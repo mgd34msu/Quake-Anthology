@@ -5,6 +5,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#define MAX_QUAKEWORLD_SEQUENCE_JUMP 0x10000
 static uint8_t *nq_packet(uint32_t flags, uint32_t sequence, const uint8_t *payload, size_t length, size_t *out_len) {
   if (length > 65527) qa_range_error("NetQuake datagram exceeds 16-bit header");
   size_t n = length + 8;
@@ -14,9 +16,14 @@ static uint8_t *nq_packet(uint32_t flags, uint32_t sequence, const uint8_t *payl
   b[4]=(uint8_t)(sequence>>24); b[5]=(uint8_t)(sequence>>16); b[6]=(uint8_t)(sequence>>8); b[7]=(uint8_t)sequence;
   memcpy(b + 8, payload, length); *out_len = n; return b;
 }
+/* Number.isSafeInteger before the cast: 1.5 or NaN must fail the TS check, not truncate.
+ * A non-integer maps to -1, which the channel rejects with the TS message. */
+static long long safe_or_invalid(double v) {
+  return isfinite(v) && v == trunc(v) && fabs(v) <= 9007199254740991.0 ? (long long)v : -1;
+}
 int qa_netquake_channel_init(qa_netquake_channel *c, double max_message_bytes, double fragment_bytes) {
   memset(c, 0, sizeof *c); c->max_message_bytes = max_message_bytes;
-  return qa_stop_and_wait_init(&c->reliable, (long long)max_message_bytes, (long long)fragment_bytes, 1000);
+  return qa_stop_and_wait_init(&c->reliable, safe_or_invalid(max_message_bytes), safe_or_invalid(fragment_bytes), 1000);
 }
 void qa_netquake_channel_destroy(qa_netquake_channel *c) { qa_stop_and_wait_destroy(&c->reliable); }
 bool qa_netquake_channel_can_send_reliable(const qa_netquake_channel *c) { return qa_stop_and_wait_can_send(&c->reliable); }
@@ -31,7 +38,9 @@ uint8_t *qa_netquake_channel_next(qa_netquake_channel *c, double now_ms, size_t 
 }
 uint8_t *qa_netquake_channel_unreliable(qa_netquake_channel *c, const uint8_t *payload, size_t length, size_t *out_len) {
   if ((double)length > c->max_message_bytes) qa_range_error("NetQuake unreliable message exceeds profile");
-  return nq_packet(QA_NETFLAG_UNRELIABLE, c->unreliable_send++, payload, length, out_len);
+  /* DataView.setUint32 stores the counter modulo 2^32. */
+  uint32_t sequence = (uint32_t)fmod(c->unreliable_send++, 4294967296.0);
+  return nq_packet(QA_NETFLAG_UNRELIABLE, sequence, payload, length, out_len);
 }
 int qa_netquake_channel_receive(qa_netquake_channel *c, const uint8_t *bytes, size_t length, double now_ms,
                                 qa_channel_delivery *delivery, uint8_t **reply, size_t *reply_len) {
@@ -44,9 +53,9 @@ int qa_netquake_channel_receive(qa_netquake_channel *c, const uint8_t *bytes, si
   if (flags & QA_NETFLAG_CTL) return 0;
   const uint8_t *payload = bytes + 8; size_t plen = length - 8;
   if (flags & QA_NETFLAG_UNRELIABLE) {
-    if (sequence < c->unreliable_receive) return 0;
-    delivery->dropped = (double)(sequence - c->unreliable_receive);
-    c->unreliable_receive = sequence + 1;
+    if ((double)sequence < c->unreliable_receive) return 0;
+    delivery->dropped = (double)sequence - c->unreliable_receive;
+    c->unreliable_receive = (double)sequence + 1;
     delivery->reliable = false; delivery->sequence = sequence; delivery->length = plen;
     delivery->payload = malloc(plen ? plen : 1); if (plen) memcpy(delivery->payload, payload, plen);
     return 1;
@@ -74,7 +83,7 @@ int qa_quakeworld_channel_init(qa_quakeworld_channel *c, bool is_client, double 
   if (qport != trunc(qport) || qport < 0 || qport > 65535) qa_range_error("Invalid qport");
   memset(c, 0, sizeof *c);
   c->is_client = is_client; c->qport = qport; c->max_message_bytes = max_message_bytes; c->bytes_per_second = bytes_per_second;
-  qa_toggle_channel_init(&c->reliable, (long long)max_message_bytes, 0);
+  qa_toggle_channel_init(&c->reliable, safe_or_invalid(max_message_bytes), 0);
   qa_packet_rate_init(&c->packet_rate, bytes_per_second, 200);
   return 1;
 }
@@ -98,7 +107,7 @@ uint8_t *qa_quakeworld_channel_transmit(qa_quakeworld_channel *c, const uint8_t 
   uint32_t w1 = (uint32_t)p.acknowledged | (p.reliable_acknowledged ? 0x80000000u : 0);
   b[0]=(uint8_t)w0; b[1]=(uint8_t)(w0>>8); b[2]=(uint8_t)(w0>>16); b[3]=(uint8_t)(w0>>24);
   b[4]=(uint8_t)w1; b[5]=(uint8_t)(w1>>8); b[6]=(uint8_t)(w1>>16); b[7]=(uint8_t)(w1>>24);
-  if (c->is_client) { uint16_t qp = (uint16_t)c->qport; b[8]=(uint8_t)qp; b[9]=(uint8_t)(qp>>8); }
+  if (c->is_client) { uint16_t qp = qa_js_to_uint16(c->qport); /* validated 0..65535 */ b[8]=(uint8_t)qp; b[9]=(uint8_t)(qp>>8); }
   memcpy(b + header, p.payload, p.length); free(p.payload);
   c->packet_rate.bytes_per_second = c->bytes_per_second;
   qa_packet_rate_sent(&c->packet_rate, (double)n, now_ms, !c->is_client && server_paused);
@@ -115,6 +124,10 @@ int qa_quakeworld_channel_receive(qa_quakeworld_channel *c, const uint8_t *bytes
   uint32_t word = (uint32_t)bytes[0]|((uint32_t)bytes[1]<<8)|((uint32_t)bytes[2]<<16)|((uint32_t)bytes[3]<<24);
   uint32_t ack = (uint32_t)bytes[4]|((uint32_t)bytes[5]<<8)|((uint32_t)bytes[6]<<16)|((uint32_t)bytes[7]<<24);
   if (word == 0xffffffffu) return 0;
+  /* The server copies accepted sequences into its own outgoing counter, so a peer
+   * must not be able to jump it to the end of the 31-bit space. */
+  if (!c->is_client && (double)(word & 0x7fffffffu) - qa_quakeworld_channel_incoming_sequence(c) > MAX_QUAKEWORLD_SEQUENCE_JUMP)
+    return 0;
   qa_toggle_packet p; memset(&p, 0, sizeof p);
   p.sequence = word & 0x7fffffffu; p.acknowledged = ack & 0x7fffffffu;
   p.reliable = (word >> 31) != 0; p.reliable_acknowledged = (ack >> 31) == 0 ? 0 : 1;
@@ -130,22 +143,4 @@ int qa_quakeworld_channel_receive(qa_quakeworld_channel *c, const uint8_t *bytes
   out->payload = res.payload; out->length = res.length;
   out->sequence = sequence; out->acknowledged = acknowledged; out->dropped = (double)res.dropped;
   return 1;
-}
-bool qa_quake_peer_send(qa_quake_peer *p, const uint8_t *bytes, size_t length) {
-  return p->transport.send(p->transport.ctx, &p->remote, bytes, length);
-}
-int qa_quake_peer_receive_nq(qa_quake_peer *p, const qa_net_address *from, const uint8_t *bytes, size_t length,
-                             double now_ms, qa_channel_delivery *out) {
-  if (!qa_net_same_address(from, &p->remote, true)) return 0;
-  uint8_t *reply = NULL; size_t reply_len = 0;
-  int got = qa_netquake_channel_receive(p->nq, bytes, length, now_ms, out, &reply, &reply_len);
-  if (reply) { (void)qa_quake_peer_send(p, reply, reply_len); free(reply); }
-  return got;
-}
-int qa_quake_peer_receive_qw(qa_quake_peer *p, const qa_net_address *from, const uint8_t *bytes, size_t length,
-                             double now_ms, qa_quakeworld_delivery *out) {
-  if (!qa_net_same_address(from, &p->remote, p->qw->is_client)) return 0;
-  int got = qa_quakeworld_channel_receive(p->qw, bytes, length, now_ms, out);
-  if (got) { qa_net_address_destroy(&p->remote); (void)qa_net_address_clone(from, &p->remote); }
-  return got;
 }

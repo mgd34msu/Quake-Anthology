@@ -311,8 +311,9 @@ bool qa_app_sim_quakec_local_view(qa_actor_id actor, qa_app_sim_quakec_local_mes
   out->angles = qa_app_sim_quakec_local_messages_angles(state, actor, &local_angles) ? local_angles : angles;
   return true;
 }
-static qa_app_sim_presentation_event event_of(const char *kind, const char *event_kind) {
-  qa_app_sim_presentation_event e; memset(&e, 0, sizeof e); e.kind = kind; e.event_kind = event_kind; return e;
+static qa_q1_event q1_of(const char *kind) { qa_q1_event e; memset(&e, 0, sizeof e); e.kind = kind; return e; }
+static qa_network_event network_of(qa_network_event_kind kind) {
+  qa_network_event e; memset(&e, 0, sizeof e); e.kind = kind; return e;
 }
 void qa_app_sim_present_quakec_local_message(qa_netquake_message message, const qa_actor_id *target,
     qa_app_sim_quakec_local_messages *state, qa_app_sim_quakec_local_message_host host) {
@@ -333,32 +334,40 @@ void qa_app_sim_present_quakec_local_message(qa_netquake_message message, const 
   }
   if (is(k, "stat")) {
     if (message.index == 12) {
-      qa_app_sim_presentation_event e = event_of("q1", "monster-total"); e.value = message.value;
-      host.emit(host.ctx, e, NULL);
+      qa_q1_event e = q1_of("monster-total"); e.total = message.value;
+      host.emit(host.ctx, &e, NULL);
     }
     return;
   }
   if (is(k, "name") || is(k, "colors") || is(k, "frags") || is(k, "ping") || is(k, "social") || is(k, "player-info")) {
-    host.client_metadata(host.ctx, message, target); return;
+    /* TS passes the message itself: Q1ClientMetadataEvent {kind, slot, value}. */
+    qa_app_sim_q1_client_metadata_event e; memset(&e, 0, sizeof e);
+    e.kind = k; e.slot = message.slot;
+    if (is(k, "name") || is(k, "social") || is(k, "player-info")) e.text = message.str_value;
+    else e.value = message.value;
+    host.client_metadata(host.ctx, e, target); return;
   }
   if (is(k, "skybox")) { host.sky(host.ctx, message.text, target); return; }
   if (is(k, "raw-print") || is(k, "chat") || is(k, "botchat")) {
-    qa_app_sim_presentation_event e = event_of("print", NULL); e.value = 2; e.value_text = message.text;
+    qa_network_event e = network_of(QA_NETWORK_EVENT_PRINT); e.level = 2; e.text = message.text;
     host.message(host.ctx, e, target); return;
   }
   if (is(k, "print") || is(k, "center-print") || is(k, "stufftext")) {
-    qa_app_sim_presentation_event e = event_of(is(k, "stufftext") ? "command-text" : is(k, "print") ? "print" : "center-print", NULL);
-    e.value = 2; e.value_text = message.text;
+    qa_network_event e = network_of(is(k, "stufftext") ? QA_NETWORK_EVENT_COMMAND_TEXT
+        : is(k, "print") ? QA_NETWORK_EVENT_PRINT : QA_NETWORK_EVENT_CENTER_PRINT);
+    if (is(k, "print")) e.level = 2;
+    e.text = message.text;
     host.message(host.ctx, e, target); return;
   }
   if (is(k, "disconnect")) {
-    qa_app_sim_presentation_event e = event_of("disconnect", NULL); e.value_text = "Source disconnected client";
+    qa_network_event e = network_of(QA_NETWORK_EVENT_DISCONNECT); e.reason = "Source disconnected client";
     host.message(host.ctx, e, target); return;
   }
   if (is(k, "set-angle")) { for (size_t i = 0; i < recipient_count; i++) host.angles(host.ctx, recipients[i], message.angles); return; }
   if (is(k, "light-style")) {
-    qa_app_sim_presentation_event e = event_of("q1", "lightstyle"); e.value = message.index; e.value_text = message.str_value ? message.str_value : message.text;
-    host.emit(host.ctx, e, NULL); return;
+    qa_q1_event e = q1_of("lightstyle"); e.style = message.index;
+    e.pattern = message.str_value ? message.str_value : message.text;
+    host.emit(host.ctx, &e, NULL); return;
   }
   if (is(k, "cd-track")) { host.music(host.ctx, message.track); return; }
   if (is(k, "pause")) { host.pause(host.ctx, message.paused); return; }
@@ -366,44 +375,47 @@ void qa_app_sim_present_quakec_local_message(qa_netquake_message message, const 
   if (is(k, "bonus-flash")) {
     for (size_t i = 0; i < recipient_count; i++) {
       qa_vec3 origin, angles; host.camera(host.ctx, recipients[i], &origin, &angles);
-      qa_app_sim_presentation_event e = event_of("q1", "effect"); e.name = "pickup";
-      e.actor = recipients[i]; e.angles = origin; e.value = 1;
-      host.emit(host.ctx, e, &recipients[i]);
+      qa_q1_event e = q1_of("effect"); e.effect = "pickup";
+      e.has_actor = true; e.actor = recipients[i]; e.origin = origin; e.amount = 1;
+      host.emit(host.ctx, &e, &recipients[i]);
     }
     return;
   }
   if (is(k, "achievement")) {
-    qa_app_sim_presentation_event e = event_of("q1", "achievement");
+    qa_q1_event e = q1_of("achievement");
     e.has_player = target != NULL; if (target) e.player = *target;
-    e.value_text = message.text;
-    host.emit(host.ctx, e, target); return;
+    e.id = message.text;
+    host.emit(host.ctx, &e, target); return;
   }
   if (is(k, "spawned-monster")) {
     for (size_t i = 0; i < recipient_count; i++) {
       double total = 0; qa_app_sim_quakec_local_messages_stat(state, recipients[i], 12, &total);
-      qa_app_sim_presentation_event e = event_of("q1", "monster-total"); e.value = total;
-      host.emit(host.ctx, e, &recipients[i]);
+      qa_q1_event e = q1_of("monster-total"); e.total = total;
+      host.emit(host.ctx, &e, &recipients[i]);
     }
     return;
   }
   if (is(k, "local-sound")) {
     for (size_t i = 0; i < recipient_count; i++) {
       qa_actor_id listener; bool has = qa_app_sim_quakec_local_messages_view_target(state, recipients[i], &listener);
-      qa_app_sim_presentation_event e = event_of("q1", "sound");
-      e.actor = has ? listener : recipients[i]; e.value_text = host.sound(host.ctx, message.index);
-      e.value = -1;
-      host.emit(host.ctx, e, &recipients[i]);
+      qa_q1_event e = q1_of("sound");
+      e.has_actor = true; e.actor = has ? listener : recipients[i];
+      e.path = host.sound(host.ctx, message.index);
+      e.sound_channel = "-1"; /* TS numeric channel -1 (Q1SoundChannel) */
+      e.volume = 1; e.attenuation = 1;
+      host.emit(host.ctx, &e, &recipients[i]);
     }
     return;
   }
   if (is(k, "damage")) {
-    qa_app_sim_presentation_event e = event_of("q1-damage", NULL);
-    e.value = message.armor; e.color = message.blood; e.angles = message.source;
+    qa_network_event e = network_of(QA_NETWORK_EVENT_Q1_DAMAGE);
+    e.armor = message.armor; e.blood = message.blood; e.source = message.source;
     host.message(host.ctx, e, target); return;
   }
   if (is(k, "particle")) {
-    qa_app_sim_presentation_event e = event_of("q1-particle", NULL);
-    e.angles = message.origin; e.value = message.count;
+    qa_network_event e = network_of(QA_NETWORK_EVENT_Q1_PARTICLE);
+    e.origin_value = message.origin; e.direction = message.direction;
+    e.count = message.count; e.color = message.color_value;
     host.message(host.ctx, e, target); return;
   }
   if (is(k, "killed-monster") || is(k, "found-secret")) {
@@ -412,57 +424,63 @@ void qa_app_sim_present_quakec_local_message(qa_netquake_message message, const 
       double total = 0, found = 0;
       qa_app_sim_quakec_local_messages_stat(state, recipients[i], secret ? 11 : 12, &total);
       qa_app_sim_quakec_local_messages_stat(state, recipients[i], secret ? 13 : 14, &found);
-      qa_app_sim_presentation_event e = event_of("q1", secret ? "secret" : "monster-killed");
-      e.actor = recipients[i]; e.value = total; e.color = found;
-      host.emit(host.ctx, e, &recipients[i]);
+      qa_q1_event e = q1_of(secret ? "secret" : "monster-killed");
+      e.has_actor = true; e.actor = recipients[i]; e.total = total; e.found = found;
+      /* TS passes no recipient: the host's default (target) applies. */
+      host.emit(host.ctx, &e, NULL);
     }
     return;
   }
   if (is(k, "intermission")) {
     for (size_t i = 0; i < recipient_count; i++) {
       qa_vec3 origin, angles; host.camera(host.ctx, recipients[i], &origin, &angles);
-      qa_app_sim_presentation_event e = event_of("q1-level", "intermission");
-      e.angles = angles; e.name = host.map; e.value = host.seconds + 5;
-      host.emit(host.ctx, e, &recipients[i]);
+      qa_q1_event e = q1_of("intermission");
+      e.origin = origin; e.angles = angles; e.map = host.map; e.exit_after = host.seconds + 5; e.track = 0;
+      host.emit(host.ctx, &e, &recipients[i]);
     }
     return;
   }
   if (is(k, "finale") || is(k, "cutscene")) {
-    qa_app_sim_presentation_event e = event_of("q1", "finale");
-    e.value_text = message.text; e.value = is(k, "finale") ? 4 : 1;
-    host.emit(host.ctx, e, NULL); return;
+    qa_q1_event e = q1_of("finale");
+    e.text = message.text; e.stage = is(k, "finale") ? 4 : 1;
+    host.emit(host.ctx, &e, NULL); return;
   }
   if (is(k, "sell-screen")) {
-    qa_app_sim_presentation_event e = event_of("command-text", NULL); e.value_text = "help\n";
+    qa_network_event e = network_of(QA_NETWORK_EVENT_COMMAND_TEXT); e.text = "help\n";
     host.message(host.ctx, e, target); return;
   }
   if (is(k, "sound") || is(k, "static-sound")) {
     const char *path = host.sound(host.ctx, message.index);
     if (is(k, "static-sound")) {
-      qa_app_sim_presentation_event e = event_of("q1", "ambient");
-      e.value_text = path; e.angles = message.origin; e.value = message.volume / 255; e.color = message.attenuation;
-      host.emit(host.ctx, e, NULL);
+      qa_q1_event e = q1_of("ambient");
+      e.path = path; e.has_origin = true; e.origin = message.origin;
+      e.volume = message.volume / 255; e.attenuation = message.attenuation;
+      host.emit(host.ctx, &e, NULL);
     } else {
       static const char *const channels[] = {"auto", "weapon", "voice", "item", "body", "5", "6", "7"};
-      int channel = (int)message.channel;
-      if (channel < 0 || channel > 7) qa_range_error("Invalid local QC sound channel");
-      qa_app_sim_presentation_event e = event_of("q1", "sound");
-      e.actor = host.actor(host.ctx, message.entity); e.value_text = path; e.name = channels[channel];
-      e.angles = message.origin; e.value = message.volume / 255; e.color = message.attenuation;
-      host.emit(host.ctx, e, NULL);
+      double channel = message.channel;
+      if (!(channel >= 0 && channel <= 7) || channel != (double)(int)channel)
+        qa_range_error("Invalid local QC sound channel");
+      qa_q1_event e = q1_of("sound");
+      e.has_actor = true; e.actor = host.actor(host.ctx, message.entity);
+      e.path = path; e.sound_channel = channels[(int)channel];
+      e.has_origin = true; e.origin = message.origin;
+      e.volume = message.volume / 255; e.attenuation = message.attenuation;
+      host.emit(host.ctx, &e, NULL);
     }
     return;
   }
   if (is(k, "stop-sound")) {
-    qa_app_sim_presentation_event e = event_of("q1", "stop-sound");
-    e.actor = host.actor(host.ctx, message.entity); e.value = message.channel;
-    host.emit(host.ctx, e, NULL); return;
+    qa_q1_event e = q1_of("stop-sound");
+    e.has_actor = true; e.actor = host.actor(host.ctx, message.entity); e.channel = message.channel;
+    host.emit(host.ctx, &e, NULL); return;
   }
   if (is(k, "static")) {
-    qa_app_sim_presentation_event e = event_of("q1", "static-model");
-    e.value_text = host.model(host.ctx, message.state.base.model_index);
-    e.value = message.state.base.frame; e.angles = message.state.base.angles;
-    host.emit(host.ctx, e, NULL); return;
+    qa_q1_event e = q1_of("static-model");
+    e.path = host.model(host.ctx, message.state.base.model_index);
+    e.frame = message.state.base.frame; e.color_map = message.state.base.color_map;
+    e.skin = message.state.base.skin; e.origin = message.state.base.origin; e.angles = message.state.base.angles;
+    host.emit(host.ctx, &e, NULL); return;
   }
   qa_range_error("Unsupported local QuakeC service %s", k ? k : "(null)");
 }

@@ -10,8 +10,7 @@
 #include "qa/foundation/support.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -36,10 +35,8 @@ static void not_admitted(qa_item_id item) {
 qa_pickup_supply_preview qa_preview_pickup_grants(const qa_inventory_entry *inventory,
                                                   size_t inventory_count,
                                                   qa_pickup_grant_plan plan) {
-  /* Working copy of entries keyed by item. */
-  qa_inventory_entry *entries = xcalloc((inventory_count != 0 ? inventory_count : 1) * sizeof *entries);
-  if (inventory_count != 0) memcpy(entries, inventory, inventory_count * sizeof *entries);
-  /* Validate destinations. */
+  /* Validate destinations (against the input; the working copy is made after). */
+  const qa_inventory_entry *entries = inventory;
   const qa_pickup_ammo_grant *weapon_grants = plan.is_weapon || !plan.weapons_shared_ammo
                                                   ? plan.weapons : NULL;
   size_t weapon_grant_count = weapon_grants != NULL ? plan.weapon_count : 0;
@@ -71,7 +68,9 @@ qa_pickup_supply_preview qa_preview_pickup_grants(const qa_inventory_entry *inve
       }
     }
   }
-  /* give() over the working entries. */
+  /* give() over a working copy of the entries. */
+  qa_inventory_entry *working = xcalloc((inventory_count != 0 ? inventory_count : 1) * sizeof *working);
+  if (inventory_count != 0) memcpy(working, inventory, inventory_count * sizeof *working);
   qa_pickup_supply_preview preview;
   memset(&preview, 0, sizeof preview);
   qa_pickup_ammo_receipt *weapon_receipts =
@@ -82,24 +81,24 @@ qa_pickup_supply_preview qa_preview_pickup_grants(const qa_inventory_entry *inve
   if (plan.is_weapon) {
     for (size_t w = 0; w < weapon_grant_count; w++) {
       for (size_t e = 0; e < inventory_count; e++) {
-        if (str_eq(entries[e].item, plan.weapons[w].item)) {
-          qa_inventory_give_transition transition = qa_inventory_give(entries[e], plan.weapons[w].amount);
+        if (str_eq(working[e].item, plan.weapons[w].item)) {
+          qa_inventory_give_transition transition = qa_inventory_give(working[e], plan.weapons[w].amount);
           weapon_receipts[w].item = plan.weapons[w].item;
-          weapon_receipts[w].before = entries[e].count;
+          weapon_receipts[w].before = working[e].count;
           weapon_receipts[w].given = transition.given;
-          if (transition.is_write) entries[e] = transition.entry;
+          if (transition.is_write) working[e] = transition.entry;
           break;
         }
       }
     }
     for (size_t a = 0; a < plan.ammo_count; a++) {
       for (size_t e = 0; e < inventory_count; e++) {
-        if (str_eq(entries[e].item, plan.ammo[a].item)) {
-          qa_inventory_give_transition transition = qa_inventory_give(entries[e], plan.ammo[a].amount);
+        if (str_eq(working[e].item, plan.ammo[a].item)) {
+          qa_inventory_give_transition transition = qa_inventory_give(working[e], plan.ammo[a].amount);
           ammo_receipts[a].item = plan.ammo[a].item;
-          ammo_receipts[a].before = entries[e].count;
+          ammo_receipts[a].before = working[e].count;
           ammo_receipts[a].given = transition.given;
-          if (transition.is_write) entries[e] = transition.entry;
+          if (transition.is_write) working[e] = transition.entry;
           break;
         }
       }
@@ -109,17 +108,17 @@ qa_pickup_supply_preview qa_preview_pickup_grants(const qa_inventory_entry *inve
     preview.weapon_count = weapon_grant_count;
     preview.ammo = ammo_receipts;
     preview.ammo_count = plan.ammo_count;
-    free(entries);
+    free(working);
     return preview;
   }
   for (size_t a = 0; a < plan.ammo_count; a++) {
     for (size_t e = 0; e < inventory_count; e++) {
-      if (str_eq(entries[e].item, plan.ammo[a].item)) {
-        qa_inventory_give_transition transition = qa_inventory_give(entries[e], plan.ammo[a].amount);
+      if (str_eq(working[e].item, plan.ammo[a].item)) {
+        qa_inventory_give_transition transition = qa_inventory_give(working[e], plan.ammo[a].amount);
         ammo_receipts[a].item = plan.ammo[a].item;
-        ammo_receipts[a].before = entries[e].count;
+        ammo_receipts[a].before = working[e].count;
         ammo_receipts[a].given = transition.given;
-        if (transition.is_write) entries[e] = transition.entry;
+        if (transition.is_write) working[e] = transition.entry;
         break;
       }
     }
@@ -148,13 +147,13 @@ qa_pickup_supply_preview qa_preview_pickup_grants(const qa_inventory_entry *inve
       }
       if (!reused) {
         for (size_t e = 0; e < inventory_count; e++) {
-          if (str_eq(entries[e].item, plan.weapons[w].item)) {
+          if (str_eq(working[e].item, plan.weapons[w].item)) {
             qa_inventory_give_transition transition =
-                qa_inventory_give(entries[e], plan.weapons[w].amount);
+                qa_inventory_give(working[e], plan.weapons[w].amount);
             weapon_receipts[w].item = plan.weapons[w].item;
-            weapon_receipts[w].before = entries[e].count;
+            weapon_receipts[w].before = working[e].count;
             weapon_receipts[w].given = transition.given;
-            if (transition.is_write) entries[e] = transition.entry;
+            if (transition.is_write) working[e] = transition.entry;
             break;
           }
         }
@@ -177,7 +176,7 @@ qa_pickup_supply_preview qa_preview_pickup_grants(const qa_inventory_entry *inve
     preview.weapons = shared;
     preview.weapon_count = shared_count;
   }
-  free(entries);
+  free(working);
   return preview;
 }
 void qa_free_pickup_supply_preview(qa_pickup_supply_preview preview) {
@@ -745,8 +744,8 @@ qa_weapon_source_entry *qa_selected_weapon_sources(
     }
     if (candidate_count > 1 && weapon->ammo != NULL) {
       const qa_pickup_supply_owner *ammo_owner = NULL;
-      for (size_t i = 0; i < profile.ammo_owner_count; i++) {
-        if (str_eq(profile.ammo_owners[i].item, weapon->ammo)) ammo_owner = &profile.ammo_owners[i];
+      for (size_t i = 0; i < profile.ammo_owner_count; i++) { /* Array.find: first match */
+        if (str_eq(profile.ammo_owners[i].item, weapon->ammo)) { ammo_owner = &profile.ammo_owners[i]; break; }
       }
       size_t canonical_count = 0;
       const qa_pickup_weapon *canonical = NULL;
@@ -789,6 +788,16 @@ qa_weapon_source_entry *qa_selected_weapon_sources(
     result[s].source = candidates[0]->item;
     free((void *)candidates);
   }
-  *out_count = selected_count;
+  /* Map.set on a repeated item keeps the first position and takes the last value. */
+  size_t unique = 0;
+  for (size_t s = 0; s < selected_count; s++) {
+    size_t existing = unique;
+    for (size_t u = 0; u < unique; u++) {
+      if (str_eq(result[u].item, result[s].item)) { existing = u; break; }
+    }
+    if (existing < unique) result[existing].source = result[s].source;
+    else result[unique++] = result[s];
+  }
+  *out_count = unique;
   return result;
 }

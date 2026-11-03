@@ -1,6 +1,8 @@
 /* Port of src/contracts/source-match.ts (runtime helpers). GPL-2.0-or-later. */
 #include "qa/contracts/source_match.h"
+#include "qa/network/common/js_number.h"
 
+#include "qa/foundation/support.h"
 #include <math.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
@@ -10,8 +12,7 @@
 /* TS throws plain Error in this module (not RangeError); the C port
  * aborts printing the identical message under the Error class name. */
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static bool string_equal(const char *left, const char *right) {
@@ -21,22 +22,7 @@ static bool string_equal(const char *left, const char *right) {
 
 /* JS String(number) for the interpolated team value. */
 static void format_number(double value, char *buffer, size_t size) {
-  if (isfinite(value) && value == trunc(value) && fabs(value) <= 9007199254740991.0) {
-    (void)snprintf(buffer, size, "%lld", (long long)value);
-    return;
-  }
-  if (isnan(value)) {
-    (void)snprintf(buffer, size, "NaN");
-    return;
-  }
-  if (isinf(value)) {
-    (void)snprintf(buffer, size, "%sInfinity", value < 0 ? "-" : "");
-    return;
-  }
-  for (int precision = 15; precision <= 17; precision++) {
-    (void)snprintf(buffer, size, "%.*g", precision, value);
-    if (strtod(buffer, NULL) == value) return;
-  }
+  qa_net_js_number(value, buffer, size);
 }
 
 const char *qa_source_team(const qa_source_team_value *values, size_t count, double value) {

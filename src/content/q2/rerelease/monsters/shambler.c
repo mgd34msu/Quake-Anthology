@@ -14,13 +14,13 @@
 static const qa_vec3 left_hand[5] = {{44, 36, 25}, {10, 44, 57}, {-1, 40, 70}, {-10, 34, 75}, {7.4, 24, 89}};
 static const qa_vec3 right_hand[5] = {{28, -38, 25}, {31, -7, 70}, {20, 0, 80}, {16, 1.2, 81}, {27, -11, 83}};
 
-static void emit_shambler_beam(qa_q2f_entity *actor_entity, qa_vec3 start, qa_vec3 end, bool visible) {
-  qa_q2mpm_beam_event event;
+static void emit_shambler_beam(qa_q2_game_services *game, qa_q2_entity *actor_entity, qa_vec3 start, qa_vec3 end, bool visible) {
+  qa_q2_presentation_event event;
   memset(&event, 0, sizeof event);
-  event.actor = actor_entity->actor.id;
+  event.kind = "beam"; event.has_actor = true; event.actor = actor_entity->actor.id;
   event.start = start; event.end = end;
   event.width = 2; event.color = (double)(uint32_t)0xffffffffu; event.visible = visible;
-  qa_q2mpm_emit_beam(event);
+  game->host->emit(game->host->ctx, event);
 }
 static void run_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -28,13 +28,13 @@ static void run_fn(void *ctx, qa_q2m_context *c) {
   q2rm_set_move(c, c->state->stand_ground ? "shambler_move_stand" : "shambler_move_run");
 }
 static void clear_beam(qa_q2m_context *c) {
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   const qa_actor_id *ids[2] = {c->entity->has_beam ? &c->entity->beam : NULL,
                                c->entity->has_beam2 ? &c->entity->beam2 : NULL};
   for (int i = 0; i < 2; i++) {
-    qa_q2f_entity *beam = game->entity(game->ctx, ids[i]);
+    qa_q2_entity *beam = game->entity(game->ctx, ids[i]);
     if (!beam) continue;
-    emit_shambler_beam(beam, q2rm_body(game, beam).origin, beam->pos2, false);
+    emit_shambler_beam(game, beam, q2rm_body(game, beam).origin, beam->pos2, false);
     game->remove(game->ctx, beam);
   }
   c->entity->has_beam = false;
@@ -44,20 +44,20 @@ static void lightning_update(qa_q2m_context *c) {
   double frame = c->entity->frame - qa_q2rm_shambler_frames_value.magic01;
   if (frame >= 5) { clear_beam(c); return; }
   if (frame < 0) return;
-  qa_q2f_entity *beam = c->game->entity(c->game->ctx, c->entity->has_beam ? &c->entity->beam : NULL);
+  qa_q2_entity *beam = c->game->entity(c->game->ctx, c->entity->has_beam ? &c->entity->beam : NULL);
   if (!beam) return;
   qa_vec3 start = qa_q2m_project_flash_default(c, left_hand[(size_t)frame]);
   qa_vec3 end = qa_q2m_project_flash_default(c, right_hand[(size_t)frame]);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = start;
   q2rm_move_body(c->game, beam, change, false, false);
   beam->pos2 = end;
-  emit_shambler_beam(beam, start, end, true);
+  emit_shambler_beam(c->game, beam, start, end, true);
 }
 static void claw(qa_q2m_context *c, bool smash) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   if (!entity->has_enemy) return;
   qa_q2m_run_ai(c, QA_Q2M_AI_CHARGE, smash ? 0 : 10);
   if (!game->can_damage(game->ctx, entity->enemy, entity->actor)) return;
@@ -74,8 +74,8 @@ static void melee_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   if (q2rm_now(game) < entity->timestamp) return;
   entity->timestamp = q2rm_now(game) + 0.001;
@@ -92,8 +92,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   clear_beam(c);
   if (qa_q2rm_check_gib(c)) {
@@ -119,7 +119,7 @@ static void maybe_idle_fn(void *ctx, qa_q2m_context *c) {
 static void windup_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   q2rm_snd(c, "shambler/sattck1.wav", 1);
-  qa_q2f_entity *beam = c->game->create(c->game->ctx, "shambler_lightning", NULL);
+  qa_q2_entity *beam = c->game->create(c->game->ctx, "shambler_lightning", NULL, 0);
   c->entity->beam = beam->actor.id; c->entity->has_beam = true;
   beam->owner = c->entity->actor.id; beam->has_owner = true;
   beam->model = "models/proj/lightning/tris.md2";
@@ -149,11 +149,11 @@ static void cast_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 direction;
   if (!qa_q2rm_predicted_direction(c, start, 0, false, q2rm_has(c->entity->spawnflags, 1) ? 0 : 0.1, &direction))
     return;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   qa_vec3 end = qa_add3_double(start, qa_scale3_double(direction, 8192));
   qa_trace_result trace = q2rm_trace(game, start, end, NULL, &c->entity->actor.id,
                                      (double)((0x46004003u | 8u | 16u)));
-  emit_shambler_beam(c->entity, start, trace.end, true);
+  emit_shambler_beam(c->game, c->entity, start, trace.end, true);
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, game, start, direction,
                          8 + floor(q2rm_rnd(game) * 4), 15, 0, 0, 45);
 }
@@ -179,7 +179,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -187,7 +187,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_corpse(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-16, -16, -24);

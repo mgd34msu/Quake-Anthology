@@ -10,7 +10,7 @@
 #include "qa/content/q2/missionpacks/monsters/types.h"
 
 /* Writes 2 definitions (hover, daedalus) to out; returns 2. */
-size_t qa_q2mpm_create_rogue_hover_definitions(qa_q2m_definition *out, qa_q2mpm_weapons weapons,
+size_t qa_q2mpm_create_rogue_hover_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2mpm_weapons weapons,
                                                qa_q2mpm_monster_state *source);
 
 #endif

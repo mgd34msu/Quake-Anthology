@@ -14,7 +14,9 @@ typedef struct qa_app_q3_server_cvar_definitions {
   char protocol_value[32];
   char maxclients_value[32];
 } qa_app_q3_server_cvar_definitions;
-qa_app_q3_server_cvar_definitions qa_app_q3_server_cvar_definitions_make(qa_app_q3_server_cvar_settings settings);
+/* Fills *out in place: items[].value points into *out's own scratch slots, so
+ * the definitions must not be copied or outlive *out. */
+void qa_app_q3_server_cvar_definitions_make(qa_app_q3_server_cvar_definitions *out, qa_app_q3_server_cvar_settings settings);
 /* TS q3ServerCvarNames: borrowed static names. */
 extern const char *const qa_app_q3_server_cvar_names[24];
 #define QA_APP_Q3_SERVER_CVAR_NAME_COUNT 24

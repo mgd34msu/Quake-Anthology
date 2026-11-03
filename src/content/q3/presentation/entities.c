@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/entities.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/entities.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -22,7 +24,7 @@ static double f_(double value) { return (double)(float)value; } /* Math.fround *
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -53,33 +55,37 @@ const char *qa_q3_pres_missile_trail_name(qa_q3_pres_missile_trail trail) {
   return "rocket";
 }
 
-static const qa_q3_pres_scene_model *indexed_model(const qa_q3_pres_scene_model *values, size_t count,
-    int32_t index, const char *name) {
-  if (index < 0 || (size_t)index >= count) qa_range_error("%s index %lld is not registered", name, (long long)index);
-  return &values[index];
+/* TS values[index] is undefined off the table, non-integers included. */
+static bool table_index(double index, size_t count) {
+  return index == trunc(index) && index >= 0 && index < (double)count;
 }
-static qa_pcm_sound *indexed_sound(qa_pcm_sound *const *values, size_t count, int32_t index, const char *name) {
-  if (index < 0 || (size_t)index >= count) qa_range_error("%s index %lld is not registered", name, (long long)index);
-  return values[index];
+static const qa_q3_pres_scene_model *indexed_model(const qa_q3_pres_scene_model *values, size_t count,
+    double index, const char *name) {
+  if (!table_index(index, count)) qa_range_error("%s index %s is not registered", name, QA_JS_NUMBER(index));
+  return &values[(size_t)index];
+}
+static qa_pcm_sound *indexed_sound(qa_pcm_sound *const *values, size_t count, double index, const char *name) {
+  if (!table_index(index, count)) qa_range_error("%s index %s is not registered", name, QA_JS_NUMBER(index));
+  return values[(size_t)index];
 }
 static const qa_q3_pres_inline_model_entry *indexed_inline(const qa_q3_pres_packet_entity_media *media,
-    int32_t index) {
-  if (index < 0 || (size_t)index >= media->inline_model_count) {
-    qa_range_error("inline model index %lld is not registered", (long long)index);
+    double index) {
+  if (!table_index(index, media->inline_model_count)) {
+    qa_range_error("inline model index %s is not registered", QA_JS_NUMBER(index));
   }
-  return &media->inline_models[index];
+  return &media->inline_models[(size_t)index];
 }
 static const qa_q3_pres_packet_item_visual *indexed_visual(const qa_q3_pres_packet_entity_media *media,
-    int32_t index) {
-  if (index < 0 || (size_t)index >= media->item_count) {
-    qa_range_error("item visual index %lld is not registered", (long long)index);
+    double index) {
+  if (!table_index(index, media->item_count)) {
+    qa_range_error("item visual index %s is not registered", QA_JS_NUMBER(index));
   }
-  return &media->items[index];
+  return &media->items[(size_t)index];
 }
 static const qa_q3_pres_packet_weapon_info *indexed_weapon(const qa_q3_pres_packet_entity_media *media,
     double index) {
   if (index != trunc(index) || index < 0 || index >= (double)media->weapon_count) {
-    qa_range_error("weapon index %g is not registered", index);
+    qa_range_error("weapon index %s is not registered", QA_JS_NUMBER(index));
   }
   return &media->weapons[(size_t)index];
 }
@@ -236,7 +242,7 @@ static void effects(presenter_t *p, qa_q3_pres_client_entity *entity) {
         current->e_type == QA_Q3_BASE_ET_SPEAKER);
   }
   if (current->constant_light != 0) {
-    int32_t light = current->constant_light;
+    int32_t light = qa_js_to_int32(current->constant_light);
     qa_q3_pres_dynamic_light dynamic = {entity->lerp_origin, ((light >> 24) & 255) * 4,
         {light & 255, (light >> 8) & 255, (light >> 16) & 255}, false};
     p->imports.add_light(p->imports.ctx, dynamic);
@@ -278,10 +284,10 @@ static void item(presenter_t *p, qa_q3_pres_client_entity *entity, qa_q3_pres_pa
   (void)qa_q3_base_item_list(state->product, &item_count);
   if (current->modelindex >= (int32_t)item_count) {
     char message[96];
-    snprintf(message, sizeof message, "Bad item index %lld on entity", (long long)current->modelindex);
+    snprintf(message, sizeof message, "Bad item index %s on entity", QA_JS_NUMBER(current->modelindex));
     qa_common_error(QA_COMMON_ERROR_DROP, message);
   }
-  if (current->modelindex == 0 || (current->e_flags & 0x80) != 0) return;
+  if (current->modelindex == 0 || (qa_js_to_int32(current->e_flags) & 0x80) != 0) return;
   const qa_q3_base_item_definition *definition = qa_q3_base_item_at(state->product, current->modelindex);
   const qa_q3_pres_packet_item_visual *visual = indexed_visual(p->media, current->modelindex);
   if (options.simple_items && definition->type != QA_Q3_BASE_IT_TEAM) {
@@ -550,7 +556,7 @@ static void team(presenter_t *p, qa_q3_pres_client_entity *entity, qa_q3_pres_pa
 
 void qa_q3_pres_packet_entity_presenter_add_entity(presenter_t *presenter, qa_q3_pres_client_entity *entity,
     qa_q3_pres_packet_entity_options options) {
-  int32_t type = entity->current_state.e_type;
+  int32_t type = qa_js_to_int32(entity->current_state.e_type);
   if (type >= QA_Q3_BASE_ET_EVENTS) return;
   qa_q3_pres_packet_entity_presenter_calculate_lerp_positions(presenter, entity, options.smooth_clients);
   if (presenter->imports.pose != NULL) presenter->imports.pose(presenter->imports.ctx, entity);

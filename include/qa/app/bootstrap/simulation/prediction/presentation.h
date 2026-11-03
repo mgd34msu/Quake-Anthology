@@ -7,6 +7,7 @@
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_PREDICTION_PRESENTATION_H
 #define QA_APP_BOOTSTRAP_SIMULATION_PREDICTION_PRESENTATION_H
 #include "qa/app/bootstrap/simulation/prediction/source_state.h"
+#include "qa/app/bootstrap/simulation/q3/presentation.h"
 #include "qa/content/q3/presentation/movement_host.h"
 #include "qa/contracts/session.h"
 
@@ -80,7 +81,7 @@ qa_app_simulation_prediction_host *qa_app_create_simulation_prediction_host(
     qa_app_simulation_prediction_source source, qa_actor_id actor, qa_seat_id seat);
 void qa_app_simulation_prediction_host_destroy(qa_app_simulation_prediction_host *host);
 qa_app_presentation_prediction_adapter *qa_app_simulation_prediction_host_adapter(qa_app_simulation_prediction_host *host);
-/* TS captureSource(published): ps is the published client state for the actor. */
+/* TS captureSource(published): reads the published client row for the host's actor. */
 void qa_app_simulation_prediction_host_capture_source(qa_app_simulation_prediction_host *host,
-    const qa_q3_base_player_state_record *ps, bool has_ps);
+    const qa_app_q3_source_presentation_state *published);
 #endif

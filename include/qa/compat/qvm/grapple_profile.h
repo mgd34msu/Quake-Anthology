@@ -17,10 +17,8 @@ typedef qa_qvm_grapple_definition qa_qvm_grapple_profile;
 qa_qvm_grapple_profile *qa_qvm_read_grapple_profile(const qa_save_value *value,
                                                     const qa_resolved_qvm_artifact *artifact);
 void qa_qvm_grapple_profile_free(qa_qvm_grapple_profile *profile);
-/* Owned declaration tree {version:1, artifactDigest, artifactPath}
- * over the profile's scalar identity fields; NULL only on OOM. The
- * TS spreads the whole profile, whose nested values are already
- * available through the profile struct. */
+/* Owned declaration tree: the whole profile plus {version:1, artifactDigest,
+ * artifactPath}, accepted by qa_qvm_read_grapple_profile; NULL only on OOM. */
 qa_save_value *qa_qvm_grapple_profile_declaration(const qa_qvm_grapple_profile *profile);
 
 #endif

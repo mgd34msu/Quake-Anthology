@@ -20,6 +20,7 @@ typedef struct qa_compat_qc_mod_environment {
   void *reference_ctx; int64_t (*reference)(void *ctx, const qa_actor_id *actor);
   const qa_compat_qc_mod_environment_clients *clients;
   struct qa_compat_qc_mod_environment *self_ref;
+  bool quakeworld; /* program.api.kind === "q1-quakeworld" */
 } qa_compat_qc_mod_environment;
 bool qa_compat_qc_mod_environment_init(qa_compat_qc_mod_environment *e, qa_mod_host_services *services, qa_compat_qc_program *program, qa_mod_callback_declaration declaration, void *reference_ctx, int64_t (*reference)(void *ctx, const qa_actor_id *actor), const qa_compat_qc_mod_environment_clients *clients);
 void qa_compat_qc_mod_environment_destroy(qa_compat_qc_mod_environment *e);

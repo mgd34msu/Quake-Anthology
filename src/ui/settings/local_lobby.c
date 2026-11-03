@@ -276,8 +276,12 @@ static qa_ui_menu factory(void *v) {
       free(cap_text);
       snprintf(id, sizeof id, "ui:lobby:join-%zu", shown);
       pool(&s->targets[at], all[i]->id);
-      controls[at] = button(s, at, pool(&s->ids[at], id),
-                            pool(&s->labels[at], label), 3 + (double)shown,
+      lobby_state * s3 = s;
+      size_t slot3 = at;
+      const char * id3 = pool(&s->ids[at], id);
+      const char * label3 = pool(&s->labels[at], label);
+      controls[at] = button(s3, slot3, id3,
+                            label3, 3 + (double)shown,
                             N_JOIN, !s->busy);
       at++;
       shown++;
@@ -320,8 +324,12 @@ static qa_ui_menu factory(void *v) {
                seat_text, entry->seats == 1 ? "" : "s");
       free(seat_text);
       snprintf(id, sizeof id, "ui:lobby:member-%zu", i - first);
-      controls[at] = button(s, at, pool(&s->ids[at], id),
-                            pool(&s->labels[at], label),
+      lobby_state * s2 = s;
+      size_t slot2 = at;
+      const char * id2 = pool(&s->ids[at], id);
+      const char * label2 = pool(&s->labels[at], label);
+      controls[at] = button(s2, slot2, id2,
+                            label2,
                             1 + (double)(i - first), N_NONE, false);
       at++;
     }

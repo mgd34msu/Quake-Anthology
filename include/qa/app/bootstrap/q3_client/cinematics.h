@@ -1,13 +1,15 @@
 /* Port of src/app/bootstrap/q3-client/cinematics.ts. Async loads
  * are synchronous; MissingCinematicError is a distinct false
- * result from prepare (other failures abort with the TS Error
- * texts). The shader picture construction and the checkpoint
- * resource writer are host mirrors (materials/persistence
- * owners). GPL-2.0-or-later. */
+ * result from prepare (other failures raise the TS Error texts).
+ * Movies allocate their CinematicImage in the ApplicationAssets
+ * image registry behind the ApplicationQ3Assets and draw through an
+ * implicit picture material bound to the playback as a video map.
+ * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_Q3_CLIENT_CINEMATICS_H
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_CINEMATICS_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/q3_client/assets.h"
 #include "qa/content/mounts.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/identity.h"
@@ -40,30 +42,15 @@ typedef struct qa_app_system_cinematic_host {
   qa_app_system_cinematic_handle (*restore)(void *ctx, const qa_save_value *value,
                                             bool (*current)(void *cctx), void *current_ctx); /* nullable fn */
 } qa_app_system_cinematic_host;
-/* Host mirrors: assets.images allocate/commit/release, the
- * implicit picture material, the checkpoint resource writer. */
-typedef struct qa_app_q3_cinematics_host {
-  void *ctx;
-  /* images.allocate(width,height,{kind:"resource",resource}) and
-   * the CinematicImage reallocation form; token is opaque. */
-  void *(*image_allocate)(void *ctx, double width, double height, qa_resolved_resource_reference resource);
-  void (*image_commit)(void *ctx, void *image);
-  void (*image_release)(void *ctx, void *image);
-  /* Builds the {kind:"material",name,material} picture for a movie;
-   * frame access rides the returned picture's video binding. */
-  qa_picture_asset (*make_picture)(void *ctx, const char *name, void *image);
-  bool (*has_frame)(void *ctx, void *image);
-  /* persistence recipe resource writer (owned tree). */
-  qa_save_value *(*write_resource)(void *ctx, qa_resolved_resource_reference resource);
-} qa_app_q3_cinematics_host;
 /* TS UiCinematicAsset. */
 typedef struct qa_app_ui_cinematic_asset { const char *path; } qa_app_ui_cinematic_asset;
-/* TS ApplicationQ3Cinematics. system NULL = TS undefined. */
+/* TS ApplicationQ3Cinematics(assets, audio, seat, now, system): assets is
+ * the ApplicationQ3Assets (provider mounts, print, and the images of the
+ * ApplicationAssets it was built over); mixer is audio.engine. system NULL
+ * = TS undefined. media must outlive the cinematics. */
 typedef struct qa_app_application_q3_cinematics qa_app_application_q3_cinematics;
 qa_app_application_q3_cinematics *qa_app_application_q3_cinematics_create(
-    qa_content_mounted *mounts, qa_app_q3_cinematics_host host,
-    void (*print)(void *ctx, const char *text), void *print_ctx,
-    qa_cinematic_mixer mixer, qa_seat_id seat,
+    qa_app_application_q3_assets *media, qa_cinematic_mixer mixer, qa_seat_id seat,
     double (*now)(void *ctx), void *now_ctx,
     const qa_app_system_cinematic_host *system);
 void qa_app_application_q3_cinematics_destroy(qa_app_application_q3_cinematics *cinematics);

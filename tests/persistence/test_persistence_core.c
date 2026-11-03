@@ -4,7 +4,7 @@
  * (synthetic KEX server save + archive roundtrip; corpus and
  * installed-save cases are not ported), and the inline-data case of
  * source-saves.test.ts (rerelease field codecs), plus synthetic
- * roundtrips for q2-containers/q2-typescript/q3 derived from the TS
+ * roundtrips for q2-containers/q2-typescript derived from the TS
  * codecs. GPL-2.0-or-later.
  */
 #include <math.h>
@@ -25,7 +25,6 @@
 #include "qa/persistence/q2_containers.h"
 #include "qa/persistence/q2_rerelease.h"
 #include "qa/persistence/q2_typescript.h"
-#include "qa/persistence/q3.h"
 #include "qa/persistence/source_json.h"
 #include "qa/persistence/value.h"
 
@@ -360,7 +359,7 @@ static void test_rerelease_fields(void) {
   free(game2.clients);
 }
 
-/* --- synthetic container / typescript / q3 roundtrips --- */
+/* --- synthetic container / typescript roundtrips --- */
 static void test_containers(void) {
   qa_q2_rerelease_server_save server;
   memset(&server, 0, sizeof server);
@@ -401,8 +400,33 @@ static void test_containers(void) {
   free(bytes2);
   qa_q2_level_metadata_free(&decoded_meta);
   free(bytes);
+
+  /* q2-containers drift: a configstring of exactly `width` bytes is written
+   * with no terminator (SetConfigstring spill); longer still fails. Bytes
+   * from bun encodeQ2ClassicLevelMetadata(..., 3, 8). */
+  qa_q2_configstring spill[2] = {{0, (char *)"xxxxxxxx"}, {1, (char *)"ab"}};
+  uint8_t spill_portal[1] = {7};
+  metadata.configstrings = spill;
+  metadata.configstring_count = 2;
+  metadata.portal_bytes = spill_portal;
+  metadata.portal_length = 1;
+  bytes = qa_encode_q2_classic_level_metadata(&metadata, 3, 8, &length);
+  static const uint8_t expected[25] = {120, 120, 120, 120, 120, 120, 120, 120, 97, 98, 0, 0, 0,
+                                       0,   0,   0,   0,   0,   0,   0,   0,   0,   0,  0, 7};
+  CHECK(bytes != NULL && length == 25 && memcmp(bytes, expected, 25) == 0);
+  CHECK(qa_decode_q2_classic_level_metadata(bytes, length, 3, 8, &decoded_meta));
+  CHECK(decoded_meta.configstring_count == 2 &&
+        text_is(decoded_meta.configstrings[0].value, "xxxxxxxx") &&
+        text_is(decoded_meta.configstrings[1].value, "ab"));
+  qa_q2_level_metadata_free(&decoded_meta);
+  free(bytes);
+  qa_q2_configstring too_long[1] = {{0, (char *)"xxxxxxxxx"}};
+  metadata.configstrings = too_long;
+  metadata.configstring_count = 1;
+  metadata.portal_length = 0;
+  CHECK_ABORTS(free(qa_encode_q2_classic_level_metadata(&metadata, 1, 8, &length)));
 }
-static void test_q2_typescript_and_q3(void) {
+static void test_q2_typescript(void) {
   qa_q2_typescript_game_save game;
   CHECK(qa_decode_q2_typescript_game(
       "{\"stamp\":\"quake-2-ts:g_save:v1\",\"clients\":[{\"health\":100}]}", &game));
@@ -417,14 +441,6 @@ static void test_q2_typescript_and_q3(void) {
   free(game2.clients);
   CHECK_ABORTS(qa_decode_q2_typescript_game("{\"stamp\":\"nope\",\"clients\":[]}", &game));
 
-  qa_persist_q3_client_session session = qa_decode_q3_client_session("1 2 3 4 5 6 7", 13);
-  CHECK(session.team == 1 && session.spectator_time == 2 && session.wins == 5 &&
-        session.team_leader == 7);
-  char *encoded = qa_encode_q3_client_session(session);
-  CHECK(text_is(encoded, "1 2 3 4 5 6 7"));
-  free(encoded);
-  /* The final scan steps past the buffer; the next integer aborts. */
-  CHECK_ABORTS(qa_decode_q3_client_session("1", 1));
 }
 
 int main(void) {
@@ -434,7 +450,7 @@ int main(void) {
   test_kex_archive();
   test_rerelease_fields();
   test_containers();
-  test_q2_typescript_and_q3();
+  test_q2_typescript();
   if (failures != 0) {
     fprintf(stderr, "%d of %d checks failed\n", failures, checks);
     return 1;

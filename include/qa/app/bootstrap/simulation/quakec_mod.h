@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "qa/compat/qc/mod_provider.h"
+#include "qa/content/mounts.h"
 #include "qa/contracts/mod_callbacks.h"
 #include "qa/contracts/mods.h"
 #include "qa/world/session/mods.h"
@@ -28,6 +29,12 @@ typedef struct qa_app_sim_quakec_mod_mounts {
   qa_compat_qc_mod_media (*prepare_resources)(void *ctx, qa_compat_qc_program *program);
 } qa_app_sim_quakec_mod_mounts;
 qa_prepared_mod qa_app_sim_prepare_mounted_quakec_mod(qa_app_sim_prepare_quakec_mod_options options, qa_app_sim_quakec_mod_mounts mounts);
+/* TS prepareMountedQuakeCMod({ description, declaration, declarationDigest, mounts }) over
+ * MountedContent: the program, prepareQuakeCResources and readScript come from mounts,
+ * which must outlive the prepared mod (it owns the program bytes and resources).
+ * Raises the TS Error when the program differs from its declaration. */
+qa_prepared_mod qa_app_sim_prepare_mounted_quakec_mod_content(qa_mod_description description,
+    const qa_mod_callback_declaration *declaration, qa_content_digest declaration_digest, qa_content_mounted *mounts);
 qa_prepared_mod qa_app_sim_prepare_quakec_mod(qa_app_sim_prepare_quakec_mod_options options);
 void qa_app_sim_prepared_quakec_mod_free(qa_prepared_mod *prepared);
 #endif

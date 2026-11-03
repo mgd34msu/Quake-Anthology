@@ -33,10 +33,11 @@
 #include "qa/input/seat.h"
 #include "qa/input/user_command.h"
 #include "qa/settings/restart.h"
+#include "qa/settings/setting_spec.h"
 #include "qa/ui/common/controller.h"
 
-/** TS SettingCategory (exact strings). */
-typedef const char *qa_ui_setting_category;
+/** TS SettingCategory, re-exported from settings/setting-spec. */
+typedef qa_setting_category qa_ui_setting_category;
 
 /** TS SettingBinding. kind: "toggle"|"slider"|"choice"|"text-entry"|"button". */
 typedef struct qa_ui_setting_binding {
@@ -75,29 +76,24 @@ qa_ui_setting_bindings qa_ui_setting_bindings_own(
     qa_ui_setting_binding *items, size_t count, void *state,
     void (*teardown)(void *state));
 
+/** Per-control storage for settingControl's closure (binding + seat)
+ * and its valueLabel text. The caller owns it and keeps it alive as long
+ * as the control (a factory result lives until the next factory call). */
+typedef struct qa_ui_setting_control_storage {
+  const qa_ui_setting_binding *binding;
+  qa_seat_id seat;
+  char value_label[64];
+} qa_ui_setting_control_storage;
+
 /** TS settingControl(binding, rect, seat). The control borrows the
- * binding (ctx = binding) and valueLabel storage in label_scratch:
- * caller supplies a buffer of at least 64 bytes kept alive with the
- * control; may be NULL when the binding has no format_value. */
+ * binding and `storage` (its ctx and value_label); storage must not be
+ * NULL. */
 qa_ui_control qa_ui_setting_control(const qa_ui_setting_binding *binding,
                                     qa_rect rect, qa_seat_id seat,
-                                    char *label_scratch, size_t scratch_size);
+                                    qa_ui_setting_control_storage *storage);
 
-/** TS CvarSettingSpec. restart meaningful when has_restart. */
-typedef struct qa_ui_cvar_setting_spec {
-  const char *name;
-  const char *label;
-  qa_ui_setting_category category;
-  bool has_restart;
-  qa_restart_kind restart;
-  const char *group; /* NULL when absent */
-  const char *kind;  /* toggle|slider|choice|text-entry */
-  double minimum, maximum, step;
-  const qa_ui_choice *choices;
-  size_t choice_count;
-  double maximum_length;
-  bool submit_only;
-} qa_ui_cvar_setting_spec;
+/** TS CvarSettingSpec, re-exported from settings/setting-spec. */
+typedef qa_cvar_setting_spec qa_ui_cvar_setting_spec;
 
 /** TS bindCvarSetting. False only on OOM. */
 bool qa_ui_bind_cvar_setting(qa_cvar_registry *registry,

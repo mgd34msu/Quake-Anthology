@@ -4,12 +4,14 @@
  * GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/app/bootstrap/diagnostic_tools.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef struct { const char *name; qa_command_handler_fn handler; void *ctx; } handler_row;
 struct qa_app_diagnostic_tools {
   qa_command_buffer *commands;
@@ -46,8 +48,11 @@ static void timers_handler(void *ctx, qa_command_invocation *cmd) {
     size_t cap = 256 + count * 128, len = 0;
     char *text = malloc(cap);
     len += (size_t)snprintf(text + len, cap - len, "milliseconds\tname\n");
-    for (size_t i = 0; i < count; i++)
-      len += (size_t)snprintf(text + len, cap - len, "%s%.3f\t%s", i ? "\n" : "", stamps[i].milliseconds, stamps[i].name);
+    for (size_t i = 0; i < count; i++) {
+      char fixed[QA_JS_TO_FIXED_CAPACITY]; /* milliseconds.toFixed(3) */
+      qa_js_to_fixed(stamps[i].milliseconds, 3, fixed, sizeof fixed);
+      len += (size_t)snprintf(text + len, cap - len, "%s%s\t%s", i ? "\n" : "", fixed, stamps[i].name);
+    }
     snprintf(text + len, cap - len, "\n");
     tool->print(tool->print_ctx, text);
     free(text);
@@ -65,12 +70,15 @@ static void timerstamp_handler(void *ctx, qa_command_invocation *cmd) {
   qa_omni_timer_stamp(tool->timer, label);
 }
 qa_app_capture_frame_result qa_app_source_capture_frame(double elapsed, double fps, double timescale, bool active, bool force) {
+  /* Users set these cvars from the console; a negative value just means no capture clock. */
+  if (isfinite(elapsed) && elapsed >= 0 && (!isfinite(fps) || !isfinite(timescale) || fps < 0 || timescale < 0))
+    return (qa_app_capture_frame_result){elapsed, false};
   if (!isfinite(elapsed) || !isfinite(fps) || !isfinite(timescale) || elapsed < 0 || fps < 0 || timescale < 0)
     qa_range_error("Invalid capture clock");
   double frames = trunc(fps);
   if (frames == 0 || elapsed == 0) return (qa_app_capture_frame_result){elapsed, false};
   float product = (float)(trunc(1000.0 / frames) * (float)timescale); /* Math.fround staged */
-  double milliseconds = fmax(1, trunc(product));
+  double milliseconds = qa_js_max(1, trunc(product));
   return (qa_app_capture_frame_result){milliseconds, active || force};
 }
 qa_app_diagnostic_tools *qa_app_register_diagnostic_tools(qa_command_buffer *commands, qa_omni_timer *timer,
@@ -164,8 +172,8 @@ static void frameinfo_handler(void *ctx, qa_command_invocation *cmd) {
   runtime_ctx *rt = ctx;
   qa_app_diagnostic_frame frame = rt->services.frame(rt->services.ctx);
   char text[1024];
-  snprintf(text, sizeof text, "{\n  \"frame\": %.17g,\n  \"milliseconds\": %.17g,\n  \"map\": \"%s\",\n  \"renderer\": \"%s\",\n  \"clients\": %.17g\n}\n",
-      frame.frame, frame.milliseconds, frame.map ? frame.map : "", frame.renderer ? frame.renderer : "", frame.clients);
+  snprintf(text, sizeof text, "{\n  \"frame\": %s,\n  \"milliseconds\": %s,\n  \"map\": \"%s\",\n  \"renderer\": \"%s\",\n  \"clients\": %s\n}\n",
+      QA_JS_NUMBER(frame.frame), QA_JS_NUMBER(frame.milliseconds), frame.map ? frame.map : "", frame.renderer ? frame.renderer : "", QA_JS_NUMBER(frame.clients));
   rt->services.print(rt->services.ctx, text);
 }
 qa_app_diagnostic_tools *qa_app_register_runtime_diagnostics(qa_app_runtime_diagnostic_services services) {
@@ -189,4 +197,121 @@ void qa_app_diagnostic_tools_destroy(qa_app_diagnostic_tools *tools) {
     qa_command_buffer_unregister(tools->commands, tools->handlers[i].name, tools->handlers[i].handler, tools->handlers[i].ctx, true);
   for (size_t i = 0; i < tools->owned_count; i++) free(tools->owned_ctx[i]);
   free(tools);
+}
+
+/* ---- RuntimeDiagnosticServices.mounts over a MountedContent ---- */
+#include "qa/content/mounts.h"
+#include "qa/content/mods/declaration_writer.h"
+#include "qa/content/roots.h"
+#include "qa/persistence/save_image.h"
+static void rm_assert_open(void *ctx) { qa_content_mounted_assert_open(ctx); }
+typedef struct { char *data; size_t length, capacity; } text_builder;
+static void tb_append(text_builder *b, const char *text, size_t length) {
+  if (b->length + length + 1 > b->capacity) {
+    while (b->length + length + 1 > b->capacity) b->capacity = b->capacity ? b->capacity * 2 : 256;
+    b->data = realloc(b->data, b->capacity);
+    if (b->data == NULL) qa_range_error("Out of memory");
+  }
+  memcpy(b->data + b->length, text, length);
+  b->length += length;
+  b->data[b->length] = '\0';
+}
+static void tb_text(text_builder *b, const char *text) { tb_append(b, text, strlen(text)); }
+/* TS describe(id): `${id} ${archivePath | rootPath}`; a missing mount throws. */
+static void describe_mount(text_builder *b, const qa_resolved_mount_plan *plan, qa_mount_id id) {
+  for (size_t i = 0; i < plan->mount_count; i++) {
+    const qa_content_mount *mount = &plan->mounts[i];
+    const qa_mount_identity *identity = mount->kind == QA_CONTENT_MOUNT_ARCHIVE ? &mount->as.archive.identity : &mount->as.loose.identity;
+    if (strcmp(identity->id, id) != 0) continue;
+    tb_text(b, id);
+    tb_text(b, " ");
+    tb_text(b, mount->kind == QA_CONTENT_MOUNT_ARCHIVE ? mount->as.archive.archive_path : mount->as.loose.root_path);
+    return;
+  }
+  free(b->data);
+  qa_raise("Error", 0, 0, "Missing active mount %s", id);
+}
+/* The text the TS path command prints: the default order, then each prefix order. */
+static char *rm_path_report(void *ctx) {
+  const qa_resolved_mount_plan *plan = qa_content_mounted_plan(ctx);
+  text_builder b = {0};
+  tb_text(&b, "");
+  for (size_t i = 0; i < plan->default_order_count; i++) {
+    if (i != 0) tb_text(&b, "\n");
+    describe_mount(&b, plan, plan->default_order[i]);
+  }
+  tb_text(&b, "\n");
+  for (size_t o = 0; o < plan->prefix_order_count; o++) {
+    const qa_prefix_mount_order *order = &plan->prefix_orders[o];
+    tb_text(&b, order->prefix);
+    tb_text(&b, ":\n");
+    for (size_t i = 0; i < order->mount_count; i++) {
+      if (i != 0) tb_text(&b, "\n");
+      describe_mount(&b, plan, order->mounts[i]);
+    }
+    tb_text(&b, "\n");
+  }
+  return b.data;
+}
+/* JSON.stringify(value, null, 2) layout of a compact JSON text. */
+static char *json_indent(const char *compact) {
+  text_builder b = {0};
+  tb_text(&b, "");
+  int depth = 0;
+  bool in_string = false;
+  for (const char *p = compact; *p != '\0'; p++) {
+    char c = *p;
+    if (in_string) {
+      tb_append(&b, p, 1);
+      if (c == '\\' && p[1] != '\0') { tb_append(&b, ++p, 1); continue; }
+      if (c == '"') in_string = false;
+      continue;
+    }
+    if (c == '"') { in_string = true; tb_append(&b, p, 1); continue; }
+    if ((c == '{' && p[1] == '}') || (c == '[' && p[1] == ']')) { tb_append(&b, p, 2); p++; continue; }
+    if (c == '{' || c == '[' || c == ',') {
+      tb_append(&b, p, 1);
+      if (c != ',') depth++;
+      tb_text(&b, "\n");
+      for (int i = 0; i < depth; i++) tb_text(&b, "  ");
+      continue;
+    }
+    if (c == '}' || c == ']') {
+      depth--;
+      tb_text(&b, "\n");
+      for (int i = 0; i < depth; i++) tb_text(&b, "  ");
+      tb_append(&b, p, 1);
+      continue;
+    }
+    if (c == ':') { tb_text(&b, ": "); continue; }
+    tb_append(&b, p, 1);
+  }
+  return b.data;
+}
+static char *rm_opened_resources_json(void *ctx) {
+  size_t count = 0;
+  const qa_resolved_resource_reference *resources = qa_content_mounted_opened_resources(ctx, &count);
+  qa_save_value *array = qa_save_value_array();
+  if (array == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < count; i++) {
+    qa_save_value *value = qa_save_resource_reference_value(&resources[i]);
+    if (value == NULL || !qa_save_value_push(array, value)) qa_range_error("Out of memory");
+  }
+  char *compact = qa_json_stringify_value(array, NULL);
+  qa_save_value_free(array);
+  char *text = json_indent(compact);
+  free(compact);
+  return text;
+}
+static char **rm_list_files(void *ctx, const char *directory, const char *extension, size_t *out_count) {
+  char **files = qa_content_mounted_list_files(ctx, directory, extension, out_count);
+  if (files == NULL) qa_range_error("Out of memory");
+  return files;
+}
+static void rm_open_file(void *ctx, const char *path) {
+  qa_content_opened_resource opened;
+  if (qa_content_mounted_open(ctx, path, NULL, NULL, &opened)) free(opened.bytes);
+}
+qa_app_runtime_mounts qa_app_runtime_mounts_of(struct qa_content_mounted *mounts) {
+  return (qa_app_runtime_mounts){mounts, rm_assert_open, rm_path_report, rm_opened_resources_json, rm_list_files, rm_open_file};
 }

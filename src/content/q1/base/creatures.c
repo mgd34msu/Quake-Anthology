@@ -1,9 +1,12 @@
 /* Port of src/content/q1/base/creatures.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/base/creatures.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/content/q1/base/frames.h"
+#include "qa/content/q1/base/grunt.h"
 #include "qa/content/q1/base/monster_actions.h"
 #include "qa/content/q1/base/species.h"
 #include "qa/foundation/support.h"
@@ -19,17 +22,24 @@ typedef struct target_entry { qa_owned_actor actor; qa_actor_id enemy; } target_
 typedef struct shot_entry { qa_owned_actor actor; qa_q1_wizard_shot shot; } shot_entry;
 
 struct qa_q1_creatures {
-  qa_q1b_game *game;
+  qa_q1_services *game;
   qa_q1_monster_services services;
   monster_entry *monsters; size_t monster_count; size_t monster_capacity;
   backpack_entry *backpacks; size_t backpack_count; size_t backpack_capacity;
   target_entry *targets; size_t target_count; size_t target_capacity;
   shot_entry *shots; size_t shot_count; size_t shot_capacity;
   double hell_knight_type;
+  /* Controllers dropped from the map: TS GC keeps a controller alive
+   * while its own callback is still running (die -> remove -> release),
+   * so they are freed with the creatures, not at release. */
+  qa_q1_base_monster **retired; size_t retired_count; size_t retired_capacity;
+  int64_t release_listener;
+  /* Registration closures (TS GC-owned): freed with the creatures. */
+  void **owned; size_t owned_count; size_t owned_capacity;
 };
 
 /* TS WeakMap<Q1EntityServices, Q1Creatures>. */
-typedef struct registration { qa_q1b_game *game; qa_q1_creatures *creatures; } registration;
+typedef struct registration { qa_q1_services *game; qa_q1_creatures *creatures; } registration;
 static registration REGISTRY[64];
 static size_t REGISTRY_COUNT;
 
@@ -50,14 +60,14 @@ static void *grow(void *array, size_t *capacity, size_t count, size_t size) {
   return grown;
 }
 
-qa_q1_creatures *qa_q1_creatures_for(qa_q1b_game *game) {
+qa_q1_creatures *qa_q1_creatures_for(qa_q1_services *game) {
   for (size_t i = 0; i < REGISTRY_COUNT; i++)
     if (REGISTRY[i].game == game) return REGISTRY[i].creatures;
   qa_range_error("Q1 creature services were not registered");
 }
-qa_q1b_game *qa_q1_creatures_game(qa_q1_creatures *creatures) { return creatures->game; }
+qa_q1_services *qa_q1_creatures_game(qa_q1_creatures *creatures) { return creatures->game; }
 
-static qa_q1_base_monster *monster_lookup(void *ctx, qa_q1b_actor *entity) {
+static qa_q1_base_monster *monster_lookup(void *ctx, qa_q1_actor *entity) {
   qa_q1_creatures *creatures = ctx;
   qa_q1_base_monster *monster = qa_q1_creatures_monsters_get(creatures, entity->actor);
   if (monster == NULL) qa_range_error("Missing Q1 monster controller for %s", entity->classname);
@@ -68,7 +78,7 @@ static void on_release(void *ctx, qa_owned_actor actor) {
   qa_q1_creatures_monsters_delete(creatures, actor);
   qa_q1_creatures_backpacks_delete(creatures, actor);
   for (size_t i = 0; i < creatures->target_count; i++) {
-    if (qa_q1b_owned_equal(creatures->targets[i].actor, actor)) {
+    if (qa_same_owned_actor(creatures->targets[i].actor, actor)) {
       memmove(&creatures->targets[i], &creatures->targets[i + 1],
               (creatures->target_count - i - 1) * sizeof *creatures->targets);
       creatures->target_count--;
@@ -76,7 +86,7 @@ static void on_release(void *ctx, qa_owned_actor actor) {
     }
   }
   for (size_t i = 0; i < creatures->shot_count; i++) {
-    if (qa_q1b_owned_equal(creatures->shots[i].actor, actor)) {
+    if (qa_same_owned_actor(creatures->shots[i].actor, actor)) {
       memmove(&creatures->shots[i], &creatures->shots[i + 1],
               (creatures->shot_count - i - 1) * sizeof *creatures->shots);
       creatures->shot_count--;
@@ -84,11 +94,16 @@ static void on_release(void *ctx, qa_owned_actor actor) {
     }
   }
 }
-static void wizard_fastfire_action(void *ctx, qa_q1b_game *game, qa_q1b_actor *entity) {
+static void wizard_fastfire_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   qa_q1_wizard_fast_fire(game, entity);
 }
-qa_q1_creatures *qa_q1_creatures_create(qa_q1b_game *game, qa_q1_monster_services services) {
+static void retain(qa_q1_creatures *creatures, void *pointer) {
+  creatures->owned = grow(creatures->owned, &creatures->owned_capacity, creatures->owned_count,
+                          sizeof *creatures->owned);
+  creatures->owned[creatures->owned_count++] = pointer;
+}
+qa_q1_creatures *qa_q1_creatures_create(qa_q1_services *game, qa_q1_monster_services services) {
   for (size_t i = 0; i < REGISTRY_COUNT; i++)
     if (REGISTRY[i].game == game) qa_range_error("Q1 creature services already registered");
   qa_q1_creatures *creatures = malloc(sizeof *creatures);
@@ -101,11 +116,12 @@ qa_q1_creatures *qa_q1_creatures_create(qa_q1b_game *game, qa_q1_monster_service
     REGISTRY[REGISTRY_COUNT].creatures = creatures;
     REGISTRY_COUNT++;
   }
-  game->host->actors_on_release(game->host->ctx, on_release, creatures);
-  qa_q1_register_monster_callbacks(game, "base", monster_lookup, creatures);
+  creatures->release_listener = qa_session_actor_registry_on_release(game->host.actors, on_release, creatures);
+  retain(creatures, qa_q1_register_monster_callbacks(game, "base", monster_lookup, creatures));
+  retain(creatures, qa_q1_register_legacy_monster_callbacks(game, monster_lookup, creatures));
   qa_q1_register_projectile_callbacks(game);
-  qa_q1b_handlers handlers = {.action = wizard_fastfire_action};
-  game->named.register_named(game->named.ctx, "base:wizard_fastfire", &handlers);
+  qa_q1_callback_registry_register(game->named, "base:wizard_fastfire",
+                                   (qa_q1_callback_handlers){.action = wizard_fastfire_action});
   return creatures;
 }
 static void backpack_entry_clear(backpack_entry *entry) {
@@ -126,8 +142,13 @@ void qa_q1_creatures_destroy(qa_q1_creatures *creatures) {
       break;
     }
   }
+  qa_session_actor_registry_off_release(creatures->game->host.actors, creatures->release_listener);
   for (size_t i = 0; i < creatures->monster_count; i++) qa_q1_base_monster_destroy(creatures->monsters[i].monster);
+  for (size_t i = 0; i < creatures->retired_count; i++) qa_q1_base_monster_destroy(creatures->retired[i]);
   for (size_t i = 0; i < creatures->backpack_count; i++) backpack_entry_clear(&creatures->backpacks[i]);
+  free(creatures->retired);
+  for (size_t i = 0; i < creatures->owned_count; i++) free(creatures->owned[i]);
+  free(creatures->owned);
   free(creatures->monsters);
   free(creatures->backpacks);
   free(creatures->targets);
@@ -170,7 +191,7 @@ const char *qa_q1_creatures_next_hell_knight_melee(qa_q1_creatures *creatures) {
 }
 
 typedef struct species_spawn { qa_q1_creatures *creatures; const qa_q1_base_monster_species *spec; } species_spawn;
-static void spawn_species(void *ctx, qa_q1b_game *game, qa_q1b_actor *entity) {
+static void spawn_species(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)game;
   species_spawn *spawn = ctx;
   qa_q1_creatures *creatures = spawn->creatures;
@@ -188,19 +209,27 @@ void qa_q1_creatures_register_species(qa_q1_creatures *creatures,
       if (spawn == NULL) qa_range_error("out of memory");
       spawn->creatures = creatures;
       spawn->spec = &species[s];
-      creatures->game->register_spawn(creatures->game, species[s].classnames[c], spawn_species, spawn);
+      retain(creatures, spawn);
+      qa_q1_register_spawn(creatures->game, species[s].classnames[c], spawn_species, spawn);
     }
   }
 }
 
 qa_q1_base_monster *qa_q1_creatures_monsters_get(qa_q1_creatures *creatures, qa_owned_actor actor) {
   for (size_t i = 0; i < creatures->monster_count; i++)
-    if (qa_q1b_owned_equal(creatures->monsters[i].actor, actor)) return creatures->monsters[i].monster;
+    if (qa_same_owned_actor(creatures->monsters[i].actor, actor)) return creatures->monsters[i].monster;
   return NULL;
+}
+static void retire(qa_q1_creatures *creatures, qa_q1_base_monster *monster) {
+  if (monster == NULL) return;
+  creatures->retired = grow(creatures->retired, &creatures->retired_capacity, creatures->retired_count,
+                            sizeof *creatures->retired);
+  creatures->retired[creatures->retired_count++] = monster;
 }
 void qa_q1_creatures_monsters_set(qa_q1_creatures *creatures, qa_owned_actor actor, qa_q1_base_monster *monster) {
   for (size_t i = 0; i < creatures->monster_count; i++) {
-    if (qa_q1b_owned_equal(creatures->monsters[i].actor, actor)) {
+    if (qa_same_owned_actor(creatures->monsters[i].actor, actor)) {
+      if (creatures->monsters[i].monster != monster) retire(creatures, creatures->monsters[i].monster);
       creatures->monsters[i].monster = monster;
       return;
     }
@@ -213,7 +242,8 @@ void qa_q1_creatures_monsters_set(qa_q1_creatures *creatures, qa_owned_actor act
 }
 void qa_q1_creatures_monsters_delete(qa_q1_creatures *creatures, qa_owned_actor actor) {
   for (size_t i = 0; i < creatures->monster_count; i++) {
-    if (qa_q1b_owned_equal(creatures->monsters[i].actor, actor)) {
+    if (qa_same_owned_actor(creatures->monsters[i].actor, actor)) {
+      retire(creatures, creatures->monsters[i].monster);
       memmove(&creatures->monsters[i], &creatures->monsters[i + 1],
               (creatures->monster_count - i - 1) * sizeof *creatures->monsters);
       creatures->monster_count--;
@@ -222,20 +252,26 @@ void qa_q1_creatures_monsters_delete(qa_q1_creatures *creatures, qa_owned_actor 
   }
 }
 size_t qa_q1_creatures_monsters_list(qa_q1_creatures *creatures, qa_q1_base_monster **out, size_t capacity) {
-  size_t count = creatures->monster_count < capacity ? creatures->monster_count : capacity;
-  for (size_t i = 0; i < count; i++) out[i] = creatures->monsters[i].monster;
+  return qa_q1_creatures_monsters_list_from(creatures, 0, out, capacity);
+}
+size_t qa_q1_creatures_monsters_list_from(qa_q1_creatures *creatures, size_t first,
+                                          qa_q1_base_monster **out, size_t capacity) {
+  if (first >= creatures->monster_count) return 0;
+  size_t available = creatures->monster_count - first;
+  size_t count = available < capacity ? available : capacity;
+  for (size_t i = 0; i < count; i++) out[i] = creatures->monsters[first + i].monster;
   return count;
 }
 const qa_q1_backpack_contents *qa_q1_creatures_backpacks_get(qa_q1_creatures *creatures, qa_owned_actor actor) {
   for (size_t i = 0; i < creatures->backpack_count; i++)
-    if (qa_q1b_owned_equal(creatures->backpacks[i].actor, actor)) return &creatures->backpacks[i].contents;
+    if (qa_same_owned_actor(creatures->backpacks[i].actor, actor)) return &creatures->backpacks[i].contents;
   return NULL;
 }
 void qa_q1_creatures_backpacks_set(qa_q1_creatures *creatures, qa_owned_actor actor,
                                    const qa_q1_backpack_contents *contents) {
   backpack_entry *entry = NULL;
   for (size_t i = 0; i < creatures->backpack_count; i++) {
-    if (qa_q1b_owned_equal(creatures->backpacks[i].actor, actor)) {
+    if (qa_same_owned_actor(creatures->backpacks[i].actor, actor)) {
       backpack_entry_clear(&creatures->backpacks[i]);
       creatures->backpacks[i].actor = actor;
       entry = &creatures->backpacks[i];
@@ -270,7 +306,7 @@ void qa_q1_creatures_backpacks_set(qa_q1_creatures *creatures, qa_owned_actor ac
 }
 void qa_q1_creatures_backpacks_delete(qa_q1_creatures *creatures, qa_owned_actor actor) {
   for (size_t i = 0; i < creatures->backpack_count; i++) {
-    if (qa_q1b_owned_equal(creatures->backpacks[i].actor, actor)) {
+    if (qa_same_owned_actor(creatures->backpacks[i].actor, actor)) {
       backpack_entry_clear(&creatures->backpacks[i]);
       memmove(&creatures->backpacks[i], &creatures->backpacks[i + 1],
               (creatures->backpack_count - i - 1) * sizeof *creatures->backpacks);
@@ -281,13 +317,13 @@ void qa_q1_creatures_backpacks_delete(qa_q1_creatures *creatures, qa_owned_actor
 }
 bool qa_q1_creatures_targets_get(qa_q1_creatures *creatures, qa_owned_actor actor, qa_actor_id *out) {
   for (size_t i = 0; i < creatures->target_count; i++) {
-    if (qa_q1b_owned_equal(creatures->targets[i].actor, actor)) { *out = creatures->targets[i].enemy; return true; }
+    if (qa_same_owned_actor(creatures->targets[i].actor, actor)) { *out = creatures->targets[i].enemy; return true; }
   }
   return false;
 }
 void qa_q1_creatures_targets_set(qa_q1_creatures *creatures, qa_owned_actor actor, qa_actor_id enemy) {
   for (size_t i = 0; i < creatures->target_count; i++) {
-    if (qa_q1b_owned_equal(creatures->targets[i].actor, actor)) { creatures->targets[i].enemy = enemy; return; }
+    if (qa_same_owned_actor(creatures->targets[i].actor, actor)) { creatures->targets[i].enemy = enemy; return; }
   }
   creatures->targets = grow(creatures->targets, &creatures->target_capacity,
                             creatures->target_count, sizeof *creatures->targets);
@@ -297,12 +333,12 @@ void qa_q1_creatures_targets_set(qa_q1_creatures *creatures, qa_owned_actor acto
 }
 const qa_q1_wizard_shot *qa_q1_creatures_shots_get(qa_q1_creatures *creatures, qa_owned_actor actor) {
   for (size_t i = 0; i < creatures->shot_count; i++)
-    if (qa_q1b_owned_equal(creatures->shots[i].actor, actor)) return &creatures->shots[i].shot;
+    if (qa_same_owned_actor(creatures->shots[i].actor, actor)) return &creatures->shots[i].shot;
   return NULL;
 }
 void qa_q1_creatures_shots_set(qa_q1_creatures *creatures, qa_owned_actor actor, qa_q1_wizard_shot shot) {
   for (size_t i = 0; i < creatures->shot_count; i++) {
-    if (qa_q1b_owned_equal(creatures->shots[i].actor, actor)) { creatures->shots[i].shot = shot; return; }
+    if (qa_same_owned_actor(creatures->shots[i].actor, actor)) { creatures->shots[i].shot = shot; return; }
   }
   creatures->shots = grow(creatures->shots, &creatures->shot_capacity,
                           creatures->shot_count, sizeof *creatures->shots);
@@ -311,7 +347,7 @@ void qa_q1_creatures_shots_set(qa_q1_creatures *creatures, qa_owned_actor actor,
   creatures->shot_count++;
 }
 
-void qa_q1_creatures_clone(qa_q1_creatures *creatures, qa_q1b_actor *source, qa_q1b_actor *target) {
+void qa_q1_creatures_clone(qa_q1_creatures *creatures, qa_q1_actor *source, qa_q1_actor *target) {
   qa_q1_base_monster *original = qa_q1_creatures_monsters_get(creatures, source->actor);
   if (original != NULL) {
     const qa_q1_base_monster_source *source_arg = original->has_source ? &original->source : NULL;
@@ -464,19 +500,54 @@ static qa_owned_actor restore_actor(qa_q1_creatures *creatures, const qa_save_re
   int64_t slot = (int64_t)saved_integer(reader, "slot");
   int64_t generation = (int64_t)saved_integer(reader, "generation");
   qa_owned_actor actor;
-  if (!creatures->game->host->actors_resolve_saved(creatures->game->host->ctx, slot, generation, &actor))
+  const qa_saved_actor_id saved = {(double)slot, (double)generation};
+  if (!qa_session_actor_registry_resolve_saved(creatures->game->host.actors, saved, &actor))
     qa_save_reader_fail(reader, "missing saved actor");
   return actor;
 }
 static qa_actor_id restore_reference(qa_q1_creatures *creatures, const qa_save_reader *reader) {
   int64_t slot = (int64_t)saved_integer(reader, "slot");
   int64_t generation = (int64_t)saved_integer(reader, "generation");
-  return creatures->game->host->actors_reference_saved(creatures->game->host->ctx, slot, generation);
+  const qa_saved_actor_id saved = {(double)slot, (double)generation};
+  return qa_session_actor_registry_reference_saved(creatures->game->host.actors, saved, "checkpoint");
+}
+static const qa_q1_base_monster_species *species_for_classname(const char *classname) {
+  for (size_t s = 0; s < QA_Q1_BASE_SPECIES_COUNT; s++)
+    for (size_t c = 0; c < QA_Q1_BASE_SPECIES[s].classname_count; c++)
+      if (strcmp(QA_Q1_BASE_SPECIES[s].classnames[c], classname) == 0) return &QA_Q1_BASE_SPECIES[s];
+  return NULL;
+}
+/* Takes over a version 5 grunt or dog: its sequence cursor becomes the equivalent source frame. */
+static void adopt_legacy_monsters(qa_q1_creatures *creatures, const qa_owned_actor *restored, size_t restored_count) {
+  qa_q1_services *game = creatures->game;
+  for (size_t i = 0; i < game->legacy_animation_count; i++) {
+    const qa_owned_actor owner = game->legacy_animations[i].owner;
+    const qa_q1_legacy_animation animation = game->legacy_animations[i].animation;
+    bool seen = false;
+    for (size_t r = 0; r < restored_count && !seen; r++) seen = qa_same_owned_actor(restored[r], owner);
+    if (seen) continue;
+    qa_q1_actor *entity = qa_q1_get_entity(game, &owner.id);
+    const qa_q1_base_monster_species *spec = entity == NULL ? NULL : species_for_classname(entity->classname);
+    if (entity == NULL || spec == NULL || (strcmp(spec->species, "army") != 0 && strcmp(spec->species, "dog") != 0))
+      qa_range_error("Saved version 5 monster is not a grunt or dog");
+    char frame[64];
+    if (!qa_q1_legacy_grunt_frame(spec->species, animation.mode, animation.first_frame, animation.frame_index, frame,
+                                  sizeof frame) ||
+        !qa_q1_monster_frames_has(frame))
+      qa_range_error("Saved %s has an unknown animation cursor", entity->classname);
+    qa_q1_base_monster *monster = qa_q1_base_monster_create(game, entity, spec, qa_q1_creatures_as_services(creatures), NULL);
+    if (monster == NULL) qa_range_error("out of memory");
+    (void)snprintf(monster->current_frame, sizeof monster->current_frame, "%s", frame);
+    (void)snprintf(monster->next_frame, sizeof monster->next_frame, "%s", frame);
+    monster->counted_death = strcmp(animation.mode, "death") == 0;
+    qa_q1_creatures_monsters_set(creatures, owner, monster);
+  }
+  game->legacy_animation_count = 0;
 }
 void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_reader *root) {
-  qa_q1b_game *game = creatures->game;
+  qa_q1_services *game = creatures->game;
   creatures->hell_knight_type = field_number(root, "hellKnightType");
-  for (size_t i = 0; i < creatures->monster_count; i++) qa_q1_base_monster_destroy(creatures->monsters[i].monster);
+  for (size_t i = 0; i < creatures->monster_count; i++) retire(creatures, creatures->monsters[i].monster);
   creatures->monster_count = 0;
   for (size_t i = 0; i < creatures->backpack_count; i++) backpack_entry_clear(&creatures->backpacks[i]);
   creatures->backpack_count = 0;
@@ -485,18 +556,20 @@ void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_re
   qa_save_reader list;
   must_field(root, "monsters", &list);
   size_t count = qa_save_reader_list_count(&list);
+  qa_owned_actor *restored = malloc((count ? count : 1) * sizeof *restored);
+  if (restored == NULL) qa_range_error("out of memory");
+  qa_cleanup restored_cleanup; /* a bad saved monster raises out of the load */
+  qa_cleanup_push(&restored_cleanup, free, restored);
+  size_t restored_count = 0;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry, actor_reader, state;
     if (!qa_save_reader_item(&list, i, &entry)) qa_range_error("out of memory");
     must_field(&entry, "actor", &actor_reader);
     qa_owned_actor owner = restore_actor(creatures, &actor_reader);
     qa_save_reader_destroy(&actor_reader);
-    qa_q1b_actor *entity = game->entity(game, qa_q1b_some_actor(owner.id));
+    qa_q1_actor *entity = qa_q1_get_entity(game, &owner.id);
     if (entity == NULL) qa_save_reader_fail(&entry, "missing source monster entity");
-    const qa_q1_base_monster_species *spec = NULL;
-    for (size_t s = 0; s < QA_Q1_BASE_SPECIES_COUNT && spec == NULL; s++)
-      for (size_t c = 0; c < QA_Q1_BASE_SPECIES[s].classname_count; c++)
-        if (strcmp(QA_Q1_BASE_SPECIES[s].classnames[c], entity->classname) == 0) { spec = &QA_Q1_BASE_SPECIES[s]; break; }
+    const qa_q1_base_monster_species *spec = species_for_classname(entity->classname);
     if (spec == NULL) qa_save_reader_fail(&entry, "unknown base monster");
     qa_q1_base_monster *monster = qa_q1_base_monster_create(game, entity, spec,
                                                             qa_q1_creatures_as_services(creatures), NULL);
@@ -506,15 +579,20 @@ void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_re
     qa_save_reader_destroy(&state);
     qa_save_reader_destroy(&entry);
     qa_q1_creatures_monsters_set(creatures, owner, monster);
+    restored[restored_count++] = owner;
   }
   qa_save_reader_destroy(&list);
+  adopt_legacy_monsters(creatures, restored, restored_count);
+  qa_cleanup_pop(&restored_cleanup);
+  free(restored);
   must_field(root, "backpacks", &list);
   count = qa_save_reader_list_count(&list);
   /* Weapon choice list: WEAPONS then registered weapon keys. */
   const char *choices[72];
   size_t choice_count = 0;
-  for (size_t i = 0; i < 8; i++) choices[choice_count++] = QA_Q1B_WEAPONS[i];
-  choice_count += game->registered_weapon_keys(game, choices + choice_count, 72 - choice_count);
+  for (size_t i = 0; i < 8; i++) choices[choice_count++] = QA_Q1_WEAPONS[i];
+  for (size_t i = 0; i < game->registered_weapon_count && choice_count < 72; i++)
+    choices[choice_count++] = game->registered_weapons[i].def->id;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry, actor_reader, data, field, extra_list;
     if (!qa_save_reader_item(&list, i, &entry)) qa_range_error("out of memory");
@@ -533,8 +611,12 @@ void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_re
     contents.cells = field_number(&data, "cells");
     must_field(&data, "extra", &extra_list);
     size_t extra_count = qa_save_reader_list_count(&extra_list);
-    qa_q1_backpack_extra extras[32];
-    size_t stored_extra = extra_count < 32 ? extra_count : 32;
+    /* TS keeps every saved extra entry (a fixed 32 dropped the rest). */
+    qa_q1_backpack_extra *extras = malloc((extra_count != 0 ? extra_count : 1) * sizeof *extras);
+    if (extras == NULL) qa_range_error("out of memory");
+    qa_cleanup extras_cleanup;
+    qa_cleanup_push(&extras_cleanup, free, extras);
+    const size_t stored_extra = extra_count;
     for (size_t e = 0; e < stored_extra; e++) {
       qa_save_reader item, item_field;
       if (!qa_save_reader_item(&extra_list, e, &item)) qa_range_error("out of memory");
@@ -558,6 +640,8 @@ void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_re
     contents.owner_pickup_delay = field_number(&data, "ownerPickupDelay");
     contents.has_owner_pickup_delay = true;
     qa_q1_creatures_backpacks_set(creatures, owner, &contents);
+    qa_cleanup_pop(&extras_cleanup);
+    free(extras);
     qa_save_reader_destroy(&data);
     qa_save_reader_destroy(&entry);
   }
@@ -589,7 +673,11 @@ void qa_q1_creatures_restore_fields(qa_q1_creatures *creatures, const qa_save_re
     qa_actor_id enemy = restore_reference(creatures, &enemy_reader);
     qa_save_reader_destroy(&enemy_reader);
     must_field(&entry, "right", &right);
-    qa_q1_wizard_shot shot = {enemy, {field_number(&right, "x"), field_number(&right, "y"), field_number(&right, "z")}};
+    /* TS reads x, y, z in order; a C initializer list does not sequence them. */
+    const double right_x = field_number(&right, "x");
+    const double right_y = field_number(&right, "y");
+    const double right_z = field_number(&right, "z");
+    qa_q1_wizard_shot shot = {enemy, {right_x, right_y, right_z}};
     qa_save_reader_destroy(&right);
     qa_q1_creatures_shots_set(creatures, owner, shot);
     qa_save_reader_destroy(&entry);

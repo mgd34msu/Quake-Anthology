@@ -61,7 +61,7 @@ void qa_lmctf_match_change_map(qa_lmctf_match *m, const char *map, bool countdow
   for (size_t i = 0; i < m->context->state_count; i++) {
     qa_lmctf_player_state *state = &m->context->states[i].state;
     qa_lmctf_player_state_clear_stats(state);
-    qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, m->context->states[i].actor);
+    qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, m->context->states[i].actor);
     if (player != NULL) player->score = 0;
   }
 }
@@ -96,7 +96,7 @@ void qa_lmctf_match_frame(qa_lmctf_match *m, qa_q2_game_services *g) {
       for (size_t i = 0; i < m->context->state_count; i++) {
         qa_actor_id actor = m->context->states[i].actor;
         qa_lmctf_player_state *state = &m->context->states[i].state;
-        qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, actor);
+        qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, actor);
         qa_q2_entity *entity = qa_q2_game_entity_of(g, &actor);
         if (player == NULL || player->spectator || entity == NULL) continue;
         g->damage(g->ctx, actor, entity, actor, &actor, 100000, 0, QA_Q2_ZERO, qa_q2_game_body(g, entity).origin, QA_Q2_ZERO, 23, 32, NULL);
@@ -153,7 +153,7 @@ qa_lmctf_match_checkpoint qa_lmctf_match_capture(qa_lmctf_match *m) {
 
 void qa_lmctf_match_restore(qa_lmctf_match *m, const qa_save_reader *reader) {
   qa_save_reader pending;
-  if (!qa_save_reader_field(reader, "pendingMap", &pending)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "pendingMap", &pending)) qa_raise("Error", 0, 0, "Out of memory");
   free(m->pending.map);
   m->pending.map = NULL;
   if (qa_save_reader_is_undefined(&pending) || qa_save_reader_is_null(&pending)) {
@@ -161,31 +161,31 @@ void qa_lmctf_match_restore(qa_lmctf_match *m, const qa_save_reader *reader) {
   } else {
     qa_save_reader field;
     m->has_pending = true;
-    if (!qa_save_reader_field(&pending, "map", &field)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_field(&pending, "map", &field)) qa_raise("Error", 0, 0, "Out of memory");
     m->pending.map = qa_q2mp_dup(qa_save_reader_string(&field));
     qa_save_reader_destroy(&field);
-    if (!qa_save_reader_field(&pending, "countdown", &field)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_field(&pending, "countdown", &field)) qa_raise("Error", 0, 0, "Out of memory");
     m->pending.countdown = qa_save_reader_boolean(&field);
     qa_save_reader_destroy(&field);
   }
   qa_save_reader_destroy(&pending);
   qa_save_reader field;
   static const char *const phases[4] = {"none", "countdown", "inplay", "over"};
-  if (!qa_save_reader_field(reader, "phase", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "phase", &field)) qa_raise("Error", 0, 0, "Out of memory");
   const char *phase = qa_save_reader_choice_string(&field, phases, 4);
   for (int i = 0; i < 4; i++)
     if (strcmp(phase, phases[i]) == 0) m->phase = phases[i];
   qa_save_reader_destroy(&field);
-  if (!qa_save_reader_field(reader, "remaining", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "remaining", &field)) qa_raise("Error", 0, 0, "Out of memory");
   m->remaining = qa_save_reader_integer(&field);
   qa_save_reader_destroy(&field);
-  if (!qa_save_reader_field(reader, "nextThink", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "nextThink", &field)) qa_raise("Error", 0, 0, "Out of memory");
   m->next_think = qa_save_reader_finite(&field);
   qa_save_reader_destroy(&field);
-  if (!qa_save_reader_field(reader, "paused", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "paused", &field)) qa_raise("Error", 0, 0, "Out of memory");
   m->paused = qa_save_reader_boolean(&field);
   qa_save_reader_destroy(&field);
-  if (!qa_save_reader_field(reader, "teamsLocked", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "teamsLocked", &field)) qa_raise("Error", 0, 0, "Out of memory");
   m->teams_locked = qa_save_reader_boolean(&field);
   qa_save_reader_destroy(&field);
 }

@@ -46,7 +46,7 @@ uint8_t *qa_encode_unified_packet(const qa_unified_packet *packet, size_t *out_l
     put_u32le(b, 36, (uint32_t)packet->total_bytes);
     put_u32le(b, 40, (uint32_t)packet->fragment_bytes);
     put_u16le(b, 46, (uint16_t)packet->fragments);
-    memcpy(b + QA_UNIFIED_PACKET_HEADER_BYTES, packet->payload, packet->length);
+    if (packet->length) memcpy(b + QA_UNIFIED_PACKET_HEADER_BYTES, packet->payload, packet->length);
   }
   *out_len = n; return b;
 }

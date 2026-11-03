@@ -5,10 +5,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "qa/content/mounts/paths.h"
+#include "qa/app/bootstrap/mod_selection.h"
 #include "qa/app/bootstrap/q3_product.h"
+#include "qa/app/bootstrap/qvm_grapple_selection.h"
+#include "qa/app/bootstrap/simulation/native_q2_map.h"
+#include "qa/app/bootstrap/simulation/q2_native_world.h"
+#include "qa/app/bootstrap/simulation/q3/guest_artifact.h"
+#include "qa/app/bootstrap/simulation/quakec_source.h"
+#include "qa/app/bootstrap/weapon_behavior_selection.h"
 #include "qa/compat/qvm/compatibility.h"
 #include "qa/content/archive.h"
 #include "qa/content/catalog/equipment.h"
@@ -22,6 +30,10 @@
 #include "qa/formats/q2_map.h"
 #include "qa/formats/q3_map/world.h"
 #include "qa/foundation/support.h"
+#include "qa/content/q3/foundation/assets.h"
+#include "qa/app/bootstrap/simulation/rerelease_guest_source.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 bool qa_app_application_discovers_mods(const qa_app_options *options, bool has_recipe,
                                        bool product_known, qa_game_family product_family) {
   /* TS: weaponBehavior !== undefined || mods || dedicated || offline && (...) */
@@ -89,16 +101,45 @@ struct qa_app_loaded_content {
   const char *world_kind; void *world; int world_family; /* 1|2|3 */
   qa_app_application_map_sidecar *sidecars; size_t sidecar_count;
   qa_content_mounted **native_opened; size_t native_opened_count, native_opened_cap;
-  struct { char *content; qa_content_mounted *mounts; } *scoped; size_t scoped_count, scoped_cap;
+  /* Provider mount sets. A mount set borrows its plan id and mount strings
+   * (mounts.h), and its references carry the plan id, so the entry owns the
+   * plan id and the catalog mount lists until the mount set is destroyed. */
+  struct { char *content; qa_content_mounted *mounts; char *plan_id; qa_catalog_mount_list primary, rules; } *scoped;
+  size_t scoped_count, scoped_cap;
   bool has_pure; qa_pure_mount_policy pure;
   const qa_q3_application_product *native_q3_product;
   size_t main_mount_leases;
+  /* Owned references (qa_resolved_resource_copy): sidecars outlive the map
+   * mount set they were opened from; the pure path's recipe references
+   * outlive the launch services and the caller's recipe. */
   qa_resolved_resource_reference *sidecar_refs; size_t sidecar_ref_count;
-  qa_resolved_resource_reference *owned_resources;
+  qa_resolved_resource_reference *owned_resources; size_t owned_resource_count;
+  qa_resolved_resource_reference owned_geometry;
   qa_launch_string_list native_strings;
   void *q3_backing; /* concrete Q3 host backing (restricted catalog) */
   qa_content_catalog *effective_catalog; /* after Q3 preparation */
   bool has_q3_value; qa_q3_application_product q3_value;
+  void *configured_backing; /* prepareConfiguredApplicationRecipe storage */
+  /* TS preparedQuakeC / preparedQ3Game / preparedQ2Game (owned; NULL is TS null). */
+  qa_app_sim_prepared_quakec_source *prepared_quakec;
+  qa_app_prepared_q3_game *prepared_q3_game;
+  void *prepared_q2_game; const char *prepared_q2_edition;
+  /* TS weaponBehaviorOwners / grappleOwner (native path; owned). */
+  qa_app_prepared_weapon_behavior *weapon_behaviors; size_t weapon_behavior_count;
+  qa_app_prepared_qvm_grapple *grapple;
+  /* TS modOwners (native path; owned): the prepared mods and the pointer list
+   * SimulationOptions.preparedMods takes. */
+  qa_app_prepared_mods prepared_mods;
+  const void **prepared_mod_pointers;
+  /* loadQ3Character results (qa_app_load_q3_character_for_content), owned until destroy. */
+  qa_q3_character_assets **characters; size_t character_count;
+  /* resolveApplicationTravel results: each owns its geometry copy and resource list until destroy. */
+  struct { qa_resolved_resource_reference geometry; qa_resolved_resource_reference *resources; size_t resource_count; } *travels;
+  size_t travel_count;
+  /* nativeCommandContext's producer (borrows the prepared Q2 game's execution strings). */
+  bool has_native_producer; qa_command_producer native_producer;
+  /* Records the content's users keep alive with it (qa_app_loaded_content_keep), released newest first by destroy. */
+  struct { void *record; void (*release)(void *record); } *kept; size_t kept_count;
 };
 struct qa_app_configuration_content {
   qa_app_content_host host;
@@ -116,8 +157,12 @@ struct qa_app_configuration_content {
   const qa_provider_timing *timing_list; size_t timing_count;
   bool has_q3_value; qa_q3_application_product q3_value;
   void *q3_backing;
+  void *q3_backing_initial; /* openInitialConfigurationContent's Q3 preparation (restricted catalog) */
+  /* C-only: the TS close() of a content built over another's mounts (qa_app_configuration_content_over_loaded). */
+  void (*close_hook)(void *ctx); void *close_ctx;
 };
 static void q3_native_backing_free(void *backing);
+static void configured_backing_free(void *backing);
 static void phase(const char *error) { if (error) qa_range_error("%s", error); }
 qa_app_loaded_content *qa_app_load_application_content(qa_app_content_host host, qa_app_options options,
                                                        const qa_executable_recipe *restored_recipe, bool has_recipe) {
@@ -140,18 +185,44 @@ static void native_world_destroy(qa_app_loaded_content *c) {
 void qa_app_loaded_content_destroy(qa_app_loaded_content *content) {
   if (!content) return;
   qa_app_loaded_content_close(content);
+  for (size_t i = content->kept_count; i-- > 0;) content->kept[i].release(content->kept[i].record);
+  free(content->kept);
+  qa_app_prepared_mods_destroy(&content->prepared_mods);
+  free(content->prepared_mod_pointers);
   for (size_t i = 0; i < content->scoped_count; i++) qa_content_mounted_destroy(content->scoped[i].mounts);
   if (content->native_mounts) qa_content_mounted_destroy(content->native_mounts);
   native_world_destroy(content);
   for (size_t i = 0; i < content->sidecar_count; i++) free((void *)content->sidecars[i].path);
+  for (size_t i = 0; i < content->sidecar_ref_count; i++) qa_resolved_resource_release(&content->sidecar_refs[i]);
+  for (size_t i = 0; i < content->owned_resource_count; i++) qa_resolved_resource_release(&content->owned_resources[i]);
+  qa_resolved_resource_release(&content->owned_geometry);
   free(content->sidecars); free(content->sidecar_refs); free(content->owned_resources);
   qa_launch_string_list_free(&content->native_strings);
-  for (size_t i = 0; i < content->scoped_count; i++) free(content->scoped[i].content);
+  for (size_t i = 0; i < content->scoped_count; i++) {
+    free(content->scoped[i].content); free(content->scoped[i].plan_id);
+    qa_content_catalog_mount_list_free(&content->scoped[i].primary);
+    qa_content_catalog_mount_list_free(&content->scoped[i].rules);
+  }
   free(content->scoped); free(content->native_opened);
   if (content->launch_result) { qa_resolve_launch_result_free(content->launch_result); free(content->launch_result); }
   if (content->preset_result) { qa_app_application_preset_result_free(content->preset_result); free(content->preset_result); }
   if (content->owns_catalog && content->native_catalog) { qa_content_catalog_destroy(content->native_catalog); free(content->native_catalog); }
   q3_native_backing_free(content->q3_backing);
+  configured_backing_free(content->configured_backing);
+  if (content->prepared_quakec) { qa_app_sim_prepared_quakec_source_destroy(content->prepared_quakec); free(content->prepared_quakec); }
+  if (content->prepared_q3_game) { qa_app_prepared_q3_game_destroy(content->prepared_q3_game); free(content->prepared_q3_game); }
+  qa_app_sim_prepared_q2_guest_free(content->prepared_q2_game, content->prepared_q2_edition);
+  for (size_t i = 0; i < content->weapon_behavior_count; i++) qa_app_prepared_weapon_behavior_destroy(&content->weapon_behaviors[i]);
+  free(content->weapon_behaviors);
+  if (content->grapple) { qa_app_prepared_qvm_grapple_destroy(content->grapple); free(content->grapple); }
+  for (size_t i = 0; i < content->character_count; i++) { qa_q3_character_assets_destroy(content->characters[i]); free(content->characters[i]); }
+  free(content->characters);
+  for (size_t i = 0; i < content->travel_count; i++) {
+    qa_resolved_resource_release(&content->travels[i].geometry);
+    for (size_t j = 0; j < content->travels[i].resource_count; j++) qa_resolved_resource_release(&content->travels[i].resources[j]);
+    free(content->travels[i].resources);
+  }
+  free(content->travels);
   qa_app_options_destroy(&content->options);
   free(content);
 }
@@ -167,6 +238,12 @@ bool qa_app_loaded_content_q3_policy(const qa_app_loaded_content *c, qa_q3_produ
   return true;
 }
 void qa_app_loaded_content_set_q3_policy(qa_app_loaded_content *c, qa_q3_product_policy policy) { c->has_q3_policy = true; c->q3_policy = policy; }
+/* TS LoadedApplicationContent.q3Product: false is TS null. */
+bool qa_app_loaded_content_q3_product(const qa_app_loaded_content *c, qa_q3_application_product *out) {
+  if (!c->has_q3_value) return false;
+  *out = c->q3_value;
+  return true;
+}
 static qa_content_mounted *native_for_content(qa_app_loaded_content *c, qa_content_id content_id);
 const void *qa_app_loaded_content_for_content(qa_app_loaded_content *c, qa_content_id content_id) {
   if (c->native_catalog) return native_for_content(c, content_id);
@@ -184,11 +261,67 @@ size_t qa_app_loaded_content_opened_mounts(qa_app_loaded_content *c, const void 
   for (size_t i = 0; i < c->opened_count && count < capacity; i++) out[count++] = c->opened[i];
   return count;
 }
+static qa_content_mounted *content_for_content(void *ctx, qa_content_id content) { return native_for_content(ctx, content); }
+/* TS prepareMods(purpose = "gameplay"): modOwners = prepareApplicationMods(catalog, recipe, forContent, purpose). */
 void qa_app_loaded_content_prepare_mods(qa_app_loaded_content *c, const char *purpose) {
-  phase(c->host.prepare_mods(c->host.ctx, c, purpose ? purpose : "gameplay"));
+  if (c->native_catalog == NULL) { phase(c->host.prepare_mods(c->host.ctx, c, purpose ? purpose : "gameplay")); return; }
+  qa_content_catalog *catalog = c->effective_catalog ? c->effective_catalog : c->native_catalog;
+  qa_app_prepared_mods prepared =
+      qa_app_prepare_application_mods(catalog, &c->recipe, content_for_content, c, purpose ? purpose : "gameplay");
+  const void **pointers = calloc(prepared.count + 1, sizeof *pointers);
+  if (pointers == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < prepared.count; i++) pointers[i] = &prepared.items[i];
+  qa_app_prepared_mods_destroy(&c->prepared_mods);
+  free(c->prepared_mod_pointers);
+  c->prepared_mods = prepared;
+  c->prepared_mod_pointers = pointers;
 }
-void qa_app_loaded_content_prepare_qvm_grapple(qa_app_loaded_content *c) { phase(c->host.prepare_grapple(c->host.ctx, c)); }
-void qa_app_loaded_content_prepare_weapon_behaviors(qa_app_loaded_content *c) { phase(c->host.prepare_weapon_behaviors(c->host.ctx, c)); }
+const void *const *qa_app_loaded_content_prepared_mods(const qa_app_loaded_content *c, size_t *out_count) {
+  /* TS modOwners starts as [] and stays an array. */
+  static const void *const empty[1] = {NULL};
+  *out_count = c->prepared_mods.count;
+  return c->prepared_mod_pointers != NULL ? c->prepared_mod_pointers : empty;
+}
+void qa_app_loaded_content_prepare_qvm_grapple(qa_app_loaded_content *c) {
+  if (c->native_catalog == NULL) { phase(c->host.prepare_grapple(c->host.ctx, c)); return; }
+  const qa_grapple_selection *selection = &c->recipe.equipment.grapple;
+  if (!selection->is_enabled || selection->mechanic == NULL || strcmp(selection->mechanic, "q3-qvm") != 0) return;
+  qa_app_prepared_qvm_grapple *grapple = calloc(1, sizeof *grapple);
+  if (grapple == NULL) qa_range_error("Out of memory");
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, free, grapple);
+  qa_app_prepare_application_qvm_grapple(*selection, content_for_content, c, grapple);
+  qa_cleanup_pop(&cleanup);
+  if (c->grapple) { qa_app_prepared_qvm_grapple_destroy(c->grapple); free(c->grapple); }
+  c->grapple = grapple;
+}
+const qa_app_prepared_qvm_grapple *qa_app_loaded_content_prepared_qvm_grapple(const qa_app_loaded_content *c) { return c->grapple; }
+void qa_app_loaded_content_prepare_weapon_behaviors(qa_app_loaded_content *c) {
+  if (c->native_catalog == NULL) { phase(c->host.prepare_weapon_behaviors(c->host.ctx, c)); return; }
+  const qa_executable_recipe *recipe = &c->recipe;
+  size_t count = recipe->weapon_behaviors != NULL ? recipe->weapon_behavior_count : 0;
+  bool guest_server = false;
+  for (size_t i = 0; i < recipe->execution_count; i++)
+    if (recipe->execution[i].role && strcmp(recipe->execution[i].role, "server-game") == 0 && recipe->execution[i].kind != QA_EXECUTION_MODULE_TYPESCRIPT)
+      guest_server = true;
+  if (count != 0 && guest_server) qa_raise("Error", 0, 0, "Selected native or bytecode game has no shared projectile behavior hook");
+  for (size_t i = 0; i < count; i++)
+    for (size_t j = i + 1; j < count; j++)
+      if (strcmp(recipe->weapon_behaviors[i].definition->role, recipe->weapon_behaviors[j].definition->role) == 0)
+        qa_raise("Error", 0, 0, "Conflicting trajectory behaviors for one projectile role");
+  for (size_t i = 0; i < count; i++) {
+    qa_app_prepared_weapon_behavior *grown = realloc(c->weapon_behaviors, (c->weapon_behavior_count + 1) * sizeof *grown);
+    if (grown == NULL) qa_range_error("Out of memory");
+    c->weapon_behaviors = grown;
+    c->weapon_behaviors[c->weapon_behavior_count] =
+        qa_app_prepare_application_weapon_behavior(c->native_catalog, recipe->weapon_behaviors[i], content_for_content, c);
+    c->weapon_behavior_count++;
+  }
+}
+const qa_app_prepared_weapon_behavior *qa_app_loaded_content_prepared_weapon_behaviors(const qa_app_loaded_content *c, size_t *out_count) {
+  *out_count = c->weapon_behavior_count;
+  return c->weapon_behaviors;
+}
 void qa_app_loaded_content_close(qa_app_loaded_content *c) {
   if (!c || c->closed) return;
   c->closed = true;
@@ -197,11 +330,7 @@ void qa_app_loaded_content_close(qa_app_loaded_content *c) {
   c->native_opened_count = 0;
   if (c->host.close_loaded) phase(c->host.close_loaded(c->host.ctx, c));
 }
-qa_executable_recipe qa_app_resolve_application_travel(qa_app_loaded_content *c, const char *path) {
-  qa_executable_recipe out = {0};
-  phase(c->host.resolve_travel(c->host.ctx, c, path, &out));
-  return out;
-}
+static qa_executable_recipe resolve_native_travel(qa_app_loaded_content *c, const char *path);
 qa_app_configuration_content *qa_app_open_application_configuration_content(qa_app_content_host host, qa_app_configuration_request request) {
   (void)request;
   qa_app_configuration_content *content = calloc(1, sizeof *content);
@@ -228,6 +357,7 @@ void qa_app_configuration_content_destroy(qa_app_configuration_content *c) {
   qa_content_catalog_mount_list_free(&c->mount_list);
   free(c->mount_order); free(c->plan_id);
   q3_native_backing_free(c->q3_backing);
+  q3_native_backing_free(c->q3_backing_initial);
   if (c->owns_catalog && c->native_catalog) { qa_content_catalog_destroy(c->native_catalog); free(c->native_catalog); }
   free(c);
 }
@@ -248,6 +378,7 @@ void qa_app_configuration_content_close(qa_app_configuration_content *c) {
   if (c->native_mounts) qa_content_mounted_close(c->native_mounts);
   if (c->remote_mounts) qa_app_remote_content_mounts_close(c->remote_mounts);
   if (c->close_delegate) qa_app_configuration_content_close(c->close_delegate);
+  if (c->close_hook) c->close_hook(c->close_ctx);
 }
 const qa_provider_timing *qa_app_configuration_content_timing(const qa_app_configuration_content *c, size_t *out_count) {
   *out_count = c->timing_count;
@@ -387,6 +518,19 @@ static const char *selected_quakec_program(const qa_content_catalog *catalog, co
       !is_expected_product(product->expectation.id) &&
       list_contains(product->expectation.required_programs, product->expectation.required_program_count, "progs.dat") ? "progs.dat" : NULL;
 }
+/* selectedQ3NativeGame: vm_game 0 and a native qagame in the mod's directory select the native module; every other
+ * case runs the bytecode. False = TS undefined. */
+static bool selected_q3_native_game(const qa_content_catalog *catalog, const qa_app_options *options, const char **path,
+                                    qa_native_abi *profile) {
+  if (!options->has_vm_game || options->vm_game != 0) return false;
+  const qa_catalog_discovered_product *product = qa_content_catalog_require(catalog, options->product);
+  if (product->expectation.native_programs == NULL || product->expectation.native_program_count == 0) return false;
+  *path = product->expectation.native_programs[0];
+  size_t length = strlen(*path);
+  *profile = length >= 4 && strcmp(*path + length - 4, ".dll") == 0 ? (qa_native_abi){"windows-i386", "pe32", 4, "cdecl"}
+                                                                    : (qa_native_abi){"linux-i386", "elf32", 4, "system-v-i386"};
+  return true;
+}
 static bool network_is(const qa_app_options *options, const char *kind) {
   return options->network_kind && strcmp(options->network_kind, kind) == 0;
 }
@@ -473,6 +617,9 @@ static bool selected_application_preset(const qa_content_catalog *catalog, const
   qa_game_family family = product->expectation.family;
   const char *native_program = selected_quakec_program(catalog, options);
   const char *q2_library = selected_q2_game_library(catalog, options);
+  const char *q3_native_path = NULL;
+  qa_native_abi q3_native_profile;
+  bool q3_native = q3_guest && selected_q3_native_game(catalog, options, &q3_native_path, &q3_native_profile);
   qa_app_source_selection_result selection;
   if (!qa_app_application_source_selection_for_catalog(catalog, options->product, options->rules, &selection)) return false;
   if (!preset_remember(out, selection.source_provider)) { free(selection.match_provider); return false; }
@@ -537,6 +684,13 @@ static bool selected_application_preset(const qa_content_catalog *catalog, const
       execution->api.as.q2_game = (qa_q2_game_api_identity){QA_Q2_GAME_API_CLASSIC, 3};
       execution->profile = (qa_native_abi){"windows-i386", "pe32", 4, "cdecl"};
     }
+  } else if (q3_guest && q3_native) {
+    memset(execution, 0, sizeof *execution);
+    execution->kind = QA_EXECUTION_MODULE_NATIVE; execution->owner = provider; execution->role = "server-game";
+    out->artifact_storage[0] = (qa_resource_request){product->id, q3_native_path};
+    execution->artifact = &out->artifact_storage[0];
+    execution->api.kind = QA_GAME_API_Q3; execution->api.as.q3 = (qa_q3_api_identity){QA_Q3_API_QAGAME, 8};
+    execution->profile = q3_native_profile;
   } else if (q3_guest) {
     memset(execution, 0, sizeof *execution);
     execution->kind = QA_EXECUTION_MODULE_QVM; execution->owner = provider; execution->role = "server-game";
@@ -582,13 +736,18 @@ static bool selected_application_preset(const qa_content_catalog *catalog, const
   preset->ordering = (qa_frame_ordering){QA_FRAME_ORDERING_MIXED, {0}, out->ordering_storage, 3};
   return true;
 }
-static void resolve_movement(const qa_content_catalog *catalog, qa_app_application_preset_result *out, const qa_app_options *options) {
-  out->resolved_options = *options; out->has_resolved_options = true;
-  if (!options->movement_product) return;
+qa_app_options qa_app_resolve_application_movement(const qa_content_catalog *catalog, const qa_app_options *options) {
+  qa_app_options resolved = *options;
+  if (options->movement_product == NULL) return resolved;
   const qa_catalog_discovered_product *product = qa_content_catalog_product(catalog, options->movement_product);
   qa_app_movement_content_product(catalog, options->movement_product);
-  out->resolved_options.movement = product->expectation.family;
-  out->resolved_options.movement_product = (char *)product->expectation.id;
+  resolved.movement = product->expectation.family;
+  resolved.movement_product = (char *)product->expectation.id;
+  return resolved;
+}
+static void resolve_movement(const qa_content_catalog *catalog, qa_app_application_preset_result *out, const qa_app_options *options) {
+  out->resolved_options = qa_app_resolve_application_movement(catalog, options);
+  out->has_resolved_options = true;
 }
 bool qa_app_application_preset_for_catalog(const qa_content_catalog *catalog, const qa_app_options *options_in,
     const qa_app_native_provider_sources *native_sources, const qa_app_content_source *presentation_source,
@@ -659,7 +818,9 @@ qa_catalog_archive_inspector qa_app_default_archive_inspector(void) {
   qa_catalog_archive_inspector inspector = {NULL, inspect_archive};
   return inspector;
 }
-/* qa_launch_mounted over qa_content_mounted (launch.ts services). */
+/* qa_launch_mounted over qa_content_mounted (launch.ts services). open and
+ * resolve hand out borrowed views of references the mount set or reader owns
+ * (launch.h): valid until launch_adapter_close; launch.c keeps owned copies. */
 typedef struct launch_adapter {
   qa_content_mounted *mounted; bool owns_mounted;
   qa_mounted_content_reader *reader;
@@ -902,11 +1063,10 @@ static qa_content_mounted *native_for_content(qa_app_loaded_content *c, qa_conte
   qa_resolved_mount_plan plan = {plan_id, mounts, count, order, count, NULL, 0};
   qa_content_mounted *opened = c->native_mounts ? qa_content_mounted_borrow_mount_plan(c->native_mounts, &plan, &mount_options) : NULL;
   if (!opened) opened = qa_open_mount_plan(&plan, &mount_options);
-  /* Plan strings/mounts are borrowed by the opened plan copy from the
-   * catalog mount lists; those lists are intentionally retained for
-   * the content lifetime (freed with the catalog generation in TS). */
-  free(mounts); free(order); free(plan_id);
-  (void)primary; (void)rules;
+  /* The opened plan copy owns the mount and order arrays but borrows the
+   * plan id and the mount strings in the catalog mount lists: the scoped
+   * entry keeps those until the mount set is destroyed. */
+  free(mounts); free(order);
   if (!opened) qa_range_error("Out of memory");
   if (c->closed) { qa_content_mounted_destroy(opened); qa_range_error("Application content closed during mount"); }
   if (c->scoped_count == c->scoped_cap) {
@@ -923,9 +1083,18 @@ static qa_content_mounted *native_for_content(qa_app_loaded_content *c, qa_conte
   }
   char *key = xstrdup(content_id);
   if (!key) qa_range_error("Out of memory");
-  c->scoped[c->scoped_count].content = key; c->scoped[c->scoped_count].mounts = opened; c->scoped_count++;
+  c->scoped[c->scoped_count].content = key; c->scoped[c->scoped_count].mounts = opened;
+  c->scoped[c->scoped_count].plan_id = plan_id;
+  c->scoped[c->scoped_count].primary = primary; c->scoped[c->scoped_count].rules = rules;
+  c->scoped_count++;
   c->native_opened[c->native_opened_count++] = opened;
   return opened;
+}
+const qa_app_sim_prepared_quakec_source *qa_app_loaded_content_prepared_quakec(const qa_app_loaded_content *c) { return c->prepared_quakec; }
+const qa_app_prepared_q3_game *qa_app_loaded_content_prepared_q3_game(const qa_app_loaded_content *c) { return c->prepared_q3_game; }
+const void *qa_app_loaded_content_prepared_q2_game(const qa_app_loaded_content *c, const char **out_edition) {
+  if (out_edition) *out_edition = c->prepared_q2_edition;
+  return c->prepared_q2_game;
 }
 qa_app_application_world qa_app_loaded_content_world(const qa_app_loaded_content *c) {
   qa_app_application_world world = {c->world_kind, c->world};
@@ -969,7 +1138,8 @@ static void sidecar_push(qa_app_loaded_content *c, qa_content_id content, char *
         if (c->sidecars[i].resource != NULL)
           c->sidecars[i].resource = refs + (c->sidecars[i].resource - old_base);
     c->sidecar_refs = refs;
-    c->sidecar_refs[c->sidecar_ref_count] = *reference;
+    /* The map mount set is destroyed once the world is decoded. */
+    if (!qa_resolved_resource_copy(reference, &c->sidecar_refs[c->sidecar_ref_count])) qa_range_error("Out of memory");
     stored = &c->sidecar_refs[c->sidecar_ref_count++];
   }
   c->sidecars[c->sidecar_count++] = (qa_app_application_map_sidecar){content, path, stored};
@@ -987,23 +1157,26 @@ static char *replace_bsp_suffix(const char *path, const char *suffix) {
   }
   return xstrdup(path);
 }
-static qa_content_mounted *open_map_content(qa_content_catalog *catalog, const qa_executable_recipe *recipe, bool demo) {
-  qa_catalog_mount_list list = {0};
-  if (!qa_content_catalog_mounts_for(catalog, recipe->map.geometry_content, &list)) return NULL;
-  qa_mount_id *order = calloc(list.count ? list.count : 1, sizeof *order);
-  if (!order) { qa_content_catalog_mount_list_free(&list); return NULL; }
-  for (size_t i = 0; i < list.count; i++)
-    order[i] = list.mounts[i].kind == QA_CONTENT_MOUNT_ARCHIVE ? list.mounts[i].as.archive.identity.id : list.mounts[i].as.loose.identity.id;
+/* The map-sidecars mount set with the plan id and mount list it borrows
+ * (mounts.h); map_content_close destroys the set before them. */
+typedef struct map_content {
+  qa_content_mounted *mounted;
+  qa_catalog_mount_list list; qa_mount_id *order; char *plan_id;
+} map_content;
+static map_content open_map_content(qa_content_catalog *catalog, const qa_executable_recipe *recipe, bool demo) {
+  map_content out; memset(&out, 0, sizeof out);
   char *hex = hex_of(recipe->map.geometry_content);
-  char *plan_id = hex ? qa_create_mount_plan_id("map-sidecars", hex) : NULL;
+  if (hex == NULL) return out;
+  out.mounted = open_product_mounts(catalog, recipe->map.geometry_content, "map-sidecars", hex, demo,
+      &out.list, &out.order, &out.plan_id);
   free(hex);
-  qa_resolved_mount_plan plan = {plan_id, list.mounts, list.count, order, list.count, NULL, 0};
-  qa_open_mount_options options; memset(&options, 0, sizeof options); options.q3_restriction_demo = demo;
-  qa_content_mounted *opened = qa_open_mount_plan(&plan, &options);
-  free(order); free(plan_id);
-  /* list backing is borrowed by the opened plan for its lifetime. */
-  (void)list;
-  return opened;
+  return out;
+}
+static void map_content_close(map_content *content) {
+  if (content->mounted) qa_content_mounted_destroy(content->mounted);
+  qa_content_catalog_mount_list_free(&content->list);
+  free(content->order); free(content->plan_id);
+  memset(content, 0, sizeof *content);
 }
 typedef struct material_stash { char **paths; uint8_t **bytes; size_t *lengths; size_t count; } material_stash;
 static uint8_t *stash_read_material(void *ctx, const char *path, size_t *out_length) {
@@ -1018,6 +1191,213 @@ static uint8_t *stash_read_material(void *ctx, const char *path, size_t *out_len
   }
   return NULL;
 }
+/* --- Concrete prepareConfiguredApplicationRecipe composition (TS
+ * weapon-behavior-selection.ts over mod-selection.ts): the
+ * qa_app_prepare_configured_recipe host filled with the landed
+ * catalog discovery, gameplay-mod discovery and mounted
+ * weapon-behavior choices. --- */
+typedef struct configured_backing {
+  qa_content_catalog *rediscovered; /* owned when the catalog was replaced */
+  qa_app_mod_choices choices; bool has_choices;
+  qa_app_applied_mods applied; bool has_applied;
+} configured_backing;
+typedef struct configured_host {
+  qa_content_catalog *catalog;
+  configured_backing *backing;
+} configured_host;
+static bool configured_catalog_has_product(void *ctx, qa_content_catalog *catalog, const char *product) {
+  (void)ctx;
+  for (size_t i = 0; i < catalog->product_count; i++)
+    if (strcmp(catalog->products[i].expectation.id, product) == 0
+        || strcmp(catalog->products[i].id, product) == 0) return true;
+  return false;
+}
+static qa_content_catalog *configured_rediscover(void *ctx, qa_content_catalog *catalog) {
+  configured_host *host = ctx;
+  qa_content_catalog *fresh = calloc(1, sizeof *fresh);
+  if (!fresh) qa_range_error("Out of memory");
+  qa_discover_content_options discover; memset(&discover, 0, sizeof discover);
+  discover.corpus_root = catalog->corpus_root;
+  discover.user_content_root = catalog->user_content_root;
+  discover.addon_content_roots = catalog->addon_content_roots;
+  discover.addon_content_root_count = catalog->addon_content_root_count;
+  discover.has_generation = true;
+  discover.generation = (double)catalog->generation;
+  discover.discover_mods = true;
+  discover.inspector = qa_app_default_archive_inspector();
+  if (!qa_discover_installed_content(&discover, fresh)) { free(fresh); qa_range_error("Out of memory"); }
+  host->backing->rediscovered = fresh;
+  host->catalog = fresh;
+  return fresh;
+}
+/* TS applicationModChoices(catalog) (shared by configured_apply_mods and
+ * qa_app_application_mod_choices_native). */
+static void configured_build_choices(configured_host *host, qa_content_catalog *catalog) {
+  host->catalog = catalog;
+  host->backing->choices = qa_app_application_mod_choices(catalog);
+  host->backing->has_choices = true;
+}
+static qa_executable_recipe configured_apply_mods(void *ctx, qa_content_catalog *catalog,
+    qa_executable_recipe recipe, const qa_app_weapon_behavior_request *requests, size_t request_count) {
+  configured_host *host = ctx;
+  configured_backing *backing = host->backing;
+  configured_build_choices(host, catalog);
+  qa_mod_selection *enabled = calloc(request_count + 1, sizeof *enabled);
+  if (!enabled) qa_range_error("Out of memory");
+  for (size_t i = 0; i < request_count; i++) {
+    enabled[i].product = requests[i].product;
+    enabled[i].id = requests[i].id;
+  }
+  backing->applied = qa_app_apply_application_mods(&recipe, backing->choices.items,
+      backing->choices.count, enabled, request_count);
+  backing->has_applied = true;
+  free(enabled);
+  return backing->applied.recipe;
+}
+static void configured_backing_free(void *storage) {
+  configured_backing *backing = storage;
+  if (backing == NULL) return;
+  if (backing->has_applied) qa_app_applied_mods_destroy(&backing->applied);
+  if (backing->has_choices) qa_app_mod_choices_destroy(&backing->choices);
+  if (backing->rediscovered) { qa_content_catalog_destroy(backing->rediscovered); free(backing->rediscovered); }
+  free(backing);
+}
+/* The decoded world's entity text and inline-model count. */
+static const char *loaded_world_entities(const qa_app_loaded_content *loaded, double *out_models) {
+  if (loaded->world_family == 1) {
+    const qa_q1_map *map = loaded->world;
+    *out_models = (double)map->world.model_count; return map->world.entities;
+  }
+  if (loaded->world_family == 2) {
+    const qa_q2_decoded_map *map = loaded->world;
+    *out_models = (double)map->world.model_count; return map->world.entities;
+  }
+  const qa_q3_decoded_world *world = loaded->world;
+  *out_models = (double)world->world.model_count; return world->world.entities;
+}
+/* loadApplicationContent's guest preparation: prepareQuakeCSource, prepareQ3Game and prepareQ2Guest
+ * (then prepareNativeQ2Map's capacity check) over the opened mounts. */
+static void prepare_guests(qa_app_loaded_content *loaded, const qa_executable_recipe *recipe, qa_content_catalog *catalog,
+    const qa_app_options *options) {
+  double models = 0;
+  const char *entities = loaded_world_entities(loaded, &models);
+  if (entities == NULL) entities = "";
+  for (size_t i = 0; i < recipe->execution_count; i++) {
+    const qa_resolved_execution_module *module = &recipe->execution[i];
+    if (module->kind != QA_EXECUTION_MODULE_QUAKEC) continue;
+    loaded->prepared_quakec = calloc(1, sizeof *loaded->prepared_quakec);
+    if (!loaded->prepared_quakec) qa_range_error("Out of memory");
+    if (strcmp(recipe->map.geometry_content, module->owner.content) != 0) {
+      qa_app_product_mounts *source = qa_app_open_product_mounts(catalog, module->owner.content, "quakec-source", false);
+      qa_app_sim_prepare_quakec_source_mounted(*module, loaded->native_mounts, entities, qa_app_product_mounts_mounted(source),
+          loaded->prepared_quakec);
+      qa_app_product_mounts_destroy(source);
+    } else qa_app_sim_prepare_quakec_source_mounted(*module, loaded->native_mounts, entities, NULL, loaded->prepared_quakec);
+    break;
+  }
+  for (size_t i = 0; i < recipe->execution_count; i++) {
+    const qa_resolved_execution_module *module = &recipe->execution[i];
+    if (!module->role || strcmp(module->role, "server-game") != 0) continue;
+    if (module->kind == QA_EXECUTION_MODULE_QVM) {
+      loaded->prepared_q3_game = calloc(1, sizeof *loaded->prepared_q3_game);
+      if (!loaded->prepared_q3_game) qa_range_error("Out of memory");
+      qa_app_prepare_q3_game(*module, loaded->native_mounts, loaded->prepared_q3_game);
+      break;
+    }
+    if (module->kind == QA_EXECUTION_MODULE_NATIVE && module->api.kind == QA_GAME_API_Q3) {
+      loaded->prepared_q3_game = calloc(1, sizeof *loaded->prepared_q3_game);
+      if (!loaded->prepared_q3_game) qa_range_error("Out of memory");
+      qa_app_prepare_q3_native_game(module, loaded->native_mounts, loaded->prepared_q3_game);
+      break;
+    }
+  }
+  for (size_t i = 0; i < recipe->execution_count; i++) {
+    const qa_resolved_execution_module *module = &recipe->execution[i];
+    if (!(module->kind == QA_EXECUTION_MODULE_NATIVE && module->role && strcmp(module->role, "server-game") == 0
+          && module->api.kind != QA_GAME_API_Q3)) continue;
+    loaded->prepared_q2_game = qa_app_sim_prepare_q2_guest_mounted(module, loaded->native_mounts, &loaded->prepared_q2_edition);
+    qa_app_sim_native_q2_map_geometry geometry = {loaded->world_kind, entities, models};
+    free(qa_app_sim_prepare_native_q2_map(geometry, loaded->prepared_q2_edition, options->mode));
+    break;
+  }
+}
+/* node:path resolve(path): absolute against the working directory, "." and ".." segments
+   folded, no trailing slash. Symlinks are not followed. */
+static char *node_resolve(const char *path) {
+  char cwd[4096];
+  const char *base = path[0] == '/' ? "" : (getcwd(cwd, sizeof cwd) != NULL ? cwd : "");
+  size_t total = strlen(base) + strlen(path) + 2;
+  char *joined = malloc(total), *out = malloc(total + 1);
+  if (joined == NULL || out == NULL) { free(joined); free(out); qa_range_error("Out of memory"); }
+  snprintf(joined, total, "%s/%s", base, path);
+  size_t length = 0;
+  for (char *segment = joined; *segment != '\0';) {
+    char *end = strchr(segment, '/');
+    size_t n = end != NULL ? (size_t)(end - segment) : strlen(segment);
+    if (n == 0 || (n == 1 && segment[0] == '.')) { /* skip */ }
+    else if (n == 2 && segment[0] == '.' && segment[1] == '.') {
+      while (length > 0 && out[length - 1] != '/') length--;
+      if (length > 0) length--;
+    } else {
+      out[length++] = '/';
+      memcpy(out + length, segment, n);
+      length += n;
+    }
+    if (end == NULL) break;
+    segment = end + 1;
+  }
+  if (length == 0) out[length++] = '/';
+  out[length] = '\0';
+  free(joined);
+  return out;
+}
+static const qa_mount_identity *content_mount_identity(const qa_content_mount *mount) {
+  return mount->kind == QA_CONTENT_MOUNT_ARCHIVE ? &mount->as.archive.identity : &mount->as.loose.identity;
+}
+static bool same_resolved_path(const char *left, const char *right) {
+  char *a = node_resolve(left), *b = node_resolve(right);
+  bool same = strcmp(a, b) == 0;
+  free(a); free(b);
+  return same;
+}
+/* TS saved.identity.id === installed.identity.id && kind && resolved path (+ digest for archives). */
+static bool same_installed_mount(const qa_content_mount *saved, const qa_content_mount *installed) {
+  if (strcmp(content_mount_identity(saved)->id, content_mount_identity(installed)->id) != 0 || saved->kind != installed->kind) return false;
+  if (saved->kind == QA_CONTENT_MOUNT_LOOSE) return same_resolved_path(saved->as.loose.root_path, installed->as.loose.root_path);
+  return same_resolved_path(saved->as.archive.archive_path, installed->as.archive.archive_path)
+      && strcmp(saved->as.archive.archive_digest, installed->as.archive.archive_digest) == 0;
+}
+static void mount_list_cleanup(void *list) { qa_content_catalog_mount_list_free(list); }
+/* TS assertRecipeInstalled: a restored recipe may only mount what the installed catalog offers;
+   saved host paths and digests are never trusted on their own. mountsFor failures offer nothing. */
+static void assert_recipe_installed(qa_content_catalog *catalog, const qa_executable_recipe *recipe) {
+  for (size_t i = 0; i < recipe->mounts.mount_count; i++) {
+    const qa_content_mount *mount = &recipe->mounts.mounts[i];
+    qa_catalog_mount_list offered;
+    memset(&offered, 0, sizeof offered);
+    bool listed = qa_content_catalog_mounts_for(catalog, content_mount_identity(mount)->content, &offered);
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, mount_list_cleanup, &offered);
+    bool found = false;
+    for (size_t j = 0; listed && j < offered.count && !found; j++) found = same_installed_mount(mount, &offered.mounts[j]);
+    qa_cleanup_pop(&guard);
+    qa_content_catalog_mount_list_free(&offered);
+    if (!found) qa_raise("Error", 0, 0, "Saved content mount %s is not offered by the installed catalog", content_mount_identity(mount)->id);
+  }
+  for (size_t i = 0; i < recipe->execution_count; i++) {
+    const qa_resolved_execution_module *module = &recipe->execution[i];
+    if (module->kind == QA_EXECUTION_MODULE_TYPESCRIPT || module->artifact == NULL) continue;
+    const qa_resolved_resource_reference *artifact = module->artifact;
+    const qa_mount_identity *identity = artifact->provenance.kind == QA_CONTENT_MOUNT_ARCHIVE
+        ? &artifact->provenance.archive_mount->identity : &artifact->provenance.loose_mount->identity;
+    bool inside = false;
+    for (size_t j = 0; j < recipe->mounts.mount_count && !inside; j++)
+      inside = strcmp(content_mount_identity(&recipe->mounts.mounts[j])->id, identity->id) == 0;
+    if (!inside)
+      qa_raise("Error", 0, 0, "Saved execution module %s uses a mount outside the restored content", module->owner.provider);
+  }
+}
+static void loaded_destroy_cleanup(void *loaded) { qa_app_loaded_content_destroy(loaded); }
 qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_host guest_host, qa_app_options options,
     const qa_executable_recipe *restored_recipe, bool has_recipe, const qa_pure_mount_policy *pure,
     qa_content_catalog *installed_catalog, const qa_app_content_source *presentation_source) {
@@ -1114,11 +1494,27 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
     launch.catalog = catalog; launch.mounts_options = &mount_options; launch.services = native_launch_services();
     if (!qa_resolve_launch(&launch, loaded->launch_result)) { qa_app_loaded_content_destroy(loaded); return NULL; }
     recipe = loaded->launch_result->recipe;
-    if (presentation_source == NULL && loaded->options.has_weapon_behavior) {
-      /* prepareConfiguredApplicationRecipe needs the weapon-behavior
-       * slice host; fail closed rather than skip it silently. */
-      qa_app_loaded_content_destroy(loaded);
-      return NULL;
+    if (presentation_source == NULL) {
+      /* TS prepareConfiguredApplicationRecipe: a no-op without mod /
+       * weapon-behavior requests; otherwise rediscover-with-mods when
+       * a requested product is absent, then applyApplicationMods. */
+      configured_backing *backing = calloc(1, sizeof *backing);
+      if (!backing) { qa_app_loaded_content_destroy(loaded); return NULL; }
+      loaded->configured_backing = backing;
+      configured_host configured = {catalog, backing};
+      qa_app_weapon_behavior_host behavior_host = {0};
+      behavior_host.ctx = &configured;
+      behavior_host.catalog_has_product = configured_catalog_has_product;
+      behavior_host.rediscover_with_mods = configured_rediscover;
+      behavior_host.apply_mods = configured_apply_mods;
+      qa_app_prepared_configured_recipe prepared =
+          qa_app_prepare_configured_recipe(behavior_host, catalog, &loaded->options, recipe);
+      if (prepared.catalog != catalog) {
+        catalog = prepared.catalog;
+        loaded->effective_catalog = catalog;
+        loaded->catalog = catalog;
+      }
+      recipe = prepared.recipe;
     }
   }
   loaded->recipe = recipe; loaded->has_recipe = true;
@@ -1130,6 +1526,7 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
     if (module->kind == QA_EXECUTION_MODULE_QVM && module->role && strcmp(module->role, "server-game") == 0) {
       if (!network_is(&options, "native-server") && !network_is(&options, "offline"))
         qa_range_error("Q3 bytecode requires offline local or dedicated Q3 server operation");
+      qa_app_assert_q3_guest_recipe(recipe, module);
       needs_guest = true;
       continue;
     }
@@ -1147,6 +1544,14 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
           strcmp(module->owner.provider, recipe.map.entities.provider) != 0 ||
           strcmp(module->owner.content, recipe.map.entities.content) != 0 || recipe.execution_count != 1)
         qa_range_error("QuakeC requires matching source actors and validated artifact; native network maps must belong to the source content and QuakeWorld requires dedicated operation");
+      needs_guest = true;
+      continue;
+    }
+    if (module->kind == QA_EXECUTION_MODULE_NATIVE && module->role && strcmp(module->role, "server-game") == 0
+        && module->api.kind == QA_GAME_API_Q3 && module->api.as.q3.kind == QA_Q3_API_QAGAME) {
+      if (!network_is(&options, "native-server") && !network_is(&options, "offline"))
+        qa_range_error("A native Q3 module requires offline local or dedicated Q3 server operation");
+      qa_app_assert_q3_guest_recipe(recipe, module);
       needs_guest = true;
       continue;
     }
@@ -1170,6 +1575,7 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
           kind, module->role, module->owner.provider, artifact ? artifact->requested_path : "");
     }
   }
+  if (has_recipe && restored_recipe && pure == NULL) assert_recipe_installed(catalog, &recipe);
   qa_content_mounted *mounts = qa_open_mount_plan(&recipe.mounts, &mount_options);
   if (!mounts) { qa_app_loaded_content_destroy(loaded); return NULL; }
   loaded->native_mounts = mounts; loaded->mounts = mounts;
@@ -1179,17 +1585,21 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
     launch_mounted.ctx = &adapter; launch_mounted.plan = qa_content_mounted_plan(mounts);
     launch_mounted.open = launch_adapter_open; launch_mounted.resolve = launch_adapter_resolve; launch_mounted.borrow_ordered = launch_adapter_borrow;
     qa_resource_request request = {recipe.map.geometry_content, recipe.map.geometry.requested_path};
-    qa_resolved_resource_reference geometry;
-    if (!qa_resolve_launch_resource(catalog, &launch_mounted, request, "map", &loaded->native_strings, &geometry)) {
+    /* qa_resolve_launch_resource returns an owned copy; loaded owns it. */
+    if (!qa_resolve_launch_resource(catalog, &launch_mounted, request, "map", &loaded->native_strings, &loaded->owned_geometry)) {
       free(adapter.last_bytes); qa_app_loaded_content_destroy(loaded); return NULL;
     }
     free(adapter.last_bytes);
+    const qa_resolved_resource_reference *geometry = &loaded->owned_geometry;
     loaded->owned_resources = calloc(recipe.resource_count ? recipe.resource_count : 1, sizeof *loaded->owned_resources);
     if (!loaded->owned_resources) { qa_app_loaded_content_destroy(loaded); return NULL; }
-    for (size_t i = 0; i < recipe.resource_count; i++)
-      loaded->owned_resources[i] = strcmp(recipe.resources[i].id, recipe.map.geometry.id) == 0 ? geometry : recipe.resources[i];
+    for (size_t i = 0; i < recipe.resource_count; i++) {
+      const qa_resolved_resource_reference *source = strcmp(recipe.resources[i].id, recipe.map.geometry.id) == 0 ? geometry : &recipe.resources[i];
+      if (!qa_resolved_resource_copy(source, &loaded->owned_resources[i])) { qa_app_loaded_content_destroy(loaded); return NULL; }
+      loaded->owned_resource_count = i + 1;
+    }
     recipe.mounts = *qa_content_mounted_plan(mounts);
-    recipe.map.geometry = geometry;
+    recipe.map.geometry = *geometry;
     recipe.resources = loaded->owned_resources;
     loaded->recipe = recipe;
   }
@@ -1199,7 +1609,8 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
   const char *bsp_family = qa_classify_bsp(bytes, byte_length, map);
   if (bsp_family == NULL) { free(bytes); qa_app_loaded_content_destroy(loaded); return NULL; }
   if (strcmp(bsp_family, "q1") == 0) {
-    qa_content_mounted *map_content = open_map_content(catalog, &recipe, q3_demo);
+    map_content sidecars = open_map_content(catalog, &recipe, q3_demo);
+    qa_content_mounted *map_content = sidecars.mounted;
     qa_content_opened_resource entities = {0}, lit = {0};
     char *ent_path = replace_bsp_suffix(map, ".ent"), *lit_path = replace_bsp_suffix(map, ".lit");
     bool has_ent = map_content && qa_content_mounted_open(map_content, ent_path, NULL, NULL, &entities);
@@ -1214,10 +1625,11 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
     map_options.has_lit = has_lit; map_options.lit = lit.bytes; map_options.lit_length = lit.byte_length;
     qa_q1_read_bsp(bytes, byte_length, &map_options, world);
     free(entities.bytes); free(lit.bytes);
-    if (map_content) qa_content_mounted_destroy(map_content);
+    map_content_close(&sidecars);
     loaded->world = world; loaded->world_family = 1; loaded->world_kind = "q1-bsp";
   } else if (strcmp(bsp_family, "q2") == 0) {
-    qa_content_mounted *map_content = open_map_content(catalog, &recipe, q3_demo);
+    map_content sidecars = open_map_content(catalog, &recipe, q3_demo);
+    qa_content_mounted *map_content = sidecars.mounted;
     qa_q2_bsp *raw = calloc(1, sizeof *raw);
     if (!raw) qa_range_error("Out of memory");
     qa_read_q2_bsp(bytes, byte_length, map, raw);
@@ -1245,10 +1657,10 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
     if (!world) qa_range_error("Out of memory");
     qa_q2_map_resources resources = {&stash, stash_read_material};
     qa_to_q2_world_geometry(raw, &resources, world);
-    free(raw);
+    /* world->source owns raw now (qa_q2_decoded_map_destroy frees it). */
     for (size_t i = 0; i < stash.count; i++) { free(stash.paths[i]); free(stash.bytes[i]); }
     free(stash.paths); free(stash.bytes); free(stash.lengths);
-    if (map_content) qa_content_mounted_destroy(map_content);
+    map_content_close(&sidecars);
     loaded->world = world; loaded->world_family = 2; loaded->world_kind = "q2-bsp";
   } else {
     qa_q3_decoded_world *world = calloc(1, sizeof *world);
@@ -1261,36 +1673,19 @@ qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_hos
   for (size_t i = 0; i < recipe.execution_count; i++) if (recipe.execution[i].kind == QA_EXECUTION_MODULE_QUAKEC) has_quakec = true;
   if (has_quakec && network_is(&options, "native-server") && loaded->world_family != 1)
     qa_range_error("Native Quake clients require Quake BSP geometry");
-  if (loaded->sidecar_count > 1) qsort(loaded->sidecars, loaded->sidecar_count, sizeof *loaded->sidecars, sidecar_compare);
-  if (needs_guest && !unified) {
-    /* prepareQuakeCSource/prepareQ3Game/prepareQ2Guest are host-shaped
-     * in their slices; no concrete host exists to call yet. */
-    qa_app_loaded_content_destroy(loaded);
-    return NULL;
-  }
+  if (loaded->sidecar_count > 1) qa_js_sort(loaded->sidecars, loaded->sidecar_count, sizeof *loaded->sidecars, sidecar_compare);
+  if (needs_guest && !unified) prepare_guests(loaded, &recipe, catalog, &options);
+  /* TS: a preparation failure closes the loaded content and rethrows. */
+  qa_cleanup prepare_cleanup;
+  qa_cleanup_push(&prepare_cleanup, loaded_destroy_cleanup, loaded);
   if (presentation_source == NULL) {
-    if (recipe.weapon_behavior_count != 0) {
-      bool guest_server = false;
-      for (size_t i = 0; i < recipe.execution_count; i++)
-        if (recipe.execution[i].role && strcmp(recipe.execution[i].role, "server-game") == 0 && recipe.execution[i].kind != QA_EXECUTION_MODULE_TYPESCRIPT) guest_server = true;
-      if (guest_server) qa_range_error("Selected native or bytecode game has no shared projectile behavior hook");
-      for (size_t i = 0; i < recipe.weapon_behavior_count; i++)
-        for (size_t j = i + 1; j < recipe.weapon_behavior_count; j++)
-          if (recipe.weapon_behaviors[i].definition && recipe.weapon_behaviors[j].definition &&
-              recipe.weapon_behaviors[i].definition->role && recipe.weapon_behaviors[j].definition->role &&
-              strcmp(recipe.weapon_behaviors[i].definition->role, recipe.weapon_behaviors[j].definition->role) == 0)
-            qa_range_error("Conflicting trajectory behaviors for one projectile role");
-    }
-    if (guest_host.prepare_weapon_behaviors) qa_app_loaded_content_prepare_weapon_behaviors(loaded);
-    else if (recipe.weapon_behavior_count != 0) { qa_app_loaded_content_destroy(loaded); return NULL; }
-    if (guest_host.prepare_mods) qa_app_loaded_content_prepare_mods(loaded, "gameplay");
-    else if (recipe.mod_count != 0) { qa_app_loaded_content_destroy(loaded); return NULL; }
-    if (guest_host.prepare_grapple) qa_app_loaded_content_prepare_qvm_grapple(loaded);
-    else if (recipe.equipment.grapple.is_enabled && recipe.equipment.grapple.mechanic && strcmp(recipe.equipment.grapple.mechanic, "q3-qvm") == 0) { qa_app_loaded_content_destroy(loaded); return NULL; }
+    qa_app_loaded_content_prepare_weapon_behaviors(loaded);
+    qa_app_loaded_content_prepare_mods(loaded, "gameplay");
+    qa_app_loaded_content_prepare_qvm_grapple(loaded);
   } else if (unified) {
-    if (guest_host.prepare_mods) qa_app_loaded_content_prepare_mods(loaded, "presentation");
-    else if (recipe.mod_count != 0) { qa_app_loaded_content_destroy(loaded); return NULL; }
+    qa_app_loaded_content_prepare_mods(loaded, "presentation");
   }
+  qa_cleanup_pop(&prepare_cleanup);
   return loaded;
 }
 qa_app_options qa_app_application_options_for_recipe(const qa_app_options *options, const qa_content_catalog *catalog,
@@ -1351,8 +1746,7 @@ static void assert_current_or_abort(qa_app_assert_current_fn assert_current, voi
   if (error) qa_range_error("%s", error);
 }
 static char *lower_dup(const char *text) {
-  char *copy = xstrdup(text);
-  if (copy) for (size_t i = 0; copy[i]; i++) copy[i] = (char)tolower((unsigned char)copy[i]);
+  char *copy = qa_js_to_lower_case(text); /* TS toLowerCase (Unicode) */
   return copy;
 }
 /* node:path dirname/basename/join over '/'-separated paths. */
@@ -1508,6 +1902,25 @@ static void configuration_set_q3(qa_app_configuration_content *content, bool has
   content->has_q3_value = has_q3;
   if (has_q3) { content->q3_value = q3; content->q3_product = &content->q3_value; }
 }
+qa_app_configuration_content *qa_app_configuration_content_over_loaded(qa_app_loaded_content *loaded,
+    void (*close)(void *ctx), void *close_ctx) {
+  qa_app_configuration_content *content = calloc(1, sizeof *content);
+  if (!content) return NULL;
+  content->catalog = loaded->catalog; content->mounts = loaded->mounts;
+  qa_q3_application_product q3;
+  memset(&q3, 0, sizeof q3);
+  bool has_q3 = qa_app_loaded_content_q3_product(loaded, &q3);
+  configuration_set_q3(content, has_q3, q3);
+  const qa_executable_recipe *recipe = &loaded->recipe;
+  content->selection.source = recipe->map.entities;
+  content->selection.engine_behavior = recipe->engine_behavior;
+  content->selection.match = recipe->match;
+  content->selection.combat = recipe->combat;
+  content->selection.movement = recipe->movement;
+  configuration_set_timing(content, recipe->timing, recipe->timing_count);
+  content->close_hook = close; content->close_ctx = close_ctx;
+  return content;
+}
 qa_app_configuration_content *qa_app_open_remote_application_content_native(const qa_app_options *options) {
   qa_remote_content_selection fallback = {0};
   const qa_remote_content_selection *selection = NULL;
@@ -1628,4 +2041,217 @@ qa_app_configuration_content *qa_app_open_application_configuration_content_nati
   content->catalog = catalog; content->mounts = content->native_mounts;
   configuration_set_q3(content, product.has_q3_product, product.q3_product);
   return content;
+}
+/* --- Exports for startup-selection.ts (startup porter, additive): the
+ * content.ts / mod-selection.ts / q3-product.ts pieces the startup
+ * selection model reads, over the concrete hosts above. --- */
+qa_launch_services qa_app_native_launch_services(void) { return native_launch_services(); }
+void qa_app_application_player_products(const qa_content_catalog *catalog, const qa_app_options *options,
+    bool has_native_source, bool native_source, const char **out_movement, const char **out_character) {
+  player_products products = application_player_products(catalog, options, has_native_source, native_source);
+  *out_movement = products.movement;
+  *out_character = products.character;
+}
+void qa_app_prepare_q3_application_product_native(qa_content_catalog *catalog, const char *content,
+    const qa_app_options *options, struct qa_app_prepared_q3_product *out, void **backing) {
+  *out = prepare_q3_native(catalog, content, options, backing);
+}
+void qa_app_q3_product_backing_free(void *backing) { q3_native_backing_free(backing); }
+const struct qa_app_mod_choices *qa_app_application_mod_choices_native(qa_content_catalog *catalog, void **backing_out) {
+  configured_backing *backing = calloc(1, sizeof *backing);
+  if (!backing) qa_range_error("Out of memory");
+  configured_host host = {catalog, backing};
+  configured_build_choices(&host, catalog);
+  *backing_out = backing;
+  return &backing->choices;
+}
+void qa_app_mod_choices_backing_free(void *backing) { configured_backing_free(backing); }
+struct qa_app_product_mounts {
+  qa_content_mounted *mounted;
+  qa_catalog_mount_list list; qa_mount_id *order; char *plan_id;
+};
+qa_app_product_mounts *qa_app_open_product_mounts(qa_content_catalog *catalog, qa_content_id content,
+    const char *plan_name_space, bool demo) {
+  qa_app_product_mounts *mounts = calloc(1, sizeof *mounts);
+  char *hex = hex_of(content);
+  if (!mounts || !hex) { free(mounts); free(hex); qa_range_error("Out of memory"); }
+  mounts->mounted = open_product_mounts(catalog, content, plan_name_space, hex, demo,
+      &mounts->list, &mounts->order, &mounts->plan_id);
+  free(hex);
+  if (!mounts->mounted) { free(mounts); qa_range_error("Out of memory"); }
+  return mounts;
+}
+qa_content_mounted *qa_app_product_mounts_mounted(qa_app_product_mounts *mounts) { return mounts->mounted; }
+void qa_app_product_mounts_destroy(qa_app_product_mounts *mounts) {
+  if (!mounts) return;
+  qa_content_mounted_destroy(mounts->mounted);
+  qa_content_catalog_mount_list_free(&mounts->list);
+  free(mounts->order); free(mounts->plan_id);
+  free(mounts);
+}
+/* TS openInitialConfigurationContent(options, recipe?, installedCatalog?) (configuration.ts),
+ * over the concrete catalog: discovers the installed catalog when none is given (owned by the
+ * result), prepares the Q3 product (written to options->q3_product), then opens the recipe or
+ * configuration-preset content. */
+qa_app_configuration_content *qa_app_open_initial_configuration_content_native(qa_app_options *options,
+    const qa_executable_recipe *recipe, qa_content_catalog *installed_catalog) {
+  qa_content_catalog *catalog = installed_catalog;
+  bool owned = false;
+  if (catalog == NULL) {
+    catalog = calloc(1, sizeof *catalog);
+    if (!catalog) return NULL;
+    owned = true;
+    char *default_user_root = NULL;
+    qa_nightdive_addon_root *default_addons = NULL; size_t default_addon_count = 0;
+    qa_catalog_nightdive_addon_root *addon_roots = NULL;
+    const char *user_root = options->user_content_root;
+    if (!user_root) { default_user_root = qa_default_user_content_root(); user_root = default_user_root; }
+    qa_discover_content_options discover; memset(&discover, 0, sizeof discover);
+    discover.corpus_root = options->corpus_root; discover.user_content_root = user_root;
+    discover.discover_mods = qa_app_application_discovers_mods_native(options, recipe != NULL);
+    discover.inspector = qa_app_default_archive_inspector();
+    if (options->addon_content_root_count > 0) {
+      addon_roots = calloc(options->addon_content_root_count, sizeof *addon_roots);
+      if (!addon_roots) qa_range_error("Out of memory");
+      for (size_t i = 0; i < options->addon_content_root_count; i++)
+        addon_roots[i] = (qa_catalog_nightdive_addon_root){options->addon_content_roots[i].family, options->addon_content_roots[i].root};
+      discover.addon_content_roots = addon_roots; discover.addon_content_root_count = options->addon_content_root_count;
+    } else if (qa_default_addon_content_roots(NULL, &default_addons, &default_addon_count)) {
+      addon_roots = calloc(default_addon_count ? default_addon_count : 1, sizeof *addon_roots);
+      if (!addon_roots) qa_range_error("Out of memory");
+      for (size_t i = 0; i < default_addon_count; i++)
+        addon_roots[i] = (qa_catalog_nightdive_addon_root){default_addons[i].family, default_addons[i].root};
+      discover.addon_content_roots = addon_roots; discover.addon_content_root_count = default_addon_count;
+    }
+    bool discovered = qa_discover_installed_content(&discover, catalog);
+    free(addon_roots); qa_nightdive_addon_roots_free(default_addons, default_addon_count); free(default_user_root);
+    if (!discovered) { free(catalog); return NULL; }
+  }
+  void *q3_backing = NULL;
+  qa_app_prepared_q3_product product = prepare_q3_native(catalog, recipe != NULL ? recipe->map.entities.content : options->product,
+      options, &q3_backing);
+  if (product.has_q3_product) { options->has_q3_product = true; options->q3_product = product.q3_product; }
+  qa_content_catalog *effective = (qa_content_catalog *)product.catalog;
+  qa_app_configuration_content *content;
+  if (recipe != NULL) {
+    qa_app_configuration_request_native request; memset(&request, 0, sizeof request);
+    request.kind = "recipe"; request.recipe = recipe;
+    content = qa_app_open_application_configuration_content_native(effective, request, options->has_q3_product ? &options->q3_product : NULL);
+    if (content) content->q3_backing_initial = q3_backing;
+  } else {
+    qa_app_application_preset_result *preset = calloc(1, sizeof *preset);
+    if (!preset || !qa_app_application_configuration_preset_for_catalog(effective, options, NULL, preset)) qa_range_error("Out of memory");
+    qa_app_configuration_request_native request; memset(&request, 0, sizeof request);
+    request.kind = "launch"; request.preset = &preset->preset; request.choice = qa_preset_choice(preset->preset.id);
+    content = qa_app_open_application_configuration_content_native(effective, request, options->has_q3_product ? &options->q3_product : NULL);
+    if (content) { content->preset_result = preset; content->q3_backing_initial = q3_backing; }
+    else { qa_app_application_preset_result_free(preset); free(preset); }
+  }
+  if (content == NULL) { q3_native_backing_free(q3_backing); if (owned) { qa_content_catalog_destroy(catalog); free(catalog); } return NULL; }
+  if (owned) { content->native_catalog = catalog; content->owns_catalog = true; }
+  return content;
+}
+
+/* ---- loadQ3Character(await content.forContent(appearance), { model, skin: "default", headModel: "", headSkin: "default",
+ * team: null, teamName: "" }) as Application.openGraphical and changeLocalPlayers call it. ---- */
+static bool character_resource_open(void *ctx, const char *path, qa_q3_character_opened_resource *out) {
+  qa_content_opened_resource opened;
+  memset(&opened, 0, sizeof opened);
+  if (!qa_content_mounted_open(ctx, path, NULL, NULL, &opened)) return false;
+  out->reference = *opened.reference; out->bytes = opened.bytes; out->byte_length = opened.byte_length;
+  return true;
+}
+static void character_free(void *assets) { free(assets); }
+const qa_q3_character_assets *qa_app_load_q3_character_for_content(qa_app_loaded_content *content, qa_content_id appearance,
+    const char *model) {
+  qa_content_mounted *mounts = (qa_content_mounted *)qa_app_loaded_content_for_content(content, appearance);
+  qa_q3_character_assets *assets = calloc(1, sizeof *assets);
+  if (assets == NULL) qa_range_error("Out of memory");
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, character_free, assets);
+  qa_q3_character_selection selection = {model, "default", "", "default", NULL, ""};
+  qa_q3_character_resources resources = {mounts, character_resource_open};
+  qa_q3_load_character(resources, selection, assets);
+  qa_cleanup_pop(&cleanup);
+  qa_q3_character_assets **grown = realloc(content->characters, (content->character_count + 1) * sizeof *grown);
+  if (grown == NULL) qa_range_error("Out of memory");
+  content->characters = grown;
+  content->characters[content->character_count++] = assets;
+  return assets;
+}
+
+/* TS resolveApplicationTravel(content, path): the recipe with its map geometry resolved again for the travel
+ * path over content.catalog and content.mounts. The returned recipe borrows the content's storage. */
+qa_executable_recipe qa_app_resolve_application_travel(qa_app_loaded_content *c, const char *path) {
+  qa_executable_recipe out = {0};
+  if (c->native_mounts == NULL) {
+    phase(c->host.resolve_travel(c->host.ctx, c, path, &out));
+    return out;
+  }
+  return resolve_native_travel(c, path);
+}
+static qa_executable_recipe resolve_native_travel(qa_app_loaded_content *c, const char *path) {
+  qa_executable_recipe out = {0};
+  const qa_executable_recipe *recipe = &c->recipe;
+  launch_adapter adapter; memset(&adapter, 0, sizeof adapter); adapter.mounted = c->native_mounts;
+  qa_launch_mounted launch_mounted; memset(&launch_mounted, 0, sizeof launch_mounted);
+  launch_mounted.ctx = &adapter; launch_mounted.plan = qa_content_mounted_plan(c->native_mounts);
+  launch_mounted.open = launch_adapter_open; launch_mounted.resolve = launch_adapter_resolve; launch_mounted.borrow_ordered = launch_adapter_borrow;
+  qa_resource_request request = {recipe->map.geometry_content, path};
+  void *grown = realloc(c->travels, (c->travel_count + 1) * sizeof *c->travels);
+  if (grown == NULL) qa_range_error("Out of memory");
+  c->travels = grown;
+  memset(&c->travels[c->travel_count], 0, sizeof c->travels[c->travel_count]);
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, free, adapter.last_bytes);
+  bool resolved = qa_resolve_launch_resource((qa_content_catalog *)c->catalog, &launch_mounted, request, "map",
+      &c->native_strings, &c->travels[c->travel_count].geometry);
+  qa_cleanup_pop(&cleanup);
+  free(adapter.last_bytes);
+  if (!resolved) qa_range_error("Out of memory");
+  c->travel_count++;
+  const qa_resolved_resource_reference *geometry = &c->travels[c->travel_count - 1].geometry;
+  qa_resolved_resource_reference *resources = calloc(recipe->resource_count ? recipe->resource_count : 1, sizeof *resources);
+  if (resources == NULL) qa_range_error("Out of memory");
+  c->travels[c->travel_count - 1].resources = resources;
+  for (size_t i = 0; i < recipe->resource_count; i++) {
+    const qa_resolved_resource_reference *source = strcmp(recipe->resources[i].id, recipe->map.geometry.id) == 0 ? geometry : &recipe->resources[i];
+    if (!qa_resolved_resource_copy(source, &resources[i])) qa_range_error("Out of memory");
+    c->travels[c->travel_count - 1].resource_count = i + 1;
+  }
+  out = *recipe;
+  out.map.geometry = *geometry;
+  out.resources = resources; out.resource_count = recipe->resource_count;
+  return out;
+}
+
+/* The producer Application.nativeCommandContext builds from content.preparedQ2Game.execution
+ * ({ kind: "game-module", module: { id, artifactPath, digest, revision } }); NULL when no Q2 game is prepared.
+ * Owned by the content: contexts that carry it stay valid until destroy. */
+const qa_command_producer *qa_app_loaded_content_native_command_producer(qa_app_loaded_content *content) {
+  if (content->prepared_q2_game == NULL) return NULL;
+  if (!content->has_native_producer) {
+    const qa_resolved_execution_module *execution = strcmp(content->prepared_q2_edition, "classic") == 0
+        ? &((const qa_app_sim_prepared_classic_guest *)content->prepared_q2_game)->execution
+        : &((const qa_app_sim_prepared_rerelease_guest *)content->prepared_q2_game)->execution;
+    const qa_resolved_resource_reference *artifact = execution->artifact;
+    memset(&content->native_producer, 0, sizeof content->native_producer);
+    content->native_producer.kind = "game-module";
+    content->native_producer.module.id = execution->owner.provider;
+    content->native_producer.module.artifact_path = artifact->requested_path;
+    content->native_producer.module.digest = artifact->digest;
+    content->native_producer.module.revision = artifact->digest;
+    content->has_native_producer = true;
+  }
+  return &content->native_producer;
+}
+
+/* C-only: keeps record alive until the content is destroyed (the TS closures that capture the content). */
+void qa_app_loaded_content_keep(qa_app_loaded_content *content, void *record, void (*release)(void *record)) {
+  void *grown = realloc(content->kept, (content->kept_count + 1) * sizeof *content->kept);
+  if (grown == NULL) qa_range_error("Out of memory");
+  content->kept = grown;
+  content->kept[content->kept_count].record = record;
+  content->kept[content->kept_count].release = release;
+  content->kept_count++;
 }

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("Classic Q2 records out of memory"); return p; }
 char *qa_compat_q2_read_classic_string(const qa_compat_q2_memory *memory, bool has, qa_guest_address address, double maximum) {
@@ -41,7 +42,21 @@ struct qa_compat_q2_classic_edicts {
   qa_guest_address f_base, f_stride, f_count, f_capacity;
   bool has_descriptor; qa_compat_q2_classic_edict_descriptor descriptor;
   double retained[256]; size_t retained_count; double retired[256]; size_t retired_count;
+  /* currentActor closures of borrowed records, one per slot, owned for the edicts' lifetime. */
+  struct slot_cell **cells; size_t cell_count;
 };
+typedef struct slot_cell { qa_compat_q2_classic_edicts *e; double slot; } slot_cell;
+static slot_cell *cell_of(qa_compat_q2_classic_edicts *e, double slot) {
+  size_t index = (size_t)slot;
+  if (index >= e->cell_count) {
+    size_t count = index + 1 > e->cell_count * 2 ? index + 1 : e->cell_count * 2;
+    slot_cell **grown = realloc(e->cells, count * sizeof *grown); if (!grown) qa_range_error("Classic Q2 records out of memory");
+    for (size_t i = e->cell_count; i < count; i++) grown[i] = NULL;
+    e->cells = grown; e->cell_count = count;
+  }
+  if (e->cells[index] == NULL) { e->cells[index] = xmalloc(sizeof **e->cells); e->cells[index]->e = e; e->cells[index]->slot = slot; }
+  return e->cells[index];
+}
 static bool slot_has(const double *list, size_t n, double slot) { for (size_t i = 0; i < n; i++) if (list[i] == slot) return true; return false; }
 static void slot_add(double *list, size_t *n, double slot) { if (!slot_has(list, *n, slot) && *n < 256) list[(*n)++] = slot; }
 static void slot_del(double *list, size_t *n, double slot) { for (size_t i = 0; i < *n; i++) if (list[i] == slot) list[i] = list[--(*n)]; }
@@ -60,7 +75,11 @@ qa_compat_q2_classic_edicts *qa_compat_q2_classic_edicts_create(
   e->f_count = qa_compat_q2_mem_offset(memory, exports, 72); e->f_capacity = qa_compat_q2_mem_offset(memory, exports, 76);
   return e;
 }
-void qa_compat_q2_classic_edicts_destroy(qa_compat_q2_classic_edicts *e) { free(e); }
+void qa_compat_q2_classic_edicts_destroy(qa_compat_q2_classic_edicts *e) {
+  if (!e) return;
+  for (size_t i = 0; i < e->cell_count; i++) free(e->cells[i]);
+  free(e->cells); free(e);
+}
 void qa_compat_q2_classic_edicts_retire_input_client(qa_compat_q2_classic_edicts *e, double slot) { slot_add(e->retired, &e->retired_count, slot); }
 void qa_compat_q2_classic_edicts_finish_input_retirement(qa_compat_q2_classic_edicts *e, double slot) { slot_del(e->retired, &e->retired_count, slot); }
 qa_compat_q2_classic_edict_descriptor qa_compat_q2_classic_edicts_descriptor(qa_compat_q2_classic_edicts *e) {
@@ -77,9 +96,7 @@ qa_compat_q2_classic_edict_descriptor qa_compat_q2_classic_edicts_descriptor(qa_
   return e->descriptor;
 }
 static qa_actor_id_result current_actor_cb(void *ctx) {
-  /* ctx is a heap cell {edicts*, slot} allocated per record; the cell
-   * is leaked with the borrowed record (TS closure lifetime). */
-  void **cell = ctx; qa_compat_q2_classic_edicts *e = cell[0]; double slot = *(double *)cell[1];
+  slot_cell *cell = ctx; qa_compat_q2_classic_edicts *e = cell->e; double slot = cell->slot;
   qa_actor_id_result r; memset(&r, 0, sizeof r);
   qa_raw_entity_view rec = qa_compat_q2_classic_edicts_at(e, slot);
   qa_owned_actor owned;
@@ -90,7 +107,7 @@ static qa_actor_id_result current_actor_cb(void *ctx) {
 static qa_raw_entity_view at_desc(qa_compat_q2_classic_edicts *e, double slot, qa_compat_q2_classic_edict_descriptor d) {
   if (slot != trunc(slot) || slot < 0 || slot >= d.count) qa_range_error("API 3 edict slot exceeds num_edicts");
   qa_guest_address address = qa_compat_q2_mem_offset(e->memory, d.base, (int64_t)(slot * d.stride));
-  void **cell = xmalloc(2 * sizeof(void *)); double *sp = xmalloc(sizeof(double)); *sp = slot; cell[0] = e; cell[1] = sp;
+  slot_cell *cell = cell_of(e, slot);
   qa_raw_entity_view rec; memset(&rec, 0, sizeof rec);
   rec.ctx = cell; rec.module = e->memory->module; rec.slot = slot; rec.address = address; rec.stride_bytes = d.stride;
   rec.public_layout = qa_compat_q2_classic_edict_layout;
@@ -176,5 +193,5 @@ uint8_t *qa_compat_q2_classic_edicts_client_prefix(qa_compat_q2_classic_edicts *
 void qa_compat_q2_classic_edicts_set_client_ping(qa_compat_q2_classic_edicts *e, double slot, double ping) {
   uint8_t *prefix = qa_compat_q2_classic_edicts_client_prefix(e, slot);
   if (!prefix) qa_range_error("Edict has no API 3 client prefix");
-  qa_compat_q2_view_set_i32(prefix, 184, (int32_t)ping);
+  qa_compat_q2_view_set_i32(prefix, 184, qa_js_to_int32(ping));
 }

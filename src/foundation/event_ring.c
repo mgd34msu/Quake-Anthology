@@ -158,6 +158,13 @@ const void *qa_event_ring_newest(const qa_event_ring *ring) {
 }
 
 bool qa_event_ring_open_cursor(qa_event_ring *ring, qa_event_cursor *cursor, bool tail) {
+  /* TS keeps cursors in a Set: reopening a registered cursor only moves it. */
+  for (size_t i = 0; i < ring->cursor_count; i++) {
+    if (ring->cursors[i] == cursor) {
+      cursor->next = tail ? ring->next_id : ring->first_id;
+      return true;
+    }
+  }
   if (ring->cursor_count == ring->cursor_capacity) {
     size_t grown = ring->cursor_capacity == 0 ? 4 : ring->cursor_capacity * 2;
     qa_event_cursor **cursors =

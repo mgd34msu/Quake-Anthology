@@ -1,5 +1,6 @@
 /* Port of src/render/scene/models/prepare.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/models/prepare.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -22,6 +23,8 @@
 #include "qa/render/scene/models/sprites.h"
 #include "qa/render/scene/models/transform.h"
 #include "qa/render/scene/particles/legacy.h"
+#include "qa/foundation/js.h"
+#define MAX_MODEL_BEAM_SEGMENTS 512
 
 static double fr(double value) { return (double)(float)value; }
 static bool bit(double flags, int32_t mask) { return (qa_int32(flags) & mask) != 0; }
@@ -153,17 +156,17 @@ static double lod_index(const qa_scene_entity *entity, double count,
     const double *m = context->camera.projection.values;
     double projected =
         distance > 0
-            ? fmin(fr(fr(radius * m[5] - distance * m[9] + m[13]) /
+            ? qa_js_min(fr(fr(radius * m[5] - distance * m[9] + m[13]) /
                       fr(radius * m[7] - distance * m[11] + m[15])), 1)
             : 0;
     double fraction = projected != 0
-                          ? fr(1 - fr(projected * fmin(options->has_lod_scale
+                          ? fr(1 - fr(projected * qa_js_min(options->has_lod_scale
                                                             ? options->lod_scale
                                                             : 5, 20)))
                           : 0;
-    lod = fmax(0, fmin(count - 1, trunc(fr(fraction * count))));
+    lod = qa_js_max(0, qa_js_min(count - 1, trunc(fr(fraction * count))));
   }
-  return fmax(0, fmin(count - 1, lod + (options->has_lod_bias ? options->lod_bias : 0)));
+  return qa_js_max(0, qa_js_min(count - 1, lod + (options->has_lod_bias ? options->lod_bias : 0)));
 }
 
 qa_model_vertex *qa_interpolate_scene_md2(
@@ -558,12 +561,13 @@ static bool prepare_at_transform(qa_scene_entity entity_value,
         const qa_q1_alias_frame *previous =
             qa_q1_sample_alias_frame(old_set, context->time_seconds, sync);
         size_t pose_count = 0;
-        qa_model_vertex *posed = qa_interpolate_alias_frames(
+        /* TS interpolateAliasFrames with its module PoseLru: the pose is borrowed from the cache (MDL frames
+           are forgotten from it in qa_q1_alias_model_destroy before they are freed). */
+        const qa_model_vertex *posed = qa_interpolate_alias_frames_cached(
             &current->frame, &previous->frame, back_lerp, (qa_vec3){0, 0, 0},
             &pose_count);
         qa_alias_geometry geometry = {0};
         qa_build_mdl_geometry(mdl, posed, pose_count, &geometry);
-        free(posed);
         double skin = (entity.skin >= 0 && entity.skin < (double)mdl->skin_count)
                           ? entity.skin : 0;
         const qa_timed_frames *skin_frames =
@@ -644,7 +648,7 @@ static bool prepare_at_transform(qa_scene_entity entity_value,
         const qa_q3_mesh_model *selected =
             *AT_PTR(const qa_q3_mesh_model *, choices, choice_count, lod, "MD3 LOD");
         if (selected == NULL)
-          qa_range_error("Missing source MD3 LOD slot %g", lod);
+          qa_range_error("Missing source MD3 LOD slot %s", QA_JS_NUMBER(lod));
         const qa_q3_mesh_frame *fog_frame = AT_PTR(
             qa_q3_mesh_frame, selected->frames, selected->frame_count, frame, "MD3 fog frame");
         p.has_fog = true;
@@ -1075,14 +1079,16 @@ bool qa_prepare_scene_entity(const qa_scene_entity *entity,
   qa_vec3 angles = qa_vector_to_angles(direction);
   qa_game_random random;
   int64_t slot = entity->actor != NULL ? entity->actor->slot : 0;
-  qa_game_random_init(&random,
-                      (int64_t)trunc(context->time_seconds * 1000) + slot);
+  /* new GameRandom(Math.trunc(t * 1000) + slot) throws unless that is a safe integer. */
+  double seed = trunc(context->time_seconds * 1000) + (double)slot;
+  if (!(fabs(seed) <= 9007199254740991.0)) qa_range_error("Game random seed must be a safe integer");
+  qa_game_random_init(&random, (int64_t)seed);
   qa_prepared_model_entity *segments = NULL;
   size_t count = 0, capacity = 0;
   bool oom = false;
   double frames = count_frames(&entity->model);
-  for (double offset = 0; offset < distance; offset += segment_length) {
-    double length = fmin(distance - offset, segment_length);
+  for (double offset = 0, made = 0; offset < distance && made < MAX_MODEL_BEAM_SEGMENTS; offset += segment_length, made++) {
+    double length = qa_js_min(distance - offset, segment_length);
     double segment_frame = fmod((double)qa_game_random_rand(&random), frames);
     qa_scene_entity segment = *entity;
     segment.transform.origin = qa_add3(

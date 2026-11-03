@@ -17,9 +17,9 @@
 
 /* TS fs failures surface as plain Node Errors; the C port aborts with
  * the strerror text under the Error class name. */
+/* Node fs errors are plain Errors that TS catch sites may recover. */
 static noreturn void fs_error(const char *source) {
-  fprintf(stderr, "Error: %s: %s\n", source, strerror(errno));
-  abort();
+  qa_raise("Error", errno, 0, "%s: %s", source, strerror(errno));
 }
 
 static char *copy_text(const char *text) {
@@ -54,7 +54,13 @@ bool qa_file_source_init(qa_archive_source *out, const char *source) {
   out->source = copy_text(source);
   if (out->source == NULL) return false;
   int descriptor = open(source, O_RDONLY);
-  if (descriptor < 0) fs_error(source);
+  if (descriptor < 0) {
+    int saved = errno;
+    free(out->source);
+    out->source = NULL;
+    errno = saved;
+    fs_error(source);
+  }
   struct stat info;
   if (fstat(descriptor, &info) != 0) {
     int saved = errno;

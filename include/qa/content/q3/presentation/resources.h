@@ -1,8 +1,7 @@
 /* Port of src/content/q3/presentation/resources.ts. GPL-2.0-or-later.
  * TS async registrations are synchronous here; register_* return false
  * only on OOM. SceneShader identity is the address of the registry's
- * per-picture shader record. The scene recorder is the landed
- * scene.h view (qa_q3_pres_scene_recorder_mirror is its alias). */
+ * per-picture shader record. The scene recorder is the scene.h view. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_RESOURCES_H
 #define QA_CONTENT_Q3_PRESENTATION_RESOURCES_H
 #include <stdbool.h>
@@ -53,11 +52,10 @@ typedef struct qa_q3_pres_resource_world {
   qa_source_cluster_pvs (*cluster_pvs)(void *ctx, double cluster);
 } qa_q3_pres_resource_world;
 /* TS Q3SceneRecorder (scene.ts): the landed recorder view. */
-typedef qa_q3_pres_scene_recorder_view qa_q3_pres_scene_recorder_mirror;
 /* TS Q3ResourceHost. model false only on OOM; skin/shader *out NULL is
  * TS null (shader picture is host-owned). world false only on OOM. */
 typedef struct qa_q3_pres_resource_host {
-  qa_q3_pres_scene_recorder_mirror scene;
+  qa_q3_pres_scene_recorder_view scene;
   qa_material_picture zero_picture;
   void *ctx;
   bool (*model)(void *ctx, const char *path, qa_q3_pres_scene_model *out);

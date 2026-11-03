@@ -1,8 +1,8 @@
 /*
  * Port of src/foundation/stamp.ts (StampSet): epoch visit marks.
  * Beginning a query is one epoch increment instead of clearing storage.
- * The epoch is 64-bit like the TypeScript `number` counter; marks store
- * its low 32 bits, exactly as the Uint32Array does. Out-of-range indices
+ * The epoch never exceeds 0xffffffff: begin() at that value re-zeroes the
+ * marks and restarts at 1, as the TypeScript does. Out-of-range indices
  * follow typed-array semantics (reads miss, writes drop).
  * GPL-2.0-or-later.
  */

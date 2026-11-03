@@ -216,6 +216,7 @@ static void opt_animation(void *ctx, qa_q3_animation_request request) {
   qa_animation_step_result update = m->options->hooks.animation(m->options->hooks.ctx, request, hook_context(m));
   m->animation = update.animation;
   for (size_t i = 0; i < update.effect_count; i++) append_effect(m, update.effects[i]);
+  free((void *)update.effects); /* hook results hand their effects to the move */
 }
 static bool opt_weapon(void *ctx) {
   provider_move *m = ctx;
@@ -223,6 +224,7 @@ static bool opt_weapon(void *ctx) {
   m->arsenal = update.base.arsenal; m->animation = update.base.animation;
   m->motion->pm_flags = update.movement_flags;
   for (size_t i = 0; i < update.base.effect_count; i++) append_effect(m, update.base.effects[i]);
+  free((void *)update.base.effects); /* hook results hand their effects to the move */
   if (update.base.continuation != NULL && !update.base.continuation->is_continue) {
     m->removed = true; return false;
   }
@@ -239,6 +241,7 @@ static void opt_torso(void *ctx) {
   qa_animation_step_result update = m->options->hooks.torso(m->options->hooks.ctx, hook_context(m));
   m->animation = update.animation;
   for (size_t i = 0; i < update.effect_count; i++) append_effect(m, update.effects[i]);
+  free((void *)update.effects); /* hook results hand their effects to the move */
 }
 static bool opt_firing(void *ctx) {
   provider_move *m = ctx;
@@ -313,6 +316,7 @@ static qa_movement_result provider_do_move(void *ctx, qa_movement_input input_in
   motion_options.has_fixed_msec = input.profile.has_fixed_milliseconds;
   motion_options.fixed_msec = input.profile.fixed_milliseconds;
   motion_options.no_footsteps = input.profile.no_footsteps;
+  motion_options.ladders_disabled = input.profile.ladders_disabled; /* ladders: profile.ladders !== false */
   motion_options.diagnostics = options->diagnostics;
   motion_options.begin_step = opt_begin_step;
   motion_options.end_step = (authoritative && services.has_input_application) ? opt_end_step : NULL;

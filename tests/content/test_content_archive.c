@@ -30,6 +30,7 @@
 #include "qa/content/roots.h"
 #include "qa/content/user_data.h"
 #include "qa/contracts/content.h"
+#include "qa/foundation/support.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -153,16 +154,36 @@ static void test_memory_pak(void) {
   duplicate_pak(unsafe, "Models\\duplicate.mdl");
   memset(unsafe + 14, 0, 56);
   memcpy(unsafe + 14, "../escape", 9);
-  CHECK_ABORTS((void)qa_decode_archive(unsafe, sizeof unsafe, false,
-                                       QA_ARCHIVE_FORMAT_PAK, NULL));
+  /* An unaddressable member is skipped instead of rejecting the archive
+   * (archive.test.ts FORMATS-012). */
+  qa_archive_handle *skipped =
+      qa_decode_archive(unsafe, sizeof unsafe, false, QA_ARCHIVE_FORMAT_PAK, NULL);
+  CHECK(skipped != NULL && skipped->entry_count == 1 && skipped->entries[0].ordinal == 0);
+  qa_archive_destroy(skipped);
+  uint8_t dotted[142];
+  duplicate_pak(dotted, "Models\\duplicate.mdl");
+  memset(dotted + 14, 0, 56);
+  memcpy(dotted + 14, "./maps//a.bsp", 13);
+  qa_archive_handle *normalized_archive =
+      qa_decode_archive(dotted, sizeof dotted, false, QA_ARCHIVE_FORMAT_PAK, NULL);
+  CHECK(normalized_archive != NULL && normalized_archive->entry_count == 2 &&
+        strcmp(normalized_archive->entries[0].path, "maps/a.bsp") == 0 &&
+        strcmp(normalized_archive->entries[1].path, "Models/duplicate.mdl") == 0);
+  qa_archive_destroy(normalized_archive);
   char *normalized =
       qa_normalize_entry_path("models/monsters/tank/../ctank/skin.pcx");
   CHECK(normalized != NULL &&
         strcmp(normalized, "models/monsters/ctank/skin.pcx") == 0);
   free(normalized);
   CHECK_ABORTS(free(qa_normalize_entry_path("../escape")));
-  CHECK_ABORTS(free(qa_normalize_entry_path("a//b")));
-  CHECK_ABORTS(free(qa_normalize_entry_path("a/./b")));
+  /* Empty and "." segments collapse (bun: "a/b", "a/b", "lead", "a/b/"). */
+  static const char *const collapse[4][2] = {
+      {"a//b", "a/b"}, {"a/./b", "a/b"}, {"/lead", "lead"}, {"a\\b\\", "a/b/"}};
+  for (int i = 0; i < 4; i++) {
+    char *collapsed = qa_normalize_entry_path(collapse[i][0]);
+    CHECK(collapsed != NULL && strcmp(collapsed, collapse[i][1]) == 0);
+    free(collapsed);
+  }
   CHECK_ABORTS(free(qa_normalize_entry_path("c:/abs")));
 }
 
@@ -437,6 +458,15 @@ static qa_content_mount loose_mount(const char *id, const char *content,
   return mount;
 }
 
+typedef struct outside_job {
+  qa_content_mounted *mounted;
+  size_t length;
+} outside_job;
+static void outside_run(void *raw) {
+  outside_job *job = raw;
+  free(qa_content_mounted_read_path(job->mounted, "../outside", &job->length));
+}
+
 static void test_mounts(void) {
   char *digest = qa_digest_bytes((const uint8_t *)"abc", 3);
   CHECK(digest != NULL &&
@@ -520,6 +550,14 @@ static void test_mounts(void) {
   const qa_resolved_resource_reference stale = *loose_ref;
   CHECK_ABORTS((void)qa_content_mounted_read_reference(mounted, &stale, &length));
   CHECK_ABORTS((void)qa_content_mounted_read_path(mounted, "../outside", &length));
+  {
+    /* mounts.test.ts: an unnameable path is a miss ("Resource not found"),
+     * not an "Invalid relative" fault. */
+    outside_job job = {mounted, 0};
+    qa_caught_error caught;
+    CHECK(!qa_try(outside_run, &job, &caught));
+    CHECK(strstr(caught.message, "Resource not found") != NULL);
+  }
 
   qa_open_mount_options pure;
   memset(&pure, 0, sizeof pure);

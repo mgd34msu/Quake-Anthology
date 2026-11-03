@@ -7,9 +7,12 @@
 
 #include "qa/content/q2/base/player/types.h"
 #include "qa/content/q2/foundation/host.h"
+#include "qa/content/q2/foundation/callbacks.h"
 
 /* TS q2EntitiesNamed. The returned array is malloc'd; caller frees. */
 qa_q2_entity **qa_q2_entities_named(qa_q2_game_services *game, const char *classname, size_t *out_count);
+/* TS q2PlayerSpawnCallbacks: think SP_CreateCoopSpots and SP_FixCoopSpots (static data). */
+const qa_q2_callback_definitions *qa_q2_player_spawn_callbacks(void);
 /* TS q2PlayerSpawns spawn module. */
 bool qa_q2_player_spawns_spawn(qa_q2_entity *entity, qa_q2_game_services *game);
 qa_q2_spawn_module qa_q2_get_player_spawns(void);

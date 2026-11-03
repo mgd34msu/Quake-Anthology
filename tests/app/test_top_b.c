@@ -15,9 +15,9 @@
 #include "qa/app/bootstrap/match_modes.h"
 #include "qa/app/bootstrap/options.h"
 #include "qa/app/bootstrap/player_progress.h"
-#include "qa/app/bootstrap/player_service_status.h"
 #include "qa/app/bootstrap/presentation.h"
 #include "qa/app/bootstrap/q1_session_actions.h"
+#include "qa/content/q1/foundation/types.h"
 #include "qa/app/bootstrap/q2_damage_blend.h"
 #include "qa/app/bootstrap/q2_travel.h"
 #include "qa/app/bootstrap/q3_map_command.h"
@@ -147,27 +147,43 @@ static void test_progress(void) {
   remove(path);
   remove("/tmp/topb-progress/player.json.pending");
 }
-static void test_service_status(void) {
-  char scratch[512];
-  qa_app_player_service_status status = qa_app_player_service_status_make("rankings", NULL, scratch, sizeof scratch);
-  CHECK(text_eq(status.kind, "unconfigured"));
-  CHECK(strstr(status.reason, "rankings requires an explicitly configured") == status.reason);
+static int load_sentinel;
+typedef struct load_result { int value; bool saw_failure; } load_result;
+static void load_service_ok(void *ctx) { (*(int *)ctx)++; }
+static void load_operation_ok(void *ctx, qa_app_loading_frame *frame) {
+  load_result *result = ctx;
+  qa_app_loading_next_frame(frame); qa_app_loading_next_frame(frame);
+  result->value = 42;
 }
-static const char *load_service_ok(void *ctx) { (*(int *)ctx)++; return NULL; }
-static const char *load_operation_ok(void *ctx, qa_app_loading_next_frame_fn next, void *frame_ctx, void *result) {
-  (void)ctx;
-  next(frame_ctx); next(frame_ctx);
-  *(int *)result = 42;
-  return NULL;
+static void load_service_fail(void *ctx) { CHECK(ctx == &load_sentinel); qa_raise("Error", 0, 0, "service broke"); }
+static void next_frame_call(void *ctx) { qa_app_loading_next_frame(ctx); }
+static void load_operation_catching(void *ctx, qa_app_loading_frame *frame) {
+  load_result *result = ctx;
+  qa_caught_error caught;
+  /* the operation catches the rejected frame and settles with a value; the service error still wins */
+  result->saw_failure = !qa_try(next_frame_call, frame, &caught) && strcmp(caught.message, "service broke") == 0;
+  result->value = 7;
 }
-static const char *load_service_fail(void *ctx) { (void)ctx; return "service broke"; }
+typedef struct load_call { qa_app_loading_operation_fn operation; load_result *result; void (*service)(void *); void *service_ctx; } load_call;
+static void run_load(void *ctx) {
+  load_call *call = ctx;
+  qa_app_service_loading(call->operation, call->result, call->service, call->service_ctx);
+}
 static void test_loading(void) {
-  int service_calls = 0, result = 0;
-  const char *error = qa_app_service_loading(load_operation_ok, NULL, load_service_ok, &service_calls, &result);
-  CHECK(error == NULL && result == 42 && service_calls == 2);
-  result = 0;
-  error = qa_app_service_loading(load_operation_ok, NULL, load_service_fail, NULL, &result);
-  CHECK(text_eq(error, "service broke"));
+  int service_calls = 0;
+  load_result result = {0, false};
+  qa_app_service_loading(load_operation_ok, &result, load_service_ok, &service_calls);
+  CHECK(result.value == 42 && service_calls == 2);
+  result.value = 0;
+  load_call call = {load_operation_ok, &result, load_service_fail, &load_sentinel};
+  qa_caught_error caught;
+  CHECK(!qa_try(run_load, &call, &caught));
+  CHECK(text_eq(caught.message, "service broke"));
+  CHECK(result.value == 0);
+  load_call catching = {load_operation_catching, &result, load_service_fail, &load_sentinel};
+  CHECK(!qa_try(run_load, &catching, &caught));
+  CHECK(text_eq(caught.message, "service broke"));
+  CHECK(result.saw_failure && result.value == 7);
 }
 static const char *lobby_host_unexpected(void *ctx, const qa_lobby *lobby, qa_net_address *a, qa_wire_selection *b) {
   (void)ctx; (void)lobby; (void)a; (void)b;
@@ -192,14 +208,18 @@ static void test_map_command_and_sessions(void) {
   const char *const *commands = qa_q3_product_map_commands(
       (qa_q3_product_policy){QA_Q3_PRODUCT_RETAIL, QA_Q3_TEAM_ARENA_UI_RETAIL}, &count);
   CHECK(count > 0);
-  qa_app_q3_map_launch launch = qa_app_q3_map_launch_make(
+  qa_app_q3_map_launch launch;
+  qa_app_q3_map_launch_make(&launch,
       (qa_q3_product_policy){QA_Q3_PRODUCT_RETAIL, QA_Q3_TEAM_ARENA_UI_RETAIL}, "spmap", 0);
   CHECK(launch.single_player && launch.game_type == 2 && launch.has_max_clients && launch.cvar_count == 4);
-  CHECK_ABORTS(qa_app_q3_map_launch_make(
+  CHECK(text_eq(launch.cvars[0].value, "2"));
+  CHECK_ABORTS(qa_app_q3_map_launch_make(&launch,
       (qa_q3_product_policy){QA_Q3_PRODUCT_RETAIL, QA_Q3_TEAM_ARENA_UI_RETAIL}, "bogus", 0));
-  qa_app_simulation_event_view event = {0};
-  event.kind = "q1"; event.event_kind = "intermission";
-  CHECK(text_eq(qa_app_source_level_completion(event), "q1"));
+  qa_q1_event intermission; memset(&intermission, 0, sizeof intermission);
+  intermission.kind = "intermission";
+  qa_app_sim_presentation_event event; memset(&event, 0, sizeof event);
+  event.kind = "q1"; event.q1 = &intermission;
+  CHECK(text_eq(qa_app_source_level_completion(&event), "q1"));
   qa_rect viewport = qa_app_seat_viewport(1, 2, 1920, 1080);
   CHECK(viewport.x == 0 && viewport.y == 540 && viewport.height == 540);
   (void)commands;
@@ -210,7 +230,6 @@ int main(void) {
   test_damage_blend();
   test_options();
   test_progress();
-  test_service_status();
   test_loading();
   test_local_lobby_guards();
   test_map_command_and_sessions();

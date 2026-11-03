@@ -22,6 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qa/contracts/execution.h" /* qa_native_heap_block, qa_guest_allocator_image */
 #include "qa/contracts/identity.h" /* qa_callback_id */
 #include "qa/contracts/math.h"     /* qa_vec3, qa_byte_view */
 #include "qa/guest/abi/adapter.h"  /* qa_guest_cpu/stop/exception + values.h shapes */
@@ -50,6 +51,7 @@ typedef struct qa_guest_allocation_options {
   qa_guest_permissions permissions;
   bool has_permissions;       /* false = TS undefined ("read-write") */
   const char *label;          /* NULL = TS undefined ("allocation") */
+  bool pooled;                /* TS pooled: a read-write page from the shared slab pool */
 } qa_guest_allocation_options;
 
 /* One snapshot mapping: GuestMapping & { backing, backingOffset }. */
@@ -87,7 +89,7 @@ typedef struct qa_guest_thread_tls {
 typedef enum qa_guest_memory_fault_reason {
   QA_FAULT_FOREIGN_ADDRESS_SPACE = 0, QA_FAULT_ADDRESS_OVERFLOW, QA_FAULT_NULL_ADDRESS,
   QA_FAULT_INVALID_LENGTH, QA_FAULT_UNMAPPED, QA_FAULT_PERMISSION, QA_FAULT_OVERLAP,
-  QA_FAULT_NONCONTIGUOUS_BORROW
+  QA_FAULT_NONCONTIGUOUS_BORROW, QA_FAULT_QUOTA
 } qa_guest_memory_fault_reason;
 const char *qa_guest_memory_fault_reason_name(qa_guest_memory_fault_reason reason);
 

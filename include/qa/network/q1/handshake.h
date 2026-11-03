@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "qa/network/common/endpoint.h"
+#include "qa/network/common/rcon_guard.h"
 typedef enum qa_nq_control_kind {
   QA_NQ_CONNECT_REQUEST, QA_NQ_SERVER_INFO_REQUEST, QA_NQ_PLAYER_INFO_REQUEST,
   QA_NQ_RULE_INFO_REQUEST, QA_NQ_ACCEPT, QA_NQ_REJECT, QA_NQ_SERVER_INFO,
@@ -65,6 +66,9 @@ void qa_qw_challenges_init(qa_qw_challenges *c, qa_random_fn random, void *ctx, 
 void qa_qw_challenges_destroy(qa_qw_challenges *c);
 double qa_qw_challenges_issue(qa_qw_challenges *c, const qa_net_address *address, double now_ms);
 bool qa_qw_challenges_validate(qa_qw_challenges *c, const qa_net_address *address, double challenge);
+/* TS validate(address, challenge, nowMilliseconds): with a time, a challenge older than 30 s fails. */
+bool qa_qw_challenges_validate_at(qa_qw_challenges *c, const qa_net_address *address, double challenge,
+                                  bool has_now, double now_ms);
 
 typedef struct qa_qw_connect_request {
   qa_net_address from; double qport, challenge; char *userinfo; bool spectator, donor_wide;
@@ -83,7 +87,11 @@ typedef struct qa_quakeworld_host {
 } qa_quakeworld_host;
 typedef struct qa_qw_connectionless_server {
   qa_quakeworld_host host; qa_qw_challenges *challenges;
+  /* TS rconGuard; a zeroed guard takes the TS defaults (3 attempts, 1024 sources) on first use. */
+  qa_rcon_guard rcon_guard;
 } qa_qw_connectionless_server;
+/* Frees the rcon guard table. */
+void qa_qw_connectionless_server_destroy(qa_qw_connectionless_server *s);
 /* Replies: malloc'd array of malloc'd datagrams; lengths in reply_lens. */
 uint8_t **qa_qw_connectionless_receive(qa_qw_connectionless_server *s, const uint8_t *bytes, size_t length,
                                        const qa_net_address *from, double now_ms,

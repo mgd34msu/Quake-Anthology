@@ -49,6 +49,9 @@ typedef struct qa_q2_game_options {
   double skill; /* 0|1|2|3 */
   qa_q2_mode mode;
   double deathmatch_flags;
+  /* TS instagib?: rerelease g_instagib, every pickup is removed and players
+   * start with a railgun and 99 slugs instead of the blaster (false = TS undefined). */
+  bool instagib;
   double max_clients;
   qa_provider_id provider;
   bool has_damage_powerup_owner;
@@ -58,7 +61,20 @@ typedef struct qa_q2_game_options {
   qa_provider_id combat_provider;
   qa_provider_id inventory_provider;
   qa_provider_id movement_provider;
+  /* TS playerName?(actor): NULL fn = TS undefined; a NULL return is TS null. */
+  void *player_name_ctx;
+  const char *(*player_name)(void *ctx, qa_actor_id actor);
+  /* TS options objects may define deathmatchFlags as a getter
+   * (composition/q2/index.ts). When set, every read goes through it;
+   * read with qa_q2_options_deathmatch_flags. */
+  void *deathmatch_flags_ctx;
+  double (*deathmatch_flags_read)(void *ctx);
 } qa_q2_game_options;
+/* TS options.deathmatchFlags (the getter when one is installed). */
+static inline double qa_q2_options_deathmatch_flags(const qa_q2_game_options *options) {
+  return options->deathmatch_flags_read != NULL ? options->deathmatch_flags_read(options->deathmatch_flags_ctx)
+                                                : options->deathmatch_flags;
+}
 
 /** TS Q2SpawnFields. values are owned pairs (insertion order). */
 typedef struct qa_q2_field_pair { char *key; char *value; } qa_q2_field_pair;
@@ -97,6 +113,11 @@ typedef struct qa_q2_motion {
   double clip_mask;
   bool has_owner;
   qa_actor_id owner;
+  /* Key order of the TS literal that produced it, kept by the physics
+   * motion table's `{ ...motion }` copies: false {actor, velocity,
+   * angularVelocity, kind, ...} (actorMotion, runtime), true {actor, kind,
+   * velocity, angularVelocity, ...} (Q2 entity-services motion). */
+  bool kind_first;
 } qa_q2_motion;
 
 typedef struct qa_q2_landmark_carry {
@@ -126,6 +147,7 @@ typedef struct qa_q2_presentation_event {
   bool reliable;
   const char *loop;               /* "start"|"stop"|"once" */
   bool has_loop_owner; qa_provider_id loop_owner;
+  bool local;                     /* sound: gi.local_sound, heard only by its actor (TS local?: true) */
   const char *text;               /* centerprint/print/help */
   bool has_instant; bool instant;
   bool has_duration_seconds; double duration_seconds;
@@ -222,6 +244,7 @@ struct qa_q2_entity {
   const char *map;
   double style;
   bool transition_started;
+  bool item_dropped; /* TS itemDropped */
   double clip_mask;
   bool projectile, dodgeable, laser_immune, damageable_target;
   const qa_attack_provenance *last_attack; /* nullable, borrowed */
@@ -275,7 +298,22 @@ struct qa_q2_game_services {
   qa_q2_counters *counters;
   bool has_current_actor;
   qa_actor_id current_actor;
+  /* TS helpChanged: game.helpchanged counts use_target_help firings. */
+  double help_changed;
+  /* TS disguiseViolation: level.disguise_violator and its expiry, a
+   * disguised player who fired is the next target of every monster.
+   * has_disguise_violation false = TS null. */
+  bool has_disguise_violation;
+  qa_actor_id disguise_violation_actor;
+  double disguise_violation_until;
   qa_q2_entity *const *(*entities)(void *ctx, size_t *out_count);
+  /* TS markDodgeable: registers a projectile whose projectile and dodgeable
+   * flags are set, for monster dodge checks. */
+  void (*mark_dodgeable)(void *ctx, qa_q2_entity *entity);
+  /* TS dodgeables(): live dodgeable projectiles in registration order; stale
+   * members are dropped as they are found. The array is borrowed until the
+   * next mark or entity release. */
+  qa_q2_entity *const *(*dodgeables)(void *ctx, size_t *out_count);
   qa_q2_entity *(*spawn)(void *ctx, qa_q2_spawn_fields fields);
   qa_q2_entity *(*create)(void *ctx, const char *classname, const qa_q2_field_pair *values, size_t value_count);
   void (*remove)(void *ctx, qa_q2_entity *entity);
@@ -321,5 +359,18 @@ qa_body_state qa_q2_game_body(qa_q2_game_services *g, qa_q2_entity *e);
 void qa_q2_game_move(qa_q2_game_services *g, qa_q2_entity *e, qa_q2_body_changes c, bool link);
 qa_q2_entity *qa_q2_game_entity_of(qa_q2_game_services *g, const qa_actor_id *a);
 void qa_q2_game_use_targets_entity(qa_q2_game_services *g, qa_q2_entity *e, const qa_actor_id *activator, bool ignore_delay);
+/* TS game.markDodgeable(entity). Test doubles that leave mark_dodgeable NULL skip it. */
+void qa_q2_game_mark_dodgeable(qa_q2_game_services *g, qa_q2_entity *e);
+/* TS game.entities is a live map: a loop that spawns or removes reads the
+ * current size and slot on every step, as these do. */
+static inline size_t qa_q2_game_entity_count(qa_q2_game_services *g) {
+  size_t n = 0;
+  (void)g->entities(g->ctx, &n);
+  return n;
+}
+static inline qa_q2_entity *qa_q2_game_entity_at(qa_q2_game_services *g, size_t index) {
+  size_t n = 0;
+  return g->entities(g->ctx, &n)[index];
+}
 
 #endif

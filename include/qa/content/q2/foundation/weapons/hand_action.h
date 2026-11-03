@@ -15,7 +15,7 @@ typedef struct qa_q2w_hand_action {
 } qa_q2w_hand_action;
 typedef enum qa_q2w_lifecycle { QA_Q2W_ALIVE, QA_Q2W_DEAD, QA_Q2W_REMOVING, QA_Q2W_REMOVED } qa_q2w_lifecycle;
 typedef struct qa_q2w_hand_action_input {
-  qa_q2f_edition edition; bool haste, quad_fire;
+  qa_q2_edition edition; bool haste, quad_fire;
   double now;
   bool pressed, held, released;
   qa_q2w_lifecycle lifecycle;

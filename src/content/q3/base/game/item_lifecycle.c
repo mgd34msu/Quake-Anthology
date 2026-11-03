@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/game/item-lifecycle.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/game/item_lifecycle.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -24,13 +25,10 @@ enum {
 };
 #define CONTENTS_TRIGGER 0x40000000
 
-qa_q3_player_inventory_mirror qa_q3_item_inventory(qa_q3_game_client *client) {
-  qa_q3_player_inventory_mirror inv; inv.stats = client->ps.stats; inv.ammo = client->ps.ammo;
-  inv.powerups = client->ps.powerups;
-  size_t health_idx = 0; inv.health = qa_q3_game_slots_get_mirror(&client->ps.stats, health_idx); return inv;
-}
-void qa_q3_item_registry_init(qa_q3_item_registry *registry, const qa_q3_game_item_definition_mirror *items, size_t count) {
-  registry->items = items; registry->count = count;
+void qa_q3_item_registry_init(qa_q3_item_registry *registry, qa_q3_base_product product) {
+  size_t count = 0;
+  registry->product = product;
+  registry->items = qa_q3_base_item_list(product, &count); registry->count = count;
   free(registry->registered);
   registry->registered = calloc(count ? count : 1, 1);
   if (registry->registered == NULL) qa_range_error("out of memory");
@@ -48,25 +46,25 @@ static uint8_t *registry_bytes(qa_q3_item_registry *registry) {
   return registry->registered;
 }
 static long registry_index(qa_q3_item_registry *registry,
-                           const qa_q3_game_item_definition_mirror *item) {
+                           const qa_q3_base_item_definition *item) {
   for (size_t i = 0; i < registry->count; i++)
     if (&registry->items[i] == item) return (long)i;
   return -1;
 }
 void qa_q3_item_registry_register(qa_q3_item_registry *registry,
-                                  const qa_q3_game_item_definition_mirror *item) {
+                                  const qa_q3_base_item_definition *item) {
   long index = registry_index(registry, item);
   if (index < 0)
     qa_range_error("Registered item does not belong to %s",
-                   qa_q3_game_product_name(registry->product));
+                   qa_q3_base_product_name(registry->product));
   registry_bytes(registry)[(size_t)index] = 1;
 }
 bool qa_q3_item_registry_is_registered(qa_q3_item_registry *registry,
-                                       const qa_q3_game_item_definition_mirror *item) {
+                                       const qa_q3_base_item_definition *item) {
   long index = registry_index(registry, item);
   if (index < 0)
     qa_range_error("Registered item does not belong to %s",
-                   qa_q3_game_product_name(registry->product));
+                   qa_q3_base_product_name(registry->product));
   return registry_bytes(registry)[(size_t)index] != 0;
 }
 static bool folded_equal(const char *a, const char *b) {
@@ -78,14 +76,14 @@ static bool folded_equal(const char *a, const char *b) {
     if (ca == 0) return true;
   }
 }
-static const qa_q3_game_item_definition_mirror *registry_find_for_weapon(
+static const qa_q3_base_item_definition *registry_find_for_weapon(
     qa_q3_item_registry *registry, double weapon) {
   for (size_t i = 0; i < registry->count; i++)
     if (registry->items[i].type == QA_Q3_BASE_IT_WEAPON && registry->items[i].tag == weapon)
       return &registry->items[i];
-  qa_range_error("Couldn't find item for weapon %d", (int)weapon);
+  qa_range_error("Couldn't find item for weapon %d", qa_js_to_int32(weapon));
 }
-static const qa_q3_game_item_definition_mirror *registry_find_item(
+static const qa_q3_base_item_definition *registry_find_item(
     qa_q3_item_registry *registry, const char *pickup_name) {
   for (size_t i = 0; i < registry->count; i++)
     if (registry->items[i].pickup_name != NULL
@@ -97,11 +95,11 @@ void qa_q3_item_registry_clear(qa_q3_item_registry *registry, double game_type) 
   memset(registry_bytes(registry), 0, registry->count);
   qa_q3_item_registry_register(registry, registry_find_for_weapon(registry, QA_Q3_WP_MACHINEGUN));
   qa_q3_item_registry_register(registry, registry_find_for_weapon(registry, QA_Q3_WP_GAUNTLET));
-  if (registry->product != QA_Q3_GAME_PRODUCT_MISSIONPACK
+  if (registry->product != QA_Q3_BASE_PRODUCT_MISSIONPACK
       || game_type != QA_Q3_BASE_GT_HARVESTER) return;
   static const char *const cubes[] = {"Red Cube", "Blue Cube"};
   for (size_t i = 0; i < sizeof cubes / sizeof *cubes; i++) {
-    const qa_q3_game_item_definition_mirror *item = registry_find_item(registry, cubes[i]);
+    const qa_q3_base_item_definition *item = registry_find_item(registry, cubes[i]);
     if (item == NULL) qa_range_error("Required item %s is missing", cubes[i]);
     qa_q3_item_registry_register(registry, item);
   }
@@ -162,33 +160,33 @@ static void require_owned(qa_q3_item_lifecycle_context context, qa_q3_game_entit
 }
 
 static double find_index(qa_q3_item_lifecycle_context context,
-                         const qa_q3_game_item_definition_mirror *item) {
+                         const qa_q3_base_item_definition *item) {
   for (size_t i = 0; i < context.registry.count; i++)
     if (&context.registry.items[i] == item) return (double)i;
   return -1;
 }
 
-static const qa_q3_game_item_definition_mirror *require_item(
+static const qa_q3_base_item_definition *require_item(
     qa_q3_item_lifecycle_context context, qa_q3_game_entity *entity) {
-  const qa_q3_game_item_definition_mirror *item = entity->item;
+  const qa_q3_base_item_definition *item = entity->item;
   if (item == NULL || find_index(context, item) < 1)
     qa_range_error("Item entity does not contain a %s item definition",
-                   qa_q3_game_product_name(context.product));
+                   qa_q3_base_product_name(context.product));
   return item;
 }
 
 static double table_index(qa_q3_item_lifecycle_context context,
-                          const qa_q3_game_item_definition_mirror *item) {
+                          const qa_q3_base_item_definition *item) {
   double index = find_index(context, item);
   if (index < 1)
     qa_range_error("Item does not belong to the %s item table",
-                   qa_q3_game_product_name(context.product));
+                   qa_q3_base_product_name(context.product));
   return index;
 }
 
-static const qa_q3_game_item_definition_mirror *require_published_item(
+static const qa_q3_base_item_definition *require_published_item(
     qa_q3_item_lifecycle_context context, qa_q3_game_entity *entity) {
-  const qa_q3_game_item_definition_mirror *item = require_item(context, entity);
+  const qa_q3_base_item_definition *item = require_item(context, entity);
   if (entity->s.modelindex != table_index(context, item))
     qa_range_error("Item entity model index does not match its item definition");
   return item;
@@ -253,7 +251,7 @@ void qa_q3_respawn_item(qa_q3_game_entity *entity, qa_q3_item_lifecycle_context 
   check_context(context);
   require_owned(context, entity);
   qa_q3_game_entity *selected = team_member(context, entity);
-  const qa_q3_game_item_definition_mirror *item = require_published_item(context, selected);
+  const qa_q3_base_item_definition *item = require_published_item(context, selected);
   selected->r.contents = CONTENTS_TRIGGER;
   selected->s.e_flags = (double)(qa_int32(selected->s.e_flags) & ~EF_NODRAW);
   selected->r.sv_flags = (double)(qa_int32(selected->r.sv_flags) & ~QA_Q3_BASE_SVF_NOCLIENT);
@@ -268,7 +266,7 @@ void qa_q3_respawn_item(qa_q3_game_entity *entity, qa_q3_item_lifecycle_context 
 
 static qa_q3_source_pickup_descriptor pickup_descriptor(
     qa_q3_game_entity *entity, qa_q3_game_entity *recipient,
-    const qa_q3_game_item_definition_mirror *item, qa_q3_item_lifecycle_context context) {
+    const qa_q3_base_item_definition *item, qa_q3_item_lifecycle_context context) {
   qa_q3_source_pickup_descriptor descriptor;
   descriptor.item_actor = qa_q3_game_entity_actor(entity).id;
   descriptor.player_actor = qa_q3_game_entity_actor(recipient).id;
@@ -288,7 +286,7 @@ static bool callback_equal(qa_q3_entity_callback a, qa_q3_entity_callback b) {
 
 bool qa_q3_observe_q3_supply(qa_q3_game_entity *entity, qa_q3_game_entity *recipient,
     qa_q3_item_lifecycle_context context, qa_q3_supply_observation *out) {
-  if (context.product != QA_Q3_GAME_PRODUCT_BASEQ3
+  if (context.product != QA_Q3_BASE_PRODUCT_BASEQ3
       || !qa_q3_game_entity_inuse(entity) || !qa_q3_game_entity_inuse(recipient)
       || qa_q3_entity_pool_get(context.entities, entity->slot) != entity
       || qa_q3_entity_pool_get(context.entities, recipient->slot) != recipient
@@ -298,7 +296,7 @@ bool qa_q3_observe_q3_supply(qa_q3_game_entity *entity, qa_q3_game_entity *recip
       || (entity->item->type != QA_Q3_BASE_IT_WEAPON
           && entity->item->type != QA_Q3_BASE_IT_AMMO))
     return false;
-  const qa_q3_game_item_definition_mirror *item = require_published_item(context, entity);
+  const qa_q3_base_item_definition *item = require_published_item(context, entity);
   if (context.preview_pickup == NULL) return false;
   qa_q3_source_pickup_preview supplied =
       context.preview_pickup(context.ctx, pickup_descriptor(entity, recipient, item, context));
@@ -336,44 +334,44 @@ static qa_q3_powerup_sight_trace trace_solid_line(void *ctx, qa_vec3 start, qa_v
   query.start = start; query.end = end;
   query.shape.kind = QA_Q3_BASE_SHAPE_POINT;
   query.mask = CONTENTS_SOLID;
-  query.pass_entity_num = QA_Q3_GAME_ENTITYNUM_NONE;
+  query.pass_entity_num = QA_Q3_BASE_ENTITYNUM_NONE;
   qa_q3_base_server_trace_result result = context->trace(context->ctx, query);
   qa_q3_powerup_sight_trace trace = {result.fraction};
   return trace;
 }
 
 static double inventory_ammo(void *ctx, qa_q3_weapon weapon) {
-  qa_q3_game_player_state_mirror *ps = ctx;
-  return qa_q3_game_slots_get_mirror(&ps->ammo, (size_t)weapon);
+  qa_q3_base_player_state *ps = ctx;
+  return qa_q3_base_player_state_slots_get(&ps->ammo, (size_t)weapon);
 }
 static double inventory_powerup(void *ctx, qa_q3_powerup powerup) {
-  qa_q3_game_player_state_mirror *ps = ctx;
-  return qa_q3_game_slots_get_mirror(&ps->powerups, (size_t)powerup);
+  qa_q3_base_player_state *ps = ctx;
+  return qa_q3_base_player_state_slots_get(&ps->powerups, (size_t)powerup);
 }
 
-/* TS q3ItemInventory, shaped for the landed canItemBeGrabbed. */
-static qa_q3_base_player_inventory build_inventory(qa_q3_game_client *client) {
-  qa_q3_game_player_state_mirror *ps = &client->ps;
+/* TS q3ItemInventory. */
+qa_q3_base_player_inventory qa_q3_item_inventory(qa_q3_game_client *client) {
+  qa_q3_base_player_state *ps = &client->ps;
   qa_q3_base_product product =
-      ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK
+      ps->state_product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK
                                                     : QA_Q3_BASE_PRODUCT_BASEQ3;
   const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(product);
   qa_q3_base_player_inventory inventory;
   memset(&inventory, 0, sizeof inventory);
   inventory.ctx = ps;
   inventory.product = product;
-  inventory.health = qa_q3_game_slots_get_mirror(&ps->stats, (size_t)schema->health);
-  inventory.armor = qa_q3_game_slots_get_mirror(&ps->stats, (size_t)schema->armor);
-  inventory.max_health = qa_q3_game_slots_get_mirror(&ps->stats, (size_t)schema->max_health);
+  inventory.health = qa_q3_base_player_state_slots_get(&ps->stats, (size_t)schema->health);
+  inventory.armor = qa_q3_base_player_state_slots_get(&ps->stats, (size_t)schema->armor);
+  inventory.max_health = qa_q3_base_player_state_slots_get(&ps->stats, (size_t)schema->max_health);
   inventory.holdable_item =
-      qa_q3_game_slots_get_mirror(&ps->stats, (size_t)schema->holdable_item);
+      qa_q3_base_player_state_slots_get(&ps->stats, (size_t)schema->holdable_item);
   inventory.team =
-      qa_q3_game_slots_get_mirror(&ps->persistant, QA_Q3_BASE_PERS_TEAM);
+      qa_q3_base_player_state_slots_get(&ps->persistant, QA_Q3_BASE_PERS_TEAM);
   inventory.ammo = inventory_ammo;
   inventory.powerup = inventory_powerup;
   if (product == QA_Q3_BASE_PRODUCT_MISSIONPACK) {
     inventory.has_persistent_powerup_index = true;
-    inventory.persistent_powerup_index = qa_q3_game_slots_get_mirror(
+    inventory.persistent_powerup_index = qa_q3_base_player_state_slots_get(
         &ps->stats, QA_Q3_BASE_MP_STAT_PERSISTANT_POWERUP);
   }
   return inventory;
@@ -384,7 +382,7 @@ typedef struct touch_state {
   qa_q3_item_lifecycle_context context;
   qa_q3_game_entity *entity, *other;
   qa_q3_game_client *client;
-  const qa_q3_game_item_definition_mirror *item;
+  const qa_q3_base_item_definition *item;
   qa_q3_base_pickup_entity pickup_state;
   const char *class_name;
   qa_actor_id item_actor, player_actor;
@@ -418,7 +416,7 @@ static bool touch_original(void *ctx) {
   touch_state *state = ctx;
   qa_q3_item_lifecycle_context context = state->context;
   qa_q3_game_entity *entity = state->entity, *other = state->other;
-  const qa_q3_game_item_definition_mirror *item = state->item;
+  const qa_q3_base_item_definition *item = state->item;
   state->original_ran = true;
   qa_q3_source_pickup_admission admission = {QA_Q3_SOURCE_PICKUP_NATIVE, 0};
   if (context.admit_pickup != NULL)
@@ -426,7 +424,7 @@ static bool touch_original(void *ctx) {
                                      pickup_descriptor(entity, other, item, context));
   if (!touch_live(state) || admission.kind == QA_Q3_SOURCE_PICKUP_REJECTED) return false;
   if (admission.kind == QA_Q3_SOURCE_PICKUP_NATIVE) {
-    qa_q3_base_player_inventory inventory = build_inventory(state->client);
+    qa_q3_base_player_inventory inventory = qa_q3_item_inventory(state->client);
     if (!qa_q3_base_can_item_be_grabbed(context.game_type, state->pickup_state, &inventory))
       return false;
   }
@@ -477,7 +475,7 @@ static void touch_complete(void *ctx, bool taken) {
   touch_state *state = ctx;
   qa_q3_item_lifecycle_context context = state->context;
   qa_q3_game_entity *entity = state->entity, *other = state->other;
-  const qa_q3_game_item_definition_mirror *item = state->item;
+  const qa_q3_base_item_definition *item = state->item;
   if (!taken || !touch_live(state)) return;
   if (!state->original_ran) {
     qa_q3_weapon_pickup_context weapon = {context.game_type, context.weapon_respawn_seconds,
@@ -556,9 +554,9 @@ void qa_q3_touch_item(qa_q3_game_entity *entity, qa_q3_damage_participant other,
   require_owned(context, other_entity);
   qa_q3_game_client *client = other_entity->client;
   if (client == NULL || qa_q3_game_entity_health(other_entity) < 1) return;
-  if (client->ps.product != context.product)
+  if (client->ps.state_product != context.product)
     qa_range_error("Item touch player product does not match lifecycle product");
-  const qa_q3_game_item_definition_mirror *item = require_published_item(context, entity);
+  const qa_q3_base_item_definition *item = require_published_item(context, entity);
   touch_state state;
   memset(&state, 0, sizeof state);
   state.context = context;
@@ -568,7 +566,7 @@ void qa_q3_touch_item(qa_q3_game_entity *entity, qa_q3_damage_participant other,
   state.pickup_state.generic1 = entity->s.generic1;
   state.item_actor = qa_q3_game_entity_actor(entity).id;
   state.player_actor = qa_q3_game_entity_actor(other_entity).id;
-  state.class_name = item->classname;
+  state.class_name = item->class_name;
   if (state.class_name == NULL) qa_range_error("Pickup item has no classname");
   state.now = game_time(context);
   state.predict = client->pers.predict_item_pickup;
@@ -631,9 +629,9 @@ void qa_q3_finish_spawning_item(qa_q3_game_entity *entity,
   qa_q3_bind_item_save_callbacks(context);
   check_context(context);
   require_owned(context, entity);
-  const qa_q3_game_item_definition_mirror *item = require_item(context, entity);
-  entity->r.mins = (qa_vec3){-ITEM_RADIUS, -ITEM_RADIUS, -ITEM_RADIUS};
-  entity->r.maxs = (qa_vec3){ITEM_RADIUS, ITEM_RADIUS, ITEM_RADIUS};
+  const qa_q3_base_item_definition *item = require_item(context, entity);
+  qa_q3_base_entity_shared_set_mins(&entity->r, (qa_vec3){-ITEM_RADIUS, -ITEM_RADIUS, -ITEM_RADIUS});
+  qa_q3_base_entity_shared_set_maxs(&entity->r, (qa_vec3){ITEM_RADIUS, ITEM_RADIUS, ITEM_RADIUS});
   entity->s.e_type = QA_Q3_BASE_ET_ITEM;
   entity->s.modelindex = table_index(context, item);
   entity->s.modelindex2 = 0;
@@ -655,8 +653,8 @@ void qa_q3_finish_spawning_item(qa_q3_game_entity *entity,
     query.start = entity->s.origin;
     query.end = destination;
     query.shape.kind = QA_Q3_BASE_SHAPE_BOX;
-    query.shape.mins = entity->r.mins;
-    query.shape.maxs = entity->r.maxs;
+    query.shape.mins = qa_q3_base_entity_shared_mins(&entity->r);
+    query.shape.maxs = qa_q3_base_entity_shared_maxs(&entity->r);
     query.pass_actor = &pass_actor;
     query.mask = CONTENTS_SOLID;
     qa_q3_base_actor_trace_result trace = context.trace_actor(context.ctx, query);
@@ -676,11 +674,7 @@ void qa_q3_finish_spawning_item(qa_q3_game_entity *entity,
       qa_q3_entity_pool_free(context.entities, entity);
       return;
     }
-    qa_q3_game_trace_hit_mirror hit;
-    hit.kind = trace.hit_kind == QA_Q3_BASE_HIT_ACTOR ? QA_Q3_HIT_ACTOR
-        : trace.hit_kind == QA_Q3_BASE_HIT_WORLD ? QA_Q3_HIT_WORLD : QA_Q3_HIT_NONE;
-    hit.actor = trace.hit_actor;
-    qa_q3_trace_ground(entity, hit, context.entities);
+    qa_q3_trace_ground(entity, trace.hit_kind, trace.hit_actor, context.entities);
     qa_q3_set_origin(entity, trace.end);
   }
   if ((qa_int32(entity->flags) & QA_Q3_GAME_FLAG_TEAMSLAVE) != 0
@@ -705,7 +699,7 @@ void qa_q3_finish_spawning_item(qa_q3_game_entity *entity,
 
 enum { FRAME_TIME = 100 };
 
-void qa_q3_spawn_item(qa_q3_game_entity *entity, const qa_q3_game_item_definition_mirror *item,
+void qa_q3_spawn_item(qa_q3_game_entity *entity, const qa_q3_base_item_definition *item,
     const qa_q3_spawn_variables *variables, bool (*is_disabled)(void *ctx), void *is_disabled_ctx,
     qa_q3_item_lifecycle_context context) {
   qa_q3_bind_item_save_callbacks(context);
@@ -725,7 +719,7 @@ void qa_q3_spawn_item(qa_q3_game_entity *entity, const qa_q3_game_item_definitio
     (void)context.sound_index(context.ctx, "sound/items/poweruprespawn.wav");
     entity->speed = qa_q3_spawn_variables_float(variables, "noglobalsound", "0").value;
   }
-  if (context.product == QA_Q3_GAME_PRODUCT_MISSIONPACK
+  if (context.product == QA_Q3_BASE_PRODUCT_MISSIONPACK
       && item->type == QA_Q3_BASE_IT_PERSISTANT_POWERUP)
     entity->s.generic1 = entity->spawnflags;
 }
@@ -762,6 +756,7 @@ void qa_q3_bind_item_save_callbacks(qa_q3_item_lifecycle_context context) {
       &catalog->think, "q3.base.game.item-lifecycle.touchItem.think",
       mkcb(&respawn_fn, retained));
   if (bound.ctx != retained) { free(retained); return; }
+  qa_q3_callback_catalog_retain(catalog, retained);
   qa_q3_callback_family_intern(&catalog->touch,
                                "q3.base.game.item-lifecycle.finishSpawningItem.touch",
                                mkcb(&touch_fn, retained));

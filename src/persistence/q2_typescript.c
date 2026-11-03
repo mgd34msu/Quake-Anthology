@@ -1,5 +1,6 @@
 /* Port of src/persistence/q2-typescript.ts. GPL-2.0-or-later. */
 #include "qa/persistence/q2_typescript.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -152,7 +153,7 @@ char *qa_encode_q2_typescript_level(const qa_q2_typescript_level_save *save) {
     if (index == trunc(index) && fabs(index) <= 9007199254740991.0)
       (void)snprintf(number, sizeof number, "%lld", (long long)index);
     else
-      (void)snprintf(number, sizeof number, "%.17g", index);
+      (void)snprintf(number, sizeof number, "%s", QA_JS_NUMBER(index));
     qa_save_json *record = qa_save_json_object();
     qa_save_json *number_node = record != NULL ? qa_save_number_create(number) : NULL;
     if (record == NULL || number_node == NULL ||

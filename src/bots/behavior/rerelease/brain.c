@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 #define STUCK_SECONDS 0.6
 #define REPLAN_SECONDS 2.0
@@ -200,6 +201,7 @@ bool qa_bot_brain_init(qa_bot_brain *brain, qa_bot_brain_config config) {
 void qa_bot_brain_destroy(qa_bot_brain *brain) {
   if (!brain) return;
   memory_clear_dynamic(&brain->state);
+  free(brain->hazard_memo);
   free((void *)brain->config.skill);
   qa_bot_game_mode_destroy(&brain->config.game_mode);
   memset(brain, 0, sizeof *brain);
@@ -256,7 +258,8 @@ bool qa_bot_brain_checkpoint_make(qa_bot_brain *brain, qa_bot_brain_checkpoint *
   m->touch_goal = s->touch_goal; m->hold_position = s->hold_position;
   m->has_gate_shoot_at = s->has_gate_shoot_at; m->gate_shoot_at = s->gate_shoot_at; m->gate_fired_at = s->gate_fired_at;
   m->coop_regrouping = s->coop_regrouping; m->coop_regroup_at = s->coop_regroup_at; m->coop_regroup_until = s->coop_regroup_until;
-  m->level_started = s->level_started; m->check_six_until = s->check_six_until; m->check_six_next_at = s->check_six_next_at;
+  m->level_started = s->level_started; m->check_six_until = s->check_six_until; m->check_six_yaw = s->check_six_yaw;
+  m->check_six_next_at = s->check_six_next_at;
   m->has_roam_point = s->has_roam_point; m->roam_point = s->roam_point; m->roam_until = s->roam_until;
   m->spawned_once = s->spawned_once; m->last_weapon_number = s->last_weapon_number;
   m->dead_since = s->dead_since; m->respawn_wait = s->respawn_wait; m->respawn_press = s->respawn_press;
@@ -288,6 +291,7 @@ bool qa_bot_brain_checkpoint_make(qa_bot_brain *brain, qa_bot_brain_checkpoint *
   }
   m->has_explicit_goal = s->has_explicit_goal; m->explicit_goal = s->explicit_goal;
   m->last_cmd = s->last_cmd;
+  m->layout = s->layout;
   return true;
 oom:
   qa_bot_brain_checkpoint_destroy(out);
@@ -297,6 +301,8 @@ bool qa_bot_brain_restore(qa_bot_brain *brain, const qa_bot_brain_checkpoint *ch
   if (checkpoint->version != 1 || !checkpoint->skill || strcmp(checkpoint->skill, brain->settings->skill))
     qa_range_error("Bot behavior checkpoint has another source skill/profile version");
   const qa_bot_brain_checkpoint_memory *m = &checkpoint->memory;
+  brain->has_failed_plan_goal = false;
+  brain->has_planned_goal = false;
   qa_bot_brain_memory fresh;
   memory_init(&fresh);
   fresh.trigger_weapon = m->trigger_weapon; fresh.trigger_held_since = m->trigger_held_since; fresh.trigger_ready_at = m->trigger_ready_at;
@@ -327,7 +333,10 @@ bool qa_bot_brain_restore(qa_bot_brain *brain, const qa_bot_brain_checkpoint *ch
   fresh.touch_goal = m->touch_goal; fresh.hold_position = m->hold_position;
   fresh.has_gate_shoot_at = m->has_gate_shoot_at; fresh.gate_shoot_at = m->gate_shoot_at; fresh.gate_fired_at = m->gate_fired_at;
   fresh.coop_regrouping = m->coop_regrouping; fresh.coop_regroup_at = m->coop_regroup_at; fresh.coop_regroup_until = m->coop_regroup_until;
-  fresh.level_started = m->level_started; fresh.check_six_until = m->check_six_until; fresh.check_six_next_at = m->check_six_next_at;
+  fresh.level_started = m->level_started; fresh.check_six_until = m->check_six_until; fresh.check_six_yaw = m->check_six_yaw;
+  fresh.check_six_next_at = m->check_six_next_at;
+  /* TS { ...scalars, maps }: a read checkpoint's scalar order, maps last. */
+  fresh.layout = m->layout == QA_BOT_BRAIN_LAYOUT_READ ? QA_BOT_BRAIN_LAYOUT_RESTORED : m->layout;
   fresh.has_roam_point = m->has_roam_point; fresh.roam_point = m->roam_point; fresh.roam_until = m->roam_until;
   fresh.last_cmd = m->last_cmd; fresh.spawned_once = m->spawned_once; fresh.last_weapon_number = m->last_weapon_number;
   fresh.dead_since = m->dead_since; fresh.respawn_wait = m->respawn_wait; fresh.respawn_press = m->respawn_press;
@@ -413,6 +422,7 @@ void qa_bot_brain_reset_for_level(qa_bot_brain *brain) {
   s->has_roam_point = false;
   s->roam_until = 0;
   s->check_six_until = 0;
+  s->check_six_yaw = 0;
   s->check_six_next_at = 0;
   s->dead_since = -1;
   s->last_weapon_number = 0;
@@ -437,10 +447,8 @@ void qa_bot_brain_reset_for_level(qa_bot_brain *brain) {
 bool qa_bot_brain_set_game_mode(qa_bot_brain *brain, qa_bot_game_mode mode) {
   return game_mode_copy(&brain->config.game_mode, &mode);
 }
-const qa_bot_awareness *qa_bot_brain_awareness_of(qa_bot_brain *brain, int64_t id) { return awareness_get(brain, id); }
 double qa_bot_brain_current_target(qa_bot_brain *brain) { return brain->state.target_id; }
 const qa_nav_path *qa_bot_brain_current_path(qa_bot_brain *brain) { return brain->state.path_state.path; }
-int64_t qa_bot_brain_current_path_index(qa_bot_brain *brain) { return brain->state.path_state.index; }
 qa_bot_usercmd qa_bot_brain_last_usercmd(qa_bot_brain *brain) { return brain->state.last_cmd; }
 void qa_bot_brain_emit_chat(qa_bot_brain *brain, const char *type) {
   if (!brain->config.on_chat) return;
@@ -498,8 +506,12 @@ static void update_senses(qa_bot_brain *brain, qa_bot_world *world, qa_bot_self 
     if (ent->dead) { awareness_delete(brain, ent->id); continue; }
     qa_sight_geometry geom = qa_evaluate_sight_geometry(self.eye, brain->state.aim.pitch, brain->state.aim.yaw,
                                                         ent->center, ent->invisible, senses, weapons);
-    qa_bot_trace sight = world->trace_line(world->ctx, self.eye, ent->center);
-    bool clear = geom.within_invis_range && (sight.fraction >= 1 || sight.hit_id == ent->id);
+    /* senseStep reads line of sight only together with a view cone, so the trace waits for one. */
+    bool clear = false;
+    if (geom.within_invis_range && (geom.in_sight_fov || geom.in_weapon_fov)) {
+      qa_bot_trace sight = world->trace_line(world->ctx, self.eye, ent->center);
+      clear = sight.fraction >= 1 || sight.hit_id == ent->id;
+    }
     bool audible = false;
     for (size_t j = 0; j < sound_count; j++) {
       if (sounds[j].source_id != ent->id) continue;
@@ -550,7 +562,7 @@ static bool update_wedge(qa_bot_brain *brain, qa_bot_vec3 origin, double now, bo
   }
   return now - s->wedge_since >= WEDGED_SECONDS;
 }
-static void update_objectives(qa_bot_brain *brain, const qa_bot_entity *entities, size_t count, qa_bot_self self, double now) {
+static void update_objectives(qa_bot_brain *brain, const qa_bot_entity *entities, size_t count, qa_bot_self self) {
   qa_bot_brain_memory *s = &brain->state;
   for (size_t i = 0; i < count; i++) {
     const qa_bot_entity *ent = &entities[i];
@@ -572,7 +584,7 @@ static void update_objectives(qa_bot_brain *brain, const qa_bot_entity *entities
     if (!s->objective_role) qa_range_error("Out of memory");
     emit_chat_once(brain, defend ? "ctf_on_defense" : "ctf_on_offense");
   }
-  if (s->objective_role && !strcmp(s->objective_role, "attack") && s->has_enemy_objective_home && now > 0) {
+  if (s->objective_role && !strcmp(s->objective_role, "attack") && s->has_enemy_objective_home) {
     if (qa_bvec_distance(self.origin, s->enemy_objective_home) < OBJECTIVE_GUARD_RADIUS) emit_chat_once(brain, "ctf_camping_enemy_base");
   }
 }
@@ -643,7 +655,8 @@ static bool objective_goal(qa_bot_brain *brain, const qa_bot_entity *entities, s
     *out = s->own_objective_home;
     return true;
   }
-  if (target && target->kind == QA_BOT_ENTITY_PLAYER && target->team > 0 && target->team != self.team)
+  if (target && target->kind == QA_BOT_ENTITY_PLAYER && target->has_carrying_objective && target->carrying_objective &&
+      target->team > 0 && target->team != self.team)
     emit_chat_once(brain, "ctf_attacking_enemy_carrier");
   if (enemy_flag) {
     s->goal_entity_id = (double)enemy_flag->id;
@@ -660,9 +673,9 @@ static bool objective_goal(qa_bot_brain *brain, const qa_bot_entity *entities, s
       *out = enemy_carrier->origin;
       return true;
     }
+    if (qa_bvec_distance(self.origin, our_carrier->origin) < ESCORT_DISTANCE) return false; /* close enough: fight, pick up, roam */
     s->goal_entity_id = (double)our_carrier->id;
     s->goal_is_live = true;
-    if (qa_bvec_distance(self.origin, our_carrier->origin) < ESCORT_DISTANCE) return false;
     *out = our_carrier->origin;
     return true;
   }
@@ -784,7 +797,7 @@ static GapAhead gap_ahead(qa_bot_brain *brain, qa_bot_world *world, qa_bot_self 
   double cap = brain->settings->movement.walk_only
                    ? (brain->config.has_walk_speed ? brain->config.walk_speed : QA_BOT_WALK_SPEED)
                    : (brain->config.has_run_speed ? brain->config.run_speed : QA_BOT_RUN_SPEED);
-  double run_speed = fmax(speed, cap);
+  double run_speed = qa_js_max(speed, cap);
   double landing_start = -1, landing_z = 0;
   for (double d = hazard_at + EDGE_PROBE_STEP; d <= hazard_at + GAP_LANDING_SEARCH; d += EDGE_PROBE_STEP) {
     double x = self.origin.x + mx * d, y = self.origin.y + my * d;
@@ -797,7 +810,7 @@ static GapAhead gap_ahead(qa_bot_brain *brain, qa_bot_world *world, qa_bot_self 
     double max_rise = brain->config.has_movement ? brain->config.movement.maximum_landing_rise : GAP_LANDING_RISE;
     if (land_z > floor_z + max_rise) return (GapAhead){true, hazard_at, false};
     if (landing_start < 0 || fabs(land_z - landing_z) > 8) { landing_start = d; landing_z = land_z; continue; }
-    double drop = fmax(0, floor_z - landing_z);
+    double drop = qa_js_max(0, floor_z - landing_z);
     double jump_velocity = brain->config.has_movement ? brain->config.movement.jump_velocity : JUMP_VELOCITY;
     double gravity = brain->config.has_movement ? brain->config.movement.gravity : BRAIN_GRAVITY;
     double airtime = (jump_velocity + sqrt(jump_velocity * jump_velocity + 2 * gravity * drop)) / gravity;
@@ -961,7 +974,7 @@ static const qa_bot_entity *best_item(qa_bot_brain *brain, qa_bot_world *world, 
     ctx.objective_at_home = !has_home || qa_bvec_distance(ent->origin, home) <= OBJECTIVE_AWAY;
     double value = qa_bot_item_value(item, ctx);
     if (value <= 0) continue;
-    double dist = fmax(64, qa_bvec_distance(self.origin, ent->origin));
+    double dist = qa_js_max(64, qa_bvec_distance(self.origin, ent->origin));
     double score = (value * 1024) / dist;
     if (score > best_score) { best_score = score; best = ent; }
   }
@@ -1141,13 +1154,29 @@ static void ensure_path(qa_bot_brain *brain, qa_bot_world *world, qa_bot_vec3 go
                      (step.kind == QA_TRANSPORT_MOVE && step.exit_stage)))
       return;
   }
-  bool stale = !current || !nav->path_valid(nav->ctx, current) || now - s->path_state.planned_at > REPLAN_SECONDS;
+  /* Bots start their replan clocks together, so spread the interval by id: a quarter-second step per bot,
+     repeating every four. */
+  double interval = REPLAN_SECONDS + (double)(qa_js_to_int32((double)self.id) & 3) * 0.25;
+  bool paced_failure = !current && brain->has_failed_plan_goal && qa_bvec_distance(brain->failed_plan_goal, goal) < 96 &&
+                       now - s->path_state.planned_at <= interval;
+  if (paced_failure) return;
+  bool stale = !current || !nav->path_valid(nav->ctx, current) || now - s->path_state.planned_at > interval;
   if (!stale) {
-    if (current->point_count == 0) return;
-    qa_bot_vec3 end = current->points[current->point_count - 1];
-    if (qa_bvec_distance(end, goal) < 96) return;
+    if (brain->has_planned_goal) {
+      if (qa_bvec_distance(brain->planned_goal, goal) < 96) return;
+    } else {
+      if (current->point_count == 0) return;
+      qa_bot_vec3 end = current->points[current->point_count - 1];
+      if (qa_bvec_distance(end, goal) < 96) return;
+    }
+  }
+  /* The hazard memo lives per navigation graph, because every plan asks about every node. */
+  if (brain->hazard_nav != nav->ctx) {
+    brain->hazard_nav = nav->ctx;
+    brain->hazard_count = 0;
   }
   CapsCtx caps_ctx; memset(&caps_ctx, 0, sizeof caps_ctx); caps_ctx.world = world;
+  caps_ctx.memo = brain->hazard_memo; caps_ctx.memo_count = brain->hazard_count; caps_ctx.memo_cap = brain->hazard_cap;
   qa_nav_traverse_caps caps = qa_default_traverse_caps();
   caps.jump = !brain->settings->movement.walk_only || brain->settings->movement.allow_jumping_in_combat;
   caps.avoid_ctx = &caps_ctx; caps.avoid = caps_avoid;
@@ -1159,7 +1188,7 @@ static void ensure_path(qa_bot_brain *brain, qa_bot_world *world, qa_bot_vec3 go
   options.start_above = brain->config.has_movement ? brain->config.movement.start_above : QA_PLAN_START_ABOVE;
   qa_nav_path path;
   bool planned = nav->plan_path(nav->ctx, self.origin, goal, &options, &path);
-  free(caps_ctx.memo);
+  brain->hazard_memo = caps_ctx.memo; brain->hazard_count = caps_ctx.memo_count; brain->hazard_cap = caps_ctx.memo_cap;
   if (s->has_owned_path) { qa_nav_path_destroy(&s->owned_path); s->has_owned_path = false; }
   if (planned) {
     s->owned_path = path;
@@ -1169,6 +1198,10 @@ static void ensure_path(qa_bot_brain *brain, qa_bot_world *world, qa_bot_vec3 go
     qa_bot_set_path(&s->path_state, NULL, self.origin, now);
     s->path_state.planned_at = now;
   }
+  brain->has_failed_plan_goal = !planned;
+  if (!planned) brain->failed_plan_goal = goal;
+  brain->has_planned_goal = true;
+  brain->planned_goal = goal;
 }
 static qa_bot_vec3 aim_point_for(qa_bot_brain *brain, const qa_bot_entity *target, qa_bot_vec3 from, double weapon_number) {
   const qa_bot_weapon_rec *weapon = qa_bot_knowledge_weapon_by_number(brain->config.knowledge, weapon_number);
@@ -1230,6 +1263,10 @@ static bool should_check_six(qa_bot_brain *brain, double now) {
   s->check_six_next_at = now + qa_bot_random_range(brain->config.rng, 3, 8);
   if (!qa_bot_random_chance(brain->config.rng, 35)) return false;
   s->check_six_until = now + 0.5;
+  /* Captured once, here: recomputing "180 degrees from where I am facing" every
+   * frame makes the ideal angle run away from the tracker, so the bot would
+   * pirouette through the whole window instead of looking behind it. */
+  s->check_six_yaw = s->aim.yaw + 180;
   return true;
 }
 static bool wants_use(qa_bot_brain *brain, const qa_bot_entity *entities, size_t count, qa_bot_vec3 origin) {
@@ -1277,7 +1314,7 @@ qa_bot_usercmd qa_bot_brain_think(qa_bot_brain *brain, qa_bot_world *world) {
   const qa_bot_entity *entities = world->entities(world->ctx, &entity_count);
   const qa_bot_sound *sounds = world->hearing(world->ctx, &sound_count);
   update_senses(brain, world, self, entities, entity_count, sounds, sound_count, dt, now);
-  update_objectives(brain, entities, entity_count, self, now);
+  update_objectives(brain, entities, entity_count, self);
   const qa_bot_entity *target = select_target(brain, entities, entity_count, self.team, self.origin);
   s->target_id = target ? (double)target->id : -1;
   bool wedged = update_wedge(brain, self.origin, now, target != NULL);
@@ -1483,15 +1520,25 @@ qa_bot_usercmd qa_bot_brain_think(qa_bot_brain *brain, qa_bot_world *world) {
     aim_at = qa_bvec_sub(s->gate_shoot_at, self.eye);
     has_aim_at = true;
   } else if (should_check_six(brain, now)) {
-    aim_at = v3(cos(((s->aim.yaw + 180) * acos(-1.0)) / 180), sin(((s->aim.yaw + 180) * acos(-1.0)) / 180), 0);
+    aim_at = v3(cos((s->check_six_yaw * acos(-1.0)) / 180), sin((s->check_six_yaw * acos(-1.0)) / 180), 0);
     has_aim_at = true;
   } else if (has_move_target) {
     aim_at = qa_bvec_sub(move_target, self.origin);
     aim_at.z = 0;
     has_aim_at = true;
   }
+  double yaw_before = s->aim.yaw;
   if (has_aim_at) (void)qa_aim_step(&s->aim, aim_at, brain->settings->aiming, dt, now);
   cmd.view_angles = v3(s->aim.pitch, qa_bot_angle_mod(s->aim.yaw), 0);
+  if (s->aim.yaw != yaw_before && (cmd.forwardmove != 0 || cmd.sidemove != 0)) {
+    /* The move fields were projected onto yaw_before but the server applies them to the new view; carry the
+       same world direction over. */
+    qa_angle_vectors before = qa_bot_angle_vectors(0, yaw_before, 0), after = qa_bot_angle_vectors(0, s->aim.yaw, 0);
+    double wx = before.forward.x * cmd.forwardmove + before.right.x * cmd.sidemove;
+    double wy = before.forward.y * cmd.forwardmove + before.right.y * cmd.sidemove;
+    cmd.forwardmove = wx * after.forward.x + wy * after.forward.y;
+    cmd.sidemove = wx * after.right.x + wy * after.right.y;
+  }
   if (s->has_gate_shoot_at && !target && now - s->gate_fired_at >= GATE_SHOT_SECONDS) {
     if (qa_bot_angle_between(s->aim.pitch, s->aim.yaw, qa_bvec_sub(s->gate_shoot_at, self.eye)) <= GATE_AIM_DEGREES) {
       cmd.buttons |= QA_BOT_BUTTON_ATTACK;

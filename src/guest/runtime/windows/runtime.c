@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/guest/pe/exports.h"
 #include "qa/guest/pe/loader.h"
@@ -213,10 +214,23 @@ static qa_call_result unsupported_impl(void *ctx, const qa_guest_core_call_conte
 }
 
 /* Host vtable. */
+typedef struct owned_resource { void *resource; void (*release)(void *resource); } owned_resource;
+static void host_own(void *ctx, void *resource, void (*release)(void *resource)) {
+  qa_windows_guest_runtime *rt = ctx;
+  grow(&rt->owned, &rt->owned_cap, rt->owned_count, sizeof(owned_resource));
+  ((owned_resource *)rt->owned)[rt->owned_count++] = (owned_resource){resource, release};
+}
+static void free_unsupported(void *resource);
 static const qa_pe_image *const *host_images(void *ctx, size_t *count) {
   qa_windows_guest_runtime *rt = ctx;
   if (count != NULL) *count = rt->image_count;
   return (const qa_pe_image *const *)rt->images;
+}
+void qa_windows_guest_runtime_charge_bytes(qa_windows_guest_runtime *runtime, size_t byte_length) {
+  if (runtime->runner_or_null != NULL) qa_guest_call_runner_charge_bytes(runtime->runner_or_null, byte_length);
+}
+static void host_charge_bytes(void *ctx, size_t byte_length) {
+  qa_windows_guest_runtime_charge_bytes((qa_windows_guest_runtime *)ctx, byte_length);
 }
 static uint32_t host_get_last_error(void *ctx) {
   qa_windows_guest_runtime *rt = ctx;
@@ -478,6 +492,7 @@ qa_guest_import_resolution qa_windows_guest_runtime_resolve(
     unsupported_state *state = xmalloc(sizeof *state);
     state->library = xstrdup(library);
     state->name = xstrdup(name);
+    host_own(runtime, state, free_unsupported);
     qa_windows_import_implementation impl = {state, unsupported_impl};
     qa_abi_value_layout *layouts = xmalloc(sizeof *layouts);
     qa_guest_call_signature signature;
@@ -669,6 +684,122 @@ bool qa_windows_guest_runtime_allocation_size(qa_windows_guest_runtime *runtime,
   return false;
 }
 
+void qa_windows_heap_tables_free(qa_windows_heap_tables *tables) {
+  free((void *)tables->heaps);
+  free((void *)tables->reservations);
+  free((void *)tables->tls);
+  free((void *)tables->fls);
+  memset(tables, 0, sizeof *tables);
+}
+void qa_windows_guest_runtime_heap_state(qa_windows_guest_runtime *runtime, qa_native_heap_block **blocks,
+                                         size_t *block_count, qa_windows_heap_tables *tables) {
+  const size_t count = runtime->allocation_count;
+  *blocks = xmalloc((count == 0 ? 1 : count) * sizeof **blocks);
+  for (size_t i = 0; i < count; i++) {
+    (*blocks)[i].base = (int64_t)ALLOCATIONS(runtime)[i].address.byte_offset;
+    (*blocks)[i].size = (double)ALLOCATIONS(runtime)[i].size;
+    (*blocks)[i].heap = (int64_t)ALLOCATIONS(runtime)[i].heap;
+  }
+  *block_count = count;
+  const qa_windows_kernel_tables *t = &runtime->tables;
+  memset(tables, 0, sizeof *tables);
+  int64_t *heaps = xmalloc((t->heap_count == 0 ? 1 : t->heap_count) * sizeof *heaps);
+  for (size_t i = 0; i < t->heap_count; i++) heaps[i] = (int64_t)t->heaps[i];
+  qa_windows_reservation *reservations = xmalloc((t->reservation_count == 0 ? 1 : t->reservation_count) * sizeof *reservations);
+  for (size_t i = 0; i < t->reservation_count; i++) {
+    reservations[i].base = (int64_t)t->reservations[i].address.byte_offset;
+    reservations[i].size = (double)t->reservations[i].size;
+  }
+  double *tls = xmalloc((t->tls_count == 0 ? 1 : t->tls_count) * sizeof *tls);
+  for (size_t i = 0; i < t->tls_count; i++) tls[i] = (double)t->tls[i];
+  qa_windows_fls_slot *fls = xmalloc((t->fls_count == 0 ? 1 : t->fls_count) * sizeof *fls);
+  for (size_t i = 0; i < t->fls_count; i++) {
+    fls[i].index = (double)t->fls[i].index;
+    fls[i].has_callback = t->fls[i].has_callback;
+    fls[i].callback = t->fls[i].has_callback ? (int64_t)t->fls[i].callback.byte_offset : 0;
+    fls[i].has_value = t->fls[i].has_value;
+    fls[i].value = t->fls[i].has_value ? (int64_t)t->fls[i].value.byte_offset : 0;
+  }
+  tables->heaps = heaps; tables->heap_count = t->heap_count;
+  tables->reservations = reservations; tables->reservation_count = t->reservation_count;
+  tables->tls = tls; tables->tls_count = t->tls_count;
+  tables->fls = fls; tables->fls_count = t->fls_count;
+  tables->last_error = (double)host_get_last_error(runtime);
+}
+static qa_guest_core_address saved_heap_pointer(qa_windows_guest_runtime *runtime, int64_t base) {
+  qa_guest_core_address address = {0};
+  if (!qa_memory_pointer(runtime->options.memory, (uint64_t)base, &address)) qa_raise("Error", 0, 0, "Saved Windows heap address is null");
+  return address;
+}
+void qa_windows_guest_runtime_restore_heap_state(qa_windows_guest_runtime *runtime, const qa_native_heap_block *blocks,
+                                                 size_t block_count, const qa_windows_heap_tables *tables) {
+  runtime->allocation_count = 0;
+  for (size_t i = 0; i < block_count; i++) {
+    const qa_guest_core_address address = saved_heap_pointer(runtime, blocks[i].base);
+    qa_memory_check(runtime->options.memory, address, 1, QA_ACCESS_READ);
+    /* TS Map#set: a repeated base replaces the earlier entry in place. */
+    size_t at = runtime->allocation_count;
+    for (size_t j = 0; j < runtime->allocation_count; j++)
+      if (ALLOCATIONS(runtime)[j].address.byte_offset == (uint64_t)blocks[i].base) { at = j; break; }
+    if (at == runtime->allocation_count) {
+      grow(&runtime->allocations, &runtime->allocation_cap, runtime->allocation_count, sizeof(heap_allocation));
+      runtime->allocation_count++;
+    }
+    ALLOCATIONS(runtime)[at].address = address;
+    ALLOCATIONS(runtime)[at].size = (size_t)blocks[i].size;
+    ALLOCATIONS(runtime)[at].heap = (uint64_t)blocks[i].heap;
+  }
+  qa_windows_kernel_tables *t = &runtime->tables;
+  t->heap_count = 0;
+  for (size_t i = 0; i < tables->heap_count; i++) {
+    bool seen = false;
+    for (size_t j = 0; j < t->heap_count; j++) seen = seen || t->heaps[j] == (uint64_t)tables->heaps[i];
+    if (seen) continue;
+    grow((void **)&t->heaps, &t->heap_cap, t->heap_count, sizeof *t->heaps);
+    t->heaps[t->heap_count++] = (uint64_t)tables->heaps[i];
+  }
+  t->reservation_count = 0;
+  for (size_t i = 0; i < tables->reservation_count; i++) {
+    const qa_guest_core_address address = saved_heap_pointer(runtime, tables->reservations[i].base);
+    size_t at = t->reservation_count;
+    for (size_t j = 0; j < t->reservation_count; j++)
+      if (t->reservations[j].address.byte_offset == (uint64_t)tables->reservations[i].base) { at = j; break; }
+    if (at == t->reservation_count) {
+      grow((void **)&t->reservations, &t->reservation_cap, t->reservation_count, sizeof *t->reservations);
+      t->reservation_count++;
+    }
+    t->reservations[at].address = address;
+    t->reservations[at].size = (size_t)tables->reservations[i].size;
+  }
+  t->fls_count = 0;
+  for (size_t i = 0; i < tables->fls_count; i++) {
+    qa_windows_fiber_slot slot;
+    memset(&slot, 0, sizeof slot);
+    slot.index = (int64_t)tables->fls[i].index;
+    slot.has_callback = tables->fls[i].has_callback;
+    if (slot.has_callback) slot.callback = saved_heap_pointer(runtime, tables->fls[i].callback);
+    slot.has_value = tables->fls[i].has_value;
+    if (slot.has_value) slot.value = saved_heap_pointer(runtime, tables->fls[i].value);
+    size_t at = t->fls_count;
+    for (size_t j = 0; j < t->fls_count; j++)
+      if (t->fls[j].index == slot.index) { at = j; break; }
+    if (at == t->fls_count) {
+      grow((void **)&t->fls, &t->fls_cap, t->fls_count, sizeof *t->fls);
+      t->fls_count++;
+    }
+    t->fls[at] = slot;
+  }
+  t->tls_count = 0;
+  for (size_t i = 0; i < tables->tls_count; i++) {
+    bool seen = false;
+    for (size_t j = 0; j < t->tls_count; j++) seen = seen || t->tls[j] == (int64_t)tables->tls[i];
+    if (seen) continue;
+    grow((void **)&t->tls, &t->tls_cap, t->tls_count, sizeof *t->tls);
+    t->tls[t->tls_count++] = (int64_t)tables->tls[i];
+  }
+  host_set_last_error(runtime, qa_js_to_uint32(tables->last_error));
+}
+
 typedef struct cfg_state { qa_windows_guest_runtime *rt; int kind; } cfg_state;
 static void validate_cfg(qa_windows_guest_runtime *rt, uint64_t target,
                          const qa_guest_core_call_context *context) {
@@ -763,7 +894,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
   }
   if (!rt->has_cfg_check) {
     cfg_state *check_state = xmalloc(sizeof *check_state);
-    check_state->rt = rt; check_state->kind = 0;
+    check_state->rt = rt; check_state->kind = 0; host_own(rt, check_state, free);
     qa_windows_import_implementation check_impl = {check_state, cfg_impl};
     qa_windows_service(&rt->host, "quake-runtime.dll", "guard-check", NULL, 0, true,
                        QA_STORAGE_INT32, check_impl);
@@ -771,7 +902,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
         rt, "quake-runtime.dll", "guard-check", &rt->cfg_check);
     if (width == 8) {
       cfg_state *dispatch_state = xmalloc(sizeof *dispatch_state);
-      dispatch_state->rt = rt; dispatch_state->kind = 1;
+      dispatch_state->rt = rt; dispatch_state->kind = 1; host_own(rt, dispatch_state, free);
       qa_windows_import_implementation dispatch_impl = {dispatch_state, cfg_impl};
       qa_abi_storage ptr = QA_STORAGE_POINTER;
       qa_windows_service(&rt->host, "quake-runtime.dll", "guard-dispatch-check", &ptr, 1,
@@ -794,7 +925,7 @@ static void prepare_cfg(qa_windows_guest_runtime *rt, qa_pe_image *image) {
       rt->has_cfg_dispatch = true;
     } else {
       cfg_state *dispatch_state = xmalloc(sizeof *dispatch_state);
-      dispatch_state->rt = rt; dispatch_state->kind = 2;
+      dispatch_state->rt = rt; dispatch_state->kind = 2; host_own(rt, dispatch_state, free);
       qa_windows_import_implementation dispatch_impl = {dispatch_state, cfg_impl};
       qa_windows_service(&rt->host, "quake-runtime.dll", "guard-dispatch-check", NULL, 0,
                          true, QA_STORAGE_INT32, dispatch_impl);
@@ -972,6 +1103,9 @@ void qa_windows_guest_runtime_init(qa_windows_guest_runtime *runtime,
   host->load_library = host_load_library;
   host->free_library = host_free_library;
   host->library_name = host_library_name;
+  host->own = host_own;
+  host->tables = &runtime->tables;
+  host->charge_bytes = host_charge_bytes;
   runtime->teb = qa_gmem_allocate(options->memory_ext, 0x2000, true, 4096, false,
                                   QA_PERM_READ_WRITE, "Windows TEB");
   runtime->peb = qa_gmem_allocate(options->memory_ext, 0x1000, true, 4096, false,
@@ -1000,7 +1134,12 @@ void qa_windows_guest_runtime_init(qa_windows_guest_runtime *runtime,
   (void)qa_windows_guest_runtime_register_data(
       runtime, "msvcp140.dll", "?id@?$numpunct@D@std@@2V0locale@2@A", zeros, (size_t)width);
 }
+static void free_unsupported(void *resource) { unsupported_state *state = resource; free(state->library); free(state->name); free(state); }
 void qa_windows_guest_runtime_destroy(qa_windows_guest_runtime *runtime) {
+  for (size_t i = runtime->owned_count; i-- > 0;) {
+    owned_resource *owned = &((owned_resource *)runtime->owned)[i]; owned->release(owned->resource);
+  }
+  free(runtime->owned);
   for (size_t i = 0; i < runtime->import_count; i++) {
     import_entry *entry = IMPORTS(runtime)[i];
     free(entry->library); free(entry->name); free(entry->callback_id);
@@ -1024,6 +1163,7 @@ void qa_windows_guest_runtime_destroy(qa_windows_guest_runtime *runtime) {
   free(runtime->prepared);
   free(runtime->initialized);
   free(runtime->allocations);
+  qa_windows_kernel_tables_free(&runtime->tables);
   free(runtime->tls_blocks);
   free(runtime->cfg_targets);
   memset(runtime, 0, sizeof *runtime);

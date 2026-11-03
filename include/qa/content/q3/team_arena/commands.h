@@ -1,7 +1,7 @@
 /* Port of src/content/q3/team-arena/commands.ts. GPL-2.0-or-later.
  * GameCommandError aborts via qa_range_error. DeathRuntime.playerDie and
  * the item spawnItem call are host callbacks (landed headers expose no
- * equivalents); ps.ping has no mirror field (scoreboard logs 0). */
+ * equivalents). */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_COMMANDS_H
 #define QA_CONTENT_Q3_TEAM_ARENA_COMMANDS_H
 #include <stdbool.h>
@@ -44,7 +44,7 @@ typedef struct qa_q3_ta_game_command_imports {
 typedef struct qa_q3_ta_game_command_host {
   qa_q3_entity_pool *pool;
   qa_q3_ta_match_state *state;
-  qa_q3_game_player_slots_mirror *team_scores;
+  qa_q3_base_player_state_slots *team_scores;
   const qa_q3_ta_command_settings *settings;
   qa_q3_ta_game_command_imports imports;
   qa_q3_ta_team_runtime *team;

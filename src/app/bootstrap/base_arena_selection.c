@@ -1,11 +1,13 @@
 /* Port of src/app/bootstrap/base-arena-selection.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/base_arena_selection.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static char *dup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
 static int by_selection(const void *a, const void *b) {
   double x = (*(const qa_app_base_arena *const *)a)->selection, y = (*(const qa_app_base_arena *const *)b)->selection;
@@ -17,7 +19,7 @@ qa_app_arena_selection qa_app_arena_selection_make(const qa_app_base_arena_catal
   size_t sorted_count = 0;
   for (size_t i = 0; i < catalog->arena_count; i++)
     if (catalog->arenas[i].special[0] != '\0' || catalog->arenas[i].number < catalog->regular_count) sorted[sorted_count++] = &catalog->arenas[i];
-  qsort(sorted, sorted_count, sizeof *sorted, by_selection);
+  qa_js_sort(sorted, sorted_count, sizeof *sorted, by_selection);
   qa_app_arena_selection out = {0};
   for (size_t i = 0; i < sorted_count; i++) {
     const qa_app_base_arena *arena = sorted[i];
@@ -41,7 +43,7 @@ qa_app_arena_selection qa_app_arena_selection_make(const qa_app_base_arena_catal
     qa_app_arena_best best = qa_app_base_arena_progression_best(progress, arena->number);
     char record[128];
     if (best.rank == 0) snprintf(record, sizeof record, "Not completed");
-    else snprintf(record, sizeof record, "Rank %.17g · Skill %.17g", best.rank, best.skill);
+    else snprintf(record, sizeof record, "Rank %s · Skill %s", QA_JS_NUMBER(best.rank), QA_JS_NUMBER(best.skill));
     out.rows = realloc(out.rows, (out.row_count + 1) * sizeof *out.rows);
     out.rows[out.row_count++] = (qa_app_arena_selection_row){arena, dup(tier), dup(record),
         qa_app_base_arena_progression_level_available(progress, arena->number)};
@@ -51,7 +53,7 @@ qa_app_arena_selection qa_app_arena_selection_make(const qa_app_base_arena_catal
   for (const char *p = saved_selection; *p; p++) if (!isspace((unsigned char)*p)) blank = false;
   const char *current = NULL;
   if (!blank) {
-    double wanted = strtod(saved_selection, NULL);
+    double wanted = qa_js_string_to_number(saved_selection); /* Number(savedSelection) */
     for (size_t i = 0; i < out.row_count; i++)
       if (out.rows[i].available && out.rows[i].arena->selection == wanted) { current = out.rows[i].arena->map; break; }
   }

@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 const char *const QA_ITEM_FLAG_HEALTH = "health", *const QA_ITEM_FLAG_AMMO = "ammo", *const QA_ITEM_FLAG_ARMOR = "armor", *const QA_ITEM_FLAG_WEAPON = "weapon", *const QA_ITEM_FLAG_POWERUP = "powerup", *const QA_ITEM_FLAG_DROPPED = "dropped", *const QA_ITEM_FLAG_MEGA_ITEM = "mega_item", *const QA_ITEM_FLAG_BACKPACK = "backpack", *const QA_ITEM_FLAG_ZAP_PROOF = "zap_proof", *const QA_ITEM_FLAG_CHECK_ITEMS = "check_items", *const QA_ITEM_FLAG_OBJECTIVE = "objective", *const QA_ITEM_FLAG_RUNE = "rune", *const QA_ITEM_FLAG_KEY = "key", *const QA_ITEM_FLAG_USABLE = "usable", *const QA_ITEM_FLAG_IGNORE_LIMITS = "ignore_limits";
 const char *const QA_WEAPON_FLAG_MELEE = "melee", *const QA_WEAPON_FLAG_HITSCAN = "hitscan", *const QA_WEAPON_FLAG_PROJECTILE = "projectile", *const QA_WEAPON_FLAG_PARABOLIC = "parabolic", *const QA_WEAPON_FLAG_EXPLOSIVE = "explosive", *const QA_WEAPON_FLAG_STICKY = "sticky", *const QA_WEAPON_FLAG_ELECTRIC = "electric", *const QA_WEAPON_FLAG_STARTING = "starting", *const QA_WEAPON_FLAG_INITIAL = "initial", *const QA_WEAPON_FLAG_SUITABLE = "suitable", *const QA_WEAPON_FLAG_ROCKET_JUMP = "rocket_jump";
 const char *const QA_MONSTER_FLAG_MELEE = "melee", *const QA_MONSTER_FLAG_RANGED = "ranged", *const QA_MONSTER_FLAG_AQUATIC = "aquatic", *const QA_MONSTER_FLAG_FLYER = "flyer", *const QA_MONSTER_FLAG_TANK = "tank", *const QA_MONSTER_FLAG_SPONGE = "sponge", *const QA_MONSTER_FLAG_TURRET = "turret", *const QA_MONSTER_FLAG_NEUTRAL = "neutral";
@@ -72,8 +74,7 @@ const qa_danger_entry *qa_bot_knowledge_get_danger(const qa_bot_knowledge *k, co
 }
 const qa_bot_weapon_rec *qa_bot_knowledge_weapon_by_number(const qa_bot_knowledge *k, double num) { size_t n; const qa_bot_weapon_rec *ws = weapon_list(k, &n), *r = NULL; for (size_t i = 0; i < n; i++) if (ws[i].entry->number == num) r = &ws[i]; if (num == 0) return NULL;
 return r; }
-static bool eq_lower(const char *a, const char *b) { while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-a++; b++; } return *a == *b; }
+static bool eq_lower(const char *a, const char *b) { return qa_js_equals_ignore_case(a, b); } /* TS toLowerCase() === */
 const qa_character_entry *qa_bot_knowledge_get_character(const qa_bot_knowledge *k, const char *name) { for (size_t i = 0; i < k->chars.entry_count; i++) if (eq_lower(k->chars.entries[i].name, name)) return &k->chars.entries[i];
 return NULL; }
 int64_t qa_bot_knowledge_team_index(const qa_bot_knowledge *k, double v) { size_t cap = k->format == QA_BOT_DATA_Q2 ? 2 : 4; for (size_t i = 0; i < k->teams_r.entry_count && i < cap; i++) if (k->teams_r.entries[i].value == v) return (int64_t)i;
@@ -108,7 +109,7 @@ void qa_bot_game_mode_destroy(qa_bot_game_mode *m) { free(m->game_type_owned); m
 const char *qa_bot_knowledge_interaction_for(const qa_bot_knowledge *k, const char *cn, int64_t spawnflags, bool has_health, bool has_targetname) {
   for (size_t i = 0; i < k->inter_r.entry_count; i++) { const qa_interactable_entry *e = &k->inter_r.entries[i]; if (strcmp(e->name, cn)) continue;
     bool conds[3]; size_t nc = 0;
-    if (e->has_spawnflags) conds[nc++] = (spawnflags & (int64_t)e->spawnflags) == (int64_t)e->spawnflags;
+    if (e->has_spawnflags) conds[nc++] = (double)(qa_js_to_int32((double)spawnflags) & qa_js_to_int32(e->spawnflags)) == e->spawnflags; /* JS & is int32 */
     if (e->has_health) conds[nc++] = e->health == has_health;
     if (e->has_targetname) conds[nc++] = e->targetname == has_targetname;
     if (!nc) return e->interaction;
@@ -122,8 +123,8 @@ bool qa_choose_weapon(const qa_bot_weapon_rec *ws, size_t count, qa_bot_weapon_c
   for (size_t i = 0; i < count; i++) { const qa_bot_weapon_rec *w = &ws[i]; const qa_weapon_entry *e = w->entry;
     if (e->priority <= 0) continue;
     if (w->is_melee && !ctx.allow_melee) continue;
-    if ((ctx.items & (int64_t)e->number) == 0) continue;
-    if (w->needs_ammo) { double have = qa_bot_ammo_get(ctx.ammo, ctx.ammo_count, e->ammo_name); if (have < fmax(1, e->min_ammo)) continue; }
+    if ((qa_js_to_int32((double)ctx.items) & qa_js_to_int32(e->number)) == 0) continue;
+    if (w->needs_ammo) { double have = qa_bot_ammo_get(ctx.ammo, ctx.ammo_count, e->ammo_name); if (have < qa_js_max(1, e->min_ammo)) continue; }
     if (ctx.range < e->min_range) continue;
     if (e->max_range > 0 && ctx.range > e->max_range) continue;
     if (e->max_height > 0 && ctx.height_delta > e->max_height) continue;
@@ -147,22 +148,22 @@ const qa_bot_weapon_rec *qa_weapon_for_item(const qa_bot_weapon_rec *ws, size_t 
 }
 double qa_bot_item_value(const qa_bot_item_rec *item, qa_bot_item_context ctx) {
   const qa_item_entry *e = item->entry;
-  bool mega = item->is_mega || (item->mega_spawnflag != 0 && (ctx.spawnflags & (int64_t)item->mega_spawnflag) == (int64_t)item->mega_spawnflag);
+  bool mega = item->is_mega || (item->mega_spawnflag != 0 && (double)(qa_js_to_int32((double)ctx.spawnflags) & qa_js_to_int32(item->mega_spawnflag)) == item->mega_spawnflag);
   if (item->is_powerup || mega) { if (!ctx.allow_power_items) return 0;
   return item->is_powerup ? 1000 : 700; }
   if (item->is_weapon) { const qa_bot_weapon_rec *w = qa_weapon_for_item(ctx.weapons, ctx.weapon_count, e->name); double number = w ? w->entry->number : 0;
-    bool owned = number != 0 && (ctx.items & (int64_t)number) != 0; if (owned && !ctx.weapon_stay) return 200;
+    bool owned = number != 0 && (qa_js_to_int32((double)ctx.items) & qa_js_to_int32(number)) != 0; if (owned && !ctx.weapon_stay) return 200;
     if (owned) return 0;
     return 600 + (w ? w->entry->priority : 0) * 10; }
-  if (item->is_health) { double missing = fmax(0, ctx.max_health - ctx.health); if (missing <= 0) return 0;
+  if (item->is_health) { double missing = qa_js_max(0, ctx.max_health - ctx.health); if (missing <= 0) return 0;
   return 100 + missing * 4; }
   if (item->is_armor) { if (ctx.armor >= 200) return 0;
   return 300 + (200 - ctx.armor); }
   if (item->is_ammo) { double want = 0;
     for (size_t i = 0; i < ctx.weapon_count; i++) { const qa_bot_weapon_rec *w = &ctx.weapons[i]; if (!w->needs_ammo) continue;
       if (w->entry->identity.is_q2_classname ? strcmp(e->name, w->entry->ammo_name) : !has_flag(e->flags, e->flag_count, w->entry->ammo)) continue;
-      double have = qa_bot_ammo_get(ctx.ammo, ctx.ammo_count, w->entry->ammo_name); double room = fmax(0, w->entry->max_ammo - have);
-      bool owned = (ctx.items & (int64_t)w->entry->number) != 0; want = fmax(want, (owned ? 150 : 40) * (w->entry->max_ammo > 0 ? room / w->entry->max_ammo : 0)); }
+      double have = qa_bot_ammo_get(ctx.ammo, ctx.ammo_count, w->entry->ammo_name); double room = qa_js_max(0, w->entry->max_ammo - have);
+      bool owned = (qa_js_to_int32((double)ctx.items) & qa_js_to_int32(w->entry->number)) != 0; want = qa_js_max(want, (owned ? 150 : 40) * (w->entry->max_ammo > 0 ? room / w->entry->max_ammo : 0)); }
     return want; }
   if (has_flag(e->flags, e->flag_count, "backpack")) return 120;
   if (has_flag(e->flags, e->flag_count, "objective")) { if (ctx.item_team <= 0 || ctx.team <= 0) return 900;

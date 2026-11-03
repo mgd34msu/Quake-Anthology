@@ -116,6 +116,10 @@ typedef struct capacity_state {
   bool has_stack;
   qa_qvm_evaluation_stack stack;
   int64_t ammo_offset;
+  /* kind "source": a content profile's capacity, still given live memory. */
+  qa_qvm_source_capacity_fn source_capacity;
+  void *source_ctx;
+  void (*source_release)(void *ctx);
 } capacity_state;
 
 static int32_t word_value(qa_qvm_source_word source, int32_t weapon, const qa_qvm_capacity_context *context) {
@@ -280,7 +284,7 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&arguments_reader);
-    if (argument_count > 62)
+    if (argument_count > QA_QVM_MAX_PRIVATE_ARGUMENT_WORDS)
       qa_save_reader_fail(&capacity, "counter arguments exceed the private source invocation");
     /* TS reads ammoOffset here, inside the counter branch only. */
     qa_save_reader ammo_reader = field(reader, "ammoOffset");
@@ -335,7 +339,7 @@ void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const q
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&live_ins);
-    if (argument_count > 62 || live_count != input_count)
+    if (argument_count > QA_QVM_MAX_PRIVATE_ARGUMENT_WORDS || live_count != input_count)
       qa_save_reader_fail(&capacity, "capacity arguments and live-ins differ from the original source frame");
   }
   qa_save_reader_destroy(&capacity);
@@ -367,6 +371,8 @@ static double capacity_of(void *ctx, qa_qvm_memory *memory, double weapon_value,
   const qa_qvm_capacity_context *context = &context_value;
   int32_t weapon = (int32_t)weapon_value;
   if (strcmp(state->kind, "constant") == 0) return (double)(int32_t)state->constant;
+  if (strcmp(state->kind, "source") == 0)
+    return state->source_capacity(state->source_ctx, memory, weapon_value);
   if (strcmp(state->kind, "global") == 0) {
     qa_qvm_writable_view view;
     qa_qvm_memory_data_view(memory, state->address, 4, &view);
@@ -415,10 +421,24 @@ void qa_qvm_primary_inventory_profile_constant(qa_module_identity module, qa_qvm
   out->public_profile = public_profile;
 }
 
+void qa_qvm_primary_inventory_profile_source(qa_module_identity module, qa_qvm_abi_profile abi_profile,
+                                             double weapons_offset, double ammo_offset,
+                                             qa_qvm_source_capacity_fn capacity, void *capacity_ctx,
+                                             void (*release)(void *ctx),
+                                             qa_qvm_inventory_profile *out) {
+  qa_qvm_primary_inventory_profile_constant(module, abi_profile, weapons_offset, ammo_offset, 0, out);
+  capacity_state *state = out->public_profile->ctx;
+  state->kind = "source";
+  state->source_capacity = capacity;
+  state->source_ctx = capacity_ctx;
+  state->source_release = release;
+}
+
 void qa_qvm_primary_inventory_profile_free(qa_qvm_inventory_profile *profile) {
   if (profile->public_profile != NULL) {
     capacity_state *state = profile->public_profile->ctx;
     if (state != NULL) {
+      if (state->source_release != NULL) state->source_release(state->source_ctx);
       free(state->functions);
       free(state->arguments);
       free((void *)state->region.inputs);

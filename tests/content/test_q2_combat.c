@@ -132,12 +132,12 @@ int main(void) {
   CHECK(env.fires == 1); /* ready+attack falls through; frame 8 is a fire frame */
 
   /* hand-grenade.ts (bun values) */
-  CHECK(qa_q2w_hand_frame_seconds((qa_q2w_hand_tempo){QA_Q2F_RERELEASE, true, false}) == 0.05);
-  CHECK(qa_q2w_hand_deadline(1.2345, 0.1, QA_Q2F_RERELEASE) == 1.335);
-  CHECK(qa_q2w_hand_deadline(1.2345, 0.1, QA_Q2F_CLASSIC) == 1.3345);
+  CHECK(qa_q2w_hand_frame_seconds((qa_q2w_hand_tempo){QA_Q2_EDITION_RERELEASE, true, false}) == 0.05);
+  CHECK(qa_q2w_hand_deadline(1.2345, 0.1, QA_Q2_EDITION_RERELEASE) == 1.335);
+  CHECK(qa_q2w_hand_deadline(1.2345, 0.1, QA_Q2_EDITION_CLASSIC) == 1.3345);
   qa_q2w_hand_throw_input tin;
   memset(&tin, 0, sizeof tin);
-  tin.edition = QA_Q2F_RERELEASE; tin.angles = (qa_vec3){-80, 10, 0}; tin.alive = true;
+  tin.edition = QA_Q2_EDITION_RERELEASE; tin.angles = (qa_vec3){-80, 10, 0}; tin.alive = true;
   tin.now = 2; tin.fuse_deadline = 3.5; tin.damage_multiplier = 2; tin.gravity = 800;
   tin.project = (qa_q2w_project_fn){NULL, fixed_project};
   qa_q2w_hand_projectile_spec spec = qa_q2w_calculate_hand_throw(tin);
@@ -145,7 +145,7 @@ int main(void) {
 
   /* presentation.ts */
   CHECK(qa_q2w_attack_frames(true, 1).first == 159 && qa_q2w_attack_frames(false, 0).last == 53);
-  CHECK(qa_q2w_animation_rate((qa_q2w_animation_rate_input){true, 0.05, QA_Q2W_DROPPING, 0, 0, false, 0}) == 20);
+  CHECK(qa_q2w_animation_rate((qa_q2w_animation_rate_input){true, 0.05, QA_Q2W_DROPPING, 0, 0, false, 0, false}) == 20);
   const char *sound = qa_q2w_powerup_sound((qa_q2w_powerup_sound_input){10, 10, true, 5});
   CHECK(sound != NULL && strcmp(sound, "ctf/tech2x.wav") == 0);
   CHECK(qa_q2w_powerup_sound((qa_q2w_powerup_sound_input){0, 0, true, 5}) == NULL);
@@ -155,10 +155,10 @@ int main(void) {
   CHECK(qa_q2m_classic_infantry_move_count == 12 && qa_q2m_rerelease_infantry_move_count == 17);
   CHECK(qa_q2m_muzzle_classic_count == 212 && qa_q2m_muzzle_rerelease_count == 290);
   CHECK(qa_q2m_muzzle_ids_value.SOLDIER_BLASTER_1 == 39);
-  qa_vec3 first = qa_q2m_muzzle_offset(QA_Q2F_CLASSIC, 0);
+  qa_vec3 first = qa_q2m_muzzle_offset(QA_Q2_EDITION_CLASSIC, 0);
   CHECK(first.x == 0 && first.y == 0 && first.z == 0);
   CHECK(qa_q2m_classic_soldier_frames_value.stand101 == 146);
-  CHECK_ABORTS((void)qa_q2m_muzzle_offset(QA_Q2F_CLASSIC, 212));
+  CHECK_ABORTS((void)qa_q2m_muzzle_offset(QA_Q2_EDITION_CLASSIC, 212));
   CHECK_ABORTS((void)qa_q2m_record_at(3, 1.5));
 
   /* alternate-fly-state defaults */
@@ -175,11 +175,12 @@ int main(void) {
   CHECK(!qa_q2m_is_callback_name("bogus"));
 
   /* spawn fields / numberField */
-  const char *keys[] = {"health", "target"};
-  const char *values[] = {"42", "x"};
-  qa_q2f_spawn_fields fields = {0, "monster_soldier", keys, values, 2};
-  CHECK(qa_q2f_number_field(&fields, "health", 1) == 42);
-  CHECK(qa_q2f_number_field(&fields, "missing", 7) == 7);
+  qa_q2_spawn_fields fields = {0};
+  fields.classname = "monster_soldier";
+  CHECK(qa_q2_spawn_set(&fields, "health", "42") && qa_q2_spawn_set(&fields, "target", "x"));
+  CHECK(qa_q2_number_field(&fields, "health", 1) == 42);
+  CHECK(qa_q2_number_field(&fields, "missing", 7) == 7);
+  qa_q2_spawn_fields_free(&fields);
 
   printf("%d checks, %d failures\n", checks, failures);
   return failures ? 1 : 0;

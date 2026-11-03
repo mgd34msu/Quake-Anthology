@@ -55,11 +55,10 @@ typedef struct qa_qvm_grapple_checkpoint {
 typedef struct qa_qvm_grapple_provider qa_qvm_grapple_provider;
 
 /*
- * NULL only on OOM. `game`/`artifact` are borrowed. The TS constructor
- * re-reads the profile through its declaration; the C declaration
- * carries only scalar identity fields (see grapple_profile.h), so the
- * caller passes the already-read profile, copied by value here (its
- * list arrays stay borrowed, as with qa_qvm_grapple_profile).
+ * NULL only on OOM. `game`/`artifact` are borrowed. As in TS, the
+ * constructor re-reads the profile through its declaration, aborting on
+ * a declaration the artifact rejects. The caller's profile is copied by
+ * value (its list arrays stay borrowed, as with qa_qvm_grapple_profile).
  */
 qa_qvm_grapple_provider *qa_qvm_grapple_provider_create(qa_qvm_game *game,
                                                         const qa_resolved_qvm_artifact *artifact,

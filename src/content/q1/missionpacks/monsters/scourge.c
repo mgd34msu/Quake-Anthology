@@ -2,146 +2,150 @@
 #include "qa/content/q1/missionpacks/monsters/scourge.h"
 
 #include <math.h>
-#include <stdlib.h>
 
 #include "qa/content/q1/missionpacks/monsters/helpers.h"
 #include "qa/content/q1/missionpacks/monsters/tables/hipscrge.h"
 #include "monsters_internal.h"
 
 static void think_impl(qa_q1mpm_mission_monster *monster) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  if (qa_q1mpm_actor_number(entity, "scourge:state") == 0) {
-    qa_q1mpm_actor *trigger = game->create(game, "scourge_trigger");
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  if (qa_q1_actor_number(entity, "scourge:state") == 0) {
+    qa_q1_actor *trigger = qa_q1_create(game, "scourge_trigger", NULL, NULL);
     trigger->solid = "trigger";
-    qa_q1mpm_actor_set_damageable(game, trigger, false);
+    qa_q1_actor_set_damageable(trigger, false);
     qa_bounds bounds = {{-64, -64, -24}, {64, 64, 64}};
-    game->set_bounds(game, trigger, bounds);
-    qa_q1mpm_references_set(trigger, "lastvictim", QA_Q1MPM_SOME(entity->actor.id));
-    qa_q1mpm_references_set(entity, "lastvictim", QA_Q1MPM_SOME(trigger->actor.id));
-    trigger->touch = game->named.touch(game->named.ctx, trigger, "hipnotic:ScourgeTriggerTouch");
-    game->schedule(game, trigger, 0.1 + game->host->random(game->host->ctx),
-                   game->named.action(game->named.ctx, trigger, "hipnotic:ScourgeTriggerThink"));
-    game->set_origin(game, trigger, qa_q1mpm_monster_origin(monster));
+    qa_q1_set_bounds(game, trigger, bounds);
+    (void)qa_q1_actor_reference_set(trigger, "lastvictim", &entity->actor.id);
+    (void)qa_q1_actor_reference_set(entity, "lastvictim", &trigger->actor.id);
+    trigger->touch = qa_q1_callback_registry_touch(game->named, trigger, "hipnotic:ScourgeTriggerTouch");
+    const double delay = 0.1 + qa_q1_host_random(game);
+    qa_q1_schedule(game, trigger, delay, qa_q1_callback_registry_action(game->named, trigger, "hipnotic:ScourgeTriggerThink"));
+    qa_q1_set_origin(game, trigger, qa_q1_base_monster_origin(&monster->base));
     qa_q1mpm_number(monster, "scourge:state", 1);
   }
-  double silent = qa_q1mpm_actor_number(entity, "spawnsilent");
-  double multi = qa_q1mpm_actor_number(entity, "spawnmulti");
-  if (silent == 0 && multi == 1) game->sound(game, entity, "misc/null.wav", QA_Q1MPM_CH("body"), 2, 1);
-  else if (silent == 1 && multi == 0) game->sound(game, entity, "scourge/walk.wav", QA_Q1MPM_CH("body"), 2, 1);
+  double silent = qa_q1_actor_number(entity, "spawnsilent");
+  double multi = qa_q1_actor_number(entity, "spawnmulti");
+  if (silent == 0 && multi == 1) qa_q1_sound(game, entity->actor.id, "misc/null.wav", "body", 2, 1);
+  else if (silent == 1 && multi == 0) qa_q1_sound(game, entity->actor.id, "scourge/walk.wav", "body", 2, 1);
   qa_q1mpm_number(monster, "spawnmulti", silent);
 }
 static void think_action(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; think_impl(monster); }
 static void side_move(qa_q1mpm_mission_monster *monster, bool right, double distance) {
-  monster->game->host->walk_move(monster->game->host->ctx, monster->entity->actor,
-                                  monster->game->body(monster->game, monster->entity).angles.y + (right ? 90 : 270),
-                                  distance);
+  (void)monster->base.game->host.walk_move(monster->base.game->host.ctx, monster->base.entity->actor,
+                                           qa_q1_get_body(monster->base.game, monster->base.entity).angles.y + (right ? 90 : 270),
+                                           distance);
 }
 static void fire_at(qa_q1mpm_mission_monster *monster, double offset) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  qa_q1mpm_monster_face(monster);
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  qa_q1_base_monster_face(&monster->base);
   qa_vec3 target;
-  if (!qa_q1mpm_monster_target(monster, &target)) return;
-  qa_q1mpm_basis basis = game->make_vectors(game, game->body(game, entity).angles);
-  qa_vec3 origin = qa_q1mpm_vadd(qa_q1mpm_vadd(qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster), QA_Q1MPM_V3(0, 0, -19)),
-                                              qa_q1mpm_vscale(basis.right, offset)),
-                                 qa_q1mpm_vscale(basis.forward, 14));
-  game->sound(game, entity, "weapons/rocket1i.wav", QA_Q1MPM_CH("weapon"), 1, 1);
-  qa_vec3 velocity = qa_q1mpm_vscale(
-      qa_q1mpm_normalize(qa_q1mpm_vsub(qa_q1mpm_vadd(target, qa_q1mpm_vscale(basis.forward, 200)), origin)), 1000);
-  qa_q1mpm_ext_launch_spike(game, QA_Q1MPM_SOME(entity->actor.id), origin, velocity);
-  monster->state.attack_finished = game->time + 0.2;
+  if (!qa_q1_base_monster_target(&monster->base, &target)) return;
+  qa_q1_basis basis = qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles);
+  qa_vec3 origin = qa_q1_vadd(qa_q1_vadd(qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, -19}),
+                                              qa_q1_vscale(basis.right, offset)),
+                                 qa_q1_vscale(basis.forward, 14));
+  qa_q1_sound(game, entity->actor.id, "weapons/rocket1i.wav", "weapon", 1, 1);
+  qa_vec3 velocity = qa_q1_vscale(
+      qa_q1_normalize(qa_q1_vsub(qa_q1_vadd(target, qa_q1_vscale(basis.forward, 200)), origin)), 1000);
+  (void)qa_q1_launch_spike(game, &entity->actor.id, origin, velocity, "spike");
+  monster->base.state->attack_finished = game->time + 0.2;
 }
 static void flash(qa_q1mpm_mission_monster *monster, double offset) {
-  monster->entity->effects |= 2;
+  monster->base.entity->effects = qa_js_bit_or(monster->base.entity->effects, 2);
   fire_at(monster, offset);
 }
 static void tail(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_monster_face(monster);
-  if (!monster->state.enemy.has || qa_q1mpm_monster_distance(monster) > 100 ||
-      !monster->game->can_damage(monster->game, monster->state.enemy.id, monster->entity->actor.id))
+  qa_q1_base_monster_face(&monster->base);
+  if (!monster->base.state->has_enemy || qa_q1_base_monster_distance(&monster->base) > 100 ||
+      !qa_q1_can_damage(monster->base.game, monster->base.state->enemy, monster->base.entity->actor.id))
     return;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  const qa_q1mpm_host *host = game->host;
-  qa_q1mpm_game_damage(game, monster->state.enemy.id, entity->actor.id, QA_Q1MPM_SOME(entity->actor.id),
-                       (host->random(host->ctx) + host->random(host->ctx) + host->random(host->ctx)) * 40);
-  game->sound(game, entity, "shambler/smack.wav", QA_Q1MPM_CH("weapon"), 1, 1);
-  qa_q1mpm_basis basis = game->basis;
-  qa_vec3 spray = qa_q1mpm_vscale(basis.right, (game->host->random(game->host->ctx) * 2 - 1) * 50);
-  qa_q1mpm_ext_spawn_meat_spray(game, entity,
-                                qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster), qa_q1mpm_vscale(basis.forward, 16)),
-                                spray);
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  const double first = qa_q1_host_random(game);
+  const double second = qa_q1_host_random(game);
+  const double amount = (first + second + qa_q1_host_random(game)) * 40;
+  (void)qa_q1_damage(game, monster->base.state->enemy, entity->actor.id, &entity->actor.id, amount, NULL, NULL, NULL, NULL);
+  qa_q1_sound(game, entity->actor.id, "shambler/smack.wav", "weapon", 1, 1);
+  qa_q1_basis basis = game->basis;
+  qa_vec3 spray = qa_q1_vscale(basis.right, (qa_q1_host_random(game) * 2 - 1) * 50);
+  (void)qa_q1_spawn_meat_spray(game, entity,
+                               qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), qa_q1_vscale(basis.forward, 16)),
+                               spray);
 }
 static void turn_impl(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_monster_delay(monster, 0.1);
+  qa_q1_base_monster_delay(&monster->base, 0.1);
   qa_vec3 target;
-  if (!qa_q1mpm_monster_target(monster, &target)) return;
-  if (fabs(monster->game->body(monster->game, monster->entity).angles.y -
-           qa_q1mpm_yaw_for(qa_q1mpm_vsub(target, qa_q1mpm_monster_origin(monster)))) > 10) {
-    qa_q1mpm_monster_face(monster);
+  if (!qa_q1_base_monster_target(&monster->base, &target)) return;
+  double left = qa_q1_get_body(monster->base.game, monster->base.entity).angles.y;
+  double right = qa_q1_yaw_for(qa_q1_vsub(target, qa_q1_base_monster_origin(&monster->base)));
+  if (fabs(left - right) > 10) {
+    qa_q1_base_monster_face(&monster->base);
     return;
   }
-  qa_q1mpm_monster_set_next_frame(monster, qa_q1mpm_monster_spec(monster)->run);
+  q1mpm_set_next_frame(&monster->base, monster->base.spec->run);
 }
 static bool check_attack(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   qa_vec3 target;
-  bool has_target = monster->state.enemy.has && qa_q1mpm_eye(game, monster->state.enemy.id, &target);
+  bool has_target = monster->base.state->has_enemy && qa_q1mpm_eye(game, monster->base.state->enemy, &target);
   if (!has_target) return false;
-  qa_vec3 start = qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster), QA_Q1MPM_V3(0, 0, 25));
-  qa_vec3 delta = qa_q1mpm_vsub(target, start);
-  double distance = qa_q1mpm_length(delta);
-  if (distance <= 100 && monster->state.enemy.has &&
-      game->can_damage(game, monster->state.enemy.id, entity->actor.id)) {
+  qa_vec3 start = qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, 25});
+  qa_vec3 delta = qa_q1_vsub(target, start);
+  double distance = qa_q1_length(delta);
+  if (distance <= 100 && monster->base.state->has_enemy &&
+      qa_q1_can_damage(game, monster->base.state->enemy, entity->actor.id)) {
     entity->attack_state = "melee";
     return true;
   }
-  if (game->time < monster->state.attack_finished || !qa_q1mpm_monster_visible(monster) ||
+  if (game->time < monster->base.state->attack_finished || !qa_q1_base_monster_visible(&monster->base, qa_q1_base_monster_enemy(&monster->base)) ||
       delta.z > 64 || delta.z < -200 || distance > 1000 || distance < 150)
     return false;
-  qa_q1mpm_trace_request request = {start, target, QA_Q1MPM_POINT, QA_Q1MPM_SOME(entity->actor.id), true, false};
-  qa_q1mpm_trace trace = game->host->trace(game->host->ctx, &request);
-  if (!qa_q1mpm_opt_eq(trace.actor, monster->state.enemy) || (trace.in_open && trace.in_water)) return false;
+  const qa_q1_trace trace = q1mpm_trace(game, start, target, QA_Q1_POINT, &entity->actor.id, true);
+  if (!q1mpm_same_opt(trace.has_actor ? &trace.actor : NULL, qa_q1_base_monster_enemy(&monster->base)) ||
+      (trace.in_open && trace.in_water))
+    return false;
   entity->attack_state = "missile";
-  qa_q1mpm_monster_attack_finished(monster, 2 + 2 * game->host->random(game->host->ctx));
+  qa_q1_base_monster_attack_finished(&monster->base, 2 + 2 * qa_q1_host_random(game));
   return true;
 }
-static void trigger_think(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity) {
+static void trigger_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
-  qa_q1mpm_opt_actor owner = qa_q1mpm_references_get(entity, "lastvictim");
-  qa_q1mpm_actor *target = game->entity(game, owner);
-  if (target == NULL || game->health(game, target->actor.id) <= 0) { game->remove(game, entity); return; }
-  qa_q1mpm_body body = game->body(game, target);
-  game->set_origin(game, entity,
-                   qa_q1mpm_vadd(body.origin, qa_q1mpm_vscale(game->make_vectors(game, body.angles).forward, 300)));
-  game->schedule(game, entity, 0.1, game->named.action(game->named.ctx, entity, "hipnotic:ScourgeTriggerThink"));
+  qa_actor_id owner_id;
+  const qa_actor_id *owner = q1mpm_reference(entity, "lastvictim", &owner_id);
+  qa_q1_actor *target = owner == NULL ? NULL : qa_q1_get_entity(game, owner);
+  if (target == NULL || qa_q1_health(game, target->actor.id) <= 0) { qa_q1_remove(game, entity); return; }
+  qa_q1_body body = qa_q1_get_body(game, target);
+  qa_q1_set_origin(game, entity,
+                   qa_q1_vadd(body.origin, qa_q1_vscale(qa_q1_make_vectors(game, body.angles).forward, 300)));
+  qa_q1_schedule(game, entity, 0.1, qa_q1_callback_registry_action(game->named, entity, "hipnotic:ScourgeTriggerThink"));
 }
-static void trigger_touch(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity, qa_actor_id other,
-                          bool has_normal, qa_vec3 normal, const void *surface) {
-  (void)has_normal; (void)normal; (void)surface;
+static void trigger_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)normal; (void)surface;
   qa_q1mpm_runtime *runtime = ctx;
-  qa_q1mpm_actor *shot = game->entity(game, QA_Q1MPM_SOME(other));
-  qa_q1mpm_opt_actor owner = qa_q1mpm_references_get(entity, "lastvictim");
-  qa_q1mpm_mission_monster *monster = owner.has ? qa_q1mpm_runtime_context(runtime, owner.id) : NULL;
-  if (shot == NULL || (shot->movement_flags & (32 | 8)) != 0 || game->is_player(game, QA_Q1MPM_SOME(other)) ||
-      !qa_q1mpm_str_eq(shot->movement, "flymissile"))
+  qa_q1_actor *shot = qa_q1_get_entity(game, &other);
+  qa_actor_id owner;
+  qa_q1mpm_mission_monster *monster =
+      qa_q1_actor_reference_get(entity, "lastvictim", &owner) ? qa_q1mpm_runtime_context(runtime, owner) : NULL;
+  if (shot == NULL || qa_js_bit_and(shot->movement_flags, 32 | 8) != 0 || qa_q1_is_player(game, &other) ||
+      !q1mpm_str_eq(shot->movement, "flymissile"))
     return;
-  if (monster == NULL || game->health(game, monster->entity->actor.id) <= 0) {
-    game->remove(game, entity);
+  if (monster == NULL || qa_q1_health(game, monster->base.entity->actor.id) <= 0) {
+    qa_q1_remove(game, entity);
     return;
   }
-  qa_q1mpm_body body = game->body(game, shot);
-  if (qa_q1mpm_dot(qa_q1mpm_normalize(qa_q1mpm_vsub(qa_q1mpm_monster_origin(monster), body.origin)),
-                   qa_q1mpm_normalize(body.velocity)) < 0.8)
+  qa_q1_body body = qa_q1_get_body(game, shot);
+  if (qa_q1_dot(qa_q1_normalize(qa_q1_vsub(qa_q1_base_monster_origin(&monster->base), body.origin)),
+                   qa_q1_normalize(body.velocity)) < 0.8)
     return;
-  if (game->time > qa_q1mpm_actor_number(entity, "duration")) {
-    qa_q1mpm_monster_play(monster, game->host->random(game->host->ctx) < 0.5 ? "scourge_strafeleft1"
+  if (game->time > qa_q1_actor_number(entity, "duration")) {
+    qa_q1_base_monster_play(&monster->base, qa_q1_host_random(game) < 0.5 ? "scourge_strafeleft1"
                                                                               : "scourge_straferight1");
     qa_q1mpm_number(monster, "duration", game->time + 1.5);
   }
@@ -149,24 +153,24 @@ static void trigger_touch(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity
 static void stand1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
   qa_q1mpm_number(monster, "spawnsilent", 0);
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_STAND, 0);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_STAND, 0);
   think_impl(monster);
 }
 static void walk1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  if (monster->game->host->random(monster->game->host->ctx) < 0.1)
-    monster->game->sound(monster->game, monster->entity, "scourge/idle.wav", QA_Q1MPM_CH("voice"), 2, 1);
+  if (qa_q1_host_random(monster->base.game) < 0.1)
+    qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "scourge/idle.wav", "voice", 2, 1);
   qa_q1mpm_number(monster, "spawnsilent", 1);
   think_impl(monster);
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_WALK, 8);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_WALK, 8);
 }
 static void run1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  if (monster->game->host->random(monster->game->host->ctx) < 0.1)
-    monster->game->sound(monster->game, monster->entity, "scourge/idle.wav", QA_Q1MPM_CH("voice"), 2, 1);
+  if (qa_q1_host_random(monster->base.game) < 0.1)
+    qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "scourge/idle.wav", "voice", 2, 1);
   qa_q1mpm_number(monster, "spawnsilent", 1);
   think_impl(monster);
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_RUN, 18);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_RUN, 18);
 }
 static void strafeleft1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
@@ -202,20 +206,20 @@ static void atk5(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; flas
 static void atk8(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
   flash(monster, 56);
-  qa_q1mpm_monster_attack_finished(monster, 4 * monster->game->host->random(monster->game->host->ctx));
+  qa_q1_base_monster_attack_finished(&monster->base, 4 * qa_q1_host_random(monster->base.game));
 }
 static void melee1_action(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
   qa_q1mpm_number(monster, "spawnsilent", 0);
   think_impl(monster);
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_CHARGE, 3);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_CHARGE, 3);
 }
 static void melee11(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_monster_face(monster);
-  if (monster->game->options.skill == 3 && !monster->state.refired && qa_q1mpm_monster_visible(monster)) {
-    monster->state.refired = true;
-    qa_q1mpm_monster_set_next_frame(monster, "scourge_melee1");
+  qa_q1_base_monster_face(&monster->base);
+  if (qa_q1_option_skill(monster->base.game) == 3 && !monster->base.state->refired && qa_q1_base_monster_visible(&monster->base, qa_q1_base_monster_enemy(&monster->base))) {
+    monster->base.state->refired = true;
+    q1mpm_set_next_frame(&monster->base, "scourge_melee1");
   }
 }
 static void pain1_action(void *ctx, qa_q1mpm_mission_monster *monster) {
@@ -225,45 +229,49 @@ static void pain1_action(void *ctx, qa_q1mpm_mission_monster *monster) {
 }
 static void spawn(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_fields_set(monster->entity, "yaw_speed", "60");
+  (void)qa_q1_actor_field_set(monster->base.entity, "yaw_speed", "60");
   qa_q1mpm_number(monster, "scourge:state", 0);
-  monster->entity->attack_state = "dodging";
+  monster->base.entity->attack_state = "dodging";
   qa_q1mpm_monster_spawn_default(monster);
 }
 static void melee_action(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_monster_play(monster, "scourge_melee1");
-  qa_q1mpm_monster_attack_finished(monster, 2 * monster->game->host->random(monster->game->host->ctx));
+  qa_q1_base_monster_play(&monster->base, "scourge_melee1");
+  qa_q1_base_monster_attack_finished(&monster->base, 2 * qa_q1_host_random(monster->base.game));
 }
-static void pain(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker, double damage) {
+static void pain(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker, double damage) {
   (void)ctx; (void)attacker;
-  if (monster->game->host->random(monster->game->host->ctx) * 50 > damage ||
-      monster->state.pain_finished > monster->game->time)
+  if (qa_q1_host_random(monster->base.game) * 50 > damage ||
+      monster->base.state->pain_finished > monster->base.game->time)
     return;
-  monster->game->host->random(monster->game->host->ctx);
-  qa_q1mpm_game_sound(monster->game, monster->entity, "scourge/pain.wav");
-  monster->state.pain_finished = monster->game->time + 2;
-  qa_q1mpm_monster_play(monster, "scourge_pain1");
+  (void)qa_q1_host_random(monster->base.game);
+  qa_q1_sound_defaults(monster->base.game, monster->base.entity->actor.id, "scourge/pain.wav");
+  monster->base.state->pain_finished = monster->base.game->time + 2;
+  qa_q1_base_monster_play(&monster->base, "scourge_pain1");
 }
-static void die(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker) {
+static void die(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker) {
   (void)ctx; (void)attacker;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  qa_q1mpm_actor *trigger = game->entity(game, qa_q1mpm_references_get(entity, "lastvictim"));
-  if (trigger != NULL) game->remove(game, trigger);
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  qa_actor_id trigger_id;
+  qa_q1_actor *trigger = qa_q1_get_entity(game, q1mpm_reference(entity, "lastvictim", &trigger_id));
+  if (trigger != NULL) qa_q1_remove(game, trigger);
   qa_q1mpm_number(monster, "spawnsilent", 0);
   think_impl(monster);
-  if (game->health(game, entity->actor.id) < -35) {
-    qa_q1mpm_game_sound(game, entity, "player/udeath.wav");
-    qa_q1mpm_ext_throw_head(game, entity, "h_scourg");
+  if (qa_q1_health(game, entity->actor.id) < -35) {
+    qa_vec3 origin;
+    const char * model;
+    double damage;
+    qa_q1_sound_defaults(game, entity->actor.id, "player/udeath.wav");
+    qa_q1_throw_head(game, entity, "h_scourg");
     static const char *const models[] = {"gib1", "gib2", "gib3"};
     for (size_t i = 0; i < 3; i++)
-      qa_q1mpm_ext_throw_gib(game, qa_q1mpm_monster_origin(monster), models[i],
-                             game->health(game, entity->actor.id));
+      (void)(origin = qa_q1_base_monster_origin(&monster->base), model = models[i], damage = qa_q1_health(game, entity->actor.id), qa_q1_throw_gib(game, origin, model,
+                            damage));
     return;
   }
-  qa_q1mpm_game_sound(game, entity, "scourge/pain2.wav");
-  qa_q1mpm_monster_play(monster, "scourge_die1");
+  qa_q1_sound_defaults(game, entity->actor.id, "scourge/pain2.wav");
+  qa_q1_base_monster_play(&monster->base, "scourge_die1");
 }
 static const char *const classnames[] = {"monster_scourge"};
 static const char *const spec_gibs[] = {"gib1", "gib2", "gib3"};
@@ -293,22 +301,20 @@ static const qa_q1mpm_named_action actions[] = {
 };
 void qa_q1mpm_scourge_definition(qa_q1mpm_runtime *runtime, qa_q1mpm_pack_monster_definition *out) {
   *out = (qa_q1mpm_pack_monster_definition){0};
-  out->spec = (qa_q1mpm_species_spec){
+  out->spec = (qa_q1_base_monster_species){
       "scourge", NULL, classnames, 1, "scor", "h_scourg", 300, -35, spec_gibs, 3,
       {{-32, -32, -24}, {32, 32, 64}}, "scourge_stand1", "scourge_walk1", "scourge_run1",
       "scourge/sight.wav", "scourge_atk1", true, "walk"};
-  out->frames = (qa_q1mpm_frame_table){qa_q1mpm_tables_hipscrge_entries, QA_Q1MPM_TABLES_HIPSCRGE_COUNT};
+  out->frames = (qa_q1_monster_frame_table){qa_q1mpm_tables_hipscrge_entries, QA_Q1MPM_TABLES_HIPSCRGE_COUNT};
   out->actions = actions;
   out->action_count = sizeof(actions) / sizeof(actions[0]);
-  qa_q1mpm_named_handlers *callbacks = calloc(2, sizeof(*callbacks));
-  if (callbacks != NULL) {
-    callbacks[0].name = "ScourgeTriggerThink";
-    callbacks[0].handlers = (qa_q1mpm_handlers){NULL, trigger_think, NULL, NULL, NULL, NULL};
-    callbacks[1].name = "ScourgeTriggerTouch";
-    callbacks[1].handlers = (qa_q1mpm_handlers){runtime, NULL, trigger_touch, NULL, NULL, NULL};
-    out->callbacks = callbacks;
-    out->callback_count = 2;
-  }
+  qa_q1mpm_named_handlers *callbacks = qa_q1mpm_runtime_calloc(runtime, 2, sizeof *callbacks);
+  callbacks[0].name = "ScourgeTriggerThink";
+  callbacks[0].handlers = (qa_q1_callback_handlers){.action = trigger_think};
+  callbacks[1].name = "ScourgeTriggerTouch";
+  callbacks[1].handlers = (qa_q1_callback_handlers){.ctx = runtime, .touch = trigger_touch};
+  out->callbacks = callbacks;
+  out->callback_count = 2;
   out->spawn = (qa_q1mpm_action){spawn, NULL};
   out->pain = pain;
   out->die = die;

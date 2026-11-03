@@ -29,30 +29,6 @@ static void set(qa_save_value *target, const char *key, qa_save_value *child) {
 static void push(qa_save_value *target, qa_save_value *child) {
   if (!child || !qa_save_value_push(target, child)) qa_range_error("out of memory");
 }
-static qa_save_value *clone_value(const qa_save_value *value) {
-  if (!value) return qa_save_value_undefined();
-  qa_save_value *out = NULL;
-  switch (value->kind) {
-    case QA_SAVE_UNDEFINED: out = qa_save_value_undefined(); break;
-    case QA_SAVE_NULL: out = qa_save_value_null(); break;
-    case QA_SAVE_BOOLEAN: out = qa_save_value_boolean(value->boolean); break;
-    case QA_SAVE_NUMBER: out = qa_save_value_number(value->number); break;
-    case QA_SAVE_BIGINT: out = qa_save_value_bigint_text(value->text); break;
-    case QA_SAVE_STRING: out = qa_save_value_string(value->text); break;
-    case QA_SAVE_BYTES: out = qa_save_value_bytes(value->bytes, value->byte_length); break;
-    case QA_SAVE_ARRAY:
-      out = qa_save_value_array();
-      if (out) for (size_t i = 0; i < value->item_count; i++) push(out, clone_value(value->items[i]));
-      break;
-    case QA_SAVE_OBJECT:
-      out = qa_save_value_object();
-      if (out) for (size_t i = 0; i < value->entry_count; i++)
-        set(out, value->entries[i].key, clone_value(value->entries[i].value));
-      break;
-  }
-  if (!out) qa_range_error("out of memory");
-  return out;
-}
 static double bounded(const qa_save_reader *reader, double minimum, double maximum) {
   double value = qa_save_reader_integer_min(reader, minimum);
   if (value > maximum || value != trunc(value))
@@ -252,58 +228,60 @@ static qa_user_command read_command(const qa_save_reader *reader) {
   qa_save_reader_destroy(&f);
   return command;
 }
+/* Keys in the order TS producers build each command (selectedQ3Command and its peers), so
+ * the checkpoint bytes match what a TS client sends for the same command. */
 static qa_save_value *write_command(const qa_user_command *command) {
   qa_save_value *out = object();
   switch (command->kind) {
     case QA_USER_COMMAND_Q3:
       set(out, "kind", qa_save_value_string("q3"));
-      set(out, "buttons", qa_save_value_number(command->as.q3.buttons));
       set(out, "serverTimeMilliseconds", qa_save_value_number(command->as.q3.server_time_milliseconds));
       set(out, "angleWords", write_angles(command->as.q3.angle_words.values));
-      set(out, "weapon", qa_save_value_number(command->as.q3.weapon));
       set(out, "forwardMove", qa_save_value_number(command->as.q3.forward_move));
       set(out, "rightMove", qa_save_value_number(command->as.q3.right_move));
       set(out, "upMove", qa_save_value_number(command->as.q3.up_move));
+      set(out, "buttons", qa_save_value_number(command->as.q3.buttons));
+      set(out, "weapon", qa_save_value_number(command->as.q3.weapon));
       break;
     case QA_USER_COMMAND_Q2_RERELEASE:
       set(out, "kind", qa_save_value_string("q2-rerelease"));
-      set(out, "buttons", qa_save_value_number(command->as.q2_rerelease.buttons));
       set(out, "milliseconds", qa_save_value_number(command->as.q2_rerelease.milliseconds));
       set(out, "angles", write_vector(command->as.q2_rerelease.angles));
       set(out, "forwardMove", qa_save_value_number(command->as.q2_rerelease.forward_move));
       set(out, "sideMove", qa_save_value_number(command->as.q2_rerelease.side_move));
+      set(out, "buttons", qa_save_value_number(command->as.q2_rerelease.buttons));
       set(out, "serverFrame", qa_save_value_number(command->as.q2_rerelease.server_frame));
       break;
     case QA_USER_COMMAND_Q1:
       set(out, "kind", qa_save_value_string("q1-netquake"));
-      set(out, "buttons", qa_save_value_number(command->as.q1.buttons));
-      set(out, "forwardMove", qa_save_value_number(command->as.q1.forward_move));
-      set(out, "sideMove", qa_save_value_number(command->as.q1.side_move));
-      set(out, "upMove", qa_save_value_number(command->as.q1.up_move));
-      set(out, "impulse", qa_save_value_number(command->as.q1.impulse));
       set(out, "acknowledgedServerTimeSeconds",
           qa_save_value_number(command->as.q1.acknowledged_server_time_seconds));
       set(out, "viewAngles", write_vector(command->as.q1.view_angles));
+      set(out, "forwardMove", qa_save_value_number(command->as.q1.forward_move));
+      set(out, "sideMove", qa_save_value_number(command->as.q1.side_move));
+      set(out, "upMove", qa_save_value_number(command->as.q1.up_move));
+      set(out, "buttons", qa_save_value_number(command->as.q1.buttons));
+      set(out, "impulse", qa_save_value_number(command->as.q1.impulse));
       break;
     case QA_USER_COMMAND_QW:
       set(out, "kind", qa_save_value_string("q1-quakeworld"));
-      set(out, "buttons", qa_save_value_number(command->as.qw.buttons));
+      set(out, "milliseconds", qa_save_value_number(command->as.qw.milliseconds));
+      set(out, "angles", write_vector(command->as.qw.angles));
       set(out, "forwardMove", qa_save_value_number(command->as.qw.forward_move));
       set(out, "sideMove", qa_save_value_number(command->as.qw.side_move));
       set(out, "upMove", qa_save_value_number(command->as.qw.up_move));
+      set(out, "buttons", qa_save_value_number(command->as.qw.buttons));
       set(out, "impulse", qa_save_value_number(command->as.qw.impulse));
-      set(out, "milliseconds", qa_save_value_number(command->as.qw.milliseconds));
-      set(out, "angles", write_vector(command->as.qw.angles));
       break;
     case QA_USER_COMMAND_Q2:
       set(out, "kind", qa_save_value_string("q2-classic"));
-      set(out, "buttons", qa_save_value_number(command->as.q2.buttons));
+      set(out, "milliseconds", qa_save_value_number(command->as.q2.milliseconds));
+      set(out, "angleShorts", write_angles(command->as.q2.angle_shorts.values));
       set(out, "forwardMove", qa_save_value_number(command->as.q2.forward_move));
       set(out, "sideMove", qa_save_value_number(command->as.q2.side_move));
       set(out, "upMove", qa_save_value_number(command->as.q2.up_move));
+      set(out, "buttons", qa_save_value_number(command->as.q2.buttons));
       set(out, "impulse", qa_save_value_number(command->as.q2.impulse));
-      set(out, "milliseconds", qa_save_value_number(command->as.q2.milliseconds));
-      set(out, "angleShorts", write_angles(command->as.q2.angle_shorts.values));
       set(out, "lightLevel", qa_save_value_number(command->as.q2.light_level));
       break;
   }
@@ -373,7 +351,7 @@ static qa_save_reader envelope(const uint8_t *bytes, size_t length,
   if (length > maximum) qa_range_error("%s exceeds protocol limit", schema);
   qa_save_value *tree = qa_decode_checkpoint_value(bytes, length);
   if (!tree) qa_range_error("out of memory");
-  *out_tree = tree;
+  *out_tree = tree; /* the caller's owner frees it if a check below raises */
   qa_save_reader reader;
   if (!qa_save_reader_init(&reader, tree, schema)) qa_range_error("out of memory");
   qa_save_reader schema_reader = field_of(&reader, "schema");
@@ -395,31 +373,10 @@ static uint8_t *encode_envelope(const char *schema, qa_save_value *value, size_t
   qa_save_value_free(out);
   return bytes;
 }
+/* The offer carries the TS composition identity value exactly (sidecars with resource: null). */
 static qa_save_value *composition_identity_tree(const qa_app_unified_composition *identity) {
-  qa_save_value *composition = object();
-  set(composition, "schemaVersion", qa_save_value_number(1));
-  set(composition, "recipe", clone_value(identity->recipe));
-  set(composition, "snapshotSchema", qa_save_value_string("qts:snapshot-v10"));
-  qa_save_value *empty = qa_save_value_array();
-  if (!empty) qa_range_error("out of memory");
-  set(composition, "actorConfigurations", empty);
-  qa_save_value *sidecars = qa_save_value_array();
-  if (!sidecars) qa_range_error("out of memory");
-  for (size_t i = 0; i < identity->sidecar_count; i++) {
-    qa_save_value *entry = object();
-    set(entry, "content", qa_save_value_string(identity->sidecars[i].content));
-    set(entry, "path", qa_save_value_string(identity->sidecars[i].path));
-    if (identity->sidecars[i].has_resource) {
-      qa_save_value *resource = qa_app_unified_write_resource_key(&identity->sidecars[i].resource);
-      if (!resource) qa_range_error("out of memory");
-      set(entry, "resource", resource);
-    }
-    push(sidecars, entry);
-  }
-  set(composition, "sidecars", sidecars);
-  qa_save_value *out = object();
-  set(out, "digest", qa_save_value_string(identity->digest));
-  set(out, "composition", composition);
+  qa_save_value *out = qa_app_unified_composition_value(identity);
+  if (!out) qa_range_error("out of memory");
   return out;
 }
 static qa_save_value *write_control(const qa_app_unified_control *value) {
@@ -501,6 +458,7 @@ uint8_t *qa_app_unified_encode_control(const qa_app_unified_control *value, size
   return encode_envelope("qts-control", write_control(value), out_length);
 }
 void qa_app_unified_control_free(qa_app_unified_control *control) {
+  qa_save_value_free(control->tree);
   qa_app_unified_composition_destroy(control->composition);
   free(control->resources);
   free(control->payload);
@@ -510,22 +468,24 @@ void qa_app_unified_control_free(qa_app_unified_control *control) {
   memset(control, 0, sizeof *control);
 }
 qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_t length) {
-  qa_save_value *tree = NULL;
-  qa_save_reader r = envelope(bytes, length, "qts-control", 4 * 1024 * 1024, &tree);
+  qa_app_unified_control out;
+  qa_app_unified_decode_control_into(&out, bytes, length);
+  return out;
+}
+void qa_app_unified_decode_control_into(qa_app_unified_control *target, const uint8_t *bytes, size_t length) {
+  memset(target, 0, sizeof *target);
+  qa_save_reader r = envelope(bytes, length, "qts-control", 4 * 1024 * 1024, &target->tree);
   static const char *kinds[] = {"offer", "ready", "admitted", "resources", "events",
     "components", "component-command", "command", "userinfo", "disconnect"};
   qa_save_reader kind_reader = field_of(&r, "kind");
   const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 10);
   qa_save_reader_destroy(&kind_reader);
-  qa_app_unified_control out;
-  memset(&out, 0, sizeof out);
+#define out (*target)
   if (strcmp(kind, "disconnect") == 0) {
     out.kind = QA_APP_UNIFIED_DISCONNECT;
     out.reason = field_string(&r, "reason", 1024);
     qa_save_reader_destroy(&r);
-    /* Strings borrow the tree, retained for the caller's lifetime. */
-    (void)tree;
-    return out;
+    return;
   }
   qa_save_reader epoch_reader = field_of(&r, "epoch");
   double epoch = bounded(&epoch_reader, 1, 4294967295.0);
@@ -565,6 +525,7 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
     qa_save_reader resources_reader = field_of(&r, "resources");
     size_t count = qa_save_reader_list_count(&resources_reader);
     qa_app_unified_resource_key *resources = xmalloc(count * sizeof *resources);
+    out.resources = resources;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader item;
       if (!qa_save_reader_item(&resources_reader, i, &item)) qa_range_error("out of memory");
@@ -572,7 +533,6 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
       qa_save_reader_destroy(&item);
     }
     if (count > 32768) qa_save_reader_fail(&resources_reader, "too many resource declarations");
-    out.resources = resources;
     out.resource_count = count;
     qa_save_reader_destroy(&resources_reader);
   } else if (strcmp(kind, "events") == 0) {
@@ -601,6 +561,7 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
     qa_save_reader args_reader = field_of(&r, "args");
     size_t count = qa_save_reader_list_count(&args_reader);
     const char **args = xmalloc(count * sizeof *args);
+    out.args = args;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader item;
       if (!qa_save_reader_item(&args_reader, i, &item)) qa_range_error("out of memory");
@@ -608,7 +569,6 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
       qa_save_reader_destroy(&item);
     }
     if (count < 1 || count > 128) qa_save_reader_fail(&args_reader, "invalid component command");
-    out.args = args;
     out.arg_count = count;
     qa_save_reader_destroy(&args_reader);
     qa_save_reader owner = field_of(&r, "owner");
@@ -623,6 +583,7 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
     qa_save_reader args_reader = field_of(&r, "args");
     size_t count = qa_save_reader_list_count(&args_reader);
     const char **args = xmalloc(count * sizeof *args);
+    out.args = args;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader item;
       if (!qa_save_reader_item(&args_reader, i, &item)) qa_range_error("out of memory");
@@ -639,7 +600,6 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
     }
     if (!name_ok || count > 128) qa_save_reader_fail(&r, "invalid command");
     out.name = name;
-    out.args = args;
     out.arg_count = count;
     qa_save_reader_destroy(&args_reader);
   } else if (strcmp(kind, "userinfo") == 0) {
@@ -647,10 +607,10 @@ qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_
     out.value = field_string(&r, "value", 8192);
   }
   qa_save_reader_destroy(&r);
-  (void)tree;
-  return out;
+#undef out
 }
 void qa_app_unified_input_batch_free(qa_app_unified_input_batch *batch) {
+  qa_save_value_free(batch->tree);
   free(batch->commands);
   memset(batch, 0, sizeof *batch);
 }
@@ -671,11 +631,17 @@ uint8_t *qa_app_unified_encode_inputs(const qa_app_unified_input_batch *value, s
   return encode_envelope("qts-input", out, out_length);
 }
 qa_app_unified_input_batch qa_app_unified_decode_inputs(const uint8_t *bytes, size_t length) {
-  qa_save_value *tree = NULL;
-  qa_save_reader r = envelope(bytes, length, "qts-input", 65536, &tree);
+  qa_app_unified_input_batch batch;
+  qa_app_unified_decode_inputs_into(&batch, bytes, length);
+  return batch;
+}
+void qa_app_unified_decode_inputs_into(qa_app_unified_input_batch *batch, const uint8_t *bytes, size_t length) {
+  memset(batch, 0, sizeof *batch);
+  qa_save_reader r = envelope(bytes, length, "qts-input", 65536, &batch->tree);
   qa_save_reader commands_reader = field_of(&r, "commands");
   size_t count = qa_save_reader_list_count(&commands_reader);
   qa_app_unified_input *commands = xmalloc(count * sizeof *commands);
+  batch->commands = commands;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader item;
     if (!qa_save_reader_item(&commands_reader, i, &item)) qa_range_error("out of memory");
@@ -697,12 +663,10 @@ qa_app_unified_input_batch qa_app_unified_decode_inputs(const uint8_t *bytes, si
   if (count > 64) qa_save_reader_fail(&commands_reader, "too many input commands");
   qa_save_reader_destroy(&commands_reader);
   qa_save_reader epoch_reader = field_of(&r, "epoch");
-  double epoch = bounded(&epoch_reader, 1, 4294967295.0);
+  batch->epoch = bounded(&epoch_reader, 1, 4294967295.0);
   qa_save_reader_destroy(&epoch_reader);
   qa_save_reader_destroy(&r);
-  (void)tree;
-  qa_app_unified_input_batch batch = {epoch, commands, count};
-  return batch;
+  batch->command_count = count;
 }
 uint8_t *qa_app_unified_encode_handshake(const qa_app_unified_handshake *value, size_t *out_length) {
   qa_save_value *out = object();
@@ -713,73 +677,40 @@ uint8_t *qa_app_unified_encode_handshake(const qa_app_unified_handshake *value, 
     set(out, "token", qa_save_value_string(value->token));
   return encode_envelope("qts-connect", out, out_length);
 }
+void qa_app_unified_handshake_free(qa_app_unified_handshake *handshake) {
+  qa_save_value_free(handshake->tree);
+  memset(handshake, 0, sizeof *handshake);
+}
+typedef struct handshake_scope {
+  const uint8_t *bytes; size_t length; qa_app_unified_handshake *out;
+} handshake_scope;
+static void decode_handshake_body(void *ctx) {
+  handshake_scope *scope = ctx;
+  qa_app_unified_handshake *out = scope->out;
+  qa_save_reader r = envelope(scope->bytes, scope->length, "qts-connect", 512, &out->tree);
+  static const char *kinds[] = {"hello", "challenge", "connect"};
+  qa_save_reader kind_reader = field_of(&r, "kind");
+  const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 3);
+  qa_save_reader_destroy(&kind_reader);
+  out->kind = strcmp(kind, "hello") == 0 ? QA_APP_UNIFIED_HELLO
+      : strcmp(kind, "challenge") == 0 ? QA_APP_UNIFIED_CHALLENGE : QA_APP_UNIFIED_CONNECT;
+  qa_save_reader nonce = field_of(&r, "nonce");
+  out->nonce = read_token(&nonce);
+  qa_save_reader_destroy(&nonce);
+  if (out->kind != QA_APP_UNIFIED_HELLO) {
+    qa_save_reader token = field_of(&r, "token");
+    out->token = read_token(&token);
+    qa_save_reader_destroy(&token);
+  }
+  qa_save_reader_destroy(&r);
+}
 bool qa_app_unified_decode_handshake(const uint8_t *bytes, size_t length,
     qa_app_unified_handshake *out) {
+  memset(out, 0, sizeof *out);
   if (length > 512) return false;
-  /* TS catches every decode failure into null; the C readers abort,
-   * so pre-validate the envelope shape before reading fields. */
-  qa_save_value *tree = qa_decode_checkpoint_value(bytes, length);
-  if (!tree) return false;
-  const qa_save_value *schema = qa_save_value_get(tree, "schema");
-  const qa_save_value *version = qa_save_value_get(tree, "version");
-  const qa_save_value *value = qa_save_value_get(tree, "value");
-  bool ok = schema && schema->kind == QA_SAVE_STRING
-      && strcmp(schema->text, "qts-connect") == 0
-      && version && version->kind == QA_SAVE_NUMBER && version->number == 1
-      && value && value->kind == QA_SAVE_OBJECT;
-  const qa_save_value *kind_value = ok ? qa_save_value_get(value, "kind") : NULL;
-  const qa_save_value *nonce_value = ok ? qa_save_value_get(value, "nonce") : NULL;
-  ok = ok && kind_value && kind_value->kind == QA_SAVE_STRING
-      && nonce_value && nonce_value->kind == QA_SAVE_STRING;
-  qa_app_unified_handshake_kind kind = QA_APP_UNIFIED_HELLO;
-  if (ok) {
-    if (strcmp(kind_value->text, "hello") == 0) kind = QA_APP_UNIFIED_HELLO;
-    else if (strcmp(kind_value->text, "challenge") == 0) kind = QA_APP_UNIFIED_CHALLENGE;
-    else if (strcmp(kind_value->text, "connect") == 0) kind = QA_APP_UNIFIED_CONNECT;
-    else ok = false;
-  }
-  if (!ok) { qa_save_value_free(tree); return false; }
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, (qa_save_value *)value, "qts-connect")) {
-    qa_save_value_free(tree);
-    return false;
-  }
-  qa_save_reader nonce_reader = field_of(&reader, "nonce");
-  /* Token validation aborts on malformed hex (TS would return null);
-   * pre-check the shape first. */
-  const char *nonce_text = nonce_reader.value && nonce_reader.value->kind == QA_SAVE_STRING
-      ? nonce_reader.value->text : "";
-  bool hex_ok = strlen(nonce_text) == 32;
-  for (size_t i = 0; hex_ok && i < 32; i++) {
-    char c = nonce_text[i];
-    hex_ok = (c >= 'a' && c <= 'f') || (c >= '0' && c <= '9');
-  }
-  const qa_save_value *token_value = kind == QA_APP_UNIFIED_HELLO
-      ? NULL : qa_save_value_get(value, "token");
-  if (kind != QA_APP_UNIFIED_HELLO) {
-    hex_ok = hex_ok && token_value && token_value->kind == QA_SAVE_STRING
-        && strlen(token_value->text) == 32;
-    for (size_t i = 0; hex_ok && i < 32; i++) {
-      char c = token_value->text[i];
-      hex_ok = (c >= 'a' && c <= 'f') || (c >= '0' && c <= '9');
-    }
-  }
-  if (!hex_ok) {
-    qa_save_reader_destroy(&nonce_reader);
-    qa_save_reader_destroy(&reader);
-    qa_save_value_free(tree);
-    return false;
-  }
-  out->kind = kind;
-  out->nonce = read_token(&nonce_reader);
-  qa_save_reader_destroy(&nonce_reader);
-  out->token = NULL;
-  if (kind != QA_APP_UNIFIED_HELLO) {
-    qa_save_reader token_reader = field_of(&reader, "token");
-    out->token = read_token(&token_reader);
-    qa_save_reader_destroy(&token_reader);
-  }
-  qa_save_reader_destroy(&reader);
-  (void)tree;
-  return true;
+  handshake_scope scope = {bytes, length, out};
+  qa_caught_error caught;
+  if (qa_try(decode_handshake_body, &scope, &caught)) return true;
+  qa_app_unified_handshake_free(out);
+  return false;
 }

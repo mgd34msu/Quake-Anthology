@@ -7,6 +7,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 static qa_q3_entity_callback cb_use(qa_q3_entity_use_fn fn, void *ctx) { qa_q3_entity_callback cb; memcpy(&cb.fn, &fn, sizeof fn); cb.ctx = ctx; return cb; }
 static qa_q3_entity_callback cb_think(qa_q3_entity_think_fn fn, void *ctx) { qa_q3_entity_callback cb; memcpy(&cb.fn, &fn, sizeof fn); cb.ctx = ctx; return cb; }
@@ -27,16 +28,16 @@ static double crandom_checked(qa_q3_misc_spawn_runtime *r) {
 }
 static void use_shooter(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)o; (void)a; qa_q3_misc_spawn_runtime *r = ctx; owned(r, e);
-  qa_vec3 initial = e->enemy ? qa_normalize3(qa_sub3(e->enemy->r.current_origin, e->s.origin)) : e->movedir;
+  qa_vec3 initial = e->enemy ? qa_normalize3(qa_sub3(qa_q3_base_entity_shared_current_origin(&e->enemy->r), e->s.origin)) : e->movedir;
   qa_vec3 up = qa_perpendicular_vector(initial), right = qa_cross3(up, initial);
   double vertical = f32(crandom_checked(r) * f32(e->random));
   qa_vec3 with_v = qa_add3(initial, qa_scale3(up, vertical));
   double horizontal = f32(crandom_checked(r) * f32(e->random));
   qa_vec3 d = qa_normalize3(qa_add3(with_v, qa_scale3(right, horizontal)));
   qa_q3_missile_direction dir = {d.x, d.y, d.z};
-  if ((int)e->s.weapon == QA_Q3_WP_GRENADE_LAUNCHER) r->host.fire_grenade(r->host.ctx, e, e->s.origin, dir);
-  else if ((int)e->s.weapon == QA_Q3_WP_ROCKET_LAUNCHER) r->host.fire_rocket(r->host.ctx, e, e->s.origin, dir);
-  else if ((int)e->s.weapon == QA_Q3_WP_PLASMAGUN) r->host.fire_plasma(r->host.ctx, e, e->s.origin, dir);
+  if (qa_js_to_int32(e->s.weapon) == QA_Q3_WP_GRENADE_LAUNCHER) r->host.fire_grenade(r->host.ctx, e, e->s.origin, dir);
+  else if (qa_js_to_int32(e->s.weapon) == QA_Q3_WP_ROCKET_LAUNCHER) r->host.fire_rocket(r->host.ctx, e, e->s.origin, dir);
+  else if (qa_js_to_int32(e->s.weapon) == QA_Q3_WP_PLASMAGUN) r->host.fire_plasma(r->host.ctx, e, e->s.origin, dir);
   qa_q3_entity_pool_add_event(r->host.pool, e, QA_Q3_EV_FIRE_WEAPON, 0);
 }
 static void finish_shooter(void *ctx, qa_q3_game_entity *e) {
@@ -58,7 +59,7 @@ static void shooter(qa_q3_misc_spawn_runtime *r, qa_q3_game_entity *e, double we
   owned(r, e);
   e->use = qa_q3_callback_family_resolve(&r->host.pool->callbacks.use, "q3.base.game.misc-spawn.shooter.use");
   e->s.weapon = weapon;
-  r->host.register_item(r->host.ctx, r->host.find_item_for_weapon(r->host.ctx, weapon));
+  r->host.register_item(r->host.ctx, qa_q3_base_find_item_for_weapon(r->host.item_product, (qa_q3_weapon)weapon));
   qa_q3_move_direction_result moved = qa_q3_move_direction(e->s.angles);
   e->movedir = moved.direction; e->s.angles = moved.angles;
   if (e->random == 0) e->random = 1;
@@ -89,5 +90,6 @@ size_t qa_q3_misc_spawn_runtime_handlers(qa_q3_misc_spawn_runtime *r, qa_q3_spaw
 }
 size_t qa_q3_misc_spawn_handlers(qa_q3_misc_spawn_host host, qa_q3_spawn_handler_entry *out, size_t cap) {
   qa_q3_misc_spawn_runtime *r = malloc(sizeof *r); if (!r) qa_range_error("out of memory");
+  qa_q3_callback_catalog_retain(&host.pool->callbacks, r);
   qa_q3_misc_spawn_runtime_init(r, host); return qa_q3_misc_spawn_runtime_handlers(r, out, cap);
 }

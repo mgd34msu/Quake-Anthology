@@ -1,6 +1,7 @@
 /* See include/qa/compat/qvm/syscalls.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/syscalls.h"
 
+#include <math.h>
 #include <string.h>
 
 #include "qa/compat/qvm/abi.h"
@@ -10,6 +11,12 @@
 #include "qa/compat/qvm/snap_vector_syscalls.h"
 #include "qa/compat/qvm/vector_syscalls.h"
 #include "qa/foundation/support.h"
+
+qa_qvm_host_result qa_qvm_host_word(double value) {
+  if (!(value == trunc(value)) || value < -2147483648.0 || value > 2147483647.0)
+    qa_range_error("QVM host value must be a signed 32-bit integer");
+  return (qa_qvm_host_result)value;
+}
 
 int32_t qa_qvm_host_call_word(const qa_qvm_host_call *call, size_t index) {
   size_t offset = index * 4;
@@ -88,12 +95,13 @@ void qa_qvm_create_system_call(qa_qvm_system_call *out, qa_qvm_role role, qa_qvm
   out->abi_profile = abi_profile == NULL ? "q3-modern" : abi_profile;
 }
 
-static void classify(qa_qvm_role role, const qa_qvmy_syscall *call, qa_qvm_memory *guest,
+static void classify(qa_qvm_role role, const qa_qvm_module_syscall *call, qa_qvm_memory *guest,
                      const char *const *arguments, size_t argument_count, bool has_arguments,
                      qa_qvm_abi_profile abi_profile, qa_qvm_host_call *out) {
   memset(out, 0, sizeof *out);
   out->base = *call;
   out->guest = guest;
+  out->game_memory = qa_qvm_memory_game_memory(guest);
   out->has_abi_profile = true;
   out->abi_profile = abi_profile;
   out->command_arguments = arguments;
@@ -116,7 +124,28 @@ static void classify(qa_qvm_role role, const qa_qvmy_syscall *call, qa_qvm_memor
   out->code = engine ? code : word;
 }
 
-qa_qvm_host_result qa_qvm_system_call_invoke(const qa_qvm_system_call *system_call, const qa_qvmy_syscall *call) {
+qa_qvm_game_memory qa_qvm_host_call_game_memory(const qa_qvm_host_call *call) {
+  if (call->game_memory.ops != NULL) return call->game_memory;
+  if (call->guest == NULL) qa_range_error("QVM host call has no guest memory");
+  return qa_qvm_memory_game_memory(call->guest);
+}
+
+bool qa_qvm_intrinsic_syscall(qa_qvm_role role, qa_qvm_abi_profile abi_profile, const uint8_t *words,
+                              size_t words_length, const qa_qvm_game_memory *memory, qa_qvm_host_result *out) {
+  const char *source_role = strcmp(role, "qagame") == 0 ? "game" : role;
+  const char *math_role = !modern(abi_profile) && strcmp(role, "ui") == 0 ? "game" : source_role;
+  int32_t result = 0;
+  if (qa_qvm_memory_syscall(source_role, words, words_length, memory, &result) ||
+      qa_qvm_math_syscall(math_role, words, words_length, &result) ||
+      qa_qvm_vector_syscall(source_role, words, words_length, memory, &result) ||
+      qa_qvm_snap_vector_syscall(source_role, words, words_length, memory, &result)) {
+    *out = result;
+    return true;
+  }
+  return false;
+}
+
+qa_qvm_host_result qa_qvm_system_call_invoke(const qa_qvm_system_call *system_call, const qa_qvm_module_syscall *call) {
   qa_qvm_role role = system_call->role;
   qa_qvm_abi_profile abi_profile = system_call->abi_profile;
   if (!modern(abi_profile)) {
@@ -138,13 +167,9 @@ qa_qvm_host_result qa_qvm_system_call_invoke(const qa_qvm_system_call *system_ca
   qa_qvm_memory *current = call->guest;
   if (current->bytes != call->memory)
     qa_range_error("QVM syscall memory belongs to another allocation");
-  const char *source_role = strcmp(role, "qagame") == 0 ? "game" : role;
-  int32_t result = 0;
-  const char *math_role = !modern(abi_profile) && strcmp(role, "ui") == 0 ? "game" : source_role;
-  if (qa_qvm_memory_syscall(source_role, call->words, call->words_length, current, &result)) return result;
-  if (qa_qvm_math_syscall(math_role, call->words, call->words_length, &result)) return result;
-  if (qa_qvm_vector_syscall(source_role, call->words, call->words_length, current, &result)) return result;
-  if (qa_qvm_snap_vector_syscall(source_role, call->words, call->words_length, current, &result)) return result;
+  const qa_qvm_game_memory game = qa_qvm_memory_game_memory(current);
+  qa_qvm_host_result result = 0;
+  if (qa_qvm_intrinsic_syscall(role, abi_profile, call->words, call->words_length, &game, &result)) return result;
   const char *const *arguments = NULL;
   size_t argument_count = 0;
   bool has_arguments = false;

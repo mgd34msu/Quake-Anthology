@@ -23,5 +23,11 @@ int32_t qa_qvm_legacy_configstring(int32_t index, qa_qvm_abi_profile profile);
 int32_t qa_qvm_legacy_powerup_bits(int32_t bits, qa_qvm_abi_profile profile);
 /* Validates and returns the input span unchanged. */
 qa_double_view qa_qvm_legacy_powerups(const double *values, size_t count, qa_qvm_abi_profile profile);
+/* TS lenient forms (remote servers choose these values): unrepresentable
+ * events and entity types become 0, powerup bits/slots past the legacy set drop. */
+int32_t qa_qvm_legacy_event_ex(int32_t value, qa_qvm_abi_profile profile, bool reverse, bool lenient);
+int32_t qa_qvm_legacy_entity_type_ex(int32_t value, qa_qvm_abi_profile profile, bool reverse, bool lenient);
+int32_t qa_qvm_legacy_powerup_bits_ex(int32_t bits, qa_qvm_abi_profile profile, bool lenient);
+void qa_qvm_legacy_powerups_lenient(const double *values, size_t count, qa_qvm_abi_profile profile, double *out);
 
 #endif

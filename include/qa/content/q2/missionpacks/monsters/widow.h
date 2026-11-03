@@ -7,7 +7,7 @@
 #include "qa/content/q2/missionpacks/monsters/state.h"
 #include "qa/content/q2/missionpacks/monsters/types.h"
 
-qa_q2m_definition qa_q2mpm_create_widow_definition(qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
+qa_q2m_definition qa_q2mpm_create_widow_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
                                                    qa_q2mpm_services services, qa_q2mpm_monster_state *source);
 
 #endif

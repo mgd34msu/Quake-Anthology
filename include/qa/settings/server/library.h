@@ -2,8 +2,8 @@
  * Port of src/settings/server/library.ts: lists the same named
  * files written by the server settings menu (JSON files under
  * the store root). A missing directory is an empty list; other
- * readdir failures abort as the TS throws. Sorting approximates
- * String.localeCompare with case-insensitive ASCII order. Entries
+ * readdir failures abort as the TS throws. Sorting is
+ * String.localeCompare (qa_js_locale_compare). Entries
  * are owned; free with qa_server_profile_entries_free.
  * GPL-2.0-or-later.
  */

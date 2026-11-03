@@ -1,7 +1,9 @@
 /* Port of src/compat/q2/rerelease/public-state.ts. GPL-2.0-or-later. */
 #include "qa/compat/q2/rerelease/public_state.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static double ef(const char *name) { qa_compat_q2_rerelease_layouts_ensure(); return qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_entity_state_layout, name); }
 static double cf(const char *name) { qa_compat_q2_rerelease_layouts_ensure(); return qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_client_layout, name); }
@@ -82,10 +84,16 @@ qa_q2_rerelease_player_state qa_compat_q2_rerelease_public_edict_player_state(co
   return qa_compat_q2_read_rerelease_player_state(e->memory, qa_compat_q2_rerelease_public_edict_client(e));
 }
 qa_vec3 qa_compat_q2_rerelease_public_edict_player_velocity(const qa_compat_q2_rerelease_public_edict *e) {
-  return qa_compat_q2_mem_read_f32_vector(e->memory, qa_compat_q2_mem_offset(e->memory, qa_compat_q2_rerelease_public_edict_client(e), (int64_t)cf("ps.pmove.velocity")));
+  const qa_compat_q2_memory * m;
+  qa_guest_address a;
+  int64_t d;
+  return qa_compat_q2_mem_read_f32_vector(e->memory, (m = e->memory, a = qa_compat_q2_rerelease_public_edict_client(e), d = (int64_t)cf("ps.pmove.velocity"), qa_compat_q2_mem_offset(m, a, d)));
 }
 double qa_compat_q2_rerelease_public_edict_player_movement_flags(const qa_compat_q2_rerelease_public_edict *e) {
-  return qa_compat_q2_mem_read_u16(e->memory, qa_compat_q2_mem_offset(e->memory, qa_compat_q2_rerelease_public_edict_client(e), (int64_t)cf("ps.pmove.pm_flags")));
+  const qa_compat_q2_memory * m;
+  qa_guest_address a;
+  int64_t d;
+  return qa_compat_q2_mem_read_u16(e->memory, (m = e->memory, a = qa_compat_q2_rerelease_public_edict_client(e), d = (int64_t)cf("ps.pmove.pm_flags"), qa_compat_q2_mem_offset(m, a, d)));
 }
 qa_compat_q2_rerelease_player_view qa_compat_q2_rerelease_public_edict_player_view(const qa_compat_q2_rerelease_public_edict *e) {
   double flags = cf("ps.pmove.pm_flags"), height = cf("ps.pmove.viewheight"), offset = cf("ps.viewoffset");
@@ -94,7 +102,10 @@ qa_compat_q2_rerelease_player_view qa_compat_q2_rerelease_public_edict_player_vi
 }
 qa_compat_q2_rerelease_model_state qa_compat_q2_rerelease_public_edict_model_state(const qa_compat_q2_rerelease_public_edict *e) {
   double model = ef("modelindex");
-  const uint8_t *view = snapshot(e->memory, qa_compat_q2_rerelease_public_edict_address(e, "s.modelindex"), ef("skinnum") + 4 - model);
+  qa_compat_q2_memory * memory2 = e->memory;
+  qa_guest_address address = qa_compat_q2_rerelease_public_edict_address(e, "s.modelindex");
+  double length = ef("skinnum") + 4 - model;
+  const uint8_t *view = snapshot(memory2, address, length);
   qa_compat_q2_rerelease_model_state s;
   s.model_indexes[0] = qa_compat_q2_view_i32(view, 0);
   s.model_indexes[1] = qa_compat_q2_view_i32(view, (size_t)(ef("modelindex2") - model));
@@ -104,11 +115,18 @@ qa_compat_q2_rerelease_model_state qa_compat_q2_rerelease_public_edict_model_sta
   return s;
 }
 double qa_compat_q2_rerelease_public_edict_ping(const qa_compat_q2_rerelease_public_edict *e) {
-  return qa_compat_q2_mem_read_i32(e->memory, qa_compat_q2_mem_offset(e->memory, qa_compat_q2_rerelease_public_edict_client(e), (int64_t)cf("ping")));
+  const qa_compat_q2_memory * m;
+  qa_guest_address a;
+  int64_t d;
+  return qa_compat_q2_mem_read_i32(e->memory, (m = e->memory, a = qa_compat_q2_rerelease_public_edict_client(e), d = (int64_t)cf("ping"), qa_compat_q2_mem_offset(m, a, d)));
 }
 void qa_compat_q2_rerelease_public_edict_set_ping(const qa_compat_q2_rerelease_public_edict *e, double value) {
-  if (value != (double)(int64_t)value || value < 0 || value > 2147483647.0) qa_range_error("Invalid API2023 ping");
-  qa_compat_q2_mem_write_i32(e->memory, qa_compat_q2_mem_offset(e->memory, qa_compat_q2_rerelease_public_edict_client(e), (int64_t)cf("ping")), (int32_t)value);
+  const qa_compat_q2_memory * m;
+  qa_guest_address a;
+  int64_t d;
+  /* Number.isInteger first: NaN and infinities must not reach an int64 cast. */
+  if (!(value == trunc(value)) || value < 0 || value > 2147483647.0) qa_range_error("Invalid API2023 ping");
+  qa_compat_q2_mem_write_i32(e->memory, (m = e->memory, a = qa_compat_q2_rerelease_public_edict_client(e), d = (int64_t)cf("ping"), qa_compat_q2_mem_offset(m, a, d)), qa_js_to_int32(value));
 }
 qa_q2_rerelease_entity_state qa_compat_q2_rerelease_public_edict_state(const qa_compat_q2_rerelease_public_edict *e) {
   const uint8_t *view = snapshot(e->memory, qa_compat_q2_rerelease_public_edict_address(e, "s.number"), qa_compat_q2_rerelease_entity_state_layout.byte_length);

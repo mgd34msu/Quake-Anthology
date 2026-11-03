@@ -5,6 +5,7 @@
 #include "qa/movement/q2/classic.h"
 #include "qa/movement/q2/dimensions.h"
 #include "qa/movement/q2/types.h"
+#include "qa/foundation/js.h"
 
 typedef struct ctx {
   qa_compat_q2_classic_guest_host *host; qa_compat_q2_memory *memory; qa_guest_address address, scratch;
@@ -40,7 +41,7 @@ static void vec_float(const uint8_t *view, size_t off, qa_q2_vec3 out) {
   out[0] = qa_compat_q2_view_f32(view, off); out[1] = qa_compat_q2_view_f32(view, off + 4); out[2] = qa_compat_q2_view_f32(view, off + 8);
 }
 static void put_short(uint8_t *view, size_t off, const qa_q2_vec3 v) {
-  qa_compat_q2_view_set_i16(view, off, (int32_t)v[0]); qa_compat_q2_view_set_i16(view, off + 2, (int32_t)v[1]); qa_compat_q2_view_set_i16(view, off + 4, (int32_t)v[2]);
+  qa_compat_q2_view_set_i16(view, off, qa_js_to_int32(v[0])); qa_compat_q2_view_set_i16(view, off + 2, qa_js_to_int32(v[1])); qa_compat_q2_view_set_i16(view, off + 4, qa_js_to_int32(v[2]));
 }
 static void put_float(uint8_t *view, size_t off, const qa_q2_vec3 v) {
   qa_compat_q2_view_set_f32(view, off, v[0]); qa_compat_q2_view_set_f32(view, off + 4, v[1]); qa_compat_q2_view_set_f32(view, off + 8, v[2]);
@@ -54,11 +55,11 @@ static qa_guest_address prepare_vector(ctx_t *c, int index, const qa_q2_vec3 v) 
 }
 static void commit(ctx_t *c) {
   qa_q2_classic_pmove *pm = c->pm; uint8_t *view = c->view;
-  qa_compat_q2_view_set_i32(view, 0, (int32_t)pm->s.pm_type);
+  qa_compat_q2_view_set_i32(view, 0, qa_js_to_int32(pm->s.pm_type));
   put_short(view, 4, pm->s.origin); put_short(view, 10, pm->s.velocity);
-  view[16] = (uint8_t)pm->s.pm_flags; view[17] = (uint8_t)pm->s.pm_time;
-  qa_compat_q2_view_set_i16(view, 18, (int32_t)pm->s.gravity); put_short(view, 20, pm->s.delta_angles);
-  qa_compat_q2_view_set_i32(view, 48, (int32_t)pm->numtouch);
+  view[16] = qa_js_to_uint8(pm->s.pm_flags); view[17] = qa_js_to_uint8(pm->s.pm_time); /* setUint8: ToUint8 */
+  qa_compat_q2_view_set_i16(view, 18, qa_js_to_int32(pm->s.gravity)); put_short(view, 20, pm->s.delta_angles);
+  qa_compat_q2_view_set_i32(view, 48, qa_js_to_int32(pm->numtouch));
   int n = pm->numtouch < 32 ? (int)pm->numtouch : 32;
   for (int i = 0; i < n; i++) {
     if (i >= 32) qa_range_error("Pmove exceeded MAXTOUCH");
@@ -69,7 +70,7 @@ static void commit(ctx_t *c) {
   put_float(view, 196, pm->mins); put_float(view, 208, pm->maxs);
   qa_guest_address g; bool has_g = pm->has_groundentity && pointer_of(c, true, pm->groundentity, &g);
   qa_compat_q2_mem_write_pointer(c->memory, qa_compat_q2_mem_offset(c->memory, c->address, 220), has_g, g);
-  qa_compat_q2_view_set_i32(view, 224, (int32_t)pm->watertype); qa_compat_q2_view_set_i32(view, 228, (int32_t)pm->waterlevel);
+  qa_compat_q2_view_set_i32(view, 224, qa_js_to_int32(pm->watertype)); qa_compat_q2_view_set_i32(view, 228, qa_js_to_int32(pm->waterlevel));
 }
 static void reload(ctx_t *c) {
   qa_q2_classic_pmove *pm = c->pm; uint8_t *view = c->view;
@@ -207,13 +208,13 @@ void qa_compat_q2_run_classic_guest_pmove(qa_guest_address address, qa_compat_q2
   if (!has_trace || !has_contents) qa_range_error("API 3 Pmove callback pointer is null");
   if (options.equipment) {
     double g = options.numeric.to_int32(options.numeric.ctx, options.numeric.multiply(options.numeric.ctx, qa_compat_q2_view_i16(view, 18), options.equipment->gravity_scale));
-    qa_compat_q2_view_set_i16(view, 18, (int32_t)g);
+    qa_compat_q2_view_set_i16(view, 18, qa_js_to_int32(g));
     view[16] = (uint8_t)(options.equipment->prediction_suppressed ? (view[16] | 64) : (view[16] & ~64));
   }
   if (options.equipment && options.equipment->velocity) {
     const double vals[] = {options.equipment->velocity->x, options.equipment->velocity->y, options.equipment->velocity->z};
     for (int i = 0; i < 3; i++)
-      qa_compat_q2_view_set_i16(view, 10 + (size_t)i * 2, (int32_t)options.numeric.to_int32(options.numeric.ctx, options.numeric.multiply(options.numeric.ctx, vals[i], 8)));
+      qa_compat_q2_view_set_i16(view, 10 + (size_t)i * 2, qa_js_to_int32(options.numeric.to_int32(options.numeric.ctx, options.numeric.multiply(options.numeric.ctx, vals[i], 8))));
   }
   run_ctx_t rc = {host, address, options};
   qa_compat_q2_classic_guest_host_apply_input_movement(host, address, &rc, run_movement);

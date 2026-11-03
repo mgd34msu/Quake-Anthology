@@ -6,17 +6,24 @@ static char *dupstr(const char *v) { if (!v) return NULL; size_t n = strlen(v); 
 qa_q3_level_capture qa_q3_capture_level(qa_q3_game_level *level) {
   qa_q3_level_capture c; c.values = qa_q3_capture_level_values(level);
   c.team_score_count = level->team_scores.length; c.team_scores = malloc((c.team_score_count ? c.team_score_count : 1) * sizeof *c.team_scores);
-  for (size_t i = 0; i < c.team_score_count; i++) c.team_scores[i] = level->team_scores.values[i];
+  for (size_t i = 0; i < c.team_score_count; i++) c.team_scores[i] = qa_q3_base_player_state_slots_get(&level->team_scores, (double)i);
   c.num_team_voting_clients[0] = level->base.num_team_voting_clients[0]; c.num_team_voting_clients[1] = level->base.num_team_voting_clients[1];
   c.sorted_count = QA_Q3_MAX_CLIENTS; c.sorted_clients = malloc(c.sorted_count * sizeof *c.sorted_clients);
   memcpy(c.sorted_clients, level->base.sorted_clients, c.sorted_count * sizeof *c.sorted_clients);
-  c.vote = level->base.vote; c.vote.string = dupstr(level->base.vote.string);
+  c.vote = level->base.vote; c.vote.string = dupstr(level->base.vote.string); c.vote.display_string = dupstr(level->base.vote.display_string);
   c.team_votes[0] = level->base.team_votes[0]; c.team_votes[0].string = dupstr(level->base.team_votes[0].string);
   c.team_votes[1] = level->base.team_votes[1]; c.team_votes[1].string = dupstr(level->base.team_votes[1].string); return c;
 }
 void qa_q3_level_capture_destroy(qa_q3_level_capture *c) {
   qa_q3_level_values_destroy(&c->values); free(c->team_scores); free(c->sorted_clients);
-  free(c->vote.string); free(c->team_votes[0].string); free(c->team_votes[1].string);
+  free(c->vote.string); free(c->vote.display_string); free(c->team_votes[0].string); free(c->team_votes[1].string);
+}
+static double field_number(const qa_save_reader *r, const char *name) {
+  qa_save_reader f; qa_save_reader_field(r, name, &f); double v = qa_save_reader_number(&f); qa_save_reader_destroy(&f); return v;
+}
+static void assign_field_string(const qa_save_reader *r, const char *name, char **out) {
+  qa_save_reader f; qa_save_reader_field(r, name, &f); char *v = dupstr(qa_save_reader_string(&f)); qa_save_reader_destroy(&f);
+  free(*out); *out = v;
 }
 static double *read_numbers(const qa_save_reader *r, const char *name, size_t *out_n) {
   qa_save_reader f; qa_save_reader_field(r, name, &f); size_t n = qa_save_reader_list_count(&f);
@@ -33,14 +40,23 @@ void qa_q3_restore_level(qa_q3_game_level *level, const qa_save_value *value) {
   double *sorted = read_numbers(&reader, "sortedClients", &nsort);
   qa_save_reader_field(&reader, "teamVotes", &f); size_t nt = qa_save_reader_list_count(&f); qa_save_reader_destroy(&f);
   if (ns != level->team_scores.length || nv != 2 || nsort != QA_Q3_MAX_CLIENTS || nt != 2) qa_save_reader_fail(&reader, "Q3 level table length mismatch");
-  for (size_t i = 0; i < ns; i++) qa_q3_game_slots_set_mirror(&level->team_scores, i, scores[i]);
+  for (size_t i = 0; i < ns; i++) qa_q3_base_player_state_slots_set(&level->team_scores, i, scores[i]);
   level->base.num_team_voting_clients[0] = voting[0]; level->base.num_team_voting_clients[1] = voting[1];
   memcpy(level->base.sorted_clients, sorted, nsort * sizeof *sorted);
   free(scores); free(voting); free(sorted);
   qa_save_reader_field(&reader, "vote", &f); qa_save_reader vf;
-  qa_save_reader_field(&f, "time", &vf); level->base.vote.time = qa_save_reader_number(&vf); qa_save_reader_destroy(&vf);
-  qa_save_reader_field(&f, "yes", &vf); level->base.vote.yes = qa_save_reader_number(&vf); qa_save_reader_destroy(&vf);
-  qa_save_reader_field(&f, "no", &vf); level->base.vote.no = qa_save_reader_number(&vf); qa_save_reader_destroy(&vf);
-  qa_save_reader_field(&f, "string", &vf); free(level->base.vote.string); level->base.vote.string = dupstr(qa_save_reader_string(&vf)); qa_save_reader_destroy(&vf);
+  level->base.vote.time = field_number(&f, "time"); level->base.vote.yes = field_number(&f, "yes"); level->base.vote.no = field_number(&f, "no");
+  assign_field_string(&f, "string", &level->base.vote.string);
+  assign_field_string(&f, "displayString", &level->base.vote.display_string);
+  level->base.vote.execute_time = field_number(&f, "executeTime");
+  qa_save_reader_destroy(&f);
+  qa_save_reader_field(&reader, "teamVotes", &f);
+  for (size_t i = 0; i < 2; i++) {
+    qa_save_reader_item(&f, i, &vf);
+    qa_q3_ta_team_vote_state *team = &level->base.team_votes[i];
+    team->time = field_number(&vf, "time"); team->yes = field_number(&vf, "yes"); team->no = field_number(&vf, "no");
+    assign_field_string(&vf, "string", &team->string);
+    qa_save_reader_destroy(&vf);
+  }
   qa_save_reader_destroy(&f); qa_save_reader_destroy(&reader);
 }

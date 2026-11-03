@@ -14,7 +14,8 @@
 #include "qa/network/common/transport.h"
 typedef struct qa_app_qw_server_administration {
   void *ctx;
-  const char *rcon_password;
+  /* TS `rconPassword` getter, read whenever the connection host reads it (borrowed until the next call). */
+  const char *(*rcon_password)(void *ctx);
   bool (*blocked)(void *ctx, const qa_net_address *from);
   char *(*status)(void *ctx);           /* malloc'd */
   char *(*log)(void *ctx, double sequence); /* malloc'd or NULL */

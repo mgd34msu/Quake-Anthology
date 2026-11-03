@@ -3,7 +3,8 @@
  * TS continuation closures become heap fn+ctx states that free
  * themselves when resumed (each resume runs at most once, driven by
  * the authority loop); mutation arrays in progress values are heap
- * copies retained by the progress. Math.fround / Math.imul staging
+ * copies owned by the progress (NULL when empty), which the authority
+ * frees after committing them. Math.fround / Math.imul staging
  * reproduced exactly. GPL-2.0-or-later.
  */
 #ifndef QA_WORLD_GAMEPLAY_POLICIES_H
@@ -127,5 +128,12 @@ qa_combat_policy qa_create_q3_combat_policy(qa_q3_combat_policy_options options)
 
 qa_victim_armor_policy qa_native_victim_armor(
     qa_victim_armor_context (*context)(void *ctx, qa_damage_request request), void *ctx);
+
+/* C ownership (TS GC): release the ctx block of a policy returned by
+ * qa_create_q1/q2/q3_combat_policy, or of a qa_native_victim_armor policy,
+ * once nothing calls it (unregistered, or its authority destroyed). The
+ * combat policy does not own its options.armor policy. */
+void qa_combat_policy_free(qa_combat_policy policy);
+void qa_victim_armor_policy_free(qa_victim_armor_policy policy);
 
 #endif

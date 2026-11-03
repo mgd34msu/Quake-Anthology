@@ -134,6 +134,7 @@ qa_resolved_gameplay_mod qa_read_gameplay_mod(const qa_save_reader *reader) {
   qa_save_reader digest = field(reader, "declarationDigest");
   mod.declaration_digest = qa_read_digest(&digest);
   qa_save_reader_destroy(&digest);
+  mod.read_order = true;
   return mod;
 }
 

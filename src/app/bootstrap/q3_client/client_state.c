@@ -11,6 +11,8 @@
 #include "qa/network/q3/client_server_command.h"
 #include "qa/network/q3/parse_entities.h"
 #include "qa/network/q3/snapshot_history.h"
+#include "qa/foundation/js.h"
+#include "qa/app/bootstrap/q3_client.h"
 typedef struct text_entry { double sequence; char *text; } text_entry;
 typedef struct ping_entry { double number; double ping; } ping_entry;
 struct qa_app_local_q3_client_state {
@@ -29,7 +31,16 @@ struct qa_app_local_q3_client_state {
   double server_command_sequence;
   double last_executed_server_command;
   double client_number;
+  /* TS readonly source (ApplicationQ3ClientSource) and the borrowed results its
+   * members and the Q3ClientState members return (valid until the next call). */
+  qa_app_q3_client_source source;
+  char **game_state_strings; size_t game_state_count;
+  char *system_info_text;
+  char **server_command_argv; size_t server_command_argc;
+  char *configstring_text;
+  bool has_record; qa_q3_source_game_state_record record;
 };
+static void init_source(qa_app_local_q3_client_state *s);
 static void drop_message(void *ctx, const char *message) {
   (void)ctx;
   qa_common_error(QA_COMMON_ERROR_DROP, message);
@@ -43,7 +54,7 @@ static void debug_print(void *ctx, const char *message) {
   s->bindings.print(s->bindings.ctx, message);
 }
 static void assert_current(qa_app_local_q3_client_state *s) {
-  if (s->retired) qa_range_error("Local Q3 client belongs to a retired gamestate");
+  if (s->retired) qa_raise("Error", 0, 0, "Local Q3 client belongs to a retired gamestate");
   s->bindings.assert_current(s->bindings.ctx);
 }
 qa_app_local_q3_client_state *qa_app_local_q3_client_state_create(
@@ -66,7 +77,19 @@ qa_app_local_q3_client_state *qa_app_local_q3_client_state_create(
   for (size_t i = 0; i < initial->entry_count; i++)
     if (initial->entries[i].kind == QA_Q3_GS_CONFIGSTRING)
       qa_q3_client_game_state_storage_append(s->game_state, initial->entries[i].index, initial->entries[i].value);
+  init_source(s);
   return s;
+}
+static void free_strings(char ***strings, size_t *count) {
+  for (size_t i = 0; i < *count; i++) free((*strings)[i]);
+  free(*strings);
+  *strings = NULL;
+  *count = 0;
+}
+static void free_record(qa_app_local_q3_client_state *s) {
+  if (!s->has_record) return;
+  qa_q3_source_game_state_record_destroy(&s->record);
+  s->has_record = false;
 }
 void qa_app_local_q3_client_state_destroy(qa_app_local_q3_client_state *state) {
   if (state == NULL) return;
@@ -78,6 +101,11 @@ void qa_app_local_q3_client_state_destroy(qa_app_local_q3_client_state *state) {
   for (size_t i = 0; i < state->command_count; i++) free(state->server_commands[i].text);
   free(state->server_commands);
   free(state->pings);
+  free_strings(&state->game_state_strings, &state->game_state_count);
+  free_strings(&state->server_command_argv, &state->server_command_argc);
+  free(state->system_info_text);
+  free(state->configstring_text);
+  free_record(state);
   free(state);
 }
 qa_q3_client_game_state_storage *qa_app_local_q3_client_state_game_state(qa_app_local_q3_client_state *state) { return state->game_state; }
@@ -132,7 +160,7 @@ void qa_app_local_q3_client_state_receive_server_command(qa_app_local_q3_client_
                                                          double sequence, const char *text) {
   assert_current(state);
   if (sequence != trunc(sequence) || sequence != state->server_command_sequence + 1)
-    qa_range_error("Local Q3 reliable command sequence must advance without gaps");
+    qa_raise("Error", 0, 0, "Local Q3 reliable command sequence must advance without gaps");
   state->server_command_sequence = sequence;
   if (state->command_count == state->command_capacity) {
     size_t cap = state->command_capacity == 0 ? 16 : state->command_capacity * 2;
@@ -164,9 +192,9 @@ void qa_app_local_q3_client_state_receive_snapshot(qa_app_local_q3_client_state 
                                                    const qa_q3_wire_snapshot *snapshot, double ping) {
   assert_current(state);
   if ((double)snapshot->message_number <= state->server_message_sequence)
-    qa_range_error("Local Q3 snapshot sequence must advance");
+    qa_raise("Error", 0, 0, "Local Q3 snapshot sequence must advance");
   if ((double)snapshot->server_command_number != state->server_command_sequence)
-    qa_range_error("Local Q3 snapshot must follow its reliable commands");
+    qa_raise("Error", 0, 0, "Local Q3 snapshot must follow its reliable commands");
   int64_t start = qa_q3_source_parse_entities_number(state->parse_entities);
   for (size_t i = 0; i < snapshot->entity_count; i++) {
     qa_q3_source_entity_state *at = qa_q3_source_parse_entities_at(
@@ -194,7 +222,7 @@ void qa_app_local_q3_client_state_receive_snapshot(qa_app_local_q3_client_state 
   state->server_message_sequence = (double)snapshot->message_number;
   size_t kept = 0;
   for (size_t i = 0; i < state->ping_count; i++) {
-    int32_t age = (int32_t)((double)snapshot->message_number - state->pings[i].number);
+    int32_t age = qa_js_to_int32((double)snapshot->message_number - state->pings[i].number);
     if (age < 32) state->pings[kept++] = state->pings[i];
   }
   state->ping_count = kept;
@@ -269,4 +297,149 @@ void qa_app_local_q3_client_state_retire(qa_app_local_q3_client_state *state) {
   state->command_count = 0;
   state->ping_count = 0;
   qa_q3_server_command_executor_clear(state->executor);
+}
+
+/* ---- TS this.source (ApplicationQ3ClientSource) ---- */
+static size_t source_game_state(void *ctx, const char *const **strings) {
+  qa_app_local_q3_client_state *s = ctx;
+  char **copied = NULL;
+  size_t count = 0;
+  copied = qa_app_local_q3_client_state_game_state_strings(s, &count); /* asserts current */
+  free_strings(&s->game_state_strings, &s->game_state_count);
+  s->game_state_strings = copied;
+  s->game_state_count = count;
+  *strings = (const char *const *)copied;
+  return count;
+}
+/* getServerCommand: number => this.getServerCommand(number) (shared with the Q3ClientState member). */
+static bool source_server_command(void *ctx, double sequence, const char *const **strings, size_t *out_count) {
+  qa_app_local_q3_client_state *s = ctx;
+  char **argv = NULL;
+  size_t argc = 0;
+  bool present = qa_app_local_q3_client_state_get_server_command(s, sequence, &argv, &argc);
+  free_strings(&s->server_command_argv, &s->server_command_argc);
+  if (!present) return false;
+  s->server_command_argv = argv;
+  s->server_command_argc = argc;
+  *strings = (const char *const *)argv;
+  *out_count = argc;
+  return true;
+}
+static qa_actor_id source_actor_at(void *ctx, double number) { return qa_app_local_q3_client_state_actor_at(ctx, number); }
+static bool source_demo(void *ctx) { (void)ctx; return false; } /* sourceMode: "live" */
+static double source_client_number(void *ctx) { return ((qa_app_local_q3_client_state *)ctx)->client_number; }
+static double source_time(void *ctx) { return qa_app_local_q3_client_state_time(ctx); }
+static double source_server_message_sequence(void *ctx) { return ((qa_app_local_q3_client_state *)ctx)->server_message_sequence; }
+static double source_last_executed_server_command(void *ctx) {
+  return ((qa_app_local_q3_client_state *)ctx)->last_executed_server_command;
+}
+static const char *source_system_info(void *ctx) {
+  qa_app_local_q3_client_state *s = ctx;
+  char *info = qa_app_local_q3_client_state_system_info(s); /* asserts current */
+  free(s->system_info_text);
+  s->system_info_text = info;
+  return info;
+}
+static bool source_sound_actor(void *ctx, double number, qa_actor_id *out) {
+  return qa_app_local_q3_client_state_sound_actor(ctx, number, out);
+}
+static bool source_snapshot_ping(void *ctx, double number, double *out) {
+  return qa_app_local_q3_client_state_snapshot_ping(ctx, number, out);
+}
+/* commands: { currentNumber, read: number => { assertCurrent(); ... angles: { x, y, z } } }. */
+static double source_command_number(void *ctx) {
+  return (double)qa_q3_wire_command_history_current_number(((qa_app_local_q3_client_state *)ctx)->commands);
+}
+static bool source_command_read(void *ctx, double number, qa_q3_base_user_command *out) {
+  qa_app_local_q3_client_state *s = ctx;
+  assert_current(s);
+  qa_q3_wire_user_command command;
+  if (!qa_q3_wire_command_history_read(s->commands, (int64_t)number, &command)) return false;
+  out->server_time = command.server_time;
+  out->angles = (qa_vec3){command.angles[0], command.angles[1], command.angles[2]};
+  out->forwardmove = command.forwardmove;
+  out->rightmove = command.rightmove;
+  out->upmove = command.upmove;
+  out->buttons = command.buttons;
+  out->weapon = command.weapon;
+  return true;
+}
+/* current: () => { assertCurrent(); return snapshots.current(); }, read likewise. */
+static qa_q3_pres_snapshot_current source_current(void *ctx) {
+  qa_app_local_q3_client_state *s = ctx;
+  assert_current(s);
+  return qa_q3_pres_history_snapshot_source_current(&s->snapshots);
+}
+static bool source_read(void *ctx, double number, qa_q3_wire_snapshot *out) {
+  qa_app_local_q3_client_state *s = ctx;
+  assert_current(s);
+  return qa_q3_pres_history_snapshot_source_read(&s->snapshots, number, out);
+}
+static void init_source(qa_app_local_q3_client_state *s) {
+  qa_app_q3_client_source *source = &s->source;
+  memset(source, 0, sizeof *source);
+  source->ctx = s;
+  source->game_state = source_game_state;
+  source->server_command = source_server_command;
+  source->actor_at = source_actor_at;
+  source->demo = source_demo;
+  source->commands.ctx = s;
+  source->commands.current_number = source_command_number;
+  source->commands.read = source_command_read;
+  source->snapshots.ctx = s;
+  source->snapshots.current = source_current;
+  source->snapshots.read = source_read;
+  source->client_number = source_client_number;
+  source->time = source_time;
+  source->server_message_sequence = source_server_message_sequence;
+  source->last_executed_server_command = source_last_executed_server_command;
+  source->system_info = source_system_info;
+  /* ...(bindings.soundActor === undefined ? {} : { soundActor }) */
+  source->sound_actor = s->bindings.sound_actor == NULL ? NULL : source_sound_actor;
+  source->snapshot_ping = source_snapshot_ping;
+}
+const qa_app_q3_client_source *qa_app_local_q3_client_state_source(qa_app_local_q3_client_state *state) { return &state->source; }
+
+/* ---- LocalQ3ClientState as Q3ClientState (compat/qvm/client-state.ts) ---- */
+static double connection_generation(void *ctx) { return ((qa_app_local_q3_client_state *)ctx)->generation; }
+static double connection_server_message_sequence(void *ctx) { return ((qa_app_local_q3_client_state *)ctx)->server_message_sequence; }
+static double connection_last_executed_server_command(void *ctx) {
+  return ((qa_app_local_q3_client_state *)ctx)->last_executed_server_command;
+}
+static double connection_client_number(void *ctx) { return ((qa_app_local_q3_client_state *)ctx)->client_number; }
+/* gameState: ClientGameStateStorage get(index) and copySourceRecord(). */
+static const char *connection_configstring(void *ctx, double index) {
+  qa_app_local_q3_client_state *s = ctx;
+  free(s->configstring_text);
+  s->configstring_text = NULL;
+  if (!qa_q3_client_game_state_storage_get(s->game_state, (int64_t)index, &s->configstring_text)) qa_range_error("Out of memory");
+  return s->configstring_text;
+}
+static qa_qvmx_source_game_state_record connection_record(void *ctx) {
+  qa_app_local_q3_client_state *s = ctx;
+  free_record(s);
+  if (!qa_q3_client_game_state_storage_copy_source_record(s->game_state, &s->record)) qa_range_error("Out of memory");
+  s->has_record = true;
+  return qa_qvmx_source_game_state_record_from_network(&s->record);
+}
+/* commands: Q3CommandHistory currentNumber and read (WireUserCommand, angles as an array). */
+static bool connection_command_read(void *ctx, double number, qa_qvmx_wire_user_command *out) {
+  qa_q3_wire_user_command command;
+  if (!qa_q3_wire_command_history_read(((qa_app_local_q3_client_state *)ctx)->commands, (int64_t)number, &command)) return false;
+  *out = qa_qvmx_wire_user_command_from_network(&command);
+  return true;
+}
+qa_q3_client_state qa_app_local_q3_client_state_connection(qa_app_local_q3_client_state *state) {
+  qa_q3_client_state connection;
+  memset(&connection, 0, sizeof connection);
+  connection.ctx = state;
+  connection.get_generation = connection_generation;
+  connection.get_server_message_sequence = connection_server_message_sequence;
+  connection.get_last_executed_server_command = connection_last_executed_server_command;
+  connection.get_client_number = connection_client_number;
+  connection.snapshot_ping = source_snapshot_ping;
+  connection.get_server_command = source_server_command;
+  connection.game_state = (qa_q3_client_game_state_view){state, connection_configstring, connection_record};
+  connection.commands = (qa_q3_client_commands_view){state, source_command_number, connection_command_read};
+  return connection;
 }

@@ -219,12 +219,12 @@ static qa_original_pickup_decision run_observe(void *ctx) {
   qa_qvm_mod_pickups *pickups = job->pickups;
   const qa_original_pickup_operation *operation = &job->definition->rule.operation;
   if (operation->is_gate_then_grant) {
-    int32_t gated = pickups->operations->invoke(pickups->operations->ctx, operation->gate,
+    double gated = pickups->operations->invoke(pickups->operations->ctx, operation->gate,
                                                 job->inputs, job->input_count);
     if (gated == 0 || !take_current(pickups, job->actor, job->offer, job->observer))
       return QA_ORIGINAL_PICKUP_REFUSED;
   }
-  int32_t result = pickups->operations->invoke(pickups->operations->ctx, operation->grant,
+  double result = pickups->operations->invoke(pickups->operations->ctx, operation->grant,
                                                job->inputs, job->input_count);
   bool accepted = (operation->is_gate_then_grant && strcmp(operation->grant_accepts, "always") == 0) || result != 0;
   return accepted ? QA_ORIGINAL_PICKUP_ACCEPTED : QA_ORIGINAL_PICKUP_REFUSED;
@@ -241,6 +241,12 @@ static qa_original_pickup_decision run_context(void *ctx) {
   context_job *job = ctx;
   return job->pickups->operations->observe(job->pickups->operations->ctx, job->actor,
                                            job->observer, run_observe, job->observe);
+}
+
+/* TS finally { this.depth--; }. */
+static void take_unwind(void *ctx) {
+  qa_qvm_mod_pickups *pickups = ctx;
+  pickups->depth--;
 }
 
 static qa_original_pickup_decision take_rule(void *ctx, qa_original_pickup_offer offer,
@@ -269,8 +275,11 @@ static qa_original_pickup_decision take_rule(void *ctx, qa_original_pickup_offer
   observe_job observe = {pickups, actor, &offer, definition, inputs, 7, &execution};
   context_job context = {pickups, actor, &execution, &observe};
   pickups->depth++;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, take_unwind, pickups);
   qa_original_pickup_decision result = pickups->operations->context(
       pickups->operations->ctx, definition, &offer, inputs, 7, run_context, &context);
+  qa_cleanup_pop(&guard);
   pickups->depth--;
   return result;
 }

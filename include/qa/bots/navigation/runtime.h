@@ -47,7 +47,7 @@ typedef struct qa_navigation_runtime {
   qa_navigation_id_bool *enabled; size_t enabled_count, enabled_cap;
   qa_navigation_id_reason *blocked; size_t blocked_count, blocked_cap;
   qa_navigation_id_seconds *admission_seconds; size_t admission_count, admission_cap;
-  int64_t world_revision;
+  double world_revision; /* TS number */
   int64_t generation;
 } qa_navigation_runtime;
 /* False only on OOM; duplicate/invalid graph identities abort (TS RangeError). */
@@ -86,6 +86,12 @@ qa_navigation_area_crossing *qa_navigation_runtime_trace_areas(qa_navigation_run
                                                                int64_t maximum, size_t *out_count);
 bool qa_navigation_runtime_edge_allowed(qa_navigation_runtime *rt, const qa_navigation_edge *edge,
                                         const qa_navigation_route_query *query);
+/* TS edgeSelectable(edge, travelFlags?): static eligibility only. */
+bool qa_navigation_runtime_edge_selectable(qa_navigation_runtime *rt, const qa_navigation_edge *edge,
+                                           bool has_flags, int64_t travel_flags);
+/* TS edge(id) / moverEdge(model); NULL is TS null. */
+const qa_navigation_edge *qa_navigation_runtime_edge(const qa_navigation_runtime *rt, int64_t id);
+const qa_navigation_edge *qa_navigation_runtime_mover_edge(const qa_navigation_runtime *rt, int64_t model);
 qa_traversal_admission qa_navigation_runtime_admit_edge(qa_navigation_runtime *rt, const qa_navigation_edge *edge, qa_vec3 origin);
 qa_navigation_estimate_result qa_navigation_runtime_estimate(qa_navigation_runtime *rt, qa_navigation_estimate_query query);
 qa_navigation_route_result qa_navigation_runtime_route(qa_navigation_runtime *rt, qa_navigation_route_query query);

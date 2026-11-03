@@ -1,5 +1,6 @@
 /* Port of src/formats/images/palette.ts. GPL-2.0-or-later. */
 #include "qa/formats/images/palette.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -155,7 +156,7 @@ void qa_build_gamma_table(const qa_gamma_profile *profile, uint8_t table[256]) {
     double value;
     if (profile->kind == QA_GAMMA_Q1_GL) {
       float g = (float)profile->gamma;
-      float p = (float)pow((index + 1) / 256.0, (double)g);
+      float p = (float)qa_js_pow((index + 1) / 256.0, (double)g);
       float m = (float)((double)p * 255.0);
       value = (double)(float)((double)m + 0.5);
     } else if (profile->gamma == 1) {
@@ -163,13 +164,13 @@ void qa_build_gamma_table(const qa_gamma_profile *profile, uint8_t table[256]) {
     } else if (profile->kind == QA_GAMMA_Q3) {
       float base = (float)(index / 255.0);
       float inv = (float)(1.0 / (double)(float)profile->gamma);
-      value = 255.0 * pow((double)base, (double)inv) + 0.5;
+      value = 255.0 * qa_js_pow((double)base, (double)inv) + 0.5;
     } else {
       float g = (float)profile->gamma;
-      value = (double)(float)(255.0 * pow((index + 0.5) / 255.5, (double)g) + 0.5);
+      value = (double)(float)(255.0 * qa_js_pow((index + 0.5) / 255.5, (double)g) + 0.5);
     }
     if (profile->kind == QA_GAMMA_Q3) {
-      value = trunc(value) * pow(2.0, profile->overbright_bits);
+      value = trunc(value) * qa_js_pow(2.0, profile->overbright_bits);
     }
     double clamped = trunc(value);
     if (!(clamped >= 0)) clamped = 0;
@@ -178,9 +179,12 @@ void qa_build_gamma_table(const qa_gamma_profile *profile, uint8_t table[256]) {
   }
 }
 
-/* TS WeakMap keyed by profile object; here keyed by profile address. */
+/* TS WeakMap keyed by profile object. A C profile is a value that callers
+ * reuse and mutate in place, so the cache is keyed by every field the
+ * table reads: equal values always compose the same table, and a changed
+ * profile at the same address is never served a stale table. */
 struct gamma_cache_entry {
-  const qa_gamma_profile *key;
+  qa_gamma_profile key;
   uint8_t table[256];
   int identity;
 };
@@ -198,7 +202,11 @@ int qa_apply_image_gamma(const qa_image_level *level,
   if (length != 0) memcpy(pixels, level->pixels.bytes, length);
   struct gamma_cache_entry *cached = NULL;
   for (size_t i = 0; i < gamma_cache_count; i++) {
-    if (gamma_cache[i].key == profile) cached = &gamma_cache[i];
+    const qa_gamma_profile *key = &gamma_cache[i].key;
+    if (key->kind == profile->kind && key->gamma == profile->gamma &&
+        key->intensity == profile->intensity && key->overbright_bits == profile->overbright_bits &&
+        key->only_gamma == profile->only_gamma)
+      cached = &gamma_cache[i];
   }
   uint8_t local_table[256];
   int local_identity = 1;
@@ -242,7 +250,7 @@ int qa_apply_image_gamma(const qa_image_level *level,
     }
     if (gamma_cache_count < gamma_cache_capacity) {
       struct gamma_cache_entry *entry = &gamma_cache[gamma_cache_count++];
-      entry->key = profile;
+      entry->key = *profile;
       memcpy(entry->table, local_table, sizeof entry->table);
       entry->identity = local_identity;
     }

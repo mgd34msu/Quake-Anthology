@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
+#include <time.h>
 #include "qa/core/commands/text.h"
 #include "qa/foundation/support.h"
 #include "qa/network/unified/channel.h"
@@ -25,7 +27,7 @@ struct qa_app_unified_client_network {
   qa_app_network_phase state;
   char nonce[33];
   char *token;
-  qa_unified_channel channel; bool channel_live, channel_closed;
+  qa_unified_channel channel; bool channel_live;
   qa_app_unified_composition *composition;
   double epoch, generation;
   double last_handshake;
@@ -37,14 +39,10 @@ struct qa_app_unified_client_network {
   bool has_command_time; double command_time;
   bool has_submitted_at; double submitted_at;
 };
+/* TS crypto.getRandomValues(new Uint8Array(16)) as hex. */
 static void make_nonce(char out[33]) {
   unsigned char bytes[16] = {0};
-  FILE *file = fopen("/dev/urandom", "rb");
-  if (file) {
-    size_t read_count = fread(bytes, 1, sizeof bytes, file);
-    (void)read_count;
-    fclose(file);
-  }
+  if (getrandom(bytes, sizeof bytes, 0) != (ssize_t)sizeof bytes) qa_raise("Error", 0, 0, "Random source unavailable");
   static const char hex[] = "0123456789abcdef";
   for (size_t i = 0; i < 16; i++) {
     out[i * 2] = hex[bytes[i] >> 4];
@@ -70,10 +68,6 @@ void qa_app_unified_client_network_destroy(qa_app_unified_client_network *networ
   if (network->channel_live) qa_unified_channel_destroy(&network->channel);
   if (network->composition) qa_app_unified_composition_destroy(network->composition);
   free(network->last_userinfo);
-  for (size_t i = 0; i < network->input_count; i++) {
-    qa_app_unified_input *input = &network->inputs[i];
-    (void)input;
-  }
   free(network->inputs);
   free(network);
 }
@@ -103,72 +97,149 @@ static void assert_current(qa_app_unified_client_network *n, double generation) 
 static void send_packet(qa_app_unified_client_network *n, const uint8_t *bytes, size_t length) {
   n->options.transport->send(n->options.transport->ctx, &n->options.remote, bytes, length);
 }
+typedef struct flush_owned { uint8_t **packets; size_t *lengths; size_t count; } flush_owned;
+static void flush_owned_free(void *arg) {
+  flush_owned *owned = arg;
+  for (size_t i = 0; i < owned->count; i++) free(owned->packets[i]);
+  free(owned->packets);
+  free(owned->lengths);
+}
 static void flush_channel(qa_app_unified_client_network *n, double now) {
-  size_t *lengths = NULL;
-  size_t count = 0;
-  uint8_t **packets = qa_unified_channel_transmit_reliable(&n->channel, now, &lengths, &count);
-  for (size_t i = 0; i < count; i++) {
-    send_packet(n, packets[i], lengths[i]);
-    free(packets[i]);
-  }
-  free(packets);
-  free(lengths);
+  flush_owned owned = {NULL, NULL, 0};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, flush_owned_free, &owned);
+  owned.packets = qa_unified_channel_flush(&n->channel, now, &owned.lengths, &owned.count);
+  if (n->channel.failure) qa_range_error("%s", n->channel.failure);
+  for (size_t i = 0; i < owned.count; i++) send_packet(n, owned.packets[i], owned.lengths[i]);
+  qa_cleanup_pop(&guard);
+  flush_owned_free(&owned);
 }
-static void fail(qa_app_unified_client_network *n, const char *message) {
-  if (n->state != QA_APP_PHASE_CLOSED) {
+static void cleanup_event(void *arg) { qa_receive_event_destroy(arg); }
+static void cleanup_control(void *arg) { qa_app_unified_control_free(arg); }
+static void cleanup_handshake(void *arg) { qa_app_unified_handshake_free(arg); }
+typedef struct delivery_owned { qa_unified_delivery *items; size_t count; } delivery_owned;
+static void cleanup_deliveries(void *arg) {
+  delivery_owned *owned = arg;
+  qa_unified_deliveries_destroy(owned->items, owned->count);
+}
+static void send_handshake(qa_app_unified_client_network *n, const qa_app_unified_handshake *handshake) {
+  size_t length = 0;
+  uint8_t *bytes = qa_app_unified_encode_handshake(handshake, &length);
+  if (!bytes) qa_range_error("out of memory");
+  send_packet(n, bytes, length);
+  free(bytes);
+}
+/* Returns true when a disconnect control ended the poll. */
+static bool receive_control(qa_app_unified_client_network *n, const qa_unified_delivery *message, double generation) {
+  qa_app_unified_control control;
+  memset(&control, 0, sizeof control);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_control, &control);
+  qa_app_unified_decode_control_into(&control, message->payload, message->length);
+  bool ended = false;
+  if (control.kind == QA_APP_UNIFIED_DISCONNECT) {
     n->state = QA_APP_PHASE_REJECTED;
-    qa_app_unified_remote_disconnected(n->options.host, message);
+    qa_app_unified_remote_disconnected(n->options.host, control.reason ? control.reason : "");
     qa_app_unified_client_network_close(n);
+    ended = true;
+  } else if (control.kind == QA_APP_UNIFIED_OFFER) {
+    if (control.epoch > n->epoch) {
+      n->state = QA_APP_PHASE_LOADING;
+      n->epoch = control.epoch;
+      n->input_count = 0;
+      n->acknowledged = -1;
+      n->has_command_time = false;
+      n->has_submitted_at = false;
+      qa_app_unified_remote_offer(n->options.host, &control);
+      assert_current(n, generation);
+      if (n->composition) qa_app_unified_composition_destroy(n->composition);
+      n->composition = control.composition;
+      control.composition = NULL;
+      free(n->last_userinfo);
+      n->last_userinfo = copy_text(n->options.userinfo(n->options.userinfo_ctx));
+      qa_app_unified_control ready = {0};
+      ready.kind = QA_APP_UNIFIED_READY;
+      ready.epoch = n->epoch;
+      ready.composition_digest = n->composition->digest;
+      ready.userinfo = n->last_userinfo;
+      send_control(n, &ready);
+    }
+  } else if (control.epoch == n->epoch) {
+    if (control.kind == QA_APP_UNIFIED_ADMITTED)
+      qa_app_unified_remote_admitted(n->options.host, &control);
+    else if (control.kind == QA_APP_UNIFIED_RESOURCES) {
+      qa_app_unified_remote_declare(n->options.host, control.epoch, control.resources, control.resource_count);
+      assert_current(n, generation);
+    } else if (control.kind == QA_APP_UNIFIED_COMPONENTS) {
+      qa_app_unified_remote_receive_components(n->options.host, control.epoch, &control.update);
+      assert_current(n, generation);
+    } else if (control.kind == QA_APP_UNIFIED_EVENTS) {
+      qa_app_unified_remote_receive_events(n->options.host, control.epoch, control.frame,
+          control.payload, control.payload_length, control.simulation, control.simulation_length);
+    } else qa_range_error("Unexpected unified server control");
   }
-  qa_range_error("%s", message);
+  qa_cleanup_pop(&guard);
+  qa_app_unified_control_free(&control);
+  return ended;
 }
-const void *const *qa_app_unified_client_network_poll(qa_app_unified_client_network *n,
-    double now, size_t *out_count) {
-  *out_count = 0;
-  if (n->state == QA_APP_PHASE_CLOSED || n->state == QA_APP_PHASE_REJECTED) return NULL;
-  double generation = n->generation;
-  if (!n->has_handshake_started) {
-    n->handshake_started = now;
-    n->has_handshake_started = true;
+static void receive_frame(qa_app_unified_client_network *n, const qa_unified_delivery *message, double generation) {
+  double acknowledged = 0;
+  bool accepted = qa_app_unified_remote_receive_frame(n->options.host,
+      message->payload, message->length, &acknowledged);
+  assert_current(n, generation);
+  if (!accepted) return;
+  n->state = QA_APP_PHASE_ACTIVE;
+  if (acknowledged > n->acknowledged) n->acknowledged = acknowledged;
+  size_t kept = 0;
+  for (size_t j = 0; j < n->input_count; j++)
+    if (n->inputs[j].sequence > n->acknowledged) n->inputs[kept++] = n->inputs[j];
+  n->input_count = kept;
+  if (n->input_count == 0) {
+    double baseline = 0;
+    if (qa_app_unified_remote_command_time(n->options.host, &baseline)) {
+      n->command_time = baseline;
+      n->has_command_time = true;
+    } else n->has_command_time = false;
   }
+}
+typedef struct poll_scope { qa_app_unified_client_network *n; double now, generation; } poll_scope;
+static void poll_body(void *ctx) {
+  poll_scope *scope = ctx;
+  qa_app_unified_client_network *n = scope->n;
+  double now = scope->now, generation = scope->generation;
   if (!n->composition && now - n->last_handshake >= 1000) {
     n->last_handshake = now;
     qa_app_unified_handshake handshake = {0};
     handshake.kind = n->token ? QA_APP_UNIFIED_CONNECT : QA_APP_UNIFIED_HELLO;
     handshake.nonce = n->nonce;
     handshake.token = n->token;
-    size_t length = 0;
-    uint8_t *bytes = qa_app_unified_encode_handshake(&handshake, &length);
-    if (!bytes) qa_range_error("out of memory");
-    send_packet(n, bytes, length);
-    free(bytes);
+    send_handshake(n, &handshake);
   }
   for (;;) {
     qa_receive_event packet;
     if (!n->options.transport->poll(n->options.transport->ctx, &packet)) break;
-    if (packet.kind == QA_RECV_ERROR) {
-      char *message = copy_text(packet.error ? packet.error : "transport error");
-      qa_receive_event_destroy(&packet);
-      fail(n, message);
-    }
-    if (packet.kind != QA_RECV_PACKET
-        || !qa_net_same_address(&packet.from, &n->options.remote, true)) {
-      qa_receive_event_destroy(&packet);
-      continue;
-    }
-    qa_app_unified_handshake handshake;
-    if (qa_app_unified_decode_handshake(packet.payload, packet.length, &handshake)) {
-      if (handshake.kind == QA_APP_UNIFIED_CHALLENGE
-          && strcmp(handshake.nonce, n->nonce) == 0 && !n->composition) {
-        if (!n->token || strcmp(n->token, handshake.token) == 0) {
+    qa_cleanup packet_guard;
+    qa_cleanup_push(&packet_guard, cleanup_event, &packet);
+    /* TS skips every event that is not a packet from the server, transport errors included. */
+    bool handled = packet.kind != QA_RECV_PACKET
+        || !qa_net_same_address(&packet.from, &n->options.remote, true);
+    if (!handled) {
+      qa_app_unified_handshake handshake;
+      if (qa_app_unified_decode_handshake(packet.payload, packet.length, &handshake)) {
+        handled = true;
+        qa_cleanup handshake_guard;
+        qa_cleanup_push(&handshake_guard, cleanup_handshake, &handshake);
+        if (handshake.kind == QA_APP_UNIFIED_CHALLENGE && strcmp(handshake.nonce, n->nonce) == 0
+            && !n->composition && (!n->token || strcmp(n->token, handshake.token) == 0)) {
           free(n->token);
           n->token = copy_text(handshake.token);
           if (!n->channel_live) {
-            int64_t max_datagram = n->options.transport->max_datagram_bytes(
-                n->options.transport->ctx);
+            int64_t max_datagram = n->options.transport->max_datagram_bytes(n->options.transport->ctx);
             int64_t datagram = max_datagram < 0 ? 1200 : max_datagram;
             if (datagram > 1200) datagram = 1200;
-            qa_unified_channel_init(&n->channel, handshake.token, datagram, 0, 0, 0, false);
+            qa_unified_channel_limits limits = qa_unified_channel_default_limits();
+            limits.datagram_bytes = datagram;
+            qa_unified_channel_init(&n->channel, handshake.token, &limits);
             n->channel_live = true;
           }
           n->state = QA_APP_PHASE_CONNECTING;
@@ -177,111 +248,43 @@ const void *const *qa_app_unified_client_network_poll(qa_app_unified_client_netw
           connect.kind = QA_APP_UNIFIED_CONNECT;
           connect.nonce = n->nonce;
           connect.token = handshake.token;
-          size_t length = 0;
-          uint8_t *bytes = qa_app_unified_encode_handshake(&connect, &length);
-          if (!bytes) qa_range_error("out of memory");
-          send_packet(n, bytes, length);
-          free(bytes);
+          send_handshake(n, &connect);
         }
-      }
-      qa_receive_event_destroy(&packet);
-      continue;
-    }
-    qa_unified_packet decoded;
-    if (!n->channel_live || !qa_decode_unified_packet(packet.payload, packet.length, &decoded)
-        || strcmp(decoded.token, n->channel.token) != 0) {
-      qa_receive_event_destroy(&packet);
-      continue;
-    }
-    n->last_received = now;
-    n->has_last_received = true;
-    qa_unified_receive_result result;
-    qa_unified_channel_receive(&n->channel, packet.payload, packet.length, now, &result);
-    for (size_t i = 0; i < result.reply_count; i++) send_packet(n, result.replies[i], result.reply_lens[i]);
-    for (size_t i = 0; i < result.delivery_count; i++) {
-      qa_unified_delivery *message = &result.deliveries[i];
-      if (strcmp(message->kind, "reliable") == 0) {
-        qa_app_unified_control control =
-            qa_app_unified_decode_control(message->payload, message->length);
-        if (control.kind == QA_APP_UNIFIED_DISCONNECT) {
-          n->state = QA_APP_PHASE_REJECTED;
-          qa_app_unified_remote_disconnected(n->options.host,
-              control.reason ? control.reason : "");
-          qa_app_unified_control_free(&control);
-          qa_unified_receive_result_destroy(&result);
-          qa_receive_event_destroy(&packet);
-          qa_app_unified_client_network_close(n);
-          return NULL;
-        }
-        if (control.kind == QA_APP_UNIFIED_OFFER) {
-          if (control.epoch <= n->epoch) {
-            qa_app_unified_control_free(&control);
-            continue;
-          }
-          n->state = QA_APP_PHASE_LOADING;
-          n->epoch = control.epoch;
-          n->input_count = 0;
-          n->acknowledged = -1;
-          n->has_command_time = false;
-          n->has_submitted_at = false;
-          qa_app_unified_remote_offer(n->options.host, &control);
-          assert_current(n, generation);
-          if (n->composition) qa_app_unified_composition_destroy(n->composition);
-          n->composition = control.composition;
-          control.composition = NULL;
-          free(n->last_userinfo);
-          n->last_userinfo = copy_text(n->options.userinfo(n->options.userinfo_ctx));
-          qa_app_unified_control ready = {0};
-          ready.kind = QA_APP_UNIFIED_READY;
-          ready.epoch = n->epoch;
-          ready.composition_digest = n->composition->digest;
-          ready.userinfo = n->last_userinfo;
-          send_control(n, &ready);
-        } else if (control.epoch == n->epoch) {
-          if (control.kind == QA_APP_UNIFIED_ADMITTED)
-            qa_app_unified_remote_admitted(n->options.host, &control);
-          else if (control.kind == QA_APP_UNIFIED_RESOURCES) {
-            qa_app_unified_remote_declare(n->options.host, control.epoch,
-                control.resources, control.resource_count);
-            assert_current(n, generation);
-          } else if (control.kind == QA_APP_UNIFIED_COMPONENTS) {
-            qa_app_unified_remote_receive_components(n->options.host,
-                control.epoch, &control.update);
-            assert_current(n, generation);
-          } else if (control.kind == QA_APP_UNIFIED_EVENTS) {
-            qa_app_unified_remote_receive_events(n->options.host, control.epoch,
-                control.frame, control.payload, control.payload_length,
-                control.simulation, control.simulation_length);
-          } else fail(n, "Unexpected unified server control");
-        }
-        qa_app_unified_control_free(&control);
-      } else if (strcmp(message->kind, "frame") == 0) {
-        double acknowledged = 0;
-        bool accepted = qa_app_unified_remote_receive_frame(n->options.host,
-            message->payload, message->length, &acknowledged);
-        assert_current(n, generation);
-        if (accepted) {
-          n->state = QA_APP_PHASE_ACTIVE;
-          if (acknowledged > n->acknowledged) n->acknowledged = acknowledged;
-          size_t kept = 0;
-          for (size_t j = 0; j < n->input_count; j++)
-            if (n->inputs[j].sequence > n->acknowledged) n->inputs[kept++] = n->inputs[j];
-          n->input_count = kept;
-          if (n->input_count == 0) {
-            double baseline = 0;
-            if (qa_app_unified_remote_command_time(n->options.host, &baseline)) {
-              n->command_time = baseline;
-              n->has_command_time = true;
-            }
-          }
-        }
+        qa_cleanup_pop(&handshake_guard);
+        qa_app_unified_handshake_free(&handshake);
       }
     }
-    qa_unified_receive_result_destroy(&result);
+    if (!handled) {
+      qa_unified_packet decoded;
+      if (n->channel_live && qa_decode_unified_packet(packet.payload, packet.length, &decoded)
+          && strcmp(decoded.token, n->channel.token) == 0) {
+        n->last_received = now;
+        n->has_last_received = true;
+        delivery_owned owned = {NULL, 0};
+        qa_cleanup deliveries_guard;
+        qa_cleanup_push(&deliveries_guard, cleanup_deliveries, &owned);
+        owned.items = qa_unified_channel_receive(&n->channel, packet.payload, packet.length, now, &owned.count);
+        if (n->channel.failure) qa_range_error("%s", n->channel.failure);
+        for (size_t i = 0; i < owned.count; i++) {
+          const qa_unified_delivery *message = &owned.items[i];
+          if (strcmp(message->kind, "reliable") != 0) receive_frame(n, message, generation);
+          else if (receive_control(n, message, generation)) {
+            qa_cleanup_pop(&deliveries_guard);
+            qa_unified_deliveries_destroy(owned.items, owned.count);
+            qa_cleanup_pop(&packet_guard);
+            qa_receive_event_destroy(&packet);
+            return;
+          }
+        }
+        qa_cleanup_pop(&deliveries_guard);
+        qa_unified_deliveries_destroy(owned.items, owned.count);
+      }
+    }
+    qa_cleanup_pop(&packet_guard);
     qa_receive_event_destroy(&packet);
   }
   double since = n->has_last_received ? n->last_received : n->handshake_started;
-  if (now - since > 120000) fail(n, "Unified connection timed out");
+  if (now - since > 120000) qa_range_error("Unified connection timed out");
   if (n->channel_live) {
     if (n->state == QA_APP_PHASE_ACTIVE) {
       const char *userinfo = n->options.userinfo(n->options.userinfo_ctx);
@@ -301,17 +304,32 @@ const void *const *qa_app_unified_client_network_poll(qa_app_unified_client_netw
       size_t length = 0;
       uint8_t *bytes = qa_app_unified_encode_inputs(&batch, &length);
       if (!bytes) qa_range_error("out of memory");
-      size_t frame_length = 0;
-      uint8_t *frame = qa_unified_channel_transmit_frame(&n->channel, bytes, length,
-          true, 0, &frame_length);
+      qa_cleanup bytes_guard;
+      qa_cleanup_push(&bytes_guard, free, bytes);
+      qa_unified_channel_queue_frame(&n->channel, bytes, length, 0);
+      qa_cleanup_pop(&bytes_guard);
       free(bytes);
-      if (!frame) qa_range_error("out of memory");
-      send_packet(n, frame, frame_length);
-      free(frame);
     }
     flush_channel(n, now);
   }
-  return NULL;
+}
+const void *const *qa_app_unified_client_network_poll(qa_app_unified_client_network *n,
+    double now, size_t *out_count) {
+  *out_count = 0;
+  if (n->state == QA_APP_PHASE_CLOSED || n->state == QA_APP_PHASE_REJECTED) return NULL;
+  if (!n->has_handshake_started) {
+    n->handshake_started = now;
+    n->has_handshake_started = true;
+  }
+  poll_scope scope = {n, now, n->generation};
+  qa_caught_error caught;
+  if (qa_try(poll_body, &scope, &caught)) return NULL;
+  if (n->state != QA_APP_PHASE_CLOSED) {
+    n->state = QA_APP_PHASE_REJECTED;
+    qa_app_unified_remote_disconnected(n->options.host, caught.message);
+    qa_app_unified_client_network_close(n);
+  }
+  qa_rethrow(&caught);
 }
 void qa_app_unified_client_network_submit(qa_app_unified_client_network *n,
     const qa_actor_command *commands, size_t count, double now) {
@@ -444,24 +462,27 @@ void qa_app_unified_client_network_publish(qa_app_unified_client_network *n,
   (void)n; (void)output; (void)events; (void)count; (void)now;
   qa_range_error("Unified client cannot publish authoritative state");
 }
+static void farewell_body(void *ctx) {
+  qa_app_unified_client_network *n = ctx;
+  qa_app_unified_control control = {0};
+  control.kind = QA_APP_UNIFIED_DISCONNECT;
+  control.reason = "Client disconnected";
+  send_control(n, &control);
+  struct timespec clock;
+  clock_gettime(CLOCK_MONOTONIC, &clock);
+  flush_channel(n, (double)clock.tv_sec * 1000.0 + (double)clock.tv_nsec / 1e6); /* performance.now() */
+}
 void qa_app_unified_client_network_close(qa_app_unified_client_network *n) {
   if (n->state == QA_APP_PHASE_CLOSED) return;
-  if (n->channel_live && !n->channel_closed && n->epoch != 0) {
-    qa_app_unified_control control = {0};
-    control.kind = QA_APP_UNIFIED_DISCONNECT;
-    control.reason = "Client disconnected";
-    size_t length = 0;
-    uint8_t *bytes = qa_app_unified_encode_control(&control, &length);
-    if (bytes) {
-      qa_unified_channel_queue_reliable(&n->channel, bytes, length);
-      free(bytes);
-      flush_channel(n, 0);
-    }
+  if (n->channel_live && !qa_unified_channel_closed(&n->channel) && n->epoch != 0) {
+    /* TS: the farewell is best effort; a failure here must not mask why the connection ended. */
+    qa_caught_error caught;
+    (void)qa_try(farewell_body, n, &caught);
   }
   n->state = QA_APP_PHASE_CLOSED;
   n->generation++;
   qa_app_unified_remote_close(n->options.host);
-  n->channel_closed = true;
+  if (n->channel_live) qa_unified_channel_close(&n->channel);
   n->input_count = 0;
   n->options.transport->close(n->options.transport->ctx);
 }

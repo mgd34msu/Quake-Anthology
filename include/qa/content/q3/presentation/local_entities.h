@@ -2,7 +2,7 @@
  * Local effect pool and frame processing from id Software
  * code/cgame/cg_localents.c. ImpactMarkSystem/ImpactMarkRequest
  * (marks.ts) and ClientEffects/SmokePuffOptions (effects.ts) are the
- * landed marks.h/effects.h types; the *_mirror names alias them. */
+ * marks.h/effects.h types. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_LOCAL_ENTITIES_H
 #define QA_CONTENT_Q3_PRESENTATION_LOCAL_ENTITIES_H
 #include <stdbool.h>
@@ -64,11 +64,7 @@ typedef struct qa_q3_pres_mission_local_entity_media {
  * (marks.ts): the landed marks.h types. Returned polys are
  * caller-owned: destroy each with qa_q3_pres_ref_poly_destroy, then
  * free the array. */
-typedef qa_q3_pres_impact_mark_request qa_q3_pres_impact_mark_request_mirror;
-typedef qa_q3_pres_impact_mark_system_view qa_q3_pres_impact_mark_system_mirror;
 /* TS SmokePuffOptions / ClientEffects (effects.ts): landed types. */
-typedef qa_q3_pres_smoke_puff_options qa_q3_pres_smoke_puff_options_mirror;
-typedef qa_q3_pres_client_effects_view qa_q3_pres_client_effects_mirror;
 /* TS LocalEntityHost: mission_media non-NULL only for missionpack, and
  * media then points at mission_media->base. */
 typedef struct qa_q3_pres_local_entity_host {
@@ -83,7 +79,7 @@ typedef struct qa_q3_pres_local_entity_host {
   void (*audio_start_sound)(void *ctx, qa_pcm_sound *sound, qa_start_sound_options options);
   double client_num;
   qa_q3_game_random *random;
-  qa_q3_pres_impact_mark_system_mirror marks;
+  qa_q3_pres_impact_mark_system_view marks;
 } qa_q3_pres_local_entity_host;
 typedef struct qa_q3_pres_local_entity_frame { double time, frame_time; qa_vec3 view_origin; } qa_q3_pres_local_entity_frame;
 typedef struct qa_q3_pres_local_entity_scene {
@@ -119,13 +115,13 @@ void qa_q3_pres_local_entity_pool_for_each_oldest_first(qa_q3_pres_local_entity_
                   qa_q3_pres_local_entity_read_current_fn read_current, void *read_current_ctx),
     void *visit_ctx);
 typedef struct qa_q3_pres_local_entity_system {
-  qa_q3_pres_client_effects_mirror effects;
+  qa_q3_pres_client_effects_view effects;
   qa_q3_pres_local_entity_pool *pool;
   qa_q3_pres_local_entity_host host;
 } qa_q3_pres_local_entity_system;
 /* Product mismatch aborts with the TS Error text. */
 void qa_q3_pres_local_entity_system_init(qa_q3_pres_local_entity_system *system,
-    qa_q3_pres_client_effects_mirror effects, qa_q3_pres_local_entity_host host);
+    qa_q3_pres_client_effects_view effects, qa_q3_pres_local_entity_host host);
 /* False only on OOM growing the diagnostic scene. */
 bool qa_q3_pres_local_entity_system_collect_entities(qa_q3_pres_local_entity_system *system,
     qa_q3_pres_local_entity_frame frame, qa_q3_pres_local_entity_scene *out);

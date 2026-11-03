@@ -60,6 +60,12 @@ float qa_load_f32_le(const uint8_t *data, size_t data_length, size_t offset) {
   return qa_float32_from_bits(qa_load_u32_le(data, data_length, offset));
 }
 
+double qa_load_f64_le(const uint8_t *data, size_t data_length, size_t offset) {
+  uint32_t low = qa_load_u32_le(data, data_length, offset);
+  uint32_t high = qa_load_u32_le(data, data_length, offset + 4);
+  return qa_float64_from_bits(((uint64_t)high << 32) | low);
+}
+
 static void store_byte(uint8_t *data, size_t data_length, size_t offset, uint8_t value) {
   /* JavaScript typed-array stores outside the span are silently dropped. */
   if (offset < data_length) data[offset] = value;
@@ -79,4 +85,10 @@ void qa_store_u32_le(uint8_t *data, size_t data_length, size_t offset, uint32_t 
 
 void qa_store_f32_le(uint8_t *data, size_t data_length, size_t offset, double value) {
   qa_store_u32_le(data, data_length, offset, qa_float32_bits(value));
+}
+
+void qa_store_f64_le(uint8_t *data, size_t data_length, size_t offset, double value) {
+  uint64_t bits = qa_float64_bits(value);
+  qa_store_u32_le(data, data_length, offset, (uint32_t)bits);
+  qa_store_u32_le(data, data_length, offset + 4, (uint32_t)(bits >> 32));
 }

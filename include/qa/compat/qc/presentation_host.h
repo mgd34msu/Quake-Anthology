@@ -95,10 +95,14 @@ struct qa_compat_qc_broadcast_messages {
   const qa_compat_qc_quakeworld_message_services *qw;
   const qa_compat_qc_netquake_message_services *nq;
   struct { struct qa_compat_qc_broadcast_messages *self; int which; } ctxs[9];
+  void *dropped_ctx; void (*dropped)(void *ctx, const char *text);
 };
 typedef struct qa_compat_qc_broadcast_messages qa_compat_qc_broadcast_messages;
 bool qa_compat_qc_broadcast_messages_init(qa_compat_qc_broadcast_messages *b, qa_compat_qc_presentation_world *world, void *emit_ctx, void (*emit)(void *ctx, qa_q1_event effect, const qa_actor_id *recipient), const qa_compat_qc_quakeworld_message_services *qw, const qa_compat_qc_netquake_message_services *nq);
 void qa_compat_qc_broadcast_messages_destroy(qa_compat_qc_broadcast_messages *b);
+/* TS constructor's optional dropped(text): reports a message flush() dropped
+ * as malformed or unsupported. Without one the drop is silent, as in TS. */
+void qa_compat_qc_broadcast_messages_set_dropped(qa_compat_qc_broadcast_messages *b, void *ctx, void (*dropped)(void *ctx, const char *text));
 uint8_t *qa_compat_qc_broadcast_messages_bytes(qa_compat_qc_broadcast_messages *b, size_t *out_length);
 void qa_compat_qc_broadcast_messages_flush(qa_compat_qc_broadcast_messages *b);
 void qa_compat_qc_broadcast_messages_flush_signon(qa_compat_qc_broadcast_messages *b);

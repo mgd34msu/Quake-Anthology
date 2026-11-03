@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/guest/pe/directories.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t size) {
   void *p = malloc(size == 0 ? 1 : size);
@@ -95,7 +96,7 @@ static void relocate(qa_pe_image_reader *image) {
     block += size;
   }
   free(source_bytes);
-  qsort(patches, patch_count, sizeof(patch), cmp_patch);
+  qa_js_sort(patches, patch_count, sizeof(patch), cmp_patch);
   int64_t end = -1;
   for (size_t i = 0; i < patch_count; i++) {
     if ((int64_t)patches[i].rva < end) qa_pe_error(QA_PE_STAGE_RELOCATION, "overlapping relocation targets");
@@ -243,6 +244,8 @@ void qa_bind_pe_imports(const qa_pe_image *image, qa_mapped_guest_memory *memory
       qa_pe_error(QA_PE_STAGE_IMPORTS, "%s: %s", import_->library,
                   resolution.detail != NULL ? resolution.detail : "");
     qa_guest_core_address address = resolution.address;
+    /* TS reads memory.mappings() per import: resolvers map callback trap pages as they go. */
+    live = qa_gmem_mappings(memory_ext, &live_count);
     uint64_t limit = memory->pointer_bytes == 4 ? 0x100000000ULL : UINT64_MAX;
     bool mapped = false;
     for (size_t j = 0; live != NULL && j < live_count; j++)

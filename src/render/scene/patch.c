@@ -5,6 +5,7 @@
 #include <string.h>
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef qa_q3_bsp_vertex V;
 static float fr(double v) { return (float)v; }
 static void *xalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("Patch allocation failed"); return p; }
@@ -74,7 +75,8 @@ static bool create_mesh(row *rows, int nrows, double *we, int nwe, double *he, i
   return true;
 }
 bool qa_tessellate_patch(const V *points, size_t count, double width_d, double height_d, double subdiv, qa_patch_mesh *out) {
-  if (width_d != trunc(width_d) || height_d != trunc(height_d)) qa_range_error("invalid quadratic patch dimensions or subdivision threshold");
+  /* Number.isInteger rejects NaN and the infinities (casting those to int is undefined) */
+  if (!isfinite(width_d) || !isfinite(height_d) || width_d != trunc(width_d) || height_d != trunc(height_d)) qa_range_error("invalid quadratic patch dimensions or subdivision threshold");
   int width = (int)width_d, height = (int)height_d;
   if (width < 3 || height < 3 || width > 65 || height > 65 || width*height > 1024 || width % 2 != 1 || height % 2 != 1 || (int)count != width*height || !isfinite(subdiv))
     qa_range_error("invalid quadratic patch dimensions or subdivision threshold");
@@ -91,7 +93,7 @@ bool qa_tessellate_patch(const V *points, size_t count, double width_d, double h
         qa_vec3 curve = qa_sub3(qa_scale3(qa_add3(qa_add3(a, qa_scale3(b, 2)), c), 0.25), a);
         qa_vec3 line = qa_normalize3(qa_sub3(c, a));
         qa_vec3 dist = qa_sub3(curve, qa_scale3(line, qa_dot3(curve, line)));
-        double d = qa_dot3(dist, dist); if (d > maximum) maximum = d;
+        maximum = qa_js_max(maximum, qa_dot3(dist, dist)); /* Math.max keeps NaN */
       }
       maximum = fr(sqrt(maximum));
       if (maximum < fr(0.1)) { error[x+1] = 999; continue; }
@@ -212,7 +214,7 @@ qa_vec3 qa_allocated_patch_mesh_lod_origin(const qa_allocated_patch_mesh *m) { r
 double qa_allocated_patch_mesh_lod_radius(const qa_allocated_patch_mesh *m) { return get_f32(m->block, 64); }
 void qa_allocated_patch_mesh_set_lod_radius(qa_allocated_patch_mesh *m, double r) { put_f32(m->block, 64, r); }
 double qa_allocated_patch_mesh_lod_fixed(const qa_allocated_patch_mesh *m) { return get_i32(m->block, 68); }
-void qa_allocated_patch_mesh_set_lod_fixed(qa_allocated_patch_mesh *m, double v) { put_i32(m->block, 68, (int32_t)v); }
+void qa_allocated_patch_mesh_set_lod_fixed(qa_allocated_patch_mesh *m, double v) { put_i32(m->block, 68, qa_js_to_int32(v)); /* DataView.setInt32: ToInt32 */ }
 bool qa_allocated_patch_mesh_lod_stitched(const qa_allocated_patch_mesh *m) { return get_i32(m->block, 72) != 0; }
 void qa_allocated_patch_mesh_set_lod_stitched(qa_allocated_patch_mesh *m, bool v) { put_i32(m->block, 72, v?1:0); }
 void qa_allocated_patch_mesh_set_lod_volume(qa_allocated_patch_mesh *m, qa_vec3 o, double r) { put_vec(m->block, 52, o); qa_allocated_patch_mesh_set_lod_radius(m, r); }

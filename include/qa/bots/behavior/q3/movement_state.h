@@ -1,9 +1,20 @@
 /* Port of src/bots/behavior/q3/movement-state.ts. GPL-2.0-or-later. */
 #ifndef QA_BOTS_BEHAVIOR_Q3_MOVEMENT_STATE_H
 #define QA_BOTS_BEHAVIOR_Q3_MOVEMENT_STATE_H
+#include "qa/bots/behavior/library/libvars.h"
+#include "qa/bots/behavior/library/memory.h"
 #include "qa/contracts/math.h"
+#include "qa/persistence/value.h"
 #include <stdbool.h>
 #include <stdint.h>
+/* A binary32 vector cell of a source record. Store through qa_bot_fv3. */
+typedef struct qa_bot_fvec3 {
+  float x, y, z;
+} qa_bot_fvec3;
+static inline qa_vec3 qa_bot_v3(qa_bot_fvec3 v) { return (qa_vec3){v.x, v.y, v.z}; }
+static inline qa_bot_fvec3 qa_bot_fv3(qa_vec3 v) {
+  return (qa_bot_fvec3){(float)v.x, (float)v.y, (float)v.z};
+}
 #define QA_MAX_MOVE_STATES 64
 #define QA_MAX_AVOID_REACH 1
 #define QA_MAX_AVOID_SPOTS 32
@@ -64,39 +75,73 @@ typedef struct qa_bot_move_result {
   int64_t block_entity, travel_type, flags, weapon;
   qa_vec3 move_direction, ideal_view_angles;
 } qa_bot_move_result;
+/* Source avoid-spot cell: 20 bytes. */
 typedef struct qa_bot_avoid_spot {
-  qa_vec3 origin;
+  qa_bot_fvec3 origin;
   float radius;
-  int64_t type;
+  int32_t type;
 } qa_bot_avoid_spot;
-typedef struct qa_bot_move_state {
-  qa_vec3 origin, velocity, view_offset, view_angles, last_origin;
-  int64_t entity_num, client;
+/* bot_movestate_t release32: 772 bytes in one BotMemory heap allocation. Fields
+ * hold what TS DataView stores. Offsets are asserted in movement_state.c. Write
+ * last_reachability through qa_bot_move_state_set_last_reachability (TS setter). */
+typedef struct qa_bot_move_record {
+  qa_bot_fvec3 origin, velocity, view_offset;
+  int32_t entity_num, client;
   float think_time;
-  int64_t presence_type;
-  int64_t area, last_area, last_goal_area, last_reachability, reach_area, move_flags, jump_reach;
+  int32_t presence_type;
+  qa_bot_fvec3 view_angles;
+  int32_t area, last_area, last_goal_area, last_reachability;
+  qa_bot_fvec3 last_origin;
+  int32_t reach_area, move_flags, jump_reach;
   float grapple_visible_time, last_grapple_distance, reachability_time;
-  int64_t avoid_reach;
+  int32_t avoid_reach;
   float avoid_reach_time;
-  int64_t avoid_reach_tries;
+  int32_t avoid_reach_tries;
   qa_bot_avoid_spot avoid_spots[QA_MAX_AVOID_SPOTS];
-  int64_t num_avoid_spots;
+  int32_t num_avoid_spots;
+} qa_bot_move_record;
+/* TS BotMoveState. src borrows the allocation; TS throws on any access after the
+ * memory is disposed, and C aborts for that only through qa_bot_move_state_record. */
+typedef struct qa_bot_move_state {
+  qa_bot_move_record *src;
+  qa_bot_memory *memory;
+  qa_bot_memory_allocation allocation;
+  /* TS walkProgress {edge, phase:"traverse"}; edges compare by graph id. */
   bool has_walk_progress;
   int64_t walk_edge_id;
 } qa_bot_move_state;
+/* TS constructor: restored NULL allocates a cleared heap record in memory. */
+void qa_bot_move_state_init(qa_bot_move_state *state, qa_bot_memory *memory,
+                            const qa_bot_memory_allocation *restored);
+qa_bot_move_record *qa_bot_move_state_record(const qa_bot_move_state *state);
+void qa_bot_move_state_set_last_reachability(qa_bot_move_state *state, int64_t value);
+void qa_bot_move_state_reset(qa_bot_move_state *state);
+void qa_bot_move_state_free(qa_bot_move_state *state);
+int32_t qa_bot_move_state_native_reset_last_avoid_probe(const qa_bot_move_state *state);
+/* TS BotMoveStateHost; lib_var is TS libVar and returns the live record. */
+typedef struct qa_bot_move_state_host {
+  void *ctx;
+  double (*time)(void *ctx);
+  void (*print)(void *ctx, int severity, const char *text); /* 1|3|4 */
+  qa_bot_lib_var *(*lib_var)(void *ctx, const char *name, const char *default_value);
+} qa_bot_move_state_host;
+/* TS BotMoveVariable fields of the store are live records (NULL before setup). */
 typedef struct qa_bot_move_state_store {
   qa_bot_move_state states[QA_MAX_MOVE_STATES + 1];
   bool allocated[QA_MAX_MOVE_STATES + 1];
-  double (*time_fn)(void *ctx);
-  void *time_ctx;
-  void (*print)(void *ctx, int severity, const char *text);
-  void *print_ctx;
-  float (*lib_var_value)(void *ctx, const char *name, const char *def);
-  void *libvar_ctx;
-  float sv_max_step, sv_max_barrier, sv_gravity, rocket_index, bfg_index, grapple_index,
-      missile_entity_type, offhand_grapple;
+  qa_bot_move_state_host host;
+  qa_bot_memory owned_memory;
+  qa_bot_memory *memory;
+  qa_bot_lib_var *sv_max_step, *sv_max_barrier, *sv_gravity, *rocket_launcher_index, *bfg_index,
+      *grapple_index, *missile_entity_type, *offhand_grapple, *grapple_on_command,
+      *grapple_off_command;
 } qa_bot_move_state_store;
+/* Default state: owned BotMemory, no host. The struct must not move. */
 void qa_bot_move_state_store_init(qa_bot_move_state_store *s);
+/* TS constructor arguments; memory NULL keeps the owned default. */
+void qa_bot_move_state_store_bind(qa_bot_move_state_store *s, qa_bot_move_state_host host,
+                                  qa_bot_memory *memory);
+void qa_bot_move_state_store_destroy(qa_bot_move_state_store *s);
 int64_t qa_bot_move_state_store_allocate(qa_bot_move_state_store *s);
 qa_bot_move_state *qa_bot_move_state_store_from_handle(qa_bot_move_state_store *s, int64_t handle);
 void qa_bot_move_state_store_free(qa_bot_move_state_store *s, int64_t handle);
@@ -113,4 +158,13 @@ void qa_bot_move_state_store_add_avoid_spot(qa_bot_move_state_store *s, int64_t 
 int64_t qa_bot_move_state_store_setup(qa_bot_move_state_store *s);
 void qa_bot_move_state_store_shutdown(qa_bot_move_state_store *s);
 void qa_bot_move_result_init(qa_bot_move_result *r);
+/* Owned checkpoint tree. */
+qa_save_value *qa_bot_move_state_store_checkpoint(qa_bot_move_state_store *s,
+                                                  qa_bot_memory_capture *memory,
+                                                  qa_bot_lib_vars *variables);
+/* TS edge(client,id) lookup: true when the graph owns the edge. */
+typedef bool (*qa_bot_move_edge_fn)(void *ctx, int64_t client, int64_t id);
+void qa_bot_move_state_store_restore(qa_bot_move_state_store *s, const qa_save_value *value,
+                                     qa_bot_memory_restored *memory, qa_bot_lib_vars *variables,
+                                     qa_bot_move_edge_fn edge, void *edge_ctx);
 #endif

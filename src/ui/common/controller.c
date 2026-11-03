@@ -1,5 +1,6 @@
 /* Port of src/ui/common/controller.ts. GPL-2.0-or-later. */
 #include "qa/ui/common/controller.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -10,6 +11,7 @@
 #include "qa/input/key_codes.h"
 #include "qa/ui/common/accessibility.h"
 #include "qa/ui/common/layout.h"
+#include "qa/foundation/js.h"
 
 typedef struct menu_entry {
   qa_ui_menu_id id;
@@ -60,6 +62,8 @@ struct qa_native_ui_controller {
   qa_ui_control_id dragging;
   bool shift, control;
   bool has_capture;
+  /* TS chordHeld over PAD_CAPTURE_CHORD (buttons 1 and 6). */
+  bool chord_held[2];
   void (*capture_accept)(void *ctx, qa_physical_input input);
   void (*capture_cancel)(void *ctx);
   void *capture_ctx;
@@ -69,6 +73,9 @@ struct qa_native_ui_controller {
   bool scores;
   qa_ui_draw_command *commands; size_t command_count, command_capacity;
   char **strings; size_t string_count, string_capacity;
+  /* Menu and control ids retained across factory calls. A factory may rebuild
+   * its string pool on every call, so retained ids are controller-owned. */
+  char **ids; size_t id_count, id_capacity;
   /* Scrolled copy of the active menu's controls (TS {...control}). */
   qa_ui_control *scrolled; size_t scrolled_capacity;
   qa_ui_menu active_menu;
@@ -93,6 +100,18 @@ static char *xstrdup(const char *text) {
   return copy;
 }
 
+static const char *retain_id(qa_native_ui_controller *c, const char *id) {
+  for (size_t i = 0; i < c->id_count; i++)
+    if (strcmp(c->ids[i], id) == 0) return c->ids[i];
+  char **ids = grow(c->ids, &c->id_capacity, c->id_count + 1, sizeof *ids);
+  if (ids == NULL) qa_range_error("Out of memory");
+  c->ids = ids;
+  char *copy = xstrdup(id);
+  if (copy == NULL) qa_range_error("Out of memory");
+  c->ids[c->id_count++] = copy;
+  return copy;
+}
+
 static const qa_vec4 WHITE = { 1, 1, 1, 1 };
 
 static bool control_enabled(const qa_ui_control *control) {
@@ -102,8 +121,8 @@ static bool kind_is(const qa_ui_control *control, const char *kind) {
   return control->kind != NULL && strcmp(control->kind, kind) == 0;
 }
 static double quantize(const qa_ui_control *control, double value) {
-  return fmax(control->minimum, fmin(control->maximum,
-    control->minimum + round((value - control->minimum) / control->step)
+  return qa_js_max(control->minimum, qa_js_min(control->maximum,
+    control->minimum + qa_js_round((value - control->minimum) / control->step)
       * control->step));
 }
 
@@ -157,6 +176,8 @@ void qa_native_ui_controller_destroy(qa_native_ui_controller *c) {
   }
   for (size_t i = 0; i < c->held_count; i++) free(c->held[i].id);
   for (size_t i = 0; i < c->string_count; i++) free(c->strings[i]);
+  for (size_t i = 0; i < c->id_count; i++) free(c->ids[i]);
+  free(c->ids);
   free(c->menus);
   free(c->stack);
   free(c->fields);
@@ -190,7 +211,7 @@ int qa_native_ui_controller_register(qa_native_ui_controller *c,
   if (menus == NULL) return -1;
   c->menus = menus;
   size_t index = c->menu_count++;
-  c->menus[index].id = id;
+  c->menus[index].id = retain_id(c, id);
   c->menus[index].factory = factory;
   c->menus[index].ctx = factory_ctx;
   c->menus[index].live = true;
@@ -227,6 +248,7 @@ void qa_native_ui_controller_capture_binding(
     void (*accept)(void *ctx, qa_physical_input input),
     void (*cancel)(void *ctx), void *ctx) {
   if (c->has_capture) c->capture_cancel(c->capture_ctx);
+  c->chord_held[0] = c->chord_held[1] = false;
   c->has_capture = true;
   c->capture_accept = accept;
   c->capture_cancel = cancel;
@@ -297,12 +319,12 @@ void qa_native_ui_controller_open_menu(qa_native_ui_controller *c,
   if (stack == NULL) qa_range_error("Out of memory");
   c->stack = stack;
   menu_cursor *top = &c->stack[c->stack_count++];
-  top->id = id;
+  top->id = entry->id;
   top->focus = NULL;
   top->scroll = 0;
   for (size_t i = 0; i < menu.control_count; i++)
     if (control_enabled(&menu.controls[i])) {
-      top->focus = menu.controls[i].id;
+      top->focus = retain_id(c, menu.controls[i].id);
       break;
     }
   c->dragging = NULL;
@@ -365,13 +387,13 @@ static bool active(qa_native_ui_controller *c, qa_ui_menu *out_menu,
     cursor->focus = NULL;
     for (size_t i = 0; i < menu.control_count; i++)
       if (control_enabled(&menu.controls[i])) {
-        cursor->focus = menu.controls[i].id;
+        cursor->focus = retain_id(c, menu.controls[i].id);
         break;
       }
   }
   if (menu.scroll != NULL) {
-    double maximum = fmax(0, menu.scroll->content_height - menu.scroll->rect.height);
-    cursor->scroll = fmax(0, fmin(maximum, cursor->scroll));
+    double maximum = qa_js_max(0, menu.scroll->content_height - menu.scroll->rect.height);
+    cursor->scroll = qa_js_max(0, qa_js_min(maximum, cursor->scroll));
     qa_ui_control *scrolled = grow(c->scrolled, &c->scrolled_capacity,
                                    menu.control_count, sizeof *scrolled);
     if (scrolled == NULL && menu.control_count > 0)
@@ -402,8 +424,8 @@ static void reveal(const qa_ui_menu *menu, menu_cursor *cursor,
   if (control->rect.y < sr.y) cursor->scroll -= sr.y - control->rect.y;
   else if (control->rect.y + control->rect.height > sr.y + sr.height)
     cursor->scroll += control->rect.y + control->rect.height - sr.y - sr.height;
-  double maximum = fmax(0, menu->scroll->content_height - sr.height);
-  cursor->scroll = fmax(0, fmin(maximum, cursor->scroll));
+  double maximum = qa_js_max(0, menu->scroll->content_height - sr.height);
+  cursor->scroll = qa_js_max(0, qa_js_min(maximum, cursor->scroll));
 }
 
 static void move_focus(qa_native_ui_controller *c, int direction) {
@@ -430,7 +452,7 @@ static void move_focus(qa_native_ui_controller *c, int direction) {
   }
   if (next != NULL && (cursor->focus == NULL
                        || strcmp(next->id, cursor->focus) != 0)) {
-    cursor->focus = next->id;
+    cursor->focus = retain_id(c, next->id);
     reveal(&menu, cursor, next);
     focus_changed(c);
     c->options.sound(c->options.ctx, "move", c->seat);
@@ -440,8 +462,8 @@ static void move_focus(qa_native_ui_controller *c, int direction) {
 static double menu_thumb(const qa_ui_menu *menu) {
   if (menu->scroll == NULL) return 0;
   qa_rect sr = menu->scroll->rect;
-  return fmin(sr.height, fmax(24, sr.height * sr.height
-                              / fmax(1, menu->scroll->content_height)));
+  return qa_js_min(sr.height, qa_js_max(24, sr.height * sr.height
+                              / qa_js_max(1, menu->scroll->content_height)));
 }
 
 static void menu_pointer(qa_native_ui_controller *c, const qa_ui_menu *menu,
@@ -449,8 +471,8 @@ static void menu_pointer(qa_native_ui_controller *c, const qa_ui_menu *menu,
   if (menu->scroll == NULL || !c->has_menu_drag_offset) return;
   qa_rect sr = menu->scroll->rect;
   double travel = sr.height - menu_thumb(menu);
-  double maximum = fmax(0, menu->scroll->content_height - sr.height);
-  cursor->scroll = travel <= 0 ? 0 : fmax(0, fmin(maximum,
+  double maximum = qa_js_max(0, menu->scroll->content_height - sr.height);
+  cursor->scroll = travel <= 0 ? 0 : qa_js_max(0, qa_js_min(maximum,
     (c->cursor.y - sr.y - c->menu_drag_offset) / travel * maximum));
 }
 
@@ -505,9 +527,13 @@ static void activate_control(qa_native_ui_controller *c,
     control->submit_text(control->ctx, c->seat, control->text);
   } else if (kind_is(control, "list")) {
     if (control->selected != NULL) {
+      /* selected may be the menu state's own string, which select_row replaces. */
+      char *selected = xstrdup(control->selected);
+      if (selected == NULL) qa_range_error("Out of memory");
       if (control->activate_row != NULL)
-        control->activate_row(control->ctx, c->seat, control->selected);
-      else control->select_row(control->ctx, c->seat, control->selected);
+        control->activate_row(control->ctx, c->seat, selected);
+      else control->select_row(control->ctx, c->seat, selected);
+      free(selected);
     }
   } else if (kind_is(control, "owner-draw")) {
     control->key(control->ctx, c->seat, QA_KEY_ENTER, true);
@@ -527,7 +553,7 @@ static field_cursor *field_for(qa_native_ui_controller *c,
   if (fields == NULL) qa_range_error("Out of memory");
   c->fields = fields;
   field_cursor *field = &c->fields[c->field_count++];
-  field->id = control->id;
+  field->id = retain_id(c, control->id);
   field->cursor = cp_length(control->text);
   field->start = 0;
   field->overstrike = false;
@@ -583,6 +609,40 @@ static void field_text(qa_native_ui_controller *c,
   emit_text_change(control, c->seat, next);
 }
 
+/* TS PAD_TEXT_*: pad text entry. X inserts a character, the shoulders cycle
+   the one before the cursor, Y deletes it. */
+static const char PAD_TEXT_CHARACTERS[] =
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-.,:;/!?+=*'\"()[]@#$%&";
+enum { PAD_TEXT_INSERT = 2, PAD_TEXT_DELETE = 3, PAD_TEXT_PREVIOUS = 9, PAD_TEXT_NEXT = 10 };
+static bool pad_text(qa_native_ui_controller *c, const qa_ui_control *control, double button) {
+  if (button != PAD_TEXT_INSERT && button != PAD_TEXT_DELETE && button != PAD_TEXT_PREVIOUS &&
+      button != PAD_TEXT_NEXT)
+    return false;
+  field_cursor *field = field_for(c, control);
+  if (button == PAD_TEXT_INSERT) field_text(c, control, "a");
+  else if (button == PAD_TEXT_DELETE) {
+    if (field->cursor > 0) {
+      field->cursor--;
+      emit_text_change(control, c->seat, splice_text(control->text, field->cursor, 1, ""));
+    }
+  } else if (field->cursor > 0) {
+    const size_t count = sizeof PAD_TEXT_CHARACTERS - 1;
+    /* indexOf the code point before the cursor; a non-ASCII one is -1. */
+    const char *previous = cp_at(control->text, field->cursor - 1);
+    const char *after = cp_at(control->text, field->cursor);
+    long current = -1;
+    if (after - previous == 1) {
+      const char *found = memchr(PAD_TEXT_CHARACTERS, previous[0], count);
+      if (found != NULL) current = (long)(found - PAD_TEXT_CHARACTERS);
+    }
+    const long step = button == PAD_TEXT_NEXT ? 1 : -1;
+    const long base = current < 0 ? 0 : current;
+    const char replacement[2] = {PAD_TEXT_CHARACTERS[(base + step + (long)count) % (long)count], '\0'};
+    emit_text_change(control, c->seat, splice_text(control->text, field->cursor - 1, 1, replacement));
+  }
+  return true;
+}
+
 static bool field_key(qa_native_ui_controller *c,
                       const qa_ui_control *control, double key) {
   field_cursor *field = field_for(c, control);
@@ -631,7 +691,7 @@ static list_state *list_for(qa_native_ui_controller *c,
   if (lists == NULL) qa_range_error("Out of memory");
   c->lists = lists;
   list_state *state = &c->lists[c->list_count++];
-  state->id = control->id;
+  state->id = retain_id(c, control->id);
   state->top = 0;
   state->rows = NULL;
   state->row_count = 0;
@@ -640,10 +700,10 @@ static list_state *list_for(qa_native_ui_controller *c,
 
 static list_layout list_layout_of(qa_native_ui_controller *c,
                                   const qa_ui_control *control) {
-  double height = fmax(1, control->has_row_height ? control->row_height
+  double height = qa_js_max(1, control->has_row_height ? control->row_height
                        : c->options.skin(c->options.ctx).line_height);
-  double page = fmax(1, floor(control->rect.height / height));
-  double maximum = fmax(0, (double)control->row_count - page);
+  double page = qa_js_max(1, floor(control->rect.height / height));
+  double maximum = qa_js_max(0, (double)control->row_count - page);
   list_state *state = list_for(c, control);
   bool changed = state->rows == NULL || state->row_count != control->row_count;
   if (!changed)
@@ -665,14 +725,14 @@ static list_layout list_layout_of(qa_native_ui_controller *c,
           && strcmp(control->rows[i].id, control->selected) == 0)
         selected = (int)i;
     }
-    state->top = fmax(0, selected - page + 1);
+    state->top = qa_js_max(0, selected - page + 1);
   }
-  double top = fmax(0, fmin(maximum, state->top));
+  double top = qa_js_max(0, qa_js_min(maximum, state->top));
   state->top = top;
   list_layout out = { top, page, height, maximum,
-    fmin(control->rect.height,
-         fmax(24, control->rect.height * page
-                  / fmax(1, (double)control->row_count))) };
+    qa_js_min(control->rect.height,
+         qa_js_max(24, control->rect.height * page
+                  / qa_js_max(1, (double)control->row_count))) };
   return out;
 }
 
@@ -681,8 +741,8 @@ static void list_pointer(qa_native_ui_controller *c,
   list_layout layout = list_layout_of(c, control);
   double travel = control->rect.height - layout.thumb;
   list_state *state = list_for(c, control);
-  state->top = travel <= 0 ? 0 : fmax(0, fmin(layout.maximum,
-    round((c->cursor.y - control->rect.y - c->list_drag_offset) / travel
+  state->top = travel <= 0 ? 0 : qa_js_max(0, qa_js_min(layout.maximum,
+    qa_js_round((c->cursor.y - control->rect.y - c->list_drag_offset) / travel
           * layout.maximum)));
 }
 
@@ -812,7 +872,7 @@ static void pointer_move(qa_native_ui_controller *c, qa_vec2 position) {
     }
   if (hovered != NULL && (cursor->focus == NULL
                           || strcmp(hovered->id, cursor->focus) != 0)) {
-    cursor->focus = hovered->id;
+    cursor->focus = retain_id(c, hovered->id);
     focus_changed(c);
     c->options.sound(c->options.ctx, "move", c->seat);
   }
@@ -828,6 +888,30 @@ static bool capture_event(qa_native_ui_controller *c,
       && (int)event.code == QA_KEY_ESCAPE) {
     c->has_capture = false;
     cancel(ctx);
+    return true;
+  }
+  /* Back and B together abandon a binding capture; either alone still binds
+     on release (TS PAD_CAPTURE_CHORD). */
+  if (strcmp(event.kind, "controller-button") == 0
+      && (event.button == 1 || event.button == 6)) {
+    const int slot = event.button == 1 ? 0 : 1;
+    if (event.down) {
+      c->chord_held[slot] = true;
+      if (c->chord_held[0] && c->chord_held[1]) {
+        c->chord_held[0] = c->chord_held[1] = false;
+        c->has_capture = false;
+        cancel(ctx);
+      }
+    } else if (c->chord_held[slot]) {
+      c->chord_held[slot] = false;
+      c->has_capture = false;
+      qa_physical_input chord;
+      memset(&chord, 0, sizeof chord);
+      chord.kind = QA_PHYSICAL_INPUT_CONTROLLER_BUTTON;
+      chord.device = event.device;
+      chord.button = event.button;
+      accept(ctx, chord);
+    }
     return true;
   }
   qa_physical_input input;
@@ -879,6 +963,12 @@ bool qa_native_ui_controller_input(qa_native_ui_controller *c,
     if (c->has_capture) c->capture_cancel(c->capture_ctx);
     c->has_capture = false;
   }
+  /* Modifier state must follow key-ups that arrive with no menu open, or it
+     sticks across the next menu. */
+  if (strcmp(event.kind, "key") == 0) {
+    if ((int)event.code == QA_KEY_SHIFT) c->shift = event.down;
+    else if ((int)event.code == QA_KEY_CONTROL) c->control = event.down;
+  }
   if (capture_event(c, event)) return true;
   qa_ui_menu menu;
   menu_cursor *cursor = NULL;
@@ -925,10 +1015,10 @@ bool qa_native_ui_controller_input(qa_native_ui_controller *c,
         break;
       }
     if (control == NULL) return true;
-    cursor->focus = control->id;
+    cursor->focus = retain_id(c, control->id);
     focus_changed(c);
     if (kind_is(control, "slider")) {
-      c->dragging = control->id;
+      c->dragging = retain_id(c, control->id);
       slider_pointer(c, control);
     } else if (kind_is(control, "text-entry")) {
       field_cursor *field = field_for(c, control);
@@ -967,7 +1057,7 @@ bool qa_native_ui_controller_input(qa_native_ui_controller *c,
         c->list_drag_offset = c->cursor.y >= thumb_y
           && c->cursor.y < thumb_y + layout.thumb
             ? c->cursor.y - thumb_y : layout.thumb / 2;
-        c->dragging = control->id;
+        c->dragging = retain_id(c, control->id);
         list_pointer(c, control);
       } else {
         double at = layout.top
@@ -988,10 +1078,10 @@ bool qa_native_ui_controller_input(qa_native_ui_controller *c,
     } else activate_control(c, control);
   } else if (strcmp(event.kind, "mouse-wheel") == 0) {
     if (menu.scroll != NULL && qa_ui_contains(menu.scroll->rect, c->cursor)) {
-      double maximum = fmax(0, menu.scroll->content_height
+      double maximum = qa_js_max(0, menu.scroll->content_height
                               - menu.scroll->rect.height);
-      double sign = event.delta.y > 0 ? 1 : event.delta.y < 0 ? -1 : 0;
-      cursor->scroll = fmax(0, fmin(maximum, cursor->scroll - sign * 84));
+      double sign = qa_js_sign(event.delta.y);
+      cursor->scroll = qa_js_max(0, qa_js_min(maximum, cursor->scroll - sign * 84));
       return true;
     }
     const qa_ui_control *hovered = NULL;
@@ -1004,23 +1094,56 @@ bool qa_native_ui_controller_input(qa_native_ui_controller *c,
       : focused_control(&menu, cursor);
     if (control != NULL && kind_is(control, "list")) {
       list_layout layout = list_layout_of(c, control);
-      double sign = event.delta.y > 0 ? 1 : event.delta.y < 0 ? -1 : 0;
+      double sign = qa_js_sign(event.delta.y);
       list_state *state = list_for(c, control);
-      state->top = fmax(0, fmin(layout.maximum, layout.top - sign * 3));
+      state->top = qa_js_max(0, qa_js_min(layout.maximum, layout.top - sign * 3));
     } else if (event.delta.y != 0)
       key_event(c, event.delta.y > 0 ? QA_KEY_UP : QA_KEY_DOWN, true);
   } else if (strcmp(event.kind, "controller-button") == 0) {
+    const qa_ui_control *focused = focused_control(&menu, cursor);
+    if (event.down && focused != NULL && kind_is(focused, "text-entry")
+        && pad_text(c, focused, event.button))
+      return true;
+    /* TS PAD_BUTTON_KEYS: face and d-pad buttons as menu keys; the d-pad
+       repeats while held, like the stick. */
     static const int codes[] = { QA_KEY_ENTER, QA_KEY_ESCAPE, -1, -1, -1, -1,
       QA_KEY_ESCAPE, -1, -1, -1, -1, QA_KEY_UP, QA_KEY_DOWN, QA_KEY_LEFT,
       QA_KEY_RIGHT };
-    int button = (int)event.button;
-    if (button >= 0 && button < 15 && codes[button] >= 0)
-      key_event(c, codes[button], event.down);
+    const double button = event.button;
+    if (!(button >= 0 && button < 15 && button == floor(button)) || codes[(int)button] < 0)
+      return true;
+    const int code = codes[(int)button];
+    char id[96];
+    snprintf(id, sizeof id, "%s:button:%s", QA_JS_NUMBER(event.device), QA_JS_NUMBER(button));
+    const bool navigation = button >= 11 && button <= 14;
+    if (!event.down) {
+      for (size_t i = 0; i < c->held_count; i++)
+        if (strcmp(c->held[i].id, id) == 0) {
+          free(c->held[i].id);
+          c->held[i] = c->held[--c->held_count];
+          break;
+        }
+    } else if (navigation) {
+      held_axis *held = NULL;
+      for (size_t i = 0; i < c->held_count; i++)
+        if (strcmp(c->held[i].id, id) == 0) held = &c->held[i];
+      if (held == NULL) {
+        held_axis *grown = grow(c->held, &c->held_capacity, c->held_count + 1, sizeof *grown);
+        if (grown == NULL) qa_range_error("Out of memory");
+        c->held = grown;
+        held = &c->held[c->held_count++];
+        held->id = xstrdup(id);
+        if (held->id == NULL) qa_range_error("Out of memory");
+      }
+      held->code = code;
+      held->next = event.time_milliseconds + 300;
+    }
+    key_event(c, code, event.down);
   } else if (strcmp(event.kind, "controller-axis") == 0) {
     if (strcmp(event.axis, "left-x") == 0
         || strcmp(event.axis, "left-y") == 0) {
       char id[64];
-      snprintf(id, sizeof id, "%g:%s", event.device, event.axis);
+      snprintf(id, sizeof id, "%s:%s", QA_JS_NUMBER(event.device), event.axis);
       if (fabs(event.value) < 0.35) {
         for (size_t i = 0; i < c->held_count; i++)
           if (strcmp(c->held[i].id, id) == 0) {
@@ -1097,14 +1220,17 @@ static double measure(qa_native_ui_controller *c, const char *value,
 typedef struct fit_result { const char *text; double scale; } fit_result;
 
 /* Shrink (then ellipsize) so control text never leaves its rect. */
-static fit_result fit_text(qa_native_ui_controller *c, const char *value,
+static fit_result fit_text(qa_native_ui_controller *c, const char *raw,
                            double max_width, double base) {
+  /* Fit the localized string, so a truncated source string never misses its
+     catalog entry. */
+  const char *value = localized(c, raw);
   double width = measure(c, value, base);
   if (width <= max_width) {
     fit_result out = { value, base };
     return out;
   }
-  double shrunk = base * fmax(0, max_width) / fmax(1, width);
+  double shrunk = base * qa_js_max(0, max_width) / qa_js_max(1, width);
   if (shrunk >= base * 0.7) {
     fit_result out = { value, shrunk };
     return out;
@@ -1184,7 +1310,9 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
   qa_native_ui_appearance appearance = c->options.appearance != NULL
     ? c->options.appearance(c->options.ctx)
     : (qa_native_ui_appearance){ 1, 1, false, NULL };
-  c->transform = qa_ui_fit(context.binding.safe_area, appearance.menu_scale);
+  const qa_rect area = context.binding.safe_area;
+  if (area.width <= 0 || area.height <= 0) return c->commands;
+  c->transform = qa_ui_fit(area, appearance.menu_scale);
   if (c->has_pointer)
     c->cursor = qa_ui_point(c->pointer_position, c->transform);
   for (size_t i = 0; i < c->held_count; i++)
@@ -1197,7 +1325,10 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
   if (!active(c, &menu, &cursor)) return c->commands;
   qa_ui_skin original = c->options.skin(c->options.ctx);
   qa_ui_skin skin = original;
-  skin.font_scale = original.font_scale * appearance.text_scale;
+  /* Text never drops below 8 physical pixels (the HUD enforces the same
+     floor); rows still cap it to their height. */
+  skin.font_scale = qa_js_max(original.font_scale * appearance.text_scale,
+                              1 / c->transform.scale);
   skin.colors = qa_ui_accessible_colors(original.colors,
                                         appearance.high_contrast,
                                         appearance.color_mode);
@@ -1320,19 +1451,48 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
             const char *value = row->cells.values[column];
             double column_width = column < control->column_widths.count
               ? control->column_widths.values[column] : content_width;
-            double width = fmin(column_width, control->rect.x + content_width
+            double width = qa_js_min(column_width, control->rect.x + content_width
               - (row->action == NULL ? 0 : 28) - x);
             double measured = c->options.measure_text != NULL
               ? c->options.measure_text(c->options.ctx, value,
                                         skin.font_scale)
               : (double)cp_length(value) * 8 * skin.font_scale;
-            double available = fmax(0, width - 16);
+            double available = qa_js_max(0, width - 16);
             double scale = skin.font_scale
-              * fmax(0.75, fmin(1, available / fmax(1, measured)));
-            fit_result fit = { value, scale };
-            if (measured * scale / skin.font_scale > available)
-              fit = fit_text(c, value, available, scale / 0.7 * 0.7);
-            stage_push(&stage, text_command(fit.text, skin.font, scale,
+              * qa_js_max(0.75, qa_js_min(1, available / qa_js_max(1, measured)));
+            const char *label = value;
+            if (measured * scale / skin.font_scale > available) {
+              size_t glyphs = cp_length(value), low = 0, high = glyphs;
+              while (low < high) {
+                size_t middle = (low + high + 1) / 2;
+                char *prefix = cp_slice(value, 0, middle);
+                if (prefix == NULL) qa_range_error("Out of memory");
+                char *candidate = malloc(strlen(prefix) + 4);
+                if (candidate == NULL) qa_range_error("Out of memory");
+                strcpy(candidate, prefix);
+                strcat(candidate, "\xe2\x80\xa6"); /* … */
+                free(prefix);
+                double w = c->options.measure_text != NULL
+                  ? c->options.measure_text(c->options.ctx, candidate, scale)
+                  : (double)cp_length(candidate) * 8 * scale;
+                free(candidate);
+                if (w <= available) low = middle; else high = middle - 1;
+              }
+              double ellipsis = c->options.measure_text != NULL
+                ? c->options.measure_text(c->options.ctx, "\xe2\x80\xa6", scale)
+                : 8 * scale;
+              if (ellipsis <= available) {
+                char *prefix = cp_slice(value, 0, low);
+                if (prefix == NULL) qa_range_error("Out of memory");
+                char *text = malloc(strlen(prefix) + 4);
+                if (text == NULL) qa_range_error("Out of memory");
+                strcpy(text, prefix);
+                strcat(text, "\xe2\x80\xa6");
+                free(prefix);
+                label = keep_string(c, text);
+              } else label = "";
+            }
+            stage_push(&stage, text_command(localized(c, label), skin.font, scale,
               x + 8, y + (layout.height - 8 * scale) / 2, row_color,
               "left"));
             x += width;
@@ -1360,8 +1520,10 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
       }
       continue;
     }
+    const double row_top = control->rect.y, row_height = control->rect.height;
+    const double base = qa_js_min(skin.font_scale, qa_js_max(0.1, (row_height - 4) / 8));
     double right = control->rect.x + control->rect.width - 10;
-    double y = control->rect.y + 6;
+    double y = row_top + qa_js_min(6, (row_height - 8 * base) / 2);
     if (!kind_is(control, "slider")) {
       const char *value = "";
       if (kind_is(control, "toggle")) value = control->checked ? "On" : "Off";
@@ -1371,21 +1533,22 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
               && strcmp(control->choices[i].id, control->selected) == 0)
             value = control->choices[i].label;
       }
+      /* TS textFit with a row height: the text is also limited
+         vertically, so a large Text size shrinks to its row. */
       double value_width = 0;
       if (value[0] != '\0') {
-        fit_result fit = fit_text(c, value, control->rect.width * 0.45,
-                                  skin.font_scale);
+        fit_result fit = fit_text(c, value, control->rect.width * 0.45, base);
         stage_push(&stage, text_command(localized(c, fit.text), skin.font,
           fit.scale, right,
-          y + (8 * skin.font_scale - 8 * fit.scale) / 2, color, "right"));
+          row_top + qa_js_min(6, (row_height - 8 * fit.scale) / 2), color, "right"));
         value_width = measure(c, fit.text, fit.scale);
       }
       fit_result fit = fit_text(c, control->label,
         control->rect.width - 20 - (value_width == 0 ? 0 : value_width + 10),
-        skin.font_scale);
+        base);
       stage_push(&stage, text_command(localized(c, fit.text), skin.font,
         fit.scale, control->rect.x + 10,
-        y + (8 * skin.font_scale - 8 * fit.scale) / 2, color, "left"));
+        row_top + qa_js_min(6, (row_height - 8 * fit.scale) / 2), color, "left"));
     }
     if (kind_is(control, "slider")) {
       double x = control->rect.x + control->rect.width * 0.6;
@@ -1393,32 +1556,34 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
       char buffer[64];
       const char *value = control->value_label;
       if (value == NULL) {
-        double rounded = round(control->value * 1e6) / 1e6;
-        snprintf(buffer, sizeof buffer, "%g", rounded);
+        /* String(Number(value.toFixed(6))): toFixed rounds the exact decimal value. */
+        char fixed[QA_JS_TO_FIXED_CAPACITY];
+        qa_js_to_fixed(control->value, 6, fixed, sizeof fixed);
+        double rounded = qa_js_string_to_number(fixed);
+        snprintf(buffer, sizeof buffer, "%s", QA_JS_NUMBER(rounded));
         value = buffer;
       }
       double value_right = x - 12;
       double measured_value = c->options.measure_text != NULL
-        ? c->options.measure_text(c->options.ctx, value, skin.font_scale)
-        : (double)cp_length(value) * 8 * skin.font_scale;
+        ? c->options.measure_text(c->options.ctx, value, base)
+        : (double)cp_length(value) * 8 * base;
       double measured_label = c->options.measure_text != NULL
-        ? c->options.measure_text(c->options.ctx, control->label,
-                                  skin.font_scale)
-        : (double)cp_length(control->label) * 8 * skin.font_scale;
-      double value_scale = skin.font_scale
-        * fmin(1, control->rect.width * 0.16 / fmax(1, measured_value));
+        ? c->options.measure_text(c->options.ctx, control->label, base)
+        : (double)cp_length(control->label) * 8 * base;
+      double value_scale = base
+        * qa_js_min(1, control->rect.width * 0.16 / qa_js_max(1, measured_value));
       double label_width = value_right - measured_value * value_scale
-        / skin.font_scale - 12 - (control->rect.x + 10);
-      double label_scale = skin.font_scale
-        * fmin(1, fmax(1, label_width) / fmax(1, measured_label));
-      stage_push(&stage, text_command(control->label, skin.font, label_scale,
+        / base - 12 - (control->rect.x + 10);
+      double label_scale = base
+        * qa_js_min(1, qa_js_max(1, label_width) / qa_js_max(1, measured_label));
+      stage_push(&stage, text_command(localized(c, control->label), skin.font, label_scale,
                                       control->rect.x + 10, y, color,
                                       "left"));
       stage_push(&stage, text_command(value == buffer
           ? keep_string(c, xstrdup(buffer)) : value,
         skin.font, value_scale, value_right, y, color, "right"));
       double ratio = control->maximum == control->minimum ? 0
-        : fmax(0, fmin(1, (control->value - control->minimum)
+        : qa_js_max(0, qa_js_min(1, (control->value - control->minimum)
                          / (control->maximum - control->minimum)));
       qa_rect track = { x, y + 7, width, 2 };
       stage_push(&stage, fill_command(track, skin.colors.disabled));
@@ -1442,8 +1607,8 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
         char *prefix = cp_slice(all, start, field->cursor);
         if (prefix == NULL) qa_range_error("Out of memory");
         double w = c->options.measure_text != NULL
-          ? c->options.measure_text(c->options.ctx, prefix, skin.font_scale)
-          : (double)cp_length(prefix) * 8 * skin.font_scale;
+          ? c->options.measure_text(c->options.ctx, prefix, base)
+          : (double)cp_length(prefix) * 8 * base;
         free(prefix);
         if (w <= available) break;
         start++;
@@ -1453,8 +1618,8 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
         char *prefix = cp_slice(all, start, end + 1);
         if (prefix == NULL) qa_range_error("Out of memory");
         double w = c->options.measure_text != NULL
-          ? c->options.measure_text(c->options.ctx, prefix, skin.font_scale)
-          : (double)cp_length(prefix) * 8 * skin.font_scale;
+          ? c->options.measure_text(c->options.ctx, prefix, base)
+          : (double)cp_length(prefix) * 8 * base;
         free(prefix);
         if (w > available) break;
         end++;
@@ -1464,18 +1629,18 @@ const qa_ui_draw_command *qa_native_ui_controller_draw(
       if (shown == NULL) qa_range_error("Out of memory");
       double x = control->rect.x + control->rect.width * 0.5;
       stage_push(&stage, text_command(localized(c, keep_string(c, shown)),
-                                      skin.font, skin.font_scale, x, y,
+                                      skin.font, base, x, y,
                                       color, "left"));
       if (focused
-          && (int)floor(context.time_milliseconds / 256) % 2 == 0) {
+          && fmod(floor(context.time_milliseconds / 256), 2) == 0) { /* % on doubles */
         char *prefix = cp_slice(all, start, field->cursor);
         if (prefix == NULL) qa_range_error("Out of memory");
         double w = c->options.measure_text != NULL
-          ? c->options.measure_text(c->options.ctx, prefix, skin.font_scale)
-          : (double)cp_length(prefix) * 8 * skin.font_scale;
+          ? c->options.measure_text(c->options.ctx, prefix, base)
+          : (double)cp_length(prefix) * 8 * base;
         free(prefix);
-        stage_push(&stage, text_command(field->overstrike ? "_" : "|",
-                                        skin.font, skin.font_scale, x + w, y,
+        stage_push(&stage, text_command(localized(c, field->overstrike ? "_" : "|"),
+                                        skin.font, base, x + w, y,
                                         color, "left"));
       }
       free(all);

@@ -8,6 +8,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 void qa_q3_temporary_vector_set(qa_q3_temporary_vector *v, double x, double y, double z) { v->x = (float)x; v->y = (float)y; v->z = (float)z; }
 void qa_q3_game_utility_scratch_init(qa_q3_game_utility_scratch *s, void *ctx, void (*print)(void *, const char *)) {
   memset(s, 0, sizeof *s); s->print_ctx = ctx; s->print = print;
@@ -24,13 +25,13 @@ uint8_t *qa_q3_game_utility_scratch_vtos(qa_q3_game_utility_scratch *s, qa_vec3 
   if (len >= 32 && s->print) { qa_q3_game_format_arg pa[2] = {qa_q3_game_format_number((double)len), qa_q3_game_format_number(32)}; char *m = qa_q3_game_format("Com_sprintf: overflow of %i in %i\n", pa, 2, 32000); if (m) { s->print(s->print_ctx, m); free(m); } }
   size_t keep = len < 31 ? len : 31; memcpy(str, value, keep); str[keep] = 0; free(value); return str;
 }
-double qa_q3_debug_line(qa_vec3 start, qa_vec3 end, double color, qa_q3_bot_debug_polygons_mirror polygons) {
+double qa_q3_debug_line(qa_vec3 start, qa_vec3 end, double color, qa_q3_base_bot_debug_polygons polygons) {
   qa_vec3 direction = qa_normalize3(qa_sub3(end, start)), up = {0, 0, 1};
   double dot = qa_dot3(direction, up);
   qa_vec3 raw = (dot > (float)0.99 || dot < (float)-0.99) ? (qa_vec3){1, 0, 0} : qa_cross3(direction, up);
   qa_vec3 cross = qa_normalize3(raw);
   qa_vec3 points[4] = {qa_add3(start, qa_scale3(cross, 2)), qa_add3(start, qa_scale3(cross, -2)), qa_add3(end, qa_scale3(cross, -2)), qa_add3(end, qa_scale3(cross, 2))};
-  return polygons.create(polygons.ctx, color, 4, points);
+  return polygons.create(polygons.ctx, color, 4, points, 4);
 }
 static const char *byte_string(const char *v) { return v; }
 void qa_q3_config_string_registry_init(qa_q3_config_string_registry *r, qa_q3_config_string_store store) { r->store = store; }
@@ -63,7 +64,7 @@ static int fold_equal(const char *a, const char *b) {
 }
 qa_q3_game_entity *qa_q3_find_entity(qa_q3_entity_pool *pool, qa_q3_game_entity *after, qa_q3_entity_string_field field, const char *match) {
   if (!match) return NULL;
-  for (int i = after ? (int)after->slot + 1 : 0; i < pool->num_entities; i++) {
+  for (int i = after ? qa_js_to_int32(after->slot) + 1 : 0; i < pool->num_entities; i++) {
     qa_q3_game_entity *e = qa_q3_entity_pool_at(pool, i); const char *v = qa_q3_entity_string_field_get(e, field);
     if (qa_q3_game_entity_inuse(e) && v && fold_equal(v, match)) return e;
   }

@@ -6,6 +6,7 @@
 #include "qa/movement/body_shape.h"
 #include "qa/movement/client_outputs.h"
 #include "qa/movement/q1/quakeworld.h"
+#include "qa/foundation/js.h"
 typedef struct shared_ctx {
   qa_provider_id id; qa_q1_movement_options options; qa_bounds standing;
   qa_app_sim_qw_postures postures;
@@ -106,7 +107,7 @@ static qa_movement_result shared_move(void *ctx, qa_movement_input input, qa_mov
   s->crouched = s->bounds.max.z < s->standing.max.z; s->published = false;
   posture(s, input.command.as.qw, input.state.as.qw);
   qa_qw_user_command command = input.command.as.qw;
-  if (command.up_move > 0) command.buttons = (int)command.buttons | 2;
+  if (command.up_move > 0) command.buttons = qa_js_to_int32(command.buttons) | 2;
   const qa_q1_movement_hooks *orig = s->options.hooks;
   s->hooks = orig ? *orig : (qa_q1_movement_hooks){0};
   s->hooks.ctx = s;

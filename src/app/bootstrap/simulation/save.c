@@ -148,7 +148,9 @@ qa_app_sim_saved_bots *qa_app_sim_saved_bot_checkpoint(qa_save_image image) {
     const qa_save_value *client = qa_save_value_get(c, "client");
     const qa_save_value *slot = client ? qa_save_value_get(client, "slot") : NULL;
     const qa_save_value *actor = qa_save_value_get(c, "actor");
+    const qa_save_value *generation = client ? qa_save_value_get(client, "generation") : NULL;
     bots->connections[i].client_slot = slot ? slot->number : 0;
+    bots->connections[i].client_generation = generation ? generation->number : 0;
     const qa_save_value *as = actor ? qa_save_value_get(actor, "slot") : NULL;
     const qa_save_value *ag = actor ? qa_save_value_get(actor, "generation") : NULL;
     bots->connections[i].actor.slot = as ? as->number : 0;
@@ -209,13 +211,15 @@ const qa_guest_checkpoint *qa_app_sim_simulation_guest_checkpoint(qa_save_image 
   for (size_t i = 0; i < image.recipe.execution_count; i++)
     if (is(image.recipe.execution[i].role, "server-game")) { execution = &image.recipe.execution[i]; count++; }
   if (count != 1 || execution == NULL) qa_range_error("Save requires exactly one selected server execution");
-  if (execution->kind != QA_EXECUTION_MODULE_QUAKEC && execution->kind != QA_EXECUTION_MODULE_QVM) {
+  bool q3_native = execution->kind == QA_EXECUTION_MODULE_NATIVE && api_is(execution->api, "q3-qagame");
+  if (execution->kind != QA_EXECUTION_MODULE_QUAKEC && execution->kind != QA_EXECUTION_MODULE_QVM && !q3_native) {
     if (image.guest_count != 0) qa_range_error("Selected source cannot restore guest memory providers");
     return NULL;
   }
-  const char *name = execution->kind == QA_EXECUTION_MODULE_QUAKEC ? "QuakeC" : "QVM";
+  const char *name = execution->kind == QA_EXECUTION_MODULE_QUAKEC ? "QuakeC" : q3_native ? "Native Q3" : "QVM";
   const qa_guest_checkpoint *checkpoint = image.guest_count ? &image.guests[0] : NULL;
-  qa_guest_checkpoint_kind want = execution->kind == QA_EXECUTION_MODULE_QUAKEC ? QA_GUEST_CHECKPOINT_QUAKEC : QA_GUEST_CHECKPOINT_QVM;
+  qa_guest_checkpoint_kind want = q3_native ? QA_GUEST_CHECKPOINT_NATIVE_GUEST
+      : execution->kind == QA_EXECUTION_MODULE_QUAKEC ? QA_GUEST_CHECKPOINT_QUAKEC : QA_GUEST_CHECKPOINT_QVM;
   if (image.guest_count != 1 || checkpoint == NULL || checkpoint->kind != want)
     qa_range_error("%s save requires exactly one complete guest checkpoint", name);
   if (execution->kind == QA_EXECUTION_MODULE_QVM) {
@@ -235,6 +239,15 @@ const qa_guest_checkpoint *qa_app_sim_simulation_guest_checkpoint(qa_save_image 
         : artifact->provenance.loose_mount ? artifact->provenance.loose_mount->identity : (qa_mount_identity){0};
     snprintf(revision, sizeof revision, "%s:%lld", mount.id ? mount.id : "", (long long)mount.generation);
     expected.revision = revision;
+  }
+  if (checkpoint->kind == QA_GUEST_CHECKPOINT_NATIVE_GUEST) {
+    const qa_native_abi *abi = &checkpoint->abi, *profile = &execution->profile;
+    if (execution->kind != QA_EXECUTION_MODULE_NATIVE || !is(execution->owner.provider, image.recipe.map.entities.provider)
+        || !same_module(checkpoint->module, expected) || !same_module(checkpoint->runtime_state.module, expected)
+        || !is(abi->kind, profile->kind) || !is(abi->image, profile->image) || abi->pointer_bytes != profile->pointer_bytes
+        || !is(abi->call, profile->call))
+      qa_range_error("Native Q3 checkpoint differs from the selected artifact and profile");
+    return checkpoint;
   }
   qa_game_api_identity api; memset(&api, 0, sizeof api);
   if (checkpoint->kind == QA_GUEST_CHECKPOINT_QUAKEC) { api.kind = QA_GAME_API_QUAKEC; api.as.quakec = checkpoint->quakec_api; }
@@ -279,9 +292,9 @@ const qa_guest_checkpoint *qa_app_sim_simulation_quakec_checkpoint(qa_save_image
   const qa_guest_checkpoint *c = qa_app_sim_simulation_guest_checkpoint(image);
   return c && c->kind == QA_GUEST_CHECKPOINT_QUAKEC ? c : NULL;
 }
-const qa_guest_checkpoint *qa_app_sim_simulation_qvm_checkpoint(qa_save_image image) {
+const qa_guest_checkpoint *qa_app_sim_simulation_q3_guest_checkpoint(qa_save_image image) {
   const qa_guest_checkpoint *c = qa_app_sim_simulation_guest_checkpoint(image);
-  return c && c->kind == QA_GUEST_CHECKPOINT_QVM ? c : NULL;
+  return c && (c->kind == QA_GUEST_CHECKPOINT_QVM || c->kind == QA_GUEST_CHECKPOINT_NATIVE_GUEST) ? c : NULL;
 }
 void qa_app_sim_validate_simulation_save(qa_save_image image) {
   for (size_t i = 0; i < image.provider_count; i++) {
@@ -301,10 +314,11 @@ void qa_app_sim_validate_simulation_save(qa_save_image image) {
     else { qa_app_sim_native_q2_rerelease_save(image, NULL, &b); qa_save_value_free(b.value); }
   }
   qa_save_value *keep = NULL;
-  size_t np = (native || (guest && guest->kind == QA_GUEST_CHECKPOINT_QVM)) ? players_count(image, &keep) : 0;
+  bool q3_guest = guest && (guest->kind == QA_GUEST_CHECKPOINT_QVM || guest->kind == QA_GUEST_CHECKPOINT_NATIVE_GUEST);
+  size_t np = (native || q3_guest) ? players_count(image, &keep) : 0;
   if (native && np != 0) qa_range_error("Native Q2 players must remain source-owned");
-  if (guest && guest->kind == QA_GUEST_CHECKPOINT_QVM && np != 0)
-    qa_range_error("QVM players must remain owned by the saved guest client records");
+  if (q3_guest && np != 0)
+    qa_range_error("Q3 guest players must remain owned by the saved guest client records");
   qa_save_value_free(keep);
   const qa_execution_module *execution = server_execution(image);
   qa_app_sim_saved_bots *bots = qa_app_sim_saved_bot_checkpoint(image);

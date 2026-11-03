@@ -4,41 +4,53 @@
 #include <math.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q2/constants.h"
 
 bool qa_q2pro_extensions(qa_q2pro_features features) {
   /* Keep TS operator precedence: (rev>=1024 && flags&8) || (rev>=1025 && flags&16). */
-  int32_t flags = (int32_t)features.flags;
+  int32_t flags = qa_js_to_int32(features.flags);
   return (features.revision >= 1024 && (flags & 8) != 0) ||
          (features.revision >= 1025 && (flags & 16) != 0);
 }
 bool qa_q2pro_extensions_v2(qa_q2pro_features features) {
-  int32_t flags = (int32_t)features.flags;
+  int32_t flags = qa_js_to_int32(features.flags);
   return features.revision >= 1025 && (flags & 16) != 0;
 }
 
-int32_t qa_q2pro_read_int23(qa_q2_sizebuf *message, int32_t previous) {
+double qa_q2pro_read_int23_number(qa_q2_sizebuf *message, double previous) {
   int32_t word = qa_q2_msg_read_short(message);
   if ((word & 1) != 0) {
     int32_t hi = qa_q2_msg_read_char(message);
-    return (((word & 65535) | (hi << 16)) >> 1);
+    /* TS ((word & 65535) | (char << 16)) >> 1 on int32. */
+    int32_t packed = (int32_t)(((uint32_t)word & 65535u) | ((uint32_t)hi << 16));
+    return (double)(packed >> 1);
   }
-  return previous + (word >> 1);
+  return previous + (double)(word >> 1);
 }
 
-void qa_q2pro_write_int23(qa_q2_sizebuf *message, int32_t current, int32_t previous) {
-  if (current < -4194304 || current > 4194303) {
+int32_t qa_q2pro_read_int23(qa_q2_sizebuf *message, int32_t previous) {
+  return qa_js_to_int32(qa_q2pro_read_int23_number(message, (double)previous));
+}
+
+void qa_q2pro_write_int23_number(qa_q2_sizebuf *message, double current, double previous) {
+  if (!isfinite(current) || current != trunc(current) || current < -4194304 ||
+      current > 4194303) {
     qa_range_error("Q2PRO coordinate exceeds signed 23-bit range");
   }
-  int32_t delta = current - previous;
+  double delta = current - previous;
   if (delta >= -16384 && delta < 16384) {
-    qa_q2_msg_write_short(message, (double)(delta << 1));
+    qa_q2_msg_write_short(message, (double)(int32_t)((uint32_t)qa_js_to_int32(delta) << 1));
   } else {
-    int32_t value = (current << 1) | 1;
+    int32_t value = (int32_t)((uint32_t)qa_js_to_int32(current) << 1) | 1;
     qa_q2_msg_write_short(message, (double)value);
     qa_q2_msg_write_byte(message, (double)((uint32_t)value >> 16));
   }
+}
+
+void qa_q2pro_write_int23(qa_q2_sizebuf *message, int32_t current, int32_t previous) {
+  qa_q2pro_write_int23_number(message, (double)current, (double)previous);
 }
 
 uint64_t qa_q2pro_read_var64(qa_q2_sizebuf *message) {
@@ -85,8 +97,8 @@ void qa_q2pro_read_fog(qa_q2_sizebuf *message, const qa_q2_pro_player_fog *from,
   if (bits & 8) out->height_falloff = (double)qa_q2_msg_read_word(message);
   if (bits & 16) read_color(message, out->height_start_color);
   if (bits & 32) read_color(message, out->height_end_color);
-  if (bits & 64) out->height_start_distance = (double)qa_q2pro_read_int23(message, 0);
-  if (bits & 128) out->height_end_distance = (double)qa_q2pro_read_int23(message, 0);
+  if (bits & 64) out->height_start_distance = qa_q2pro_read_int23_number(message, 0);
+  if (bits & 128) out->height_end_distance = qa_q2pro_read_int23_number(message, 0);
 }
 
 static bool triple_differs(const double a[3], const double b[3]) {
@@ -117,8 +129,8 @@ void qa_q2pro_write_fog(qa_q2_sizebuf *message, int32_t bits,
   if (bits & 8) qa_q2_msg_write_short(message, fog->height_falloff);
   if (bits & 16) write_color(message, fog->height_start_color);
   if (bits & 32) write_color(message, fog->height_end_color);
-  if (bits & 64) qa_q2pro_write_int23(message, (int32_t)fog->height_start_distance, 0);
-  if (bits & 128) qa_q2pro_write_int23(message, (int32_t)fog->height_end_distance, 0);
+  if (bits & 64) qa_q2pro_write_int23_number(message, fog->height_start_distance, 0);
+  if (bits & 128) qa_q2pro_write_int23_number(message, fog->height_end_distance, 0);
 }
 
 static const uint64_t ORIGIN_BITS[3] = {1ull, 2ull, 512ull};
@@ -133,7 +145,7 @@ static const uint64_t SCALE_BIT = 4294967296ull;
 static const uint64_t MORE_FX16 = 8589934592ull;
 
 static uint64_t width_bits(double value, uint64_t byte_bit, uint64_t word_bit) {
-  uint32_t v = (uint32_t)(int32_t)value;
+  uint32_t v = qa_js_to_uint32(value); /* TS value >>> 0 */
   return v < 256u ? byte_bit : v < 65536u ? word_bit : byte_bit | word_bit;
 }
 static void write_width(qa_q2_sizebuf *message, uint64_t bits, double value,
@@ -165,7 +177,9 @@ void qa_q2pro_read_entity_bits(qa_q2_sizebuf *message, qa_q2_entity_bits *out) {
   }
   out->number = (bits & NUMBER16) != 0 ? (double)qa_q2_msg_read_word(message)
                                         : (double)qa_q2_msg_read_byte(message);
-  out->bits = (double)bits;
+  /* TS Number(bits): a truncated read ORs BigInt(-1) in, making the bigint
+   * negative; its two's complement low 64 bits are bits_u64. */
+  out->bits = (double)(int64_t)bits;
   out->bits_u64 = bits;
 }
 
@@ -214,7 +228,7 @@ void qa_q2pro_write_entity(qa_q2_sizebuf *message, qa_q2pro_features features,
   bool old_origin_differs = from->old_origin[0] != to->old_origin[0] ||
                             from->old_origin[1] != to->old_origin[1] ||
                             from->old_origin[2] != to->old_origin[2];
-  if (new_entity || (((int32_t)to->renderfx & 128) != 0 &&
+  if (new_entity || ((qa_js_to_int32(to->renderfx) & 128) != 0 &&
                      (features.revision < 1017 || old_origin_differs))) {
     bits |= 16777216ull;
   }
@@ -244,12 +258,11 @@ void qa_q2pro_write_entity(qa_q2_sizebuf *message, qa_q2pro_features features,
   write_width(message, bits, to->renderfx, 4096ull, 262144ull);
   for (int i = 0; i < 3; i++) {
     if ((bits & ORIGIN_BITS[i]) != 0) {
-      int32_t current = (int32_t)trunc((double)to->origin[i] * 8.0);
+      double current = trunc((double)to->origin[i] * 8.0);
       if (v2) {
-        qa_q2pro_write_int23(message, current,
-                             (int32_t)trunc((double)from->origin[i] * 8.0));
+        qa_q2pro_write_int23_number(message, current, trunc((double)from->origin[i] * 8.0));
       } else {
-        qa_q2_msg_write_short(message, (double)current);
+        qa_q2_msg_write_short(message, current);
       }
     }
   }
@@ -261,13 +274,13 @@ void qa_q2pro_write_entity(qa_q2_sizebuf *message, qa_q2pro_features features,
   }
   if ((bits & 16777216ull) != 0) {
     for (int i = 0; i < 3; i++) {
-      if (v2) qa_q2pro_write_int23(message, (int32_t)trunc((double)to->old_origin[i] * 8.0), 0);
+      if (v2) qa_q2pro_write_int23_number(message, trunc((double)to->old_origin[i] * 8.0), 0);
       else qa_q2_msg_write_short(message, trunc((double)to->old_origin[i] * 8.0));
     }
   }
   if ((bits & 67108864ull) != 0) {
     if (extended) {
-      int32_t packed = (int32_t)to->sound | (volume_changed ? 16384 : 0) |
+      int32_t packed = qa_js_to_int32(to->sound) | (volume_changed ? 16384 : 0) |
                        (attenuation_changed ? 32768 : 0);
       qa_q2_msg_write_short(message, (double)packed);
       if (volume_changed) qa_q2_msg_write_byte(message, trunc(to->loop_volume * 255.0));
@@ -346,10 +359,10 @@ void qa_q2pro_read_entity(qa_q2_sizebuf *message, qa_q2pro_features features,
   to->renderfx = read_width(message, bits, to->renderfx, 4096ull, 262144ull);
   for (int i = 0; i < 3; i++) {
     if ((bits & ORIGIN_BITS[i]) != 0) {
-      int32_t raw = v2 ? qa_q2pro_read_int23(
-                             message, (int32_t)trunc((double)from->origin[i] * 8.0))
-                       : qa_q2_msg_read_short(message);
-      to->origin[i] = (float)((double)raw / 8.0);
+      double raw = v2 ? qa_q2pro_read_int23_number(message,
+                                                   trunc((double)from->origin[i] * 8.0))
+                      : (double)qa_q2_msg_read_short(message);
+      to->origin[i] = (float)(raw / 8.0);
     }
   }
   for (int i = 0; i < 3; i++) {
@@ -360,8 +373,9 @@ void qa_q2pro_read_entity(qa_q2_sizebuf *message, qa_q2pro_features features,
   }
   if ((bits & 16777216ull) != 0) {
     for (int i = 0; i < 3; i++) {
-      int32_t raw = v2 ? qa_q2pro_read_int23(message, 0) : qa_q2_msg_read_short(message);
-      to->old_origin[i] = (float)((double)raw / 8.0);
+      double raw = v2 ? qa_q2pro_read_int23_number(message, 0)
+                      : (double)qa_q2_msg_read_short(message);
+      to->old_origin[i] = (float)(raw / 8.0);
     }
   }
   if ((bits & 67108864ull) != 0) {

@@ -2,6 +2,7 @@
 #include "qa/world/actors/callbacks.h"
 
 #include <stdlib.h>
+#include "qa/foundation/support.h"
 #include <string.h>
 
 static void *xrealloc(void *ptr, size_t size) {
@@ -111,6 +112,17 @@ static void pop_invocation(qa_actor_callback_table *table) {
   free(value);
 }
 
+/* TS `try { ... } finally { this.invocation = parent; }`: a raise that a
+ * caller catches must not leave the frame current. */
+static void pop_invocation_cleanup(void *arg) { pop_invocation(arg); }
+#define INVOCATION_BEGIN(table, self, kind) \
+  qa_cleanup invocation_node; \
+  push_invocation((table), (self), (kind)); \
+  qa_cleanup_push(&invocation_node, pop_invocation_cleanup, (table))
+#define INVOCATION_END(table) \
+  qa_cleanup_pop(&invocation_node); \
+  pop_invocation(table)
+
 static const qa_actor_callbacks *find_callbacks(qa_actor_callback_table *table, qa_owned_actor self) {
   for (size_t i = 0; i < table->binding_count; i++) {
     if (qa_same_owned_actor(table->bindings[i].actor, self)) return &table->bindings[i].callbacks;
@@ -126,9 +138,9 @@ static bool invoke_cb(qa_actor_callback_table *table, qa_owned_actor self, const
   qa_session_actor_registry_assert_owned(table->actors, self);
   const qa_actor_callbacks *callbacks = find_callbacks(table, self);
   if (callbacks == NULL || !has_callback) return false;
-  push_invocation(table, self, kind);
+  INVOCATION_BEGIN(table, self, kind);
   call(ctx, callbacks);
-  pop_invocation(table);
+  INVOCATION_END(table);
   return true;
 }
 static bool compose(qa_actor_callback_table *table, qa_owned_actor self, qa_mod_operation *operation,
@@ -285,9 +297,9 @@ static void pain_source_run(void *ctx, const void *request, void *out) {
     return;
   }
   qa_session_actor_registry_assert_owned(state->table->actors, reaction.self);
-  push_invocation(state->table, reaction.self, "pain");
+  INVOCATION_BEGIN(state->table, reaction.self, "pain");
   exec.state->execute(exec.state->ctx, exec.reaction);
-  pop_invocation(state->table);
+  INVOCATION_END(state->table);
   *(bool *)out = true;
 }
 bool qa_actor_callback_table_source_pain(qa_actor_callback_table *table,
@@ -318,9 +330,9 @@ static void die_source_run(void *ctx, const void *request, void *out) {
     return;
   }
   qa_session_actor_registry_assert_owned(state->table->actors, value->reaction.pain.self);
-  push_invocation(state->table, value->reaction.pain.self, "die");
+  INVOCATION_BEGIN(state->table, value->reaction.pain.self, "die");
   state->execute(state->ctx, value->reaction);
-  pop_invocation(state->table);
+  INVOCATION_END(state->table);
   *(bool *)out = true;
 }
 bool qa_actor_callback_table_source_die(qa_actor_callback_table *table,
@@ -352,10 +364,10 @@ static void use_source_run(void *ctx, const void *request, void *out) {
     return;
   }
   qa_session_actor_registry_assert_owned(state->table->actors, value->self);
-  push_invocation(state->table, value->self, "use");
+  INVOCATION_BEGIN(state->table, value->self, "use");
   state->execute(state->ctx, value->self, value->has_other ? &value->other : NULL,
                  value->has_activator ? &value->activator : NULL);
-  pop_invocation(state->table);
+  INVOCATION_END(state->table);
   *(bool *)out = true;
 }
 bool qa_actor_callback_table_source_use(qa_actor_callback_table *table, qa_owned_actor self,
@@ -399,9 +411,9 @@ static void touch_source_run(void *ctx, const void *request, void *out) {
     return;
   }
   qa_session_actor_registry_assert_owned(state->table->actors, value->contact.self);
-  push_invocation(state->table, value->contact.self, "touch");
+  INVOCATION_BEGIN(state->table, value->contact.self, "touch");
   state->execute(state->ctx, value->contact);
-  pop_invocation(state->table);
+  INVOCATION_END(state->table);
   *(bool *)out = true;
 }
 bool qa_actor_callback_table_source_touch(qa_actor_callback_table *table,

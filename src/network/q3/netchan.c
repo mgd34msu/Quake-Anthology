@@ -46,7 +46,24 @@ static bool make_packet(qa_q3_netchannel *c, const uint8_t *payload, size_t len,
   qa_q3_message_writer_destroy(m);
   return ok;
 }
-static void assert_entry(qa_q3_netchannel *c) { if (c->delivering) qa_range_error("Cannot reenter channel delivery"); }
+static void assert_entry(qa_q3_netchannel *c) { if (c->delivering) qa_raise("Error", 0, 0, "Cannot reenter channel delivery"); }
+/* TS `try { send; trace } finally { delivering = false }`: a raise from the
+ * owner's send or trace resets the flag, frees the packet and propagates. */
+typedef struct deliver_scope { const qa_q3_channel_delivery *delivery; const uint8_t *packet; size_t len; const char *trace; } deliver_scope;
+static void deliver_body(void *ctx) {
+  deliver_scope *scope = ctx;
+  scope->delivery->send(scope->delivery->send_ctx, scope->packet, scope->len);
+  if (scope->delivery->trace) scope->delivery->trace(scope->delivery->trace_ctx, scope->trace);
+}
+static void deliver(qa_q3_netchannel *c, const qa_q3_channel_delivery *delivery, uint8_t *packet, size_t len, const char *trace) {
+  c->delivering = true;
+  deliver_scope scope = { delivery, packet, len, trace };
+  qa_caught_error caught;
+  bool ok = qa_try(deliver_body, &scope, &caught);
+  c->delivering = false;
+  free(packet);
+  if (!ok) qa_rethrow(&caught);
+}
 void qa_q3_netchannel_begin_transmit(qa_q3_netchannel *c, const uint8_t *payload, size_t len, const qa_q3_channel_delivery *delivery) {
   assert_entry(c);
   if (len > QA_Q3_MAX_MESSAGE_LENGTH) qa_range_error("Netchannel message too large");
@@ -61,15 +78,9 @@ void qa_q3_netchannel_begin_transmit(qa_q3_netchannel *c, const uint8_t *payload
   uint8_t *packet = NULL; size_t plen = 0;
   if (!make_packet(c, payload, len, false, 0, delivery->source_state, &packet, &plen)) qa_range_error("Netchannel allocation failed");
   c->outgoing++;
-  c->delivering = true;
-  delivery->send(delivery->send_ctx, packet, plen);
-  if (delivery->trace) {
-    char buf[128]; snprintf(buf, sizeof buf, "%s send %4zu : s=%lld ack=%lld\n",
-      role_name(c->role), plen, (long long)(c->outgoing - 1), (long long)c->incoming);
-    delivery->trace(delivery->trace_ctx, buf);
-  }
-  c->delivering = false;
-  free(packet);
+  char buf[128]; snprintf(buf, sizeof buf, "%s send %4zu : s=%lld ack=%lld\n",
+    role_name(c->role), plen, (long long)(c->outgoing - 1), (long long)c->incoming);
+  deliver(c, delivery, packet, plen, buf);
 }
 bool qa_q3_netchannel_transmit_next_fragment(qa_q3_netchannel *c, const qa_q3_channel_delivery *delivery) {
   assert_entry(c);
@@ -78,15 +89,9 @@ bool qa_q3_netchannel_transmit_next_fragment(qa_q3_netchannel *c, const qa_q3_ch
   uint8_t *packet = NULL; size_t plen = 0;
   if (!make_packet(c, c->unsent_buffer + c->unsent_start, (size_t)length, true, c->unsent_start, delivery->source_state, &packet, &plen))
     qa_range_error("Netchannel allocation failed");
-  c->delivering = true;
-  delivery->send(delivery->send_ctx, packet, plen);
-  if (delivery->trace) {
-    char buf[160]; snprintf(buf, sizeof buf, "%s send %4zu : s=%lld fragment=%lld,%lld\n",
-      role_name(c->role), plen, (long long)c->outgoing, (long long)c->unsent_start, (long long)length);
-    delivery->trace(delivery->trace_ctx, buf);
-  }
-  c->delivering = false;
-  free(packet);
+  char buf[160]; snprintf(buf, sizeof buf, "%s send %4zu : s=%lld fragment=%lld,%lld\n",
+    role_name(c->role), plen, (long long)c->outgoing, (long long)c->unsent_start, (long long)length);
+  deliver(c, delivery, packet, plen, buf);
   c->unsent_start += length;
   if (c->unsent_start == c->unsent_length && length != QA_Q3_FRAGMENT_SIZE) {
     c->outgoing++; c->unsent_fragments = false;
@@ -198,14 +203,19 @@ static bool xor_payload(const uint8_t *payload, size_t len, size_t start, int64_
   }
   return true;
 }
+static void reader_cleanup(void *r) { qa_q3_message_reader_destroy(r); }
 bool qa_q3_xor_client_message(const uint8_t *payload, size_t len, int64_t challenge,
                               qa_q3_server_command_fn server_command, void *ctx, uint8_t **out) {
   if (len <= 12) { *out = malloc(len ? len : 1); if (!*out) return false; memcpy(*out, payload, len); return true; }
   qa_q3_message_reader *r = NULL;
   if (!qa_q3_message_reader_init(&r, payload, len, QA_Q3_MESSAGE_BITSTREAM, NULL)) return false;
+  /* The three Huffman longs can run off a hostile payload; free the reader on that raise. */
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, reader_cleanup, r);
   int64_t server_id = qa_q3_message_reader_read_long(r);
   int64_t ack = qa_q3_message_reader_read_long(r);
   int64_t reliable = qa_q3_message_reader_read_long(r);
+  qa_cleanup_pop(&guard);
   qa_q3_message_reader_destroy(r);
   const char *cmd = server_command(ctx, reliable);
   return xor_payload(payload, len, 12, (int32_t)((uint32_t)challenge ^ (uint32_t)server_id ^ (uint32_t)ack), cmd ? cmd : "", out);

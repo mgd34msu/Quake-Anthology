@@ -6,17 +6,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 /* JS Number::toFixed via printf %.Nf matches for these magnitudes;
  * frames use JS number->string (integers print without fraction). */
 char *qa_app_demo_timing_text(qa_app_demo_timing timing) {
   double seconds = timing.elapsed_milliseconds / 1000;
   double fps = seconds > 0 ? timing.frames / seconds : 0;
-  char *text = malloc(128);
+  char *text = malloc(QA_JS_TO_FIXED_CAPACITY * 2 + 80);
   if (!text) return NULL;
-  if (timing.frames == trunc(timing.frames) && fabs(timing.frames) < 1e21)
-    snprintf(text, 128, "%.0f frames, %.3f seconds: %.1f fps\n", timing.frames, seconds, fps);
-  else
-    snprintf(text, 128, "%g frames, %.3f seconds: %.1f fps\n", timing.frames, seconds, fps);
+  /* `${frames} frames, ${seconds.toFixed(3)} seconds: ${fps.toFixed(1)} fps\n` */
+  char seconds_text[QA_JS_TO_FIXED_CAPACITY], fps_text[QA_JS_TO_FIXED_CAPACITY];
+  qa_js_to_fixed(seconds, 3, seconds_text, sizeof seconds_text);
+  qa_js_to_fixed(fps, 1, fps_text, sizeof fps_text);
+  snprintf(text, QA_JS_TO_FIXED_CAPACITY * 2 + 80, "%s frames, %s seconds: %s fps\n", QA_JS_NUMBER(timing.frames), seconds_text, fps_text);
   return text;
 }
 struct qa_app_recorded_source {
@@ -60,15 +63,14 @@ bool qa_app_recorded_source_timing(const qa_app_recorded_source *source, qa_app_
 }
 bool qa_app_recorded_source_is_paused(const qa_app_recorded_source *source) { return source->paused; }
 void qa_app_recorded_source_set_paused(qa_app_recorded_source *source, bool paused) { source->paused = paused; }
-void qa_app_recorded_source_advance(qa_app_recorded_source *s,
-    double milliseconds, double frame, double real_time) {
-  if (strcmp(s->state, "closed") == 0) return;
-  if (s->paused && s->has_previous_real_time)
-    s->paused_milliseconds += fmax(0, real_time - s->previous_real_time);
-  s->previous_real_time = real_time; s->has_previous_real_time = true;
-  if (s->paused) return;
-  real_time -= s->paused_milliseconds;
-  bool timedemo = s->timedemo || qa_cvar_registry_variable_value(s->cvars, "timedemo") != 0;
+typedef struct advance_scope {
+  qa_app_recorded_source *s; double milliseconds, frame, real_time; bool timedemo;
+} advance_scope;
+static void advance_body(void *ctx) {
+  advance_scope *scope = ctx;
+  qa_app_recorded_source *s = scope->s;
+  double milliseconds = scope->milliseconds, frame = scope->frame, real_time = scope->real_time;
+  bool timedemo = scope->timedemo;
   qa_app_recorded_family family = s->playback.family;
   if (family == QA_APP_REC_Q1 || family == QA_APP_REC_QW) {
     qa_app_recorded_q1_result result = s->playback.advance_q1(
@@ -89,10 +91,13 @@ void qa_app_recorded_source_advance(qa_app_recorded_source *s,
       s->state = "active";
     } else s->terminal = result.kind;
   } else {
+    double time_nudge = qa_cvar_registry_variable_value(s->cvars, "cl_timeNudge");
+    double timescale2 = qa_cvar_registry_variable_value(s->cvars, "timescale");
+    bool freeze_demo = qa_cvar_registry_variable_value(s->cvars, "cl_freezeDemo") != 0;
     qa_app_recorded_q3_options options = {false,
-      qa_cvar_registry_variable_value(s->cvars, "cl_timeNudge"),
-      qa_cvar_registry_variable_value(s->cvars, "timescale"),
-      qa_cvar_registry_variable_value(s->cvars, "cl_freezeDemo") != 0, timedemo};
+      time_nudge,
+      timescale2,
+      freeze_demo, timedemo};
     qa_app_recorded_q3_result result = s->playback.advance_frame_q3(s->playback.ctx, real_time, options);
     if (strcmp(result.kind, "end") == 0) {
       s->terminal = strcmp(result.end_reason, "truncated-header") == 0
@@ -105,13 +110,29 @@ void qa_app_recorded_source_advance(qa_app_recorded_source *s,
       s->state = strcmp(s->playback.phase_q3(s->playback.ctx), "active") == 0 ? "active" : "loading";
     }
   }
+}
+void qa_app_recorded_source_advance(qa_app_recorded_source *s,
+    double milliseconds, double frame, double real_time) {
+  if (strcmp(s->state, "closed") == 0) return;
+  if (s->paused && s->has_previous_real_time)
+    s->paused_milliseconds += qa_js_max(0, real_time - s->previous_real_time);
+  s->previous_real_time = real_time; s->has_previous_real_time = true;
+  if (s->paused) return;
+  real_time -= s->paused_milliseconds;
+  bool timedemo = s->timedemo || qa_cvar_registry_variable_value(s->cvars, "timedemo") != 0;
+  qa_app_recorded_family family = s->playback.family;
+  /* Readers throw on a short or malformed trailing record; a partial recording ends
+   * playback like a Q3 truncation (TS catch (error) { terminal = 'truncated' }). */
+  advance_scope scope = { s, milliseconds, frame, real_time, timedemo };
+  qa_caught_error caught;
+  if (!qa_try(advance_body, &scope, &caught)) s->terminal = "truncated";
   if (timedemo && family != QA_APP_REC_Q3) {
     if (!s->terminal && strcmp(s->state, "active") == 0) {
       if (!s->has_benchmark_start) { s->benchmark_start = real_time; s->has_benchmark_start = true; }
       else s->benchmark_frames++;
     } else if (s->terminal && s->has_benchmark_start) {
       s->result_timing.frames = s->benchmark_frames;
-      s->result_timing.elapsed_milliseconds = fmax(0, real_time - s->benchmark_start);
+      s->result_timing.elapsed_milliseconds = qa_js_max(0, real_time - s->benchmark_start);
       s->has_result_timing = true;
     }
   }

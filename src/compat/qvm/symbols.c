@@ -8,6 +8,7 @@
 
 #include "qa/core/common_parse.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct record {
   char *name;   /* owned */
@@ -99,6 +100,8 @@ qa_qvm_function_symbol qa_qvm_symbols_value_to_function_symbol(qa_qvm_symbols *s
 int32_t qa_qvm_function_symbol_get_profile_count(qa_qvm_function_symbol *symbol) {
   if (symbol->owner == NULL) return 0;
   assert_live(symbol->owner);
+  /* A reload may retire the record a running frame sampled (TS keeps it alive). */
+  if (symbol->index >= symbol->owner->record_count) return 0;
   record *records = symbol->owner->records;
   return data_i32(records[symbol->index].data, 8);
 }
@@ -106,6 +109,7 @@ int32_t qa_qvm_function_symbol_get_profile_count(qa_qvm_function_symbol *symbol)
 void qa_qvm_function_symbol_set_profile_count(qa_qvm_function_symbol *symbol, int32_t count) {
   if (symbol->owner == NULL) return; /* null symbol is a plain object in TS */
   assert_live(symbol->owner);
+  if (symbol->index >= symbol->owner->record_count) return;
   record *records = symbol->owner->records;
   data_set_i32(records[symbol->index].data, 8, count);
 }
@@ -230,7 +234,7 @@ void qa_qvm_symbols_load(qa_qvm_symbols *symbols, const qa_qvm_symbol_load_optio
     if (value >= 0 && (size_t)value < symbols->instruction_pointer_count)
       value = symbols->instruction_pointers[value];
     /* TS allocate returns a zeroed Uint8Array. */
-    memset(bytes, 0, 12);
+    memset(bytes, 0, 16 + name_length);
     data_set_i32(bytes, 4, value);
     for (size_t i = 0; i < name_length; i++) bytes[12 + i] = (uint8_t)name_copy[i];
     count++;
@@ -275,7 +279,7 @@ void qa_qvm_symbols_print_profile(qa_qvm_symbols *symbols, qa_qvm_symbol_print_f
     sorted[i].index = i;
     total += data_i32(records[i].data, 8);
   }
-  qsort(sorted, count, sizeof *sorted, compare_profile);
+  qa_js_sort(sorted, count, sizeof *sorted, compare_profile);
   if (total == 0 && print != NULL) {
     print(print_ctx, debug_enabled
         ? "vmprofile: percentages are undefined with zero total instructions.\n"

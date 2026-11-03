@@ -364,52 +364,6 @@ static const qa_q2m_frame f_supertank_2[] = {
   {QA_Q2M_AI_WALK, NULL, 4, NULL, 0, -1},
   {QA_Q2M_AI_WALK, NULL, 4, NULL, 0, -1},
 };
-static const qa_q2m_action a_supertank_3_0[] = {
-  {false, "TreadSound", 0, false},
-};
-static const qa_q2m_frame f_supertank_3[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, a_supertank_3_0, 1, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
-static const qa_q2m_action a_supertank_4_0[] = {
-  {false, "TreadSound", 0, false},
-};
-static const qa_q2m_frame f_supertank_4[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, a_supertank_4_0, 1, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
 static const qa_q2m_frame f_supertank_5[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
@@ -558,8 +512,6 @@ const qa_q2m_move qa_q2rm_supertank_moves[] = {
   {"supertank_move_stand", 194, 253, NULL, 0, f_supertank_0, 60},
   {"supertank_move_run", 128, 145, NULL, 0, f_supertank_1, 18},
   {"supertank_move_forward", 128, 145, NULL, 0, f_supertank_2, 18},
-  {"supertank_move_turn_right", 176, 193, "supertank_run", 0, f_supertank_3, 18},
-  {"supertank_move_turn_left", 146, 163, "supertank_run", 0, f_supertank_4, 18},
   {"supertank_move_pain3", 172, 175, "supertank_run", 0, f_supertank_5, 4},
   {"supertank_move_pain2", 168, 171, "supertank_run", 0, f_supertank_6, 4},
   {"supertank_move_pain1", 164, 167, "supertank_run", 0, f_supertank_7, 4},

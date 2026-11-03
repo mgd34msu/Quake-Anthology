@@ -1,6 +1,7 @@
 /* Port of src/content/q2/missionpacks/monsters/hints.ts.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/monsters/hints.h"
+#include "qa/network/common/js_number.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 #include "mp_internal.h"
 #include "qa/content/q2/foundation/monsters/ai.h"
 #include "qa/persistence/save_image.h"
+#include "qa/foundation/js.h"
 
 #define HINT_ENDPOINT 1
 #define MAX_HINT_CHAINS 100
@@ -31,7 +33,7 @@ static qa_q2mpm_hint_node *node_set(qa_q2mpm_hints *hints, qa_actor_id actor, do
   if (hints->node_count == hints->node_cap) {
     size_t cap = hints->node_cap ? hints->node_cap * 2 : 16;
     qa_q2mpm_hint_node *grown = realloc(hints->nodes, cap * sizeof *grown);
-    if (!grown) qa_q2f_error("Out of memory growing hint nodes");
+    if (!grown) qa_raise("Error", 0, 0, "Out of memory growing hint nodes");
     hints->nodes = grown;
     hints->node_cap = cap;
   }
@@ -46,7 +48,7 @@ static void starts_push(qa_q2mpm_hints *hints, qa_actor_id actor) {
   if (hints->start_count == hints->start_cap) {
     size_t cap = hints->start_cap ? hints->start_cap * 2 : 16;
     qa_actor_id *grown = realloc(hints->starts, cap * sizeof *grown);
-    if (!grown) qa_q2f_error("Out of memory growing hint starts");
+    if (!grown) qa_raise("Error", 0, 0, "Out of memory growing hint starts");
     hints->starts = grown;
     hints->start_cap = cap;
   }
@@ -58,7 +60,7 @@ static qa_q2mpm_hint_monster *monster_of(qa_q2mpm_hints *hints, qa_q2m_context *
   if (hints->pursuer_count == hints->pursuer_cap) {
     size_t cap = hints->pursuer_cap ? hints->pursuer_cap * 2 : 8;
     qa_q2mpm_hint_monster *grown = realloc(hints->pursuers, cap * sizeof *grown);
-    if (!grown) qa_q2f_error("Out of memory growing hint pursuers");
+    if (!grown) qa_raise("Error", 0, 0, "Out of memory growing hint pursuers");
     hints->pursuers = grown;
     hints->pursuer_cap = cap;
   }
@@ -67,11 +69,11 @@ static qa_q2mpm_hint_monster *monster_of(qa_q2mpm_hints *hints, qa_q2m_context *
   monster->actor = context->entity->actor.id;
   return monster;
 }
-static double source_slot(qa_q2f_game *game, qa_q2f_entity *entity) {
-  qa_q2f_saved_result saved = game->host->actors.source_of(game->host->actors.ctx, entity->actor.id);
-  return saved.has_value ? saved.value.slot : (double)entity->actor.id.slot;
+static double source_slot(qa_q2_game_services *game, qa_q2_entity *entity) {
+  qa_actor_source_result saved = qa_session_actor_registry_source_of(game->host->actors, entity->actor.id);
+  return saved.has_value ? saved.slot : (double)entity->actor.id.slot;
 }
-static void touch_hook_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void touch_hook_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2mpm_hints *hints = ctx;
   qa_q2m_context *context = qa_q2m_monsters_context(hints->monsters, contact.other);
   if (context) qa_q2mpm_hints_touch(hints, entity, game, context);
@@ -98,38 +100,39 @@ void qa_q2mpm_hints_destroy(qa_q2mpm_hints *hints) {
   free(hints->pursuers);
   memset(hints, 0, sizeof *hints);
 }
-static qa_q2f_named_touch hint_touch_entry(qa_q2mpm_hints *hints) {
-  qa_q2f_named_touch entry;
+static qa_q2_named_touch hint_touch_entry(qa_q2mpm_hints *hints) {
+  qa_q2_named_touch entry;
   entry.name = "hint_path_touch";
-  entry.cb = (qa_q2f_touch){hints, touch_hook_fn};
+  entry.cb = (qa_q2_touch){hints, touch_hook_fn};
   return entry;
 }
-qa_q2f_callback_definitions qa_q2mpm_hints_callbacks(qa_q2mpm_hints *hints) {
+qa_q2_callback_definitions qa_q2mpm_hints_callbacks(qa_q2mpm_hints *hints) {
   /* The touch table borrows one static slot per hints object is not
    * possible; callers copy the returned definitions immediately. */
-  static qa_q2f_named_touch entries[1];
+  static qa_q2_named_touch entries[1];
   entries[0] = hint_touch_entry(hints);
-  qa_q2f_callback_definitions definitions;
+  qa_q2_callback_definitions definitions;
   memset(&definitions, 0, sizeof definitions);
   definitions.touch = entries;
   definitions.touch_count = 1;
   return definitions;
 }
-static qa_q2f_callback_definitions spawn_callbacks_fn(void *ctx) { return qa_q2mpm_hints_callbacks(ctx); }
-static bool spawn_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static qa_q2_callback_definitions spawn_callbacks_fn(void *ctx) { return qa_q2mpm_hints_callbacks(ctx); }
+static bool spawn_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   return qa_q2mpm_hints_spawn(ctx, entity, game);
 }
-qa_q2bm_spawn_module qa_q2mpm_hints_as_spawn(qa_q2mpm_hints *hints) {
-  qa_q2bm_spawn_module module = {hints, spawn_callbacks_fn, spawn_fn};
+qa_q2_spawn_module qa_q2mpm_hints_as_spawn(qa_q2mpm_hints *hints) {
+  hints->spawn_callbacks = spawn_callbacks_fn(hints);
+  qa_q2_spawn_module module = {hints, &hints->spawn_callbacks, NULL, spawn_fn};
   return module;
 }
-static void position_text(qa_q2f_entity *entity, qa_q2f_game *game, char *buffer, size_t size) {
+static void position_text(qa_q2_entity *entity, qa_q2_game_services *game, char *buffer, size_t size) {
   qa_vec3 origin = q2mpm_body(game, entity).origin;
-  snprintf(buffer, size, "%g %g %g", origin.x, origin.y, origin.z);
+  snprintf(buffer, size, "%s %s %s", QA_JS_NUMBER(origin.x), QA_JS_NUMBER(origin.y), QA_JS_NUMBER(origin.z));
 }
-bool qa_q2mpm_hints_spawn(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_game *game) {
+bool qa_q2mpm_hints_spawn(qa_q2mpm_hints *hints, qa_q2_entity *entity, qa_q2_game_services *game) {
   if (strcmp(entity->classname, "hint_path") != 0) return false;
-  if (strcmp(game->options.mode, "deathmatch") == 0) {
+  if (game->options.mode == QA_Q2_MODE_DEATHMATCH) {
     game->remove(game->ctx, entity);
     return true;
   }
@@ -146,16 +149,16 @@ bool qa_q2mpm_hints_spawn(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_g
   }
   qa_actor_id none = entity->actor.id;
   (void)node_set(hints, entity->actor.id, -1, false, none);
-  entity->touch = (qa_q2f_touch){hints, touch_hook_fn};
+  entity->touch = (qa_q2_touch){hints, touch_hook_fn};
   entity->server_flags = q2mpm_or(entity->server_flags, 1);
   entity->visible = false;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2mpm_v3(-8, -8, -8);
   change.bounds.max = q2mpm_v3(8, 8, 8);
   q2mpm_move_body(game, entity, change, true, false);
-  game->solid(game->ctx, entity, QA_Q2F_SOLID_TRIGGER);
+  game->solid(game->ctx, entity, "trigger");
   game->show(game->ctx, entity);
   return true;
 }
@@ -166,21 +169,21 @@ void qa_q2mpm_hint_init_free(qa_q2mpm_hint_initialization *report) {
 }
 static char *duplicate_text(const char *text) {
   char *copy = malloc(strlen(text) + 1);
-  if (!copy) qa_q2f_error("Out of memory recording hint issue");
+  if (!copy) qa_raise("Error", 0, 0, "Out of memory recording hint issue");
   strcpy(copy, text);
   return copy;
 }
 static int compare_entities(const void *left, const void *right) {
   const double *slots = NULL;
   (void)slots;
-  qa_q2f_entity *const *a = left;
-  qa_q2f_entity *const *b = right;
+  qa_q2_entity *const *a = left;
+  qa_q2_entity *const *b = right;
   double sa = (double)(*a)->actor.id.slot;
   double sb = (double)(*b)->actor.id.slot;
   return sa < sb ? -1 : sa > sb ? 1 : 0;
 }
 typedef struct sort_entry {
-  qa_q2f_entity *entity;
+  qa_q2_entity *entity;
   double slot;
 } sort_entry;
 static int compare_slots(const void *left, const void *right) {
@@ -188,32 +191,32 @@ static int compare_slots(const void *left, const void *right) {
   const sort_entry *b = right;
   return a->slot < b->slot ? -1 : a->slot > b->slot ? 1 : 0;
 }
-bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_hint_initialization *out) {
+bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2_game_services *game, qa_q2mpm_hint_initialization *out) {
   memset(out, 0, sizeof *out);
   hints->start_count = 0;
   hints->node_count = 0;
   size_t hint_count = 0;
-  for (size_t i = 0; i < game->entity_count; i++)
-    if (strcmp(game->entities[i]->classname, "hint_path") == 0) hint_count++;
+  for (size_t i = 0; i < qa_q2_game_entity_count(game); i++)
+    if (strcmp(qa_q2_game_entity_at(game, i)->classname, "hint_path") == 0) hint_count++;
   sort_entry *sorted = malloc((hint_count ? hint_count : 1) * sizeof *sorted);
   if (!sorted) return false;
   size_t at = 0;
-  for (size_t i = 0; i < game->entity_count; i++) {
-    if (strcmp(game->entities[i]->classname, "hint_path") != 0) continue;
-    sorted[at].entity = game->entities[i];
-    sorted[at].slot = source_slot(game, game->entities[i]);
+  for (size_t i = 0; i < qa_q2_game_entity_count(game); i++) {
+    if (strcmp(qa_q2_game_entity_at(game, i)->classname, "hint_path") != 0) continue;
+    sorted[at].entity = qa_q2_game_entity_at(game, i);
+    sorted[at].slot = source_slot(game, qa_q2_game_entity_at(game, i));
     at++;
   }
-  qsort(sorted, hint_count, sizeof *sorted, compare_slots);
+  qa_js_sort(sorted, hint_count, sizeof *sorted, compare_slots);
   (void)compare_entities;
   hints->present = hint_count != 0;
   size_t issue_cap = 0;
   for (size_t i = 0; i < hint_count; i++) {
-    qa_q2f_entity *hint = sorted[i].entity;
+    qa_q2_entity *hint = sorted[i].entity;
     (void)node_set(hints, hint->actor.id, -1, false, hint->actor.id);
     const char *target = hint->target ? hint->target : "";
     const char *targetname = hint->targetname ? hint->targetname : "";
-    if (((uint32_t)hint->spawnflags & HINT_ENDPOINT) == 0 || target[0] == '\0') continue;
+    if ((qa_js_to_uint32(hint->spawnflags) & HINT_ENDPOINT) == 0 || target[0] == '\0') continue;
     if (targetname[0] != '\0') {
       char position[96];
       char message[512];
@@ -235,10 +238,10 @@ bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_
   }
   for (size_t chain = 0; chain < hints->start_count; chain++) {
     qa_actor_id actor = hints->starts[chain];
-    qa_q2f_entity *start = game->entity(game->ctx, &actor);
+    qa_q2_entity *start = game->entity(game->ctx, &actor);
     if (!start) continue;
     qa_q2mpm_hint_node *root = node_set(hints, actor, (double)chain, false, actor);
-    qa_q2f_entity *current = start;
+    qa_q2_entity *current = start;
     size_t visited_count = 0;
     size_t visited_cap = 16;
     qa_actor_id *visited = malloc(visited_cap * sizeof *visited);
@@ -247,8 +250,8 @@ bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_
     const char *current_target = current->target ? current->target : "";
     while (current_target[0] != '\0') {
       size_t match_count = 0;
-      qa_q2f_entity *const *matches = game->targets(game->ctx, current_target, &match_count);
-      qa_q2f_entity *next = match_count ? matches[0] : NULL;
+      qa_q2_entity *const *matches = game->targets(game->ctx, current_target, &match_count);
+      qa_q2_entity *next = match_count ? matches[0] : NULL;
       if (match_count > 1) {
         char position[96];
         char message[512];
@@ -292,7 +295,7 @@ bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_
         free(visited);
         free(sorted);
         qa_q2mpm_hint_init_free(out);
-        qa_q2f_error("Hint chain lost its current node during initialization");
+        qa_raise("Error", 0, 0, "Hint chain lost its current node during initialization");
       }
       current_node->has_next = true;
       current_node->next = next->actor.id;
@@ -315,7 +318,7 @@ bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_
   out->chains = hints->start_count;
   return true;
 }
-static size_t chain_collect(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_actor_id start, qa_q2f_entity **buffer,
+static size_t chain_collect(qa_q2mpm_hints *hints, qa_q2_game_services *game, qa_actor_id start, qa_q2_entity **buffer,
                             size_t capacity) {
   size_t count = 0;
   bool has_actor = true;
@@ -324,7 +327,7 @@ static size_t chain_collect(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_actor_i
     bool seen = false;
     for (size_t i = 0; i < count; i++) if (qa_same_actor(buffer[i]->actor.id, actor)) seen = true;
     if (seen) break;
-    qa_q2f_entity *entity = game->entity(game->ctx, &actor);
+    qa_q2_entity *entity = game->entity(game->ctx, &actor);
     if (!entity) break;
     if (count < capacity) buffer[count] = entity;
     count++;
@@ -334,31 +337,31 @@ static size_t chain_collect(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_actor_i
   }
   return count;
 }
-qa_q2f_entity *qa_q2mpm_hints_find_start(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_game *game) {
+qa_q2_entity *qa_q2mpm_hints_find_start(qa_q2mpm_hints *hints, qa_q2_entity *entity, qa_q2_game_services *game) {
   (void)hints;
   const char *target = entity->target ? entity->target : "";
   bool forward = target[0] != '\0';
   size_t visited_cap = 16;
   size_t visited_count = 0;
   qa_actor_id *visited = malloc(visited_cap * sizeof *visited);
-  if (!visited) qa_q2f_error("Out of memory in hint findStart");
+  if (!visited) qa_raise("Error", 0, 0, "Out of memory in hint findStart");
   visited[visited_count++] = entity->actor.id;
-  qa_q2f_entity *current = entity;
-  qa_q2f_entity *last = NULL;
+  qa_q2_entity *current = entity;
+  qa_q2_entity *last = NULL;
   for (;;) {
     const char *name = forward ? (current->target ? current->target : "")
                                : (current->targetname ? current->targetname : "");
     if (name[0] == '\0') break;
-    qa_q2f_entity *next = NULL;
+    qa_q2_entity *next = NULL;
     if (forward) {
       size_t match_count = 0;
-      qa_q2f_entity *const *matches = game->targets(game->ctx, name, &match_count);
+      qa_q2_entity *const *matches = game->targets(game->ctx, name, &match_count);
       next = match_count ? matches[0] : NULL;
     } else {
       double best_slot = 0;
       bool have = false;
-      for (size_t i = 0; i < game->entity_count; i++) {
-        qa_q2f_entity *candidate = game->entities[i];
+      for (size_t i = 0; i < qa_q2_game_entity_count(game); i++) {
+        qa_q2_entity *candidate = qa_q2_game_entity_at(game, i);
         const char *candidate_target = candidate->target ? candidate->target : "";
         if (strcmp(candidate_target, name) != 0) continue;
         double slot = source_slot(game, candidate);
@@ -372,22 +375,22 @@ qa_q2f_entity *qa_q2mpm_hints_find_start(qa_q2mpm_hints *hints, qa_q2f_entity *e
     if (visited_count == visited_cap) {
       visited_cap *= 2;
       qa_actor_id *grown = realloc(visited, visited_cap * sizeof *grown);
-      if (!grown) { free(visited); qa_q2f_error("Out of memory in hint findStart"); }
+      if (!grown) { free(visited); qa_raise("Error", 0, 0, "Out of memory in hint findStart"); }
       visited = grown;
     }
     visited[visited_count++] = next->actor.id;
     last = current = next;
   }
   free(visited);
-  return last && ((uint32_t)last->spawnflags & HINT_ENDPOINT) != 0 ? last : NULL;
+  return last && (qa_js_to_uint32(last->spawnflags) & HINT_ENDPOINT) != 0 ? last : NULL;
 }
-qa_q2f_entity *qa_q2mpm_hints_other_end(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_game *game) {
+qa_q2_entity *qa_q2mpm_hints_other_end(qa_q2mpm_hints *hints, qa_q2_entity *entity, qa_q2_game_services *game) {
   return qa_q2mpm_hints_find_start(hints, entity, game);
 }
-static bool visible_from(qa_q2f_game *game, qa_actor_id actor, qa_q2f_entity *target) {
-  qa_body_state_result body = game->host->bodies.read(game->host->bodies.ctx, actor);
+static bool visible_from(qa_q2_game_services *game, qa_actor_id actor, qa_q2_entity *target) {
+  qa_body_state_result body = qa_shared_body_table_read(game->host->bodies, actor);
   if (!body.has_value) return false;
-  qa_q2f_entity *actor_entity = game->entity(game->ctx, &actor);
+  qa_q2_entity *actor_entity = game->entity(game->ctx, &actor);
   qa_vec3 start = body.value.origin;
   start.z += actor_entity ? actor_entity->view_height : 22;
   qa_vec3 destination = q2mpm_body(game, target).origin;
@@ -396,33 +399,33 @@ static bool visible_from(qa_q2f_game *game, qa_actor_id actor, qa_q2f_entity *ta
   return q2mpm_trace(game, start, end, NULL, &actor, QA_Q2M_MASK_OPAQUE).fraction == 1;
 }
 bool qa_q2mpm_hints_check(qa_q2mpm_hints *hints, qa_q2m_context *context) {
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *entity = context->entity;
   qa_q2m_state *state = context->state;
   if (!hints->present || !entity->has_enemy || state->stand_ground
       || strcmp(entity->classname, "monster_turret") == 0
       || (q2mpm_rr(game) && state->alt.has_pathing)) return false;
   qa_actor_id enemy_actor = entity->enemy;
-  qa_body_state_result enemy = game->host->bodies.read(game->host->bodies.ctx, enemy_actor);
+  qa_body_state_result enemy = qa_shared_body_table_read(game->host->bodies, enemy_actor);
   if (!enemy.has_value) return false;
   qa_vec3 origin = q2mpm_body(game, entity).origin;
   size_t total = 0;
   for (size_t i = 0; i < hints->start_count; i++) {
-    qa_q2f_entity *scratch[1];
+    qa_q2_entity *scratch[1];
     total += chain_collect(hints, game, hints->starts[i], scratch, 0);
   }
-  qa_q2f_entity **all = malloc((total ? total : 1) * sizeof *all);
-  if (!all) qa_q2f_error("Out of memory in hint check");
+  qa_q2_entity **all = malloc((total ? total : 1) * sizeof *all);
+  if (!all) qa_raise("Error", 0, 0, "Out of memory in hint check");
   size_t all_count = 0;
   for (size_t i = 0; i < hints->start_count; i++)
     all_count += chain_collect(hints, game, hints->starts[i], all + all_count, total - all_count);
-  qa_q2f_entity *start = NULL;
-  qa_q2f_entity *destination = NULL;
+  qa_q2_entity *start = NULL;
+  qa_q2_entity *destination = NULL;
   /* Monster-side nodes near and visible; represented chains. */
   double represented[128];
   size_t represented_count = 0;
   for (size_t i = 0; i < all_count; i++) {
-    qa_q2f_entity *node = all[i];
+    qa_q2_entity *node = all[i];
     if (qa_hypot3(qa_sub3_double(origin, q2mpm_body(game, node).origin)) > 512) continue;
     if (!qa_q2m_visible(context, &node->actor.id)) continue;
     qa_q2mpm_hint_node *info = node_of(hints, node->actor.id);
@@ -433,11 +436,11 @@ bool qa_q2mpm_hints_check(qa_q2mpm_hints *hints, qa_q2m_context *context) {
   }
   double target_chains[128];
   size_t target_chain_count = 0;
-  qa_q2f_entity **target_nodes = malloc((all_count ? all_count : 1) * sizeof *target_nodes);
-  if (!target_nodes) { free(all); qa_q2f_error("Out of memory in hint check"); }
+  qa_q2_entity **target_nodes = malloc((all_count ? all_count : 1) * sizeof *target_nodes);
+  if (!target_nodes) { free(all); qa_raise("Error", 0, 0, "Out of memory in hint check"); }
   size_t target_count = 0;
   for (size_t i = 0; i < all_count; i++) {
-    qa_q2f_entity *node = all[i];
+    qa_q2_entity *node = all[i];
     qa_q2mpm_hint_node *info = node_of(hints, node->actor.id);
     double chain = info ? info->chain : -2;
     bool represented_node = false;
@@ -452,7 +455,7 @@ bool qa_q2mpm_hints_check(qa_q2mpm_hints *hints, qa_q2m_context *context) {
   }
   if (target_count == 0) { free(target_nodes); free(all); return false; }
   for (size_t i = 0; i < all_count; i++) {
-    qa_q2f_entity *node = all[i];
+    qa_q2_entity *node = all[i];
     if (qa_hypot3(qa_sub3_double(origin, q2mpm_body(game, node).origin)) > 512) continue;
     if (!qa_q2m_visible(context, &node->actor.id)) continue;
     qa_q2mpm_hint_node *info = node_of(hints, node->actor.id);
@@ -486,13 +489,15 @@ bool qa_q2mpm_hints_check_lost(qa_q2mpm_hints *hints, qa_q2m_context *context) {
   source->last_time = now;
   return qa_q2mpm_hints_check(hints, context);
 }
-void qa_q2mpm_hints_go(qa_q2mpm_hints *hints, qa_q2m_context *context, qa_q2f_entity *point) {
+void qa_q2mpm_hints_go(qa_q2mpm_hints *hints, qa_q2m_context *context, qa_q2_entity *point) {
   (void)hints;
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *entity = context->entity;
   qa_q2m_state *state = context->state;
+  qa_vec3 a = q2mpm_body(game, point).origin;
+  qa_vec3 b = q2mpm_body(game, entity).origin;
   state->ideal_yaw = qa_vector_to_angles_with_rule(
-      qa_sub3_double(q2mpm_body(game, point).origin, q2mpm_body(game, entity).origin),
+      qa_sub3_double(a, b),
       QA_VECTOR_TO_ANGLES_NATIVE_AI).y;
   entity->has_goal = true;
   entity->goal = point->actor.id;
@@ -508,8 +513,8 @@ void qa_q2mpm_hints_go(qa_q2mpm_hints *hints, qa_q2m_context *context, qa_q2f_en
   context->run(context->impl_ctx, context);
 }
 void qa_q2mpm_hints_stop(qa_q2mpm_hints *hints, qa_q2m_context *context) {
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *entity = context->entity;
   qa_q2m_state *state = context->state;
   qa_q2mpm_hint_monster *source = monster_of(hints, context);
   entity->has_goal = false;
@@ -528,8 +533,8 @@ void qa_q2mpm_hints_stop(qa_q2mpm_hints *hints, qa_q2m_context *context) {
 }
 bool qa_q2mpm_hints_run(qa_q2mpm_hints *hints, qa_q2m_context *context, double distance) {
   if (!context->state->alt.hint_path) return false;
-  qa_q2f_entity *entity = context->entity;
-  qa_q2f_game *game = context->game;
+  qa_q2_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
   (void)context->move_to_goal(context->impl_ctx, context, distance);
   if (!q2mpm_live(game, entity->actor.id)) return true;
   if (!entity->has_enemy || !q2mpm_live(game, entity->enemy)) {
@@ -537,7 +542,7 @@ bool qa_q2mpm_hints_run(qa_q2mpm_hints *hints, qa_q2m_context *context, double d
     qa_q2mpm_hints_stop(hints, context);
     return true;
   }
-  qa_q2f_entity *target = game->entity(game->ctx, &entity->enemy);
+  qa_q2_entity *target = game->entity(game->ctx, &entity->enemy);
   bool has_real = true;
   qa_actor_id real_enemy = entity->enemy;
   if (target && strcmp(target->classname, "player_noise") == 0) {
@@ -550,10 +555,10 @@ bool qa_q2mpm_hints_run(qa_q2mpm_hints *hints, qa_q2m_context *context, double d
     return true;
   }
   if (qa_q2m_visible(context, &real_enemy)) qa_q2mpm_hints_stop(hints, context);
-  else if (strcmp(game->options.mode, "coop") == 0) (void)context->find_target(context->impl_ctx, context);
+  else if (game->options.mode == QA_Q2_MODE_COOP) (void)context->find_target(context->impl_ctx, context);
   return true;
 }
-void qa_q2mpm_hints_touch(qa_q2mpm_hints *hints, qa_q2f_entity *hint, qa_q2f_game *game, qa_q2m_context *context) {
+void qa_q2mpm_hints_touch(qa_q2mpm_hints *hints, qa_q2_entity *hint, qa_q2_game_services *game, qa_q2m_context *context) {
   if (!context->state->has_move_target || !qa_same_actor(context->state->move_target, hint->actor.id)) return;
   qa_q2mpm_hint_monster *source = monster_of(hints, context);
   if (source->has_goal && qa_same_actor(source->goal, hint->actor.id)) {
@@ -561,16 +566,16 @@ void qa_q2mpm_hints_touch(qa_q2mpm_hints *hints, qa_q2f_entity *hint, qa_q2f_gam
     return;
   }
   qa_q2mpm_hint_node *node = node_of(hints, hint->actor.id);
-  qa_q2f_entity *next = NULL;
+  qa_q2_entity *next = NULL;
   bool goal_found = false;
   if (node && node->chain >= 0 && (size_t)node->chain < hints->start_count) {
     qa_actor_id start = hints->starts[(size_t)node->chain];
     size_t capacity = chain_collect(hints, game, start, NULL, 0);
-    qa_q2f_entity **chain = malloc((capacity ? capacity : 1) * sizeof *chain);
-    if (!chain) qa_q2f_error("Out of memory in hint touch");
+    qa_q2_entity **chain = malloc((capacity ? capacity : 1) * sizeof *chain);
+    if (!chain) qa_raise("Error", 0, 0, "Out of memory in hint touch");
     size_t count = chain_collect(hints, game, start, chain, capacity);
     for (size_t i = 0; i < count; i++) {
-      qa_q2f_entity *entry = chain[i];
+      qa_q2_entity *entry = chain[i];
       qa_q2mpm_hint_node *entry_node = node_of(hints, entry->actor.id);
       bool has_following = entry_node && entry_node->has_next;
       qa_actor_id following = has_following ? entry_node->next : entry->actor.id;
@@ -600,7 +605,7 @@ void qa_q2mpm_hints_checkpoint_free(qa_q2mpm_hints_checkpoint *checkpoint) {
   free(checkpoint->monsters);
   memset(checkpoint, 0, sizeof *checkpoint);
 }
-bool qa_q2mpm_hints_capture(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_hints_checkpoint *out) {
+bool qa_q2mpm_hints_capture(qa_q2mpm_hints *hints, qa_q2_game_services *game, qa_q2mpm_hints_checkpoint *out) {
   memset(out, 0, sizeof *out);
   out->version = 1;
   out->present = hints->present;
@@ -627,7 +632,7 @@ bool qa_q2mpm_hints_capture(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_h
     entry->actor.generation = (double)hints->nodes[i].actor.generation;
     entry->chain = hints->nodes[i].chain;
     const qa_actor_id *next = hints->nodes[i].has_next ? &hints->nodes[i].next : NULL;
-    entry->has_next = qa_q2f_save_actor(next, &entry->next);
+    entry->has_next = qa_q2_save_actor(next, &entry->next);
   }
   size_t live_monsters = 0;
   for (size_t i = 0; i < hints->pursuer_count; i++)
@@ -642,16 +647,16 @@ bool qa_q2mpm_hints_capture(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_h
     entry->actor.slot = (double)hints->pursuers[i].actor.slot;
     entry->actor.generation = (double)hints->pursuers[i].actor.generation;
     const qa_actor_id *goal = hints->pursuers[i].has_goal ? &hints->pursuers[i].goal : NULL;
-    entry->has_goal = qa_q2f_save_actor(goal, &entry->goal);
+    entry->has_goal = qa_q2_save_actor(goal, &entry->goal);
     entry->last_time = hints->pursuers[i].last_time;
   }
   return true;
 }
-static qa_actor_id restore_reference(qa_q2f_game *game, qa_saved_actor_id saved) {
-  qa_q2f_owned_result resolved = game->host->actors.resolve_saved(game->host->actors.ctx, saved);
-  return resolved.has_value ? resolved.value.id : game->host->actors.reference_saved(game->host->actors.ctx, saved);
+static qa_actor_id restore_reference(qa_q2_game_services *game, qa_saved_actor_id saved) {
+  qa_owned_actor resolved; bool has_resolved = qa_session_actor_registry_resolve_saved(game->host->actors, saved, &resolved);
+  return has_resolved ? resolved.id : qa_session_actor_registry_reference_saved(game->host->actors, saved, NULL);
 }
-void qa_q2mpm_hints_restore(qa_q2mpm_hints *hints, qa_q2f_game *game, const qa_q2mpm_hints_checkpoint *checkpoint) {
+void qa_q2mpm_hints_restore(qa_q2mpm_hints *hints, qa_q2_game_services *game, const qa_q2mpm_hints_checkpoint *checkpoint) {
   hints->present = checkpoint->present;
   hints->start_count = 0;
   hints->node_count = 0;
@@ -669,7 +674,7 @@ void qa_q2mpm_hints_restore(qa_q2mpm_hints *hints, qa_q2f_game *game, const qa_q
     if (hints->pursuer_count == hints->pursuer_cap) {
       size_t cap = hints->pursuer_cap ? hints->pursuer_cap * 2 : 8;
       qa_q2mpm_hint_monster *grown = realloc(hints->pursuers, cap * sizeof *grown);
-      if (!grown) qa_q2f_error("Out of memory restoring hint pursuers");
+      if (!grown) qa_raise("Error", 0, 0, "Out of memory restoring hint pursuers");
       hints->pursuers = grown;
       hints->pursuer_cap = cap;
     }
@@ -752,6 +757,6 @@ bool qa_q2mpm_decode_hints_checkpoint(const qa_save_reader *reader, qa_q2mpm_hin
   bool invalid = out->start_count > MAX_HINT_CHAINS;
   for (size_t i = 0; i < out->node_count; i++)
     if (out->nodes[i].chain >= (double)out->start_count) invalid = true;
-  if (invalid) qa_save_reader_fail(reader, "%s", "invalid hint chain index");
+  if (invalid) { qa_q2mpm_hints_checkpoint_free(out); qa_save_reader_fail(reader, "%s", "invalid hint chain index"); }
   return true;
 }

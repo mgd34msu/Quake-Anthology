@@ -12,7 +12,7 @@ typedef struct byte_item { uint8_t *bytes; size_t length; } byte_item;
 struct qa_app_q1_client_network {
   qa_app_q1_client_network_options options;
   /* Opaque landed type with caller storage (no published size). */
-  _Alignas(16) unsigned char recording_storage[512];
+  qa_netquake_recording_state *recording_storage;
   bool has_sink; qa_app_q1_recording_sink sink; void *sink_token;
   qa_vec3 view_angles;
   qa_nq_connect_client handshake;
@@ -25,8 +25,10 @@ struct qa_app_q1_client_network {
   byte_item *reliable; size_t reliable_count, reliable_cap, reliable_head;
 };
 static void reliable_admit(qa_app_q1_client_network *n, uint8_t *bytes, size_t length) {
-  if (n->reliable_count - n->reliable_head >= 4096)
-    qa_range_error("event ring capacity exceeded");
+  if (n->reliable_count - n->reliable_head >= 4096) {
+    free(bytes);
+    qa_range_error("Event ring capacity exhausted (4096 undrained records); drain before admitting more");
+  }
   if (n->reliable_count == n->reliable_cap) {
     n->reliable_cap = n->reliable_cap ? n->reliable_cap * 2 : 16;
     n->reliable = realloc(n->reliable, n->reliable_cap * sizeof *n->reliable);
@@ -48,24 +50,25 @@ static void send_to(qa_app_q1_client_network *n, const qa_net_address *to,
 }
 qa_app_q1_client_network *qa_app_q1_client_network_create(qa_app_q1_client_network_options options) {
   if (options.seat.has_extension_flags)
-    qa_range_error("Native NetQuake does not negotiate private extensions");
+    qa_raise("Error", 0, 0, "Native NetQuake does not negotiate private extensions");
   qa_app_q1_client_network *n = calloc(1, sizeof *n);
   if (!n) return NULL;
   n->options = options;
   n->state = QA_APP_PHASE_CONNECTING;
-  qa_netquake_recording_state_init((qa_netquake_recording_state *)n->recording_storage);
+  n->recording_storage = qa_netquake_recording_state_create();
+  if (!n->recording_storage) qa_range_error("out of memory");
   qa_nq_connect_client_init(&n->handshake);
-  if (!qa_netquake_channel_init(&n->channel, QA_WIDE_MAX_MSGLEN, 0)) {
+  if (!qa_netquake_channel_init(&n->channel, QA_WIDE_MAX_MSGLEN, 1024)) {
     free(n); return NULL;
   }
   qa_q1_protocol_identity protocol = {"q1-netquake", 15, 0, 0};
-  qa_netquake_decoder_init(&n->decoder, protocol, "known-retail", false);
+  qa_netquake_decoder_init(&n->decoder, protocol, "known-retail", true);
   qa_netquake_signon_init(&n->signon, options.seat);
   return n;
 }
 void qa_app_q1_client_network_destroy(qa_app_q1_client_network *network) {
   if (!network) return;
-  qa_netquake_recording_state_destroy((qa_netquake_recording_state *)network->recording_storage);
+  qa_netquake_recording_state_free(network->recording_storage);
   qa_nq_connect_client_destroy(&network->handshake);
   qa_netquake_channel_destroy(&network->channel);
   qa_netquake_decoder_destroy(&network->decoder);
@@ -86,7 +89,7 @@ bool qa_app_q1_client_network_server_address(qa_app_q1_client_network *network, 
   return qa_net_address_clone(&network->peer, out) != 0;
 }
 void qa_app_q1_client_network_command(qa_app_q1_client_network *network, const char *text) {
-  if (!network->has_peer) qa_range_error("NetQuake client is not connected");
+  if (!network->has_peer) qa_raise("Error", 0, 0, "NetQuake client is not connected");
   qa_size_buf bytes;
   if (!qa_size_buf_init(&bytes, 8000, false)) qa_range_error("out of memory");
   qa_write_client_string_command(&bytes, text);
@@ -95,6 +98,38 @@ void qa_app_q1_client_network_command(qa_app_q1_client_network *network, const c
   qa_size_buf_destroy(&bytes);
   if (!payload) qa_range_error("out of memory");
   reliable_admit(network, payload, length);
+}
+static void destroy_event_slot(void *arg) { qa_receive_event_destroy(arg); }
+typedef struct datagram_scope {
+  qa_app_q1_client_network *n; qa_receive_event *packet; double now;
+  qa_channel_delivery delivery; uint8_t *reply;
+  qa_netquake_message *messages; size_t count;
+} datagram_scope;
+static void datagram_scope_release(datagram_scope *scope) {
+  free(scope->reply); scope->reply = NULL;
+  for (size_t i = 0; i < scope->count; i++) qa_netquake_message_destroy(&scope->messages[i]);
+  free(scope->messages); scope->messages = NULL; scope->count = 0;
+  free(scope->delivery.payload); scope->delivery.payload = NULL;
+}
+static void datagram_scope_free(void *arg) { datagram_scope_release(arg); }
+/* TS try { channel.receive; replies; decode; scoreboard check } */
+static void datagram_body(void *ctx) {
+  datagram_scope *scope = ctx;
+  qa_app_q1_client_network *n = scope->n;
+  size_t reply_length = 0;
+  qa_netquake_channel_receive(&n->channel, scope->packet->payload, scope->packet->length, scope->now,
+      &scope->delivery, &scope->reply, &reply_length);
+  n->last_received = scope->now;
+  if (scope->reply) {
+    n->options.transport.send(n->options.transport.ctx, &n->peer, scope->reply, reply_length);
+    free(scope->reply); scope->reply = NULL;
+  }
+  if (!scope->delivery.payload) return;
+  scope->messages = qa_netquake_decoder_decode(&n->decoder, scope->delivery.payload, scope->delivery.length, &scope->count);
+  for (size_t i = 0; i < scope->count; i++)
+    if (strcmp(scope->messages[i].kind, "server-info") == 0
+        && (scope->messages[i].max_clients < 1 || scope->messages[i].max_clients > 16))
+      qa_raise("Error", 0, 0, "Native NetQuake requires 1–16 scoreboard slots");
 }
 static void reject(qa_app_q1_client_network *n, const char *reason) {
   n->state = QA_APP_PHASE_REJECTED;
@@ -126,7 +161,11 @@ const void *const *qa_app_q1_client_network_poll(qa_app_q1_client_network *n,
       continue;
     }
     if (!n->has_peer) {
+      /* A malformed control reply throws to the caller as in TS; the event is released. */
+      qa_cleanup packet_guard;
+      qa_cleanup_push(&packet_guard, destroy_event_slot, &packet);
       qa_nq_connect_client_receive(&n->handshake, packet.payload, packet.length);
+      qa_cleanup_pop(&packet_guard);
       if (n->handshake.kind == 2) {
         reject(n, n->handshake.reason);
         qa_receive_event_destroy(&packet);
@@ -143,26 +182,27 @@ const void *const *qa_app_q1_client_network_poll(qa_app_q1_client_network *n,
       qa_receive_event_destroy(&packet);
       continue;
     }
-    qa_channel_delivery delivery = {0};
-    uint8_t *reply = NULL;
-    size_t reply_length = 0;
-    qa_netquake_channel_receive(&n->channel, packet.payload, packet.length, now,
-        &delivery, &reply, &reply_length);
-    n->last_received = now;
-    if (reply) {
-      send_to(n, &n->peer, reply, reply_length);
-      free(reply);
-    }
+    datagram_scope scope;
+    memset(&scope, 0, sizeof scope);
+    scope.n = n; scope.packet = &packet; scope.now = now;
+    qa_caught_error caught;
+    bool ok = qa_try(datagram_body, &scope, &caught);
     qa_receive_event_destroy(&packet);
-    if (!delivery.payload) continue;
-    size_t count = 0;
-    qa_netquake_message *messages = qa_netquake_decoder_decode(
-        &n->decoder, delivery.payload, delivery.length, &count);
-    qa_netquake_recording_state_observe((qa_netquake_recording_state *)n->recording_storage, messages, count);
+    if (!ok) {
+      /* A malformed server datagram ends this connection, not the process. */
+      datagram_scope_release(&scope);
+      reject(n, caught.message);
+      return NULL;
+    }
+    if (!scope.delivery.payload) continue;
+    qa_netquake_message *messages = scope.messages;
+    size_t count = scope.count;
+    qa_channel_delivery delivery = scope.delivery;
+    qa_cleanup messages_guard;
+    qa_cleanup_push(&messages_guard, datagram_scope_free, &scope);
+    qa_netquake_recording_state_observe(n->recording_storage, messages, count);
     for (size_t i = 0; i < count; i++) {
       if (strcmp(messages[i].kind, "server-info") == 0) {
-        if (messages[i].max_clients < 1 || messages[i].max_clients > 16)
-          qa_range_error("Native NetQuake requires 1–16 scoreboard slots");
         n->signon.stage = 0;
         n->movement_messages = 0;
         n->state = QA_APP_PHASE_LOADING;
@@ -185,9 +225,8 @@ const void *const *qa_app_q1_client_network_poll(qa_app_q1_client_network *n,
       if (strcmp(messages[i].kind, "entity") == 0) qa_netquake_signon_first_entity(&n->signon);
       if (strcmp(messages[i].kind, "disconnect") == 0) disconnected = true;
     }
-    for (size_t i = 0; i < count; i++) qa_netquake_message_destroy(&messages[i]);
-    free(messages);
-    free(delivery.payload);
+    qa_cleanup_pop(&messages_guard);
+    datagram_scope_release(&scope);
     if (disconnected) {
       n->state = QA_APP_PHASE_CLOSED;
       n->options.host.disconnected(n->options.host.ctx, "Server disconnected");
@@ -222,7 +261,7 @@ void qa_app_q1_client_network_submit(qa_app_q1_client_network *network,
     const void *const *commands, size_t count, double now) {
   (void)now;
   if (network->state != QA_APP_PHASE_ACTIVE || !network->has_peer) return;
-  if (count > 1) qa_range_error("A native NetQuake connection carries one player");
+  if (count > 1) qa_raise("Error", 0, 0, "A native NetQuake connection carries one player");
   for (size_t i = 0; i < count; i++) {
     qa_q1_user_command move = network->options.host.command(
         network->options.host.ctx, commands[i]);
@@ -250,7 +289,7 @@ void qa_app_q1_client_network_submit(qa_app_q1_client_network *network,
 void qa_app_q1_client_network_publish(qa_app_q1_client_network *network,
     const void *output, const void *const *events, size_t count, double now) {
   (void)network; (void)output; (void)events; (void)count; (void)now;
-  qa_range_error("Remote client cannot publish authoritative state");
+  qa_raise("Error", 0, 0, "Remote client cannot publish authoritative state");
 }
 void qa_app_q1_client_network_close(qa_app_q1_client_network *network) {
   if (network->options.transport.is_closed(network->options.transport.ctx)) return;
@@ -274,7 +313,7 @@ void qa_app_q1_recording_seed_free(qa_app_q1_recording_seed *seed) {
 void qa_app_q1_client_network_recording_seed(qa_app_q1_client_network *network,
     qa_app_q1_recording_seed *out) {
   if (network->state != QA_APP_PHASE_ACTIVE)
-    qa_range_error("Recording requires an active NetQuake connection");
+    qa_raise("Error", 0, 0, "Recording requires an active NetQuake connection");
   size_t *lengths = NULL;
   size_t count = 0;
   uint8_t **packets = qa_netquake_recording_state_seed((qa_netquake_recording_state *)network->recording_storage,
@@ -296,7 +335,7 @@ void qa_app_q1_client_network_recording_seed(qa_app_q1_client_network *network,
 void *qa_app_q1_client_network_recording_attach(qa_app_q1_client_network *network,
     qa_app_q1_recording_sink sink) {
   if (network->has_sink || network->state != QA_APP_PHASE_ACTIVE)
-    qa_range_error("NetQuake recording cannot attach");
+    qa_raise("Error", 0, 0, "NetQuake recording cannot attach");
   network->sink = sink;
   network->has_sink = true;
   network->sink_token = malloc(1);
@@ -312,9 +351,16 @@ void qa_app_q1_client_network_recording_detach(qa_app_q1_client_network *network
 static qa_app_network_phase net_phase(void *ctx) {
   return qa_app_q1_client_network_phase(ctx);
 }
-static const void *net_wire(void *ctx) {
+static qa_wire_selection source_wire(qa_protocol_identity protocol) {
+  qa_wire_selection wire;
+  memset(&wire, 0, sizeof wire);
+  wire.protocol = protocol;
+  return wire;
+}
+/* TS get wire(): { kind: "source", protocol: this.decoder.protocol } */
+static qa_wire_selection net_wire(void *ctx) {
   qa_app_q1_client_network *n = ctx;
-  return &n->decoder.protocol;
+  return source_wire(n->decoder.protocol);
 }
 static const void *const *net_poll(void *ctx, double now, size_t *out_count) {
   return qa_app_q1_client_network_poll(ctx, now, out_count);

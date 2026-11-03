@@ -2,9 +2,8 @@
  * Port of src/compat/qvm/legacy-bot-syscalls.ts. False means another
  * service owns the trap (TS null). Services are the landed
  * qa_qvm_bot_library_services (TS QvmBotLibraryServices, owner
- * src/compat/qvm/bot-library-syscalls.ts) whose library member is
- * qa_qvmx_bot_library; this module calls its actions/characters/
- * chat members, using chat_enter_chat_legacy for the legacy arity.
+ * src/compat/qvm/bot-library-syscalls.ts); this module calls the real
+ * BotLibrary's actions, characters and chat with the legacy arities.
  * BotActionFlag values (TS owner src/bots/behavior/library/
  * actions.ts) are inlined as constants.
  * GPL-2.0-or-later.

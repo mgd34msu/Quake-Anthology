@@ -7,6 +7,8 @@
 #include <string.h>
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
 static bool dialect_is(qa_cvar_registry *cvars, qa_command_dialect dialect) {
   return qa_cvar_registry_dialect(cvars) == dialect;
@@ -50,7 +52,7 @@ void qa_app_register_player_userinfo(qa_cvar_registry *cvars, double index, cons
   if (dialect_is(cvars, QA_COMMAND_DIALECT_Q1_NETQUAKE)) {
     qa_cvar_read read;
     char fallback[64];
-    snprintf(fallback, sizeof fallback, "Player %lld", (long long)(index + 1));
+    snprintf(fallback, sizeof fallback, "Player %s", QA_JS_NUMBER(index + 1));
     const char *name_value = fallback;
     char *kept_name = NULL, *kept_color = NULL;
     if (find_cvar(cvars, "name", &read)) { kept_name = read.value; read.value = NULL; qa_cvar_read_free(&read); name_value = kept_name; }
@@ -62,7 +64,7 @@ void qa_app_register_player_userinfo(qa_cvar_registry *cvars, double index, cons
     return;
   }
   char player[64];
-  snprintf(player, sizeof player, "Player %lld", (long long)(index + 1));
+  snprintf(player, sizeof player, "Player %s", QA_JS_NUMBER(index + 1));
   register_cvar(cvars, "name", player, flags);
   if (dialect_is(cvars, QA_COMMAND_DIALECT_Q1_QUAKEWORLD)) {
     register_cvar(cvars, "topcolor", "0", flags);
@@ -136,13 +138,14 @@ void qa_app_apply_character_appearance(qa_cvar_registry *cvars, qa_app_character
   double bottom = clamp_color(options.has_bottom_color, options.bottom_color);
   if (dialect_is(cvars, QA_COMMAND_DIALECT_Q1_NETQUAKE)) {
     char packed[32];
-    snprintf(packed, sizeof packed, "%lld", (long long)(((int)top << 4) | (int)bottom));
+    /* String((top << 4) | bottom): a NaN color is 0 through ToInt32. */
+    snprintf(packed, sizeof packed, "%s", QA_JS_NUMBER((double)((qa_js_to_int32(top) << 4) | qa_js_to_int32(bottom))));
     set_if_present(cvars, "_cl_color", packed);
     set_if_present(cvars, "color", packed);
   } else if (dialect_is(cvars, QA_COMMAND_DIALECT_Q1_QUAKEWORLD)) {
     char top_text[32], bottom_text[32];
-    snprintf(top_text, sizeof top_text, "%lld", (long long)top);
-    snprintf(bottom_text, sizeof bottom_text, "%lld", (long long)bottom);
+    snprintf(top_text, sizeof top_text, "%s", QA_JS_NUMBER(top));
+    snprintf(bottom_text, sizeof bottom_text, "%s", QA_JS_NUMBER(bottom));
     set_if_present(cvars, "topcolor", top_text);
     set_if_present(cvars, "bottomcolor", bottom_text);
   }

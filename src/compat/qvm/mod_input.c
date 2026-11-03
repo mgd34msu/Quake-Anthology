@@ -67,7 +67,7 @@ static void validate_pointer(qa_qvm_mod_input *input, const qa_qvm_mod_input_poi
   }
 }
 
-static int64_t resolve_address(const qa_qvm_mod_input_pointer *pointer, qa_qvmy_function_call *call) {
+static int64_t resolve_address(const qa_qvm_mod_input_pointer *pointer, qa_qvm_module_function_call *call) {
   int64_t address;
   if (!pointer->is_global) {
     size_t offset = (size_t)(int64_t)pointer->index * 4;
@@ -253,7 +253,7 @@ static void reconcile(qa_qvm_mod_input *input, capture *capture, bool publish) {
   process_commands(input, capture, capture->commands, capture->command_count, publish);
 }
 
-static int32_t proceed_call(qa_qvmy_function_call *call) {
+static int32_t proceed_call(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                      : call->proceed_async(call->call_ctx);
 }
@@ -271,7 +271,22 @@ static bool is_selected(const capture *capture, const qa_qvm_mod_input_output *o
   return false;
 }
 
-static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
+typedef struct invoke_unwind_ctx {
+  capture *owner;
+  size_t start;
+  const qa_qvm_mod_input_output **selected;
+  command_capture *local;
+} invoke_unwind_ctx;
+
+/* TS remove() in the finally around proceed. */
+static void invoke_unwind(void *ctx) {
+  invoke_unwind_ctx *unwind = ctx;
+  unwind->owner->command_count = unwind->start;
+  free((void *)unwind->selected);
+  free(unwind->local);
+}
+
+static int32_t invoke_hook(void *ctx, qa_qvm_module_function_call *call) {
   declaration_group *group = ctx;
   qa_qvm_mod_input *input = group->input;
   capture **captures = capture_stack(input);
@@ -282,10 +297,12 @@ static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
   const qa_qvm_mod_input_output **selected = xmalloc(group->count * sizeof *selected);
   size_t selected_count = 0;
   for (size_t i = 0; i < group->count; i++) {
+    int64_t left;
+    int64_t right;
     const qa_qvm_mod_input_output *output = group->declarations[i];
     if (is_selected(capture, output) &&
-        resolve_address(&output->actor_pointer, call) ==
-            input->operations.pointer(input->operations.ctx, actor, output->actor_record))
+        (left = resolve_address(&output->actor_pointer, call), right = input->operations.pointer(input->operations.ctx, actor, output->actor_record), left ==
+            right))
       selected[selected_count++] = output;
   }
   command_capture *local = xmalloc(selected_count * sizeof *local);
@@ -307,7 +324,11 @@ static int32_t invoke_hook(void *ctx, qa_qvmy_function_call *call) {
     capture->commands[capture->command_count++] = local[local_count];
     local_count++;
   }
+  invoke_unwind_ctx unwind = {capture, start, selected, local};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, invoke_unwind, &unwind);
   int32_t result = proceed_call(call);
+  qa_cleanup_pop(&guard);
   if (capture_active(input, capture)) {
     for (size_t i = 0; i < selected_count; i++) {
       if (strcmp(selected[i]->kind, "handler") != 0) continue;
@@ -411,8 +432,7 @@ void qa_qvm_mod_input_destroy(qa_qvm_mod_input *input) {
   }
   free(input->removal_ids);
   free(input->applications);
-  capture **captures = capture_stack(input);
-  for (size_t i = 0; i < input->capture_count; i++) free_capture(captures[i]);
+  /* Every capture belongs to a running qa_qvm_mod_input_run_output frame. */
   free(input->captures);
   memset(input, 0, sizeof *input);
 }
@@ -463,6 +483,18 @@ void qa_qvm_mod_input_open(qa_qvm_mod_input *input, qa_mod_client_application *a
   *out_remove_ctx = state;
 }
 
+typedef struct output_unwind_ctx {
+  qa_qvm_mod_input *input;
+  capture *created;
+} output_unwind_ctx;
+
+/* TS finally { this.captures.pop(); }. */
+static void output_finish(void *ctx) {
+  output_unwind_ctx *unwind = ctx;
+  if (unwind->input->capture_count != 0) unwind->input->capture_count--;
+  free_capture(unwind->created);
+}
+
 qa_mod_client_input_output *qa_qvm_mod_input_run_output(qa_qvm_mod_input *input,
                                                     const qa_qvm_mod_input_output *outputs, size_t output_count,
                                                     qa_mod_client_application *application,
@@ -491,19 +523,24 @@ qa_mod_client_input_output *qa_qvm_mod_input_run_output(qa_qvm_mod_input *input,
       created->field_count++;
     }
   }
+  output_unwind_ctx unwind = {input, created};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, output_finish, &unwind);
   run(run_ctx);
+  qa_cleanup_pop(&guard);
   qa_mod_client_input_output *result = NULL;
   *out_count = 0;
   if (capture_active(input, created)) {
     reconcile(input, created, true);
     size_t total = created->change_count + created->consumed_count;
     result = xmalloc(total * sizeof *result);
-    memcpy(result, created->changes, created->change_count * sizeof *result);
-    memcpy(result + created->change_count, created->consumed, created->consumed_count * sizeof *result);
+    if (created->change_count != 0)
+      memcpy(result, created->changes, created->change_count * sizeof *result);
+    if (created->consumed_count != 0)
+      memcpy(result + created->change_count, created->consumed, created->consumed_count * sizeof *result);
     *out_count = total;
   }
-  input->capture_count--;
-  free_capture(created);
+  output_finish(&unwind);
   return result;
 }
 
@@ -512,7 +549,5 @@ void qa_qvm_mod_input_close(qa_qvm_mod_input *input) {
     qa_qvm_module_unbind(input->operations.module, input->removal_ids[i]);
   input->removal_count = 0;
   input->application_count = 0;
-  capture **captures = capture_stack(input);
-  for (size_t i = 0; i < input->capture_count; i++) free_capture(captures[i]);
-  input->capture_count = 0;
+  input->capture_count = 0; /* the running output frames free their own captures */
 }

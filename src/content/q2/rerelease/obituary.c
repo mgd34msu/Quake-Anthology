@@ -2,6 +2,7 @@
 #include "qa/content/q2/rerelease/obituary.h"
 #include <stdio.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 typedef struct { long k; const char *v; } kv;
 static const kv GENERIC[] = {{23,"suicide"},{22,"falling"},{20,"crush"},{17,"water"},{18,"slime"},{19,"lava"},
@@ -16,13 +17,13 @@ static const char *find_kv(const kv *t, size_t n, long k) {
   for (size_t i = 0; i < n; i++) if (t[i].k == k) return t[i].v;
   return NULL;
 }
-qa_q2rr_obituary qa_q2_rerelease_obituary(qa_q2rr_player_state *victim, qa_q2rr_player_state *attacker,
+qa_q2rr_obituary qa_q2_rerelease_obituary(qa_q2_base_player_state *victim, qa_q2_base_player_state *attacker,
                                           double cause, qa_q2_mode mode, bool no_point_loss,
                                           void *score_ctx,
-                                          void (*score)(void *ctx, qa_q2rr_player_state *r, double change)) {
-  long c = (long)(int32_t)cause;
-  long means = c & ~0x8000000L;
-  bool friendly = (c & 0x8000000L) != 0 || (mode == QA_Q2_MODE_COOP && attacker);
+                                          void (*score)(void *ctx, qa_q2_base_player_state *r, double change)) {
+  int32_t c = qa_js_to_int32(cause); /* (int32_t) of a double is UB out of range */
+  int32_t means = c & ~0x8000000;
+  bool friendly = (c & 0x8000000) != 0 || (mode == QA_Q2_MODE_COOP && attacker);
   qa_q2rr_obituary out; memset(&out, 0, sizeof out);
   const char *source = NULL;
   char buf[96];

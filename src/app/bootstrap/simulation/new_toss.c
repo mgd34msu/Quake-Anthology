@@ -2,6 +2,7 @@
 #include "qa/app/bootstrap/simulation/new_toss.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 typedef struct ctxn { qa_numeric_operations n; } ctxn;
 static qa_vec3 vec(qa_numeric_operations *n, double x, double y, double z) {
   return (qa_vec3){n->store(n->ctx, x), n->store(n->ctx, y), n->store(n->ctx, z)};
@@ -52,9 +53,9 @@ const char *qa_app_sim_step_q2_new_toss(qa_owned_actor actor, double elapsed, qa
   if (moving_v(motion.angular_velocity)) {
     qa_vec3 angles = add_v(n, body.angles, scale_v(n, motion.angular_velocity, elapsed));
     double adjustment = n->store(n->ctx, n->multiply(n->ctx, n->multiply(n->ctx, elapsed, host.stop_speed), 6));
-    double fx = motion.angular_velocity.x > 0 ? fmax(0, n->store(n->ctx, n->subtract(n->ctx, motion.angular_velocity.x, adjustment))) : fmin(0, n->store(n->ctx, n->add(n->ctx, motion.angular_velocity.x, adjustment)));
-    double fy = motion.angular_velocity.y > 0 ? fmax(0, n->store(n->ctx, n->subtract(n->ctx, motion.angular_velocity.y, adjustment))) : fmin(0, n->store(n->ctx, n->add(n->ctx, motion.angular_velocity.y, adjustment)));
-    double fz = motion.angular_velocity.z > 0 ? fmax(0, n->store(n->ctx, n->subtract(n->ctx, motion.angular_velocity.z, adjustment))) : fmin(0, n->store(n->ctx, n->add(n->ctx, motion.angular_velocity.z, adjustment)));
+    double fx = motion.angular_velocity.x > 0 ? qa_js_max(0, n->store(n->ctx, n->subtract(n->ctx, motion.angular_velocity.x, adjustment))) : qa_js_min(0, n->store(n->ctx, n->add(n->ctx, motion.angular_velocity.x, adjustment)));
+    double fy = motion.angular_velocity.y > 0 ? qa_js_max(0, n->store(n->ctx, n->subtract(n->ctx, motion.angular_velocity.y, adjustment))) : qa_js_min(0, n->store(n->ctx, n->add(n->ctx, motion.angular_velocity.y, adjustment)));
+    double fz = motion.angular_velocity.z > 0 ? qa_js_max(0, n->store(n->ctx, n->subtract(n->ctx, motion.angular_velocity.z, adjustment))) : qa_js_min(0, n->store(n->ctx, n->add(n->ctx, motion.angular_velocity.z, adjustment)));
     body.angles = angles;
     qa_shared_body_table_write(host.bodies, actor, body);
     host.write_angular_velocity(host.ctx, vec(n, fx, fy, fz));
@@ -62,7 +63,7 @@ const char *qa_app_sim_step_q2_new_toss(qa_owned_actor actor, double elapsed, qa
   double speed = length_v(n, velocity);
   double water_level = 0, water_type0 = 0; host.water(host.ctx, &water_level, &water_type0);
   double loss = water_level != 0 ? n->multiply(n->ctx, 6, water_level) : !has_ground ? 6 : 36;
-  double newspeed = n->store(n->ctx, n->divide(n->ctx, fmax(0, n->store(n->ctx, n->subtract(n->ctx, speed, loss))), speed));
+  double newspeed = n->store(n->ctx, n->divide(n->ctx, qa_js_max(0, n->store(n->ctx, n->subtract(n->ctx, speed, loss))), speed));
   read = qa_shared_body_table_read(host.bodies, actor.id);
   if (!read.has_value) return "removed";
   body = read.value; body.velocity = scale_v(n, velocity, newspeed);
@@ -75,9 +76,9 @@ const char *qa_app_sim_step_q2_new_toss(qa_owned_actor actor, double elapsed, qa
   if (!read.has_value) return "removed";
   body = read.value;
   double wl2 = 0, wt2 = 0; host.water(host.ctx, &wl2, &wt2);
-  bool was_in_water = (((int)wt2 & 56) != 0);
+  bool was_in_water = ((qa_js_to_int32(wt2) & 56) != 0);
   double water_type = host.point_contents(host.ctx, body.origin);
-  bool in_water = (((int)water_type & 56) != 0);
+  bool in_water = ((qa_js_to_int32(water_type) & 56) != 0);
   host.write_water(host.ctx, in_water ? 1 : 0, water_type);
   if (was_in_water != in_water) host.water_sound(host.ctx, in_water ? old_origin : body.origin);
   return qa_session_actor_registry_is_live(host.actors, actor.id) ? "moved" : "removed";

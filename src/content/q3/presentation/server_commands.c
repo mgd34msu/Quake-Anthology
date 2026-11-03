@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/server-commands.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/server_commands.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -20,7 +22,7 @@ const char *qa_q3_pres_client_server_command_sound_name(qa_q3_pres_client_server
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -101,7 +103,7 @@ static void at_check(double index, double length) {
     if (index == trunc(index) && fabs(index) < 1e21) {
       qa_range_error("Source array index %lld outside %lld", (long long)index, (long long)length);
     }
-    qa_range_error("Source array index %g outside %g", index, length);
+    qa_range_error("Source array index %s outside %s", QA_JS_NUMBER(index), QA_JS_NUMBER(length));
   }
 }
 
@@ -269,7 +271,7 @@ static qa_q3_base_game_type valid_game_type(int32_t value) {
     case QA_Q3_BASE_GT_1FCTF:
     case QA_Q3_BASE_GT_OBELISK:
     case QA_Q3_BASE_GT_HARVESTER: return (qa_q3_base_game_type)value;
-    default: qa_range_error("Invalid server game type %lld", (long long)value);
+    default: return (qa_q3_base_game_type)value; /* TS returns any other value unchanged */
   }
 }
 static double order_task(const char *command) {
@@ -345,9 +347,9 @@ static void flag_status(runtime_t *runtime) {
   qa_q3_pres_client_game_static_state *state = runtime->host.static_state;
   size_t length = strlen(value);
   if (state->game_type == QA_Q3_BASE_GT_CTF) {
-    if (length < 1) qa_range_error("CTF flag status leaves source bytes uninitialized");
-    state->redflag = (unsigned char)value[0] - 48;
-    state->blueflag = (length == 1 ? 0 : (unsigned char)value[1]) - 48;
+    state->redflag = (length == 0 ? 0 : (unsigned char)value[0]) - 48;
+    /* TS value.charCodeAt(1) is NaN for an empty string. */
+    state->blueflag = (length == 1 ? 0 : length == 0 ? NAN : (double)(unsigned char)value[1]) - 48;
   } else if (runtime->host.state->product == QA_Q3_BASE_PRODUCT_MISSIONPACK &&
              state->game_type == QA_Q3_BASE_GT_1FCTF) {
     state->flag_status = (length == 0 ? 0 : (unsigned char)value[0]) - 48;
@@ -412,12 +414,15 @@ static void parse_scores(runtime_t *runtime, const char *const *command, size_t 
   }
 }
 static void parse_team_info(runtime_t *runtime, const char *const *command, size_t count) {
+  /* TEAM_MAXOVERLAY is 32. A server chooses these numbers, so anything outside the tables is ignored. */
   int32_t team_count = argv_integer(command, count, 1);
+  if (team_count > 32) team_count = 32;
+  if (team_count < 0) team_count = 0;
   qa_q3_pres_client_game_state *state = runtime->host.state;
-  if (team_count > 8) qa_range_error("Team overlay exceeds TEAM_MAXOVERLAY");
   state->num_sorted_team_players = team_count;
   for (int32_t i = 0; i < team_count; i++) {
     int32_t client = argv_integer(command, count, i * 6 + 2);
+    if (client < 0 || client >= 64) { state->num_sorted_team_players = i; return; }
     qa_q3_pres_client_info *info = runtime->host.client_info(runtime->host.clients_ctx, client);
     state->sorted_team_players[i] = client;
     info->location = argv_integer(command, count, i * 6 + 3);
@@ -677,7 +682,7 @@ static bool map_restart(runtime_t *runtime) {
       if (state->time == trunc(state->time) && fabs(state->time) < 1e21) {
         snprintf(time_text, sizeof time_text, "%lld", (long long)state->time);
       } else {
-        snprintf(time_text, sizeof time_text, "%g", state->time);
+        snprintf(time_text, sizeof time_text, "%s", QA_JS_NUMBER(state->time));
       }
       runtime->host.set_cvar(runtime->host.ctx, "ui_matchStartTime", time_text);
       qa_cvar_snapshot demo_name, demo_flag;
@@ -987,7 +992,7 @@ bool qa_q3_pres_client_server_command_runtime_load_voice_chats(runtime_t *runtim
   if (used == trunc(used) && fabs(used) < 1e21) {
     snprintf(message, sizeof message, "voice chat memory size = %lld\n", (long long)used);
   } else {
-    snprintf(message, sizeof message, "voice chat memory size = %g\n", used);
+    snprintf(message, sizeof message, "voice chat memory size = %s\n", QA_JS_NUMBER(used));
   }
   runtime->host.print(runtime->host.ctx, message);
   return true;
@@ -1138,7 +1143,7 @@ static bool add_buffered_voice_chat(runtime_t *runtime, buffered_voice voice) {
   if (state->voice_chat_buffer_in == state->voice_chat_buffer_out) {
     at_check(state->voice_chat_buffer_out, 32);
     if (!play_voice_chat(runtime, &runtime->voices[(size_t)state->voice_chat_buffer_out])) return false;
-    state->voice_chat_buffer_out++;
+    state->voice_chat_buffer_out = fmod(state->voice_chat_buffer_out + 1, 32);
   }
   return true;
 }

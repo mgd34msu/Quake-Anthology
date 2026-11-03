@@ -1,5 +1,6 @@
 /* Port of src/content/mods/qvm-items.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/qvm_items.h"
+#include "qa/content/mods/declaration.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -72,7 +73,7 @@ static const char *fns(const qa_save_reader *r, const char *name) {
   return v;
 }
 static void *xalloc(const qa_save_reader *r, size_t count, size_t size) {
-  void *p = count > 0 ? calloc(count, size) : NULL;
+  void *p = count > 0 ? qa_mod_declaration_calloc(count, size) : NULL;
   if (count > 0 && p == NULL) qa_save_reader_fail(r, "out of memory");
   return p;
 }
@@ -83,7 +84,7 @@ static void *xalloc(const qa_save_reader *r, size_t count, size_t size) {
  * RangeError message. */
 static char *normalize_resource_path(const char *path) {
   size_t n = strlen(path);
-  char *out = (char *)malloc(n + 1);
+  char *out = (char *)qa_mod_declaration_malloc(n + 1);
   if (out == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i <= n; i++) out[i] = path[i] == '\\' ? '/' : path[i];
   bool bad = n == 0;
@@ -421,7 +422,7 @@ qa_qvm_mod_items *qa_read_qvm_mod_items(
     void *read_ctx) {
   static const char *const admissions[] = {"add", "replace-primary"};
   static const char *const def_kinds[] = {"counter", "weapon"};
-  qa_qvm_mod_items *items = (qa_qvm_mod_items *)calloc(1, sizeof *items);
+  qa_qvm_mod_items *items = (qa_qvm_mod_items *)qa_mod_declaration_calloc(1, sizeof *items);
   if (items == NULL) return NULL;
   {
     qa_save_reader list = field(reader, "definitions");

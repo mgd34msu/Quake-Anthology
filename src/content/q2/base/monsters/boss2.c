@@ -20,7 +20,10 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   return qa_q2bm_boss_check_attack(c, true, false);
 }
-static const qa_q2bm_sound_spec search_spec = {"bosshovr/bhvunqv1.wav", 2, 1};
+static void search_fn(void *ctx, qa_q2m_context *c) {
+  (void)ctx;
+  if (q2bm_rnd(c->game) < 0.5) q2bm_sound(c->game, c->entity, "bosshovr/bhvunqv1.wav", true, 2, true, 1, true, 0);
+}
 static void initialize_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   c->entity->laser_immune = true;
@@ -93,7 +96,7 @@ const qa_q2m_definition qa_q2bm_boss2_definition = {
   .walk = {(void *)"boss2_move_walk", qa_q2bm_move_handler_fn},
   .run = {NULL, run_fn}, .attack = {NULL, attack_fn},
   .check_attack = check_attack_fn,
-  .search = {(void *)&search_spec, qa_q2bm_sound_handler_fn},
+  .search = {NULL, search_fn},
   .initialize = {NULL, initialize_fn},
   .reactions = {NULL, pain_fn, die_fn},
 };

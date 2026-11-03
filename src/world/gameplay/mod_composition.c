@@ -10,8 +10,7 @@
 
 /* TS throws plain Error here (not RangeError); abort identically. */
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 struct qa_mod_operation_entry {
@@ -123,10 +122,20 @@ typedef struct next_state {
   void *request; /* dispatch-owned request buffer, replaced by next() */
   bool open;
   bool called;
+  bool failed;               /* TS failure.value !== null */
+  qa_caught_error failure;
 } next_state;
 
-static void next_call(void *ctx, const void *request, void *out_result) {
-  next_state *state = ctx;
+typedef struct next_args {
+  next_state *state;
+  const void *request;
+  void *out_result;
+} next_args;
+static void next_body(void *arg) {
+  next_args *args = arg;
+  next_state *state = args->state;
+  const void *request = args->request;
+  void *out_result = args->out_result;
   char message[2048];
   if (!state->open) {
     (void)snprintf(message, sizeof message, "Mod continuation for %s is closed: %s/%s",
@@ -144,6 +153,26 @@ static void next_call(void *ctx, const void *request, void *out_result) {
   state->called = true;
   memcpy(state->request, request, state->operation->request_size);
   state->canonical.call(state->canonical.ctx, request, out_result);
+}
+/* The continuation records any throw before rethrowing it, so dispatch rethrows
+ * it even when the replacement catches and returns normally. */
+static void next_call(void *ctx, const void *request, void *out_result) {
+  next_state *state = ctx;
+  next_args args = {state, request, out_result};
+  if (!qa_try(next_body, &args, &state->failure)) {
+    state->failed = true;
+    qa_rethrow(&state->failure);
+  }
+}
+
+typedef struct dispatch_buffers {
+  void *request, *scratch, *snapshot;
+} dispatch_buffers;
+static void dispatch_release(void *arg) {
+  dispatch_buffers *buffers = arg;
+  free(buffers->request);
+  free(buffers->scratch);
+  free(buffers->snapshot);
 }
 
 void qa_mod_operation_dispatch(qa_mod_operation *operation, const void *input,
@@ -171,6 +200,9 @@ void qa_mod_operation_dispatch(qa_mod_operation *operation, const void *input,
   void *scratch = malloc(operation->request_size != 0 ? operation->request_size : 1);
   if (request == NULL || scratch == NULL) abort();
   memcpy(request, input, operation->request_size);
+  dispatch_buffers buffers = {request, scratch, snapshot};
+  qa_cleanup node;
+  qa_cleanup_push(&node, dispatch_release, &buffers);
   for (size_t i = 0; i < count; i++) {
     if (!snapshot[i].active) continue;
     /* Re-check liveness: an earlier transform may have unregistered it. */
@@ -202,11 +234,13 @@ void qa_mod_operation_dispatch(qa_mod_operation *operation, const void *input,
     state.request = request;
     state.open = true;
     state.called = false;
+    state.failed = false;
     qa_mod_next next;
     next.ctx = &state;
     next.call = next_call;
     replacement->contribution.replace(replacement->contribution.ctx, request, next, out_result);
     state.open = false;
+    if (state.failed) qa_rethrow(&state.failure);
   } else {
     canonical.call(canonical.ctx, request, out_result);
   }
@@ -220,6 +254,7 @@ void qa_mod_operation_dispatch(qa_mod_operation *operation, const void *input,
     if (!live) continue;
     snapshot[i].contribution.observe(snapshot[i].contribution.ctx, request, out_result);
   }
+  qa_cleanup_pop(&node);
   free(request);
   free(scratch);
   free(snapshot);

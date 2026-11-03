@@ -10,18 +10,15 @@
 
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 static const char *const FIXED_COOP_MAPS[] = {
     "jail2", "jail4", "mine1", "mine2", "mine3", "mine4", "lab",
     "boss1", "fact3", "biggun", "space", "command", "power2", "strike"};
 
-static bool equals_lower(const char *a, const char *b) {
-  while (*a && *b) {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    a++; b++;
-  }
-  return *a == *b;
-}
+/* TS a.toLowerCase() === b.toLowerCase() over entity targetnames (Latin-1 byte strings). */
+static bool equals_lower(const char *a, const char *b) { return qa_js_latin1_equals_ignore_case(a, b); }
 
 static int64_t source_slot_of(qa_q2_game_services *game, qa_q2_entity *entity) {
   qa_actor_source_result source = qa_session_actor_registry_source_of(game->host->actors, entity->actor.id);
@@ -68,15 +65,25 @@ static void coop_fix_fn(void *c, qa_q2_entity *self, qa_q2_game_services *active
   size_t count = 0;
   qa_q2_entity **starts = qa_q2_entities_named(active, "info_player_start", &count);
   for (size_t i = 0; i < count; i++) {
+    qa_vec3 a;
+    qa_vec3 b;
     qa_q2_entity *start = starts[i];
     if (start->targetname[0] != '\0' &&
-        qa_q2_length(qa_q2_subtract(qa_q2_game_body(active, start).origin, qa_q2_game_body(active, self).origin)) < 384) {
+        qa_q2_length((a = qa_q2_game_body(active, start).origin, b = qa_q2_game_body(active, self).origin, qa_q2_subtract(a, b))) < 384) {
       if (!equals_lower(self->targetname, start->targetname)) self->targetname = start->targetname;
       break;
     }
   }
   free(starts);
 }
+
+/* TS q2PlayerSpawnCallbacks: the coop spot thinks are named source callbacks. */
+static const qa_q2_named_think PLAYER_SPAWN_THINKS[] = {
+  {"SP_CreateCoopSpots", {NULL, security_spots_fn}},
+  {"SP_FixCoopSpots", {NULL, coop_fix_fn}},
+};
+static const qa_q2_callback_definitions PLAYER_SPAWN_CALLBACKS = {.think = PLAYER_SPAWN_THINKS, .think_count = 2};
+const qa_q2_callback_definitions *qa_q2_player_spawn_callbacks(void) { return &PLAYER_SPAWN_CALLBACKS; }
 
 bool qa_q2_player_spawns_spawn(qa_q2_entity *entity, qa_q2_game_services *game) {
   const char *classname = entity->classname;
@@ -114,7 +121,7 @@ static bool spawn_module_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services
   return qa_q2_player_spawns_spawn(entity, game);
 }
 qa_q2_spawn_module qa_q2_get_player_spawns(void) {
-  return (qa_q2_spawn_module){NULL, NULL, NULL, spawn_module_fn};
+  return (qa_q2_spawn_module){NULL, &PLAYER_SPAWN_CALLBACKS, NULL, spawn_module_fn};
 }
 
 double qa_q2_players_range(qa_q2_game_services *game, qa_q2_entity *spot) {
@@ -126,7 +133,7 @@ double qa_q2_players_range(qa_q2_game_services *game, qa_q2_entity *spot) {
     if ((combat.has_value ? combat.value.health : 0) <= 0) continue;
     qa_body_state_result body = qa_shared_body_table_read(game->host->bodies, players[i]);
     if (body.has_value)
-      closest = fmin(closest, qa_q2_length(qa_q2_subtract(body.value.origin, qa_q2_game_body(game, spot).origin)));
+      closest = qa_js_min(closest, qa_q2_length(qa_q2_subtract(body.value.origin, qa_q2_game_body(game, spot).origin)));
   }
   return closest;
 }
@@ -136,7 +143,7 @@ qa_q2_entity *qa_q2_select_spawn(qa_q2_game_services *game, qa_q2_base_player_st
   if (game->options.mode == QA_Q2_MODE_DEATHMATCH) {
     size_t count = 0;
     qa_q2_entity **spots = qa_q2_entities_named(game, "info_player_deathmatch", &count);
-    if (((int64_t)game->options.deathmatch_flags & 512) != 0) {
+    if ((qa_js_to_int32(qa_q2_options_deathmatch_flags(&game->options)) & 512) != 0) {
       double best = 0;
       for (size_t i = 0; i < count; i++) {
         double distance = qa_q2_players_range(game, spots[i]);

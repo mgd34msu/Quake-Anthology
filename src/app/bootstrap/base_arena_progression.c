@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/base-arena-progression.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/base_arena_progression.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 #include "qa/core/game_numeric.h"
 #include "qa/core/info_string.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static bool reg_cvar(qa_cvar_registry *r, const char *name, const char *value, double flags, void *unused) {
   (void)unused;
@@ -46,9 +48,7 @@ static void write_key(qa_app_base_arena_progression *p, const char *name, const 
   bool found = qa_cvar_registry_get(p->cvars, name, &read);
   if (found) current = read.value;
   char buf[64];
-  snprintf(buf, sizeof buf, "%.17g", value);
-  /* String(integer-valued number) has no trailing fraction in JS. */
-  if (is_int(value) && fabs(value) < 1e21) snprintf(buf, sizeof buf, "%.0f", value);
+  snprintf(buf, sizeof buf, "%s", QA_JS_NUMBER(value)); /* String(value) */
   qa_info_options options = {QA_COMMAND_DIALECT_Q3, 1024, QA_CVAR_INFO_CLIENT_USERINFO, true, info_print_throw, NULL};
   char *text = qa_set_info_value(current, key, buf, &options);
   set_cvar(p->cvars, name, text ? text : "", true, NULL);
@@ -76,7 +76,7 @@ void qa_app_base_arena_progression_destroy(qa_app_base_arena_progression *p) { f
 qa_app_arena_best qa_app_base_arena_progression_best(qa_app_base_arena_progression *p, double level) {
   double rank = 0, skill = 0;
   char name[32], key[32];
-  snprintf(key, sizeof key, "l%.0f", level);
+  snprintf(key, sizeof key, "l%s", QA_JS_NUMBER(level));
   for (int n = 1; n <= 5; n++) {
     snprintf(name, sizeof name, "g_spScores%d", n);
     double current = read_key(p, name, key);
@@ -85,11 +85,11 @@ qa_app_arena_best qa_app_base_arena_progression_best(qa_app_base_arena_progressi
   return (qa_app_arena_best){rank, skill};
 }
 double qa_app_base_arena_progression_award(qa_app_base_arena_progression *p, double medal) {
-  char key[32]; snprintf(key, sizeof key, "a%.0f", medal);
+  char key[32]; snprintf(key, sizeof key, "a%s", QA_JS_NUMBER(medal));
   return read_key(p, "g_spAwards", key);
 }
 bool qa_app_base_arena_progression_movie_unlocked(qa_app_base_arena_progression *p, double tier) {
-  char key[32]; snprintf(key, sizeof key, "tier%.0f", tier);
+  char key[32]; snprintf(key, sizeof key, "tier%s", QA_JS_NUMBER(tier));
   return tier > 0 && read_key(p, "g_spVideos", key) != 0;
 }
 double qa_app_base_arena_progression_current_level(qa_app_base_arena_progression *p) {
@@ -120,8 +120,8 @@ double qa_app_base_arena_progression_completed_tier(qa_app_base_arena_progressio
 typedef struct { qa_app_base_arena_progression *p; qa_app_arena_progression_result *out; } grant_ctx;
 static void grant(grant_ctx *ctx, double medal, double count, double display) {
   if (count == 0) return;
-  char key[32]; snprintf(key, sizeof key, "a%.0f", medal);
-  double next = (double)(int32_t)(qa_app_base_arena_progression_award(ctx->p, medal) + count); /* JS |0 */
+  char key[32]; snprintf(key, sizeof key, "a%s", QA_JS_NUMBER(medal));
+  double next = (double)qa_js_to_int32(qa_app_base_arena_progression_award(ctx->p, medal) + count); /* JS |0 */
   write_key(ctx->p, "g_spAwards", key, next);
   if (display != 0) {
     ctx->out->awards = realloc(ctx->out->awards, (ctx->out->award_count + 1) * sizeof *ctx->out->awards);
@@ -134,8 +134,8 @@ qa_app_arena_progression_result qa_app_base_arena_progression_record(qa_app_base
     qa_range_error("Invalid arena result");
   qa_app_arena_progression_result out = {result.rank, -1, -1, 0, NULL, 0};
   char name[32], key[32];
-  snprintf(name, sizeof name, "g_spScores%.0f", result.skill);
-  snprintf(key, sizeof key, "l%.0f", result.level);
+  snprintf(name, sizeof name, "g_spScores%s", QA_JS_NUMBER(result.skill));
+  snprintf(key, sizeof key, "l%s", QA_JS_NUMBER(result.level));
   double old = read_key(p, name, key);
   if (old == 0 || old > result.rank) write_key(p, name, key, result.rank);
   grant_ctx ctx = {p, &out};
@@ -153,7 +153,7 @@ qa_app_arena_progression_result qa_app_base_arena_progression_record(qa_app_base
   if (result.perfect) grant(&ctx, 5, 1, 1);
   double tier = result.rank == 1 ? qa_app_base_arena_progression_completed_tier(p, result.level) : -1;
   double unlocked = tier >= 0 && !qa_app_base_arena_progression_movie_unlocked(p, tier + 1) ? tier + 1 : -1;
-  if (unlocked >= 0) { char vkey[32]; snprintf(vkey, sizeof vkey, "tier%.0f", unlocked); write_key(p, "g_spVideos", vkey, 1); }
+  if (unlocked >= 0) { char vkey[32]; snprintf(vkey, sizeof vkey, "tier%s", QA_JS_NUMBER(unlocked)); write_key(p, "g_spVideos", vkey, 1); }
   out.completed_tier = tier;
   out.unlocked_movie = unlocked;
   out.next_level = qa_app_base_arena_progression_current_level(p);
@@ -167,7 +167,7 @@ void qa_app_base_arena_progression_reset(qa_app_base_arena_progression *p) {
 }
 void qa_app_base_arena_progression_unlock_levels(qa_app_base_arena_progression *p) {
   char key[32];
-  for (double level = 0; level < p->catalog.total_levels; level++) { snprintf(key, sizeof key, "l%.0f", level); write_key(p, "g_spScores1", key, 1); }
+  for (double level = 0; level < p->catalog.total_levels; level++) { snprintf(key, sizeof key, "l%s", QA_JS_NUMBER(level)); write_key(p, "g_spScores1", key, 1); }
   for (int tier = 1; tier <= 8; tier++) { snprintf(key, sizeof key, "tier%d", tier); write_key(p, "g_spVideos", key, 1); }
 }
 void qa_app_base_arena_progression_unlock_medals(qa_app_base_arena_progression *p) {

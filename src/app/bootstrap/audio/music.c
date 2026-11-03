@@ -1,6 +1,7 @@
 /* Port of src/app/bootstrap/audio/music.ts. GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/app/bootstrap/audio/music.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
@@ -102,7 +103,7 @@ static void print_f(qa_app_application_music *m, qa_app_music_print_fn print, vo
 /* JS String(number) for the gain/track values printed here. */
 static void number_text(double value, char *buf, size_t size) {
   if (value == trunc(value) && fabs(value) < 1e15) snprintf(buf, size, "%lld", (long long)value);
-  else snprintf(buf, size, "%.15g", value);
+  else snprintf(buf, size, "%s", QA_JS_NUMBER(value));
 }
 static qa_pcm_stream *bank_open(current_track *c, const char *path) {
   qa_pcm_stream *stream = NULL;
@@ -183,6 +184,11 @@ void qa_app_application_music_stop(qa_app_application_music *music) {
   qa_app_application_music_stop_playback(music, "source");
   free_current(music);
 }
+/* TS player.onFault: a decoder failure stops the track and is reported. */
+static void music_fault(void *ctx, const qa_caught_error *error) {
+  qa_app_application_music *music = ctx;
+  print_f(music, NULL, NULL, "WARNING: music playback stopped: %s\n", error->message);
+}
 void qa_app_application_music_select(qa_app_application_music *music, qa_app_music_source source,
                                      qa_sound_bank *bank, qa_app_open_music_track fallback) {
   if (music->current != NULL && is(music->current->source.content, source.content)
@@ -210,6 +216,8 @@ void qa_app_application_music_select(qa_app_application_music *music, qa_app_mus
   qa_music_player_init(&c->player, qa_unified_audio_sample_rate(music->engine), family,
                        music->volume_mode, music->controls);
   qa_music_player_set_volume(&c->player, music->gain);
+  c->player.on_fault = music_fault;
+  c->player.on_fault_ctx = music;
   qa_cd_music_init(&c->cd, &c->player, opener_open, c);
   music->current = c;
 }
@@ -234,6 +242,7 @@ static char *trimmed(const char *v) {
   memcpy(out, v, len); out[len] = '\0';
   return out;
 }
+static void close_stream_cleanup(void *stream) { qa_pcm_stream_close(stream); }
 static void start_track(qa_app_application_music *m, const char *selected, bool looping,
                         bool numbered, bool (*active)(void *), void *active_ctx);
 static qa_pcm_stream *open_named(qa_app_application_music *m, current_track *c, const char *name,
@@ -360,9 +369,17 @@ static void start_track(qa_app_application_music *m, const char *selected, bool 
     return;
   }
   qa_pcm_stream *loop = NULL;
+  /* A raise while opening the loop closes the intro before it propagates (TS try/catch). */
+  qa_cleanup intro_guard, token0_guard, token1_guard;
+  qa_cleanup_push(&token0_guard, free, tokens[0]);
+  qa_cleanup_push(&token1_guard, free, tokens[1]);
+  qa_cleanup_push(&intro_guard, close_stream_cleanup, intro);
   if (looping)
     loop = loop_name == NULL || loop_name[0] == '\0' || is(loop_name, intro_name)
       ? intro : open_named(m, c, loop_name, request, active, active_ctx);
+  qa_cleanup_pop(&intro_guard);
+  qa_cleanup_pop(&token1_guard);
+  qa_cleanup_pop(&token0_guard);
   if (request != m->request || !m->controls->enabled || !active(active_ctx)) {
     qa_pcm_stream_close(intro);
     if (loop != intro && loop != NULL) qa_pcm_stream_close(loop);

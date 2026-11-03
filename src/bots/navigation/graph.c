@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static const qa_travel_mode AAS_MODES[20] = {
     QA_TM_UNKNOWN, QA_TM_UNKNOWN, QA_TM_WALK, QA_TM_CROUCH, QA_TM_JUMP,
@@ -23,6 +24,10 @@ qa_travel_mode qa_aas_travel_mode(int64_t type) {
 }
 qa_travel_mode qa_kex_travel_mode(int64_t type) {
   return (type >= 0 && type < 15) ? KEX_MODES[type] : QA_TM_UNKNOWN;
+}
+bool qa_navigation_edge_is_barrier_jump(const qa_navigation_edge *edge) {
+  return edge->source_travel_type ==
+         (edge->source.kind == QA_NS_AAS ? QA_AAS_TRAVEL_BARRIERJUMP : QA_KEX_TRAVEL_BARRIER_JUMP);
 }
 int64_t qa_aas_travel_flag(int64_t type) {
   int64_t index = type & 0xffffff;
@@ -185,7 +190,7 @@ bool qa_navigation_from_asset(qa_navigation_graph *out, qa_navigation_map_identi
         qa_navigation_edge edge; memset(&edge, 0, sizeof edge);
         edge.id = idx; edge.from = number; edge.to = reach->area; edge.mode = mode;
         edge.start = reach->start; edge.end = reach->end;
-        edge.travel_seconds = fmax(1.0, (double)reach->travel_time) / 100.0;
+        edge.travel_seconds = qa_js_max(1.0, (double)reach->travel_time) / 100.0;
         edge.source_travel_type = reach->travel_type; edge.source_flags = 0;
         if (moving) {
           edge.has_entity = true;
@@ -238,7 +243,7 @@ bool qa_navigation_from_asset(qa_navigation_graph *out, qa_navigation_map_identi
         qa_navigation_edge edge; memset(&edge, 0, sizeof edge);
         edge.id = idx; edge.from = (int64_t)number; edge.to = link->target; edge.mode = mode;
         edge.start = start; edge.end = end; edge.source_travel_type = link->type; edge.source_flags = link->flags;
-        edge.travel_seconds = mode == QA_TM_TELEPORT ? 0.01 : fmax(0.01, qa_nav_distance(start, end) * kex->heuristic / 320.0);
+        edge.travel_seconds = mode == QA_TM_TELEPORT ? 0.01 : qa_js_max(0.01, qa_nav_distance(start, end) * kex->heuristic / 320.0);
         edge.has_hint = has_hint; edge.hint = hint;
         if (!entity) {
           if (mode == QA_TM_TELEPORT || mode == QA_TM_JUMP_PAD || mode == QA_TM_MOVER) {

@@ -61,7 +61,8 @@ typedef struct qa_q2_mvd_capture {
   size_t message_count;
 } qa_q2_mvd_capture;
 
-/* TS encodeMvdEmission. Malloc'd bytes or NULL only on OOM. */
+/* TS encodeMvdEmission; invalid events raise the TS RangeError. Malloc'd bytes or
+ * NULL only on OOM. */
 uint8_t *qa_q2_encode_mvd_emission(const qa_q2_mvd_emission *event,
                                    size_t *out_length);
 
@@ -80,7 +81,8 @@ typedef struct qa_q2_mvd_encoder {
 void qa_q2_mvd_encoder_init(qa_q2_mvd_encoder *encoder);
 void qa_q2_mvd_encoder_destroy(qa_q2_mvd_encoder *encoder);
 void qa_q2_mvd_encoder_reset(qa_q2_mvd_encoder *encoder);
-/* TS capture(capture). False only on OOM. */
+/* TS capture(capture); invalid captures raise the TS RangeError/Error with nothing
+ * held. False only on OOM. */
 bool qa_q2_mvd_encoder_capture(qa_q2_mvd_encoder *encoder,
                                const qa_q2_mvd_capture *capture,
                                qa_q2_mvd_byte_block **out, size_t *out_count);

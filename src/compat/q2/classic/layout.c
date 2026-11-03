@@ -28,8 +28,11 @@ int64_t qa_compat_q2_mem_read_i64(const qa_compat_q2_memory *m, qa_guest_address
 uint64_t qa_compat_q2_mem_read_u64(const qa_compat_q2_memory *m, qa_guest_address a) { return rd(m, a, 8); }
 double qa_compat_q2_mem_read_f32(const qa_compat_q2_memory *m, qa_guest_address a) { uint32_t u = (uint32_t)rd(m, a, 4); float f; memcpy(&f, &u, 4); return f; }
 qa_vec3 qa_compat_q2_mem_read_f32_vector(const qa_compat_q2_memory *m, qa_guest_address a) {
-  qa_vec3 v = {qa_compat_q2_mem_read_f32(m, a), qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, a, 4)),
-               qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, a, 8))}; return v;
+  double x = qa_compat_q2_mem_read_f32(m, a);
+  double y = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, a, 4));
+  double z = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, a, 8));
+  qa_vec3 v = {x, y,
+               z}; return v;
 }
 bool qa_compat_q2_mem_read_pointer(const qa_compat_q2_memory *m, qa_guest_address a, qa_guest_address *out) {
   uint64_t raw = rd(m, a, (size_t)m->pointer_bytes);
@@ -55,6 +58,10 @@ double qa_compat_q2_native_allocation_bytes(double logical) {
 }
 qa_guest_address qa_compat_q2_allocate_native_memory(const qa_compat_q2_memory *m, double logical, const char *label) {
   return m->allocate(m->ctx, qa_compat_q2_native_allocation_bytes(logical), true, 4096, label);
+}
+qa_guest_address qa_compat_q2_allocate_pooled_native_memory(const qa_compat_q2_memory *m, double logical, const char *label) {
+  const double bytes = qa_compat_q2_native_allocation_bytes(logical);
+  return bytes == 4096 && m->allocate_pooled != NULL ? m->allocate_pooled(m->ctx, bytes, 4096, label) : m->allocate(m->ctx, bytes, true, 4096, label);
 }
 const qa_guest_call_value *qa_compat_q2_guest_argument(const qa_guest_call_value *args, size_t count, size_t index) {
   if (index >= count) qa_range_error("Missing guest argument %zu", index);

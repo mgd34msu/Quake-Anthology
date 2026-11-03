@@ -50,8 +50,8 @@ static void refidget_fn(void *ctx, qa_q2m_context *c) {
 }
 static void drain_attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
   qa_vec3 start = qa_q2m_project_flash_default(c, q2bm_v3(24, 0, 6));
@@ -66,28 +66,21 @@ static void drain_attack_fn(void *ctx, qa_q2m_context *c) {
   if (trace.hit.kind != QA_TRACE_HIT_ACTOR || !qa_same_actor(trace.hit.actor, entity->enemy)) return;
   bool first = entity->frame == qa_q2bm_parasite_frames_value.drain03;
   if (first) {
-    qa_q2f_presentation_event e;
+    qa_q2_presentation_event e;
     memset(&e, 0, sizeof e);
-    e.kind = QA_Q2F_EVENT_SOUND; e.actor = &entity->enemy; e.origin = end;
+    e.kind = "sound"; e.has_actor = true; e.actor = entity->enemy; e.origin = end;
     e.path = "parasite/paratck2.wav"; e.channel = 0; e.volume = 1; e.attenuation = 1;
     e.reliable = false; e.loop = "once";
     game->host->emit(game->host->ctx, e);
   } else if (entity->frame == qa_q2bm_parasite_frames_value.drain04) {
     q2bm_sound(game, entity, "parasite/paratck3.wav", true, 1, false, 0, false, 0);
   }
-  qa_q2bm_extended_event beam;
+  qa_q2_presentation_event beam;
   memset(&beam, 0, sizeof beam);
-  beam.kind = "monster-beam"; beam.effect = "parasite"; beam.actor = entity->actor.id;
+  beam.kind = "monster-beam"; beam.effect = "parasite"; beam.has_actor = true; beam.actor = entity->actor.id;
   beam.start = start; beam.end = end;
-  qa_q2bm_emit_extended(beam);
-  qa_q2f_damage_args args;
-  memset(&args, 0, sizeof args);
-  args.target = entity->enemy; args.inflictor_entity = entity; args.inflictor_actor = entity->actor.id;
-  args.attacker = &entity->actor.id;
-  args.amount = first ? 5 : 2; args.knockback = 0;
-  args.direction = qa_sub3_double(start, end); args.point = end; args.normal = q2bm_zero();
-  args.means_of_death = 0; args.has_flags = true; args.flags = 8; args.weapon = NULL;
-  (void)game->damage(game->ctx, args);
+  game->host->emit(game->host->ctx, beam);
+  (void)game->damage(game->ctx, entity->enemy, entity, entity->actor.id, &entity->actor.id, first ? 5 : 2, 0, qa_sub3_double(start, end), end, q2bm_zero(), 0, 8, NULL);
 }
 #define CB(name, fn) {name, {NULL, fn}}
 static const qa_q2m_named_handler parasite_callbacks[] = {

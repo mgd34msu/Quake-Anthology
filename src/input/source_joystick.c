@@ -8,6 +8,8 @@
 
 #include "qa/foundation/support.h"
 #include "qa/input/key_codes.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 static void pad_left(const char *text, size_t width, char *out, size_t out_size) {
   size_t length = strlen(text);
@@ -53,13 +55,13 @@ char *qa_windows_joystick_debug(const qa_sdl_event *events, size_t count) {
   char raw[32];
   snprintf(raw, sizeof raw, "%x", buttons);
   pad_left(raw, 8, fields[0], sizeof fields[0]);
-  snprintf(raw, sizeof raw, "%.0f", pov);
+  snprintf(raw, sizeof raw, "%s", QA_JS_NUMBER(pov));
   pad_left(raw, 5, fields[1], sizeof fields[1]);
   for (int axis = 0; axis < 6; axis++) {
     if (axis < 4) {
       /* Math.fround(value / 32768).toFixed(2) */
       float fraction = (float)((double)axes[axis] / 32768);
-      snprintf(raw, sizeof raw, "%.2f", (double)fraction);
+      qa_js_to_fixed((double)fraction, 2, raw, sizeof raw); /* exact ties round up */
       pad_left(raw, 5, fields[2 + axis], sizeof fields[0]);
     } else {
       snprintf(raw, sizeof raw, "%d", axes[axis]);
@@ -134,10 +136,7 @@ void qa_source_joystick_state_axis(qa_source_joystick_state *state, double axis,
                                    double value) {
   /* Typed-array stores outside 0..15 (or fractional) drop silently. */
   if (axis == trunc(axis) && axis >= 0 && axis < 16) {
-    double wrapped = fmod(trunc(value), 65536);
-    if (wrapped >= 32768) wrapped -= 65536;
-    if (wrapped < -32768) wrapped += 65536;
-    state->axes[(int)axis] = (int16_t)wrapped;
+    state->axes[(int)axis] = qa_js_to_int16(value); /* Int16Array store: NaN and infinities to 0 */
   }
 }
 
@@ -172,7 +171,7 @@ void qa_source_joystick_state_windows_frame(
     qa_queue_mouse_fn queue_mouse, void *queue_mouse_ctx) {
   int32_t axes = 0;
   if (threshold != NULL) {
-    double limit = fmin(axis_count, 4);
+    double limit = qa_js_min(axis_count, 4);
     for (int index = 0; index < limit; index++) {
       double fraction = (double)(float)((double)state->axes[index] / 32768);
       if (fraction < -*threshold) axes |= (int32_t)(1u << (index * 2));

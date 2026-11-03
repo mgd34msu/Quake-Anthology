@@ -14,13 +14,12 @@
 
 /* TS `throw new Error(msg)`, as in src/text/atlas.c. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static void required_hint(const char *name, const char *value) {
@@ -296,6 +295,22 @@ void qa_sdl_audio_resume(qa_sdl_audio_device *device) {
 }
 
 void qa_sdl_audio_start(qa_sdl_audio_device *device) { qa_sdl_audio_resume(device); }
+
+/* TS get removed: true when a named output is no longer enumerated
+ * (unplugged); the system default follows SDL's own rerouting. The open
+ * device keeps the audio subsystem initialized. */
+bool qa_sdl_audio_removed(qa_sdl_audio_device *device) {
+  (void)opened(device);
+  if (device->device_name == NULL) return false;
+  int count = SDL_GetNumAudioDevices(0);
+  for (int index = 0; index < count; index++) {
+    const char *name = SDL_GetAudioDeviceName(index, 0);
+    if (name == NULL || name[0] == '\0')
+      qa_error("SDL_GetAudioDeviceName: %s", SDL_GetError());
+    if (strcmp(name, device->device_name) == 0) return false;
+  }
+  return true;
+}
 
 qa_sdl_audio_state qa_sdl_audio_state_of(const qa_sdl_audio_device *device) {
   return device->device == 0 ? QA_SDL_AUDIO_CLOSED

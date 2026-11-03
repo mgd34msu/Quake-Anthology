@@ -1,12 +1,14 @@
 /* Port of src/console/metrics.ts. GPL-2.0-or-later. */
 #include "qa/console/metrics.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
-static double max2(double a, double b) { return a > b ? a : b; }
-static double min2(double a, double b) { return a < b ? a : b; }
+/* Math.max / Math.min, NaN and -0 included. */
+static double max2(double a, double b) { return qa_js_max(a, b); }
+static double min2(double a, double b) { return qa_js_min(a, b); }
 
 double qa_console_cell_width(const qa_text_font_selection *font, double line_height) {
   qa_resolved_text_glyph glyph = qa_resolve_text_glyph(font, 77, false);
@@ -19,12 +21,12 @@ qa_console_metrics qa_console_metrics_for(const qa_console_metrics_options *opti
   double automatic = max2(2, floor(options->height / ratio / 300));
   bool explicit = isfinite(options->requested_scale) && options->requested_scale > 0;
   double requested = explicit
-                         ? max2(1, min2(4, round(options->requested_scale)))
+                         ? max2(1, min2(4, qa_js_round(options->requested_scale)))
                          : automatic;
   double fit = explicit
                    ? max2(1, floor(min2(options->width / 40, options->height / 16)))
                    : max2(1, floor(min2(options->width / 256, options->height / 96)));
-  double scale = max2(1, min2(fit, round(requested * ratio)));
+  double scale = max2(1, min2(fit, qa_js_round(requested * ratio)));
   double line_height = 8 * scale;
   double cell_width = qa_console_cell_width(options->font, line_height);
   qa_console_metrics out;
@@ -35,26 +37,20 @@ qa_console_metrics qa_console_metrics_for(const qa_console_metrics_options *opti
   return out;
 }
 
-/* Approximation of \p{L}\p{N}\p{M} over predominantly letter,
- * number, or mark blocks (see header note). */
+/* /[\p{L}\p{N}\p{M}]/u for one code point, from the table bun generates. */
 static bool is_letter_number_mark(uint32_t code) {
   static const struct {
     uint32_t first, last;
   } ranges[] = {
-      {0x00aa, 0x00aa}, {0x00b5, 0x00b5}, {0x00ba, 0x00ba}, {0x00bc, 0x00be},
-      {0x00c0, 0x00d6}, {0x00d8, 0x00f6}, {0x00f8, 0x02ff}, {0x0300, 0x036f},
-      {0x0370, 0x03ff}, {0x0400, 0x04ff}, {0x0530, 0x058f}, {0x0590, 0x05ff},
-      {0x0600, 0x06ff}, {0x0750, 0x077f}, {0x08a0, 0x08ff}, {0x0900, 0x097f},
-      {0x0980, 0x09ff}, {0x0a00, 0x0a7f}, {0x0a80, 0x0aff}, {0x0b00, 0x0b7f},
-      {0x0b80, 0x0bff}, {0x0c00, 0x0c7f}, {0x0c80, 0x0cff}, {0x0d00, 0x0d7f},
-      {0x0e00, 0x0e7f}, {0x0e80, 0x0eff}, {0x1000, 0x109f}, {0x10a0, 0x10ff},
-      {0x1100, 0x11ff}, {0x1200, 0x137f}, {0x16a0, 0x16ff}, {0x1700, 0x171f},
-      {0x1800, 0x18af}, {0x1e00, 0x1eff}, {0x3040, 0x30ff}, {0x3400, 0x4dbf},
-      {0x4e00, 0x9fff}, {0xa000, 0xa48f}, {0xac00, 0xd7af}, {0xf900, 0xfaff},
-      {0xff10, 0xff19}, {0xff21, 0xff3a}, {0xff41, 0xff5a},
+#include "metrics_letters.inc"
   };
-  for (size_t i = 0; i < sizeof ranges / sizeof *ranges; i++)
-    if (code >= ranges[i].first && code <= ranges[i].last) return true;
+  size_t lo = 0, hi = sizeof ranges / sizeof *ranges;
+  while (lo < hi) {
+    size_t mid = lo + (hi - lo) / 2;
+    if (code < ranges[mid].first) hi = mid;
+    else if (code > ranges[mid].last) lo = mid + 1;
+    else return true;
+  }
   return false;
 }
 

@@ -10,9 +10,10 @@
 #include "qa/contracts/session.h"
 #include "qa/core/cvars/index.h"
 #include "qa/world/session/session.h"
+/* TS RemoteSeatServices. network and remote are borrowed from their RemoteSeatSource. */
 typedef struct qa_app_remote_seat_services {
-  qa_app_remote_seat_network_mirror network;
-  qa_app_remote_seat_presentation_mirror remote;
+  const qa_app_remote_seat_network *network;
+  const qa_app_remote_seat_presentation *remote;
   qa_cvar_registry *cvars;
 } qa_app_remote_seat_services;
 typedef struct qa_app_remote_seat_channel qa_app_remote_seat_channel;

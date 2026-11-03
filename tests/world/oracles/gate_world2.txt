@@ -1,0 +1,26 @@
+retired_close AggregateError|Retired world shutdown failed sim1,presentation,client-world
+retired_close_again none []
+disconnect AggregateError|Client disconnect failed client-world2,connection
+clear_world AggregateError|Client world shutdown failed client-world3
+detach_close AggregateError|World replacement failed sim2
+detach_close_again none []
+close_client AggregateError|Client shutdown failed client2
+local_close AggregateError|Retired local seats shutdown failed client3
+local_close_again none []
+session_close AggregateError|Failed to close Session resources client4
+session_close_again none []
+mod_files "/tmp/qa/../root/./x//" /tmp/root/x/.mods/pkg/a%3Ab%2Bc%2Fd
+mod_files "/" /.mods/pkg/a%3Ab%2Bc%2Fd
+mod_files "rel/../dir/." dir/.mods/pkg/a%3Ab%2Bc%2Fd
+mod_files "" .mods/pkg/a%3Ab%2Bc%2Fd
+pickup_observer_late Error|Pickup protection observer is closed
+rebind_copied true false
+lease_retired_publish Error|Component client output owner is retired
+lease_new_owner {"stance":true}
+match_objectives x,y
+match_unbind_again none y
+mods_assert_open none
+mods_assert_closed Error|Mod session is closed
+mods_init_failure Error|init failed
+mods_assert_after_failure Error|Mod session is closed
+pickup_touch accepted,accepted,accepted

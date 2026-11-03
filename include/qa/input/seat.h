@@ -116,9 +116,22 @@ bool qa_seat_input_input(qa_seat_input *input, const qa_seat_input_event *event)
 void qa_seat_input_gyro(qa_seat_input *input, qa_vec3 sample,
                         double time_milliseconds);
 void qa_seat_input_release_device(qa_seat_input *input, double device, double time);
+/* TS input.gamepad.tuning = tuning (a copy). */
+void qa_seat_input_set_gamepad_tuning(qa_seat_input *input, const qa_gamepad_tuning *tuning);
 /* commands NULL selects the seat's command buffer (the TS default). */
 void qa_seat_input_release(qa_seat_input *input, double time,
                            qa_command_buffer *commands);
+/** TS Pick<CommandBuffer, "append"> release target (for example a
+ * prepared program's releaseCommands, which appends in its release
+ * dialect). */
+typedef struct qa_command_append_target {
+  void *ctx;
+  void (*append)(void *ctx, const char *text, const qa_command_context *source);
+} qa_command_append_target;
+/* TS release(time, commands) with a non-buffer append target; NULL
+ * selects the seat's command buffer. */
+void qa_seat_input_release_to(qa_seat_input *input, double time,
+                              const qa_command_append_target *commands);
 /* False only on allocation failure; out owns its button rows. */
 bool qa_seat_input_take_sample(qa_seat_input *input, double now_milliseconds,
                           double frame_milliseconds, qa_seat_input_sample *out);

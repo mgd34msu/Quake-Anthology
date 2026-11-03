@@ -1,5 +1,6 @@
 /* Port of src/ui/hud/q1-wheel.ts. GPL-2.0-or-later. */
 #include "qa/ui/hud/q1_wheel.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <string.h>
 
 #include "qa/core/common_parse.h"
+#include "qa/foundation/js.h"
 
 static char *dup_str(const char *text) {
   size_t length = strlen(text);
@@ -16,22 +18,14 @@ static char *dup_str(const char *text) {
 }
 /* JS Number(string): whole-string parse, NaN on junk. */
 static double js_number_of(const char *text) {
-  if (text == NULL) return NAN;
-  if (text[0] == '\0') return 0;
-  char *end = NULL;
-  double value = strtod(text, &end);
-  if (end == text || *end != '\0') return NAN;
-  return value;
+  return text == NULL ? NAN : qa_js_string_to_number(text); /* Number(undefined) is NaN */
 }
 static bool js_is_integer(double value) {
   return isfinite(value) && value == trunc(value);
 }
 /* JS String(number) for error messages and ids. */
 static void js_string(char *buf, size_t size, double value) {
-  if (isnan(value)) snprintf(buf, size, "NaN");
-  else if (value == floor(value) && fabs(value) < 1e21)
-    snprintf(buf, size, "%.0f", value);
-  else snprintf(buf, size, "%.17g", value);
+  qa_net_js_number(value, buf, size);
 }
 
 typedef struct field {
@@ -388,7 +382,7 @@ bool qa_ui_q1_wheel_items_for(const qa_ui_q1_wheel_slot *slots,
     item->label = state->label(state->ctx, slot);
     /* TS (state.items & slot.weaponBits) !== 0: JS bitwise is int32. */
     item->owned = slot->has_weapon_bits
-        && (((int32_t)state->items & (int32_t)slot->weapon_bits) != 0);
+        && ((qa_js_to_int32(state->items) & qa_js_to_int32(slot->weapon_bits)) != 0);
     item->has_ammo = !has_count || count > 0;
     item->has_count = has_count;
     item->count = count;

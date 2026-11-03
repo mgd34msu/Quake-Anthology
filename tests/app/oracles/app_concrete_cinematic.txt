@@ -1,0 +1,19 @@
+dotdot: Invalid cinematic resource path
+missing: Missing campaign cinematic: video/none.roq
+cin-fallback: Missing campaign cinematic: video/none.ogv
+format: Missing campaign cinematic: pics/colormap.bad
+retired: Cinematic preparation belongs to a retired request
+prepared status=playing
+active status=playing
+frames ended=false status=playing elapsed=250 source=250
+executed 1:draw-buffer,image-resource,set-color,stretch-pic,swap-buffers 2:draw-buffer,set-color,stretch-pic,swap-buffers 3:draw-buffer,set-color,stretch-pic,swap-buffers 4:draw-buffer,swap-buffers 5:draw-buffer,swap-buffers 6:draw-buffer,image-resource,set-color,stretch-pic,swap-buffers
+paused status=paused
+checkpoint keys=version,request,resource,clock,audioStarted,playback,fullscreen,initialAudio,pcm version=1 clock=250 audioStarted=true request={"name":"eou1_.cin","loop":false,"hold":false,"silent":false}
+checkpoint resource=video/eou1_.cin initialAudio=0
+input=true status=playing
+closed status=stopped
+executed close 9:image-resource
+restored status=playing
+restored frame status=playing elapsed=300
+activate closed: Cinematic activation belongs to a retired request
+changed: campaign-cinematic: cinematic resource changed

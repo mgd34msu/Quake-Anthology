@@ -66,6 +66,7 @@ typedef struct qa_app_options {
   bool has_display_width; double display_width;
   bool has_display_height; double display_height;
   bool has_display_gamma; double display_gamma;
+  bool trusted_networks_only; /* TS trustedNetworksOnly (--lan-only) */
   bool dedicated;
   double width, height, seats;
   double skill;                       /* 0..3 */
@@ -75,6 +76,9 @@ typedef struct qa_app_options {
   double seed;
   bool has_frame_limit; double frame_limit;
   bool hidden;
+  bool allow_load_paths;              /* TS allowLoadPaths (--allow-load-paths) */
+  /* TS vmGame?: 0 | 1 | 2 (--vm-game). 0 runs a mod's native qagame module when it ships one. */
+  bool has_vm_game; int vm_game;
   const char *network_kind;           /* "offline"|*-server|*-client */
   char *network_host;                 /* owned, server kinds */
   double network_port;

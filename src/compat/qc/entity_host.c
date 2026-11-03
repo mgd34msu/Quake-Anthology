@@ -18,7 +18,6 @@ static void s_initialize(void *ctx, int64_t slot, qa_owned_actor actor) {
   (void)actor; S *s = ctx;
   qa_compat_qc_words *w = qa_compat_qc_entity_memory_at(s->entities, slot);
   memset(w->bytes, 0, w->byte_length);
-  /* TS also zeroes the whole edict via entities.at(slot).bytes.fill(0) on the field view only; free word is in prefix. */
   wr_i32(s->entities->bytes, (size_t)qa_compat_qc_entity_memory_reference(s->entities, slot) + (size_t)s->metadata.free_offset_bytes, 0);
 }
 static void s_clear_freed(void *ctx, int64_t slot, qa_source_time now) {

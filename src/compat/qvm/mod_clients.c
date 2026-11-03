@@ -9,6 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/world/session/mod_client_input.h"
+#include "qa/foundation/js.h"
 
 typedef struct client_slot {
   qa_actor_id actor;
@@ -94,9 +95,9 @@ bool qa_qvm_mod_client_bindings_slot(qa_qvm_mod_client_bindings *bindings, qa_ac
   qa_mod_client_services *services = bindings->operations.services;
   qa_client_id client;
   if (!services->for_actor(services->ctx, actor, &client)) {
-    client_slot *entry = find_entry(bindings, actor);
-    if (entry == NULL) return false;
-    *out = entry->slot;
+    if (find_entry(bindings, actor) == NULL) return false;
+    /* TS this.require(actor), which throws for an entry that lost its client. */
+    *out = require_entry(bindings, actor)->slot;
     return true;
   }
   client_slot *previous = find_entry(bindings, actor);
@@ -150,11 +151,20 @@ static void admit(qa_qvm_mod_client_bindings *bindings, qa_actor_id actor) {
   int64_t slot = 0;
   if (!qa_qvm_mod_client_bindings_slot(bindings, actor, &slot))
     qa_range_error("QVM component admission requires a live client");
-  bool was_admitted = require_entry(bindings, actor)->admitted;
+  client_slot required = *require_entry(bindings, actor);
   bindings->operations.project(bindings->operations.ctx, actor);
-  /* Re-find: project() may reenter bindings and realloc the entries. */
-  client_slot *entry = find_entry(bindings, actor);
-  if (!was_admitted && entry != NULL) {
+  if (!required.admitted) {
+    /* TS Map.set of the captured entry: re-inserts if project() removed it. */
+    client_slot *entry = find_entry(bindings, actor);
+    if (entry == NULL) {
+      if (bindings->entry_count == bindings->entry_capacity) {
+        bindings->entry_capacity = bindings->entry_capacity == 0 ? 8 : bindings->entry_capacity * 2;
+        bindings->entries = realloc(bindings->entries, bindings->entry_capacity * sizeof(client_slot));
+        if (bindings->entries == NULL) qa_range_error("QVM memory allocation failed");
+      }
+      entry = &((client_slot *)bindings->entries)[bindings->entry_count++];
+    }
+    *entry = required;
     entry->admitted = true;
     entry->generation = next_generation(bindings); /* TS replaces the entry object */
     run_calls(bindings, bindings->operations.declaration->admit,
@@ -320,7 +330,7 @@ void qa_qvm_mod_client_bindings_frame(qa_qvm_mod_client_bindings *bindings,
       count++;
     }
   }
-  qsort(clients, count, sizeof *clients, compare_slot);
+  qa_js_sort(clients, count, sizeof *clients, compare_slot);
   for (size_t i = 0; i < count; i++) {
     for (size_t c = 0; c < call_count; c++) {
       client_slot *current = find_entry(bindings, clients[i].entry.actor);
@@ -431,15 +441,6 @@ static controls_command q3_command_for_controls(const qa_user_command *command, 
   return qa_app_sim_q3_command_for_controls(*command, milliseconds, requested_weapon, use_holdable);
 }
 
-static controls_command relative_q3_source_command(qa_command_source_kind source, qa_user_command_kind dialect,
-                                                   controls_command command, qa_vec3 delta,
-                                                   const char *angle_space) {
-  qa_command_source full;
-  memset(&full, 0, sizeof full);
-  full.kind = source;
-  return qa_app_sim_relative_q3_source_command(full, dialect_name(dialect), command, delta, angle_space);
-}
-
 static qa_mod_client_application *applied(qa_qvm_mod_client_bindings *bindings, qa_actor_id actor) {
   for (size_t i = bindings->application_count; i-- > 0;) {
     if (qa_same_actor(bindings->applications[i]->identity.actor, actor))
@@ -466,25 +467,29 @@ qa_q3_wire_user_command qa_qvm_mod_client_bindings_get_user_command(qa_qvm_mod_c
   ps.persistent.values = storage + 16;
   ps.powerups.values = storage + 32;
   ps.ammo.values = storage + 48;
+  /* Copied: the callbacks below may reenter the bindings and grow the entries. */
+  qa_actor_id entry_actor = entry == NULL ? (qa_actor_id){0} : entry->actor;
   if (application != NULL && entry != NULL) {
-    bindings->operations.player_state(bindings->operations.ctx, entry->actor, &ps);
+    bindings->operations.player_state(bindings->operations.ctx, entry_actor, &ps);
     qa_source_time time = application->frame.time;
     double milliseconds = time.kind == QA_SOURCE_TIME_SECONDS ? time.value * 1000 : time.value;
     bool use_holdable = application->command.kind == QA_USER_COMMAND_Q3 &&
-                        ((int32_t)application->command.as.q3.buttons & 4) != 0;
+                        (qa_int32(application->command.as.q3.buttons) & 4) != 0;
     controls_command command = q3_command_for_controls(&application->command, milliseconds,
-        requested_weapon(bindings, entry->actor, ps.weapon), use_holdable);
+        requested_weapon(bindings, entry_actor, ps.weapon), use_holdable);
     qa_q3_wire_user_command result;
-    result.server_time = (int32_t)command.server_time;
-    result.buttons = (int32_t)command.buttons;
-    result.weapon = (int32_t)command.weapon;
-    result.forwardmove = (int32_t)command.forwardmove;
-    result.rightmove = (int32_t)command.rightmove;
-    result.upmove = (int32_t)command.upmove;
-    /* TS Math.trunc(...) & 65535 is a JS ToInt32 wrap of the angle. */
-    result.angles[0] = (qa_int32(application->absolute_aim.x * 65536.0 / 360.0) & 65535) - (int32_t)ps.delta_angle_words.values[0];
-    result.angles[1] = (qa_int32(application->absolute_aim.y * 65536.0 / 360.0) & 65535) - (int32_t)ps.delta_angle_words.values[1];
-    result.angles[2] = (qa_int32(application->absolute_aim.z * 65536.0 / 360.0) & 65535) - (int32_t)ps.delta_angle_words.values[2];
+    /* TS returns these numbers; the usercmd writer stores them with ToInt32. */
+    result.server_time = qa_int32(command.server_time);
+    result.buttons = qa_int32(command.buttons);
+    result.weapon = qa_int32(command.weapon);
+    result.forwardmove = qa_int32(command.forwardmove);
+    result.rightmove = qa_int32(command.rightmove);
+    result.upmove = qa_int32(command.upmove);
+    /* TS Math.trunc(...) & 65535 is a JS ToInt32 wrap of the angle; the
+     * difference with the delta word is a number, wrapped when stored. */
+    result.angles[0] = qa_int32((double)(qa_int32(application->absolute_aim.x * 65536.0 / 360.0) & 65535) - ps.delta_angle_words.values[0]);
+    result.angles[1] = qa_int32((double)(qa_int32(application->absolute_aim.y * 65536.0 / 360.0) & 65535) - ps.delta_angle_words.values[1]);
+    result.angles[2] = qa_int32((double)(qa_int32(application->absolute_aim.z * 65536.0 / 360.0) & 65535) - ps.delta_angle_words.values[2]);
     return result;
   }
   qa_mod_client_services *services = bindings->operations.services;
@@ -494,24 +499,25 @@ qa_q3_wire_user_command qa_qvm_mod_client_bindings_get_user_command(qa_qvm_mod_c
     qa_range_error("QVM component usercmd requires an accepted destination client command");
   const qa_actor_command *input = &accepted->input;
   double milliseconds = accepted->time.kind == QA_SOURCE_TIME_SECONDS ? accepted->time.value * 1000 : accepted->time.value;
-  bindings->operations.player_state(bindings->operations.ctx, entry->actor, &ps);
+  bindings->operations.player_state(bindings->operations.ctx, entry_actor, &ps);
   bool use_holdable;
   if (input->arsenal != NULL) use_holdable = input->arsenal->use_holdable;
-  else use_holdable = input->command.kind == QA_USER_COMMAND_Q3 && ((int32_t)input->command.as.q3.buttons & 4) != 0;
+  else use_holdable = input->command.kind == QA_USER_COMMAND_Q3 && (qa_int32(input->command.as.q3.buttons) & 4) != 0;
   controls_command converted = q3_command_for_controls(&input->command, milliseconds,
-      requested_weapon(bindings, entry->actor, ps.weapon), use_holdable);
+      requested_weapon(bindings, entry_actor, ps.weapon), use_holdable);
   qa_vec3 delta = {ps.delta_angle_words.values[0], ps.delta_angle_words.values[1], ps.delta_angle_words.values[2]};
-  controls_command command = relative_q3_source_command(input->source.kind, input->command.kind,
-                                                        converted, delta, input->angle_space);
+  controls_command command = qa_app_sim_relative_q3_source_command(
+      input->source, dialect_name(input->command.kind), converted, delta, input->angle_space);
   qa_q3_wire_user_command result;
-  result.server_time = (int32_t)command.server_time;
-  result.angles[0] = (int32_t)command.angles.x;
-  result.angles[1] = (int32_t)command.angles.y;
-  result.angles[2] = (int32_t)command.angles.z;
-  result.buttons = (int32_t)command.buttons;
-  result.weapon = (int32_t)command.weapon;
-  result.forwardmove = (int32_t)command.forwardmove;
-  result.rightmove = (int32_t)command.rightmove;
-  result.upmove = (int32_t)command.upmove;
+  /* A remote client's numbers; the usercmd writer stores them with ToInt32. */
+  result.server_time = qa_int32(command.server_time);
+  result.angles[0] = qa_int32(command.angles.x);
+  result.angles[1] = qa_int32(command.angles.y);
+  result.angles[2] = qa_int32(command.angles.z);
+  result.buttons = qa_int32(command.buttons);
+  result.weapon = qa_int32(command.weapon);
+  result.forwardmove = qa_int32(command.forwardmove);
+  result.rightmove = qa_int32(command.rightmove);
+  result.upmove = qa_int32(command.upmove);
   return result;
 }

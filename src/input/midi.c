@@ -14,6 +14,7 @@
 
 #include "qa/input/device_settings.h"
 #include "qa/input/source_midi.h"
+#include "qa/foundation/js.h"
 
 void qa_midi_devices_free(qa_midi_device *devices, size_t count) {
   if (devices == NULL) return;
@@ -280,7 +281,7 @@ bool qa_linux_midi_input_boundary_list(qa_linux_midi_input_boundary *boundary,
       entries[entry_count].name = names[i];
       entry_count++;
     }
-    qsort(entries, entry_count, sizeof *entries, compare_devices);
+    qa_js_sort(entries, entry_count, sizeof *entries, compare_devices);
   }
   qa_midi_device *devices = NULL;
   if (entry_count != 0) {

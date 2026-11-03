@@ -1,16 +1,19 @@
 /* Port of src/compat/q2/rerelease/imports.ts. GPL-2.0-or-later. */
 #include "qa/compat/q2/rerelease/imports.h"
+#include "qa/compat/q2/guest_console.h"
+#include "qa/compat/q2/guest_strings.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/compat/q2/rerelease/layouts.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("Q2 rerelease imports out of memory"); return p; }
 static char *xstrdup(const char *s) { size_t n = strlen(s) + 1; char *p = xmalloc(n); memcpy(p, s, n); return p; }
 static void fmt_number(char *out, size_t cap, double v) {
-  if (v == trunc(v) && fabs(v) <= 9007199254740991.0) snprintf(out, cap, "%lld", (long long)v);
-  else snprintf(out, cap, "%.17g", v);
+  qa_net_js_number(v, out, cap);
 }
 
 char *qa_compat_q2_read_guest_string(const qa_compat_q2_memory *memory, qa_guest_address address, double maximum) {
@@ -43,6 +46,7 @@ typedef struct { int64_t key; qa_guest_address address; double size, tag; } allo
 typedef struct { char *key; qa_guest_address address; } string_entry_t;
 typedef struct {
   char *name; qa_guest_address address;
+  qa_compat_q2_reusable_guest_string text, latched_text;
   qa_guest_address f_string, f_latched, f_flags, f_modified, f_value, f_integer;
 } guest_cvar_t;
 struct qa_compat_q2_rerelease_core_imports {
@@ -50,20 +54,23 @@ struct qa_compat_q2_rerelease_core_imports {
   qa_compat_q2_rerelease_core_services services;
   allocation_t *allocs; size_t alloc_count, alloc_cap;
   string_entry_t *strings; size_t string_count, string_cap;
-  guest_cvar_t *cvars; size_t cvar_count, cvar_cap;
+  guest_cvar_t **cvars; size_t cvar_count, cvar_cap;
   bool has_last_cvar; qa_guest_address last_cvar;
+  qa_compat_q2_command_guest_strings *command_strings; /* TS #commandStrings */
 };
 qa_compat_q2_rerelease_core_imports *qa_compat_q2_rerelease_core_imports_create(qa_compat_q2_memory *memory,
                                                                               qa_compat_q2_rerelease_core_services services) {
   qa_compat_q2_rerelease_core_imports *c = calloc(1, sizeof *c);
   if (!c) return NULL;
   c->memory = memory; c->services = services;
+  c->command_strings = qa_compat_q2_command_guest_strings_create(memory, "Q2 command text");
   return c;
 }
 void qa_compat_q2_rerelease_core_imports_destroy(qa_compat_q2_rerelease_core_imports *c) {
   if (!c) return;
   for (size_t i = 0; i < c->string_count; i++) free(c->strings[i].key);
-  for (size_t i = 0; i < c->cvar_count; i++) free(c->cvars[i].name);
+  for (size_t i = 0; i < c->cvar_count; i++) { free(c->cvars[i]->name); qa_compat_q2_reusable_guest_string_destroy(&c->cvars[i]->text); qa_compat_q2_reusable_guest_string_destroy(&c->cvars[i]->latched_text); free(c->cvars[i]); }
+  if (c->command_strings) qa_compat_q2_command_guest_strings_destroy(c->command_strings);
   free(c->allocs); free(c->strings); free(c->cvars); free(c);
 }
 qa_compat_q2_memory *qa_compat_q2_rerelease_core_imports_get_memory(const qa_compat_q2_rerelease_core_imports *c) { return c->memory; }
@@ -82,20 +89,22 @@ qa_guest_address qa_compat_q2_rerelease_core_imports_string(qa_compat_q2_rerelea
 }
 static void write_cvar(qa_compat_q2_rerelease_core_imports *c, guest_cvar_t *record, const qa_cvar_snapshot *value) {
   const qa_compat_q2_memory *m = c->memory;
-  qa_compat_q2_mem_write_pointer(m, record->f_string, true, qa_compat_q2_rerelease_core_imports_string(c, value->value));
-  if (value->latched_value) qa_compat_q2_mem_write_pointer(m, record->f_latched, true, qa_compat_q2_rerelease_core_imports_string(c, value->latched_value));
-  else qa_compat_q2_mem_write_pointer(m, record->f_latched, false, record->address);
-  qa_compat_q2_mem_write_u32(m, record->f_flags, (uint32_t)value->flags);
+  /* Private cvars (rcon passwords) exist for the guest but never reveal their contents. */
+  bool hidden = (value->flags & QA_Q2_CVAR_FLAG_PRIVATE) != 0;
+  qa_compat_q2_mem_write_pointer(m, record->f_string, true, qa_compat_q2_reusable_guest_string_set_text(&record->text, hidden ? "" : value->value));
+  if (value->latched_value == NULL || hidden) qa_compat_q2_mem_write_pointer(m, record->f_latched, false, record->address);
+  else qa_compat_q2_mem_write_pointer(m, record->f_latched, true, qa_compat_q2_reusable_guest_string_set_text(&record->latched_text, value->latched_value));
+  qa_compat_q2_mem_write_u32(m, record->f_flags, qa_js_to_uint32(value->flags));
   double modified = value->modification_count;
-  qa_compat_q2_mem_write_i32(m, record->f_modified, (int32_t)(modified == 0 || isnan(modified) ? 1 : modified));
-  qa_compat_q2_mem_write_f32(m, record->f_value, value->numeric_value);
-  qa_compat_q2_mem_write_i32(m, record->f_integer, (int32_t)value->integer_value);
+  qa_compat_q2_mem_write_i32(m, record->f_modified, qa_js_to_int32((modified == 0 || isnan(modified) ? 1 : modified)));
+  qa_compat_q2_mem_write_f32(m, record->f_value, hidden ? 0 : value->numeric_value);
+  qa_compat_q2_mem_write_i32(m, record->f_integer, hidden ? 0 : qa_js_to_int32(value->integer_value));
 }
 void qa_compat_q2_rerelease_core_imports_refresh_cvars(qa_compat_q2_rerelease_core_imports *c) {
   for (size_t i = 0; i < c->cvar_count; i++) {
     qa_cvar_snapshot value; memset(&value, 0, sizeof value);
-    if (qa_cvar_registry_get(c->services.cvars, c->cvars[i].name, &value)) {
-      write_cvar(c, &c->cvars[i], &value);
+    if (qa_cvar_registry_get(c->services.cvars, c->cvars[i]->name, &value)) {
+      write_cvar(c, c->cvars[i], &value);
       qa_cvar_read_free(&value);
     }
   }
@@ -104,7 +113,7 @@ bool qa_compat_q2_rerelease_core_imports_cvar(qa_compat_q2_rerelease_core_import
   if (!value) return false;
   qa_compat_q2_rerelease_layouts_ensure();
   guest_cvar_t *record = NULL;
-  for (size_t i = 0; i < c->cvar_count; i++) if (strcmp(c->cvars[i].name, value->name) == 0) record = &c->cvars[i];
+  for (size_t i = 0; i < c->cvar_count; i++) if (strcmp(c->cvars[i]->name, value->name) == 0) record = c->cvars[i];
   if (!record) {
     char label[512]; snprintf(label, sizeof label, "Q2 cvar %s", value->name);
     qa_guest_address address = c->memory->allocate(c->memory->ctx, qa_compat_q2_rerelease_cvar_layout.byte_length, true, 8, label);
@@ -114,8 +123,13 @@ bool qa_compat_q2_rerelease_core_imports_cvar(qa_compat_q2_rerelease_core_import
       c->cvars = realloc(c->cvars, c->cvar_cap * sizeof *c->cvars);
       if (!c->cvars) qa_range_error("Q2 rerelease imports out of memory");
     }
-    record = &c->cvars[c->cvar_count++];
+    record = calloc(1, sizeof *record); if (!record) qa_range_error("Q2 rerelease imports out of memory");
+    c->cvars[c->cvar_count++] = record;
     record->name = xstrdup(value->name); record->address = address;
+    char value_label[512], latched_label[512];
+    snprintf(value_label, sizeof value_label, "Q2 cvar %s value", value->name); snprintf(latched_label, sizeof latched_label, "Q2 cvar %s latched", value->name);
+    qa_compat_q2_reusable_guest_string_init(&record->text, c->memory, value_label);
+    qa_compat_q2_reusable_guest_string_init(&record->latched_text, c->memory, latched_label);
     record->f_string = qa_compat_q2_mem_offset(c->memory, address, (int64_t)qa_compat_q2_rerelease_field_offset(layout, "string"));
     record->f_latched = qa_compat_q2_mem_offset(c->memory, address, (int64_t)qa_compat_q2_rerelease_field_offset(layout, "latched_string"));
     record->f_flags = qa_compat_q2_mem_offset(c->memory, address, (int64_t)qa_compat_q2_rerelease_field_offset(layout, "flags"));
@@ -138,7 +152,9 @@ void qa_compat_q2_rerelease_core_imports_free(qa_compat_q2_rerelease_core_import
     if (c->allocs[i].key == address.byte_offset) {
       double size = c->allocs[i].size;
       c->memory->unmap(c->memory->ctx, address, qa_compat_q2_native_allocation_bytes(size));
-      c->allocs[i] = c->allocs[--c->alloc_count];
+      /* Keep the TS Map's insertion order for FreeTags. */
+      memmove(&c->allocs[i], &c->allocs[i + 1], (c->alloc_count - i - 1) * sizeof *c->allocs);
+      c->alloc_count--;
       return;
     }
   }
@@ -183,15 +199,49 @@ qa_guest_call_result qa_compat_q2_rerelease_core_imports_invoke(qa_compat_q2_rer
   }
   if (strcmp(name, "ServerFrame") == 0) return result_u32(s->server_frame(s->ctx));
   if (strcmp(name, "argc") == 0) { size_t n = 0; (void)s->command_arguments(s->ctx, &n); return qa_compat_q2_rerelease_guest_int((double)n); }
-  if (strcmp(name, "argv") == 0) {
+  if (strcmp(name, "argv") == 0 || strcmp(name, "args") == 0) {
     size_t n = 0; const char *const *argv = s->command_arguments(s->ctx, &n);
-    int64_t index = qa_compat_q2_guest_integer(args, count, 0);
-    const char *value = index >= 0 && (size_t)index < n && argv[index] ? argv[index] : "";
-    return qa_compat_q2_rerelease_guest_pointer(true, qa_compat_q2_rerelease_core_imports_string(c, value));
+    const char *tail = s->command_tail(s->ctx);
+    /* `${command.join("\0")}\0\0${tail}` keys the reusable strings of one command. */
+    size_t key_length = 2 + strlen(tail);
+    for (size_t i = 0; i < n; i++) key_length += strlen(argv[i] ? argv[i] : "") + (i ? 1 : 0);
+    char *key = malloc(key_length + 1);
+    if (!key) qa_range_error("Q2 import allocation failed");
+    size_t at = 0;
+    for (size_t i = 0; i < n; i++) {
+      const char *part = argv[i] ? argv[i] : "";
+      if (i) key[at++] = '\0';
+      memcpy(key + at, part, strlen(part)); at += strlen(part);
+    }
+    key[at++] = '\0'; key[at++] = '\0';
+    memcpy(key + at, tail, strlen(tail)); at += strlen(tail);
+    key[at] = '\0';
+    const char *value = tail;
+    if (strcmp(name, "argv") == 0) {
+      int64_t index = qa_compat_q2_guest_integer(args, count, 0);
+      value = index >= 0 && (size_t)index < n && argv[index] ? argv[index] : "";
+    }
+    qa_guest_address address = qa_compat_q2_command_guest_strings_get(c->command_strings, key, at, value);
+    free(key);
+    return qa_compat_q2_rerelease_guest_pointer(true, address);
   }
-  if (strcmp(name, "args") == 0)
-    return qa_compat_q2_rerelease_guest_pointer(true, qa_compat_q2_rerelease_core_imports_string(c, s->command_tail(s->ctx)));
-  if (strcmp(name, "AddCommandString") == 0) { char *t = arg_text(c, args, count, 0); s->add_command(s->ctx, t); free(t); return result_void(); }
+  if (strcmp(name, "AddCommandString") == 0) {
+    char *t = arg_text(c, args, count, 0);
+    qa_compat_q2_guest_console_filter filtered = qa_compat_q2_filter_guest_console(t);
+    free(t);
+    if (filtered.refused_count != 0) {
+      char *list = qa_compat_q2_guest_console_refused_list(&filtered);
+      size_t size = strlen(list) + 64;
+      char *message = malloc(size);
+      if (!message) qa_range_error("Q2 import allocation failed");
+      snprintf(message, size, "game module console command refused: %s\n", list);
+      s->print(s->ctx, message);
+      free(message); free(list);
+    }
+    if (filtered.text[0] != '\0') s->add_command(s->ctx, filtered.text);
+    qa_compat_q2_guest_console_filter_free(&filtered);
+    return result_void();
+  }
   if (strcmp(name, "GetExtension") == 0) {
     char *t = arg_text(c, args, count, 0); qa_guest_address out = {0};
     bool has = s->extension && s->extension(s->ctx, t, call.api, &out);
@@ -234,7 +284,13 @@ qa_guest_call_result qa_compat_q2_rerelease_core_imports_invoke(qa_compat_q2_rer
   if (strcmp(name, "cvar_set") == 0 || strcmp(name, "cvar_forceset") == 0) {
     char *n0 = arg_text(c, args, count, 0), *n1 = arg_text(c, args, count, 1);
     qa_cvar_snapshot snap; memset(&snap, 0, sizeof snap);
-    bool filled = qa_cvar_registry_set(s->cvars, n0, n1, strcmp(name, "cvar_forceset") == 0, &snap);
+    /* A guest may not overwrite the credentials it is not allowed to read. */
+    bool filled = qa_cvar_registry_get(s->cvars, n0, &snap);
+    if (!filled || (snap.flags & QA_Q2_CVAR_FLAG_PRIVATE) == 0) {
+      if (filled) qa_cvar_read_free(&snap);
+      memset(&snap, 0, sizeof snap);
+      filled = qa_cvar_registry_set(s->cvars, n0, n1, strcmp(name, "cvar_forceset") == 0, &snap);
+    }
     free(n0); free(n1);
     return cvar_result(c, filled, &snap);
   }

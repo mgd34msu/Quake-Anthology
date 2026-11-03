@@ -31,10 +31,16 @@ void qa_q3_reliable_ring_assign_acknowledgement(qa_q3_reliable_ring *r, int64_t 
 /* pending(): fills caller array (max), returns count. */
 size_t qa_q3_reliable_ring_pending(const qa_q3_reliable_ring *r, qa_q3_reliable_command *out, size_t max);
 void qa_q3_client_reliable_commands_change_latest(qa_q3_client_reliable_commands *r);
-/* Returns false on ReliableOverflowError (out gets sequence/acknowledge of ring). */
+/* Returns false on ReliableOverflowError (out gets sequence/acknowledge of ring); the
+ * caller raises "ReliableOverflowError" where TS lets it throw. out may be NULL. */
 bool qa_q3_client_reliable_commands_add(qa_q3_client_reliable_commands *r, const char *text, qa_q3_reliable_command *out);
 qa_q3_reliable_acknowledgement qa_q3_client_reliable_commands_acknowledge_through(qa_q3_client_reliable_commands *r, int64_t sequence);
 bool qa_q3_server_reliable_commands_replace_pending(qa_q3_server_reliable_commands *r, int64_t sent, const char *text);
 qa_q3_server_command_append qa_q3_server_reliable_commands_add(qa_q3_server_reliable_commands *r, const char *text);
 qa_q3_reliable_acknowledgement qa_q3_server_reliable_commands_acknowledge_through(qa_q3_server_reliable_commands *r, int64_t sequence);
+/* TS protected replace(sequence, text) plus the currentSequence /
+ * acknowledgedSequence assignments of a subclass constructor
+ * (app/bootstrap/simulation/bots.ts RestoredBotReliableCommands). */
+void qa_q3_reliable_ring_replace(qa_q3_reliable_ring *r, int64_t sequence, const char *text);
+void qa_q3_reliable_ring_set_sequences(qa_q3_reliable_ring *r, int64_t current, int64_t acknowledged);
 #endif

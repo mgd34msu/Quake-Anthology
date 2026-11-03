@@ -45,6 +45,24 @@ static void pushed_append(pushed_list *list, qa_actor_id actor, qa_vec3 origin) 
   list->count++;
 }
 
+static void pushed_release(void *arg) {
+  pushed_list *list = arg;
+  free(list->items);
+  list->items = NULL;
+}
+
+typedef struct push_call {
+  const qa_q1_pusher_services *services;
+  qa_q1_physics_entity entity;
+  qa_vec3 displacement;
+  qa_q1_push_result result;
+} push_call;
+
+static void push_call_run(void *data) {
+  push_call *call = data;
+  call->result = call->services->push(call->services->ctx, call->entity, call->displacement);
+}
+
 static qa_q1_pusher_result make_result(qa_actor_id actor, const char *status, pushed_list *pushed) {
   qa_q1_pusher_result result;
   memset(&result, 0, sizeof result);
@@ -94,9 +112,13 @@ qa_q1_pusher_result qa_push_q1_pusher(qa_q1_push_input input, qa_q1_pusher_servi
   services.write(services.ctx, pusher);
   services.link(services.ctx, pusher.actor, false);
   pushed_list pushed = {NULL, 0, 0};
+  /* TS arrays are GC-owned; a raise from a source callback releases the list. */
+  qa_cleanup pushed_cleanup;
+  qa_cleanup_push(&pushed_cleanup, pushed_release, &pushed);
   const qa_angle_vectors axes = qa_q1_math_angles(m, qa_q1_math_scale(m, angular, -1));
   qa_q1_physics_entity linked_pusher;
   if (!services.read(services.ctx, input.actor, &linked_pusher)) {
+    qa_cleanup_pop(&pushed_cleanup);
     free(pushed.items);
     return make_result(input.actor, "actor-removed", NULL);
   }
@@ -132,10 +154,15 @@ qa_q1_pusher_result qa_push_q1_pusher(qa_q1_push_input input, qa_q1_pusher_servi
       displacement = qa_q1_math_add(m, delta, qa_q1_math_sub(m, rotated, offset));
     }
     services.collision_enabled(services.ctx, pusher.actor, false);
-    const qa_q1_push_result pushed_result = services.push(services.ctx, entity, displacement);
+    /* TS try { push } finally { re-enable }: the finally also runs when push throws. */
+    push_call call = {&services, entity, displacement, {0}};
+    qa_caught_error caught;
+    const bool push_ok = qa_try(push_call_run, &call, &caught);
+    const qa_q1_push_result pushed_result = call.result;
     /* A synchronous trigger may remove the pusher. Never relink a stale actor. */
     qa_q1_physics_entity probe;
     if (services.read(services.ctx, input.actor, &probe)) services.collision_enabled(services.ctx, pusher.actor, true);
+    if (!push_ok) qa_rethrow(&caught);
     qa_q1_physics_entity live_pusher;
     if (!services.read(services.ctx, input.actor, &live_pusher)) {
       result = make_result(input.actor, "actor-removed", &pushed);
@@ -191,6 +218,7 @@ qa_q1_pusher_result qa_push_q1_pusher(qa_q1_push_input input, qa_q1_pusher_servi
     finished = true;
   }
   if (!finished) result = make_result(input.actor, "moved", &pushed);
+  qa_cleanup_pop(&pushed_cleanup);
   free(pushed.items);
   return result;
 }

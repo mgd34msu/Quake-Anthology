@@ -1,1066 +1,570 @@
-/* Port of src/persistence/q2-monsters.ts. GPL-2.0-or-later. */
+/* Port of src/persistence/q2-monsters.ts over the content checkpoint type
+ * qa_q2m_monsters_checkpoint (content/q2/foundation/monsters/checkpoint.h).
+ * Builders emit keys in the order the TS capture objects are created (the
+ * MonsterState literal of Q2Monsters.admit minus the saved links, then the
+ * links); readers follow the TS reader. GPL-2.0-or-later. */
 #include "qa/persistence/q2_monsters.h"
 
-#include <stdlib.h>
 #include <string.h>
 
-static qa_save_reader field(const qa_save_reader *reader, const char *name) {
-  qa_save_reader out;
-  if (!qa_save_reader_field(reader, name, &out))
-    qa_save_reader_fail(reader, "out of memory");
+#include "q2_codec_internal.h"
+
+static const char *const POWER_ARMOR[] = {"none", "screen", "shield"};
+static const char *const WEAPONS[] = {"blaster", "shotgun", "machinegun"};
+static const char *const LOCOMOTION[] = {"walk", "fly", "swim", "stationary"};
+static const char *const SPAWNED_BY[] = {"none", "carrier", "medic", "widow"};
+static const char *const ATTACK_STATES[] = {"straight", "sliding", "melee", "missile", "blind"};
+
+static size_t choice_index(const qa_save_reader *reader, const char *name, const char *const *choices, size_t count) {
+  const char *value = q2c_choice(reader, name, choices, count);
+  for (size_t i = 0; i < count; i++) if (value == choices[i]) return i;
+  return 0;
+}
+static double finite_field(const qa_save_reader *reader, const char *name) {
+  qa_save_reader f = q2c_field(reader, name);
+  double value = qa_save_reader_finite(&f);
+  qa_save_reader_destroy(&f);
+  return value;
+}
+
+/* ---- TS alternateFly / state readers ---- */
+static void read_alternate_fly(const qa_save_reader *r, qa_q2m_alternate_fly_state *out) {
+  out->alternate_fly = q2c_boolean(r, "alternateFly");
+  out->fly_min_distance = q2c_number(r, "flyMinDistance");
+  out->fly_max_distance = q2c_number(r, "flyMaxDistance");
+  out->fly_acceleration = q2c_number(r, "flyAcceleration");
+  out->fly_speed = q2c_number(r, "flySpeed");
+  out->fly_ideal_position = q2c_vector(r, "flyIdealPosition");
+  out->fly_position_time = q2c_number(r, "flyPositionTime");
+  out->fly_buzzard = q2c_boolean(r, "flyBuzzard");
+  out->fly_above = q2c_boolean(r, "flyAbove");
+  out->fly_pinned = q2c_boolean(r, "flyPinned");
+  out->fly_thrusters = q2c_boolean(r, "flyThrusters");
+  out->fly_recovery_time = q2c_number(r, "flyRecoveryTime");
+  out->fly_recovery_direction = q2c_vector(r, "flyRecoveryDirection");
+  out->hint_path = q2c_boolean(r, "hintPath");
+  qa_save_reader pathing = q2c_field(r, "pathing");
+  out->has_pathing = !qa_save_reader_is_null(&pathing);
+  if (out->has_pathing) {
+    out->pathing.first_move_point = q2c_vector(&pathing, "firstMovePoint");
+    out->pathing.second_move_point = q2c_vector(&pathing, "secondMovePoint");
+    out->pathing.traversal_pending = q2c_boolean(&pathing, "traversalPending");
+  }
+  qa_save_reader_destroy(&pathing);
+}
+
+static void read_state(const qa_save_reader *r, qa_q2m_state_checkpoint *out) {
+  static const double WATER_LEVELS[] = {0, 1, 2, 3};
+  qa_q2m_state *s = &out->rest;
+  s->initial_power_armor_type = (qa_q2m_power_armor)choice_index(r, "initialPowerArmorType", POWER_ARMOR, 3);
+  s->max_power_armor_power = finite_field(r, "maxPowerArmorPower");
+  s->base_health = finite_field(r, "baseHealth");
+  s->health_scaling = q2c_integer(r, "healthScaling", 1);
+  read_alternate_fly(r, &s->alt);
+  s->kind = q2c_string(r, "kind");
+  s->weapon = (qa_q2m_weapon_kind)choice_index(r, "weapon", WEAPONS, 3);
+  s->locomotion = (qa_q2m_locomotion)choice_index(r, "locomotion", LOCOMOTION, 4);
+  s->has_melee = q2c_boolean(r, "hasMelee");
+  s->has_ranged_attack = q2c_boolean(r, "hasRangedAttack");
+  s->has_idle = q2c_boolean(r, "hasIdle");
+  s->has_search = q2c_boolean(r, "hasSearch");
+  s->blind_fire = q2c_boolean(r, "blindFire");
+  s->good_guy = q2c_boolean(r, "goodGuy");
+  s->target_anger = q2c_boolean(r, "targetAnger");
+  s->ignore_shots = q2c_boolean(r, "ignoreShots");
+  s->do_not_count = q2c_boolean(r, "doNotCount");
+  s->spawned_by = (qa_q2m_spawned_by)choice_index(r, "spawnedBy", SPAWNED_BY, 4);
+  out->has_commander = q2c_nullable_actor(r, "commander", &out->commander);
+  s->monster_slots = q2c_number(r, "monsterSlots");
+  s->monster_used = q2c_number(r, "monsterUsed");
+  s->brutal = q2c_boolean(r, "brutal");
+  s->medic = q2c_boolean(r, "medic");
+  s->resurrecting = q2c_boolean(r, "resurrecting");
+  out->move = q2c_string(r, "move");
+  out->next_move = q2c_is_null(r, "nextMove") ? NULL : q2c_string(r, "nextMove");
+  s->next_frame = q2c_number(r, "nextFrame");
+  s->next_move_time = q2c_number(r, "nextMoveTime");
+  s->scale = q2c_number(r, "scale");
+  s->gib_health = q2c_number(r, "gibHealth");
+  s->can_take_damage = q2c_boolean(r, "canTakeDamage");
+  s->dead = q2c_boolean(r, "dead");
+  s->corpse = q2c_boolean(r, "corpse");
+  s->gibbed = q2c_boolean(r, "gibbed");
+  s->stand_ground = q2c_boolean(r, "standGround");
+  s->temporary_stand_ground = q2c_boolean(r, "temporaryStandGround");
+  s->hold_frame = q2c_boolean(r, "holdFrame");
+  s->ducked = q2c_boolean(r, "ducked");
+  s->dodging = q2c_boolean(r, "dodging");
+  s->charging = q2c_boolean(r, "charging");
+  s->manual_steering = q2c_boolean(r, "manualSteering");
+  s->combat_point = q2c_boolean(r, "combatPoint");
+  s->attack_state = (qa_q2m_attack_state)choice_index(r, "attackState", ATTACK_STATES, 5);
+  s->lefty = q2c_boolean(r, "lefty");
+  s->ideal_yaw = q2c_number(r, "idealYaw");
+  s->yaw_speed = q2c_number(r, "yawSpeed");
+  s->pause_time = q2c_number(r, "pauseTime");
+  s->idle_time = q2c_number(r, "idleTime");
+  s->pain_time = q2c_number(r, "painTime");
+  s->fire_wait = q2c_number(r, "fireWait");
+  s->duck_wait = q2c_number(r, "duckWait");
+  s->next_duck_time = q2c_number(r, "nextDuckTime");
+  s->dodge_time = q2c_number(r, "dodgeTime");
+  s->attack_finished = q2c_number(r, "attackFinished");
+  s->check_attack_time = q2c_number(r, "checkAttackTime");
+  s->strafe_time = q2c_number(r, "strafeTime");
+  s->had_visibility = q2c_boolean(r, "hadVisibility");
+  s->close_sight_tripped = q2c_boolean(r, "closeSightTripped");
+  /* Timers added after the first save revision read as expired from older saves; the flags read as false. */
+  s->bad_move_time = q2c_present(r, "badMoveTime") ? q2c_number(r, "badMoveTime") : 0;
+  s->reached_hold_combat = q2c_true(r, "reachedHoldCombat");
+  s->third_eye = q2c_true(r, "thirdEye");
+  s->bump_time = q2c_present(r, "bumpTime") ? q2c_number(r, "bumpTime") : 0;
+  s->no_step = q2c_true(r, "noStep");
+  s->random_change_time = q2c_present(r, "randomChangeTime") ? q2c_number(r, "randomChangeTime") : 0;
+  s->melee_time = q2c_number(r, "meleeTime");
+  s->search_time = q2c_number(r, "searchTime");
+  s->trail_time = q2c_number(r, "trailTime");
+  s->show_hostile = q2c_number(r, "showHostile");
+  s->last_sighting = q2c_vector(r, "lastSighting");
+  s->has_saved_goal = !q2c_is_null(r, "savedGoal");
+  if (s->has_saved_goal) s->saved_goal = q2c_vector(r, "savedGoal");
+  s->lost_sight = q2c_boolean(r, "lostSight");
+  s->pursue_next = q2c_boolean(r, "pursueNext");
+  s->pursue_temporary = q2c_boolean(r, "pursueTemporary");
+  s->pursuit_last_seen = q2c_boolean(r, "pursuitLastSeen");
+  s->blind_fire_target = q2c_vector(r, "blindFireTarget");
+  s->blind_fire_delay = q2c_number(r, "blindFireDelay");
+  qa_save_reader sound = q2c_field(r, "soundTarget");
+  out->has_sound_target = !qa_save_reader_is_null(&sound);
+  if (out->has_sound_target) {
+    out->sound_target.actor = q2c_actor(&sound, "actor");
+    out->sound_target.owner = q2c_actor(&sound, "owner");
+    out->sound_target.origin = q2c_vector(&sound, "origin");
+    out->sound_target.time = q2c_number(&sound, "time");
+  }
+  qa_save_reader_destroy(&sound);
+  out->has_old_enemy = q2c_nullable_actor(r, "oldEnemy", &out->old_enemy);
+  out->has_move_target = q2c_nullable_actor(r, "moveTarget", &out->move_target);
+  s->combat_target = q2c_string(r, "combatTarget");
+  s->cocked = q2c_boolean(r, "cocked");
+  s->force_refire = q2c_boolean(r, "forceRefire");
+  s->normal_height = q2c_number(r, "normalHeight");
+  s->air_finished = q2c_number(r, "airFinished");
+  s->environmental_damage_time = q2c_number(r, "environmentalDamageTime");
+  qa_save_reader water = q2c_field(r, "waterLevel");
+  s->water_level = qa_save_reader_choice_number(&water, WATER_LEVELS, 4);
+  qa_save_reader_destroy(&water);
+  s->water_type = q2c_number(r, "waterType");
+  s->last_link_count = q2c_number(r, "lastLinkCount");
+  s->jump_time = q2c_number(r, "jumpTime");
+  s->has_flies_time = !q2c_is_null(r, "fliesTime");
+  if (s->has_flies_time) s->flies_time = q2c_number(r, "fliesTime");
+}
+
+/* TS Q2Monsters.capture() state: the admit() literal (createAlternateFlyState
+ * spread first) minus move/nextMove/soundTarget/oldEnemy/moveTarget/commander,
+ * then those six. */
+static qa_save_value *state_value(const qa_q2m_state_checkpoint *in) {
+  const qa_q2m_state *s = &in->rest;
+  const qa_q2m_alternate_fly_state *a = &s->alt;
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "alternateFly", qa_save_value_boolean(a->alternate_fly));
+  q2c_set(&o, "flyMinDistance", qa_save_value_number(a->fly_min_distance));
+  q2c_set(&o, "flyMaxDistance", qa_save_value_number(a->fly_max_distance));
+  q2c_set(&o, "flyAcceleration", qa_save_value_number(a->fly_acceleration));
+  q2c_set(&o, "flySpeed", qa_save_value_number(a->fly_speed));
+  q2c_set(&o, "flyIdealPosition", q2c_vector_value(a->fly_ideal_position));
+  q2c_set(&o, "flyPositionTime", qa_save_value_number(a->fly_position_time));
+  q2c_set(&o, "flyBuzzard", qa_save_value_boolean(a->fly_buzzard));
+  q2c_set(&o, "flyAbove", qa_save_value_boolean(a->fly_above));
+  q2c_set(&o, "flyPinned", qa_save_value_boolean(a->fly_pinned));
+  q2c_set(&o, "flyThrusters", qa_save_value_boolean(a->fly_thrusters));
+  q2c_set(&o, "flyRecoveryTime", qa_save_value_number(a->fly_recovery_time));
+  q2c_set(&o, "flyRecoveryDirection", q2c_vector_value(a->fly_recovery_direction));
+  q2c_set(&o, "hintPath", qa_save_value_boolean(a->hint_path));
+  if (a->has_pathing) {
+    q2c_object pathing = q2c_object_new();
+    q2c_set(&pathing, "firstMovePoint", q2c_vector_value(a->pathing.first_move_point));
+    q2c_set(&pathing, "secondMovePoint", q2c_vector_value(a->pathing.second_move_point));
+    q2c_set(&pathing, "traversalPending", qa_save_value_boolean(a->pathing.traversal_pending));
+    q2c_set(&o, "pathing", q2c_done(&pathing));
+  } else {
+    q2c_set(&o, "pathing", qa_save_value_null());
+  }
+  q2c_set(&o, "initialPowerArmorType", qa_save_value_string(POWER_ARMOR[s->initial_power_armor_type]));
+  q2c_set(&o, "maxPowerArmorPower", qa_save_value_number(s->max_power_armor_power));
+  q2c_set(&o, "baseHealth", qa_save_value_number(s->base_health));
+  q2c_set(&o, "healthScaling", qa_save_value_number(s->health_scaling));
+  q2c_set(&o, "kind", q2c_string_value(s->kind));
+  q2c_set(&o, "weapon", qa_save_value_string(WEAPONS[s->weapon]));
+  q2c_set(&o, "locomotion", qa_save_value_string(LOCOMOTION[s->locomotion]));
+  q2c_set(&o, "hasMelee", qa_save_value_boolean(s->has_melee));
+  q2c_set(&o, "hasRangedAttack", qa_save_value_boolean(s->has_ranged_attack));
+  q2c_set(&o, "hasIdle", qa_save_value_boolean(s->has_idle));
+  q2c_set(&o, "hasSearch", qa_save_value_boolean(s->has_search));
+  q2c_set(&o, "blindFire", qa_save_value_boolean(s->blind_fire));
+  q2c_set(&o, "goodGuy", qa_save_value_boolean(s->good_guy));
+  q2c_set(&o, "targetAnger", qa_save_value_boolean(s->target_anger));
+  q2c_set(&o, "brutal", qa_save_value_boolean(s->brutal));
+  q2c_set(&o, "medic", qa_save_value_boolean(s->medic));
+  q2c_set(&o, "resurrecting", qa_save_value_boolean(s->resurrecting));
+  q2c_set(&o, "ignoreShots", qa_save_value_boolean(s->ignore_shots));
+  q2c_set(&o, "doNotCount", qa_save_value_boolean(s->do_not_count));
+  q2c_set(&o, "spawnedBy", qa_save_value_string(SPAWNED_BY[s->spawned_by]));
+  q2c_set(&o, "monsterSlots", qa_save_value_number(s->monster_slots));
+  q2c_set(&o, "monsterUsed", qa_save_value_number(s->monster_used));
+  q2c_set(&o, "nextFrame", qa_save_value_number(s->next_frame));
+  q2c_set(&o, "nextMoveTime", qa_save_value_number(s->next_move_time));
+  q2c_set(&o, "scale", qa_save_value_number(s->scale));
+  q2c_set(&o, "gibHealth", qa_save_value_number(s->gib_health));
+  q2c_set(&o, "canTakeDamage", qa_save_value_boolean(s->can_take_damage));
+  q2c_set(&o, "dead", qa_save_value_boolean(s->dead));
+  q2c_set(&o, "corpse", qa_save_value_boolean(s->corpse));
+  q2c_set(&o, "gibbed", qa_save_value_boolean(s->gibbed));
+  q2c_set(&o, "standGround", qa_save_value_boolean(s->stand_ground));
+  q2c_set(&o, "temporaryStandGround", qa_save_value_boolean(s->temporary_stand_ground));
+  q2c_set(&o, "holdFrame", qa_save_value_boolean(s->hold_frame));
+  q2c_set(&o, "ducked", qa_save_value_boolean(s->ducked));
+  q2c_set(&o, "dodging", qa_save_value_boolean(s->dodging));
+  q2c_set(&o, "charging", qa_save_value_boolean(s->charging));
+  q2c_set(&o, "manualSteering", qa_save_value_boolean(s->manual_steering));
+  q2c_set(&o, "combatPoint", qa_save_value_boolean(s->combat_point));
+  q2c_set(&o, "attackState", qa_save_value_string(ATTACK_STATES[s->attack_state]));
+  q2c_set(&o, "lefty", qa_save_value_boolean(s->lefty));
+  q2c_set(&o, "idealYaw", qa_save_value_number(s->ideal_yaw));
+  q2c_set(&o, "yawSpeed", qa_save_value_number(s->yaw_speed));
+  q2c_set(&o, "pauseTime", qa_save_value_number(s->pause_time));
+  q2c_set(&o, "idleTime", qa_save_value_number(s->idle_time));
+  q2c_set(&o, "painTime", qa_save_value_number(s->pain_time));
+  q2c_set(&o, "fireWait", qa_save_value_number(s->fire_wait));
+  q2c_set(&o, "duckWait", qa_save_value_number(s->duck_wait));
+  q2c_set(&o, "nextDuckTime", qa_save_value_number(s->next_duck_time));
+  q2c_set(&o, "dodgeTime", qa_save_value_number(s->dodge_time));
+  q2c_set(&o, "attackFinished", qa_save_value_number(s->attack_finished));
+  q2c_set(&o, "checkAttackTime", qa_save_value_number(s->check_attack_time));
+  q2c_set(&o, "strafeTime", qa_save_value_number(s->strafe_time));
+  q2c_set(&o, "hadVisibility", qa_save_value_boolean(s->had_visibility));
+  q2c_set(&o, "closeSightTripped", qa_save_value_boolean(s->close_sight_tripped));
+  q2c_set(&o, "badMoveTime", qa_save_value_number(s->bad_move_time));
+  q2c_set(&o, "reachedHoldCombat", qa_save_value_boolean(s->reached_hold_combat));
+  q2c_set(&o, "thirdEye", qa_save_value_boolean(s->third_eye));
+  q2c_set(&o, "bumpTime", qa_save_value_number(s->bump_time));
+  q2c_set(&o, "noStep", qa_save_value_boolean(s->no_step));
+  q2c_set(&o, "randomChangeTime", qa_save_value_number(s->random_change_time));
+  q2c_set(&o, "meleeTime", qa_save_value_number(s->melee_time));
+  q2c_set(&o, "searchTime", qa_save_value_number(s->search_time));
+  q2c_set(&o, "trailTime", qa_save_value_number(s->trail_time));
+  q2c_set(&o, "showHostile", qa_save_value_number(s->show_hostile));
+  q2c_set(&o, "lastSighting", q2c_vector_value(s->last_sighting));
+  q2c_set(&o, "savedGoal", s->has_saved_goal ? q2c_vector_value(s->saved_goal) : qa_save_value_null());
+  q2c_set(&o, "lostSight", qa_save_value_boolean(s->lost_sight));
+  q2c_set(&o, "pursueNext", qa_save_value_boolean(s->pursue_next));
+  q2c_set(&o, "pursueTemporary", qa_save_value_boolean(s->pursue_temporary));
+  q2c_set(&o, "pursuitLastSeen", qa_save_value_boolean(s->pursuit_last_seen));
+  q2c_set(&o, "blindFireTarget", q2c_vector_value(s->blind_fire_target));
+  q2c_set(&o, "blindFireDelay", qa_save_value_number(s->blind_fire_delay));
+  q2c_set(&o, "combatTarget", q2c_string_value(s->combat_target));
+  q2c_set(&o, "cocked", qa_save_value_boolean(s->cocked));
+  q2c_set(&o, "forceRefire", qa_save_value_boolean(s->force_refire));
+  q2c_set(&o, "normalHeight", qa_save_value_number(s->normal_height));
+  q2c_set(&o, "waterLevel", qa_save_value_number(s->water_level));
+  q2c_set(&o, "waterType", qa_save_value_number(s->water_type));
+  q2c_set(&o, "lastLinkCount", qa_save_value_number(s->last_link_count));
+  q2c_set(&o, "airFinished", qa_save_value_number(s->air_finished));
+  q2c_set(&o, "environmentalDamageTime", qa_save_value_number(s->environmental_damage_time));
+  q2c_set(&o, "jumpTime", qa_save_value_number(s->jump_time));
+  q2c_set(&o, "fliesTime", s->has_flies_time ? qa_save_value_number(s->flies_time) : qa_save_value_null());
+  q2c_set(&o, "move", q2c_string_value(in->move));
+  q2c_set(&o, "nextMove", in->next_move != NULL ? qa_save_value_string(in->next_move) : qa_save_value_null());
+  if (in->has_sound_target) {
+    q2c_object sound = q2c_object_new();
+    q2c_set(&sound, "actor", q2c_actor_value(in->sound_target.actor));
+    q2c_set(&sound, "owner", q2c_actor_value(in->sound_target.owner));
+    q2c_set(&sound, "origin", q2c_vector_value(in->sound_target.origin));
+    q2c_set(&sound, "time", qa_save_value_number(in->sound_target.time));
+    q2c_set(&o, "soundTarget", q2c_done(&sound));
+  } else {
+    q2c_set(&o, "soundTarget", qa_save_value_null());
+  }
+  q2c_set(&o, "oldEnemy", q2c_nullable_actor_value(in->has_old_enemy, in->old_enemy));
+  q2c_set(&o, "moveTarget", q2c_nullable_actor_value(in->has_move_target, in->move_target));
+  q2c_set(&o, "commander", q2c_nullable_actor_value(in->has_commander, in->commander));
+  return q2c_done(&o);
+}
+
+/* ---- perception (TS MonsterPerception.capture()) ---- */
+static qa_q2m_saved_sighting read_sighting(const qa_save_reader *r) {
+  qa_q2m_saved_sighting out;
+  out.actor = q2c_actor(r, "actor");
+  out.time = q2c_number(r, "time");
   return out;
 }
-static qa_save_reader item(const qa_save_reader *reader, size_t index) {
-  qa_save_reader out;
-  if (!qa_save_reader_item(reader, index, &out))
-    qa_save_reader_fail(reader, "out of memory");
+static qa_q2m_saved_noise read_noise(const qa_save_reader *r) {
+  qa_q2m_saved_noise out;
+  out.actor = q2c_actor(r, "actor");
+  out.time = q2c_number(r, "time");
+  out.owner = q2c_actor(r, "owner");
+  out.origin = q2c_vector(r, "origin");
   return out;
 }
-/* TS readSavedActor (save-image.ts, not yet ported as a module):
- * {slot: integer(0), generation: integer(0)}. Local copy only. */
-static qa_saved_actor_id read_actor(const qa_save_reader *reader) {
-  qa_saved_actor_id actor;
-  qa_save_reader slot = field(reader, "slot");
-  actor.slot = qa_save_reader_integer_min(&slot, 0);
-  qa_save_reader_destroy(&slot);
-  qa_save_reader generation = field(reader, "generation");
-  actor.generation = qa_save_reader_integer_min(&generation, 0);
-  qa_save_reader_destroy(&generation);
-  return actor;
-}
-static bool set_own(qa_save_value *object, const char *key, qa_save_value *child) {
-  if (child == NULL) return false;
-  if (!qa_save_value_set(object, key, child)) { qa_save_value_free(child); return false; }
-  return true;
-}
-static bool push_own(qa_save_value *array, qa_save_value *child) {
-  if (child == NULL) return false;
-  if (!qa_save_value_push(array, child)) { qa_save_value_free(child); return false; }
-  return true;
-}
-__attribute__((unused)) static qa_save_value *str_value(const char *text) {
-  return qa_save_value_string(text != NULL ? text : "");
-}
-__attribute__((unused)) static qa_save_value *vec_value(const qa_vec3 *vector) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "x", qa_save_value_number(vector->x)) ||
-      !set_own(obj, "y", qa_save_value_number(vector->y)) ||
-      !set_own(obj, "z", qa_save_value_number(vector->z))) {
-    qa_save_value_free(obj);
-    return NULL;
-  }
-  return obj;
-}
-static qa_save_value *actor_value(const qa_saved_actor_id *actor) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "slot", qa_save_value_number(actor->slot)) ||
-      !set_own(obj, "generation", qa_save_value_number(actor->generation))) {
-    qa_save_value_free(obj);
-    return NULL;
-  }
-  return obj;
-}
-__attribute__((unused)) static qa_save_value *time_value(const qa_source_time *time) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "kind", qa_save_value_string(
-          time->kind == QA_SOURCE_TIME_SECONDS ? "seconds" : "milliseconds")) ||
-      !set_own(obj, "value", qa_save_value_number(time->value))) {
-    qa_save_value_free(obj);
-    return NULL;
-  }
-  return obj;
-}
-/* Moves every entry of `child` into `object` (TS object spread). */
-__attribute__((unused)) static bool merge_into(qa_save_value *object, qa_save_value *child) {
-  for (size_t i = 0; i < child->entry_count; i++) {
-    qa_save_value *value = child->entries[i].value;
-    child->entries[i].value = NULL;
-    if (!qa_save_value_set(object, child->entries[i].key, value)) {
-      child->entries[i].value = value;
-      return false;
-    }
-  }
-  return true;
-}
-
-static void read_q2_fly_pathing(const qa_save_reader *reader, qa_q2_fly_pathing *out);
-static qa_save_value *build_q2_fly_pathing(const qa_q2_fly_pathing *in);
-static void read_q2_alternate_fly_state(const qa_save_reader *reader, qa_q2_alternate_fly_state *out);
-static qa_save_value *build_q2_alternate_fly_state(const qa_q2_alternate_fly_state *in);
-static void read_q2_monster_sound_target(const qa_save_reader *reader, qa_q2_monster_sound_target *out);
-static qa_save_value *build_q2_monster_sound_target(const qa_q2_monster_sound_target *in);
-static void read_q2_monster_state_checkpoint(const qa_save_reader *reader, qa_q2_monster_state_checkpoint *out);
-static qa_save_value *build_q2_monster_state_checkpoint(const qa_q2_monster_state_checkpoint *in);
-static void read_q2_saved_sighting(const qa_save_reader *reader, qa_q2_saved_sighting *out);
-static qa_save_value *build_q2_saved_sighting(const qa_q2_saved_sighting *in);
-static void read_q2_saved_noise(const qa_save_reader *reader, qa_q2_saved_noise *out);
-static qa_save_value *build_q2_saved_noise(const qa_q2_saved_noise *in);
-static void read_q2_alerted_entry(const qa_save_reader *reader, qa_q2_alerted_entry *out);
-static qa_save_value *build_q2_alerted_entry(const qa_q2_alerted_entry *in);
-static void read_q2_noise_entry(const qa_save_reader *reader, qa_q2_noise_entry *out);
-static qa_save_value *build_q2_noise_entry(const qa_q2_noise_entry *in);
-static void read_q2_trail_point(const qa_save_reader *reader, qa_q2_trail_point *out);
-static qa_save_value *build_q2_trail_point(const qa_q2_trail_point *in);
-static void read_q2_trail_entry(const qa_save_reader *reader, qa_q2_trail_entry *out);
-static qa_save_value *build_q2_trail_entry(const qa_q2_trail_entry *in);
-static void read_q2_player_origin_entry(const qa_save_reader *reader, qa_q2_player_origin_entry *out);
-static qa_save_value *build_q2_player_origin_entry(const qa_q2_player_origin_entry *in);
-static void read_q2_monster_perception_checkpoint(const qa_save_reader *reader, qa_q2_monster_perception_checkpoint *out);
-static qa_save_value *build_q2_monster_perception_checkpoint(const qa_q2_monster_perception_checkpoint *in);
-static void read_q2_monster_reaction(const qa_save_reader *reader, qa_q2_monster_reaction *out);
-static qa_save_value *build_q2_monster_reaction(const qa_q2_monster_reaction *in);
-static void read_q2_monster_damage_checkpoint(const qa_save_reader *reader, qa_q2_monster_damage_checkpoint *out);
-static qa_save_value *build_q2_monster_damage_checkpoint(const qa_q2_monster_damage_checkpoint *in);
-static void read_q2_monster_actor(const qa_save_reader *reader, qa_q2_monster_actor *out);
-static qa_save_value *build_q2_monster_actor(const qa_q2_monster_actor *in);
-static void read_q2_monsters_checkpoint(const qa_save_reader *reader, qa_q2_monsters_checkpoint *out);
-static qa_save_value *build_q2_monsters_checkpoint(const qa_q2_monsters_checkpoint *in);
-
-static void read_q2_fly_pathing(const qa_save_reader *reader, qa_q2_fly_pathing *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "firstMovePoint");
-    (*out).first_move_point = qa_read_vector(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "secondMovePoint");
-    (*out).second_move_point = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "traversalPending");
-    (*out).traversal_pending = qa_save_reader_boolean(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_fly_pathing(const qa_q2_fly_pathing *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "firstMovePoint", vec_value(&(*in).first_move_point))) goto fail;
-  if (!set_own(obj, "secondMovePoint", vec_value(&(*in).second_move_point))) goto fail;
-  if (!set_own(obj, "traversalPending", qa_save_value_boolean((*in).traversal_pending))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_alternate_fly_state(const qa_save_reader *reader, qa_q2_alternate_fly_state *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "alternateFly");
-    (*out).alternate_fly = qa_save_reader_boolean(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "flyMinDistance");
-    (*out).fly_min_distance = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "flyMaxDistance");
-    (*out).fly_max_distance = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "flyAcceleration");
-    (*out).fly_acceleration = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "flySpeed");
-    (*out).fly_speed = qa_save_reader_number(&f4);
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "flyIdealPosition");
-    (*out).fly_ideal_position = qa_read_vector(&f5);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "flyPositionTime");
-    (*out).fly_position_time = qa_save_reader_number(&f6);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "flyBuzzard");
-    (*out).fly_buzzard = qa_save_reader_boolean(&f7);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "flyAbove");
-    (*out).fly_above = qa_save_reader_boolean(&f8);
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "flyPinned");
-    (*out).fly_pinned = qa_save_reader_boolean(&f9);
-    qa_save_reader_destroy(&f9); }
-  { qa_save_reader f10 = field(reader, "flyThrusters");
-    (*out).fly_thrusters = qa_save_reader_boolean(&f10);
-    qa_save_reader_destroy(&f10); }
-  { qa_save_reader f11 = field(reader, "flyRecoveryTime");
-    (*out).fly_recovery_time = qa_save_reader_number(&f11);
-    qa_save_reader_destroy(&f11); }
-  { qa_save_reader f12 = field(reader, "flyRecoveryDirection");
-    (*out).fly_recovery_direction = qa_read_vector(&f12);
-    qa_save_reader_destroy(&f12); }
-  { qa_save_reader f13 = field(reader, "hintPath");
-    (*out).hint_path = qa_save_reader_boolean(&f13);
-    qa_save_reader_destroy(&f13); }
-  { qa_save_reader f14 = field(reader, "pathing");
-    if (!qa_save_reader_is_null(&f14)) { (*out).has_pathing = true;
-      read_q2_fly_pathing(&f14, &(*out).pathing);
-    }
-    qa_save_reader_destroy(&f14); }
-}
-static qa_save_value *build_q2_alternate_fly_state(const qa_q2_alternate_fly_state *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "alternateFly", qa_save_value_boolean((*in).alternate_fly))) goto fail;
-  if (!set_own(obj, "flyMinDistance", qa_save_value_number((*in).fly_min_distance))) goto fail;
-  if (!set_own(obj, "flyMaxDistance", qa_save_value_number((*in).fly_max_distance))) goto fail;
-  if (!set_own(obj, "flyAcceleration", qa_save_value_number((*in).fly_acceleration))) goto fail;
-  if (!set_own(obj, "flySpeed", qa_save_value_number((*in).fly_speed))) goto fail;
-  if (!set_own(obj, "flyIdealPosition", vec_value(&(*in).fly_ideal_position))) goto fail;
-  if (!set_own(obj, "flyPositionTime", qa_save_value_number((*in).fly_position_time))) goto fail;
-  if (!set_own(obj, "flyBuzzard", qa_save_value_boolean((*in).fly_buzzard))) goto fail;
-  if (!set_own(obj, "flyAbove", qa_save_value_boolean((*in).fly_above))) goto fail;
-  if (!set_own(obj, "flyPinned", qa_save_value_boolean((*in).fly_pinned))) goto fail;
-  if (!set_own(obj, "flyThrusters", qa_save_value_boolean((*in).fly_thrusters))) goto fail;
-  if (!set_own(obj, "flyRecoveryTime", qa_save_value_number((*in).fly_recovery_time))) goto fail;
-  if (!set_own(obj, "flyRecoveryDirection", vec_value(&(*in).fly_recovery_direction))) goto fail;
-  if (!set_own(obj, "hintPath", qa_save_value_boolean((*in).hint_path))) goto fail;
-  if (!set_own(obj, "pathing", (*in).has_pathing ? build_q2_fly_pathing(&(*in).pathing) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monster_sound_target(const qa_save_reader *reader, qa_q2_monster_sound_target *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "owner");
-    (*out).owner = read_actor(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "time");
-    (*out).time = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_monster_sound_target(const qa_q2_monster_sound_target *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "owner", actor_value(&(*in).owner))) goto fail;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  if (!set_own(obj, "time", qa_save_value_number((*in).time))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monster_state_checkpoint(const qa_save_reader *reader, qa_q2_monster_state_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "initialPowerArmorType");
-    static const char *const ch1[] = {"none", "screen", "shield"};
-    (*out).initial_power_armor_type = qa_save_reader_choice_string(&f0, ch1, 3);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "maxPowerArmorPower");
-    (*out).max_power_armor_power = qa_save_reader_finite(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "baseHealth");
-    (*out).base_health = qa_save_reader_finite(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "healthScaling");
-    (*out).health_scaling = qa_save_reader_integer_min(&f3, 1);
-    qa_save_reader_destroy(&f3); }
-  read_q2_alternate_fly_state(reader, &(*out).fly);
-  { qa_save_reader f5 = field(reader, "kind");
-    (*out).kind = qa_save_reader_string(&f5);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "weapon");
-    static const char *const ch2[] = {"blaster", "shotgun", "machinegun"};
-    (*out).weapon = qa_save_reader_choice_string(&f6, ch2, 3);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "locomotion");
-    static const char *const ch3[] = {"walk", "fly", "swim", "stationary"};
-    (*out).locomotion = qa_save_reader_choice_string(&f7, ch3, 4);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "hasMelee");
-    (*out).has_melee = qa_save_reader_boolean(&f8);
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "hasRangedAttack");
-    (*out).has_ranged_attack = qa_save_reader_boolean(&f9);
-    qa_save_reader_destroy(&f9); }
-  { qa_save_reader f10 = field(reader, "hasIdle");
-    (*out).has_idle = qa_save_reader_boolean(&f10);
-    qa_save_reader_destroy(&f10); }
-  { qa_save_reader f11 = field(reader, "hasSearch");
-    (*out).has_search = qa_save_reader_boolean(&f11);
-    qa_save_reader_destroy(&f11); }
-  { qa_save_reader f12 = field(reader, "blindFire");
-    (*out).blind_fire = qa_save_reader_boolean(&f12);
-    qa_save_reader_destroy(&f12); }
-  { qa_save_reader f13 = field(reader, "goodGuy");
-    (*out).good_guy = qa_save_reader_boolean(&f13);
-    qa_save_reader_destroy(&f13); }
-  { qa_save_reader f14 = field(reader, "targetAnger");
-    (*out).target_anger = qa_save_reader_boolean(&f14);
-    qa_save_reader_destroy(&f14); }
-  { qa_save_reader f15 = field(reader, "ignoreShots");
-    (*out).ignore_shots = qa_save_reader_boolean(&f15);
-    qa_save_reader_destroy(&f15); }
-  { qa_save_reader f16 = field(reader, "doNotCount");
-    (*out).do_not_count = qa_save_reader_boolean(&f16);
-    qa_save_reader_destroy(&f16); }
-  { qa_save_reader f17 = field(reader, "spawnedBy");
-    static const char *const ch4[] = {"none", "carrier", "medic", "widow"};
-    (*out).spawned_by = qa_save_reader_choice_string(&f17, ch4, 4);
-    qa_save_reader_destroy(&f17); }
-  { qa_save_reader f18 = field(reader, "commander");
-    if (!qa_save_reader_is_null(&f18)) { (*out).has_commander = true;
-      (*out).commander = read_actor(&f18);
-    }
-    qa_save_reader_destroy(&f18); }
-  { qa_save_reader f19 = field(reader, "monsterSlots");
-    (*out).monster_slots = qa_save_reader_number(&f19);
-    qa_save_reader_destroy(&f19); }
-  { qa_save_reader f20 = field(reader, "monsterUsed");
-    (*out).monster_used = qa_save_reader_number(&f20);
-    qa_save_reader_destroy(&f20); }
-  { qa_save_reader f21 = field(reader, "brutal");
-    (*out).brutal = qa_save_reader_boolean(&f21);
-    qa_save_reader_destroy(&f21); }
-  { qa_save_reader f22 = field(reader, "medic");
-    (*out).medic = qa_save_reader_boolean(&f22);
-    qa_save_reader_destroy(&f22); }
-  { qa_save_reader f23 = field(reader, "resurrecting");
-    (*out).resurrecting = qa_save_reader_boolean(&f23);
-    qa_save_reader_destroy(&f23); }
-  { qa_save_reader f24 = field(reader, "move");
-    (*out).move = qa_save_reader_string(&f24);
-    qa_save_reader_destroy(&f24); }
-  { qa_save_reader f25 = field(reader, "nextMove");
-    if (qa_save_reader_is_null(&f25)) (*out).next_move = NULL; else {
-      (*out).next_move = qa_save_reader_string(&f25);
-    }
-    qa_save_reader_destroy(&f25); }
-  { qa_save_reader f26 = field(reader, "nextFrame");
-    (*out).next_frame = qa_save_reader_number(&f26);
-    qa_save_reader_destroy(&f26); }
-  { qa_save_reader f27 = field(reader, "nextMoveTime");
-    (*out).next_move_time = qa_save_reader_number(&f27);
-    qa_save_reader_destroy(&f27); }
-  { qa_save_reader f28 = field(reader, "scale");
-    (*out).scale = qa_save_reader_number(&f28);
-    qa_save_reader_destroy(&f28); }
-  { qa_save_reader f29 = field(reader, "gibHealth");
-    (*out).gib_health = qa_save_reader_number(&f29);
-    qa_save_reader_destroy(&f29); }
-  { qa_save_reader f30 = field(reader, "canTakeDamage");
-    (*out).can_take_damage = qa_save_reader_boolean(&f30);
-    qa_save_reader_destroy(&f30); }
-  { qa_save_reader f31 = field(reader, "dead");
-    (*out).dead = qa_save_reader_boolean(&f31);
-    qa_save_reader_destroy(&f31); }
-  { qa_save_reader f32 = field(reader, "corpse");
-    (*out).corpse = qa_save_reader_boolean(&f32);
-    qa_save_reader_destroy(&f32); }
-  { qa_save_reader f33 = field(reader, "gibbed");
-    (*out).gibbed = qa_save_reader_boolean(&f33);
-    qa_save_reader_destroy(&f33); }
-  { qa_save_reader f34 = field(reader, "standGround");
-    (*out).stand_ground = qa_save_reader_boolean(&f34);
-    qa_save_reader_destroy(&f34); }
-  { qa_save_reader f35 = field(reader, "temporaryStandGround");
-    (*out).temporary_stand_ground = qa_save_reader_boolean(&f35);
-    qa_save_reader_destroy(&f35); }
-  { qa_save_reader f36 = field(reader, "holdFrame");
-    (*out).hold_frame = qa_save_reader_boolean(&f36);
-    qa_save_reader_destroy(&f36); }
-  { qa_save_reader f37 = field(reader, "ducked");
-    (*out).ducked = qa_save_reader_boolean(&f37);
-    qa_save_reader_destroy(&f37); }
-  { qa_save_reader f38 = field(reader, "dodging");
-    (*out).dodging = qa_save_reader_boolean(&f38);
-    qa_save_reader_destroy(&f38); }
-  { qa_save_reader f39 = field(reader, "charging");
-    (*out).charging = qa_save_reader_boolean(&f39);
-    qa_save_reader_destroy(&f39); }
-  { qa_save_reader f40 = field(reader, "manualSteering");
-    (*out).manual_steering = qa_save_reader_boolean(&f40);
-    qa_save_reader_destroy(&f40); }
-  { qa_save_reader f41 = field(reader, "combatPoint");
-    (*out).combat_point = qa_save_reader_boolean(&f41);
-    qa_save_reader_destroy(&f41); }
-  { qa_save_reader f42 = field(reader, "attackState");
-    static const char *const ch6[] = {"straight", "sliding", "melee", "missile", "blind"};
-    (*out).attack_state = qa_save_reader_choice_string(&f42, ch6, 5);
-    qa_save_reader_destroy(&f42); }
-  { qa_save_reader f43 = field(reader, "lefty");
-    (*out).lefty = qa_save_reader_boolean(&f43);
-    qa_save_reader_destroy(&f43); }
-  { qa_save_reader f44 = field(reader, "idealYaw");
-    (*out).ideal_yaw = qa_save_reader_number(&f44);
-    qa_save_reader_destroy(&f44); }
-  { qa_save_reader f45 = field(reader, "yawSpeed");
-    (*out).yaw_speed = qa_save_reader_number(&f45);
-    qa_save_reader_destroy(&f45); }
-  { qa_save_reader f46 = field(reader, "pauseTime");
-    (*out).pause_time = qa_save_reader_number(&f46);
-    qa_save_reader_destroy(&f46); }
-  { qa_save_reader f47 = field(reader, "idleTime");
-    (*out).idle_time = qa_save_reader_number(&f47);
-    qa_save_reader_destroy(&f47); }
-  { qa_save_reader f48 = field(reader, "painTime");
-    (*out).pain_time = qa_save_reader_number(&f48);
-    qa_save_reader_destroy(&f48); }
-  { qa_save_reader f49 = field(reader, "fireWait");
-    (*out).fire_wait = qa_save_reader_number(&f49);
-    qa_save_reader_destroy(&f49); }
-  { qa_save_reader f50 = field(reader, "duckWait");
-    (*out).duck_wait = qa_save_reader_number(&f50);
-    qa_save_reader_destroy(&f50); }
-  { qa_save_reader f51 = field(reader, "nextDuckTime");
-    (*out).next_duck_time = qa_save_reader_number(&f51);
-    qa_save_reader_destroy(&f51); }
-  { qa_save_reader f52 = field(reader, "dodgeTime");
-    (*out).dodge_time = qa_save_reader_number(&f52);
-    qa_save_reader_destroy(&f52); }
-  { qa_save_reader f53 = field(reader, "attackFinished");
-    (*out).attack_finished = qa_save_reader_number(&f53);
-    qa_save_reader_destroy(&f53); }
-  { qa_save_reader f54 = field(reader, "checkAttackTime");
-    (*out).check_attack_time = qa_save_reader_number(&f54);
-    qa_save_reader_destroy(&f54); }
-  { qa_save_reader f55 = field(reader, "strafeTime");
-    (*out).strafe_time = qa_save_reader_number(&f55);
-    qa_save_reader_destroy(&f55); }
-  { qa_save_reader f56 = field(reader, "hadVisibility");
-    (*out).had_visibility = qa_save_reader_boolean(&f56);
-    qa_save_reader_destroy(&f56); }
-  { qa_save_reader f57 = field(reader, "closeSightTripped");
-    (*out).close_sight_tripped = qa_save_reader_boolean(&f57);
-    qa_save_reader_destroy(&f57); }
-  { qa_save_reader f58 = field(reader, "meleeTime");
-    (*out).melee_time = qa_save_reader_number(&f58);
-    qa_save_reader_destroy(&f58); }
-  { qa_save_reader f59 = field(reader, "searchTime");
-    (*out).search_time = qa_save_reader_number(&f59);
-    qa_save_reader_destroy(&f59); }
-  { qa_save_reader f60 = field(reader, "trailTime");
-    (*out).trail_time = qa_save_reader_number(&f60);
-    qa_save_reader_destroy(&f60); }
-  { qa_save_reader f61 = field(reader, "showHostile");
-    (*out).show_hostile = qa_save_reader_number(&f61);
-    qa_save_reader_destroy(&f61); }
-  { qa_save_reader f62 = field(reader, "lastSighting");
-    (*out).last_sighting = qa_read_vector(&f62);
-    qa_save_reader_destroy(&f62); }
-  { qa_save_reader f63 = field(reader, "savedGoal");
-    if (!qa_save_reader_is_null(&f63)) { (*out).has_saved_goal = true;
-      (*out).saved_goal = qa_read_vector(&f63);
-    }
-    qa_save_reader_destroy(&f63); }
-  { qa_save_reader f64 = field(reader, "lostSight");
-    (*out).lost_sight = qa_save_reader_boolean(&f64);
-    qa_save_reader_destroy(&f64); }
-  { qa_save_reader f65 = field(reader, "pursueNext");
-    (*out).pursue_next = qa_save_reader_boolean(&f65);
-    qa_save_reader_destroy(&f65); }
-  { qa_save_reader f66 = field(reader, "pursueTemporary");
-    (*out).pursue_temporary = qa_save_reader_boolean(&f66);
-    qa_save_reader_destroy(&f66); }
-  { qa_save_reader f67 = field(reader, "pursuitLastSeen");
-    (*out).pursuit_last_seen = qa_save_reader_boolean(&f67);
-    qa_save_reader_destroy(&f67); }
-  { qa_save_reader f68 = field(reader, "blindFireTarget");
-    (*out).blind_fire_target = qa_read_vector(&f68);
-    qa_save_reader_destroy(&f68); }
-  { qa_save_reader f69 = field(reader, "blindFireDelay");
-    (*out).blind_fire_delay = qa_save_reader_number(&f69);
-    qa_save_reader_destroy(&f69); }
-  { qa_save_reader f70 = field(reader, "soundTarget");
-    if (!qa_save_reader_is_null(&f70)) { (*out).has_sound_target = true;
-      read_q2_monster_sound_target(&f70, &(*out).sound_target);
-    }
-    qa_save_reader_destroy(&f70); }
-  { qa_save_reader f71 = field(reader, "oldEnemy");
-    if (!qa_save_reader_is_null(&f71)) { (*out).has_old_enemy = true;
-      (*out).old_enemy = read_actor(&f71);
-    }
-    qa_save_reader_destroy(&f71); }
-  { qa_save_reader f72 = field(reader, "moveTarget");
-    if (!qa_save_reader_is_null(&f72)) { (*out).has_move_target = true;
-      (*out).move_target = read_actor(&f72);
-    }
-    qa_save_reader_destroy(&f72); }
-  { qa_save_reader f73 = field(reader, "combatTarget");
-    (*out).combat_target = qa_save_reader_string(&f73);
-    qa_save_reader_destroy(&f73); }
-  { qa_save_reader f74 = field(reader, "cocked");
-    (*out).cocked = qa_save_reader_boolean(&f74);
-    qa_save_reader_destroy(&f74); }
-  { qa_save_reader f75 = field(reader, "forceRefire");
-    (*out).force_refire = qa_save_reader_boolean(&f75);
-    qa_save_reader_destroy(&f75); }
-  { qa_save_reader f76 = field(reader, "normalHeight");
-    (*out).normal_height = qa_save_reader_number(&f76);
-    qa_save_reader_destroy(&f76); }
-  { qa_save_reader f77 = field(reader, "airFinished");
-    (*out).air_finished = qa_save_reader_number(&f77);
-    qa_save_reader_destroy(&f77); }
-  { qa_save_reader f78 = field(reader, "environmentalDamageTime");
-    (*out).environmental_damage_time = qa_save_reader_number(&f78);
-    qa_save_reader_destroy(&f78); }
-  { qa_save_reader f79 = field(reader, "waterLevel");
-    static const double ch7[] = {0, 1, 2, 3};
-    (*out).water_level = qa_save_reader_choice_number(&f79, ch7, 4);
-    qa_save_reader_destroy(&f79); }
-  { qa_save_reader f80 = field(reader, "waterType");
-    (*out).water_type = qa_save_reader_number(&f80);
-    qa_save_reader_destroy(&f80); }
-  { qa_save_reader f81 = field(reader, "lastLinkCount");
-    (*out).last_link_count = qa_save_reader_number(&f81);
-    qa_save_reader_destroy(&f81); }
-  { qa_save_reader f82 = field(reader, "jumpTime");
-    (*out).jump_time = qa_save_reader_number(&f82);
-    qa_save_reader_destroy(&f82); }
-  { qa_save_reader f83 = field(reader, "fliesTime");
-    if (!qa_save_reader_is_null(&f83)) { (*out).has_flies_time = true;
-      (*out).flies_time = qa_save_reader_number(&f83);
-    }
-    qa_save_reader_destroy(&f83); }
-}
-static qa_save_value *build_q2_monster_state_checkpoint(const qa_q2_monster_state_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "initialPowerArmorType", str_value((*in).initial_power_armor_type))) goto fail;
-  if (!set_own(obj, "maxPowerArmorPower", qa_save_value_number((*in).max_power_armor_power))) goto fail;
-  if (!set_own(obj, "baseHealth", qa_save_value_number((*in).base_health))) goto fail;
-  if (!set_own(obj, "healthScaling", qa_save_value_number((*in).health_scaling))) goto fail;
-  { qa_save_value *flat8 = build_q2_alternate_fly_state(&(*in).fly);
-    if (flat8 == NULL || !merge_into(obj, flat8)) { qa_save_value_free(flat8); goto fail; } qa_save_value_free(flat8); }
-  if (!set_own(obj, "kind", str_value((*in).kind))) goto fail;
-  if (!set_own(obj, "weapon", str_value((*in).weapon))) goto fail;
-  if (!set_own(obj, "locomotion", str_value((*in).locomotion))) goto fail;
-  if (!set_own(obj, "hasMelee", qa_save_value_boolean((*in).has_melee))) goto fail;
-  if (!set_own(obj, "hasRangedAttack", qa_save_value_boolean((*in).has_ranged_attack))) goto fail;
-  if (!set_own(obj, "hasIdle", qa_save_value_boolean((*in).has_idle))) goto fail;
-  if (!set_own(obj, "hasSearch", qa_save_value_boolean((*in).has_search))) goto fail;
-  if (!set_own(obj, "blindFire", qa_save_value_boolean((*in).blind_fire))) goto fail;
-  if (!set_own(obj, "goodGuy", qa_save_value_boolean((*in).good_guy))) goto fail;
-  if (!set_own(obj, "targetAnger", qa_save_value_boolean((*in).target_anger))) goto fail;
-  if (!set_own(obj, "ignoreShots", qa_save_value_boolean((*in).ignore_shots))) goto fail;
-  if (!set_own(obj, "doNotCount", qa_save_value_boolean((*in).do_not_count))) goto fail;
-  if (!set_own(obj, "spawnedBy", str_value((*in).spawned_by))) goto fail;
-  if (!set_own(obj, "commander", (*in).has_commander ? actor_value(&(*in).commander) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "monsterSlots", qa_save_value_number((*in).monster_slots))) goto fail;
-  if (!set_own(obj, "monsterUsed", qa_save_value_number((*in).monster_used))) goto fail;
-  if (!set_own(obj, "brutal", qa_save_value_boolean((*in).brutal))) goto fail;
-  if (!set_own(obj, "medic", qa_save_value_boolean((*in).medic))) goto fail;
-  if (!set_own(obj, "resurrecting", qa_save_value_boolean((*in).resurrecting))) goto fail;
-  if (!set_own(obj, "move", str_value((*in).move))) goto fail;
-  if (!set_own(obj, "nextMove", (*in).next_move != NULL ? str_value((*in).next_move) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "nextFrame", qa_save_value_number((*in).next_frame))) goto fail;
-  if (!set_own(obj, "nextMoveTime", qa_save_value_number((*in).next_move_time))) goto fail;
-  if (!set_own(obj, "scale", qa_save_value_number((*in).scale))) goto fail;
-  if (!set_own(obj, "gibHealth", qa_save_value_number((*in).gib_health))) goto fail;
-  if (!set_own(obj, "canTakeDamage", qa_save_value_boolean((*in).can_take_damage))) goto fail;
-  if (!set_own(obj, "dead", qa_save_value_boolean((*in).dead))) goto fail;
-  if (!set_own(obj, "corpse", qa_save_value_boolean((*in).corpse))) goto fail;
-  if (!set_own(obj, "gibbed", qa_save_value_boolean((*in).gibbed))) goto fail;
-  if (!set_own(obj, "standGround", qa_save_value_boolean((*in).stand_ground))) goto fail;
-  if (!set_own(obj, "temporaryStandGround", qa_save_value_boolean((*in).temporary_stand_ground))) goto fail;
-  if (!set_own(obj, "holdFrame", qa_save_value_boolean((*in).hold_frame))) goto fail;
-  if (!set_own(obj, "ducked", qa_save_value_boolean((*in).ducked))) goto fail;
-  if (!set_own(obj, "dodging", qa_save_value_boolean((*in).dodging))) goto fail;
-  if (!set_own(obj, "charging", qa_save_value_boolean((*in).charging))) goto fail;
-  if (!set_own(obj, "manualSteering", qa_save_value_boolean((*in).manual_steering))) goto fail;
-  if (!set_own(obj, "combatPoint", qa_save_value_boolean((*in).combat_point))) goto fail;
-  if (!set_own(obj, "attackState", str_value((*in).attack_state))) goto fail;
-  if (!set_own(obj, "lefty", qa_save_value_boolean((*in).lefty))) goto fail;
-  if (!set_own(obj, "idealYaw", qa_save_value_number((*in).ideal_yaw))) goto fail;
-  if (!set_own(obj, "yawSpeed", qa_save_value_number((*in).yaw_speed))) goto fail;
-  if (!set_own(obj, "pauseTime", qa_save_value_number((*in).pause_time))) goto fail;
-  if (!set_own(obj, "idleTime", qa_save_value_number((*in).idle_time))) goto fail;
-  if (!set_own(obj, "painTime", qa_save_value_number((*in).pain_time))) goto fail;
-  if (!set_own(obj, "fireWait", qa_save_value_number((*in).fire_wait))) goto fail;
-  if (!set_own(obj, "duckWait", qa_save_value_number((*in).duck_wait))) goto fail;
-  if (!set_own(obj, "nextDuckTime", qa_save_value_number((*in).next_duck_time))) goto fail;
-  if (!set_own(obj, "dodgeTime", qa_save_value_number((*in).dodge_time))) goto fail;
-  if (!set_own(obj, "attackFinished", qa_save_value_number((*in).attack_finished))) goto fail;
-  if (!set_own(obj, "checkAttackTime", qa_save_value_number((*in).check_attack_time))) goto fail;
-  if (!set_own(obj, "strafeTime", qa_save_value_number((*in).strafe_time))) goto fail;
-  if (!set_own(obj, "hadVisibility", qa_save_value_boolean((*in).had_visibility))) goto fail;
-  if (!set_own(obj, "closeSightTripped", qa_save_value_boolean((*in).close_sight_tripped))) goto fail;
-  if (!set_own(obj, "meleeTime", qa_save_value_number((*in).melee_time))) goto fail;
-  if (!set_own(obj, "searchTime", qa_save_value_number((*in).search_time))) goto fail;
-  if (!set_own(obj, "trailTime", qa_save_value_number((*in).trail_time))) goto fail;
-  if (!set_own(obj, "showHostile", qa_save_value_number((*in).show_hostile))) goto fail;
-  if (!set_own(obj, "lastSighting", vec_value(&(*in).last_sighting))) goto fail;
-  if (!set_own(obj, "savedGoal", (*in).has_saved_goal ? vec_value(&(*in).saved_goal) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "lostSight", qa_save_value_boolean((*in).lost_sight))) goto fail;
-  if (!set_own(obj, "pursueNext", qa_save_value_boolean((*in).pursue_next))) goto fail;
-  if (!set_own(obj, "pursueTemporary", qa_save_value_boolean((*in).pursue_temporary))) goto fail;
-  if (!set_own(obj, "pursuitLastSeen", qa_save_value_boolean((*in).pursuit_last_seen))) goto fail;
-  if (!set_own(obj, "blindFireTarget", vec_value(&(*in).blind_fire_target))) goto fail;
-  if (!set_own(obj, "blindFireDelay", qa_save_value_number((*in).blind_fire_delay))) goto fail;
-  if (!set_own(obj, "soundTarget", (*in).has_sound_target ? build_q2_monster_sound_target(&(*in).sound_target) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "oldEnemy", (*in).has_old_enemy ? actor_value(&(*in).old_enemy) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "moveTarget", (*in).has_move_target ? actor_value(&(*in).move_target) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "combatTarget", str_value((*in).combat_target))) goto fail;
-  if (!set_own(obj, "cocked", qa_save_value_boolean((*in).cocked))) goto fail;
-  if (!set_own(obj, "forceRefire", qa_save_value_boolean((*in).force_refire))) goto fail;
-  if (!set_own(obj, "normalHeight", qa_save_value_number((*in).normal_height))) goto fail;
-  if (!set_own(obj, "airFinished", qa_save_value_number((*in).air_finished))) goto fail;
-  if (!set_own(obj, "environmentalDamageTime", qa_save_value_number((*in).environmental_damage_time))) goto fail;
-  if (!set_own(obj, "waterLevel", qa_save_value_number((*in).water_level))) goto fail;
-  if (!set_own(obj, "waterType", qa_save_value_number((*in).water_type))) goto fail;
-  if (!set_own(obj, "lastLinkCount", qa_save_value_number((*in).last_link_count))) goto fail;
-  if (!set_own(obj, "jumpTime", qa_save_value_number((*in).jump_time))) goto fail;
-  if (!set_own(obj, "fliesTime", (*in).has_flies_time ? qa_save_value_number((*in).flies_time) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_saved_sighting(const qa_save_reader *reader, qa_q2_saved_sighting *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "time");
-    (*out).time = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_saved_sighting(const qa_q2_saved_sighting *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "time", qa_save_value_number((*in).time))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_saved_noise(const qa_save_reader *reader, qa_q2_saved_noise *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "time");
-    (*out).time = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "owner");
-    (*out).owner = read_actor(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_saved_noise(const qa_q2_saved_noise *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "time", qa_save_value_number((*in).time))) goto fail;
-  if (!set_own(obj, "owner", actor_value(&(*in).owner))) goto fail;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_alerted_entry(const qa_save_reader *reader, qa_q2_alerted_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "sighting");
-    read_q2_saved_sighting(&f1, &(*out).sighting);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_alerted_entry(const qa_q2_alerted_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "sighting", build_q2_saved_sighting(&(*in).sighting))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_noise_entry(const qa_save_reader *reader, qa_q2_noise_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "primary");
-    (*out).primary = read_actor(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "secondary");
-    (*out).secondary = read_actor(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_noise_entry(const qa_q2_noise_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "primary", actor_value(&(*in).primary))) goto fail;
-  if (!set_own(obj, "secondary", actor_value(&(*in).secondary))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_trail_point(const qa_save_reader *reader, qa_q2_trail_point *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "time");
-    (*out).time = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "yaw");
-    (*out).yaw = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_trail_point(const qa_q2_trail_point *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  if (!set_own(obj, "time", qa_save_value_number((*in).time))) goto fail;
-  if (!set_own(obj, "yaw", qa_save_value_number((*in).yaw))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_trail_entry(const qa_save_reader *reader, qa_q2_trail_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "points");
-    (*out).points_count = qa_save_reader_list_count(&f1);
-    (*out).points = (qa_q2_trail_point *)calloc((*out).points_count != 0 ? (*out).points_count : 1, sizeof(qa_q2_trail_point));
-    if ((*out).points == NULL) qa_save_reader_fail(&f1, "out of memory");
-    for (size_t i9 = 0; i9 < (*out).points_count; i9++) {
-      qa_save_reader it10 = item(&f1, i9);
-      read_q2_trail_point(&it10, &(*out).points[i9]);
-      qa_save_reader_destroy(&it10);
-    }
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_trail_entry(const qa_q2_trail_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  { qa_save_value *arr11 = qa_save_value_array();
-    if (arr11 == NULL) goto fail;
-    for (size_t i12 = 0; i12 < (*in).points_count; i12++) {
-      if (!push_own(arr11, build_q2_trail_point(&(*in).points[i12]))) { qa_save_value_free(arr11); goto fail; }
-    }
-    if (!set_own(obj, "points", arr11)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_player_origin_entry(const qa_save_reader *reader, qa_q2_player_origin_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_player_origin_entry(const qa_q2_player_origin_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monster_perception_checkpoint(const qa_save_reader *reader, qa_q2_monster_perception_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "sightClient");
-    if (!qa_save_reader_is_null(&f0)) { (*out).has_sight_client = true;
-      (*out).sight_client = read_actor(&f0);
-    }
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "sight");
-    if (!qa_save_reader_is_null(&f1)) { (*out).has_sight = true;
-      read_q2_saved_sighting(&f1, &(*out).sight);
-    }
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "alerted");
-    (*out).alerted_count = qa_save_reader_list_count(&f2);
-    (*out).alerted = (qa_q2_alerted_entry *)calloc((*out).alerted_count != 0 ? (*out).alerted_count : 1, sizeof(qa_q2_alerted_entry));
-    if ((*out).alerted == NULL) qa_save_reader_fail(&f2, "out of memory");
-    for (size_t i13 = 0; i13 < (*out).alerted_count; i13++) {
-      qa_save_reader it14 = item(&f2, i13);
-      read_q2_alerted_entry(&it14, &(*out).alerted[i13]);
-      qa_save_reader_destroy(&it14);
-    }
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "primary");
-    if (!qa_save_reader_is_null(&f3)) { (*out).has_primary = true;
-      read_q2_saved_noise(&f3, &(*out).primary);
-    }
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "secondary");
-    if (!qa_save_reader_is_null(&f4)) { (*out).has_secondary = true;
-      read_q2_saved_noise(&f4, &(*out).secondary);
-    }
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "noises");
-    (*out).noises_count = qa_save_reader_list_count(&f5);
-    (*out).noises = (qa_q2_noise_entry *)calloc((*out).noises_count != 0 ? (*out).noises_count : 1, sizeof(qa_q2_noise_entry));
-    if ((*out).noises == NULL) qa_save_reader_fail(&f5, "out of memory");
-    for (size_t i15 = 0; i15 < (*out).noises_count; i15++) {
-      qa_save_reader it16 = item(&f5, i15);
-      read_q2_noise_entry(&it16, &(*out).noises[i15]);
-      qa_save_reader_destroy(&it16);
-    }
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "trails");
-    (*out).trails_count = qa_save_reader_list_count(&f6);
-    (*out).trails = (qa_q2_trail_entry *)calloc((*out).trails_count != 0 ? (*out).trails_count : 1, sizeof(qa_q2_trail_entry));
-    if ((*out).trails == NULL) qa_save_reader_fail(&f6, "out of memory");
-    for (size_t i17 = 0; i17 < (*out).trails_count; i17++) {
-      qa_save_reader it18 = item(&f6, i17);
-      read_q2_trail_entry(&it18, &(*out).trails[i17]);
-      qa_save_reader_destroy(&it18);
-    }
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "playerOrigins");
-    (*out).player_origins_count = qa_save_reader_list_count(&f7);
-    (*out).player_origins = (qa_q2_player_origin_entry *)calloc((*out).player_origins_count != 0 ? (*out).player_origins_count : 1, sizeof(qa_q2_player_origin_entry));
-    if ((*out).player_origins == NULL) qa_save_reader_fail(&f7, "out of memory");
-    for (size_t i19 = 0; i19 < (*out).player_origins_count; i19++) {
-      qa_save_reader it20 = item(&f7, i19);
-      read_q2_player_origin_entry(&it20, &(*out).player_origins[i19]);
-      qa_save_reader_destroy(&it20);
-    }
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "hostile");
-    (*out).hostile_count = qa_save_reader_list_count(&f8);
-    (*out).hostile = (qa_q2_saved_sighting *)calloc((*out).hostile_count != 0 ? (*out).hostile_count : 1, sizeof(qa_q2_saved_sighting));
-    if ((*out).hostile == NULL) qa_save_reader_fail(&f8, "out of memory");
-    for (size_t i21 = 0; i21 < (*out).hostile_count; i21++) {
-      qa_save_reader it22 = item(&f8, i21);
-      read_q2_saved_sighting(&it22, &(*out).hostile[i21]);
-      qa_save_reader_destroy(&it22);
-    }
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "lastFrame");
-    if (!qa_save_reader_is_null(&f9)) { (*out).has_last_frame = true;
-      (*out).last_frame = qa_save_reader_number(&f9);
-    }
-    qa_save_reader_destroy(&f9); }
-}
-static qa_save_value *build_q2_monster_perception_checkpoint(const qa_q2_monster_perception_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "sightClient", (*in).has_sight_client ? actor_value(&(*in).sight_client) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "sight", (*in).has_sight ? build_q2_saved_sighting(&(*in).sight) : qa_save_value_null())) goto fail;
-  { qa_save_value *arr23 = qa_save_value_array();
-    if (arr23 == NULL) goto fail;
-    for (size_t i24 = 0; i24 < (*in).alerted_count; i24++) {
-      if (!push_own(arr23, build_q2_alerted_entry(&(*in).alerted[i24]))) { qa_save_value_free(arr23); goto fail; }
-    }
-    if (!set_own(obj, "alerted", arr23)) goto fail; }
-  if (!set_own(obj, "primary", (*in).has_primary ? build_q2_saved_noise(&(*in).primary) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "secondary", (*in).has_secondary ? build_q2_saved_noise(&(*in).secondary) : qa_save_value_null())) goto fail;
-  { qa_save_value *arr25 = qa_save_value_array();
-    if (arr25 == NULL) goto fail;
-    for (size_t i26 = 0; i26 < (*in).noises_count; i26++) {
-      if (!push_own(arr25, build_q2_noise_entry(&(*in).noises[i26]))) { qa_save_value_free(arr25); goto fail; }
-    }
-    if (!set_own(obj, "noises", arr25)) goto fail; }
-  { qa_save_value *arr27 = qa_save_value_array();
-    if (arr27 == NULL) goto fail;
-    for (size_t i28 = 0; i28 < (*in).trails_count; i28++) {
-      if (!push_own(arr27, build_q2_trail_entry(&(*in).trails[i28]))) { qa_save_value_free(arr27); goto fail; }
-    }
-    if (!set_own(obj, "trails", arr27)) goto fail; }
-  { qa_save_value *arr29 = qa_save_value_array();
-    if (arr29 == NULL) goto fail;
-    for (size_t i30 = 0; i30 < (*in).player_origins_count; i30++) {
-      if (!push_own(arr29, build_q2_player_origin_entry(&(*in).player_origins[i30]))) { qa_save_value_free(arr29); goto fail; }
-    }
-    if (!set_own(obj, "playerOrigins", arr29)) goto fail; }
-  { qa_save_value *arr31 = qa_save_value_array();
-    if (arr31 == NULL) goto fail;
-    for (size_t i32 = 0; i32 < (*in).hostile_count; i32++) {
-      if (!push_own(arr31, build_q2_saved_sighting(&(*in).hostile[i32]))) { qa_save_value_free(arr31); goto fail; }
-    }
-    if (!set_own(obj, "hostile", arr31)) goto fail; }
-  if (!set_own(obj, "lastFrame", (*in).has_last_frame ? qa_save_value_number((*in).last_frame) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monster_reaction(const qa_save_reader *reader, qa_q2_monster_reaction *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "damage");
-    (*out).damage = qa_save_reader_number(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "kick");
-    (*out).kick = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "point");
-    (*out).point = qa_read_vector(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "attacker");
-    if (!qa_save_reader_is_null(&f3)) { (*out).has_attacker = true;
-      (*out).attacker = read_actor(&f3);
-    }
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "inflictor");
-    if (!qa_save_reader_is_null(&f4)) { (*out).has_inflictor = true;
-      (*out).inflictor = read_actor(&f4);
-    }
-    qa_save_reader_destroy(&f4); }
-}
-static qa_save_value *build_q2_monster_reaction(const qa_q2_monster_reaction *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "damage", qa_save_value_number((*in).damage))) goto fail;
-  if (!set_own(obj, "kick", qa_save_value_number((*in).kick))) goto fail;
-  if (!set_own(obj, "point", vec_value(&(*in).point))) goto fail;
-  if (!set_own(obj, "attacker", (*in).has_attacker ? actor_value(&(*in).attacker) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "inflictor", (*in).has_inflictor ? actor_value(&(*in).inflictor) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monster_damage_checkpoint(const qa_save_reader *reader, qa_q2_monster_damage_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "reaction");
-    read_q2_monster_reaction(&f0, &(*out).reaction);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "attack");
-    if (!qa_save_reader_is_null(&f1)) { (*out).has_attack = true;
-      (*out).attack = qa_read_q2_attack_checkpoint(&f1);
-    }
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_monster_damage_checkpoint(const qa_q2_monster_damage_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "reaction", build_q2_monster_reaction(&(*in).reaction))) goto fail;
-  if (!set_own(obj, "attack", (*in).has_attack ? qa_q2_attack_checkpoint_value(&(*in).attack) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monster_actor(const qa_save_reader *reader, qa_q2_monster_actor *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "definition");
-    (*out).definition = qa_save_reader_string(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "state");
-    read_q2_monster_state_checkpoint(&f2, &(*out).state);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "pendingDamage");
-    if (!qa_save_reader_is_null(&f3)) { (*out).has_pending_damage = true;
-      read_q2_monster_damage_checkpoint(&f3, &(*out).pending_damage);
-    }
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_monster_actor(const qa_q2_monster_actor *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "definition", str_value((*in).definition))) goto fail;
-  if (!set_own(obj, "state", build_q2_monster_state_checkpoint(&(*in).state))) goto fail;
-  if (!set_own(obj, "pendingDamage", (*in).has_pending_damage ? build_q2_monster_damage_checkpoint(&(*in).pending_damage) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_monsters_checkpoint(const qa_save_reader *reader, qa_q2_monsters_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "version");
-    (*out).version = qa_save_reader_literal_number(&f0, 1);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "actors");
-    (*out).actors_count = qa_save_reader_list_count(&f1);
-    (*out).actors = (qa_q2_monster_actor *)calloc((*out).actors_count != 0 ? (*out).actors_count : 1, sizeof(qa_q2_monster_actor));
-    if ((*out).actors == NULL) qa_save_reader_fail(&f1, "out of memory");
-    for (size_t i33 = 0; i33 < (*out).actors_count; i33++) {
-      qa_save_reader it34 = item(&f1, i33);
-      read_q2_monster_actor(&it34, &(*out).actors[i33]);
-      qa_save_reader_destroy(&it34);
-    }
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "perception");
-    read_q2_monster_perception_checkpoint(&f2, &(*out).perception);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_monsters_checkpoint(const qa_q2_monsters_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
-  { qa_save_value *arr35 = qa_save_value_array();
-    if (arr35 == NULL) goto fail;
-    for (size_t i36 = 0; i36 < (*in).actors_count; i36++) {
-      if (!push_own(arr35, build_q2_monster_actor(&(*in).actors[i36]))) { qa_save_value_free(arr35); goto fail; }
-    }
-    if (!set_own(obj, "actors", arr35)) goto fail; }
-  if (!set_own(obj, "perception", build_q2_monster_perception_checkpoint(&(*in).perception))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-qa_q2_monsters_checkpoint qa_read_q2_monsters_checkpoint(const qa_save_reader *reader) {
-  qa_q2_monsters_checkpoint out;
-  read_q2_monsters_checkpoint(reader, &out);
+static qa_q2m_saved_noise_result read_nullable_noise(const qa_save_reader *r, const char *name) {
+  qa_q2m_saved_noise_result out;
+  memset(&out, 0, sizeof out);
+  qa_save_reader f = q2c_field(r, name);
+  out.has_value = !qa_save_reader_is_null(&f);
+  if (out.has_value) out.value = read_noise(&f);
+  qa_save_reader_destroy(&f);
   return out;
 }
-uint8_t *qa_encode_q2_monsters_checkpoint(const qa_q2_monsters_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_monsters_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
+static qa_q2m_perception_checkpoint read_perception(const qa_save_reader *r, qa_persist_decoded *owner) {
+  qa_q2m_perception_checkpoint out;
+  memset(&out, 0, sizeof out);
+  out.sight_client.has_value = q2c_nullable_actor(r, "sightClient", &out.sight_client.value);
+  qa_save_reader sight = q2c_field(r, "sight");
+  out.sight.has_value = !qa_save_reader_is_null(&sight);
+  if (out.sight.has_value) out.sight.value = read_sighting(&sight);
+  qa_save_reader_destroy(&sight);
+  qa_save_reader alerted = q2c_field(r, "alerted");
+  out.alerted_count = qa_save_reader_list_count(&alerted);
+  qa_q2m_alerted_entry *alerts = qa_persist_decoded_array(owner, out.alerted_count, sizeof *alerts);
+  for (size_t i = 0; i < out.alerted_count; i++) {
+    qa_save_reader value = q2c_item(&alerted, i);
+    alerts[i].actor = q2c_actor(&value, "actor");
+    qa_save_reader sighting = q2c_field(&value, "sighting");
+    alerts[i].sighting = read_sighting(&sighting);
+    qa_save_reader_destroy(&sighting);
+    qa_save_reader_destroy(&value);
+  }
+  out.alerted = alerts;
+  qa_save_reader_destroy(&alerted);
+  out.primary = read_nullable_noise(r, "primary");
+  out.secondary = read_nullable_noise(r, "secondary");
+  qa_save_reader noises = q2c_field(r, "noises");
+  out.noise_count = qa_save_reader_list_count(&noises);
+  qa_q2m_noise_pair_entry *pairs = qa_persist_decoded_array(owner, out.noise_count, sizeof *pairs);
+  for (size_t i = 0; i < out.noise_count; i++) {
+    qa_save_reader value = q2c_item(&noises, i);
+    pairs[i].actor = q2c_actor(&value, "actor");
+    pairs[i].primary = q2c_actor(&value, "primary");
+    pairs[i].secondary = q2c_actor(&value, "secondary");
+    /* Saves from before per-player records omit them (TS reads undefined as null). */
+    if (q2c_present(&value, "primaryRecord")) pairs[i].primary_record = read_nullable_noise(&value, "primaryRecord");
+    if (q2c_present(&value, "secondaryRecord")) pairs[i].secondary_record = read_nullable_noise(&value, "secondaryRecord");
+    qa_save_reader_destroy(&value);
+  }
+  out.noises = pairs;
+  qa_save_reader_destroy(&noises);
+  qa_save_reader trails = q2c_field(r, "trails");
+  out.trail_count = qa_save_reader_list_count(&trails);
+  qa_q2m_trail_entry *trail_entries = qa_persist_decoded_array(owner, out.trail_count, sizeof *trail_entries);
+  for (size_t i = 0; i < out.trail_count; i++) {
+    qa_save_reader value = q2c_item(&trails, i);
+    trail_entries[i].actor = q2c_actor(&value, "actor");
+    qa_save_reader points = q2c_field(&value, "points");
+    trail_entries[i].point_count = qa_save_reader_list_count(&points);
+    qa_q2m_trail_point *trail = qa_persist_decoded_array(owner, trail_entries[i].point_count, sizeof *trail);
+    for (size_t p = 0; p < trail_entries[i].point_count; p++) {
+      qa_save_reader point = q2c_item(&points, p);
+      trail[p].origin = q2c_vector(&point, "origin");
+      trail[p].time = q2c_number(&point, "time");
+      trail[p].yaw = q2c_number(&point, "yaw");
+      qa_save_reader_destroy(&point);
+    }
+    trail_entries[i].points = trail;
+    qa_save_reader_destroy(&points);
+    qa_save_reader_destroy(&value);
+  }
+  out.trails = trail_entries;
+  qa_save_reader_destroy(&trails);
+  qa_save_reader origins = q2c_field(r, "playerOrigins");
+  out.player_origin_count = qa_save_reader_list_count(&origins);
+  qa_q2m_origin_entry *origin_entries = qa_persist_decoded_array(owner, out.player_origin_count, sizeof *origin_entries);
+  for (size_t i = 0; i < out.player_origin_count; i++) {
+    qa_save_reader value = q2c_item(&origins, i);
+    origin_entries[i].actor = q2c_actor(&value, "actor");
+    origin_entries[i].origin = q2c_vector(&value, "origin");
+    qa_save_reader_destroy(&value);
+  }
+  out.player_origins = origin_entries;
+  qa_save_reader_destroy(&origins);
+  qa_save_reader hostile = q2c_field(r, "hostile");
+  out.hostile_count = qa_save_reader_list_count(&hostile);
+  qa_q2m_hostile_entry *hostile_entries = qa_persist_decoded_array(owner, out.hostile_count, sizeof *hostile_entries);
+  for (size_t i = 0; i < out.hostile_count; i++) {
+    qa_save_reader value = q2c_item(&hostile, i);
+    qa_q2m_saved_sighting sighting = read_sighting(&value);
+    hostile_entries[i].actor = sighting.actor;
+    hostile_entries[i].time = sighting.time;
+    qa_save_reader_destroy(&value);
+  }
+  out.hostile = hostile_entries;
+  qa_save_reader_destroy(&hostile);
+  out.has_last_frame = !q2c_is_null(r, "lastFrame");
+  if (out.has_last_frame) out.last_frame = q2c_number(r, "lastFrame");
+  return out;
 }
-bool qa_decode_q2_monsters_checkpoint(const uint8_t *bytes, size_t length, qa_q2_monsters_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
+/* Sighting {actor, time}; noise records are created {actor, owner, origin, time}. */
+static qa_save_value *sighting_value(qa_saved_actor_id actor, double time) {
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "actor", q2c_actor_value(actor));
+  q2c_set(&o, "time", qa_save_value_number(time));
+  return q2c_done(&o);
+}
+static qa_save_value *noise_value(const qa_q2m_saved_noise_result *noise) {
+  if (!noise->has_value) return qa_save_value_null();
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "actor", q2c_actor_value(noise->value.actor));
+  q2c_set(&o, "owner", q2c_actor_value(noise->value.owner));
+  q2c_set(&o, "origin", q2c_vector_value(noise->value.origin));
+  q2c_set(&o, "time", qa_save_value_number(noise->value.time));
+  return q2c_done(&o);
+}
+static qa_save_value *perception_value(const qa_q2m_perception_checkpoint *p) {
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "sightClient", q2c_nullable_actor_value(p->sight_client.has_value, p->sight_client.value));
+  q2c_set(&o, "sight", p->sight.has_value ? sighting_value(p->sight.value.actor, p->sight.value.time) : qa_save_value_null());
+  qa_save_value *alerted = qa_save_value_array();
+  for (size_t i = 0; alerted != NULL && i < p->alerted_count; i++) {
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(p->alerted[i].actor));
+    q2c_set(&entry, "sighting", sighting_value(p->alerted[i].sighting.actor, p->alerted[i].sighting.time));
+    if (!q2c_push(alerted, q2c_done(&entry))) { qa_save_value_free(alerted); alerted = NULL; }
+  }
+  q2c_set(&o, "alerted", alerted);
+  q2c_set(&o, "primary", noise_value(&p->primary));
+  q2c_set(&o, "secondary", noise_value(&p->secondary));
+  qa_save_value *noises = qa_save_value_array();
+  for (size_t i = 0; noises != NULL && i < p->noise_count; i++) {
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(p->noises[i].actor));
+    q2c_set(&entry, "primary", q2c_actor_value(p->noises[i].primary));
+    q2c_set(&entry, "secondary", q2c_actor_value(p->noises[i].secondary));
+    q2c_set(&entry, "primaryRecord", noise_value(&p->noises[i].primary_record));
+    q2c_set(&entry, "secondaryRecord", noise_value(&p->noises[i].secondary_record));
+    if (!q2c_push(noises, q2c_done(&entry))) { qa_save_value_free(noises); noises = NULL; }
+  }
+  q2c_set(&o, "noises", noises);
+  qa_save_value *trails = qa_save_value_array();
+  for (size_t i = 0; trails != NULL && i < p->trail_count; i++) {
+    qa_save_value *points = qa_save_value_array();
+    for (size_t k = 0; points != NULL && k < p->trails[i].point_count; k++) {
+      const qa_q2m_trail_point *point = &p->trails[i].points[k];
+      q2c_object entry = q2c_object_new();
+      q2c_set(&entry, "origin", q2c_vector_value(point->origin));
+      q2c_set(&entry, "time", qa_save_value_number(point->time));
+      q2c_set(&entry, "yaw", qa_save_value_number(point->yaw));
+      if (!q2c_push(points, q2c_done(&entry))) { qa_save_value_free(points); points = NULL; }
+    }
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(p->trails[i].actor));
+    q2c_set(&entry, "points", points);
+    if (!q2c_push(trails, q2c_done(&entry))) { qa_save_value_free(trails); trails = NULL; }
+  }
+  q2c_set(&o, "trails", trails);
+  qa_save_value *origins = qa_save_value_array();
+  for (size_t i = 0; origins != NULL && i < p->player_origin_count; i++) {
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(p->player_origins[i].actor));
+    q2c_set(&entry, "origin", q2c_vector_value(p->player_origins[i].origin));
+    if (!q2c_push(origins, q2c_done(&entry))) { qa_save_value_free(origins); origins = NULL; }
+  }
+  q2c_set(&o, "playerOrigins", origins);
+  qa_save_value *hostile = qa_save_value_array();
+  for (size_t i = 0; hostile != NULL && i < p->hostile_count; i++)
+    if (!q2c_push(hostile, sighting_value(p->hostile[i].actor, p->hostile[i].time))) { qa_save_value_free(hostile); hostile = NULL; }
+  q2c_set(&o, "hostile", hostile);
+  q2c_set(&o, "lastFrame", p->has_last_frame ? qa_save_value_number(p->last_frame) : qa_save_value_null());
+  return q2c_done(&o);
+}
+
+/* ---- TS readQ2MonstersCheckpoint ---- */
+qa_q2m_monsters_checkpoint qa_read_q2_monsters_checkpoint(const qa_save_reader *reader, qa_persist_decoded *owner) {
+  qa_q2m_monsters_checkpoint out;
+  memset(&out, 0, sizeof out);
+  qa_save_reader version = q2c_field(reader, "version");
+  out.version = qa_save_reader_literal_number(&version, 1);
+  qa_save_reader_destroy(&version);
+  qa_save_reader actors = q2c_field(reader, "actors");
+  out.actor_count = qa_save_reader_list_count(&actors);
+  qa_q2m_actor_checkpoint *entries = qa_persist_decoded_array(owner, out.actor_count, sizeof *entries);
+  for (size_t i = 0; i < out.actor_count; i++) {
+    qa_save_reader value = q2c_item(&actors, i);
+    qa_q2m_actor_checkpoint *entry = &entries[i];
+    entry->actor = q2c_actor(&value, "actor");
+    entry->definition = q2c_string(&value, "definition");
+    qa_save_reader state = q2c_field(&value, "state");
+    read_state(&state, &entry->state);
+    qa_save_reader_destroy(&state);
+    qa_save_reader pending = q2c_field(&value, "pendingDamage");
+    entry->pending_damage.has_value = !qa_save_reader_is_null(&pending);
+    if (entry->pending_damage.has_value) {
+      qa_q2m_damage_checkpoint *damage = &entry->pending_damage.value;
+      qa_save_reader reaction = q2c_field(&pending, "reaction");
+      damage->damage = q2c_number(&reaction, "damage");
+      damage->kick = q2c_number(&reaction, "kick");
+      damage->point = q2c_vector(&reaction, "point");
+      damage->has_attacker = q2c_nullable_actor(&reaction, "attacker", &damage->attacker);
+      damage->has_inflictor = q2c_nullable_actor(&reaction, "inflictor", &damage->inflictor);
+      qa_save_reader_destroy(&reaction);
+      qa_save_reader attack = q2c_field(&pending, "attack");
+      damage->has_attack = !qa_save_reader_is_null(&attack);
+      if (damage->has_attack) damage->attack = qa_read_q2_attack_checkpoint(&attack);
+      qa_save_reader_destroy(&attack);
+    }
+    qa_save_reader_destroy(&pending);
+    qa_save_reader_destroy(&value);
+  }
+  out.actors = entries;
+  qa_save_reader_destroy(&actors);
+  qa_save_reader perception = q2c_field(reader, "perception");
+  out.perception = read_perception(&perception, owner);
+  qa_save_reader_destroy(&perception);
+  return out;
+}
+
+/* TS Q2Monsters.capture(): {version, perception, actors}; actor records
+ * {actor, definition, state, pendingDamage}. */
+static qa_save_value *monsters_value(const qa_q2m_monsters_checkpoint *checkpoint) {
+  qa_save_value *actors = qa_save_value_array();
+  for (size_t i = 0; actors != NULL && i < checkpoint->actor_count; i++) {
+    const qa_q2m_actor_checkpoint *entry = &checkpoint->actors[i];
+    q2c_object o = q2c_object_new();
+    q2c_set(&o, "actor", q2c_actor_value(entry->actor));
+    q2c_set(&o, "definition", q2c_string_value(entry->definition));
+    q2c_set(&o, "state", state_value(&entry->state));
+    if (entry->pending_damage.has_value) {
+      const qa_q2m_damage_checkpoint *damage = &entry->pending_damage.value;
+      q2c_object reaction = q2c_object_new();
+      q2c_set(&reaction, "damage", qa_save_value_number(damage->damage));
+      q2c_set(&reaction, "kick", qa_save_value_number(damage->kick));
+      q2c_set(&reaction, "point", q2c_vector_value(damage->point));
+      q2c_set(&reaction, "attacker", q2c_nullable_actor_value(damage->has_attacker, damage->attacker));
+      q2c_set(&reaction, "inflictor", q2c_nullable_actor_value(damage->has_inflictor, damage->inflictor));
+      q2c_object pending = q2c_object_new();
+      q2c_set(&pending, "reaction", q2c_done(&reaction));
+      q2c_set(&pending, "attack", damage->has_attack ? qa_q2_attack_checkpoint_value(&damage->attack) : qa_save_value_null());
+      q2c_set(&o, "pendingDamage", q2c_done(&pending));
+    } else {
+      q2c_set(&o, "pendingDamage", qa_save_value_null());
+    }
+    if (!q2c_push(actors, q2c_done(&o))) { qa_save_value_free(actors); actors = NULL; }
+  }
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "version", qa_save_value_number(checkpoint->version));
+  q2c_set(&o, "perception", perception_value(&checkpoint->perception));
+  q2c_set(&o, "actors", actors);
+  return q2c_done(&o);
+}
+
+uint8_t *qa_encode_q2_monsters_checkpoint(const qa_q2m_monsters_checkpoint *checkpoint, size_t *out_length) {
+  return q2c_encode(monsters_value(checkpoint), out_length);
+}
+
+bool qa_decode_q2_monsters_checkpoint(const uint8_t *bytes, size_t length, qa_q2m_monsters_checkpoint *out,
+                                      qa_persist_decoded *owner) {
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-monsters")) { qa_save_value_free(root); return false; }
-  read_q2_monsters_checkpoint(&reader, out);
+  if (!q2c_open(bytes, length, "q2-monsters", owner, &reader)) return false;
+  *out = qa_read_q2_monsters_checkpoint(&reader, owner);
   qa_save_reader_destroy(&reader);
-  out->root = root;
   return true;
 }
-

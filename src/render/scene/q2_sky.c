@@ -1,9 +1,11 @@
 /* Port of src/render/scene/q2-sky.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/q2_sky.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/materials/sky.h"
 typedef struct fb { double min_s, min_t, max_s, max_t; } fb;
@@ -27,10 +29,8 @@ static void project_polygon(const qa_vec3 *points, size_t n, fb *bounds) {
     }
     if (divisor < 0.001) continue;
     s = fr(s / divisor); t = fr(t / divisor);
-    if (s < range->min_s) range->min_s = s;
-    if (t < range->min_t) range->min_t = t;
-    if (s > range->max_s) range->max_s = s;
-    if (t > range->max_t) range->max_t = t;
+    range->min_s = qa_js_min(range->min_s, s); range->min_t = qa_js_min(range->min_t, t); /* Math.min/max keep NaN */
+    range->max_s = qa_js_max(range->max_s, s); range->max_t = qa_js_max(range->max_t, t);
   }
 }
 static void clip_polygon(const qa_vec3 *points, size_t n, int stage, fb *bounds) {
@@ -81,10 +81,10 @@ qa_render_operation *qa_q2_sky_sides(qa_material_geometry geometry, qa_vec3 orig
     qa_vec3 tri[3];
     for (int o = 0; o < 3; o++) {
       if (index + (size_t)o >= geometry.index_count) qa_range_error("Q2 sky index %zu outside %zu", index + (size_t)o, geometry.index_count);
-      double vi = geometry.indices[index + (size_t)o]; long idx = (long)vi;
-      if (vi != (double)idx || idx < 0 || (size_t)idx >= geometry.vertex_count)
-        qa_range_error("Q2 sky index %g outside %zu", vi, geometry.vertex_count);
-      tri[o] = qa_sub3(geometry.vertices[idx].position, origin);
+      double vi = geometry.indices[index + (size_t)o];
+      if (!(vi >= 0 && vi == floor(vi) && vi < (double)geometry.vertex_count))
+        qa_range_error("Q2 sky index %s outside %zu", QA_JS_NUMBER(vi), geometry.vertex_count);
+      tri[o] = qa_sub3(geometry.vertices[(size_t)vi].position, origin);
     }
     clip_polygon(tri, 3, 0, bounds);
   }

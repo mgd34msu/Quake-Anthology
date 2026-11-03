@@ -52,5 +52,4 @@ void qa_q3_character_presenter_reset(qa_q3_character_presenter *presenter, qa_q3
 /* Returned passes are presenter-owned scratch. */
 const qa_q3_character_pass *qa_q3_character_presenter_frame(qa_q3_character_presenter *presenter,
     qa_q3_character_view view, qa_q3_character_render_options options, size_t *out_count);
-qa_axis qa_q3_identity_axis(void);
 #endif

@@ -1,9 +1,9 @@
 /*
  * Port of src/formats/q3-model/lod.ts. C accommodations: the async
  * reader becomes a synchronous fn ptr + ctx returning a malloc'd
- * buffer (NULL = missing, freed by the loader); the TS catch of
- * BinaryError cannot be reproduced (parse errors abort), so the
- * "invalid" slot is produced only where noted in the implementation.
+ * buffer (NULL = missing, freed by the loader). A BinaryError from a
+ * LOD is caught as in TS (invalid slot, lower slots alias it); any
+ * other raise is rethrown.
  * GPL-2.0-or-later.
  */
 #ifndef QA_FORMATS_Q3_MODEL_LOD_H

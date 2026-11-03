@@ -6,6 +6,10 @@
 #include "qa/content/q2/foundation/host.h"
 bool qa_q2_save_actor(const qa_actor_id *actor, qa_saved_actor_id *out);
 qa_owned_actor qa_q2_restore_actor(qa_q2_game_services *g, qa_saved_actor_id actor);
+/* C accommodation for immutable TS strings: a process-lifetime copy of
+ * text (deduplicated; NULL stays NULL). Restore functions keep strings
+ * through it, so a decoded checkpoint can be freed after restore. */
+const char *qa_q2_intern(const char *text);
 /* TS Q2AttackCheckpoint: AttackProvenance with saved ids. Pointers in
  * qa_attack_provenance are retargeted to caller scratch on restore. */
 typedef struct qa_q2_attack_checkpoint {
@@ -16,6 +20,7 @@ typedef struct qa_q2_attack_checkpoint {
   qa_saved_actor_id originating_projectile;
 } qa_q2_attack_checkpoint;
 qa_q2_attack_checkpoint qa_q2_save_attack(qa_attack_provenance attack);
+/* Strings in the result are interned (qa_q2_intern). */
 qa_attack_provenance qa_q2_restore_attack(qa_q2_attack_checkpoint in,
     qa_actor_id (*reference)(void *ctx, qa_saved_actor_id a), void *ctx,
     qa_actor_id *attacker_scratch, qa_actor_id *inflictor_scratch);

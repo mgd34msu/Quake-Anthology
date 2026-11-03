@@ -24,25 +24,26 @@ qa_compat_qc_builtin qa_compat_qc_registry_get_named(const qa_compat_qc_builtin_
   if (!r) { return (qa_compat_qc_builtin){NULL, NULL}; } for (size_t i = 0; i < r->named_count; i++) { if (strcmp(r->named[i].name, name) == 0) return r->named[i].fn; } return (qa_compat_qc_builtin){NULL, NULL};
 }
 void qa_compat_qc_registry_destroy(qa_compat_qc_builtin_registry *r) { if (r->state_destroy) { r->state_destroy(r->state); } free(r->numbered); free(r->named); memset(r, 0, sizeof *r); }
-void *qa_compat_qc_machine_get_builtin_state(const qa_compat_qc_machine *m) { return m->builtin_state; }
 void qa_compat_qc_machine_snapshot_destroy(qa_compat_qc_machine_snapshot *s) { free(s->globals); free(s->entities); free(s->strings); free(s->profiling); memset(s, 0, sizeof *s); }
 
 noreturn void qa_compat_qc_machine_fail(qa_compat_qc_machine *m, const char *format, ...) {
-  char msg[1024]; va_list ap; va_start(ap, format); vsnprintf(msg, sizeof msg, format, ap); va_end(ap);
-  qa_range_error("QuakeC %lld:%lld: %s", (long long)m->function_index, (long long)m->statement, msg);
+  char msg[QA_CAUGHT_MESSAGE_CAPACITY]; va_list ap; va_start(ap, format); vsnprintf(msg, sizeof msg, format, ap); va_end(ap);
+  qa_raise("QcRuntimeError", 0, 0, "QuakeC %lld:%lld: %s", (long long)m->function_index, (long long)m->statement, msg);
 }
 static bool in_boundary(qa_compat_qc_machine *m, int64_t idx) { for (size_t i = 0; i < m->boundary_function_count; i++) { if (m->boundary_functions[i] == idx) return true; } return false; }
 static const qa_compat_qc_inline_region *region_at(qa_compat_qc_machine *m, int64_t entry) {
   for (size_t i = 0; i < m->inline_region_count; i++) { if (m->inline_regions[i].entry == entry) return &m->inline_regions[i]; } return NULL;
 }
+static void machine_destroy_cleanup(void *arg) { qa_compat_qc_machine_destroy(arg); }
 bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_options o) {
   memset(m, 0, sizeof *m); m->options = o; m->program = o.program; m->entities = o.entities; m->numeric = o.numeric;
+  qa_cleanup scope; qa_cleanup_push(&scope, machine_destroy_cleanup, m);
   if (o.entities->layout.field_words != o.program->entity_field_words) qa_compat_qc_program_error("progs.dat", "entity field layout disagrees with program");
   m->globals_bytes = malloc(o.program->initial_globals_length ? o.program->initial_globals_length : 1);
-  if (!m->globals_bytes) return false;
+  if (!m->globals_bytes) goto oom;
   memcpy(m->globals_bytes, o.program->initial_globals, o.program->initial_globals_length);
   qa_compat_qc_words_init(&m->globals, m->globals_bytes, o.program->initial_globals_length);
-  if (!qa_compat_qc_strings_init(&m->strings, o.program->strings, o.program->string_length, o.program->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD)) { free(m->globals_bytes); return false; }
+  if (!qa_compat_qc_strings_init(&m->strings, o.program->strings, o.program->string_length, o.program->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD)) goto oom;
   m->profiling = calloc(o.program->function_count ? o.program->function_count : 1, sizeof(double));
   if (!m->profiling) goto oom;
   if (o.function_boundary && o.function_boundary->function_count) {
@@ -77,12 +78,15 @@ bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_opt
   m->stack_limit = o.stack_limit ? o.stack_limit : 32;
   m->local_stack_limit = o.local_stack_words ? o.local_stack_words : 2048;
   if (m->statement_limit <= 0 || m->stack_limit <= 0 || m->local_stack_limit <= 0) qa_range_error("Invalid QuakeC execution limits");
+  qa_cleanup_pop(&scope);
   return true;
-oom: qa_compat_qc_machine_destroy(m); return false;
+oom: qa_cleanup_pop(&scope); qa_compat_qc_machine_destroy(m); return false;
 }
 void qa_compat_qc_machine_destroy(qa_compat_qc_machine *m) {
   for (size_t i = 0; i < m->frame_count; i++) free(m->frames[i].locals);
   free(m->frames); free(m->profiling); free(m->globals_bytes); free(m->boundary_functions); free(m->inline_regions);
+  for (size_t i = 0; i < m->continuation_count; i++) free(m->continuations[i]);
+  free(m->continuations);
   qa_compat_qc_strings_destroy(&m->strings); memset(m, 0, sizeof *m);
 }
 int64_t qa_compat_qc_machine_get_argc(const qa_compat_qc_machine *m) { return m->argument_count; }
@@ -104,9 +108,9 @@ static qa_compat_qc_words *entity_fields(qa_compat_qc_machine *m, int64_t ref, c
   if (m->options.validate_entity_access) m->options.validate_entity_access(m->options.ctx, ref, qa_compat_qc_machine_field_offset(m, field), words, "read");
   return qa_compat_qc_entity_memory_from_reference(m->entities, ref);
 }
-double qa_compat_qc_machine_entity_float(qa_compat_qc_machine *m, int64_t r, const char *f) { return qa_compat_qc_words_float(entity_fields(m, r, f, 1), qa_compat_qc_machine_field_offset(m, f)); }
-int32_t qa_compat_qc_machine_entity_int(qa_compat_qc_machine *m, int64_t r, const char *f) { return qa_compat_qc_words_int(entity_fields(m, r, f, 1), qa_compat_qc_machine_field_offset(m, f)); }
-qa_vec3 qa_compat_qc_machine_entity_vector(qa_compat_qc_machine *m, int64_t r, const char *f) { return qa_compat_qc_words_vector(entity_fields(m, r, f, 3), qa_compat_qc_machine_field_offset(m, f)); }
+double qa_compat_qc_machine_entity_float(qa_compat_qc_machine *m, int64_t r, const char *f) { const qa_compat_qc_words * w = entity_fields(m, r, f, 1); int64_t word = qa_compat_qc_machine_field_offset(m, f); return qa_compat_qc_words_float(w, word); }
+int32_t qa_compat_qc_machine_entity_int(qa_compat_qc_machine *m, int64_t r, const char *f) { const qa_compat_qc_words * w = entity_fields(m, r, f, 1); int64_t word = qa_compat_qc_machine_field_offset(m, f); return qa_compat_qc_words_int(w, word); }
+qa_vec3 qa_compat_qc_machine_entity_vector(qa_compat_qc_machine *m, int64_t r, const char *f) { const qa_compat_qc_words * w = entity_fields(m, r, f, 3); int64_t word = qa_compat_qc_machine_field_offset(m, f); return qa_compat_qc_words_vector(w, word); }
 static void store_entity(qa_compat_qc_machine *m, int64_t ref, const char *field, int64_t words, int mode, double num, qa_vec3 vec) {
   int64_t word = qa_compat_qc_machine_field_offset(m, field);
   qa_compat_qc_words *fields = qa_compat_qc_entity_memory_from_reference(m->entities, ref);
@@ -157,7 +161,13 @@ static qa_compat_qc_builtin get_builtin(qa_compat_qc_machine *m, const qa_compat
   if (!b.fn) { if (fn->named_builtin) qa_compat_qc_machine_fail(m, "unbound builtin %s (named)", fn->name); else qa_compat_qc_machine_fail(m, "unbound builtin %s (%lld)", fn->name, (long long)-fn->first_statement); }
   return b;
 }
-static void call_builtin(qa_compat_qc_machine *m, qa_compat_qc_builtin b) { void *prev = m->builtin_state; m->builtin_state = m->options.builtins ? m->options.builtins->state : NULL; m->builtin_depth++; b.fn(b.ctx, m); m->builtin_depth--; m->builtin_state = prev; }
+/* try/finally around the builtin: a throw (including a cancellation) passes through here. */
+static void builtin_finally(void *arg) { ((qa_compat_qc_machine *)arg)->builtin_depth--; }
+static void call_builtin(qa_compat_qc_machine *m, qa_compat_qc_builtin b) {
+  qa_cleanup scope; m->builtin_depth++; qa_cleanup_push(&scope, builtin_finally, m);
+  b.fn(b.ctx, m);
+  qa_cleanup_pop(&scope); m->builtin_depth--;
+}
 static void enter(qa_compat_qc_machine *m, const qa_compat_qc_function *fn) {
   if ((int64_t)m->frame_count + 1 >= m->stack_limit) qa_compat_qc_machine_fail(m, "stack overflow");
   if (m->local_words + fn->local_words > m->local_stack_limit) qa_compat_qc_machine_fail(m, "locals stack overflow");
@@ -187,59 +197,109 @@ static Staging capture_staging(qa_compat_qc_machine *m) {
 static void restore_staging(qa_compat_qc_machine *m, Staging s) { if (s.valid) { memcpy(m->globals.bytes + 4, s.words, 108); m->argument_count = s.argument_count; } }
 /* stop_frame is a frame index (TS Frame identity survives realloc), -1 = none. */
 static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t *budget, const qa_compat_qc_inline_region *stop_region, int64_t stop_frame);
+typedef struct { qa_compat_qc_machine *m; int64_t depth; } Unwind;
+static void unwind_frames(void *arg) { Unwind *u = arg; while ((int64_t)u->m->frame_count > u->depth) leave(u->m); }
 static void run_function(qa_compat_qc_machine *m, const qa_compat_qc_function *fn, int64_t *budget) {
   int64_t exit_depth = (int64_t)m->frame_count;
   qa_compat_qc_builtin b = get_builtin(m, fn);
   if (b.fn) { call_builtin(m, b); return; }
-  enter(m, fn); run_statements(m, exit_depth, budget, NULL, -1);
+  enter(m, fn);
+  Unwind unwind = {m, exit_depth}; qa_cleanup scope; qa_cleanup_push(&scope, unwind_frames, &unwind);
+  run_statements(m, exit_depth, budget, NULL, -1);
+  qa_cleanup_pop(&scope);
+}
+/* A TS continuation is a closure: it stays callable, and fails by name, after its boundary
+ * returned. Records therefore outlive the boundary and are retained per machine; the oldest
+ * inactive record is reused only once QA_CONTINUATION_RETAINED newer ones exist. */
+enum { QA_CONTINUATION_RETAINED = 64 };
+struct qa_compat_qc_continuation {
+  qa_compat_qc_machine *m;
+  bool active, called, executing, has_failure, has_completed;
+  /* function boundary */
+  const qa_compat_qc_function *fn; Staging staging, completed; int64_t cancel_words[3];
+  /* inline boundary */
+  const qa_compat_qc_inline_region *region; int64_t exit_depth, frame;
+  int64_t *budget;
+  qa_caught_error failure;
+};
+typedef struct qa_compat_qc_continuation Cont;
+static Cont *continuation_acquire(qa_compat_qc_machine *m) {
+  size_t n = m->continuation_count;
+  if (n >= QA_CONTINUATION_RETAINED) for (size_t i = 0; i < n; i++) {
+    size_t at = (m->continuation_next + i) % n; Cont *c = m->continuations[at];
+    if (c->active) continue;
+    m->continuation_next = (at + 1) % n;
+    c->called = c->executing = c->has_failure = c->has_completed = false; c->active = true;
+    return c;
+  }
+  Cont **grown = realloc(m->continuations, (n + 1) * sizeof *grown);
+  Cont *c = calloc(1, sizeof *c);
+  if (!grown || !c) { free(c); qa_range_error("QuakeC continuation allocation failed"); }
+  m->continuations = grown; grown[n] = c; m->continuation_count = n + 1;
+  c->m = m; c->active = true;
+  return c;
 }
 /* Function boundary execution plumbing */
-typedef struct {
-  qa_compat_qc_machine *m; const qa_compat_qc_function *fn; int64_t *budget; Staging staging;
-  bool *active, *called; Staging *completed; char owner; bool executing;
-} ExecCtx;
+static const char QC_FUNCTION_CANCELLATION[] = "QcFunctionCancellation";
 static void set_return_words(qa_compat_qc_machine *m, const int64_t w[3]) {
   for (int i = 0; i < 3; i++) { if (w[i] < -2147483648LL || w[i] > 4294967295LL) qa_compat_qc_machine_fail(m, "replacement return is not a QC word"); qa_compat_qc_words_set_int(&m->globals, 1 + i, (double)(int32_t)(uint32_t)w[i]); }
 }
-static void exec_run(void *ctx, const qa_compat_qc_builtin *prepare) {
-  ExecCtx *e = ctx; qa_compat_qc_machine *m = e->m;
-  if (!*e->active || *e->called) qa_compat_qc_machine_fail(m, "function continuation must execute once inside its boundary");
-  *e->called = true; restore_staging(m, e->staging);
-  if (prepare && prepare->fn) prepare->fn(prepare->ctx, m);
-  e->executing = true;
-  m->cancel_owner = &e->owner;
-  if (setjmp(m->cancel_jmp) == 0) { m->cancel_active = true; run_function(m, e->fn, e->budget); m->cancel_active = false; }
-  else { m->cancel_active = false; /* unwind frames added by cancelled fn: run_function entered one frame */
-    set_return_words(m, m->cancel_words); }
-  e->executing = false;
-  e->completed->valid = true; memcpy(e->completed->words, m->globals.bytes + 4, 12); e->completed->argument_count = m->argument_count;
+static void capture_completed(Cont *e) {
+  qa_compat_qc_machine *m = e->m;
+  e->has_completed = true; e->completed.valid = true; memcpy(e->completed.words, m->globals.bytes + 4, 12); e->completed.argument_count = m->argument_count;
 }
-static void exec_skip(void *ctx, const int64_t w[3]) {
-  ExecCtx *e = ctx; qa_compat_qc_machine *m = e->m;
-  if (!*e->active || *e->called) qa_compat_qc_machine_fail(m, "function continuation must execute once inside its boundary");
-  *e->called = true; restore_staging(m, e->staging); set_return_words(m, w);
-  e->completed->valid = true; memcpy(e->completed->words, m->globals.bytes + 4, 12); e->completed->argument_count = m->argument_count;
+static void run_source(void *ctx) { Cont *e = ctx; run_function(e->m, e->fn, e->budget); }
+typedef struct { Cont *e; const qa_compat_qc_builtin *prepare; const int64_t *words; } Finish;
+static void finish_body(void *ctx) {
+  Finish *f = ctx; Cont *e = f->e; qa_compat_qc_machine *m = e->m;
+  if (!e->active || e->called) qa_compat_qc_machine_fail(m, "function continuation must execute once inside its boundary");
+  e->called = true; restore_staging(m, e->staging);
+  if (f->words) set_return_words(m, f->words);
+  else {
+    if (f->prepare && f->prepare->fn) f->prepare->fn(f->prepare->ctx, m);
+    e->executing = true;
+    qa_caught_error caught;
+    bool completed = qa_try(run_source, e, &caught);
+    e->executing = false;
+    if (!completed) {
+      if (caught.name != QC_FUNCTION_CANCELLATION || caught.detail != (long long)(intptr_t)e) qa_rethrow(&caught);
+      set_return_words(m, e->cancel_words);
+    }
+  }
+  capture_completed(e);
 }
+/* A host may swallow a continuation's throw; the boundary rethrows it after run returns. */
+static void finish(Cont *e, const qa_compat_qc_builtin *prepare, const int64_t *words) {
+  Finish f = {e, prepare, words};
+  if (!qa_try(finish_body, &f, &e->failure)) { e->has_failure = true; qa_rethrow(&e->failure); }
+}
+static void exec_run(void *ctx, const qa_compat_qc_builtin *prepare) { finish(ctx, prepare, NULL); }
+static void exec_skip(void *ctx, const int64_t w[3]) { finish(ctx, NULL, w); }
 static noreturn void exec_cancel(void *ctx, const int64_t w[3]) {
-  ExecCtx *e = ctx; qa_compat_qc_machine *m = e->m;
-  if (!*e->active || !e->executing || !m->cancel_active || m->cancel_owner != &e->owner) qa_compat_qc_machine_fail(m, "function cancellation requires its live source execution");
-  memcpy(m->cancel_words, w, sizeof m->cancel_words);
-  /* unwind to the frame depth at boundary entry is handled by caller cleanup */
-  longjmp(m->cancel_jmp, 1);
+  Cont *e = ctx;
+  if (!e->active || !e->executing) qa_compat_qc_machine_fail(e->m, "function cancellation requires its live source execution");
+  memcpy(e->cancel_words, w, sizeof e->cancel_words);
+  qa_raise(QC_FUNCTION_CANCELLATION, 0, (long long)(intptr_t)e, "function cancellation");
+}
+static void boundary_finally(void *arg) {
+  Cont *e = arg; qa_compat_qc_machine *m = e->m;
+  e->active = false; m->boundary_depth--;
+  /* Host confirmation may reenter QC after the callee returned. Preserve its actual return, not guest state. */
+  if (e->has_completed) { memcpy(m->globals.bytes + 4, e->completed.words, 12); m->argument_count = e->completed.argument_count; }
 }
 static void invoke_function(qa_compat_qc_machine *m, const qa_compat_qc_function *fn, qa_compat_qc_call_site call, int64_t *budget, Staging staging) {
   const qa_compat_qc_function_boundary *b = m->options.function_boundary;
   if (!b || !in_boundary(m, fn->index)) { run_function(m, fn, budget); return; }
-  bool active = true, called = false; Staging completed; memset(&completed, 0, sizeof completed);
-  int64_t depth0 = (int64_t)m->frame_count;
-  ExecCtx e = {m, fn, budget, staging, &active, &called, &completed, 0, false};
-  qa_compat_qc_function_execution exec = {&e, exec_run, exec_skip, exec_cancel};
+  Cont *e = continuation_acquire(m);
+  e->fn = fn; e->budget = budget; e->staging = staging;
+  qa_compat_qc_function_execution exec = {e, exec_run, exec_skip, exec_cancel};
   m->boundary_depth++;
+  qa_cleanup scope; qa_cleanup_push(&scope, boundary_finally, e);
   b->run(b->ctx, call, exec);
-  if (!called) qa_compat_qc_machine_fail(m, "function boundary omitted source execution");
-  active = false; m->boundary_depth--;
-  while ((int64_t)m->frame_count > depth0) leave(m);
-  if (completed.valid) { memcpy(m->globals.bytes + 4, completed.words, 12); m->argument_count = completed.argument_count; }
+  if (e->has_failure) qa_rethrow(&e->failure);
+  if (!e->called) qa_compat_qc_machine_fail(m, "function boundary omitted source execution");
+  qa_cleanup_pop(&scope);
+  boundary_finally(e);
 }
 void qa_compat_qc_machine_execute(qa_compat_qc_machine *m, int64_t function_index, int64_t argument_count) {
   if (argument_count < 0 || argument_count > 8) qa_compat_qc_machine_fail(m, "invalid argument count");
@@ -251,6 +311,13 @@ void qa_compat_qc_machine_execute(qa_compat_qc_machine *m, int64_t function_inde
   restore_staging(m, staging);
   int64_t budget = m->statement_limit;
   invoke_function(m, fn, call, &budget, staging);
+}
+typedef struct { qa_compat_qc_machine *m; int64_t depth, saved; bool has_prev; int32_t prev; int64_t prev_args; } RegionScope;
+static void region_finally(void *arg) {
+  RegionScope *r = arg;
+  while ((int64_t)r->m->frame_count > r->depth) leave(r->m);
+  if (r->has_prev) qa_compat_qc_words_set_int(&r->m->globals, r->saved, r->prev);
+  r->m->argument_count = r->prev_args;
 }
 double qa_compat_qc_machine_execute_region(qa_compat_qc_machine *m, qa_compat_qc_inline_region region, int64_t argument_count) {
   const qa_compat_qc_inline_region *admitted = region_at(m, region.entry);
@@ -265,11 +332,12 @@ double qa_compat_qc_machine_execute_region(qa_compat_qc_machine *m, qa_compat_qc
   if (m->frame_count == 0) qa_compat_qc_machine_fail(m, "standalone inline execution has no frame");
   m->statement = region.entry - 1;
   int64_t budget = m->statement_limit;
+  RegionScope rs = {m, depth, saved, has_prev, prev, prev_args};
+  qa_cleanup scope; qa_cleanup_push(&scope, region_finally, &rs);
   run_statements(m, depth, &budget, admitted, depth);
   double result = qa_compat_qc_words_float(&m->globals, saved);
-  while ((int64_t)m->frame_count > depth) leave(m);
-  if (has_prev) qa_compat_qc_words_set_int(&m->globals, saved, prev);
-  m->argument_count = prev_args;
+  qa_cleanup_pop(&scope);
+  region_finally(&rs);
   return result;
 }
 static double byte_compare(const char *l, const char *r) {
@@ -278,17 +346,22 @@ static double byte_compare(const char *l, const char *r) {
   return 0;
 }
 /* Inline continuation plumbing */
-typedef struct { qa_compat_qc_machine *m; int64_t exit_depth; int64_t *budget; const qa_compat_qc_inline_region *region; int64_t frame; bool *active, *called; } InlineCtx;
-static void inline_decide(InlineCtx *e, bool skip) {
-  qa_compat_qc_machine *m = e->m;
-  if (!*e->active || *e->called) qa_compat_qc_machine_fail(m, "inline continuation must execute once inside its boundary");
+typedef struct { Cont *e; bool skip; } Decide;
+static void decide_body(void *ctx) {
+  Decide *d = ctx; Cont *e = d->e; qa_compat_qc_machine *m = e->m;
+  if (!e->active || e->called) qa_compat_qc_machine_fail(m, "inline continuation must execute once inside its boundary");
   if (m->frame_count == 0 || (int64_t)m->frame_count - 1 != e->frame || m->function_index != e->region->function_index) qa_compat_qc_machine_fail(m, "inline continuation belongs to another source frame");
-  if (skip && !e->region->replaceable) qa_compat_qc_machine_fail(m, "inline source region is not admitted for replacement");
-  *e->called = true;
-  if (skip) m->statement = e->region->exit - 1; else run_statements(m, e->exit_depth, e->budget, e->region, e->frame);
+  if (d->skip && !e->region->replaceable) qa_compat_qc_machine_fail(m, "inline source region is not admitted for replacement");
+  e->called = true;
+  if (d->skip) m->statement = e->region->exit - 1; else run_statements(m, e->exit_depth, e->budget, e->region, e->frame);
+}
+static void inline_decide(Cont *e, bool skip) {
+  Decide d = {e, skip};
+  if (!qa_try(decide_body, &d, &e->failure)) { e->has_failure = true; qa_rethrow(&e->failure); }
 }
 static void inline_run(void *ctx) { inline_decide(ctx, false); }
 static void inline_skip(void *ctx) { inline_decide(ctx, true); }
+static void inline_finally(void *arg) { ((Cont *)arg)->active = false; }
 static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t *budget, const qa_compat_qc_inline_region *stop_region, int64_t stop_frame) {
   const qa_compat_qc_inline_boundary *boundary = m->inline_region_count ? m->options.inline_boundary : NULL;
   while ((int64_t)m->frame_count > exit_depth) {
@@ -302,13 +375,17 @@ static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t 
     const qa_compat_qc_inline_region *region = boundary ? region_at(m, m->statement) : NULL;
     if (boundary && region && region->function_index == m->function_index && !(stop_region && stop_frame == (int64_t)m->frame_count - 1 && stop_region->entry == m->statement)) {
       if (m->frame_count == 0) qa_compat_qc_machine_fail(m, "inline source region has no frame");
-      int64_t frame = (int64_t)m->frame_count - 1;
-      bool active = true, called = false; m->statement--;
-      InlineCtx ic = {m, exit_depth, budget, region, frame, &active, &called};
-      qa_compat_qc_inline_continuation cont = {&ic, inline_run, inline_skip};
+      Cont *e = continuation_acquire(m);
+      e->region = region; e->exit_depth = exit_depth; e->budget = budget; e->frame = (int64_t)m->frame_count - 1;
+      m->statement--;
+      qa_compat_qc_inline_continuation cont = {e, inline_run, inline_skip};
+      qa_cleanup scope; qa_cleanup_push(&scope, inline_finally, e);
       boundary->run(boundary->ctx, *region, cont);
-      if (!called) qa_compat_qc_machine_fail(m, "inline boundary omitted source execution");
-      active = false; continue;
+      if (e->has_failure) qa_rethrow(&e->failure);
+      if (!e->called) qa_compat_qc_machine_fail(m, "inline boundary omitted source execution");
+      qa_cleanup_pop(&scope);
+      e->active = false;
+      continue;
     }
     if (--*budget == 0) qa_compat_qc_machine_fail(m, "runaway loop error");
     if (m->function_index >= 0 && m->function_index < (int64_t)m->program->function_count) m->profiling[m->function_index] += 1;
@@ -329,8 +406,8 @@ static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t 
       case QA_QC_OP_NE_F: qa_compat_qc_words_set_float(g,c,qa_compat_qc_words_float(g,a)!=qa_compat_qc_words_float(g,b)?1:0); break;
       case QA_QC_OP_EQ_V: qa_compat_qc_words_set_float(g,c,qa_compat_qc_words_float(g,a)==qa_compat_qc_words_float(g,b)&&qa_compat_qc_words_float(g,a+1)==qa_compat_qc_words_float(g,b+1)&&qa_compat_qc_words_float(g,a+2)==qa_compat_qc_words_float(g,b+2)?1:0); break;
       case QA_QC_OP_NE_V: qa_compat_qc_words_set_float(g,c,qa_compat_qc_words_float(g,a)!=qa_compat_qc_words_float(g,b)||qa_compat_qc_words_float(g,a+1)!=qa_compat_qc_words_float(g,b+1)||qa_compat_qc_words_float(g,a+2)!=qa_compat_qc_words_float(g,b+2)?1:0); break;
-      case QA_QC_OP_EQ_S: { char *l=NULL,*r=NULL; const char *ls=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,a)); l=strdup(ls); const char *rs=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,b)); r=strdup(rs); qa_compat_qc_words_set_float(g,c,l&&r&&strcmp(l,r)==0?1:0); free(l); free(r); break; }
-      case QA_QC_OP_NE_S: { const char *ls=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,a)); char *l=strdup(ls); const char *rs=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,b)); char *r=strdup(rs); qa_compat_qc_words_set_float(g,c,byte_compare(l?l:"",r?r:"")); free(l); free(r); break; }
+      case QA_QC_OP_EQ_S: { const char *l=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,a)); const char *r=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,b)); qa_compat_qc_words_set_float(g,c,strcmp(l,r)==0?1:0); break; }
+      case QA_QC_OP_NE_S: { const char *l=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,a)); const char *r=qa_compat_qc_strings_get(&m->strings,qa_compat_qc_words_int(g,b)); qa_compat_qc_words_set_float(g,c,byte_compare(l,r)); break; }
       case QA_QC_OP_EQ_E: case QA_QC_OP_EQ_FN: qa_compat_qc_words_set_float(g,c,qa_compat_qc_words_int(g,a)==qa_compat_qc_words_int(g,b)?1:0); break;
       case QA_QC_OP_NE_E: case QA_QC_OP_NE_FN: qa_compat_qc_words_set_float(g,c,qa_compat_qc_words_int(g,a)!=qa_compat_qc_words_int(g,b)?1:0); break;
       case QA_QC_OP_LE: qa_compat_qc_words_set_float(g,c,qa_compat_qc_words_float(g,a)<=qa_compat_qc_words_float(g,b)?1:0); break;
@@ -382,17 +459,26 @@ static void run_statements(qa_compat_qc_machine *m, int64_t exit_depth, int64_t 
         break; }
       case QA_QC_OP_STATE: {
         qa_compat_qc_words *self = qa_compat_qc_machine_self(m);
-        double nt = n->add(nc, qa_compat_qc_words_float(g, qa_compat_qc_machine_global_offset(m,"time")), 0.1);
-        struct { const char *name; double v; int is_int; } fs[3] = {{"nextthink",nt,0},{"frame",qa_compat_qc_words_float(g,a),0},{"think",qa_compat_qc_words_int(g,b),1}};
-        for (int i=0;i<3;i++) { int64_t word=qa_compat_qc_machine_field_offset(m,fs[i].name);
-          uint8_t before[4]; bool obs=m->options.validate_entity_access&&m->options.observe_entity_store; if(obs) memcpy(before,self->bytes+word*4,4);
-          if (m->options.validate_entity_access) m->options.validate_entity_access(m->options.ctx,qa_compat_qc_words_int(g,qa_compat_qc_machine_global_offset(m,"self")),word,1,"write");
-          if (fs[i].is_int) qa_compat_qc_words_set_int(self,word,fs[i].v); else qa_compat_qc_words_set_float(self,word,fs[i].v);
-          if(obs) m->options.observe_entity_store(m->options.ctx,(qa_compat_qc_entity_store_observation){m->function_index,m->statement,qa_compat_qc_words_int(g,qa_compat_qc_machine_global_offset(m,"self")),word,before,4,self->bytes+word*4,4});
-        } break; }
+        if (m->options.validate_entity_access) {
+          int64_t reference = qa_compat_qc_words_int(g, qa_compat_qc_machine_global_offset(m, "self"));
+          struct { const char *name; double v; int is_int; } fs[3] = {{"nextthink", n->add(nc, qa_compat_qc_words_float(g, qa_compat_qc_machine_global_offset(m, "time")), 0.1), 0}, {"frame", qa_compat_qc_words_float(g, a), 0}, {"think", qa_compat_qc_words_int(g, b), 1}};
+          for (int i = 0; i < 3; i++) {
+            int64_t word = qa_compat_qc_machine_field_offset(m, fs[i].name);
+            m->options.validate_entity_access(m->options.ctx, reference, word, 1, "write");
+            uint8_t before[4]; bool obs = m->options.observe_entity_store != NULL; if (obs) memcpy(before, self->bytes + word * 4, 4);
+            if (fs[i].is_int) qa_compat_qc_words_set_int(self, word, fs[i].v); else qa_compat_qc_words_set_float(self, word, fs[i].v);
+            if (obs) m->options.observe_entity_store(m->options.ctx, (qa_compat_qc_entity_store_observation){m->function_index, m->statement, reference, word, before, 4, self->bytes + word * 4, 4});
+          }
+          break;
+        }
+        int64_t nextthink = qa_compat_qc_machine_field_offset(m, "nextthink");
+        qa_compat_qc_words_set_float(self, nextthink, n->add(nc, qa_compat_qc_words_float(g, qa_compat_qc_machine_global_offset(m, "time")), 0.1));
+        qa_compat_qc_words_set_float(self, qa_compat_qc_machine_field_offset(m, "frame"), qa_compat_qc_words_float(g, a));
+        qa_compat_qc_words_set_int(self, qa_compat_qc_machine_field_offset(m, "think"), qa_compat_qc_words_int(g, b));
+        break; }
       case QA_QC_OP_DONE: case QA_QC_OP_RETURN:
         if (stop_region && m->frame_count && (int64_t)m->frame_count-1==stop_frame) qa_compat_qc_machine_fail(m,"inline source region returned before its continuation");
-        qa_compat_qc_words_copy_words(g,g,a,1,3); leave(m); break;
+        qa_compat_qc_words_copy_return_words(g,g,a,1,3); leave(m); break;
       default: qa_compat_qc_machine_fail(m,"unsupported opcode %d",(int)st.opcode);
     }
   }
@@ -408,9 +494,13 @@ bool qa_compat_qc_machine_get_snapshot(qa_compat_qc_machine *m, qa_compat_qc_mac
   out->entity_count=m->entities->count; out->statement=m->statement; out->function_index=m->function_index; out->argument_count=m->argument_count; out->trace_enabled=m->trace_enabled;
   return true;
 }
-bool qa_compat_qc_machine_restore(qa_compat_qc_machine *m, const qa_compat_qc_machine_snapshot *s) {
+void qa_compat_qc_machine_validate_snapshot(qa_compat_qc_machine *m, const qa_compat_qc_machine_snapshot *s) {
   if (m->frame_count || m->builtin_depth || m->boundary_depth) qa_compat_qc_machine_fail(m,"restore requires an idle callback boundary");
   if (s->globals_length!=m->globals.byte_length || s->profiling_count!=m->program->function_count || s->function_index!=0) qa_compat_qc_machine_fail(m,"incompatible machine checkpoint");
+  if (s->entities_length!=m->entities->byte_length || s->entity_count<1 || s->entity_count>m->entities->capacity) qa_compat_qc_machine_fail(m,"incompatible machine checkpoint");
+}
+bool qa_compat_qc_machine_restore(qa_compat_qc_machine *m, const qa_compat_qc_machine_snapshot *s) {
+  qa_compat_qc_machine_validate_snapshot(m, s);
   if (!qa_compat_qc_strings_restore(&m->strings,s->strings,s->strings_length)) return false;
   qa_compat_qc_entity_memory_restore(m->entities,s->entities,s->entities_length,s->entity_count);
   memcpy(m->globals.bytes,s->globals,s->globals_length);

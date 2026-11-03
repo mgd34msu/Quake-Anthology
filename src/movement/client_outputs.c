@@ -5,12 +5,8 @@
 
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
-static double js_max(double a, double b) {
-  if (isnan(a) || isnan(b)) return NAN;
-  if (a == b) return a == 0.0 && signbit(a) && !signbit(b) ? b : a;
-  return a > b ? a : b;
-}
 
 qa_user_command qa_client_stance_command(qa_user_command command, bool has_crouched, bool crouched) {
   if (!has_crouched) return command;
@@ -20,14 +16,14 @@ qa_user_command qa_client_stance_command(qa_user_command command, bool has_crouc
                                                  : (double)(qa_int32(command.as.q2_rerelease.buttons) & ~16);
       return command;
     case QA_USER_COMMAND_QW:
-      command.as.qw.up_move = crouched ? -js_max(1, fabs(command.as.qw.up_move)) : js_max(0, command.as.qw.up_move);
+      command.as.qw.up_move = crouched ? -qa_js_max(1, fabs(command.as.qw.up_move)) : qa_js_max(0, command.as.qw.up_move);
       if (crouched) command.as.qw.buttons = (double)(qa_int32(command.as.qw.buttons) & ~2);
       return command;
     case QA_USER_COMMAND_Q2:
-      command.as.q2.up_move = crouched ? -js_max(1, fabs(command.as.q2.up_move)) : js_max(0, command.as.q2.up_move);
+      command.as.q2.up_move = crouched ? -qa_js_max(1, fabs(command.as.q2.up_move)) : qa_js_max(0, command.as.q2.up_move);
       return command;
     case QA_USER_COMMAND_Q3:
-      command.as.q3.up_move = crouched ? -js_max(1, fabs(command.as.q3.up_move)) : js_max(0, command.as.q3.up_move);
+      command.as.q3.up_move = crouched ? -qa_js_max(1, fabs(command.as.q3.up_move)) : qa_js_max(0, command.as.q3.up_move);
       return command;
     case QA_USER_COMMAND_Q1:
       qa_range_error("NetQuake has no source crouch command; authored bounds require their own qualified movement boundary");
@@ -46,7 +42,8 @@ double qa_client_movement_type(qa_movement_state_kind kind, qa_mod_client_moveme
 
 bool qa_client_movement_mode(const qa_mod_client_movement_outputs *outputs, double health,
                              qa_mod_client_movement_mode *out_mode) {
-  if (health <= 0 || outputs == NULL || !outputs->has_mode) return false;
+  /* TS health > 0 ? ... : undefined; NaN health has no mode. */
+  if (!(health > 0) || outputs == NULL || !outputs->has_mode) return false;
   *out_mode = outputs->mode;
   return true;
 }

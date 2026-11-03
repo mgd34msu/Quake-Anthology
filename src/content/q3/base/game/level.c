@@ -3,22 +3,20 @@
 #include <stdlib.h>
 #include <string.h>
 void qa_q3_game_level_init(qa_q3_game_level *level) {
-  memset(level, 0, sizeof *level); level->team_scores.length = 4;
+  memset(level, 0, sizeof *level);
+  (void)qa_q3_base_player_state_slots_init(&level->team_scores, 4, level->team_score_words, 4, true, NULL, NULL, NULL);
+  qa_q3_ta_match_state_init(&level->base);
 }
 void qa_q3_game_level_destroy(qa_q3_game_level *level) {
-  free(level->base.changemap); free(level->base.vote.string);
-  free(level->base.team_votes[0].string); free(level->base.team_votes[1].string);
-  level->base.changemap = level->base.vote.string = NULL;
-  level->base.team_votes[0].string = level->base.team_votes[1].string = NULL;
+  qa_q3_ta_match_state_destroy(&level->base);
 }
 void qa_q3_game_level_clear(qa_q3_game_level *level) {
-  /* Preserve arrays' storage identity: zero them, reset scalars/votes to fresh. */
-  for (size_t i = 0; i < level->team_scores.length; i++) qa_q3_game_slots_set_mirror(&level->team_scores, i, 0);
-  level->base.num_team_voting_clients[0] = level->base.num_team_voting_clients[1] = 0;
-  memset(level->base.sorted_clients, 0, sizeof level->base.sorted_clients);
-  char *vote_str = level->base.vote.string, *tv0 = level->base.team_votes[0].string, *tv1 = level->base.team_votes[1].string;
-  char *changemap = level->base.changemap;
-  qa_q3_game_player_slots_mirror scores = level->team_scores;
-  memset(level, 0, sizeof *level); level->team_scores = scores; level->team_scores.length = 4;
-  free(vote_str); free(tv0); free(tv1); free(changemap);
+  /* TS assigns a fresh GameLevel over this one, keeping the identity of
+   * teamScores, the client tables, and the vote records: embedded storage
+   * keeps its address here, so zero and re-initialize in place. */
+  for (double i = 0; i < level->team_scores.length; i++) qa_q3_base_player_state_slots_set(&level->team_scores, i, 0);
+  qa_q3_base_player_state_slots scores = level->team_scores;
+  qa_q3_ta_match_state_destroy(&level->base);
+  memset(level, 0, sizeof *level); level->team_scores = scores;
+  qa_q3_ta_match_state_init(&level->base);
 }

@@ -63,23 +63,24 @@ typedef struct qa_q2mpm_hints {
   qa_q2mpm_hint_node *nodes; size_t node_count, node_cap;
   qa_q2mpm_hint_monster *pursuers; size_t pursuer_count, pursuer_cap;
   qa_q2m_hint_hooks hooks; /* ctx is this hints object */
+  qa_q2_callback_definitions spawn_callbacks; /* TS callbacks getter, read by Q2EntityServices */
 } qa_q2mpm_hints;
 
 void qa_q2mpm_hints_init(qa_q2mpm_hints *hints, qa_q2m_monsters *monsters);
 void qa_q2mpm_hints_destroy(qa_q2mpm_hints *hints);
-qa_q2f_callback_definitions qa_q2mpm_hints_callbacks(qa_q2mpm_hints *hints);
-qa_q2bm_spawn_module qa_q2mpm_hints_as_spawn(qa_q2mpm_hints *hints);
-bool qa_q2mpm_hints_spawn(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_game *game);
-bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_hint_initialization *out);
-qa_q2f_entity *qa_q2mpm_hints_find_start(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_game *game);
-qa_q2f_entity *qa_q2mpm_hints_other_end(qa_q2mpm_hints *hints, qa_q2f_entity *entity, qa_q2f_game *game);
+qa_q2_callback_definitions qa_q2mpm_hints_callbacks(qa_q2mpm_hints *hints);
+qa_q2_spawn_module qa_q2mpm_hints_as_spawn(qa_q2mpm_hints *hints);
+bool qa_q2mpm_hints_spawn(qa_q2mpm_hints *hints, qa_q2_entity *entity, qa_q2_game_services *game);
+bool qa_q2mpm_hints_finalize(qa_q2mpm_hints *hints, qa_q2_game_services *game, qa_q2mpm_hint_initialization *out);
+qa_q2_entity *qa_q2mpm_hints_find_start(qa_q2mpm_hints *hints, qa_q2_entity *entity, qa_q2_game_services *game);
+qa_q2_entity *qa_q2mpm_hints_other_end(qa_q2mpm_hints *hints, qa_q2_entity *entity, qa_q2_game_services *game);
 bool qa_q2mpm_hints_check(qa_q2mpm_hints *hints, qa_q2m_context *context);
 bool qa_q2mpm_hints_check_lost(qa_q2mpm_hints *hints, qa_q2m_context *context);
-void qa_q2mpm_hints_go(qa_q2mpm_hints *hints, qa_q2m_context *context, qa_q2f_entity *point);
+void qa_q2mpm_hints_go(qa_q2mpm_hints *hints, qa_q2m_context *context, qa_q2_entity *point);
 void qa_q2mpm_hints_stop(qa_q2mpm_hints *hints, qa_q2m_context *context);
 bool qa_q2mpm_hints_run(qa_q2mpm_hints *hints, qa_q2m_context *context, double distance);
-void qa_q2mpm_hints_touch(qa_q2mpm_hints *hints, qa_q2f_entity *hint, qa_q2f_game *game, qa_q2m_context *context);
-bool qa_q2mpm_hints_capture(qa_q2mpm_hints *hints, qa_q2f_game *game, qa_q2mpm_hints_checkpoint *out);
-void qa_q2mpm_hints_restore(qa_q2mpm_hints *hints, qa_q2f_game *game, const qa_q2mpm_hints_checkpoint *checkpoint);
+void qa_q2mpm_hints_touch(qa_q2mpm_hints *hints, qa_q2_entity *hint, qa_q2_game_services *game, qa_q2m_context *context);
+bool qa_q2mpm_hints_capture(qa_q2mpm_hints *hints, qa_q2_game_services *game, qa_q2mpm_hints_checkpoint *out);
+void qa_q2mpm_hints_restore(qa_q2mpm_hints *hints, qa_q2_game_services *game, const qa_q2mpm_hints_checkpoint *checkpoint);
 
 #endif

@@ -1,7 +1,10 @@
 /* Port of src/app/bootstrap/q3-client/userinfo.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q3_client/userinfo.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/support.h"
 static void reg_ignored(qa_cvar_registry *cvars, const char *name, const char *value, double flags) {
   qa_cvar_snapshot ignored;
   if (qa_cvar_registry_register(cvars, name, value, flags, &ignored)) qa_cvar_read_free(&ignored);
@@ -45,4 +48,36 @@ void qa_app_initialize_q3_client_cvars(qa_cvar_registry *cvars, qa_app_q3_client
   reg_ignored(cvars, "cl_maxPing", "800", QA_CVAR_FLAG_ARCHIVE);
   reg_ignored(cvars, "cl_serverStatusResendTime", "750", 0);
   reg_ignored(cvars, "sv_master1", "master.quake3arena.com", 0);
+}
+void qa_app_apply_server_system_info(qa_cvar_registry *cvars, const char *info,
+    bool (*skip)(void *ctx, const char *name), void *skip_ctx) {
+  /* info.split("\\"): fields between backslashes. */
+  size_t count = 1;
+  for (const char *p = info; *p != '\0'; p++) if (*p == '\\') count++;
+  char *copy = strdup(info);
+  char **fields = malloc(count * sizeof *fields);
+  if (copy == NULL || fields == NULL) { free(copy); free(fields); qa_range_error("Out of memory"); }
+  size_t n = 0;
+  fields[n++] = copy;
+  for (char *p = copy; *p != '\0'; p++)
+    if (*p == '\\') { *p = '\0'; fields[n++] = p + 1; }
+  for (size_t index = fields[0][0] == '\0' ? 1 : 0; index + 1 < n; index += 2) {
+    const char *name = fields[index], *value = fields[index + 1];
+    if (name[0] == '\0') continue;
+    char *lower = qa_js_to_lower_case(name);
+    if (lower == NULL) qa_range_error("Out of memory");
+    bool download = strcmp(lower, "cl_allowdownload") == 0;
+    free(lower);
+    if (download || skip(skip_ctx, name)) continue;
+    qa_cvar_read read;
+    int32_t flags = 0;
+    if (qa_cvar_registry_find(cvars, name, &read)) {
+      flags = read.flags;
+      qa_cvar_read_free(&read);
+    }
+    if ((flags & QA_CVAR_FLAG_ARCHIVE) != 0) continue;
+    set_ignored(cvars, name, value, true);
+  }
+  free(fields);
+  free(copy);
 }

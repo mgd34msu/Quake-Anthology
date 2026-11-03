@@ -5,6 +5,7 @@
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
 #include "qa/render/scene/view.h"
+#include "qa/foundation/js.h"
 typedef struct player_effects {
   qa_actor_id actor;
   double ir_until, nuke_until;
@@ -56,9 +57,9 @@ qa_app_q2_effect_player_view qa_app_q2_effect_views_frame(qa_app_q2_effect_views
   for (size_t i = 0; i < views->count; i++)
     if (qa_same_actor(views->players[i].actor, actor)) state = &views->players[i];
   if (state == NULL) return out;
-  double frames = round(state->ir_until * 10) - round(seconds * 10);
-  bool infrared = frames > 0 && (frames > 30 || (((int64_t)frames) & 4) != 0);
-  double nuke_alpha = fmax(0, fmin(1, (state->nuke_until - seconds) / 2));
+  double frames = qa_js_round(state->ir_until * 10) - qa_js_round(seconds * 10);
+  bool infrared = frames > 0 && (frames > 30 || ((qa_js_to_int32(frames)) & 4) != 0);
+  double nuke_alpha = qa_js_max(0, qa_js_min(1, (state->nuke_until - seconds) / 2));
   double alpha = nuke_alpha + (1 - nuke_alpha) * (infrared ? 0.2 : 0);
   double fraction = alpha > 0 ? nuke_alpha / alpha : 0;
   out.infrared = infrared;

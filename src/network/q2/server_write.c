@@ -1,5 +1,6 @@
 /* Port of src/network/q2/server-write.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/server_write.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -15,8 +16,8 @@ static bool kind_is(const qa_q2_protocol_identity *p, const char *kind) {
 }
 
 void qa_q2_write_fog(qa_q2_sizebuf *m, const qa_q2_svc_fog_data *fog) {
-  int32_t bits = (int32_t)fog->bits |
-                 (((int32_t)fog->bits & 0xff00) != 0 ? QA_Q2_SVC_FOG_BIT_MORE_BITS : 0);
+  int32_t bits = qa_js_to_int32(fog->bits) |
+                 ((qa_js_to_int32(fog->bits) & 0xff00) != 0 ? QA_Q2_SVC_FOG_BIT_MORE_BITS : 0);
   qa_q2_msg_write_byte(m, (double)bits);
   if (bits & QA_Q2_SVC_FOG_BIT_MORE_BITS) qa_q2_msg_write_byte(m, (double)((uint32_t)bits >> 8));
   if (bits & QA_Q2_SVC_FOG_BIT_DENSITY) {
@@ -38,6 +39,8 @@ void qa_q2_write_fog(qa_q2_sizebuf *m, const qa_q2_svc_fog_data *fog) {
   if (bits & QA_Q2_SVC_FOG_BIT_HEIGHTFOG_END_B) qa_q2_msg_write_byte(m, fog->hf_end_b);
   if (bits & QA_Q2_SVC_FOG_BIT_HEIGHTFOG_END_DIST) qa_q2_msg_write_long(m, fog->hf_end_dist);
 }
+
+static void release_message(void *arg) { qa_q2_message_destroy((qa_q2_sizebuf *)arg); }
 
 static void float_vector(qa_q2_sizebuf *m, const float value[3]) {
   for (int i = 0; i < 3; i++) qa_q2_msg_write_float(m, (double)value[i]);
@@ -96,13 +99,17 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
   }
   qa_q2_sizebuf m;
   if (!qa_q2_message_create(&m, 32768)) return NULL;
+  /* TS reuses one scratch message; C owns a fresh one and releases it when a
+   * write raises (SZ_GetSpace overflow, codec or Q2PRO range errors, the
+   * protocol checks below) under a catching caller. */
+  qa_cleanup release;
+  qa_cleanup_push(&release, release_message, &m);
   switch (event->kind) {
     case QA_Q2_SERVER_NOP: qa_q2_msg_write_byte(&m, 6); break;
     case QA_Q2_SERVER_DISCONNECT: qa_q2_msg_write_byte(&m, 7); break;
     case QA_Q2_SERVER_RECONNECT: qa_q2_msg_write_byte(&m, 8); break;
     case QA_Q2_SERVER_LEVEL_RESTART:
       if (!kex) {
-        qa_q2_message_destroy(&m);
         qa_q2_throw_error("Level-restart opcode requires KEX wire");
       }
       qa_q2_msg_write_byte(&m, 24);
@@ -161,7 +168,7 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
             qa_q2_msg_write_dir(&m, value);
           } else if (qa_q2_wire_codec_q2pro_extended_v2(wire)) {
             for (int k = 0; k < 3; k++) {
-              qa_q2pro_write_int23(&m, (int32_t)trunc((double)value[k] * 8.0), 0);
+              qa_q2pro_write_int23_number(&m, trunc((double)value[k] * 8.0), 0); /* range-checked as a number */
             }
           } else if (qa_q2_wire_codec_floating_coordinates(wire)) {
             float_vector(&m, value);
@@ -194,28 +201,28 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
       break;
     case QA_Q2_SERVER_SEAT:
       if (!kex) {
-        qa_q2_message_destroy(&m);
         qa_q2_throw_error("Source seat marker requires KEX wire");
       }
       qa_q2_msg_write_byte(&m, 21);
       qa_q2_msg_write_byte(&m, event->seat);
       break;
     case QA_Q2_SERVER_MUZZLE_FLASH: {
-      int32_t entity = (int32_t)event->flash_entity;
-      int32_t flash = (int32_t)event->flash;
-      if (event->monster && flash > 255) {
+      /* TS numbers: the > 255 test sees the number itself; the bitwise ops and the
+       * message writes apply ToInt32. */
+      int32_t entity = qa_js_to_int32(event->flash_entity);
+      int32_t flash = qa_js_to_int32(event->flash);
+      if (event->monster && event->flash > 255) {
         if (kex || kind_is(&wire->selected_protocol, "q2-rerelease") ||
             kind_is(&wire->selected_protocol, "q2-private-classic")) {
           qa_q2_msg_write_byte(&m, 32);
-          qa_q2_msg_write_short(&m, (double)entity);
-          qa_q2_msg_write_short(&m, (double)flash);
+          qa_q2_msg_write_short(&m, event->flash_entity);
+          qa_q2_msg_write_short(&m, event->flash);
           break;
         }
         if (qa_q2_wire_codec_q2pro_extended(wire)) {
-          entity |= (flash & 0x700) << 5;
+          entity |= (int32_t)((uint32_t)(flash & 0x700) << 5);
           flash &= 255;
         } else {
-          qa_q2_message_destroy(&m);
           qa_q2_throw_error("Monster muzzleflash cannot fit selected Q2 protocol");
         }
       }
@@ -226,10 +233,9 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
     }
     case QA_Q2_SERVER_SOUND: {
       const qa_q2_sound_message *s = &event->sound;
-      int32_t flags = (int32_t)s->flags;
+      int32_t flags = qa_js_to_int32(s->flags); /* every later use is |, & or a byte write */
       if (!kex && s->index > 255) {
         if (!rerelease && !qa_q2_wire_codec_q2pro_extended(wire)) {
-          qa_q2_message_destroy(&m);
           qa_q2_throw_error("Q2 sound index needs extended game layout");
         }
         flags |= 32;
@@ -239,7 +245,7 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
       if (s->volume != 1) flags |= 1;
       if (s->attenuation != 1) flags |= 2;
       if (s->delay_seconds != 0) flags |= 16;
-      int32_t channel = ((int32_t)s->entity << 3) | (int32_t)s->channel;
+      int32_t channel = (int32_t)((uint32_t)qa_js_to_int32(s->entity) << 3) | qa_js_to_int32(s->channel);
       if (kex && channel > 65535) flags |= 64;
       qa_q2_msg_write_byte(&m, 9);
       qa_q2_msg_write_byte(&m, (double)flags);
@@ -254,12 +260,11 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
       }
       if (flags & 4) {
         if (!s->has_position) {
-          qa_q2_message_destroy(&m);
           qa_q2_throw_error("Positioned Q2 sound has no position");
         }
         float pos[3] = {(float)s->position.x, (float)s->position.y, (float)s->position.z};
         if (qa_q2_wire_codec_q2pro_extended_v2(wire)) {
-          for (int k = 0; k < 3; k++) qa_q2pro_write_int23(&m, (int32_t)trunc((double)pos[k] * 8.0), 0);
+          for (int k = 0; k < 3; k++) qa_q2pro_write_int23_number(&m, trunc((double)pos[k] * 8.0), 0);
         } else if (qa_q2_wire_codec_floating_coordinates(wire)) {
           float_vector(&m, pos);
         } else {
@@ -277,7 +282,7 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
       qa_q2_msg_write_byte(&m, (double)event->indicator_count);
       for (size_t i = 0; i < event->indicator_count; i++) {
         const qa_q2_kex_damage_indicator *d = &event->indicators[i];
-        int32_t v = ((int32_t)d->damage & 31) | (d->health ? 32 : 0) | (d->armor ? 64 : 0) |
+        int32_t v = (qa_js_to_int32(d->damage) & 31) | (d->health ? 32 : 0) | (d->armor ? 64 : 0) |
                     (d->shield ? 128 : 0);
         qa_q2_msg_write_byte(&m, (double)v);
         qa_q2_msg_write_dir(&m, d->direction);
@@ -313,6 +318,7 @@ uint8_t *qa_q2_encode_server_event(qa_q2_wire_codec *wire, const qa_q2_server_ev
     case QA_Q2_SERVER_PRIVATE:
       break;
   }
+  qa_cleanup_pop(&release);
   uint8_t *out = qa_q2_message_bytes(&m, out_length);
   qa_q2_message_destroy(&m);
   return out;

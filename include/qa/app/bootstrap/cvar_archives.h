@@ -14,4 +14,7 @@ void qa_app_cvar_archive_entries_free(qa_cvar_archive_entry *entries, size_t cou
 /* entries NULL uses registry archive entries (TS default argument). */
 void qa_app_save_cvar_archive(const qa_config_store *store, const char *const *owner, size_t owner_count,
                               qa_cvar_registry *registry, const qa_cvar_archive_entry *entries, size_t entry_count);
+/* TS archiveDataText(text, isCommand): saved settings are data; only variable and binding
+ * lines survive, one command per line. Malloc'd ("" when nothing is kept). */
+char *qa_app_archive_data_text(const char *text, bool (*is_command)(void *ctx, const char *name), void *ctx);
 #endif

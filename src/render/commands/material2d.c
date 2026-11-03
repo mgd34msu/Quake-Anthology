@@ -2,6 +2,7 @@
 #include "qa/render/commands/material2d.h"
 #include "qa/render/commands/frame.h"
 #include "qa/materials/compile.h"
+#include "qa/render/scene/material_registrations.h"
 #include <string.h>
 typedef struct proj_ctx { qa_rect viewport; } proj_ctx;
 static qa_vec4 project_2d(void *ctx,qa_vec3 position){ proj_ctx *p=(proj_ctx*)ctx; qa_vec4 o;
@@ -20,7 +21,12 @@ int qa_prepare_material_text(qa_material_text_draw draw,qa_rect viewport,qa_mate
     verts[i].position.x=xs[i];verts[i].position.y=ys[i];verts[i].position.z=0;
     verts[i].normal.z=1; verts[i].tex_coord.x=ss[i];verts[i].tex_coord.y=ts[i]; verts[i].color=color; }
   qa_material_geometry geometry; geometry.indices=indices;geometry.index_count=6;geometry.vertices=verts;geometry.vertex_count=4;
-  const qa_mat_compiled_material *original=(const qa_mat_compiled_material*)draw.picture.compiled;
+  /* original = draw.picture.material.compiled, remap = currentRemap(original): a MaterialHandle
+   * draws its current material (or its remap); a plain CompiledMaterial has no remap. */
+  const qa_scene_material_handle *handle=draw.picture.compiled_is_handle?(const qa_scene_material_handle*)draw.picture.compiled:NULL;
+  const qa_mat_compiled_material *original=handle!=NULL?handle->current:(const qa_mat_compiled_material*)draw.picture.compiled;
+  qa_scene_material_remap remap; bool has_remap=handle!=NULL&&qa_current_remap(original,handle,&remap);
+  if(has_remap){ context.time_offset=context.time_offset+remap.time_offset; original=qa_registered_scene_material_compiled(remap.material); }
   proj_ctx pc; pc.viewport=viewport;
   context.fog=NULL; context.entity_rgba=color;
   context.project.ctx=&pc; context.project.project=project_2d;

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/core/math.h"
+#include "qa/foundation/support.h"
 
 void qa_model_owned_geometry_destroy(qa_model_owned_geometry *geometry) {
   free(geometry->vertices);
@@ -51,7 +52,7 @@ bool qa_q1_sprite_axes(const qa_q1_sprite_model *model,
                                 qa_scale3(up, cosine))}};
       return true;
     }
-    default: return false; /* TS falls off the switch: undefined */
+    default: return false; /* TS falls off the switch: undefined (see qa_q1_sprite_geometry) */
   }
 }
 
@@ -94,7 +95,13 @@ qa_model_owned_geometry qa_q1_sprite_geometry(
     double roll) {
   qa_model_owned_geometry empty = {0};
   qa_axis axis;
-  if (!qa_q1_sprite_axes(model, transform, camera, roll, &axis)) return empty;
+  if (!qa_q1_sprite_axes(model, transform, camera, roll, &axis)) {
+    /* q1SpriteAxes falls off its switch for any other orientation and
+     * returns undefined, which is not null: TS goes on to read axis[0]. */
+    if (model->orientation < 0 || model->orientation > 4)
+      qa_raise("TypeError", 0, 0, "undefined is not an object (evaluating 'axis[0]')");
+    return empty;
+  }
   qa_vec3 origin = qa_add3(transform.origin,
                            qa_scale3(axis.vectors[0], -model->beam_length));
   if (qa_dot3(axis.vectors[0], qa_sub3(camera.origin, origin)) >= 0)

@@ -145,9 +145,9 @@ static void test_debug_lifetime_and_color(void) {
 }
 
 static void test_obituary(void) {
-  qa_q2rr_player_state victim, attacker;
-  qa_q2rr_player_state_init(&victim, 0, 0);
-  qa_q2rr_player_state_init(&attacker, 1, 0);
+  qa_q2_base_player_state victim, attacker;
+  qa_q2_base_player_state_init(&victim, 0, 0);
+  qa_q2_base_player_state_init(&attacker, 1, 0);
   snprintf(victim.name, sizeof victim.name, "Vic");
   snprintf(attacker.name, sizeof attacker.name, "Atk");
   /* generic means 22 = falling, deathmatch loses a point */
@@ -164,8 +164,8 @@ static void test_obituary(void) {
   /* friendly-fire bit 0x8000000 + means 8 = rocket: attacker loses point */
   ob = qa_q2_rerelease_obituary(&victim, &attacker, 8 + 0x8000000, QA_Q2_MODE_DEATHMATCH, false, NULL, NULL);
   CHECK(strcmp(ob.text, "$g_mod_kill_rocket") == 0 && attacker.score == 0);
-  qa_q2rr_player_state_destroy(&victim);
-  qa_q2rr_player_state_destroy(&attacker);
+  qa_q2_base_player_state_destroy(&victim);
+  qa_q2_base_player_state_destroy(&attacker);
 }
 
 static void test_campaign_report(void) {
@@ -194,15 +194,15 @@ static void test_campaign_report(void) {
 }
 
 /* Minimal hooks/game for connect + animation (no base ops needed). */
-static qa_q2rr_player_movement fake_movement(void *c, qa_actor_id a) {
+static qa_q2_player_movement fake_movement(void *c, qa_actor_id a) {
   (void)c; (void)a;
-  qa_q2rr_player_movement m = {0};
+  qa_q2_player_movement m = {0};
   m.standing_bounds = QA_Q2_RERELEASE_PLAYER_BOUNDS;
   m.animate_q2 = true; m.grounded = true;
   return m;
 }
-static void fake_emit(void *c, qa_q2rr_player_event e) { (void)c; (void)e; }
-static void fake_set_movement(void *c, qa_actor_id a, qa_q2rr_movement_change ch) { (void)c; (void)a; (void)ch; }
+static void fake_emit(void *c, qa_q2_player_event e) { (void)c; (void)e; }
+static void fake_set_movement(void *c, qa_actor_id a, qa_q2_player_movement_change ch) { (void)c; (void)a; (void)ch; }
 static void fake_noise(void *c, qa_actor_id a, qa_vec3 o) { (void)c; (void)a; (void)o; }
 static bool fake_banned(void *c, const char *a) { (void)c; (void)a; return false; }
 static void rr_emit(void *c, qa_q2_rerelease_event e) { (void)c; (void)e; }
@@ -223,8 +223,8 @@ static bool rr_clip(void *c, qa_q2_entity *t, qa_actor_id p, qa_q2_game_services
   (void)c; (void)t; (void)p; (void)g; return true;
 }
 
-static qa_q2_rerelease_players make_players(void) {
-  qa_q2rr_player_hooks hooks = {0};
+static void make_players(qa_q2_rerelease_players *p) {
+  qa_q2_player_hooks hooks = {0};
   hooks.movement = fake_movement; hooks.set_movement = fake_set_movement;
   hooks.emit = fake_emit; hooks.noise = fake_noise; hooks.banned = fake_banned;
   qa_q2_rerelease_hooks rr = {0};
@@ -232,18 +232,17 @@ static qa_q2_rerelease_players make_players(void) {
   rr.clip_trigger = rr_clip; rr.navigation = rr_nav; rr.monsters_searching = rr_search;
   rr.grounded_on_world = rr_true1; rr.push_player = rr_void_actor;
   rr.set_actor_gravity = rr_grav; rr.set_world_gravity = rr_world_grav;
-  qa_q2_rerelease_players p;
-  qa_q2_rerelease_players_init(&p, NULL, NULL, hooks, rr, NULL, NULL);
-  return p;
+  CHECK(qa_q2_rerelease_players_init(p, NULL, NULL, hooks, rr, NULL, NULL, 0));
 }
 
 static void test_connect(void) {
-  qa_q2_rerelease_players p = make_players();
+  qa_q2_rerelease_players p;
+  make_players(&p);
   qa_q2_game_services g = {0};
   g.options.mode = QA_Q2_MODE_DEATHMATCH;
-  qa_q2rr_connection_result r = qa_q2_rerelease_players_connect(&p, &g, "\\name\\Player", false);
+  qa_q2_connection_result r = qa_q2_rerelease_players_connect(&p, &g, "\\name\\Player", false);
   CHECK(r.allowed);
-  snprintf(p.rules.password, sizeof p.rules.password, "secret");
+  qa_q2_players_rules(p.base)->password = "secret";
   r = qa_q2_rerelease_players_connect(&p, &g, "\\name\\Player", false);
   CHECK(!r.allowed);
   CHECK(strcmp(r.reason, "Password required or incorrect.") == 0);
@@ -273,11 +272,11 @@ static void test_client_animation(void) {
   qa_q2_spawn_fields fields = {0};
   qa_q2_entity e;
   qa_q2_entity_init(&e, (qa_owned_actor){0}, fields);
-  qa_q2rr_player_state st;
-  qa_q2rr_player_state_init(&st, 0, 0);
+  qa_q2_base_player_state st;
+  qa_q2_base_player_state_init(&st, 0, 0);
   qa_q2rr_player_extra_state extra;
   qa_q2rr_player_extra_state_init(&extra, 0, "");
-  qa_q2rr_player_context ctx = {0};
+  qa_q2_player_context ctx = {0};
   ctx.entity = &e; ctx.game = &g; ctx.state = &st;
   ctx.movement = fake_movement(NULL, e.actor.id);
   /* idle standing: frame 0, end 39 (TS q2RereleaseClientAnimation) */
@@ -295,13 +294,14 @@ static void test_client_animation(void) {
   st.animation_priority = 0;
   qa_q2_rerelease_client_animation(&ctx, &extra);
   CHECK(e.frame == 40 && st.animation_end == 45);
-  qa_q2rr_player_state_destroy(&st);
+  qa_q2_base_player_state_destroy(&st);
   qa_q2rr_player_extra_state_destroy(&extra);
   qa_q2_entity_destroy(&e);
 }
 
 static void test_goals_checkpoint(void) {
-  qa_q2_rerelease_players p = make_players();
+  qa_q2_rerelease_players p;
+  make_players(&p);
   qa_q2_rerelease_campaign_state camp;
   CHECK(qa_q2_create_rerelease_campaign_state(&camp));
   qa_q2_rerelease_goals goals;

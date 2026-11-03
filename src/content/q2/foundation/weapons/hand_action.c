@@ -1,11 +1,12 @@
 /* Port of src/content/q2/foundation/weapons/hand-action.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/weapons/hand_action.h"
 #include <math.h>
+#include "qa/foundation/js.h"
 
 static qa_q2w_hand_action mk(qa_q2w_hand_action_kind k) { qa_q2w_hand_action a = {0}; a.kind = k; return a; }
 static double firing_interval(const qa_q2w_hand_action_host *h, double seconds) {
   double r = h->firing_interval ? h->firing_interval(h->ctx, seconds) : seconds;
-  if (!isfinite(r) || r < 0) qa_q2f_error("Original hand grenade cadence must produce a finite nonnegative interval");
+  if (!isfinite(r) || r < 0) qa_raise("Error", 0, 0, "Original hand grenade cadence must produce a finite nonnegative interval");
   return r;
 }
 static qa_q2w_hand_tempo tempo_of(qa_q2w_hand_action_input in) {
@@ -14,7 +15,7 @@ static qa_q2w_hand_tempo tempo_of(qa_q2w_hand_action_input in) {
 }
 static qa_q2w_hand_action emit(double expires_at, qa_q2w_hand_action_input in, const qa_q2w_hand_action_host *h, bool held);
 static double frame_deadline(qa_q2w_hand_action_input in, const qa_q2w_hand_action_host *h, double from) {
-  return (round(from * 1000) + round(firing_interval(h, qa_q2w_hand_frame_seconds(tempo_of(in))) * 1000)) / 1000;
+  return (qa_js_round(from * 1000) + qa_js_round(firing_interval(h, qa_q2w_hand_frame_seconds(tempo_of(in))) * 1000)) / 1000;
 }
 static qa_q2w_hand_action emit(double expires_at, qa_q2w_hand_action_input in, const qa_q2w_hand_action_host *h, bool held) {
   h->sound(h->ctx, "cook-stop");
@@ -24,7 +25,7 @@ static qa_q2w_hand_action emit(double expires_at, qa_q2w_hand_action_input in, c
   ti.project = in.throw_project;
   ti.edition = in.edition; ti.now = in.now;
   ti.alive = in.lifecycle == QA_Q2W_ALIVE || in.lifecycle == QA_Q2W_REMOVING;
-  ti.fuse_deadline = in.lifecycle == QA_Q2W_DEAD && in.edition == QA_Q2F_CLASSIC ? in.now : expires_at;
+  ti.fuse_deadline = in.lifecycle == QA_Q2W_DEAD && in.edition == QA_Q2_EDITION_CLASSIC ? in.now : expires_at;
   ti.held = held;
   h->emit(h->ctx, qa_q2w_calculate_hand_throw(ti));
   qa_q2w_hand_action a = mk(QA_Q2W_HA_RECOVERING);
@@ -33,7 +34,7 @@ static qa_q2w_hand_action emit(double expires_at, qa_q2w_hand_action_input in, c
   return a;
 }
 static qa_q2w_hand_action release(double expires_at, qa_q2w_hand_action_input in, const qa_q2w_hand_action_host *h, double released_at) {
-  if (in.edition == QA_Q2F_RERELEASE) return emit(expires_at, in, h, false);
+  if (in.edition == QA_Q2_EDITION_RERELEASE) return emit(expires_at, in, h, false);
   double throw_at = frame_deadline(in, h, released_at);
   if (in.now < throw_at) {
     qa_q2w_hand_action a = mk(QA_Q2W_HA_RELEASING);
@@ -56,7 +57,7 @@ qa_q2w_hand_action qa_q2w_step_hand_action(qa_q2w_hand_action state, qa_q2w_hand
   if (in.lifecycle == QA_Q2W_DEAD || in.lifecycle == QA_Q2W_REMOVING || !in.enabled) {
     if (state.kind == QA_Q2W_HA_PREPARING) h->refund(h->ctx);
     if (state.kind == QA_Q2W_HA_COOKING || state.kind == QA_Q2W_HA_RELEASING)
-      (void)emit(state.expires_at, in, h, in.lifecycle == QA_Q2W_DEAD && in.edition == QA_Q2F_RERELEASE);
+      (void)emit(state.expires_at, in, h, in.lifecycle == QA_Q2W_DEAD && in.edition == QA_Q2_EDITION_RERELEASE);
     return mk(QA_Q2W_HA_DISARMED);
   }
   switch (state.kind) {
@@ -64,7 +65,7 @@ qa_q2w_hand_action qa_q2w_step_hand_action(qa_q2w_hand_action state, qa_q2w_hand
     case QA_Q2W_HA_IDLE: {
       if (!in.pressed || !h->reserve(h->ctx)) return state;
       qa_q2w_hand_action a = mk(QA_Q2W_HA_PREPARING);
-      a.frame = in.edition == QA_Q2F_CLASSIC ? 1 : 2;
+      a.frame = in.edition == QA_Q2_EDITION_CLASSIC ? 1 : 2;
       a.next_at = frame_deadline(in, h, in.now);
       a.release_queued = in.released || !in.held;
       return a;

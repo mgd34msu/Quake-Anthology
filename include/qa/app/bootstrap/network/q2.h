@@ -11,7 +11,14 @@
 #include <stdint.h>
 #include "qa/app/bootstrap/network/q2_client_receiver.h"
 #include "qa/app/bootstrap/network/types.h"
+#include "qa/network/q2/connectionless.h"
 typedef struct qa_app_q2_server_network qa_app_q2_server_network;
+/* TS Q2ApplicationServerHost.discovery: the value qa_app_q2_server_host.discovery points at. */
+typedef struct qa_app_q2_discovery {
+  void *ctx;
+  qa_q2_status (*status)(void *ctx);
+  qa_q2_host_info (*info)(void *ctx);
+} qa_app_q2_discovery;
 typedef struct qa_app_q2_recording_sink {
   void *ctx;
   void (*append)(void *ctx, const char *kind, const uint8_t *message, size_t length);
@@ -40,10 +47,9 @@ const void *const *qa_app_q2_server_network_poll(qa_app_q2_server_network *netwo
     double now, size_t *out_count);
 void qa_app_q2_server_network_submit(qa_app_q2_server_network *network,
     const void *const *commands, size_t count, double now);
-/* frame_time: output snapshot frame time as {is_seconds,value}. */
+/* output is a qa_simulation_output; its snapshot frame time is the MVD source clock. */
 void qa_app_q2_server_network_publish(qa_app_q2_server_network *network,
-    const void *output, const void *const *events, size_t event_count,
-    bool frame_time_is_seconds, double frame_time_value, double now);
+    const void *output, const void *const *events, size_t event_count, double now);
 void qa_app_q2_server_network_close(qa_app_q2_server_network *network);
 void qa_app_q2_server_network_server_recording_seed(qa_app_q2_server_network *network,
     qa_app_q2_server_recording_seed *out);

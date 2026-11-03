@@ -14,6 +14,7 @@ struct qa_app_seat_player_death {
   void *quit_ctx;
   bool active;
   bool busy;
+  bool closed; /* closed while a restart is pending */
   char *message;
   int handle;
   qa_ui_control controls[4];
@@ -25,13 +26,20 @@ static char *dup_text(const char *text) {
   memcpy(out, text, len + 1);
   return out;
 }
+/* TS restart(): try { await saves.recovery.restart(); } catch (error) { message = error.message } finally { busy = false }.
+ * The application settles the queued restart in its step; a death prompt closed before then is freed at the settle. */
+static void restart_settled(void *ctx, const char *error) {
+  qa_app_seat_player_death *death = ctx;
+  if (error != NULL) { free(death->message); death->message = dup_text(error); }
+  death->busy = false;
+  if (death->closed) { free(death->message); free(death); }
+}
 static void restart(qa_app_seat_player_death *death) {
   if (death->busy || death->saves == NULL || !death->saves->has_recovery) return;
   death->busy = true;
   free(death->message); death->message = dup_text("Restarting level...");
-  const char *error = death->saves->recovery_restart(death->saves->ctx);
-  if (error != NULL) { free(death->message); death->message = dup_text(error); }
-  death->busy = false;
+  qa_ui_saves_settle settle = { restart_settled, death };
+  death->saves->recovery_restart(death->saves->ctx, settle);
 }
 static void activate_load(void *ctx, qa_seat_id seat) {
   (void)seat;
@@ -121,6 +129,7 @@ bool qa_app_seat_player_death_input(qa_app_seat_player_death *death, qa_seat_inp
 void qa_app_seat_player_death_close(qa_app_seat_player_death *death) {
   if (death == NULL) return;
   qa_native_ui_controller_unregister(death->controller, death->handle);
+  if (death->busy) { death->closed = true; return; }
   free(death->message);
   free(death);
 }

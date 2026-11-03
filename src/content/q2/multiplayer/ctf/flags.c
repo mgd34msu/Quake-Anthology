@@ -1,6 +1,7 @@
 /* Port of src/content/q2/multiplayer/ctf/flags.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/multiplayer/ctf/flags.h"
 #include "../multiplayer_internal.h"
+#include "qa/foundation/js.h"
 
 struct qa_q2_ctf_flags {
   qa_q2_ctf_context *context;
@@ -134,8 +135,8 @@ bool qa_q2_ctf_flags_spawn(qa_q2_ctf_flags *f, qa_q2_entity *entity, qa_q2_game_
   qa_q2_ctf_playing_team team;
   if (!qa_ctf_flag_team(entity->classname, &team)) return false;
   if (entity->model == NULL || entity->model[0] == '\0') entity->model = QA_CTF_FLAGS[(int)team].model;
-  entity->effects = (double)((int64_t)entity->effects | (int64_t)QA_CTF_FLAGS[(int)team].effect);
-  entity->render_flags = (double)((int64_t)entity->render_flags | 512);
+  entity->effects = (double)(qa_js_to_int32(entity->effects) | qa_js_to_int32(QA_CTF_FLAGS[(int)team].effect));
+  entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 512);
   entity->frame = 173;
   qa_q2_think setup = {f, setup_fn};
   g->schedule(g->ctx, entity, g->host->frame_seconds(g->host->ctx) * 2, setup);
@@ -147,7 +148,7 @@ qa_q2_entity *qa_q2_ctf_flags_base(qa_q2_ctf_flags *f, qa_q2_game_services *g, q
   size_t n = 0;
   qa_q2_entity *const *all = g->entities(g->ctx, &n);
   for (size_t i = 0; i < n; i++)
-    if (strcmp(all[i]->classname, QA_CTF_FLAGS[(int)team].classname) == 0 && ((int64_t)all[i]->spawnflags & 0x30000) == 0) return all[i];
+    if (strcmp(all[i]->classname, QA_CTF_FLAGS[(int)team].classname) == 0 && (qa_js_to_int32(all[i]->spawnflags) & 0x30000) == 0) return all[i];
   return NULL;
 }
 
@@ -155,7 +156,7 @@ const char *qa_q2_ctf_flags_state(qa_q2_ctf_flags *f, qa_q2_game_services *g, qa
   size_t n = 0;
   qa_q2_entity *const *all = g->entities(g->ctx, &n);
   for (size_t i = 0; i < n; i++)
-    if (strcmp(all[i]->classname, QA_CTF_FLAGS[(int)team].classname) == 0 && ((int64_t)all[i]->spawnflags & 0x30000) != 0) return "dropped";
+    if (strcmp(all[i]->classname, QA_CTF_FLAGS[(int)team].classname) == 0 && (qa_js_to_int32(all[i]->spawnflags) & 0x30000) != 0) return "dropped";
   qa_q2_entity *base = qa_q2_ctf_flags_base(f, g, team);
   return base != NULL && strcmp(base->solid, "trigger") == 0 ? "base" : "taken";
 }
@@ -170,11 +171,11 @@ void qa_q2_ctf_flags_reset(qa_q2_ctf_flags *f, qa_q2_game_services *g, qa_q2_ctf
   for (size_t i = 0; i < n; i++) {
     qa_q2_entity *entity = copy[i];
     if (strcmp(entity->classname, QA_CTF_FLAGS[(int)team].classname) != 0) continue;
-    if (((int64_t)entity->spawnflags & 0x30000) != 0) {
+    if ((qa_js_to_int32(entity->spawnflags) & 0x30000) != 0) {
       g->remove(g->ctx, entity);
     } else {
       entity->visible = true;
-      entity->server_flags = (double)((int64_t)entity->server_flags & ~1);
+      entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) & ~1);
       g->solid(g->ctx, entity, "trigger");
       g->show(g->ctx, entity);
       qa_q2_presentation_event event = {0};
@@ -200,14 +201,14 @@ static void pickup(qa_q2_ctf_flags *f, qa_q2_entity *entity, qa_q2_game_services
   bool has_team = qa_ctf_flag_team(entity->classname, &team);
   qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(context, actor);
   qa_q2_entity *player = qa_q2_game_entity_of(g, &actor);
-  qa_q2mp_player_state *common = context->hooks.player(context->hooks.ctx, actor);
+  qa_q2_base_player_state *common = context->hooks.player(context->hooks.ctx, actor);
   if (!has_team || state == NULL || state->team == 0 || player == NULL || common == NULL || common->spectator ||
       qa_q2mp_health_or(g, actor, 0) <= 0) return;
   if (strcmp(entity->solid, "trigger") != 0) return;
   double now = qa_q2mp_now(g);
   qa_q2_ctf_playing_team enemy = qa_other_ctf_team(team);
   const qa_q2_ctf_flag_def *flag = &QA_CTF_FLAGS[(int)team];
-  bool dropped = ((int64_t)entity->spawnflags & 0x30000) != 0;
+  bool dropped = (qa_js_to_int32(entity->spawnflags) & 0x30000) != 0;
   qa_shared_inventory_table *inv = g->host->inventory;
   if (state->team == team) {
     if (dropped) {
@@ -287,15 +288,15 @@ static void pickup(qa_q2_ctf_flags *f, qa_q2_entity *entity, qa_q2_game_services
     return;
   }
   entity->visible = false;
-  entity->server_flags = (double)((int64_t)entity->server_flags | 1);
+  entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) | 1);
   g->solid(g->ctx, entity, "none");
   g->show(g->ctx, entity);
 }
 
 static void targets(qa_q2_ctf_flags *f, qa_q2_entity *entity, qa_q2_game_services *g, qa_actor_id actor) {
   (void)f;
-  if (((int64_t)entity->spawnflags & 0x40000) == 0) {
-    entity->spawnflags = (double)((int64_t)entity->spawnflags | 0x40000);
+  if ((qa_js_to_int32(entity->spawnflags) & 0x40000) == 0) {
+    entity->spawnflags = (double)(qa_js_to_int32(entity->spawnflags) | 0x40000);
     qa_q2_game_use_targets_entity(g, entity, &actor, false);
   }
 }
@@ -403,7 +404,10 @@ void qa_q2_ctf_flags_frag(qa_q2_ctf_flags *f, qa_q2_entity *victim, qa_q2_entity
   if (near_object(f, flag, victim, attacker, g)) {
     qa_ctf_score(context, attacker->actor.id, 1);
     if (ghost != NULL) ghost->base_defense++;
-    qa_ctf_print(g, NULL, "medium", "%s defends the %s %s.\n", qa_ctf_name(context, attacker->actor.id), qa_ctf_team_name(source->team), strcmp(flag->solid, "none") == 0 ? "base" : "flag");
+    const char * value = qa_ctf_name(context, attacker->actor.id);
+    const char * value2 = qa_ctf_team_name(source->team);
+    char * value3 = strcmp(flag->solid, "none") == 0 ? "base" : "flag";
+    qa_ctf_print(g, NULL, "medium", "%s defends the %s %s.\n", value, value2, value3);
     return;
   }
   size_t pn = 0;
@@ -428,9 +432,9 @@ void qa_q2_ctf_flags_effects(qa_q2_ctf_flags *f, qa_q2_entity *entity, qa_q2_gam
   (void)f;
   qa_q2_ctf_playing_team team;
   bool carried = qa_ctf_carried_flag(g, entity->actor.id, &team);
-  entity->effects = (double)((int64_t)entity->effects & ~0xc0000);
+  entity->effects = (double)(qa_js_to_int32(entity->effects) & ~0xc0000);
   if (carried && qa_q2mp_health_or(g, entity->actor.id, 0) > 0)
-    entity->effects = (double)((int64_t)entity->effects | (int64_t)QA_CTF_FLAGS[(int)team].effect);
+    entity->effects = (double)(qa_js_to_int32(entity->effects) | qa_js_to_int32(QA_CTF_FLAGS[(int)team].effect));
   entity->model3 = carried ? QA_CTF_FLAGS[(int)team].model : "";
   g->show(g->ctx, entity);
 }

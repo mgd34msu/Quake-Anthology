@@ -1,7 +1,5 @@
 /* Port of src/content/q3/team-arena/team.ts. GPL-2.0-or-later.
- * ps.generic1/ps.weapon have no landed mirror fields: generic1 goes
- * through host accessors; teamplayInfoMessage reads s.weapon for the
- * TS ps.weapon slot. captureSaveState's object becomes a struct. */
+ * captureSaveState's object becomes a struct. */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_TEAM_H
 #define QA_CONTENT_Q3_TEAM_ARENA_TEAM_H
 #include <stdbool.h>
@@ -37,7 +35,7 @@ typedef struct qa_q3_ta_team_host {
   qa_q3_base_server_world *world;                 /* borrowed */
   qa_q3_base_actor_spatial_queries *spatial;      /* borrowed; trace_actor */
   double game_type, time;
-  qa_q3_game_player_slots_mirror *team_scores;
+  qa_q3_base_player_state_slots *team_scores;
   const double *sorted_clients; size_t sorted_client_count;
   qa_q3_game_entity *location_head;
   void *ctx;
@@ -48,8 +46,6 @@ typedef struct qa_q3_ta_team_host {
   void (*calculate_ranks)(void *ctx);
   void (*respawn_item)(void *ctx, qa_q3_game_entity *item);
   bool (*in_pvs)(void *ctx, qa_vec3 first, qa_vec3 second);
-  double (*generic1)(void *ctx, qa_q3_game_client *client);
-  void (*set_generic1)(void *ctx, qa_q3_game_client *client, double value);
 } qa_q3_ta_team_host;
 
 /* TS TeamGameState. Status fields hold FlagStatus | -1 as double. */
@@ -64,7 +60,6 @@ void qa_q3_ta_team_game_state_init(qa_q3_ta_team_game_state *state);
 qa_q3_base_team qa_q3_ta_other_team(qa_q3_base_team team);
 const char *qa_q3_ta_team_name(qa_q3_base_team team);
 const char *qa_q3_ta_other_team_name(qa_q3_base_team team);
-const char *qa_q3_ta_team_color_string(qa_q3_base_team team);
 bool qa_q3_ta_on_same_team(double game_type, qa_q3_game_entity *first, qa_q3_game_entity *second);
 void qa_q3_ta_spawn_team_point(qa_q3_game_entity *entity);
 

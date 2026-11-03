@@ -1,5 +1,6 @@
 /* Port of src/network/q2/channel.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/channel.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -315,7 +316,7 @@ bool qa_q2_channel_receive(qa_q2_channel *channel, const uint8_t *bytes, size_t 
                     : width == 1 ? qa_q2_msg_read_byte(&packet)
                                  : 0;
     int32_t expected = width == 2 ? (int32_t)channel->options.qport
-                                  : (int32_t)channel->options.qport & 255;
+                                  : qa_js_to_int32(channel->options.qport) & 255;
     if (packet.readcount > packet.cursize) {
       free(copy);
       return set_rejected(out, "short");

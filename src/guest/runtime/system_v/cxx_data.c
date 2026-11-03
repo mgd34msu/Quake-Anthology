@@ -145,12 +145,16 @@ void qa_cxx_abi_data_init(qa_cxx_abi_data *abi, qa_system_v_service_host *host) 
   qa_guest_core_address class_vtable = abi->class_info_vtables[0];
   qa_guest_core_address single_vtable = abi->class_info_vtables[1];
   write_ptr(m, base, class_vtable);
-  write_ptr(m, qa_cxx_abi_slot(abi, base, p), qa_cxx_abi_bytes(abi, "St9type_info"));
+  qa_guest_core_address a2 = qa_cxx_abi_slot(abi, base, p);
+  qa_guest_core_address v2 = qa_cxx_abi_bytes(abi, "St9type_info");
+  write_ptr(m, a2, v2);
   const char *type_names[] = {class_name, single_name, multiple_name};
   qa_guest_core_address parents[] = {base, class_info, class_info};
   for (int i = 0; i < 3; i++) {
     write_ptr(m, infos[i], single_vtable);
-    write_ptr(m, qa_cxx_abi_slot(abi, infos[i], p), qa_cxx_abi_bytes(abi, type_names[i]));
+    qa_guest_core_address a = qa_cxx_abi_slot(abi, infos[i], p);
+    qa_guest_core_address v = qa_cxx_abi_bytes(abi, type_names[i]);
+    write_ptr(m, a, v);
     write_ptr(m, qa_cxx_abi_slot(abi, infos[i], 2 * p), parents[i]);
     types_set(abi, type_names[i], infos[i]);
   }

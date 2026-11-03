@@ -1,5 +1,6 @@
 /* Port of src/platform/theora.ts. GPL-2.0-or-later. */
 #include "qa/platform/theora.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -100,7 +101,7 @@ done:
 }
 
 static uint8_t byte_of(double value) {
-  double rounded = floor(value + 0.5); /* JS Math.round */
+  double rounded = qa_js_round(value);
   if (rounded < 0) return 0;
   if (rounded > 255) return 255;
   return (uint8_t)rounded;

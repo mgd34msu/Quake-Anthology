@@ -1,0 +1,910 @@
+admitted 67:0 view-height 26
+players 1
+== frame 0
+source q3
+time 0.3
+frame-context 6 milliseconds:300 milliseconds:50 frame-exit
+actors 69
+actor-kind q3:official q3:character 1
+actor-kind q3:official q3:entity 68
+actor q3:character 212 2360 60.99319839477539
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 1024 1000 24
+actor q3:entity 1024 1296 72
+actor q3:entity 1052 1432 24
+actor q3:entity 1056 512 -24.875
+actor q3:entity 1084 2364 47.125
+actor q3:entity 1088 1040 72
+actor q3:entity 1088 760 72
+actor q3:entity 1116 1364 84
+actor q3:entity 1120 1896 15.125
+actor q3:entity 1120 2056 15.125
+actor q3:entity 1120 2092 15.125
+actor q3:entity 1120 2128 15.125
+actor q3:entity 1120 2316 47.125
+actor q3:entity 1120 512 -24.875
+actor q3:entity 1136 1020 104
+actor q3:entity 1160 536 64
+actor q3:entity 1164 1316 84
+actor q3:entity 160 520 64
+actor q3:entity 180 1316 86
+actor q3:entity 196 1020 108
+actor q3:entity 212 2060 15.125
+actor q3:entity 212 2096 15.125
+actor q3:entity 212 2132 15.125
+actor q3:entity 212 2360 56
+actor q3:entity 212 2360 60
+actor q3:entity 216 1328 24
+actor q3:entity 228 1364 84
+actor q3:entity 256 720 72
+actor q3:entity 272 1008 72
+actor q3:entity 272 512 -24.875
+actor q3:entity 376 1792 72
+actor q3:entity 384 1472 15.125
+actor q3:entity 384 1520 72
+actor q3:entity 400 1304 72
+actor q3:entity 416 824 -16
+actor q3:entity 476 1620 92
+actor q3:entity 520 2200 40
+actor q3:entity 528 856 64
+actor q3:entity 552 2232 40
+actor q3:entity 586 1286 334
+actor q3:entity 586 1462 334
+actor q3:entity 586 1590 334
+actor q3:entity 656 1792 72
+actor q3:entity 668 -80 61.79182434082031
+actor q3:entity 668 2096 15.125
+actor q3:entity 668 2140 100
+actor q3:entity 668 2304 128
+actor q3:entity 670 728 -34.875
+actor q3:entity 672 1288 15.125
+actor q3:entity 672 1496 72
+actor q3:entity 758 1282 334
+actor q3:entity 758 1458 334
+actor q3:entity 758 1586 334
+actor q3:entity 812 856 64
+actor q3:entity 864 1612 92
+actor q3:entity 928 1520 72
+actor q3:entity 932 1348 15.125
+actor q3:entity 936 824 -16
+actor q3:entity 960 1792 72
+bodies 69
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 656 1792 72 v 0 0 0 a 0 0 0 g -
+body 10:3 o 668 2140 100 v 0 0 0 a 0 0 0 g -
+body 11:0 o 668 2304 128 v 0 0 0 a 0 0 0 g -
+body 12:0 o 932 1348 15.125 v 0 0 0 a 0 0 0 g 0
+body 13:0 o 272 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 14:0 o 1120 2316 47.125 v 0 0 0 a 0 0 0 g 0
+body 15:0 o 216 1328 24 v 0 0 0 a 0 0 0 g -
+body 16:0 o 212 2360 56 v 0 0 0 a 0 0 0 g -
+body 17:0 o 212 2132 15.125 v 0 0 0 a 0 0 0 g 0
+body 18:0 o 672 1288 15.125 v 0 0 0 a 0 0 0 g 0
+body 19:0 o 1120 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 20:0 o 668 -80 61.79182434082031 v 0 0 0 a 0 0 0 g 0
+body 21:0 o 670 728 -34.875 v 0 0 0 a 0 0 0 g 0
+body 22:0 o 668 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 23:0 o 384 1472 15.125 v 0 0 0 a 0 0 0 g 0
+body 24:0 o 758 1458 334 v 0 0 0 a 0 0 0 g -
+body 25:7 o 758 1586 334 v 0 0 0 a 0 0 0 g -
+body 26:7 o 586 1590 334 v 0 0 0 a 0 0 0 g -
+body 27:1 o 1052 1432 24 v 0 0 0 a 0 0 0 g -
+body 28:0 o 864 1612 92 v 0 0 0 a 0 0 0 g -
+body 29:0 o 476 1620 92 v 0 0 0 a 0 0 0 g -
+body 30:0 o 758 1282 334 v 0 0 0 a 0 0 0 g -
+body 31:1 o 586 1286 334 v 0 0 0 a 0 0 0 g -
+body 32:32 o 586 1462 334 v 0 0 0 a 0 0 0 g -
+body 33:1 o 228 1364 84 v 0 0 0 a 0 0 0 g -
+body 34:3 o 180 1316 86 v 0 0 0 a 0 0 0 g -
+body 35:1 o 1116 1364 84 v 0 0 0 a 0 0 0 g -
+body 36:3 o 1164 1316 84 v 0 0 0 a 0 0 0 g -
+body 37:11 o 1056 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 38:0 o 1120 1896 15.125 v 0 0 0 a 0 0 0 g 0
+body 39:0 o 212 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 40:0 o 416 824 -16 v 0 0 0 a 0 0 0 g -
+body 41:0 o 1084 2364 47.125 v 0 0 0 a 0 0 0 g 0
+body 42:0 o 212 2060 15.125 v 0 0 0 a 0 0 0 g 0
+body 43:0 o 1120 2128 15.125 v 0 0 0 a 0 0 0 g 0
+body 44:0 o 1120 2092 15.125 v 0 0 0 a 0 0 0 g 0
+body 45:0 o 1120 2056 15.125 v 0 0 0 a 0 0 0 g 0
+body 46:28 o 528 856 64 v 0 0 0 a 0 0 0 g -
+body 47:0 o 812 856 64 v 0 0 0 a 0 0 0 g -
+body 48:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g -
+body 49:0 o 196 1020 108 v 0 0 0 a 0 0 0 g -
+body 50:0 o 160 520 64 v 0 0 0 a 0 0 0 g -
+body 51:0 o 1160 536 64 v 0 0 0 a 0 0 0 g -
+body 52:4 o 960 1792 72 v 0 0 0 a 0 0 0 g -
+body 53:0 o 376 1792 72 v 0 0 0 a 0 0 0 g -
+body 54:0 o 384 1520 72 v 0 0 0 a 0 0 0 g -
+body 55:0 o 672 1496 72 v 0 0 0 a 0 0 0 g -
+body 56:0 o 928 1520 72 v 0 0 0 a 0 0 0 g -
+body 57:0 o 1024 1296 72 v 0 0 0 a 0 0 0 g -
+body 58:0 o 1088 1040 72 v 0 0 0 a 0 0 0 g -
+body 59:0 o 400 1304 72 v 0 0 0 a 0 0 0 g -
+body 60:0 o 272 1008 72 v 0 0 0 a 0 0 0 g -
+body 61:0 o 256 720 72 v 0 0 0 a 0 0 0 g -
+body 62:0 o 1088 760 72 v 0 0 0 a 0 0 0 g -
+body 63:0 o 552 2232 40 v 0 0 0 a 0 0 0 g -
+body 64:0 o 520 2200 40 v 0 0 0 a 0 0 0 g -
+body 65:0 o 1024 1000 24 v 0 0 0 a 0 0 0 g -
+body 66:0 o 936 824 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 212 2360 60.99319839477539 v 0 0 -80 a 0 -45 0 g -
+body 68:0 o 212 2360 60 v 0 0 0 a 0 0 0 g -
+inventory 67 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=100/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=0/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+combat 0 0 q3:0:- none -
+combat 1 0 q3:0:- none -
+combat 2 0 q3:0:- none -
+combat 3 0 q3:0:- none -
+combat 4 0 q3:0:- none -
+combat 5 0 q3:0:- none -
+combat 6 0 q3:0:- none -
+combat 7 0 q3:0:- none -
+combat 8 0 q3:0:- none -
+combat 9 1 q3:0:- none -
+combat 10 0 q3:0:- none -
+combat 11 0 q3:0:- none -
+combat 12 0 q3:0:- none -
+combat 13 0 q3:0:- none -
+combat 14 0 q3:0:- none -
+combat 15 0 q3:0:- none -
+combat 16 0 q3:0:- none -
+combat 17 0 q3:0:- none -
+combat 18 0 q3:0:- none -
+combat 19 0 q3:0:- none -
+combat 20 0 q3:0:- none -
+combat 21 0 q3:0:- none -
+combat 22 0 q3:0:- none -
+combat 23 0 q3:0:- none -
+combat 24 0 q3:0:- none -
+combat 25 0 q3:0:- none -
+combat 26 0 q3:0:- none -
+combat 27 0 q3:0:- none -
+combat 28 0 q3:0:- none -
+combat 29 0 q3:0:- none -
+combat 30 0 q3:0:- none -
+combat 31 0 q3:0:- none -
+combat 32 0 q3:0:- none -
+combat 33 0 q3:0:- none -
+combat 34 0 q3:0:- none -
+combat 35 0 q3:0:- none -
+combat 36 0 q3:0:- none -
+combat 37 0 q3:0:- none -
+combat 38 0 q3:0:- none -
+combat 39 0 q3:0:- none -
+combat 40 0 q3:0:- none -
+combat 41 0 q3:0:- none -
+combat 42 0 q3:0:- none -
+combat 43 0 q3:0:- none -
+combat 44 0 q3:0:- none -
+combat 45 0 q3:0:- none -
+combat 46 0 q3:0:- none -
+combat 47 0 q3:0:- none -
+combat 48 0 q3:0:- none -
+combat 49 0 q3:0:- none -
+combat 50 0 q3:0:- none -
+combat 51 0 q3:0:- none -
+combat 52 2 q3:0:- none -
+combat 53 3 q3:0:- none -
+combat 54 4 q3:0:- none -
+combat 55 5 q3:0:- none -
+combat 56 6 q3:0:- none -
+combat 57 7 q3:0:- none -
+combat 58 8 q3:0:- none -
+combat 59 9 q3:0:- none -
+combat 60 10 q3:0:- none -
+combat 61 11 q3:0:- none -
+combat 62 12 q3:0:- none -
+combat 63 0 q3:0:- none -
+combat 64 0 q3:0:- none -
+combat 65 0 q3:0:- none -
+combat 66 0 q3:0:- none -
+combat 67 125 q3:0:- none -
+combat 68 0 q3:0:- none -
+player body o 212 2360 60.99319839477539 v 0 0 -80 a 0 -45 0 min -15 -15 -24 max 15 15 32
+player view o 212 2360 60.99319839477539 a 0 -45 0 h 26
+player combat 125 q3:0:- none
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=100 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=0 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+checkpoint-error Save requires consumed source output
+== frame 1
+source q3
+time 0.4
+frame-context 8 milliseconds:400 milliseconds:50 frame-exit
+actors 69
+actor-kind q3:official q3:character 1
+actor-kind q3:official q3:entity 68
+actor q3:character 214.181884765625 2355.37451171875 56.125
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 1024 1000 24
+actor q3:entity 1024 1296 72
+actor q3:entity 1052 1432 24
+actor q3:entity 1056 512 -24.875
+actor q3:entity 1084 2364 47.125
+actor q3:entity 1088 1040 72
+actor q3:entity 1088 760 72
+actor q3:entity 1116 1364 84
+actor q3:entity 1120 1896 15.125
+actor q3:entity 1120 2056 15.125
+actor q3:entity 1120 2092 15.125
+actor q3:entity 1120 2128 15.125
+actor q3:entity 1120 2316 47.125
+actor q3:entity 1120 512 -24.875
+actor q3:entity 1136 1020 104
+actor q3:entity 1160 536 64
+actor q3:entity 1164 1316 84
+actor q3:entity 160 520 64
+actor q3:entity 180 1316 86
+actor q3:entity 196 1020 108
+actor q3:entity 212 2060 15.125
+actor q3:entity 212 2096 15.125
+actor q3:entity 212 2132 15.125
+actor q3:entity 212 2360 56
+actor q3:entity 212 2360 60
+actor q3:entity 216 1328 24
+actor q3:entity 228 1364 84
+actor q3:entity 256 720 72
+actor q3:entity 272 1008 72
+actor q3:entity 272 512 -24.875
+actor q3:entity 376 1792 72
+actor q3:entity 384 1472 15.125
+actor q3:entity 384 1520 72
+actor q3:entity 400 1304 72
+actor q3:entity 416 824 -16
+actor q3:entity 476 1620 92
+actor q3:entity 520 2200 40
+actor q3:entity 528 856 64
+actor q3:entity 552 2232 40
+actor q3:entity 586 1286 334
+actor q3:entity 586 1462 334
+actor q3:entity 586 1590 334
+actor q3:entity 656 1792 72
+actor q3:entity 668 -80 61.79182434082031
+actor q3:entity 668 2096 15.125
+actor q3:entity 668 2140 100
+actor q3:entity 668 2304 128
+actor q3:entity 670 728 -34.875
+actor q3:entity 672 1288 15.125
+actor q3:entity 672 1496 72
+actor q3:entity 758 1282 334
+actor q3:entity 758 1458 334
+actor q3:entity 758 1586 334
+actor q3:entity 812 856 64
+actor q3:entity 864 1612 92
+actor q3:entity 928 1520 72
+actor q3:entity 932 1348 15.125
+actor q3:entity 936 824 -16
+actor q3:entity 960 1792 72
+bodies 69
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 656 1792 72 v 0 0 0 a 0 0 0 g -
+body 10:3 o 668 2140 100 v 0 0 0 a 0 0 0 g -
+body 11:0 o 668 2304 128 v 0 0 0 a 0 0 0 g -
+body 12:0 o 932 1348 15.125 v 0 0 0 a 0 0 0 g 0
+body 13:0 o 272 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 14:0 o 1120 2316 47.125 v 0 0 0 a 0 0 0 g 0
+body 15:0 o 216 1328 24 v 0 0 0 a 0 0 0 g -
+body 16:0 o 212 2360 56 v 0 0 0 a 0 0 0 g -
+body 17:0 o 212 2132 15.125 v 0 0 0 a 0 0 0 g 0
+body 18:0 o 672 1288 15.125 v 0 0 0 a 0 0 0 g 0
+body 19:0 o 1120 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 20:0 o 668 -80 61.79182434082031 v 0 0 0 a 0 0 0 g 0
+body 21:0 o 670 728 -34.875 v 0 0 0 a 0 0 0 g 0
+body 22:0 o 668 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 23:0 o 384 1472 15.125 v 0 0 0 a 0 0 0 g 0
+body 24:0 o 758 1458 334 v 0 0 0 a 0 0 0 g -
+body 25:7 o 758 1586 334 v 0 0 0 a 0 0 0 g -
+body 26:7 o 586 1590 334 v 0 0 0 a 0 0 0 g -
+body 27:1 o 1052 1432 24 v 0 0 0 a 0 0 0 g -
+body 28:0 o 864 1612 92 v 0 0 0 a 0 0 0 g -
+body 29:0 o 476 1620 92 v 0 0 0 a 0 0 0 g -
+body 30:0 o 758 1282 334 v 0 0 0 a 0 0 0 g -
+body 31:1 o 586 1286 334 v 0 0 0 a 0 0 0 g -
+body 32:32 o 586 1462 334 v 0 0 0 a 0 0 0 g -
+body 33:1 o 228 1364 84 v 0 0 0 a 0 0 0 g -
+body 34:3 o 180 1316 86 v 0 0 0 a 0 0 0 g -
+body 35:1 o 1116 1364 84 v 0 0 0 a 0 0 0 g -
+body 36:3 o 1164 1316 84 v 0 0 0 a 0 0 0 g -
+body 37:11 o 1056 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 38:0 o 1120 1896 15.125 v 0 0 0 a 0 0 0 g 0
+body 39:0 o 212 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 40:0 o 416 824 -16 v 0 0 0 a 0 0 0 g -
+body 41:0 o 1084 2364 47.125 v 0 0 0 a 0 0 0 g 0
+body 42:0 o 212 2060 15.125 v 0 0 0 a 0 0 0 g 0
+body 43:0 o 1120 2128 15.125 v 0 0 0 a 0 0 0 g 0
+body 44:0 o 1120 2092 15.125 v 0 0 0 a 0 0 0 g 0
+body 45:0 o 1120 2056 15.125 v 0 0 0 a 0 0 0 g 0
+body 46:28 o 528 856 64 v 0 0 0 a 0 0 0 g -
+body 47:0 o 812 856 64 v 0 0 0 a 0 0 0 g -
+body 48:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g -
+body 49:0 o 196 1020 108 v 0 0 0 a 0 0 0 g -
+body 50:0 o 160 520 64 v 0 0 0 a 0 0 0 g -
+body 51:0 o 1160 536 64 v 0 0 0 a 0 0 0 g -
+body 52:4 o 960 1792 72 v 0 0 0 a 0 0 0 g -
+body 53:0 o 376 1792 72 v 0 0 0 a 0 0 0 g -
+body 54:0 o 384 1520 72 v 0 0 0 a 0 0 0 g -
+body 55:0 o 672 1496 72 v 0 0 0 a 0 0 0 g -
+body 56:0 o 928 1520 72 v 0 0 0 a 0 0 0 g -
+body 57:0 o 1024 1296 72 v 0 0 0 a 0 0 0 g -
+body 58:0 o 1088 1040 72 v 0 0 0 a 0 0 0 g -
+body 59:0 o 400 1304 72 v 0 0 0 a 0 0 0 g -
+body 60:0 o 272 1008 72 v 0 0 0 a 0 0 0 g -
+body 61:0 o 256 720 72 v 0 0 0 a 0 0 0 g -
+body 62:0 o 1088 760 72 v 0 0 0 a 0 0 0 g -
+body 63:0 o 552 2232 40 v 0 0 0 a 0 0 0 g -
+body 64:0 o 520 2200 40 v 0 0 0 a 0 0 0 g -
+body 65:0 o 1024 1000 24 v 0 0 0 a 0 0 0 g -
+body 66:0 o 936 824 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 214.181884765625 2355.37451171875 56.125 v 47 -99 0 a 0 -38.001708984375 0 g 0
+body 68:0 o 212 2360 60 v 0 0 0 a 0 0 0 g -
+inventory 67 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=100/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=0/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+combat 0 0 q3:0:- none -
+combat 1 0 q3:0:- none -
+combat 2 0 q3:0:- none -
+combat 3 0 q3:0:- none -
+combat 4 0 q3:0:- none -
+combat 5 0 q3:0:- none -
+combat 6 0 q3:0:- none -
+combat 7 0 q3:0:- none -
+combat 8 0 q3:0:- none -
+combat 9 1 q3:0:- none -
+combat 10 0 q3:0:- none -
+combat 11 0 q3:0:- none -
+combat 12 0 q3:0:- none -
+combat 13 0 q3:0:- none -
+combat 14 0 q3:0:- none -
+combat 15 0 q3:0:- none -
+combat 16 0 q3:0:- none -
+combat 17 0 q3:0:- none -
+combat 18 0 q3:0:- none -
+combat 19 0 q3:0:- none -
+combat 20 0 q3:0:- none -
+combat 21 0 q3:0:- none -
+combat 22 0 q3:0:- none -
+combat 23 0 q3:0:- none -
+combat 24 0 q3:0:- none -
+combat 25 0 q3:0:- none -
+combat 26 0 q3:0:- none -
+combat 27 0 q3:0:- none -
+combat 28 0 q3:0:- none -
+combat 29 0 q3:0:- none -
+combat 30 0 q3:0:- none -
+combat 31 0 q3:0:- none -
+combat 32 0 q3:0:- none -
+combat 33 0 q3:0:- none -
+combat 34 0 q3:0:- none -
+combat 35 0 q3:0:- none -
+combat 36 0 q3:0:- none -
+combat 37 0 q3:0:- none -
+combat 38 0 q3:0:- none -
+combat 39 0 q3:0:- none -
+combat 40 0 q3:0:- none -
+combat 41 0 q3:0:- none -
+combat 42 0 q3:0:- none -
+combat 43 0 q3:0:- none -
+combat 44 0 q3:0:- none -
+combat 45 0 q3:0:- none -
+combat 46 0 q3:0:- none -
+combat 47 0 q3:0:- none -
+combat 48 0 q3:0:- none -
+combat 49 0 q3:0:- none -
+combat 50 0 q3:0:- none -
+combat 51 0 q3:0:- none -
+combat 52 2 q3:0:- none -
+combat 53 3 q3:0:- none -
+combat 54 4 q3:0:- none -
+combat 55 5 q3:0:- none -
+combat 56 6 q3:0:- none -
+combat 57 7 q3:0:- none -
+combat 58 8 q3:0:- none -
+combat 59 9 q3:0:- none -
+combat 60 10 q3:0:- none -
+combat 61 11 q3:0:- none -
+combat 62 12 q3:0:- none -
+combat 63 0 q3:0:- none -
+combat 64 0 q3:0:- none -
+combat 65 0 q3:0:- none -
+combat 66 0 q3:0:- none -
+combat 67 125 q3:0:- none -
+combat 68 0 q3:0:- none -
+player body o 214.181884765625 2355.37451171875 56.125 v 47 -99 0 a 0 -38.001708984375 0 min -15 -15 -24 max 15 15 32
+player view o 214.181884765625 2355.37451171875 56.125 a 0 -38.001708984375 0 h 26
+player combat 125 q3:0:- none
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=100 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=0 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+presentation q3-source 38
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 fc410582e1dcb38a canonical bbe50b52f3767110
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official q3:native 1 a0d5c862b7b63863 canonical fe5899d9186801f3
+checkpoint q3:official world:q3-runtime 1 15802b47222acc16 canonical 2a8dfe04e346e829
+checkpoint q3:official world:simulation 11 faaeb22634f75920 canonical 09b21e8af07af5bb
+checkpoint-image e467f558289b7535 canonical 142a0dd9c1a8c226 996832fd104b73ab
+== frame 10
+source q3
+time 1.3
+frame-context 26 milliseconds:1300 milliseconds:50 frame-exit
+actors 68
+actor-kind q3:official q3:character 1
+actor-kind q3:official q3:entity 67
+actor q3:character 428.2326965332031 2221.5009765625 28.125
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 1024 1000 24
+actor q3:entity 1024 1296 72
+actor q3:entity 1052 1432 24
+actor q3:entity 1056 512 -24.875
+actor q3:entity 1084 2364 47.125
+actor q3:entity 1088 1040 72
+actor q3:entity 1088 760 72
+actor q3:entity 1116 1364 84
+actor q3:entity 1120 1896 15.125
+actor q3:entity 1120 2056 15.125
+actor q3:entity 1120 2092 15.125
+actor q3:entity 1120 2128 15.125
+actor q3:entity 1120 2316 47.125
+actor q3:entity 1120 512 -24.875
+actor q3:entity 1136 1020 104
+actor q3:entity 1160 536 64
+actor q3:entity 1164 1316 84
+actor q3:entity 160 520 64
+actor q3:entity 180 1316 86
+actor q3:entity 196 1020 108
+actor q3:entity 212 2060 15.125
+actor q3:entity 212 2096 15.125
+actor q3:entity 212 2132 15.125
+actor q3:entity 212 2360 56
+actor q3:entity 216 1328 24
+actor q3:entity 228 1364 84
+actor q3:entity 256 720 72
+actor q3:entity 272 1008 72
+actor q3:entity 272 512 -24.875
+actor q3:entity 376 1792 72
+actor q3:entity 384 1472 15.125
+actor q3:entity 384 1520 72
+actor q3:entity 400 1304 72
+actor q3:entity 416 824 -16
+actor q3:entity 476 1620 92
+actor q3:entity 520 2200 40
+actor q3:entity 528 856 64
+actor q3:entity 552 2232 40
+actor q3:entity 586 1286 334
+actor q3:entity 586 1462 334
+actor q3:entity 586 1590 334
+actor q3:entity 656 1792 72
+actor q3:entity 668 -80 61.79182434082031
+actor q3:entity 668 2096 15.125
+actor q3:entity 668 2140 100
+actor q3:entity 668 2304 128
+actor q3:entity 670 728 -34.875
+actor q3:entity 672 1288 15.125
+actor q3:entity 672 1496 72
+actor q3:entity 758 1282 334
+actor q3:entity 758 1458 334
+actor q3:entity 758 1586 334
+actor q3:entity 812 856 64
+actor q3:entity 864 1612 92
+actor q3:entity 928 1520 72
+actor q3:entity 932 1348 15.125
+actor q3:entity 936 824 -16
+actor q3:entity 960 1792 72
+bodies 68
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 656 1792 72 v 0 0 0 a 0 0 0 g -
+body 10:3 o 668 2140 100 v 0 0 0 a 0 0 0 g -
+body 11:0 o 668 2304 128 v 0 0 0 a 0 0 0 g -
+body 12:0 o 932 1348 15.125 v 0 0 0 a 0 0 0 g 0
+body 13:0 o 272 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 14:0 o 1120 2316 47.125 v 0 0 0 a 0 0 0 g 0
+body 15:0 o 216 1328 24 v 0 0 0 a 0 0 0 g -
+body 16:0 o 212 2360 56 v 0 0 0 a 0 0 0 g -
+body 17:0 o 212 2132 15.125 v 0 0 0 a 0 0 0 g 0
+body 18:0 o 672 1288 15.125 v 0 0 0 a 0 0 0 g 0
+body 19:0 o 1120 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 20:0 o 668 -80 61.79182434082031 v 0 0 0 a 0 0 0 g 0
+body 21:0 o 670 728 -34.875 v 0 0 0 a 0 0 0 g 0
+body 22:0 o 668 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 23:0 o 384 1472 15.125 v 0 0 0 a 0 0 0 g 0
+body 24:0 o 758 1458 334 v 0 0 0 a 0 0 0 g -
+body 25:7 o 758 1586 334 v 0 0 0 a 0 0 0 g -
+body 26:7 o 586 1590 334 v 0 0 0 a 0 0 0 g -
+body 27:1 o 1052 1432 24 v 0 0 0 a 0 0 0 g -
+body 28:0 o 864 1612 92 v 0 0 0 a 0 0 0 g -
+body 29:0 o 476 1620 92 v 0 0 0 a 0 0 0 g -
+body 30:0 o 758 1282 334 v 0 0 0 a 0 0 0 g -
+body 31:1 o 586 1286 334 v 0 0 0 a 0 0 0 g -
+body 32:32 o 586 1462 334 v 0 0 0 a 0 0 0 g -
+body 33:1 o 228 1364 84 v 0 0 0 a 0 0 0 g -
+body 34:3 o 180 1316 86 v 0 0 0 a 0 0 0 g -
+body 35:1 o 1116 1364 84 v 0 0 0 a 0 0 0 g -
+body 36:3 o 1164 1316 84 v 0 0 0 a 0 0 0 g -
+body 37:11 o 1056 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 38:0 o 1120 1896 15.125 v 0 0 0 a 0 0 0 g 0
+body 39:0 o 212 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 40:0 o 416 824 -16 v 0 0 0 a 0 0 0 g -
+body 41:0 o 1084 2364 47.125 v 0 0 0 a 0 0 0 g 0
+body 42:0 o 212 2060 15.125 v 0 0 0 a 0 0 0 g 0
+body 43:0 o 1120 2128 15.125 v 0 0 0 a 0 0 0 g 0
+body 44:0 o 1120 2092 15.125 v 0 0 0 a 0 0 0 g 0
+body 45:0 o 1120 2056 15.125 v 0 0 0 a 0 0 0 g 0
+body 46:28 o 528 856 64 v 0 0 0 a 0 0 0 g -
+body 47:0 o 812 856 64 v 0 0 0 a 0 0 0 g -
+body 48:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g -
+body 49:0 o 196 1020 108 v 0 0 0 a 0 0 0 g -
+body 50:0 o 160 520 64 v 0 0 0 a 0 0 0 g -
+body 51:0 o 1160 536 64 v 0 0 0 a 0 0 0 g -
+body 52:4 o 960 1792 72 v 0 0 0 a 0 0 0 g -
+body 53:0 o 376 1792 72 v 0 0 0 a 0 0 0 g -
+body 54:0 o 384 1520 72 v 0 0 0 a 0 0 0 g -
+body 55:0 o 672 1496 72 v 0 0 0 a 0 0 0 g -
+body 56:0 o 928 1520 72 v 0 0 0 a 0 0 0 g -
+body 57:0 o 1024 1296 72 v 0 0 0 a 0 0 0 g -
+body 58:0 o 1088 1040 72 v 0 0 0 a 0 0 0 g -
+body 59:0 o 400 1304 72 v 0 0 0 a 0 0 0 g -
+body 60:0 o 272 1008 72 v 0 0 0 a 0 0 0 g -
+body 61:0 o 256 720 72 v 0 0 0 a 0 0 0 g -
+body 62:0 o 1088 760 72 v 0 0 0 a 0 0 0 g -
+body 63:0 o 552 2232 40 v 0 0 0 a 0 0 0 g -
+body 64:0 o 520 2200 40 v 0 0 0 a 0 0 0 g -
+body 65:0 o 1024 1000 24 v 0 0 0 a 0 0 0 g -
+body 66:0 o 936 824 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 428.2326965332031 2221.5009765625 28.125 v 265 199 0 a 0 24.9993896484375 0 g 0
+inventory 67 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=100/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=0/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+combat 0 0 q3:0:- none -
+combat 1 0 q3:0:- none -
+combat 2 0 q3:0:- none -
+combat 3 0 q3:0:- none -
+combat 4 0 q3:0:- none -
+combat 5 0 q3:0:- none -
+combat 6 0 q3:0:- none -
+combat 7 0 q3:0:- none -
+combat 8 0 q3:0:- none -
+combat 9 1 q3:0:- none -
+combat 10 0 q3:0:- none -
+combat 11 0 q3:0:- none -
+combat 12 0 q3:0:- none -
+combat 13 0 q3:0:- none -
+combat 14 0 q3:0:- none -
+combat 15 0 q3:0:- none -
+combat 16 0 q3:0:- none -
+combat 17 0 q3:0:- none -
+combat 18 0 q3:0:- none -
+combat 19 0 q3:0:- none -
+combat 20 0 q3:0:- none -
+combat 21 0 q3:0:- none -
+combat 22 0 q3:0:- none -
+combat 23 0 q3:0:- none -
+combat 24 0 q3:0:- none -
+combat 25 0 q3:0:- none -
+combat 26 0 q3:0:- none -
+combat 27 0 q3:0:- none -
+combat 28 0 q3:0:- none -
+combat 29 0 q3:0:- none -
+combat 30 0 q3:0:- none -
+combat 31 0 q3:0:- none -
+combat 32 0 q3:0:- none -
+combat 33 0 q3:0:- none -
+combat 34 0 q3:0:- none -
+combat 35 0 q3:0:- none -
+combat 36 0 q3:0:- none -
+combat 37 0 q3:0:- none -
+combat 38 0 q3:0:- none -
+combat 39 0 q3:0:- none -
+combat 40 0 q3:0:- none -
+combat 41 0 q3:0:- none -
+combat 42 0 q3:0:- none -
+combat 43 0 q3:0:- none -
+combat 44 0 q3:0:- none -
+combat 45 0 q3:0:- none -
+combat 46 0 q3:0:- none -
+combat 47 0 q3:0:- none -
+combat 48 0 q3:0:- none -
+combat 49 0 q3:0:- none -
+combat 50 0 q3:0:- none -
+combat 51 0 q3:0:- none -
+combat 52 2 q3:0:- none -
+combat 53 3 q3:0:- none -
+combat 54 4 q3:0:- none -
+combat 55 5 q3:0:- none -
+combat 56 6 q3:0:- none -
+combat 57 7 q3:0:- none -
+combat 58 8 q3:0:- none -
+combat 59 9 q3:0:- none -
+combat 60 10 q3:0:- none -
+combat 61 11 q3:0:- none -
+combat 62 12 q3:0:- none -
+combat 63 0 q3:0:- none -
+combat 64 0 q3:0:- none -
+combat 65 0 q3:0:- none -
+combat 66 0 q3:0:- none -
+combat 67 124 q3:0:- none -
+player body o 428.2326965332031 2221.5009765625 28.125 v 265 199 0 a 0 24.9993896484375 0 min -15 -15 -24 max 15 15 32
+player view o 428.2326965332031 2221.5009765625 28.125 a 0 24.9993896484375 0 h 26
+player combat 124 q3:0:- none
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=100 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=0 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+presentation q3-source 42
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 a47f858b0a9b6d93 canonical fa0ea19f098bc889
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official q3:native 1 4394aac58d54c27e canonical 6438d00629b6c7f5
+checkpoint q3:official world:q3-runtime 1 965e7fadeeaf2cfb canonical bb582639471faef9
+checkpoint q3:official world:simulation 11 3f9bbe980a12ed07 canonical e84de4a7a0212a0f
+checkpoint-image d569aadd13011666 canonical 142a0dd9c1a8c226 4032bce5a3995bbf
+== frame 100
+source q3
+time 10.3
+frame-context 206 milliseconds:10300 milliseconds:50 frame-exit
+actors 70
+actor-kind q3:official q3:character 1
+actor-kind q3:official q3:entity 69
+actor q3:character 868.183349609375 1748.5484619140625 69.1045913696289
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 0 0 0
+actor q3:entity 1024 1000 24
+actor q3:entity 1024 1296 72
+actor q3:entity 1052 1432 24
+actor q3:entity 1056 512 -24.875
+actor q3:entity 1084 2364 47.125
+actor q3:entity 1088 1040 72
+actor q3:entity 1088 760 72
+actor q3:entity 1116 1364 84
+actor q3:entity 1120 1896 15.125
+actor q3:entity 1120 2056 15.125
+actor q3:entity 1120 2092 15.125
+actor q3:entity 1120 2128 15.125
+actor q3:entity 1120 2316 47.125
+actor q3:entity 1120 512 -24.875
+actor q3:entity 1136 1020 104
+actor q3:entity 1160 536 64
+actor q3:entity 1164 1316 84
+actor q3:entity 160 520 64
+actor q3:entity 180 1316 86
+actor q3:entity 196 1020 108
+actor q3:entity 212 2060 15.125
+actor q3:entity 212 2096 15.125
+actor q3:entity 212 2132 15.125
+actor q3:entity 212 2360 56
+actor q3:entity 216 1328 24
+actor q3:entity 228 1364 84
+actor q3:entity 256 720 72
+actor q3:entity 272 1008 72
+actor q3:entity 272 512 -24.875
+actor q3:entity 376 1792 72
+actor q3:entity 384 1472 15.125
+actor q3:entity 384 1520 72
+actor q3:entity 400 1304 72
+actor q3:entity 416 824 -16
+actor q3:entity 476 1620 92
+actor q3:entity 520 2200 40
+actor q3:entity 528 856 64
+actor q3:entity 552 2232 40
+actor q3:entity 586 1286 334
+actor q3:entity 586 1462 334
+actor q3:entity 586 1590 334
+actor q3:entity 656 1792 72
+actor q3:entity 668 -80 61.79182434082031
+actor q3:entity 668 2096 15.125
+actor q3:entity 668 2140 100
+actor q3:entity 668 2304 128
+actor q3:entity 670 728 -34.875
+actor q3:entity 672 1288 15.125
+actor q3:entity 672 1496 72
+actor q3:entity 758 1282 334
+actor q3:entity 758 1458 334
+actor q3:entity 758 1586 334
+actor q3:entity 812 856 64
+actor q3:entity 864 1612 92
+actor q3:entity 872 1746 47
+actor q3:entity 874 1729 88
+actor q3:entity 928 1520 72
+actor q3:entity 932 1348 15.125
+actor q3:entity 936 824 -16
+actor q3:entity 960 1792 72
+bodies 70
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 656 1792 72 v 0 0 0 a 0 0 0 g -
+body 10:3 o 668 2140 100 v 0 0 0 a 0 0 0 g -
+body 11:0 o 668 2304 128 v 0 0 0 a 0 0 0 g -
+body 12:0 o 932 1348 15.125 v 0 0 0 a 0 0 0 g 0
+body 13:0 o 272 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 14:0 o 1120 2316 47.125 v 0 0 0 a 0 0 0 g 0
+body 15:0 o 216 1328 24 v 0 0 0 a 0 0 0 g -
+body 16:0 o 212 2360 56 v 0 0 0 a 0 0 0 g -
+body 17:0 o 212 2132 15.125 v 0 0 0 a 0 0 0 g 0
+body 18:0 o 672 1288 15.125 v 0 0 0 a 0 0 0 g 0
+body 19:0 o 1120 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 20:0 o 668 -80 61.79182434082031 v 0 0 0 a 0 0 0 g 0
+body 21:0 o 670 728 -34.875 v 0 0 0 a 0 0 0 g 0
+body 22:0 o 668 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 23:0 o 384 1472 15.125 v 0 0 0 a 0 0 0 g 0
+body 24:0 o 758 1458 334 v 0 0 0 a 0 0 0 g -
+body 25:7 o 758 1586 334 v 0 0 0 a 0 0 0 g -
+body 26:7 o 586 1590 334 v 0 0 0 a 0 0 0 g -
+body 27:1 o 1052 1432 24 v 0 0 0 a 0 0 0 g -
+body 28:0 o 864 1612 92 v 0 0 0 a 0 0 0 g -
+body 29:0 o 476 1620 92 v 0 0 0 a 0 0 0 g -
+body 30:0 o 758 1282 334 v 0 0 0 a 0 0 0 g -
+body 31:1 o 586 1286 334 v 0 0 0 a 0 0 0 g -
+body 32:32 o 586 1462 334 v 0 0 0 a 0 0 0 g -
+body 33:1 o 228 1364 84 v 0 0 0 a 0 0 0 g -
+body 34:3 o 180 1316 86 v 0 0 0 a 0 0 0 g -
+body 35:1 o 1116 1364 84 v 0 0 0 a 0 0 0 g -
+body 36:3 o 1164 1316 84 v 0 0 0 a 0 0 0 g -
+body 37:11 o 1056 512 -24.875 v 0 0 0 a 0 0 0 g 0
+body 38:0 o 1120 1896 15.125 v 0 0 0 a 0 0 0 g 0
+body 39:0 o 212 2096 15.125 v 0 0 0 a 0 0 0 g 0
+body 40:0 o 416 824 -16 v 0 0 0 a 0 0 0 g -
+body 41:0 o 1084 2364 47.125 v 0 0 0 a 0 0 0 g 0
+body 42:0 o 212 2060 15.125 v 0 0 0 a 0 0 0 g 0
+body 43:0 o 1120 2128 15.125 v 0 0 0 a 0 0 0 g 0
+body 44:0 o 1120 2092 15.125 v 0 0 0 a 0 0 0 g 0
+body 45:0 o 1120 2056 15.125 v 0 0 0 a 0 0 0 g 0
+body 46:28 o 528 856 64 v 0 0 0 a 0 0 0 g -
+body 47:0 o 812 856 64 v 0 0 0 a 0 0 0 g -
+body 48:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g -
+body 49:0 o 196 1020 108 v 0 0 0 a 0 0 0 g -
+body 50:0 o 160 520 64 v 0 0 0 a 0 0 0 g -
+body 51:0 o 1160 536 64 v 0 0 0 a 0 0 0 g -
+body 52:4 o 960 1792 72 v 0 0 0 a 0 0 0 g -
+body 53:0 o 376 1792 72 v 0 0 0 a 0 0 0 g -
+body 54:0 o 384 1520 72 v 0 0 0 a 0 0 0 g -
+body 55:0 o 672 1496 72 v 0 0 0 a 0 0 0 g -
+body 56:0 o 928 1520 72 v 0 0 0 a 0 0 0 g -
+body 57:0 o 1024 1296 72 v 0 0 0 a 0 0 0 g -
+body 58:0 o 1088 1040 72 v 0 0 0 a 0 0 0 g -
+body 59:0 o 400 1304 72 v 0 0 0 a 0 0 0 g -
+body 60:0 o 272 1008 72 v 0 0 0 a 0 0 0 g -
+body 61:0 o 256 720 72 v 0 0 0 a 0 0 0 g -
+body 62:0 o 1088 760 72 v 0 0 0 a 0 0 0 g -
+body 63:0 o 552 2232 40 v 0 0 0 a 0 0 0 g -
+body 64:0 o 520 2200 40 v 0 0 0 a 0 0 0 g -
+body 65:0 o 1024 1000 24 v 0 0 0 a 0 0 0 g -
+body 66:0 o 936 824 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 868.183349609375 1748.5484619140625 69.1045913696289 v -14 7 30 a 0 -65.0006103515625 0 g -
+body 68:6 o 872 1746 47 v 0 0 0 a 0 0 0 g -
+body 69:2 o 874 1729 88 v 0 0 0 a 0 0 0 g -
+inventory 67 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=96/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=30/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+combat 0 0 q3:0:- none -
+combat 1 0 q3:0:- none -
+combat 2 0 q3:0:- none -
+combat 3 0 q3:0:- none -
+combat 4 0 q3:0:- none -
+combat 5 0 q3:0:- none -
+combat 6 0 q3:0:- none -
+combat 7 0 q3:0:- none -
+combat 8 0 q3:0:- none -
+combat 9 1 q3:0:- none -
+combat 10 0 q3:0:- none -
+combat 11 0 q3:0:- none -
+combat 12 0 q3:0:- none -
+combat 13 0 q3:0:- none -
+combat 14 0 q3:0:- none -
+combat 15 0 q3:0:- none -
+combat 16 0 q3:0:- none -
+combat 17 0 q3:0:- none -
+combat 18 0 q3:0:- none -
+combat 19 0 q3:0:- none -
+combat 20 0 q3:0:- none -
+combat 21 0 q3:0:- none -
+combat 22 0 q3:0:- none -
+combat 23 0 q3:0:- none -
+combat 24 0 q3:0:- none -
+combat 25 0 q3:0:- none -
+combat 26 0 q3:0:- none -
+combat 27 0 q3:0:- none -
+combat 28 0 q3:0:- none -
+combat 29 0 q3:0:- none -
+combat 30 0 q3:0:- none -
+combat 31 0 q3:0:- none -
+combat 32 0 q3:0:- none -
+combat 33 0 q3:0:- none -
+combat 34 0 q3:0:- none -
+combat 35 0 q3:0:- none -
+combat 36 0 q3:0:- none -
+combat 37 0 q3:0:- none -
+combat 38 0 q3:0:- none -
+combat 39 0 q3:0:- none -
+combat 40 0 q3:0:- none -
+combat 41 0 q3:0:- none -
+combat 42 0 q3:0:- none -
+combat 43 0 q3:0:- none -
+combat 44 0 q3:0:- none -
+combat 45 0 q3:0:- none -
+combat 46 0 q3:0:- none -
+combat 47 0 q3:0:- none -
+combat 48 0 q3:0:- none -
+combat 49 0 q3:0:- none -
+combat 50 0 q3:0:- none -
+combat 51 0 q3:0:- none -
+combat 52 2 q3:0:- none -
+combat 53 3 q3:0:- none -
+combat 54 4 q3:0:- none -
+combat 55 5 q3:0:- none -
+combat 56 6 q3:0:- none -
+combat 57 7 q3:0:- none -
+combat 58 8 q3:0:- none -
+combat 59 9 q3:0:- none -
+combat 60 10 q3:0:- none -
+combat 61 11 q3:0:- none -
+combat 62 12 q3:0:- none -
+combat 63 0 q3:0:- none -
+combat 64 0 q3:0:- none -
+combat 65 0 q3:0:- none -
+combat 66 0 q3:0:- none -
+combat 67 115 q3:5:- none -
+combat 68 0 q3:0:- none -
+combat 69 0 q3:0:- none -
+player body o 868.183349609375 1748.5484619140625 69.1045913696289 v -14 7 30 a 0 -65.0006103515625 0 min -15 -15 -24 max 15 15 32
+player view o 868.183349609375 1748.5484619140625 69.1045913696289 a 0 -65.0006103515625 0 h 26
+player combat 115 q3:5:- none
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=96 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=30 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+presentation q3-source 90
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 6eba73e6de081902 canonical f4be92f756baefce
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official q3:native 1 08133a90c3f7bfad canonical 8b0dba4523efd68b
+checkpoint q3:official world:q3-runtime 1 5e895cc6be65c713 canonical addb2b4b51133968
+checkpoint q3:official world:simulation 11 5b5d5a3d9dc0a067 canonical 5dec2b3459cc7399
+checkpoint-image 3e76edfb8b3c372a canonical 142a0dd9c1a8c226 7a2938e10706938d

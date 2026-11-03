@@ -1,10 +1,13 @@
 /* Port of src/app/bootstrap/q2-match-reports.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q2_match_reports.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/network/q2/state.h"
+#include "qa/foundation/js.h"
+#include <math.h>
 static const char round_identity[] = "qts_matchRoundIdentity";
 static double read_stat(qa_double_view stats, int64_t index) {
   return qa_q2_read_element_f64(stats.values, stats.count, index);
@@ -15,7 +18,7 @@ bool qa_app_classic_match_score(const qa_q2_player_state *state, double *out) {
   return true;
 }
 bool qa_app_rerelease_match_score(const qa_q2_rerelease_player_state *state, double *out) {
-  if ((((int64_t)read_stat(state->view.stats, 13)) & 8) == 0 || read_stat(state->view.stats, 17) != 0) return false;
+  if (((qa_js_to_int32(read_stat(state->view.stats, 13))) & 8) == 0 || read_stat(state->view.stats, 17) != 0) return false;
   *out = read_stat(state->view.stats, 14);
   return true;
 }
@@ -56,7 +59,7 @@ bool qa_app_q2_match_completed(const qa_app_q2_match_simulation *simulation,
   for (size_t i = 0; i < count; i++) {
     const qa_q2_rerelease_player_state *state =
         simulation->rerelease_player_state(simulation->ctx, slots[i] + 1);
-    if (state != NULL && (((int64_t)read_stat(state->view.stats, 13)) & 8) != 0) return true;
+    if (state != NULL && ((qa_js_to_int32(read_stat(state->view.stats, 13))) & 8) != 0) return true;
   }
   return false;
 }
@@ -109,9 +112,9 @@ qa_app_q2_match_report_rows qa_app_q2_match_reports(const qa_app_q2_match_simula
       snprintf(participant, sizeof participant, "local-seat:%lld", (long long)locals[i].seat.index);
       event->participant = format_text(&rows, "%s", participant);
       char event_text[512];
-      if (started == (double)(long long)started)
-        snprintf(event_text, sizeof event_text, "match:%s:%lld", identity, (long long)started);
-      else snprintf(event_text, sizeof event_text, "match:%s:%g", identity, started);
+      if ((fabs(started) < 9.2e18 && started == trunc(started)))
+        snprintf(event_text, sizeof event_text, "match:%s:%s", identity, QA_JS_NUMBER(started));
+      else snprintf(event_text, sizeof event_text, "match:%s:%s", identity, QA_JS_NUMBER(started));
       event->event = format_text(&rows, "%s", event_text);
       event->map = map;
       event->score = score;

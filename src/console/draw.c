@@ -1,6 +1,8 @@
 /* Port of src/console/draw.ts. GPL-2.0-or-later. */
 #include "qa/console/draw.h"
+#include "qa/foundation/js.h"
 
+#include "qa/foundation/support.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
@@ -9,8 +11,7 @@
 #include <string.h>
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static const qa_vec4 colors[8] = {
@@ -330,7 +331,7 @@ void qa_draw_console(const qa_console_draw_options *options) {
       }
       free(visible.points);
     }
-    int32_t blink = (int32_t)trunc(options->now_ms / 256);
+    int32_t blink = qa_js_to_int32(trunc(options->now_ms / 256)); /* Math.trunc(t / 256) & 1 */
     if ((blink & 1) == 0) {
       int64_t from = clamp_index(scroll, characters.count);
       int64_t to = clamp_index(field->cursor, characters.count);

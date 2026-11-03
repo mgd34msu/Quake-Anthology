@@ -46,6 +46,11 @@ typedef struct qa_surface_dynamic_light {
   qa_vec3 color;
 } qa_surface_dynamic_light;
 
+/* TS dynamicLightReachesFace: the plane and radius rejection at the top of
+ * addDynamicLights, so callers can skip faces a light cannot touch. */
+bool qa_dynamic_light_reaches_face(const qa_lightmap_face *face,
+                                   const qa_surface_dynamic_light *light);
+
 /* TS Q1LightmapEncoding strings: "rgb"|"inverted-luminance"|"inverted-alpha". */
 typedef const char *qa_q1_lightmap_encoding;
 

@@ -16,7 +16,8 @@ qa_sweep_stop qa_sweep_body(const qa_swept_body_services *services, double elaps
   const bool paired = services->has_plane_response;
   const size_t seed_count = paired ? services->plane_response.seed_count : 0;
   qa_vec3 *planes = malloc((seed_count + 8) * sizeof *planes);
-  if (planes == NULL) qa_range_error("Out of memory");
+  uintptr_t *identities = calloc(seed_count + 8, sizeof *identities);
+  if (planes == NULL || identities == NULL) qa_range_error("Out of memory");
   size_t plane_count = 0;
   for (size_t i = 0; i < seed_count; i++) planes[plane_count++] = services->plane_response.seeds[i];
   qa_vec3 original = initial.velocity;
@@ -62,6 +63,7 @@ qa_sweep_stop qa_sweep_body(const qa_swept_body_services *services, double elaps
       }
     }
     const qa_vec3 normal = services->normal(ctx, &trace);
+    const uintptr_t identity = services->plane_identity != NULL ? services->plane_identity(ctx, &trace) : 0;
     services->impact(ctx, &trace, normal);
     qa_swept_body_state current;
     if (!services->read(ctx, &current)) {
@@ -89,6 +91,7 @@ qa_sweep_stop qa_sweep_body(const qa_swept_body_services *services, double elaps
         continue;
       }
     }
+    identities[plane_count] = identity;
     planes[plane_count++] = normal;
     bool has_velocity = false;
     qa_vec3 velocity = swept_zero;
@@ -142,8 +145,10 @@ qa_sweep_stop qa_sweep_body(const qa_swept_body_services *services, double elaps
       last_candidate = candidate;
       bool accepted = true;
       for (size_t other = 0; other < plane_count; other++) {
-        if (!services->same_plane(ctx, planes[other], plane, other == index) &&
-            math->dot(math->ctx, candidate, planes[other]) < 0) {
+        const bool same_object = other == index || (identities[other] != 0 && identities[other] == identities[index]);
+        /* TS every(... || dot >= 0): a NaN dot rejects the candidate. */
+        if (!services->same_plane(ctx, planes[other], plane, same_object) &&
+            !(math->dot(math->ctx, candidate, planes[other]) >= 0)) {
           accepted = false;
           break;
         }
@@ -180,6 +185,7 @@ qa_sweep_stop qa_sweep_body(const qa_swept_body_services *services, double elaps
     }
     services->write_velocity(ctx, velocity, QA_SWEPT_VELOCITY_ALL);
   }
+  free(identities);
   free(planes);
   return stop;
 }

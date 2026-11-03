@@ -3,15 +3,16 @@
 #include <math.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
-static double angle_of(double v) { long t = (long)trunc(v * 65536.0 / 360.0); return (double)(t & 65535); }
+static double angle_of(double v) { return (double)(qa_js_to_int32(trunc(v * 65536.0 / 360.0)) & 65535); } /* Math.trunc(...) & 65535 */
 static double move_of(double v) { double t = trunc(v * 127.0 / 320.0); return t < -127 ? -127 : t > 127 ? 127 : t; }
 qa_user_command qa_app_sim_rerelease_bot_command(qa_bot_usercmd source, const char *dialect,
     double milliseconds, double server_time) {
   long attack = (long)(source.buttons & QA_BOT_BUTTON_ATTACK);
   bool jump = (source.buttons & QA_BOT_BUTTON_JUMP) != 0;
   bool use = (source.buttons & QA_BOT_BUTTON_USE) != 0;
-  double up = jump ? fmax(200, source.upmove) : source.upmove;
+  double up = jump ? qa_js_max(200, source.upmove) : source.upmove;
   qa_user_command out = {0};
   if (is(dialect, "q1-netquake")) {
     out.kind = QA_USER_COMMAND_Q1;

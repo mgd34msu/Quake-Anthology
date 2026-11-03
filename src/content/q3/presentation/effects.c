@@ -8,6 +8,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 static qa_axis identity_axis(void) {
   qa_axis axis = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
@@ -59,10 +60,13 @@ void qa_q3_pres_client_effects_bubble_trail(qa_q3_pres_client_effects *fx, qa_ve
   qa_vec3 difference = qa_sub3(end, start);
   double length = qa_length3(difference);
   qa_vec3 direction = qa_normalize3(difference);
-  double i = (double)((int32_t)fx_rand(fx) % (int32_t)trunc(spacing));
+  double i = (double)(qa_js_to_int32(fx_rand(fx)) % qa_js_to_int32(trunc(spacing)));
   qa_vec3 move = qa_add3(start, qa_scale3(direction, i));
   qa_vec3 step = qa_scale3(direction, spacing);
   for (; i < length; i = qa_qvm_float_to_int(f32(f32(i) + spacing))) {
+    double x;
+    double y;
+    double z;
     qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_sprite(qa_q3_pres_create_sprite_entity());
     qa_q3_pres_local_entity *le = qa_q3_pres_local_entity_pool_allocate(fx->pool, QA_Q3_PRES_LE_MOVE_SCALE_FADE, ref);
     qa_q3_pres_ref_sprite_entity *sprite = &le->ref_entity.as.sprite;
@@ -76,7 +80,7 @@ void qa_q3_pres_client_effects_bubble_trail(qa_q3_pres_client_effects *fx, qa_ve
     sprite->shading.shader_rgba = (qa_vec4){255, 255, 255, 255};
     le->color = (qa_vec4){0, 0, 0, 1};
     le->pos = trajectory(QA_Q3_BASE_TR_LINEAR, fx->state->time, move,
-                         (qa_vec3){f32(fx_crandom(fx) * 5), f32(fx_crandom(fx) * 5), f32(f32(fx_crandom(fx) * 5) + 6)});
+                         (x = f32(fx_crandom(fx) * 5), y = f32(fx_crandom(fx) * 5), z = f32(f32(fx_crandom(fx) * 5) + 6), (qa_vec3){x, y, z}));
     move = qa_add3(move, step);
   }
 }
@@ -129,13 +133,13 @@ qa_q3_pres_local_entity *qa_q3_pres_client_effects_make_explosion(qa_q3_pres_cli
   int32_t duration = qa_int32(options.duration);
   if (duration <= 0) qa_range_error("CG_MakeExplosion: msec = %d", duration);
   if (options.sprite && !options.direction) qa_range_error("Sprite explosion requires a direction vector");
-  double offset = (double)((int32_t)fx_rand(fx) & 63);
+  double offset = (double)(qa_js_to_int32(fx_rand(fx)) & 63);
   qa_q3_pres_local_entity *le = NULL;
   if (options.sprite) {
     qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_sprite(qa_q3_pres_create_sprite_entity());
     le = qa_q3_pres_local_entity_pool_allocate(fx->pool, QA_Q3_PRES_LE_SPRITE_EXPLOSION, ref);
     qa_q3_pres_ref_sprite_entity *sprite = &le->ref_entity.as.sprite;
-    sprite->rotation = (double)((int32_t)fx_rand(fx) % 360);
+    sprite->rotation = (double)(qa_js_to_int32(fx_rand(fx)) % 360);
     sprite->origin = qa_add3(qa_scale3(*options.direction, 16), options.origin);
   } else {
     qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_model(qa_q3_pres_create_model_entity_default());
@@ -143,7 +147,7 @@ qa_q3_pres_local_entity *qa_q3_pres_client_effects_make_explosion(qa_q3_pres_cli
     qa_q3_pres_ref_model_entity *model = &le->ref_entity.as.model;
     if (!options.direction) model->axis = identity_axis();
     else {
-      double angle = (double)((int32_t)fx_rand(fx) % 360);
+      double angle = (double)(qa_js_to_int32(fx_rand(fx)) % 360);
       qa_vec3 forward = *options.direction;
       qa_vec3 perpendicular = qa_perpendicular_vector(forward);
       qa_vec3 side = angle == 0 ? perpendicular
@@ -185,7 +189,7 @@ bool qa_q3_pres_client_effects_bleed_at(qa_q3_pres_client_effects *fx, qa_vec3 o
   le->start_time = fx->state->time;
   le->end_time = qa_int32(le->start_time + 500);
   sprite->origin = origin;
-  sprite->rotation = (double)((int32_t)fx_rand(fx) % 360);
+  sprite->rotation = (double)(qa_js_to_int32(fx_rand(fx)) % 360);
   sprite->radius = 24;
   sprite->shading.custom_shader = fx->media.blood_explosion_shader;
   if (hide) sprite->shading.render_flags = (double)(qa_int32(sprite->shading.render_flags) | QA_Q3_PRES_RF_THIRD_PERSON);
@@ -208,15 +212,21 @@ qa_q3_pres_local_entity *qa_q3_pres_client_effects_launch_gib(qa_q3_pres_client_
 }
 void qa_q3_pres_client_effects_gib_player(qa_q3_pres_client_effects *fx, qa_vec3 origin) {
   if (!fx->options.blood) return;
-  qa_vec3 first = {f32(fx_crandom(fx) * 250), f32(fx_crandom(fx) * 250), f32(250 + f32(fx_crandom(fx) * 250))};
-  qa_q3_pres_scene_model head = ((int32_t)fx_rand(fx) & 1) != 0 ? fx->media.gib_skull : fx->media.gib_brain;
+  double x2 = f32(fx_crandom(fx) * 250);
+  double y2 = f32(fx_crandom(fx) * 250);
+  double z2 = f32(250 + f32(fx_crandom(fx) * 250));
+  qa_vec3 first = {x2, y2, z2};
+  qa_q3_pres_scene_model head = (qa_js_to_int32(fx_rand(fx)) & 1) != 0 ? fx->media.gib_skull : fx->media.gib_brain;
   (void)qa_q3_pres_client_effects_launch_gib(fx, origin, first, head);
   if (!fx->options.gibs) return;
   qa_q3_pres_scene_model models[9] = {fx->media.gib_abdomen, fx->media.gib_arm, fx->media.gib_chest,
       fx->media.gib_fist, fx->media.gib_foot, fx->media.gib_forearm, fx->media.gib_intestine,
       fx->media.gib_leg, fx->media.gib_leg};
   for (int i = 0; i < 9; i++) {
-    qa_vec3 velocity = {f32(fx_crandom(fx) * 250), f32(fx_crandom(fx) * 250), f32(250 + f32(fx_crandom(fx) * 250))};
+    double x = f32(fx_crandom(fx) * 250);
+    double y = f32(fx_crandom(fx) * 250);
+    double z = f32(250 + f32(fx_crandom(fx) * 250));
+    qa_vec3 velocity = {x, y, z};
     (void)qa_q3_pres_client_effects_launch_gib(fx, origin, velocity, models[i]);
   }
 }
@@ -238,8 +248,10 @@ void qa_q3_pres_client_effects_big_explode(qa_q3_pres_client_effects *fx, qa_vec
   if (!fx->options.blood) return;
   const double scales[5] = {1, 1, 1.5, 2, 2.5};
   for (int i = 0; i < 5; i++) {
-    qa_vec3 velocity = {f32(f32(fx_crandom(fx) * 100) * scales[i]), f32(f32(fx_crandom(fx) * 100) * scales[i]),
-                        f32(150 + f32(fx_crandom(fx) * 100))};
+    double x = f32(f32(fx_crandom(fx) * 100) * scales[i]);
+    double y = f32(f32(fx_crandom(fx) * 100) * scales[i]);
+    double z = f32(150 + f32(fx_crandom(fx) * 100));
+    qa_vec3 velocity = {x, y, z};
     (void)qa_q3_pres_client_effects_launch_explode(fx, origin, velocity, fx->media.smoke2);
   }
 }
@@ -293,7 +305,7 @@ void qa_q3_pres_client_effects_obelisk_explode(qa_q3_pres_client_effects *fx, qa
   le->light_color = (qa_vec3){1, 0.75, 0};
 }
 static qa_pcm_sound *hit_sound(qa_q3_pres_client_effects *fx, qa_pcm_sound *const sounds[3]) {
-  int32_t choice = (int32_t)fx_rand(fx) & 3;
+  int32_t choice = qa_js_to_int32(fx_rand(fx)) & 3;
   return choice < 2 ? sounds[0] : choice == 2 ? sounds[1] : sounds[2];
 }
 void qa_q3_pres_client_effects_obelisk_pain(qa_q3_pres_client_effects *fx, qa_vec3 origin) {

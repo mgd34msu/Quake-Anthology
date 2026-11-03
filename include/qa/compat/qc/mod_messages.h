@@ -34,6 +34,8 @@ typedef struct qa_compat_qc_local_message_ops {
 typedef struct qa_compat_qc_mod_messages_operations {
   void *ctx;
   bool (*loading)(void *ctx); bool (*phs)(void *ctx);
+  /* TS !publishesKills: a writable borrower of a monster-kill objective, whose owner publishes the kill. */
+  bool withholds_kills;
   bool (*client_is_player)(void *ctx, qa_actor_id actor); /* engine presentation players fallback */
   const qa_actor_id *(*players)(void *ctx, size_t *out_count);
   qa_actor_id (*world_actor)(void *ctx, int64_t slot);
@@ -61,6 +63,9 @@ typedef struct qa_compat_qc_mod_messages {
   int64_t release_id; qa_mod_client_unsubscribe unsubscribe; bool has_unsubscribe;
   qa_session_actor_registry *actors;
   struct qa_compat_qc_mod_messages *self_ref;
+  /* TS host(target) closures: presentation calls nest shallowly and
+   * synchronously, so a small ring holds each live wrapper. */
+  struct qa_compat_qc_mod_messages_host { struct qa_compat_qc_mod_messages *m; qa_compat_qc_local_message_host inner; bool has_target; qa_actor_id target; } hosts[16]; size_t host_next;
 } qa_compat_qc_mod_messages;
 bool qa_compat_qc_mod_messages_init(qa_compat_qc_mod_messages *m, qa_compat_qc_presentation_world *world, qa_session_actor_registry *actors, qa_content_id content, qa_compat_qc_mod_messages_operations operations, qa_compat_qc_local_message_ops local);
 void qa_compat_qc_mod_messages_destroy(qa_compat_qc_mod_messages *m);

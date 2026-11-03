@@ -7,8 +7,12 @@
  *    trace object (valid until the adapter's next trace call; the
  *    solver only uses it synchronously within one bump, as in the TS).
  *  - Plane identity (TS `first === second`) is preserved by passing
- *    same_slot (same planes-array slot) to same_plane; adapters that
- *    used identity return same_slot.
+ *    same_slot to same_plane: true when both entries are the same normal
+ *    object in TS. Without plane_identity every normal is a fresh object
+ *    (same planes-array slot); with it, two entries are also the same
+ *    object when their nonzero identities are equal (the trace's
+ *    qa_trace_result.plane_identity). Adapters that used identity
+ *    return same_slot.
  *  - Optional policy/response members use has_* flags; enum defaults
  *    match the TS undefined behavior exactly.
  * GPL-2.0-or-later.
@@ -18,6 +22,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "qa/contracts/math.h"
 
@@ -94,6 +99,8 @@ typedef struct qa_swept_body_services {
   void (*solid)(void *ctx, const qa_swept_body_trace *trace);
   void (*touch)(void *ctx, const qa_swept_body_trace *trace);
   qa_vec3 (*normal)(void *ctx, const qa_swept_body_trace *trace);
+  /* JS identity of the object normal() returns (0 = fresh); may be NULL. */
+  uintptr_t (*plane_identity)(void *ctx, const qa_swept_body_trace *trace);
   void (*impact)(void *ctx, const qa_swept_body_trace *trace, qa_vec3 normal);
   bool stop_when_still;
   bool has_collision_policy;

@@ -12,6 +12,7 @@
 #include "qa/content/q2/rerelease/monsters/tables/flashes.h"
 #include "qa/content/q2/rerelease/monsters/tables/gunner.h"
 #include "rrm_internal.h"
+#include "qa/foundation/js.h"
 
 static void run_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -29,9 +30,9 @@ static bool shooting(qa_q2m_context *c) {
 }
 static bool grenade_check(qa_q2m_context *c) {
   qa_body_state enemy;
-  if (!qa_q2m_enemy_body(c, &enemy) || !qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 53)))
+  if (!qa_q2m_enemy_body(c, &enemy) || !qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 53)))
     return false;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 53));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 53));
   qa_vec3 target = c->state->manual_steering ? c->state->blind_fire_target : enemy.origin;
   qa_vec3 delta = qa_sub3_double(target, start);
   qa_vec3 out;
@@ -39,8 +40,8 @@ static bool grenade_check(qa_q2m_context *c) {
       && qa_q2rm_calculate_pitch_to_fire_default(c, target, start, qa_normalize3_double_hypot(delta), 600, 2.5, false, &out);
 }
 static void grenade(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
@@ -58,11 +59,11 @@ static void grenade(qa_q2m_context *c) {
   if (blind && !qa_q2m_visible_enemy(c) && qa_hypot3(target) == 0) return;
   qa_body_state body = q2rm_body(game, entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   qa_vec3 delta = qa_sub3_double(target, body.origin);
   double distance = qa_hypot3(delta);
   if (distance > 512 && delta.z < 64 && delta.z > -64) delta.z += distance - 512;
-  double pitch = fmax(-0.5, fmin(0.4, qa_normalize3_double_hypot(delta).z));
+  double pitch = qa_js_max(-0.5, qa_js_min(0.4, qa_normalize3_double_hypot(delta).z));
   qa_vec3 aim = qa_add3_double(qa_add3_double(axes.forward, qa_scale3_double(axes.right, spread)),
                                qa_scale3_double(axes.up, pitch));
   qa_vec3 predicted;
@@ -81,7 +82,7 @@ static void jump_impl(qa_q2m_context *c, bool up) {
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   qa_vec3 velocity = qa_add3_double(body.velocity,
       qa_add3_double(qa_scale3_double(axes.forward, up ? 150 : 100), qa_scale3_double(axes.up, up ? 400 : 300)));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = velocity;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -90,8 +91,8 @@ static void sight_fn(void *ctx, qa_q2m_context *c) { (void)ctx; q2rm_snd(c, "gun
 static void search_fn(void *ctx, qa_q2m_context *c) { (void)ctx; q2rm_snd(c, "gunner/gunsrch1.wav", 2); }
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   qa_q2m_finish_dodge(c);
   if (state->attack_state == QA_Q2M_ATTACK_BLIND) {
@@ -103,26 +104,32 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
     state->manual_steering = true;
     if (grenade_check(c)) {
       q2rm_set_move(c, q2rm_rnd(game) < 0.5 ? "gunner_move_attack_grenade2" : "gunner_move_attack_grenade");
-      state->attack_finished = q2rm_now(game) + q2rm_rnd(game) * 2;
+      double left3 = q2rm_now(game);
+      double right3 = q2rm_rnd(game) * 2;
+      state->attack_finished = left3 + right3;
     } else state->manual_steering = false;
-    entity->timestamp = q2rm_now(game) + 2 + q2rm_rnd(game);
+    double left2 = q2rm_now(game) + 2;
+    double right2 = q2rm_rnd(game);
+    entity->timestamp = left2 + right2;
     return;
   }
   if (entity->timestamp > q2rm_now(game)
-      || (qa_q2m_target_distance(c) <= 175 && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 45)))) {
+      || (qa_q2m_target_distance(c) <= 175 && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 45)))) {
     q2rm_set_move(c, "gunner_move_attack_chain");
     return;
   }
   if (entity->timestamp <= q2rm_now(game) && q2rm_rnd(game) <= 0.5 && grenade_check(c)) {
     q2rm_set_move(c, q2rm_rnd(game) < 0.5 ? "gunner_move_attack_grenade2" : "gunner_move_attack_grenade");
-    entity->timestamp = q2rm_now(game) + 2 + q2rm_rnd(game);
-  } else if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 45)))
+    double left = q2rm_now(game) + 2;
+    double right = q2rm_rnd(game);
+    entity->timestamp = left + right;
+  } else if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 45)))
     q2rm_set_move(c, "gunner_move_attack_chain");
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_q2m_finish_dodge(c);
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2
@@ -137,8 +144,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -208,7 +215,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   bounds.max.z = -4;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -226,7 +233,7 @@ static void fire_fn(void *ctx, qa_q2m_context *c) {
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
   double id = 45 + c->entity->frame - qa_q2rm_gunner_frames_value.attak216;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   qa_vec3 direction;
   if (!qa_q2rm_predicted_direction(c, start, 0, true, -0.2, &direction)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, start, direction, 3, 4, 300, 500, 0);
@@ -290,7 +297,7 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_gunner_definition(void) {
   gunner_definition.duck_ctx = NULL; gunner_definition.duck = duck_fn;
   gunner_definition.sidestep_ctx = NULL; gunner_definition.sidestep = sidestep_fn;
   gunner_definition.blocked_ctx = NULL; gunner_definition.blocked = blocked_fn;
-  gunner_definition.callbacks = qa_q2rm_merge_callbacks(
+  gunner_definition.callbacks = qa_q2rm_merge_callbacks(NULL, 
       qa_q2bm_gunner_definition.callbacks, qa_q2bm_gunner_definition.callback_count,
       extra_callbacks, sizeof extra_callbacks / sizeof extra_callbacks[0], &gunner_definition.callback_count);
   gunner_ready = true;

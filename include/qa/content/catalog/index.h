@@ -167,6 +167,8 @@ typedef struct qa_catalog_mount_plan_selection {
  * src/content/mounts/index.ts; injected here), as in
  * text/mounted.h. */
 typedef struct qa_catalog_opened_resource {
+  /* Borrowed view owned by the service, valid until its close; keep a
+   * qa_resolved_resource_copy to hold it longer. */
   qa_resolved_resource_reference reference;
   const uint8_t *bytes; /* borrowed from the service */
   size_t byte_length;
@@ -274,7 +276,9 @@ uint8_t *qa_content_catalog_read(qa_content_catalog *catalog,
                                  size_t *out_length);
 
 /* TS authoredStartsFor. *out_found false is the TS null return;
- * the catalog out owns strings (resource is by value). */
+ * the catalog out owns its strings and an owned copy of the resource
+ * reference (the mount set is closed before return); free with
+ * qa_authored_start_catalog_free. */
 bool qa_content_catalog_authored_starts_for(
     qa_content_catalog *catalog, qa_catalog_mount_plan_opener opener,
     const char *id, qa_authored_start_catalog *out, bool *out_found);

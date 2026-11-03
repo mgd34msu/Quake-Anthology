@@ -14,7 +14,6 @@
 #include "qa/world/gameplay/inventory.h"
 
 extern const qa_bounds qa_q3_character_bounds;
-enum { QA_Q3_CHARACTER_VIEW_HEIGHT = 26 };
 
 typedef struct qa_q3_character_event {
   qa_owned_actor actor; double sequence, time_milliseconds, event, parameter;

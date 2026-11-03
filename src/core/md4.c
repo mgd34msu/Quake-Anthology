@@ -117,7 +117,7 @@ void qa_md4_context_update(qa_md4_context *context, const uint8_t *data,
     }
     index = 0;
   }
-  memcpy(context->buffer + index, data + offset, length - offset);
+  if (length > offset) memcpy(context->buffer + index, data + offset, length - offset);
   (void)before;
 }
 

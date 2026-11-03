@@ -1,8 +1,9 @@
 /*
  * Umbrella for the port of src/content/q1/missionpacks/monsters/index.ts.
  * TS Q1MissionPack (owner src/content/q1/missionpacks/types.ts) is the
- * pack string ("hipnotic" | "rogue"). register returns the runtime via
- * the caller-owned *out struct (false only on OOM). GPL-2.0-or-later.
+ * pack string ("hipnotic" | "rogue"). register initializes the
+ * caller-owned *out (which must not move afterwards) and returns it.
+ * GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_Q1_MISSIONPACKS_MONSTERS_H
 #define QA_CONTENT_Q1_MISSIONPACKS_MONSTERS_H
@@ -29,10 +30,10 @@
 #include "qa/content/q1/missionpacks/monsters/types.h"
 #include "qa/content/q1/missionpacks/monsters/wrath.h"
 
-/* TS MissionMonsterHooks default {}: hooks may be NULL. */
-bool qa_q1mpm_register_mission_pack_monsters(qa_q1mpm_game *game, qa_q1mpm_q1base *base,
-                                             const char *pack,
-                                             const qa_q1mpm_mission_monster_hooks *hooks,
-                                             qa_q1mpm_runtime *out);
+/* TS registerMissionPackMonsters(game, base, pack, hooks = {}): hooks may be NULL. */
+qa_q1mpm_runtime *qa_q1mpm_register_mission_pack_monsters(qa_q1_services *game, qa_q1_base *base,
+                                                          const char *pack,
+                                                          const qa_q1mpm_mission_monster_hooks *hooks,
+                                                          qa_q1mpm_runtime *out);
 
 #endif

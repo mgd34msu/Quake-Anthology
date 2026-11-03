@@ -18,9 +18,6 @@ typedef struct qa_q1_threewave_host {
   bool (*can_attach)(void *ctx, qa_actor_id owner, qa_actor_id target);
   bool (*can_pulse)(void *ctx, qa_actor_id owner, qa_actor_id target);
   bool (*can_damage)(void *ctx, qa_actor_id target, qa_actor_id owner);
-  /* Attachment mirrors of SharedBodyTable attach/detach (optional). */
-  void (*attach)(void *ctx, qa_owned_actor hook, qa_actor_id anchor, bool centered, qa_vec3 offset);
-  void (*detach)(void *ctx, qa_owned_actor hook);
 } qa_q1_threewave_host;
 
 typedef struct qa_q1_threewave_state {

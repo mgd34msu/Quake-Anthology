@@ -16,7 +16,11 @@
  *    the TS null (fallback name). Symbol producer instances are
  *    opaque const void * (contracts qa_command_producer.instance).
  *  - Contexts stored in chunks deep-copy their origin chain (the TS
- *    freezes fresh objects); producer module strings stay borrowed.
+ *    freezes fresh objects) and their producer record with its strings
+ *    (TS keeps the referenced objects alive). A context a caller keeps
+ *    past the invocation or script that produced it (a queued request)
+ *    must be a qa_command_context_copy, released with
+ *    qa_command_context_release.
  *  - bindOutput/bindScriptCompletion/bindProducer return handles.
  *  - prepareProgram's prefix runner is a synchronous bool callback;
  *    a throwing TS runner has no C counterpart (it aborts).
@@ -50,6 +54,10 @@ struct qa_command_invocation {
 };
 /* TS CommandHandler returns undefined. */
 typedef void (*qa_command_handler_fn)(void *ctx, qa_command_invocation *command);
+/* TS `class CommandUsageError extends Error`: a handler that raises this name
+ * (qa_raise(QA_COMMAND_USAGE_ERROR, ...)) has its message printed by dispatch,
+ * which then reports the command as handled; any other raise propagates. */
+#define QA_COMMAND_USAGE_ERROR "CommandUsageError"
 /* TS CommandFallback: -1 undefined, else 0/1. */
 typedef int (*qa_command_fallback_fn)(void *ctx, qa_command_invocation *command);
 
@@ -153,6 +161,11 @@ qa_command_buffer *qa_command_buffer_create(const qa_command_buffer_options *opt
 void qa_command_buffer_destroy(qa_command_buffer *buffer);
 qa_command_dialect qa_command_buffer_dialect(const qa_command_buffer *buffer);
 qa_command_context qa_command_buffer_context(const qa_command_buffer *buffer);
+/* Deep copy of a context: origin names and the script caller chain, and the
+ * producer record with its module strings (the instance stays an identity).
+ * NULL copies to a zeroed context. Release with qa_command_context_release. */
+qa_command_context qa_command_context_copy(const qa_command_context *context);
+void qa_command_context_release(qa_command_context *context);
 bool qa_command_buffer_program_complete(qa_command_buffer *buffer);
 bool qa_command_buffer_has_preparation_prefix(qa_command_buffer *buffer);
 bool qa_command_buffer_preparation_complete(qa_command_buffer *buffer);

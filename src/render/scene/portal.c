@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 static float fr(double v) { return (float)v; }
 static qa_vec3 transform(qa_vec3 vector, qa_axis surface, qa_axis camera) {
@@ -72,12 +73,12 @@ bool qa_portal_surface_offscreen(qa_material_geometry mesh, qa_scene_camera came
   double triangles = (double)mesh.index_count / 3, shortest = 100000000;
   for (size_t i = 0; i < mesh.index_count; i += 3) {
     double vi = mesh.indices[i];
-    long idx = (long)vi;
-    if (vi != (double)idx || idx < 0 || (size_t)idx >= mesh.vertex_count)
+    if (!(vi >= 0 && vi == floor(vi) && vi < (double)mesh.vertex_count))
       qa_range_error("Portal triangle index is outside its vertices");
+    size_t idx = (size_t)vi;
     const qa_material_vertex *vertex = &mesh.vertices[idx];
     qa_vec3 relative = qa_sub3(vertex->position, camera.origin);
-    double d = qa_dot3(relative, relative); if (d < shortest) shortest = d;
+    shortest = qa_js_min(shortest, qa_dot3(relative, relative)); /* Math.min keeps NaN */
     if (qa_dot3(relative, vertex->normal) >= 0) triangles--;
   }
   return triangles == 0 || (!mirror && shortest > fr(fr(range) * fr(range)));

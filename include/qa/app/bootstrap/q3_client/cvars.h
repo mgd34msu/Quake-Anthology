@@ -1,29 +1,16 @@
-/* Port of src/app/bootstrap/q3-client/cvars.ts. The TS
- * QvmCvarServices interface (Pick<CvarRegistry,...>) is an fn+ctx
- * vtable here; the landed compat header typedefs its
- * qa_qvm_cvar_services to a concrete registry, so this abstract
- * shape is local to the q3-client slice. Snapshot outs follow the
- * landed registry convention (bool found + owned qa_cvar_snapshot,
- * free with qa_cvar_read_free). GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/q3-client/cvars.ts. The TS QvmCvarServices
+ * interface (Pick<CvarRegistry,...>) is the compat qa_qvm_cvar_table
+ * (compat/qvm/cvar_syscalls.h). Snapshot outs follow the registry
+ * convention (bool found + owned qa_cvar_snapshot, free with
+ * qa_cvar_read_free). GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_Q3_CLIENT_CVARS_H
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_CVARS_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/compat/qvm/cvar_syscalls.h"
 #include "qa/core/cvars/index.h"
-/* TS QvmCvarServices. Optional TS args: value NULL / has_flags. */
-typedef struct qa_app_qvm_cvar_services {
-  void *ctx;
-  bool (*get)(void *ctx, const char *name, qa_cvar_snapshot *out);
-  bool (*set)(void *ctx, const char *name, const char *value, bool force, qa_cvar_snapshot *out);
-  bool (*set_value)(void *ctx, const char *name, double value, qa_cvar_snapshot *out);
-  bool (*reset)(void *ctx, const char *name, bool force, qa_cvar_snapshot *out);
-  bool (*register_cvar)(void *ctx, const char *name, const char *value, bool has_flags,
-                        double flags, qa_cvar_snapshot *out);
-  double (*bind_vm)(void *ctx, const char *name, const char *value, double flags);
-  bool (*read_vm)(void *ctx, double handle, qa_cvar_snapshot *out);
-  /* maximum_length < 0 = TS default 1024. Malloc'd result. */
-  char *(*info_string)(void *ctx, double flags, double maximum_length);
-} qa_app_qvm_cvar_services;
+/* TS QvmCvarServices: the compat interface (same members). */
+typedef qa_qvm_cvar_table qa_app_qvm_cvar_services;
 /* TS Q3ClientCvars options. */
 typedef struct qa_app_q3_client_cvars_options {
   void *ctx;

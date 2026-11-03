@@ -1,0 +1,269 @@
+admitted 9:0 entity 0
+== frame 0
+source q3-qvm
+time 0
+frame-context 0 milliseconds:0 milliseconds:0 frame-entry
+actors 11
+actor-kind q3:official q3:guest-slot 11
+actor q3:guest-slot 1136 1020 104
+actor q3:guest-slot 1160 536 64
+actor q3:guest-slot 160 520 64
+actor q3:guest-slot 196 1020 108
+actor q3:guest-slot 212 2357 60
+actor q3:guest-slot 212.79051208496094 2357.64501953125 60.99319839477539
+actor q3:guest-slot 476 1620 92
+actor q3:guest-slot 520 2200 40
+actor q3:guest-slot 528 856 64
+actor q3:guest-slot 812 856 64
+actor q3:guest-slot 864 1612 92
+bodies 11
+body 0:0 o 864 1612 92 v 0 0 0 a 0 0 0 g 9
+body 1:0 o 476 1620 92 v 0 0 0 a 0 0 0 g 9
+body 2:0 o 528 856 64 v 0 0 0 a 0 0 0 g 9
+body 3:0 o 812 856 64 v 0 0 0 a 0 0 0 g 9
+body 4:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g 9
+body 5:0 o 196 1020 108 v 0 0 0 a 0 0 0 g 9
+body 6:0 o 160 520 64 v 0 0 0 a 0 0 0 g 9
+body 7:0 o 1160 536 64 v 0 0 0 a 0 0 0 g 9
+body 8:0 o 520 2200 40 v 0 0 0 a 0 0 0 g 9
+body 9:0 o 212.79051208496094 2357.64501953125 60.99319839477539 v 10 -30 -80 a 0 0 0 g -
+body 10:0 o 212 2357 60 v 0 0 0 a 0 0 0 g 9
+inventory 9 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=100/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=0/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+player body o 212.79051208496094 2357.64501953125 60.99319839477539 v 10 -30 -80 a 0 0 0 min -15 -15 -24 max 15 15 32
+player view o 212.79051208496094 2357.64501953125 60.99319839477539 a 0 -45 0 h 26
+player combat -
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=100 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=0 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+console "------- Game Initialization -------\n"
+console "gamename: baseq3\n"
+console "gamedate: Sep 30 2002\n"
+console "[configstring] 289 sound/player/fry.wav"
+console "------------------------------------------------------------\n"
+console "InitGame: \\protocol\\68\\sv_allowDownload\\0\\sv_maxRate\\0\\sv_maxclients\\1\\mapname\\q3dm1\\sv_mapname\\q3dm1\\sv_privateClients\\0\\sv_minPing\\0\\sv_maxPing\\0\\sv_floodProtect\\1\\gamename\\baseq3\\g_gametype\\0\\g_maxGameClients\\0\\dmflags\\0\\fraglimit\\20\\timelimit\\0\\capturelimit\\8\\g_needpass\\0\n"
+console "[configstring] 20 baseq3-1"
+console "[configstring] 21 0"
+console "[configstring] 2 music\\sonic5.wav"
+console "[configstring] 3 Arena Gate"
+console "[configstring] 290 sound/world/fire1.wav"
+console "[configstring] 291 sound/world/ambient/x_ominous.wav"
+console "0 teams with 0 entities\n"
+console "12 items registered\n"
+console "[configstring] 27 010101101110100100110100000000000000"
+console "-----------------------------------\n"
+console "[configstring] 0 \\protocol\\68\\sv_allowDownload\\0\\sv_maxRate\\0\\sv_maxclients\\1\\mapname\\q3dm1\\sv_mapname\\q3dm1\\sv_privateClients\\0\\sv_minPing\\0\\sv_maxPing\\0\\sv_floodProtect\\1\\gamename\\baseq3\\g_gametype\\0\\g_maxGameClients\\0\\dmflags\\0\\fraglimit\\20\\timelimit\\0\\capturelimit\\8\\g_needpass\\0"
+console "ClientConnect: 0\n"
+console "[configstring] 544 n\\Player 1\\t\\0\\model\\sarge/default\\hmodel\\\\g_redteam\\\\g_blueteam\\\\c1\\\\c2\\\\hc\\100\\w\\0\\l\\0\\tt\\0\\tl\\0"
+console "ClientUserinfoChanged: 0 n\\Player 1\\t\\0\\model\\sarge/default\\hmodel\\\\g_redteam\\\\g_blueteam\\\\c1\\\\c2\\\\hc\\100\\w\\0\\l\\0\\tt\\0\\tl\\0\n"
+console "[server-command] -1 print \"Player 1^7 connected\n\""
+console "[configstring] 6 0"
+console "[configstring] 7 -9999"
+console "[server-command] -1 print \"Player 1^7 entered the game\n\""
+console "ClientBegin: 0\n"
+checkpoint world:actors world:source-slots 1 ab729c9e6d455037 canonical 9a68d18d0f9d8edb
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official world:simulation 11 bb239f1a7b7e7d88 canonical d8e76f576eddc129
+checkpoint-image 6e73ec28a18c102c canonical 142a0dd9c1a8c226 24d3675349e3c44b
+== frame 1
+source q3-qvm
+time 0.1
+frame-context 2 milliseconds:100 milliseconds:50 frame-exit
+actors 11
+actor-kind q3:official q3:guest-slot 11
+actor q3:guest-slot 1136 1020 104
+actor q3:guest-slot 1160 536 64
+actor q3:guest-slot 160 520 64
+actor q3:guest-slot 196 1020 108
+actor q3:guest-slot 212 2357 60
+actor q3:guest-slot 216.01856994628906 2350.039306640625 56.125
+actor q3:guest-slot 476 1620 92
+actor q3:guest-slot 520 2200 40
+actor q3:guest-slot 528 856 64
+actor q3:guest-slot 812 856 64
+actor q3:guest-slot 864 1612 92
+bodies 11
+body 0:0 o 864 1612 92 v 0 0 0 a 0 0 0 g 9
+body 1:0 o 476 1620 92 v 0 0 0 a 0 0 0 g 9
+body 2:0 o 528 856 64 v 0 0 0 a 0 0 0 g 9
+body 3:0 o 812 856 64 v 0 0 0 a 0 0 0 g 9
+body 4:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g 9
+body 5:0 o 196 1020 108 v 0 0 0 a 0 0 0 g 9
+body 6:0 o 160 520 64 v 0 0 0 a 0 0 0 g 9
+body 7:0 o 1160 536 64 v 0 0 0 a 0 0 0 g 9
+body 8:0 o 520 2200 40 v 0 0 0 a 0 0 0 g 9
+body 9:0 o 216.01856994628906 2350.039306640625 56.125 v 58 -128 0 a 0 0 0 g -
+body 10:0 o 212 2357 60 v 0 0 0 a 0 0 0 g 9
+inventory 9 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=100/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=0/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+player body o 216.01856994628906 2350.039306640625 56.125 v 58 -128 0 a 0 0 0 min -15 -15 -24 max 15 15 32
+player view o 216.01856994628906 2350.039306640625 56.125 a 0 -38.001708984375 0 h 26
+player combat -
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=100 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=0 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+checkpoint world:actors world:source-slots 1 ab729c9e6d455037 canonical 9a68d18d0f9d8edb
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official world:simulation 11 3d11ef5c1a6cce62 canonical 4043629a465c1e18
+checkpoint-image 4db3d038a2a10853 canonical 142a0dd9c1a8c226 67484ba6ee1e4842
+== frame 10
+source q3-qvm
+time 1
+frame-context 20 milliseconds:1000 milliseconds:50 frame-exit
+actors 28
+actor-kind q3:official q3:guest-slot 28
+actor q3:guest-slot 1056 512 -24.875
+actor q3:guest-slot 1084 2364 47.125
+actor q3:guest-slot 1120 1896 15.125
+actor q3:guest-slot 1120 2056 15.125
+actor q3:guest-slot 1120 2092 15.125
+actor q3:guest-slot 1120 2128 15.125
+actor q3:guest-slot 1120 2316 47.125
+actor q3:guest-slot 1120 512 -24.875
+actor q3:guest-slot 1136 1020 104
+actor q3:guest-slot 1160 536 64
+actor q3:guest-slot 160 520 64
+actor q3:guest-slot 196 1020 108
+actor q3:guest-slot 212 2060 15.125
+actor q3:guest-slot 212 2096 15.125
+actor q3:guest-slot 212 2132 15.125
+actor q3:guest-slot 272 512 -24.875
+actor q3:guest-slot 384 1472 15.125
+actor q3:guest-slot 430.2340393066406 2214.78955078125 28.125
+actor q3:guest-slot 476 1620 92
+actor q3:guest-slot 520 2200 40
+actor q3:guest-slot 528 856 64
+actor q3:guest-slot 668 -80 61.79182434082031
+actor q3:guest-slot 668 2096 15.125
+actor q3:guest-slot 670 728 -34.875
+actor q3:guest-slot 672 1288 15.125
+actor q3:guest-slot 812 856 64
+actor q3:guest-slot 864 1612 92
+actor q3:guest-slot 932 1348 15.125
+bodies 28
+body 0:0 o 864 1612 92 v 0 0 0 a 0 0 0 g 9
+body 1:0 o 476 1620 92 v 0 0 0 a 0 0 0 g 9
+body 2:0 o 528 856 64 v 0 0 0 a 0 0 0 g 9
+body 3:0 o 812 856 64 v 0 0 0 a 0 0 0 g 9
+body 4:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g 9
+body 5:0 o 196 1020 108 v 0 0 0 a 0 0 0 g 9
+body 6:0 o 160 520 64 v 0 0 0 a 0 0 0 g 9
+body 7:0 o 1160 536 64 v 0 0 0 a 0 0 0 g 9
+body 8:0 o 520 2200 40 v 0 0 0 a 0 0 0 g 9
+body 9:0 o 430.2340393066406 2214.78955078125 28.125 v 265 199 0 a 0 0 0 g -
+body 11:0 o 932 1348 15.125 v 0 0 0 a 0 0 0 g -
+body 12:0 o 272 512 -24.875 v 0 0 0 a 0 0 0 g -
+body 13:0 o 1120 2316 47.125 v 0 0 0 a 0 0 0 g -
+body 14:0 o 212 2132 15.125 v 0 0 0 a 0 0 0 g -
+body 15:0 o 672 1288 15.125 v 0 0 0 a 0 0 0 g -
+body 16:0 o 1120 512 -24.875 v 0 0 0 a 0 0 0 g -
+body 17:0 o 668 -80 61.79182434082031 v 0 0 0 a 0 0 0 g -
+body 18:0 o 670 728 -34.875 v 0 0 0 a 0 0 0 g -
+body 19:0 o 668 2096 15.125 v 0 0 0 a 0 0 0 g -
+body 20:0 o 384 1472 15.125 v 0 0 0 a 0 0 0 g -
+body 21:0 o 1056 512 -24.875 v 0 0 0 a 0 0 0 g -
+body 22:0 o 1120 1896 15.125 v 0 0 0 a 0 0 0 g -
+body 23:0 o 212 2096 15.125 v 0 0 0 a 0 0 0 g -
+body 24:0 o 1084 2364 47.125 v 0 0 0 a 0 0 0 g -
+body 25:0 o 212 2060 15.125 v 0 0 0 a 0 0 0 g -
+body 26:0 o 1120 2128 15.125 v 0 0 0 a 0 0 0 g -
+body 27:0 o 1120 2092 15.125 v 0 0 0 a 0 0 0 g -
+body 28:0 o 1120 2056 15.125 v 0 0 0 a 0 0 0 g -
+inventory 9 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=100/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=0/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+player body o 430.2340393066406 2214.78955078125 28.125 v 265 199 0 a 0 0 0 min -15 -15 -24 max 15 15 32
+player view o 430.2340393066406 2214.78955078125 28.125 a 0 24.9993896484375 0 h 26
+player combat -
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=100 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=0 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+console "[configstring] 608 unknown"
+console "[configstring] 609 Courtyard"
+console "[configstring] 610 Courtyard"
+console "[configstring] 611 Courtyard"
+console "[configstring] 612 Antechamber"
+console "[configstring] 613 Antechamber"
+console "[configstring] 614 Antechamber"
+console "[configstring] 615 Hallway"
+console "[configstring] 616 Hallway"
+console "[configstring] 617 Hallway"
+console "[configstring] 618 Hallway"
+console "[configstring] 619 Mouth"
+console "[configstring] 620 Mouth"
+checkpoint world:actors world:source-slots 1 2b8e623f53d060d5 canonical 9c098a9d95a5a289
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official world:simulation 11 d4f5b4c4ecb915f2 canonical b698d64723f3df39
+checkpoint-image 7633d6305410c090 canonical 142a0dd9c1a8c226 1a2cbd94d85f9ae8
+== frame 100
+source q3-qvm
+time 10
+frame-context 200 milliseconds:10000 milliseconds:50 frame-exit
+actors 30
+actor-kind q3:official q3:guest-slot 30
+actor q3:guest-slot 1056 512 -24.875
+actor q3:guest-slot 1084 2364 47.125
+actor q3:guest-slot 1120 1896 15.125
+actor q3:guest-slot 1120 2056 15.125
+actor q3:guest-slot 1120 2092 15.125
+actor q3:guest-slot 1120 2128 15.125
+actor q3:guest-slot 1120 2316 47.125
+actor q3:guest-slot 1120 512 -24.875
+actor q3:guest-slot 1136 1020 104
+actor q3:guest-slot 1160 536 64
+actor q3:guest-slot 160 520 64
+actor q3:guest-slot 196 1020 108
+actor q3:guest-slot 212 2060 15.125
+actor q3:guest-slot 212 2096 15.125
+actor q3:guest-slot 212 2132 15.125
+actor q3:guest-slot 272 512 -24.875
+actor q3:guest-slot 384 1472 15.125
+actor q3:guest-slot 476 1620 92
+actor q3:guest-slot 520 2200 40
+actor q3:guest-slot 528 856 64
+actor q3:guest-slot 668 -80 61.79182434082031
+actor q3:guest-slot 668 2096 15.125
+actor q3:guest-slot 670 728 -34.875
+actor q3:guest-slot 672 1288 15.125
+actor q3:guest-slot 812 856 64
+actor q3:guest-slot 864 1612 92
+actor q3:guest-slot 868.183349609375 1748.5484619140625 69.1045913696289
+actor q3:guest-slot 872 1746 47
+actor q3:guest-slot 874 1729 88
+actor q3:guest-slot 932 1348 15.125
+bodies 30
+body 0:0 o 864 1612 92 v 0 0 0 a 0 0 0 g 9
+body 1:0 o 476 1620 92 v 0 0 0 a 0 0 0 g 9
+body 2:0 o 528 856 64 v 0 0 0 a 0 0 0 g 9
+body 3:0 o 812 856 64 v 0 0 0 a 0 0 0 g 9
+body 4:0 o 1136 1020 104 v 0 0 0 a 0 0 0 g 9
+body 5:0 o 196 1020 108 v 0 0 0 a 0 0 0 g 9
+body 6:0 o 160 520 64 v 0 0 0 a 0 0 0 g 9
+body 7:0 o 1160 536 64 v 0 0 0 a 0 0 0 g 9
+body 8:0 o 520 2200 40 v 0 0 0 a 0 0 0 g 9
+body 9:0 o 868.183349609375 1748.5484619140625 69.1045913696289 v -14 7 30 a 0 0 0 g -
+body 10:6 o 872 1746 47 v -35 18 190 a 0 0 0 g -
+body 11:0 o 932 1348 15.125 v 0 0 0 a 0 0 0 g -
+body 12:0 o 272 512 -24.875 v 0 0 0 a 0 0 0 g -
+body 13:0 o 1120 2316 47.125 v 0 0 0 a 0 0 0 g -
+body 14:0 o 212 2132 15.125 v 0 0 0 a 0 0 0 g -
+body 15:0 o 672 1288 15.125 v 0 0 0 a 0 0 0 g -
+body 16:0 o 1120 512 -24.875 v 0 0 0 a 0 0 0 g -
+body 17:0 o 668 -80 61.79182434082031 v 0 0 0 a 0 0 0 g -
+body 18:0 o 670 728 -34.875 v 0 0 0 a 0 0 0 g -
+body 19:0 o 668 2096 15.125 v 0 0 0 a 0 0 0 g -
+body 20:0 o 384 1472 15.125 v 0 0 0 a 0 0 0 g -
+body 21:0 o 1056 512 -24.875 v 0 0 0 a 0 0 0 g -
+body 22:0 o 1120 1896 15.125 v 0 0 0 a 0 0 0 g -
+body 23:0 o 212 2096 15.125 v 0 0 0 a 0 0 0 g -
+body 24:0 o 1084 2364 47.125 v 0 0 0 a 0 0 0 g -
+body 25:0 o 212 2060 15.125 v 0 0 0 a 0 0 0 g -
+body 26:0 o 1120 2128 15.125 v 0 0 0 a 0 0 0 g -
+body 27:0 o 1120 2092 15.125 v 0 0 0 a 0 0 0 g -
+body 28:0 o 1120 2056 15.125 v 0 0 0 a 0 0 0 g -
+body 29:2 o 874 1729 88 v 0 0 0 a 0 0 0 g 9
+inventory 9 q3:weapon/gauntlet=1/1 q3:weapon/machinegun=1/1 q3:ammo/machinegun=96/200 q3:weapon/shotgun=0/1 q3:ammo/shotgun=0/200 q3:weapon/grenadelauncher=0/1 q3:ammo/grenadelauncher=0/200 q3:weapon/rocketlauncher=0/1 q3:ammo/rocketlauncher=0/200 q3:weapon/lightning=0/1 q3:ammo/lightning=0/200 q3:weapon/railgun=0/1 q3:ammo/railgun=0/200 q3:weapon/plasmagun=0/1 q3:ammo/plasmagun=30/200 q3:weapon/bfg=0/1 q3:ammo/bfg=0/200 q3:weapon/grapple=0/1
+player body o 868.183349609375 1748.5484619140625 69.1045913696289 v -14 7 30 a 0 0 0 min -15 -15 -24 max 15 15 32
+player view o 868.183349609375 1748.5484619140625 69.1045913696289 a 0 -65.0006103515625 0 h 26
+player combat -
+player inventory q3:weapon/gauntlet=1 q3:weapon/machinegun=1 q3:ammo/machinegun=96 q3:weapon/shotgun=0 q3:ammo/shotgun=0 q3:weapon/grenadelauncher=0 q3:ammo/grenadelauncher=0 q3:weapon/rocketlauncher=0 q3:ammo/rocketlauncher=0 q3:weapon/lightning=0 q3:ammo/lightning=0 q3:weapon/railgun=0 q3:ammo/railgun=0 q3:weapon/plasmagun=0 q3:ammo/plasmagun=30 q3:weapon/bfg=0 q3:ammo/bfg=0 q3:weapon/grapple=0
+console "Item: 0 item_armor_shard\n"
+console "Item: 0 ammo_cells\n"
+checkpoint world:actors world:source-slots 1 762e1b341d8a05df canonical 8c3dfb70e0f607bb
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q3:official world:simulation 11 21456982482759f0 canonical 3cb1c755037c187a
+checkpoint-image 28426729e39e556b canonical 142a0dd9c1a8c226 2d04fc7eddcb1763

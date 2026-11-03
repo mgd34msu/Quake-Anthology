@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 void qa_gl_with_pixel_store(qa_gl *gl,const char *direction,qa_gl_pixel_store_fn operation,void *ctx){
   int pack=!strcmp(direction,"pack");
   int32_t state=0; gl->glGetIntegerv(pack?0x88ed:0x88ef,&state);
@@ -22,10 +23,12 @@ void qa_gl_with_pixel_store(qa_gl *gl,const char *direction,qa_gl_pixel_store_fn
 typedef struct tex { double ordinal; uint32_t name; bool mipmap; double width,height; qa_render_image content; double (*levels)[2]; size_t level_count; } tex;
 typedef struct timpl { qa_gl *gl; qa_renderer_resource_owner owner; double maximum; tex *items; size_t count,cap; } timpl;
 static timpl *T(qa_gl_textures *t){ return (timpl*)t->impl; }
+/* Number.isSafeInteger, without a C cast of NaN or a huge double. */
+static int safe_integer(double v){ return isfinite(v)&&v==floor(v)&&fabs(v)<=9007199254740991.0; }
 static void own(qa_gl_textures *t,qa_renderer_image image){
   timpl *p=T(t);
   if(image.owner.identity!=p->owner.identity||image.owner.session.token!=p->owner.session.token||image.owner.generation!=p->owner.generation) qa_range_error("OpenGL image belongs to another renderer owner");
-  if(image.ordinal!=(double)(long long)image.ordinal||image.ordinal<0) qa_range_error("OpenGL image ordinal must be a nonnegative safe integer");
+  if(!safe_integer(image.ordinal)||image.ordinal<0) qa_range_error("OpenGL image ordinal must be a nonnegative safe integer");
 }
 static tex *find_tex(qa_gl_textures *t,double ord){ timpl *p=T(t); for(size_t i=0;i<p->count;i++)if(p->items[i].ordinal==ord)return &p->items[i]; return NULL; }
 qa_gl_texture_info qa_gl_textures_registered(qa_gl_textures *t,qa_renderer_image image){ own(t,image); tex *x=find_tex(t,image.ordinal);
@@ -47,7 +50,7 @@ static void apply_filter(qa_gl *gl,const char *filter){
 }
 static void check_dims(qa_gl_textures *t,double w,double h,size_t pixel_count,double channels,int is_depth,const float *fpixels){
   timpl *p=T(t);
-  if(w!=(double)(long long)w||h!=(double)(long long)h||w<1||h<1||w>p->maximum||h>p->maximum||pixel_count!=(size_t)(w*h*channels)) qa_range_error("OpenGL image dimensions do not match its pixel allocation");
+  if(!safe_integer(w)||!safe_integer(h)||w<1||h<1||w>p->maximum||h>p->maximum||(double)pixel_count!=w*h*channels) qa_range_error("OpenGL image dimensions do not match its pixel allocation");
   if(is_depth) for(size_t i=0;i<pixel_count;i++) if(!isfinite(fpixels[i])||fpixels[i]<0||fpixels[i]>1) qa_range_error("OpenGL depth samples must be finite values in 0..1");
 }
 typedef struct upload_ctx { qa_gl *gl; const qa_render_image *content; const qa_image_level *levels; } upload_ctx;
@@ -84,8 +87,8 @@ void qa_gl_textures_apply(qa_gl_textures *t,qa_image_resource_operation op){
       double w,h; size_t pc;
       if(content->kind==QA_RENDER_IMAGE_DEPTH32F){ w=content->depth_levels[i].width;h=content->depth_levels[i].height;pc=content->depth_levels[i].pixel_count; check_dims(t,w,h,pc,1,1,content->depth_levels[i].pixels); }
       else { w=content->levels[i].width;h=content->levels[i].height;pc=content->levels[i].pixels.length; check_dims(t,w,h,pc,content->kind==QA_RENDER_IMAGE_RGBA8?4:1,0,NULL); }
-      double ew=fmax(1,floor(fw/pow(2,(double)i))),eh=fmax(1,floor(fh/pow(2,(double)i)));
-      if(w!=ew||h!=eh||(double)i>floor(log2(fmax(fw,fh)))) qa_range_error("OpenGL mip levels must halve their preceding dimensions");
+      double ew=qa_js_max(1,floor(fw/qa_js_pow(2,(double)i))),eh=qa_js_max(1,floor(fh/qa_js_pow(2,(double)i)));
+      if(w!=ew||h!=eh||(double)i>floor(log2(qa_js_max(fw,fh)))) qa_range_error("OpenGL mip levels must halve their preceding dimensions");
     }
     qa_image_level *expanded=NULL;
     if(content->kind==QA_RENDER_IMAGE_INDEXED8){
@@ -115,10 +118,10 @@ void qa_gl_textures_apply(qa_gl_textures *t,qa_image_resource_operation op){
     free(expanded); return; }
   case QA_IMAGE_OP_UPDATE: {
     tex *x=find_tex(t,op.image.ordinal); if(!x)qa_range_error("OpenGL image is not registered");
-    long li=(long)op.level;
+    long li=safe_integer(op.level)&&op.level>=0?(long)op.level:-1; /* levels[1.5] is undefined in TS */
     double uw=op.update_depth_level?op.update_depth_level->width:op.update_level?op.update_level->width:0;
     double uh=op.update_depth_level?op.update_depth_level->height:op.update_level?op.update_level->height:0;
-    if(op.level!=(double)li||li<0||(size_t)li>=x->level_count||x->levels[li][0]!=uw||x->levels[li][1]!=uh) qa_range_error("OpenGL update dimensions differ from the registered mip level");
+    if(li<0||(size_t)li>=x->level_count||x->levels[li][0]!=uw||x->levels[li][1]!=uh) qa_range_error("OpenGL update dimensions differ from the registered mip level");
     update_ctx uc; uc.gl=gl;uc.level=op.level;uc.w=uw;uc.h=uh;
     qa_image_level ex; int have_ex=0;
     if(x->content.kind==QA_RENDER_IMAGE_DEPTH32F){

@@ -27,14 +27,14 @@ static void write_vector(qa_qvm_writable_view *view, qa_vec3 value) {
 }
 
 bool qa_qvm_vector_syscall(const char *role, const uint8_t *words, size_t words_length,
-                           qa_qvm_memory *memory, int32_t *out) {
+                           const qa_qvm_game_memory *memory, int32_t *out) {
   if (strcmp(role, "game") != 0) return false;
   switch (word_i32(words, words_length, 0)) {
     case 107: {
       qa_qvm_writable_view left, right, output;
-      qa_qvm_memory_view(memory, word_i32(words, words_length, 4), 36, 0, &left);
-      qa_qvm_memory_view(memory, word_i32(words, words_length, 8), 36, 0, &right);
-      qa_qvm_memory_view(memory, word_i32(words, words_length, 12), 36, 0, &output);
+      qa_qvm_game_memory_view(memory, word_i32(words, words_length, 4), 36, 0, &left);
+      qa_qvm_game_memory_view(memory, word_i32(words, words_length, 8), 36, 0, &right);
+      qa_qvm_game_memory_view(memory, word_i32(words, words_length, 12), 36, 0, &output);
       for (int row = 0; row < 3; row++) {
         for (int column = 0; column < 3; column++) {
           qa_vec3 a = qa_math_vec3(
@@ -53,15 +53,15 @@ bool qa_qvm_vector_syscall(const char *role, const uint8_t *words, size_t words_
     }
     case 108: {
       qa_qvm_writable_view angles;
-      qa_qvm_memory_view(memory, word_i32(words, words_length, 4), 12, 0, &angles);
+      qa_qvm_game_memory_view(memory, word_i32(words, words_length, 4), 12, 0, &angles);
       int32_t forward_word = word_i32(words, words_length, 8);
       int32_t right_word = word_i32(words, words_length, 12);
       int32_t up_word = word_i32(words, words_length, 16);
       qa_qvm_writable_view forward, right, up;
       /* TS resolves every optional span before reading the angles. */
-      if (forward_word != 0) qa_qvm_memory_view(memory, forward_word, 12, 0, &forward);
-      if (right_word != 0) qa_qvm_memory_view(memory, right_word, 12, 0, &right);
-      if (up_word != 0) qa_qvm_memory_view(memory, up_word, 12, 0, &up);
+      if (forward_word != 0) qa_qvm_game_memory_view(memory, forward_word, 12, 0, &forward);
+      if (right_word != 0) qa_qvm_game_memory_view(memory, right_word, 12, 0, &right);
+      if (up_word != 0) qa_qvm_game_memory_view(memory, up_word, 12, 0, &up);
       qa_angle_vectors result = qa_math_angle_vectors(read_vector(&angles));
       if (forward_word != 0) write_vector(&forward, result.forward);
       if (right_word != 0) write_vector(&right, result.right);
@@ -71,8 +71,8 @@ bool qa_qvm_vector_syscall(const char *role, const uint8_t *words, size_t words_
     }
     case 109: {
       qa_qvm_writable_view destination, source_view;
-      qa_qvm_memory_view(memory, word_i32(words, words_length, 4), 12, 0, &destination);
-      qa_qvm_memory_view(memory, word_i32(words, words_length, 8), 12, 0, &source_view);
+      qa_qvm_game_memory_view(memory, word_i32(words, words_length, 4), 12, 0, &destination);
+      qa_qvm_game_memory_view(memory, word_i32(words, words_length, 8), 12, 0, &source_view);
       qa_vec3 source = read_vector(&source_view);
       if (qa_dot3(source, source) == 0.0)
         qa_range_error("QVM PerpendicularVector has a zero projection denominator");

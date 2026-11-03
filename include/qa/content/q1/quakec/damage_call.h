@@ -20,12 +20,15 @@ typedef struct qa_q1qc_damage_role_location {
 typedef struct qa_q1qc_role_locations {
   qa_q1qc_damage_role_location *items; size_t count;
 } qa_q1qc_role_locations;
-/* TS QcDamageCallLayout (heap owned). declaration borrowed. */
+/* TS QcDamageCallLayout (heap owned). declaration points at declaration_copy,
+ * a shallow copy of the caller's call (its strings and arrays stay borrowed from
+ * the compatibility declaration), so a call passed by value may go out of scope. */
 typedef struct qa_q1qc_damage_call_layout {
   int64_t function_index;
   const char **parameters; size_t parameter_count;
   qa_q1qc_role_locations roles[4];
   const qa_mod_source_call *declaration; bool has_declaration;
+  qa_mod_source_call declaration_copy;
 } qa_q1qc_damage_call_layout;
 void qa_q1qc_damage_call_layout_destroy(qa_q1qc_damage_call_layout *layout);
 bool qa_q1qc_damage_roles_equal(const qa_q1qc_damage_call_layout *a,

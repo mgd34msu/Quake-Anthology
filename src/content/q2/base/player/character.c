@@ -12,6 +12,7 @@
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 qa_q2_character_actor *qa_q2_character_actor_create(qa_owned_actor actor, qa_q2_character_host host, qa_q2_character_options options) {
   qa_q2_character_actor *character = calloc(1, sizeof *character);
@@ -122,14 +123,22 @@ static void character_environment_damage(void *ctx, double amount, double means,
   character->host.environment_damage(character->host.ctx, character->actor, amount, means, flags);
 }
 
+/* PlayerNoise ignores self noises during a landmark fall and for 0.1 s after it. */
+static void character_noise(void *ctx, qa_actor_id actor, qa_vec3 origin) {
+  qa_q2_character_actor *character = ctx;
+  if (character->state.landmark_free_fall || character->state.landmark_noise_time >= character->host.now(character->host.ctx) ||
+      (qa_js_to_int32(character->entity.flags) & 0x8000) != 0)
+    return;
+  character->host.noise(character->host.ctx, actor, origin);
+}
 static qa_q2_character_context make_context(qa_q2_character_actor *character) {
   qa_q2_character_context context = {0};
   context.entity = &character->entity;
   context.state = &character->state;
   context.rules = &character->rules;
   context.movement = character->host.movement(character->host.ctx, character->actor.id);
-  context.noise_ctx = character->host.ctx;
-  context.noise = character->host.noise;
+  context.noise_ctx = character;
+  context.noise = character_noise;
   context.cb_ctx = character;
   context.powerups = character_powerups;
   context.weapon_state = character_weapon_state;
@@ -158,6 +167,15 @@ void qa_q2_character_actor_pain(qa_q2_character_actor *character, qa_pain_reacti
 
 void qa_q2_character_actor_record_damage(qa_q2_character_actor *character, qa_damage_decision decision) {
   character->last_attack_storage = decision.request.attack;
+  /* The request's actor pointers are the caller's; keep our own copies. */
+  if (decision.request.attack.attacker) {
+    character->attack_attacker_storage = *decision.request.attack.attacker;
+    character->last_attack_storage.attacker = &character->attack_attacker_storage;
+  }
+  if (decision.request.attack.inflictor) {
+    character->attack_inflictor_storage = *decision.request.attack.inflictor;
+    character->last_attack_storage.inflictor = &character->attack_inflictor_storage;
+  }
   character->entity.last_attack = &character->last_attack_storage;
   if (decision.reaction && strcmp(decision.reaction, "death") == 0) return;
   bool feedback = decision.has_feedback && decision.feedback_kind && strcmp(decision.feedback_kind, "q2") == 0;
@@ -189,9 +207,10 @@ static void show(qa_q2_character_actor *character) {
 }
 static qa_vec3 gib_velocity(qa_q2_character_actor *character, double damage) {
   double factor = damage < 50 ? 0.7 : 1.2;
-  return (qa_vec3){(character->host.random(character->host.ctx) * 2 - 1) * 100 * factor,
-                   (character->host.random(character->host.ctx) * 2 - 1) * 100 * factor,
-                   (200 + character->host.random(character->host.ctx) * 100) * factor};
+  double x = (character->host.random(character->host.ctx) * 2 - 1) * 100 * factor;
+  double y = (character->host.random(character->host.ctx) * 2 - 1) * 100 * factor;
+  double z = (200 + character->host.random(character->host.ctx) * 100) * factor;
+  return (qa_vec3){x, y, z};
 }
 
 void qa_q2_character_actor_die(qa_q2_character_actor *character, qa_death_reaction reaction) {
@@ -227,16 +246,24 @@ void qa_q2_character_actor_die(qa_q2_character_actor *character, qa_death_reacti
                     (body.bounds.max.z - body.bounds.min.z) * 0.5};
     qa_vec3 center = qa_q2_add(body.origin, qa_q2_add(body.bounds.min, half));
     for (int index = 0; index < 4; index++) {
-      qa_vec3 origin = qa_q2_add(center, (qa_vec3){(host->random(host->ctx) * 2 - 1) * half.x,
-          (host->random(host->ctx) * 2 - 1) * half.y, (host->random(host->ctx) * 2 - 1) * half.z});
+      double x3 = (host->random(host->ctx) * 2 - 1) * half.x;
+      double y3 = (host->random(host->ctx) * 2 - 1) * half.y;
+      double z3 = (host->random(host->ctx) * 2 - 1) * half.z;
+      qa_vec3 origin = qa_q2_add(center, (qa_vec3){x3,
+          y3, z3});
       qa_vec3 impulse = gib_velocity(character, reaction.pain.damage);
       qa_vec3 velocity = qa_q2_add(body.velocity, (qa_vec3){impulse.x * 0.5, impulse.y * 0.5, impulse.z * 0.5});
       qa_q2_character_gib gib = {0};
       gib.model = "models/objects/gibs/sm_meat/tris.md2";
       gib.origin = origin;
-      gib.velocity = (qa_vec3){fmax(-300, fmin(300, velocity.x)), fmax(-300, fmin(300, velocity.y)), fmax(200, fmin(500, velocity.z))};
-      gib.angular_velocity = (qa_vec3){host->random(host->ctx) * 600, host->random(host->ctx) * 600, host->random(host->ctx) * 600};
-      gib.expires_at = host->now(host->ctx) + 10 + host->random(host->ctx) * 10;
+      gib.velocity = (qa_vec3){qa_js_max(-300, qa_js_min(300, velocity.x)), qa_js_max(-300, qa_js_min(300, velocity.y)), qa_js_max(200, qa_js_min(500, velocity.z))};
+      double x2 = host->random(host->ctx) * 600;
+      double y2 = host->random(host->ctx) * 600;
+      double z2 = host->random(host->ctx) * 600;
+      gib.angular_velocity = (qa_vec3){x2, y2, z2};
+      double left = host->now(host->ctx) + 10;
+      double right = host->random(host->ctx) * 10;
+      gib.expires_at = left + right;
       host->spawn_gib(host->ctx, gib);
     }
     bool head = host->random(host->ctx) < 0.5;
@@ -273,16 +300,16 @@ void qa_q2_character_actor_die(qa_q2_character_actor *character, qa_death_reacti
 void qa_q2_character_actor_after_client_think(qa_q2_character_actor *character) {
   double buttons = character->host.movement(character->host.ctx, character->actor.id).buttons;
   qa_q2_base_player_state *state = &character->state;
-  state->latched_buttons = (double)((int64_t)state->latched_buttons | ((int64_t)buttons & ~(int64_t)state->buttons));
+  state->latched_buttons = (double)(qa_js_to_int32(state->latched_buttons) | (qa_js_to_int32(buttons) & ~qa_js_to_int32(state->buttons)));
   state->buttons = buttons;
 }
 
 void qa_q2_character_actor_begin_frame(qa_q2_character_actor *character) {
   qa_q2_base_player_state *state = &character->state;
-  int64_t mask = character->options.mode == QA_Q2_MODE_DEATHMATCH ? 1 : -1;
+  int32_t mask = character->options.mode == QA_Q2_MODE_DEATHMATCH ? 1 : -1;
   if (state->dead && character->host.now(character->host.ctx) > state->respawn_time &&
-      (((int64_t)state->latched_buttons & mask) != 0 ||
-       (character->options.mode == QA_Q2_MODE_DEATHMATCH && ((int64_t)character->options.deathmatch_flags & 1024) != 0))) {
+      ((qa_js_to_int32(state->latched_buttons) & mask) != 0 ||
+       (character->options.mode == QA_Q2_MODE_DEATHMATCH && (qa_js_to_int32(character->options.deathmatch_flags) & 1024) != 0))) {
     state->latched_buttons = 0;
     character->host.request_respawn(character->host.ctx, character->actor);
     return;
@@ -325,7 +352,7 @@ void qa_q2_character_actor_end_frame(qa_q2_character_actor *character, bool inte
   qa_body_state body = body_of(character);
   qa_angle_vectors vectors = qa_math_angle_vectors_rule(context.movement.view_angles, QA_ANGLE_RULE_NATIVE);
   double side = qa_q2_dot(body.velocity, vectors.right);
-  double roll = (side < 0 ? -1 : 1) * fmin(fabs(side) * character->rules.roll_angle / character->rules.roll_speed, character->rules.roll_angle);
+  double roll = (side < 0 ? -1 : 1) * qa_js_min(fabs(side) * character->rules.roll_angle / character->rules.roll_speed, character->rules.roll_angle);
   qa_body_state angled = body;
   angled.angles = (qa_vec3){(context.movement.view_angles.x > 180 ? context.movement.view_angles.x - 360 : context.movement.view_angles.x) / 3,
                             context.movement.view_angles.y, roll * 4};

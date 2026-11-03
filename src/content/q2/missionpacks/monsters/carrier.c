@@ -12,6 +12,8 @@
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/spawn.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_carrier.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
+#include "qa/foundation/js.h"
 
 typedef struct carrier_bundle {
   qa_q2m_monsters *monsters;
@@ -21,7 +23,7 @@ typedef struct relation { bool front, back, below; } carrier_relation;
 static const qa_bounds flyer_bounds = {{-16, -16, -24}, {16, 16, 16}};
 static carrier_relation relation_of(qa_q2m_context *c, qa_actor_id actor) {
   carrier_relation result = {false, false, false};
-  qa_body_state_result target = c->game->host->bodies.read(c->game->host->bodies.ctx, actor);
+  qa_body_state_result target = qa_shared_body_table_read(c->game->host->bodies, actor);
   if (!target.has_value) return result;
   qa_body_state body = q2mpm_body(c->game, c->entity);
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(target.value.origin, body.origin));
@@ -35,8 +37,8 @@ static void rocket_fire(carrier_bundle *bundle, qa_q2m_context *c) {
   (void)bundle;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !c->entity->has_enemy) return;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   bool predictive = game->host->is_player(game->host->ctx, entity->enemy) && q2mpm_rnd(game) < 0.5;
   qa_vec3 right = qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).right;
   static const double spreads[] = {0.4, 0.025, -0.025, -0.4};
@@ -45,7 +47,7 @@ static void rocket_fire(carrier_bundle *bundle, qa_q2m_context *c) {
     qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(game->options.edition, flash));
     qa_vec3 direction;
     if (predictive) {
-      if (!qa_q2mpm_predicted_direction(c, start, 750, false, -0.3 + index * 0.15, &direction)) continue;
+      if (!qa_q2rm_predicted_direction(c, start, 750, false, -0.3 + index * 0.15, &direction)) continue;
     } else {
       qa_vec3 target = enemy.origin;
       target.z -= index == 0 || index == 3 ? 15 : 0;
@@ -54,29 +56,29 @@ static void rocket_fire(carrier_bundle *bundle, qa_q2m_context *c) {
           qa_scale3_double(right, q2mpm_at_d(spreads, 4, index))));
     }
     (void)c->weapons.fire_rocket(c->weapons.ctx, entity, game, start, direction, 50, predictive ? 750 : 500, 70, 50);
-    qa_q2mpm_monster_flash(c, flash, start, direction);
+    qa_q2rm_monster_flash(c, flash, start, direction);
   }
 }
 static void coop_check(carrier_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
-  if (strcmp(game->options.mode, "coop") != 0 || entity->wait > q2mpm_now(game)) return;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  if (game->options.mode != QA_Q2_MODE_COOP || entity->wait > q2mpm_now(game)) return;
   size_t player_count = 0;
   const qa_actor_id *players = game->host->players(game->host->ctx, &player_count);
   qa_actor_id *targets = malloc((player_count ? player_count : 1) * sizeof *targets);
-  if (!targets) qa_q2f_error("Out of memory in carrier coop check");
+  if (!targets) qa_raise("Error", 0, 0, "Out of memory in carrier coop check");
   size_t count = 0;
   for (size_t i = 0; i < player_count; i++) {
     qa_actor_id player = players[i];
     if (!q2mpm_live(game, player) || !game->host->is_player(game->host->ctx, player)) continue;
     carrier_relation direction = relation_of(c, player);
-    qa_body_state_result target = game->host->bodies.read(game->host->bodies.ctx, player);
+    qa_body_state_result target = qa_shared_body_table_read(game->host->bodies, player);
     if (target.has_value && (direction.back || direction.below)
         && q2mpm_trace(game, q2mpm_body(game, entity).origin, target.value.origin, NULL, &entity->actor.id, 3).fraction == 1)
       targets[count++] = player;
   }
   if (count == 0) { free(targets); return; }
-  double pick = fmin((double)count - 1, floor(q2mpm_rnd(game) * (double)count));
+  double pick = qa_js_min((double)count - 1, floor(q2mpm_rnd(game) * (double)count));
   qa_actor_id chosen = q2mpm_at_a(targets, count, pick);
   free(targets);
   entity->wait = q2mpm_now(game) + 2;
@@ -100,17 +102,17 @@ static void machine_gun(carrier_bundle *bundle, qa_q2m_context *c) {
     qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(
         qa_add3_double(eye, qa_scale3_double(enemy.velocity, right_gun ? 0.2 : -0.2)), start));
     c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, start, direction, 6, 4, 900, 500, 0);
-    qa_q2mpm_monster_flash(c, flash, start, direction);
+    qa_q2rm_monster_flash(c, flash, start, direction);
   }
 }
 static void spawn_child(carrier_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_vec3 point;
   if (!qa_q2mpm_find_rogue_spawn_point(game, qa_q2m_project_flash_default(c, q2mpm_v3(105, 0, -58)),
                                        flyer_bounds, 32, &point)) return;
   double time = trunc((q2mpm_now(game) + 0.1 - entity->timestamp) / 0.5);
-  qa_q2f_entity *child = qa_q2mpm_create_rogue_monster(bundle->monsters, game, point,
+  qa_q2_entity *child = qa_q2mpm_create_rogue_monster(bundle->monsters, game, point,
                                                        q2mpm_body(game, entity).angles,
                                                        time == 2 ? "monster_kamikaze" : "monster_flyer");
   q2mpm_snd4(c, "medic_commander/monsterspawn1.wav", 4, 1, 0);
@@ -119,7 +121,7 @@ static void spawn_child(carrier_bundle *bundle, qa_q2m_context *c) {
   child->next_think = q2mpm_now(game);
   if (child->think.fn) child->think.fn(child->think.ctx, child, game);
   qa_q2m_context *child_context = qa_q2m_monsters_context(bundle->monsters, child->actor.id);
-  if (!child_context) qa_q2f_error("Carrier child has no source controller");
+  if (!child_context) qa_raise("Error", 0, 0, "Carrier child has no source controller");
   child_context->state->spawned_by = QA_Q2M_SPAWNED_CARRIER;
   child_context->state->do_not_count = true;
   child_context->state->ignore_shots = true;
@@ -137,11 +139,11 @@ static void spawn_child(carrier_bundle *bundle, qa_q2m_context *c) {
       child_context->state->lefty = false;
       child_context->state->attack_state = QA_Q2M_ATTACK_STRAIGHT;
       q2mpm_set_move(child_context, "flyer_move_kamikaze");
-      qa_q2f_combat_traits traits;
+      qa_combat_trait_changes traits;
       memset(&traits, 0, sizeof traits);
       traits.has_mass = true;
       traits.mass = 100;
-      game->host->combat.set_traits(game->host->combat.ctx, child->actor, traits);
+      qa_gameplay_authority_set_traits(game->host->combat, child->actor, traits);
       child_context->state->charging = true;
     }
   }
@@ -157,11 +159,11 @@ static void rail_move(qa_q2m_context *c) {
 }
 static void init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  double hp = fmax(2000, 2000 + 1000 * (game->options.skill - 1))
-      + (strcmp(game->options.mode, "coop") == 0 ? 500 * game->options.skill : 0);
+  qa_q2_game_services *game = c->game;
+  double hp = qa_js_max(2000, 2000 + 1000 * (game->options.skill - 1))
+      + (game->options.mode == QA_Q2_MODE_COOP ? 500 * game->options.skill : 0);
   c->entity->max_health = hp;
-  game->host->combat.set_health(game->host->combat.ctx, c->entity->actor, hp);
+  qa_gameplay_authority_set_health(game->host->combat, c->entity->actor, hp);
   c->entity->laser_immune = true;
   c->state->ignore_shots = true;
   c->state->monster_slots = game->options.skill == 0 ? 3 : game->options.skill == 3 ? 9 : 6;
@@ -169,8 +171,8 @@ static void init_fn(void *ctx, qa_q2m_context *c) {
 }
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   carrier_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   state->hold_frame = false;
   if (!entity->has_enemy || !q2mpm_live(game, entity->enemy)) return;
@@ -227,8 +229,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   qa_vec3 eye;
@@ -243,8 +245,8 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
         state->attack_state = QA_Q2M_ATTACK_BLIND;
         return true;
       }
-      qa_q2f_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
-      if (!enemy_entity || enemy_entity->solid != QA_Q2F_SOLID_NONE || trace.fraction < 1) return false;
+      qa_q2_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
+      if (!enemy_entity || strcmp(enemy_entity->solid, "none") != 0 || trace.fraction < 1) return false;
     }
   }
   carrier_relation direction = relation_of(c, entity->enemy);
@@ -258,21 +260,21 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
     return true;
   }
   if (distance < 80) { state->attack_state = QA_Q2M_ATTACK_MISSILE; return true; }
-  qa_q2f_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
+  qa_q2_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
   if (q2mpm_rnd(game) < (state->stand_ground ? 0.4 : distance < 1000 ? 0.8 : 0.5)
-      || (enemy_entity && enemy_entity->solid == QA_Q2F_SOLID_NONE)) {
+      || (enemy_entity && strcmp(enemy_entity->solid, "none") == 0)) {
     state->attack_state = QA_Q2M_ATTACK_MISSILE;
     return true;
   }
-  if (((uint32_t)entity->flags & 1u) != 0)
+  if ((qa_js_to_uint32(entity->flags) & 1u) != 0)
     state->attack_state = q2mpm_rnd(game) < 0.6 ? QA_Q2M_ATTACK_SLIDING : QA_Q2M_ATTACK_STRAIGHT;
   return false;
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
   qa_q2bm_damaged_skin(c);
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (game->options.skill == 3 || q2mpm_now(game) < state->pain_time) return;
   state->pain_time = q2mpm_now(game) + 5;
@@ -317,8 +319,8 @@ static void grenade_fn(void *ctx, qa_q2m_context *c) {
   coop_check(bundle, c);
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   double direction = q2mpm_rnd(game) < 0.5 ? -1 : 1;
   double time = trunc((q2mpm_now(game) - entity->timestamp) / 0.4);
   double right_spread = time == 0 ? 0.15 * direction : time == 2 ? -0.15 * direction : 0;
@@ -329,9 +331,9 @@ static void grenade_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 aim = qa_add3_double(qa_add3_double(qa_normalize3_double_hypot(qa_sub3_double(enemy.origin, start)),
                                               qa_scale3_double(axes.right, right_spread)),
                                qa_scale3_double(axes.up, up_spread));
-  aim.z = fmax(-0.5, fmin(0.15, aim.z));
+  aim.z = qa_js_max(-0.5, qa_js_min(0.15, aim.z));
   (void)c->weapons.fire_grenade(c->weapons.ctx, entity, game, start, aim, 50, 600, 2.5, 90, false, false, true, NULL);
-  qa_q2mpm_monster_flash(c, 53, start, aim);
+  qa_q2rm_monster_flash(c, 53, start, aim);
 }
 static void save_loc_fn(void *ctx, qa_q2m_context *c) {
   coop_check(ctx, c);
@@ -343,7 +345,7 @@ static void rail_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(c->game->options.edition, 147));
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(c->entity->pos1, start));
   c->weapons.fire_rail(c->weapons.ctx, c->entity, c->game, start, direction, 50, 100);
-  qa_q2mpm_monster_flash(c, 147, start, direction);
+  qa_q2rm_monster_flash(c, 147, start, direction);
   c->state->attack_finished = q2mpm_now(c->game) + 3;
 }
 static void attack_mg_fn(void *ctx, qa_q2m_context *c) { coop_check(ctx, c); q2mpm_set_move(c, "carrier_move_attack_mg"); }
@@ -412,13 +414,13 @@ static void spawn_check_fn(void *ctx, qa_q2m_context *c) {
   }
 }
 static const qa_q2bm_sound_spec sight_spec = {"carrier/sight.wav", 2, 1};
-qa_q2m_definition qa_q2mpm_create_carrier_definition(qa_q2m_monsters *monsters, qa_q2mpm_services services) {
-  carrier_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating carrier definition");
+qa_q2m_definition qa_q2mpm_create_carrier_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters, qa_q2mpm_services services) {
+  carrier_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating carrier definition");
   bundle->monsters = monsters;
   bundle->services = services;
-  qa_q2m_named_handler *callbacks = malloc(18 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating carrier definition");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 18 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating carrier definition");
   size_t n = 0;
   callbacks[n++] = (qa_q2m_named_handler){"carrier_run", {NULL, run_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"carrier_dead", {NULL, dead_fn}};
@@ -470,8 +472,8 @@ qa_q2m_definition qa_q2mpm_create_carrier_definition(qa_q2m_monsters *monsters, 
   definition.reactions.die = die_fn;
   definition.check_attack = check_attack_fn;
   qa_q2m_definition wrapped;
-  qa_q2f_named_think *storage = malloc((definition.source_callbacks.think_count + 1) * sizeof *storage);
-  if (!storage) qa_q2f_error("Out of memory creating carrier definition");
+  qa_q2_named_think *storage = qa_q2mpm_arena_alloc(arena, (definition.source_callbacks.think_count + 1) * sizeof *storage);
+  if (!storage) qa_raise("Error", 0, 0, "Out of memory creating carrier definition");
   qa_q2bm_with_boss_explosion_callbacks(&wrapped, &definition, monsters, storage);
   return wrapped;
 }

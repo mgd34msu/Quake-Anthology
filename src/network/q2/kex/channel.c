@@ -1,9 +1,12 @@
 /* Port of src/network/q2/kex/channel.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/kex/channel.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/network/q2/codecs/zpacket.h"
+#include "qa/foundation/support.h"
 #include <zlib.h>
 
 #include "qa/network/q2/constants.h"
@@ -62,30 +65,9 @@ static uint8_t *deflate_all(const uint8_t *payload, size_t length, size_t *out_l
   return out;
 }
 
+/* TS inflateSync(bytes, { maxOutputLength: KEX_MESSAGE_BYTES }); its errors propagate as is. */
 static uint8_t *inflate_all(const uint8_t *bytes, size_t length, size_t *out_length) {
-  size_t capacity = QA_KEX_MESSAGE_BYTES;
-  uint8_t *out = (uint8_t *)malloc(capacity);
-  if (out == NULL) return NULL;
-  z_stream stream;
-  memset(&stream, 0, sizeof stream);
-  if (inflateInit(&stream) != Z_OK) {
-    free(out);
-    qa_q2_throw_error("KEX decompression failed");
-  }
-  stream.next_in = (Bytef *)bytes;
-  stream.avail_in = (uInt)length;
-  stream.next_out = out;
-  stream.avail_out = (uInt)capacity;
-  int status = inflate(&stream, Z_FINISH);
-  size_t produced = stream.total_out;
-  inflateEnd(&stream);
-  /* TS inflateSync throws unless the stream ends within the bound. */
-  if (status != Z_STREAM_END) {
-    free(out);
-    qa_q2_throw_error("KEX decompression failed");
-  }
-  *out_length = produced;
-  return out;
+  return qa_q2_inflate_sync(bytes, length, false, QA_KEX_MESSAGE_BYTES, Z_FINISH, out_length);
 }
 
 bool qa_kex_channel_send(qa_kex_channel *channel, double kind, const uint8_t *payload,
@@ -199,7 +181,10 @@ static bool expand_message(double kind, uint8_t *bytes, size_t length,
     qa_q2_throw_error("Invalid compressed KEX game kind");
   }
   size_t inflated_len = 0;
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, bytes);
   uint8_t *inflated = inflate_all(bytes + 1, length - 1, &inflated_len);
+  qa_cleanup_pop(&node);
   free(bytes);
   if (inflated == NULL) return false;
   out->kind = (double)original;
@@ -208,12 +193,26 @@ static bool expand_message(double kind, uint8_t *bytes, size_t length,
   return true;
 }
 
+static bool channel_receive(qa_kex_channel *channel, qa_kex_packet *held, double now,
+                            qa_kex_message *out);
+static void packet_release(void *arg) { qa_kex_packet_free((qa_kex_packet *)arg); }
 bool qa_kex_channel_receive(qa_kex_channel *channel, const uint8_t *bytes, size_t length,
                             double now, qa_kex_message *out) {
   qa_kex_packet packet;
   if (!qa_kex_read_packet(bytes, length, &packet)) return false;
-  bool reliable = ((int32_t)packet.flags & 1) != 0;
-  bool sequential = ((int32_t)packet.flags & 2) != 0;
+  /* The packet's payload stays owned here until the body hands it on (and clears it). */
+  qa_cleanup node;
+  qa_cleanup_push(&node, packet_release, &packet);
+  bool result = channel_receive(channel, &packet, now, out);
+  qa_cleanup_pop(&node);
+  qa_kex_packet_free(&packet);
+  return result;
+}
+static bool channel_receive(qa_kex_channel *channel, qa_kex_packet *held, double now,
+                            qa_kex_message *out) {
+#define packet (*held)
+  bool reliable = (qa_js_to_int32(packet.flags) & 1) != 0;
+  bool sequential = (qa_js_to_int32(packet.flags) & 2) != 0;
   if (packet.kind == 130 && packet.flags == 0) {
     if (packet.payload_length != 3) {
       qa_kex_packet_free(&packet);
@@ -266,7 +265,7 @@ bool qa_kex_channel_receive(qa_kex_channel *channel, const uint8_t *bytes, size_
   }
   if (sequential) channel->incoming_sequence = (int64_t)packet.sequence;
   channel->received_at = now;
-  int32_t fragment = (int32_t)packet.flags & 12;
+  int32_t fragment = qa_js_to_int32(packet.flags) & 12;
   if (fragment == 0) {
     if (packet.kind < 0) {
       qa_kex_packet_free(&packet);
@@ -338,6 +337,7 @@ bool qa_kex_channel_receive(qa_kex_channel *channel, const uint8_t *bytes, size_
   qa_kex_packet_free(&packet);
   memset(out, 0, sizeof *out);
   return expand_message(kind, joined, joined_len, out);
+#undef packet
 }
 
 bool qa_kex_channel_tick(qa_kex_channel *channel, double now) {

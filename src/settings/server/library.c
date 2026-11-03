@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "qa/settings/server/library.h"
 
+#include "qa/foundation/support.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -12,15 +13,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_range(const char *text, size_t length) {
@@ -48,15 +50,7 @@ static bool profile_file_name(const char *name) {
 static int entry_compare(const void *left_raw, const void *right_raw) {
   const qa_server_profile_entry *left = (const qa_server_profile_entry *)left_raw;
   const qa_server_profile_entry *right = (const qa_server_profile_entry *)right_raw;
-  const unsigned char *a = (const unsigned char *)left->name;
-  const unsigned char *b = (const unsigned char *)right->name;
-  for (;; a++, b++) {
-    int delta = tolower(*a) - tolower(*b);
-    if (delta != 0 || *a == '\0') {
-      if (delta != 0) return delta;
-      return strcmp(left->name, right->name);
-    }
-  }
+  return qa_js_locale_compare(left->name, right->name); /* TS localeCompare */
 }
 
 void qa_server_profile_entries_free(qa_server_profile_entry *entries, size_t count) {
@@ -119,7 +113,7 @@ qa_server_profile_entry *qa_list_server_profiles(const qa_config_store *store,
   }
   closedir(dir);
   free(directory);
-  if (count > 1) qsort(entries, count, sizeof *entries, entry_compare);
+  if (count > 1) qa_js_sort(entries, count, sizeof *entries, entry_compare);
   *out_count = count;
   if (entries == NULL)
     entries = (qa_server_profile_entry *)calloc(1, sizeof(qa_server_profile_entry));

@@ -1,5 +1,6 @@
 /* Port of src/render/scene/particles/q3-system.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/particles/q3_system.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 #define ENTITYNUM_WORLD 1022
 
@@ -134,7 +136,7 @@ static registered_animation make_registered(const char *name,
   for (int i = 0; i < 6; i++)
     if (strcmp(ANIMATION_NAMES[i], name) == 0) count = ANIMATION_COUNTS[i];
   if ((double)frames.count != count)
-    qa_range_error("%s requires its %g registered source frames", name, count);
+    qa_range_error("%s requires its %s registered source frames", name, QA_JS_NUMBER(count));
   registered_animation out = {name, count, aspect_ratio, NULL};
   out.frames = calloc(frames.count ? frames.count : 1, sizeof *out.frames);
   if (out.frames != NULL)
@@ -223,7 +225,7 @@ void qa_particle_system_clear(qa_particle_system *system,
 }
 
 static particle *at_particle(qa_particle_system *s, long index) {
-  if (index < 0 || (size_t)index >= (size_t)s->capacity)
+  if (index < 0 || index >= (double)(size_t)s->capacity)
     qa_range_error("invalid particle slot %ld", index);
   return &particles_of(s)[index];
 }
@@ -324,14 +326,17 @@ void qa_particle_system_snow_flurry(qa_particle_system *s,
   } else { p->height = 1; p->width = 1; }
   p->type = PT_WEATHER_FLURRY;
   p->origin = entity.origin;
+  double x3 = f_add(f_mul(entity.angles.x, 32), f_mul(qa_game_random_crandom(rng(s)), 16));
+  double y3 = f_add(f_mul(entity.angles.y, 32), f_mul(qa_game_random_crandom(rng(s)), 16));
+  double z2 = f_add(-10, entity.angles.z);
   p->velocity = (qa_vec3){
-      f_add(f_mul(entity.angles.x, 32), f_mul(qa_game_random_crandom(rng(s)), 16)),
-      f_add(f_mul(entity.angles.y, 32), f_mul(qa_game_random_crandom(rng(s)), 16)),
-      f_add(-10, entity.angles.z)};
+      x3, y3, z2};
   /* vec3() stages each component */
   p->velocity = qa_math_vec3(p->velocity.x, p->velocity.y, p->velocity.z);
-  p->acceleration = qa_math_vec3(f_mul(qa_game_random_crandom(rng(s)), 16),
-                                 f_mul(qa_game_random_crandom(rng(s)), 16), 0);
+  double x2 = f_mul(qa_game_random_crandom(rng(s)), 16);
+  double y2 = f_mul(qa_game_random_crandom(rng(s)), 16);
+  p->acceleration = qa_math_vec3(x2,
+                                 y2, 0);
 }
 
 void qa_particle_system_snow(qa_particle_system *s,
@@ -351,14 +356,16 @@ void qa_particle_system_snow(qa_particle_system *s,
   p->shader = shader;
   p->height = 1; p->width = 1;
   p->type = turbulent ? PT_WEATHER_TURBULENT : PT_WEATHER;
+  double x3 = f_add(origin.x, f_mul(qa_game_random_crandom(rng(s)), range));
+  double y3 = f_add(origin.y, f_mul(qa_game_random_crandom(rng(s)), range));
+  double z3 = f_add(origin.z, f_mul(qa_game_random_crandom(rng(s)), f_sub(p->start, p->end)));
   p->origin = qa_math_vec3(
-      f_add(origin.x, f_mul(qa_game_random_crandom(rng(s)), range)),
-      f_add(origin.y, f_mul(qa_game_random_crandom(rng(s)), range)),
-      f_add(origin.z, f_mul(qa_game_random_crandom(rng(s)), f_sub(p->start, p->end))));
+      x3, y3, z3);
+  double x2 = turbulent ? f_mul(qa_game_random_crandom(rng(s)), 16) : 0;
+  double y2 = turbulent ? f_mul(qa_game_random_crandom(rng(s)), 16) : 0;
+  double z2 = turbulent ? f_mul(-50, 1.3) : -50;
   p->velocity = qa_math_vec3(
-      turbulent ? f_mul(qa_game_random_crandom(rng(s)), 16) : 0,
-      turbulent ? f_mul(qa_game_random_crandom(rng(s)), 16) : 0,
-      turbulent ? f_mul(-50, 1.3) : -50);
+      x2, y2, z2);
   p->acceleration = qa_math_vec3(0, 0, 0);
   p->snum = snum;
   p->link = true;
@@ -381,13 +388,16 @@ void qa_particle_system_bubble(qa_particle_system *s,
   double velocity_z = f_add(50, f_mul(qa_game_random_crandom(rng(s)), 10));
   if (turbulent) velocity_z = f_mul(50, 1.3);
   p->type = turbulent ? PT_BUBBLE_TURBULENT : PT_BUBBLE;
+  double x3 = f_add(origin.x, f_mul(qa_game_random_crandom(rng(s)), range));
+  double y3 = f_add(origin.y, f_mul(qa_game_random_crandom(rng(s)), range));
+  double z2 = f_add(origin.z, f_mul(qa_game_random_crandom(rng(s)), f_sub(p->start, p->end)));
   p->origin = qa_math_vec3(
-      f_add(origin.x, f_mul(qa_game_random_crandom(rng(s)), range)),
-      f_add(origin.y, f_mul(qa_game_random_crandom(rng(s)), range)),
-      f_add(origin.z, f_mul(qa_game_random_crandom(rng(s)), f_sub(p->start, p->end))));
+      x3, y3, z2);
+  double x2 = turbulent ? f_mul(qa_game_random_crandom(rng(s)), 4) : 0;
+  double y2 = turbulent ? f_mul(qa_game_random_crandom(rng(s)), 4) : 0;
   p->velocity = qa_math_vec3(
-      turbulent ? f_mul(qa_game_random_crandom(rng(s)), 4) : 0,
-      turbulent ? f_mul(qa_game_random_crandom(rng(s)), 4) : 0, velocity_z);
+      x2,
+      y2, velocity_z);
   p->acceleration = qa_math_vec3(0, 0, 0);
   p->snum = snum;
   p->link = true;
@@ -448,7 +458,7 @@ bool qa_particle_system_new_particle_area(qa_particle_system *s, double index) {
   const char *text = s->host.config_string(s->host.config_ctx, index);
   if (text == NULL || text[0] == '\0') return false;
   char name[128];
-  (void)snprintf(name, sizeof name, "particle configstring %lld", (long long)index);
+  (void)snprintf(name, sizeof name, "particle configstring %s", QA_JS_NUMBER(index));
   qa_tokenizer tokens;
   if (!qa_tokenizer_init(&tokens, text, strlen(text), name)) return false;
   char *raw[10] = {0};
@@ -645,15 +655,16 @@ void qa_particle_system_blood_pool(qa_particle_system *s,
 
 void qa_particle_system_blood_cloud(qa_particle_system *s,
                                     qa_vec3 origin, qa_vec3 direction) {
-  double count = fmax(1, f_div(qa_length3(direction), 32));
+  double count = qa_js_max(1, f_div(qa_length3(direction), 32));
   for (double index = 0; index < count; index++) {
     particle *p = allocate(s);
     if (p == NULL) return;
     p->alpha = 0.75;
     p->alpha_velocity = 0;
     p->shader = s->host.media.smoke_puff_shader;
-    p->end_time = f_add((double)qa_int32(state_time(s) + 350),
-                       f_mul(qa_game_random_crandom(rng(s)), 100));
+    double a = (double)qa_int32(state_time(s) + 350);
+    double b = f_mul(qa_game_random_crandom(rng(s)), 100);
+    p->end_time = f_add(a, b);
     p->start_fade = f32(state_time(s));
     p->width = p->height = p->end_height = p->end_width = 32;
     p->type = PT_SMOKE;
@@ -679,15 +690,20 @@ void qa_particle_system_sparks(qa_particle_system *s, qa_vec3 origin,
   p->height = p->width = p->end_height = p->end_width = 0.5;
   p->shader = s->host.media.tracer_shader;
   p->type = PT_SMOKE;
-  p->origin = qa_math_vec3(f_add(origin.x, f_mul(qa_game_random_crandom(rng(s)), x)),
-                           f_add(origin.y, f_mul(qa_game_random_crandom(rng(s)), y)),
+  double x4 = f_add(origin.x, f_mul(qa_game_random_crandom(rng(s)), x));
+  double y4 = f_add(origin.y, f_mul(qa_game_random_crandom(rng(s)), y));
+  p->origin = qa_math_vec3(x4,
+                           y4,
                            origin.z);
+  double x3 = f_add(velocity.x, f_mul(qa_game_random_crandom(rng(s)), 4));
+  double y3 = f_add(velocity.y, f_mul(qa_game_random_crandom(rng(s)), 4));
+  double z2 = f_add(velocity.z, f_mul(f_add(20, f_mul(qa_game_random_crandom(rng(s)), 10)), speed));
   p->velocity = qa_math_vec3(
-      f_add(velocity.x, f_mul(qa_game_random_crandom(rng(s)), 4)),
-      f_add(velocity.y, f_mul(qa_game_random_crandom(rng(s)), 4)),
-      f_add(velocity.z, f_mul(f_add(20, f_mul(qa_game_random_crandom(rng(s)), 10)), speed)));
-  p->acceleration = qa_math_vec3(f_mul(qa_game_random_crandom(rng(s)), 4),
-                                 f_mul(qa_game_random_crandom(rng(s)), 4), 0);
+      x3, y3, z2);
+  double x2 = f_mul(qa_game_random_crandom(rng(s)), 4);
+  double y2 = f_mul(qa_game_random_crandom(rng(s)), 4);
+  p->acceleration = qa_math_vec3(x2,
+                                 y2, 0);
 }
 
 qa_vec3 qa_particle_system_dust(qa_particle_system *s, qa_vec3 origin,
@@ -695,7 +711,7 @@ qa_vec3 qa_particle_system_dust(qa_particle_system *s, qa_vec3 origin,
   qa_vec3 negated = qa_math_vec3(-direction.x, -direction.y, -direction.z);
   double length = qa_length3(negated);
   qa_vec3 forward = qa_qvm_angle_vectors(qa_vector_to_angles(negated)).forward;
-  double count = fmax(1, f_div(length, 32));
+  double count = qa_js_max(1, f_div(length, 32));
   qa_vec3 point = origin;
   for (double index = 0; index < count; index++) {
     point = ma(point, 32, forward);
@@ -704,16 +720,18 @@ qa_vec3 qa_particle_system_dust(qa_particle_system *s, qa_vec3 origin,
     p->alpha = 0.75;
     p->alpha_velocity = 0;
     p->shader = s->host.media.smoke_puff_shader;
-    p->end_time = f_add((double)qa_int32(state_time(s) + (length != 0 ? 4500 : 750)),
-                       f_mul(qa_game_random_crandom(rng(s)), length != 0 ? 3500 : 500));
+    double a = (double)qa_int32(state_time(s) + (length != 0 ? 4500 : 750));
+    double b = f_mul(qa_game_random_crandom(rng(s)), length != 0 ? 3500 : 500);
+    p->end_time = f_add(a, b);
     p->start_fade = f32(state_time(s));
     p->width = p->height = length != 0 ? 32 : f_mul(32, 0.2);
     p->end_height = p->end_width = length != 0 ? 96 : 16;
     p->type = PT_SMOKE;
     p->origin = point;
-    p->velocity = qa_math_vec3(f_mul(qa_game_random_crandom(rng(s)), 6),
-                               f_mul(qa_game_random_crandom(rng(s)), 6),
-                               f_mul(qa_game_random_random(rng(s)), 20));
+    double x2 = f_mul(qa_game_random_crandom(rng(s)), 6);
+    double y2 = f_mul(qa_game_random_crandom(rng(s)), 6);
+    double z2 = f_mul(qa_game_random_random(rng(s)), 20);
+    p->velocity = qa_math_vec3(x2, y2, z2);
     (void)qa_game_random_crandom(rng(s));
     (void)qa_game_random_crandom(rng(s));
     p->acceleration = qa_math_vec3(0, 0, 0);
@@ -815,14 +833,17 @@ static void add_to_scene(qa_particle_system *s, particle *p, qa_vec3 origin,
       bool bubble = p->type == PT_BUBBLE || p->type == PT_BUBBLE_TURBULENT;
       if (p->type != PT_WEATHER_FLURRY) {
         if (bubble && origin.z > p->end) {
+          double x3;
+          double y3;
           p->time = f32(state_time(s));
           p->origin = qa_math_vec3(origin.x, origin.y,
                                    f_add(p->start, f_mul(qa_game_random_crandom(rng(s)), 4)));
           if (p->type == PT_BUBBLE_TURBULENT)
-            p->velocity = qa_math_vec3(f_mul(qa_game_random_crandom(rng(s)), 4),
-                                       f_mul(qa_game_random_crandom(rng(s)), 4),
-                                       p->velocity.z);
+            p->velocity = (x3 = f_mul(qa_game_random_crandom(rng(s)), 4), y3 = f_mul(qa_game_random_crandom(rng(s)), 4), qa_math_vec3(x3,
+                                       y3, p->velocity.z));
         } else if (!bubble && origin.z < p->end) {
+          double x2;
+          double y2;
           p->time = f32(state_time(s));
           double z = origin.z;
           while (z < p->end) {
@@ -833,9 +854,8 @@ static void add_to_scene(qa_particle_system *s, particle *p, qa_vec3 origin,
           }
           p->origin = qa_math_vec3(origin.x, origin.y, z);
           if (p->type == PT_WEATHER_TURBULENT)
-            p->velocity = qa_math_vec3(f_mul(qa_game_random_crandom(rng(s)), 16),
-                                       f_mul(qa_game_random_crandom(rng(s)), 16),
-                                       p->velocity.z);
+            p->velocity = (x2 = f_mul(qa_game_random_crandom(rng(s)), 16), y2 = f_mul(qa_game_random_crandom(rng(s)), 16), qa_math_vec3(x2,
+                                       y2, p->velocity.z));
         }
         if (!p->link) return;
         p->alpha = 1;
@@ -877,7 +897,7 @@ static void add_to_scene(qa_particle_system *s, particle *p, qa_vec3 origin,
       if (p->color == PC_BLOOD) color = (qa_vec3){0.22, 0, 0};
       else if (p->color == PC_GREY75) {
         double d = distance_to(s, origin, view_origin);
-        double grey = fmin(f_mul(0.25, f_div(4096, d == 0 ? 1 : d)), 0.5);
+        double grey = qa_js_min(f_mul(0.25, f_div(4096, d == 0 ? 1 : d)), 0.5);
         color = (qa_vec3){grey, grey, grey};
       }
       double inverse;
@@ -885,7 +905,7 @@ static void add_to_scene(qa_particle_system *s, particle *p, qa_vec3 origin,
         inverse = f_sub(1, f_div(f_sub(state_time(s), p->start_fade),
                                f_sub(p->end_time, p->start_fade)));
         if (p->color == PC_EMISSIVE_FADE) {
-          double fade = fmax(0, f_mul(inverse, inverse));
+          double fade = qa_js_max(0, f_mul(inverse, inverse));
           color = (qa_vec3){fade, fade, fade};
         }
         inverse = f_mul(inverse, p->alpha);
@@ -933,8 +953,8 @@ static void add_to_scene(qa_particle_system *s, particle *p, qa_vec3 origin,
       break;
     }
     case PT_FLAT_SCALE_UP: {
-      double width = fmin(f_add(p->width, f_mul(ratio, f_sub(p->end_width, p->width))), p->end_width);
-      double height = fmin(f_add(p->height, f_mul(ratio, f_sub(p->end_height, p->height))), p->end_height);
+      double width = qa_js_min(f_add(p->width, f_mul(ratio, f_sub(p->end_width, p->width))), p->end_width);
+      double height = qa_js_min(f_add(p->height, f_mul(ratio, f_sub(p->end_height, p->height))), p->end_height);
       double radians = f_div(f_mul(p->roll, f32(acos(-1.0))), 180);
       double root2 = f32(sqrt(2));
       double sine = f_mul(f_mul(height, f32(sin(radians))), root2);
@@ -963,8 +983,8 @@ static void add_to_scene(qa_particle_system *s, particle *p, qa_vec3 origin,
       if (distance_to(s, origin, view_origin) < f_div(width, 1.5)) return;
       registered_animation *animations = animations_of(s);
       if (!(p->shader_animation >= 0) || trunc(p->shader_animation) != p->shader_animation ||
-          (size_t)p->shader_animation >= s->animation_count)
-        qa_range_error("invalid particle animation %g", p->shader_animation);
+          p->shader_animation >= (double)s->animation_count)
+        qa_range_error("invalid particle animation %s", QA_JS_NUMBER(p->shader_animation));
       registered_animation *animation = &animations[(size_t)p->shader_animation];
       int32_t frame = qa_qvm_float_to_int(floor(f_mul(amount, animation->count)));
       if (frame < 0 || (double)frame >= animation->count)

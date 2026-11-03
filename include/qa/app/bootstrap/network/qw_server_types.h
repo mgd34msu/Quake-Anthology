@@ -21,10 +21,20 @@ typedef struct qa_app_qw_frame {
 typedef struct qa_app_qw_bytes { const uint8_t *data; size_t length; } qa_app_qw_bytes;
 typedef void (*qa_app_qw_action_fn)(void *ctx);
 typedef void (*qa_app_qw_emit_fn)(void *ctx, qa_app_qw_player recipient, const void *message);
+/* TS networkInfo's info: live address()/ping() of the admitted peer. ctx is
+ * owned by the server network and stays valid until the network is destroyed
+ * (after the peer leaves it reports the peer's last values, as the TS closure). */
+typedef struct qa_app_qw_network_info {
+  void *ctx;
+  const char *(*address)(void *ctx);
+  double (*ping)(void *ctx);
+} qa_app_qw_network_info;
 typedef struct qa_app_qw_server_host {
   void *ctx;
   const void *administration; const void *authentication;
-  double max_clients; bool paused;
+  double max_clients;
+  /* TS `get paused()`: read live at every use. NULL reads false. */
+  bool (*paused)(void *ctx);
   const void *const *(*masters)(void *ctx, size_t *out_count);
   const void *(*supports_source_wire)(void *ctx);
   qa_app_qw_admission (*admit)(void *ctx, const void *request);
@@ -32,6 +42,8 @@ typedef struct qa_app_qw_server_host {
   qa_app_qw_player (*recording_player)(void *ctx, qa_client_id client);
   const qa_app_qw_bytes *(*recording_signon)(void *ctx, qa_app_qw_player player, size_t *out_count);
   const void *(*client_info)(void *ctx, qa_app_qw_player player); /* string map, opaque */
+  /* TS networkInfo?(player, info): NULL is TS undefined. */
+  void (*network_info)(void *ctx, qa_app_qw_player player, qa_app_qw_network_info info);
   void (*command_phase)(void *ctx, qa_app_qw_player player, qa_app_qw_action_fn action, void *action_ctx,
       qa_app_qw_emit_fn emit, void *emit_ctx);
   void (*disconnect)(void *ctx, qa_app_qw_player player, const char *reason);

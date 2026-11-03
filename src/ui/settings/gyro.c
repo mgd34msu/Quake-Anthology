@@ -1,5 +1,6 @@
 /* Port of src/ui/settings/gyro.ts. GPL-2.0-or-later. */
 #include "qa/ui/settings/gyro.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 #include "qa/input/support.h"
 #include "qa/ui/common/layout.h"
 
@@ -133,8 +135,8 @@ static qa_ui_menu factory(void *v) {
   if (!have_device) status = "No controller connected.";
   else if (!capable) status = "This controller has no gyroscope.";
   else if (calibration.kind == QA_GYRO_CALIBRATION_CALIBRATING) {
-    snprintf(s->status, sizeof s->status, "Keep still: %d%%",
-             (int)llround(calibration.progress * 100));
+    snprintf(s->status, sizeof s->status, "Keep still: %s%%",
+             QA_JS_NUMBER(qa_js_round(calibration.progress * 100)));
     status = s->status;
   } else if (calibration.kind == QA_GYRO_CALIBRATION_READY)
     status = "Calibration complete.";

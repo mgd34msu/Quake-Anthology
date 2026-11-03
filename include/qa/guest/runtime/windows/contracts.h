@@ -77,6 +77,23 @@ typedef struct qa_windows_import_implementation {
                            const qa_call_value *arguments, size_t argument_count);
 } qa_windows_import_implementation;
 
+/* TS WindowsServiceHost heaps / reservations / tlsIndices / fiberSlots: kernel
+ * tables a game extends while it runs, held by the host so a process image can
+ * save them. Every array keeps TS Set/Map insertion order. */
+typedef struct qa_windows_kernel_reservation { qa_guest_core_address address; size_t size; } qa_windows_kernel_reservation;
+typedef struct qa_windows_fiber_slot {
+  int64_t index;
+  bool has_callback; qa_guest_core_address callback;
+  bool has_value; qa_guest_core_address value;
+} qa_windows_fiber_slot;
+typedef struct qa_windows_kernel_tables {
+  uint64_t *heaps; size_t heap_count, heap_cap;
+  qa_windows_kernel_reservation *reservations; size_t reservation_count, reservation_cap;
+  int64_t *tls; size_t tls_count, tls_cap;
+  qa_windows_fiber_slot *fls; size_t fls_count, fls_cap;
+} qa_windows_kernel_tables;
+void qa_windows_kernel_tables_free(qa_windows_kernel_tables *tables);
+
 typedef struct qa_windows_service_host {
   void *ctx;
   qa_mapped_guest_memory *memory;
@@ -109,6 +126,14 @@ typedef struct qa_windows_service_host {
   bool (*load_library)(void *ctx, const char *library, qa_guest_core_address *out);
   bool (*free_library)(void *ctx, qa_guest_core_address handle);
   const char *(*library_name)(void *ctx, qa_guest_core_address handle);
+  /* Host-side state that lives as long as the runtime (a TS closure's
+   * captures): release(resource) runs when the runtime is destroyed, in
+   * reverse order of ownership. */
+  void (*own)(void *ctx, void *resource, void (*release)(void *resource));
+  /* TS heaps/reservations/tlsIndices/fiberSlots; NULL: the kernel keeps private tables. */
+  qa_windows_kernel_tables *tables;
+  /* TS chargeBytes; NULL charges nothing (a host with no attached runner). */
+  void (*charge_bytes)(void *ctx, size_t byte_length);
 } qa_windows_service_host;
 
 /* Convenience wrappers mirroring host.method(...) call sites. */
@@ -133,6 +158,8 @@ bool qa_windows_load_library(qa_windows_service_host *host, const char *library,
 bool qa_windows_free_library(qa_windows_service_host *host, qa_guest_core_address handle);
 const char *qa_windows_library_name(qa_windows_service_host *host, qa_guest_core_address handle);
 const qa_pe_image *const *qa_windows_images(qa_windows_service_host *host, size_t *count);
+void qa_windows_own(qa_windows_service_host *host, void *resource, void (*release)(void *resource));
+void qa_windows_charge_bytes(qa_windows_service_host *host, size_t byte_length);
 
 /* TS throw new UnsupportedWindowsImport(library, symbol, context, detail?). */
 void qa_unsupported_windows_import(const char *library, const char *symbol, const char *detail);

@@ -1,5 +1,6 @@
 /* Port of src/movement/q2/types.ts. GPL-2.0-or-later. */
 #include "qa/movement/q2/types.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -21,7 +22,7 @@ double qa_q2_element(const double *values, size_t length, double index) {
   } else if (index == trunc(index) && fabs(index) < 1e15) {
     snprintf(text, sizeof text, "%lld", (long long)index);
   } else {
-    snprintf(text, sizeof text, "%g", index);
+    snprintf(text, sizeof text, "%s", QA_JS_NUMBER(index));
   }
   qa_range_error("Quake II movement index %s outside %zu", text, length);
 }

@@ -19,6 +19,11 @@
 #include "qa/network/q3/parse_entities.h"
 #include "qa/network/q3/admission.h"
 #include "qa/network/q3/game_state.h"
+#include "qa/foundation/js.h"
+#include "qa/core/numeric.h"
+/* TS `throw new Error(message)`. */
+#define js_error(...) qa_raise("Error", 0, 0, __VA_ARGS__)
+static void release_string(void *arg) { char **text = arg; free(*text); *text = NULL; }
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -41,23 +46,28 @@ struct qa_app_q3_remote {
   qa_actor_configuration published_configuration[1];
   qa_scene_snapshot_world published_world;
   qa_byte_view published_area_bits;
-  qa_inventory_entry *ui_inventory; size_t ui_inventory_cap;
+  /* q3GuestPlayerUi output buffers; playerUi results borrow them until the next call. */
+  qa_app_guest_player_ui ui;
   double game_state_message, game_state_commands;
   qa_app_presentation_prediction_adapter *prediction;
   char **source_records; size_t source_record_count;
   char **server_command; size_t server_command_count;
+  char *system_info; /* the source's systemInfo() result until the next call */
+  struct source_ctx { qa_app_q3_remote *remote; } source_ctx;
+  struct entities_ctx { qa_app_q3_remote *remote; } entities_ctx;
 };
 static qa_actor_id actor_at(qa_app_q3_remote *remote, double number) {
   if (number != trunc(number) || number < 0 || number >= 1024)
-    qa_range_error("Invalid Q3 source entity");
+    js_error("Invalid Q3 source entity");
   for (size_t i = 0; i < remote->actor_count; i++)
     if (remote->actors[i].number == number) return remote->actors[i].actor;
   qa_actor_id actor = remote->options.identity_actor(remote->options.ctx, number,
       remote->options.next_generation(remote->options.ctx, number));
   if (remote->actor_count == remote->actor_cap) {
-    remote->actor_cap = remote->actor_cap ? remote->actor_cap * 2 : 64;
-    remote->actors = realloc(remote->actors, remote->actor_cap * sizeof *remote->actors);
-    if (!remote->actors) qa_range_error("out of memory");
+    size_t cap = remote->actor_cap ? remote->actor_cap * 2 : 64;
+    void *grown = realloc(remote->actors, cap * sizeof *remote->actors);
+    if (!grown) qa_range_error("out of memory");
+    remote->actors = grown; remote->actor_cap = cap;
   }
   remote->actors[remote->actor_count].number = number;
   remote->actors[remote->actor_count].actor = actor;
@@ -73,93 +83,113 @@ static bool is_demo(qa_app_q3_remote *remote) {
   const qa_q3_client_mode *mode = qa_q3_client_connection_get_mode(remote->connection);
   return mode && mode->kind == QA_Q3_CLIENT_MODE_DEMO;
 }
-typedef struct entities_ctx { qa_app_q3_remote *remote; } entities_ctx;
+typedef struct entities_ctx entities_ctx;
+/* TS `{ actorAt: number => this.actorAt(number) }`: an invalid number throws. */
 static bool entities_actor_at(void *ctx, double number, qa_actor_id *out) {
   entities_ctx *entities = ctx;
-  if (number == trunc(number) && number >= 0 && number < 1024) {
-    *out = actor_at(entities->remote, number);
-    return true;
-  }
-  return false;
+  *out = actor_at(entities->remote, number);
+  return true;
 }
 static bool entities_number_of(void *ctx, qa_actor_id actor, double *out) {
   entities_ctx *entities = ctx;
   return qa_app_q3_remote_number_of(entities->remote, actor, out);
 }
-static qa_app_prediction_source_entities source_entities(qa_app_q3_remote *remote,
-    entities_ctx *storage) {
-  storage->remote = remote;
-  qa_app_prediction_source_entities entities = {storage, entities_actor_at, entities_number_of};
+static qa_app_prediction_source_entities source_entities(qa_app_q3_remote *remote) {
+  remote->entities_ctx.remote = remote;
+  qa_app_prediction_source_entities entities = {&remote->entities_ctx, entities_actor_at, entities_number_of};
   return entities;
 }
+static void release_retail(void *arg) { qa_q3_pres_retail_snapshot_destroy(arg); }
+/* TS predictionSnapshot(): the base carries the recipe providers, playerUi ammo,
+ * bounds and view offset; readPredictionSourceState replaces the source-owned
+ * fields from the retail player state. The result owns its ammo array
+ * (qa_app_movement_prediction_snapshot_destroy). */
 static qa_app_movement_prediction_snapshot prediction_snapshot(qa_app_q3_remote *remote) {
-  if (!remote->has_current)
-    qa_range_error("Q3 prediction needs a snapshot");
   qa_app_q3_player player;
-  if (!qa_app_q3_remote_player(remote, &player)) qa_range_error("Q3 prediction needs a snapshot");
+  if (!remote->has_current || !qa_app_q3_remote_player(remote, &player)) js_error("Q3 prediction needs a snapshot");
   const qa_q3_player_state_record *ps = &remote->current.player_state;
   qa_q3_adapted_player_state adapted;
   qa_q3_to_player_state(ps, &adapted);
-  qa_q3_player_state canonical = adapted.state;
+  const qa_q3_player_state *canonical = &adapted.state;
   const qa_executable_recipe *recipe = recipe_of(remote);
-  entities_ctx storage;
-  qa_app_prediction_source_entities entities = source_entities(remote, &storage);
-  qa_app_movement_prediction_snapshot base = {0};
+  qa_app_prediction_source_entities entities = source_entities(remote);
+  qa_app_movement_prediction_snapshot base;
+  memset(&base, 0, sizeof base);
   base.sequence = remote->connection
       ? (double)qa_q3_wire_command_history_current_number(
             qa_q3_client_connection_commands(remote->connection)) : 0;
-  base.command_time_milliseconds = canonical.command_time_milliseconds;
+  base.command_time_milliseconds = canonical->command_time_milliseconds;
   base.state.kind = QA_MOVEMENT_STATE_Q3;
-  base.state.as.q3.command_time_milliseconds = canonical.command_time_milliseconds;
-  base.state.as.q3.movement_type = canonical.movement_type;
-  base.state.as.q3.bob_cycle = canonical.bob_cycle;
-  base.state.as.q3.movement_flags = canonical.movement_flags;
-  base.state.as.q3.movement_time_milliseconds = canonical.movement_time_milliseconds;
-  base.state.as.q3.origin = canonical.origin;
-  base.state.as.q3.velocity = canonical.velocity;
-  base.state.as.q3.gravity = canonical.gravity;
-  base.state.as.q3.speed = canonical.speed;
-  base.state.as.q3.delta_angle_words = canonical.delta_angle_words;
-  base.state.as.q3.movement_direction = canonical.movement_direction;
-  base.state.as.q3.grapple_point = canonical.grapple_point;
-  base.state.as.q3.flags = canonical.flags;
-  base.state.as.q3.view_angles = canonical.view_angles;
-  base.state.as.q3.view_height = canonical.view_height;
-  qa_q3_pres_retail_snapshot retail = {0};
+  qa_q3_movement_state *state = &base.state.as.q3;
+  state->command_time_milliseconds = canonical->command_time_milliseconds;
+  state->movement_type = canonical->movement_type;
+  state->bob_cycle = canonical->bob_cycle;
+  state->movement_flags = canonical->movement_flags;
+  state->movement_time_milliseconds = canonical->movement_time_milliseconds;
+  state->origin = canonical->origin;
+  state->velocity = canonical->velocity;
+  state->gravity = canonical->gravity;
+  state->speed = canonical->speed;
+  state->delta_angle_words = canonical->delta_angle_words;
+  state->movement_direction = canonical->movement_direction;
+  state->grapple_point = canonical->grapple_point;
+  state->flags = canonical->flags;
+  state->view_angles = canonical->view_angles;
+  state->view_height = canonical->view_height;
+  state->ground = qa_app_prediction_source_hit((double)ps->ground_entity_num, entities);
+  state->predictable_event_sequence = (double)ps->event_sequence;
+  qa_actor_id jump_pad;
+  if (ps->jumppad_ent != 0) { jump_pad = actor_at(remote, (double)ps->jumppad_ent); state->jump_pad = &jump_pad; }
+  state->movement_frame = (double)ps->pmove_framecount;
+  state->jump_pad_frame = (double)ps->jumppad_frame;
+  qa_app_sim_player_ui ui = qa_app_q3_remote_player_ui(remote, player.actor);
+  const qa_q3_weapon_item *weapon = qa_q3_get_weapon_item((double)ps->weapon);
+  base.arsenal.provider = recipe->inventory.provider;
+  base.arsenal.active_weapon = weapon ? weapon->item : NULL;
+  base.arsenal.ammo = ui.inventory;
+  base.arsenal.ammo_count = ui.inventory_count;
+  base.arsenal.state.kind = "q3";
+  base.arsenal.state.source_weapon = (double)ps->weapon;
+  base.arsenal.state.state = (double)ps->weapon_state;
+  base.arsenal.state.time_milliseconds = (double)ps->weapon_time;
+  base.animation.provider = recipe->character.definition.provider;
+  base.animation.state.kind = "q3";
+  base.animation.state.legs = (double)ps->legs_anim;
+  base.animation.state.torso = (double)ps->torso_anim;
+  base.animation.state.legs_timer_milliseconds = (double)ps->legs_timer;
+  base.animation.state.torso_timer_milliseconds = (double)ps->torso_timer;
+  base.environment.health = (double)ps->stats[0];
+  base.environment.gravity_multiplier = 1;
+  base.bounds = (qa_bounds){{-15, -15, -24}, {15, 15, 32}};
+  base.view_angles = canonical->view_angles;
+  base.view_height = canonical->view_height;
+  base.view_offset = (qa_vec3){0, 0, canonical->view_height};
+  qa_q3_pres_retail_snapshot retail;
+  memset(&retail, 0, sizeof retail);
   if (!qa_q3_pres_retail_snapshot_from_wire(&retail, &remote->current))
     qa_range_error("out of memory");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_retail, &retail);
   qa_app_movement_prediction_snapshot result =
       qa_app_read_prediction_source_state(base, &retail.player_state, entities);
+  qa_cleanup_pop(&guard);
   qa_q3_pres_retail_snapshot_destroy(&retail);
-  /* Re-apply TS base fields readPredictionSourceState does not own. */
-  result.view_angles = canonical.view_angles;
-  result.view_height = canonical.view_height;
-  result.view_offset = (qa_vec3){0, 0, canonical.view_height};
-  result.bounds = (qa_bounds){{-15, -15, -24}, {15, 15, 32}};
-  result.environment.health = canonical.stats.values ? canonical.stats.values[0] : 0;
-  result.environment.gravity_multiplier = 1;
-  qa_app_sim_player_ui ui = qa_app_q3_remote_player_ui(remote, player.actor);
-  result.arsenal.provider = recipe->inventory.provider;
-  const qa_q3_weapon_item *weapon = qa_q3_get_weapon_item((double)ps->weapon);
-  result.arsenal.active_weapon = weapon ? weapon->item : NULL;
-  result.arsenal.ammo = ui.inventory;
-  result.arsenal.ammo_count = ui.inventory_count;
-  result.arsenal.state.kind = "q3";
-  result.arsenal.state.source_weapon = (double)ps->weapon;
-  result.arsenal.state.state = (double)ps->weapon_state;
-  result.arsenal.state.time_milliseconds = (double)ps->weapon_time;
-  result.animation.provider = recipe->character.definition.provider;
-  result.animation.state.kind = "q3";
-  result.animation.state.legs = (double)ps->legs_anim;
-  result.animation.state.torso = (double)ps->torso_anim;
-  result.animation.state.legs_timer_milliseconds = (double)ps->legs_timer;
-  result.animation.state.torso_timer_milliseconds = (double)ps->torso_timer;
   return result;
 }
+static void release_prediction(void *arg) { qa_app_movement_prediction_snapshot_destroy(arg); }
+static void capture_prediction(qa_app_q3_remote *remote) {
+  qa_app_movement_prediction_snapshot capture = prediction_snapshot(remote);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_prediction, &capture);
+  qa_app_presentation_prediction_adapter_capture(remote->prediction, capture);
+  qa_cleanup_pop(&guard);
+  qa_app_movement_prediction_snapshot_destroy(&capture);
+}
 static void publish_remote(qa_app_q3_remote *remote, double time) {
-  if (!remote->has_current || !qa_app_remote_world_loaded(remote->world)) return;
+  /* TS reads this.player (actorAt) before testing world.ready. */
   qa_app_q3_player player;
-  if (!qa_app_q3_remote_player(remote, &player)) return;
+  if (!remote->has_current || !qa_app_q3_remote_player(remote, &player)) return;
+  if (!qa_app_remote_world_loaded(remote->world)) return;
   const qa_executable_recipe *recipe = recipe_of(remote);
   const qa_q3_wire_snapshot *snapshot = &remote->current;
   const qa_q3_player_state_record *ps = &snapshot->player_state;
@@ -174,9 +204,9 @@ static void publish_remote(qa_app_q3_remote *remote, double time) {
     if (entity->number == ps->client_num) continue;
     qa_body_snapshot *body = &remote->published_bodies[count];
     body->actor = actor_at(remote, (double)entity->number);
-    body->body.origin = entity->origin;
-    body->body.angles = entity->angles;
-    body->body.velocity = (qa_vec3){0, 0, 0};
+    body->body.origin = entity->pos.base;
+    body->body.angles = entity->apos.base;
+    body->body.velocity = entity->pos.delta;
     body->body.bounds = bounds;
     body->body.ground = NULL;
     remote->published_actors[count].id = body->actor;
@@ -257,11 +287,14 @@ void qa_app_q3_remote_destroy(qa_app_q3_remote *remote) {
   free(remote->actors);
   free(remote->published_bodies);
   free(remote->published_actors);
-  free(remote->ui_inventory);
+  free(remote->ui.powerups);
+  free(remote->ui.inventory);
+  free(remote->ui.items);
   for (size_t i = 0; i < remote->source_record_count; i++) free(remote->source_records[i]);
   free(remote->source_records);
   for (size_t i = 0; i < remote->server_command_count; i++) free(remote->server_command[i]);
   free(remote->server_command);
+  free(remote->system_info);
   free(remote);
 }
 qa_client_id qa_app_q3_remote_client(const qa_app_q3_remote *remote) {
@@ -293,7 +326,7 @@ bool qa_app_q3_remote_player(const qa_app_q3_remote *remote, qa_app_q3_player *o
   return true;
 }
 qa_app_q3_player qa_app_q3_remote_admitted_player(qa_app_q3_remote *remote) {
-  if (!remote->connection) qa_range_error("Q3 seat has no decoded connection");
+  if (!remote->connection) js_error("Q3 seat has no decoded connection");
   double number = (double)qa_q3_client_connection_client_number(remote->connection);
   qa_app_q3_player player = {0};
   player.actor = actor_at(remote, number);
@@ -302,11 +335,11 @@ qa_app_q3_player qa_app_q3_remote_admitted_player(qa_app_q3_remote *remote) {
   return player;
 }
 const qa_q3_player_state_record *qa_app_q3_remote_initial_player(qa_app_q3_remote *remote) {
-  if (!remote->has_current) qa_range_error("Q3 cgame needs its first decoded player state");
+  if (!remote->has_current) js_error("Q3 cgame needs its first decoded player state");
   return &remote->current.player_state;
 }
 const qa_app_q3_client_source *qa_app_q3_remote_cgame_source(qa_app_q3_remote *remote) {
-  if (!remote->has_source) qa_range_error("Q3 cgame has no connection source");
+  if (!remote->has_source) js_error("Q3 cgame has no connection source");
   return &remote->source;
 }
 static void free_strings(char ***strings, size_t *count) {
@@ -344,7 +377,7 @@ bool qa_app_q3_remote_is_player(qa_app_q3_remote *remote, qa_actor_id actor) {
   double number = 0;
   return qa_app_q3_remote_number_of(remote, actor, &number) && number < 64;
 }
-typedef struct source_ctx { qa_app_q3_remote *remote; } source_ctx;
+typedef struct source_ctx source_ctx;
 static size_t source_game_state(void *ctx, const char *const **strings) {
   source_ctx *source = ctx;
   size_t count = 0;
@@ -379,18 +412,78 @@ static void history_print(void *ctx, const char *message) {
   qa_app_q3_remote *remote = ctx;
   remote->options.print(remote->options.ctx, message);
 }
+/* The ApplicationQ3ClientSource getters over the attached connection. */
+static bool source_demo(void *ctx) { return is_demo(((source_ctx *)ctx)->remote); }
+static double source_time(void *ctx) { return (double)qa_q3_client_clock_time(((source_ctx *)ctx)->remote->clock); }
+static double source_client_number(void *ctx) {
+  return (double)qa_q3_client_connection_client_number(((source_ctx *)ctx)->remote->connection);
+}
+static double source_server_message_sequence(void *ctx) { return ((source_ctx *)ctx)->remote->game_state_message; }
+static double source_last_executed_server_command(void *ctx) { return ((source_ctx *)ctx)->remote->game_state_commands; }
+/* systemInfo: () => connection.gameState.get(1) ?? "" */
+static const char *source_system_info(void *ctx) {
+  qa_app_q3_remote *remote = ((source_ctx *)ctx)->remote;
+  free(remote->system_info);
+  remote->system_info = NULL;
+  char *value = NULL;
+  if (!qa_q3_client_game_state_storage_get(qa_q3_client_connection_game_state(remote->connection), 1, &value))
+    qa_range_error("out of memory");
+  if (value == NULL) {
+    value = malloc(1);
+    if (value == NULL) qa_range_error("out of memory");
+    value[0] = '\0';
+  }
+  remote->system_info = value;
+  return value;
+}
+/* snapshotPing: number => connection.snapshotPing(number) (false is null). */
+static bool source_snapshot_ping(void *ctx, double number, double *out) {
+  int64_t ping = 0;
+  if (!qa_q3_client_connection_snapshot_ping(((source_ctx *)ctx)->remote->connection, (int64_t)number, &ping)) return false;
+  *out = (double)ping;
+  return true;
+}
+/* commands: { currentNumber, read: number => ({ ...value, angles: { x, y, z } }) }. */
+static double source_command_number(void *ctx) {
+  return (double)qa_q3_wire_command_history_current_number(qa_q3_client_connection_commands(((source_ctx *)ctx)->remote->connection));
+}
+static bool source_command_read(void *ctx, double number, qa_q3_base_user_command *out) {
+  qa_q3_wire_user_command value;
+  if (!qa_q3_wire_command_history_read(qa_q3_client_connection_commands(((source_ctx *)ctx)->remote->connection),
+                                       (int64_t)number, &value))
+    return false;
+  out->server_time = value.server_time;
+  out->angles = (qa_vec3){value.angles[0], value.angles[1], value.angles[2]};
+  out->buttons = value.buttons;
+  out->weapon = value.weapon;
+  out->forwardmove = value.forwardmove;
+  out->rightmove = value.rightmove;
+  out->upmove = value.upmove;
+  return true;
+}
 void qa_app_q3_remote_attach(qa_app_q3_remote *remote, qa_q3_client_connection *connection) {
   remote->connection = connection;
   qa_q3_pres_history_snapshot_source_init(&remote->history_source,
       qa_q3_client_connection_history(connection), connection,
       history_parse_entities, history_print);
   remote->history_init = true;
-  source_ctx *ctx = xmalloc(sizeof *ctx);
-  ctx->remote = remote;
-  remote->source.ctx = ctx;
+  remote->source_ctx.remote = remote;
+  remote->source.ctx = &remote->source_ctx;
   remote->source.game_state = source_game_state;
   remote->source.server_command = source_server_command;
   remote->source.actor_at = source_actor_at;
+  remote->source.demo = source_demo;
+  remote->source.commands.ctx = &remote->source_ctx;
+  remote->source.commands.current_number = source_command_number;
+  remote->source.commands.read = source_command_read;
+  remote->source.snapshots = qa_q3_pres_history_snapshot_source_as_source(&remote->history_source);
+  remote->source.client_number = source_client_number;
+  remote->source.time = source_time;
+  remote->source.server_message_sequence = source_server_message_sequence;
+  remote->source.last_executed_server_command = source_last_executed_server_command;
+  remote->source.system_info = source_system_info;
+  remote->source.sound_actor = NULL; /* the remote source has no soundActor */
+  remote->source.snapshot_ping = source_snapshot_ping;
   remote->has_source = true;
 }
 void qa_app_q3_remote_clear_active(qa_app_q3_remote *remote,
@@ -415,57 +508,77 @@ void qa_app_q3_remote_clear_active(qa_app_q3_remote *remote,
 }
 void qa_app_q3_remote_system_info(qa_app_q3_remote *remote, const char *info) {
   char *pure = qa_q3_info_value(info, "sv_pure");
-  double pure_value = pure ? strtod(pure, NULL) : 0;
+  double pure_value = pure ? qa_js_string_to_number(pure) : 0;
   free(pure);
   if (!is_demo(remote) && pure_value != 0 && !remote->options.initialize)
-    qa_range_error("This server requires pure verification, which is not supported yet.");
+    js_error("This server requires pure verification, which is not supported yet.");
   char *game = qa_q3_info_value(info, "fs_game");
+  if (!game) qa_range_error("out of memory");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_string, &game);
   qa_remote_content_selection selection;
-  if (!qa_remote_content_selection_make("q3-baseq3", game ? game : "", &selection))
+  if (!qa_remote_content_selection_make("q3-baseq3", game, &selection))
     qa_range_error("out of memory");
+  qa_cleanup_pop(&guard);
   qa_remote_content_selection_free(&selection);
   free(game);
 }
 static char *game_state_get(qa_app_q3_remote *remote, int64_t index) {
   char *out = NULL;
-  qa_q3_client_game_state_storage_get(
-      qa_q3_client_connection_game_state(remote->connection), index, &out);
+  if (!qa_q3_client_game_state_storage_get(
+          qa_q3_client_connection_game_state(remote->connection), index, &out))
+    qa_range_error("out of memory");
   return out;
 }
-void qa_app_q3_remote_gamestate(qa_app_q3_remote *remote, const qa_q3_gamestate *state,
-    double generation, qa_app_q3_remote_assert_fn assert_current, void *assert_ctx) {
-  (void)generation;
-  assert_current(assert_ctx);
-  if (!remote->connection) qa_range_error("Q3 gamestate has no connection");
-  char *info = game_state_get(remote, 0);
-  char *protocol = qa_q3_info_value(info ? info : "", "protocol");
-  if (!protocol || strcmp(protocol, "68") != 0) {
-    free(protocol);
-    free(info);
-    qa_range_error("Q3 remote requires protocol 68");
+/* Owned scratch of one gamestate. The server-provided info string reaches
+ * q3InfoValue (CommonError on an oversize infostring), and assertCurrent,
+ * downloads.prepare, loadContent and initialize are host code that raise; a
+ * catching caller loses nothing. */
+typedef struct {
+  char *info, *text, *map, *map_path;
+  char *models[256]; size_t model_count;
+  char *sounds[256]; size_t sound_count;
+} gamestate_scratch;
+static void gamestate_scratch_release(void *arg) {
+  gamestate_scratch *sc = arg;
+  free(sc->info); free(sc->text); free(sc->map); free(sc->map_path);
+  for (size_t i = 0; i < sc->model_count; i++) free(sc->models[i]);
+  for (size_t i = 0; i < sc->sound_count; i++) free(sc->sounds[i]);
+  memset(sc, 0, sizeof *sc);
+}
+/* names(first, count): nonempty configstrings in index order. */
+static void gamestate_names(qa_app_q3_remote *remote, int64_t first, char **names, size_t *count) {
+  for (int64_t i = 0; i < 256; i++) {
+    char *value = game_state_get(remote, first + i);
+    if (value && value[0] != '\0') names[(*count)++] = value;
+    else free(value);
   }
-  free(protocol);
-  char *type_text = qa_q3_info_value(info, "g_gametype");
-  double game_type = type_text ? strtod(type_text, NULL) : NAN;
-  free(type_text);
-  if (game_type != trunc(game_type) || game_type < 0 || game_type > 4) {
-    free(info);
-    qa_range_error("Q3 remote requires a baseq3 game type");
-  }
-  char *map = qa_q3_info_value(info, "mapname");
-  bool valid = map && map[0] != '\0';
-  for (const char *p = map; valid && *p; p++) {
+}
+static bool valid_map_name(const char *map) {
+  if (!map[0] || strstr(map, "..")) return false;
+  for (const char *p = map; *p; p++) {
     char c = *p;
     if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-        || c == '_' || c == '/' || c == '-')) valid = false;
+        || c == '_' || c == '/' || c == '-')) return false;
   }
-  if (valid && strstr(map, "..")) valid = false;
-  if (!valid) {
-    free(map);
-    free(info);
-    qa_range_error("Invalid Q3 remote map name");
-  }
-  free(info);
+  return true;
+}
+static void gamestate_body(qa_app_q3_remote *remote, gamestate_scratch *sc, const qa_q3_gamestate *state,
+    qa_app_q3_remote_assert_fn assert_current, void *assert_ctx) {
+  sc->info = game_state_get(remote, 0);
+  if (!sc->info) { sc->info = malloc(1); if (!sc->info) qa_range_error("out of memory"); sc->info[0] = 0; }
+  sc->text = qa_q3_info_value(sc->info, "protocol");
+  if (!sc->text) qa_range_error("out of memory");
+  if (strcmp(sc->text, "68") != 0) js_error("Q3 remote requires protocol 68");
+  free(sc->text);
+  sc->text = qa_q3_info_value(sc->info, "g_gametype");
+  if (!sc->text) qa_range_error("out of memory");
+  double game_type = qa_js_string_to_number(sc->text);
+  if (game_type != trunc(game_type) || game_type < 0 || game_type > 4)
+    js_error("Q3 remote requires a baseq3 game type");
+  sc->map = qa_q3_info_value(sc->info, "mapname");
+  if (!sc->map) qa_range_error("out of memory");
+  if (!valid_map_name(sc->map)) js_error("Invalid Q3 remote map name");
   remote->game_state_message =
       (double)qa_q3_client_connection_server_message_sequence(remote->connection);
   remote->game_state_commands = (double)state->command_sequence;
@@ -475,76 +588,67 @@ void qa_app_q3_remote_gamestate(qa_app_q3_remote *remote, const qa_q3_gamestate 
           : false;
   assert_current(assert_ctx);
   remote->loading_downloads = downloading;
-  if (downloading) {
-    free(map);
-    return;
-  }
-  char **model_names = xmalloc(256 * sizeof *model_names);
-  size_t model_count = 0;
-  for (int64_t i = 0; i < 256; i++) {
-    char *value = game_state_get(remote, 32 + i);
-    if (value && value[0] != '\0') model_names[model_count++] = value;
-    else free(value);
-  }
-  char **sound_names = xmalloc(256 * sizeof *sound_names);
-  size_t sound_count = 0;
-  for (int64_t i = 0; i < 256; i++) {
-    char *value = game_state_get(remote, 288 + i);
-    if (value && value[0] != '\0') sound_names[sound_count++] = value;
-    else free(value);
-  }
-  char *map_path = xmalloc(strlen(map) + 10);
-  snprintf(map_path, strlen(map) + 10, "maps/%s.bsp", map);
-  void *content = remote->options.load_content(remote->options.ctx, map_path,
-      (const char *const *)model_names, model_count,
-      (const char *const *)sound_names, sound_count, remote->connection);
+  if (downloading) return;
+  size_t path_size = strlen(sc->map) + sizeof "maps/.bsp";
+  sc->map_path = xmalloc(path_size);
+  snprintf(sc->map_path, path_size, "maps/%s.bsp", sc->map);
+  gamestate_names(remote, 32, sc->models, &sc->model_count);
+  gamestate_names(remote, 288, sc->sounds, &sc->sound_count);
+  void *content = remote->options.load_content(remote->options.ctx, sc->map_path,
+      (const char *const *)sc->models, sc->model_count,
+      (const char *const *)sc->sounds, sc->sound_count, remote->connection);
   assert_current(assert_ctx);
   qa_app_remote_world_set_loaded(remote->world, content);
   if (remote->options.initialize)
     remote->options.initialize(remote->options.ctx, remote->connection);
   assert_current(assert_ctx);
-  for (size_t i = 0; i < model_count; i++) free(model_names[i]);
-  free(model_names);
-  for (size_t i = 0; i < sound_count; i++) free(sound_names[i]);
-  free(sound_names);
-  free(map_path);
-  free(map);
+}
+void qa_app_q3_remote_gamestate(qa_app_q3_remote *remote, const qa_q3_gamestate *state,
+    double generation, qa_app_q3_remote_assert_fn assert_current, void *assert_ctx) {
+  (void)generation; /* TS `_generation`: unused by the remote presentation */
+  assert_current(assert_ctx);
+  if (!remote->connection) js_error("Q3 gamestate has no connection");
+  gamestate_scratch *sc = calloc(1, sizeof *sc);
+  if (!sc) qa_range_error("out of memory");
+  qa_cleanup scratch_guard, release_guard;
+  qa_cleanup_push(&scratch_guard, free, sc);
+  qa_cleanup_push(&release_guard, gamestate_scratch_release, sc);
+  gamestate_body(remote, sc, state, assert_current, assert_ctx);
+  qa_cleanup_pop(&release_guard);
+  qa_cleanup_pop(&scratch_guard);
+  gamestate_scratch_release(sc);
+  free(sc);
 }
 double qa_app_q3_remote_download_size(qa_app_q3_remote *remote, double size) {
-  if (is_demo(remote)) qa_range_error("Q3 demo cannot request package downloads");
+  if (is_demo(remote)) js_error("Q3 demo cannot request package downloads");
   if (!remote->options.has_downloads)
-    qa_range_error("Q3 package downloads have no writable content owner");
+    js_error("Q3 package downloads have no writable content owner");
   return remote->options.downloads.publish_size(remote->options.downloads.ctx, size);
 }
 void qa_app_q3_remote_download(qa_app_q3_remote *remote, const qa_q3_download_block *block) {
-  if (is_demo(remote)) qa_range_error("Q3 demo cannot request package downloads");
+  if (is_demo(remote)) js_error("Q3 demo cannot request package downloads");
   if (!remote->options.has_downloads)
-    qa_range_error("Q3 package downloads have no writable content owner");
+    js_error("Q3 package downloads have no writable content owner");
   remote->options.downloads.receive(remote->options.downloads.ctx, block);
 }
 void qa_app_q3_remote_snapshot(qa_app_q3_remote *remote,
     const qa_q3_wire_snapshot *snapshot, double ping) {
   (void)ping;
   if (remote->has_current) qa_q3_wire_snapshot_destroy(&remote->current);
+  remote->has_current = false;
   if (!qa_q3_wire_snapshot_copy(&remote->current, snapshot)) qa_range_error("out of memory");
   remote->has_current = true;
   qa_q3_client_clock_publish(remote->clock, &remote->current);
-  if (remote->prediction) {
-    qa_app_movement_prediction_snapshot capture = prediction_snapshot(remote);
-    qa_app_presentation_prediction_adapter_capture(remote->prediction, capture);
-  }
+  if (remote->prediction) capture_prediction(remote);
   publish_remote(remote, (double)snapshot->server_time);
 }
 void qa_app_q3_remote_map_restart(qa_app_q3_remote *remote) {
-  if (remote->prediction && remote->has_current) {
-    qa_app_movement_prediction_snapshot capture = prediction_snapshot(remote);
-    qa_app_presentation_prediction_adapter_capture(remote->prediction, capture);
-  }
+  if (remote->prediction && remote->has_current) capture_prediction(remote);
 }
 static const qa_q3_wire_snapshot *require_player(qa_app_q3_remote *remote, qa_actor_id actor) {
   if (!remote->has_current
       || !qa_same_actor(actor_at(remote, (double)remote->current.player_state.client_num), actor))
-    qa_range_error("No decoded Q3 player state");
+    js_error("No decoded Q3 player state");
   return &remote->current;
 }
 const qa_world_text *qa_app_q3_remote_world_text(qa_app_q3_remote *remote, size_t *out_count) {
@@ -570,39 +674,48 @@ qa_app_sim_player_view qa_app_q3_remote_player_view(qa_app_q3_remote *remote, qa
 static const char *product_name(qa_q3_product product) {
   return product == QA_Q3_PRODUCT_MISSIONPACK ? "missionpack" : "baseq3";
 }
+/* Capacities for q3GuestPlayerUi's caller-owned outputs: every source powerup,
+ * a weapon and an ammo row per catalog weapon, one item per catalog weapon. */
+enum { REMOTE_UI_POWERUPS = 32, REMOTE_UI_INVENTORY = 2 * QA_Q3_STANDARD_GUEST_WEAPON_COUNT,
+       REMOTE_UI_ITEMS = QA_Q3_STANDARD_GUEST_WEAPON_COUNT };
 qa_app_sim_player_ui qa_app_q3_remote_player_ui(qa_app_q3_remote *remote, qa_actor_id actor) {
   const qa_q3_wire_snapshot *snapshot = require_player(remote, actor);
   const qa_executable_recipe *recipe = recipe_of(remote);
-  if (recipe->weapons.count == 0) qa_range_error("Q3 remote has no native weapon provider");
+  if (recipe->weapons.count == 0) js_error("Q3 remote has no native weapon provider");
+  if (!remote->ui.powerups) {
+    remote->ui.powerups = xmalloc(REMOTE_UI_POWERUPS * sizeof *remote->ui.powerups);
+    remote->ui.powerup_capacity = REMOTE_UI_POWERUPS;
+  }
+  if (!remote->ui.inventory) {
+    remote->ui.inventory = xmalloc(REMOTE_UI_INVENTORY * sizeof *remote->ui.inventory);
+    remote->ui.inventory_capacity = REMOTE_UI_INVENTORY;
+  }
+  if (!remote->ui.items) {
+    remote->ui.items = xmalloc(REMOTE_UI_ITEMS * sizeof *remote->ui.items);
+    remote->ui.item_capacity = REMOTE_UI_ITEMS;
+  }
   qa_q3_adapted_player_state adapted;
   qa_q3_to_player_state(&snapshot->player_state, &adapted);
-  qa_app_guest_player_ui scratch = {0};
-  qa_app_guest_player_ui guest = qa_app_q3_guest_player_ui(adapted.state, recipe->weapons.values[0],
-      snapshot->server_time, NULL, 0, product_name(snapshot->player_state.product),
-      NULL, 0, false, NULL, false, scratch);
-  if (remote->ui_inventory_cap < guest.inventory_count) {
-    remote->ui_inventory = realloc(remote->ui_inventory,
-        guest.inventory_count * sizeof *remote->ui_inventory);
-    if (!remote->ui_inventory) qa_range_error("out of memory");
-    remote->ui_inventory_cap = guest.inventory_count;
-  }
-  if (guest.inventory_count)
-    memcpy(remote->ui_inventory, guest.inventory, guest.inventory_count * sizeof *remote->ui_inventory);
+  /* this.current?.serverTime ?? ps.commandTime: requirePlayer guarantees current. */
+  remote->ui = qa_app_q3_guest_player_ui(adapted.state, recipe->weapons.values[0],
+      (double)snapshot->server_time, NULL, 0, product_name(snapshot->player_state.product),
+      NULL, 0, false, NULL, false, remote->ui);
+  const qa_app_guest_player_ui *guest = &remote->ui;
   qa_app_sim_player_ui ui = {0};
-  ui.health = guest.health;
-  ui.armor = guest.armor;
-  ui.powerups = guest.powerups;
-  ui.powerup_count = guest.powerup_count;
-  ui.weapon_status = guest.has_weapon_status ? &guest.weapon_status : NULL;
-  ui.arsenal_warning = guest.arsenal_warning;
-  ui.active_weapon = guest.active_weapon;
-  ui.has_ammo = guest.has_ammo;
-  ui.ammo_item = guest.ammo_item;
-  ui.ammo_count = guest.ammo_count;
-  ui.inventory = remote->ui_inventory;
-  ui.inventory_count = guest.inventory_count;
-  ui.items = (const qa_app_sim_player_ui_item *)guest.items;
-  ui.item_count = guest.item_count;
+  ui.health = guest->health;
+  ui.armor = guest->armor;
+  ui.powerups = guest->powerups;
+  ui.powerup_count = guest->powerup_count;
+  ui.weapon_status = guest->has_weapon_status ? &guest->weapon_status : NULL;
+  ui.arsenal_warning = guest->arsenal_warning;
+  ui.active_weapon = guest->active_weapon;
+  ui.has_ammo = guest->has_ammo;
+  ui.ammo_item = guest->ammo_item;
+  ui.ammo_count = guest->ammo_count;
+  ui.inventory = guest->inventory;
+  ui.inventory_count = guest->inventory_count;
+  ui.items = (const qa_app_sim_player_ui_item *)guest->items;
+  ui.item_count = guest->item_count;
   return ui;
 }
 const void *qa_app_q3_remote_character_views(qa_app_q3_remote *remote, size_t *out_count) {
@@ -619,48 +732,52 @@ void qa_app_q3_remote_register_resource(qa_app_q3_remote *remote, qa_content_id 
     const char *path, qa_resolved_resource_reference resource) {
   (void)remote; (void)content; (void)path; (void)resource;
 }
+static bool has_command_delimiter(const char *value) {
+  for (const char *p = value; *p; p++)
+    if (*p == '"' || *p == '\n' || *p == '\r' || *p == ';') return true;
+  return false;
+}
 void qa_app_q3_remote_player_command(qa_app_q3_remote *remote, qa_actor_id actor,
     const char *name, const char *const *args, size_t count) {
   require_player(remote, actor);
-  const char *values[64];
-  values[0] = name;
-  for (size_t i = 0; i < count && i < 63; i++) values[i + 1] = args[i];
-  for (size_t i = 0; i <= count && i < 64; i++)
-    for (const char *p = values[i]; *p; p++)
-      if (*p == '"' || *p == '\n' || *p == '\r' || *p == ';')
-        qa_range_error("Invalid Q3 command delimiter");
+  bool invalid = has_command_delimiter(name);
+  for (size_t i = 0; i < count && !invalid; i++) invalid = has_command_delimiter(args[i]);
+  if (invalid) js_error("Invalid Q3 command delimiter");
   size_t total = strlen(name) + 1;
   for (size_t i = 0; i < count; i++) total += strlen(args[i]) + 3;
   char *line = xmalloc(total);
   size_t used = (size_t)snprintf(line, total, "%s", name);
   for (size_t i = 0; i < count; i++)
     used += (size_t)snprintf(line + used, total - used, " \"%s\"", args[i]);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_string, &line);
   remote->options.send_command(remote->options.ctx, line);
+  qa_cleanup_pop(&guard);
   free(line);
 }
 qa_q3_wire_user_command qa_app_q3_remote_command(qa_app_q3_remote *remote,
     const qa_actor_command *command) {
   const qa_q3_wire_snapshot *snapshot = require_player(remote, command->actor);
   if (command->command.kind != QA_USER_COMMAND_Q3)
-    qa_range_error("Native Q3 remote requires Q3 commands");
+    js_error("Native Q3 remote requires Q3 commands");
   double time = (double)qa_q3_client_clock_time(remote->clock);
   qa_q3_base_user_command presented = qa_app_presentation_source_command(
       *command, time, command->command.as.q3.weapon);
   qa_q3_base_user_command source = qa_app_sim_relative_q3_source_command(
       command->source, "q3", presented, snapshot->player_state.delta_angles, command->angle_space);
   qa_q3_wire_user_command result = {0};
-  result.server_time = (int64_t)time;
-  result.angles[0] = source.angles.x;
-  result.angles[1] = source.angles.y;
-  result.angles[2] = source.angles.z;
-  result.buttons = source.buttons;
-  result.weapon = source.weapon;
-  result.forwardmove = source.forwardmove;
-  result.rightmove = source.rightmove;
-  result.upmove = source.upmove;
-  result.angles[0] = (double)((int64_t)result.angles[0] & 65535);
-  result.angles[1] = (double)((int64_t)result.angles[1] & 65535);
-  result.angles[2] = (double)((int64_t)result.angles[2] & 65535);
+  /* TS keeps these as numbers and the delta writer emits their low bits; the int32
+   * wire fields take ToInt32 (the old implicit conversions were undefined for NaN). */
+  result.server_time = qa_js_to_int32(time);
+  result.buttons = qa_js_to_int32(source.buttons);
+  result.weapon = qa_js_to_int32(source.weapon);
+  result.forwardmove = qa_js_to_int32(source.forwardmove);
+  result.rightmove = qa_js_to_int32(source.rightmove);
+  result.upmove = qa_js_to_int32(source.upmove);
+  /* JS `x & 65535` (ToInt32 first). */
+  result.angles[0] = qa_int32(source.angles.x) & 65535;
+  result.angles[1] = qa_int32(source.angles.y) & 65535;
+  result.angles[2] = qa_int32(source.angles.z) & 65535;
   return result;
 }
 const qa_simulation_output *qa_app_q3_remote_sample_presentation(qa_app_q3_remote *remote,
@@ -670,12 +787,15 @@ const qa_simulation_output *qa_app_q3_remote_sample_presentation(qa_app_q3_remot
     if (!remote->has_current) return NULL;
     time = qa_q3_client_clock_time(remote->clock);
   } else {
+    double presented = trunc(remote->options.presentation_time
+        ? remote->options.presentation_time(remote->options.ctx) : now);
     qa_q3_clock_options options = {0};
-    options.time_nudge = remote->options.time_nudge ? (int64_t)remote->options.time_nudge(remote->options.ctx) : 0;
+    options.time_nudge = remote->options.time_nudge ? remote->options.time_nudge(remote->options.ctx) : 0;
     options.timescale = remote->options.timescale ? remote->options.timescale(remote->options.ctx) : 1;
-    double presented = remote->options.presentation_time
-        ? remote->options.presentation_time(remote->options.ctx) : now;
-    if (!qa_q3_client_clock_advance(remote->clock, (int64_t)trunc(presented), &options, &time))
+    /* Q3ClientClock.advance's sourceClock(realTime) rejects what int64 cannot carry. */
+    if (!(presented >= -2147483648.0 && presented <= 2147483647.0))
+      qa_range_error("Q3 source clock arithmetic exceeds signed int32");
+    if (!qa_q3_client_clock_advance(remote->clock, (int64_t)presented, &options, &time))
       return NULL;
   }
   publish_remote(remote, (double)time);
@@ -701,10 +821,9 @@ qa_app_presentation_prediction_adapter *qa_app_q3_remote_movement(
     qa_app_q3_remote *remote, qa_seat_id seat) {
   if (remote->prediction) return remote->prediction;
   qa_app_q3_player player;
-  if (!qa_app_q3_remote_player(remote, &player)) qa_range_error("Q3 prediction has no player");
+  if (!qa_app_q3_remote_player(remote, &player)) js_error("Q3 prediction has no player");
   const qa_executable_recipe *recipe = recipe_of(remote);
-  entities_ctx *storage = xmalloc(sizeof *storage);
-  qa_app_prediction_source_entities entities = source_entities(remote, storage);
+  qa_app_prediction_source_entities entities = source_entities(remote);
   qa_app_presentation_prediction_options options = {0};
   options.movement.probe.actor = remote->options.owned_actor(remote->options.ctx,
       player.actor, &recipe->map.entities);
@@ -716,10 +835,14 @@ qa_app_presentation_prediction_adapter *qa_app_q3_remote_movement(
   options.movement.probe.host_ctx = remote;
   options.movement.probe.is_brush = is_brush_hit;
   options.initial = prediction_snapshot(remote);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_prediction, &options.initial);
   options.entities = entities;
   options.host_ctx = remote;
   options.relative_source_command = relative_hook;
   remote->prediction = qa_app_create_presentation_movement_host(options);
+  qa_cleanup_pop(&guard);
+  qa_app_movement_prediction_snapshot_destroy(&options.initial);
   if (!remote->prediction) qa_range_error("out of memory");
   return remote->prediction;
 }
@@ -735,7 +858,10 @@ void qa_app_q3_remote_print(qa_app_q3_remote *remote, const char *text) {
 void qa_app_q3_remote_disconnected(qa_app_q3_remote *remote, const char *reason) {
   char *line = xmalloc(strlen(reason) + 2);
   snprintf(line, strlen(reason) + 2, "%s\n", reason);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_string, &line);
   qa_app_q3_remote_print(remote, line);
+  qa_cleanup_pop(&guard);
   free(line);
   remote->options.disconnected(remote->options.ctx, reason);
 }

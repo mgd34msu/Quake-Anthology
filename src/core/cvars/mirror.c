@@ -1,22 +1,22 @@
 /* Port of src/core/cvars/mirror.ts. GPL-2.0-or-later. */
 #include "qa/core/cvars/mirror.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/core/cvars/index.h"
 #include "qa/foundation/cleanup.h"
 
-/* Plain TS `Error` throws: same message form, then abort. */
+/* Plain TS `Error` throws: catchable raises named "Error". */
 static noreturn void throw_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static noreturn void throw_error_name(const char *prefix, const char *name,
                                       const char *suffix) {
-  fprintf(stderr, "Error: %s%s%s\n", prefix, name, suffix);
-  abort();
+  qa_raise("Error", 0, 0, "%s%s%s", prefix, name, suffix);
 }
 
 struct mirror_binding_ctx {
@@ -243,13 +243,19 @@ qa_shared_cvar_mirror *qa_shared_cvar_mirror_create(
   return self;
 }
 
+static void refreshing_release(void *raw) { ((qa_shared_cvar_mirror *)raw)->refreshing = false; }
+
 void qa_shared_cvar_mirror_refresh(qa_shared_cvar_mirror *mirror) {
   mirror->refreshing = true;
+  /* TS try { ... } finally { this.refreshing = false; } */
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, refreshing_release, mirror);
   for (size_t i = 0; i < mirror->name_count; i++) {
     const char *value =
         mirror->owner->variable_string(mirror->owner->ctx, mirror->names[i]);
     mirror->mirror->set(mirror->mirror->ctx, mirror->names[i], value, true);
   }
+  qa_cleanup_pop(&cleanup);
   mirror->refreshing = false;
 }
 
@@ -284,4 +290,76 @@ void qa_shared_cvar_mirror_destroy(qa_shared_cvar_mirror *mirror) {
   free(mirror->binding_ctxs);
   qa_cleanup_stack_destroy(&mirror->releases);
   free(mirror);
+}
+
+/* ---- CvarRegistry view ---- */
+static char *view_scratch;
+static char *view_hold(char *text) {
+  free(view_scratch);
+  view_scratch = text;
+  return text;
+}
+static bool view_find(void *ctx, const char *name, qa_cvar_mirror_read *out) {
+  qa_cvar_read read;
+  if (!qa_cvar_registry_find(ctx, name, &read)) return false;
+  out->reset_value = view_hold(strdup(read.reset_value != NULL ? read.reset_value : ""));
+  out->flags = read.flags;
+  qa_cvar_read_free(&read);
+  if (out->reset_value == NULL) throw_error_name("Shared engine cvar ", name, " could not be copied");
+  return true;
+}
+static void view_register(void *ctx, const char *name, const char *default_value, int64_t flags) {
+  qa_cvar_snapshot ignored;
+  if (qa_cvar_registry_register(ctx, name, default_value, (double)flags, &ignored)) qa_cvar_read_free(&ignored);
+}
+static void view_set(void *ctx, const char *name, const char *value, bool force) {
+  qa_cvar_snapshot ignored;
+  if (qa_cvar_registry_set(ctx, name, value, force, &ignored)) qa_cvar_read_free(&ignored);
+}
+static const char *view_variable_string(void *ctx, const char *name) {
+  char *value = qa_cvar_registry_variable_string(ctx, name);
+  if (value == NULL) throw_error_name("Shared engine cvar ", name, " could not be read");
+  return view_hold(value);
+}
+typedef struct view_binding {
+  qa_cvar_registry *registry;
+  int64_t handle;
+  qa_cvar_mirror_binding binding;
+} view_binding;
+static char *view_validate(void *ctx, const char *value) {
+  view_binding *binding = ctx;
+  const char *explanation = binding->binding.validate(binding->binding.ctx, value);
+  return explanation == NULL ? NULL : strdup(explanation);
+}
+static void view_changed(void *ctx, const char *value) {
+  view_binding *binding = ctx;
+  binding->binding.changed(binding->binding.ctx, value);
+}
+static void view_release(void *ctx) {
+  view_binding *binding = ctx;
+  qa_cvar_registry_unbind_value(binding->registry, binding->handle);
+  free(binding);
+}
+static qa_cvar_mirror_release view_bind_value(void *ctx, const char *name, qa_cvar_mirror_binding binding) {
+  view_binding *bound = calloc(1, sizeof *bound);
+  if (bound == NULL) throw_error_name("Shared engine cvar ", name, " could not be bound");
+  bound->registry = ctx;
+  bound->binding = binding;
+  qa_cvar_value_binding value = {bound, binding.validate != NULL ? view_validate : NULL, view_changed};
+  bound->handle = qa_cvar_registry_bind_value(ctx, name, value);
+  qa_cvar_mirror_release release = {bound, view_release};
+  return release;
+}
+qa_cvar_mirror_registry qa_cvar_registry_mirror_view(struct qa_cvar_registry *registry) {
+  static const char *const dialects[] = {"q1-netquake", "q1-quakeworld", "q2-classic", "q2-rerelease", "q3"};
+  qa_cvar_mirror_registry view;
+  view.ctx = registry;
+  view.session = qa_cvar_registry_context(registry).session.token;
+  view.dialect = dialects[qa_cvar_registry_dialect(registry)];
+  view.find = view_find;
+  view.register_cvar = view_register;
+  view.set = view_set;
+  view.variable_string = view_variable_string;
+  view.bind_value = view_bind_value;
+  return view;
 }

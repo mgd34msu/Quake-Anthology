@@ -22,7 +22,9 @@ static void *xrealloc(void *ptr, size_t size) {
 static noreturn void reject_scale(const qa_q1qc_program *program, const char *reason) {
   qa_q1qc_program_error(program, "Unsupported QC damage scale: %s", reason);
 }
-static bool is_integer(double value) { return value == (double)(int64_t)value; }
+/* Number.isInteger, limited to safe integers so the int64 casts that follow are defined;
+ * every caller rejects larger integers anyway (statement indices and damages are small). */
+static bool is_integer(double value) { return fabs(value) <= 9007199254740991.0 && value == trunc(value); }
 
 typedef struct wset { int64_t *items; size_t count, capacity; } wset;
 static bool wset_has(const wset *set, int64_t word) {
@@ -439,7 +441,8 @@ qa_q1qc_damage_scale *qa_q1qc_damage_scale_create(const qa_q1qc_program *program
           value_free(&left); value_free(&right);
           reject_scale(program, "nonmultiplicative damage transformation");
         }
-        bool power = factor->has_constant && factor->constant > 0 &&
+        /* Number.isInteger(Math.log2(c)): log2(Infinity) is not an integer. */
+        bool power = factor->has_constant && factor->constant > 0 && isfinite(factor->constant) &&
                      log2(factor->constant) == floor(log2(factor->constant));
         if (opcode == QA_Q1QC_OP_DIV_F && !power) {
           value_free(&left); value_free(&right);
@@ -539,6 +542,18 @@ static double scale_execute_region(void *ctx, int64_t argument_count) {
   scale_execute_ctx *execute = ctx;
   return execute->machine->execute_region(execute->machine->ctx, execute->region, argument_count);
 }
+typedef struct scratch_restore {
+  qa_q1qc_machine *machine;
+  const qa_q1qc_damage_scale *scale;
+  int32_t *saved;
+} scratch_restore;
+static void restore_scratch(void *arg) {
+  scratch_restore *restore = arg;
+  for (size_t i = 0; i < restore->scale->scratch_count; i++)
+    qa_q1qc_words_set_int(&restore->machine->globals, restore->scale->scratch[i], restore->saved[i]);
+  free(restore->saved);
+  restore->saved = NULL;
+}
 double qa_q1qc_evaluate_damage_scale(qa_q1qc_machine *machine,
                                      const qa_q1qc_damage_scale *scale,
                                      qa_actor_id owner, int64_t actor_reference, double seconds) {
@@ -565,14 +580,17 @@ double qa_q1qc_evaluate_damage_amount(qa_q1qc_machine *machine,
     saved[i] = qa_q1qc_words_int(&machine->globals, scale->scratch[i]);
   scale_reference_ctx reference = {machine, owner, actor_reference};
   scale_execute_ctx execute = {machine, scale->region};
+  /* TS restores scratch words in a finally, which also covers the
+   * nonnegative check below and any raise out of the region. */
+  scratch_restore restore = {machine, scale, saved};
+  qa_cleanup node;
+  qa_cleanup_push(&node, restore_scratch, &restore);
   double result = qa_q1qc_with_source_call(machine, &scale->call, inputs, 5,
                                            scale_reference, &reference,
                                            scale_execute_region, &execute);
-  /* TS restores scratch words in a finally. */
-  for (size_t i = 0; i < scale->scratch_count; i++)
-    qa_q1qc_words_set_int(&machine->globals, scale->scratch[i], saved[i]);
-  free(saved);
   if (!isfinite(result) || result < 0)
     qa_q1qc_error("progs.dat", "Original QC damage amount is not finite and nonnegative");
+  qa_cleanup_pop(&node);
+  restore_scratch(&restore);
   return result;
 }

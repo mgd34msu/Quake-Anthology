@@ -408,6 +408,8 @@ typedef struct qa_native_mod_declaration {
   size_t release_count;
   const qa_native_mod_callback *callbacks;
   size_t callback_count;
+  /* C ownership: everything the reader allocated (content/mods/declaration.h). */
+  struct qa_mod_declaration_owner *owner;
 } qa_native_mod_declaration;
 
 #endif

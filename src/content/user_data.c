@@ -52,3 +52,44 @@ char *qa_user_product_directory(const char *user_content_root,
                                 const char *content_directory) {
   return qa_path_within_root(user_content_root, content_directory);
 }
+
+/* node:path normalization of an absolute path: drops empty and "." segments,
+ * pops a segment for "..", keeps "/" for the root. */
+static void normalize_absolute(char *path) {
+  char *out = path, *in = path;
+  size_t length = 0;
+  while (*in != '\0') {
+    while (*in == '/') in++;
+    if (*in == '\0') break;
+    const char *segment = in;
+    while (*in != '\0' && *in != '/') in++;
+    size_t n = (size_t)(in - segment);
+    if (n == 1 && segment[0] == '.') continue;
+    if (n == 2 && segment[0] == '.' && segment[1] == '.') {
+      while (length > 0 && out[length - 1] != '/') length--;
+      if (length > 0) length--;
+      continue;
+    }
+    out[length++] = '/';
+    memmove(out + length, segment, n);
+    length += n;
+  }
+  if (length == 0) out[length++] = '/';
+  out[length] = '\0';
+}
+
+char *qa_user_data_directory(const char *kind, const char *user_content_root) {
+  if (user_content_root == NULL) {
+    char suffix[64];
+    (void)snprintf(suffix, sizeof suffix, ".local/share/quake-typescript/%s", kind);
+    return resolve_home(suffix);
+  }
+  char cwd[PATH_MAX] = "";
+  if (user_content_root[0] != '/' && getcwd(cwd, sizeof cwd) == NULL) cwd[0] = '\0';
+  size_t length = strlen(cwd) + strlen(user_content_root) + strlen(kind) + 3;
+  char *out = (char *)malloc(length);
+  if (out == NULL) return NULL;
+  (void)snprintf(out, length, "%s/%s/%s", cwd, user_content_root, kind);
+  normalize_absolute(out);
+  return out;
+}

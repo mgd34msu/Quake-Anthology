@@ -4,9 +4,11 @@
 #include "qa/network/q1/codecs/qw28.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static double vg(const qa_wire_vector *v, int i) { return qa_wire_vector_get(v, (size_t)i); }
 static void vs(qa_wire_vector *v, int i, double x) { qa_wire_vector_set(v, (size_t)i, x); }
-static int32_t ji(double n) { double m = fmod(trunc(n), 4294967296.0); if (m < 0) m += 4294967296.0; return (int32_t)(uint32_t)m; }
+/* ToInt32: NaN and infinities are 0 (the old fmod form cast NaN to uint32_t). */
+static int32_t ji(double n) { return qa_js_to_int32(n); }
 static void write_entity_header(qa_size_buf *sb, int32_t entnum, int32_t bits_in, int32_t ext) {
   int32_t bits = bits_in;
   if (ext) bits |= QA_QW29_U_EXTEND;
@@ -16,10 +18,10 @@ static void write_entity_header(qa_size_buf *sb, int32_t entnum, int32_t bits_in
   if (bits & QA_QW29_U_EXTEND) qa_msg_write_byte(sb, ext);
   if (ext & QA_QW29_U_ENTITY2) qa_msg_write_byte(sb, (entnum >> 9) & 255);
 }
-static void wc_coord(qa_protocol_codec *c, qa_size_buf *sb, double f, double fl) { (void)c; qa_msg_write_coord_flags(sb, f, (int64_t)fl); }
-static void wc_angle(qa_protocol_codec *c, qa_size_buf *sb, double f, double fl) { (void)c; qa_msg_write_angle_flags(sb, f, (int64_t)fl); }
-static double rc_coord(qa_protocol_codec *c, double fl) { return qa_message_reader_coord_flags(c->reader, (int64_t)fl); }
-static double rc_angle(qa_protocol_codec *c, double fl) { return qa_message_reader_angle_flags(c->reader, (int64_t)fl); }
+static void wc_coord(qa_protocol_codec *c, qa_size_buf *sb, double f, double fl) { (void)c; qa_msg_write_coord_flags(sb, f, qa_js_to_int32(fl)); }
+static void wc_angle(qa_protocol_codec *c, qa_size_buf *sb, double f, double fl) { (void)c; qa_msg_write_angle_flags(sb, f, qa_js_to_int32(fl)); }
+static double rc_coord(qa_protocol_codec *c, double fl) { return qa_message_reader_coord_flags(c->reader, qa_js_to_int32(fl)); }
+static double rc_angle(qa_protocol_codec *c, double fl) { return qa_message_reader_angle_flags(c->reader, qa_js_to_int32(fl)); }
 static void wc_protocol(qa_protocol_codec *c, qa_size_buf *sb, double fl) { (void)c; qa_msg_write_long(sb, QA_PROTOCOL_QW_WIDE); qa_msg_write_long(sb, fl); }
 static bool wc_static(qa_protocol_codec *c, qa_size_buf *sb, const qa_q1_wire_entity_state *state, double fl) {
   (void)c;
@@ -28,14 +30,14 @@ static bool wc_static(qa_protocol_codec *c, qa_size_buf *sb, const qa_q1_wire_en
   qa_msg_write_short(sb, state->modelindex); qa_msg_write_short(sb, state->frame);
   qa_msg_write_byte(sb, state->colormap); qa_msg_write_byte(sb, state->skin);
   qa_msg_write_byte(sb, state->alpha); qa_msg_write_byte(sb, state->scale);
-  for (int i = 0; i < 3; i++) { qa_msg_write_coord_flags(sb, vg(&state->origin,i), (int64_t)fl); qa_msg_write_angle_flags(sb, vg(&state->angles,i), (int64_t)fl); }
+  for (int i = 0; i < 3; i++) { qa_msg_write_coord_flags(sb, vg(&state->origin,i), qa_js_to_int32(fl)); qa_msg_write_angle_flags(sb, vg(&state->angles,i), qa_js_to_int32(fl)); }
   return true;
 }
 static bool wc_ssound(qa_protocol_codec *c, qa_size_buf *sb, const qa_wire_vector *org, double snd, double vol, double atten, double fl) {
   (void)c;
   if (snd > 65535) return false;
   qa_msg_write_byte(sb, QA_QW_SVC_SPAWNSTATICSOUND);
-  for (int i = 0; i < 3; i++) qa_msg_write_coord_flags(sb, vg(org,i), (int64_t)fl);
+  for (int i = 0; i < 3; i++) qa_msg_write_coord_flags(sb, vg(org,i), qa_js_to_int32(fl));
   qa_msg_write_short(sb, snd); qa_msg_write_byte(sb, vol * 255); qa_msg_write_byte(sb, atten * 64);
   return true;
 }
@@ -43,14 +45,14 @@ static bool wc_sound(qa_protocol_codec *c, qa_size_buf *sb, const qa_q1_sound_me
   (void)c;
   if (s->ent >= 1024 || s->channel >= 8) return false;
   if (s->sound_num > 65535) return false;
-  int32_t chan = (ji(s->ent) << 3) | ji(s->channel);
+  int32_t chan = (qa_q1_js_shl(ji(s->ent), 3)) | ji(s->channel);
   if (s->volume != QA_QW_DEFAULT_SOUND_PACKET_VOLUME) chan |= QA_QW_SND_VOLUME;
   if (s->attenuation != QA_QW_DEFAULT_SOUND_PACKET_ATTENUATION) chan |= QA_QW_SND_ATTENUATION;
   qa_msg_write_byte(sb, QA_QW_SVC_SOUND); qa_msg_write_short(sb, chan);
   if (chan & QA_QW_SND_VOLUME) qa_msg_write_byte(sb, s->volume);
   if (chan & QA_QW_SND_ATTENUATION) qa_msg_write_byte(sb, s->attenuation * 64);
   qa_msg_write_short(sb, s->sound_num);
-  for (int i = 0; i < 3; i++) qa_msg_write_coord_flags(sb, vg(&s->origin,i), (int64_t)fl);
+  for (int i = 0; i < 3; i++) qa_msg_write_coord_flags(sb, vg(&s->origin,i), qa_js_to_int32(fl));
   return true;
 }
 static double rc_pflags(qa_protocol_codec *c) { return qa_message_reader_long(c->reader); }
@@ -82,12 +84,12 @@ static bool wc_de(qa_protocol_codec *c, qa_size_buf *sb, const qa_qw_entity_stat
   if (bits & QA_QW_U_COLORMAP) qa_msg_write_byte(sb, to->colormap);
   if (bits & QA_QW_U_SKIN) qa_msg_write_byte(sb, to->skinnum);
   if (bits & QA_QW_U_EFFECTS) qa_msg_write_byte(sb, to->effects);
-  if (bits & QA_QW_U_ORIGIN1) qa_msg_write_coord_flags(sb, vg(&to->origin,0), (int64_t)fl);
-  if (bits & QA_QW_U_ANGLE1) qa_msg_write_angle_flags(sb, vg(&to->angles,0), (int64_t)fl);
-  if (bits & QA_QW_U_ORIGIN2) qa_msg_write_coord_flags(sb, vg(&to->origin,1), (int64_t)fl);
-  if (bits & QA_QW_U_ANGLE2) qa_msg_write_angle_flags(sb, vg(&to->angles,1), (int64_t)fl);
-  if (bits & QA_QW_U_ORIGIN3) qa_msg_write_coord_flags(sb, vg(&to->origin,2), (int64_t)fl);
-  if (bits & QA_QW_U_ANGLE3) qa_msg_write_angle_flags(sb, vg(&to->angles,2), (int64_t)fl);
+  if (bits & QA_QW_U_ORIGIN1) qa_msg_write_coord_flags(sb, vg(&to->origin,0), qa_js_to_int32(fl));
+  if (bits & QA_QW_U_ANGLE1) qa_msg_write_angle_flags(sb, vg(&to->angles,0), qa_js_to_int32(fl));
+  if (bits & QA_QW_U_ORIGIN2) qa_msg_write_coord_flags(sb, vg(&to->origin,1), qa_js_to_int32(fl));
+  if (bits & QA_QW_U_ANGLE2) qa_msg_write_angle_flags(sb, vg(&to->angles,1), qa_js_to_int32(fl));
+  if (bits & QA_QW_U_ORIGIN3) qa_msg_write_coord_flags(sb, vg(&to->origin,2), qa_js_to_int32(fl));
+  if (bits & QA_QW_U_ANGLE3) qa_msg_write_angle_flags(sb, vg(&to->angles,2), qa_js_to_int32(fl));
   if (ext & QA_QW29_U_MODEL2) qa_msg_write_byte(sb, (ji(to->modelindex) >> 8) & 255);
   if (ext & QA_QW29_U_FRAME2) qa_msg_write_byte(sb, (ji(to->frame) >> 8) & 255);
   if (ext & QA_QW29_U_ALPHA) qa_msg_write_byte(sb, to->alpha);
@@ -106,9 +108,11 @@ static void rc_dhdr(qa_protocol_codec *c, double word, qa_qw_entity_word *out) {
   int32_t ext = 0;
   if (bits & QA_QW29_U_EXTEND) {
     ext = ji(qa_message_reader_byte(c->reader));
-    if (ext & QA_QW29_U_ENTITY2) number |= ji(qa_message_reader_byte(c->reader)) << 9;
+    if (ext & QA_QW29_U_ENTITY2) number |= qa_q1_js_shl(ji(qa_message_reader_byte(c->reader)), 9);
   }
-  out->bits = bits; out->ext = ext; out->number = number; out->remove = (bits & QA_QW_U_REMOVE) != 0;
+  out->bits = bits; out->ext = ext;
+  if (number > QA_QW29_MAX_ENTITY_NUMBER) qa_q1_packet_error("QW29 entity number exceeds its limit", c->reader->offset);
+  out->number = number; out->remove = (bits & QA_QW_U_REMOVE) != 0;
 }
 static void rc_de(qa_protocol_codec *c, const qa_qw_entity_state *from, qa_qw_entity_state *to, const qa_qw_entity_word *hdr, double fl) {
   qa_message_reader *r = c->reader;
@@ -121,14 +125,14 @@ static void rc_de(qa_protocol_codec *c, const qa_qw_entity_state *from, qa_qw_en
   if (bits & QA_QW_U_COLORMAP) to->colormap = qa_message_reader_byte(r);
   if (bits & QA_QW_U_SKIN) to->skinnum = qa_message_reader_byte(r);
   if (bits & QA_QW_U_EFFECTS) to->effects = qa_message_reader_byte(r);
-  if (bits & QA_QW_U_ORIGIN1) vs(&to->origin,0,qa_message_reader_coord_flags(r,(int64_t)fl));
-  if (bits & QA_QW_U_ANGLE1) vs(&to->angles,0,qa_message_reader_angle_flags(r,(int64_t)fl));
-  if (bits & QA_QW_U_ORIGIN2) vs(&to->origin,1,qa_message_reader_coord_flags(r,(int64_t)fl));
-  if (bits & QA_QW_U_ANGLE2) vs(&to->angles,1,qa_message_reader_angle_flags(r,(int64_t)fl));
-  if (bits & QA_QW_U_ORIGIN3) vs(&to->origin,2,qa_message_reader_coord_flags(r,(int64_t)fl));
-  if (bits & QA_QW_U_ANGLE3) vs(&to->angles,2,qa_message_reader_angle_flags(r,(int64_t)fl));
-  if (ext & QA_QW29_U_MODEL2) to->modelindex = ji(to->modelindex) | (ji(qa_message_reader_byte(r)) << 8);
-  if (ext & QA_QW29_U_FRAME2) to->frame = ji(to->frame) | (ji(qa_message_reader_byte(r)) << 8);
+  if (bits & QA_QW_U_ORIGIN1) vs(&to->origin,0,qa_message_reader_coord_flags(r,qa_js_to_int32(fl)));
+  if (bits & QA_QW_U_ANGLE1) vs(&to->angles,0,qa_message_reader_angle_flags(r,qa_js_to_int32(fl)));
+  if (bits & QA_QW_U_ORIGIN2) vs(&to->origin,1,qa_message_reader_coord_flags(r,qa_js_to_int32(fl)));
+  if (bits & QA_QW_U_ANGLE2) vs(&to->angles,1,qa_message_reader_angle_flags(r,qa_js_to_int32(fl)));
+  if (bits & QA_QW_U_ORIGIN3) vs(&to->origin,2,qa_message_reader_coord_flags(r,qa_js_to_int32(fl)));
+  if (bits & QA_QW_U_ANGLE3) vs(&to->angles,2,qa_message_reader_angle_flags(r,qa_js_to_int32(fl)));
+  if (ext & QA_QW29_U_MODEL2) to->modelindex = ji(to->modelindex) | (qa_q1_js_shl(ji(qa_message_reader_byte(r)), 8));
+  if (ext & QA_QW29_U_FRAME2) to->frame = ji(to->frame) | (qa_q1_js_shl(ji(qa_message_reader_byte(r)), 8));
   if (ext & QA_QW29_U_ALPHA) to->alpha = qa_message_reader_byte(r);
   if (ext & QA_QW29_U_SCALE) to->scale = qa_message_reader_byte(r);
 }
@@ -137,7 +141,7 @@ static void wc_qbase(qa_protocol_codec *c, qa_size_buf *sb, const qa_qw_entity_s
   qa_msg_write_short(sb, es->modelindex); qa_msg_write_short(sb, es->frame);
   qa_msg_write_byte(sb, es->colormap); qa_msg_write_byte(sb, es->skinnum);
   qa_msg_write_byte(sb, es->alpha); qa_msg_write_byte(sb, es->scale);
-  for (int i = 0; i < 3; i++) { qa_msg_write_coord_flags(sb, vg(&es->origin,i), (int64_t)fl); qa_msg_write_angle_flags(sb, vg(&es->angles,i), (int64_t)fl); }
+  for (int i = 0; i < 3; i++) { qa_msg_write_coord_flags(sb, vg(&es->origin,i), qa_js_to_int32(fl)); qa_msg_write_angle_flags(sb, vg(&es->angles,i), qa_js_to_int32(fl)); }
 }
 static void rc_qbase(qa_protocol_codec *c, qa_qw_entity_state *es, double fl) {
   qa_message_reader *r = c->reader;
@@ -145,7 +149,7 @@ static void rc_qbase(qa_protocol_codec *c, qa_qw_entity_state *es, double fl) {
   es->frame = ji(qa_message_reader_short(r)) & 0xffff;
   es->colormap = qa_message_reader_byte(r); es->skinnum = qa_message_reader_byte(r);
   es->alpha = qa_message_reader_byte(r); es->scale = qa_message_reader_byte(r);
-  for (int i = 0; i < 3; i++) { vs(&es->origin,i,qa_message_reader_coord_flags(r,(int64_t)fl)); vs(&es->angles,i,qa_message_reader_angle_flags(r,(int64_t)fl)); }
+  for (int i = 0; i < 3; i++) { vs(&es->origin,i,qa_message_reader_coord_flags(r,qa_js_to_int32(fl))); vs(&es->angles,i,qa_message_reader_angle_flags(r,qa_js_to_int32(fl))); }
 }
 static void wc_short(qa_protocol_codec *c, qa_size_buf *sb, double n) { (void)c; qa_msg_write_short(sb, n); }
 static double rc_short16(qa_protocol_codec *c) { return (double)(ji(qa_message_reader_short(c->reader)) & 0xffff); }

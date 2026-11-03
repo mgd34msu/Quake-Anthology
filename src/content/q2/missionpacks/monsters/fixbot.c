@@ -1,6 +1,7 @@
 /* Port of src/content/q2/missionpacks/monsters/fixbot.ts.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/monsters/fixbot.h"
+#include "qa/foundation/js.h"
 
 #include <stdlib.h>
 
@@ -22,38 +23,47 @@ static void run_move(qa_q2m_context *c) {
   q2mpm_set_move(c, c->state->stand_ground ? "fixbot_move_stand" : "fixbot_move_run");
 }
 static void run_fn(void *ctx, qa_q2m_context *c) { (void)ctx; run_move(c); }
-static qa_q2f_entity *goal_of(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity->has_goal ? c->game->entity(c->game->ctx, &c->entity->goal) : NULL;
-  if (!entity) qa_q2f_error("Fixbot source movement requires its bot goal");
-  return entity;
+/* The C dereferences a freed or NULL goal; the port treats a missing goal as the end of the goal-driven move. */
+static qa_q2_entity *goal_of(qa_q2m_context *c) {
+  return c->entity->has_goal ? c->game->entity(c->game->ctx, &c->entity->goal) : NULL;
+}
+static void drop_goal(qa_q2m_context *c) {
+  c->entity->has_goal = false;
+  c->entity->has_enemy = false;
+  q2mpm_set_move(c, "fixbot_move_stand");
 }
 static double turn_toward(qa_q2m_context *c) {
-  qa_vec3 direction = qa_sub3_double(q2mpm_body(c->game, goal_of(c)).origin, q2mpm_body(c->game, c->entity).origin);
+  qa_q2_entity *goal = goal_of(c);
+  if (goal == NULL) {
+    drop_goal(c);
+    return INFINITY;
+  }
+  qa_vec3 a = q2mpm_body(c->game, goal).origin;
+  qa_vec3 b = q2mpm_body(c->game, c->entity).origin;
+  qa_vec3 direction = qa_sub3_double(a, b);
   c->state->ideal_yaw = qa_vector_to_angles_with_rule(direction, QA_VECTOR_TO_ANGLES_NATIVE_AI).y;
   qa_q2m_change_yaw(c);
   return trunc(qa_hypot3(direction));
 }
 static void leave_goal(qa_q2m_context *c) {
-  qa_q2f_entity *target = goal_of(c);
-  c->game->schedule(c->game->ctx, target, 0.1, qa_q2f_free_entity_think());
-  c->entity->has_goal = false;
-  c->entity->has_enemy = false;
-  q2mpm_set_move(c, "fixbot_move_stand");
+  qa_q2_entity *target = goal_of(c);
+  if (target != NULL) c->game->schedule(c->game->ctx, target, 0.1, QA_Q2_FREE_ENTITY);
+  drop_goal(c);
 }
 static void vertical_goal(qa_q2m_context *c, bool landing) {
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_entity *target = game->create(game->ctx, "bot_goal", NULL);
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_entity *target = game->create(game->ctx, "bot_goal", NULL, 0);
   qa_body_state body = q2mpm_body(game, entity);
   target->has_owner = true;
   target->owner = entity->actor.id;
-  game->solid(game->ctx, target, QA_Q2F_SOLID_BOX);
+  game->solid(game->ctx, target, "box");
   qa_bounds bounds = {{-32, -32, -24}, {32, 32, 24}};
   qa_vec3 end = qa_add3_double(body.origin,
       qa_scale3_double(qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).up, landing ? -8096 : 128));
   qa_trace_result trace = q2mpm_trace(game, body.origin, end, &bounds, &entity->actor.id,
                                       qa_q2m_monster_solid_mask(game));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = trace.end;
   change.has_bounds = true; change.bounds = bounds;
@@ -64,14 +74,14 @@ static void vertical_goal(qa_q2m_context *c, bool landing) {
 }
 static bool search_dead(fixbot_bundle *bundle, qa_q2m_context *c) {
   if (c->entity->has_goal) return false;
-  qa_q2f_entity *best = NULL;
+  qa_q2_entity *best = NULL;
   size_t count = 0;
   const qa_actor_id *nearby = c->game->host->nearby(c->game->host->ctx, q2mpm_body(c->game, c->entity).origin, 1024, &count);
   for (size_t i = 0; i < count; i++) {
     qa_actor_id actor = nearby[i];
-    qa_q2f_entity *candidate = c->game->entity(c->game->ctx, &actor);
+    qa_q2_entity *candidate = c->game->entity(c->game->ctx, &actor);
     qa_q2m_context *candidate_context = qa_q2m_monsters_context(bundle->monsters, actor);
-    if (!candidate || candidate == c->entity || ((uint32_t)candidate->server_flags & 4u) == 0
+    if (!candidate || candidate == c->entity || (qa_js_to_uint32(candidate->server_flags) & 4u) == 0
         || (candidate_context && candidate_context->state->good_guy) || candidate->has_owner
         || qa_q2m_health(c->game, &actor) > 0 || candidate->has_next_think || !qa_q2m_visible(c, &actor)) continue;
     if (!best || candidate->max_health > best->max_health) best = candidate;
@@ -93,7 +103,7 @@ static void attack_move(fixbot_bundle *bundle, qa_q2m_context *c) {
     if (!qa_q2m_visible(c, c->entity->has_goal ? &c->entity->goal : NULL)) return;
     qa_body_state_result enemy;
     memset(&enemy, 0, sizeof enemy);
-    if (c->entity->has_enemy) enemy = c->game->host->bodies.read(c->game->host->bodies.ctx, c->entity->enemy);
+    if (c->entity->has_enemy) enemy = qa_shared_body_table_read(c->game->host->bodies, c->entity->enemy);
     if (!enemy.has_value
         || qa_hypot3(qa_sub3_double(q2mpm_body(c->game, c->entity).origin, enemy.value.origin)) > 128) return;
     q2mpm_set_move(c, "fixbot_move_laserattack");
@@ -103,10 +113,12 @@ static void attack_move(fixbot_bundle *bundle, qa_q2m_context *c) {
 }
 static void attack_fn(void *ctx, qa_q2m_context *c) { attack_move(ctx, c); }
 static void walk_fn(void *ctx, qa_q2m_context *c) {
+  qa_vec3 a;
+  qa_vec3 b;
   (void)ctx;
-  qa_q2f_entity *target = c->entity->has_goal ? c->game->entity(c->game->ctx, &c->entity->goal) : NULL;
+  qa_q2_entity *target = c->entity->has_goal ? c->game->entity(c->game->ctx, &c->entity->goal) : NULL;
   bool weld = target && strcmp(target->classname, "object_repair") == 0
-      && qa_hypot3(qa_sub3_double(q2mpm_body(c->game, c->entity).origin, q2mpm_body(c->game, target).origin)) < 32;
+      && qa_hypot3((a = q2mpm_body(c->game, c->entity).origin, b = q2mpm_body(c->game, target).origin, qa_sub3_double(a, b))) < 32;
   q2mpm_set_move(c, weld ? "fixbot_move_weld_start" : "fixbot_move_walk");
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
@@ -140,7 +152,7 @@ static void ai_movetogoal_fn(void *ctx, qa_q2m_context *c, double distance) {
     if (bundle->before_count == bundle->before_cap) {
       size_t cap = bundle->before_cap ? bundle->before_cap * 2 : 8;
       before_entry *grown = realloc(bundle->before, cap * sizeof *grown);
-      if (!grown) qa_q2f_error("Out of memory in fixbot movement");
+      if (!grown) qa_raise("Error", 0, 0, "Out of memory in fixbot movement");
       bundle->before = grown;
       bundle->before_cap = cap;
     }
@@ -152,27 +164,28 @@ static void ai_movetogoal_fn(void *ctx, qa_q2m_context *c, double distance) {
 }
 static void ai_facing_fn(void *ctx, qa_q2m_context *c, double distance) {
   (void)ctx; (void)distance;
-  if (qa_q2m_in_front(c, goal_of(c)->actor.id)) { q2mpm_set_move(c, "fixbot_move_forward"); return; }
+  qa_q2_entity *target = goal_of(c);
+  if (target != NULL && qa_q2m_in_front(c, target->actor.id)) { q2mpm_set_move(c, "fixbot_move_forward"); return; }
   (void)turn_toward(c);
 }
 static void change_to_roam_fn(void *ctx, qa_q2m_context *c) {
   fixbot_bundle *bundle = ctx;
   if (search_dead(bundle, c)) return;
   q2mpm_set_move(c, "fixbot_move_roamgoal");
-  if (((uint32_t)c->entity->spawnflags & 16u) != 0) { vertical_goal(c, true); c->entity->spawnflags = 32; }
-  if (((uint32_t)c->entity->spawnflags & 8u) != 0) { vertical_goal(c, false); c->entity->spawnflags = 32; }
-  if (((uint32_t)c->entity->spawnflags & 4u) != 0) { q2mpm_set_move(c, "fixbot_move_roamgoal"); c->entity->spawnflags = 32; }
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 16u) != 0) { vertical_goal(c, true); c->entity->spawnflags = 32; }
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 8u) != 0) { vertical_goal(c, false); c->entity->spawnflags = 32; }
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 4u) != 0) { q2mpm_set_move(c, "fixbot_move_roamgoal"); c->entity->spawnflags = 32; }
   if (c->entity->spawnflags == 0) q2mpm_set_move(c, "fixbot_move_stand2");
 }
 static void roam_goal_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state body = q2mpm_body(game, entity);
-  qa_q2f_entity *target = game->create(game->ctx, "bot_goal", NULL);
+  qa_q2_entity *target = game->create(game->ctx, "bot_goal", NULL, 0);
   target->has_owner = true;
   target->owner = entity->actor.id;
-  game->solid(game->ctx, target, QA_Q2F_SOLID_BOX);
+  game->solid(game->ctx, target, "box");
   double distance = 0;
   qa_vec3 chosen = q2mpm_zero();
   for (int i = 0; i < 12; i++) {
@@ -184,7 +197,7 @@ static void roam_goal_fn(void *ctx, qa_q2m_context *c) {
     double size = trunc(qa_hypot3(qa_sub3_double(body.origin, trace.end)));
     if (size > distance) { distance = size; chosen = trace.end; }
   }
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = chosen;
   q2mpm_move_body(game, target, change, true, false);
@@ -211,25 +224,30 @@ static void fly_vertical_fn(void *ctx, qa_q2m_context *c) {
 }
 static void use_scanner_fn(void *ctx, qa_q2m_context *c) {
   fixbot_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   size_t count = 0;
   const qa_actor_id *nearby = game->host->nearby(game->host->ctx, q2mpm_body(game, entity).origin, 1024, &count);
   for (size_t i = 0; i < count; i++) {
     qa_actor_id actor = nearby[i];
-    qa_q2f_entity *candidate = game->entity(game->ctx, &actor);
+    qa_q2_entity *candidate = game->entity(game->ctx, &actor);
     if (!candidate || qa_q2m_health(game, &actor) < 100 || strcmp(candidate->classname, "object_repair") != 0
         || !qa_q2m_visible(c, &actor)) continue;
-    qa_q2f_entity *old = goal_of(c);
-    if (strcmp(old->classname, "bot_goal") == 0) game->schedule(game->ctx, old, 0.1, qa_q2f_free_entity_think());
+    qa_q2_entity *old = goal_of(c);
+    if (old != NULL && strcmp(old->classname, "bot_goal") == 0) game->schedule(game->ctx, old, 0.1, QA_Q2_FREE_ENTITY);
     entity->has_goal = true; entity->goal = actor;
     entity->has_enemy = true; entity->enemy = actor;
-    if (qa_hypot3(qa_sub3_double(q2mpm_body(game, entity).origin, q2mpm_body(game, candidate).origin)) < 32)
+    qa_vec3 a2 = q2mpm_body(game, entity).origin;
+    qa_vec3 b2 = q2mpm_body(game, candidate).origin;
+    if (qa_hypot3(qa_sub3_double(a2, b2)) < 32)
       q2mpm_set_move(c, "fixbot_move_weld_start");
     return;
   }
-  qa_q2f_entity *target = goal_of(c);
-  if (qa_hypot3(qa_sub3_double(q2mpm_body(game, entity).origin, q2mpm_body(game, target).origin)) < 32) {
+  qa_q2_entity *target = goal_of(c);
+  if (target == NULL) { drop_goal(c); return; }
+  qa_vec3 a = q2mpm_body(game, entity).origin;
+  qa_vec3 b = q2mpm_body(game, target).origin;
+  if (qa_hypot3(qa_sub3_double(a, b)) < 32) {
     if (strcmp(target->classname, "object_repair") == 0) q2mpm_set_move(c, "fixbot_move_weld_start");
     else leave_goal(c);
     return;
@@ -242,7 +260,7 @@ static void use_scanner_fn(void *ctx, qa_q2m_context *c) {
       found = true;
     }
   }
-  if (!found) qa_q2f_error("Fixbot scanner must follow source movement in the same frame");
+  if (!found) qa_raise("Error", 0, 0, "Fixbot scanner must follow source movement in the same frame");
   if (trunc(qa_hypot3(qa_sub3_double(q2mpm_body(game, entity).origin, previous))) == 0) {
     if (strcmp(target->classname, "object_repair") == 0) q2mpm_set_move(c, "fixbot_move_stand");
     else leave_goal(c);
@@ -253,15 +271,16 @@ static void weldstate_fn(void *ctx, qa_q2m_context *c) {
   const qa_q2mpm_xatrix_fixbot_frames *f = &qa_q2mpm_xatrix_fixbot_frames_value;
   if (c->entity->frame == f->weldstart_10) { q2mpm_set_move(c, "fixbot_move_weld"); return; }
   if (c->entity->frame == f->weldmiddle_07) {
-    qa_q2f_entity *target = goal_of(c);
+    qa_q2_entity *target = goal_of(c);
+    if (target == NULL) { drop_goal(c); return; }
     double hp = qa_q2m_health(c->game, &target->actor.id);
     if (hp < 0) {
-      qa_q2f_entity *enemy = c->entity->has_enemy ? c->game->entity(c->game->ctx, &c->entity->enemy) : NULL;
+      qa_q2_entity *enemy = c->entity->has_enemy ? c->game->entity(c->game->ctx, &c->entity->enemy) : NULL;
       if (enemy) enemy->has_owner = false;
       q2mpm_set_move(c, "fixbot_move_weld_end");
       return;
     }
-    c->game->host->combat.set_health(c->game->host->combat.ctx, target->actor, hp - 10);
+    qa_gameplay_authority_set_health(c->game->host->combat, target->actor, hp - 10);
     return;
   }
   c->entity->has_goal = false;
@@ -290,9 +309,9 @@ static void fire_blaster_fn(void *ctx, qa_q2m_context *c) {
 }
 static void fire_laser_fn(void *ctx, qa_q2m_context *c) {
   fixbot_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *target = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *target = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
   if (!target) return;
   qa_q2m_context *patient = qa_q2m_monsters_context(bundle->monsters, target->actor.id);
   if (!patient) return;
@@ -309,7 +328,7 @@ static void fire_laser_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 origin = qa_add3_double(body.origin,
       qa_scale3_double(qa_math_angle_vectors_rule(angles, QA_ANGLE_RULE_NATIVE).forward, 16));
   (void)qa_q2mpm_monster_dabeam(entity, game, &target->actor.id, origin, angles, -1, true);
-  qa_combat_state_result combat = game->host->combat.read(game->host->combat.ctx, target->actor.id);
+  qa_combat_state_result combat = qa_gameplay_authority_read(game->host->combat, target->actor.id);
   double mass = combat.has_value ? combat.value.mass : 0;
   if (qa_q2m_health(game, &target->actor.id) <= mass / 10) {
     patient->state->resurrecting = true;
@@ -319,10 +338,10 @@ static void fire_laser_fn(void *ctx, qa_q2m_context *c) {
   qa_trace_result trace = q2mpm_trace(game, target_body.origin, up_end, &target_body.bounds, &entity->actor.id,
                                       qa_q2m_monster_solid_mask(game));
   if (trace.hit.kind == QA_TRACE_HIT_ACTOR) {
-    qa_combat_state_result victim = game->host->combat.read(game->host->combat.ctx, trace.hit.actor);
+    qa_combat_state_result victim = qa_gameplay_authority_read(game->host->combat, trace.hit.actor);
     if (victim.has_value && victim.value.can_take_damage) {
-      qa_q2f_owned_result owned = game->host->actors.resolve_owned(game->host->actors.ctx, trace.hit.actor);
-      if (owned.has_value) game->host->combat.set_health(game->host->combat.ctx, owned.value, -1000);
+      qa_owned_actor owned; bool has_owned = qa_session_actor_registry_resolve_owned(game->host->actors, trace.hit.actor, &owned);
+      if (has_owned) qa_gameplay_authority_set_health(game->host->combat, owned, -1000);
       return;
     }
   }
@@ -333,7 +352,7 @@ static void fire_laser_fn(void *ctx, qa_q2m_context *c) {
   qa_q2m_context *restored = qa_q2m_monsters_respawn(bundle->monsters, target, game);
   target->has_owner = false;
   restored->state->resurrecting = false;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true;
   change.origin = body.origin;
@@ -342,15 +361,15 @@ static void fire_laser_fn(void *ctx, qa_q2m_context *c) {
   c->state->medic = false;
   q2mpm_set_move(c, "fixbot_move_stand");
 }
-qa_q2m_definition qa_q2mpm_create_fixbot_definition(qa_q2m_monsters *monsters) {
-  fixbot_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating fixbot definition");
+qa_q2m_definition qa_q2mpm_create_fixbot_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
+  fixbot_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating fixbot definition");
   memset(bundle, 0, sizeof *bundle);
   bundle->monsters = monsters;
-  qa_q2m_named_handler *callbacks = malloc(12 * sizeof *callbacks);
-  qa_q2m_named_ai *ai = malloc(3 * sizeof *ai);
-  qa_q2f_named_think *thinks = malloc(sizeof *thinks);
-  if (!callbacks || !ai || !thinks) qa_q2f_error("Out of memory creating fixbot definition");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 12 * sizeof *callbacks);
+  qa_q2m_named_ai *ai = qa_q2mpm_arena_alloc(arena, 3 * sizeof *ai);
+  qa_q2_named_think *thinks = qa_q2mpm_arena_alloc(arena, sizeof *thinks);
+  if (!callbacks || !ai || !thinks) qa_raise("Error", 0, 0, "Out of memory creating fixbot definition");
   size_t n = 0;
   callbacks[n++] = (qa_q2m_named_handler){"fixbot_run", {NULL, run_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"fixbot_dead", {NULL, qa_q2bm_finish_corpse_handler}};
@@ -368,7 +387,7 @@ qa_q2m_definition qa_q2mpm_create_fixbot_definition(qa_q2m_monsters *monsters) {
   ai[1] = (qa_q2m_named_ai){"ai_movetogoal", bundle, ai_movetogoal_fn};
   ai[2] = (qa_q2m_named_ai){"ai_facing", NULL, ai_facing_fn};
   thinks[0].name = "G_FreeEdict";
-  thinks[0].cb = qa_q2f_free_entity_think();
+  thinks[0].cb = QA_Q2_FREE_ENTITY;
   qa_q2m_definition definition;
   memset(&definition, 0, sizeof definition);
   definition.classname = "monster_fixbot";

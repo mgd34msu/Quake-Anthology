@@ -9,6 +9,7 @@
 #include "qa/core/commands/text.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js.h"
 
 qa_view_input_tuning qa_default_view_input_tuning(qa_command_dialect dialect) {
   bool q1 = qa_command_dialect_is_q1(dialect);
@@ -35,7 +36,7 @@ static double q1_yaw(double angle) {
 }
 
 static double clamp_sym(double value, double maximum) {
-  return fmax(-maximum, fmin(maximum, value));
+  return qa_js_max(-maximum, qa_js_min(maximum, value));
 }
 
 struct qa_input_command_builder {
@@ -209,7 +210,7 @@ qa_user_command qa_input_command_builder_build(
   pitch = F(pitch - F(F(angle_speed * tuning.pitch_speed) * fr(sample, "look-up")));
   pitch = F(pitch + F(F(angle_speed * tuning.pitch_speed) * fr(sample, "look-down")));
   if (q1) {
-    pitch = fmax(-70, fmin(80, pitch));
+    pitch = qa_js_max(-70, qa_js_min(80, pitch));
     roll = clamp_sym(roll, 50);
   }
   bool running = speed != tuning.always_run;
@@ -224,9 +225,9 @@ qa_user_command qa_input_command_builder_build(
   side = ADD(side, F((q3 ? move_speed : tuning.side_speed) * fr(sample, "move-right")));
   side = ADD(side, -F((q3 ? move_speed : tuning.side_speed) * fr(sample, "move-left")));
   double jump = q1 ? fr(sample, "move-up")
-                   : fmax(fr(sample, "jump"), fr(sample, "move-up"));
+                   : qa_js_max(fr(sample, "jump"), fr(sample, "move-up"));
   double crouch = q1 ? fr(sample, "move-down")
-                     : fmax(fr(sample, "crouch"), fr(sample, "move-down"));
+                     : qa_js_max(fr(sample, "crouch"), fr(sample, "move-down"));
   up = ADD(up, F((q3 ? move_speed : tuning.up_speed) * jump));
   up = ADD(up, -F((q3 ? move_speed : tuning.up_speed) * crouch));
   if (!klook || q3) {
@@ -286,7 +287,7 @@ qa_user_command qa_input_command_builder_build(
     if (!running) buttons |= 16;
     if (!game_focus) buttons |= 2;
     else if (any) buttons |= 2048;
-    pitch = fmax(previous_pitch - 90, fmin(previous_pitch + 90, pitch));
+    pitch = qa_js_max(previous_pitch - 90, qa_js_min(previous_pitch + 90, pitch));
   } else {
     if (pressed_of(sample, "attack") && (q1 || frame->attack_allowed)) buttons |= 1;
     if ((q1 && (pressed_of(sample, "jump") || pressed_of(sample, "move-up"))) ||
@@ -300,14 +301,14 @@ qa_user_command qa_input_command_builder_build(
       if (pressed_of(sample, "crouch") || pressed_of(sample, "move-down")) buttons |= 16;
     }
   }
-  if (q1) pitch = fmax(-70, fmin(80, pitch));
+  if (q1) pitch = qa_js_max(-70, qa_js_min(80, pitch));
   if (frame->kind == QA_COMMAND_DIALECT_Q2_CLASSIC ||
       frame->kind == QA_COMMAND_DIALECT_Q2_RERELEASE) {
     double delta = frame->delta_angles.x;
     if (delta > 180) delta -= 360;
     if (pitch + delta < -360) pitch += 360;
     if (pitch + delta > 360) pitch -= 360;
-    pitch = fmax(-89 - delta, fmin(89 - delta, pitch));
+    pitch = qa_js_max(-89 - delta, qa_js_min(89 - delta, pitch));
     forward = clamp_sym(forward, 400);
     side = clamp_sym(side, 400);
   }

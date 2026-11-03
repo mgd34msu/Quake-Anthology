@@ -49,6 +49,8 @@ typedef struct qa_world_surface {
 typedef struct qa_world_scene_options {
   bool has_subdivisions; double subdivisions;
   bool has_q3_lightmap_overbright; double q3_lightmap_overbright;
+  /* TS q3IdentityLight?: tr.identityLight, scaling fog volume colors (default 1). */
+  bool has_q3_identity_light; double q3_identity_light;
   const char *q1_lightmap_encoding; /* nullable */
   bool has_q1_water_alpha; double q1_water_alpha;
   const char *q2_sky_name;          /* nullable */
@@ -79,6 +81,8 @@ typedef struct qa_world_view_input {
   const double *q1_styles; size_t q1_style_count;
   const qa_q2_light_style *q2_styles; size_t q2_style_count;
   const qa_surface_dynamic_light *lights; size_t light_count;
+  /* false is TS lights undefined; SceneModelRenderer.prepare tells it from []. */
+  bool has_lights;
   bool has_q2_fragment_lighting;
   const qa_q2_fragment_light *fragment_lights; size_t fragment_light_count;
   const qa_q2_shadow_atlas *fragment_atlas;
@@ -99,6 +103,9 @@ typedef struct qa_world_view_input {
   const qa_projection_shadow_context *material_projection_shadow;
   const qa_world_inline_model *inline_models; size_t inline_model_count;
   qa_world_prepare_flare_fn prepare_flare; void *prepare_flare_ctx;
+  /* TS modelShadows?: 2 | 3 (cg_shadows stencil volumes / projection
+   * shadows); 0 is TS undefined. */
+  double model_shadows;
 } qa_world_view_input;
 typedef struct qa_prepared_world_view {
   qa_render_view view;

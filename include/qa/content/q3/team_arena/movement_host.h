@@ -9,11 +9,18 @@
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
 
+/* Which TS object literal built the options (its key order): ClientThink's moveClient call or the spectator
+ * policy's (client-policy.ts). */
+typedef enum qa_q3_ta_client_movement_literal {
+  QA_Q3_TA_MOVEMENT_LITERAL_THINK, QA_Q3_TA_MOVEMENT_LITERAL_SPECTATOR
+} qa_q3_ta_client_movement_literal;
 typedef struct qa_q3_ta_client_movement_options {
   double trace_mask;
   bool has_fixed_msec; double fixed_msec; /* has=false is TS null */
   bool no_footsteps, gauntlet_hit;
   double debug_level;
+  bool ladders; /* TS ladders?: ClientThink always passes settings.ladders !== false */
+  qa_q3_ta_client_movement_literal literal;
 } qa_q3_ta_client_movement_options;
 typedef struct qa_q3_ta_client_movement_result {
   const qa_actor_id *contacts; size_t contact_count; /* borrowed */

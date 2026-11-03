@@ -66,7 +66,6 @@ typedef struct qa_md3_model {
 typedef struct qa_decoded_md3_model {
   qa_md3_model model;
   char *source;    /* owned */
-  uint8_t *bytes;  /* owned copy up to model end */
   size_t byte_length;
 } qa_decoded_md3_model;
 

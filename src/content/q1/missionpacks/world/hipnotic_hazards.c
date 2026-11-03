@@ -1,371 +1,438 @@
-/* Port of src/content/q1/missionpacks/world/hipnotic-hazards.ts.
- * Observation scans use game entities reversed (see
- * hipnotic_weapons.c note). GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/hipnotic-hazards.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/hipnotic_hazards.h"
+
 #include "../missionpacks_internal.h"
 #include "qa/content/q1/missionpacks/world/common.h"
-#include "qa/foundation/support.h"
-#include <math.h>
-#include <stdlib.h>
 
-typedef struct hz_ctx { qa_q1mp_game *game; } hz_ctx;
-bool qa_q1mp_is_struck_by_mjolnir(qa_q1mp_game *game, qa_actor_id actor) {
-  qa_q1mp_actor *ents[512]; size_t n = game->base->entities(game->base, ents, 512);
-  for (size_t i = 0; i < n; i++) {
-    if (!(qa_q1mp_streq(ents[i]->classname,"hipnotic_mjolnir_lightning")||qa_q1mp_streq(ents[i]->classname,"hipnotic_tesla_lightning"))) continue;
-    if (ents[i]->count != 1) continue;
-    qa_q1mp_opt_actor enemy = qa_q1b_references_get(ents[i], "hipnotic:enemy");
-    /* TS checks references.get !== undefined && !== null. */
-    bool present = false;
-    for (size_t j = 0; j < ents[i]->reference_count; j++) if (qa_q1mp_streq(ents[i]->references[j].key, "hipnotic:enemy")) present = true;
-    if (present && enemy.has && qa_same_actor(actor, enemy.id)) return true;
-  }
-  return false;
+static bool falsy(double value) { return value == 0 || isnan(value); } /* JS `||=` on a number */
+static bool can_take_damage(qa_q1_services *game, qa_actor_id actor) {
+  const qa_combat_state_result state = qa_gameplay_authority_read(game->host.combat, actor);
+  return state.has_value && state.value.can_take_damage;
 }
-static bool visible_to(hz_ctx *c, qa_q1mp_actor *entity, qa_actor_id actor) {
-  qa_q1b_game *g = c->game->base; qa_q1b_body body;
-  if (!qa_q1mp_body_read(c->game, actor, &body)) return false;
-  qa_q1mp_actor *target = g->entity(g, QA_Q1MP_SOME(actor));
-  double z = g->is_player(g, QA_Q1MP_SOME(actor)) ? 22 : (target ? qa_q1mp_vector_of(target, "view_ofs").z : 0);
-  qa_q1b_trace trace = qa_q1mp_trace(c->game, qa_q1mp_vadd(g->body(g, entity).origin, qa_q1mp_vector_of(entity, "view_ofs")),
-    qa_q1mp_vadd(body.origin, QA_Q1MP_V3(0,0,z)), QA_Q1MP_SOME(entity->actor.id), false, false);
+static double powerup_of(qa_q1_services *game, qa_actor_id actor, qa_q1_powerup powerup) {
+  qa_q1_player_state *player = qa_q1_player(game, actor);
+  return player != NULL ? qa_q1_player_powerup_get(player, powerup) : 0;
+}
+static double movement_flags_of(qa_q1_actor *entity) { return entity != NULL ? entity->movement_flags : 0; }
+static bool reference(const qa_q1_actor *entity, const char *key, qa_actor_id *out) { return qa_q1_actor_reference_get(entity, key, out); }
+static void emit_beam(qa_q1_services *game, qa_actor_id actor, qa_vec3 start, qa_vec3 end) {
+  qa_q1_event event = {0};
+  event.kind = "beam"; event.beam_style = "lightning2"; event.has_actor = true; event.actor = actor;
+  event.start = start; event.end = end;
+  qa_q1_emit(game, event);
+}
+/* [...game.host.actors.observations()].reverse() ids; caller frees. */
+static qa_actor_id *observations_reversed(qa_q1_services *game, size_t *out_count) {
+  size_t count = 0;
+  const qa_actor_observation *observations = qa_session_actor_registry_observations(game->host.actors, &count);
+  qa_actor_id *ids = malloc((count != 0 ? count : 1) * sizeof *ids);
+  if (ids == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < count; i++) ids[i] = observations[count - 1 - i].id;
+  *out_count = count;
+  return ids;
+}
+
+bool qa_q1mp_is_struck_by_mjolnir(qa_q1_services *game, qa_actor_id actor) {
+  size_t count; qa_q1_actor **entities = qa_q1mp_entities(game, &count);
+  bool struck = false;
+  for (size_t i = 0; i < count && !struck; i++) {
+    qa_q1_actor *entity = entities[i];
+    if (!(qa_q1mp_streq(entity->classname, "hipnotic_mjolnir_lightning") || qa_q1mp_streq(entity->classname, "hipnotic_tesla_lightning")) || entity->count != 1) continue;
+    qa_actor_id enemy;
+    struck = reference(entity, "hipnotic:enemy", &enemy) && qa_same_actor(actor, enemy);
+  }
+  free(entities);
+  return struck;
+}
+static bool visible(qa_q1_services *game, qa_q1_actor *entity, qa_actor_id actor) {
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!body.has_value) return false;
+  qa_vec3 a = qa_q1_get_body(game, entity).origin;
+  qa_vec3 b = qa_q1_actor_vector(entity, "view_ofs");
+  const qa_vec3 start = qa_q1_vadd(a, b);
+  qa_q1_actor *target = qa_q1_get_entity(game, &actor);
+  const double z = qa_q1_is_player(game, &actor) ? 22 : target != NULL ? qa_q1_actor_vector(target, "view_ofs").z : 0;
+  const qa_q1_trace trace = qa_q1mp_trace(game, start, qa_q1_vadd(body.value.origin, QA_Q1MP_V3(0, 0, z)), &entity->actor.id, false);
   return trace.fraction == 1 && !(trace.in_open && trace.in_water);
 }
-static size_t scan_actors(hz_ctx *c, qa_q1mp_actor *entity, double radius, bool include_monsters, qa_actor_id *out, size_t capacity) {
-  qa_q1b_game *g = c->game->base; qa_vec3 origin = g->body(g, entity).origin;
-  qa_q1mp_actor *ents[512]; size_t n = g->entities(g, ents, 512); size_t found = 0;
-  for (size_t idx = n; idx-- > 0 && found < capacity;) {
-    qa_actor_id actor = ents[idx]->actor.id; qa_q1mp_actor *target = ents[idx]; qa_q1b_body body;
-    if (!qa_q1mp_body_read(c->game, actor, &body)) continue;
-    if ((target->movement_flags & 128) != 0) continue;
-    if (!g->is_player(g, QA_Q1MP_SOME(actor)) && (!include_monsters || (target->movement_flags & 32) == 0)) continue;
-    qa_vec3 center = qa_q1mp_vadd(body.origin, qa_q1mp_vscale(qa_q1mp_vadd(body.bounds.min, body.bounds.max), 0.5));
-    if (qa_q1mp_length(qa_q1mp_vsub(center, origin)) <= radius && g->health(g, actor) > 0 && visible_to(c, entity, actor)) out[found++] = actor;
-  }
-  return found;
-}
-static void lightning_damage(hz_ctx *c, qa_q1mp_actor *entity, qa_vec3 start, qa_vec3 end, qa_q1mp_opt_actor from, double amount) {
-  qa_q1b_game *g = c->game->base;
-  qa_q1mp_opt_actor inflictor = from.has ? from : (g->world ? QA_Q1MP_SOME(g->world->actor.id) : QA_Q1MP_NONE);
-  if (!inflictor.has) qa_range_error("Lightning damage requires worldspawn");
-  qa_vec3 side = {-(end.y-start.y)*16, -(end.y-start.y)*16, 0};
-  qa_vec3 offsets[3] = {QA_Q1MP_ZERO, side, qa_q1mp_vscale(side,-1)}; qa_actor_id hit[8]; size_t hits = 0;
-  for (int i = 0; i < 3; i++) {
-    qa_q1b_trace trace = qa_q1mp_trace(c->game, qa_q1mp_vadd(start,offsets[i]), qa_q1mp_vadd(end,offsets[i]), QA_Q1MP_SOME(entity->actor.id), true, false);
-    if (!trace.actor.has) continue;
-    bool seen = false;
-    for (size_t j = 0; j < hits; j++) if (qa_same_actor(hit[j], trace.actor.id)) seen = true;
-    if (seen) continue;
-    if (hits < 8) hit[hits++] = trace.actor.id;
-    qa_q1mp_player_state *tp = g->player(g, trace.actor.id);
-    if (!qa_q1mp_can_damage_actor(c->game, trace.actor.id) || (tp ? qa_q1b_powerups_get(tp,"hipnotic:wetsuit") : 0) != 0) continue;
-    if (c->game->emit_particles) c->game->emit_particles(c->game->ctx, trace.end, QA_Q1MP_V3(0,0,100), 225, amount * 4);
-    qa_q1mp_damage_full(c->game, trace.actor.id, inflictor.id, from, amount, NULL, "direct", "electric", NULL);
-  }
-}
-static void mine_explode(hz_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  g->radius_damage(g, e->actor.id, QA_Q1MP_SOME(e->actor.id), 110, QA_Q1MP_NONE, NULL, NULL);
-  qa_q1mp_sound_ch(c->game, e, "weapons/r_exp3.wav", "weapon");
-  qa_q1mp_effect_a(c->game, "explosion", g->body(g, e).origin, QA_Q1MP_NONE, 0);
-  qa_q1mp_sound_ch(c->game, e, "misc/null.wav", "voice");
-  qa_q1mp_set_velocity(c->game, e, QA_Q1MP_ZERO);
-  e->touch.has = false; qa_q1mp_set_model(e, "progs/s_explod.spr"); e->solid = "none"; e->frame = 0;
-  g->link(g, e); qa_q1mp_world_later(c->game, e, 0.1, "base:explosion_frame");
-}
-static void mine_home_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  e->frame = fmod(e->frame + 1, 9);
-  qa_q1mp_world_later(c->game, e, 0.2, "hip:mine_home");
-  if (qa_q1mp_number(e, "search_time") < g->time) {
-    double distance = 2000; qa_q1mp_opt_actor selected = QA_Q1MP_NONE;
-    qa_actor_id found[64]; size_t n = scan_actors(c, e, 2000, false, found, 64);
-    for (size_t i = 0; i < n; i++) {
-      qa_q1b_body body;
-      if (!qa_q1mp_body_read(c->game, found[i], &body)) continue;
-      double next = qa_q1mp_length(qa_q1mp_vsub(body.origin, g->body(g, e).origin));
-      if (next < distance) { distance = next; selected = QA_Q1MP_SOME(found[i]); }
-    }
-    if (selected.has) qa_q1mp_sound_ch(c->game, e, "hipitems/spikmine.wav", "voice");
-    qa_q1b_references_set(e, "enemy", selected);
-    qa_q1mp_world_number(e, "search_time", g->time + 1.3);
-  }
-  qa_q1mp_opt_actor enemy = qa_q1b_references_get(e, "enemy");
-  qa_q1b_body target; bool has = enemy.has && qa_q1mp_body_read(c->game, enemy.id, &target);
-  if (!has) { qa_q1mp_sound_ch(c->game, e, "misc/null.wav", "voice"); qa_q1mp_set_velocity(c->game, e, QA_Q1MP_ZERO); return; }
-  qa_vec3 direction = qa_q1mp_normalize(qa_q1mp_vsub(qa_q1mp_vadd(target.origin, QA_Q1MP_V3(0,0,10)), g->body(g, e).origin));
-  bool in_front = qa_q1mp_dot(qa_q1mp_normalize(qa_q1mp_vsub(target.origin, g->body(g, e).origin)), qa_q1mp_vectors(c->game, g->body(g, e).angles).forward) > 0.3;
-  qa_q1mp_set_velocity(c->game, e, qa_q1mp_vscale(direction, g->options.skill * 50 + (in_front ? 50 : 150)));
-}
-static void lightning_think(hz_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  if (g->time > e->delay) { g->remove(g, e); return; }
-  qa_vec3 start = g->body(g, e).origin, end = qa_q1mp_vector_of(e, "oldorigin");
-  qa_q1mp_opt_actor client = g->host->check_client(g->host->ctx, e->actor);
-  if (client.has && c->game->emit_beam) c->game->emit_beam(c->game->ctx, "lightning2", e->actor.id, start, end);
-  lightning_damage(c, e, start, end, qa_q1b_references_get(e, "lastvictim"), e->damage);
-  qa_q1mp_world_later(c->game, e, 0.1, "hip:lightning_bolt");
-}
-static void lightning_bolt_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { lightning_think(vctx, g, e); }
-static void lightning_use_impl(hz_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  if (g->time >= qa_q1mp_number(e, "pausetime")) {
-    qa_q1mp_sound(c->game, e, (e->spawnflags & 2) != 0 ? "weapons/lstart.wav" : "weapons/lhit.wav");
-    if (qa_q1mp_streq(e->classname, "trap_lightning_triggered")) qa_q1mp_world_number(e, "pausetime", g->time + 0.1);
-  }
-  qa_vec3 start = g->body(g, e).origin, end;
-  if (e->target[0]) {
-    qa_q1mp_opt_actor enemy_ref = qa_q1b_references_get(e, "enemy");
-    qa_q1mp_actor *enemy = enemy_ref.has ? g->entity(g, enemy_ref) : NULL;
-    if (!enemy) enemy = g->world;
-    if (!enemy) qa_range_error("Lightning requires worldspawn");
-    end = g->body(g, enemy).origin;
-  } else {
-    e->movedir = qa_q1mp_vectors(c->game, g->body(g, e).angles).forward;
-    end = qa_q1mp_trace(c->game, start, qa_q1mp_vadd(start, qa_q1mp_vscale(e->movedir, 600)), QA_Q1MP_SOME(e->actor.id), false, false).end;
-  }
-  qa_vec3 direction = qa_q1mp_normalize(qa_q1mp_vsub(end, start));
-  double distance = qa_q1mp_length(qa_q1mp_vsub(end, start)) / 30, remainder = distance - floor(distance);
-  if (remainder > 0) { start = qa_q1mp_vadd(start, qa_q1mp_vscale(direction, (remainder-1)*15)); end = qa_q1mp_vsub(end, qa_q1mp_vscale(direction, (remainder-1)*15)); }
-  if (qa_q1mp_number(e, "duration") > 0.1) {
-    qa_q1mp_actor *bolt = g->create(g, "hipnotic_lightning");
-    g->set_origin(g, bolt, start); qa_q1mp_world_vector(bolt, "oldorigin", end);
-    qa_q1b_references_set(bolt, "lastvictim", QA_Q1MP_SOME(e->actor.id));
-    bolt->damage = e->damage; bolt->delay = g->time + qa_q1mp_number(e, "duration");
-    lightning_think(c, g, bolt); return;
-  }
-  qa_q1mp_opt_actor client = g->host->check_client(g->host->ctx, e->actor);
-  if (client.has && c->game->emit_beam) c->game->emit_beam(c->game->ctx, "lightning2", e->actor.id, start, end);
-  lightning_damage(c, e, start, end, QA_Q1MP_SOME(e->actor.id), e->damage);
-}
-static void lightning_use_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)o; (void)a; lightning_use_impl(vctx, g, e); }
-static size_t tesla_scan(hz_ctx *c, qa_q1mp_actor *e, qa_actor_id *out, size_t cap) {
-  qa_actor_id all[128]; size_t n = scan_actors(c, e, qa_q1mp_number(e, "distance"), (e->spawnflags & 1) != 0, all, 128);
+/* Returns an owned list; *out_count is its length. */
+static qa_actor_id *scan(qa_q1_services *game, qa_q1_actor *entity, double radius, bool include_monsters, size_t *out_count) {
+  const qa_vec3 origin = qa_q1_get_body(game, entity).origin;
+  size_t count; qa_actor_id *ids = observations_reversed(game, &count);
   size_t found = 0;
-  for (size_t i = 0; i < n && found < cap; i++) {
-    if (qa_q1mp_is_struck_by_mjolnir(c->game, all[i])) continue;
-    out[found++] = all[i];
-    if (found >= (size_t)(e->count > 0 ? e->count : 0) && e->count > 0) break;
+  for (size_t i = 0; i < count; i++) {
+    const qa_actor_id actor = ids[i];
+    qa_q1_actor *target = qa_q1_get_entity(game, &actor);
+    const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+    if (!body.has_value || qa_js_bit_and(movement_flags_of(target), 128) != 0 ||
+        (!qa_q1_is_player(game, &actor) && (!include_monsters || qa_js_bit_and(movement_flags_of(target), 32) == 0))) continue;
+    const qa_vec3 center = qa_q1_vadd(body.value.origin, qa_q1_vscale(qa_q1_vadd(body.value.bounds.min, body.value.bounds.max), 0.5));
+    if (qa_q1_length(qa_q1_vsub(center, origin)) <= radius && qa_q1_health(game, actor) > 0 && visible(game, entity, actor)) ids[found++] = actor;
   }
+  *out_count = found;
+  return ids;
+}
+static void lightning_damage(qa_q1_services *game, qa_q1_actor *entity, qa_vec3 start, qa_vec3 end, const qa_actor_id *from, double amount) {
+  qa_actor_id inflictor;
+  if (from != NULL) inflictor = *from;
+  else if (game->world != NULL) inflictor = game->world->actor.id;
+  else qa_range_error("Lightning damage requires worldspawn");
+  const qa_vec3 side = QA_Q1MP_V3(-(end.y - start.y) * 16, -(end.y - start.y) * 16, 0);
+  const qa_vec3 offsets[3] = {QA_Q1_ZERO, side, qa_q1_vscale(side, -1)};
+  qa_actor_id hit[3]; size_t hits = 0;
+  for (size_t i = 0; i < 3; i++) {
+    const qa_q1_trace trace = qa_q1mp_trace(game, qa_q1_vadd(start, offsets[i]), qa_q1_vadd(end, offsets[i]), &entity->actor.id, true);
+    if (!trace.has_actor) continue;
+    const qa_actor_id actor = trace.actor;
+    bool seen = false;
+    for (size_t j = 0; j < hits; j++) if (qa_same_actor(actor, hit[j])) seen = true;
+    if (seen) continue;
+    hit[hits++] = actor;
+    if (!can_take_damage(game, actor) || powerup_of(game, actor, "hipnotic:wetsuit") != 0) continue;
+    qa_q1_event event = {0};
+    event.kind = "particles"; event.origin = trace.end; event.direction = QA_Q1MP_V3(0, 0, 100); event.color = 225; event.count = amount * 4;
+    qa_q1_emit(game, event);
+    (void)qa_q1_damage(game, actor, inflictor, from, amount, NULL, "direct", "electric", NULL);
+  }
+}
+static void mine_explode(qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1_radius_damage(game, entity->actor.id, &entity->actor.id, 110, NULL, NULL, "");
+  qa_q1_sound(game, entity->actor.id, "weapons/r_exp3.wav", "weapon", 1, 1);
+  qa_q1_effect(game, "explosion", qa_q1_get_body(game, entity).origin, NULL, 1);
+  qa_q1_sound(game, entity->actor.id, "misc/null.wav", "voice", 1, 1);
+  qa_q1_body_patch patch = {0}; patch.has_velocity = true; patch.velocity = QA_Q1_ZERO; qa_q1_set_body(game, entity, &patch);
+  entity->touch = (qa_q1_bound_touch){0};
+  qa_q1mp_set_string(&entity->model, "progs/s_explod.spr"); entity->solid = "none"; entity->frame = 0;
+  qa_q1_link(game, entity);
+  qa_q1mp_world_later(game, entity, 0.1, "base:explosion_frame");
+}
+static void mine_home(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->frame = fmod(entity->frame + 1, 9);
+  qa_q1mp_world_later(game, entity, 0.2, "hip:mine_home");
+  if (qa_q1_actor_number(entity, "search_time") < game->time) {
+    double distance = 2000; bool has_selected = false; qa_actor_id selected = {0};
+    size_t count; qa_actor_id *found = scan(game, entity, 2000, false, &count);
+    for (size_t i = 0; i < count; i++) {
+      const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, found[i]);
+      if (!body.has_value) continue;
+      const double next = qa_q1_length(qa_q1_vsub(body.value.origin, qa_q1_get_body(game, entity).origin));
+      if (next < distance) { distance = next; selected = found[i]; has_selected = true; }
+    }
+    free(found);
+    if (has_selected) qa_q1_sound(game, entity->actor.id, "hipitems/spikmine.wav", "voice", 1, 1);
+    if (!qa_q1_actor_reference_set(entity, "enemy", has_selected ? &selected : NULL)) qa_range_error("Out of memory");
+    qa_q1mp_world_number(entity, "search_time", game->time + 1.3);
+  }
+  qa_actor_id enemy;
+  const bool has_enemy = reference(entity, "enemy", &enemy);
+  const qa_body_state_result target = has_enemy ? qa_shared_body_table_read(game->host.bodies, enemy) : (qa_body_state_result){0};
+  qa_q1_body_patch patch = {0}; patch.has_velocity = true;
+  if (!target.has_value) {
+    qa_q1_sound(game, entity->actor.id, "misc/null.wav", "voice", 1, 1);
+    patch.velocity = QA_Q1_ZERO; qa_q1_set_body(game, entity, &patch); return;
+  }
+  const qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(qa_q1_vadd(target.value.origin, QA_Q1MP_V3(0, 0, 10)), qa_q1_get_body(game, entity).origin));
+  const qa_vec3 toward = qa_q1_normalize(qa_q1_vsub(target.value.origin, qa_q1_get_body(game, entity).origin));
+  const bool in_front = qa_q1_dot(toward, qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles).forward) > 0.3;
+  patch.velocity = qa_q1_vscale(direction, qa_q1_option_skill(game) * 50 + (in_front ? 50 : 150));
+  qa_q1_set_body(game, entity, &patch);
+}
+static void lightning_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (game->time > entity->delay) { qa_q1_remove(game, entity); return; }
+  const qa_vec3 start = qa_q1_get_body(game, entity).origin, end = qa_q1_actor_vector(entity, "oldorigin");
+  qa_actor_id client;
+  if (game->host.check_client(game->host.ctx, entity->actor, &client)) emit_beam(game, entity->actor.id, start, end);
+  qa_actor_id victim;
+  const bool has_victim = reference(entity, "lastvictim", &victim);
+  lightning_damage(game, entity, start, end, has_victim ? &victim : NULL, entity->damage);
+  qa_q1mp_world_later(game, entity, 0.1, "hip:lightning_bolt");
+}
+static void lightning_use_impl(qa_q1_services *game, qa_q1_actor *entity) {
+  if (game->time >= qa_q1_actor_number(entity, "pausetime")) {
+    qa_q1_sound(game, entity->actor.id, qa_js_bit_and(entity->spawnflags, 2) != 0 ? "weapons/lstart.wav" : "weapons/lhit.wav", "voice", 1, 1);
+    if (qa_q1mp_streq(entity->classname, "trap_lightning_triggered")) qa_q1mp_world_number(entity, "pausetime", game->time + 0.1);
+  }
+  qa_vec3 start = qa_q1_get_body(game, entity).origin, end;
+  if (entity->target[0] != '\0') {
+    qa_actor_id enemy_id;
+    qa_q1_actor *enemy = reference(entity, "enemy", &enemy_id) ? qa_q1_get_entity(game, &enemy_id) : NULL;
+    if (enemy == NULL) enemy = game->world;
+    if (enemy == NULL) qa_range_error("Lightning requires worldspawn");
+    end = qa_q1_get_body(game, enemy).origin;
+  } else {
+    entity->movedir = qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles).forward;
+    end = qa_q1mp_trace(game, start, qa_q1_vadd(start, qa_q1_vscale(entity->movedir, 600)), &entity->actor.id, false).end;
+  }
+  const qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(end, start));
+  const double distance = qa_q1_length(qa_q1_vsub(end, start)) / 30, remainder = distance - floor(distance);
+  if (remainder > 0) {
+    start = qa_q1_vadd(start, qa_q1_vscale(direction, (remainder - 1) * 15));
+    end = qa_q1_vsub(end, qa_q1_vscale(direction, (remainder - 1) * 15));
+  }
+  if (qa_q1_actor_number(entity, "duration") > 0.1) {
+    qa_q1_actor *bolt = qa_q1_create(game, "hipnotic_lightning", NULL, NULL);
+    qa_q1_set_origin(game, bolt, start); qa_q1mp_world_vector(bolt, "oldorigin", end);
+    if (!qa_q1_actor_reference_set(bolt, "lastvictim", &entity->actor.id)) qa_range_error("Out of memory");
+    bolt->damage = entity->damage; bolt->delay = game->time + qa_q1_actor_number(entity, "duration");
+    lightning_think(NULL, game, bolt); return;
+  }
+  qa_actor_id client;
+  if (game->host.check_client(game->host.ctx, entity->actor, &client)) emit_beam(game, entity->actor.id, start, end);
+  lightning_damage(game, entity, start, end, &entity->actor.id, entity->damage);
+}
+static void lightning_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)other; (void)activator; lightning_use_impl(game, entity);
+}
+static qa_actor_id *tesla_scan(qa_q1_services *game, qa_q1_actor *entity, size_t *out_count) {
+  size_t count; qa_actor_id *found = scan(game, entity, qa_q1_actor_number(entity, "distance"), qa_js_bit_and(entity->spawnflags, 1) != 0, &count);
+  size_t kept = 0;
+  for (size_t i = 0; i < count; i++) {
+    if (qa_q1mp_is_struck_by_mjolnir(game, found[i])) continue;
+    found[kept++] = found[i];
+    if ((double)kept == entity->count) break;
+  }
+  *out_count = kept;
   return found;
 }
-static void tesla_bolt_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  qa_q1mp_actor *owner = g->entity(g, e->owner);
-  if (owner) qa_q1mp_world_number(owner, "attack_state", 2);
-  qa_q1mp_opt_actor enemy = qa_q1b_references_get(e, "hipnotic:enemy");
-  qa_q1b_body target; bool has = enemy.has && qa_q1mp_body_read(c->game, enemy.id, &target);
-  if (g->time > e->delay || !has) { g->remove(g, e); return; }
-  qa_vec3 start = g->body(g, e).origin;
-  qa_q1b_trace trace = qa_q1mp_trace(c->game, start, target.origin, QA_Q1MP_SOME(e->actor.id), false, false);
-  if (trace.fraction != 1 || !enemy.has || g->health(g, enemy.id) <= 0 || qa_q1mp_length(qa_q1mp_vsub(start, target.origin)) > qa_q1mp_number(e,"distance") + 10) { g->remove(g, e); return; }
-  if (c->game->emit_beam) c->game->emit_beam(c->game->ctx, "lightning2", e->actor.id, start, trace.end);
-  lightning_damage(c, e, start, trace.end, qa_q1b_references_get(e, "lastvictim"), e->damage);
-  qa_q1mp_world_later(c->game, e, 0.1, "hip:tesla_bolt");
+static void tesla_bolt(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1_actor *owner = entity->has_owner ? qa_q1_get_entity(game, &entity->owner) : NULL;
+  if (owner != NULL) qa_q1mp_world_number(owner, "attack_state", 2);
+  qa_actor_id enemy;
+  const bool has_enemy = reference(entity, "hipnotic:enemy", &enemy);
+  const qa_body_state_result target = has_enemy ? qa_shared_body_table_read(game->host.bodies, enemy) : (qa_body_state_result){0};
+  if (game->time > entity->delay || !target.has_value) { qa_q1_remove(game, entity); return; }
+  const qa_vec3 start = qa_q1_get_body(game, entity).origin;
+  const qa_q1_trace trace = qa_q1mp_trace(game, start, target.value.origin, &entity->actor.id, false);
+  if (trace.fraction != 1 || !has_enemy || qa_q1_health(game, enemy) <= 0 ||
+      qa_q1_length(qa_q1_vsub(start, target.value.origin)) > qa_q1_actor_number(entity, "distance") + 10) { qa_q1_remove(game, entity); return; }
+  emit_beam(game, entity->actor.id, start, trace.end);
+  qa_actor_id victim;
+  const bool has_victim = reference(entity, "lastvictim", &victim);
+  lightning_damage(game, entity, start, trace.end, has_victim ? &victim : NULL, entity->damage);
+  qa_q1mp_world_later(game, entity, 0.1, "hip:tesla_bolt");
 }
-static void tesla_think_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  if (qa_q1mp_number(e, "hazard_state") == 0) { qa_q1mp_world_later(c->game, e, 0.25, "hip:tesla_think"); return; }
-  double state = qa_q1mp_number(e, "attack_state");
+static void tesla_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (qa_q1_actor_number(entity, "hazard_state") == 0) { qa_q1mp_world_later(game, entity, 0.25, "hip:tesla_think"); return; }
+  const double state = qa_q1_actor_number(entity, "attack_state");
   if (state == 0) {
-    qa_actor_id targets[32]; size_t n = tesla_scan(c, e, targets, 32);
-    if (n > 0) {
-      if (e->wait > 0) qa_q1mp_sound(c->game, e, "misc/tesla.wav");
-      qa_q1mp_world_number(e, "attack_state", 1);
-      qa_q1mp_world_later(c->game, e, e->wait, "hip:tesla_think"); return;
+    size_t count; qa_actor_id *targets = tesla_scan(game, entity, &count); free(targets);
+    if (count > 0) {
+      if (entity->wait > 0) qa_q1_sound(game, entity->actor.id, "misc/tesla.wav", "voice", 1, 1);
+      qa_q1mp_world_number(entity, "attack_state", 1);
+      qa_q1mp_world_later(game, entity, entity->wait, "hip:tesla_think"); return;
     }
-    if (e->delay > 0 && g->time > qa_q1mp_number(e, "search_time")) qa_q1mp_world_number(e, "attack_state", 3);
-    qa_q1mp_world_later(c->game, e, 0.25, "hip:tesla_think"); return;
+    if (entity->delay > 0 && game->time > qa_q1_actor_number(entity, "search_time")) qa_q1mp_world_number(entity, "attack_state", 3);
+    qa_q1mp_world_later(game, entity, 0.25, "hip:tesla_think"); return;
   }
   if (state == 1) {
-    qa_actor_id targets[32]; size_t n = tesla_scan(c, e, targets, 32);
-    for (size_t i = 0; i < n; i++) {
-      qa_q1mp_sound(c->game, e, "hipweap/mjolhit.wav");
-      qa_q1mp_actor *bolt = g->create(g, "hipnotic_tesla_lightning");
-      bolt->count = 1; bolt->owner = QA_Q1MP_SOME(e->actor.id);
-      qa_q1b_references_set(bolt, "hipnotic:enemy", QA_Q1MP_SOME(targets[i]));
-      qa_q1b_references_set(bolt, "lastvictim", qa_q1b_references_get(e, "lastvictim"));
-      double dur = qa_q1mp_number(e, "duration");
-      bolt->delay = g->time + (dur > 0 ? dur : 9999); bolt->damage = e->damage;
-      qa_q1mp_world_number(bolt, "distance", qa_q1mp_number(e, "distance"));
-      g->set_origin(g, bolt, g->body(g, e).origin);
-      qa_q1mp_world_later(c->game, bolt, 0, "hip:tesla_bolt");
+    size_t count; qa_actor_id *targets = tesla_scan(game, entity, &count);
+    for (size_t i = 0; i < count; i++) {
+      qa_q1_sound(game, entity->actor.id, "hipweap/mjolhit.wav", "voice", 1, 1);
+      qa_q1_actor *bolt = qa_q1_create(game, "hipnotic_tesla_lightning", NULL, NULL);
+      bolt->count = 1; bolt->has_owner = true; bolt->owner = entity->actor.id;
+      qa_q1mp_field_text(bolt, "deathtype", qa_q1_actor_text(entity, "deathtype"));
+      if (!qa_q1_actor_reference_set(bolt, "hipnotic:enemy", &targets[i])) qa_range_error("Out of memory");
+      qa_actor_id victim;
+      const bool has_victim = reference(entity, "lastvictim", &victim);
+      if (!qa_q1_actor_reference_set(bolt, "lastvictim", has_victim ? &victim : NULL)) qa_range_error("Out of memory");
+      bolt->delay = game->time + (qa_q1_actor_number(entity, "duration") > 0 ? qa_q1_actor_number(entity, "duration") : 9999);
+      bolt->damage = entity->damage;
+      qa_q1mp_world_number(bolt, "distance", qa_q1_actor_number(entity, "distance"));
+      qa_q1_set_origin(game, bolt, qa_q1_get_body(game, entity).origin);
+      qa_q1mp_world_later(game, bolt, 0, "hip:tesla_bolt");
     }
-    qa_q1mp_world_number(e, "attack_state", 2);
-    qa_q1mp_world_later(c->game, e, 1, "hip:tesla_think"); return;
+    free(targets);
+    qa_q1mp_world_number(entity, "attack_state", 2);
+    qa_q1mp_world_later(game, entity, 1, "hip:tesla_think"); return;
   }
-  if (state == 2) { qa_q1mp_world_number(e, "attack_state", 3); qa_q1mp_world_later(c->game, e, 0.2, "hip:tesla_think"); return; }
-  qa_q1mp_world_number(e, "attack_state", 0);
-  if (qa_q1mp_streq(e->classname, "trap_gods_wrath")) g->cancel(g, e);
-  else qa_q1mp_world_later(c->game, e, 0.1, "hip:tesla_think");
+  if (state == 2) { qa_q1mp_world_number(entity, "attack_state", 3); qa_q1mp_world_later(game, entity, 0.2, "hip:tesla_think"); return; }
+  qa_q1mp_world_number(entity, "attack_state", 0);
+  if (qa_q1mp_streq(entity->classname, "trap_gods_wrath")) qa_q1_cancel(game, entity);
+  else qa_q1mp_world_later(game, entity, 0.1, "hip:tesla_think");
 }
-static void mine_first_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx; qa_q1mp_world_number(e, "search_time", 0);
-  qa_q1b_actor_set_damageable(g, e, true); e->aimed_damage = true;
-  e->use = g->named.use(g->named.ctx, e, "hip:mine_use");
-  qa_q1mp_world_later(c->game, e, 0.1, "hip:mine_home");
+static void mine_first(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_world_number(entity, "search_time", 0);
+  qa_q1_actor_set_damageable(entity, true); entity->aimed_damage = true;
+  entity->use = qa_q1_callback_registry_use(game->named, entity, "hip:mine_use");
+  qa_q1mp_world_later(game, entity, 0.1, "hip:mine_home");
 }
-static void mine_use_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor activator) {
-  (void)o; hz_ctx *c = vctx;
-  if (activator.has && g->is_player(g, activator)) {
-    qa_q1mp_player_state *p = g->player(g, activator.id);
-    if ((p ? qa_q1b_powerups_get(p, "invisibility") : 0) <= g->time) {
-      qa_q1b_references_set(e, "enemy", activator);
-      qa_q1mp_world_later(c->game, e, 0.1, "hip:mine_home");
-    }
+static void mine_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)other;
+  if (activator != NULL && qa_q1_is_player(game, activator) && powerup_of(game, *activator, "invisibility") <= game->time) {
+    if (!qa_q1_actor_reference_set(entity, "enemy", activator)) qa_range_error("Out of memory");
+    qa_q1mp_world_later(game, entity, 0.1, "hip:mine_home");
   }
 }
-static void mine_die_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor attacker) {
-  hz_ctx *c = vctx; qa_q1b_actor_set_damageable(g, e, false); g->killed_monsters++;
-  if (c->game->emit_monster_killed) c->game->emit_monster_killed(c->game->ctx, e->actor.id, g->total_monsters, g->killed_monsters);
-  g->use_targets(g, e, attacker); mine_explode(c, g, e);
+static void mine_die(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
+  (void)ctx;
+  qa_q1_actor_set_damageable(entity, false);
+  game->killed_monsters++;
+  qa_q1_event event = {0};
+  event.kind = "monster-killed"; event.has_actor = true; event.actor = entity->actor.id;
+  event.total = game->total_monsters; event.found = game->killed_monsters;
+  qa_q1_emit(game, event);
+  qa_q1_use_targets(game, entity, attacker);
+  mine_explode(game, entity);
 }
-static void mine_touch_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; hz_ctx *c = vctx;
-  if (g->health(g, e->actor.id) > 0) {
-    const char *cn = g->host->classname(g->host->ctx, other);
-    if (qa_q1mp_streq(cn,"trap_spike_mine")||qa_q1mp_streq(cn,"missile")||qa_q1mp_streq(cn,"grenade")||qa_q1mp_streq(cn,"hiplaser")||qa_q1mp_streq(cn,"proximity_grenade")) return;
-    qa_q1b_game_damage(g, e->actor.id, e->actor.id, QA_Q1MP_SOME(e->actor.id), g->health(g, e->actor.id) + 10);
+static void mine_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                       const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  if (qa_q1_health(game, entity->actor.id) > 0) {
+    static const char *const IGNORED[] = {"trap_spike_mine", "missile", "grenade", "hiplaser", "proximity_grenade"};
+    const char *classname = game->host.classname(game->host.ctx, other);
+    for (size_t i = 0; i < sizeof IGNORED / sizeof IGNORED[0]; i++) if (qa_q1mp_streq(classname, IGNORED[i])) return;
+    (void)qa_q1_damage(game, entity->actor.id, entity->actor.id, &entity->actor.id, qa_q1_health(game, entity->actor.id) + 10, NULL, "direct", "", NULL);
   }
-  mine_explode(c, g, e);
+  mine_explode(game, entity);
 }
-static void mine_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  if (g->options.deathmatch != 0) { g->remove(g, e); return; }
-  qa_q1mp_set_model(e, "progs/spikmine.mdl"); e->solid = "bbox"; e->movement = "flymissile";
-  e->angular_velocity = QA_Q1MP_V3(-50,100,150);
-  e->max_health = g->options.skill <= 1 ? 200 : 400;
-  g->host->combat_set_health(g->host->ctx, e->actor, e->max_health);
-  e->frame = 0; e->movement_flags |= 32; g->total_monsters++;
-  e->touch = g->named.touch(g->named.ctx, e, "hip:mine_explode");
-  e->die = g->named.die(g->named.ctx, e, "hip:mine_explode");
-  qa_q1mp_world_later(c->game, e, 0.2, "hip:mine_first");
+static void spike_mine_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_field_text(entity, "deathtype", "$qc_suicide_mine");
+  if (game->options.deathmatch != 0) { qa_q1_remove(game, entity); return; }
+  qa_q1mp_set_string(&entity->model, "progs/spikmine.mdl"); entity->solid = "bbox"; entity->movement = "flymissile";
+  entity->angular_velocity = QA_Q1MP_V3(-50, 100, 150);
+  entity->max_health = qa_q1_option_skill(game) <= 1 ? 200 : 400;
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, entity->max_health);
+  entity->frame = 0; entity->movement_flags = qa_js_bit_or(entity->movement_flags, 32);
+  game->total_monsters++;
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "hip:mine_explode");
+  entity->die = qa_q1_callback_registry_die(game->named, entity, "hip:mine_explode");
+  qa_q1mp_world_later(game, entity, 0.2, "hip:mine_first");
 }
-static void hazard_switch_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) {
-  (void)o; (void)a; (void)vctx;
-  qa_q1mp_world_number(e, "hazard_state", 1 - qa_q1mp_number(e, "hazard_state"));
-  if (qa_q1mp_number(e, "hazard_state") == 1 && e->think.has)
-    g->schedule(g, e, qa_q1mp_number(e, "huntingcharmer") - g->time, e->think);
+static void hazard_switch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)other; (void)activator;
+  qa_q1mp_world_number(entity, "hazard_state", 1 - qa_q1_actor_number(entity, "hazard_state"));
+  if (qa_q1_actor_number(entity, "hazard_state") == 1 && entity->think.fn != NULL)
+    qa_q1_schedule(game, entity, qa_q1_actor_number(entity, "huntingcharmer") - game->time, entity->think);
 }
-static void lightning_think_state_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  if (qa_q1mp_number(e, "hazard_state") != 0) lightning_use_impl(c, g, e);
-  if (qa_q1mp_number(e, "cnt") == 0) {
-    double delay = (e->spawnflags & 1) != 0 ? e->wait * qa_q1mp_random(c->game) : e->wait;
-    qa_q1mp_world_number(e, "cnt", 1);
-    qa_q1mp_world_number(e, "t_length", g->time + qa_q1mp_number(e,"duration") - 0.1);
-    double pt = g->time + qa_q1mp_number(e,"duration") - 0.1; if (pt < g->time + 0.3) pt = g->time + 0.3;
-    qa_q1mp_world_number(e, "pausetime", pt);
-    if (delay < qa_q1mp_number(e,"duration")) delay = qa_q1mp_number(e,"duration");
-    qa_q1mp_world_number(e, "t_width", g->time + delay);
+static void lightning_cycle(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (qa_q1_actor_number(entity, "hazard_state") != 0) lightning_use_impl(game, entity);
+  if (qa_q1_actor_number(entity, "cnt") == 0) {
+    double delay = qa_js_bit_and(entity->spawnflags, 1) != 0 ? entity->wait * game->host.random(game->host.ctx) : entity->wait;
+    qa_q1mp_world_number(entity, "cnt", 1);
+    qa_q1mp_world_number(entity, "t_length", game->time + qa_q1_actor_number(entity, "duration") - 0.1);
+    qa_q1mp_world_number(entity, "pausetime", qa_js_max(game->time + qa_q1_actor_number(entity, "duration") - 0.1, game->time + 0.3));
+    delay = qa_js_max(delay, qa_q1_actor_number(entity, "duration"));
+    qa_q1mp_world_number(entity, "t_width", game->time + delay);
   }
-  if (g->time >= qa_q1mp_number(e, "t_length")) {
-    qa_q1mp_world_number(e, "cnt", 0);
-    qa_q1mp_world_later(c->game, e, qa_q1mp_number(e,"t_width") - g->time, "hip:lightning_think"); return;
+  if (game->time >= qa_q1_actor_number(entity, "t_length")) {
+    qa_q1mp_world_number(entity, "cnt", 0);
+    qa_q1mp_world_later(game, entity, qa_q1_actor_number(entity, "t_width") - game->time, "hip:lightning_think"); return;
   }
-  qa_q1mp_world_later(c->game, e, 0.2, "hip:lightning_think");
+  qa_q1mp_world_later(game, entity, 0.2, "hip:lightning_think");
 }
-static void lightning_first_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  if (e->target[0]) {
-    qa_q1mp_actor *t = qa_q1mp_find0(c->game, e->target);
-    qa_q1b_references_set(e, "enemy", t ? QA_Q1MP_SOME(t->actor.id) : QA_Q1MP_NONE);
+static void lightning_first(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (entity->target[0] != '\0') {
+    qa_q1_actor *first = qa_q1mp_find_first(game, entity->target);
+    if (!qa_q1_actor_reference_set(entity, "enemy", first != NULL ? &first->actor.id : NULL)) qa_range_error("Out of memory");
   }
-  if (qa_q1mp_streq(e->classname, "trap_lightning_triggered")) { g->cancel(g, e); return; }
-  qa_q1mp_world_later(c->game, e, qa_q1mp_number(e,"huntingcharmer") + e->wait + qa_q1mp_number(e,"ltime") - g->time, "hip:lightning_think");
+  if (qa_q1mp_streq(entity->classname, "trap_lightning_triggered")) { qa_q1_cancel(game, entity); return; }
+  double left = qa_q1_actor_number(entity, "huntingcharmer") + entity->wait;
+  double right = qa_q1_actor_number(entity, "ltime");
+  qa_q1mp_world_later(game, entity, left + right - game->time,
+                      "hip:lightning_think");
 }
-static void lightning_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  if (e->wait == 0) e->wait = 1;
-  if (e->damage == 0) e->damage = 30;
-  if (qa_q1mp_number(e,"duration") == 0) qa_q1mp_world_number(e, "duration", 0.1);
-  qa_q1mp_world_number(e, "cnt", 0);
-  qa_q1mp_world_number(e, "hazard_state", qa_q1mp_streq(e->classname,"trap_lightning") ? 1 : qa_q1mp_number(e,"state"));
-  qa_q1mp_world_number(e, "huntingcharmer", qa_q1mp_number(e,"nextthink"));
-  e->use = g->named.use(g->named.ctx, e, qa_q1mp_streq(e->classname,"trap_lightning_switched") ? "hip:hazard_switch" : "hip:lightning_use");
-  qa_q1mp_world_later(c->game, e, 0.25, "hip:lightning_first");
+/* The TS spawn closures capture the registered classname. */
+typedef struct hazard_class { const char *classname; } hazard_class;
+static hazard_class LIGHTNING_CLASSES[3] = {{"trap_lightning"}, {"trap_lightning_triggered"}, {"trap_lightning_switched"}};
+static hazard_class TESLA_CLASSES[2] = {{"trap_tesla_coil"}, {"trap_gods_wrath"}};
+static void lightning_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const char *classname = ((const hazard_class *)ctx)->classname;
+  qa_q1mp_field_text(entity, "deathtype", "$qc_suicide_electrocuted");
+  if (falsy(entity->wait)) entity->wait = 1;
+  if (falsy(entity->damage)) entity->damage = 30;
+  if (qa_q1_actor_number(entity, "duration") == 0) qa_q1mp_world_number(entity, "duration", 0.1);
+  qa_q1mp_world_number(entity, "cnt", 0);
+  qa_q1mp_world_number(entity, "hazard_state", qa_q1mp_streq(classname, "trap_lightning") ? 1 : qa_q1_actor_number(entity, "state"));
+  qa_q1mp_world_number(entity, "huntingcharmer", qa_q1_actor_number(entity, "nextthink"));
+  entity->use = qa_q1_callback_registry_use(game->named, entity, qa_q1mp_streq(classname, "trap_lightning_switched") ? "hip:hazard_switch" : "hip:lightning_use");
+  qa_q1mp_world_later(game, entity, 0.25, "hip:lightning_first");
 }
-static void wrath_use_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor activator) {
-  (void)o; hz_ctx *c = vctx;
-  if (qa_q1mp_number(e, "attack_state") != 0) return;
-  qa_q1mp_world_number(e, "search_time", g->time + e->delay);
-  qa_q1b_references_set(e, "lastvictim", activator);
-  tesla_think_cb(c, g, e);
+static void wrath_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)other;
+  if (qa_q1_actor_number(entity, "attack_state") != 0) return;
+  qa_q1mp_world_number(entity, "search_time", game->time + entity->delay);
+  if (!qa_q1_actor_reference_set(entity, "lastvictim", activator)) qa_range_error("Out of memory");
+  tesla_think(ctx, game, entity);
 }
-static void tesla_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx; bool wrath = qa_q1mp_streq(e->classname, "trap_gods_wrath");
-  if (e->wait == 0) e->wait = 2;
-  if (e->damage == 0) e->damage = 2 + 5 * g->options.skill;
-  if (qa_q1mp_number(e,"duration") == 0) qa_q1mp_world_number(e, "duration", -1);
-  if (qa_q1mp_number(e,"distance") == 0) qa_q1mp_world_number(e, "distance", 600);
-  if (e->delay == 0) e->delay = wrath ? 5 : -1;
-  qa_q1mp_world_number(e, "hazard_state", qa_q1mp_number(e,"state"));
-  qa_q1mp_world_number(e, "attack_state", 0);
-  qa_q1b_references_set(e, "lastvictim", QA_Q1MP_NONE);
-  e->use = g->named.use(g->named.ctx, e, "hip:hazard_switch");
-  qa_q1mp_world_later(c->game, e, qa_q1mp_random(c->game), "hip:tesla_think");
-  if (wrath) { e->wait = 0; qa_q1mp_world_number(e, "hazard_state", 1); g->cancel(g, e); e->use = g->named.use(g->named.ctx, e, "hip:wrath_use"); }
-}
-static void gravity_action(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx; qa_q1mp_world_number(e, "ltime", g->time);
-  qa_actor_id targets[32]; size_t n = tesla_scan(c, e, targets, 32);
-  for (size_t i = 0; i < n; i++) {
-    qa_owned_actor owner; qa_q1b_body body;
-    if (!g->host->actors_resolve_owned(g->host->ctx, targets[i], &owner) || !qa_q1mp_body_read(c->game, targets[i], &body)) continue;
-    qa_q1mp_player_state *tp = g->player(g, targets[i]);
-    double scale = ((e->spawnflags & 2) != 0 && (tp ? qa_q1b_powerups_get(tp,"hipnotic:wetsuit") : 0) > g->time) ? 0.6 : 1;
-    qa_vec3 pull = qa_q1mp_vscale(qa_q1mp_normalize(qa_q1mp_vsub(g->body(g, e).origin, body.origin)), e->speed * scale);
-    body.velocity = qa_q1mp_vadd(body.velocity, pull);
-    g->host->bodies_write(g->host->ctx, owner, &body);
+static void tesla_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const bool wrath = qa_q1mp_streq(((const hazard_class *)ctx)->classname, "trap_gods_wrath");
+  qa_q1mp_field_text(entity, "deathtype", wrath ? "$qc_suicide_wrath" : "$qc_suicide_electrocuted");
+  if (falsy(entity->wait)) entity->wait = 2;
+  if (falsy(entity->damage)) entity->damage = 2 + 5 * qa_q1_option_skill(game);
+  if (qa_q1_actor_number(entity, "duration") == 0) qa_q1mp_world_number(entity, "duration", -1);
+  if (qa_q1_actor_number(entity, "distance") == 0) qa_q1mp_world_number(entity, "distance", 600);
+  if (falsy(entity->delay)) entity->delay = wrath ? 5 : -1;
+  qa_q1mp_world_number(entity, "hazard_state", qa_q1_actor_number(entity, "state"));
+  qa_q1mp_world_number(entity, "attack_state", 0);
+  if (!qa_q1_actor_reference_set(entity, "lastvictim", NULL)) qa_range_error("Out of memory");
+  entity->use = qa_q1_callback_registry_use(game->named, entity, "hip:hazard_switch");
+  qa_q1mp_world_later(game, entity, game->host.random(game->host.ctx), "hip:tesla_think");
+  if (wrath) {
+    entity->wait = 0; qa_q1mp_world_number(entity, "hazard_state", 1); qa_q1_cancel(game, entity);
+    entity->use = qa_q1_callback_registry_use(game->named, entity, "hip:wrath_use");
   }
-  qa_q1mp_world_later(c->game, e, 0.1, "hip:gravity_well");
 }
-static void gravity_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; hz_ctx *c = vctx;
-  if (e->attack_finished > g->time || !qa_q1mp_can_damage_actor(c->game, other)) return;
-  qa_q1b_game_damage(g, other, e->actor.id, QA_Q1MP_SOME(e->actor.id), e->damage);
-  e->attack_finished = g->time + 0.2;
+static void gravity_well(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_world_number(entity, "ltime", game->time);
+  size_t count; qa_actor_id *targets = tesla_scan(game, entity, &count);
+  for (size_t i = 0; i < count; i++) {
+    const qa_actor_id actor = targets[i];
+    qa_owned_actor owner;
+    const bool has_owner = qa_session_actor_registry_resolve_owned(game->host.actors, actor, &owner);
+    qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+    if (!has_owner || !body.has_value) continue;
+    const double scale = qa_js_bit_and(entity->spawnflags, 2) != 0 && powerup_of(game, actor, "hipnotic:wetsuit") > game->time ? 0.6 : 1;
+    const qa_vec3 pull = qa_q1_vscale(qa_q1_normalize(qa_q1_vsub(qa_q1_get_body(game, entity).origin, body.value.origin)), entity->speed * scale);
+    body.value.velocity = qa_q1_vadd(body.value.velocity, pull);
+    qa_shared_body_table_write(game->host.bodies, owner, body.value);
+  }
+  free(targets);
+  qa_q1mp_world_later(game, entity, 0.1, "hip:gravity_well");
 }
-static void gravity_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  hz_ctx *c = vctx;
-  e->solid = "trigger"; e->movement = "none";
-  if (e->damage == 0) e->damage = 10000;
-  if (e->speed == 0) e->speed = 210;
-  if (qa_q1mp_number(e,"distance") == 0) qa_q1mp_world_number(e, "distance", 600);
-  e->touch = g->named.touch(g->named.ctx, e, "hip:gravity_well");
-  g->set_bounds(g, e, (qa_bounds){{-16,-16,-16},{16,16,16}});
-  qa_q1mp_world_number(e, "ltime", g->time);
-  qa_q1mp_world_later(c->game, e, 0.1, "hip:gravity_well");
+static void gravity_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                          const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  if (entity->attack_finished > game->time || !can_take_damage(game, other)) return;
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "", NULL);
+  entity->attack_finished = game->time + 0.2;
 }
-void qa_q1mp_register_hipnotic_hazards(qa_q1mp_game *game) {
-  hz_ctx *c = malloc(sizeof *c); c->game = game; qa_q1b_game *g = game->base;
-  qa_q1b_handlers h = {0}; h.ctx = c; h.action = mine_home_cb;
-  g->named.register_named(g->named.ctx, "hip:mine_home", &h);
-  qa_q1b_handlers hf = {0}; hf.ctx = c; hf.action = mine_first_cb;
-  g->named.register_named(g->named.ctx, "hip:mine_first", &hf);
-  qa_q1b_handlers hu = {0}; hu.ctx = c; hu.use = mine_use_cb;
-  g->named.register_named(g->named.ctx, "hip:mine_use", &hu);
-  qa_q1b_handlers he = {0}; he.ctx = c; he.die = mine_die_cb; he.touch = mine_touch_cb;
-  g->named.register_named(g->named.ctx, "hip:mine_explode", &he);
-  g->register_spawn(g, "trap_spike_mine", mine_spawn, c);
-  qa_q1b_handlers hl = {0}; hl.ctx = c; hl.action = lightning_bolt_cb;
-  g->named.register_named(g->named.ctx, "hip:lightning_bolt", &hl);
-  qa_q1b_handlers hlu = {0}; hlu.ctx = c; hlu.use = lightning_use_cb;
-  g->named.register_named(g->named.ctx, "hip:lightning_use", &hlu);
-  qa_q1b_handlers hsw = {0}; hsw.ctx = c; hsw.use = hazard_switch_use;
-  g->named.register_named(g->named.ctx, "hip:hazard_switch", &hsw);
-  qa_q1b_handlers hlt = {0}; hlt.ctx = c; hlt.action = lightning_think_state_cb;
-  g->named.register_named(g->named.ctx, "hip:lightning_think", &hlt);
-  qa_q1b_handlers hlf = {0}; hlf.ctx = c; hlf.action = lightning_first_cb;
-  g->named.register_named(g->named.ctx, "hip:lightning_first", &hlf);
-  static const char *const lightning[] = {"trap_lightning","trap_lightning_triggered","trap_lightning_switched"};
-  for (size_t i = 0; i < 3; i++) g->register_spawn(g, lightning[i], lightning_spawn, c);
-  qa_q1b_handlers htb = {0}; htb.ctx = c; htb.action = tesla_bolt_cb;
-  g->named.register_named(g->named.ctx, "hip:tesla_bolt", &htb);
-  qa_q1b_handlers htt = {0}; htt.ctx = c; htt.action = tesla_think_cb;
-  g->named.register_named(g->named.ctx, "hip:tesla_think", &htt);
-  qa_q1b_handlers hw = {0}; hw.ctx = c; hw.use = wrath_use_cb;
-  g->named.register_named(g->named.ctx, "hip:wrath_use", &hw);
-  g->register_spawn(g, "trap_tesla_coil", tesla_spawn, c);
-  g->register_spawn(g, "trap_gods_wrath", tesla_spawn, c);
-  qa_q1b_handlers hg = {0}; hg.ctx = c; hg.action = gravity_action; hg.touch = gravity_touch;
-  g->named.register_named(g->named.ctx, "hip:gravity_well", &hg);
-  g->register_spawn(g, "trap_gravity_well", gravity_spawn, c);
+static void gravity_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->solid = "trigger"; entity->movement = "none";
+  if (falsy(entity->damage)) entity->damage = 10000;
+  if (falsy(entity->speed)) entity->speed = 210;
+  if (qa_q1_actor_number(entity, "distance") == 0) qa_q1mp_world_number(entity, "distance", 600);
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "hip:gravity_well");
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, -16}, {16, 16, 16}});
+  qa_q1mp_world_number(entity, "ltime", game->time);
+  qa_q1mp_world_later(game, entity, 0.1, "hip:gravity_well");
+}
+void qa_q1mp_register_hipnotic_hazards(qa_q1_services *game) {
+  qa_q1_callback_registry *named = game->named;
+  qa_q1_callback_registry_register(named, "hip:mine_home", (qa_q1_callback_handlers){.action = mine_home});
+  qa_q1_callback_registry_register(named, "hip:mine_first", (qa_q1_callback_handlers){.action = mine_first});
+  qa_q1_callback_registry_register(named, "hip:mine_use", (qa_q1_callback_handlers){.use = mine_use});
+  qa_q1_callback_registry_register(named, "hip:mine_explode", (qa_q1_callback_handlers){.die = mine_die, .touch = mine_touch});
+  qa_q1_register_spawn(game, "trap_spike_mine", spike_mine_spawn, NULL);
+  qa_q1_callback_registry_register(named, "hip:lightning_bolt", (qa_q1_callback_handlers){.action = lightning_think});
+  qa_q1_callback_registry_register(named, "hip:lightning_use", (qa_q1_callback_handlers){.use = lightning_use});
+  qa_q1_callback_registry_register(named, "hip:hazard_switch", (qa_q1_callback_handlers){.use = hazard_switch});
+  qa_q1_callback_registry_register(named, "hip:lightning_think", (qa_q1_callback_handlers){.action = lightning_cycle});
+  qa_q1_callback_registry_register(named, "hip:lightning_first", (qa_q1_callback_handlers){.action = lightning_first});
+  for (size_t i = 0; i < 3; i++) qa_q1_register_spawn(game, LIGHTNING_CLASSES[i].classname, lightning_spawn, &LIGHTNING_CLASSES[i]);
+  qa_q1_callback_registry_register(named, "hip:tesla_bolt", (qa_q1_callback_handlers){.action = tesla_bolt});
+  qa_q1_callback_registry_register(named, "hip:tesla_think", (qa_q1_callback_handlers){.action = tesla_think});
+  qa_q1_callback_registry_register(named, "hip:wrath_use", (qa_q1_callback_handlers){.use = wrath_use});
+  for (size_t i = 0; i < 2; i++) qa_q1_register_spawn(game, TESLA_CLASSES[i].classname, tesla_spawn, &TESLA_CLASSES[i]);
+  qa_q1_callback_registry_register(named, "hip:gravity_well", (qa_q1_callback_handlers){.action = gravity_well, .touch = gravity_touch});
+  qa_q1_register_spawn(game, "trap_gravity_well", gravity_spawn, NULL);
 }

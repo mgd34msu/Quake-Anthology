@@ -20,6 +20,7 @@ typedef struct player_arsenal {
   bool has_last_fire;
   double last_fire_milliseconds;
   qa_item_id pending_use;
+  bool arsenal_read_order; /* the restored arsenal's key order (qa_app_q3_selected_arsenal_checkpoint) */
 } player_arsenal;
 struct qa_app_q3_selected_arsenal {
   qa_app_q3_selected_arsenal_options options;
@@ -120,6 +121,17 @@ qa_arsenal_state qa_app_q3_selected_arsenal_admit(qa_app_q3_selected_arsenal *ar
   player->runtime = qa_q3_spawn_arsenal_runtime(arsenal->options.product, max_health, 0);
   player->torso_animation = qa_q3_spawn_animation().torso;
   return qa_app_q3_selected_arsenal_read(arsenal, actor.id);
+}
+/* setSpawnWeapon (arsenal/q3.ts 94-99). */
+void qa_app_q3_selected_arsenal_set_spawn_weapon(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor, double weapon) {
+  player_arsenal *player = require_player(arsenal, actor);
+  const qa_q3_weapon_item *entry = NULL;
+  for (size_t i = 0; i < QA_Q3_WEAPON_ITEM_COUNT && entry == NULL; i++) if (qa_q3_weapon_items[i].weapon == weapon) entry = &qa_q3_weapon_items[i];
+  if (entry == NULL || player->arsenal.state.kind == NULL || strcmp(player->arsenal.state.kind, "q3") != 0)
+    qa_range_error("Spawn weapon is not a Q3 weapon");
+  player->arsenal.active_weapon = entry->item;
+  player->arsenal.state.source_weapon = weapon;
+  player->runtime.has_requested_weapon = false;
 }
 bool qa_app_q3_selected_arsenal_select(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor, qa_item_id item) {
   player_arsenal *player = require_player(arsenal, actor);
@@ -285,11 +297,8 @@ qa_weapon_step_result qa_app_q3_selected_arsenal_step(qa_app_q3_selected_arsenal
   }
   if (intent && intent->weapon) {
     const qa_q3_weapon_item *requested = find_weapon(intent->weapon);
-    if (!requested || (!missionpack(arsenal) && requested->weapon > 10)) {
-      free((void *)state.ammo);
-      qa_range_error("Weapon does not belong to the selected Q3 product");
-    }
-    qa_app_q3_selected_arsenal_select(arsenal, input.actor.id, intent->weapon);
+    /* Peers choose this string; a weapon outside the product is no request. */
+    if (requested && (missionpack(arsenal) || requested->weapon <= 10)) qa_app_q3_selected_arsenal_select(arsenal, input.actor.id, intent->weapon);
   }
   qa_actor_animation_state weapon_animation; memset(&weapon_animation, 0, sizeof weapon_animation);
   weapon_animation.provider = arsenal->options.provider;
@@ -312,6 +321,7 @@ qa_weapon_step_result qa_app_q3_selected_arsenal_step(qa_app_q3_selected_arsenal
   qa_q3_arsenal_step stepped = qa_q3_step_arsenal(stepped_input, player->runtime, controls,
       arsenal->options.firing_delay ? delay_cb : NULL, &dctx);
   qa_weapon_step_result result = stepped.base;
+  free((void *)stepped.torso_animations); /* nothing reads stepQ3Arsenal's torsoAnimations here */
   double elapsed = input.frame.elapsed.kind == QA_SOURCE_TIME_MILLISECONDS ? input.frame.elapsed.value : input.frame.elapsed.value * 1000;
   double milliseconds = trunc(elapsed + player->runtime.fractional_milliseconds);
   if (arsenal->options.has_equipment && arsenal->options.equipment.advance)
@@ -370,6 +380,7 @@ qa_app_q3_selected_arsenal_checkpoint qa_app_q3_selected_arsenal_capture(qa_app_
   checkpoint.has_last_fire_milliseconds = player->has_last_fire;
   checkpoint.last_fire_milliseconds = player->last_fire_milliseconds;
   checkpoint.pending_use = player->pending_use;
+  checkpoint.arsenal_read_order = player->arsenal_read_order;
   return checkpoint;
 }
 void qa_app_q3_selected_arsenal_restore(qa_app_q3_selected_arsenal *arsenal, qa_owned_actor actor,
@@ -401,6 +412,7 @@ void qa_app_q3_selected_arsenal_restore(qa_app_q3_selected_arsenal *arsenal, qa_
   player->has_last_fire = checkpoint.has_last_fire_milliseconds;
   player->last_fire_milliseconds = checkpoint.last_fire_milliseconds;
   player->pending_use = checkpoint.pending_use;
+  player->arsenal_read_order = checkpoint.arsenal_read_order;
 }
 static double ui_count(void *v, qa_item_id item) {
   struct { qa_app_inventory_access inventory; qa_actor_id actor; } *ctx = v;
@@ -542,6 +554,7 @@ qa_app_q3_selected_arsenal_checkpoint qa_app_read_q3_selected_arsenal_checkpoint
   qa_save_reader_destroy(&supply); qa_save_reader_destroy(&provider); qa_save_reader_destroy(&active);
   qa_save_reader_destroy(&ammo); qa_save_reader_destroy(&kind); qa_save_reader_destroy(&state);
   qa_save_reader_destroy(&arsenal); qa_save_reader_destroy(&runtime);
+  checkpoint.arsenal_read_order = true;
   return checkpoint;
 }
 

@@ -1,5 +1,6 @@
 /* Port of src/content/q2/foundation/runtime.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/runtime.h"
+#include "qa/foundation/js.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,17 +71,17 @@ static void find_teams(qa_q2_foundation *f) {
   for (size_t mi = 0; mi < n; mi++) {
     qa_q2_entity *master = sorted[mi];
     const char *name = qa_q2_spawn_get(&master->spawn, "team");
-    if (!name || !name[0] || ((int64_t)master->flags & 0x400) != 0) continue;
+    if (!name || !name[0] || (qa_js_to_int32(master->flags) & 0x400) != 0) continue;
     master->has_team_master = true; master->team_master = master->actor.id;
-    if (g->options.edition == QA_Q2_EDITION_RERELEASE) master->flags = (double)((int64_t)master->flags | 0x4000000);
+    if (g->options.edition == QA_Q2_EDITION_RERELEASE) master->flags = (double)(qa_js_to_int32(master->flags) | 0x4000000);
     qa_q2_entity *chain = master;
     for (size_t i = 0; i < n; i++) {
       qa_q2_entity *member = sorted[i];
       const char *tn = qa_q2_spawn_get(&member->spawn, "team");
-      if (member == master || slot_of(f, member->actor.id) <= slot_of(f, master->actor.id) || !tn || strcmp(tn, name) != 0 || ((int64_t)member->flags & 0x400) != 0) continue;
+      if (member == master || slot_of(f, member->actor.id) <= slot_of(f, master->actor.id) || !tn || strcmp(tn, name) != 0 || (qa_js_to_int32(member->flags) & 0x400) != 0) continue;
       chain->has_team_chain = true; chain->team_chain = member->actor.id;
       member->has_team_master = true; member->team_master = master->actor.id;
-      member->flags = (double)((int64_t)member->flags | 0x400);
+      member->flags = (double)(qa_js_to_int32(member->flags) | 0x400);
       chain = member;
     }
   }
@@ -88,10 +89,10 @@ static void find_teams(qa_q2_foundation *f) {
     for (size_t mi = 0; mi < n; mi++) {
       qa_q2_entity *master = sorted[mi];
       const char *name = qa_q2_spawn_get(&master->spawn, "team");
-      if (!name || !name[0] || strcmp(master->classname, "func_train") != 0 || ((int64_t)master->spawnflags & 8) == 0 || ((int64_t)master->flags & 0x400) == 0) continue;
+      if (!name || !name[0] || strcmp(master->classname, "func_train") != 0 || (qa_js_to_int32(master->spawnflags) & 8) == 0 || (qa_js_to_int32(master->flags) & 0x400) == 0) continue;
       master->has_team_master = true; master->team_master = master->actor.id;
       master->has_team_chain = false;
-      master->flags = (double)(((int64_t)master->flags & ~0x400) | 0x4000000);
+      master->flags = (double)((qa_js_to_int32(master->flags) & ~0x400) | 0x4000000);
       qa_q2_entity *chain = master;
       for (size_t i = 0; i < n; i++) {
         qa_q2_entity *member = sorted[i];
@@ -100,7 +101,7 @@ static void find_teams(qa_q2_foundation *f) {
         chain->has_team_chain = true; chain->team_chain = member->actor.id;
         member->has_team_master = true; member->team_master = master->actor.id;
         member->has_team_chain = false;
-        member->flags = (double)(((int64_t)member->flags & ~0x4000000) | 0x400);
+        member->flags = (double)((qa_js_to_int32(member->flags) & ~0x4000000) | 0x400);
         member->speed = master->speed;
         g->motion(g->ctx, member, "push");
         chain = member;
@@ -160,8 +161,11 @@ qa_q2_spawn_report qa_q2_foundation_load(qa_q2_foundation *f, const char *source
     }
     qa_q2_spawn_fields clone;
     if (!qa_q2_spawn_fields_clone(&clone, &fields[i])) qa_range_error("out of memory");
-    qa_q2_entity *entity = qa_q2_entity_services_spawn(f, clone);
-    if (qa_session_actor_registry_is_live(g->host->actors, entity->actor.id)) st->spawned[sp_n++] = entity;
+    /* TS reads entity.actor after spawn even when the source removed it; the C
+     * entity is freed with its actor, so the id is taken before spawning. */
+    qa_owned_actor spawned_actor = qa_q2_entity_services_allocate_actor(f, &clone, NULL);
+    qa_q2_entity *entity = qa_q2_entity_services_spawn_entity(f, qa_q2_entity_services_attach(f, spawned_actor, clone));
+    if (qa_session_actor_registry_is_live(g->host->actors, spawned_actor.id)) st->spawned[sp_n++] = entity;
     else st->removed[rem_n++] = &fields[i];
   }
   free(replacements); free(has_replacement);

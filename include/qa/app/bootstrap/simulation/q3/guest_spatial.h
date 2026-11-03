@@ -25,4 +25,6 @@ void qa_app_q3_guest_spatial_set_brush_model(qa_app_q3_guest_spatial *spatial, i
 void qa_app_q3_guest_spatial_adjust_area_portal_state(qa_app_q3_guest_spatial *spatial, int32_t slot, bool open);
 bool qa_app_q3_guest_spatial_in_pvs(qa_app_q3_guest_spatial *spatial, qa_vec3 first, qa_vec3 second, bool ignore_portals);
 bool qa_app_q3_guest_spatial_areas_connected(qa_app_q3_guest_spatial *spatial, int32_t first, int32_t second);
+/* TS modelBounds(index): scene.modelBounds(index). */
+qa_bounds qa_app_q3_guest_spatial_model_bounds(qa_app_q3_guest_spatial *spatial, double index);
 #endif

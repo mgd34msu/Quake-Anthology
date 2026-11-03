@@ -6,6 +6,7 @@
 #include "qa/core/common_parse.h"
 #include "qa/core/game_numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static char *dupstr(const char *v) { size_t n = strlen(v); char *d = malloc(n + 1); if (d) memcpy(d, v, n + 1); return d; }
 static int lower_equal(const char *a, const char *b) {
   while (*a && *b) { int ca = (unsigned char)*a, cb = (unsigned char)*b; if (ca >= 'A' && ca <= 'Z') ca += 32; if (cb >= 'A' && cb <= 'Z') cb += 32; if (ca != cb) return 0; a++; b++; }
@@ -126,13 +127,13 @@ static int excluded(const qa_q3_spawn_variables *vars, qa_q3_spawn_context *ctx,
   if (ctx->game_type == 2 && qa_q3_spawn_variables_int(vars, "notsingle", "0").value != 0) { *out = QA_Q3_SPAWN_NOTSINGLE; return 1; }
   int team = ctx->game_type >= 3;
   if (qa_q3_spawn_variables_int(vars, team ? "notteam" : "notfree", "0").value != 0) { *out = team ? QA_Q3_SPAWN_NOTTEAM : QA_Q3_SPAWN_NOTFREE; return 1; }
-  int mp = ctx->product == QA_Q3_GAME_PRODUCT_MISSIONPACK;
+  int mp = ctx->product == QA_Q3_BASE_PRODUCT_MISSIONPACK;
   if (qa_q3_spawn_variables_int(vars, mp ? "notta" : "notq3a", "0").value != 0) { *out = mp ? QA_Q3_SPAWN_NOTTA : QA_Q3_SPAWN_NOTQ3A; return 1; }
   qa_q3_spawn_value_string gt = qa_q3_spawn_variables_string(vars, "gametype", "");
   if (gt.present && ctx->game_type >= 0 && ctx->game_type < 8) {
-    if (ctx->game_type != (int)ctx->game_type) qa_range_error("No source gametype name");
+    if (ctx->game_type != qa_js_to_int32(ctx->game_type)) qa_range_error("No source gametype name");
     static const char *names[8] = {"ffa", "tournament", "single", "team", "ctf", "oneflag", "obelisk", "harvester"};
-    if (!strstr(gt.value, names[(int)ctx->game_type])) { *out = QA_Q3_SPAWN_GAMETYPE; return 1; }
+    if (!strstr(gt.value, names[qa_js_to_int32(ctx->game_type)])) { *out = QA_Q3_SPAWN_GAMETYPE; return 1; }
   }
   return 0;
 }
@@ -141,12 +142,14 @@ qa_q3_spawn_outcome qa_q3_spawn_entity(const qa_q3_spawn_variables *vars, qa_q3_
   for (size_t i = 0; i < vars->count; i++) qa_q3_parse_spawn_field(vars->entries[i].key, vars->entries[i].value, e, ctx->memory);
   qa_q3_spawn_filter reason;
   if (excluded(vars, ctx, &reason)) { qa_q3_entity_pool_free(ctx->pool, e); o.kind = QA_Q3_SPAWN_FILTERED; o.reason = reason; return o; }
-  e->s.pos.base = e->s.origin; e->r.current_origin = e->s.origin;
-  const char *classname = qa_q3_game_entity_classname(e); o.classname = classname;
+  e->s.pos.base = e->s.origin; qa_q3_base_entity_shared_set_current_origin(&e->r, e->s.origin);
+  const char *classname = qa_q3_game_entity_classname(e);
+  if (classname) { o.classname = dupstr(classname); if (!o.classname) qa_range_error("out of memory"); }
   if (!classname) ctx->warn(ctx->ctx, "G_CallSpawn: NULL classname\n");
   else {
-    for (size_t i = 0; i < ctx->item_count; i++) if (ctx->items[i].classname && strcmp(ctx->items[i].classname, classname) == 0) {
-      ctx->spawn_item(ctx->ctx, e, &ctx->items[i], vars); o.kind = QA_Q3_SPAWN_DISPATCHED; o.route = QA_Q3_ROUTE_ITEM; o.entity = e; return o;
+    size_t item_count = 0; const qa_q3_base_item_definition *items = qa_q3_base_item_list(ctx->product, &item_count);
+    for (size_t i = 0; i < item_count; i++) if (items[i].class_name && strcmp(items[i].class_name, classname) == 0) {
+      ctx->spawn_item(ctx->ctx, e, &items[i], vars); o.kind = QA_Q3_SPAWN_DISPATCHED; o.route = QA_Q3_ROUTE_ITEM; o.entity = e; return o;
     }
     for (size_t i = 0; i < ctx->handler_count; i++) if (strcmp(ctx->handlers[i].classname, classname) == 0) {
       ctx->handlers[i].fn(ctx->handlers[i].ctx, e, vars); o.kind = QA_Q3_SPAWN_DISPATCHED; o.route = QA_Q3_ROUTE_HANDLER; o.entity = e; return o;
@@ -159,20 +162,21 @@ void qa_q3_spawn_world(const qa_q3_spawn_variables *vars, qa_q3_worldspawn_conte
   if (!lower_equal(qa_q3_spawn_variables_string(vars, "classname", "").value, "worldspawn"))
     qa_range_error("SP_worldspawn: The first entity isn't 'worldspawn'");
   ctx->set_configstring(ctx->ctx, 20, "baseq3-1");
-  char buf[64]; snprintf(buf, sizeof buf, "%lld", (long long)(int)ctx->start_time); ctx->set_configstring(ctx->ctx, 21, buf);
+  char buf[64]; snprintf(buf, sizeof buf, "%lld", (long long)qa_js_to_int32(ctx->start_time)); ctx->set_configstring(ctx->ctx, 21, buf);
   ctx->set_configstring(ctx->ctx, 2, qa_q3_spawn_variables_string(vars, "music", "").value);
   ctx->set_configstring(ctx->ctx, 3, qa_q3_spawn_variables_string(vars, "message", "").value);
   ctx->set_configstring(ctx->ctx, 4, ctx->motd);
   ctx->set_cvar(ctx->ctx, "g_gravity", qa_q3_spawn_variables_string(vars, "gravity", "800").value);
   ctx->set_cvar(ctx->ctx, "g_enableDust", qa_q3_spawn_variables_string(vars, "enableDust", "0").value);
   ctx->set_cvar(ctx->ctx, "g_enableBreath", qa_q3_spawn_variables_string(vars, "enableBreath", "0").value);
-  qa_q3_game_entity *world = qa_q3_entity_pool_at(ctx->pool, QA_Q3_GAME_ENTITYNUM_WORLD);
-  world->s.number = QA_Q3_GAME_ENTITYNUM_WORLD; qa_q3_game_entity_set_classname(world, "worldspawn");
+  qa_q3_game_entity *world = qa_q3_entity_pool_at(ctx->pool, QA_Q3_BASE_ENTITYNUM_WORLD);
+  world->s.number = QA_Q3_BASE_ENTITYNUM_WORLD; qa_q3_game_entity_set_classname(world, "worldspawn");
   ctx->set_configstring(ctx->ctx, 5, "");
   if (ctx->restarted != 0) { ctx->set_cvar(ctx->ctx, "g_restarted", "0"); ctx->warmup_time = 0; }
   else if (ctx->do_warmup != 0) { ctx->warmup_time = -1; ctx->set_configstring(ctx->ctx, 5, "-1"); ctx->log(ctx->ctx, "Warmup:\n"); }
 }
-void qa_q3_spawn_report_destroy(qa_q3_spawn_report *r) { qa_q3_spawn_variables_destroy(&r->world_variables); free(r->outcomes); r->outcomes = NULL; r->outcome_count = 0; }
+void qa_q3_spawn_outcome_destroy(qa_q3_spawn_outcome *outcome) { free(outcome->classname); outcome->classname = NULL; }
+void qa_q3_spawn_report_destroy(qa_q3_spawn_report *r) { qa_q3_spawn_variables_destroy(&r->world_variables); for (size_t i = 0; i < r->outcome_count; i++) qa_q3_spawn_outcome_destroy(&r->outcomes[i]); free(r->outcomes); r->outcomes = NULL; r->outcome_count = 0; }
 qa_q3_spawn_report qa_q3_spawn_entities(const char *text, qa_q3_spawn_map_context *ctx, const char *source) {
   if (ctx->spawn.pool != ctx->world.pool) qa_range_error("Worldspawn and entity dispatch must share an entity pool");
   qa_q3_spawn_parser parser; qa_q3_spawn_parser_init(&parser, text, source ? source : "<spawn entities>");

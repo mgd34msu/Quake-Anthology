@@ -2,6 +2,7 @@
 #include "qa/content/q2/multiplayer/ctf/presentation.h"
 #include "../multiplayer_internal.h"
 #include <ctype.h>
+#include "qa/foundation/js.h"
 
 struct tech_name { const char *classname, *name; };
 static const struct tech_name TECH_NAMES[4] = {
@@ -97,7 +98,7 @@ static struct rows team_rows(qa_q2_ctf_presentation *p, qa_q2_game_services *g, 
   out.rows = qa_q2mp_xalloc(malloc((pn == 0 ? 1 : pn) * sizeof *out.rows));
   for (size_t i = 0; i < pn; i++) {
     qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(p->context, players[i]);
-    qa_q2mp_player_state *player = p->context->hooks.player(p->context->hooks.ctx, players[i]);
+    qa_q2_base_player_state *player = p->context->hooks.player(p->context->hooks.ctx, players[i]);
     if (state == NULL || state->team != team || player == NULL) continue;
     qa_q2_ctf_score_row *row = &out.rows[out.count++];
     *row = (qa_q2_ctf_score_row){0};
@@ -107,7 +108,7 @@ static struct rows team_rows(qa_q2_ctf_presentation *p, qa_q2_game_services *g, 
     row->ping = player->ping < 999 ? player->ping : 999;
     row->has_carried_flag = qa_ctf_carried_flag(g, players[i], &row->carried_flag);
   }
-  qsort(out.rows, out.count, sizeof *out.rows, row_cmp);
+  qa_js_sort(out.rows, out.count, sizeof *out.rows, row_cmp);
   return out;
 }
 
@@ -224,7 +225,7 @@ bool qa_q2_ctf_presentation_identify(qa_q2_ctf_presentation *p, qa_q2_entity *en
 void qa_q2_ctf_presentation_hud(qa_q2_ctf_presentation *p, qa_q2_entity *entity, qa_q2_game_services *g, const char *status) {
   qa_q2_ctf_player_state *state = qa_ctf_player(p->context, entity->actor.id);
   qa_q2_ctf_match_state *match = &p->context->match;
-  double blink = (double)((int64_t)trunc(qa_q2mp_now(g) * 10) & 8);
+  double blink = (double)(qa_js_to_int32(trunc(qa_q2mp_now(g) * 10)) & 8);
   qa_q2_ctf_event event = {0};
   event.kind = "hud";
   event.actor = entity->actor.id;
@@ -266,7 +267,7 @@ char *qa_q2_ctf_presentation_location(qa_q2_ctf_presentation *p, qa_q2_entity *e
     if (distance > 1024) continue;
     candidates[count++] = (struct candidate){all[i], entry->priority, distance, qa_ctf_can_see(all[i], entity, g)};
   }
-  qsort(candidates, count, sizeof *candidates, candidate_cmp);
+  qa_js_sort(candidates, count, sizeof *candidates, candidate_cmp);
   if (count == 0) {
     free(candidates);
     return qa_q2mp_dup("nowhere");
@@ -281,15 +282,19 @@ char *qa_q2_ctf_presentation_location(qa_q2_ctf_presentation *p, qa_q2_entity *e
     qa_q2_entity *red = qa_q2_ctf_flags_base(p->flags, g, 1);
     qa_q2_entity *blue = qa_q2_ctf_flags_base(p->flags, g, 2);
     if (red != NULL && blue != NULL) {
-      double one = qa_q2_length(qa_q2_subtract(qa_q2_game_body(g, hot).origin, qa_q2_game_body(g, red).origin));
-      double two = qa_q2_length(qa_q2_subtract(qa_q2_game_body(g, hot).origin, qa_q2_game_body(g, blue).origin));
+      qa_vec3 a2 = qa_q2_game_body(g, hot).origin;
+      qa_vec3 b2 = qa_q2_game_body(g, red).origin;
+      double one = qa_q2_length(qa_q2_subtract(a2, b2));
+      qa_vec3 a = qa_q2_game_body(g, hot).origin;
+      qa_vec3 b = qa_q2_game_body(g, blue).origin;
+      double two = qa_q2_length(qa_q2_subtract(a, b));
       team = one < two ? "red " : one > two ? "blue " : "";
     }
   }
   qa_vec3 delta = qa_q2_subtract(origin, qa_q2_game_body(g, hot).origin);
   const char *where = fabs(delta.z) > fabs(delta.x) && fabs(delta.z) > fabs(delta.y) ? (delta.z > 0 ? "above" : "below") : "near";
   qa_vec3 point = qa_q2_add(origin, (qa_vec3){0, 0, qa_q2_game_body(g, entity).bounds.min.z + 1});
-  const char *water = ((int64_t)g->host->point_contents(g->host->ctx, point) & 56) != 0 ? "in the water " : "";
+  const char *water = (qa_js_to_int32(g->host->point_contents(g->host->ctx, point)) & 56) != 0 ? "in the water " : "";
   const char *name = qa_q2_item_module_item_name(p->context->hooks.items, hot->classname);
   char buffer[512];
   snprintf(buffer, sizeof buffer, "%s%s the %s%s", water, where, team, name == NULL ? hot->classname : name);
@@ -369,13 +374,20 @@ void qa_q2_ctf_presentation_say_team(qa_q2_ctf_presentation *p, qa_q2_entity *en
     memmove(text_source, text_source + 1, strlen(text_source));
   }
   struct sb text = {0};
-  for (size_t i = 0; text_source[i]; i++) {
-    if (text_source[i] != '%' || text_source[i + 1] == '\0') {
+  /* TS expansions: each %-key (lowercased) is expanded once per message and reused. */
+  char *expansions[256] = {0};
+  for (size_t i = 0; text_source[i] && text.len < 1023; i++) {
+    if (text_source[i] != '%' || text_source[i + 1] == '\0' || text_source[i + 1] == '\n') {
       char ch[2] = {text_source[i], '\0'};
       sb_add(&text, ch);
       continue;
     }
     char character = text_source[++i];
+    unsigned char key = (unsigned char)tolower((unsigned char)character);
+    if (expansions[key] != NULL) {
+      sb_add(&text, expansions[key]);
+      continue;
+    }
     char *replacement = NULL;
     char buffer[256];
     switch (tolower((unsigned char)character)) {
@@ -405,13 +417,13 @@ void qa_q2_ctf_presentation_say_team(qa_q2_ctf_presentation *p, qa_q2_entity *en
         break;
       }
       case 'w': {
-        qa_q2mp_weapon_state *weapon = p->context->hooks.weapons->get_state(p->context->hooks.weapons->ctx, entity->actor.id);
+        qa_q2w_state *weapon = qa_q2w_ballistics_state(&p->context->hooks.weapons->base, entity->actor.id);
         if (weapon == NULL || weapon->weapon == NULL) {
           replacement = qa_q2mp_dup("none");
         } else {
-          const qa_q2f_weapon_definition *def = p->context->hooks.weapons->definition(p->context->hooks.weapons->ctx, weapon->weapon);
+          const qa_q2w_definition *def = qa_q2w_weapons_definition(p->context->hooks.weapons, weapon->weapon);
           qa_q2_inventory_item found;
-          const char *name = def != NULL && def->item != NULL && qa_q2_item_module_lookup(p->context->hooks.items, def->item, &found) ? found.name : weapon->weapon;
+          const char *name = qa_q2_item_module_lookup(p->context->hooks.items, def->item, &found) ? found.name : weapon->weapon;
           replacement = qa_q2mp_dup(name);
         }
         break;
@@ -424,8 +436,9 @@ void qa_q2_ctf_presentation_say_team(qa_q2_ctf_presentation *p, qa_q2_entity *en
       }
     }
     sb_add(&text, replacement);
-    free(replacement);
+    expansions[key] = replacement;
   }
+  for (size_t k = 0; k < 256; k++) free(expansions[k]);
   free(text_source);
   if (text.len > 1023) {
     text.data[1023] = '\0';
@@ -455,7 +468,13 @@ void qa_q2_ctf_presentation_join_menu(qa_q2_ctf_presentation *p, qa_q2_entity *e
   qa_q2mp_format_number(c1, sizeof c1, counts[1]);
   snprintf(red, sizeof red, "Join Red Team (%s)", c0);
   snprintf(blue, sizeof blue, "Join Blue Team (%s)", c1);
-  char *labels[6] = {qa_q2mp_dup(red), qa_q2mp_dup(blue), qa_q2mp_dup("Chase Camera"), qa_q2mp_dup("Credits"), qa_q2mp_dup("Request match"), qa_q2mp_dup("Close")};
+  char * value = qa_q2mp_dup(red);
+  char * value2 = qa_q2mp_dup(blue);
+  char * value3 = qa_q2mp_dup("Chase Camera");
+  char * value4 = qa_q2mp_dup("Credits");
+  char * value5 = qa_q2mp_dup("Request match");
+  char * value6 = qa_q2mp_dup("Close");
+  char *labels[6] = {value, value2, value3, value4, value5, value6};
   qa_q2_ctf_menu_entry entries[6] = {
       {labels[0], locked || strcmp(p->context->rules.force_join, "blue") == 0 ? NULL : "join-red"},
       {labels[1], locked || strcmp(p->context->rules.force_join, "red") == 0 ? NULL : "join-blue"},

@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-map/decode.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_map/decode.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -11,9 +12,12 @@
 #include "qa/foundation/support.h"
 
 #define HEADER_SIZE (8 + 17 * 8)
+/* Original MAX_MAP_AREAS is 256; collision allocates areas squared. */
+#define MAX_MAP_AREAS 1024
 
+/* Zeroed, so a caught raise can release a partly read map. */
 static void *xmalloc(size_t size) {
-  void *p = malloc(size == 0 ? 1 : size);
+  void *p = calloc(size == 0 ? 1 : size, 1);
   if (p == NULL) qa_range_error("Out of memory");
   return p;
 }
@@ -28,26 +32,53 @@ typedef struct {
   qa_binary_reader reader;
   lump lumps[17];
   qa_q3_bsp_map *map;
+  /* Owned scratch, released with the map when a caller catches a raise. */
+  uint8_t *normalized;
+  uint8_t *visited;
+  void *stack;
+  uint8_t *lightmap_use;
 } parser;
 
+static void parser_release(void *raw) {
+  parser *p = raw;
+  qa_binary_reader_destroy(&p->reader);
+  free(p->normalized);
+  free(p->visited);
+  free(p->stack);
+  free(p->lightmap_use);
+  p->normalized = p->visited = p->lightmap_use = NULL;
+  p->stack = NULL;
+  qa_q3_bsp_map_destroy(p->map);
+}
+
 static qa_vec2 read_vec2(qa_binary_reader *reader) {
-  qa_vec2 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader)};
+  qa_vec2 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static qa_vec3 read_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static qa_vec3 int_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_i32(reader), qa_binary_reader_i32(reader), qa_binary_reader_i32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_i32(reader);
+  v.y = qa_binary_reader_i32(reader);
+  v.z = qa_binary_reader_i32(reader);
   return v;
 }
 
 static qa_vec3 byte_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_u8(reader), qa_binary_reader_u8(reader), qa_binary_reader_u8(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_u8(reader);
+  v.y = qa_binary_reader_u8(reader);
+  v.z = qa_binary_reader_u8(reader);
   return v;
 }
 
@@ -68,7 +99,7 @@ static void fail_at(parser *p, int64_t offset, const char *message) {
 static void reference(parser *p, double value, double count, int64_t offset, const char *name) {
   if (value < 0 || value >= count) {
     char message[256];
-    snprintf(message, sizeof message, "%s index %g outside 0..%g", name, value, count - 1);
+    snprintf(message, sizeof message, "%s index %s outside 0..%s", name, QA_JS_NUMBER(value), QA_JS_NUMBER(count - 1));
     fail_at(p, offset, message);
   }
 }
@@ -77,7 +108,7 @@ static void check_range(parser *p, double first, double count, double total, int
                         const char *name) {
   if (first < 0 || count < 0 || first > total - count) {
     char message[256];
-    snprintf(message, sizeof message, "%s range %g+%g exceeds %g", name, first, count, total);
+    snprintf(message, sizeof message, "%s range %s+%s exceeds %s", name, QA_JS_NUMBER(first), QA_JS_NUMBER(count), QA_JS_NUMBER(total));
     fail_at(p, offset, message);
   }
 }
@@ -120,10 +151,14 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
   size_t normalized_length = 0;
   uint8_t *normalized = qa_q3_normalize_bsp(data, data_length, name, &normalized_length);
   parser p;
+  memset(&p, 0, sizeof p);
   p.source = name;
   p.map = out;
+  p.normalized = normalized;
   if (!qa_binary_reader_init(&p.reader, normalized, normalized_length, name))
     qa_range_error("Out of memory");
+  qa_cleanup parser_node;
+  qa_cleanup_push(&parser_node, parser_release, &p);
   qa_binary_reader *reader = &p.reader;
   if (qa_binary_reader_u32(reader) != 0x50534249u) qa_binary_error(name, 0, "expected IBSP magic");
   if (qa_binary_reader_i32(reader) != 46) qa_binary_error(name, 4, "expected BSP version 46");
@@ -286,8 +321,7 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
     }
   }
   {
-    uint8_t *visited = xmalloc(out->node_count);
-    memset(visited, 0, out->node_count);
+    uint8_t *visited = p.visited = xmalloc(out->node_count);
     typedef struct { size_t node; bool exiting; } stack_entry;
     stack_entry *stack = NULL;
     size_t stack_count = 0, stack_capacity = 0;
@@ -299,6 +333,7 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
       stack_capacity = stack_capacity ? stack_capacity * 2 : 16;       \
       stack = realloc(stack, stack_capacity * sizeof *stack);          \
       if (stack == NULL) qa_range_error("Out of memory");              \
+      p.stack = stack;                                                 \
     }                                                                  \
     stack[stack_count].node = (node_);                                \
     stack[stack_count].exiting = (exiting_);                           \
@@ -322,13 +357,15 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
     }
     free(stack);
     free(visited);
+    p.stack = NULL;
+    p.visited = NULL;
   }
   for (size_t i = 0; i < out->leaf_count; i++) {
     int64_t offset = p.lumps[4].offset + (int64_t)i * 48;
     const qa_q3_raw_leaf *leaf = &out->leaves[i];
     if (leaf->cluster < -1 || (out->visibility != NULL && leaf->cluster >= out->visibility->cluster_count))
       fail_at(&p, offset, "invalid leaf cluster");
-    if (leaf->area < -1) fail_at(&p, offset + 4, "invalid leaf area");
+    if (leaf->area < -1 || leaf->area >= MAX_MAP_AREAS) fail_at(&p, offset + 4, "invalid leaf area");
     check_range(&p, leaf->first_surface, leaf->surface_count, (double)out->leaf_surface_count, offset + 32,
                 "leaf surfaces");
     check_range(&p, leaf->first_brush, leaf->brush_count, (double)out->leaf_brush_count, offset + 40,
@@ -366,8 +403,8 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
     if (out->fogs[i].visible_side != -1)
       reference(&p, out->fogs[i].visible_side, brush->side_count, offset + 68, "fog visible side");
   }
-  uint8_t *lightmap_use = xmalloc(out->vertex_count);
-  memset(lightmap_use, 0, out->vertex_count);
+  uint8_t *lightmap_use = p.lightmap_use = xmalloc(out->vertex_count);
+  double surface_work = 0;
   for (size_t i = 0; i < out->surface_count; i++) {
     const qa_q3_raw_surface *item = &out->surfaces[i];
     int64_t offset = p.lumps[13].offset + (int64_t)i * 104;
@@ -379,6 +416,11 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
                 "surface vertices");
     check_range(&p, item->first_index, item->index_count, (double)out->index_count, offset + 20,
                 "surface indices");
+    /* Surfaces own disjoint vertex and index ranges in compiled maps;
+     * overlapping ranges would multiply this validation work. */
+    surface_work += item->vertex_count + item->index_count;
+    if (surface_work > 4 * ((double)out->vertex_count + (double)out->index_count) + 65536)
+      fail_at(&p, offset + 12, "surface ranges overlap excessively");
     bool planar_or_patch = strcmp(item->type, "planar") == 0 || strcmp(item->type, "patch") == 0;
     bool uses_lightmap = planar_or_patch && item->lightmap >= 0 && item->lightmap < (double)out->lightmap_count;
     if (planar_or_patch && item->lightmap < -4) fail_at(&p, offset + 28, "invalid lightmap sentinel");
@@ -407,9 +449,11 @@ void qa_q3_parse_bsp(const uint8_t *data, size_t data_length, const char *source
       fail_at(&p, p.lumps[10].offset + (int64_t)i * 44 + 24, "non-finite lightmap coordinate");
   }
   free(lightmap_use);
+  p.lightmap_use = NULL;
   char entity_name[1024];
   snprintf(entity_name, sizeof entity_name, "%s:entities", name);
   out->entity_records = qa_q3_parse_entities(out->entities, entity_name, &out->entity_record_count);
+  qa_cleanup_pop(&parser_node);
   qa_binary_reader_destroy(reader);
   free(normalized);
 }

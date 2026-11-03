@@ -18,13 +18,12 @@
 
 /* TS `throw new Error(msg)`, as in src/text/atlas.c. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 char **qa_contained_file_parts(const char *name, size_t *out_count) {
@@ -65,6 +64,28 @@ void qa_contained_file_parts_free(char **parts, size_t count) {
   free(parts);
 }
 
+/* Node/Bun fs error text: "<CODE>: <libuv description>, <syscall> '<path>'".
+   Unlisted errno values fall back to strerror. */
+static noreturn void fs_error(int code, const char *syscall, const char *path) {
+  static const struct { int code; const char *name, *text; } known[] = {
+      {ENOENT, "ENOENT", "no such file or directory"},
+      {ENOTDIR, "ENOTDIR", "not a directory"},
+      {EACCES, "EACCES", "permission denied"},
+      {EPERM, "EPERM", "operation not permitted"},
+      {ELOOP, "ELOOP", "too many symbolic links encountered"},
+      {EEXIST, "EEXIST", "file already exists"},
+      {EMFILE, "EMFILE", "too many open files"},
+      {ENAMETOOLONG, "ENAMETOOLONG", "name too long"},
+      {EROFS, "EROFS", "read-only file system"},
+      {ENOSPC, "ENOSPC", "no space left on device"},
+      {EISDIR, "EISDIR", "illegal operation on a directory"},
+  };
+  for (size_t i = 0; i < sizeof known / sizeof known[0]; i++)
+    if (known[i].code == code)
+      qa_error("%s: %s, %s '%s'", known[i].name, known[i].text, syscall, path);
+  qa_error("%s", strerror(code));
+}
+
 int qa_open_contained_parent(const char *root, const char *name, bool create,
                              char **out_leaf) {
 #ifndef __linux__
@@ -82,21 +103,24 @@ int qa_open_contained_parent(const char *root, const char *name, bool create,
   if (descriptor < 0) {
     int code = errno;
     qa_contained_file_parts_free(parts, count);
-    qa_error("%s", strerror(code));
+    fs_error(code, "open", root);
   }
   for (size_t i = 0; i + 1 < count; i++) {
+    /* TS opens `/proc/self/fd/${descriptor}/${part}`; the path names it. */
+    char path[4096];
+    snprintf(path, sizeof path, "/proc/self/fd/%d/%s", descriptor, parts[i]);
     if (create && mkdirat(descriptor, parts[i], 0777) != 0 && errno != EEXIST) {
       int code = errno;
       close(descriptor);
       qa_contained_file_parts_free(parts, count);
-      qa_error("%s", strerror(code));
+      fs_error(code, "mkdir", path);
     }
     int next = openat(descriptor, parts[i], O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
     if (next < 0) {
       int code = errno;
       close(descriptor);
       qa_contained_file_parts_free(parts, count);
-      qa_error("%s", strerror(code));
+      fs_error(code, "open", path);
     }
     close(descriptor);
     descriptor = next;

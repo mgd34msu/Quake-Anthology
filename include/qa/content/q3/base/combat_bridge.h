@@ -4,7 +4,8 @@
  * and dispatch() closures become bridge functions, and the TS
  * q3DamageFeedback/q3ForeignDamageFeedback exports (not in the landed
  * combat header) are host callbacks. Progress-wrapper adapter ctxs
- * are malloc'd per resume and intentionally not reclaimed. */
+ * follow qa_combat_progress ownership: a resume frees its adapter and
+ * projection, and discard frees an adapter dropped unresumed. */
 #ifndef QA_CONTENT_Q3_BASE_COMBAT_BRIDGE_H
 #define QA_CONTENT_Q3_BASE_COMBAT_BRIDGE_H
 #include <stdbool.h>

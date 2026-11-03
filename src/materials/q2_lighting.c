@@ -1,5 +1,6 @@
 /* Port of src/materials/q2-lighting.ts. GPL-2.0-or-later. */
 #include <math.h>
+#include "qa/foundation/js.h"
 
 #include "qa/core/math.h"
 #include "qa/materials/q2_lighting.h"
@@ -36,14 +37,14 @@ void qa_calc_dynamic_light_contribution_into(qa_vec3 *out,
   if (isfinite(light.scale)) {
     double radius = light.radius;
     if (radius >= 0 && dx * dx + dy * dy + dz * dz >
-                           radius * radius * (1 + pow(2, -40))) {
+                           radius * radius * (1 + qa_js_pow(2, -40))) {
       out->x = 0; out->y = 0; out->z = 0;
       return;
     }
     if (light.color.x >= 0) {
       double tx = dx * normal.x, ty = dy * normal.y, tz = dz * normal.z;
       double dot = tx + ty + tz;
-      if (dot < -(fabs(tx) + fabs(ty) + fabs(tz)) * pow(2, -40)) {
+      if (dot < -(fabs(tx) + fabs(ty) + fabs(tz)) * qa_js_pow(2, -40)) {
         out->x = 0; out->y = 0; out->z = 0;
         return;
       }

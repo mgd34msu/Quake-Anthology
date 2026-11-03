@@ -82,7 +82,7 @@ void qa_restore_q2_ctf(qa_q2_ctf_context *context, qa_q2_game_services *g, const
     if (!qa_session_actor_registry_resolve_saved(g->host->actors, entry->actor, &owned) ||
         qa_q2_game_entity_of(g, &owned.id) == NULL || context->hooks.player(context->hooks.ctx, owned.id) == NULL) {
       free(players);
-      qa_q2f_error("CTF restore requires the existing shared player and source entity");
+      qa_raise("Error", 0, 0, "CTF restore requires the existing shared player and source entity");
     }
     players[i].actor = owned.id;
     qa_q2_ctf_player_state_init(&players[i].state);
@@ -157,7 +157,7 @@ void qa_restore_q2_ctf(qa_q2_ctf_context *context, qa_q2_game_services *g, const
 
 /* ---- encode ---- */
 static void set_field(qa_save_value *object, const char *key, qa_save_value *child) {
-  if (!qa_save_value_set(object, key, qa_q2mp_xalloc(child))) qa_q2f_error("Out of memory");
+  if (!qa_save_value_set(object, key, qa_q2mp_xalloc(child))) qa_raise("Error", 0, 0, "Out of memory");
 }
 static void set_num(qa_save_value *object, const char *key, double v) { set_field(object, key, qa_save_value_number(v)); }
 static void set_str(qa_save_value *object, const char *key, const char *v) { set_field(object, key, qa_save_value_string(v)); }
@@ -227,7 +227,7 @@ uint8_t *qa_encode_q2_ctf_checkpoint(const qa_q2_ctf_checkpoint *checkpoint, siz
     set_num(ghost, "captures", gc->captures);
     set_num(ghost, "baseDefense", gc->base_defense);
     set_num(ghost, "carrierDefense", gc->carrier_defense);
-    if (!qa_save_value_push(ghosts, ghost)) qa_q2f_error("Out of memory");
+    if (!qa_save_value_push(ghosts, ghost)) qa_raise("Error", 0, 0, "Out of memory");
   }
   set_field(match, "ghosts", ghosts);
   set_field(root, "match", match);
@@ -261,7 +261,7 @@ uint8_t *qa_encode_q2_ctf_checkpoint(const qa_q2_ctf_checkpoint *checkpoint, siz
     qa_save_value *player = qa_q2mp_xalloc(qa_save_value_object());
     set_field(player, "actor", saved_actor_value(entry->actor));
     set_field(player, "state", state);
-    if (!qa_save_value_push(players, player)) qa_q2f_error("Out of memory");
+    if (!qa_save_value_push(players, player)) qa_raise("Error", 0, 0, "Out of memory");
   }
   set_field(root, "players", players);
   uint8_t *bytes = qa_encode_checkpoint_value(root, out_length);
@@ -272,35 +272,35 @@ uint8_t *qa_encode_q2_ctf_checkpoint(const qa_q2_ctf_checkpoint *checkpoint, siz
 /* ---- decode ---- */
 static double read_field_finite(const qa_save_reader *reader, const char *name) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   double value = qa_save_reader_finite(&field);
   qa_save_reader_destroy(&field);
   return value;
 }
 static double read_field_integer(const qa_save_reader *reader, const char *name) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   double value = qa_save_reader_integer(&field);
   qa_save_reader_destroy(&field);
   return value;
 }
 static double read_field_integer_min(const qa_save_reader *reader, const char *name, double minimum) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   double value = qa_save_reader_integer_min(&field, minimum);
   qa_save_reader_destroy(&field);
   return value;
 }
 static bool read_field_bool(const qa_save_reader *reader, const char *name) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   bool value = qa_save_reader_boolean(&field);
   qa_save_reader_destroy(&field);
   return value;
 }
 static const char *read_field_choice(const qa_save_reader *reader, const char *name, const char *const *choices, size_t count) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   const char *value = qa_save_reader_choice_string(&field, choices, count);
   qa_save_reader_destroy(&field);
   /* Return the static choice literal, not tree-borrowed storage. */
@@ -310,14 +310,14 @@ static const char *read_field_choice(const qa_save_reader *reader, const char *n
 }
 static const char *read_field_string(const qa_save_reader *reader, const char *name) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   const char *value = qa_save_reader_string(&field);
   qa_save_reader_destroy(&field);
   return value;
 }
 static bool read_nullable_finite(const qa_save_reader *reader, const char *name, double *out) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   bool has = !qa_save_reader_is_null(&field);
   if (has) *out = qa_save_reader_finite(&field);
   qa_save_reader_destroy(&field);
@@ -325,7 +325,7 @@ static bool read_nullable_finite(const qa_save_reader *reader, const char *name,
 }
 static bool read_nullable_integer_min(const qa_save_reader *reader, const char *name, double minimum, double *out) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   bool has = !qa_save_reader_is_null(&field);
   if (has) *out = qa_save_reader_integer_min(&field, minimum);
   qa_save_reader_destroy(&field);
@@ -333,14 +333,14 @@ static bool read_nullable_integer_min(const qa_save_reader *reader, const char *
 }
 static qa_saved_actor_id read_field_actor(const qa_save_reader *reader, const char *name) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   qa_saved_actor_id value = qa_read_saved_actor(&field);
   qa_save_reader_destroy(&field);
   return value;
 }
 static bool read_nullable_actor(const qa_save_reader *reader, const char *name, qa_saved_actor_id *out) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, name, &field)) qa_raise("Error", 0, 0, "Out of memory");
   bool has = !qa_save_reader_is_null(&field);
   if (has) *out = qa_read_saved_actor(&field);
   qa_save_reader_destroy(&field);
@@ -351,7 +351,7 @@ static void read_player(const qa_save_reader *reader, qa_q2_ctf_player_checkpoin
   static const double team_choices[3] = {0, 1, 2};
   qa_save_reader field;
   qa_q2_ctf_player_state_init(&out->state);
-  if (!qa_save_reader_field(reader, "team", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "team", &field)) qa_raise("Error", 0, 0, "Out of memory");
   out->state.team = qa_save_reader_choice_number(&field, team_choices, 3);
   qa_save_reader_destroy(&field);
   out->state.spawn_state = read_field_integer_min(reader, "spawnState", 0);
@@ -368,9 +368,10 @@ static void read_player(const qa_save_reader *reader, qa_q2_ctf_player_checkpoin
   static const char *const grapple_choices[3] = {"fly", "pull", "hang"};
   out->grapple.grapple_state = read_field_choice(reader, "grappleState", grapple_choices, 3);
   out->grapple.grapple_release_time = read_field_finite(reader, "grappleReleaseTime");
-  if (!qa_save_reader_field(reader, "grappleNoKnockback", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "grappleNoKnockback", &field)) qa_raise("Error", 0, 0, "Out of memory");
   if (qa_save_reader_is_undefined(&field) || qa_save_reader_is_null(&field)) {
     out->grapple.has_no_knockback = false;
+    out->grapple.grapple_no_knockback = false;
   } else {
     out->grapple.has_no_knockback = true;
     out->grapple.grapple_no_knockback = qa_save_reader_boolean(&field);
@@ -387,13 +388,13 @@ void qa_decode_q2_ctf_checkpoint(const uint8_t *bytes, size_t length, qa_q2_ctf_
   qa_save_value *decoded = qa_decode_checkpoint_value(bytes, length);
   qa_q2mp_xalloc(decoded);
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, decoded, "q2-ctf")) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_init(&reader, decoded, "q2-ctf")) qa_raise("Error", 0, 0, "Out of memory");
   qa_save_reader field;
-  if (!qa_save_reader_field(&reader, "version", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(&reader, "version", &field)) qa_raise("Error", 0, 0, "Out of memory");
   out->version = qa_save_reader_literal_number(&field, 1);
   qa_save_reader_destroy(&field);
   qa_save_reader rules, match;
-  if (!qa_save_reader_field(&reader, "rules", &rules)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(&reader, "rules", &rules)) qa_raise("Error", 0, 0, "Out of memory");
   static const char *const force_choices[3] = {"", "red", "blue"};
   out->rules.force_join = read_field_choice(&rules, "forceJoin", force_choices, 3);
   out->rules.competition = read_field_integer_min(&rules, "competition", 0);
@@ -405,7 +406,7 @@ void qa_decode_q2_ctf_checkpoint(const uint8_t *bytes, size_t length, qa_q2_ctf_
   out->rules.capture_limit = read_field_integer_min(&rules, "captureLimit", 0);
   out->rules.instant_weapons = read_field_bool(&rules, "instantWeapons");
   qa_save_reader_destroy(&rules);
-  if (!qa_save_reader_field(&reader, "match", &match)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(&reader, "match", &match)) qa_raise("Error", 0, 0, "Out of memory");
   qa_q2_ctf_match_checkpoint *mc = &out->match;
   mc->team1 = read_field_integer_min(&match, "team1", 0);
   mc->team2 = read_field_integer_min(&match, "team2", 0);
@@ -414,7 +415,7 @@ void qa_decode_q2_ctf_checkpoint(const uint8_t *bytes, size_t length, qa_q2_ctf_
   mc->has_last_flag_capture = read_nullable_finite(&match, "lastFlagCapture", &mc->last_flag_capture);
   {
     static const double team_choices[2] = {1, 2};
-    if (!qa_save_reader_field(&match, "lastCaptureTeam", &field)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_field(&match, "lastCaptureTeam", &field)) qa_raise("Error", 0, 0, "Out of memory");
     mc->has_last_capture_team = !qa_save_reader_is_null(&field);
     if (mc->has_last_capture_team) mc->last_capture_team = qa_save_reader_choice_number(&field, team_choices, 2);
     qa_save_reader_destroy(&field);
@@ -423,7 +424,7 @@ void qa_decode_q2_ctf_checkpoint(const uint8_t *bytes, size_t length, qa_q2_ctf_
   mc->phase = read_field_choice(&match, "phase", phase_choices, 5);
   mc->match_time = read_field_finite(&match, "matchTime");
   mc->last_time = read_field_integer(&match, "lastTime");
-  if (!qa_save_reader_field(&match, "election", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(&match, "election", &field)) qa_raise("Error", 0, 0, "Out of memory");
   mc->has_election = !qa_save_reader_is_null(&field);
   if (mc->has_election) {
     static const char *const kind_choices[3] = {"match", "admin", "map"};
@@ -436,18 +437,18 @@ void qa_decode_q2_ctf_checkpoint(const uint8_t *bytes, size_t length, qa_q2_ctf_
     mc->election.expires = read_field_finite(&field, "expires");
   }
   qa_save_reader_destroy(&field);
-  if (!qa_save_reader_field(&match, "ghosts", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(&match, "ghosts", &field)) qa_raise("Error", 0, 0, "Out of memory");
   mc->ghost_count = qa_save_reader_list_count(&field);
   mc->ghosts = qa_q2mp_xalloc(malloc((mc->ghost_count == 0 ? 1 : mc->ghost_count) * sizeof *mc->ghosts));
   for (size_t i = 0; i < mc->ghost_count; i++) {
     qa_save_reader item;
-    if (!qa_save_reader_item(&field, i, &item)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_item(&field, i, &item)) qa_raise("Error", 0, 0, "Out of memory");
     qa_q2_ctf_ghost_checkpoint *gc = &mc->ghosts[i];
     memset(gc, 0, sizeof *gc);
     gc->code = read_field_integer_min(&item, "code", 10000);
     static const double team_choices[2] = {1, 2};
     qa_save_reader team_field;
-    if (!qa_save_reader_field(&item, "team", &team_field)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_field(&item, "team", &team_field)) qa_raise("Error", 0, 0, "Out of memory");
     gc->team = qa_save_reader_choice_number(&team_field, team_choices, 2);
     qa_save_reader_destroy(&team_field);
     gc->name = qa_q2mp_dup(read_field_string(&item, "name"));
@@ -462,14 +463,14 @@ void qa_decode_q2_ctf_checkpoint(const uint8_t *bytes, size_t length, qa_q2_ctf_
   }
   qa_save_reader_destroy(&field);
   qa_save_reader_destroy(&match);
-  if (!qa_save_reader_field(&reader, "players", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(&reader, "players", &field)) qa_raise("Error", 0, 0, "Out of memory");
   out->player_count = qa_save_reader_list_count(&field);
   out->players = qa_q2mp_xalloc(malloc((out->player_count == 0 ? 1 : out->player_count) * sizeof *out->players));
   for (size_t i = 0; i < out->player_count; i++) {
     qa_save_reader item, state;
-    if (!qa_save_reader_item(&field, i, &item)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_item(&field, i, &item)) qa_raise("Error", 0, 0, "Out of memory");
     out->players[i].actor = read_field_actor(&item, "actor");
-    if (!qa_save_reader_field(&item, "state", &state)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_field(&item, "state", &state)) qa_raise("Error", 0, 0, "Out of memory");
     read_player(&state, &out->players[i].state);
     qa_save_reader_destroy(&state);
     qa_save_reader_destroy(&item);

@@ -2,13 +2,16 @@
 #include "qa/content/q2/multiplayer/lmctf/weapons.h"
 #include "../multiplayer_internal.h"
 #include "qa/content/q2/foundation/weapons/presentation.h"
+#include "qa/foundation/js.h"
 
 static const double PLASMA_PAUSES[2] = {16, 46};
 static const double PLASMA_FIRES[2] = {4, 5};
-const qa_q2f_weapon_definition QA_LMCTF_PLASMA = {
-    "lmctf:plasma", "q2:weapon_plasma", "weapon_plasma", "q2:ammo_cells", 10, 10,
-    "models/weapons/v_plasma/tris.md2", "models/weapons/g_plasma/tris.md2", 12,
-    3, 11, 46, 51, PLASMA_PAUSES, 2, PLASMA_FIRES, 2, false};
+const qa_q2w_definition QA_LMCTF_PLASMA = {
+    .name = "lmctf:plasma", .item = "q2:weapon_plasma", .classname = "weapon_plasma", .ammo = "q2:ammo_cells",
+    .quantity = 10, .warning = 10, .view_model = "models/weapons/v_plasma/tris.md2",
+    .world_model = "models/weapons/g_plasma/tris.md2", .player_model = 12, .activate_last = 3, .fire_last = 11,
+    .idle_last = 46, .deactivate_last = 51, .pauses = PLASMA_PAUSES, .pause_count = 2, .fires = PLASMA_FIRES,
+    .fire_count = 2, .repeating = false};
 
 struct qa_lmctf_weapons {
   qa_lmctf_context *context;
@@ -21,47 +24,40 @@ static void mode_print(qa_lmctf_weapons *w, qa_owned_actor self, qa_q2_game_serv
   qa_lmctf_print(g, &self.id, "%s", qa_lmctf_player(w->context, self.id)->plasma_mode ? "bounce plasma\n" : "spread plasma\n");
 }
 
-static void weapon_think(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weapons_port *weapons) {
+static void weapon_think(void *ctx, qa_q2w_context *current, qa_q2w_weapons *weapons) {
   qa_lmctf_weapons *w = ctx;
   w->context->plasma_quad = current->input.quad_until > current->now;
-  qa_q2mp_weapon_state *state = current->state;
-  bool activating = strcmp(state->animation.phase, "activating") == 0 && state->animation.frame == 3;
-  if (strcmp(state->animation.phase, "ready") == 0 && state->animation.frame == 35 && !current->input.attack &&
-      !state->animation.latched_attack && state->pending == NULL)
-    current->game->sound(current->game->ctx, current->actor, "weapons/plasma/vent.wav", 1, 1, 1);
-  weapons->generic_classic(weapons->ctx, current);
-  if (activating && strcmp(state->animation.phase, "ready") == 0) mode_print(w, current->actor, current->game);
+  qa_q2w_state *state = current->state;
+  bool activating = state->phase == QA_Q2W_ACTIVATING && state->frame == 3;
+  if (state->phase == QA_Q2W_READY && state->frame == 35 && !current->input.attack &&
+      !state->latched_attack && state->pending == NULL)
+    current->game->sound(current->game->ctx, current->self.actor, "weapons/plasma/vent.wav", 1, 1, 1);
+  qa_q2w_weapons_generic_classic(weapons, current);
+  if (activating && state->phase == QA_Q2W_READY) mode_print(w, current->self.actor, current->game);
 }
 
-static void weapon_fire(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weapons_port *weapons) {
+static void weapon_fire(void *ctx, qa_q2w_context *current, qa_q2w_weapons *weapons) {
   qa_lmctf_weapons *w = ctx;
-  qa_owned_actor self = current->actor;
+  qa_owned_actor self = current->self.actor;
   qa_q2_game_services *g = current->game;
-  qa_q2mp_weapon_state *state = current->state;
+  qa_q2w_state *state = current->state;
   double now = current->now;
-  if (weapons->ammo(weapons->ctx, current) < 1) {
-    state->animation.frame++;
+  if (qa_q2w_weapons_ammo(weapons, current) < 1) {
+    state->frame++;
     if (now >= state->empty_sound_time) {
       g->sound(g->ctx, self, "weapons/plasma/empty.wav", 2, 1, 1);
       state->empty_sound_time = now + 1;
     }
-    weapons->no_ammo(weapons->ctx, current, false);
+    qa_q2w_weapons_no_ammo(weapons, current, false);
     return;
   }
-  if (state->animation.frame == 4) {
-    qa_vec3 start, direction;
-    weapons->project(weapons->ctx, current, (qa_vec3){8, 8, -8}, &start, &direction);
+  if (state->frame == 4) {
+    qa_q2w_projection projection = qa_q2w_weapons_project_default(weapons, current, (qa_vec3){8, 8, -8});
+    qa_vec3 start = projection.start, direction = projection.direction;
     bool reflect = qa_lmctf_player(w->context, self.id)->plasma_mode;
-    qa_q2w_state projected = {0};
-    projected.kick_origin = state->kick_origin;
-    projected.kick_angles = state->kick_angles;
-    projected.kick_time = state->kick_time;
-    projected.kick_until = state->kick_until;
-    projected.kick_duration = state->kick_duration;
-    qa_q2f_edition edition = g->options.edition == QA_Q2_EDITION_RERELEASE ? QA_Q2F_RERELEASE : QA_Q2F_CLASSIC;
-    qa_vec3 recoil = qa_q2w_weapon_recoil(&projected, edition, now).kick_angles;
     qa_vec3 kick_origin = qa_q2_scale(qa_math_angle_vectors_rule(current->input.angles, QA_ANGLE_RULE_NATIVE).forward, -2);
-    weapons->kick(weapons->ctx, current, kick_origin, recoil);
+    qa_vec3 recoil = qa_q2w_weapon_recoil(state, g->options.edition, now).kick_angles;
+    qa_q2w_weapons_kick_default(weapons, current, kick_origin, recoil);
     g->sound(g->ctx, self, reflect ? "weapons/plasma/fire1.wav" : "weapons/plasma/fire2.wav", 1, 1, 1);
     qa_lmctf_weapons_launch(w, self, g, start, direction, reflect);
     size_t en = 0;
@@ -69,34 +65,33 @@ static void weapon_fire(void *ctx, qa_q2mp_weapon_context *current, qa_q2mp_weap
     const qa_inventory_entry *cells = NULL;
     for (size_t i = 0; i < en; i++)
       if (entries[i].item != NULL && strcmp(entries[i].item, "q2:ammo_cells") == 0) cells = &entries[i];
-    if (cells == NULL) qa_q2f_error("LMCTF plasma fired without its admitted cell counter");
+    if (cells == NULL) qa_raise("Error", 0, 0, "LMCTF plasma fired without its admitted cell counter");
     qa_inventory_entry entry = *cells;
     entry.has_count_policy = true;
     entry.count_policy.kind = "source-counter";
     entry.count_policy.arithmetic = "int32";
     qa_shared_inventory_table_configure(g->host->inventory, self, entry, NULL, NULL);
     qa_shared_inventory_table_adjust_source_counter(g->host->inventory, self, "q2:ammo_cells", -9);
-    if (((int64_t)g->options.deathmatch_flags & 8192) == 0)
+    if ((qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 8192) == 0)
       qa_shared_inventory_table_adjust_source_counter(g->host->inventory, self, "q2:ammo_cells", -1);
-    weapons->ammo_changed(weapons->ctx, self.id, "q2:ammo_cells");
-    qa_q2mp_player_state *player = w->context->hooks.player(w->context->hooks.ctx, self.id);
+    weapons->base.hooks.ammo_changed(weapons->base.hooks.ctx, self.id, "q2:ammo_cells");
+    qa_q2_base_player_state *player = w->context->hooks.player(w->context->hooks.ctx, self.id);
     if (player != NULL) {
       player->damage_pitch = -2;
       player->damage_roll = (g->host->random(g->host->ctx) * 2 - 1) * 2;
       player->damage_time = now + 0.5;
     }
-    weapons->player_noise(weapons->ctx, self.id, g, start, "weapon");
+    qa_q2w_ballistics_player_noise(&weapons->base, self, g, start, "weapon");
   }
-  state->animation.frame++;
+  state->frame++;
 }
 
-static bool selection_choose(void *ctx, qa_owned_actor self, double view_height, qa_q2_game_services *g, qa_q2mp_weapon_state *state) {
-  (void)view_height;
+static bool selection_choose(void *ctx, qa_q2w_owner self, qa_q2_game_services *g, qa_q2w_state *state) {
   qa_lmctf_weapons *w = ctx;
   if (state->weapon != NULL && strcmp(state->weapon, "lmctf:plasma") == 0) {
-    qa_lmctf_player_state *player = qa_lmctf_player(w->context, self.id);
+    qa_lmctf_player_state *player = qa_lmctf_player(w->context, self.actor.id);
     player->plasma_mode = !player->plasma_mode;
-    mode_print(w, self, g);
+    mode_print(w, self.actor, g);
   }
   return true;
 }
@@ -107,7 +102,7 @@ static void free_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *g) {
 }
 
 static void impact(qa_lmctf_weapons *w, qa_q2_entity *self, qa_q2_game_services *g, qa_touch_contact contact, bool reflect) {
-  if (contact.surface != NULL && ((int64_t)contact.surface->native_flags & 4) != 0) {
+  if (contact.surface != NULL && (qa_js_to_int32(contact.surface->native_flags) & 4) != 0) {
     g->remove(g->ctx, self);
     return;
   }
@@ -122,7 +117,7 @@ static void impact(qa_lmctf_weapons *w, qa_q2_entity *self, qa_q2_game_services 
   qa_combat_state_result target = qa_q2mp_combat_read(g, contact.other);
   bool hurt = target.has_value && target.value.can_take_damage;
   if (owner != NULL && g->host->is_player(g->host->ctx, owner->actor.id))
-    w->context->hooks.weapons->player_noise(w->context->hooks.weapons->ctx, owner->actor.id, g, body.origin, "impact");
+    qa_q2w_ballistics_player_noise(&w->context->hooks.weapons->base, owner->actor, g, body.origin, "impact");
   if (hurt) {
     qa_actor_id owner_id = self->has_owner ? self->owner : self->actor.id;
     g->damage(g->ctx, contact.other, self, self->actor.id, self->has_owner ? &owner_id : NULL, damage, 1,
@@ -189,14 +184,14 @@ qa_lmctf_weapons *qa_lmctf_weapons_create(qa_lmctf_context *context) {
   def.has_coop_stay = true;
   def.coop_stay = true;
   qa_q2_item_module_register(context->hooks.items, def);
-  qa_q2mp_weapon_extension extension = {0};
+  qa_q2w_extension extension = {0};
   extension.definition = &QA_LMCTF_PLASMA;
   extension.ctx = w;
   extension.fire = weapon_fire;
   extension.think = weapon_think;
   extension.selection_requested = QA_LMCTF_PLASMA.name;
   extension.selection_choose = selection_choose;
-  context->hooks.weapons->register_weapon(context->hooks.weapons->ctx, extension);
+  qa_q2w_weapons_register(context->hooks.weapons, extension);
   return w;
 }
 void qa_lmctf_weapons_destroy(qa_lmctf_weapons *w) { free(w); }

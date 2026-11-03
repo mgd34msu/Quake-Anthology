@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/prediction.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/prediction.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -14,6 +15,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
 #include "qa/world/collision/q3/model.h"
+#include "qa/foundation/js.h"
 
 enum { SOLID_BMODEL = 0xffffff, CONTENTS_BODY = 0x2000000, MASK_PLAYERSOLID = 1 | 0x10000 | CONTENTS_BODY };
 
@@ -21,7 +23,7 @@ static double f32(double value) { return (double)(float)value; }
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -35,11 +37,7 @@ static int32_t imul(double a, double b) {
 }
 /* TS Number -> string for warn messages (integer text when integral). */
 static void fmt_num(char *buffer, size_t size, double value) {
-  if (value == trunc(value) && fabs(value) < 1e21) {
-    snprintf(buffer, size, "%lld", (long long)value);
-  } else {
-    snprintf(buffer, size, "%g", value);
-  }
+  qa_net_js_number(value, buffer, size);
 }
 static qa_q3_base_trajectory base_trajectory(const qa_q3_wire_trajectory *wire) {
   qa_q3_base_trajectory result = {wire->type, wire->time, wire->duration, wire->base, wire->delta};
@@ -178,9 +176,10 @@ qa_q3_pres_movement_trace qa_q3_pres_prediction_runtime_trace(runtime_t *runtime
     qa_q3_pres_client_entity *cent = solids->items[index];
     const qa_q3_base_entity_state *entity = &cent->current_state;
     if (entity->number == skip_number) continue;
-    double x = entity->solid & 255;
-    double zd = (entity->solid >> 8) & 255;
-    double zu = ((entity->solid >> 16) & 255) - 32;
+    int32_t solid = qa_js_to_int32(entity->solid);
+    double x = solid & 255;
+    double zd = (solid >> 8) & 255;
+    double zu = ((solid >> 16) & 255) - 32;
     qa_q3_trace_result trace;
     if (entity->solid == SOLID_BMODEL) {
       qa_q3_trace_query modeled = query;
@@ -240,10 +239,14 @@ bool qa_q3_pres_prediction_runtime_interpolate_player_state(runtime_t *runtime, 
   double cycle = b->bob_cycle < a->bob_cycle ? (double)to_int32(b->bob_cycle + 256) : b->bob_cycle;
   out->bob_cycle = qa_qvm_float_to_int(f32(f32(a->bob_cycle) +
       f32(fraction * f32((double)to_int32(cycle - a->bob_cycle)))));
+  qa_vec3 a3 = qa_q3_base_player_state_record_origin(a);
+  qa_vec3 b3 = qa_q3_base_player_state_record_origin(b);
   qa_q3_base_player_state_record_set_origin(out, interpolate_vector(
-      qa_q3_base_player_state_record_origin(a), qa_q3_base_player_state_record_origin(b), fraction));
+      a3, b3, fraction));
+  qa_vec3 a2 = qa_q3_base_player_state_record_velocity(a);
+  qa_vec3 b2 = qa_q3_base_player_state_record_velocity(b);
   qa_q3_base_player_state_record_set_velocity(out, interpolate_vector(
-      qa_q3_base_player_state_record_velocity(a), qa_q3_base_player_state_record_velocity(b), fraction));
+      a2, b2, fraction));
   if (!grab_angles) {
     out->viewangles = qa_math_vec3(
         qa_lerp_angle_with_rule(a->viewangles.x, b->viewangles.x, fraction, QA_LERP_ANGLE_FLOAT),
@@ -255,12 +258,14 @@ bool qa_q3_pres_prediction_runtime_interpolate_player_state(runtime_t *runtime, 
 
 static void source_touch_item(runtime_t *runtime, qa_q3_pres_client_entity *cent,
     qa_q3_pres_prediction_settings settings) {
+  qa_vec3 player_origin;
+  qa_q3_base_trajectory item_position;
   qa_q3_pres_client_game_state *state = runtime->state;
   qa_q3_base_source_player_state *ps = &state->predicted_player_state;
   qa_q3_base_entity_state *entity = &cent->current_state;
   if (!settings.predict_items ||
-      !qa_q3_base_player_touches_item(qa_q3_base_player_state_record_origin(ps),
-          base_trajectory(&entity->pos), state->time) ||
+      !(player_origin = qa_q3_base_player_state_record_origin(ps), item_position = base_trajectory(&entity->pos), qa_q3_base_player_touches_item(player_origin,
+          item_position, state->time)) ||
       cent->misc_time == state->time) {
     return;
   }
@@ -281,7 +286,7 @@ static void source_touch_item(runtime_t *runtime, qa_q3_pres_client_entity *cent
     }
   }
   (void)qa_q3_base_player_state_record_add_event(ps, QA_Q3_EV_ITEM_PICKUP, entity->modelindex);
-  entity->e_flags |= 0x80;
+  entity->e_flags = (double)(qa_js_to_int32(entity->e_flags) | 0x80);
   cent->misc_time = state->time;
   if (item->type == QA_Q3_BASE_IT_WEAPON) {
     double slot = qa_q3_base_stat_schema_for(qa_q3_base_player_state_record_product(ps))->weapons;
@@ -426,8 +431,10 @@ bool qa_q3_pres_prediction_runtime_predict_player_state(runtime_t *runtime) {
         }
         if (length > f32(0.1)) {
           if (settings.show_miss != 0) {
-            char message[96];
-            snprintf(message, sizeof message, "Prediction miss: %.6f\n", length);
+            char message[QA_JS_TO_FIXED_CAPACITY + 32];
+            char fixed[QA_JS_TO_FIXED_CAPACITY]; /* length.toFixed(6): exact ties round up */
+            qa_js_to_fixed(length, 6, fixed, sizeof fixed);
+            snprintf(message, sizeof message, "Prediction miss: %s\n", fixed);
             warn(runtime, message);
           }
           if (settings.error_decay_integer != 0) {
@@ -436,8 +443,10 @@ bool qa_q3_pres_prediction_runtime_predict_player_state(runtime_t *runtime) {
                                   f32(settings.error_decay_value));
             if (fraction < 0) fraction = 0;
             if (fraction > 0 && settings.show_miss != 0) {
-              char message[96];
-              snprintf(message, sizeof message, "Double prediction decay: %.6f\n", fraction);
+              char message[QA_JS_TO_FIXED_CAPACITY + 32];
+              char fixed[QA_JS_TO_FIXED_CAPACITY]; /* fraction.toFixed(6) */
+              qa_js_to_fixed(fraction, 6, fixed, sizeof fixed);
+              snprintf(message, sizeof message, "Double prediction decay: %s\n", fixed);
               warn(runtime, message);
             }
             state->predicted_error = qa_scale3(state->predicted_error, fraction);
@@ -467,6 +476,7 @@ bool qa_q3_pres_prediction_runtime_predict_player_state(runtime_t *runtime) {
     options.has_fixed_msec = settings.pmove_fixed;
     options.fixed_msec = settings.pmove_msec;
     options.no_footsteps = (to_int32(settings.dm_flags) & 32) != 0;
+    options.ladders_disabled = settings.ladders_disabled;
     options.gauntlet_hit = false;
     qa_bounds result = runtime->host.movement.move_player(runtime->host.movement.ctx, ps, runtime->command, options);
     moved = true;
@@ -510,7 +520,7 @@ bool qa_q3_pres_build_solid_list(qa_q3_pres_client_game_state *state) {
   for (size_t index = 0; index < snapshot->entity_count; index++) {
     qa_q3_pres_client_entity *entity =
         qa_q3_pres_client_game_state_entity_at(state, snapshot->entities[index].number);
-    int32_t type = entity->current_state.e_type;
+    int32_t type = qa_js_to_int32(entity->current_state.e_type);
     if (type == QA_Q3_BASE_ET_ITEM || type == QA_Q3_BASE_ET_PUSH_TRIGGER || type == QA_Q3_BASE_ET_TELEPORT_TRIGGER) {
       if (!qa_q3_pres_client_entity_list_push(&state->trigger_entities, entity)) return false;
     } else if (entity->next_state.solid != 0) {

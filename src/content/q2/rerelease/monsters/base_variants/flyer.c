@@ -41,7 +41,7 @@ static void slash(qa_q2m_context *c, bool right) {
     c->state->melee_time = q2rm_now(c->game) + 1.5;
   q2rm_snd(c, "flyer/flyatck2.wav", 1);
 }
-static void touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2m_monsters *monsters = ctx;
   qa_q2m_context *context = qa_q2m_monsters_context(monsters, entity->actor.id);
   qa_q2m_context *other = qa_q2m_monsters_context(monsters, contact.other);
@@ -51,7 +51,7 @@ static void touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_tou
   context->state->alt.fly_thrusters = false;
   qa_vec3 origin = q2rm_body(game, entity).origin;
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(origin, q2rm_body(game, other->entity).origin));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = qa_scale3_double(direction, 500);
   q2rm_move_body(game, entity, change, false, false);
@@ -68,8 +68,8 @@ static void init_fn(void *ctx, qa_q2m_context *c) {
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_state *state = c->state;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_body_state enemy;
   bool have_enemy = qa_q2m_enemy_body(c, &enemy);
   double range = qa_q2m_target_distance(c);
@@ -96,8 +96,8 @@ static void melee_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time) return;
@@ -112,8 +112,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   q2rm_snd(c, "flyer/flydeth1.wav", 2);
   q2rm_emit_effect(game, "q2:explosion1", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
@@ -146,19 +146,19 @@ static void check_melee_fn(void *ctx, qa_q2m_context *c) {
 }
 static const qa_q2bm_sound_spec pop_spec = {"flyer/flyatck1.wav", 2, 1};
 
-qa_q2m_definition qa_q2rm_create_rerelease_flyer_definition(qa_q2m_monsters *monsters) {
+qa_q2m_definition qa_q2rm_create_rerelease_flyer_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
   /* TS filters out flyer_move_kamikaze from the table. */
-  qa_q2m_move *moves = malloc(qa_q2rm_flyer_move_count * sizeof *moves);
-  qa_q2f_named_touch *touch_defs = malloc(sizeof *touch_defs);
-  if (!moves || !touch_defs) qa_q2f_error("Out of memory creating rerelease flyer definition");
+  qa_q2m_move *moves = qa_q2mpm_arena_alloc(arena, qa_q2rm_flyer_move_count * sizeof *moves);
+  qa_q2_named_touch *touch_defs = qa_q2mpm_arena_alloc(arena, sizeof *touch_defs);
+  if (!moves || !touch_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease flyer definition");
   size_t move_count = 0;
   for (size_t i = 0; i < qa_q2rm_flyer_move_count; i++)
     if (strcmp(qa_q2rm_flyer_moves[i].name, "flyer_move_kamikaze") != 0) moves[move_count++] = qa_q2rm_flyer_moves[i];
   touch_defs[0].name = "flyer_touch";
   touch_defs[0].cb.ctx = monsters;
   touch_defs[0].cb.fn = touch_fn;
-  qa_q2m_named_handler *callbacks = malloc(8 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating rerelease flyer definition");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 8 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating rerelease flyer definition");
   callbacks[0] = (qa_q2m_named_handler){"flyer_run", {NULL, run_fn}};
   callbacks[1] = (qa_q2m_named_handler){"flyer_pop_blades", {(void *)&pop_spec, qa_q2bm_sound_handler_fn}};
   callbacks[2] = (qa_q2m_named_handler){"flyer_loop_melee", {(void *)"flyer_move_loop_melee", qa_q2bm_move_handler_fn}};

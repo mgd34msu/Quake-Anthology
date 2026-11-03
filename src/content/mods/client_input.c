@@ -1,5 +1,6 @@
 /* Port of src/content/mods/client-input.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/client_input.h"
+#include "qa/content/mods/declaration.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +31,7 @@ static void *read_list(const qa_save_reader *reader, const char *name,
                        void *ctx, size_t elem_size, size_t *out_count) {
   qa_save_reader list = field(reader, name);
   size_t count = qa_save_reader_list_count(&list);
-  char *storage = count > 0 ? (char *)malloc(count * elem_size) : NULL;
+  char *storage = count > 0 ? (char *)qa_mod_declaration_malloc(count * elem_size) : NULL;
   if (count > 0 && storage == NULL) qa_save_reader_fail(&list, "out of memory");
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(&list, i);
@@ -52,7 +53,7 @@ qa_mod_client_input_binding *qa_read_mod_client_input(
   static const char *const phases[] = {"before", "after"};
   size_t count = qa_save_reader_list_count(reader);
   qa_mod_client_input_binding *bindings = count > 0
-      ? (qa_mod_client_input_binding *)calloc(count, sizeof *bindings) : NULL;
+      ? (qa_mod_client_input_binding *)qa_mod_declaration_calloc(count, sizeof *bindings) : NULL;
   if (count > 0 && bindings == NULL) return NULL;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(reader, i);

@@ -11,6 +11,7 @@
 #include "qa/content/q3/foundation/arsenal.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t n){ void*p=malloc(n?n:1); if(!p) qa_range_error("out of memory"); return p; }
 static char *xstrdup(const char*s){ size_t n=strlen(s)+1; char*p=xmalloc(n); memcpy(p,s,n); return p; }
@@ -112,7 +113,7 @@ static catalog_items read_records(const uint8_t *data,size_t length,qa_q3_guest_
     int32_t class_ptr=word_le(data,address+(int64_t)layout.field_class_name);
     if(class_ptr==0) continue;
     int32_t type=word_le(data,address+(int64_t)layout.field_type);
-    if(filter_types&&type!=(int32_t)layout.weapon_type&&type!=(int32_t)layout.ammo_type) continue;
+    if(filter_types&&type!=qa_js_to_int32(layout.weapon_type)&&type!=qa_js_to_int32(layout.ammo_type)) continue;
     int32_t pickup_ptr=word_le(data,address+(int64_t)layout.field_pickup_name);
     int32_t tag=word_le(data,address+(int64_t)layout.field_tag);
     const int32_t ptrs[2]={class_ptr,pickup_ptr}; char *texts[2];
@@ -259,7 +260,7 @@ qa_q3_guest_weapon_list qa_q3_guest_weapons(const qa_q3_equipment_qvm_artifact *
 }
 /* --- Q3GuestCatalog --- */
 struct qa_q3_guest_catalog {
-  qa_q3_equipment_qvm_artifact artifact;
+  bool has_artifact; qa_q3_equipment_qvm_artifact artifact;
   qa_q3_guest_qvm_module module;
   bool has_layout; qa_q3_guest_qvm_item_layout layout;
   bool has_table; /* layout present (QvmSourceItemCatalog) */
@@ -292,14 +293,15 @@ qa_q3_guest_catalog *qa_q3_guest_catalog_create(const qa_q3_equipment_qvm_artifa
     const qa_q3_guest_weapon *initial, size_t initial_count,
     bool has_selection, const qa_q3_guest_selection *selection, size_t selection_count,
     const qa_q3_guest_qvm_inventory_profile *inventory){
-  if(!str_eq(module.profile_module.digest,artifact->module.digest)
+  if(!artifact&&layout) qa_range_error("A native module has no readable item table");
+  if(artifact&&(!str_eq(module.profile_module.digest,artifact->module.digest)
     ||!str_eq(module.profile_module.id,artifact->module.id)
     ||!str_eq(module.profile_module.artifact_path,artifact->module.artifact_path)
-    ||!str_eq(module.profile_module.revision,artifact->module.revision))
+    ||!str_eq(module.profile_module.revision,artifact->module.revision)))
     qa_range_error("QVM item catalog belongs to a different original module");
   qa_q3_guest_catalog *c=calloc(1,sizeof *c); if(!c) return NULL;
-  c->artifact=*artifact; c->module=module;
-  if(layout){ c->has_layout=true; c->layout=*layout; c->has_table=true; }
+  if(artifact){ c->has_artifact=true; c->artifact=*artifact; c->module=module; }
+  if(layout){ c->has_layout=true; c->layout=*layout; c->has_table=artifact!=NULL; }
   c->weapons=copy_weapons(initial,initial_count);
   c->has_selection=has_selection;
   if(has_selection){
@@ -344,7 +346,7 @@ const qa_q3_guest_qvm_catalog_record *qa_q3_guest_catalog_records(qa_q3_guest_ca
 }
 const qa_q3_guest_weapon *qa_q3_guest_catalog_weapons(qa_q3_guest_catalog *c, size_t *out_count){
   if(c->closed) qa_range_error("QVM item catalog owner is retired");
-  if(!c->has_table||!c->has_layout||!c->layout.source_live){ *out_count=c->weapons.count; return c->weapons.values; }
+  if(!c->has_table||!c->has_artifact||!c->has_layout||!c->layout.source_live){ *out_count=c->weapons.count; return c->weapons.values; }
   const catalog_items *entries=table_records(c);
   if(entries->values==c->previous){ *out_count=c->weapons.count; return c->weapons.values; }
   qa_q3_guest_weapon_list weapons=catalog_weapons(&c->artifact,c->layout,entries,c->has_selection,c->selection,c->selection_count);

@@ -1,12 +1,20 @@
 /* Port of src/app/bootstrap/network/q2.ts. GPL-2.0-or-later. */
+#define _POSIX_C_SOURCE 199309L
+#include "qa/network/common/js_number.h"
 #include "qa/app/bootstrap/network/q2.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include "qa/app/bootstrap/network/q2_downloads.h"
 #include "qa/core/commands/text.h"
+#include "qa/network/q1/handshake.h"
+#include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/diagnostics.h"
+#include "qa/network/common/movement_budget.h"
 #include "qa/network/q2/channel.h"
 #include "qa/network/q2/client_messages.h"
 #include "qa/network/q2/connectionless.h"
@@ -16,6 +24,7 @@
 #include "qa/network/q2/mvd_encoding.h"
 #include "qa/network/q2/server_demo.h"
 #include "qa/network/q2/server_write.h"
+#include "qa/network/services/admin.h"
 #include "qa/network/services/discovery.h"
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
@@ -29,15 +38,15 @@ static char *copy_text(const char *s) {
   return out;
 }
 static double signon_integer(const char *text) {
-  if (!text) qa_range_error("Invalid Q2 signon number");
+  if (!text) qa_raise("Error", 0, 0, "Invalid Q2 signon number");
   const char *p = text;
   if (*p == '-') p++;
-  if (!*p) qa_range_error("Invalid Q2 signon number");
+  if (!*p) qa_raise("Error", 0, 0, "Invalid Q2 signon number");
   for (const char *q = p; *q; q++)
-    if (*q < '0' || *q > '9') qa_range_error("Invalid Q2 signon number");
+    if (*q < '0' || *q > '9') qa_raise("Error", 0, 0, "Invalid Q2 signon number");
   double result = strtod(text, NULL);
   if (result != trunc(result) || fabs(result) > 9007199254740991.0)
-    qa_range_error("Q2 signon number outside range");
+    qa_raise("Error", 0, 0, "Q2 signon number outside range");
   return result;
 }
 static bool client_equal(qa_client_id a, qa_client_id b) {
@@ -60,7 +69,9 @@ static bool wire_supported(const qa_app_q2_server_host *host, const char *prefix
     used += len;
   }
   message[used] = '\0';
-  qa_range_error("%s", message);
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, message);
+  qa_raise("Error", 0, 0, "%s", message);
 }
 typedef struct split {
   qa_app_q2_player player; qa_q2_command_replay replay; double sequence;
@@ -77,8 +88,11 @@ typedef struct peer {
   qa_q2_wire_codec wire;
   qa_q2_command_replay replay;
   frame_store *frames; size_t frame_count, frame_cap;
-  bool has_game_state; qa_app_q2_game_state game_state;
+  bool has_game_state; qa_app_q2_game_state game_state; /* .data owned (servercount copy) */
   bool active; double sequence, last_received;
+  qa_movement_budget budget;
+  double rate_sizes[10]; /* sv_send.c message_size[RATE_MESSAGES] */
+  double suppressed;     /* surpressCount */
   uint8_t **datagram; size_t *datagram_lengths; size_t datagram_count, datagram_cap;
   char *userinfo;
 } peer;
@@ -112,19 +126,27 @@ struct qa_app_q2_server_network {
   const qa_q2_mvd_capture *server_demo_seed;
   server_recording_owner *server_owner;
   const void **poll_result; size_t poll_result_cap;
+  /* Tokens of owners a failed append retired; kept so a later detach cannot match a new owner. */
+  void **retired_tokens; size_t retired_count;
+  qa_connectionless_gate gate;
+  qa_rcon_guard rcon_guard; /* TS rconGuard: one per server, so failures back off across packets */
+  /* TS drop() leaves the peer object alive for whoever still holds it (the poll catch drops it
+   * again); dropped peers are freed at the next poll/publish entry and at destroy. */
+  peer **dropped; size_t dropped_count, dropped_cap;
 };
-typedef struct q2_discovery {
-  void *ctx;
-  qa_q2_status (*status)(void *ctx);
-  qa_q2_host_info (*info)(void *ctx);
-} q2_discovery;
+typedef qa_app_q2_discovery q2_discovery;
 static qa_datagram_transport *transport_of(qa_app_q2_server_network *n) {
   return &n->transport;
 }
 static bool is_kex(const qa_q2_protocol_identity *protocol) {
   return protocol->kind && strcmp(protocol->kind, "q2-kex") == 0;
 }
-static double now_performance(void) { return 0; }
+/* TS performance.now(): monotonic milliseconds, the clock the application passes to poll. */
+static double now_performance(void) {
+  struct timespec clock;
+  clock_gettime(CLOCK_MONOTONIC, &clock);
+  return (double)clock.tv_sec * 1000.0 + (double)clock.tv_nsec / 1e6;
+}
 static void datagram_push(peer *p, uint8_t *bytes, size_t length) {
   if (p->datagram_count == p->datagram_cap) {
     p->datagram_cap = p->datagram_cap ? p->datagram_cap * 2 : 8;
@@ -167,14 +189,20 @@ static peer *find_peer(qa_app_q2_server_network *n, const char *key) {
     if (strcmp(n->peers[i]->key, key) == 0) return n->peers[i];
   return NULL;
 }
-static void peer_destroy(qa_app_q2_server_network *n, peer *p) {
-  (void)n;
+static void peer_game_state_clear(peer *p) {
+  if (p->has_game_state) free((void *)p->game_state.data);
+  memset(&p->game_state, 0, sizeof p->game_state);
+  p->has_game_state = false;
+}
+static void peer_destroy(peer *p) {
   close_download(p);
+  peer_game_state_clear(p);
   qa_app_q2_peer_download_destroy(p->download);
   qa_net_address_destroy(&p->remote);
   free(p->key);
   free(p->splits);
   qa_q2_channel_destroy(&p->channel);
+  qa_q2_wire_codec_destroy(&p->wire);
   frames_clear(p);
   free(p->frames);
   datagram_clear(p);
@@ -183,16 +211,40 @@ static void peer_destroy(qa_app_q2_server_network *n, peer *p) {
   free(p->userinfo);
   free(p);
 }
+static void dropped_flush(qa_app_q2_server_network *n) {
+  for (size_t i = 0; i < n->dropped_count; i++) peer_destroy(n->dropped[i]);
+  n->dropped_count = 0;
+}
+static bool peer_present(const qa_app_q2_server_network *n, const peer *p) {
+  for (size_t i = 0; i < n->peer_count; i++)
+    if (n->peers[i] == p) return true;
+  return false;
+}
+/* TS drop(): closeDownload, peers.delete, pending filter, then host.disconnect for every seat. A
+ * peer dropped twice (the poll catch after a failing disconnect) repeats the same steps. */
 static void drop_peer(qa_app_q2_server_network *n, peer *p, const char *reason) {
   close_download(p);
+  bool listed = false;
   for (size_t i = 0; i < n->peer_count; i++)
     if (n->peers[i] == p) {
       memmove(n->peers + i, n->peers + i + 1, (n->peer_count - i - 1) * sizeof *n->peers);
       n->peer_count--;
+      listed = true;
       break;
     }
-  /* pending live-filter by remote-client source identity. Commands
-   * are qa_actor_command-shaped: source client at offset of .source. */
+  if (listed) {
+    bool kept = false;
+    for (size_t i = 0; i < n->dropped_count; i++) kept |= n->dropped[i] == p;
+    if (!kept) {
+      if (n->dropped_count == n->dropped_cap) {
+        n->dropped_cap = n->dropped_cap ? n->dropped_cap * 2 : 8;
+        peer **grown = realloc(n->dropped, n->dropped_cap * sizeof *grown);
+        if (!grown) qa_range_error("out of memory");
+        n->dropped = grown;
+      }
+      n->dropped[n->dropped_count++] = p;
+    }
+  }
   size_t kept = 0;
   for (size_t i = 0; i < n->pending_count; i++) {
     const qa_actor_command *command = n->pending[i];
@@ -205,15 +257,9 @@ static void drop_peer(qa_app_q2_server_network *n, peer *p, const char *reason) 
     if (!drop) n->pending[kept++] = n->pending[i];
   }
   n->pending_count = kept;
-  qa_app_q2_player player = p->player;
-  size_t split_count = p->split_count;
-  qa_app_q2_player *split_players = xmalloc(split_count * sizeof *split_players);
-  for (size_t i = 0; i < split_count; i++) split_players[i] = p->splits[i].player;
-  peer_destroy(n, p);
-  n->host.disconnect(n->host.ctx, player, reason);
-  for (size_t i = 0; i < split_count; i++)
-    n->host.disconnect(n->host.ctx, split_players[i], reason);
-  free(split_players);
+  n->host.disconnect(n->host.ctx, p->player, reason);
+  for (size_t i = 0; i < p->split_count; i++)
+    n->host.disconnect(n->host.ctx, p->splits[i].player, reason);
 }
 static void reply_oob(qa_app_q2_server_network *n, const qa_net_address *remote, const char *text) {
   size_t length = 0;
@@ -245,6 +291,9 @@ static void new_client(qa_app_q2_server_network *n, peer *p) {
   qa_app_q2_game_state state = original;
   qa_q2_server_data_result data = *(const qa_q2_server_data_result *)original.data;
   data.servercount = n->server_generation;
+  if (p->split_count + 1 > QA_Q2_SERVER_DATA_CLIENTNUMS_MAX)
+    qa_raise("Error", 0, 0, "Q2 serverdata carries at most %d client numbers",
+        QA_Q2_SERVER_DATA_CLIENTNUMS_MAX);
   if (p->split_count > 0) {
     data.has_clientnums = true;
     data.clientnum_count = p->split_count + 1;
@@ -255,6 +304,7 @@ static void new_client(qa_app_q2_server_network *n, peer *p) {
   qa_q2_server_data_result *owned_data = xmalloc(sizeof *owned_data);
   *owned_data = data;
   state.data = owned_data;
+  peer_game_state_clear(p);
   p->game_state = state;
   p->has_game_state = true;
   qa_q2_server_event event = {0};
@@ -262,165 +312,202 @@ static void new_client(qa_app_q2_server_network *n, peer *p) {
   event.data = data;
   reliable(p, &event);
   char text[96];
-  snprintf(text, sizeof text, "cmd configstrings %.0f 0\n", data.servercount);
+  snprintf(text, sizeof text, "cmd configstrings %s 0\n", QA_JS_NUMBER(data.servercount));
   stuff(p, text);
+}
+typedef struct signon_entry { double index; size_t position; } signon_entry;
+/* TS [...map].filter(index >= start).sort((a, b) => a - b): the entries in index order. */
+static size_t signon_entries(signon_entry *out, const double *indices, size_t count, double start) {
+  size_t used = 0;
+  for (size_t i = 0; i < count; i++) {
+    if (!(indices[i] >= start)) continue;
+    size_t at = used++;
+    while (at > 0 && out[at - 1].index > indices[i]) { out[at] = out[at - 1]; at--; }
+    out[at] = (signon_entry){indices[i], i};
+  }
+  return used;
 }
 static void signon_page(qa_app_q2_server_network *n, peer *p, bool configs, double start) {
   (void)n;
-  if (!p->has_game_state) qa_range_error("Q2 signon has no game state");
-  if (start < 0) qa_range_error("Q2 signon index is negative");
+  if (!p->has_game_state) qa_raise("Error", 0, 0, "Q2 signon has no game state");
+  if (start < 0) qa_raise("Error", 0, 0, "Q2 signon index is negative");
   const qa_app_q2_game_state *state = &p->game_state;
   const qa_q2_server_data_result *data = state_data(state);
+  const qa_app_q2_config_snapshot *snapshot = state->config_strings;
+  const qa_q2_baseline_list *baselines = state->baselines;
+  size_t total = configs ? snapshot->count : baselines->count;
+  double *indices = xmalloc(total * sizeof *indices);
+  for (size_t i = 0; i < total; i++)
+    indices[i] = configs ? snapshot->entries[i].index : baselines->entries[i].number;
+  signon_entry *entries = xmalloc(total * sizeof *entries);
+  size_t entry_count = signon_entries(entries, indices, total, start);
+  free(indices);
+  qa_cleanup entries_node;
+  qa_cleanup_push(&entries_node, free, entries);
   size_t length = 0;
   bool has_next = false;
   double next = 0;
-  if (configs) {
-    const qa_app_q2_config_snapshot *snapshot = state->config_strings;
-    for (size_t i = 0; i < snapshot->count; i++) {
-      if (snapshot->entries[i].index < start) continue;
-      qa_q2_server_event event = {0};
+  for (size_t e = 0; e < entry_count; e++) {
+    size_t i = entries[e].position;
+    qa_q2_server_event event = {0};
+    if (configs) {
       event.kind = QA_Q2_SERVER_CONFIG_STRING;
       event.index = snapshot->entries[i].index;
       event.text = snapshot->entries[i].value;
-      size_t entry_length = 0;
-      uint8_t *bytes = qa_q2_encode_server_event(&p->wire, &event, &entry_length);
-      if (!bytes) qa_range_error("out of memory");
-      if ((double)(length + entry_length) > p->channel.capacity - 96) {
-        has_next = true;
-        next = snapshot->entries[i].index;
-        free(bytes);
-        break;
-      }
-      qa_q2_channel_queue_reliable(&p->channel, bytes, entry_length);
-      free(bytes);
-      length += entry_length;
-    }
-  } else {
-    const qa_q2_baseline_list *baselines = state->baselines;
-    for (size_t i = 0; i < baselines->count; i++) {
-      if (baselines->entries[i].number < start) continue;
-      qa_q2_server_event event = {0};
+    } else {
       event.kind = QA_Q2_SERVER_BASELINE;
       event.entity = baselines->entries[i].state;
-      size_t entry_length = 0;
-      uint8_t *bytes = qa_q2_encode_server_event(&p->wire, &event, &entry_length);
-      if (!bytes) qa_range_error("out of memory");
-      if ((double)(length + entry_length) > p->channel.capacity - 96) {
-        has_next = true;
-        next = baselines->entries[i].number;
-        free(bytes);
-        break;
-      }
-      qa_q2_channel_queue_reliable(&p->channel, bytes, entry_length);
-      free(bytes);
-      length += entry_length;
     }
+    size_t entry_length = 0;
+    uint8_t *bytes = qa_q2_encode_server_event(&p->wire, &event, &entry_length);
+    if (!bytes) qa_range_error("out of memory");
+    if ((double)(length + entry_length) > p->channel.capacity - 96) {
+      has_next = true;
+      next = entries[e].index;
+      free(bytes);
+      break;
+    }
+    qa_cleanup bytes_node;
+    qa_cleanup_push(&bytes_node, free, bytes);
+    qa_q2_channel_queue_reliable(&p->channel, bytes, entry_length);
+    qa_cleanup_pop(&bytes_node);
+    free(bytes);
+    length += entry_length;
   }
+  qa_cleanup_pop(&entries_node);
+  free(entries);
   if (has_next && length == 0)
-    qa_range_error("Q2 signon record exceeds negotiated reliable message capacity");
+    qa_raise("Error", 0, 0, "Q2 signon record exceeds negotiated reliable message capacity");
   char text[96];
-  if (has_next) snprintf(text, sizeof text, "cmd %s %.0f %.0f\n",
-      configs ? "configstrings" : "baselines", data->servercount, next);
-  else if (configs) snprintf(text, sizeof text, "cmd baselines %.0f 0\n", data->servercount);
-  else snprintf(text, sizeof text, "precache %.0f\n", data->servercount);
+  if (has_next) snprintf(text, sizeof text, "cmd %s %s %s\n",
+      configs ? "configstrings" : "baselines", QA_JS_NUMBER(data->servercount), QA_JS_NUMBER(next));
+  else if (configs) snprintf(text, sizeof text, "cmd baselines %s 0\n", QA_JS_NUMBER(data->servercount));
+  else snprintf(text, sizeof text, "precache %s\n", QA_JS_NUMBER(data->servercount));
   stuff(p, text);
 }
+typedef struct download_begin_scope {
+  qa_app_q2_server_network *n; peer *p; const char *name, *offset;
+  qa_q2_server_event *event;
+} download_begin_scope;
+static void download_begin_body(void *arg) {
+  download_begin_scope *scope = arg;
+  scope->event = qa_app_q2_peer_download_begin(scope->p->download,
+      (qa_app_q2_downloads *)scope->n->host.downloads, scope->name, scope->offset);
+}
+static void download_reliable_body(void *arg) {
+  download_begin_scope *scope = arg;
+  reliable(scope->p, scope->event);
+}
+static void download_event_release(void *arg) {
+  download_begin_scope *scope = arg;
+  if (scope->event) { qa_q2_server_event_clear(scope->event); free(scope->event); }
+  scope->event = NULL;
+}
+/* TS beginDownload: the open settles asynchronously, so a failure (the open, the first block, or
+ * queueing it) only records downloadFailure for the next poll, and a stale settlement is
+ * ignored. The C open is synchronous; the same checks run when it returns. */
 static void begin_download(qa_app_q2_server_network *n, peer *p,
     const char *name, const char *offset) {
-  /* TS completes the open asynchronously; errors land in
-   * downloadFailure for the next poll. The C begin is synchronous. */
-  qa_q2_server_event *event = qa_app_q2_peer_download_begin(p->download,
-      (qa_app_q2_downloads *)n->host.downloads, name, offset);
-  if (event) {
-    reliable(p, event);
-    qa_q2_server_event_clear(event);
-    free(event);
+  double generation = n->server_generation;
+  download_begin_scope scope = {n, p, name, offset, NULL};
+  qa_caught_error caught;
+  bool begun = qa_try(download_begin_body, &scope, &caught);
+  bool current = !n->ended && n->server_generation == generation && peer_present(n, p);
+  if (begun && scope.event && current) {
+    qa_cleanup node;
+    qa_cleanup_push(&node, download_event_release, &scope);
+    begun = qa_try(download_reliable_body, &scope, &caught);
+    qa_cleanup_pop(&node);
   }
+  download_event_release(&scope);
+  if (!begun && current) {
+    free(p->download_failure);
+    p->download_failure = copy_text(caught.message);
+  }
+}
+typedef struct command_held {
+  char *expanded; bool has_tokens; qa_command_tokens tokens;
+} command_held;
+static void command_held_release(void *arg) {
+  command_held *held = arg;
+  if (held->has_tokens) qa_command_tokens_destroy(&held->tokens);
+  held->has_tokens = false;
+  free(held->expanded);
+  held->expanded = NULL;
 }
 static void client_command(qa_app_q2_server_network *n, peer *p, const char *original,
     qa_app_q2_player player) {
+  /* The expanded text and tokens live until the command finishes: commandText receives the
+   * expanded text, and a signon number that fails to parse raises out through the node. */
+  command_held held = {0};
   const char *text = original;
-  char *expanded = NULL;
   if (n->host.expand_client_command) {
     const char *result = n->host.expand_client_command(n->host.ctx, text);
     if (!result) return;
-    expanded = (char *)result;
+    held.expanded = (char *)result;
     text = result;
   }
-  qa_command_tokens tokens;
-  if (!qa_tokenize_command(text, QA_COMMAND_DIALECT_Q2_CLASSIC, QA_COMMAND_TEXT_SOURCE, &tokens)) qa_range_error("out of memory");
-  free(expanded);
-  if (tokens.argc == 0) { qa_command_tokens_destroy(&tokens); return; }
-  const char *name = tokens.argv[0];
-  if (strcmp(name, "disconnect") == 0) {
-    qa_command_tokens_destroy(&tokens);
+  qa_cleanup node;
+  qa_cleanup_push(&node, command_held_release, &held);
+  if (!qa_tokenize_command(text, QA_COMMAND_DIALECT_Q2_CLASSIC, QA_COMMAND_TEXT_SOURCE, &held.tokens))
+    qa_range_error("out of memory");
+  held.has_tokens = true;
+  const qa_command_tokens *tokens = &held.tokens;
+  const char *name = tokens->argc ? tokens->argv[0] : NULL;
+  if (!name) {
+  } else if (strcmp(name, "disconnect") == 0) {
     drop_peer(n, p, "Client disconnected");
-    return;
-  }
-  if (strcmp(name, "new") == 0) {
-    qa_command_tokens_destroy(&tokens);
+  } else if (p->active && (strcmp(name, "new") == 0 || strcmp(name, "configstrings") == 0
+      || strcmp(name, "baselines") == 0)) {
+    /* sv_user.c accepts the signon commands only while the client is cs_connected. */
+  } else if (strcmp(name, "new") == 0) {
     new_client(n, p);
-    return;
-  }
-  if (strcmp(name, "download") == 0) {
-    char *name_copy = copy_text(tokens.argc > 1 ? tokens.argv[1] : "");
-    char *offset_copy = tokens.argc > 2 ? copy_text(tokens.argv[2]) : NULL;
-    qa_command_tokens_destroy(&tokens);
-    begin_download(n, p, name_copy, offset_copy);
-    free(name_copy);
-    free(offset_copy);
-    return;
-  }
-  if (strcmp(name, "nextdl") == 0) {
-    qa_command_tokens_destroy(&tokens);
+  } else if (strcmp(name, "download") == 0) {
+    begin_download(n, p, tokens->argc > 1 ? tokens->argv[1] : "",
+        tokens->argc > 2 ? tokens->argv[2] : NULL);
+  } else if (strcmp(name, "nextdl") == 0) {
     qa_q2_server_event *event = qa_app_q2_peer_download_next(p->download);
     if (event) {
       reliable(p, event);
       qa_q2_server_event_clear(event);
       free(event);
     }
-    return;
-  }
-  if (strcmp(name, "configstrings") == 0 || strcmp(name, "baselines") == 0
+  } else if (strcmp(name, "configstrings") == 0 || strcmp(name, "baselines") == 0
       || strcmp(name, "begin") == 0) {
-    bool is_begin = strcmp(name, "begin") == 0;
-    bool is_configs = strcmp(name, "configstrings") == 0;
-    char *arg1 = tokens.argc > 1 ? copy_text(tokens.argv[1]) : NULL;
-    char *arg2 = tokens.argc > 2 ? copy_text(tokens.argv[2]) : NULL;
-    qa_command_tokens_destroy(&tokens);
-    if (!p->has_game_state || signon_integer(arg1) != state_data(&p->game_state)->servercount) {
-      free(arg1); free(arg2);
+    if (!p->has_game_state
+        || signon_integer(tokens->argc > 1 ? tokens->argv[1] : NULL)
+            != state_data(&p->game_state)->servercount) {
       new_client(n, p);
-      return;
-    }
-    if (is_begin) {
+    } else if (strcmp(name, "begin") == 0) {
       if (!p->active && n->host.begin) {
         n->host.begin(n->host.ctx, p->player);
         for (size_t i = 0; i < p->split_count; i++) n->host.begin(n->host.ctx, p->splits[i].player);
       }
       p->active = true;
-      free(arg1); free(arg2);
-      return;
+    } else {
+      double start = signon_integer(tokens->argc > 2 ? tokens->argv[2] : NULL);
+      signon_page(n, p, strcmp(name, "configstrings") == 0, start);
     }
-    double start = signon_integer(arg2);
-    free(arg1); free(arg2);
-    signon_page(n, p, is_configs, start);
-    return;
-  }
-  if (p->active) {
+  } else if (p->active) {
     if (n->host.command_text) n->host.command_text(n->host.ctx, player, text);
     else n->host.command(n->host.ctx, player, name,
-        (const char *const *)tokens.argv + 1, tokens.argc - 1);
+        (const char *const *)tokens->argv + 1, tokens->argc - 1);
   }
-  qa_command_tokens_destroy(&tokens);
+  qa_cleanup_pop(&node);
+  command_held_release(&held);
 }
 typedef struct think_ctx {
-  qa_app_q2_server_network *n; qa_app_q2_player player; double *sequence;
+  qa_app_q2_server_network *n; peer *p; qa_app_q2_player player; double *sequence;
 } think_ctx;
 static void think_command(void *ctx, const qa_q2_wire_usercmd *command) {
   think_ctx *think = ctx;
-  const void *input = think->n->host.input(think->n->host.ctx, think->player,
-      command, (*think->sequence)++);
+  /* sv_enforcetime: command bursts cannot exceed what the elapsed time allows. */
+  if (!qa_movement_budget_admit(&think->p->budget, command->msec, think->p->last_received)) return;
+  void * value = think->n->host.ctx;
+  qa_app_q2_player value2 = think->player;
+  double value4 = (*think->sequence)++;
+  const void *input = think->n->host.input(value, value2,
+      command, value4);
   if (input) {
     if (think->n->pending_count == think->n->pending_cap) {
       think->n->pending_cap = think->n->pending_cap ? think->n->pending_cap * 2 : 32;
@@ -431,6 +518,15 @@ static void think_command(void *ctx, const qa_q2_wire_usercmd *command) {
     think->n->pending[think->n->pending_count++] = input;
   }
 }
+typedef struct client_records {
+  qa_q2_client_record *records;
+  size_t count;
+} client_records;
+static void client_records_release(void *arg) {
+  client_records *held = (client_records *)arg;
+  qa_q2_client_records_free(held->records, held->count);
+}
+static void free_pointer(void *arg) { free(arg); }
 static void process_peer(qa_app_q2_server_network *n, peer *p,
     const qa_q2_channel_receive_result *result) {
   qa_q2_client_record *records = NULL;
@@ -438,6 +534,9 @@ static void process_peer(qa_app_q2_server_network *n, peer *p,
   if (!qa_q2_read_client_messages(&p->wire, result->bytes, result->bytes_length,
           result->sequence, (double)p->split_count + 1, &records, &count))
     qa_range_error("out of memory");
+  client_records held = {records, count};
+  qa_cleanup node;
+  qa_cleanup_push(&node, client_records_release, &held);
   for (size_t i = 0; i < count; i++) {
     qa_q2_client_record *record = &records[i];
     double seat = record->seat;
@@ -448,7 +547,7 @@ static void process_peer(qa_app_q2_server_network *n, peer *p,
       replay = &p->replay; player = p->player; sequence = &p->sequence;
     } else {
       if (seat < 1 || seat > (double)p->split_count)
-        qa_range_error("Missing admitted Q2 split owner");
+        qa_raise("Error", 0, 0, "Missing admitted Q2 split owner");
       split *owner = &p->splits[(size_t)seat - 1];
       replay = &owner->replay; player = owner->player; sequence = &owner->sequence;
     }
@@ -456,19 +555,23 @@ static void process_peer(qa_app_q2_server_network *n, peer *p,
       case QA_Q2_CLIENT_MOVE:
       case QA_Q2_CLIENT_BATCH_MOVE:
         if (p->active) {
-          think_ctx think = {n, player, sequence};
+          think_ctx think = {n, p, player, sequence};
           qa_q2_command_replay_execute(replay, &record->event, result->dropped,
               think_command, &think);
         }
         break;
       case QA_Q2_CLIENT_COMMAND: {
         char *text = copy_text(record->event.text ? record->event.text : "");
+        if (!text) qa_range_error("out of memory");
+        qa_cleanup text_node;
+        qa_cleanup_push(&text_node, free_pointer, text);
         client_command(n, p, text, player);
+        qa_cleanup_pop(&text_node);
         free(text);
-        char *key = qa_net_address_key(&p->remote, true);
-        bool present = key && find_peer(n, key) == p;
-        free(key);
+        bool present = false;
+        for (size_t k = 0; k < n->peer_count; k++) present |= n->peers[k] == p;
         if (!present) {
+          qa_cleanup_pop(&node);
           qa_q2_client_records_free(records, count);
           return;
         }
@@ -496,10 +599,10 @@ static void process_peer(qa_app_q2_server_network *n, peer *p,
         break;
       }
       case QA_Q2_CLIENT_SETTING: {
-        char index_text[32];
-        char value_text[64];
-        snprintf(index_text, sizeof index_text, "%.17g", record->event.setting.index);
-        snprintf(value_text, sizeof value_text, "%.17g", record->event.setting.value);
+        char index_text[40];
+        char value_text[40];
+        qa_net_js_number(record->event.setting.index, index_text, sizeof index_text);
+        qa_net_js_number(record->event.setting.value, value_text, sizeof value_text);
         const char *args[] = {index_text, value_text};
         n->host.command(n->host.ctx, p->player, "set_setting", args, 2);
         break;
@@ -507,27 +610,99 @@ static void process_peer(qa_app_q2_server_network *n, peer *p,
       case QA_Q2_CLIENT_NOP: break;
     }
   }
+  qa_cleanup_pop(&node);
   qa_q2_client_records_free(records, count);
 }
-typedef struct rcon_ctx { qa_app_q2_server_network *n; const qa_net_address *remote; } rcon_ctx;
+typedef struct rcon_ctx {
+  qa_app_q2_server_network *n; const qa_net_address *remote;
+  const qa_q2_connectionless_host *original; /* administration leaves keep their own ctx */
+} rcon_ctx;
+static const char *rcon_password_forward(void *ctx) {
+  const rcon_ctx *rcon = ctx;
+  return rcon->original->rcon_password(rcon->original->ctx);
+}
+static bool rcon_limited_forward(void *ctx, const char **password, const char ***prefixes,
+    size_t *prefix_count) {
+  const rcon_ctx *rcon = ctx;
+  return rcon->original->limited_rcon(rcon->original->ctx, password, prefixes, prefix_count);
+}
+static bool rcon_rate_forward(void *ctx, double now) {
+  const rcon_ctx *rcon = ctx;
+  return rcon->original->rcon_rate_allowed(rcon->original->ctx, now);
+}
+static void rcon_recharge_forward(void *ctx) {
+  const rcon_ctx *rcon = ctx;
+  rcon->original->recharge_rcon_rate(rcon->original->ctx);
+}
+static void rcon_execute_forward(void *ctx, const char *command, bool limited,
+    void (*output)(void *octx, const char *text), void *output_ctx) {
+  const rcon_ctx *rcon = ctx;
+  rcon->original->execute_rcon(rcon->original->ctx, command, limited, output, output_ctx);
+}
 static void rcon_reply(void *ctx, const qa_net_address *to, const uint8_t *payload, size_t length) {
   rcon_ctx *rcon = ctx;
   (void)to;
   transport_of(rcon->n)->send(transport_of(rcon->n)->ctx, rcon->remote, payload, length);
 }
+typedef struct connectionless_held {
+  qa_q2_connectionless_message *message;
+  qa_q2_connect_request *request;
+  char *key; split *splits; /* a connect's peer key and seats until a peer owns them */
+} connectionless_held;
+static void connectionless_release(void *arg) {
+  connectionless_held *held = (connectionless_held *)arg;
+  free(held->key); held->key = NULL;
+  free(held->splits); held->splits = NULL;
+  if (held->request) qa_q2_connect_request_free(held->request);
+  qa_q2_connectionless_message_free(held->message);
+}
+static size_t same_address_peers(qa_app_q2_server_network *n, const qa_net_address *remote) {
+  size_t count = 0;
+  for (size_t i = 0; i < n->peer_count; i++)
+    if (qa_net_same_address(&n->peers[i]->remote, remote, false)) count++;
+  return count;
+}
+static bool connectionless_dispatch(qa_app_q2_server_network *n, const qa_net_address *remote,
+    qa_q2_connectionless_message *message_in, double now, connectionless_held *held);
 static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *remote,
     const uint8_t *bytes, size_t length, double now) {
   qa_q2_connectionless_message message;
   if (!qa_q2_read_out_of_band(bytes, length, is_kex(&n->host.protocol), &message))
     return false;
+  if (!qa_connectionless_gate_allow(&n->gate, remote, now)) {
+    qa_q2_connectionless_message_free(&message);
+    return true;
+  }
+  /* The parsed message and connect request stay owned here if a handler raises. */
+  connectionless_held held = {&message, NULL, NULL, NULL};
+  qa_cleanup node;
+  qa_cleanup_push(&node, connectionless_release, &held);
+  bool handled = connectionless_dispatch(n, remote, &message, now, &held);
+  qa_cleanup_pop(&node);
+  qa_q2_connectionless_message_free(&message);
+  return handled;
+}
+static bool connectionless_dispatch(qa_app_q2_server_network *n, const qa_net_address *remote,
+    qa_q2_connectionless_message *message_in, double now, connectionless_held *held) {
+  qa_q2_connectionless_message message = *message_in;
   bool handled = true;
   if (strcmp(message.command, "rcon") == 0) {
     if (n->host.administration) {
-      qa_q2_connectionless_host admin =
-          *(const qa_q2_connectionless_host *)n->host.administration;
-      rcon_ctx ctx = {n, remote};
+      const qa_q2_connectionless_host *original = n->host.administration;
+      qa_q2_connectionless_host admin = *original;
+      rcon_ctx ctx = {n, remote, original};
       admin.ctx = &ctx;
       admin.reply = rcon_reply;
+      admin.rcon_password = original->rcon_password ? rcon_password_forward : NULL;
+      admin.limited_rcon = original->limited_rcon ? rcon_limited_forward : NULL;
+      admin.rcon_rate_allowed = original->rcon_rate_allowed ? rcon_rate_forward : NULL;
+      admin.recharge_rcon_rate = original->recharge_rcon_rate ? rcon_recharge_forward : NULL;
+      admin.execute_rcon = original->execute_rcon ? rcon_execute_forward : NULL;
+      admin.status = NULL;
+      admin.info = NULL;
+      admin.connect = NULL;
+      /* TS handleQ2Rcon(..., this.rconGuard): the server's persistent guard. */
+      admin.rcon_guard = &n->rcon_guard;
       qa_q2_handle_rcon(&admin, remote, &message, now);
     }
   } else if (strcmp(message.command, "status") == 0) {
@@ -545,7 +720,7 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
   } else if (strcmp(message.command, "info") == 0) {
     if (n->host.discovery) {
       const q2_discovery *discovery = n->host.discovery;
-      double argument = message.argument_count ? strtod(message.arguments[0], NULL) : NAN;
+      double argument = message.argument_count ? qa_js_string_to_number(message.arguments[0]) : NAN;
       char *text = qa_q2_info_text(discovery->info(discovery->ctx),
           &n->host.protocol, 1, argument);
       if (text) {
@@ -565,19 +740,26 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
   } else if (strcmp(message.command, "connect") == 0) {
     qa_q2_connect_request request;
     if (!qa_q2_read_connect(&message, &request)) qa_range_error("out of memory");
+    held->request = &request;
     if (request.protocol.version != n->host.protocol.version) {
       reply_oob(n, remote, "print\nUnsupported protocol.\n");
     } else if (!(is_kex(&request.protocol)
         ? n->lan_live && qa_kex_lan_admitted(&n->lan, remote)
-        : qa_q2_challenge_table_validate(&n->challenges, remote, request.challenge))) {
+        : qa_q2_challenge_table_validate(&n->challenges, remote, request.challenge, now))) {
       reply_oob(n, remote, "print\nBad challenge.\n");
     } else {
       char *key = qa_net_address_key(remote, true);
       if (!key) qa_range_error("out of memory");
+      held->key = key;
       peer *existing = find_peer(n, key);
       if (existing) {
         free(key);
+        held->key = NULL;
         accept_connection(n, remote);
+      } else if (same_address_peers(n, remote) >= 8) { /* MAX_PEERS_PER_ADDRESS */
+        free(key);
+        held->key = NULL;
+        reply_oob(n, remote, "print\nToo many connections from this address.\n");
       } else {
         size_t client_count = 0;
         for (size_t i = 0; i < n->peer_count; i++)
@@ -585,6 +767,7 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
         size_t seats = request.has_social_ids ? request.social_id_count : 1;
         if ((double)(client_count + seats) > n->host.max_clients) {
           free(key);
+        held->key = NULL;
           reply_oob(n, remote, "print\nServer is full.\n");
         } else {
           qa_q2_connect_request first = request;
@@ -597,11 +780,13 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
             reply_oob(n, remote, reply);
             free(reply);
             free(key);
+        held->key = NULL;
           } else {
             split *splits = NULL;
             size_t split_count = 0;
             const char *failure = NULL;
             if (seats > 1) splits = xmalloc((seats - 1) * sizeof *splits);
+            held->splits = splits;
             for (size_t seat = 1; seat < seats; seat++) {
               qa_q2_connect_request additional = request;
               additional.split_seat = (double)seat;
@@ -623,7 +808,9 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
               reply_oob(n, remote, reply);
               free(reply);
               free(splits);
+              held->splits = NULL;
               free(key);
+        held->key = NULL;
             } else {
               qa_q2_protocol_identity configured = n->host.protocol;
               qa_q2_protocol_identity offered = request.protocol;
@@ -636,6 +823,9 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
                   && configured.revision < offered.revision) protocol = configured;
               peer *p = calloc(1, sizeof *p);
               if (!p) qa_range_error("out of memory");
+              held->key = NULL;
+              held->splits = NULL;
+              qa_movement_budget_init(&p->budget, 1800, 1.8);
               p->download = qa_app_q2_peer_download_create();
               if (!p->download) qa_range_error("out of memory");
               if (!qa_net_address_clone(remote, &p->remote)) qa_range_error("out of memory");
@@ -672,37 +862,54 @@ static bool connectionless(qa_app_q2_server_network *n, const qa_net_address *re
         }
       }
     }
+    held->request = NULL;
     qa_q2_connect_request_free(&request);
   } else {
     handled = true;
   }
-  qa_q2_connectionless_message_free(&message);
   return handled;
 }
 static const qa_q2_mvd_capture *capture_mvd(qa_app_q2_server_network *n) {
   if (n->ended || !n->has_mvd_frame || !n->host.mvd_capture)
-    qa_range_error("MVD recording requires an active authoritative Q2 capture source");
+    qa_raise("Error", 0, 0, "MVD recording requires an active authoritative Q2 capture source");
   return n->host.mvd_capture(n->host.ctx, n->mvd_output, n->mvd_events,
       n->mvd_event_count, n->server_generation);
+}
+/* TS mvdTime(): the fixed 10 Hz MVD tick of the last published source clock. */
+static double mvd_time(qa_app_q2_server_network *n) {
+  if (!n->has_mvd_frame || !n->mvd_output) qa_raise("Error", 0, 0, "MVD capture has no source clock");
+  const qa_simulation_output *output = n->mvd_output;
+  qa_source_time time = output->snapshot.frame.time;
+  return floor((time.kind == QA_SOURCE_TIME_SECONDS ? time.value * 10 : time.value / 100) + 1e-7);
 }
 static bool broadcast_authorize(void *ctx, const qa_q2_gtv_client_hello *hello) {
   qa_app_q2_server_network *n = ctx;
   bool enabled = false;
   const char *password = "";
   if (n->host.mvd_settings) n->host.mvd_settings(n->host.ctx, &enabled, NULL, &password);
-  (void)enabled;
-  return strcmp(hello->password, password) == 0;
+  return strcmp(hello->password, password ? password : "") == 0;
 }
+static void broadcast_retire(qa_app_q2_server_network *n) {
+  if (!n->broadcast_init) return;
+  n->broadcast_live = false;
+  n->broadcast_init = false;
+  qa_q2_mvd_broadcast_close(&n->broadcast);
+  qa_q2_mvd_broadcast_destroy(&n->broadcast);
+}
+typedef struct listen_scope { qa_app_q2_server_network *n; const char *host; double port; } listen_scope;
+static void listen_body(void *arg) {
+  listen_scope *scope = arg;
+  qa_q2_mvd_broadcast_listen(&scope->n->broadcast, scope->host, scope->port);
+}
+/* TS configureMvd: a disabled setting retires the broadcast; an enabled one starts a new
+ * MvdBroadcast with the current viewer limit, and a failed listen closes it and rethrows. */
 static void configure_mvd(qa_app_q2_server_network *n) {
   bool enabled = false;
   double max_viewers = 0;
   if (n->host.mvd_settings)
     n->host.mvd_settings(n->host.ctx, &enabled, &max_viewers, NULL);
   if (!enabled) {
-    if (n->broadcast_live) {
-      qa_q2_mvd_broadcast_close(&n->broadcast);
-      n->broadcast_live = false;
-    }
+    broadcast_retire(n);
     return;
   }
   if (n->broadcast_live) return;
@@ -717,17 +924,21 @@ static void configure_mvd(qa_app_q2_server_network *n) {
         address.ipv4[0], address.ipv4[1], address.ipv4[2], address.ipv4[3]);
   else if (address.kind == QA_NET_IPV6) snprintf(host, sizeof host, "%s", address.host);
   qa_net_address_destroy(&address);
-  if (!is_ip) qa_range_error("GTV broadcast requires an IP server transport");
+  if (!is_ip) qa_raise("Error", 0, 0, "GTV broadcast requires an IP server transport");
   if (!n->host.mvd_capture)
-    qa_range_error("GTV broadcast requires an authoritative Q2 capture source");
-  if (!n->broadcast_init) {
-    qa_q2_mvd_broadcast_options options = {n, broadcast_authorize, NULL, NULL, max_viewers};
-    qa_q2_mvd_broadcast_init(&n->broadcast, options);
-    n->broadcast_init = true;
+    qa_raise("Error", 0, 0, "GTV broadcast requires an authoritative Q2 capture source");
+  broadcast_retire(n);
+  qa_q2_mvd_broadcast_options options = {n, broadcast_authorize, NULL, NULL, max_viewers};
+  qa_q2_mvd_broadcast_init(&n->broadcast, options);
+  n->broadcast_init = true;
+  listen_scope scope = {n, host, port};
+  qa_caught_error caught;
+  if (!qa_try(listen_body, &scope, &caught)) {
+    broadcast_retire(n);
+    qa_rethrow(&caught);
   }
-  qa_q2_mvd_broadcast_listen(&n->broadcast, host, port);
   if (n->ended) {
-    qa_q2_mvd_broadcast_close(&n->broadcast);
+    broadcast_retire(n);
     return;
   }
   n->broadcast_live = true;
@@ -735,7 +946,7 @@ static void configure_mvd(qa_app_q2_server_network *n) {
 static qa_q2_status discovery_status(void *ctx) {
   qa_app_q2_server_network *n = ctx;
   const q2_discovery *discovery = n->host.discovery;
-  if (!discovery) qa_range_error("Q2 master publication requires source status");
+  if (!discovery) qa_raise("Error", 0, 0, "Q2 master publication requires source status");
   return discovery->status(discovery->ctx);
 }
 static bool sender_send(void *ctx, const qa_net_address *to, const uint8_t *bytes, size_t length) {
@@ -756,6 +967,7 @@ qa_app_q2_server_network *qa_app_q2_server_network_create(qa_app_q2_server_netwo
     lan_options.local_players = 0;
     lan_options.max_players = options.host.max_clients;
     lan_options.name = "Quake II";
+    lan_options.trusted_networks_only = options.trusted_networks_only;
     if (!qa_kex_lan_transport_init(&n->lan, base, &lan_options)) { free(n); return NULL; }
     n->lan_live = true;
     n->transport = qa_kex_lan_as_transport(&n->lan);
@@ -764,11 +976,16 @@ qa_app_q2_server_network *qa_app_q2_server_network_create(qa_app_q2_server_netwo
   qa_q2_discovery_wire_init(&n->discovery_wire, &n->discovery_state,
       options.host.protocol, discovery_status, n);
   qa_packet_sender sender = {n, sender_send};
-  qa_master_heartbeat_service_init(&n->heartbeat_service, n->discovery_wire, sender, 0);
+  /* TS new MasterHeartbeat(wire, transport): the default 300 s interval. */
+  qa_master_heartbeat_service_init(&n->heartbeat_service, n->discovery_wire, sender, 300000);
   wire_supported(&options.host, "Native Q2 wire is unavailable: ");
   if (options.host.protocol.kind && strcmp(options.host.protocol.kind, "q2-kex-demo") == 0)
-    qa_range_error("KEX native live transport is unbound");
+    qa_raise("Error", 0, 0, "KEX native live transport is unbound");
+  qa_connectionless_gate_init(&n->gate);
+  qa_rcon_guard_init(&n->rcon_guard, 3, 1024);
   if (!qa_q2_challenge_table_init(&n->challenges, options.random, options.random_ctx, 0)) {
+    qa_rcon_guard_destroy(&n->rcon_guard);
+    qa_connectionless_gate_destroy(&n->gate);
     free(n);
     return NULL;
   }
@@ -776,9 +993,13 @@ qa_app_q2_server_network *qa_app_q2_server_network_create(qa_app_q2_server_netwo
 }
 void qa_app_q2_server_network_destroy(qa_app_q2_server_network *network) {
   if (!network) return;
-  for (size_t i = 0; i < network->peer_count; i++) peer_destroy(network, network->peers[i]);
+  for (size_t i = 0; i < network->peer_count; i++) peer_destroy(network->peers[i]);
   free(network->peers);
+  dropped_flush(network);
+  free(network->dropped);
   qa_q2_challenge_table_destroy(&network->challenges);
+  qa_connectionless_gate_destroy(&network->gate);
+  qa_rcon_guard_destroy(&network->rcon_guard);
   if (network->lan_live) qa_kex_lan_transport_destroy(&network->lan);
   if (network->broadcast_init) qa_q2_mvd_broadcast_destroy(&network->broadcast);
   if (network->mvd_owner) {
@@ -790,6 +1011,8 @@ void qa_app_q2_server_network_destroy(qa_app_q2_server_network *network) {
     free(network->server_owner->token);
     free(network->server_owner);
   }
+  for (size_t i = 0; i < network->retired_count; i++) free(network->retired_tokens[i]);
+  free(network->retired_tokens);
   free(network->pending);
   free(network->poll_result);
   free(network->mvd_messages);
@@ -819,8 +1042,8 @@ void qa_app_q2_server_network_change_world(qa_app_q2_server_network *n,
   if (!host.protocol.kind || !n->host.protocol.kind
       || strcmp(host.protocol.kind, n->host.protocol.kind) != 0
       || host.protocol.version != n->host.protocol.version)
-    qa_range_error("Native Q2 map transition cannot change protocol");
-  if (n->server_owner) qa_range_error("Finish serverrecord with serverstop before changing maps");
+    qa_raise("Error", 0, 0, "Native Q2 map transition cannot change protocol");
+  if (n->server_owner) qa_raise("Error", 0, 0, "Finish serverrecord with serverstop before changing maps");
   n->server_demo_seed = NULL;
   size_t count = n->peer_count;
   qa_app_q2_player *players = xmalloc(count * sizeof *players);
@@ -853,7 +1076,7 @@ void qa_app_q2_server_network_change_world(qa_app_q2_server_network *n,
     }
     p->active = false;
     frames_clear(p);
-    p->has_game_state = false;
+    peer_game_state_clear(p);
     qa_q2_command_replay_init(&p->replay);
     datagram_clear(p);
     stuff(p, "changing\n");
@@ -870,37 +1093,113 @@ void qa_app_q2_server_network_heartbeat(qa_app_q2_server_network *network, doubl
       ? (const qa_net_address *)network->host.masters(network->host.ctx, &count) : NULL;
   qa_master_heartbeat_service_send(&network->heartbeat_service, masters, count, now, true, true);
 }
+typedef struct farewell_scope {
+  qa_app_q2_server_network *n;
+  peer *p;
+  const char *reason;
+  char *text;
+} farewell_scope;
+static void farewell_body(void *arg) {
+  farewell_scope *scope = (farewell_scope *)arg;
+  scope->text = xmalloc(strlen(scope->reason) + 2);
+  snprintf(scope->text, strlen(scope->reason) + 2, "%s\n", scope->reason);
+  qa_q2_server_event print = {0};
+  print.kind = QA_Q2_SERVER_PRINT;
+  print.level = 2;
+  print.text = scope->text;
+  reliable(scope->p, &print);
+  qa_q2_server_event disconnect = {0};
+  disconnect.kind = QA_Q2_SERVER_DISCONNECT;
+  reliable(scope->p, &disconnect);
+  qa_q2_channel_send(&scope->p->channel, transport_of(scope->n), &scope->p->remote, NULL, 0,
+                     now_performance());
+}
 bool qa_app_q2_server_network_disconnect_client(qa_app_q2_server_network *network,
     qa_client_id client, const char *reason) {
   peer *p = NULL;
-  for (size_t i = 0; i < network->peer_count; i++) {
+  for (size_t i = 0; i < network->peer_count && !p; i++) {
     if (client_equal(network->peers[i]->player.client, client)) p = network->peers[i];
-    for (size_t j = 0; j < network->peers[i]->split_count; j++)
+    for (size_t j = 0; j < network->peers[i]->split_count && !p; j++)
       if (client_equal(network->peers[i]->splits[j].player.client, client))
         p = network->peers[i];
   }
   if (!p) return false;
-  char *text = xmalloc(strlen(reason) + 2);
-  snprintf(text, strlen(reason) + 2, "%s\n", reason);
-  qa_q2_server_event print = {0};
-  print.kind = QA_Q2_SERVER_PRINT;
-  print.level = 2;
-  print.text = text;
-  reliable(p, &print);
-  free(text);
-  qa_q2_server_event disconnect = {0};
-  disconnect.kind = QA_Q2_SERVER_DISCONNECT;
-  reliable(p, &disconnect);
-  qa_q2_channel_send(&p->channel, transport_of(network), &p->remote, NULL, 0, now_performance());
+  /* TS try { ... } finally { this.drop(peer, reason) } */
+  farewell_scope scope = {network, p, reason, NULL};
+  qa_caught_error caught;
+  bool ok = qa_try(farewell_body, &scope, &caught);
+  free(scope.text);
   drop_peer(network, p, reason);
+  if (!ok) qa_rethrow(&caught);
   return true;
+}
+typedef struct packet_scope {
+  qa_app_q2_server_network *n;
+  qa_receive_event *packet;
+  peer *p;
+  double now;
+  qa_q2_channel_receive_result result;
+  bool has_result;
+} packet_scope;
+static void packet_body(void *arg) {
+  packet_scope *scope = (packet_scope *)arg;
+  qa_app_q2_server_network *n = scope->n;
+  qa_receive_event *packet = scope->packet;
+  double now = scope->now;
+  if (connectionless(n, &packet->from, packet->payload, packet->length, now)) return;
+  if (!scope->p) {
+    for (size_t i = 0; i < n->peer_count && !scope->p; i++) {
+      peer *candidate = n->peers[i];
+      if (!qa_net_same_address(&candidate->remote, &packet->from, false)) continue;
+      if (packet->length < 10) continue;
+      bool matches = candidate->channel.options.protocol.version == 34
+          ? (unsigned)(packet->payload[8] | (packet->payload[9] << 8))
+              == (unsigned)(int64_t)candidate->channel.options.qport
+          : packet->payload[8] == ((unsigned)qa_js_to_int32(candidate->channel.options.qport) & 255);
+      if (matches) scope->p = candidate;
+    }
+  }
+  peer *p = scope->p;
+  if (!p) return;
+  if (!qa_q2_channel_receive(&p->channel, packet->payload, packet->length, now, &scope->result))
+    qa_range_error("out of memory");
+  scope->has_result = true;
+  if (scope->result.kind != QA_Q2_CHANNEL_REJECTED) p->last_received = now;
+  if (scope->result.kind == QA_Q2_CHANNEL_MESSAGE) {
+    if (!qa_net_same_address(&p->remote, &packet->from, true)) {
+      for (size_t i = 0; i < n->peer_count; i++)
+        if (n->peers[i] == p) {
+          memmove(n->peers + i, n->peers + i + 1,
+              (n->peer_count - i - 1) * sizeof *n->peers);
+          n->peer_count--;
+          break;
+        }
+      qa_net_address_destroy(&p->remote);
+      free(p->key);
+      p->key = NULL;
+      if (!qa_net_address_clone(&packet->from, &p->remote)) qa_range_error("out of memory");
+      p->key = qa_net_address_key(&p->remote, true);
+      if (!p->key) qa_range_error("out of memory");
+      n->peers[n->peer_count++] = p;
+    }
+    process_peer(n, p, &scope->result);
+  }
+}
+static void packet_release(void *arg) { qa_receive_event_destroy(arg); }
+static void packet_result_release(void *arg) {
+  packet_scope *scope = arg;
+  if (scope->has_result) qa_q2_channel_receive_result_free(&scope->result);
+  scope->has_result = false;
 }
 const void *const *qa_app_q2_server_network_poll(qa_app_q2_server_network *n,
     double now, size_t *out_count) {
   *out_count = 0;
   if (n->lan_live) qa_kex_lan_tick(&n->lan, now);
   if (n->ended) return NULL;
+  dropped_flush(n);
   configure_mvd(n);
+  /* TS sockets are serviced by the event loop; the C broadcast is pumped here. */
+  if (n->broadcast_live) qa_q2_mvd_broadcast_poll(&n->broadcast, 0);
   size_t master_count = 0;
   const qa_net_address *masters = n->host.masters
       ? (const qa_net_address *)n->host.masters(n->host.ctx, &master_count) : NULL;
@@ -936,48 +1235,40 @@ const void *const *qa_app_q2_server_network_poll(qa_app_q2_server_network *n,
     if (!key) qa_range_error("out of memory");
     peer *p = find_peer(n, key);
     free(key);
-    /* TS catches per-packet errors (drop peer or print reply);
-     * landed decoders abort with the same messages. */
-    if (connectionless(n, &packet.from, packet.payload, packet.length, now)) {
-      qa_receive_event_destroy(&packet);
-      continue;
-    }
-    if (!p) {
-      for (size_t i = 0; i < n->peer_count; i++) {
-        peer *candidate = n->peers[i];
-        if (!qa_net_same_address(&candidate->remote, &packet.from, false)) continue;
-        if (packet.length < 10) continue;
-        bool matches = candidate->channel.options.protocol.version == 34
-            ? (unsigned)(packet.payload[8] | (packet.payload[9] << 8))
-                == (unsigned)(int64_t)candidate->channel.options.qport
-            : packet.payload[8] == ((unsigned)(int64_t)candidate->channel.options.qport & 255);
-        if (matches) p = candidate;
+    /* The packet and the channel result are released on every path, including a raise that
+     * leaves poll for the application's frame boundary. */
+    qa_cleanup packet_node;
+    qa_cleanup_push(&packet_node, packet_release, &packet);
+    /* A fault raised while handling one peer's packet costs that peer its connection. If the
+     * game itself is broken, the disconnect callback raises too and the application's frame
+     * boundary takes over. */
+    packet_scope scope;
+    memset(&scope, 0, sizeof scope);
+    scope.n = n;
+    scope.packet = &packet;
+    scope.p = p;
+    scope.now = now;
+    qa_cleanup result_node;
+    qa_cleanup_push(&result_node, packet_result_release, &scope);
+    qa_caught_error caught;
+    if (!qa_try(packet_body, &scope, &caught)) {
+      bool callback = strcmp(caught.name, "Q2GameCallbackError") == 0;
+      if (callback) {
+        char *printable = qa_printable_peer_text(caught.message, 256);
+        if (!printable) qa_range_error("out of memory");
+        size_t length = strlen(printable) + 2;
+        char *line = xmalloc(length);
+        snprintf(line, length, "%s\n", printable);
+        free(printable);
+        n->host.print(n->host.ctx, line);
+        free(line);
       }
+      if (scope.p) drop_peer(n, scope.p, caught.message);
+      else reply_oob(n, &packet.from, "print\nConnection refused\n");
     }
-    if (!p) { qa_receive_event_destroy(&packet); continue; }
-    qa_q2_channel_receive_result result;
-    if (!qa_q2_channel_receive(&p->channel, packet.payload, packet.length, now, &result))
-      qa_range_error("out of memory");
-    if (result.kind != QA_Q2_CHANNEL_REJECTED) p->last_received = now;
-    if (result.kind == QA_Q2_CHANNEL_MESSAGE) {
-      if (!qa_net_same_address(&p->remote, &packet.from, true)) {
-        for (size_t i = 0; i < n->peer_count; i++)
-          if (n->peers[i] == p) {
-            memmove(n->peers + i, n->peers + i + 1,
-                (n->peer_count - i - 1) * sizeof *n->peers);
-            n->peer_count--;
-            break;
-          }
-        qa_net_address_destroy(&p->remote);
-        free(p->key);
-        if (!qa_net_address_clone(&packet.from, &p->remote)) qa_range_error("out of memory");
-        p->key = qa_net_address_key(&p->remote, true);
-        if (!p->key) qa_range_error("out of memory");
-        n->peers[n->peer_count++] = p;
-      }
-      process_peer(n, p, &result);
-    }
-    qa_q2_channel_receive_result_free(&result);
+    qa_cleanup_pop(&result_node);
+    if (scope.has_result) qa_q2_channel_receive_result_free(&scope.result);
+    qa_cleanup_pop(&packet_node);
     qa_receive_event_destroy(&packet);
   }
   for (size_t i = 0; i < n->peer_count;) {
@@ -1005,7 +1296,7 @@ const void *const *qa_app_q2_server_network_poll(qa_app_q2_server_network *n,
 void qa_app_q2_server_network_submit(qa_app_q2_server_network *network,
     const void *const *commands, size_t count, double now) {
   (void)network; (void)commands; (void)count; (void)now;
-  qa_range_error("Q2 server commands must enter the authoritative application input batch");
+  qa_raise("Error", 0, 0, "Q2 server commands must enter the authoritative application input batch");
 }
 static uint8_t *join_packets(uint8_t *const *packets, const size_t *lengths,
     size_t count, size_t *out_length) {
@@ -1042,10 +1333,281 @@ static qa_q2_wire_frame clone_frame(const qa_q2_wire_frame *frame) {
       frame->entity_count * sizeof *out.entities);
   return out;
 }
+typedef struct append_scope {
+  const qa_app_q2_recording_sink *sink;
+  const char *kind;
+  const uint8_t *bytes;
+  size_t length;
+} append_scope;
+static void append_body(void *arg) {
+  append_scope *scope = (append_scope *)arg;
+  scope->sink->append(scope->sink->ctx, scope->kind, scope->bytes, scope->length);
+}
+/* The TS sink returns a promise whose rejection the owner's writes chain catches. */
+static bool sink_append(const qa_app_q2_recording_sink *sink, const char *kind,
+    const uint8_t *bytes, size_t length, qa_caught_error *caught) {
+  append_scope scope = {sink, kind, bytes, length};
+  return qa_try(append_body, &scope, caught);
+}
+static void retire_token(qa_app_q2_server_network *n, void *token) {
+  void **grown = realloc(n->retired_tokens, (n->retired_count + 1) * sizeof *grown);
+  if (!grown) qa_range_error("out of memory");
+  n->retired_tokens = grown;
+  n->retired_tokens[n->retired_count++] = token;
+}
+static void recording_failed(qa_app_q2_server_network *n, const char *prefix, const char *message) {
+  size_t length = strlen(prefix) + strlen(message) + 2;
+  char *text = xmalloc(length);
+  snprintf(text, length, "%s%s\n", prefix, message);
+  n->host.print(n->host.ctx, text);
+  free(text);
+}
+/* nativeAtoi(quakeWorldInfo(userinfo).get(key)) with the TS fallbacks: a missing or empty
+ * `msg` is 0, a missing or empty `rate` is "5000". */
+static double info_number(const char *userinfo, const char *key, double fallback) {
+  qa_qw_info info;
+  qa_quakeworld_info_parse(userinfo ? userinfo : "", &info);
+  const char *value = qa_qw_info_get(&info, key);
+  double result = value && value[0] ? (double)qa_native_atoi(value) : fallback;
+  qa_qw_info_destroy(&info);
+  return result;
+}
+typedef struct publish_held {
+  void *items[5];
+} publish_held;
+static void *held_put(publish_held *h, int slot, void *pointer) {
+  h->items[slot] = pointer;
+  return pointer;
+}
+static void held_free(publish_held *h, int slot) {
+  free(h->items[slot]);
+  h->items[slot] = NULL;
+}
+static void publish_held_release(void *arg) {
+  publish_held *h = (publish_held *)arg;
+  for (int i = 0; i < 5; i++) held_free(h, i);
+}
+/* TS publishPeer. Buffers it allocates live in `h`, which the caller frees on every path. */
+static void publish_peer(qa_app_q2_server_network *n, peer *p, publish_held *h,
+    const void *output, const void *const *events, size_t event_count, double now) {
+  if (n->host.raw_messages) {
+    size_t count = 0;
+    const qa_app_q2_raw_message *messages = n->host.raw_messages(n->host.ctx, p->player, &count);
+    for (size_t i = 0; i < count; i++) {
+      if (messages[i].reliable)
+        qa_q2_channel_queue_reliable(&p->channel, messages[i].bytes, messages[i].length);
+      else if (p->active) {
+        uint8_t *copy = held_put(h, 0, xmalloc(messages[i].length));
+        memcpy(copy, messages[i].bytes, messages[i].length);
+        h->items[0] = NULL;
+        datagram_push(p, copy, messages[i].length);
+      }
+    }
+  }
+  for (size_t si = 0; si < p->split_count; si++) {
+    uint8_t prefix[2] = {21, (uint8_t)(si + 2)};
+    uint8_t suffix[2] = {21, 1};
+    if (n->host.raw_messages) {
+      size_t count = 0;
+      const qa_app_q2_raw_message *messages =
+          n->host.raw_messages(n->host.ctx, p->splits[si].player, &count);
+      for (size_t i = 0; i < count; i++) {
+        uint8_t *parts[] = {prefix, (uint8_t *)messages[i].bytes, suffix};
+        size_t part_lengths[] = {2, messages[i].length, 2};
+        size_t length = 0;
+        uint8_t *joined = held_put(h, 0, join_packets(parts, part_lengths, 3, &length));
+        if (messages[i].reliable) {
+          qa_q2_channel_queue_reliable(&p->channel, joined, length);
+          held_free(h, 0);
+        } else if (p->active) {
+          h->items[0] = NULL;
+          datagram_push(p, joined, length);
+        } else held_free(h, 0);
+      }
+    }
+    if (p->active && n->host.events) {
+      size_t count = 0;
+      const qa_app_q2_server_event *host_events = n->host.events(n->host.ctx,
+          p->splits[si].player, output, events, event_count, &count);
+      for (size_t i = 0; i < count; i++) {
+        size_t entry_length = 0;
+        uint8_t *encoded = held_put(h, 0, qa_q2_encode_server_event(&p->wire,
+            (const qa_q2_server_event *)host_events[i].event, &entry_length));
+        if (!encoded) qa_range_error("out of memory");
+        uint8_t *parts[] = {prefix, encoded, suffix};
+        size_t part_lengths[] = {2, entry_length, 2};
+        size_t length = 0;
+        uint8_t *joined = join_packets(parts, part_lengths, 3, &length);
+        held_free(h, 0);
+        held_put(h, 0, joined);
+        if (event_reliable(&host_events[i])) {
+          qa_q2_channel_queue_reliable(&p->channel, joined, length);
+          held_free(h, 0);
+        } else {
+          h->items[0] = NULL;
+          datagram_push(p, joined, length);
+        }
+      }
+    }
+  }
+  if (!p->active) return;
+  const qa_q2_wire_frame *primary = n->host.frame(n->host.ctx, p->player, output, &p->protocol);
+  qa_q2_wire_frame frame = *primary;
+  qa_q2_wire_frame *split_frames = NULL;
+  if (p->split_count) {
+    split_frames = held_put(h, 1, xmalloc(p->split_count * sizeof *split_frames));
+    for (size_t si = 0; si < p->split_count; si++)
+      split_frames[si] = *(const qa_q2_wire_frame *)n->host.frame(
+          n->host.ctx, p->splits[si].player, output, &p->protocol);
+    /* Merge entities by number, sorted ascending. */
+    size_t total = primary->entity_count;
+    for (size_t si = 0; si < p->split_count; si++) total += split_frames[si].entity_count;
+    qa_q2_wire_entity *merged = held_put(h, 2, xmalloc(total * sizeof *merged));
+    size_t merged_count = 0;
+    /* new Map(number => entity): a later entry with the same number replaces the earlier one. */
+    for (size_t source = 0; source <= p->split_count; source++) {
+      const qa_q2_wire_frame *from = source == 0 ? primary : &split_frames[source - 1];
+      for (size_t i = 0; i < from->entity_count; i++) {
+        bool replaced = false;
+        for (size_t j = 0; j < merged_count && !replaced; j++)
+          if (merged[j].number == from->entities[i].number) {
+            merged[j] = from->entities[i];
+            replaced = true;
+          }
+        if (!replaced) merged[merged_count++] = from->entities[i];
+      }
+    }
+    for (size_t i = 0; i < merged_count; i++)
+      for (size_t j = i + 1; j < merged_count; j++)
+        if (merged[j].number < merged[i].number) {
+          qa_q2_wire_entity swap = merged[i];
+          merged[i] = merged[j];
+          merged[j] = swap;
+        }
+    frame.entities = merged;
+    frame.entity_count = merged_count;
+    frame.has_split = true;
+    frame.split_players = held_put(h, 3, xmalloc(p->split_count * sizeof *frame.split_players));
+    frame.split_count = p->split_count;
+    for (size_t si = 0; si < p->split_count; si++) {
+      frame.split_players[si].area_bits = split_frames[si].area_bits;
+      frame.split_players[si].area_bits_length = split_frames[si].area_bits_length;
+      frame.split_players[si].player = split_frames[si].player;
+    }
+  }
+  if (n->host.events) {
+    double message_level = info_number(p->userinfo, "msg", 0);
+    size_t count = 0;
+    const qa_app_q2_server_event *host_events = n->host.events(n->host.ctx,
+        p->player, output, events, event_count, &count);
+    for (size_t i = 0; i < count; i++) {
+      const qa_q2_server_event *wire_event = host_events[i].event;
+      if (wire_event->kind == QA_Q2_SERVER_PRINT && wire_event->level < message_level) continue;
+      size_t entry_length = 0;
+      uint8_t *encoded = held_put(h, 0, qa_q2_encode_server_event(&p->wire,
+          (const qa_q2_server_event *)host_events[i].event, &entry_length));
+      if (!encoded) qa_range_error("out of memory");
+      if (event_reliable(&host_events[i])) {
+        qa_q2_channel_queue_reliable(&p->channel, encoded, entry_length);
+        held_free(h, 0);
+      } else {
+        h->items[0] = NULL;
+        datagram_push(p, encoded, entry_length);
+      }
+    }
+  }
+  bool have_frame = false;
+  for (size_t i = 0; i < p->frame_count; i++)
+    if (p->frames[i].number == frame.server_frame) have_frame = true;
+  if (qa_q2_channel_get_fragment_pending(&p->channel)) {
+    qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, NULL, 0, now);
+    return;
+  }
+  if (have_frame) {
+    if (qa_q2_channel_should_update(&p->channel, now))
+      qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, NULL, 0, now);
+    return;
+  }
+  const qa_q2_wire_frame *old = NULL;
+  if (p->replay.last_frame >= 0)
+    for (size_t i = 0; i < p->frame_count; i++)
+      if (p->frames[i].number == p->replay.last_frame) old = &p->frames[i].frame;
+  if (!p->has_game_state) qa_raise("Error", 0, 0, "Active Q2 client has no baselines");
+  const qa_q2_baseline_list *baselines = p->game_state.baselines;
+  /* SV_RateDrop: skip the frame while the last RATE_MESSAGES sends exceed the client's rate;
+   * loopback is exempt. */
+  /* JS `serverFrame % RATE_MESSAGES`: a negative or fractional frame names no array slot, so the
+   * store below is a property write the total never reads. */
+  double slot_value = fmod(frame.server_frame, 10);
+  bool slot_valid = slot_value >= 0 && slot_value == trunc(slot_value);
+  size_t slot = slot_valid ? (size_t)slot_value : 0;
+  if (p->remote.kind != QA_NET_LOOPBACK) {
+    double requested = info_number(p->userinfo, "rate", 5000);
+    double rate = qa_js_max(100, qa_js_min(15000, requested));
+    double total = 0;
+    for (int i = 0; i < 10; i++) total += p->rate_sizes[i];
+    if (total > rate) {
+      p->suppressed++;
+      if (slot_valid) p->rate_sizes[slot] = 0;
+      size_t pending = 0;
+      for (size_t i = 0; i < p->datagram_count; i++) pending += p->datagram_lengths[i];
+      if (pending > 1400) datagram_clear(p); /* MAX_MSGLEN */
+      return;
+    }
+  }
+  frame.suppressed_count = p->suppressed;
+  size_t frame_length = 0;
+  uint8_t *frame_bytes = held_put(h, 0, qa_q2_encode_frame(&p->wire, &frame, old,
+      baselines, n->host.max_clients, &frame_length));
+  if (!frame_bytes) qa_range_error("out of memory");
+  size_t datagram_length = frame_length;
+  for (size_t i = 0; i < p->datagram_count; i++) datagram_length += p->datagram_lengths[i];
+  uint8_t *datagram = held_put(h, 4, xmalloc(datagram_length));
+  memcpy(datagram, frame_bytes, frame_length);
+  size_t offset = frame_length;
+  for (size_t i = 0; i < p->datagram_count; i++) {
+    memcpy(datagram + offset, p->datagram[i], p->datagram_lengths[i]);
+    offset += p->datagram_lengths[i];
+  }
+  held_free(h, 0);
+  datagram_clear(p);
+  p->suppressed = 0;
+  if (slot_valid) p->rate_sizes[slot] = (double)datagram_length;
+  qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, datagram, datagram_length, now);
+  held_free(h, 4);
+  if (p->frame_count == p->frame_cap) {
+    p->frame_cap = p->frame_cap ? p->frame_cap * 2 : 16;
+    p->frames = realloc(p->frames, p->frame_cap * sizeof *p->frames);
+    if (!p->frames) qa_range_error("out of memory");
+  }
+  p->frames[p->frame_count].number = frame.server_frame;
+  p->frames[p->frame_count].frame = clone_frame(&frame);
+  p->frame_count++;
+  while (p->frame_count > 16) {
+    qa_q2_wire_frame_free(&p->frames[0].frame);
+    memmove(p->frames, p->frames + 1, (p->frame_count - 1) * sizeof *p->frames);
+    p->frame_count--;
+  }
+
+}
+typedef struct publish_scope {
+  qa_app_q2_server_network *n;
+  peer *p;
+  publish_held held;
+  const void *output;
+  const void *const *events;
+  size_t event_count;
+  double now;
+} publish_scope;
+static void publish_body(void *arg) {
+  publish_scope *scope = (publish_scope *)arg;
+  publish_peer(scope->n, scope->p, &scope->held, scope->output, scope->events,
+               scope->event_count, scope->now);
+}
 void qa_app_q2_server_network_publish(qa_app_q2_server_network *n,
-    const void *output, const void *const *events, size_t event_count,
-    bool frame_time_is_seconds, double frame_time_value, double now) {
+    const void *output, const void *const *events, size_t event_count, double now) {
   if (n->ended) return;
+  dropped_flush(n);
   n->host.observe(n->host.ctx, output, events, event_count);
   n->mvd_output = output;
   n->mvd_events = events;
@@ -1117,17 +1679,23 @@ void qa_app_q2_server_network_publish(qa_app_q2_server_network *n,
         spans, multicast_count, &frame_length);
     free(spans);
     if (!frame_bytes) qa_range_error("out of memory");
-    n->server_owner->sink.append(n->server_owner->sink.ctx, "q2-server",
-        frame_bytes, frame_length);
+    qa_caught_error caught;
+    bool written = sink_append(&n->server_owner->sink, "q2-server", frame_bytes, frame_length,
+                               &caught);
     free(frame_bytes);
+    if (!written) {
+      retire_token(n, n->server_owner->token);
+      free(n->server_owner);
+      n->server_owner = NULL;
+      recording_failed(n, "Server recording failed: ", caught.message);
+    }
     for (size_t i = 0; i < owned_count; i++) free(owned[i]);
     free(owned);
     free(multicasts);
     free(lengths);
   }
   if ((n->mvd_owner || n->broadcast_live) && current) {
-    double ticks = frame_time_is_seconds ? frame_time_value * 10 : frame_time_value / 100;
-    double tick = floor(ticks + 1e-7);
+    double tick = mvd_time(n);
     for (size_t i = 0; i < current->message_count; i++) {
       if (n->mvd_message_count == n->mvd_message_cap) {
         n->mvd_message_cap = n->mvd_message_cap ? n->mvd_message_cap * 2 : 16;
@@ -1153,10 +1721,20 @@ void qa_app_q2_server_network_publish(qa_app_q2_server_network *n,
         if (!qa_q2_mvd_encoder_capture(&n->mvd_owner->encoder, &capture,
                 &blocks, &block_count))
           qa_range_error("out of memory");
-        for (size_t i = 0; i < block_count; i++)
-          n->mvd_owner->sink.append(n->mvd_owner->sink.ctx, "mvd",
-              blocks[i].bytes, blocks[i].length);
+        /* Admit immediately: the shared sink owns ordering, including a stop in this turn. */
+        qa_caught_error caught;
+        bool written = true;
+        for (size_t i = 0; i < block_count && written; i++)
+          written = sink_append(&n->mvd_owner->sink, "mvd", blocks[i].bytes, blocks[i].length,
+                                &caught);
         qa_q2_mvd_byte_blocks_free(blocks, block_count);
+        if (!written) {
+          qa_q2_mvd_encoder_destroy(&n->mvd_owner->encoder);
+          retire_token(n, n->mvd_owner->token);
+          free(n->mvd_owner);
+          n->mvd_owner = NULL;
+          recording_failed(n, "MVD recording failed: ", caught.message);
+        }
       }
       free(flat);
     }
@@ -1164,206 +1742,107 @@ void qa_app_q2_server_network_publish(qa_app_q2_server_network *n,
     n->has_mvd_tick = false;
     n->mvd_message_count = 0;
   }
-  for (size_t pi = 0; pi < n->peer_count; pi++) {
+  for (size_t pi = 0; pi < n->peer_count;) {
     peer *p = n->peers[pi];
-    if (n->host.raw_messages) {
-      size_t count = 0;
-      const qa_app_q2_raw_message *messages = n->host.raw_messages(n->host.ctx, p->player, &count);
-      for (size_t i = 0; i < count; i++) {
-        if (messages[i].reliable)
-          qa_q2_channel_queue_reliable(&p->channel, messages[i].bytes, messages[i].length);
-        else if (p->active) {
-          uint8_t *copy = xmalloc(messages[i].length);
-          memcpy(copy, messages[i].bytes, messages[i].length);
-          datagram_push(p, copy, messages[i].length);
-        }
-      }
-    }
-    for (size_t si = 0; si < p->split_count; si++) {
-      uint8_t prefix[2] = {21, (uint8_t)(si + 2)};
-      uint8_t suffix[2] = {21, 1};
-      if (n->host.raw_messages) {
-        size_t count = 0;
-        const qa_app_q2_raw_message *messages =
-            n->host.raw_messages(n->host.ctx, p->splits[si].player, &count);
-        for (size_t i = 0; i < count; i++) {
-          uint8_t *parts[] = {prefix, (uint8_t *)messages[i].bytes, suffix};
-          size_t part_lengths[] = {2, messages[i].length, 2};
-          size_t length = 0;
-          uint8_t *joined = join_packets(parts, part_lengths, 3, &length);
-          if (messages[i].reliable) {
-            qa_q2_channel_queue_reliable(&p->channel, joined, length);
-            free(joined);
-          } else if (p->active) datagram_push(p, joined, length);
-          else free(joined);
-        }
-      }
-      if (p->active && n->host.events) {
-        size_t count = 0;
-        const qa_app_q2_server_event *host_events = n->host.events(n->host.ctx,
-            p->splits[si].player, output, events, event_count, &count);
-        for (size_t i = 0; i < count; i++) {
-          size_t entry_length = 0;
-          uint8_t *encoded = qa_q2_encode_server_event(&p->wire,
-              (const qa_q2_server_event *)host_events[i].event, &entry_length);
-          if (!encoded) qa_range_error("out of memory");
-          uint8_t *parts[] = {prefix, encoded, suffix};
-          size_t part_lengths[] = {2, entry_length, 2};
-          size_t length = 0;
-          uint8_t *joined = join_packets(parts, part_lengths, 3, &length);
-          free(encoded);
-          if (event_reliable(&host_events[i])) {
-            qa_q2_channel_queue_reliable(&p->channel, joined, length);
-            free(joined);
-          } else datagram_push(p, joined, length);
-        }
-      }
-    }
-    if (!p->active) continue;
-    const qa_q2_wire_frame *primary = n->host.frame(n->host.ctx, p->player, output, &p->protocol);
-    qa_q2_wire_frame frame = *primary;
-    qa_q2_wire_frame *split_frames = NULL;
-    if (p->split_count) {
-      split_frames = xmalloc(p->split_count * sizeof *split_frames);
-      for (size_t si = 0; si < p->split_count; si++)
-        split_frames[si] = *(const qa_q2_wire_frame *)n->host.frame(
-            n->host.ctx, p->splits[si].player, output, &p->protocol);
-      /* Merge entities by number, sorted ascending. */
-      size_t total = primary->entity_count;
-      for (size_t si = 0; si < p->split_count; si++) total += split_frames[si].entity_count;
-      qa_q2_wire_entity *merged = xmalloc(total * sizeof *merged);
-      size_t merged_count = 0;
-      for (size_t i = 0; i < primary->entity_count; i++) merged[merged_count++] = primary->entities[i];
-      for (size_t si = 0; si < p->split_count; si++)
-        for (size_t i = 0; i < split_frames[si].entity_count; i++) {
-          bool replaced = false;
-          for (size_t j = 0; j < merged_count; j++)
-            if (merged[j].number == split_frames[si].entities[i].number) {
-              merged[j] = split_frames[si].entities[i];
-              replaced = true;
-            }
-          if (!replaced) merged[merged_count++] = split_frames[si].entities[i];
-        }
-      for (size_t i = 0; i < merged_count; i++)
-        for (size_t j = i + 1; j < merged_count; j++)
-          if (merged[j].number < merged[i].number) {
-            qa_q2_wire_entity swap = merged[i];
-            merged[i] = merged[j];
-            merged[j] = swap;
-          }
-      frame.entities = merged;
-      frame.entity_count = merged_count;
-      frame.has_split = true;
-      frame.split_players = xmalloc(p->split_count * sizeof *frame.split_players);
-      frame.split_count = p->split_count;
-      for (size_t si = 0; si < p->split_count; si++) {
-        frame.split_players[si].area_bits = split_frames[si].area_bits;
-        frame.split_players[si].area_bits_length = split_frames[si].area_bits_length;
-        frame.split_players[si].player = split_frames[si].player;
-      }
-    }
-    if (n->host.events) {
-      size_t count = 0;
-      const qa_app_q2_server_event *host_events = n->host.events(n->host.ctx,
-          p->player, output, events, event_count, &count);
-      for (size_t i = 0; i < count; i++) {
-        size_t entry_length = 0;
-        uint8_t *encoded = qa_q2_encode_server_event(&p->wire,
-            (const qa_q2_server_event *)host_events[i].event, &entry_length);
-        if (!encoded) qa_range_error("out of memory");
-        if (event_reliable(&host_events[i])) {
-          qa_q2_channel_queue_reliable(&p->channel, encoded, entry_length);
-          free(encoded);
-        } else datagram_push(p, encoded, entry_length);
-      }
-    }
-    bool have_frame = false;
-    for (size_t i = 0; i < p->frame_count; i++)
-      if (p->frames[i].number == frame.server_frame) have_frame = true;
-    if (qa_q2_channel_get_fragment_pending(&p->channel)) {
-      qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, NULL, 0, now);
-      free(split_frames);
-      if (p->split_count) { free(frame.entities); free(frame.split_players); }
+    publish_scope scope;
+    memset(&scope, 0, sizeof scope);
+    scope.n = n;
+    scope.p = p;
+    scope.output = output;
+    scope.events = events;
+    scope.event_count = event_count;
+    scope.now = now;
+    qa_caught_error caught;
+    bool ok = qa_try(publish_body, &scope, &caught);
+    publish_held_release(&scope.held);
+    if (!ok) {
+      /* Overflow or a stuck channel belongs to this peer. As in native Q2, only that client is
+       * dropped; a game callback failure goes to the application's frame boundary. */
+      if (strcmp(caught.name, "Q2GameCallbackError") == 0) qa_rethrow(&caught);
+      drop_peer(n, p, caught.message);
       continue;
     }
-    if (have_frame) {
-      if (qa_q2_channel_should_update(&p->channel, now))
-        qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, NULL, 0, now);
-      free(split_frames);
-      if (p->split_count) { free(frame.entities); free(frame.split_players); }
-      continue;
-    }
-    const qa_q2_wire_frame *old = NULL;
-    if (p->replay.last_frame >= 0)
-      for (size_t i = 0; i < p->frame_count; i++)
-        if (p->frames[i].number == p->replay.last_frame) old = &p->frames[i].frame;
-    if (!p->has_game_state) qa_range_error("Active Q2 client has no baselines");
-    const qa_q2_baseline_list *baselines = p->game_state.baselines;
-    size_t frame_length = 0;
-    uint8_t *frame_bytes = qa_q2_encode_frame(&p->wire, &frame, old,
-        baselines, n->host.max_clients, &frame_length);
-    if (!frame_bytes) qa_range_error("out of memory");
-    size_t datagram_length = frame_length;
-    for (size_t i = 0; i < p->datagram_count; i++) datagram_length += p->datagram_lengths[i];
-    uint8_t *datagram = xmalloc(datagram_length);
-    memcpy(datagram, frame_bytes, frame_length);
-    size_t offset = frame_length;
-    for (size_t i = 0; i < p->datagram_count; i++) {
-      memcpy(datagram + offset, p->datagram[i], p->datagram_lengths[i]);
-      offset += p->datagram_lengths[i];
-    }
-    free(frame_bytes);
-    datagram_clear(p);
-    qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, datagram, datagram_length, now);
-    free(datagram);
-    if (p->frame_count == p->frame_cap) {
-      p->frame_cap = p->frame_cap ? p->frame_cap * 2 : 16;
-      p->frames = realloc(p->frames, p->frame_cap * sizeof *p->frames);
-      if (!p->frames) qa_range_error("out of memory");
-    }
-    p->frames[p->frame_count].number = frame.server_frame;
-    p->frames[p->frame_count].frame = clone_frame(&frame);
-    p->frame_count++;
-    while (p->frame_count > 16) {
-      qa_q2_wire_frame_free(&p->frames[0].frame);
-      memmove(p->frames, p->frames + 1, (p->frame_count - 1) * sizeof *p->frames);
-      p->frame_count--;
-    }
-    free(split_frames);
-    if (p->split_count) { free(frame.entities); free(frame.split_players); }
+    pi++;
   }
+}
+typedef struct close_step {
+  qa_app_q2_server_network *n;
+  peer *p;
+  const qa_app_q2_player *player;
+  int kind;
+} close_step;
+static void close_step_body(void *arg) {
+  close_step *step = (close_step *)arg;
+  qa_app_q2_server_network *n = step->n;
+  switch (step->kind) {
+    case 0: {
+      size_t master_count = 0;
+      const qa_net_address *masters = n->host.masters
+          ? (const qa_net_address *)n->host.masters(n->host.ctx, &master_count) : NULL;
+      qa_master_heartbeat_service_send(&n->heartbeat_service, masters, master_count,
+          now_performance(), false, true);
+      break;
+    }
+    case 1: close_download(step->p); break;
+    case 2: {
+      qa_q2_server_event disconnect = {0};
+      disconnect.kind = QA_Q2_SERVER_DISCONNECT;
+      reliable(step->p, &disconnect);
+      qa_q2_channel_send(&step->p->channel, transport_of(n), &step->p->remote, NULL, 0,
+                         now_performance());
+      break;
+    }
+    case 3: n->host.disconnect(n->host.ctx, *step->player, "Server shutdown"); break;
+    case 4: transport_of(n)->close(transport_of(n)->ctx); break;
+    case 5: qa_q2_mvd_broadcast_close(&n->broadcast); break;
+  }
+}
+/* TS cleanup(operation): a failing step is collected and the rest still run. */
+static void close_step_run(close_step step, size_t *failures) {
+  qa_caught_error caught;
+  if (!qa_try(close_step_body, &step, &caught)) (*failures)++;
 }
 void qa_app_q2_server_network_close(qa_app_q2_server_network *n) {
   if (n->ended) return;
   n->ended = true;
-  n->server_owner = n->server_owner;
-  (void)0;
+  mvd_recording_owner *owner = n->mvd_owner;
+  server_recording_owner *server_owner = n->server_owner;
+  bool broadcast = n->broadcast_live;
+  n->server_owner = NULL;
+  n->server_demo_seed = NULL;
   n->mvd_owner = NULL;
-  /* TS aggregates failures; C cleanup steps abort on failure. */
-  size_t master_count = 0;
-  const qa_net_address *masters = n->host.masters
-      ? (const qa_net_address *)n->host.masters(n->host.ctx, &master_count) : NULL;
-  qa_master_heartbeat_service_send(&n->heartbeat_service, masters, master_count,
-      now_performance(), false, true);
+  n->broadcast_live = false;
+  n->mvd_seed = NULL;
+  n->has_mvd_frame = false;
+  n->mvd_output = NULL;
+  n->has_mvd_tick = false;
+  n->mvd_message_count = 0;
+  size_t failures = 0;
+  close_step_run((close_step){n, NULL, NULL, 0}, &failures);
   for (size_t i = 0; i < n->peer_count; i++) {
     peer *p = n->peers[i];
-    close_download(p);
-    qa_q2_server_event disconnect = {0};
-    disconnect.kind = QA_Q2_SERVER_DISCONNECT;
-    reliable(p, &disconnect);
-    qa_q2_channel_send(&p->channel, transport_of(n), &p->remote, NULL, 0, now_performance());
-    n->host.disconnect(n->host.ctx, p->player, "Server shutdown");
+    close_step_run((close_step){n, p, NULL, 1}, &failures);
+    close_step_run((close_step){n, p, NULL, 2}, &failures);
+    close_step_run((close_step){n, p, &p->player, 3}, &failures);
     for (size_t j = 0; j < p->split_count; j++)
-      n->host.disconnect(n->host.ctx, p->splits[j].player, "Server shutdown");
+      close_step_run((close_step){n, p, &p->splits[j].player, 3}, &failures);
   }
-  for (size_t i = 0; i < n->peer_count; i++) peer_destroy(n, n->peers[i]);
+  for (size_t i = 0; i < n->peer_count; i++) peer_destroy(n->peers[i]);
   n->peer_count = 0;
   n->pending_count = 0;
-  transport_of(n)->close(transport_of(n)->ctx);
-  if (n->broadcast_live) {
-    qa_q2_mvd_broadcast_close(&n->broadcast);
-    n->broadcast_live = false;
+  close_step_run((close_step){n, NULL, NULL, 4}, &failures);
+  /* Recording sinks append synchronously, so no write is still pending here. */
+  if (owner) {
+    qa_q2_mvd_encoder_destroy(&owner->encoder);
+    retire_token(n, owner->token);
+    free(owner);
   }
+  if (server_owner) {
+    retire_token(n, server_owner->token);
+    free(server_owner);
+  }
+  if (broadcast) close_step_run((close_step){n, NULL, NULL, 5}, &failures);
+  if (failures != 0) qa_raise("AggregateError", 0, 0, "Q2 server shutdown failed");
 }
 void qa_app_q2_server_recording_seed_free(qa_app_q2_server_recording_seed *seed) {
   free(seed->message);
@@ -1373,8 +1852,8 @@ void qa_app_q2_server_network_server_recording_seed(qa_app_q2_server_network *ne
     qa_app_q2_server_recording_seed *out) {
   const qa_q2_mvd_capture *capture = capture_mvd(network);
   if (capture->revision != 2010)
-    qa_range_error("serverrecord requires classic Quake II; use mvdrecord for other source revisions");
-  if (network->server_owner) qa_range_error("Already doing a serverrecord");
+    qa_raise("Error", 0, 0, "serverrecord requires classic Quake II; use mvdrecord for other source revisions");
+  if (network->server_owner) qa_raise("Error", 0, 0, "Already doing a serverrecord");
   network->server_demo_seed = capture;
   qa_q2_server_demo_state state = {0};
   state.servercount = capture->servercount;
@@ -1401,7 +1880,7 @@ void *qa_app_q2_server_network_server_recording_attach(qa_app_q2_server_network 
   const qa_q2_mvd_capture *seed = network->server_demo_seed;
   if (network->ended || !seed || network->server_owner
       || seed->servercount != network->server_generation)
-    qa_range_error("Server recording requires a current unused seed");
+    qa_raise("Error", 0, 0, "Server recording requires a current unused seed");
   server_recording_owner *owner = calloc(1, sizeof *owner);
   if (!owner) qa_range_error("out of memory");
   owner->sink = sink;
@@ -1433,7 +1912,7 @@ void qa_app_q2_server_network_mvd_recording_seed(qa_app_q2_server_network *netwo
   double revision = capture->revision;
   if (revision != 2009 && revision != 2010 && revision != 2011 && revision != 2012
       && revision != 2013 && revision != 3038)
-    qa_range_error("Unsupported MVD recording revision");
+    qa_raise("Error", 0, 0, "Unsupported MVD recording revision");
   qa_q2_mvd_encoder encoder;
   qa_q2_mvd_encoder_init(&encoder);
   qa_q2_mvd_capture empty = *capture;
@@ -1457,7 +1936,7 @@ void qa_app_q2_server_network_mvd_recording_seed(qa_app_q2_server_network *netwo
 void *qa_app_q2_server_network_mvd_recording_attach(qa_app_q2_server_network *network,
     qa_app_q2_recording_sink sink) {
   if (network->ended || network->mvd_owner || !network->mvd_seed)
-    qa_range_error("MVD recording requires an unused server seed");
+    qa_raise("Error", 0, 0, "MVD recording requires an unused server seed");
   mvd_recording_owner *owner = calloc(1, sizeof *owner);
   if (!owner) qa_range_error("out of memory");
   owner->sink = sink;
@@ -1474,12 +1953,8 @@ void *qa_app_q2_server_network_mvd_recording_attach(qa_app_q2_server_network *ne
   owner->token = xmalloc(1);
   network->mvd_owner = owner;
   if (!network->broadcast_live) {
+    network->mvd_tick = mvd_time(network);
     network->has_mvd_tick = true;
-    double seconds = 0;
-    const qa_simulation_output *output = network->mvd_output;
-    seconds = output->snapshot.frame.time.kind == QA_SOURCE_TIME_SECONDS
-        ? output->snapshot.frame.time.value * 10 : output->snapshot.frame.time.value / 100;
-    network->mvd_tick = floor(seconds + 1e-7);
     network->mvd_message_count = 0;
   }
   return owner->token;
@@ -1496,9 +1971,13 @@ void qa_app_q2_server_network_mvd_recording_detach(qa_app_q2_server_network *net
 static qa_app_network_phase srv_phase(void *ctx) {
   return qa_app_q2_server_network_phase(ctx);
 }
-static const void *srv_wire(void *ctx) {
+/* TS this.wire = { kind: "source", protocol: options.host.protocol } */
+static qa_wire_selection srv_wire(void *ctx) {
   qa_app_q2_server_network *n = ctx;
-  return &n->host.protocol;
+  qa_wire_selection wire;
+  memset(&wire, 0, sizeof wire);
+  wire.protocol = n->host.protocol;
+  return wire;
 }
 static const void *const *srv_poll(void *ctx, double now, size_t *out_count) {
   return qa_app_q2_server_network_poll(ctx, now, out_count);
@@ -1508,10 +1987,7 @@ static void srv_submit(void *ctx, const void *const *commands, size_t count, dou
 }
 static void srv_publish(void *ctx, const void *output, const void *const *events,
     size_t count, double now) {
-  const qa_simulation_output *simulation = output;
-  qa_app_q2_server_network_publish(ctx, output, events, count,
-      simulation->snapshot.frame.time.kind == QA_SOURCE_TIME_SECONDS,
-      simulation->snapshot.frame.time.value, now);
+  qa_app_q2_server_network_publish(ctx, output, events, count, now);
 }
 static void srv_heartbeat(void *ctx, double now) {
   qa_app_q2_server_network_heartbeat(ctx, now);
@@ -1549,7 +2025,20 @@ struct qa_app_q2_client_network {
   pending_usercmd *pending; size_t pending_count, pending_cap;
   qa_app_q2_recording_sink recording_sink; bool recording;
   bool recording_waiting_full;
+  void *recording_token; /* TS recordingOwner identity */
+  void **retired_tokens; size_t retired_count;
 };
+/* A detach token stays unique while the network lives, so a stale detach never matches. */
+static void client_retire_recording(qa_app_q2_client_network *n) {
+  if (n->recording_token) {
+    void **grown = realloc(n->retired_tokens, (n->retired_count + 1) * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    n->retired_tokens = grown;
+    n->retired_tokens[n->retired_count++] = n->recording_token;
+  }
+  n->recording_token = NULL;
+  n->recording = false;
+}
 static bool host_kex(qa_app_q2_client_network *n) { return is_kex(&n->host.protocol); }
 static qa_app_network_phase client_phase(qa_app_q2_client_network *n) {
   if (!n->channel_live || n->state == QA_APP_PHASE_CLOSED
@@ -1560,7 +2049,7 @@ static qa_app_network_phase client_phase(qa_app_q2_client_network *n) {
   return QA_APP_PHASE_LOADING;
 }
 void qa_app_q2_client_network_command(qa_app_q2_client_network *n, const char *text) {
-  if (!n->channel_live) qa_range_error("Q2 client is not connected");
+  if (!n->channel_live) qa_raise("Error", 0, 0, "Q2 client is not connected");
   qa_q2_client_event event = {0};
   event.kind = QA_Q2_CLIENT_COMMAND;
   event.text = (char *)text;
@@ -1676,6 +2165,9 @@ void qa_app_q2_client_network_destroy(qa_app_q2_client_network *network) {
   if (network->lan_live) qa_kex_lan_transport_destroy(&network->lan);
   qa_net_address_destroy(&network->remote);
   free(network->pending);
+  free(network->recording_token);
+  for (size_t i = 0; i < network->retired_count; i++) free(network->retired_tokens[i]);
+  free(network->retired_tokens);
   free(network);
 }
 const qa_app_q2_client_network_options *qa_app_q2_client_network_options_of(
@@ -1716,6 +2208,56 @@ static void send_pending(qa_app_q2_client_network *n, double now) {
   if (qa_q2_channel_should_update(&n->channel, now))
     qa_q2_channel_send(&n->channel, &n->transport, &n->remote, NULL, 0, now);
 }
+typedef struct client_receive_scope {
+  qa_app_q2_client_network *n;
+  const qa_q2_channel_receive_result *result;
+  double now;
+  qa_q2_server_record *records;
+  size_t count;
+} client_receive_scope;
+static void client_receive_body(void *arg) {
+  client_receive_scope *scope = arg;
+  scope->records = qa_app_q2_client_receiver_receive(scope->n->receiver, scope->result->bytes,
+      scope->result->bytes_length, scope->now, &scope->count);
+}
+static void client_prepare_body(void *arg) { qa_app_q2_client_receiver_prepare_game_state(arg); }
+/* TS dropOnServerError: Com_Error(ERR_DROP) from the server's map or content tells the server,
+ * leaves it, and reports the reason; any other failure propagates. */
+static void drop_on_server_error(qa_app_q2_client_network *n, const qa_caught_error *caught) {
+  if (strcmp(caught->name, "Q2ServerDropError") != 0) qa_rethrow(caught);
+  qa_app_network_phase phase = client_phase(n);
+  if (n->channel_live && phase != QA_APP_PHASE_CLOSED && phase != QA_APP_PHASE_REJECTED) {
+    qa_app_q2_client_network_command(n, "disconnect");
+    qa_q2_channel_send(&n->channel, &n->transport, &n->remote, NULL, 0, now_performance());
+  }
+  qa_app_q2_client_receiver_close(n->receiver);
+  n->state = QA_APP_PHASE_REJECTED;
+  n->pending_count = 0;
+  n->host.disconnected(n->host.ctx, caught->message);
+}
+/* One client packet's owned pieces, released by a raise that leaves poll (a handshake failure, a
+ * receiver error other than Q2ServerDropError, a failing recording sink). */
+typedef struct client_packet_held {
+  qa_receive_event packet; bool has_packet;
+  qa_q2_connectionless_message message; bool has_message;
+  qa_q2_channel_receive_result result; bool has_result;
+  qa_q2_server_record *records; size_t record_count;
+  uint8_t **messages; size_t *lengths; uint8_t *joined;
+} client_packet_held;
+static void client_packet_release(void *arg) {
+  client_packet_held *held = arg;
+  free(held->joined); held->joined = NULL;
+  free(held->messages); held->messages = NULL;
+  free(held->lengths); held->lengths = NULL;
+  if (held->records) qa_q2_server_records_free(held->records, held->record_count);
+  held->records = NULL; held->record_count = 0;
+  if (held->has_result) qa_q2_channel_receive_result_free(&held->result);
+  held->has_result = false;
+  if (held->has_message) qa_q2_connectionless_message_free(&held->message);
+  held->has_message = false;
+  if (held->has_packet) qa_receive_event_destroy(&held->packet);
+  held->has_packet = false;
+}
 const void *const *qa_app_q2_client_network_poll(qa_app_q2_client_network *n,
     double now, size_t *out_count) {
   *out_count = 0;
@@ -1731,98 +2273,102 @@ const void *const *qa_app_q2_client_network_poll(qa_app_q2_client_network *n,
     }
   }
   for (;;) {
-    qa_receive_event packet;
-    if (!n->transport.poll(n->transport.ctx, &packet)) break;
-    if (packet.kind != QA_RECV_PACKET) {
-      if (packet.kind == QA_RECV_ERROR && packet.error) {
-        char *text = xmalloc(strlen(packet.error) + 2);
-        snprintf(text, strlen(packet.error) + 2, "%s\n", packet.error);
+    client_packet_held held;
+    memset(&held, 0, sizeof held);
+    if (!n->transport.poll(n->transport.ctx, &held.packet)) break;
+    held.has_packet = true;
+    qa_cleanup held_node;
+    qa_cleanup_push(&held_node, client_packet_release, &held);
+    qa_receive_event *packet = &held.packet;
+    bool stop = false;
+    if (packet->kind != QA_RECV_PACKET) {
+      if (packet->kind == QA_RECV_ERROR && packet->error) {
+        char *text = xmalloc(strlen(packet->error) + 2);
+        snprintf(text, strlen(packet->error) + 2, "%s\n", packet->error);
+        held.joined = (uint8_t *)text;
         n->host.print(n->host.ctx, text);
-        free(text);
       }
-      qa_receive_event_destroy(&packet);
-      continue;
-    }
-    if (!qa_net_same_address(&packet.from, &n->remote, true)) {
-      qa_receive_event_destroy(&packet);
-      continue;
-    }
-    n->last_received = now;
-    n->has_last_received = true;
-    qa_q2_connectionless_message message;
-    bool is_oob = qa_q2_read_out_of_band(packet.payload, packet.length,
-        host_kex(n), &message);
-    if (is_oob) {
-      if (strcmp(message.command, "print") == 0) n->host.print(n->host.ctx, message.body);
-      qa_q2_client_handshake_receive(&n->handshake, &packet.from, &message);
-      if (n->handshake.kind == QA_Q2_HANDSHAKE_CONNECTING) n->state = QA_APP_PHASE_CONNECTING;
-      if (n->handshake.kind == QA_Q2_HANDSHAKE_REJECTED) {
-        n->state = QA_APP_PHASE_REJECTED;
-        n->host.disconnected(n->host.ctx, n->handshake.reason ? n->handshake.reason : "rejected");
-      }
-      if (n->handshake.kind == QA_Q2_HANDSHAKE_CONNECTED && !n->channel_live) {
-        qa_q2_connect_request *request = &n->handshake.request;
-        if (n->host.downloads)
-          qa_app_q2_download_receiver_set_http_server(
-              (void *)n->host.downloads, n->handshake.download_server);
-        qa_q2_channel_options channel_options = {0};
-        channel_options.side_server = false;
-        channel_options.protocol = request->protocol;
-        channel_options.channel_new = request->channel_new;
-        channel_options.qport = request->qport;
-        channel_options.has_payload_bytes = true;
-        channel_options.payload_bytes = request->payload_bytes;
-        channel_options.has_max_datagram_bytes = true;
-        int64_t max_datagram = n->transport.max_datagram_bytes(n->transport.ctx);
-        channel_options.max_datagram_bytes = max_datagram < 0 ? 65507 : (double)max_datagram;
-        qa_q2_channel_init(&n->channel, &channel_options);
-        n->channel_live = true;
-        n->state = QA_APP_PHASE_LOADING;
-        qa_app_q2_client_network_command(n, "new");
-      }
-      qa_q2_connectionless_message_free(&message);
-    } else if (n->channel_live) {
-      qa_q2_channel_receive_result result;
-      if (!qa_q2_channel_receive(&n->channel, packet.payload, packet.length, now, &result))
-        qa_range_error("out of memory");
-      if (result.kind == QA_Q2_CHANNEL_MESSAGE) {
-        if (n->host.prediction_acknowledged)
-          n->host.prediction_acknowledged(n->host.ctx, result.acknowledged, now);
-        size_t count = 0;
-        qa_q2_server_record *records = qa_app_q2_client_receiver_receive(
-            n->receiver, result.bytes, result.bytes_length, now, &count);
-        if (n->recording) {
-          uint8_t **messages = xmalloc(count * sizeof *messages);
-          size_t *lengths = xmalloc(count * sizeof *lengths);
-          size_t message_count = 0;
-          for (size_t i = 0; i < count; i++) {
-            qa_q2_server_record *record = &records[i];
-            if (record->event.kind == QA_Q2_SERVER_DATA) n->recording_waiting_full = true;
-            if (record->event.kind == QA_Q2_SERVER_FRAME) {
-              if (record->event.frame.has_valid && !record->event.frame.valid) continue;
-              if (n->recording_waiting_full && record->event.frame.delta_frame > 0) continue;
-              n->recording_waiting_full = false;
-            }
-            messages[message_count] = record->raw;
-            lengths[message_count] = record->raw_length;
-            message_count++;
-          }
-          if (n->recording_waiting_full)
-            qa_app_q2_client_receiver_request_full_frame(n->receiver);
-          if (message_count > 0) {
-            size_t length = 0;
-            uint8_t *joined = join_packets(messages, lengths, message_count, &length);
-            n->recording_sink.append(n->recording_sink.ctx, "q2", joined, length);
-            free(joined);
-          }
-          free(messages);
-          free(lengths);
+    } else if (qa_net_same_address(&packet->from, &n->remote, true)) {
+      n->last_received = now;
+      n->has_last_received = true;
+      held.has_message = qa_q2_read_out_of_band(packet->payload, packet->length,
+          host_kex(n), &held.message);
+      if (held.has_message) {
+        const qa_q2_connectionless_message *message = &held.message;
+        if (strcmp(message->command, "print") == 0) n->host.print(n->host.ctx, message->body);
+        qa_q2_client_handshake_receive(&n->handshake, &packet->from, message);
+        if (n->handshake.kind == QA_Q2_HANDSHAKE_CONNECTING) n->state = QA_APP_PHASE_CONNECTING;
+        if (n->handshake.kind == QA_Q2_HANDSHAKE_REJECTED) {
+          n->state = QA_APP_PHASE_REJECTED;
+          n->host.disconnected(n->host.ctx, n->handshake.reason ? n->handshake.reason : "");
         }
-        qa_q2_server_records_free(records, count);
+        if (n->handshake.kind == QA_Q2_HANDSHAKE_CONNECTED && !n->channel_live) {
+          qa_q2_connect_request *request = &n->handshake.request;
+          if (n->host.downloads)
+            qa_app_q2_download_receiver_set_http_server(
+                (void *)n->host.downloads, n->handshake.download_server);
+          qa_q2_channel_options channel_options = {0};
+          channel_options.side_server = false;
+          channel_options.protocol = request->protocol;
+          channel_options.channel_new = request->channel_new;
+          channel_options.qport = request->qport;
+          channel_options.has_payload_bytes = true;
+          channel_options.payload_bytes = request->payload_bytes;
+          channel_options.has_max_datagram_bytes = true;
+          int64_t max_datagram = n->transport.max_datagram_bytes(n->transport.ctx);
+          channel_options.max_datagram_bytes = max_datagram < 0 ? 65507 : (double)max_datagram;
+          qa_q2_channel_init(&n->channel, &channel_options);
+          n->channel_live = true;
+          n->state = QA_APP_PHASE_LOADING;
+          qa_app_q2_client_network_command(n, "new");
+        }
+      } else if (n->channel_live) {
+        if (!qa_q2_channel_receive(&n->channel, packet->payload, packet->length, now, &held.result))
+          qa_range_error("out of memory");
+        held.has_result = true;
+        if (held.result.kind == QA_Q2_CHANNEL_MESSAGE) {
+          if (n->host.prediction_acknowledged)
+            n->host.prediction_acknowledged(n->host.ctx, held.result.acknowledged, now);
+          client_receive_scope scope = {n, &held.result, now, NULL, 0};
+          qa_caught_error caught;
+          if (!qa_try(client_receive_body, &scope, &caught)) {
+            drop_on_server_error(n, &caught);
+            stop = true;
+          } else {
+            held.records = scope.records;
+            held.record_count = scope.count;
+          }
+          if (!stop && n->recording) {
+            size_t count = held.record_count;
+            held.messages = xmalloc(count * sizeof *held.messages);
+            held.lengths = xmalloc(count * sizeof *held.lengths);
+            size_t message_count = 0;
+            for (size_t i = 0; i < count; i++) {
+              qa_q2_server_record *record = &held.records[i];
+              if (record->event.kind == QA_Q2_SERVER_DATA) n->recording_waiting_full = true;
+              if (record->event.kind == QA_Q2_SERVER_FRAME) {
+                if (record->event.frame.has_valid && !record->event.frame.valid) continue;
+                if (n->recording_waiting_full && record->event.frame.delta_frame > 0) continue;
+                n->recording_waiting_full = false;
+              }
+              held.messages[message_count] = record->raw;
+              held.lengths[message_count] = record->raw_length;
+              message_count++;
+            }
+            if (n->recording_waiting_full)
+              qa_app_q2_client_receiver_request_full_frame(n->receiver);
+            if (message_count > 0) {
+              size_t length = 0;
+              held.joined = join_packets(held.messages, held.lengths, message_count, &length);
+              n->recording_sink.append(n->recording_sink.ctx, "q2", held.joined, length);
+            }
+          }
+        }
       }
-      qa_q2_channel_receive_result_free(&result);
     }
-    qa_receive_event_destroy(&packet);
+    qa_cleanup_pop(&held_node);
+    client_packet_release(&held);
+    if (stop) return NULL;
   }
   double timeout = n->options.has_timeout_milliseconds
       ? n->options.timeout_milliseconds : 120000;
@@ -1831,7 +2377,11 @@ const void *const *qa_app_q2_client_network_poll(qa_app_q2_client_network *n,
     n->state = QA_APP_PHASE_REJECTED;
     n->host.disconnected(n->host.ctx, "Connection timed out");
   }
-  qa_app_q2_client_receiver_prepare_game_state(n->receiver);
+  qa_caught_error caught;
+  if (!qa_try(client_prepare_body, n->receiver, &caught)) {
+    drop_on_server_error(n, &caught);
+    return NULL;
+  }
   send_pending(n, now);
   return NULL;
 }
@@ -1840,7 +2390,7 @@ void qa_app_q2_client_network_submit(qa_app_q2_client_network *n,
   (void)now;
   if (client_phase(n) != QA_APP_PHASE_ACTIVE) return;
   if (count > 1)
-    qa_range_error("A native Q2 connection carries one player; use independent connections for local seats");
+    qa_raise("Error", 0, 0, "A native Q2 connection carries one player; use independent connections for local seats");
   for (size_t i = 0; i < count; i++) {
     const void *command = n->host.command(n->host.ctx, commands[i]);
     if (n->pending_count == n->pending_cap) {
@@ -1854,10 +2404,10 @@ void qa_app_q2_client_network_submit(qa_app_q2_client_network *n,
 void qa_app_q2_client_network_publish(qa_app_q2_client_network *n,
     const void *output, const void *const *events, size_t count, double now) {
   (void)n; (void)output; (void)events; (void)count; (void)now;
-  qa_range_error("Remote Q2 client cannot publish authoritative server state");
+  qa_raise("Error", 0, 0, "Remote Q2 client cannot publish authoritative server state");
 }
 void qa_app_q2_client_network_close(qa_app_q2_client_network *n) {
-  n->recording = false;
+  client_retire_recording(n);
   qa_app_network_phase phase = client_phase(n);
   qa_app_q2_client_receiver_close(n->receiver);
   if (n->transport.is_closed(n->transport.ctx)) return;
@@ -1875,26 +2425,34 @@ void qa_app_q2_client_network_recording_seed(qa_app_q2_client_network *n,
 }
 void *qa_app_q2_client_network_recording_attach(qa_app_q2_client_network *n,
     qa_app_q2_recording_sink sink) {
-  if (n->recording) qa_range_error("Q2 connection is already recording");
+  if (n->recording) qa_raise("Error", 0, 0, "Q2 connection is already recording");
   if (client_phase(n) != QA_APP_PHASE_ACTIVE)
-    qa_range_error("Recording requires an active Q2 connection");
+    qa_raise("Error", 0, 0, "Recording requires an active Q2 connection");
+  void *token = xmalloc(1);
   n->recording_sink = sink;
   n->recording = true;
   n->recording_waiting_full = true;
+  n->recording_token = token;
   qa_app_q2_client_receiver_request_full_frame(n->receiver);
-  void *token = xmalloc(1);
   return token;
 }
 void qa_app_q2_client_network_recording_detach(qa_app_q2_client_network *n, void *token) {
-  (void)token;
-  n->recording = false;
+  if (n->recording && n->recording_token == token) {
+    free(n->recording_token);
+    n->recording_token = NULL;
+    n->recording = false;
+  }
 }
 static qa_app_network_phase cli_phase(void *ctx) {
   return qa_app_q2_client_network_phase(ctx);
 }
-static const void *cli_wire(void *ctx) {
+/* TS this.wire = { kind: "source", protocol: options.host.protocol } */
+static qa_wire_selection cli_wire(void *ctx) {
   qa_app_q2_client_network *n = ctx;
-  return &n->host.protocol;
+  qa_wire_selection wire;
+  memset(&wire, 0, sizeof wire);
+  wire.protocol = n->host.protocol;
+  return wire;
 }
 static const void *const *cli_poll(void *ctx, double now, size_t *out_count) {
   return qa_app_q2_client_network_poll(ctx, now, out_count);

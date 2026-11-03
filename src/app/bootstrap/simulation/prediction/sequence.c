@@ -39,6 +39,9 @@ qa_app_prediction_sequence_result qa_app_predict_movement_sequence(const qa_app_
       step.fixed_milliseconds = options->profile.fixed_milliseconds;
       step.no_footsteps = options->profile.no_footsteps;
     }
+    /* ladders: profile.kind === "q3" && profile.ladders !== false */
+    step.has_ladders = true;
+    step.ladders = options->profile.kind && strcmp(options->profile.kind, "q3") == 0 && !options->profile.ladders_disabled;
     step.first_command = first;
     qa_app_prediction_step_result stepped = qa_app_predict_movement_command(options, out.player, commands[i], step, shape);
     qa_app_movement_prediction_snapshot_destroy(&out.player);
@@ -50,6 +53,8 @@ qa_app_prediction_sequence_result qa_app_predict_movement_sequence(const qa_app_
       memcpy(out.effects + out.effect_count, stepped.result.effects, stepped.result.effect_count * sizeof *effects);
       out.effect_count += stepped.result.effect_count;
     }
+    /* The step's movement result owns its effects and contacts; replay keeps only the copied effects. */
+    free((void *)stepped.result.effects); free((void *)stepped.result.contacts);
     out.trajectory[out.trajectory_count++] = origin_of(out.player);
     first = false;
   }

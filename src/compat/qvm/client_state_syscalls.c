@@ -90,8 +90,8 @@ bool qa_qvm_client_state_syscall(const qa_qvm_host_call *call,
       return true;
     }
     case QA_QVM_CGAME_IMPORT_CG_GETCURRENTCMDNUMBER:
-      *out = (qa_qvm_host_result)services.connection.commands.get_current_number(
-          services.connection.commands.ctx);
+      *out = qa_qvm_host_word(services.connection.commands.get_current_number(
+          services.connection.commands.ctx));
       return true;
     case QA_QVM_CGAME_IMPORT_CG_GETUSERCMD: {
       int32_t number = qa_qvm_host_call_word(call, 1);

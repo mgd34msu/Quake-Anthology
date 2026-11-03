@@ -1,105 +1,132 @@
 /*
- * Slice-internal helpers for the q1/missionpacks/monsters port:
- * foundation vector ops (owner src/content/q1/foundation/types.ts,
- * built on landed qa/core/math.h) and mirrored declarations for
- * unlanded cross-module functions. Mirrored functions keep their TS
- * names prefixed qa_q1mpm_ext_; link against their owners when landed:
- *  - projectiles: src/content/q1/base/projectiles.ts
- *  - fire_bullets: src/content/q1/foundation/weapons.ts
- *  - hipnotic weapons: src/content/q1/missionpacks/hipnotic-weapons.ts
- *  - rogue plasma: src/content/q1/missionpacks/rogue-weapons.ts
- *  - multi_explosion: src/content/q1/missionpacks/world/hipnotic-misc.ts
- *  - teleport fog/death: src/content/q1/foundation/spawns.ts
- *  - register_monster_callbacks: src/content/q1/base/monsters.ts
- * velocity_angles is implemented in runtime.c (owner
- * src/content/q1/missionpacks/types.ts, mirrored formula).
+ * Private to src/content/q1/missionpacks/monsters: value adapters between
+ * the Q1 value types (qa_q1_body, optional actor pointers) and the shared
+ * world tables on qa_q1_host (TS game.host.bodies / combat / actors), and
+ * small C accommodations (fixed frame-name buffers, String(n) field
+ * writes). No logic beyond the TS call and the type conversion.
  * GPL-2.0-or-later.
  */
 #ifndef QA_Q1MPM_MONSTERS_INTERNAL_H
 #define QA_Q1MPM_MONSTERS_INTERNAL_H
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
-#include "qa/core/math.h"
-#include "qa/foundation/support.h"
+#include "qa/content/q1/base/projectiles.h"
+#include "qa/content/q1/foundation/spawns.h"
+#include "qa/content/q1/foundation/weapons.h"
+#include "qa/content/q1/missionpacks/hipnotic_weapons.h"
 #include "qa/content/q1/missionpacks/monsters/runtime.h"
+#include "qa/content/q1/missionpacks/rogue_weapons.h"
+#include "qa/content/q1/missionpacks/types.h"
+#include "qa/content/q1/missionpacks/world/hipnotic_misc.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
-#define QA_Q1MPM_ZERO ((qa_vec3){0, 0, 0})
-#define QA_Q1MPM_POINT ((qa_bounds){{0, 0, 0}, {0, 0, 0}})
-#define QA_Q1MPM_V3(x, y, z) ((qa_vec3){(x), (y), (z)})
-#define QA_Q1MPM_NONE ((qa_q1mpm_opt_actor){false, {{NULL, NULL}, 0, 0, NULL}})
-#define QA_Q1MPM_SOME(id) ((qa_q1mpm_opt_actor){true, (id)})
-#define QA_Q1MPM_CH(name) ((qa_q1mpm_channel){(name), 0})
-#define QA_Q1MPM_CH_NUM(n) ((qa_q1mpm_channel){NULL, (n)})
+/* Zeroed storage owned by the runtime (freed by qa_q1mpm_runtime_destroy):
+ * a factory definition's callbacks record lives as long as the runtime. */
+void *qa_q1mpm_runtime_calloc(qa_q1mpm_runtime *runtime, size_t count, size_t size);
 
-static inline qa_vec3 qa_q1mpm_vadd(qa_vec3 a, qa_vec3 b) { return qa_add3_double(a, b); }
-static inline qa_vec3 qa_q1mpm_vsub(qa_vec3 a, qa_vec3 b) { return qa_sub3_double(a, b); }
-static inline qa_vec3 qa_q1mpm_vscale(qa_vec3 a, double s) { return qa_scale3_double(a, s); }
-static inline double qa_q1mpm_dot(qa_vec3 a, qa_vec3 b) { return qa_dot3_double(a, b); }
-static inline double qa_q1mpm_length(qa_vec3 a) { return qa_length3_double(a); }
-static inline qa_vec3 qa_q1mpm_normalize(qa_vec3 a) {
-  double magnitude = qa_length3_double(a);
-  return magnitude == 0 ? QA_Q1MPM_ZERO : qa_scale3_double(a, 1 / magnitude);
+/* TS game.host.bodies.read(actor): null -> false. */
+static inline bool q1mpm_read_body(qa_q1_services *game, qa_actor_id actor, qa_q1_body *out) {
+  const qa_body_state_result result = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!result.has_value) return false;
+  *out = qa_q1_body_from_state(result.value);
+  return true;
 }
-static inline double qa_q1mpm_yaw_for(qa_vec3 direction) {
-  double yaw = atan2(direction.y, direction.x) * 180 / 3.141592653589793;
-  return yaw < 0 ? yaw + 360 : yaw;
+/* TS game.host.combat.read(actor)?.canTakeDamage === true. */
+static inline bool q1mpm_can_take_damage(qa_q1_services *game, qa_actor_id actor) {
+  const qa_combat_state_result result = qa_gameplay_authority_read(game->host.combat, actor);
+  return result.has_value && result.value.can_take_damage;
 }
-static inline bool qa_q1mpm_opt_eq(qa_q1mpm_opt_actor a, qa_q1mpm_opt_actor b) {
-  if (a.has != b.has) return false;
-  return !a.has || qa_same_actor(a.id, b.id);
+/* TS game.host.trace(request) with the optional members of Q1TraceRequest
+ * left absent (missile undefined). ignore NULL = TS null. */
+static inline qa_q1_trace q1mpm_trace(qa_q1_services *game, qa_vec3 start, qa_vec3 end, qa_bounds bounds,
+                                      const qa_actor_id *ignore, bool monsters) {
+  qa_q1_trace_request request;
+  memset(&request, 0, sizeof request);
+  request.start = start;
+  request.end = end;
+  request.bounds = bounds;
+  request.has_ignore = ignore != NULL;
+  if (ignore != NULL) request.ignore = *ignore;
+  request.monsters = monsters;
+  return game->host.trace(game->host.ctx, request);
 }
-static inline bool qa_q1mpm_id_eq_opt(qa_actor_id a, qa_q1mpm_opt_actor b) {
-  return b.has && qa_same_actor(a, b.id);
+/* TS game.host.emit({ kind: "sound", actor, path, channel, volume, attenuation }). */
+static inline void q1mpm_emit_sound(qa_q1_services *game, qa_actor_id actor, const char *path,
+                                    qa_q1_sound_channel channel, double volume, double attenuation) {
+  qa_q1_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = "sound";
+  event.has_actor = true;
+  event.actor = actor;
+  event.path = path;
+  event.sound_channel = channel;
+  event.volume = volume;
+  event.attenuation = attenuation;
+  qa_q1_emit(game, event);
 }
-static inline bool qa_q1mpm_str_eq(const char *a, const char *b) {
+/* TS game.host.checkClient(observer): false = TS null. */
+static inline bool q1mpm_check_client(qa_q1_services *game, qa_owned_actor observer, qa_actor_id *out) {
+  return game->host.check_client(game->host.ctx, observer, out);
+}
+/* TS game.host.players()[0] ?? null as a pointer into the host's list. */
+static inline const qa_actor_id *q1mpm_first_player(qa_q1_services *game) {
+  size_t count = 0;
+  const qa_actor_id *players = game->host.players(game->host.ctx, &count);
+  return count == 0 ? NULL : &players[0];
+}
+/* TS `a === b` over two strings. */
+static inline bool q1mpm_str_eq(const char *a, const char *b) {
   return a != NULL && b != NULL && strcmp(a, b) == 0;
 }
-static inline qa_q1mpm_basis qa_q1mpm_vectors(qa_vec3 angles) {
-  return qa_math_angle_vectors_rule(angles, QA_ANGLE_RULE_Q1);
+/* TS `a === b` over ActorId | null. */
+static inline bool q1mpm_same_opt(const qa_actor_id *a, const qa_actor_id *b) {
+  if (a == NULL || b == NULL) return a == b;
+  return qa_same_actor(*a, *b);
 }
-qa_vec3 qa_q1mpm_velocity_angles(qa_vec3 velocity); /* runtime.c */
-/* TS callbackName(): the bound name or NULL for a null callback. */
-static inline const char *qa_q1mpm_callback_name(qa_q1mpm_callback callback) { return callback.name; }
-
-/* TS BackpackContents (base/projectiles.ts) subset used here. */
-typedef struct qa_q1mpm_ext_backpack_contents {
-  const char *weapon; /* TS Q1Weapon | null */
-  double shells; double nails; double rockets; double cells;
-} qa_q1mpm_ext_backpack_contents;
-
-qa_q1mpm_actor *qa_q1mpm_ext_create_missile(qa_q1mpm_game *game, qa_q1mpm_opt_actor owner,
-                                            const char *classname, const char *model,
-                                            qa_vec3 origin, qa_vec3 velocity);
-qa_q1mpm_actor *qa_q1mpm_ext_throw_gib(qa_q1mpm_game *game, qa_vec3 origin, const char *model, double damage);
-void qa_q1mpm_ext_throw_head(qa_q1mpm_game *game, qa_q1mpm_actor *entity, const char *model);
-void qa_q1mpm_ext_throw_head_damage(qa_q1mpm_game *game, qa_q1mpm_actor *entity, const char *model, double damage);
-qa_q1mpm_actor *qa_q1mpm_ext_spawn_meat_spray(qa_q1mpm_game *game, qa_q1mpm_actor *owner,
-                                              qa_vec3 origin, qa_vec3 velocity);
-qa_q1mpm_actor *qa_q1mpm_ext_drop_backpack(qa_q1mpm_game *game, qa_vec3 origin,
-                                           const qa_q1mpm_ext_backpack_contents *contents);
-qa_q1mpm_actor *qa_q1mpm_ext_launch_spike(qa_q1mpm_game *game, qa_q1mpm_opt_actor owner,
-                                          qa_vec3 origin, qa_vec3 velocity);
-qa_q1mpm_actor *qa_q1mpm_ext_launch_laser(qa_q1mpm_game *game, qa_q1mpm_opt_actor owner,
-                                          qa_vec3 origin, qa_vec3 direction);
-void qa_q1mpm_ext_launch_ogre_grenade(qa_q1mpm_mission_monster *monster);
-void qa_q1mpm_ext_fire_bullets(qa_q1mpm_game *game, qa_owned_actor shooter, qa_vec3 direction,
-                               qa_vec3 view_angles, double count, double spread_x, double spread_y,
-                               const char *weapon);
-qa_q1mpm_actor *qa_q1mpm_ext_launch_hipnotic_laser(qa_q1mpm_game *game, qa_actor_id shooter,
-                                                   qa_vec3 origin, qa_vec3 direction, bool light);
-qa_q1mpm_actor *qa_q1mpm_ext_launch_hipnotic_proximity(qa_q1mpm_game *game, qa_actor_id owner,
-                                                       qa_vec3 origin, qa_vec3 velocity);
-qa_q1mpm_actor *qa_q1mpm_ext_launch_rogue_plasma(qa_q1mpm_game *game, qa_actor_id owner,
-                                                 qa_vec3 origin, qa_vec3 direction);
-qa_q1mpm_actor *qa_q1mpm_ext_multi_explosion(qa_q1mpm_game *game, qa_q1mpm_actor *source, qa_vec3 origin,
-                                             double radius, double damage, double duration,
-                                             double pause, double volume);
-qa_q1mpm_actor *qa_q1mpm_ext_spawn_teleport_fog(qa_q1mpm_game *game, qa_vec3 origin);
-qa_q1mpm_actor *qa_q1mpm_ext_spawn_teledeath(qa_q1mpm_game *game, qa_vec3 origin, qa_actor_id owner);
-typedef qa_q1mpm_mission_monster *(*qa_q1mpm_ext_monster_lookup_fn)(void *ctx, qa_q1mpm_actor *entity);
-void qa_q1mpm_ext_register_monster_callbacks(qa_q1mpm_game *game, const char *prefix,
-                                             qa_q1mpm_ext_monster_lookup_fn lookup, void *lookup_ctx);
+/* TS entity.fields.set(key, String(value)). */
+static inline void q1mpm_set_number_text(qa_q1_actor *entity, const char *key, double value) {
+  char text[40];
+  qa_net_js_number(value, text, sizeof text);
+  (void)qa_q1_actor_field_set(entity, key, text);
+}
+/* TS entity.fields.set(key, String(Math.fround(value))). */
+static inline void q1mpm_set_fround_text(qa_q1_actor *entity, const char *key, double value) {
+  q1mpm_set_number_text(entity, key, (double)(float)value);
+}
+/* Replace an owned actor string member (TS entity.model = value, ...). */
+static inline void q1mpm_set_text(char **slot, const char *value) {
+  if (value == NULL) value = "";
+  const size_t length = strlen(value) + 1;
+  char *copy = malloc(length);
+  if (copy == NULL) qa_range_error("out of memory");
+  memcpy(copy, value, length);
+  free(*slot);
+  *slot = copy;
+}
+/* TS monster.nextFrame = name (fixed buffer on qa_q1_base_monster). */
+static inline void q1mpm_set_next_frame(qa_q1_base_monster *monster, const char *name) {
+  size_t length = strlen(name);
+  if (length >= sizeof monster->next_frame) length = sizeof monster->next_frame - 1;
+  memcpy(monster->next_frame, name, length);
+  monster->next_frame[length] = '\0';
+}
+/* TS entity.references.get(key) ?? null as a pointer into *slot. */
+static inline const qa_actor_id *q1mpm_reference(const qa_q1_actor *entity, const char *key, qa_actor_id *slot) {
+  return qa_q1_actor_reference_get(entity, key, slot) ? slot : NULL;
+}
+/* TS entity.monster?.enemy ?? null. */
+static inline const qa_actor_id *q1mpm_state_enemy(const qa_q1_actor *entity) {
+  return entity == NULL || entity->monster == NULL || !entity->monster->has_enemy ? NULL : &entity->monster->enemy;
+}
+/* TS game.player(actor)?.powerups.get(name) ?? 0. */
+static inline double q1mpm_player_powerup(qa_q1_services *game, qa_actor_id actor, const char *name) {
+  const qa_q1_player_state *player = qa_q1_player(game, actor);
+  return player == NULL ? 0 : qa_q1_player_powerup_get(player, name);
+}
 
 #endif

@@ -37,12 +37,7 @@ static double now_milliseconds(qa_windows_service_host *host) {
   return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1000000.0;
 }
 
-typedef struct reservation { qa_guest_core_address address; size_t size; } reservation;
-typedef struct fls_slot {
-  bool used;
-  bool has_callback; qa_guest_core_address callback;
-  bool has_value; qa_guest_core_address value;
-} fls_slot;
+typedef qa_windows_kernel_reservation reservation;
 typedef struct file_handle {
   uint64_t key;
   int stream_kind; /* 0 file, 1 stdin, 2 stdout, 3 stderr */
@@ -57,11 +52,10 @@ typedef struct kernel_ctx {
   bool has_invalid; qa_guest_core_address invalid;
   uint64_t pointer_secret;
   qa_guest_core_address process_heap;
-  uint64_t *heaps; size_t heap_count, heap_cap;
-  reservation *reservations; size_t reservation_count, reservation_cap;
-  bool tls_used[1088];
+  /* TS host.heaps / reservations / tlsIndices / fiberSlots. */
+  qa_windows_kernel_tables *tables;
+  qa_windows_kernel_tables own_tables; /* used when the host carries none */
   qa_guest_core_address dynamic_tls;
-  fls_slot fls[128];
   uint64_t *locks; size_t lock_count, lock_cap;
   bool has_exception_filter; qa_guest_core_address exception_filter;
   file_handle *handles; size_t handle_count, handle_cap;
@@ -90,6 +84,19 @@ static bool u64_set_delete(uint64_t *set, size_t *count, uint64_t value) {
       return true;
     }
   return false;
+}
+
+/* Position of a TlsAlloc index in host.tlsIndices (insertion order), or -1. */
+static ptrdiff_t tls_index(const kernel_ctx *k, int64_t index) {
+  for (size_t i = 0; i < k->tables->tls_count; i++)
+    if (k->tables->tls[i] == index) return (ptrdiff_t)i;
+  return -1;
+}
+/* Position of an FlsAlloc index in host.fiberSlots (insertion order), or -1. */
+static ptrdiff_t fls_index(const kernel_ctx *k, int64_t index) {
+  for (size_t i = 0; i < k->tables->fls_count; i++)
+    if (k->tables->fls[i].index == index) return (ptrdiff_t)i;
+  return -1;
 }
 
 static qa_guest_core_address stored_string(kernel_ctx *k, const char *value, bool wide) {
@@ -171,6 +178,12 @@ enum {
 };
 static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *context,
                                   const qa_call_value *args, size_t count);
+static void free_state(void *resource) { kernel_state *state = resource; free(state->name); free(state); }
+/* Open file handles stay with the runtime's guest (as TS); only host storage is freed here. */
+static void free_kernel(void *resource) {
+  kernel_ctx *k = resource;
+  qa_windows_kernel_tables_free(&k->own_tables); free(k->locks); free(k->handles); free(k->standards); free(k);
+}
 static void reg(kernel_ctx *k, int kind, int number, const char *name,
                 const qa_abi_storage *parameters, size_t parameter_count, bool result_is_void,
                 qa_abi_storage result) {
@@ -178,6 +191,7 @@ static void reg(kernel_ctx *k, int kind, int number, const char *name,
   state->k = k; state->kind = kind; state->number = number;
   state->name = xmalloc(strlen(name) + 1);
   strcpy(state->name, name);
+  qa_windows_own(k->host, state, free_state);
   qa_windows_import_implementation impl = {state, kernel_impl};
   qa_windows_service(k->host, "kernel32.dll", name, parameters, parameter_count,
                      result_is_void, result, impl);
@@ -265,29 +279,35 @@ static uint16_t *input_units(kernel_ctx *k, qa_guest_core_address address, int64
 }
 /* UTF-8 decode (WHATWG replacement semantics simplified to U+FFFD per
  * invalid sequence maximal subpart) into UTF-16 units. Malloc'd. */
+/* WHATWG UTF-8 decode as TextDecoder applies it: a leading BOM is dropped and
+ * each maximal invalid subpart yields one U+FFFD. */
 static uint16_t *utf8_decode(const uint8_t *bytes, size_t len, size_t *out_len) {
   uint16_t *out = xmalloc((len + 1) * 2 * sizeof *out);
-  size_t count = 0, i = 0;
+  size_t count = 0, i = len >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
   while (i < len) {
-    uint8_t b = bytes[i];
+    uint8_t b = bytes[i++];
+    if (b < 0x80) { out[count++] = b; continue; }
     uint32_t cp;
-    size_t need;
-    if (b < 0x80) { cp = b; need = 1; }
-    else if (b >= 0xc2 && b < 0xe0) { cp = b & 0x1f; need = 2; }
-    else if (b >= 0xe0 && b < 0xf0) { cp = b & 0x0f; need = 3; }
-    else if (b >= 0xf0 && b < 0xf5) { cp = b & 0x07; need = 4; }
-    else { out[count++] = 0xfffd; i++; continue; }
-    bool ok = i + need <= len;
-    if (ok)
-      for (size_t j = 1; j < need; j++)
-        if ((bytes[i + j] & 0xc0) != 0x80) ok = false;
-    if (!ok) { out[count++] = 0xfffd; i++; continue; }
-    for (size_t j = 1; j < need; j++) cp = (cp << 6) | (bytes[i + j] & 0x3f);
-    uint32_t min = need == 2 ? 0x80 : need == 3 ? 0x800 : need == 4 ? 0x10000 : 0;
-    if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp < 0xe000)) {
-      out[count++] = 0xfffd; i++; continue;
+    int need;
+    uint8_t lower = 0x80, upper = 0xbf;
+    if (b >= 0xc2 && b < 0xe0) { cp = b & 0x1fu; need = 1; }
+    else if (b >= 0xe0 && b < 0xf0) {
+      cp = b & 0x0fu; need = 2;
+      if (b == 0xe0) lower = 0xa0;
+      if (b == 0xed) upper = 0x9f;
+    } else if (b >= 0xf0 && b < 0xf5) {
+      cp = b & 0x07u; need = 3;
+      if (b == 0xf0) lower = 0x90;
+      if (b == 0xf4) upper = 0x8f;
+    } else { out[count++] = 0xfffd; continue; }
+    bool ok = true;
+    for (; need > 0; need--) {
+      if (i >= len || bytes[i] < lower || bytes[i] > upper) { ok = false; break; }
+      cp = (cp << 6) | (bytes[i++] & 0x3fu);
+      lower = 0x80;
+      upper = 0xbf;
     }
-    i += need;
+    if (!ok) { out[count++] = 0xfffd; continue; }
     if (cp < 0x10000) out[count++] = (uint16_t)cp;
     else {
       cp -= 0x10000;
@@ -523,13 +543,13 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
     case K_HEAP_CREATE: {
       qa_guest_core_address address = qa_gmem_allocate(host->memory_ext, 16, false, 0, false,
                                                   QA_PERM_READ_WRITE, "Windows heap handle");
-      u64_set_add(&k->heaps, &k->heap_count, &k->heap_cap, address.byte_offset);
+      u64_set_add(&k->tables->heaps, &k->tables->heap_count, &k->tables->heap_cap, address.byte_offset);
       return qa_call_pointer(true, address);
     }
     case K_HEAP_ALLOC: {
       qa_guest_core_address heap = {0};
       if (!qa_guest_pointer_argument(args, count, 0, &heap) ||
-          !u64_set_has(k->heaps, k->heap_count, heap.byte_offset)) {
+          !u64_set_has(k->tables->heaps, k->tables->heap_count, heap.byte_offset)) {
         qa_windows_last_error_set(host, 6);
         return qa_call_pointer(false, none);
       }
@@ -577,7 +597,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
       qa_guest_core_address heap = {0};
       if (!qa_guest_pointer_argument(args, count, 0, &heap) ||
           heap.byte_offset == k->process_heap.byte_offset ||
-          !u64_set_delete(k->heaps, &k->heap_count, heap.byte_offset))
+          !u64_set_delete(k->tables->heaps, &k->tables->heap_count, heap.byte_offset))
         return bool_result(false);
       qa_windows_destroy_heap(host, heap.byte_offset);
       qa_gmem_unmap(host->memory_ext, heap, 16);
@@ -613,20 +633,20 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
           address = qa_gmem_map(host->memory_ext, base, bytes, QA_PERM_NONE,
                                 "Windows VirtualAlloc", NULL, 0);
         }
-        grow((void **)&k->reservations, &k->reservation_cap, k->reservation_count,
+        grow((void **)&k->tables->reservations, &k->tables->reservation_cap, k->tables->reservation_count,
              sizeof(reservation));
-        k->reservations[k->reservation_count].address = address;
-        k->reservations[k->reservation_count].size = bytes;
-        k->reservation_count++;
+        k->tables->reservations[k->tables->reservation_count].address = address;
+        k->tables->reservations[k->tables->reservation_count].size = bytes;
+        k->tables->reservation_count++;
       } else {
         uint64_t base = address.byte_offset & ~4095ULL;
         bytes = (size_t)(((address.byte_offset - base) + size + 4095) / 4096 * 4096);
         bool has_address = qa_memory_pointer(memory, base, &address);
         bool inside = false;
         if (has_address)
-          for (size_t i = 0; i < k->reservation_count; i++)
-            if (base >= k->reservations[i].address.byte_offset &&
-                base + bytes <= k->reservations[i].address.byte_offset + k->reservations[i].size)
+          for (size_t i = 0; i < k->tables->reservation_count; i++)
+            if (base >= k->tables->reservations[i].address.byte_offset &&
+                base + bytes <= k->tables->reservations[i].address.byte_offset + k->tables->reservations[i].size)
               inside = true;
         if (!has_address || !inside) {
           qa_windows_last_error_set(host, 487);
@@ -642,22 +662,22 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
       size_t size = qa_guest_count(args, count, 1);
       uint32_t flags = (uint32_t)qa_guest_integer_u64(args, count, 2);
       if (flags == 0x8000u && size == 0) {
-        for (size_t i = 0; i < k->reservation_count; i++)
-          if (k->reservations[i].address.byte_offset == address.byte_offset) {
-            qa_gmem_unmap(host->memory_ext, address, k->reservations[i].size);
-            memmove(&k->reservations[i], &k->reservations[i + 1],
-                    (k->reservation_count - i - 1) * sizeof(reservation));
-            k->reservation_count--;
+        for (size_t i = 0; i < k->tables->reservation_count; i++)
+          if (k->tables->reservations[i].address.byte_offset == address.byte_offset) {
+            qa_gmem_unmap(host->memory_ext, address, k->tables->reservations[i].size);
+            memmove(&k->tables->reservations[i], &k->tables->reservations[i + 1],
+                    (k->tables->reservation_count - i - 1) * sizeof(reservation));
+            k->tables->reservation_count--;
             return bool_result(true);
           }
         return bool_result(false);
       }
       if (flags == 0x4000u && size > 0) {
         bool inside = false;
-        for (size_t i = 0; i < k->reservation_count; i++)
-          if (address.byte_offset >= k->reservations[i].address.byte_offset &&
+        for (size_t i = 0; i < k->tables->reservation_count; i++)
+          if (address.byte_offset >= k->tables->reservations[i].address.byte_offset &&
               address.byte_offset + size <=
-                  k->reservations[i].address.byte_offset + k->reservations[i].size)
+                  k->tables->reservations[i].address.byte_offset + k->tables->reservations[i].size)
             inside = true;
         if (!inside) return bool_result(false);
         qa_gmem_protect(host->memory_ext, address, size, QA_PERM_READ_WRITE);
@@ -673,8 +693,9 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
     }
     case K_TLS_ALLOC: {
       for (int index = 0; index < 1088; index++)
-        if (!k->tls_used[index]) {
-          k->tls_used[index] = true;
+        if (tls_index(k, index) < 0) {
+          grow((void **)&k->tables->tls, &k->tables->tls_cap, k->tables->tls_count, sizeof(int64_t));
+          k->tables->tls[k->tables->tls_count++] = index;
           qa_write_unsigned(memory, tls_slot(k, index), width, 0);
           return u32_result((uint32_t)index);
         }
@@ -682,16 +703,18 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
     }
     case K_TLS_FREE: {
       int64_t index = qa_guest_integer(args, count, 0);
-      if (index < 0 || index >= 1088 || !k->tls_used[index]) {
+      const ptrdiff_t at = index < 0 || index >= 1088 ? -1 : tls_index(k, index);
+      if (at < 0) {
         qa_windows_last_error_set(host, 87);
         return bool_result(false);
       }
-      k->tls_used[index] = false;
+      memmove(&k->tables->tls[at], &k->tables->tls[at + 1], (k->tables->tls_count - (size_t)at - 1) * sizeof(int64_t));
+      k->tables->tls_count--;
       return bool_result(true);
     }
     case K_TLS_GET: {
       int64_t index = qa_guest_integer(args, count, 0);
-      if (index < 0 || index >= 1088 || !k->tls_used[index]) {
+      if (index < 0 || index >= 1088 || tls_index(k, index) < 0) {
         qa_windows_last_error_set(host, 87);
         return qa_call_pointer(false, none);
       }
@@ -702,7 +725,7 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
     }
     case K_TLS_SET: {
       int64_t index = qa_guest_integer(args, count, 0);
-      if (index < 0 || index >= 1088 || !k->tls_used[index]) {
+      if (index < 0 || index >= 1088 || tls_index(k, index) < 0) {
         qa_windows_last_error_set(host, 87);
         return bool_result(false);
       }
@@ -713,11 +736,13 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
     }
     case K_FLS_ALLOC: {
       for (int index = 0; index < 128; index++)
-        if (!k->fls[index].used) {
-          k->fls[index].used = true;
-          k->fls[index].has_callback =
-              qa_guest_pointer_argument(args, count, 0, &k->fls[index].callback);
-          k->fls[index].has_value = false;
+        if (fls_index(k, index) < 0) {
+          grow((void **)&k->tables->fls, &k->tables->fls_cap, k->tables->fls_count, sizeof(qa_windows_fiber_slot));
+          qa_windows_fiber_slot *slot = &k->tables->fls[k->tables->fls_count++];
+          memset(slot, 0, sizeof *slot);
+          slot->index = index;
+          slot->has_callback = qa_guest_pointer_argument(args, count, 0, &slot->callback);
+          slot->has_value = false;
           return u32_result((uint32_t)index);
         }
       qa_windows_last_error_set(host, 8);
@@ -725,30 +750,34 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
     }
     case K_FLS_GET: {
       int64_t index = qa_guest_integer(args, count, 0);
-      if (index < 0 || index >= 128 || !k->fls[index].used) {
+      const ptrdiff_t at = index < 0 || index >= 128 ? -1 : fls_index(k, index);
+      if (at < 0) {
         qa_windows_last_error_set(host, 87);
         return qa_call_pointer(false, none);
       }
       qa_windows_last_error_set(host, 0);
-      return qa_call_pointer(k->fls[index].has_value, k->fls[index].value);
+      return qa_call_pointer(k->tables->fls[at].has_value, k->tables->fls[at].value);
     }
     case K_FLS_SET: {
       int64_t index = qa_guest_integer(args, count, 0);
-      if (index < 0 || index >= 128 || !k->fls[index].used) {
+      const ptrdiff_t at = index < 0 || index >= 128 ? -1 : fls_index(k, index);
+      if (at < 0) {
         qa_windows_last_error_set(host, 87);
         return bool_result(false);
       }
-      k->fls[index].has_value = qa_guest_pointer_argument(args, count, 1, &k->fls[index].value);
+      k->tables->fls[at].has_value = qa_guest_pointer_argument(args, count, 1, &k->tables->fls[at].value);
       return bool_result(true);
     }
     case K_FLS_FREE: {
       int64_t index = qa_guest_integer(args, count, 0);
-      if (index < 0 || index >= 128 || !k->fls[index].used) {
+      const ptrdiff_t at = index < 0 || index >= 128 ? -1 : fls_index(k, index);
+      if (at < 0) {
         qa_windows_last_error_set(host, 87);
         return bool_result(false);
       }
-      fls_slot slot = k->fls[index];
-      k->fls[index].used = false;
+      qa_windows_fiber_slot slot = k->tables->fls[at];
+      memmove(&k->tables->fls[at], &k->tables->fls[at + 1], (k->tables->fls_count - (size_t)at - 1) * sizeof(qa_windows_fiber_slot));
+      k->tables->fls_count--;
       if (slot.has_callback && slot.has_value) {
         qa_abi_storage params[] = {QA_STORAGE_POINTER};
         qa_call_value invoke_args[] = {qa_call_pointer(true, slot.value)};
@@ -1287,7 +1316,8 @@ static qa_call_result kernel_impl(void *ctx, const qa_guest_core_call_context *c
           mapped[mapped_len++] = c;
         } else {
           if (c == 0xdf) { mapped[mapped_len++] = 'S'; mapped[mapped_len++] = 'S'; continue; }
-          if (c >= 'a' && c <= 'z') c = (uint16_t)(c - 32);
+          if (c == 0xb5) c = 0x39c;
+          else if (c >= 'a' && c <= 'z') c = (uint16_t)(c - 32);
           else if (c >= 0xe0 && c <= 0xfe && c != 0xf7) c = (uint16_t)(c - 32);
           else if (c == 0xff) c = 0x178;
           mapped[mapped_len++] = c;
@@ -1321,6 +1351,8 @@ void qa_install_kernel(qa_windows_service_host *host) {
   kernel_ctx *k = xmalloc(sizeof *k);
   memset(k, 0, sizeof *k);
   k->host = host;
+  k->tables = host->tables != NULL ? host->tables : &k->own_tables;
+  qa_windows_own(host, k, free_kernel);
   qa_mapped_guest_memory *memory = host->memory;
   int width = memory->pointer_bytes;
   const char *command_line_text = host->capabilities.command_line != NULL
@@ -1350,7 +1382,7 @@ void qa_install_kernel(qa_windows_service_host *host) {
   reg(k, K_ENCODE, 0, "DecodePointer", &ptr, 1, false, ptr);
   k->process_heap = qa_gmem_allocate(host->memory_ext, 16, false, 0, false,
                                      QA_PERM_READ_WRITE, "Windows process heap");
-  u64_set_add(&k->heaps, &k->heap_count, &k->heap_cap, k->process_heap.byte_offset);
+  u64_set_add(&k->tables->heaps, &k->tables->heap_count, &k->tables->heap_cap, k->process_heap.byte_offset);
   reg(k, K_GET_PROCESS_HEAP, 0, "GetProcessHeap", NULL, 0, false, ptr);
   reg(k, K_GET_LAST_ERROR, 0, "GetLastError", NULL, 0, false, u32);
   reg(k, K_SET_LAST_ERROR, 0, "SetLastError", &u32, 1, true, i32);
@@ -1482,9 +1514,10 @@ void qa_install_kernel(qa_windows_service_host *host) {
   reg(k, K_WIDE_TO_MULTIBYTE, 0, "WideCharToMultiByte", wc_params, 8, false, i32);
   qa_abi_storage type_w_params[] = {u32, ptr, i32, ptr};
   qa_abi_storage type_a_params[] = {u32, u32, ptr, i32, ptr};
-  reg(k, K_GET_STRING_TYPE, 1, "GetStringTypeW", type_w_params, 4, false, i32);
+  /* TS registers the narrow variant first (for wide of [false, true]). */
   reg(k, K_GET_STRING_TYPE, 0, "GetStringTypeA", type_a_params, 5, false, i32);
+  reg(k, K_GET_STRING_TYPE, 1, "GetStringTypeW", type_w_params, 4, false, i32);
   qa_abi_storage lcmap_params[] = {u32, u32, ptr, i32, ptr, i32};
-  reg(k, K_LCMAP, 1, "LCMapStringW", lcmap_params, 6, false, i32);
   reg(k, K_LCMAP, 0, "LCMapStringA", lcmap_params, 6, false, i32);
+  reg(k, K_LCMAP, 1, "LCMapStringW", lcmap_params, 6, false, i32);
 }

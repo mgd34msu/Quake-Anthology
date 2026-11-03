@@ -44,6 +44,11 @@ void qa_ranking_lifecycle_init(qa_ranking_lifecycle *l, const qa_ranking_provide
                                qa_ranking_changed_fn changed, void *changed_ctx,
                                qa_ranking_service_changed_fn service_changed, void *service_ctx);
 void qa_ranking_lifecycle_destroy(qa_ranking_lifecycle *l);
+/* Heap form (the struct is private to rankings.c): NULL only on OOM; free destroys. */
+qa_ranking_lifecycle *qa_ranking_lifecycle_create(const qa_ranking_provider *provider,
+                                                  qa_ranking_changed_fn changed, void *changed_ctx,
+                                                  qa_ranking_service_changed_fn service_changed, void *service_ctx);
+void qa_ranking_lifecycle_free(qa_ranking_lifecycle *l);
 void qa_ranking_lifecycle_unavailable(qa_ranking_lifecycle *l, const char *reason);
 qa_ranking_service_state qa_ranking_lifecycle_get_state(const qa_ranking_lifecycle *l);
 qa_ranking_player_state qa_ranking_lifecycle_player(const qa_ranking_lifecycle *l, double slot);

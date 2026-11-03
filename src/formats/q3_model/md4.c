@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-model/md4.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_model/md4.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -29,7 +30,7 @@ static void check_range(qa_binary_reader *reader, double offset, double length, 
                         int64_t field) {
   if (offset != trunc(offset) || length != trunc(length) || offset > 9007199254740991.0 ||
       length > 9007199254740991.0 || offset < start || length < 0 || offset > end - length) {
-    qa_binary_error(reader->source, field, "MD4 range %g+%g exceeds %g..%g", offset, length, start, end);
+    qa_binary_error(reader->source, field, "MD4 range %s+%s exceeds %s..%s", QA_JS_NUMBER(offset), QA_JS_NUMBER(length), QA_JS_NUMBER(start), QA_JS_NUMBER(end));
   }
 }
 
@@ -37,7 +38,7 @@ static double read_count(qa_binary_reader *reader, double maximum) {
   size_t offset = reader->cursor;
   double value = qa_binary_reader_i32(reader);
   if (value < 0 || value > maximum) {
-    qa_binary_error(reader->source, (int64_t)offset, "MD4 count %g outside 0..%g", value, maximum);
+    qa_binary_error(reader->source, (int64_t)offset, "MD4 count %s outside 0..%s", QA_JS_NUMBER(value), QA_JS_NUMBER(maximum));
   }
   return value;
 }
@@ -46,7 +47,7 @@ static double read_index(qa_binary_reader *reader, double maximum, const char *l
   size_t offset = reader->cursor;
   double value = qa_binary_reader_i32(reader);
   if (value < 0 || value >= maximum) {
-    qa_binary_error(reader->source, (int64_t)offset, "%s %g outside 0..%g", label, value, maximum - 1);
+    qa_binary_error(reader->source, (int64_t)offset, "%s %s outside 0..%s", label, QA_JS_NUMBER(value), QA_JS_NUMBER(maximum - 1));
   }
   return value;
 }
@@ -63,14 +64,19 @@ static char *c_string(qa_binary_reader *reader) {
 }
 
 static qa_vec3 read_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static qa_vec4 read_row(qa_binary_reader *reader) {
-  qa_vec4 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader)};
+  qa_vec4 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
+  v.w = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
@@ -152,7 +158,7 @@ void qa_parse_md4(const uint8_t *bytes, size_t length, const char *source, qa_de
   check_range(&reader, 0, 100, 0, (double)reader.length, 0);
   if (qa_binary_reader_u32(&reader) != 0x34504449u) qa_binary_error(name, 0, "expected IDP4 model magic");
   double version = qa_binary_reader_i32(&reader);
-  if (version != 1) qa_binary_error(name, 4, "unsupported MD4 version %g", version);
+  if (version != 1) qa_binary_error(name, 4, "unsupported MD4 version %s", QA_JS_NUMBER(version));
   qa_md4_model *model = &out->model;
   model->version = version;
   model->name = c_string(&reader);
@@ -218,9 +224,6 @@ void qa_parse_md4(const uint8_t *bytes, size_t length, const char *source, qa_de
     for (size_t i = 0; i < out->bone_name_count; i++) out->bone_names[i] = c_string(&reader);
   }
   out->source = xstrdup(name);
-  out->bytes_length = (size_t)ofs_end;
-  out->bytes = xmalloc(out->bytes_length);
-  memcpy(out->bytes, bytes, out->bytes_length);
   qa_binary_reader_destroy(&reader);
 }
 
@@ -244,7 +247,6 @@ void qa_decoded_md4_model_destroy(qa_decoded_md4_model *model) {
   }
   free((void *)inner->lods);
   free(model->source);
-  free(model->bytes);
   for (size_t i = 0; i < model->bone_name_count; i++) free(model->bone_names[i]);
   free(model->bone_names);
   memset(model, 0, sizeof *model);

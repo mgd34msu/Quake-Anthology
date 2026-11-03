@@ -7,6 +7,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/ui/common/controls.h"
 #include "qa/ui/common/layout.h"
 
 typedef struct account_state account_state;
@@ -195,22 +196,6 @@ static qa_ui_control field(account_state *s, size_t slot, const char *id,
   return control;
 }
 
-/* /.{1,64}(?:\s|$)|.{1,64}/g over bytes (no newlines expected). */
-static size_t wrap_line(const char *text, size_t max, char *out) {
-  size_t length = strlen(text);
-  if (length == 0) { out[0] = '\0'; return 0; }
-  size_t best = 0;
-  for (size_t i = 1; i <= max && i < length; i++)
-    if (qa_input_js_space((unsigned char)text[i])) best = i + 1;
-  size_t take;
-  if (length <= max) take = length;
-  else if (best > 0) take = best;
-  else take = max;
-  memcpy(out, text, take);
-  out[take] = '\0';
-  return take;
-}
-
 static void menu_close(void *v, qa_seat_id seat) {
   (void)seat;
   close_state((account_state *)v);
@@ -297,21 +282,21 @@ static qa_ui_menu factory(void *v) {
   controls[at] = button(s, at, "ui:rankings:back", "Back", 11, A_BACK, true);
   at++;
   (void)back_at;
-  const char *rest = status;
-  for (int line = 0; line < 3 && rest[0] != '\0' && at < 16; line++) {
-    char buffer[80];
-    size_t used = wrap_line(rest, 64, buffer);
+  /* TS wrapWords(status, 64).slice(0, 3). */
+  size_t line_count = 0;
+  char **lines = qa_ui_wrap_words(status, 64, &line_count);
+  for (size_t line = 0; line < 3 && line < line_count && at < 16; line++) {
     char id[48];
-    snprintf(id, sizeof id, "ui:rankings:status-%d", line);
-    s->labels[at] = qa_input_dup(buffer);
+    snprintf(id, sizeof id, "ui:rankings:status-%zu", line);
+    s->labels[at] = qa_input_dup(lines[line]);
     s->ids[at] = qa_input_dup(id);
     if (s->labels[at] == NULL || s->ids[at] == NULL)
       qa_range_error("Out of memory");
-    controls[at] = button(s, at, s->ids[at], s->labels[at], 8 + line,
+    controls[at] = button(s, at, s->ids[at], s->labels[at], 8 + (double)line,
                           A_NONE, false);
     at++;
-    rest += used;
   }
+  qa_ui_wrapped_lines_free(lines, line_count);
   qa_ui_menu menu;
   memset(&menu, 0, sizeof menu);
   menu.id = "menu:rankings:account";

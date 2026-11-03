@@ -2,6 +2,7 @@
 #include "qa/render/scene/view.h"
 #include <math.h>
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 static float fr(double v) { return (float)v; }
 double qa_scene_model_scale(qa_scene_model_transform model) {
@@ -63,7 +64,8 @@ qa_scene_view_projector qa_scene_create_model_projector(qa_scene_camera c, qa_sc
   p.eye_z = mrow(m, qa_scale3(c.axis.vectors[0], -1), qa_dot3(c.origin, c.axis.vectors[0]));
   return p;
 }
-static double dot4(qa_vec3 p, qa_vec4 e) { return p.x * e.x + p.y * e.y + p.z * e.z; }
+/* TS dot3(point, eyeX): the binary32-staged dot over the row's x, y, z. */
+static double dot4(qa_vec3 p, qa_vec4 e) { return qa_dot3(p, qa_math_vec3(e.x, e.y, e.z)); }
 qa_vec4 qa_scene_projector_project(qa_scene_view_projector p, qa_vec3 pt) {
   double x = fr(dot4(pt, p.eye_x) + p.eye_x.w), y = fr(dot4(pt, p.eye_y) + p.eye_y.w), z = fr(dot4(pt, p.eye_z) + p.eye_z.w);
   const double *v = p.projection.values;
@@ -71,7 +73,7 @@ qa_vec4 qa_scene_projector_project(qa_scene_view_projector p, qa_vec3 pt) {
     comp(x, y, z, v[2], v[6], v[10], v[14]), comp(x, y, z, v[3], v[7], v[11], v[15]));
 }
 static qa_plane side(qa_scene_camera c, qa_vec3 dir, double scale, double sign) {
-  double inv = 1 / hypot(1, scale);
+  double inv = 1 / qa_js_hypot2(1, scale);
   qa_vec3 n = qa_add3(qa_scale3(c.axis.vectors[0], inv), qa_scale3(dir, scale * inv * sign));
   return (qa_plane){ n, qa_dot3(c.origin, n) };
 }
@@ -95,7 +97,7 @@ double qa_scene_far_clip(qa_vec3 origin, qa_bounds b) {
   double xs[2] = { b.min.x, b.max.x }, ys[2] = { b.min.y, b.max.y }, zs[2] = { b.min.z, b.max.z };
   for (int i = 0; i < 2; i++) for (int j = 0; j < 2; j++) for (int k = 0; k < 2; k++) {
     qa_vec3 r = qa_sub3(qa_math_vec3(xs[i], ys[j], zs[k]), origin);
-    double d = qa_dot3(r, r); if (d > mx) mx = d;
+    mx = qa_js_max(mx, qa_dot3(r, r)); /* Math.max keeps NaN */
   }
   return fr(sqrt(mx));
 }

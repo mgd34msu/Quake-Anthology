@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/render/scene/textures.h"
 typedef struct picture_entry { char *id; qa_picture_asset asset; char *name; } picture_entry;
 typedef struct id_entry { char *name; char *id; } id_entry;
 struct qa_app_q2_native_hud {
@@ -16,6 +17,7 @@ struct qa_app_q2_native_hud {
   qa_native_q2_hud_table table;
   qa_native_q2_hud_operations prepared;
   bool has_prepared;
+  bool cap_reported;
 };
 static char *dup_text(const char *text) {
   size_t len = strlen(text);
@@ -36,6 +38,7 @@ void qa_app_q2_native_hud_clear(qa_app_q2_native_hud *hud) {
   if (hud->has_prepared) { qa_native_q2_hud_operations_free(&hud->prepared); hud->has_prepared = false; }
   hud->has_environment = false;
   hud->revision++;
+  hud->cap_reported = false;
   free(hud->content); hud->content = NULL;
   for (size_t i = 0; i < hud->id_count; i++) { free(hud->ids[i].name); free(hud->ids[i].id); }
   hud->id_count = 0;
@@ -84,11 +87,44 @@ static void set_picture(qa_app_q2_native_hud *hud, const char *name, const char 
   entry->asset.image.name = entry->name;
   entry->asset.image.image = image;
 }
+/* Layout names come from the game module; past the cap further pictures are left undrawn (once reported). */
+#define MAXIMUM_PICTURES 512
+typedef struct ops_job {
+  const qa_native_q2_hud_frame *frame; double width, height;
+  qa_q2_hud_binding_fn binding; void *binding_ctx; const char *mode;
+  const qa_native_q2_hud_arsenal *arsenal; qa_native_q2_hud_environment *environment;
+  qa_native_q2_hud_operations *out;
+} ops_job;
+static void ops_run(void *ctx) {
+  ops_job *job = ctx;
+  if (!qa_q2_native_hud_operations(job->frame, job->width, job->height, job->binding, job->binding_ctx, job->mode,
+                                   job->arsenal, job->environment, job->out))
+    qa_range_error("Out of memory");
+}
+/* try { q2NativeHudOperations(...) } catch NativeQ2HudLayoutError: false with the message; other errors rethrow. */
+static bool layout_operations(ops_job *job, qa_caught_error *caught) {
+  memset(job->out, 0, sizeof *job->out);
+  if (qa_try(ops_run, job, caught)) return true;
+  if (strcmp(caught->name, "NativeQ2HudLayoutError") != 0) qa_rethrow(caught);
+  qa_native_q2_hud_operations_free(job->out); /* the operations collected before the error (TS GC) */
+  memset(job->out, 0, sizeof *job->out);
+  return false;
+}
+static void current(qa_app_q2_native_hud *hud, double revision, qa_app_q2_hud_assert_fn assert_current, void *assert_ctx) {
+  if (assert_current != NULL) assert_current(assert_ctx);
+  if (revision != hud->revision) qa_raise("Error", 0, 0, "Native HUD media is retired");
+}
+static bool name_listed(const char *const *names, size_t count, const char *name) {
+  for (size_t i = 0; i < count; i++) if (strcmp(names[i], name) == 0) return true;
+  return false;
+}
+static void ops_release(void *ops) { qa_native_q2_hud_operations_free(ops); }
 void qa_app_q2_native_hud_prepare(qa_app_q2_native_hud *hud, qa_content_id content,
-    const qa_app_q2_hud_assets *assets, const qa_native_q2_hud_frame *frame,
+    qa_app_application_assets *assets, const qa_native_q2_hud_frame *frame,
     qa_ui_draw_context context, double scale, const char *mode,
     qa_app_q2_hud_assert_fn assert_current, void *assert_ctx,
     const qa_native_q2_hud_arsenal *arsenal, const qa_app_native_q2_hud_rendering *environment) {
+  if (mode == NULL) mode = "replace-status";
   if (hud->content == NULL || strcmp(hud->content, content) != 0) {
     qa_app_q2_native_hud_clear(hud);
     hud->content = dup_text(content);
@@ -99,60 +135,93 @@ void qa_app_q2_native_hud_prepare(qa_app_q2_native_hud *hud, qa_content_id conte
     hud->environment.environment.table = &hud->table;
     hud->has_environment = true;
   } else hud->has_environment = false;
-  if (assert_current != NULL) assert_current(assert_ctx);
-  if (revision != hud->revision) qa_range_error("Native HUD media is retired");
+  current(hud, revision, assert_current, assert_ctx);
   qa_rect area = context.binding.safe_area;
-  qa_native_q2_hud_operations ops = {0};
-  qa_native_q2_hud_environment *env = hud->has_environment ? &hud->environment.environment : NULL;
-  if (!qa_q2_native_hud_operations(frame, area.width / scale, area.height / scale, NULL, NULL, mode, arsenal, env, &ops))
-    qa_range_error("Out of memory");
+  qa_native_q2_hud_operations ops;
+  ops_job job = {frame, area.width / scale, area.height / scale, NULL, NULL, mode, arsenal,
+                 hud->has_environment ? &hud->environment.environment : NULL, &ops};
+  qa_caught_error caught;
+  if (!layout_operations(&job, &caught)) {
+    size_t length = strlen(caught.message) + 32;
+    char *text = malloc(length);
+    if (text == NULL) qa_range_error("Out of memory");
+    snprintf(text, length, "Native HUD layout skipped: %s\n", caught.message);
+    qa_app_application_assets_warn_once(assets, "q2-native-hud-layout", text);
+    free(text);
+  }
+  if (hud->has_prepared) { qa_native_q2_hud_operations_free(&hud->prepared); hud->has_prepared = false; }
   if (hud->has_environment) {
-    if (hud->has_prepared) qa_native_q2_hud_operations_free(&hud->prepared);
     hud->prepared = ops;
     hud->has_prepared = true;
   }
-  /* Collect names: conchars, field_3, num/anum digits + minus, op pics. */
-  const char *names[256];
-  size_t name_count = 0;
+  /* ops stays owned by prepared (environment) or is freed below; a raise frees it here. */
+  qa_native_q2_hud_operations *owned = hud->has_environment ? NULL : &ops;
+  qa_cleanup ops_guard;
+  if (owned != NULL) qa_cleanup_push(&ops_guard, ops_release, owned);
+  qa_app_provider_scene_assets provider = qa_app_application_assets_provider(assets, content);
+  current(hud, revision, assert_current, assert_ctx);
+  /* new Set(["conchars", "field_3", ...numbers, ...picture names]) in insertion order. */
+  size_t name_cap = 24 + ops.count;
+  const char **names = malloc(name_cap * sizeof *names);
+  if (names == NULL) qa_range_error("Out of memory");
+  qa_cleanup names_guard;
+  qa_cleanup_push(&names_guard, free, (void *)names);
   char number_names[22][24];
+  size_t name_count = 0, number_at = 0;
   names[name_count++] = "conchars";
   names[name_count++] = "field_3";
-  size_t number_at = 0;
   for (size_t p = 0; p < 2; p++) {
     for (int digit = 0; digit < 10; digit++) {
-      snprintf(number_names[number_at], 24, "%s_%d", p == 0 ? "num" : "anum", digit);
+      snprintf(number_names[number_at], sizeof number_names[number_at], "%s_%d", p == 0 ? "num" : "anum", digit);
       names[name_count++] = number_names[number_at++];
     }
-    snprintf(number_names[number_at], 24, "%s_minus", p == 0 ? "num" : "anum");
+    snprintf(number_names[number_at], sizeof number_names[number_at], "%s_minus", p == 0 ? "num" : "anum");
     names[name_count++] = number_names[number_at++];
   }
-  for (size_t i = 0; i < ops.count && name_count < 256; i++) {
-    if (ops.operations[i].kind == QA_Q2_HUD_OP_PICTURE || ops.operations[i].kind == QA_Q2_HUD_OP_SIZED_PICTURE) {
-      bool seen = false;
-      for (size_t n = 0; n < name_count; n++) if (strcmp(names[n], ops.operations[i].name) == 0) seen = true;
-      if (!seen) names[name_count++] = ops.operations[i].name;
-    }
+  for (size_t i = 0; i < ops.count; i++) {
+    const qa_native_q2_hud_operation *op = &ops.operations[i];
+    if ((op->kind == QA_Q2_HUD_OP_PICTURE || op->kind == QA_Q2_HUD_OP_SIZED_PICTURE) && !name_listed(names, name_count, op->name))
+      names[name_count++] = op->name;
   }
-  for (size_t i = 0; i < name_count; i++) {
+  size_t room = hud->id_count >= MAXIMUM_PICTURES ? 0 : MAXIMUM_PICTURES - hud->id_count;
+  size_t wanted = 0;
+  for (size_t i = 0; i < name_count; i++) if (id_for(hud, names[i]) == NULL) names[wanted++] = names[i];
+  if (wanted > room && !hud->cap_reported) {
+    hud->cap_reported = true;
+    char text[128];
+    snprintf(text, sizeof text, "Native HUD layout names more than %d pictures; the rest are not drawn.\n", MAXIMUM_PICTURES);
+    qa_app_application_assets_warn_once(assets, "q2-native-hud-cap", text);
+  }
+  if (wanted > room) wanted = room;
+  qa_scene_texture_load_options options = {true, false, "clamp", "q2", NULL};
+  for (size_t i = 0; i < wanted; i++) {
     const char *name = names[i];
     if (id_for(hud, name) != NULL) continue;
-    char path[1024];
-    if (name[0] == '/' || name[0] == '\\') snprintf(path, sizeof path, "%s", name + 1);
-    else snprintf(path, sizeof path, "pics/%s.pcx", name);
-    qa_renderer_image image;
-    bool loaded = assets->load_texture(assets->ctx, content, path, &image);
-    if (assert_current != NULL) assert_current(assert_ctx);
-    if (revision != hud->revision) qa_range_error("Native HUD media is retired");
-    if (!loaded && strncmp(path, "players/", 8) == 0)
-      loaded = assets->load_texture(assets->ctx, content, "players/male/grunt_i.pcx", &image);
-    if (assert_current != NULL) assert_current(assert_ctx);
-    if (revision != hud->revision) qa_range_error("Native HUD media is retired");
-    if (!loaded) image = assets->missing_image(assets->ctx, content);
-    char id[2048];
-    snprintf(id, sizeof id, "resource:q2-native-hud:%s/%s", content, path);
+    size_t path_length = strlen(name) + 16;
+    char *path = malloc(path_length);
+    if (path == NULL) qa_range_error("Out of memory");
+    if (name[0] == '/' || name[0] == '\\') snprintf(path, path_length, "%s", name + 1);
+    else snprintf(path, path_length, "pics/%s.pcx", name);
+    qa_cleanup path_guard;
+    qa_cleanup_push(&path_guard, free, path);
+    const qa_scene_texture *texture = qa_scene_texture_loader_load(provider.textures, path, &options);
+    current(hud, revision, assert_current, assert_ctx);
+    if (texture == NULL && strncmp(path, "players/", 8) == 0)
+      texture = qa_scene_texture_loader_load(provider.textures, "players/male/grunt_i.pcx", &options);
+    current(hud, revision, assert_current, assert_ctx);
+    qa_renderer_image image = (texture != NULL ? texture : provider.textures->missing)->image;
+    size_t id_length = strlen(content) + strlen(path) + 32;
+    char *id = malloc(id_length);
+    if (id == NULL) qa_range_error("Out of memory");
+    snprintf(id, id_length, "resource:q2-native-hud:%s/%s", content, path);
     set_picture(hud, name, id, path, image);
+    free(id);
+    qa_cleanup_pop(&path_guard);
+    free(path);
   }
-  if (!hud->has_environment) qa_native_q2_hud_operations_free(&ops);
+  qa_cleanup_pop(&names_guard);
+  free((void *)names);
+  if (owned != NULL) { qa_cleanup_pop(&ops_guard); qa_native_q2_hud_operations_free(owned); }
 }
 static void push_command(qa_ui_draw_command **out, size_t *count, size_t *capacity, qa_ui_draw_command command) {
   if (*count == *capacity) {
@@ -176,9 +245,10 @@ size_t qa_app_q2_native_hud_commands(qa_app_q2_native_hud *hud, const qa_native_
   qa_native_q2_hud_operations fresh = {0};
   const qa_native_q2_hud_operations *ops = &hud->prepared;
   if (!hud->has_prepared) {
-    qa_native_q2_hud_environment *env = hud->has_environment ? &hud->environment.environment : NULL;
-    if (!qa_q2_native_hud_operations(frame, area.width / scale, area.height / scale, binding, binding_ctx, mode, arsenal, env, &fresh))
-      qa_range_error("Out of memory");
+    ops_job job = {frame, area.width / scale, area.height / scale, binding, binding_ctx, mode != NULL ? mode : "replace-status",
+                   arsenal, hud->has_environment ? &hud->environment.environment : NULL, &fresh};
+    qa_caught_error caught;
+    (void)layout_operations(&job, &caught); /* a layout error draws no operations */
     ops = &fresh;
   }
   for (size_t i = 0; i < ops->count; i++) {
@@ -228,8 +298,11 @@ size_t qa_app_q2_native_hud_commands(qa_app_q2_native_hud *hud, const qa_native_
       command.color = (qa_vec4){1, 1, 1, 1};
       push_command(&commands, &count, &capacity, command);
     } else if (font != NULL) {
-      /* TS text op: per-byte conchars glyphs. TextEncoder bytes are
-       * UTF-8; op.text bytes are read as-is (ASCII HUD text). */
+      /* TS: bytes = op.xor ? new TextEncoder().encode(op.text) : null; code = bytes?.[i] ?? op.text.charCodeAt(i).
+       * The xor text (rerelease names and localized strings) is UTF-8 in C, so its bytes are the TextEncoder bytes.
+       * Every other HUD text is a Q2 configstring, client name, inventory label or an ASCII control glyph: TS decodes
+       * those one char per byte (String.fromCharCode in network/q2/message.ts, latin1 guest records), and the C
+       * strings keep the raw bytes, so op.text[i] is charCodeAt(i) and strlen is op.text.length. */
       size_t length = strlen(op->text);
       for (size_t index = 0; index < length; index++) {
         unsigned int byte = (unsigned char)op->text[index];

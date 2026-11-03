@@ -21,8 +21,8 @@ static void init_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time) return;
@@ -34,8 +34,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -58,7 +58,7 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_corpse(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-16, -16, -8);
@@ -80,7 +80,7 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_flipper_definition(void) {
   flipper_definition.initialize = (qa_q2m_handler){NULL, init_fn};
   flipper_definition.reactions.pain = pain_fn;
   flipper_definition.reactions.die = die_fn;
-  flipper_definition.callbacks = qa_q2rm_merge_callbacks(
+  flipper_definition.callbacks = qa_q2rm_merge_callbacks(NULL, 
       flipper_definition.callbacks, flipper_definition.callback_count,
       extra_callbacks, 1, &flipper_definition.callback_count);
   flipper_ready = true;

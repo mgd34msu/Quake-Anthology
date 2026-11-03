@@ -37,8 +37,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   if (qa_q2rm_check_gib(c)) {
     q2rm_snd(c, "misc/udeath.wav", 2);
@@ -79,7 +79,7 @@ static void rail_fn(void *ctx, qa_q2m_context *c) {
       : frame == qa_q2rm_arachnid_frames_value.rails_up7 ? qa_q2rm_rereleaseFlash_value.ARACHNID_RAIL_UP1
       : frame == qa_q2rm_arachnid_frames_value.rails_up11 ? qa_q2rm_rereleaseFlash_value.ARACHNID_RAIL_UP2
       : qa_q2rm_rereleaseFlash_value.ARACHNID_RAIL1;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, flash));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, flash));
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(c->entity->pos1, start));
   c->weapons.fire_rail(c->weapons.ctx, c->entity, c->game, start, direction, 35, 100);
   qa_q2rm_monster_flash(c, flash, start, direction);

@@ -1,5 +1,6 @@
 /* Port of src/content/mods/qvm-presentation.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/qvm_presentation.h"
+#include "qa/content/mods/declaration.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -49,7 +50,7 @@ static bool fpresent(const qa_save_reader *r, const char *name) {
   return p;
 }
 static void *xalloc(const qa_save_reader *r, size_t count, size_t size) {
-  void *p = count > 0 ? calloc(count, size) : NULL;
+  void *p = count > 0 ? qa_mod_declaration_calloc(count, size) : NULL;
   if (count > 0 && p == NULL) qa_save_reader_fail(r, "out of memory");
   return p;
 }
@@ -71,7 +72,7 @@ static qa_double_view read_int_list(const qa_save_reader *r, const char *name) {
  * src/content/mounts/paths.ts). See callbacks.c. */
 static char *normalize_resource_path(const char *path) {
   size_t n = strlen(path);
-  char *out = (char *)malloc(n + 1);
+  char *out = (char *)qa_mod_declaration_malloc(n + 1);
   if (out == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i <= n; i++) out[i] = path[i] == '\\' ? '/' : path[i];
   bool bad = n == 0;
@@ -184,7 +185,7 @@ qa_qvm_mod_presentation_declaration *qa_read_qvm_mod_presentation_declaration(
   static const char *const hud_modes[] = {"overlay", "replace-status"};
   static const char *const parts[] = {"body", "lower", "upper", "head"};
   qa_qvm_mod_presentation_declaration *decl =
-      (qa_qvm_mod_presentation_declaration *)calloc(1, sizeof *decl);
+      (qa_qvm_mod_presentation_declaration *)qa_mod_declaration_calloc(1, sizeof *decl);
   if (decl == NULL) return NULL;
   qa_save_reader storage = field(reader, "storage");
   qa_save_reader centities = field(&storage, "centities");
@@ -224,6 +225,9 @@ qa_qvm_mod_presentation_declaration *qa_read_qvm_mod_presentation_declaration(
   bool has_axis = fpresent(&storage, "viewAxis");
   if (has_angles) view_angles = read_int_list(&storage, "viewAngles");
   if (has_axis) view_axis = read_int_list(&storage, "viewAxis");
+  /* A kept list is non-NULL even when empty (qa_mod_declaration_present). */
+  if (has_angles) view_angles.values = qa_mod_declaration_present(view_angles.values);
+  if (has_axis) view_axis.values = qa_mod_declaration_present(view_axis.values);
   double cent_address = fint(&centities, "address", 0);
   double cent_stride = fint(&centities, "stride", 1);
   double cent_capacity = fint(&centities, "capacity", 1);
@@ -293,7 +297,7 @@ qa_qvm_mod_presentation_declaration *qa_read_qvm_mod_presentation_declaration(
           qa_save_reader_destroy(&entry);
         }
         qa_save_reader_destroy(&list);
-        scene->body.mesh.parts = rows;
+        scene->body.mesh.parts = qa_mod_declaration_present(rows);
         scene->body.mesh.part_count = count;
       }
       qa_save_reader_destroy(&mesh);

@@ -36,6 +36,8 @@ typedef struct qa_q2_mvd_viewer {
   double queued_bytes;
   bool identified, authorized, active, needs_gamestate, closed;
   double flags, sequence;
+  char remote_address[64]; /* TS socket.remoteAddress, for the per-address cap */
+  double deadline_ms;      /* TS 10 s authorization deadline (monotonic ms) */
 } qa_q2_mvd_viewer;
 
 /* TS MvdBroadcast (latest capture deep-copied, messages dropped

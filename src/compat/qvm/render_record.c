@@ -34,13 +34,15 @@ static qa_vec4 read_color(const qa_qvm_writable_view *view, int64_t offset) {
   return result;
 }
 
-void qa_qvm_read_ref_entity(const qa_qvm_writable_view *view, qa_qvm_source_ref_entity_record *out) {
+void qa_qvm_read_ref_entity(const qa_qvm_writable_view *view, qa_q3_pres_source_ref_entity_record *out) {
   require_bytes(view, QA_QVM_REF_ENTITY_BYTES, "QVM refEntity_t");
   int32_t type = qa_qvm_writable_view_get_int32(view, 0, true);
   if (type < 0 || type > 7)
     qa_binary_error("QVM refEntity_t", 0, "unsupported entity type %d", (int)type);
+  memset(out, 0, sizeof *out);
   out->render_flags = qa_qvm_writable_view_get_int32(view, 4, true);
-  out->model = qa_qvm_writable_view_get_int32(view, 8, true);
+  out->model.is_handle = true;
+  out->model.handle = qa_qvm_writable_view_get_int32(view, 8, true);
   out->lighting_origin = read_vector(view, 12);
   out->shadow_plane = qa_qvm_writable_view_get_float32(view, 24, true);
   out->axis = read_axis(view, 28);
@@ -51,20 +53,23 @@ void qa_qvm_read_ref_entity(const qa_qvm_writable_view *view, qa_qvm_source_ref_
   out->old_frame = qa_qvm_writable_view_get_int32(view, 96, true);
   out->back_lerp = qa_qvm_writable_view_get_float32(view, 100, true);
   out->skin_num = qa_qvm_writable_view_get_int32(view, 104, true);
-  out->custom_skin = qa_qvm_writable_view_get_int32(view, 108, true);
-  out->custom_shader = qa_qvm_writable_view_get_int32(view, 112, true);
+  out->custom_skin.is_handle = true;
+  out->custom_skin.handle = qa_qvm_writable_view_get_int32(view, 108, true);
+  out->custom_shader.is_handle = true;
+  out->custom_shader.handle = qa_qvm_writable_view_get_int32(view, 112, true);
   out->shader_rgba = read_color(view, 116);
   out->shader_tex_coord.x = (double)qa_qvm_writable_view_get_float32(view, 120, true);
   out->shader_tex_coord.y = (double)qa_qvm_writable_view_get_float32(view, 124, true);
   out->shader_time = qa_qvm_writable_view_get_float32(view, 128, true);
   out->radius = qa_qvm_writable_view_get_float32(view, 132, true);
   out->rotation = qa_qvm_writable_view_get_float32(view, 136, true);
-  static const char *const kinds[] = {"model", "poly", "sprite", "beam",
-                                      "rail-core", "rail-rings", "lightning", "portal-surface"};
+  static const qa_q3_pres_ref_entity_kind kinds[] = {
+      QA_Q3_PRES_REF_MODEL,      QA_Q3_PRES_REF_POLY,       QA_Q3_PRES_REF_SPRITE,    QA_Q3_PRES_REF_BEAM,
+      QA_Q3_PRES_REF_RAIL_CORE,  QA_Q3_PRES_REF_RAIL_RINGS, QA_Q3_PRES_REF_LIGHTNING, QA_Q3_PRES_REF_PORTAL};
   out->kind = kinds[type];
 }
 
-void qa_qvm_read_refdef(const qa_qvm_writable_view *view, qa_qvm_refdef *out) {
+void qa_qvm_read_refdef(const qa_qvm_writable_view *view, qa_q3_pres_refdef *out) {
   require_bytes(view, QA_QVM_REFDEF_BYTES, "QVM refdef_t");
   out->x = qa_qvm_writable_view_get_int32(view, 0, true);
   out->y = qa_qvm_writable_view_get_int32(view, 4, true);
@@ -76,20 +81,16 @@ void qa_qvm_read_refdef(const qa_qvm_writable_view *view, qa_qvm_refdef *out) {
   out->view_axis = read_axis(view, 36);
   out->time = qa_qvm_writable_view_get_int32(view, 72, true);
   out->render_flags = qa_qvm_writable_view_get_int32(view, 76, true);
-  memcpy(out->area_mask, view->bytes + view->start + 80, 32);
+  for (int i = 0; i < 32; i++) out->area_mask[i] = qa_qvm_writable_view_get_uint8(view, 80 + i);
+  out->area_mask_length = 32;
   for (int row = 0; row < 8; row++) {
     int64_t offset = 112 + row * 32;
-    bool has_nul = false;
-    for (int i = 0; i < 32; i++) {
-      out->text[row][i] = qa_qvm_writable_view_get_uint8(view, offset + i);
-      if (out->text[row][i] == 0) has_nul = true;
-    }
-    if (!has_nul)
-      qa_binary_error("QVM refdef_t", offset, "render text row has no NUL within 32 bytes");
+    for (int i = 0; i < 32; i++) out->text.rows[row].bytes[i] = qa_qvm_writable_view_get_uint8(view, offset + i);
+    out->text.rows[row].length = 32;
   }
 }
 
-void qa_qvm_read_poly_vertices(const qa_qvm_writable_view *view, int64_t count, qa_qvm_ref_poly_vertex *out) {
+void qa_qvm_read_poly_vertices(const qa_qvm_writable_view *view, int64_t count, qa_q3_pres_ref_poly_vertex *out) {
   if (count < 0 || count > view->length / QA_QVM_POLY_VERTEX_BYTES)
     qa_binary_error("QVM polyVert_t", 0, "invalid vertex count %lld for %lld bytes",
                     (long long)count, (long long)view->length);

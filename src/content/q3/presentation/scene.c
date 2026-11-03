@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/scene.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/scene.h"
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
@@ -138,6 +140,7 @@ struct qa_q3_pres_scene_recorder {
   qa_q3_pres_admitted_ref_entity *entities; size_t entity_count, entity_cap;
   qa_q3_pres_admitted_poly *polygons; size_t polygon_count, polygon_cap;
   qa_scene_light *lights; size_t light_count, light_cap;
+  bool rejected;
 };
 static bool grow(void **arr, size_t *cap, size_t need, size_t sz) {
   if (*cap >= need) return true;
@@ -168,14 +171,30 @@ void qa_q3_pres_scene_recorder_clear_scene(qa_q3_pres_scene_recorder *r) {
   r->polygon_count = 0;
   r->light_count = 0;
 }
+/* A server controls these values through entity state, and one bad record must not end the frame. */
+static void reject(qa_q3_pres_scene_recorder *r, const char *what) {
+  if (r->rejected) return;
+  r->rejected = true;
+  char message[160];
+  snprintf(message, sizeof message, "^3WARNING: %s: non-finite or out-of-range coordinates, dropped\n", what);
+  r->target.print(r->target.ctx, message);
+}
 void qa_q3_pres_scene_recorder_add_ref_entity(qa_q3_pres_scene_recorder *r,
                                               const qa_q3_pres_admitted_ref_entity *entity) {
+  if (!qa_q3_pres_ref_entity_is_admissible(entity)) {
+    reject(r, "RE_AddRefEntityToScene");
+    return;
+  }
   if (!grow((void **)&r->entities, &r->entity_cap, r->entity_count + 1, sizeof *r->entities)) oom_abort();
   r->entities[r->entity_count++] = qa_q3_pres_copy_admitted_ref_entity(entity);
 }
 void qa_q3_pres_scene_recorder_add_poly(qa_q3_pres_scene_recorder *r, const qa_q3_pres_ref_poly *poly) {
   if (poly->shader == NULL) {
     r->target.print(r->target.ctx, "^3WARNING: RE_AddPolyToScene: NULL poly shader\n");
+    return;
+  }
+  if (!qa_q3_pres_ref_poly_is_admissible(poly)) {
+    reject(r, "RE_AddPolyToScene");
     return;
   }
   size_t fog_count = 0;
@@ -185,6 +204,10 @@ void qa_q3_pres_scene_recorder_add_poly(qa_q3_pres_scene_recorder *r, const qa_q
   r->polygon_count++;
 }
 void qa_q3_pres_scene_recorder_add_light(qa_q3_pres_scene_recorder *r, qa_q3_pres_dynamic_light light) {
+  if (!isfinite(light.origin.x + light.origin.y + light.origin.z + light.radius + light.color.x + light.color.y + light.color.z)) {
+    reject(r, "RE_AddLightToScene");
+    return;
+  }
   if (!grow((void **)&r->lights, &r->light_cap, r->light_count + 1, sizeof *r->lights)) oom_abort();
   qa_scene_light *entry = &r->lights[r->light_count++];
   memset(entry, 0, sizeof *entry);
@@ -264,7 +287,9 @@ void qa_q3_pres_scene_recorder_render_scene(qa_q3_pres_scene_recorder *r, const 
   scene.source = qa_q3_pres_copy_refdef(input);
   if (!qa_q3_pres_scene_recorder_capture(r, &scene.content)) oom_abort();
   scene.seat = r->target.seat;
-  scene.viewport = (qa_rect){r->target.viewport.x + scene.source.x, r->target.viewport.y + scene.source.y,
+  /* TS this.target.viewport: the shared Rect when the target carries one. */
+  qa_rect target_viewport = r->target.viewport_ref != NULL ? *r->target.viewport_ref : r->target.viewport;
+  scene.viewport = (qa_rect){target_viewport.x + scene.source.x, target_viewport.y + scene.source.y,
                              scene.source.width, scene.source.height};
   memset(&scene.camera, 0, sizeof scene.camera);
   scene.camera.viewport = scene.viewport;

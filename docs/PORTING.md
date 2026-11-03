@@ -32,6 +32,17 @@ stale; when a doc and the code disagree, the code wins.
   TypeScript throw propagates to the top-level crash handler, so failing
   loudly preserves observable behavior. Recoverable "full" conditions keep
   their exact sentinel returns (`-1`, `0`, `false`).
+- Aborting is correct only when the TypeScript throw reaches the top level. When
+  TypeScript catches and continues, the recovery is behavior and must exist in C:
+  dropping a peer, recording a diagnostic, settling a fallback, retiring an actor,
+  cancelling a weapon or item. Use an error return where the TS function's
+  callers are all in reach, or `qa_raise`/`qa_try` with `qa_cleanup_push` nodes
+  (`include/qa/foundation/support.h`) where frames must unwind. That is the one
+  mechanism: do not add another. A raise nobody catches prints and aborts, so
+  converting an abort to `qa_raise` is safe. A
+  `catch { cleanup(); throw }` that ends at the top level needs no cleanup in C.
+  Input from the network, files, or guest code must never be able to abort the
+  process where TypeScript would recover.
 - Allocation failure has no TypeScript counterpart (GC never reports it);
   constructors return `bool` for OOM only. Invalid arguments still abort.
 - `number` integers checked with `Number.isSafeInteger` become `int64_t`
@@ -46,6 +57,36 @@ stale; when a doc and the code disagree, the code wins.
   uses `-ffp-contract=off` and never `-ffast-math`, so binary32 results
   match the TypeScript bit for bit (verified by ported tests).
 - Closures become a function pointer plus `void *ctx`.
+- Evaluation order: TypeScript evaluates call arguments, object and array
+  literals, and operands left to right; C does not (GCC evaluates call
+  arguments right to left, and the right side of `=` before the left). When
+  two operands of one expression have effects that can see each other (reads
+  from one cursor or random stream, a counter bump and a read of it), hoist
+  them into locals in TypeScript order: `qa_vec3 v; v.x = read(r);
+  v.y = read(r); v.z = read(r);`. `tools/eval_order_audit.py` finds them.
+- Numbers printed where TypeScript uses `String(n)` or a template literal use
+  `qa_net_js_number` (or `QA_JS_NUMBER(n)` with `%s`), never `%g`/`%.17g`:
+  `%g` loses digits and spells `0.00001` as `1e-05`.
+- JS number semantics: where the TypeScript runs a JS built-in or operator,
+  the C must return what Bun (JavaScriptCore) returns, NaN, -0, infinities and
+  out-of-range values included. Use `include/qa/foundation/js.h`, never the C
+  library look-alike: `qa_js_min`/`qa_js_max` for Math.min/max (fmin/fmax drop
+  NaN); `qa_js_round` for Math.round (round/lround tie away from zero,
+  floor(x + 0.5) fails at 0.49999999999999994); `qa_js_pow` for Math.pow and
+  `**` (JSC squares integer exponents 0..1000, so glibc pow differs in the
+  last bit); `qa_js_hypot2/3` for Math.hypot (three arguments are not
+  sqrt(x*x + y*y + z*z) or nested hypot); `qa_js_to_int32`/`to_uint32`/
+  `to_uint8`... for `| 0`, `>>> 0`, shifts, masks and typed-array stores (a C
+  cast of NaN or an out-of-range double is undefined); `qa_js_bit_and/or/xor/
+  not`, `qa_js_shl/shr/ushr` (or int32 operands) for JS bitwise operators on
+  numbers, never int64_t arithmetic, which keeps bits above 2^31 and never
+  goes negative; `qa_js_parse_int`/`parse_float`/`string_to_number` for
+  parseInt/parseFloat/Number(string) (strtol/strtod accept "inf", hex floats
+  and signs before 0x); `qa_js_to_fixed` for toFixed (printf rounds ties to
+  even and prints "-0.00"); `qa_js_sort`/`qa_js_stable_sort` for
+  Array.prototype.sort (qsort is unstable). A floating condition treats NaN
+  as true in C and false in JS. `tools/js_semantics_audit.py` finds the
+  sites; classify each one it flags in `tools/js_semantics_audit.tsv`.
 - `async`/promises and Bun FFI have no C counterpart: platform libraries
   (SDL2, OpenGL, FreeType, Vorbis, Theora) are linked directly, and
   asynchronous flows become synchronous or explicitly pumped state

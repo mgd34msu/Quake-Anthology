@@ -86,9 +86,15 @@ void qa_active_captions_free(qa_active_caption *captions, size_t count);
 void qa_caption_cue_clear(qa_caption_cue *cue);
 void qa_caption_cues_free(qa_caption_cue *cues, size_t count);
 
-/* TS parseSubtitleText. False only on OOM. */
+/* TS parseSubtitleText's `skipped` callback: one reason per invalid cue. */
+typedef void (*qa_subtitle_skipped_fn)(void *ctx, const char *reason);
+
+/* TS parseSubtitleText. False only on OOM. An invalid cue raises (Error or
+ * RangeError, catchable with qa_try) when skipped is NULL; otherwise it is
+ * reported through skipped and parsing continues, as in TS. */
 bool qa_parse_subtitle_text(const char *text, size_t length,
-                            const char *name_space, qa_caption_cue **out,
+                            const char *name_space, qa_subtitle_skipped_fn skipped,
+                            void *skipped_ctx, qa_caption_cue **out,
                             size_t *out_count);
 
 #endif

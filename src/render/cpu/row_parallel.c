@@ -1,9 +1,24 @@
-/* Port of src/render/cpu/row-parallel.ts (direct/pumped). GPL-2.0-or-later. */
+/* Port of src/render/cpu/row-parallel.ts. Row-parallel CPU rasterization: a
+ * synchronous pthread pool sharing one framebuffer. Every worker receives the
+ * same setup list but rasterizes only the row bands it claims, so each pixel has
+ * exactly one owner processing triangles in draw order and output is bit-identical
+ * to the serial kernel. GPL-2.0-or-later. */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE 1
+#endif
 #include "qa/render/cpu/row_parallel.h"
 #include "qa/foundation/support.h"
+#include "qa/render/cpu/row_worker.h"
+#include <errno.h>
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include "qa/foundation/js.h"
 static const char *const BLEND_FACTORS[]={"zero","one","src-color","one-minus-src-color","dst-color","one-minus-dst-color","src-alpha","one-minus-src-alpha","dst-alpha","one-minus-dst-alpha","src-alpha-saturate"};
 static const char *const BLENDINGS[]={"opaque","alpha","add","multiply","dst-color-inverse-dst-alpha","general"};
 static const char *const DEPTH_TESTS[]={"less-equal","equal","always"};
@@ -12,7 +27,7 @@ static const char *const STENCIL_OPS[]={"keep","increment","decrement"};
 static const char *const ENVS[]={"modulate","add","replace"};
 static const char *const FOG_EFFECTS[]={"color","none","rgb","alpha","rgba","overlay"};
 static double code_of(const char *const *vals,size_t n,const char *v){ for(size_t i=0;i<n;i++)if(!strcmp(vals[i],v))return (double)i; qa_range_error("Unknown row-parallel enum value %s",v); }
-static const char *uncode(const char *const *vals,size_t n,double v){ long i=(long)v; if(i<0||(size_t)i>=n)qa_range_error("Invalid row-parallel enum code"); return vals[i]; }
+static const char *uncode(const char *const *vals,size_t n,double v){ if(!(v>=0&&v<(double)n)||floor(v)!=v)qa_range_error("Invalid row-parallel enum code"); return vals[(size_t)v]; }
 #define N(a) (sizeof(a)/sizeof((a)[0]))
 void qa_encode_row_setup(double *data,size_t data_count,double offset_d,const qa_triangle_setup *s,qa_row_registries reg){
   size_t o=(size_t)offset_d; if(o+QA_ROW_SETUP_STRIDE>data_count)qa_range_error("Row setup encoding is outside its job buffer");
@@ -82,57 +97,195 @@ qa_triangle_setup qa_decode_row_setup(const double *data,size_t data_count,doubl
   s.stencil_depth_fail=uncode(STENCIL_OPS,N(STENCIL_OPS),at(data,data_count,o,81));s.stencil_depth_pass=uncode(STENCIL_OPS,N(STENCIL_OPS),at(data,data_count,o,82));
   return s;
 }
-typedef struct pimpl { qa_row_shared_framebuffer shared; qa_cpu_framebuffer fb; qa_cpu_sample sampled; bool closed; double workers;
-  const void **tex_keys; qa_bound_texture *tex_vals; size_t tex_count, tex_cap;
-  const void **lit_keys; qa_batch_lighting *lit_vals; size_t lit_count, lit_cap;
-  const void **dep_keys; qa_depth_image_level *dep_vals; size_t dep_count, dep_cap;
-  double *job; size_t job_cap; } pimpl;
-static double pool_tex_id(void *ctx,const qa_bound_texture *t){ pimpl *p=(pimpl*)ctx; if(t->kind==QA_BOUND_TEXTURE_INCOMPLETE)return -1;
-  for(size_t i=0;i<p->tex_count;i++)if(p->tex_keys[i]==(const void*)t->levels)return (double)i;
-  if(p->tex_count==p->tex_cap){ size_t nc=p->tex_cap?p->tex_cap*2:16; p->tex_keys=(const void**)realloc(p->tex_keys,nc*sizeof *p->tex_keys); p->tex_vals=(qa_bound_texture*)realloc(p->tex_vals,nc*sizeof *p->tex_vals); if(!p->tex_keys||!p->tex_vals)qa_range_error("row parallel allocation failed"); p->tex_cap=nc; }
-  size_t id=p->tex_count++; p->tex_keys[id]=(const void*)t->levels; p->tex_vals[id]=*t; return (double)id; }
+
+/* Registries. TS keys images and lighting by object identity. C setups carry these
+ * structs by value, so identity becomes field equality: two equal structs read the
+ * same memory and shade the same. Each culled light set has its own `lights`
+ * storage and so its own id, like each object cullTriangleLights creates in TS. */
+typedef struct lit_slot { uint64_t hash; uint32_t index_plus_one; } lit_slot;
+typedef struct pimpl {
+  qa_row_shared_framebuffer shared; qa_cpu_framebuffer fb; qa_cpu_sample sampled;
+  qa_row_control control; qa_row_worker *workers; pthread_t *threads; size_t worker_count, started;
+  qa_row_texture_registration *textures; size_t texture_count, texture_cap;
+  qa_row_lighting_registration *lightings; size_t lighting_count, lighting_cap;
+  lit_slot *lit_slots; size_t lit_slot_cap;
+  qa_row_depth_registration *depths; size_t depth_count, depth_cap, pending_depth_start;
+  double next_texture, next_lighting, next_depth;
+  double *job; size_t job_cap;
+} pimpl;
+static void *grow(void *data,size_t *cap,size_t element){
+  size_t next=*cap?*cap*2:16; void *grown=realloc(data,next*element);
+  if(!grown)qa_range_error("row parallel allocation failed");
+  *cap=next; return grown;
+}
+static bool same_texture(const qa_bound_texture *a,const qa_bound_texture *b){
+  if(a->kind!=b->kind||strcmp(a->internal_format,b->internal_format))return false;
+  if(a->kind==QA_BOUND_TEXTURE_CONSTANT)return a->sample.r==b->sample.r&&a->sample.g==b->sample.g&&a->sample.b==b->sample.b&&a->sample.a==b->sample.a;
+  return a->levels==b->levels&&a->level_count==b->level_count&&!strcmp(a->wrap,b->wrap)&&a->minify_linear==b->minify_linear&&a->magnify_linear==b->magnify_linear
+    &&!strcmp(a->mipmapping,b->mipmapping)&&a->magnification_limit==b->magnification_limit
+    &&a->border_color.x==b->border_color.x&&a->border_color.y==b->border_color.y&&a->border_color.z==b->border_color.z&&a->border_color.w==b->border_color.w;
+}
+static double pool_tex_id(void *ctx,const qa_bound_texture *t){ pimpl *p=(pimpl*)ctx;
+  if(t->kind==QA_BOUND_TEXTURE_INCOMPLETE)return -1;
+  for(size_t i=0;i<p->texture_count;i++)if(same_texture(&p->textures[i].texture,t))return p->textures[i].id;
+  if(p->texture_count==p->texture_cap)p->textures=(qa_row_texture_registration*)grow(p->textures,&p->texture_cap,sizeof *p->textures);
+  qa_row_texture_registration *r=&p->textures[p->texture_count++]; r->id=p->next_texture++; r->texture=*t; return r->id;
+}
+static bool optional_str_eq(const char *a,const char *b){ return a==b||(a&&b&&!strcmp(a,b)); }
+static bool same_lighting(const qa_batch_lighting *a,const qa_batch_lighting *b){
+  return a->lights==b->lights&&a->light_count==b->light_count&&a->world_positions==b->world_positions&&a->world_position_count==b->world_position_count
+    &&a->normals==b->normals&&a->normal_count==b->normal_count&&a->atlas==b->atlas&&a->model_shadow_lights==b->model_shadow_lights&&a->model_shadow_light_count==b->model_shadow_light_count
+    &&a->has_shade_scale==b->has_shade_scale&&(!a->has_shade_scale||a->shade_scale==b->shade_scale)
+    &&a->atlas_value.texel_size==b->atlas_value.texel_size&&a->atlas_value.near_plane==b->atlas_value.near_plane
+    &&!strcmp(a->kind,b->kind)&&optional_str_eq(a->pass,b->pass);
+}
+static uint64_t lighting_hash(const qa_batch_lighting *l){
+  const uintptr_t fields[5]={(uintptr_t)l->lights,(uintptr_t)l->world_positions,(uintptr_t)l->normals,(uintptr_t)l->model_shadow_lights,(uintptr_t)l->light_count};
+  uint64_t h=1469598103934665603ULL;
+  for(size_t i=0;i<5;i++){ h^=(uint64_t)fields[i]; h*=1099511628211ULL; h^=h>>29; }
+  return h;
+}
+static void lit_slot_insert(lit_slot *slots,size_t cap,uint64_t hash,uint32_t index_plus_one){
+  size_t i=(size_t)hash&(cap-1); while(slots[i].index_plus_one)i=(i+1)&(cap-1);
+  slots[i].hash=hash; slots[i].index_plus_one=index_plus_one;
+}
 static double pool_lit_id(void *ctx,const qa_batch_lighting *l){ pimpl *p=(pimpl*)ctx;
-  for(size_t i=0;i<p->lit_count;i++)if(p->lit_keys[i]==(const void*)l->world_positions&&p->lit_vals[i].kind==l->kind)return (double)i;
-  if(p->lit_count==p->lit_cap){ size_t nc=p->lit_cap?p->lit_cap*2:16; p->lit_keys=(const void**)realloc(p->lit_keys,nc*sizeof *p->lit_keys); p->lit_vals=(qa_batch_lighting*)realloc(p->lit_vals,nc*sizeof *p->lit_vals); if(!p->lit_keys||!p->lit_vals)qa_range_error("row parallel allocation failed"); p->lit_cap=nc; }
-  size_t id=p->lit_count++; p->lit_keys[id]=(const void*)l->world_positions; p->lit_vals[id]=*l; return (double)id; }
-static double pool_dep_id(void *ctx,const qa_depth_image_level *d){ pimpl *p=(pimpl*)ctx; if(d==NULL)return -1;
-  for(size_t i=0;i<p->dep_count;i++)if(p->dep_keys[i]==(const void*)d->pixels)return (double)i;
-  if(p->dep_count==p->dep_cap){ size_t nc=p->dep_cap?p->dep_cap*2:16; p->dep_keys=(const void**)realloc(p->dep_keys,nc*sizeof *p->dep_keys); p->dep_vals=(qa_depth_image_level*)realloc(p->dep_vals,nc*sizeof *p->dep_vals); if(!p->dep_keys||!p->dep_vals)qa_range_error("row parallel allocation failed"); p->dep_cap=nc; }
-  size_t id=p->dep_count++; p->dep_keys[id]=(const void*)d->pixels; p->dep_vals[id]=*d; return (double)id; }
-static qa_bound_texture pool_tex(void *ctx,double id){ pimpl *p=(pimpl*)ctx; qa_bound_texture o; memset(&o,0,sizeof o); o.kind=QA_BOUND_TEXTURE_INCOMPLETE; if(id==-1)return o; long i=(long)id; if(i<0||(size_t)i>=p->tex_count)qa_range_error("Row worker missing texture"); return p->tex_vals[i]; }
-static qa_batch_lighting pool_lit(void *ctx,double id){ pimpl *p=(pimpl*)ctx; long i=(long)id; if(i<0||(size_t)i>=p->lit_count)qa_range_error("Row worker missing lighting"); return p->lit_vals[i]; }
-static const qa_depth_image_level *pool_dep(void *ctx,double id){ pimpl *p=(pimpl*)ctx; if(id==-1)return NULL; long i=(long)id; if(i<0||(size_t)i>=p->dep_count)qa_range_error("Row worker missing depth"); return &p->dep_vals[i]; }
-static double configured_workers(void){ const char *raw=getenv("QTS_CPU_WORKERS"); if(raw){ char *end=NULL; long v=strtol(raw,&end,10); if(end==raw)return 0; if(v<0)v=0; if(v>16)v=16; return (double)v; } return 1; }
+  uint64_t hash=lighting_hash(l);
+  if(p->lit_slot_cap){
+    for(size_t i=(size_t)hash&(p->lit_slot_cap-1);p->lit_slots[i].index_plus_one;i=(i+1)&(p->lit_slot_cap-1)){
+      if(p->lit_slots[i].hash!=hash)continue;
+      const qa_row_lighting_registration *r=&p->lightings[p->lit_slots[i].index_plus_one-1];
+      if(same_lighting(&r->parameters,l))return r->id;
+    }
+  }
+  if((p->lighting_count+1)*2>p->lit_slot_cap){
+    size_t cap=p->lit_slot_cap?p->lit_slot_cap*2:64; lit_slot *slots=(lit_slot*)calloc(cap,sizeof *slots);
+    if(!slots)qa_range_error("row parallel allocation failed");
+    for(size_t i=0;i<p->lit_slot_cap;i++)if(p->lit_slots[i].index_plus_one)lit_slot_insert(slots,cap,p->lit_slots[i].hash,p->lit_slots[i].index_plus_one);
+    free(p->lit_slots); p->lit_slots=slots; p->lit_slot_cap=cap;
+  }
+  if(p->lighting_count==p->lighting_cap)p->lightings=(qa_row_lighting_registration*)grow(p->lightings,&p->lighting_cap,sizeof *p->lightings);
+  qa_row_lighting_registration *r=&p->lightings[p->lighting_count++]; r->id=p->next_lighting++; r->parameters=*l;
+  lit_slot_insert(p->lit_slots,p->lit_slot_cap,hash,(uint32_t)p->lighting_count);
+  return r->id;
+}
+static double pool_dep_id(void *ctx,const qa_depth_image_level *d){ pimpl *p=(pimpl*)ctx;
+  if(d==NULL)return -1;
+  for(size_t i=0;i<p->depth_count;i++){ const qa_depth_image_level *known=&p->depths[i].depth;
+    if(known->pixels==d->pixels&&known->width==d->width&&known->height==d->height&&known->pixel_count==d->pixel_count)return p->depths[i].id; }
+  if(p->depth_count==p->depth_cap)p->depths=(qa_row_depth_registration*)grow(p->depths,&p->depth_cap,sizeof *p->depths);
+  qa_row_depth_registration *r=&p->depths[p->depth_count++]; r->id=p->next_depth++; r->depth=*d; return r->id;
+}
+/* os.availableParallelism(): the CPUs this process may run on. */
+static long available_parallelism(void){
+  cpu_set_t set; CPU_ZERO(&set);
+  if(sched_getaffinity(0,sizeof set,&set)==0){ int n=CPU_COUNT(&set); if(n>0)return n; }
+  return sysconf(_SC_NPROCESSORS_ONLN);
+}
+static double configured_workers(void){
+  const char *raw=getenv("QTS_CPU_WORKERS");
+  if(raw){ /* Number.parseInt(raw, 10): a NaN parse means no workers. */
+    double v=qa_js_parse_int(raw,10); /* strtol skipped only ASCII space and clamped at LONG_MAX */
+    return isfinite(v)?qa_js_max(0,qa_js_min(16,v)):0;
+  }
+  long available=available_parallelism();
+  if(available<1)return 0;
+  long count=available-1;
+  return count>4?4:(double)count;
+}
+static struct timespec deadline_after(long seconds){ struct timespec t; clock_gettime(CLOCK_REALTIME,&t); t.tv_sec+=seconds; return t; }
+static void pool_free(pimpl *p){
+  if(p->workers)for(size_t i=0;i<p->worker_count;i++)qa_row_worker_destroy(&p->workers[i]);
+  free(p->workers);free(p->threads);free(p->textures);free(p->lightings);free(p->lit_slots);free(p->depths);free(p->job);
+  qa_row_control_destroy(&p->control); free(p);
+}
+static void pool_stop_threads(pimpl *p){
+  pthread_mutex_lock(&p->control.lock); p->control.shutdown=true; pthread_cond_broadcast(&p->control.job_ready); pthread_mutex_unlock(&p->control.lock);
+  for(size_t i=0;i<p->started;i++)pthread_join(p->threads[i],NULL);
+  p->started=0;
+}
 bool qa_row_parallel_pool_try_create(qa_row_parallel_pool *pool,qa_row_shared_framebuffer shared){
-  pimpl *p=(pimpl*)calloc(1,sizeof *p); if(!p)return false; pool->impl=p; pool->jobs_run=0;
-  p->shared=shared; p->workers=configured_workers();
+  pool->impl=NULL; pool->jobs_run=0; pool->worker_count=0; pool->failure=NULL;
+  double count=configured_workers(); if(count<1)return false;
+  pimpl *p=(pimpl*)calloc(1,sizeof *p); if(!p){ pool->failure="Out of memory"; return false; }
+  if(!qa_row_control_init(&p->control)){ free(p); pool->failure="Row worker synchronization could not be created"; return false; }
+  p->shared=shared; p->worker_count=(size_t)count;
   p->fb.width=shared.width;p->fb.height=shared.height;p->fb.pixels=shared.color;p->fb.color_words=(int32_t*)shared.color;
   p->fb.depth=shared.depth;p->fb.stencil=shared.stencil;p->fb.origin_x=0;p->fb.origin_y=0;p->fb.stride=shared.width;
   p->fb.storage_count=(size_t)(shared.width*shared.height);
-  p->sampled.r=p->sampled.g=p->sampled.b=p->sampled.a=1; return true;
-}
-double qa_row_parallel_pool_worker_count(const qa_row_parallel_pool *pool){ return pool&&pool->impl?((pimpl*)pool->impl)->workers:0; }
-qa_row_registries qa_row_parallel_pool_registries(qa_row_parallel_pool *pool){ qa_row_registries r; r.ctx=pool->impl; r.texture_id=pool_tex_id; r.lighting_id=pool_lit_id; r.depth_id=pool_dep_id; return r; }
-void qa_row_parallel_pool_run(qa_row_parallel_pool *pool,const qa_triangle_setup *setups,size_t count){
-  pimpl *p=(pimpl*)pool->impl; if(p->closed)qa_range_error("Row-parallel pool is closed");
-  size_t need=count*QA_ROW_SETUP_STRIDE;
-  if(need>p->job_cap){ size_t nc=need>8192?need:8192; double *nj=(double*)realloc(p->job,nc*sizeof *nj); if(!nj)qa_range_error("row parallel allocation failed"); p->job=nj;p->job_cap=nc; }
-  qa_row_registries reg=qa_row_parallel_pool_registries(pool);
-  for(size_t i=0;i<count;i++) qa_encode_row_setup(p->job,p->job_cap,(double)(i*QA_ROW_SETUP_STRIDE),&setups[i],reg);
-  double workers=p->workers<1?1:p->workers;
-  double band_rows=fmax(1,ceil(p->shared.height/(workers*4)));
-  double band_count=ceil(p->shared.height/band_rows);
-  /* Direct/pumped: decode each setup once, then claim bands in order. */
-  qa_triangle_setup *decoded=(qa_triangle_setup*)calloc(count?count:1,sizeof *decoded);
-  qa_row_decode_storage *storage=(qa_row_decode_storage*)calloc(count?count:1,sizeof *storage);
-  if(!decoded||!storage)qa_range_error("row parallel allocation failed");
-  qa_row_decode_registries dreg; dreg.ctx=p; dreg.texture=pool_tex; dreg.lighting=pool_lit; dreg.depth=pool_dep;
-  for(size_t i=0;i<count;i++) decoded[i]=qa_decode_row_setup(p->job,p->job_cap,(double)(i*QA_ROW_SETUP_STRIDE),dreg,&storage[i]);
-  for(double band=0;band<band_count;band++){
-    double fy=band*band_rows, ly=fmin(p->shared.height-1,fy+band_rows-1);
-    for(size_t i=0;i<count;i++) qa_run_worker_triangle_rows(&decoded[i],&p->fb,&p->sampled,fy,ly);
+  p->sampled.r=p->sampled.g=p->sampled.b=p->sampled.a=1;
+  p->workers=(qa_row_worker*)calloc(p->worker_count,sizeof *p->workers); p->threads=(pthread_t*)calloc(p->worker_count,sizeof *p->threads);
+  bool ok=p->workers&&p->threads;
+  for(size_t i=0;ok&&i<p->worker_count;i++)ok=qa_row_worker_init(&p->workers[i],shared,&p->control);
+  for(size_t i=0;ok&&i<p->worker_count;i++){ ok=pthread_create(&p->threads[i],NULL,qa_row_worker_main,&p->workers[i])==0; if(ok)p->started++; }
+  /* The TS constructor waits 30s for readiness, then closes and yields null. */
+  if(ok){
+    struct timespec deadline=deadline_after(30);
+    pthread_mutex_lock(&p->control.lock);
+    while(ok&&p->control.ready<p->worker_count)ok=pthread_cond_timedwait(&p->control.progress,&p->control.lock,&deadline)!=ETIMEDOUT||p->control.ready>=p->worker_count;
+    pthread_mutex_unlock(&p->control.lock);
   }
-  free(decoded); free(storage); pool->jobs_run++;
+  if(!ok){ pool_stop_threads(p); pool_free(p); pool->failure="Row workers did not start"; return false; }
+  pool->impl=p; pool->worker_count=count; return true;
 }
-void qa_row_parallel_pool_close(qa_row_parallel_pool *pool){ if(!pool||!pool->impl)return; pimpl *p=(pimpl*)pool->impl; if(p->closed)return; p->closed=true;
-  free(p->tex_keys);free(p->tex_vals);free(p->lit_keys);free(p->lit_vals);free(p->dep_keys);free(p->dep_vals);free(p->job); free(p); pool->impl=NULL; }
+double qa_row_parallel_pool_worker_count(const qa_row_parallel_pool *pool){ return pool?pool->worker_count:0; }
+qa_row_registries qa_row_parallel_pool_registries(qa_row_parallel_pool *pool){
+  if(!pool->impl)qa_range_error("Row-parallel pool is closed");
+  qa_row_registries r; r.ctx=pool->impl; r.texture_id=pool_tex_id; r.lighting_id=pool_lit_id; r.depth_id=pool_dep_id; return r;
+}
+typedef struct coordinator_job { pimpl *pool; const qa_triangle_setup *setups; size_t count; double band_rows; } coordinator_job;
+static void coordinator_bands(void *ctx){
+  coordinator_job *job=(coordinator_job*)ctx; pimpl *p=job->pool; double height=p->shared.height, band_count=ceil(height/job->band_rows);
+  for(;;){
+    double band=(double)atomic_fetch_add(&p->control.next,1);
+    if(band>=band_count)break;
+    double first_y=band*job->band_rows, last_y=qa_js_min(height-1,first_y+job->band_rows-1);
+    for(size_t i=0;i<job->count;i++)qa_run_triangle_rows(&job->setups[i],&p->fb,&p->sampled,first_y,last_y);
+  }
+}
+void qa_row_parallel_pool_run(qa_row_parallel_pool *pool,const qa_triangle_setup *setups,size_t count){
+  pimpl *p=(pimpl*)pool->impl; if(!p)qa_range_error("Row-parallel pool is closed");
+  size_t floats=count*QA_ROW_SETUP_STRIDE; double *fresh=NULL;
+  if(p->job==NULL||p->job_cap<floats){
+    size_t cap=floats>8192?floats:8192; double *grown=(double*)realloc(p->job,cap*sizeof *grown);
+    if(!grown)qa_range_error("row parallel allocation failed");
+    p->job=grown; p->job_cap=cap; fresh=grown;
+  }
+  /* Texture and lighting ids last one job, because workers drop their copies when
+   * the next job starts (RENDER-002). Depth ids persist, and only new depths are sent. */
+  p->texture_count=0; p->lighting_count=0; p->pending_depth_start=p->depth_count;
+  if(p->lit_slot_cap)memset(p->lit_slots,0,p->lit_slot_cap*sizeof *p->lit_slots);
+  qa_row_registries registries=qa_row_parallel_pool_registries(pool);
+  for(size_t i=0;i<count;i++)qa_encode_row_setup(p->job,p->job_cap,(double)(i*QA_ROW_SETUP_STRIDE),&setups[i],registries);
+  double workers=(double)p->worker_count, height=p->shared.height;
+  double band_rows=qa_js_max(1,ceil(height/(workers*4)));
+  qa_row_job_message message; memset(&message,0,sizeof message);
+  message.kind="job"; message.count=(double)count; message.band_rows=band_rows; message.job_buffer=fresh; message.job_count=fresh?p->job_cap:0;
+  message.textures=p->textures; message.texture_count=p->texture_count;
+  message.lightings=p->lightings; message.lighting_count=p->lighting_count;
+  message.depths=p->depths+p->pending_depth_start; message.depth_count=p->depth_count-p->pending_depth_start;
+  qa_row_control *control=&p->control;
+  pthread_mutex_lock(&control->lock);
+  atomic_store(&control->next,0); control->done=0; control->failed=false; control->error[0]='\0'; control->message=message; control->generation++;
+  pthread_cond_broadcast(&control->job_ready);
+  pthread_mutex_unlock(&control->lock);
+  /* The coordinator claims bands alongside the workers instead of only blocking on
+   * the barrier: bands are row-disjoint and setups run in order within a band, so
+   * the output is identical. */
+  coordinator_job job; job.pool=p; job.setups=setups; job.count=count; job.band_rows=band_rows;
+  char failure[1024]; bool completed=qa_range_error_catch(coordinator_bands,&job,failure,sizeof failure);
+  struct timespec deadline=deadline_after(120);
+  pthread_mutex_lock(&control->lock);
+  while(control->done<p->worker_count){
+    if(pthread_cond_timedwait(&control->progress,&control->lock,&deadline)==ETIMEDOUT&&control->done<p->worker_count)qa_range_error("Row-parallel rasterization timed out");
+  }
+  bool worker_failed=control->failed; char worker_error[sizeof control->error]; memcpy(worker_error,control->error,sizeof worker_error);
+  pthread_mutex_unlock(&control->lock);
+  pool->jobs_run++;
+  if(worker_failed)qa_range_error("Row-parallel worker failed: %s",worker_error);
+  if(!completed)qa_range_error("%s",failure);
+}
+void qa_row_parallel_pool_close(qa_row_parallel_pool *pool){
+  if(!pool||!pool->impl)return;
+  pimpl *p=(pimpl*)pool->impl; pool_stop_threads(p); pool_free(p); pool->impl=NULL;
+}

@@ -1,5 +1,6 @@
 /* Port of src/movement/q3/prediction.ts. GPL-2.0-or-later. */
 #include "qa/movement/q3/prediction.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -10,6 +11,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/network/common/js_number.h"
 
 static double f32(double v) { return (double)(float)v; }
 static qa_vec3 v3(double x, double y, double z) { qa_vec3 r = {x, y, z}; return r; }
@@ -32,7 +34,7 @@ double qa_q3_command_history_append(qa_q3_command_history *history, qa_q3_user_c
 bool qa_q3_command_history_read(const qa_q3_command_history *history, double number, qa_q3_user_command *out) {
   if (!is_integer(number)) qa_range_error("Invalid user command number");
   if (number > history->number)
-    qa_range_error("CL_GetUserCmd: %.0f >= %.0f", number, history->number);
+    qa_range_error("CL_GetUserCmd: %s >= %s", QA_JS_NUMBER(number), QA_JS_NUMBER(history->number));
   if (number <= (double)qa_int32(history->number - 64)) return false;
   *out = history->commands[qa_int32(number) & 63];
   return true;
@@ -116,6 +118,16 @@ static void push_effects(qa_ordered_movement_effect **effects, size_t *count, si
   }
 }
 
+/* Math.imul(Math.trunc(((serverTime + msec - 1) | 0) / msec), msec): both imul
+ * operands pass through ToInt32, so a zero, fractional or non-finite msec (the
+ * unclamped settings snapshot) wraps or yields 0 instead of a C cast of NaN. */
+double qa_q3_fixed_server_time(double server_time_milliseconds, double movement_milliseconds) {
+  double quotient = trunc((double)qa_int32(server_time_milliseconds + movement_milliseconds - 1) /
+                          movement_milliseconds);
+  uint32_t product = (uint32_t)qa_js_to_int32(quotient) * (uint32_t)qa_js_to_int32(movement_milliseconds);
+  return (double)(int32_t)product;
+}
+
 qa_q3_prediction_output qa_q3_prediction_predict(qa_q3_prediction_runtime *r, qa_q3_prediction_frame frame) {
   qa_q3_prediction_settings settings = r->host.settings(r->host.ctx);
   qa_q3_prediction_snapshot snapshot = frame.snapshot;
@@ -146,9 +158,10 @@ qa_q3_prediction_output qa_q3_prediction_predict(qa_q3_prediction_runtime *r, qa
   else if (settings.movement_milliseconds > 33) r->host.set_movement_milliseconds(r->host.ctx, 33);
   qa_ordered_movement_effect *effects = NULL; size_t effect_count = 0, effect_capacity = 0;
   bool moved = false, hyperspace = false, consumed_teleport = false;
-  for (int32_t number = qa_int32(current - 63); number <= qa_int32(current); number++) {
+  /* TS `number` is a double: the loop ends after current even at INT32_MAX. */
+  for (int64_t number = qa_int32(current - 63); number <= qa_int32(current); number++) {
     qa_q3_user_command read_command;
-    if (r->host.commands.read(r->host.commands.ctx, number, &read_command)) r->command = read_command;
+    if (r->host.commands.read(r->host.commands.ctx, (double)number, &read_command)) r->command = read_command;
     if (settings.fixed) r->predicted.movement = qa_q3_update_prediction_view(r->predicted.movement, frame.health, r->command);
     qa_q3_movement_state ps = r->predicted.movement;
     if (r->command.server_time_milliseconds <= ps.command_time_milliseconds ||
@@ -163,8 +176,10 @@ qa_q3_prediction_output qa_q3_prediction_predict(qa_q3_prediction_runtime *r, qa
         double length = f32(qa_length3(delta));
         if (length > f32(0.1)) {
           if (settings.show_miss != 0) {
-            char buffer[128];
-            snprintf(buffer, sizeof buffer, "Prediction miss: %f\n", length);
+            char buffer[QA_JS_TO_FIXED_CAPACITY + 32];
+            char fixed[QA_JS_TO_FIXED_CAPACITY]; /* length.toFixed(6) */
+            qa_js_to_fixed(length, 6, fixed, sizeof fixed);
+            snprintf(buffer, sizeof buffer, "Prediction miss: %s\n", fixed);
             r->host.warn(r->host.ctx, buffer);
           }
           if (settings.error_decay_integer != 0) {
@@ -178,19 +193,23 @@ qa_q3_prediction_output qa_q3_prediction_predict(qa_q3_prediction_runtime *r, qa
       }
     }
     if (settings.fixed)
-      r->command.server_time_milliseconds = (double)(int32_t)(trunc((double)qa_int32(
-          r->command.server_time_milliseconds + settings.movement_milliseconds - 1) /
-          settings.movement_milliseconds) * (int64_t)settings.movement_milliseconds);
-    qa_q3_movement_input input = r->host.movement_input(r->host.ctx, r->predicted, r->command, number, physics_time);
+      r->command.server_time_milliseconds = qa_q3_fixed_server_time(r->command.server_time_milliseconds,
+                                                                    settings.movement_milliseconds);
+    qa_q3_movement_input input = r->host.movement_input(r->host.ctx, r->predicted, r->command, (double)number, physics_time);
     input.state.kind = QA_MOVEMENT_STATE_Q3; input.state.as.q3 = r->predicted.movement;
     input.arsenal = r->predicted.arsenal; input.animation = r->predicted.animation;
     input.command.kind = QA_USER_COMMAND_Q3; input.command.as.q3 = r->command;
-    input.command_sequence = number; input.execution = "prediction";
+    input.command_sequence = (double)number; input.execution = "prediction";
     input.profile.has_fixed_milliseconds = settings.fixed;
     input.profile.fixed_milliseconds = settings.movement_milliseconds;
     qa_movement_result result = r->host.movement.move(r->host.movement.ctx, input,
                                                       r->host.movement_services(r->host.ctx, physics_time));
     push_effects(&effects, &effect_count, &effect_capacity, result.effects, result.effect_count);
+    /* Movement providers hand their malloc'd effect and contact arrays to the receiver
+     * (the q2 contact pass frees them the same way); the effects were copied above and
+     * prediction does not use the contacts. */
+    free((void *)result.effects);
+    free((void *)result.contacts);
     if (result.status != NULL && strcmp(result.status, "actor-removed") == 0) {
       qa_q3_prediction_output out = {0}; out.status = "actor-removed"; out.effects = effects; out.effect_count = effect_count; out.consumed_teleport = consumed_teleport;
       return out;
@@ -201,7 +220,6 @@ qa_q3_prediction_output qa_q3_prediction_predict(qa_q3_prediction_runtime *r, qa
     qa_q3_prediction_triggers triggers = r->host.touch_triggers(r->host.ctx, r->predicted, result.bounds, physics_time);
     r->predicted = triggers.actor; hyperspace = hyperspace || triggers.hyperspace;
     push_effects(&effects, &effect_count, &effect_capacity, triggers.effects, triggers.effect_count);
-    /* TS result contacts/effects arrays are GC-owned; C result buffers stay caller-owned here. */
   }
   if (!moved) {
     qa_q3_prediction_output out = {"unchanged", true, r->predicted, hyperspace, effects, effect_count, consumed_teleport};

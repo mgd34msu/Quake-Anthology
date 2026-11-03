@@ -15,6 +15,8 @@
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_widow2.h"
 #include "qa/content/q2/missionpacks/monsters/widow/common.h"
 #include "qa/content/q2/missionpacks/monsters/widow/death.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
+#include "qa/foundation/js.h"
 
 static const qa_vec3 tongue_offsets[] = {
   {17.48, 0.10, 68.92}, {17.47, 0.29, 68.91}, {17.45, 0.53, 68.87}, {17.42, 0.78, 68.81},
@@ -25,8 +27,8 @@ typedef struct widow2_bundle {
   qa_q2mpm_weapons weapons;
   qa_q2mpm_services services;
   qa_q2mpm_monster_state *source;
-  qa_q2f_think power_think;
-  qa_q2f_think explode;
+  qa_q2_think power_think;
+  qa_q2_think explode;
 } widow2_bundle;
 static bool tongue_okay(qa_vec3 start, qa_vec3 end) {
   qa_vec3 delta = qa_sub3_double(start, end);
@@ -50,8 +52,8 @@ static void beam_fire(widow2_bundle *bundle, qa_q2m_context *c) {
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
   const qa_q2mpm_rogue_widow2_frames *f = &qa_q2mpm_rogue_widow2_frames_value;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   if (entity->frame >= f->spawn04 && entity->frame <= f->spawn14) {
     double index = entity->frame - f->spawn04;
     double flash = 200 + index;
@@ -61,7 +63,7 @@ static void beam_fire(widow2_bundle *bundle, qa_q2m_context *c) {
     angles.y -= -40 + index * 8;
     qa_vec3 direction = qa_math_angle_vectors_rule(angles, QA_ANGLE_RULE_NATIVE).forward;
     bundle->weapons.fire_heat_beam(bundle->weapons.ctx, entity, game, start, direction, q2mpm_zero(), 10, 50);
-    qa_q2mpm_monster_flash(c, flash, start, direction);
+    qa_q2rm_monster_flash(c, flash, start, direction);
     return;
   }
   save_beam(c);
@@ -74,19 +76,19 @@ static void beam_fire(widow2_bundle *bundle, qa_q2m_context *c) {
   target.z += height - 10;
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(target, start));
   bundle->weapons.fire_heat_beam(bundle->weapons.ctx, entity, game, start, direction, q2mpm_zero(), 10, 50);
-  if (firing) qa_q2mpm_monster_flash(c, flash, start, direction);
+  if (firing) qa_q2rm_monster_flash(c, flash, start, direction);
 }
 static void beam_fn(void *ctx, qa_q2m_context *c) { beam_fire(ctx, c); }
 static void tongue_pull(widow2_bundle *bundle, qa_q2m_context *c) {
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !c->entity->has_enemy) { run_fn(NULL, c); return; }
   const qa_q2mpm_rogue_widow2_frames *f = &qa_q2mpm_rogue_widow2_frames_value;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_vec3 start = qa_q2mpm_widow_project(entity, game, q2mpm_at_v(tongue_offsets, 8, entity->frame - f->tongs01));
   if (!tongue_okay(start, enemy.origin)) return;
-  qa_q2f_owned_result actor = game->host->actors.resolve_owned(game->host->actors.ctx, entity->enemy);
-  if (!actor.has_value) return;
+  qa_owned_actor actor; bool has_actor = qa_session_actor_registry_resolve_owned(game->host->actors, entity->enemy, &actor);
+  if (!has_actor) return;
   qa_vec3 origin = enemy.origin;
   if (enemy.ground != NULL) origin.z += 1;
   qa_body_state body = q2mpm_body(game, entity);
@@ -102,21 +104,21 @@ static void tongue_pull(widow2_bundle *bundle, qa_q2m_context *c) {
     }
     velocity = qa_scale3_double(qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).forward, 1000);
   }
-  qa_body_state_result current = game->host->bodies.read(game->host->bodies.ctx, actor.value.id);
+  qa_body_state_result current = qa_shared_body_table_read(game->host->bodies, actor.id);
   qa_body_state written = enemy;
   if (current.has_value) written.angles = current.value.angles;
   written.origin = origin;
   written.ground = NULL;
   written.velocity = velocity;
-  game->host->bodies.write(game->host->bodies.ctx, actor.value, written);
-  qa_q2f_entity *target = game->entity(game->ctx, &entity->enemy);
+  qa_shared_body_table_write(game->host->bodies, actor, written);
+  qa_q2_entity *target = game->entity(game->ctx, &entity->enemy);
   if (target) game->motion(game->ctx, target, target->motion);
 }
 static void tongue_pull_fn(void *ctx, qa_q2m_context *c) { tongue_pull(ctx, c); }
 static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   widow2_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   qa_vec3 eye;
@@ -139,8 +141,8 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
         state->attack_state = QA_Q2M_ATTACK_BLIND;
         return true;
       }
-      qa_q2f_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
-      if (!enemy_entity || enemy_entity->solid != QA_Q2F_SOLID_NONE || trace.fraction < 1) return false;
+      qa_q2_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
+      if (!enemy_entity || strcmp(enemy_entity->solid, "none") != 0 || trace.fraction < 1) return false;
     }
   }
   state->ideal_yaw = qa_vector_to_angles_with_rule(qa_sub3_double(enemy.origin, q2mpm_body(game, entity).origin),
@@ -153,8 +155,8 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   }
   if (q2mpm_now(game) < state->attack_finished) return false;
   double chance = state->stand_ground ? 0.4 : distance < 1000 ? 0.8 : 0.5;
-  qa_q2f_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
-  if (q2mpm_rnd(game) < chance || (enemy_entity && enemy_entity->solid == QA_Q2F_SOLID_NONE)) {
+  qa_q2_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
+  if (q2mpm_rnd(game) < chance || (enemy_entity && strcmp(enemy_entity->solid, "none") == 0)) {
     state->attack_state = QA_Q2M_ATTACK_MISSILE;
     return true;
   }
@@ -162,11 +164,11 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void init_fn(void *ctx, qa_q2m_context *c) {
   widow2_bundle *bundle = ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   entity->max_health = 2800 + 1000 * game->options.skill
-      + (strcmp(game->options.mode, "coop") == 0 ? 500 * game->options.skill : 0);
-  game->host->combat.set_health(game->host->combat.ctx, entity->actor, entity->max_health);
+      + (game->options.mode == QA_Q2_MODE_COOP ? 500 * game->options.skill : 0);
+  qa_gameplay_authority_set_health(game->host->combat, entity->actor, entity->max_health);
   entity->laser_immune = true;
   c->state->ignore_shots = true;
   entity->prethink = bundle->power_think;
@@ -179,8 +181,8 @@ static void search_fn(void *ctx, qa_q2m_context *c) {
 }
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   widow2_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_q2mpm_rogue_state *own = qa_q2mpm_state_get(bundle->source, entity);
   bool blocked = own->blocked;
@@ -217,7 +219,7 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
   qa_q2bm_damaged_skin(c);
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double skill = game->options.skill;
   if (skill == 3 || q2mpm_now(game) < state->pain_time) return;
@@ -231,11 +233,11 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   widow2_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (qa_q2m_health(game, &entity->actor.id) <= state->gib_health) {
-    double clipped = fmin(reaction.pain.damage, 100);
+    double clipped = qa_js_min(reaction.pain.damage, 100);
     q2mpm_snd(c, "misc/udeath.wav", 2);
     for (int i = 0; i < 2; i++)
       (void)qa_q2mpm_widow_gib(entity, game, "models/objects/gibs/bone/tris.md2", clipped, true, NULL, false, "", false);
@@ -264,8 +266,8 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   entity->count = 0;
   qa_body_state enemy;
   qa_vec3 point = qa_q2m_enemy_body(c, &enemy) ? enemy.origin : q2mpm_body(game, entity).origin;
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q2f_entity *child = game->entities[i];
+  for (size_t i = 0; i < qa_q2_game_entity_count(game); i++) {
+    qa_q2_entity *child = qa_q2_game_entity_at(game, i);
     if (strcmp(child->classname, "monster_stalker") == 0 && qa_q2m_health(game, &child->actor.id) > 0)
       (void)q2mpm_damage(game, child->actor.id, entity, &entity->actor.id,
                          qa_q2m_health(game, &child->actor.id) + 1, 0, q2mpm_zero(), point, q2mpm_zero(), 0, false, 8);
@@ -278,6 +280,7 @@ static void beam_target_remove_fn(void *ctx, qa_q2m_context *c) {
   c->entity->pos1 = q2mpm_zero();
   c->entity->pos2 = q2mpm_zero();
 }
+static void step_fn(void *ctx, qa_q2m_context *c) { (void)ctx; q2mpm_snd(c, "widow/bwstep1.wav", 4); }
 static void reattack_beam_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   c->state->manual_steering = false;
@@ -302,12 +305,12 @@ static void disrupt_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 direction;
   if (locked) {
     direction = qa_normalize3_double_hypot(qa_sub3_double(c->entity->pos1, start));
-  } else if (!qa_q2mpm_predicted_direction(c, start, 1200, true, 0, &direction)) {
+  } else if (!qa_q2rm_predicted_direction(c, start, 1200, true, 0, &direction)) {
     return;
   }
   (void)bundle->weapons.fire_tracker(bundle->weapons.ctx, c->entity, c->game, start, direction, 20,
                                      locked ? 500 : 1200, locked && c->entity->has_enemy ? &c->entity->enemy : NULL);
-  qa_q2mpm_monster_flash(c, 148, start, direction);
+  qa_q2rm_monster_flash(c, 148, start, direction);
 }
 static void disrupt_reattack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -330,8 +333,8 @@ static void tongue_fn(void *ctx, qa_q2m_context *c) {
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !c->entity->has_enemy) return;
   const qa_q2mpm_rogue_widow2_frames *f = &qa_q2mpm_rogue_widow2_frames_value;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_vec3 start = qa_q2mpm_widow_project(entity, game, q2mpm_at_v(tongue_offsets, 8, entity->frame - f->tongs01));
   qa_vec3 top = enemy.origin; top.z += enemy.bounds.max.z - 8;
   qa_vec3 bottom = enemy.origin; bottom.z += enemy.bounds.min.z + 8;
@@ -339,11 +342,11 @@ static void tongue_fn(void *ctx, qa_q2m_context *c) {
   qa_trace_result trace = q2mpm_trace(game, start, enemy.origin, NULL, &entity->actor.id, 0x6000003);
   if (trace.hit.kind != QA_TRACE_HIT_ACTOR || !qa_same_actor(trace.hit.actor, entity->enemy)) return;
   q2mpm_snd(c, "brain/brnatck3.wav", 1);
-  qa_q2bm_extended_event beam;
+  qa_q2_presentation_event beam;
   memset(&beam, 0, sizeof beam);
-  beam.kind = "monster-beam"; beam.effect = "parasite"; beam.actor = entity->actor.id;
+  beam.kind = "monster-beam"; beam.effect = "parasite"; beam.has_actor = true; beam.actor = entity->actor.id;
   beam.start = start; beam.end = enemy.origin;
-  qa_q2bm_emit_extended(beam);
+  game->host->emit(game->host->ctx, beam);
   (void)q2mpm_damage(game, entity->enemy, entity, &entity->actor.id, 2, 0, qa_sub3_double(start, enemy.origin),
                      enemy.origin, q2mpm_zero(), 0, false, 8);
 }
@@ -390,27 +393,27 @@ static void finaldeath_fn(void *ctx, qa_q2m_context *c) {
   c->state->corpse = true;
   c->state->can_take_damage = true;
   q2mpm_set_damageable(c->game, c->entity, true);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2mpm_v3(-70, -70, 0);
   change.bounds.max = q2mpm_v3(70, 70, 80);
   q2mpm_move_body(c->game, c->entity, change, false, false);
-  c->game->motion(c->game->ctx, c->entity, QA_Q2F_MOTION_TOSS);
+  c->game->motion(c->game->ctx, c->entity, "toss");
   c->game->cancel(c->game->ctx, c->entity);
 }
-qa_q2m_definition qa_q2mpm_create_widow2_definition(qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
+qa_q2m_definition qa_q2mpm_create_widow2_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
                                                     qa_q2mpm_services services, qa_q2mpm_monster_state *source) {
-  widow2_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating widow2 definition");
+  widow2_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating widow2 definition");
   bundle->monsters = monsters;
   bundle->weapons = weapons;
   bundle->services = services;
   bundle->source = source;
-  bundle->power_think = qa_q2mpm_widow_power_think(monsters, source);
-  bundle->explode = qa_q2mpm_create_widow_explode(monsters);
-  qa_q2m_named_handler *callbacks = malloc(29 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating widow2 definition");
+  bundle->power_think = qa_q2mpm_widow_power_think(arena, monsters, source);
+  bundle->explode = qa_q2mpm_create_widow_explode(arena, monsters);
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 30 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating widow2 definition");
   size_t n = 0;
   callbacks[n++] = (qa_q2m_named_handler){"widow2_run", {NULL, run_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"Widow2Beam", {bundle, beam_fn}};
@@ -418,6 +421,7 @@ qa_q2m_definition qa_q2mpm_create_widow2_definition(qa_q2m_monsters *monsters, q
   callbacks[n++] = (qa_q2m_named_handler){"Widow2StartSweep", {NULL, save_beam_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"Widow2BeamTargetRemove", {NULL, beam_target_remove_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"widow2_attack_beam", {(void *)"widow2_move_attack_beam", qa_q2bm_move_handler_fn}};
+  callbacks[n++] = (qa_q2m_named_handler){"widow2_step", {NULL, step_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"widow2_reattack_beam", {NULL, reattack_beam_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"Widow2SaveDisruptLoc", {NULL, save_loc_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"WidowDisrupt", {bundle, disrupt_fn}};
@@ -441,16 +445,16 @@ qa_q2m_definition qa_q2mpm_create_widow2_definition(qa_q2m_monsters *monsters, q
   callbacks[n++] = (qa_q2m_named_handler){"widow2_start_searching", {NULL, start_searching_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"widow2_keep_searching", {NULL, keep_searching_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"widow2_finaldeath", {NULL, finaldeath_fn}};
-  qa_q2f_callback_definitions debris = qa_q2mpm_widow_debris_callbacks();
-  qa_q2f_callback_definitions spawn = qa_q2mpm_rogue_spawn_callbacks();
+  qa_q2_callback_definitions debris = qa_q2mpm_widow_debris_callbacks();
+  qa_q2_callback_definitions spawn = qa_q2mpm_rogue_spawn_callbacks();
   size_t think_count = debris.think_count + spawn.think_count + 2;
-  qa_q2f_named_think *thinks = malloc(think_count * sizeof *thinks);
-  if (!thinks) qa_q2f_error("Out of memory creating widow2 definition");
+  qa_q2_named_think *thinks = qa_q2mpm_arena_alloc(arena, think_count * sizeof *thinks);
+  if (!thinks) qa_raise("Error", 0, 0, "Out of memory creating widow2 definition");
   size_t at = 0;
   for (size_t i = 0; i < debris.think_count; i++) thinks[at++] = debris.think[i];
   for (size_t i = 0; i < spawn.think_count; i++) thinks[at++] = spawn.think[i];
-  thinks[at++] = (qa_q2f_named_think){"q2:rogue/widow2_powerups", bundle->power_think};
-  thinks[at++] = (qa_q2f_named_think){"q2:rogue/WidowExplode", bundle->explode};
+  thinks[at++] = (qa_q2_named_think){"q2:rogue/widow2_powerups", bundle->power_think};
+  thinks[at++] = (qa_q2_named_think){"q2:rogue/WidowExplode", bundle->explode};
   qa_q2m_definition definition;
   memset(&definition, 0, sizeof definition);
   definition.classname = "monster_widow2";

@@ -126,11 +126,16 @@ qa_q1qc_damage_call_layout *qa_q1qc_damage_call_layout_create(
       }
     }
   }
-  int64_t global_words[64];
-  int global_roles[64];
+  /* TS Map<number, QcDamageRole>: one entry per declared global word, unbounded. */
+  size_t global_capacity = 0;
+  for (int role = 0; role < 4; role++) global_capacity += layout->roles[role].count;
+  int64_t *global_words = xmalloc(global_capacity * sizeof *global_words);
+  int *global_roles = xmalloc(global_capacity * sizeof *global_roles);
   size_t global_count = 0;
   for (int role = 0; role < 4; role++) {
     if (layout->roles[role].count == 0) {
+      free(global_words);
+      free(global_roles);
       qa_q1qc_damage_call_layout_destroy(layout);
       qa_q1qc_program_error(program, "Unsupported QC damage call: missing %s input", ROLE_NAMES[role]);
     }
@@ -142,19 +147,26 @@ qa_q1qc_damage_call_layout *qa_q1qc_damage_call_layout_create(
         if (global_words[g] == location->word) {
           seen = true;
           if (global_roles[g] != role) {
+            free(global_words);
+            free(global_roles);
             qa_q1qc_damage_call_layout_destroy(layout);
             qa_q1qc_program_error(program, "Unsupported QC damage call: distinct damage roles overlap one source global");
           }
         }
       }
-      if (!seen && global_count < 64) {
+      if (!seen) {
         global_words[global_count] = location->word;
         global_roles[global_count] = role;
         global_count++;
       }
     }
   }
-  layout->declaration = declaration;
+  free(global_words);
+  free(global_roles);
+  if (declaration != NULL) {
+    layout->declaration_copy = *declaration;
+    layout->declaration = &layout->declaration_copy;
+  }
   layout->has_declaration = declaration != NULL;
   return layout;
 }
@@ -209,9 +221,10 @@ typedef struct project_ctx {
   const qa_q1qc_damage_call_layout *layout;
   qa_q1qc_damage_call_values captured;
   qa_q1qc_damage_call_values effective;
-  int64_t saved_words[64];
-  int32_t saved_values[64];
-  size_t saved_count;
+  /* TS Map<number, number> of saved global words, unbounded. */
+  int64_t *saved_words;
+  int32_t *saved_values;
+  size_t saved_count, saved_capacity;
 } project_ctx;
 static void project_prepare(void *ctx, qa_q1qc_machine *vm) {
   (void)vm;
@@ -234,7 +247,17 @@ static void project_prepare(void *ctx, qa_q1qc_machine *vm) {
       if (location->is_global) {
         bool seen = false;
         for (size_t s = 0; s < project->saved_count; s++) if (project->saved_words[s] == word) seen = true;
-        if (!seen && project->saved_count < 64) {
+        if (!seen) {
+          if (project->saved_count == project->saved_capacity) {
+            size_t capacity = project->saved_capacity == 0 ? 8 : project->saved_capacity * 2;
+            int64_t *words = realloc(project->saved_words, capacity * sizeof *words);
+            if (words == NULL) qa_range_error("out of memory");
+            project->saved_words = words;
+            int32_t *values = realloc(project->saved_values, capacity * sizeof *values);
+            if (values == NULL) qa_range_error("out of memory");
+            project->saved_values = values;
+            project->saved_capacity = capacity;
+          }
           project->saved_words[project->saved_count] = word;
           project->saved_values[project->saved_count] = qa_q1qc_words_int(&project->machine->globals, word);
           project->saved_count++;
@@ -245,6 +268,16 @@ static void project_prepare(void *ctx, qa_q1qc_machine *vm) {
     }
   }
 }
+static void project_restore(void *arg) {
+  project_ctx *project = arg;
+  for (size_t i = 0; i < project->saved_count; i++)
+    qa_q1qc_words_set_int(&project->machine->globals, project->saved_words[i], project->saved_values[i]);
+  free(project->saved_words);
+  free(project->saved_values);
+  project->saved_words = NULL;
+  project->saved_values = NULL;
+  project->saved_count = project->saved_capacity = 0;
+}
 void qa_q1qc_project_damage_call(qa_q1qc_machine *machine,
                                  const qa_q1qc_damage_call_layout *layout,
                                  qa_q1qc_damage_call_values captured,
@@ -252,8 +285,10 @@ void qa_q1qc_project_damage_call(qa_q1qc_machine *machine,
                                  qa_q1qc_function_execution execute) {
   project_ctx project = {.machine = machine, .layout = layout, .captured = captured,
                          .effective = effective, .saved_count = 0};
+  /* TS restores saved globals in a finally, also when execute throws. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, project_restore, &project);
   execute.run(execute.ctx, project_prepare, &project);
-  /* TS restores saved globals in a finally. */
-  for (size_t i = 0; i < project.saved_count; i++)
-    qa_q1qc_words_set_int(&machine->globals, project.saved_words[i], project.saved_values[i]);
+  qa_cleanup_pop(&node);
+  project_restore(&project);
 }

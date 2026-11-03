@@ -37,6 +37,9 @@ qa_q2_spawn_module qa_q2_base_entity_module_as_spawn(qa_q2_base_entity_module *m
 qa_q2_base_traversal qa_q2_base_entity_module_mover_traversal(qa_q2_base_entity_module *m, qa_q2_entity *entity);
 qa_q2_callback_definitions qa_q2_base_entity_module_callbacks(qa_q2_base_entity_module *m);
 qa_q2_base_entities_module_checkpoint qa_q2_base_entity_module_capture(qa_q2_base_entity_module *m, qa_q2_game_services *game);
+/* Frees the nested arrays a capture allocated (TS GC). The linear motion
+ * entries stay owned by the motion module. */
+void qa_q2_base_entities_module_checkpoint_free(qa_q2_base_entities_module_checkpoint *checkpoint);
 /* Restore after shared tables, foundation entities and monster
  * contexts; no source callback runs. */
 void qa_q2_base_entity_module_restore(qa_q2_base_entity_module *m, qa_q2_game_services *game, qa_q2_base_entities_module_checkpoint checkpoint);

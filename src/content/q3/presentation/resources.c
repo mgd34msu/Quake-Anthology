@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/resources.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/resources.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -17,6 +19,8 @@ typedef struct picture_entry {
 typedef struct model_name_entry { char *path; size_t model_index; } model_name_entry;
 typedef struct skin_entry { char *path; const qa_q3_pres_scene_skin *skin; } skin_entry;
 typedef struct picture_key_entry { char *key; picture_entry *entry; } picture_key_entry;
+/* Peers choose model names, so unresolved lookups are cached only up to this many entries. */
+enum { MAX_FAILED_LOOKUPS = 256 };
 typedef struct shader_request { char *path; bool mip; double handle; } shader_request;
 
 struct qa_q3_pres_q3_renderer_resources {
@@ -32,6 +36,7 @@ struct qa_q3_pres_q3_renderer_resources {
   picture_key_entry *picture_keys; size_t picture_key_count, picture_key_capacity;
   shader_request *requests; size_t request_count, request_capacity;
   double operations;
+  double failed_models, failed_skins; /* TS failedModels/failedSkins */
   qa_common_parse_state entity_parser;
   qa_common_parse_cursor entity_cursor;
   bool world_loaded;
@@ -146,13 +151,15 @@ bool qa_q3_pres_q3_renderer_resources_register_model(resources_t *resources, con
       resources->models[resources->model_count++] = model;
     }
   }
-  if (!grow((void **)&resources->model_names, &resources->model_name_capacity, resources->model_name_count,
-            sizeof *resources->model_names)) return false;
-  char *copy = xstrdup(path);
-  if (copy == NULL) return false;
-  resources->model_names[resources->model_name_count].path = copy;
-  resources->model_names[resources->model_name_count].model_index = model_index;
-  resources->model_name_count++;
+  if (model.kind != QA_Q3_PRES_SCENE_MODEL_DEFAULT || resources->failed_models++ < MAX_FAILED_LOOKUPS) {
+    if (!grow((void **)&resources->model_names, &resources->model_name_capacity, resources->model_name_count,
+              sizeof *resources->model_names)) return false;
+    char *copy = xstrdup(path);
+    if (copy == NULL) return false;
+    resources->model_names[resources->model_name_count].path = copy;
+    resources->model_names[resources->model_name_count].model_index = model_index;
+    resources->model_name_count++;
+  }
   *out = resources->models[model_index];
   return true;
 }
@@ -170,13 +177,15 @@ bool qa_q3_pres_q3_renderer_resources_register_skin(resources_t *resources, cons
   bool ok = resources->host.skin(resources->host.ctx, path, &skin);
   resources->operations--;
   if (!ok) return false;
-  if (!grow((void **)&resources->skins, &resources->skin_capacity, resources->skin_count,
-            sizeof *resources->skins)) return false;
-  char *copy = xstrdup(path);
-  if (copy == NULL) return false;
-  resources->skins[resources->skin_count].path = copy;
-  resources->skins[resources->skin_count].skin = skin;
-  resources->skin_count++;
+  if (skin != NULL || resources->failed_skins++ < MAX_FAILED_LOOKUPS) {
+    if (!grow((void **)&resources->skins, &resources->skin_capacity, resources->skin_count,
+              sizeof *resources->skins)) return false;
+    char *copy = xstrdup(path);
+    if (copy == NULL) return false;
+    resources->skins[resources->skin_count].path = copy;
+    resources->skins[resources->skin_count].skin = skin;
+    resources->skin_count++;
+  }
   if (skin != NULL) {
     bool present = false;
     for (size_t i = 0; i < resources->skin_handle_count; i++) {
@@ -318,7 +327,7 @@ static void handle_error(const char *kind, double handle) {
   if (handle == trunc(handle) && fabs(handle) < 1e21) {
     qa_range_error("Invalid cgame %s handle %lld", kind, (long long)handle);
   }
-  qa_range_error("Invalid cgame %s handle %g", kind, handle);
+  qa_range_error("Invalid cgame %s handle %s", kind, QA_JS_NUMBER(handle));
 }
 qa_q3_pres_scene_model qa_q3_pres_q3_renderer_resources_model_for_handle(resources_t *resources, double handle) {
   if (handle != trunc(handle) || handle < 0 || handle >= (double)resources->model_count) {
@@ -424,7 +433,7 @@ static double point_cluster(resources_t *resources, qa_vec3 (*read)(void *ctx), 
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);

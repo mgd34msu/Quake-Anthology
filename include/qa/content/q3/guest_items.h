@@ -56,7 +56,9 @@ typedef struct qa_q3_guest_selection { double value; qa_item_id item; } qa_q3_gu
 
 typedef struct qa_q3_guest_catalog qa_q3_guest_catalog;
 /* initial/selection arrays are borrowed at construction and copied where
- * retained. layout/inventory NULL are TS undefined/null. NULL only on OOM. */
+ * retained. layout/inventory NULL are TS undefined/null. NULL only on OOM.
+ * artifact NULL is TS `source === null` (a native module: no readable item
+ * table, carries the weapons it was prepared with); module is then ignored. */
 qa_q3_guest_catalog *qa_q3_guest_catalog_create(const qa_q3_equipment_qvm_artifact *artifact,
     qa_q3_guest_qvm_module module, const qa_q3_guest_qvm_item_layout *layout,
     const qa_q3_guest_weapon *initial, size_t initial_count,

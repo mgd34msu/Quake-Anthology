@@ -1,6 +1,7 @@
 /* Port of src/world/session/mod-client-input-values.ts.
  * GPL-2.0-or-later. */
 #include "qa/world/session/mod_client_input_values.h"
+#include "qa/foundation/js.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -34,9 +35,9 @@ qa_mod_client_input_values qa_mod_client_input_values_of(
   double buttons = buttons_of(command);
   bool jump = command.kind == QA_USER_COMMAND_Q1 ||
                       command.kind == QA_USER_COMMAND_QW
-                  ? (((int32_t)buttons & 2) != 0)
+                  ? ((qa_js_to_int32(buttons) & 2) != 0)
                   : command.kind == QA_USER_COMMAND_Q2_RERELEASE
-                        ? (((int32_t)buttons & 8) != 0)
+                        ? ((qa_js_to_int32(buttons) & 8) != 0)
                         : (command.kind == QA_USER_COMMAND_Q3
                                ? command.as.q3.up_move
                                : command.as.q2.up_move) >= 10;
@@ -65,8 +66,8 @@ qa_mod_client_input_values qa_mod_client_input_values_of(
     case QA_USER_COMMAND_Q2_RERELEASE:
       forward = command.as.q2_rerelease.forward_move;
       side = command.as.q2_rerelease.side_move;
-      up = ((int32_t)buttons & 8) != 0 ? 1
-           : ((int32_t)buttons & 16) != 0 ? -1 : 0;
+      up = (qa_js_to_int32(buttons) & 8) != 0 ? 1
+           : (qa_js_to_int32(buttons) & 16) != 0 ? -1 : 0;
       break;
     case QA_USER_COMMAND_Q3:
     default:
@@ -89,7 +90,7 @@ qa_mod_client_input_values qa_mod_client_input_values_of(
   values.entries[3].value.kind = "vector";
   values.entries[3].value.vector_value = application->absolute_aim;
   values.entries[4].name = "attack";
-  values.entries[4].value = float_value((double)((int32_t)buttons & 1));
+  values.entries[4].value = float_value((double)(qa_js_to_int32(buttons) & 1));
   values.entries[5].name = "jump";
   values.entries[5].value = float_value(jump ? 1 : 0);
   values.entries[6].name = "impulse";

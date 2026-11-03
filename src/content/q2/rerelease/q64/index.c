@@ -1,5 +1,6 @@
 /* Port of src/content/q2/rerelease/q64/index.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/rerelease/q64/index.h"
+#include "qa/network/common/js_number.h"
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/content/q2/rerelease/players.h"
@@ -10,9 +11,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static double anglemod_q(double angle) {
-  long q = (long)trunc(angle * 65536 / 360) & 65535;
+  long q = qa_js_to_int32(trunc(angle * 65536 / 360)) & 65535;
   return (double)q * 360 / 65536;
 }
 static double turn_q(double current, double ideal, double speed) {
@@ -82,13 +84,16 @@ void qa_q2_rerelease_q64_restore(qa_q2_rerelease_q64 *q, qa_q2_game_services *g,
 static void spinning_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_rerelease_q64 *q = c;
   if (e->timestamp <= rr_now(g)) {
-    e->timestamp = rr_now(g) + 1 + g->host->random(g->host->ctx) * 5;
+    double left = rr_now(g) + 1;
+    double right = g->host->random(g->host->ctx) * 5;
+    e->timestamp = left + right;
     double x = e->decel + g->host->random(g->host->ctx) * (e->speed - e->decel);
     double y = e->decel + g->host->random(g->host->ctx) * (e->speed - e->decel);
     double z = e->decel + g->host->random(g->host->ctx) * (e->speed - e->decel);
-    e->movedir = rr_v3(g->host->random(g->host->ctx) < 0.5 ? -x : x,
-                       g->host->random(g->host->ctx) < 0.5 ? -y : y,
-                       g->host->random(g->host->ctx) < 0.5 ? -z : z);
+    double x2 = g->host->random(g->host->ctx) < 0.5 ? -x : x;
+    double y2 = g->host->random(g->host->ctx) < 0.5 ? -y : y;
+    double z2 = g->host->random(g->host->ctx) < 0.5 ? -z : z;
+    e->movedir = rr_v3(x2, y2, z2);
   }
   qa_vec3 av = e->angular_velocity, md = e->movedir;
   double sx = av.x < md.x ? (md.x < av.x + e->accel ? md.x : av.x + e->accel) : (md.x > av.x - e->accel ? md.x : av.x - e->accel);
@@ -100,13 +105,15 @@ static void spinning_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
 }
 static void eye_think(void *c, qa_q2_entity *e, qa_q2_game_services *g);
 static void eye_setup(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
+  qa_vec3 a;
+  qa_vec3 b;
   qa_q2_rerelease_q64 *q = c;
   qa_q2rr_eye_state *st = eye_get(q, e->actor.id);
   if (!st) qa_q2rr_error("func_eye source state missing");
   const char *pt = qa_q2_spawn_get(&e->spawn, "pathtarget");
   qa_q2_entity *target = g->pick_target(g->ctx, pt ? pt : "");
   if (!target) rr_diag(g, "func_eye: bad target");
-  else st->eye_position = qa_q2_subtract(rr_body_of(g, target).origin, rr_body_of(g, e).origin);
+  else st->eye_position = (a = rr_body_of(g, target).origin, b = rr_body_of(g, e).origin, qa_q2_subtract(a, b));
   e->movedir = qa_q2_normalize(st->eye_position);
   g->schedule(g->ctx, e, 0.1, q->eye_think);
 }
@@ -118,7 +125,7 @@ static void eye_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   bool has_closest = false; qa_actor_id closest = {0}; double closest_dist = INFINITY;
   size_t pn = 0; const qa_actor_id *pls = g->host->players(g->host->ctx, &pn);
   for (size_t i = 0; i < pn; i++) {
-    qa_q2rr_player_state *pl = qa_q2rr_players_get_state(q->players, pls[i]);
+    qa_q2_base_player_state *pl = qa_q2_players_get_state(q->players->base, pls[i]);
     qa_body_state_result br = qa_shared_body_table_read(g->host->bodies, pls[i]);
     if (!pl || !pl->connected || !br.has_value) continue;
     qa_vec3 dir = qa_q2_subtract(br.value.origin, body.origin);
@@ -159,7 +166,7 @@ static void camera_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const q
   (void)other; qa_q2_rerelease_q64 *q = c;
   double music = qa_q2_number_field(&e->spawn, "sounds", 0);
   if (music != 0) {
-    char tb[64]; snprintf(tb, sizeof tb, "%lld", (long long)(int64_t)music);
+    char tb[64]; snprintf(tb, sizeof tb, "%s", QA_JS_NUMBER(music)); /* String(music) */
     qa_q2_presentation_event ev; memset(&ev, 0, sizeof ev); ev.kind = "music"; ev.track = tb; rr_emit_host(g, ev);
   }
   if (!e->target || !e->target[0]) return;
@@ -169,7 +176,7 @@ static void camera_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const q
   qa_q2_entity *source = rr_ent(g, act);
   e->has_goal = true; e->goal = target->actor.id;
   e->has_activator = act != NULL; if (act) e->activator = *act;
-  if (source && qa_q2rr_players_get_state(q->players, source->actor.id)) {
+  if (source && qa_q2_players_get_state(q->players->base, source->actor.id)) {
     qa_body_state b = rr_body_of(g, source);
     qa_q2_entity *dummy = g->create(g->ctx, "target_camera_dummy", NULL, 0);
     e->has_enemy = true; e->enemy = dummy->actor.id;
@@ -182,15 +189,14 @@ static void camera_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const q
     ch.has_ground = true; ch.ground_null = b.ground == NULL; if (b.ground) ch.ground = *b.ground;
     g->move(g->ctx, dummy, ch, false);
     g->solid(g->ctx, dummy, "box"); g->motion(g->ctx, dummy, "step"); g->link(g->ctx, dummy); g->show(g->ctx, dummy);
-    dum_set(q, dummy->actor.id, (qa_q2rr_dummy_state){0, 0, false});
+    dum_set(q, dummy->actor.id, (qa_q2rr_dummy_state){0, 0, false, false});
     g->schedule(g->ctx, dummy, 0.1, q->dummy_think);
   }
   double distance = qa_q2_length(qa_q2_subtract(rr_body_of(g, target).origin, origin));
-  qa_q2rr_camera_state st = {distance, distance, e->speed, look_at(e, g, origin, QA_Q2_ZERO)};
+  qa_q2rr_camera_state st = {distance, distance, e->speed, look_at(e, g, origin, QA_Q2_ZERO), false};
   cam_set(q, e->actor.id, st);
-  q->players->intermission.playing = false; q->players->intermission.map[0] = '\0';
-  q->players->intermission.started = rr_now(g); q->players->intermission.exit = false;
-  q->players->intermission.has_landmark = false;
+  qa_q2_players_set_intermission(q->players->base,
+      (qa_q2_intermission){.kind = "intermission", .map = "", .started = rr_now(g), .exit = false, .has_landmark = false});
   qa_q2_rerelease_players_move_to_camera(q->players, g, origin, st.angles, true);
   if (rr_band(qa_q2_number_field(&e->spawn, "hackflags", 0), 128) != 0) q->end_of_unit(q->end_ctx, g);
   g->schedule(g->ctx, e, e->wait, q->camera_think);
@@ -201,15 +207,17 @@ static void camera_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   if (!st) qa_q2rr_error("target_camera source state missing");
   bool skip = false;
   if (rr_band(qa_q2_number_field(&e->spawn, "hackflags", 0), 64) != 0 && rr_now(g) > 2) {
-    for (size_t i = 0; i < q->players->state_count; i++)
-      if (q->players->states[i].state->connected && q->players->states[i].state->buttons != 0) skip = true;
+    for (size_t i = 0; i < qa_q2_players_state_count(q->players->base); i++) {
+      qa_actor_id actor; qa_q2_base_player_state *state;
+      if (qa_q2_players_state_at(q->players->base, i, &actor, &state) && state->connected && state->buttons != 0) skip = true;
+    }
   }
   qa_q2_entity *target = e->has_goal ? rr_ent(g, &e->goal) : NULL;
   if (skip || !target) {
     if (e->killtarget && e->killtarget[0]) {
       qa_q2_entity *dummy = e->has_enemy ? rr_ent(g, &e->enemy) : NULL;
       if (dummy) g->remove(g->ctx, dummy);
-      q->players->intermission.playing = true;
+      qa_q2_players_set_intermission(q->players->base, (qa_q2_intermission){.kind = "playing"});
       q->players->intermission_camera_set = true;
       size_t n = 0; qa_q2_entity *const *dests = g->targets(g->ctx, e->killtarget, &n);
       for (size_t i = 0; i < n; i++) if (dests[i]->use.fn)
@@ -235,12 +243,18 @@ static void camera_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     e->has_goal = next != NULL; if (next) e->goal = next->actor.id;
     if (next) {
       st->speed = next->speed != 0 ? next->speed : 55;
-      st->distance = st->remaining = qa_q2_length(qa_q2_subtract(rr_body_of(g, next).origin, rr_body_of(g, e).origin));
+      qa_vec3 a2 = rr_body_of(g, next).origin;
+      qa_vec3 b2 = rr_body_of(g, e).origin;
+      st->distance = st->remaining = qa_q2_length(qa_q2_subtract(a2, b2));
     }
     g->schedule(g->ctx, e, target->wait, q->camera_think); return;
   }
   double fraction = 1 - st->remaining / st->distance;
-  qa_vec3 origin = qa_q2_add(rr_body_of(g, e).origin, qa_q2_scale(qa_q2_subtract(rr_body_of(g, target).origin, rr_body_of(g, e).origin), fraction));
+  qa_vec3 a = rr_body_of(g, e).origin;
+  qa_vec3 a3 = rr_body_of(g, target).origin;
+  qa_vec3 b3 = rr_body_of(g, e).origin;
+  qa_vec3 b = qa_q2_scale(qa_q2_subtract(a3, b3), fraction);
+  qa_vec3 origin = qa_q2_add(a, b);
   qa_q2_entity *dummy = e->has_enemy ? rr_ent(g, &e->enemy) : NULL;
   if (dummy) {
     qa_q2rr_dummy_state *ds = dum_get(q, dummy->actor.id);
@@ -260,7 +274,7 @@ static void dummy_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_entity *source = e->has_owner ? rr_ent(g, &e->owner) : NULL;
   qa_q2rr_dummy_state *st = dum_get(q, e->actor.id);
   if (!source || !st) { g->remove(g->ctx, e); return; }
-  qa_q2rr_player_context ctx = qa_q2_rerelease_players_context(q->players, source, g);
+  qa_q2_player_context ctx = qa_q2_players_context(q->players->base, source, g);
   ctx.entity = e;
   ctx.movement.grounded = rr_body_of(g, e).ground != NULL;
   qa_q2_rerelease_client_animation(&ctx, qa_q2_rerelease_players_get_extra(q->players, source->actor.id));
@@ -308,7 +322,9 @@ bool qa_q2_rerelease_q64_spawn(qa_q2_rerelease_q64 *q, qa_q2_entity *e, qa_q2_ga
     e->speed = (e->speed != 0 ? e->speed : 45) * rr_frame(g);
     e->wait = 1;
     double vc = qa_q2_number_field(&e->spawn, "vision_cone", 0);
-    qa_q2rr_eye_state st = {rr_body_of(g, e).angles, qa_q2_vector_field(&e->spawn, "eye_position"), vc != 0 ? vc : 0.5};
+    qa_vec3 neutral_angles2 = rr_body_of(g, e).angles;
+    qa_vec3 eye_position2 = qa_q2_vector_field(&e->spawn, "eye_position");
+    qa_q2rr_eye_state st = {neutral_angles2, eye_position2, vc != 0 ? vc : 0.5};
     eye_set(q, e->actor.id, st);
     const char *pt = qa_q2_spawn_get(&e->spawn, "pathtarget");
     if (pt && pt[0]) g->schedule(g->ctx, e, 0.1, q->eye_setup);

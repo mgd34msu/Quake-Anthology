@@ -9,6 +9,8 @@
 #include "qa/core/commands/text.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q1/profile.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 static char *dup_text(const char *text) {
   if (text == NULL) return NULL;
   size_t len = strlen(text);
@@ -32,6 +34,7 @@ const char *const qa_app_application_help =
     "  --map NAME                 Map name or maps/path.bsp\n"
     "  --progs MOUNTED_PATH       Validated mounted QuakeC .dat artifact\n"
     "  --q2-game MOUNTED_PATH     Explicit Quake II game DLL (classic i386 / rerelease x64)\n"
+    "  --vm-game 0|1|2            id's vm_game: 0 runs a mod's native Quake III qagame (qagamex86.dll / qagamei386.so) when it ships one\n"
     "  --weapon-behavior PRODUCT/ID  Overlay a declared projectile trajectory\n"
     "  --mod PRODUCT/ID           Enable a declared mod component (repeat to combine)\n"
     "  --movement q1|q2|q3|qw|PRODUCT  Movement family or exact installed product\n"
@@ -54,6 +57,7 @@ const char *const qa_app_application_help =
     "  --q1-protocol 15|666|999    NetQuake host protocol (default 15; RMQ flags 130)\n"
     "  --listen-q2 PORT           Host the native Quake II source protocol\n"
     "  --bind ADDRESS             Server IP (default 0.0.0.0)\n"
+    "  --lan-only                 NetQuake and Quake II KEX LAN hosts ignore non-private peers\n"
     "  --connect-q1 ADDRESS       Join a native Quake server (id1, protocols 15/666/999)\n"
     "  --connect-qw ADDRESS       Join a base QuakeWorld protocol 28 server\n"
     "  --connect-q3 ADDRESS       Join a baseq3 protocol 68 server (sv_pure 0)\n"
@@ -64,10 +68,11 @@ const char *const qa_app_application_help =
     "  --seed N                   Gameplay random seed\n"
     "  --frames N                 Close after N simulation steps\n"
     "  --hidden                   Start a hidden native window\n"
+    "  --allow-load-paths         Let scripts, game modules and remote clients load a save from outside the save directory\n"
     "  --list-content             Show installed games and expansions\n"
     "  --version                  Show the application version\n"
     "  weapon-behavior --help     Inspect and author mounted source behavior declarations\n"
-    "  --help                     Show these options\n";
+    "  -h, --help                 Show these options\n";
 void qa_app_options_destroy(qa_app_options *o) {
   if (o == NULL) return;
   free(o->network_transport_relay);
@@ -102,7 +107,7 @@ static double integer_value(const char *value, const char *label, double minimum
     if (!isdigit((unsigned char)*p)) qa_range_error("%s must be an integer", label);
   double number = strtod(value, NULL);
   if (!(number >= minimum && number <= maximum) || number > 9007199254740991.0)
-    qa_range_error("%s must be between %lld and %lld", label, (long long)minimum, (long long)maximum);
+    qa_range_error("%s must be between %s and %s", label, QA_JS_NUMBER(minimum), QA_JS_NUMBER(maximum));
   return number;
 }
 static qa_game_family family_value(const char *value) {
@@ -152,7 +157,9 @@ static qa_q2_protocol_identity parse_q2_protocol(const char *value) {
   if (is(value, "4038")) { out.kind = "q2-private-classic"; out.version = 4038; return out; }
   if (is(value, "2023")) { out.kind = "q2-kex"; out.version = 2023; return out; }
   if (is(value, "1038")) { out.kind = "q2-rerelease"; out.version = 1038; return out; }
-  long revision = is(value, "36") ? 1026 : strncmp(value, "36:", 3) == 0 ? strtol(value + 3, NULL, 10) : 0;
+  /* Number(value.slice(3)): strtol took "36:1020abc" and read "36:0x3fc" as 0. */
+  double number = is(value, "36") ? 1026 : strncmp(value, "36:", 3) == 0 ? qa_js_string_to_number(value + 3) : 0;
+  long revision = number >= 1015 && number <= 1026 && number == trunc(number) ? (long)number : 0;
   switch (revision) {
     case 1015: case 1017: case 1018: case 1019: case 1020: case 1021: case 1022: case 1023: case 1024: case 1025: case 1026:
       out.kind = "q2-q2pro"; out.version = 36; out.revision = revision; return out;
@@ -304,14 +311,17 @@ qa_app_application_command qa_app_parse_application_command(const char *const *a
       free(bind); free(remote); free(content_root_path); qa_app_options_destroy(&o);
       command.kind = "version"; return command;
     }
+    if (is(flag, "--lan-only")) { o.trusted_networks_only = true; continue; }
     if (is(flag, "--dedicated")) { o.dedicated = true; continue; }
     if (is(flag, "--hidden")) { o.hidden = true; continue; }
+    if (is(flag, "--allow-load-paths")) { o.allow_load_paths = true; continue; }
     if (is(flag, "--list-content")) { list = true; continue; }
     if (is(flag, "--ipx-native")) {
       if (o.network_transport_kind[0] != '\0') qa_range_error("Choose one IPX transport");
       o.network_transport_kind = "ipx-native"; continue;
     }
-    if (++index >= argc) qa_range_error("Missing value for %s", flag);
+    /* A flag swallowing the next flag as its value would silently disable what the user asked for. */
+    if (++index >= argc || strncmp(argv[index], "--", 2) == 0) qa_range_error("Missing value for %s", flag);
     const char *value = argv[index];
     if (is(flag, "--ipx-dosbox")) {
       if (o.network_transport_kind[0] != '\0') qa_range_error("Choose one IPX transport");
@@ -390,7 +400,7 @@ qa_app_application_command qa_app_parse_application_command(const char *const *a
       o.width = integer_value(value, flag, 64, 16384);
       o.has_display_width = true; o.display_width = o.width;
     } else if (is(flag, "--gamma")) {
-      double gamma = strtod(value, NULL);
+      double gamma = qa_js_string_to_number(value); /* Number(value) */
       if (!isfinite(gamma) || gamma < 0.5 || gamma > 3) qa_range_error("Display gamma must be between 0.5 and 3");
       o.gamma = gamma; o.has_display_gamma = true; o.display_gamma = gamma;
     } else if (is(flag, "--height")) {
@@ -411,7 +421,18 @@ qa_app_application_command qa_app_parse_application_command(const char *const *a
       remote_kind = is(flag, "--connect-unified") ? "unified-client" : is(flag, "--connect-qw") ? "qw-client"
           : is(flag, "--connect-q1") ? "q1-client" : is(flag, "--connect-q3") ? "q3-client" : "q2-client";
       remote = dup_text(value);
-    } else if (is(flag, "--bind")) set_owned(&bind, value);
+    } else if (is(flag, "--bind")) {
+      /* /^[A-Za-z0-9._:[\]-]+$/ */
+      bool ok = value[0] != '\0';
+      for (const char *p = value; ok && *p != '\0'; p++)
+        if (!(isalnum((unsigned char)*p) && (unsigned char)*p < 0x80) && strchr("._:[]-", *p) == NULL) ok = false;
+      if (!ok) qa_range_error("Invalid bind address: %s", value);
+      set_owned(&bind, value);
+    } else if (is(flag, "--vm-game")) {
+      if (!is(value, "0") && !is(value, "1") && !is(value, "2"))
+        qa_range_error("--vm-game requires 0 (native module), 1 (interpreted) or 2 (compiled)");
+      o.has_vm_game = true; o.vm_game = value[0] - '0';
+    }
     else if (is(flag, "--skill")) {
       o.skill = integer_value(value, flag, 0, 3); o.explicit_skill = true;
     } else if (is(flag, "--bot-skill")) {
@@ -449,7 +470,8 @@ qa_app_application_command qa_app_parse_application_command(const char *const *a
     o.network_kind = listen_kind; o.network_host = bind; bind = NULL; o.network_port = listen_port;
   } else if (!is(bind, "0.0.0.0")) qa_range_error("--bind requires --listen, --listen-q2 or --listen-unified");
   if (remote != NULL) {
-    if (o.has_bot_skill) qa_range_error("--bot-skill is not a native Quake II client setting");
+    if (o.dedicated) qa_range_error("A dedicated server cannot connect to a remote server");
+    if (o.has_bot_skill) qa_range_error("--bot-skill sets bot difficulty on the host and cannot be used when joining a server");
     o.network_kind = remote_kind; o.network_remote = remote; remote = NULL;
   }
   if (o.network_transport_kind[0] != '\0' && (is(o.network_kind, "unified-server") || is(o.network_kind, "unified-client")))
@@ -466,6 +488,8 @@ qa_app_application_command qa_app_parse_application_command(const char *const *a
     qa_range_error("--q1-protocol requires --listen for a Quake I host");
   if (o.has_q1_protocol && is(o.product, "q1-quakeworld"))
     qa_range_error("--q1-protocol selects NetQuake; QuakeWorld uses native protocol 28");
+  if (o.explicit_mode && is(o.mode, "singleplayer") && (o.seats > 1 || !is(o.network_kind, "offline")))
+    qa_range_error("--mode singleplayer conflicts with --seats above 1 and with network options");
   if (!is(o.network_kind, "offline") && is(o.mode, "singleplayer"))
     o.mode = (is(o.network_kind, "native-server") || is(o.network_kind, "unified-server"))
             && (strncmp(o.product, "q3-", 3) == 0 || is(o.product, "q1-quakeworld")) ? "deathmatch" : "coop";

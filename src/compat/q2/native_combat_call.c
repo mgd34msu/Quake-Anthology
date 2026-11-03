@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static const qa_guest_field_layout mod_fields[]={{"id",0,"uint8",1},{"friendly_fire",1,"uint8",1},{"no_point_loss",2,"uint8",1}};
 const qa_guest_layout qa_compat_q2_native_rerelease_mod_layout={"q2-rerelease:mod_t",3,1,8,mod_fields,3};
 static const qa_compat_q2_native_combat_field dmg[]={QA_Q2CF_TARGET,QA_Q2CF_INFLICTOR,QA_Q2CF_ATTACKER,QA_Q2CF_DIRECTION,QA_Q2CF_POINT,QA_Q2CF_NORMAL,QA_Q2CF_AMOUNT,QA_Q2CF_KNOCKBACK,QA_Q2CF_FLAGS,QA_Q2CF_CAUSE};
@@ -100,7 +101,7 @@ bool qa_compat_q2_read_native_combat_call(const qa_save_reader *reader, qa_compa
       else { /* aggregate layouts via persistence/execution readLayout are guest-world; retain empty layout */ args[i].layout.is_aggregate=true; }
       qa_save_reader_destroy(&sr);
       fld(&it,"bytes",&br); size_t m=qa_save_reader_list_count(&br); uint8_t *b=m?malloc(m):NULL;
-      for(size_t j=0;j<m;j++){qa_save_reader x; qa_save_reader_item(&br,j,&x); b[j]=(uint8_t)qa_save_reader_integer_min(&x,0); qa_save_reader_destroy(&x);}
+      for(size_t j=0;j<m;j++){qa_save_reader x; qa_save_reader_item(&br,j,&x); b[j]=qa_js_to_uint8(qa_save_reader_integer_min(&x,0)); qa_save_reader_destroy(&x);}
       qa_save_reader_destroy(&br); args[i].bytes=b; args[i].byte_count=m;}
     qa_save_reader_destroy(&it);}
   qa_save_reader_destroy(&lr); out->arguments=args; out->argument_count=n;

@@ -1,5 +1,7 @@
 /* Port of src/content/q2/foundation/targets.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/targets.h"
+#include "qa/content/q2/foundation/checkpoint.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -11,6 +13,8 @@
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/content/q2/foundation/shadow_lights.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 #define THINK(name) static void name(void *c, qa_q2_entity *e, qa_q2_game_services *g)
 #define USE(name) static void name(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *o, const qa_actor_id *a)
@@ -71,7 +75,7 @@ USE(func_static_use);
 
 static void trigger_multiple(qa_q2_entity *e, qa_q2_game_services *g) {
   if (strcmp(e->classname, "trigger_once") == 0) {
-    if (((int64_t)e->spawnflags & 1) != 0) e->spawnflags = (double)(((int64_t)e->spawnflags & ~1) | 4);
+    if ((qa_js_to_int32(e->spawnflags) & 1) != 0) e->spawnflags = (double)((qa_js_to_int32(e->spawnflags) & ~1) | 4);
     e->wait = -1;
   } else if (e->wait == 0) e->wait = 0.2;
   qa_vec3 angles = qa_q2_game_body(g, e).angles;
@@ -79,7 +83,7 @@ static void trigger_multiple(qa_q2_entity *e, qa_q2_game_services *g) {
   e->visible = false;
   e->touch = XCB(touch_multi);
   e->use = UCB(use_multi);
-  g->solid(g->ctx, e, ((int64_t)e->spawnflags & 4) != 0 ? "none" : "trigger");
+  g->solid(g->ctx, e, (qa_js_to_int32(e->spawnflags) & 4) != 0 ? "none" : "trigger");
 }
 
 static double speaker_loop_attenuation(qa_q2_entity *e, qa_q2_game_services *g) {
@@ -88,10 +92,16 @@ static double speaker_loop_attenuation(qa_q2_entity *e, qa_q2_game_services *g) 
   return e->attenuation > 0 && e->attenuation != 3 ? e->attenuation / 5 : 1;
 }
 static void emit_speaker(qa_q2_entity *e, qa_q2_game_services *g, const char *op) {
-  emit_sound(g, e->actor.id, qa_q2_game_body(g, e).origin, e->noise, 2,
-      strcmp(op, "once") == 0 ? e->volume : 1,
-      strcmp(op, "once") == 0 ? e->attenuation : speaker_loop_attenuation(e, g),
-      ((int64_t)e->spawnflags & 4) != 0, op);
+  qa_actor_id actor2 = e->actor.id;
+  qa_vec3 origin2 = qa_q2_game_body(g, e).origin;
+  const char * path = e->noise;
+  double vol = strcmp(op, "once") == 0 ? e->volume : 1;
+  double att = strcmp(op, "once") == 0 ? e->attenuation : speaker_loop_attenuation(e, g);
+  bool reliable = (qa_js_to_int32(e->spawnflags) & 4) != 0;
+  emit_sound(g, actor2, origin2, path, 2,
+      vol,
+      att,
+      reliable, op);
 }
 
 static void speaker(qa_q2_entity *e, qa_q2_game_services *g) {
@@ -101,14 +111,12 @@ static void speaker(qa_q2_entity *e, qa_q2_game_services *g) {
   static _Thread_local char buf[512];
   const char *n = noise;
   if (!strstr(noise, ".wav")) { snprintf(buf, sizeof buf, "%s.wav", noise); n = buf; }
-  /* retain: copy into spawn-owned storage via a private key */
-  if (!qa_q2_spawn_set(&e->spawn, "\x01noise", n)) qa_range_error("out of memory");
-  e->noise = qa_q2_spawn_get(&e->spawn, "\x01noise");
+  e->noise = qa_q2_intern(n); /* the noise path outlives the spawn values */
   e->volume = qa_q2_number_field(&e->spawn, "volume", 0) != 0 ? qa_q2_number_field(&e->spawn, "volume", 0) : 1;
   double authored = qa_q2_number_field(&e->spawn, "attenuation", 0);
-  bool rerelease_loop = g->options.edition == QA_Q2_EDITION_RERELEASE && ((int64_t)e->spawnflags & 3) != 0;
+  bool rerelease_loop = g->options.edition == QA_Q2_EDITION_RERELEASE && (qa_js_to_int32(e->spawnflags) & 3) != 0;
   e->attenuation = authored == -1 ? (rerelease_loop ? -1 : 0) : authored != 0 ? authored : (rerelease_loop ? 3 : 1);
-  e->sound = ((int64_t)e->spawnflags & 1) != 0 ? e->noise : "";
+  e->sound = (qa_js_to_int32(e->spawnflags) & 1) != 0 ? e->noise : "";
   if (e->sound[0]) emit_speaker(e, g, "start");
   e->use = UCB(use_target_speaker);
   g->link(g->ctx, e);
@@ -116,11 +124,15 @@ static void speaker(qa_q2_entity *e, qa_q2_game_services *g) {
 
 static void timer_spawn(qa_q2_entity *e, qa_q2_game_services *g) {
   if (e->wait == 0) e->wait = 1;
-  e->random = fmin(qa_q2_number_field(&e->spawn, "random", 0), e->wait - g->host->frame_seconds(g->host->ctx));
+  double a = qa_q2_number_field(&e->spawn, "random", 0);
+  double b = e->wait - g->host->frame_seconds(g->host->ctx);
+  e->random = qa_js_min(a, b);
   e->use = UCB(func_timer_use);
-  if (((int64_t)e->spawnflags & 1) != 0) {
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) {
+    double left;
+    double right;
     e->has_activator = true; e->activator = e->actor.id;
-    g->schedule(g->ctx, e, 1 + qa_q2_number_field(&e->spawn, "pausetime", 0) + e->delay + e->wait + (g->host->random(g->host->ctx) * 2 - 1) * e->random, TCB(func_timer_think));
+    g->schedule(g->ctx, e, (left = 1 + qa_q2_number_field(&e->spawn, "pausetime", 0) + e->delay + e->wait, right = (g->host->random(g->host->ctx) * 2 - 1) * e->random, left + right), TCB(func_timer_think));
   }
 }
 
@@ -172,7 +184,7 @@ static bool spawn_target(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     if (style >= 32) {
       e->use = UCB(light_use);
       qa_q2_presentation_event ev = ev_new("lightstyle");
-      ev.style = style; ev.pattern = ((int64_t)e->spawnflags & 1) != 0 ? "a" : "m";
+      ev.style = style; ev.pattern = (qa_js_to_int32(e->spawnflags) & 1) != 0 ? "a" : "m";
       g->host->emit(g->host->ctx, ev);
     }
     return true;
@@ -186,7 +198,7 @@ static bool spawn_target(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   if (strcmp(cn, "target_delay") == 0) { e->use = UCB(target_delay_use); return true; }
   if (strcmp(cn, "func_static") == 0) { g->solid(g->ctx, e, "brush"); e->use = UCB(func_static_use); return true; }
   if (strcmp(cn, "trigger_always") == 0) {
-    e->delay = fmax(e->delay, 0.2);
+    e->delay = qa_js_max(e->delay, 0.2);
     qa_actor_id self = e->actor.id;
     use_targets(e, g, &self);
     return true;
@@ -212,7 +224,11 @@ static bool spawn_target(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   }
   if (strcmp(cn, "target_secret") == 0 || strcmp(cn, "target_goal") == 0) {
     if (g->options.mode == QA_Q2_MODE_DEATHMATCH) { g->remove(g->ctx, e); return true; }
-    if (strcmp(cn, "target_secret") == 0) g->counters->total_secrets++; else g->counters->total_goals++;
+    bool secret = strcmp(cn, "target_secret") == 0;
+    if (secret) g->counters->total_secrets++; else g->counters->total_goals++;
+    qa_vec3 origin = qa_q2_game_body(g, e).origin;
+    if (secret && qa_js_latin1_equals_ignore_case(g->options.map_name, "mine3") && origin.x == 280 && origin.y == -2048 && origin.z == -624)
+      e->message = "You have found a secret area.";
     e->use = UCB(use_target_secret_or_goal);
     return true;
   }
@@ -236,8 +252,8 @@ static bool spawn_target(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
 TOUCH(touch_multi) {
   (void)c;
   if (strcmp(e->solid, "trigger") != 0) return;
-  if (g->host->is_player(g->host->ctx, contact.other)) { if (((int64_t)e->spawnflags & 2) != 0) return; }
-  else if (g->host->is_monster(g->host->ctx, contact.other)) { if (((int64_t)e->spawnflags & 1) == 0) return; }
+  if (g->host->is_player(g->host->ctx, contact.other)) { if ((qa_js_to_int32(e->spawnflags) & 2) != 0) return; }
+  else if (g->host->is_monster(g->host->ctx, contact.other)) { if ((qa_js_to_int32(e->spawnflags) & 1) == 0) return; }
   else return;
   qa_body_state_result body = qa_shared_body_table_read(g->host->bodies, contact.other);
   if (body.has_value && qa_q2_dot(qa_q2_movedir(body.value.angles), e->movedir) < 0) return;
@@ -250,7 +266,7 @@ USE(use_multi) {
 }
 USE(use_target_speaker) {
   (void)c; (void)o; (void)a;
-  if (((int64_t)e->spawnflags & 3) != 0) {
+  if ((qa_js_to_int32(e->spawnflags) & 3) != 0) {
     e->sound = e->sound[0] == '\0' ? e->noise : "";
     emit_speaker(e, g, e->sound[0] ? "start" : "stop");
     return;
@@ -274,7 +290,8 @@ USE(func_timer_use) {
 }
 USE(use_target_changelevel) {
   (void)c;
-  if (e->transition_started) return;
+  /* A started transition replaces the world within moments; a latch this old means travel failed, so the exit may fire again. */
+  if (e->transition_started && g->host->now(g->host->ctx) - e->timestamp < 5) return;
   const char *map = e->map;
   if (g->options.mode == QA_Q2_MODE_SINGLEPLAYER) {
     size_t n = 0;
@@ -284,7 +301,7 @@ USE(use_target_changelevel) {
       if ((cs.has_value ? cs.value.health : 0) <= 0) return;
     }
   }
-  if (g->options.mode == QA_Q2_MODE_DEATHMATCH && ((int64_t)g->options.deathmatch_flags & 4096) == 0 && o != NULL) {
+  if (g->options.mode == QA_Q2_MODE_DEATHMATCH && (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 4096) == 0 && o != NULL) {
     qa_q2_entity *other_ent = g->entity(g->ctx, o);
     if (!(other_ent && strcmp(other_ent->classname, "worldspawn") == 0)) {
       qa_body_state_result body = qa_shared_body_table_read(g->host->bodies, *o);
@@ -297,7 +314,17 @@ USE(use_target_changelevel) {
       return;
     }
   }
-  if (strchr(map, '*')) g->counters->server_flags = (double)((int64_t)g->counters->server_flags & ~255);
+  if (g->options.mode == QA_Q2_MODE_DEATHMATCH && a != NULL && g->options.player_name != NULL) {
+    const char *name = g->options.player_name(g->options.player_name_ctx, *a);
+    if (name != NULL) {
+      char text[600];
+      snprintf(text, sizeof text, "%s exited the level.\n", name);
+      qa_q2_presentation_event ev = {0};
+      ev.kind = "print"; ev.level = "medium"; ev.text = text;
+      g->host->emit(g->host->ctx, ev);
+    }
+  }
+  if (strchr(map, '*')) g->counters->server_flags = (double)(qa_js_to_int32(g->counters->server_flags) & ~255);
   const char *sep = strchr(map, '$');
   static _Thread_local char dest[512], full[600];
   const char *spawn_point = "";
@@ -315,6 +342,7 @@ USE(use_target_changelevel) {
     g->host->prepare_level_change(g->host->ctx, map, &carry, g->counters->server_flags);
   } else g->host->prepare_level_change(g->host->ctx, map, NULL, g->counters->server_flags);
   e->transition_started = true;
+  e->timestamp = g->host->now(g->host->ctx);
   snprintf(full, sizeof full, "q2:%s", dest);
   qa_transition_intent intent = {0};
   intent.kind = "campaign-level"; intent.campaign = g->options.campaign; intent.map = full;
@@ -323,9 +351,9 @@ USE(use_target_changelevel) {
 }
 USE(light_use) {
   (void)c; (void)o; (void)a;
-  e->spawnflags = (double)((int64_t)e->spawnflags ^ 1);
+  e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) ^ 1);
   qa_q2_presentation_event ev = ev_new("lightstyle");
-  ev.style = e->style; ev.pattern = ((int64_t)e->spawnflags & 1) != 0 ? "a" : "m";
+  ev.style = e->style; ev.pattern = (qa_js_to_int32(e->spawnflags) & 1) != 0 ? "a" : "m";
   g->host->emit(g->host->ctx, ev);
 }
 USE(trigger_relay_use) { (void)c; (void)o; use_targets(e, g, a); }
@@ -333,13 +361,15 @@ USE(trigger_counter_use) {
   (void)c; (void)o;
   if (e->count == 0) return;
   e->count--;
-  if (((int64_t)e->spawnflags & 1) == 0 && a) {
+  if ((qa_js_to_int32(e->spawnflags) & 1) == 0 && a) {
     static _Thread_local char buf[128];
-    if (e->count != 0) snprintf(buf, sizeof buf, "%.17g more to go...", e->count);
+    if (e->count != 0) snprintf(buf, sizeof buf, "%s more to go...", QA_JS_NUMBER(e->count));
     qa_q2_presentation_event ev = ev_new("centerprint");
     ev.has_actor = true; ev.actor = *a; ev.text = e->count != 0 ? buf : "Sequence completed!";
     g->host->emit(g->host->ctx, ev);
-    g->sound(g->ctx, e->actor, "misc/talk1.wav", 0, 1, 1);
+    /* TS services.sound(services.entity(activator) ?? self, ...). */
+    qa_q2_entity *heard = g->entity(g->ctx, a);
+    g->sound(g->ctx, heard != NULL ? heard->actor : e->actor, "misc/talk1.wav", 0, 1, 1);
   }
   if (e->count == 0) multi(e, g, a);
 }
@@ -370,7 +400,7 @@ USE(trigger_key_use) {
   int cube = 0;
   if (g->options.mode == QA_Q2_MODE_COOP && cube_key) {
     qa_q2_entity *ae = g->entity(g->ctx, a);
-    int64_t bits = ae ? (int64_t)ae->power_cubes : 0;
+    int32_t bits = ae ? qa_js_to_int32(ae->power_cubes) : 0; /* TS powerCubes & (1 << cube) */
     for (; cube < 8 && (bits & (1 << cube)) == 0; cube++) {}
   }
   size_t pn = 0;
@@ -386,8 +416,8 @@ USE(trigger_key_use) {
     if (!qa_session_actor_registry_resolve_owned(g->host->actors, copy[i], &owner)) continue;
     if (g->options.mode == QA_Q2_MODE_COOP && cube_key) {
       qa_q2_entity *ent = g->entity(g->ctx, &copy[i]);
-      if (!ent || ((int64_t)ent->power_cubes & (1 << cube)) == 0) continue;
-      ent->power_cubes = (double)((int64_t)ent->power_cubes & ~(1 << cube));
+      if (!ent || (qa_js_to_int32(ent->power_cubes) & (1 << cube)) == 0) continue;
+      ent->power_cubes = (double)(qa_js_to_int32(ent->power_cubes) & ~(1 << cube));
       qa_shared_inventory_table_consume(g->host->inventory, owner, key, 1);
     } else {
       double amount = g->options.mode == QA_Q2_MODE_COOP ? qa_shared_inventory_table_count(g->host->inventory, copy[i], key) : 1;
@@ -401,8 +431,9 @@ USE(trigger_key_use) {
 }
 USE(use_target_help) {
   (void)c; (void)o; (void)a;
+  g->help_changed++;
   qa_q2_presentation_event ev = ev_new("help");
-  ev.slot = ((int64_t)e->spawnflags & 1) != 0 ? 1 : 2; ev.text = e->message;
+  ev.slot = (qa_js_to_int32(e->spawnflags) & 1) != 0 ? 1 : 2; ev.text = e->message;
   g->host->emit(g->host->ctx, ev);
 }
 USE(use_target_secret_or_goal) {
@@ -451,12 +482,12 @@ USE(use_target_poi) {
 }
 USE(use_areaportal) {
   (void)c; (void)o; (void)a;
-  e->count = (double)((int64_t)e->count ^ 1);
+  e->count = (double)(qa_js_to_int32(e->count) ^ 1);
   g->host->set_area_portal(g->host->ctx, e->style, e->count != 0);
 }
 TOUCH(teleport_touch) {
   (void)c;
-  if (((int64_t)e->spawnflags & 1) != 0 && !g->host->is_player(g->host->ctx, contact.other)) return;
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0 && !g->host->is_player(g->host->ctx, contact.other)) return;
   qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, contact.other);
   if ((cs.has_value ? cs.value.health : 0) < 1) return;
   size_t n = 0;
@@ -487,7 +518,7 @@ USE(target_delay_use) {
   (void)c; (void)o;
   e->has_activator = a != NULL;
   if (a) e->activator = *a;
-  g->schedule(g->ctx, e, fmax(0, e->wait), TCB(target_delay_fire));
+  g->schedule(g->ctx, e, qa_js_max(0, e->wait), TCB(target_delay_fire));
 }
 USE(func_static_use) {
   (void)c; (void)o; (void)a;

@@ -1,9 +1,10 @@
 /*
  * Port of src/world/session/mod-files.ts: per-selection user file
- * stores and borrowed mod file mounts. Paths join with '/' after
- * encodeURIComponent on each selection component, exactly as the TS
- * resolve() result reads on POSIX. Stores returned by _for are
- * owned by the ModUserFiles and stay valid until its destroy.
+ * stores and borrowed mod file mounts. Store roots are node
+ * path.resolve(root, ".mods", encodeURIComponent(product),
+ * encodeURIComponent(id)) on POSIX: normalized, relative roots against
+ * the working directory. Stores returned by _for are owned by the
+ * ModUserFiles and stay valid until its destroy.
  * Mount identity strings created for a returned mounted content are
  * retained for that instance's lifetime (the TS retains the mount
  * objects; the C mounter borrows their strings).

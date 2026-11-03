@@ -1,9 +1,10 @@
 /* Port of src/app/bootstrap/network/remote-unified.ts
  * (UnifiedRemotePresentation). Loaded content rides as the
  * remote-world opaque handle; prepared mods, recipe and resource
- * resolution come through the options host. PresentationState's
- * event queue is local (receive assigns local sequences); owner
- * admission for consumers is a host seam. Scene link/unlink (TS
+ * resolution come through the options host. Presentation events are
+ * decoded as unified event trees and received into the replica's own
+ * PresentationState (media) as typed events (unified_event_values.h);
+ * the consumers admit and retire owners on it. Scene link/unlink (TS
  * createSceneQueries surface beyond landed qa_scene_queries) is a
  * host seam. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_REMOTE_UNIFIED_H
@@ -59,8 +60,6 @@ typedef struct qa_app_unified_remote_options {
   const void *(*borrow_mounts)(void *ctx, const char *selection, qa_content_id content,
       const void *installed, const void **out_writable);
   void (*close_mounts)(void *ctx, const void *mounts);
-  void (*admit_owner)(void *ctx, qa_presentation_owner owner, qa_content_id content);
-  void (*retire_owner)(void *ctx, qa_presentation_owner owner);
   void (*product_expectation)(void *ctx, qa_content_id content,
       const char **family, const char **edition);
   /* NULL = TS undefined. */
@@ -90,7 +89,7 @@ void qa_app_unified_remote_admitted(qa_app_unified_remote *remote,
     const qa_app_unified_control *binding);
 void qa_app_unified_remote_receive_components(qa_app_unified_remote *remote,
     double epoch, const qa_app_unified_component_update *update);
-const void *qa_app_unified_remote_mod_presentation_sources(qa_app_unified_remote *remote,
+const struct qa_active_mod_presentation *qa_app_unified_remote_mod_presentation_sources(qa_app_unified_remote *remote,
     size_t *out_count);
 const qa_active_mod_client_presentation *qa_app_unified_remote_mod_client_sources(
     qa_app_unified_remote *remote, size_t *out_count);
@@ -124,10 +123,14 @@ void qa_app_unified_remote_player_command(qa_app_unified_remote *remote, qa_acto
     const char *name, const char *const *args, size_t count);
 void qa_app_unified_remote_register_resource(qa_app_unified_remote *remote,
     qa_content_id content, const char *path, qa_resolved_resource_reference resource);
-qa_save_value **qa_app_unified_remote_drain_simulation_events(qa_app_unified_remote *remote,
+/* TS drainSimulationEvents(): valid until the next drain. */
+const qa_simulation_event *qa_app_unified_remote_drain_simulation_events(qa_app_unified_remote *remote,
     size_t *out_count);
-qa_save_value **qa_app_unified_remote_drain_presentation_events(qa_app_unified_remote *remote,
+/* TS drainPresentationEvents() = media.takePresentation(): owned by the media until its next take. */
+const qa_app_sim_presentation_event *qa_app_unified_remote_drain_presentation_events(qa_app_unified_remote *remote,
     size_t *out_count);
+/* TS get media(): the replica's PresentationState (replaced on each offer). */
+struct qa_app_presentation_state *qa_app_unified_remote_media(qa_app_unified_remote *remote);
 void qa_app_unified_remote_disconnected(qa_app_unified_remote *remote, const char *reason);
 void qa_app_unified_remote_print(qa_app_unified_remote *remote, const char *text);
 void qa_app_unified_remote_close(qa_app_unified_remote *remote);

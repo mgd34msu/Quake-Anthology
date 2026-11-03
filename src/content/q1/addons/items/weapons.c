@@ -1,280 +1,289 @@
-/* Port of src/content/q1/addons/items/weapons.ts. GPL-2.0-or-later. */
+/* Port of src/content/q1/addons/items/weapons.ts (quakec_mg3/mg3_weapons.qc, weapons.qc and player.qc).
+ * GPL-2.0-or-later. */
 #include "qa/content/q1/addons/items/weapons.h"
 
 #include <math.h>
 #include <string.h>
 
 #include "qa/content/q1/addons/items/pickups.h"
+#include "qa/content/q1/foundation/weapons.h"
+#include "qa/content/q1/missionpacks/hipnotic_weapons.h"
+#include "qa/foundation/js.h"
 
 static double fr(double value) { return (double)(float)value; }
-static bool infinite_ammo(qa_q1ad_context *context, qa_q1ad_player *player) {
+
+static bool infinite_ammo(qa_q1ad_context *context, qa_q1_player_state *player) {
   return qa_q1ad_player_number(context, player->actor.id, "infiniteammo") != 0;
 }
-static double inventory_count(qa_q1ad_context *context, qa_actor_id actor, qa_item_id item) {
-  return context->game.inventory_count != NULL
-      ? context->game.inventory_count(context->game.ctx, actor, item) : 0;
-}
-static bool inventory_consume(qa_q1ad_context *context, qa_owned_actor actor, qa_item_id item, double amount) {
-  return context->game.inventory_consume != NULL &&
-      context->game.inventory_consume(context->game.ctx, actor, item, amount);
-}
-static void emit_weapon(qa_q1ad_context *context, qa_q1ad_player *player, double punch) {
-  qa_q1ad_host_event event = {.kind = "weapon", .player = player->actor.id, .has_player = true,
-      .weapon = player->weapon,
-      .view_model = context->game.weapon_model != NULL
-          ? context->game.weapon_model(context->game.ctx, player->weapon, player) : "",
-      .frame = player->weapon_frame, .punch = punch};
-  qa_q1ad_host_emit(context, &event);
-}
-static qa_angle_vectors basis_of(qa_q1ad_context *context, qa_vec3 angles) {
-  qa_angle_vectors basis;
-  if (context->game.make_vectors != NULL &&
-      context->game.make_vectors(context->game.ctx, angles, &basis)) return basis;
-  return qa_math_angle_vectors_rule(angles, QA_ANGLE_RULE_Q1);
-}
-static double frame_delay(qa_q1ad_context *context, qa_q1ad_player *player, double delay) {
-  return context->game.weapon_frame_delay != NULL
-      ? context->game.weapon_frame_delay(context->game.ctx, player, delay) : delay;
-}
-static double attack_delay(qa_q1ad_context *context, qa_q1ad_player *player, double delay) {
-  return context->game.weapon_attack_delay != NULL
-      ? context->game.weapon_attack_delay(context->game.ctx, player, delay) : delay;
-}
-static qa_vec3 aim_at(qa_q1ad_context *context, qa_owned_actor actor, qa_vec3 forward) {
-  return context->game.aim != NULL ? context->game.aim(context->game.ctx, actor, forward) : forward;
+
+static double inventory_count(qa_q1_services *game, qa_actor_id actor, qa_item_id item) {
+  return qa_shared_inventory_table_count(game->host.inventory, actor, item);
 }
 
-bool qa_q1ad_mg3_hammer_body_frame(qa_q1ad_context *context, qa_q1ad_player *player, double *out) {
-  const char *weapon = player->weapon != NULL ? player->weapon : "";
-  if (strcmp(weapon, "mg3:mjolnir") != 0 || player->weapon_animation_at < 0 ||
-      player->weapon_frame < 1 || player->weapon_frame > 4) return false;
+static void emit_weapon(qa_q1_services *game, qa_q1_player_state *player, double punch) {
+  qa_q1_emit(game, (qa_q1_event){.kind = "weapon", .has_player = true, .player = player->actor.id,
+                                 .weapon = player->weapon,
+                                 .view_model = qa_q1_services_weapon_model(game, player->weapon, player),
+                                 .frame = player->weapon_frame, .punch = punch});
+}
+
+bool qa_q1ad_mg3_hammer_body_frame(qa_q1ad_context *context, qa_q1_player_state *player, double *out) {
+  if (strcmp(player->weapon, "mg3:mjolnir") != 0 || player->weapon_animation_at < 0 || player->weapon_frame < 1 ||
+      player->weapon_frame > 4)
+    return false;
   *out = qa_q1ad_player_number(context, player->actor.id, "mg3.hammerBodyBase") + player->weapon_frame;
   return true;
 }
 
-void qa_q1ad_mg3_weapon_frame(qa_q1ad_context *context, qa_q1ad_player *player) {
-  if (qa_q1ad_health(context, player->actor.id) <= 0) return;
-  const char *weapon = player->weapon != NULL ? player->weapon : "";
-  if (strcmp(weapon, "mg3:mjolnir") == 0 &&
+void qa_q1ad_mg3_weapon_frame(qa_q1ad_context *context, qa_q1_player_state *player) {
+  qa_q1_services *game = context->game;
+  if (qa_q1_health(game, player->actor.id) <= 0) return;
+  if (strcmp(player->weapon, "mg3:mjolnir") == 0 &&
       qa_q1ad_player_number(context, player->actor.id, "mg3.hammerGlow") != 0 &&
-      qa_q1ad_player_number(context, player->actor.id, "last_mjolnir_hit_time") <= fr(context->game.time)) {
+      qa_q1ad_player_number(context, player->actor.id, "last_mjolnir_hit_time") <= fr(game->time)) {
     qa_q1ad_set_player_number(context, player->actor.id, "mg3.hammerGlow", 0);
-    emit_weapon(context, player, 0);
+    emit_weapon(game, player, 0);
   }
-  if (context->game.time <= player->attack_finished || strcmp(weapon, "axe") == 0 ||
-      strcmp(weapon, "mg3:mjolnir") == 0) return;
-  const char *ammo = context->game.weapon_ammo != NULL
-      ? context->game.weapon_ammo(context->game.ctx, weapon) : NULL;
-  if (ammo == NULL || inventory_count(context, player->actor.id, ammo) != 0) return;
-  const char *name = strcmp(ammo, "q1:ammo/shells") == 0 ? "item_shells"
-      : strcmp(ammo, "q1:ammo/nails") == 0 ? "item_spikes"
-      : strcmp(ammo, "q1:ammo/rockets") == 0 ? "item_rockets"
-      : strcmp(ammo, "q1:ammo/cells") == 0 ? "item_cells" : NULL;
-  if (name != NULL) {
-    qa_q1ad_actor *entities[512];
-    size_t count = qa_q1ad_entities(context, entities, 512);
-    for (size_t i = 0; i < count; i++)
-      if (entities[i]->classname != NULL && strcmp(entities[i]->classname, name) == 0 &&
-          ((int32_t)entities[i]->spawnflags & 8) != 0 && entities[i]->solid != NULL &&
-          strcmp(entities[i]->solid, "none") == 0)
-        qa_q1ad_schedule(context, entities[i], 0.5 * qa_q1ad_random(context), "SUB_regen");
-  }
-  if (context->game.choose_best != NULL && context->game.select_weapon != NULL) {
-    const char *best = context->game.choose_best(context->game.ctx, player->actor);
-    if (best != NULL) (void)context->game.select_weapon(context->game.ctx, player->actor, best);
-  }
+  if (game->time <= player->attack_finished || strcmp(player->weapon, "axe") == 0 ||
+      strcmp(player->weapon, "mg3:mjolnir") == 0)
+    return;
+  qa_item_id ammo = qa_q1_services_weapon_ammo(game, player->weapon);
+  if (ammo == NULL || inventory_count(game, player->actor.id, ammo) != 0) return;
+  const char *name = strcmp(ammo, "q1:ammo/shells") == 0    ? "item_shells"
+                     : strcmp(ammo, "q1:ammo/nails") == 0   ? "item_spikes"
+                     : strcmp(ammo, "q1:ammo/rockets") == 0 ? "item_rockets"
+                     : strcmp(ammo, "q1:ammo/cells") == 0   ? "item_cells"
+                                                            : NULL;
+  if (name != NULL)
+    for (size_t i = 0; i < game->entity_count; i++) {
+      double delay;
+      qa_q1_bound_action callback;
+      qa_q1_actor *entity = game->entities[i];
+      if (strcmp(entity->classname, name) == 0 && (qa_js_to_int32(entity->spawnflags) & 8) != 0 &&
+          strcmp(entity->solid, "none") == 0)
+        (delay = 0.5 * qa_q1_host_random(game), callback = qa_q1_callback_registry_action(game->named, entity, "SUB_regen"), qa_q1_schedule(game, entity, delay,
+                       callback));
+    }
+  (void)qa_q1_select_weapon(game, player->actor, qa_q1_choose_best(game, player->actor));
 }
 
-bool qa_q1ad_mg3_fire_laser(qa_q1ad_context *context, qa_q1ad_player *player) {
-  qa_q1ad_body body;
-  if (!qa_q1ad_body_by_id(context, player->actor.id, &body)) return false;
-  if (!infinite_ammo(context, player) &&
-      !inventory_consume(context, player->actor, "q1:ammo/cells", 1)) return false;
-  qa_angle_vectors basis = basis_of(context, player->view_angles);
-  qa_vec3 flat_forward = basis.forward;
-  flat_forward.z = 0;
-  qa_vec3 outward = qa_normalize3_or_zero(flat_forward);
-  qa_vec3 origin = qa_add3(qa_add3(body.origin, qa_scale3(basis.up, 6)), qa_scale3(outward, 12));
-  qa_vec3 direction = aim_at(context, player->actor, basis.forward);
+static bool fire_laser(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  qa_q1ad_context *context = ctx;
+  qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, player->actor.id);
+  if (!body.has_value ||
+      (!infinite_ammo(context, player) &&
+       !qa_shared_inventory_table_consume(game->host.inventory, player->actor, "q1:ammo/cells", 1)))
+    return false;
+  qa_q1_basis basis = qa_q1_make_vectors(game, player->view_angles);
+  qa_vec3 outward = qa_q1_normalize((qa_vec3){basis.forward.x, basis.forward.y, 0});
+  qa_vec3 origin = qa_q1_vadd(qa_q1_vadd(body.value.origin, qa_q1_vscale(basis.up, 6)), qa_q1_vscale(outward, 12));
+  qa_vec3 direction = qa_q1_aim(game, player->actor, basis.forward);
   bool paired = !player->continuous_firing || player->weapon_frame == 4;
+  static const qa_q1mp_hipnotic_laser_profile PROFILE = {"mg3:laser", 15, 20};
   if (paired) {
     double offset = 6 * 0.707;
-    qa_vec3 first = qa_sub3(qa_add3(origin, qa_scale3(basis.right, offset)), qa_scale3(basis.up, offset));
-    if (context->game.launch_laser != NULL) {
-      context->game.launch_laser(context->game.ctx, player->actor.id, first, direction, false);
-      context->game.launch_laser(context->game.ctx, player->actor.id,
-          qa_sub3(first, qa_scale3(basis.right, offset * 2)), direction, false);
-    }
-  } else if (context->game.launch_laser != NULL)
-    context->game.launch_laser(context->game.ctx, player->actor.id,
-        qa_add3(origin, qa_scale3(basis.up, 6)), direction, qa_q1ad_random(context) < 0.1);
+    qa_vec3 first = qa_q1_vsub(qa_q1_vadd(origin, qa_q1_vscale(basis.right, offset)), qa_q1_vscale(basis.up, offset));
+    (void)qa_q1mp_launch_hipnotic_laser(game, player->actor.id, first, direction, false, &PROFILE);
+    (void)qa_q1mp_launch_hipnotic_laser(game, player->actor.id, qa_q1_vsub(first, qa_q1_vscale(basis.right, offset * 2)),
+                                        direction, false, &PROFILE);
+  } else {
+    qa_vec3 start = qa_q1_vadd(origin, qa_q1_vscale(basis.up, 6));
+    bool light = qa_q1_host_random(game) < 0.1;
+    (void)qa_q1mp_launch_hipnotic_laser(game, player->actor.id, start, direction, light, &PROFILE);
+  }
   player->continuous_firing = true;
   player->weapon_animation_at = -1;
   player->weapon_frame = paired ? 1 : 4;
-  player->attack_finished = player->next_weapon_frame =
-      fr(context->game.time + frame_delay(context, player, 0.1));
-  player->hostile_until = fr(context->game.time + 1);
-  emit_weapon(context, player, -1);
-  qa_q1ad_effect(context, "muzzleflash", body.origin, &player->actor.id, 0);
+  player->attack_finished = player->next_weapon_frame = fr(game->time + qa_q1_weapon_frame_delay(game, player, 0.1));
+  player->hostile_until = fr(game->time + 1);
+  emit_weapon(game, player, -1);
+  qa_q1_effect(game, "muzzleflash", body.value.origin, &player->actor.id, 1);
   return true;
 }
 
-static void hammer_strike(qa_q1ad_context *context, qa_q1ad_actor *strike) {
-  qa_q1ad_player *player = strike->has_owner ? qa_q1ad_player_state(context, strike->owner) : NULL;
-  qa_q1ad_body body;
-  bool has_body = player != NULL && qa_q1ad_body_by_id(context, player->actor.id, &body);
-  if (player == NULL || !has_body) { qa_q1ad_remove(context, strike); return; }
-  qa_angle_vectors basis = basis_of(context, player->view_angles);
-  qa_vec3 source = qa_add3(body.origin, (qa_vec3){0, 0, 16});
+static qa_q1_trace point_trace(qa_q1_services *game, qa_vec3 start, qa_vec3 end, qa_actor_id ignore) {
+  return qa_q1_host_trace(game, (qa_q1_trace_request){.start = start, .end = end, .bounds = QA_Q1_POINT,
+                                                      .has_ignore = true, .ignore = ignore, .monsters = true});
+}
+
+static void hammer_strike(void *ctx, qa_q1_services *game, qa_q1_actor *strike) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_player_state *player = strike->has_owner ? qa_q1_player(game, strike->owner) : NULL;
+  qa_body_state_result body = player == NULL ? (qa_body_state_result){0}
+                                             : qa_shared_body_table_read(game->host.bodies, player->actor.id);
+  if (player == NULL || !body.has_value) { qa_q1_remove(game, strike); return; }
   qa_actor_id self = player->actor.id;
-  qa_q1ad_trace trace = {.fraction = 1, .end = qa_add3(source, qa_scale3(basis.forward, 64))};
-  if (context->game.trace != NULL)
-    (void)context->game.trace(context->game.ctx, source, trace.end,
-        (qa_bounds){{0, 0, 0}, {0, 0, 0}}, &self, true, &trace);
-  qa_vec3 origin = qa_sub3(trace.end, qa_scale3(basis.forward, 4));
-  player->attack_finished = fr(context->game.time + attack_delay(context, player, 0.4));
-  bool can_take = false;
-  bool known = trace.has_actor && context->game.combat_can_take_damage != NULL &&
-      context->game.combat_can_take_damage(context->game.ctx, trace.actor, &can_take);
-  if (trace.has_actor && known && can_take) {
+  qa_q1_basis basis = qa_q1_make_vectors(game, player->view_angles);
+  qa_vec3 source = qa_q1_vadd(body.value.origin, (qa_vec3){0, 0, 16});
+  qa_q1_trace trace = point_trace(game, source, qa_q1_vadd(source, qa_q1_vscale(basis.forward, 64)), self);
+  qa_vec3 origin = qa_q1_vsub(trace.end, qa_q1_vscale(basis.forward, 4));
+  player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, 0.4));
+  qa_combat_state_result combat = trace.has_actor ? qa_gameplay_authority_read(game->host.combat, trace.actor)
+                                                  : (qa_combat_state_result){0};
+  if (trace.has_actor && combat.has_value && combat.value.can_take_damage) {
     qa_actor_id target = trace.actor;
-    qa_q1ad_sound_actor(context, player->actor.id, "hipweap/mjolslap.wav", "weapon");
-    qa_q1ad_effect(context, "blood", origin, &target, 40);
-    qa_q1ad_actor *victim = qa_q1ad_entity(context, &target);
+    qa_q1_sound(game, player->actor.id, "hipweap/mjolslap.wav", "weapon", 1, 1);
+    qa_q1_effect(game, "blood", origin, &target, 40);
+    qa_q1_actor *victim = qa_q1_get_entity(game, &target);
     if (victim != NULL) qa_q1ad_set_number(context, victim, "axhitme", 1);
-    const char *classname = context->game.classname_of != NULL
-        ? context->game.classname_of(context->game.ctx, target) : "";
-    if (classname == NULL) classname = "";
-    double health = qa_q1ad_health(context, target);
-    double damage = strcmp(classname, "monster_zombie") == 0 ||
-        strcmp(classname, "monster_szombie") == 0 ? 120 : health - 40 < 0 ? 80 : 40;
+    const char *classname = game->host.classname(game->host.ctx, target);
+    double health = qa_q1_health(game, target);
+    double damage = classname != NULL && (strcmp(classname, "monster_zombie") == 0 ||
+                                          strcmp(classname, "monster_szombie") == 0)
+                        ? 120
+                    : health - 40 < 0 ? 80 : 40;
     qa_actor_id last;
     bool has_last = qa_q1ad_player_reference(context, player->actor.id, "last_mjolnir_hit", &last);
-    if (qa_q1ad_player_number(context, player->actor.id, "last_mjolnir_hit_time") > fr(context->game.time)) {
+    if (qa_q1ad_player_number(context, player->actor.id, "last_mjolnir_hit_time") > fr(game->time)) {
       if (has_last && qa_same_actor(last, target) && player->water_level < 2 &&
-          inventory_count(context, player->actor.id, "q1:ammo/cells") >= 15) {
-        qa_q1ad_trace floor_trace = {.fraction = 1,
-            .end = qa_sub3(source, qa_scale3(basis.up, player->water_level < 1 ? 30 : 15))};
-        if (context->game.trace != NULL)
-          (void)context->game.trace(context->game.ctx, source, floor_trace.end,
-              (qa_bounds){{0, 0, 0}, {0, 0, 0}}, &self, true, &floor_trace);
+          inventory_count(game, player->actor.id, "q1:ammo/cells") >= 15) {
+        qa_q1_trace floor =
+            point_trace(game, source, qa_q1_vsub(source, qa_q1_vscale(basis.up, player->water_level < 1 ? 30 : 15)), self);
         if (!infinite_ammo(context, player))
-          (void)inventory_consume(context, player->actor, "q1:ammo/cells", 15);
-        if (context->game.spawn_hammer_base != NULL)
-          context->game.spawn_hammer_base(context->game.ctx, player, floor_trace.end, "mg3:mjolnir");
+          (void)qa_shared_inventory_table_consume(game->host.inventory, player->actor, "q1:ammo/cells", 15);
+        qa_q1mp_spawn_hipnotic_hammer_base(game, player, floor.end, "mg3:mjolnir");
       } else
-        qa_q1ad_damage(context, target, &self, &self, damage, "mg3:mjolnir", NULL, NULL);
-      qa_q1ad_set_player_number(context, player->actor.id, "last_mjolnir_hit_time", context->game.time);
-      player->attack_finished = fr(context->game.time + attack_delay(context, player, 0.5));
+        (void)qa_q1_damage(game, target, self, &self, damage, "mg3:mjolnir", NULL, NULL, NULL);
+      qa_q1ad_set_player_number(context, player->actor.id, "last_mjolnir_hit_time", game->time);
+      player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, 0.5));
     } else {
-      qa_q1ad_set_player_number(context, player->actor.id, "last_mjolnir_hit_time", context->game.time + 0.5);
+      qa_q1ad_set_player_number(context, player->actor.id, "last_mjolnir_hit_time", game->time + 0.5);
       qa_q1ad_set_player_reference(context, player->actor.id, "last_mjolnir_hit", &target);
-      player->attack_finished = fr(context->game.time + attack_delay(context, player, 0.2));
-      if (inventory_count(context, player->actor.id, "q1:ammo/cells") >= 15)
+      player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, 0.2));
+      if (inventory_count(game, player->actor.id, "q1:ammo/cells") >= 15)
         qa_q1ad_set_player_number(context, player->actor.id, "mg3.hammerGlow", 1);
-      qa_q1ad_damage(context, target, &self, &self, damage, "mg3:mjolnir", NULL, NULL);
+      (void)qa_q1_damage(game, target, self, &self, damage, "mg3:mjolnir", NULL, NULL, NULL);
     }
   } else {
     if (trace.fraction != 1) {
-      qa_q1ad_sound_actor(context, player->actor.id, "hipweap/mjoltink.wav", "weapon");
-      qa_q1ad_effect(context, "gunshot", origin, NULL, 0);
-    } else qa_q1ad_sound_actor(context, player->actor.id, "weapons/ax1.wav", "weapon");
+      qa_q1_sound(game, player->actor.id, "hipweap/mjoltink.wav", "weapon", 1, 1);
+      qa_q1_effect(game, "gunshot", origin, NULL, 1);
+    } else
+      qa_q1_sound(game, player->actor.id, "weapons/ax1.wav", "weapon", 1, 1);
     qa_q1ad_set_player_reference(context, player->actor.id, "last_mjolnir_hit", NULL);
   }
-  emit_weapon(context, player, 0);
-  qa_q1ad_remove(context, strike);
+  emit_weapon(game, player, 0);
+  qa_q1_remove(game, strike);
 }
 
-bool qa_q1ad_mg3_fire_hammer(qa_q1ad_context *context, qa_q1ad_player *player) {
-  if (context->game.create == NULL) return false;
-  qa_q1ad_actor *strike = context->game.create(context->game.ctx, "mg3_hammer_strike");
-  if (strike == NULL) return false;
-  strike->owner = player->actor.id;
+static bool fire_hammer(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_actor *strike = qa_q1_create(game, "mg3_hammer_strike", NULL, NULL);
   strike->has_owner = true;
+  strike->owner = player->actor.id;
   qa_q1ad_set_player_number(context, player->actor.id, "mg3.hammerBodyBase",
-      inventory_count(context, player->actor.id, "q1:ammo/cells") < 30 ? 31 : 37);
-  qa_q1ad_schedule(context, strike, 0.2, "mg3:hammer_strike");
+                            inventory_count(game, player->actor.id, "q1:ammo/cells") < 30 ? 31 : 37);
+  qa_q1_schedule(game, strike, 0.2, qa_q1_callback_registry_action(game->named, strike, "mg3:hammer_strike"));
   player->continuous_firing = false;
-  player->weapon_animation_at = context->game.time;
+  player->weapon_animation_at = game->time;
   player->weapon_animation_base = 1;
   player->weapon_frame = 1;
-  player->attack_finished = fr(context->game.time + attack_delay(context, player, 0.5));
-  player->hostile_until = fr(context->game.time + 1);
-  emit_weapon(context, player, 0);
+  player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, 0.5));
+  player->hostile_until = fr(game->time + 1);
+  emit_weapon(game, player, 0);
   return true;
 }
 
-bool qa_q1ad_mg3_fire_shotgun(qa_q1ad_context *context, qa_q1ad_player *player) {
-  double shells = inventory_count(context, player->actor.id, "q1:ammo/shells");
-  int32_t bloody = (int32_t)qa_q1ad_player_number(context, player->actor.id, "parm15");
-  const char *weapon = player->weapon != NULL ? player->weapon : "";
-  if (strcmp(weapon, "supershotgun") == 0 && (bloody & QA_Q1AD_MG3_BLOODY_SUPER_SHOTGUN) != 0 && shells > 1) {
-    qa_q1ad_body body;
-    if (!qa_q1ad_body_by_id(context, player->actor.id, &body)) return false;
-    if (!infinite_ammo(context, player)) (void)inventory_consume(context, player->actor, "q1:ammo/shells", 2);
-    qa_q1ad_sound_actor(context, player->actor.id, "weapons/shotgn2.wav", "weapon");
-    qa_angle_vectors basis = basis_of(context, player->view_angles);
-    if (context->game.fire_bullets != NULL)
-      context->game.fire_bullets(context->game.ctx, player->actor,
-          aim_at(context, player->actor, basis.forward), player->view_angles, 28, 0.3, 0.08, "supershotgun");
+static bool fire_shotgun(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  qa_q1ad_context *context = ctx;
+  double count = inventory_count(game, player->actor.id, "q1:ammo/shells");
+  int32_t bloody = qa_js_to_int32(qa_q1ad_player_number(context, player->actor.id, "parm15"));
+  if (strcmp(player->weapon, "supershotgun") == 0 && (bloody & QA_Q1AD_MG3_BLOODY_SUPER_SHOTGUN) != 0 && count > 1) {
+    qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, player->actor.id);
+    if (!body.has_value) return false;
+    if (!infinite_ammo(context, player))
+      (void)qa_shared_inventory_table_consume(game->host.inventory, player->actor, "q1:ammo/shells", 2);
+    qa_q1_sound(game, player->actor.id, "weapons/shotgn2.wav", "weapon", 1, 1);
+    qa_q1_basis basis = qa_q1_make_vectors(game, player->view_angles);
+    qa_vec3 direction = qa_q1_aim(game, player->actor, basis.forward);
+    qa_q1_fire_bullets(game, player->actor, direction, player->view_angles, 28, 0.3, 0.08, "supershotgun");
     player->continuous_firing = false;
-    player->weapon_animation_at = context->game.time;
+    player->weapon_animation_at = game->time;
     player->weapon_animation_base = 1;
     player->weapon_frame = 1;
-    player->attack_finished = fr(context->game.time + attack_delay(context, player, 0.7));
-    player->hostile_until = fr(context->game.time + 1);
-    emit_weapon(context, player, -4);
-    qa_q1ad_effect(context, "muzzleflash", body.origin, &player->actor.id, 0);
+    player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, 0.7));
+    player->hostile_until = fr(game->time + 1);
+    emit_weapon(game, player, -4);
+    qa_q1_effect(game, "muzzleflash", body.value.origin, &player->actor.id, 1);
     return true;
   }
-  bool fired = context->game.fire_base_weapon != NULL &&
-      context->game.fire_base_weapon(context->game.ctx, player);
-  if (fired && strcmp(weapon, "shotgun") == 0 && (bloody & QA_Q1AD_MG3_BLOODY_SHOTGUN) != 0)
-    player->attack_finished = fr(context->game.time + attack_delay(context, player, 0.28));
+  bool fired = qa_q1_fire_base_weapon(game, player);
+  if (fired && strcmp(player->weapon, "shotgun") == 0 && (bloody & QA_Q1AD_MG3_BLOODY_SHOTGUN) != 0)
+    player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, 0.28));
   return fired;
 }
 
-bool qa_q1ad_mg3_consume_ammo(qa_q1ad_context *context, qa_q1ad_player *player, qa_item_id item, double amount) {
-  return infinite_ammo(context, player) || inventory_consume(context, player->actor, item, amount);
+static bool consume_ammo(void *ctx, qa_q1_services *game, qa_q1_player_state *player, qa_item_id item, double amount) {
+  return infinite_ammo(ctx, player) || qa_shared_inventory_table_consume(game->host.inventory, player->actor, item, amount);
 }
-const char *qa_q1ad_mg3_hammer_model(qa_q1ad_context *context, qa_q1ad_player *player) {
-  return qa_q1ad_player_number(context, player->actor.id, "mg3.hammerGlow") != 0 &&
-          qa_q1ad_player_number(context, player->actor.id, "last_mjolnir_hit_time") > fr(context->game.time)
-      ? "progs/v_hammer_glow.mdl" : "progs/v_hammer.mdl";
+
+static const char *hammer_model(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  return qa_q1ad_player_number(ctx, player->actor.id, "mg3.hammerGlow") != 0 &&
+                 qa_q1ad_player_number(ctx, player->actor.id, "last_mjolnir_hit_time") > fr(game->time)
+             ? "progs/v_hammer_glow.mdl"
+             : "progs/v_hammer.mdl";
 }
-const char *qa_q1ad_mg3_shotgun_model(qa_q1ad_context *context, qa_q1ad_player *player, const char *weapon) {
-  bool shotgun = strcmp(weapon, "shotgun") == 0;
-  int32_t bloody = (int32_t)qa_q1ad_player_number(context, player->actor.id, "parm15");
-  bool active = (bloody & (shotgun ? QA_Q1AD_MG3_BLOODY_SHOTGUN : QA_Q1AD_MG3_BLOODY_SUPER_SHOTGUN)) != 0;
-  return active ? shotgun ? "progs/v_bloodshot.mdl" : "progs/v_bloodshot2.mdl"
-                : shotgun ? "progs/v_shot.mdl" : "progs/v_shot2.mdl";
-}
-bool qa_q1ad_mg3_shotgun_best_available(qa_q1ad_context *context, qa_q1ad_player *player, const char *weapon) {
-  return strcmp(weapon, "shotgun") == 0 ||
-      inventory_count(context, player->actor.id, "q1:ammo/shells") >= 2;
-}
-void qa_q1ad_mg3_hammer_animate(qa_q1ad_context *context, qa_q1ad_player *player, double seconds) {
+
+static void hammer_animate(void *ctx, qa_q1_services *game, qa_q1_player_state *player, double seconds) {
+  (void)ctx; /* TS closure reads no context state */
   if (player->weapon_animation_at < 0) return;
-  double step = floor((seconds - player->weapon_animation_at) / 0.1);
-  double frame = step >= 4 ? 0 : step + 1;
+  double step = floor((seconds - player->weapon_animation_at) / 0.1), frame = step >= 4 ? 0 : step + 1;
   if (frame != player->weapon_frame) {
     player->weapon_frame = frame;
-    emit_weapon(context, player, 0);
+    emit_weapon(game, player, 0);
   }
   if (step >= 4) player->weapon_animation_at = -1;
 }
 
-void qa_q1ad_register_mg3_weapons(qa_q1ad_context *context) {
-  if (context->game.register_rule != NULL) {
-    context->game.register_rule(context->game.ctx, "q1:mg3:ammunition");
-    context->game.register_rule(context->game.ctx, "hipnotic:laser-callbacks");
-    context->game.register_rule(context->game.ctx, "hipnotic:hammer-callbacks");
-    context->game.register_rule(context->game.ctx, "weapon:mg3:laser");
-    context->game.register_rule(context->game.ctx, "weapon:mg3:mjolnir");
-    context->game.register_rule(context->game.ctx, "weapon:shotgun");
-    context->game.register_rule(context->game.ctx, "weapon:supershotgun");
-    /* The MG3 QC intentionally omits laser/rocket/grenade launchers from W_BestWeapon. */
-    context->game.register_rule(context->game.ctx, "q1:mg3:weapon-order");
-  }
-  qa_q1ad_register_named(context, "mg3:hammer_strike", (qa_q1ad_handlers){.action = hammer_strike});
+static bool shotgun_best_available(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  (void)ctx; (void)game; (void)player; /* weapon === "shotgun" */
+  return true;
+}
+static bool supershotgun_best_available(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  (void)ctx; /* TS closure reads no context state */
+  return inventory_count(game, player->actor.id, "q1:ammo/shells") >= 2;
+}
+static const char *shotgun_model(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  (void)game; /* model choice reads only the player word */
+  return (qa_js_to_int32(qa_q1ad_player_number(ctx, player->actor.id, "parm15")) & QA_Q1AD_MG3_BLOODY_SHOTGUN) != 0
+             ? "progs/v_bloodshot.mdl"
+             : "progs/v_shot.mdl";
+}
+static const char *supershotgun_model(void *ctx, qa_q1_services *game, qa_q1_player_state *player) {
+  (void)game; /* model choice reads only the player word */
+  return (qa_js_to_int32(qa_q1ad_player_number(ctx, player->actor.id, "parm15")) & QA_Q1AD_MG3_BLOODY_SUPER_SHOTGUN) != 0
+             ? "progs/v_bloodshot2.mdl"
+             : "progs/v_shot2.mdl";
+}
+
+void qa_q1ad_register_mg3_weapons(qa_q1ad_context *context, qa_q1ad_mg3_weapon_tables *tables) {
+  qa_q1_services *game = context->game;
+  tables->ammunition = (qa_q1_weapon_rules){.ctx = context, .id = "q1:mg3:ammunition", .consume_ammo = consume_ammo};
+  qa_q1_register_weapon_rules(game, &tables->ammunition);
+  qa_q1mp_register_hipnotic_laser_callbacks(game);
+  qa_q1mp_register_hipnotic_hammer_callbacks(game);
+  qa_q1_callback_registry_register(game->named, "mg3:hammer_strike",
+                                   (qa_q1_callback_handlers){.ctx = context, .action = hammer_strike});
+  tables->laser = (qa_q1_weapon_definition){.ctx = context, .id = "mg3:laser", .ammo = "q1:ammo/cells",
+                                            .model = "progs/v_laserg.mdl", .rank = 3, .fire = fire_laser};
+  qa_q1_register_weapon(game, &tables->laser);
+  tables->mjolnir = (qa_q1_weapon_definition){
+      .ctx = context, .id = "mg3:mjolnir", .ammo = "q1:ammo/cells", .has_ammo_per_shot = true, .ammo_per_shot = 0,
+      .model = "progs/v_hammer.mdl", .rank = 8, .model_for = hammer_model, .fire = fire_hammer,
+      .animate = hammer_animate};
+  qa_q1_register_weapon(game, &tables->mjolnir);
+  tables->shotgun = (qa_q1_weapon_definition){
+      .ctx = context, .id = "shotgun", .ammo = "q1:ammo/shells", .has_ammo_per_shot = true, .ammo_per_shot = 1,
+      .model = "progs/v_shot.mdl", .rank = 8, .best_available = shotgun_best_available, .model_for = shotgun_model,
+      .fire = fire_shotgun};
+  qa_q1_replace_weapon(game, &tables->shotgun);
+  tables->supershotgun = (qa_q1_weapon_definition){
+      .ctx = context, .id = "supershotgun", .ammo = "q1:ammo/shells", .has_ammo_per_shot = true, .ammo_per_shot = 1,
+      .model = "progs/v_shot2.mdl", .rank = 6, .best_available = supershotgun_best_available,
+      .model_for = supershotgun_model, .fire = fire_shotgun};
+  qa_q1_replace_weapon(game, &tables->supershotgun);
+  /* The MG3 QC intentionally omits laser/rocket/grenade launchers from W_BestWeapon. */
+  static const qa_q1_weapon ORDER[] = {"lightning", "supernailgun", "supershotgun", "nailgun",
+                                       "shotgun", "mg3:mjolnir", "axe"};
+  qa_q1_register_weapon_order(game, "q1:mg3", ORDER, sizeof ORDER / sizeof ORDER[0]);
 }

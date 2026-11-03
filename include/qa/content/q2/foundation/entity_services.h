@@ -3,14 +3,20 @@
 #define QA_CONTENT_Q2_FOUNDATION_ENTITY_SERVICES_H
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/host.h"
-typedef struct qa_q2_entity_services qa_q2_entity_services;
 /* NULL only on OOM. modules borrowed. */
 qa_q2_entity_services *qa_q2_entity_services_create(qa_q2_foundation_host *host, qa_q2_game_options options, const qa_q2_spawn_module *modules, size_t module_count);
 void qa_q2_entity_services_destroy(qa_q2_entity_services *s);
 qa_q2_game_services *qa_q2_entity_services_game(qa_q2_entity_services *s);
+/* The Q2EntityServices a qa_q2_entity_services_game() result belongs to
+ * (TS holds the one object under both types). */
+qa_q2_entity_services *qa_q2_entity_services_of_game(qa_q2_game_services *game);
+/* Q2EntityServices.capture() through its Q2GameServices view. */
+qa_q2_foundation_checkpoint qa_q2_game_services_capture(qa_q2_game_services *game);
 qa_q2_entity *const *qa_q2_entity_services_entities(qa_q2_entity_services *s, size_t *n);
 qa_authored_target *const *qa_q2_entity_services_authored_targets(qa_q2_entity_services *s, size_t *n);
 void qa_q2_entity_services_add_authored_target(qa_q2_entity_services *s, qa_authored_target *t);
+/* TS authoredTargets.set: replaces the entry for t->actor in place, else appends. */
+void qa_q2_entity_services_set_authored_target(qa_q2_entity_services *s, qa_authored_target *t);
 qa_q2_source_callbacks *qa_q2_entity_services_callbacks(qa_q2_entity_services *s);
 qa_q2_counters *qa_q2_entity_services_counters(qa_q2_entity_services *s);
 /* capture storage owned by services until next capture/destroy. */

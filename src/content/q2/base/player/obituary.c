@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/player/obituary.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/player/obituary.h"
+#include "qa/foundation/js.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -51,7 +52,7 @@ void qa_q2_obituary(qa_q2_base_player_state *victim, qa_q2_base_player_state *at
                     void *score_ctx, void (*score)(void *ctx, qa_q2_base_player_state *recipient, double change),
                     char *out, size_t out_size) {
   /* TS bitwise operators work on int32 values. */
-  int32_t means32 = (int32_t)means;
+  int32_t means32 = qa_js_to_int32(means);
   bool friendly = (means32 & 0x8000000) != 0 || (coop && attacker != NULL);
   int32_t mod = means32 & ~0x8000000;
   const char *message = environment_message(mod);

@@ -4,8 +4,8 @@
 #ifndef QA_CONTENT_Q1_ADDONS_MONSTERS_HEAVY_TABLES_MG3_LAVAMAN_H
 #define QA_CONTENT_Q1_ADDONS_MONSTERS_HEAVY_TABLES_MG3_LAVAMAN_H
 
-#include "qa/content/q1/addons/monsters/ai/controller.h"
+#include "qa/content/q1/base/animation.h"
 
-extern const qa_q1am_frame_table qa_q1am_mg3_lavaman_frames;
+extern const qa_q1_monster_frame_table qa_q1am_mg3_lavaman_frames;
 
 #endif

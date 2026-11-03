@@ -1,14 +1,14 @@
 /* Port of src/console/dedicated.ts. GPL-2.0-or-later. */
 #include "qa/console/dedicated.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static char *dup_range(const char *text, size_t length) {
@@ -40,24 +40,46 @@ void qa_dedicated_console_destroy(qa_dedicated_console *console) {
   memset(console, 0, sizeof *console);
 }
 
+#define MAXIMUM_PENDING 65536
+
+/* TS enqueue: a full ring drops the line instead of throwing from the
+ * stream handler. */
+static void enqueue(qa_dedicated_console *console, const char *text, size_t length) {
+  char *line = dup_range(text, length);
+  if (line == NULL) qa_range_error("Out of memory");
+  if (qa_event_ring_append(&console->lines, &line) == 0) {
+    free(line);
+    console->dropped++;
+  }
+}
+
 static void admit_line(qa_dedicated_console *console, const char *text,
                        size_t length) {
   if (length > 0 && text[length - 1] == '\r') length--;
-  char *line = dup_range(text, length);
-  if (line != NULL) (void)qa_event_ring_admit(&console->lines, &line);
+  enqueue(console, text, length);
 }
 
 static void split_pending(qa_dedicated_console *console) {
   for (;;) {
-    if (console->pending == NULL || console->pending_length == 0) return;
+    if (console->pending == NULL || console->pending_length == 0) break;
     char *newline = (char *)memchr(console->pending, '\n',
                                    console->pending_length);
-    if (newline == NULL) return;
+    if (newline == NULL) break;
     size_t index = (size_t)(newline - console->pending);
     admit_line(console, console->pending, index);
     size_t rest = console->pending_length - index - 1;
     memmove(console->pending, console->pending + index + 1, rest);
     console->pending_length = rest;
+  }
+}
+
+/* TS split(): lines first, then an over-long unterminated remainder is
+ * dropped. */
+static void split(qa_dedicated_console *console) {
+  split_pending(console);
+  if (console->pending_length > MAXIMUM_PENDING) {
+    console->pending_length = 0;
+    console->dropped++;
   }
 }
 
@@ -75,7 +97,7 @@ void qa_dedicated_console_feed(qa_dedicated_console *console,
   }
   memcpy(console->pending + console->pending_length, data, length);
   console->pending_length += length;
-  split_pending(console);
+  split(console);
 }
 
 void qa_dedicated_console_feed_text(qa_dedicated_console *console,
@@ -85,11 +107,10 @@ void qa_dedicated_console_feed_text(qa_dedicated_console *console,
 
 void qa_dedicated_console_end(qa_dedicated_console *console) {
   if (console->closed) return;
-  split_pending(console);
+  split(console);
   if (console->pending_length > 0) {
     /* decoder.end() text was already fed as bytes; see header note. */
-    char *line = dup_range(console->pending, console->pending_length);
-    if (line != NULL) (void)qa_event_ring_admit(&console->lines, &line);
+    enqueue(console, console->pending, console->pending_length);
   }
   console->pending_length = 0;
   console->ended = true;
@@ -110,6 +131,13 @@ size_t qa_dedicated_console_drain(qa_dedicated_console *console,
                                   qa_command_buffer *commands) {
   if (console->closed) qa_error("Dedicated console is closed");
   if (console->error_message != NULL) qa_error(console->error_message);
+  if (console->dropped != 0) {
+    char text[96];
+    snprintf(text, sizeof text, "echo \"Dedicated console dropped %zu input line(s)\"\n",
+             console->dropped);
+    qa_command_buffer_append(commands, text, NULL, -1);
+    console->dropped = 0;
+  }
   size_t count = 0;
   char **lines = (char **)qa_event_ring_drain_all(&console->lines, &count);
   for (size_t i = 0; i < count; i++) {

@@ -165,7 +165,9 @@ static void initialize_ios(streams_ctx *s, qa_guest_core_address object, bool ha
   qa_gmem_write_i64(memory, at(s, object, 40), 0);
   write_ptr(s, at(s, object, 48), false, none);
   write_ptr(s, at(s, object, 56), false, none);
-  write_ptr(s, at(s, object, 64), true, qa_msvc_locale_create(s->locale));
+  qa_guest_core_address a = at(s, object, 64);
+  qa_guest_core_address v = qa_msvc_locale_create(s->locale);
+  write_ptr(s, a, true, v);
   write_ptr(s, at(s, object, 72), has_buffer, buffer);
   write_ptr(s, at(s, object, 80), false, none);
   qa_memory_write_u8(memory, at(s, object, 88), 32);
@@ -464,7 +466,9 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_core_call_context *c
                                                        {64, 48}, {80, 72}, {88, 76}};
       for (size_t i = 0; i < 6; i++)
         write_ptr(s, at(s, object, entries[i].slot), true, at(s, object, entries[i].target));
-      write_ptr(s, at(s, object, 96), true, qa_msvc_locale_create(s->locale));
+      qa_guest_core_address a2 = at(s, object, 96);
+      qa_guest_core_address v = qa_msvc_locale_create(s->locale);
+      write_ptr(s, a2, true, v);
       return qa_call_pointer(true, object);
     }
     case ST_FLUSH: {
@@ -627,11 +631,13 @@ static qa_call_result stream_impl(void *ctx, const qa_guest_core_call_context *c
   (void)none;
   return qa_call_void();
 }
+static void free_streams(void *resource) { streams_ctx *s = resource; free(s->locale); free(s); }
 static void bind(streams_ctx *s, int kind, int number, const char *name,
                  const qa_abi_storage *parameters, size_t parameter_count, bool result_is_void,
                  qa_abi_storage result) {
   stream_state *state = xmalloc(sizeof *state);
   state->s = s; state->kind = kind; state->number = number;
+  qa_windows_own(s->host, state, free);
   qa_windows_import_implementation impl = {state, stream_impl};
   qa_windows_service(s->host, library, name, parameters, parameter_count, result_is_void,
                      result, impl);
@@ -643,24 +649,25 @@ void qa_install_msvc_streams(qa_windows_service_host *host) {
   memset(s, 0, sizeof *s);
   s->host = host;
   s->locale = xmalloc(sizeof *s->locale);
+  qa_windows_own(host, s, free_streams);
   qa_msvc_locale_init(s->locale, host);
   qa_mapped_guest_memory *memory = host->memory;
   qa_abi_storage ptr = QA_STORAGE_POINTER, i32 = QA_STORAGE_INT32, u32 = QA_STORAGE_UINT32,
                  i64 = QA_STORAGE_INT64;
   char *name;
   name = concat3("??1", ios_name, "UEAA@XZ");
-  bind(s, ST_BASIC_DTOR, 0, name, &ptr, 1, true, i32);
+  bind(s, ST_BASIC_DTOR, 0, name, &ptr, 1, true, i32); free(name);
   qa_abi_storage delete_params[] = {ptr, u32};
   bind(s, ST_BASIC_DELETE, 0, "runtime:basic-ios-delete", delete_params, 2, false, ptr);
   const char *ios_table_names[] = {"runtime:basic-ios-delete"};
   s->ios_table = make_table(s, ios_table_names, 1, "MSVC basic_ios vftable");
   name = concat3("??0", ios_name, "IEAA@XZ");
-  bind(s, ST_IOS_CTOR, 0, name, &ptr, 1, false, ptr);
+  bind(s, ST_IOS_CTOR, 0, name, &ptr, 1, false, ptr); free(name);
   name = concat3("?rdbuf@", ios_name, "QEBAPEAV?$basic_streambuf@DU?$char_traits@D@std@@@2@XZ");
-  bind(s, ST_RDBUF, 0, name, &ptr, 1, false, ptr);
+  bind(s, ST_RDBUF, 0, name, &ptr, 1, false, ptr); free(name);
   qa_abi_storage setstate_params[] = {ptr, i32, u32};
   name = concat3("?setstate@", ios_name, "QEAAXH_N@Z");
-  bind(s, ST_SETSTATE, 0, name, setstate_params, 3, true, i32);
+  bind(s, ST_SETSTATE, 0, name, setstate_params, 3, true, i32); free(name);
   bind(s, ST_GOOD, 0, "?good@ios_base@std@@QEBA_NXZ", &ptr, 1, false, u32);
   s->ostream_vb = qa_gmem_allocate(host->memory_ext, 8, false, 0, false, QA_PERM_READ_WRITE,
                                    "MSVC ostream vbtable");
@@ -673,70 +680,70 @@ void qa_install_msvc_streams(qa_windows_service_host *host) {
   qa_gmem_protect(host->memory_ext, s->iostream_vb, 16, QA_PERM_READ);
   qa_abi_storage ostream_ctor_params[] = {ptr, ptr, u32, i32};
   name = concat3("??0", ostream_name, "QEAA@PEAV?$basic_streambuf@DU?$char_traits@D@std@@@1@_N@Z");
-  bind(s, ST_OSTREAM_CTOR, 0, name, ostream_ctor_params, 4, false, ptr);
+  bind(s, ST_OSTREAM_CTOR, 0, name, ostream_ctor_params, 4, false, ptr); free(name);
   qa_abi_storage iostream_ctor_params[] = {ptr, ptr, i32};
   name = concat3("??0", iostream_name, "QEAA@PEAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z");
-  bind(s, ST_IOSTREAM_CTOR, 0, name, iostream_ctor_params, 3, false, ptr);
+  bind(s, ST_IOSTREAM_CTOR, 0, name, iostream_ctor_params, 3, false, ptr); free(name);
   name = concat3("??1", ostream_name, "UEAA@XZ");
-  bind(s, ST_OSTREAM_DTOR, 0, name, &ptr, 1, true, i32);
+  bind(s, ST_OSTREAM_DTOR, 0, name, &ptr, 1, true, i32); free(name);
   name = concat3("??1", iostream_name, "UEAA@XZ");
-  bind(s, ST_IOSTREAM_DTOR, 0, name, &ptr, 1, true, i32);
+  bind(s, ST_IOSTREAM_DTOR, 0, name, &ptr, 1, true, i32); free(name);
   bind(s, ST_OSTREAM_DELETE, 0, "runtime:ostream-delete", delete_params, 2, false, ptr);
   const char *ostream_table_names[] = {"runtime:ostream-delete"};
   s->ostream_table = make_table(s, ostream_table_names, 1, "MSVC ostream vftable");
   s->iostream_table = make_table(s, ostream_table_names, 1, "MSVC iostream vftable");
   name = concat3("??1", streambuf_name, "UEAA@XZ");
-  bind(s, ST_BUFFER_DTOR, 0, name, &ptr, 1, true, i32);
+  bind(s, ST_BUFFER_DTOR, 0, name, &ptr, 1, true, i32); free(name);
   bind(s, ST_BUFFER_DELETE, 0, "runtime:streambuf-delete", delete_params, 2, false, ptr);
   const char *lock_methods[] = {"_Lock", "_Unlock"};
   for (size_t i = 0; i < 2; i++) {
     char *lock_name = xmalloc(strlen(streambuf_name) + 32);
     (void)snprintf(lock_name, strlen(streambuf_name) + 32, "?%s@%sUEAAXXZ",
                    lock_methods[i], streambuf_name);
-    bind(s, ST_VOID0, 0, lock_name, &ptr, 1, true, i32);
+    bind(s, ST_VOID0, 0, lock_name, &ptr, 1, true, i32); free(lock_name);
   }
   qa_abi_storage ch_params[] = {ptr, i32};
   bind(s, ST_MINUS1_CH, 0, "runtime:streambuf-overflow", ch_params, 2, false, i32);
   bind(s, ST_MINUS1_CH, 0, "runtime:streambuf-pbackfail", ch_params, 2, false, i32);
   bind(s, ST_MINUS1, 0, "runtime:streambuf-underflow", &ptr, 1, false, i32);
   name = concat3("?showmanyc@", streambuf_name, "MEAA_JXZ");
-  bind(s, ST_SHOWMANYC, 0, name, &ptr, 1, false, i64);
+  bind(s, ST_SHOWMANYC, 0, name, &ptr, 1, false, i64); free(name);
   name = concat3("?sync@", streambuf_name, "MEAAHXZ");
-  bind(s, ST_SYNC, 0, name, &ptr, 1, false, i32);
+  bind(s, ST_SYNC, 0, name, &ptr, 1, false, i32); free(name);
   qa_abi_storage setbuf_params[] = {ptr, ptr, i64};
   name = concat3("?setbuf@", streambuf_name, "MEAAPEAV12@PEAD_J@Z");
-  bind(s, ST_SETBUF, 0, name, setbuf_params, 3, false, ptr);
+  bind(s, ST_SETBUF, 0, name, setbuf_params, 3, false, ptr); free(name);
   qa_abi_storage two_ptrs[] = {ptr, ptr};
   name = concat3("?imbue@", streambuf_name, "MEAAXAEBVlocale@2@@Z");
-  bind(s, ST_VOID0, 0, name, two_ptrs, 2, true, i32);
+  bind(s, ST_VOID0, 0, name, two_ptrs, 2, true, i32); free(name);
   const struct { const char *name; int offset; } fields[] = {
       {"eback", 24}, {"pbase", 32}, {"gptr", 56}, {"pptr", 64}};
   for (size_t i = 0; i < 4; i++) {
     char *field_name = xmalloc(strlen(streambuf_name) + 24);
     (void)snprintf(field_name, strlen(streambuf_name) + 24, "?%s@%sIEBAPEADXZ",
                    fields[i].name, streambuf_name);
-    bind(s, ST_FIELD, fields[i].offset, field_name, &ptr, 1, false, ptr);
+    bind(s, ST_FIELD, fields[i].offset, field_name, &ptr, 1, false, ptr); free(field_name);
   }
   for (int input = 1; input >= 0; input--) {
     char *field_name = xmalloc(strlen(streambuf_name) + 24);
     (void)snprintf(field_name, strlen(streambuf_name) + 24, "?%s@%sIEBAPEADXZ",
                    input ? "egptr" : "epptr", streambuf_name);
-    bind(s, ST_EGPTR, input, field_name, &ptr, 1, false, ptr);
+    bind(s, ST_EGPTR, input, field_name, &ptr, 1, false, ptr); free(field_name);
   }
   name = concat3("?uflow@", streambuf_name, "MEAAHXZ");
-  bind(s, ST_UFLOW, 0, name, &ptr, 1, false, i32);
+  bind(s, ST_UFLOW, 0, name, &ptr, 1, false, i32); free(name);
   name = concat3("?sputc@", streambuf_name, "QEAAHD@Z");
-  bind(s, ST_SPUTC, 0, name, ch_params, 2, false, i32);
+  bind(s, ST_SPUTC, 0, name, ch_params, 2, false, i32); free(name);
   for (int input = 1; input >= 0; input--) {
     char *xs_name = xmalloc(strlen(streambuf_name) + 32);
     (void)snprintf(xs_name, strlen(streambuf_name) + 32, "?%s@%sMEAA_J%s_J@Z",
                    input ? "xsgetn" : "xsputn", streambuf_name, input ? "PEAD" : "PEBD");
     qa_abi_storage xs_params[] = {ptr, ptr, i64};
-    bind(s, ST_XS, input, xs_name, xs_params, 3, false, i64);
+    bind(s, ST_XS, input, xs_name, xs_params, 3, false, i64); free(xs_name);
   }
   qa_abi_storage sputn_params[] = {ptr, ptr, i64};
   name = concat3("?sputn@", streambuf_name, "QEAA_JPEBD_J@Z");
-  bind(s, ST_SPUTN, 0, name, sputn_params, 3, false, i64);
+  bind(s, ST_SPUTN, 0, name, sputn_params, 3, false, i64); free(name);
   qa_abi_storage seekoff_params[] = {ptr, ptr, i64, i32, i32};
   qa_abi_storage seekpos_params[] = {ptr, ptr, ptr, i32};
   bind(s, ST_SEEK, 0, "runtime:streambuf-seekoff", seekoff_params, 5, false, ptr);
@@ -756,27 +763,29 @@ void qa_install_msvc_streams(qa_windows_service_host *host) {
       uflow_name, xsgetn_name, xsputn_name, "runtime:streambuf-seekoff",
       "runtime:streambuf-seekpos", setbuf_name, sync_name, imbue_name};
   s->buffer_table = make_table(s, buffer_table_names, 15, "MSVC streambuf vftable");
+  free(lock_name); free(unlock_name); free(showmanyc_name); free(uflow_name); free(xsgetn_name);
+  free(xsputn_name); free(setbuf_name); free(sync_name); free(imbue_name);
   name = concat3("??0", streambuf_name, "IEAA@XZ");
-  bind(s, ST_BUFFER_CTOR, 0, name, &ptr, 1, false, ptr);
+  bind(s, ST_BUFFER_CTOR, 0, name, &ptr, 1, false, ptr); free(name);
   name = concat3("?flush@", ostream_name, "QEAAAEAV12@XZ");
-  bind(s, ST_FLUSH, 0, name, &ptr, 1, false, ptr);
+  bind(s, ST_FLUSH, 0, name, &ptr, 1, false, ptr); free(name);
   name = concat3("?_Osfx@", ostream_name, "QEAAXXZ");
-  bind(s, ST_OSFX, 0, name, &ptr, 1, true, i32);
+  bind(s, ST_OSFX, 0, name, &ptr, 1, true, i32); free(name);
   /* C++ throw/unwind remains an explicit runtime stop (TS comment). */
   bind(s, ST_UNCAUGHT, 0, "?uncaught_exception@std@@YA_NXZ", NULL, 0, false, u32);
   qa_abi_storage tellp_params[] = {ptr, ptr};
   name = concat3("?tellp@", ostream_name, "QEAA?AV?$fpos@U_Mbstatet@@@2@XZ");
-  bind(s, ST_TELLP, 0, name, tellp_params, 2, false, ptr);
+  bind(s, ST_TELLP, 0, name, tellp_params, 2, false, ptr); free(name);
   for (int b = 0; b < 2; b++) {
     int bits = b == 0 ? 32 : 64;
     char *insert_name = xmalloc(strlen(ostream_name) + 32);
     (void)snprintf(insert_name, strlen(ostream_name) + 32, "??6%sQEAAAEAV01@%s@Z",
                    ostream_name, bits == 32 ? "H" : "_J");
     qa_abi_storage insert_params[] = {ptr, bits == 32 ? i32 : i64};
-    bind(s, ST_INSERT_INT, bits, insert_name, insert_params, 2, false, ptr);
+    bind(s, ST_INSERT_INT, bits, insert_name, insert_params, 2, false, ptr); free(insert_name);
   }
   name = concat3("??6", ostream_name,
                  "QEAAAEAV01@PEAV?$basic_streambuf@DU?$char_traits@D@std@@@1@@Z");
-  bind(s, ST_INSERT_BUFFER, 0, name, two_ptrs, 2, false, ptr);
-  (void)xstrdup; /* names above are intentionally retained like TS strings */
+  bind(s, ST_INSERT_BUFFER, 0, name, two_ptrs, 2, false, ptr); free(name);
+  (void)xstrdup;
 }

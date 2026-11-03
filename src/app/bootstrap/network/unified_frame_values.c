@@ -1,6 +1,7 @@
 /* Port of src/app/bootstrap/network/unified-frame-values.ts.
  * GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/unified_frame_values.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/content/held_weapon.h"
@@ -32,6 +33,8 @@ static bool has_field(const qa_save_reader *reader, const char *name, qa_save_re
   }
   return true;
 }
+static qa_actor_id actor_field(const qa_save_reader *reader, const char *name,
+    const qa_app_unified_identity_decoder *identity);
 static double finite_field(const qa_save_reader *reader, const char *name) {
   qa_save_reader f = field_of(reader, name);
   double value = qa_save_reader_finite(&f);
@@ -55,6 +58,26 @@ qa_actor_id qa_app_unified_read_actor(const qa_save_reader *reader,
   double g = qa_save_reader_integer_min(&generation, 0);
   qa_save_reader_destroy(&slot); qa_save_reader_destroy(&generation);
   return identity->actor(identity->ctx, s, g);
+}
+double qa_app_unified_non_negative(const qa_save_reader *reader) {
+  double value = qa_save_reader_finite(reader);
+  if (!(value >= 0)) qa_save_reader_fail(reader, "expected a non-negative number");
+  return value;
+}
+double qa_app_unified_positive(const qa_save_reader *reader) {
+  double value = qa_save_reader_finite(reader);
+  if (!(value > 0)) qa_save_reader_fail(reader, "expected a positive number");
+  return value;
+}
+void qa_app_unified_finite_vectors(const qa_save_reader *reader, const qa_vec3 *vectors, size_t count) {
+  for (size_t i = 0; i < count; i++)
+    if (!isfinite(vectors[i].x) || !isfinite(vectors[i].y) || !isfinite(vectors[i].z))
+      qa_save_reader_fail(reader, "nonfinite source player vector");
+}
+static qa_actor_id actor_field(const qa_save_reader *reader, const char *name,
+    const qa_app_unified_identity_decoder *identity) {
+  qa_save_reader f = field_of(reader, name);
+  return qa_app_unified_read_actor(&f, identity);
 }
 qa_vec3 qa_app_unified_read_vector(const qa_save_reader *reader) {
   qa_vec3 out = {finite_field(reader, "x"), finite_field(reader, "y"), finite_field(reader, "z")};
@@ -191,125 +214,116 @@ static void validate_native_inventory(const qa_save_reader *reader) {
   if (!qa_save_reader_is_null(&selected)) qa_namespaced(&selected);
   qa_save_reader_destroy(&selected);
 }
+static void cleanup_ui(void *arg) { qa_app_unified_player_ui_free(arg); }
+static double integer_field(const qa_save_reader *reader, const char *name, double minimum) {
+  qa_save_reader f = field_of(reader, name);
+  return qa_save_reader_integer_min(&f, minimum);
+}
+static bool boolean_field(const qa_save_reader *reader, const char *name) {
+  qa_save_reader f = field_of(reader, name);
+  return qa_save_reader_boolean(&f);
+}
+static const char *string_field(const qa_save_reader *reader, const char *name) {
+  qa_save_reader f = field_of(reader, name);
+  return qa_save_reader_string(&f);
+}
+static qa_vec3 vector_field(const qa_save_reader *reader, const char *name) {
+  qa_save_reader f = field_of(reader, name);
+  return qa_app_unified_read_vector(&f);
+}
+#define SAFE_MIN (-9007199254740991.0)
 qa_app_sim_player_ui qa_app_unified_read_player_ui(const qa_save_reader *reader) {
-  qa_app_sim_player_ui ui = {0};
+  qa_app_sim_player_ui ui;
+  memset(&ui, 0, sizeof ui);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_ui, &ui);
   qa_save_reader f;
-  if (has_field(reader, "selectedArsenal", &f)) {
-    ui.selected_arsenal = qa_save_reader_literal_boolean(&f, true);
-    qa_save_reader_destroy(&f);
-  }
+  if (has_field(reader, "selectedArsenal", &f)) ui.selected_arsenal = qa_save_reader_literal_boolean(&f, true);
   if (has_field(reader, "nativeInventory", &f)) {
     validate_native_inventory(&f);
     ui.native_inventory = clone_value(f.value);
-    qa_save_reader_destroy(&f);
   }
   ui.health = finite_field(reader, "health");
   f = field_of(reader, "armor");
   ui.armor = qa_read_armor(&f);
-  qa_save_reader_destroy(&f);
   f = field_of(reader, "activeWeapon");
   ui.active_weapon = qa_save_reader_is_null(&f) ? NULL : qa_namespaced(&f);
-  qa_save_reader_destroy(&f);
-  if (has_field(reader, "ammo", &f) && !qa_save_reader_is_null(&f)) {
-    ui.has_ammo = true;
+  f = field_of(reader, "ammo");
+  if (!qa_save_reader_is_null(&f)) {
     ui.ammo_item = namespaced_field(&f, "item");
     ui.ammo_count = finite_field(&f, "count");
+    ui.has_ammo = true;
   }
-  if (ui.has_ammo || f.value) qa_save_reader_destroy(&f);
   f = field_of(reader, "inventory");
   size_t inv_count = qa_save_reader_list_count(&f);
-  qa_inventory_entry *inventory = xmalloc(inv_count * sizeof *inventory);
+  qa_inventory_entry *inventory = calloc(inv_count ? inv_count : 1, sizeof *inventory);
+  if (!inventory) qa_range_error("out of memory");
+  ui.inventory = inventory; ui.inventory_count = inv_count;
   for (size_t i = 0; i < inv_count; i++) {
     qa_save_reader row;
     if (!qa_save_reader_item(&f, i, &row)) qa_range_error("out of memory");
     inventory[i] = qa_read_inventory_entry(&row);
-    qa_save_reader_destroy(&row);
   }
-  ui.inventory = inventory; ui.inventory_count = inv_count;
-  qa_save_reader_destroy(&f);
   static const char *warnings[] = {"none", "low", "empty"};
   f = field_of(reader, "arsenalWarning");
   ui.arsenal_warning = qa_save_reader_choice_string(&f, warnings, 3);
-  qa_save_reader_destroy(&f);
   f = field_of(reader, "powerups");
   size_t powerup_count = qa_save_reader_list_count(&f);
-  qa_active_powerup_timer *powerups = xmalloc(powerup_count * sizeof *powerups);
+  qa_active_powerup_timer *powerups = calloc(powerup_count ? powerup_count : 1, sizeof *powerups);
+  if (!powerups) qa_range_error("out of memory");
+  ui.powerups = powerups; ui.powerup_count = powerup_count;
   for (size_t i = 0; i < powerup_count; i++) {
     qa_save_reader row;
     if (!qa_save_reader_item(&f, i, &row)) qa_range_error("out of memory");
     powerups[i].item = namespaced_field(&row, "item");
-    qa_save_reader label = field_of(&row, "label");
-    powerups[i].label = qa_save_reader_string(&label);
-    qa_save_reader_destroy(&label);
+    powerups[i].label = string_field(&row, "label");
     powerups[i].remaining_seconds = finite_field(&row, "remainingSeconds");
-    qa_save_reader_destroy(&row);
   }
-  ui.powerups = powerups; ui.powerup_count = powerup_count;
-  qa_save_reader_destroy(&f);
   f = field_of(reader, "items");
   size_t item_count = qa_save_reader_list_count(&f);
-  qa_app_sim_player_ui_item *items = xmalloc(item_count * sizeof *items);
+  qa_app_sim_player_ui_item *items = calloc(item_count ? item_count : 1, sizeof *items);
+  if (!items) qa_range_error("out of memory");
+  ui.items = items; ui.item_count = item_count;
   static const char *item_kinds[] = {"weapon", "powerup"};
   for (size_t i = 0; i < item_count; i++) {
     qa_save_reader row;
     if (!qa_save_reader_item(&f, i, &row)) qa_range_error("out of memory");
     items[i].id = namespaced_field(&row, "id");
-    qa_save_reader label = field_of(&row, "label");
-    items[i].label = qa_save_reader_string(&label);
-    qa_save_reader_destroy(&label);
+    items[i].label = string_field(&row, "label");
     qa_save_reader kind = field_of(&row, "kind");
     items[i].kind = qa_save_reader_choice_string(&kind, item_kinds, 2);
-    qa_save_reader_destroy(&kind);
-    qa_save_reader ordinal = field_of(&row, "sourceOrdinal");
-    items[i].source_ordinal = qa_save_reader_integer(&ordinal);
-    qa_save_reader_destroy(&ordinal);
-    qa_save_reader owned = field_of(&row, "owned"), has_ammo = field_of(&row, "hasAmmo");
-    items[i].owned = qa_save_reader_boolean(&owned);
-    items[i].has_ammo = qa_save_reader_boolean(&has_ammo);
-    qa_save_reader_destroy(&owned); qa_save_reader_destroy(&has_ammo);
+    items[i].source_ordinal = integer_field(&row, "sourceOrdinal", SAFE_MIN);
+    items[i].owned = boolean_field(&row, "owned");
+    items[i].has_ammo = boolean_field(&row, "hasAmmo");
     qa_save_reader count_field = field_of(&row, "count");
     if (!qa_save_reader_is_null(&count_field)) {
-      items[i].has_count = true;
       items[i].count = qa_save_reader_finite(&count_field);
+      items[i].has_count = true;
     }
-    qa_save_reader_destroy(&count_field);
     items[i].warning_count = finite_field(&row, "warningCount");
-    qa_save_reader_destroy(&row);
   }
-  ui.items = items; ui.item_count = item_count;
-  qa_save_reader_destroy(&f);
-  if (has_field(reader, "weaponStatus", &f) && !qa_save_reader_is_null(&f)) {
-    qa_weapon_hud_status *status = xmalloc(sizeof *status);
-    memset(status, 0, sizeof *status);
+  f = field_of(reader, "weaponStatus");
+  if (!qa_save_reader_is_null(&f)) {
+    qa_weapon_hud_status *status = calloc(1, sizeof *status);
+    if (!status) qa_range_error("out of memory");
+    ui.weapon_status = status;
     qa_save_reader ammo = field_of(&f, "ammo");
     static const char *ammo_kinds[] = {"unmetered", "finite"};
     qa_save_reader kind_reader = field_of(&ammo, "kind");
     const char *kind = qa_save_reader_choice_string(&kind_reader, ammo_kinds, 2);
-    qa_save_reader_destroy(&kind_reader);
     qa_save_reader source_reader = field_of(&f, "source");
     status->source = qa_read_provider(&source_reader);
-    qa_save_reader_destroy(&source_reader);
     status->item = namespaced_field(&f, "item");
-    qa_save_reader label = field_of(&f, "label");
-    status->label = qa_save_reader_string(&label);
-    qa_save_reader_destroy(&label);
+    status->label = string_field(&f, "label");
     status->ammo_is_finite = strcmp(kind, "finite") == 0;
     if (status->ammo_is_finite) {
       status->ammo_item = namespaced_field(&ammo, "item");
       status->ammo_count = finite_field(&ammo, "count");
-      qa_save_reader flag = field_of(&ammo, "hasAmmoToStart");
-      status->has_ammo_to_start = qa_save_reader_boolean(&flag);
-      qa_save_reader_destroy(&flag);
-      flag = field_of(&ammo, "low");
-      status->low = qa_save_reader_boolean(&flag);
-      qa_save_reader_destroy(&flag);
+      status->has_ammo_to_start = boolean_field(&ammo, "hasAmmoToStart");
+      status->low = boolean_field(&ammo, "low");
     }
-    qa_save_reader_destroy(&ammo);
-    ui.weapon_status = status;
-    qa_save_reader_destroy(&f);
-  } else if (f.path) {
-    qa_save_reader_destroy(&f);
   }
+  qa_cleanup_pop(&guard);
   return ui;
 }
 void qa_app_unified_player_ui_free(qa_app_sim_player_ui *ui) {
@@ -320,250 +334,176 @@ void qa_app_unified_player_ui_free(qa_app_sim_player_ui *ui) {
   free((void *)ui->weapon_status);
   memset(ui, 0, sizeof *ui);
 }
+static void cleanup_model(void *arg) { qa_app_unified_model_free(arg); }
 qa_app_simulation_presentation qa_app_unified_read_model(const qa_save_reader *reader,
     const qa_app_unified_identity_decoder *identity) {
-  qa_app_simulation_presentation model = {0};
+  qa_app_simulation_presentation model;
+  memset(&model, 0, sizeof model);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_model, &model);
   qa_save_reader f;
   if (has_field(reader, "heldWeapon", &f)) {
-    qa_held_weapon_declaration *declaration = xmalloc(sizeof *declaration);
-    memset(declaration, 0, sizeof *declaration);
-    if (!qa_read_held_weapon_declaration(&f, declaration)) qa_range_error("out of memory");
+    qa_held_weapon_declaration *declaration = calloc(1, sizeof *declaration);
+    if (!declaration) qa_range_error("out of memory");
     model.held_weapon = declaration;
-    qa_save_reader_destroy(&f);
+    if (!qa_read_held_weapon_declaration(&f, declaration)) qa_range_error("out of memory");
   }
-  if (has_field(reader, "nativeHeldWeapon", &f)) {
-    model.native_held_weapon = qa_save_reader_literal_boolean(&f, true);
-    qa_save_reader_destroy(&f);
-  }
-  if (has_field(reader, "weaponItem", &f)) {
-    model.weapon_item = qa_namespaced(&f);
-    qa_save_reader_destroy(&f);
-  }
+  if (has_field(reader, "nativeHeldWeapon", &f)) model.native_held_weapon = qa_save_reader_literal_boolean(&f, true);
+  if (has_field(reader, "weaponItem", &f)) model.weapon_item = qa_namespaced(&f);
   if (has_field(reader, "flare", &f)) {
-    model.has_flare = true;
-    qa_save_reader image = field_of(&f, "image");
-    model.flare.image = qa_save_reader_string(&image);
-    qa_save_reader_destroy(&image);
+    model.flare.image = string_field(&f, "image");
     model.flare.fade_start = finite_field(&f, "fadeStart");
     model.flare.fade_end = finite_field(&f, "fadeEnd");
     model.flare.scale = finite_field(&f, "scale");
-    qa_save_reader color = field_of(&f, "color");
-    model.flare.color = qa_app_unified_read_vector(&color);
-    qa_save_reader_destroy(&color);
+    model.flare.color = vector_field(&f, "color");
     qa_save_reader rim = field_of(&f, "rimColor");
     if (!qa_save_reader_is_null(&rim)) {
+      qa_vec3 color = qa_app_unified_read_vector(&rim);
       qa_vec3 *rim_owned = xmalloc(sizeof *rim_owned);
-      *rim_owned = qa_app_unified_read_vector(&rim);
+      *rim_owned = color;
       model.flare.rim_color = rim_owned;
     }
-    qa_save_reader_destroy(&rim);
-    qa_save_reader lock = field_of(&f, "lockAngle");
-    model.flare.lock_angle = qa_save_reader_boolean(&lock);
-    qa_save_reader_destroy(&lock);
-    qa_save_reader_destroy(&f);
+    model.flare.lock_angle = boolean_field(&f, "lockAngle");
+    model.has_flare = true;
   }
   if (has_field(reader, "backLerp", &f)) {
     model.back_lerp = qa_save_reader_finite(&f); model.has_back_lerp = true;
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "skinPath", &f)) {
-    if (!qa_save_reader_is_null(&f)) {
-      model.has_skin_path = true;
-      model.skin_path = qa_save_reader_string(&f);
-    }
-    qa_save_reader_destroy(&f);
+    model.skin_path = qa_save_reader_is_null(&f) ? NULL : qa_save_reader_string(&f);
+    model.has_skin_path = true;
   }
   if (has_field(reader, "indexedSkin", &f)) {
-    qa_save_reader width_reader = field_of(&f, "width"), height_reader = field_of(&f, "height");
-    double width = qa_save_reader_integer_min(&width_reader, 1);
-    double height = qa_save_reader_integer_min(&height_reader, 1);
-    qa_save_reader_destroy(&width_reader); qa_save_reader_destroy(&height_reader);
+    double width = integer_field(&f, "width", 1);
+    double height = integer_field(&f, "height", 1);
     qa_save_reader pixels_reader = field_of(&f, "pixels");
     size_t length = 0;
     const uint8_t *pixels = qa_save_reader_bytes(&pixels_reader, &length);
-    if (length != (size_t)width * (size_t)height) {
-      qa_save_reader_destroy(&pixels_reader);
-      qa_save_reader_fail(&f, "indexed skin length differs");
-    }
+    if ((double)length != width * height) qa_save_reader_fail(&f, "indexed skin length differs");
+    const char *name = string_field(&f, "name");
     uint8_t *owned = xmalloc(length);
-    memcpy(owned, pixels, length);
-    qa_save_reader_destroy(&pixels_reader);
-    qa_save_reader name = field_of(&f, "name");
-    model.indexed_skin.name = copy_text(qa_save_reader_string(&name));
-    qa_save_reader_destroy(&name);
-    model.indexed_skin.width = width; model.indexed_skin.height = height;
+    if (length) memcpy(owned, pixels, length);
     model.indexed_skin.pixels.bytes = owned; model.indexed_skin.pixels.length = length;
+    model.indexed_skin.name = copy_text(name);
+    model.indexed_skin.width = width; model.indexed_skin.height = height;
     model.has_indexed_skin = true;
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "playerColors", &f)) {
+    model.player_color_top = integer_field(&f, "top", SAFE_MIN);
+    model.player_color_bottom = integer_field(&f, "bottom", SAFE_MIN);
     model.has_player_colors = true;
-    qa_save_reader top = field_of(&f, "top"), bottom = field_of(&f, "bottom");
-    model.player_color_top = qa_save_reader_integer(&top);
-    model.player_color_bottom = qa_save_reader_integer(&bottom);
-    qa_save_reader_destroy(&top); qa_save_reader_destroy(&bottom);
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "previousOrigin", &f)) {
     model.previous_origin = qa_app_unified_read_vector(&f);
     model.has_previous_origin = true;
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "modelBeam", &f)) {
+    qa_save_reader segment = field_of(&f, "segmentLength");
+    model.model_beam_segment_length = qa_app_unified_non_negative(&segment);
     model.has_model_beam = true;
-    model.model_beam_segment_length = finite_field(&f, "segmentLength");
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "alpha", &f)) {
     model.alpha = qa_save_reader_finite(&f); model.has_alpha = true;
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "shaderBeam", &f)) {
+    model.shader_beam_path = string_field(&f, "path");
+    model.shader_beam_end = vector_field(&f, "end");
+    model.shader_beam_width = integer_field(&f, "width", 1);
     model.has_shader_beam = true;
-    qa_save_reader path = field_of(&f, "path");
-    model.shader_beam_path = qa_save_reader_string(&path);
-    qa_save_reader_destroy(&path);
-    qa_save_reader end = field_of(&f, "end");
-    model.shader_beam_end = qa_app_unified_read_vector(&end);
-    qa_save_reader_destroy(&end);
-    qa_save_reader width = field_of(&f, "width");
-    model.shader_beam_width = qa_save_reader_integer_min(&width, 1);
-    qa_save_reader_destroy(&width);
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "modelAttachments", &f)) {
     size_t count = qa_save_reader_list_count(&f);
-    qa_app_sim_presentation_attachment *items = xmalloc(count * sizeof *items);
+    qa_app_sim_presentation_attachment *items = calloc(count ? count : 1, sizeof *items);
+    if (!items) qa_range_error("out of memory");
+    model.model_attachments = items; model.model_attachment_count = count;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry;
       if (!qa_save_reader_item(&f, i, &entry)) qa_range_error("out of memory");
-      qa_save_reader path = field_of(&entry, "path"), tag = field_of(&entry, "tag");
-      items[i].path = qa_save_reader_string(&path);
-      items[i].tag = qa_save_reader_string(&tag);
-      qa_save_reader_destroy(&path); qa_save_reader_destroy(&tag);
-      qa_save_reader_destroy(&entry);
+      items[i].path = string_field(&entry, "path");
+      items[i].tag = string_field(&entry, "tag");
     }
-    model.model_attachments = items; model.model_attachment_count = count;
-    qa_save_reader_destroy(&f);
   }
   if (has_field(reader, "modelAnchor", &f)) {
-    /* Validate the TS shape, retain the subtree (landed slot is opaque). */
-    qa_save_reader path = field_of(&f, "path"), tag = field_of(&f, "tag");
-    qa_save_reader_string(&path); qa_save_reader_string(&tag);
-    qa_save_reader_destroy(&path); qa_save_reader_destroy(&tag);
-    qa_save_reader offset = field_of(&f, "offset");
-    qa_app_unified_read_vector(&offset);
-    qa_save_reader_destroy(&offset);
+    /* TS builds {path, tag, offset, fovOffset:{above, scale}} (strings borrow from the tree). */
+    qa_qvm_grapple_view_anchor anchor;
+    memset(&anchor, 0, sizeof anchor);
+    anchor.path = string_field(&f, "path");
+    anchor.tag = string_field(&f, "tag");
+    anchor.offset = vector_field(&f, "offset");
     qa_save_reader fov = field_of(&f, "fovOffset");
-    qa_save_reader above = field_of(&fov, "above");
-    qa_save_reader_integer_min(&above, 1);
-    qa_save_reader_destroy(&above);
-    finite_field(&fov, "scale");
-    qa_save_reader_destroy(&fov);
-    model.model_anchor = clone_value(f.value);
-    qa_save_reader_destroy(&f);
+    anchor.fov_offset_above = integer_field(&fov, "above", 1);
+    qa_save_reader fov_again = field_of(&f, "fovOffset");
+    anchor.fov_offset_scale = finite_field(&fov_again, "scale");
+    qa_qvm_grapple_view_anchor *owned = xmalloc(sizeof *owned);
+    *owned = anchor;
+    model.model_anchor = owned;
   }
-  if (has_field(reader, "replacesBody", &f)) {
-    model.replaces_body = qa_save_reader_literal_boolean(&f, true);
-    qa_save_reader_destroy(&f);
-  }
-  if (has_field(reader, "renderOwner", &f)) {
-    model.render_owner = qa_save_reader_literal_string(&f, "source-client");
-    qa_save_reader_destroy(&f);
-  }
+  if (has_field(reader, "replacesBody", &f)) model.replaces_body = qa_save_reader_literal_boolean(&f, true);
+  if (has_field(reader, "renderOwner", &f)) model.render_owner = qa_save_reader_literal_string(&f, "source-client");
   if (has_field(reader, "q3GrappleCable", &f)) {
-    qa_save_reader owner = field_of(&f, "owner");
-    qa_app_unified_read_actor(&owner, identity);
-    qa_save_reader_destroy(&owner);
-    qa_save_reader v = field_of(&f, "ownerOrigin");
-    qa_app_unified_read_vector(&v); qa_save_reader_destroy(&v);
-    v = field_of(&f, "ownerAngles");
-    qa_app_unified_read_vector(&v); qa_save_reader_destroy(&v);
-    finite_field(&f, "viewHeight");
-    qa_save_reader flag = field_of(&f, "offhand");
-    qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
-    flag = field_of(&f, "attached");
-    qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
-    qa_save_reader text = field_of(&f, "flight");
-    qa_save_reader_string(&text); qa_save_reader_destroy(&text);
-    text = field_of(&f, "pull");
-    qa_save_reader_string(&text); qa_save_reader_destroy(&text);
-    text = field_of(&f, "hold");
-    qa_save_reader_string(&text); qa_save_reader_destroy(&text);
-    qa_save_reader segment = field_of(&f, "segmentLength");
-    qa_save_reader_integer_min(&segment, 1);
-    qa_save_reader_destroy(&segment);
-    model.q3_grapple_cable = clone_value(f.value);
-    qa_save_reader_destroy(&f);
+    qa_app_sim_q3_grapple_cable cable;
+    memset(&cable, 0, sizeof cable);
+    cable.owner = actor_field(&f, "owner", identity);
+    cable.owner_origin = vector_field(&f, "ownerOrigin");
+    cable.owner_angles = vector_field(&f, "ownerAngles");
+    cable.view_height = finite_field(&f, "viewHeight");
+    cable.offhand = boolean_field(&f, "offhand");
+    cable.attached = boolean_field(&f, "attached");
+    cable.flight = string_field(&f, "flight");
+    cable.pull = string_field(&f, "pull");
+    cable.hold = string_field(&f, "hold");
+    cable.segment_length = integer_field(&f, "segmentLength", 1);
+    qa_app_sim_q3_grapple_cable *owned = xmalloc(sizeof *owned);
+    *owned = cable;
+    model.q3_grapple_cable = owned;
   }
   if (has_field(reader, "q3Weapon", &f)) {
-    model.has_q3_weapon = true;
     model.q3_weapon_time_ms = finite_field(&f, "timeMilliseconds");
-    qa_save_reader v = field_of(&f, "torsoAnimation");
-    model.q3_weapon_torso_animation = qa_save_reader_integer(&v);
-    qa_save_reader_destroy(&v);
-    v = field_of(&f, "lastFireMilliseconds");
+    model.q3_weapon_torso_animation = integer_field(&f, "torsoAnimation", SAFE_MIN);
+    qa_save_reader v = field_of(&f, "lastFireMilliseconds");
     if (!qa_save_reader_is_null(&v)) {
-      model.has_q3_weapon_last_fire = true;
       model.q3_weapon_last_fire_ms = qa_save_reader_finite(&v);
+      model.has_q3_weapon_last_fire = true;
     }
-    qa_save_reader_destroy(&v);
-    v = field_of(&f, "firing");
-    model.q3_weapon_firing = qa_save_reader_boolean(&v);
-    qa_save_reader_destroy(&v);
+    model.q3_weapon_firing = boolean_field(&f, "firing");
     model.q3_weapon_horizontal_speed = finite_field(&f, "horizontalSpeed");
     model.q3_weapon_bob_cycle = finite_field(&f, "bobCycle");
-    v = field_of(&f, "weapon");
-    model.q3_weapon_weapon = qa_save_reader_integer(&v);
-    qa_save_reader_destroy(&v);
-    qa_save_reader_destroy(&f);
+    model.q3_weapon_weapon = integer_field(&f, "weapon", SAFE_MIN);
+    model.has_q3_weapon = true;
   }
-  qa_save_reader actor_reader = field_of(reader, "actor");
-  model.actor = qa_app_unified_read_actor(&actor_reader, identity);
-  qa_save_reader_destroy(&actor_reader);
+  model.actor = actor_field(reader, "actor", identity);
   f = field_of(reader, "content");
   model.content = qa_read_content_id(&f);
-  qa_save_reader_destroy(&f);
   static const char *families[] = {"q1", "q2", "q3"};
   f = field_of(reader, "family");
   const char *family_text = qa_save_reader_choice_string(&f, families, 3);
-  if (!qa_game_family_parse(family_text, &model.family))
-    qa_save_reader_fail(&f, "invalid family");
-  qa_save_reader_destroy(&f);
-  f = field_of(reader, "path");
-  model.path = qa_save_reader_string(&f);
-  qa_save_reader_destroy(&f);
-  static const struct { const char *name; } int_fields[] = {{"frame"}, {"oldFrame"}, {"skin"}, {"effects"}, {"renderFlags"}};
-  double ints[5];
-  for (size_t i = 0; i < 5; i++) {
-    qa_save_reader v = field_of(reader, int_fields[i].name);
-    ints[i] = qa_save_reader_integer(&v);
-    qa_save_reader_destroy(&v);
-  }
-  model.frame = ints[0]; model.old_frame = ints[1]; model.skin = ints[2];
-  model.effects = ints[3]; model.render_flags = ints[4];
-  qa_save_reader origin = field_of(reader, "origin"), angles = field_of(reader, "angles");
-  model.origin = qa_app_unified_read_vector(&origin);
-  model.angles = qa_app_unified_read_vector(&angles);
-  qa_save_reader_destroy(&origin); qa_save_reader_destroy(&angles);
+  if (!qa_game_family_parse(family_text, &model.family)) qa_save_reader_fail(&f, "invalid family");
+  model.path = string_field(reader, "path");
+  model.frame = integer_field(reader, "frame", SAFE_MIN);
+  model.old_frame = integer_field(reader, "oldFrame", SAFE_MIN);
+  model.skin = integer_field(reader, "skin", SAFE_MIN);
+  model.effects = integer_field(reader, "effects", SAFE_MIN);
+  model.render_flags = integer_field(reader, "renderFlags", SAFE_MIN);
+  model.origin = vector_field(reader, "origin");
+  model.angles = vector_field(reader, "angles");
   model.scale = finite_field(reader, "scale");
-  qa_save_reader flag = field_of(reader, "visible");
-  model.visible = qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
-  flag = field_of(reader, "viewWeapon");
-  model.view_weapon = qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
+  model.visible = boolean_field(reader, "visible");
+  model.view_weapon = boolean_field(reader, "viewWeapon");
+  qa_cleanup_pop(&guard);
   return model;
 }
 void qa_app_unified_model_free(qa_app_simulation_presentation *model) {
   if (model->held_weapon) {
-    qa_content_held_weapon_free((qa_held_weapon_declaration *)model->held_weapon);
-    free((void *)model->held_weapon);
+    qa_held_weapon_declaration *held = (qa_held_weapon_declaration *)model->held_weapon;
+    qa_content_held_weapon_free(held);
+    free(held);
   }
   free((void *)model->flare.rim_color);
   free((void *)model->indexed_skin.name);
   free((void *)model->indexed_skin.pixels.bytes);
   free((void *)model->model_attachments);
-  qa_save_value_free((qa_save_value *)model->model_anchor);
-  qa_save_value_free((qa_save_value *)model->q3_grapple_cable);
+  free((void *)model->model_anchor);
+  free((void *)model->q3_grapple_cable);
   memset(model, 0, sizeof *model);
 }
 qa_q3_character_view qa_app_unified_read_character_view(const qa_save_reader *reader,
@@ -627,12 +567,6 @@ qa_world_text qa_app_unified_read_world_text(const qa_save_reader *reader) {
   const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 2);
   qa_save_reader_destroy(&kind_reader);
   text.orientation_fixed = strcmp(kind, "fixed") == 0;
-  if (text.orientation_fixed) {
-    qa_save_reader angles = field_of(&o, "angles");
-    text.angles = qa_app_unified_read_vector(&angles);
-    qa_save_reader_destroy(&angles);
-  }
-  qa_save_reader_destroy(&o);
   if (has_field(reader, "distanceCullFactor", &f)) {
     text.has_distance_cull_factor = true;
     text.distance_cull_factor = qa_save_reader_finite(&f);
@@ -650,7 +584,9 @@ qa_world_text qa_app_unified_read_world_text(const qa_save_reader *reader) {
   f = field_of(reader, "color");
   text.color = qa_app_unified_read_color(&f);
   qa_save_reader_destroy(&f);
-  text.cell_size = finite_field(reader, "cellSize");
+  f = field_of(reader, "cellSize");
+  text.cell_size = qa_app_unified_positive(&f);
+  if (text.orientation_fixed) text.angles = vector_field(&o, "angles");
   f = field_of(reader, "depthTest");
   text.depth_test = qa_save_reader_boolean(&f);
   qa_save_reader_destroy(&f);

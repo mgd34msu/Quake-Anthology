@@ -712,6 +712,90 @@ static void test_growth(void) {
   qa_audio_mixer_destroy(roomy);
 }
 
+/* playback.test.ts "Doppler singularities and arbitrarily large finite rates
+ * have bounded sample work": the sign and sample-clock checks (C cannot count
+ * the Proxy's sample reads). */
+static void test_doppler_singularities(void) {
+  static const double cases[5][2] = {
+      {0, 1000},
+      {0.000001, 1000},
+      {1, 0},
+      {1, 0},
+      {0.09999964386224747, 18446678103011885000.0},
+  };
+  static int16_t backing[2048];
+  for (int c = 0; c < 5; c++) {
+    double velocity = cases[c][1];
+    if (c == 2) velocity = sqrt(1023.5 * 100) - 1;
+    if (c == 3) velocity = sqrt(1024.5 * 100) - 1;
+    for (int v = 0; v < 2; v++) {
+      int16_t value = v == 0 ? 12000 : -12000;
+      for (size_t i = 0; i < 2048; i++) backing[i] = value;
+      clock_value = 0;
+      qa_audio_mixer *mixer = new_mixer(1000, 96);
+      qa_pcm_sound sound = {0};
+      sound.sample_rate = 1000;
+      sound.channels = 1;
+      sound.samples = backing;
+      sound.sample_count = 2048;
+      sound.frame_count = 2048;
+      sound.loop_start = -1;
+      qa_audio_mixer_set_listener(mixer, 1, origin_zero, axis_x);
+      qa_frame_looping_sound_options options = {0};
+      options.entity = 2;
+      options.origin = (qa_vec3){cases[c][0], 0, 0};
+      options.velocity = (qa_vec3){velocity, 0, 0};
+      options.frame_number = 1;
+      qa_audio_mixer_update_looping_sound(mixer, &sound, options);
+      qa_audio_mixer_set_listener(mixer, 1, origin_zero, axis_x);
+      int16_t out[64];
+      for (int pass = 0; pass < 2; pass++) {
+        qa_audio_mixer_mix(mixer, 32, out);
+        bool signs = true;
+        for (size_t i = 0; i < 64; i++)
+          if ((value > 0 && out[i] <= 0) || (value < 0 && out[i] >= 0)) signs = false;
+        CHECK(signs);
+        if (pass == 0) CHECK(qa_audio_mixer_sample_clock(mixer) == 32);
+      }
+      qa_audio_mixer_destroy(mixer);
+    }
+  }
+}
+
+/* playback.test.ts PLATFORM-010: the mixer caps voices at 128 and steals the
+ * oldest ordinary effect instead of growing (bun: 1000 accepted, 128 voices). */
+static void test_voice_cap(void) {
+  clock_value = 0;
+  qa_audio_mixer *mixer = qa_audio_mixer_create(11025, milliseconds, NULL, 96, 1, 1024);
+  CHECK(mixer != NULL);
+  static int16_t silence[11025 * 10];
+  qa_pcm_sound sound = {0};
+  sound.sample_rate = 11025;
+  sound.channels = 1;
+  sound.samples = silence;
+  sound.sample_count = 11025 * 10;
+  sound.frame_count = 11025 * 10;
+  sound.loop_start = -1;
+  int accepted = 0;
+  for (int index = 0; index < 1000; index++) {
+    qa_source_sound_options source = {0};
+    source.entity = index + 1;
+    source.origin = local_origin();
+    source.volume = 1;
+    source.attenuation = 0;
+    if (qa_audio_mixer_start_q1_sound(mixer, &sound, source, auto_command(), zero_random, NULL, NULL))
+      accepted++;
+  }
+  CHECK(accepted == 1000);
+  static int16_t out[735 * 2];
+  qa_audio_mixer_mix(mixer, 735, out);
+  size_t count = 0;
+  qa_mixer_channel_volume *volumes = qa_audio_mixer_channel_volumes(mixer, &count);
+  free(volumes);
+  CHECK(count == 128);
+  qa_audio_mixer_destroy(mixer);
+}
+
 static qa_unified_audio *new_engine(double rate) {
   qa_unified_audio_options options = {0};
   options.has_sample_rate = rate != 0;
@@ -779,6 +863,51 @@ static void test_engine_seats(void) {
   qa_unified_audio_mix(audio, 32, first);
   CHECK(all_zero(first, 64));
   qa_unified_audio_destroy(audio);
+}
+
+/* playback.test.ts "a second sound on an occupied actor channel replaces the
+ * first": the replaced mix equals a fresh engine playing only the second. */
+static void play_on_channel(qa_unified_audio *audio, const qa_sound_asset *sound,
+                            qa_seat_id seat, qa_actor_id actor) {
+  qa_play_sound play = {0};
+  play.sound = sound;
+  play.family = QA_SOUND_FAMILY_Q1;
+  play.has_actor = true;
+  play.actor = actor;
+  play.origin.kind = QA_SOUND_ORIGIN_LOCAL;
+  play.audience.kind = QA_AUDIO_AUDIENCE_SEAT;
+  play.audience.seat = seat;
+  play.channel = 1;
+  play.volume = 1;
+  play.attenuation = 1;
+  (void)qa_unified_audio_play(audio, &play);
+}
+
+static void test_engine_channel_replacement(void) {
+  clock_value = 100;
+  qa_seat_id seat = qa_identity_owner_seat(&identity, 0);
+  qa_actor_id actor = qa_identity_owner_actor(&identity, 1, 0);
+  static int16_t loud_samples[2048];
+  for (size_t i = 0; i < 2048; i++) loud_samples[i] = 24000;
+  qa_sound_asset loud = asset;
+  loud.resource = "resource:audio-smoke-loud";
+  loud.name = "sound/loud";
+  loud.pcm.samples = loud_samples;
+  qa_unified_audio *replaced = new_engine(22050);
+  qa_unified_audio *fresh = new_engine(22050);
+  qa_audio_listener listeners[1] = {listener_for(seat, true, actor, 1)};
+  qa_unified_audio_set_listeners(replaced, listeners, 1);
+  qa_unified_audio_set_listeners(fresh, listeners, 1);
+  play_on_channel(replaced, &asset, seat, actor);
+  play_on_channel(replaced, &loud, seat, actor);
+  play_on_channel(fresh, &loud, seat, actor);
+  int16_t after[128], expected[128];
+  qa_unified_audio_mix(replaced, 64, after);
+  qa_unified_audio_mix(fresh, 64, expected);
+  CHECK(!all_zero(expected, 128));
+  CHECK(memcmp(after, expected, sizeof after) == 0);
+  qa_unified_audio_destroy(replaced);
+  qa_unified_audio_destroy(fresh);
 }
 
 /* playback.test.ts: component Q3 loops/channels stay independent. */
@@ -1385,80 +1514,8 @@ static void test_output_selection(void) {
   qa_unified_audio_destroy(audio);
 }
 
-/* MixerSoundMemory preparation: sample reads go through memory. */
-typedef struct counting_memory {
-  int reads;
-  int touches;
-  bool out_of_bounds;
-} counting_memory;
-static double memory_frames(void *ctx, const qa_pcm_sound *sound) {
-  (void)ctx;
-  return (double)sound->frame_count;
-}
-static bool memory_has_data(void *ctx, const qa_pcm_sound *sound) {
-  (void)ctx;
-  (void)sound;
-  return true;
-}
-static double memory_sample(void *ctx, const qa_pcm_sound *sound, double frame) {
-  counting_memory *memory = ctx;
-  memory->reads++;
-  if (frame < 0 || frame >= (double)sound->sample_count) {
-    memory->out_of_bounds = true;
-    return 0;
-  }
-  return sound->samples[(size_t)frame];
-}
-static void memory_touch(void *ctx, const qa_pcm_sound *sound, double ms) {
-  counting_memory *memory = ctx;
-  (void)sound;
-  (void)ms;
-  memory->touches++;
-}
-
-static void test_sound_memory(void) {
-  clock_value = 0;
-  qa_audio_mixer *mixer = new_mixer(1000, 96);
-  counting_memory counting = {0};
-  qa_mixer_sound_memory memory = {0};
-  memory.ctx = &counting;
-  memory.frame_count = memory_frames;
-  memory.has_data = memory_has_data;
-  memory.sample = memory_sample;
-  memory.touch = memory_touch;
-  qa_audio_mixer_bind_sound_memory(mixer, memory);
-  static int16_t samples[2048];
-  for (size_t i = 0; i < 2048; i++)
-    samples[i] = (int16_t)(((int)(i % 13) - 6) * 3000);
-  qa_pcm_sound sound = {0};
-  sound.sample_rate = 1000;
-  sound.channels = 1;
-  sound.samples = samples;
-  sound.sample_count = 2048;
-  sound.frame_count = 2048;
-  sound.loop_start = -1;
-  qa_audio_mixer_set_listener(mixer, 1, origin_zero, axis_x);
-  qa_frame_looping_sound_options options = {0};
-  options.entity = 2;
-  options.origin = (qa_vec3){100, 0, 0};
-  options.velocity = (qa_vec3){1000, 0, 0};
-  options.frame_number = 1;
-  qa_audio_mixer_update_looping_sound(mixer, &sound, options);
-  qa_audio_mixer_set_listener(mixer, 1, origin_zero, axis_x);
-  static const int16_t expected[24] = {
-      -3474, -3474, -2895, -2895, -2316, -2316, -1737, -1737,
-      -869,  -869,  0,     0,     578,   578,   1157,  1157,
-      1736,  1736,  2605,  2605,  3473,  3473,  -3474, -3474};
-  int16_t out[24];
-  qa_audio_mixer_mix(mixer, 12, out);
-  CHECK(memcmp(out, expected, sizeof expected) == 0);
-  CHECK(counting.reads > 0);
-  CHECK(!counting.out_of_bounds);
-  CHECK(counting.touches > 0);
-  qa_audio_mixer_destroy(mixer);
-}
-
-/* queueRaw/queueMusic paint through the raw ring at unity gain. */
+/* queueRaw paints through the raw ring at unity gain (queueMusic,
+ * queueRawBytes and getRawSamplePointer left TS with MixerSoundMemory). */
 static void test_raw_queue(void) {
   clock_value = 100;
   qa_audio_mixer *mixer = new_mixer(1000, 96);
@@ -1472,23 +1529,9 @@ static void test_raw_queue(void) {
   sound.loop_start = -1;
   qa_audio_mixer_queue_raw(mixer, &sound, 1);
   CHECK(qa_audio_mixer_raw_end(mixer) == 2);
-  int32_t *raw = qa_audio_mixer_raw_sample_pointer(mixer);
-  CHECK(raw[0] == 256000 && raw[2] == -256000);
   int16_t out[4];
   qa_audio_mixer_mix(mixer, 2, out);
   CHECK(out[0] == 1000 && out[2] == -1000);
-  qa_audio_mixer_set_music_volume(mixer, 1);
-  qa_audio_mixer_queue_music(mixer, &sound);
-  qa_audio_mixer_mix(mixer, 2, out);
-  CHECK(out[0] == 1000 && out[2] == -1000);
-  /* Signed-byte stereo through the DataView entry point. */
-  qa_audio_mixer_stop_all(mixer);
-  const uint8_t bytes[4] = {16, 240, 32, 224}; /* +16,-16,+32,-32 */
-  qa_audio_mixer_queue_raw_bytes(mixer, 2, 1000, 1, 2, bytes, sizeof bytes,
-                                 1);
-  qa_audio_mixer_mix(mixer, 2, out);
-  CHECK(out[0] == 4096 && out[1] == -4096);
-  CHECK(out[2] == 8192 && out[3] == -8192);
   qa_audio_mixer_destroy(mixer);
 }
 
@@ -1622,11 +1665,13 @@ int main(void) {
   test_source_loops_phase();
   test_doppler();
   test_growth();
+  test_doppler_singularities();
+  test_voice_cap();
   test_engine_seats();
+  test_engine_channel_replacement();
   test_engine_q3_components();
   test_engine_q1_loops();
   test_engine_voice_events();
-  test_sound_memory();
   test_raw_queue();
   test_engine_streams_music();
   test_try_decode();

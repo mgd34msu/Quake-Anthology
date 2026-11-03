@@ -1,9 +1,6 @@
 /* Port of src/content/q2/missionpacks/types.ts. GPL-2.0-or-later.
- * Host/game/entity types are the landed qa_q2f_* mirrors (TS owner
- * content/q2/foundation/host.ts) used by foundation/weapons+monsters;
- * Q2Ballistics is qa_q2w_ballistics and MonsterContext qa_q2m_context.
- * Also declares small shared mirrors whose landed C exists only in the
- * incompatible qa_q2_* host system (noted per block). */
+ * Host/game/entity types are the one Q2 family (foundation/host.h);
+ * Q2Ballistics is qa_q2w_ballistics and MonsterContext qa_q2m_context. */
 #ifndef QA_CONTENT_Q2_MISSIONPACKS_TYPES_H
 #define QA_CONTENT_Q2_MISSIONPACKS_TYPES_H
 #include <stdbool.h>
@@ -54,15 +51,4 @@ enum {
   QA_Q2MP_MOD_DOPPLE_EXPLODE = 53, QA_Q2MP_MOD_DOPPLE_VENGEANCE = 54, QA_Q2MP_MOD_DOPPLE_HUNTER = 55
 };
 
-/* Mirror (TS owner foundation/scenery.ts killQ2Box; landed C is
- * qa_q2_kill_box on the qa_q2_* host). */
-bool qa_q2mp_kill_box(qa_q2f_entity *entity, qa_q2f_game *game);
-/* Mirror (TS owner world/gameplay/inventory.ts SharedInventoryTable.give;
- * the qa_q2f_inventory mirror has entries/count/consume/configure only).
- * Returns the TS given count. */
-double qa_q2mp_inventory_give(qa_q2f_game *game, qa_owned_actor actor, qa_item_id item, double count);
-/* Mirrors (TS owner foundation/fields.ts integerField/movedir; the q2f
- * mirror carries numberField only). */
-double qa_q2mp_integer_field(const qa_q2f_spawn_fields *fields, const char *key, double fallback);
-qa_vec3 qa_q2mp_movedir(qa_vec3 angles);
 #endif

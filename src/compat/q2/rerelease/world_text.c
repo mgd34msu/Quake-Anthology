@@ -39,10 +39,11 @@ bool qa_compat_q2_rerelease_world_text_imports_invoke(qa_compat_q2_rerelease_wor
   input.has_angles = fixed;
   if (fixed) input.angles = qa_compat_q2_mem_read_f32_vector(memory, qa_compat_q2_guest_required_pointer(args, count, 1));
   input.text = w->text_scratch;
-  input.color = (qa_vec4){qa_compat_q2_mem_read_u8(memory, color_addr) / 255.0,
-    qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 1)) / 255.0,
-    qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 2)) / 255.0,
-    qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 3)) / 255.0};
+  double x = qa_compat_q2_mem_read_u8(memory, color_addr) / 255.0;
+  double y = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 1)) / 255.0;
+  double z = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 2)) / 255.0;
+  double w2 = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 3)) / 255.0;
+  input.color = (qa_vec4){x, y, z, w2};
   input.size = floats[0];
   input.depth_test = qa_compat_q2_guest_integer(args, count, 5 + offset) != 0;
   w->emit(w->emit_ctx, (qa_compat_q2_rerelease_world_text_event){qa_compat_q2_q2_world_text(input), floats[1]});

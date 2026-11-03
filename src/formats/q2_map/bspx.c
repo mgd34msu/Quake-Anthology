@@ -1,5 +1,6 @@
 /* Port of src/formats/q2-map/bspx.ts. GPL-2.0-or-later. */
 #include "qa/formats/q2_map/bspx.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -44,6 +45,8 @@ static void section_or_die(const qa_binary_reader *reader, int64_t offset, int64
                            qa_binary_reader *out) {
   if (!qa_binary_reader_section(reader, offset, length, out)) qa_range_error("Out of memory");
 }
+
+static void destroy_reader(void *raw) { qa_binary_reader_destroy(raw); }
 
 static qa_binary_reader lump_reader(const qa_q2_bspx_lump *lump, const char *source) {
   qa_binary_reader reader;
@@ -118,19 +121,27 @@ void qa_q2_bspx_directory_destroy(qa_q2_bspx_directory *directory) {
 }
 
 static qa_vec3 vector(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static qa_vec3 integer_vector(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_u32(reader), qa_binary_reader_u32(reader), qa_binary_reader_u32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_u32(reader);
+  v.y = qa_binary_reader_u32(reader);
+  v.z = qa_binary_reader_u32(reader);
   return v;
 }
 
 void qa_read_q2_face_normals(const qa_q2_bspx_lump *lump, double corner_count, qa_q2_face_normals *out) {
   memset(out, 0, sizeof *out);
   qa_binary_reader reader = lump_reader(lump, "BSPX FACENORMALS");
+  /* toQ2WorldGeometry catches a BinaryError; release the reader then. */
+  qa_cleanup reader_node;
+  qa_cleanup_push(&reader_node, destroy_reader, &reader);
   uint32_t count = qa_binary_reader_u32(&reader);
   qa_binary_reader records;
   if (!qa_binary_reader_records(&reader, (int64_t)reader.cursor,
@@ -152,6 +163,7 @@ void qa_read_q2_face_normals(const qa_q2_bspx_lump *lump, double corner_count, q
     out->corner_indices[i][1] = qa_binary_reader_u32(&reader);
     out->corner_indices[i][2] = qa_binary_reader_u32(&reader);
   }
+  qa_cleanup_pop(&reader_node);
   qa_binary_reader_destroy(&reader);
 }
 
@@ -166,6 +178,8 @@ void qa_read_q2_decoupled_lightmaps(const qa_q2_bspx_lump *lump, double face_cou
                                     qa_q2_decoupled_lightmaps *out) {
   memset(out, 0, sizeof *out);
   qa_binary_reader reader = lump_reader(lump, "BSPX DECOUPLED_LM");
+  qa_cleanup reader_node;
+  qa_cleanup_push(&reader_node, destroy_reader, &reader);
   qa_binary_reader records;
   if (!qa_binary_reader_records(&reader, 0, (int64_t)reader.length, 40, &records))
     qa_range_error("Out of memory");
@@ -184,8 +198,8 @@ void qa_read_q2_decoupled_lightmaps(const qa_q2_bspx_lump *lump, double face_cou
     double lighting_offset = raw_offset;
     if (has_offset && lighting_offset >= lighting_bytes) {
       char message[256];
-      snprintf(message, sizeof message, "DECOUPLED_LM face %zu has invalid lighting offset %g", i,
-               lighting_offset);
+      snprintf(message, sizeof message, "DECOUPLED_LM face %zu has invalid lighting offset %s", i,
+               QA_JS_NUMBER(lighting_offset));
       list_push(&out->diagnostics, xstrdup(message));
       has_offset = false;
     }
@@ -200,6 +214,7 @@ void qa_read_q2_decoupled_lightmaps(const qa_q2_bspx_lump *lump, double face_cou
     out->faces[i].offset.x = x;
     out->faces[i].offset.y = y;
   }
+  qa_cleanup_pop(&reader_node);
   qa_binary_reader_destroy(&reader);
 }
 
@@ -226,115 +241,135 @@ static qa_q2_lightgrid_child read_child(qa_binary_reader *reader) {
   return child;
 }
 
+typedef struct lightgrid_scratch {
+  qa_binary_reader reader;
+  qa_q2_lightgrid_child *pending;
+  uint8_t *visited;
+} lightgrid_scratch;
+
+static void lightgrid_scratch_release(void *raw) {
+  lightgrid_scratch *scratch = raw;
+  free(scratch->pending);
+  free(scratch->visited);
+  qa_binary_reader_destroy(&scratch->reader);
+}
+
+/* Every allocation is published to `out` as soon as it exists, so a caller
+ * that catches the BinaryError (toQ2WorldGeometry) frees it with
+ * qa_q2_lightgrid_destroy. */
 void qa_read_q2_lightgrid(const qa_q2_bspx_lump *lump, qa_q2_lightgrid *out) {
   memset(out, 0, sizeof *out);
-  qa_binary_reader reader = lump_reader(lump, "BSPX LIGHTGRID_OCTREE");
-  out->spacing = vector(&reader);
+  lightgrid_scratch scratch;
+  scratch.reader = lump_reader(lump, "BSPX LIGHTGRID_OCTREE");
+  scratch.pending = NULL;
+  scratch.visited = NULL;
+  qa_cleanup scratch_node;
+  qa_cleanup_push(&scratch_node, lightgrid_scratch_release, &scratch);
+  qa_binary_reader *reader = &scratch.reader;
+  out->spacing = vector(reader);
   if (out->spacing.x <= 0 || out->spacing.y <= 0 || out->spacing.z <= 0) {
-    qa_binary_error(reader.source, 0, "lightgrid spacing must be positive");
+    qa_binary_error(reader->source, 0, "lightgrid spacing must be positive");
   }
   out->scale.x = 1 / out->spacing.x;
   out->scale.y = 1 / out->spacing.y;
   out->scale.z = 1 / out->spacing.z;
-  out->size = integer_vector(&reader);
-  out->min = vector(&reader);
-  double style_count = qa_binary_reader_u8(&reader);
+  out->size = integer_vector(reader);
+  out->min = vector(reader);
+  double style_count = qa_binary_reader_u8(reader);
   if (style_count < 1 || style_count > 4) {
-    qa_binary_error(reader.source, 36, "invalid lightgrid style count");
+    qa_binary_error(reader->source, 36, "invalid lightgrid style count");
   }
   out->style_count = style_count;
-  out->root = read_child(&reader);
-  uint32_t node_count = qa_binary_reader_u32(&reader);
+  out->root = read_child(reader);
+  uint32_t node_count = qa_binary_reader_u32(reader);
   qa_binary_reader records;
-  if (!qa_binary_reader_records(&reader, (int64_t)reader.cursor, (int64_t)node_count * 44, 44, &records))
+  if (!qa_binary_reader_records(reader, (int64_t)reader->cursor, (int64_t)node_count * 44, 44, &records))
     qa_range_error("Out of memory");
   qa_binary_reader_destroy(&records);
   qa_q2_lightgrid_node *nodes = xmalloc(node_count * sizeof *nodes);
-  for (uint32_t i = 0; i < node_count; i++) {
-    nodes[i].point = integer_vector(&reader);
-    for (int j = 0; j < 8; j++) nodes[i].children[j] = read_child(&reader);
-  }
   out->nodes = nodes;
+  for (uint32_t i = 0; i < node_count; i++) {
+    nodes[i].point = integer_vector(reader);
+    for (int j = 0; j < 8; j++) nodes[i].children[j] = read_child(reader);
+  }
   out->node_count = node_count;
-  uint32_t leaf_count = qa_binary_reader_u32(&reader);
-  if ((double)leaf_count > (double)qa_binary_reader_remaining(&reader) / 24) {
-    qa_binary_error(reader.source, (int64_t)reader.cursor - 4, "invalid lightgrid leaf count");
+  uint32_t leaf_count = qa_binary_reader_u32(reader);
+  if ((double)leaf_count > (double)qa_binary_reader_remaining(reader) / 24) {
+    qa_binary_error(reader->source, (int64_t)reader->cursor - 4, "invalid lightgrid leaf count");
   }
   qa_q2_lightgrid_leaf *leaves = xmalloc(leaf_count * sizeof *leaves);
-  qa_q2_lightgrid_sample *samples = NULL;
+  out->leaves = leaves;
   size_t sample_count = 0, sample_capacity = 0;
   qa_q2_lightgrid_sample occluded = {255, {255, 255, 255}};
   for (uint32_t i = 0; i < leaf_count; i++) {
-    qa_vec3 leaf_min = integer_vector(&reader);
-    qa_vec3 leaf_size = integer_vector(&reader);
+    qa_vec3 leaf_min = integer_vector(reader);
+    qa_vec3 leaf_size = integer_vector(reader);
     double point_count = leaf_size.x * leaf_size.y * leaf_size.z;
     if (point_count != trunc(point_count) || point_count < 0 || point_count > 9007199254740991.0 ||
-        point_count > (double)qa_binary_reader_remaining(&reader)) {
-      qa_binary_error(reader.source, (int64_t)reader.cursor, "invalid lightgrid point count");
+        point_count > (double)qa_binary_reader_remaining(reader)) {
+      qa_binary_error(reader->source, (int64_t)reader->cursor, "invalid lightgrid point count");
     }
     double first_sample = (double)sample_count;
     for (double point = 0; point < point_count; point++) {
-      uint8_t count = qa_binary_reader_u8(&reader);
+      uint8_t count = qa_binary_reader_u8(reader);
       if (count != 255 && count > style_count) {
-        qa_binary_error(reader.source, (int64_t)reader.cursor - 1, "too many sample styles");
+        qa_binary_error(reader->source, (int64_t)reader->cursor - 1, "too many sample styles");
       }
       for (double style = 0; style < style_count; style++) {
         qa_q2_lightgrid_sample sample;
         if (count != 255 && style < count) {
-          sample.style = qa_binary_reader_u8(&reader);
-          sample.rgb.x = qa_binary_reader_u8(&reader);
-          sample.rgb.y = qa_binary_reader_u8(&reader);
-          sample.rgb.z = qa_binary_reader_u8(&reader);
+          sample.style = qa_binary_reader_u8(reader);
+          sample.rgb.x = qa_binary_reader_u8(reader);
+          sample.rgb.y = qa_binary_reader_u8(reader);
+          sample.rgb.z = qa_binary_reader_u8(reader);
         } else {
           sample = occluded;
         }
         if (sample_count == sample_capacity) {
           sample_capacity = sample_capacity ? sample_capacity * 2 : 64;
-          samples = xrealloc(samples, sample_capacity * sizeof *samples);
+          out->samples = xrealloc((void *)out->samples, sample_capacity * sizeof *out->samples);
         }
-        samples[sample_count++] = sample;
+        ((qa_q2_lightgrid_sample *)out->samples)[sample_count++] = sample;
+        out->sample_count = sample_count;
       }
     }
     leaves[i].min = leaf_min;
     leaves[i].size = leaf_size;
     leaves[i].first_sample = first_sample;
     leaves[i].point_count = point_count;
+    out->leaf_count = i + 1;
   }
-  out->leaves = leaves;
   out->leaf_count = leaf_count;
-  out->samples = samples;
-  out->sample_count = sample_count;
-  /* Validate the octree iteratively, as in the TS. */
-  qa_q2_lightgrid_child *pending = NULL;
-  size_t pending_count = 0, pending_capacity = 0;
-  uint8_t *visited = xmalloc(node_count);
-  memset(visited, 0, node_count);
-  pending = xrealloc(pending, sizeof *pending);
-  pending[pending_count++] = out->root;
-  pending_capacity = 1;
-  while (pending_count > 0 && leaf_count > 0) {
-    qa_q2_lightgrid_child next = pending[--pending_count];
+  /* Cycle detection runs even for leafless grids, because lookups walk the
+   * nodes regardless (TS); only the leaf-reference check needs leaves. */
+  size_t pending_count = 0, pending_capacity = 1;
+  scratch.visited = xmalloc(node_count);
+  memset(scratch.visited, 0, node_count);
+  scratch.pending = xmalloc(sizeof *scratch.pending);
+  scratch.pending[pending_count++] = out->root;
+  while (pending_count > 0) {
+    qa_q2_lightgrid_child next = scratch.pending[--pending_count];
     if (next.kind == QA_Q2_LIGHTGRID_OCCLUDED) continue;
     if (next.kind == QA_Q2_LIGHTGRID_LEAF) {
-      if (next.index >= leaf_count) qa_binary_error(reader.source, 37, "invalid lightgrid leaf reference");
+      if (leaf_count > 0 && next.index >= leaf_count)
+        qa_binary_error(reader->source, 37, "invalid lightgrid leaf reference");
       continue;
     }
     if (next.index != trunc(next.index) || next.index < 0 || next.index >= node_count ||
-        visited[(size_t)next.index]) {
-      qa_binary_error(reader.source, 37, "invalid or repeated lightgrid node");
+        scratch.visited[(size_t)next.index]) {
+      qa_binary_error(reader->source, 37, "invalid or repeated lightgrid node");
     }
-    visited[(size_t)next.index] = 1;
+    scratch.visited[(size_t)next.index] = 1;
     for (int j = 0; j < 8; j++) {
       if (pending_count == pending_capacity) {
         pending_capacity *= 2;
-        pending = xrealloc(pending, pending_capacity * sizeof *pending);
+        scratch.pending = xrealloc(scratch.pending, pending_capacity * sizeof *scratch.pending);
       }
-      pending[pending_count++] = nodes[(size_t)next.index].children[j];
+      scratch.pending[pending_count++] = nodes[(size_t)next.index].children[j];
     }
   }
-  free(pending);
-  free(visited);
-  qa_binary_reader_destroy(&reader);
+  qa_cleanup_pop(&scratch_node);
+  lightgrid_scratch_release(&scratch);
 }
 
 void qa_q2_lightgrid_destroy(qa_q2_lightgrid *grid) {

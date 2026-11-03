@@ -35,6 +35,10 @@ bool qa_compat_qc_borrowed_actors_actor(qa_compat_qc_borrowed_actors *b, int64_t
 int64_t qa_compat_qc_borrowed_actors_reference(qa_compat_qc_borrowed_actors *b, qa_actor_id actor);
 /* kind "read"|"write"; words 1|3 */
 void qa_compat_qc_borrowed_actors_access(qa_compat_qc_borrowed_actors *b, int64_t reference, int64_t word, int64_t words, const char *kind);
+/* TS observeStore: a QC velocity store into a borrowed row writes the
+ * canonical body velocity. after holds the stored words (little endian). */
+void qa_compat_qc_borrowed_actors_observe_store(qa_compat_qc_borrowed_actors *b, int64_t reference, int64_t word,
+    const uint8_t *after, size_t after_length);
 typedef struct qa_compat_qc_borrowed_checkpoint { qa_saved_actor_id actor; int64_t slot; } qa_compat_qc_borrowed_checkpoint;
 size_t qa_compat_qc_borrowed_actors_checkpoint(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_checkpoint *out, size_t capacity);
 void qa_compat_qc_borrowed_actors_restore(qa_compat_qc_borrowed_actors *b, const qa_save_reader *reader);

@@ -121,6 +121,10 @@ static void sweep_impact(void *data, const qa_swept_body_trace *trace, qa_vec3 n
   if (normal.z > 0.7) move->blocked |= 1;
   if (normal.z == 0) move->blocked |= 2;
 }
+static uintptr_t sweep_plane_identity(void *data, const qa_swept_body_trace *trace) {
+  (void)data;
+  return ((const qa_trace_result *)trace->native)->plane_identity;
+}
 static bool sweep_same_plane(void *data, qa_vec3 first, qa_vec3 second, bool same_slot) {
   (void)data;
   (void)first;
@@ -156,6 +160,7 @@ static int fly_move(quakeworld_move *move) {
   services.impact = sweep_impact;
   services.stop_when_still = false;
   services.same_plane = sweep_same_plane;
+  services.plane_identity = sweep_plane_identity;
   services.has_collision_policy = true;
   services.stop_on_start_solid = true;
   services.original_velocity = QA_SWEPT_ORIGINAL_INITIAL;

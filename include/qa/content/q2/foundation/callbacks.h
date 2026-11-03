@@ -44,4 +44,9 @@ const char *qa_q2_die_name(qa_q2_source_callbacks *c, qa_q2_die cb, bool has);
 qa_q2_die qa_q2_die_resolve(qa_q2_source_callbacks *c, const char *name, bool *has);
 const char *qa_q2_blocked_name(qa_q2_source_callbacks *c, qa_q2_blocked cb, bool has);
 qa_q2_blocked qa_q2_blocked_resolve(qa_q2_source_callbacks *c, const char *name, bool *has);
+/* TS [...<kind>.functions.keys()] (or the trajectories map keys): the
+ * registered names in registration order. kind: "think"|"use"|"touch"|
+ * "pain"|"die"|"blocked"|"trajectory". Writes up to capacity names into
+ * out (borrowed) and returns the total count. */
+size_t qa_q2_source_callbacks_names(const qa_q2_source_callbacks *c, const char *kind, const char **out, size_t capacity);
 #endif

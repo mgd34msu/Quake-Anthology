@@ -260,7 +260,10 @@ static void test_inspect_rejected_and_implicit(void) {
   implicit.base_image.binding.playback.kind = "single";
   implicit.profile = default_profile();
   qa_finished_shader_result finished;
-  qa_finish_implicit_shader(implicit, &finished);
+  qa_finish_shader_input_result implicit_input;
+  qa_implicit_shader_input(implicit, &implicit_input);
+  qa_finish_shader(implicit_input.input, &finished);
+  qa_finish_shader_input_result_free(&implicit_input);
   CHECK(finished.shader.source_stage_count == 1);
   CHECK(strcmp(finished.shader.source_stages[0].stage.depth_func, "always") == 0);
   CHECK(!finished.shader.source_stages[0].stage.depth_write);
@@ -270,9 +273,15 @@ static void test_inspect_rejected_and_implicit(void) {
          QA_SOURCE_STATE_DEPTHTEST_DISABLE) != 0);
   qa_finished_shader_result_free(&finished);
 
-  qa_finish_failed_shader_input failed = {"missing/shader", -1, default_profile()};
+  /* R_FindShader's named missing-image record: an empty implicit definition. */
+  qa_finish_shader_input failed;
+  memset(&failed, 0, sizeof failed);
+  failed.definition.name = "missing/shader";
+  failed.definition.cull = "front";
+  failed.lightmap_index = -1;
+  failed.profile = default_profile();
   qa_finished_shader_result failed_result;
-  qa_finish_failed_shader(failed, &failed_result);
+  qa_finish_shader(failed, &failed_result);
   CHECK(failed_result.shader.num_unfogged_passes == 0);
   CHECK(failed_result.shader.sort == 7);
   qa_finished_shader_result_free(&failed_result);

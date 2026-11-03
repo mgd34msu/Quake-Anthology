@@ -1,5 +1,7 @@
 /* Port of src/content/q3/base/game/personal-portal.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/game/personal_portal.h"
+#include "qa/network/common/js_number.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "qa/content/q3/base/game/missile.h"
@@ -7,6 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 #define CONTENTS_CORPSE_V (double)0x4000000
 #define CONTENTS_TRIGGER_V (double)(int32_t)0x40000000
 typedef qa_q3_personal_portal_runtime RT;
@@ -22,6 +25,17 @@ static qa_q3_game_client *player_client(RT *r, qa_q3_game_entity *e) {
   return e->client;
 }
 static void free_portal(RT *r, qa_q3_game_entity *e) { owned(r, e); qa_q3_entity_pool_free(pool(r), e); }
+/* TS private dropContext. */
+static qa_q3_drop_item_context drop_context(RT *r) {
+  qa_q3_drop_item_context c; memset(&c, 0, sizeof c);
+  c.launch.entities = pool(r); c.launch.product = QA_Q3_BASE_PRODUCT_MISSIONPACK;
+  c.launch.game_type = r->host.combat->game_type; c.launch.time = r->host.combat->time;
+  c.launch.touch_item = r->host.touch_item; c.launch.dropped_flag_think = r->host.dropped_flag_think;
+  c.launch.check_dropped_team_item = r->host.check_dropped_team_item;
+
+  c.random_ctx = r->host.ctx; c.random = r->host.random_value;
+  return c;
+}
 static qa_q3_game_entity *destination(RT *r, double sequence) {
   qa_q3_game_entity *d = NULL;
   while ((d = qa_q3_find_entity(pool(r), d, QA_Q3_FIELD_CLASSNAME, "hi_portal destination")) != NULL)
@@ -37,14 +51,14 @@ static void drop_carried_flag(RT *r, qa_q3_game_entity *player) {
   if (r->host.has_map_travel) { r->host.map_drop_carried_flag(r->host.ctx, player); return; }
   qa_q3_game_client *c = player->client;
   if (!c) qa_range_error("Portal touch requires a client entity");
-  double powerup = qa_q3_game_slots_get_mirror(&c->ps.powerups, QA_Q3_PW_NEUTRALFLAG) != 0 ? QA_Q3_PW_NEUTRALFLAG
-    : qa_q3_game_slots_get_mirror(&c->ps.powerups, QA_Q3_PW_REDFLAG) != 0 ? QA_Q3_PW_REDFLAG
-    : qa_q3_game_slots_get_mirror(&c->ps.powerups, QA_Q3_PW_BLUEFLAG) != 0 ? QA_Q3_PW_BLUEFLAG : QA_Q3_PW_NONE;
-  if ((int)powerup == QA_Q3_PW_NONE) return;
-  const qa_q3_game_item_definition_mirror *item = r->host.find_item_for_powerup(r->host.ctx, powerup);
-  if (!item) { char buf[128]; snprintf(buf, sizeof buf, "Portal carried flag %g is absent from the missionpack item table", powerup); qa_range_error("%s", buf); }
-  (void)r->host.drop_item(r->host.ctx, player, item, 0);
-  qa_q3_game_slots_set_mirror(&c->ps.powerups, (size_t)powerup, 0);
+  double powerup = qa_q3_base_player_state_slots_get(&c->ps.powerups, QA_Q3_PW_NEUTRALFLAG) != 0 ? QA_Q3_PW_NEUTRALFLAG
+    : qa_q3_base_player_state_slots_get(&c->ps.powerups, QA_Q3_PW_REDFLAG) != 0 ? QA_Q3_PW_REDFLAG
+    : qa_q3_base_player_state_slots_get(&c->ps.powerups, QA_Q3_PW_BLUEFLAG) != 0 ? QA_Q3_PW_BLUEFLAG : QA_Q3_PW_NONE;
+  if (qa_js_to_int32(powerup) == QA_Q3_PW_NONE) return;
+  const qa_q3_base_item_definition *item = qa_q3_base_find_item_for_powerup(QA_Q3_BASE_PRODUCT_MISSIONPACK, (qa_q3_powerup)powerup);
+  if (!item) { char buf[128]; snprintf(buf, sizeof buf, "Portal carried flag %s is absent from the missionpack item table", QA_JS_NUMBER(powerup)); qa_range_error("%s", buf); }
+  (void)qa_q3_drop_item(drop_context(r), player, item, 0);
+  qa_q3_base_player_state_slots_set(&c->ps.powerups, (size_t)powerup, 0);
 }
 static void portal_touch(RT *r, qa_q3_game_entity *source, qa_q3_game_entity *other) {
   owned(r, source);
@@ -70,7 +84,7 @@ void qa_q3_personal_portal_drop_destination(RT *r, qa_q3_game_entity *player) {
   qa_q3_game_entity *portal = qa_q3_entity_pool_spawn(pool(r));
   portal->s.modelindex = r->host.model_index(r->host.ctx, "models/powerups/teleporter/tele_exit.md3");
   qa_q3_set_origin(portal, qa_q3_snap_vector(player->s.pos.base));
-  portal->r.mins = player->r.mins; portal->r.maxs = player->r.maxs;
+  qa_q3_base_entity_shared_set_mins(&portal->r, qa_q3_base_entity_shared_mins(&player->r)); qa_q3_base_entity_shared_set_maxs(&portal->r, qa_q3_base_entity_shared_maxs(&player->r));
   qa_q3_game_entity_set_classname(portal, "hi_portal destination");
   portal->r.contents = CONTENTS_CORPSE_V;
   qa_q3_game_entity_set_takedamage(portal, true); qa_q3_game_entity_set_health(portal, 200);
@@ -81,20 +95,22 @@ void qa_q3_personal_portal_drop_destination(RT *r, qa_q3_game_entity *player) {
   r->host.world.link(r->host.world.ctx, portal);
   r->portal_sequence = qa_int32(r->portal_sequence + 1);
   client->portal_id = r->portal_sequence; portal->count = client->portal_id;
-  const qa_q3_game_item_definition_mirror *item = r->host.find_item(r->host.ctx, "Portal");
+  const qa_q3_base_item_definition *item = qa_q3_base_find_item(QA_Q3_BASE_PRODUCT_MISSIONPACK, "Portal");
   if (!item) qa_range_error("Portal holdable is absent from the missionpack item table");
-  double index = r->host.item_index(r->host.ctx, item);
+  size_t count = 0; const qa_q3_base_item_definition *list = qa_q3_base_item_list(QA_Q3_BASE_PRODUCT_MISSIONPACK, &count);
+  double index = -1;
+  for (size_t i = 0; i < count; i++) if (&list[i] == item) { index = (double)i; break; }
   if (index < 1) qa_range_error("Portal holdable has no missionpack item index");
-  qa_q3_game_slots_set_mirror(&client->ps.stats, (size_t)qa_q3_base_stat_schema_for(QA_Q3_BASE_PRODUCT_MISSIONPACK)->holdable_item, index);
+  qa_q3_base_player_state_slots_set(&client->ps.stats, (size_t)qa_q3_base_stat_schema_for(QA_Q3_BASE_PRODUCT_MISSIONPACK)->holdable_item, index);
 }
 void qa_q3_personal_portal_drop_source(RT *r, qa_q3_game_entity *player) {
   qa_q3_game_client *client = player_client(r, player);
   qa_q3_game_entity *portal = qa_q3_entity_pool_spawn(pool(r));
   portal->s.modelindex = r->host.model_index(r->host.ctx, "models/powerups/teleporter/tele_enter.md3");
   qa_q3_set_origin(portal, qa_q3_snap_vector(player->s.pos.base));
-  portal->r.mins = player->r.mins; portal->r.maxs = player->r.maxs;
+  qa_q3_base_entity_shared_set_mins(&portal->r, qa_q3_base_entity_shared_mins(&player->r)); qa_q3_base_entity_shared_set_maxs(&portal->r, qa_q3_base_entity_shared_maxs(&player->r));
   qa_q3_game_entity_set_classname(portal, "hi_portal source");
-  portal->r.contents = (double)((int32_t)CONTENTS_CORPSE_V | (int32_t)CONTENTS_TRIGGER_V);
+  portal->r.contents = (double)((int32_t)CONTENTS_CORPSE_V | qa_js_to_int32(CONTENTS_TRIGGER_V));
   qa_q3_game_entity_set_takedamage(portal, true); qa_q3_game_entity_set_health(portal, 200);
   portal->die = qa_q3_callback_family_resolve(&pool(r)->callbacks.die, "q3.base.game.personal-portal.dropPortalDestination.die");
   r->host.world.link(r->host.world.ctx, portal);
@@ -119,13 +135,13 @@ void qa_q3_personal_portal_bind_save_callbacks(RT *r) {
   qa_q3_callback_family_intern(&c->think, "q3.base.game.personal-portal.dropPortalSource.think", mkcb(&en, r));
 }
 void qa_q3_personal_portal_runtime_init(RT *r, qa_q3_personal_portal_host host) {
-  if (host.combat->entities->options.product != QA_Q3_GAME_PRODUCT_MISSIONPACK)
+  if (host.combat->entities->options.product != QA_Q3_BASE_PRODUCT_MISSIONPACK)
     qa_range_error("Personal portals require a missionpack entity pool");
   if (!host.spatial_is_world) qa_range_error("Personal portal combat and collision worlds must match");
   r->host = host; r->portal_sequence = 0; qa_q3_personal_portal_bind_save_callbacks(r);
 }
 double qa_q3_personal_portal_capture_sequence(const RT *r) { return r->portal_sequence; }
 void qa_q3_personal_portal_restore_sequence(RT *r, double sequence) {
-  if (sequence != (int32_t)sequence) qa_range_error("portal sequence exceeds source integer range");
+  if (!(sequence >= -2147483648.0 && sequence <= 2147483647.0) || sequence != trunc(sequence)) qa_range_error("portal sequence exceeds source integer range");
   r->portal_sequence = sequence;
 }

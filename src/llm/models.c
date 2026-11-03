@@ -7,6 +7,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 const char *qa_llm_reasoning_source_name(qa_llm_reasoning_source source) {
   switch (source) {
@@ -97,9 +99,9 @@ void qa_llm_model_catalog_copy(const qa_llm_model_catalog *source, qa_llm_model_
   out->message = source->message != NULL ? qa_llm_strdup(source->message) : NULL;
 }
 
-/* models.ts string(): JS length > 256 (UTF-16 units; bytes here). */
+/* models.ts string(): JS length > 256 counts UTF-16 units. */
 static bool model_string(const qa_llm_json *value, char **out, qa_llm_error *error) {
-  bool bad = value == NULL || value->kind != QA_LLM_JSON_STRING || qa_llm_trim_is_empty(value->string) || strlen(value->string) > 256;
+  bool bad = value == NULL || value->kind != QA_LLM_JSON_STRING || qa_llm_trim_is_empty(value->string) || qa_llm_utf16_length(value->string) > 256;
   if (!bad) {
     for (const uint8_t *p = (const uint8_t *)value->string; *p != '\0'; p++) {
       if (*p <= 0x1f || *p == 0x7f) bad = true;
@@ -263,9 +265,8 @@ static bool is_non_chat(const char *id) {
 }
 
 static int compare_model_name(const void *a, const void *b) {
-  /* localeCompare vs strcmp can differ for case/punctuation; names here
-   * are model IDs where byte order matches the TS test expectations. */
-  return strcmp(((const qa_llm_model *)a)->name, ((const qa_llm_model *)b)->name);
+  /* TS a.name.localeCompare(b.name). */
+  return qa_js_locale_compare(((const qa_llm_model *)a)->name, ((const qa_llm_model *)b)->name);
 }
 
 bool qa_llm_parse_api_models(const qa_llm_json *value, bool openai, qa_llm_model_list *out, qa_llm_error *error) {
@@ -303,7 +304,7 @@ bool qa_llm_parse_api_models(const qa_llm_json *value, bool openai, qa_llm_model
     }
     if (!replaced) model_list_push(out, &model);
   }
-  if (out->count > 1) qsort(out->items, out->count, sizeof *out->items, compare_model_name);
+  if (out->count > 1) qa_js_sort(out->items, out->count, sizeof *out->items, compare_model_name);
   return true;
 }
 
@@ -386,7 +387,9 @@ bool qa_llm_parse_codex_models(const qa_llm_json *value, qa_llm_model_list *out,
     id_json.string = model.id;
     free(model.name);
     model.name = NULL;
-    if (!model_string(display != NULL ? display : &id_json, &model.name, error)) {
+    /* item["display_name"] ?? id: a JSON null display name falls back too. */
+    bool nullish = display == NULL || display->kind == QA_LLM_JSON_NULL;
+    if (!model_string(nullish ? &id_json : display, &model.name, error)) {
       free(default_effort);
       qa_llm_model_clear(&model);
       ok = false;
@@ -412,7 +415,7 @@ bool qa_llm_parse_codex_models(const qa_llm_json *value, qa_llm_model_list *out,
     free(models);
     return false;
   }
-  if (count > 1) qsort(models, count, sizeof *models, compare_priority);
+  if (count > 1) qa_js_sort(models, count, sizeof *models, compare_priority);
   /* [...new Map(models.map(...)).values()]: dedupe by id, first wins in
    * insertion position but the LAST value (Map.set semantics on an
    * entries-built Map keeps the later value at the first position). */
@@ -474,12 +477,8 @@ static bool model_json(qa_llm_http_response *response, qa_llm_abort_signal *sign
     bool valid_ok = qa_llm_utf8_valid(raw.data, raw.length, &valid);
     if (valid_ok) valid = raw.length;
     else {
-      uint8_t lead = valid < raw.length ? raw.data[valid] : 0;
-      size_t need = (lead & 0xe0) == 0xc0 ? 2 : (lead & 0xf0) == 0xe0 ? 3 : (lead & 0xf8) == 0xf0 ? 4 : 0;
-      bool partial = need > 0 && raw.length - valid < need;
-      for (size_t i = valid + 1; partial && i < raw.length; i++) {
-        if ((raw.data[i] & 0xc0) != 0x80) partial = false;
-      }
+      /* The streaming fatal decoder throws unless the tail can still complete. */
+      bool partial = valid < raw.length && qa_llm_utf8_incomplete_tail(raw.data + valid, raw.length - valid);
       if (!partial) { ok = false; break; } /* decoder fatal: generic */
     }
     if (valid > 0) {

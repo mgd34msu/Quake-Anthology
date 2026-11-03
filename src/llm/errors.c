@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 /* See include/qa/llm/errors.h. GPL-2.0-or-later. */
 #include "qa/llm/errors.h"
+#include "qa/foundation/js.h"
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -147,26 +148,75 @@ char *qa_llm_strndup(const char *text, size_t length) {
   return copy;
 }
 
-static bool trim_space(uint8_t c) {
-  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
-}
-
+/* String.prototype.trim: strips every JS WhiteSpace and LineTerminator code
+ * point (qa_js_white_space_length) from both ends. */
 char *qa_llm_trim_dup(const char *text) {
   if (text == NULL) return qa_llm_strdup("");
-  size_t begin = 0, end = strlen(text);
-  /* NBSP/BOM (JS White_Space) in UTF-8, the common non-ASCII cases. */
-  for (;;) {
-    if (begin < end && trim_space((uint8_t)text[begin])) { begin++; continue; }
-    if (end - begin >= 2 && (uint8_t)text[begin] == 0xc2 && (uint8_t)text[begin + 1] == 0xa0) { begin += 2; continue; }
-    if (end - begin >= 3 && (uint8_t)text[begin] == 0xef && (uint8_t)text[begin + 1] == 0xbb && (uint8_t)text[begin + 2] == 0xbf) { begin += 3; continue; }
-    break;
-  }
-  for (;;) {
-    if (end > begin && trim_space((uint8_t)text[end - 1])) { end--; continue; }
-    if (end - begin >= 2 && (uint8_t)text[end - 2] == 0xc2 && (uint8_t)text[end - 1] == 0xa0) { end -= 2; continue; }
-    break;
+  size_t begin = 0, length;
+  while ((length = qa_js_white_space_length(text + begin)) != 0) begin += length;
+  size_t end = begin, at = begin;
+  while (text[at] != '\0') {
+    length = qa_js_white_space_length(text + at);
+    if (length != 0) { at += length; continue; }
+    at++;
+    end = at;
   }
   return qa_llm_strndup(text + begin, end - begin);
+}
+
+bool qa_llm_utf8_incomplete_tail(const uint8_t *tail, size_t length) {
+  if (length == 0) return false;
+  uint8_t lead = tail[0];
+  size_t need = lead >= 0xc2 && lead <= 0xdf ? 2 : lead >= 0xe0 && lead <= 0xef ? 3 : lead >= 0xf0 && lead <= 0xf4 ? 4 : 0;
+  if (need == 0 || length >= need) return false;
+  for (size_t i = 1; i < length; i++) {
+    uint8_t lower = 0x80, upper = 0xbf;
+    if (i == 1) {
+      if (lead == 0xe0) lower = 0xa0;
+      else if (lead == 0xed) upper = 0x9f;
+      else if (lead == 0xf0) lower = 0x90;
+      else if (lead == 0xf4) upper = 0x8f;
+    }
+    if (tail[i] < lower || tail[i] > upper) return false;
+  }
+  return true;
+}
+
+size_t qa_llm_utf16_length(const char *text) {
+  size_t units = 0;
+  for (const uint8_t *p = (const uint8_t *)text; *p != '\0'; p++) {
+    if ((*p & 0xc0) == 0x80) continue;
+    units += *p >= 0xf0 ? 2 : 1;
+  }
+  return units;
+}
+
+/* Buffer.toString("utf8") / TextDecoder (not fatal): each maximal invalid
+ * subpart becomes U+FFFD, as the WHATWG UTF-8 decoder does. */
+void qa_llm_utf8_decode_lossy(const uint8_t *data, size_t length, qa_llm_bytes *out) {
+  static const uint8_t replacement[3] = {0xef, 0xbf, 0xbd};
+  size_t i = 0;
+  while (i < length) {
+    uint8_t lead = data[i];
+    if (lead < 0x80) { qa_llm_bytes_append(out, &lead, 1); i++; continue; }
+    size_t need = lead >= 0xc2 && lead <= 0xdf ? 1 : lead >= 0xe0 && lead <= 0xef ? 2 : lead >= 0xf0 && lead <= 0xf4 ? 3 : 0;
+    if (need == 0) { qa_llm_bytes_append(out, replacement, 3); i++; continue; }
+    size_t seen = 0;
+    while (seen < need && i + 1 + seen < length) {
+      uint8_t lower = 0x80, upper = 0xbf, byte = data[i + 1 + seen];
+      if (seen == 0) {
+        if (lead == 0xe0) lower = 0xa0;
+        else if (lead == 0xed) upper = 0x9f;
+        else if (lead == 0xf0) lower = 0x90;
+        else if (lead == 0xf4) upper = 0x8f;
+      }
+      if (byte < lower || byte > upper) break;
+      seen++;
+    }
+    if (seen == need) qa_llm_bytes_append(out, data + i, need + 1);
+    else qa_llm_bytes_append(out, replacement, 3);
+    i += 1 + seen;
+  }
 }
 
 bool qa_llm_trim_is_empty(const char *text) {

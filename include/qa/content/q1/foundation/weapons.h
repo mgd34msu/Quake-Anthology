@@ -6,6 +6,9 @@
 
 const char *qa_q1_weapon_model(qa_q1_weapon weapon);
 qa_q1_weapon qa_q1_best_weapon(qa_q1_services *game, qa_owned_actor actor);
+/* TS bestWeapon(game, actor, ammoCount); ammo_count NULL = inventory count. */
+qa_q1_weapon qa_q1_best_weapon_counted(qa_q1_services *game, qa_owned_actor actor,
+                                       qa_q1_ammo_count_fn ammo_count, void *ammo_count_ctx);
 qa_vec3 qa_q1_aim(qa_q1_services *game, qa_owned_actor actor, qa_vec3 forward);
 void qa_q1_fire_bullets(qa_q1_services *game, qa_owned_actor shooter, qa_vec3 direction, qa_vec3 view_angles,
                         double count, double spread_x, double spread_y, qa_q1_weapon weapon);

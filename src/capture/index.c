@@ -6,7 +6,6 @@
 #include <fcntl.h>
 #include <math.h>
 #include <stdarg.h>
-#include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,17 +16,11 @@
 #include "qa/formats/images/png_encoder.h"
 #include "qa/formats/images/tga.h"
 #include "qa/settings/config.h"
+#include "qa/foundation/support.h"
 
-/* TS throws plain Error in this module; abort with identical message. */
-static noreturn void capture_error(const char *format, ...) {
-  va_list args;
-  va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
-  va_end(args);
-  abort();
-}
+/* TS throws plain Error in this module (a rejection for the async methods):
+ * a catchable raise named "Error"; uncaught it prints and aborts as before. */
+#define capture_error(...) qa_raise("Error", 0, 0, __VA_ARGS__)
 
 static void check_frame(const qa_image_level *image) {
   if (!isfinite(image->width) || !isfinite(image->height) ||
@@ -109,6 +102,8 @@ bool qa_frame_capture_init(qa_frame_capture *capture, const char *root,
   capture->root = strdup(root);
   if (capture->root == NULL) return false;
   capture->readback = readback;
+  for (size_t i = 0; i < sizeof capture->next_shot / sizeof capture->next_shot[0]; i++)
+    capture->next_shot[i] = 0;
   return true;
 }
 
@@ -177,7 +172,10 @@ bool qa_frame_capture_screenshot(qa_frame_capture *capture,
       return false;
     }
   } else {
-    for (int index = 0; index < 10000 && path == NULL; index++) {
+    /* TS nextShot: the first unnamed index to try per format; the directory
+     * is made once, on that first index. */
+    const int start = (int)capture->next_shot[format];
+    for (int index = start; index < 10000 && path == NULL; index++) {
       char stem[16];
       (void)snprintf(stem, sizeof stem, "shot%04d", index);
       char *candidate = capture_path(capture, "screenshots/%s.%s", stem, extension);
@@ -185,14 +183,16 @@ bool qa_frame_capture_screenshot(qa_frame_capture *capture,
         free(bytes);
         return false;
       }
-      const char *slash = strrchr(candidate, '/');
-      char *dir = strndup(candidate, (size_t)(slash - candidate));
-      bool made = dir != NULL && make_directories(dir);
-      free(dir);
-      if (!made) {
-        free(candidate);
-        free(bytes);
-        return false;
+      if (index == start) {
+        const char *slash = strrchr(candidate, '/');
+        char *dir = strndup(candidate, (size_t)(slash - candidate));
+        bool made = dir != NULL && make_directories(dir);
+        free(dir);
+        if (!made) {
+          free(candidate);
+          free(bytes);
+          return false;
+        }
       }
       int fd = open(candidate, O_WRONLY | O_CREAT | O_EXCL, 0666);
       if (fd < 0) {
@@ -219,6 +219,7 @@ bool qa_frame_capture_screenshot(qa_frame_capture *capture,
         return false;
       }
       path = candidate;
+      capture->next_shot[format] = index + 1;
     }
     if (path == NULL) {
       free(bytes);

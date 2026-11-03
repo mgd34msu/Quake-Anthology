@@ -1,6 +1,7 @@
 /* Port of src/content/mods/selection.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/selection.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,8 +9,7 @@
 
 /* TS throws plain Error in this module. */
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static noreturn void fail_format(const char *format, const char *a) {
   char message[4096];

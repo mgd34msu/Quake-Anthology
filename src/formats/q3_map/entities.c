@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-map/entities.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_map/entities.h"
+#include "qa/network/common/js_number.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,8 +22,10 @@ static void *xrealloc(void *p, size_t size) {
 
 noreturn void qa_q3_text_parse_error(const char *source_name, double line, double column,
                                      const char *message) {
-  fprintf(stderr, "TextParseError: %s:%g:%g: %s\n", source_name, line, column, message);
-  abort();
+  /* TS throws a catchable TextParseError (startup selection marks the map
+   * unavailable); an uncaught raise still prints and aborts. */
+  qa_raise("TextParseError", 0, 0, "%s:%s:%s: %s", source_name, QA_JS_NUMBER(line),
+           QA_JS_NUMBER(column), message);
 }
 
 static bool is_whitespace(char character) { return (unsigned char)character <= 32; }
@@ -136,6 +139,7 @@ bool qa_q3_tokenizer_next(qa_q3_tokenizer *tokenizer, bool allow_line_breaks, qa
   if (length >= QA_Q3_TOKEN_MAX) {
     char message[128];
     snprintf(message, sizeof message, "token is limited to %d characters", QA_Q3_TOKEN_MAX - 1);
+    free(value);
     qa_q3_text_parse_error(tokenizer->name, line, column, message);
   }
   out->value = value;
@@ -167,42 +171,71 @@ static void entity_set(qa_q3_entity *entity, char *key, char *value) {
   entity->property_count++;
 }
 
+/* Owned state of one parse, released when a TextParseError unwinds. */
+typedef struct parse_state {
+  qa_q3_entity *entities;
+  size_t count;
+  qa_q3_entity entity;
+  char *pending[2];
+} parse_state;
+
+static void parse_state_release(void *raw) {
+  parse_state *state = (parse_state *)raw;
+  qa_q3_entities_destroy(state->entities, state->count);
+  for (size_t j = 0; j < state->entity.property_count; j++) {
+    free(state->entity.properties[j].key);
+    free(state->entity.properties[j].value);
+  }
+  free(state->entity.properties);
+  free(state->pending[0]);
+  free(state->pending[1]);
+  memset(state, 0, sizeof *state);
+}
+
 qa_q3_entity *qa_q3_parse_entities(const char *text, const char *name, size_t *out_count) {
   qa_q3_tokenizer tokenizer;
   qa_q3_tokenizer_init(&tokenizer, text, name != NULL ? name : "<entities>");
-  qa_q3_entity *entities = NULL;
-  size_t count = 0;
+  parse_state state;
+  memset(&state, 0, sizeof state);
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, parse_state_release, &state);
   for (;;) {
     qa_q3_token opening;
     if (!qa_q3_tokenizer_next(&tokenizer, true, &opening)) break;
+    state.pending[0] = opening.value;
     if (strcmp(opening.value, "{") != 0) parse_error_at(&tokenizer, "expected \"{\"", &opening);
     free(opening.value);
-    qa_q3_entity entity = {NULL, 0};
+    state.pending[0] = NULL;
     for (;;) {
       qa_q3_token key;
       if (!qa_q3_tokenizer_next(&tokenizer, true, &key))
         parse_error_at(&tokenizer, "expected key or \"}\"", NULL);
       if (strcmp(key.value, "}") == 0) {
         free(key.value);
-        entities = xrealloc(entities, (count + 1) * sizeof *entities);
-        entities[count++] = entity;
+        state.entities = xrealloc(state.entities, (state.count + 1) * sizeof *state.entities);
+        state.entities[state.count++] = state.entity;
+        memset(&state.entity, 0, sizeof state.entity);
         break;
       }
+      state.pending[0] = key.value;
       qa_q3_token value;
       char message[1200];
       if (!qa_q3_tokenizer_next(&tokenizer, false, &value)) {
         snprintf(message, sizeof message, "missing value for entity key \"%s\"", key.value);
         parse_error_at(&tokenizer, message, NULL);
       }
+      state.pending[1] = value.value;
       if (strcmp(value.value, "}") == 0) {
         snprintf(message, sizeof message, "missing value for entity key \"%s\"", key.value);
         parse_error_at(&tokenizer, message, &value);
       }
-      entity_set(&entity, key.value, value.value);
+      state.pending[0] = state.pending[1] = NULL;
+      entity_set(&state.entity, key.value, value.value);
     }
   }
-  *out_count = count;
-  return entities;
+  qa_cleanup_pop(&cleanup);
+  *out_count = state.count;
+  return state.entities;
 }
 
 void qa_q3_entities_destroy(qa_q3_entity *entities, size_t count) {

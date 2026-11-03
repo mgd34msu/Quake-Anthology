@@ -28,14 +28,29 @@ void qa_write_quakeworld_move(qa_size_buf *sb, qa_quakeworld_profile profile, co
   sb->data[checksum_offset] = (uint8_t)qa_quake_world_checksum(sb->data + checksum_offset + 1,
       (size_t)(sb->cursize - checksum_offset - 1), sequence);
 }
+typedef struct client_scope {
+  qa_quakeworld_client_message **out; size_t *count; qa_quakeworld_client_message *current;
+} client_scope;
+/* A caught PacketError abandons the whole decode, as the TS throw discards `out`. */
+static void client_scope_free(void *arg) {
+  client_scope *scope = arg;
+  for (size_t i = 0; i < *scope->count; i++) qa_quakeworld_client_message_destroy(&(*scope->out)[i]);
+  free(*scope->out);
+  qa_quakeworld_client_message_destroy(scope->current);
+}
 qa_quakeworld_client_message *qa_decode_quakeworld_client(const uint8_t *bytes, size_t length,
                                                           qa_quakeworld_profile profile, double sequence, size_t *out_count) {
   qa_message_reader r; qa_message_reader_init(&r, bytes, length);
   qa_protocol_codec codec; qa_create_quakeworld_codec(profile, &r, &codec);
   size_t cap = 4, count = 0, dummy; bool moved = false;
   qa_quakeworld_client_message *out = calloc(cap, sizeof *out);
+  qa_quakeworld_client_message m;
+  memset(&m, 0, sizeof m);
+  client_scope scope = { &out, &count, &m };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, client_scope_free, &scope);
   while (qa_message_reader_remaining(&r) > 0) {
-    qa_quakeworld_client_message m; memset(&m, 0, sizeof m);
+    memset(&m, 0, sizeof m);
     switch ((int)qa_message_reader_byte(&r)) {
       case 1: m.kind = "nop"; break;
       case 4: m.kind = "string-command"; m.text = qa_message_reader_string(&r, 2047, false, &dummy); break;
@@ -80,7 +95,9 @@ qa_quakeworld_client_message *qa_decode_quakeworld_client(const uint8_t *bytes, 
     qa_message_reader_finish(&r);
     if (count == cap) { cap *= 2; out = realloc(out, cap * sizeof *out); }
     out[count++] = m;
+    memset(&m, 0, sizeof m);
   }
+  qa_cleanup_pop(&guard);
   *out_count = count; return out;
 }
 void qa_write_quakeworld_upload(qa_size_buf *sb, const uint8_t *bytes, size_t length, double percent) {

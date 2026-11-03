@@ -1,11 +1,8 @@
 /*
  * Port of src/world/session/mod-presentations.ts (types only).
- * Mirrored from unported modules (named per type): the QVM
- * presentation context (TS owner src/compat/qvm/mod-presentation.ts),
- * entity state fields (TS owner src/compat/qvm/entity-record.ts),
- * and the Q3 game-state record (TS owner src/network/q3/
- * game-state.ts) stay opaque borrowed pointers; only fields this
- * module declares are typed. GPL-2.0-or-later.
+ * The source context is the compat/qvm QvmPresentationContext; entity
+ * state fields are compat/qvm QvmEntityStateFields and the game-state
+ * record is network/q3 SourceGameStateRecord. GPL-2.0-or-later.
  */
 #ifndef QA_WORLD_SESSION_MOD_PRESENTATIONS_H
 #define QA_WORLD_SESSION_MOD_PRESENTATIONS_H
@@ -13,6 +10,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "qa/compat/qvm/mod_presentation.h"
 #include "qa/content/mounts.h"
 #include "qa/contracts/execution.h"
 #include "qa/contracts/identity.h"
@@ -23,10 +21,10 @@
 #include "qa/platform/files/writable.h"
 #include "qa/world/session/mods.h"
 
-/* Mirrored unported payloads (see file comment). */
-typedef const void *qa_session_qvm_presentation_context;
-typedef const void *qa_session_qvm_entity_state_fields;
-typedef const void *qa_session_source_game_state_record;
+/* TS QvmEntityStateFields / SourceGameStateRecord, borrowed as the TS
+ * publication references them. */
+typedef const qa_qvm_entity_state_fields *qa_session_qvm_entity_state_fields;
+typedef const qa_q3_source_game_state_record *qa_session_source_game_state_record;
 
 typedef struct qa_qvm_scene_client {
   qa_actor_id actor;
@@ -83,10 +81,14 @@ struct qa_mod_qvm_presentation_source {
   qa_module_identity module;
   qa_qvm_abi_profile abi_profile;
   double generation;
-  /* Omit<QvmPresentationContext, "frameTimeMilliseconds" |
-   * "viewOrigin"> stays opaque (unported owner). */
-  qa_session_qvm_presentation_context (*context)(void *ctx,
-                                                 qa_actor_id viewer);
+  /* TS Omit<QvmPresentationContext, "frameTimeMilliseconds" |
+   * "viewOrigin"> | null: NULL is TS null. The omitted members
+   * (frame_time_milliseconds, view_origin) are zero and never read;
+   * the consumer supplies them. The result and the player-state slot
+   * storage it points into are owned by the source and stay valid
+   * until its next context() call. */
+  const qa_qvm_presentation_context *(*context)(void *ctx,
+                                                qa_actor_id viewer);
   bool (*scene)(void *ctx, qa_qvm_scene_pair *out);
   bool (*files)(void *ctx, qa_qvm_presentation_files *out);
   void (*client_command)(void *ctx, qa_actor_id viewer,

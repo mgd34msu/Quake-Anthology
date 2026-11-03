@@ -71,8 +71,8 @@ qa_entity_geometry qa_rail_geometry(qa_rail_pose entity, qa_vec3 view_origin,
   qa_vec3 delta = qa_sub3(end, start);
   qa_vec3 direction = qa_normalize3(delta);
   double length = trunc(qa_length3(delta));
-  if (!is_int32(length))
-    qa_range_error("rail length exceeds source int32 conversion");
+  /* The source's int conversion is undefined past int32, so such a beam is not drawn. */
+  if (!is_int32(length)) return (qa_entity_geometry){b.vertices, b.count, b.indices, b.icount};
   if (strcmp(entity.kind, "rail-rings") != 0) {
     qa_vec3 right = qa_normalize3(qa_cross3(
         qa_normalize3(qa_sub3(start, view_origin)),
@@ -80,8 +80,10 @@ qa_entity_geometry qa_rail_geometry(qa_rail_pose entity, qa_vec3 view_origin,
     int iterations = lightning ? 4 : 1;
     for (int index = 0; index < iterations; index++) {
       double width = lightning ? 8 : settings->core_width;
-      if (!is_int32(width))
-        qa_range_error("rail core width requires a source int32");
+      if (!is_int32(width)) {
+        if (lightning) right = qa_rotate_point_around_vector(direction, right, 45);
+        continue;
+      }
       double base = (double)b.count;
       qa_vec3 offset = qa_scale3(right, fr(width));
       double t = fr(fr(length) / 256);
@@ -102,17 +104,13 @@ qa_entity_geometry qa_rail_geometry(qa_rail_pose entity, qa_vec3 view_origin,
   qa_vec3 up = qa_cross3(right, direction);
   double segments =
       trunc(fr(fr(length) / fr(settings->segment_length)));
-  if (!is_int32(segments))
-    qa_range_error("rail ring count exceeds source int32 conversion");
+  if (!is_int32(segments)) return (qa_entity_geometry){b.vertices, b.count, b.indices, b.icount};
   if (segments <= 0) segments = 1;
   qa_vec3 step = qa_math_vec3(direction.x * fr(settings->segment_length),
                               direction.y * fr(settings->segment_length),
                               direction.z * fr(settings->segment_length));
   double width = settings->ring_width;
-  if (!is_int32(width))
-    qa_range_error("rail ring width requires a source int32");
-  if (segments > 1000000)
-    qa_range_error("rail ring geometry exceeds safe allocation");
+  if (!is_int32(width) || segments > 1000000) return (qa_entity_geometry){b.vertices, b.count, b.indices, b.icount};
   if (segments > 1) segments--;
   qa_vec3 positions[4];
   for (int index = 0; index < 4; index++) {
@@ -210,16 +208,6 @@ qa_entity_geometry qa_sprite_geometry(qa_sprite_pose entity, qa_axis view_axis,
   memcpy(out.indices, indices, sizeof indices);
   out.index_count = 6;
   return out;
-}
-
-double qa_sprite_fog(qa_vec3 origin, double radius, const qa_bounds *bounds,
-                     size_t bounds_count) {
-  for (size_t i = 0; i < bounds_count; i++)
-    if (origin.x - radius < bounds[i].max.x && origin.x + radius > bounds[i].min.x &&
-        origin.y - radius < bounds[i].max.y && origin.y + radius > bounds[i].min.y &&
-        origin.z - radius < bounds[i].max.z && origin.z + radius > bounds[i].min.z)
-      return (double)i;
-  return -1;
 }
 
 static qa_draw_batch base_batch(qa_renderer_image white_image,

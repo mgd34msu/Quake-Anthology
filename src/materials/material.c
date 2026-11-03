@@ -15,6 +15,7 @@
 #include "qa/core/renderer_math.h"
 #include "qa/foundation/support.h"
 #include "qa/materials/source_state.h"
+#include "qa/foundation/js_case.h"
 
 #define QA_PI 3.14159265358979323846
 
@@ -181,8 +182,10 @@ static int source_tex_coord_generator(qa_tex_coord_generator gen) {
 /* TS shaderTableIndex / evaluateWaveform. */
 static int32_t shader_table_index(double value) {
   double integer = trunc(value);
+  /* The source's float-to-int conversion yields the x86 "integer indefinite"
+     (INT_MIN) here, which masks to zero. */
   if (!isfinite(integer) || integer < -2147483648.0 || integer > 2147483647.0)
-    qa_range_error("Shader table index reaches undefined source float-to-int conversion");
+    return 0;
   return (int32_t)integer & 1023;
 }
 double qa_evaluate_waveform(qa_waveform wave, double time) {
@@ -274,7 +277,9 @@ qa_vec2 qa_evaluate_tex_coords(const qa_shader_stage_def *stage, qa_vec2 uv,
     result.x = f32(result.x);
     result.y = f32(result.y);
   }
-  qa_vec2 out = {f32(result.x), f32(result.y)};
+  /* finiteOrZero: texture coordinates stay finite for upload. */
+  double out_x = f32(result.x), out_y = f32(result.y);
+  qa_vec2 out = {isfinite(out_x) ? out_x : 0, isfinite(out_y) ? out_y : 0};
   return out;
 }
 
@@ -489,18 +494,6 @@ static const char *required_token(parser *p, bool allow_line_breaks) {
 }
 static double source_atof(const char *value) { return f32(qa_native_atof(value)); }
 static double p_number(parser *p) { return source_atof(required_token(p, false)); }
-static void p_expect(parser *p, const char *value, bool allow_line_breaks) {
-  const char *actual = required_token(p, allow_line_breaks);
-  bool ok = strcmp(value, "{") == 0 ? actual[0] == '{' : strcmp(actual, value) == 0;
-  if (!ok)
-    p_fail(p, s_format(p->scratch, "Expected '%s', received '%s'", value, actual));
-}
-static qa_vec3 p_vector(parser *p) {
-  p_expect(p, "(", false);
-  qa_vec3 result = {p_number(p), p_number(p), p_number(p)};
-  p_expect(p, ")", false);
-  return result;
-}
 typedef struct vector_result { qa_vec3 value; bool complete; } vector_result;
 static vector_result source_vector(parser *p, qa_vec3 previous) {
   token value;
@@ -577,9 +570,12 @@ static qa_string_view_list line_arguments(parser *p) {
   out.count = count;
   return out;
 }
+/* TS token.toLowerCase(): Unicode lowering of shader text. */
 static char *lower_copy(parser *p, const char *text) {
-  char *copy = s_strdup(p->scratch, text);
-  for (char *c = copy; *c != '\0'; c++) *c = (char)tolower((unsigned char)*c);
+  char *lowered = qa_js_to_lower_case(text);
+  if (lowered == NULL) qa_range_error("Out of memory");
+  char *copy = s_strdup(p->scratch, lowered);
+  free(lowered);
   return copy;
 }
 
@@ -830,7 +826,7 @@ static bool p_rgb(parser *p, qa_waveform previous_wave, qa_color_generator *out)
   }
   if (strcmp(kind, "const") == 0) {
     out->kind = "const";
-    out->color = p_vector(p);
+    out->color = source_vector(p, (qa_vec3){0, 0, 0}).value;
     return true;
   }
   if (strcmp(kind, "wave") == 0) {
@@ -2114,8 +2110,22 @@ static void inspect_impl(const char *text, const char *source,
   for (;;) {
     token name_token;
     if (!p_next(p, true, &name_token)) break;
-    if (strcmp(name_token.value, "{") == 0 || strcmp(name_token.value, "}") == 0)
-      p_fail(p, "Expected shader name");
+    if (strcmp(name_token.value, "{") == 0 || strcmp(name_token.value, "}") == 0) {
+      if (!recover) p_fail(p, "Expected shader name");
+      /* A stray brace is skipped with its section, as SkipBracedSection does,
+         so sibling shaders survive. */
+      if (strcmp(name_token.value, "}") == 0) {
+        p->depth = 0;
+      } else {
+        bool ended = false;
+        while (p->depth > 0) {
+          token skipped;
+          if (!p_next(p, true, &skipped)) { ended = true; break; }
+        }
+        if (ended) break;
+      }
+      continue;
+    }
     compiled_ctx *ctx = (compiled_ctx *)s_alloc(result, sizeof *ctx);
     ctx->text = retained_text;
     ctx->source = retained_source;
@@ -2219,8 +2229,9 @@ bool qa_mat_kind_is(const char *kind, const char *name) {
 }
 int32_t qa_mat_shader_table_index(double value) {
   double integer = trunc(value);
+  /* x86 "integer indefinite" (INT_MIN) masks to zero. */
   if (!isfinite(integer) || integer < -2147483648.0 || integer > 2147483647.0)
-    qa_range_error("Shader table index reaches undefined source float-to-int conversion");
+    return 0;
   return (int32_t)integer & 1023;
 }
 double qa_mat_evaluate_waveform(qa_waveform wave, double time) {

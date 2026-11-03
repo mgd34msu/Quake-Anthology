@@ -7,10 +7,63 @@
 #include "qa/compat/qvm/operations.h"
 #include "qa/foundation/support.h"
 
+/* Every block a qualification allocates is tracked, so a rejected region (a
+ * TS throw, caught by the interpreter) releases them before rethrowing. */
+typedef struct tracker {
+  void **blocks;
+  size_t count, capacity;
+} tracker;
+static tracker *active_tracker;
+
+static void track(uintptr_t old_block, void *block) {
+  tracker *t = active_tracker;
+  if (t == NULL) return;
+  for (size_t i = 0; old_block != 0 && i < t->count; i++)
+    if ((uintptr_t)t->blocks[i] == old_block) {
+      t->blocks[i] = block;
+      return;
+    }
+  if (t->count == t->capacity) {
+    size_t capacity = t->capacity == 0 ? 32 : t->capacity * 2;
+    void **grown = realloc(t->blocks, capacity * sizeof *grown);
+    if (grown == NULL) {
+      free(block);
+      qa_range_error("QVM memory allocation failed");
+    }
+    t->blocks = grown;
+    t->capacity = capacity;
+  }
+  t->blocks[t->count++] = block;
+}
+
 static void *xrealloc(void *ptr, size_t size) {
+  uintptr_t old_block = (uintptr_t)ptr;
   void *result = realloc(ptr, size == 0 ? 1 : size);
   if (result == NULL) qa_range_error("QVM memory allocation failed");
+  track(old_block, result);
   return result;
+}
+
+static void xfree(void *block) {
+  tracker *t = active_tracker;
+  for (size_t i = 0; block != NULL && t != NULL && i < t->count; i++)
+    if (t->blocks[i] == block) {
+      t->blocks[i] = t->blocks[--t->count];
+      break;
+    }
+  free(block);
+}
+
+static void run_tracked(void (*body)(void *ctx), void *ctx) {
+  tracker t = {NULL, 0, 0};
+  tracker *previous = active_tracker;
+  active_tracker = &t;
+  char message[512];
+  bool ok = qa_range_error_catch(body, ctx, message, sizeof message);
+  active_tracker = previous;
+  for (size_t i = 0; i < t.count; i++) free(t.blocks[i]);
+  free(t.blocks);
+  if (!ok) qa_range_error("%s", message);
 }
 
 static const qa_qvm_instruction *at(const qa_qvm_instruction *instructions,
@@ -19,8 +72,8 @@ static const qa_qvm_instruction *at(const qa_qvm_instruction *instructions,
   return &instructions[pc];
 }
 
-int64_t qa_qvm_qualify_region(const qa_qvm_instruction *instructions, size_t count,
-                              int64_t owner, int64_t entry, int64_t join) {
+static int64_t qualify_region_body(const qa_qvm_instruction *instructions, size_t count,
+                                   int64_t owner, int64_t entry, int64_t join) {
   const qa_qvm_instruction *first = at(instructions, count, owner);
   if (first == NULL || first->opcode != QA_QVMY_OP_ENTER)
     qa_range_error("QVM region owner is not a function");
@@ -104,8 +157,8 @@ int64_t qa_qvm_qualify_region(const qa_qvm_instruction *instructions, size_t cou
       }
     }
   }
-  free(depths);
-  free(pending);
+  xfree(depths);
+  xfree(pending);
   if (!joined) qa_range_error("QVM region does not reach its original join");
   for (int64_t pc = owner + 1; pc < end; pc++) {
     if (pc >= entry && pc < join) continue;
@@ -182,8 +235,8 @@ static void path_add(pending_paths *pending, int64_t pc, operand *stack, size_t 
     for (size_t s = 0; s < initialized_count; s++)
       if (set_has(previous->initialized, previous->initialized_count, initialized[s]))
         initialized[kept++] = initialized[s];
-    free(previous->stack);
-    free(previous->initialized);
+    xfree(previous->stack);
+    xfree(previous->initialized);
     previous->stack = stack;
     previous->stack_count = stack_count;
     previous->initialized = initialized;
@@ -196,22 +249,22 @@ static void path_add(pending_paths *pending, int64_t pc, operand *stack, size_t 
 
 static operand *copy_stack(const operand *stack, size_t count) {
   operand *result = xrealloc(NULL, (count == 0 ? 1 : count) * sizeof *result);
-  memcpy(result, stack, count * sizeof *result);
+  if (count != 0) memcpy(result, stack, count * sizeof *result);
   return result;
 }
 
 static int64_t *copy_set(const int64_t *set, size_t count) {
   int64_t *result = xrealloc(NULL, (count == 0 ? 1 : count) * sizeof *result);
-  memcpy(result, set, count * sizeof *result);
+  if (count != 0) memcpy(result, set, count * sizeof *result);
   return result;
 }
 
-int64_t qa_qvm_qualify_region_evaluation(const qa_qvm_instruction *instructions, size_t count,
-                                         int64_t owner, const qa_qvm_region_evaluation *region,
-                                         const char *access) {
+static int64_t qualify_evaluation_body(const qa_qvm_instruction *instructions, size_t count,
+                                       int64_t owner, const qa_qvm_region_evaluation *region,
+                                       const char *access) {
   if (access == NULL) access = "source";
   bool read_only = strcmp(access, "read-only") == 0;
-  int64_t frame = qa_qvm_qualify_region(instructions, count, owner, region->entry, region->join);
+  int64_t frame = qualify_region_body(instructions, count, owner, region->entry, region->join);
   for (size_t i = 0; i < region->input_count; i++) {
     int64_t offset = region->inputs[i];
     if (offset < 8 || offset % 4 != 0 || offset + 4 > frame)
@@ -238,8 +291,8 @@ int64_t qa_qvm_qualify_region_evaluation(const qa_qvm_instruction *instructions,
       if (region->has_result && !set_has(current.initialized, current.initialized_count, region->result)) {
         qa_range_error("QVM region result is not initialized on every source path");
       }
-      free(current.stack);
-      free(current.initialized);
+      xfree(current.stack);
+      xfree(current.initialized);
       continue;
     }
     const qa_qvm_instruction *instruction = at(instructions, count, pc);
@@ -308,14 +361,24 @@ int64_t qa_qvm_qualify_region_evaluation(const qa_qvm_instruction *instructions,
       if (stack_count == 0) qa_range_error("Invalid QVM region operand proof");
       operand destination = stack[--stack_count];
       if (destination.kind != OPERAND_CONSTANT) qa_range_error("QVM region jump lost its source target");
-      path_add(&pending, destination.value, copy_stack(stack, stack_count), stack_count,
-               copy_set(initialized, initialized_count), initialized_count);
+      pending_paths * pending3 = &pending;
+      int64_t pc3 = destination.value;
+      operand * stack3 = copy_stack(stack, stack_count);
+      size_t stack_count3 = stack_count;
+      int64_t * initialized3 = copy_set(initialized, initialized_count);
+      path_add(pending3, pc3, stack3, stack_count3,
+               initialized3, initialized_count);
       jumped = true;
     } else if (opcode >= QA_QVMY_OP_EQ && opcode <= QA_QVMY_OP_GEF && instruction->operand_width == 4) {
       if (stack_count < 2) qa_range_error("Invalid QVM region operand proof");
       stack_count -= 2;
-      path_add(&pending, instruction->operand, copy_stack(stack, stack_count), stack_count,
-               copy_set(initialized, initialized_count), initialized_count);
+      pending_paths * pending2 = &pending;
+      int64_t pc2 = instruction->operand;
+      operand * stack2 = copy_stack(stack, stack_count);
+      size_t stack_count2 = stack_count;
+      int64_t * initialized2 = copy_set(initialized, initialized_count);
+      path_add(pending2, pc2, stack2, stack_count2,
+               initialized2, initialized_count);
     } else if (opcode == QA_QVMY_OP_CALL) {
       if (stack_count == 0) qa_range_error("Invalid QVM region operand proof");
       stack[--stack_count] = (operand){OPERAND_UNKNOWN, 0};
@@ -344,10 +407,44 @@ int64_t qa_qvm_qualify_region_evaluation(const qa_qvm_instruction *instructions,
     }
     if (!jumped) path_add(&pending, pc + 1, stack, stack_count, initialized, initialized_count);
     else {
-      free(stack);
-      free(initialized);
+      xfree(stack);
+      xfree(initialized);
     }
   }
-  free(pending.paths);
+  xfree(pending.paths);
   return frame;
+}
+
+typedef struct qualify_job {
+  const qa_qvm_instruction *instructions;
+  size_t count;
+  int64_t owner, entry, join;
+  const qa_qvm_region_evaluation *region;
+  const char *access;
+  int64_t result;
+} qualify_job;
+
+static void qualify_region_job(void *ctx) {
+  qualify_job *job = ctx;
+  job->result = qualify_region_body(job->instructions, job->count, job->owner, job->entry, job->join);
+}
+
+static void qualify_evaluation_job(void *ctx) {
+  qualify_job *job = ctx;
+  job->result = qualify_evaluation_body(job->instructions, job->count, job->owner, job->region, job->access);
+}
+
+int64_t qa_qvm_qualify_region(const qa_qvm_instruction *instructions, size_t count,
+                              int64_t owner, int64_t entry, int64_t join) {
+  qualify_job job = {instructions, count, owner, entry, join, NULL, NULL, 0};
+  run_tracked(qualify_region_job, &job);
+  return job.result;
+}
+
+int64_t qa_qvm_qualify_region_evaluation(const qa_qvm_instruction *instructions, size_t count,
+                                         int64_t owner, const qa_qvm_region_evaluation *region,
+                                         const char *access) {
+  qualify_job job = {instructions, count, owner, 0, 0, region, access, 0};
+  run_tracked(qualify_evaluation_job, &job);
+  return job.result;
 }

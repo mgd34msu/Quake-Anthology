@@ -1,7 +1,8 @@
 /* Port of src/app/bootstrap/simulation/weapon-behavior-runtime.ts.
  * Async loading is pumped synchronously through next_frame
- * callbacks (PORTING.md). Source construction for quakec entries
- * runs through the host bundle. GPL-2.0-or-later. */
+ * callbacks (PORTING.md). QuakeC sources are constructed here, as TS
+ * does; the qvm and native ones through host.create_qvm / create_native
+ * (TS host.qvm / host.native). GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_WEAPON_BEHAVIOR_RUNTIME_H
 #define QA_APP_BOOTSTRAP_SIMULATION_WEAPON_BEHAVIOR_RUNTIME_H
 #include <stdbool.h>
@@ -28,7 +29,6 @@ typedef struct qa_app_sim_weapon_behavior_runtime_host {
   const qa_app_sim_qc_weapon_target *(*targets)(void *ctx, size_t *out_count);
   qa_vec3 (*aim)(void *ctx, qa_actor_id shooter, double speed);
   void (*print)(void *ctx, const qa_actor_id *recipient, const char *text);
-  qa_app_sim_quakec_weapon_behavior_source *(*create_quakec)(void *ctx, qa_app_prepared_weapon_behavior entry);
   qa_app_sim_qvm_weapon_behavior_source *(*create_qvm)(void *ctx, qa_app_prepared_weapon_behavior entry);
   qa_app_sim_rerelease_weapon_behavior_source *(*create_native)(void *ctx, qa_app_prepared_weapon_behavior entry,
       void (*next_frame)(void *frame_ctx), void *frame_ctx);

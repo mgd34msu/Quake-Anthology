@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_truthy.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q2/anorms.h"
 #include "qa/network/q2/constants.h"
@@ -60,54 +62,42 @@ int64_t qa_q2_sz_get_space(qa_q2_sizebuf *buf, int64_t length) {
   return offset;
 }
 
+/* TS target.set(source, offset): RangeError when the source does not fit. */
+static void typed_set(qa_q2_sizebuf *buf, const uint8_t *source, size_t count, int64_t offset) {
+  if (offset < 0 || (uint64_t)offset > (uint64_t)buf->data_length ||
+      (uint64_t)count > (uint64_t)buf->data_length - (uint64_t)offset) {
+    qa_range_error("Range consisting of offset and length are out of bounds");
+  }
+  if (count > 0) memmove(buf->data + offset, source, count);
+}
+
 void qa_q2_sz_write(qa_q2_sizebuf *buf, const uint8_t *data, size_t data_length,
                     int64_t length) {
   int64_t offset = qa_q2_sz_get_space(buf, length);
-  /* TS: buf.data.set(data.subarray(0, length), offset) silently drops
-   * bytes past the destination span. */
-  for (int64_t i = 0; i < length; i++) {
-    int64_t at = offset + i;
-    if (at >= 0 && (uint64_t)at < (uint64_t)buf->data_length &&
-        (uint64_t)i < (uint64_t)data_length) {
-      buf->data[at] = data[i];
-    }
-  }
-}
-
-static size_t nul_terminated_bytes(const char *s, uint8_t *out) {
-  size_t n = strlen(s);
-  for (size_t i = 0; i < n; i++) out[i] = (uint8_t)s[i];
-  out[n] = 0;
-  return n + 1;
+  /* TS: buf.data.set(data.subarray(0, length), offset); subarray clamps the
+   * end to the source length (a negative end counts back from it). */
+  size_t count;
+  if (length >= 0) count = (uint64_t)length < (uint64_t)data_length ? (size_t)length : data_length;
+  else count = (uint64_t)(-length) < (uint64_t)data_length ? data_length - (size_t)(-length) : 0;
+  typed_set(buf, data, count, offset);
 }
 
 void qa_q2_sz_print(qa_q2_sizebuf *buf, const char *text) {
-  size_t n = strlen(text);
-  uint8_t *bytes = (uint8_t *)malloc(n + 1);
-  if (bytes == NULL) qa_range_error("out of memory");
-  size_t len = nul_terminated_bytes(text, bytes);
+  /* TS stringToBytesNulTerminated: the C string with its NUL is that array. */
+  size_t len = strlen(text) + 1;
+  const uint8_t *bytes = (const uint8_t *)text;
   if (buf->cursize != 0) {
     if (qa_q2_read_element_u8(buf->data, buf->data_length, buf->cursize - 1) != 0) {
       int64_t offset = qa_q2_sz_get_space(buf, (int64_t)len);
-      for (size_t i = 0; i < len; i++) {
-        int64_t at = offset + (int64_t)i;
-        if (at >= 0 && (uint64_t)at < (uint64_t)buf->data_length) buf->data[at] = bytes[i];
-      }
+      typed_set(buf, bytes, len, offset);
     } else {
       int64_t offset = qa_q2_sz_get_space(buf, (int64_t)len - 1) - 1;
-      for (size_t i = 0; i < len; i++) {
-        int64_t at = offset + (int64_t)i;
-        if (at >= 0 && (uint64_t)at < (uint64_t)buf->data_length) buf->data[at] = bytes[i];
-      }
+      typed_set(buf, bytes, len, offset);
     }
   } else {
     int64_t offset = qa_q2_sz_get_space(buf, (int64_t)len);
-    for (size_t i = 0; i < len; i++) {
-      int64_t at = offset + (int64_t)i;
-      if (at >= 0 && (uint64_t)at < (uint64_t)buf->data_length) buf->data[at] = bytes[i];
-    }
+    typed_set(buf, bytes, len, offset);
   }
-  free(bytes);
 }
 
 size_t qa_q2_string_to_bytes(const char *text, uint8_t *out, size_t out_capacity) {
@@ -146,7 +136,7 @@ void qa_q2_msg_write_long(qa_q2_sizebuf *sb, double c) {
 }
 static void check_view_span(qa_q2_sizebuf *sb, int64_t offset, int64_t width) {
   if (offset < 0 || offset + width > (int64_t)sb->data_length) {
-    qa_range_error("Offset is outside the bounds of the DataView");
+    qa_range_error("Out of bounds access"); /* Bun DataView RangeError text */
   }
 }
 void qa_q2_msg_write_float(qa_q2_sizebuf *sb, double f) {
@@ -168,12 +158,9 @@ void qa_q2_msg_write_string(qa_q2_sizebuf *sb, const char *s) {
     uint8_t zero = 0;
     qa_q2_sz_write(sb, &zero, 1, 1);
   } else {
-    size_t n = strlen(s);
-    uint8_t *bytes = (uint8_t *)malloc(n + 1);
-    if (bytes == NULL) qa_range_error("out of memory");
-    size_t len = nul_terminated_bytes(s, bytes);
-    qa_q2_sz_write(sb, bytes, len, (int64_t)len);
-    free(bytes);
+    /* TS stringToBytesNulTerminated(s): the bytes of s and its NUL. */
+    size_t len = strlen(s) + 1;
+    qa_q2_sz_write(sb, (const uint8_t *)s, len, (int64_t)len);
   }
 }
 void qa_q2_msg_write_coord(qa_q2_sizebuf *sb, double f) {
@@ -248,7 +235,7 @@ void qa_q2_msg_write_delta_entity(const qa_q2_wire_entity *from,
                                   const qa_q2_wire_entity *to,
                                   qa_q2_sizebuf *msg, bool force,
                                   bool newentity) {
-  if (to->number == 0) qa_q2_com_error_throw(QA_Q2_ERR_FATAL, "Unset entity number");
+  if (!qa_js_truthy(to->number)) qa_q2_com_error_throw(QA_Q2_ERR_FATAL, "Unset entity number");
   if (to->number >= QA_Q2_MAX_EDICTS) {
     qa_q2_com_error_throw(QA_Q2_ERR_FATAL, "Entity number >= MAX_EDICTS");
   }
@@ -269,9 +256,10 @@ void qa_q2_msg_write_delta_entity(const qa_q2_wire_entity *from,
     if (to->frame < 256) bits |= QA_Q2_U_FRAME8;
     else bits |= QA_Q2_U_FRAME16;
   }
-  if (to->effects != from->effects) {
-    if (to->effects < 256) bits |= QA_Q2_U_EFFECTS8;
-    else if (to->effects < 0x8000) bits |= QA_Q2_U_EFFECTS16;
+  /* effects is unsigned in the original, so bit 31 (EF_TRACKERTRAIL) selects the long form. */
+  if (qa_js_to_uint32(to->effects) != qa_js_to_uint32(from->effects)) {
+    if (qa_js_to_uint32(to->effects) < 256) bits |= QA_Q2_U_EFFECTS8;
+    else if (qa_js_to_uint32(to->effects) < 0x8000) bits |= QA_Q2_U_EFFECTS16;
     else bits |= QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16;
   }
   if (to->renderfx != from->renderfx) {
@@ -280,7 +268,7 @@ void qa_q2_msg_write_delta_entity(const qa_q2_wire_entity *from,
     else bits |= QA_Q2_U_RENDERFX8 | QA_Q2_U_RENDERFX16;
   }
   if (to->solid != from->solid) bits |= QA_Q2_U_SOLID;
-  if (to->event != 0) bits |= QA_Q2_U_EVENT;
+  if (qa_js_truthy(to->event)) bits |= QA_Q2_U_EVENT;
   if (to->modelindex != from->modelindex) bits |= QA_Q2_U_MODEL;
   if (to->modelindex2 != from->modelindex2) bits |= QA_Q2_U_MODEL2;
   if (to->modelindex3 != from->modelindex3) bits |= QA_Q2_U_MODEL3;
@@ -361,7 +349,7 @@ int32_t qa_q2_msg_read_char(qa_q2_sizebuf *msg) {
     c = -1;
   } else {
     int32_t b = qa_q2_read_element_u8(msg->data, msg->data_length, msg->readcount);
-    c = (b << 24) >> 24;
+    c = (int32_t)((uint32_t)b << 24) >> 24;
   }
   msg->readcount++;
   return c;
@@ -383,7 +371,7 @@ int32_t qa_q2_msg_read_short(qa_q2_sizebuf *msg) {
   } else {
     int32_t b0 = qa_q2_read_element_u8(msg->data, msg->data_length, msg->readcount);
     int32_t b1 = qa_q2_read_element_u8(msg->data, msg->data_length, msg->readcount + 1);
-    c = ((b0 | (b1 << 8)) << 16) >> 16;
+    c = (int32_t)((uint32_t)(b0 | (b1 << 8)) << 16) >> 16;
   }
   msg->readcount += 2;
   return c;
@@ -409,7 +397,7 @@ int32_t qa_q2_msg_read_long(qa_q2_sizebuf *msg) {
     int32_t b1 = qa_q2_read_element_u8(msg->data, msg->data_length, msg->readcount + 1);
     int32_t b2 = qa_q2_read_element_u8(msg->data, msg->data_length, msg->readcount + 2);
     int32_t b3 = qa_q2_read_element_u8(msg->data, msg->data_length, msg->readcount + 3);
-    c = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    c = (int32_t)((uint32_t)b0 | ((uint32_t)b1 << 8) | ((uint32_t)b2 << 16) | ((uint32_t)b3 << 24));
   }
   msg->readcount += 4;
   return c;

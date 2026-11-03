@@ -1,7 +1,6 @@
-/* Port of src/content/q2/missionpacks/projectiles/bolts.ts. GPL-2.0-or-later.
- * game.host.weaponBehavior.controlsTrajectory has no qa_q2f mirror (the
- * mirror port carries launch only); steering-skip checks read as false. */
+/* Port of src/content/q2/missionpacks/projectiles/bolts.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/projectiles/bolts.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <string.h>
@@ -10,25 +9,27 @@
 #include "qa/content/q2/foundation/monsters/types.h"
 #include "qa/content/q2/missionpacks/projectiles/common.h"
 
-static void project_steering(void *ctx, qa_q2f_entity *entity, qa_weapon_trajectory_update update) {
+static void project_steering(void *ctx, qa_q2_entity *entity, qa_weapon_trajectory_update update) {
   (void)ctx;
   entity->movedir = q2mp_norm(update.velocity);
   entity->speed = q2mp_len(update.velocity);
 }
-static void register_callbacks(qa_q2mp_bolts *b, qa_q2f_game *game) {
-  game->source_callbacks.register_defs(game->source_callbacks.ctx, qa_q2mp_bolts_callbacks(b));
+void qa_q2mp_bolts_register(qa_q2mp_bolts *b, qa_q2_game_services *game) {
+  qa_q2_source_callbacks_register(game->source_callbacks, b->callbacks_of(b->callbacks_self));
 }
-void qa_q2mp_bolts_player_collision(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_q2f_entity *p) {
+static void register_callbacks(qa_q2mp_bolts *b, qa_q2_game_services *game) { qa_q2mp_bolts_register(b, game); }
+static qa_q2_callback_definitions bolts_callbacks_of(void *self) { return qa_q2mp_bolts_callbacks(self); }
+void qa_q2mp_bolts_player_collision(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_q2_entity *p) {
   if (q2mp_rr(game) && game->host->is_player(game->host->ctx, self.id)) {
     const qa_q2w_input *input = qa_q2w_ballistics_input(b->hooks.base, self.id);
-    if (input != NULL && !input->players_collide) p->clip_mask = (double)(q2mp_u32(p->clip_mask) & ~0x40000000u);
+    if (input != NULL && !input->players_collide) p->clip_mask = (double)(qa_js_to_int32(q2mp_u32(p->clip_mask) & ~0x40000000u));
   }
 }
-static void impact_noise(qa_q2mp_bolts *b, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void impact_noise(qa_q2mp_bolts *b, qa_q2_entity *entity, qa_q2_game_services *game) {
   if (entity->has_owner)
     qa_q2w_ballistics_player_noise_for_actor(b->hooks.base, entity->owner, game, q2mp_body(game, entity).origin, "impact");
 }
-static void initial_touch(qa_owned_actor self, qa_q2f_game *game, qa_q2f_entity *bolt) {
+static void initial_touch(qa_owned_actor self, qa_q2_game_services *game, qa_q2_entity *bolt) {
   qa_vec3 start = game->body(game->ctx, self).origin;
   qa_trace_result trace = q2mp_trace(game, start, q2mp_body(game, bolt).origin, NULL, &bolt->actor.id, bolt->clip_mask);
   if (trace.fraction == 1 || bolt->touch.fn == NULL) return;
@@ -39,7 +40,7 @@ static void initial_touch(qa_owned_actor self, qa_q2f_game *game, qa_q2f_entity 
   if (rr && strcmp(trace.kind, "q2") == 0 && trace.surface != NULL) {
     surface.name = trace.surface->name; surface.native_flags = trace.surface->flags; surface.native_value = trace.surface->value;
   }
-  qa_q2f_body_changes c = q2mp_changes();
+  qa_q2_body_changes c = q2mp_changes();
   c.has_origin = true;
   c.origin = rr ? q2mp_add(trace.end, trace.contact.has_plane ? plane.normal : q2mp_zero())
                 : q2mp_add(q2mp_body(game, bolt).origin, q2mp_scale(bolt->movedir, -10));
@@ -53,12 +54,12 @@ static void initial_touch(qa_owned_actor self, qa_q2f_game *game, qa_q2f_entity 
   bolt->touch.fn(bolt->touch.ctx, bolt, game, contact);
 }
 
-static void ion_sparks_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void ion_sparks_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   (void)ctx;
   qa_q2mp_effect(entity, game, "welding_sparks", q2mp_zero(), 0, 0xe4 + floor(q2mp_rnd(game) * 4));
   game->remove(game->ctx, entity);
 }
-static void ion_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void ion_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2mp_bolts *b = ctx;
   if (entity->has_owner && qa_same_actor(contact.other, entity->owner)) return;
   if ((q2mp_u32(q2mp_surf(&contact)) & 4) != 0) { game->remove(game->ctx, entity); return; }
@@ -69,11 +70,11 @@ static void ion_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa
               1, body.velocity, body.origin, q2mp_cnormal(&contact), QA_Q2MP_MOD_RIPPER, true, 4, "q2:weapon_boomer");
   game->remove(game->ctx, entity);
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_ion_ripper(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_ion_ripper(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                              qa_vec3 direction, double damage, double speed, double effects) {
   register_callbacks(b, game);
-  qa_q2f_entity *bolt = qa_q2mp_projectile(self, game, "ion", start, q2mp_norm(direction), speed,
-                                           "models/objects/boomrang/tris.md2", QA_Q2F_MOTION_WALL_BOUNCE, effects);
+  qa_q2_entity *bolt = qa_q2mp_projectile(self, game, "ion", start, q2mp_norm(direction), speed,
+                                           "models/objects/boomrang/tris.md2", "wall-bounce", effects);
   qa_q2mp_bolts_player_collision(b, self, game, bolt);
   bolt->damage = damage; bolt->damage_radius = 100; bolt->render_flags = 8; bolt->touch = b->ion_touch;
   game->schedule(game->ctx, bolt, 3, b->ion_sparks);
@@ -82,15 +83,15 @@ qa_q2f_entity *qa_q2mp_bolts_fire_ion_ripper(qa_q2mp_bolts *b, qa_owned_actor se
   initial_touch(self, game, bolt);
   return bolt;
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_blue_blaster(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_blue_blaster(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                                qa_vec3 direction, double damage, double speed, double effects) {
-  qa_q2f_entity *bolt = qa_q2w_ballistics_fire_blaster(b->hooks.base, self, game, start, direction, damage, speed,
+  qa_q2_entity *bolt = qa_q2w_ballistics_fire_blaster(b->hooks.base, self, game, start, direction, damage, speed,
                                                        effects, false, q2mp_rr(game) ? 58 : 1);
   if (q2mp_live(game, bolt->actor.id)) { bolt->model = "models/objects/blaser/tris.md2"; game->show(game->ctx, bolt); }
   return bolt;
 }
 
-static void plasma_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void plasma_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2mp_bolts *b = ctx;
   if (entity->has_owner && qa_same_actor(contact.other, entity->owner)) return;
   if ((q2mp_u32(q2mp_surf(&contact)) & 4) != 0) { game->remove(game->ctx, entity); return; }
@@ -101,19 +102,19 @@ static void plasma_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game,
                 body.velocity, body.origin, q2mp_cnormal(&contact), QA_Q2MP_MOD_PHALANX, true, 0, "q2:weapon_phalanx");
   q2mp_radius(game, entity, entity->has_owner ? &entity->owner : NULL, entity->radius_damage, &contact.other,
               entity->damage_radius, QA_Q2MP_MOD_PHALANX, true, 0, "q2:weapon_phalanx");
-  qa_q2f_presentation_event e;
+  qa_q2_presentation_event e;
   memset(&e, 0, sizeof e);
-  e.kind = QA_Q2F_EVENT_EFFECT; e.effect = "q2:plasma_explosion";
+  e.kind = "effect"; e.effect = "q2:plasma_explosion";
   e.origin = q2mp_add(body.origin, q2mp_scale(body.velocity, -0.02)); e.direction = q2mp_zero(); e.count = 0; e.color = 0;
   game->host->emit(game->host->ctx, e);
   game->remove(game->ctx, entity);
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_plasma(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_plasma(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                          qa_vec3 direction, double damage, double speed, double radius,
                                          double radius_damage) {
   register_callbacks(b, game);
-  qa_q2f_entity *bolt = qa_q2mp_projectile(self, game, "plasma", start, direction, speed, "sprites/s_photon.sp2",
-                                           QA_Q2F_MOTION_FLY_MISSILE, 0x1000000 | 0x2000);
+  qa_q2_entity *bolt = qa_q2mp_projectile(self, game, "plasma", start, direction, speed, "sprites/s_photon.sp2",
+                                           "fly-missile", 0x1000000 | 0x2000);
   qa_q2mp_bolts_player_collision(b, self, game, bolt);
   bolt->damage = damage; bolt->damage_radius = radius; bolt->radius_damage = radius_damage; bolt->touch = b->plasma_touch;
   game->schedule(game->ctx, bolt, 8000 / speed, qa_q2mp_free_projectile_think());
@@ -122,7 +123,7 @@ qa_q2f_entity *qa_q2mp_bolts_fire_plasma(qa_q2mp_bolts *b, qa_owned_actor self, 
   return bolt;
 }
 
-static void flechette_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void flechette_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   (void)ctx;
   if (entity->has_owner && qa_same_actor(contact.other, entity->owner)) return;
   if ((q2mp_u32(q2mp_surf(&contact)) & 4) != 0) { game->remove(game->ctx, entity); return; }
@@ -134,11 +135,11 @@ static void flechette_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *ga
   else qa_q2mp_effect(entity, game, "flechette", q2mp_cnormal(&contact), 1, 0);
   game->remove(game->ctx, entity);
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_flechette(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_flechette(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                             qa_vec3 direction, double damage, double speed, double kick) {
   register_callbacks(b, game);
-  qa_q2f_entity *bolt = qa_q2mp_projectile(self, game, "flechette", start, q2mp_norm(direction), speed,
-                                           "models/proj/flechette/tris.md2", QA_Q2F_MOTION_FLY_MISSILE, 0);
+  qa_q2_entity *bolt = qa_q2mp_projectile(self, game, "flechette", start, q2mp_norm(direction), speed,
+                                           "models/proj/flechette/tris.md2", "fly-missile", 0);
   qa_q2mp_bolts_player_collision(b, self, game, bolt);
   bolt->damage = damage; bolt->damage_radius = kick; bolt->render_flags = 8; bolt->touch = b->flechette_touch;
   game->schedule(game->ctx, bolt, 8000 / speed, qa_q2mp_free_projectile_think());
@@ -148,7 +149,7 @@ qa_q2f_entity *qa_q2mp_bolts_fire_flechette(qa_q2mp_bolts *b, qa_owned_actor sel
   return bolt;
 }
 
-static void heat_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void heat_think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_bolts *b = ctx;
   bool has_nearest = false;
   qa_actor_id nearest = entity->actor.id;
@@ -171,16 +172,18 @@ static void heat_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
   qa_body_state_result target = has_nearest ? q2mp_bread(game, nearest) : (qa_body_state_result){false, {q2mp_zero(), q2mp_zero(), q2mp_zero(), {q2mp_zero(), q2mp_zero()}, NULL}};
   if (target.has_value) {
     entity->enemy = nearest; entity->has_enemy = true;
-    entity->movedir = q2mp_norm(q2mp_sub(target.value.origin, origin));
-    qa_q2f_body_changes c = q2mp_changes();
-    c.has_angles = true; c.angles = q2mp_vta(entity->movedir);
-    c.has_velocity = true; c.velocity = q2mp_scale(entity->movedir, 500);
-    q2mp_move(game, entity, c, false, false);
-    game->motion(game->ctx, entity, entity->motion);
+    if (!q2mp_controls_trajectory(game, entity->actor.id)) {
+      entity->movedir = q2mp_norm(q2mp_sub(target.value.origin, origin));
+      qa_q2_body_changes c = q2mp_changes();
+      c.has_angles = true; c.angles = q2mp_vta(entity->movedir);
+      c.has_velocity = true; c.velocity = q2mp_scale(entity->movedir, 500);
+      q2mp_move(game, entity, c, false, false);
+      game->motion(game->ctx, entity, entity->motion);
+    }
   }
   game->schedule(game->ctx, entity, 0.1, b->heat_think);
 }
-static void heat_think_rr_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void heat_think_rr_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_bolts *b = ctx;
   bool has_acquire = false;
   qa_actor_id acquire = entity->actor.id;
@@ -205,45 +208,59 @@ static void heat_think_rr_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game
   qa_body_state_result target = has_acquire ? q2mp_bread(game, acquire) : (qa_body_state_result){false, {q2mp_zero(), q2mp_zero(), q2mp_zero(), {q2mp_zero(), q2mp_zero()}, NULL}};
   if (!target.has_value) entity->has_enemy = false;
   else {
-    qa_vec3 desired = q2mp_norm(q2mp_sub(target.value.origin, origin));
-    double alignment = q2mp_dot(entity->movedir, desired);
-    if (alignment < 0.45 && alignment > -0.45) desired = q2mp_scale(desired, -1);
-    double cosine = q2mp_dot(entity->movedir, desired), angle = acos(cosine), sine = sin(angle);
-    double from = fabs(cosine) > 0.9995 ? 1 - entity->accel : sin((1 - entity->accel) * angle) / sine;
-    double to = fabs(cosine) > 0.9995 ? entity->accel : sin(entity->accel * angle) / sine;
-    entity->movedir = q2mp_norm(q2mp_add(q2mp_scale(entity->movedir, from), q2mp_scale(desired, to)));
-    qa_q2f_body_changes c = q2mp_changes();
-    c.has_angles = true; c.angles = q2mp_vta(entity->movedir);
-    q2mp_move(game, entity, c, false, false);
+    if (!q2mp_controls_trajectory(game, entity->actor.id)) {
+      qa_vec3 desired = q2mp_norm(q2mp_sub(target.value.origin, origin));
+      double alignment = q2mp_dot(entity->movedir, desired);
+      if (alignment < 0.45 && alignment > -0.45) desired = q2mp_scale(desired, -1);
+      double cosine = q2mp_dot(entity->movedir, desired), angle = acos(cosine), sine = sin(angle);
+      double from = fabs(cosine) > 0.9995 ? 1 - entity->accel : sin((1 - entity->accel) * angle) / sine;
+      double to = fabs(cosine) > 0.9995 ? entity->accel : sin(entity->accel * angle) / sine;
+      entity->movedir = q2mp_norm(q2mp_add(q2mp_scale(entity->movedir, from), q2mp_scale(desired, to)));
+      qa_q2_body_changes c = q2mp_changes();
+      c.has_angles = true; c.angles = q2mp_vta(entity->movedir);
+      q2mp_move(game, entity, c, false, false);
+    }
     if (!entity->has_enemy) {
       q2mp_sound(game, entity, "weapons/railgr1a.wav", true, 1, true, 1, true, 0.25);
       entity->enemy = acquire; entity->has_enemy = true;
     }
   }
-  qa_q2f_body_changes c = q2mp_changes();
-  c.has_velocity = true; c.velocity = q2mp_scale(entity->movedir, entity->speed);
-  q2mp_move(game, entity, c, false, false);
-  game->motion(game->ctx, entity, entity->motion);
+  if (!q2mp_controls_trajectory(game, entity->actor.id)) {
+    qa_q2_body_changes c = q2mp_changes();
+    c.has_velocity = true; c.velocity = q2mp_scale(entity->movedir, entity->speed);
+    q2mp_move(game, entity, c, false, false);
+    game->motion(game->ctx, entity, entity->motion);
+  }
   game->schedule(game->ctx, entity, q2mp_frame(game), b->heat_think_rerelease);
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_heat_rocket(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_heat_rocket(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                               qa_vec3 direction, double damage, double speed, double radius,
                                               double radius_damage, double turn_fraction) {
   register_callbacks(b, game);
-  qa_q2f_entity *rocket = qa_q2w_ballistics_fire_rocket(b->hooks.base, self, game, start, direction, damage, speed, radius, radius_damage);
+  qa_q2_entity *rocket = qa_q2w_ballistics_fire_rocket(b->hooks.base, self, game, start, direction, damage, speed, radius, radius_damage);
   if (q2mp_live(game, rocket->actor.id)) {
     rocket->accel = turn_fraction; rocket->speed = speed; rocket->movedir = direction;
-    game->schedule(game->ctx, rocket, q2mp_rr(game) ? q2mp_frame(game) : 0.1, q2mp_rr(game) ? b->heat_think_rerelease : b->heat_think);
+    void * value = game->ctx;
+    double value3 = q2mp_rr(game) ? q2mp_frame(game) : 0.1;
+    qa_q2_think value4 = q2mp_rr(game) ? b->heat_think_rerelease : b->heat_think;
+    game->schedule(value, rocket, value3, value4);
   }
   return rocket;
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_heat_rocket_default(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game,
+qa_q2_entity *qa_q2mp_bolts_fire_heat_rocket_default(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game,
                                                        qa_vec3 start, qa_vec3 direction, double damage, double speed,
                                                        double radius, double radius_damage) {
   return qa_q2mp_bolts_fire_heat_rocket(b, self, game, start, direction, damage, speed, radius, radius_damage, 0.075);
 }
 
-static void green_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void green_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
+  qa_actor_id target;
+  qa_actor_id inf_actor;
+  const qa_actor_id * attacker;
+  double amount;
+  qa_vec3 dir;
+  qa_vec3 normal;
+  double mod;
   qa_q2mp_bolts *b = ctx;
   if (entity->has_owner && qa_same_actor(contact.other, entity->owner)) return;
   if ((q2mp_u32(q2mp_surf(&contact)) & 4) != 0) { game->remove(game->ctx, entity); return; }
@@ -268,19 +285,19 @@ static void green_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, 
     }
   }
   if (hurt)
-    q2mp_damage(game, contact.other, entity, entity->actor.id, entity->has_owner ? &entity->owner : NULL, entity->damage, 1,
-                q2mp_body(game, entity).velocity, origin, q2mp_cnormal(&contact),
-                entity->has_owner && game->host->is_player(game->host->ctx, entity->owner) ? QA_Q2MP_MOD_DEFENDER_SPHERE : QA_Q2MP_MOD_BLASTER2,
-                true, 4, NULL);
+    (target = contact.other, inf_actor = entity->actor.id, attacker = entity->has_owner ? &entity->owner : NULL, amount = entity->damage, dir = q2mp_body(game, entity).velocity, normal = q2mp_cnormal(&contact), mod = entity->has_owner && game->host->is_player(game->host->ctx, entity->owner) ? QA_Q2MP_MOD_DEFENDER_SPHERE : QA_Q2MP_MOD_BLASTER2, q2mp_damage(game, target, entity, inf_actor, attacker, amount, 1,
+                dir, origin, normal,
+                mod,
+                true, 4, NULL));
   else qa_q2mp_effect(entity, game, "blaster2", q2mp_cnormal(&contact), 1, 0);
   game->remove(game->ctx, entity);
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_blaster2(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_blaster2(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                            qa_vec3 direction, double damage, double speed, double effects) {
   register_callbacks(b, game);
-  qa_q2f_entity *bolt = qa_q2mp_projectile(self, game, "bolt", start, q2mp_norm(direction), speed,
-                                           "models/proj/laser2/tris.md2", QA_Q2F_MOTION_FLY_MISSILE,
-                                           (double)(q2mp_u32(effects) | (effects == 0 ? 0u : 0x4000000u)));
+  qa_q2_entity *bolt = qa_q2mp_projectile(self, game, "bolt", start, q2mp_norm(direction), speed,
+                                           "models/proj/laser2/tris.md2", "fly-missile",
+                                           (double)(qa_js_to_int32(q2mp_u32(effects) | (effects == 0 ? 0u : 0x4000000u))));
   qa_q2mp_bolts_player_collision(b, self, game, bolt);
   if (q2mp_rr(game)) { bolt->model = "models/objects/laser/tris.md2"; bolt->skin = 2; bolt->scale = 2.5; }
   bolt->damage = damage; bolt->damage_radius = 128; bolt->touch = b->green_touch;
@@ -291,7 +308,7 @@ qa_q2f_entity *qa_q2mp_bolts_fire_blaster2(qa_q2mp_bolts *b, qa_owned_actor self
   return bolt;
 }
 
-static void tracker_fly_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void tracker_fly_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_bolts *b = ctx;
   qa_body_state_result target = entity->has_enemy ? q2mp_bread(game, entity->enemy)
       : (qa_body_state_result){false, {q2mp_zero(), q2mp_zero(), q2mp_zero(), {q2mp_zero(), q2mp_zero()}, NULL}};
@@ -301,26 +318,28 @@ static void tracker_fly_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) 
   }
   qa_vec3 min = q2mp_add(target.value.origin, target.value.bounds.min);
   qa_vec3 max = q2mp_add(target.value.origin, target.value.bounds.max);
-  qa_q2f_entity *enemy_entity = q2mp_ent(game, true, entity->enemy);
+  qa_q2_entity *enemy_entity = q2mp_ent(game, true, entity->enemy);
   qa_vec3 destination = game->host->is_player(game->host->ctx, entity->enemy)
       ? q2mp_add(target.value.origin, q2mp_v3(0, 0, enemy_entity != NULL ? enemy_entity->view_height : 22))
       : q2mp_len(min) == 0 || q2mp_len(max) == 0 ? target.value.origin : q2mp_scale(q2mp_add(min, max), 0.5);
-  entity->movedir = q2mp_norm(q2mp_sub(destination, q2mp_body(game, entity).origin));
-  qa_q2f_body_changes c = q2mp_changes();
-  c.has_velocity = true; c.velocity = q2mp_scale(entity->movedir, entity->speed);
-  c.has_angles = true; c.angles = q2mp_vta(entity->movedir);
-  q2mp_move(game, entity, c, false, false);
-  game->motion(game->ctx, entity, entity->motion);
+  if (!q2mp_controls_trajectory(game, entity->actor.id)) {
+    entity->movedir = q2mp_norm(q2mp_sub(destination, q2mp_body(game, entity).origin));
+    qa_q2_body_changes c = q2mp_changes();
+    c.has_velocity = true; c.velocity = q2mp_scale(entity->movedir, entity->speed);
+    c.has_angles = true; c.angles = q2mp_vta(entity->movedir);
+    q2mp_move(game, entity, c, false, false);
+    game->motion(game->ctx, entity, entity->motion);
+  }
   game->schedule(game->ctx, entity, 0.1, b->tracker_fly);
 }
-static void tracker_pain_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void tracker_pain_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_bolts *b = ctx;
-  qa_q2f_entity *target = q2mp_ent(game, entity->has_enemy, entity->enemy);
+  qa_q2_entity *target = q2mp_ent(game, entity->has_enemy, entity->enemy);
   qa_body_state_result body = entity->has_enemy ? q2mp_bread(game, entity->enemy)
       : (qa_body_state_result){false, {q2mp_zero(), q2mp_zero(), q2mp_zero(), {q2mp_zero(), q2mp_zero()}, NULL}};
   if (!entity->has_enemy || !body.has_value || q2mp_now(game) - entity->timestamp > 0.5 || q2mp_health(game, entity->enemy) <= 0) {
     if (target != NULL && !game->host->is_player(game->host->ctx, target->actor.id)) {
-      target->effects = (double)(q2mp_u32(target->effects) & ~0x80000000u);
+      target->effects = (double)(qa_js_to_int32(q2mp_u32(target->effects) & ~0x80000000u));
       game->show(game->ctx, target);
     }
     game->remove(game->ctx, entity);
@@ -346,12 +365,12 @@ static void tracker_pain_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game)
     fx.kind = QA_Q2MP_EFFECT_TRACKER_PAIN; fx.actor = enemy; fx.until = q2mp_now(game) + interval;
     b->hooks.player_effect(b->hooks.ctx, fx);
   } else if (target != NULL) {
-    target->effects = (double)(q2mp_u32(target->effects) | 0x80000000u);
+    target->effects = (double)(qa_js_to_int32(q2mp_u32(target->effects) | 0x80000000u));
     game->show(game->ctx, target);
   }
   game->schedule(game->ctx, entity, interval, b->tracker_pain);
 }
-static void tracker_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void tracker_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2mp_bolts *b = ctx;
   if (entity->has_owner && qa_same_actor(contact.other, entity->owner)) return;
   if ((q2mp_u32(q2mp_surf(&contact)) & 4) != 0) { game->remove(game->ctx, entity); return; }
@@ -365,11 +384,11 @@ static void tracker_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game
                 q2mp_cnormal(&contact), QA_Q2MP_MOD_TRACKER, true, 260, "q2:weapon_disintegrator");
     if (live) {
       qa_body_state_result target_body = q2mp_bread(game, contact.other);
-      qa_q2f_entity *target_entity = q2mp_ent(game, true, contact.other);
+      qa_q2_entity *target_entity = q2mp_ent(game, true, contact.other);
       double flags = target_entity != NULL ? target_entity->flags : 0;
       if (target_body.has_value && (q2mp_u32(flags) & 3) == 0)
         qa_q2mp_velocity(game, contact.other, q2mp_add(target_body.value.velocity, q2mp_v3(0, 0, 140)), false);
-      qa_q2f_entity *daemon = game->create(game->ctx, "pain daemon", NULL);
+      qa_q2_entity *daemon = game->create(game->ctx, "pain daemon", NULL, 0);
       daemon->owner = entity->owner; daemon->has_owner = entity->has_owner;
       daemon->enemy = contact.other; daemon->has_enemy = true;
       daemon->damage = trunc(entity->damage * (q2mp_rr(game) ? 0.1 : q2mp_frame(game)) / 0.5);
@@ -379,11 +398,11 @@ static void tracker_touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game
   }
   qa_q2mp_explode(entity, game, "tracker_explosion");
 }
-qa_q2f_entity *qa_q2mp_bolts_fire_tracker(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+qa_q2_entity *qa_q2mp_bolts_fire_tracker(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                           qa_vec3 direction, double damage, double speed, bool has_enemy, qa_actor_id enemy) {
   register_callbacks(b, game);
-  qa_q2f_entity *bolt = qa_q2mp_projectile(self, game, "tracker", start, q2mp_norm(direction), speed,
-                                           "models/proj/disintegrator/tris.md2", QA_Q2F_MOTION_FLY_MISSILE, 0x4000000);
+  qa_q2_entity *bolt = qa_q2mp_projectile(self, game, "tracker", start, q2mp_norm(direction), speed,
+                                           "models/proj/disintegrator/tris.md2", "fly-missile", 0x4000000);
   qa_q2mp_bolts_player_collision(b, self, game, bolt);
   bolt->damage = damage; bolt->enemy = enemy; bolt->has_enemy = has_enemy; bolt->touch = b->tracker_touch;
   game->schedule(game->ctx, bolt, !has_enemy ? 10 : 0.1, !has_enemy ? qa_q2mp_free_projectile_think() : b->tracker_fly);
@@ -393,7 +412,7 @@ qa_q2f_entity *qa_q2mp_bolts_fire_tracker(qa_q2mp_bolts *b, qa_owned_actor self,
   return bolt;
 }
 
-void qa_q2mp_bolts_fire_heat_beam(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_game *game, qa_vec3 start,
+void qa_q2mp_bolts_fire_heat_beam(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2_game_services *game, qa_vec3 start,
                                   qa_vec3 direction, qa_vec3 offset, double damage, double kick) {
   (void)offset;
   const double water_mask = 56;
@@ -402,7 +421,7 @@ void qa_q2mp_bolts_fire_heat_beam(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_
   double mask = qa_q2mp_projectile_mask(game);
   if (q2mp_rr(game) && game->host->is_player(game->host->ctx, self.id)) {
     const qa_q2w_input *input = qa_q2w_ballistics_input(b->hooks.base, self.id);
-    if (input != NULL && !input->players_collide) mask = (double)(q2mp_u32(mask) & ~0x40000000u);
+    if (input != NULL && !input->players_collide) mask = (double)(qa_js_to_int32(q2mp_u32(mask) & ~0x40000000u));
   }
   qa_vec3 water_start = start;
   bool water = false;
@@ -410,9 +429,9 @@ void qa_q2mp_bolts_fire_heat_beam(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_
   if (strcmp(trace.kind, "q1") != 0 && ((q2mp_u32(trace.contents)) & 56) != 0) {
     water = true; water_start = trace.end;
     if (q2mp_len(q2mp_sub(start, water_start)) != 0) {
-      qa_q2f_presentation_event e;
+      qa_q2_presentation_event e;
       memset(&e, 0, sizeof e);
-      e.kind = QA_Q2F_EVENT_EFFECT; e.effect = "q2:heatbeam_sparks"; e.origin = water_start;
+      e.kind = "effect"; e.effect = "q2:heatbeam_sparks"; e.origin = water_start;
       e.direction = q2mp_normal(trace); e.count = 0; e.color = 0;
       game->host->emit(game->host->ctx, e);
     }
@@ -428,9 +447,9 @@ void qa_q2mp_bolts_fire_heat_beam(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_
       q2mp_damage(game, actor, NULL, self.id, &self.id, water ? trunc(damage / 2) : damage, kick, direction, trace.end,
                   normal, QA_Q2MP_MOD_HEATBEAM, true, 4, "q2:weapon_plasmabeam");
     else if (!water && !(strcmp(trace.kind, "q2") == 0 && trace.surface != NULL && strncmp(trace.surface->name, "sky", 3) == 0)) {
-      qa_q2f_presentation_event e;
+      qa_q2_presentation_event e;
       memset(&e, 0, sizeof e);
-      e.kind = QA_Q2F_EVENT_EFFECT; e.effect = "q2:heatbeam_steam"; e.origin = trace.end;
+      e.kind = "effect"; e.effect = "q2:heatbeam_steam"; e.origin = trace.end;
       e.direction = normal; e.count = 0; e.color = 0;
       game->host->emit(game->host->ctx, e);
       qa_q2w_ballistics_player_noise(b->hooks.base, self, game, trace.end, "impact");
@@ -457,35 +476,37 @@ void qa_q2mp_bolts_fire_heat_beam(qa_q2mp_bolts *b, qa_owned_actor self, qa_q2f_
 void qa_q2mp_bolts_init(qa_q2mp_bolts *b, qa_q2mp_projectile_hooks hooks) {
   memset(b, 0, sizeof *b);
   b->hooks = hooks;
-  b->ion_sparks = (qa_q2f_think){b, ion_sparks_fn};
-  b->heat_think = (qa_q2f_think){b, heat_think_fn};
-  b->heat_think_rerelease = (qa_q2f_think){b, heat_think_rr_fn};
-  b->tracker_fly = (qa_q2f_think){b, tracker_fly_fn};
-  b->tracker_pain = (qa_q2f_think){b, tracker_pain_fn};
-  b->ion_touch = (qa_q2f_touch){b, ion_touch_fn};
-  b->plasma_touch = (qa_q2f_touch){b, plasma_touch_fn};
-  b->flechette_touch = (qa_q2f_touch){b, flechette_touch_fn};
-  b->green_touch = (qa_q2f_touch){b, green_touch_fn};
-  b->tracker_touch = (qa_q2f_touch){b, tracker_touch_fn};
-  qa_q2f_think free_think = qa_q2mp_free_projectile_think();
-  b->cb_think[0] = (qa_q2f_named_think){"missionpack.free", free_think};
-  b->cb_think[1] = (qa_q2f_named_think){"ionripper_sparks", b->ion_sparks};
-  b->cb_think[2] = (qa_q2f_named_think){"heat_think", b->heat_think};
-  b->cb_think[3] = (qa_q2f_named_think){"rerelease/heat_think", b->heat_think_rerelease};
-  b->cb_think[4] = (qa_q2f_named_think){"tracker_fly", b->tracker_fly};
-  b->cb_think[5] = (qa_q2f_named_think){"tracker_pain_daemon_think", b->tracker_pain};
-  b->cb_touch[0] = (qa_q2f_named_touch){"ionripper_touch", b->ion_touch};
-  b->cb_touch[1] = (qa_q2f_named_touch){"plasma_touch", b->plasma_touch};
-  b->cb_touch[2] = (qa_q2f_named_touch){"flechette_touch", b->flechette_touch};
-  b->cb_touch[3] = (qa_q2f_named_touch){"blaster2_touch", b->green_touch};
-  b->cb_touch[4] = (qa_q2f_named_touch){"tracker_touch", b->tracker_touch};
-  b->cb_traj[0] = (qa_q2f_trajectory_def){b->ion_touch, b, project_steering};
-  b->cb_traj[1] = (qa_q2f_trajectory_def){b->plasma_touch, b, project_steering};
-  b->cb_traj[2] = (qa_q2f_trajectory_def){b->flechette_touch, b, project_steering};
-  b->cb_traj[3] = (qa_q2f_trajectory_def){b->tracker_touch, b, project_steering};
+  b->callbacks_self = b;
+  b->callbacks_of = bolts_callbacks_of;
+  b->ion_sparks = (qa_q2_think){b, ion_sparks_fn};
+  b->heat_think = (qa_q2_think){b, heat_think_fn};
+  b->heat_think_rerelease = (qa_q2_think){b, heat_think_rr_fn};
+  b->tracker_fly = (qa_q2_think){b, tracker_fly_fn};
+  b->tracker_pain = (qa_q2_think){b, tracker_pain_fn};
+  b->ion_touch = (qa_q2_touch){b, ion_touch_fn};
+  b->plasma_touch = (qa_q2_touch){b, plasma_touch_fn};
+  b->flechette_touch = (qa_q2_touch){b, flechette_touch_fn};
+  b->green_touch = (qa_q2_touch){b, green_touch_fn};
+  b->tracker_touch = (qa_q2_touch){b, tracker_touch_fn};
+  qa_q2_think free_think = qa_q2mp_free_projectile_think();
+  b->cb_think[0] = (qa_q2_named_think){"missionpack.free", free_think};
+  b->cb_think[1] = (qa_q2_named_think){"ionripper_sparks", b->ion_sparks};
+  b->cb_think[2] = (qa_q2_named_think){"heat_think", b->heat_think};
+  b->cb_think[3] = (qa_q2_named_think){"rerelease/heat_think", b->heat_think_rerelease};
+  b->cb_think[4] = (qa_q2_named_think){"tracker_fly", b->tracker_fly};
+  b->cb_think[5] = (qa_q2_named_think){"tracker_pain_daemon_think", b->tracker_pain};
+  b->cb_touch[0] = (qa_q2_named_touch){"ionripper_touch", b->ion_touch};
+  b->cb_touch[1] = (qa_q2_named_touch){"plasma_touch", b->plasma_touch};
+  b->cb_touch[2] = (qa_q2_named_touch){"flechette_touch", b->flechette_touch};
+  b->cb_touch[3] = (qa_q2_named_touch){"blaster2_touch", b->green_touch};
+  b->cb_touch[4] = (qa_q2_named_touch){"tracker_touch", b->tracker_touch};
+  b->cb_traj[0] = (qa_q2_trajectory_def){b->ion_touch, b, project_steering};
+  b->cb_traj[1] = (qa_q2_trajectory_def){b->plasma_touch, b, project_steering};
+  b->cb_traj[2] = (qa_q2_trajectory_def){b->flechette_touch, b, project_steering};
+  b->cb_traj[3] = (qa_q2_trajectory_def){b->tracker_touch, b, project_steering};
 }
-qa_q2f_callback_definitions qa_q2mp_bolts_callbacks(qa_q2mp_bolts *b) {
-  qa_q2f_callback_definitions defs;
+qa_q2_callback_definitions qa_q2mp_bolts_callbacks(qa_q2mp_bolts *b) {
+  qa_q2_callback_definitions defs;
   memset(&defs, 0, sizeof defs);
   defs.trajectory = b->cb_traj; defs.trajectory_count = 4;
   defs.think = b->cb_think; defs.think_count = 6;

@@ -30,7 +30,12 @@ bool qa_q3_content_references_init(qa_q3_content_references **out, qa_q3_mounted
   const qa_q3_pak_catalog_entry **entries = calloc(pack_count ? pack_count : 1, sizeof *entries);
   if (!entries) { free(r); return false; }
   for (size_t i = 0; i < pack_count; i++) entries[i] = &packs[i].pack;
+  qa_cleanup entries_guard, r_guard;
+  qa_cleanup_push(&r_guard, free, r);
+  qa_cleanup_push(&entries_guard, free, entries);
   bool ok = qa_q3_pak_references_init(&r->references, entries, pack_count, checksum_feed, random, random_ctx);
+  qa_cleanup_pop(&entries_guard);
+  qa_cleanup_pop(&r_guard);
   free(entries);
   if (!ok) { free(r); return false; }
   r->packs = packs; r->pack_count = pack_count;
@@ -60,7 +65,7 @@ void qa_q3_content_references_opened(qa_q3_content_references *r, const qa_resol
     if (strcmp(r->packs[i].mount.identity.id, mount->identity.id) == 0) { pak = &r->packs[i]; break; }
   if (!pak || !digest_eq(pak->mount.archive_digest, mount->archive_digest)
       || pak->mount.identity.generation != mount->identity.generation)
-    qa_range_error("Opened source resource does not belong to this Q3 pak catalog");
+    qa_raise("Error", 0, 0, "Opened source resource does not belong to this Q3 pak catalog");
   qa_q3_pak_references_record_packed_open(r->references, &pak->pack, reference->requested_path);
 }
 bool qa_q3_content_references_pure_mount_policy(const qa_q3_content_references *r, const int64_t *server_checksums, size_t count,
@@ -72,6 +77,10 @@ bool qa_q3_content_references_pure_mount_policy(const qa_q3_content_references *
   qa_q3_pure_search_path *reordered = calloc(r->pack_count ? r->pack_count : 1, sizeof *reordered);
   qa_content_digest *archives = calloc(r->pack_count ? r->pack_count : 1, sizeof *archives);
   if (!paths || !reordered || !archives) { free(paths); free(reordered); free(archives); return false; }
+  qa_cleanup paths_guard, reordered_guard, archives_guard;
+  qa_cleanup_push(&archives_guard, free, archives);
+  qa_cleanup_push(&reordered_guard, free, reordered);
+  qa_cleanup_push(&paths_guard, free, paths);
   for (size_t i = 0; i < r->pack_count; i++) {
     paths[i].kind = QA_Q3_PURE_PAK; paths[i].checksum = r->packs[i].pack.checksum; paths[i].value = &r->packs[i];
   }
@@ -83,8 +92,11 @@ bool qa_q3_content_references_pure_mount_policy(const qa_q3_content_references *
     for (size_t j = 0; j < count; j++) if ((uint32_t)server_checksums[j] == (uint32_t)reordered[i].checksum) accepted = true;
     if (accepted) archives[n++] = ((qa_q3_mounted_pak *)reordered[i].value)->mount.archive_digest;
   }
+  qa_cleanup_pop(&paths_guard);
+  qa_cleanup_pop(&reordered_guard);
+  qa_cleanup_pop(&archives_guard);
   free(paths); free(reordered);
-  if (n == 0) { free(archives); qa_range_error("No installed Q3 archives match the server pure list"); }
+  if (n == 0) { free(archives); qa_raise("Error", 0, 0, "No installed Q3 archives match the server pure list"); }
   *out_storage = archives;
   out->archives = archives; out->archive_count = n;
   return true;

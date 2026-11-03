@@ -1,45 +1,21 @@
 /* Port of src/app/bootstrap/network/q2-service-presentation.ts.
- * Emitted SimulationPresentationEvents ride as the stamped value
- * struct below (simulation/types owner uses the same fields).
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_Q2_SERVICE_PRESENTATION_H
 #define QA_APP_BOOTSTRAP_NETWORK_Q2_SERVICE_PRESENTATION_H
 #include <stdbool.h>
 #include <stddef.h>
-#include "qa/app/bootstrap/network/q2_effects.h"
+#include "qa/app/bootstrap/simulation/types.h"
 #include "qa/content/q2/rerelease/types.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
 #include "qa/network/q2/fog.h"
 #include "qa/network/q2/server_messages.h"
-typedef enum qa_app_q2_service_event_kind {
-  QA_APP_SVC_EV_SOUND, QA_APP_SVC_EV_MUZZLEFLASH, QA_APP_SVC_EV_MONSTER_MUZZLEFLASH,
-  QA_APP_SVC_EV_CENTERPRINT, QA_APP_SVC_EV_PRINT, QA_APP_SVC_EV_USERINFO,
-  QA_APP_SVC_EV_EFFECT, QA_APP_SVC_EV_BEAM, QA_APP_SVC_EV_FOG,
-  QA_APP_SVC_EV_ACHIEVEMENT, QA_APP_SVC_EV_HELP_PATH,
-  QA_APP_SVC_EV_REMOVE_POI, QA_APP_SVC_EV_KEYED_POI, QA_APP_SVC_EV_DIRECTIONAL_DAMAGE
-} qa_app_q2_service_event_kind;
-typedef struct qa_app_q2_presentation_event {
-  const char *kind; /* q2|q2-weapon|q2-player|q2-rerelease */
-  double sequence; qa_content_id content; double seconds;
-  bool has_source_entity; double source_entity;
-  qa_app_q2_service_event_kind event_kind;
-  bool has_actor; qa_actor_id actor;
-  /* sound */ qa_vec3 origin, direction; const char *path; double volume, attenuation, channel;
-  /* muzzleflash */ double flash; bool silenced;
-  /* centerprint/print/achievement */ const char *text; bool instant; const char *level;
-  /* userinfo */ double slot; const char *name; const char *skin; size_t name_length, skin_offset;
-  /* effect/beam */ qa_app_q2_effect_event effect; qa_app_q2_beam_event beam;
-  /* fog */ qa_q2_fog_state fog; double transition_milliseconds;
-  /* help-path */ bool first; qa_vec3 position;
-  /* poi */ double key, duration, color, flags; const char *image;
-  /* directional-damage */ double damage; bool health, armor, shield;
-} qa_app_q2_presentation_event;
 typedef struct qa_app_q2_service_player {
   qa_actor_id actor; double source_entity;
 } qa_app_q2_service_player;
 typedef struct qa_app_q2_service_entity { qa_vec3 origin, angles; } qa_app_q2_service_entity;
+/* TS Q2ServicePresentationHost. player/actor/entity return false for TS null. */
 typedef struct qa_app_q2_service_host {
   void *ctx;
   bool has_edition; bool edition_rerelease;
@@ -55,7 +31,9 @@ typedef struct qa_app_q2_service_host {
   void (*set_config_string)(void *ctx, double index, const char *value);
   void (*set_inventory)(void *ctx, const double *counts, size_t count);
   void (*set_layout)(void *ctx, const char *text);
-  void (*emit)(void *ctx, const qa_app_q2_presentation_event *event);
+  /* event is a borrowed view (storage NULL) valid for the call; a host that
+   * keeps it stores qa_app_sim_presentation_event_copy. */
+  void (*emit)(void *ctx, const qa_app_sim_presentation_event *event);
 } qa_app_q2_service_host;
 bool qa_app_q2_service_player_info(const qa_app_q2_service_host *host, double index, const char *value);
 /* Remaining (untranslated) records are compacted to the front of

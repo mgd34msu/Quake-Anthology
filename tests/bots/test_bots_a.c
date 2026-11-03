@@ -163,6 +163,13 @@ static void test_memory_checkpoint(void) {
   qa_bot_memory_destroy(&other);
 }
 
+static int gps_sentinel;
+static char gps_printed[64];
+static void gps_print(void *ctx, const char *text) {
+  CHECK(ctx == &gps_sentinel);
+  strncat(gps_printed, text, sizeof gps_printed - strlen(gps_printed) - 1);
+}
+
 static void test_pure(void) {
   CHECK(qa_travel_flag_for_type(QA_TRAVEL_WALK) == QA_TFL_WALK);
   CHECK(qa_travel_flag_for_type(999) == QA_TFL_INVALID);
@@ -191,11 +198,18 @@ static void test_pure(void) {
   CHECK(strcmp(out, "Red") == 0);
   const char *sub = qa_stristr_bots_a("Hello World", "world");
   CHECK(sub != NULL && strcmp(sub, "World") == 0);
+  /* TS botGPSToPosition prints each coordinate through game.options.engine. */
   qa_game_ai_context_bots_a ctx;
-  CHECK(qa_game_ai_context_bots_a_init(&ctx, 8));
+  memset(&ctx, 0, sizeof ctx);
+  qa_source_bot_game_bots_a game;
+  memset(&game, 0, sizeof game);
+  gps_printed[0] = '\0';
+  game.options.engine.ctx = &gps_sentinel;
+  game.options.engine.print = gps_print;
+  ctx.game = &game;
   qa_vec3 gps = qa_bot_gps_to_position_bots_a(&ctx, "10 -20 30");
   CHECK(gps.x == 10 && gps.y == -20 && gps.z == 30);
-  qa_game_ai_context_bots_a_destroy(&ctx);
+  CHECK(strcmp(gps_printed, "10\n-20\n30\n") == 0);
 }
 
 static void test_observations_actions_assets(void) {
@@ -239,9 +253,10 @@ static void test_observations_actions_assets(void) {
 
 static void test_prediction_abort(void) {
   qa_bot_state_bots_a state;
-  memset(&state, 0, sizeof state);
-  state.enemy = -1;
+  CHECK(qa_bot_state_bots_a_init(&state, QA_Q3_BASE_PRODUCT_BASEQ3, NULL));
+  state.src->enemy = -1;
   CHECK_ABORTS((void)qa_bot_inventory_value_bots_a(&state, 9999));
+  qa_bot_state_bots_a_destroy(&state);
   qa_bot_move_state_store store;
   qa_bot_move_state_store_init(&store);
   int64_t h = qa_bot_move_state_store_allocate(&store);
@@ -249,6 +264,7 @@ static void test_prediction_abort(void) {
   CHECK(qa_bot_move_state_store_from_handle(&store, h) != NULL);
   CHECK(qa_bot_move_state_store_from_handle(&store, 99) == NULL);
   qa_bot_move_state_store_shutdown(&store);
+  qa_bot_move_state_store_destroy(&store);
 }
 
 static const uint8_t *script_read_file(void *ctx, const char *path, size_t *out_len) {

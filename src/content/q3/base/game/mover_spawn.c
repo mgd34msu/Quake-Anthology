@@ -7,6 +7,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 #define FRAMETIME_MS 100
 #define CONTENTS_TRIGGER_V (double)(int32_t)0x40000000
@@ -40,27 +41,27 @@ static const char *vtos(RT *r, qa_vec3 v) { return (const char *)qa_q3_game_util
 static void door_touch(void *ctx, qa_q3_game_entity *e, qa_q3_damage_participant other, qa_touch_contact contact) {
   (void)contact; RT *r = ctx; qa_q3_game_entity *parent = parent_of(e);
   if (other.entity && other.entity->client && other.entity->client->sess.session_team == 3) {
-    if ((int)parent->mover_state == QA_Q3_MOVER_ONE_TO_TWO || (int)parent->mover_state == QA_Q3_MOVER_POS2) return;
-    int axis = (int)e->count;
-    double mn = comp(e->r.absmin, axis), mx = comp(e->r.absmax, axis), pos = comp(other.entity->s.origin, axis);
+    if (qa_js_to_int32(parent->mover_state) == QA_Q3_MOVER_ONE_TO_TWO || qa_js_to_int32(parent->mover_state) == QA_Q3_MOVER_POS2) return;
+    int axis = qa_js_to_int32(e->count);
+    double mn = comp(qa_q3_base_entity_shared_absmin(&e->r), axis), mx = comp(qa_q3_base_entity_shared_absmax(&e->r), axis), pos = comp(other.entity->s.origin, axis);
     bool toward_min = fabs(f32(pos - mx)) < fabs(f32(pos - mn));
     qa_vec3 dir = with_comp((qa_vec3){0, 0, 0}, axis, toward_min ? -1 : 1);
-    qa_vec3 center = qa_scale3(qa_add3(e->r.absmin, e->r.absmax), 0.5);
+    qa_vec3 center = qa_scale3(qa_add3(qa_q3_base_entity_shared_absmin(&e->r), qa_q3_base_entity_shared_absmax(&e->r)), 0.5);
     qa_vec3 origin = with_comp(center, axis, toward_min ? f32(mn - 10) : f32(mx + 10));
     qa_q3_teleport_player(r->host.teleport, other.entity, origin, qa_vector_to_angles(dir));
-  } else if ((int)parent->mover_state != QA_Q3_MOVER_ONE_TO_TWO) r->host.use_binary(r->host.ctx, parent, e, other);
+  } else if (qa_js_to_int32(parent->mover_state) != QA_Q3_MOVER_ONE_TO_TWO) r->host.use_binary(r->host.ctx, parent, e, other);
 }
 static void spawn_door_trigger(RT *r, qa_q3_game_entity *e) {
   for (qa_q3_game_entity *p = e; p; p = p->teamchain) qa_q3_game_entity_set_takedamage(p, true);
-  qa_bounds b = {e->r.absmin, e->r.absmax};
+  qa_bounds b = {qa_q3_base_entity_shared_absmin(&e->r), qa_q3_base_entity_shared_absmax(&e->r)};
   for (qa_q3_game_entity *p = e->teamchain; p; p = p->teamchain)
-    b = qa_add_point_to_bounds(qa_add_point_to_bounds(b, p->r.absmin), p->r.absmax);
+    b = qa_add_point_to_bounds(qa_add_point_to_bounds(b, qa_q3_base_entity_shared_absmin(&p->r)), qa_q3_base_entity_shared_absmax(&p->r));
   qa_vec3 size = qa_sub3(b.max, b.min); int axis = 0;
   for (int i = 1; i < 3; i++) if (comp(size, i) < comp(size, axis)) axis = i;
   qa_q3_game_entity *t = qa_q3_entity_pool_spawn(r->host.pool);
   qa_q3_game_entity_set_classname(t, "door_trigger");
-  t->r.mins = with_comp(b.min, axis, comp(b.min, axis) - 120);
-  t->r.maxs = with_comp(b.max, axis, comp(b.max, axis) + 120);
+  qa_q3_base_entity_shared_set_mins(&t->r, with_comp(b.min, axis, comp(b.min, axis) - 120));
+  qa_q3_base_entity_shared_set_maxs(&t->r, with_comp(b.max, axis, comp(b.max, axis) + 120));
   t->parent = e; t->r.contents = CONTENTS_TRIGGER_V; t->count = axis;
   t->touch = qa_q3_callback_family_resolve(&r->host.pool->callbacks.touch, "q3.base.game.mover-spawn.spawnDoorTrigger.touch");
   r->host.world.link(r->host.world.ctx, t);
@@ -71,14 +72,16 @@ static void spawn_plat_trigger(RT *r, qa_q3_game_entity *e) {
   qa_q3_game_entity_set_classname(t, "plat_trigger");
   t->touch = qa_q3_callback_family_resolve(&r->host.pool->callbacks.touch, "q3.base.game.mover-spawn.spawnPlatTrigger.touch");
   t->r.contents = CONTENTS_TRIGGER_V; t->parent = e;
-  qa_vec3 mn = qa_add3(qa_add3(e->pos1, e->r.mins), (qa_vec3){33, 33, 0});
-  qa_vec3 mx = qa_add3(qa_add3(e->pos1, e->r.maxs), (qa_vec3){-33, -33, 8});
+  qa_vec3 mn = qa_add3(qa_add3(e->pos1, qa_q3_base_entity_shared_mins(&e->r)), (qa_vec3){33, 33, 0});
+  qa_vec3 mx = qa_add3(qa_add3(e->pos1, qa_q3_base_entity_shared_maxs(&e->r)), (qa_vec3){-33, -33, 8});
   for (int axis = 0; axis < 2; axis++) {
+    double left;
+    double right;
     if (comp(mx, axis) > comp(mn, axis)) continue;
-    double center = f32(comp(e->pos1, axis) + f32(f32(comp(e->r.mins, axis) + comp(e->r.maxs, axis)) * 0.5));
+    double center = f32(comp(e->pos1, axis) + f32(f32((left = comp(qa_q3_base_entity_shared_mins(&e->r), axis), right = comp(qa_q3_base_entity_shared_maxs(&e->r), axis), left + right)) * 0.5));
     mn = with_comp(mn, axis, center); mx = with_comp(mx, axis, center + 1);
   }
-  t->r.mins = mn; t->r.maxs = mx; r->host.world.link(r->host.world.ctx, t);
+  qa_q3_base_entity_shared_set_mins(&t->r, mn); qa_q3_base_entity_shared_set_maxs(&t->r, mx); r->host.world.link(r->host.world.ctx, t);
 }
 static void reached_train(RT *r, qa_q3_game_entity *e) {
   qa_q3_game_entity *next = e->next_train;
@@ -90,20 +93,21 @@ static void reached_train(RT *r, qa_q3_game_entity *e) {
   if (!dest) qa_range_error("Train path was removed during target dispatch");
   e->next_train = dest; e->pos1 = next->s.origin; e->pos2 = dest->s.origin;
   double speed = next->speed != 0 ? next->speed : e->speed; if (speed < 1) speed = 1;
-  e->s.pos.duration = float_int(f32(f32(qa_length3(qa_sub3(e->pos2, e->pos1)) * 1000) / (float)speed));
+  /* A leg shorter than one millisecond would give setState an infinite delta (0 * Infinity is NaN); ioquake3 clamps the same way. */
+  e->s.pos.duration = qa_js_max(1, float_int(f32(f32(qa_length3(qa_sub3(e->pos2, e->pos1)) * 1000) / (float)speed)));
   e->s.loop_sound = next->sound_loop;
   r->host.set_state(r->host.ctx, e, QA_Q3_MOVER_ONE_TO_TWO, now(r));
   if (next->wait != 0) {
     qa_q3_game_entity_set_nextthink(e, float_int(f32(f32(now(r)) + f32(next->wait * 1000))));
     e->think = qa_q3_callback_family_resolve(&r->host.pool->callbacks.think, "q3.base.game.mover-spawn.reachedTrain.think");
-    e->s.pos.type = QA_Q3_TR_STATIONARY;
+    e->s.pos.type = QA_Q3_BASE_TR_STATIONARY;
   }
 }
 static void setup_train(RT *r, qa_q3_game_entity *e) {
   char buf[512];
   qa_q3_game_entity *start = qa_q3_find_entity(r->host.pool, NULL, QA_Q3_FIELD_TARGETNAME, e->target);
   e->next_train = start;
-  if (!start) { snprintf(buf, sizeof buf, "func_train at %s with an unfound target\n", vtos(r, e->r.absmin)); r->host.warn(r->host.ctx, buf); return; }
+  if (!start) { snprintf(buf, sizeof buf, "func_train at %s with an unfound target\n", vtos(r, qa_q3_base_entity_shared_absmin(&e->r))); r->host.warn(r->host.ctx, buf); return; }
   qa_q3_game_entity *visited[1024]; size_t nv = 0; qa_q3_game_entity *path = start;
   for (;;) {
     for (size_t i = 0; i < nv; i++) if (visited[i] == path) qa_range_error("Train path cycle does not return to its first corner");
@@ -132,12 +136,14 @@ static void spawn_door(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables 
   double lip = qa_q3_spawn_variables_float(v, "lip", "8").value; e->damage = qa_q3_spawn_variables_int(v, "dmg", "2").value;
   e->pos1 = e->s.origin; r->host.set_brush_model(r->host.ctx, e, e->model); set_direction(e);
   qa_vec3 absd = {fabs(e->movedir.x), fabs(e->movedir.y), fabs(e->movedir.z)};
-  double dist = f32(qa_dot3(absd, qa_sub3(e->r.maxs, e->r.mins)) - lip);
+  qa_vec3 a = qa_q3_base_entity_shared_maxs(&e->r);
+  qa_vec3 b = qa_q3_base_entity_shared_mins(&e->r);
+  double dist = f32(qa_dot3(absd, qa_sub3(a, b)) - lip);
   e->pos2 = qa_add3(e->pos1, qa_scale3(e->movedir, dist));
-  if (((int)e->spawnflags & 1) != 0) { e->pos1 = e->pos2; e->pos2 = e->s.origin; }
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) { e->pos1 = e->pos2; e->pos2 = e->s.origin; }
   r->host.initialize_binary(r->host.ctx, e, v);
   qa_q3_game_entity_set_nextthink(e, qa_int32(now(r) + FRAMETIME_MS));
-  if (((int)e->flags & QA_Q3_GAME_FLAG_TEAMSLAVE) == 0) {
+  if ((qa_js_to_int32(e->flags) & QA_Q3_GAME_FLAG_TEAMSLAVE) == 0) {
     double health = qa_q3_spawn_variables_int(v, "health", "0").value;
     if (health != 0) qa_q3_game_entity_set_takedamage(e, true);
     e->think = qa_q3_callback_family_resolve(&r->host.pool->callbacks.think,
@@ -145,6 +151,8 @@ static void spawn_door(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables 
   }
 }
 static void spawn_plat(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
+  double left;
+  double right;
   e->sound_1to2 = e->sound_2to1 = r->host.sound_index(r->host.ctx, "sound/movers/plats/pt1_strt.wav");
   e->sound_pos1 = e->sound_pos2 = r->host.sound_index(r->host.ctx, "sound/movers/plats/pt1_end.wav");
   e->s.angles = (qa_vec3){0, 0, 0};
@@ -152,7 +160,7 @@ static void spawn_plat(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables 
   e->wait = 1000; double lip = qa_q3_spawn_variables_float(v, "lip", "8").value;
   r->host.set_brush_model(r->host.ctx, e, e->model);
   qa_q3_spawn_value_number height = qa_q3_spawn_variables_float(v, "height", "0");
-  double dist = height.present ? height.value : f32(f32(e->r.maxs.z - e->r.mins.z) - lip);
+  double dist = height.present ? height.value : f32(f32((left = qa_q3_base_entity_shared_maxs(&e->r).z, right = qa_q3_base_entity_shared_mins(&e->r).z, left - right)) - lip);
   e->pos2 = e->s.origin; e->pos1 = (qa_vec3){e->pos2.x, e->pos2.y, e->pos2.z - dist};
   r->host.initialize_binary(r->host.ctx, e, v);
   e->touch = qa_q3_callback_family_resolve(&r->host.pool->callbacks.touch, "q3.base.game.mover-spawn.plat.touch");
@@ -166,7 +174,9 @@ static void spawn_button(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variable
   e->wait = f32(e->wait * 1000);
   e->pos1 = e->s.origin; r->host.set_brush_model(r->host.ctx, e, e->model); set_direction(e);
   qa_vec3 absd = {fabs(e->movedir.x), fabs(e->movedir.y), fabs(e->movedir.z)};
-  double dist = f32(qa_dot3(absd, qa_sub3(e->r.maxs, e->r.mins)) - qa_q3_spawn_variables_float(v, "lip", "4").value);
+  qa_vec3 a = qa_q3_base_entity_shared_maxs(&e->r);
+  qa_vec3 b = qa_q3_base_entity_shared_mins(&e->r);
+  double dist = f32(qa_dot3(absd, qa_sub3(a, b)) - qa_q3_spawn_variables_float(v, "lip", "4").value);
   e->pos2 = qa_add3(e->pos1, qa_scale3(e->movedir, dist));
   if (qa_q3_game_entity_health(e) != 0) qa_q3_game_entity_set_takedamage(e, true);
   else e->touch = qa_q3_callback_family_resolve(&r->host.pool->callbacks.touch, "q3.base.game.mover-spawn.button.touch");
@@ -174,9 +184,9 @@ static void spawn_button(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variable
 }
 static void spawn_train(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   char buf[512]; e->s.angles = (qa_vec3){0, 0, 0};
-  if (((int)e->spawnflags & 4) != 0) e->damage = 0; else if (e->damage == 0) e->damage = 2;
+  if ((qa_js_to_int32(e->spawnflags) & 4) != 0) e->damage = 0; else if (e->damage == 0) e->damage = 2;
   if (e->speed == 0) e->speed = 100;
-  if (!e->target) { snprintf(buf, sizeof buf, "func_train without a target at %s\n", vtos(r, e->r.absmin)); r->host.warn(r->host.ctx, buf); qa_q3_entity_pool_free(r->host.pool, e); return; }
+  if (!e->target) { snprintf(buf, sizeof buf, "func_train without a target at %s\n", vtos(r, qa_q3_base_entity_shared_absmin(&e->r))); r->host.warn(r->host.ctx, buf); qa_q3_entity_pool_free(r->host.pool, e); return; }
   r->host.set_brush_model(r->host.ctx, e, e->model); r->host.initialize_binary(r->host.ctx, e, v);
   e->reached = qa_q3_callback_family_resolve(&r->host.pool->callbacks.reached, "q3.base.game.mover-spawn.train.reached");
   qa_q3_game_entity_set_nextthink(e, qa_int32(now(r) + FRAMETIME_MS));
@@ -189,37 +199,37 @@ static void spawn_path_corner(RT *r, qa_q3_game_entity *e) {
 }
 static void spawn_static(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   r->host.set_brush_model(r->host.ctx, e, e->model); r->host.initialize_binary(r->host.ctx, e, v);
-  e->s.pos.base = e->s.origin; e->r.current_origin = e->s.origin;
+  e->s.pos.base = e->s.origin; qa_q3_base_entity_shared_set_current_origin(&e->r, e->s.origin);
 }
 static void spawn_rotating(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   if (e->speed == 0) e->speed = 100;
-  int axis = ((int)e->spawnflags & 4) != 0 ? 2 : ((int)e->spawnflags & 8) != 0 ? 0 : 1;
-  e->s.apos.type = QA_Q3_TR_LINEAR; e->s.apos.delta = with_comp(e->s.apos.delta, axis, e->speed);
+  int axis = (qa_js_to_int32(e->spawnflags) & 4) != 0 ? 2 : (qa_js_to_int32(e->spawnflags) & 8) != 0 ? 0 : 1;
+  e->s.apos.type = QA_Q3_BASE_TR_LINEAR; e->s.apos.delta = with_comp(e->s.apos.delta, axis, e->speed);
   if (e->damage == 0) e->damage = 2;
   r->host.set_brush_model(r->host.ctx, e, e->model); r->host.initialize_binary(r->host.ctx, e, v);
-  e->s.pos.base = e->s.origin; e->r.current_origin = e->s.pos.base; e->r.current_angles = e->s.apos.base;
+  e->s.pos.base = e->s.origin; qa_q3_base_entity_shared_set_current_origin(&e->r, e->s.pos.base); qa_q3_base_entity_shared_set_current_angles(&e->r, e->s.apos.base);
   r->host.world.link(r->host.world.ctx, e);
 }
 static void spawn_bobbing(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   e->speed = qa_q3_spawn_variables_float(v, "speed", "4").value; e->damage = qa_q3_spawn_variables_int(v, "dmg", "2").value;
   double height = qa_q3_spawn_variables_float(v, "height", "32").value, phase = qa_q3_spawn_variables_float(v, "phase", "0").value;
   r->host.set_brush_model(r->host.ctx, e, e->model); r->host.initialize_binary(r->host.ctx, e, v);
-  e->r.current_origin = e->s.origin;
+  qa_q3_base_entity_shared_set_current_origin(&e->r, e->s.origin);
   double duration = float_int(f32(e->speed * 1000));
-  int axis = ((int)e->spawnflags & 1) != 0 ? 0 : ((int)e->spawnflags & 2) != 0 ? 1 : 2;
+  int axis = (qa_js_to_int32(e->spawnflags) & 1) != 0 ? 0 : (qa_js_to_int32(e->spawnflags) & 2) != 0 ? 1 : 2;
   e->s.pos.base = e->s.origin; e->s.pos.duration = duration; e->s.pos.time = float_int(f32(f32(duration) * (float)phase));
-  e->s.pos.type = QA_Q3_TR_SINE; e->s.pos.delta = with_comp(e->s.pos.delta, axis, height);
+  e->s.pos.type = QA_Q3_BASE_TR_SINE; e->s.pos.delta = with_comp(e->s.pos.delta, axis, height);
 }
 static void spawn_pendulum(RT *r, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   double speed = qa_q3_spawn_variables_float(v, "speed", "30").value, phase = qa_q3_spawn_variables_float(v, "phase", "0").value;
   e->damage = qa_q3_spawn_variables_int(v, "dmg", "2").value; r->host.set_brush_model(r->host.ctx, e, e->model);
-  double length = fmax(8, fabs(e->r.mins.z));
+  double length = qa_js_max(8, fabs(qa_q3_base_entity_shared_mins(&e->r).z));
   double freq = f32(f32(1 / f32(f32(3.141592653589793) * 2)) * f32(sqrt(f32(r->host.gravity(r->host.ctx) / f32(3 * length)))));
   double duration = float_int(f32(1000 / freq)); e->s.pos.duration = duration;
   r->host.initialize_binary(r->host.ctx, e, v);
-  e->s.pos.base = e->s.origin; e->r.current_origin = e->s.origin;
+  e->s.pos.base = e->s.origin; qa_q3_base_entity_shared_set_current_origin(&e->r, e->s.origin);
   e->s.apos.base = e->s.angles; e->s.apos.duration = duration; e->s.apos.time = float_int(f32(f32(duration) * (float)phase));
-  e->s.apos.type = QA_Q3_TR_SINE; e->s.apos.delta = with_comp(e->s.apos.delta, 2, speed);
+  e->s.apos.type = QA_Q3_BASE_TR_SINE; e->s.apos.delta = with_comp(e->s.apos.delta, 2, speed);
 }
 /* Save callbacks. */
 static void cb_blocked(void *ctx, qa_q3_game_entity *s, qa_q3_damage_participant o) { RT *r = ctx; r->host.blocked_door(r->host.ctx, s, o); }
@@ -227,18 +237,18 @@ static void cb_match(void *ctx, qa_q3_game_entity *s) { RT *r = ctx; r->host.mat
 static void cb_door_trig(void *ctx, qa_q3_game_entity *s) { spawn_door_trigger(ctx, s); }
 static void cb_plat_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_participant o, qa_touch_contact c) {
   (void)c; RT *r = ctx; qa_q3_game_entity *p = parent_of(s);
-  if (o.entity && o.entity->client && (int)p->mover_state == QA_Q3_MOVER_POS1) r->host.use_binary(r->host.ctx, p, s, o);
+  if (o.entity && o.entity->client && qa_js_to_int32(p->mover_state) == QA_Q3_MOVER_POS1) r->host.use_binary(r->host.ctx, p, s, o);
 }
 static void cb_plat_self_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_participant o, qa_touch_contact c) {
   (void)c; RT *r = ctx;
-  if (o.entity && o.entity->client && o.entity->client->ps.health > 0 && (int)s->mover_state == QA_Q3_MOVER_POS2)
+  if (o.entity && o.entity->client && qa_q3_base_player_state_record_health(&o.entity->client->ps) > 0 && qa_js_to_int32(s->mover_state) == QA_Q3_MOVER_POS2)
     qa_q3_game_entity_set_nextthink(s, qa_int32(now(r) + 1000));
 }
 static void cb_button_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_participant o, qa_touch_contact c) {
   (void)c; RT *r = ctx;
-  if (o.entity && o.entity->client && (int)s->mover_state == QA_Q3_MOVER_POS1) r->host.use_binary(r->host.ctx, s, o.entity, o);
+  if (o.entity && o.entity->client && qa_js_to_int32(s->mover_state) == QA_Q3_MOVER_POS1) r->host.use_binary(r->host.ctx, s, o.entity, o);
 }
-static void cb_reached_think(void *ctx, qa_q3_game_entity *s) { RT *r = ctx; s->s.pos.time = now(r); s->s.pos.type = QA_Q3_TR_LINEAR_STOP; }
+static void cb_reached_think(void *ctx, qa_q3_game_entity *s) { RT *r = ctx; s->s.pos.time = now(r); s->s.pos.type = QA_Q3_BASE_TR_LINEAR_STOP; }
 static void cb_reached(void *ctx, qa_q3_game_entity *s) { reached_train(ctx, s); }
 static void cb_train_think(void *ctx, qa_q3_game_entity *s) { setup_train(ctx, s); }
 void qa_q3_mover_spawn_bind_save_callbacks(RT *r) {
@@ -279,8 +289,4 @@ size_t qa_q3_mover_spawn_runtime_handlers(RT *r, qa_q3_spawn_handler_entry *out,
   size_t n = sizeof T / sizeof *T;
   for (size_t i = 0; i < n && i < cap; i++) { out[i].classname = T[i].name; out[i].fn = T[i].fn; out[i].ctx = r; }
   return n;
-}
-size_t qa_q3_create_mover_spawn_handlers(qa_q3_mover_spawn_host host, qa_q3_spawn_handler_entry *out, size_t cap) {
-  RT *r = malloc(sizeof *r); if (!r) qa_range_error("out of memory");
-  qa_q3_mover_spawn_runtime_init(r, host); return qa_q3_mover_spawn_runtime_handlers(r, out, cap);
 }

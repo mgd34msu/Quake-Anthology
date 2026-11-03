@@ -13,16 +13,16 @@ static void frame(qa_q1_threewave_weapon *weapon, qa_actor_id actor, double valu
 }
 
 static double moving_frame(qa_q1_threewave_weapon *weapon, qa_actor_id actor) {
-  qa_q1_actor *entity = qa_q1_get_entity(weapon->core->game, &actor);
-  if (entity == NULL) qa_range_error("Threewave weapon owner requires a shared body");
-  return qa_q1_length(entity->body.velocity) >= 750 ? 4 : 3;
+  const qa_body_state_result body = qa_shared_body_table_read(weapon->core->game->host.bodies, actor);
+  if (!body.has_value) qa_range_error("Threewave weapon owner requires a shared body"); /* TS Error throw */
+  return qa_q1_length(body.value.velocity) >= 750 ? 4 : 3;
 }
 
 static void launch_frame(void *ctx, qa_q1_services *game, qa_q1_actor *timer) {
   qa_q1_threewave_weapon *weapon = ctx;
   if (timer->has_owner) {
     const qa_actor_id actor = timer->owner;
-    const bool live = qa_q1_get_entity(game, &actor) != NULL || qa_q1_is_player(game, &actor);
+    const bool live = qa_session_actor_registry_is_live(game->host.actors, actor);
     if (live) {
       qa_q1_threewave_state_for(weapon->core, actor)->has_animation = false;
       if (qa_q1_health(game, actor) > 0 && weapon->hooks.selected(weapon->hooks.ctx, actor)) {

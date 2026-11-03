@@ -9,6 +9,7 @@
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct move { qa_q2_entity *e; qa_vec3 destination; double speed; qa_q2_think done; } move;
 struct qa_q2_angular_motion {
@@ -44,7 +45,9 @@ static void done_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
 }
 static void final_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_angular_motion *m = c;
-  qa_vec3 delta = qa_q2_subtract(state_of(m, e)->destination, qa_q2_game_body(g, e).angles);
+  qa_vec3 a = state_of(m, e)->destination;
+  qa_vec3 b = qa_q2_game_body(g, e).angles;
+  qa_vec3 delta = qa_q2_subtract(a, b);
   if (delta.x == 0 && delta.y == 0 && delta.z == 0) { done_fn(m, e, g); return; }
   e->angular_velocity = qa_q2_scale(delta, 1 / g->host->frame_seconds(g->host->ctx));
   g->motion(g->ctx, e, e->motion);
@@ -53,7 +56,7 @@ static void final_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
 static void begin_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_angular_motion *m = c;
   move *st = state_of(m, e);
-  if (st->speed < e->speed) st->speed = fmin(e->speed, st->speed + e->accel);
+  if (st->speed < e->speed) st->speed = qa_js_min(e->speed, st->speed + e->accel);
   qa_vec3 delta = qa_q2_subtract(st->destination, qa_q2_game_body(g, e).angles);
   double time = qa_q2_length(delta) / st->speed;
   double frame = g->host->frame_seconds(g->host->ctx);

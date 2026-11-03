@@ -6,6 +6,7 @@
  * GPL-2.0-or-later.
  */
 #include <math.h>
+#include "qa/foundation/js.h"
 #include <signal.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -18,6 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "q3_fake_entity.h"
 #include "qa/content/q3/base/map_spawns.h"
 #include "qa/content/q3/base/records.h"
 #include "qa/content/q3/base/settings.h"
@@ -276,7 +278,7 @@ static void test_entity_shared_snapshot_jumppad(void) {
   qa_q3_base_player_state_record_set_health(&ps, 0);
   qa_q3_base_player_state_to_entity_state_extrapolate(&ps, &es, 2000, false);
   CHECK(es.pos.type == QA_Q3_BASE_TR_LINEAR_STOP && es.pos.time == 2000 && es.pos.duration == 50);
-  CHECK((es.e_flags & 1) != 0);
+  CHECK((qa_js_to_int32(es.e_flags) & 1) != 0);
   /* Jump pad: first touch adds event + sets velocity from origin2. */
   qa_q3_base_player_state_record_set_health(&ps, 100);
   es.number = 42;
@@ -298,12 +300,17 @@ static void test_entity_shared_snapshot_jumppad(void) {
 static void test_settings_definitions(void) {
   size_t count = 0;
   const qa_q3_base_cvar_definition *defs = qa_q3_base_game_cvar_definitions(QA_Q3_BASE_PRODUCT_BASEQ3, &count);
-  CHECK(count == 45);
+  /* q3GameCvarDefinitions("baseq3").length under bun: 48 (finalCvars has pmove_ladders, sv_rankingsGameKey/ID). */
+  CHECK(count == 48);
+  bool found_ladders = false;
+  for (size_t i = 0; i < count; i++)
+    if (strcmp(defs[i].name, "pmove_ladders") == 0) found_ladders = strcmp(defs[i].value, "1") == 0 && defs[i].flags == QA_CVAR_FLAG_SYSTEM_INFO; /* bun: value "1", flags 8 */
+  CHECK(found_ladders);
   CHECK(strcmp(defs[0].name, "sv_cheats") == 0 && strcmp(defs[0].value, "") == 0 && defs[0].flags == 0);
   CHECK(strcmp(defs[2].name, "g_gametype") == 0);
   CHECK(defs[2].flags == (QA_CVAR_FLAG_SERVER_INFO | QA_CVAR_FLAG_USER_INFO | QA_CVAR_FLAG_LATCH));
   defs = qa_q3_base_game_cvar_definitions(QA_Q3_BASE_PRODUCT_MISSIONPACK, &count);
-  CHECK(count == 56);
+  CHECK(count == 59);
   bool found_redteam = false;
   for (size_t i = 0; i < count; i++)
     if (strcmp(defs[i].name, "g_redteam") == 0) found_redteam = defs[i].track && defs[i].team_shader && strcmp(defs[i].value, "Stroggs") == 0;
@@ -348,9 +355,9 @@ static void test_objectives(void) {
 
 /* ---- w6c-q3-rest slice ---- */
 
-static void slots_init4(qa_q3_game_player_slots_mirror *slots, size_t length) {
-  memset(slots, 0, sizeof *slots);
-  slots->length = length;
+/* TS new PlayerStateSlots(length); release with qa_q3_base_player_state_slots_destroy. */
+static void slots_init4(qa_q3_base_player_state_slots *slots, size_t length) {
+  if (!qa_q3_base_player_state_slots_init(slots, (double)length, NULL, 0, false, NULL, NULL, NULL)) abort();
 }
 
 typedef struct fake_cvars {
@@ -388,15 +395,15 @@ static const char *empty_team(void *ctx, const char *key) { (void)ctx; (void)key
 /* Port of tests/gameplay/q3/modes/session.test.ts case 1. */
 static void test_session_manager(void) {
   qa_q3_game_client red, blue, joining;
-  qa_q3_game_client_init(&red, QA_Q3_GAME_PRODUCT_MISSIONPACK);
-  qa_q3_game_client_init(&blue, QA_Q3_GAME_PRODUCT_MISSIONPACK);
-  qa_q3_game_client_init(&joining, QA_Q3_GAME_PRODUCT_MISSIONPACK);
+  qa_q3_game_client_init(&red, QA_Q3_BASE_PRODUCT_MISSIONPACK);
+  qa_q3_game_client_init(&blue, QA_Q3_BASE_PRODUCT_MISSIONPACK);
+  qa_q3_game_client_init(&joining, QA_Q3_BASE_PRODUCT_MISSIONPACK);
   red.pers.connected = blue.pers.connected = QA_Q3_CONN_CONNECTED;
   red.sess.session_team = QA_Q3_BASE_TEAM_RED;
   blue.sess.session_team = QA_Q3_BASE_TEAM_BLUE;
-  qa_q3_game_player_slots_mirror scores;
+  qa_q3_base_player_state_slots scores;
   slots_init4(&scores, 4);
-  qa_q3_game_slots_set_mirror(&scores, QA_Q3_BASE_TEAM_BLUE, 2);
+  qa_q3_base_player_state_slots_set(&scores, QA_Q3_BASE_TEAM_BLUE, 2);
   qa_q3_game_client *clients[] = {&red, &blue, &joining};
   qa_q3_ta_session_world_state world;
   memset(&world, 0, sizeof world);
@@ -427,8 +434,8 @@ static void test_session_manager(void) {
   CHECK_ABORTS(qa_q3_ta_game_session_manager_read_client(&manager, 7));
   /* Duel admission (TS case 2). */
   qa_q3_game_client duel;
-  qa_q3_game_client_init(&duel, QA_Q3_GAME_PRODUCT_BASEQ3);
-  qa_q3_game_player_slots_mirror scores2;
+  qa_q3_game_client_init(&duel, QA_Q3_BASE_PRODUCT_BASEQ3);
+  qa_q3_base_player_state_slots scores2;
   slots_init4(&scores2, 4);
   qa_q3_game_client *duel_clients[] = {&duel};
   qa_q3_ta_session_world_state world2;
@@ -453,6 +460,7 @@ static void test_session_manager(void) {
   CHECK(duel.ready_to_exit);
   qa_q3_game_client_destroy(&red); qa_q3_game_client_destroy(&blue);
   qa_q3_game_client_destroy(&joining); qa_q3_game_client_destroy(&duel);
+  qa_q3_base_player_state_slots_destroy(&scores); qa_q3_base_player_state_slots_destroy(&scores2);
 }
 
 static void test_admission_pure(void) {
@@ -469,7 +477,7 @@ static void test_admission_pure(void) {
   value = qa_q3_ta_clean_client_name("a    b");
   CHECK(strcmp(value, "a   b") == 0); free(value);
   qa_q3_game_client client;
-  qa_q3_game_client_init(&client, QA_Q3_GAME_PRODUCT_BASEQ3);
+  qa_q3_game_client_init(&client, QA_Q3_BASE_PRODUCT_BASEQ3);
   free(client.pers.netname);
   client.pers.netname = strdup("Fox");
   client.pers.max_health = 100;
@@ -514,7 +522,6 @@ static void test_team_pure(void) {
   CHECK(qa_q3_ta_other_team(QA_Q3_BASE_TEAM_FREE) == QA_Q3_BASE_TEAM_FREE);
   CHECK(strcmp(qa_q3_ta_team_name(QA_Q3_BASE_TEAM_BLUE), "BLUE") == 0);
   CHECK(strcmp(qa_q3_ta_other_team_name(QA_Q3_BASE_TEAM_RED), "BLUE") == 0);
-  CHECK(strcmp(qa_q3_ta_team_color_string(QA_Q3_BASE_TEAM_SPECTATOR), "^3") == 0);
   qa_q3_ta_team_game_state state;
   qa_q3_ta_team_game_state_init(&state);
   CHECK(state.red_status == 0 && state.blue_status == 0 && state.last_flag_capture == 0);
@@ -523,8 +530,7 @@ static void test_team_pure(void) {
 /* Fake entity pool over static storage for pool-driven modules. */
 static qa_q3_game_entity fake_entities[QA_Q3_MAX_GENTITIES];
 static qa_q3_game_client fake_clients[QA_Q3_MAX_CLIENTS];
-static bool fake_active[QA_Q3_MAX_GENTITIES];
-static bool fake_is_active(void *ctx) { return *(bool *)ctx; }
+static q3_fake_entity fake_bodies[QA_Q3_MAX_GENTITIES];
 static qa_q3_game_entity *fake_get(void *ctx, double slot) {
   (void)ctx;
   if (slot < 0 || slot >= QA_Q3_MAX_GENTITIES || slot != (double)(int)slot) return NULL;
@@ -536,14 +542,14 @@ static qa_q3_game_client *fake_client(void *ctx, double slot) {
 }
 static qa_q3_game_entity *fake_activate(void *ctx, double slot) {
   (void)ctx;
-  fake_active[(int)slot] = true;
+  fake_bodies[(int)slot].active = true;
   return &fake_entities[(int)slot];
 }
 static void fake_release(void *ctx, qa_q3_game_entity *entity) {
   (void)ctx;
-  fake_active[(int)entity->slot] = false;
+  fake_bodies[(int)entity->slot].active = false;
 }
-static void fake_deactivate(void *ctx, double slot) { (void)ctx; fake_active[(int)slot] = false; }
+static void fake_deactivate(void *ctx, double slot) { (void)ctx; fake_bodies[(int)slot].active = false; }
 static double fake_time;
 static double fake_pool_time(void *ctx) { (void)ctx; return fake_time; }
 static void fake_pool_print(void *ctx, const char *message) { (void)ctx; (void)message; }
@@ -555,16 +561,10 @@ static void make_fake_pool(double max_clients) {
     for (int i = 0; i < QA_Q3_MAX_GENTITIES; i++) qa_q3_game_entity_destroy(&fake_entities[i]);
     for (int i = 0; i < QA_Q3_MAX_CLIENTS; i++) qa_q3_game_client_destroy(&fake_clients[i]);
   }
-  memset(fake_active, 0, sizeof fake_active);
-  for (int slot = 0; slot < QA_Q3_MAX_GENTITIES; slot++) {
-    qa_q3_game_entity_binding binding;
-    memset(&binding, 0, sizeof binding);
-    binding.ctx = &fake_active[slot];
-    binding.active = fake_is_active;
-    qa_q3_game_entity_init(&fake_entities[slot], slot, binding);
-  }
+  for (int slot = 0; slot < QA_Q3_MAX_GENTITIES; slot++)
+    q3_fake_entity_init(&fake_entities[slot], &fake_bodies[slot], slot);
   for (int slot = 0; slot < QA_Q3_MAX_CLIENTS; slot++)
-    qa_q3_game_client_init(&fake_clients[slot], QA_Q3_GAME_PRODUCT_BASEQ3);
+    qa_q3_game_client_init(&fake_clients[slot], QA_Q3_BASE_PRODUCT_BASEQ3);
   qa_q3_entity_pool_options options;
   memset(&options, 0, sizeof options);
   options.records.ctx = NULL;
@@ -574,7 +574,7 @@ static void make_fake_pool(double max_clients) {
   options.records.activate = fake_activate;
   options.records.release = fake_release;
   options.records.deactivate_client = fake_deactivate;
-  options.product = QA_Q3_GAME_PRODUCT_BASEQ3;
+  options.product = QA_Q3_BASE_PRODUCT_BASEQ3;
   options.max_clients = max_clients;
   options.map_start_time = 0;
   options.ctx = NULL;
@@ -604,7 +604,7 @@ static void test_find_teams_and_spawn_points(void) {
   fake_pool.num_entities = 70;
   /* findQ3EntityTeams: slots 64+1.. use indices 65,66 sharing a team. */
   for (int slot = 65; slot <= 67; slot++) {
-    fake_active[slot] = true;
+    fake_bodies[slot].active = true;
     fake_entities[slot].team = strdup("alpha");
   }
   fake_entities[66].targetname = strdup("shared");
@@ -615,7 +615,7 @@ static void test_find_teams_and_spawn_points(void) {
   CHECK(fake_entities[66].targetname == NULL);
   CHECK((int32_t)fake_entities[66].flags & QA_Q3_GAME_FLAG_TEAMSLAVE);
   /* Spawn selection + view angle + deathmatch flags. */
-  fake_active[68] = fake_active[69] = true;
+  fake_bodies[68].active = fake_bodies[69].active = true;
   qa_q3_game_entity_set_classname(&fake_entities[68], "info_player_deathmatch");
   qa_q3_game_entity_set_classname(&fake_entities[69], "info_player_deathmatch");
   fake_entities[68].s.origin = (qa_vec3){100, 0, 0};
@@ -638,7 +638,7 @@ static void test_find_teams_and_spawn_points(void) {
   qa_q3_spawn_variables_destroy(&vars);
   fake_entities[0].client = &fake_clients[0];
   qa_q3_ta_set_client_view_angle(&fake_entities[0], (qa_vec3){90, 0, 0});
-  CHECK(qa_q3_game_slots_get_mirror(&fake_clients[0].ps.delta_angles, 0) == 16384);
+  CHECK(fake_clients[0].ps.delta_angles.x == 16384);
 }
 
 typedef struct match_capture {
@@ -662,7 +662,7 @@ static void test_match_ranks_and_vote(void) {
   qa_q3_ta_match_state state;
   qa_q3_ta_match_state_init(&state);
   state.time = 5000;
-  qa_q3_game_player_slots_mirror scores;
+  qa_q3_base_player_state_slots scores;
   slots_init4(&scores, 4);
   match_capture cap;
   memset(&cap, 0, sizeof cap);
@@ -689,8 +689,8 @@ static void test_match_ranks_and_vote(void) {
     fake_clients[i].sess.session_team = QA_Q3_BASE_TEAM_FREE;
     fake_clients[i].sess.spectator_client = 0;
   }
-  qa_q3_game_slots_set_mirror(&fake_clients[0].ps.persistant, QA_Q3_BASE_PERS_SCORE, 3);
-  qa_q3_game_slots_set_mirror(&fake_clients[1].ps.persistant, QA_Q3_BASE_PERS_SCORE, 7);
+  qa_q3_base_player_state_slots_set(&fake_clients[0].ps.persistant, QA_Q3_BASE_PERS_SCORE, 3);
+  qa_q3_base_player_state_slots_set(&fake_clients[1].ps.persistant, QA_Q3_BASE_PERS_SCORE, 7);
   qa_q3_ta_match_runtime_calculate_ranks(&match);
   CHECK(state.num_playing_clients == 2);
   CHECK(state.sorted_clients[0] == 1 && state.sorted_clients[1] == 0);
@@ -708,6 +708,7 @@ static void test_match_ranks_and_vote(void) {
   qa_q3_ta_match_runtime_check_vote(&match);
   CHECK(strcmp(cap.console, "map q3dm1\n") == 0);
   qa_q3_ta_match_state_destroy(&state);
+  qa_q3_base_player_state_slots_destroy(&scores);
 }
 
 typedef struct server_capture {

@@ -61,5 +61,8 @@ typedef struct qa_discovered_gameplay_mod {
 qa_discovered_gameplay_mod *qa_discover_gameplay_mods(
     const qa_mod_catalog_product *product,
     const qa_mod_mounted_content *mounted, size_t *out_count);
+/* Frees a qa_discover_gameplay_mods result: every entry's strings,
+ * selections and declaration, and the shared JSON tree. NULL-safe. */
+void qa_discovered_gameplay_mods_free(qa_discovered_gameplay_mod *mods, size_t count);
 
 #endif

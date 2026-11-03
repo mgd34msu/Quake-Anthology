@@ -7,7 +7,6 @@
 #include "qa/content/q1/foundation/entity_services.h"
 #include "qa/content/q1/foundation/extensions.h"
 #include "qa/content/q1/foundation/held_weapons.h"
-#include "qa/content/q1/foundation/monsters.h"
 #include "qa/content/q1/foundation/movers.h"
 #include "qa/content/q1/foundation/pickups.h"
 #include "qa/content/q1/foundation/precache.h"

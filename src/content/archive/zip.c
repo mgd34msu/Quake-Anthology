@@ -74,7 +74,7 @@ bool qa_read_zip_directory(const uint8_t *bytes, size_t length,
   reader_or_oom(&reader, bytes, length, source);
   qa_archive_entry *entries = NULL;
   size_t count = 0, capacity = 0;
-  for (int64_t ordinal = 0; ordinal < directory.entry_count; ordinal++) {
+  for (int64_t index = 0; index < directory.entry_count; index++) {
     size_t offset = qa_binary_reader_offset(&reader);
     const uint8_t *header =
         qa_binary_reader_data_view(&reader, (int64_t)offset, 46);
@@ -111,12 +111,17 @@ bool qa_read_zip_directory(const uint8_t *bytes, size_t length,
     qa_archive_check_range(source, directory.offset, local_header_offset, 30);
     qa_binary_reader_skip(&reader, 46);
     uint8_t *name_bytes = qa_binary_reader_bytes(&reader, name_length);
+    /* TS tryNormalizeEntryPath rejects a NUL anywhere in the byte string. */
+    bool has_nul = name_length > 0 && memchr(name_bytes, 0, name_length) != NULL;
     char *raw_path = byte_string(name_bytes, name_length);
     free(name_bytes);
     if (raw_path == NULL) goto oom;
     qa_binary_reader_skip(&reader, (int64_t)extra_length + comment_length);
-    char *path = qa_normalize_entry_path(raw_path);
-    if (path == NULL) { free(raw_path); goto oom; }
+    bool unsafe = has_nul;
+    char *path = has_nul ? NULL : qa_try_normalize_entry_path(raw_path, &unsafe);
+    if (path == NULL && !unsafe) { free(raw_path); goto oom; }
+    /* An unaddressable member is skipped instead of rejecting the archive. */
+    if (path == NULL) { free(raw_path); continue; }
     if (count == capacity) {
       size_t next = capacity == 0 ? 16 : capacity * 2;
       qa_archive_entry *grown =
@@ -128,7 +133,7 @@ bool qa_read_zip_directory(const uint8_t *bytes, size_t length,
     qa_archive_entry *entry = &entries[count];
     memset(entry, 0, sizeof *entry);
     entry->format = format;
-    entry->ordinal = ordinal;
+    entry->ordinal = (int64_t)count; /* TS entries.length */
     entry->raw_path = raw_path;
     entry->path = path;
     entry->byte_length = byte_length;
@@ -220,6 +225,9 @@ int64_t qa_zip_data_offset(const uint8_t *variable, size_t variable_length,
 uint8_t *qa_decode_zip_entry(const uint8_t *compressed, size_t compressed_length,
                              const char *source, int64_t data_offset,
                              const qa_archive_entry *entry, size_t *out_length) {
+  if (entry->byte_length > QA_MAX_ZIP_ENTRY_BYTES)
+    qa_archive_error(source, data_offset, "entry size %lld exceeds the %d-byte limit",
+                     (long long)entry->byte_length, QA_MAX_ZIP_ENTRY_BYTES);
   uint8_t *output = NULL;
   size_t output_length = 0;
   if (entry->compression_method == 0) {

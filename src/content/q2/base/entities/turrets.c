@@ -11,13 +11,16 @@
 
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
+#include "qa/content/q2/foundation/monsters/ai.h"
+#include "qa/content/q2/foundation/monsters/infantry.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct breach_entry { qa_q2_entity *e; qa_q2_base_turret_breach_state state; } breach_entry;
 typedef struct driver_entry {
   qa_q2_entity *e;
-  qa_q2_base_monster_context *context;
+  qa_q2m_context *context;
   qa_q2_die monster_die;
   bool has_breach;
   qa_actor_id breach;
@@ -178,7 +181,7 @@ void qa_q2_turret_entities_restore(qa_q2_turret_entities *t, qa_q2_game_services
   for (size_t i = 0; i < checkpoint.driver_count; i++) {
     const qa_q2_base_turret_driver_entry *saved = &checkpoint.drivers[i];
     qa_q2_entity *entity = saved_turret(game, saved->actor);
-    qa_q2_base_monster_context *context = t->hooks.monster_context(t->hooks.ctx, entity->actor.id);
+    qa_q2m_context *context = t->hooks.monster_context(t->hooks.ctx, entity->actor.id);
     bool has_die = false;
     qa_q2_die monster_die = qa_q2_die_resolve(game->source_callbacks, saved->monster_die, &has_die);
     if (!context || !has_die) qa_range_error("Restore Q2 turret drivers after their monster state");
@@ -216,7 +219,7 @@ static void fire(qa_q2_turret_entities *t, qa_q2_entity *entity, qa_q2_game_serv
                                       qa_q2_scale(axes.right, state->muzzle.y)), qa_q2_scale(axes.up, state->muzzle.z));
   double damage = trunc(100 + game->host->random(game->host->ctx) * 50);
   double speed = 550 + 50 * game->options.skill;
-  (void)t->hooks.fire_rocket(t->hooks.weapons_ctx, driver, game, start, axes.forward, damage, speed, 150, damage);
+  (void)qa_q2w_ballistics_fire_rocket(t->hooks.weapons, driver->actor, game, start, axes.forward, damage, speed, 150, damage);
   qa_q2_presentation_event ev = {0};
   ev.kind = "sound"; ev.has_actor = true; ev.actor = entity->actor.id; ev.origin = start;
   ev.path = "weapons/rocklf1a.wav"; ev.channel = 1; ev.volume = 1; ev.attenuation = 1; ev.reliable = false; ev.loop = "once";
@@ -231,7 +234,7 @@ static void breach_think_fn(void *c, qa_q2_entity *entity, qa_q2_game_services *
   double frame = game->host->frame_seconds(game->host->ctx);
   double pitch = normalize_angle(state->goal.x), yaw = normalize_angle(state->goal.y);
   if (pitch > 180) pitch -= 360;
-  pitch = fmax(state->pitch_min, fmin(state->pitch_max, pitch));
+  pitch = qa_js_max(state->pitch_min, qa_js_min(state->pitch_max, pitch));
   if (yaw < state->yaw_min || yaw > state->yaw_max) {
     double min_distance = fabs(short_angle(fabs(state->yaw_min - yaw)));
     double max_distance = fabs(short_angle(fabs(state->yaw_max - yaw)));
@@ -240,8 +243,8 @@ static void breach_think_fn(void *c, qa_q2_entity *entity, qa_q2_game_services *
   state->goal.x = pitch; state->goal.y = yaw;
   double limit = entity->speed * frame;
   entity->angular_velocity = (qa_vec3){
-      fmax(-limit, fmin(limit, short_angle(pitch - normalize_angle(body.angles.x)))) / frame,
-      fmax(-limit, fmin(limit, short_angle(yaw - normalize_angle(body.angles.y)))) / frame, 0};
+      qa_js_max(-limit, qa_js_min(limit, short_angle(pitch - normalize_angle(body.angles.x)))) / frame,
+      qa_js_max(-limit, qa_js_min(limit, short_angle(yaw - normalize_angle(body.angles.y)))) / frame, 0};
   game->motion(game->ctx, entity, "push");
   size_t count = 0;
   qa_q2_entity **members = team_of(t, entity, game, &count);
@@ -265,9 +268,9 @@ static void breach_think_fn(void *c, qa_q2_entity *entity, qa_q2_game_services *
     changes.velocity = qa_q2_scale(qa_q2_subtract(target, driver_body.origin), 1 / frame);
     game->move(game->ctx, owner, changes, false);
     game->motion(game->ctx, owner, "push");
-    if (((int64_t)entity->spawnflags & 65536) != 0) {
+    if ((qa_js_to_int32(entity->spawnflags) & 65536) != 0) {
       fire(t, entity, game, state, owner);
-      entity->spawnflags = (double)((int64_t)entity->spawnflags & ~65536LL);
+      entity->spawnflags = (double)(qa_js_to_int32(entity->spawnflags) & ~65536);
     }
   }
   game->schedule(game->ctx, entity, frame, (qa_q2_think){t, breach_think_fn});
@@ -279,18 +282,18 @@ static void driver_think_fn(void *c, qa_q2_entity *entity, qa_q2_game_services *
   qa_q2_entity *turret = driver && driver->has_breach ? game->entity(game->ctx, &driver->breach) : NULL;
   if (!driver || !turret) return;
   game->schedule(game->ctx, entity, game->host->frame_seconds(game->host->ctx), (qa_q2_think){t, driver_think_fn});
-  qa_q2_base_monster_context *context = driver->context;
-  qa_q2_base_monster_state *state = context->state;
+  qa_q2m_context *context = driver->context;
+  qa_q2m_state *state = context->state;
   if (entity->has_enemy) {
     qa_combat_state_result combat = qa_gameplay_authority_read(game->host->combat, entity->enemy);
     if (!qa_session_actor_registry_is_live(game->host->actors, entity->enemy) || (combat.has_value ? combat.value.health : 0) <= 0)
       entity->has_enemy = false;
   }
   if (!entity->has_enemy) {
-    if (!context->find_target(context)) return;
+    if (!context->find_target(context->impl_ctx, context)) return;
     state->trail_time = game->host->now(game->host->ctx);
     state->lost_sight = false;
-  } else if (context->visible_enemy(context)) {
+  } else if (qa_q2m_visible(context, NULL)) {
     if (state->lost_sight) { state->trail_time = game->host->now(game->host->ctx); state->lost_sight = false; }
   } else { state->lost_sight = true; return; }
   qa_body_state_result enemy = entity->has_enemy ? qa_shared_body_table_read(game->host->bodies, entity->enemy) : (qa_body_state_result){0};
@@ -303,7 +306,7 @@ static void driver_think_fn(void *c, qa_q2_entity *entity, qa_q2_game_services *
   double reaction_time = 3 - game->options.skill;
   if (game->host->now(game->host->ctx) - state->trail_time < reaction_time) return;
   state->attack_finished = game->host->now(game->host->ctx) + reaction_time + 1;
-  turret->spawnflags = (double)((int64_t)turret->spawnflags | 65536LL);
+  turret->spawnflags = (double)(qa_js_to_int32(turret->spawnflags) | 65536);
 }
 
 static void breach_init_fn(void *c, qa_q2_entity *self, qa_q2_game_services *services) {
@@ -316,7 +319,9 @@ static void breach_init_fn(void *c, qa_q2_entity *self, qa_q2_game_services *ser
     (void)snprintf(message, sizeof message, "turret_breach missing muzzle target %s", self->target);
     services->host->diagnostic(services->host->ctx, message);
   } else {
-    state->muzzle = qa_q2_subtract(qa_q2_game_body(services, muzzle).origin, qa_q2_game_body(services, self).origin);
+    qa_vec3 a = qa_q2_game_body(services, muzzle).origin;
+    qa_vec3 b = qa_q2_game_body(services, self).origin;
+    state->muzzle = qa_q2_subtract(a, b);
     services->remove(services->ctx, muzzle);
   }
   size_t count = 0;
@@ -330,7 +335,7 @@ static void driver_die_fn(void *c, qa_q2_entity *self, qa_q2_game_services *serv
   qa_q2_turret_entities *t = c;
   driver_entry *state = find_driver(t, self);
   if (!state) qa_range_error("Turret driver death without source state");
-  qa_q2_base_monster_context *context = state->context;
+  qa_q2m_context *context = state->context;
   qa_q2_die monster_die = state->monster_die;
   qa_q2_entity *turret = state->has_breach ? services->entity(services->ctx, &state->breach) : NULL;
   if (turret) {
@@ -353,7 +358,7 @@ static void driver_die_fn(void *c, qa_q2_entity *self, qa_q2_game_services *serv
   state->has_breach = false;
   self->has_team_master = false;
   self->has_team_chain = false;
-  self->flags = (double)((int64_t)self->flags & ~1024LL);
+  self->flags = (double)(qa_js_to_int32(self->flags) & ~1024);
   self->angular_velocity = QA_Q2_ZERO;
   services->motion(services->ctx, self, "step");
   monster_die.fn(monster_die.ctx, self, services, reaction);
@@ -392,7 +397,7 @@ static void driver_link_fn(void *c, qa_q2_entity *self, qa_q2_game_services *ser
   qa_q2_body_changes changes = {0};
   changes.has_angles = true; changes.angles = target.angles;
   services->move(services->ctx, self, changes, false);
-  self->flags = (double)((int64_t)self->flags | 1024LL);
+  self->flags = (double)(qa_js_to_int32(self->flags) | 1024);
   services->schedule(services->ctx, self, services->host->frame_seconds(services->host->ctx), (qa_q2_think){t, driver_think_fn});
 }
 
@@ -419,7 +424,7 @@ bool qa_q2_turret_entities_spawn(qa_q2_turret_entities *t, qa_q2_entity *entity,
   }
   if (strcmp(classname, "turret_driver") == 0) {
     if (game->options.mode == QA_Q2_MODE_DEATHMATCH) { game->remove(game->ctx, entity); return true; }
-    qa_q2_base_monster_context *context = t->hooks.turret_driver(t->hooks.ctx, entity, game);
+    qa_q2m_context *context = t->hooks.turret_driver(t->hooks.ctx, entity, game);
     qa_q2_die monster_die = entity->die;
     if (monster_die.fn == NULL) qa_range_error("Turret driver admission did not bind infantry death");
     driver_entry entry = {0};
@@ -428,12 +433,11 @@ bool qa_q2_turret_entities_spawn(qa_q2_turret_entities *t, qa_q2_entity *entity,
     context->state->gib_health = 0;
     context->state->stand_ground = true;
     context->state->ducked = true;
-    entity->flags = (double)((int64_t)entity->flags | 2048LL);
-    entity->server_flags = (double)((int64_t)entity->server_flags | 4LL);
-    entity->render_flags = (double)((int64_t)entity->render_flags | 64LL);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) | 2048);
+    entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) | 4);
+    entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 64);
     entity->view_height = 24;
-    /* TS infantryStand(context) is context.setMove("infantry_move_stand"). */
-    context->set_move(context, "infantry_move_stand");
+    qa_q2m_infantry_stand_handler(NULL, context);
     entity->frame = 0;
     entity->die = (qa_q2_die){t, driver_die_fn};
     game->motion(game->ctx, entity, "push");

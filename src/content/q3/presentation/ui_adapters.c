@@ -4,6 +4,7 @@
 #include "qa/content/q3/presentation/model_access.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 void qa_q3_pres_engine_ui_model_painter_init(qa_q3_pres_engine_ui_model_painter *painter,
     qa_q3_pres_renderer_resources resources, const void *commands_token) {
@@ -25,7 +26,7 @@ void qa_q3_pres_engine_ui_model_painter_paint(qa_q3_pres_engine_ui_model_painter
   refdef.fov_x = request->field_of_view_x != 0 ? f32(request->field_of_view_x) : viewport.width;
   refdef.fov_y = request->field_of_view_y != 0 ? f32(request->field_of_view_y) : viewport.height;
   /* request.time | 0 */
-  refdef.time = (double)(int32_t)request->time;
+  refdef.time = (double)qa_js_to_int32(request->time);
   qa_bounds bounds = qa_q3_pres_model_bounds(&request->model);
   qa_q3_pres_ref_model_entity entity = qa_q3_pres_create_model_entity(request->model);
   double length = f32(0.5 * f32(bounds.max.z - bounds.min.z));

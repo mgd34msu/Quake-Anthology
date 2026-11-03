@@ -43,7 +43,7 @@ static qa_vec3 query_read_point(void *ctx, double index) {
   qa_qvm_writable_view view = span(mark, mark->has_input, mark->input, index * 12, 12, "input points");
   return read_vector_view(&view);
 }
-static void query_write_fragment(void *ctx, double index, qa_qvmx_mark_fragment fragment) {
+static void query_write_fragment(void *ctx, double index, qa_q3_pres_mark_fragment fragment) {
   mark_ctx *mark = ctx;
   qa_qvm_writable_view first = span(mark, mark->has_fragments, mark->fragments, index * 8, 4, "fragments");
   qa_qvm_writable_view_set_int32(&first, 0, qa_int32(fragment.first_point), true);
@@ -62,6 +62,16 @@ static void query_write_points(void *ctx, double first_point, const qa_vec3 *val
   }
 }
 
+static double bsp_mark_fragments_record(void *ctx, qa_q3_pres_source_mark_projection query) {
+  return qa_q3_pres_bsp_mark_projector_mark_fragments_record(ctx, query);
+}
+
+qa_qvm_mark_projector qa_qvm_bsp_mark_projector(qa_q3_pres_bsp_mark_projector *projector) {
+  qa_qvm_mark_projector out = {projector, bsp_mark_fragments_record};
+  return out;
+}
+
+/* The active renderer owns both the BSP and its prepared mark grids. */
 bool qa_qvm_client_mark_syscall(const qa_qvm_host_call *call, qa_qvm_mark_projector projector,
                                 qa_qvm_host_result *out) {
   if (strcmp(call->kind, "engine") != 0 || strcmp(call->role, "cgame") != 0 ||
@@ -81,7 +91,7 @@ bool qa_qvm_client_mark_syscall(const qa_qvm_host_call *call, qa_qvm_mark_projec
   ctx.has_projection = qa_qvm_memory_pointer(memory, projection_word, &ctx.projection);
   ctx.has_points = qa_qvm_memory_pointer(memory, points_word, &ctx.points);
   ctx.has_fragments = qa_qvm_memory_pointer(memory, fragments_word, &ctx.fragments);
-  qa_qvmx_mark_query query;
+  qa_q3_pres_source_mark_projection query;
   query.point_count = point_count;
   query.max_points = max_points;
   query.max_fragments = max_fragments;
@@ -90,6 +100,6 @@ bool qa_qvm_client_mark_syscall(const qa_qvm_host_call *call, qa_qvm_mark_projec
   query.read_point = query_read_point;
   query.write_fragment = query_write_fragment;
   query.write_points = query_write_points;
-  *out = (qa_qvm_host_result)projector.mark_fragments_record(projector.ctx, query);
+  *out = qa_qvm_host_word(projector.mark_fragments_record(projector.ctx, query));
   return true;
 }

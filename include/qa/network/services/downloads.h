@@ -1,8 +1,6 @@
 /* Port of src/network/services/downloads.ts. downloadPath re-exports
  * qa_contained_file_parts. Hashing is one-shot over staged bytes (the
  * TS incremental hash is replaced by hashing at finish; same digest).
- * downloadHttp: fetch -> synchronous plain-HTTP GET in http-downloads
- * transport helper (see qa_http_fetch_to_sink); HTTPS needs platform TLS.
  * GPL-2.0-or-later. */
 #ifndef QA_NETWORK_SERVICES_DOWNLOADS_H
 #define QA_NETWORK_SERVICES_DOWNLOADS_H
@@ -10,6 +8,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "qa/contracts/content.h"
+#include "qa/foundation/support.h"
+#include "qa/network/common/session.h"
 #include "qa/platform/files/contained.h"
 /* TS `downloadPath` === containedFileParts. */
 #define qa_download_path qa_contained_file_parts
@@ -37,6 +37,10 @@ typedef struct qa_download_sink {
   qa_download_expectation expected;
   bool ranged; double total; struct qa_download_span_state *spans; size_t span_count;
   double count; bool ended, inspecting;
+  bool resumable, suspended;
+  double resumed_from; /* bytes already staged and hash-verified when continuing an interrupted download */
+  qa_net_sha256 hash;   /* TS createHash("sha256") over appended bytes */
+  char failure[QA_CAUGHT_MESSAGE_CAPACITY]; /* message behind qa_download_sink_try_finish's *error */
 } qa_download_sink;
 int qa_download_sink_create(qa_download_sink *s, const char *root, const char *name, qa_download_expectation expected);
 int qa_download_sink_create_ranged(qa_download_sink *s, const char *root, const char *name,
@@ -47,26 +51,23 @@ double qa_download_sink_byte_length(const qa_download_sink *s);
 qa_download_expectation qa_download_sink_get_expected(const qa_download_sink *s);
 void qa_download_sink_append(qa_download_sink *s, const uint8_t *bytes, size_t length);
 void qa_download_sink_append_range(qa_download_sink *s, double span_start, const uint8_t *bytes, size_t length);
-/* Returns malloc'd digest string, caller frees. */
+/* Returns malloc'd digest string, caller frees. Closes the sink on every path (TS
+ * finally) and raises the TS Error on failure. */
 char *qa_download_sink_finish(qa_download_sink *s);
+/* finish under a catch: any failure sets *error (the TS message, stored in s->failure
+ * until the sink is destroyed) and returns NULL. */
+char *qa_download_sink_try_finish(qa_download_sink *s, const char **error);
 typedef void (*qa_download_inspect_fn)(void *ctx, const char *path);
 void qa_download_sink_inspect_staged(qa_download_sink *s, qa_download_inspect_fn inspect, void *ctx);
+/* Closes; a one-shot sink whose staged file vanished raises the unlink Error after releasing
+ * everything (TS close's finally chain). */
 void qa_download_sink_close(qa_download_sink *s);
+/* TS DownloadSink.resumable: stage under a stable `<name>.part` with a `.part.sha256` record so an
+ * interrupted transfer can continue. A partial file is reused only when its length and SHA-256
+ * match the record; anything else is discarded. expected must be a protocol expectation. */
+int qa_download_sink_create_resumable(qa_download_sink *s, const char *root, const char *name, qa_download_expectation expected);
+/* Keep the staged bytes and their hash record for a later resumable sink; other sinks are discarded. */
+void qa_download_sink_suspend(qa_download_sink *s);
 
-typedef struct qa_download_block { double index; bool has_total; double total_bytes; uint8_t *bytes; size_t length; } qa_download_block;
-typedef struct qa_download_window qa_download_window;
-int qa_download_window_init(qa_download_window *w, qa_download_source source, double block_bytes, double window_blocks);
-void qa_download_window_destroy(qa_download_window *w);
-bool qa_download_window_closed(const qa_download_window *w);
-qa_download_block *qa_download_window_packets(qa_download_window *w, double now, double count, size_t *out_count);
-/* Returns "continue" | "complete". */
-const char *qa_download_window_acknowledge(qa_download_window *w, double block, double now);
-void qa_download_window_close(qa_download_window *w);
 
-/* Synchronous HTTP(S) URL fetch into sink; url is a string. Aborts with
- * TS messages on protocol/status errors. Returns malloc'd digest. */
-char *qa_download_http(const char *url, qa_download_sink *sink);
-/* Returns malloc'd array of borrowed digest strings missing from available. */
-const char **qa_verify_pure_content(const char *const *required, size_t required_count,
-                                    const char *const *available, size_t available_count, size_t *out_count);
 #endif

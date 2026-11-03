@@ -23,6 +23,9 @@ void qa_qvm_read_player_state(const qa_qvm_writable_view *view, qa_qvm_abi_profi
 void qa_qvm_read_source_player_state(const qa_qvm_writable_view *view, qa_qvm_abi_profile profile, qa_q3_player_state *out);
 void qa_qvm_write_player_state(qa_qvm_writable_view *view, const qa_q3_player_state *state,
                                qa_qvm_abi_profile profile, const char *persistent_write);
+/* TS writeQvmPlayerState(..., unmapped): ignore_unmapped is "ignore" (client paths, remote values). */
+void qa_qvm_write_player_state_unmapped(qa_qvm_writable_view *view, const qa_q3_player_state *state,
+                                        qa_qvm_abi_profile profile, const char *persistent_write, bool ignore_unmapped);
 void qa_qvm_write_source_player_state(qa_qvm_writable_view *view, const qa_q3_player_state *state,
                                       qa_qvm_abi_profile profile);
 

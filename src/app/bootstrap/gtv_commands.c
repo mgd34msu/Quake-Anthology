@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/gtv-commands.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/gtv_commands.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <string.h>
 #include "qa/foundation/support.h"
@@ -52,7 +53,7 @@ bool qa_app_matches_gtv_disconnect(const char *const *args, size_t arg_count, co
   if (selected && (strcmp(selected, "-h") == 0 || strcmp(selected, "--help") == 0)) return false;
   if (!current) qa_range_error("No GTV connections.");
   if (!selected || strcmp(selected, "-a") == 0 || strcmp(selected, "--all") == 0) return true;
-  char id[64]; snprintf(id, sizeof id, "%.17g", current->id);
+  char id[64]; snprintf(id, sizeof id, "%s", QA_JS_NUMBER(current->id));
   if (strcmp(selected, id) == 0 || (current->label && strcmp(selected, current->label) == 0)) return true;
   qa_range_error("No such connection ID: %s", selected);
 }

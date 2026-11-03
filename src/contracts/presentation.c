@@ -1,33 +1,15 @@
 /* Port of src/contracts/presentation.ts (runtime helpers). GPL-2.0-or-later. */
 #include "qa/contracts/presentation.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Minimal JSON.stringify number formatting for the generation:
- * non-finite numbers stringify as null, -0 as 0, safe integers
- * exactly, other values with a round-tripping %g precision. JS
- * switches to exponent notation outside [1e-6, 1e21); exponents from
- * %g may differ cosmetically in that range (noted accommodation). */
+/* JSON.stringify number formatting: non-finite numbers are null, -0 is 0. */
 static void format_json_number(double value, char *buffer, size_t size) {
-  if (!isfinite(value)) {
-    (void)snprintf(buffer, size, "null");
-    return;
-  }
-  if (value == 0.0) {
-    (void)snprintf(buffer, size, "0");
-    return;
-  }
-  if (value == trunc(value) && fabs(value) <= 9007199254740991.0) {
-    (void)snprintf(buffer, size, "%lld", (long long)value);
-    return;
-  }
-  for (int precision = 15; precision <= 17; precision++) {
-    (void)snprintf(buffer, size, "%.*g", precision, value);
-    if (strtod(buffer, NULL) == value) return;
-  }
+  qa_net_json_number(value, buffer, size);
 }
 
 static size_t json_escaped_length(const char *text) {
@@ -81,7 +63,8 @@ char *qa_presentation_owner_key(const qa_presentation_owner *owner) {
   }
   char number[40];
   format_json_number(owner->generation, number, sizeof number);
-  size_t length = 2 + json_escaped_length(owner->provider) + 1 + strlen(number) + 1;
+  /* [" provider " , number ] */
+  size_t length = 2 + json_escaped_length(owner->provider) + 2 + strlen(number) + 1;
   char *out = (char *)malloc(length + 1);
   if (out == NULL) return NULL;
   char *cursor = out;

@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js_case.h"
 struct qa_app_client_download_permission { qa_cvar_registry *cvars; bool family_q3; };
 const char *qa_app_client_download_category_name(qa_app_client_download_category category) {
   switch (category) {
@@ -17,12 +18,10 @@ const char *qa_app_client_download_category_name(qa_app_client_download_category
   }
   return "picture";
 }
+/* TS path.toLowerCase() then a suffix test: Unicode lowering (U+212A lowers to 'k'). */
 static bool ends_with_ci(const char *s, size_t n, const char *suffix) {
-  size_t m = strlen(suffix);
-  if (n < m) return false;
-  for (size_t i = 0; i < m; i++)
-    if (tolower((unsigned char)s[n - m + i]) != suffix[i]) return false;
-  return true;
+  (void)n;
+  return qa_js_ends_with_ignore_case(s, suffix);
 }
 static bool starts_with_ci(const char *s, const char *prefix) {
   for (size_t i = 0; prefix[i]; i++)
@@ -48,14 +47,17 @@ qa_app_client_download_permission *qa_app_create_client_download_permission(
   double archive = family_q3 ? QA_CVAR_FLAG_ARCHIVE : QA_Q2_CVAR_FLAG_ARCHIVE;
   qa_cvar_snapshot registered;
   if (family_q3) {
-    qa_cvar_registry_register(cvars, "cl_allowDownload", "0", archive, &registered);
+    if (qa_cvar_registry_register(cvars, "cl_allowDownload", "0", archive, &registered)) qa_cvar_read_free(&registered);
     return p;
   }
-  qa_cvar_registry_register(cvars, "allow_download", "1", archive, &registered);
-  qa_cvar_registry_register(cvars, "cl_http_downloads", "1", archive, &registered);
+  if (qa_cvar_registry_register(cvars, "allow_download", "1", archive, &registered)) qa_cvar_read_free(&registered);
+  if (qa_cvar_registry_register(cvars, "cl_http_downloads", "1", archive, &registered)) qa_cvar_read_free(&registered);
+  /* Packages stay mounted in later sessions, so they have their own switch (on, as in Q2PRO). */
+  if (qa_cvar_registry_register(cvars, "cl_http_package_downloads", "1", archive, &registered)) qa_cvar_read_free(&registered);
   static const char *names[] = {"allow_download_maps", "allow_download_models",
     "allow_download_sounds", "allow_download_players"};
-  for (size_t i = 0; i < 4; i++) qa_cvar_registry_register(cvars, names[i], "1", archive, &registered);
+  for (size_t i = 0; i < 4; i++)
+    if (qa_cvar_registry_register(cvars, names[i], "1", archive, &registered)) qa_cvar_read_free(&registered);
   return p;
 }
 static bool category_allowed(qa_cvar_registry *cvars, qa_app_client_download_category category) {
@@ -84,7 +86,10 @@ bool qa_app_client_download_permitted(const qa_app_client_download_permission *p
     return value != 0;
   }
   return qa_cvar_registry_variable_value(cvars, "allow_download") > 0
-    && (transport != QA_APP_DL_HTTP || qa_cvar_registry_variable_value(cvars, "cl_http_downloads") != 0)
+    && (transport != QA_APP_DL_HTTP
+        || (qa_cvar_registry_variable_value(cvars, "cl_http_downloads") != 0
+            && (category != QA_APP_DL_PACKAGE
+                || qa_cvar_registry_variable_value(cvars, "cl_http_package_downloads") != 0)))
     && category_allowed(cvars, category);
 }
 void qa_app_client_download_permission_destroy(qa_app_client_download_permission *permission) { free(permission); }

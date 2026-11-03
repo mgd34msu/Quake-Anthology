@@ -27,15 +27,15 @@ static double snap_component(double value) {
 }
 
 bool qa_qvm_snap_vector_syscall(const char *role, const uint8_t *words, size_t words_length,
-                                qa_qvm_memory *memory, int32_t *out) {
+                                const qa_qvm_game_memory *memory, int32_t *out) {
   bool game = strcmp(role, "game") == 0;
   if (strcmp(role, "ui") == 0) return false;
   if (word_i32(words, words_length, 0) != (game ? 42 : 71)) return false;
-  qa_qvm_memory_span pointer;
-  if (!qa_qvm_memory_pointer(memory, word_i32(words, words_length, 4), &pointer))
+  qa_qvm_game_region pointer;
+  if (!qa_qvm_game_memory_pointer(memory, word_i32(words, words_length, 4), &pointer))
     qa_range_error("QVM SnapVector requires a nonnull pointer");
   qa_qvm_writable_view vector;
-  qa_qvm_memory_data_view(memory, pointer.byte_offset, pointer.byte_length, &vector);
+  qa_qvm_game_memory_region_view(memory, &pointer, 0, -1, &vector);
   for (int64_t offset = 0; offset < 12; offset += 4) {
     double value = (double)qa_qvm_writable_view_get_float32(&vector, offset, true);
     qa_qvm_writable_view_set_float32(&vector, offset, snap_component(value), true);

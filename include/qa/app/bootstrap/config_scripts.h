@@ -44,6 +44,9 @@ typedef struct qa_app_console_script_files_options {
   bool (*mounted_resource)(void *ctx, const char *path, uint8_t **out_bytes, size_t *out_count);
   bool has_legacy_config; qa_app_legacy_console_config_sources legacy_config;
   const char *(*retire_mounted)(void *ctx);
+  /* C-only: frees the construction site's adapter storage when the files are
+   * destroyed (TS lets the closures go with the object). NULL when none. */
+  void (*release)(void *ctx); void *release_ctx;
 } qa_app_console_script_files_options;
 /* Malloc'd; caller frees (user_content_root NULL = TS undefined). */
 char *qa_app_console_config_root(const char *user_content_root);
@@ -66,4 +69,14 @@ bool qa_app_console_script_files_open_mounted(qa_app_console_script_files *files
 void qa_app_console_script_files_close(qa_app_console_script_files *files);
 /* TS write(): runs operation synchronously in call order; error or NULL. */
 const char *qa_app_console_script_files_write(qa_app_console_script_files *files, const char *(*operation)(void *ctx), void *ctx);
+/* TS sourceScriptReader(catalog, mounts, source): reads through mounts
+ * reordered to the source product chain (source, then each baseProduct),
+ * accepting only mounts owned by that chain. The reader borrows catalog
+ * and mounts; release it with qa_app_source_script_reader_destroy.
+ * Raises "Cyclic configuration source dependency: <source>". */
+struct qa_content_catalog;
+struct qa_content_mounted;
+qa_app_source_script_reader qa_app_source_script_reader_create(const struct qa_content_catalog *catalog,
+    struct qa_content_mounted *mounts, const char *source);
+void qa_app_source_script_reader_destroy(qa_app_source_script_reader reader);
 #endif

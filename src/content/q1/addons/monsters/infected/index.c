@@ -1,174 +1,214 @@
 /* Port of src/content/q1/addons/monsters/infected/index.ts.
- * GPL-2.0-or-later. */
+ * quakec_mg3/monsters/mg3_*_infected.qc. GPL-2.0-or-later. */
 #include "qa/content/q1/addons/monsters/infected/index.h"
+#include "qa/foundation/support.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/content/q1/addons/monsters/infected/species.h"
 #include "qa/content/q1/addons/monsters/startup.h"
-#include "qa/foundation/support.h"
+#include "qa/content/q1/base/provider.h"
+#include "../support.h"
 
-typedef struct infected_registry {
-  qa_q1am_context *context;
-  qa_q1am_infected *head, *tail;
-} infected_registry;
-static qa_q1am_infected *registry_get(infected_registry *r, qa_owned_actor actor) {
-  for (qa_q1am_infected *m = r->head; m; m = m->next)
-    if (qa_q1am_same_owned(m->base.entity->actor, actor)) return m;
+#define PREFIX QA_Q1AM_INFECTED_PREFIX
+
+typedef struct infected_spawn { qa_q1am_infected_registry *registry; const char *kind; } infected_spawn;
+struct qa_q1am_infected_registry {
+  qa_q1ad_context *context;
+  struct { qa_owned_actor actor; qa_q1am_infected *monster; } *entries; size_t count, capacity;
+  qa_q1am_infected **retired; size_t retired_count, retired_capacity;
+  infected_spawn spawns[4];
+  void *monster_callbacks;
+  int64_t release_subscription;
+  qa_q1_state_extension extension;
+  qa_q1am_infected_registry *next;
+};
+static qa_q1am_infected_registry *all_registries;
+
+static void *grow(void *items, size_t *capacity, size_t size) {
+  const size_t next = *capacity != 0 ? *capacity * 2 : 8;
+  void *grown = realloc(items, next * size);
+  if (grown == NULL) qa_range_error("out of memory");
+  *capacity = next;
+  return grown;
+}
+static void retire(qa_q1am_infected_registry *r, qa_q1am_infected *monster) {
+  if (r->retired_count == r->retired_capacity) r->retired = grow(r->retired, &r->retired_capacity, sizeof *r->retired);
+  r->retired[r->retired_count++] = monster;
+}
+qa_q1am_infected *qa_q1am_infected_registry_get(const qa_q1am_infected_registry *monsters, qa_owned_actor actor) {
+  for (size_t i = 0; i < monsters->count; i++)
+    if (qa_same_owned_actor(monsters->entries[i].actor, actor)) return monsters->entries[i].monster;
   return NULL;
 }
-static void registry_put(infected_registry *r, qa_q1am_infected *m) {
-  qa_q1am_infected *old = registry_get(r, m->base.entity->actor);
-  if (old == m) return;
-  if (old != NULL) {
-    qa_q1am_infected **link = &r->head;
-    while (*link && *link != old) link = &(*link)->next;
-    *link = old->next;
-    if (r->tail == old) r->tail = NULL;
-    free(old);
-  }
-  m->next = NULL;
-  if (r->tail) r->tail->next = m;
-  else r->head = m;
-  r->tail = m;
-}
-static void registry_delete(infected_registry *r, qa_owned_actor actor) {
-  qa_q1am_infected **link = &r->head;
-  while (*link) {
-    if (qa_q1am_same_owned((*link)->base.entity->actor, actor)) {
-      qa_q1am_infected *dead = *link;
-      *link = dead->next;
-      free(dead);
+static void registry_set(qa_q1am_infected_registry *r, qa_owned_actor actor, qa_q1am_infected *monster) {
+  for (size_t i = 0; i < r->count; i++)
+    if (qa_same_owned_actor(r->entries[i].actor, actor)) {
+      if (r->entries[i].monster != monster) retire(r, r->entries[i].monster);
+      r->entries[i].monster = monster;
       return;
     }
-    link = &(*link)->next;
-  }
+  if (r->count == r->capacity) r->entries = grow(r->entries, &r->capacity, sizeof *r->entries);
+  r->entries[r->count].actor = actor;
+  r->entries[r->count].monster = monster;
+  r->count++;
 }
-static void registry_clear(infected_registry *r) {
-  while (r->head) {
-    qa_q1am_infected *dead = r->head;
-    r->head = dead->next;
-    free(dead);
-  }
-  r->tail = NULL;
-}
-static qa_q1am_infected *replace_one(void *ctx, qa_q1am_actor *entity) {
-  infected_registry *r = ctx;
+/* TS replace(entity): a new controller for the entity, set in the map. */
+static qa_q1am_infected *replace(void *ctx, qa_q1_actor *entity) {
+  qa_q1am_infected_registry *r = ctx;
   qa_q1am_infected *value = malloc(sizeof *value);
-  if (!value) qa_range_error("Infected allocation failed");
-  qa_q1am_infected_replace replace = {r, replace_one};
-  qa_q1am_infected_init(value, r->context, entity, replace);
-  registry_put(r, value);
+  if (value == NULL || !qa_q1am_infected_init(value, r->context, entity, replace, r)) qa_range_error("out of memory");
+  registry_set(r, entity->actor, value);
   return value;
 }
-static qa_q1am_infected *require_infected(infected_registry *r, qa_q1am_actor *entity) {
-  qa_q1am_infected *m = registry_get(r, entity->actor);
-  if (m == NULL) qa_range_error("Missing MG3 infected source state");
-  return m;
+/* TS monster(entity). */
+static qa_q1am_infected *require(qa_q1am_infected_registry *r, qa_q1_actor *entity) {
+  qa_q1am_infected *value = qa_q1am_infected_registry_get(r, entity->actor);
+  if (value == NULL) qa_range_error("Missing MG3 infected source state");
+  return value;
 }
-static qa_q1am_monster *lookup(void *ctx, qa_q1am_actor *entity) {
-  return &require_infected(ctx, entity)->base;
+static qa_q1_base_monster *lookup(void *ctx, qa_q1_actor *entity) { return &require(ctx, entity)->base.base; }
+static void resurrect(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* TS (_game, entity) */
+  qa_q1am_infected_resurrect(require(ctx, entity));
 }
-static void on_release(void *ctx, qa_owned_actor actor) { registry_delete(ctx, actor); }
-static void resurrect_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
-  qa_q1am_infected_resurrect(require_infected(ctx, entity));
-}
-static bool kill_count_rule(void *ctx, qa_q1am_monster *value) {
-  infected_registry *r = ctx;
-  if (registry_get(r, value->entity->actor) == NULL ||
-      qa_q1am_actor_number(value->entity, "infected") != 1)
+static bool kill_count_rule(void *ctx, qa_q1_base_monster *value) {
+  qa_q1am_infected_registry *r = ctx;
+  if (qa_q1am_infected_registry_get(r, value->entity->actor) == NULL || qa_q1_actor_number(value->entity, "infected") != 1)
     return true;
-  r->context->set_number(r->context->ctx, value->entity, "infected", 0);
+  qa_q1ad_set_number(r->context, value->entity, "infected", 0);
   return false;
 }
-typedef struct spawn_ctx { infected_registry *registry; const char *kind; } spawn_ctx;
-static void spawn_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
-  spawn_ctx *state = ctx;
-  qa_q1am_actor_set_field(entity, "infected.kind", state->kind);
-  qa_q1am_infected *value = replace_one(state->registry, entity);
-  value->base.ops.spawn(&value->base);
+static void spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* TS (_game, entity) */
+  const infected_spawn *closure = ctx;
+  qa_q1am_field_text(entity, "infected.kind", closure->kind);
+  qa_q1_base_monster_spawn(&replace(closure->registry, entity)->base.base);
 }
-static uint8_t *capture_all(void *ctx, size_t *out_length) {
-  infected_registry *r = ctx;
+static void on_release(void *ctx, qa_owned_actor actor) {
+  qa_q1am_infected_registry *r = ctx;
+  for (size_t i = 0; i < r->count; i++)
+    if (qa_same_owned_actor(r->entries[i].actor, actor)) {
+      retire(r, r->entries[i].monster);
+      memmove(&r->entries[i], &r->entries[i + 1], (r->count - i - 1) * sizeof *r->entries);
+      r->count--;
+      return;
+    }
+}
+static void must(bool ok) { if (!ok) qa_range_error("out of memory"); }
+static void set_child(qa_save_value *object, const char *key, qa_save_value *child) {
+  must(child != NULL && qa_save_value_set(object, key, child));
+}
+static bool capture(void *ctx, uint8_t **out, size_t *out_length) {
+  qa_q1am_infected_registry *r = ctx;
   qa_save_value *list = qa_save_value_array();
-  for (qa_q1am_infected *m = r->head; m; m = m->next) {
+  if (list == NULL) return false;
+  for (size_t i = 0; i < r->count; i++) {
+    const qa_q1_base_monster *value = &r->entries[i].monster->base.base;
     qa_save_value *object = qa_save_value_object();
-    qa_save_value_set(object, "slot", qa_save_value_number((double)m->base.entity->actor.id.slot));
-    qa_save_value_set(object, "generation", qa_save_value_number((double)m->base.entity->actor.id.generation));
-    qa_save_value_set(object, "state", qa_q1am_monster_capture(&m->base));
-    qa_save_value_push(list, object);
+    must(object != NULL);
+    set_child(object, "slot", qa_save_value_number((double)value->entity->actor.id.slot));
+    set_child(object, "generation", qa_save_value_number((double)value->entity->actor.id.generation));
+    set_child(object, "state", qa_q1_base_monster_capture(value));
+    must(qa_save_value_push(list, object));
   }
-  uint8_t *bytes = qa_encode_checkpoint_value(list, out_length);
+  *out = qa_encode_checkpoint_value(list, out_length);
   qa_save_value_free(list);
-  return bytes;
+  return *out != NULL;
 }
-static void restore_all(void *ctx, const uint8_t *bytes, size_t length) {
-  infected_registry *r = ctx;
-  registry_clear(r);
-  qa_q1am_game *game = r->context->game;
+static double field_integer(const qa_save_reader *reader, const char *name) {
+  qa_save_reader value;
+  must(qa_save_reader_field(reader, name, &value));
+  const double result = qa_save_reader_integer_min(&value, 0);
+  qa_save_reader_destroy(&value);
+  return result;
+}
+static void q1_free_decoded_save(void *value) { qa_save_value_free(value); }
+static void restore(void *ctx, const uint8_t *bytes, size_t length) {
+  qa_q1am_infected_registry *r = ctx;
+  qa_q1_services *game = r->context->game;
+  for (size_t i = 0; i < r->count; i++) retire(r, r->entries[i].monster);
+  r->count = 0;
   qa_save_value *decoded = qa_decode_checkpoint_value(bytes, length);
+  qa_cleanup decoded_cleanup; /* a malformed save raises from the readers */
+  qa_cleanup_push(&decoded_cleanup, q1_free_decoded_save, decoded);
   qa_save_reader root;
-  qa_save_reader_init(&root, decoded, QA_Q1AM_INFECTED_PREFIX);
-  size_t count = qa_save_reader_list_count(&root);
+  must(qa_save_reader_init(&root, decoded, PREFIX));
+  const size_t count = qa_save_reader_list_count(&root);
   for (size_t i = 0; i < count; i++) {
-    qa_save_reader reader, slot, generation, state;
-    qa_save_reader_item(&root, i, &reader);
-    qa_save_reader_field(&reader, "slot", &slot);
-    qa_save_reader_field(&reader, "generation", &generation);
+    qa_save_reader reader, state;
+    must(qa_save_reader_item(&root, i, &reader));
+    qa_saved_actor_id saved;
+    saved.slot = field_integer(&reader, "slot");
+    saved.generation = field_integer(&reader, "generation");
     qa_owned_actor owner;
-    bool resolved = game->actors_resolve_saved(game->ctx, (int64_t)qa_save_reader_integer_min(&slot, 0),
-                                                (int64_t)qa_save_reader_integer_min(&generation, 0), &owner);
-    qa_save_reader_destroy(&slot);
-    qa_save_reader_destroy(&generation);
-    qa_q1am_actor *entity = resolved ? game->entity(game->ctx, true, owner.id) : NULL;
+    qa_q1_actor *entity = qa_session_actor_registry_resolve_saved(game->host.actors, saved, &owner)
+                              ? qa_q1_get_entity(game, &owner.id) : NULL;
     if (entity == NULL) qa_save_reader_fail(&reader, "missing infected actor");
-    qa_q1am_infected *value = replace_one(r, entity);
-    qa_save_reader_field(&reader, "state", &state);
-    qa_q1am_monster_restore(&value->base, &state);
+    qa_q1am_infected *value = replace(r, entity);
+    must(qa_save_reader_field(&reader, "state", &state));
+    qa_q1_base_monster_restore(&value->base.base, &state);
     qa_save_reader_destroy(&state);
     qa_save_reader_destroy(&reader);
   }
   qa_save_reader_destroy(&root);
+  qa_cleanup_pop(&decoded_cleanup);
   qa_save_value_free(decoded);
 }
-static void clone_one(void *ctx, qa_q1am_actor *source, qa_q1am_actor *target) {
-  infected_registry *r = ctx;
-  qa_q1am_infected *value = registry_get(r, source->actor);
+static void clone(void *ctx, qa_q1_actor *source, qa_q1_actor *target) {
+  qa_q1am_infected_registry *r = ctx;
+  qa_q1am_infected *value = qa_q1am_infected_registry_get(r, source->actor);
   if (value == NULL) return;
-  qa_q1am_infected *copy = replace_one(r, target);
-  qa_save_value *captured = qa_q1am_monster_capture(&value->base);
+  qa_save_value *captured = qa_q1_base_monster_capture(&value->base.base);
+  must(captured != NULL);
+  qa_q1am_infected *copy = replace(r, target);
   qa_save_reader reader;
-  qa_save_reader_init(&reader, captured, QA_Q1AM_INFECTED_PREFIX);
-  qa_q1am_monster_restore(&copy->base, &reader);
+  must(qa_save_reader_init(&reader, captured, PREFIX));
+  qa_q1_base_monster_restore(&copy->base.base, &reader);
   qa_save_reader_destroy(&reader);
   qa_save_value_free(captured);
 }
-qa_q1am_infected *qa_q1am_register_mg3_infected(qa_q1am_context *context) {
-  qa_q1am_game *game = context->game;
-  infected_registry *r = calloc(1, sizeof *r);
-  if (!r) qa_range_error("Infected allocation failed");
+qa_q1am_infected_registry *qa_q1am_register_mg3_infected(qa_q1ad_context *context) {
+  qa_q1_services *game = context->game;
+  qa_q1am_infected_registry *r = calloc(1, sizeof *r);
+  if (r == NULL) qa_range_error("out of memory");
   r->context = context;
-  qa_q1am_monster_lookup lookup_value = {r, lookup};
-  game->register_monster_callbacks(game->ctx, game, QA_Q1AM_INFECTED_PREFIX, lookup_value);
-  qa_q1am_register_mg3_monster_startup(game, QA_Q1AM_INFECTED_PREFIX, lookup_value);
-  qa_q1am_handlers handlers = {0};
+  r->next = all_registries;
+  all_registries = r;
+  r->monster_callbacks = qa_q1_register_monster_callbacks(game, PREFIX, lookup, r);
+  qa_q1am_register_mg3_monster_startup(game, PREFIX, lookup, r);
+  qa_q1_callback_handlers handlers;
+  memset(&handlers, 0, sizeof handlers);
   handlers.ctx = r;
-  handlers.action = resurrect_handler;
-  game->named_register(game->ctx, QA_Q1AM_INFECTED_PREFIX ":resurrect", handlers);
-  context->base->register_kill_count_rule(context->base->ctx, QA_Q1AM_INFECTED_PREFIX, kill_count_rule, r);
-  for (size_t i = 0; i < qa_q1am_infected_classname_count; i++) {
-    spawn_ctx *state = malloc(sizeof *state);
-    if (!state) qa_range_error("Infected allocation failed");
-    state->registry = r;
-    state->kind = qa_q1am_infected_classnames[i].kind;
-    game->register_spawn(game->ctx, qa_q1am_infected_classnames[i].classname, spawn_handler, state);
+  handlers.action = resurrect;
+  qa_q1_callback_registry_register(game->named, PREFIX ":resurrect", handlers);
+  qa_q1_base_register_kill_count_rule(context->base, PREFIX, kill_count_rule, r);
+  for (size_t i = 0; i < qa_q1am_infected_classname_count && i < 4; i++) {
+    r->spawns[i].registry = r;
+    r->spawns[i].kind = qa_q1am_infected_classnames[i].kind;
+    qa_q1_register_spawn(game, qa_q1am_infected_classnames[i].classname, spawn, &r->spawns[i]);
   }
-  game->actors_on_release(game->ctx, on_release, r);
-  qa_q1am_state_extension extension = {QA_Q1AM_INFECTED_PREFIX, r, capture_all, restore_all, clone_one};
-  game->register_state_extension(game->ctx, extension);
-  return r->head;
+  r->release_subscription = qa_session_actor_registry_on_release(game->host.actors, on_release, r);
+  r->extension.ctx = r;
+  r->extension.id = PREFIX;
+  r->extension.capture = capture;
+  r->extension.restore = restore;
+  r->extension.clone = clone;
+  qa_q1_register_state_extension(game, &r->extension);
+  return r;
+}
+void qa_q1am_release_mg3_infected(qa_q1_services *game) {
+  for (qa_q1am_infected_registry **link = &all_registries; *link != NULL;) {
+    qa_q1am_infected_registry *r = *link;
+    if (r->context->game != game) { link = &r->next; continue; }
+    *link = r->next;
+    qa_session_actor_registry_off_release(game->host.actors, r->release_subscription);
+    for (size_t i = 0; i < r->count; i++) qa_q1_base_monster_destroy(&r->entries[i].monster->base.base);
+    for (size_t i = 0; i < r->retired_count; i++) qa_q1_base_monster_destroy(&r->retired[i]->base.base);
+    free(r->entries);
+    free(r->retired);
+    free(r->monster_callbacks);
+    free(r);
+  }
 }

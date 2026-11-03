@@ -16,9 +16,11 @@
  *  - MenuParseFailure rides a setjmp stack inside the parser;
  *    fail() throws through qa_ui_script_fail_throw (aborts with
  *    the ScriptLanguageError text form when uncaught).
- *  - Definitions own their menus/items/scripts/references;
- *    qa_ui_menu_definitions_destroy frees them (allocation handles
- *    only; shared pool storage outlives handles, as in TS).
+ *  - Each load's definitions own everything that parse created:
+ *    menus, items, scripts, references and typeData handles. Pool
+ *    menu records are shared between reloads, so slots do not imply
+ *    ownership; generations may be destroyed in any order. Shared
+ *    pool storage outlives handles, as in TS.
  * Copyright (C) 1999-2005 Id Software, Inc. GPL-2.0-or-later.
  */
 #ifndef QA_UI_COMMON_LEGACY_MENU_H
@@ -98,6 +100,7 @@ struct qa_ui_resource_reference {
   qa_ui_resource_kind kind;
   char *path; /* owned */
   double point_size;
+  size_t refs; /* a reload inherits the previous generation's assets */
 };
 typedef qa_ui_resource_reference qa_ui_shader_reference;
 typedef qa_ui_resource_reference qa_ui_model_reference;
@@ -110,6 +113,9 @@ qa_ui_model_reference *qa_ui_model_reference_create(const char *path);
 qa_ui_sound_reference *qa_ui_sound_reference_create(const char *path);
 qa_ui_font_reference *qa_ui_font_reference_create(const char *path,
                                                   double point_size);
+qa_ui_resource_reference *qa_ui_resource_reference_retain(
+    qa_ui_resource_reference *reference);
+/* Releases one reference; the last release frees it. */
 void qa_ui_resource_reference_destroy(qa_ui_resource_reference *reference);
 
 /** TS UiScriptToken. */
@@ -392,6 +398,7 @@ struct qa_ui_menu_definition {
   qa_ui_script_location location;
 };
 
+/* Frees this view only: its items belong to the parse that created them. */
 void qa_ui_menu_definition_destroy(qa_ui_menu_definition *menu);
 
 double qa_ui_menu_source_index(qa_ui_menu_definition *menu);
@@ -497,6 +504,8 @@ typedef struct qa_ui_menu_memory_ownership {
   qa_ui_team_arena_memory *memory;
 } qa_ui_menu_memory_ownership;
 
+typedef struct qa_ui_menu_ownership qa_ui_menu_ownership;
+
 /** TS UiMenuDefinitions. Owned; destroy frees everything but the
  * borrowed memory owner. */
 typedef struct qa_ui_menu_definitions {
@@ -512,6 +521,7 @@ typedef struct qa_ui_menu_definitions {
   qa_ui_menu_registration_event *registration_events;
   size_t registration_event_count;
   bool font_registered;
+  qa_ui_menu_ownership *ownership;
 } qa_ui_menu_definitions;
 
 void qa_ui_menu_definitions_destroy(qa_ui_menu_definitions *definitions);
@@ -564,13 +574,6 @@ typedef struct qa_ui_menu_parse_host {
 /** TS UiMenuResolvedParseHost (loadMenuDefinitions host shape). */
 typedef qa_ui_menu_parse_host qa_ui_menu_resolved_parse_host;
 
-/** TS UiMenuDefinitionSink. */
-typedef struct qa_ui_menu_definition_sink {
-  void *ctx;
-  double (*menu_count)(void *ctx);
-  void (*publish)(void *ctx, qa_ui_menu_definition *menu);
-} qa_ui_menu_definition_sink;
-
 /** TS UiMenuParseOptions. has_* flags mark TS-present fields;
  * sink pointers NULL is TS undefined. */
 typedef struct qa_ui_menu_parse_options {
@@ -583,25 +586,16 @@ typedef struct qa_ui_menu_parse_options {
   const qa_ui_global_assets *initial_assets;
   bool has_initial_font_registered;
   bool initial_font_registered;
-  const qa_ui_menu_definition_sink *menu_sink;
   qa_ui_script_report_fn report_diagnostic;
   void *report_diagnostic_ctx;
 } qa_ui_menu_parse_options;
 
-/** TS UiMenuLoadPlan. set_paths borrowed (ui); set_path (hud). */
-typedef enum qa_ui_menu_load_plan_kind {
-  QA_UI_LOAD_PLAN_UI,  /* "ui" */
-  QA_UI_LOAD_PLAN_HUD  /* "hud" */
-} qa_ui_menu_load_plan_kind;
-
+/** TS UiMenuLoadPlan: only the HUD form { kind: "hud", setPath } remains
+ * (the "ui" menus.txt/ingame.txt plan was dropped); set_path borrowed. */
 typedef struct qa_ui_menu_load_plan {
-  qa_ui_menu_load_plan_kind kind;
-  const char *const *set_paths;
-  size_t set_path_count;
   const char *set_path;
 } qa_ui_menu_load_plan;
 
-qa_ui_menu_load_plan qa_ui_default_menu_plan(void);
 qa_ui_menu_load_plan qa_ui_default_hud_menu_plan(void);
 
 /** TS UiMenuTokenSource. next false is TS undefined. */
@@ -654,12 +648,10 @@ void qa_ui_menu_source_parser_load(qa_ui_menu_source_parser *parser,
                                    qa_ui_menu_definitions *out);
 /* TS parseSource over a text source. */
 void qa_ui_menu_source_parser_parse_source(
-    qa_ui_menu_source_parser *parser, const qa_ui_script_source *source,
-    bool hud);
+    qa_ui_menu_source_parser *parser, const qa_ui_script_source *source);
 /* TS parseSource over an open cursor (takes ownership). */
 void qa_ui_menu_source_parser_parse_cursor(
-    qa_ui_menu_source_parser *parser, qa_ui_menu_token_cursor *cursor,
-    bool hud);
+    qa_ui_menu_source_parser *parser, qa_ui_menu_token_cursor *cursor);
 
 /** TS loadMenuDefinitions. Zero options select TS defaults. */
 void qa_ui_load_menu_definitions(

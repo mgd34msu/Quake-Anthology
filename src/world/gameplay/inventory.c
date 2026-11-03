@@ -1,5 +1,6 @@
 /* Port of src/world/gameplay/inventory.ts. GPL-2.0-or-later. */
 #include "qa/world/gameplay/inventory.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdnoreturn.h>
@@ -10,8 +11,7 @@
 #include "qa/foundation/support.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static noreturn void qa_retired(void) {
   fprintf(stderr, "Error: %s\n", QA_SOURCE_ITEM_RETIRED_MESSAGE);
@@ -60,7 +60,7 @@ static double source_count(qa_inventory_entry entry, double value) {
     if (!isfinite(rounded)) qa_range_error("Inventory counter exceeds binary32 range");
     return rounded;
   }
-  if (str_eq(entry.count_policy.arithmetic, "int32")) return (double)(int32_t)value;
+  if (str_eq(entry.count_policy.arithmetic, "int32")) return (double)qa_js_to_int32(value);
   return value; /* binary64 */
 }
 static qa_inventory_entry copy_entry(qa_inventory_entry entry) {
@@ -71,8 +71,8 @@ static qa_inventory_entry copy_entry(qa_inventory_entry entry) {
 
 qa_inventory_give_transition qa_inventory_give(qa_inventory_entry entry, double count) {
   (void)quantity(count);
-  double room = entry.capacity - entry.count;
-  double given = count < (room > 0 ? room : 0) ? count : (room > 0 ? room : 0);
+  /* Math.min(count, Math.max(0, capacity - count)): NaN propagates. */
+  double given = qa_js_min(count, qa_js_max(0, entry.capacity - entry.count));
   qa_inventory_give_transition transition;
   transition.is_write = false;
   transition.entry = entry;
@@ -140,18 +140,21 @@ struct qa_shared_inventory_table {
   size_t scratch_groups_capacity;
   qa_current_original_pickup *scratch_matches;
   size_t scratch_matches_capacity;
-  void **owned_states; /* heap closure states freed at destroy */
+  struct owned_state { void *ptr; void (*release)(void *ptr); } *owned_states; /* heap closure states released at destroy */
   size_t owned_count, owned_capacity;
 };
 
-static void own_state(qa_shared_inventory_table *table, void *ptr) {
+static void own_state_with(qa_shared_inventory_table *table, void *ptr, void (*release)(void *ptr)) {
   if (table->owned_count == table->owned_capacity) {
     table->owned_capacity = table->owned_capacity != 0 ? table->owned_capacity * 2 : 16;
     table->owned_states = xrealloc(table->owned_states,
                                    table->owned_capacity * sizeof *table->owned_states);
   }
-  table->owned_states[table->owned_count++] = ptr;
+  table->owned_states[table->owned_count].ptr = ptr;
+  table->owned_states[table->owned_count].release = release;
+  table->owned_count++;
 }
+static void own_state(qa_shared_inventory_table *table, void *ptr) { own_state_with(table, ptr, free); }
 
 static inv_store *find_store(qa_shared_inventory_table *table, qa_owned_actor actor) {
   for (size_t i = 0; i < table->store_count; i++) {
@@ -187,10 +190,13 @@ static void free_pickups(bound_pickups *binding) {
   free(binding->items);
   free(binding);
 }
+/* Groups and pickup bindings are table-owned (released at table destroy): a
+ * lease, item action or pickup `current` closure keeps reading them after a
+ * close, unbind or actor release, as TS closures keep their objects. */
+static void free_group_owned(void *ptr) { free_group(ptr); }
+static void free_pickups_owned(void *ptr) { free_pickups(ptr); }
 static void free_store(inv_store *store) {
   if (store == NULL) return;
-  for (size_t i = 0; i < store->group_count; i++) free_group(store->groups[i]);
-  for (size_t i = 0; i < store->pickup_count; i++) free_pickups(store->pickups[i]);
   free(store->groups);
   free(store->item_keys);
   free(store->item_groups);
@@ -231,7 +237,7 @@ void qa_shared_inventory_table_destroy(qa_shared_inventory_table *table) {
   qa_session_actor_registry_off_release(table->actors, table->release_subscription);
   for (size_t i = 0; i < table->store_count; i++) free_store(table->stores[i]);
   free(table->stores);
-  for (size_t i = 0; i < table->owned_count; i++) free(table->owned_states[i]);
+  for (size_t i = 0; i < table->owned_count; i++) table->owned_states[i].release(table->owned_states[i].ptr);
   free(table->owned_states);
   qa_mod_operation_destroy(&table->give_op);
   qa_mod_operation_destroy(&table->consume_op);
@@ -461,7 +467,6 @@ static void lease_close(void *ctx) {
         delegate = true;
     }
     if (delegate) {
-      free_pickups(store->pickups[p]);
       memmove(&store->pickups[p], &store->pickups[p + 1],
               (store->pickup_count - p - 1) * sizeof *store->pickups);
       store->pickup_count--;
@@ -476,10 +481,6 @@ static void lease_close(void *ctx) {
       store->item_count--;
     } else i++;
   }
-  /* The group struct itself is freed with the store (no longer listed);
-   * retain it dangling-free by leaking to table-owned states is wrong:
-   * free it now that maps no longer reference it. */
-  free_group(group);
 }
 
 qa_source_item_lease qa_shared_inventory_table_bind_items(qa_shared_inventory_table *table,
@@ -493,6 +494,7 @@ qa_source_item_lease qa_shared_inventory_table_bind_items(qa_shared_inventory_ta
   const qa_inventory_entry *primary = store->primary.read(store->primary.ctx, &primary_count);
   char message[2048];
   bound_items *group = xcalloc(sizeof *group);
+  own_state_with(table, group, free_group_owned);
   group->count = requested.item_count;
   group->owner = requested.owner;
   group->state = requested.state;
@@ -790,6 +792,7 @@ int64_t qa_shared_inventory_table_bind_pickup(qa_shared_inventory_table *table,
     }
   }
   bound_pickups *binding = xcalloc(sizeof *binding);
+  own_state_with(table, binding, free_pickups_owned);
   binding->id = ++table->next_pickup_id;
   binding->owner = requested.owner;
   binding->rules = rules;
@@ -810,7 +813,6 @@ void qa_shared_inventory_table_unbind_pickup(qa_shared_inventory_table *table,
   if (store == NULL) return;
   for (size_t i = 0; i < store->pickup_count; i++) {
     if (store->pickups[i]->id == binding_id) {
-      free_pickups(store->pickups[i]);
       memmove(&store->pickups[i], &store->pickups[i + 1],
               (store->pickup_count - i - 1) * sizeof *store->pickups);
       store->pickup_count--;
@@ -911,7 +913,10 @@ qa_original_pickup_resolution qa_shared_inventory_table_resolve_pickup(
   return resolution;
 }
 
-/* Local create() binding. */
+/* Local create() binding. TS ItemId strings are values the table's Map
+ * keeps, so the local binding owns a copy of each item id: written once
+ * when the item first enters, kept when the entry is replaced, freed with
+ * the binding. Callers may pass ids of any lifetime. */
 typedef struct local_items {
   qa_inventory_entry *entries;
   size_t count, capacity;
@@ -921,19 +926,38 @@ static const qa_inventory_entry *local_read(void *ctx, size_t *out_count) {
   *out_count = items->count;
   return items->entries;
 }
+static char *own_item_id(qa_item_id item) {
+  const size_t length = strlen(item) + 1;
+  char *copy = malloc(length);
+  if (copy == NULL) abort();
+  memcpy(copy, item, length);
+  return copy;
+}
 static void local_write(void *ctx, qa_inventory_entry entry) {
   local_items *items = ctx;
   for (size_t i = 0; i < items->count; i++) {
     if (str_eq(items->entries[i].item, entry.item)) {
+      const qa_item_id owned = items->entries[i].item;
       items->entries[i] = copy_entry(entry);
+      items->entries[i].item = owned;
       return;
     }
   }
+  const qa_inventory_entry copied = copy_entry(entry);
   if (items->count == items->capacity) {
     items->capacity = items->capacity != 0 ? items->capacity * 2 : 8;
     items->entries = xrealloc(items->entries, items->capacity * sizeof *items->entries);
   }
-  items->entries[items->count++] = copy_entry(entry);
+  items->entries[items->count] = copied;
+  items->entries[items->count].item = own_item_id(entry.item);
+  items->count++;
+}
+/* A local binding owns its entry array and item ids (TS GC). */
+static void local_release(void *ptr) {
+  local_items *items = ptr;
+  for (size_t i = 0; i < items->count; i++) free((void *)items->entries[i].item);
+  free(items->entries);
+  free(items);
 }
 static bool local_mutable(void *ctx, qa_item_id item) {
   (void)ctx;
@@ -945,7 +969,7 @@ void qa_shared_inventory_table_create_entries(qa_shared_inventory_table *table,
                                               const qa_inventory_entry *entries,
                                               size_t entry_count) {
   local_items *items = xcalloc(sizeof *items);
-  own_state(table, items);
+  own_state_with(table, items, local_release);
   for (size_t i = 0; i < entry_count; i++) {
     for (size_t j = 0; j < i; j++) {
       if (str_eq(entries[i].item, entries[j].item))
@@ -1085,9 +1109,13 @@ static void configure_canonical_impl(qa_shared_inventory_table *table, qa_owned_
       store_read(table, actor, store, &count, &table->scratch, &table->scratch_capacity);
   bool has_previous = false;
   qa_inventory_entry previous;
+  memset(&previous, 0, sizeof previous);
   for (size_t i = 0; i < count; i++) {
     if (str_eq(entries[i].item, entry.item)) { has_previous = true; previous = entries[i]; break; }
   }
+  /* `before` is copied before the write (copyEntry can throw first). */
+  qa_inventory_entry before_copy = previous;
+  if (committed != NULL && has_previous) before_copy = copy_entry(previous);
   qa_inventory_entry value = entry;
   if (!value.has_count_policy && has_previous && previous.has_count_policy) {
     value.has_count_policy = true;
@@ -1110,7 +1138,7 @@ static void configure_canonical_impl(qa_shared_inventory_table *table, qa_owned_
     qa_inventory_committed_change change;
     change.actor = actor;
     change.has_before = has_previous;
-    if (has_previous) change.before = copy_entry(previous);
+    if (has_previous) change.before = before_copy;
     change.after = copy_entry(after);
     committed(committed_ctx, change);
   }
@@ -1131,7 +1159,9 @@ static double adjust_canonical(qa_shared_inventory_table *table, qa_inventory_ad
   if (!found || !entry.has_count_policy || !str_eq(entry.count_policy.kind, "source-counter"))
     qa_error("Item is not a signed source counter");
   qa_inventory_entry next = entry;
-  next.count = source_count(entry, entry.count) + source_count(entry, request.delta);
+  double current = source_count(entry, entry.count); /* left operand first */
+  double delta = source_count(entry, request.delta);
+  next.count = current + delta;
   next = copy_entry(next);
   store_write(table, request.actor, store, next);
   return next.count;

@@ -9,8 +9,10 @@ typedef struct binding {
   qa_command_buffer *buffer;
   qa_command_handler_fn handlers[7];
   const char *names[7];
+  void *contexts[7]; /* each registered handler's ctx (TS closure), freed when its command is unregistered */
   size_t count;
   bool has_timedemo;
+  void *timedemo_context;
   struct binding *next;
 } binding;
 typedef struct token_row { const void *token; bool completed; qa_command_context source; } token_row;
@@ -161,11 +163,15 @@ static void binding_refresh(qa_app_client_demo_commands *commands, binding *bind
     qa_command_documentation doc = {"Benchmark a Quake recording.", "timedemo <name>", NULL, 0, NULL, 0};
     static const char *const examples[] = {"timedemo demo1"};
     doc.examples = examples; doc.example_count = 1;
-    if (qa_command_buffer_register(bind->buffer, "timedemo", demo_handler, ctx, &doc, QA_COMMAND_WORLD)) bind->has_timedemo = true;
-    else { commands->host.print(commands->host.ctx, "Demo command timedemo is already owned by another command.\n"); free(ctx); }
+    if (qa_command_buffer_register(bind->buffer, "timedemo", demo_handler, ctx, &doc, QA_COMMAND_WORLD)) {
+      bind->has_timedemo = true;
+      bind->timedemo_context = ctx;
+    } else { commands->host.print(commands->host.ctx, "Demo command timedemo is already owned by another command.\n"); free(ctx); }
   } else if (!want && bind->has_timedemo) {
     qa_command_buffer_unregister(bind->buffer, "timedemo", NULL, NULL, false);
     bind->has_timedemo = false;
+    free(bind->timedemo_context);
+    bind->timedemo_context = NULL;
   }
 }
 void *qa_app_client_demo_commands_attach(qa_app_client_demo_commands *commands, qa_command_buffer *buffer) {
@@ -193,6 +199,7 @@ void *qa_app_client_demo_commands_attach(qa_app_client_demo_commands *commands, 
     qa_command_documentation doc = {rows[i].summary, rows[i].usage, examples_storage, 1, NULL, 0};
     if (qa_command_buffer_register(buffer, rows[i].name, demo_handler, ctx, &doc, QA_COMMAND_WORLD)) {
       bind->handlers[bind->count] = demo_handler;
+      bind->contexts[bind->count] = ctx;
       bind->names[bind->count++] = rows[i].name;
     } else {
       char text[256];
@@ -209,8 +216,12 @@ void *qa_app_client_demo_commands_attach(qa_app_client_demo_commands *commands, 
 }
 void qa_app_client_demo_commands_detach(qa_app_client_demo_commands *commands, void *handle) {
   binding *bind = handle;
-  for (size_t i = 0; i < bind->count; i++) qa_command_buffer_unregister(bind->buffer, bind->names[i], bind->handlers[i], NULL, false);
+  for (size_t i = 0; i < bind->count; i++) {
+    qa_command_buffer_unregister(bind->buffer, bind->names[i], bind->handlers[i], NULL, false);
+    free(bind->contexts[i]);
+  }
   if (bind->has_timedemo) qa_command_buffer_unregister(bind->buffer, "timedemo", NULL, NULL, false);
+  free(bind->timedemo_context);
   binding **cursor = &commands->bindings;
   while (*cursor && *cursor != bind) cursor = &(*cursor)->next;
   if (*cursor) *cursor = bind->next;
@@ -261,7 +272,11 @@ static qa_app_demo_client_state local_current(void *ctx, bool has_source, qa_com
   return (qa_app_demo_client_state){"local", family, false, NULL, {family, NULL, false}};
 }
 static void local_stage(void *ctx, qa_app_client_demo_intent intent) {
-  (void)ctx;
+  qa_app_client_demo_commands *commands = ctx;
+  if (commands->local_host.dedicated) {
+    commands->local_host.print(commands->local_host.ctx, "Demo playback is not available on a dedicated server.\n");
+    return;
+  }
   if (strcmp(intent.kind, "start") == 0)
     qa_range_error("Demo playback (%s) requires the graphical launcher; this application owns a local game.", intent.request.name);
   qa_range_error("Stopping demo playback requires its retained client owner.");

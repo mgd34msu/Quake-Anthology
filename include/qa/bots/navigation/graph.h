@@ -7,6 +7,16 @@
 #include "qa/bots/navigation/types.h"
 qa_travel_mode qa_aas_travel_mode(int64_t type);
 qa_travel_mode qa_kex_travel_mode(int64_t type);
+/* Source travel type numbers that code outside the mode tables has to name. */
+enum {
+  QA_AAS_TRAVEL_BARRIERJUMP = 4,
+  QA_KEX_TRAVEL_BARRIER_JUMP = 5,
+  QA_KEX_TRAVEL_ELEVATOR = 6,
+  QA_KEX_TRAVEL_TRAIN = 7
+};
+/* TS navigationEdgeIsBarrierJump: AAS numbers barrier jumps 4 and jumps 5; the Kex NAV tables number
+ * them the other way round. */
+bool qa_navigation_edge_is_barrier_jump(const qa_navigation_edge *edge);
 int64_t qa_aas_travel_flag(int64_t type);
 int64_t qa_aas_area_travel_flags(int64_t contents, int64_t flags);
 /* Clusters own their node arrays; caller frees each list's nodes + array. */

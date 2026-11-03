@@ -1,13 +1,18 @@
 /* Port of src/world/collision/contents.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/contents.h"
+#include "qa/foundation/js.h"
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 static int fam(qa_collision_family f){return f&&strcmp(f,"q1")==0?1:f&&strcmp(f,"q2")==0?2:3;}
-static int32_t bits32(double v){return (int32_t)(uint32_t)v;}
+/* The `&` operands: ToInt32 (NaN to 0, wraps modulo 2^32). */
+static int32_t bits32(double v){return qa_js_to_int32(v);}
 double qa_convert_contents(double contents,qa_collision_family from,qa_collision_family to){
   int F=fam(from),T=fam(to);
   if(F==T)return contents;
   if(F==1){
+    /* TS switch compares with ===: a fraction or NaN matches no case. */
+    if(!(contents==trunc(contents)&&fabs(contents)<16))return 0;
     int64_t c=(int64_t)contents;
     switch(c){
       case -2:return 1; case -3:return 32; case -4:return 16; case -5:return 8; case -6:return 1;
@@ -44,6 +49,8 @@ bool qa_contents_block(double contents,qa_collision_family family,qa_trace_polic
 }
 bool qa_blocks_q1_contents(double c,qa_trace_policy p){return qa_contents_block(c,"q1",p);}
 double qa_geometry_mask(qa_trace_policy policy,qa_collision_family family){
+  /* policy.contentsMask | 0 when the policy already speaks the geometry's namespace. */
+  if(policy.kind&&family&&strcmp(policy.kind,family)==0)return (double)qa_js_to_int32(policy.contents_mask);
   int32_t mask=0;
   for(int bit=0;bit<32;bit++){int32_t flag=(int32_t)(1u<<bit); if(bit==31)flag=(-2147483647-1);
     if(qa_contents_block((double)flag,family,policy))mask|=flag;}
@@ -60,7 +67,16 @@ static qa_bsp_plane plane_with_type(qa_trace_result r){
 }
 static qa_q2_surface_info sky_surf={"sky",4,0,""};
 static qa_q2_surface_info empty_surf={"",0,0,""};
-static qa_q2_surface_info q3_surf={"",0,0,""};
+/* TS builds a fresh {name:"", flags: convertSurfaceFlags(q3, "q3", "q2")} per trace. Those
+ * flags are (q3 & 0x86), so one immutable surface per combination stands in for the fresh
+ * object: a shared mutable static would change surfaces already handed to earlier traces. */
+static const qa_q2_surface_info q3_surfs[8]={
+  {"",0x00,0,""},{"",0x02,0,""},{"",0x04,0,""},{"",0x06,0,""},
+  {"",0x80,0,""},{"",0x82,0,""},{"",0x84,0,""},{"",0x86,0,""}};
+static const qa_q2_surface_info *q3_surface(double q2_flags){
+  int32_t f=bits32(q2_flags);
+  return &q3_surfs[((f&0x80)?4:0)|((f&0x06)>>1)];
+}
 qa_trace_result qa_adapt_trace_result_ex(qa_trace_result r,qa_trace_policy policy,bool has_q1c,double q1c){
   if(r.kind&&policy.kind&&strcmp(r.kind,policy.kind)==0)return r;
   qa_trace_result o=r;
@@ -73,14 +89,15 @@ qa_trace_result qa_adapt_trace_result_ex(qa_trace_result r,qa_trace_policy polic
   o.kind=policy.kind;
   if(policy.kind&&strcmp(policy.kind,"q1")==0){
     double sf=rk==2?(r.surface?r.surface->flags:0):rk==3?(r.has_surface_flags?r.surface_flags:0):0;
-    if(rk==2&&(((uint32_t)bits32(r.contents))&0x20000000u))sf=(double)(bits32(sf)|8);
+    /* TS `(flags) | (ladder ? 8 : 0)`: the `|` applies ToInt32 to every value. */
+    sf=(double)(bits32(sf)|((rk==2&&(((uint32_t)bits32(r.contents))&0x20000000u))?8:0));
     o.has_surface_flags=true;o.surface_flags=sf;o.in_open=!r.all_solid;
     o.in_water=((bits32(native)&56)!=0);o.source_plane_q1=sp.plane;o.source_plane=sp;o.contents=native;
     return o;
   }
   if(policy.kind&&strcmp(policy.kind,"q2")==0){
     int sky=rk==1&&(native==-6||(r.has_surface_flags&&((bits32(r.surface_flags)&4)!=0)));
-    if(rk==3){q3_surf.flags=qa_convert_surface_flags(r.has_surface_flags?r.surface_flags:0,"q3","q2");o.surface=&q3_surf;}
+    if(rk==3)o.surface=q3_surface(qa_convert_surface_flags(r.has_surface_flags?r.surface_flags:0,"q3","q2"));
     else if(sky)o.surface=&sky_surf;
     else o.surface=r.hit.kind!=QA_TRACE_HIT_NONE?&empty_surf:NULL;
     double ladder=(rk==3&&r.has_surface_flags&&((bits32(r.surface_flags)&8)!=0))?0x20000000:0;
@@ -111,3 +128,5 @@ double qa_convert_surface_flags(double flags,qa_collision_family from,qa_collisi
   int32_t f=bits32(flags);
   return (double)((f&0x86)|(F==2&&T==3&&((f&4)!=0)?16:0));
 }
+/* cmodel.c's nullsurface: what every Q2 trace reports when no textured brush side was hit. */
+const qa_q2_surface_info qa_q2_null_surface = { "", 0, 0, "" };

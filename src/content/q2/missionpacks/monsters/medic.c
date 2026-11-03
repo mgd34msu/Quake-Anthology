@@ -13,6 +13,8 @@
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/spawn.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_medic.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
+#include "qa/foundation/js.h"
 
 static const qa_vec3 cable_offsets[] = {
   {45, -9.2, 15.5}, {48.4, -9.7, 15.2}, {47.8, -9.8, 15.8}, {47.3, -9.3, 14.3}, {45.4, -10.1, 13.1},
@@ -34,12 +36,12 @@ typedef struct medic_bundle {
 } medic_bundle;
 
 bool qa_q2mpm_pick_rogue_coop_target(qa_q2m_context *context, qa_actor_id *out) {
-  qa_q2f_game *game = context->game;
-  if (strcmp(game->options.mode, "coop") != 0) return false;
+  qa_q2_game_services *game = context->game;
+  if (game->options.mode != QA_Q2_MODE_COOP) return false;
   size_t player_count = 0;
   const qa_actor_id *all = game->host->players(game->host->ctx, &player_count);
   qa_actor_id *players = malloc((player_count ? player_count : 1) * sizeof *players);
-  if (!players) qa_q2f_error("Out of memory picking coop target");
+  if (!players) qa_raise("Error", 0, 0, "Out of memory picking coop target");
   size_t count = 0;
   for (size_t i = 0; i < player_count; i++) {
     qa_actor_id actor = all[i];
@@ -47,7 +49,7 @@ bool qa_q2mpm_pick_rogue_coop_target(qa_q2m_context *context, qa_actor_id *out) 
       players[count++] = actor;
   }
   if (count == 0) { free(players); return false; }
-  double pick = fmin((double)count - 1, floor(q2mpm_rnd(game) * (double)count));
+  double pick = qa_js_min((double)count - 1, floor(q2mpm_rnd(game) * (double)count));
   *out = q2mpm_at_a(players, count, pick);
   free(players);
   return true;
@@ -60,19 +62,19 @@ static void medic_sound(qa_q2m_context *c, const char *normal, const char *comma
   q2mpm_snd4(c, buffer, channel, 1, attenuation);
 }
 static void heal_cleanup(medic_bundle *bundle, qa_q2m_context *c, bool change_frame) {
-  qa_q2f_entity *target = c->entity->has_enemy ? c->game->entity(c->game->ctx, &c->entity->enemy) : NULL;
+  qa_q2_entity *target = c->entity->has_enemy ? c->game->entity(c->game->ctx, &c->entity->enemy) : NULL;
   if (target) qa_q2mpm_cleanup_rogue_heal_target(bundle->monsters, bundle->source, target, c->game);
   if (change_frame) c->state->next_frame = qa_q2mpm_rogue_medic_frames_value.attack52;
 }
 static void heal_abort(medic_bundle *bundle, qa_q2m_context *c, bool change_frame, bool gib, bool mark) {
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   heal_cleanup(bundle, c, change_frame);
-  qa_q2f_entity *target = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+  qa_q2_entity *target = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
   if (target && mark) {
     qa_q2mpm_rogue_state *patient = qa_q2mpm_state_get(bundle->source, target);
-    qa_q2f_entity *previous = patient->has_bad_medic1 ? game->entity(game->ctx, &patient->bad_medic1) : NULL;
+    qa_q2_entity *previous = patient->has_bad_medic1 ? game->entity(game->ctx, &patient->bad_medic1) : NULL;
     if (previous && strncmp(previous->classname, "monster_medic", 13) == 0) {
       patient->has_bad_medic2 = true;
       patient->bad_medic2 = entity->actor.id;
@@ -96,41 +98,43 @@ static void heal_abort(medic_bundle *bundle, qa_q2m_context *c, bool change_fram
   }
   qa_q2mpm_state_get(bundle->source, entity)->medic_tries = 0;
 }
-static qa_q2f_entity *find_dead(medic_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_entity *best = NULL;
+static qa_q2_entity *find_dead(medic_bundle *bundle, qa_q2m_context *c) {
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_entity *best = NULL;
   size_t count = 0;
   const qa_actor_id *nearby = game->host->nearby(game->host->ctx, q2mpm_body(game, entity).origin,
                                                  c->state->stand_ground ? 400 : 1024, &count);
-  qa_q2f_think_result flies_on = game->source_callbacks.think_resolve(game->source_callbacks.ctx, "M_FliesOn");
-  qa_q2f_think_result flies_off = game->source_callbacks.think_resolve(game->source_callbacks.ctx, "M_FliesOff");
+  bool has_flies_on = false; qa_q2_think flies_on = qa_q2_think_resolve(game->source_callbacks, "M_FliesOn", &has_flies_on);
+  bool has_flies_off = false; qa_q2_think flies_off = qa_q2_think_resolve(game->source_callbacks, "M_FliesOff", &has_flies_off);
   for (size_t i = 0; i < count; i++) {
     qa_actor_id actor = nearby[i];
-    qa_q2f_entity *target = game->entity(game->ctx, &actor);
+    qa_q2_entity *target = game->entity(game->ctx, &actor);
     qa_q2m_context *candidate = qa_q2m_monsters_context(bundle->monsters, actor);
-    if (!target || target == entity || ((uint32_t)target->server_flags & 4u) == 0
+    if (!target || target == entity || (qa_js_to_uint32(target->server_flags) & 4u) == 0
         || (candidate && candidate->state->good_guy) || strncmp(target->classname, "player", 6) == 0) continue;
     qa_q2mpm_rogue_state *patient = qa_q2mpm_state_get(bundle->source, target);
-    qa_q2f_entity *healer = patient->has_healer ? game->entity(game->ctx, &patient->healer) : NULL;
+    qa_q2_entity *healer = patient->has_healer ? game->entity(game->ctx, &patient->healer) : NULL;
     bool bad_medic = (patient->has_bad_medic1 && qa_same_actor(patient->bad_medic1, entity->actor.id))
         || (patient->has_bad_medic2 && qa_same_actor(patient->bad_medic2, entity->actor.id));
     bool busy_healer = healer && qa_q2m_health(game, &healer->actor.id) > 0
-        && ((uint32_t)healer->server_flags & 4u) != 0
+        && (qa_js_to_uint32(healer->server_flags) & 4u) != 0
         && (qa_q2m_monsters_context(bundle->monsters, healer->actor.id) != NULL
             && qa_q2m_monsters_context(bundle->monsters, healer->actor.id)->state->medic);
     if (bad_medic || busy_healer) continue;
-    bool flies = (flies_on.has_value && qa_q2f_think_eq(target->think, flies_on.value))
-        || (flies_off.has_value && qa_q2f_think_eq(target->think, flies_off.value));
+    bool flies = (has_flies_on && qa_q2_think_eq(target->think, flies_on))
+        || (has_flies_off && qa_q2_think_eq(target->think, flies_off));
     if (qa_q2m_health(game, &actor) > 0 || (target->has_next_think && !flies) || !qa_q2m_visible(c, &actor)) continue;
-    if (qa_hypot3(qa_sub3_double(q2mpm_body(game, entity).origin, q2mpm_body(game, target).origin)) <= 32) continue;
+    qa_vec3 a = q2mpm_body(game, entity).origin;
+    qa_vec3 b = q2mpm_body(game, target).origin;
+    if (qa_hypot3(qa_sub3_double(a, b)) <= 32) continue;
     if (!best || target->max_health > best->max_health) best = target;
   }
   if (best) entity->timestamp = q2mpm_now(game) + 10;
   return best;
 }
 static bool acquire_dead(medic_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *target = find_dead(bundle, c);
+  qa_q2_entity *target = find_dead(bundle, c);
   if (!target) return false;
   c->state->has_old_enemy = c->entity->has_enemy;
   c->state->old_enemy = c->entity->enemy;
@@ -156,8 +160,8 @@ static void idle_move(medic_bundle *bundle, qa_q2m_context *c) {
 static void idle_fn(void *ctx, qa_q2m_context *c) { idle_move(ctx, c); }
 static void attack_move(medic_bundle *bundle, qa_q2m_context *c) {
   qa_q2m_finish_dodge(c);
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   bool melee_range = qa_q2m_target_distance(c) < 80;
   qa_q2mpm_rogue_state *own = qa_q2mpm_state_get(bundle->source, entity);
@@ -197,12 +201,12 @@ static void sidestep_move(qa_q2m_context *c) {
 }
 static void sidestep_fn(void *ctx, qa_q2m_context *c) { (void)ctx; sidestep_move(c); }
 static void cable_attack(medic_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   const qa_q2mpm_rogue_medic_frames *f = &qa_q2mpm_rogue_medic_frames_value;
-  qa_q2f_entity *target = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
-  if (!target || ((uint32_t)target->effects & 2u) != 0 || game->host->is_player(game->host->ctx, target->actor.id)
+  qa_q2_entity *target = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+  if (!target || (qa_js_to_uint32(target->effects) & 2u) != 0 || game->host->is_player(game->host->ctx, target->actor.id)
       || qa_q2m_health(game, &target->actor.id) > 0) {
     heal_abort(bundle, c, true, false, false);
     return;
@@ -228,9 +232,7 @@ static void cable_attack(medic_bundle *bundle, qa_q2m_context *c) {
     return;
   }
   if (entity->frame == f->attack43) {
-    game->sound(game->ctx, target->actor,
-                qa_q2mpm_monster_mass(c) == 400 ? "medic/medatck3.wav" : "medic_commander/medatck3a.wav",
-                true, 0, false, 0, false, 0);
+    game->sound(game->ctx, target->actor, qa_q2mpm_monster_mass(c) == 400 ? "medic/medatck3.wav" : "medic_commander/medatck3a.wav", 0, 1, 1);
     qa_q2m_context *patient = qa_q2m_monsters_context(bundle->monsters, target->actor.id);
     if (patient) {
       patient->state->resurrecting = true;
@@ -314,19 +316,19 @@ static void cable_attack(medic_bundle *bundle, qa_q2m_context *c) {
   } else if (entity->frame == f->attack44) {
     medic_sound(c, "medatck4", "medatck4a", 1, 1);
   }
-  qa_q2f_entity *current = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+  qa_q2_entity *current = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
   if (!current) return;
   qa_body_state body = q2mpm_body(game, current);
-  qa_q2bm_extended_event beam;
+  qa_q2_presentation_event beam;
   memset(&beam, 0, sizeof beam);
   beam.kind = "monster-beam";
   beam.effect = "medic";
-  beam.actor = entity->actor.id;
+  beam.has_actor = true; beam.actor = entity->actor.id;
   beam.start = qa_add3_double(start, qa_scale3_double(
       qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward, 8));
   beam.end = body.origin;
   beam.end.z += (body.bounds.min.z + body.bounds.max.z) / 2;
-  qa_q2bm_emit_extended(beam);
+  game->host->emit(game->host->ctx, beam);
 }
 static void cable_fn(void *ctx, qa_q2m_context *c) { cable_attack(ctx, c); }
 /* TS eachSpawn iteration step: returns spawn count for i, or -1 when
@@ -380,7 +382,7 @@ static void fire_blaster_fn(void *ctx, qa_q2m_context *c) {
   double frame = c->entity->frame;
   double effects = frame == f->attack9 || frame == f->attack12 ? 8
       : frame == f->attack19 || frame == f->attack22 || frame == f->attack25 || frame == f->attack28 ? 64 : 0;
-  qa_q2f_entity *enemy = c->entity->has_enemy ? c->game->entity(c->game->ctx, &c->entity->enemy) : NULL;
+  qa_q2_entity *enemy = c->entity->has_enemy ? c->game->entity(c->game->ctx, &c->entity->enemy) : NULL;
   const char *tesla = q2mpm_rr(c->game) ? "tesla_mine" : "tesla";
   double damage = enemy && strcmp(enemy->classname, tesla) == 0 ? 3 : 2;
   bool commander = qa_q2mpm_monster_mass(c) > 400;
@@ -389,7 +391,7 @@ static void fire_blaster_fn(void *ctx, qa_q2m_context *c) {
   else
     (void)c->weapons.fire_blaster(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, damage, 1000, effects,
                                   false, false, 0);
-  qa_q2mpm_monster_flash(c, commander ? 146 : 60, aim.start, aim.direction);
+  qa_q2rm_monster_flash(c, commander ? 146 : 60, aim.start, aim.direction);
 }
 static void start_spawn_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -401,7 +403,7 @@ static void determine_spawn_fn(void *ctx, qa_q2m_context *c) {
   double lucky = q2mpm_rnd(c->game);
   double strength = c->game->options.skill + (lucky < 0.05 ? -3 : lucky < 0.15 ? -2 : lucky < 0.3 ? -1
                                                : lucky > 0.95 ? 3 : lucky > 0.85 ? 2 : lucky > 0.7 ? 1 : 0);
-  qa_q2mpm_state_get(bundle->source, c->entity)->summon_strength = fmax(0, strength);
+  qa_q2mpm_state_get(bundle->source, c->entity)->summon_strength = qa_js_max(0, strength);
   bool success = false;
   double count = spawn_count_for(bundle, c);
   for (double i = 0; i < count; i++) {
@@ -449,8 +451,8 @@ static void spawngrows_fn(void *ctx, qa_q2m_context *c) {
 }
 static void finish_spawn_fn(void *ctx, qa_q2m_context *c) {
   medic_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_q2mpm_rogue_state *own = qa_q2mpm_state_get(bundle->source, entity);
   own->summon_strength = fabs(own->summon_strength);
@@ -459,9 +461,14 @@ static void finish_spawn_fn(void *ctx, qa_q2m_context *c) {
     qa_vec3 point; qa_bounds bounds; double index;
     if (!spawn_step(bundle, c, false, i, &point, &bounds, &index)) continue;
     if (!qa_q2mpm_check_rogue_spawn_point(game, point, bounds)) continue;
-    qa_q2f_entity *child = qa_q2mpm_create_rogue_ground_monster(bundle->monsters, game, point,
-                                                                 q2mpm_body(game, entity).angles, bounds,
-                                                                 q2mpm_at_s(reinforcements, 7, index), 256);
+    qa_q2m_monsters * monsters2 = bundle->monsters;
+    qa_vec3 origin = point;
+    qa_vec3 angles2 = q2mpm_body(game, entity).angles;
+    qa_bounds bounds2 = bounds;
+    const char * classname = q2mpm_at_s(reinforcements, 7, index);
+    qa_q2_entity *child = qa_q2mpm_create_rogue_ground_monster(monsters2, game, origin,
+                                                                 angles2, bounds2,
+                                                                 classname, 256);
     if (!child) continue;
     if (child->think.fn) {
       child->has_next_think = true;
@@ -469,7 +476,7 @@ static void finish_spawn_fn(void *ctx, qa_q2m_context *c) {
       child->think.fn(child->think.ctx, child, game);
     }
     qa_q2m_context *child_context = qa_q2m_monsters_context(bundle->monsters, child->actor.id);
-    if (!child_context) qa_q2f_error("Medic reinforcement has no shared controller");
+    if (!child_context) qa_raise("Error", 0, 0, "Medic reinforcement has no shared controller");
     child_context->state->ignore_shots = true;
     child_context->state->do_not_count = true;
     child_context->state->spawned_by = QA_Q2M_SPAWNED_MEDIC;
@@ -480,7 +487,7 @@ static void finish_spawn_fn(void *ctx, qa_q2m_context *c) {
     qa_actor_id enemy = entity->enemy;
     if (state->medic) { has_enemy = state->has_old_enemy; enemy = state->old_enemy; }
     else has_enemy = entity->has_enemy;
-    if (strcmp(game->options.mode, "coop") == 0) {
+    if (game->options.mode == QA_Q2_MODE_COOP) {
       qa_actor_id picked;
       bool got = qa_q2mpm_pick_rogue_coop_target(child_context, &picked);
       if (got) { has_enemy = true; enemy = picked; } else has_enemy = false;
@@ -518,8 +525,8 @@ static void init_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   bool commander = qa_q2mpm_monster_mass(c) > 400;
   qa_q2m_finish_dodge(c);
@@ -532,7 +539,7 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
     state->manual_steering = false;
     state->hold_frame = false;
     medic_sound(c, "medpain2", "medpain2", 2, 1);
-    q2mpm_set_move(c, q2mpm_rnd(game) < fmin(reaction.damage * 0.005, 0.5) ? "medic_move_pain2" : "medic_move_pain1");
+    q2mpm_set_move(c, q2mpm_rnd(game) < qa_js_min(reaction.damage * 0.005, 0.5) ? "medic_move_pain2" : "medic_move_pain1");
   } else {
     bool first = q2mpm_rnd(game) < 0.5;
     q2mpm_set_move(c, first ? "medic_move_pain1" : "medic_move_pain2");
@@ -558,12 +565,12 @@ static bool sidestep_field_fn(void *ctx, qa_q2m_context *c) { (void)ctx; sideste
 static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   medic_bundle *bundle = ctx;
   return qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)
-      || qa_q2mpm_blocked_check_platform(c, distance);
+      || qa_q2rm_blocked_check_platform(c, distance);
 }
 static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   medic_bundle *bundle = ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   if (state->medic) {
     if (!entity->has_enemy || !q2mpm_live(game, entity->enemy)) {
@@ -598,15 +605,15 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   }
   return qa_q2m_default_check_attack(c, NULL);
 }
-size_t qa_q2mpm_create_rogue_medic_definitions(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_medic_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                                qa_q2mpm_weapons weapons, qa_q2mpm_monster_state *source) {
-  medic_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue medic definitions");
+  medic_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue medic definitions");
   bundle->monsters = monsters;
   bundle->weapons = weapons;
   bundle->source = source;
-  qa_q2m_named_handler *callbacks = malloc(16 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating rogue medic definitions");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 16 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating rogue medic definitions");
   size_t n = 0;
   callbacks[n++] = (qa_q2m_named_handler){"medic_idle", {bundle, idle_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"medic_run", {bundle, run_fn}};

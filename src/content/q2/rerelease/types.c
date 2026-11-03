@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js_case.h"
 
 noreturn void qa_q2rr_error(const char *format, ...) {
   va_list args; va_start(args, format);
@@ -26,11 +27,8 @@ char *qa_q2rr_dup(const char *s) {
 
 bool qa_q2rr_ieq(const char *a, const char *b) {
   if (!a || !b) return a == b;
-  while (*a && *b) {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    a++; b++;
-  }
-  return *a == *b;
+  /* TS toLowerCase() === over entity strings (Latin-1 byte strings) and ASCII names. */
+  return qa_js_latin1_equals_ignore_case(a, b);
 }
 bool qa_q2rr_contains(const char *s, const char *needle) { return s && needle && strstr(s, needle) != NULL; }
 bool qa_q2rr_starts_with(const char *s, const char *prefix) {
@@ -48,9 +46,6 @@ const char *qa_q2_coop_respawn_state_name(qa_q2_coop_respawn_state s) {
     case QA_Q2_COOP_NO_LIVES: return "no-lives";
     default: return "none";
   }
-}
-const char *qa_q2rr_hand_name(qa_q2rr_hand h) {
-  return h == QA_Q2RR_HAND_LEFT ? "left" : h == QA_Q2RR_HAND_CENTER ? "center" : "right";
 }
 
 static void copy_str(char *dst, size_t cap, const char *src) {

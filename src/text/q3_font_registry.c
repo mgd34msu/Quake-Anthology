@@ -1,5 +1,6 @@
 /* Port of src/text/q3-font-registry.ts. GPL-2.0-or-later. */
 #include "qa/text/q3_font_registry.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -10,18 +11,22 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js_case.h"
 
 #define RECORD QA_Q3_FONT_RECORD_BYTES
 
 /* TS `throw new Error(msg)`, as in src/text/atlas.c. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
+}
+
+static void pending_release(void *raw) {
+  ((qa_q3_renderer_font_registry *)raw)->pending--;
 }
 
 static void require_open(const qa_q3_renderer_font_registry *registry) {
@@ -39,14 +44,9 @@ static char *dup_text(const char *text) {
   return out;
 }
 
-/* JS Number->string for the integer-valued sizes registerFont makes;
- * non-safe-integer magnitudes fall back to %g (JS exponent spelling
- * above 1e21 can differ). */
+/* String(number) for the sizes registerFont makes. */
 static void format_size(double size, char *out, size_t out_size) {
-  if (size >= -9007199254740991.0 && size <= 9007199254740991.0)
-    snprintf(out, out_size, "%lld", (long long)size);
-  else
-    snprintf(out, out_size, "%.17g", size);
+  qa_net_js_number(size, out, out_size);
 }
 
 /* DataView.setInt32 value conversion (ToIntegerOrInfinity, then
@@ -363,6 +363,22 @@ static bool restore_map_set(restore_picture_map *map, const char *name,
   return true;
 }
 
+/* TS `finally { this.pending--; }` plus the locals a raise abandons. */
+typedef struct restore_locals {
+  qa_q3_renderer_font_registry *registry;
+  restore_picture_map *generated;
+  qa_save_reader *reader;
+} restore_locals;
+
+static void restore_locals_release(void *raw) {
+  restore_locals *locals = (restore_locals *)raw;
+  free(locals->generated->names);
+  free(locals->generated->pictures);
+  memset(locals->generated, 0, sizeof *locals->generated);
+  locals->registry->pending--;
+  qa_save_reader_destroy(locals->reader);
+}
+
 bool qa_q3_renderer_font_registry_restore_checkpoint(
     qa_q3_renderer_font_registry *registry, const qa_save_value *value) {
   require_open(registry);
@@ -390,6 +406,9 @@ bool qa_q3_renderer_font_registry_restore_checkpoint(
   registry->pending++;
   bool ok = true;
   restore_picture_map generated = {NULL, NULL, 0, 0};
+  restore_locals locals = {registry, &generated, &reader};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, restore_locals_release, &locals);
   if (has_kind) {
     open_freetype(registry, NULL, NULL);
     if (registry->freetype_kind != wanted)
@@ -531,21 +550,13 @@ bool qa_q3_renderer_font_registry_restore_checkpoint(
       qa_save_reader_destroy(&list);
     }
   }
-  free(generated.names);
-  free(generated.pictures);
-  registry->pending--;
-  qa_save_reader_destroy(&reader);
+  qa_cleanup_pop(&cleanup);
+  restore_locals_release(&locals);
   return ok;
 }
 
-static bool ascii_ieq(const char *left, const char *right) {
-  while (*left != '\0' && *right != '\0') {
-    if (tolower((unsigned char)*left) != tolower((unsigned char)*right)) return false;
-    left++;
-    right++;
-  }
-  return *left == *right;
-}
+/* TS left.toLowerCase() === right.toLowerCase(). */
+static bool ascii_ieq(const char *left, const char *right) { return qa_js_equals_ignore_case(left, right); }
 
 static void write_name(uint8_t *bytes, size_t offset, size_t length,
                        const char *name) {
@@ -608,6 +619,26 @@ static const qa_q3_registered_font *push_font(qa_q3_renderer_font_registry *regi
   return &entry->font;
 }
 
+typedef struct generate_locals {
+  qa_q3_renderer_font_registry *registry;
+  qa_freetype_face *face;
+  qa_retained_font_file file;
+  uint8_t *record;
+  bool record_owned;
+  uint8_t *atlas;
+  uint8_t *rgba;
+} generate_locals;
+
+static void generate_locals_release(void *raw) {
+  generate_locals *locals = (generate_locals *)raw;
+  qa_q3_renderer_font_registry *registry = locals->registry;
+  if (!registry->closed) qa_freetype_release_face(&registry->freetype, locals->face);
+  registry->reader.free_file(registry->reader.ctx, locals->file);
+  if (locals->record_owned) free(locals->record);
+  free(locals->atlas);
+  free(locals->rgba);
+}
+
 static const qa_q3_registered_font *generate_font(
     qa_q3_renderer_font_registry *registry, const char *path, double size,
     qa_font_print_fn print, void *print_ctx,
@@ -648,18 +679,22 @@ static const qa_q3_registered_font *generate_font(
     return NULL;
   }
   const qa_q3_registered_font *result = NULL;
-  uint8_t *record = NULL;
-  bool record_owned = false;
-  uint8_t *atlas = NULL;
-  uint8_t *rgba = NULL;
+  /* TS try { ... } finally { releaseFace; freeFile }: the node runs the
+   * finally when a raise leaves this frame. */
+  generate_locals locals = {registry, face, file, NULL, false, NULL, NULL};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, generate_locals_release, &locals);
   if (destination != NULL) {
-    record = destination_record(destination, destination_ctx).bytes;
+    locals.record = destination_record(destination, destination_ctx).bytes;
   } else {
-    record = (uint8_t *)calloc(RECORD, 1);
-    record_owned = true;
+    locals.record = (uint8_t *)calloc(RECORD, 1);
+    locals.record_owned = true;
   }
-  atlas = (uint8_t *)calloc(1024u * 1024u, 1);
-  rgba = (uint8_t *)malloc(256u * 256u * 4u);
+  locals.atlas = (uint8_t *)calloc(1024u * 1024u, 1);
+  locals.rgba = (uint8_t *)malloc(256u * 256u * 4u);
+  uint8_t *record = locals.record;
+  uint8_t *atlas = locals.atlas;
+  uint8_t *rgba = locals.rgba;
   if (record == NULL || atlas == NULL || rgba == NULL) goto finally;
   {
     const qa_picture_asset *pictures[QA_Q3_FONT_GLYPHS] = {NULL};
@@ -789,11 +824,8 @@ static const qa_q3_registered_font *generate_font(
     require_open(registry);
   }
 finally:
-  if (!registry->closed) qa_freetype_release_face(freetype, face);
-  registry->reader.free_file(registry->reader.ctx, file);
-  if (record_owned) free(record);
-  free(atlas);
-  free(rgba);
+  qa_cleanup_pop(&cleanup);
+  generate_locals_release(&locals);
   return result;
 }
 
@@ -905,9 +937,13 @@ const qa_q3_registered_font *qa_q3_renderer_font_registry_register_font(
   format_size(size, size_text, sizeof size_text);
   snprintf(name, sizeof name, "fonts/fontImage_%s.dat", size_text);
   registry->pending++;
+  /* TS decrements pending when the registration settles, rejected too. */
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, pending_release, registry);
   const qa_q3_registered_font *result =
       load_font(registry, name, path, size, print, print_ctx, destination,
                 destination_ctx);
+  qa_cleanup_pop(&cleanup);
   registry->pending--;
   return result;
 }

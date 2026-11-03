@@ -15,8 +15,8 @@
 #include "../rrm_internal.h"
 
 static void gib(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   q2rm_emit_effect(game, "q2:explosion1", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
   entity->skin = trunc(entity->skin / 2);
@@ -33,10 +33,10 @@ static void gib(qa_q2m_context *c) {
   (void)qa_q2m_throw_gib(entity, game, "models/monsters/hover/gibs/head.md2", 150, head);
   state->dead = true; state->gibbed = true;
 }
-static void dead_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void dead_think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2m_monsters *monsters = ctx;
   if (!q2rm_body(game, entity).ground && q2rm_now(game) < entity->timestamp) {
-    qa_q2f_think self = {monsters, dead_think_fn};
+    qa_q2_think self = {monsters, dead_think_fn};
     game->schedule(game->ctx, entity, 0.1, self);
     return;
   }
@@ -57,8 +57,8 @@ static void init_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2
       ? q2rm_or(entity->skin, 1) : q2rm_and(entity->skin, ~1);
@@ -72,8 +72,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->effects = 0;
   qa_q2rm_set_powered(game, entity->actor, "none", 0);
@@ -114,23 +114,23 @@ static void fire_blaster_fn(void *ctx, qa_q2m_context *c) {
   qa_q2rm_monster_flash(c, flash, aim.start, aim.direction);
 }
 static void dead_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   c->state->corpse = true;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-16, -16, -24);
   change.bounds.max = q2rm_v3(16, 16, -8);
   q2rm_move_body(game, entity, change, false, false);
-  game->motion(game->ctx, entity, QA_Q2F_MOTION_TOSS);
+  game->motion(game->ctx, entity, "toss");
   entity->timestamp = q2rm_now(game) + 15;
-  qa_q2f_think think = {ctx, dead_think_fn};
+  qa_q2_think think = {ctx, dead_think_fn};
   game->schedule(game->ctx, entity, 0.1, think);
 }
 static void dying_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   if (q2rm_body(game, entity).ground) { dead_think_fn(ctx, entity, game); return; }
   if (qa_q2_rerelease_random_integer_max(qa_q2rm_rerelease_random(c), 2) != 0) return;
   q2rm_emit_effect(game, "q2:plain-explosion", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
@@ -140,9 +140,9 @@ static void dying_fn(void *ctx, qa_q2m_context *c) {
                                                : "models/objects/gibs/sm_metal/tris.md2", 120, options);
 }
 
-qa_q2m_definition qa_q2rm_create_rerelease_hover_definition(qa_q2m_monsters *monsters) {
-  qa_q2f_named_think *think_defs = malloc(sizeof *think_defs);
-  if (!think_defs) qa_q2f_error("Out of memory creating rerelease hover definition");
+qa_q2m_definition qa_q2rm_create_rerelease_hover_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
+  qa_q2_named_think *think_defs = qa_q2mpm_arena_alloc(arena, sizeof *think_defs);
+  if (!think_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease hover definition");
   think_defs[0].name = "hover_deadthink";
   think_defs[0].cb.ctx = monsters;
   think_defs[0].cb.fn = dead_think_fn;
@@ -163,7 +163,7 @@ qa_q2m_definition qa_q2rm_create_rerelease_hover_definition(qa_q2m_monsters *mon
   definition.initialize = (qa_q2m_handler){NULL, init_fn};
   definition.reactions.pain = pain_fn;
   definition.reactions.die = die_fn;
-  definition.callbacks = qa_q2rm_merge_callbacks(definition.callbacks, definition.callback_count,
+  definition.callbacks = qa_q2rm_merge_callbacks(arena, definition.callbacks, definition.callback_count,
                                                  extra, sizeof extra / sizeof extra[0], &definition.callback_count);
   return definition;
 }

@@ -74,9 +74,14 @@ static void rocket_fn(void *ctx, qa_q2m_context *c) {
 static void slash_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   q2bm_sound(c->game, c->entity, "chick/chkatck3.wav", true, 1, false, 0, false, 0);
-  (void)c->weapons.fire_hit(c->weapons.ctx, c->entity, c->game,
-                            q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, 10),
-                            10 + floor(q2bm_rnd(c->game) * 6), 100);
+  void * value = c->weapons.ctx;
+  qa_q2_entity * value2 = c->entity;
+  qa_q2_game_services * value3 = c->game;
+  qa_vec3 value4 = q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, 10);
+  double value5 = 10 + floor(q2bm_rnd(c->game) * 6);
+  (void)c->weapons.fire_hit(value, value2, value3,
+                            value4,
+                            value5, 100);
 }
 static void rerocket_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -89,10 +94,15 @@ static void reslash_fn(void *ctx, qa_q2m_context *c) {
   q2bm_set_move(c, qa_q2bm_alive_enemy(c) && qa_q2m_target_distance(c) < 80 && q2bm_rnd(c->game) <= 0.9
                    ? "chick_move_slash" : "chick_move_end_slash");
 }
+static void dead_fn(void *ctx, qa_q2m_context *c) {
+  (void)ctx;
+  qa_bounds bounds = {{-16, -16, 0}, {16, 16, 16}};
+  qa_q2bm_finish_corpse_bounds(c, bounds);
+}
 #define CB(name, fn) {name, {NULL, fn}}
 static const qa_q2m_named_handler chick_callbacks[] = {
   {"chick_stand", {(void *)"chick_move_stand", qa_q2bm_move_handler_fn}},
-  CB("chick_run", run_fn), CB("chick_dead", qa_q2bm_finish_corpse_handler),
+  CB("chick_run", run_fn), CB("chick_dead", dead_fn),
   CB("ChickMoan", moan_fn), CB("chick_fidget", fidget_fn),
   CB("chick_duck_down", duck_down_fn), CB("chick_duck_hold", duck_hold_fn), CB("chick_duck_up", duck_up_fn),
   {"Chick_PreAttack1", {(void *)&preattack_spec, qa_q2bm_sound_handler_fn}},

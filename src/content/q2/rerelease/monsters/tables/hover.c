@@ -422,11 +422,6 @@ static const qa_q2m_frame f_hover_9[] = {
   {QA_Q2M_AI_CHARGE, NULL, 1, NULL, 0, -1},
   {QA_Q2M_AI_CHARGE, NULL, 1, NULL, 0, -1},
 };
-static const qa_q2m_frame f_hover_10[] = {
-  {QA_Q2M_AI_CHARGE, NULL, 15, NULL, 0, -1},
-  {QA_Q2M_AI_CHARGE, NULL, 15, NULL, 0, -1},
-  {QA_Q2M_AI_CHARGE, NULL, 15, NULL, 0, -1},
-};
 static const qa_q2m_action a_hover_11_0[] = {
   {false, "hover_fire_blaster", 0, false},
 };
@@ -441,10 +436,6 @@ static const qa_q2m_frame f_hover_11[] = {
   {QA_Q2M_AI_CHARGE, NULL, 10, a_hover_11_1, 1, -1},
   {QA_Q2M_AI_CHARGE, NULL, 10, a_hover_11_2, 1, -1},
 };
-static const qa_q2m_frame f_hover_12[] = {
-  {QA_Q2M_AI_CHARGE, NULL, 15, NULL, 0, -1},
-  {QA_Q2M_AI_CHARGE, NULL, 15, NULL, 0, -1},
-};
 const qa_q2m_move qa_q2rm_hover_moves[] = {
   {"hover_move_stand", 0, 29, NULL, 0, f_hover_0, 30},
   {"hover_move_pain3", 153, 161, "hover_run", 0, f_hover_1, 9},
@@ -456,8 +447,6 @@ const qa_q2m_move qa_q2rm_hover_moves[] = {
   {"hover_move_start_attack", 197, 199, "hover_attack", 0, f_hover_7, 3},
   {"hover_move_attack1", 200, 202, NULL, 0, f_hover_8, 3},
   {"hover_move_end_attack", 203, 204, "hover_run", 0, f_hover_9, 2},
-  {"hover_move_start_attack2", 197, 199, "hover_attack", 0, f_hover_10, 3},
   {"hover_move_attack2", 200, 202, NULL, 0, f_hover_11, 3},
-  {"hover_move_end_attack2", 203, 204, "hover_run", 0, f_hover_12, 2},
 };
 const size_t qa_q2rm_hover_move_count = sizeof qa_q2rm_hover_moves / sizeof qa_q2rm_hover_moves[0];

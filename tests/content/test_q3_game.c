@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "qa/content/q3/base/game/ballistics_math.h"
+#include "q3_fake_entity.h"
 #include "qa/content/q3/base/game/combat.h"
 #include "qa/content/q3/base/game/death.h"
 #include "qa/content/q3/base/game/misc_spawn.h"
@@ -47,7 +48,6 @@
 #include "qa/core/q3_product_policy.h"
 #include "qa/movement/q3/weapon.h"
 #include "qa/network/q3/admission.h"
-#include "qa/persistence/q3.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -138,14 +138,13 @@ static void test_memory(void) {
 }
 
 static void test_check_armor(void) {
-  qa_q3_game_entity e; qa_q3_game_entity_binding binding; memset(&binding, 0, sizeof binding);
-  qa_q3_game_entity_init(&e, 0, binding);
-  qa_q3_game_client client; qa_q3_game_client_init(&client, QA_Q3_GAME_PRODUCT_BASEQ3);
+  qa_q3_game_entity e; q3_fake_entity fe; q3_fake_entity_init(&e, &fe, 0);
+  qa_q3_game_client client; qa_q3_game_client_init(&client, QA_Q3_BASE_PRODUCT_BASEQ3);
   e.client = &client;
-  qa_q3_game_slots_set_mirror(&client.ps.stats, 3, 100);
+  qa_q3_base_player_state_slots_set(&client.ps.stats, 3, 100);
   double save = qa_q3_check_armor(&e, 100, 0);
   CHECK(save == 66);
-  CHECK(qa_q3_game_slots_get_mirror(&client.ps.stats, 3) == 34);
+  CHECK(qa_q3_base_player_state_slots_get(&client.ps.stats, 3) == 34);
   CHECK(qa_q3_check_armor(&e, 0, 0) == 0);
   CHECK(qa_q3_check_armor(&e, 100, QA_Q3_DAMAGE_NO_ARMOR) == 0);
   qa_q3_game_client_destroy(&client); qa_q3_game_entity_destroy(&e);
@@ -207,19 +206,16 @@ static void test_spawn(void) {
 
 /* Fake pool records for the completed spawn/death handler modules. */
 static qa_q3_game_entity fake_entities[160];
+static q3_fake_entity fake_bodies[160];
 static qa_q3_game_client fake_clients[64];
-static bool fake_active[160];
 static int fake_released, fake_registered, fake_init_binary_count, fake_links, fake_returned, fake_ranks;
-static bool fake_is_active(void *ctx) { return *(bool *)ctx; }
-static qa_owned_actor fake_actor(void *ctx) { (void)ctx; qa_owned_actor a; memset(&a, 0, sizeof a); return a; }
 static qa_q3_game_entity *fake_get(void *ctx, double slot) { (void)ctx; return slot >= 0 && slot < 160 ? &fake_entities[(int)slot] : NULL; }
 static qa_q3_game_entity *fake_activate(void *ctx, double slot) {
-  (void)ctx; int i = (int)slot; qa_q3_game_entity_binding b; memset(&b, 0, sizeof b);
-  b.ctx = &fake_active[i]; b.active = fake_is_active; b.actor = fake_actor;
-  qa_q3_game_entity_init(&fake_entities[i], slot, b); fake_active[i] = true; return &fake_entities[i];
+  (void)ctx; int i = (int)slot;
+  q3_fake_entity_init(&fake_entities[i], &fake_bodies[i], slot); fake_bodies[i].active = true; return &fake_entities[i];
 }
 static qa_q3_game_client *fake_client(void *ctx, double slot) { (void)ctx; return &fake_clients[(int)slot]; }
-static void fake_release(void *ctx, qa_q3_game_entity *e) { (void)ctx; fake_active[(int)e->slot] = false; fake_released++; }
+static void fake_release(void *ctx, qa_q3_game_entity *e) { (void)ctx; fake_bodies[(int)e->slot].active = false; fake_released++; }
 static void fake_noop_client(void *ctx, double slot) { (void)ctx; (void)slot; }
 static double fake_time1000(void *ctx) { (void)ctx; return 1000; }
 static void fake_link(void *ctx, qa_q3_game_entity *e) { (void)ctx; (void)e; fake_links++; }
@@ -231,18 +227,17 @@ static void fake_warn(void *ctx, const char *m) { (void)ctx; (void)m; }
 static qa_q3_entity_pool fake_pool;
 static void fake_pool_setup(void) {
   static bool done; if (done) return; done = true;
-  for (int i = 0; i < 64; i++) qa_q3_game_client_init(&fake_clients[i], QA_Q3_GAME_PRODUCT_BASEQ3);
+  for (int i = 0; i < 64; i++) qa_q3_game_client_init(&fake_clients[i], QA_Q3_BASE_PRODUCT_BASEQ3);
   qa_q3_entity_pool_options o; memset(&o, 0, sizeof o);
   o.records.get = fake_get; o.records.activate = fake_activate; o.records.client = fake_client;
   o.records.release = fake_release; o.records.deactivate_client = fake_noop_client;
-  o.product = QA_Q3_GAME_PRODUCT_BASEQ3; o.max_clients = 8; o.time = fake_time1000; o.print = print_noop;
+  o.product = QA_Q3_BASE_PRODUCT_BASEQ3; o.max_clients = 8; o.time = fake_time1000; o.print = print_noop;
   o.link = fake_link; o.unlink = fake_unlink;
   qa_q3_entity_pool_init(&fake_pool, o);
 }
 static void fake_fire(void *ctx, qa_q3_game_entity *e, qa_vec3 o, qa_q3_missile_direction d) { (void)ctx; (void)e; (void)o; (void)d; }
-static void fake_register(void *ctx, const qa_q3_game_item_definition_mirror *i) { (void)ctx; (void)i; fake_registered++; }
-static const qa_q3_game_item_definition_mirror *fake_find_weapon(void *ctx, double w) { (void)ctx; (void)w; return NULL; }
-static void fake_brush(void *ctx, qa_q3_game_entity *e, const char *n) { (void)ctx; (void)n; e->r.mins = v3(-8, -8, -8); e->r.maxs = v3(8, 8, 8); }
+static void fake_register(void *ctx, const qa_q3_base_item_definition *i) { (void)ctx; (void)i; fake_registered++; }
+static void fake_brush(void *ctx, qa_q3_game_entity *e, const char *n) { (void)ctx; (void)n; qa_q3_base_entity_shared_set_mins(&e->r, v3(-8, -8, -8)); qa_q3_base_entity_shared_set_maxs(&e->r, v3(8, 8, 8)); }
 static void fake_init_binary(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) { (void)ctx; (void)e; (void)v; fake_init_binary_count++; }
 static void test_completed_spawns(void) {
   fake_pool_setup();
@@ -251,8 +246,8 @@ static void test_completed_spawns(void) {
   qa_q3_misc_spawn_host mh; memset(&mh, 0, sizeof mh);
   mh.pool = &fake_pool; mh.time = fake_time1000; mh.rand_value = fake_zero_d; mh.crandom = fake_zero_d;
   mh.warn = fake_warn; mh.fire_grenade = mh.fire_rocket = mh.fire_plasma = fake_fire;
-  mh.register_item = fake_register; mh.find_item_for_weapon = fake_find_weapon;
-  mh.world.link = fake_link; mh.world.unlink_number = fake_unlink_num;
+  mh.register_item = fake_register;
+  mh.world.link = fake_link; mh.world.unlink = fake_unlink_num;
   qa_q3_spawn_handler_entry entries[16];
   size_t n = qa_q3_misc_spawn_handlers(mh, entries, 16);
   CHECK(n == 11);
@@ -267,7 +262,7 @@ static void test_completed_spawns(void) {
   qa_q3_mover_spawn_runtime mr; qa_q3_mover_spawn_host vh; memset(&vh, 0, sizeof vh);
   vh.pool = &fake_pool; vh.time = fake_time1000; vh.gravity = fake_zero_d; vh.sound_index = fake_sound;
   vh.set_brush_model = fake_brush; vh.initialize_binary = fake_init_binary; vh.warn = fake_warn;
-  vh.world.link = fake_link; vh.world.unlink_number = fake_unlink_num;
+  vh.world.link = fake_link; vh.world.unlink = fake_unlink_num;
   qa_q3_mover_spawn_runtime_init(&mr, vh);
   n = qa_q3_mover_spawn_runtime_handlers(&mr, entries, 16);
   CHECK(n == 9);
@@ -300,45 +295,45 @@ static void fake_calc_ranks(void *ctx) { (void)ctx; fake_ranks++; }
 static void test_completed_runtime(void) {
   fake_pool_setup();
   /* Weapon helpers. */
-  qa_q3_game_client wc; qa_q3_game_client_init(&wc, QA_Q3_GAME_PRODUCT_BASEQ3);
-  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_GAME_PRODUCT_BASEQ3) == 1);
-  qa_q3_game_slots_set_mirror(&wc.ps.powerups, 1, 5000);
-  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_GAME_PRODUCT_BASEQ3) == 3);
+  qa_q3_game_client wc; qa_q3_game_client_init(&wc, QA_Q3_BASE_PRODUCT_BASEQ3);
+  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_BASE_PRODUCT_BASEQ3) == 1);
+  qa_q3_base_player_state_slots_set(&wc.ps.powerups, 1, 5000);
+  CHECK(qa_q3_weapon_damage_factor(&wc, 3, QA_Q3_BASE_PRODUCT_BASEQ3) == 3);
   qa_q3_missile_direction dir = {2, 0, 0};
   qa_q3_sphere_intersections hits = qa_q3_ray_sphere_intersections(v3(0, 0, 0), 10, v3(0, 0, 0), &dir);
   CHECK(hits.count == 2 && dir.x == 1);
   qa_q3_game_client_destroy(&wc);
   /* Death: persistent powerup toss + addScore. */
-  qa_q3_game_entity victim; qa_q3_game_entity_binding vb; memset(&vb, 0, sizeof vb);
-  qa_q3_game_entity_init(&victim, 3, vb);
-  qa_q3_game_client vc; qa_q3_game_client_init(&vc, QA_Q3_GAME_PRODUCT_MISSIONPACK);
-  qa_q3_game_entity power; qa_q3_game_entity_init(&power, 4, vb);
+  qa_q3_game_entity victim; q3_fake_entity vfe; q3_fake_entity_init(&victim, &vfe, 3);
+  qa_q3_game_client vc; qa_q3_game_client_init(&vc, QA_Q3_BASE_PRODUCT_MISSIONPACK);
+  qa_q3_game_entity power; q3_fake_entity pfe; q3_fake_entity_init(&power, &pfe, 4);
   vc.persistant_powerup = &power; victim.client = &vc;
-  qa_q3_game_slots_set_mirror(&vc.ps.stats, 2, 7);
+  qa_q3_base_player_state_slots_set(&vc.ps.stats, 2, 7);
   fake_returned = 0;
   qa_q3_toss_client_persistent_powerup(&victim, fake_return_item, NULL);
-  CHECK(fake_returned == 1 && vc.persistant_powerup == NULL && qa_q3_game_slots_get_mirror(&vc.ps.stats, 2) == 0);
-  static qa_q3_game_player_slots_mirror team_scores; team_scores.length = 4;
+  CHECK(fake_returned == 1 && vc.persistant_powerup == NULL && qa_q3_base_player_state_slots_get(&vc.ps.stats, 2) == 0);
+  static qa_q3_base_player_state_slots team_scores; static int32_t team_score_words[4];
+  (void)qa_q3_base_player_state_slots_init(&team_scores, 4, team_score_words, 4, true, NULL, NULL, NULL);
   static qa_q3_death_animation_sequence seq; qa_q3_death_animation_sequence_init(&seq);
   qa_q3_death_runtime dr; qa_q3_death_host dh; memset(&dh, 0, sizeof dh);
-  dh.product = QA_Q3_GAME_PRODUCT_BASEQ3; dh.pool = &fake_pool; dh.team_scores = &team_scores;
+  dh.product = QA_Q3_BASE_PRODUCT_BASEQ3; dh.pool = &fake_pool; dh.team_scores = &team_scores;
   dh.death_animations = &seq; dh.frame = fake_frame; dh.calculate_ranks = fake_calc_ranks;
   qa_q3_death_runtime_init(&dr, dh);
   qa_q3_game_entity *scorer = qa_q3_entity_pool_at(&fake_pool, 0);
   fake_ranks = 0;
   qa_q3_death_add_score(&dr, scorer, v3(0, 0, 0), 5);
-  CHECK(fake_ranks == 1 && qa_q3_game_slots_get_mirror(&scorer->client->ps.persistant, 0) == 5);
+  CHECK(fake_ranks == 1 && qa_q3_base_player_state_slots_get(&scorer->client->ps.persistant, 0) == 5);
   /* Personal portal: sequence save/restore and product gate. */
   qa_q3_personal_portal_runtime pr; memset(&pr, 0, sizeof pr);
   qa_q3_personal_portal_restore_sequence(&pr, 42);
   CHECK(qa_q3_personal_portal_capture_sequence(&pr) == 42);
   CHECK_ABORTS(qa_q3_personal_portal_restore_sequence(&pr, 3e9));
   /* State: new shared fields, event ring, classname capture. */
-  qa_q3_game_client sc; qa_q3_game_client_init(&sc, QA_Q3_GAME_PRODUCT_BASEQ3);
+  qa_q3_game_client sc; qa_q3_game_client_init(&sc, QA_Q3_BASE_PRODUCT_BASEQ3);
   CHECK(sc.ps.ping == 0 && sc.ps.generic1 == 0 && sc.ps.weapon == 0);
-  qa_q3_game_player_state_add_event_mirror(&sc.ps, 9, 4);
-  CHECK(sc.ps.event_sequence == 1 && qa_q3_game_slots_get_mirror(&sc.ps.events, 0) == 9);
-  qa_q3_game_entity se; qa_q3_game_entity_init(&se, 5, vb);
+  qa_q3_base_player_state_record_add_event(&sc.ps, 9, 4);
+  CHECK(sc.ps.event_sequence == 1 && qa_q3_base_player_state_slots_get(&sc.ps.events, 0) == 9);
+  qa_q3_game_entity se; q3_fake_entity sfe; q3_fake_entity_init(&se, &sfe, 5);
   qa_q3_game_entity_bind_client_name(&se, &sc);
   CHECK(qa_q3_game_entity_capture_classname(&se).kind == 1);
   qa_q3_game_entity_destroy(&se); qa_q3_game_client_destroy(&sc);
@@ -349,21 +344,21 @@ static void test_completed_runtime(void) {
   CHECK(game_ctx.entities == &fake_pool && policy_ctx.player);
 }
 static void test_name_collisions(void) {
-  /* qa_q3_game_product mirrors shared/definitions.ts Product;
+  /* qa_q3_base_product mirrors shared/definitions.ts Product;
    * qa_q3_product is network/q3/state/product.ts Product. Same
    * ordinals/names, distinct C types and enumerators. */
-  CHECK((int)QA_Q3_GAME_PRODUCT_BASEQ3 == (int)QA_Q3_PRODUCT_BASEQ3);
-  CHECK((int)QA_Q3_GAME_PRODUCT_MISSIONPACK == (int)QA_Q3_PRODUCT_MISSIONPACK);
-  CHECK(strcmp(qa_q3_game_product_name(QA_Q3_GAME_PRODUCT_BASEQ3),
+  CHECK((int)QA_Q3_BASE_PRODUCT_BASEQ3 == (int)QA_Q3_PRODUCT_BASEQ3);
+  CHECK((int)QA_Q3_BASE_PRODUCT_MISSIONPACK == (int)QA_Q3_PRODUCT_MISSIONPACK);
+  CHECK(strcmp(qa_q3_base_product_name(QA_Q3_BASE_PRODUCT_BASEQ3),
       qa_q3_product_name(QA_Q3_PRODUCT_BASEQ3)) == 0);
-  CHECK(strcmp(qa_q3_game_product_name(QA_Q3_GAME_PRODUCT_MISSIONPACK), "missionpack") == 0);
+  CHECK(strcmp(qa_q3_base_product_name(QA_Q3_BASE_PRODUCT_MISSIONPACK), "missionpack") == 0);
   qa_q3_product parsed = QA_Q3_PRODUCT_BASEQ3;
   CHECK(qa_q3_product_parse("missionpack", &parsed) && parsed == QA_Q3_PRODUCT_MISSIONPACK);
   /* Game ENTITYNUM mirror vs network/q3/state/player.ts owner. */
-  CHECK(QA_Q3_GAME_ENTITYNUM_WORLD == 1022);
-  CHECK(QA_Q3_GAME_ENTITYNUM_NONE == QA_Q3_ENTITYNUM_NONE && QA_Q3_ENTITYNUM_NONE == 1023);
-  /* Bootstrap ApplicationQ3Client host vs network Q3ApplicationClientHost. */
-  qa_app_q3_bootstrap_client_host bootstrap_host;
+  CHECK(QA_Q3_BASE_ENTITYNUM_WORLD == 1022);
+  CHECK(QA_Q3_BASE_ENTITYNUM_NONE == QA_Q3_ENTITYNUM_NONE && QA_Q3_ENTITYNUM_NONE == 1023);
+  /* Bootstrap ApplicationQ3Client options vs network Q3ApplicationClientHost. */
+  qa_app_application_q3_client_options bootstrap_host;
   qa_app_q3_client_host network_host;
   memset(&bootstrap_host, 0, sizeof bootstrap_host);
   memset(&network_host, 0, sizeof network_host);
@@ -371,7 +366,7 @@ static void test_name_collisions(void) {
   CHECK(sizeof bootstrap_host != sizeof network_host || sizeof bootstrap_host > 0);
   /* Base-shared owners coexist with the game mirrors/network owners. */
   CHECK((int)QA_Q3_BASE_PRODUCT_MISSIONPACK == (int)QA_Q3_PRODUCT_MISSIONPACK);
-  CHECK((int)QA_Q3_BASE_ENTITYNUM_WORLD == (int)QA_Q3_GAME_ENTITYNUM_WORLD);
+  CHECK((int)QA_Q3_BASE_ENTITYNUM_WORLD == (int)QA_Q3_BASE_ENTITYNUM_WORLD);
   CHECK((int)QA_Q3_BASE_ENTITYNUM_NONE == QA_Q3_ENTITYNUM_NONE);
   /* Product-policy kinds share the QA_Q3_PRODUCT_ prefix only. */
   CHECK(QA_Q3_PRODUCT_RETAIL != QA_Q3_PRODUCT_PRERELEASE_DEMO);
@@ -379,12 +374,6 @@ static void test_name_collisions(void) {
    * "active", distinct enumerators and ordinals. */
   CHECK((int)QA_Q3_WEAPON_SLOT_ACTIVE == 0 && (int)QA_Q3_SLOT_ACTIVE == 4);
   CHECK((int)QA_Q3_WEAPON_SLOT_HOLSTERED == 3 && (int)QA_Q3_SLOT_FREE == 0);
-  /* Persistence session mirror (int32) vs game session (double). */
-  qa_persist_q3_client_session persist_session;
-  qa_q3_client_session game_session;
-  memset(&persist_session, 0, sizeof persist_session);
-  memset(&game_session, 0, sizeof game_session);
-  CHECK(sizeof persist_session != sizeof game_session);
 }
 
 int main(void) {

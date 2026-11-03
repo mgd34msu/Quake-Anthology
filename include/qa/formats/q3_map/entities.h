@@ -1,6 +1,7 @@
 /*
- * Port of src/formats/q3-map/entities.ts. TextParseError aborts
- * printing "TextParseError: <source>:<line>:<column>: <message>".
+ * Port of src/formats/q3-map/entities.ts. TextParseError is qa_raise
+ * name "TextParseError", message "<source>:<line>:<column>: <message>"
+ * (catchable with qa_try, as the TS throw is).
  * Entity maps become ordered key/value lists with JS Map set
  * semantics (duplicate keys overwrite in place). GPL-2.0-or-later.
  */

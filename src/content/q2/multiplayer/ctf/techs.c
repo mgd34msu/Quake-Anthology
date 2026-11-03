@@ -1,6 +1,7 @@
 /* Port of src/content/q2/multiplayer/ctf/techs.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/multiplayer/ctf/techs.h"
 #include "../multiplayer_internal.h"
+#include "qa/foundation/js.h"
 
 struct tech_row { const char *classname, *model, *icon, *name; };
 static const struct tech_row TECHS[4] = {
@@ -125,13 +126,13 @@ void qa_q2_ctf_techs_think_impl(void *ctx, qa_q2_entity *entity, qa_q2_game_serv
 static qa_q2_entity *create_tech(qa_q2_ctf_techs *t, const char *classname, qa_q2_entity *spot, qa_q2_game_services *g) {
   qa_q2_entity *entity = g->create(g->ctx, classname, NULL, 0);
   qa_q2_item_module *items = t->context->hooks.items;
-  if (!qa_q2_item_module_spawn(items, entity, g)) qa_q2f_error("Unregistered CTF tech %s", classname);
+  if (!qa_q2_item_module_spawn(items, entity, g)) qa_raise("Error", 0, 0, "Unregistered CTF tech %s", classname);
   qa_q2_callback_definitions callbacks = qa_q2_item_module_callbacks(items);
   qa_q2_touch touch = {0};
   bool found = false;
   for (size_t i = 0; i < callbacks.touch_count; i++)
     if (strcmp(callbacks.touch[i].name, "Touch_Item") == 0) { touch = callbacks.touch[i].cb; found = true; }
-  if (!found) qa_q2f_error("CTF techs require the shared Touch_Item callback");
+  if (!found) qa_raise("Error", 0, 0, "CTF techs require the shared Touch_Item callback");
   entity->spawnflags = 0x10000;
   entity->effects = 1;
   entity->render_flags = 512;
@@ -183,7 +184,7 @@ void qa_q2_ctf_techs_spawn_impl(void *ctx, qa_q2_entity *entity, qa_q2_game_serv
 }
 
 void qa_q2_ctf_techs_setup(qa_q2_ctf_techs *t, qa_q2_game_services *g) {
-  if (((int64_t)g->options.deathmatch_flags & 524288) != 0) return;
+  if ((qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 524288) != 0) return;
   qa_q2_entity *spawner = g->create(g->ctx, "ctf_tech_spawn", NULL, 0);
   qa_q2_think think = {t, qa_q2_ctf_techs_spawn_impl};
   g->schedule(g->ctx, spawner, 2, think);
@@ -240,7 +241,7 @@ void qa_q2_ctf_techs_drop(qa_q2_ctf_techs *t, qa_q2_entity *entity, qa_q2_game_s
 }
 
 static void tech_sound(qa_q2_ctf_techs *t, qa_owned_actor entity, qa_q2_game_services *g, const char *name) {
-  double volume = t->context->hooks.weapons->silencer_shots(t->context->hooks.weapons->ctx, entity.id) > 0 ? 0.2 : 1;
+  double volume = qa_q2w_ballistics_silencer_shots(&t->context->hooks.weapons->base, entity.id) > 0 ? 0.2 : 1;
   char path[64];
   snprintf(path, sizeof path, "ctf/%s.wav", name);
   qa_q2_presentation_event event = {0};
@@ -278,7 +279,9 @@ bool qa_q2_ctf_techs_strength_sound(qa_q2_ctf_techs *t, qa_owned_actor entity, q
   qa_q2_ctf_player_state *state = qa_ctf_player(t->context, entity.id);
   if (state->tech_sound_time < qa_q2mp_now(g)) {
     state->tech_sound_time = qa_q2mp_now(g) + 1;
-    tech_sound(t, entity, g, qa_q2_item_module_player_powerups(t->context->hooks.items, entity.id).quad_until > qa_q2mp_now(g) ? "tech2x" : "tech2");
+    double left = qa_q2_item_module_player_powerups(t->context->hooks.items, entity.id).quad_until;
+    double right = qa_q2mp_now(g);
+    tech_sound(t, entity, g, left > right ? "tech2x" : "tech2");
   }
   return true;
 }

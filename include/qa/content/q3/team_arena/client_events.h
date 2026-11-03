@@ -1,8 +1,6 @@
 /* Port of src/content/q3/team-arena/client-events.ts. GPL-2.0-or-later.
  * WeaponRuntime/ClientSpawnRuntime/PersonalPortalRuntime/DropItemContext
- * services become fn+ctx callbacks; ps.eventSequence is the mirror's
- * generic ring counter and ps.generic1 has no mirror field (the
- * harvester cube count is passed through drops.generic1 accessors). */
+ * services become fn+ctx callbacks. */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_CLIENT_EVENTS_H
 #define QA_CONTENT_Q3_TEAM_ARENA_CLIENT_EVENTS_H
 #include <stdbool.h>
@@ -33,9 +31,6 @@ typedef struct qa_q3_ta_client_events_context {
   void (*drop_portal_destination)(void *ctx, qa_q3_game_entity *entity);
   /* TS optional primaryAttackAllowed: NULL fn is TS undefined. */
   bool (*primary_attack_allowed)(void *ctx, qa_actor_id actor);
-  /* TS ps.generic1 accessors (no mirror field). */
-  double (*generic1)(void *ctx, qa_q3_game_client *client);
-  void (*set_generic1)(void *ctx, qa_q3_game_client *client, double value);
 } qa_q3_ta_client_events_context;
 
 void qa_q3_ta_client_events(qa_q3_ta_client_events_context *context, qa_q3_game_entity *entity,
@@ -53,15 +48,13 @@ typedef struct qa_q3_ta_holdable_context {
 } qa_q3_ta_holdable_context;
 void qa_q3_ta_use_holdable(qa_q3_ta_holdable_context *context, qa_q3_game_entity *entity, double event);
 
-/* TS Pick<ClientEventsContext, "drops" | "product" | "combat"> (+ generic1). */
+/* TS Pick<ClientEventsContext, "drops" | "product" | "combat">. */
 typedef struct qa_q3_ta_teleport_objectives_context {
   qa_q3_base_product product;
   qa_q3_game_combat_context *combat;
   void *ctx;
   qa_q3_game_entity *(*drop_item)(void *ctx, qa_q3_game_entity *entity,
       const qa_q3_base_item_definition *item, double angle);
-  double (*generic1)(void *ctx, qa_q3_game_client *client);
-  void (*set_generic1)(void *ctx, qa_q3_game_client *client, double value);
 } qa_q3_ta_teleport_objectives_context;
 void qa_q3_ta_drop_teleport_objectives(qa_q3_ta_teleport_objectives_context *context, qa_q3_game_entity *entity);
 #endif

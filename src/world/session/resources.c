@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/support.h"
+
 struct qa_resource_scope {
   char *name; /* owned */
   struct {
@@ -18,14 +20,14 @@ struct qa_resource_scope {
   bool closed;
 };
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static void *xmalloc(size_t size) {
@@ -91,8 +93,9 @@ struct owned_resource {
 };
 static void close_owned(void *ctx) {
   struct owned_resource *owned = ctx;
-  owned->resource.close(owned->resource.ctx);
-  free(owned);
+  qa_session_resource resource = owned->resource;
+  free(owned); /* before close: a throwing close must not leak it */
+  resource.close(resource.ctx);
 }
 
 qa_session_resource qa_resource_scope_own(qa_resource_scope *scope,
@@ -103,15 +106,27 @@ qa_session_resource qa_resource_scope_own(qa_resource_scope *scope,
   return resource;
 }
 
+struct cleanup_call {
+  qa_session_cleanup_fn fn;
+  void *ctx;
+};
+static void run_cleanup_call(void *arg) {
+  struct cleanup_call *call = arg;
+  call->fn(call->ctx);
+}
 void qa_resource_scope_close(qa_resource_scope *scope) {
   if (scope->closed) return;
   scope->closed = true;
+  /* Every cleanup runs (newest first) in its own try; failures become one
+   * AggregateError. */
+  size_t errors = 0;
   while (scope->count != 0) {
     scope->count--;
-    qa_session_cleanup_fn fn = scope->cleanups[scope->count].fn;
-    void *ctx = scope->cleanups[scope->count].ctx;
-    fn(ctx);
+    struct cleanup_call call = {scope->cleanups[scope->count].fn, scope->cleanups[scope->count].ctx};
+    qa_caught_error caught;
+    if (!qa_try(run_cleanup_call, &call, &caught)) errors++;
   }
+  if (errors > 0) qa_raise("AggregateError", 0, 0, "Failed to close %s", scope->name);
 }
 
 static void scope_close_ctx(void *ctx) {

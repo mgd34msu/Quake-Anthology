@@ -1,0 +1,92 @@
+purge status Quaddicted — community Quake add-ons scope catalog
+purge entry local:qd_cccccccccccccccccccc_dddddddddddddddddddd|qd_cccccccccccccccccccc_dddddddddddddddddddd|Installed — play|-
+purge tree .addons dir
+purge tree .addons/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.zip bc4a71180870f7945155fbb02f4b0a2e3faa2a62d6d31b7039013055ed19869a
+purge tree .addons/removed dir
+purge tree .addons/removed/q1 dir
+purge tree q1 dir
+purge tree q1/qd_cccccccccccccccccccc_dddddddddddddddddddd dir
+purge tree q1/qd_cccccccccccccccccccc_dddddddddddddddddddd/.quaddicted.json ad8a872942291edceb825f16b248cf04d97c3e4b2e57669f5312d24fa4945c98
+local-first status Installed map — ready to play scope catalog
+local-first entry local:qd_2817305f655347bca81a_1dc29a01b35b5412a2e6|map|Installed — play|-
+local changes 2
+local-second status Installed map — ready to play scope catalog
+local-second entry local:qd_2817305f655347bca81a_a06e6a97f3b78c5e1442|map|Installed — play|-
+local first-hidden true
+local-selected status Installed map — ready to play scope installed:qd_2817305f655347bca81a_a06e6a97f3b78c5e1442
+local-selected entry local-play|Play|map|-
+local-selected entry local-remove|Remove installed add-on|map|-
+local-selected entry back|Back to add-ons|-|-
+local changes 3
+local-removed status Removed map scope catalog
+local tree .addons dir
+local tree .addons/1dc29a01b35b5412a2e6b124fed76783c08c1f6e9168b5e32697b34d2a48cb9d.zip 1dc29a01b35b5412a2e6b124fed76783c08c1f6e9168b5e32697b34d2a48cb9d
+local tree .addons/a06e6a97f3b78c5e14422204d51889ac4898a202dcf47a7441757509e51a40de.zip a06e6a97f3b78c5e14422204d51889ac4898a202dcf47a7441757509e51a40de
+local tree .addons/removed dir
+local tree .addons/removed/q1 dir
+local tree .addons/removed/q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+local tree .addons/removed/q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+local tree map.zip a06e6a97f3b78c5e14422204d51889ac4898a202dcf47a7441757509e51a40de
+local tree q1 dir
+local tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6 dir
+local tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6/.quaddicted.json 53600bf40ccfa859f51bb05034aab799b6a2e220253c4e9a09280fd1fc658279
+local tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6/maps dir
+local tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6/maps/example.bsp 80d8f975e768eecac59d22a788bf8e811e51ca85e309ee47f1e821e3e58280f2
+local tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442 dir
+local tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442/.quaddicted.json 8d738dab81c51a8988948bd66580c3cb4539e2681471b236069dac986f40f222
+local tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442/maps dir
+local tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442/maps/example.bsp ebfa015966891a400bf353bdf8ef30444a71b1751e2808ef6c014db34d168d85
+restore status catalog failed scope catalog
+restore entry local:qd_2817305f655347bca81a_1dc29a01b35b5412a2e6|map|Installed — play|-
+restore original-hidden false
+restore tree .addons dir
+restore tree .addons/1dc29a01b35b5412a2e6b124fed76783c08c1f6e9168b5e32697b34d2a48cb9d.zip 1dc29a01b35b5412a2e6b124fed76783c08c1f6e9168b5e32697b34d2a48cb9d
+restore tree .addons/a06e6a97f3b78c5e14422204d51889ac4898a202dcf47a7441757509e51a40de.zip a06e6a97f3b78c5e14422204d51889ac4898a202dcf47a7441757509e51a40de
+restore tree .addons/removed dir
+restore tree .addons/removed/q1 dir
+restore tree .addons/removed/q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+restore tree map.zip a06e6a97f3b78c5e14422204d51889ac4898a202dcf47a7441757509e51a40de
+restore tree q1 dir
+restore tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6 dir
+restore tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6/.quaddicted.json 53600bf40ccfa859f51bb05034aab799b6a2e220253c4e9a09280fd1fc658279
+restore tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6/maps dir
+restore tree q1/qd_2817305f655347bca81a_1dc29a01b35b5412a2e6/maps/example.bsp 80d8f975e768eecac59d22a788bf8e811e51ca85e309ee47f1e821e3e58280f2
+restore tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442 dir
+restore tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442/.quaddicted.json 8d738dab81c51a8988948bd66580c3cb4539e2681471b236069dac986f40f222
+restore tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442/maps dir
+restore tree q1/qd_2817305f655347bca81a_a06e6a97f3b78c5e1442/maps/example.bsp ebfa015966891a400bf353bdf8ef30444a71b1751e2808ef6c014db34d168d85
+classic status Installed Map — ready to play scope catalog
+classic entry local:qd_2817305f655347bca81a_eaff2c7e254bfdb345a2|Map|Installed — play|-
+rerelease status Installed Map — ready to play scope catalog
+rerelease entry local:qd_2817305f655347bca81a_eaff2c7e254bfdb345a2|Map|Installed — play|-
+editions launches q1-classic-qd_2817305f655347bca81a_eaff2c7e254bfdb345a2 null
+classic-removed status Removed Map scope catalog
+classic-game status Installed Game Pack — ready to play scope catalog
+classic-game entry local:qd_bbdec30895fea579c538_8fae056a56372d6f11d2|Game Pack|Installed — play|-
+classic-text status <root>/notes.txt:0: ZIP end-of-central-directory record not found scope catalog
+classic-text entry local:qd_bbdec30895fea579c538_8fae056a56372d6f11d2|Game Pack|Installed — play|-
+classic-missing status ENOENT: no such file or directory, open '<root>/missing.zip'
+editions tree .addons dir
+editions tree .addons/8fae056a56372d6f11d27a9970f9b9c8fb4d0016a2ea71f40abb314e5d6fcf89.zip 8fae056a56372d6f11d27a9970f9b9c8fb4d0016a2ea71f40abb314e5d6fcf89
+editions tree .addons/eaff2c7e254bfdb345a22448c5c6a982aba8a110f5b675b1fc1b21fdbcbbecb6.zip eaff2c7e254bfdb345a22448c5c6a982aba8a110f5b675b1fc1b21fdbcbbecb6
+editions tree .addons/removed dir
+editions tree .addons/removed/q1 dir
+editions tree .addons/removed/q1/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+editions tree Game Pack.ZIP 8fae056a56372d6f11d27a9970f9b9c8fb4d0016a2ea71f40abb314e5d6fcf89
+editions tree Map.zip eaff2c7e254bfdb345a22448c5c6a982aba8a110f5b675b1fc1b21fdbcbbecb6
+editions tree notes.txt a3989126344744ef800dbc88bf7e744853f3f2eac75c9ab3301f4e845ef22078
+editions tree q1 dir
+editions tree q1/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2 dir
+editions tree q1/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2/.quaddicted.json e806e9a57cb4f3a5690f7896e12f99ebae03ce0ca562e3fd084de4ff06339466
+editions tree q1/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2/maps dir
+editions tree q1/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2/maps/example.bsp 8148b7fefaf89ebf8e7951994d2601d731220c5460faecc64c69d12bb7ff3213
+editions tree q1/qd_bbdec30895fea579c538_8fae056a56372d6f11d2 dir
+editions tree q1/qd_bbdec30895fea579c538_8fae056a56372d6f11d2/.quaddicted.json 350ffa3c9e6bbc797356398aa83448a2c1769bb96b95279cc77c679de1559e1a
+editions tree q1/qd_bbdec30895fea579c538_8fae056a56372d6f11d2/maps dir
+editions tree q1/qd_bbdec30895fea579c538_8fae056a56372d6f11d2/maps/start.bsp cced28c6dc3f99c2396a5eaad732bf6b28142335892b1cd0e6af6cdb53f5ccfa
+editions tree q1/qd_bbdec30895fea579c538_8fae056a56372d6f11d2/progs.dat 2f080a18700714ccb20d1b7e01e87a3f9df24b8c747939c22ccf914ef8c49d23
+editions tree q1/rerelease dir
+editions tree q1/rerelease/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2 dir
+editions tree q1/rerelease/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2/.quaddicted.json e806e9a57cb4f3a5690f7896e12f99ebae03ce0ca562e3fd084de4ff06339466
+editions tree q1/rerelease/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2/maps dir
+editions tree q1/rerelease/qd_2817305f655347bca81a_eaff2c7e254bfdb345a2/maps/example.bsp 8148b7fefaf89ebf8e7951994d2601d731220c5460faecc64c69d12bb7ff3213

@@ -4,38 +4,67 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "qa/content/q3/foundation/animation_config.h"
+#include "qa/content/q3/foundation/animation.h"
 #include "qa/content/q3/foundation/weapon_pose.h"
 #include "qa/content/q3/presentation/ref_entity.h"
 #include "qa/core/game_numeric.h"
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
 #include "qa/render/scene/models/transform.h"
-typedef struct model_entry { char *key; const qa_app_q3_selected_model_asset *asset; bool resolved; } model_entry;
+
 typedef struct animation_entry { char *content; qa_q3_player_animation_config config; } animation_entry;
+/* One settled TS Promise<ModelAsset | null>: present false is TS null. */
+typedef struct model_entry { char *key; bool present; qa_app_model_asset asset; } model_entry;
 struct qa_app_selected_q3_weapon_presenter {
   qa_q3_lerp_frame torso;
   qa_q3_weapon_barrel barrel, world_barrel;
   qa_game_random random;
-  qa_app_q3_weapon_assets assets;
+  qa_app_application_assets *assets;
   const qa_q3_player_animation_config *character_animation;
-  model_entry *models; size_t model_count, model_capacity;
-  animation_entry *animations; size_t animation_count, animation_capacity;
+  animation_entry **animations; size_t animation_count, animation_capacity;
+  model_entry **models; size_t model_count, model_capacity;
+  /* world() scratch: gun, barrel, flash; passes. */
+  qa_scene_entity world_entities[3];
+  qa_scene_entity_attachment world_attachments[1];
+  qa_q3_character_pass world_passes[4];
+  /* frame() scratch: the gun's attachments and their entities. */
+  qa_scene_entity *frame_entities; qa_scene_entity_attachment *frame_attachments; size_t frame_capacity;
 };
-static char *dup_text(const char *text) {
-  size_t len = strlen(text);
-  char *out = malloc(len + 1);
+
+static const qa_vec3 ZERO = {0, 0, 0};
+static const qa_vec3 UNIT = {1, 1, 1};
+
+static char *copy_text(const char *text) {
+  size_t length = strlen(text) + 1;
+  char *out = malloc(length);
   if (out == NULL) qa_range_error("Out of memory");
-  memcpy(out, text, len + 1);
+  memcpy(out, text, length);
   return out;
 }
-static const qa_vec3 zero3 = {0, 0, 0};
-static const qa_vec3 unit3 = {1, 1, 1};
+static char *join_text(const char *a, const char *b, const char *c) {
+  size_t length = strlen(a) + strlen(b) + strlen(c) + 1;
+  char *out = malloc(length);
+  if (out == NULL) qa_range_error("Out of memory");
+  snprintf(out, length, "%s%s%s", a, b, c);
+  return out;
+}
+/* TS source.path.replace(/\.[^.]+$/, ""). */
+static char *path_stem(const char *path) {
+  const char *dot = strrchr(path, '.');
+  size_t length = dot != NULL && dot[1] != '\0' ? (size_t)(dot - path) : strlen(path);
+  char *out = malloc(length + 1);
+  if (out == NULL) qa_range_error("Out of memory");
+  memcpy(out, path, length);
+  out[length] = '\0';
+  return out;
+}
+
 qa_app_selected_q3_weapon_presenter *qa_app_selected_q3_weapon_presenter_create(
-    qa_app_q3_weapon_assets assets, const qa_q3_player_animation_config *character_animation) {
+    qa_app_application_assets *assets, const qa_q3_player_animation_config *character_animation) {
   qa_app_selected_q3_weapon_presenter *presenter = calloc(1, sizeof *presenter);
-  if (presenter == NULL) qa_range_error("Out of memory");
+  if (presenter == NULL) return NULL;
   presenter->torso = qa_q3_create_lerp_frame();
   qa_q3_weapon_barrel_init(&presenter->barrel);
   qa_q3_weapon_barrel_init(&presenter->world_barrel);
@@ -46,291 +75,303 @@ qa_app_selected_q3_weapon_presenter *qa_app_selected_q3_weapon_presenter_create(
 }
 void qa_app_selected_q3_weapon_presenter_destroy(qa_app_selected_q3_weapon_presenter *presenter) {
   if (presenter == NULL) return;
-  for (size_t i = 0; i < presenter->model_count; i++) free(presenter->models[i].key);
-  free(presenter->models);
   for (size_t i = 0; i < presenter->animation_count; i++) {
-    free(presenter->animations[i].content);
-    qa_q3_player_animation_config_destroy(&presenter->animations[i].config);
+    qa_q3_player_animation_config_destroy(&presenter->animations[i]->config);
+    free(presenter->animations[i]->content); free(presenter->animations[i]);
   }
   free(presenter->animations);
+  for (size_t i = 0; i < presenter->model_count; i++) { free(presenter->models[i]->key); free(presenter->models[i]); }
+  free(presenter->models);
+  free(presenter->frame_entities); free(presenter->frame_attachments);
   free(presenter);
 }
-static void host_print(void *ctx, const char *message) {
-  qa_app_selected_q3_weapon_presenter *presenter = ctx;
-  if (presenter->assets.print != NULL) presenter->assets.print(presenter->assets.ctx, message);
+
+/* TS (await provider(content)).mounts.open(path) !== null. */
+static bool resource_present(qa_app_application_assets *assets, qa_content_id content, const char *path) {
+  qa_content_mounted *mounts = qa_app_application_assets_provider(assets, content).mounts;
+  qa_content_opened_resource opened;
+  if (!qa_content_mounted_open(mounts, path, NULL, NULL, &opened)) return false;
+  free(opened.bytes);
+  return true;
 }
-static const qa_q3_player_animation_config *animation_for(qa_app_selected_q3_weapon_presenter *presenter,
-    qa_content_id content) {
+
+/* TS private animation(content). */
+static const qa_q3_player_animation_config *animation_for(qa_app_selected_q3_weapon_presenter *presenter, qa_content_id content) {
   if (presenter->character_animation != NULL) return presenter->character_animation;
   for (size_t i = 0; i < presenter->animation_count; i++)
-    if (strcmp(presenter->animations[i].content, content) == 0) return &presenter->animations[i].config;
+    if (strcmp(presenter->animations[i]->content, content) == 0) return &presenter->animations[i]->config;
   const char *path = "models/players/sarge/animation.cfg";
-  size_t length = 0;
-  uint8_t *bytes = presenter->assets.open(presenter->assets.ctx, content, path, &length);
-  if (bytes == NULL) qa_range_error("Selected Q3 weapon animation configuration is missing");
-  char *text = malloc(length + 1);
+  qa_content_mounted *mounts = qa_app_application_assets_provider(presenter->assets, content).mounts;
+  qa_content_opened_resource resource;
+  if (!qa_content_mounted_open(mounts, path, NULL, NULL, &resource))
+    qa_raise("Error", 0, 0, "Selected Q3 weapon animation configuration is missing");
+  char *text = malloc(resource.byte_length + 1);
   if (text == NULL) qa_range_error("Out of memory");
-  memcpy(text, bytes, length); text[length] = '\0';
-  free(bytes);
-  if (presenter->animation_count == presenter->animation_capacity) {
-    size_t cap = presenter->animation_capacity == 0 ? 4 : presenter->animation_capacity * 2;
-    animation_entry *next = realloc(presenter->animations, cap * sizeof *next);
-    if (next == NULL) qa_range_error("Out of memory");
-    presenter->animations = next; presenter->animation_capacity = cap;
-  }
-  animation_entry *entry = &presenter->animations[presenter->animation_count];
-  memset(entry, 0, sizeof *entry);
-  entry->content = dup_text(content);
+  memcpy(text, resource.bytes, resource.byte_length);
+  text[resource.byte_length] = '\0';
+  free(resource.bytes);
+  animation_entry *entry = calloc(1, sizeof *entry);
+  if (entry == NULL) qa_range_error("Out of memory");
+  qa_cleanup text_guard, entry_guard;
+  qa_cleanup_push(&text_guard, free, text);
+  qa_cleanup_push(&entry_guard, free, entry);
   qa_q3_parse_player_animation_config(text, path, NULL, &entry->config);
+  qa_cleanup_pop(&entry_guard);
+  qa_cleanup_pop(&text_guard);
   free(text);
-  presenter->animation_count++;
+  entry->content = copy_text(content);
+  if (presenter->animation_count == presenter->animation_capacity) {
+    size_t capacity = presenter->animation_capacity == 0 ? 4 : presenter->animation_capacity * 2;
+    animation_entry **next = realloc(presenter->animations, capacity * sizeof *next);
+    if (next == NULL) qa_range_error("Out of memory");
+    presenter->animations = next; presenter->animation_capacity = capacity;
+  }
+  presenter->animations[presenter->animation_count++] = entry;
   return &entry->config;
 }
-static const qa_app_q3_selected_model_asset *model_for(qa_app_selected_q3_weapon_presenter *presenter,
-    qa_content_id content, const char *path) {
-  size_t key_size = strlen(content) + strlen(path) + 2;
-  char *key = malloc(key_size);
-  if (key == NULL) qa_range_error("Out of memory");
-  snprintf(key, key_size, "%s/%s", content, path);
-  for (size_t i = 0; i < presenter->model_count; i++) {
-    if (strcmp(presenter->models[i].key, key) == 0) {
+
+/* TS private model(content, path): NULL is TS null. */
+static const qa_app_model_asset *model_for(qa_app_selected_q3_weapon_presenter *presenter, qa_content_id content, const char *path) {
+  char *key = join_text(content, "/", path);
+  for (size_t i = 0; i < presenter->model_count; i++)
+    if (strcmp(presenter->models[i]->key, key) == 0) {
       free(key);
-      return presenter->models[i].asset;
+      return presenter->models[i]->present ? &presenter->models[i]->asset : NULL;
+    }
+  qa_cleanup key_guard;
+  qa_cleanup_push(&key_guard, free, key);
+  model_entry *entry = calloc(1, sizeof *entry);
+  if (entry == NULL) qa_range_error("Out of memory");
+  qa_cleanup entry_guard;
+  qa_cleanup_push(&entry_guard, free, entry);
+  if (resource_present(presenter->assets, content, path)) {
+    entry->asset = qa_app_application_assets_model(presenter->assets, content, path);
+    entry->present = true;
+  }
+  qa_cleanup_pop(&entry_guard);
+  qa_cleanup_pop(&key_guard);
+  entry->key = key;
+  if (presenter->model_count == presenter->model_capacity) {
+    size_t capacity = presenter->model_capacity == 0 ? 8 : presenter->model_capacity * 2;
+    model_entry **next = realloc(presenter->models, capacity * sizeof *next);
+    if (next == NULL) qa_range_error("Out of memory");
+    presenter->models = next; presenter->model_capacity = capacity;
+  }
+  presenter->models[presenter->model_count++] = entry;
+  return entry->present ? &entry->asset : NULL;
+}
+
+static bool flash_visible(const qa_app_simulation_presentation *source) {
+  bool continuous = source->q3_weapon_firing
+      && (source->q3_weapon_weapon == 1 || source->q3_weapon_weapon == 6 || source->q3_weapon_weapon == 10);
+  return continuous || (source->has_q3_weapon_last_fire && source->q3_weapon_time_ms - source->q3_weapon_last_fire_ms <= 20);
+}
+
+/* TS options: () => shader === null ? {} : { customShader: shader }; ctx is the shader text. */
+static qa_model_source_options shader_options(void *ctx, const qa_scene_entity *entity) {
+  (void)entity;
+  qa_model_source_options options;
+  memset(&options, 0, sizeof options);
+  options.custom_shader = ctx;
+  return options;
+}
+
+/* TS world part(asset, angles). */
+static qa_scene_entity world_part(const qa_app_simulation_presentation *source, const qa_app_model_asset *asset,
+                                  qa_vec3 angles, qa_vec3 lighting_origin, bool personal_model) {
+  qa_scene_entity entity;
+  memset(&entity, 0, sizeof entity);
+  entity.actor = &source->actor;
+  entity.resource = asset->resource;
+  entity.model = asset->model;
+  entity.transform.origin = ZERO;
+  entity.transform.axis = qa_qvm_angles_to_axis(angles);
+  entity.transform.scale = UNIT;
+  entity.previous_origin = ZERO;
+  entity.pose.is_frame = true;
+  entity.color = (qa_vec4){1, 1, 1, 1};
+  entity.shader_time.kind = QA_SOURCE_TIME_SECONDS;
+  entity.shader_time.value = 0;
+  entity.flags_kind = "q3";
+  entity.flags_bits = QA_Q3_PRES_RF_LIGHTING_ORIGIN | (personal_model ? QA_Q3_PRES_RF_THIRD_PERSON : 0);
+  entity.lighting_origin = lighting_origin;
+  entity.shadow_plane = 0;
+  return entity;
+}
+
+const qa_q3_character_pass *qa_app_selected_q3_weapon_presenter_world(qa_app_selected_q3_weapon_presenter *presenter,
+    const qa_app_simulation_presentation *source, qa_vec3 character_origin, double character_powerups,
+    bool personal_model, size_t *out_count) {
+  *out_count = 0;
+  if (!source->has_q3_weapon || !source->visible || source->path[0] == '\0') return presenter->world_passes;
+  char *stem = path_stem(source->path);
+  char *barrel_path = join_text(stem, "_barrel.md3", ""), *flash_path = join_text(stem, "_flash.md3", "");
+  free(stem);
+  qa_cleanup barrel_guard, flash_guard;
+  qa_cleanup_push(&barrel_guard, free, barrel_path);
+  qa_cleanup_push(&flash_guard, free, flash_path);
+  qa_app_model_asset gun_asset = qa_app_application_assets_model(presenter->assets, source->content, source->path);
+  const qa_app_model_asset *barrel_asset = model_for(presenter, source->content, barrel_path);
+  const qa_app_model_asset *flash_asset = model_for(presenter, source->content, flash_path);
+  qa_cleanup_pop(&flash_guard);
+  qa_cleanup_pop(&barrel_guard);
+  free(barrel_path); free(flash_path);
+  qa_q3_weapon_barrel_step_result spin = qa_q3_weapon_barrel_step(&presenter->world_barrel, source->q3_weapon_time_ms,
+                                                                   source->q3_weapon_firing);
+  qa_scene_entity *gun = &presenter->world_entities[0];
+  *gun = world_part(source, &gun_asset, ZERO, character_origin, personal_model);
+  if (barrel_asset != NULL) {
+    presenter->world_entities[1] = world_part(source, barrel_asset, (qa_vec3){0, 0, spin.angle}, character_origin, personal_model);
+    presenter->world_attachments[0].tag = "tag_barrel";
+    presenter->world_attachments[0].entity = &presenter->world_entities[1];
+    gun->attachments = presenter->world_attachments;
+    gun->attachment_count = 1;
+  }
+  size_t count = 0;
+  int32_t powerups = qa_js_to_int32(character_powerups);
+  bool invisible = (powerups & (1 << QA_Q3_PW_INVIS)) != 0;
+  const char *shaders[3]; size_t shader_count = 0;
+  shaders[shader_count++] = invisible ? "powerups/invisibility" : NULL;
+  if (!invisible) {
+    if (powerups & (1 << QA_Q3_PW_BATTLESUIT)) shaders[shader_count++] = "powerups/battleWeapon";
+    if (powerups & (1 << QA_Q3_PW_QUAD)) shaders[shader_count++] = "powerups/quadWeapon";
+  }
+  for (size_t i = 0; i < shader_count; i++) {
+    qa_q3_character_pass *pass = &presenter->world_passes[count++];
+    pass->content = source->content; pass->entity = *gun; pass->shader = shaders[i];
+    pass->options = shader_options; pass->options_ctx = (void *)shaders[i];
+  }
+  if (flash_asset != NULL && flash_visible(source)) {
+    qa_model_attachment_tag_result tag;
+    if (qa_model_attachment_tag(gun, "tag_flash", &tag)) {
+      double roll = (float)(qa_game_random_crandom(&presenter->random) * 10);
+      qa_scene_entity flash = world_part(source, flash_asset, (qa_vec3){0, 0, roll}, character_origin, personal_model);
+      presenter->world_entities[2] = qa_attach_scene_entity(gun, &flash, tag);
+      qa_q3_character_pass *pass = &presenter->world_passes[count++];
+      pass->content = source->content; pass->entity = presenter->world_entities[2]; pass->shader = NULL;
+      pass->options = shader_options; pass->options_ctx = NULL;
     }
   }
-  size_t length = 0;
-  uint8_t *bytes = presenter->assets.open(presenter->assets.ctx, content, path, &length);
-  const qa_app_q3_selected_model_asset *asset = NULL;
-  if (bytes != NULL) {
-    free(bytes);
-    const char *error = NULL;
-    asset = presenter->assets.model(presenter->assets.ctx, content, path, &error);
-    if (asset == NULL) qa_range_error("%s", error != NULL ? error : "Out of memory");
-  }
-  if (presenter->model_count == presenter->model_capacity) {
-    size_t cap = presenter->model_capacity == 0 ? 8 : presenter->model_capacity * 2;
-    model_entry *next = realloc(presenter->models, cap * sizeof *next);
-    if (next == NULL) qa_range_error("Out of memory");
-    presenter->models = next; presenter->model_capacity = cap;
-  }
-  presenter->models[presenter->model_count].key = key;
-  presenter->models[presenter->model_count].asset = asset;
-  presenter->models[presenter->model_count].resolved = true;
-  presenter->model_count++;
-  return asset;
+  *out_count = count;
+  return presenter->world_passes;
 }
-static const qa_app_q3_selected_model_asset *required_model(qa_app_selected_q3_weapon_presenter *presenter,
-    qa_content_id content, const char *path) {
-  const char *error = NULL;
-  const qa_app_q3_selected_model_asset *asset = presenter->assets.model(presenter->assets.ctx, content, path, &error);
-  if (asset == NULL) qa_range_error("%s", error != NULL ? error : "Out of memory");
-  return asset;
-}
-static char *stem_path(const char *path, const char *suffix) {
-  size_t len = strlen(path);
-  const char *dot = strrchr(path, '.');
-  size_t stem = dot != NULL && dot != path ? (size_t)(dot - path) : len;
-  char *out = malloc(stem + strlen(suffix) + 1);
-  if (out == NULL) qa_range_error("Out of memory");
-  memcpy(out, path, stem);
-  memcpy(out + stem, suffix, strlen(suffix) + 1);
-  return out;
-}
-static qa_scene_entity part_entity(qa_app_q3_weapon_source source, const qa_app_q3_selected_model_asset *asset,
-    qa_vec3 origin, qa_vec3 angles, double flags_bits, bool world) {
-  qa_scene_entity entity = {0};
-  entity.actor = source.actor;
+
+/* TS frame part(asset, origin, angles). */
+static qa_scene_entity view_part(const qa_app_simulation_presentation *source, const qa_app_model_asset *asset,
+                                 qa_vec3 origin, qa_vec3 angles) {
+  qa_scene_entity entity;
+  memset(&entity, 0, sizeof entity);
+  entity.actor = &source->actor;
   entity.resource = asset->resource;
   entity.model = asset->model;
   entity.transform.origin = origin;
   entity.transform.axis = qa_qvm_angles_to_axis(angles);
-  entity.transform.scale = unit3;
-  entity.previous_origin = world ? zero3 : origin;
+  entity.transform.scale = UNIT;
+  entity.previous_origin = origin;
   entity.pose.is_frame = true;
-  entity.pose.frame = 0; entity.pose.previous_frame = 0; entity.pose.back_lerp = 0;
-  entity.skin = 0;
   entity.color = (qa_vec4){1, 1, 1, 1};
-  entity.shader_time.kind = world ? QA_SOURCE_TIME_SECONDS : QA_SOURCE_TIME_MILLISECONDS;
+  entity.shader_time.kind = QA_SOURCE_TIME_MILLISECONDS;
   entity.shader_time.value = 0;
   entity.flags_kind = "q3";
-  entity.flags_bits = flags_bits;
-  entity.lighting_origin = world ? source.origin : source.origin;
+  entity.flags_bits = QA_Q3_PRES_RF_MINLIGHT | QA_Q3_PRES_RF_FIRST_PERSON | QA_Q3_PRES_RF_DEPTHHACK;
+  entity.lighting_origin = source->origin;
   entity.shadow_plane = 0;
   return entity;
 }
-static bool continuous_fire(qa_app_q3_weapon_view view) {
-  return view.firing && (view.weapon == 1 || view.weapon == 6 || view.weapon == 10);
-}
-static bool flash_visible(qa_app_q3_weapon_view view) {
-  return continuous_fire(view) || (view.has_last_fire && view.time_milliseconds - view.last_fire_milliseconds <= 20);
-}
-typedef struct pass_state { const char *shader; } pass_state;
-static pass_state pass_states[8];
-static qa_model_source_options pass_options(void *ctx, const qa_scene_entity *entity) {
-  (void)entity;
-  pass_state *state = ctx;
-  qa_model_source_options options = {0};
-  if (state->shader != NULL) {
-    options.custom_shader = state->shader;
+
+bool qa_app_selected_q3_weapon_presenter_frame(qa_app_selected_q3_weapon_presenter *presenter,
+    const qa_app_simulation_presentation *source, double field_of_view, qa_scene_entity *out) {
+  if (!source->has_q3_weapon) qa_raise("Error", 0, 0, "Selected Q3 weapon presentation state is missing");
+  const qa_qvm_grapple_view_anchor *anchor = source->model_anchor;
+  char *stem = path_stem(source->path);
+  char *hand_path = join_text(stem, "_hand.md3", ""), *barrel_path = join_text(stem, "_barrel.md3", ""),
+       *flash_path = join_text(stem, "_flash.md3", "");
+  free(stem);
+  qa_cleanup hand_guard, barrel_guard, flash_guard;
+  qa_cleanup_push(&hand_guard, free, hand_path);
+  qa_cleanup_push(&barrel_guard, free, barrel_path);
+  qa_cleanup_push(&flash_guard, free, flash_path);
+  qa_app_model_asset gun_asset = qa_app_application_assets_model(presenter->assets, source->content, source->path);
+  const qa_app_model_asset *own_hand = model_for(presenter, source->content, anchor != NULL ? anchor->path : hand_path);
+  const qa_app_model_asset *barrel_asset = anchor == NULL ? model_for(presenter, source->content, barrel_path) : NULL;
+  const qa_app_model_asset *flash_asset = anchor == NULL ? model_for(presenter, source->content, flash_path) : NULL;
+  const qa_q3_player_animation_config *animation = anchor == NULL ? animation_for(presenter, source->content) : NULL;
+  qa_cleanup_pop(&flash_guard);
+  qa_cleanup_pop(&barrel_guard);
+  qa_cleanup_pop(&hand_guard);
+  free(hand_path); free(barrel_path); free(flash_path);
+  qa_app_model_asset hand_fallback;
+  const qa_app_model_asset *hand_asset = own_hand;
+  if (hand_asset == NULL) {
+    hand_fallback = qa_app_application_assets_model(presenter->assets, source->content, "models/weapons2/shotgun/shotgun_hand.md3");
+    hand_asset = &hand_fallback;
   }
-  return options;
-}
-void qa_app_q3_weapon_passes_destroy(qa_app_q3_weapon_passes *passes) {
-  if (passes == NULL) return;
-  free(passes->items); free(passes->entities); free(passes->attachments);
-  memset(passes, 0, sizeof *passes);
-}
-qa_app_q3_weapon_passes qa_app_selected_q3_weapon_presenter_world(qa_app_selected_q3_weapon_presenter *presenter,
-    qa_app_q3_weapon_source source, qa_app_q3_weapon_character character, bool personal_model) {
-  qa_app_q3_weapon_passes out = {0};
-  if (!source.has_weapon || !source.visible || source.path[0] == '\0') return out;
-  qa_app_q3_weapon_view view = source.weapon;
-  char *barrel_path = stem_path(source.path, "_barrel.md3");
-  char *flash_path = stem_path(source.path, "_flash.md3");
-  const qa_app_q3_selected_model_asset *gun_asset = required_model(presenter, source.content, source.path);
-  const qa_app_q3_selected_model_asset *barrel_asset = model_for(presenter, source.content, barrel_path);
-  const qa_app_q3_selected_model_asset *flash_asset = model_for(presenter, source.content, flash_path);
-  double flags = QA_Q3_PRES_RF_LIGHTING_ORIGIN | (personal_model ? QA_Q3_PRES_RF_THIRD_PERSON : 0);
-  out.entities = calloc(3, sizeof *out.entities);
-  out.attachments = calloc(1, sizeof *out.attachments);
-  out.items = calloc(4, sizeof *out.items);
-  if (out.entities == NULL || out.attachments == NULL || out.items == NULL) qa_range_error("Out of memory");
-  qa_q3_weapon_barrel_step_result spin = qa_q3_weapon_barrel_step(&presenter->world_barrel, view.time_milliseconds, view.firing);
-  out.entities[0] = part_entity(source, gun_asset, zero3, zero3, flags, true);
-  out.entities[0].lighting_origin = character.origin;
-  out.entity_count = 1;
-  if (barrel_asset != NULL) {
-    qa_vec3 angles = {0, 0, spin.angle};
-    out.entities[1] = part_entity(source, barrel_asset, zero3, angles, flags, true);
-    out.entities[1].lighting_origin = character.origin;
-    out.attachments[0].tag = "tag_barrel";
-    out.attachments[0].entity = &out.entities[1];
-    out.entities[0].attachments = out.attachments;
-    out.entities[0].attachment_count = 1;
-    out.attachment_count = 1;
-    out.entity_count = 2;
-  }
-  bool invisible = (((int64_t)character.powerups) & (1 << QA_Q3_PW_INVIS)) != 0;
-  size_t pass_at = 0;
-  const char *shaders[4];
-  shaders[pass_at++] = invisible ? "powerups/invisibility" : NULL;
-  if (!invisible) {
-    if ((((int64_t)character.powerups) & (1 << QA_Q3_PW_BATTLESUIT)) != 0) shaders[pass_at++] = "powerups/battleWeapon";
-    if ((((int64_t)character.powerups) & (1 << QA_Q3_PW_QUAD)) != 0) shaders[pass_at++] = "powerups/quadWeapon";
-  }
-  for (size_t i = 0; i < pass_at; i++) {
-    qa_q3_character_pass *pass = &out.items[out.count];
-    pass->content = source.content;
-    pass->entity = out.entities[0];
-    pass->shader = shaders[i];
-    pass_states[out.count].shader = shaders[i];
-    pass->options_ctx = &pass_states[out.count];
-    pass->options = pass_options;
-    out.count++;
-  }
-  if (flash_asset != NULL && flash_visible(view)) {
-    qa_model_attachment_tag_result tag;
-    if (qa_model_attachment_tag(&out.entities[0], "tag_flash", &tag)) {
-      qa_vec3 angles = {0, 0, (float)(qa_game_random_crandom(&presenter->random) * 10)};
-      qa_scene_entity flash = part_entity(source, flash_asset, zero3, angles, flags, true);
-      flash.lighting_origin = character.origin;
-      out.entities[2] = qa_attach_scene_entity(&out.entities[0], &flash, tag);
-      out.entity_count = 3;
-      qa_q3_character_pass *pass = &out.items[out.count];
-      pass->content = source.content;
-      pass->entity = out.entities[2];
-      pass->shader = NULL;
-      pass_states[out.count].shader = NULL;
-      pass->options_ctx = &pass_states[out.count];
-      pass->options = pass_options;
-      out.count++;
-    }
-  }
-  free(barrel_path); free(flash_path);
-  return out;
-}
-static qa_vec3 add3(qa_vec3 a, qa_vec3 b) { qa_vec3 out = {a.x + b.x, a.y + b.y, a.z + b.z}; return out; }
-static qa_vec3 scale3(qa_vec3 a, double s) { qa_vec3 out = {a.x * s, a.y * s, a.z * s}; return out; }
-qa_scene_entity qa_app_selected_q3_weapon_presenter_frame(qa_app_selected_q3_weapon_presenter *presenter,
-    qa_app_q3_weapon_source source, double field_of_view,
-    qa_scene_entity *entity_scratch, size_t entity_capacity,
-    qa_scene_entity_attachment *attachment_scratch, size_t attachment_capacity) {
-  if (!source.has_weapon) qa_range_error("Selected Q3 weapon presentation state is missing");
-  qa_app_q3_weapon_view view = source.weapon;
-  const char *hand_fallback = "models/weapons2/shotgun/shotgun_hand.md3";
-  char *barrel_path = stem_path(source.path, "_barrel.md3");
-  char *flash_path = stem_path(source.path, "_flash.md3");
-  char *hand_path = stem_path(source.path, "_hand.md3");
-  const qa_app_q3_selected_model_asset *gun_asset = required_model(presenter, source.content, source.path);
-  const qa_app_q3_selected_model_asset *own_hand = model_for(presenter, source.content,
-      source.model_anchor != NULL ? source.model_anchor->path : hand_path);
-  const qa_app_q3_selected_model_asset *barrel_asset = source.model_anchor == NULL
-      ? model_for(presenter, source.content, barrel_path) : NULL;
-  const qa_app_q3_selected_model_asset *flash_asset = source.model_anchor == NULL
-      ? model_for(presenter, source.content, flash_path) : NULL;
-  const qa_q3_player_animation_config *animation = source.model_anchor == NULL
-      ? animation_for(presenter, source.content) : NULL;
-  const qa_app_q3_selected_model_asset *hand_asset = own_hand != NULL ? own_hand
-      : required_model(presenter, source.content, hand_fallback);
-  free(barrel_path); free(flash_path); free(hand_path);
   if (animation != NULL) {
-    qa_q3_run_lerp_frame_input input = {view.time_milliseconds, view.torso_animation, 1, false};
-    qa_q3_run_lerp_frame(qa_q3_animation_set_from_config(animation), &presenter->torso, input, host_print, presenter);
+    qa_q3_run_lerp_frame_input input = { source->q3_weapon_time_ms, source->q3_weapon_torso_animation, 1, false };
+    qa_q3_run_lerp_frame(qa_q3_animation_set_from_config(animation), &presenter->torso, input, NULL, NULL);
   }
-  double bob = view.bob_cycle;
-  qa_q3_weapon_view_motion motion = {source.origin, source.angles, view.time_milliseconds,
-      view.horizontal_speed, (double)(((int64_t)bob & 128) >> 7),
-      fabs(sin(((double)((int64_t)bob & 127)) / 127 * acos(-1.0))), 0, 0};
+  int32_t bob = qa_js_to_int32(source->q3_weapon_bob_cycle);
+  qa_q3_weapon_view_motion motion = { source->origin, source->angles, source->q3_weapon_time_ms,
+      source->q3_weapon_horizontal_speed, (double)((bob & 128) >> 7),
+      fabs(sin((double)(bob & 127) / 127 * 3.141592653589793)), 0, 0 };
   qa_q3_weapon_view_pose_result position = qa_q3_weapon_view_pose(motion);
-  double flags = QA_Q3_PRES_RF_MINLIGHT | QA_Q3_PRES_RF_FIRST_PERSON | QA_Q3_PRES_RF_DEPTHHACK;
-  qa_axis axis = qa_qvm_angles_to_axis(source.angles);
-  qa_vec3 offset = source.model_anchor != NULL ? source.model_anchor->offset : zero3;
-  double fov_offset = 0;
-  if (source.model_anchor != NULL && source.model_anchor->has_fov_offset) {
-    double above = field_of_view - source.model_anchor->fov_above;
-    fov_offset = (float)((float)source.model_anchor->fov_scale * (float)(above > 0 ? above : 0));
-  }
-  qa_vec3 origin = add3(position.origin, add3(add3(scale3(axis.vectors[0], offset.x), scale3(axis.vectors[1], offset.y)),
-      scale3(axis.vectors[2], (float)(offset.z + fov_offset))));
-  size_t needed = 3 + source.model_attachment_count;
-  if (entity_capacity < needed || attachment_capacity < needed) qa_range_error("Out of memory");
-  qa_scene_entity hand = part_entity(source, hand_asset, origin, position.angles, flags, false);
-  hand.pose.frame = animation == NULL ? source.frame
-      : qa_q3_torso_weapon_frame(animation, presenter->torso.frame);
-  hand.pose.previous_frame = animation == NULL ? source.old_frame
-      : qa_q3_torso_weapon_frame(animation, presenter->torso.old_frame);
-  hand.pose.back_lerp = animation == NULL ? (source.has_back_lerp ? source.back_lerp : 0)
-      : presenter->torso.back_lerp;
-  const char *tag_name = source.model_anchor != NULL && source.model_anchor->tag != NULL
-      ? source.model_anchor->tag : "tag_weapon";
+  qa_axis axis = qa_qvm_angles_to_axis(source->angles);
+  qa_vec3 offset = anchor != NULL ? anchor->offset : ZERO;
+  double fov_offset = anchor == NULL ? 0
+      : (float)((double)(float)anchor->fov_offset_scale * (double)(float)qa_js_max(0, field_of_view - anchor->fov_offset_above));
+  qa_vec3 origin = qa_add3(position.origin, qa_add3(qa_add3(qa_scale3(axis.vectors[0], offset.x), qa_scale3(axis.vectors[1], offset.y)),
+                                                    qa_scale3(axis.vectors[2], (float)(offset.z + fov_offset))));
+  qa_scene_entity hand = view_part(source, hand_asset, origin, position.angles);
+  hand.pose.is_frame = true;
+  hand.pose.frame = animation == NULL ? source->frame : qa_q3_torso_weapon_frame(animation, presenter->torso.frame);
+  hand.pose.previous_frame = animation == NULL ? source->old_frame : qa_q3_torso_weapon_frame(animation, presenter->torso.old_frame);
+  hand.pose.back_lerp = animation == NULL ? (source->has_back_lerp ? source->back_lerp : 0) : presenter->torso.back_lerp;
+  const char *tag_name = anchor != NULL ? anchor->tag : "tag_weapon";
   qa_model_attachment_tag_result tag;
-  if (!qa_model_attachment_tag(&hand, tag_name, &tag))
-    qa_range_error("Selected Q3 hands model has no %s", tag_name);
-  size_t entity_at = 0, attachment_at = 0;
-  for (size_t i = 0; i < source.model_attachment_count; i++) {
-    const qa_app_q3_selected_model_asset *asset = required_model(presenter, source.content, source.model_attachments[i].path);
-    entity_scratch[entity_at] = part_entity(source, asset, zero3, zero3, flags, false);
-    attachment_scratch[attachment_at].tag = source.model_attachments[i].tag;
-    attachment_scratch[attachment_at].entity = &entity_scratch[entity_at];
-    entity_at++; attachment_at++;
+  if (!qa_model_attachment_tag(&hand, tag_name, &tag)) {
+    char *key = join_text("q3-hands-tag:", source->content, "/");
+    char *full_key = join_text(key, source->path, "");
+    free(key);
+    char *text = join_text("Selected Q3 hands model has no ", tag_name, "; the weapon is not drawn.\n");
+    qa_app_application_assets_warn_once(presenter->assets, full_key, text);
+    free(full_key); free(text);
+    return false;
   }
-  qa_q3_weapon_barrel_step_result spin = qa_q3_weapon_barrel_step(&presenter->barrel, view.time_milliseconds, view.firing);
+  size_t needed = source->model_attachment_count + 2;
+  if (needed > presenter->frame_capacity) {
+    qa_scene_entity *entities = realloc(presenter->frame_entities, needed * sizeof *entities);
+    if (entities == NULL) qa_range_error("Out of memory");
+    presenter->frame_entities = entities;
+    qa_scene_entity_attachment *attachments = realloc(presenter->frame_attachments, needed * sizeof *attachments);
+    if (attachments == NULL) qa_range_error("Out of memory");
+    presenter->frame_attachments = attachments;
+    presenter->frame_capacity = needed;
+  }
+  size_t count = 0;
+  for (size_t i = 0; i < source->model_attachment_count; i++) {
+    qa_app_model_asset asset = qa_app_application_assets_model(presenter->assets, source->content, source->model_attachments[i].path);
+    presenter->frame_entities[count] = view_part(source, &asset, ZERO, ZERO);
+    presenter->frame_attachments[count].tag = source->model_attachments[i].tag;
+    presenter->frame_attachments[count].entity = &presenter->frame_entities[count];
+    count++;
+  }
+  qa_q3_weapon_barrel_step_result spin = qa_q3_weapon_barrel_step(&presenter->barrel, source->q3_weapon_time_ms, source->q3_weapon_firing);
   if (barrel_asset != NULL) {
-    qa_vec3 angles = {0, 0, spin.angle};
-    entity_scratch[entity_at] = part_entity(source, barrel_asset, zero3, angles, flags, false);
-    attachment_scratch[attachment_at].tag = "tag_barrel";
-    attachment_scratch[attachment_at].entity = &entity_scratch[entity_at];
-    entity_at++; attachment_at++;
+    presenter->frame_entities[count] = view_part(source, barrel_asset, ZERO, (qa_vec3){0, 0, spin.angle});
+    presenter->frame_attachments[count].tag = "tag_barrel";
+    presenter->frame_attachments[count].entity = &presenter->frame_entities[count];
+    count++;
   }
-  if (flash_asset != NULL && flash_visible(view)) {
-    qa_vec3 angles = {0, 0, (float)(qa_game_random_crandom(&presenter->random) * 10)};
-    entity_scratch[entity_at] = part_entity(source, flash_asset, zero3, angles, flags, false);
-    attachment_scratch[attachment_at].tag = "tag_flash";
-    attachment_scratch[attachment_at].entity = &entity_scratch[entity_at];
-    entity_at++; attachment_at++;
+  if (flash_asset != NULL && flash_visible(source)) {
+    double roll = (float)(qa_game_random_crandom(&presenter->random) * 10);
+    presenter->frame_entities[count] = view_part(source, flash_asset, ZERO, (qa_vec3){0, 0, roll});
+    presenter->frame_attachments[count].tag = "tag_flash";
+    presenter->frame_attachments[count].entity = &presenter->frame_entities[count];
+    count++;
   }
-  qa_scene_entity gun = part_entity(source, gun_asset, zero3, zero3, flags, false);
-  gun.attachments = attachment_scratch;
-  gun.attachment_count = attachment_at;
-  return qa_attach_scene_entity(&hand, &gun, tag);
+  qa_scene_entity gun = view_part(source, &gun_asset, ZERO, ZERO);
+  gun.attachments = count == 0 ? NULL : presenter->frame_attachments;
+  gun.attachment_count = count;
+  *out = qa_attach_scene_entity(&hand, &gun, tag);
+  return true;
 }

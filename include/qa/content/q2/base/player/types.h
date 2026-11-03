@@ -2,13 +2,11 @@
  * Port of src/content/q2/base/player/types.ts. Player behavior adapted
  * from id Software Quake II p_client.c, p_view.c, p_hud.c and g_cmds.c.
  * GPL-2.0-or-later.
- * C accommodations: TS Q2Weapons / Q2WeaponState (TS owner:
- * src/content/q2/foundation/weapons/index.ts) landed as qa_q2w_* over
- * the incompatible qa_q2f_* game shape, so the operations this slice
- * uses are mirrored as the fn+ctx surface qa_q2_base_weapons over
- * qa_q2_game_services (landed qa_q2w_input / qa_q2w_name are reused).
+ * C accommodations: TS Q2Weapons / Q2WeaponState are the real
+ * qa_q2w_weapons / qa_q2w_state (foundation/weapons/player.h).
  * Live-state strings the TS mutates in place (userinfo/name/skin) are
- * fixed buffers bounded by the TS 511/15 truncations. Type names use
+ * fixed buffers bounded by the largest TS truncation (Q2RereleasePlayers
+ * keeps 2047/31 characters; the base 511/15). Type names use
  * the qa_q2_base_* prefix where contracts/protocol.h or
  * persistence/q2-players.h already own the plain qa_q2_* spelling.
  */
@@ -21,7 +19,7 @@
 
 #include "qa/content/q2/foundation/host.h"
 #include "qa/content/q2/foundation/items.h"
-#include "qa/content/q2/foundation/weapons/types.h"
+#include "qa/content/q2/foundation/weapons/player.h"
 #include "qa/contracts/gameplay.h"
 
 /** TS Q2PlayerMovement. */
@@ -30,6 +28,8 @@ typedef struct qa_q2_player_movement {
   double water_level, water_type;
   bool grounded, ducked;
   double buttons;
+  /* TS upMove: latest command upmove; a spectator pressing jump cycles its chase target. */
+  double up_move;
   qa_bounds standing_bounds;
   bool animate_q2;
 } qa_q2_player_movement;
@@ -58,6 +58,7 @@ typedef struct qa_q2_base_player_view {
   double timer_seconds;
   bool spectator;
   double layouts;
+  bool help_icon; /* TS helpIcon?: STAT_HELPICON shows i_help while an objective change is pending */
 } qa_q2_base_player_view;
 
 /** TS Q2ScoreRow. */
@@ -91,37 +92,6 @@ typedef struct qa_q2_player_event {
   bool has_chase_target; qa_actor_id chase_target; /* chase */
 } qa_q2_player_event;
 
-/* Mirror of the TS Q2Weapons surface used here (see header note).
- * weapon()/last_weapon()/loop_sound() return NULL when the actor has
- * no state or the TS field is null; request_weapon returns the TS
- * selection string ("selected", "no-ammo", ...). */
-typedef struct qa_q2_base_weapon_definition {
-  qa_q2w_name name;
-  qa_item_id item;
-  const char *classname;
-  qa_item_id ammo; /* nullable */
-} qa_q2_base_weapon_definition;
-typedef struct qa_q2_base_weapons {
-  void *ctx;
-  bool (*has_state)(void *ctx, qa_actor_id actor);
-  const char *(*weapon)(void *ctx, qa_actor_id actor);
-  const char *(*last_weapon)(void *ctx, qa_actor_id actor);
-  const char *(*loop_sound)(void *ctx, qa_actor_id actor);
-  void (*bind)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game);
-  const char *(*request_weapon)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, const char *name);
-  bool (*can_drop)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, const char *name);
-  void (*tick)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_q2w_input input);
-  bool (*definition)(void *ctx, const char *name, qa_q2_base_weapon_definition *out);
-  const qa_q2_base_weapon_definition *(*registered_definitions)(void *ctx, size_t *out_count);
-  void (*reset_silencer)(void *ctx, qa_actor_id actor);
-  /* TS weapon.weapon = name; weapon.pending = null. */
-  void (*set_weapon)(void *ctx, qa_actor_id actor, const char *name);
-  /* TS Object.assign(weapon, new Q2WeaponState(name)). */
-  void (*reset_state)(void *ctx, qa_actor_id actor, const char *name);
-  /* TS q2WeaponRecoil(weapon, edition, now). */
-  void (*recoil)(void *ctx, qa_actor_id actor, qa_q2_edition edition, double now, qa_vec3 *kick_origin, qa_vec3 *kick_angles);
-} qa_q2_base_weapons;
-
 /** TS Q2CharacterWeapon. */
 typedef struct qa_q2_character_weapon {
   const char *q2_name; /* nullable */
@@ -145,6 +115,8 @@ typedef struct qa_q2_player_hooks {
   void (*noise)(void *ctx, qa_actor_id actor, qa_vec3 origin);
   qa_q2w_input (*weapon_input)(void *ctx, qa_actor_id actor);
   bool (*banned)(void *ctx, const char *address);
+  /* TS selectEmpty?(): g_select_empty, `use` may select a weapon that has no ammo. NULL = absent. */
+  bool (*select_empty)(void *ctx);
   void (*score)(void *ctx, qa_q2_entity *victim, qa_q2_entity *attacker, qa_q2_game_services *game,
                 double change, double means_of_death, qa_q2_entity *recipient);
   void (*player_spawned)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game);
@@ -211,9 +183,9 @@ typedef struct qa_q2_base_player_state {
   double slot, entered_at;
   bool use_q2_weapons, use_q2_inventory;
   qa_inventory_entry *spawn_inventory; size_t spawn_inventory_count;
-  char userinfo[512];
-  char name[16];
-  char skin[512];
+  char userinfo[2048];
+  char name[32];
+  char skin[2048];
   const char *gender;
   double fov;
   const char *hand;
@@ -224,6 +196,8 @@ typedef struct qa_q2_base_player_state {
   qa_vec3 damage_from, damage_blend;
   double damage_alpha, bonus_alpha, damage_pitch, damage_roll, damage_time;
   double power_armor_time, fall_time, fall_value;
+  /* pers.helpchanged / pers.game_helpchanged of the classic help computer. */
+  double help_changed, game_help_changed;
   bool landmark_free_fall;
   double landmark_noise_time;
   qa_vec3 old_velocity, old_view_angles;
@@ -235,6 +209,7 @@ typedef struct qa_q2_base_player_state {
   bool animation_duck, animation_run;
   const char *loop_sound;
   qa_item_id selected_item; /* nullable */
+  bool jump_held;
   bool show_scores, show_inventory, show_help;
   bool has_chase_target; qa_actor_id chase_target;
   bool has_coop_respawn; qa_q2_base_player_carry coop_respawn;
@@ -247,7 +222,8 @@ void qa_q2_base_player_state_destroy(qa_q2_base_player_state *state);
 
 /** TS Q2PlayerContext. The TS powerups()/weaponState()/
  * environmentDamage() closures become the qa_q2_player_context_*
- * helpers in player/index.h (they need the players object). */
+ * helpers in player/index.h; players is the object they close over. */
+struct qa_q2_players;
 typedef struct qa_q2_player_context {
   qa_q2_entity *entity;
   qa_q2_game_services *game;
@@ -255,8 +231,9 @@ typedef struct qa_q2_player_context {
   qa_q2_player_movement movement;
   qa_q2_base_player_rules *rules;
   qa_q2_item_module *items;
-  qa_q2_base_weapons weapons;
+  qa_q2w_weapons *weapons;
   qa_q2_player_hooks *hooks;
+  struct qa_q2_players *players;
 } qa_q2_player_context;
 
 /** TS Q2CharacterServices. sound carries the TS defaulted channel,

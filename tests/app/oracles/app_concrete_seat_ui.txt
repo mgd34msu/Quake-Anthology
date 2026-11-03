@@ -1,0 +1,33 @@
+hud q1:weapon/rocketlauncher weapon resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_rocket2_2.lmp/ aspect 1.5 image q1:rerelease:id1:installed/gfx/weapons/ww_rocket2_2.lmp/ 48x32 ammo resource:weapon-hud:q1:rerelease:id1:installed/gfx.wad/sb_rocket aspect 1 image q1:rerelease:id1:installed/gfx.wad/sb_rocket 24x24
+hud q1:weapon/axe weapon resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_axe_2.lmp/ aspect 1.5 image q1:rerelease:id1:installed/gfx/weapons/ww_axe_2.lmp/ 48x32 ammo null
+hud q1:weapon/lightning weapon resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_light_2.lmp/ aspect 1.5 image q1:rerelease:id1:installed/gfx/weapons/ww_light_2.lmp/ 48x32 ammo resource:weapon-hud:q1:rerelease:id1:installed/gfx.wad/sb_cells aspect 1 image q1:rerelease:id1:installed/gfx.wad/sb_cells 24x24
+hud null {"weapon":null,"ammo":null}
+hud cached resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_rocket2_2.lmp/ resource:weapon-hud:q1:rerelease:id1:installed/gfx.wad/sb_rocket
+hud aspect-null 1
+hud missing Weapon HUD picture missing: q1:rerelease:id1:installed/gfx/weapons/missing.lmp/
+wheel before null
+wheel item {"id":"q1:weapon/shotgun","sourceOrdinal":0,"sortOrder":0,"label":"W1","owned":true,"hasAmmo":true,"count":3,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_shotgun1_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_shotgun1_2.lmp/"}
+wheel item {"id":"q1:weapon/supershotgun","sourceOrdinal":1,"sortOrder":1,"label":"W2","owned":true,"hasAmmo":false,"count":3,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_shotgun2_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_shotgun2_2.lmp/"}
+wheel item {"id":"q1:weapon/nailgun","sourceOrdinal":2,"sortOrder":2,"label":"W3","owned":false,"hasAmmo":true,"count":9,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_nail1_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_nail1_2.lmp/"}
+wheel item {"id":"q1:weapon/supernailgun","sourceOrdinal":3,"sortOrder":3,"label":"W4","owned":false,"hasAmmo":true,"count":9,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_nail2_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_nail2_2.lmp/"}
+wheel item {"id":"q1:weapon/grenadelauncher","sourceOrdinal":4,"sortOrder":4,"label":"W5","owned":false,"hasAmmo":true,"count":15,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_rocket1_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_rocket1_2.lmp/"}
+wheel item {"id":"q1:weapon/rocketlauncher","sourceOrdinal":5,"sortOrder":5,"label":"W6","owned":true,"hasAmmo":true,"count":15,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_rocket2_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_rocket2_2.lmp/"}
+wheel item {"id":"q1:weapon/lightning","sourceOrdinal":6,"sortOrder":6,"label":"W7","owned":false,"hasAmmo":true,"count":21,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_light_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_light_2.lmp/"}
+wheel item {"id":"q1:weapon/axe","sourceOrdinal":7,"sortOrder":7,"label":"W0","owned":true,"hasAmmo":true,"count":null,"warningCount":0,"icon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_axe_1.lmp/","selectedIcon":"resource:weapon-hud:q1:rerelease:id1:installed/gfx/weapons/ww_axe_2.lmp/"}
+wheel switch 0 1 q1:weapon/shotgun
+wheel switch 5 1 q1:weapon/supershotgun
+wheel switch 6 0 q1:weapon/shotgun
+wheel switch 7 2 q1:weapon/axe
+wheel switch 1.5 3 null
+wheel switch -1 1 q1:weapon/supershotgun
+wheel switch 3 4 null
+wheel cleared null
+prompt other active null title "" controls []
+prompt console active null title "Quad Damage is wearing off\n" controls [["ui:game-prompt:0","1. qc_suicides",true],["ui:game-prompt:1","2. Plain",true],["ui:game-prompt:2","3. Ring of Shadows magic is fading\n",true],["ui:game-prompt:3","4. Four",true],["ui:game-prompt:previous","Previous",false],["ui:game-prompt:next","Next (1/2)",true]]
+prompt game active menu:application:prompt title "Quad Damage is wearing off\n" controls [["ui:game-prompt:0","1. qc_suicides",true],["ui:game-prompt:1","2. Plain",true],["ui:game-prompt:2","3. Ring of Shadows magic is fading\n",true],["ui:game-prompt:3","4. Four",true],["ui:game-prompt:previous","Previous",false],["ui:game-prompt:next","Next (1/2)",true]]
+prompt key-wrong-seat false
+prompt key 2 true impulses [12]
+prompt after active null title "" controls []
+prompt again active menu:application:prompt title "Again" controls [["ui:game-prompt:0","1. Only",true]]
+prompt key 9 true impulses [12]
+prompt cleared active null title "" controls []

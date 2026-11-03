@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/network/qw-skins.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/qw_skins.h"
+#include "qa/foundation/support.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,6 +63,13 @@ char *qa_app_qw_player_skins_name(qa_app_qw_player_skins *skins, const char *use
       : skins->options.baseskin(skins->options.ctx);
   return skin_name(chosen);
 }
+typedef struct pcx_scope {
+  const uint8_t *bytes; size_t length; const char *path; bool decoded_ok; qa_pcx_image decoded;
+} pcx_scope;
+static void pcx_body(void *ctx) {
+  pcx_scope *scope = ctx;
+  scope->decoded_ok = qa_decode_pcx(scope->bytes, scope->length, scope->path, &scope->decoded) != 0;
+}
 static bool load_skin(qa_app_qw_player_skins *skins, const char *selected, const char *base,
     cache_entry *entry) {
   char path[256];
@@ -78,15 +86,21 @@ static bool load_skin(qa_app_qw_player_skins *skins, const char *selected, const
     unsigned xmax = bytes[8] | (bytes[9] << 8);
     unsigned ymax = bytes[10] | (bytes[11] << 8);
     if (xmax < 320 && ymax < 200) {
-      qa_pcx_image decoded;
-      if (qa_decode_pcx(bytes, length, path, &decoded)) {
+      /* TS: try { decodePcx(...) ... } catch { return null; } */
+      pcx_scope scope;
+      memset(&scope, 0, sizeof scope);
+      scope.bytes = bytes; scope.length = length; scope.path = path;
+      qa_caught_error caught;
+      if (!qa_try(pcx_body, &scope, &caught)) scope.decoded_ok = false;
+      qa_pcx_image decoded = scope.decoded;
+      if (scope.decoded_ok && decoded.width > 320) { qa_pcx_image_destroy(&decoded); scope.decoded_ok = false; }
+      if (scope.decoded_ok) {
         uint8_t *padded = calloc(320 * 200, 1);
         uint8_t *pixels = calloc(296 * 194, 1);
         char *digest = qa_digest_bytes(bytes, length);
         if (padded && pixels && digest) {
           for (int64_t row = 0; row < decoded.height && row < 200; row++) {
-            size_t width = decoded.width > 320 ? 320 : (size_t)decoded.width;
-            memcpy(padded + row * 320, decoded.indices + row * decoded.width, width);
+            memcpy(padded + row * 320, decoded.indices + row * decoded.width, (size_t)decoded.width);
           }
           for (int row = 0; row < 194; row++)
             memcpy(pixels + row * 296, padded + row * 320, 296);

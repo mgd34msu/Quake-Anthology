@@ -1,5 +1,6 @@
 /* Port of src/network/q2/kex/packet.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/kex/packet.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -35,6 +36,10 @@ static bool utf8_ok(const uint8_t *bytes, size_t length) {
   return true;
 }
 
+/* TextDecoder drops one leading byte order mark (ignoreBOM defaults to false). */
+static bool has_bom(const uint8_t *bytes, size_t length) {
+  return length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf;
+}
 void qa_kex_packet_reader_init(qa_kex_packet_reader *reader, const uint8_t *bytes,
                                size_t length) {
   reader->bytes = bytes;
@@ -66,10 +71,12 @@ char *qa_kex_packet_reader_string(qa_kex_packet_reader *reader) {
   const uint8_t *start = reader->bytes + reader->position;
   reader->position += (size_t)length;
   if (!utf8_ok(start, (size_t)length)) qa_q2_throw_utf8_error();
-  char *out = (char *)malloc((size_t)length + 1);
+  size_t n = (size_t)length;
+  if (has_bom(start, n)) { start += 3; n -= 3; }
+  char *out = (char *)malloc(n + 1);
   if (out != NULL) {
-    memcpy(out, start, (size_t)length);
-    out[length] = '\0';
+    memcpy(out, start, n);
+    out[n] = '\0';
   }
   return out;
 }
@@ -173,7 +180,7 @@ bool qa_kex_read_packet(const uint8_t *bytes, size_t length, qa_kex_packet *out)
 }
 
 uint8_t *qa_kex_write_packet(const qa_kex_packet *packet, size_t *out_length) {
-  int32_t flags = (int32_t)packet->flags;
+  int32_t flags = qa_js_to_int32(packet->flags); /* NaN passes the TS range test; `| flags` makes it 0 */
   bool sequential = (flags & 2) != 0;
   bool continued = (flags & 8) != 0;
   size_t offset = sequential ? 6 : 2;
@@ -186,8 +193,8 @@ uint8_t *qa_kex_write_packet(const qa_kex_packet *packet, size_t *out_length) {
   if (bytes == NULL) return NULL;
   store_u16be(bytes, (uint16_t)((total << 4) | (size_t)flags));
   if (sequential) {
-    store_u16be(bytes + 2, (uint16_t)(int32_t)packet->sequence);
-    store_u16be(bytes + 4, (uint16_t)(int32_t)packet->reliable);
+    store_u16be(bytes + 2, qa_js_to_uint16(packet->sequence)); /* DataView setUint16 */
+    store_u16be(bytes + 4, qa_js_to_uint16(packet->reliable));
   }
   if (!continued && packet->kind >= 0) bytes[offset] = (uint8_t)packet->kind;
   if (packet->payload_length > 0) {
@@ -208,6 +215,7 @@ uint8_t *qa_kex_text_bytes(const char *value, size_t *out_length) {
 }
 char *qa_kex_read_text(const uint8_t *value, size_t length) {
   if (!utf8_ok(value, length)) qa_q2_throw_utf8_error();
+  if (has_bom(value, length)) { value += 3; length -= 3; }
   char *out = (char *)malloc(length + 1);
   if (out != NULL) {
     if (length > 0) memcpy(out, value, length);

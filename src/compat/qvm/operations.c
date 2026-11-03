@@ -1,10 +1,17 @@
 /* See include/qa/compat/qvm/operations.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/operations.h"
 
+#include <math.h>
+
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
-static float as_float(int32_t word) { return qa_bits_to_float32((uint32_t)word); }
+/* TS bitsToFloat32 reads through DataView.getFloat32, which yields the one
+ * canonical quiet NaN for every NaN payload; fresh arithmetic NaNs keep theirs. */
+static float as_float(int32_t word) {
+  float value = qa_bits_to_float32((uint32_t)word);
+  return isnan(value) ? NAN : value;
+}
 static int32_t as_word(double value) { return (int32_t)qa_float32_to_bits(value); }
 
 int32_t qa_qvm_evaluate_unary(qa_qvm_opcode opcode, int32_t word) {
@@ -19,10 +26,8 @@ int32_t qa_qvm_evaluate_unary(qa_qvm_opcode opcode, int32_t word) {
   }
 }
 
-static int shift_count(int32_t word) {
-  if (word < 0 || word > 31) qa_range_error("QVM shift count outside 0..31");
-  return (int)word;
-}
+/* The compiled module's x86 shifts take the count from CL: low five bits only. */
+static int shift_count(int32_t word) { return (int)((uint32_t)word & 31u); }
 
 int32_t qa_qvm_evaluate_binary(qa_qvm_opcode opcode, int32_t left, int32_t right) {
   switch (opcode) {

@@ -266,9 +266,20 @@ static void set_qword_at(qa_x64_integer_kernel *kernel, int byte_offset, uint64_
   set_word_at(kernel, (byte_offset >> 2) + 1, (uint32_t)(value >> 32));
 }
 static qa_guest_throw *kernel_throw(qa_x64_integer_kernel *kernel) { return kernel->memory->throw_ctx; }
+/* TS x64Lock throws X64ProcessorFault(6); qa_x64_lock aborts for callers with
+ * no throw channel. */
+static void kernel_lock(qa_x64_integer_kernel *kernel, bool lock, const qa_x64_operand *destination,
+                        bool has_destination, bool permitted) {
+  if (lock && (!permitted || !has_destination || destination->kind != QA_X64_OPERAND_MEMORY))
+    qa_guest_throw_processor(kernel_throw(kernel), 6, false, 0,
+                             "LOCK requires a supported memory read-modify-write operand");
+}
 static void lock_none(qa_x64_integer_kernel *kernel, bool lock, bool permitted) {
-  (void)kernel;
-  qa_x64_lock(lock, NULL, false, permitted);
+  kernel_lock(kernel, lock, NULL, false, permitted);
+}
+static qa_x64_flow execute_passthrough(qa_x64_integer_kernel *kernel, const qa_x64_semantic_plan *plan) {
+  return kernel->execute_plan != NULL ? kernel->execute_plan(kernel->execute_plan_ctx, plan)
+                                      : qa_execute_x64_plan(plan, &kernel->memory->base, kernel->state);
 }
 
 static void read_memory_kernel(qa_x64_integer_kernel *kernel, qa_guest_core_address address, int width) {
@@ -432,8 +443,9 @@ static void extend_op(qa_x64_integer_kernel *kernel, const qa_x64_integer_operat
   read_operand_kernel(kernel, &operation->source_operand, next_ip);
   if (operation->is_signed) {
     int width = operation->source_operand.width;
-    if (width == 8) kernel->low = (uint32_t)(((int32_t)kernel->low << 24) >> 24);
-    else if (width == 16) kernel->low = (uint32_t)(((int32_t)kernel->low << 16) >> 16);
+    /* Sign extension without shifting into the int sign bit (UB). */
+    if (width == 8) kernel->low = (uint32_t)(int32_t)(int8_t)(uint8_t)kernel->low;
+    else if (width == 16) kernel->low = (uint32_t)(int32_t)(int16_t)(uint16_t)kernel->low;
     if (width != 64) kernel->high = kernel->low >= 0x80000000u ? 0xffffffffu : 0;
   }
   write_operand_kernel(kernel, &operation->destination, next_ip);
@@ -455,8 +467,9 @@ static void pop_kernel(qa_x64_integer_kernel *kernel, int width) {
 }
 static uint64_t return_target(qa_x64_integer_kernel *kernel, uint64_t discard) {
   uint64_t stack = qword_at(kernel, reg_offset(QA_REG_RSP));
-  uint64_t target = qa_x64_canonical_address(kernel_throw(kernel),
-      qa_sparse_read_u64(kernel->memory, qa_x64_guest_address(kernel->memory, stack, QA_ACCESS_READ)));
+  qa_guest_throw * throw_ctx = kernel_throw(kernel);
+  uint64_t value = qa_sparse_read_u64(kernel->memory, qa_x64_guest_address(kernel->memory, stack, QA_ACCESS_READ));
+  uint64_t target = qa_x64_canonical_address(throw_ctx, value);
   set_qword_at(kernel, reg_offset(QA_REG_RSP), stack + 8ull + discard);
   return target;
 }
@@ -521,7 +534,7 @@ qa_x64_flow qa_x64_integer_kernel_execute(qa_x64_integer_kernel *kernel, const q
       write_operand_kernel(kernel, &op->destination, original->next_ip);
       return qa_x64_advance;
     case QA_KERNEL_OP_PASSTHROUGH:
-      return qa_execute_x64_plan(original, &kernel->memory->base, kernel->state);
+      return execute_passthrough(kernel, original);
     case QA_KERNEL_OP_NOP:
       lock_none(kernel, original->lock, false);
       return qa_x64_advance;
@@ -530,7 +543,7 @@ qa_x64_flow qa_x64_integer_kernel_execute(qa_x64_integer_kernel *kernel, const q
       extend_op(kernel, op, original->next_ip);
       return qa_x64_advance;
     case QA_KERNEL_OP_INCREMENT: {
-      qa_x64_lock(original->lock, op->destination.is_memory ? &op->destination.source : NULL,
+      kernel_lock(kernel, original->lock, op->destination.is_memory ? &op->destination.source : NULL,
                   op->destination.is_memory, true);
       bool has_address = op->destination.is_memory;
       qa_guest_core_address address = {0};
@@ -561,7 +574,7 @@ qa_x64_flow qa_x64_integer_kernel_execute(qa_x64_integer_kernel *kernel, const q
       read_source(kernel, &op->source, original->next_ip);
       uint32_t right_low = kernel->low, right_high = kernel->high;
       bool writes = op->alu_operation != QA_ALU_CMP && op->alu_operation != QA_ALU_TEST;
-      qa_x64_lock(original->lock, op->destination.is_memory ? &op->destination.source : NULL,
+      kernel_lock(kernel, original->lock, op->destination.is_memory ? &op->destination.source : NULL,
                   op->destination.is_memory, writes);
       bool has_address = op->destination.is_memory;
       qa_guest_core_address address = {0};
@@ -677,6 +690,7 @@ qa_x64_integer_block_result qa_x64_integer_kernel_execute_block(
       (void)qa_integer_register_file_checkpoint(&kernel->state->registers, kernel->checkpoint, sizeof kernel->checkpoint);
       bs->low_flags = kernel->state->flags.low;
       bs->high_flags = kernel->state->flags.high;
+      const uint64_t deliveries = qa_sparse_write_deliveries(kernel->memory);
       /* Nested handler: roll back this step, then rethrow outward. */
       jmp_buf inner_buf;
       qa_guest_throw inner_throw;
@@ -695,7 +709,11 @@ qa_x64_integer_block_result qa_x64_integer_kernel_execute_block(
         longjmp(outer_buf, 1);
       }
       bs->instructions++;
-      if (observed || !after_store(after_store_ctx)) { bs->finished = true; break; }
+      /* Only a store that reached an observer ends the block. */
+      if ((observed && qa_sparse_write_deliveries(kernel->memory) != deliveries) || !after_store(after_store_ctx)) {
+        bs->finished = true;
+        break;
+      }
       continue;
     }
     switch (op->kind) {
@@ -716,7 +734,7 @@ qa_x64_integer_block_result qa_x64_integer_kernel_execute_block(
         write_operand_kernel(kernel, &op->destination, original->next_ip);
         break;
       case QA_KERNEL_OP_PASSTHROUGH:
-        (void)qa_execute_x64_plan(original, &kernel->memory->base, kernel->state);
+        (void)execute_passthrough(kernel, original);
         break;
       case QA_KERNEL_OP_NOP:
         lock_none(kernel, original->lock, false);
@@ -748,7 +766,7 @@ qa_x64_integer_block_result qa_x64_integer_kernel_execute_block(
         read_source(kernel, &op->source, original->next_ip);
         uint32_t right_low = kernel->low, right_high = kernel->high;
         bool writes = op->alu_operation != QA_ALU_CMP && op->alu_operation != QA_ALU_TEST;
-        qa_x64_lock(original->lock, op->destination.is_memory ? &op->destination.source : NULL,
+        kernel_lock(kernel, original->lock, op->destination.is_memory ? &op->destination.source : NULL,
                     op->destination.is_memory, writes);
         read_operand_kernel(kernel, &op->destination, original->next_ip);
         alu_kernel(kernel, op->alu_operation, op->destination.width, right_low, right_high);

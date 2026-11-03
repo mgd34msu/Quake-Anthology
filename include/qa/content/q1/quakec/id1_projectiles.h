@@ -30,6 +30,11 @@ typedef struct qa_q1_id1_projectile_capture {
 typedef struct qa_q1_id1_projectile_attacks qa_q1_id1_projectile_attacks;
 qa_q1_id1_projectile_attacks *qa_q1_id1_projectile_attacks_create(
     qa_q1qc_source source, qa_q1qc_machine_fn machine, void *machine_ctx);
+/* TS constructor with the optional foreignActor source member (only
+ * foreign_actor is read); foreign NULL = absent. The table is copied. */
+qa_q1_id1_projectile_attacks *qa_q1_id1_projectile_attacks_create_foreign(
+    qa_q1qc_source source, const qa_q1qc_foreign_source *foreign,
+    qa_q1qc_machine_fn machine, void *machine_ctx);
 void qa_q1_id1_projectile_attacks_destroy(qa_q1_id1_projectile_attacks *attacks);
 /* Malloc'd capture entries (free with free()). */
 qa_q1_id1_projectile_capture *qa_q1_id1_projectile_attacks_capture(

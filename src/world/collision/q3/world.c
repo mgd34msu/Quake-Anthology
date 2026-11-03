@@ -1,5 +1,6 @@
 /* Port of src/world/collision/q3/world.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/q3/world.h"
+#include "qa/network/common/js_number.h"
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/stamp.h"
@@ -9,6 +10,12 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+/* StampSet.mark(index) on a Uint32Array: a negative, fractional or NaN index
+ * stores nothing and reports a first mark; a C cast of it is undefined. */
+static bool mark_number(qa_stamp_set*set,double index){
+  return !(index>=0&&index==floor(index)&&index<9007199254740992.0)||qa_stamp_set_mark(set,(size_t)index);
+}
 static float f32(double v){return (float)v;}
 static int finite3(qa_vec3 p){return isfinite(p.x)&&isfinite(p.y)&&isfinite(p.z);}
 static int is_int_d(double v){return isfinite(v)&&v==floor(v);}
@@ -29,23 +36,28 @@ typedef struct{qa_vec3 center,mins;qa_patch_shape shape;} ShapeInfo;
 static ShapeInfo shape_info(qa_q3_trace_shape shape){
   ShapeInfo r; memset(&r,0,sizeof r);
   if(shape.kind&&strcmp(shape.kind,"point")==0){r.shape=(qa_patch_shape){"point",{0,0,0},{0,0,0},0,{0,0,0}};return r;}
-  if(!finite3(shape.mins)||!finite3(shape.maxs)||shape.mins.x>shape.maxs.x||shape.mins.y>shape.maxs.y||shape.mins.z>shape.maxs.z)
-    qa_range_error("trace shape requires finite ordered bounds");
+  /* CM_Trace derives offset and size from mins and maxs without ordering them, so a guest may pass reversed bounds. */
+  if(!finite3(shape.mins)||!finite3(shape.maxs))qa_range_error("trace shape requires finite bounds");
   r.center=qa_scale3(qa_add3(shape.mins,shape.maxs),0.5);
   r.mins=qa_sub3(shape.mins,r.center);
   qa_vec3 ext=qa_sub3(shape.maxs,r.center);
   if(shape.kind&&strcmp(shape.kind,"capsule")==0){
-    double radius=fmin(ext.x,ext.z);
+    double radius=qa_js_min(ext.x,ext.z);
     r.shape=(qa_patch_shape){"capsule",r.mins,ext,radius,{0,0,ext.z-radius}};
   }else r.shape=(qa_patch_shape){"box",r.mins,ext,0,{0,0,0}};
   return r;
+}
+/* -fround(fround(fround(n.x * fround(x)) + fround(n.y * fround(y))) + fround(n.z * fround(z))) */
+static double signed_expansion(qa_vec3 normal,int s,qa_patch_shape shape){
+  double x=(s&1)?shape.extents.x:shape.mins.x,y=(s&2)?shape.extents.y:shape.mins.y,z=(s&4)?shape.extents.z:shape.mins.z;
+  return -(double)(float)((double)(float)((double)(float)(normal.x*(double)(float)x)+(double)(float)(normal.y*(double)(float)y))+(double)(float)(normal.z*(double)(float)z));
 }
 static double expansion(qa_patch_shape shape,qa_q3_collision_plane*plane){
   if(shape.kind&&strcmp(shape.kind,"point")==0)return 0;
   if(shape.kind&&strcmp(shape.kind,"capsule")==0)return shape.radius+fabs(qa_dot3(plane->plane.normal,shape.offset));
   if(plane->signbits>=8)qa_range_error("CM brush plane signbits outside trace offsets");
   int s=(int)plane->signbits;
-  return -qa_dot3(plane->plane.normal,qa_math_vec3((s&1)?shape.extents.x:shape.mins.x,(s&2)?shape.extents.y:shape.mins.y,(s&4)?shape.extents.z:shape.mins.z));
+  return signed_expansion(plane->plane.normal,s,shape);
 }
 static qa_stamp_set *stamps_of(qa_collision_world*w){return (qa_stamp_set*)w->media_stamps;}
 void qa_collision_world_init(qa_collision_world*w,qa_collision_map_data*map,qa_collision_world_profile profile,qa_collision_counters*counters){
@@ -71,7 +83,7 @@ bool qa_collision_world_has_nodes(qa_collision_world*w){return w->map->node_coun
 qa_collision_box_storage *qa_collision_world_box_storage(qa_collision_world*w){return w->map->box;}
 void qa_collision_world_advance_check_count(qa_collision_world*w){w->map->check_count=(int32_t)((uint32_t)w->map->check_count+1u);}
 static qa_q3_collision_model_rec *model_at(qa_collision_world*w,double idx){
-  if(idx<0||(size_t)idx>=w->map->model_count)qa_range_error("collision index %g out of range",idx);
+  if(!(idx>=0&&idx<(double)w->map->model_count&&idx==floor(idx)))qa_range_error("collision index %s out of range",QA_JS_NUMBER(idx));
   return &w->map->models[(size_t)idx];
 }
 qa_bounds qa_collision_world_model_bounds(qa_collision_world*w,double idx){return model_at(w,idx)->bounds;}
@@ -103,14 +115,14 @@ double qa_collision_world_point_contents(qa_collision_world*w,qa_vec3 point,doub
   if(model_index!=0)brushes=model->brushes;
   else{
     double li=qa_collision_world_point_leafnum(w,point);
-    if(li<0||(size_t)li>=map->leaf_count)qa_range_error("collision index %g out of range",li);
+    if(!(li>=0&&li<(double)map->leaf_count&&li==floor(li)))qa_range_error("collision index %s out of range",QA_JS_NUMBER(li));
     leaf=map->leaves[(size_t)li];
     brushes=(qa_collision_indexes){map->leaf_brush_values+(size_t)leaf.first_brush,(size_t)leaf.brush_count};
   }
   int32_t contents=0;
   for(size_t i=0;i<brushes.length;i++){
     double bi=brushes.values[i];
-    if(bi<0||(size_t)bi>=map->brush_count)qa_range_error("collision index %g out of range",bi);
+    if(!(bi>=0&&bi<(double)map->brush_count&&bi==floor(bi)))qa_range_error("collision index %s out of range",QA_JS_NUMBER(bi));
     qa_q3_collision_brush*brush=&map->brushes[(size_t)bi];
     int inside=1;
     for(double k=0;k<brush->side_count;k++){
@@ -119,7 +131,7 @@ double qa_collision_world_point_contents(qa_collision_world*w,qa_vec3 point,doub
       qa_q3_collision_plane*plane=&map->planes[(size_t)pi];
       if(qa_dot3(point,plane->plane.normal)>plane->plane.distance){inside=0;break;}
     }
-    if(inside)contents|=(int32_t)brush->contents;
+    if(inside)contents|=qa_js_to_int32(brush->contents);
   }
   return contents;
 }
@@ -137,12 +149,12 @@ typedef struct{
 } Trace;
 static void brush_trace(Trace*t,double index){
   qa_collision_world*w=t->w; qa_collision_map_data*map=w->map;
-  if(index<0||(size_t)index>=map->brush_count)qa_range_error("collision index %g out of range",index);
+  if(!(index>=0&&index<(double)map->brush_count&&index==floor(index)))qa_range_error("collision index %s out of range",QA_JS_NUMBER(index));
   qa_q3_collision_brush*brush=&map->brushes[(size_t)index];
   if(brush->check_count==map->check_count)return;
   brush->check_count=map->check_count;
   double flags=brush->contents;
-  if((((int32_t)flags)&((int32_t)t->q.mask))==0||brush->side_count==0)return;
+  if(((qa_js_to_int32(flags))&(qa_js_to_int32(t->q.mask)))==0||brush->side_count==0)return;
   if(!t->stationary)w->counters->c_brush_traces=(int32_t)((uint32_t)w->counters->c_brush_traces+1u);
   if(t->has_position_bounds){
     qa_bounds b=t->position_bounds,bb=brush->bounds;
@@ -172,7 +184,7 @@ static void brush_trace(Trace*t,double index){
       double f=f32(f32(d1-0.125)/f32(d1-d2)); if(f<0)f=0;
       if(f>enter){enter=f;lead_plane=*plane;lead_sf=side->surface_flags;have_lead=1;}
     }else{
-      double f=f32(f32(d1+0.125)/f32(d1-d2)); if(f>1)f=1; if(f<leave)leave=f;
+      leave=qa_js_min(leave,qa_js_min(1,f32(f32(d1+0.125)/f32(d1-d2)))); /* Math.min: NaN propagates */
     }
   }
   if(!start_out){
@@ -192,7 +204,7 @@ static void patch_trace_(Trace*t,double index){
   if(!surface)return;
   if(surface->check_count==map->check_count)return;
   surface->check_count=map->check_count;
-  if((((int32_t)surface->contents)&((int32_t)t->q.mask))==0)return;
+  if(((qa_js_to_int32(surface->contents))&(qa_js_to_int32(t->q.mask)))==0)return;
   if(t->stationary){
     qa_patch_shape ps=t->shape;
     if(ps.kind&&strcmp(ps.kind,"point")==0)ps.kind="box";
@@ -213,7 +225,7 @@ static void patch_trace_(Trace*t,double index){
 }
 static void leaf_trace(Trace*t,double index){
   qa_collision_world*w=t->w; qa_collision_map_data*map=w->map;
-  if(index<0||(size_t)index>=map->leaf_count)qa_range_error("collision index %g out of range",index);
+  if(!(index>=0&&index<(double)map->leaf_count&&index==floor(index)))qa_range_error("collision index %s out of range",QA_JS_NUMBER(index));
   qa_q3_collision_leaf*leaf=&map->leaves[(size_t)index];
   for(double i=0;i<leaf->brush_count;i++){brush_trace(t,qa_collision_indexes_at(map->leaf_brushes,leaf->first_brush+i));if(t->fraction==0)return;}
   if((t->q.has_curves&&!t->q.curves)||(w->settings&&qa_collision_map_settings_no_curves(w->settings)))return;
@@ -223,7 +235,7 @@ static void tree_trace(Trace*t,double index,double p1f,double p2f,qa_vec3 p1,qa_
   if(t->fraction<=p1f)return;
   if(index<0){leaf_trace(t,-1-index);return;}
   qa_collision_map_data*map=t->w->map;
-  if((size_t)index>=map->node_count)qa_range_error("collision index %g out of range",index);
+  if((size_t)index>=map->node_count)qa_range_error("collision index %s out of range",QA_JS_NUMBER(index));
   qa_q3_collision_node*node=&map->nodes[(size_t)index];
   qa_q3_collision_plane*plane=&map->planes[(size_t)node->plane];
   double t1=f32((plane->type==0?p1.x:plane->type==1?p1.y:plane->type==2?p1.z:qa_dot3(p1,plane->plane.normal))-plane->plane.distance);
@@ -257,9 +269,10 @@ static qa_source_trace_result do_trace(qa_collision_world*w,qa_q3_trace_query qu
     t.has_position_bounds=1;
     if(replacement)t.position_bounds=replacement->bounds;
     else if(shape.kind&&strcmp(shape.kind,"capsule")==0){
+      /* TS vec3(...) stores each coordinate through Math.fround. */
       t.position_bounds=(qa_bounds){
-        {start.x-fabs(shape.offset.x)-shape.radius,start.y-fabs(shape.offset.y)-shape.radius,start.z-fabs(shape.offset.z)-shape.radius},
-        {start.x+fabs(shape.offset.x)+shape.radius,start.y+fabs(shape.offset.y)+shape.radius,start.z+fabs(shape.offset.z)+shape.radius}};
+        qa_math_vec3(start.x-fabs(shape.offset.x)-shape.radius,start.y-fabs(shape.offset.y)-shape.radius,start.z-fabs(shape.offset.z)-shape.radius),
+        qa_math_vec3(start.x+fabs(shape.offset.x)+shape.radius,start.y+fabs(shape.offset.y)+shape.radius,start.z+fabs(shape.offset.z)+shape.radius)};
     }else{
       qa_vec3 ext=(shape.kind&&strcmp(shape.kind,"point")==0)?qa_math_vec3(0,0,0):shape.extents;
       t.position_bounds=(qa_bounds){qa_add3(start,size_mins),qa_add3(start,ext)};
@@ -339,7 +352,7 @@ static double media_dist(void*ctx,qa_bsp_plane plane,int endpoint){
   else if(c->shape.kind&&strcmp(c->shape.kind,"point")!=0){
     int s=(int)plane.signbits;
     if(s>=8)qa_range_error("CM brush plane signbits outside trace offsets");
-    exp_=-qa_dot3(plane.plane.normal,qa_math_vec3((s&1)?c->shape.extents.x:c->shape.mins.x,(s&2)?c->shape.extents.y:c->shape.mins.y,(s&4)?c->shape.extents.z:c->shape.mins.z));
+    exp_=signed_expansion(plane.plane.normal,s,c->shape);
   }
   double dist=f32(plane.plane.distance+exp_);
   if(capsule)point=qa_dot3(plane.plane.normal,c->shape.offset)>0?qa_sub3(point,c->shape.offset):qa_add3(point,c->shape.offset);
@@ -375,8 +388,9 @@ qa_trace_media qa_collision_world_trace_media(qa_collision_world*w,qa_q3_trace_q
   qa_vec3 size_max=capsule?qa_math_vec3(fabs(shape.offset.x)+shape.radius,fabs(shape.offset.y)+shape.radius,fabs(shape.offset.z)+shape.radius):shape.extents;
   qa_vec3 size_min=capsule?qa_scale3(size_max,-1):mins;
   qa_vec3 reached=qa_source_trace_end(start,end,fraction);
-  qa_bounds env={{fmin(start.x,reached.x)+size_min.x-1,fmin(start.y,reached.y)+size_min.y-1,fmin(start.z,reached.z)+size_min.z-1},
-    {fmax(start.x,reached.x)+size_max.x+1,fmax(start.y,reached.y)+size_max.y+1,fmax(start.z,reached.z)+size_max.z+1}};
+  /* TS vec3(...) stores each coordinate through Math.fround. */
+  qa_bounds env={qa_math_vec3(qa_js_min(start.x,reached.x)+size_min.x-1,qa_js_min(start.y,reached.y)+size_min.y-1,qa_js_min(start.z,reached.z)+size_min.z-1),
+    qa_math_vec3(qa_js_max(start.x,reached.x)+size_max.x+1,qa_js_max(start.y,reached.y)+size_max.y+1,qa_js_max(start.z,reached.z)+size_max.z+1)};
   qa_collision_map_data*map=w->map;
   CandCtx cand={w,NULL,0,0};
   if(model_index!=0){
@@ -391,7 +405,7 @@ qa_trace_media qa_collision_world_trace_media(qa_collision_world*w,qa_q3_trace_q
   size_t bn=0;
   for(size_t i=0;i<cand.n;i++){
     double bi=cand.v[i];
-    if(!qa_stamp_set_mark(seen,(size_t)bi))continue;
+    if(!mark_number(seen,bi))continue;
     qa_q3_collision_brush*brush=&map->brushes[(size_t)bi];
     if(qa_convert_contents(brush->contents,"q3","q1")==-1)continue;
     size_t sc=(size_t)brush->side_count;

@@ -13,12 +13,13 @@ qa_app_client_socks_settings *qa_app_client_socks_settings_create(
     qa_command_context context, qa_command_print_fn print, void *print_ctx);
 void qa_app_client_socks_settings_destroy(qa_app_client_socks_settings *settings);
 qa_cvar_registry *qa_app_client_socks_settings_cvars(qa_app_client_socks_settings *settings);
-/* TS route(): wraps `base` (copied by value). The returned routing's
- * ctx borrows the settings; visible list storage is owned by the
- * settings and refreshed per call. */
+/* TS route(): a new routing over `base` (copied by value) per call; an
+ * earlier route keeps its own base. The route (its ctx and visible list
+ * storage, refreshed per visible call) is owned by the settings and freed
+ * by qa_app_client_socks_settings_destroy. */
 qa_command_cvar_routing qa_app_client_socks_settings_route(
     qa_app_client_socks_settings *settings, qa_command_cvar_routing base);
 /* TS connect(): async -> synchronous. `cvars` NULL uses own registry. */
 void qa_app_client_socks_settings_connect(qa_app_client_socks_settings *settings,
-    qa_udp_transport *transport, qa_cvar_registry *cvars);
+    qa_socks_connector transport, qa_cvar_registry *cvars);
 #endif

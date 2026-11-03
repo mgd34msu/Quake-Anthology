@@ -1,8 +1,9 @@
 /* Port of src/compat/qc/spatial-host.ts. GPL-2.0-or-later. */
 #include "qa/compat/qc/spatial_host.h"
 #include <math.h>
-#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 typedef qa_compat_qc_spatial_world W;
 static void check(W *w, qa_compat_qc_machine *m) { if (m->entities != w->entities || m->program != w->program) qa_compat_qc_machine_fail(m, "world builtin belongs to another QC machine"); }
 static void set_size(W *w, qa_compat_qc_machine *m, int64_t slot, qa_bounds b) {
@@ -24,7 +25,10 @@ static void write_trace(W *w, qa_compat_qc_machine *m, qa_trace_result t) {
   qa_compat_qc_words_set_float(&m->globals, qa_compat_qc_machine_global_offset(m, "trace_plane_dist"), t.source_plane_q1.distance);
   qa_compat_qc_words_set_vector(&m->globals, qa_compat_qc_machine_global_offset(m, "trace_endpos"), t.end);
   qa_compat_qc_words_set_vector(&m->globals, qa_compat_qc_machine_global_offset(m, "trace_plane_normal"), t.source_plane_q1.normal);
-  qa_compat_qc_words_set_int(&m->globals, qa_compat_qc_machine_global_offset(m, "trace_ent"), (double)hit_ref(w, t));
+  qa_compat_qc_words * w2 = &m->globals;
+  int64_t word = qa_compat_qc_machine_global_offset(m, "trace_ent");
+  double value = (double)hit_ref(w, t);
+  qa_compat_qc_words_set_int(w2, word, value);
 }
 static qa_trace_policy q1pol(const char *move) { qa_trace_policy p; memset(&p,0,sizeof p); p.kind="q1"; p.move=move; return p; }
 static void b_setorigin(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(w,m);
@@ -34,19 +38,24 @@ static void b_setorigin(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(w,
 static void b_setsize(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(w,m);
   set_size(w,m,qa_compat_qc_entity_memory_slot(w->entities, qa_compat_qc_machine_arg_int(m,0)),(qa_bounds){qa_compat_qc_machine_arg_vector(m,1),qa_compat_qc_machine_arg_vector(m,2)}); }
 static void b_setmodel(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(w,m);
-  const char *name0 = qa_compat_qc_machine_arg_string(m,1); char name[512]; snprintf(name,sizeof name,"%s",name0);
+  const char *name0 = qa_compat_qc_machine_arg_string(m,1); size_t name_length = strlen(name0) + 1;
+  char *name = malloc(name_length); if (!name) qa_compat_qc_machine_fail(m, "model name allocation failed");
+  memcpy(name, name0, name_length); /* arg_string's buffer is reused by later string reads */
   qa_compat_qc_spatial_model model; if (!w->model(w->ctx, name, &model)) { qa_compat_qc_machine_fail(m, "no precache: %s", name); }
+  /* QuakeWorld sizes only inline models; any other model leaves the box to a later setsize. */
+  const bool sized = w->program->api.kind != QA_QUAKEC_API_Q1_QUAKEWORLD || name[0] == '*';
+  free(name);
   int64_t slot = qa_compat_qc_entity_memory_slot(w->entities, qa_compat_qc_machine_arg_int(m,0));
   qa_compat_qc_machine_set_entity_int(m, qa_compat_qc_machine_arg_int(m,0), "model", qa_compat_qc_machine_arg_int(m,1));
   qa_compat_qc_machine_set_entity_float(m, qa_compat_qc_machine_arg_int(m,0), "modelindex", model.index);
-  set_size(w,m,slot,model.bounds); }
+  if (sized) set_size(w,m,slot,model.bounds); }
 static void b_pointcontents(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(w,m);
   qa_point_contents_query q; memset(&q,0,sizeof q); q.point=qa_compat_qc_machine_arg_vector(m,0); q.policy=q1pol("normal"); q.numeric=w->numeric;
   qa_point_contents_result r = w->scene.point_contents(w->scene.ctx, q);
   if (strcmp(r.kind,"q1")!=0) { qa_compat_qc_machine_fail(m,"QC pointcontents requires Q1 source contents"); }
   qa_compat_qc_machine_return_float(m, r.contents); }
 static void b_traceline(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(w,m);
-  int64_t mode = (int64_t)trunc(qa_compat_qc_machine_arg_float(m,2));
+  double mode = trunc(qa_compat_qc_machine_arg_float(m,2));
   qa_trace_query q; memset(&q,0,sizeof q);
   q.start=qa_compat_qc_machine_arg_vector(m,0); q.end=qa_compat_qc_machine_arg_vector(m,1); q.shape.kind="point";
   q.policy=q1pol(mode==1?"no-monsters":mode==2?"missile":"normal"); q.numeric=w->numeric;
@@ -76,14 +85,14 @@ static void b_droptofloor(void *ctx, qa_compat_qc_machine *m) { W *w=ctx; check(
   qa_vec3 origin=qa_compat_qc_machine_entity_vector(m,ref,"origin");
   qa_trace_query q; memset(&q,0,sizeof q); q.start=origin;
   q.end=origin; q.end.z=m->numeric->subtract(m->numeric->ctx,origin.z,256);
-  q.shape.kind="box"; q.shape.bounds=(qa_bounds){qa_compat_qc_machine_entity_vector(m,ref,"mins"),qa_compat_qc_machine_entity_vector(m,ref,"maxs")};
+  q.shape.kind="box"; qa_vec3 min = qa_compat_qc_machine_entity_vector(m,ref,"mins"); qa_vec3 max = qa_compat_qc_machine_entity_vector(m,ref,"maxs"); q.shape.bounds=(qa_bounds){min,max};
   q.policy=q1pol("normal"); q.numeric=w->numeric;
   qa_actor_id pass=w->actor(w->ctx,slot).id; q.pass_actor=&pass;
   qa_trace_result t=w->scene.trace(w->scene.ctx,q);
   if (t.fraction==1||t.all_solid){ qa_compat_qc_machine_return_float(m,0); return; }
   qa_compat_qc_machine_set_entity_vector(m,ref,"origin",t.end);
   w->link(w->ctx,slot);
-  qa_compat_qc_machine_set_entity_float(m,ref,"flags",(double)((int64_t)trunc(qa_compat_qc_machine_entity_float(m,ref,"flags"))|512));
+  qa_compat_qc_machine_set_entity_float(m,ref,"flags",qa_js_bit_or(qa_compat_qc_machine_entity_float(m,ref,"flags"),512));
   qa_compat_qc_machine_set_entity_int(m,ref,"groundentity",(double)hit_ref(w,t));
   qa_compat_qc_machine_return_float(m,1); }
 qa_compat_qc_spatial_bindings qa_compat_qc_create_spatial_bindings(W *w) {

@@ -30,17 +30,19 @@ static qa_q2_entity *first_named(qa_q2_game_services *g, const char *classname) 
 
 void qa_select_lmctf_spawn(qa_lmctf_context *context, qa_q2_entity *entity, qa_q2_game_services *g, qa_vec3 *out_origin, qa_vec3 *out_angles) {
   qa_lmctf_player_state *state = qa_lmctf_player(context, entity->actor.id);
-  qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, entity->actor.id);
-  if (player == NULL) qa_q2f_error("LMCTF spawn needs the admitted source player");
+  qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, entity->actor.id);
+  if (player == NULL) qa_raise("Error", 0, 0, "LMCTF spawn needs the admitted source player");
   qa_q2_entity *spot = state->spawn_state == 0 ? qa_lmctf_team_spawn(context, entity, g) : NULL;
   state->spawn_state = 1;
   size_t dm_count = 0;
   qa_q2_entity **dm = qa_q2mp_entities_named(g, "info_player_deathmatch", &dm_count);
   free(dm);
   if (spot == NULL && dm_count > 0) {
+    double left;
+    double right;
     qa_q2_entity *deathmatch = qa_q2mp_select_spawn(g, player->slot, "");
     qa_q2_entity *team = qa_lmctf_team_spawn(context, entity, g);
-    spot = team == NULL || qa_q2mp_players_range(g, deathmatch) > qa_q2mp_players_range(g, team) ? deathmatch : team;
+    spot = team == NULL || (left = qa_q2mp_players_range(g, deathmatch), right = qa_q2mp_players_range(g, team), left > right) ? deathmatch : team;
   }
   if (spot == NULL) spot = first_named(g, "info_flag_red");
   if (spot == NULL) spot = first_named(g, "info_flag_blue");

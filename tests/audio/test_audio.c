@@ -1,7 +1,7 @@
 /*
  * Port of key cases from tests/audio/geometry.test.ts,
  * q3-wav.test.ts and playback.test.ts (RawAudioStream, MusicPlayer,
- * StereoReverb), plus oracle values for adpcm/wavelet/types produced
+ * StereoReverb), plus oracle values for types produced
  * by the TypeScript implementation. Mixer/engine/bank cases land
  * with those ports. GPL-2.0-or-later.
  */
@@ -151,33 +151,6 @@ static void test_types_channels(void) {
   CHECK_ABORTS((void)qa_source_sound_channel(QA_SOUND_FAMILY_Q1, -2));
 }
 
-static void test_adpcm_wavelet(void) {
-  const int16_t input[8] = {0, 1000, -1000, 5000, 32767, -32768, 0, 123};
-  const uint8_t expected_bytes[4] = {7, 247, 127, 17};
-  const int16_t expected_decoded[8] = {0, 11, -19, 44, 180, -113, 13, 127};
-  uint8_t encoded[4] = {0};
-  qa_adpcm_state state = {0, 0};
-  qa_encode_adpcm(input, 8, encoded, sizeof encoded, &state);
-  CHECK(memcmp(encoded, expected_bytes, 4) == 0);
-  CHECK(state.sample == 127);
-  CHECK(state.index == 38);
-  int16_t decoded[8] = {0};
-  qa_adpcm_state state2 = {0, 0};
-  qa_decode_adpcm(encoded, sizeof encoded, decoded, 8, &state2);
-  CHECK(memcmp(decoded, expected_decoded, sizeof expected_decoded) == 0);
-  CHECK(state2.sample == 127 && state2.index == 38);
-  CHECK(qa_adpcm_memory_needed(4096, 22050, 22050) == 2052);
-  CHECK(qa_adpcm_memory_needed(44100, 44100, 22050) == 11049);
-  CHECK_ABORTS(qa_encode_adpcm(input, 8, encoded, 2, &(qa_adpcm_state){0, 0}));
-
-  CHECK(qa_mu_law_encode(0) == 127);
-  CHECK(qa_mu_law_decode(127) == -4);
-  CHECK(qa_mu_law_encode(1000) == 78);
-  CHECK(qa_mu_law_decode(78) == 956);
-  CHECK(qa_mu_law_encode(-1000) == 206);
-  CHECK_ABORTS((void)qa_mu_law_encode(32768));
-}
-
 static void test_raw_stream(void) {
   qa_raw_audio_stream stream;
   qa_raw_audio_stream_init(&stream, 48000);
@@ -316,7 +289,6 @@ int main(void) {
   test_geometry();
   test_q3_wav();
   test_types_channels();
-  test_adpcm_wavelet();
   test_raw_stream();
   test_music_player();
   test_reverb();

@@ -6,6 +6,8 @@
 #include "qa/content/q3/base/shared/definitions.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 typedef struct timer_ctx { qa_q3_player_state state; } timer_ctx;
 static double timer_expires(void *v, double powerup) {
@@ -42,7 +44,7 @@ static double count_item(count_ctx *ctx, qa_item_id item) {
     if (item_eq(ctx->definitions[i].item, item) || (ctx->definitions[i].ammo && item_eq(ctx->definitions[i].ammo, item))) definition = &ctx->definitions[i];
   if (!definition) return 0;
   if (item_eq(definition->item, item))
-    return (((long long)view_at(ctx->state.stats, ctx->stats->weapons)) & (1LL << (long long)definition->weapon)) != 0 ? 1 : 0;
+    return ((qa_js_to_int32(view_at(ctx->state.stats, ctx->stats->weapons))) & qa_js_to_int32(qa_js_shl(1, definition->weapon))) != 0 ? 1 : 0;
   return view_at(ctx->state.ammo, definition->weapon);
 }
 static double count_cb(void *v, qa_item_id item) { return count_item((count_ctx *)v, item); }
@@ -60,14 +62,12 @@ qa_app_guest_player_ui qa_app_q3_guest_player_ui(qa_q3_player_state state, qa_pr
   if (catalog == qa_q3_standard_guest_weapons || catalog == qa_q3_base_guest_weapons) standard = true;
   const qa_q3_base_stat_schema *stats = qa_q3_base_stat_schema_for(missionpack ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
   const qa_q3_guest_weapon *weapon = NULL;
-  for (size_t i = 0; i < definition_count; i++) {
+  /* TS definitions.find: the first match. A weapon missing from the catalog shows no active weapon. */
+  for (size_t i = 0; i < definition_count && weapon == NULL; i++) {
     if (!has_active && definitions[i].weapon == state.weapon) weapon = &definitions[i];
     if (has_active && active && item_eq(definitions[i].item, active)) weapon = &definitions[i];
   }
   count_ctx ctx = {state, definitions, definition_count, stats, inventory, inventory_count, has_inventory};
-  if ((!has_active ? state.weapon != 0 : active != NULL) && !weapon)
-    qa_range_error("Q3 guest weapon %lld is missing from its item catalog; this mod needs a qvm-items.json declaration",
-        (long long)state.weapon);
   double armor = view_at(state.stats, stats->armor);
   out.powerup_count = powerup_timers(state, now_milliseconds, out.powerups, out.powerup_capacity);
   out.health = view_at(state.stats, stats->health);

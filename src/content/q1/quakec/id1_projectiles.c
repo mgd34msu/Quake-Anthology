@@ -25,6 +25,7 @@ typedef struct weapon_entry { int64_t function_index; qa_item_id weapon; } weapo
 typedef struct site_entry { int64_t statement, caller; } site_entry;
 struct qa_q1_id1_projectile_attacks {
   qa_q1qc_source source;
+  qa_q1qc_foreign_source foreign;
   qa_q1qc_machine_fn machine;
   void *machine_ctx;
   emission_entry *emissions; size_t emission_count, emission_capacity;
@@ -32,7 +33,26 @@ struct qa_q1_id1_projectile_attacks {
   weapon_entry *weapons; size_t weapon_count;
   site_entry sites[8]; size_t site_count;
   int64_t owner_field, damage_function, radius_function, lightning_function, launch_spike_function;
+  /* Restored weapon ids are copied: the decoded save tree they are read from
+   * is released after restore (TS strings are values). */
+  char **owned_weapons; size_t owned_weapon_count;
 };
+static const qa_item_id KNOWN_WEAPONS[5] = {"q1:weapon/rocketlauncher", "q1:weapon/grenadelauncher",
+                                            "q1:weapon/nailgun", "q1:weapon/supernailgun",
+                                            "q1:weapon/lightning"};
+static qa_item_id stable_weapon(qa_q1_id1_projectile_attacks *attacks, const char *weapon) {
+  for (size_t i = 0; i < sizeof KNOWN_WEAPONS / sizeof *KNOWN_WEAPONS; i++)
+    if (strcmp(KNOWN_WEAPONS[i], weapon) == 0) return KNOWN_WEAPONS[i];
+  for (size_t i = 0; i < attacks->owned_weapon_count; i++)
+    if (strcmp(attacks->owned_weapons[i], weapon) == 0) return attacks->owned_weapons[i];
+  size_t length = strlen(weapon);
+  char *copy = xmalloc(length + 1);
+  memcpy(copy, weapon, length + 1);
+  attacks->owned_weapons = xrealloc(attacks->owned_weapons,
+                                    (attacks->owned_weapon_count + 1) * sizeof *attacks->owned_weapons);
+  attacks->owned_weapons[attacks->owned_weapon_count++] = copy;
+  return copy;
+}
 static emission *find_emission(qa_q1_id1_projectile_attacks *attacks, qa_actor_id actor) {
   for (size_t i = 0; i < attacks->emission_count; i++)
     if (qa_q1qc_actor_equal(attacks->emissions[i].actor, actor)) return &attacks->emissions[i].value;
@@ -56,9 +76,15 @@ static const qa_item_id *find_weapon(const qa_q1_id1_projectile_attacks *attacks
 }
 qa_q1_id1_projectile_attacks *qa_q1_id1_projectile_attacks_create(
     qa_q1qc_source source, qa_q1qc_machine_fn machine, void *machine_ctx) {
+  return qa_q1_id1_projectile_attacks_create_foreign(source, NULL, machine, machine_ctx);
+}
+qa_q1_id1_projectile_attacks *qa_q1_id1_projectile_attacks_create_foreign(
+    qa_q1qc_source source, const qa_q1qc_foreign_source *foreign,
+    qa_q1qc_machine_fn machine, void *machine_ctx) {
   qa_q1_id1_projectile_attacks *attacks = xmalloc(sizeof *attacks);
   memset(attacks, 0, sizeof *attacks);
   attacks->source = source;
+  if (foreign != NULL) attacks->foreign = *foreign;
   attacks->machine = machine;
   attacks->machine_ctx = machine_ctx;
   const qa_q1qc_program *p = source.program;
@@ -101,6 +127,8 @@ void qa_q1_id1_projectile_attacks_destroy(qa_q1_id1_projectile_attacks *attacks)
   free(attacks->emissions);
   free(attacks->firing);
   free(attacks->weapons);
+  for (size_t i = 0; i < attacks->owned_weapon_count; i++) free(attacks->owned_weapons[i]);
+  free(attacks->owned_weapons);
   free(attacks);
 }
 qa_q1_id1_projectile_capture *qa_q1_id1_projectile_attacks_capture(
@@ -126,12 +154,17 @@ void qa_q1_id1_projectile_attacks_restore(qa_q1_id1_projectile_attacks *attacks,
   size_t count = qa_save_reader_list_count(&reader);
   typedef struct restored { qa_actor_id actor, owner; double emitted_at; qa_item_id weapon; } restored;
   restored *entries = xmalloc(count * sizeof *entries);
+  /* A malformed entry raises from the readers below (TS GC frees the list). */
+  qa_cleanup entries_node;
+  qa_cleanup_push(&entries_node, free, entries);
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry, actor_reader, owner_reader, slot, generation, field_reader;
     if (!qa_save_reader_item(&reader, i, &entry)) qa_save_reader_fail(&reader, "out of memory");
     qa_saved_actor_id saved[2];
     qa_save_reader *readers[2] = {&actor_reader, &owner_reader};
     const char *names[2] = {"actor", "owner"};
+    qa_actor_id referenced[2];
+    /* TS object literal order: actor identity, its referenceSaved, then the owner's. */
     for (int k = 0; k < 2; k++) {
       if (!qa_save_reader_field(&entry, names[k], readers[k]))
         qa_save_reader_fail(&entry, "out of memory");
@@ -143,11 +176,10 @@ void qa_q1_id1_projectile_attacks_restore(qa_q1_id1_projectile_attacks *attacks,
       saved[k].generation = qa_save_reader_integer_min(&generation, 0);
       qa_save_reader_destroy(&generation);
       qa_save_reader_destroy(readers[k]);
+      referenced[k] = qa_session_actor_registry_reference_saved(attacks->source.actors, saved[k], "checkpoint");
     }
-    entries[i].actor = qa_session_actor_registry_reference_saved(attacks->source.actors,
-                                                                 saved[0], "checkpoint");
-    entries[i].owner = qa_session_actor_registry_reference_saved(attacks->source.actors,
-                                                                 saved[1], "checkpoint");
+    entries[i].actor = referenced[0];
+    entries[i].owner = referenced[1];
     if (!qa_save_reader_field(&entry, "emittedAt", &field_reader))
       qa_save_reader_fail(&entry, "out of memory");
     entries[i].emitted_at = qa_save_reader_finite(&field_reader);
@@ -161,13 +193,13 @@ void qa_q1_id1_projectile_attacks_restore(qa_q1_id1_projectile_attacks *attacks,
   qa_save_reader_destroy(&reader);
   attacks->emission_count = 0;
   for (size_t i = 0; i < count; i++) {
-    if (find_emission(attacks, entries[i].actor) != NULL) {
-      free(entries);
+    if (find_emission(attacks, entries[i].actor) != NULL)
       proj_error("Duplicate saved projectile emission");
-    }
     set_emission(attacks, entries[i].actor,
-                 (emission){entries[i].owner, entries[i].emitted_at, entries[i].weapon});
+                 (emission){entries[i].owner, entries[i].emitted_at,
+                            stable_weapon(attacks, entries[i].weapon)});
   }
+  qa_cleanup_pop(&entries_node);
   free(entries);
 }
 static qa_q1qc_machine *proj_vm(qa_q1_id1_projectile_attacks *attacks) {
@@ -179,10 +211,17 @@ static qa_q1qc_machine *proj_vm(qa_q1_id1_projectile_attacks *attacks) {
 static qa_actor_id proj_actor(qa_q1_id1_projectile_attacks *attacks, int64_t reference) {
   int64_t slot = qa_q1qc_entities_slot(attacks->source.entities, reference);
   qa_owned_actor actor;
-  if (!qa_source_actor_slots_at(attacks->source.slots, slot, &actor) ||
-      !qa_session_actor_registry_is_live(attacks->source.actors, actor.id))
+  /* TS `slots.at(slot) ?? foreignActor?.(slot) ?? null`. */
+  const bool found = qa_source_actor_slots_at(attacks->source.slots, slot, &actor) ||
+                     (attacks->foreign.foreign_actor != NULL &&
+                      attacks->foreign.foreign_actor(attacks->foreign.ctx, slot, &actor));
+  if (!found || !qa_session_actor_registry_is_live(attacks->source.actors, actor.id))
     proj_error("Projectile references a free actor");
   return actor.id;
+}
+static void pop_firing(void *arg) {
+  qa_q1_id1_projectile_attacks *attacks = arg;
+  attacks->firing_count--;
 }
 static void composed_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_execution execute) {
   qa_q1_id1_projectile_composed *composed = ctx;
@@ -201,11 +240,14 @@ static void composed_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_exe
       proj_actor(attacks, qa_q1qc_words_int(&vm->globals,
                                             qa_q1qc_machine_global_offset(vm, "self"))),
       qa_q1qc_words_float(&vm->globals, qa_q1qc_machine_global_offset(vm, "time")), *weapon};
+  /* TS pops in a finally, which also runs when execute throws. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, pop_firing, attacks);
   if (qa_q1qc_boundary_has(&composed->inner, call.function_index))
     composed->inner.run(composed->inner.ctx, call, execute);
   else qa_q1qc_execution_run(&execute);
-  /* TS pops in a finally. */
-  attacks->firing_count--;
+  qa_cleanup_pop(&node);
+  pop_firing(attacks);
 }
 void qa_q1_id1_projectile_attacks_compose(qa_q1_id1_projectile_composed *composed,
                                           qa_q1_id1_projectile_attacks *attacks,

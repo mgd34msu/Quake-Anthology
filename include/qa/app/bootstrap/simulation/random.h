@@ -17,8 +17,13 @@ typedef struct qa_app_sim_source_random qa_app_sim_source_random;
 qa_app_sim_source_random *qa_app_sim_source_random_create(double seed, const char *profile);
 void qa_app_sim_source_random_destroy(qa_app_sim_source_random *r);
 bool qa_app_sim_source_random_has_rerelease(const qa_app_sim_source_random *r);
+/* TS SourceRandom.rerelease: the owned Q2RereleaseRandom, NULL (TS null) for the classic profile. */
+qa_q2_rerelease_random *qa_app_sim_source_random_rerelease(qa_app_sim_source_random *r);
 double qa_app_sim_source_random_next_integer(qa_app_sim_source_random *r);
 double qa_app_sim_source_random_next_unit(qa_app_sim_source_random *r);
 qa_app_sim_source_random_state qa_app_sim_source_random_checkpoint(qa_app_sim_source_random *r);
 void qa_app_sim_source_random_restore(qa_app_sim_source_random *r, qa_app_sim_source_random_state state);
+/* A read TS RandomState narrowed to ReturnType<SourceRandom["checkpoint"]>
+ * (the readers check kind first); other kinds raise RangeError. */
+qa_app_sim_source_random_state qa_app_sim_source_random_state_of(const qa_random_state *state);
 #endif

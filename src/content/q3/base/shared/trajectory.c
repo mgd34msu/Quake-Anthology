@@ -1,10 +1,12 @@
 /* Port of src/content/q3/base/shared/trajectory.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/shared/trajectory.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include "qa/content/q3/base/shared/definitions.h"
 #include "qa/core/common_error.h"
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 
 static float fr(double v) { return (float)v; }
 /* JS (x)|0: ToInt32. */
@@ -13,7 +15,7 @@ static int32_t to_int32(double v) {
   double m = fmod(trunc(v), 4294967296.0);
   if (m >= 2147483648.0) m -= 4294967296.0;
   if (m < -2147483648.0) m += 4294967296.0;
-  return (int32_t)m;
+  return qa_js_to_int32(m);
 }
 static double seconds(double milliseconds) {
   return (double)fr((double)fr(milliseconds) * (double)fr(0.001));
@@ -50,7 +52,7 @@ qa_vec3 qa_q3_base_evaluate_trajectory(qa_q3_base_trajectory tr, double at_time)
     return vec(result.x, result.y, result.z - fall);
   }
   char msg[128];
-  snprintf(msg, sizeof msg, "BG_EvaluateTrajectory: unknown trType: %g", tr.time);
+  snprintf(msg, sizeof msg, "BG_EvaluateTrajectory: unknown trType: %s", QA_JS_NUMBER(tr.time));
   qa_common_error(QA_COMMON_ERROR_DROP, msg);
 }
 qa_vec3 qa_q3_base_evaluate_trajectory_delta(qa_q3_base_trajectory tr, double at_time) {
@@ -69,6 +71,6 @@ qa_vec3 qa_q3_base_evaluate_trajectory_delta(qa_q3_base_trajectory tr, double at
     return vec(tr.delta.x, tr.delta.y, tr.delta.z - (double)fr(QA_Q3_BASE_DEFAULT_GRAVITY * dt));
   }
   char msg[128];
-  snprintf(msg, sizeof msg, "BG_EvaluateTrajectoryDelta: unknown trType: %g", tr.time);
+  snprintf(msg, sizeof msg, "BG_EvaluateTrajectoryDelta: unknown trType: %s", QA_JS_NUMBER(tr.time));
   qa_common_error(QA_COMMON_ERROR_DROP, msg);
 }

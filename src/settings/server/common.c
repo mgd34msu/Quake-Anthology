@@ -1,5 +1,6 @@
 /* Port of src/settings/server/common.ts. GPL-2.0-or-later. */
 #include "qa/settings/server/common.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -10,37 +11,7 @@
  * outside it. Finds the shortest round-tripping decimal in the
  * matching notation. */
 static void js_number_text(double value, char *out, size_t size) {
-  if (value == 0.0) { /* String(-0) is "0" */
-    snprintf(out, size, "0");
-    return;
-  }
-  double magnitude = fabs(value);
-  if (magnitude >= 1e-6 && magnitude < 1e21) {
-    for (int decimals = 0; decimals <= 17; decimals++) {
-      snprintf(out, size, "%.*f", decimals, value);
-      if (strtod(out, NULL) == value) return;
-    }
-  }
-  for (int precision = 1; precision <= 17; precision++) {
-    snprintf(out, size, "%.*e", precision - 1, value);
-    if (strtod(out, NULL) == value) break;
-  }
-  /* JS exponent form: trim mantissa zeros, drop the exponent's
-   * leading zero ("1e+21", "1.5e-7"). */
-  char *e = strchr(out, 'e');
-  if (e != NULL) {
-    if (strchr(out, '.') != NULL) {
-      char *tail = e - 1;
-      while (tail > out && *tail == '0') tail--;
-      if (*tail == '.') tail--;
-      memmove(tail + 1, e, strlen(e) + 1);
-      e = strchr(out, 'e');
-    }
-    char *digits = e + 1;
-    if (*digits == '+' || *digits == '-') digits++;
-    while (digits[0] == '0' && digits[1] != '\0')
-      memmove(digits, digits + 1, strlen(digits));
-  }
+  qa_net_js_number(value, out, size);
 }
 
 void qa_server_limit(qa_server_setting_definition *out, qa_server_setting_id id,

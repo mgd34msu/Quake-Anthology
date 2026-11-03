@@ -43,8 +43,11 @@ bool qa_read_pak_directory(const uint8_t *bytes, size_t length,
     int64_t byte_length = qa_binary_reader_i32(&reader);
     if (raw_path == NULL) goto oom;
     qa_archive_check_range(source, file_size, data_offset, byte_length);
-    char *path = qa_normalize_entry_path(raw_path);
-    if (path == NULL) { free(raw_path); goto oom; }
+    bool unsafe = false;
+    char *path = qa_try_normalize_entry_path(raw_path, &unsafe);
+    if (path == NULL && !unsafe) { free(raw_path); goto oom; }
+    /* An unaddressable member is skipped instead of rejecting the archive. */
+    if (path == NULL) { free(raw_path); continue; }
     if (count == capacity) {
       size_t next = capacity == 0 ? 16 : capacity * 2;
       qa_archive_entry *grown =

@@ -1,6 +1,8 @@
 /* Port of src/network/q2/state.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/state.h"
 
+#include "qa/foundation/js.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -13,9 +15,7 @@ void qa_q2_wire_player_init(qa_q2_wire_player *state) { memset(state, 0, sizeof 
 
 int32_t qa_q2_angle2short(double x) {
   /* TS: Math.trunc((x * 65536) / 360) & 65535 (ToInt32, then mask). */
-  double t = trunc((x * 65536.0) / 360.0);
-  int64_t v = (int64_t)t;
-  return (int32_t)(v & 65535);
+  return qa_js_to_int32(trunc((x * 65536.0) / 360.0)) & 65535;
 }
 
 double qa_q2_short2angle(double x) { return x * (360.0 / 65536.0); }

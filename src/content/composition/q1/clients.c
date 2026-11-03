@@ -1,5 +1,6 @@
 /* Port of src/content/composition/q1/clients.ts. GPL-2.0-or-later. */
 #include "qa/content/composition/q1/clients.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 static char *dup_text(const char *text) {
   size_t length = strlen(text);
@@ -18,20 +20,12 @@ static char *dup_text(const char *text) {
 
 /* JS Number(text) for userinfo values: blank -> 0, junk -> NaN. */
 static double js_number(const char *text) {
-  if (text == NULL) return 0;
-  const char *cursor = text;
-  while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' || *cursor == '\r') cursor++;
-  if (*cursor == '\0') return 0;
-  char *end = NULL;
-  double value = strtod(cursor, &end);
-  if (end == cursor) return NAN;
-  while (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r') end++;
-  return *end == '\0' ? value : NAN;
+  return text == NULL ? 0 : qa_js_string_to_number(text); /* Number(value ?? 0) */
 }
 
 static int64_t color_of(double parsed) {
   if (!isfinite(parsed)) return 0;
-  double clamped = fmax(0.0, fmin(13.0, trunc(parsed)));
+  double clamped = qa_js_max(0.0, qa_js_min(13.0, trunc(parsed)));
   return (int64_t)clamped;
 }
 static int64_t color(const char *value) { return color_of(js_number(value)); }
@@ -95,13 +89,20 @@ int64_t qa_comp_q1_source_client_pants(const qa_comp_q1_source_client *client) {
   return color(userinfo_get(client, "bottomcolor"));
 }
 qa_comp_q1_client_snapshot qa_comp_q1_source_client_snapshot(const qa_comp_q1_source_client *client) {
-  return (qa_comp_q1_client_snapshot){client->actor.id, client->slot, qa_comp_q1_source_client_name(client),
-                                      client->frags, qa_comp_q1_source_client_shirt(client),
-                                      qa_comp_q1_source_client_pants(client), client->team, client->observer,
+  const qa_actor_id actor2 = client->actor.id;
+  int64_t slot2 = client->slot;
+  const char * name = qa_comp_q1_source_client_name(client);
+  double frags2 = client->frags;
+  int64_t shirt = qa_comp_q1_source_client_shirt(client);
+  int64_t pants = qa_comp_q1_source_client_pants(client);
+  return (qa_comp_q1_client_snapshot){actor2, slot2, name,
+                                      frags2, shirt,
+                                      pants, client->team, client->observer,
                                       client->no_target, client->userinfo, client->userinfo_count};
 }
 
-static bool same_owned(qa_owned_actor left, qa_owned_actor right) { return left.token == right.token; }
+/* TS Map<OwnedActor, ...> key identity: the registry's owned handle. */
+static bool same_owned(qa_owned_actor left, qa_owned_actor right) { return qa_same_owned_actor(left, right); }
 
 static void on_release(void *ctx, qa_owned_actor actor) {
   qa_comp_q1_source_clients *clients = (qa_comp_q1_source_clients *)ctx;
@@ -116,16 +117,18 @@ static void on_release(void *ctx, qa_owned_actor actor) {
     }
 }
 
-void qa_comp_q1_source_clients_init(qa_comp_q1_source_clients *clients, qa_comp_q1_client_game game,
+void qa_comp_q1_source_clients_init(qa_comp_q1_source_clients *clients, qa_q1_services *game,
                                     qa_comp_q1_program program, const qa_comp_q1_services *services) {
   memset(clients, 0, sizeof *clients);
   clients->game = game;
   clients->program = program;
   clients->services = services;
-  clients->game.on_release(clients->game.ctx, on_release, clients);
+  clients->release_listener = qa_session_actor_registry_on_release(game->host.actors, on_release, clients);
 }
 
 void qa_comp_q1_source_clients_destroy(qa_comp_q1_source_clients *clients) {
+  if (clients->game != NULL)
+    qa_session_actor_registry_off_release(clients->game->host.actors, clients->release_listener);
   for (size_t i = 0; i < clients->record_count; i++) {
     client_clear_userinfo(&clients->records[i]);
     free(clients->records[i].userinfo);
@@ -136,7 +139,7 @@ void qa_comp_q1_source_clients_destroy(qa_comp_q1_source_clients *clients) {
 
 qa_comp_q1_source_client *qa_comp_q1_source_clients_get(qa_comp_q1_source_clients *clients, qa_actor_id actor) {
   qa_owned_actor owner;
-  if (!clients->game.resolve_owned(clients->game.ctx, actor, &owner)) return NULL;
+  if (!qa_session_actor_registry_resolve_owned(clients->game->host.actors, actor, &owner)) return NULL;
   for (size_t i = 0; i < clients->record_count; i++)
     if (same_owned(clients->records[i].actor, owner)) return &clients->records[i];
   return NULL;
@@ -148,37 +151,49 @@ qa_comp_q1_source_client *qa_comp_q1_source_clients_require(qa_comp_q1_source_cl
   return client;
 }
 
+/* TS String(team). The combat authority keeps the team string it is given
+ * (TS strings are values), so team names are interned for the process. */
+static const char *team_name(double team) {
+  static struct interned_team { struct interned_team *next; char text[40]; } *interned = NULL;
+  char text[40];
+  (void)snprintf(text, sizeof text, "%s", QA_JS_NUMBER(team));
+  for (const struct interned_team *entry = interned; entry != NULL; entry = entry->next)
+    if (strcmp(entry->text, text) == 0) return entry->text;
+  struct interned_team *entry = malloc(sizeof *entry);
+  if (entry == NULL) qa_range_error("Out of memory");
+  memcpy(entry->text, text, sizeof text);
+  entry->next = interned;
+  interned = entry;
+  return entry->text;
+}
+
 static void apply_player_settings(qa_comp_q1_source_clients *clients, qa_comp_q1_source_client *client) {
-  char team_text[32];
   const char *team;
   if (clients->program == QA_COMP_Q1_CTF)
     team = client->team == 5 ? "red" : client->team == 14 ? "blue" : NULL;
-  else if (client->team > 0) {
-    /* TS String(team) for a number. */
-    if (client->team == trunc(client->team) && fabs(client->team) < 9.0e15)
-      (void)snprintf(team_text, sizeof team_text, "%lld", (long long)client->team);
-    else
-      (void)snprintf(team_text, sizeof team_text, "%g", client->team);
-    team = team_text;
-  } else
+  else if (client->team > 0)
+    team = team_name(client->team);
+  else
     team = NULL;
-  clients->game.set_traits_team(clients->game.ctx, client->actor, team);
+  qa_combat_trait_changes traits;
+  memset(&traits, 0, sizeof traits);
+  traits.has_team = true;
+  traits.team = team;
+  qa_gameplay_authority_set_traits(clients->game->host.combat, client->actor, traits);
+  qa_q1_player_state *player = qa_q1_player(clients->game, client->actor.id);
   const char *auto_switch = userinfo_get(client, "qts_weapon_autoswitch");
-  if (auto_switch != NULL)
-    clients->game.set_auto_switch(clients->game.ctx, client->actor.id,
-                                  strcmp(auto_switch, "new") == 0 || strcmp(auto_switch, "never") == 0
-                                      ? auto_switch
-                                      : "always");
+  if (player != NULL && auto_switch != NULL)
+    player->auto_switch = strcmp(auto_switch, "new") == 0 ? "new" : strcmp(auto_switch, "never") == 0 ? "never" : "always";
 }
 
 qa_comp_q1_source_client *qa_comp_q1_source_clients_attach(qa_comp_q1_source_clients *clients,
                                                            qa_owned_actor actor,
                                                            const qa_comp_q1_client_admission *admission) {
-  clients->game.assert_owned(clients->game.ctx, actor);
+  qa_session_actor_registry_assert_owned(clients->game->host.actors, actor);
   for (size_t i = 0; i < clients->record_count; i++)
     if (same_owned(clients->records[i].actor, actor) || clients->records[i].slot == admission->slot)
       qa_range_error("Q1 source client slot is already admitted");
-  double max_clients = clients->game.has_max_clients ? clients->game.max_clients : 1;
+  double max_clients = clients->game->options.has_max_clients ? clients->game->options.max_clients : 1;
   if (admission->slot < 0 || (double)admission->slot >= max_clients)
     qa_range_error("Q1 source client slot is out of range");
   if (clients->record_count == clients->record_capacity) {
@@ -234,8 +249,8 @@ double qa_comp_q1_source_clients_team_color(qa_comp_q1_source_clients *clients, 
 void qa_comp_q1_source_clients_spawned(qa_comp_q1_source_clients *clients, qa_actor_id actor) {
   qa_comp_q1_source_client *client = qa_comp_q1_source_clients_require(clients, actor);
   client->god_mode = false;
-  if (strcmp(clients->game.edition, "rerelease") == 0 && clients->program != QA_COMP_Q1_CTF) {
-    if (clients->game.coop) client->team = 1;
+  if (strcmp(clients->game->options.edition, "rerelease") == 0 && clients->program != QA_COMP_Q1_CTF) {
+    if (clients->game->options.coop) client->team = 1;
     else if (clients->program == QA_COMP_Q1_ID1) client->team = -1;
   }
   apply_player_settings(clients, client);
@@ -357,7 +372,8 @@ bool qa_comp_q1_source_clients_restore(qa_comp_q1_source_clients *clients, const
     int64_t slot = (int64_t)field_number(&id, "slot", 0);
     int64_t generation = (int64_t)field_number(&id, "generation", 0);
     qa_owned_actor actor;
-    if (!clients->game.resolve_saved(clients->game.ctx, slot, generation, &actor))
+    const qa_saved_actor_id saved_id = {(double)slot, (double)generation};
+    if (!qa_session_actor_registry_resolve_saved(clients->game->host.actors, saved_id, &actor))
       qa_save_reader_fail(&id, "missing source client actor");
     qa_save_reader_destroy(&id);
     int64_t client_slot = (int64_t)field_number(&saved, "slot", 0);

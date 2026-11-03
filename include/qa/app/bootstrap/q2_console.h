@@ -37,6 +37,11 @@ typedef struct qa_app_q2_console_options {
       qa_command_context source);
   /* TS bindLmctfConsoleRules beyond registration. */
   void (*bind_lmctf_rules)(void *ctx, qa_cvar_registry *cvars, qa_lmctf_rules *rules);
+  /* TS simulation().selectionConsumption(): calls each(each_ctx, entry) per entry in order.
+     NULL lists nothing. */
+  void (*selection_consumption)(void *ctx,
+      void (*each)(void *each_ctx, const char *axis, const char *outcome, const char *requested, const char *detail),
+      void *each_ctx);
 } qa_app_q2_console_options;
 typedef struct qa_app_q2_console qa_app_q2_console;
 /* Aborts without a Q2 source runtime (TS Error). */

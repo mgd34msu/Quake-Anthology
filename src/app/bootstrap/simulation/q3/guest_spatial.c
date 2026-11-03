@@ -6,9 +6,11 @@
 #include "qa/content/q3/base/shared/entity_shared.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/world/collision/index.h"
 #include "qa/world/collision/q3/clip_models.h"
 #include "qa/world/collision/q3/model.h"
 #include "qa/world/spatial/index.h"
+#include "qa/foundation/js.h"
 
 struct qa_app_q3_guest_spatial {
   qa_app_q3_guest_spatial_dependencies dependencies;
@@ -26,9 +28,9 @@ static bool passes(qa_app_q3_guest_spatial *spatial, double entity_num, int32_t 
   qa_qvm_shared_entity *entity = qa_app_q3_guest_records_entity(spatial->dependencies.records, entity_num);
   int32_t owner = qa_qvm_shared_entity_get_owner_num(entity);
   if (entity_num == pass_entity_num || owner == pass_entity_num) return false;
-  if ((double)pass_entity_num < qa_qvm_game_data_get_num_entities(qa_app_q3_guest_records_data(spatial->dependencies.records))) {
+  if (pass_entity_num >= 0 && (double)pass_entity_num < qa_qvm_game_data_get_num_entities(qa_app_q3_guest_records_data(spatial->dependencies.records))) {
     qa_qvm_shared_entity *pass = qa_app_q3_guest_records_entity(spatial->dependencies.records, pass_entity_num);
-    if (qa_qvm_shared_entity_get_owner_num(pass) == (int32_t)entity_num) return false;
+    if (qa_qvm_shared_entity_get_owner_num(pass) == qa_js_to_int32(entity_num)) return false;
   }
   return true;
 }
@@ -45,12 +47,10 @@ static qa_trace_result scene_trace(qa_app_q3_guest_spatial *spatial, const qa_qv
   return qa_shared_trace_excluding(spatial->dependencies.scene, query, excluded, excluded_count);
 }
 qa_qvm_trace_record qa_app_q3_guest_spatial_trace(qa_app_q3_guest_spatial *spatial, const qa_qvm_server_trace_query *input) {
-  double entities = qa_qvm_game_data_get_num_entities(qa_app_q3_guest_records_data(spatial->dependencies.records));
   size_t ignore_count = 0;
-  if (input->pass_entity_num != 1023 && (double)input->pass_entity_num < entities) {
-    spatial->ignore_storage[ignore_count++] =
-        qa_app_q3_guest_records_actor(spatial->dependencies.records, input->pass_entity_num).id;
-  }
+  /* TS passActor: this.records.reference(input.passEntityNum) (null outside 0..1021 or for a retired input). */
+  if (qa_app_q3_guest_records_reference(spatial->dependencies.records, input->pass_entity_num, &spatial->ignore_storage[0]))
+    ignore_count = 1;
   for (size_t attempt = 0; attempt <= 1024; attempt++) {
     qa_trace_result hit = scene_trace(spatial, input, spatial->ignore_storage, ignore_count);
     double entity_num = hit.hit.kind == QA_TRACE_HIT_WORLD ? 1022 : 1023;
@@ -63,7 +63,7 @@ qa_qvm_trace_record qa_app_q3_guest_spatial_trace(qa_app_q3_guest_spatial *spati
       result.result.plane.plane = hit.contact.plane;
       result.result.plane.type = hit.source_plane.type; result.result.plane.signbits = hit.source_plane.signbits;
       result.result.surface_flags = hit.surface_flags; result.result.contents = hit.contents;
-      result.entity_num = (int32_t)entity_num;
+      result.entity_num = qa_js_to_int32(entity_num);
       return result;
     }
     if (hit.hit.kind == QA_TRACE_HIT_ACTOR && ignore_count < 1024) spatial->ignore_storage[ignore_count++] = hit.hit.actor;
@@ -79,8 +79,8 @@ static double transformed_contents(qa_app_q3_guest_spatial *spatial, qa_qvm_shar
   }
   qa_bounds bounds = {qa_qvm_shared_entity_get_mins(entity), qa_qvm_shared_entity_get_maxs(entity)};
   qa_temporary_collision_model *temporary = model.kind && strcmp(model.kind, "capsule") == 0
-      ? qa_create_capsule_model(bounds, &spatial->counters, &spatial->box_storage)
-      : qa_create_box_model(bounds, &spatial->counters, &spatial->box_storage);
+      ? qa_create_capsule_model(bounds, &spatial->counters, NULL)
+      : qa_create_box_model(bounds, &spatial->counters, NULL);
   double contents = qa_temporary_model_transformed_point_contents(temporary, point,
       qa_qvm_shared_entity_get_current_origin(entity), qa_qvm_shared_entity_get_current_angles(entity));
   qa_temporary_collision_model_destroy(temporary);
@@ -91,7 +91,8 @@ int32_t qa_app_q3_guest_spatial_point_contents(qa_app_q3_guest_spatial *spatial,
   query.point = point;
   query.policy.kind = "q3"; query.policy.curves = true; query.policy.player_curve_clip = true;
   query.numeric = qa_q3_binary32_profile;
-  int32_t contents = (int32_t)qa_shared_point_contents(spatial->dependencies.scene, query).contents;
+  /* Q3 contents reach 0x80000000 (CONTENTS_NODROP): ToInt32, not an out-of-range cast */
+  int32_t contents = qa_js_to_int32(qa_shared_point_contents(spatial->dependencies.scene, query).contents);
   double entities = qa_qvm_game_data_get_num_entities(qa_app_q3_guest_records_data(spatial->dependencies.records));
   for (double slot = 0; slot < entities; slot++) {
     if (!passes(spatial, slot, pass_entity_num)) continue;
@@ -99,51 +100,53 @@ int32_t qa_app_q3_guest_spatial_point_contents(qa_app_q3_guest_spatial *spatial,
     if (!qa_qvm_shared_entity_get_linked(entity) || ((qa_qvm_shared_entity_get_sv_flags(entity)) & QA_Q3_BASE_SVF_NOCLIENT) != 0) continue;
     qa_vec3 absmin = qa_qvm_shared_entity_get_absmin(entity), absmax = qa_qvm_shared_entity_get_absmax(entity);
     if (point.x < absmin.x || point.x > absmax.x || point.y < absmin.y || point.y > absmax.y || point.z < absmin.z || point.z > absmax.z) continue;
-    contents |= (int32_t)transformed_contents(spatial, entity, point);
+    contents |= qa_js_to_int32(transformed_contents(spatial, entity, point));
   }
   return contents;
 }
 size_t qa_app_q3_guest_spatial_area_entities(qa_app_q3_guest_spatial *spatial, qa_bounds bounds, int32_t maximum, int32_t *out, size_t capacity) {
   size_t count = 0;
-  const qa_spatial_actor *found = qa_shared_query_actors(spatial->dependencies.scene, bounds, "solid", &count);
+  /* TS scene.queryActors(bounds): every linked role (triggers included); each actor must have a guest slot. */
+  const qa_spatial_actor *found = qa_shared_query_actors(spatial->dependencies.scene, bounds, "both", &count);
   size_t total = 0;
   for (size_t i = 0; i < count; i++) {
-    if (!qa_bounds_intersect(found[i].body.absolute_bounds, bounds)) continue;
-    double slot;
-    if (!qa_app_q3_guest_records_slot(spatial->dependencies.records, found[i].body.actor, &slot)) continue;
     /* TS areaEntities: a negative maximum returns the full list. */
     if (maximum >= 0 && (int64_t)total >= maximum) break;
-    if (total < capacity) out[total] = (int32_t)slot;
+    double slot = qa_app_q3_guest_records_require_slot(spatial->dependencies.records, found[i].body.actor);
+    if (total < capacity) out[total] = qa_js_to_int32(slot);
     total++;
   }
   return total;
 }
+/* TS entityContact: the caller's absolute box at the origin against the entity's model at its link transform
+ * (SV_EntityContact: CM_TransformedBoxTrace start == end, startsolid or allsolid). */
 bool qa_app_q3_guest_spatial_entity_contact(qa_app_q3_guest_spatial *spatial, qa_bounds bounds, int32_t slot, bool capsule) {
   qa_qvm_shared_entity *entity = qa_app_q3_guest_records_entity(spatial->dependencies.records, slot);
   qa_qvm_entity_collision_model model = qa_qvm_shared_entity_get_model(entity);
-  qa_vec3 origin = qa_qvm_shared_entity_get_current_origin(entity);
+  const qa_vec3 origin = {0, 0, 0};
+  qa_vec3 current_origin = qa_qvm_shared_entity_get_current_origin(entity), current_angles = qa_qvm_shared_entity_get_current_angles(entity);
   if (model.kind && strcmp(model.kind, "inline") == 0) {
-    qa_source_clip_models *models = qa_shared_native_q3_clip_models(spatial->dependencies.scene);
-    if (!models) qa_range_error("Q3 entityContact requires native clip model support");
-    qa_temporary_trace_query query; memset(&query, 0, sizeof query);
+    qa_trace_query query; memset(&query, 0, sizeof query);
     query.start = origin; query.end = origin;
-    query.shape.kind = capsule ? "capsule" : "box"; query.shape.mins = bounds.min; query.shape.maxs = bounds.max;
-    return qa_source_clip_trace(models, query, qa_source_clip_inline_model(models, model.index)).start_solid
-        || qa_source_clip_point_contents(models, origin, qa_source_clip_inline_model(models, model.index)) != 0;
+    query.shape.kind = capsule ? "capsule" : "box"; query.shape.bounds = bounds;
+    qa_actor_id pass; bool has_pass = qa_app_q3_guest_records_reference(spatial->dependencies.records, 1023, &pass);
+    query.pass_actor = has_pass ? &pass : NULL;
+    query.target.is_model = true; query.target.model = model.index; query.target.origin = current_origin; query.target.angles = current_angles;
+    query.numeric = qa_q3_binary32_profile;
+    query.policy.kind = "q3"; query.policy.contents_mask = -1; query.policy.curves = true; query.policy.player_curve_clip = true;
+    qa_trace_result result = qa_shared_geometry_trace(spatial->dependencies.scene, query);
+    return result.start_solid || result.all_solid;
   }
-  qa_bounds entity_bounds = {qa_qvm_shared_entity_get_mins(entity), qa_qvm_shared_entity_get_maxs(entity)};
+  qa_bounds target = {qa_qvm_shared_entity_get_mins(entity), qa_qvm_shared_entity_get_maxs(entity)};
   qa_temporary_collision_model *temporary = model.kind && strcmp(model.kind, "capsule") == 0
-      ? qa_create_capsule_model(entity_bounds, &spatial->counters, &spatial->box_storage)
-      : qa_create_box_model(entity_bounds, &spatial->counters, &spatial->box_storage);
+      ? qa_create_capsule_model(target, &spatial->counters, NULL)
+      : qa_create_box_model(target, &spatial->counters, NULL);
   qa_temporary_trace_query query; memset(&query, 0, sizeof query);
-  query.start = origin; query.end = origin;
+  query.start = origin; query.end = origin; query.mask = -1;
   query.shape.kind = capsule ? "capsule" : "box"; query.shape.mins = bounds.min; query.shape.maxs = bounds.max;
-  bool contact = qa_temporary_model_transformed_trace_source(temporary, query, origin,
-      qa_qvm_shared_entity_get_current_angles(entity)).start_solid
-      || qa_temporary_model_transformed_point_contents(temporary, origin, origin,
-          qa_qvm_shared_entity_get_current_angles(entity)) != 0;
+  qa_source_trace_result result = qa_temporary_model_transformed_trace_source(temporary, query, current_origin, current_angles);
   qa_temporary_collision_model_destroy(temporary);
-  return contact;
+  return result.start_solid || result.all_solid;
 }
 void qa_app_q3_guest_spatial_set_brush_model(qa_app_q3_guest_spatial *spatial, int32_t slot, const char *name) {
   qa_owned_actor actor = qa_app_q3_guest_records_actor(spatial->dependencies.records, slot);
@@ -156,7 +159,7 @@ void qa_app_q3_guest_spatial_set_brush_model(qa_app_q3_guest_spatial *spatial, i
   if (!models) qa_range_error("Q3 setBrushModel requires native clip model support");
   double handle = qa_source_clip_inline_model(models, model_index);
   qa_bounds bounds = qa_source_clip_model_bounds(models, handle);
-  qa_qvm_entity_collision_model model = {"inline", (int32_t)model_index};
+  qa_qvm_entity_collision_model model = {"inline", qa_js_to_int32(model_index)};
   qa_qvm_shared_entity_set_model(entity, model);
   qa_qvm_shared_entity_set_mins(entity, bounds.min);
   qa_qvm_shared_entity_set_maxs(entity, bounds.max);
@@ -216,6 +219,9 @@ static bool ops_pvs(void *v, qa_vec3 first, qa_vec3 second, bool ignore) { retur
 static bool ops_areas(void *v, int32_t first, int32_t second) { return qa_app_q3_guest_spatial_areas_connected((qa_app_q3_guest_spatial *)v, first, second); }
 static void ops_link(void *v, int32_t slot) { qa_app_q3_guest_records_link(((qa_app_q3_guest_spatial *)v)->dependencies.records, slot); }
 static void ops_unlink(void *v, int32_t slot) { qa_app_q3_guest_records_unlink(((qa_app_q3_guest_spatial *)v)->dependencies.records, slot); }
+qa_bounds qa_app_q3_guest_spatial_model_bounds(qa_app_q3_guest_spatial *spatial, double index) {
+  return qa_shared_model_bounds(spatial->dependencies.scene, index);
+}
 qa_qvm_server_spatial_operations qa_app_q3_guest_spatial_operations(qa_app_q3_guest_spatial *spatial) {
   qa_qvm_server_spatial_operations ops; memset(&ops, 0, sizeof ops);
   ops.ctx = spatial; ops.trace = ops_trace; ops.point_contents = ops_contents; ops.area_entities = ops_area;

@@ -4,8 +4,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/content/composition/q1/types.h"
+#include "qa/content/q1/addons/ctf/types.h"
+#include "qa/content/q2/base/player/types.h"
+#include "qa/content/q2/foundation/host.h"
+#include "qa/content/q2/rerelease/campaign.h"
+#include "qa/content/q2/rerelease/types.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 typedef struct bar { double slot; char *id; char *label; qa_ui_hud_health_bar value; } bar;
 typedef struct help_entry { double slot; char *text; } help_entry;
 typedef struct client_entry { double slot; char *name; double frags, team; bool observer; } client_entry;
@@ -19,7 +27,7 @@ struct qa_app_seat_source_hud {
   qa_actor_id actor;
   char *(*localize)(void *ctx, qa_content_id content, const char *text, const char *const *args, size_t arg_count);
   void *localize_ctx;
-  qa_app_simulation_presentation_event pending[8192]; size_t pending_head, pending_count;
+  qa_app_sim_presentation_event pending[8192]; size_t pending_head, pending_count; /* owned copies */
   struct { char *text; double seconds; } prints[1024]; size_t print_head, print_count;
   qa_app_objective_print *drained; size_t drained_count, drained_cap;
   char *objective;
@@ -41,6 +49,7 @@ struct qa_app_seat_source_hud {
   qa_ui_hud_damage_indicator damage[32]; size_t damage_count;
   bool has_damage_picture; char *damage_content; qa_resource_id damage_image; double damage_width, damage_height;
   char *capture; double capture_until;
+  char **missing; size_t missing_count, missing_cap; /* TS missingPictures */
   /* Presentation scratch. */
   qa_ui_hud_prompt *prompt_scratch; size_t prompt_cap;
   char **string_scratch; size_t string_scratch_count, string_scratch_cap;
@@ -79,6 +88,8 @@ qa_app_seat_source_hud *qa_app_seat_source_hud_create(qa_actor_id actor,
 void qa_app_seat_source_hud_destroy(qa_app_seat_source_hud *h) {
   if (!h) return;
   free(h->objective); free(h->capture);
+  for (size_t i = 0; i < h->missing_count; i++) free(h->missing[i]);
+  free(h->missing);
   free(h->help_primary); free(h->help_secondary);
   free(h->pickup_name); free(h->pickup_path); free(h->pickup_content);
   free(h->damage_content);
@@ -95,6 +106,7 @@ void qa_app_seat_source_hud_destroy(qa_app_seat_source_hud *h) {
   for (size_t i = 0; i < h->report_line_count; i++) free(h->report_lines[i]);
   free(h->report_lines);
   for (size_t i = 0; i < h->poi_count; i++) { free(h->pois[i].content); free(h->pois[i].path); }
+  for (size_t i = 0; i < h->pending_count; i++) qa_app_sim_presentation_event_release(&h->pending[(h->pending_head + i) % 8192]);
   for (size_t i = 0; i < h->print_count; i++) free(h->prints[(h->print_head + i) % 1024].text);
   for (size_t i = 0; i < h->drained_count; i++) free((void *)h->drained[i].text);
   free(h->drained);
@@ -136,53 +148,53 @@ static void admit_print(qa_app_seat_source_hud *h, const char *text, double seco
   h->print_count++;
 }
 static qa_vec3 normalize3(qa_vec3 v) {
-  double length = sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
-  if (length == 0) length = 1;
+  double length = qa_js_hypot3(v.x, v.y, v.z);
+  if (length == 0 || isnan(length)) length = 1; /* Math.hypot(...) || 1 */
   qa_vec3 r = {v.x / length, v.y / length, v.z / length};
   return r;
 }
-static void apply(qa_app_seat_source_hud *h, qa_app_simulation_presentation_event source) {
+static void apply(qa_app_seat_source_hud *h, const qa_app_sim_presentation_event *source) {
   char buf[4096];
-  if (strcmp(source.kind, "q2") == 0 && strcmp(source.event_kind, "pickup") == 0 && same_actor(source.player, h->actor)) {
+  if (strcmp(source->kind, "q2") == 0 && strcmp(source->q2->kind, "pickup") == 0 && same_actor(source->q2->player, h->actor)) {
     h->has_pickup = true;
-    set_str(&h->pickup_name, source.name);
-    set_str(&h->pickup_content, source.content);
-    set_str(&h->pickup_path, source.icon);
+    set_str(&h->pickup_name, source->q2->name);
+    set_str(&h->pickup_content, source->content);
+    set_str(&h->pickup_path, source->q2->icon);
     h->pickup_icon = NULL;
-    h->pickup_expires = source.seconds * 1000 + 3000;
+    h->pickup_expires = source->seconds * 1000 + 3000;
   }
-  if (strcmp(source.kind, "q2") == 0 && strcmp(source.event_kind, "damage-indicator") == 0 && same_actor(source.actor, h->actor)) {
+  if (strcmp(source->kind, "q2") == 0 && strcmp(source->q2->kind, "damage-indicator") == 0 && same_actor(source->q2->actor, h->actor)) {
     bool was_full = h->damage_count >= 32;
     qa_ui_hud_damage_indicator entry; memset(&entry, 0, sizeof entry);
-    entry.origin = source.origin; entry.amount = source.amount; entry.expires_milliseconds = source.seconds * 1000 + 800;
+    entry.origin = source->q2->origin; entry.amount = source->q2->amount; entry.expires_milliseconds = source->seconds * 1000 + 800;
     if (h->damage_count < 32) h->damage[h->damage_count++] = entry;
     else { memmove(&h->damage[0], &h->damage[1], 31 * sizeof entry); h->damage[31] = entry; }
     if (!was_full && h->damage_count > 8) { memmove(&h->damage[0], &h->damage[1], (h->damage_count - 1) * sizeof entry); h->damage_count--; }
   }
-  if (strcmp(source.kind, "q2") == 0 && strcmp(source.event_kind, "help") == 0) {
+  if (strcmp(source->kind, "q2") == 0 && strcmp(source->q2->kind, "help") == 0) {
     bool found = false;
-    for (size_t i = 0; i < h->help_count; i++) if (h->help_text[i].slot == source.slot) { set_str(&h->help_text[i].text, source.text); found = true; }
+    for (size_t i = 0; i < h->help_count; i++) if (h->help_text[i].slot == source->q2->slot) { set_str(&h->help_text[i].text, source->q2->text); found = true; }
     if (!found) {
       if (h->help_count == h->help_cap) { h->help_cap = h->help_cap ? h->help_cap * 2 : 8; h->help_text = realloc(h->help_text, h->help_cap * sizeof *h->help_text); if (!h->help_text) qa_range_error("Out of memory"); }
-      h->help_text[h->help_count].slot = source.slot;
-      h->help_text[h->help_count].text = xdup(source.text);
+      h->help_text[h->help_count].slot = source->q2->slot;
+      h->help_text[h->help_count].text = xdup(source->q2->text);
       h->help_count++;
     }
   }
-  if (strcmp(source.kind, "q2-player") == 0 && strcmp(source.event_kind, "inventory") == 0 && same_actor(source.actor, h->actor)) {
+  if (strcmp(source->kind, "q2-player") == 0 && strcmp(source->q2_player->kind, "inventory") == 0 && same_actor(source->q2_player->actor, h->actor)) {
     for (size_t i = 0; i < h->inventory_count; i++) { free(h->inventory[i].id); free(h->inventory[i].label); }
     free(h->inventory); h->inventory = NULL; h->inventory_count = 0;
-    if (source.has_visible && !source.visible) h->inventory_null = true;
+    if (source->q2_player->has_visible && !source->q2_player->visible) h->inventory_null = true;
     else {
       h->inventory_null = false;
       size_t cap = 0;
-      for (size_t i = 0; i < source.entry_count; i++) {
-        if (source.entries[i].count <= 0) continue;
+      for (size_t i = 0; i < source->q2_player->entry_count; i++) {
+        if (source->q2_player->entries[i].count <= 0) continue;
         const char *label = NULL;
-        for (size_t j = 0; j < source.label_count; j++) if (strcmp(source.labels[j].item, source.entries[i].item) == 0) label = source.labels[j].name;
+        for (size_t j = 0; j < source->q2_player->label_count; j++) if (strcmp(source->q2_player->labels[j].item, source->q2_player->entries[i].item) == 0) label = source->q2_player->labels[j].name;
         char *fallback = NULL;
         if (label == NULL) {
-          const char *item = source.entries[i].item;
+          const char *item = source->q2_player->entries[i].item;
           if (strncmp(item, "q2:", 3) == 0) item += 3;
           fallback = xdup(item);
           for (char *p = fallback; *p; p++) if (*p == '_') *p = ' ';
@@ -190,53 +202,54 @@ static void apply(qa_app_seat_source_hud *h, qa_app_simulation_presentation_even
         }
         if (h->inventory_count == cap) { cap = cap ? cap * 2 : 8; h->inventory = realloc(h->inventory, cap * sizeof *h->inventory); if (!h->inventory) qa_range_error("Out of memory"); }
         inv_item *item = &h->inventory[h->inventory_count++];
-        item->id = xdup(source.entries[i].item);
+        item->id = xdup(source->q2_player->entries[i].item);
         item->label = xdup(label);
         free(fallback);
-        item->value = (qa_ui_hud_inventory_item){item->id, item->label, source.entries[i].count,
-                                                 source.selected != NULL && strcmp(source.entries[i].item, source.selected) == 0, NULL, NULL};
+        item->value = (qa_ui_hud_inventory_item){item->id, item->label, source->q2_player->entries[i].count,
+                                                 source->q2_player->has_selected && source->q2_player->selected != NULL && strcmp(source->q2_player->entries[i].item, source->q2_player->selected) == 0, NULL, NULL};
       }
     }
     if (!h->inventory_null) h->help_visible = false;
   }
-  if (strcmp(source.kind, "q2-player") == 0 && strcmp(source.event_kind, "help") == 0 && same_actor(source.actor, h->actor)) {
-    h->help_visible = source.visible;
+  if (strcmp(source->kind, "q2-player") == 0 && strcmp(source->q2_player->kind, "help") == 0 && same_actor(source->q2_player->actor, h->actor)) {
+    h->help_visible = source->q2_player->visible;
     if (h->help_visible) { h->inventory_null = true; h->score_visible = false; }
   }
-  if (strcmp(source.kind, "q2-player") == 0 && strcmp(source.event_kind, "view") == 0 && same_actor(source.actor, h->actor)) {
-    long layouts = (long)source.layouts;
+  if (strcmp(source->kind, "q2-player") == 0 && strcmp(source->q2_player->kind, "view") == 0 && same_actor(source->q2_player->actor, h->actor)) {
+    long layouts = qa_js_to_int32(source->q2_player->view.layouts); /* layouts & 2 */
     if ((layouts & 2) == 0) h->inventory_null = true;
     else if (!h->inventory_null) {
       for (size_t i = 0; i < h->inventory_count; i++)
-        h->inventory[i].value.selected = source.selected_item != NULL && strcmp(h->inventory[i].id, source.selected_item) == 0;
+        h->inventory[i].value.selected = source->q2_player->view.selected_item != NULL && strcmp(h->inventory[i].id, source->q2_player->view.selected_item) == 0;
     }
     if ((layouts & 1) == 0) { h->help_visible = false; h->score_visible = false; }
   }
-  if (strcmp(source.kind, "q2-player") == 0 && strcmp(source.event_kind, "scoreboard") == 0 && same_actor(source.actor, h->actor)) {
+  if (strcmp(source->kind, "q2-player") == 0 && strcmp(source->q2_player->kind, "scoreboard") == 0 && same_actor(source->q2_player->actor, h->actor)) {
     for (size_t i = 0; i < h->score_row_count; i++) free(h->score_rows[i]);
     free(h->score_rows);
-    h->score_rows = calloc(source.row_count ? source.row_count : 1, sizeof *h->score_rows);
+    h->score_rows = calloc(source->q2_player->row_count ? source->q2_player->row_count : 1, sizeof *h->score_rows);
     if (!h->score_rows) qa_range_error("Out of memory");
-    h->score_row_count = source.row_count;
-    for (size_t i = 0; i < source.row_count; i++) {
-      char *score = qa_input_js_number(source.rows[i].score);
-      char *ping = qa_input_js_number(source.rows[i].ping);
-      char *minutes = qa_input_js_number(source.rows[i].minutes);
-      snprintf(buf, sizeof buf, "%s  %s  %sms  %sm%s", score, source.rows[i].name, ping, minutes, source.rows[i].spectator ? "  Spectator" : "");
+    h->score_row_count = source->q2_player->row_count;
+    for (size_t i = 0; i < source->q2_player->row_count; i++) {
+      char *score = qa_input_js_number(source->q2_player->rows[i].score);
+      char *ping = qa_input_js_number(source->q2_player->rows[i].ping);
+      char *minutes = qa_input_js_number(source->q2_player->rows[i].minutes);
+      snprintf(buf, sizeof buf, "%s  %s  %sms  %sm%s", score, source->q2_player->rows[i].name, ping, minutes, source->q2_player->rows[i].spectator ? "  Spectator" : "");
       free(score); free(ping); free(minutes);
       h->score_rows[i] = xdup(buf);
     }
     h->score_visible = true; h->help_visible = false; h->inventory_null = true;
   }
-  if (strcmp(source.kind, "q2-rerelease") == 0) {
-    if (strcmp(source.event_kind, "mission-objective") == 0 && same_actor(source.actor, h->actor)) {
-      set_str(&h->objective, source.text);
-      admit_print(h, source.text, source.seconds);
+  if (strcmp(source->kind, "q2-rerelease") == 0) {
+    const qa_q2_rerelease_event *event = source->q2_rerelease;
+    if (strcmp(event->kind, "mission-objective") == 0 && same_actor(event->actor, h->actor)) {
+      set_str(&h->objective, event->text);
+      admit_print(h, event->text, source->seconds);
     }
-    if (strcmp(source.event_kind, "mission-status") == 0 && same_actor(source.actor, h->actor)) h->mission_visible = source.icon_visible;
-    if ((strcmp(source.event_kind, "poi") == 0 || strcmp(source.event_kind, "keyed-poi") == 0) && same_actor(source.actor, h->actor)) {
-      double key = strcmp(source.event_kind, "poi") == 0 ? 1 : source.key;
-      double now = source.seconds * 1000;
+    if (strcmp(event->kind, "mission-status") == 0 && same_actor(event->actor, h->actor)) h->mission_visible = event->icon_visible;
+    if ((strcmp(event->kind, "poi") == 0 || strcmp(event->kind, "keyed-poi") == 0) && same_actor(event->actor, h->actor)) {
+      double key = strcmp(event->kind, "poi") == 0 ? 1 : event->key;
+      double now = source->seconds * 1000;
       long index = -1;
       if (key != 0) for (size_t i = 0; i < h->poi_count; i++) if (h->pois[i].key == key) index = (long)i;
       if (index < 0) for (size_t i = 0; i < h->poi_count; i++) if (h->pois[i].expires <= now) { index = (long)i; break; }
@@ -249,32 +262,32 @@ static void apply(qa_app_seat_source_hud *h, qa_app_simulation_presentation_even
         poi *entry = &h->pois[index];
         free(entry->content); free(entry->path);
         entry->key = key; entry->width = 32; entry->height = 32;
-        entry->flags = strcmp(source.event_kind, "poi") == 0 ? 1 : source.flags;
-        entry->content = xdup(source.content);
-        entry->path = xdup(source.image);
+        entry->flags = strcmp(event->kind, "poi") == 0 ? 1 : event->flags;
+        entry->content = xdup(source->content);
+        entry->path = xdup(event->image);
         entry->image = NULL;
-        entry->origin = source.position;
-        entry->color = (double)((long)source.color & 255);
+        entry->origin = event->position;
+        entry->color = (double)(qa_js_to_int32(event->color) & 255);
         entry->tint = (qa_vec4){1, 1, 1, 1};
-        entry->expires = now + source.duration;
+        entry->expires = now + event->duration;
       }
     }
-    if (strcmp(source.event_kind, "remove-poi") == 0 && same_actor(source.actor, h->actor) && source.key != 0) {
-      for (size_t i = 0; i < h->poi_count; i++) if (h->pois[i].key == source.key) {
+    if (strcmp(event->kind, "remove-poi") == 0 && same_actor(event->actor, h->actor) && event->key != 0) {
+      for (size_t i = 0; i < h->poi_count; i++) if (h->pois[i].key == event->key) {
         free(h->pois[i].content); free(h->pois[i].path);
         memmove(&h->pois[i], &h->pois[i + 1], (h->poi_count - i - 1) * sizeof(poi));
         h->poi_count--;
         break;
       }
     }
-    if (strcmp(source.event_kind, "directional-damage") == 0 && same_actor(source.actor, h->actor)) {
-      if (!h->has_damage_picture || strcmp(h->damage_content, source.content) != 0) {
+    if (strcmp(event->kind, "directional-damage") == 0 && same_actor(event->actor, h->actor)) {
+      if (!h->has_damage_picture || strcmp(h->damage_content, source->content) != 0) {
         h->has_damage_picture = true;
-        set_str(&h->damage_content, source.content);
+        set_str(&h->damage_content, source->content);
         h->damage_image = NULL; h->damage_width = 0; h->damage_height = 0;
       }
-      double now = source.seconds * 1000;
-      qa_vec3 direction = source.direction;
+      double now = source->seconds * 1000;
+      qa_vec3 direction = event->direction;
       long index = -1;
       for (size_t i = 0; i < h->damage_count; i++) {
         qa_ui_hud_damage_indicator *value = &h->damage[i];
@@ -289,59 +302,64 @@ static void apply(qa_app_seat_source_hud *h, qa_app_simulation_presentation_even
           && previous->direction.x * direction.x + previous->direction.y * direction.y + previous->direction.z * direction.z >= 0.95) {
         retain = true; retained = *previous;
       }
-      qa_vec3 color = normalize3((qa_vec3){(source.health ? 1 : 0) + (source.armor ? 1 : 0), (source.shield ? 1 : 0) + (source.armor ? 1 : 0), source.armor ? 1 : 0});
+      qa_vec3 color = normalize3((qa_vec3){(event->health ? 1 : 0) + (event->armor ? 1 : 0), (event->shield ? 1 : 0) + (event->armor ? 1 : 0), event->armor ? 1 : 0});
       qa_ui_hud_damage_indicator entry; memset(&entry, 0, sizeof entry);
       entry.is_direction = true;
       entry.direction = direction;
-      entry.amount = source.damage + (retain ? retained.amount : 0);
+      entry.amount = event->damage + (retain ? retained.amount : 0);
       entry.color = normalize3((qa_vec3){color.x + (retain ? retained.color.x : 0), color.y + (retain ? retained.color.y : 0), color.z + (retain ? retained.color.z : 0)});
-      entry.health = source.health || (retain && retained.health);
-      entry.armor = source.armor || (retain && retained.armor);
-      entry.shield = source.shield || (retain && retained.shield);
+      entry.health = event->health || (retain && retained.health);
+      entry.armor = event->armor || (retain && retained.armor);
+      entry.shield = event->shield || (retain && retained.shield);
       entry.expires_milliseconds = now + 1000;
       h->damage[index] = entry;
     }
-    if (strcmp(source.event_kind, "help-path") == 0 && same_actor(source.actor, h->actor)) {
+    if (strcmp(event->kind, "help-path") == 0 && same_actor(event->actor, h->actor)) {
       h->has_path = true;
-      h->path_origin = source.position;
-      h->path_direction = source.direction;
-      h->path_expires = source.seconds * 1000 + 10000;
+      h->path_origin = event->position;
+      h->path_direction = event->direction;
+      h->path_expires = source->seconds * 1000 + 10000;
     }
-    if (strcmp(source.event_kind, "end-of-unit") == 0) {
+    if (strcmp(event->kind, "end-of-unit") == 0) {
       for (size_t i = 0; i < h->report_line_count; i++) free(h->report_lines[i]);
       free(h->report_lines);
       /* Stable sort by visitOrder (insertion sort on a copied index list). */
-      size_t *order = calloc(source.level_count ? source.level_count : 1, sizeof *order);
+      size_t *order = calloc(event->level_count ? event->level_count : 1, sizeof *order);
       if (!order) qa_range_error("Out of memory");
-      for (size_t i = 0; i < source.level_count; i++) order[i] = i;
-      for (size_t i = 1; i < source.level_count; i++) {
+      for (size_t i = 0; i < event->level_count; i++) order[i] = i;
+      for (size_t i = 1; i < event->level_count; i++) {
         size_t at = order[i]; size_t j = i;
-        while (j > 0 && source.levels[order[j - 1]].visit_order > source.levels[at].visit_order) { order[j] = order[j - 1]; j--; }
+        while (j > 0 && event->levels[order[j - 1]].visit_order > event->levels[at].visit_order) { order[j] = order[j - 1]; j--; }
         order[j] = at;
       }
-      h->report_lines = calloc(source.level_count ? source.level_count : 1, sizeof *h->report_lines);
+      h->report_lines = calloc(event->level_count ? event->level_count : 1, sizeof *h->report_lines);
       if (!h->report_lines) qa_range_error("Out of memory");
-      h->report_line_count = source.level_count;
-      for (size_t i = 0; i < source.level_count; i++) {
-        const qa_app_hud_unit_level_mirror *level = &source.levels[order[i]];
+      h->report_line_count = event->level_count;
+      for (size_t i = 0; i < event->level_count; i++) {
+        const qa_q2_rerelease_level_entry *level = &event->levels[order[i]];
         char *killed = qa_input_js_number(level->killed_monsters);
         char *total_m = qa_input_js_number(level->total_monsters);
         char *found = qa_input_js_number(level->found_secrets);
         char *total_s = qa_input_js_number(level->total_secrets);
         double minutes = floor(level->time / 60);
-        double secs = floor(level->time - minutes * 60) /* Math.floor(time % 60) for positive times */;
-        snprintf(buf, sizeof buf, "%s: %s/%s kills  %s/%s secrets  %.0f:%02.0f",
-                 level->name && level->name[0] ? level->name : level->map, killed, total_m, found, total_s, minutes, secs);
+        /* String(Math.floor(time % 60)).padStart(2, "0") */
+        char secs[48];
+        qa_net_js_number(floor(fmod(level->time, 60)), secs + 1, sizeof secs - 1);
+        const char *secs_text = secs + 1;
+        if (strlen(secs_text) < 2) { secs[0] = '0'; secs_text = secs; }
+        snprintf(buf, sizeof buf, "%s: %s/%s kills  %s/%s secrets  %s:%s",
+                 level->name && level->name[0] ? level->name : level->map, killed, total_m, found, total_s,
+                 QA_JS_NUMBER(minutes), secs_text);
         free(killed); free(total_m); free(found); free(total_s);
         h->report_lines[i] = xdup(buf);
       }
       free(order);
       h->has_report = true;
-      h->report_ready = source.button_time * 1000;
+      h->report_ready = event->button_time * 1000;
     }
-    if (strcmp(source.event_kind, "healthbar") == 0 && same_actor(source.actor, h->actor)) {
-      if (!source.visible) {
-        for (size_t i = 0; i < h->bar_count; i++) if (h->bars[i].slot == source.slot) {
+    if (strcmp(event->kind, "healthbar") == 0 && same_actor(event->actor, h->actor)) {
+      if (!event->visible) {
+        for (size_t i = 0; i < h->bar_count; i++) if (h->bars[i].slot == event->slot) {
           free(h->bars[i].id); free(h->bars[i].label);
           memmove(&h->bars[i], &h->bars[i + 1], (h->bar_count - i - 1) * sizeof(bar));
           h->bar_count--;
@@ -349,131 +367,180 @@ static void apply(qa_app_seat_source_hud *h, qa_app_simulation_presentation_even
         }
       } else {
         bar *slot = NULL;
-        for (size_t i = 0; i < h->bar_count; i++) if (h->bars[i].slot == source.slot) slot = &h->bars[i];
+        for (size_t i = 0; i < h->bar_count; i++) if (h->bars[i].slot == event->slot) slot = &h->bars[i];
         if (slot == NULL) {
           if (h->bar_count == h->bar_cap) { h->bar_cap = h->bar_cap ? h->bar_cap * 2 : 8; h->bars = realloc(h->bars, h->bar_cap * sizeof *h->bars); if (!h->bars) qa_range_error("Out of memory"); }
           slot = &h->bars[h->bar_count++];
           memset(slot, 0, sizeof *slot);
-          slot->slot = source.slot;
-          char *n = qa_input_js_number(source.slot);
+          slot->slot = event->slot;
+          char *n = qa_input_js_number(event->slot);
           snprintf(buf, sizeof buf, "boss:%s", n); free(n);
           slot->id = xdup(buf);
         }
-        set_str(&slot->label, source.name);
-        slot->value = (qa_ui_hud_health_bar){slot->id, slot->label, source.fraction, 1, {0.8, 0.12, 0.08, 1}};
+        set_str(&slot->label, event->name);
+        slot->value = (qa_ui_hud_health_bar){slot->id, slot->label, event->fraction, 1, {0.8, 0.12, 0.08, 1}};
       }
     }
-    if (strcmp(source.event_kind, "help-computer") == 0 && same_actor(source.actor, h->actor)) {
-      h->help_visible = source.visible;
-      if (source.visible) { h->inventory_null = true; h->score_visible = false; }
+    if (strcmp(event->kind, "help-computer") == 0 && same_actor(event->actor, h->actor)) {
+      h->help_visible = event->visible;
+      if (event->visible) { h->inventory_null = true; h->score_visible = false; }
       h->has_help_computer = true;
-      set_str(&h->help_primary, source.primary);
-      set_str(&h->help_secondary, source.secondary);
+      set_str(&h->help_primary, event->primary);
+      set_str(&h->help_secondary, event->secondary);
     }
   }
-  if (strcmp(source.kind, "q1-composition") == 0) {
-    if (strcmp(source.event_kind, "client") == 0) {
+  if (strcmp(source->kind, "q1-composition") == 0) {
+    const qa_comp_q1_event *event = source->q1_composition;
+    if (event->kind == QA_COMP_Q1_EVENT_CLIENT) {
       bool found = false;
-      for (size_t i = 0; i < h->client_count; i++) if (h->clients[i].slot == source.client_slot) {
-        set_str(&h->clients[i].name, source.client_name);
-        h->clients[i].frags = source.client_frags; h->clients[i].team = source.client_team; h->clients[i].observer = source.client_observer;
+      for (size_t i = 0; i < h->client_count; i++) if (h->clients[i].slot == (double)event->client.slot) {
+        set_str(&h->clients[i].name, event->client.name);
+        h->clients[i].frags = event->client.frags; h->clients[i].team = event->client.team; h->clients[i].observer = event->client.observer;
         found = true;
       }
       if (!found) {
         if (h->client_count == h->client_cap) { h->client_cap = h->client_cap ? h->client_cap * 2 : 8; h->clients = realloc(h->clients, h->client_cap * sizeof *h->clients); if (!h->clients) qa_range_error("Out of memory"); }
-        h->clients[h->client_count] = (client_entry){source.client_slot, xdup(source.client_name), source.client_frags, source.client_team, source.client_observer};
+        h->clients[h->client_count] = (client_entry){(double)event->client.slot, xdup(event->client.name), event->client.frags, event->client.team, event->client.observer};
         h->client_count++;
       }
     }
-    if (strcmp(source.event_kind, "client-left") == 0) {
-      for (size_t i = 0; i < h->client_count; i++) if (h->clients[i].slot == source.slot) {
+    if (event->kind == QA_COMP_Q1_EVENT_CLIENT_LEFT) {
+      for (size_t i = 0; i < h->client_count; i++) if (h->clients[i].slot == (double)event->slot) {
         free(h->clients[i].name);
         memmove(&h->clients[i], &h->clients[i + 1], (h->client_count - i - 1) * sizeof(client_entry));
         h->client_count--;
         break;
       }
     }
-    if (strcmp(source.event_kind, "ctf-status") == 0 && same_actor(source.actor, h->actor)) {
-      h->ctf = true; h->red = source.ctf_red; h->blue = source.ctf_blue; h->flags = source.ctf_flags; h->rune_items = source.ctf_rune_items;
+    if (event->kind == QA_COMP_Q1_EVENT_CTF_STATUS && same_actor(event->actor, h->actor)) {
+      h->ctf = true; h->red = event->status->red; h->blue = event->status->blue; h->flags = (double)event->status->flags; h->rune_items = (double)event->status->rune_items;
     }
-    if (strcmp(source.event_kind, "ctf-capture") == 0) {
+    if (event->kind == QA_COMP_Q1_EVENT_CTF_CAPTURE) {
       h->ctf = true;
-      bool red = source.ctf_team && strcmp(source.ctf_team, "red") == 0;
-      if (red) h->red = source.ctf_total; else h->blue = source.ctf_total;
+      bool red = event->team != NULL && strcmp(event->team, "red") == 0;
+      if (red) h->red = event->total; else h->blue = event->total;
       set_str(&h->capture, red ? "Red captured the flag" : "Blue captured the flag");
-      h->capture_until = source.seconds * 1000 + 3000;
+      h->capture_until = source->seconds * 1000 + 3000;
     }
   }
 }
-static bool needs_localize(qa_app_simulation_presentation_event source) {
-  return strcmp(source.kind, "q2-rerelease") == 0
-      && (strcmp(source.event_kind, "healthbar") == 0 || strcmp(source.event_kind, "help-computer") == 0
-          || strcmp(source.event_kind, "mission-objective") == 0);
+static bool needs_localize(const qa_app_sim_presentation_event *source) {
+  return strcmp(source->kind, "q2-rerelease") == 0
+      && (strcmp(source->q2_rerelease->kind, "healthbar") == 0 || strcmp(source->q2_rerelease->kind, "help-computer") == 0
+          || strcmp(source->q2_rerelease->kind, "mission-objective") == 0);
 }
-void qa_app_seat_source_hud_receive(qa_app_seat_source_hud *h, qa_app_simulation_presentation_event source) {
+void qa_app_seat_source_hud_receive(qa_app_seat_source_hud *h, const qa_app_sim_presentation_event *source) {
   if (h->localize != NULL && needs_localize(source)) {
     if (h->pending_count == 8192) qa_range_error("Event ring capacity exhausted (%zu undrained records); drain before admitting more", (size_t)8192);
-    h->pending[(h->pending_head + h->pending_count) % 8192] = source;
+    if (!qa_app_sim_presentation_event_copy(&h->pending[(h->pending_head + h->pending_count) % 8192], source))
+      qa_range_error("Out of memory");
     h->pending_count++;
   } else apply(h, source);
 }
+/* path.startsWith("/") ? path.slice(1) : `pics/${path}.pcx`. Malloc'd. */
+static char *icon_path(const char *path) {
+  if (path[0] == '/') return xdup(path + 1);
+  size_t length = strlen(path) + sizeof "pics/.pcx";
+  char *out = malloc(length);
+  if (out == NULL) qa_range_error("Out of memory");
+  snprintf(out, length, "pics/%s.pcx", path);
+  return out;
+}
+typedef struct load_attempt { qa_app_weapon_hud_assets *icons; qa_weapon_hud_icon icon; qa_resource_id result; } load_attempt;
+static void load_attempt_run(void *ctx) {
+  load_attempt *attempt = ctx;
+  attempt->result = qa_app_weapon_hud_assets_load(attempt->icons, attempt->icon);
+}
+/* TS loadOptional: pictures named by the game or server are cosmetic; an
+ * absent one draws nothing instead of failing the frame. */
+static qa_resource_id load_optional(qa_app_seat_source_hud *h, qa_app_weapon_hud_assets *icons, qa_content_id content, const char *path) {
+  size_t length = strlen(content) + strlen(path) + 2;
+  char *key = malloc(length);
+  if (key == NULL) qa_range_error("Out of memory");
+  snprintf(key, length, "%s/%s", content, path);
+  for (size_t i = 0; i < h->missing_count; i++)
+    if (strcmp(h->missing[i], key) == 0) { free(key); return NULL; }
+  load_attempt attempt; memset(&attempt, 0, sizeof attempt);
+  attempt.icons = icons;
+  attempt.icon.kind = QA_WEAPON_HUD_ICON_IMAGE;
+  attempt.icon.resource.content = content;
+  attempt.icon.resource.path = path;
+  qa_caught_error caught;
+  if (qa_try(load_attempt_run, &attempt, &caught)) { free(key); return attempt.result; }
+  if (h->missing_count == h->missing_cap) {
+    h->missing_cap = h->missing_cap ? h->missing_cap * 2 : 8;
+    h->missing = realloc(h->missing, h->missing_cap * sizeof *h->missing);
+    if (h->missing == NULL) qa_range_error("Out of memory");
+  }
+  h->missing[h->missing_count++] = key;
+  return NULL;
+}
 void qa_app_seat_source_hud_prepare(qa_app_seat_source_hud *h, qa_app_weapon_hud_assets *icons) {
   while (h->pending_count > 0) {
-    qa_app_simulation_presentation_event source = h->pending[h->pending_head];
+    qa_app_sim_presentation_event owned = h->pending[h->pending_head];
+    memset(&h->pending[h->pending_head], 0, sizeof owned);
     h->pending_head = (h->pending_head + 1) % 8192;
     h->pending_count--;
-    if (strcmp(source.kind, "q2-rerelease") != 0 || h->localize == NULL) { apply(h, source); continue; }
-    if (strcmp(source.event_kind, "healthbar") == 0) {
-      char *text = h->localize(h->localize_ctx, source.content, source.name, NULL, 0);
-      source.name = text;
-      apply(h, source);
+    if (strcmp(owned.kind, "q2-rerelease") != 0 || h->localize == NULL) { apply(h, &owned); qa_app_sim_presentation_event_release(&owned); continue; }
+    /* TS apply({ ...source, event: { ...event, <localized fields> } }). */
+    qa_q2_rerelease_event event = *owned.q2_rerelease;
+    qa_app_sim_presentation_event localized = owned;
+    localized.storage = NULL;
+    localized.q2_rerelease = &event;
+    if (strcmp(event.kind, "healthbar") == 0) {
+      char *text = h->localize(h->localize_ctx, owned.content, event.name, NULL, 0);
+      event.name = text;
+      apply(h, &localized);
       free(text);
-    } else if (strcmp(source.event_kind, "help-computer") == 0) {
-      char *primary = h->localize(h->localize_ctx, source.content, source.primary, NULL, 0);
-      char *secondary = h->localize(h->localize_ctx, source.content, source.secondary, NULL, 0);
-      source.primary = primary; source.secondary = secondary;
-      apply(h, source);
+    } else if (strcmp(event.kind, "help-computer") == 0) {
+      char *primary = h->localize(h->localize_ctx, owned.content, event.primary, NULL, 0);
+      char *secondary = h->localize(h->localize_ctx, owned.content, event.secondary, NULL, 0);
+      event.primary = primary; event.secondary = secondary;
+      apply(h, &localized);
       free(primary); free(secondary);
-    } else if (strcmp(source.event_kind, "mission-objective") == 0) {
-      char *text = h->localize(h->localize_ctx, source.content, source.text, source.args, source.arg_count);
-      source.text = text; source.args = NULL; source.arg_count = 0;
-      apply(h, source);
+    } else if (strcmp(event.kind, "mission-objective") == 0) {
+      char *text = h->localize(h->localize_ctx, owned.content, event.text, event.args, event.arg_count);
+      event.text = text; event.args = NULL; event.arg_count = 0;
+      apply(h, &localized);
       free(text);
-    } else apply(h, source);
+    } else apply(h, &owned);
+    qa_app_sim_presentation_event_release(&owned);
   }
   for (size_t i = 0; i < h->poi_count; i++) {
     poi *entry = &h->pois[i];
     if (entry->image != NULL) continue;
-    char path[1024];
-    snprintf(path, sizeof path, "pics/%s.pcx", entry->path);
-    qa_weapon_hud_icon icon; memset(&icon, 0, sizeof icon);
-    icon.kind = QA_WEAPON_HUD_ICON_IMAGE;
-    icon.resource.content = entry->content;
-    icon.resource.path = path;
-    entry->image = qa_app_weapon_hud_assets_load(icons, icon);
-    const qa_picture_asset *picture = qa_app_weapon_hud_assets_picture(icons, entry->image);
+    char *path = icon_path(entry->path);
+    qa_resource_id image = load_optional(h, icons, entry->content, path);
+    free(path);
+    if (image == NULL) continue;
+    entry->image = image;
+    const qa_picture_asset *picture = qa_app_weapon_hud_assets_picture(icons, image);
     if (picture != NULL && picture->kind == QA_PICTURE_IMAGE) {
-      double w = 0, hh = 0;
-      /* Image sizes come through the weapon-hud host; 32x32 default kept otherwise. */
-      (void)w; (void)hh;
+      entry->width = picture->image.image.width; entry->height = picture->image.image.height;
     }
-    /* Palette tint stays white (TS provider palette access). */
+    const qa_palette *palette = qa_app_application_assets_provider(qa_app_weapon_hud_assets_assets(icons), entry->content).palette;
+    if (palette != NULL) {
+      /* (palette.colors[index] ?? 255) / 255 */
+      double channel[3];
+      for (int c = 0; c < 3; c++) {
+        double index = entry->color * 3 + c;
+        channel[c] = (index < (double)palette->colors.length ? palette->colors.bytes[(size_t)index] : 255) / 255.0;
+      }
+      entry->tint = (qa_vec4){channel[0], channel[1], channel[2], 1};
+    }
   }
   if (h->has_damage_picture && h->damage_image == NULL) {
-    qa_weapon_hud_icon icon; memset(&icon, 0, sizeof icon);
-    icon.kind = QA_WEAPON_HUD_ICON_IMAGE;
-    icon.resource.content = h->damage_content;
-    icon.resource.path = "pics/damage_indicator.pcx";
-    h->damage_image = qa_app_weapon_hud_assets_load(icons, icon);
+    qa_resource_id image = load_optional(h, icons, h->damage_content, "pics/damage_indicator.pcx");
+    const qa_picture_asset *picture = image == NULL ? NULL : qa_app_weapon_hud_assets_picture(icons, image);
+    h->damage_image = image;
+    if (picture != NULL && picture->kind == QA_PICTURE_IMAGE) {
+      h->damage_width = picture->image.image.width; h->damage_height = picture->image.image.height;
+    }
   }
   if (h->has_pickup && h->pickup_icon == NULL && h->pickup_path[0] != '\0') {
-    char path[1024];
-    snprintf(path, sizeof path, "pics/%s.pcx", h->pickup_path);
-    qa_weapon_hud_icon icon; memset(&icon, 0, sizeof icon);
-    icon.kind = QA_WEAPON_HUD_ICON_IMAGE;
-    icon.resource.content = h->pickup_content;
-    icon.resource.path = path;
-    h->pickup_icon = qa_app_weapon_hud_assets_load(icons, icon);
+    char *path = icon_path(h->pickup_path);
+    h->pickup_icon = load_optional(h, icons, h->pickup_content, path);
+    free(path);
   }
 }
 const qa_ui_hud_point_of_interest *qa_app_seat_source_hud_points(qa_app_seat_source_hud *h, size_t *out_count) {
@@ -484,7 +551,7 @@ const qa_ui_hud_point_of_interest *qa_app_seat_source_hud_points(qa_app_seat_sou
   for (size_t i = 0; i < h->poi_count; i++) {
     if (h->pois[i].image == NULL) continue;
     h->point_scratch[n++] = (qa_ui_hud_point_of_interest){h->pois[i].key, h->pois[i].origin, h->pois[i].image,
-        h->pois[i].width, h->pois[i].height, h->pois[i].tint, ((long)h->pois[i].flags & 1) != 0, h->pois[i].expires};
+        h->pois[i].width, h->pois[i].height, h->pois[i].tint, (qa_js_to_int32(h->pois[i].flags) & 1) != 0, h->pois[i].expires};
   }
   *out_count = n;
   return h->point_scratch;
@@ -503,11 +570,11 @@ qa_app_hud_presentation qa_app_seat_source_hud_presentation(qa_app_seat_source_h
   }
   if (h->mission_visible && h->objective[0] != '\0') prompts[prompt_count++] = (qa_ui_hud_prompt){"New objective", "", NULL};
   if (h->ctf) {
-    long flags = (long)h->flags;
+    long flags = qa_js_to_int32(h->flags); /* flags & 7, (flags >> 3) & 7 */
     snprintf(buf, sizeof buf, "Red flag %s - Blue flag %s", flag_state(flags & 7), flag_state((flags >> 3) & 7));
     prompts[prompt_count++] = (qa_ui_hud_prompt){scratch_str(h, buf), "", NULL};
     const struct { long bit; const char *label; } runes[4] = {{32, "Resistance"}, {64, "Strength"}, {128, "Haste"}, {256, "Regeneration"}};
-    for (int i = 0; i < 4; i++) if (((long)h->rune_items & runes[i].bit) != 0) prompts[prompt_count++] = (qa_ui_hud_prompt){runes[i].label, "", NULL};
+    for (int i = 0; i < 4; i++) if ((qa_js_to_int32(h->rune_items) & runes[i].bit) != 0) prompts[prompt_count++] = (qa_ui_hud_prompt){runes[i].label, "", NULL};
   }
   if (h->capture_until > now_milliseconds) prompts[prompt_count++] = (qa_ui_hud_prompt){scratch_str(h, h->capture), "", NULL};
   free(h->prompt_scratch);

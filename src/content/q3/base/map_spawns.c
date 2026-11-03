@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/map-spawns.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/map_spawns.h"
+#include "qa/foundation/js.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -74,7 +75,7 @@ size_t qa_q3_base_create_spawn_handlers(qa_q3_base_spawn_handlers_host host,
   qa_q3_spawn_handler_entry scratch[128];
   size_t count = qa_q3_misc_spawn_handlers(host.misc, scratch, 128);
   put_all(&table, scratch, count < 128 ? count : 128);
-  count = qa_q3_create_mover_spawn_handlers(host.movers, scratch, 128);
+  count = qa_q3_mover_spawn_runtime_handlers(host.movers, scratch, 128);
   put_all(&table, scratch, count < 128 ? count : 128);
   count = qa_q3_trigger_spawn_handlers(host.triggers, scratch, 128);
   put_all(&table, scratch, count < 128 ? count : 128);
@@ -98,20 +99,20 @@ qa_q3_base_entity_teams qa_q3_base_find_entity_teams(qa_q3_entity_pool *pool) {
   for (double index = 1; index < pool->num_entities; index++) {
     qa_q3_game_entity *master = qa_q3_entity_pool_at(pool, index);
     if (!qa_q3_game_entity_inuse(master) || master->team == NULL ||
-        ((int32_t)master->flags & QA_Q3_GAME_FLAG_TEAMSLAVE) != 0) continue;
+        (qa_js_to_int32(master->flags) & QA_Q3_GAME_FLAG_TEAMSLAVE) != 0) continue;
     master->teammaster = master;
     teams++;
     entities++;
     for (double next = index + 1; next < pool->num_entities; next++) {
       qa_q3_game_entity *entity = qa_q3_entity_pool_at(pool, next);
       if (!qa_q3_game_entity_inuse(entity) || entity->team == NULL ||
-          ((int32_t)entity->flags & QA_Q3_GAME_FLAG_TEAMSLAVE) != 0 ||
+          (qa_js_to_int32(entity->flags) & QA_Q3_GAME_FLAG_TEAMSLAVE) != 0 ||
           strcmp(entity->team, master->team) != 0) continue;
       entities++;
       entity->teamchain = master->teamchain;
       master->teamchain = entity;
       entity->teammaster = master;
-      entity->flags = (double)((int32_t)entity->flags | QA_Q3_GAME_FLAG_TEAMSLAVE);
+      entity->flags = (double)(qa_js_to_int32(entity->flags) | QA_Q3_GAME_FLAG_TEAMSLAVE);
       if (entity->targetname != NULL) {
         /* TS transfers the string reference; free the replaced owned copy. */
         free(master->targetname);

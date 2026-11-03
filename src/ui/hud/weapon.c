@@ -1,10 +1,12 @@
 /* Port of src/ui/hud/weapon.ts. GPL-2.0-or-later. */
 #include "qa/ui/hud/weapon.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static size_t cp_count(const char *text) {
   size_t count = 0;
@@ -29,10 +31,7 @@ static char *dup_str(const char *text) {
 }
 /* JS String(number) for the ammo count (integers print plainly). */
 static void js_number(char *buf, size_t size, double value) {
-  if (value == floor(value) && fabs(value) < 1e21)
-    snprintf(buf, size, "%.0f", value);
-  else
-    snprintf(buf, size, "%.17g", value);
+  qa_net_js_number(value, buf, size);
 }
 
 typedef struct builder {
@@ -110,9 +109,9 @@ void qa_ui_weapon_commands_free(qa_ui_weapon_commands *result) {
 
 qa_ui_hud_status_rows qa_ui_hud_status_rows_for(double text_scale,
                                                 double cap_height) {
-  double label_top = fmax(25, 4 + cap_height * text_scale * 1.5 + 4);
+  double label_top = qa_js_max(25, 4 + cap_height * text_scale * 1.5 + 4);
   qa_ui_hud_status_rows out = {
-    label_top, fmax(42, ceil(label_top + cap_height * text_scale * 0.9 + 4))
+    label_top, qa_js_max(42, ceil(label_top + cap_height * text_scale * 0.9 + 4))
   };
   return out;
 }
@@ -209,9 +208,9 @@ bool qa_ui_draw_weapon_hud(const qa_ui_common_weapon_hud *data, qa_rect rect,
         && number_width > rect.width - (secondary_icon ? 84 : 66);
     double max_width = warning == NULL ? 48 : 30;
     double max_height = warning == NULL ? 32 : 20;
-    double width = fmin(stacked_icon ? 24 : max_width,
+    double width = qa_js_min(stacked_icon ? 24 : max_width,
                         (stacked_icon
-                             ? fmin(24, rect.height - rows.label_top - 4)
+                             ? qa_js_min(24, rect.height - rows.label_top - 4)
                              : max_height)
                             * icon_aspect);
     double height = width / icon_aspect;
@@ -225,9 +224,9 @@ bool qa_ui_draw_weapon_hud(const qa_ui_common_weapon_hud *data, qa_rect rect,
     if (finite) {
       double available = rect.x + rect.width
           - (secondary_icon && !stacked_icon ? 26 : 8) - x;
-      double scale = fmin(text_scale * 1.5,
+      double scale = qa_js_min(text_scale * 1.5,
                           available
-                              / fmax(1, measure(data, count_buf, 1)));
+                              / qa_js_max(1, measure(data, count_buf, 1)));
       if (!push_text(&b, x, rect.y + 4 - cap_top * scale, count_buf,
                      skin.font, scale, color))
         goto oom;
@@ -243,9 +242,9 @@ bool qa_ui_draw_weapon_hud(const qa_ui_common_weapon_hud *data, qa_rect rect,
            && measure_at_1(data, original) * minimum_text_scale > available)
               ? "LOW AMMO" : original;
       double text_width = measure_at_1(data, text);
-      double scale = fmax(minimum_text_scale,
-                          fmin(text_scale * 0.9,
-                               available / fmax(1, text_width)));
+      double scale = qa_js_max(minimum_text_scale,
+                          qa_js_min(text_scale * 0.9,
+                               available / qa_js_max(1, text_width)));
       /* Word wrap on single spaces (TS text.split(" ")). */
       char *copy = dup_str(text);
       if (copy == NULL) goto oom;
@@ -299,9 +298,11 @@ bool qa_ui_draw_weapon_hud(const qa_ui_common_weapon_hud *data, qa_rect rect,
         }
         if (ok) { lines[line_count++] = line; line = NULL; }
       }
-      double max_lines_d = fmax(1, floor((rect.height - rows.label_top - 4)
+      double max_lines_d = qa_js_max(1, floor((rect.height - rows.label_top - 4)
                                          / (cap_height * scale)));
-      size_t maximum_lines = (size_t)max_lines_d;
+      /* slice(0, NaN) shows nothing; slice(0, Infinity) shows every line. */
+      size_t maximum_lines = isnan(max_lines_d) ? 0
+          : max_lines_d >= 18446744073709551615.0 ? SIZE_MAX : (size_t)max_lines_d;
       size_t shown = line_count < maximum_lines ? line_count : maximum_lines;
       for (size_t i = 0; ok && i < shown; i++) {
         const char *visible = lines[i];
@@ -339,7 +340,7 @@ bool qa_ui_draw_weapon_hud(const qa_ui_common_weapon_hud *data, qa_rect rect,
       if (!ok) goto oom;
     }
     double ammo_aspect = data->has_ammo_aspect ? data->ammo_aspect : 1;
-    double ammo_width = fmin(18, 18 * ammo_aspect);
+    double ammo_width = qa_js_min(18, 18 * ammo_aspect);
     if (secondary_icon) {
       qa_rect r = { rect.x + rect.width - 22,
                     rect.y + (stacked_icon ? rows.label_top : 4),

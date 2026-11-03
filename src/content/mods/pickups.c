@@ -1,5 +1,6 @@
 /* Port of src/content/mods/pickups.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/pickups.h"
+#include "qa/content/mods/declaration.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -55,7 +56,7 @@ static void *read_call_at(const qa_save_reader *reader, const char *name,
                           void (*read)(void *, const qa_save_reader *, void *),
                           void *ctx, size_t size) {
   qa_save_reader f = field(reader, name);
-  void *storage = malloc(size == 0 ? 1 : size);
+  void *storage = qa_mod_declaration_malloc(size == 0 ? 1 : size);
   if (storage == NULL) qa_save_reader_fail(&f, "out of memory");
   read(ctx, &f, storage);
   qa_save_reader_destroy(&f);
@@ -79,7 +80,7 @@ qa_mod_pickup_rule qa_read_mod_pickup_rule(
     qa_save_reader list = field(reader, "offered");
     size_t count = qa_save_reader_list_count(&list);
     qa_item_id *offered =
-        count > 0 ? (qa_item_id *)malloc(count * sizeof *offered) : NULL;
+        count > 0 ? (qa_item_id *)qa_mod_declaration_malloc(count * sizeof *offered) : NULL;
     if (count > 0 && offered == NULL) qa_save_reader_fail(&list, "out of memory");
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&list, i);
@@ -102,7 +103,7 @@ qa_mod_pickup_rule qa_read_mod_pickup_rule(
     qa_save_reader_fail(reader, "Pickup rule has both resource and writes");
   if (!has_writes) {
     qa_save_reader resource = field(reader, "resource");
-    qa_pickup_write *writes = (qa_pickup_write *)malloc(sizeof *writes);
+    qa_pickup_write *writes = (qa_pickup_write *)qa_mod_declaration_malloc(sizeof *writes);
     if (writes == NULL) qa_save_reader_fail(&resource, "out of memory");
     writes[0] = read_write(&resource, true);
     qa_save_reader_destroy(&resource);
@@ -112,7 +113,7 @@ qa_mod_pickup_rule qa_read_mod_pickup_rule(
     qa_save_reader list = field(reader, "writes");
     size_t count = qa_save_reader_list_count(&list);
     qa_pickup_write *writes =
-        count > 0 ? (qa_pickup_write *)malloc(count * sizeof *writes) : NULL;
+        count > 0 ? (qa_pickup_write *)qa_mod_declaration_malloc(count * sizeof *writes) : NULL;
     if (count > 0 && writes == NULL) qa_save_reader_fail(&list, "out of memory");
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&list, i);

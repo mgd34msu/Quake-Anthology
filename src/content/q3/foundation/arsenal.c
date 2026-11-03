@@ -1,5 +1,6 @@
 /* Port of src/content/q3/foundation/arsenal.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/foundation/arsenal.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/animation.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 const qa_q3_weapon_item qa_q3_weapon_items[] = {
   {QA_Q3_WP_GAUNTLET,"q3:weapon/gauntlet",NULL},
@@ -52,7 +54,6 @@ typedef struct step_ctx {
   qa_movement_effect *effects; size_t effect_count, effect_cap;
   double *torsos; size_t torso_count, torso_cap;
   qa_actor_animation_state animation; double event_sequence;
-  /* source weapon state fields mirrored so setters can emit effects in snapshot order */
   qa_q3_source_weapon_state *state;
   double msec;
   const char *product;
@@ -75,12 +76,19 @@ static void changed(step_ctx*c,qa_weapon_state before){
     e.weapon_before=before; e.weapon_after=after; push_effect(c,e);
   }
 }
-/* The landed qa_q3_source_weapon_state stores weapon fields directly (no TS
- * accessor setters), so setter effects cannot be observed mid-step; the
- * step below runs the source step, then this context emits ammo/event/torso
- * effects during it. Weapon snapshot effects are reconciled in
- * qa_q3_step_arsenal by comparing before/after around the whole step
- * (documented divergence for multi-transition steps). */
+/* TS weapon/weaponState/weaponTime setters. */
+static void weapon_field_written(void*ctx,double before_weapon,double before_state,double before_time){
+  step_ctx*c=ctx;
+  qa_weapon_state before=snapshot(c);
+  before.source_weapon=before_weapon; before.state=before_state; before.time_milliseconds=before_time;
+  changed(c,before);
+  if(before_weapon!=c->state->weapon){
+    const qa_q3_weapon_item*b=qa_q3_get_weapon_item(before_weapon);
+    const qa_q3_weapon_item*a=qa_q3_get_weapon_item(c->state->weapon);
+    qa_movement_effect se={0}; se.kind=QA_MOVEMENT_EFFECT_WEAPON_SELECTION; se.provider=c->input.arsenal.provider;
+    se.selection_before=b?b->item:NULL; se.selection_after=a?a->item:NULL; push_effect(c,se);
+  }
+}
 static qa_inventory_entry *find_entry(step_ctx*c,qa_item_id item){
   for(size_t i=0;i<c->entry_count;i++) if(c->entries[i].item&&item&&strcmp(c->entries[i].item,item)==0) return &c->entries[i];
   return NULL;
@@ -93,7 +101,7 @@ static double ammo_get(void*ctx,double weapon){
 }
 static void ammo_set(void*ctx,double weapon,double count){
   step_ctx*c=ctx; const qa_q3_weapon_item*item=qa_q3_get_weapon_item(weapon);
-  if(!item||!item->ammo) qa_range_error("Q3 weapon has no consumable ammo slot: %g",weapon);
+  if(!item||!item->ammo) qa_range_error("Q3 weapon has no consumable ammo slot: %s",QA_JS_NUMBER(weapon));
   qa_inventory_entry*e=find_entry(c,item->ammo);
   if(!e) qa_range_error("Missing Q3 ammo inventory entry: %s",item->ammo);
   double before=e->count; e->count=count;
@@ -102,7 +110,9 @@ static void ammo_set(void*ctx,double weapon,double count){
 }
 static void on_event(void*ctx,double event){
   step_ctx*c=ctx; qa_movement_effect e={0}; e.kind=QA_MOVEMENT_EFFECT_EVENT;
-  e.value=(qa_predictable_movement_event){c->input.arsenal.provider,c->event_sequence++,event,0};
+  qa_provider_id provider2 = c->input.arsenal.provider;
+  double sequence = c->event_sequence++;
+  e.value=(qa_predictable_movement_event){provider2,sequence,event,0};
   push_effect(c,e);
 }
 static void on_torso(void*ctx,double torso){
@@ -111,11 +121,8 @@ static void on_torso(void*ctx,double torso){
   c->torsos[c->torso_count++]=torso;
   if(!c->animation.state.kind||strcmp(c->animation.state.kind,"q3")!=0||c->input.environment.health<=0) return;
   qa_q3_animation_context ac={c->animation,false,c->msec,0,c->product,c->event_sequence};
+  /* TS continueAnimation defaults to false. */
   qa_animation_step_result r=qa_q3_run_torso_operation(torso,ac,false);
-  /* TS runQ3TorsoOperation(torso,{...}) defaults continueAnimation per its
-   * own signature; landed C requires the flag. arsenal.ts omits it, which
-   * is TS undefined -> see movement animation default handling. We pass
-   * false here; corrected below if needed by tests. */
   for(size_t i=0;i<r.effect_count;i++) push_effect(c,r.effects[i]);
   free((void*)r.effects);
   c->animation=r.animation;
@@ -148,7 +155,7 @@ qa_q3_arsenal_step qa_q3_step_arsenal(qa_weapon_step_input input, qa_q3_arsenal_
   int32_t owned=0;
   for(size_t i=0;i<QA_Q3_WEAPON_ITEM_COUNT;i++){
     qa_inventory_entry*e=find_entry(&c,qa_q3_weapon_items[i].item);
-    if(e&&e->count>0) owned|=(int32_t)(1u<<(unsigned)qa_q3_weapon_items[i].weapon);
+    if(e&&e->count>0) owned|=(int32_t)(1u<<qa_js_to_uint32(qa_q3_weapon_items[i].weapon));
   }
   qa_q3_external_weapon_slot external=runtime.external_slot;
   qa_q3_source_weapon_state state={0};
@@ -160,8 +167,7 @@ qa_q3_arsenal_step qa_q3_step_arsenal(qa_weapon_step_input input, qa_q3_arsenal_
   state.spectator=runtime.spectator; state.haste=input.environment.haste;
   state.persistent_powerup_tag=runtime.persistent_powerup_tag;
   state.holdable_item=runtime.holdable_item; state.holdable_tag=runtime.holdable_tag;
-  state.ammo_get=ammo_get; state.ammo_set=ammo_set; c.state=&state;
-  qa_weapon_state before_all=snapshot(&c);
+  state.ammo_get=ammo_get; state.ammo_set=ammo_set; state.weapon_field_written=weapon_field_written; c.state=&state;
   if(input.environment.health>0&&!controls.attack&&!controls.use_holdable)
     state.pm_flags=(double)(qa_int32(state.pm_flags)&~QA_Q3_FLAG_RESPAWNED);
   qa_q3_move_command command={0};
@@ -174,21 +180,6 @@ qa_q3_arsenal_step qa_q3_step_arsenal(qa_weapon_step_input input, qa_q3_arsenal_
   if(firing_delay) options.firing_delay=firing_trampoline;
   qa_q3_run_weapon_step(&state,command,&options);
   qa_weapon_state weapon=snapshot(&c);
-  /* Reconcile weapon/weapon-selection effects (see note above): insert at front? 
-   * TS emits them interleaved at each setter. With direct fields we emit one
-   * weapon effect if changed, plus selection if weapon changed, appended
-   * after step effects. Tests check presence, not exact interleave. */
-  if(before_all.source_weapon!=weapon.source_weapon||before_all.state!=weapon.state||before_all.time_milliseconds!=weapon.time_milliseconds){
-    qa_movement_effect e={0}; e.kind=QA_MOVEMENT_EFFECT_WEAPON; e.provider=input.arsenal.provider;
-    e.weapon_before=before_all; e.weapon_after=weapon; push_effect(&c,e);
-    if(before_all.source_weapon!=weapon.source_weapon){
-      const qa_q3_weapon_item*b=qa_q3_get_weapon_item(before_all.source_weapon);
-      const qa_q3_weapon_item*a=qa_q3_get_weapon_item(weapon.source_weapon);
-      qa_movement_effect se={0}; se.kind=QA_MOVEMENT_EFFECT_WEAPON_SELECTION; se.provider=input.arsenal.provider;
-      se.selection_before=b?b->item:NULL; se.selection_after=a?a->item:NULL; push_effect(&c,se);
-    }
-  }
-  changed(&c,weapon); /* no-op guard; keeps helper referenced */
   const qa_q3_weapon_item*active=qa_q3_get_weapon_item(state.weapon);
   qa_q3_arsenal_step result={0};
   result.base.arsenal=input.arsenal; result.base.arsenal.active_weapon=active?active->item:NULL;

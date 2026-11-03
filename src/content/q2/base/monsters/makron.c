@@ -14,13 +14,13 @@ static void run_fn(void *ctx, qa_q2m_context *c) {
   q2bm_set_move(c, c->state->stand_ground ? "makron_move_stand" : "makron_move_run");
 }
 /* TS WeakMap-cached spawn think per monsters: ctx is the monsters pointer. */
-static void makron_spawn_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *services) {
+static void makron_spawn_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *services) {
   qa_q2m_monsters *monsters = ctx;
   if (!qa_q2m_monsters_spawn(monsters, self, services))
-    qa_q2f_error("Makron definition must be registered before Jorg");
+    qa_raise("Error", 0, 0, "Makron definition must be registered before Jorg");
   qa_actor_id player;
   if (!qa_q2m_monsters_current_sight_client(monsters, &player)) return;
-  qa_body_state_result target = services->host->bodies.read(services->host->bodies.ctx, player);
+  qa_body_state_result target = qa_shared_body_table_read(services->host->bodies, player);
   if (!target.has_value) return;
   qa_body_state body = services->body(services->ctx, self->actor);
   qa_vec3 direction = qa_sub3_double(target.value.origin, body.origin);
@@ -28,47 +28,47 @@ static void makron_spawn_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *service
   velocity.z = 200;
   qa_vec3 angles = body.angles;
   angles.y = qa_vector_to_angles_with_rule(direction, QA_VECTOR_TO_ANGLES_NATIVE_AI).y;
-  qa_q2f_body_changes changes;
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_angles = true; changes.angles = angles;
   changes.has_velocity = true; changes.velocity = velocity;
-  changes.has_ground = true; changes.ground = NULL;
-  services->move(services->ctx, self, changes, false, false);
+  changes.has_ground = true; changes.ground_null = true;
+  services->move(services->ctx, self, changes, true);
 }
-static qa_q2f_think makron_spawn_callback(qa_q2m_monsters *monsters) {
-  qa_q2f_think think = {monsters, makron_spawn_fn};
+static qa_q2_think makron_spawn_callback(qa_q2m_monsters *monsters) {
+  qa_q2_think think = {monsters, makron_spawn_fn};
   return think;
 }
-static void makron_torso_think_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *services) {
+static void makron_torso_think_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *services) {
   (void)ctx;
   self->frame++;
   if (self->frame >= 365) self->frame = 346;
   services->show(services->ctx, self);
-  qa_q2f_think think = {NULL, makron_torso_think_fn};
+  qa_q2_think think = {NULL, makron_torso_think_fn};
   services->schedule(services->ctx, self, 0.1, think);
 }
 void qa_q2bm_with_makron_spawn_callbacks(qa_q2m_definition *out, const qa_q2m_definition *definition,
-                                         qa_q2m_monsters *monsters, qa_q2f_named_think *think_storage) {
+                                         qa_q2m_monsters *monsters, qa_q2_named_think *think_storage) {
   *out = *definition;
   size_t count = definition->has_source_callbacks ? definition->source_callbacks.think_count : 0;
   for (size_t i = 0; i < count; i++) think_storage[i] = definition->source_callbacks.think[i];
   think_storage[count].name = "q2:base/MakronSpawn";
   think_storage[count].cb = makron_spawn_callback(monsters);
   think_storage[count + 1].name = "q2:base/makron_torso_think";
-  think_storage[count + 1].cb = (qa_q2f_think){NULL, makron_torso_think_fn};
+  think_storage[count + 1].cb = (qa_q2_think){NULL, makron_torso_think_fn};
   out->has_source_callbacks = true;
   out->source_callbacks.think = think_storage;
   out->source_callbacks.think_count = count + 2;
 }
 void qa_q2bm_makron_toss(qa_q2m_context *context, qa_q2m_monsters *monsters) {
-  qa_q2f_entity *entity = context->entity;
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *child = game->create(game->ctx, "monster_makron", NULL);
+  qa_q2_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *child = game->create(game->ctx, "monster_makron", NULL, 0);
   child->target = entity->target;
-  qa_q2f_body_changes changes;
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_origin = true; changes.origin = q2bm_body(game, entity).origin;
-  game->move(game->ctx, child, changes, true, false);
+  game->move(game->ctx, child, changes, false);
   game->schedule(game->ctx, child, 0.8, makron_spawn_callback(monsters));
 }
 static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
@@ -108,8 +108,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   qa_q2bm_stop_loop(c);
@@ -128,23 +128,23 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   q2bm_sound(game, entity, "makron/death.wav", true, 2, true, 1, true, 0);
   state->dead = true; state->can_take_damage = true;
   q2bm_set_traits_damage(game, entity, true);
-  qa_q2f_entity *torso = game->create(game->ctx, "makron_torso", NULL);
+  qa_q2_entity *torso = game->create(game->ctx, "makron_torso", NULL, 0);
   qa_body_state body = q2bm_body(game, entity);
   torso->model = "models/monsters/boss3/rider/tris.md2";
   torso->frame = 346;
   qa_vec3 origin = body.origin; origin.y = body.origin.y - 84;
-  qa_q2f_body_changes changes;
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_origin = true; changes.origin = origin;
   changes.has_angles = true; changes.angles = body.angles;
   changes.has_bounds = true; changes.bounds = (qa_bounds){{-8, -8, 0}, {8, 8, 8}};
   changes.has_velocity = true; changes.velocity = q2bm_zero();
-  game->move(game->ctx, torso, changes, false, false);
-  game->motion(game->ctx, torso, QA_Q2F_MOTION_STATIONARY);
-  game->solid(game->ctx, torso, QA_Q2F_SOLID_NONE);
+  game->move(game->ctx, torso, changes, true);
+  game->motion(game->ctx, torso, "stationary");
+  game->solid(game->ctx, torso, "none");
   game->show(game->ctx, torso);
   q2bm_emit_loop(game, torso, "makron/spine.wav", "start", 1);
-  qa_q2f_think think = {NULL, makron_torso_think_fn};
+  qa_q2_think think = {NULL, makron_torso_think_fn};
   game->schedule(game->ctx, torso, 0.2, think);
   q2bm_set_move(c, "makron_move_death2");
 }

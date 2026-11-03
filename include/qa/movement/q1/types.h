@@ -82,6 +82,9 @@ typedef struct qa_q1_movement_options {
   const char *jump_authority;
   /* "source" | "preserve"; NULL = "source". */
   const char *fix_angle_roll;
+  /* QuakeC WaterMove's `velocity -= 0.8 * waterlevel * frametime * velocity`, for sessions
+   * whose player prethink is not QuakeC bytecode (TS sourceWaterDrag === true). */
+  bool source_water_drag;
   const qa_q1_movement_hooks *hooks; /* NULL absent */
 } qa_q1_movement_options;
 

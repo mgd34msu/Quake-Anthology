@@ -9,6 +9,7 @@
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct door_state {
   qa_q2_entity *e;
@@ -19,7 +20,8 @@ typedef struct door_state {
   qa_q2_entity *master;
   qa_q2_entity **team; size_t team_count;
 } door_state;
-typedef struct train_state { qa_q2_entity *e, *destination; double debounce; bool ship; } train_state;
+/* TS TrainState: wait is the wait of the corner trainNext last chose. */
+typedef struct train_state { qa_q2_entity *e, *destination; double debounce, wait; bool ship; } train_state;
 
 struct qa_q2_mover_module {
   qa_q2_mover_hooks hooks;
@@ -96,7 +98,8 @@ static void loop_sound(qa_q2_entity *e, qa_q2_game_services *g, const char *path
   if (!path || path[0] == '\0') return;
   qa_q2_presentation_event ev = {0};
   ev.kind = "sound"; ev.has_actor = true; ev.actor = e->actor.id; ev.origin = qa_q2_game_body(g, e).origin;
-  ev.path = path; ev.channel = 2; ev.volume = 1; ev.attenuation = 3; ev.loop = start ? "start" : "stop";
+  ev.path = path; ev.channel = 2; ev.volume = 1; ev.attenuation = g->options.edition == QA_Q2_EDITION_RERELEASE ? 3 : 1;
+  ev.loop = start ? "start" : "stop";
   g->host->emit(g->host->ctx, ev);
 }
 
@@ -118,7 +121,8 @@ static void door_sound(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
   const char *sound = start ? sel[0] : sel[2], *middle = sel[1];
   double attenuation = (g->options.edition == QA_Q2_EDITION_RERELEASE && !st->water) ? qa_q2_number_field(&e->spawn, "attenuation", 3) : 3;
   double att = attenuation == -1 ? 0 : attenuation;
-  if (st->master == e && sound[0]) {
+  if (st->master != e) return;
+  if (sound[0]) {
     qa_vec3 origin = qa_q2_game_body(g, e).origin;
     if (g->options.edition == QA_Q2_EDITION_RERELEASE && st->team_count > 1) {
       qa_vec3 sum = QA_Q2_ZERO;
@@ -127,7 +131,7 @@ static void door_sound(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
         sum = qa_q2_add(sum, qa_q2_add(b.origin, qa_q2_scale(qa_q2_add(b.bounds.min, b.bounds.max), 0.5)));
       }
       qa_vec3 center = qa_q2_scale(sum, 1 / (double)st->team_count);
-      if (((int64_t)g->host->point_contents(g->host->ctx, center) & 1) == 0) origin = center;
+      if ((qa_js_to_int32(g->host->point_contents(g->host->ctx, center)) & 1) == 0) origin = center;
     }
     qa_q2_presentation_event ev = {0};
     ev.kind = "sound"; ev.has_actor = true; ev.actor = e->actor.id; ev.origin = origin; ev.path = sound;
@@ -137,7 +141,8 @@ static void door_sound(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
   if (middle[0]) {
     qa_q2_presentation_event ev = {0};
     ev.kind = "sound"; ev.has_actor = true; ev.actor = e->actor.id; ev.origin = qa_q2_game_body(g, e).origin; ev.path = middle;
-    ev.channel = 2; ev.volume = 1; ev.attenuation = att; ev.loop = start ? "start" : "stop";
+    ev.channel = 2; ev.volume = 1; ev.attenuation = g->options.edition != QA_Q2_EDITION_RERELEASE ? 1 : att;
+    ev.loop = start ? "start" : "stop";
     g->host->emit(g->host->ctx, ev);
   }
 }
@@ -157,10 +162,10 @@ static void bottom_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_mover_module *m = c;
   door_state *st = door_of(m, e);
   st->phase = "bottom";
-  if (st->button) { e->effects = (double)(((int64_t)e->effects & ~0x800) | 0x400); g->show(g->ctx, e); }
+  if (st->button) { e->effects = (double)((qa_js_to_int32(e->effects) & ~0x800) | 0x400); g->show(g->ctx, e); }
   else {
     door_sound(m, e, g, false);
-    if (g->options.edition == QA_Q2_EDITION_CLASSIC || ((int64_t)e->spawnflags & 1) == 0) portals(e, g, false);
+    if (g->options.edition == QA_Q2_EDITION_CLASSIC || (qa_js_to_int32(e->spawnflags) & 1) == 0) portals(e, g, false);
   }
 }
 static void down_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
@@ -175,14 +180,14 @@ static void down_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   if (st->button) { e->frame = 0; g->show(g->ctx, e); }
   else door_sound(m, e, g, true);
   move_to(m, st, e, g, st->start, TCB(m, bottom_fn));
-  if (g->options.edition == QA_Q2_EDITION_RERELEASE && !st->button && ((int64_t)e->spawnflags & 1) != 0) portals(e, g, true);
+  if (g->options.edition == QA_Q2_EDITION_RERELEASE && !st->button && (qa_js_to_int32(e->spawnflags) & 1) != 0) portals(e, g, true);
 }
 static void top_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_mover_module *m = c;
   door_state *st = door_of(m, e);
   st->phase = "top";
   if (st->button) {
-    e->effects = (double)(((int64_t)e->effects & ~0x400) | 0x800);
+    e->effects = (double)((qa_js_to_int32(e->effects) & ~0x400) | 0x800);
     e->frame = 1;
     g->show(g->ctx, e);
     qa_actor_id act = e->activator;
@@ -190,16 +195,16 @@ static void top_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     if (!live(g, e->actor.id)) return;
   } else {
     door_sound(m, e, g, false);
-    if (((int64_t)e->spawnflags & 32) != 0) return;
+    if ((qa_js_to_int32(e->spawnflags) & 32) != 0) return;
   }
   if (e->wait >= 0) g->schedule(g->ctx, e, e->wait, TCB(m, down_fn));
-  if (g->options.edition == QA_Q2_EDITION_RERELEASE && !st->button && ((int64_t)e->spawnflags & 1) != 0) portals(e, g, false);
+  if (g->options.edition == QA_Q2_EDITION_RERELEASE && !st->button && (qa_js_to_int32(e->spawnflags) & 1) != 0) portals(e, g, false);
 }
 static void up(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *activator) {
   door_state *st = door_of(m, e);
   if (strcmp(st->phase, "up") == 0) return;
   if (strcmp(st->phase, "top") == 0) {
-    if (!st->button && e->wait >= 0 && ((int64_t)e->spawnflags & 32) == 0) g->schedule(g->ctx, e, e->wait, TCB(m, down_fn));
+    if (!st->button && e->wait >= 0 && (qa_js_to_int32(e->spawnflags) & 32) == 0) g->schedule(g->ctx, e, e->wait, TCB(m, down_fn));
     return;
   }
   e->has_activator = activator != NULL;
@@ -209,22 +214,22 @@ static void up(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g, c
   move_to(m, st, e, g, st->reversed ? qa_q2_scale(st->end, -1) : st->end, TCB(m, top_fn));
   if (!st->button) {
     qa_q2_game_use_targets_entity(g, e, activator, false);
-    if (g->options.edition == QA_Q2_EDITION_CLASSIC || ((int64_t)e->spawnflags & 1) == 0) portals(e, g, true);
+    if (g->options.edition == QA_Q2_EDITION_CLASSIC || (qa_js_to_int32(e->spawnflags) & 1) == 0) portals(e, g, true);
   }
 }
 static void use_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *activator) {
   door_state *st = door_of(m, e);
   if (st->master != e) return;
-  if (g->options.edition == QA_Q2_EDITION_RERELEASE && st->angular && ((int64_t)e->spawnflags & 0x20000) != 0 &&
+  if (g->options.edition == QA_Q2_EDITION_RERELEASE && st->angular && (qa_js_to_int32(e->spawnflags) & 0x20000) != 0 &&
       (strcmp(st->phase, "bottom") == 0 || strcmp(st->phase, "down") == 0) && activator) {
     qa_body_state_result body = qa_shared_body_table_read(g->host->bodies, *activator);
     if (body.has_value) st->reversed = qa_q2_dot(qa_q2_normalize(qa_q2_subtract(body.value.origin, qa_q2_game_body(g, e).origin)), st->safe_direction) > 0;
   }
-  bool close = !st->button && ((int64_t)e->spawnflags & 32) != 0 && (strcmp(st->phase, "up") == 0 || strcmp(st->phase, "top") == 0);
-  if (!close && g->options.edition == QA_Q2_EDITION_RERELEASE && st->water && ((int64_t)e->spawnflags & 2) != 0) {
+  bool close = !st->button && (qa_js_to_int32(e->spawnflags) & 32) != 0 && (strcmp(st->phase, "up") == 0 || strcmp(st->phase, "top") == 0);
+  if (!close && g->options.edition == QA_Q2_EDITION_RERELEASE && st->water && (qa_js_to_int32(e->spawnflags) & 2) != 0) {
     qa_body_state b = qa_q2_game_body(g, e);
     qa_vec3 center = qa_q2_scale(qa_q2_add(b.bounds.min, b.bounds.max), 0.5);
-    if (((int64_t)g->host->point_contents(g->host->ctx, center) & 56) != 0) {
+    if ((qa_js_to_int32(g->host->point_contents(g->host->ctx, center)) & 56) != 0) {
       e->message = ""; e->touch = (qa_q2_touch){0};
       e->has_enemy = activator != NULL;
       if (activator) e->enemy = *activator;
@@ -234,7 +239,7 @@ static void use_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services
   }
   for (size_t i = 0; i < st->team_count; i++) {
     qa_q2_entity *member = st->team[i];
-    member->message = ""; member->touch = (qa_q2_touch){0};
+    if (!st->button) { member->message = ""; member->touch = (qa_q2_touch){0}; }
     if (close) down_fn(m, member, g);
     else up(m, member, g, activator);
   }
@@ -242,9 +247,9 @@ static void use_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services
 
 static qa_vec3 train_destination(qa_q2_entity *e, qa_q2_entity *target, qa_q2_game_services *g) {
   qa_vec3 origin = qa_q2_game_body(g, target).origin;
-  if (g->options.edition == QA_Q2_EDITION_RERELEASE && ((int64_t)e->spawnflags & 32) != 0) return origin;
+  if (g->options.edition == QA_Q2_EDITION_RERELEASE && (qa_js_to_int32(e->spawnflags) & 32) != 0) return origin;
   qa_vec3 dest = qa_q2_subtract(origin, qa_q2_game_body(g, e).bounds.min);
-  return (g->options.edition == QA_Q2_EDITION_RERELEASE && ((int64_t)e->spawnflags & 16) != 0)
+  return (g->options.edition == QA_Q2_EDITION_RERELEASE && (qa_js_to_int32(e->spawnflags) & 16) != 0)
       ? qa_q2_subtract(dest, (qa_vec3){1, 1, 1}) : dest;
 }
 
@@ -292,7 +297,7 @@ bool qa_q2_mover_module_train_route(qa_q2_mover_module *m, qa_q2_entity *e, qa_q
     stop->has_next = next != NULL;
     if (next) stop->next = next->actor.id;
     stop->wait = corner->wait;
-    stop->teleport = ((int64_t)corner->spawnflags & 1) != 0;
+    stop->teleport = (qa_js_to_int32(corner->spawnflags) & 1) != 0;
     if (!next) break;
     cur_name = corner->target;
     (void)n;
@@ -302,7 +307,7 @@ bool qa_q2_mover_module_train_route(qa_q2_mover_module *m, qa_q2_entity *e, qa_q
     for (size_t i = 0; i < visited_count; i++) if (qa_same_actor(visited[i], st->destination->actor.id)) seen = true;
     if (!seen) return false;
   }
-  out->running = ((int64_t)e->spawnflags & 1) != 0;
+  out->running = (qa_js_to_int32(e->spawnflags) & 1) != 0;
   out->has_destination = st->destination != NULL;
   if (st->destination) out->destination = st->destination->actor.id;
   out->stops = m->route_scratch;
@@ -350,12 +355,18 @@ qa_q2_movers_checkpoint qa_q2_mover_module_capture(qa_q2_mover_module *m, qa_q2_
     }
     if (t) {
       m->cp_trains[tn] = (qa_q2_train_checkpoint){ref_of(entities[i]), t->destination != NULL,
-          t->destination ? ref_of(t->destination) : (qa_saved_actor_id){0, 0}, t->debounce, t->ship};
+          t->destination ? ref_of(t->destination) : (qa_saved_actor_id){0, 0}, t->debounce, true, t->wait, t->ship};
       tn++;
     }
   }
-  return (qa_q2_movers_checkpoint){m->cp_doors, dn, m->cp_trains, tn,
-      qa_q2_linear_motion_capture(m->linear, g), qa_q2_angular_motion_capture(m->angular, g)};
+  const qa_q2_door_checkpoint * doors = m->cp_doors;
+  size_t door_count2 = dn;
+  const qa_q2_train_checkpoint * trains = m->cp_trains;
+  size_t train_count = tn;
+  qa_q2_linear_motion_checkpoint linear2 = qa_q2_linear_motion_capture(m->linear, g);
+  qa_q2_angular_motion_checkpoint angular2 = qa_q2_angular_motion_capture(m->angular, g);
+  return (qa_q2_movers_checkpoint){doors, door_count2, trains, train_count,
+      linear2, angular2};
 }
 
 static qa_q2_entity *ref_entity(qa_q2_game_services *g, qa_saved_actor_id saved) {
@@ -387,7 +398,8 @@ void qa_q2_mover_module_restore(qa_q2_mover_module *m, qa_q2_game_services *g, q
   for (size_t i = 0; i < cp.train_count; i++) {
     qa_q2_entity *e = ref_entity(g, cp.trains[i].actor);
     if (m->train_count == m->train_cap) { m->train_cap = m->train_cap ? m->train_cap * 2 : 8; m->trains = realloc(m->trains, m->train_cap * sizeof *m->trains); if (!m->trains) qa_range_error("out of memory"); }
-    m->trains[m->train_count++] = (train_state){e, cp.trains[i].has_destination ? ref_entity(g, cp.trains[i].destination) : NULL, cp.trains[i].debounce, cp.trains[i].ship};
+    m->trains[m->train_count++] = (train_state){e, cp.trains[i].has_destination ? ref_entity(g, cp.trains[i].destination) : NULL, cp.trains[i].debounce,
+        cp.trains[i].has_wait ? cp.trains[i].wait : 0, cp.trains[i].ship};
   }
   qa_q2_linear_motion_restore(m->linear, g, cp.linear);
   qa_q2_angular_motion_restore(m->angular, g, cp.angular);
@@ -403,7 +415,7 @@ static void spawn_bobbing(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_ser
   e->pos1 = body.origin;
   e->pos2 = qa_q2_add(body.origin, qa_q2_scale(e->movedir, height));
   double speed_field = qa_q2_number_field(&e->spawn, "speed", 0);
-  e->speed = 2 * height / fmax(speed_field != 0 ? speed_field : 4, 0.1);
+  e->speed = 2 * height / qa_js_max(speed_field != 0 ? speed_field : 4, 0.1);
   e->accel = e->speed; e->decel = e->speed;
   g->motion(g->ctx, e, "push");
   g->solid(g->ctx, e, "brush");
@@ -435,7 +447,7 @@ static void spawn_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
   bool button = strcmp(e->classname, "func_button") == 0;
   bool angular = strcmp(e->classname, "func_door_rotating") == 0;
   bool water = strcmp(e->classname, "func_water") == 0;
-  int64_t sf = (int64_t)e->spawnflags;
+  int32_t sf = qa_js_to_int32(e->spawnflags); /* TS spawnflags & x: ToInt32 */
   qa_vec3 safe = (angular && (sf & 0x20000) != 0) ? qa_q2_movedir(qa_q2_game_body(g, e).angles) : QA_Q2_ZERO;
   double water_divisor = e->accel != 0 ? e->accel : 20;
   e->movedir = angular ? ((sf & 64) ? (qa_vec3){0, 0, 1} : (sf & 128) ? (qa_vec3){1, 0, 0} : (qa_vec3){0, 1, 0})
@@ -451,7 +463,7 @@ static void spawn_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
   if (e->accel == 0) e->accel = e->speed;
   if (e->decel == 0) e->decel = e->speed;
   if (e->wait == 0) e->wait = water ? -1 : 3;
-  if (e->damage == 0) e->damage = 2;
+  if (!button && e->damage == 0) e->damage = 2;
   qa_body_state body = qa_q2_game_body(g, e);
   qa_vec3 size = qa_q2_subtract(body.bounds.max, body.bounds.min);
   qa_vec3 dir = {fabs(e->movedir.x), fabs(e->movedir.y), fabs(e->movedir.z)};
@@ -463,7 +475,7 @@ static void spawn_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
   qa_vec3 end = qa_q2_add(start, qa_q2_scale(e->movedir, distance));
   if (!button && (sf & 1)) {
     if (g->options.edition == QA_Q2_EDITION_RERELEASE && angular && (sf & 0x20000)) {
-      e->spawnflags = (double)((int64_t)e->spawnflags & ~0x20000);
+      e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) & ~0x20000);
       g->host->diagnostic(g->host->ctx, "Q2 rotating door SAFE_OPEN is incompatible with START_OPEN");
     }
     qa_vec3 prev = start; start = end; end = prev;
@@ -485,13 +497,13 @@ static void spawn_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
   if (!qa_q2_spawn_get(&e->spawn, "team")) { e->has_team_master = true; e->team_master = e->actor.id; }
   if (water) {
     e->accel = e->decel = e->speed;
-    if (e->wait == -1) e->spawnflags = (double)((int64_t)e->spawnflags | 32);
+    if (e->wait == -1) e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) | 32);
     if (g->options.edition == QA_Q2_EDITION_CLASSIC) e->classname = "func_door";
   }
-  if (button) e->effects = (double)((int64_t)e->effects | 0x400);
+  if (button) e->effects = (double)(qa_js_to_int32(e->effects) | 0x400);
   else if (!water) {
-    if (((int64_t)e->spawnflags & 16) != 0) e->effects = (double)((int64_t)e->effects | 0x1000);
-    if (!angular && ((int64_t)e->spawnflags & 64) != 0) e->effects = (double)((int64_t)e->effects | 0x2000);
+    if ((qa_js_to_int32(e->spawnflags) & 16) != 0) e->effects = (double)(qa_js_to_int32(e->effects) | 0x1000);
+    if (!angular && (qa_js_to_int32(e->spawnflags) & 64) != 0) e->effects = (double)(qa_js_to_int32(e->effects) | 0x2000);
   }
   e->use = (qa_q2_use){m, door_use_fn};
   if (e->max_health > 0 && !water) {
@@ -502,14 +514,14 @@ static void spawn_door(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_servic
     e->die = (qa_q2_die){m, door_killed_fn};
   } else if (button && e->targetname[0] == '\0') e->touch = (qa_q2_touch){m, button_touch_fn};
   else if (!button && e->targetname[0] && e->message[0]) e->touch = (qa_q2_touch){m, door_touch_fn};
-  e->blocked = (qa_q2_blocked){m, door_blocked_fn};
+  e->blocked = button ? (qa_q2_blocked){0} : (qa_q2_blocked){m, door_blocked_fn};
   g->show(g->ctx, e);
   if (!button && !water) g->schedule(g->ctx, e, g->host->frame_seconds(g->host->ctx), TCB(m, prepare_door_fn));
   if (water) {
     e->blocked = (qa_q2_blocked){0};
-    if (g->options.edition == QA_Q2_EDITION_RERELEASE && ((int64_t)e->spawnflags & 2) != 0) e->blocked = (qa_q2_blocked){m, smart_water_blocked_fn};
+    if (g->options.edition == QA_Q2_EDITION_RERELEASE && (qa_js_to_int32(e->spawnflags) & 2) != 0) e->blocked = (qa_q2_blocked){m, smart_water_blocked_fn};
   }
-  if (g->options.edition == QA_Q2_EDITION_RERELEASE && angular && ((int64_t)e->spawnflags & 0x10000) != 0) {
+  if (g->options.edition == QA_Q2_EDITION_RERELEASE && angular && (qa_js_to_int32(e->spawnflags) & 0x10000) != 0) {
     if (e->max_health > 0) {
       qa_combat_trait_changes tc = {0}; tc.has_can_take_damage = true; tc.can_take_damage = false;
       qa_gameplay_authority_set_traits(g->host->combat, e->actor, tc);
@@ -542,7 +554,7 @@ static void prepare_door_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     d->team_count = team_count;
   }
   if (master != e) { free(team); return; }
-  if (g->options.edition == QA_Q2_EDITION_RERELEASE && !door_of(m, e)->angular && ((int64_t)e->spawnflags & 1) != 0) portals(e, g, true);
+  if (g->options.edition == QA_Q2_EDITION_RERELEASE && !door_of(m, e)->angular && (qa_js_to_int32(e->spawnflags) & 1) != 0) portals(e, g, true);
   double shortest = 0;
   for (size_t i = 0; i < team_count; i++) {
     double a = fabs(door_of(m, team[i])->distance);
@@ -562,8 +574,8 @@ static void prepare_door_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   for (size_t i = 0; i < team_count; i++) {
     qa_body_state b = qa_q2_game_body(g, team[i]);
     qa_vec3 low = qa_q2_add(b.origin, b.bounds.min), high = qa_q2_add(b.origin, b.bounds.max);
-    mn.x = fmin(mn.x, low.x); mn.y = fmin(mn.y, low.y); mn.z = fmin(mn.z, low.z);
-    mx.x = fmax(mx.x, high.x); mx.y = fmax(mx.y, high.y); mx.z = fmax(mx.z, high.z);
+    mn.x = qa_js_min(mn.x, low.x); mn.y = qa_js_min(mn.y, low.y); mn.z = qa_js_min(mn.z, low.z);
+    mx.x = qa_js_max(mx.x, high.x); mx.y = qa_js_max(mx.y, high.y); mx.z = qa_js_max(mx.z, high.z);
   }
   free(team);
   qa_q2_entity *trigger = g->create(g->ctx, "door_trigger", NULL, 0);
@@ -574,7 +586,7 @@ static void prepare_door_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   g->move(g->ctx, trigger, ch, false);
   trigger->touch = (qa_q2_touch){m, door_trigger_touch_fn};
   g->solid(g->ctx, trigger, "trigger");
-  if (((int64_t)e->spawnflags & 1) != 0) portals(e, g, true);
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) portals(e, g, true);
 }
 
 static void smart_water_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
@@ -612,7 +624,7 @@ static void smart_water_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   }
   if (!lowest) return;
   double distance = height - top;
-  double speed = fmin(e->speed, fmax(5, distance < st->water_divisor ? 5 : distance / st->water_divisor));
+  double speed = qa_js_min(e->speed, qa_js_max(5, distance < st->water_divisor ? 5 : distance / st->water_divisor));
   qa_q2_body_changes ch = {0}; ch.has_velocity = true; ch.velocity = (qa_vec3){0, 0, speed};
   g->move(g->ctx, e, ch, false);
   g->motion(g->ctx, e, e->motion);
@@ -627,13 +639,15 @@ static void smart_water_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
 void qa_q2_mover_module_resume_train_at(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g, qa_q2_entity *corner) {
   train_state *st = train_of(m, e);
   st->destination = corner;
-  e->spawnflags = (double)((int64_t)e->spawnflags | 1);
+  e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) | 1);
   qa_q2_linear_motion_move_to(m->linear, e, g, train_destination(e, corner, g), TCB(m, train_wait_fn));
 }
 qa_vec3 qa_q2_mover_module_train_direction(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_entity *corner = train_of(m, e)->destination;
   if (!corner) return QA_Q2_ZERO;
-  qa_vec3 delta = qa_q2_subtract(train_destination(e, corner, g), qa_q2_game_body(g, e).origin);
+  qa_vec3 a = train_destination(e, corner, g);
+  qa_vec3 b = qa_q2_game_body(g, e).origin;
+  qa_vec3 delta = qa_q2_subtract(a, b);
   double d = qa_q2_length(delta);
   return d == 0 ? QA_Q2_ZERO : qa_q2_scale(delta, 1 / d);
 }
@@ -651,12 +665,13 @@ static void train_wait_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     target->target = prev;
     if (!live(g, e->actor.id)) return;
   }
-  if (target->wait == 0) { train_next_fn(m, e, g); return; }
-  if (target->wait > 0) g->schedule(g->ctx, e, target->wait, TCB(m, train_next_fn));
-  else if (((int64_t)e->spawnflags & 2) != 0) {
+  double wait = train_of(m, e)->wait;
+  if (wait == 0) { train_next_fn(m, e, g); return; }
+  if (wait > 0) g->schedule(g->ctx, e, wait, TCB(m, train_next_fn));
+  else if ((qa_js_to_int32(e->spawnflags) & 2) != 0) {
     if (g->options.edition == QA_Q2_EDITION_RERELEASE) train_of(m, e)->destination = NULL;
     else train_next_fn(m, e, g);
-    e->spawnflags = (double)((int64_t)e->spawnflags & ~1);
+    e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) & ~1);
     qa_q2_body_changes ch = {0}; ch.has_velocity = true; ch.velocity = QA_Q2_ZERO;
     g->move(g->ctx, e, ch, false);
     g->motion(g->ctx, e, e->motion);
@@ -686,7 +701,7 @@ static void train_next_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
       return;
     }
     e->target = target->target;
-    if (((int64_t)target->spawnflags & 1) != 0) {
+    if ((qa_js_to_int32(target->spawnflags) & 1) != 0) {
       if (teleported) { g->host->diagnostic(g->host->ctx, "Q2 train has consecutive teleport corners"); return; }
       teleported = true;
       qa_q2_body_changes ch = {0}; ch.has_origin = true; ch.origin = train_destination(e, target, g);
@@ -697,6 +712,7 @@ static void train_next_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
       continue;
     }
     train_of(m, e)->destination = target;
+    train_of(m, e)->wait = target->wait;
     if (g->options.edition == QA_Q2_EDITION_RERELEASE && target->speed != 0) {
       e->speed = target->speed;
       e->accel = target->accel != 0 ? target->accel : target->speed;
@@ -704,11 +720,11 @@ static void train_next_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     }
     const char *noise = qa_q2_spawn_get(&e->spawn, "noise");
     loop_sound(e, g, noise ? noise : "", true);
-    e->spawnflags = (double)((int64_t)e->spawnflags | 1);
+    e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) | 1);
     qa_vec3 dest = train_destination(e, target, g);
     qa_vec3 delta = qa_q2_subtract(dest, qa_q2_game_body(g, e).origin);
     qa_q2_linear_motion_move_to(m->linear, e, g, dest, TCB(m, train_wait_fn));
-    if (g->options.edition == QA_Q2_EDITION_RERELEASE && ((int64_t)e->spawnflags & 8) != 0) {
+    if (g->options.edition == QA_Q2_EDITION_RERELEASE && (qa_js_to_int32(e->spawnflags) & 8) != 0) {
       size_t tn = 0;
       const qa_owned_actor *team = g->push_team(g->ctx, e->actor.id, &tn);
       qa_owned_actor *copy = NULL;
@@ -729,7 +745,7 @@ static void train_next_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
 void qa_q2_mover_module_spawn_train(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
   bool ship = strcmp(e->classname, "func_train") != 0;
   if (m->train_count == m->train_cap) { m->train_cap = m->train_cap ? m->train_cap * 2 : 8; m->trains = realloc(m->trains, m->train_cap * sizeof *m->trains); if (!m->trains) qa_range_error("out of memory"); }
-  m->trains[m->train_count++] = (train_state){e, NULL, 0, ship};
+  m->trains[m->train_count++] = (train_state){e, NULL, 0, 0, ship};
   if (ship) {
     e->model = strcmp(e->classname, "misc_strogg_ship") == 0 ? "models/ships/strogg1/tris.md2" : "models/ships/viper/tris.md2";
     e->visible = false;
@@ -742,7 +758,7 @@ void qa_q2_mover_module_spawn_train(qa_q2_mover_module *m, qa_q2_entity *e, qa_q
   g->move(g->ctx, e, za, true);
   if (e->speed == 0) e->speed = ship ? 300 : 100;
   e->accel = e->decel = e->speed;
-  e->damage = ((int64_t)e->spawnflags & 4) != 0 ? 0 : (e->damage != 0 ? e->damage : 100);
+  e->damage = (qa_js_to_int32(e->spawnflags) & 4) != 0 ? 0 : (e->damage != 0 ? e->damage : 100);
   e->use = (qa_q2_use){m, train_use_fn};
   e->blocked = (qa_q2_blocked){m, train_blocked_fn};
   g->show(g->ctx, e);
@@ -750,7 +766,7 @@ void qa_q2_mover_module_spawn_train(qa_q2_mover_module *m, qa_q2_entity *e, qa_q
 }
 
 static void spawn_rotating(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
-  int64_t sf = (int64_t)e->spawnflags;
+  int32_t sf = qa_js_to_int32(e->spawnflags); /* TS spawnflags & x: ToInt32 */
   e->movedir = (sf & 4) ? (qa_vec3){0, 0, 1} : (sf & 8) ? (qa_vec3){1, 0, 0} : (qa_vec3){0, 1, 0};
   if (sf & 2) e->movedir = qa_q2_scale(e->movedir, -1);
   if (e->speed == 0) e->speed = 100;
@@ -760,13 +776,16 @@ static void spawn_rotating(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_se
   e->blocked = (qa_q2_blocked){m, rotating_damage_fn};
   e->use = (qa_q2_use){m, rotating_use_fn};
   if (sf & 1) rotating_use_fn(m, e, g, NULL, NULL);
-  if (sf & 64) e->effects = (double)((int64_t)e->effects | 0x1000);
-  if (sf & 128) e->effects = (double)((int64_t)e->effects | 0x2000);
+  if (sf & 64) e->effects = (double)(qa_js_to_int32(e->effects) | 0x1000);
+  if (sf & 128) e->effects = (double)(qa_js_to_int32(e->effects) | 0x2000);
   g->show(g->ctx, e);
 }
 static void spawn_path(qa_q2_mover_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
   if (e->targetname[0] == '\0' && strcmp(e->classname, "path_corner") == 0) { g->remove(g->ctx, e); return; }
-  qa_q2_body_changes ch = {0}; ch.has_bounds = true; ch.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
+  const bool combat = strcmp(e->classname, "point_combat") == 0;
+  if (combat && g->options.mode == QA_Q2_MODE_DEATHMATCH) { g->remove(g->ctx, e); return; }
+  const double half = combat ? 16 : 8;
+  qa_q2_body_changes ch = {0}; ch.has_bounds = true; ch.bounds = (qa_bounds){{-8, -8, -half}, {8, 8, half}};
   g->move(g->ctx, e, ch, false);
   e->visible = false;
   e->touch = (qa_q2_touch){m, path_touch_fn};
@@ -814,7 +833,9 @@ static void door_touch_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_t
   qa_q2_presentation_event ev = {0};
   ev.kind = "centerprint"; ev.has_actor = true; ev.actor = contact.other; ev.text = e->message;
   g->host->emit(g->host->ctx, ev);
-  g->sound(g->ctx, e->actor, "misc/talk1.wav", 0, 1, 1);
+  /* TS services.sound(services.entity(contact.other) ?? self, ...). */
+  qa_q2_entity *heard = g->entity(g->ctx, &contact.other);
+  g->sound(g->ctx, heard != NULL ? heard->actor : e->actor, "misc/talk1.wav", 0, 1, 1);
 }
 static void door_blocked_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id other) {
   qa_q2_mover_module *m = c;
@@ -824,12 +845,16 @@ static void door_blocked_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa
   if (!g->host->is_player(g->host->ctx, other) && !g->host->is_monster(g->host->ctx, other)) {
     if (qa_gameplay_authority_read(g->host->combat, other).has_value)
       g->damage(g->ctx, other, e, e->actor.id, &self, 100000, 1, QA_Q2_ZERO, body.value.origin, QA_Q2_ZERO, 20, 0, NULL);
+    qa_q2_presentation_event explosion = {0};
+    explosion.kind = "effect"; explosion.effect = "q2:explosion1"; explosion.origin = body.value.origin;
+    explosion.direction = QA_Q2_ZERO; explosion.count = 1; explosion.color = 0;
+    g->host->emit(g->host->ctx, explosion);
     qa_q2_entity *victim = g->entity(g->ctx, &other);
     if (victim) g->remove(g->ctx, victim);
     return;
   }
   g->damage(g->ctx, other, e, e->actor.id, &self, e->damage, 1, QA_Q2_ZERO, body.value.origin, QA_Q2_ZERO, 20, 0, NULL);
-  if (((int64_t)e->spawnflags & 4) != 0 || e->wait < 0) return;
+  if ((qa_js_to_int32(e->spawnflags) & 4) != 0 || e->wait < 0) return;
   door_state *st = door_of(m, e);
   bool reverse = strcmp(st->phase, "down") == 0;
   for (size_t i = 0; i < st->team_count; i++) {
@@ -870,7 +895,7 @@ static void door_trigger_touch_fn(void *c, qa_q2_entity *e, qa_q2_game_services 
   qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, contact.other);
   if ((cs.has_value ? cs.value.health : 0) <= 0 || g->host->now(g->host->ctx) < e->timestamp) return;
   bool monster = g->host->is_monster(g->host->ctx, contact.other);
-  if ((!monster && !g->host->is_player(g->host->ctx, contact.other)) || (monster && ((int64_t)entity->spawnflags & 8) != 0)) return;
+  if ((!monster && !g->host->is_player(g->host->ctx, contact.other)) || (monster && (qa_js_to_int32(entity->spawnflags) & 8) != 0)) return;
   e->timestamp = g->host->now(g->host->ctx) + 1;
   use_door(m, entity, g, &contact.other);
 }
@@ -880,9 +905,9 @@ static void train_use_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, const
   e->has_activator = a != NULL;
   if (a) e->activator = *a;
   if (train_of(m, e)->ship && !e->visible) { e->visible = true; g->show(g->ctx, e); }
-  if (((int64_t)e->spawnflags & 1) != 0) {
-    if (((int64_t)e->spawnflags & 2) == 0) return;
-    e->spawnflags = (double)((int64_t)e->spawnflags & ~1);
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) {
+    if ((qa_js_to_int32(e->spawnflags) & 2) == 0) return;
+    e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) & ~1);
     qa_q2_body_changes ch = {0}; ch.has_velocity = true; ch.velocity = QA_Q2_ZERO;
     g->move(g->ctx, e, ch, false);
     g->motion(g->ctx, e, e->motion);
@@ -891,16 +916,24 @@ static void train_use_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, const
   }
   qa_q2_entity *dest = train_of(m, e)->destination;
   if (!dest) { train_next_fn(m, e, g); return; }
-  e->spawnflags = (double)((int64_t)e->spawnflags | 1);
+  e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) | 1);
   qa_q2_linear_motion_move_to(m->linear, e, g, train_destination(e, dest, g), TCB(m, train_wait_fn));
 }
 static void train_blocked_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id other) {
   qa_q2_mover_module *m = c;
   train_state *st = train_of(m, e);
   qa_body_state_result body = qa_shared_body_table_read(g->host->bodies, other);
-  if (!body.has_value || e->damage == 0 || g->host->now(g->host->ctx) < st->debounce) return;
-  st->debounce = g->host->now(g->host->ctx) + 0.5;
+  if (!body.has_value) return;
   qa_actor_id self = e->actor.id;
+  if (!g->host->is_player(g->host->ctx, other) && !g->host->is_monster(g->host->ctx, other)) {
+    if (qa_gameplay_authority_read(g->host->combat, other).has_value)
+      g->damage(g->ctx, other, e, e->actor.id, &self, 100000, 1, QA_Q2_ZERO, body.value.origin, QA_Q2_ZERO, 20, 0, NULL);
+    qa_q2_entity *victim = g->entity(g->ctx, &other);
+    if (victim) g->remove(g->ctx, victim);
+    return;
+  }
+  if (e->damage == 0 || g->host->now(g->host->ctx) < st->debounce) return;
+  st->debounce = g->host->now(g->host->ctx) + 0.5;
   if (qa_gameplay_authority_read(g->host->combat, other).has_value)
     g->damage(g->ctx, other, e, e->actor.id, &self, e->damage, 1, QA_Q2_ZERO, body.value.origin, QA_Q2_ZERO, 20, 0, NULL);
 }
@@ -918,8 +951,8 @@ static void train_find_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   e->target = target->target;
   qa_q2_body_changes ch = {0}; ch.has_origin = true; ch.origin = train_destination(e, target, g);
   g->move(g->ctx, e, ch, true);
-  if (e->targetname[0] == '\0') e->spawnflags = (double)((int64_t)e->spawnflags | 1);
-  if (((int64_t)e->spawnflags & 1) != 0) {
+  if (e->targetname[0] == '\0') e->spawnflags = (double)(qa_js_to_int32(e->spawnflags) | 1);
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) {
     e->has_activator = true; e->activator = e->actor.id;
     g->schedule(g->ctx, e, g->host->frame_seconds(g->host->ctx), TCB(m, train_next_fn));
   }
@@ -936,7 +969,7 @@ static void rotating_use_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, co
   qa_q2_mover_module *m = c;
   bool stop = qa_q2_length(e->angular_velocity) != 0;
   e->angular_velocity = stop ? QA_Q2_ZERO : qa_q2_scale(e->movedir, e->speed);
-  e->touch = (!stop && ((int64_t)e->spawnflags & 16) != 0) ? (qa_q2_touch){m, rotating_touch_fn} : (qa_q2_touch){0};
+  e->touch = (!stop && (qa_js_to_int32(e->spawnflags) & 16) != 0) ? (qa_q2_touch){m, rotating_touch_fn} : (qa_q2_touch){0};
   g->motion(g->ctx, e, e->motion);
 }
 static void path_touch_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_touch_contact contact) {

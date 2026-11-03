@@ -8,6 +8,7 @@
 #include "qa/formats/q12_model/normals.h"
 #include "qa/foundation/support.h"
 #include "qa/render/scene/particles/legacy.h"
+#include "qa/foundation/js.h"
 static const qa_vec3 zero_v = {0, 0, 0};
 static const qa_vec3 gravity_v = {0, 0, -40};
 static const double q1_fire_ramp[6] = {109, 107, 6, 5, 4, 3};
@@ -105,10 +106,11 @@ void qa_app_source_particles_q1_impact(qa_app_source_particles *p, qa_vec3 origi
   if (count == 1024) { qa_app_source_particles_q1_explosion(p, origin, seconds, false); return; }
   for (double i = 0; i < count; i++) {
     double die = seconds + 0.1 * (double)(rand_i(p) % 5);
-    double shade = (double)(((int64_t)color & ~7LL) + (rand_i(p) & 7));
-    qa_vec3 at = {origin.x + (double)((rand_i(p) & 15) - 8),
-                  origin.y + (double)((rand_i(p) & 15) - 8),
-                  origin.z + (double)((rand_i(p) & 15) - 8)};
+    double shade = (double)((qa_js_to_int32(color) & ~7LL) + (rand_i(p) & 7));
+    double x2 = origin.x + (double)((rand_i(p) & 15) - 8);
+    double y2 = origin.y + (double)((rand_i(p) & 15) - 8);
+    double z2 = origin.z + (double)((rand_i(p) & 15) - 8);
+    qa_vec3 at = {x2, y2, z2};
     if (!first(p, (qa_q1_particle_state){at, qa_scale3(direction, 15), shade, 0, die, "slow-gravity"})) return;
   }
 }
@@ -116,14 +118,17 @@ void qa_app_source_particles_q1_entity(qa_app_source_particles *p, qa_vec3 origi
   size_t normal_count = 0;
   const qa_vec3 *normals = qa_alias_normal_table(&normal_count);
   if (p->angular_count == 0 || p->angular[0].x == 0) {
+    double x2;
+    double y2;
+    double z2;
     free(p->angular);
     p->angular = malloc(normal_count * sizeof *p->angular);
     if (p->angular == NULL) qa_range_error("Out of memory");
     p->angular_count = normal_count;
     for (size_t i = 0; i < normal_count; i++)
-      p->angular[i] = (qa_vec3){fr((double)(rand_i(p) & 255) * 0.01),
-                                fr((double)(rand_i(p) & 255) * 0.01),
-                                fr((double)(rand_i(p) & 255) * 0.01)};
+      p->angular[i] = (x2 = fr((double)(rand_i(p) & 255) * 0.01), y2 = fr((double)(rand_i(p) & 255) * 0.01), z2 = fr((double)(rand_i(p) & 255) * 0.01), (qa_vec3){x2,
+                                y2,
+                                z2});
   }
   for (size_t index = 0; index < normal_count; index++) {
     if ((double)p->q1_count == p->capacity) return;
@@ -156,29 +161,32 @@ void qa_app_source_particles_q1_trail(qa_app_source_particles *p, qa_vec3 start,
       ramp = (double)(rand_i(p) & 3) + (type == 1 ? 2 : 0);
       color = ramp >= 0 && ramp < 6 ? q1_fire_ramp[(size_t)ramp] : 0;
       particle_type = "fire";
-      origin = (qa_vec3){fr(point.x + (double)(rand_i(p) % 6 - 3)),
-                         fr(point.y + (double)(rand_i(p) % 6 - 3)),
-                         fr(point.z + (double)(rand_i(p) % 6 - 3))};
+      double x4 = fr(point.x + (double)(rand_i(p) % 6 - 3));
+      double y4 = fr(point.y + (double)(rand_i(p) % 6 - 3));
+      double z4 = fr(point.z + (double)(rand_i(p) % 6 - 3));
+      origin = (qa_vec3){x4, y4, z4};
     } else if (type == 2 || type == 4) {
       color = 67 + (double)(rand_i(p) & 3);
       particle_type = "gravity";
-      origin = (qa_vec3){fr(point.x + (double)(rand_i(p) % 6 - 3)),
-                         fr(point.y + (double)(rand_i(p) % 6 - 3)),
-                         fr(point.z + (double)(rand_i(p) % 6 - 3))};
+      double x3 = fr(point.x + (double)(rand_i(p) % 6 - 3));
+      double y3 = fr(point.y + (double)(rand_i(p) % 6 - 3));
+      double z3 = fr(point.z + (double)(rand_i(p) % 6 - 3));
+      origin = (qa_vec3){x3, y3, z3};
       if (type == 4) remaining = fr(remaining - 3);
     } else if (type == 3 || type == 5) {
       die = fr(seconds + 0.5);
-      color = (type == 3 ? 52 : 230) + (double)(((int64_t)p->tracer_count & 4) << 1);
+      color = (type == 3 ? 52 : 230) + (double)((qa_js_to_int32(p->tracer_count) & 4) << 1);
       p->tracer_count++;
-      velocity = (((int64_t)p->tracer_count & 1) != 0)
+      velocity = ((qa_js_to_int32(p->tracer_count) & 1) != 0)
         ? (qa_vec3){fr(30 * direction.y), fr(30 * -direction.x), 0}
         : (qa_vec3){fr(30 * -direction.y), fr(30 * direction.x), 0};
     } else {
       color = 152 + (double)(rand_i(p) & 3);
       die = fr(seconds + 0.3);
-      origin = (qa_vec3){fr(point.x + (double)((rand_i(p) & 15) - 8)),
-                         fr(point.y + (double)((rand_i(p) & 15) - 8)),
-                         fr(point.z + (double)((rand_i(p) & 15) - 8))};
+      double x2 = fr(point.x + (double)((rand_i(p) & 15) - 8));
+      double y2 = fr(point.y + (double)((rand_i(p) & 15) - 8));
+      double z2 = fr(point.z + (double)((rand_i(p) & 15) - 8));
+      origin = (qa_vec3){x2, y2, z2};
     }
     first(p, (qa_q1_particle_state){origin, velocity, color, ramp, die, particle_type});
     point = (qa_vec3){fr(point.x + direction.x), fr(point.y + direction.y), fr(point.z + direction.z)};
@@ -199,8 +207,10 @@ void qa_app_source_particles_q1_explosion(qa_app_source_particles *p, qa_vec3 or
 void qa_app_source_particles_q1_color_explosion(qa_app_source_particles *p, qa_vec3 origin, double seconds,
                                                 double color_start, double color_length) {
   if (color_start != trunc(color_start) || color_start < 0 || color_start > 255
-      || color_length != trunc(color_length) || color_length < 1 || color_length > 255)
-    qa_range_error("Invalid Quake colored explosion palette range");
+      || color_length != trunc(color_length) || color_length > 255)
+    qa_raise("Error", 0, 0, "Invalid Quake colored explosion palette range");
+  /* A zero-length range divides by zero in the source; the explosion is dropped. */
+  if (color_length < 1) return;
   for (int i = 0; i < 512 && (double)p->q1_count < p->capacity; i++) {
     double ox = origin.x + (double)(rand_i(p) % 32 - 16), vx = (double)(rand_i(p) % 512 - 256);
     double oy = origin.y + (double)(rand_i(p) % 32 - 16), vy = (double)(rand_i(p) % 512 - 256);
@@ -218,11 +228,16 @@ void qa_app_source_particles_q1_splash(qa_app_source_particles *p, qa_vec3 origi
         double color = (lava ? 224 : 7) + (double)(rand_i(p) & 7);
         qa_vec3 direction, point;
         if (lava) {
-          direction = (qa_vec3){j * 8 + (double)(rand_i(p) & 7), i * 8 + (double)(rand_i(p) & 7), 256};
+          double x3 = j * 8 + (double)(rand_i(p) & 7);
+          double y3 = i * 8 + (double)(rand_i(p) & 7);
+          direction = (qa_vec3){x3, y3, 256};
           point = (qa_vec3){origin.x + direction.x, origin.y + direction.y, origin.z + (double)(rand_i(p) & 63)};
         } else {
           direction = (qa_vec3){j * 8, i * 8, k * 8};
-          point = qa_add3(origin, (qa_vec3){i + (double)(rand_i(p) & 3), j + (double)(rand_i(p) & 3), k + (double)(rand_i(p) & 3)});
+          double x2 = i + (double)(rand_i(p) & 3);
+          double y2 = j + (double)(rand_i(p) & 3);
+          double z2 = k + (double)(rand_i(p) & 3);
+          point = qa_add3(origin, (qa_vec3){x2, y2, z2});
         }
         qa_vec3 velocity = qa_scale3(qa_normalize3_or_zero(direction), 50 + (double)(rand_i(p) & 63));
         if (!first(p, (qa_q1_particle_state){point, velocity, color, 0, die, "slow-gravity"})) return;
@@ -275,7 +290,9 @@ void qa_app_source_particles_q2_berserk_slam(qa_app_source_particles *p, qa_vec3
   right_up(direction, &right, &up);
   for (int i = 0; i < 700 && (double)p->q2_count < p->capacity; i++) {
     double color = 110 + 2 * (double)(rand_i(p) & 3);
-    qa_vec3 velocity = qa_add3(qa_add3(qa_scale3(direction, unit(p) * 192), qa_scale3(right, signed_unit(p) * 192)),
+    qa_vec3 a = qa_scale3(direction, unit(p) * 192);
+    qa_vec3 b = qa_scale3(right, signed_unit(p) * 192);
+    qa_vec3 velocity = qa_add3(qa_add3(a, b),
                                qa_scale3(up, signed_unit(p) * 192));
     second(p, (qa_q2_particle_state){seconds * 1000, origin, velocity, zero_v, color, 1, -1 / (0.5 + unit(p) * 0.3)});
   }
@@ -287,11 +304,15 @@ bool qa_app_source_particles_q2_steam(qa_app_source_particles *p, qa_vec3 origin
   for (double i = 0; i < count; i++) {
     if ((double)p->q2_count == p->capacity) return false;
     double shade = color + (double)(rand_i(p) & 7);
-    qa_vec3 point = qa_add3(origin, (qa_vec3){magnitude * 0.1 * signed_unit(p),
-                                              magnitude * 0.1 * signed_unit(p),
-                                              magnitude * 0.1 * signed_unit(p)});
-    qa_vec3 velocity = qa_add3(qa_add3(qa_scale3(direction, magnitude), qa_scale3(right, signed_unit(p) * magnitude / 3)),
-                               qa_scale3(up, signed_unit(p) * magnitude / 3));
+    double x = magnitude * 0.1 * signed_unit(p);
+    double y = magnitude * 0.1 * signed_unit(p);
+    double z = magnitude * 0.1 * signed_unit(p);
+    qa_vec3 point = qa_add3(origin, (qa_vec3){x,
+                                              y,
+                                              z});
+    qa_vec3 a = qa_add3(qa_scale3(direction, magnitude), qa_scale3(right, signed_unit(p) * magnitude / 3));
+    qa_vec3 b = qa_scale3(up, signed_unit(p) * magnitude / 3);
+    qa_vec3 velocity = qa_add3(a, b);
     second(p, (qa_q2_particle_state){seconds * 1000, point, velocity,
       smoke ? zero_v : qa_scale3(gravity_v, 0.5), shade, 1, -1 / (0.5 + unit(p) * 0.3)});
   }
@@ -303,10 +324,13 @@ void qa_app_source_particles_q2_force_wall(qa_app_source_particles *p, qa_vec3 s
   double length = qa_length3(delta);
   qa_vec3 direction = qa_normalize3_or_zero(delta);
   for (double distance = 0; distance < length && (double)p->q2_count < p->capacity; distance += 4) {
+    double x;
+    double y;
+    double z;
     if (unit(p) <= 0.3) continue;
     double alpha_velocity = -1 / (3 + unit(p) * 0.5);
     qa_vec3 origin = qa_add3(qa_add3(start, qa_scale3(direction, distance)),
-                             (qa_vec3){signed_unit(p) * 3, signed_unit(p) * 3, signed_unit(p) * 3});
+                             (x = signed_unit(p) * 3, y = signed_unit(p) * 3, z = signed_unit(p) * 3, (qa_vec3){x, y, z}));
     second(p, (qa_q2_particle_state){seconds * 1000, origin,
       {0, 0, -40 - signed_unit(p) * 10}, zero_v, color, 1, alpha_velocity});
   }
@@ -327,7 +351,10 @@ void qa_app_source_particles_q2_tracker_trail(qa_app_source_particles *p, qa_vec
 }
 void qa_app_source_particles_q2_tracker_shell(qa_app_source_particles *p, qa_vec3 origin, double seconds) {
   for (int i = 0; i < 300 && (double)p->q2_count < p->capacity; i++) {
-    qa_vec3 random_v = {signed_unit(p), signed_unit(p), signed_unit(p)};
+    double x = signed_unit(p);
+    double y = signed_unit(p);
+    double z = signed_unit(p);
+    qa_vec3 random_v = {x, y, z};
     second(p, (qa_q2_particle_state){seconds * 1000,
       qa_add3(origin, qa_scale3(qa_normalize3_or_zero(random_v), 40)), zero_v, zero_v, 0, 1, -10000});
   }
@@ -336,12 +363,20 @@ void qa_app_source_particles_q2_respawn(qa_app_source_particles *p, qa_vec3 orig
   bool logout = !is(kind, "item");
   double base_color = is(kind, "login") ? 0xd0 : is(kind, "logout") ? 0x40 : is(kind, "respawn") ? 0xe0 : 0xd4;
   for (int i = 0; i < (logout ? 500 : 64); i++) {
+    double x3;
+    double y3;
+    double z3;
+    double x2;
+    double y2;
+    double z2;
     double color = base_color + (double)(rand_i(p) & (logout ? 7 : 3));
     qa_vec3 point = logout
-      ? qa_add3(origin, (qa_vec3){-16 + unit(p) * 32, -16 + unit(p) * 32, -24 + unit(p) * 56})
-      : qa_add3(origin, (qa_vec3){signed_unit(p) * 8, signed_unit(p) * 8, signed_unit(p) * 8});
-    qa_vec3 velocity = {signed_unit(p) * (logout ? 20 : 8), signed_unit(p) * (logout ? 20 : 8),
-                        signed_unit(p) * (logout ? 20 : 8)};
+      ? qa_add3(origin, (x3 = -16 + unit(p) * 32, y3 = -16 + unit(p) * 32, z3 = -24 + unit(p) * 56, (qa_vec3){x3, y3, z3}))
+      : qa_add3(origin, (x2 = signed_unit(p) * 8, y2 = signed_unit(p) * 8, z2 = signed_unit(p) * 8, (qa_vec3){x2, y2, z2}));
+    double x = signed_unit(p) * (logout ? 20 : 8);
+    double y = signed_unit(p) * (logout ? 20 : 8);
+    double z = signed_unit(p) * (logout ? 20 : 8);
+    qa_vec3 velocity = {x, y, z};
     if (!second(p, (qa_q2_particle_state){seconds * 1000, point, velocity,
         qa_scale3(gravity_v, logout ? 1 : 0.2), color, 1, -1 / (1 + unit(p) * 0.3)})) return;
   }
@@ -352,7 +387,10 @@ void qa_app_source_particles_q2_teleport(qa_app_source_particles *p, qa_vec3 ori
       for (int k = -16; k <= 32; k += 4) {
         double color = 7 + (double)(rand_i(p) & 7);
         double alpha_velocity = -1 / (0.3 + (double)(rand_i(p) & 7) * 0.02);
-        qa_vec3 point = qa_add3(origin, (qa_vec3){i + (double)(rand_i(p) & 3), j + (double)(rand_i(p) & 3), k + (double)(rand_i(p) & 3)});
+        double x = i + (double)(rand_i(p) & 3);
+        double y = j + (double)(rand_i(p) & 3);
+        double z = k + (double)(rand_i(p) & 3);
+        qa_vec3 point = qa_add3(origin, (qa_vec3){x, y, z});
         qa_vec3 velocity = qa_scale3(qa_normalize3_or_zero((qa_vec3){j * 8, i * 8, k * 8}), 50 + (double)(rand_i(p) & 63));
         if (!second(p, (qa_q2_particle_state){seconds * 1000, point, velocity, gravity_v, color, 1, alpha_velocity})) return;
       }
@@ -377,9 +415,12 @@ void qa_app_source_particles_q2_teleporter(qa_app_source_particles *p, qa_vec3 o
   for (int i = 0; i < 8 && (double)p->q2_count < p->capacity; i++) {
     double ox = origin.x - 16 + (double)(rand_i(p) & 31), vx = signed_unit(p) * 14;
     double oy = origin.y - 16 + (double)(rand_i(p) & 31), vy = signed_unit(p) * 14;
-    second(p, (qa_q2_particle_state){seconds * 1000,
-      {ox, oy, origin.z - 8 + (double)(rand_i(p) & 7)},
-      {vx, vy, 80 + (double)(rand_i(p) & 7)}, gravity_v, 0xdb, 1, -0.5});
+    double spawn_milliseconds = seconds * 1000;
+    qa_vec3 origin2 = {ox, oy, origin.z - 8 + (double)(rand_i(p) & 7)};
+    qa_vec3 velocity = {vx, vy, 80 + (double)(rand_i(p) & 7)};
+    second(p, (qa_q2_particle_state){spawn_milliseconds,
+      origin2,
+      velocity, gravity_v, 0xdb, 1, -0.5});
   }
 }
 void qa_app_source_particles_q2_blaster_trail(qa_app_source_particles *p, qa_vec3 start, qa_vec3 end,
@@ -416,7 +457,7 @@ double qa_app_source_particles_q2_diminishing_trail(qa_app_source_particles *p, 
       second(p, (qa_q2_particle_state){seconds * 1000, {ox, oy, oz},
         {vx, vy, vz - (blood ? 40 : 0)}, blood ? zero_v : (qa_vec3){0, 0, 20}, color, 1, alpha_velocity});
     }
-    count = fmax(100, count - 5);
+    count = qa_js_max(100, count - 5);
   }
   if (is(kind, "rocket"))
     for (double distance = 0; distance < length && (double)p->q2_count < p->capacity; distance++) {

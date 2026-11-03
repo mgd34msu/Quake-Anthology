@@ -9,6 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 enum {
   ICON_SIZE = 48, CHAR_WIDTH = 32, CHAR_HEIGHT = 48, BIGCHAR_WIDTH = 16, BIGCHAR_HEIGHT = 16,
   TINYCHAR_WIDTH = 8, TINYCHAR_HEIGHT = 8, MAX_TEAM_OVERLAY_PLAYERS = 8, TEAM_OVERLAY_MAXNAME_WIDTH = 12,
@@ -80,9 +81,9 @@ void qa_q3_pres_client_hud_corners_draw_field(qa_q3_pres_client_hud_corners *cor
   else if (width == 4) v = v < -999 ? -999 : v > 9999 ? 9999 : v;
   char text[32];
   snprintf(text, sizeof text, "%lld", (long long)v);
-  double length = fmin((double)strlen(text), width);
+  double length = qa_js_min((double)strlen(text), width);
   double draw_x = x + 2 + CHAR_WIDTH * (width - length);
-  for (int index = 0; index < (int)length; index++) {
+  for (int index = 0; index < qa_js_to_int32(length); index++) {
     int frame = text[index] == '-' ? 10 : text[index] - '0';
     if (frame < 0 || frame > 10 || !corners->host.graphics)
       qa_range_error("Invalid field digit frame");
@@ -177,24 +178,24 @@ static double draw_team_overlay(qa_q3_pres_client_hud_corners *corners, double y
   qa_q3_base_source_player_state *ps = active_player_state(corners);
   double team = qa_q3_base_player_state_slots_get(&ps->persistant, QA_Q3_BASE_PERS_TEAM);
   if (team != QA_Q3_BASE_TEAM_RED && team != QA_Q3_BASE_TEAM_BLUE) return y;
-  double count = fmin(corners->state->num_sorted_team_players, MAX_TEAM_OVERLAY_PLAYERS);
+  double count = qa_js_min(corners->state->num_sorted_team_players, MAX_TEAM_OVERLAY_PLAYERS);
   double players = 0, player_width = 0;
   for (double index = 0; index < count; index++) {
     qa_q3_pres_client_info *client = team_client(corners, index);
     if (client->info_valid && client->team == (qa_q3_base_team)team) {
       players++;
-      player_width = fmax(player_width, qa_q3_pres_draw_strlen(client->name ? client->name : ""));
+      player_width = qa_js_max(player_width, qa_q3_pres_draw_strlen(client->name ? client->name : ""));
     }
   }
   if (players == 0) return y;
-  player_width = fmin(player_width, TEAM_OVERLAY_MAXNAME_WIDTH);
+  player_width = qa_js_min(player_width, TEAM_OVERLAY_MAXNAME_WIDTH);
   double location_width = 0;
   for (double index = 1; index < MAX_LOCATIONS; index++) {
     const char *location = corners->host.config_string(corners->host.ctx, CS_LOCATIONS + index);
     if (location && location[0] != '\0')
-      location_width = fmax(location_width, qa_q3_pres_draw_strlen(location));
+      location_width = qa_js_max(location_width, qa_q3_pres_draw_strlen(location));
   }
-  location_width = fmin(location_width, TEAM_OVERLAY_MAXLOCATION_WIDTH);
+  location_width = qa_js_min(location_width, TEAM_OVERLAY_MAXLOCATION_WIDTH);
   double width = (player_width + location_width + 11) * TINYCHAR_WIDTH;
   double x = right ? 640 - width : 0;
   double height = players * TINYCHAR_HEIGHT;
@@ -233,7 +234,7 @@ static double draw_team_overlay(qa_q3_pres_client_hud_corners *corners, double y
         weapon_icon ? weapon_icon : corners->host.graphics ? corners->host.graphics->defer_shader : NULL);
     xx = right ? x : x + width - TINYCHAR_WIDTH;
     for (int p = 0; p < 16; p++) {
-      if (((int64_t)client->powerups & (1LL << POWERUPS[p])) == 0) continue;
+      if ((qa_js_to_int32(client->powerups) & (1 << POWERUPS[p])) == 0) continue;
       const qa_q3_base_item_definition *item =
           qa_q3_base_find_item_for_powerup(corners->state->product, POWERUPS[p]);
       if (!item) continue;
@@ -321,7 +322,7 @@ static double draw_scores(qa_q3_pres_client_hud_corners *corners, double y) {
     double score = qa_q3_base_player_state_slots_get(&ps->persistant, QA_Q3_BASE_PERS_SCORE);
     bool spectator = qa_q3_base_player_state_slots_get(&ps->persistant, QA_Q3_BASE_PERS_TEAM) ==
                      QA_Q3_BASE_TEAM_SPECTATOR;
-    if (score1 != score) score2 = (int32_t)score;
+    if (score1 != score) score2 = qa_js_to_int32(score);
     if (score2 != SCORE_NOT_PRESENT)
       x = draw_free_score(corners, x, y, score2, !spectator && score == score2 && score != score1, false);
     if (score1 != SCORE_NOT_PRESENT)
@@ -344,7 +345,7 @@ static double draw_powerups(qa_q3_pres_client_hud_corners *corners, double y) {
   int sorted[16];
   int32_t sorted_times[16];
   int sorted_count = 0;
-  for (int powerup = 0; powerup < (int)ps->powerups.length && powerup < 16; powerup++) {
+  for (int powerup = 0; powerup < qa_js_to_int32(ps->powerups.length) && powerup < 16; powerup++) {
     double expiration = qa_q3_base_player_state_slots_get(&ps->powerups, powerup);
     if (expiration == 0) continue;
     int32_t remaining = qa_int32(expiration - corners->state->time);
@@ -450,7 +451,7 @@ static const char *team_chat_msg(qa_q3_pres_client_game_static_state *cgs, doubl
 }
 void qa_q3_pres_client_hud_corners_draw_team_info(qa_q3_pres_client_hud_corners *corners) {
   require_base(corners, "CG_DrawTeamInfo");
-  double chat_height = fmin(corner_cvar(corners, QA_Q3_PRES_CORNER_CVAR_TEAM_CHAT_HEIGHT), TEAMCHAT_HEIGHT);
+  double chat_height = qa_js_min(corner_cvar(corners, QA_Q3_PRES_CORNER_CVAR_TEAM_CHAT_HEIGHT), TEAMCHAT_HEIGHT);
   if (chat_height <= 0) return;
   qa_q3_pres_client_game_static_state *cgs = corners->static_state;
   if (cgs->team_last_chat_pos == cgs->team_chat_pos) return;
@@ -465,7 +466,7 @@ void qa_q3_pres_client_hud_corners_draw_team_info(qa_q3_pres_client_hud_corners 
   double width = 0;
   for (double index = cgs->team_last_chat_pos; index < cgs->team_chat_pos; index++) {
     const char *message = team_chat_msg(cgs, index, chat_height);
-    width = fmax(width, qa_q3_pres_draw_strlen(message ? message : ""));
+    width = qa_js_max(width, qa_q3_pres_draw_strlen(message ? message : ""));
   }
   width = width * TINYCHAR_WIDTH + TINYCHAR_WIDTH * 2;
   (void)width;

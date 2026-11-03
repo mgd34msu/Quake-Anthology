@@ -1,6 +1,7 @@
 /* Port of src/bots/behavior/rerelease/nav.ts. GPL-2.0-or-later. */
 #include "qa/bots/behavior/rerelease/nav.h"
 #include "qa/foundation/support.h"
+#include "qa/bots/navigation/graph.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,11 +36,11 @@ static bool link_type_of(const qa_navigation_edge *edge, qa_nav_link_type *out) 
     case QA_TM_CROUCH: *out = QA_NAV_LINK_CROUCH; return true;
     case QA_TM_LADDER: *out = QA_NAV_LINK_LADDER; return true;
     case QA_TM_JUMP: case QA_TM_WATER_JUMP:
-      *out = edge->source_travel_type == 5 ? QA_NAV_LINK_BARRIER_JUMP : QA_NAV_LINK_LONG_JUMP; return true;
+      *out = qa_navigation_edge_is_barrier_jump(edge) ? QA_NAV_LINK_BARRIER_JUMP : QA_NAV_LINK_LONG_JUMP; return true;
     case QA_TM_DROP: *out = QA_NAV_LINK_WALK_OFF_LEDGE; return true;
     case QA_TM_TELEPORT: *out = QA_NAV_LINK_TELEPORT; return true;
     case QA_TM_JUMP_PAD: *out = QA_NAV_LINK_PUSHER; return true;
-    case QA_TM_MOVER: *out = edge->source_travel_type == 7 ? QA_NAV_LINK_TRAIN : QA_NAV_LINK_ELEVATOR; return true;
+    case QA_TM_MOVER: *out = edge->source_travel_type == QA_KEX_TRAVEL_TRAIN ? QA_NAV_LINK_TRAIN : QA_NAV_LINK_ELEVATOR; return true;
     default: return false;
   }
 }

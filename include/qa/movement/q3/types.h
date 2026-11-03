@@ -89,6 +89,7 @@ typedef struct qa_q3_motion_options {
   bool has_trace_mask;
   bool has_fixed_msec; double fixed_msec; /* TS number|null: has=false is null */
   bool no_footsteps;
+  bool ladders_disabled; /* TS options.ladders === false */
   /* begin_step/end_step: false return is TS `=== false` break; has_ret distinguishes void */
   bool (*begin_step)(void *ctx, qa_q3_motion *state, qa_q3_move_command *command, double msec, double substep);
   bool (*end_step)(void *ctx, qa_q3_motion *state); /* NULL = absent */

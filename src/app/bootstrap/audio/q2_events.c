@@ -2,6 +2,7 @@
 #include "qa/app/bootstrap/audio/q2_events.h"
 #include <stdio.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static qa_app_q2_event_sound mk(const char *path, double channel, double attenuation,
                                 double volume, double delay) {
   qa_app_q2_event_sound s;
@@ -29,7 +30,7 @@ size_t qa_app_q2_muzzle_sounds(double flash, bool silenced, qa_app_q2_random_fn 
   const double volume = silenced ? 0.2 : 1;
   char buf[64];
   /* TS machinegun closure, inlined per call site below. */
-  long long key = (long long)flash & ~128LL;
+  long long key = qa_js_to_int32(flash) & ~128LL;
   switch (key) {
     case 0: case 34: out[0] = mk("weapons/blastf1a.wav", 1, 1, volume, 0); return 1;
     case 1: case 3:
@@ -82,7 +83,8 @@ static int one(qa_app_q2_event_sound *out, const char *path, double attenuation)
 }
 int qa_app_q2_monster_muzzle_sounds(double flash, qa_app_q2_random_fn random, void *random_ctx,
                                     bool rerelease, qa_app_q2_event_sound *out) {
-  long long f = (long long)flash;
+  /* switch (flash) compares the number: 5.5 or NaN matches no case (-1 matches none either). */
+  long long f = isfinite(flash) && flash == trunc(flash) && fabs(flash) < 1e9 ? (long long)flash : -1;
   char buf[64];
   if (rerelease) {
     switch (f) {

@@ -1,45 +1,61 @@
-/* Port of src/app/bootstrap/selected-q3-presentation.ts. Q3 source /
- * scene / assets owners (q3-client and content/q3 slices) are host
- * fn+ctx; ownership, busy and closed guards are kept here.
- * Async -> synchronous; failures are error strings. GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/selected-q3-presentation.ts: one original
+ * selected-source cgame scene per viewing seat, without primary view, body,
+ * weapon, input or HUD ownership (ApplicationSelectedQ3Presentation), and
+ * the per-seat collection (ApplicationSelectedQ3Presentations).
+ * Async is synchronous; errors raise through qa_raise with the TS class and
+ * message. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SELECTED_Q3_PRESENTATION_H
 #define QA_APP_BOOTSTRAP_SELECTED_Q3_PRESENTATION_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/mod_presentations.h"
+#include "qa/app/bootstrap/presentation.h"
+#include "qa/app/bootstrap/simulation/arsenal/q3_source.h"
+#include "qa/app/bootstrap/simulation/q3/presentation.h"
+#include "qa/app/bootstrap/simulation/types.h"
 #include "qa/contracts/content.h"
-#include "qa/contracts/identity.h"
-/* TS SelectedQ3Presentation: content/source/state stay opaque + hardware. */
-typedef struct qa_app_selected_q3_source_ref {
+
+/* TS SelectedQ3Presentation { content, source, state }. Borrowed. */
+typedef struct qa_app_selected_q3_source {
   qa_content_id content;
-  const void *source; /* Q3SelectedSource mirror */
-  const void *state;  /* Q3SourcePresentationState mirror */
-  const void *identity; /* TS object identity for owns() */
-} qa_app_selected_q3_source_ref;
-typedef struct qa_app_selected_q3_host {
-  void *ctx;
-  const char *(*hardware)(void *ctx, const qa_app_selected_q3_source_ref *source);
-  qa_actor_id (*presentation_actor)(void *ctx, const void *presentation);
-  double (*presentation_generation)(void *ctx, const void *presentation);
-  bool (*source_owns_presentation)(void *ctx, const qa_app_selected_q3_source_ref *source, const void *presentation);
-  const char *(*initialize)(void *ctx, const qa_app_selected_q3_source_ref *source, const void *presentation);
-  const char *(*prepare_frame)(void *ctx, const qa_app_selected_q3_source_ref *source, const void *presentation, const void *const *events, size_t count, double frame);
-  const char *(*close_one)(void *ctx);
-  void (*flush_audio)(void *ctx);
-} qa_app_selected_q3_host;
+  qa_app_q3_selected_source *source;
+  const qa_app_q3_source_presentation_state *state;
+} qa_app_selected_q3_source;
+
+/* TS SelectedQ3PresentationOptions: the ApplicationModPresentationsOptions
+ * plus hardware() (true is "ragepro", false "generic"), called with base.ctx. */
+typedef struct qa_app_selected_q3_presentation_options {
+  qa_app_mod_presentations_options base;
+  bool (*hardware_ragepro)(void *ctx);
+} qa_app_selected_q3_presentation_options;
+
 typedef struct qa_app_selected_q3_presentation qa_app_selected_q3_presentation;
-qa_app_selected_q3_presentation *qa_app_selected_q3_presentation_create(qa_app_selected_q3_host host,
-    qa_app_selected_q3_source_ref source, const void *presentation);
-void qa_app_selected_q3_presentation_destroy(qa_app_selected_q3_presentation *p);
-const char *qa_app_selected_q3_presentation_hardware(qa_app_selected_q3_presentation *p);
-bool qa_app_selected_q3_presentation_owns(qa_app_selected_q3_presentation *p, qa_app_selected_q3_source_ref source, const void *presentation);
-void qa_app_selected_q3_presentation_prepare(qa_app_selected_q3_presentation *p, qa_app_selected_q3_source_ref source,
-                                             const void *const *events, size_t count, double frame);
-void qa_app_selected_q3_presentation_close(qa_app_selected_q3_presentation *p);
+/* TS ApplicationSelectedQ3Presentation.create. options, source and seat are
+ * borrowed and must outlive the result. */
+qa_app_selected_q3_presentation *qa_app_selected_q3_presentation_create(
+    const qa_app_selected_q3_presentation_options *options, qa_app_selected_q3_source source,
+    const qa_app_viewing_seat *presentation);
+/* Closes (TS close), then frees; a close failure raises after the free. */
+void qa_app_selected_q3_presentation_destroy(qa_app_selected_q3_presentation *presentation);
+bool qa_app_selected_q3_presentation_owns(const qa_app_selected_q3_presentation *presentation,
+    const qa_app_selected_q3_source *source, const qa_app_viewing_seat *seat);
+void qa_app_selected_q3_presentation_prepare(qa_app_selected_q3_presentation *presentation,
+    const qa_app_selected_q3_source *source, const qa_app_sim_presentation_event *events, size_t event_count,
+    double frame);
+void qa_app_selected_q3_presentation_close(qa_app_selected_q3_presentation *presentation);
+
 typedef struct qa_app_selected_q3_presentations qa_app_selected_q3_presentations;
-qa_app_selected_q3_presentations *qa_app_selected_q3_presentations_create(qa_app_selected_q3_host host);
-void qa_app_selected_q3_presentations_destroy(qa_app_selected_q3_presentations *c);
-void qa_app_selected_q3_presentations_retain(qa_app_selected_q3_presentations *c, const void *const *presentations, size_t count);
-void qa_app_selected_q3_presentations_prepare(qa_app_selected_q3_presentations *c, const void *const *presentations, size_t count,
-                                              const qa_app_selected_q3_source_ref *source, const void *const *events, size_t event_count, double frame);
-void qa_app_selected_q3_presentations_close(qa_app_selected_q3_presentations *c);
+/* options is copied; its pointers are borrowed. */
+qa_app_selected_q3_presentations *qa_app_selected_q3_presentations_create(
+    const qa_app_selected_q3_presentation_options *options);
+/* Closes, then frees; a close failure raises after the free. */
+void qa_app_selected_q3_presentations_destroy(qa_app_selected_q3_presentations *presentations);
+/* Seats are identified by their ctx. */
+void qa_app_selected_q3_presentations_retain(qa_app_selected_q3_presentations *presentations,
+    const qa_app_viewing_seat *seats, size_t seat_count);
+/* source NULL is TS null. */
+void qa_app_selected_q3_presentations_prepare(qa_app_selected_q3_presentations *presentations,
+    const qa_app_viewing_seat *seats, size_t seat_count, const qa_app_selected_q3_source *source,
+    const qa_app_sim_presentation_event *events, size_t event_count, double frame);
+void qa_app_selected_q3_presentations_close(qa_app_selected_q3_presentations *presentations);
 #endif

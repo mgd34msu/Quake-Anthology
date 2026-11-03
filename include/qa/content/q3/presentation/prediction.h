@@ -37,6 +37,7 @@ typedef struct qa_q3_pres_prediction_settings {
   double dm_flags;
   bool demo_playback, no_predict, synchronous_clients, predict_items, pmove_fixed;
   double pmove_msec, error_decay_integer, error_decay_value, show_miss;
+  bool ladders_disabled; /* TS ladders === false (absent or true leaves ladders on) */
 } qa_q3_pres_prediction_settings;
 /* TS predictItem source closure. */
 typedef void (*qa_q3_pres_predict_item_source_fn)(void *ctx);

@@ -47,6 +47,9 @@ qa_qvm_file_services qa_qvm_files_get_services(const qa_qvm_files *files);
 /* False only on OOM. */
 bool qa_qvm_files_capture_checkpoint(qa_qvm_files *files, qa_qvm_files_checkpoint *out);
 void qa_qvm_files_restore_checkpoint(qa_qvm_files *files, const qa_save_value *value);
+/* TS captureCheckpoint() as its saved value (owned tree; defined with the
+ * QVM provider codecs in mod_provider.c). */
+qa_save_value *qa_qvm_files_checkpoint_value(qa_qvm_files *files);
 void qa_qvm_files_assert_current(qa_qvm_files *files);
 void qa_qvm_files_close_all(qa_qvm_files *files);
 

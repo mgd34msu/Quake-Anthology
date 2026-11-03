@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
 static qa_vec3 vec_of(const float v[3]) {
@@ -72,9 +73,9 @@ void qa_q2_to_entity(const qa_q2_wire_entity *wire, qa_q2_entity_state *out) {
   out->model_indexes[3] = wire->modelindex4;
   out->frame = wire->frame;
   out->skin = wire->skinnum;
-  out->effects = (double)(uint32_t)(int32_t)wire->effects;
-  out->render_effects = (double)(uint32_t)(int32_t)wire->renderfx;
-  out->solid = (double)(uint32_t)(int32_t)wire->solid;
+  out->effects = (double)(uint32_t)qa_int32(wire->effects);
+  out->render_effects = (double)(uint32_t)qa_int32(wire->renderfx);
+  out->solid = (double)(uint32_t)qa_int32(wire->solid);
   out->sound = wire->sound;
   out->event = wire->event;
 }
@@ -83,8 +84,8 @@ void qa_q2_to_rerelease_entity(const qa_q2_wire_entity *wire,
                                qa_q2_rerelease_entity_state *out) {
   memset(out, 0, sizeof *out);
   qa_q2_to_entity(wire, &out->base);
-  out->effects = (uint64_t)(uint32_t)(int32_t)wire->effects |
-                 ((uint64_t)(uint32_t)(int32_t)wire->morefx << 32);
+  out->effects = (uint64_t)(uint32_t)qa_int32(wire->effects) |
+                 ((uint64_t)(uint32_t)qa_int32(wire->morefx) << 32);
   out->alpha = wire->alpha;
   out->scale = wire->scale;
   out->instance_bits = wire->instance_bits;
@@ -114,7 +115,7 @@ static void copy_stats(qa_q2_wire_player *out, const double *values, size_t coun
   if (count > QA_Q2_MAX_STATS_STORAGE) {
     qa_range_error("Q2 wire has at most 64 player stats");
   }
-  for (size_t i = 0; i < count; i++) out->stats[i] = (int16_t)(int32_t)values[i];
+  for (size_t i = 0; i < count; i++) out->stats[i] = (int16_t)qa_int32(values[i]);
 }
 
 void qa_q2_from_player_classic(const qa_q2_player_state *state, qa_q2_wire_player *out) {
@@ -123,9 +124,9 @@ void qa_q2_from_player_classic(const qa_q2_player_state *state, qa_q2_wire_playe
                state->movement.gravity, out);
   copy_stats(out, state->view.stats.values, state->view.stats.count);
   for (int i = 0; i < 3; i++) {
-    out->pmove.origin[i] = (int32_t)state->movement.origin_eighths.values[i];
-    out->pmove.velocity[i] = (int32_t)state->movement.velocity_eighths.values[i];
-    out->pmove.delta_angles[i] = (int16_t)(int32_t)state->movement.delta_angle_shorts.values[i];
+    out->pmove.origin[i] = qa_int32(state->movement.origin_eighths.values[i]);
+    out->pmove.velocity[i] = qa_int32(state->movement.velocity_eighths.values[i]);
+    out->pmove.delta_angles[i] = (int16_t)qa_int32(state->movement.delta_angle_shorts.values[i]);
   }
   out->pmove.pm_time = state->movement.time_eight_milliseconds;
   set_color(out->blend, state->blend);
@@ -220,7 +221,7 @@ void qa_q2_from_command_classic(const qa_q2_user_command *command,
   out->sidemove = command->side_move;
   out->buttons = command->buttons;
   for (int i = 0; i < 3; i++) {
-    out->angles[i] = (int16_t)(int32_t)command->angle_shorts.values[i];
+    out->angles[i] = (int16_t)qa_int32(command->angle_shorts.values[i]);
   }
   out->upmove = command->up_move;
   out->impulse = command->impulse;

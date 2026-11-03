@@ -2,6 +2,7 @@
 #include "qa/compat/qvm/game_data.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "qa/compat/qvm/player_record.h"
@@ -15,12 +16,29 @@ static void check_int32(double value) {
 static bool is_integer(double v) { return isfinite(v) && v == trunc(v); }
 static bool modern(qa_qvm_abi_profile p) { return p == NULL || strcmp(p, "q3-modern") == 0; }
 
-void qa_qvm_game_data_init(qa_qvm_game_data *data, qa_qvm_memory *memory,
+void qa_qvm_game_data_init(qa_qvm_game_data *data, const qa_qvm_game_memory *memory,
                            qa_qvm_abi_profile abi_profile) {
   memset(data, 0, sizeof *data);
-  data->memory = memory;
+  if (memory != NULL) data->memory = *memory;
   data->abi_profile = abi_profile == NULL ? "q3-modern" : abi_profile;
   data->client_count = 64;
+}
+
+typedef struct qa_qvm_game_data_cache_block {
+  struct qa_qvm_game_data_cache_block *next;
+  size_t count;
+  int64_t offsets[256];
+  qa_qvm_shared_entity entities[256];
+} qa_qvm_game_data_cache_block;
+
+void qa_qvm_game_data_destroy(qa_qvm_game_data *data) {
+  qa_qvm_game_data_cache_block *block = data->cached_overflow;
+  while (block != NULL) {
+    qa_qvm_game_data_cache_block *next = block->next;
+    free(block);
+    block = next;
+  }
+  data->cached_overflow = NULL;
 }
 
 void qa_qvm_game_data_set_client_count(qa_qvm_game_data *data, double count) {
@@ -39,35 +57,41 @@ double qa_qvm_game_data_get_client_stride_bytes(const qa_qvm_game_data *data) {
   return (double)data->client_stride;
 }
 
+typedef struct view_at_ctx { qa_qvm_game_data *data; int64_t offset, size; qa_qvm_writable_view *out; } view_at_ctx;
+static void view_at(void *ctx) {
+  view_at_ctx *view = ctx;
+  qa_qvm_game_memory_view_at(&view->data->memory, view->offset, view->size, view->out);
+}
 static void make_view(qa_qvm_game_data *data, int64_t offset, int64_t size,
                       qa_qvm_writable_view *out) {
-  if (offset < 0 || offset > (int64_t)data->memory->length - size)
-    qa_range_error("Game-data record exceeds the interpreter allocation");
-  qa_qvm_memory_data_view(data->memory, offset, size, out);
+  if (offset < 0) qa_range_error("Game-data record exceeds the guest allocation");
+  view_at_ctx ctx = {data, offset, size, out};
+  qa_caught_error caught;
+  if (!qa_try(view_at, &ctx, &caught)) qa_range_error("Game-data record exceeds the guest allocation");
 }
 
-static int64_t indexed(qa_qvm_game_data *data, bool has_base, int64_t base, int64_t stride,
+static int64_t indexed(bool has_base, int64_t base, int64_t stride,
                        double number) {
   if (!has_base) qa_range_error("Game-data table has a null source pointer");
   check_int32(number);
   double displacement = (double)stride * number;
   check_int32(displacement);
   int64_t offset = base + (int64_t)displacement;
-  if (offset < 0 || offset > (int64_t)data->memory->length)
-    qa_range_error("Game-data pointer arithmetic leaves the interpreter allocation");
+  if (offset < 0 || offset > 0xffffffffLL)
+    qa_range_error("Game-data pointer arithmetic leaves the guest allocation");
   return offset;
 }
 
 static int64_t entity_offset(qa_qvm_game_data *data, double number) {
   if (!is_integer(number) || number < 0 || number >= (double)data->count)
     qa_range_error("Entity slot is outside located game data");
-  return indexed(data, data->has_entities, data->entities, data->entity_stride, number);
+  return indexed(data->has_entities, data->entities, data->entity_stride, number);
 }
 
 static int64_t client_offset(qa_qvm_game_data *data, double number) {
   if (!is_integer(number) || number < 0 || number >= (double)data->client_count)
     qa_range_error("Client slot is outside configured game data");
-  int64_t offset = indexed(data, data->has_clients, data->clients, data->client_stride, number);
+  int64_t offset = indexed(data->has_clients, data->clients, data->client_stride, number);
   qa_qvm_writable_view view;
   make_view(data, offset, data->client_stride, &view);
   return offset;
@@ -100,14 +124,10 @@ void qa_qvm_game_data_clear(qa_qvm_game_data *data) {
 
 qa_qvm_game_data_state qa_qvm_game_data_checkpoint(const qa_qvm_game_data *data) {
   qa_qvm_game_data_state state;
-  state.entities_word = !data->has_entities ? 0
-                        : data->entities == 0 ? (double)data->memory->length
-                                              : (double)data->entities;
+  state.entities_word = (double)qa_qvm_game_memory_pointer_word(&data->memory, data->has_entities, data->entities);
   state.num_entities = (double)data->count;
   state.entity_stride = (double)data->entity_stride;
-  state.clients_word = !data->has_clients ? 0
-                       : data->clients == 0 ? (double)data->memory->length
-                                             : (double)data->clients;
+  state.clients_word = (double)qa_qvm_game_memory_pointer_word(&data->memory, data->has_clients, data->clients);
   state.client_stride = (double)data->client_stride;
   return state;
 }
@@ -123,10 +143,7 @@ void qa_qvm_game_data_restore(qa_qvm_game_data *data, qa_qvm_game_data_state sta
 }
 
 static bool word_offset(qa_qvm_game_data *data, double word, int64_t *out) {
-  qa_qvm_memory_span span;
-  if (!qa_qvm_memory_pointer(data->memory, (int64_t)word, &span)) return false;
-  *out = span.byte_offset;
-  return true;
+  return qa_qvm_game_memory_address(&data->memory, (int64_t)word, out);
 }
 
 void qa_qvm_game_data_locate(qa_qvm_game_data *data, double entities_word, double num_entities,
@@ -160,9 +177,24 @@ void qa_qvm_game_data_locate(qa_qvm_game_data *data, double entities_word, doubl
 static qa_qvm_shared_entity *entity_at(qa_qvm_game_data *data, int64_t offset) {
   for (size_t i = 0; i < data->cached_count; i++)
     if (data->cached_offsets[i] == offset) return &data->cached_entities[i];
+  for (qa_qvm_game_data_cache_block *block = data->cached_overflow; block != NULL; block = block->next)
+    for (size_t i = 0; i < block->count; i++)
+      if (block->offsets[i] == offset) return &block->entities[i];
   qa_qvm_writable_view view;
   make_view(data, offset, qa_qvm_shared_entity_bytes(data->abi_profile), &view);
-  if (data->cached_count >= 1024) qa_range_error("out of memory");
+  if (data->cached_count >= 1024) {
+    qa_qvm_game_data_cache_block *block = data->cached_overflow;
+    if (block == NULL || block->count == 256) {
+      block = calloc(1, sizeof *block);
+      if (block == NULL) qa_range_error("out of memory");
+      block->next = data->cached_overflow;
+      data->cached_overflow = block;
+    }
+    size_t slot = block->count++;
+    block->offsets[slot] = offset;
+    qa_qvm_borrow_shared_entity(&view, data->abi_profile, &block->entities[slot]);
+    return &block->entities[slot];
+  }
   size_t slot = data->cached_count++;
   data->cached_offsets[slot] = offset;
   qa_qvm_borrow_shared_entity(&view, data->abi_profile, &data->cached_entities[slot]);

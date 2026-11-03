@@ -9,8 +9,8 @@
 #include "qa/foundation/support.h"
 
 noreturn void qa_compat_qc_program_error(const char *source, const char *format, ...) {
-  char msg[1024]; va_list ap; va_start(ap, format); vsnprintf(msg, sizeof msg, format, ap); va_end(ap);
-  qa_range_error("%s: %s", source ? source : "progs.dat", msg);
+  char msg[QA_CAUGHT_MESSAGE_CAPACITY]; va_list ap; va_start(ap, format); vsnprintf(msg, sizeof msg, format, ap); va_end(ap);
+  qa_raise("QcProgramError", 0, 0, "%s: %s", source ? source : "progs.dat", msg);
 }
 static char *xstrdup(const char *s) { size_t n = strlen(s) + 1; char *r = malloc(n); if (r) memcpy(r, s, n); return r; }
 char *qa_compat_qc_byte_string(const uint8_t *bytes, size_t length, int64_t offset) {
@@ -53,12 +53,32 @@ void qa_compat_qc_program_destroy(qa_compat_qc_program *p) {
   free(p->statements); free(p->globals); free(p->fields); free(p->functions);
   free(p->strings); free(p->initial_globals); free(p->source); free(p->digest); memset(p, 0, sizeof *p);
 }
+/* A throw abandons the partial program, which TS leaves to the GC. */
+typedef struct {
+  qa_binary_reader reader, secs[6]; qa_compat_qc_program *out;
+  char *name, *file; uint8_t *sizes; int64_t *parameter_sizes;
+} LoadScope;
+static void load_release(LoadScope *l) {
+  free(l->name); free(l->file); free(l->sizes); free(l->parameter_sizes);
+  for (int i = 0; i < 6; i++) qa_binary_reader_destroy(&l->secs[i]);
+  qa_binary_reader_destroy(&l->reader);
+}
+static void load_scope_free(void *arg) { LoadScope *l = arg; load_release(l); qa_compat_qc_program_destroy(l->out); }
+static void *grown(void *items, size_t count, size_t *capacity, size_t size, size_t first) {
+  if (count < *capacity) return items;
+  size_t next = *capacity ? *capacity * 2 : first;
+  void *p = realloc(items, next * size);
+  if (!p) qa_range_error("QC program allocation failed");
+  *capacity = next;
+  return p;
+}
 bool qa_compat_qc_load_program(const uint8_t *bytes, size_t length, const qa_quakec_api_identity *expected, const char *source, qa_compat_qc_program *out) {
   memset(out, 0, sizeof *out);
   const char *src = source ? source : "progs.dat";
-  qa_binary_reader reader;
-  if (!qa_binary_reader_init(&reader, (uint8_t *)bytes, length, src)) return false;
-  int32_t version = qa_binary_reader_i32(&reader), crc = qa_binary_reader_i32(&reader);
+  LoadScope l; memset(&l, 0, sizeof l); l.out = out;
+  if (!qa_binary_reader_init(&l.reader, (uint8_t *)bytes, length, src)) return false;
+  qa_cleanup scope; qa_cleanup_push(&scope, load_scope_free, &l);
+  int32_t version = qa_binary_reader_i32(&l.reader), crc = qa_binary_reader_i32(&l.reader);
   if (version != 6) qa_compat_qc_program_error(src, "unsupported program version %d", version);
   qa_quakec_api_identity api;
   if (crc == 5927) api = (qa_quakec_api_identity){QA_QUAKEC_API_Q1_NETQUAKE, 6, 5927};
@@ -66,85 +86,102 @@ bool qa_compat_qc_load_program(const uint8_t *bytes, size_t length, const qa_qua
   else qa_compat_qc_program_error(src, "unknown system layout CRC %d", crc);
   if (expected && expected->kind != api.kind)
     qa_compat_qc_program_error(src, "expected %s, found %s", expected->kind == QA_QUAKEC_API_Q1_QUAKEWORLD ? "q1-quakeworld" : "q1-netquake", api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD ? "q1-quakeworld" : "q1-netquake");
-  qa_binary_reader secs[6]; static const int strides[6] = {8, 8, 8, 36, 1, 4};
+  static const int strides[6] = {8, 8, 8, 36, 1, 4};
   for (int i = 0; i < 6; i++) {
-    int32_t off = qa_binary_reader_i32(&reader), cnt = qa_binary_reader_i32(&reader);
+    int32_t off = qa_binary_reader_i32(&l.reader), cnt = qa_binary_reader_i32(&l.reader);
     if (cnt < 0) qa_compat_qc_program_error(src, "negative section count");
-    if (!qa_binary_reader_records(&reader, off, (int64_t)cnt * strides[i], strides[i], &secs[i])) { qa_binary_reader_destroy(&reader); return false; }
+    if (!qa_binary_reader_records(&l.reader, off, (int64_t)cnt * strides[i], strides[i], &l.secs[i])) goto oom;
   }
-  int32_t efw = qa_binary_reader_i32(&reader);
+  int32_t efw = qa_binary_reader_i32(&l.reader);
   if (efw <= 0 || efw > 65536) qa_compat_qc_program_error(src, "invalid entity field count %d", efw);
-  out->string_length = qa_binary_reader_length(&secs[4]);
-  out->strings = qa_binary_reader_bytes(&secs[4], (int64_t)out->string_length);
+  out->string_length = qa_binary_reader_length(&l.secs[4]);
+  out->strings = qa_binary_reader_bytes(&l.secs[4], (int64_t)out->string_length);
   if (!out->strings && out->string_length) goto oom;
   if (out->string_length == 0 || out->strings[0] != 0) qa_compat_qc_program_error(src, "string zero must be empty");
-  out->initial_globals_length = qa_binary_reader_length(&secs[5]);
-  out->initial_globals = qa_binary_reader_bytes(&secs[5], (int64_t)out->initial_globals_length);
+  out->initial_globals_length = qa_binary_reader_length(&l.secs[5]);
+  out->initial_globals = qa_binary_reader_bytes(&l.secs[5], (int64_t)out->initial_globals_length);
   if (!out->initial_globals && out->initial_globals_length) goto oom;
   if (out->initial_globals_length < 28 * 4) qa_compat_qc_program_error(src, "missing reserved global words");
   out->source = xstrdup(src); if (!out->source) goto oom;
   out->api = api; out->entity_field_words = efw;
   /* definitions: secs[1]=globals, secs[2]=fields */
   for (int which = 0; which < 2; which++) {
-    qa_binary_reader *in = &secs[which ? 2 : 1]; bool field = which == 1;
-    size_t cap = 0, n = 0; qa_compat_qc_definition *arr = NULL;
+    qa_binary_reader *in = &l.secs[which ? 2 : 1]; bool field = which == 1;
+    qa_compat_qc_definition **arr = field ? &out->fields : &out->globals;
+    size_t *count = field ? &out->field_count : &out->global_count, cap = 0;
     while (qa_binary_reader_remaining(in) > 0) {
       uint16_t raw = qa_binary_reader_u16(in), off = qa_binary_reader_u16(in);
-      char *name = qa_compat_qc_byte_string(out->strings, out->string_length, qa_binary_reader_i32(in));
-      if (!name) { for (size_t k = 0; k < n; k++) free(arr[k].name); free(arr); goto oom; }
+      l.name = qa_compat_qc_byte_string(out->strings, out->string_length, qa_binary_reader_i32(in));
+      if (!l.name) goto oom;
       const char *type = (raw & 0x7fff) < 8 ? value_types[raw & 0x7fff] : "opaque";
-      if (field && (raw & 0x8000)) qa_compat_qc_program_error(src, "invalid definition %s", name);
+      if (field && (raw & 0x8000)) qa_compat_qc_program_error(src, "invalid definition %s", l.name);
       int64_t words = strcmp(type, "vector") == 0 ? 3 : 1;
       int64_t limit = field ? efw : (int64_t)(out->initial_globals_length / 4);
-      if (off + words > limit) qa_compat_qc_program_error(src, "definition %s exceeds its memory", name);
-      if (n == cap) { cap = cap ? cap * 2 : 16; arr = realloc(arr, cap * sizeof *arr); if (!arr) { free(name); goto oom; } }
-      arr[n++] = (qa_compat_qc_definition){type, raw & 0x7fff, (raw & 0x8000) != 0, off, name};
+      if (off + words > limit) qa_compat_qc_program_error(src, "definition %s exceeds its memory", l.name);
+      *arr = grown(*arr, *count, &cap, sizeof **arr, 16);
+      (*arr)[(*count)++] = (qa_compat_qc_definition){type, raw & 0x7fff, (raw & 0x8000) != 0, off, l.name};
+      l.name = NULL;
     }
-    if (field) { out->fields = arr; out->field_count = n; } else { out->globals = arr; out->global_count = n; }
   }
-  { size_t cap = 0, n = 0; qa_compat_qc_statement *arr = NULL;
-    while (qa_binary_reader_remaining(&secs[0]) > 0) {
-      uint16_t op = qa_binary_reader_u16(&secs[0]);
+  { size_t cap = 0;
+    while (qa_binary_reader_remaining(&l.secs[0]) > 0) {
+      uint16_t op = qa_binary_reader_u16(&l.secs[0]);
       if (op > QA_QC_OP_BITOR) qa_compat_qc_program_error(src, "unsupported opcode %u", op);
-      if (n == cap) { cap = cap ? cap * 2 : 64; arr = realloc(arr, cap * sizeof *arr); if (!arr) { free(arr); goto oom; } }
-      arr[n++] = (qa_compat_qc_statement){(qa_compat_qc_opcode)op, qa_binary_reader_u16(&secs[0]), qa_binary_reader_u16(&secs[0]), qa_binary_reader_u16(&secs[0])};
+      out->statements = grown(out->statements, out->statement_count, &cap, sizeof *out->statements, 64);
+      /* Initializer lists are indeterminately sequenced in C: read in file order first. */
+      uint16_t a = qa_binary_reader_u16(&l.secs[0]), b = qa_binary_reader_u16(&l.secs[0]), c = qa_binary_reader_u16(&l.secs[0]);
+      out->statements[out->statement_count++] = (qa_compat_qc_statement){(qa_compat_qc_opcode)op, a, b, c};
     }
-    out->statements = arr; out->statement_count = n; }
-  { size_t cap = 0, n = 0; qa_compat_qc_function *arr = NULL;
-    while (qa_binary_reader_remaining(&secs[3]) > 0) {
-      int32_t first = qa_binary_reader_i32(&secs[3]), pstart = qa_binary_reader_i32(&secs[3]), locals = qa_binary_reader_i32(&secs[3]);
-      (void)qa_binary_reader_i32(&secs[3]);
-      char *name = qa_compat_qc_byte_string(out->strings, out->string_length, qa_binary_reader_i32(&secs[3]));
-      if (!name) goto oom_fns;
-      char *file = qa_compat_qc_byte_string(out->strings, out->string_length, qa_binary_reader_i32(&secs[3]));
-      if (!file) { free(name); goto oom_fns; }
-      int32_t count = qa_binary_reader_i32(&secs[3]);
-      uint8_t *sizes = qa_binary_reader_bytes(&secs[3], 8);
-      if (!sizes) { free(name); free(file); goto oom_fns; }
-      if (count < 0 || count > 8 || locals < 0 || pstart < 0 || pstart + locals > (int64_t)(out->initial_globals_length / 4))
-        qa_compat_qc_program_error(src, "invalid function locals/parameters for %s", name);
-      int64_t *ps = NULL; if (count) { ps = malloc((size_t)count * sizeof *ps); if (!ps) { free(name); free(file); free(sizes); goto oom_fns; } }
+  }
+  { size_t cap = 0; qa_binary_reader *in = &l.secs[3];
+    while (qa_binary_reader_remaining(in) > 0) {
+      int32_t first = qa_binary_reader_i32(in), pstart = qa_binary_reader_i32(in), locals = qa_binary_reader_i32(in);
+      (void)qa_binary_reader_i32(in); /* Runtime profile counters start at zero. */
+      l.name = qa_compat_qc_byte_string(out->strings, out->string_length, qa_binary_reader_i32(in));
+      if (!l.name) goto oom;
+      l.file = qa_compat_qc_byte_string(out->strings, out->string_length, qa_binary_reader_i32(in));
+      if (!l.file) goto oom;
+      int32_t count = qa_binary_reader_i32(in);
+      l.sizes = qa_binary_reader_bytes(in, 8);
+      if (!l.sizes) goto oom;
+      if (count < 0 || count > 8 || locals < 0 || pstart < 0 || pstart + (int64_t)locals > (int64_t)(out->initial_globals_length / 4))
+        qa_compat_qc_program_error(src, "invalid function locals/parameters for %s", l.name);
+      if (count) { l.parameter_sizes = malloc((size_t)count * sizeof *l.parameter_sizes); if (!l.parameter_sizes) goto oom; }
       int64_t sum = 0;
-      for (int32_t i = 0; i < count; i++) { if (first > 0 && sizes[i] != 1 && sizes[i] != 3) qa_compat_qc_program_error(src, "invalid parameter size for %s", name); ps[i] = sizes[i]; sum += sizes[i]; }
-      free(sizes);
+      for (int32_t i = 0; i < count; i++) { if (first > 0 && l.sizes[i] != 1 && l.sizes[i] != 3) qa_compat_qc_program_error(src, "invalid parameter size for %s", l.name); l.parameter_sizes[i] = l.sizes[i]; sum += l.sizes[i]; }
+      free(l.sizes); l.sizes = NULL;
       if (first >= (int64_t)out->statement_count || (first > 0 && pstart + sum > (int64_t)(out->initial_globals_length / 4)))
-        qa_compat_qc_program_error(src, "invalid entry point for %s", name);
-      if (n == cap) { cap = cap ? cap * 2 : 32; arr = realloc(arr, cap * sizeof *arr); if (!arr) { free(name); free(file); free(ps); goto oom_fns; } }
-      arr[n] = (qa_compat_qc_function){(int64_t)n, first, pstart, locals, name, file, ps, (size_t)count, n > 0 && first == 0 && pstart == 0 && locals == 0};
-      n++;
+        qa_compat_qc_program_error(src, "invalid entry point for %s", l.name);
+      size_t n = out->function_count;
+      out->functions = grown(out->functions, n, &cap, sizeof *out->functions, 32);
+      out->functions[n] = (qa_compat_qc_function){(int64_t)n, first, pstart, locals, l.name, l.file, l.parameter_sizes, (size_t)count, n > 0 && first == 0 && pstart == 0 && locals == 0};
+      out->function_count = n + 1;
+      l.name = NULL; l.file = NULL; l.parameter_sizes = NULL;
     }
-    out->functions = arr; out->function_count = n; goto fns_done;
-  oom_fns: out->functions = arr; out->function_count = n; goto oom;
-  fns_done:; }
+  }
   if (out->function_count == 0 || out->statement_count == 0) qa_compat_qc_program_error(src, "empty function/statement table");
   out->checksum = crc16(bytes, length);
   { uint8_t dig[SHA256_DIGEST_LENGTH]; SHA256(bytes, length, dig); char hex[65];
     for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) sprintf(hex + i * 2, "%02x", dig[i]);
     hex[64] = 0; out->digest = qa_create_content_digest(hex); if (!out->digest) goto oom; }
-  for (int i = 0; i < 6; i++) qa_binary_reader_destroy(&secs[i]);
-  qa_binary_reader_destroy(&reader);
+  qa_cleanup_pop(&scope);
+  load_release(&l);
   return true;
 oom:
-  for (int i = 0; i < 6; i++) qa_binary_reader_destroy(&secs[i]);
-  qa_binary_reader_destroy(&reader); qa_compat_qc_program_destroy(out); return false;
+  qa_cleanup_pop(&scope);
+  load_scope_free(&l);
+  return false;
+}
+
+int64_t qa_compat_qc_program_function_end(const qa_compat_qc_program *p, int64_t first_statement) {
+  bool found = false;
+  int64_t end = 0;
+  for (size_t i = 0; i < p->function_count; i++) {
+    const int64_t start = p->functions[i].first_statement;
+    if (start > first_statement && (!found || start < end)) {
+      end = start;
+      found = true;
+    }
+  }
+  return found ? end : (int64_t)p->statement_count;
 }

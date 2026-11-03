@@ -4,10 +4,10 @@
 #ifndef QA_CONTENT_Q2_RERELEASE_OBITUARY_H
 #define QA_CONTENT_Q2_RERELEASE_OBITUARY_H
 #include <stddef.h>
-#include "qa/content/q2/rerelease/players.h"
+#include "qa/content/q2/base/player/types.h"
 typedef struct qa_q2rr_obituary { char text[96]; const char *args[2]; size_t arg_count; } qa_q2rr_obituary;
-qa_q2rr_obituary qa_q2_rerelease_obituary(qa_q2rr_player_state *victim, qa_q2rr_player_state *attacker,
+qa_q2rr_obituary qa_q2_rerelease_obituary(qa_q2_base_player_state *victim, qa_q2_base_player_state *attacker,
                                           double cause, qa_q2_mode mode, bool no_point_loss,
                                           void *score_ctx,
-                                          void (*score)(void *ctx, qa_q2rr_player_state *recipient, double change));
+                                          void (*score)(void *ctx, qa_q2_base_player_state *recipient, double change));
 #endif

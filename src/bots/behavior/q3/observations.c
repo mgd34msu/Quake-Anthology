@@ -4,12 +4,13 @@
 #include <stdlib.h>
 #include <string.h>
 static qa_vec3 fr3(qa_vec3 v) { return (qa_vec3){(float)v.x, (float)v.y, (float)v.z}; }
-static qa_aas_entity_info_bots_a empty_info(int64_t n) {
+qa_aas_entity_info_bots_a qa_aas_entity_info_empty_bots_a(int64_t n) {
   qa_aas_entity_info_bots_a r;
   memset(&r, 0, sizeof r);
   r.number = n;
   return r;
 }
+static qa_aas_entity_info_bots_a empty_info(int64_t n) { return qa_aas_entity_info_empty_bots_a(n); }
 bool qa_bot_entity_observations_init(qa_bot_entity_observations *o, int64_t cap) {
   o->capacity = cap;
   o->records = NULL;

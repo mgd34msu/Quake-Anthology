@@ -11,10 +11,9 @@ uint8_t *qa_flood_skin(const uint8_t *indices, size_t length, double width_d, do
   int black = 0;
   for (int i = 0; i < 256; i++) {
     size_t o = (size_t)i * 3;
-    uint8_t r = o < palette.colors.length ? palette.colors.bytes[o] : 0;
-    uint8_t g = o + 1 < palette.colors.length ? palette.colors.bytes[o + 1] : 0;
-    uint8_t b = o + 2 < palette.colors.length ? palette.colors.bytes[o + 2] : 0;
-    if (r == 0 && g == 0 && b == 0) { black = i; break; }
+    /* colors[i] past the palette is undefined, which is not === 0 */
+    if (o + 2 >= palette.colors.length) continue;
+    if (palette.colors.bytes[o] == 0 && palette.colors.bytes[o + 1] == 0 && palette.colors.bytes[o + 2] == 0) { black = i; break; }
   }
   if (length == 0) return result;
   uint8_t fill = result[0];

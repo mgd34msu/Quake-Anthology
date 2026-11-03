@@ -25,8 +25,10 @@ bool qa_q12_group_type(qa_binary_reader *reader);
 /* Malloc'd cumulative endpoints. */
 double *qa_q12_intervals(qa_binary_reader *reader, double frame_count, size_t *out_count);
 
+/* A frame reader must not leak its own partial frame when it raises. */
 typedef void *(*qa_q12_read_frame_fn)(void *ctx);
-qa_timed_frames qa_q12_read_timed(qa_binary_reader *reader, qa_q12_read_frame_fn read_frame, void *ctx);
+/* Reads into `out`, which the caller zeroes and releases on a raise (frames are stored as they are read). */
+void qa_q12_read_timed(qa_binary_reader *reader, qa_q12_read_frame_fn read_frame, void *ctx, qa_timed_frames *out);
 
 qa_vec3 qa_q12_expand_position(qa_vec3 position, qa_vec3 scale, qa_vec3 translate);
 qa_packed_alias_vertex qa_q12_packed_vertex(qa_binary_reader *reader);

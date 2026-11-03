@@ -10,6 +10,7 @@
 #include "qa/input/support.h"
 #include "qa/ui/common/layout.h"
 #include "qa/ui/settings/accessibility.h"
+#include "qa/foundation/js.h"
 
 static void oom(void) { qa_range_error("Out of memory"); }
 static void *xmalloc(size_t size) {
@@ -37,8 +38,8 @@ static bool kind_is(const char *kind, const char *wanted) {
 }
 /* JS value.toFixed(2) through Number(): shortest of the 2dp value. */
 static void format_percent(char *out, size_t size, double value) {
-  char fixed[64];
-  snprintf(fixed, sizeof fixed, "%.2f", value);
+  char fixed[QA_JS_TO_FIXED_CAPACITY];
+  qa_js_to_fixed(value, 2, fixed, sizeof fixed);
   char *shortest = xnumber(qa_input_js_parse_number(fixed));
   snprintf(out, size, "%s%%", shortest);
   free(shortest);
@@ -84,10 +85,7 @@ static void free_state(void *state) { free(state); }
 
 /* ---- settingControl -------------------------------------------------- */
 
-typedef struct control_ctx {
-  const qa_ui_setting_binding *binding;
-  qa_seat_id seat;
-} control_ctx;
+typedef qa_ui_setting_control_storage control_ctx;
 
 static void require_seat(control_ctx *ctx, qa_seat_id actual) {
   if (!qa_same_seat(actual, ctx->seat))
@@ -127,13 +125,11 @@ static void ctl_submit_text(void *v, qa_seat_id seat, const char *value) {
     ctx->binding->commit_submit(ctx->binding->ctx, value);
 }
 
-/* The control_ctx is leaked per control (the TS closure lives as
- * long as the control object the factory returned; factories here
- * rebuild controls per call and the leak is one small struct per
- * rebuild — noted accommodation, matching retained closures). */
+/* The closure state lives in caller-owned storage that outlives the control
+ * (the TS closure lives as long as the control object). */
 qa_ui_control qa_ui_setting_control(const qa_ui_setting_binding *binding,
                                     qa_rect rect, qa_seat_id seat,
-                                    char *label_scratch, size_t scratch_size) {
+                                    qa_ui_setting_control_storage *storage) {
   qa_ui_control control;
   memset(&control, 0, sizeof control);
   control.id = binding->id;
@@ -142,7 +138,7 @@ qa_ui_control qa_ui_setting_control(const qa_ui_setting_binding *binding,
   control.visible = true;
   control.enabled = binding->enabled(binding->ctx);
   control.kind = binding->kind;
-  control_ctx *ctx = xmalloc(sizeof *ctx);
+  control_ctx *ctx = storage;
   ctx->binding = binding;
   ctx->seat = seat;
   control.ctx = ctx;
@@ -151,11 +147,11 @@ qa_ui_control qa_ui_setting_control(const qa_ui_setting_binding *binding,
     control.change_checked = ctl_change_checked;
   } else if (kind_is(binding->kind, "slider")) {
     control.value = binding->read_num(binding->ctx);
-    if (binding->format_value != NULL && label_scratch != NULL) {
+    if (binding->format_value != NULL) {
       const char *label =
           binding->format_value(binding->ctx, binding->read_num(binding->ctx));
-      snprintf(label_scratch, scratch_size, "%s", label);
-      control.value_label = label_scratch;
+      snprintf(storage->value_label, sizeof storage->value_label, "%s", label);
+      control.value_label = storage->value_label;
     }
     control.minimum = binding->minimum;
     control.maximum = binding->maximum;
@@ -397,9 +393,10 @@ struct menus_state {
   char **strings;
   size_t string_count, string_capacity;
   qa_ui_menu_scroll scroll;
-  const qa_ui_control_id *scroll_ids;
-  char *label_pool;
-  size_t label_capacity;
+  qa_ui_control_id *scroll_ids;
+  size_t scroll_capacity;
+  qa_ui_setting_control_storage *control_storage;
+  size_t storage_capacity;
   struct nav_slot { menus_state *menus; char *target; } *navs;
   size_t nav_count, nav_capacity;
 };
@@ -435,14 +432,25 @@ static qa_ui_control *pool_controls(menus_state *m, size_t count) {
   }
   return m->controls;
 }
-static char *pool_labels(menus_state *m, size_t count) {
-  if (m->label_capacity < count * 64) {
-    char *next = realloc(m->label_pool, count * 64);
+/* Storage for one factory result's setting controls, reused by the next. */
+static qa_ui_setting_control_storage *pool_storage(menus_state *m, size_t count) {
+  if (m->storage_capacity < count) {
+    qa_ui_setting_control_storage *next =
+        realloc(m->control_storage, count * sizeof *next);
     if (next == NULL) oom();
-    m->label_pool = next;
-    m->label_capacity = count * 64;
+    m->control_storage = next;
+    m->storage_capacity = count;
   }
-  return m->label_pool;
+  return m->control_storage;
+}
+static qa_ui_control_id *pool_scroll_ids(menus_state *m, size_t count) {
+  if (m->scroll_capacity < count) {
+    qa_ui_control_id *next = realloc(m->scroll_ids, count * sizeof *next);
+    if (next == NULL) oom();
+    m->scroll_ids = next;
+    m->scroll_capacity = count;
+  }
+  return m->scroll_ids;
 }
 static void nav_activate(void *v, qa_seat_id seat) {
   (void)seat;
@@ -508,11 +516,16 @@ static qa_ui_menu page_factory(void *v) {
   size_t group_buttons = page->is_group_index ? page->group_count : 0;
   size_t total = group_buttons + setting_count + 1;
   qa_ui_control *controls = pool_controls(m, total);
-  char *labels = pool_labels(m, setting_count == 0 ? 1 : setting_count);
+  qa_ui_setting_control_storage *storage =
+      pool_storage(m, setting_count == 0 ? 1 : setting_count);
   qa_seat_id seat = qa_native_ui_controller_get_seat(m->controller);
   size_t at = 0;
   if (page->is_group_index) {
     for (size_t g = 0; g < page->group_count; g++) {
+      const char * id2;
+      const char * label;
+      qa_rect rect2;
+      char * target;
       char slug[256];
       const char *group = page->groups[g];
       size_t o = 0;
@@ -537,25 +550,22 @@ static qa_ui_menu page_factory(void *v) {
                page->category_id, slug + first);
       snprintf(target_buffer, sizeof target_buffer, "menu:settings:%s:%s",
                page->category_id, slug + first);
-      controls[at++] = nav_button(m, pool_dup(m, id_buffer),
-                                  pool_dup(m, group), row496((double)g),
-                                  pool_dup(m, target_buffer));
+      controls[at++] = (id2 = pool_dup(m, id_buffer), label = pool_dup(m, group), rect2 = row496((double)g), target = pool_dup(m, target_buffer), nav_button(m, id2,
+                                  label, rect2, target));
     }
   }
   for (size_t i = 0; i < setting_count; i++) {
     controls[at] = qa_ui_setting_control(page->selected[i],
                                          row496((double)(group_buttons + i)),
-                                         seat, labels + i * 64, 64);
+                                         seat, &storage[i]);
     at++;
   }
   size_t scrolled = at;
   controls[at++] = back_button(m);
   const qa_ui_control_id *ids = NULL;
   if (scrolled > 0) {
-    qa_ui_control_id *array = xmalloc(scrolled * sizeof *array);
+    qa_ui_control_id *array = pool_scroll_ids(m, scrolled);
     for (size_t i = 0; i < scrolled; i++) array[i] = controls[i].id;
-    /* Leaked with the pool's lifetime intent; stored for the menu. */
-    m->scroll_ids = array;
     ids = array;
   }
   m->scroll.rect.x = 64;
@@ -606,10 +616,13 @@ static qa_ui_menu root_factory(void *v) {
     if (!any) continue;
     char target[160];
     snprintf(target, sizeof target, "menu:settings:%s:0", categories[c].id);
+    const char * id2 = pool_fmt(m, "ui:settings:category:%s", categories[c].id);
+    const char * label3 = categories[c].label;
+    qa_rect rect2 = qa_ui_menu_row((double)at, none);
+    char * target3 = pool_dup(m, target);
     controls[at] = nav_button(
-        m, pool_fmt(m, "ui:settings:category:%s", categories[c].id),
-        categories[c].label, qa_ui_menu_row((double)at, none),
-        pool_dup(m, target));
+        m, id2,
+        label3, rect2, target3);
     at++;
   }
   if (m->llm_root != NULL) {
@@ -619,9 +632,10 @@ static qa_ui_menu root_factory(void *v) {
     at++;
   }
   if (m->has_reset) {
-    controls[at] = nav_button(m, "ui:settings:reset", m->reset.label,
-                              qa_ui_menu_row((double)at, none),
-                              pool_dup(m, "menu:settings:reset-confirm"));
+    const char * label2 = m->reset.label;
+    qa_rect rect = qa_ui_menu_row((double)at, none);
+    char * target2 = pool_dup(m, "menu:settings:reset-confirm");
+    controls[at] = nav_button(m, "ui:settings:reset", label2, rect, target2);
     at++;
   }
   controls[at++] = back_button(m);
@@ -860,12 +874,12 @@ void qa_ui_settings_menus_dispose(qa_ui_settings_menus *menus) {
     free(m->pages[i]);
   }
   pool_clear(m);
-  free((void *)m->scroll_ids);
+  free(m->scroll_ids);
   free(m->handles);
   free(m->pages);
   free(m->controls);
   free(m->strings);
-  free(m->label_pool);
+  free(m->control_storage);
   free(m->navs);
   free(m);
   menus->state = NULL;
@@ -982,7 +996,7 @@ static void axis_write(void *v, double value) {
   double base = a->pitch ? qa_default_mouse_tuning.pitch
                          : qa_default_mouse_tuning.yaw;
   double direction = current < 0 || (current == 0 && signbit(current)) ? -1 : 1;
-  double next = direction * base * fmin(200, fmax(0, value)) / 100;
+  double next = direction * base * qa_js_min(200, qa_js_max(0, value)) / 100;
   qa_ui_primary_input_settings values = cur;
   if (a->pitch) {
     values.pitch = next;
@@ -1408,10 +1422,12 @@ static const qa_ui_choice *device_choices(void *v, size_t *out_count) {
     pool[at++] = (qa_ui_choice){ id, audio_dup(s, devices[i]) };
   }
   if (current != NULL && !current_seen) {
+    const char * id2;
+    const char * label;
     char buffer[512];
     snprintf(buffer, sizeof buffer, "device:%s", current);
-    pool[at++] = (qa_ui_choice){ audio_dup(s, buffer),
-                                 audio_dup(s, current) };
+    pool[at++] = (id2 = audio_dup(s, buffer), label = audio_dup(s, current), (qa_ui_choice){ id2,
+                                 label });
   }
   *out_count = at;
   return pool;
@@ -1464,6 +1480,8 @@ static const qa_ui_choice *format_choices(void *v, size_t *out_count) {
   qa_ui_choice *pool = audio_choice_pool(s, value_count + 1);
   size_t at = 0;
   for (size_t i = 0; i <= value_count; i++) {
+    const char * id2;
+    const char * label2;
     int64_t value = i < value_count ? values[i] : current;
     char *id_text = xnumber((double)value);
     bool seen = false;
@@ -1474,8 +1492,8 @@ static const qa_ui_choice *format_choices(void *v, size_t *out_count) {
     if (f->field == 0) snprintf(label, sizeof label, "%s Hz", id_text);
     else if (f->field == 1) snprintf(label, sizeof label, "%s-bit", id_text);
     else snprintf(label, sizeof label, "%s", value == 1 ? "Mono" : "Stereo");
-    pool[at++] = (qa_ui_choice){ audio_dup(s, id_text),
-                                 audio_dup(s, label) };
+    pool[at++] = (id2 = audio_dup(s, id_text), label2 = audio_dup(s, label), (qa_ui_choice){ id2,
+                                 label2 });
     free(id_text);
   }
   *out_count = at;
@@ -1486,6 +1504,9 @@ static void format_write(void *v, const char *value) {
   audio_state *s = f->state;
   qa_audio_output_format next = s->output.format_read(s->output.ctx);
   double number = qa_input_js_parse_number(value);
+  /* audioOutputFormat rejects a NaN or fractional field (Number.isSafeInteger, === 1/2,
+   * === 8/16); map those to an always-invalid 0 instead of a C cast of NaN. */
+  if (!(number == floor(number) && fabs(number) <= 9007199254740991.0)) number = 0;
   if (f->field == 0) next.sample_rate = (int64_t)number;
   else if (f->field == 1) next.sample_bits = (int64_t)number;
   else next.channels = (int64_t)number;
@@ -1619,7 +1640,7 @@ typedef struct gamepad_state {
   qa_seat_input *(*get_input)(void *);
   void *get_ctx;
   qa_ui_setting_binding items[25];
-  char format[96];
+  char format[2 * QA_JS_TO_FIXED_CAPACITY + 16];
 } gamepad_state;
 static qa_gamepad_input *pad_of(gamepad_state *s) {
   qa_seat_input *input = s->get_input != NULL ? s->get_input(s->get_ctx)
@@ -1699,7 +1720,7 @@ static void pad_write_num(void *v, double value) {
     case PAD_MOVE_DEADZONE: {
       qa_stick_curve curve = t.move;
       curve.deadzone = curve.kind == QA_STICK_CURVE_RADIAL
-                           ? fmin(value, 0.999 - curve.outer_threshold)
+                           ? qa_js_min(value, 0.999 - curve.outer_threshold)
                            : value;
       pad_curve(s, false, curve);
       break;
@@ -1707,7 +1728,7 @@ static void pad_write_num(void *v, double value) {
     case PAD_LOOK_DEADZONE: {
       qa_stick_curve curve = t.look;
       curve.deadzone = curve.kind == QA_STICK_CURVE_RADIAL
-                           ? fmin(value, 0.999 - curve.outer_threshold)
+                           ? qa_js_min(value, 0.999 - curve.outer_threshold)
                            : value;
       pad_curve(s, true, curve);
       break;
@@ -1727,7 +1748,7 @@ static void pad_write_num(void *v, double value) {
     case PAD_MOVE_OUTER: {
       qa_stick_curve curve = t.move;
       if (curve.kind == QA_STICK_CURVE_RADIAL) {
-        curve.outer_threshold = fmin(value, 0.999 - curve.deadzone);
+        curve.outer_threshold = qa_js_min(value, 0.999 - curve.deadzone);
         pad_curve(s, false, curve);
       }
       break;
@@ -1735,7 +1756,7 @@ static void pad_write_num(void *v, double value) {
     case PAD_LOOK_OUTER: {
       qa_stick_curve curve = t.look;
       if (curve.kind == QA_STICK_CURVE_RADIAL) {
-        curve.outer_threshold = fmin(value, 0.999 - curve.deadzone);
+        curve.outer_threshold = qa_js_min(value, 0.999 - curve.deadzone);
         pad_curve(s, true, curve);
       }
       break;
@@ -1758,7 +1779,10 @@ static const char *pad_preview_format(void *v, double value) {
                : c->field == PAD_MOVE_PREVIEW_Y ? preview.move_raw.y
                : c->field == PAD_LOOK_PREVIEW_X ? preview.look_raw.x
                                                 : preview.look_raw.y;
-  snprintf(s->format, sizeof s->format, "Raw %.2f / %.2f", raw, value);
+  char raw_text[QA_JS_TO_FIXED_CAPACITY], value_text[QA_JS_TO_FIXED_CAPACITY]; /* toFixed(2) */
+  qa_js_to_fixed(raw, 2, raw_text, sizeof raw_text);
+  qa_js_to_fixed(value, 2, value_text, sizeof value_text);
+  snprintf(s->format, sizeof s->format, "Raw %s / %s", raw_text, value_text);
   return s->format;
 }
 static const char *pad_curve_read(void *v) {
@@ -1777,7 +1801,7 @@ static void pad_curve_write(void *v, const char *value) {
   qa_stick_curve curve = previous;
   if (strcmp(value, "radial") == 0) {
     curve.kind = QA_STICK_CURVE_RADIAL;
-    curve.outer_threshold = fmin(0.02, (1 - previous.deadzone) / 2);
+    curve.outer_threshold = qa_js_min(0.02, (1 - previous.deadzone) / 2);
   } else {
     curve.kind = QA_STICK_CURVE_AXIAL;
   }

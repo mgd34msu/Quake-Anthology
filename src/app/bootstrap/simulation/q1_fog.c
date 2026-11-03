@@ -28,11 +28,11 @@ static void emit(qa_app_sim_q1_fog *f, retained *value) {
   if (!value->has_context) return;
   qa_app_sim_presentation_event *e = &f->out[f->out_count++];
   memset(e, 0, sizeof *e);
-  e->kind = "q1-fog"; e->event_kind = "transition";
+  e->kind = "q1-fog"; e->q1_fog.kind = "transition";
   e->content = value->context.content; e->sequence = value->context.sequence; e->seconds = value->context.seconds;
   e->has_source_entity = value->context.has_source_entity; e->source_entity = value->context.source_entity;
-  e->has_player = value->has_player; e->player = value->player;
-  e->transition = qa_q1_fog_state_capture(&value->state); e->sky_factor = value->sky_factor;
+  e->q1_fog.has_player = value->has_player; e->q1_fog.player = value->player;
+  e->q1_fog.transition = qa_q1_fog_state_capture(&value->state); e->q1_fog.sky_factor = value->sky_factor;
 }
 qa_app_sim_q1_fog *qa_app_sim_q1_fog_create(qa_app_sim_q1_fog_options options) {
   qa_app_sim_q1_fog *f = calloc(1, sizeof *f);
@@ -62,6 +62,12 @@ static bool accepts(qa_app_sim_q1_fog *f, qa_content_id content) {
   for (size_t i = 0; i < f->options.accepted_content_count; i++)
     if (content && strcmp(content, f->options.accepted_contents[i]) == 0) return true;
   return false;
+}
+static qa_content_id accepted_text(qa_app_sim_q1_fog *f, qa_content_id content) {
+  if (f->options.content && strcmp(content, f->options.content) == 0) return f->options.content;
+  for (size_t i = 0; f->options.has_accepted && i < f->options.accepted_content_count; i++)
+    if (strcmp(content, f->options.accepted_contents[i]) == 0) return f->options.accepted_contents[i];
+  return content;
 }
 static bool alive_of(qa_app_sim_q1_fog *f, qa_actor_id a) { return f->options.alive(f->options.alive_ctx, a); }
 static void apply(qa_app_sim_q1_fog *f, retained *value, qa_app_sim_q1_fog_context ctx, qa_app_sim_q1_fog_event_in ev) {
@@ -193,7 +199,8 @@ static retained read_retained(qa_app_sim_q1_fog *fog, const qa_save_reader *entr
     qa_save_reader cf = fld(&ctx, "content");
     qa_content_id content = qa_read_content_id(&cf); qa_save_reader_destroy(&cf);
     if (!accepts(fog, content)) qa_save_reader_fail(&ctx, "fog source content is not selected");
-    out.context.content = content;
+    /* The context outlives the save tree: keep the equal option string. */
+    out.context.content = accepted_text(fog, content);
     qa_save_reader f1 = fld(&ctx, "sequence"); out.context.sequence = qa_save_reader_integer_min(&f1, 0); qa_save_reader_destroy(&f1);
     qa_save_reader f2 = fld(&ctx, "seconds"); out.context.seconds = qa_save_reader_finite(&f2); qa_save_reader_destroy(&f2);
     qa_save_reader f3 = fld(&ctx, "sourceEntity");

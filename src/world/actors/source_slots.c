@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 
 static bool safe_integer(double value) {
@@ -22,8 +23,8 @@ static bool q3_reusable(void *ctx, qa_source_time freed_at, qa_source_time now) 
   if (freed_at.kind != QA_SOURCE_TIME_MILLISECONDS || now.kind != QA_SOURCE_TIME_MILLISECONDS)
     qa_range_error("Q3 entity lifetime uses milliseconds");
   /* TS: (mapStart + 2000) | 0 and (now - freed) | 0 (int32 truncation). */
-  int32_t threshold = (int32_t)(state->map_start_milliseconds + 2000);
-  int32_t elapsed = (int32_t)(now.value - freed_at.value);
+  int32_t threshold = qa_js_to_int32(state->map_start_milliseconds + 2000);
+  int32_t elapsed = qa_js_to_int32(now.value - freed_at.value);
   return !(freed_at.value > (double)threshold && elapsed < 1000);
 }
 
@@ -47,7 +48,7 @@ qa_actor_lifetime_policy qa_q3_entity_lifetime(qa_q3_lifetime_state *state,
   policy.reuse = "source-cooldown";
   policy.ctx = state;
   policy.reusable_after = q3_reusable;
-  policy.clear = "source-gentity";
+  policy.clear = "source-edict"; /* ActorLifetimePolicy.clear has one TS value; "source-gentity" was dropped. */
   policy.exhaustion = "fatal";
   return policy;
 }

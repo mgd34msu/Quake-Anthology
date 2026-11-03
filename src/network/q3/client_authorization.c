@@ -1,5 +1,6 @@
 /* Port of src/network/q3/client-authorization.ts. GPL-2.0-or-later. */
 #include "qa/network/q3/client_authorization.h"
+#include "qa/foundation/support.h"
 #include "qa/network/q3/connectionless.h"
 #include <netdb.h>
 #include <netinet/in.h>
@@ -31,14 +32,33 @@ bool qa_q3_client_authorization_init(qa_q3_client_authorization **out, const qa_
   *out = a; return true;
 }
 void qa_q3_client_authorization_destroy(qa_q3_client_authorization *a) { free(a); }
+typedef struct resolve_scope { qa_q3_client_authorization_options *o; qa_q3_mirror_ipv4_address *addr; char *err; size_t err_len; bool ok; } resolve_scope;
+static void resolve_body(void *ctx) {
+  resolve_scope *scope = ctx;
+  scope->ok = scope->o->resolve ? scope->o->resolve(scope->o->ctx, scope->addr, scope->err, scope->err_len) : default_resolve(scope->addr);
+}
+static double cvar_integer(qa_cvar_registry *cvars, const char *name) {
+  qa_cvar_snapshot snap;
+  if (!qa_cvar_registry_get(cvars, name, &snap)) return 0;
+  double value = snap.integer_value;
+  qa_cvar_read_free(&snap);
+  return value;
+}
 void qa_q3_client_authorization_request(qa_q3_client_authorization *a, qa_q3_client_auth_assert_fn assert_current, void *assert_ctx,
                                         qa_q3_client_auth_send_fn send, void *send_ctx) {
   qa_q3_client_authorization_options *o = &a->options;
   assert_current(assert_ctx);
+  /* The key is sent in cleartext to a legacy authority, so it leaves the machine only when the player opts in. */
+  qa_cvar_snapshot registered;
+  if (qa_cvar_registry_register(o->cvars, "cl_authorizeKey", "0", QA_CVAR_FLAG_ARCHIVE, &registered)) qa_cvar_read_free(&registered);
+  if (cvar_integer(o->cvars, "cl_authorizeKey") == 0) return;
   if (!a->has_address) {
     qa_q3_mirror_ipv4_address addr; memset(&addr, 0, sizeof addr);
     char err[128] = "";
-    bool ok = o->resolve ? o->resolve(o->ctx, &addr, err, sizeof err) : default_resolve(&addr);
+    /* TS `catch { address = null; }` around the resolver. */
+    resolve_scope scope = { o, &addr, err, sizeof err, false };
+    qa_caught_error caught;
+    bool ok = qa_try(resolve_body, &scope, &caught) && scope.ok;
     if (!ok || addr.kind != QA_Q3_ADDR_IPV4) {
       assert_current(assert_ctx);
       if (o->print) o->print(o->print_ctx, "Couldn't resolve Q3 authorization server\n");
@@ -62,10 +82,8 @@ void qa_q3_client_authorization_request(qa_q3_client_authorization *a, qa_q3_cli
     key[n] = 0;
   }
   qa_cvar_snapshot snap;
-  qa_cvar_registry_register(o->cvars, "cl_anonymous", "0", QA_CVAR_FLAG_INIT | QA_CVAR_FLAG_SYSTEM_INFO, &snap);
-  qa_cvar_read_free(&snap);
-  double anonymous = 0;
-  if (qa_cvar_registry_get(o->cvars, "cl_anonymous", &snap)) { anonymous = snap.integer_value; qa_cvar_read_free(&snap); }
+  if (qa_cvar_registry_register(o->cvars, "cl_anonymous", "0", QA_CVAR_FLAG_INIT | QA_CVAR_FLAG_SYSTEM_INFO, &snap)) qa_cvar_read_free(&snap);
+  double anonymous = cvar_integer(o->cvars, "cl_anonymous");
   assert_current(assert_ctx);
   char buf[96];
   snprintf(buf, sizeof buf, "getKeyAuthorize %lld %s", (long long)anonymous, key);

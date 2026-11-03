@@ -4,6 +4,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include <math.h>
+#include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,15 +45,24 @@ static void ensure_names(qa_q3_server_pak_set *s, size_t need) {
   for (size_t i = s->name_capacity; i < need; i++) nn[i] = NULL;
   s->names = nn; s->name_capacity = need;
 }
+static void destroy_tokens(void *arg) { qa_command_tokens_destroy(arg); }
 void qa_q3_server_pak_set_set_names(qa_q3_server_pak_set *s, const char *text, int64_t clear_count) {
-  size_t clear = clear_count < 0 ? s->sum_count : (size_t)clear_count;
+  /* -1 is the TS default (current sums length); other negatives clear nothing. */
+  size_t clear = clear_count == -1 ? s->sum_count : clear_count < 0 ? 0 : (size_t)clear_count;
   ensure_names(s, clear);
   for (size_t i = 0; i < clear; i++) { free(s->names[i]); s->names[i] = NULL; }
   qa_command_tokens t;
   if (!tokenize(text, &t)) qa_range_error("pak name tokenize allocation failed");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, destroy_tokens, &t);
   size_t n = t.argc < MAX_SEARCH_PATHS ? t.argc : MAX_SEARCH_PATHS;
   ensure_names(s, n);
-  for (size_t i = 0; i < n; i++) { free(s->names[i]); s->names[i] = xstrdup(t.argv[i]); }
+  for (size_t i = 0; i < n; i++) {
+    char *name = xstrdup(t.argv[i]);
+    if (!name) qa_range_error("pak name allocation failed");
+    free(s->names[i]); s->names[i] = name;
+  }
+  qa_cleanup_pop(&guard);
   qa_command_tokens_destroy(&t);
 }
 bool qa_q3_server_pak_set_snapshot(const qa_q3_server_pak_set *s, qa_q3_server_pak **out, size_t *count) {
@@ -137,15 +147,37 @@ static state_t *find_state(qa_q3_pak_references *r, const qa_q3_pak_catalog_entr
   for (size_t i = 0; i < r->state_count; i++) if (r->states[i].pack == pack) return &r->states[i];
   return NULL;
 }
+/* TS `${prefix} ${JSON.stringify(path)}`: the label only matters when the
+ * checksum is out of range, so it is built on that path alone. */
+static noreturn void raise_checksum_label(const char *prefix, const char *path) {
+  size_t n = strlen(path);
+  char *quoted = malloc(n * 6 + 3);
+  if (!quoted) qa_range_error("%s must be a signed or unsigned 32-bit integer", prefix);
+  size_t o = 0;
+  quoted[o++] = '"';
+  for (size_t i = 0; i < n; i++) {
+    unsigned char c = (unsigned char)path[i];
+    const char *esc = c == '"' ? "\\\"" : c == '\\' ? "\\\\" : c == '\b' ? "\\b" : c == '\f' ? "\\f"
+                    : c == '\n' ? "\\n" : c == '\r' ? "\\r" : c == '\t' ? "\\t" : NULL;
+    if (esc) { memcpy(quoted + o, esc, 2); o += 2; }
+    else if (c < 0x20) o += (size_t)snprintf(quoted + o, 7, "\\u%04x", c);
+    else quoted[o++] = (char)c;
+  }
+  quoted[o++] = '"'; quoted[o] = 0;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, quoted);
+  qa_range_error("%s %s must be a signed or unsigned 32-bit integer", prefix, quoted);
+}
+static void check_pack_checksum(int64_t value, const char *prefix, const char *path) {
+  if (value < -((int64_t)0x80000000) || value > 0xffffffffLL) raise_checksum_label(prefix, path);
+}
 static void add_state(qa_q3_pak_references *r, const qa_q3_pak_catalog_entry *pack, state_t *out) {
-  char label[512];
-  snprintf(label, sizeof label, "Checksum for \"%s\"", pack->archive_path);
-  checksum_pattern(pack->checksum, label);
-  snprintf(label, sizeof label, "Pure checksum for \"%s\"", pack->archive_path);
-  checksum_pattern(pack->pure_checksum, label);
+  check_pack_checksum(pack->checksum, "Checksum for", pack->archive_path);
+  check_pack_checksum(pack->pure_checksum, "Pure checksum for", pack->archive_path);
   if (find_state(r, pack)) qa_range_error("Pak catalog contains the same identity more than once");
   out->pack = pack; out->flags = 0;
 }
+static void destroy_references(void *arg) { qa_q3_pak_references_destroy(arg); }
 bool qa_q3_pak_references_init(qa_q3_pak_references **out, const qa_q3_pak_catalog_entry *const *packs, size_t pack_count,
                                int64_t checksum_feed, qa_q3_pak_random_fn random, void *random_ctx) {
   qa_q3_pak_references *r = calloc(1, sizeof *r);
@@ -154,7 +186,10 @@ bool qa_q3_pak_references_init(qa_q3_pak_references **out, const qa_q3_pak_catal
   r->random = random; r->random_ctx = random_ctx;
   r->states = calloc(pack_count ? pack_count : 1, sizeof *r->states);
   if (!r->states) { free(r); return false; }
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, destroy_references, r);
   for (size_t i = 0; i < pack_count; i++) { r->state_count = i; add_state(r, packs[i], &r->states[i]); }
+  qa_cleanup_pop(&guard);
   r->state_count = pack_count;
   *out = r; return true;
 }

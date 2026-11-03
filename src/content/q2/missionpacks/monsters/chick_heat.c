@@ -29,9 +29,9 @@ static void rocket_fn(void *ctx, qa_q2m_context *c) {
     (void)c->weapons.fire_rocket(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, 50, 500, 70, 50);
   qa_q2bm_muzzle(c, 57, aim.direction, aim.start);
 }
-qa_q2m_definition qa_q2mpm_create_chick_heat_definition(qa_q2mpm_weapons weapons) {
-  qa_q2mpm_weapons *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating chick heat definition");
+qa_q2m_definition qa_q2mpm_create_chick_heat_definition(qa_q2mpm_arena *arena, qa_q2mpm_weapons weapons) {
+  qa_q2mpm_weapons *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating chick heat definition");
   *box = weapons;
   qa_q2m_definition definition = qa_q2bm_chick_definition;
   definition.classname = "monster_chick_heat";
@@ -40,7 +40,7 @@ qa_q2m_definition qa_q2mpm_create_chick_heat_definition(qa_q2mpm_weapons weapons
   definition.reactions.ctx = NULL;
   definition.reactions.pain = pain_fn;
   const qa_q2m_named_handler extra[] = {{"ChickRocket", {box, rocket_fn}}};
-  definition.callbacks = qa_q2mpm_merge_callbacks(definition.callbacks, definition.callback_count, extra, 1,
+  definition.callbacks = qa_q2mpm_merge_callbacks(arena, definition.callbacks, definition.callback_count, extra, 1,
                                                   &definition.callback_count);
   return definition;
 }

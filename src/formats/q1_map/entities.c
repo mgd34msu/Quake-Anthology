@@ -28,8 +28,7 @@ static noreturn void plain_error(const char *format, ...) {
   va_start(args, format);
   vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 typedef enum { TOKEN_NONE, TOKEN_OPEN, TOKEN_CLOSE, TOKEN_TEXT } token_kind;
@@ -45,7 +44,8 @@ static token_kind next_token(lexer *lex, char **out_value) {
   while (lex->position < lex->length) {
     char character = lex->text[lex->position];
     if (character == '\0') return TOKEN_NONE;
-    if (character <= ' ') { lex->position++; continue; }
+    /* TS compares characters: high bytes are above " ", not whitespace. */
+    if ((unsigned char)character <= ' ') { lex->position++; continue; }
     if (lex->position + 1 < lex->length && lex->text[lex->position] == '/' &&
         lex->text[lex->position + 1] == '/') {
       size_t end = lex->position + 2;
@@ -76,7 +76,7 @@ static token_kind next_token(lexer *lex, char **out_value) {
     return TOKEN_TEXT;
   }
   start = lex->position - 1;
-  while (lex->position < lex->length && lex->text[lex->position] > ' ' &&
+  while (lex->position < lex->length && (unsigned char)lex->text[lex->position] > ' ' &&
          lex->text[lex->position] != '{' && lex->text[lex->position] != '}')
     lex->position++;
   size_t length = lex->position - start;

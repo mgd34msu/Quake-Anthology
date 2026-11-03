@@ -31,6 +31,15 @@ typedef struct qa_app_sim_q2_guest_prepare_host {
 } qa_app_sim_q2_guest_prepare_host;
 /* Synchronous form of the TS async prepare (PORTING.md). */
 qa_app_sim_prepared_q2_native_guest qa_app_sim_prepare_q2_guest(qa_execution_module execution, qa_app_sim_q2_guest_prepare_host host);
+/* TS prepareQ2Guest over mounted content: the PE header of the artifact
+ * decides the edition, and the prepared execution carries the corrected
+ * api/profile. Returns an owned qa_app_sim_prepared_classic_guest or
+ * qa_app_sim_prepared_rerelease_guest (*out_edition "classic"|"rerelease");
+ * release it with qa_app_sim_prepared_q2_guest_free. Errors abort as the TS throws. */
+struct qa_content_mounted;
+void *qa_app_sim_prepare_q2_guest_mounted(const qa_resolved_execution_module *execution, struct qa_content_mounted *mounts,
+    const char **out_edition);
+void qa_app_sim_prepared_q2_guest_free(void *prepared, const char *edition);
 /* revision is malloc'd into scratch when a primary exists (caller
  * copies before the next call). */
 qa_module_identity qa_app_sim_native_module_identity(qa_app_sim_prepared_q2_native_guest prepared, char *scratch, size_t scratch_size);

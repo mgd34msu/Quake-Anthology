@@ -6,6 +6,7 @@
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static const uint8_t CHKTBL[1028] = {
   0x78, 0xd2, 0x94, 0xe3, 0x41, 0xec, 0xd6, 0xd5, 0xcb, 0xfc, 0xdb, 0x8a, 0x4b, 0xcc, 0x85, 0x01,
   0x23, 0xd2, 0xe5, 0xf2, 0x29, 0xa7, 0x45, 0x94, 0x4a, 0x62, 0xe3, 0xa5, 0x6f, 0x3f, 0xe1, 0x7a,
@@ -47,7 +48,7 @@ double qa_quake_world_checksum(const uint8_t *bytes, size_t length, double seque
   long long offset = (long long)fmod(sequence, (double)(1028 - 8));
   uint8_t data[64];
   memcpy(data, bytes, count);
-  uint32_t seq = (uint32_t)sequence;
+  uint32_t seq = qa_js_to_uint32(sequence); /* sequence & 255 on a safe integer: ToInt32 wraps past 2^32 */
   data[count] = (uint8_t)((seq & 255) ^ CHKTBL[offset]);
   data[count+1] = CHKTBL[offset+1];
   data[count+2] = (uint8_t)(((seq >> 8) & 255) ^ CHKTBL[offset+2]);

@@ -57,16 +57,25 @@ bool qa_q3_demo_recording_init(qa_q3_demo_recording **out, qa_q3_client_connecti
 void qa_q3_demo_recording_destroy(qa_q3_demo_recording *r) { free(r); }
 qa_q3_client_connection *qa_q3_demo_recording_client(const qa_q3_demo_recording *r) { return r->client; }
 void qa_q3_demo_recording_append(qa_q3_demo_recording *r, const uint8_t *bytes, size_t len) {
-  if (r->ended) qa_range_error("Q3 demo recording is closed");
+  if (r->ended) qa_raise("Error", 0, 0, "Q3 demo recording is closed");
   if (!qa_q3_client_connection_demo_waiting(r->client))
     recording_write(r, qa_q3_client_connection_server_message_sequence(r->client), bytes, len);
+}
+typedef struct terminator_scope { qa_q3_demo_recording *r; } terminator_scope;
+static void terminator_body(void *ctx) {
+  qa_q3_demo_recording *r = ((terminator_scope *)ctx)->r;
+  uint8_t terminator[8]; memset(terminator, 255, 8);
+  r->file.write_bytes(r->file.ctx, terminator, 8);
 }
 void qa_q3_demo_recording_stop(qa_q3_demo_recording *r) {
   if (r->ended) return;
   r->ended = true;
-  uint8_t terminator[8]; memset(terminator, 255, 8);
-  r->file.write_bytes(r->file.ctx, terminator, 8);
+  /* TS `try { writeBytes(terminator) } finally { close() }`. */
+  terminator_scope scope = { r };
+  qa_caught_error caught;
+  bool ok = qa_try(terminator_body, &scope, &caught);
   r->file.close(r->file.ctx);
+  if (!ok) qa_rethrow(&caught);
 }
 void qa_q3_demo_recording_close(qa_q3_demo_recording *r) {
   if (!r->ended) { r->ended = true; r->file.close(r->file.ctx); }

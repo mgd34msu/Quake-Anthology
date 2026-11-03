@@ -334,6 +334,8 @@ static size_t gnu_symbol_count(reader *r, const qa_elf_segment_info *segments, s
     uint32_t symbol = rd_u32(r, bucket_offset + (size_t)bucket * 4);
     if (symbol == 0) continue;
     if (symbol < first) elf_error("GNU hash bucket precedes symbol offset");
+    /* Chains of a well-formed table are disjoint and ascending; a start inside the counted range only repeats a walk. */
+    if (symbol < count) continue;
     for (;;) {
       uint32_t hash = rd_u32(r, qa_elf_file_offset(segments, segment_count,
                                                    chains + (uint64_t)(symbol - first) * 4, 4));

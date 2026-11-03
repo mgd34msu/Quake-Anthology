@@ -1,8 +1,15 @@
 /* Port of src/compat/q3/native/module.ts. GPL-2.0-or-later. */
 #include "qa/compat/q3/native/module.h"
+#include <math.h>
 #include <string.h>
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
+/* {kind:"int32",value}: encodeIntegerValue rejects inexact numbers and wraps the rest. */
+qa_call_value qa_compat_q3_native_int32(double value) {
+  if (!isfinite(value) || value != trunc(value) || fabs(value) > (double)QA_MAX_SAFE_INTEGER) qa_range_error("Integer ABI argument is not an exact integer");
+  return qa_call_int32(qa_int32(value));
+}
 qa_guest_call_signature qa_compat_q3_native_signature(qa_guest_native_abi abi,
   const qa_abi_storage *parameters, size_t parameter_count,
   bool has_result, qa_abi_storage result, bool variadic,
@@ -79,7 +86,7 @@ void qa_compat_q3_quakelive_game_module_register_cvars(qa_compat_q3_quakelive_ga
 }
 void qa_compat_q3_quakelive_game_module_initialize(qa_compat_q3_quakelive_game_module *m, double level_time, double random_seed, bool restart) {
   static const qa_abi_storage params[3] = {QA_STORAGE_INT32, QA_STORAGE_INT32, QA_STORAGE_INT32};
-  qa_call_value args[3] = {qa_call_int32((int32_t)level_time), qa_call_int32((int32_t)random_seed), qa_call_int32(restart ? 1 : 0)};
+  qa_call_value args[3] = {qa_compat_q3_native_int32(level_time), qa_compat_q3_native_int32(random_seed), qa_call_int32(restart ? 1 : 0)};
   qa_call_result r = call_slot(m, 3, params, 3, false, QA_STORAGE_INT32, args, 3); qa_call_value_free(&r);
 }
 void qa_compat_q3_quakelive_game_module_shutdown(qa_compat_q3_quakelive_game_module *m, bool restart) {
@@ -89,9 +96,22 @@ void qa_compat_q3_quakelive_game_module_shutdown(qa_compat_q3_quakelive_game_mod
 }
 void qa_compat_q3_quakelive_game_module_run_frame(qa_compat_q3_quakelive_game_module *m, double time) {
   static const qa_abi_storage params[1] = {QA_STORAGE_INT32};
-  qa_call_value args[1] = {qa_call_int32((int32_t)time)};
+  qa_call_value args[1] = {qa_compat_q3_native_int32(time)};
   qa_call_result r = call_slot(m, 1, params, 1, false, QA_STORAGE_INT32, args, 1); qa_call_value_free(&r);
 }
+/* The export table is eleven pointers: ShutdownGame, RunFrame, RegisterCvars, InitGame, ConsoleCommand, then ClientBegin,
+ * ClientCommand and ClientThink, ClientConnect (verified at slot 8) and ClientUserinfoChanged and ClientDisconnect. */
+static void client_slot(qa_compat_q3_quakelive_game_module *m, int slot, double client) {
+  static const qa_abi_storage params[1] = {QA_STORAGE_INT32};
+  qa_call_value args[1] = {qa_compat_q3_native_int32(client)};
+  qa_call_result r = call_slot(m, slot, params, 1, false, QA_STORAGE_INT32, args, 1);
+  qa_call_value_free(&r);
+}
+void qa_compat_q3_quakelive_game_module_client_begin(qa_compat_q3_quakelive_game_module *m, double client) { client_slot(m, 5, client); }
+void qa_compat_q3_quakelive_game_module_client_command(qa_compat_q3_quakelive_game_module *m, double client) { client_slot(m, 6, client); }
+void qa_compat_q3_quakelive_game_module_client_think(qa_compat_q3_quakelive_game_module *m, double client) { client_slot(m, 7, client); }
+void qa_compat_q3_quakelive_game_module_client_userinfo_changed(qa_compat_q3_quakelive_game_module *m, double client) { client_slot(m, 9, client); }
+void qa_compat_q3_quakelive_game_module_client_disconnect(qa_compat_q3_quakelive_game_module *m, double client) { client_slot(m, 10, client); }
 bool qa_compat_q3_quakelive_game_module_console_command(qa_compat_q3_quakelive_game_module *m) {
   qa_call_result result = call_slot(m, 4, NULL, 0, true, QA_STORAGE_INT32, NULL, 0);
   if (result.kind != QA_CALL_INT32) qa_range_error("Quake Live ConsoleCommand returned the wrong ABI type");
@@ -99,7 +119,7 @@ bool qa_compat_q3_quakelive_game_module_console_command(qa_compat_q3_quakelive_g
 }
 bool qa_compat_q3_quakelive_game_module_client_connect(qa_compat_q3_quakelive_game_module *m, double client, bool first_time, bool is_bot, qa_guest_core_address *out) {
   static const qa_abi_storage params[3] = {QA_STORAGE_INT32, QA_STORAGE_INT32, QA_STORAGE_INT32};
-  qa_call_value args[3] = {qa_call_int32((int32_t)client), qa_call_int32(first_time ? 1 : 0), qa_call_int32(is_bot ? 1 : 0)};
+  qa_call_value args[3] = {qa_compat_q3_native_int32(client), qa_call_int32(first_time ? 1 : 0), qa_call_int32(is_bot ? 1 : 0)};
   qa_call_result result = call_slot(m, 8, params, 3, true, QA_STORAGE_POINTER, args, 3);
   if (result.kind != QA_CALL_POINTER) qa_range_error("Quake Live ClientConnect returned the wrong ABI type");
   if (result.pointer_has) *out = result.pointer;
@@ -121,8 +141,8 @@ void qa_compat_q3_vm_module_init(qa_compat_q3_vm_module *m, qa_compat_q3_native_
 double qa_compat_q3_vm_module_call(qa_compat_q3_vm_module *m, double command, const double *arguments, size_t argument_count) {
   if (argument_count > 12) qa_range_error("Q3 vmMain accepts at most twelve arguments");
   qa_call_value args[13];
-  args[0] = qa_call_int32((int32_t)command);
-  for (size_t i = 0; i < 12; i++) args[1 + i] = qa_call_int32((int32_t)(i < argument_count ? arguments[i] : 0));
+  args[0] = qa_compat_q3_native_int32(command);
+  for (size_t i = 0; i < 12; i++) args[1 + i] = qa_compat_q3_native_int32(i < argument_count ? arguments[i] : 0);
   qa_abi_storage params[13];
   for (size_t i = 0; i < 13; i++) params[i] = QA_STORAGE_INT32;
   qa_call_result result = invoke_call(&m->options, m->vm_main, params, 13, true, QA_STORAGE_INT32, args, 13, true);

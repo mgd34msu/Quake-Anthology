@@ -16,7 +16,12 @@ const char *qa_q3_callback_family_capture(qa_q3_callback_family *family, qa_q3_e
 qa_q3_entity_callback qa_q3_callback_family_resolve(qa_q3_callback_family *family, const char *id);
 typedef struct qa_q3_callback_catalog {
   qa_q3_callback_family think, reached, blocked, touch, use, pain, die;
+  void **retained; size_t retained_count, retained_cap; /* owned callback contexts */
 } qa_q3_callback_catalog;
 void qa_q3_callback_catalog_init(qa_q3_callback_catalog *catalog);
+/* Frees every retained context. */
 void qa_q3_callback_catalog_destroy(qa_q3_callback_catalog *catalog);
+/* The catalog takes ownership of a malloc'd callback context: TS closures
+ * live as long as the catalog that can resolve them. */
+void qa_q3_callback_catalog_retain(qa_q3_callback_catalog *catalog, void *owned);
 #endif

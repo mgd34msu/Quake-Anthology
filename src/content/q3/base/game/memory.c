@@ -7,6 +7,7 @@
 #include "qa/core/common_error.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 void qa_q3_game_memory_init(qa_q3_game_memory *mem, void *ctx, double (*dbg)(void *), void (*print)(void *, const char *)) {
   memset(mem->pool, 0, sizeof mem->pool); mem->alloc_point = 0; mem->ctx = ctx; mem->debug_integer = dbg; mem->print = print;
 }
@@ -55,7 +56,7 @@ void qa_q3_game_memory_restore_save_state(qa_q3_game_memory *mem, const qa_save_
 }
 qa_q3_game_memory_allocation qa_q3_game_memory_allocate(qa_q3_game_memory *mem, double size) {
   if (size != trunc(size) || size < 0 || size > 0x7fffffff) qa_range_error("G_Alloc requires a nonnegative source int size");
-  double aligned = (double)((int64_t)(size + 31) & ~31LL);
+  double aligned = (double)(qa_js_to_int32((size + 31)) & ~31);
   if (mem->debug_integer(mem->ctx) != 0) { char buf[256]; snprintf(buf, sizeof buf, "G_Alloc of %lld bytes (%lld left)\n", (long long)size, (long long)qa_int32(QA_Q3_GAME_MEMORY_BYTES - mem->alloc_point - aligned)); mem->print(mem->ctx, buf); }
   if (mem->alloc_point + size > QA_Q3_GAME_MEMORY_BYTES) { char buf[256]; snprintf(buf, sizeof buf, "G_Alloc: failed on allocation of %lld bytes\n", (long long)size); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
   qa_q3_game_memory_allocation a = {mem->pool + (size_t)mem->alloc_point, (size_t)size, mem, (size_t)mem->alloc_point};

@@ -136,14 +136,14 @@ void qa_qvm_validate_mod_actor_frame(const qa_qvm_mod_actor_frame *definition,
 
 typedef struct branch_state {
   qa_qvm_mod_actor_frame_runtime *frame;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   int64_t stack;
   size_t filter_index;
   bool is_end;
   qa_qvm_cancellation_scope cancellation;
 } branch_state;
 
-static bool decide_owned(void *ctx, bool taken, void *call_ctx, qa_qvmy_cancel_fn cancel) {
+static bool decide_owned(void *ctx, bool taken, void *call_ctx, qa_qvm_cancel_fn cancel) {
   (void)call_ctx;
   (void)cancel;
   branch_state *state = ctx;
@@ -155,16 +155,27 @@ static bool decide_owned(void *ctx, bool taken, void *call_ctx, qa_qvmy_cancel_f
   return state->frame->owned(state->frame->owned_ctx, pointer);
 }
 
-static bool decide_end(void *ctx, bool taken, void *call_ctx, qa_qvmy_cancel_fn cancel) {
+static bool decide_end(void *ctx, bool taken, void *call_ctx, qa_qvm_cancel_fn cancel) {
   branch_state *state = ctx;
   if (taken == state->frame->definition->end.completed_taken) {
     state->frame->active_completed = true;
-    cancel(call_ctx, state->cancellation);
+    { cancel(call_ctx, state->cancellation); qa_range_error("QVM function scope cancelled"); }
   }
   return taken;
 }
 
-static int32_t frame_hook(void *ctx, qa_qvmy_function_call *call) {
+typedef struct hook_storage {
+  qa_qvm_module_branch_binding *bindings;
+  branch_state *states;
+} hook_storage;
+
+static void hook_storage_unwind(void *ctx) {
+  hook_storage *storage = ctx;
+  free(storage->bindings);
+  free(storage->states);
+}
+
+static int32_t frame_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_mod_actor_frame_runtime *frame = ctx;
   if (!frame->has_active)
     return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
@@ -172,7 +183,7 @@ static int32_t frame_hook(void *ctx, qa_qvmy_function_call *call) {
   qa_qvm_cancellation_scope cancellation = call->cancellation_scope(call->call_ctx);
   int64_t stack = call->words_offset - 8 - frame->enter_operand;
   size_t count = frame->local_count + 1;
-  qa_qvmy_branch_binding *bindings = malloc(count * sizeof *bindings);
+  qa_qvm_module_branch_binding *bindings = malloc(count * sizeof *bindings);
   branch_state *states = malloc(count * sizeof *states);
   if (bindings == NULL || states == NULL) qa_range_error("QVM memory allocation failed");
   for (size_t i = 0; i < frame->local_count; i++) {
@@ -186,10 +197,13 @@ static int32_t frame_hook(void *ctx, qa_qvmy_function_call *call) {
   bindings[frame->local_count].ctx = &states[frame->local_count];
   bindings[frame->local_count].decide = decide_end;
   call->branches(call->call_ctx, bindings, count);
+  hook_storage storage = {bindings, states};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, hook_storage_unwind, &storage);
   int32_t result = strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                                 : call->proceed_async(call->call_ctx);
-  free(bindings);
-  free(states);
+  qa_cleanup_pop(&guard);
+  hook_storage_unwind(&storage);
   return result;
 }
 
@@ -222,12 +236,21 @@ void qa_qvm_mod_actor_frame_runtime_init(qa_qvm_mod_actor_frame_runtime *frame,
   frame->removal_id = qa_qvm_module_bind_invocation(module, &reference, frame_hook, frame);
 }
 
+/* TS finally { this.active = null; }. */
+static void run_unwind(void *ctx) {
+  qa_qvm_mod_actor_frame_runtime *frame = ctx;
+  frame->has_active = false;
+}
+
 bool qa_qvm_mod_actor_frame_runtime_run(qa_qvm_mod_actor_frame_runtime *frame,
                                         qa_qvm_actor_invoke_fn invoke, void *invoke_ctx) {
   if (frame->has_active) qa_range_error("QVM actor frame is already executing");
   frame->has_active = true;
   frame->active_completed = false;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, run_unwind, frame);
   invoke(invoke_ctx);
+  qa_cleanup_pop(&guard);
   bool completed = frame->active_completed;
   frame->has_active = false;
   return completed;

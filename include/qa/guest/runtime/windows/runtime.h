@@ -35,7 +35,13 @@ struct qa_windows_guest_runtime {
   qa_guest_core_address cfg_check, cfg_dispatch;
   qa_guest_call_runner *runner_or_null;
   int64_t budget;
+  void *owned; size_t owned_count, owned_cap; /* host.own resources */
+  /* TS heaps / reservations / tlsIndices / fiberSlots (host.tables points here). */
+  qa_windows_kernel_tables tables;
 };
+
+/* TS WindowsHeapTables (contracts/execution.h) with malloc'd arrays from heap_state. */
+void qa_windows_heap_tables_free(qa_windows_heap_tables *tables);
 
 void qa_windows_guest_runtime_init(qa_windows_guest_runtime *runtime,
                                    const qa_windows_runtime_options *options);
@@ -78,5 +84,15 @@ bool qa_windows_guest_runtime_free(qa_windows_guest_runtime *runtime, bool has_a
                                    qa_guest_core_address address, uint64_t heap);
 bool qa_windows_guest_runtime_allocation_size(qa_windows_guest_runtime *runtime,
                                               qa_guest_core_address address, uint64_t heap, size_t *out);
+
+/* TS heapState: the heap table and kernel tables for a process image. Out
+ * arrays are malloc'd (blocks: caller frees; tables: qa_windows_heap_tables_free). Iteration order is TS's. */
+void qa_windows_guest_runtime_heap_state(qa_windows_guest_runtime *runtime, qa_native_heap_block **blocks,
+                                         size_t *block_count, qa_windows_heap_tables *tables);
+/* TS restoreHeapState: every block must lie in a mapping already restored. */
+void qa_windows_guest_runtime_restore_heap_state(qa_windows_guest_runtime *runtime, const qa_native_heap_block *blocks,
+                                                 size_t block_count, const qa_windows_heap_tables *tables);
+/* TS chargeBytes: forwards to the attached runner, if any. */
+void qa_windows_guest_runtime_charge_bytes(qa_windows_guest_runtime *runtime, size_t byte_length);
 
 #endif

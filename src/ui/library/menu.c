@@ -9,6 +9,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js_case.h"
 
 typedef struct lib_state lib_state;
 typedef struct lctx {
@@ -68,11 +69,10 @@ static bool blank_trim(const char *text) {
   free(trimmed);
   return empty;
 }
+/* TS text.toLowerCase() (Unicode). */
 static char *lower_dup(const char *text) {
-  char *copy = qa_input_dup(text);
+  char *copy = qa_js_to_lower_case(text);
   if (copy == NULL) qa_range_error("Out of memory");
-  for (char *p = copy; *p != '\0'; p++)
-    *p = (char)tolower((unsigned char)*p);
   return copy;
 }
 static const char *service_scope(lib_state *s) {

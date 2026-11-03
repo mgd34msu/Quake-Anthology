@@ -54,11 +54,13 @@ static qa_guest_core_address create_file(qa_system_v_stdio *stdio, int descripto
   qa_gmem_write_i64(m, off(m, file, stdio->layout.offset), -1);
   if (m->pointer_bytes == 8) qa_gmem_write_i64(m, off(m, file, stdio->layout.old_offset), -1);
   else qa_gmem_write_i32(m, off(m, file, stdio->layout.old_offset), -1);
-  write_ptr(m, off(m, file, stdio->layout.lock), true,
-            qa_system_v_allocate(host, (size_t)m->pointer_bytes * 2 + 8));
+  qa_guest_core_address a2 = off(m, file, stdio->layout.lock);
+  qa_guest_core_address v2 = qa_system_v_allocate(host, (size_t)m->pointer_bytes * 2 + 8);
+  write_ptr(m, a2, true, v2);
   /* _IO_wide_data starts with eleven wchar_t pointers and an mbstate_t. */
-  write_ptr(m, off(m, file, stdio->layout.wide_data), true,
-            qa_system_v_allocate(host, m->pointer_bytes == 8 ? 312 : 180));
+  qa_guest_core_address a = off(m, file, stdio->layout.wide_data);
+  qa_guest_core_address v = qa_system_v_allocate(host, m->pointer_bytes == 8 ? 312 : 180);
+  write_ptr(m, a, true, v);
   return file;
 }
 static int descriptor_of(qa_system_v_stdio *stdio, qa_guest_core_address file) {

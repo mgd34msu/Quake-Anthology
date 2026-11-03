@@ -8,6 +8,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 enum { HEADER_Y = 86, TOP_Y = 118, NORMAL_HEIGHT = 40, INTER_HEIGHT = 16, MAX_NORMAL = 7, MAX_INTER = 17 };
 static float f32(double v) { return (float)v; }
 const char *qa_q3_pres_scoreboard_cvar_name(qa_q3_pres_scoreboard_cvar cvar) {
@@ -64,12 +65,12 @@ static void draw_client_score(qa_q3_pres_base_scoreboard *board, double y, qa_q3
   qa_q3_pres_client_draw_tools *tools = tools_of(board);
   const double icon_x = 80, head_x = 112;
   qa_rect icon_rect = {icon_x, large ? y - 8 : y, large ? 32 : 16, large ? 32 : 16};
-  int64_t powerups = (int64_t)ci->powerups;
-  if ((powerups & (1LL << QA_Q3_PW_NEUTRALFLAG)) != 0)
+  int32_t powerups = qa_js_to_int32(ci->powerups); /* TS powerups & x: ToInt32 */
+  if ((powerups & (1 << QA_Q3_PW_NEUTRALFLAG)) != 0)
     qa_q3_pres_client_draw_icons_draw_flag_model(board->host.icons, icon_rect, QA_Q3_BASE_TEAM_FREE, false);
-  else if ((powerups & (1LL << QA_Q3_PW_REDFLAG)) != 0)
+  else if ((powerups & (1 << QA_Q3_PW_REDFLAG)) != 0)
     qa_q3_pres_client_draw_icons_draw_flag_model(board->host.icons, icon_rect, QA_Q3_BASE_TEAM_RED, false);
-  else if ((powerups & (1LL << QA_Q3_PW_BLUEFLAG)) != 0)
+  else if ((powerups & (1 << QA_Q3_PW_BLUEFLAG)) != 0)
     qa_q3_pres_client_draw_icons_draw_flag_model(board->host.icons, icon_rect, QA_Q3_BASE_TEAM_BLUE, false);
   else {
     if (ci->bot_skill > 0 && ci->bot_skill <= 5) {

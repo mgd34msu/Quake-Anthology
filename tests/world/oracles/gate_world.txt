@@ -1,0 +1,6 @@
+adapt_q1_flags -2147483648
+adapt_q2_surfaces 2 4
+media_nan inOpen false inWater false
+q2box_nan fraction 1 hit none
+box_bounds 0.10000000149011612 contents 0
+transport_order 2,1 slots 0,1,2

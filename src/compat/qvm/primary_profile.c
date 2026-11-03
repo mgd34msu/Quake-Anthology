@@ -23,26 +23,75 @@ static qa_save_reader field(const qa_save_reader *reader, const char *name) {
   return out;
 }
 
-static qa_q3_equipment_qvm_artifact equipment_artifact(const qa_resolved_qvm_artifact *artifact) {
-  qa_q3_equipment_qvm_artifact result;
-  memset(&result, 0, sizeof result);
-  result.module = artifact->module;
-  result.role = artifact->role;
-  result.abi_profile = artifact->has_abi_profile ? artifact->abi_profile : NULL;
-  result.image.initialized_data = artifact->image.initialized_data;
-  result.image.initialized_data_length = artifact->image.initialized_length;
-  result.image.allocated_data_length = (double)artifact->image.allocated_data_length;
-  result.image.data_length = (double)artifact->image.data_length;
-  result.image.literal_length = (double)artifact->image.literal_length;
-  result.image.bss_length = (double)artifact->image.bss_length;
-  return result;
+typedef struct equipment_view {
+  qa_q3_equipment_qvm_artifact artifact;
+  qa_q3_equipment_known_artifact known;
+  qa_q3_equipment_qvm_instruction *instructions; /* owned */
+} equipment_view;
+
+/* The content profiles read the same artifact through their own mirror types. */
+static void equipment_artifact_init(equipment_view *view, const qa_resolved_qvm_artifact *artifact) {
+  memset(view, 0, sizeof *view);
+  qa_q3_equipment_qvm_artifact *result = &view->artifact;
+  result->module = artifact->module;
+  result->role = artifact->role;
+  result->abi_profile = artifact->has_abi_profile ? artifact->abi_profile : NULL;
+  if (artifact->known != NULL) {
+    view->known.product = artifact->known->product;
+    result->known = &view->known;
+  }
+  result->image.initialized_data = artifact->image.initialized_data;
+  result->image.initialized_data_length = artifact->image.initialized_length;
+  result->image.allocated_data_length = (double)artifact->image.allocated_data_length;
+  result->image.data_length = (double)artifact->image.data_length;
+  result->image.literal_length = (double)artifact->image.literal_length;
+  result->image.bss_length = (double)artifact->image.bss_length;
+  view->instructions = xmalloc(artifact->image.instruction_count * sizeof *view->instructions);
+  for (size_t i = 0; i < artifact->image.instruction_count; i++) {
+    const qa_qvm_instruction *instruction = &artifact->image.instructions[i];
+    view->instructions[i].byte_offset = (double)instruction->byte_offset;
+    view->instructions[i].opcode = (double)instruction->opcode;
+    view->instructions[i].operand_width = (double)instruction->operand_width;
+    view->instructions[i].operand = (double)instruction->operand;
+  }
+  result->image.instructions = view->instructions;
+  result->image.instruction_count = artifact->image.instruction_count;
+}
+
+/* TS QvmInventoryProfile capacity from the content profile, over live memory. */
+static double content_capacity(void *ctx, qa_qvm_memory *memory, double weapon) {
+  qa_q3_equipment_qvm_inventory_profile *content = ctx;
+  qa_q3_equipment_qvm_memory view = {memory->bytes, memory->length};
+  return content->capacity(content->capacity_ctx, view, weapon);
+}
+static void content_capacity_release(void *ctx) {
+  qa_q3_equipment_qvm_inventory_profile_destroy(ctx);
+  free(ctx);
+}
+
+/* TS QvmPickupGrant.eligible from the content profile: its answer replaces the
+ * source gate, as the TS closure returns without proceeding. */
+typedef struct content_eligibility {
+  void *ctx;
+  bool (*eligible)(void *ctx, qa_q3_equipment_qvm_pickup_eligibility context);
+} content_eligibility;
+
+static bool content_eligible(void *ctx, qa_qvm_pickup_eligibility context) {
+  content_eligibility *source = ctx;
+  qa_q3_equipment_qvm_pickup_eligibility view = {
+      {context.call->words, context.call->words_length},
+      {context.item.bytes + context.item.start, (size_t)context.item.length},
+      {context.player.bytes + context.player.start, (size_t)context.player.length}};
+  return source->eligible(source->ctx, view);
 }
 
 void qa_qvm_builtin_primary_profile(const qa_resolved_qvm_artifact *artifact,
                                     const qa_q3_guest_weapon *catalog, size_t catalog_count,
                                     qa_qvm_primary_profile *out) {
   memset(out, 0, sizeof *out);
-  qa_q3_equipment_qvm_artifact equipment = equipment_artifact(artifact);
+  equipment_view view;
+  equipment_artifact_init(&view, artifact);
+  const qa_q3_equipment_qvm_artifact equipment = view.artifact;
   qa_q3_qvm_input_definition input;
   if (qa_q3_input_profile(&equipment, &input)) {
     out->input = xmalloc(sizeof *out->input);
@@ -82,6 +131,12 @@ void qa_qvm_builtin_primary_profile(const qa_resolved_qvm_artifact *artifact,
     target->persistent_max_health = weapons.persistent_max_health;
     target->stage.dispatcher.entry = weapons.stage.dispatcher.entry;
     target->stage.dispatcher.actor = weapons.stage.dispatcher.actor;
+    /* The profile owns its pointer path (qa_qvm_primary_weapon_profile_free). */
+    size_t indirection_count = weapons.stage.dispatcher.actor.pointer.indirections.count;
+    double *indirections = xmalloc(indirection_count * sizeof *indirections);
+    for (size_t i = 0; i < indirection_count; i++)
+      indirections[i] = weapons.stage.dispatcher.actor.pointer.indirections.values[i];
+    target->stage.dispatcher.actor.pointer.indirections.values = indirections;
     qa_qvm_weapon_predicate *predicates = xmalloc(weapons.stage.predicate_count * sizeof *predicates);
     memcpy(predicates, weapons.stage.predicates, weapons.stage.predicate_count * sizeof *predicates);
     target->stage.predicates = predicates;
@@ -192,16 +247,15 @@ void qa_qvm_builtin_primary_profile(const qa_resolved_qvm_artifact *artifact,
     target->give.named.item = weapons.give_named_item;
     qa_q3_equipment_qvm_primary_weapon_profile_destroy(&weapons);
   }
-  qa_q3_equipment_qvm_inventory_profile inventory;
-  if (qa_q3_native_inventory_profile(&equipment, &inventory)) {
+  qa_q3_equipment_qvm_inventory_profile *inventory = xmalloc(sizeof *inventory);
+  if (qa_q3_native_inventory_profile(&equipment, inventory)) {
     out->inventory = xmalloc(sizeof *out->inventory);
-    qa_q3_equipment_qvm_memory memory = {artifact->image.initialized_data, artifact->image.initialized_length};
-    int32_t constant =
-        inventory.capacity != NULL ? (int32_t)inventory.capacity(inventory.capacity_ctx, memory, 0) : 0;
-    qa_qvm_primary_inventory_profile_constant(inventory.module,
-        inventory.abi_profile != NULL ? inventory.abi_profile : "q3-modern",
-        inventory.weapons_offset, inventory.ammo_offset, constant, out->inventory);
-    qa_q3_equipment_qvm_inventory_profile_destroy(&inventory);
+    qa_qvm_primary_inventory_profile_source(inventory->module,
+        inventory->abi_profile != NULL ? inventory->abi_profile : "q3-modern",
+        inventory->weapons_offset, inventory->ammo_offset, content_capacity, inventory,
+        content_capacity_release, out->inventory);
+  } else {
+    free(inventory);
   }
   qa_q3_equipment_qvm_pickup_profile pickups;
   if (qa_q3_native_pickup_profile(&equipment, &pickups)) {
@@ -278,7 +332,11 @@ void qa_qvm_builtin_primary_profile(const qa_resolved_qvm_artifact *artifact,
         quantity_inputs[q] = (int64_t)source->weapon_quantity.inputs[q];
       grant->weapon_quantity.inputs = quantity_inputs;
       grant->weapon_quantity.input_count = source->weapon_quantity.input_count;
-      grant->eligible = qa_qvm_primary_pickup_grant_eligible;
+      content_eligibility *eligibility = xmalloc(sizeof *eligibility);
+      eligibility->ctx = source->eligible_ctx;
+      eligibility->eligible = source->eligible;
+      grant->eligible_ctx = eligibility;
+      grant->eligible = content_eligible;
     }
   }
   qa_q3_equipment_qvm_primary_combat_profile combat;
@@ -361,6 +419,7 @@ void qa_qvm_builtin_primary_profile(const qa_resolved_qvm_artifact *artifact,
     target->armor.tiers.value_count = combat.armor.value_count;
     target->armor.tiers.fallback = combat.armor.fallback;
   }
+  free(view.instructions);
 }
 
 /* TS isDeepStrictEqual(items, pickups.items) over QvmItemLayout. */

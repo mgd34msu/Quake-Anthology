@@ -297,7 +297,9 @@ void qa_ui_source_token_clear(qa_ui_source_token_memory *token) {
 
 void qa_ui_source_token_copy_from(qa_ui_source_token_memory *token,
                                   qa_ui_source_token_memory *other) {
-  memcpy(qa_ui_source_token_bytes(token), qa_ui_source_token_bytes(other),
+  void * destination = qa_ui_source_token_bytes(token);
+  const void * source_value = qa_ui_source_token_bytes(other);
+  memcpy(destination, source_value,
          QA_UI_SOURCE_TOKEN_BYTES);
   token->has_extent = other->has_extent;
   token->text_extent = other->text_extent;
@@ -340,8 +342,10 @@ void qa_ui_source_token_set_float_value(qa_ui_source_token_memory *token,
   write_float(qa_ui_source_token_bytes(token), OFF_FLOAT, value);
 }
 bool qa_ui_source_token_whitespace_before(qa_ui_source_token_memory *token) {
-  return qa_ui_source_token_whitespace_end(token)
-         > qa_ui_source_token_whitespace_start(token);
+  uint32_t left = qa_ui_source_token_whitespace_end(token);
+  uint32_t right = qa_ui_source_token_whitespace_start(token);
+  return left
+         > right;
 }
 void qa_ui_source_token_clear_whitespace(qa_ui_source_token_memory *token) {
   qa_ui_source_token_set_whitespace_start(token, 0);
@@ -452,8 +456,10 @@ static bool same_value(qa_ui_source_token_memory *token,
   if (token->has_extent != other->has_extent) return false;
   if (token->has_extent && token->text_extent != other->text_extent)
     return false;
-  return memcmp(qa_ui_source_token_bytes(token),
-                qa_ui_source_token_bytes(other),
+  const void * first = qa_ui_source_token_bytes(token);
+  const void * second = qa_ui_source_token_bytes(other);
+  return memcmp(first,
+                second,
                 QA_UI_SOURCE_TOKEN_BYTES) == 0;
 }
 
@@ -567,6 +573,11 @@ bool qa_ui_source_token_read_record(
     qa_ui_script_token_release(value);
     return false;
   }
+  /* copy_from retained the source token's previous snapshot on storage;
+   * the storage's link is the weak back-pointer to its own snapshot, so
+   * drop that strong reference before replacing it (otherwise every
+   * re-snapshotted token, as #define expansion makes, pins the chain). */
+  set_snapshot(storage, NULL);
   storage->snapshot = snapshot;
   storage->snapshot_weak = true;
   /* The token's creation reference belongs to the snapshot; the

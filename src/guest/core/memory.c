@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 #include "qa/foundation/support.h"
@@ -165,6 +166,75 @@ static void insert_mapping(qa_sparse_guest_memory *mem, qa_sparse_mapping *mappi
   memmove(mem->mappings + at + 1, mem->mappings + at, (mem->mapping_count - at) * sizeof *mem->mappings);
   mem->mappings[at] = mapping;
   mem->mapping_count++;
+  mem->mapped_total += mapping->byte_length;
+}
+
+/* TS #recentMappings key: read, write, execute, or "any" for access null. */
+static int recent_slot(bool has_access, qa_guest_access access) {
+  if (!has_access) return 3;
+  return access == QA_ACCESS_READ ? 0 : access == QA_ACCESS_WRITE ? 1 : 2;
+}
+
+/* TS #remember. Retired mappings stay alive, so stale slots only need the
+ * active check their readers already make. */
+static void remember(qa_sparse_guest_memory *mem, int slot, qa_sparse_mapping *mapping) {
+  mem->recent_mappings[slot] = mapping;
+  for (size_t i = 0; i < QA_SPARSE_WORKING_SET; i++)
+    if (mem->working_set[i] == mapping) return;
+  mem->working_set[mem->next_working_mapping] = mapping;
+  mem->next_working_mapping = (mem->next_working_mapping + 1u) & (QA_SPARSE_WORKING_SET - 1u);
+}
+
+/* True when [address, address+byte_length) lies inside mapping. */
+static bool mapping_holds(const qa_sparse_mapping *mapping, uint64_t address, size_t byte_length, size_t *offset) {
+  if (address < mapping->base || !addr_lt_end(address, mapping)) return false;
+  size_t at = (size_t)(address - mapping->base);
+  if (byte_length > mapping->byte_length - at) return false;
+  *offset = at;
+  return true;
+}
+
+_Noreturn static void permission_fault(qa_sparse_guest_memory *mem, const qa_sparse_mapping *mapping, uint64_t address,
+                                       size_t byte_length, qa_guest_access access) {
+  char detail[512];
+  (void)snprintf(detail, sizeof detail, "mapping '%s' permits %s", mapping->label,
+                 qa_guest_permissions_name(mapping->permissions));
+  fault(mem, QA_FAULT_PERMISSION, address, byte_length, fault_access_of(access), detail);
+}
+
+/* TS #singleMapping: the mapping wholly containing the range, or NULL when
+ * the range is empty or crosses mappings (callers then take chunks_of). */
+static qa_sparse_mapping *single_mapping(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length,
+                                         qa_guest_access access, size_t *offset) {
+  int slot = recent_slot(true, access);
+  uint64_t raw = address.byte_offset;
+  qa_sparse_mapping *recent = mem->recent_mappings[slot];
+  if (byte_length > 0 && byte_length <= (size_t)QA_MAX_SAFE_INTEGER) {
+    if (recent != NULL && recent->active && mapping_holds(recent, raw, byte_length, offset)) {
+      if (!qa_guest_permissions_allows(recent->permissions, access))
+        permission_fault(mem, recent, raw, byte_length, access);
+      return recent;
+    }
+    for (size_t i = 0; i < QA_SPARSE_WORKING_SET; i++) {
+      qa_sparse_mapping *candidate = mem->working_set[i];
+      if (candidate == NULL || candidate == recent || !candidate->active) continue;
+      if (!mapping_holds(candidate, raw, byte_length, offset)) continue;
+      if (!qa_guest_permissions_allows(candidate->permissions, access))
+        permission_fault(mem, candidate, raw, byte_length, access);
+      mem->recent_mappings[slot] = candidate;
+      return candidate;
+    }
+  }
+  range_check(mem, raw, byte_length, fault_access_of(access));
+  if (byte_length == 0) return NULL;
+  size_t index = first_end_after(mem, raw);
+  if (index >= mem->mapping_count) return NULL;
+  qa_sparse_mapping *mapping = mem->mappings[index];
+  if (!mapping_holds(mapping, raw, byte_length, offset)) return NULL;
+  if (!qa_guest_permissions_allows(mapping->permissions, access))
+    permission_fault(mem, mapping, raw, byte_length, access);
+  remember(mem, slot, mapping);
+  return mapping;
 }
 
 /* TS #chunks: full checked walk. has_access=false mirrors access null.
@@ -173,6 +243,20 @@ static chunk *chunks_of(qa_sparse_guest_memory *mem, qa_guest_core_address addre
                         bool has_access, qa_guest_access access, size_t *out_count) {
   range_check(mem, address.byte_offset, byte_length,
               has_access ? fault_access_of(access) : QA_FAULT_ACCESS_MAP);
+  int slot = recent_slot(has_access, access);
+  qa_sparse_mapping *recent = mem->recent_mappings[slot];
+  size_t recent_offset = 0;
+  if (byte_length > 0 && recent != NULL && recent->active &&
+      mapping_holds(recent, address.byte_offset, byte_length, &recent_offset)) {
+    if (has_access && !qa_guest_permissions_allows(recent->permissions, access))
+      permission_fault(mem, recent, address.byte_offset, byte_length, access);
+    chunk *only = (chunk *)xmalloc(sizeof *only);
+    only->mapping = recent;
+    only->offset = recent_offset;
+    only->byte_length = byte_length;
+    *out_count = 1;
+    return only;
+  }
   chunk *result = NULL;
   size_t count = 0, cap = 0;
   uint64_t cursor = address.byte_offset;
@@ -184,11 +268,8 @@ static chunk *chunks_of(qa_sparse_guest_memory *mem, qa_guest_core_address addre
     if (!addr_lt_end(cursor, mapping)) continue; /* cursor >= end */
     if (cursor < mapping->base) break;
     if (has_access && !qa_guest_permissions_allows(mapping->permissions, access)) {
-      char detail[512];
-      (void)snprintf(detail, sizeof detail, "mapping '%s' permits %s", mapping->label,
-                     qa_guest_permissions_name(mapping->permissions));
       free(result);
-      fault(mem, QA_FAULT_PERMISSION, cursor, remaining, fault_access_of(access), detail);
+      permission_fault(mem, mapping, cursor, remaining, access);
     }
     size_t offset = (size_t)(cursor - mapping->base);
     size_t length = remaining < mapping->byte_length - offset ? remaining : mapping->byte_length - offset;
@@ -200,6 +281,7 @@ static chunk *chunks_of(qa_sparse_guest_memory *mem, qa_guest_core_address addre
     result[count].offset = offset;
     result[count].byte_length = length;
     count++;
+    remember(mem, slot, mapping);
     remaining -= length;
     cursor += (uint64_t)length;
   }
@@ -227,20 +309,17 @@ static void invalidate_code(qa_sparse_backing *backing, size_t absolute_offset, 
   for (size_t i = first; i <= last; i++) backing->page_revisions[i] += 1u; /* fresh revision token */
 }
 
+/* TS #notifyWrite. TS indexes watched ranges by backing page (PERF1); the
+ * result is the same as this full scan: observers in registration order,
+ * ranges in watched-then-written chunk order. Every pending range is
+ * collected first, then #writeDeliveries counts the store once, then the
+ * observers run. */
 static void notify_write(qa_sparse_guest_memory *mem, const chunk *written, size_t written_count) {
   if (mem->observers == NULL) return;
   /* Snapshot the observer list; callbacks may add/remove/write. */
   size_t count = 0, cap = 0;
-  qa_sparse_write_observer **snapshot = NULL;
-  for (qa_sparse_write_observer *o = mem->observers; o != NULL; o = o->next) {
-    if (count == cap) {
-      cap = cap == 0 ? 4 : cap * 2;
-      snapshot = (qa_sparse_write_observer **)xrealloc(snapshot, cap * sizeof *snapshot);
-    }
-    snapshot[count++] = o;
-  }
-  for (size_t i = 0; i < count; i++) {
-    qa_sparse_write_observer *observer = snapshot[i];
+  struct pending { qa_sparse_write_observer *observer; qa_guest_written_range *ranges; size_t range_count; } *pending = NULL;
+  for (qa_sparse_write_observer *observer = mem->observers; observer != NULL; observer = observer->next) {
     if (observer->removed) continue;
     qa_guest_written_range *ranges = NULL;
     size_t range_count = 0, range_cap = 0;
@@ -266,10 +345,24 @@ static void notify_write(qa_sparse_guest_memory *mem, const chunk *written, size
       }
       displacement += (int64_t)observer->chunks[w].byte_length;
     }
-    if (range_count > 0) observer->notify(observer->ctx, ranges, range_count);
-    free(ranges);
+    if (range_count == 0) continue;
+    if (count == cap) {
+      cap = cap == 0 ? 4 : cap * 2;
+      pending = (struct pending *)xrealloc(pending, cap * sizeof *pending);
+    }
+    pending[count].observer = observer;
+    pending[count].ranges = ranges;
+    pending[count].range_count = range_count;
+    count++;
   }
-  free(snapshot);
+  if (count == 0) return;
+  mem->write_deliveries++;
+  for (size_t i = 0; i < count; i++) {
+    if (!pending[i].observer->removed)
+      pending[i].observer->notify(pending[i].observer->ctx, pending[i].ranges, pending[i].range_count);
+  }
+  for (size_t i = 0; i < count; i++) free(pending[i].ranges);
+  free(pending);
 }
 
 static void commit_write(qa_sparse_guest_memory *mem, const chunk *chunks, size_t count, const uint8_t *source) {
@@ -342,6 +435,7 @@ static void replace_range(qa_sparse_guest_memory *mem, uint64_t base, size_t byt
     else if (mapping->end_wraps) end_offset = (size_t)(end - mapping->base);
     else if (end_wraps) end_offset = (size_t)(mapping->end - mapping->base);
     else end_offset = (size_t)((end < mapping->end ? end : mapping->end) - mapping->base);
+    if (permissions == NULL) mem->mapped_total -= end_offset - start_offset;
     qa_sparse_mapping *pieces[3];
     int piece_count = 0;
     if (start_offset > 0)
@@ -390,12 +484,25 @@ static void replace_range(qa_sparse_guest_memory *mem, uint64_t base, size_t byt
 }
 
 static void read_bytes(qa_sparse_guest_memory *mem, qa_guest_core_address address, uint8_t *dest, size_t byte_length) {
+  size_t single_offset = 0;
+  const qa_sparse_mapping *single = single_mapping(mem, address, byte_length, QA_ACCESS_READ, &single_offset);
+  if (single != NULL) {
+    memcpy(dest, single->backing->bytes + single->backing_offset + single_offset, byte_length);
+    return;
+  }
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_READ, &count);
   copy_chunks_into(chunks, count, dest);
   free(chunks);
 }
 static void write_bytes(qa_sparse_guest_memory *mem, qa_guest_core_address address, const uint8_t *bytes, size_t byte_length) {
+  size_t single_offset = 0;
+  qa_sparse_mapping *single = single_mapping(mem, address, byte_length, QA_ACCESS_WRITE, &single_offset);
+  if (single != NULL) {
+    chunk only = {single, single_offset, byte_length};
+    commit_write(mem, &only, 1, bytes);
+    return;
+  }
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, QA_ACCESS_WRITE, &count);
   /* Source may alias guest backing: snapshot when it overlaps a dest chunk. */
@@ -443,6 +550,11 @@ qa_guest_core_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_cor
 
 qa_guest_core_address qa_sparse_map(qa_sparse_guest_memory *mem, const qa_guest_map_options *options) {
   available(mem, options->base, options->byte_length);
+  if (mem->mapped_total + (uint64_t)options->byte_length > mem->maximum_mapped_bytes) {
+    char detail[96];
+    (void)snprintf(detail, sizeof detail, "guest mappings would exceed %llu bytes", (unsigned long long)mem->maximum_mapped_bytes);
+    fault(mem, QA_FAULT_QUOTA, options->base, options->byte_length, QA_FAULT_ACCESS_MAP, detail);
+  }
   if (options->bytes != NULL && options->bytes_length > options->byte_length)
     qa_range_error("Initial guest bytes exceed the mapping length");
   uint8_t *bytes = (uint8_t *)xcalloc(options->byte_length == 0 ? 1 : options->byte_length, 1);
@@ -465,7 +577,82 @@ static uint64_t align_up_checked(qa_sparse_guest_memory *mem, uint64_t value, ui
   return result;
 }
 
+enum { POOL_PAGE_BYTES = 4096, POOL_PAGES_PER_SLAB = 64 };
+/* TS #allocatePooledPage: small native allocations share slabs of whole pages; released pages are zeroed and reused. */
+static qa_guest_core_address allocate_pooled_page(qa_sparse_guest_memory *mem, const char *label) {
+  size_t page;
+  if (mem->free_page_count > 0) page = mem->free_pages[--mem->free_page_count];
+  else {
+    size_t slab_index = mem->slab_count;
+    for (size_t i = 0; i < mem->slab_count; i++) if (mem->slabs[i].next < POOL_PAGES_PER_SLAB) { slab_index = i; break; }
+    if (slab_index == mem->slab_count) {
+      char slab_label[256];
+      snprintf(slab_label, sizeof slab_label, "pooled pages (%s)", label);
+      qa_guest_allocation_options slab_options;
+      memset(&slab_options, 0, sizeof slab_options);
+      slab_options.byte_length = (size_t)POOL_PAGE_BYTES * POOL_PAGES_PER_SLAB;
+      slab_options.alignment = POOL_PAGE_BYTES;
+      slab_options.label = slab_label;
+      qa_guest_core_address base = qa_sparse_allocate(mem, &slab_options);
+      if (mem->slab_count == mem->slab_cap) {
+        mem->slab_cap = mem->slab_cap == 0 ? 4 : mem->slab_cap * 2;
+        mem->slabs = (struct qa_sparse_slab *)xrealloc(mem->slabs, mem->slab_cap * sizeof *mem->slabs);
+      }
+      memset(&mem->slabs[mem->slab_count], 0, sizeof *mem->slabs);
+      mem->slabs[mem->slab_count].base = base.byte_offset;
+      slab_index = mem->slab_count++;
+    }
+    page = slab_index * POOL_PAGES_PER_SLAB + mem->slabs[slab_index].next++;
+  }
+  struct qa_sparse_slab *slab = &mem->slabs[page / POOL_PAGES_PER_SLAB];
+  slab->used[page % POOL_PAGES_PER_SLAB] = 1;
+  return make_address(slab->base + (uint64_t)(page % POOL_PAGES_PER_SLAB) * POOL_PAGE_BYTES);
+}
+/* TS #releasePooledPage: true when the range was a pooled page (now zeroed and free). */
+static bool release_pooled_page(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length) {
+  const uint64_t raw = address.byte_offset;
+  const uint64_t slab_bytes = (uint64_t)POOL_PAGE_BYTES * POOL_PAGES_PER_SLAB;
+  for (size_t slab_index = 0; slab_index < mem->slab_count; slab_index++) {
+    struct qa_sparse_slab *slab = &mem->slabs[slab_index];
+    if (raw < slab->base || raw >= slab->base + slab_bytes) continue;
+    if (raw == slab->base && byte_length == slab_bytes) {
+      /* Guest disposal unmaps the slab's own mapping: retire the slab so none of its pages is handed out again. */
+      memset(slab->used, 1, sizeof slab->used);
+      slab->next = POOL_PAGES_PER_SLAB;
+      const size_t first = slab_index * POOL_PAGES_PER_SLAB, last = first + POOL_PAGES_PER_SLAB;
+      for (size_t free_index = mem->free_page_count; free_index-- > 0;) {
+        const size_t page = mem->free_pages[free_index];
+        if (page >= first && page < last) {
+          memmove(&mem->free_pages[free_index], &mem->free_pages[free_index + 1], (mem->free_page_count - free_index - 1) * sizeof *mem->free_pages);
+          mem->free_page_count--;
+        }
+      }
+      return false;
+    }
+    const size_t index = (size_t)((raw - slab->base) / POOL_PAGE_BYTES);
+    if (byte_length != POOL_PAGE_BYTES || (raw - slab->base) % POOL_PAGE_BYTES != 0)
+      fault(mem, QA_FAULT_INVALID_LENGTH, raw, byte_length, QA_FAULT_ACCESS_MAP, "a pooled page can only be released whole");
+    if (slab->used[index] != 1) fault(mem, QA_FAULT_UNMAPPED, raw, byte_length, QA_FAULT_ACCESS_MAP, "pooled page is not allocated");
+    slab->used[index] = 0;
+    size_t offset = 0;
+    qa_sparse_mapping *mapping = single_mapping(mem, address, byte_length, QA_ACCESS_WRITE, &offset);
+    if (mapping == NULL) qa_range_error("Pooled guest page lost its mapping");
+    const size_t absolute = mapping->backing_offset + offset;
+    memset(mapping->backing->bytes + absolute, 0, byte_length);
+    invalidate_code(mapping->backing, absolute, byte_length);
+    if (mem->free_page_count == mem->free_page_cap) {
+      mem->free_page_cap = mem->free_page_cap == 0 ? 16 : mem->free_page_cap * 2;
+      mem->free_pages = (size_t *)xrealloc(mem->free_pages, mem->free_page_cap * sizeof *mem->free_pages);
+    }
+    mem->free_pages[mem->free_page_count++] = slab_index * POOL_PAGES_PER_SLAB + index;
+    return true;
+  }
+  return false;
+}
 qa_guest_core_address qa_sparse_allocate(qa_sparse_guest_memory *mem, const qa_guest_allocation_options *options) {
+  if (options->pooled && options->byte_length == POOL_PAGE_BYTES && (options->alignment == 0 ? 16 : options->alignment) <= POOL_PAGE_BYTES
+      && (!options->has_permissions || options->permissions == QA_PERM_READ_WRITE))
+    return allocate_pooled_page(mem, options->label != NULL ? options->label : "allocation");
   uint64_t alignment = options->alignment == 0 ? 16 : options->alignment;
   if (alignment == 0 || (alignment & (alignment - 1u)) != 0)
     qa_range_error("Guest allocation alignment must be a positive power of two");
@@ -533,6 +720,7 @@ qa_guest_core_address qa_sparse_map_alias(qa_sparse_guest_memory *mem, uint64_t 
 }
 
 void qa_sparse_unmap(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length) {
+  if (mem->slab_count != 0 && release_pooled_page(mem, address, byte_length)) return;
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, false, QA_ACCESS_READ, &count);
   free(chunks);
@@ -555,6 +743,8 @@ size_t qa_sparse_mappings(const qa_sparse_guest_memory *mem, qa_guest_mapping *o
   return mem->mapping_count;
 }
 void qa_sparse_check(qa_sparse_guest_memory *mem, qa_guest_core_address address, size_t byte_length, qa_guest_access access) {
+  size_t single_offset = 0;
+  if (single_mapping(mem, address, byte_length, access, &single_offset) != NULL) return;
   size_t count = 0;
   chunk *chunks = chunks_of(mem, address, byte_length, true, access, &count);
   free(chunks);
@@ -624,17 +814,17 @@ void qa_sparse_fetch(qa_sparse_guest_memory *mem, qa_guest_core_address address,
   free(chunks);
 }
 uint8_t qa_sparse_fetch_byte(qa_sparse_guest_memory *mem, uint64_t byte_offset) {
-  range_check(mem, byte_offset, 1, QA_FAULT_ACCESS_EXECUTE);
-  size_t index = first_end_after(mem, byte_offset);
-  qa_sparse_mapping *mapping = index < mem->mapping_count ? mem->mappings[index] : NULL;
-  if (mapping == NULL || byte_offset < mapping->base)
-    fault(mem, QA_FAULT_UNMAPPED, byte_offset, 1, QA_FAULT_ACCESS_EXECUTE, "range includes unmapped bytes");
-  if (!qa_guest_permissions_allows(mapping->permissions, QA_ACCESS_EXECUTE)) {
-    char detail[512];
-    (void)snprintf(detail, sizeof detail, "mapping '%s' permits %s", mapping->label,
-                   qa_guest_permissions_name(mapping->permissions));
-    fault(mem, QA_FAULT_PERMISSION, byte_offset, 1, QA_FAULT_ACCESS_EXECUTE, detail);
+  qa_sparse_mapping *mapping = mem->recent_mappings[2];
+  if (mapping == NULL || !mapping->active || byte_offset < mapping->base || !addr_lt_end(byte_offset, mapping)) {
+    range_check(mem, byte_offset, 1, QA_FAULT_ACCESS_EXECUTE);
+    size_t index = first_end_after(mem, byte_offset);
+    mapping = index < mem->mapping_count ? mem->mappings[index] : NULL;
+    if (mapping == NULL || byte_offset < mapping->base)
+      fault(mem, QA_FAULT_UNMAPPED, byte_offset, 1, QA_FAULT_ACCESS_EXECUTE, "range includes unmapped bytes");
+    remember(mem, 2, mapping);
   }
+  if (!qa_guest_permissions_allows(mapping->permissions, QA_ACCESS_EXECUTE))
+    permission_fault(mem, mapping, byte_offset, 1, QA_ACCESS_EXECUTE);
   return mapping->backing->bytes[mapping->backing_offset + (size_t)(byte_offset - mapping->base)];
 }
 void qa_sparse_write(qa_sparse_guest_memory *mem, qa_guest_core_address address, const uint8_t *bytes, size_t byte_length) {
@@ -691,6 +881,131 @@ void qa_sparse_unobserve_writes(qa_sparse_guest_memory *mem, qa_guest_write_obse
     if (o->id == handle) { o->removed = true; return; }
   }
 }
+uint64_t qa_sparse_write_deliveries(const qa_sparse_guest_memory *mem) { return mem->write_deliveries; }
+
+/* TS #numericMapping: the recent mapping for this access, then the working
+ * set (a hit there becomes the recent mapping); NULL leaves nothing changed. */
+static qa_sparse_mapping *numeric_mapping(qa_sparse_guest_memory *mem, uint64_t address, size_t byte_length,
+                                          qa_guest_access access, size_t *offset) {
+  const int slot = recent_slot(true, access);
+  qa_sparse_mapping *recent = mem->recent_mappings[slot];
+  if (recent != NULL && recent->active && !recent->end_wraps && recent->end <= 0x1fffffffffffffull &&
+      mapping_holds(recent, address, byte_length, offset) && qa_guest_permissions_allows(recent->permissions, access))
+    return recent;
+  for (size_t i = 0; i < QA_SPARSE_WORKING_SET; i++) {
+    qa_sparse_mapping *candidate = mem->working_set[i];
+    if (candidate == NULL || candidate == recent || !candidate->active || candidate->end_wraps ||
+        candidate->end > 0x1fffffffffffffull)
+      continue;
+    if (!mapping_holds(candidate, address, byte_length, offset) ||
+        !qa_guest_permissions_allows(candidate->permissions, access))
+      continue;
+    mem->recent_mappings[slot] = candidate;
+    return candidate;
+  }
+  return NULL;
+}
+int64_t qa_sparse_scalar_read(qa_sparse_guest_memory *mem, uint64_t address, int byte_length) {
+  size_t offset = 0;
+  qa_sparse_mapping *mapping = numeric_mapping(mem, address, (size_t)byte_length, QA_ACCESS_READ, &offset);
+  if (mapping == NULL) return -1;
+  return (int64_t)load_le(mapping->backing->bytes + mapping->backing_offset + offset, byte_length);
+}
+bool qa_sparse_scalar_write(qa_sparse_guest_memory *mem, uint64_t address, int byte_length, uint32_t value) {
+  size_t offset = 0;
+  qa_sparse_mapping *mapping = numeric_mapping(mem, address, (size_t)byte_length, QA_ACCESS_WRITE, &offset);
+  if (mapping == NULL) return false;
+  const size_t absolute = mapping->backing_offset + offset;
+  store_le(mapping->backing->bytes + absolute, value, byte_length);
+  invalidate_code(mapping->backing, absolute, (size_t)byte_length);
+  if (mem->observers != NULL) {
+    chunk written = { mapping, offset, (size_t)byte_length };
+    notify_write(mem, &written, 1);
+  }
+  return true;
+}
+
+void qa_sparse_allocator_image(const qa_sparse_guest_memory *mem, qa_guest_allocator_image *out) {
+  memset(out, 0, sizeof *out);
+  qa_guest_allocator_hint *hints = (qa_guest_allocator_hint *)xcalloc(mem->hint_count == 0 ? 1 : mem->hint_count, sizeof *hints);
+  for (size_t i = 0; i < mem->hint_count; i++) {
+    hints[i].alignment = (int64_t)mem->hints[i].alignment;
+    hints[i].base = (int64_t)mem->hints[i].base;
+    hints[i].byte_length = (double)mem->hints[i].byte_length;
+  }
+  qa_guest_allocator_slab *slabs = (qa_guest_allocator_slab *)xcalloc(mem->slab_count == 0 ? 1 : mem->slab_count, sizeof *slabs);
+  for (size_t i = 0; i < mem->slab_count; i++) {
+    uint8_t *used = (uint8_t *)xmalloc(POOL_PAGES_PER_SLAB);
+    memcpy(used, mem->slabs[i].used, POOL_PAGES_PER_SLAB);
+    slabs[i].base = (int64_t)mem->slabs[i].base;
+    slabs[i].used.bytes = used;
+    slabs[i].used.length = POOL_PAGES_PER_SLAB;
+    slabs[i].next = (double)mem->slabs[i].next;
+  }
+  double *free_pages = (double *)xcalloc(mem->free_page_count == 0 ? 1 : mem->free_page_count, sizeof *free_pages);
+  for (size_t i = 0; i < mem->free_page_count; i++) free_pages[i] = (double)mem->free_pages[i];
+  out->hints = hints;
+  out->hint_count = mem->hint_count;
+  out->slabs = slabs;
+  out->slab_count = mem->slab_count;
+  out->free_pages = free_pages;
+  out->free_page_count = mem->free_page_count;
+}
+void qa_guest_allocator_image_free(qa_guest_allocator_image *image) {
+  for (size_t i = 0; i < image->slab_count; i++) free((void *)image->slabs[i].used.bytes);
+  free((void *)image->hints);
+  free((void *)image->slabs);
+  free((void *)image->free_pages);
+  memset(image, 0, sizeof *image);
+}
+static bool safe_integer(double value) { return value == trunc(value) && fabs(value) <= 9007199254740991.0; }
+void qa_sparse_restore_allocator(qa_sparse_guest_memory *mem, const qa_guest_allocator_image *image) {
+  for (size_t i = 0; i < image->slab_count; i++) {
+    const qa_guest_allocator_slab *slab = &image->slabs[i];
+    if (slab->used.length != POOL_PAGES_PER_SLAB || !safe_integer(slab->next) || slab->next < 0 || slab->next > POOL_PAGES_PER_SLAB)
+      qa_range_error("Invalid guest allocator slab");
+    qa_sparse_check(mem, make_address((uint64_t)slab->base), (size_t)POOL_PAGE_BYTES * POOL_PAGES_PER_SLAB, QA_ACCESS_READ);
+  }
+  for (size_t i = 0; i < image->free_page_count; i++) {
+    const double page = image->free_pages[i];
+    if (!safe_integer(page) || page < 0 || page >= (double)image->slab_count * POOL_PAGES_PER_SLAB)
+      qa_range_error("Invalid guest allocator free page");
+  }
+  /* TS Map#set on an existing alignment keeps the first insertion's place. */
+  mem->hint_count = 0;
+  for (size_t i = 0; i < image->hint_count; i++) {
+    size_t at = mem->hint_count;
+    for (size_t j = 0; j < mem->hint_count; j++)
+      if (mem->hints[j].alignment == (uint64_t)image->hints[i].alignment) { at = j; break; }
+    if (at == mem->hint_count) {
+      if (mem->hint_count == mem->hint_cap) {
+        mem->hint_cap = mem->hint_cap == 0 ? 4 : mem->hint_cap * 2;
+        mem->hints = (struct qa_sparse_hint *)xrealloc(mem->hints, mem->hint_cap * sizeof *mem->hints);
+      }
+      mem->hint_count++;
+    }
+    mem->hints[at].alignment = (uint64_t)image->hints[i].alignment;
+    mem->hints[at].base = (uint64_t)image->hints[i].base;
+    mem->hints[at].byte_length = (size_t)image->hints[i].byte_length;
+  }
+  if (image->slab_count > mem->slab_cap) {
+    mem->slab_cap = image->slab_count;
+    mem->slabs = (struct qa_sparse_slab *)xrealloc(mem->slabs, mem->slab_cap * sizeof *mem->slabs);
+  }
+  mem->slab_count = image->slab_count;
+  for (size_t i = 0; i < image->slab_count; i++) {
+    mem->slabs[i].base = (uint64_t)image->slabs[i].base;
+    memcpy(mem->slabs[i].used, image->slabs[i].used.bytes, POOL_PAGES_PER_SLAB);
+    mem->slabs[i].next = (size_t)image->slabs[i].next;
+  }
+  if (image->free_page_count > mem->free_page_cap) {
+    mem->free_page_cap = image->free_page_count;
+    mem->free_pages = (size_t *)xrealloc(mem->free_pages, mem->free_page_cap * sizeof *mem->free_pages);
+  }
+  mem->free_page_count = image->free_page_count;
+  for (size_t i = 0; i < image->free_page_count; i++) mem->free_pages[i] = (size_t)image->free_pages[i];
+}
+
 bool qa_sparse_has_write_observers(const qa_sparse_guest_memory *mem) {
   for (const qa_sparse_write_observer *o = mem->observers; o != NULL; o = o->next) {
     if (!o->removed) return true;
@@ -1036,6 +1351,7 @@ static void init_impl(qa_sparse_guest_memory *mem, const qa_sparse_guest_memory_
   mem->module = options->module;
   mem->managed = managed;
   mem->allocation_base = options->has_allocation_base ? options->allocation_base : 0x10000ull;
+  mem->maximum_mapped_bytes = options->maximum_mapped_bytes != 0 ? options->maximum_mapped_bytes : 0x40000000ull;
   mem->base.ctx = mem;
   mem->base.pointer_bytes = options->pointer_bytes;
   mem->base.managed_sparse = managed;
@@ -1088,6 +1404,8 @@ void qa_sparse_guest_memory_destroy(qa_sparse_guest_memory *mem) {
     observer = next;
   }
   free(mem->hints);
+  free(mem->slabs);
+  free(mem->free_pages);
   memset(mem, 0, sizeof *mem);
 }
 

@@ -14,31 +14,32 @@
 #include "qa/content/q2/rerelease/monsters/common.h"
 #include "qa/content/q2/rerelease/monsters/tables/boss32.h"
 #include "../rrm_internal.h"
+#include "qa/foundation/js.h"
 
-static void torso_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void torso_think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   (void)ctx;
   if (++entity->frame >= 365) entity->frame = 346;
   qa_vec3 angles = q2rm_body(game, entity).angles;
   if (angles.x > 0) {
-    angles.x = fmax(0, angles.x - 15);
-    qa_q2f_body_changes change;
+    angles.x = qa_js_max(0, angles.x - 15);
+    qa_q2_body_changes change;
     memset(&change, 0, sizeof change);
     change.has_angles = true; change.angles = angles;
     q2rm_move_body(game, entity, change, false, false);
   }
   game->show(game->ctx, entity);
-  qa_q2f_think self = {NULL, torso_think_fn};
+  qa_q2_think self = {NULL, torso_think_fn};
   game->schedule(game->ctx, entity, 0.1, self);
 }
-static qa_q2f_think torso_think(void) {
-  qa_q2f_think think = {NULL, torso_think_fn};
+static qa_q2_think torso_think(void) {
+  qa_q2_think think = {NULL, torso_think_fn};
   return think;
 }
 static void spawn_torso(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_gib_options plain = {false, false, false, false};
-  qa_q2f_entity *torso = qa_q2m_throw_gib(entity, game, "models/monsters/boss3/rider/tris.md2", 0, plain);
+  qa_q2_entity *torso = qa_q2m_throw_gib(entity, game, "models/monsters/boss3/rider/tris.md2", 0, plain);
   if (!torso) return;
   qa_body_state body = q2rm_body(game, entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
@@ -47,7 +48,7 @@ static void spawn_torso(qa_q2m_context *c) {
   torso->skin = 1;
   torso->effects = 2;
   torso->angular_velocity = q2rm_zero();
-  torso->sound_text = "makron/spine.wav";
+  torso->sound = "makron/spine.wav";
   qa_vec3 raised = body.origin;
   raised.z += height - 15;
   qa_vec3 origin = qa_add3_double(raised, qa_scale3_double(axes.forward, -10));
@@ -55,29 +56,29 @@ static void spawn_torso(qa_q2m_context *c) {
   angles.x = 90;
   qa_vec3 velocity = qa_add3_double(q2rm_body(game, torso).velocity,
       qa_add3_double(qa_scale3_double(axes.up, 120), qa_scale3_double(axes.forward, -120)));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = origin;
   change.has_angles = true; change.angles = angles;
   change.has_velocity = true; change.velocity = velocity;
   q2rm_move_body(game, torso, change, false, false);
-  game->motion(game->ctx, torso, QA_Q2F_MOTION_TOSS);
+  game->motion(game->ctx, torso, "toss");
   game->show(game->ctx, torso);
-  q2rm_emit_loop(game, torso, torso->sound_text, 0, "start");
+  q2rm_emit_loop(game, torso, torso->sound, 0, "start");
   game->schedule(game->ctx, torso, 0.1, torso_think());
 }
 qa_actor_id qa_q2rm_toss_rerelease_makron(qa_q2m_context *context, qa_q2m_monsters *monsters) {
-  qa_q2f_entity *entity = context->entity;
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *child = game->create(game->ctx, "monster_makron", NULL);
+  qa_q2_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *child = game->create(game->ctx, "monster_makron", NULL, 0);
   child->target = entity->target;
   child->enemy = entity->enemy;
   child->has_enemy = entity->has_enemy;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = q2rm_body(game, entity).origin;
   q2rm_move_body(game, child, change, true, false);
-  if (!qa_q2m_monsters_spawn(monsters, child, game)) qa_q2f_error("Makron must be registered before Jorg");
+  if (!qa_q2m_monsters_spawn(monsters, child, game)) qa_raise("Error", 0, 0, "Makron must be registered before Jorg");
   if (child->think.fn) child->think.fn(child->think.ctx, child, game);
   bool has_enemy = child->has_enemy && qa_q2m_health(game, &child->enemy) > 0;
   qa_actor_id enemy;
@@ -86,7 +87,7 @@ qa_actor_id qa_q2rm_toss_rerelease_makron(qa_q2m_context *context, qa_q2m_monste
   else have_enemy = qa_q2m_monsters_current_sight_client(monsters, &enemy);
   qa_body_state_result target;
   memset(&target, 0, sizeof target);
-  if (have_enemy) target = game->host->bodies.read(game->host->bodies.ctx, enemy);
+  if (have_enemy) target = qa_shared_body_table_read(game->host->bodies, enemy);
   qa_q2m_context *resumed = qa_q2m_monsters_context(monsters, child->actor.id);
   if (!target.has_value || !resumed) return child->actor.id;
   qa_body_state body = q2rm_body(game, child);
@@ -98,7 +99,7 @@ qa_actor_id qa_q2rm_toss_rerelease_makron(qa_q2m_context *context, qa_q2m_monste
   memset(&change, 0, sizeof change);
   change.has_angles = true; change.angles = angles;
   change.has_velocity = true; change.velocity = velocity;
-  change.has_ground = true; change.ground = NULL;
+  change.has_ground = true; change.ground_null = true;
   q2rm_move_body(game, child, change, false, false);
   child->enemy = enemy;
   child->has_enemy = true;
@@ -119,8 +120,8 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (strcmp(state->move->name, "makron_move_sight") == 0 || q2rm_now(game) < state->pain_time
@@ -140,12 +141,12 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   qa_q2bm_stop_loop(c);
-  entity->sound_text = "";
+  entity->sound = "";
   if (qa_q2rm_check_gib(c)) {
     q2rm_snd(c, "misc/udeath.wav", 2);
     qa_q2m_gib_options plain = {false, false, false, false};
@@ -164,7 +165,7 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   q2rm_set_damageable(game, entity, true);
   q2rm_set_move(c, "makron_move_death2");
   spawn_torso(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-60, -60, 0);
@@ -174,7 +175,7 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_corpse(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-60, -60, 0);
@@ -189,7 +190,7 @@ static void save_loc_fn(void *ctx, qa_q2m_context *c) {
 }
 static void railgun_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 119));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 119));
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(c->entity->pos1, start));
   c->weapons.fire_rail(c->weapons.ctx, c->entity, c->game, start, direction, 50, 100);
   qa_q2rm_monster_flash(c, 119, start, direction);
@@ -199,7 +200,7 @@ static void hyper_fn(void *ctx, qa_q2m_context *c) {
   double frame = c->entity->frame;
   const qa_q2rm_boss32_frames *f = &qa_q2rm_boss32_frames_value;
   double flash = 102 + frame - f->attak405;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, flash));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, flash));
   qa_vec3 eye;
   bool have_eye = qa_q2m_enemy_eye(c, &eye);
   double yaw = q2rm_body(c->game, c->entity).angles.y;
@@ -224,8 +225,8 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_makron_definition(void) {
   makron_definition = qa_q2bm_makron_definition;
   makron_definition.moves = qa_q2rm_boss32_moves;
   makron_definition.move_count = qa_q2rm_boss32_move_count;
-  qa_q2f_named_think *think_defs = malloc(sizeof *think_defs);
-  if (!think_defs) qa_q2f_error("Out of memory creating rerelease makron definition");
+  qa_q2_named_think *think_defs = malloc(sizeof *think_defs);
+  if (!think_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease makron definition");
   think_defs[0].name = "rerelease.makron.makron_torso_think";
   think_defs[0].cb = torso_think();
   makron_definition.has_source_callbacks = true;
@@ -237,7 +238,7 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_makron_definition(void) {
   makron_definition.check_attack = check_attack_fn;
   makron_definition.reactions.pain = pain_fn;
   makron_definition.reactions.die = die_fn;
-  makron_definition.callbacks = qa_q2rm_merge_callbacks(
+  makron_definition.callbacks = qa_q2rm_merge_callbacks(NULL, 
       makron_definition.callbacks, makron_definition.callback_count,
       extra_callbacks, sizeof extra_callbacks / sizeof extra_callbacks[0], &makron_definition.callback_count);
   makron_ready = true;

@@ -5,9 +5,9 @@
 #define QA_CONTENT_Q2_RERELEASE_MONSTERS_BEAM_H
 #include "qa/content/q2/foundation/monsters/types.h"
 
-void qa_q2rm_update_monster_beam(qa_q2f_entity *beam, qa_q2f_game *game, bool damage);
+void qa_q2rm_update_monster_beam(qa_q2_entity *beam, qa_q2_game_services *game, bool damage);
 /* TS freeMonsterBeam (Q2Think). */
-void qa_q2rm_free_monster_beam_fn(void *ctx, qa_q2f_entity *beam, qa_q2f_game *game);
-qa_q2f_think qa_q2rm_free_monster_beam(void);
-void qa_q2rm_fire_monster_beam(qa_q2m_context *context, double damage, bool secondary, qa_q2f_think update);
+void qa_q2rm_free_monster_beam_fn(void *ctx, qa_q2_entity *beam, qa_q2_game_services *game);
+qa_q2_think qa_q2rm_free_monster_beam(void);
+void qa_q2rm_fire_monster_beam(qa_q2m_context *context, double damage, bool secondary, qa_q2_think update);
 #endif

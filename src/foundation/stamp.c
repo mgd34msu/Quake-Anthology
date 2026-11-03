@@ -28,10 +28,12 @@ void qa_stamp_set_destroy(qa_stamp_set *set) {
 }
 
 void qa_stamp_set_begin(qa_stamp_set *set) {
-  set->epoch++;
-  if (set->epoch == 0) {
+  /* TS: the epoch re-zeroes the marks once it reaches the uint32 ceiling. */
+  if (set->epoch >= 0xffffffffu) {
     if (set->capacity != 0) memset(set->marks, 0, set->capacity * sizeof(uint32_t));
     set->epoch = 1;
+  } else {
+    set->epoch++;
   }
 }
 

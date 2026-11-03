@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/game/ballistics-math.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/game/ballistics_math.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
@@ -35,7 +36,7 @@ qa_q3_missile_params qa_q3_get_missile_parameters(double weapon) {
   if (weapon == 5) { qa_q3_missile_params p = {900,15000,false,100,100,120,6,7}; return p; }
   if (weapon == 8) { qa_q3_missile_params p = {2000,10000,false,20,15,20,8,9}; return p; }
   if (weapon == 9) { qa_q3_missile_params p = {2000,10000,false,100,100,120,12,13}; return p; }
-  qa_range_error("No Q3 missile parameters for weapon %g", weapon);
+  qa_range_error("No Q3 missile parameters for weapon %s", QA_JS_NUMBER(weapon));
 }
 qa_vec3 qa_q3_nail_velocity(qa_vec3 start, qa_vec3 forward, qa_vec3 right, qa_vec3 up, qa_q3_game_random_pick random) {
   double angle = f32(f32(random.random(random.ctx) * f32(3.141592653589793)) * 2);

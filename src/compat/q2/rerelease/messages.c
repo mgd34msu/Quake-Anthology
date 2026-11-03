@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 struct qa_compat_q2_rerelease_message_imports {
   qa_compat_q2_memory *memory; qa_compat_q2_rerelease_message_services services;
@@ -29,7 +30,7 @@ bool qa_compat_q2_rerelease_message_imports_invoke(qa_compat_q2_rerelease_messag
     const qa_guest_call_value *v = qa_compat_q2_guest_argument(args, count, 0);
     if (v->kind != QA_GUEST_VALUE_FLOAT32) qa_range_error("Q2 message writer requires a source float");
     if (strcmp(name, "WriteFloat") == 0) qa_q2_msg_write_float(buffer, v->number_value);
-    else qa_q2_msg_write_byte(buffer, (double)((int64_t)trunc((float)((float)(v->number_value * 256) / 360)) & 255));
+    else qa_q2_msg_write_byte(buffer, (double)(qa_js_to_int32(trunc((float)((float)(v->number_value * 256) / 360))) & 255)); /* guest NaN/huge: ToInt32 */
   }
   else if (strcmp(name, "WritePosition") == 0) {
     qa_vec3 p = qa_compat_q2_mem_read_f32_vector(m->memory, qa_compat_q2_guest_required_pointer(args, count, 0));

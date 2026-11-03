@@ -200,7 +200,8 @@ static void test_classic_printf(void) {
   text = qa_compat_q2_classic_printf(&memory, "%#08x %.0i %f", args2, 3);
   CHECK(text && strcmp(text, "0x00002a  -0.000000") == 0);
   free(text);
-  CHECK_ABORTS((void)qa_compat_q2_classic_printf_layouts("%I64d", NULL, 0));
+  /* After the drift %I64d is a 64-bit conversion (TS printf.ts size prefixes), not an error. */
+  { qa_guest_value_layout layout[1]; CHECK(qa_compat_q2_classic_printf_layouts("%I64d", layout, 1) == 1 && strcmp(layout[0].storage, "int64") == 0); }
   CHECK_ABORTS(free(qa_compat_q2_classic_printf(&memory, "%i", NULL, 0)));
   qa_guest_call_value wrong[] = {double_value(1)};
   CHECK_ABORTS(free(qa_compat_q2_classic_printf(&memory, "%i", wrong, 1)));

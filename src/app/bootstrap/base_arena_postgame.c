@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/game_numeric.h"
+#include "qa/foundation/js.h"
 static double number_at(const char *const *args, size_t count, size_t index) {
   const char *text = index < count && args[index] ? args[index] : "";
   /* TS splits on NUL (C string end) and slices 1023 chars. */
@@ -15,7 +16,7 @@ static double number_at(const char *const *args, size_t count, size_t index) {
   return qa_game_atoi(buf);
 }
 qa_app_arena_postgame qa_app_parse_arena_postgame(const char *const *args, size_t arg_count, double level, double skill) {
-  double count = fmin(8, fmax(0, number_at(args, arg_count, 0)));
+  double count = qa_js_min(8, qa_js_max(0, number_at(args, arg_count, 0)));
   double player_client = number_at(args, arg_count, 1);
   qa_app_arena_postgame game = {0};
   game.player_client = player_client;
@@ -24,7 +25,7 @@ qa_app_arena_postgame qa_app_parse_arena_postgame(const char *const *args, size_
   for (double n = 0; n < count; n++) {
     size_t i = (size_t)n;
     double client = number_at(args, arg_count, 8 + i * 3);
-    double player_rank = (double)(int32_t)(((int32_t)number_at(args, arg_count, 9 + i * 3) & ~64) + 1);
+    double player_rank = (double)(int32_t)((qa_js_to_int32(number_at(args, arg_count, 9 + i * 3)) & ~64) + 1);
     game.players[game.player_count++] = (qa_app_arena_podium_player){client, player_rank, number_at(args, arg_count, 10 + i * 3)};
     if (client == player_client) rank = player_rank;
   }

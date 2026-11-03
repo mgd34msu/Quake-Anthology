@@ -1,10 +1,17 @@
 /* Port of src/network/q1/demos.ts. GPL-2.0-or-later. */
 #include "qa/network/q1/demos.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+/* ToInt32 (NaN and infinities are 0; the fmod form cast NaN to uint32_t). */
+static int32_t ji(double n) { return qa_js_to_int32(n); }
+/* Throw-time owner of one malloc'd slot: a raise after the read frees it. */
+static void free_slot(void *arg) { free(*(void **)arg); *(void **)arg = NULL; }
 void qa_netquake_demo_reader_init(qa_netquake_demo_reader *r, const uint8_t *bytes, size_t length, double max_message_bytes) {
   r->max_message_bytes = max_message_bytes; r->owned_base = bytes;
   long long end = -1;
@@ -17,7 +24,7 @@ void qa_netquake_demo_reader_init(qa_netquake_demo_reader *r, const uint8_t *byt
   bool ok = i < n;
   for (size_t j = i; j < n; j++) if (!isdigit((unsigned char)track[j])) ok = false;
   if (!ok) qa_q1_packet_error("Invalid demo track", 0);
-  r->forced_track = strtod(track, NULL);
+  r->forced_track = qa_js_string_to_number(track); /* Number(track) */
   qa_message_reader_init(&r->reader, bytes + end + 1, length - (size_t)end - 1);
 }
 int qa_netquake_demo_reader_next(qa_netquake_demo_reader *r, qa_netquake_demo_record *out) {
@@ -28,12 +35,17 @@ int qa_netquake_demo_reader_next(qa_netquake_demo_reader *r, qa_netquake_demo_re
   out->view_angles.x = qa_message_reader_float(mr);
   out->view_angles.y = qa_message_reader_float(mr);
   out->view_angles.z = qa_message_reader_float(mr);
-  out->message = qa_message_reader_bytes(mr, (long long)size, &out->length);
+  size_t length = 0;
+  uint8_t *message = qa_message_reader_bytes(mr, (long long)size, &length);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free_slot, &message);
   qa_message_reader_finish(mr);
+  qa_cleanup_pop(&guard);
+  out->message = message; out->length = length;
   return 1;
 }
 uint8_t *qa_write_netquake_demo_header(double track, size_t *out_len) {
-  char buf[40]; int n = snprintf(buf, sizeof buf, "%lld\n", (long long)trunc(track));
+  char buf[48]; int n = snprintf(buf, sizeof buf, "%s\n", QA_JS_NUMBER(trunc(track)));
   uint8_t *b = malloc((size_t)n); memcpy(b, buf, (size_t)n); *out_len = (size_t)n; return b;
 }
 uint8_t *qa_write_netquake_demo_record(const qa_netquake_demo_record *record, size_t *out_len) {
@@ -81,10 +93,13 @@ int qa_quakeworld_demo_reader_next(qa_quakeworld_demo_reader *r, qa_quakeworld_d
     out->kind = "sequences";
     out->outgoing = qa_message_reader_long(mr); out->incoming = qa_message_reader_long(mr);
   } else {
-    char msg[64]; snprintf(msg, sizeof msg, "Unknown QWD record %g", type);
+    char msg[64]; snprintf(msg, sizeof msg, "Unknown QWD record %s", QA_JS_NUMBER(type));
     qa_q1_packet_error(msg, mr->offset - 1);
   }
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free_slot, &out->message);
   qa_message_reader_finish(mr);
+  qa_cleanup_pop(&guard);
   return 1;
 }
 uint8_t *qa_write_quakeworld_demo_record(const qa_quakeworld_demo_record *record, size_t *out_len) {
@@ -95,12 +110,12 @@ uint8_t *qa_write_quakeworld_demo_record(const qa_quakeworld_demo_record *record
     qa_msg_write_byte(&s, 0);
     uint8_t bytes[24]; memset(bytes, 0, sizeof bytes);
     const qa_qw_user_command *c = &record->command;
-    bytes[0] = (uint8_t)c->milliseconds;
+    bytes[0] = (uint8_t)ji(c->milliseconds);
     float fx = (float)c->angles.x, fy = (float)c->angles.y, fz = (float)c->angles.z;
     memcpy(bytes + 4, &fx, 4); memcpy(bytes + 8, &fy, 4); memcpy(bytes + 12, &fz, 4);
-    int16_t f = (int16_t)c->forward_move, sd = (int16_t)c->side_move, u = (int16_t)c->up_move;
+    int16_t f = (int16_t)ji(c->forward_move), sd = (int16_t)ji(c->side_move), u = (int16_t)ji(c->up_move);
     memcpy(bytes + 16, &f, 2); memcpy(bytes + 18, &sd, 2); memcpy(bytes + 20, &u, 2);
-    bytes[22] = (uint8_t)c->buttons; bytes[23] = (uint8_t)c->impulse;
+    bytes[22] = (uint8_t)ji(c->buttons); bytes[23] = (uint8_t)ji(c->impulse);
     qa_sz_write(&s, bytes, 24, 24);
     qa_msg_write_float(&s, record->view_angles.x);
     qa_msg_write_float(&s, record->view_angles.y);
@@ -121,14 +136,28 @@ void qa_quakeworld_demo_playback_destroy(qa_quakeworld_demo_playback *p) {
   if (p->has_pending) qa_quakeworld_demo_record_destroy(&p->pending);
   p->has_pending = false;
 }
+typedef struct drain_scope { qa_quakeworld_demo_record **records; size_t *count; } drain_scope;
+/* A raise in reader.next leaves `pending` on the record already pushed, as TS
+ * leaves this.pending unassigned; that last copy stays owned by pending. */
+static void drain_scope_free(void *arg) {
+  drain_scope *scope = arg;
+  for (size_t i = 0; i + 1 < *scope->count; i++) free((*scope->records)[i].message);
+  free(*scope->records);
+}
 qa_quakeworld_demo_record *qa_quakeworld_demo_playback_drain(qa_quakeworld_demo_playback *p, double seconds, bool force, size_t *out_count) {
   size_t cap = 4, count = 0;
   qa_quakeworld_demo_record *records = calloc(cap, sizeof *records);
+  drain_scope scope = { &records, &count };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, drain_scope_free, &scope);
   while (p->has_pending && (force || p->pending.seconds <= seconds)) {
     if (count == cap) { cap *= 2; records = realloc(records, cap * sizeof *records); }
     records[count++] = p->pending;
-    p->has_pending = qa_quakeworld_demo_reader_next(p->reader, &p->pending) != 0;
+    qa_quakeworld_demo_record next;
+    p->has_pending = qa_quakeworld_demo_reader_next(p->reader, &next) != 0;
+    p->pending = next;
   }
+  qa_cleanup_pop(&guard);
   *out_count = count; return records;
 }
 bool qa_quakeworld_demo_playback_ended(const qa_quakeworld_demo_playback *p) { return !p->has_pending; }

@@ -46,9 +46,14 @@ static void spike_fn(void *ctx, qa_q2m_context *c) {
 }
 static void club_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  (void)c->weapons.fire_hit(c->weapons.ctx, c->entity, c->game,
-                            q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, -4),
-                            5 + floor(q2bm_rnd(c->game) * 6), 400);
+  void * value = c->weapons.ctx;
+  qa_q2_entity * value2 = c->entity;
+  qa_q2_game_services * value3 = c->game;
+  qa_vec3 value4 = q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, -4);
+  double value5 = 5 + floor(q2bm_rnd(c->game) * 6);
+  (void)c->weapons.fire_hit(value, value2, value3,
+                            value4,
+                            value5, 400);
 }
 static void strike_fn(void *ctx, qa_q2m_context *c) { (void)ctx; (void)c; }
 

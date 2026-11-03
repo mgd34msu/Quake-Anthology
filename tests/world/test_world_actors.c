@@ -481,7 +481,8 @@ static void test_authority(void) {
   options.id = "q1:combat";
   options.context = q1_context;
   options.armor = qa_native_victim_armor(armor_context, NULL);
-  (void)qa_gameplay_authority_register(combat, qa_create_q1_combat_policy(options));
+  const qa_combat_policy policy = qa_create_q1_combat_policy(options);
+  (void)qa_gameplay_authority_register(combat, policy);
   qa_owned_actor target = qa_session_actor_registry_allocate(actors, "q2:game", "q2:monster");
   qa_combat_state initial;
   memset(&initial, 0, sizeof initial);
@@ -513,6 +514,8 @@ static void test_authority(void) {
   CHECK(after.has_value && after.value.health == 70);
   CHECK(log.confirmed == 1 && log.before == 1);
   qa_gameplay_authority_destroy(combat);
+  qa_combat_policy_free(policy); /* C ownership: the creator releases (TS GC) */
+  qa_victim_armor_policy_free(options.armor);
   qa_actor_callback_table_destroy(callbacks);
   qa_session_actor_registry_destroy(actors);
   qa_identity_owner_destroy(&identities);

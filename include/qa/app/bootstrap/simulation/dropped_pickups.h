@@ -6,6 +6,7 @@
 #include "qa/contracts/gameplay.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/session.h"
+#include "qa/persistence/value.h"
 typedef struct qa_app_sim_dropped_pickup_cargo { qa_item_id item; double count; } qa_app_sim_dropped_pickup_cargo;
 typedef struct qa_app_sim_dropped_pickup_slot { qa_item_id item; double count; double slot; } qa_app_sim_dropped_pickup_slot;
 typedef struct qa_app_sim_dropped_pickup_level { const char *map; qa_app_sim_dropped_pickup_slot *items; size_t item_count; } qa_app_sim_dropped_pickup_level;
@@ -28,4 +29,8 @@ void qa_app_sim_source_pickup_cargo_release(qa_app_sim_source_pickup_cargo *c, q
 qa_app_sim_dropped_pickup_level *qa_app_sim_source_pickup_cargo_travel(qa_app_sim_source_pickup_cargo *c, const char *map, bool new_unit, size_t *out_count);
 void qa_app_sim_dropped_pickup_levels_destroy(qa_app_sim_dropped_pickup_level *levels, size_t count);
 void qa_app_sim_source_pickup_cargo_revisit(qa_app_sim_source_pickup_cargo *c, const qa_app_sim_dropped_pickup_level *levels, size_t count, const char *map);
+/* SourcePickupCargo.capture(): { current, levels } (owned tree). */
+qa_save_value *qa_app_sim_source_pickup_cargo_capture(qa_app_sim_source_pickup_cargo *c);
+/* SourcePickupCargo.restore(reader); an undefined reader value clears. */
+void qa_app_sim_source_pickup_cargo_restore(qa_app_sim_source_pickup_cargo *c, const qa_save_reader *reader);
 #endif

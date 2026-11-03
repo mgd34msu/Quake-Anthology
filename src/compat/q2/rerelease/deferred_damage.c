@@ -8,6 +8,7 @@
 #include "qa/compat/q2/rerelease/source_state.h"
 #include "qa/content/q2/missionpacks/damage.h"
 #include "qa/foundation/cleanup.h"
+#include "qa/foundation/js.h"
 
 typedef struct { qa_damage_request request; qa_actor_id attacker, inflictor; } stored_request_t;
 static void store_request(stored_request_t *dst, qa_damage_request src) {
@@ -71,18 +72,22 @@ static tracked_t *find_tracked(qa_compat_q2_rerelease_deferred_damage *d, qa_act
   return NULL;
 }
 static bool entry_valid(qa_compat_q2_rerelease_deferred_damage *d, tracked_t *entry) {
+  const qa_compat_q2_memory * m;
+  qa_guest_address a;
   qa_compat_q2_rerelease_source_edict *source = xsource(d, entry->view);
   bool ok = qa_session_actor_registry_is_live(dengine(d)->actors, entry->actor.id) &&
             qa_compat_q2_rerelease_source_edict_generation(source) == entry->generation &&
-            qa_compat_q2_mem_read_u8(dmem(d), qa_compat_q2_rerelease_source_edict_at(source, "shared.inuse")) != 0;
+            (m = dmem(d), a = qa_compat_q2_rerelease_source_edict_at(source, "shared.inuse"), qa_compat_q2_mem_read_u8(m, a)) != 0;
   qa_compat_q2_rerelease_source_edict_destroy(source);
   return ok;
 }
 static qa_vec3 monster_point(qa_compat_q2_rerelease_deferred_damage *d, qa_raw_entity_view view) {
   double base = dprofile(d)->monster.point;
   qa_compat_q2_memory *m = dmem(d);
-  return (qa_vec3){qa_compat_q2_mem_read_f32(m, at_view(d, view, base)), qa_compat_q2_mem_read_f32(m, at_view(d, view, base + 4)),
-                   qa_compat_q2_mem_read_f32(m, at_view(d, view, base + 8))};
+  double x = qa_compat_q2_mem_read_f32(m, at_view(d, view, base));
+  double y = qa_compat_q2_mem_read_f32(m, at_view(d, view, base + 4));
+  double z = qa_compat_q2_mem_read_f32(m, at_view(d, view, base + 8));
+  return (qa_vec3){x, y, z};
 }
 static void unobserve(void *v) {
   obs_t *obs = v;
@@ -111,7 +116,9 @@ static void blood_written(void *v) {
 }
 void qa_compat_q2_rerelease_deferred_damage_track(qa_compat_q2_rerelease_deferred_damage *d, qa_raw_entity_view view) {
   qa_compat_q2_rerelease_source_edict *source = xsource(d, view);
-  bool monster = (qa_compat_q2_mem_read_u32(dmem(d), qa_compat_q2_rerelease_source_edict_at(source, "shared.svflags")) & 4) != 0;
+  const qa_compat_q2_memory * m = dmem(d);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(source, "shared.svflags");
+  bool monster = (qa_compat_q2_mem_read_u32(m, a) & 4) != 0;
   double generation = qa_compat_q2_rerelease_source_edict_generation(source);
   qa_compat_q2_rerelease_source_edict_destroy(source);
   if (!monster) return;
@@ -146,8 +153,10 @@ static qa_actor_id request_actor(qa_compat_q2_rerelease_deferred_damage *d, cons
 static qa_vec3 request_vector(qa_compat_q2_rerelease_deferred_damage *d, const qa_guest_call_value *args, size_t count, size_t index) {
   qa_guest_address address = qa_compat_q2_guest_required_pointer(args, count, index);
   qa_compat_q2_memory *m = dmem(d);
-  return (qa_vec3){qa_compat_q2_mem_read_f32(m, address), qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 4)),
-                   qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 8))};
+  double x = qa_compat_q2_mem_read_f32(m, address);
+  double y = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 4));
+  double z = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 8));
+  return (qa_vec3){x, y, z};
 }
 typedef struct { qa_damage_request request; qa_actor_id attacker, inflictor; } request_parts_t;
 static qa_damage_request native_request(qa_compat_q2_rerelease_deferred_damage *d, qa_actor_id target, const qa_guest_call_value *args, size_t count,
@@ -173,7 +182,7 @@ static qa_damage_request native_request(qa_compat_q2_rerelease_deferred_damage *
   request.point = request_vector(d, args, count, 4);
   request.direction = request_vector(d, args, count, 3);
   request.normal = request_vector(d, args, count, 5);
-  request.delivery = ((int64_t)damage_flags & 1) != 0 ? "radius" : "direct";
+  request.delivery = (qa_js_to_int32(damage_flags) & 1) != 0 ? "radius" : "direct";
   request.attack = d->services.provenance(d->services.ctx, parts->attacker, parts->inflictor, target);
   request.attack.attacker = &parts->attacker;
   request.attack.inflictor = &parts->inflictor;
@@ -201,7 +210,9 @@ static void damage_entered(void *v) {
   qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(dmod(d));
   qa_raw_entity_view view = table.from_pointer(table.ctx, address);
   qa_compat_q2_rerelease_source_edict *source = xsource(d, view);
-  bool monster = (qa_compat_q2_mem_read_u32(dmem(d), qa_compat_q2_rerelease_source_edict_at(source, "shared.svflags")) & 4) != 0;
+  const qa_compat_q2_memory * m = dmem(d);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(source, "shared.svflags");
+  bool monster = (qa_compat_q2_mem_read_u32(m, a) & 4) != 0;
   qa_compat_q2_rerelease_source_edict_destroy(source);
   if (!monster) return;
   qa_owned_actor actor;
@@ -431,17 +442,19 @@ void qa_compat_q2_rerelease_deferred_damage_restore(qa_compat_q2_rerelease_defer
     qa_actor_source_result source = qa_session_actor_registry_source_of(dengine(d)->actors, target);
     if (!source.has_value) qa_range_error("Saved monster has no native source slot");
     qa_raw_entity_view view = table.at_slot(table.ctx, (double)source.slot);
-    qa_compat_q2_mem_write_pointer(memory, at_view(d, view, profile->monster.attacker), true,
-                                   table.at_slot(table.ctx, state->attacker_slot).address);
-    qa_compat_q2_mem_write_pointer(memory, at_view(d, view, profile->monster.inflictor), true,
-                                   table.at_slot(table.ctx, state->inflictor_slot).address);
-    qa_compat_q2_mem_write_i32(memory, at_view(d, view, profile->monster.blood), (int32_t)state->blood);
-    qa_compat_q2_mem_write_i32(memory, at_view(d, view, profile->monster.knockback), (int32_t)state->save_knockback);
+    qa_guest_address a3 = at_view(d, view, profile->monster.attacker);
+    qa_guest_address v2 = table.at_slot(table.ctx, state->attacker_slot).address;
+    qa_compat_q2_mem_write_pointer(memory, a3, true, v2);
+    qa_guest_address a2 = at_view(d, view, profile->monster.inflictor);
+    qa_guest_address v = table.at_slot(table.ctx, state->inflictor_slot).address;
+    qa_compat_q2_mem_write_pointer(memory, a2, true, v);
+    qa_compat_q2_mem_write_i32(memory, at_view(d, view, profile->monster.blood), qa_js_to_int32(state->blood));
+    qa_compat_q2_mem_write_i32(memory, at_view(d, view, profile->monster.knockback), qa_js_to_int32(state->save_knockback));
     double components[3] = {state->save_point.x, state->save_point.y, state->save_point.z};
     for (size_t c = 0; c < 3; c++)
       qa_compat_q2_mem_write_f32(memory, at_view(d, view, profile->monster.point + (double)c * 4), components[c]);
     if (state->mod_count != 3) qa_range_error("Invalid saved native monster mod_t");
-    uint8_t mod[3] = {(uint8_t)state->mod[0], (uint8_t)state->mod[1], (uint8_t)state->mod[2]};
+    uint8_t mod[3] = {qa_js_to_uint8(state->mod[0]), qa_js_to_uint8(state->mod[1]), qa_js_to_uint8(state->mod[2])};
     memory->write(memory->ctx, at_view(d, view, profile->monster.mod), mod, 3);
     qa_compat_q2_rerelease_deferred_damage_track(d, view);
     tracked_t *entry = find_tracked(d, target);

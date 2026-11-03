@@ -166,7 +166,10 @@ void qa_q2_mvd_framer_push(qa_q2_mvd_message_framer *framer, const uint8_t *byte
     uint8_t *payload = framer->pending;
     framer->pending = NULL;
     framer->pending_length = 0;
+    qa_cleanup node;
+    qa_cleanup_push(&node, free, payload); /* a raising consumer abandons the message */
     bool keep = message(ctx, payload + 2, (size_t)mlen);
+    qa_cleanup_pop(&node);
     free(payload);
     if (!keep) {
       size_t rest = length - offset;
@@ -227,19 +230,33 @@ void qa_q2_mvd_byte_blocks_free(qa_q2_mvd_byte_block *blocks, size_t count) {
   }
 }
 
+typedef struct recording_held {
+  qa_q2_mvd_message_framer *framer;
+  collect_ctx *collected;
+} recording_held;
+static void recording_release(void *arg) {
+  recording_held *held = (recording_held *)arg;
+  qa_q2_mvd_framer_destroy(held->framer);
+  qa_q2_mvd_byte_blocks_free(held->collected->blocks, held->collected->count);
+}
+
 bool qa_q2_read_mvd_recording(const uint8_t *bytes, size_t length,
                               qa_q2_mvd_byte_block **out, size_t *out_count) {
   qa_q2_mvd_message_framer framer;
   qa_q2_mvd_framer_init(&framer, true, QA_Q2_MVD_MAX_MESSAGE);
   collect_ctx c = {NULL, 0, 0, false};
+  /* A truncated or malformed recording raises; what was collected is released. */
+  recording_held held = {&framer, &c};
+  qa_cleanup node;
+  qa_cleanup_push(&node, recording_release, &held);
   qa_q2_mvd_framer_push(&framer, bytes, length, collect_message, &c);
+  if (!c.oom) qa_q2_mvd_framer_finish(&framer, true);
+  qa_cleanup_pop(&node);
+  qa_q2_mvd_framer_destroy(&framer);
   if (c.oom) {
     qa_q2_mvd_byte_blocks_free(c.blocks, c.count);
-    qa_q2_mvd_framer_destroy(&framer);
     return false;
   }
-  qa_q2_mvd_framer_finish(&framer, true);
-  qa_q2_mvd_framer_destroy(&framer);
   *out = c.blocks;
   *out_count = c.count;
   return true;

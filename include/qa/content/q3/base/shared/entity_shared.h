@@ -35,6 +35,9 @@ typedef struct qa_q3_base_entity_shared {
   double contents, owner_num;
   qa_q3_base_entity_body_binding body;
   bool has_previous_link; qa_linked_body previous_link;
+  /* Owned copy of previous_link.state.ground (TS ActorId value): the body
+   * table's ground pointer is only valid until its next store. */
+  qa_actor_id previous_link_ground;
   bool has_current_origin_view; qa_vec3 current_origin_view;
   bool has_abs_min_override; qa_vec3 abs_min_override;
   bool has_abs_max_override; qa_vec3 abs_max_override;

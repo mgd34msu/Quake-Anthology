@@ -1,370 +1,386 @@
-/* Port of src/content/q1/addons/brushes.ts. GPL-2.0-or-later. */
+/* Port of src/content/q1/addons/brushes.ts. MG1/MG3 func_bob.qc,
+ * func_toss.qc, rotate.qc, misc.qc, misc_model.qc. Copyright (C) 1996-2026
+ * id Software LLC. GPL-2.0-or-later. */
 #include "qa/content/q1/addons/brushes.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 
-static void prefix_of(qa_q1ad_context *context, char out[QA_Q1AD_NAME]) {
-  (void)snprintf(out, QA_Q1AD_NAME, "%s:brush:", qa_q1ad_program_name(context->program));
-}
-static void schedule(qa_q1ad_context *context, qa_q1ad_actor *entity, const char *name, double delay) {
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_schedule_named(context, entity, delay, prefix, name);
-}
-static void schedule_at_named(qa_q1ad_context *context, qa_q1ad_actor *entity, double time, const char *name) {
-  char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_named_name(full, prefix, name);
-  qa_q1ad_schedule_at(context, entity, time, full);
-}
-static void call_named(qa_q1ad_context *context, qa_q1ad_actor *entity, const char *name) {
-  char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_named_name(full, prefix, name);
-  qa_q1ad_do_action(context, entity, full);
-}
+/* `${program}:brush:` names: static literals, since slots borrow the name. */
+#define NAMED(context, name) \
+  ((const char *const[]){"dopa:brush:" name, "mg1:brush:" name, "mg3:brush:" name, \
+                         "ctf:brush:" name}[(context)->program])
+
 static double fr(double value) { return (double)(float)value; }
-static void push_brush(qa_q1ad_context *context, qa_q1ad_actor *entity) {
+static bool falsy(double value) { return value == 0 || isnan(value); }
+static int32_t spawnflags(const qa_q1_actor *entity) { return qa_js_to_int32(entity->spawnflags); }
+static bool same(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
+
+static qa_q1_bound_action named_action(qa_q1_services *game, qa_q1_actor *entity, const char *name) {
+  return qa_q1_callback_registry_action(game->named, entity, name);
+}
+static void schedule(qa_q1ad_context *context, qa_q1_actor *entity, const char *name, double delay) {
+  qa_q1_schedule(context->game, entity, delay, named_action(context->game, entity, name));
+}
+static void schedule_at(qa_q1_services *game, qa_q1_actor *entity, double time, const char *name) {
+  qa_q1_schedule_at(game, entity, time, named_action(game, entity, name));
+}
+static void set_velocity(qa_q1_services *game, qa_q1_actor *entity, qa_vec3 velocity) {
+  qa_q1_body_patch patch = {.has_velocity = true, .velocity = velocity};
+  qa_q1_set_body(game, entity, &patch);
+}
+static void push_brush(qa_q1_services *game, qa_q1_actor *entity) {
   entity->solid = "bsp";
   entity->movement = "push";
-  qa_q1ad_link(context, entity);
+  qa_q1_link(game, entity);
 }
-static qa_vec3 bob_position(qa_q1ad_actor *entity, double angle) {
+/* (game.host.random() * 2 - 1): one draw per call, in TS order at call sites. */
+static double signed_random(qa_q1_services *game) { return qa_q1_host_random(game) * 2 - 1; }
+
+static qa_vec3 bob_position(qa_q1_actor *entity, double angle) {
   entity->count = fr(fmod(fr(entity->count + angle), 360));
-  return qa_add3(qa_scale3(qa_q1ad_actor_vector(entity, "dest"), fr(sin(entity->count))),
-                 qa_scale3(qa_q1ad_actor_vector(entity, "dest2"), fr(cos(entity->count))));
+  /* The source sin()/cos() are QuakeC functions of degrees (makevectors on {0, angle, 0}). */
+  double radians = entity->count * (3.141592653589793 * 2 / 360) /* Math.PI */;
+  qa_vec3 a = qa_q1_vscale(qa_q1_actor_vector(entity, "dest"), fr(sin(radians)));
+  qa_vec3 b = qa_q1_vscale(qa_q1_actor_vector(entity, "dest2"), fr(cos(radians)));
+  return qa_q1_vadd(a, b);
 }
-static void bob_tick(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_set_origin(context, entity, bob_position(entity, fr(entity->angular_velocity.x * context->frame_time)));
+
+static void bob_tick(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_set_origin(game, entity, bob_position(entity, fr(entity->angular_velocity.x * context->frame_time)));
 }
-static void bob_think(qa_q1ad_context *context, qa_q1ad_actor *entity) {
+static void bob_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
   qa_vec3 position = bob_position(entity, fr(entity->angular_velocity.x * 0.05));
-  qa_q1ad_body_patch patch = {.has_velocity = true,
-      .velocity = qa_scale3(qa_sub3(position, qa_q1ad_body_of(context, entity).origin), 20)};
-  qa_q1ad_set_body(context, entity, &patch);
-  schedule_at_named(context, entity, fr(qa_q1ad_actor_number(entity, "ltime") + 0.05), "bob_think");
+  set_velocity(game, entity, qa_q1_vscale(qa_q1_vsub(position, qa_q1_get_body(game, entity).origin), 20));
+  schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 0.05), NAMED(context, "bob_think"));
 }
-static void bob_use(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                    const qa_actor_id *other, const qa_actor_id *activator) {
+static void bob_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                    const qa_actor_id *activator) {
   (void)other; (void)activator;
-  bool solid = entity->solid == NULL || strcmp(entity->solid, "none") != 0;
-  char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
+  qa_q1ad_context *context = ctx;
+  bool solid = !same(entity->solid, "none");
   if (entity->activated) {
-    if (solid) {
-      qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = {0, 0, 0}};
-      qa_q1ad_set_body(context, entity, &patch);
-      qa_q1ad_cancel(context, entity);
-    } else qa_q1ad_remove_frame_tick(context, entity);
-  } else if (solid) call_named(context, entity, "bob_think");
-  else { qa_q1ad_named_name(full, prefix, "bob_tick"); qa_q1ad_add_frame_tick(context, entity, full); }
+    if (solid) { set_velocity(game, entity, QA_Q1_ZERO); qa_q1_cancel(game, entity); }
+    else qa_q1ad_remove_frame_tick(context, entity);
+  } else if (solid) {
+    qa_q1_call_action(game, entity, named_action(game, entity, NAMED(context, "bob_think")));
+  } else {
+    qa_q1ad_add_frame_tick(context, entity, NAMED(context, "bob_tick"));
+  }
   entity->activated = !entity->activated;
 }
-static void bob_blocked(qa_q1ad_context *context, qa_q1ad_actor *entity, qa_actor_id other) {
-  if (entity->attack_finished > context->game.time) return;
+static void bob_blocked(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other) {
+  (void)ctx;
+  if (entity->attack_finished > game->time) return;
   qa_actor_id self = entity->actor.id;
-  qa_q1ad_damage(context, other, &self, &self, entity->damage, NULL, NULL, NULL);
-  entity->attack_finished = fr(context->game.time + 0.5);
+  (void)qa_q1_damage(game, other, self, &self, entity->damage, NULL, NULL, NULL, NULL);
+  entity->attack_finished = fr(game->time + 0.5);
 }
-static void spawn_bob(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  if (qa_length3(qa_q1ad_actor_vector(entity, "dest")) == 0)
-    qa_q1ad_set_vector(context, entity, "dest", (qa_vec3){0, 0, 64});
-  if (entity->wait == 0) entity->wait = 10;
-  if (entity->damage == 0) entity->damage = 1;
+static void spawn_bob(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  if (qa_q1_length(qa_q1_actor_vector(entity, "dest")) == 0) qa_q1ad_set_vector(context, entity, "dest", (qa_vec3){0, 0, 64});
+  if (falsy(entity->wait)) entity->wait = 10;
+  if (falsy(entity->damage)) entity->damage = 1;
   entity->angular_velocity = (qa_vec3){fr(360 / entity->wait), 0, 0};
   entity->count = fr(360 * entity->delay);
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->use, prefix, "bob_use");
-  qa_q1ad_bind_prefix(entity->blocked, prefix, "bob_blocked");
-  entity->solid = ((int32_t)entity->spawnflags & 1) != 0 ? "none" : "bsp";
-  entity->movement = strcmp(entity->solid, "none") == 0 ? "none" : "push";
-  if (((int32_t)entity->spawnflags & 2) != 0) qa_q1ad_do_use(context, entity, entity->use, NULL, NULL);
+  entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "bob_use"));
+  entity->blocked = qa_q1_callback_registry_blocked(game->named, entity, NAMED(context, "bob_blocked"));
+  entity->solid = (spawnflags(entity) & 1) != 0 ? "none" : "bsp";
+  entity->movement = same(entity->solid, "none") ? "none" : "push";
+  if ((spawnflags(entity) & 2) != 0) qa_q1_call_use(game, entity, entity->use, NULL, NULL);
 }
-static void toss_think(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  if (qa_length3(qa_q1ad_body_of(context, entity).velocity) < 0.01) {
-    int32_t flags = (int32_t)entity->spawnflags;
-    if ((flags & 2) != 0 && ((flags & 8) == 0 ||
-        qa_length3(qa_sub3(qa_q1ad_actor_vector(entity, "oldorigin"),
-                           qa_q1ad_body_of(context, entity).origin)) > 64)) {
-      qa_q1ad_remove(context, entity);
+
+static void toss_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  if (qa_q1_length(qa_q1_get_body(game, entity).velocity) < 0.01) {
+    qa_vec3 a;
+    qa_vec3 b;
+    if ((spawnflags(entity) & 2) != 0 &&
+        ((spawnflags(entity) & 8) == 0 ||
+         qa_q1_length((a = qa_q1_actor_vector(entity, "oldorigin"), b = qa_q1_get_body(game, entity).origin, qa_q1_vsub(a, b))) > 64)) {
+      qa_q1_remove(game, entity);
       return;
     }
-    qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = {0, 0, 0}};
-    qa_q1ad_set_body(context, entity, &patch);
-    push_brush(context, entity);
+    set_velocity(game, entity, QA_Q1_ZERO);
+    push_brush(game, entity);
     return;
   }
-  schedule(context, entity, "toss_think", 0.5);
+  schedule(context, entity, NAMED(context, "toss_think"), 0.5);
 }
-static void toss_action(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
+static void toss_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_body body = qa_q1_get_body(game, entity);
   entity->solid = "bbox";
-  entity->movement = ((int32_t)entity->spawnflags & 4) != 0 ? "toss" : "bounce";
-  qa_bounds bounds = {qa_add3(body.bounds.min, (qa_vec3){4, 4, 0}), body.bounds.max};
-  qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = entity->movedir,
-                              .has_bounds = true, .bounds = bounds};
-  qa_q1ad_set_body(context, entity, &patch);
-  if (qa_q1ad_actor_text(entity, "noise")[0] != '\0')
-    qa_q1ad_sound_entity(context, entity, qa_q1ad_actor_text(entity, "noise"), NULL);
-  qa_q1ad_link(context, entity);
-  schedule(context, entity, "toss_think", 0.25);
+  entity->movement = (spawnflags(entity) & 4) != 0 ? "toss" : "bounce";
+  qa_q1_body_patch patch = {.has_velocity = true, .velocity = entity->movedir, .has_bounds = true,
+                            .bounds = {qa_q1_vadd(body.bounds.min, (qa_vec3){4, 4, 0}), body.bounds.max}};
+  qa_q1_set_body(game, entity, &patch);
+  if (qa_q1_actor_text(entity, "noise")[0] != '\0') qa_q1_sound_defaults(game, entity->actor.id, qa_q1_actor_text(entity, "noise"));
+  qa_q1_link(game, entity);
+  schedule(context, entity, NAMED(context, "toss_think"), 0.25);
 }
-static void toss_use(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                     const qa_actor_id *other, const qa_actor_id *activator) {
+static void toss_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                     const qa_actor_id *activator) {
   (void)other; (void)activator;
-  entity->use[0] = '\0';
+  qa_q1ad_context *context = ctx;
+  entity->use = (qa_q1_bound_use){0};
   if (entity->delay != 0)
-    schedule_at_named(context, entity, fr(qa_q1ad_actor_number(entity, "ltime") + entity->delay), "toss");
-  else call_named(context, entity, "toss");
+    schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + entity->delay), NAMED(context, "toss"));
+  else
+    qa_q1_call_action(game, entity, named_action(game, entity, NAMED(context, "toss")));
 }
-static void toss_cascade(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
-  qa_vec3 position = qa_scale3(qa_add3(body.bounds.min, body.bounds.max), 0.5);
+static void toss_cascade(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_bounds bounds = qa_q1_get_body(game, entity).bounds;
+  qa_vec3 position = qa_q1_vscale(qa_q1_vadd(bounds.min, bounds.max), 0.5);
   double nearest = 16384;
-  qa_q1ad_actor *entities[512];
-  size_t count = qa_q1ad_entities(context, entities, 512);
-  for (size_t i = 0; i < count; i++) {
-    qa_q1ad_actor *other = entities[i];
-    if (strcmp(qa_q1ad_actor_text(other, "netname"), "_toss_origin") != 0) continue;
-    const char *a = other->targetname != NULL ? other->targetname : "";
-    const char *b = entity->targetname != NULL ? entity->targetname : "";
-    if (strcmp(a, b) != 0) continue;
-    qa_bounds other_bounds = qa_q1ad_body_of(context, other).bounds;
-    double value = fr(qa_length3(qa_sub3(position,
-        qa_scale3(qa_add3(other_bounds.min, other_bounds.max), 0.5))) / other->speed);
-    if (value < nearest) nearest = value;
+  for (size_t i = 0; i < game->entity_count; i++) {
+    qa_q1_actor *other = game->entities[i];
+    if (other == NULL || strcmp(qa_q1_actor_text(other, "netname"), "_toss_origin") != 0 ||
+        strcmp(other->targetname, entity->targetname) != 0) continue;
+    qa_bounds other_bounds = qa_q1_get_body(game, other).bounds;
+    nearest = qa_js_min(nearest, fr(qa_q1_length(qa_q1_vsub(position, qa_q1_vscale(qa_q1_vadd(other_bounds.min, other_bounds.max), 0.5))) /
+                                    other->speed));
   }
   if (nearest < 16384) entity->delay = nearest;
 }
-static double random_signed(qa_q1ad_context *context) { return qa_q1ad_random(context) * 2 - 1; }
-static void spawn_toss(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  push_brush(context, entity);
-  qa_q1ad_set_vector(context, entity, "oldorigin", qa_q1ad_body_of(context, entity).origin);
-  entity->movedir = qa_q1ad_actor_vector(entity, "movedir");
-  if (qa_length3(entity->movedir) == 0) entity->movedir = (qa_vec3){0, 0, 200};
-  qa_vec3 variance = qa_q1ad_actor_vector(entity, "dest");
-  if (qa_length3(variance) != 0)
-    entity->movedir = qa_add3(entity->movedir, (qa_vec3){
-        random_signed(context) * variance.x, random_signed(context) * variance.y,
-        random_signed(context) * variance.z});
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->use, prefix, "toss_use");
-  if (((int32_t)entity->spawnflags & 1) != 0) {
-    qa_q1ad_actor_set(entity, "netname", "_toss_origin");
-    if (entity->speed == 0) entity->speed = 200;
+static void spawn_toss(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  push_brush(game, entity);
+  qa_q1ad_set_vector(context, entity, "oldorigin", qa_q1_get_body(game, entity).origin);
+  entity->movedir = qa_q1_actor_vector(entity, "movedir");
+  if (qa_q1_length(entity->movedir) == 0) entity->movedir = (qa_vec3){0, 0, 200};
+  qa_vec3 variance = qa_q1_actor_vector(entity, "dest");
+  if (qa_q1_length(variance) != 0) {
+    qa_vec3 jitter;
+    jitter.x = signed_random(game) * variance.x;
+    jitter.y = signed_random(game) * variance.y;
+    jitter.z = signed_random(game) * variance.z;
+    entity->movedir = qa_q1_vadd(entity->movedir, jitter);
+  }
+  entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "toss_use"));
+  if ((spawnflags(entity) & 1) != 0) {
+    (void)qa_q1_actor_field_set(entity, "netname", "_toss_origin");
+    if (falsy(entity->speed)) entity->speed = 200;
     return;
   }
   if (entity->delay == 0)
-    schedule_at_named(context, entity, fr(qa_q1ad_actor_number(entity, "ltime") + 0.2), "toss_cascade");
+    schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 0.2), NAMED(context, "toss_cascade"));
 }
-static void shatter_use(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                        const qa_actor_id *other, const qa_actor_id *activator) {
-  (void)other; (void)activator;
-  entity->use[0] = '\0';
+static void shatter_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                        const qa_actor_id *activator) {
+  (void)ctx; (void)other; (void)activator;
+  entity->use = (qa_q1_bound_use){0};
   entity->solid = "none";
   entity->movement = "toss";
-  qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = entity->movedir};
-  qa_q1ad_set_body(context, entity, &patch);
-  qa_q1ad_link(context, entity);
+  set_velocity(game, entity, entity->movedir);
+  qa_q1_link(game, entity);
 }
-static void spawn_shatter(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  push_brush(context, entity);
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
-  entity->pos1 = qa_add3(body.origin, qa_scale3(qa_add3(body.bounds.min, body.bounds.max), 0.5));
-  entity->pos2 = qa_q1ad_actor_vector(entity, "pos2");
-  if (qa_length3(entity->pos2) == 0) entity->pos2 = qa_sub3(body.origin, (qa_vec3){0, 0, 100});
-  qa_vec3 difference = qa_sub3(entity->pos1, entity->pos2);
-  double distance = qa_length3(difference);
-  entity->speed = fr(fr((entity->speed != 0 ? entity->speed : 200) * 10000) / fr(distance * distance));
-  if (entity->wait == 0) entity->wait = 10;
-  entity->movedir = qa_add3(qa_scale3(qa_normalize3_or_zero(difference), entity->speed), (qa_vec3){
-      random_signed(context) * entity->wait, random_signed(context) * entity->wait,
-      random_signed(context) * entity->wait});
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->use, prefix, "shatter");
+static void spawn_shatter(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  push_brush(game, entity);
+  qa_q1_body body = qa_q1_get_body(game, entity);
+  entity->pos1 = qa_q1_vadd(body.origin, qa_q1_vscale(qa_q1_vadd(body.bounds.min, body.bounds.max), 0.5));
+  entity->pos2 = qa_q1_actor_vector(entity, "pos2");
+  if (qa_q1_length(entity->pos2) == 0) entity->pos2 = qa_q1_vsub(body.origin, (qa_vec3){0, 0, 100});
+  qa_vec3 difference = qa_q1_vsub(entity->pos1, entity->pos2);
+  double distance = qa_q1_length(difference);
+  entity->speed = fr(fr((falsy(entity->speed) ? 200 : entity->speed) * 10000) / fr(distance * distance));
+  if (falsy(entity->wait)) entity->wait = 10;
+  qa_vec3 jitter;
+  jitter.x = signed_random(game) * entity->wait;
+  jitter.y = signed_random(game) * entity->wait;
+  jitter.z = signed_random(game) * entity->wait;
+  entity->movedir = qa_q1_vadd(qa_q1_vscale(qa_q1_normalize(difference), entity->speed), jitter);
+  entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "shatter"));
 }
-static void debris_fade(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  double alpha = fr(qa_q1ad_actor_number_or(entity, "alpha", 1) -
-                    fr(fr(1 / entity->wait) * context->frame_time));
+static void debris_fade(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  double alpha = fr(qa_q1_actor_number_or(entity, "alpha", 1) - fr(fr(1 / entity->wait) * context->frame_time));
   qa_q1ad_alpha(context, entity, alpha);
   if (alpha < 0) {
     qa_q1ad_alpha(context, entity, 1);
-    qa_q1ad_set_origin(context, entity, qa_q1ad_actor_vector(entity, "oldorigin"));
+    qa_q1_set_origin(game, entity, qa_q1_actor_vector(entity, "oldorigin"));
     entity->movement = "toss";
-    qa_q1ad_body_patch patch = {.has_velocity = true,
-        .velocity = {random_signed(context) * 8, random_signed(context) * 8, 0}};
-    qa_q1ad_set_body(context, entity, &patch);
-    schedule(context, entity, "debris_fade", entity->delay);
+    qa_vec3 velocity = {0, 0, 0};
+    velocity.x = signed_random(game) * 8;
+    velocity.y = signed_random(game) * 8;
+    set_velocity(game, entity, velocity);
+    schedule(context, entity, NAMED(context, "debris_fade"), entity->delay);
     return;
   }
-  schedule(context, entity, "debris_fade", 0.01);
+  schedule(context, entity, NAMED(context, "debris_fade"), 0.01);
 }
-static void debris_wake(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  entity->use[0] = '\0';
+static void debris_wake(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  entity->use = (qa_q1_bound_use){0};
   entity->solid = "none";
   entity->movement = "toss";
   qa_q1ad_alpha(context, entity, 1);
-  qa_vec3 velocity = qa_q1ad_body_of(context, entity).velocity;
-  velocity.x = random_signed(context) * 8;
-  velocity.y = random_signed(context) * 8;
-  qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = velocity};
-  qa_q1ad_set_body(context, entity, &patch);
-  qa_q1ad_link(context, entity);
-  schedule(context, entity, "debris_fade", entity->delay);
+  qa_vec3 velocity = qa_q1_get_body(game, entity).velocity;
+  velocity.x = signed_random(game) * 8;
+  velocity.y = signed_random(game) * 8;
+  set_velocity(game, entity, velocity);
+  qa_q1_link(game, entity);
+  schedule(context, entity, NAMED(context, "debris_fade"), entity->delay);
 }
-static void debris_wait(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                        const qa_actor_id *other, const qa_actor_id *activator) {
+static void debris_wait(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                        const qa_actor_id *activator) {
   (void)other; (void)activator;
-  schedule_at_named(context, entity, fr(qa_q1ad_actor_number(entity, "ltime") + qa_q1ad_random(context)), "debris_wake");
+  qa_q1ad_context *context = ctx;
+  double ltime = qa_q1_actor_number(entity, "ltime");
+  schedule_at(game, entity, fr(ltime + qa_q1_host_random(game)), NAMED(context, "debris_wake"));
 }
-static void spawn_debris(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  push_brush(context, entity);
-  qa_q1ad_set_vector(context, entity, "oldorigin", qa_q1ad_body_of(context, entity).origin);
-  if (entity->delay == 0) entity->delay = 1.5;
-  if (entity->wait == 0) entity->wait = 0.1;
+static void spawn_debris(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  push_brush(game, entity);
+  qa_q1ad_set_vector(context, entity, "oldorigin", qa_q1_get_body(game, entity).origin);
+  if (falsy(entity->delay)) entity->delay = 1.5;
+  if (falsy(entity->wait)) entity->wait = 0.1;
   entity->movedir = (qa_vec3){0, 0, 200};
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->use, prefix, "debris_wait");
+  entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "debris_wait"));
   qa_q1ad_alpha(context, entity, 1);
 }
-static void explode_action(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
-  qa_vec3 position = qa_scale3(qa_add3(body.bounds.min, body.bounds.max), 0.5);
-  entity->model = "";
-  qa_q1ad_set_origin(context, entity, position);
+static void explode_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1_body body = qa_q1_get_body(game, entity);
+  qa_vec3 position = qa_q1_vscale(qa_q1_vadd(body.bounds.min, body.bounds.max), 0.5);
+  qa_q1ad_set_text(&entity->model, "");
+  qa_q1_set_origin(game, entity, position);
   qa_actor_id self = entity->actor.id;
-  if (context->game.radius_damage != NULL)
-    context->game.radius_damage(context->game.ctx, self, &self, 160, NULL, NULL);
-  qa_q1ad_sound_entity(context, entity, "weapons/r_exp3.wav", NULL);
-  qa_q1ad_effect(context, "explosion", position, NULL, 0);
-  qa_q1ad_use_targets(context, entity, entity->has_activator ? &entity->activator : NULL);
-  qa_q1ad_remove(context, entity);
+  qa_q1_radius_damage(game, self, &self, 160, NULL, NULL, "");
+  qa_q1_sound_defaults(game, self, "weapons/r_exp3.wav");
+  qa_q1_effect(game, "explosion", position, NULL, 1);
+  qa_q1_use_targets(game, entity, entity->has_activator ? &entity->activator : NULL);
+  qa_q1_remove(game, entity);
 }
-static void explode_die(qa_q1ad_context *context, qa_q1ad_actor *entity, const qa_actor_id *attacker) {
-  entity->damageable = false;
-  if (attacker != NULL) { entity->activator = *attacker; entity->has_activator = true; }
-  else entity->has_activator = false;
-  schedule_at_named(context, entity, fr(qa_q1ad_actor_number(entity, "ltime") + 0.15), "explode");
+static void explode_die(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_actor_set_damageable(entity, false);
+  entity->has_activator = attacker != NULL;
+  if (attacker != NULL) entity->activator = *attacker;
+  schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 0.15), NAMED(context, "explode"));
 }
-static void spawn_explode(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  push_brush(context, entity);
-  qa_q1ad_body_patch patch = {.has_angles = true, .angles = {0, 0, 0}};
-  qa_q1ad_set_body(context, entity, &patch);
-  if (context->game.combat_set_health != NULL)
-    context->game.combat_set_health(context->game.ctx, entity->actor, 20);
-  entity->damageable = true;
+static void spawn_explode(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  push_brush(game, entity);
+  qa_q1_body_patch patch = {.has_angles = true, .angles = QA_Q1_ZERO};
+  qa_q1_set_body(game, entity, &patch);
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 20);
+  qa_q1_actor_set_damageable(entity, true);
   entity->aimed_damage = true;
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->die, prefix, "explode_die");
+  entity->die = qa_q1_callback_registry_die(game->named, entity, NAMED(context, "explode_die"));
 }
-static void hurt_use(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                     const qa_actor_id *other, const qa_actor_id *activator) {
-  (void)context; (void)other; (void)activator;
+static void hurt_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                     const qa_actor_id *activator) {
+  (void)ctx; (void)game; (void)other; (void)activator;
   entity->activated = !entity->activated;
   entity->attack_finished = 0;
 }
-static void hurt_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                       const qa_actor_id *other, const qa_vec3 *normal) {
-  (void)normal;
-  if (other == NULL) return;
-  bool can_take = false;
-  bool known = context->game.combat_can_take_damage != NULL &&
-      context->game.combat_can_take_damage(context->game.ctx, *other, &can_take);
-  if (!entity->activated || entity->attack_finished > context->game.time ||
-      qa_q1ad_health(context, *other) <= 0 || !known || !can_take) return;
-  bool monster = context->services.is_monster != NULL &&
-      context->services.is_monster(context->services.ctx, *other);
-  if (!qa_q1ad_is_player(context, other) && !monster) return;
-  qa_q1ad_actor *world = qa_q1ad_world(context);
-  qa_actor_id self = entity->actor.id;
-  qa_actor_id world_id = world != NULL ? world->actor.id : self;
-  qa_q1ad_damage(context, *other, &self, world != NULL ? &world_id : NULL, entity->damage, NULL, NULL, NULL);
-  entity->attack_finished = fr(context->game.time + entity->wait);
+static void hurt_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                       const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)normal; (void)surface;
+  qa_q1ad_context *context = ctx;
+  if (!entity->activated || entity->attack_finished > game->time || qa_q1_health(game, other) <= 0) return;
+  qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, other);
+  if (!combat.has_value || !combat.value.can_take_damage) return;
+  if (!qa_q1_is_player(game, &other) && !context->services.is_monster(context->services.ctx, other)) return;
+  qa_actor_id world;
+  if (game->world != NULL) world = game->world->actor.id;
+  (void)qa_q1_damage(game, other, entity->actor.id, game->world != NULL ? &world : NULL, entity->damage, NULL, NULL, NULL, NULL);
+  entity->attack_finished = fr(game->time + entity->wait);
 }
-static void spawn_hurt(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  push_brush(context, entity);
-  if (entity->damage == 0) entity->damage = 10;
-  if (entity->wait == 0) entity->wait = 0.2;
-  entity->activated = ((int32_t)entity->spawnflags & 1) != 0;
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->use, prefix, "hurt_use");
-  qa_q1ad_bind_prefix(entity->touch, prefix, "hurt_touch");
+static void spawn_hurt(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  push_brush(game, entity);
+  if (falsy(entity->damage)) entity->damage = 10;
+  if (falsy(entity->wait)) entity->wait = 0.2;
+  entity->activated = (spawnflags(entity) & 1) != 0;
+  entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "hurt_use"));
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, NAMED(context, "hurt_touch"));
 }
-static void spawn_fade_brush(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_bind(entity->use, "func_wall_use");
-  push_brush(context, entity);
+/* The official function unconditionally delegates to func_wall before its obsolete fade code. */
+static void spawn_fade_brush(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->use = qa_q1_callback_registry_use(game->named, entity, "func_wall_use");
+  push_brush(game, entity);
 }
-static void model_loop(qa_q1ad_context *context, qa_q1ad_actor *entity) {
+static void model_loop(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game;
+  qa_q1ad_context *context = ctx;
   entity->frame++;
-  if (entity->frame == qa_q1ad_actor_number(entity, "cnt")) entity->frame = entity->count;
-  schedule(context, entity, "model_loop", 0.1);
+  if (entity->frame == qa_q1_actor_number(entity, "cnt")) entity->frame = entity->count;
+  schedule(context, entity, NAMED(context, "model_loop"), 0.1);
 }
-static void model_once(qa_q1ad_context *context, qa_q1ad_actor *entity) {
+static void model_once(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game;
+  qa_q1ad_context *context = ctx;
   entity->frame++;
-  if (entity->frame < qa_q1ad_actor_number(entity, "cnt")) schedule(context, entity, "model_once", 0.1);
+  if (entity->frame < qa_q1_actor_number(entity, "cnt")) schedule(context, entity, NAMED(context, "model_once"), 0.1);
 }
-static void model_use_once(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                           const qa_actor_id *other, const qa_actor_id *activator) {
-  (void)other; (void)activator;
+static void model_use_once(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                           const qa_actor_id *activator) {
+  (void)game; (void)other; (void)activator;
+  qa_q1ad_context *context = ctx;
   entity->frame = entity->count;
-  schedule(context, entity, "model_once", 0.1);
+  schedule(context, entity, NAMED(context, "model_once"), 0.1);
 }
-static void model_use_loop(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                           const qa_actor_id *other, const qa_actor_id *activator) {
+static void model_use_loop(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                           const qa_actor_id *activator) {
   (void)other; (void)activator;
-  entity->spawnflags = (double)((int32_t)entity->spawnflags ^ 4);
-  if (((int32_t)entity->spawnflags & 4) == 0) call_named(context, entity, "model_loop");
-  else qa_q1ad_cancel(context, entity);
+  qa_q1ad_context *context = ctx;
+  entity->spawnflags = (double)(spawnflags(entity) ^ 4);
+  if ((spawnflags(entity) & 4) == 0) qa_q1_call_action(game, entity, named_action(game, entity, NAMED(context, "model_loop")));
+  else qa_q1_cancel(game, entity);
 }
-static void spawn_model(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  if (entity->model == NULL || entity->model[0] == '\0') qa_range_error("misc_model requires a model");
-  entity->frame = qa_q1ad_actor_number(entity, "frame");
+static void spawn_model(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  if (entity->model[0] == '\0') qa_range_error("misc_model requires a model");
+  entity->frame = qa_q1_actor_number(entity, "frame");
   entity->solid = "none";
   if (entity->spawnflags == 0) return;
-  if (qa_q1ad_actor_number(entity, "cnt") < entity->frame ||
-      entity->targetname == NULL || entity->targetname[0] == '\0')
+  if (qa_q1_actor_number(entity, "cnt") < entity->frame || entity->targetname[0] == '\0')
     qa_range_error("misc_model requires a valid frame range and targetname");
   entity->count = entity->frame;
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  if (((int32_t)entity->spawnflags & 2) != 0) qa_q1ad_bind_prefix(entity->use, prefix, "model_use_once");
-  else if (((int32_t)entity->spawnflags & 5) != 0) {
-    qa_q1ad_bind_prefix(entity->use, prefix, "model_use_loop");
-    entity->spawnflags = (double)((int32_t)entity->spawnflags ^ 4);
-    qa_q1ad_do_use(context, entity, entity->use, NULL, NULL);
+  if ((spawnflags(entity) & 2) != 0) {
+    entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "model_use_once"));
+  } else if ((spawnflags(entity) & 5) != 0) {
+    entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "model_use_loop"));
+    entity->spawnflags = (double)(spawnflags(entity) ^ 4);
+    qa_q1_call_use(game, entity, entity->use, NULL, NULL);
   }
 }
-static void spawn_remove(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_remove(context, entity);
+static void spawn_remove(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1_remove(game, entity);
 }
 static double wrap_angle(double value) {
   if (value > 360) return value - ceil((value - 360) / 360) * 360;
   if (value < 0) return value + ceil(-value / 360) * 360;
   return value;
 }
-static void rotate_apply(qa_q1ad_context *context, qa_q1ad_actor *entity, double scale) {
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
-  qa_vec3 angles = qa_add3(body.angles, qa_scale3(entity->angular_velocity, fr(context->frame_time * scale)));
+static void rotate(qa_q1ad_context *context, qa_q1_actor *entity, double scale) {
+  qa_q1_services *game = context->game;
+  qa_q1_body body = qa_q1_get_body(game, entity);
+  qa_vec3 angles = qa_q1_vadd(body.angles, qa_q1_vscale(entity->angular_velocity, fr(context->frame_time * scale)));
   /* Source ModAngles mistakenly tests x for the negative-z adjustment. */
-  qa_vec3 wrapped = {wrap_angle(angles.x), wrap_angle(angles.y),
-                     angles.z > 360 ? wrap_angle(angles.z) : angles.z};
-  qa_q1ad_body_patch patch = {.has_angles = true, .angles = wrapped};
-  qa_q1ad_set_body(context, entity, &patch);
+  qa_q1_body_patch patch = {.has_angles = true,
+                            .angles = {wrap_angle(angles.x), wrap_angle(angles.y), angles.z > 360 ? wrap_angle(angles.z) : angles.z}};
+  qa_q1_set_body(game, entity, &patch);
 }
-static void rotate_tick(qa_q1ad_context *context, qa_q1ad_actor *entity) { rotate_apply(context, entity, 1); }
-static void rotate_tween(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  double next = fr(entity->speed + fr(qa_q1ad_actor_number(entity, "distance") * context->frame_time));
-  entity->speed = next < 0 ? 0 : next > 1 ? 1 : next;
+static void rotate_tick(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game;
+  rotate(ctx, entity, 1);
+}
+static void rotate_tween(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game;
+  qa_q1ad_context *context = ctx;
+  entity->speed = qa_js_min(1, qa_js_max(0, fr(entity->speed + fr(qa_q1_actor_number(entity, "distance") * context->frame_time))));
   if (entity->speed == 0) {
     qa_q1ad_set_number(context, entity, "rotate.state", 0);
     qa_q1ad_remove_frame_tick(context, entity);
@@ -372,127 +388,119 @@ static void rotate_tween(qa_q1ad_context *context, qa_q1ad_actor *entity) {
   }
   if (entity->speed == 1) {
     qa_q1ad_set_number(context, entity, "rotate.state", 2);
-    char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-    prefix_of(context, prefix);
-    qa_q1ad_named_name(full, prefix, "rotate_tick");
-    qa_q1ad_actor_set(entity, "addon.frameTick", full);
-    rotate_apply(context, entity, 1);
+    (void)qa_q1_actor_field_set(entity, "addon.frameTick", NAMED(context, "rotate_tick"));
+    rotate(context, entity, 1);
     return;
   }
-  rotate_apply(context, entity, entity->speed);
+  rotate(context, entity, entity->speed);
 }
-static void rotate_use(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                       const qa_actor_id *other, const qa_actor_id *activator) {
-  (void)other; (void)activator;
-  double state = qa_q1ad_actor_number(entity, "rotate.state");
-  char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
+static void rotate_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                       const qa_actor_id *activator) {
+  (void)game; (void)other; (void)activator;
+  qa_q1ad_context *context = ctx;
+  double state = qa_q1_actor_number(entity, "rotate.state");
   if (entity->delay <= 0) {
     qa_q1ad_set_number(context, entity, "rotate.state", state == 0 ? 2 : 0);
-    if (state == 0) { qa_q1ad_named_name(full, prefix, "rotate_tick"); qa_q1ad_add_frame_tick(context, entity, full); }
+    if (state == 0) qa_q1ad_add_frame_tick(context, entity, NAMED(context, "rotate_tick"));
     else qa_q1ad_remove_frame_tick(context, entity);
     return;
   }
-  qa_q1ad_named_name(full, prefix, "rotate_tween");
-  qa_q1ad_actor_set(entity, "addon.frameTick", full);
+  (void)qa_q1_actor_field_set(entity, "addon.frameTick", NAMED(context, "rotate_tween"));
   bool forward = state == 0 || state == 3;
   qa_q1ad_set_number(context, entity, "rotate.state", forward ? 1 : 3);
-  double distance = qa_q1ad_actor_number(entity, "distance");
-  qa_q1ad_set_number(context, entity, "distance", fabs(distance) * (forward ? 1 : -1));
-  if (state == 0) qa_q1ad_add_frame_tick(context, entity, full);
+  qa_q1ad_set_number(context, entity, "distance", fabs(qa_q1_actor_number(entity, "distance")) * (forward ? 1 : -1));
+  if (state == 0) qa_q1ad_add_frame_tick(context, entity, NAMED(context, "rotate_tween"));
 }
-static void spawn_rotate(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  entity->angular_velocity = qa_q1ad_actor_vector(entity, "avelocity");
-  if (qa_length3(entity->angular_velocity) == 0) entity->angular_velocity = (qa_vec3){0, 30, 0};
+static void spawn_rotate(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  entity->angular_velocity = qa_q1_actor_vector(entity, "avelocity");
+  if (qa_q1_length(entity->angular_velocity) == 0) entity->angular_velocity = (qa_vec3){0, 30, 0};
   if (entity->delay > 0) qa_q1ad_set_number(context, entity, "distance", 1 / entity->delay);
-  entity->solid = ((int32_t)entity->spawnflags & 4) != 0 ? "bsp" : "none";
-  entity->movement = strcmp(entity->solid, "bsp") == 0 ? "push" : "none";
-  qa_q1ad_body_patch patch = {.has_angles = true, .angles = {0, 0, 0}};
-  qa_q1ad_set_body(context, entity, &patch);
-  qa_vec3 pos = qa_q1ad_actor_vector(entity, "pos2");
-  if (qa_length3(pos) != 0) qa_q1ad_set_origin(context, entity, pos);
-  char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->use, prefix, "rotate_use");
-  bool off = ((int32_t)entity->spawnflags & 1) != 0;
+  entity->solid = (spawnflags(entity) & 4) != 0 ? "bsp" : "none";
+  entity->movement = same(entity->solid, "bsp") ? "push" : "none";
+  qa_q1_body_patch patch = {.has_angles = true, .angles = QA_Q1_ZERO};
+  qa_q1_set_body(game, entity, &patch);
+  qa_vec3 pos = qa_q1_actor_vector(entity, "pos2");
+  if (qa_q1_length(pos) != 0) qa_q1_set_origin(game, entity, pos);
+  entity->use = qa_q1_callback_registry_use(game->named, entity, NAMED(context, "rotate_use"));
+  bool off = (spawnflags(entity) & 1) != 0;
   qa_q1ad_set_number(context, entity, "rotate.state", off ? 0 : 2);
   if (!off) {
     entity->speed = 1;
-    qa_q1ad_named_name(full, prefix, "rotate_tick");
-    qa_q1ad_add_frame_tick(context, entity, full);
+    qa_q1ad_add_frame_tick(context, entity, NAMED(context, "rotate_tick"));
   }
 }
-static void breakable_stop(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = {0, 0, 0}};
-  qa_q1ad_set_body(context, entity, &patch);
+static void breakable_stop(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  set_velocity(game, entity, QA_Q1_ZERO);
 }
-static void breakable_pain(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  if (context->game.combat_set_health != NULL)
-    context->game.combat_set_health(context->game.ctx, entity->actor, 10000);
-  qa_q1ad_body_patch patch = {.has_velocity = true, .velocity = {0, 0, -20}};
-  qa_q1ad_set_body(context, entity, &patch);
-  schedule_at_named(context, entity, fr(qa_q1ad_actor_number(entity, "ltime") + 1), "breakable_stop");
+static void breakable_pain(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker,
+                           double damage) {
+  (void)attacker; (void)damage;
+  qa_q1ad_context *context = ctx;
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 10000);
+  set_velocity(game, entity, (qa_vec3){0, 0, -20});
+  schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 1), NAMED(context, "breakable_stop"));
 }
-static void breakable_die(qa_q1ad_context *context, qa_q1ad_actor *entity, const qa_actor_id *attacker) {
-  (void)attacker;
-  qa_q1ad_remove(context, entity);
+static void breakable_die(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
+  (void)ctx; (void)attacker;
+  qa_q1_remove(game, entity);
 }
-static void spawn_breakable(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  push_brush(context, entity);
-  if (context->game.combat_set_health != NULL)
-    context->game.combat_set_health(context->game.ctx, entity->actor, 10000);
+static void spawn_breakable(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  push_brush(game, entity);
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 10000);
   entity->max_health = 10000;
-  entity->damageable = true;
+  qa_q1_actor_set_damageable(entity, true);
   entity->aimed_damage = false;
-  char prefix[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-  qa_q1ad_bind_prefix(entity->pain, prefix, "breakable_pain");
-  qa_q1ad_bind_prefix(entity->die, prefix, "breakable_die");
+  entity->pain = qa_q1_callback_registry_pain(game->named, entity, NAMED(context, "breakable_pain"));
+  entity->die = qa_q1_callback_registry_die(game->named, entity, NAMED(context, "breakable_die"));
+}
+
+static void reg(qa_q1ad_context *context, const char *name, qa_q1_callback_handlers handlers) {
+  handlers.ctx = context;
+  qa_q1_callback_registry_register(context->game->named, name, handlers);
 }
 
 void qa_q1ad_register_brushes(qa_q1ad_context *context) {
-  char prefix[QA_Q1AD_NAME], full[QA_Q1AD_NAME];
-  prefix_of(context, prefix);
-#define REG(name, handlers) do { qa_q1ad_named_name(full, prefix, name); \
-  qa_q1ad_register_named(context, full, handlers); } while (0)
-  REG("bob_tick", ((qa_q1ad_handlers){.action = bob_tick}));
-  REG("bob_think", ((qa_q1ad_handlers){.action = bob_think}));
-  REG("bob_use", ((qa_q1ad_handlers){.use = bob_use}));
-  REG("bob_blocked", ((qa_q1ad_handlers){.blocked = bob_blocked}));
-  REG("toss_think", ((qa_q1ad_handlers){.action = toss_think}));
-  REG("toss", ((qa_q1ad_handlers){.action = toss_action}));
-  REG("toss_use", ((qa_q1ad_handlers){.use = toss_use}));
-  REG("toss_cascade", ((qa_q1ad_handlers){.action = toss_cascade}));
-  REG("shatter", ((qa_q1ad_handlers){.use = shatter_use}));
-  REG("debris_fade", ((qa_q1ad_handlers){.action = debris_fade}));
-  REG("debris_wake", ((qa_q1ad_handlers){.action = debris_wake}));
-  REG("debris_wait", ((qa_q1ad_handlers){.use = debris_wait}));
-  REG("explode", ((qa_q1ad_handlers){.action = explode_action}));
-  REG("explode_die", ((qa_q1ad_handlers){.die = explode_die}));
-  REG("hurt_use", ((qa_q1ad_handlers){.use = hurt_use}));
-  REG("hurt_touch", ((qa_q1ad_handlers){.touch = hurt_touch}));
-  REG("model_loop", ((qa_q1ad_handlers){.action = model_loop}));
-  REG("model_once", ((qa_q1ad_handlers){.action = model_once}));
-  REG("model_use_once", ((qa_q1ad_handlers){.use = model_use_once}));
-  REG("model_use_loop", ((qa_q1ad_handlers){.use = model_use_loop}));
-  REG("rotate_tick", ((qa_q1ad_handlers){.action = rotate_tick}));
-  REG("rotate_tween", ((qa_q1ad_handlers){.action = rotate_tween}));
-  REG("rotate_use", ((qa_q1ad_handlers){.use = rotate_use}));
-  qa_q1ad_register_spawn(context, "func_bob", false, spawn_bob);
-  qa_q1ad_register_spawn(context, "func_toss", false, spawn_toss);
-  qa_q1ad_register_spawn(context, "func_shatter", false, spawn_shatter);
-  qa_q1ad_register_spawn(context, "func_debris", false, spawn_debris);
-  qa_q1ad_register_spawn(context, "func_explode", false, spawn_explode);
-  qa_q1ad_register_spawn(context, "func_hurt", false, spawn_hurt);
-  qa_q1ad_register_spawn(context, "func_fade", false, spawn_fade_brush);
-  qa_q1ad_register_spawn(context, "misc_model", false, spawn_model);
-  qa_q1ad_register_spawn(context, "info_rotate_axis", false, spawn_remove);
-  qa_q1ad_register_spawn(context, "rotate_object_continuously", false, spawn_rotate);
+  qa_q1_services *game = context->game;
+  reg(context, NAMED(context, "bob_tick"), (qa_q1_callback_handlers){.action = bob_tick});
+  reg(context, NAMED(context, "bob_think"), (qa_q1_callback_handlers){.action = bob_think});
+  reg(context, NAMED(context, "bob_use"), (qa_q1_callback_handlers){.use = bob_use});
+  reg(context, NAMED(context, "bob_blocked"), (qa_q1_callback_handlers){.blocked = bob_blocked});
+  qa_q1_register_spawn(game, "func_bob", spawn_bob, context);
+  reg(context, NAMED(context, "toss_think"), (qa_q1_callback_handlers){.action = toss_think});
+  reg(context, NAMED(context, "toss"), (qa_q1_callback_handlers){.action = toss_action});
+  reg(context, NAMED(context, "toss_use"), (qa_q1_callback_handlers){.use = toss_use});
+  reg(context, NAMED(context, "toss_cascade"), (qa_q1_callback_handlers){.action = toss_cascade});
+  qa_q1_register_spawn(game, "func_toss", spawn_toss, context);
+  reg(context, NAMED(context, "shatter"), (qa_q1_callback_handlers){.use = shatter_use});
+  qa_q1_register_spawn(game, "func_shatter", spawn_shatter, context);
+  reg(context, NAMED(context, "debris_fade"), (qa_q1_callback_handlers){.action = debris_fade});
+  reg(context, NAMED(context, "debris_wake"), (qa_q1_callback_handlers){.action = debris_wake});
+  reg(context, NAMED(context, "debris_wait"), (qa_q1_callback_handlers){.use = debris_wait});
+  qa_q1_register_spawn(game, "func_debris", spawn_debris, context);
+  reg(context, NAMED(context, "explode"), (qa_q1_callback_handlers){.action = explode_action});
+  reg(context, NAMED(context, "explode_die"), (qa_q1_callback_handlers){.die = explode_die});
+  qa_q1_register_spawn(game, "func_explode", spawn_explode, context);
+  reg(context, NAMED(context, "hurt_use"), (qa_q1_callback_handlers){.use = hurt_use});
+  reg(context, NAMED(context, "hurt_touch"), (qa_q1_callback_handlers){.touch = hurt_touch});
+  qa_q1_register_spawn(game, "func_hurt", spawn_hurt, context);
+  qa_q1_register_spawn(game, "func_fade", spawn_fade_brush, context);
+  reg(context, NAMED(context, "model_loop"), (qa_q1_callback_handlers){.action = model_loop});
+  reg(context, NAMED(context, "model_once"), (qa_q1_callback_handlers){.action = model_once});
+  reg(context, NAMED(context, "model_use_once"), (qa_q1_callback_handlers){.use = model_use_once});
+  reg(context, NAMED(context, "model_use_loop"), (qa_q1_callback_handlers){.use = model_use_loop});
+  qa_q1_register_spawn(game, "misc_model", spawn_model, context);
+  qa_q1_register_spawn(game, "info_rotate_axis", spawn_remove, context);
+  reg(context, NAMED(context, "rotate_tick"), (qa_q1_callback_handlers){.action = rotate_tick});
+  reg(context, NAMED(context, "rotate_tween"), (qa_q1_callback_handlers){.action = rotate_tween});
+  reg(context, NAMED(context, "rotate_use"), (qa_q1_callback_handlers){.use = rotate_use});
+  qa_q1_register_spawn(game, "rotate_object_continuously", spawn_rotate, context);
   if (context->program == QA_Q1AD_MG3) {
-    REG("breakable_stop", ((qa_q1ad_handlers){.action = breakable_stop}));
-    REG("breakable_pain", ((qa_q1ad_handlers){.pain = breakable_pain}));
-    REG("breakable_die", ((qa_q1ad_handlers){.die = breakable_die}));
-    qa_q1ad_register_spawn(context, "func_breakable", false, spawn_breakable);
+    reg(context, NAMED(context, "breakable_stop"), (qa_q1_callback_handlers){.action = breakable_stop});
+    reg(context, NAMED(context, "breakable_pain"), (qa_q1_callback_handlers){.pain = breakable_pain});
+    reg(context, NAMED(context, "breakable_die"), (qa_q1_callback_handlers){.die = breakable_die});
+    qa_q1_register_spawn(game, "func_breakable", spawn_breakable, context);
   }
-#undef REG
 }

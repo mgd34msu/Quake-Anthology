@@ -1,14 +1,13 @@
 /*
  * Port of src/main.ts. Command dispatch runs through the landed
  * options parser: --version/--help/--list-content and
- * --splash-child are fully wired. run/menu compose real phase
- * hosts for StartupApplication (graphical) and Application
- * (dedicated) over the landed catalog/settings/SDL/audio/input
- * services, the concrete StartupMenu, and the concrete
- * SharedSimulation builder; composition steps whose TS service
- * has only a host-seam C port fail with a named missing-service
- * error (crash.log + exit 1, as in TS main's catch) instead of
- * a stub.
+ * --splash-child are fully wired. Graphical run/menu open
+ * StartupApplication (startup_application.h) and run/close it as TS
+ * main does. Dedicated runs compose Application over the landed
+ * catalog services and the concrete SharedSimulation builder;
+ * composition steps whose TS service has only a host-seam C port
+ * fail with a named missing-service error (crash.log + exit 1, as
+ * in TS main's catch) instead of a stub.
  * GPL-2.0-or-later.
  */
 #include <errno.h>
@@ -38,8 +37,14 @@
 #include "qa/app/bootstrap/renderer.h"
 #include "qa/app/bootstrap/splash.h"
 #include "qa/app/bootstrap/startup.h"
+#include "qa/app/bootstrap/startup_application.h"
 #include "qa/app/bootstrap/startup_audio.h"
 #include "qa/app/bootstrap/startup_menu.h"
+#include "qa/app/bootstrap/menu_art.h"
+#include "qa/app/bootstrap/menu_font.h"
+#include "qa/app/bootstrap/startup_selection.h"
+#include "qa/render/scene/resources.h"
+#include "qa/ui/common/assets.h"
 #include "qa/app/bootstrap/startup_saves.h"
 #include "qa/app/bootstrap/startup_timing.h"
 #include "qa/app/bootstrap/weapon_behavior_tool.h"
@@ -60,6 +65,8 @@
 #include "qa/platform/sdl.h"
 #include "qa/settings/config.h"
 #include "qa/version.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 /* ---- small helpers ---- */
 
@@ -411,8 +418,8 @@ static bool splash_child_open(void *ctx, double width, double height,
     (void)close(fds[1]);
     (void)setenv("QTS_SPLASH_CHILD", "1", 1);
     char w[32], h[32];
-    (void)snprintf(w, sizeof w, "%.0f", width);
-    (void)snprintf(h, sizeof h, "%.0f", height);
+    (void)snprintf(w, sizeof w, "%s", QA_JS_NUMBER(width));
+    (void)snprintf(h, sizeof h, "%s", QA_JS_NUMBER(height));
     execl("/proc/self/exe", "quake-anthology", "--splash-child", w, h,
           (char *)NULL);
     _exit(127);
@@ -540,14 +547,13 @@ static int run_list_content(const char *corpus_root) {
  * TS main opens StartupApplication (graphical) or Application
  * (dedicated), closes the splash, wires SIGINT/SIGTERM to
  * requestQuit, runs until finished, then closes the application
- * and finally the LLM settings. The landed startup.c/application.c
- * abort on a returned phase error, which would bypass that catch
- * (crash.log, ordered close, exit 1), so phases below record the
+ * and finally the LLM settings. The dedicated application.c host
+ * aborts on a returned phase error, which would bypass that catch
+ * (crash.log, ordered close, exit 1), so its phases record the
  * first error in the composition and return NULL; main fails on
- * the recorded error after open returns and never pumps a failed
- * composition. Phases over concrete landed services are real;
- * the phase that needs a host-seam-only TS service records a
- * named missing-service error. */
+ * the recorded error after open returns. StartupApplication raises
+ * (qa_raise), caught by composition_run_startup into the same
+ * first-error slot. */
 
 typedef enum composition_kind {
   COMPOSITION_STARTUP,
@@ -622,37 +628,13 @@ typedef struct composition {
   bool catalog_open;
   const qa_catalog_discovered_product *selected;  /* into catalog */
   const qa_catalog_discovered_product *installed; /* into catalog */
-  qa_config_store settings;
-  bool settings_open;
-  qa_global_input_tuning tuning; /* retained shared-settings baseline */
-  bool has_tuning;
-  qa_app_frontend_preferences *preferences;
-  const char *renderer_kind; /* "cpu" | "gl" */
-  qa_identity_owner identity; /* TS StartupApplication identity/session */
-  bool identity_open;
-  qa_seat_id seat; /* primary local seat (index 0) */
   qa_catalog_mount_list mount_list; /* TS catalog.mountsFor(installed) */
   bool mount_list_open;
   qa_mount_id *mount_order;      /* owned plan defaultOrder storage */
   char *mount_plan_id;           /* owned */
   qa_open_mount_options mount_options;
-  qa_content_mounted *mounted;   /* TS openMountPlan("startup","font") */
+  qa_content_mounted *mounted;
   qa_app_configuration_content *configuration; /* openInitialConfigurationContent */
-  qa_sdl_window window;
-  bool window_open;
-  qa_sdl_window *active_window; /* renderer's window, when opened */
-  qa_app_native_renderer *renderer; /* NativeRenderer over window */
-  qa_sound_bank *bank;              /* SoundBank(mounted) */
-  qa_app_startup_audio *startup_audio;
-  qa_unified_audio *audio; /* borrowed engine of startup_audio, if any */
-  qa_sdl_controllers *controllers;
-  qa_native_ui_controller *ui;   /* borrowed StartupMenu controller */
-  qa_app_startup_saves *saves;   /* StartupSaves over save_directory */
-  qa_app_startup_menu *menu;     /* StartupMenu */
-  qa_app_application *game;      /* TS pending/run-entry Application */
-  bool pending_game;             /* StartupMenu play -> open game */
-  double game_last_ms;           /* last qa_app_application_step stamp */
-  bool game_clock_started;
   /* Game content recipe backing (TS loadApplicationContent):
    * preset + resolveLaunch results the recipe borrows from, and
    * the recipe mount plan opened over them. */
@@ -671,14 +653,6 @@ typedef struct composition {
   qa_app_sim_shared_simulation_host concrete_host;
   qa_app_sim_concrete_simulation *concrete_state; /* borrowed */
   bool concrete_built;
-  qa_app_local_accounts *accounts; /* localClientAccount registry */
-  qa_online_account lobby_account; /* borrows registry id/name */
-  qa_local_lobby_service *lobby_service; /* TS new LocalLobbyService() */
-  qa_app_application_local_lobby lobby;
-  bool lobby_open;
-  bool quit_requested;
-  double frames;
-  uint32_t random_state;
   char *error; /* owned first phase error; freed by main, not close */
 } composition;
 
@@ -705,8 +679,7 @@ static void composition_set_error(composition *comp, const char *format, ...) {
  * (application.c), the concrete SharedSimulation builder
  * (simulation/runtime qa_app_sim_shared_simulation_concrete_host,
  * built in dedicated_open over the composed options/actors/
- * session and reached through the composition shim host), the
- * graphical menu objects and the concrete StartupMenu are all
+ * session and reached through the composition shim host) are
  * constructed for real. The concrete builder itself does not
  * construct source-game runtimes (QuakeC/QVM/native guests) and
  * decodes only Q1 worlds from mounts, so recipes needing those
@@ -717,13 +690,6 @@ static const char composition_missing_game[] =
     "Application game composition is not available for this "
     "recipe: the concrete SharedSimulation "
     "(src/app/bootstrap/simulation/runtime.ts) was not built";
-static const char composition_missing_remote[] =
-    "Lobby join requires RemoteApplication composition: "
-    "remote_application.h is host-seam only (open_services/connect/"
-    "build_seats have no concrete C host) and qa_composition_identity "
-    "carries no recipe for TS lobbyJoinOptions "
-    "(src/app/bootstrap/startup.ts, "
-    "src/app/bootstrap/remote-application.ts)";
 
 
 /* TS createStartupSelection: discoverInstalledContent over options. */
@@ -754,110 +720,6 @@ static void composition_discover(composition *comp) {
     return;
   }
   comp->catalog_open = true;
-}
-
-static qa_command_dialect composition_dialect(void *ctx) {
-  composition *comp = ctx;
-  return qa_app_configuration_dialect_for(comp->options->movement, NULL);
-}
-
-/* Shared-settings part of TS FrontendPreferences.loadBaseline. */
-static const char *composition_load_baseline(void *ctx,
-                                             qa_app_frontend_preferences *prefs) {
-  composition *comp = ctx;
-  qa_global_input_tuning tuning;
-  if (!qa_config_store_load_global_tuning(&comp->settings,
-                                          "input/global-tuning.json", &tuning))
-    return NULL;
-  comp->tuning = tuning;
-  comp->has_tuning = true;
-  qa_app_frontend_mouse mouse = {0};
-  mouse.sensitivity = tuning.mouse.sensitivity;
-  mouse.pitch = tuning.mouse.pitch;
-  mouse.yaw = tuning.mouse.yaw;
-  mouse.invert_pitch = tuning.mouse.invert_pitch;
-  mouse.acceleration = tuning.mouse.acceleration != 0;
-  mouse.filter = tuning.mouse.filter;
-  mouse.has_look_spring = true;
-  mouse.look_spring = tuning.mouse.look_spring;
-  mouse.has_look_strafe = true;
-  mouse.look_strafe = tuning.mouse.look_strafe;
-  mouse.free_look = tuning.mouse.free_look;
-  qa_app_frontend_preferences_set_baselines(prefs, mouse, tuning.has_always_run,
-                                            tuning.always_run, tuning.rumble,
-                                            tuning.rumble_strength);
-  return NULL;
-}
-
-/* TS FrontendPreferences.saveGlobal over the shared ConfigStore. */
-static const char *composition_save_global(void *ctx,
-                                           qa_app_frontend_preferences *prefs) {
-  composition *comp = ctx;
-  qa_global_input_tuning tuning = comp->has_tuning ? comp->tuning
-                                                   : (qa_global_input_tuning){0};
-  tuning.version = 1;
-  if (!comp->has_tuning) tuning.mouse = qa_default_mouse_tuning;
-  qa_app_frontend_preference_overrides effective =
-      qa_app_frontend_preferences_effective_values(prefs);
-  tuning.mouse.sensitivity = effective.sensitivity;
-  tuning.mouse.pitch = effective.pitch;
-  tuning.mouse.yaw = effective.yaw;
-  tuning.mouse.invert_pitch = effective.invert_mouse;
-  tuning.mouse.acceleration = effective.acceleration ? 1 : 0;
-  tuning.mouse.filter = effective.filter;
-  tuning.mouse.look_spring = effective.look_spring;
-  tuning.mouse.look_strafe = effective.look_strafe;
-  tuning.mouse.free_look = effective.free_look;
-  if (effective.has_always_run) {
-    tuning.has_always_run = true;
-    tuning.always_run = effective.always_run;
-  }
-  tuning.rumble = effective.controller_vibration;
-  tuning.rumble_strength = effective.controller_vibration_strength;
-  if (!qa_config_store_save_global_tuning(&comp->settings,
-                                          "input/global-tuning.json", &tuning))
-    return "global input tuning could not be saved";
-  comp->tuning = tuning;
-  comp->has_tuning = true;
-  return NULL;
-}
-
-/* FrontendPreferences + renderer text preference (TS openGraphics). */
-static void composition_load_preferences(composition *comp) {
-  if (comp->error != NULL) return;
-  comp->settings_directory = join_path(comp->save_directory, "../settings");
-  if (comp->settings_directory == NULL ||
-      !qa_config_store_init(&comp->settings, comp->settings_directory)) {
-    composition_set_error(comp, "Out of memory");
-    return;
-  }
-  comp->settings_open = true;
-  qa_app_frontend_preferences_host host = {0};
-  host.ctx = comp;
-  host.dialect = composition_dialect;
-  host.has_shared_settings = true;
-  host.load_baseline = composition_load_baseline;
-  host.save_global = composition_save_global;
-  comp->preferences = qa_app_frontend_preferences_create(host);
-  if (comp->preferences == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return;
-  }
-  (void)qa_app_frontend_preferences_load_baseline(comp->preferences);
-  comp->renderer_kind = comp->options->renderer;
-  if (comp->options->renderer_selection != NULL &&
-      strcmp(comp->options->renderer_selection, "default") == 0) {
-    size_t length = 0;
-    char *text = qa_config_store_load_text(&comp->settings, "renderer", &length);
-    if (text != NULL) {
-      while (length > 0 && (text[length - 1] == '\n' || text[length - 1] == '\r' ||
-                            text[length - 1] == ' ' || text[length - 1] == '\t'))
-        text[--length] = '\0';
-      if (strcmp(text, "cpu") == 0 || strcmp(text, "gl") == 0)
-        comp->renderer_kind = strcmp(text, "cpu") == 0 ? "cpu" : "gl";
-      free(text);
-    }
-  }
 }
 
 /* Product selection from options. require_installed mirrors
@@ -920,13 +782,9 @@ static void composition_select_product(composition *comp, bool require_installed
 
 /* ---- concrete bootstrap hosts over landed services ----
  *
- * TS openGraphics order (startup.ts): openInitialConfiguration-
- * Content, font mounts (catalog.mountsFor + openMountPlan),
- * NativeRenderer.open, SdlControllers.open, StartupAudio.open,
- * StartupMenu. The hosts below give those C modules real catalog,
- * mount, SDL-window, unified-audio and sound-bank services.
- * Hosts record comp->error and return NULL for the same
- * crash-log reason as the startup phases. */
+ * The dedicated Application content host over the discovered
+ * catalog and mounts. Hosts record comp->error and return NULL
+ * for the crash-log reason above. */
 
 /* Catalog product facts for content/configuration selectors. */
 static const qa_catalog_discovered_product *composition_product_for(
@@ -956,82 +814,6 @@ static bool composition_content_product(void *ctx, const char *id,
 
 static bool composition_content_require(void *ctx, const char *id) {
   return composition_find_product(&((composition *)ctx)->catalog, id) != NULL;
-}
-
-static bool composition_configuration_product(void *ctx, const char *content_id,
-                                              qa_game_family *family,
-                                              const char **edition,
-                                              const char **content_directory,
-                                              const char **user_root,
-                                              const char **base_product) {
-  composition *comp = ctx;
-  const qa_catalog_discovered_product *product =
-      composition_product_for(comp, content_id);
-  if (product == NULL) return false;
-  *family = product->expectation.family;
-  *edition = product->expectation.edition;
-  *content_directory = product->expectation.content_directory;
-  *user_root = product->user_content != NULL ? product->user_content->root : NULL;
-  *base_product = product->expectation.base_product;
-  return true;
-}
-
-static size_t composition_configuration_q1_products(void *ctx,
-                                                    const char **directories,
-                                                    const char **user_roots,
-                                                    size_t capacity) {
-  composition *comp = ctx;
-  size_t count = 0;
-  for (size_t i = 0; i < comp->catalog.product_count && count < capacity; i++) {
-    const qa_catalog_discovered_product *product = &comp->catalog.products[i];
-    if (product->expectation.family != QA_GAME_FAMILY_Q1) continue;
-    if (product->expectation.edition != NULL &&
-        strcmp(product->expectation.edition, "quakeworld") == 0) continue;
-    directories[count] = product->expectation.content_directory;
-    user_roots[count] =
-        product->user_content != NULL ? product->user_content->root : NULL;
-    count++;
-  }
-  return count;
-}
-
-/* TS catalog.mountsFor(product.id) + openMountPlan("startup","font")
- * for the graphical path; ("application", hex) shape is covered by
- * the same landed calls for dedicated content loading. */
-static void composition_open_mounts(composition *comp,
-                                    const qa_catalog_discovered_product *product) {
-  if (comp->error != NULL || comp->mounted != NULL || product == NULL) return;
-  if (!qa_content_catalog_mounts_for(&comp->catalog, product->id,
-                                     &comp->mount_list)) {
-    composition_set_error(comp, "Out of memory");
-    return;
-  }
-  comp->mount_list_open = true;
-  comp->mount_order = calloc(comp->mount_list.count > 0 ? comp->mount_list.count : 1,
-                             sizeof *comp->mount_order);
-  if (comp->mount_order == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return;
-  }
-  for (size_t i = 0; i < comp->mount_list.count; i++) {
-    const qa_content_mount *mount = &comp->mount_list.mounts[i];
-    comp->mount_order[i] = mount->kind == QA_CONTENT_MOUNT_ARCHIVE
-                               ? mount->as.archive.identity.id
-                               : mount->as.loose.identity.id;
-  }
-  comp->mount_plan_id = qa_create_mount_plan_id("startup", "font");
-  if (comp->mount_plan_id == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return;
-  }
-  qa_resolved_mount_plan plan = {0};
-  plan.id = comp->mount_plan_id;
-  plan.mounts = comp->mount_list.mounts;
-  plan.mount_count = comp->mount_list.count;
-  plan.default_order = comp->mount_order;
-  plan.default_order_count = comp->mount_list.count;
-  comp->mounted = qa_open_mount_plan(&plan, &comp->mount_options);
-  if (comp->mounted == NULL) composition_set_error(comp, "Out of memory");
 }
 
 /* Content host: open_configuration publishes catalog+mounts+source
@@ -1350,92 +1132,10 @@ static qa_app_content_host composition_content_host(composition *comp) {
   return host;
 }
 
-static qa_app_configuration_host composition_configuration_host(
-    composition *comp) {
-  qa_app_configuration_host host = {0};
-  host.ctx = comp;
-  host.product = composition_configuration_product;
-  host.q1_products = composition_configuration_q1_products;
-  return host;
-}
-
-/* TS openInitialConfigurationContent(options, undefined, catalog). */
-static void composition_open_configuration(composition *comp) {
-  if (comp->error != NULL || comp->configuration != NULL) return;
-  qa_app_options options = *comp->options; /* configuration.c borrows it */
-  comp->configuration = qa_app_open_initial_configuration_content(
-      composition_configuration_host(comp), composition_content_host(comp),
-      options, NULL, false);
-  if (comp->configuration == NULL && comp->error == NULL)
-    composition_set_error(comp, "Out of memory");
-}
-
-/* Destroy the nested run-entry/lobby Application, if open. Its
- * host close does not touch composition services (borrowed-mode
- * sharing, as in TS Application.openBorrowed). */
-static void composition_close_game(composition *comp) {
-  if (comp->game == NULL) return;
-  qa_app_application_destroy(comp->game);
-  comp->game = NULL;
-  comp->game_clock_started = false;
-}
-
 /* Ordered composition teardown (TS StartupApplication.close /
  * Application.closeOwned service order, landed subset). Idempotent;
  * comp->error stays owned by main. */
 static void composition_close(composition *comp) {
-  composition_close_game(comp);
-  if (comp->lobby_open) {
-    comp->lobby_open = false;
-    (void)qa_app_application_local_lobby_close(&comp->lobby);
-    qa_app_application_local_lobby_destroy(&comp->lobby);
-  }
-  qa_local_lobby_service_free(comp->lobby_service);
-  comp->lobby_service = NULL;
-  if (comp->accounts != NULL) {
-    qa_app_local_accounts_destroy(comp->accounts);
-    comp->accounts = NULL;
-  }
-  if (comp->menu != NULL) {
-    qa_app_startup_menu_destroy(comp->menu); /* owns its controller */
-    comp->menu = NULL;
-    comp->ui = NULL; /* borrowed controller died with the menu */
-  }
-  if (comp->ui != NULL) { /* backstop when menu creation failed midway */
-    qa_native_ui_controller_destroy(comp->ui);
-    comp->ui = NULL;
-  }
-  if (comp->saves != NULL) {
-    qa_app_startup_saves_destroy(comp->saves);
-    comp->saves = NULL;
-  }
-  if (comp->startup_audio != NULL) {
-    comp->audio = NULL; /* engine freed by startup-audio destroy */
-    qa_app_startup_audio_destroy(comp->startup_audio);
-    comp->startup_audio = NULL;
-  }
-  if (comp->audio != NULL) {
-    qa_unified_audio_destroy(comp->audio);
-    comp->audio = NULL;
-  }
-  if (comp->bank != NULL) {
-    qa_sound_bank_destroy(comp->bank);
-    comp->bank = NULL;
-  }
-  if (comp->controllers != NULL) {
-    qa_sdl_controllers_close(comp->controllers);
-    comp->controllers = NULL;
-  }
-  if (comp->renderer != NULL) {
-    qa_app_native_renderer_destroy(comp->renderer); /* closes the window */
-    comp->renderer = NULL;
-    comp->active_window = NULL;
-    comp->window_open = false;
-  }
-  if (comp->window_open) {
-    comp->window_open = false;
-    qa_sdl_window_close(&comp->window);
-  }
   if (comp->configuration != NULL) {
     qa_app_configuration_content_destroy(comp->configuration);
     comp->configuration = NULL;
@@ -1478,18 +1178,6 @@ static void composition_close(composition *comp) {
     comp->mount_list_open = false;
     qa_content_catalog_mount_list_free(&comp->mount_list);
   }
-  if (comp->identity_open) {
-    comp->identity_open = false;
-    qa_identity_owner_destroy(&comp->identity);
-  }
-  if (comp->preferences != NULL) {
-    qa_app_frontend_preferences_destroy(comp->preferences);
-    comp->preferences = NULL;
-  }
-  if (comp->settings_open) {
-    comp->settings_open = false;
-    qa_config_store_destroy(&comp->settings);
-  }
   if (comp->catalog_open) {
     comp->catalog_open = false;
     comp->selected = NULL;
@@ -1507,560 +1195,9 @@ static void composition_close(composition *comp) {
   comp->save_directory = NULL;
 }
 
-/* ---- StartupApplication phase host (graphical run/menu) ---- */
-
-static const char *comp_phase_discover(void *ctx) {
-  composition_discover(ctx);
-  return NULL;
-}
-static const char *comp_phase_preferences(void *ctx) {
-  composition_load_preferences(ctx);
-  return NULL;
-}
-static const char *comp_phase_splash(void *ctx) {
-  (void)ctx; /* TS main opened the splash before StartupApplication.open */
-  return NULL;
-}
-static const char *comp_phase_select(void *ctx) {
-  composition *comp = ctx;
-  composition_select_product(comp, false);
-  if (comp->error != NULL) return NULL;
-  /* TS constructor identity/session + primary seat, then
-   * openInitialConfigurationContent and the font mount plan. */
-  if (!qa_identity_owner_create(&comp->identity, "startup")) {
-    composition_set_error(comp, "Out of memory");
-    return NULL;
-  }
-  comp->identity_open = true;
-  comp->seat = qa_identity_owner_seat(&comp->identity, 0);
-  composition_open_mounts(comp, comp->installed);
-  composition_open_configuration(comp);
-  return NULL;
-}
-
-static const char *comp_phase_renderer(void *ctx) {
-  composition *comp = ctx;
-  if (comp->error != NULL) return NULL;
-  /* Concrete SDL window + cpu/gl backend factory from renderer.c
-   * (qa_app_open_native_backend_bundle, TS openBackend). */
-  qa_app_native_renderer_host host = {0};
-  host.open_bundle = qa_app_open_native_backend_bundle;
-  qa_renderer_resource_owner owner = {0};
-  owner.identity = comp; /* unique live address = TS owner symbol */
-  owner.session = comp->identity.session;
-  comp->renderer = qa_app_native_renderer_open(
-      host, comp->renderer_kind != NULL ? comp->renderer_kind : "cpu",
-      comp->options->width, comp->options->height, comp->options->hidden,
-      comp->options->gamma, false, owner, NULL);
-  if (comp->renderer == NULL && comp->error == NULL)
-    composition_set_error(comp, "Out of memory");
-  if (comp->renderer != NULL)
-    comp->active_window = qa_app_native_renderer_window(comp->renderer);
-  return NULL;
-}
-static double comp_audio_now(void *ctx) {
-  (void)ctx;
-  /* TS StartupAudio: milliseconds = trunc(performance.now()) --
-   * process-relative integer ms (the mixer allocation clock
-   * rejects fractional or out-of-int32 times). */
-  static double epoch = -1;
-  double now = splash_now_ms(NULL);
-  if (epoch < 0) epoch = now;
-  return (double)(int64_t)(now - epoch);
-}
-static double comp_audio_random(void *ctx) {
-  composition *comp = ctx;
-  comp->random_state = comp->random_state * 1664525u + 1013904223u;
-  return (double)(comp->random_state >> 8) / 16777216.0;
-}
-static void comp_print(void *ctx, const char *text); /* defined below */
-
-/* StartupAudio host over the landed unified audio engine. */
-static qa_sound_family comp_sound_family(const char *family) {
-  qa_sound_family parsed = QA_SOUND_FAMILY_Q1;
-  if (family != NULL) (void)qa_sound_family_parse(family, &parsed);
-  return parsed;
-}
-static qa_unified_audio *comp_audio_create_engine(
-    void *ctx, const qa_app_startup_audio_preferences *preferences) {
-  composition *comp = ctx;
-  qa_unified_audio_options options = {0};
-  options.milliseconds = comp_audio_now;
-  options.random = comp_audio_random;
-  options.random_ctx = comp;
-  if (preferences->has_output_format) {
-    options.has_output_format = true;
-    options.output_format = preferences->output_format;
-  }
-  qa_unified_audio *engine = qa_unified_audio_create(&options);
-  if (engine == NULL) qa_range_error("Out of memory");
-  return engine;
-}
-static void comp_audio_destroy_engine(void *ctx, qa_unified_audio *engine) {
-  (void)ctx;
-  qa_unified_audio_destroy(engine);
-}
-static qa_audio_output_format comp_audio_output_format(void *ctx,
-                                                       qa_unified_audio *engine) {
-  (void)ctx;
-  return qa_unified_audio_output_format(engine);
-}
-static const void *comp_audio_selected_output(void *ctx,
-                                              qa_unified_audio *engine) {
-  (void)ctx;
-  return qa_unified_audio_selected_output(engine);
-}
-static void comp_audio_select_output(void *ctx, qa_unified_audio *engine,
-                                     const void *output,
-                                     qa_audio_output_format format, bool restart) {
-  (void)ctx;
-  (void)qa_unified_audio_select_output(engine, (const char *)output, &format,
-                                       restart);
-}
-static void comp_audio_set_listeners(void *ctx, qa_unified_audio *engine,
-                                     qa_seat_id seat) {
-  (void)ctx;
-  qa_audio_listener listener = {0};
-  listener.seat = seat;
-  listener.gain = 1;
-  qa_unified_audio_set_listeners(engine, &listener, 1);
-}
-static void comp_audio_set_effects_volume(void *ctx, qa_unified_audio *engine,
-                                          double volume) {
-  (void)ctx;
-  qa_unified_audio_set_effects_volume(engine, volume);
-}
-static void comp_audio_open_device(void *ctx, qa_unified_audio *engine,
-                                   const char *device_name, bool *out_failed,
-                                   const char **out_error) {
-  (void)ctx;
-  qa_sdl_audio_open_result result =
-      qa_unified_audio_open_device(engine, device_name, 0);
-  *out_failed = result != QA_SDL_AUDIO_OPEN_OK;
-  *out_error = *out_failed ? "Audio output unavailable" : NULL;
-}
-static void comp_audio_play_ui(void *ctx, qa_unified_audio *engine,
-                               const void *sound, const char *family,
-                               qa_seat_id seat) {
-  (void)ctx;
-  qa_play_sound request = {0};
-  request.sound = (const qa_sound_asset *)sound;
-  request.family = comp_sound_family(family);
-  request.origin.kind = QA_SOUND_ORIGIN_LOCAL;
-  request.audience.kind = QA_AUDIO_AUDIENCE_SEAT;
-  request.audience.seat = seat;
-  request.volume = 1;
-  (void)qa_unified_audio_play(engine, &request);
-}
-static void comp_audio_update_music(void *ctx, qa_unified_audio *engine) {
-  (void)ctx;
-  qa_unified_audio_update_music(engine);
-}
-static void comp_audio_pump(void *ctx, qa_unified_audio *engine) {
-  (void)ctx;
-  (void)qa_unified_audio_pump(engine, false, 0, 0);
-}
-static void comp_audio_close_engine(void *ctx, qa_unified_audio *engine) {
-  (void)ctx;
-  qa_unified_audio_close(engine);
-}
-static const void *comp_audio_bank_register(void *ctx, const char *family,
-                                            const char *event) {
-  composition *comp = ctx;
-  if (comp->bank == NULL) return NULL;
-  qa_sound_family parsed = comp_sound_family(family);
-  const qa_sound_asset *asset = NULL;
-  if (!qa_sound_bank_register(comp->bank,
-                              qa_app_menu_sound_path(
-                                  comp->installed != NULL
-                                      ? comp->installed->expectation.family
-                                      : QA_GAME_FAMILY_Q1,
-                                  event),
-                              parsed, &asset))
-    return NULL;
-  return asset;
-}
-static void comp_audio_bank_clear(void *ctx) {
-  composition *comp = ctx;
-  if (comp->bank != NULL) qa_sound_bank_clear(comp->bank);
-}
-
-static const char *comp_phase_audio(void *ctx) {
-  composition *comp = ctx;
-  if (comp->error != NULL) return NULL;
-  comp->bank = qa_sound_bank_create(comp->mounted);
-  if (comp->bank == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return NULL;
-  }
-  qa_app_startup_audio_host host = {0};
-  host.ctx = comp;
-  host.create_engine = comp_audio_create_engine;
-  host.destroy_engine = comp_audio_destroy_engine;
-  host.engine_output_format = comp_audio_output_format;
-  host.engine_selected_output = comp_audio_selected_output;
-  host.engine_select_output = comp_audio_select_output;
-  host.engine_set_listeners = comp_audio_set_listeners;
-  host.engine_set_effects_volume = comp_audio_set_effects_volume;
-  host.engine_open_device = comp_audio_open_device;
-  host.engine_play_ui = comp_audio_play_ui;
-  host.engine_update_music = comp_audio_update_music;
-  host.engine_pump = comp_audio_pump;
-  host.engine_close = comp_audio_close_engine;
-  host.bank_register = comp_audio_bank_register;
-  host.bank_clear = comp_audio_bank_clear;
-  qa_app_startup_audio_options options = {0};
-  options.family = qa_game_family_name(comp->installed->expectation.family);
-  options.source.content = comp->installed->id;
-  options.source.family = comp->installed->expectation.family;
-  options.source.edition = comp->installed->expectation.edition;
-  options.source.campaign = comp->installed->expectation.campaign;
-  options.bank = comp->bank;
-  options.mounts = comp->mounted;
-  options.seat = comp->seat;
-  options.print = comp_print;
-  options.print_ctx = comp;
-  comp->startup_audio = qa_app_startup_audio_open(host, options);
-  if (comp->startup_audio == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return NULL;
-  }
-  comp->audio = qa_app_startup_audio_engine(comp->startup_audio);
-  /* TS audio.openOutput(preferences.audioBaseline.deviceName ?? null). */
-  qa_app_startup_audio_open_output(comp->startup_audio, NULL, comp_print, comp);
-  return NULL;
-}
-static const char *comp_phase_input(void *ctx) {
-  composition *comp = ctx;
-  if (comp->error != NULL) return NULL;
-  comp->controllers = qa_sdl_controllers_open();
-  if (comp->controllers == NULL)
-    composition_set_error(comp,
-                          "SdlControllers.open failed "
-                          "(src/platform/controller.ts)");
-  return NULL;
-}
-/* Concrete StartupMenu (qa_app_startup_menu_new, TS `new
- * StartupMenu`): it owns its NativeUiController and registers the
- * real menu tree, so the legacy host-delegation gate is gone.
- * Model callbacks (presets/rows/select/monsters/hosting) stay
- * unset: the C StartupSelectionModel is itself host-seam
- * (startup_selection.h presets/rows/resolve), and the concrete
- * menu treats absent model rows as TS safeRows()=[]. That model
- * composition is the remaining named menu gap, not faked here.
- * Saves, sound, play and quit are wired to real services below. */
-static void composition_open_game(composition *comp); /* below */
-
-static double comp_menu_measure(void *ctx, const char *text, double scale) {
-  (void)ctx;
-  return (double)strlen(text) * 8 * scale;
-}
-static void comp_menu_sound(void *ctx, qa_ui_sound sound) {
-  composition *comp = ctx;
-  if (comp->startup_audio != NULL) qa_app_startup_audio_sound(comp->startup_audio, sound);
-}
-static const qa_app_startup_save_list *comp_menu_saves(void *ctx) {
-  composition *comp = ctx;
-  return comp->saves != NULL ? qa_app_startup_saves_list(comp->saves) : NULL;
-}
-static void comp_menu_refresh_saves(void *ctx) {
-  composition *comp = ctx;
-  if (comp->saves != NULL) qa_app_startup_saves_refresh(comp->saves);
-}
-static void comp_menu_quit(void *ctx) {
-  ((composition *)ctx)->quit_requested = true;
-}
-static void comp_menu_play(void *ctx) {
-  /* TS play sets pending {kind:"play"}; comp_pump_frame stages it. */
-  ((composition *)ctx)->pending_game = true;
-}
-
-static void comp_menu_inspect_save(void *ctx, const char *path,
-                                   qa_app_startup_save_detail *detail) {
-  (void)ctx;
-  (void)path;
-  (void)detail; /* seeds kept: rows report unavailable until save parsing wires */
-}
-static void comp_menu_prepare_saves(void *ctx) {
-  composition *comp = ctx;
-  qa_app_startup_saves_host host = {0};
-  host.ctx = comp;
-  host.inspect_pak = comp_menu_inspect_save;
-  host.inspect_sav = comp_menu_inspect_save;
-  comp->saves = qa_app_startup_saves_create(host, comp->save_directory, NULL, 0);
-  if (comp->saves == NULL) composition_set_error(comp, "Out of memory");
-}
-
-
-static const char *comp_phase_menu_or_game(void *ctx, bool run_entry) {
-  composition *comp = ctx;
-  if (comp->error != NULL) return NULL;
-  if (run_entry) {
-    /* TS entry "run": openGraphics stages pending {kind:"initial"}
-     * and advance() opens the game Application over the loaded
-     * content (Application.openBorrowed in TS; the C owned-path
-     * qa_app_open_application composition here). */
-    composition_open_game(comp);
-    return NULL;
-  }
-  comp_menu_prepare_saves(comp);
-  if (comp->error != NULL) return NULL;
-  qa_app_startup_menu_options options = {0};
-  options.ctx = comp;
-  options.seat = comp->seat;
-  options.skin_font = "resource:startup:font";
-  options.now = splash_now_ms;
-  options.sound = comp_menu_sound;
-  options.measure = comp_menu_measure;
-  options.play = comp_menu_play;
-  options.saves = comp_menu_saves;
-  options.refresh_saves = comp_menu_refresh_saves;
-  options.quit = comp_menu_quit;
-  comp->menu = qa_app_startup_menu_new(options);
-  if (comp->menu == NULL && comp->error == NULL)
-    composition_set_error(comp, "Out of memory");
-  if (comp->menu != NULL) {
-    comp->ui = qa_app_startup_menu_controller(comp->menu); /* borrowed */
-    (void)qa_app_startup_menu_open(comp->menu); /* ensures main menu */
-  }
-  return NULL;
-}
-
-/* Local lobby: account registry + ApplicationLocalLobby are real;
- * transitions mirror TS startup.ts (host/join launch a game, so
- * they keep the named Application gap; leave/completed match TS).
- * The phase stops at the LocalLobbyService allocator gap. */
-static void comp_random_bytes(void *ctx, unsigned char out[16]) {
-  composition *comp = ctx;
-  FILE *file = fopen("/dev/urandom", "rb");
-  if (file != NULL) {
-    size_t got = fread(out, 1, 16, file);
-    (void)fclose(file);
-    if (got == 16) return;
-  }
-  for (int i = 0; i < 16; i++) {
-    comp->random_state = comp->random_state * 1664525u + 1013904223u;
-    out[i] = (unsigned char)(comp->random_state >> 24);
-  }
-}
-static const char *comp_lobby_host(void *ctx, const qa_lobby *lobby,
-                                   qa_net_address *endpoint_out,
-                                   qa_wire_selection *wire_out) {
-  (void)lobby;
-  (void)endpoint_out;
-  (void)wire_out;
-  composition *comp = ctx;
-  /* TS host: stageLobbyLaunch({kind:"lobby-host"}) opens the game
-   * Application, then publishes game.networkAddress/networkWire.
-   * The C Application composition opens for real here; it exposes
-   * no listening-server accessor (application.h), so the publish
-   * step fails with TS's own message and the staged game closes. */
-  if (comp->selected == NULL)
-    return "Select a game before starting the lobby";
-  composition_open_game(comp);
-  if (comp->error != NULL) return comp->error;
-  composition_close_game(comp);
-  return "The selected game did not open a listening server";
-}
-static const char *comp_lobby_join(void *ctx, const qa_lobby *lobby) {
-  composition *comp = ctx;
-  /* TS lobbyJoinOptions guards that are representable in C, in
-   * order; the launch itself is a RemoteApplication (below). */
-  if (lobby->has_endpoint && lobby->endpoint.kind == QA_NET_LOOPBACK)
-    return "This lobby endpoint requires an in-process transport";
-  bool member = false;
-  for (size_t i = 0; i < lobby->member_count; i++)
-    if (lobby->members[i].account.id != NULL &&
-        comp->lobby_account.id != NULL &&
-        strcmp(lobby->members[i].account.id, comp->lobby_account.id) == 0)
-      member = true;
-  if (!member) return "The local client is not a member of this lobby";
-  return composition_missing_remote;
-}
-static const char *comp_lobby_leave(void *ctx, const qa_lobby *lobby) {
-  (void)lobby;
-  composition *comp = ctx;
-  /* TS leave re-stages the frontend when a lobby source is live. */
-  composition_close_game(comp);
-  return NULL;
-}
-static const char *comp_lobby_completed(void *ctx, const qa_lobby *lobby) {
-  (void)ctx;
-  (void)lobby;
-  return NULL; /* TS completed: async () => undefined */
-}
-static const char *comp_phase_lobby(void *ctx) {
-  composition *comp = ctx;
-  if (comp->error != NULL) return NULL;
-  comp->accounts = qa_app_local_accounts_create(comp_random_bytes, comp);
-  if (comp->accounts == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return NULL;
-  }
-  const qa_app_local_account *account =
-      qa_app_local_client_account(comp->accounts, &comp->identity);
-  comp->lobby_account.id = account->id;
-  comp->lobby_account.name = account->name;
-  qa_app_local_lobby_transitions transitions = {0};
-  transitions.ctx = comp;
-  transitions.host = comp_lobby_host;
-  transitions.join = comp_lobby_join;
-  transitions.leave = comp_lobby_leave;
-  transitions.completed = comp_lobby_completed;
-  /* host.localLobbies ?? new LocalLobbyService() */
-  comp->lobby_service = qa_local_lobby_service_new();
-  if (comp->lobby_service == NULL) {
-    composition_set_error(comp, "Out of memory");
-    return NULL;
-  }
-  qa_app_application_local_lobby_init(&comp->lobby, comp->lobby_service,
-                                      &comp->lobby_account, transitions);
-  comp->lobby_open = true;
-  return NULL;
-}
-static const char *comp_pump_frame(void *ctx) {
-  composition *comp = ctx;
-  qa_sdl_window *window = comp->active_window != NULL
-                              ? comp->active_window
-                              : (comp->window_open ? &comp->window : NULL);
-  if (window != NULL) {
-    size_t count = 0;
-    qa_sdl_event *events = qa_sdl_window_poll_events(window, &count);
-    for (size_t i = 0; i < count; i++)
-      if (events[i].kind == QA_SDL_EVENT_QUIT) comp->quit_requested = true;
-    free(events);
-    if (qa_sdl_window_closed(window)) comp->quit_requested = true;
-  }
-  if (comp->startup_audio != NULL) {
-    qa_app_startup_audio_pump(comp->startup_audio);
-  } else if (comp->audio != NULL) {
-    qa_unified_audio_update_music(comp->audio);
-    (void)qa_unified_audio_pump(comp->audio, false, 0, 0);
-  }
-  if (comp->menu != NULL) qa_app_startup_menu_pump(comp->menu);
-  /* TS advance(): a staged play/initial source opens, then the
-   * live game steps with real elapsed time through its session
-   * (qa_app_application_step; host.step is unused once a
-   * simulation is attached). A finished run-entry game finishes
-   * the startup; a finished menu game returns to the frontend. */
-  if (comp->pending_game && comp->game == NULL) {
-    comp->pending_game = false;
-    composition_open_game(comp);
-  }
-  if (comp->game != NULL && comp->error == NULL) {
-    double now = splash_now_ms(NULL);
-    if (!comp->game_clock_started) {
-      comp->game_clock_started = true;
-      comp->game_last_ms = now;
-    } else {
-      double elapsed = now - comp->game_last_ms;
-      comp->game_last_ms = now;
-      if (elapsed > 0) {
-        const void *output = NULL;
-        const char *error =
-            qa_app_application_step(comp->game, elapsed, &output);
-        if (error != NULL) composition_set_error(comp, "%s", error);
-      }
-    }
-    if (comp->game != NULL && qa_app_application_finished(comp->game)) {
-      bool run_entry = comp->kind != NULL && strcmp(comp->kind, "run") == 0;
-      composition_close_game(comp);
-      if (run_entry) comp->quit_requested = true;
-    }
-  }
-  if (comp->lobby_open) {
-    const char *lobby_error = qa_app_application_local_lobby_poll(&comp->lobby);
-    if (lobby_error != NULL) composition_set_error(comp, "%s", lobby_error);
-  }
-  if (comp->preferences != NULL)
-    qa_app_frontend_preferences_pump(comp->preferences, splash_now_ms(NULL));
-  comp->frames += 1;
-  return comp->error;
-}
-static const char *comp_selection_error(void *ctx) {
-  return ((composition *)ctx)->error;
-}
-static bool comp_has_selection(void *ctx) {
-  return ((composition *)ctx)->selected != NULL;
-}
-static bool comp_has_listening_server(void *ctx) {
-  (void)ctx;
-  return false;
-}
-static const char *comp_hosted_game(void *ctx) {
-  (void)ctx;
-  return NULL;
-}
-static void comp_persist_preferences(void *ctx) {
-  composition *comp = ctx;
-  if (comp->preferences == NULL) return;
-  const char *error = qa_app_frontend_preferences_save_global(comp->preferences);
-  if (error != NULL) {
-    char message[512];
-    (void)snprintf(message, sizeof message, "Could not save controls: %s\n", error);
-    print_text(message);
-  }
-}
 static void comp_print(void *ctx, const char *text) {
   (void)ctx;
   print_text(text);
-}
-static void comp_command(void *ctx, const char *name, const char *const *args,
-                         size_t count, const qa_command_context *source) {
-  (void)args;
-  (void)count;
-  (void)source;
-  if (name != NULL && strcmp(name, "quit") == 0)
-    ((composition *)ctx)->quit_requested = true;
-}
-static bool comp_handle_event(void *ctx, const qa_sdl_event *event) {
-  if (event != NULL && event->kind == QA_SDL_EVENT_QUIT) {
-    ((composition *)ctx)->quit_requested = true;
-    return true;
-  }
-  return false;
-}
-static void comp_capture(void *ctx, const void *request) {
-  (void)ctx;
-  (void)request;
-}
-static int comp_frame_count(void *ctx) {
-  return (int)((composition *)ctx)->frames;
-}
-static const char *comp_close_services(void *ctx) {
-  composition_close(ctx);
-  return NULL;
-}
-static double comp_frame_index(void *ctx) {
-  return ((composition *)ctx)->frames;
-}
-
-static qa_app_startup_host composition_startup_host(composition *comp) {
-  qa_app_startup_host host = {0};
-  host.ctx = comp;
-  host.discover_content = comp_phase_discover;
-  host.load_preferences = comp_phase_preferences;
-  host.open_splash = comp_phase_splash;
-  host.select_product = comp_phase_select;
-  host.open_renderer = comp_phase_renderer;
-  host.open_audio = comp_phase_audio;
-  host.open_input = comp_phase_input;
-  host.open_menu_or_game = comp_phase_menu_or_game;
-  host.open_lobby = comp_phase_lobby;
-  host.pump_frame = comp_pump_frame;
-  host.selection_error = comp_selection_error;
-  host.has_selection = comp_has_selection;
-  host.has_listening_server = comp_has_listening_server;
-  host.hosted_game = comp_hosted_game;
-  host.persist_preferences = comp_persist_preferences;
-  host.print = comp_print;
-  host.command = comp_command;
-  host.handle_event = comp_handle_event;
-  host.capture = comp_capture;
-  host.frame_count = comp_frame_count;
-  host.close_services = comp_close_services;
-  host.frame_index = comp_frame_index;
-  return host;
 }
 
 /* ---- Application host (dedicated + nested graphical game) ----
@@ -2107,12 +1244,13 @@ static const char *dedicated_open(void *ctx, qa_app_application *application) {
     return NULL;
   }
   for (size_t i = 0; i < recipe->execution_count; i++) {
-    if (recipe->execution[i].kind != QA_EXECUTION_MODULE_TYPESCRIPT) {
+    if (recipe->execution[i].kind != QA_EXECUTION_MODULE_TYPESCRIPT &&
+        recipe->execution[i].kind != QA_EXECUTION_MODULE_QUAKEC) {
       composition_set_error(comp,
                             "Concrete SharedSimulation does not construct "
                             "the source game for execution module %s "
                             "(src/app/bootstrap/simulation/runtime.ts: "
-                            "QuakeC/QVM/native guests are not constructed)",
+                            "QVM/native guests are not constructed)",
                             recipe->execution[i].owner.provider != NULL
                                 ? recipe->execution[i].owner.provider : "");
       return NULL;
@@ -2126,24 +1264,6 @@ static const char *dedicated_open(void *ctx, qa_app_application *application) {
                               ? recipe->map.entities.provider
                               : recipe->movement.provider);
     return NULL;
-  }
-  if (simulation->options.world == NULL) {
-    /* From mounts the concrete builder decodes Q1 BSP only; Q2/Q3
-     * need the decoded world through options.world, which
-     * application.c compose_world does not populate. */
-    const qa_catalog_discovered_product *geometry_product =
-        composition_find_product(&comp->catalog, recipe->map.geometry_content);
-    if (geometry_product == NULL ||
-        geometry_product->expectation.family != QA_GAME_FAMILY_Q1 ||
-        simulation->options.mounts == NULL) {
-      composition_set_error(comp,
-                            "Concrete SharedSimulation requires a decoded "
-                            "world for this map: qa_app_simulation_options.world "
-                            "is not populated by Application compose_world "
-                            "from the loaded content, and only Q1 geometry "
-                            "decodes from mounts");
-      return NULL;
-    }
   }
   comp->concrete_host = qa_app_sim_shared_simulation_concrete_host(
       simulation->options, simulation->actors, simulation->session,
@@ -2272,120 +1392,19 @@ static qa_app_application_host composition_dedicated_host(composition *comp) {
   return composition_application_host(comp, true);
 }
 
-/* Deep copy of the owned option strings/arrays (the field set
- * qa_app_options_destroy releases), so a nested game Application
- * can own its options while the StartupApplication keeps the
- * originals (TS shares the immutable options object). False only
- * on OOM; a partially built clone is destroyed before returning. */
-static bool composition_clone_options(const qa_app_options *in,
-                                      qa_app_options *out) {
-  *out = *in;
-  out->network_transport_relay = dup_text(in->network_transport_relay);
-  out->startup_commands = NULL;
-  out->remote_content.directory = dup_text(in->remote_content.directory);
-  out->server_profile_path = dup_text(in->server_profile_path);
-  out->corpus_root = dup_text(in->corpus_root);
-  out->user_content_root = dup_text(in->user_content_root);
-  out->addon_content_roots = NULL;
-  out->product = dup_text(in->product);
-  out->map_product = dup_text(in->map_product);
-  out->map = dup_text(in->map);
-  out->quakec_program = dup_text(in->quakec_program);
-  out->q2_game_library = dup_text(in->q2_game_library);
-  out->weapon_behavior_product = dup_text(in->weapon_behavior_product);
-  out->weapon_behavior_id = dup_text(in->weapon_behavior_id);
-  out->mods = NULL;
-  out->movement_product = dup_text(in->movement_product);
-  out->character_model = dup_text(in->character_model);
-  out->character_skin = dup_text(in->character_skin);
-  out->network_host = dup_text(in->network_host);
-  out->network_remote = dup_text(in->network_remote);
-  bool ok = (in->network_transport_relay == NULL || out->network_transport_relay != NULL) &&
-      (in->remote_content.directory == NULL || out->remote_content.directory != NULL) &&
-      (in->server_profile_path == NULL || out->server_profile_path != NULL) &&
-      (in->corpus_root == NULL || out->corpus_root != NULL) &&
-      (in->user_content_root == NULL || out->user_content_root != NULL) &&
-      (in->product == NULL || out->product != NULL) &&
-      (in->map_product == NULL || out->map_product != NULL) &&
-      (in->map == NULL || out->map != NULL) &&
-      (in->quakec_program == NULL || out->quakec_program != NULL) &&
-      (in->q2_game_library == NULL || out->q2_game_library != NULL) &&
-      (in->weapon_behavior_product == NULL || out->weapon_behavior_product != NULL) &&
-      (in->weapon_behavior_id == NULL || out->weapon_behavior_id != NULL) &&
-      (in->movement_product == NULL || out->movement_product != NULL) &&
-      (in->character_model == NULL || out->character_model != NULL) &&
-      (in->character_skin == NULL || out->character_skin != NULL) &&
-      (in->network_host == NULL || out->network_host != NULL) &&
-      (in->network_remote == NULL || out->network_remote != NULL);
-  if (ok && in->startup_command_count > 0) {
-    out->startup_commands =
-        calloc(in->startup_command_count, sizeof *out->startup_commands);
-    ok = out->startup_commands != NULL;
-    for (size_t i = 0; ok && i < in->startup_command_count; i++) {
-      out->startup_commands[i] = dup_text(in->startup_commands[i]);
-      ok = in->startup_commands[i] == NULL || out->startup_commands[i] != NULL;
-      if (!ok) out->startup_command_count = i;
-    }
-  }
-  if (ok && in->addon_content_root_count > 0) {
-    out->addon_content_roots =
-        calloc(in->addon_content_root_count, sizeof *out->addon_content_roots);
-    ok = out->addon_content_roots != NULL;
-    for (size_t i = 0; ok && i < in->addon_content_root_count; i++) {
-      out->addon_content_roots[i].family = in->addon_content_roots[i].family;
-      out->addon_content_roots[i].root = dup_text(in->addon_content_roots[i].root);
-      ok = in->addon_content_roots[i].root == NULL ||
-           out->addon_content_roots[i].root != NULL;
-      if (!ok) out->addon_content_root_count = i + 1;
-    }
-  }
-  if (ok && in->mod_count > 0) {
-    out->mods = calloc(in->mod_count, sizeof *out->mods);
-    ok = out->mods != NULL;
-    for (size_t i = 0; ok && i < in->mod_count; i++) {
-      out->mods[i].product = dup_text(in->mods[i].product);
-      out->mods[i].id = dup_text(in->mods[i].id);
-      ok = (in->mods[i].product == NULL || out->mods[i].product != NULL) &&
-           (in->mods[i].id == NULL || out->mods[i].id != NULL);
-      if (!ok) out->mod_count = i + 1;
-    }
-  }
-  if (!ok) qa_app_options_destroy(out);
-  return ok;
-}
-
-/* TS stageLobbyLaunch/advance game open: qa_app_open_application
- * over a cloned options set (the nested Application owns them)
- * with the shared composition bundles. Failures stay in
- * comp->error (first error wins); a failed open is destroyed by
- * composition_close_game during composition_close. */
-static void composition_open_game(composition *comp) {
-  if (comp->error != NULL || comp->game != NULL) return;
-  qa_app_options cloned;
-  if (!composition_clone_options(comp->options, &cloned)) {
-    composition_set_error(comp, "Out of memory");
-    return;
-  }
-  comp->game = qa_app_open_application(
-      cloned, composition_application_host(comp, false), NULL, false, false,
-      (qa_app_frontend_preference_overrides){0});
-  if (comp->game == NULL) {
-    qa_app_options_destroy(&cloned); /* open did not take ownership */
-    if (comp->error == NULL) composition_set_error(comp, "Out of memory");
-  }
-  comp->game_clock_started = false;
-}
-
 /* ---- SIGINT/SIGTERM -> requestQuit (TS main.ts stop handler) ---- */
 
 static volatile sig_atomic_t composition_signal_quit;
 static qa_app_application *composition_signal_application;
 
+static qa_startup_application *composition_signal_startup;
 static void composition_signal_handler(int signum) {
   (void)signum;
   composition_signal_quit = 1;
   if (composition_signal_application != NULL)
     qa_app_application_request_quit(composition_signal_application);
+  if (composition_signal_startup != NULL)
+    qa_startup_application_request_quit(composition_signal_startup);
 }
 
 static void composition_install_signals(struct sigaction *old_int,
@@ -2403,6 +1422,72 @@ static void composition_restore_signals(const struct sigaction *old_int,
   (void)sigaction(SIGINT, old_int, NULL);
   (void)sigaction(SIGTERM, old_term, NULL);
   composition_signal_application = NULL;
+  composition_signal_startup = NULL;
+}
+
+/* ---- graphical run/menu (TS main.ts StartupApplication path) ---- */
+typedef struct startup_main {
+  const qa_app_options *options;
+  const char *entry;               /* "run" | "menu" */
+  qa_llm_settings_service *llm;    /* NULL is TS undefined */
+  qa_app_splash_screen **splash;
+  qa_llm_command_requester requester;
+  qa_startup_application_host host;
+  qa_startup_application *application;
+} startup_main;
+/* TS host.llm as the LlmCommandRequester the console reads. */
+static char *startup_llm_request(void *ctx, const qa_llm_request_input *input, char **out_error) {
+  qa_llm_error error;
+  memset(&error, 0, sizeof error);
+  char *text = NULL;
+  if (qa_llm_settings_request(ctx, input, &text, &error)) return text;
+  *out_error = dup_text(error.message);
+  return NULL;
+}
+static void startup_llm_prime(void *ctx, const char *instructions) {
+  qa_llm_error error;
+  memset(&error, 0, sizeof error);
+  (void)qa_llm_settings_prime(ctx, instructions, &error);
+}
+static void startup_open_body(void *ctx) {
+  startup_main *run = ctx;
+  run->application = qa_startup_application_open(run->options, run->host, NULL, run->entry);
+}
+static void startup_run_body(void *ctx) { qa_startup_application_run(((startup_main *)ctx)->application); }
+static void startup_close_body(void *ctx) { qa_startup_application_close(((startup_main *)ctx)->application); }
+/* open, close the splash, SIGINT/SIGTERM -> requestQuit, run(), then close();
+ * a close failure after a run failure is printed without replacing it (APP-006). */
+static void composition_run_startup(startup_main *run, composition *comp) {
+  memset(&run->host, 0, sizeof run->host);
+  run->host.base.print = comp_print;
+  if (run->llm != NULL) {
+    run->requester.ctx = run->llm;
+    run->requester.request = startup_llm_request;
+    run->requester.prime = startup_llm_prime;
+    run->host.base.llm_settings = run->llm;
+    run->host.base.llm_requester = &run->requester;
+  }
+  qa_caught_error caught;
+  if (!qa_try(startup_open_body, run, &caught)) {
+    composition_set_error(comp, "%s", caught.message);
+    return;
+  }
+  qa_app_splash_screen_close(*run->splash);
+  *run->splash = NULL;
+  struct sigaction old_int, old_term;
+  composition_install_signals(&old_int, &old_term);
+  composition_signal_startup = run->application;
+  qa_caught_error run_error;
+  bool failed = !qa_try(startup_run_body, run, &run_error);
+  composition_restore_signals(&old_int, &old_term);
+  if (failed) composition_set_error(comp, "%s", run_error.message);
+  qa_caught_error close_error;
+  if (!qa_try(startup_close_body, run, &close_error)) {
+    if (!failed) composition_set_error(comp, "%s", close_error.message);
+    else fprintf(stderr, "Shutdown after failure also failed: %s\n", close_error.message);
+  }
+  qa_startup_application_destroy(run->application);
+  run->application = NULL;
 }
 
 /* TS StartupApplication.open default saveDirectory. */
@@ -2516,10 +1601,8 @@ static void weapon_close_product(void *ctx, const void *content) {
 
 static bool parse_positive_integer(const char *text, double *out) {
   if (text == NULL || *text == '\0') return false;
-  char *end = NULL;
-  double value = strtod(text, &end);
-  if (end == text || *end != '\0') return false;
-  if (value != (double)(int64_t)value || value <= 0) return false;
+  double value = qa_js_string_to_number(text); /* Number(argv[i]), then Number.isInteger and > 0 */
+  if (!isfinite(value) || value != trunc(value) || value <= 0) return false;
   *out = value;
   return true;
 }
@@ -2612,7 +1695,6 @@ int main(int argc, char **argv) {
     composition comp = {0};
     comp.kind = command.kind;
     comp.save_directory = default_save_directory();
-    comp.random_state = 0x9e3779b9u;
     if (comp.save_directory == NULL) composition_set_error(&comp, "Out of memory");
     /* Options ownership transfers to the opened application
      * (its destroy frees them); comp borrows the same strings. */
@@ -2652,28 +1734,16 @@ int main(int argc, char **argv) {
       }
       if (application != NULL) qa_app_application_destroy(application);
     } else {
-      qa_app_startup_application *application =
-          qa_app_startup_application_open(composition_startup_host(&comp), options,
-                                          comp.save_directory,
-                                          composition_entry_for(command.kind));
-      if (application == NULL && comp.error == NULL)
-        composition_set_error(&comp, "Out of memory");
-      if (application != NULL && comp.error == NULL) {
-        qa_app_splash_screen_close(splash);
-        splash = NULL;
-        struct sigaction old_int, old_term;
-        composition_install_signals(&old_int, &old_term);
-        while (composition_should_continue(
-            comp.quit_requested || composition_signal_quit != 0, false,
-            options.has_frame_limit, options.frame_limit,
-            qa_app_startup_application_frame_count(application))) {
-          qa_app_startup_application_pump(application);
-          if (comp.error != NULL) break;
-          splash_sleep(NULL, 8); /* TS run(): 8 ms with no game/remote */
-        }
-        composition_restore_signals(&old_int, &old_term);
-      }
-      if (application != NULL) qa_app_startup_application_destroy(application);
+      /* TS StartupApplication.open(command.options, host, undefined, command.kind),
+       * then run() and close(). The application copies the options. */
+      startup_main run;
+      memset(&run, 0, sizeof run);
+      run.options = &options;
+      run.entry = composition_entry_for(command.kind);
+      run.llm = llm;
+      run.splash = &splash;
+      composition_run_startup(&run, &comp);
+      qa_app_options_destroy(&options);
     }
     composition_close(&comp); /* idempotent backstop if open failed early */
     comp.options = NULL; /* application destroy freed the strings */

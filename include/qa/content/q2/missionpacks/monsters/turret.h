@@ -10,10 +10,10 @@
 /* Mirrored unported surface (TS owner: src/content/q2/foundation/
  * scenery.ts throwQ2Debris; landed qa_q2_throw_debris serves the
  * incompatible qa_q2_* host). Implemented in turret.c. */
-qa_q2f_entity *qa_q2mpm_throw_debris(qa_q2f_entity *self, qa_q2f_game *game, const char *model, double speed,
+qa_q2_entity *qa_q2mpm_throw_debris(qa_q2_entity *self, qa_q2_game_services *game, const char *model, double speed,
                                      qa_vec3 origin);
 
-qa_q2m_definition qa_q2mpm_create_rogue_turret_definition(qa_q2m_monsters *monsters, qa_q2mpm_movers movers,
+qa_q2m_definition qa_q2mpm_create_rogue_turret_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters, qa_q2_mover_module *movers,
                                                            qa_q2mpm_monster_state *source);
 
 #endif

@@ -11,5 +11,8 @@ bool qa_compat_qc_receives_quakeworld_message(qa_actor_id actor, qa_compat_qc_me
   qa_vec3 delta = {point.x - d.origin.x, point.y - d.origin.y, point.z - d.origin.z};
   if (d.visibility && strcmp(d.visibility, "phs") == 0 && delta.x*delta.x + delta.y*delta.y + delta.z*delta.z <= 1024.0*1024.0) return true;
   qa_q1_client_visibility_scene scene = visibility.fn(visibility.ctx);
-  return scene.cluster_visible(scene.ctx, scene.leaf_cluster(scene.ctx, scene.point_leaf(scene.ctx, d.origin)), scene.leaf_cluster(scene.ctx, scene.point_leaf(scene.ctx, point)), d.visibility);
+  void * value = scene.ctx;
+  double value2 = scene.leaf_cluster(scene.ctx, scene.point_leaf(scene.ctx, d.origin));
+  double value3 = scene.leaf_cluster(scene.ctx, scene.point_leaf(scene.ctx, point));
+  return scene.cluster_visible(value, value2, value3, d.visibility);
 }

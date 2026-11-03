@@ -1,0 +1,2155 @@
+admitted 159:0 view-height 22
+players 1
+== frame 0
+source q1
+time 0
+frame-context 0 seconds:0 seconds:0 frame-entry
+actors 160
+actor-kind q1:official q1:ambient_comp_hum 4
+actor-kind q1:official q1:ambient_drone 1
+actor-kind q1:official q1:character 1
+actor-kind q1:official q1:door_trigger 2
+actor-kind q1:official q1:func_button 6
+actor-kind q1:official q1:func_door 14
+actor-kind q1:official q1:func_door_secret 7
+actor-kind q1:official q1:func_plat 2
+actor-kind q1:official q1:info_intermission 4
+actor-kind q1:official q1:info_player_coop 3
+actor-kind q1:official q1:info_player_deathmatch 5
+actor-kind q1:official q1:info_player_start 1
+actor-kind q1:official q1:info_teleport_destination 1
+actor-kind q1:official q1:item_armor1 1
+actor-kind q1:official q1:item_armor2 1
+actor-kind q1:official q1:item_artifact_envirosuit 1
+actor-kind q1:official q1:item_artifact_super_damage 1
+actor-kind q1:official q1:item_health 14
+actor-kind q1:official q1:item_shells 3
+actor-kind q1:official q1:item_spikes 2
+actor-kind q1:official q1:light 9
+actor-kind q1:official q1:light_fluoro 6
+actor-kind q1:official q1:light_fluorospark 2
+actor-kind q1:official q1:misc_explobox 1
+actor-kind q1:official q1:monster_army 18
+actor-kind q1:official q1:monster_dog 5
+actor-kind q1:official q1:path_corner 14
+actor-kind q1:official q1:plat_trigger 2
+actor-kind q1:official q1:trigger_changelevel 1
+actor-kind q1:official q1:trigger_counter 1
+actor-kind q1:official q1:trigger_multiple 7
+actor-kind q1:official q1:trigger_once 10
+actor-kind q1:official q1:trigger_secret 6
+actor-kind q1:official q1:trigger_teleport 1
+actor-kind q1:official q1:weapon_nailgun 1
+actor-kind q1:official q1:weapon_supershotgun 1
+actor-kind q1:official q1:worldspawn 1
+actor q1:ambient_comp_hum 250 194 72
+actor q1:ambient_comp_hum 466 2226 -104
+actor q1:ambient_comp_hum 626 2058 -104
+actor q1:ambient_comp_hum 714 194 72
+actor q1:ambient_drone 1314 450 -200
+actor q1:character 480 -352 89
+actor q1:door_trigger 0 0 0
+actor q1:door_trigger 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_door -4.408728224614307e-14 -240 0
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -66
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_plat 0 0 -152
+actor q1:func_plat 0 0 -400
+actor q1:info_intermission -112 704 56
+actor q1:info_intermission -208 2736 192
+actor q1:info_intermission 1376 1936 64
+actor q1:info_intermission 240 2664 104
+actor q1:info_player_coop 432 -296 72
+actor q1:info_player_coop 480 -240 72
+actor q1:info_player_coop 528 -296 72
+actor q1:info_player_deathmatch -272 2928 -56
+actor q1:info_player_deathmatch 1312 880 -248
+actor q1:info_player_deathmatch 480 48 24
+actor q1:info_player_deathmatch 528 1888 -168
+actor q1:info_player_deathmatch 832 2048 -152
+actor q1:info_player_start 480 -352 88
+actor q1:info_teleport_destination -32 1800 -29
+actor q1:item_armor1 688 480 80
+actor q1:item_armor2 1312 1048 -432
+actor q1:item_artifact_envirosuit 712 2040 -408
+actor q1:item_artifact_super_damage 544 2480 -88
+actor q1:item_health -16 2064 -208
+actor q1:item_health -376 1704 -224
+actor q1:item_health 1176 936 -432
+actor q1:item_health 1184 992 -272
+actor q1:item_health 1224 2464 -304
+actor q1:item_health 1256 1704 -432
+actor q1:item_health 1376 808 -432
+actor q1:item_health 1376 856 -272
+actor q1:item_health 1424 904 -432
+actor q1:item_health 328 848 -224
+actor q1:item_health 344 920 -224
+actor q1:item_health 600 2200 -128
+actor q1:item_health 916 2416 -136
+actor q1:item_health 944 1008 -272
+actor q1:item_shells 296 2136 -192
+actor q1:item_shells 528 720 80
+actor q1:item_shells 672 -40 48
+actor q1:item_spikes 1376 1024 -272
+actor q1:item_spikes 272 2352 64
+actor q1:light 1280 2000 -152
+actor q1:light 1280 2496 -216
+actor q1:light 32 2312 200
+actor q1:light 32 2352 88
+actor q1:light 32 2392 200
+actor q1:light 56 2352 200
+actor q1:light 752 2000 -88
+actor q1:light 784 2496 -280
+actor q1:light 8 2352 200
+actor q1:light_fluoro -472 2064 -88
+actor q1:light_fluoro 176 1744 -152
+actor q1:light_fluoro 416 1968 -112
+actor q1:light_fluoro 416 2064 -112
+actor q1:light_fluoro 592 544 88
+actor q1:light_fluoro 80 1744 -152
+actor q1:light_fluorospark 344 2216 -88
+actor q1:light_fluorospark 688 192 80
+actor q1:misc_explobox 72 2056 -207.96875
+actor q1:monster_army -16 1888 -184
+actor q1:monster_army -344 2656 -104
+actor q1:monster_army 0 576 24
+actor q1:monster_army 1232 2088 -216
+actor q1:monster_army 1232 2448 -280
+actor q1:monster_army 1256 1760 -408
+actor q1:monster_army 1312 936 -248
+actor q1:monster_army 1392 928 -248
+actor q1:monster_army 248 2392 40
+actor q1:monster_army 424 2672 -56
+actor q1:monster_army 424 2832 -56
+actor q1:monster_army 432 2920 -56
+actor q1:monster_army 8 1520 -200
+actor q1:monster_army 80 2024 -184
+actor q1:monster_army 824 1784 -408
+actor q1:monster_army 832 2072 -408
+actor q1:monster_army 832 2464 -344
+actor q1:monster_army 848 2584 -72
+actor q1:monster_dog -544 2584 56
+actor q1:monster_dog -72 2896 -56
+actor q1:monster_dog 1336 1784 -408
+actor q1:monster_dog 432 2120 -168
+actor q1:monster_dog 88 1520 -200
+actor q1:path_corner -104 2352 40
+actor q1:path_corner -136 1912 -200
+actor q1:path_corner -200 1992 -200
+actor q1:path_corner -560 2352 40
+actor q1:path_corner 1232 2048 -232
+actor q1:path_corner 248 1912 -200
+actor q1:path_corner 248 1992 -200
+actor q1:path_corner 368 2696 -72
+actor q1:path_corner 368 2936 -72
+actor q1:path_corner 480 2696 -72
+actor q1:path_corner 480 2936 -72
+actor q1:path_corner 832 2416 -104
+actor q1:path_corner 832 2712 -88
+actor q1:path_corner 880 2048 -168
+actor q1:plat_trigger 0 0 0
+actor q1:plat_trigger 0 0 0
+actor q1:trigger_changelevel 0 0 0
+actor q1:trigger_counter 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_teleport 0 0 0
+actor q1:weapon_nailgun 112 2352 16
+actor q1:weapon_supershotgun -360 2912 -80
+actor q1:worldspawn 0 0 0
+bodies 160
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 2:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 3:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 6:3 o 688 480 80 v 0 0 0 a 0 0 0 g -
+body 7:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:15 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 11:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 12:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 13:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 14:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 15:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 16:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 17:7 o 0 0 -152 v 0 0 0 a 0 0 0 g -
+body 18:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 19:12 o -4.408728224614307e-14 -240 0 v 0 0 0 a 0 0 0 g -
+body 20:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 21:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 22:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 23:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 24:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 25:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 26:0 o 112 2352 16 v 0 0 0 a 0 0 0 g -
+body 27:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 28:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 29:1 o 248 2392 40 v 0 0 0 a 0 180 0 g -
+body 30:0 o 272 2352 64 v 0 0 0 a 0 0 0 g -
+body 31:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 32:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 33:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 34:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 35:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 36:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 38:3 o 0 0 -66 v 0 0 0 a 0 0 0 g -
+body 39:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 40:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 41:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 544 2480 -88 v 0 0 0 a 0 0 0 g -
+body 43:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 44:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 47:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:9 o 944 1008 -272 v 0 0 0 a 0 0 0 g -
+body 51:0 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 52:0 o 296 2136 -192 v 0 0 0 a 0 0 0 g -
+body 53:0 o 1424 904 -432 v 0 0 0 a 0 0 0 g -
+body 54:0 o 1376 808 -432 v 0 0 0 a 0 0 0 g -
+body 55:0 o 1176 936 -432 v 0 0 0 a 0 0 0 g -
+body 56:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 57:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 58:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 59:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 60:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 61:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 66:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 69:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 70:0 o 1376 1024 -272 v 0 0 0 a 0 0 0 g -
+body 71:0 o 1184 992 -272 v 0 0 0 a 0 0 0 g -
+body 72:0 o 1376 856 -272 v 0 0 0 a 0 0 0 g -
+body 73:0 o 1256 1704 -432 v 0 0 0 a 0 0 0 g -
+body 74:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 75:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 76:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 77:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 78:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 79:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 80:0 o 328 848 -224 v 0 0 0 a 0 0 0 g -
+body 81:0 o 344 920 -224 v 0 0 0 a 0 0 0 g -
+body 82:0 o -16 2064 -208 v 0 0 0 a 0 0 0 g -
+body 83:0 o 0 576 24 v 0 0 0 a 0 0 0 g -
+body 84:0 o 8 1520 -200 v 0 0 0 a 0 270 0 g -
+body 85:0 o 88 1520 -200 v 0 0 0 a 0 270 0 g -
+body 86:0 o 712 2040 -408 v 0 0 0 a 0 90 0 g -
+body 87:1 o 916 2416 -136 v 0 0 0 a 0 0 0 g -
+body 88:0 o 1312 936 -248 v 0 0 0 a 0 90 0 g -
+body 89:0 o 1336 1784 -408 v 0 0 0 a 0 180 0 g -
+body 90:0 o 1392 928 -248 v 0 0 0 a 0 90 0 g -
+body 91:0 o 1256 1760 -408 v 0 0 0 a 0 180 0 g -
+body 92:0 o 824 1784 -408 v 0 0 0 a 0 90 0 g -
+body 93:0 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 95:0 o 1232 2088 -216 v 0 0 0 a 0 0 0 g -
+body 96:0 o 1232 2448 -280 v 0 0 0 a 0 270 0 g -
+body 97:0 o 832 2464 -344 v 0 0 0 a 0 0 0 g -
+body 98:0 o 832 2072 -408 v 0 0 0 a 0 90 0 g -
+body 99:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 100:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 101:0 o -360 2912 -80 v 0 0 0 a 0 0 0 g -
+body 102:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 103:2 o 528 720 80 v 0 0 0 a 0 0 0 g -
+body 104:0 o 432 2120 -168 v 0 0 0 a 0 180 0 g -
+body 105:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 106:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 107:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 108:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 109:0 o 80 2024 -184 v 0 0 0 a 0 0 0 g -
+body 110:0 o -16 1888 -184 v 0 0 0 a 0 0 0 g -
+body 111:0 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 112:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 113:0 o -544 2584 56 v 0 0 0 a 0 0 0 g -
+body 114:0 o -344 2656 -104 v 0 0 0 a 0 270 0 g -
+body 115:0 o -72 2896 -56 v 0 0 0 a 0 225 0 g -
+body 116:0 o 432 2920 -56 v 0 0 0 a 0 0 0 g -
+body 117:0 o 424 2832 -56 v 0 0 0 a 0 180 0 g -
+body 118:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 119:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 120:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 121:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 2672 -56 v 0 0 0 a 0 0 0 g -
+body 123:0 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 124:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 125:0 o 848 2584 -72 v 0 0 0 a 0 0 0 g -
+body 126:0 o -376 1704 -224 v 0 0 0 a 0 0 0 g -
+body 127:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 128:0 o 672 -40 48 v 0 0 0 a 0 0 0 g -
+body 129:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 130:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 131:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:1 o 600 2200 -128 v 0 0 0 a 0 0 0 g -
+body 136:1 o 72 2056 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 137:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:0 o 1224 2464 -304 v 0 0 0 a 0 0 0 g -
+body 141:2 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:0 o 1312 1048 -432 v 0 0 0 a 0 0 0 g -
+body 145:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 146:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 147:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 148:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 149:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 150:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 151:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 152:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 153:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 154:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 155:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 156:0 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 159:0 o 480 -352 89 v 0 0 0 a 0 90 0 g -
+inventory 159 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=25/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100 q1:key/silver=0/1 q1:key/gold=0/1
+combat 0 0 none none -
+combat 1 0 none none -
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 10000 none none -
+combat 28 0 none none -
+combat 29 30 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 0 none none -
+combat 35 0 none none -
+combat 36 10000 none none -
+combat 37 10000 none none -
+combat 38 0 none none -
+combat 39 1 none none -
+combat 40 0 none none -
+combat 41 0 none none -
+combat 42 0 none none -
+combat 43 0 none none -
+combat 44 0 none none -
+combat 45 10000 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 10000 none none -
+combat 49 0 none none -
+combat 50 0 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 30 none none -
+combat 84 30 none none -
+combat 85 25 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 25 none none -
+combat 90 30 none none -
+combat 91 30 none none -
+combat 92 30 none none -
+combat 93 0 none none -
+combat 94 0 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 30 none none -
+combat 99 1 none none -
+combat 100 10000 none none -
+combat 101 0 none none -
+combat 102 0 none none -
+combat 103 0 none none -
+combat 104 25 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 30 none none -
+combat 110 30 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 25 none none -
+combat 114 30 none none -
+combat 115 25 none none -
+combat 116 30 none none -
+combat 117 30 none none -
+combat 118 0 none none -
+combat 119 0 none none -
+combat 120 0 none none -
+combat 121 0 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 30 none none -
+combat 126 0 none none -
+combat 127 10000 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 0 none none -
+combat 131 0 none none -
+combat 132 0 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 20 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 0 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 100 none none 1
+player body o 480 -352 89 v 0 0 0 a 0 90 0 min -16 -16 -24 max 16 16 32
+player view o 480 -352 89 a 0 90 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=25 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0 q1:key/silver=0 q1:key/gold=0
+checkpoint world:actors world:source-slots 1 30e3356e5ae0b074 canonical 73350c73b8b459cf
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:source-cvars 1 6492c4b5a0ed2625 canonical fb39ebf491120e8d
+checkpoint q1:official q1:foundation 1 7ffdf63b1452e481 canonical 2887263ee599efab
+checkpoint q1:official world:simulation 11 dfae8eb5f8a82b2a canonical 0dcc32f16b147fad
+checkpoint-image 87756e005ed24594 canonical e02af44d349b838c 41cf0c1d77ff7c1f
+== frame 1
+source q1
+time 0.1
+frame-context 1 seconds:0.1 seconds:0.1 frame-exit
+actors 160
+actor-kind q1:official q1:ambient_comp_hum 4
+actor-kind q1:official q1:ambient_drone 1
+actor-kind q1:official q1:character 1
+actor-kind q1:official q1:door_trigger 2
+actor-kind q1:official q1:func_button 6
+actor-kind q1:official q1:func_door 14
+actor-kind q1:official q1:func_door_secret 7
+actor-kind q1:official q1:func_plat 2
+actor-kind q1:official q1:info_intermission 4
+actor-kind q1:official q1:info_player_coop 3
+actor-kind q1:official q1:info_player_deathmatch 5
+actor-kind q1:official q1:info_player_start 1
+actor-kind q1:official q1:info_teleport_destination 1
+actor-kind q1:official q1:item_armor1 1
+actor-kind q1:official q1:item_armor2 1
+actor-kind q1:official q1:item_artifact_envirosuit 1
+actor-kind q1:official q1:item_artifact_super_damage 1
+actor-kind q1:official q1:item_health 14
+actor-kind q1:official q1:item_shells 3
+actor-kind q1:official q1:item_spikes 2
+actor-kind q1:official q1:light 9
+actor-kind q1:official q1:light_fluoro 6
+actor-kind q1:official q1:light_fluorospark 2
+actor-kind q1:official q1:misc_explobox 1
+actor-kind q1:official q1:monster_army 18
+actor-kind q1:official q1:monster_dog 5
+actor-kind q1:official q1:path_corner 14
+actor-kind q1:official q1:plat_trigger 2
+actor-kind q1:official q1:trigger_changelevel 1
+actor-kind q1:official q1:trigger_counter 1
+actor-kind q1:official q1:trigger_multiple 7
+actor-kind q1:official q1:trigger_once 10
+actor-kind q1:official q1:trigger_secret 6
+actor-kind q1:official q1:trigger_teleport 1
+actor-kind q1:official q1:weapon_nailgun 1
+actor-kind q1:official q1:weapon_supershotgun 1
+actor-kind q1:official q1:worldspawn 1
+actor q1:ambient_comp_hum 250 194 72
+actor q1:ambient_comp_hum 466 2226 -104
+actor q1:ambient_comp_hum 626 2058 -104
+actor q1:ambient_comp_hum 714 194 72
+actor q1:ambient_drone 1314 450 -200
+actor q1:character 482.9773864746094 -352.36749267578125 88.03125
+actor q1:door_trigger 0 0 0
+actor q1:door_trigger 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_door -4.408728224614307e-14 -240 0
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -66
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_plat 0 0 -152
+actor q1:func_plat 0 0 -400
+actor q1:info_intermission -112 704 56
+actor q1:info_intermission -208 2736 192
+actor q1:info_intermission 1376 1936 64
+actor q1:info_intermission 240 2664 104
+actor q1:info_player_coop 432 -296 72
+actor q1:info_player_coop 480 -240 72
+actor q1:info_player_coop 528 -296 72
+actor q1:info_player_deathmatch -272 2928 -56
+actor q1:info_player_deathmatch 1312 880 -248
+actor q1:info_player_deathmatch 480 48 24
+actor q1:info_player_deathmatch 528 1888 -168
+actor q1:info_player_deathmatch 832 2048 -152
+actor q1:info_player_start 480 -352 88
+actor q1:info_teleport_destination -32 1800 -29
+actor q1:item_armor1 688 480 80
+actor q1:item_armor2 1312 1048 -432
+actor q1:item_artifact_envirosuit 712 2040 -408
+actor q1:item_artifact_super_damage 544 2480 -88
+actor q1:item_health -16 2064 -208
+actor q1:item_health -376 1704 -224
+actor q1:item_health 1176 936 -432
+actor q1:item_health 1184 992 -272
+actor q1:item_health 1224 2464 -304
+actor q1:item_health 1256 1704 -432
+actor q1:item_health 1376 808 -432
+actor q1:item_health 1376 856 -272
+actor q1:item_health 1424 904 -432
+actor q1:item_health 328 848 -224
+actor q1:item_health 344 920 -224
+actor q1:item_health 600 2200 -128
+actor q1:item_health 916 2416 -136
+actor q1:item_health 944 1008 -272
+actor q1:item_shells 296 2136 -192
+actor q1:item_shells 528 720 80
+actor q1:item_shells 672 -40 48
+actor q1:item_spikes 1376 1024 -272
+actor q1:item_spikes 272 2352 64
+actor q1:light 1280 2000 -152
+actor q1:light 1280 2496 -216
+actor q1:light 32 2312 200
+actor q1:light 32 2352 88
+actor q1:light 32 2392 200
+actor q1:light 56 2352 200
+actor q1:light 752 2000 -88
+actor q1:light 784 2496 -280
+actor q1:light 8 2352 200
+actor q1:light_fluoro -472 2064 -88
+actor q1:light_fluoro 176 1744 -152
+actor q1:light_fluoro 416 1968 -112
+actor q1:light_fluoro 416 2064 -112
+actor q1:light_fluoro 592 544 88
+actor q1:light_fluoro 80 1744 -152
+actor q1:light_fluorospark 344 2216 -88
+actor q1:light_fluorospark 688 192 80
+actor q1:misc_explobox 72 2056 -207.96875
+actor q1:monster_army -16 1888 -184
+actor q1:monster_army -344 2656 -104
+actor q1:monster_army 0 576 24
+actor q1:monster_army 1232 2088 -216
+actor q1:monster_army 1232 2448 -280
+actor q1:monster_army 1256 1760 -408
+actor q1:monster_army 1312 936 -256
+actor q1:monster_army 1392 928 -255.96875
+actor q1:monster_army 248 2392 40
+actor q1:monster_army 424 2672 -56
+actor q1:monster_army 424 2832 -56
+actor q1:monster_army 432 2920 -56
+actor q1:monster_army 8 1520 -199.96875
+actor q1:monster_army 80 2024 -184
+actor q1:monster_army 824 1784 -408
+actor q1:monster_army 832 2072 -408
+actor q1:monster_army 832 2464 -344
+actor q1:monster_army 848 2584 -72
+actor q1:monster_dog -544 2584 56.03125
+actor q1:monster_dog -72 2896 -55.96875
+actor q1:monster_dog 1336 1784 -408
+actor q1:monster_dog 432 2120 -168
+actor q1:monster_dog 88 1520 -200
+actor q1:path_corner -104 2352 40
+actor q1:path_corner -136 1912 -200
+actor q1:path_corner -200 1992 -200
+actor q1:path_corner -560 2352 40
+actor q1:path_corner 1232 2048 -232
+actor q1:path_corner 248 1912 -200
+actor q1:path_corner 248 1992 -200
+actor q1:path_corner 368 2696 -72
+actor q1:path_corner 368 2936 -72
+actor q1:path_corner 480 2696 -72
+actor q1:path_corner 480 2936 -72
+actor q1:path_corner 832 2416 -104
+actor q1:path_corner 832 2712 -88
+actor q1:path_corner 880 2048 -168
+actor q1:plat_trigger 0 0 0
+actor q1:plat_trigger 0 0 0
+actor q1:trigger_changelevel 0 0 0
+actor q1:trigger_counter 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_teleport 0 0 0
+actor q1:weapon_nailgun 112 2352 16
+actor q1:weapon_supershotgun -360 2912 -80
+actor q1:worldspawn 0 0 0
+bodies 160
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 2:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 3:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 6:3 o 688 480 80 v 0 0 0 a 0 0 0 g -
+body 7:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:15 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 11:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 12:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 13:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 14:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 15:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 16:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 17:7 o 0 0 -152 v 0 0 0 a 0 0 0 g -
+body 18:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 19:12 o -4.408728224614307e-14 -240 0 v 0 0 0 a 0 0 0 g -
+body 20:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 21:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 22:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 23:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 24:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 25:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 26:0 o 112 2352 16 v 0 0 0 a 0 0 0 g -
+body 27:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 28:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 29:1 o 248 2392 40 v 0 0 0 a 0 180 0 g 0
+body 30:0 o 272 2352 64 v 0 0 0 a 0 0 0 g -
+body 31:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 32:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 33:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 34:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 35:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 36:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 38:3 o 0 0 -66 v 0 0 0 a 0 0 0 g -
+body 39:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 40:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 41:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 544 2480 -88 v 0 0 0 a 0 0 0 g -
+body 43:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 44:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 47:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:9 o 944 1008 -272 v 0 0 0 a 0 0 0 g -
+body 51:0 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 52:0 o 296 2136 -192 v 0 0 0 a 0 0 0 g -
+body 53:0 o 1424 904 -432 v 0 0 0 a 0 0 0 g -
+body 54:0 o 1376 808 -432 v 0 0 0 a 0 0 0 g -
+body 55:0 o 1176 936 -432 v 0 0 0 a 0 0 0 g -
+body 56:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 57:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 58:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 59:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 60:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 61:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 66:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 69:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 70:0 o 1376 1024 -272 v 0 0 0 a 0 0 0 g -
+body 71:0 o 1184 992 -272 v 0 0 0 a 0 0 0 g -
+body 72:0 o 1376 856 -272 v 0 0 0 a 0 0 0 g -
+body 73:0 o 1256 1704 -432 v 0 0 0 a 0 0 0 g -
+body 74:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 75:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 76:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 77:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 78:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 79:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 80:0 o 328 848 -224 v 0 0 0 a 0 0 0 g -
+body 81:0 o 344 920 -224 v 0 0 0 a 0 0 0 g -
+body 82:0 o -16 2064 -208 v 0 0 0 a 0 0 0 g -
+body 83:0 o 0 576 24 v 0 0 0 a 0 0 0 g 7
+body 84:0 o 8 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 85:0 o 88 1520 -200 v 0 0 0 a 0 270 0 g 0
+body 86:0 o 712 2040 -408 v 0 0 0 a 0 90 0 g -
+body 87:1 o 916 2416 -136 v 0 0 0 a 0 0 0 g -
+body 88:0 o 1312 936 -256 v 0 0 -80 a 0 90 0 g -
+body 89:0 o 1336 1784 -408 v 0 0 0 a 0 180 0 g 0
+body 90:0 o 1392 928 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 91:0 o 1256 1760 -408 v 0 0 0 a 0 180 0 g 0
+body 92:0 o 824 1784 -408 v 0 0 0 a 0 90 0 g 0
+body 93:0 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 95:0 o 1232 2088 -216 v 0 0 0 a 0 0 0 g 0
+body 96:0 o 1232 2448 -280 v 0 0 0 a 0 270 0 g 0
+body 97:0 o 832 2464 -344 v 0 0 0 a 0 0 0 g 0
+body 98:0 o 832 2072 -408 v 0 0 0 a 0 90 0 g 0
+body 99:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 100:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 101:0 o -360 2912 -80 v 0 0 0 a 0 0 0 g -
+body 102:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 103:2 o 528 720 80 v 0 0 0 a 0 0 0 g -
+body 104:0 o 432 2120 -168 v 0 0 0 a 0 180 0 g 0
+body 105:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 106:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 107:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 108:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 109:0 o 80 2024 -184 v 0 0 0 a 0 0 0 g 0
+body 110:0 o -16 1888 -184 v 0 0 0 a 0 0 0 g 0
+body 111:0 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 112:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 113:0 o -544 2584 56.03125 v 0 0 0 a 0 0 0 g 0
+body 114:0 o -344 2656 -104 v 0 0 0 a 0 270 0 g 0
+body 115:0 o -72 2896 -55.96875 v 0 0 0 a 0 225 0 g 0
+body 116:0 o 432 2920 -56 v 0 0 0 a 0 0 0 g 0
+body 117:0 o 424 2832 -56 v 0 0 0 a 0 180 0 g 0
+body 118:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 119:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 120:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 121:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 2672 -56 v 0 0 0 a 0 0 0 g 0
+body 123:0 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 124:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 125:0 o 848 2584 -72 v 0 0 0 a 0 0 0 g 0
+body 126:0 o -376 1704 -224 v 0 0 0 a 0 0 0 g -
+body 127:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 128:0 o 672 -40 48 v 0 0 0 a 0 0 0 g -
+body 129:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 130:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 131:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:1 o 600 2200 -128 v 0 0 0 a 0 0 0 g -
+body 136:1 o 72 2056 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 137:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:0 o 1224 2464 -304 v 0 0 0 a 0 0 0 g -
+body 141:2 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:0 o 1312 1048 -432 v 0 0 0 a 0 0 0 g -
+body 145:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 146:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 147:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 148:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 149:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 150:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 151:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 152:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 153:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 154:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 155:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 156:0 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 159:0 o 482.9773864746094 -352.36749267578125 88.03125 v 29.774065017700195 -3.674915075302124 0 a 0 7 0 g 0
+inventory 159 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=25/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100 q1:key/silver=0/1 q1:key/gold=0/1
+combat 0 0 none none -
+combat 1 0 none none -
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 10000 none none -
+combat 28 0 none none -
+combat 29 30 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 0 none none -
+combat 35 0 none none -
+combat 36 10000 none none -
+combat 37 10000 none none -
+combat 38 0 none none -
+combat 39 1 none none -
+combat 40 0 none none -
+combat 41 0 none none -
+combat 42 0 none none -
+combat 43 0 none none -
+combat 44 0 none none -
+combat 45 10000 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 10000 none none -
+combat 49 0 none none -
+combat 50 0 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 30 none none -
+combat 84 30 none none -
+combat 85 25 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 25 none none -
+combat 90 30 none none -
+combat 91 30 none none -
+combat 92 30 none none -
+combat 93 0 none none -
+combat 94 0 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 30 none none -
+combat 99 1 none none -
+combat 100 10000 none none -
+combat 101 0 none none -
+combat 102 0 none none -
+combat 103 0 none none -
+combat 104 25 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 30 none none -
+combat 110 30 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 25 none none -
+combat 114 30 none none -
+combat 115 25 none none -
+combat 116 30 none none -
+combat 117 30 none none -
+combat 118 0 none none -
+combat 119 0 none none -
+combat 120 0 none none -
+combat 121 0 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 30 none none -
+combat 126 0 none none -
+combat 127 10000 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 0 none none -
+combat 131 0 none none -
+combat 132 0 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 20 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 0 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 100 none none 1
+player body o 482.9773864746094 -352.36749267578125 88.03125 v 29.774065017700195 -3.674915075302124 0 a 0 7 0 min -16 -16 -24 max 16 16 32
+player view o 482.9773864746094 -352.36749267578125 88.03125 a 0 7 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=25 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0 q1:key/silver=0 q1:key/gold=0
+event message:print 1
+presentation q1 37
+presentation q1-composition 2
+presentation view-reset 1
+console "[message] Player 1 entered the game\n"
+checkpoint world:actors world:source-slots 1 30e3356e5ae0b074 canonical 73350c73b8b459cf
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:source-cvars 1 6492c4b5a0ed2625 canonical fb39ebf491120e8d
+checkpoint q1:official q1:foundation 1 ed3c8d13c2228d5a canonical 48ae9d294fc4a22e
+checkpoint q1:official world:simulation 11 b35a7f97774f5e99 canonical ea3fb347b8837796
+checkpoint-image acf75fc7c8559b02 canonical e02af44d349b838c cef91e059c5eb556
+== frame 10
+source q1
+time 0.9999999999999999
+frame-context 10 seconds:0.9999999999999999 seconds:0.1 frame-exit
+actors 160
+actor-kind q1:official q1:ambient_comp_hum 4
+actor-kind q1:official q1:ambient_drone 1
+actor-kind q1:official q1:character 1
+actor-kind q1:official q1:door_trigger 2
+actor-kind q1:official q1:func_button 6
+actor-kind q1:official q1:func_door 14
+actor-kind q1:official q1:func_door_secret 7
+actor-kind q1:official q1:func_plat 2
+actor-kind q1:official q1:info_intermission 4
+actor-kind q1:official q1:info_player_coop 3
+actor-kind q1:official q1:info_player_deathmatch 5
+actor-kind q1:official q1:info_player_start 1
+actor-kind q1:official q1:info_teleport_destination 1
+actor-kind q1:official q1:item_armor1 1
+actor-kind q1:official q1:item_armor2 1
+actor-kind q1:official q1:item_artifact_envirosuit 1
+actor-kind q1:official q1:item_artifact_super_damage 1
+actor-kind q1:official q1:item_health 14
+actor-kind q1:official q1:item_shells 3
+actor-kind q1:official q1:item_spikes 2
+actor-kind q1:official q1:light 9
+actor-kind q1:official q1:light_fluoro 6
+actor-kind q1:official q1:light_fluorospark 2
+actor-kind q1:official q1:misc_explobox 1
+actor-kind q1:official q1:monster_army 18
+actor-kind q1:official q1:monster_dog 5
+actor-kind q1:official q1:path_corner 14
+actor-kind q1:official q1:plat_trigger 2
+actor-kind q1:official q1:trigger_changelevel 1
+actor-kind q1:official q1:trigger_counter 1
+actor-kind q1:official q1:trigger_multiple 7
+actor-kind q1:official q1:trigger_once 10
+actor-kind q1:official q1:trigger_secret 6
+actor-kind q1:official q1:trigger_teleport 1
+actor-kind q1:official q1:weapon_nailgun 1
+actor-kind q1:official q1:weapon_supershotgun 1
+actor-kind q1:official q1:worldspawn 1
+actor q1:ambient_comp_hum 250 194 72
+actor q1:ambient_comp_hum 466 2226 -104
+actor q1:ambient_comp_hum 626 2058 -104
+actor q1:ambient_comp_hum 714 194 72
+actor q1:ambient_drone 1314 450 -200
+actor q1:character 540.235107421875 -256.2863464355469 72.03125
+actor q1:door_trigger 0 0 0
+actor q1:door_trigger 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_door -4.408728224614307e-14 -240 0
+actor q1:func_door -96 1.1756609784817611e-14 0
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -66
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 94 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_plat 0 0 -152
+actor q1:func_plat 0 0 -400
+actor q1:info_intermission -112 704 56
+actor q1:info_intermission -208 2736 192
+actor q1:info_intermission 1376 1936 64
+actor q1:info_intermission 240 2664 104
+actor q1:info_player_coop 432 -296 72
+actor q1:info_player_coop 480 -240 72
+actor q1:info_player_coop 528 -296 72
+actor q1:info_player_deathmatch -272 2928 -56
+actor q1:info_player_deathmatch 1312 880 -248
+actor q1:info_player_deathmatch 480 48 24
+actor q1:info_player_deathmatch 528 1888 -168
+actor q1:info_player_deathmatch 832 2048 -152
+actor q1:info_player_start 480 -352 88
+actor q1:info_teleport_destination -32 1800 -29
+actor q1:item_armor1 688 480 80.03125
+actor q1:item_armor2 1312 1048 -431.96875
+actor q1:item_artifact_envirosuit 712 2040 -407.96875
+actor q1:item_artifact_super_damage 544 2480 -87.96875
+actor q1:item_health -16 2064 -207.96875
+actor q1:item_health -376 1704 -223.96875
+actor q1:item_health 1176 936 -431.96875
+actor q1:item_health 1184 992 -279.96875
+actor q1:item_health 1224 2464 -303.96875
+actor q1:item_health 1256 1704 -431.96875
+actor q1:item_health 1376 808 -431.96875
+actor q1:item_health 1376 856 -279.96875
+actor q1:item_health 1424 904 -431.96875
+actor q1:item_health 328 848 -223.96875
+actor q1:item_health 344 920 -223.96875
+actor q1:item_health 600 2200 -127.96875
+actor q1:item_health 916 2416 -135.96875
+actor q1:item_health 944 1008 -271.96875
+actor q1:item_shells 296 2136 -191.96875
+actor q1:item_shells 528 720 80.03125
+actor q1:item_shells 672 -40 48.03125
+actor q1:item_spikes 1376 1024 -279.96875
+actor q1:item_spikes 272 2352 64.03125
+actor q1:light 1280 2000 -152
+actor q1:light 1280 2496 -216
+actor q1:light 32 2312 200
+actor q1:light 32 2352 88
+actor q1:light 32 2392 200
+actor q1:light 56 2352 200
+actor q1:light 752 2000 -88
+actor q1:light 784 2496 -280
+actor q1:light 8 2352 200
+actor q1:light_fluoro -472 2064 -88
+actor q1:light_fluoro 176 1744 -152
+actor q1:light_fluoro 416 1968 -112
+actor q1:light_fluoro 416 2064 -112
+actor q1:light_fluoro 592 544 88
+actor q1:light_fluoro 80 1744 -152
+actor q1:light_fluorospark 344 2216 -88
+actor q1:light_fluorospark 688 192 80
+actor q1:misc_explobox 72 2056 -207.96875
+actor q1:monster_army -344 2656 -103.96875
+actor q1:monster_army -8.928934097290039 1895.0712890625 -183.96875
+actor q1:monster_army 0 576 24.03125
+actor q1:monster_army 1232 2087 -215.96875
+actor q1:monster_army 1232 2448 -279.96875
+actor q1:monster_army 1256 1760 -407.96875
+actor q1:monster_army 1312 936 -255.96875
+actor q1:monster_army 1392 928 -255.96875
+actor q1:monster_army 248 2392 40.03125
+actor q1:monster_army 424 2832 -55.96875
+actor q1:monster_army 427.0503234863281 2924.949462890625 -55.96875
+actor q1:monster_army 428.9496765136719 2676.949462890625 -55.96875
+actor q1:monster_army 77.01940155029297 2023.6593017578125 -183.96875
+actor q1:monster_army 8 1520 -199.96875
+actor q1:monster_army 824 1784 -407.96875
+actor q1:monster_army 832 2072 -407.96875
+actor q1:monster_army 832 2464 -343.96875
+actor q1:monster_army 846.2635498046875 2597.891357421875 -71.96875
+actor q1:monster_dog -544 2584 56.03125
+actor q1:monster_dog -72 2896 -55.96875
+actor q1:monster_dog 1336 1784 -407.96875
+actor q1:monster_dog 432 2120 -167.96875
+actor q1:monster_dog 88 1520 -199.96875
+actor q1:path_corner -104 2352 40
+actor q1:path_corner -136 1912 -200
+actor q1:path_corner -200 1992 -200
+actor q1:path_corner -560 2352 40
+actor q1:path_corner 1232 2048 -232
+actor q1:path_corner 248 1912 -200
+actor q1:path_corner 248 1992 -200
+actor q1:path_corner 368 2696 -72
+actor q1:path_corner 368 2936 -72
+actor q1:path_corner 480 2696 -72
+actor q1:path_corner 480 2936 -72
+actor q1:path_corner 832 2416 -104
+actor q1:path_corner 832 2712 -88
+actor q1:path_corner 880 2048 -168
+actor q1:plat_trigger 0 0 0
+actor q1:plat_trigger 0 0 0
+actor q1:trigger_changelevel 0 0 0
+actor q1:trigger_counter 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_teleport 0 0 0
+actor q1:weapon_nailgun 112 2352 16.03125
+actor q1:weapon_supershotgun -360 2912 -79.96875
+actor q1:worldspawn 0 0 0
+bodies 160
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 2:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 3:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 6:3 o 688 480 80.03125 v 0 0 0 a 0 0 0 g 0
+body 7:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:15 o -96 1.1756609784817611e-14 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 94 0 0 v 0 0 0 a 0 0 0 g -
+body 11:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 12:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 13:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 14:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 15:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 16:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 17:7 o 0 0 -152 v 0 0 0 a 0 0 0 g -
+body 18:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 19:12 o -4.408728224614307e-14 -240 0 v 0 0 0 a 0 0 0 g -
+body 20:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 21:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 22:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 23:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 24:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 25:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 26:0 o 112 2352 16.03125 v 0 0 0 a 0 0 0 g 0
+body 27:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 28:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 29:1 o 248 2392 40.03125 v 0 0 0 a 0 180 0 g 0
+body 30:0 o 272 2352 64.03125 v 0 0 0 a 0 0 0 g 0
+body 31:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 32:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 33:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 34:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 35:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 36:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 38:3 o 0 0 -66 v 0 0 0 a 0 0 0 g -
+body 39:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 40:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 41:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 544 2480 -87.96875 v 0 0 0 a 0 0 0 g 0
+body 43:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 44:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 47:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:9 o 944 1008 -271.96875 v 0 0 0 a 0 0 0 g 0
+body 51:0 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 52:0 o 296 2136 -191.96875 v 0 0 0 a 0 0 0 g 0
+body 53:0 o 1424 904 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 54:0 o 1376 808 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 55:0 o 1176 936 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 56:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 57:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 58:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 59:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 60:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 61:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 66:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 69:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 70:0 o 1376 1024 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 71:0 o 1184 992 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 72:0 o 1376 856 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 73:0 o 1256 1704 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 74:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 75:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 76:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 77:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 78:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 79:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 80:0 o 328 848 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 81:0 o 344 920 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 82:0 o -16 2064 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 83:0 o 0 576 24.03125 v 0 0 0 a 0 0 0 g 7
+body 84:0 o 8 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 85:0 o 88 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 86:0 o 712 2040 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 87:1 o 916 2416 -135.96875 v 0 0 0 a 0 0 0 g 0
+body 88:0 o 1312 936 -255.96875 v 0 0 0 a 0 90 0 g 0
+body 89:0 o 1336 1784 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 90:0 o 1392 928 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 91:0 o 1256 1760 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 92:0 o 824 1784 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 93:0 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 95:0 o 1232 2087 -215.96875 v 0 0 0 a 0 300.003662109375 0 g 0
+body 96:0 o 1232 2448 -279.96875 v 0 0 0 a 0 270 0 g 0
+body 97:0 o 832 2464 -343.96875 v 0 0 0 a 0 0 0 g 0
+body 98:0 o 832 2072 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 99:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 100:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 101:0 o -360 2912 -79.96875 v 0 0 0 a 0 0 0 g 0
+body 102:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 103:2 o 528 720 80.03125 v 0 0 0 a 0 0 0 g 0
+body 104:0 o 432 2120 -167.96875 v 0 0 0 a 0 180 0 g 0
+body 105:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 106:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 107:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 108:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 109:0 o 77.01940155029297 2023.6593017578125 -183.96875 v 0 0 0 a 0 220.001220703125 0 g 0
+body 110:0 o -8.928934097290039 1895.0712890625 -183.96875 v 0 0 0 a 0 45 0 g 0
+body 111:0 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 112:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 113:0 o -544 2584 56.03125 v 0 0 0 a 0 0 0 g 0
+body 114:0 o -344 2656 -103.96875 v 0 0 0 a 0 270 0 g 0
+body 115:0 o -72 2896 -55.96875 v 0 0 0 a 0 225 0 g 0
+body 116:0 o 427.0503234863281 2924.949462890625 -55.96875 v 0 0 0 a 0 119.970703125 0 g 0
+body 117:0 o 424 2832 -55.96875 v 0 0 0 a 0 180 0 g 0
+body 118:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 119:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 120:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 121:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 122:0 o 428.9496765136719 2676.949462890625 -55.96875 v 0 0 0 a 0 45 0 g 0
+body 123:0 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 124:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 125:0 o 846.2635498046875 2597.891357421875 -71.96875 v 0 0 0 a 0 97.1246337890625 0 g 0
+body 126:0 o -376 1704 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 127:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 128:0 o 672 -40 48.03125 v 0 0 0 a 0 0 0 g 0
+body 129:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 130:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 131:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:1 o 600 2200 -127.96875 v 0 0 0 a 0 0 0 g 0
+body 136:1 o 72 2056 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 137:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:0 o 1224 2464 -303.96875 v 0 0 0 a 0 0 0 g 0
+body 141:2 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:0 o 1312 1048 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 145:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 146:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 147:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 148:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 149:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 150:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 151:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 152:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 153:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 154:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 155:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 156:0 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 159:0 o 540.235107421875 -256.2863464355469 72.03125 v 21.30823516845703 205.03466796875 0 a 0 70 -2.9826841354370117 g 0
+inventory 159 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=25/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100 q1:key/silver=0/1 q1:key/gold=0/1
+combat 0 0 none none -
+combat 1 0 none none -
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 10000 none none -
+combat 28 0 none none -
+combat 29 30 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 0 none none -
+combat 35 0 none none -
+combat 36 10000 none none -
+combat 37 10000 none none -
+combat 38 0 none none -
+combat 39 1 none none -
+combat 40 0 none none -
+combat 41 0 none none -
+combat 42 0 none none -
+combat 43 0 none none -
+combat 44 0 none none -
+combat 45 10000 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 10000 none none -
+combat 49 0 none none -
+combat 50 0 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 30 none none -
+combat 84 30 none none -
+combat 85 25 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 25 none none -
+combat 90 30 none none -
+combat 91 30 none none -
+combat 92 30 none none -
+combat 93 0 none none -
+combat 94 0 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 30 none none -
+combat 99 1 none none -
+combat 100 10000 none none -
+combat 101 0 none none -
+combat 102 0 none none -
+combat 103 0 none none -
+combat 104 25 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 30 none none -
+combat 110 30 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 25 none none -
+combat 114 30 none none -
+combat 115 25 none none -
+combat 116 30 none none -
+combat 117 30 none none -
+combat 118 0 none none -
+combat 119 0 none none -
+combat 120 0 none none -
+combat 121 0 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 30 none none -
+combat 126 0 none none -
+combat 127 10000 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 0 none none -
+combat 131 0 none none -
+combat 132 0 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 20 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 0 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 100 none none 1
+player body o 540.235107421875 -256.2863464355469 72.03125 v 21.30823516845703 205.03466796875 0 a 0 70 -2.9826841354370117 min -16 -16 -24 max 16 16 32
+player view o 540.235107421875 -256.2863464355469 72.03125 a 0 70 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=25 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0 q1:key/silver=0 q1:key/gold=0
+event message:print 1
+presentation q1 43
+presentation q1-composition 2
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 30e3356e5ae0b074 canonical 73350c73b8b459cf
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:source-cvars 1 6492c4b5a0ed2625 canonical fb39ebf491120e8d
+checkpoint q1:official q1:foundation 1 c58a21ac33448eda canonical 6531dcaeafda5c49
+checkpoint q1:official world:simulation 11 cc725c8918fc7a08 canonical 3c9202d1cc4ca04e
+checkpoint-image 224f738d74a5a3d4 canonical e02af44d349b838c c40db14d96824258
+== frame 100
+source q1
+time 9.99999999999998
+frame-context 100 seconds:9.99999999999998 seconds:0.1 frame-exit
+actors 160
+actor-kind q1:official q1:ambient_comp_hum 4
+actor-kind q1:official q1:ambient_drone 1
+actor-kind q1:official q1:character 1
+actor-kind q1:official q1:door_trigger 2
+actor-kind q1:official q1:func_button 6
+actor-kind q1:official q1:func_door 14
+actor-kind q1:official q1:func_door_secret 7
+actor-kind q1:official q1:func_plat 2
+actor-kind q1:official q1:info_intermission 4
+actor-kind q1:official q1:info_player_coop 3
+actor-kind q1:official q1:info_player_deathmatch 5
+actor-kind q1:official q1:info_player_start 1
+actor-kind q1:official q1:info_teleport_destination 1
+actor-kind q1:official q1:item_armor1 1
+actor-kind q1:official q1:item_armor2 1
+actor-kind q1:official q1:item_artifact_envirosuit 1
+actor-kind q1:official q1:item_artifact_super_damage 1
+actor-kind q1:official q1:item_health 14
+actor-kind q1:official q1:item_shells 3
+actor-kind q1:official q1:item_spikes 2
+actor-kind q1:official q1:light 9
+actor-kind q1:official q1:light_fluoro 6
+actor-kind q1:official q1:light_fluorospark 2
+actor-kind q1:official q1:misc_explobox 1
+actor-kind q1:official q1:monster_army 18
+actor-kind q1:official q1:monster_dog 5
+actor-kind q1:official q1:path_corner 14
+actor-kind q1:official q1:plat_trigger 2
+actor-kind q1:official q1:trigger_changelevel 1
+actor-kind q1:official q1:trigger_counter 1
+actor-kind q1:official q1:trigger_multiple 7
+actor-kind q1:official q1:trigger_once 10
+actor-kind q1:official q1:trigger_secret 6
+actor-kind q1:official q1:trigger_teleport 1
+actor-kind q1:official q1:weapon_nailgun 1
+actor-kind q1:official q1:weapon_supershotgun 1
+actor-kind q1:official q1:worldspawn 1
+actor q1:ambient_comp_hum 250 194 72
+actor q1:ambient_comp_hum 466 2226 -104
+actor q1:ambient_comp_hum 626 2058 -104
+actor q1:ambient_comp_hum 714 194 72
+actor q1:ambient_drone 1314 450 -200
+actor q1:character 553.6420288085938 -399.96875 88.03125
+actor q1:door_trigger 0 0 0
+actor q1:door_trigger 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_button 0 0 0
+actor q1:func_door -4.408728224614307e-14 -240 0
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -16
+actor q1:func_door 0 0 -66
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_door_secret 0 0 0
+actor q1:func_plat 0 0 -152
+actor q1:func_plat 0 0 -400
+actor q1:info_intermission -112 704 56
+actor q1:info_intermission -208 2736 192
+actor q1:info_intermission 1376 1936 64
+actor q1:info_intermission 240 2664 104
+actor q1:info_player_coop 432 -296 72
+actor q1:info_player_coop 480 -240 72
+actor q1:info_player_coop 528 -296 72
+actor q1:info_player_deathmatch -272 2928 -56
+actor q1:info_player_deathmatch 1312 880 -248
+actor q1:info_player_deathmatch 480 48 24
+actor q1:info_player_deathmatch 528 1888 -168
+actor q1:info_player_deathmatch 832 2048 -152
+actor q1:info_player_start 480 -352 88
+actor q1:info_teleport_destination -32 1800 -29
+actor q1:item_armor1 688 480 80.03125
+actor q1:item_armor2 1312 1048 -431.96875
+actor q1:item_artifact_envirosuit 712 2040 -407.96875
+actor q1:item_artifact_super_damage 544 2480 -87.96875
+actor q1:item_health -16 2064 -207.96875
+actor q1:item_health -376 1704 -223.96875
+actor q1:item_health 1176 936 -431.96875
+actor q1:item_health 1184 992 -279.96875
+actor q1:item_health 1224 2464 -303.96875
+actor q1:item_health 1256 1704 -431.96875
+actor q1:item_health 1376 808 -431.96875
+actor q1:item_health 1376 856 -279.96875
+actor q1:item_health 1424 904 -431.96875
+actor q1:item_health 328 848 -223.96875
+actor q1:item_health 344 920 -223.96875
+actor q1:item_health 600 2200 -127.96875
+actor q1:item_health 916 2416 -135.96875
+actor q1:item_health 944 1008 -271.96875
+actor q1:item_shells 296 2136 -191.96875
+actor q1:item_shells 528 720 80.03125
+actor q1:item_shells 672 -40 48.03125
+actor q1:item_spikes 1376 1024 -279.96875
+actor q1:item_spikes 272 2352 64.03125
+actor q1:light 1280 2000 -152
+actor q1:light 1280 2496 -216
+actor q1:light 32 2312 200
+actor q1:light 32 2352 88
+actor q1:light 32 2392 200
+actor q1:light 56 2352 200
+actor q1:light 752 2000 -88
+actor q1:light 784 2496 -280
+actor q1:light 8 2352 200
+actor q1:light_fluoro -472 2064 -88
+actor q1:light_fluoro 176 1744 -152
+actor q1:light_fluoro 416 1968 -112
+actor q1:light_fluoro 416 2064 -112
+actor q1:light_fluoro 592 544 88
+actor q1:light_fluoro 80 1744 -152
+actor q1:light_fluorospark 344 2216 -88
+actor q1:light_fluorospark 688 192 80
+actor q1:misc_explobox 72 2056 -207.96875
+actor q1:monster_army -344 2656 -103.96875
+actor q1:monster_army -82.10066223144531 1997.178955078125 -183.96875
+actor q1:monster_army 0 576 24.03125
+actor q1:monster_army 1087.0738525390625 2055.66845703125 -193.16139221191406
+actor q1:monster_army 1232 2448 -279.96875
+actor q1:monster_army 1256 1760 -407.96875
+actor q1:monster_army 1312 936 -255.96875
+actor q1:monster_army 1392 928 -255.96875
+actor q1:monster_army 154.5563507080078 1903.556396484375 -183.96875
+actor q1:monster_army 248 2392 40.03125
+actor q1:monster_army 373.7570495605469 2801.75048828125 -55.96875
+actor q1:monster_army 424 2832 -55.96875
+actor q1:monster_army 477.3720397949219 2817.17431640625 -55.96875
+actor q1:monster_army 8 1520 -199.96875
+actor q1:monster_army 824 1784 -407.96875
+actor q1:monster_army 832 2072 -407.96875
+actor q1:monster_army 832 2464 -343.96875
+actor q1:monster_army 832.3275756835938 2616.29541015625 -71.96875
+actor q1:monster_dog -544 2584 56.03125
+actor q1:monster_dog -72 2896 -55.96875
+actor q1:monster_dog 1336 1784 -407.96875
+actor q1:monster_dog 432 2120 -167.96875
+actor q1:monster_dog 88 1520 -199.96875
+actor q1:path_corner -104 2352 40
+actor q1:path_corner -136 1912 -200
+actor q1:path_corner -200 1992 -200
+actor q1:path_corner -560 2352 40
+actor q1:path_corner 1232 2048 -232
+actor q1:path_corner 248 1912 -200
+actor q1:path_corner 248 1992 -200
+actor q1:path_corner 368 2696 -72
+actor q1:path_corner 368 2936 -72
+actor q1:path_corner 480 2696 -72
+actor q1:path_corner 480 2936 -72
+actor q1:path_corner 832 2416 -104
+actor q1:path_corner 832 2712 -88
+actor q1:path_corner 880 2048 -168
+actor q1:plat_trigger 0 0 0
+actor q1:plat_trigger 0 0 0
+actor q1:trigger_changelevel 0 0 0
+actor q1:trigger_counter 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_multiple 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_once 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_secret 0 0 0
+actor q1:trigger_teleport 0 0 0
+actor q1:weapon_nailgun 112 2352 16.03125
+actor q1:weapon_supershotgun -360 2912 -79.96875
+actor q1:worldspawn 0 0 0
+bodies 160
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 2:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 3:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 6:3 o 688 480 80.03125 v 0 0 0 a 0 0 0 g 0
+body 7:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:15 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 11:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 12:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 13:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 14:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 15:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 16:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 17:7 o 0 0 -152 v 0 0 0 a 0 0 0 g -
+body 18:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 19:12 o -4.408728224614307e-14 -240 0 v 0 0 0 a 0 0 0 g -
+body 20:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 21:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 22:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 23:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 24:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 25:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 26:0 o 112 2352 16.03125 v 0 0 0 a 0 0 0 g 0
+body 27:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 28:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 29:1 o 248 2392 40.03125 v 0 0 0 a 0 180 0 g 0
+body 30:0 o 272 2352 64.03125 v 0 0 0 a 0 0 0 g 0
+body 31:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 32:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 33:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 34:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 35:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 36:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 38:3 o 0 0 -66 v 0 0 0 a 0 0 0 g -
+body 39:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 40:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 41:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 544 2480 -87.96875 v 0 0 0 a 0 0 0 g 0
+body 43:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 44:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 47:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:9 o 944 1008 -271.96875 v 0 0 0 a 0 0 0 g 0
+body 51:0 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 52:0 o 296 2136 -191.96875 v 0 0 0 a 0 0 0 g 0
+body 53:0 o 1424 904 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 54:0 o 1376 808 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 55:0 o 1176 936 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 56:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 57:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 58:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 59:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 60:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 61:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 66:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 -16 v 0 0 0 a 0 0 0 g -
+body 69:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 70:0 o 1376 1024 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 71:0 o 1184 992 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 72:0 o 1376 856 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 73:0 o 1256 1704 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 74:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 75:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 76:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 77:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 78:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 79:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 80:0 o 328 848 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 81:0 o 344 920 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 82:0 o -16 2064 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 83:0 o 0 576 24.03125 v 0 0 0 a 0 0 0 g 7
+body 84:0 o 8 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 85:0 o 88 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 86:0 o 712 2040 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 87:1 o 916 2416 -135.96875 v 0 0 0 a 0 0 0 g 0
+body 88:0 o 1312 936 -255.96875 v 0 0 0 a 0 90 0 g 0
+body 89:0 o 1336 1784 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 90:0 o 1392 928 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 91:0 o 1256 1760 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 92:0 o 824 1784 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 93:0 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 95:0 o 1087.0738525390625 2055.66845703125 -193.16139221191406 v 0 0 0 a 0 180 0 g 0
+body 96:0 o 1232 2448 -279.96875 v 0 0 0 a 0 270 0 g 0
+body 97:0 o 832 2464 -343.96875 v 0 0 0 a 0 0 0 g 0
+body 98:0 o 832 2072 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 99:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 100:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 101:0 o -360 2912 -79.96875 v 0 0 0 a 0 0 0 g 0
+body 102:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 103:2 o 528 720 80.03125 v 0 0 0 a 0 0 0 g 0
+body 104:0 o 432 2120 -167.96875 v 0 0 0 a 0 180 0 g 0
+body 105:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 106:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 107:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 108:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 109:0 o -82.10066223144531 1997.178955078125 -183.96875 v 0 0 0 a 0 180 0 g 0
+body 110:0 o 154.5563507080078 1903.556396484375 -183.96875 v 0 0 0 a 0 0 0 g 0
+body 111:0 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 112:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 113:0 o -544 2584 56.03125 v 0 0 0 a 0 0 0 g 0
+body 114:0 o -344 2656 -103.96875 v 0 0 0 a 0 270 0 g 0
+body 115:0 o -72 2896 -55.96875 v 0 0 0 a 0 225 0 g 0
+body 116:0 o 373.7570495605469 2801.75048828125 -55.96875 v 0 0 0 a 0 270 0 g 0
+body 117:0 o 424 2832 -55.96875 v 0 0 0 a 0 180 0 g 0
+body 118:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 119:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 120:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 121:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 122:0 o 477.3720397949219 2817.17431640625 -55.96875 v 0 0 0 a 0 90 0 g 0
+body 123:0 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 124:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 125:0 o 832.3275756835938 2616.29541015625 -71.96875 v 0 0 0 a 0 270 0 g 0
+body 126:0 o -376 1704 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 127:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 128:0 o 672 -40 48.03125 v 0 0 0 a 0 0 0 g 0
+body 129:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 130:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 131:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:1 o 600 2200 -127.96875 v 0 0 0 a 0 0 0 g 0
+body 136:1 o 72 2056 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 137:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:0 o 1224 2464 -303.96875 v 0 0 0 a 0 0 0 g 0
+body 141:2 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:0 o 1312 1048 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 145:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 146:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 147:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 148:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 149:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 150:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 151:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 152:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 153:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 154:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 155:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 156:0 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 159:0 o 553.6420288085938 -399.96875 88.03125 v 207.86532592773438 0 0 a 0.3333333432674408 340 -3.570694923400879 g 0
+inventory 159 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=21/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100 q1:key/silver=0/1 q1:key/gold=0/1
+combat 0 0 none none -
+combat 1 0 none none -
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 10000 none none -
+combat 28 0 none none -
+combat 29 30 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 0 none none -
+combat 35 0 none none -
+combat 36 10000 none none -
+combat 37 10000 none none -
+combat 38 0 none none -
+combat 39 1 none none -
+combat 40 0 none none -
+combat 41 0 none none -
+combat 42 0 none none -
+combat 43 0 none none -
+combat 44 0 none none -
+combat 45 10000 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 10000 none none -
+combat 49 0 none none -
+combat 50 0 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 30 none none -
+combat 84 30 none none -
+combat 85 25 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 25 none none -
+combat 90 30 none none -
+combat 91 30 none none -
+combat 92 30 none none -
+combat 93 0 none none -
+combat 94 0 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 30 none none -
+combat 99 1 none none -
+combat 100 10000 none none -
+combat 101 0 none none -
+combat 102 0 none none -
+combat 103 0 none none -
+combat 104 25 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 30 none none -
+combat 110 30 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 25 none none -
+combat 114 30 none none -
+combat 115 25 none none -
+combat 116 30 none none -
+combat 117 30 none none -
+combat 118 0 none none -
+combat 119 0 none none -
+combat 120 0 none none -
+combat 121 0 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 30 none none -
+combat 126 0 none none -
+combat 127 10000 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 0 none none -
+combat 131 0 none none -
+combat 132 0 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 20 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 0 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 100 none none 1
+player body o 553.6420288085938 -399.96875 88.03125 v 207.86532592773438 0 0 a 0.3333333432674408 340 -3.570694923400879 min -16 -16 -24 max 16 16 32
+player view o 553.6420288085938 -399.96875 88.03125 a 0 340 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=21 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0 q1:key/silver=0 q1:key/gold=0
+event message:print 1
+presentation q1 106
+presentation q1-composition 2
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 30e3356e5ae0b074 canonical 73350c73b8b459cf
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:source-cvars 1 6492c4b5a0ed2625 canonical fb39ebf491120e8d
+checkpoint q1:official q1:foundation 1 79cc0966652290b8 canonical 823bb2c309de5a64
+checkpoint q1:official world:simulation 11 6b04d782be4865cd canonical f791017a525ff811
+checkpoint-image c6a8565f3f99d674 canonical e02af44d349b838c 70a2d78e3f0effb7

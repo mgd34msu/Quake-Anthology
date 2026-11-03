@@ -26,10 +26,6 @@ bool qa_aas_reachability_entities_int(qa_aas_reachability_entities *entities, in
 bool qa_aas_reachability_entities_float(qa_aas_reachability_entities *entities, int64_t entity, const char *key, double *out);
 bool qa_aas_reachability_entities_vector(qa_aas_reachability_entities *entities, int64_t entity, const char *key, qa_vec3 *out);
 
-typedef struct qa_aas_trace {
-  bool start_solid; double fraction; qa_vec3 end;
-  int64_t entity_num, last_area, area, plane;
-} qa_aas_trace;
 typedef struct qa_aas_host_trace {
   bool start_solid; double fraction; qa_vec3 end; double surface_flags;
 } qa_aas_host_trace;

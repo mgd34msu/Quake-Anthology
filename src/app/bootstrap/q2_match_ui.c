@@ -1,11 +1,13 @@
 /* Port of src/app/bootstrap/q2-match-ui.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q2_match_ui.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/ui/common/layout.h"
+#include <math.h>
 typedef struct name_entry { qa_actor_id actor; char *name; } name_entry;
 typedef struct menu_entry_ctx {
   qa_app_q2_match_ui *ui;
@@ -260,9 +262,9 @@ void qa_app_q2_match_ui_receive(qa_app_q2_match_ui *ui, qa_app_q2_match_event ev
   if (is(event.kind, "match-status")) { ui->print(ui->print_ctx, event.text); return; }
   if (is(event.kind, "score-log")) {
     char line[1024];
-    if (event.amount == (double)(long long)event.amount)
-      snprintf(line, sizeof line, "%s: %s%lld\n", event.name, event.amount > 0 ? "+" : "", (long long)event.amount);
-    else snprintf(line, sizeof line, "%s: %s%g\n", event.name, event.amount > 0 ? "+" : "", event.amount);
+    if ((fabs(event.amount) < 9.2e18 && event.amount == trunc(event.amount)))
+      snprintf(line, sizeof line, "%s: %s%s\n", event.name, event.amount > 0 ? "+" : "", QA_JS_NUMBER(event.amount));
+    else snprintf(line, sizeof line, "%s: %s%s\n", event.name, event.amount > 0 ? "+" : "", QA_JS_NUMBER(event.amount));
     ui->print(ui->print_ctx, line);
     return;
   }
@@ -275,8 +277,8 @@ void qa_app_q2_match_ui_receive(qa_app_q2_match_ui *ui, qa_app_q2_match_event ev
     char scratch[3][256];
     values[count++] = event.team == 1 ? "Red" : event.team == 2 ? "Blue" : "Spectator";
     if (event.has_captures) {
-      snprintf(scratch[0], sizeof scratch[0], "Red %lld (%s)", (long long)event.captures[0], event.flag_states[0]);
-      snprintf(scratch[1], sizeof scratch[1], "Blue %lld (%s)", (long long)event.captures[1], event.flag_states[1]);
+      snprintf(scratch[0], sizeof scratch[0], "Red %s (%s)", QA_JS_NUMBER(event.captures[0]), event.flag_states[0]);
+      snprintf(scratch[1], sizeof scratch[1], "Blue %s (%s)", QA_JS_NUMBER(event.captures[1]), event.flag_states[1]);
       values[count++] = scratch[0];
       values[count++] = scratch[1];
       if (event.tech != NULL) {
@@ -325,8 +327,8 @@ void qa_app_q2_match_ui_receive(qa_app_q2_match_ui *ui, qa_app_q2_match_event ev
     for (size_t g = 0; g < 3; g++) {
       for (size_t i = 0; i < group_counts[g]; i++) {
         char label[1024];
-        snprintf(label, sizeof label, "%s   %lld   %lld ms", groups[g][i].name,
-            (long long)groups[g][i].score, (long long)groups[g][i].ping);
+        snprintf(label, sizeof label, "%s   %s   %s ms", groups[g][i].name,
+            QA_JS_NUMBER(groups[g][i].score), QA_JS_NUMBER(groups[g][i].ping));
         pending.entries[pending.entry_count].label = dup_text(label);
         pending.entries[pending.entry_count].command = NULL;
         pending.entries[pending.entry_count].command_count = 0;
@@ -335,8 +337,8 @@ void qa_app_q2_match_ui_receive(qa_app_q2_match_ui *ui, qa_app_q2_match_event ev
     }
     for (size_t i = 0; i < spectator_count; i++) {
       char label[1024];
-      snprintf(label, sizeof label, "%s   %lld   %lld ms", spectators[i].name,
-          (long long)spectators[i].score, (long long)spectators[i].ping);
+      snprintf(label, sizeof label, "%s   %s   %s ms", spectators[i].name,
+          QA_JS_NUMBER(spectators[i].score), QA_JS_NUMBER(spectators[i].ping));
       pending.entries[pending.entry_count].label = dup_text(label);
       pending.entries[pending.entry_count].command = NULL;
       pending.entries[pending.entry_count].command_count = 0;
@@ -348,8 +350,8 @@ void qa_app_q2_match_ui_receive(qa_app_q2_match_ui *ui, qa_app_q2_match_event ev
     pending.entries[pending.entry_count].command_count = command_count;
     pending.entry_count++;
     char title[128];
-    if (event.has_captures) snprintf(title, sizeof title, "Red %lld - Blue %lld",
-        (long long)event.captures[0], (long long)event.captures[1]);
+    if (event.has_captures) snprintf(title, sizeof title, "Red %s - Blue %s",
+        QA_JS_NUMBER(event.captures[0]), QA_JS_NUMBER(event.captures[1]));
     else snprintf(title, sizeof title, "Scores");
     show_menu(ui, title, false);
     return;

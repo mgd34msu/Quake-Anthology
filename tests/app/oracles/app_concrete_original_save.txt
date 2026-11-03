@@ -1,0 +1,26 @@
+capture time 3.9000000000000026 skill 2 map e1m1 sha c8a8df8f0e2d0af8
+contextual ok
+options product q1-classic-id1 map maps/e1m1.bsp skill 2 mode singleplayer movement q1 character q1
+options model player seats 1 rules standard progs progs.dat network offline
+options mapProduct - movementProduct - q2 - startup - authored - explicitRules -
+image entities q1:classic:id1:installed q1:official map maps/e1m1.bsp
+image time seconds 3.9 actors 179 bodies 179 guests 1
+image providers world:source-slots@1,world:primary-protection@1,world:source-items@1,world:simulation@11
+explicit ok
+options product q1-classic-id1 map maps/e1m1.bsp skill 2 mode singleplayer movement q1 character q1
+options model player seats 1 rules standard progs progs.dat network offline
+options mapProduct - movementProduct - q2 - startup - authored - explicitRules -
+image entities q1:classic:id1:installed q1:official map maps/e1m1.bsp
+image time seconds 3.9 actors 179 bodies 179 guests 1
+image providers world:source-slots@1,world:primary-protection@1,world:source-items@1,world:simulation@11
+ambiguous error Select the source game for this save; its original format does not identify the program.
+mismatch error Selected source game does not match this save.
+missing error ENOENT: no such file or directory, open '<tmp>/absent.sav'
+kex error q2-kex: cannot decompress save archive: incorrect header check
+shared ok
+options product q1-classic-id1 map maps/e1m1.bsp skill 2 mode singleplayer movement q1 character q1
+options model player seats 1 rules - progs progs.dat network offline
+options mapProduct q1-classic-id1 movementProduct - q2 - startup 1 authored - explicitRules true
+image entities q1:classic:id1:installed q1:official map maps/e1m1.bsp
+image time seconds 4.000000000000003 actors 180 bodies 179 guests 1
+image providers world:source-slots@1,world:primary-protection@1,world:source-items@1,world:simulation@11

@@ -15,6 +15,7 @@
 #include "qa/content/q2/rerelease/monsters/tables/flashes.h"
 #include "qa/content/q2/rerelease/monsters/tables/guncmdr.h"
 #include "rrm_internal.h"
+#include "qa/foundation/js.h"
 
 static void run_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -23,7 +24,7 @@ static void run_fn(void *ctx, qa_q2m_context *c) {
 }
 static bool behind(qa_q2m_context *c, const qa_actor_id *actor) {
   if (!actor) return false;
-  qa_body_state_result other = c->game->host->bodies.read(c->game->host->bodies.ctx, *actor);
+  qa_body_state_result other = qa_shared_body_table_read(c->game->host->bodies, *actor);
   if (!other.has_value) return false;
   qa_body_state body = q2rm_body(c->game, c->entity);
   qa_vec3 delta = qa_sub3_double(other.value.origin, body.origin);
@@ -47,18 +48,18 @@ static void attack_impl(qa_q2m_context *c) {
   qa_q2m_finish_dodge(c);
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   double distance = qa_q2m_target_distance(c);
   qa_body_state body = q2rm_body(game, c->entity);
   if (distance < 80 && c->state->melee_time < q2rm_now(game)) { q2rm_set_move(c, "guncmdr_move_attack_kick"); return; }
   if ((distance <= 100 || q2rm_rnd(game) < 0.5)
-      && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, qa_q2rm_rereleaseFlash_value.GUNCMDR_CHAINGUN_1))) {
+      && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, qa_q2rm_rereleaseFlash_value.GUNCMDR_CHAINGUN_1))) {
     q2rm_set_move(c, "guncmdr_move_attack_chain");
     return;
   }
   qa_vec3 aim = qa_normalize3_double_hypot(qa_sub3_double(enemy.origin, body.origin));
-  qa_vec3 mortar_offset = qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, qa_q2rm_rereleaseFlash_value.GUNCMDR_GRENADE_MORTAR_1);
-  qa_vec3 front_offset = qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, qa_q2rm_rereleaseFlash_value.GUNCMDR_GRENADE_FRONT_1);
+  qa_vec3 mortar_offset = qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, qa_q2rm_rereleaseFlash_value.GUNCMDR_GRENADE_MORTAR_1);
+  qa_vec3 front_offset = qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, qa_q2rm_rereleaseFlash_value.GUNCMDR_GRENADE_FRONT_1);
   qa_vec3 out;
   if ((distance >= 525 || fabs(body.origin.z + body.bounds.min.z - enemy.origin.z - enemy.bounds.max.z) > 64)
       && qa_q2m_clear_shot(c, mortar_offset)
@@ -82,7 +83,7 @@ static void jump_impl(qa_q2m_context *c, bool high) {
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   qa_vec3 velocity = qa_add3_double(body.velocity,
       qa_add3_double(qa_scale3_double(axes.forward, high ? 150 : 100), qa_scale3_double(axes.up, high ? 400 : 300)));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = velocity;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -108,13 +109,13 @@ static bool sidestep_impl(qa_q2m_context *c) {
 static bool sidestep_fn(void *ctx, qa_q2m_context *c) { (void)ctx; return sidestep_impl(c); }
 static void init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->scale = 1.25;
   entity->skin = 2;
   state->scale = (float)((float)1.15f * 1.25);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-20, -20, -30);
@@ -150,8 +151,8 @@ static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   qa_q2m_finish_dodge(c);
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2
@@ -186,8 +187,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -225,10 +226,10 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   if (fabs(body.origin.z + entity->view_height - reaction.point.z) <= 4 && body.velocity.z < 65) {
     q2rm_set_move(c, "guncmdr_move_death5");
     qa_q2m_gib_options plain = {false, false, false, false};
-    qa_q2f_entity *head = qa_q2m_throw_gib(entity, game, "models/monsters/gunner/gibs/head.md2", damage, plain);
+    qa_q2_entity *head = qa_q2m_throw_gib(entity, game, "models/monsters/gunner/gibs/head.md2", damage, plain);
     qa_body_state_result inflictor;
     memset(&inflictor, 0, sizeof inflictor);
-    if (reaction.inflictor) inflictor = game->host->bodies.read(game->host->bodies.ctx, *reaction.inflictor);
+    if (reaction.inflictor) inflictor = qa_shared_body_table_read(game->host->bodies, *reaction.inflictor);
     if (head) {
       qa_vec3 from = inflictor.has_value ? inflictor.value.origin : body.origin;
       qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(body.origin, from));
@@ -236,7 +237,7 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
       qa_vec3 velocity = qa_scale3_double(direction, 100);
       velocity.z = 200;
       qa_vec3 origin = qa_add3_double(body.origin, q2rm_v3(0, 0, 24));
-      qa_q2f_body_changes change;
+      qa_q2_body_changes change;
       memset(&change, 0, sizeof change);
       change.has_origin = true; change.origin = origin;
       change.has_angles = true; change.angles = body.angles;
@@ -244,10 +245,14 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
       q2rm_move_body(game, head, change, false, false);
     }
   } else if (behind(c, reaction.inflictor)) {
-    double choice = floor(q2rm_rnd(game) * (strcmp(state->move->name, "guncmdr_move_pain6") == 0 ? 2 : 3));
+    double left2 = q2rm_rnd(game);
+    double right2 = (strcmp(state->move->name, "guncmdr_move_pain6") == 0 ? 2 : 3);
+    double choice = floor(left2 * right2);
     q2rm_set_move(c, choice == 0 ? "guncmdr_move_death3" : choice == 1 ? "guncmdr_move_death7" : "guncmdr_move_pain6");
   } else {
-    double choice = floor(q2rm_rnd(game) * (strcmp(state->move->name, "guncmdr_move_pain5") == 0 ? 1 : 2));
+    double left = q2rm_rnd(game);
+    double right = (strcmp(state->move->name, "guncmdr_move_pain5") == 0 ? 1 : 2);
+    double choice = floor(left * right);
     q2rm_set_move(c, choice == 0 ? "guncmdr_move_death4" : "guncmdr_move_pain5");
   }
 }
@@ -272,7 +277,7 @@ static void pain6_death6_fn(void *ctx, qa_q2m_context *c) {
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_corpse(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = qa_scale3_double(q2rm_v3(-16, -16, -24), c->entity->scale);
@@ -284,7 +289,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   bounds.max.z = -4 * c->entity->scale;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -300,26 +305,28 @@ static void refire_fn(void *ctx, qa_q2m_context *c) {
 }
 static void cmdr_fire_fn(void *ctx, qa_q2m_context *c) {
   qa_q2mpm_weapons *weapons = ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
   const qa_q2rm_guncmdr_frames *frame = &qa_q2rm_guncmdr_frames_value;
   double id = entity->frame >= frame->c_attack401 && entity->frame <= frame->c_attack505
       ? qa_q2rm_rereleaseFlash_value.GUNCMDR_CHAINGUN_2 : qa_q2rm_rereleaseFlash_value.GUNCMDR_CHAINGUN_1;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   qa_vec3 aim;
   if (!qa_q2rm_predicted_direction(c, start, 800, false, q2rm_rnd(game) * 0.3, &aim)) return;
-  qa_vec3 direction = {aim.x + (q2rm_rnd(game) * 2 - 1) * 0.025, aim.y + (q2rm_rnd(game) * 2 - 1) * 0.025,
-                       aim.z + (q2rm_rnd(game) * 2 - 1) * 0.025};
+  double x2 = aim.x + (q2rm_rnd(game) * 2 - 1) * 0.025;
+  double y2 = aim.y + (q2rm_rnd(game) * 2 - 1) * 0.025;
+  double z2 = aim.z + (q2rm_rnd(game) * 2 - 1) * 0.025;
+  qa_vec3 direction = {x2, y2, z2};
   (void)weapons->fire_flechette(weapons->ctx, entity, game, start, direction, 4, 800, 2);
   qa_q2rm_monster_flash(c, id, start, direction);
 }
 typedef struct cmdr_shot { double frame, spread, id; int kind; } cmdr_shot; /* kind 0 mortar 1 front 2 crouch */
 static void cmdr_grenade_fn(void *ctx, qa_q2m_context *c) {
   qa_q2mpm_weapons *weapons = ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
@@ -344,13 +351,13 @@ static void cmdr_grenade_fn(void *ctx, qa_q2m_context *c) {
   if (blind && qa_hypot3(target) == 0) return;
   qa_body_state body = q2rm_body(game, entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, shot->id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, shot->id));
   qa_vec3 delta = qa_sub3_double(target, body.origin);
   double pitch = 0;
   if (shot->kind != 2) {
     double distance = qa_hypot3(delta);
     if (distance > 512 && delta.z < 64 && delta.z > -64) delta.z += distance - 512;
-    pitch = fmax(-0.5, fmin(0.4, qa_normalize3_double_hypot(delta).z));
+    pitch = qa_js_max(-0.5, qa_js_min(0.4, qa_normalize3_double_hypot(delta).z));
     if (enemy.origin.z + enemy.bounds.min.z - body.origin.z - body.bounds.max.z > 16 && shot->kind == 0)
       pitch += 0.5;
   }
@@ -396,16 +403,16 @@ static void kick_finished_fn(void *ctx, qa_q2m_context *c) {
 }
 static void kick_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   if (c->weapons.fire_hit(c->weapons.ctx, entity, game, q2rm_v3(80, 0, -32), 15, 400)
       && entity->has_enemy && game->host->is_player(game->host->ctx, entity->enemy)) {
-    qa_body_state_result body = game->host->bodies.read(game->host->bodies.ctx, entity->enemy);
-    qa_q2f_owned_result actor = game->host->actors.resolve_owned(game->host->actors.ctx, entity->enemy);
-    if (body.has_value && actor.has_value && body.value.velocity.z < 270) {
+    qa_body_state_result body = qa_shared_body_table_read(game->host->bodies, entity->enemy);
+    qa_owned_actor actor; bool has_actor = qa_session_actor_registry_resolve_owned(game->host->actors, entity->enemy, &actor);
+    if (body.has_value && has_actor && body.value.velocity.z < 270) {
       qa_body_state written = body.value;
       written.velocity.z = 270;
-      game->host->bodies.write(game->host->bodies.ctx, actor.value, written);
+      qa_shared_body_table_write(game->host->bodies, actor, written);
     }
   }
 }
@@ -418,8 +425,8 @@ static void wait_land_fn(void *ctx, qa_q2m_context *c) {
 }
 static void counter_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_body_state body = q2rm_body(game, entity);
   qa_vec3 direction = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).forward;
   qa_vec3 end = qa_q2m_project_flash_default(c, q2rm_v3(20, 0, 14));
@@ -432,12 +439,12 @@ static const qa_q2bm_sound_spec search_spec = {"guncmdr/gcdrsrch1.wav", 2, 1};
 static const qa_q2bm_sound_spec idle_spec = {"guncmdr/gcdridle1.wav", 2, 2};
 static const qa_q2bm_sound_spec open_spec = {"guncmdr/gcdratck1.wav", 2, 2};
 
-qa_q2m_definition qa_q2rm_create_gun_commander_definition(qa_q2mpm_weapons weapons) {
-  qa_q2mpm_weapons *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating gun commander definition");
+qa_q2m_definition qa_q2rm_create_gun_commander_definition(qa_q2mpm_arena *arena, qa_q2mpm_weapons weapons) {
+  qa_q2mpm_weapons *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating gun commander definition");
   *box = weapons;
   qa_q2m_named_handler *callbacks = malloc(20 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating gun commander definition");
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating gun commander definition");
   callbacks[0] = (qa_q2m_named_handler){"guncmdr_stand", {(void *)"guncmdr_move_stand", qa_q2bm_move_handler_fn}};
   callbacks[1] = (qa_q2m_named_handler){"guncmdr_run", {NULL, run_fn}};
   callbacks[2] = (qa_q2m_named_handler){"guncmdr_idlesound", {(void *)&idle_spec, qa_q2bm_sound_handler_fn}};
@@ -463,7 +470,7 @@ qa_q2m_definition qa_q2rm_create_gun_commander_definition(qa_q2mpm_weapons weapo
     {"GunnerCmdrCounter", {NULL, counter_fn}},
   };
   size_t callback_count = 0;
-  qa_q2m_named_handler *merged = qa_q2rm_merge_callbacks(callbacks, 20, extra, 2, &callback_count);
+  qa_q2m_named_handler *merged = qa_q2rm_merge_callbacks(arena, callbacks, 20, extra, 2, &callback_count);
   free(callbacks);
   qa_q2m_definition definition;
   memset(&definition, 0, sizeof definition);

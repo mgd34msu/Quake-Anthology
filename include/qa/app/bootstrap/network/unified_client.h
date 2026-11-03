@@ -1,8 +1,7 @@
 /* Port of src/app/bootstrap/network/unified-client.ts
- * (UnifiedClientNetwork). Channel flush maps to landed
- * transmit_reliable + transmit_frame. Poll failures set rejected,
- * notify disconnected, close, then abort with the TS message
- * (the TS rethrow). GPL-2.0-or-later. */
+ * (UnifiedClientNetwork). Any fault in poll, a malformed packet included, sets rejected,
+ * notifies disconnected, closes, then re-raises for the caller's frame boundary, as TS
+ * rethrows. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_UNIFIED_CLIENT_H
 #define QA_APP_BOOTSTRAP_NETWORK_UNIFIED_CLIENT_H
 #include <stdbool.h>

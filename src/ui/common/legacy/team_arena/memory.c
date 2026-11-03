@@ -731,14 +731,6 @@ qa_ui_string_reference *qa_ui_team_arena_memory_string_alloc_reference(
   memcpy(memory->strings->bytes + memory->string_point, input, length);
   memory->strings->bytes[memory->string_point + (int64_t)length] = 0;
   memory->string_point += (int64_t)length + 1;
-  qa_ui_memory_allocation *last = first;
-  current = first;
-  while (current != NULL
-         && qa_ui_memory_allocation_get_allocation_pointer(current, 0)
-                != NULL) {
-    last = current;
-    current = qa_ui_memory_allocation_get_allocation_pointer(current, 0);
-  }
   int64_t offset;
   if (!qa_ui_team_arena_memory_allocate(memory, 8, &offset))
     qa_range_error("String_Alloc dereferences a failed UI_Alloc stringDef_t");
@@ -759,9 +751,18 @@ qa_ui_string_reference *qa_ui_team_arena_memory_string_alloc_reference(
   qa_ui_string_reference_release(reference); /* the map retains it */
   qa_ui_string_reference *stored =
       qa_ui_memory_allocation_get_string_reference(allocation, 4);
-  /* The source tracks the penultimate node here. */
-  if (last != NULL)
-    qa_ui_memory_allocation_set_allocation_pointer(last, 0, allocation);
+  /* The source replaces the penultimate node's link, so colliding strings
+     evict each other and per-frame lookups re-allocate; append at the real
+     tail instead. */
+  qa_ui_memory_allocation *tail = first;
+  while (tail != NULL) {
+    qa_ui_memory_allocation *next =
+        qa_ui_memory_allocation_get_allocation_pointer(tail, 0);
+    if (next == NULL) break;
+    tail = next;
+  }
+  if (tail != NULL)
+    qa_ui_memory_allocation_set_allocation_pointer(tail, 0, allocation);
   else memory->buckets[hash] = allocation;
   return stored;
 }

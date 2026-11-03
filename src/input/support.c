@@ -1,20 +1,22 @@
 /* See include/qa/input/support.h. GPL-2.0-or-later. */
 #include "qa/input/support.h"
+#include "qa/network/common/js_number.h"
 
+#include "qa/foundation/support.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 noreturn void qa_input_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 char *qa_input_dup(const char *text) {
@@ -44,28 +46,10 @@ int32_t qa_input_to_int32(double value) {
 }
 
 char *qa_input_js_number(double value) {
-  if (isnan(value)) return qa_input_dup("NaN");
-  if (isinf(value)) return qa_input_dup(value < 0 ? "-Infinity" : "Infinity");
-  if (value == 0) return qa_input_dup("0");
-  char buffer[64];
-  if (value == trunc(value) && fabs(value) < 1e21) {
-    snprintf(buffer, sizeof buffer, "%.0f", value);
-    return qa_input_dup(buffer);
-  }
-  /* Shortest %g rendering that parses back to the same double. */
-  for (int precision = 1; precision <= 17; precision++) {
-    snprintf(buffer, sizeof buffer, "%.*g", precision, value);
-    if (strtod(buffer, NULL) == value) break;
-  }
-  /* JS exponent form drops the zero padding %g emits ("1e-07"). */
-  char *exponent = strchr(buffer, 'e');
-  if (exponent != NULL) {
-    char *digits = exponent + 1;
-    if (*digits == '+' || *digits == '-') digits++;
-    while (digits[0] == '0' && digits[1] != '\0') {
-      memmove(digits, digits + 1, strlen(digits + 1) + 1);
-    }
-  }
+  /* String(value): the shared ECMAScript Number::toString. A %g search printed
+   * 0.00001 as "1e-5" where JS writes "0.00001". */
+  char buffer[40];
+  qa_net_js_number(value, buffer, sizeof buffer);
   return qa_input_dup(buffer);
 }
 
@@ -83,62 +67,9 @@ char *qa_input_js_trim(const char *text) {
   return qa_input_dup_range((const char *)start, length);
 }
 
-static double parse_radix_digits(const char *text, int radix) {
-  if (*text == '\0') return NAN;
-  double value = 0;
-  for (const char *at = text; *at != '\0'; at++) {
-    int digit;
-    if (*at >= '0' && *at <= '9') digit = *at - '0';
-    else if (*at >= 'a' && *at <= 'z') digit = *at - 'a' + 10;
-    else if (*at >= 'A' && *at <= 'Z') digit = *at - 'A' + 10;
-    else return NAN;
-    if (digit >= radix) return NAN;
-    value = value * radix + digit;
-  }
-  return value;
-}
+double qa_input_js_parse_number(const char *text) { return qa_js_string_to_number(text); }
 
-double qa_input_js_parse_number(const char *text) {
-  char *trimmed = qa_input_js_trim(text);
-  if (trimmed == NULL) return NAN;
-  double result;
-  if (trimmed[0] == '\0') {
-    result = 0;
-  } else if (strcmp(trimmed, "Infinity") == 0 || strcmp(trimmed, "+Infinity") == 0) {
-    result = INFINITY;
-  } else if (strcmp(trimmed, "-Infinity") == 0) {
-    result = -INFINITY;
-  } else if (trimmed[0] == '0' && (trimmed[1] == 'x' || trimmed[1] == 'X')) {
-    result = parse_radix_digits(trimmed + 2, 16);
-  } else if (trimmed[0] == '0' && (trimmed[1] == 'b' || trimmed[1] == 'B')) {
-    result = parse_radix_digits(trimmed + 2, 2);
-  } else if (trimmed[0] == '0' && (trimmed[1] == 'o' || trimmed[1] == 'O')) {
-    result = parse_radix_digits(trimmed + 2, 8);
-  } else {
-    char *end = NULL;
-    result = strtod(trimmed, &end);
-    if (end == trimmed || *end != '\0') result = NAN;
-  }
-  free(trimmed);
-  return result;
-}
-
-double qa_input_js_parse_int10(const char *text) {
-  const unsigned char *at = (const unsigned char *)text;
-  while (*at != '\0' && qa_input_js_space(*at)) at++;
-  double sign = 1;
-  if (*at == '-' || *at == '+') {
-    if (*at == '-') sign = -1;
-    at++;
-  }
-  if (*at < '0' || *at > '9') return NAN;
-  double value = 0;
-  while (*at >= '0' && *at <= '9') {
-    value = value * 10 + (*at - '0');
-    at++;
-  }
-  return sign * value;
-}
+double qa_input_js_parse_int10(const char *text) { return qa_js_parse_int(text, 10); }
 
 bool qa_input_binding_copy(qa_input_binding *out, const qa_input_binding *in) {
   memset(out, 0, sizeof *out);

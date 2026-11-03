@@ -59,11 +59,11 @@ qa_app_unified_native_projection qa_app_unified_project_native_components(
         && source->identity.generation == old->identity.generation;
     if (same && (!qa_same_mod_identity(&source->identity.identity, &old->identity.identity)
             || !actor_equal(source->viewer, old->viewer)))
-      qa_range_error("Native component activation changed identity or recipient");
+      qa_raise("Error", 0, 0, "Native component activation changed identity or recipient");
     bool has_hud = source->frame.has_native_hud;
     bool old_hud = same && old->frame.has_native_hud;
-    const qa_session_native_q2_hud_frame *hud = &source->frame.native_hud_frame;
-    const qa_session_native_q2_hud_frame *old_frame = old ? &old->frame.native_hud_frame : NULL;
+    const qa_native_q2_hud_frame *hud = &source->frame.native_hud_frame;
+    const qa_native_q2_hud_frame *old_frame = old ? &old->frame.native_hud_frame : NULL;
     bool same_config = has_hud && old_hud && hud->configstrings == old_frame->configstrings;
     bool same_hud = !has_hud ? !old_hud
         : old_hud && same_config
@@ -72,8 +72,8 @@ qa_app_unified_native_projection qa_app_unified_project_native_components(
                       old_frame->protocol.kind ? old_frame->protocol.kind : "") == 0
             && strcmp(hud->layout, old_frame->layout) == 0
             && hud->player_number == old_frame->player_number
-            && same_numbers(hud->inventory.values, hud->inventory.count,
-                            old_frame->inventory.values, old_frame->inventory.count);
+            && same_numbers(hud->inventory, hud->inventory_count,
+                            old_frame->inventory, old_frame->inventory_count);
     const qa_presentation_owner *previous_owner = i < previous_count
         ? &previous[i].identity.owner : NULL;
     bool owner_same = previous_owner
@@ -91,8 +91,8 @@ qa_app_unified_native_projection qa_app_unified_project_native_components(
       state->hud.has_configstrings = !same_config;
       state->hud.configstrings = (qa_native_q2_config_string *)hud->configstrings;
       state->hud.layout = hud->layout;
-      state->hud.inventory = (double *)hud->inventory.values;
-      state->hud.inventory_count = hud->inventory.count;
+      state->hud.inventory = (double *)hud->inventory;
+      state->hud.inventory_count = hud->inventory_count;
       state->hud.player_number = hud->player_number;
     }
     qa_app_unified_native_frame *frame = &out.frames[i];
@@ -104,8 +104,8 @@ qa_app_unified_native_projection qa_app_unified_project_native_components(
     frame->view = source->frame.native_view;
     frame->has_hud = has_hud;
     if (has_hud) {
-      frame->hud.stats = (double *)hud->stats.values;
-      frame->hud.stat_count = hud->stats.count;
+      frame->hud.stats = (double *)hud->stats;
+      frame->hud.stat_count = hud->stat_count;
       frame->hud.server_frame = hud->server_frame;
       frame->hud.time_milliseconds = hud->time_milliseconds;
       frame->hud.has_frame_time = hud->has_frame_time_milliseconds;
@@ -270,23 +270,32 @@ static qa_q2_protocol_identity read_protocol(const qa_save_reader *reader) {
   qa_save_reader_destroy(&version);
   return out;
 }
+typedef struct states_scope { qa_app_unified_native_state *states; size_t count; } states_scope;
+static void states_scope_free(void *arg) {
+  states_scope *scope = arg;
+  qa_app_unified_native_states_free(scope->states, scope->count);
+}
 size_t qa_app_unified_read_native_states(const qa_save_reader *reader,
     qa_app_unified_native_state **out) {
   *out = NULL;
   if (qa_save_reader_is_undefined(reader)) return 0;
   size_t count = qa_save_reader_list_count(reader);
-  qa_app_unified_native_state *states = xmalloc(count * sizeof *states);
+  states_scope scope = {calloc(count ? count : 1, sizeof *scope.states), 0};
+  if (!scope.states) qa_range_error("out of memory");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, states_scope_free, &scope);
+  qa_app_unified_native_state *states = scope.states;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader source;
     if (!qa_save_reader_item(reader, i, &source)) qa_range_error("out of memory");
     qa_app_unified_native_state *state = &states[i];
-    memset(state, 0, sizeof *state);
+    scope.count = i + 1;
     qa_save_reader owner = field_of(&source, "owner");
     state->identity.owner = qa_app_unified_read_component_owner(&owner);
     qa_save_reader_destroy(&owner);
     qa_save_reader identity = field_of(&source, "identity");
-    state->identity.identity = qa_read_mod_identity(&identity);
     state->identity.identity_wire = clone_value(identity.value);
+    state->identity.identity = qa_read_mod_identity(&identity);
     qa_save_reader_destroy(&identity);
     qa_save_reader generation = field_of(&source, "generation");
     state->identity.generation = bounded_int(&generation, 0, 9007199254740991.0);
@@ -304,7 +313,10 @@ size_t qa_app_unified_read_native_states(const qa_save_reader *reader,
       if (!qa_save_reader_is_null(&configs)) {
         state->hud.has_configstrings = true;
         size_t config_count = qa_save_reader_list_count(&configs);
-        qa_native_q2_config_string *entries = xmalloc(config_count * sizeof *entries);
+        qa_native_q2_config_string *entries = calloc(config_count ? config_count : 1, sizeof *entries);
+        if (!entries) qa_range_error("out of memory");
+        state->hud.configstrings = entries;
+        state->hud.configstring_count = config_count;
         for (size_t j = 0; j < config_count; j++) {
           qa_save_reader row;
           if (!qa_save_reader_item(&configs, j, &row)) qa_range_error("out of memory");
@@ -315,17 +327,28 @@ size_t qa_app_unified_read_native_states(const qa_save_reader *reader,
           entries[j].value = bounded_text(&value_reader, 65535);
           qa_save_reader_destroy(&value_reader);
           qa_save_reader_destroy(&row);
-          for (size_t k = 0; k < j; k++)
-            if (entries[k].index == entries[j].index)
-              qa_save_reader_fail(&configs, "duplicate native configstrings");
         }
-        state->hud.configstrings = entries;
-        state->hud.configstring_count = config_count;
+        /* TS builds the Map after reading every entry; a bitmap over the index range stands in
+         * for it (indices are already bounded by the layout). */
+        size_t range = (size_t)layout.max_config_strings;
+        uint8_t *seen = calloc(range ? range : 1, 1);
+        if (!seen) qa_range_error("out of memory");
+        bool duplicate = false;
+        for (size_t j = 0; j < config_count && !duplicate; j++) {
+          size_t index = (size_t)entries[j].index;
+          if (seen[index]) duplicate = true;
+          seen[index] = 1;
+        }
+        free(seen);
+        if (duplicate) qa_save_reader_fail(&configs, "duplicate native configstrings");
       }
       qa_save_reader_destroy(&configs);
       qa_save_reader inventory_reader = field_of(&frame, "inventory");
       size_t inventory_count = qa_save_reader_list_count(&inventory_reader);
-      double *inventory = xmalloc(inventory_count * sizeof *inventory);
+      double *inventory = calloc(inventory_count ? inventory_count : 1, sizeof *inventory);
+      if (!inventory) qa_range_error("out of memory");
+      state->hud.inventory = inventory;
+      state->hud.inventory_count = inventory_count;
       for (size_t j = 0; j < inventory_count; j++) {
         qa_save_reader item;
         if (!qa_save_reader_item(&inventory_reader, j, &item)) qa_range_error("out of memory");
@@ -351,11 +374,14 @@ size_t qa_app_unified_read_native_states(const qa_save_reader *reader,
     qa_save_reader_destroy(&hud);
     qa_save_reader_destroy(&source);
   }
+  qa_cleanup_pop(&guard);
   *out = states;
   return count;
 }
 void qa_app_unified_native_states_free(qa_app_unified_native_state *states, size_t count) {
   for (size_t i = 0; i < count; i++) {
+    free((void *)states[i].identity.identity.modules);
+    free((void *)states[i].identity.identity.providers);
     qa_save_value_free((qa_save_value *)states[i].identity.identity_wire);
     free(states[i].hud.configstrings);
     free(states[i].hud.inventory);
@@ -393,17 +419,26 @@ qa_save_value *qa_app_unified_write_native_frames(
   }
   return list;
 }
+typedef struct frames_scope { qa_app_unified_native_frame *frames; size_t count; } frames_scope;
+static void frames_scope_free(void *arg) {
+  frames_scope *scope = arg;
+  qa_app_unified_native_frames_free(scope->frames, scope->count);
+}
 size_t qa_app_unified_read_native_frames(const qa_save_reader *reader,
     const qa_app_unified_identity_decoder *identity, qa_app_unified_native_frame **out) {
   *out = NULL;
   if (qa_save_reader_is_undefined(reader)) return 0;
   size_t count = qa_save_reader_list_count(reader);
-  qa_app_unified_native_frame *frames = xmalloc(count * sizeof *frames);
+  frames_scope scope = {calloc(count ? count : 1, sizeof *scope.frames), 0};
+  if (!scope.frames) qa_range_error("out of memory");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, frames_scope_free, &scope);
+  qa_app_unified_native_frame *frames = scope.frames;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader source;
     if (!qa_save_reader_item(reader, i, &source)) qa_range_error("out of memory");
     qa_app_unified_native_frame *frame = &frames[i];
-    memset(frame, 0, sizeof *frame);
+    scope.count = i + 1;
     qa_save_reader owner = field_of(&source, "owner");
     frame->owner = qa_app_unified_read_component_owner(&owner);
     qa_save_reader_destroy(&owner);
@@ -424,7 +459,10 @@ size_t qa_app_unified_read_native_frames(const qa_save_reader *reader,
       frame->has_hud = true;
       qa_save_reader stats_reader = field_of(&hud, "stats");
       size_t stat_count = qa_save_reader_list_count(&stats_reader);
-      double *stats = xmalloc(stat_count * sizeof *stats);
+      double *stats = calloc(stat_count ? stat_count : 1, sizeof *stats);
+      if (!stats) qa_range_error("out of memory");
+      frame->hud.stats = stats;
+      frame->hud.stat_count = stat_count;
       for (size_t j = 0; j < stat_count; j++) {
         qa_save_reader item;
         if (!qa_save_reader_item(&stats_reader, j, &item)) qa_range_error("out of memory");
@@ -454,6 +492,7 @@ size_t qa_app_unified_read_native_frames(const qa_save_reader *reader,
     qa_save_reader_destroy(&hud);
     qa_save_reader_destroy(&source);
   }
+  qa_cleanup_pop(&guard);
   *out = frames;
   return count;
 }

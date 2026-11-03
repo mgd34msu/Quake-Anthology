@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 enum wheel_state { WHEEL_CLOSED, WHEEL_OPEN };
 enum carousel_state { CAROUSEL_CLOSED, CAROUSEL_OPEN, CAROUSEL_CLOSING };
@@ -74,7 +75,7 @@ static const qa_ui_wheel_item *sorted_items(qa_seat_weapon_wheel *wheel,
   }
   if (*out_count > 0)
     memcpy(wheel->items, source, *out_count * sizeof *source);
-  qsort(wheel->items, *out_count, sizeof *wheel->items, item_order);
+  qa_js_sort(wheel->items, *out_count, sizeof *wheel->items, item_order);
   wheel->item_count = *out_count;
   return wheel->items;
 }
@@ -112,7 +113,7 @@ bool qa_seat_weapon_wheel_is_open(const qa_seat_weapon_wheel *wheel) {
   return wheel->state == WHEEL_OPEN;
 }
 double qa_seat_weapon_wheel_time_scale(const qa_seat_weapon_wheel *wheel) {
-  return fmax(0.1, 1 - wheel->opacity);
+  return qa_js_max(0.1, 1 - wheel->opacity);
 }
 double qa_seat_weapon_wheel_weapon_lock_until(
     const qa_seat_weapon_wheel *wheel) {
@@ -270,9 +271,9 @@ qa_ui_wheel_command qa_seat_weapon_wheel_command(
 
 void qa_seat_weapon_wheel_update(qa_seat_weapon_wheel *wheel,
                                  double now_milliseconds) {
-  double elapsed = fmax(0, now_milliseconds - wheel->last_update) / 1000;
+  double elapsed = qa_js_max(0, now_milliseconds - wheel->last_update) / 1000;
   wheel->last_update = now_milliseconds;
-  wheel->opacity = fmax(0, fmin(1, wheel->opacity + elapsed
+  wheel->opacity = qa_js_max(0, qa_js_min(1, wheel->opacity + elapsed
       * wheel->options.fade_per_second
       * (qa_seat_weapon_wheel_is_open(wheel) ? 1 : -1)));
   if (!qa_seat_weapon_wheel_is_open(wheel)) return;

@@ -1,9 +1,10 @@
 /* Port of src/camera/spline.ts. Camera files and cubic B-splines
  * adapted from Q3 code/splines/splines.cpp. GPL-2.0-or-later.
  * C accommodations:
- *  - Plain TS `Error` throws abort printing the identical message
- *    (the src/contracts pattern); the one RangeError (monotonic
- *    clock) uses qa_range_error. Allocation failure has no TS
+ *  - Plain TS `Error` throws are qa_raise("Error", ...) with the TS
+ *    message (catchable with qa_try; partial parse state is freed);
+ *    the one RangeError (monotonic clock) uses qa_range_error.
+ *    Allocation failure has no TS
  *    counterpart: parse/serialize abort (or return NULL for
  *    serialize), playback_init returns false.
  *  - Strings are owned NUL-terminated copies (TS UTF-16 strings;
@@ -75,7 +76,7 @@ typedef struct qa_camera_definition {
 
 void qa_camera_definition_destroy(qa_camera_definition *definition);
 
-/* TS parseCamera; invalid input aborts with the TS Error message. */
+/* TS parseCamera; invalid input raises "Error" with the TS message. */
 void qa_parse_camera(const char *text, qa_camera_definition *out);
 
 /* TS serializeCamera; malloc'd, caller frees. NULL only on OOM. */

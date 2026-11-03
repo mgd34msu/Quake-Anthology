@@ -1,8 +1,10 @@
 /* Port of src/app/bootstrap/network/unified-frame-values.ts.
  * Arrays/strings in read results are malloc'd; free helpers below.
- * PlayerUi.nativeInventory and model anchor/grapple/held-weapon
- * ride as retained qa_save_value subtrees in the landed void*
- * slots (validated here, re-emitted by the frame codec).
+ * PlayerUi.nativeInventory and the model anchor ride as validated
+ * qa_save_value clones in the landed void* slots (re-emitted by the frame
+ * codec); held weapons and grapple cables are typed. Strings borrow from
+ * the reader's tree. Readers that allocate free their partial result when
+ * a read raises.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_UNIFIED_FRAME_VALUES_H
 #define QA_APP_BOOTSTRAP_NETWORK_UNIFIED_FRAME_VALUES_H
@@ -17,6 +19,11 @@
 qa_save_value *qa_app_unified_wire_actor(qa_actor_id actor);
 qa_actor_id qa_app_unified_read_actor(const qa_save_reader *reader,
     const qa_app_unified_identity_decoder *identity);
+/* TS nonNegative / positive: finite() then the bound, failing with the TS text. */
+double qa_app_unified_non_negative(const qa_save_reader *reader);
+double qa_app_unified_positive(const qa_save_reader *reader);
+/* TS finiteVectors: fails 'nonfinite source player vector' at `reader`. */
+void qa_app_unified_finite_vectors(const qa_save_reader *reader, const qa_vec3 *vectors, size_t count);
 qa_vec3 qa_app_unified_read_vector(const qa_save_reader *reader);
 qa_vec4 qa_app_unified_read_color(const qa_save_reader *reader);
 void qa_app_unified_read_axis(const qa_save_reader *reader, qa_vec3 out[3]);

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 struct qa_q1_precache_registry {
   bool frozen;
@@ -95,7 +96,7 @@ void qa_q1_precache_begin_world(qa_q1_precache_registry *registry, const char *p
   (void)qa_q1_precache_model(registry, path);
   for (double ordinal = 1; ordinal <= inline_models; ordinal += 1) {
     char name[32];
-    (void)snprintf(name, sizeof name, "*%.0f", ordinal);
+    (void)snprintf(name, sizeof name, "*%s", QA_JS_NUMBER(ordinal));
     (void)qa_q1_precache_model(registry, name);
   }
 }

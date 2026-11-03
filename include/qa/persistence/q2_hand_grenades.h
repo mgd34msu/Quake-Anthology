@@ -59,5 +59,7 @@ typedef struct qa_persist_hand_grenades_checkpoint {
 qa_persist_hand_grenades_checkpoint qa_read_hand_grenades_checkpoint(const qa_save_reader *reader);
 uint8_t *qa_encode_hand_grenades_checkpoint(const qa_persist_hand_grenades_checkpoint *checkpoint, size_t *out_length);
 bool qa_decode_hand_grenades_checkpoint(const uint8_t *bytes, size_t length, qa_persist_hand_grenades_checkpoint *out);
+/* Frees actors and the decoded root (NULL from qa_read_*). */
+void qa_persist_hand_grenades_checkpoint_free(qa_persist_hand_grenades_checkpoint *checkpoint);
 
 #endif

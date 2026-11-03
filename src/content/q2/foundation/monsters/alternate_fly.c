@@ -2,6 +2,7 @@
  * Math.fround staging: computed in double, cast to float at the TS
  * Math.fround points. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/monsters/alternate_fly.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 
@@ -70,13 +71,13 @@ qa_q2m_alternate_fly_result qa_q2m_steer_alternate_fly(qa_q2m_alternate_fly_inpu
   const qa_body_state *enemy = input.enemy;
   qa_q2m_alternate_fly_result result;
   memset(&result, 0, sizeof result);
-  if (((uint32_t)input.flags & 2u) != 0 && state->water_level < 3) {
+  if ((qa_js_to_uint32(input.flags) & 2u) != 0 && state->water_level < 3) {
     result.kind = QA_Q2M_FLY_STEERED; result.velocity = body.velocity; result.has_pitch = false;
     return result;
   }
   if (alt->fly_position_time <= input.now || (enemy != NULL && alt->fly_pinned && !services->visible_enemy(services->ctx))) {
     alt->fly_pinned = false;
-    alt->fly_position_time = (round(input.now * 1000) + qa_q2_rerelease_random_time_milliseconds(services->random, 3000, 10000)) / 1000;
+    alt->fly_position_time = (qa_js_round(input.now * 1000) + qa_q2_rerelease_random_time_milliseconds(services->random, 3000, 10000)) / 1000;
     alt->fly_ideal_position = ideal_hover(input, services->random);
   }
   fnormal initial = normal_of(body.velocity);
@@ -113,9 +114,6 @@ qa_q2m_alternate_fly_result qa_q2m_steer_alternate_fly(qa_q2m_alternate_fly_inpu
   double sine = f32(sin(angle)), cosine = f32(cos(angle));
   qa_vec3 forward = q2m_v3(cosine, sine, -0.0), right = q2m_v3(sine, -cosine, -0.0);
   if (obstruction.fraction < f32(0.25)) {
-    qa_vec3 starts[2];
-    starts[0] = fv_add(body.origin, q2m_v3(0, 0, body.bounds.min.z));
-    starts[1] = fv_add(body.origin, q2m_v3(0, 0, body.bounds.max.z));
     bool vis[2];
     double heights[2] = {body.bounds.min.z, body.bounds.max.z};
     double ends[2] = {f32(body.bounds.min.z - alt->fly_acceleration), f32(body.bounds.max.z + alt->fly_acceleration)};
@@ -124,7 +122,6 @@ qa_q2m_alternate_fly_result qa_q2m_steer_alternate_fly(qa_q2m_alternate_fly_inpu
       vis[i] = services->trace(services->ctx, start, wanted_position, NULL, SOLID_MASK).fraction == 1
             && services->trace(services->ctx, body.origin, fv_add(body.origin, q2m_v3(0, 0, ends[i])), &body.bounds, SOLID_MASK).fraction == 1;
     }
-    (void)starts;
     bool bottom_visible = vis[0], top_visible = vis[1];
     if (bottom_visible == top_visible) {
       qa_vec3 front = fv_add(body.origin, fv_scaled(forward, body.bounds.max));
@@ -144,9 +141,9 @@ qa_q2m_alternate_fly_result qa_q2m_steer_alternate_fly(qa_q2m_alternate_fly_inpu
                        : ts_minimum(1, f32(f32(0.84) + f32(f32(0.08) * f32(current_speed / alt->fly_speed))));
   qa_vec3 final_direction = fv_nonzero(direction) ? direction : wanted_direction;
   if (fv_nan(final_direction)) { result.kind = QA_Q2M_FLY_FALLBACK; return result; }
-  bool swimming = ((uint32_t)input.flags & 2u) != 0, flying = ((uint32_t)input.flags & 1u) != 0;
+  bool swimming = (qa_js_to_uint32(input.flags) & 2u) != 0, flying = (qa_js_to_uint32(input.flags) & 1u) != 0;
   bool avoid_water = swimming || (flying && state->water_level < 3);
-  bool water_ahead = avoid_water && ((uint32_t)services->point_contents(services->ctx, fv_add(body.origin, fv_scale(wanted_direction, current_speed))) & 32u) != 0;
+  bool water_ahead = avoid_water && (qa_js_to_uint32(services->point_contents(services->ctx, fv_add(body.origin, fv_scale(wanted_direction, current_speed)))) & 32u) != 0;
   bool bad_direction = swimming ? !water_ahead : (flying && state->water_level < 3 && water_ahead);
   if (bad_direction) {
     if (alt->fly_recovery_time < input.now) {
@@ -154,7 +151,7 @@ qa_q2m_alternate_fly_result qa_q2m_steer_alternate_fly(qa_q2m_alternate_fly_inpu
       double ry = qa_q2_rerelease_random_float_range(services->random, -1, 1);
       double rz = qa_q2_rerelease_random_float_range(services->random, -1, 1);
       alt->fly_recovery_direction = normal_of(q2m_v3(rx, ry, rz)).direction;
-      alt->fly_recovery_time = (round(input.now * 1000) + 1000) / 1000;
+      alt->fly_recovery_time = (qa_js_round(input.now * 1000) + 1000) / 1000;
     }
     wanted_direction = alt->fly_recovery_direction;
   }
@@ -182,7 +179,7 @@ qa_q2m_alternate_fly_result qa_q2m_steer_alternate_fly(qa_q2m_alternate_fly_inpu
 }
 
 typedef struct step_env {
-  qa_q2f_game *game; qa_q2f_entity *entity; qa_body_state body;
+  qa_q2_game_services *game; qa_q2_entity *entity; qa_body_state body;
   bool has_enemy; qa_body_state enemy; qa_actor_id enemy_id;
 } step_env;
 static qa_trace_result step_trace(void *ctx, qa_vec3 start, qa_vec3 end, const qa_bounds *bounds, double mask) {
@@ -196,24 +193,25 @@ static double step_contents(void *ctx, qa_vec3 point) {
 static bool step_visible(void *ctx) {
   step_env *e = ctx;
   if (!e->has_enemy) return false;
-  qa_q2f_entity *enemy_entity = e->game->entity(e->game->ctx, &e->enemy_id);
+  qa_q2_entity *enemy_entity = e->game->entity(e->game->ctx, &e->enemy_id);
   double vh = enemy_entity ? enemy_entity->view_height : 22;
-  qa_vec3 doubles_up = qa_add3_double(e->body.origin, q2m_v3(0, 0, e->entity->view_height));
-  qa_vec3 fadd_tmp = qa_add3_double(e->enemy.origin, q2m_v3(0, 0, vh));
-  return q2m_trace(e->game, doubles_up, fadd_tmp, NULL, &e->entity->actor.id, 1 | 8 | 16).fraction == 1;
+  /* TS alternateFlyStep uses this module's binary32 `add` for both points. */
+  qa_vec3 start = fv_add(e->body.origin, q2m_v3(0, 0, e->entity->view_height));
+  qa_vec3 end = fv_add(e->enemy.origin, q2m_v3(0, 0, vh));
+  return q2m_trace(e->game, start, end, NULL, &e->entity->actor.id, 1 | 8 | 16).fraction == 1;
 }
 bool qa_q2m_alternate_fly_step(qa_q2m_context *context) {
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *entity = context->entity;
   qa_body_state body = q2m_body(game, entity);
   qa_q2_rerelease_random *random = game->host->rerelease_random;
-  if (!random) qa_q2f_error("Rerelease alternate flying requires the shared rerelease random stream");
+  if (!random) qa_raise("Error", 0, 0, "Rerelease alternate flying requires the shared rerelease random stream");
   qa_body_state_result enemy_r = {false, {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {{0, 0, 0}, {0, 0, 0}}, NULL}};
-  if (entity->has_enemy) enemy_r = game->host->bodies.read(game->host->bodies.ctx, entity->enemy);
+  if (entity->has_enemy) enemy_r = qa_shared_body_table_read(game->host->bodies, entity->enemy);
   qa_vec3 goal_origin;
   bool has_goal = false;
   if (entity->has_goal) {
-    qa_body_state_result goal_r = game->host->bodies.read(game->host->bodies.ctx, entity->goal);
+    qa_body_state_result goal_r = qa_shared_body_table_read(game->host->bodies, entity->goal);
     if (goal_r.has_value) { goal_origin = goal_r.value.origin; has_goal = true; }
   }
   step_env env;
@@ -231,7 +229,7 @@ bool qa_q2m_alternate_fly_step(qa_q2m_context *context) {
   services.trace = step_trace; services.point_contents = step_contents; services.visible_enemy = step_visible;
   qa_q2m_alternate_fly_result result = qa_q2m_steer_alternate_fly(input, &services);
   if (result.kind == QA_Q2M_FLY_FALLBACK) return false;
-  qa_q2f_body_changes c;
+  qa_q2_body_changes c;
   memset(&c, 0, sizeof c);
   c.has_velocity = true; c.velocity = result.velocity;
   if (result.has_pitch) {

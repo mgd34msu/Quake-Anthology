@@ -9,6 +9,7 @@
 #include "qa/world/actors/body.h"
 #include "qa/world/actors/callbacks.h"
 #include "qa/world/gameplay/inventory.h"
+#include "qa/foundation/js.h"
 
 typedef struct { double slot; qa_owned_actor actor; bool has_generation; double generation; int64_t address; } lifetime_t;
 typedef struct { qa_actor_id actor; qa_raw_entity_view view; } bot_entry_t;
@@ -48,7 +49,10 @@ static qa_compat_q2_memory *hmem(qa_compat_q2_rerelease_q2_guest_host *h) {
   return qa_compat_q2_rerelease_guest_module_get_memory(h->module);
 }
 static qa_guest_address at_field(qa_compat_q2_rerelease_q2_guest_host *h, qa_raw_entity_view view, const char *name) {
-  return qa_compat_q2_mem_offset(hmem(h), view.address, (int64_t)qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_edict_layout, name));
+  const qa_compat_q2_memory * m = hmem(h);
+  qa_guest_address a = view.address;
+  int64_t d = (int64_t)qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_edict_layout, name);
+  return qa_compat_q2_mem_offset(m, a, d);
 }
 static qa_vec3 read_vector(qa_compat_q2_rerelease_q2_guest_host *h, qa_guest_address address) {
   return qa_compat_q2_mem_read_f32_vector(hmem(h), address);
@@ -232,6 +236,7 @@ static void unsubscribe(qa_compat_q2_rerelease_q2_guest_host *h) {
   h->subscribed = false;
 }
 void qa_compat_q2_rerelease_q2_guest_host_rebind_world(qa_compat_q2_rerelease_q2_guest_host *h, void *ctx, void (*commit)(void *ctx)) {
+  if (h->has_pickups) qa_compat_q2_native_primary_pickups_assert_idle(&h->pickups);
   if (h->closed || !h->initialized || h->filter_depth != 0)
     qa_range_error("Q2 world rebind requires an idle initialized host");
   if (h->foreign) qa_compat_q2_rerelease_foreign_actors_clear(h->foreign);
@@ -338,6 +343,7 @@ static void check_save(qa_compat_q2_rerelease_q2_guest_host *h, qa_compat_q2_rer
 void qa_compat_q2_rerelease_q2_guest_host_read_save_loading(qa_compat_q2_rerelease_q2_guest_host *h, const char *kind,
                                                             qa_compat_q2_rerelease_source_save saved, void (*next_frame)(void *), void *next_ctx,
                                                             const char *domain) {
+  if (h->has_pickups) qa_compat_q2_native_primary_pickups_assert_idle(&h->pickups);
   check_save(h, saved);
   const char *dom = domain ? domain : "current";
   qa_compat_q2_memory *memory = hmem(h);
@@ -355,6 +361,7 @@ void qa_compat_q2_rerelease_q2_guest_host_read_save_loading(qa_compat_q2_rerelea
 }
 void qa_compat_q2_rerelease_q2_guest_host_read_save(qa_compat_q2_rerelease_q2_guest_host *h, const char *kind,
                                                     qa_compat_q2_rerelease_source_save saved, const char *domain) {
+  if (h->has_pickups) qa_compat_q2_native_primary_pickups_assert_idle(&h->pickups);
   check_save(h, saved);
   const char *dom = domain ? domain : "current";
   qa_compat_q2_memory *memory = hmem(h);
@@ -451,6 +458,7 @@ static qa_compat_q2_rerelease_source_save finish_save(qa_compat_q2_rerelease_q2_
 }
 qa_compat_q2_rerelease_source_save qa_compat_q2_rerelease_q2_guest_host_write_save(qa_compat_q2_rerelease_q2_guest_host *h, const char *kind,
                                                                                    bool automatic_or_transition) {
+  if (h->has_pickups) qa_compat_q2_native_primary_pickups_assert_idle(&h->pickups);
   qa_compat_q2_memory *memory = hmem(h);
   qa_guest_address size = memory->allocate(memory->ctx, 8, true, 8, "Q2 save size");
   qa_guest_call_value args[2] = {qa_compat_q2_rerelease_guest_bool(automatic_or_transition),
@@ -461,6 +469,7 @@ qa_compat_q2_rerelease_source_save qa_compat_q2_rerelease_q2_guest_host_write_sa
 }
 qa_compat_q2_rerelease_source_save qa_compat_q2_rerelease_q2_guest_host_write_save_loading(
     qa_compat_q2_rerelease_q2_guest_host *h, const char *kind, bool automatic_or_transition, void (*next_frame)(void *), void *next_ctx) {
+  if (h->has_pickups) qa_compat_q2_native_primary_pickups_assert_idle(&h->pickups);
   if (h->closed) qa_range_error("Q2 guest host is closed");
   qa_compat_q2_rerelease_core_imports_refresh_cvars(h->core);
   qa_compat_q2_memory *memory = hmem(h);
@@ -475,6 +484,13 @@ void qa_compat_q2_rerelease_q2_guest_host_bind_pickup_supply(qa_compat_q2_rerele
   if (!h->has_pickups) qa_range_error("This original game has no admitted pickup supply interface");
   qa_compat_q2_native_primary_pickups_bind_supply(&h->pickups, owner);
 }
+void qa_compat_q2_rerelease_q2_guest_host_unbind_pickup_supply(qa_compat_q2_rerelease_q2_guest_host *h, qa_compat_q2_native_pickup_supply owner) {
+  qa_compat_q2_native_primary_pickups_unbind_supply(&h->pickups, owner);
+}
+qa_compat_q2_native_pickup_supply_evaluation qa_compat_q2_rerelease_q2_guest_host_pickup_supply(qa_compat_q2_rerelease_q2_guest_host *h, const qa_original_pickup_offer *offer) {
+  if (!h->has_pickups) qa_range_error("This original game has no admitted pickup supply interface");
+  return qa_compat_q2_native_primary_pickups_evaluate_supply(&h->pickups, offer);
+}
 bool qa_compat_q2_rerelease_q2_guest_host_pickup_supply_owns(qa_compat_q2_rerelease_q2_guest_host *h, qa_actor_id actor, qa_item_id item, qa_actor_id pickup) {
   if (!h->has_pickups) qa_range_error("This original game has no admitted pickup supply interface");
   return h->pickups.has_supply && h->pickups.supply.owns(h->pickups.supply.ctx, actor, item, pickup);
@@ -488,10 +504,11 @@ static bool surface_address(qa_compat_q2_rerelease_q2_guest_host *h, const qa_q2
   size_t name_length = strlen(surface->name ? surface->name : "");
   if (name_length > 31) name_length = 31;
   memory->write(memory->ctx, address, (const uint8_t *)(surface->name ? surface->name : ""), name_length);
-  qa_compat_q2_mem_write_u32(memory, qa_compat_q2_mem_offset(memory, address, 32), (uint32_t)surface->flags);
-  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, address, 36), (int32_t)surface->value);
-  qa_compat_q2_mem_write_u32(memory, qa_compat_q2_mem_offset(memory, address, 40),
-                             (uint32_t)h->options.spatial.surface_id(h->options.spatial.ctx, *surface));
+  qa_compat_q2_mem_write_u32(memory, qa_compat_q2_mem_offset(memory, address, 32), qa_js_to_uint32(surface->flags));
+  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, address, 36), qa_js_to_int32(surface->value));
+  qa_guest_address a = qa_compat_q2_mem_offset(memory, address, 40);
+  uint32_t v = qa_js_to_uint32(h->options.spatial.surface_id(h->options.spatial.ctx, *surface));
+  qa_compat_q2_mem_write_u32(memory, a, v);
   size_t material_length = strlen(surface->material ? surface->material : "");
   if (material_length > 15) material_length = 15;
   memory->write(memory->ctx, qa_compat_q2_mem_offset(memory, address, 44),
@@ -513,8 +530,8 @@ static void put_vector(uint8_t *view, size_t offset, qa_vec3 value) {
 static void put_plane(uint8_t *view, size_t offset, qa_bsp_plane value) {
   put_vector(view, offset, value.plane.normal);
   qa_compat_q2_view_set_f32(view, offset + 12, value.plane.distance);
-  view[offset + 16] = (uint8_t)value.type;
-  view[offset + 17] = (uint8_t)value.signbits;
+  view[offset + 16] = qa_js_to_uint8(value.type); /* setUint8 */
+  view[offset + 17] = qa_js_to_uint8(value.signbits);
 }
 qa_guest_call_result qa_compat_q2_rerelease_q2_guest_host_encode_trace(qa_compat_q2_rerelease_q2_guest_host *h, qa_trace_result trace,
                                                                        const qa_guest_address *clipped_entity) {
@@ -530,7 +547,7 @@ qa_guest_call_result qa_compat_q2_rerelease_q2_guest_host_encode_trace(qa_compat
   put_plane(view, 20, trace.source_plane);
   qa_guest_address surface;
   put_u64(view, 40, surface_address(h, trace.surface, &surface) ? (uint64_t)surface.byte_offset : 0);
-  qa_compat_q2_view_set_i32(view, 48, (int32_t)(uint32_t)trace.contents);
+  qa_compat_q2_view_set_i32(view, 48, qa_js_to_int32(trace.contents)); /* setUint32: same 32 bits as ToInt32 */
   qa_guest_address hit;
   if (clipped_entity) hit = *clipped_entity;
   else if (trace.hit.kind == QA_TRACE_HIT_ACTOR) hit = qa_compat_q2_rerelease_q2_guest_host_address_for_actor(h, trace.hit.actor);
@@ -567,6 +584,9 @@ static qa_guest_call_result host_import(qa_compat_q2_rerelease_q2_guest_host *h,
   return h->options.import_boundary(h->options.import_boundary_ctx, call.name, call.arguments, call.argument_count,
                                     boundary_invoke, &ctx);
 }
+qa_guest_call_result qa_compat_q2_rerelease_q2_guest_host_dispatch_import(qa_compat_q2_rerelease_q2_guest_host *h, qa_compat_q2_rerelease_import_call call) {
+  return dispatch_import(h, call);
+}
 static bool foreign_lookup_defined(qa_compat_q2_rerelease_q2_guest_host *h, qa_raw_entity_view view) {
   if (!h->foreign) return false;
   qa_owned_actor found;
@@ -591,7 +611,8 @@ static qa_guest_call_result dispatch_import(qa_compat_q2_rerelease_q2_guest_host
   size_t count = call.argument_count;
   qa_compat_q2_memory *memory = hmem(h);
   qa_q2_foundation_host *engine = h->options.engine;
-  qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(h->module);
+  /* TS reads module.entities() only in the cases that need it: PreInit imports run before the edicts exist. */
+#define table (qa_compat_q2_rerelease_guest_module_entities(h->module))
   const char *name = call.name;
   if (strcmp(name, "Bot_RegisterEdict") == 0 || strcmp(name, "Bot_UnRegisterEdict") == 0) {
     qa_raw_entity_view view = table.from_pointer(table.ctx, qa_compat_q2_guest_required_pointer(args, count, 0));
@@ -669,15 +690,17 @@ static qa_guest_call_result dispatch_import(qa_compat_q2_rerelease_q2_guest_host
   if (strcmp(name, "pointcontents") == 0) {
     qa_guest_call_result out; memset(&out, 0, sizeof out);
     out.kind = QA_GUEST_VALUE_UINT32;
-    out.number_value = (double)(uint32_t)engine->point_contents(engine->ctx, read_vector(h, qa_compat_q2_guest_required_pointer(args, count, 0)));
+    out.number_value = engine->point_contents(engine->ctx, read_vector(h, qa_compat_q2_guest_required_pointer(args, count, 0))); /* TS passes the number through */
     return out;
   }
   if (strcmp(name, "inPVS") == 0 || strcmp(name, "inPHS") == 0) {
+    void * value2 = h->options.spatial.ctx;
+    const char * value3 = strcmp(name, "inPVS") == 0 ? "pvs" : "phs";
+    qa_vec3 value4 = read_vector(h, qa_compat_q2_guest_required_pointer(args, count, 0));
+    qa_vec3 value5 = read_vector(h, qa_compat_q2_guest_required_pointer(args, count, 1));
+    bool value6 = qa_compat_q2_guest_integer(args, count, 2) != 0;
     return qa_compat_q2_rerelease_guest_bool(h->options.spatial.visibility(
-        h->options.spatial.ctx, strcmp(name, "inPVS") == 0 ? "pvs" : "phs",
-        read_vector(h, qa_compat_q2_guest_required_pointer(args, count, 0)),
-        read_vector(h, qa_compat_q2_guest_required_pointer(args, count, 1)),
-        qa_compat_q2_guest_integer(args, count, 2) != 0));
+        value2, value3, value4, value5, value6));
   }
   if (strcmp(name, "AreasConnected") == 0) {
     return qa_compat_q2_rerelease_guest_bool(h->options.spatial.areas_connected(
@@ -717,7 +740,8 @@ static qa_guest_call_result dispatch_import(qa_compat_q2_rerelease_q2_guest_host
     return qa_compat_q2_rerelease_q2_guest_host_encode_trace(h, trace, NULL);
   }
   if (strcmp(name, "linkentity") == 0 || strcmp(name, "unlinkentity") == 0) {
-    if (h->filter_depth != 0) qa_range_error("Q2 BoxEdicts filter cannot modify world links");
+    qa_guest_address address2;
+    qa_vec3 vector;
     qa_raw_entity_view view = table.from_pointer(table.ctx, qa_compat_q2_guest_required_pointer(args, count, 0));
     if (view.slot == 0) return void_result();
     if (foreign_lookup_defined(h, view)) return void_result();
@@ -751,31 +775,31 @@ static qa_guest_call_result dispatch_import(qa_compat_q2_rerelease_q2_guest_host
     qa_vec3 mins = read_vector(h, at_field(h, view, "mins"));
     qa_vec3 maxs = read_vector(h, at_field(h, view, "maxs"));
     write_vector(h, at_field(h, view, "size"), (qa_vec3){maxs.x - mins.x, maxs.y - mins.y, maxs.z - mins.z});
-    qa_compat_q2_mem_write_i32(memory, at_field(h, view, "areanum"), (int32_t)metadata.area);
-    qa_compat_q2_mem_write_i32(memory, at_field(h, view, "areanum2"), (int32_t)metadata.area2);
-    qa_compat_q2_mem_write_u32(memory, at_field(h, view, "s.solid"), (uint32_t)metadata.network_solid);
+    qa_compat_q2_mem_write_i32(memory, at_field(h, view, "areanum"), qa_js_to_int32(metadata.area));
+    qa_compat_q2_mem_write_i32(memory, at_field(h, view, "areanum2"), qa_js_to_int32(metadata.area2));
+    qa_compat_q2_mem_write_u32(memory, at_field(h, view, "s.solid"), qa_js_to_uint32(metadata.network_solid));
     if (qa_compat_q2_mem_read_i32(memory, at_field(h, view, "linkcount")) == 0 &&
         (qa_compat_q2_mem_read_u32(memory, at_field(h, view, "s.renderfx")) & 128) == 0)
-      write_vector(h, at_field(h, view, "s.old_origin"), read_vector(h, at_field(h, view, "s.origin")));
-    qa_compat_q2_mem_write_i32(memory, at_field(h, view, "linkcount"),
-                               qa_compat_q2_mem_read_i32(memory, at_field(h, view, "linkcount")) + 1);
+      (address2 = at_field(h, view, "s.old_origin"), vector = read_vector(h, at_field(h, view, "s.origin")), write_vector(h, address2, vector));
+    qa_guest_address a3 = at_field(h, view, "linkcount");
+    int v2 = qa_compat_q2_mem_read_i32(memory, at_field(h, view, "linkcount")) + 1;
+    qa_compat_q2_mem_write_i32(memory, a3, v2);
     qa_compat_q2_mem_write_u8(memory, at_field(h, view, "linked"), solid == 0 ? 0 : 1);
     return void_result();
   }
   if (strcmp(name, "setmodel") == 0) {
-    if (h->filter_depth != 0) qa_range_error("Q2 BoxEdicts filter cannot modify world links");
     qa_raw_entity_view view = table.from_pointer(table.ctx, qa_compat_q2_guest_required_pointer(args, count, 0));
     char *model_name = qa_compat_q2_read_guest_string(memory, qa_compat_q2_guest_required_pointer(args, count, 1), -1);
-    qa_compat_q2_mem_write_i32(memory, at_field(h, view, "s.modelindex"),
-                               (int32_t)h->options.services.resource_index(h->options.services.ctx, "model", model_name));
+    qa_guest_address a2 = at_field(h, view, "s.modelindex");
+    int32_t v = qa_js_to_int32(h->options.services.resource_index(h->options.services.ctx, "model", model_name));
+    qa_compat_q2_mem_write_i32(memory, a2, v);
     if (model_name[0] == '*') {
       const char *text = model_name + 1;
       double model = 0;
       bool valid = true;
       if (text[0] != '\0') {
-        char *end = NULL;
-        model = strtod(text, &end);
-        valid = end != text && *end == '\0';
+        model = qa_js_string_to_number(text); /* Number(name.slice(1)); strtod missed "0b11" and " 5 " */
+        valid = !isnan(model);
       }
       if (!valid || trunc(model) != model || model < 0 || model > 9007199254740991.0) {
         free(model_name);
@@ -795,6 +819,7 @@ static qa_guest_call_result dispatch_import(qa_compat_q2_rerelease_q2_guest_host
     return void_result();
   }
   return qa_compat_q2_rerelease_core_imports_invoke(h->core, call);
+#undef table
 }
 static bool module_actor_at_slot(void *v, double slot, qa_actor_id *out) {
   qa_compat_q2_rerelease_q2_guest_host *h = v;
@@ -817,6 +842,32 @@ static double source_slot(void *v, qa_guest_address address) {
   qa_compat_q2_rerelease_q2_guest_host *h = v;
   qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(h->module);
   return table.from_pointer(table.ctx, address).slot;
+}
+static qa_guest_call_result pickup_invoke(void *ctx, qa_guest_address target, qa_compat_q2_guest_call_signature signature, const qa_guest_call_value *values, size_t count) {
+  qa_compat_q2_rerelease_q2_guest_host *h = ctx;
+  return qa_compat_q2_rerelease_guest_module_invoke(h->module, target, signature, values, count, NULL, NULL);
+}
+static qa_raw_entity_view pickup_record(void *ctx, qa_guest_address address) {
+  qa_compat_q2_rerelease_q2_guest_host *h = ctx;
+  qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(h->module);
+  return table.from_pointer(table.ctx, address);
+}
+static bool pickup_current(void *ctx, qa_raw_entity_view record, qa_actor_id *out) {
+  qa_compat_q2_rerelease_q2_guest_host *h = ctx;
+  qa_owned_actor actor;
+  if (set_contains(h->retired, h->retired_count, record.slot)) return false;
+  if (!qa_session_actor_registry_at_source(h->options.engine->actors, hmem(h)->module.id, (int64_t)record.slot, &actor)) return false;
+  *out = actor.id;
+  return true;
+}
+static const qa_original_pickup_admission *pickup_admission(void *ctx) {
+  qa_compat_q2_rerelease_q2_guest_host *h = ctx;
+  if (!h->options.has_pickups) qa_range_error("API2023 primary pickup authority disappeared");
+  return h->options.pickup_admission;
+}
+static void *pickup_with_protection(void *ctx, qa_raw_entity_view recipient, qa_protection_channel channel, void *operation_ctx, void (*current)(void *),
+                                    void *(*operation)(void *, void *, qa_compat_q2_native_pickup_consume_fn), bool (*committed)(void *)) {
+  return qa_compat_q2_with_rerelease_primary_protection(ctx, recipient, channel, operation_ctx, current, operation, committed);
 }
 qa_compat_q2_rerelease_q2_guest_host *qa_compat_q2_rerelease_q2_guest_host_create(const qa_compat_q2_rerelease_q2_host_options *options) {
   if (options->has_pickups && options->semantics.project)
@@ -865,7 +916,12 @@ qa_compat_q2_rerelease_q2_guest_host *qa_compat_q2_rerelease_q2_guest_host_creat
     const qa_compat_q2_native_pickup_profile *profile = options->pickup_profile;
     if (!profile) profile = qa_compat_q2_rerelease_get_pickup_profile(module_memory->module.digest);
     if (profile) {
-      qa_compat_q2_native_primary_pickups_init(&h->pickups, module_memory->module.digest, true, profile);
+      qa_compat_q2_native_pickup_host pickup_host;
+      memset(&pickup_host, 0, sizeof pickup_host);
+      pickup_host.memory = module_memory; pickup_host.runner = options->module_options.runner; pickup_host.ctx = h;
+      pickup_host.invoke = pickup_invoke; pickup_host.record = pickup_record; pickup_host.current = pickup_current;
+      pickup_host.admission = pickup_admission; pickup_host.with_protection = pickup_with_protection;
+      qa_compat_q2_native_primary_pickups_init(&h->pickups, pickup_host, options->pickup_image_base, profile);
       h->has_pickups = true;
     }
   }

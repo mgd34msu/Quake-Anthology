@@ -96,4 +96,14 @@ qa_aas_area_crossing *qa_aas_trace_areas(const qa_aas_asset *asset, qa_vec3 star
                                          int64_t maximum, size_t *out_count);
 int64_t *qa_aas_bbox_areas(const qa_aas_asset *asset, qa_bounds bounds, int64_t maximum,
                            size_t *out_count);
+/* TS AasTrace. */
+typedef struct qa_aas_trace {
+  bool start_solid; double fraction; qa_vec3 end;
+  int64_t entity_num, last_area, area, plane;
+} qa_aas_trace;
+/* TS aasTraceClientBBox: AAS_TraceClientBBox, a walk down the area tree that stops at the first leaf
+ * not admitting `presence`. It sees no entities, so a mover linked over the floor does not stop it,
+ * unlike a BSP trace. print NULL is the TS default (discard). */
+qa_aas_trace qa_aas_trace_client_bbox(const qa_aas_asset *asset, qa_vec3 start, qa_vec3 end, int64_t presence,
+                                      void (*print)(void *ctx, const char *text), void *print_ctx);
 #endif

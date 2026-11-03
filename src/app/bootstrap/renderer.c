@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/renderer.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/renderer.h"
+#include "qa/app/bootstrap/mod_presentation.h"
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
@@ -8,6 +9,7 @@
 #include "qa/render/execution.h"
 #include "qa/render/gl/renderer.h"
 #include "qa/render/worker.h"
+#include "qa/foundation/js.h"
 /* FrameCaptures */
 typedef struct capture_entry { double id; qa_app_frame_capture_request request; } capture_entry;
 typedef struct captures {
@@ -42,7 +44,8 @@ static void captures_complete(captures *c, const qa_image_level *image, const do
   }
 }
 static void captures_fail(captures *c, const char *reason) {
-  if (c->failure == NULL) c->failure = reason;
+  /* The reason may name an error object that dies with its worker. */
+  if (c->failure == NULL) { c->failure = strdup(reason); if (c->failure == NULL) qa_range_error("Out of memory"); }
   for (size_t i = 0; i < c->pending_count; i++) c->pending[i].request.reject(c->pending[i].request.ctx, c->failure);
   c->pending_count = 0;
   free(c->armed); c->armed = NULL; c->armed_count = 0; c->armed_cap = 0;
@@ -73,6 +76,8 @@ struct qa_app_native_renderer {
   qa_app_prepared_renderer_restart *pending_restart;
   /* Retirements retained until close: previous bundles (host-owned ctx + close fns). */
   qa_app_native_backend_bundle *retired; size_t retired_count, retired_cap;
+  /* C ownership: TS restart handles are GC'd; these live until the renderer is destroyed. */
+  qa_app_prepared_renderer_restart **restarts; size_t restart_count, restart_cap;
 };
 struct qa_app_prepared_renderer_restart {
   qa_app_native_renderer *renderer;
@@ -117,8 +122,6 @@ typedef struct native_impl {
   qa_software_renderer cpu; bool has_cpu;
   qa_gl_renderer gl; bool has_gl;
   qa_worker_renderer worker; bool has_worker;
-  qa_sdl_worker_render_context worker_ctx; bool has_worker_ctx;
-  qa_gl_renderer worker_gl; bool has_worker_gl;
   qa_renderer_backend backend;
   qa_app_gl_driver driver; qa_app_gl_config config;
   qa_gl_driver_info worker_driver; qa_worker_gl_config worker_config;
@@ -132,13 +135,9 @@ static void glctx_drawable_size(void *ctx, double *width, double *height) {
   *width = size.width; *height = size.height;
 }
 static void glctx_set_rendering(void *ctx, bool enabled) { qa_sdl_window_set_rendering_enabled((qa_sdl_window *)ctx, enabled); }
-static void wglctx_make_current(void *ctx) { qa_sdl_worker_render_context_make_current((qa_sdl_worker_render_context *)ctx); }
-static void wglctx_drawable_size(void *ctx, double *width, double *height) {
-  int32_t w = 0, h = 0;
-  qa_sdl_worker_render_context_drawable_size((qa_sdl_worker_render_context *)ctx, &w, &h);
-  *width = w; *height = h;
-}
-static void wglctx_set_rendering(void *ctx, bool enabled) { qa_sdl_worker_render_context_set_rendering_enabled((qa_sdl_worker_render_context *)ctx, enabled); }
+static void glctx_swap(void *ctx) { qa_sdl_window_swap((qa_sdl_window *)ctx); }
+static qa_sdl_render_context_transfer workerwin_detach(void *ctx) { return qa_sdl_window_detach_render_context((qa_sdl_window *)ctx); }
+static void workerwin_restore(void *ctx) { qa_sdl_window_restore_render_context((qa_sdl_window *)ctx); }
 static void native_worker_swap(void *ctx, const qa_image_level *image, const double *ids, size_t count) {
   native_impl *impl = ctx;
   if (impl->hook_complete) impl->hook_complete(impl->hook_ctx, impl, image, ids, count);
@@ -167,7 +166,10 @@ static void native_execute_commands(void *ctx, const qa_render_command *commands
   native_impl *impl = ctx;
   qa_render_frame frame; memset(&frame, 0, sizeof frame);
   frame.owner = impl->owner; frame.commands = commands; frame.command_count = count;
-  qa_worker_renderer_execute(&impl->worker, frame, ids, id_count);
+  qa_worker_renderer_execute(&impl->worker, frame.commands, frame.command_count, ids, id_count, NULL, 0);
+}
+static void native_execute_frame(void *ctx, const qa_render_command *commands, size_t count, const double *ids, size_t id_count, const qa_image_resource_operation *suffix, size_t suffix_count) {
+  qa_worker_renderer_execute(&((native_impl *)ctx)->worker, commands, count, ids, id_count, suffix, suffix_count);
 }
 static void native_execute_set_color(void *ctx, qa_vec4 color) {
   qa_render_command command; memset(&command, 0, sizeof command);
@@ -185,7 +187,20 @@ static const uint8_t *native_pixels(void *ctx, size_t *out_length) {
 static uint8_t *native_read_pixels_gl(void *ctx, size_t *out_length) {
   return qa_gl_renderer_read_pixels(&((native_impl *)ctx)->gl, out_length);
 }
-static void native_present_gl(void *ctx) { qa_sdl_window_swap(((native_impl *)ctx)->window); }
+static void native_present_gl(void *ctx) { qa_gl_renderer_present(&((native_impl *)ctx)->gl); }
+static void native_synchronize(void *ctx) { qa_worker_renderer_synchronize(&((native_impl *)ctx)->worker); }
+static void native_set_swap_interval(void *ctx, double interval) { qa_worker_renderer_set_swap_interval(&((native_impl *)ctx)->worker, interval); }
+static void native_worker_resize(void *ctx, double width, double height) {
+  native_impl *impl = ctx;
+  qa_worker_renderer_resize(&impl->worker, width, height);
+  impl->backend = qa_worker_renderer_backend(&impl->worker);
+}
+static uint8_t *native_worker_read_pixels(void *ctx, size_t *out_length) {
+  qa_image_level level; qa_worker_renderer_read_pixels(&((native_impl *)ctx)->worker, &level);
+  if (out_length) *out_length = level.pixels.length;
+  return (uint8_t *)level.pixels.bytes;
+}
+static void native_bind_images(void *ctx, qa_scene_image_registry *images, qa_render_image_journal *journal) { qa_worker_renderer_bind_images(&((native_impl *)ctx)->worker, images, journal); }
 static void native_resize_cpu(void *ctx, double width, double height) {
   native_impl *impl = ctx;
   qa_software_renderer replacement; memset(&replacement, 0, sizeof replacement);
@@ -195,7 +210,11 @@ static void native_resize_cpu(void *ctx, double width, double height) {
   impl->cpu = replacement;
   impl->backend = qa_software_renderer_backend(&impl->cpu);
 }
-static qa_renderer_backend native_current_backend(void *ctx) { return ((native_impl *)ctx)->backend; }
+static qa_renderer_backend native_current_backend(void *ctx) {
+  native_impl *impl = ctx;
+  if (impl->has_worker) impl->backend = qa_worker_renderer_backend(&impl->worker);
+  return impl->backend;
+}
 static void native_set_hooks(void *ctx,
     void (*complete)(void *, void *, const qa_image_level *, const double *, size_t),
     void (*fail)(void *, void *, const char *), void *hook_ctx) {
@@ -204,17 +223,19 @@ static void native_set_hooks(void *ctx,
 }
 static void native_close_backend(void *ctx) {
   native_impl *impl = ctx;
-  if (impl->has_worker) { qa_worker_renderer_close(&impl->worker); impl->has_worker = false; }
-  if (impl->has_worker_gl) { qa_gl_renderer_close(&impl->worker_gl); impl->has_worker_gl = false; }
-  if (impl->has_worker_ctx) { qa_sdl_worker_render_context_release(&impl->worker_ctx); impl->has_worker_ctx = false; }
-  if (impl->has_gl) { qa_gl_renderer_close(&impl->gl); impl->has_gl = false; }
+  /* TS rethrows a worker's close failure; `failed` already delivered it to captures. */
+  if (impl->has_worker) { (void)qa_worker_renderer_close(&impl->worker); qa_worker_renderer_destroy(&impl->worker); impl->has_worker = false; }
+  if (impl->has_gl) { qa_gl_renderer_destroy(&impl->gl); impl->has_gl = false; }
   if (impl->has_cpu) { qa_software_renderer_close(&impl->cpu); impl->has_cpu = false; }
 }
+static void close_window_parked(void *ctx) { qa_sdl_window_close((qa_sdl_window *)ctx); }
 static void native_close_window(void *ctx) {
   native_impl *impl = ctx;
-  if (impl->window) { qa_sdl_window_close(impl->window); free(impl->window); impl->window = NULL; }
+  if (impl->window) { qa_worker_renderer_with_parked_contexts(close_window_parked, impl->window); free(impl->window); impl->window = NULL; }
   free(impl);
 }
+typedef struct window_open_scope { const qa_sdl_window_options *options; qa_sdl_window *window; bool opened; } window_open_scope;
+static void open_window_parked(void *ctx) { window_open_scope *s = ctx; s->opened = qa_sdl_window_open(s->options, s->window); }
 bool qa_app_open_native_backend_bundle(void *unused, const char *kind, double width, double height, bool hidden, bool worker,
                                        qa_renderer_resource_owner owner, double gamma, qa_app_native_backend_bundle *out) {
   (void)unused;
@@ -232,25 +253,21 @@ bool qa_app_open_native_backend_bundle(void *unused, const char *kind, double wi
   options.hidden = hidden; options.resizable = true;
   options.backend = is_gl ? QA_SDL_BACKEND_GL : QA_SDL_BACKEND_CPU;
   options.display_index = -1;
-  if (!qa_sdl_window_open(&options, impl->window)) { free(impl->window); free(impl); return false; }
+  window_open_scope open_scope = {&options, impl->window, false};
+  qa_worker_renderer_with_parked_contexts(open_window_parked, &open_scope);
+  if (!open_scope.opened) { free(impl->window); free(impl); return false; }
   qa_sdl_size drawable = qa_sdl_window_drawable_size(impl->window);
+  /* TS NativeRenderer.open sets the GL interval before openBackend detaches the context. */
+  if (is_gl && worker) qa_sdl_window_set_swap_interval(impl->window, 1);
   if (worker) {
-    qa_render_worker_init init; memset(&init, 0, sizeof init);
-    init.backend = kind; init.width = drawable.width; init.height = drawable.height; init.gamma = gamma;
-    init.swap_interval = is_gl ? 1 : 0;
-    if (is_gl) {
-      qa_sdl_render_context_transfer transfer = qa_sdl_window_detach_render_context(impl->window);
-      if (!qa_sdl_worker_render_context_adopt(&transfer, &impl->worker_ctx)) { native_close_window(impl); return false; }
-      impl->has_worker_ctx = true;
-      qa_gl_render_context context; memset(&context, 0, sizeof context);
-      context.ctx = &impl->worker_ctx; context.gl_context = qa_gl_context_from_worker(&impl->worker_ctx);
-      context.make_current = wglctx_make_current; context.drawable_size = wglctx_drawable_size; context.set_rendering_enabled = wglctx_set_rendering;
-      if (!qa_gl_renderer_init(&impl->worker_gl, context, owner)) { native_close_backend(impl); native_close_window(impl); return false; }
-      impl->has_worker_gl = true;
-      init.gl_backend = qa_gl_renderer_backend(&impl->worker_gl); init.has_gl_backend = true;
-    }
-    if (!qa_worker_renderer_open(&impl->worker, init, owner, native_worker_swap, impl, native_worker_failed, impl)) {
-      native_close_backend(impl); native_close_window(impl); return false;
+    /* TS WorkerRenderer.open: the context crosses to the render thread as a transfer;
+     * the thread adopts it and builds its GlRenderer there. Images and the journal
+     * arrive through bind_image_state, since a restart swaps the journal. */
+    qa_worker_window worker_window; memset(&worker_window, 0, sizeof worker_window);
+    worker_window.ctx = impl->window; worker_window.is_gl = is_gl; worker_window.drawable_size = glctx_drawable_size;
+    worker_window.detach_render_context = workerwin_detach; worker_window.restore_render_context = workerwin_restore;
+    if (!qa_worker_renderer_open(&impl->worker, worker_window, owner, gamma, NULL, NULL, native_worker_swap, impl, native_worker_failed, impl, NULL)) {
+      native_close_window(impl); return false;
     }
     impl->has_worker = true;
     impl->backend = qa_worker_renderer_backend(&impl->worker);
@@ -266,11 +283,17 @@ bool qa_app_open_native_backend_bundle(void *unused, const char *kind, double wi
       out->gl_config = &impl->config;
     }
     out->execute_commands = native_execute_commands;
+    out->execute_frame = native_execute_frame;
     out->execute_set_color = native_execute_set_color;
+    out->synchronize = native_synchronize;
+    out->set_swap_interval = native_set_swap_interval;
+    out->resize = native_worker_resize;
+    out->read_pixels = native_worker_read_pixels;
+    out->bind_image_state = native_bind_images;
   } else if (is_gl) {
     qa_gl_render_context context; memset(&context, 0, sizeof context);
     context.ctx = impl->window; context.gl_context = qa_gl_context_from_window(impl->window);
-    context.make_current = glctx_make_current; context.drawable_size = glctx_drawable_size; context.set_rendering_enabled = glctx_set_rendering;
+    context.make_current = glctx_make_current; context.drawable_size = glctx_drawable_size; context.set_rendering_enabled = glctx_set_rendering; context.swap = glctx_swap;
     if (!qa_gl_renderer_init(&impl->gl, context, owner)) { native_close_window(impl); return false; }
     impl->has_gl = true;
     qa_gl_renderer_set_output_gamma(&impl->gl, gamma);
@@ -329,7 +352,9 @@ qa_app_native_renderer *qa_app_native_renderer_open(qa_app_native_renderer_host 
   }
   r->current = bundle;
   install_capture_hooks(r, &r->current);
-  if (strcmp(renderer_kind, "gl") == 0 && r->current.window) qa_sdl_window_set_swap_interval(r->current.window, 1);
+  if (r->current.bind_image_state) r->current.bind_image_state(r->current.ctx, r->images, &r->journal);
+  /* A GL worker's window received this before its context crossed to the worker. */
+  if (strcmp(renderer_kind, "gl") == 0 && r->current.window && !r->current.is_worker) qa_sdl_window_set_swap_interval(r->current.window, 1);
   qa_execution_services services = {r, journal_record_cb, swap_cb};
   qa_render_executor_init(&r->executor, r->current.backend, services);
   return r;
@@ -337,7 +362,9 @@ qa_app_native_renderer *qa_app_native_renderer_open(qa_app_native_renderer_host 
 void qa_app_native_renderer_destroy(qa_app_native_renderer *r) {
   if (!r) return;
   qa_app_native_renderer_close(r);
-  free(r->caps.armed); free(r->caps.pending); free(r->retired);
+  free(r->caps.armed); free(r->caps.pending); free(r->retired); free((void *)r->caps.failure);
+  for (size_t i = 0; i < r->restart_count; i++) free(r->restarts[i]);
+  free(r->restarts);
   if (r->journal_live) qa_render_image_journal_destroy(&r->journal);
   free(r);
 }
@@ -370,13 +397,13 @@ static void writable(qa_app_native_renderer *r) {
 void qa_app_native_renderer_set_swap_interval(qa_app_native_renderer *r, double interval) {
   writable(r);
   if (r->current.is_worker) { if (r->current.set_swap_interval) r->current.set_swap_interval(r->current.ctx, interval); }
-  else if (strcmp(window_backend_name(r), "gl") == 0) qa_sdl_window_set_swap_interval(r->current.window, (int32_t)interval);
+  else if (strcmp(window_backend_name(r), "gl") == 0) qa_sdl_window_set_swap_interval(r->current.window, qa_js_to_int32(interval));
   r->interval = interval;
 }
 void qa_app_native_renderer_mutate_window(qa_app_native_renderer *r, void (*operation)(void *ctx), void *ctx) {
   writable(r);
   if (r->host.with_parked_contexts) r->host.with_parked_contexts(r->host.ctx, operation, ctx);
-  else operation(ctx);
+  else qa_worker_renderer_with_parked_contexts(operation, ctx);
 }
 double qa_app_native_renderer_output_gamma(const qa_app_native_renderer *r) { return r->gamma; }
 void qa_app_native_renderer_synchronize(qa_app_native_renderer *r) {
@@ -391,12 +418,18 @@ static void apply_image(qa_app_native_renderer *r, qa_image_resource_operation o
   if (r->current.is_worker) { if (r->current.apply_image_resource) r->current.apply_image_resource(r->current.ctx, operation); }
   else qa_render_executor_image(&r->executor, operation);
 }
-static void dispose_bundle(qa_app_native_renderer *r, qa_app_native_backend_bundle *bundle) {
-  (void)r;
+/* TS dispose runs inside withParkedContexts; native_close_window parks again, which
+ * skips the workers already parked here. */
+static void dispose_body(void *ctx) {
+  qa_app_native_backend_bundle *bundle = ctx;
   if (bundle->window && bundle->is_gl && !bundle->is_worker) qa_sdl_window_make_current(bundle->window);
   if (bundle->close_backend) bundle->close_backend(bundle->ctx);
   if (bundle->close_window) bundle->close_window(bundle->ctx);
   else if (bundle->window) qa_sdl_window_close(bundle->window);
+}
+static void dispose_bundle(qa_app_native_renderer *r, qa_app_native_backend_bundle *bundle) {
+  (void)r;
+  qa_worker_renderer_with_parked_contexts(dispose_body, bundle);
 }
 qa_app_prepared_renderer_restart *qa_app_native_renderer_prepare_restart(qa_app_native_renderer *r, const char *kind, bool has_worker, bool worker) {
   writable(r);
@@ -421,9 +454,16 @@ qa_app_prepared_renderer_restart *qa_app_native_renderer_prepare_restart(qa_app_
   if (!opened) { qa_render_image_journal_destroy(&p->journal); r->preparing = false; free(p); return NULL; }
   p->candidate = candidate;
   install_capture_hooks(r, &p->candidate);
-  if (strcmp(kind, "gl") == 0 && candidate.window) qa_sdl_window_set_swap_interval(candidate.window, (int32_t)r->interval);
+  if (p->candidate.bind_image_state) p->candidate.bind_image_state(p->candidate.ctx, r->images, &p->journal);
+  /* TS sets the window's interval before openBackend; a worker owns the context now,
+   * so it sets the same interval on its adopted context. */
+  if (strcmp(kind, "gl") == 0 && candidate.window) {
+    if (!candidate.is_worker) qa_sdl_window_set_swap_interval(candidate.window, qa_js_to_int32(r->interval));
+    else if (candidate.set_swap_interval) candidate.set_swap_interval(candidate.ctx, r->interval);
+  }
   qa_journal_backend jb = {candidate.ctx, candidate.apply_image_resource};
   if (candidate.apply_image_resource) qa_render_image_journal_replay(&r->journal, jb);
+  qa_scene_image_registry_invalidate_backend(r->images);
   if (!candidate.is_worker) {
     /* TS: serial backends have no transport acknowledgment; retain the
      * same successful journal by recording the replay into the new one. */
@@ -448,23 +488,38 @@ qa_app_prepared_renderer_restart *qa_app_native_renderer_prepare_restart(qa_app_
   p->previous = r->current;
   r->preparing = false;
   r->pending_restart = p;
+  if (r->restart_count == r->restart_cap) {
+    size_t cap = r->restart_cap ? r->restart_cap * 2 : 4;
+    qa_app_prepared_renderer_restart **grown = realloc(r->restarts, cap * sizeof *grown);
+    if (!grown) qa_range_error("Out of memory");
+    r->restarts = grown; r->restart_cap = cap;
+  }
+  r->restarts[r->restart_count++] = p;
   return p;
 }
 qa_sdl_window *qa_app_prepared_renderer_restart_window(qa_app_prepared_renderer_restart *p) { return p->candidate.window; }
 qa_renderer_backend qa_app_prepared_renderer_restart_backend(qa_app_prepared_renderer_restart *p) { return p->candidate.backend; }
 bool qa_app_prepared_renderer_restart_published(const qa_app_prepared_renderer_restart *p) { return p->phase == 1; }
+/* TS publish: window changes run with every worker context parked. */
+typedef struct publish_scope { qa_app_prepared_renderer_restart *p; const qa_sdl_window_presentation *presentation; } publish_scope;
+static void publish_windows(void *ctx) {
+  publish_scope *s = ctx; qa_app_prepared_renderer_restart *p = s->p;
+  qa_sdl_window_restore_presentation(p->candidate.window, s->presentation);
+  if (p->candidate.is_gl && !p->candidate.is_worker) qa_sdl_window_make_current(p->candidate.window);
+  qa_sdl_window_set_visible(p->previous.window, false);
+}
 void qa_app_prepared_renderer_restart_publish(qa_app_prepared_renderer_restart *p) {
   qa_app_native_renderer *r = p->renderer;
   if (p->phase != 0 || r->pending_restart != p || r->closed) qa_range_error("Renderer restart is no longer prepared");
   qa_sdl_window_presentation presentation = qa_sdl_window_capture_presentation(p->previous.window);
-  qa_sdl_window_restore_presentation(p->candidate.window, &presentation);
-  if (p->candidate.is_gl && !p->candidate.is_worker) qa_sdl_window_make_current(p->candidate.window);
-  qa_sdl_window_set_visible(p->previous.window, false);
+  publish_scope scope = {p, &presentation};
+  qa_worker_renderer_with_parked_contexts(publish_windows, &scope);
   r->current = p->candidate;
   if (r->journal_live) qa_render_image_journal_destroy(&r->journal);
   r->journal = p->journal;
   r->journal_live = true;
   memset(&p->journal, 0, sizeof p->journal);
+  if (r->current.bind_image_state) r->current.bind_image_state(r->current.ctx, r->images, &r->journal);
   qa_render_executor_replace_backend(&r->executor, p->candidate.backend);
   qa_execution_command set_color; memset(&set_color, 0, sizeof set_color);
   set_color.kind = QA_EXEC_COMMAND_SET_COLOR; set_color.color = r->color;
@@ -532,8 +587,9 @@ qa_app_renderer_diagnostics qa_app_native_renderer_diagnostics(qa_app_native_ren
   return d;
 }
 static void renderer_resize(qa_app_native_renderer *r) {
-  if (r->current.is_gl && !r->current.is_worker) return;
   qa_sdl_size size = qa_sdl_window_drawable_size(r->current.window);
+  /* TS GlRenderer width/height are getters; the backend struct holds a copy. */
+  if (r->current.is_gl && !r->current.is_worker) { r->current.backend.width = size.width; r->current.backend.height = size.height; r->executor.backend = r->current.backend; return; }
   if (r->current.is_worker) { if (r->current.resize) r->current.resize(r->current.ctx, size.width, size.height); return; }
   if (size.width == r->current.backend.width && size.height == r->current.backend.height) return;
   /* TS: serial CPU resize builds a replacement SoftwareRenderer, replays
@@ -546,6 +602,7 @@ static void renderer_resize(qa_app_native_renderer *r) {
     if (replacement.width != r->current.backend.width || replacement.height != r->current.backend.height) {
       qa_journal_backend jb = {r->current.ctx, r->current.apply_image_resource};
       if (r->current.apply_image_resource) qa_render_image_journal_replay(&r->journal, jb);
+      qa_scene_image_registry_invalidate_backend(r->images);
       r->current.backend = replacement;
       qa_render_executor_replace_backend(&r->executor, replacement);
     }
@@ -597,8 +654,11 @@ void qa_app_native_renderer_execute(qa_app_native_renderer *r, qa_render_frame f
     double *cap_ids = has_swap ? captures_take(&r->caps, &cap_count) : NULL;
     size_t op_count = 0;
     qa_image_resource_operation *ops = qa_scene_image_registry_drain_pending(r->images, &op_count);
-    if (r->current.execute_commands) r->current.execute_commands(r->current.ctx, frame.commands, frame.command_count, cap_ids, cap_count);
-    for (size_t i = 0; i < op_count; i++) apply_image(r, ops[i]);
+    if (r->current.execute_frame) r->current.execute_frame(r->current.ctx, frame.commands, frame.command_count, cap_ids, cap_count, ops, op_count);
+    else {
+      if (r->current.execute_commands) r->current.execute_commands(r->current.ctx, frame.commands, frame.command_count, cap_ids, cap_count);
+      for (size_t i = 0; i < op_count; i++) apply_image(r, ops[i]);
+    }
     free(ops);
     free(cap_ids);
     for (size_t i = 0; i < frame.command_count; i++)
@@ -643,6 +703,20 @@ void qa_app_native_renderer_capture_next_frame(qa_app_native_renderer *r, qa_app
   if (r->closed) { request.reject(request.ctx, "Native renderer is closed"); return; }
   captures_request(&r->caps, request);
 }
+void qa_app_native_renderer_abort_capture(qa_app_native_renderer *r, void *request_ctx, const char *reason) {
+  captures *c = &r->caps;
+  for (size_t j = 0; j < c->pending_count; j++) {
+    if (c->pending[j].request.ctx != request_ctx) continue;
+    capture_entry entry = c->pending[j];
+    memmove(&c->pending[j], &c->pending[j + 1], (c->pending_count - j - 1) * sizeof *c->pending);
+    c->pending_count--;
+    size_t kept = 0;
+    for (size_t i = 0; i < c->armed_count; i++) if (c->armed[i] != entry.id) c->armed[kept++] = c->armed[i];
+    c->armed_count = kept;
+    entry.request.reject(entry.request.ctx, reason);
+    return;
+  }
+}
 void qa_app_native_renderer_close(qa_app_native_renderer *r) {
   if (r->closed) return;
   r->closed = true;
@@ -657,4 +731,17 @@ void qa_app_native_renderer_close(qa_app_native_renderer *r) {
   qa_render_image_journal_clear(&r->journal);
   for (size_t i = 0; i < r->retired_count; i++) dispose_bundle(r, &r->retired[i]);
   r->retired_count = 0;
+}
+/* TS renderer.driver?.renderer (the GL driver's renderer string); NULL when the backend has no GL driver. */
+const char *qa_app_native_renderer_driver_name(qa_app_native_renderer *r) {
+  const qa_app_gl_driver *driver = qa_app_native_renderer_driver(r);
+  return driver == NULL ? NULL : driver->renderer;
+}
+/* TS QvmDisplayOptions["renderer"]: Pick<NativeRenderer, "backend" | "driver" | "glConfig"> read now. */
+qa_app_qvm_display_renderer qa_app_native_renderer_qvm_display(qa_app_native_renderer *r) {
+  qa_app_qvm_display_renderer display;
+  display.backend_stencil_bits = qa_app_native_renderer_backend(r).stencil_bits;
+  display.driver = qa_app_native_renderer_driver(r);
+  display.gl_config = qa_app_native_renderer_gl_config(r);
+  return display;
 }

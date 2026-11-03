@@ -11,6 +11,7 @@
  * checks before JSON.parse are the lenient qa_parse_json_value decode
  * (see persistence/value.h). */
 #include "qa/app/bootstrap/weapon_behavior_tool.h"
+#include "qa/network/common/js_number.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -42,13 +43,12 @@
 
 /* TS `throw new Error(msg)`: prints the Error string form and aborts. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static void *xmalloc(size_t size) {
@@ -125,17 +125,8 @@ static void json_write_string(text *out, const char *value) {
   text_add(out, "\"", 1);
 }
 static void json_write_number(text *out, double value) {
-  char buffer[64];
-  if (value == trunc(value) && value >= -9007199254740991.0 &&
-      value <= 9007199254740991.0) {
-    snprintf(buffer, sizeof buffer, "%lld", (long long)value);
-  } else {
-    /* Shortest round-trip decimal, as JSON.stringify prints. */
-    for (int precision = 1; precision <= 17; precision++) {
-      snprintf(buffer, sizeof buffer, "%.*g", precision, value);
-      if (strtod(buffer, NULL) == value) break;
-    }
-  }
+  char buffer[40];
+  qa_net_json_number(value, buffer, sizeof buffer);
   text_add_cstr(out, buffer);
 }
 static void json_write_value(text *out, const qa_save_value *value, int depth) {

@@ -5,7 +5,9 @@
 
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 #include "qa/materials/fog.h"
+#include "qa/foundation/js.h"
 
 static float fr(double v) { return (float)v; }
 static bool eq(const char *a, const char *b) {
@@ -13,18 +15,18 @@ static bool eq(const char *a, const char *b) {
 }
 
 qa_fog_volume qa_prepare_fog_volume(qa_fog_brush_map map, double index,
-                                    qa_q3_material_fog parameters) {
-  int64_t fi = (int64_t)index;
-  if (fi < 0 || (size_t)fi >= map.fog_count)
-    qa_range_error("fog index %lld outside %zu", (long long)fi, map.fog_count);
-  qa_fog_brush_map_entry fog = map.fogs[fi];
-  int64_t bi = (int64_t)fog.brush;
-  if (bi < 0 || (size_t)bi >= map.brush_count)
-    qa_range_error("fog index %lld outside %zu", (long long)bi, map.brush_count);
-  qa_fog_brush_entry brush = map.brushes[bi];
+                                    qa_q3_material_fog parameters,
+                                    double identity_light) {
+  /* items[index] is undefined for a fractional, negative or NaN index. */
+  if (!(index >= 0 && index == floor(index) && index < (double)map.fog_count))
+    qa_range_error("fog index %s outside %zu", QA_JS_NUMBER(index), map.fog_count);
+  qa_fog_brush_map_entry fog = map.fogs[(size_t)index];
+  if (!(fog.brush >= 0 && fog.brush == floor(fog.brush) && fog.brush < (double)map.brush_count))
+    qa_range_error("fog index %s outside %zu", QA_JS_NUMBER(fog.brush), map.brush_count);
+  qa_fog_brush_entry brush = map.brushes[(size_t)fog.brush];
   if (brush.side_count < 6)
-    qa_range_error("fog brush %lld has fewer than six axial sides",
-                   (long long)fog.brush);
+    qa_range_error("fog brush %s has fewer than six axial sides",
+                   QA_JS_NUMBER(fog.brush));
   qa_plane planes[8];
   int side_total = fog.visible_side >= 0 && fog.visible_side >= 6
       ? (int)fog.visible_side + 1 : 6;
@@ -62,9 +64,9 @@ qa_fog_volume qa_prepare_fog_volume(qa_fog_brush_map map, double index,
   free(heap);
   double depth = parameters.depth_for_opaque;
   out.color = (qa_vec4){
-      (qa_mat_to_int32(fr(parameters.color.x * 255)) & 255) / 255.0,
-      (qa_mat_to_int32(fr(parameters.color.y * 255)) & 255) / 255.0,
-      (qa_mat_to_int32(fr(parameters.color.z * 255)) & 255) / 255.0, 1};
+      (qa_mat_to_int32(fr(fr(parameters.color.x * identity_light) * 255)) & 255) / 255.0,
+      (qa_mat_to_int32(fr(fr(parameters.color.y * identity_light) * 255)) & 255) / 255.0,
+      (qa_mat_to_int32(fr(fr(parameters.color.z * identity_light) * 255)) & 255) / 255.0, 1};
   out.tc_scale = fr(1.0 / fr((depth > 1 ? depth : 1) * 8));
   return out;
 }
@@ -108,9 +110,9 @@ double qa_fog_factor(double s, double t) {
     distance = fr(distance * fr(fr(t - 1.0 / 32) / (30.0 / 32)));
   distance = fr(distance * 8);
   if (distance > 1) distance = 1;
-  int64_t index = (int64_t)trunc(fr(distance * 255));
-  if (index < 0 || index >= 256)
-    qa_range_error("fog index %lld outside 256", (long long)index);
+  double index = trunc(fr(distance * 255)); /* NaN s reads FOG_TABLE[NaN]: undefined */
+  if (!(index >= 0 && index < 256))
+    qa_range_error("fog index %s outside 256", QA_JS_NUMBER(index));
   return fr(sqrt(fr(index / 255.0)));
 }
 
@@ -134,26 +136,6 @@ qa_image_level qa_create_fog_texture(uint8_t *pixels, size_t length) {
   return out;
 }
 
-static bool is_blended(qa_blend_state blend) {
-  return !eq(blend.source, "one") || !eq(blend.destination, "zero");
-}
-
-qa_fog_adjustment_kind qa_fog_adjustment(qa_mat_shader_stage stage,
-                                         qa_mat_shader_stage first) {
-  if (!is_blended(stage.blend) || !is_blended(first.blend)) return "none";
-  const char *source = stage.blend.source, *destination = stage.blend.destination;
-  if ((eq(source, "one") && eq(destination, "one")) ||
-      (eq(source, "zero") && eq(destination, "one-minus-src-color")))
-    return "rgb";
-  if (eq(source, "src-alpha") && eq(destination, "one-minus-src-alpha"))
-    return "alpha";
-  if (eq(source, "one") && eq(destination, "one-minus-src-alpha"))
-    return "rgba";
-  return "none";
-}
-
-static double js_round(double v) { return floor(v + 0.5); }
-
 qa_vec4 qa_attenuate_fog_color(qa_vec4 color, const char *adjustment,
                                qa_vec2 coordinates) {
   if (eq(adjustment, "none")) return color;
@@ -162,31 +144,12 @@ qa_vec4 qa_attenuate_fog_color(qa_vec4 color, const char *adjustment,
   bool alpha = eq(adjustment, "alpha") || eq(adjustment, "rgba");
   qa_vec4 out = color;
   if (rgb) {
-    out.x = trunc(fr(js_round(color.x * 255) * attenuation)) / 255;
-    out.y = trunc(fr(js_round(color.y * 255) * attenuation)) / 255;
-    out.z = trunc(fr(js_round(color.z * 255) * attenuation)) / 255;
+    out.x = trunc(fr(qa_js_round(color.x * 255) * attenuation)) / 255;
+    out.y = trunc(fr(qa_js_round(color.y * 255) * attenuation)) / 255;
+    out.z = trunc(fr(qa_js_round(color.z * 255) * attenuation)) / 255;
   }
-  if (alpha) out.w = trunc(fr(js_round(color.w * 255) * attenuation)) / 255;
+  if (alpha) out.w = trunc(fr(qa_js_round(color.w * 255) * attenuation)) / 255;
   return out;
-}
-
-double qa_shader_sort(const qa_mat_shader_definition *shader) {
-  if (shader == NULL) return 3;
-  if (shader->stage_count == 0) return 7;
-  if (shader->sky != NULL) return 2;
-  if (shader->has_sort && shader->sort != 0) return shader->sort;
-  if (shader->polygon_offset) return 4;
-  qa_mat_parsed_stage first = shader->stages[0];
-  return is_blended(first.stage.blend) ? (first.stage.depth_write ? 5 : 9) : 3;
-}
-
-qa_fog_pass qa_shader_fog_pass(const qa_mat_shader_definition *shader) {
-  if (qa_shader_sort(shader) <= 3) return "equal";
-  if (shader != NULL) {
-    for (size_t i = 0; i < shader->surface_parms.count; i++)
-      if (eq(shader->surface_parms.values[i], "fog")) return "less-equal";
-  }
-  return "none";
 }
 
 qa_render_state qa_fog_pass_state(const char *pass, const char *cull) {

@@ -2,6 +2,7 @@
 #include "qa/core/binary/index.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,16 +10,16 @@
 
 #include "qa/foundation/binary.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 noreturn void qa_binary_error(const char *source, int64_t offset,
                               const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "BinaryError: %s:%lld: ", source, (long long)offset);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("BinaryError", 0, offset, "%s:%lld: %s", source, (long long)offset, text);
 }
 
 static char *copy_text(const char *text) {
@@ -61,6 +62,18 @@ static void check_range(const qa_binary_reader *reader, int64_t offset,
     qa_binary_error(reader->source, offset,
                     "range of %lld bytes exceeds %zu-byte input",
                     (long long)length, reader->length);
+  }
+}
+
+static bool safe_integer(double value) {
+  return value == trunc(value) && fabs(value) <= 9007199254740991.0;
+}
+
+void qa_binary_reader_check_number(const qa_binary_reader *reader, double offset, double length) {
+  if (!safe_integer(offset) || !safe_integer(length) || offset < 0 || length < 0 ||
+      offset > (double)reader->length - length) {
+    qa_binary_error(reader->source, safe_integer(offset) ? (int64_t)offset : 0,
+                    "range of %s bytes exceeds %zu-byte input", QA_JS_NUMBER(length), reader->length);
   }
 }
 
@@ -184,8 +197,7 @@ static int valid_utf8(const uint8_t *bytes, size_t length) {
 
 static noreturn void throw_type_error(void) {
   /* The fatal decoder's TypeError; message per the Bun oracle runtime. */
-  fputs("TypeError: Invalid byte sequence\n", stderr);
-  abort();
+  qa_raise("TypeError", 0, 0, "Invalid byte sequence");
 }
 
 char *qa_binary_reader_fixed_string(qa_binary_reader *reader, int64_t length) {
@@ -298,12 +310,13 @@ void qa_binary_reader_expect_magic(qa_binary_reader *reader,
     char *got = json_stringify(actual != NULL ? actual : "");
     const char *want_text = want != NULL ? want : "\"\"";
     const char *got_text = got != NULL ? got : "\"\"";
-    fprintf(stderr, "BinaryError: %s:%zu: expected %s, got %s\n",
-            reader->source, offset, want_text, got_text);
+    char text[1536];
+    snprintf(text, sizeof text, "%s:%zu: expected %s, got %s",
+             reader->source, offset, want_text, got_text);
     free(want);
     free(got);
     free(actual);
-    abort();
+    qa_raise("BinaryError", 0, (long long)offset, "%s", text);
   }
   free(actual);
 }

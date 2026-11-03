@@ -1,7 +1,5 @@
 /* Port of src/render/gl/renderer.ts. The SDL render context surface is
- * fn+ctx (makeCurrent/drawable size/rendering toggle). FBO-backed
- * opacity/gamma/depth-atlas/fog passes use the reduced helpers in this
- * slice. GPL-2.0-or-later. */
+ * fn+ctx (makeCurrent/drawable size/rendering toggle/swap). GPL-2.0-or-later. */
 #ifndef QA_RENDER_GL_RENDERER_H
 #define QA_RENDER_GL_RENDERER_H
 #include <stdbool.h>
@@ -15,6 +13,7 @@ typedef struct qa_gl_render_context {
   void (*make_current)(void *ctx);
   void (*drawable_size)(void *ctx, double *width, double *height);
   void (*set_rendering_enabled)(void *ctx, bool enabled);
+  void (*swap)(void *ctx);
 } qa_gl_render_context;
 typedef struct qa_gl_driver_info { const char *vendor; const char *renderer; const char *version; const char *shading_language; } qa_gl_driver_info;
 typedef struct qa_gl_renderer qa_gl_renderer;
@@ -39,6 +38,11 @@ double qa_gl_renderer_read_depth_pixel(qa_gl_renderer *renderer, double window_x
 uint8_t *qa_gl_renderer_read_pixels(qa_gl_renderer *renderer, size_t *out_length);
 bool qa_gl_renderer_read_depth_image(qa_gl_renderer *renderer, qa_renderer_image image, qa_depth_image_level *out, float *storage, size_t storage_count);
 void qa_gl_renderer_finish(qa_gl_renderer *renderer);
+uint32_t qa_gl_renderer_get_error(qa_gl_renderer *renderer);
+void qa_gl_renderer_present(qa_gl_renderer *renderer);
+/* TS close(): GL resources go; later calls raise "OpenGL renderer is closed". */
 void qa_gl_renderer_close(qa_gl_renderer *renderer);
+/* C ownership: frees what close kept for those late calls. Closes first if needed. */
+void qa_gl_renderer_destroy(qa_gl_renderer *renderer);
 qa_renderer_backend qa_gl_renderer_backend(qa_gl_renderer *renderer);
 #endif

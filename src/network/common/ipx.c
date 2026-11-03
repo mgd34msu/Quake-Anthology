@@ -25,7 +25,8 @@ uint8_t *qa_encode_ipx_packet(const qa_ipx_packet *packet, size_t *out_len) {
   put_u16be(b, 0, 65535); put_u16be(b, 2, (uint16_t)n);
   b[4] = (uint8_t)packet->hops; b[5] = (uint8_t)packet->packet_type;
   write_addr(b, 6, &packet->to); write_addr(b, 18, &packet->from);
-  memcpy(b + 30, packet->payload, packet->length); *out_len = n; return b;
+  if (packet->length) memcpy(b + 30, packet->payload, packet->length);
+  *out_len = n; return b;
 }
 int qa_decode_ipx_packet(const uint8_t *bytes, size_t length, qa_ipx_packet *out) {
   if (length < 30) return 0;
@@ -82,7 +83,7 @@ void qa_ipx_udp_transport_destroy(qa_ipx_udp_transport *t) {
 }
 bool qa_ipx_udp_transport_closed(const qa_ipx_udp_transport *t) { return t->ended; }
 void qa_ipx_udp_transport_add_peer(qa_ipx_udp_transport *t, const qa_net_address *ipx, const qa_net_address *udp) {
-  if (t->ended) qa_range_error("IPX tunnel is closed");
+  if (t->ended) qa_raise("Error", 0, 0, "IPX tunnel is closed");
   for (size_t i = 0; i < t->peer_count; i++) if (qa_net_same_address(&t->peers[i].ipx, ipx, false)) {
     qa_net_address_destroy(&t->peers[i].ipx); qa_net_address_destroy(&t->peers[i].udp);
     (void)qa_net_address_clone(ipx, &t->peers[i].ipx); (void)qa_net_address_clone(udp, &t->peers[i].udp); return;
@@ -98,13 +99,15 @@ void qa_ipx_udp_transport_remove_peer(qa_ipx_udp_transport *t, const qa_net_addr
   }
 }
 bool qa_ipx_udp_transport_send(qa_ipx_udp_transport *t, const qa_net_address *to, const uint8_t *payload, size_t length) {
-  if (t->ended) qa_range_error("IPX tunnel is closed");
+  if (t->ended) qa_raise("Error", 0, 0, "IPX tunnel is closed");
   if ((long long)length > qa_packet_queue_get_limits(&t->queue).max_bytes) qa_range_error("IPX payload exceeds tunnel capacity");
   uint8_t *owned = NULL; const uint8_t *bytes = payload; size_t blen = length;
   if (t->profile.kind == QA_IPX_PROFILE_QUAKE1) {
-    owned = malloc(length + 4); uint32_t seq = t->sequence++;
+    owned = malloc(length + 4); if (!owned) qa_range_error("Out of memory");
+    uint32_t seq = t->sequence++;
     owned[0] = (uint8_t)seq; owned[1] = (uint8_t)(seq >> 8); owned[2] = (uint8_t)(seq >> 16); owned[3] = (uint8_t)(seq >> 24);
-    memcpy(owned + 4, payload, length); bytes = owned; blen = length + 4;
+    if (length) memcpy(owned + 4, payload, length);
+    bytes = owned; blen = length + 4;
   }
   qa_ipx_packet pkt; memset(&pkt, 0, sizeof pkt);
   (void)qa_net_address_clone(&t->address, &pkt.from); (void)qa_net_address_clone(to, &pkt.to);
@@ -126,19 +129,25 @@ bool qa_ipx_udp_transport_send(qa_ipx_udp_transport *t, const qa_net_address *to
   free(wire); free(owned); return result;
 }
 int qa_ipx_udp_transport_poll(qa_ipx_udp_transport *t, qa_receive_event *out) {
-  if (t->ended) qa_range_error("IPX tunnel is closed");
+  if (t->ended) qa_raise("Error", 0, 0, "IPX tunnel is closed");
   ipx_receive_packets(t); return qa_packet_queue_poll(&t->queue, out);
 }
 long long qa_ipx_udp_transport_subscribe(qa_ipx_udp_transport *t, qa_net_listener_fn fn, void *ctx) {
   return qa_packet_queue_subscribe(&t->queue, fn, ctx);
 }
 void qa_ipx_udp_transport_unsubscribe(qa_ipx_udp_transport *t, long long id) { qa_packet_queue_unsubscribe(&t->queue, id); }
+static void close_queue_body(void *ctx) { qa_packet_queue_close(ctx); }
 void qa_ipx_udp_transport_close(qa_ipx_udp_transport *t) {
   if (t->ended) return;
   t->ended = true;
   qa_udp_transport_unsubscribe(&t->transport, t->subscription);
-  qa_packet_queue_close(&t->queue);
+  for (size_t i = 0; i < t->peer_count; i++) { qa_net_address_destroy(&t->peers[i].ipx); qa_net_address_destroy(&t->peers[i].udp); }
+  t->peer_count = 0;
+  /* try { queue.close() } finally { transport.close() } */
+  qa_caught_error caught;
+  bool ok = qa_try(close_queue_body, &t->queue, &caught);
   qa_udp_transport_close(&t->transport);
+  if (!ok) qa_rethrow(&caught);
 }
 static int vt_addr(void *ctx, qa_net_address *out) { return qa_net_address_clone(&((qa_ipx_udp_transport *)ctx)->address, out); }
 static bool vt_closed(void *ctx) { return qa_ipx_udp_transport_closed(ctx); }

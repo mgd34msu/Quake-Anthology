@@ -20,10 +20,19 @@
 #include "qa/formats/q12_model/sprite.h"
 #include "qa/formats/q2_map/reader.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 #include "qa/materials/sky.h"
 #include "qa/network/q2/handshake.h"
 #include "qa/network/q2/server_write.h"
 #include "qa/network/services/http_downloads.h"
+#include "qa/network/services/download_types.h"
+#include "qa/app/bootstrap/network/q2_client_receiver.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
+static void free_arg(void *arg) { free(arg); }
+/* TS `throw new Q2ServerDropError(message)`: Com_Error(ERR_DROP), the client leaves the server and
+ * shows the message instead of ending the process. */
+#define q2_server_drop(...) qa_raise("Q2ServerDropError", 0, 0, __VA_ARGS__)
 static char *copy_text(const char *s) {
   size_t n = strlen(s) + 1; char *out = malloc(n);
   if (out) memcpy(out, s, n);
@@ -63,13 +72,15 @@ qa_app_q2_downloads *qa_app_create_q2_application_downloads(
   if (!d) return NULL;
   d->mounts = mounts; d->cvars = cvars;
   qa_cvar_snapshot registered;
-  qa_cvar_registry_register(cvars, "sv_downloadserver", "", 0, &registered);
+  qa_cvar_registry_register(cvars, "sv_downloadserver", "", 0, &registered); qa_cvar_read_free(&registered);
   const char *def = edition_rerelease ? "1" : "0";
-  qa_cvar_registry_register(cvars, "allow_download", def, QA_Q2_CVAR_FLAG_ARCHIVE, &registered);
-  qa_cvar_registry_register(cvars, "allow_download_players", def, QA_Q2_CVAR_FLAG_ARCHIVE, &registered);
+  qa_cvar_registry_register(cvars, "allow_download", def, QA_Q2_CVAR_FLAG_ARCHIVE, &registered); qa_cvar_read_free(&registered);
+  qa_cvar_registry_register(cvars, "allow_download_players", def, QA_Q2_CVAR_FLAG_ARCHIVE, &registered); qa_cvar_read_free(&registered);
   static const char *names[] = {"allow_download_models", "allow_download_sounds", "allow_download_maps"};
-  for (size_t i = 0; i < 3; i++)
+  for (size_t i = 0; i < 3; i++) {
     qa_cvar_registry_register(cvars, names[i], "1", QA_Q2_CVAR_FLAG_ARCHIVE, &registered);
+    qa_cvar_read_free(&registered);
+  }
   return d;
 }
 void qa_app_q2_downloads_destroy(qa_app_q2_downloads *downloads) { free(downloads); }
@@ -82,16 +93,17 @@ char *qa_app_q2_downloads_http_server(qa_app_q2_downloads *downloads) {
   snprintf(argument, n, "dlserver=%s", server);
   free(server);
   char *args[] = {argument};
-  char *result = qa_q2_read_download_server(args, 1);
+  char *result = qa_q2_read_download_server(args, 1, NULL);
   free(argument);
   return result;
 }
+static void check_download_path_body(void *ctx) { check_download_path(ctx); }
 bool qa_app_q2_downloads_allowed(qa_app_q2_downloads *downloads, const char *name) {
-  if (strstr(name, "..") || name[0] == '.' || !strchr(name, '/')
+  if (strstr(name, "..") || name[0] == '.' || !strchr(name, '/') || !qa_is_served_download_type(name)
       || qa_cvar_registry_variable_value(downloads->cvars, "allow_download") == 0) return false;
-  /* TS try { downloadPath } catch -> false: the landed parts routine
-   * aborts on unsafe names, which the checks above mostly preclude. */
-  check_download_path(name);
+  /* TS try { downloadPath(name) } catch { return false } */
+  qa_caught_error caught;
+  if (!qa_try(check_download_path_body, (void *)name, &caught)) return false;
   static const struct { const char *prefix, *setting; } categories[] = {
     {"players/", "allow_download_players"}, {"models/", "allow_download_models"},
     {"sound/", "allow_download_sounds"}, {"maps/", "allow_download_maps"}};
@@ -104,7 +116,7 @@ bool qa_app_q2_downloads_allowed(qa_app_q2_downloads *downloads, const char *nam
 typedef struct retained { uint8_t *bytes; size_t length; } retained;
 static uint8_t *retained_read(void *ctx, double offset, double max_bytes, size_t *out_len) {
   retained *r = ctx;
-  if (!r->bytes) qa_range_error("Q2 mounted download is closed");
+  if (!r->bytes) qa_raise("Error", 0, 0, "Q2 mounted download is closed");
   size_t start = offset < 0 ? 0 : (size_t)offset;
   if (start > r->length) start = r->length;
   size_t available = r->length - start;
@@ -163,6 +175,16 @@ void qa_app_q2_peer_download_close(qa_app_q2_peer_download *peer) {
   peer->generation++;
   if (peer->has_sender) { qa_q2_download_sender_close(&peer->sender); peer->has_sender = false; }
 }
+typedef struct open_scope {
+  qa_app_q2_downloads *downloads;
+  const char *name;
+  qa_download_source source;
+  bool opened;
+} open_scope;
+static void open_body(void *arg) {
+  open_scope *scope = (open_scope *)arg;
+  scope->opened = qa_app_q2_downloads_open(scope->downloads, scope->name, &scope->source);
+}
 qa_q2_server_event *qa_app_q2_peer_download_begin(qa_app_q2_peer_download *peer,
     qa_app_q2_downloads *downloads, const char *name, const char *offset_text) {
   /* TS try { nativeAtoi } catch: landed atoi does not throw. */
@@ -170,11 +192,15 @@ qa_q2_server_event *qa_app_q2_peer_download_begin(qa_app_q2_peer_download *peer,
   if (offset < 0 || !qa_app_q2_downloads_allowed(downloads, name)) return refused_event();
   qa_app_q2_peer_download_close(peer);
   double generation = peer->generation;
-  qa_download_source source;
-  if (!qa_app_q2_downloads_open(downloads, name, &source)) return refused_event();
-  if (generation != peer->generation) { source.close(source.ctx); return NULL; }
+  /* TS try { source = await downloads.open(name) } catch { source = null } */
+  open_scope scope = {downloads, name, {0}, false};
+  qa_caught_error caught;
+  if (!qa_try(open_body, &scope, &caught)) scope.opened = false;
+  qa_download_source source = scope.source;
+  if (generation != peer->generation) { if (scope.opened) source.close(source.ctx); return NULL; }
+  if (!scope.opened) return refused_event();
   qa_q2_download_sender_init(&peer->sender, source, true,
-      fmin(offset, source.byte_length), false, 0);
+      qa_js_min(offset, source.byte_length), false, 0);
   peer->has_sender = true;
   return qa_app_q2_peer_download_next(peer);
 }
@@ -200,12 +226,14 @@ static void list_clear(string_list *list) {
   list->count = 0;
 }
 static void list_destroy(string_list *list) { list_clear(list); free(list->items); }
+typedef struct http_current { struct qa_app_q2_download_receiver *r; double generation; } http_current;
 typedef struct resource_iter {
   int phase; size_t index, sub_index;
   char *map; uint8_t *world; size_t world_length;
   string_list pending; size_t pending_index;
   string_list models, sounds, images;
   int sky_step; char *sky_tga, *sky_pcx;
+  char *yielded_model; /* TS opens a model after yielding it, i.e. after its own download */
 } resource_iter;
 struct qa_app_q2_download_receiver {
   const qa_app_q2_remote_mounts *(*content)(void *); void *content_ctx;
@@ -213,15 +241,12 @@ struct qa_app_q2_download_receiver {
   void (*print)(void *, const char *); void *print_ctx;
   void (*refresh_packages)(void *); void *refresh_ctx;
   const qa_app_client_download_permission *permission;
-  qa_app_q2_state_access access;
   bool cancelled, retired_block, retry_requested;
   char *server;
-  /* The landed queue type is opaque with caller storage and no
-   * published size; this aligned buffer holds it (parent: landed
-   * header should expose a create/size). */
-  _Alignas(16) unsigned char http_storage[1024]; bool http_live;
+  qa_http_download_queue *http; /* TS http (null when absent) */
+  char *http_root; http_current http_current; /* the queue's root and assertCurrent closure */
   bool metadata_aborted;
-  bool http_task, http_done; char *http_error;
+  bool http_task, http_done; char *http_error; const char *http_error_name;
   int task_kind; /* 0 none, 1 initial, 2 asset */ char *task_path;
   string_list attempted, refused;
   struct { char *dest, *path; } *http_paths; size_t http_path_count, http_path_cap;
@@ -330,16 +355,24 @@ static char *url_join(const char *server, const char *relative) {
   memcpy(out + keep, relative, strlen(relative) + 1);
   return out;
 }
-static const char *config_string(qa_app_q2_download_receiver *r,
-    const qa_app_q2_game_state *state, double index) {
-  return r->access.config_string(state->config_strings, index);
+/* Q2ApplicationGameState as the receiver builds it: data is a qa_q2_server_data_result,
+ * configStrings a qa_app_q2_config_snapshot (q2_client_receiver.h). */
+static const char *config_string(const qa_app_q2_game_state *state, double index) {
+  const qa_app_q2_config_snapshot *snapshot = state->config_strings;
+  for (size_t i = 0; i < snapshot->count; i++)
+    if (snapshot->entries[i].index == index) return snapshot->entries[i].value;
+  return NULL;
+}
+static const char *state_gamedir(const qa_app_q2_game_state *state) {
+  return ((const qa_q2_server_data_result *)state->data)->gamedir;
 }
 static void validate_path(const char *path) {
   check_download_path(path);
   bool ok = charset_ok(path);
   if (ok) {
     if (starts_with_ci(path, "maps/")) ok = ends_with_ci(path, ".bsp");
-    else if (starts_with_ci(path, "models/") || starts_with_ci(path, "players/"))
+    else if (starts_with_ci(path, "models/") || starts_with_ci(path, "players/")
+             || starts_with_ci(path, "sprites/"))
       ok = ends_with_ci(path, ".md2") || ends_with_ci(path, ".sp2")
           || ends_with_ci(path, ".pcx") || ends_with_ci(path, ".wav");
     else if (starts_with_ci(path, "sound/")) ok = ends_with_ci(path, ".wav");
@@ -348,7 +381,7 @@ static void validate_path(const char *path) {
     else if (starts_with_ci(path, "textures/")) ok = ends_with_ci(path, ".wal");
     else ok = false;
   }
-  if (!ok) qa_range_error("Q2 server requested a non-asset download: %s", path);
+  if (!ok) qa_raise("Error", 0, 0, "Q2 server requested a non-asset download: %s", path);
 }
 static bool filelist_extension_ok(const char *path) {
   static const char *extensions[] = {".bsp", ".dm2", ".ent", ".jpg", ".loc", ".md2", ".md3",
@@ -372,7 +405,7 @@ static char *http_destination(qa_app_q2_download_receiver *r, const char *path) 
 static const char *http_resource(qa_app_q2_download_receiver *r, const char *destination) {
   for (size_t i = 0; i < r->http_path_count; i++)
     if (strcmp(r->http_paths[i].dest, destination) == 0) return r->http_paths[i].path;
-  qa_range_error("Unknown Q2 HTTP download destination");
+  qa_raise("Error", 0, 0, "Unknown Q2 HTTP download destination");
 }
 static void http_paths_set(qa_app_q2_download_receiver *r, const char *dest, const char *path) {
   for (size_t i = 0; i < r->http_path_count; i++)
@@ -408,13 +441,13 @@ static bool scope_game_local(qa_app_q2_download_receiver *r, const char *path) {
     if (strcmp(r->asset_scopes[i].path, path) == 0) return r->asset_scopes[i].game_local;
   return false;
 }
-typedef struct http_current { qa_app_q2_download_receiver *r; double generation; } http_current;
+
 static void check_current(http_current *current) {
   qa_app_q2_download_receiver *r = current->r;
   if (current->generation != r->generation || r->metadata_aborted)
-    qa_range_error("Q2 download generation retired");
+    qa_raise("Error", 0, 0, "Q2 download generation retired");
   if (!permitted(r, QA_APP_DL_HTTP, QA_APP_DL_METADATA))
-    qa_range_error("Q2 HTTP download permission changed");
+    qa_raise("Error", 0, 0, "Q2 HTTP download permission changed");
 }
 static void queue_assert_current(void *ctx) { check_current(ctx); }
 static bool queue_resolved(void *ctx, const char *destination) {
@@ -432,7 +465,7 @@ static void queue_refresh_package(void *ctx, const char *destination) {
   http_current *current = ctx;
   qa_app_q2_download_receiver *r = current->r;
   http_resource(r, destination);
-  if (!r->refresh_packages) qa_range_error("Q2 package refresh is unavailable");
+  if (!r->refresh_packages) qa_raise("Error", 0, 0, "Q2 package refresh is unavailable");
   r->refresh_packages(r->refresh_ctx);
   check_current(current);
 }
@@ -443,21 +476,21 @@ typedef struct validate_ctx { qa_app_q2_download_receiver *r; char *path; } vali
 static void http_validate(void *ctx, const char *staged) {
   validate_ctx *v = ctx;
   if (!permitted(v->r, QA_APP_DL_HTTP, qa_app_client_download_category_for(v->path)))
-    qa_range_error("Q2 HTTP download permission changed");
+    qa_raise("Error", 0, 0, "Q2 HTTP download permission changed");
   (void)staged;
 }
 static void http_validate_package(void *ctx, const char *staged) {
   validate_ctx *v = ctx;
   http_validate(ctx, staged);
   qa_archive_handle *archive = qa_open_archive(staged, true,
-      ends_with_ci(v->path, ".pak") ? QA_ARCHIVE_FORMAT_PAK : QA_ARCHIVE_FORMAT_ZIP);
+      qa_js_ends_with_ignore_case(v->path, ".pak") ? QA_ARCHIVE_FORMAT_PAK : QA_ARCHIVE_FORMAT_ZIP);
   qa_archive_destroy(archive);
 }
 static void http_asset_run(qa_app_q2_download_receiver *r, const char *path, bool package) {
-  if (!r->http_live || !r->server || !r->state || list_contains(&r->attempted, path)
+  if (!r->http || !r->server || !r->state || list_contains(&r->attempted, path)
       || !permitted(r, QA_APP_DL_HTTP, qa_app_client_download_category_for(path))) return;
   list_push(&r->attempted, path);
-  const char *gamedir = r->access.gamedir(r->state->data);
+  const char *gamedir = state_gamedir(r->state);
   const char *game = gamedir && gamedir[0] ? gamedir : "baseq2";
   char *encoded_game = encode_component(game);
   char *encoded_path = encode_path_segments(path);
@@ -472,20 +505,24 @@ static void http_asset_run(qa_app_q2_download_receiver *r, const char *path, boo
   char *destination = http_destination(r, path);
   http_paths_set(r, destination, path);
   validate_ctx validate = {r, copy_text(path)};
-  qa_download_expectation expected = {true, NULL, 0, 0x7fffffff};
+  qa_download_expectation expected = {true, NULL, 0,
+      package ? 1024.0 * 1024 * 1024 : 128.0 * 1024 * 1024}; /* MAX_HTTP_PACKAGE/ASSET_BYTES */
   qa_http_download_request request = {destination, url, package ? "package" : "asset",
       expected, package ? http_validate_package : http_validate, &validate};
-  qa_http_download_queue_enqueue((qa_http_download_queue *)r->http_storage, request);
-  qa_http_download_queue_pump((qa_http_download_queue *)r->http_storage);
+  qa_http_download_queue_enqueue(r->http, request);
+  qa_http_download_queue_pump(r->http);
   qa_http_download_result result;
-  int have = qa_http_download_queue_result((qa_http_download_queue *)r->http_storage, destination, &result);
+  int have = qa_http_download_queue_result(r->http, destination, &result);
   free(validate.path); free(url); free(destination);
   if (!have) return;
   if (strcmp(result.kind, "failed") == 0) {
     const char *reason = result.reason ? result.reason : "HTTP download failed";
     char *message = copy_text(reason);
     qa_http_download_result_destroy(&result);
-    qa_range_error("%s", message);
+    if (!message) qa_range_error("out of memory");
+    qa_cleanup node;
+    qa_cleanup_push(&node, free_arg, message);
+    qa_raise("Error", 0, 0, "%s", message);
   }
   bool fallback = strcmp(result.kind, "fallback") == 0;
   qa_http_download_result_destroy(&result);
@@ -495,165 +532,224 @@ static void http_asset_run(qa_app_q2_download_receiver *r, const char *path, boo
     print_text(r, "HTTP unavailable: ", path, "; ",
         package ? "continuing with individual files\n" : "using native download\n");
 }
+typedef struct filelist_entry {
+  qa_app_q2_download_receiver *r;
+  const char *line;
+  size_t length;
+  string_list *assets, *packages;
+} filelist_entry;
+/* One TS filelist try block. The line is a byte span; a NUL inside it fails validation. */
+static void filelist_entry_body(void *arg) {
+  filelist_entry *entry = (filelist_entry *)arg;
+  char *line = malloc(entry->length + 1);
+  if (!line) qa_range_error("out of memory");
+  memcpy(line, entry->line, entry->length);
+  line[entry->length] = '\0';
+  qa_cleanup node;
+  qa_cleanup_push(&node, free_arg, line);
+  bool embedded_nul = strlen(line) != entry->length;
+  if (ends_with_ci(line, ".pak") || ends_with_ci(line, ".pkz")) {
+    check_download_path(line);
+    if (embedded_nul || strchr(line, '/') != NULL || !charset_ok(line))
+      qa_raise("Error", 0, 0, "Invalid package path");
+    if (entry->r->refresh_packages && !list_contains(entry->packages, line))
+      list_push(entry->packages, line);
+  } else {
+    const char *path = line[0] == '@' ? line + 1 : line;
+    check_download_path(path);
+    /* Donor HTTP whitelist plus JPEG/BMP/GIF supported by the shared image reader. */
+    if (embedded_nul || !charset_ok(path) || strchr(path, '/') == NULL || !filelist_extension_ok(path))
+      qa_raise("Error", 0, 0, "Q2 filelist requested a non-asset download: %s", path);
+    if (!list_contains(entry->assets, path)) list_push(entry->assets, path);
+    scope_set(entry->r, path, line[0] == '@');
+  }
+  qa_cleanup_pop(&node);
+  free(line);
+}
+/* httpInitial's locals, released when a validation or currency check raises out of it. */
+typedef struct initial_held {
+  char *parent; string_list assets, packages, lists;
+  char *path; char *encoded_game; uint8_t *bytes;
+} initial_held;
+static void initial_held_release(void *arg) {
+  initial_held *held = arg;
+  free(held->parent); held->parent = NULL;
+  list_destroy(&held->assets); list_destroy(&held->packages); list_destroy(&held->lists);
+  memset(&held->assets, 0, sizeof held->assets);
+  memset(&held->packages, 0, sizeof held->packages);
+  memset(&held->lists, 0, sizeof held->lists);
+  free(held->path); held->path = NULL;
+  free(held->encoded_game); held->encoded_game = NULL;
+  free(held->bytes); held->bytes = NULL;
+}
 static void http_initial_run(qa_app_q2_download_receiver *r, const qa_app_q2_game_state *state) {
   if (!r->server || !permitted(r, QA_APP_DL_HTTP, QA_APP_DL_METADATA)) return;
-  http_current current = {r, r->generation};
-  const char *gamedir = r->access.gamedir(state->data);
+  initial_held held = {0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, initial_held_release, &held);
+  /* The queue keeps calling assertCurrent/resolved after this run returns (each asset task pumps
+   * it), so the closure state and root live on the receiver with the queue. */
+  r->http_current = (http_current){r, r->generation};
+  http_current *current = &r->http_current;
+  const char *gamedir = state_gamedir(state);
   const char *game = gamedir && gamedir[0] ? gamedir : "baseq2";
-  const char *map = config_string(r, state, 33);
+  const char *map = config_string(state, 33);
   const qa_app_q2_remote_mounts *owner = r->content(r->content_ctx);
-  char *parent = path_dirname(owner->write_root);
-  mkdir_recursive(parent);
-  check_current(&current);
-  string_list assets = {0}, packages = {0};
+  held.parent = path_dirname(owner->write_root);
+  if (!held.parent) qa_range_error("out of memory");
+  mkdir_recursive(held.parent);
+  check_current(current);
   qa_http_queue_options options = {0};
-  options.root = parent; options.ctx = &current;
+  options.ctx = current;
+  options.has_total_budget_bytes = true;
+  options.total_budget_bytes = 2.0 * 1024 * 1024 * 1024; /* MAX_HTTP_SESSION_BYTES */
   options.assert_current = queue_assert_current;
   options.resolved = queue_resolved;
   options.refresh_package = queue_refresh_package;
   options.progress = queue_progress;
-  if (r->http_live) qa_http_download_queue_destroy((qa_http_download_queue *)r->http_storage);
-  qa_http_download_queue_init((qa_http_download_queue *)r->http_storage, options);
-  r->http_live = true;
-  string_list lists = {0};
-  char *encoded_game = encode_component(game);
-  if (!encoded_game) qa_range_error("out of memory");
+  if (r->http) qa_http_download_queue_free(r->http);
+  r->http = NULL;
+  free(r->http_root);
+  r->http_root = held.parent;
+  held.parent = NULL;
+  options.root = r->http_root;
+  r->http = qa_http_download_queue_create(options);
+  if (!r->http) qa_range_error("out of memory");
+  size_t listed = 0;
+  held.encoded_game = encode_component(game);
+  if (!held.encoded_game) qa_range_error("out of memory");
+  const char *encoded_game = held.encoded_game;
   size_t first_n = strlen(encoded_game) + 10;
-  char *first = malloc(first_n);
-  if (!first) qa_range_error("out of memory");
-  snprintf(first, first_n, "%s.filelist", encoded_game);
-  list_push(&lists, first);
-  free(first);
+  held.path = malloc(first_n);
+  if (!held.path) qa_range_error("out of memory");
+  snprintf(held.path, first_n, "%s.filelist", encoded_game);
+  list_push(&held.lists, held.path);
+  free(held.path); held.path = NULL;
   if (map) {
     validate_path(map);
     size_t map_length = strlen(map);
     /* TS map.slice(0, -4) drops the final four units unconditionally. */
     size_t stem = map_length >= 4 ? map_length - 4 : 0;
-    char *stem_text = malloc(stem + 1);
-    if (!stem_text) qa_range_error("out of memory");
-    memcpy(stem_text, map, stem); stem_text[stem] = '\0';
-    char *encoded_stem = encode_path_segments(stem_text);
-    free(stem_text);
+    held.path = malloc(stem + 1);
+    if (!held.path) qa_range_error("out of memory");
+    memcpy(held.path, map, stem); held.path[stem] = '\0';
+    char *encoded_stem = encode_path_segments(held.path);
+    free(held.path); held.path = NULL;
+    if (!encoded_stem) qa_range_error("out of memory");
+    held.path = encoded_stem;
     size_t n = strlen(encoded_game) + strlen(encoded_stem) + 11;
     char *entry = malloc(n);
     if (!entry) qa_range_error("out of memory");
     snprintf(entry, n, "%s/%s.filelist", encoded_game, encoded_stem);
-    free(encoded_stem);
-    list_push(&lists, entry);
-    free(entry);
-    if (!list_contains(&assets, map)) list_push(&assets, map);
+    free(held.path); held.path = entry;
+    list_push(&held.lists, entry);
+    free(held.path); held.path = NULL;
+    if (!list_contains(&held.assets, map)) list_push(&held.assets, map);
     scope_set(r, map, false);
   }
-  free(encoded_game);
-  for (size_t li = 0; li < lists.count; li++) {
+  for (size_t li = 0; li < held.lists.count; li++) {
     if (!permitted(r, QA_APP_DL_HTTP, QA_APP_DL_METADATA)) {
-      list_destroy(&lists); list_destroy(&assets); list_destroy(&packages); free(parent);
+      qa_cleanup_pop(&node);
+      initial_held_release(&held);
       return;
     }
-    char *url = url_join(r->server, lists.items[li]);
+    held.path = url_join(r->server, held.lists.items[li]);
+    if (!held.path) qa_range_error("out of memory");
     size_t length = 0;
-    uint8_t *bytes = qa_fetch_http_download_metadata(url, 1 << 20, &r->metadata_aborted, &length);
-    free(url);
-    check_current(&current);
-    if (!bytes) continue;
-    char *text = malloc(length + 1);
-    if (!text) qa_range_error("out of memory");
-    memcpy(text, bytes, length); text[length] = '\0';
-    free(bytes);
-    char *cursor = text;
-    while (cursor) {
-      char *newline = strchr(cursor, '\n');
-      char *line = cursor;
-      if (newline) *newline = '\0';
-      size_t line_length = strlen(line);
-      if (line_length && line[line_length - 1] == '\r') line[line_length - 1] = '\0';
-      if (line[0] != '\0') {
-        /* TS per-entry try/catch prints and continues; validate
-         * without the aborting helpers here. */
-        bool package = ends_with_ci(line, ".pak") || ends_with_ci(line, ".pkz");
-        bool valid = true;
-        if (package) {
-          size_t count = 0;
-          valid = strchr(line, '/') == NULL && charset_ok(line);
-          if (valid) {
-            char **parts = qa_download_path(line, &count);
-            qa_contained_file_parts_free(parts, count);
-          }
-          if (valid && r->refresh_packages && !list_contains(&packages, line))
-            list_push(&packages, line);
-        } else {
-          const char *path = line[0] == '@' ? line + 1 : line;
-          valid = charset_ok(path) && strchr(path, '/') != NULL && filelist_extension_ok(path);
-          if (valid) {
-            size_t count = 0;
-            char **parts = qa_download_path(path, &count);
-            qa_contained_file_parts_free(parts, count);
-          }
-          if (valid) {
-            if (!list_contains(&assets, path)) list_push(&assets, path);
-            scope_set(r, path, line[0] == '@');
-          }
-        }
-        if (!valid) {
+    held.bytes = qa_fetch_http_download_metadata(held.path, 1 << 20, &r->metadata_aborted, &length);
+    free(held.path); held.path = NULL;
+    check_current(current);
+    if (!held.bytes) continue;
+    const uint8_t *bytes = held.bytes;
+    /* TS new TextDecoder().decode(bytes).split('\n'): every segment counts toward the entry
+     * cap, including the empty one after a final newline. */
+    size_t start = 0;
+    while (start <= length) {
+      const uint8_t *newline = memchr(bytes + start, '\n', length - start);
+      size_t end = newline ? (size_t)(newline - bytes) : length;
+      if (++listed > 4096) {
+        print_text(r, "Ignoring the rest of an oversized Q2 filelist\n", "", "", "");
+        break;
+      }
+      size_t line_length = end - start;
+      if (line_length && bytes[start + line_length - 1] == '\r') line_length--;
+      if (line_length) {
+        filelist_entry entry = {r, (const char *)bytes + start, line_length, &held.assets, &held.packages};
+        qa_caught_error caught;
+        if (!qa_try(filelist_entry_body, &entry, &caught)) {
           char shown[129];
-          size_t shown_length = strlen(line) > 128 ? 128 : strlen(line);
-          memcpy(shown, line, shown_length); shown[shown_length] = '\0';
+          size_t shown_length = line_length > 128 ? 128 : line_length;
+          memcpy(shown, bytes + start, shown_length);
+          shown[shown_length] = '\0';
           print_text(r, "Ignoring invalid Q2 filelist entry: ", shown, "\n", "");
         }
       }
-      cursor = newline ? newline + 1 : NULL;
-      if (cursor && *cursor == '\0') break;
+      if (!newline) break;
+      start = end + 1;
     }
-    free(text);
+    free(held.bytes); held.bytes = NULL;
   }
-  list_destroy(&lists);
-  for (size_t i = 0; i < packages.count; i++) {
-    http_asset_run(r, packages.items[i], true);
-    check_current(&current);
+  /* Native Q2 cannot download flat packages. Settle package publication/reload before assets. */
+  for (size_t i = 0; i < held.packages.count; i++) {
+    http_asset_run(r, held.packages.items[i], true);
+    check_current(current);
   }
-  list_destroy(&packages);
   qa_app_q2_layout layout = qa_app_q2_application_layout((qa_q2_protocol_identity){"q2-classic", 34, 0, 0});
   for (double index = 1; index < layout.max_models; index++) {
-    const char *path = config_string(r, state, layout.models + index);
+    const char *path = config_string(state, layout.models + index);
     if (path && path[0] && path[0] != '*' && path[0] != '#') {
       validate_path(path);
-      if (!list_contains(&assets, path)) list_push(&assets, path);
+      if (!list_contains(&held.assets, path)) list_push(&held.assets, path);
       scope_set(r, path, false);
     }
   }
   for (double index = 1; index < layout.max_sounds; index++) {
-    const char *name = config_string(r, state, layout.sounds + index);
+    const char *name = config_string(state, layout.sounds + index);
     if (name && name[0] && name[0] != '*') {
-      char *path;
-      if (name[0] == '#') path = copy_text(name + 1);
+      if (name[0] == '#') held.path = copy_text(name + 1);
       else {
         size_t n = strlen(name) + 7;
-        path = malloc(n);
-        if (!path) qa_range_error("out of memory");
-        snprintf(path, n, "sound/%s", name);
+        held.path = malloc(n);
+        if (held.path) snprintf(held.path, n, "sound/%s", name);
       }
-      validate_path(path);
-      if (!list_contains(&assets, path)) list_push(&assets, path);
-      scope_set(r, path, false);
-      free(path);
+      if (!held.path) qa_range_error("out of memory");
+      validate_path(held.path);
+      if (!list_contains(&held.assets, held.path)) list_push(&held.assets, held.path);
+      scope_set(r, held.path, false);
+      free(held.path); held.path = NULL;
     }
   }
-  for (size_t i = 0; i < assets.count; i++) http_asset_run(r, assets.items[i], false);
-  check_current(&current);
-  list_destroy(&assets);
-  free(parent);
+  for (size_t i = 0; i < held.assets.count; i++) http_asset_run(r, held.assets.items[i], false);
+  check_current(current);
+  qa_cleanup_pop(&node);
+  initial_held_release(&held);
 }
 /* TS start(): the async task runs now; completion (or its error) is
  * observed on the next prepare(), keeping the waiting sequence. */
+typedef struct task_scope {
+  qa_app_q2_download_receiver *r;
+  int kind;
+  const char *path;
+} task_scope;
+static void task_body(void *arg) {
+  task_scope *scope = (task_scope *)arg;
+  if (scope->kind == 1) http_initial_run(scope->r, scope->r->state);
+  else if (scope->kind == 2) http_asset_run(scope->r, scope->path, false);
+}
 static void start_task(qa_app_q2_download_receiver *r, int kind, const char *path) {
   double generation = r->generation;
   r->http_task = true; r->http_done = false;
   r->task_kind = kind;
   free(r->task_path); r->task_path = path ? copy_text(path) : NULL;
-  /* Errors abort in C (the TS catch stores httpError); generation
-   * checks inside the task abort with the retired message. */
-  if (kind == 1) http_initial_run(r, r->state);
-  else if (kind == 2) http_asset_run(r, path, false);
+  /* TS task.catch(cause => { if (current) this.httpError = cause }) */
+  task_scope scope = {r, kind, path};
+  qa_caught_error caught;
+  if (!qa_try(task_body, &scope, &caught) && generation == r->generation) {
+    free(r->http_error);
+    r->http_error = copy_text(caught.message);
+    r->http_error_name = caught.name;
+    if (!r->http_error) qa_range_error("out of memory");
+  }
   if (generation == r->generation) r->http_done = true;
 }
 static void iter_destroy(resource_iter *it) {
@@ -662,17 +758,56 @@ static void iter_destroy(resource_iter *it) {
   list_destroy(&it->pending); list_destroy(&it->models);
   list_destroy(&it->sounds); list_destroy(&it->images);
   free(it->sky_tga); free(it->sky_pcx);
+  free(it->yielded_model);
   free(it);
 }
-static void collect_names(qa_app_q2_download_receiver *r, const qa_app_q2_game_state *state,
-    double first, double count, string_list *out) {
+/* TS names(first, count): configStrings first+1 .. first+count-1, empty ones dropped. */
+static void collect_names(const qa_app_q2_game_state *state, double first, double count,
+    string_list *out) {
   for (double index = 1; index < count; index++) {
-    const char *value = config_string(r, state, first + index);
+    const char *value = config_string(state, first + index);
     if (value && value[0]) list_push(out, value);
   }
 }
-/* TS resources() async generator as an explicit iterator. Returns a
- * malloc'd path or NULL when exhausted. */
+static char *joined_text(const char *a, const char *b, const char *c, const char *d) {
+  size_t n = strlen(a) + strlen(b) + strlen(c) + strlen(d) + 1;
+  char *out = malloc(n);
+  if (!out) qa_range_error("out of memory");
+  snprintf(out, n, "%s%s%s%s", a, b, c, d);
+  return out;
+}
+typedef struct model_parse {
+  const char *model; const uint8_t *bytes; size_t length;
+  string_list *dependencies;
+  bool md2; qa_q2_alias_model alias; bool sp2; qa_q2_sprite_model sprite;
+} model_parse;
+static void model_parse_release(void *arg) {
+  model_parse *parse = arg;
+  if (parse->md2) qa_q2_alias_model_destroy(&parse->alias);
+  if (parse->sp2) qa_q2_sprite_model_destroy(&parse->sprite);
+  parse->md2 = parse->sp2 = false;
+}
+static void model_parse_body(void *arg) {
+  model_parse *parse = arg;
+  qa_cleanup node;
+  qa_cleanup_push(&node, model_parse_release, parse);
+  if (ends_with_ci(parse->model, ".md2")) {
+    qa_parse_md2(parse->bytes, parse->length, parse->model, &parse->alias);
+    parse->md2 = true;
+    for (size_t i = 0; i < parse->alias.skins.count; i++)
+      if (parse->alias.skins.values[i][0]) list_push(parse->dependencies, parse->alias.skins.values[i]);
+  } else if (ends_with_ci(parse->model, ".sp2")) {
+    qa_parse_sp2(parse->bytes, parse->length, parse->model, &parse->sprite);
+    parse->sp2 = true;
+    for (size_t i = 0; i < parse->sprite.frame_count; i++)
+      list_push(parse->dependencies, parse->sprite.frames[i].image);
+  }
+  qa_cleanup_pop(&node);
+  model_parse_release(parse);
+}
+/* TS resources() async generator as an explicit iterator. Returns a malloc'd path or NULL when
+ * exhausted. Work the generator does after a yield (opening the world or a model) runs on the
+ * following call, after the yielded file had its chance to download. */
 static char *iter_next(qa_app_q2_download_receiver *r, const qa_app_q2_game_state *state,
     const qa_app_q2_remote_mounts *content) {
   resource_iter *it = r->paths;
@@ -682,9 +817,10 @@ static char *iter_next(qa_app_q2_download_receiver *r, const qa_app_q2_game_stat
       return copy_text(it->pending.items[it->pending_index++]);
     switch (it->phase) {
       case 0: {
-        const char *map = config_string(r, state, layout.models + 1);
-        if (!map) qa_range_error("Q2 server supplied no world model");
+        const char *map = config_string(state, layout.models + 1);
+        if (!map) qa_raise("Error", 0, 0, "Q2 server supplied no world model");
         it->map = copy_text(map);
+        if (!it->map) qa_range_error("out of memory");
         it->phase = 1;
         return copy_text(map);
       }
@@ -692,98 +828,125 @@ static char *iter_next(qa_app_q2_download_receiver *r, const qa_app_q2_game_stat
         uint8_t *bytes = NULL; size_t length = 0;
         const qa_resolved_resource_reference *reference = NULL;
         if (!content->mounts.open(content->mounts.ctx, it->map, &bytes, &length, &reference))
-          qa_range_error("Q2 server map is unavailable: %s", it->map);
+          q2_server_drop("Couldn't load %s", it->map);
         it->world = bytes; it->world_length = length;
-        const char *checksum = config_string(r, state, layout.map_checksum);
-        bool ok = checksum && (uint32_t)strtod(checksum, NULL)
-            == qa_block_checksum(bytes, length);
-        if (!ok) qa_range_error("Q2 server map checksum differs from mounted content");
-        collect_names(r, state, layout.models, layout.max_models, &it->models);
-        collect_names(r, state, layout.sounds, layout.max_sounds, &it->sounds);
-        collect_names(r, state, layout.images, layout.max_images, &it->images);
+        const char *checksum = config_string(state, layout.map_checksum);
+        uint32_t world_checksum = qa_block_checksum(bytes, length);
+        /* (Number(checksum) >>> 0) !== blockChecksum(world.bytes) */
+        if (!checksum || qa_js_to_uint32(qa_js_string_to_number(checksum)) != world_checksum)
+          q2_server_drop("Local map version differs from server: %d != '%s'",
+                         (int)(int32_t)world_checksum, checksum ? checksum : "");
+        collect_names(state, layout.models, layout.max_models, &it->models);
         it->phase = 2; it->index = 0;
         break;
       }
       case 2: {
-        if (it->index >= it->models.count) { it->phase = 3; it->index = 0; break; }
+        if (it->yielded_model) {
+          char *model = it->yielded_model;
+          it->yielded_model = NULL;
+          qa_cleanup model_node;
+          qa_cleanup_push(&model_node, free_arg, model);
+          list_clear(&it->pending); it->pending_index = 0;
+          uint8_t *bytes = NULL; size_t length = 0;
+          const qa_resolved_resource_reference *reference = NULL;
+          if (content->mounts.open(content->mounts.ctx, model, &bytes, &length, &reference)) {
+            qa_cleanup bytes_node;
+            qa_cleanup_push(&bytes_node, free_arg, bytes);
+            /* CL_RequestNextDownload skips a model it cannot load; the skin check is simply lost. */
+            string_list dependencies = {0};
+            model_parse parse = {0};
+            parse.model = model; parse.bytes = bytes; parse.length = length;
+            parse.dependencies = &dependencies;
+            qa_caught_error caught;
+            if (qa_try(model_parse_body, &parse, &caught)) {
+              for (size_t i = 0; i < dependencies.count; i++) list_push(&it->pending, dependencies.items[i]);
+            } else {
+              char shown[129];
+              size_t shown_length = strlen(model) > 128 ? 128 : strlen(model);
+              memcpy(shown, model, shown_length);
+              shown[shown_length] = '\0';
+              char *text = joined_text("Ignoring unreadable Q2 model ", shown, ": ", caught.message);
+              qa_cleanup text_node;
+              qa_cleanup_push(&text_node, free_arg, text);
+              print_text(r, text, "\n", "", "");
+              qa_cleanup_pop(&text_node);
+              free(text);
+            }
+            list_destroy(&dependencies);
+            qa_cleanup_pop(&bytes_node);
+            free(bytes);
+          }
+          qa_cleanup_pop(&model_node);
+          free(model);
+          break;
+        }
+        if (it->index >= it->models.count) {
+          collect_names(state, layout.sounds, layout.max_sounds, &it->sounds);
+          it->phase = 3; it->index = 0;
+          break;
+        }
         const char *model = it->models.items[it->index++];
         if (strcmp(model, it->map) == 0 || model[0] == '*' || model[0] == '#') break;
-        uint8_t *bytes = NULL; size_t length = 0;
-        const qa_resolved_resource_reference *reference = NULL;
-        list_clear(&it->pending); it->pending_index = 0;
-        list_push(&it->pending, model);
-        if (content->mounts.open(content->mounts.ctx, model, &bytes, &length, &reference)) {
-          if (ends_with_ci(model, ".md2")) {
-            qa_q2_alias_model parsed;
-            qa_parse_md2(bytes, length, model, &parsed);
-            for (size_t i = 0; i < parsed.skins.count; i++)
-              if (parsed.skins.values[i][0]) list_push(&it->pending, parsed.skins.values[i]);
-            qa_q2_alias_model_destroy(&parsed);
-          } else if (ends_with_ci(model, ".sp2")) {
-            qa_q2_sprite_model parsed;
-            qa_parse_sp2(bytes, length, model, &parsed);
-            for (size_t i = 0; i < parsed.frame_count; i++)
-              list_push(&it->pending, parsed.frames[i].image);
-            /* Landed sprite model storage is released with its
-             * model owner; strings were copied above. */
-          }
-          free(bytes);
-        }
-        break;
+        it->yielded_model = copy_text(model);
+        if (!it->yielded_model) qa_range_error("out of memory");
+        return copy_text(model);
       }
       case 3: {
-        if (it->index >= it->sounds.count) { it->phase = 4; it->index = 0; break; }
+        if (it->index >= it->sounds.count) {
+          collect_names(state, layout.images, layout.max_images, &it->images);
+          it->phase = 4; it->index = 0;
+          break;
+        }
         const char *sound = it->sounds.items[it->index++];
         if (sound[0] == '*') break;
         if (sound[0] == '#') return copy_text(sound + 1);
-        size_t n = strlen(sound) + 7;
-        char *out = malloc(n);
-        if (!out) qa_range_error("out of memory");
-        snprintf(out, n, "sound/%s", sound);
-        return out;
+        return joined_text("sound/", sound, "", "");
       }
       case 4: {
         if (it->index >= it->images.count) { it->phase = 5; it->index = 0; break; }
         const char *image = it->images.items[it->index++];
         if (image[0] == '/') return copy_text(image + 1);
-        size_t n = strlen(image) + 10;
-        char *out = malloc(n);
-        if (!out) qa_range_error("out of memory");
-        snprintf(out, n, "pics/%s.pcx", image);
-        return out;
+        return joined_text("pics/", image, ".pcx", "");
       }
       case 5: {
         if (it->index >= 256) { it->phase = 6; it->index = 0; it->sky_step = 0; break; }
-        const char *value = config_string(r, state, layout.player_skins + (double)it->index++);
+        const char *value = config_string(state, layout.player_skins + (double)it->index++);
         if (!value || !value[0]) break;
+        /* value.slice(value.indexOf('\\') + 1) */
         const char *backslash = strchr(value, '\\');
         const char *skin = backslash ? backslash + 1 : value;
         const char *slash = strchr(skin, '/');
         if (!slash || slash == skin) break;
         size_t model_length = (size_t)(slash - skin);
+        char *model = malloc(model_length + 1);
+        if (!model) qa_range_error("out of memory");
+        memcpy(model, skin, model_length); model[model_length] = '\0';
+        qa_cleanup model_node;
+        qa_cleanup_push(&model_node, free_arg, model);
         const char *name = slash + 1;
-        static const char *fixed[] = {"tris.md2", "weapon.md2", "weapon.pcx"};
         list_clear(&it->pending); it->pending_index = 0;
+        const char *suffixes[5][2] = {{"tris.md2", ""}, {"weapon.md2", ""}, {"weapon.pcx", ""},
+            {name, ".pcx"}, {name, "_i.pcx"}};
         for (size_t i = 0; i < 5; i++) {
-          char buffer[512];
-          if (i < 3) snprintf(buffer, sizeof buffer, "players/%.*s/%s", (int)model_length, skin, fixed[i]);
-          else if (i == 3) snprintf(buffer, sizeof buffer, "players/%.*s/%s.pcx", (int)model_length, skin, name);
-          else snprintf(buffer, sizeof buffer, "players/%.*s/%s_i.pcx", (int)model_length, skin, name);
-          list_push(&it->pending, buffer);
+          char *path = joined_text("players/", model, "/", suffixes[i][0]);
+          char *full = joined_text(path, suffixes[i][1], "", "");
+          free(path);
+          list_push(&it->pending, full);
+          free(full);
         }
+        qa_cleanup_pop(&model_node);
+        free(model);
         break;
       }
       case 6: {
-        const char *sky = config_string(r, state, 2);
+        const char *sky = config_string(state, 2);
         if (!sky || !sky[0] || it->index >= 6) { it->phase = 7; break; }
         if (it->sky_step == 0) {
           const char *suffix = qa_sky_face_suffixes[it->index];
-          size_t n = strlen(sky) + strlen(suffix) + 10;
           free(it->sky_tga); free(it->sky_pcx);
-          it->sky_tga = malloc(n); it->sky_pcx = malloc(n);
-          if (!it->sky_tga || !it->sky_pcx) qa_range_error("out of memory");
-          snprintf(it->sky_tga, n, "env/%s%s.tga", sky, suffix);
-          snprintf(it->sky_pcx, n, "env/%s%s.pcx", sky, suffix);
+          it->sky_tga = NULL; it->sky_pcx = NULL;
+          it->sky_tga = joined_text("env/", sky, suffix, ".tga");
+          it->sky_pcx = joined_text("env/", sky, suffix, ".pcx");
           it->index++;
           if (content->mounts.exists(content->mounts.ctx, it->sky_tga)
               || content->mounts.exists(content->mounts.ctx, it->sky_pcx)) break;
@@ -800,10 +963,7 @@ static char *iter_next(qa_app_q2_download_receiver *r, const qa_app_q2_game_stat
         qa_read_q2_bsp(it->world, it->world_length, it->map, &bsp);
         list_clear(&it->pending); it->pending_index = 0;
         for (size_t i = 0; i < bsp.texture_info_count; i++) {
-          size_t n = strlen(bsp.texture_info[i].name) + 15;
-          char *out = malloc(n);
-          if (!out) qa_range_error("out of memory");
-          snprintf(out, n, "textures/%s.wal", bsp.texture_info[i].name);
+          char *out = joined_text("textures/", bsp.texture_info[i].name, ".wal", "");
           list_push(&it->pending, out);
           free(out);
         }
@@ -818,11 +978,12 @@ static char *iter_next(qa_app_q2_download_receiver *r, const qa_app_q2_game_stat
 static void receiver_close(qa_app_q2_download_receiver *r) {
   r->retired_block = false; r->retry_requested = false;
   r->generation++;
-  if (r->http_live) { qa_http_download_queue_cancel((qa_http_download_queue *)r->http_storage); qa_http_download_queue_destroy((qa_http_download_queue *)r->http_storage); r->http_live = false; }
+  if (r->http) { qa_http_download_queue_cancel(r->http); qa_http_download_queue_free(r->http); r->http = NULL; }
+  free(r->http_root); r->http_root = NULL;
   r->metadata_aborted = true;
   r->metadata_aborted = false; /* TS installs a fresh AbortController */
   r->http_task = false; r->http_done = false;
-  free(r->http_error); r->http_error = NULL;
+  free(r->http_error); r->http_error = NULL; r->http_error_name = NULL;
   list_clear(&r->attempted);
   for (size_t i = 0; i < r->http_path_count; i++) {
     free(r->http_paths[i].dest); free(r->http_paths[i].path);
@@ -831,8 +992,9 @@ static void receiver_close(qa_app_q2_download_receiver *r) {
   free(r->retry_path); r->retry_path = NULL;
   free(r->task_path); r->task_path = NULL; r->task_kind = 0;
   if (r->has_pending) {
+    /* TS this.pending?.sink.suspend(): an interrupted native download keeps its staged bytes for resume. */
     if (r->pending.has_sink) {
-      qa_download_sink_close(&r->pending.sink);
+      qa_download_sink_suspend(&r->pending.sink);
       qa_download_sink_destroy(&r->pending.sink);
     }
     free(r->pending.path); r->has_pending = false;
@@ -840,21 +1002,23 @@ static void receiver_close(qa_app_q2_download_receiver *r) {
   iter_destroy(r->paths); r->paths = NULL;
   r->state = NULL;
   list_clear(&r->refused);
+  /* httpInitial's asset scope map belongs to the queue this close cancelled. */
+  for (size_t i = 0; i < r->scope_count; i++) free(r->asset_scopes[i].path);
+  r->scope_count = 0;
 }
 qa_app_q2_download_receiver *qa_app_q2_download_receiver_create(
     const qa_app_q2_remote_mounts *(*content)(void *ctx), void *content_ctx,
     void (*command)(void *ctx, const char *text), void *command_ctx,
     void (*print)(void *ctx, const char *text), void *print_ctx,
     void (*refresh_packages)(void *ctx), void *refresh_ctx,
-    const qa_app_client_download_permission *permission,
-    qa_app_q2_state_access state_access) {
+    const qa_app_client_download_permission *permission) {
   qa_app_q2_download_receiver *r = calloc(1, sizeof *r);
   if (!r) return NULL;
   r->content = content; r->content_ctx = content_ctx;
   r->command = command; r->command_ctx = command_ctx;
   r->print = print; r->print_ctx = print_ctx;
   r->refresh_packages = refresh_packages; r->refresh_ctx = refresh_ctx;
-  r->permission = permission; r->access = state_access;
+  r->permission = permission;
   return r;
 }
 void qa_app_q2_download_receiver_destroy(qa_app_q2_download_receiver *receiver) {
@@ -870,10 +1034,10 @@ void qa_app_q2_download_receiver_destroy(qa_app_q2_download_receiver *receiver) 
 size_t qa_app_q2_download_receiver_progress(qa_app_q2_download_receiver *receiver,
     qa_app_client_download_progress *out, size_t capacity) {
   size_t total = 0;
-  if (receiver->http_live) {
-    size_t count = qa_http_download_queue_progress_count((qa_http_download_queue *)receiver->http_storage);
+  if (receiver->http != NULL) {
+    size_t count = qa_http_download_queue_progress_count(receiver->http);
     for (size_t i = 0; i < count; i++) {
-      qa_download_progress item = qa_http_download_queue_progress_at((qa_http_download_queue *)receiver->http_storage, i);
+      qa_download_progress item = qa_http_download_queue_progress_at(receiver->http, i);
       if (total < capacity) {
         qa_app_client_download_progress *row = &out[total];
         row->path = http_resource(receiver, item.path);
@@ -921,10 +1085,92 @@ void qa_app_q2_download_receiver_set_http_server(qa_app_q2_download_receiver *re
   free(receiver->server);
   receiver->server = server_url ? copy_text(server_url) : NULL;
 }
+typedef struct exists_scope {
+  const qa_app_q2_remote_mounts *content;
+  const char *path;
+  bool installed;
+} exists_scope;
+static void exists_body(void *arg) {
+  exists_scope *scope = (exists_scope *)arg;
+  scope->installed = scope->content->mounts.exists(scope->content->mounts.ctx, scope->path);
+}
+static void validate_body(void *arg) { validate_path(arg); }
+typedef struct prepare_scope {
+  qa_app_q2_download_receiver *r;
+  const qa_app_q2_game_state *state;
+  double generation;
+  char *path; /* owned while the loop holds it */
+  qa_app_q2_download_preparation result;
+} prepare_scope;
+static void prepare_body(void *arg) {
+  prepare_scope *scope = (prepare_scope *)arg;
+  qa_app_q2_download_receiver *r = scope->r;
+  const qa_app_q2_game_state *state = scope->state;
+  double generation = scope->generation;
+  const qa_app_q2_remote_mounts *content = r->content(r->content_ctx);
+  for (;;) {
+    char *path;
+    if (r->retry_path) { path = r->retry_path; r->retry_path = NULL; }
+    else path = iter_next(r, state, content);
+    if (generation != r->generation) { free(path); scope->path = NULL; scope->result = QA_APP_Q2_PREP_CANCELED; return; }
+    if (!path) { scope->result = QA_APP_Q2_PREP_READY; return; }
+    scope->path = path;
+    /* An unresolvable path is not installed; validation below refuses it. */
+    exists_scope exists = {content, path, false};
+    qa_caught_error exists_caught;
+    if (!qa_try(exists_body, &exists, &exists_caught)) exists.installed = false;
+    bool installed = exists.installed;
+    if (generation != r->generation) { free(path); scope->path = NULL; scope->result = QA_APP_Q2_PREP_CANCELED; return; }
+    if (installed || list_contains(&r->refused, path)) { free(path); scope->path = NULL; continue; }
+    qa_caught_error invalid;
+    if (!qa_try(validate_body, path, &invalid)) {
+      /* cl_parse.c prints and goes on with the next resource. */
+      char shown[129];
+      size_t shown_length = strlen(path) > 128 ? 128 : strlen(path);
+      memcpy(shown, path, shown_length);
+      shown[shown_length] = '\0';
+      print_text(r, "Refusing Q2 download of ", shown, "\n", "");
+      if (!list_contains(&r->refused, path)) list_push(&r->refused, path);
+      free(path);
+      scope->path = NULL;
+      continue;
+    }
+    qa_app_client_download_category category = qa_app_client_download_category_for(path);
+    if (r->http != NULL && !list_contains(&r->attempted, path)
+        && permitted(r, QA_APP_DL_HTTP, category)) {
+      r->retry_path = path;
+      scope->path = NULL;
+      start_task(r, 2, path);
+      scope->result = QA_APP_Q2_PREP_WAITING;
+      return;
+    }
+    if (!permitted(r, QA_APP_DL_NATIVE, category)) { free(path); scope->path = NULL; continue; }
+    mkdir_recursive(root_for(r, path));
+    if (generation != r->generation) { free(path); scope->path = NULL; scope->result = QA_APP_Q2_PREP_CANCELED; return; }
+    if (!permitted(r, QA_APP_DL_NATIVE, category)) { free(path); scope->path = NULL; continue; }
+    qa_download_expectation expected = {true, NULL, 0, 0x7fffffff};
+    if (!qa_download_sink_create_resumable(&r->pending.sink, root_for(r, path), path, expected))
+      qa_range_error("out of memory");
+    r->pending.has_sink = true;
+    r->pending.path = path; r->pending.percent = 0; r->has_pending = true;
+    scope->path = NULL;
+    /* cl_parse.c continues from the length of the staged file. */
+    double resumed = r->pending.sink.resumed_from;
+    size_t n = strlen(path) + 40;
+    char *command = malloc(n);
+    if (!command) qa_range_error("out of memory");
+    if (resumed > 0) snprintf(command, n, "download %s %s", path, QA_JS_NUMBER(resumed));
+    else snprintf(command, n, "download %s", path);
+    r->command(r->command_ctx, command);
+    free(command);
+    scope->result = QA_APP_Q2_PREP_WAITING;
+    return;
+  }
+}
 qa_app_q2_download_preparation qa_app_q2_download_receiver_prepare(
     qa_app_q2_download_receiver *r, const qa_app_q2_game_state *state) {
   if (r->cancelled) return QA_APP_Q2_PREP_CANCELED;
-  const char *gamedir = r->access.gamedir(state->data);
+  const char *gamedir = state_gamedir(state);
   qa_remote_content_selection selected;
   if (!qa_remote_content_selection_make("q2-classic-baseq2", gamedir ? gamedir : "", &selected))
     qa_range_error("out of memory");
@@ -932,7 +1178,7 @@ qa_app_q2_download_preparation qa_app_q2_download_receiver_prepare(
   bool same = strcmp(owner->selection_base, selected.base) == 0
       && strcmp(owner->selection_directory, selected.directory) == 0;
   free(selected.directory);
-  if (!same) qa_range_error("Q2 server game differs from prepared content");
+  if (!same) qa_raise("Error", 0, 0, "Q2 server game differs from prepared content");
   if (r->http_task && r->http_done) r->http_task = false;
   if (r->state != state) {
     receiver_close(r);
@@ -941,49 +1187,30 @@ qa_app_q2_download_preparation qa_app_q2_download_receiver_prepare(
     if (r->server && permitted(r, QA_APP_DL_HTTP, QA_APP_DL_METADATA)) start_task(r, 1, NULL);
   }
   if (r->http_task) return QA_APP_Q2_PREP_WAITING;
-  if (r->http_error) qa_range_error("%s", r->http_error);
+  /* TS `throw this.httpError`: the stored error, outside the try that closes the receiver. */
+  if (r->http_error) qa_raise(r->http_error_name, 0, 0, "%s", r->http_error);
   if (!r->paths) {
     r->paths = calloc(1, sizeof(resource_iter));
     if (!r->paths) qa_range_error("out of memory");
   }
   if (r->has_pending) return QA_APP_Q2_PREP_WAITING;
-  double generation = r->generation;
-  const qa_app_q2_remote_mounts *content = r->content(r->content_ctx);
-  for (;;) {
-    char *path;
-    if (r->retry_path) { path = r->retry_path; r->retry_path = NULL; }
-    else path = iter_next(r, state, content);
-    if (generation != r->generation) { free(path); return QA_APP_Q2_PREP_CANCELED; }
-    if (!path) return QA_APP_Q2_PREP_READY;
-    validate_path(path);
-    bool installed = content->mounts.exists(content->mounts.ctx, path);
-    if (generation != r->generation) { free(path); return QA_APP_Q2_PREP_CANCELED; }
-    if (installed || list_contains(&r->refused, path)) { free(path); continue; }
-    qa_app_client_download_category category = qa_app_client_download_category_for(path);
-    if (r->http_live && !list_contains(&r->attempted, path)
-        && permitted(r, QA_APP_DL_HTTP, category)) {
-      r->retry_path = path;
-      start_task(r, 2, path);
-      return QA_APP_Q2_PREP_WAITING;
-    }
-    if (!permitted(r, QA_APP_DL_NATIVE, category)) { free(path); continue; }
-    mkdir_recursive(root_for(r, path));
-    if (generation != r->generation) { free(path); return QA_APP_Q2_PREP_CANCELED; }
-    if (!permitted(r, QA_APP_DL_NATIVE, category)) { free(path); continue; }
-    qa_download_expectation expected = {true, NULL, 0, 0x7fffffff};
-    if (!qa_download_sink_create(&r->pending.sink, root_for(r, path), path, expected))
-      qa_range_error("out of memory");
-    r->pending.has_sink = true;
-    r->pending.path = path; r->pending.percent = 0; r->has_pending = true;
-    size_t n = strlen(path) + 10;
-    char *command = malloc(n);
-    if (!command) qa_range_error("out of memory");
-    snprintf(command, n, "download %s", path);
-    r->command(r->command_ctx, command);
-    free(command);
-    return QA_APP_Q2_PREP_WAITING;
-  }
+  /* TS try { ... } catch (error) { if (generation !== this.generation) return 'canceled';
+   * this.close(); throw error; } */
+  prepare_scope scope = {r, state, r->generation, NULL, QA_APP_Q2_PREP_CANCELED};
+  qa_caught_error caught;
+  bool ok = qa_try(prepare_body, &scope, &caught);
+  if (ok) return scope.result;
+  free(scope.path);
+  if (scope.generation != r->generation) return QA_APP_Q2_PREP_CANCELED;
+  receiver_close(r);
+  qa_rethrow(&caught);
 }
+typedef struct receive_scope {
+  qa_app_q2_download_receiver *r;
+  const qa_q2_server_event *block;
+  qa_app_q2_download_receive result;
+} receive_scope;
+static void receive_body(void *arg);
 qa_app_q2_download_receive qa_app_q2_download_receiver_receive(
     qa_app_q2_download_receiver *r, const qa_q2_server_event *block) {
   if (r->retired_block) {
@@ -998,18 +1225,36 @@ qa_app_q2_download_receive qa_app_q2_download_receiver_receive(
     free(r->pending.path); r->has_pending = false;
     return QA_APP_Q2_DL_COMPLETE;
   }
+  /* TS try { ... } catch (error) { this.close(); throw error; } */
+  receive_scope scope = {r, block, QA_APP_Q2_DL_COMPLETE};
+  qa_caught_error caught;
+  if (qa_try(receive_body, &scope, &caught)) return scope.result;
+  /* catch: pending.sink.close(); this.pending = null; this.close(); throw */
+  if (r->has_pending) {
+    if (r->pending.has_sink) {
+      qa_download_sink_close(&r->pending.sink);
+      qa_download_sink_destroy(&r->pending.sink);
+    }
+    free(r->pending.path); r->has_pending = false;
+  }
+  receiver_close(r);
+  qa_rethrow(&caught);
+}
+static void receive_body(void *arg) {
+  receive_scope *scope = (receive_scope *)arg;
+  qa_app_q2_download_receiver *r = scope->r;
+  const qa_q2_server_event *block = scope->block;
   if (!block->has_bytes) {
-    list_push(&r->refused, r->pending.path);
+    if (!list_contains(&r->refused, r->pending.path)) list_push(&r->refused, r->pending.path);
     print_text(r, "Server download unavailable: ", r->pending.path, "\n", "");
     qa_download_sink_close(&r->pending.sink);
     qa_download_sink_destroy(&r->pending.sink);
     free(r->pending.path); r->has_pending = false;
-    return QA_APP_Q2_DL_COMPLETE;
+    scope->result = QA_APP_Q2_DL_COMPLETE;
+    return;
   }
-  if (block->percent < r->pending.percent || block->percent > 100) {
-    receiver_close(r);
-    qa_range_error("Invalid Q2 download progress");
-  }
+  if (block->percent < r->pending.percent || block->percent > 100)
+    qa_raise("Error", 0, 0, "Invalid Q2 download progress");
   qa_download_sink_append(&r->pending.sink, block->bytes, block->bytes_length);
   r->pending.percent = block->percent;
   if (block->percent == 100
@@ -1020,14 +1265,12 @@ qa_app_q2_download_receive qa_app_q2_download_receiver_receive(
     free(r->pending.path); r->has_pending = false;
     const qa_app_q2_remote_mounts *content = r->content(r->content_ctx);
     content->mounts.invalidate_listings(content->mounts.ctx);
-    return QA_APP_Q2_DL_COMPLETE;
+    scope->result = QA_APP_Q2_DL_COMPLETE;
+    return;
   }
-  if (block->bytes_length == 0) {
-    receiver_close(r);
-    qa_range_error("Q2 download made no progress");
-  }
+  if (block->bytes_length == 0) qa_raise("Error", 0, 0, "Q2 download made no progress");
   r->command(r->command_ctx, "nextdl");
-  return QA_APP_Q2_DL_WAITING;
+  scope->result = QA_APP_Q2_DL_WAITING;
 }
 void qa_app_q2_download_receiver_close(qa_app_q2_download_receiver *receiver) {
   receiver_close(receiver);

@@ -687,25 +687,4 @@ void qa_finish_shader_input_result_free(qa_finish_shader_input_result *result) {
   storage_free((storage *)result->_storage);
   memset(result, 0, sizeof *result);
 }
-void qa_finish_implicit_shader(qa_finish_implicit_shader_input input,
-                               qa_finished_shader_result *out) {
-  qa_finish_shader_input_result built;
-  qa_implicit_shader_input(input, &built);
-  qa_finish_shader(built.input, out);
-  qa_finish_shader_input_result_free(&built);
-}
-void qa_finish_failed_shader(qa_finish_failed_shader_input input,
-                             qa_finished_shader_result *out) {
-  qa_mat_shader_definition definition;
-  memset(&definition, 0, sizeof definition);
-  definition.name = input.name;
-  definition.cull = "front";
-  qa_finish_shader_input finish;
-  finish.definition = definition;
-  finish.lightmap_index = input.lightmap_index;
-  finish.images = NULL;
-  finish.image_count = 0;
-  finish.profile = input.profile;
-  qa_finish_shader(finish, out);
-}
 

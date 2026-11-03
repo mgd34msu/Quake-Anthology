@@ -1,9 +1,10 @@
 /* Port of src/app/bootstrap/network/remote.ts
  * (Q2RemotePresentation + q2RemoteEntityBounds). Loaded content
- * access (recipe/world/mount read/catalog rebind) and scene
- * link/model-bounds come through the options host. Events are
- * qa_app_sim_presentation_event with the payload structs below
- * (kind "q2"/"q2-player"/"q2-weapon"). GPL-2.0-or-later. */
+ * access (recipe/world/mount read/catalog rebind) comes through the
+ * options host; the world scene is the qa_shared_scene_queries the
+ * remote world host creates, linked and traced directly. Events are
+ * SimulationPresentationEvent (kind "q2"/"q2-player"/"q2-weapon").
+ * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_REMOTE_H
 #define QA_APP_BOOTSTRAP_NETWORK_REMOTE_H
 #include <stdbool.h>
@@ -22,23 +23,6 @@
 #include "qa/network/q2/server_messages.h"
 #include "qa/text/world.h"
 qa_bounds qa_app_q2_remote_entity_bounds(double solid, bool long_solid);
-typedef enum qa_app_q2_remote_event_kind {
-  QA_APP_Q2_REMOTE_ENTITY_EVENT, QA_APP_Q2_REMOTE_SOUND_START,
-  QA_APP_Q2_REMOTE_SOUND_STOP, QA_APP_Q2_REMOTE_SOUND_ONCE,
-  QA_APP_Q2_REMOTE_CENTERPRINT, QA_APP_Q2_REMOTE_MONSTER_MUZZLEFLASH,
-  QA_APP_Q2_REMOTE_MUZZLEFLASH, QA_APP_Q2_REMOTE_EFFECT,
-  QA_APP_Q2_REMOTE_USERINFO, QA_APP_Q2_REMOTE_PRINT, QA_APP_Q2_REMOTE_BEAM
-} qa_app_q2_remote_event_kind;
-typedef struct qa_app_q2_remote_event {
-  qa_app_q2_remote_event_kind kind;
-  bool has_actor; qa_actor_id actor;
-  double event;          /* entity-event */
-  qa_vec3 origin, direction;
-  const char *path, *text, *name, *skin;
-  double channel, volume, attenuation, flash, slot;
-  bool silenced;
-  const void *effect;    /* qa_app_q2_effect_event / beam */
-} qa_app_q2_remote_event;
 typedef void (*qa_app_q2_cinematic_ended_fn)(void *ctx);
 typedef struct qa_app_q2_remote_cinematic {
   void *ctx;
@@ -78,10 +62,6 @@ typedef struct qa_app_q2_remote_options {
   const uint8_t *(*content_read)(void *ctx, void *loaded,
       const qa_resolved_resource_reference *reference, size_t *out_length);
   const qa_app_q2_remote_mounts *(*rebind_download_content)(void *ctx, const qa_app_q2_remote_mounts *owner, void *loaded);
-  /* Scene link seam (world.scene link/unlink/modelBounds). */
-  void (*scene_link)(void *ctx, void *scene, qa_linked_body body, qa_actor_collision collision);
-  void (*scene_unlink)(void *ctx, void *scene, qa_actor_id actor);
-  qa_bounds (*scene_model_bounds)(void *ctx, void *scene, double model);
 } qa_app_q2_remote_options;
 typedef struct qa_app_q2_remote qa_app_q2_remote;
 qa_app_q2_remote *qa_app_q2_remote_create(qa_app_q2_remote_options options);
@@ -130,6 +110,8 @@ const qa_simulation_output *qa_app_q2_remote_sample_demo(qa_app_q2_remote *remot
     double recorded_milliseconds);
 void qa_app_q2_remote_records(qa_app_q2_remote *remote,
     const qa_q2_server_record *records, size_t count);
+/* TS drainPresentationEvents. The events are owned copies the remote keeps
+ * until the next drain or destroy. */
 const qa_app_sim_presentation_event *qa_app_q2_remote_drain_events(qa_app_q2_remote *remote,
     size_t *out_count);
 void qa_app_q2_remote_prediction_acknowledged(qa_app_q2_remote *remote,

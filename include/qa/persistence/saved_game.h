@@ -6,15 +6,10 @@
  *    false on I/O failure (the TS promise rejects) or OOM.
  *  - The decoded Q1 payload is owned (qa_q1_save_data_free via
  *    qa_saved_game_free); a shared image borrows per save_image.h.
- *  - BLOCKED: the shared ("QT") branch needs decodeSaveImage /
- *    encodeSaveImage from save-image.ts, which have no C port yet
- *    (see save_image.h). qa_decode_saved_game reproduces that
- *    codec's signature, envelope and schemaVersion checks exactly
- *    (malformed shared saves abort with the same SaveFormatError
- *    and never fall back to source parsing), then aborts with a
- *    C-only "not yet ported" SaveFormatError until the codec lands;
- *    qa_write_saved_game aborts the same way for a shared save.
- *    The Q1 source branch is complete.
+ *  - A decoded shared image keeps its checkpoint tree and arrays in
+ *    image_root (qa_saved_game_free releases them, as
+ *    qa_save_image_result_free does); a caller-built shared image
+ *    leaves image_root NULL and owns its own storage.
  * GPL-2.0-or-later.
  */
 #ifndef QA_PERSISTENCE_SAVED_GAME_H
@@ -26,6 +21,7 @@
 
 #include "qa/contracts/session.h"
 #include "qa/persistence/q1.h"
+#include "qa/persistence/value.h"
 
 /* TS SavedGame union on kind: "shared" | "q1-source". */
 typedef enum qa_saved_game_kind {
@@ -34,6 +30,7 @@ typedef enum qa_saved_game_kind {
 typedef struct qa_saved_game {
   qa_saved_game_kind kind;
   qa_save_image image;   /* shared */
+  qa_save_value *image_root; /* shared, decoded: owned tree (C-only) */
   qa_q1_save_data data;  /* q1-source; owned */
 } qa_saved_game;
 

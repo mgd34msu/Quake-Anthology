@@ -42,9 +42,11 @@ bool qa_q3_client_clock_advance(qa_q3_client_clock *c, int64_t real_time, const 
     qa_common_error(QA_COMMON_ERROR_DROP, "cl.snap.serverTime < cl.oldFrameServerTime");
   c->old_frame_server_time = snapshot->server_time;
   if (!options->demo || !options->freeze_demo) {
-    int64_t nudge = (int64_t)trunc(options->time_nudge);
-    if (nudge < -30) nudge = -30;
-    if (nudge > 30) nudge = 30;
+    /* Math.max(-30, Math.min(30, Math.trunc(x))): NaN survives the clamps and
+     * the following sourceClock rejects it. */
+    double nudge_value = trunc(options->time_nudge);
+    if (isnan(nudge_value)) qa_range_error("Q3 source clock arithmetic exceeds signed int32");
+    int64_t nudge = nudge_value < -30 ? -30 : nudge_value > 30 ? 30 : (int64_t)nudge_value;
     c->time = source_clock(sc_add(real_time, c->delta) - nudge);
     if (c->time < c->old_time) c->time = c->old_time;
     c->old_time = c->time;

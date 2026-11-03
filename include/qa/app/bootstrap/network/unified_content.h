@@ -1,9 +1,9 @@
-/* Port of src/app/bootstrap/network/unified-content.ts. The landed
- * recipe reader is blocked (persistence/recipe.h), so recipes ride
- * as qa_save_value trees: normalization, mount/resource rebinding,
- * resource-id recomputation and the canonical digest all operate
- * on the tree with TS field names. Catalog/content loading goes
- * through the host below. GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/network/unified-content.ts. Recipes ride
+ * as qa_save_value trees (checked by qa_read_recipe as TS readRecipe):
+ * normalization, mount/resource rebinding, resource-id recomputation and
+ * the canonical digest all operate on the tree with TS field names.
+ * Catalog/content loading goes through the host below. Readers raise as
+ * TS throws and free their partial results. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_UNIFIED_CONTENT_H
 #define QA_APP_BOOTSTRAP_NETWORK_UNIFIED_CONTENT_H
 #include <stdbool.h>
@@ -22,7 +22,8 @@ typedef struct qa_app_unified_map_sidecar {
 typedef struct qa_app_unified_composition {
   char *digest;                 /* owned ContentDigest text */
   qa_save_value *recipe;        /* owned normalized recipe tree */
-  qa_app_unified_map_sidecar *sidecars; size_t sidecar_count; /* owned */
+  qa_app_unified_map_sidecar *sidecars; size_t sidecar_count; /* owned array */
+  qa_save_value *sidecar_tree;  /* owned canonical sidecar list the sidecars borrow from */
 } qa_app_unified_composition;
 /* Malloc'd `resource:unified:<sha256 hex>`; from_reference selects
  * the ResolvedResourceReference overload. */
@@ -43,6 +44,9 @@ qa_app_unified_composition *qa_app_unified_build_composition(
 /* TS readUnifiedComposition(unknown): value is the identity tree
  * {digest, composition:{...}}. */
 qa_app_unified_composition *qa_app_unified_read_composition(const qa_save_value *value);
+/* The TS identity value {digest, composition} of a read composition (owned). */
+qa_save_value *qa_app_unified_composition_value(const qa_app_unified_composition *identity);
+/* TS encodeUnifiedComposition: re-reads the identity, then encodes the canonical value. */
 uint8_t *qa_app_unified_encode_composition(const qa_save_value *identity_tree, size_t *out_length);
 qa_app_unified_composition *qa_app_unified_decode_composition(
     const uint8_t *bytes, size_t length);
@@ -51,7 +55,11 @@ typedef struct qa_app_unified_content_host {
   void *ctx;
   /* catalog.mountsFor(content): candidate mount trees (borrowed). */
   const qa_save_value *const *(*catalog_mounts)(void *ctx, qa_content_id content, size_t *out_count);
-  /* openMountPlan read/resolve over the rebound plan tree. */
+  /* openMountPlan(plan) over the rebound plan tree ({id, mounts, defaultOrder, prefixOrders}); close_plan
+   * disposes it (TS `using`), also when a read or check raises. */
+  void (*open_plan)(void *ctx, const qa_save_value *plan);
+  void (*close_plan)(void *ctx);
+  /* read/resolve on the opened plan. */
   void (*plan_read)(void *ctx, const qa_save_value *resource);
   const char *(*plan_resolve_id)(void *ctx, const char *requested_path);
   /* loadApplicationContent + close + observed recipe/sidecars. */

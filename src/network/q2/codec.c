@@ -1,8 +1,12 @@
 /* Port of src/network/q2/codec.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/codec.h"
+#include "qa/network/common/js_number.h"
 
 #include <stdlib.h>
+
+#include "qa/foundation/support.h"
 #include <string.h>
+#include <math.h>
 
 #include "qa/network/q2/constants.h"
 
@@ -29,7 +33,7 @@ void qa_q2_negotiated_r1q2_protocol(qa_q2_protocol_identity offered,
                                     bool has_reported, double reported,
                                     qa_q2_protocol_identity *out) {
   if (!has_reported || (reported != 1903 && reported != 1904 && reported != 1905)) {
-    if (has_reported) qa_q2_throw_error("Unsupported R1Q2 server revision %g", reported);
+    if (has_reported) qa_q2_throw_error("Unsupported R1Q2 server revision %s", QA_JS_NUMBER(reported));
     qa_q2_throw_error("Unsupported R1Q2 server revision undefined");
   }
   double revision = reported < (double)offered.revision ? reported
@@ -78,6 +82,7 @@ bool qa_q2_wire_codec_init(qa_q2_wire_codec *wire,
 
 void qa_q2_wire_codec_destroy(qa_q2_wire_codec *wire) {
   qa_q2_message_destroy(&wire->message);
+  qa_q2_kex_context_destroy(&wire->kex);
 }
 
 qa_q2_protocol_identity qa_q2_wire_codec_get_protocol(const qa_q2_wire_codec *wire) {
@@ -99,7 +104,7 @@ void qa_q2_wire_codec_accept_server_revision(qa_q2_wire_codec *wire,
 
 void qa_q2_wire_codec_accept_q2pro_features(qa_q2_wire_codec *wire,
                                             double revision, double flags) {
-  bool integer_flags = flags == (double)(int64_t)flags;
+  bool integer_flags = isfinite(flags) && flags == trunc(flags); /* Number.isInteger */
   if (!kind_is(&wire->selected_protocol, "q2-q2pro") ||
       (double)wire->selected_protocol.revision != revision || !integer_flags ||
       flags < 0 || flags > 65535) {
@@ -155,6 +160,17 @@ int32_t qa_q2_wire_codec_opcode(qa_q2_wire_codec *wire, int32_t raw) {
   return raw;
 }
 
+typedef struct nested_scope {
+  qa_q2_wire_codec *wire;
+  qa_q2_wire_read_fn read;
+  void *ctx;
+} nested_scope;
+static void nested_body(void *arg) {
+  nested_scope *scope = (nested_scope *)arg;
+  scope->read(scope->ctx, scope->wire->selected_codec, &scope->wire->message);
+  qa_q2_wire_codec_finish(scope->wire);
+}
+
 bool qa_q2_wire_codec_nested(qa_q2_wire_codec *wire, const uint8_t *bytes,
                              size_t length, qa_q2_wire_read_fn read, void *ctx) {
   uint8_t *prev_data = wire->message.data;
@@ -170,8 +186,10 @@ bool qa_q2_wire_codec_nested(qa_q2_wire_codec *wire, const uint8_t *bytes,
   wire->message.owns_data = false;
   qa_q2_sz_init(&wire->message, copy, length, (int64_t)length);
   wire->message.cursize = (int64_t)length;
-  read(ctx, wire->selected_codec, &wire->message);
-  qa_q2_wire_codec_finish(wire);
+  /* TS try/finally: the containing packet is restored whether or not the nested read throws. */
+  nested_scope scope = {wire, read, ctx};
+  qa_caught_error caught;
+  bool ok = qa_try(nested_body, &scope, &caught);
   free(copy);
   wire->message.data = prev_data;
   wire->message.data_length = prev_len;
@@ -179,6 +197,7 @@ bool qa_q2_wire_codec_nested(qa_q2_wire_codec *wire, const uint8_t *bytes,
   wire->message.readcount = prev_readcount;
   wire->message.maxsize = prev_maxsize;
   wire->message.owns_data = prev_owns;
+  if (!ok) qa_rethrow(&caught);
   return true;
 }
 

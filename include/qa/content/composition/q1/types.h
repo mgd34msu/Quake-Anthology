@@ -1,17 +1,8 @@
 /*
- * Port of src/content/composition/q1/types.ts (types only).
- * Mirrored types from unported modules (opaque, collision-proof names;
- * replace when their owners land):
- *  - qa_comp_q1_actor: Q1Actor, src/content/q1/foundation/entity.ts
- *  - qa_comp_q1_travel: Q1TravelState, src/content/q1/base/index.ts
- *  - qa_comp_q1_entity_services: Q1EntityServices,
- *    src/content/q1/foundation/entity-services.ts
- *  - qa_comp_q1_addon_event: Q1AddonEvent, src/content/q1/addons/context.ts
- *  - qa_comp_q1_finale: Q1SourceFinale, src/content/q1/base/index.ts
- *  - qa_comp_ctf_status: CtfStatus, src/content/q1/addons/ctf/types.ts
- *  - qa_comp_q1_campaign_binding: Q1CampaignBinding,
- *    src/content/q1/base/index.ts (readFlags/writeFlags/setSkill as used
- *    by this module).
+ * Port of src/content/composition/q1/types.ts (types only), on the one Q1
+ * game: Q1Actor is qa_q1_actor, Q1TravelState qa_q1_travel_state,
+ * Q1EntityServices qa_q1_services, Q1AddonEvent qa_q1ad_event, CtfStatus
+ * qa_q1ad_ctf_status, Q1SourceFinale qa_q1_intermission_result.
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_COMPOSITION_Q1_TYPES_H
@@ -25,13 +16,11 @@
 #include "qa/contracts/gameplay.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
-
-typedef struct qa_comp_q1_actor qa_comp_q1_actor;
-typedef struct qa_comp_q1_travel qa_comp_q1_travel;
-typedef struct qa_comp_q1_entity_services qa_comp_q1_entity_services;
-typedef struct qa_comp_q1_addon_event qa_comp_q1_addon_event;
-typedef struct qa_comp_q1_finale qa_comp_q1_finale;
-typedef struct qa_comp_ctf_status qa_comp_ctf_status;
+#include "qa/content/q1/addons/context.h"
+#include "qa/content/q1/addons/ctf/types.h"
+#include "qa/content/q1/base/rules.h"
+#include "qa/content/q1/base/travel.h"
+#include "qa/content/q1/foundation/entity_services.h"
 
 /* TS Q1SourceProgram, in declaration order. */
 typedef enum qa_comp_q1_program {
@@ -40,17 +29,9 @@ typedef enum qa_comp_q1_program {
 } qa_comp_q1_program;
 const char *qa_comp_q1_program_name(qa_comp_q1_program program);
 
-/* Mirrored Q1CampaignBinding surface used by this module. */
-typedef struct qa_comp_q1_campaign_binding {
-  void *ctx;
-  double (*read_flags)(void *ctx);
-  void (*write_flags)(void *ctx, double flags);
-  void (*set_skill)(void *ctx, double skill);
-} qa_comp_q1_campaign_binding;
-
 typedef struct qa_comp_q1_source_selection {
   qa_comp_q1_program program;
-  qa_comp_q1_campaign_binding campaign;
+  qa_q1_campaign_binding campaign; /* TS Q1CampaignBinding (base/provider.h) */
   bool has_horde;
   bool horde;
   bool registered;
@@ -116,11 +97,11 @@ typedef enum qa_comp_q1_event_kind {
 } qa_comp_q1_event_kind;
 typedef struct qa_comp_q1_event {
   qa_comp_q1_event_kind kind;
-  const qa_comp_q1_addon_event *addon_event;
+  const qa_q1ad_event *addon_event;
   qa_comp_q1_client_snapshot client;
   qa_actor_id actor;
   int64_t slot;
-  const qa_comp_ctf_status *status;
+  const qa_q1ad_ctf_status *status;
   const char *team;
   double total;
   const char *title;
@@ -128,7 +109,7 @@ typedef struct qa_comp_q1_event {
   size_t choice_count;
   const char *action;
   const char *text;
-  const qa_comp_q1_finale *finale;
+  const qa_q1_intermission_result *finale;
 } qa_comp_q1_event;
 
 /** TS Q1CompositionServices as fn+ctx. Optional TS members are NULL-able
@@ -142,12 +123,12 @@ typedef struct qa_comp_q1_services {
   void (*emit)(void *ctx, const qa_comp_q1_event *event);
   qa_comp_q1_selected_player (*selected_player)(void *ctx, qa_actor_id actor);
   void (*set_observer)(void *ctx, qa_actor_id actor, bool enabled);
-  void (*place_player)(void *ctx, qa_owned_actor actor, qa_comp_q1_actor *spot,
-                       qa_comp_q1_travel *travel);
+  void (*place_player)(void *ctx, qa_owned_actor actor, qa_q1_actor *spot,
+                       const qa_q1_travel_state *travel);
   void (*disconnect)(void *ctx, qa_actor_id actor);
   void (*teleport)(void *ctx, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles,
                    qa_vec3 velocity, double until);
-  qa_comp_q1_entity_services *(*weapon_services)(void *ctx, qa_actor_id actor);
+  qa_q1_services *(*weapon_services)(void *ctx, qa_actor_id actor); /* NULL result = TS null */
   bool (*cheat_arsenal)(void *ctx, qa_actor_id actor, const char *category);
   bool (*give_selected_item)(void *ctx, qa_actor_id actor, const char *const *args, size_t arg_count);
   qa_item_id (*selected_weapon)(void *ctx, qa_actor_id actor);

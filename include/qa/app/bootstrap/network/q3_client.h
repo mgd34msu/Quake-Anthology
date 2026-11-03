@@ -18,6 +18,7 @@ typedef struct qa_app_q3_client_host {
   bool (*downloading)(void *ctx);
   const char *(*userinfo)(void *ctx);
   void (*system_info)(void *ctx, const char *info);
+  /* snapshot is borrowed for this call only (freed with the parsed message); copy it (qa_q3_wire_snapshot_copy) to keep or publish it. */
   void (*snapshot)(void *ctx, const qa_q3_wire_snapshot *snapshot, double ping);
   void (*map_restart)(void *ctx);
   void (*print)(void *ctx, const char *text);
@@ -82,7 +83,7 @@ void qa_app_q3_client_network_send_packet(qa_app_q3_client_network *network);
 void qa_app_q3_client_network_poll(qa_app_q3_client_network *network, double now);
 void qa_app_q3_client_network_submit(qa_app_q3_client_network *network,
     const void *const *commands, size_t count, double now);
-/* Always aborts "Remote client cannot publish authoritative state". */
+/* Always raises Error "Remote client cannot publish authoritative state". */
 void qa_app_q3_client_network_publish(qa_app_q3_client_network *network,
     const void *output, const void *const *events, size_t count, double now);
 void qa_app_q3_client_network_close(qa_app_q3_client_network *network);

@@ -80,6 +80,10 @@ typedef struct qa_q3_movement_state {
   double predictable_event_sequence;
   const qa_actor_id *jump_pad; /* nullable */
   double movement_frame, jump_pad_frame;
+  /* Key order of the TS literal that produced it: true when ground follows
+   * deltaAngleWords (readQ3MovementState over the source record), false
+   * when it follows viewHeight (the admission literal). */
+  bool ground_after_delta_angles;
 } qa_q3_movement_state;
 
 /* TS MovementState union on kind. */
@@ -128,6 +132,12 @@ typedef struct qa_movement_profile {
   bool has_fixed_milliseconds;
   double fixed_milliseconds;
   bool no_footsteps;
+  /* Q3 `ladders?: boolean`: true only for an explicit `ladders: false`
+   * (undefined and true both leave SURF_LADDER climbing on). */
+  bool ladders_disabled;
+  /* The `ladders` key is present (TS selectedMovementProfile sets it whenever
+   * sourceMovement exists); wire codecs write it only then. */
+  bool has_ladders;
 } qa_movement_profile;
 typedef qa_movement_profile qa_q1_movement_profile;
 typedef qa_movement_profile qa_qw_movement_profile;
@@ -148,6 +158,10 @@ typedef struct qa_weapon_state {
   qa_source_time grenade_time;
   bool grenade_blew_up;
   double time_milliseconds;
+  /* Key order of a q1 state literal: true for the QuakeC source's
+   * { kind, sourceWeapon, frame, attackFinishedSeconds }, false for the Q1
+   * game's { kind, frame, attackFinishedSeconds, sourceWeapon }. */
+  bool source_weapon_first;
 } qa_weapon_state;
 
 typedef struct qa_arsenal_state {

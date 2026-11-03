@@ -1,10 +1,12 @@
-/* Port of src/app/bootstrap/q2-native-hud.ts. ApplicationAssets
- * texture access (assets.ts, other slice) is the host below.
- * GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/q2-native-hud.ts: mounted Q2 pictures and conchars
+ * through ApplicationAssets providers. Async prepare -> synchronous. A
+ * NativeQ2HudLayoutError (qa_raise name) skips the layout as TS; other errors
+ * propagate. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_Q2_NATIVE_HUD_H
 #define QA_APP_BOOTSTRAP_Q2_NATIVE_HUD_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/app/bootstrap/assets.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/render.h"
 #include "qa/contracts/ui.h"
@@ -17,13 +19,6 @@ typedef struct qa_app_native_q2_hud_rendering {
   qa_resource_id font;
   double font_scale;
 } qa_app_native_q2_hud_rendering;
-typedef struct qa_app_q2_hud_assets {
-  void *ctx;
-  /* provider.textures.load(path,{family:"q2",mipmap:false,wrap:"clamp"}):
-   * false = TS null; missing_image is textures.missing.image. */
-  bool (*load_texture)(void *ctx, qa_content_id content, const char *path, qa_renderer_image *image_out);
-  qa_renderer_image (*missing_image)(void *ctx, qa_content_id content);
-} qa_app_q2_hud_assets;
 typedef void (*qa_app_q2_hud_assert_fn)(void *ctx);
 typedef struct qa_app_q2_native_hud qa_app_q2_native_hud;
 qa_app_q2_native_hud *qa_app_q2_native_hud_create(void);
@@ -32,9 +27,9 @@ void qa_app_q2_native_hud_clear(qa_app_q2_native_hud *hud);
 /* Borrowed picture or NULL (TS undefined). */
 const qa_picture_asset *qa_app_q2_native_hud_picture(qa_app_q2_native_hud *hud, qa_resource_id id);
 /* mode "layout-overlay"|"replace-status"; arsenal/environment NULL
- * are TS undefined; assert_current may be NULL. */
+ * are TS undefined; mode NULL is "replace-status"; assert_current may be NULL. */
 void qa_app_q2_native_hud_prepare(qa_app_q2_native_hud *hud, qa_content_id content,
-    const qa_app_q2_hud_assets *assets, const qa_native_q2_hud_frame *frame,
+    qa_app_application_assets *assets, const qa_native_q2_hud_frame *frame,
     qa_ui_draw_context context, double scale, const char *mode,
     qa_app_q2_hud_assert_fn assert_current, void *assert_ctx,
     const qa_native_q2_hud_arsenal *arsenal, const qa_app_native_q2_hud_rendering *environment);

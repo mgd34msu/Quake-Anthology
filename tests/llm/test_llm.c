@@ -852,7 +852,7 @@ static bool session_fixture_transport(void *ctx, const qa_llm_request_input *inp
     fixture->count++;
   }
   if (strstr(input->prompt, "READY only") != NULL) { *out_text = qa_llm_strdup("READY"); return true; }
-  if (strcmp(input->prompt, "bad") == 0) {
+  if (qa_llm_ends_with(input->prompt, "bad")) { /* TS input.prompt.endsWith("bad") */
     qa_llm_error_set(error, "transport failed");
     return false;
   }
@@ -898,8 +898,8 @@ static void test_session(void) {
     input.instructions = "turn two";
     CHECK(qa_llm_session_request(session, &input, &answer, &error));
     free(answer);
-    CHECK_CONTAINS(fixture.calls[2].instructions, "User: first");
-    CHECK_CONTAINS(fixture.calls[2].instructions, "Assistant: answer:first");
+    CHECK_CONTAINS(fixture.calls[2].prompt, "User: first");
+    CHECK_CONTAINS(fixture.calls[2].prompt, "Assistant: answer:first");
     CHECK_STR(qa_llm_session_id(session), id);
 
     CHECK(qa_llm_session_prime(session, "CATALOG TWO", &error));
@@ -912,7 +912,7 @@ static void test_session(void) {
     CHECK(qa_llm_session_request(session, &input, &answer, &error));
     free(answer);
     CHECK_CONTAINS(fixture.calls[4].instructions, "CATALOG TWO");
-    CHECK_CONTAINS(fixture.calls[4].instructions, "User: second");
+    CHECK_CONTAINS(fixture.calls[4].prompt, "User: second");
     bool all_id = true;
     for (size_t i = 0; i < fixture.count; i++) {
       if (fixture.calls[i].session_id == NULL || strcmp(fixture.calls[i].session_id, id) != 0) all_id = false;
@@ -945,7 +945,7 @@ static void test_session(void) {
     CHECK(strcmp(qa_llm_session_id(session), first_id) != 0);
     CHECK(fixture.count == 4);
     CHECK_CONTAINS(fixture.calls[2].prompt, "starts an ongoing session");
-    CHECK_NOT_CONTAINS(fixture.calls[3].instructions, "User: first");
+    CHECK_NOT_CONTAINS(fixture.calls[3].prompt, "User: first");
     CHECK_STR(fixture.calls[3].session_id, qa_llm_session_id(session));
     free(first_id);
     qa_llm_session_destroy(session);
@@ -971,8 +971,8 @@ static void test_session(void) {
     input.prompt = "next";
     CHECK(qa_llm_session_request(session, &input, &answer, &error));
     free(answer);
-    CHECK_CONTAINS(fixture.calls[fixture.count - 1].instructions, "User: kept");
-    CHECK_NOT_CONTAINS(fixture.calls[fixture.count - 1].instructions, "User: bad");
+    CHECK_CONTAINS(fixture.calls[fixture.count - 1].prompt, "User: kept");
+    CHECK_NOT_CONTAINS(fixture.calls[fixture.count - 1].prompt, "User: bad");
     char *old_id = qa_llm_strdup(qa_llm_session_id(session));
     qa_llm_session_invalidate(session);
     CHECK(strcmp(qa_llm_session_id(session), old_id) != 0);
@@ -981,7 +981,7 @@ static void test_session(void) {
     input.prompt = "fresh";
     CHECK(qa_llm_session_request(session, &input, &answer, &error));
     free(answer);
-    CHECK_NOT_CONTAINS(fixture.calls[fixture.count - 1].instructions, "User: kept");
+    CHECK_NOT_CONTAINS(fixture.calls[fixture.count - 1].prompt, "User: kept");
     qa_llm_session_destroy(session);
     for (size_t i = 0; i < fixture.count; i++) {
       free(fixture.calls[i].prompt); free(fixture.calls[i].instructions); free(fixture.calls[i].session_id);
@@ -1172,6 +1172,16 @@ static void test_settings_storage(void) {
   CHECK_STR(preserved, "{\"version\":1,\"secret\":");
   free(preserved);
   CHECK(!qa_llm_settings_save_api_key(service, QA_LLM_PROVIDER_CHATGPT_API, "replacement", &error));
+  /* PLATFORM-017: removal and preference changes are the repair path for a malformed file. */
+  CHECK(qa_llm_settings_remove_credential(reopened, QA_LLM_PROVIDER_CHATGPT_API, &error));
+  char *repaired = read_at(dir, "chatgpt.key");
+  CHECK_NOT_CONTAINS(repaired, "\"secret\":");
+  free(repaired);
+  write_at(dir, "llm.json", "{broken");
+  CHECK(qa_llm_settings_select_provider(reopened, QA_LLM_PROVIDER_OTHER_API, &error));
+  char *preferences = read_at(dir, "llm.json");
+  CHECK_CONTAINS(preferences, "other-api");
+  free(preferences);
   qa_llm_settings_close(service);
   qa_llm_settings_destroy(service);
   qa_llm_settings_close(reopened);
@@ -1607,7 +1617,10 @@ static void test_settings_refresh(void) {
     free(endpoint.response_json);
     endpoint.response_json = qa_llm_strdup("{\"access_token\":\"new\",\"expires_in\":3600}");
     qa_llm_signal_init(&signal);
-    CHECK(!qa_llm_refresh_subscription(&auth, &credential, &signal, &refreshed, &error));
+    /* PLATFORM-014: a refresh response without a new refresh_token keeps the previous one. */
+    CHECK(qa_llm_refresh_subscription(&auth, &credential, &signal, &refreshed, &error));
+    CHECK_STR(refreshed.refresh_token, "old-refresh");
+    qa_llm_subscription_credential_free(&refreshed);
     free(endpoint.response_json);
     free(endpoint.last_body);
     free(endpoint.last_url);
@@ -1765,7 +1778,7 @@ static bool prime_handler(void *ctx, const char *url, const qa_llm_http_init *in
   const char *body = init->body != NULL ? init->body : "";
   if (state->count < 8) state->bodies[state->count++] = qa_llm_strdup(body);
   const char *answer = strstr(body, "READY only") != NULL ? "READY"
-      : strstr(body, "\"text\":\"second\"") != NULL ? "second answer" : "first answer";
+      : strstr(body, "Current request:\\nsecond") != NULL ? "second answer" : "first answer";
   qa_llm_strbuf sse;
   qa_llm_strbuf_init(&sse);
   qa_llm_strbuf_appendf(&sse, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"%s\"}\n\n"
@@ -1893,10 +1906,11 @@ static void test_auth_worker(void) {
   qa_llm_auth_worker_handle_request(worker, "POST", "/auth/callback", &status, &body);
   CHECK(status == 405);
   free(body);
+  int before_mismatch = messages.count;
   qa_llm_auth_worker_handle_request(worker, "GET", "/auth/callback?state=wrong&code=x", &status, &body);
   CHECK(status == 400);
   CHECK_STR(body, "Sign-in failed. State mismatch.");
-  CHECK(messages.kinds[messages.count - 1] == QA_LLM_AUTH_WORKER_STATE_MISMATCH);
+  CHECK(messages.count == before_mismatch); /* a stray request posts nothing */
   free(body);
   qa_llm_auth_worker_handle_request(worker, "GET", "/auth/callback?state=expected-state&error=access_denied", &status, &body);
   CHECK(status == 400);
@@ -1966,24 +1980,34 @@ typedef struct browser_state {
   qa_llm_settings_service *service;
 } browser_state;
 
+static int browser_request(const char *callback, const char *state, bool with_error);
 static void browser_child(const char *callback, const char *state, bool with_error) {
+  _exit(browser_request(callback, state, with_error));
+}
+/* PLATFORM-015: a wrong-state request gets 400 without provider text, then the
+ * real callback still succeeds (the stray request does not abort sign-in). */
+static void browser_child_stray_then_real(const char *callback, const char *state) {
+  if (browser_request(callback, "wrong-state-secret", true) != 3) _exit(4);
+  _exit(browser_request(callback, state, false));
+}
+static int browser_request(const char *callback, const char *state, bool with_error) {
   /* callback is http://localhost:PORT/auth/callback */
   const char *port_at = strrchr(callback, ':');
   int port = port_at != NULL ? atoi(port_at + 1) : 0;
   sleep_ms(50);
   int fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) _exit(4);
+  if (fd < 0) return 4;
   struct sockaddr_in address;
   memset(&address, 0, sizeof address);
   address.sin_family = AF_INET;
   address.sin_port = htons((uint16_t)port);
   address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  if (connect(fd, (struct sockaddr *)&address, sizeof address) != 0) _exit(4);
+  if (connect(fd, (struct sockaddr *)&address, sizeof address) != 0) return 4;
   char request[2048];
   snprintf(request, sizeof request,
            "GET /auth/callback?state=%s&code=test-code%s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
            state, with_error ? "&error=provider-secret" : "");
-  if (write(fd, request, strlen(request)) < 0) _exit(4);
+  if (write(fd, request, strlen(request)) < 0) return 4;
   char response[4096];
   size_t length = 0;
   ssize_t got;
@@ -1992,9 +2016,9 @@ static void browser_child(const char *callback, const char *state, bool with_err
   }
   response[length] = '\0';
   close(fd);
-  if (strstr(response, " 200 ") != NULL && strstr(response, "Authorization received. You can return to the game.") != NULL) _exit(0);
-  if (strstr(response, " 400 ") != NULL && strstr(response, "secret-") == NULL) _exit(3);
-  _exit(4);
+  if (strstr(response, " 200 ") != NULL && strstr(response, "Authorization received. You can return to the game.") != NULL) return 0;
+  if (strstr(response, " 400 ") != NULL && strstr(response, "secret-") == NULL) return 3;
+  return 4;
 }
 
 static bool scripted_browser(void *ctx, const char *url, qa_llm_abort_signal *signal, qa_llm_error *error) {
@@ -2015,7 +2039,8 @@ static bool scripted_browser(void *ctx, const char *url, qa_llm_abort_signal *si
   if (state->mode == 3 || state->mode == 4) return true;
   pid_t pid = fork();
   if (pid == 0) {
-    browser_child(redirect, state->mode == 1 ? "wrong-state-secret" : oauth_state, state->mode == 1);
+    if (state->mode == 1) browser_child_stray_then_real(redirect, oauth_state);
+    browser_child(redirect, oauth_state, false);
     _exit(4);
   }
   state->child = pid;
@@ -2098,13 +2123,14 @@ static void test_sign_in(void) {
     cleanup_dir(dir);
     free(dir);
   }
-  /* state mismatch: no token request, no secret reflected, no file */
+  /* PLATFORM-015: a wrong-state request gets 400 without requesting tokens or
+   * reflecting provider text, and does not abort sign-in. */
   {
     char *dir = make_temp_dir();
     browser_state browser = {0};
     browser.mode = 1;
     token_endpoint endpoint = {0};
-    endpoint.response_json = qa_llm_strdup("{}");
+    endpoint.response_json = token_response_json("stray", "test-refresh", true);
     mock_fetch auth_mock = {0};
     auth_mock.handler = token_handler;
     auth_mock.handler_ctx = &endpoint;
@@ -2116,16 +2142,14 @@ static void test_sign_in(void) {
     options.auth.fetch = mock_ref(&auth_mock);
     qa_llm_settings_service *service = qa_llm_settings_open(&options);
     browser.service = service;
-    CHECK(!qa_llm_settings_sign_in_subscription(service, &error));
-    CHECK(wait_child(&browser) == 3); /* 400 without provider text */
-    CHECK(endpoint.calls == 0);
-    CHECK_NOT_CONTAINS(error.message, "secret");
+    CHECK(qa_llm_settings_sign_in_subscription(service, &error));
+    CHECK(wait_child(&browser) == 0); /* 400 without provider text, then 200 */
+    CHECK(endpoint.calls == 1);
     qa_llm_settings_snapshot snapshot;
     qa_llm_settings_read(service, &snapshot);
-    CHECK(snapshot.subscription_auth == QA_LLM_SUBSCRIPTION_AUTH_ERROR);
-    CHECK_NOT_CONTAINS(snapshot.subscription_auth_message, "secret");
+    CHECK(snapshot.subscription_auth == QA_LLM_SUBSCRIPTION_AUTH_IDLE);
+    CHECK(snapshot.subscription_auth_message == NULL || strstr(snapshot.subscription_auth_message, "secret") == NULL);
     qa_llm_settings_snapshot_free(&snapshot);
-    CHECK(!file_exists(dir, "chatgpt.key"));
     qa_llm_settings_close(service);
     qa_llm_settings_destroy(service);
     free(endpoint.response_json);

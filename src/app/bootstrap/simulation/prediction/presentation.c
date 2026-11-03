@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/simulation/prediction/presentation.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/prediction/presentation.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,7 @@
 #include "qa/app/bootstrap/simulation/prediction/step.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/prediction.h"
+#include "qa/foundation/js.h"
 
 static double axis_value(double value, double speed) {
   double scaled = value * 127 / speed;
@@ -15,7 +17,7 @@ static double axis_value(double value, double speed) {
   if (scaled < -127) scaled = -127;
   return trunc(scaled);
 }
-static double angle_word(double degrees) { return (double)(((long long)trunc(degrees * 65536 / 360)) & 65535); }
+static double angle_word(double degrees) { return (double)((qa_js_to_int32(trunc(degrees * 65536 / 360))) & 65535); }
 
 qa_q3_base_user_command qa_app_presentation_source_command(qa_actor_command input, double milliseconds, double weapon) {
   qa_user_command c = input.command;
@@ -24,7 +26,7 @@ qa_q3_base_user_command qa_app_presentation_source_command(qa_actor_command inpu
     out.server_time = c.as.q3.server_time_milliseconds;
     out.angles = (qa_vec3){c.as.q3.angle_words.values[0], c.as.q3.angle_words.values[1], c.as.q3.angle_words.values[2]};
     out.buttons = input.arsenal == NULL ? c.as.q3.buttons
-        : (double)((((long long)c.as.q3.buttons) & ~4) | (input.arsenal->use_holdable ? 4 : 0));
+        : (double)(((qa_js_to_int32(c.as.q3.buttons)) & ~4) | (input.arsenal->use_holdable ? 4 : 0));
     out.weapon = input.arsenal == NULL ? c.as.q3.weapon : weapon;
     out.forwardmove = c.as.q3.forward_move; out.rightmove = c.as.q3.right_move; out.upmove = c.as.q3.up_move;
     return out;
@@ -44,12 +46,12 @@ qa_q3_base_user_command qa_app_presentation_source_command(qa_actor_command inpu
   }
   double speed = (c.kind == QA_USER_COMMAND_Q1 || c.kind == QA_USER_COMMAND_QW) ? 320 : 200;
   out.server_time = trunc(milliseconds); out.angles = angles;
-  out.buttons = (double)((((long long)buttons) & 1) | (input.arsenal && input.arsenal->use_holdable ? 4 : 0));
+  out.buttons = (double)(((qa_js_to_int32(buttons)) & 1) | (input.arsenal && input.arsenal->use_holdable ? 4 : 0));
   out.weapon = weapon;
   out.forwardmove = axis_value(forward, speed); out.rightmove = axis_value(side, speed);
   out.upmove = c.kind == QA_USER_COMMAND_Q2_RERELEASE
-      ? ((((long long)buttons) & 8) != 0 ? 127 : (((long long)buttons) & 16) != 0 ? -127 : 0)
-      : (c.kind == QA_USER_COMMAND_Q1 || c.kind == QA_USER_COMMAND_QW) && (((long long)buttons) & 2) != 0 ? 127 : axis_value(up, speed);
+      ? (((qa_js_to_int32(buttons)) & 8) != 0 ? 127 : ((qa_js_to_int32(buttons)) & 16) != 0 ? -127 : 0)
+      : (c.kind == QA_USER_COMMAND_Q1 || c.kind == QA_USER_COMMAND_QW) && ((qa_js_to_int32(buttons)) & 2) != 0 ? 127 : axis_value(up, speed);
   return out;
 }
 
@@ -193,7 +195,7 @@ static qa_app_movement_prediction_snapshot seed_snapshot(qa_app_presentation_pre
     for (size_t i = 0; i < adapter->snapshot_count; i++)
       if (adapter->snapshots[i].time == ps->command_time) { baseline = adapter->snapshots[i].snapshot; found = true; }
   }
-  if (!found) qa_range_error("No selected movement snapshot for source command time %g", ps->command_time);
+  if (!found) qa_range_error("No selected movement snapshot for source command time %s", QA_JS_NUMBER(ps->command_time));
   return qa_app_read_prediction_source_state(baseline, ps, adapter->options.entities);
 }
 
@@ -258,7 +260,7 @@ qa_bounds qa_app_presentation_prediction_adapter_move_player(qa_app_presentation
   for (size_t i = 0; i < adapter->command_count; i++) if (adapter->commands[i].time == key) original = &adapter->commands[i];
   qa_app_prediction_command entry; memset(&entry, 0, sizeof entry);
   if (strcmp(adapter->options.movement.probe.profile.kind, "q3") != 0) {
-    if (!original) qa_range_error("No original selected command for cgame time %g", command.server_time);
+    if (!original) qa_range_error("No original selected command for cgame time %s", QA_JS_NUMBER(command.server_time));
     entry = original->command;
   } else {
     entry.sequence = original ? original->command.sequence : command.server_time;
@@ -284,6 +286,7 @@ qa_bounds qa_app_presentation_prediction_adapter_move_player(qa_app_presentation
   options.scene = scene; options.rerelease_movement = &adapter->rerelease_movement;
   options.has_fixed_milliseconds = movement.has_fixed_msec; options.fixed_milliseconds = movement.fixed_msec;
   options.no_footsteps = movement.no_footsteps; options.gauntlet_hit = movement.gauntlet_hit;
+  options.has_ladders = true; options.ladders = !movement.ladders_disabled; /* ladders: movement.ladders !== false */
   options.has_trace_mask = true; options.trace_mask = movement.trace_mask;
   options.first_command = !prior || prior->snapshot.command_time_milliseconds != ps->command_time;
   qa_app_prediction_step_result output = qa_app_predict_movement_command(&adapter->options.movement.probe, seed, entry, options, NULL);
@@ -297,6 +300,7 @@ qa_bounds qa_app_presentation_prediction_adapter_move_player(qa_app_presentation
       qa_q3_base_player_state_record_add_event(ps, effect.effect.value.event, effect.effect.value.parameter);
   }
   qa_bounds bounds = output.result.bounds;
+  free((void *)output.result.effects); free((void *)output.result.contacts); /* the step's movement result owns them */
   state_entry *entry_state = find_state(adapter, ps);
   if (!entry_state) {
     if (adapter->state_count >= 16) {
@@ -329,7 +333,7 @@ void qa_app_presentation_prediction_adapter_update_view_angles(qa_app_presentati
         ps->viewangles.z = cmd.as.q2_rerelease.angles.z + seed.state.as.q2_rerelease.delta_angles.z;
       } else if (cmd.kind == QA_USER_COMMAND_Q2 && seed.state.kind == QA_MOVEMENT_STATE_Q2) {
         for (int i = 0; i < 3; i++) {
-          double value = (double)((((long long)(cmd.as.q2.angle_shorts.values[i] + seed.state.as.q2.delta_angle_shorts.values[i])) << 16) >> 16) * 360.0 / 65536.0;
+          double value = qa_js_shr(qa_js_shl(cmd.as.q2.angle_shorts.values[i] + seed.state.as.q2.delta_angle_shorts.values[i], 16), 16) * 360.0 / 65536.0; /* int32 << 16 >> 16 sign-extends the short */
           if (i == 0) ps->viewangles.x = value; else if (i == 1) ps->viewangles.y = value; else ps->viewangles.z = value;
         }
       }
@@ -444,8 +448,11 @@ qa_app_presentation_prediction_adapter *qa_app_simulation_prediction_host_adapte
   return host->adapter;
 }
 void qa_app_simulation_prediction_host_capture_source(qa_app_simulation_prediction_host *host,
-    const qa_q3_base_player_state_record *ps, bool has_ps) {
-  qa_app_movement_prediction_snapshot captured = sim_capture(host, ps, has_ps);
+    const qa_app_q3_source_presentation_state *published) {
+  const qa_q3_base_player_state_record *ps = NULL;
+  for (size_t i = 0; i < published->client_count && ps == NULL; i++)
+    if (qa_same_actor(published->clients[i].actor, host->actor)) ps = &published->clients[i].state;
+  qa_app_movement_prediction_snapshot captured = sim_capture(host, ps, ps != NULL);
   qa_app_presentation_prediction_adapter_capture(host->adapter, captured);
   qa_app_movement_prediction_snapshot_destroy(&captured);
 }

@@ -18,6 +18,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "qa/app/bootstrap/content.h"
 #include "qa/content/catalog.h"
 
 static int failures = 0;
@@ -126,6 +127,132 @@ static void test_order_archives(void) {
   CHECK(strcmp(ordered[2]->path, "/x/pak0.pkz") == 0);
   free(ordered);
   for (size_t i = 0; i < 4; i++) qa_catalog_archive_free(&storage[i]);
+
+  /* Q3: FS_PathCmp keys (upper-case ASCII, `\\` and `:` as `/`), at most
+   * 1024 pk3s (bun: b, a_x, aZ, a:b; 1030 archives keep z1023..z0000). */
+  const qa_catalog_product_expectation *q3 = NULL;
+  for (size_t i = 0; i < qa_expected_product_count && q3 == NULL; i++)
+    if (qa_expected_products[i].family == QA_GAME_FAMILY_Q3) q3 = &qa_expected_products[i];
+  CHECK(q3 != NULL && strcmp(q3->id, "q3-baseq3") == 0);
+  storage[0] = make_archive("/x/a_x.pk3", QA_ARCHIVE_FORMAT_PK3);
+  storage[1] = make_archive("/x/aZ.pk3", QA_ARCHIVE_FORMAT_PK3);
+  storage[2] = make_archive("/x/b.pk3", QA_ARCHIVE_FORMAT_PK3);
+  storage[3] = make_archive("/x/a:b.pk3", QA_ARCHIVE_FORMAT_PK3);
+  ordered = qa_order_game_archives(q3, archives, 4, &count);
+  CHECK(count == 4 && strcmp(ordered[0]->path, "/x/b.pk3") == 0 &&
+        strcmp(ordered[1]->path, "/x/a_x.pk3") == 0 && strcmp(ordered[2]->path, "/x/aZ.pk3") == 0 &&
+        strcmp(ordered[3]->path, "/x/a:b.pk3") == 0);
+  free(ordered);
+  for (size_t i = 0; i < 4; i++) qa_catalog_archive_free(&storage[i]);
+  static qa_catalog_archive many[1030];
+  static qa_catalog_archive *many_pointers[1030];
+  for (size_t i = 0; i < 1030; i++) {
+    char name[32];
+    snprintf(name, sizeof name, "/x/z%04zu.pk3", i);
+    many[i] = make_archive(name, QA_ARCHIVE_FORMAT_PK3);
+    many_pointers[i] = &many[i];
+  }
+  ordered = qa_order_game_archives(q3, many_pointers, 1030, &count);
+  CHECK(count == 1024 && strcmp(ordered[0]->path, "/x/z1023.pk3") == 0 &&
+        strcmp(ordered[1023]->path, "/x/z0000.pk3") == 0);
+  free(ordered);
+  for (size_t i = 0; i < 1030; i++) qa_catalog_archive_free(&many[i]);
+}
+
+/* required-programs.test.ts: requiredPrograms are enforced through the base
+ * chain during availability. */
+static void write_pak_with(const char *path, const char *const *entries, size_t count) {
+  size_t directory_offset = 12 + count;
+  size_t length = directory_offset + count * 64;
+  uint8_t *bytes = calloc(1, length);
+  memcpy(bytes, "PACK", 4);
+  bytes[4] = (uint8_t)directory_offset;
+  bytes[8] = (uint8_t)(count * 64);
+  for (size_t i = 0; i < count; i++) {
+    bytes[12 + i] = 6;
+    size_t offset = directory_offset + i * 64;
+    memcpy(bytes + offset, entries[i], strlen(entries[i]));
+    bytes[offset + 56] = (uint8_t)(12 + i);
+    bytes[offset + 60] = 1;
+  }
+  FILE *file = fopen(path, "wb");
+  if (file != NULL) {
+    (void)fwrite(bytes, 1, length, file);
+    (void)fclose(file);
+  }
+  free(bytes);
+}
+
+static void test_required_programs(void) {
+  char root_template[] = "/tmp/qa-required-programs-XXXXXX";
+  char *root = mkdtemp(root_template);
+  CHECK(root != NULL);
+  if (root == NULL) return;
+  char path[1024];
+  const char *const directories[3] = {"id1", "qw", "hipnotic"};
+  for (size_t i = 0; i < 3; i++) {
+    snprintf(path, sizeof path, "%s/%s", root, directories[i]);
+    (void)mkdir(path, 0777);
+  }
+  const char *const progs[1] = {"progs.dat"};
+  const char *const maps[1] = {"maps/e1m1.bsp"};
+  snprintf(path, sizeof path, "%s/id1/pak0.pak", root);
+  write_pak_with(path, progs, 1);
+  snprintf(path, sizeof path, "%s/id1/pak1.pak", root);
+  write_pak_with(path, maps, 1);
+  snprintf(path, sizeof path, "%s/hipnotic/pak0.pak", root);
+  write_pak_with(path, progs, 1);
+  qa_catalog_product_expectation products[3];
+  size_t product_count = 0;
+  for (size_t i = 0; i < qa_expected_product_count; i++) {
+    const char *id = qa_expected_products[i].id;
+    if (strcmp(id, "q1-classic-id1") == 0 || strcmp(id, "q1-quakeworld") == 0 ||
+        strcmp(id, "q1-quakeworld-hipnotic") == 0)
+      products[product_count++] = qa_expected_products[i];
+  }
+  CHECK(product_count == 3);
+  for (int pass = 0; pass < 2; pass++) {
+    qa_discover_content_options options = {0};
+    options.corpus_root = root;
+    options.products = products;
+    options.product_count = product_count;
+    options.discover_mods = true;
+    /* TS reads the archives through openArchive (the app's inspector). */
+    options.inspector = qa_app_default_archive_inspector();
+    qa_content_catalog catalog = {0};
+    CHECK(qa_discover_installed_content(&options, &catalog));
+    const qa_catalog_discovered_product *id1 = qa_content_catalog_product(&catalog, "q1-classic-id1");
+    const qa_catalog_discovered_product *qw = qa_content_catalog_product(&catalog, "q1-quakeworld");
+    const qa_catalog_discovered_product *hip =
+        qa_content_catalog_product(&catalog, "q1-quakeworld-hipnotic");
+    CHECK(id1 != NULL && id1->availability.kind == QA_CATALOG_INSTALLED);
+    if (pass == 0) {
+      CHECK(qw != NULL && qw->availability.kind == QA_CATALOG_MISSING &&
+            qw->availability.requirement_count == 1 &&
+            strcmp(qw->availability.requirements[0], "qwprogs.dat") == 0);
+      CHECK(hip != NULL && hip->availability.kind == QA_CATALOG_MISSING);
+      snprintf(path, sizeof path, "%s/qw/qwprogs.dat", root);
+      FILE *file = fopen(path, "wb");
+      if (file != NULL) {
+        (void)fputc(6, file);
+        (void)fclose(file);
+      }
+    } else {
+      CHECK(qw != NULL && qw->availability.kind == QA_CATALOG_INSTALLED);
+      CHECK(hip != NULL && hip->availability.kind == QA_CATALOG_INSTALLED);
+    }
+    qa_content_catalog_destroy(&catalog);
+  }
+  const char *const files[5] = {"id1/pak0.pak", "id1/pak1.pak", "hipnotic/pak0.pak", "qw/qwprogs.dat", NULL};
+  for (size_t i = 0; files[i] != NULL; i++) {
+    snprintf(path, sizeof path, "%s/%s", root, files[i]);
+    (void)remove(path);
+  }
+  for (size_t i = 0; i < 3; i++) {
+    snprintf(path, sizeof path, "%s/%s", root, directories[i]);
+    (void)rmdir(path);
+  }
+  (void)rmdir(root);
 }
 
 static void test_start_maps(void) {
@@ -154,6 +281,23 @@ static void test_start_maps(void) {
   qa_authored_starts bad = {0};
   CHECK_ABORTS(qa_parse_authored_starts((const uint8_t *)bad_flag,
                                         strlen(bad_flag), "mod", &bad));
+}
+
+typedef struct escape_job {
+  const qa_addon_package *package;
+} escape_job;
+static void escape_run(void *raw) {
+  escape_job *job = raw;
+  bool found = false;
+  free(qa_addon_install_path(job->package, "../escape", &found));
+}
+typedef struct skip_log {
+  char *reasons[8];
+  int count;
+} skip_log;
+static void skip_record(void *ctx, const char *reason) {
+  skip_log *log = ctx;
+  if (log->count < 8) log->reasons[log->count++] = strdup(reason);
 }
 
 static void test_addons(void) {
@@ -191,8 +335,47 @@ static void test_addons(void) {
   CHECK(!found && path == NULL);
   qa_addon_package package = list.values[0];
   CHECK_ABORTS(qa_addon_install_path(&package, "../escape", &found));
+  {
+    escape_job job = {&package};
+    qa_caught_error caught;
+    CHECK(!qa_try(escape_run, &job, &caught));
+    CHECK(strcmp(caught.message,
+                 "File path must be relative and stay inside its storage directory") == 0);
+  }
   qa_addon_package_list_free(&list);
   qa_save_value_free(value);
+  /* addons.test.ts "a malformed row or a dot-directory game option skips that
+   * row only" (bun: ["good.zip"]; reasons "Invalid Quaddicted package",
+   * "Invalid game directory: ..", "\"not a url\" cannot be parsed as a URL."). */
+  {
+    char sha_c[65];
+    memset(sha_c, 'c', 64);
+    sha_c[64] = '\0';
+    static char rows[4096];
+    (void)snprintf(rows, sizeof rows,
+        "[\"not a record\","
+        "{\"sha256\":\"%s\",\"bytes\":100,\"tags\":[\"game=quake\",\"game_mode=singleplayer\","
+        "\"filename=bad.zip\",\"commandline=-game ..\"],\"install\":{\"extract\":\"/\"},"
+        "\"urls\":[\"https://www.quaddicted.com/files/by-sha256/aa/%s/test.zip\"]},"
+        "{\"sha256\":\"%s\",\"bytes\":100,\"tags\":[\"game=quake\",\"game_mode=singleplayer\","
+        "\"filename=badurl.zip\"],\"install\":{\"extract\":\"/\"},\"urls\":[\"not a url\"]},"
+        "{\"sha256\":\"%s\",\"bytes\":100,\"tags\":[\"game=quake\",\"game_mode=singleplayer\","
+        "\"filename=good.zip\"],\"install\":{\"extract\":\"/\"},"
+        "\"urls\":[\"https://www.quaddicted.com/files/by-sha256/bb/%s/test.zip\"]}]",
+        sha_a, sha_a, sha_c, sha_b, sha_b);
+    qa_save_value *rows_value = json(rows);
+    skip_log log = {0};
+    qa_addon_package_list kept = {0};
+    CHECK(rows_value != NULL && qa_parse_addon_catalog_reporting(rows_value, skip_record, &log, &kept));
+    CHECK(kept.count == 1 && strcmp(kept.values[0].filename, "good.zip") == 0);
+    CHECK(log.count == 3);
+    CHECK(log.count == 3 && strcmp(log.reasons[0], "Invalid Quaddicted package") == 0 &&
+          strcmp(log.reasons[1], "Invalid game directory: ..") == 0 &&
+          strcmp(log.reasons[2], "\"not a url\" cannot be parsed as a URL.") == 0);
+    for (int i = 0; i < log.count; i++) free(log.reasons[i]);
+    qa_addon_package_list_free(&kept);
+    qa_save_value_free(rows_value);
+  }
   /* Dependencies ordered before overlays. */
   (void)snprintf(buffer, sizeof buffer,
       "[{\"sha256\":\"%s\",\"bytes\":100,\"tags\":[\"game=quake\","
@@ -299,11 +482,14 @@ static bool fake_inspect(void *ctx, const char *path, qa_archive_format format,
   memset(out, 0, sizeof *out);
   out->path = strdup(path);
   out->format = format;
-  out->entries = (qa_catalog_archive_entry *)calloc(1, sizeof *out->entries);
+  out->entries = (qa_catalog_archive_entry *)calloc(2, sizeof *out->entries);
   if (out->path == NULL || out->entries == NULL) return false;
   out->entries[0].path = strdup("maps/start.bsp");
   out->entries[0].ordinal = 0;
-  out->entry_count = 1;
+  /* Discovery now requires each product's programs (TS missingPrograms). */
+  out->entries[1].path = strdup("progs.dat");
+  out->entries[1].ordinal = 1;
+  out->entry_count = 2;
   return true;
 }
 
@@ -528,6 +714,7 @@ int main(void) {
   test_products();
   test_remote();
   test_order_archives();
+  test_required_programs();
   test_start_maps();
   test_addons();
   test_nightdive();

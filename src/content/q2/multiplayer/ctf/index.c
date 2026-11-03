@@ -2,6 +2,9 @@
 #include "qa/content/q2/multiplayer/ctf/index.h"
 #include "../multiplayer_internal.h"
 #include <ctype.h>
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js_case.h"
 
 struct qa_q2_ctf {
   qa_q2_ctf_context context;
@@ -24,17 +27,17 @@ static void teleport_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_servic
 static void spawn_player_impl(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g);
 static void set_observer(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g);
 
-static bool rules_haste(void *ctx, qa_q2mp_weapon_context *context) {
+static bool rules_haste(void *ctx, qa_q2w_context *context) {
   qa_q2_ctf *ctf = ctx;
-  return qa_q2_ctf_techs_haste(ctf->techs, context->actor.id, context->game);
+  return qa_q2_ctf_techs_haste(ctf->techs, context->self.actor.id, context->game);
 }
-static bool rules_strength_sound(void *ctx, qa_q2mp_weapon_context *context) {
+static bool rules_strength_sound(void *ctx, qa_q2w_context *context) {
   qa_q2_ctf *ctf = ctx;
-  return qa_q2_ctf_techs_strength_sound(ctf->techs, context->actor, context->game);
+  return qa_q2_ctf_techs_strength_sound(ctf->techs, context->self.actor, context->game);
 }
-static void rules_haste_sound(void *ctx, qa_q2mp_weapon_context *context) {
+static void rules_haste_sound(void *ctx, qa_q2w_context *context) {
   qa_q2_ctf *ctf = ctx;
-  qa_q2_ctf_techs_haste_sound(ctf->techs, context->actor, context->game);
+  qa_q2_ctf_techs_haste_sound(ctf->techs, context->self.actor, context->game);
 }
 
 static void actions_reset_players(void *ctx, qa_q2_game_services *g) { qa_q2_ctf_reset_players(ctx, g); }
@@ -105,13 +108,13 @@ qa_q2_ctf *qa_q2_ctf_create(qa_q2_ctf_hooks hooks, const qa_q2_ctf_rules *change
   qa_q2_ctf_flags_register(ctf->flags);
   qa_q2_ctf_grapple_module_register(ctf->grapple);
   qa_q2_ctf_techs_register(ctf->techs);
-  qa_q2mp_source_rules rules = {0};
+  qa_q2w_source_rules rules = {0};
   rules.kind = "ctf";
   rules.ctx = ctf;
   rules.haste = rules_haste;
   rules.strength_sound = rules_strength_sound;
   rules.haste_sound = rules_haste_sound;
-  hooks.weapons->set_source_rules(hooks.weapons->ctx, rules);
+  qa_q2w_weapons_set_source_rules(hooks.weapons, rules);
   return ctf;
 }
 
@@ -199,7 +202,7 @@ static void teleport_touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_servic
   event.actor = player->actor.id;
   event.event = 6;
   g->host->emit(g->host->ctx, event);
-  qa_q2mp_mirror_kill_box(player, g);
+  qa_q2_player_kill_box(player, g);
   g->link(g->ctx, player);
 }
 
@@ -209,7 +212,7 @@ bool qa_q2_ctf_spawn(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *
   if (strcmp(classname, "info_player_team1") == 0 || strcmp(classname, "info_player_team2") == 0) return true;
   if (strcmp(classname, "misc_ctf_banner") == 0 || strcmp(classname, "misc_ctf_small_banner") == 0) {
     entity->model = strcmp(classname, "misc_ctf_banner") == 0 ? "models/ctf/banner/tris.md2" : "models/ctf/banner/small.md2";
-    entity->skin = ((int64_t)entity->spawnflags & 1) != 0 ? 1 : 0;
+    entity->skin = (qa_js_to_int32(entity->spawnflags) & 1) != 0 ? 1 : 0;
     entity->frame = floor(g->host->random(g->host->ctx) * 16);
     g->solid(g->ctx, entity, "none");
     g->motion(g->ctx, entity, "stationary");
@@ -232,12 +235,12 @@ bool qa_q2_ctf_spawn(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *
       return true;
     }
     entity->visible = false;
-    entity->server_flags = (double)((int64_t)entity->server_flags | 1);
+    entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) | 1);
     entity->touch = (qa_q2_touch){ctf, teleport_touch_fn};
     if (entity->model != NULL && entity->model[0] == '*') {
       qa_q2_body_changes move = {0};
       move.has_bounds = true;
-      move.bounds = g->host->inline_model_bounds(g->host->ctx, strtod(entity->model + 1, NULL));
+      move.bounds = g->host->inline_model_bounds(g->host->ctx, qa_js_string_to_number(entity->model + 1));
       qa_q2_game_move(g, entity, move, true);
     }
     g->solid(g->ctx, entity, "trigger");
@@ -282,12 +285,12 @@ void qa_q2_ctf_admitted(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_service
     qa_shared_inventory_table_configure(g->host->inventory, entity->actor, entry, NULL, NULL);
   }
   if (qa_q2_ctf_context_get(&ctf->context, entity->actor.id) != NULL) return;
-  qa_q2mp_player_state *common = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
-  if (common == NULL) qa_q2f_error("CTF admission requires the shared player state");
+  qa_q2_base_player_state *common = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  if (common == NULL) qa_raise("Error", 0, 0, "CTF admission requires the shared player state");
   qa_q2_ctf_player_state fresh;
   qa_q2_ctf_player_state_init(&fresh);
   qa_q2_ctf_player_state *state = qa_q2_ctf_context_set(&ctf->context, entity->actor.id, fresh);
-  if (((int64_t)g->options.deathmatch_flags & 131072) != 0 && strcmp(ctf->context.match.phase, "none") == 0 && !common->requested_spectator) {
+  if ((qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 131072) != 0 && strcmp(ctf->context.match.phase, "none") == 0 && !common->requested_spectator) {
     double one = 0, two = 0;
     for (size_t i = 0; i < ctf->context.state_count; i++) {
       if (ctf->context.states[i].state.team == 1) one++;
@@ -303,9 +306,9 @@ void qa_q2_ctf_admitted(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_service
 }
 
 void qa_q2_ctf_assign_skin(qa_q2_ctf *ctf, qa_q2_entity *entity) {
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
   qa_q2_ctf_player_state *state = qa_ctf_player(&ctf->context, entity->actor.id);
-  if (player == NULL) qa_q2f_error("Missing shared CTF player");
+  if (player == NULL) qa_raise("Error", 0, 0, "Missing shared CTF player");
   char skin_buf[512];
   const char *from_info = qa_q2mp_userinfo_get(player->userinfo, "skin", skin_buf, sizeof skin_buf);
   const char *original = from_info == NULL ? player->skin : from_info;
@@ -321,14 +324,14 @@ void qa_q2_ctf_assign_skin(qa_q2_ctf *ctf, qa_q2_entity *entity) {
 }
 
 static void spawn_player_impl(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g) {
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
-  if (player == NULL) qa_q2f_error("Missing shared CTF player");
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  if (player == NULL) qa_raise("Error", 0, 0, "Missing shared CTF player");
   player->spectator = false;
   player->requested_spectator = false;
   player->dead = false;
   player->noclip = false;
   player->god = false;
-  entity->server_flags = (double)((int64_t)entity->server_flags & ~1);
+  entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) & ~1);
   entity->visible = true;
   ctf->context.hooks.spawn_player(ctf->context.hooks.ctx, entity, g);
   qa_combat_trait_changes traits = {0};
@@ -374,10 +377,12 @@ bool qa_q2_ctf_join(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g
   return true;
 }
 
+/* TS toLowerCase (Unicode) into a bounded buffer. */
 static void lower_into(char *out, size_t size, const char *text) {
-  size_t i = 0;
-  for (; text[i] && i + 1 < size; i++) out[i] = (char)tolower((unsigned char)text[i]);
-  out[i] = '\0';
+  char *lowered = qa_js_to_lower_case(text);
+  if (!lowered) qa_range_error("Out of memory");
+  snprintf(out, size, "%s", lowered);
+  free(lowered);
 }
 
 void qa_q2_ctf_team_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g, const char *name) {
@@ -404,7 +409,7 @@ void qa_q2_ctf_team_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_ser
     return;
   }
   qa_q2_ctf_team previous = state->team;
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
   qa_q2_ctf_drop_inventory(ctf, entity, g);
   if (previous != 0 && player != NULL) {
     player->god = false;
@@ -420,8 +425,8 @@ void qa_q2_ctf_team_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_ser
 }
 
 static void set_observer(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g) {
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
-  if (player == NULL) qa_q2f_error("Missing shared CTF player");
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  if (player == NULL) qa_raise("Error", 0, 0, "Missing shared CTF player");
   player->spectator = true;
   player->requested_spectator = true;
   player->noclip = true;
@@ -435,7 +440,7 @@ static void set_observer(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_servic
   traits.invulnerable = false;
   qa_gameplay_authority_set_traits(g->host->combat, entity->actor, traits);
   entity->visible = false;
-  entity->server_flags = (double)((int64_t)entity->server_flags | 1);
+  entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) | 1);
   g->solid(g->ctx, entity, "none");
   g->show(g->ctx, entity);
   ctf->context.hooks.observer(ctf->context.hooks.ctx, entity, g);
@@ -444,7 +449,7 @@ static void set_observer(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_servic
 void qa_q2_ctf_observer(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g) {
   qa_q2_ctf_drop_inventory(ctf, entity, g);
   qa_q2_ctf_player_state *state = qa_ctf_player(&ctf->context, entity->actor.id);
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
   state->team = 0;
   state->ready = false;
   state->has_match_respawn_at = false;
@@ -456,13 +461,13 @@ void qa_q2_ctf_observer(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_service
 
 bool qa_q2_ctf_select_spawn(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g, qa_vec3 *out_origin, qa_vec3 *out_angles) {
   qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(&ctf->context, entity->actor.id);
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
   if (state == NULL || state->team == 0 || player == NULL) return false;
   qa_q2_entity *spot = NULL;
   if (state->spawn_state == 0) {
     state->spawn_state++;
     char classname[32];
-    snprintf(classname, sizeof classname, "info_player_team%.0f", state->team);
+    snprintf(classname, sizeof classname, "info_player_team%s", QA_JS_NUMBER(state->team));
     size_t n = 0;
     qa_q2_entity **starts = qa_q2mp_entities_named(g, classname, &n);
     /* sorted copy by range (stable). */
@@ -546,14 +551,14 @@ void qa_q2_ctf_before_player(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_se
     state->has_match_respawn_at = false;
     spawn_player_impl(ctf, entity, g);
   } else {
-    qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+    qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
     if (state->team != 0 && strcmp(ctf->context.match.phase, "game") == 0 && player != NULL && player->dead &&
         player->respawn_time < qa_q2mp_now(g))
       spawn_player_impl(ctf, entity, g);
   }
 }
 
-qa_q2mp_weapon_input qa_q2_ctf_weapon_input(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g, qa_q2mp_weapon_input input) {
+qa_q2w_input qa_q2_ctf_weapon_input(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g, qa_q2w_input input) {
   input.haste = input.haste || qa_q2_ctf_techs_haste(ctf->techs, entity->actor.id, g);
   input.instant_switch = input.instant_switch || ctf->context.rules.instant_weapons;
   return input;
@@ -562,7 +567,7 @@ qa_q2mp_weapon_input qa_q2_ctf_weapon_input(qa_q2_ctf *ctf, qa_q2_entity *entity
 void qa_q2_ctf_after_player(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *g) {
   qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(&ctf->context, entity->actor.id);
   if (state == NULL) return;
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
   if (qa_q2_ctf_grapple_module_native_enabled(ctf->grapple) && state->team != 0 && player != NULL && player->use_q2_weapons &&
       !player->dead && qa_q2mp_inv_count(g, entity->actor.id, "q2:weapon_grapple") == 0) {
     qa_inventory_entry entry = {0};
@@ -633,16 +638,8 @@ static char *join_args(const char *const *args, size_t count) {
 }
 
 static bool js_number(const char *text, double *out) {
-  const char *p = text;
-  while (isspace((unsigned char)*p)) p++;
-  if (*p == '\0') return false;
-  char *end = NULL;
-  double value = strtod(p, &end);
-  if (end == p) return false;
-  while (isspace((unsigned char)*end)) end++;
-  if (*end != '\0') return false;
-  *out = value;
-  return true;
+  *out = qa_js_string_to_number(text); /* callers reject blank text first */
+  return !isnan(*out);
 }
 
 static bool digits_only(const char *text) {
@@ -659,7 +656,7 @@ bool qa_q2_ctf_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services
   }
   if (qa_q2_ctf_context_get(&ctf->context, entity->actor.id) == NULL) return false;
   qa_q2_ctf_player_state *state = qa_ctf_player(&ctf->context, entity->actor.id);
-  qa_q2mp_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = ctf->context.hooks.player(ctf->context.hooks.ctx, entity->actor.id);
   char *words = join_args(args, arg_count);
   char lowered[256];
   lower_into(lowered, sizeof lowered, command);
@@ -668,11 +665,17 @@ bool qa_q2_ctf_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services
     if (arg_count != 1) handled = false;
     else {
       const char *action = args[0];
+      /* The join menu is only opened for team-less players, and these entries exist only there. */
+      bool join_entry = strcmp(action, "join-red") == 0 || strcmp(action, "join-blue") == 0 ||
+                        strcmp(action, "chase") == 0 || strcmp(action, "match") == 0;
       static const char *const actions[] = {"join-red", "join-blue", "observer", "chase", "credits", "match", "ready", "notready", "admin-settings", "admin-start", "admin-cancel", "close"};
       bool known = false;
       for (size_t i = 0; i < sizeof actions / sizeof *actions; i++)
         if (strcmp(action, actions[i]) == 0) known = true;
-      if (!known) handled = false;
+      if (join_entry && state->team != 0) handled = false;
+      else if (strcmp(action, "match") == 0 && !(ctf->context.rules.competition != 0 && strcmp(ctf->context.match.phase, "none") == 0))
+        handled = false;
+      else if (!known) handled = false;
       else qa_q2_ctf_menu_action(ctf, entity, g, action);
     }
   } else if (strcmp(lowered, "ctf-settings") == 0) {
@@ -681,7 +684,7 @@ bool qa_q2_ctf_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services
       const char *key = args[0];
       const char *value = args[1];
       qa_q2_ctf_rules *rules = &ctf->context.rules;
-      int64_t flags = (int64_t)g->options.deathmatch_flags;
+      int32_t flags = qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)); /* TS dmflags & x: ToInt32 */
       qa_q2_ctf_admin_settings settings = {rules->match_minutes, rules->setup_minutes, rules->start_seconds,
           (flags & 4) != 0, (flags & 16) != 0, (flags & 16384) != 0, rules->instant_weapons, rules->match_lock};
       if (strcmp(key, "matchMinutes") == 0 || strcmp(key, "setupMinutes") == 0 || strcmp(key, "startSeconds") == 0) {
@@ -742,7 +745,7 @@ bool qa_q2_ctf_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services
   } else if (strcmp(lowered, "no") == 0) {
     qa_q2_ctf_match_vote(ctf->match, entity, g, false);
   } else if (strcmp(lowered, "ghost") == 0) {
-    if (digits_only(words)) qa_q2_ctf_match_restore_ghost(ctf->match, entity, g, strtod(words, NULL));
+    if (digits_only(words)) qa_q2_ctf_match_restore_ghost(ctf->match, entity, g, qa_js_string_to_number(words));
   } else if (strcmp(lowered, "admin") == 0) {
     qa_q2_ctf_match_admin(ctf->match, entity, g, words);
   } else if (strcmp(lowered, "stats") == 0) {
@@ -758,7 +761,7 @@ bool qa_q2_ctf_command(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services
     lines[0] = '\0';
     size_t used = 0;
     for (size_t i = 0; i < pn; i++) {
-      qa_q2mp_player_state *common = ctf->context.hooks.player(ctf->context.hooks.ctx, players[i]);
+      qa_q2_base_player_state *common = ctf->context.hooks.player(ctf->context.hooks.ctx, players[i]);
       qa_q2_ctf_player_state *member = qa_q2_ctf_context_get(&ctf->context, players[i]);
       if (common == NULL || member == NULL) continue;
       double elapsed = qa_q2mp_now(g) - common->entered_at;
@@ -811,7 +814,10 @@ void qa_q2_ctf_menu_action(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_serv
   } else if (strcmp(action, "admin-settings") == 0) {
     qa_q2_ctf_match_settings_menu(ctf->match, entity, g);
   } else if (strcmp(action, "credits") == 0) {
-    char *labels[3] = {qa_q2mp_dup("Design and code: David 'Zoid' Kirsch"), qa_q2mp_dup("id Software Quake II"), qa_q2mp_dup("Close")};
+    char * value = qa_q2mp_dup("Design and code: David 'Zoid' Kirsch");
+    char * value2 = qa_q2mp_dup("id Software Quake II");
+    char * value3 = qa_q2mp_dup("Close");
+    char *labels[3] = {value, value2, value3};
     qa_q2_ctf_menu_entry entries[3] = {{labels[0], NULL}, {labels[1], NULL}, {labels[2], "close"}};
     qa_q2_ctf_event event = {0};
     event.kind = "menu";

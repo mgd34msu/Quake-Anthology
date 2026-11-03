@@ -30,17 +30,17 @@ static category find_category(const char *classname, const table *t) {
   for (int kind = 0; kind < 4; kind++) if (in_list(classname, t->rows[kind], t->counts[kind])) return (category)kind;
   return CAT_NONE;
 }
-static double rr_integer(qa_q2f_game *game, double count) {
+static double rr_integer(qa_q2_game_services *game, double count) {
   return game->host->rerelease_random != NULL
       ? (double)qa_q2_rerelease_random_integer_max(game->host->rerelease_random, (int64_t)count)
       : floor(q2mp_rnd(game) * count);
 }
 static bool is(const char *a, const char *b) { return strcmp(a, b) == 0; }
 
-const char *qa_q2mp_random_item(qa_q2f_entity *entity, const qa_q2mp_item_definition *item, qa_q2f_game *game,
+const char *qa_q2mp_random_item(qa_q2_entity *entity, const qa_q2_item_definition *item, qa_q2_game_services *game,
                                 qa_q2mp_random_item_settings settings) {
   if (!settings.enabled) return NULL;
-  if (game->options.edition == QA_Q2F_CLASSIC) {
+  if (game->options.edition == QA_Q2_EDITION_CLASSIC) {
     if (is(item->kind, "power-armor")) return NULL;
     if (is(item->kind, "health") || is(item->classname, "item_adrenaline")) {
       if (is(entity->classname, "item_health_small")) return NULL;

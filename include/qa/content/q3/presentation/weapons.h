@@ -105,6 +105,8 @@ const qa_q3_pres_packet_item_visual *qa_q3_pres_client_weapon_media_registry_ite
 /* Bad indices abort with the TS RangeError text. */
 qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_weapon(
     qa_q3_pres_client_weapon_media_registry *registry, double number);
+qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_weapon_or_empty(
+    qa_q3_pres_client_weapon_media_registry *registry, double number);
 qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_require_weapon(
     qa_q3_pres_client_weapon_media_registry *registry, double number);
 bool qa_q3_pres_client_weapon_media_registry_register_weapon(qa_q3_pres_client_weapon_media_registry *registry,

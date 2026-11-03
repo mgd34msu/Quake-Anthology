@@ -42,12 +42,19 @@ typedef struct qa_qvm_inventory_records {
 void qa_qvm_read_primary_inventory_profile(const qa_save_reader *reader, const qa_resolved_qvm_artifact *artifact,
                                            const qa_qvm_inventory_records *records,
                                            qa_qvm_inventory_profile *out);
-/* Public profile whose capacity closure yields a fixed constant
- * (the builtin-profile conversion of a content capacity evaluated
- * for weapon 0). */
+/* Public profile whose capacity closure yields a fixed constant. */
 void qa_qvm_primary_inventory_profile_constant(qa_module_identity module, qa_qvm_abi_profile abi_profile,
                                                double weapons_offset, double ammo_offset, int32_t constant,
                                                qa_qvm_inventory_profile *out);
+/* Public profile whose capacity is a content closure over live memory (TS
+ * q3NativeInventoryProfile, which depends on the weapon and the source's game
+ * mode); `release`, optional, runs on capacity_ctx in the profile's free. */
+typedef double (*qa_qvm_source_capacity_fn)(void *ctx, qa_qvm_memory *memory, double weapon);
+void qa_qvm_primary_inventory_profile_source(qa_module_identity module, qa_qvm_abi_profile abi_profile,
+                                             double weapons_offset, double ammo_offset,
+                                             qa_qvm_source_capacity_fn capacity, void *capacity_ctx,
+                                             void (*release)(void *ctx),
+                                             qa_qvm_inventory_profile *out);
 void qa_qvm_primary_inventory_profile_free(qa_qvm_inventory_profile *profile);
 
 #endif

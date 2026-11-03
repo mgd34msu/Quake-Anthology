@@ -208,6 +208,7 @@ static qa_ui_menu factory(void *v) {
   add_button(s, &at, "ui:match:removebot", "Remove named bot", 11,
              M_REMOVEBOT, !blank_trim(s->bot));
   add_button(s, &at, "ui:match:back", "Back", 10, M_BACK, true);
+  s->controls[at - 1].rect = (qa_rect){ 64, 414, 496, 30 };
   s->scroll =
       (qa_ui_menu_scroll){ (qa_rect){ 64, 92, 512, 306 }, 442, scroll_ids, 12 };
   qa_ui_menu menu;

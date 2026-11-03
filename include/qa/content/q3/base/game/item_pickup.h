@@ -1,6 +1,5 @@
 /* Port of src/content/q3/base/game/item-pickup.ts. GPL-2.0-or-later.
- * shared/items.ts itemList/itemAt unported: caller registers mirror lists via
- * qa_q3_item_pickup_set_item_list_mirror (TS-owner comment; see unresolved). */
+ * Item identity is the shared/items.ts table (qa_q3_base_item_list). */
 #ifndef QA_CONTENT_Q3_BASE_GAME_ITEM_PICKUP_H
 #define QA_CONTENT_Q3_BASE_GAME_ITEM_PICKUP_H
 #include <stddef.h>
@@ -16,13 +15,11 @@ typedef struct qa_q3_item_pickup_context {
   qa_q3_weapon_pickup_context weapon; qa_q3_powerup_pickup_context powerup;
   void *handicap_ctx; const char *(*handicap_for_client)(void *ctx, double client_num);
 } qa_q3_item_pickup_context;
-void qa_q3_item_pickup_set_item_list_mirror(qa_q3_game_product product, const qa_q3_game_item_definition_mirror *items, size_t count);
-void qa_q3_add_ammo(qa_q3_game_entity *other, double weapon, double count);
 double qa_q3_pickup_ammo(qa_q3_game_entity *item_entity, qa_q3_game_entity *other);
 typedef struct qa_q3_weapon_pickup_quantity_input { double count, quantity; bool dropped; double game_type, current_ammo; } qa_q3_weapon_pickup_quantity_input;
 double qa_q3_weapon_pickup_quantity(qa_q3_weapon_pickup_quantity_input input);
 double qa_q3_weapon_respawn_seconds(qa_q3_weapon_pickup_context context);
-double qa_q3_item_respawn_seconds(const qa_q3_game_item_definition_mirror *item, qa_q3_weapon_pickup_context context);
+double qa_q3_item_respawn_seconds(const qa_q3_base_item_definition *item, qa_q3_weapon_pickup_context context);
 double qa_q3_pickup_weapon(qa_q3_game_entity *item_entity, qa_q3_game_entity *other, qa_q3_weapon_pickup_context context);
 double qa_q3_pickup_health(qa_q3_game_entity *item_entity, qa_q3_game_entity *other);
 double qa_q3_pickup_armor(qa_q3_game_entity *item_entity, qa_q3_game_entity *other);

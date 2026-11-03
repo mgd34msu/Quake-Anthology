@@ -20,6 +20,8 @@ typedef struct qa_q3_source_weapon_state {
   double holdable_item, holdable_tag;
   double (*ammo_get)(void *ctx, double weapon);
   void (*ammo_set)(void *ctx, double weapon, double count);
+  /* Optional: called with ammo_ctx and the prior values after each weapon/weapon_state/weapon_time write (TS accessors). */
+  void (*weapon_field_written)(void *ctx, double before_weapon, double before_state, double before_time);
 } qa_q3_source_weapon_state;
 
 typedef struct qa_q3_source_weapon_options {

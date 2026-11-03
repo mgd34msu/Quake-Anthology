@@ -4,7 +4,7 @@
 #ifndef QA_CONTENT_Q1_ADDONS_MONSTERS_BOSSES_SPHERE_POINTS_H
 #define QA_CONTENT_Q1_ADDONS_MONSTERS_BOSSES_SPHERE_POINTS_H
 
-#include "qa/content/q1/addons/monsters/ai/controller.h"
+#include "qa/contracts/math.h"
 
 qa_vec3 qa_q1am_sphere_point(double index);
 

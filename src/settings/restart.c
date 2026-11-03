@@ -1,6 +1,7 @@
 /* Port of src/settings/restart.ts. GPL-2.0-or-later. */
 #include "qa/settings/restart.h"
 
+#include "qa/foundation/support.h"
 #include <stdarg.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
@@ -8,13 +9,12 @@
 #include <string.h>
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 bool qa_restart_controls_init(

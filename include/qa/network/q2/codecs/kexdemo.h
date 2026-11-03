@@ -80,11 +80,18 @@ typedef struct qa_q2_kex_context {
   qa_q2_protocol_codec codec; /* TS KEX_DEMO_CODEC */
   double protocol;            /* TS kexServerProtocol */
   double split_players;
-  bool edict_solid_known[QA_Q2_MAX_EDICTS];
-  bool edict_solid[QA_Q2_MAX_EDICTS];
+  /* TS kexDemoEdictNonzeroSolid = new Map<number, boolean>(): any entity
+   * number the stream names (readEntityBitsWide reads up to a word, and -1 on
+   * underflow). solid_table holds numbers 0..MAX_EDICTS-1 (0 unknown, 1 false,
+   * 2 true); solid_other holds every other key (heap, freed by _destroy). */
+  uint8_t solid_table[QA_Q2_MAX_EDICTS];
+  struct qa_q2_kex_solid_entry { double number; bool nonzero; } *solid_other;
+  size_t solid_other_count, solid_other_cap;
 } qa_q2_kex_context;
 
 void qa_q2_kex_context_init(qa_q2_kex_context *ctx, qa_q2_sizebuf *net_message);
+/* Releases the edict-solid memory; the context may be initialised again. */
+void qa_q2_kex_context_destroy(qa_q2_kex_context *ctx);
 /* TS setKexProtocol / splitPlayerCount / isKexDemoProtocol. */
 void qa_q2_kex_set_protocol(qa_q2_kex_context *ctx, double protocol);
 double qa_q2_kex_split_player_count(const qa_q2_kex_context *ctx);

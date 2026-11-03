@@ -9,8 +9,15 @@ void qa_app_sim_register_quakeworld_engine_cvars(qa_cvar_registry *cvars) {
   };
   for (size_t i = 0; i < sizeof entries / sizeof entries[0]; i++) {
     qa_cvar_read found;
-    if (!qa_cvar_registry_find(cvars, entries[i].name, &found))
-      qa_cvar_registry_register(cvars, entries[i].name, entries[i].value, 0, &(qa_cvar_snapshot){0});
+    bool exists = qa_cvar_registry_find(cvars, entries[i].name, &found);
+    qa_cvar_read_free(&found);
+    if (!exists) {
+      qa_cvar_snapshot registered;
+      qa_cvar_registry_register(cvars, entries[i].name, entries[i].value, 0, &registered);
+      qa_cvar_read_free(&registered);
+    }
   }
-  qa_cvar_registry_register(cvars, "maxspectators", "8", QA_CVAR_FLAG_SERVER_INFO, &(qa_cvar_snapshot){0});
+  qa_cvar_snapshot registered;
+  qa_cvar_registry_register(cvars, "maxspectators", "8", QA_CVAR_FLAG_SERVER_INFO, &registered);
+  qa_cvar_read_free(&registered);
 }

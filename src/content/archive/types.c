@@ -8,16 +8,17 @@
 
 #include "qa/foundation/support.h"
 
+/* TS ArchiveError(source, offset, message): `${source}:${offset}: ${message}`,
+ * raised so TS catch sites (mod discovery, mount fallbacks) recover it. */
 noreturn void qa_archive_error(const char *source, int64_t offset,
                                const char *format, ...) {
+  char message[QA_CAUGHT_MESSAGE_CAPACITY];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "ArchiveError: %s:%lld: ", source ? source : "",
-          (long long)offset);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("ArchiveError", 0, (long long)offset, "%s:%lld: %s",
+           source ? source : "", (long long)offset, message);
 }
 
 void qa_archive_check_range(const char *source, int64_t size, int64_t offset,
@@ -69,74 +70,81 @@ static noreturn void unsafe_path(const char *path) {
   qa_range_error("Unsafe archive member path: %s", json != NULL ? json : "\"\"");
 }
 
-char *qa_normalize_entry_path(const char *path) {
+char *qa_try_normalize_entry_path(const char *path, bool *out_unsafe) {
+  *out_unsafe = false;
   if (path == NULL) path = "";
   size_t length = strlen(path);
-  char *separated = (char *)malloc(length + 1);
-  if (separated == NULL) return NULL;
+  /* A NUL byte cannot occur in a C string; callers holding raw bytes test
+   * for it before calling (TS includes("\0") returns null). */
   for (size_t i = 0; i < length; i++)
-    separated[i] = path[i] == '\\' ? '/' : path[i];
-  separated[length] = '\0';
-  bool trailing = length > 0 && separated[length - 1] == '/';
-  size_t candidate_length = trailing ? length - 1 : length;
-
-  bool bad = candidate_length == 0;
-  for (size_t i = 0; i < candidate_length && !bad; i++)
-    if (separated[i] == ':') bad = true;
-  /* A NUL byte cannot occur in a C string; the TS includes("\0")
-   * clause is unreachable here (byte-string inputs lose it earlier). */
-
-  /* Split candidate into parts, validating ""/"." and folding "..". */
-  size_t part_capacity = candidate_length / 2 + 2;
-  char **parts = (char **)malloc(part_capacity * sizeof *parts);
-  size_t *part_lengths = (size_t *)malloc(part_capacity * sizeof *part_lengths);
-  if (parts == NULL || part_lengths == NULL) {
-    free(parts); free(part_lengths); free(separated);
+    if (path[i] == ':') {
+      *out_unsafe = true;
+      return NULL;
+    }
+  bool trailing = length > 0 && (path[length - 1] == '/' || path[length - 1] == '\\');
+  /* Parts index into path; "" and "." segments collapse, ".." pops. */
+  size_t part_capacity = length / 2 + 2;
+  size_t *starts = (size_t *)malloc(part_capacity * sizeof *starts);
+  size_t *lengths = (size_t *)malloc(part_capacity * sizeof *lengths);
+  if (starts == NULL || lengths == NULL) {
+    free(starts);
+    free(lengths);
     return NULL;
   }
   size_t part_count = 0;
   size_t start = 0;
-  for (size_t i = 0; i <= candidate_length && !bad; i++) {
-    if (i != candidate_length && separated[i] != '/') continue;
+  bool bad = false;
+  for (size_t i = 0; i <= length; i++) {
+    if (i != length && path[i] != '/' && path[i] != '\\') continue;
     size_t part_length = i - start;
-    const char *part = separated + start;
-    if (part_length == 0 || (part_length == 1 && part[0] == '.')) {
-      bad = true;
-      break;
-    }
+    const char *part = path + start;
+    size_t part_start = start;
+    start = i + 1;
+    if (part_length == 0 || (part_length == 1 && part[0] == '.')) continue;
     if (part_length == 2 && part[0] == '.' && part[1] == '.') {
-      if (part_count == 0) { bad = true; break; }
+      if (part_count == 0) {
+        bad = true;
+        break;
+      }
       part_count--;
     } else {
-      parts[part_count] = separated + start;
-      part_lengths[part_count] = part_length;
+      starts[part_count] = part_start;
+      lengths[part_count] = part_length;
       part_count++;
     }
-    start = i + 1;
   }
-  if (!bad && part_count == 0) bad = true;
-  if (bad) {
-    free(parts); free(part_lengths); free(separated);
-    unsafe_path(path);
+  if (bad || part_count == 0) {
+    free(starts);
+    free(lengths);
+    *out_unsafe = true;
+    return NULL;
   }
   size_t out_length = trailing ? 1 : 0;
-  for (size_t i = 0; i < part_count; i++)
-    out_length += part_lengths[i] + (i > 0 ? 1 : 0);
+  for (size_t i = 0; i < part_count; i++) out_length += lengths[i] + (i > 0 ? 1 : 0);
   char *out = (char *)malloc(out_length + 1);
   if (out == NULL) {
-    free(parts); free(part_lengths); free(separated);
+    free(starts);
+    free(lengths);
     return NULL;
   }
   size_t at = 0;
   for (size_t i = 0; i < part_count; i++) {
     if (i > 0) out[at++] = '/';
-    memcpy(out + at, parts[i], part_lengths[i]);
-    at += part_lengths[i];
+    memcpy(out + at, path + starts[i], lengths[i]);
+    at += lengths[i];
   }
   if (trailing) out[at++] = '/';
   out[at] = '\0';
-  free(parts); free(part_lengths); free(separated);
+  free(starts);
+  free(lengths);
   return out;
+}
+
+char *qa_normalize_entry_path(const char *path) {
+  bool unsafe = false;
+  char *normalized = qa_try_normalize_entry_path(path, &unsafe);
+  if (unsafe) unsafe_path(path);
+  return normalized;
 }
 
 char *qa_compare_entry_path(const char *path,

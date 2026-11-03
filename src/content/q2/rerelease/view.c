@@ -5,8 +5,8 @@
 #include "rr_internal.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
-qa_q2rr_base_view_ops qa_q2rr_base_view;
 static double clampd(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
 static double kick_ratio(double until, double now, double duration, double slack) {
   double remaining = until - now;
@@ -14,13 +14,14 @@ static double kick_ratio(double until, double now, double duration, double slack
   return (slack != 0 && remaining > duration) ? (duration + slack - remaining) / slack : remaining / duration;
 }
 
-qa_q2rr_feedback_result qa_q2_rerelease_damage_feedback(qa_q2rr_player_context *c, qa_q2rr_player_extra_state *extra, double pain_index) {
-  qa_q2rr_player_state *st = c->state; qa_q2_game_services *g = c->game; qa_q2_entity *e = c->entity;
+qa_q2_damage_feedback_result qa_q2_rerelease_damage_feedback(qa_q2_player_context *c, qa_q2rr_player_extra_state *extra, double pain_index) {
+  qa_q2_base_player_state *st = c->state; qa_q2_game_services *g = c->game; qa_q2_entity *e = c->entity;
   double now = rr_now(g);
   double blood = st->damage_blood, armor = st->damage_armor, power = st->damage_power_armor, kick = st->damage_knockback;
   double total = blood + armor + power, old_alpha = st->damage_alpha, old_pain = st->pain_debounce;
-  if (!qa_q2rr_base_view.damage_feedback) qa_q2rr_error("q2DamageFeedback base op missing");
-  qa_q2rr_feedback_result result = qa_q2rr_base_view.damage_feedback(qa_q2rr_base_view.ctx, c, pain_index);
+  qa_q2_player_character_adapter adapter;
+  qa_q2_character_context shared = qa_q2_player_context_as_character(c, &adapter);
+  qa_q2_damage_feedback_result result = qa_q2_damage_feedback(&shared, pain_index);
   if (result.flashes != 0) { extra->flashes = result.flashes; extra->flash_time = now + 0.1; }
   else if (extra->flash_time < now) extra->flashes = 0;
   if (total != 0) {
@@ -42,11 +43,13 @@ qa_q2rr_feedback_result qa_q2_rerelease_damage_feedback(qa_q2rr_player_context *
     }
     if (st->pain_debounce > old_pain) c->hooks->noise(c->hooks->ctx, e->actor.id, rr_body_of(g, e).origin);
   }
-  qa_q2rr_feedback_result out = {extra->flashes, result.pain_index};
+  qa_q2_damage_feedback_result out = {extra->flashes, result.pain_index};
   return out;
 }
 
-typedef struct { qa_q2rr_player_context *inner; qa_q2_player_powerups powers; double now; } shared_call;
+/* The adapter is the first member, so the base body/move services still
+ * read it through the same ctx. */
+typedef struct { qa_q2_player_character_adapter adapter; qa_q2_player_powerups powers; double now; } shared_call;
 static void shared_sound(void *ctx, qa_q2_entity *e, const char *path, double ch, double vol, double att) {
   shared_call *s = ctx;
   bool has_until = true; double until = 0;
@@ -54,37 +57,38 @@ static void shared_sound(void *ctx, qa_q2_entity *e, const char *path, double ch
   else if (strcmp(path, "items/protect2.wav") == 0) until = s->powers.invulnerability_until;
   else if (strcmp(path, "items/airout.wav") == 0) until = s->powers.enviro_until > s->now ? s->powers.enviro_until : s->powers.breather_until;
   else has_until = false;
-  if (has_until && llround((until - s->now) * 1000) != 3000) return;
-  rr_sound_ent(s->inner->game, e, path, ch, vol, att);
+  if (has_until && qa_js_round((until - s->now) * 1000) != 3000) return;
+  rr_sound_ent(s->adapter.game, e, path, ch, vol, att);
 }
 
-qa_q2rr_player_view qa_q2_rerelease_build_view(qa_q2rr_player_context *c, qa_q2rr_player_extra_state *extra, double flashes, bool intermission) {
-  qa_q2rr_player_state *st = c->state; qa_q2_game_services *g = c->game; qa_q2_entity *e = c->entity;
+qa_q2_base_player_view qa_q2_rerelease_build_view(qa_q2_player_context *c, qa_q2rr_player_extra_state *extra, double flashes, bool intermission) {
+  qa_q2_base_player_state *st = c->state; qa_q2_game_services *g = c->game; qa_q2_entity *e = c->entity;
   double now = rr_now(g), dt = rr_frame(g);
-  qa_q2_player_powerups powers = c->powerups(c->call_ctx);
-  qa_q2rr_player_context shared = *c;
-  shared_call sc = {c, powers, now};
-  shared.call_ctx = &sc; shared.sound = shared_sound;
+  qa_q2_player_powerups powers = qa_q2_player_context_powerups(c->players, e);
+  shared_call sc;
+  sc.powers = powers; sc.now = now;
+  qa_q2_character_context shared = qa_q2_player_context_as_character(c, &sc.adapter);
+  shared.game.ctx = &sc; shared.game.sound = shared_sound;
   double alpha = st->damage_alpha, bonus = st->bonus_alpha;
-  if (!qa_q2rr_base_view.build_view) qa_q2rr_error("q2BuildView base op missing");
-  qa_q2rr_player_view base = qa_q2rr_base_view.build_view(qa_q2rr_base_view.ctx, &shared, flashes, intermission);
+  qa_q2_base_player_view base = qa_q2_build_view(&shared, flashes, intermission);
   st->damage_alpha = alpha - dt * 0.6 > 0 ? alpha - dt * 0.6 : 0;
   st->bonus_alpha = bonus - dt > 0 ? bonus - dt : 0;
   if (intermission) { base.offset = QA_Q2_ZERO; return base; }
   qa_body_state body = rr_body_of(g, e);
-  qa_q2rr_weapon_result weapon = c->weapon_state(c->call_ctx);
+  qa_q2_character_weapon weapon_value;
+  bool has_weapon = qa_q2_player_context_weapon_state(c->players, e, g, &weapon_value);
   qa_angle_vectors vectors = qa_math_angle_vectors_rule(c->movement.view_angles, QA_ANGLE_RULE_NATIVE);
   double speed = hypot(body.velocity.x, body.velocity.y);
   bool duck = c->movement.ducked && c->movement.grounded;
   double bob_time = st->bob_time * (duck ? 4 : 1);
-  int64_t cycle = (int64_t)trunc(bob_time);
+  int32_t cycle = qa_js_to_int32(bob_time); /* TS Math.trunc(bobTime) & 1: ToInt32 */
   double bob = fabs(sin(bob_time * 3.141592653589793));
   double sign = (cycle & 1) != 0 ? -1 : 1;
   double fall = kick_ratio(st->fall_time, now, 0.3, 0.1 - dt);
-  const qa_q2rr_player_rules *rules = c->rules;
+  const qa_q2_base_player_rules *rules = c->rules;
   qa_vec3 kick = QA_Q2_ZERO, offset = QA_Q2_ZERO;
   if (!st->dead && !extra->bob_skip) {
-    qa_vec3 recoil = weapon.has ? weapon.v.kick_angles : QA_Q2_ZERO;
+    qa_vec3 recoil = has_weapon ? weapon_value.kick_angles : QA_Q2_ZERO;
     double damage = kick_ratio(st->damage_time, now, 0.5, 0.1 - dt);
     double bx = bob * rules->bob_pitch * speed * (duck ? 6 : 1); if (bx > 1.2) bx = 1.2;
     double bz = bob * rules->bob_roll * speed * (duck ? 6 : 1); if (bz > 1.2) bz = 1.2;
@@ -99,19 +103,18 @@ qa_q2rr_player_view qa_q2_rerelease_build_view(qa_q2rr_player_context *c, qa_q2r
     }
   }
   if (!extra->bob_skip) {
-    qa_vec3 recoil = weapon.has ? weapon.v.kick_origin : QA_Q2_ZERO;
+    qa_vec3 recoil = has_weapon ? weapon_value.kick_origin : QA_Q2_ZERO;
     double bz = bob * speed * rules->bob_up; if (bz > 6) bz = 6;
     offset.x = clampd(recoil.x, -14, 14);
     offset.y = clampd(recoil.y, -14, 14);
     offset.z = clampd(-fall * st->fall_value * 0.4 + bz + recoil.z, -22, 30);
   }
   qa_vec3 gun = QA_Q2_ZERO;
-  qa_q2rr_weapon_state_entry *src_w = NULL;
-  if (c->weapons && c->weapons->get_state) src_w = c->weapons->get_state(c->weapons->ctx, e->actor.id);
-  bool suppress = weapon.has && weapon.v.q2_name &&
-    (strcmp(weapon.v.q2_name, "heatbeam") == 0 || strcmp(weapon.v.q2_name, "grapple") == 0) &&
-    src_w && src_w->phase && strcmp(src_w->phase, "firing") == 0;
-  if (weapon.has && !suppress) {
+  qa_q2w_state *src_w = qa_q2_players_weapon_state(c->players, e->actor.id);
+  bool suppress = has_weapon && weapon_value.q2_name &&
+    (strcmp(weapon_value.q2_name, "heatbeam") == 0 || strcmp(weapon_value.q2_name, "grapple") == 0) &&
+    src_w && src_w->phase == QA_Q2W_FIRING;
+  if (has_weapon && !suppress) {
     qa_vec3 delta = qa_q2_subtract(st->old_view_angles, base.angles);
     qa_vec3 slow = extra->slow_view_angles;
     double in[3] = {slow.x, slow.y, slow.z}, ch[3] = {delta.x, delta.y, delta.z}, kk[3], vv[3];
@@ -135,8 +138,8 @@ qa_q2rr_player_view qa_q2_rerelease_build_view(qa_q2rr_player_context *c, qa_q2r
   return base;
 }
 
-void qa_q2_rerelease_client_animation(qa_q2rr_player_context *c, qa_q2rr_player_extra_state *extra) {
-  qa_q2rr_player_state *st = c->state; qa_q2_entity *e = c->entity; qa_q2_game_services *g = c->game;
+void qa_q2_rerelease_client_animation(qa_q2_player_context *c, qa_q2rr_player_extra_state *extra) {
+  qa_q2_base_player_state *st = c->state; qa_q2_entity *e = c->entity; qa_q2_game_services *g = c->game;
   if (!c->movement.animate_q2 || st->gibbed) return;
   qa_body_state b = rr_body_of(g, e);
   bool run = hypot(b.velocity.x, b.velocity.y) != 0, duck = c->movement.ducked;

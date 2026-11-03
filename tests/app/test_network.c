@@ -86,8 +86,9 @@ static void test_unified_handshake(void) {
   CHECK(decoded.kind == QA_APP_UNIFIED_HELLO);
   CHECK(strcmp(decoded.nonce, hello.nonce) == 0);
   free(bytes);
-  /* Malformed checkpoint JSON aborts in the landed decoder. */
-  CHECK_ABORTS(qa_app_unified_decode_handshake((const uint8_t *)"junk", 4, &decoded));
+  /* TS returns null for any malformed handshake. */
+  qa_app_unified_handshake_free(&decoded);
+  CHECK(!qa_app_unified_decode_handshake((const uint8_t *)"junk", 4, &decoded));
 }
 static void test_unified_control_roundtrip(void) {
   qa_app_unified_control control = {0};

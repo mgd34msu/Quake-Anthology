@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 const qa_vec3 qa_cell_axes[3] = {{1,0,0},{0,1,0},{0,0,1}};
 double qa_cell_dot(qa_vec3 a, qa_vec3 b){return a.x*b.x+a.y*b.y+a.z*b.z;}
 qa_vec3 qa_cell_add(qa_vec3 a, qa_vec3 b){qa_vec3 r={a.x+b.x,a.y+b.y,a.z+b.z};return r;}
@@ -19,7 +20,41 @@ typedef struct{qa_vec3*v;size_t n,cap;} VecList;
 static void vl_push(VecList*l,qa_vec3 x){if(l->n==l->cap){l->cap=l->cap?l->cap*2:8;l->v=xrealloc(l->v,l->cap*sizeof *l->v);}l->v[l->n++]=x;}
 typedef struct{qa_cell_face*v;size_t n,cap;} FaceList;
 static void fl_push(FaceList*l,qa_plane p,qa_vec3*v,size_t n){if(l->n==l->cap){l->cap=l->cap?l->cap*2:8;l->v=xrealloc(l->v,l->cap*sizeof*l->v);}l->v[l->n++]=(qa_cell_face){p,v,n};}
-static qa_convex_cell *cell_new(qa_cell_face*f,size_t n){qa_convex_cell*c=xmalloc(sizeof*c);c->faces=f;c->face_count=n;return c;}
+static qa_convex_cell *cell_new(qa_cell_face*f,size_t n){qa_convex_cell*c=xmalloc(sizeof*c);c->faces=f;c->face_count=n;c->bounds_state=0;return c;}
+/* TS boundsForCell: NULL when any vertex is non-finite or the cell is empty. */
+static const qa_convex_cell *bounds_for_cell(qa_convex_cell*cell){
+  if(cell->bounds_state==1)return cell;
+  if(cell->bounds_state==2)return NULL;
+  double mn[3]={INFINITY,INFINITY,INFINITY},mx[3]={-INFINITY,-INFINITY,-INFINITY};
+  for(size_t f=0;f<cell->face_count;f++)for(size_t i=0;i<cell->faces[f].vertex_count;i++){
+    qa_vec3 p=cell->faces[f].vertices[i];
+    if(!isfinite(p.x)||!isfinite(p.y)||!isfinite(p.z)){cell->bounds_state=2;return NULL;}
+    mn[0]=p.x<mn[0]?p.x:mn[0]; mn[1]=p.y<mn[1]?p.y:mn[1]; mn[2]=p.z<mn[2]?p.z:mn[2];
+    mx[0]=p.x>mx[0]?p.x:mx[0]; mx[1]=p.y>mx[1]?p.y:mx[1]; mx[2]=p.z>mx[2]?p.z:mx[2];
+  }
+  if(mn[0]==INFINITY){cell->bounds_state=2;return NULL;}
+  memcpy(cell->bmin,mn,sizeof mn);memcpy(cell->bmax,mx,sizeof mx);cell->bounds_state=1;
+  return cell;
+}
+static void seed_bounds(qa_convex_cell*cell,const double*mn,const double*mx,double poison){
+  if(cell==NULL||mn[0]==INFINITY||poison!=poison)return;
+  memcpy(cell->bmin,mn,3*sizeof*mn);memcpy(cell->bmax,mx,3*sizeof*mx);cell->bounds_state=1;
+}
+static void grow_bounds(double*mn,double*mx,qa_vec3 p){
+  mn[0]=p.x<mn[0]?p.x:mn[0]; mx[0]=p.x>mx[0]?p.x:mx[0];
+  mn[1]=p.y<mn[1]?p.y:mn[1]; mx[1]=p.y>mx[1]?p.y:mx[1];
+  mn[2]=p.z<mn[2]?p.z:mn[2]; mx[2]=p.z>mx[2]?p.z:mx[2];
+}
+qa_convex_cell *qa_convex_cell_clone(const qa_convex_cell*cell){
+  qa_convex_cell*c=xmalloc(sizeof*c); *c=*cell;
+  c->faces=xmalloc((cell->face_count?cell->face_count:1)*sizeof*c->faces);
+  for(size_t i=0;i<cell->face_count;i++){
+    c->faces[i]=cell->faces[i];
+    c->faces[i].vertices=xmalloc((cell->faces[i].vertex_count?cell->faces[i].vertex_count:1)*sizeof*c->faces[i].vertices);
+    memcpy(c->faces[i].vertices,cell->faces[i].vertices,cell->faces[i].vertex_count*sizeof*c->faces[i].vertices);
+  }
+  return c;
+}
 void qa_convex_cell_destroy(qa_convex_cell*c){if(!c)return;for(size_t i=0;i<c->face_count;i++)free(c->faces[i].vertices);free(c->faces);free(c);}
 static qa_vec3 *dup_pts(const qa_vec3*p,size_t n){qa_vec3*r=xmalloc(n*sizeof*r);memcpy(r,p,n*sizeof*r);return r;}
 qa_convex_cell *qa_box_cell(qa_bounds b){
@@ -35,10 +70,15 @@ qa_convex_cell *qa_box_cell(qa_bounds b){
   f[3]=(qa_cell_face){{qa_cell_scale(qa_cell_axes[1],-1),-a.y},dup_pts(v3,4),4};
   f[4]=(qa_cell_face){{qa_cell_axes[2],c.z},dup_pts(v4,4),4};
   f[5]=(qa_cell_face){{qa_cell_scale(qa_cell_axes[2],-1),-a.z},dup_pts(v5,4),4};
-  return cell_new(f,6);
+  qa_convex_cell*cell=cell_new(f,6);
+  cell->bmin[0]=qa_js_min(a.x,c.x);cell->bmin[1]=qa_js_min(a.y,c.y);cell->bmin[2]=qa_js_min(a.z,c.z);
+  cell->bmax[0]=qa_js_max(a.x,c.x);cell->bmax[1]=qa_js_max(a.y,c.y);cell->bmax[2]=qa_js_max(a.z,c.z);
+  cell->bounds_state=1;
+  return cell;
 }
-typedef struct{qa_vec3 point;double angle;} Angled;
-static int ang_cmp(const void*A,const void*B){double d=((const Angled*)A)->angle-((const Angled*)B)->angle;return d<0?-1:d>0?1:0;}
+typedef struct{qa_vec3 point;double angle;size_t order;} Angled;
+/* Array.prototype.sort is stable; equal angles keep their cap order. */
+static int ang_cmp(const void*A,const void*B){const Angled*a=A,*b=B;double d=a->angle-b->angle;if(d<0)return -1;if(d>0)return 1;return a->order<b->order?-1:a->order>b->order?1:0;}
 static qa_convex_cell *close_cell(FaceList faces, VecList cap, qa_plane plane){
   if(cap.n>=3){
     qa_vec3 sum={0,0,0}; for(size_t i=0;i<cap.n;i++)sum=qa_cell_add(sum,cap.v[i]);
@@ -46,8 +86,8 @@ static qa_convex_cell *close_cell(FaceList faces, VecList cap, qa_plane plane){
     qa_vec3 axis=fabs(plane.normal.z)<0.9?qa_cell_axes[2]:qa_cell_axes[1];
     qa_vec3 u=qa_cell_unit(qa_cell_cross(axis,plane.normal)), v=qa_cell_cross(plane.normal,u);
     Angled*an=xmalloc(cap.n*sizeof*an);
-    for(size_t i=0;i<cap.n;i++){qa_vec3 d=qa_cell_sub(cap.v[i],center);an[i]=(Angled){cap.v[i],atan2(qa_cell_dot(d,v),qa_cell_dot(d,u))};}
-    qsort(an,cap.n,sizeof*an,ang_cmp);
+    for(size_t i=0;i<cap.n;i++){qa_vec3 d=qa_cell_sub(cap.v[i],center);an[i]=(Angled){cap.v[i],atan2(qa_cell_dot(d,v),qa_cell_dot(d,u)),i};}
+    qa_js_sort(an,cap.n,sizeof*an,ang_cmp);
     qa_vec3*pts=xmalloc(cap.n*sizeof*pts); for(size_t i=0;i<cap.n;i++)pts[i]=an[i].point; free(an);
     fl_push(&faces,plane,pts,cap.n);
   }
@@ -80,33 +120,57 @@ qa_convex_cell *qa_clip_cell(qa_convex_cell*cell, qa_plane plane){
   return close_cell(faces,cap,plane);
 }
 qa_split_result qa_split_cell(qa_convex_cell*cell, qa_plane plane){
+  qa_vec3 n=plane.normal;
+  if(isfinite(n.x)&&isfinite(n.y)&&isfinite(n.z)&&isfinite(plane.distance)){
+    const qa_convex_cell*b=bounds_for_cell(cell);
+    if(b!=NULL){
+      double lower=(n.x<0?b->bmax[0]:b->bmin[0])*n.x+(n.y<0?b->bmax[1]:b->bmin[1])*n.y+(n.z<0?b->bmax[2]:b->bmin[2])*n.z-plane.distance;
+      double upper=(n.x<0?b->bmin[0]:b->bmax[0])*n.x+(n.y<0?b->bmin[1]:b->bmax[1])*n.y+(n.z<0?b->bmin[2]:b->bmax[2])*n.z-plane.distance;
+      if(isfinite(lower)&&isfinite(upper)){
+        if(upper<-1e-8){qa_split_result r={NULL,cell};return r;}
+        if(lower>1e-8){qa_split_result r={cell,NULL};return r;}
+        if(lower>=-1e-8&&upper<=1e-8){qa_split_result r={cell,cell};return r;}
+      }
+    }
+  }
   int outside=0,inside=0,nonfinite=0;
-  for(size_t i=0;i<cell->face_count;i++)for(size_t j=0;j<cell->faces[i].vertex_count;j++){
+  for(size_t i=0;i<cell->face_count&&!nonfinite&&!(outside&&inside);i++)for(size_t j=0;j<cell->faces[i].vertex_count;j++){
     double d=qa_cell_dot(cell->faces[i].vertices[j],plane.normal)-plane.distance;
     if(!isfinite(d)){nonfinite=1;break;}
     if(d>1e-8){outside=1;}
     if(d<-1e-8){inside=1;}
     if(outside&&inside){break;}}
-  if(nonfinite){qa_split_result r={qa_clip_cell(cell,qa_negate_plane(plane)),qa_clip_cell(cell,plane)};return r;}
+  if(nonfinite){qa_convex_cell * front4 = qa_clip_cell(cell,qa_negate_plane(plane)); qa_convex_cell * back4 = qa_clip_cell(cell,plane); qa_split_result r={front4,back4};return r;}
   if(!outside||!inside){qa_split_result r={inside?NULL:cell,outside?NULL:cell};return r;}
   qa_plane opp=qa_negate_plane(plane);
   FaceList front={0},back={0}; VecList cap={0};
+  /* Child bounds accumulate over the same vertex visits; a NaN component
+   * poisons the product and skips seeding (TS fPoison/bPoison). */
+  double fmn[3]={INFINITY,INFINITY,INFINITY},fmx[3]={-INFINITY,-INFINITY,-INFINITY},fpoison=1;
+  double bmn[3]={INFINITY,INFINITY,INFINITY},bmx[3]={-INFINITY,-INFINITY,-INFINITY},bpoison=1;
   for(size_t fi=0;fi<cell->face_count;fi++){
     VecList fv={0},bv={0};
     for(size_t i=0;i<cell->faces[fi].vertex_count;i++){
       qa_vec3 a=cell->faces[fi].vertices[i],b=cell->faces[fi].vertices[(i+1)%cell->faces[fi].vertex_count];
       double da=qa_cell_dot(a,plane.normal)-plane.distance,db=qa_cell_dot(b,plane.normal)-plane.distance;
-      if(!isfinite(da)||!isfinite(db)){free(fv.v);free(bv.v);for(size_t k=0;k<front.n;k++)free(front.v[k].vertices);free(front.v);for(size_t k=0;k<back.n;k++)free(back.v[k].vertices);free(back.v);free(cap.v);qa_split_result r={qa_clip_cell(cell,opp),qa_clip_cell(cell,plane)};return r;}
-      if(da>=0){vl_push(&fv,a);}
-      if(da<=0){vl_push(&bv,a);}
-      if((da<0&&db>0)||(da>0&&db<0)){qa_vec3 pt=qa_cell_lerp(a,b,da/(da-db));vl_push(&fv,pt);vl_push(&bv,pt);if(!cap_has(&cap,pt))vl_push(&cap,pt);}
+      if(!isfinite(da)||!isfinite(db)){free(fv.v);free(bv.v);for(size_t k=0;k<front.n;k++)free(front.v[k].vertices);free(front.v);for(size_t k=0;k<back.n;k++)free(back.v[k].vertices);free(back.v);free(cap.v);qa_convex_cell * front3 = qa_clip_cell(cell,opp); qa_convex_cell * back3 = qa_clip_cell(cell,plane); qa_split_result r={front3,back3};return r;}
+      if(da>=0){vl_push(&fv,a);fpoison*=a.x*a.y*a.z;grow_bounds(fmn,fmx,a);}
+      if(da<=0){vl_push(&bv,a);bpoison*=a.x*a.y*a.z;grow_bounds(bmn,bmx,a);}
+      if((da<0&&db>0)||(da>0&&db<0)){qa_vec3 pt=qa_cell_lerp(a,b,da/(da-db));vl_push(&fv,pt);vl_push(&bv,pt);
+        double product=pt.x*pt.y*pt.z;fpoison*=product;bpoison*=product;grow_bounds(fmn,fmx,pt);grow_bounds(bmn,bmx,pt);
+        if(!cap_has(&cap,pt))vl_push(&cap,pt);}
       else if(da==0&&!cap_has(&cap,a))vl_push(&cap,a);
     }
     if(fv.n>=3)fl_push(&front,cell->faces[fi].plane,fv.v,fv.n); else free(fv.v);
     if(bv.n>=3)fl_push(&back,cell->faces[fi].plane,bv.v,bv.n); else free(bv.v);
   }
   VecList cap2={0}; for(size_t i=0;i<cap.n;i++)vl_push(&cap2,cap.v[i]);
-  qa_split_result r={close_cell(front,cap2,opp),close_cell(back,cap,plane)}; return r;
+  qa_convex_cell * front2 = close_cell(front,cap2,opp);
+  qa_convex_cell * back2 = close_cell(back,cap,plane);
+  qa_split_result r={front2,back2};
+  seed_bounds(r.front,fmn,fmx,fpoison);
+  seed_bounds(r.back,bmn,bmx,bpoison);
+  return r;
 }
 qa_vec3 *qa_cell_vertices(const qa_convex_cell*cell,size_t*out){
   size_t n=0; for(size_t i=0;i<cell->face_count;i++)n+=cell->faces[i].vertex_count;
@@ -117,7 +181,8 @@ qa_vec3 *qa_cell_vertices(const qa_convex_cell*cell,size_t*out){
 qa_plane *qa_box_separating_planes(const qa_convex_cell*cell,const qa_vec3*axes,size_t ac,size_t*out){
   VecList normals={0}; int axialSeen=0;
   /* insert inline via loop helper macro pattern */
-  #define INSERT(N) do{qa_vec3 _n0=(N);double _m=qa_cell_length(_n0);if(_m>=1e-8){qa_vec3 _n=qa_cell_scale(_n0,1.0/_m);int _ax=(_n.y==0&&_n.z==0)?(_n.x==1?1:_n.x==-1?2:0):(_n.x==0&&_n.z==0)?(_n.y==1?4:_n.y==-1?8:0):(_n.x==0&&_n.y==0)?(_n.z==1?16:_n.z==-1?32:0):0;if(!(axialSeen&_ax)){int _dup=0;for(size_t _i=0;_i<normals.n;_i++)if(qa_cell_dot(normals.v[_i],_n)>1-1e-10)_dup=1;if(!_dup)vl_push(&normals,_n);axialSeen|=_ax;}}}while(0)
+  /* `if (magnitude < 1e-8) return`: a NaN magnitude continues in TS. */
+  #define INSERT(N) do{qa_vec3 _n0=(N);double _m=qa_cell_length(_n0);if(!(_m<1e-8)){qa_vec3 _n=qa_cell_scale(_n0,1.0/_m);int _ax=(_n.y==0&&_n.z==0)?(_n.x==1?1:_n.x==-1?2:0):(_n.x==0&&_n.z==0)?(_n.y==1?4:_n.y==-1?8:0):(_n.x==0&&_n.y==0)?(_n.z==1?16:_n.z==-1?32:0):0;if(!(axialSeen&_ax)){int _dup=0;for(size_t _i=0;_i<normals.n;_i++)if(qa_cell_dot(normals.v[_i],_n)>1-1e-10)_dup=1;if(!_dup)vl_push(&normals,_n);axialSeen|=_ax;}}}while(0)
   for(size_t fi=0;fi<cell->face_count;fi++){
     INSERT(cell->faces[fi].plane.normal);
     for(size_t i=0;i<cell->faces[fi].vertex_count;i++){
@@ -130,6 +195,6 @@ qa_plane *qa_box_separating_planes(const qa_convex_cell*cell,const qa_vec3*axes,
   #undef INSERT
   size_t vc=0; qa_vec3*verts=qa_cell_vertices(cell,&vc);
   qa_plane*r=xmalloc((normals.n?normals.n:1)*sizeof*r);
-  for(size_t i=0;i<normals.n;i++){double d=-INFINITY;for(size_t j=0;j<vc;j++){double x=qa_cell_dot(normals.v[i],verts[j]);if(x>d)d=x;}r[i]=(qa_plane){normals.v[i],d};}
+  for(size_t i=0;i<normals.n;i++){double d=-INFINITY;for(size_t j=0;j<vc;j++)d=qa_js_max(d,qa_cell_dot(normals.v[i],verts[j]));r[i]=(qa_plane){normals.v[i],d};}
   free(verts); free(normals.v); *out=normals.n; return r;
 }

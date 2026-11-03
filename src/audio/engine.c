@@ -7,11 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "qa/audio/reverb.h"
 #include "qa/foundation/bounded_queue.h"
 #include "qa/foundation/strings.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static noreturn void plain_error(const char *format, ...) {
   char message[1024];
@@ -19,8 +21,7 @@ static noreturn void plain_error(const char *format, ...) {
   va_start(args, format);
   vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static void *xmalloc(size_t size) {
@@ -119,9 +120,13 @@ struct qa_unified_audio {
     qa_actor_id actor;
     bool has_owner;
     qa_provider_id owner; /* borrowed */
+    bool retired;         /* TS null slot */
   } *actors;
   size_t actor_count;
   size_t actor_capacity;
+  int64_t *free_actor_entities; /* TS freeActorEntities: popped from the end */
+  size_t free_actor_count;
+  size_t free_actor_capacity;
   struct alias_entry {
     int64_t entity;
     int64_t *aliases;
@@ -171,6 +176,7 @@ struct qa_unified_audio {
   bool has_previous_pump_frame;
   int64_t previous_pump_frame;
   qa_bounded_queue pump_intervals;
+  double next_removal_check; /* TS nextRemovalCheck (performance.now ms) */
   qa_string_table *loop_owners;
   struct loop_key_entry {
     uint32_t owner_id;
@@ -291,29 +297,37 @@ static void alias_push(struct alias_entry *entry, int64_t entity) {
   entry->aliases[entry->count++] = entity;
 }
 
+/* TS actorEntityKey equality: session, slot, generation and owner. */
 static int64_t engine_entity(qa_unified_audio *audio, qa_actor_id actor,
                              bool has_owner, qa_provider_id owner) {
   for (size_t i = 0; i < audio->actor_count; i++) {
-    if (qa_same_actor(audio->actors[i].actor, actor) &&
+    if (!audio->actors[i].retired && qa_same_actor(audio->actors[i].actor, actor) &&
         owner_equal(audio->actors[i].has_owner, audio->actors[i].owner,
                     has_owner, owner))
       return (int64_t)i + 1;
   }
   bool has_original = has_owner;
   int64_t original = has_owner ? engine_entity(audio, actor, false, NULL) : 0;
-  if ((double)(audio->actor_count + 1) >= audio->max_actors)
-    qa_range_error("Audio actor capacity exhausted");
-  if (audio->actor_count == audio->actor_capacity) {
-    audio->actor_capacity =
-        audio->actor_capacity == 0 ? 16 : audio->actor_capacity * 2;
-    audio->actors =
-        xrealloc(audio->actors, audio->actor_capacity * sizeof *audio->actors);
+  int64_t entity;
+  if (audio->free_actor_count != 0) {
+    entity = audio->free_actor_entities[--audio->free_actor_count];
+  } else {
+    if ((double)(audio->actor_count + 1) >= audio->max_actors)
+      qa_range_error("Audio actor capacity exhausted");
+    if (audio->actor_count == audio->actor_capacity) {
+      audio->actor_capacity =
+          audio->actor_capacity == 0 ? 16 : audio->actor_capacity * 2;
+      audio->actors =
+          xrealloc(audio->actors, audio->actor_capacity * sizeof *audio->actors);
+    }
+    audio->actor_count++;
+    entity = (int64_t)audio->actor_count;
   }
-  audio->actors[audio->actor_count].actor = actor;
-  audio->actors[audio->actor_count].has_owner = has_owner;
-  audio->actors[audio->actor_count].owner = owner;
-  audio->actor_count++;
-  int64_t entity = (int64_t)audio->actor_count;
+  struct actor_entry *slot = &audio->actors[entity - 1];
+  slot->actor = actor;
+  slot->has_owner = has_owner;
+  slot->owner = owner;
+  slot->retired = false;
   if (!has_original) {
     struct alias_entry *entry = alias_entry_for(audio, entity, true);
     entry->count = 0;
@@ -330,6 +344,75 @@ static int64_t engine_entity(qa_unified_audio *audio, qa_actor_id actor,
     }
   }
   return entity;
+}
+
+static void positions_delete(qa_unified_audio *audio, int64_t entity) {
+  for (size_t i = 0; i < audio->position_count; i++) {
+    if (audio->positions[i].entity != entity) continue;
+    memmove(&audio->positions[i], &audio->positions[i + 1],
+            (audio->position_count - i - 1) * sizeof *audio->positions);
+    audio->position_count--;
+    return;
+  }
+}
+
+static bool actor_kept(const qa_actor_id *live, size_t live_count,
+                       qa_unified_audio *audio, qa_actor_id actor) {
+  for (size_t i = 0; i < live_count; i++)
+    if (qa_same_actor(live[i], actor)) return true;
+  for (size_t i = 0; i < audio->seat_count; i++)
+    if (audio->seats[i]->listener.has_actor &&
+        qa_same_actor(audio->seats[i]->listener.actor, actor))
+      return true;
+  return false;
+}
+
+/* TS retireAbsentActors: an unowned actor absent from `live` and from every
+ * listener frees its entity and its owner aliases once no loop or voice of
+ * any seat can still be heard from them. */
+void qa_unified_audio_retire_absent_actors(qa_unified_audio *audio,
+                                           const qa_actor_id *live,
+                                           size_t live_count) {
+  check_open(audio);
+  for (size_t index = 0; index < audio->actor_count; index++) {
+    struct actor_entry *entry = &audio->actors[index];
+    if (entry->retired || entry->has_owner ||
+        actor_kept(live, live_count, audio, entry->actor))
+      continue;
+    int64_t own = (int64_t)index + 1;
+    struct alias_entry *aliases = alias_entry_for(audio, own, false);
+    const int64_t *entities = aliases != NULL ? aliases->aliases : &own;
+    size_t entity_count = aliases != NULL ? aliases->count : 1;
+    bool heard = false;
+    for (size_t s = 0; s < audio->seat_count && !heard; s++) {
+      seat_audio *state = audio->seats[s];
+      for (size_t l = 0; l < state->loop_count && !heard; l++)
+        heard = qa_same_actor(state->loops[l].loop.actor, entry->actor);
+      for (size_t e = 0; e < entity_count && !heard; e++)
+        heard = qa_audio_mixer_entity_active(state->mixer, (double)entities[e]);
+    }
+    if (heard) continue;
+    for (size_t e = 0; e < entity_count; e++) {
+      int64_t entity = entities[e];
+      audio->actors[entity - 1].retired = true;
+      positions_delete(audio, entity);
+      if (audio->free_actor_count == audio->free_actor_capacity) {
+        audio->free_actor_capacity =
+            audio->free_actor_capacity == 0 ? 16 : audio->free_actor_capacity * 2;
+        audio->free_actor_entities =
+            xrealloc(audio->free_actor_entities,
+                     audio->free_actor_capacity * sizeof *audio->free_actor_entities);
+      }
+      audio->free_actor_entities[audio->free_actor_count++] = entity;
+    }
+    if (aliases != NULL) {
+      free(aliases->aliases);
+      size_t at = (size_t)(aliases - audio->aliases);
+      memmove(&audio->aliases[at], &audio->aliases[at + 1],
+              (audio->alias_count - at - 1) * sizeof *audio->aliases);
+      audio->alias_count--;
+    }
+  }
 }
 
 static int64_t engine_loop_key(qa_unified_audio *audio, qa_sound_family family,
@@ -1327,7 +1410,7 @@ static int16_t *mix_output(qa_unified_audio *audio, int64_t frames) {
   free(refill.samples);
   int16_t *samples = xmalloc((size_t)frames * 2 * sizeof *samples);
   for (int64_t i = 0; i < frames * 2; i++)
-    samples[i] = (int16_t)trunc(mixed[i]);
+    samples[i] = qa_js_to_int16(mixed[i]); /* Int16Array.from: ToInt16, NaN to 0 */
   free(mixed);
   return samples;
 }
@@ -1555,9 +1638,8 @@ qa_sdl_audio_open_result qa_unified_audio_select_output(
       audio->detached_playing = playing;
       audio->detached_buffer_frames = previous_buffer;
       audio->has_detached = true;
-      fprintf(stderr,
-              "AggregateError: Audio output selection and recovery failed\n");
-      abort();
+      /* TS throws AggregateError; pump's removal fallback catches it. */
+      qa_raise("AggregateError", 0, 0, "Audio output selection and recovery failed");
     }
   }
   if (had_previous && audio->has_device) {
@@ -1593,6 +1675,37 @@ qa_sdl_audio_open_result qa_unified_audio_select_output(
   return QA_SDL_AUDIO_OPEN_OK;
 }
 
+/* TS performance.now(): milliseconds on a monotonic clock. */
+static double performance_now(void) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1e6;
+}
+
+/* SdlAudioDevice.removed: a named output no longer listed by SDL. */
+static bool device_removed(qa_sdl_audio_device *device) {
+  return qa_sdl_audio_removed(device);
+}
+
+/* TS outputRemoved: checked at most once a second for a named output. */
+static bool output_removed(qa_unified_audio *audio) {
+  if (audio->device.device_name == NULL) return false;
+  double now = performance_now();
+  if (now < audio->next_removal_check) return false;
+  audio->next_removal_check = now + 1000;
+  return device_removed(&audio->device);
+}
+
+typedef struct removal_fallback {
+  qa_unified_audio *audio;
+  qa_sdl_audio_open_result result;
+} removal_fallback;
+
+static void removal_fallback_run(void *raw) {
+  removal_fallback *job = raw;
+  job->result = qa_unified_audio_select_output(job->audio, NULL, &job->audio->format, true);
+}
+
 static void longest_visit(const void *value, size_t index, void *ctx) {
   (void)index;
   double *longest = ctx;
@@ -1605,6 +1718,16 @@ int64_t qa_unified_audio_pump(qa_unified_audio *audio, bool has_ahead,
   check_open(audio);
   if (!audio->has_device) plain_error("Audio output is not open");
   if (audio->paused) return 0;
+  if (output_removed(audio)) {
+    /* SDL_AUDIODEVICEREMOVED: fall back to the system default, or stay
+     * detached until snd_restart succeeds. A failed open is a TS throw
+     * here, so it detaches too. */
+    removal_fallback job = {audio, QA_SDL_AUDIO_OPEN_OK};
+    qa_caught_error caught;
+    if (!qa_try(removal_fallback_run, &job, &caught) || job.result != QA_SDL_AUDIO_OPEN_OK)
+      qa_unified_audio_detach_output(audio);
+    return 0;
+  }
   if (!isfinite(measured_work_milliseconds) ||
       measured_work_milliseconds < 0)
     qa_range_error("Invalid measured audio frame work");
@@ -1629,12 +1752,12 @@ int64_t qa_unified_audio_pump(qa_unified_audio *audio, bool has_ahead,
   qa_bounded_queue_for_each(&audio->pump_intervals, longest_visit, &longest);
   double target = has_ahead
                       ? ahead_frames
-                      : fmin((double)device->max_queued_frames,
+                      : qa_js_min((double)device->max_queued_frames,
                              initial_fill
-                                 ? fmax(ceil((double)device->sample_rate *
+                                 ? qa_js_max(ceil((double)device->sample_rate *
                                              0.2),
                                         (double)device->buffer_frames * 2)
-                                 : fmax(ceil((double)device->sample_rate *
+                                 : qa_js_max(ceil((double)device->sample_rate *
                                              0.08),
                                         longest +
                                             (double)device->buffer_frames *
@@ -1658,22 +1781,23 @@ int64_t qa_unified_audio_pump(qa_unified_audio *audio, bool has_ahead,
   if (frames < 0) frames = 0;
   if (frames > 0) {
     int16_t *samples = mix_output(audio, frames);
-    size_t combined_count = audio->queued_count + (size_t)frames * 2;
-    int16_t *combined = xmalloc(combined_count * sizeof *combined);
-    if (audio->queued_count > 0)
-      memcpy(combined, audio->queued_pcm,
-             audio->queued_count * sizeof *combined);
-    memcpy(combined + audio->queued_count, samples,
-           (size_t)frames * 2 * sizeof *combined);
-    queue_encoded(device, samples, (size_t)frames * 2, audio->format);
+    size_t sample_count = (size_t)frames * 2;
+    queue_encoded(device, samples, sample_count, audio->format);
+    /* Keep only the retained tail of old plus new samples:
+     * keep = min(previous + samples, queuedFrames * 2). */
+    int64_t queued_samples = qa_sdl_audio_queued_frames(device) * 2;
+    size_t total = audio->queued_count + sample_count;
+    size_t kept = queued_samples < 0 ? 0
+                  : (size_t)queued_samples < total ? (size_t)queued_samples : total;
+    size_t from_new = kept < sample_count ? kept : sample_count;
+    int16_t *queued = xmalloc((kept == 0 ? 1 : kept) * sizeof *queued);
+    if (from_new > 0)
+      memcpy(queued + (kept - from_new), samples + (sample_count - from_new),
+             from_new * sizeof *queued);
+    if (kept > from_new)
+      memcpy(queued, audio->queued_pcm + (audio->queued_count - (kept - from_new)),
+             (kept - from_new) * sizeof *queued);
     free(samples);
-    int64_t start = slice_start(combined_count,
-                                (int64_t)combined_count -
-                                    qa_sdl_audio_queued_frames(device) * 2);
-    size_t kept = combined_count - (size_t)start;
-    int16_t *queued = xmalloc(kept * sizeof *queued);
-    if (kept > 0) memcpy(queued, combined + start, kept * sizeof *queued);
-    free(combined);
     free(audio->queued_pcm);
     audio->queued_pcm = kept > 0 ? queued : NULL;
     if (kept == 0) free(queued);
@@ -1804,6 +1928,7 @@ void qa_unified_audio_destroy(qa_unified_audio *audio) {
   free(audio->seats);
   free(audio->round_mixers);
   free(audio->actors);
+  free(audio->free_actor_entities);
   for (size_t i = 0; i < audio->alias_count; i++) free(audio->aliases[i].aliases);
   free(audio->aliases);
   free(audio->positions);

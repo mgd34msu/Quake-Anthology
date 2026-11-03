@@ -46,7 +46,9 @@ static void storage_initialize(void *ctx, int64_t slot, qa_owned_actor actor) {
   A *a = ctx;
   a->storage_base.initialize(a->storage_base.ctx, slot, actor);
   a->options.remember(a->options.ctx, actor.id, slot);
-  qa_shared_body_table_bind(a->options.services->bodies, actor, a->options.body(a->options.ctx, slot));
+  qa_shared_body_table * table = a->options.services->bodies;
+  qa_body_state_binding binding = a->options.body(a->options.ctx, slot);
+  qa_shared_body_table_bind(table, actor, binding);
   qa_compat_qc_mod_actors_admit(a, actor, slot);
 }
 static qa_source_time slots_now(void *ctx) {
@@ -57,16 +59,10 @@ static void slots_unlink(void *ctx, qa_owned_actor actor) { A *a = ctx; qa_share
 static void slots_exhausted(void *ctx, int64_t slot) { (void)ctx; (void)slot; qa_range_error("Gameplay mod source edicts exhausted"); }
 static void remove_fn(void *ctx, qa_compat_qc_machine *m) {
   A *a = ctx;
-  if (m->entities != a->options.machine->entities) { qa_compat_qc_machine_fail(m, "actor builtin belongs to another machine"); }
   int64_t slot = qa_compat_qc_entity_memory_slot(m->entities, qa_compat_qc_machine_arg_int(m, 0));
   qa_owned_actor at;
   if (!qa_source_actor_slots_at(a->slots, slot, &at)) { qa_compat_qc_machine_fail(m, "Mod remove requires its own actor; foreign source removal needs its owner continuation"); }
-  /* inner remove is bindings remove (stored before wrap) */
-  a->bindings_state.slots = a->slots;
-  qa_owned_actor actor = at;
-  if (!qa_source_actor_slots_free(a->slots, actor)) {
-    a->slots_options.storage.clear_freed(a->slots_options.storage.ctx, slot, a->slots_options.now(a->slots_options.ctx));
-  }
+  a->bindings_remove.fn(a->bindings_remove.ctx, m);
 }
 static void on_release(void *ctx, qa_owned_actor actor) {
   A *a = ctx; bool found; int64_t slot = owned_slot(a, actor, &found);
@@ -102,11 +98,13 @@ bool qa_compat_qc_mod_actors_init(A *a, qa_compat_qc_mod_actor_options o) {
   if (!a->slots) { qa_frame_scheduler_destroy(a->scheduler); return false; }
   qa_compat_qc_actor_bindings bindings = qa_compat_qc_create_actor_bindings(machine->entities, services->actors, a->slots, a->slots_options, &a->bindings_state);
   a->spawn = bindings.host_entries[0].fn;
+  a->bindings_remove = bindings.host_entries[1].fn;
   a->remove = (qa_compat_qc_builtin){a, remove_fn};
   a->release_id = qa_session_actor_registry_on_release(services->actors, on_release, a);
   return true;
 }
 void qa_compat_qc_mod_actors_destroy(A *a) {
+  if (!a->closed && a->options.services) qa_session_actor_registry_off_release(a->options.services->actors, a->release_id);
   if (a->scheduler) qa_frame_scheduler_destroy(a->scheduler);
   qa_source_actor_slots_destroy(a->slots);
   free(a->owned_actors); free(a->owned_slots);
@@ -178,12 +176,18 @@ void qa_compat_qc_mod_actors_restored(A *a) {
     if (a->options.nextthink >= 0) qa_compat_qc_mod_actors_schedule(a, owned[i]);
   }
 }
+typedef struct { A *a; qa_owned_actor actor; } ReleaseTry;
+static void release_actor(void *ctx) { ReleaseTry *t = ctx; qa_session_actor_registry_release(t->a->options.services->actors, t->actor); }
 void qa_compat_qc_mod_actors_close(A *a) {
   if (a->closed) return;
   a->closed = true;
   qa_session_actor_registry_off_release(a->options.services->actors, a->release_id);
   qa_frame_scheduler_close(a->scheduler);
-  /* TS collects release errors into AggregateError; release aborts on error in C. */
-  for (size_t i = 0; i < a->owned_count; i++) if (qa_session_actor_registry_is_live(a->options.services->actors, a->owned_actors[i].id)) qa_session_actor_registry_release(a->options.services->actors, a->owned_actors[i]);
+  size_t errors = 0;
+  for (size_t i = 0; i < a->owned_count; i++) if (qa_session_actor_registry_is_live(a->options.services->actors, a->owned_actors[i].id)) {
+    ReleaseTry attempt = {a, a->owned_actors[i]}; qa_caught_error caught;
+    if (!qa_try(release_actor, &attempt, &caught)) errors++;
+  }
   a->owned_count = 0;
+  if (errors) qa_range_error("Mod actor release failed");
 }

@@ -10,6 +10,9 @@
 typedef struct qa_netquake_recording_state qa_netquake_recording_state;
 void qa_netquake_recording_state_init(qa_netquake_recording_state *s);
 void qa_netquake_recording_state_destroy(qa_netquake_recording_state *s);
+/* Heap instance for callers that cannot see the struct size; NULL on OOM. */
+qa_netquake_recording_state *qa_netquake_recording_state_create(void);
+void qa_netquake_recording_state_free(qa_netquake_recording_state *s);
 void qa_netquake_recording_state_observe(qa_netquake_recording_state *s,
                                          const qa_netquake_message *messages, size_t count);
 /* Malloc'd array of malloc'd datagrams + lengths; caller frees. */

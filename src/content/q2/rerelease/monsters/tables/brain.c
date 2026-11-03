@@ -307,17 +307,6 @@ static const qa_q2m_frame f_brain_2[] = {
   {QA_Q2M_AI_WALK, NULL, -1, a_brain_2_9, 1, -1},
   {QA_Q2M_AI_WALK, NULL, 2, NULL, 0, -1},
 };
-static const qa_q2m_frame f_brain_3[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
 static const qa_q2m_frame f_brain_4[] = {
   {QA_Q2M_AI_MOVE, NULL, -2, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 2, NULL, 0, -1},
@@ -597,7 +586,6 @@ const qa_q2m_move qa_q2rm_brain_moves[] = {
   {"brain_move_stand", 162, 191, NULL, 0, f_brain_0, 30},
   {"brain_move_idle", 192, 221, "brain_stand", 0, f_brain_1, 30},
   {"brain_move_walk1", 0, 10, NULL, 0, f_brain_2, 11},
-  {"brain_move_defense", 154, 161, NULL, 0, f_brain_3, 9},
   {"brain_move_pain3", 117, 122, "brain_run", 0, f_brain_4, 6},
   {"brain_move_pain2", 109, 116, "brain_run", 0, f_brain_5, 8},
   {"brain_move_pain1", 88, 108, "brain_run", 0, f_brain_6, 21},

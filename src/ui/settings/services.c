@@ -1,5 +1,6 @@
 /* Port of src/ui/settings/services.ts. GPL-2.0-or-later. */
 #include "qa/ui/settings/services.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 
 #include "qa/core/cvars/index.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static char *dup_str(const char *text) {
   size_t length = strlen(text);
@@ -22,17 +24,10 @@ static void set_str(char **slot, const char *value) {
   *slot = copy;
 }
 static double js_number_of(const char *text) {
-  if (text == NULL || text[0] == '\0') return text != NULL ? 0 : NAN;
-  char *end = NULL;
-  double value = strtod(text, &end);
-  if (end == text || *end != '\0') return NAN;
-  return value;
+  return text == NULL ? NAN : qa_js_string_to_number(text); /* Number(undefined) is NaN */
 }
 static void js_string(char *buf, size_t size, double value) {
-  if (isnan(value)) snprintf(buf, size, "NaN");
-  else if (value == floor(value) && fabs(value) < 1e21)
-    snprintf(buf, size, "%.0f", value);
-  else snprintf(buf, size, "%.17g", value);
+  snprintf(buf, size, "%s", QA_JS_NUMBER(value)); /* String(value); "%.0f" printed -0 as "-0" */
 }
 static void cvar_set(qa_cvar_registry *registry, const char *name,
                      const char *value) {
@@ -334,7 +329,7 @@ static const qa_ui_choice *video_choices(video_state *s, size_t *out_count) {
         seen = true;
     if (!seen) all[unique++] = all[i];
   }
-  qsort(all, unique, sizeof *all, mode_order);
+  qa_js_sort(all, unique, sizeof *all, mode_order);
   video_free_choices(s);
   s->choices = calloc(unique, sizeof *s->choices);
   s->choice_strings = calloc(unique * 2, sizeof *s->choice_strings);
@@ -434,7 +429,9 @@ static void resolution_write(void *v, const char *value) {
   if (wlen >= sizeof wpart) wlen = sizeof wpart - 1;
   memcpy(wpart, selected->id, wlen);
   wpart[wlen] = '\0';
-  video_report(s, video_resize(s, js_number_of(wpart), js_number_of(x + 1)));
+  double w = js_number_of(wpart);
+  double h = js_number_of(x + 1);
+  video_report(s, video_resize(s, w, h));
 }
 static const char *width_read(void *v) {
   video_state *s = v;
@@ -457,14 +454,17 @@ static void height_write(void *v, const char *value) {
   set_str(&s->height, value);
 }
 static bool custom_apply_enabled(void *v) {
+  double w;
+  double h;
   video_state *s = v;
   return !qa_sdl_window_fullscreen(video_window(s))
-      && valid_size(js_number_of(s->width), js_number_of(s->height));
+      && (w = js_number_of(s->width), h = js_number_of(s->height), valid_size(w, h));
 }
 static void custom_apply(void *v) {
   video_state *s = v;
-  video_report(s, video_resize(s, js_number_of(s->width),
-                               js_number_of(s->height)));
+  double w = js_number_of(s->width);
+  double h = js_number_of(s->height);
+  video_report(s, video_resize(s, w, h));
 }
 static bool vsync_enabled(void *v) {
   video_state *s = v;

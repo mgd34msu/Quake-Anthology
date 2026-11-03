@@ -1,7 +1,7 @@
 /* Port of src/app/bootstrap/simulation/q3/types.ts (types only).
- * ClientMovementOptions/Result re-export landed team_arena movement
- * host types. Q3SourceHost is fn+ctx over borrowed session owners
- * (opaque handles); serverState is this slice's qa_app_q3_server_state.
+ * Q3SourceHost is fn+ctx over the borrowed session owners (typed); serverState
+ * is this slice's qa_app_q3_server_state.
+ * ClientMovementOptions/Result re-export the team_arena movement host types.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_Q3_TYPES_H
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_TYPES_H
@@ -10,11 +10,22 @@
 typedef struct qa_q3_game_entity qa_q3_game_entity; /* landed content/q3/base/game/state.h */
 #include "qa/content/q3/base/shared/entity_state.h"
 #include "qa/content/q3/base/shared/player_state.h"
-/* Landed content/q3/team_arena/movement_host.h pulls game/state.h whose
- * product enum collides with network/q3 product.h in one TU; forward
- * typedefs keep both usable without editing landed headers. */
-typedef struct qa_q3_ta_client_movement_options qa_q3_ta_client_movement_options;
-typedef struct qa_q3_ta_client_movement_result qa_q3_ta_client_movement_result;
+#include "qa/content/q3/base/game/item_lifecycle.h"
+#include "qa/content/q3/base/game/mover.h"
+#include "qa/content/q3/foundation/character.h"
+#include "qa/content/q3/team_arena/client_admission.h"
+#include "qa/content/q3/team_arena/client_effects.h"
+#include "qa/content/q3/team_arena/client_events.h"
+#include "qa/content/q3/team_arena/movement_host.h"
+#include "qa/contracts/original_pickups.h"
+#include "qa/world/actors/body.h"
+#include "qa/world/actors/callbacks.h"
+#include "qa/world/actors/registry.h"
+#include "qa/world/collision/index.h"
+#include "qa/world/gameplay/armor.h"
+#include "qa/world/gameplay/authority.h"
+#include "qa/world/gameplay/inventory.h"
+#include "qa/world/spatial/index.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/execution.h"
 #include "qa/contracts/gameplay.h"
@@ -24,6 +35,7 @@ typedef struct qa_q3_ta_client_movement_result qa_q3_ta_client_movement_result;
 #include "qa/contracts/session.h"
 #include "qa/core/cvars/index.h"
 
+#include "qa/contracts/weapon_behavior.h"
 typedef qa_q3_ta_client_movement_options qa_app_client_movement_options;
 typedef qa_q3_ta_client_movement_result qa_app_client_movement_result;
 
@@ -61,6 +73,9 @@ typedef struct qa_app_q3_source_engine {
   void (*execute_console_now)(void *ctx, const char *text);
 } qa_app_q3_source_engine;
 
+/* TS Q3SourceBots = ClientBotServices & ({ kind: "unavailable"; reason } |
+ * { kind: "available"; testAas; interbreedEndMatch; consoleCommand }).
+ * client is the ClientBotServices part; its kind/reason mirror kind/reason. */
 typedef struct qa_app_q3_source_bots {
   void *ctx;
   const char *kind; /* "unavailable"|"available" */
@@ -68,46 +83,59 @@ typedef struct qa_app_q3_source_bots {
   void (*test_aas)(void *ctx, qa_vec3 origin);
   void (*interbreed_end_match)(void *ctx);
   void (*console_command)(void *ctx, const char *const *argv, size_t argc);
-  /* ClientBotServices surface is host-owned beyond these seams. */
-  void *services;
+  qa_q3_ta_client_bot_services client;
 } qa_app_q3_source_bots;
 
 typedef struct qa_app_q3_server_state qa_app_q3_server_state;
 
+/* TS Q3SourceHost (extends ClientMovementHost). Every function member takes
+ * ctx, except entity_event and source_command, which take their own context
+ * (createQ3SourceHost replaces exactly those two). Optional TS members are NULL
+ * when undefined. Owners are borrowed and outlive the source runtime. */
 typedef struct qa_app_q3_source_host {
   void *ctx;
-  /* ClientMovementHost base (landed movement_host shape, flattened). */
-  void *movement_ctx;
+  /* ClientMovementHost.moveClient. */
   qa_q3_ta_client_movement_result (*move_client)(void *ctx, qa_q3_game_entity *entity,
       qa_q3_base_user_command command, qa_q3_ta_client_movement_options options);
-  void (*ammo_timer_stored)(void *ctx, qa_actor_id actor, double weapon, double value); /* NULL absent */
-  bool (*timer_ownership)(void *ctx, qa_actor_id actor, void *out_ownership);
+  void (*ammo_timer_stored)(void *ctx, qa_actor_id actor, double weapon, double value);
+  /* timerOwnership?(actor): fills out and returns true. */
+  bool (*timer_ownership)(void *ctx, qa_actor_id actor, qa_q3_ta_client_timer_ownership *out);
   double (*speed_multiplier)(void *ctx, qa_actor_id actor);
-  qa_app_q3_server_state *server_state; /* borrowed */
-  void *mover_actors; /* borrowed MoverActorAccess handle */
+  qa_app_q3_server_state *server_state;
+  /* Pick<MoverActorAccess, "observe"|"write"|"link"|"release">: native and
+   * participant stay NULL (the runtime supplies them). */
+  qa_q3_mover_actor_access mover_actors;
   bool (*primary_attack_allowed)(void *ctx, qa_actor_id actor);
-  bool (*grant_selected_arsenal)(void *ctx, qa_actor_id actor, const char *category);
+  bool (*grant_selected_arsenal)(void *ctx, qa_actor_id actor, const char *category); /* "weapons"|"ammo" */
   bool (*give_selected_item)(void *ctx, qa_actor_id actor, const char *const *args, size_t argc);
-  bool (*preview_pickup)(void *ctx, const void *descriptor, void *out_preview);
-  bool (*admit_pickup)(void *ctx, const void *descriptor, void *out_admission);
-  void *actors, *bodies, *callbacks, *combat, *inventory, *scene; /* borrowed owners */
-  const void *original_pickups; /* nullable */
+  qa_q3_source_pickup_preview (*preview_pickup)(void *ctx, qa_q3_source_pickup_descriptor item);
+  qa_q3_source_pickup_admission (*admit_pickup)(void *ctx, qa_q3_source_pickup_descriptor item);
+  qa_session_actor_registry *actors;
+  qa_shared_body_table *bodies;
+  qa_actor_callback_table *callbacks;
+  qa_gameplay_authority *combat;
+  qa_shared_inventory_table *inventory;
+  const qa_original_pickup_admission *original_pickups; /* NULL = undefined */
+  qa_shared_scene_queries *scene;
   qa_app_q3_source_engine engine;
-  qa_cvar_registry *cvars; /* borrowed */
+  qa_cvar_registry *cvars;
   void *configstrings_ctx;
   const char *(*configstring_get)(void *ctx, double index);
   void (*configstring_set)(void *ctx, double index, const char *value);
-  void *death_animations;
+  qa_q3_death_animation_sequence *death_animations;
   qa_app_q3_source_bots bots;
   double (*now)(void *ctx);
   void (*schedule)(void *ctx, qa_owned_actor actor, bool has_due, double due_milliseconds);
   void (*run_think)(void *ctx, qa_owned_actor actor, double time_milliseconds);
-  void (*collision)(void *ctx, qa_owned_actor actor, const void *collision);
-  void (*armor_context)(void *ctx, qa_damage_request request, void *out_context);
+  void (*collision)(void *ctx, qa_owned_actor actor, qa_actor_collision collision);
+  qa_victim_armor_context (*armor_context)(void *ctx, qa_damage_request request);
   qa_q3_game_entity *(*foreign)(void *ctx, qa_actor_id actor); /* NULL = TS null */
   bool (*is_player)(void *ctx, qa_actor_id actor);
+  void *source_command_ctx;
   qa_q3_base_user_command (*source_command)(void *ctx, qa_actor_command input);
-  void (*spawn_player)(void *ctx, qa_q3_game_entity *entity, qa_vec3 origin, qa_vec3 angles);
+  void (*spawn_player)(void *ctx, qa_q3_game_entity *entity, qa_q3_ta_spawn_pose pose);
+  void (*select_spawn_weapon)(void *ctx, qa_q3_game_entity *entity);
+  void *entity_event_ctx;
   void (*entity_event)(void *ctx, qa_app_q3_source_entity_event event);
 } qa_app_q3_source_host;
 
@@ -123,7 +151,7 @@ typedef struct qa_app_q3_source_session_carry {
 } qa_app_q3_source_session_carry;
 
 typedef struct qa_app_q3_source_options {
-  const void *weapon_behavior; /* nullable */
+  const qa_weapon_behavior_projectile_port *weapon_behavior; /* NULL = undefined */
   qa_executable_recipe recipe;
   qa_provider_reference weapon_provider;
   const char *product; /* "baseq3"|"missionpack" */

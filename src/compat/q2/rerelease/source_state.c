@@ -6,6 +6,7 @@
 #include <string.h>
 #include "qa/compat/q2/classic/combat_binding.h"
 #include "qa/content/q2/missionpacks/damage.h"
+#include "qa/foundation/js.h"
 
 struct qa_compat_q2_rerelease_source_client {
   qa_guest_address address; qa_compat_q2_rerelease_guest_module *module;
@@ -33,7 +34,9 @@ qa_guest_address qa_compat_q2_rerelease_source_client_at(const qa_compat_q2_rere
   return qa_compat_q2_mem_offset(memory, c->address, (int64_t)qa_compat_q2_rerelease_field_offset(&c->profile.layout, name));
 }
 int64_t qa_compat_q2_rerelease_source_client_invincible_until_milliseconds(const qa_compat_q2_rerelease_source_client *c) {
-  return qa_compat_q2_mem_read_i64(qa_compat_q2_rerelease_guest_module_get_memory(c->module), qa_compat_q2_rerelease_source_client_at(c, "invincible_time"));
+  const qa_compat_q2_memory * m = qa_compat_q2_rerelease_guest_module_get_memory(c->module);
+  qa_guest_address a = qa_compat_q2_rerelease_source_client_at(c, "invincible_time");
+  return qa_compat_q2_mem_read_i64(m, a);
 }
 static qa_guest_address item_at(qa_compat_q2_rerelease_source_client *c, double index) {
   if (index != trunc(index) || fabs(index) > 9007199254740991.0 || index < 0 || index >= c->profile.inventory_count)
@@ -76,9 +79,9 @@ static void inv_write(void *vctx, qa_inventory_entry entry) {
   else {
     if (entry.capacity != trunc(entry.capacity) || fabs(entry.capacity) > 9007199254740991.0 || entry.capacity < 0 || entry.capacity > 32767)
       qa_range_error("Native ammo capacity exceeds int16");
-    qa_compat_q2_mem_write_i16(memory, ammo_at(x->c, item->capacity_source_index), (int32_t)entry.capacity);
+    qa_compat_q2_mem_write_i16(memory, ammo_at(x->c, item->capacity_source_index), qa_js_to_int32(entry.capacity));
   }
-  qa_compat_q2_mem_write_i32(memory, item_at(x->c, item->source_index), (int32_t)entry.count);
+  qa_compat_q2_mem_write_i32(memory, item_at(x->c, item->source_index), qa_js_to_int32(entry.count));
 }
 qa_inventory_state_binding qa_compat_q2_rerelease_source_client_inventory(qa_compat_q2_rerelease_source_client *c,
                                                                           const qa_compat_q2_rerelease_inventory_item *items, size_t count) {
@@ -98,14 +101,18 @@ qa_inventory_state_binding qa_compat_q2_rerelease_source_client_inventory(qa_com
 static double cells_read(void *ctx) {
   qa_compat_q2_rerelease_source_client *c = ctx;
   double index = qa_compat_q2_rerelease_guest_module_require_world_profile(c->module)->armor.cells_index;
-  return qa_compat_q2_mem_read_i32(qa_compat_q2_rerelease_guest_module_get_memory(c->module), item_at(c, index));
+  const qa_compat_q2_memory * m = qa_compat_q2_rerelease_guest_module_get_memory(c->module);
+  qa_guest_address a = item_at(c, index);
+  return qa_compat_q2_mem_read_i32(m, a);
 }
 static void cells_write(void *ctx, double count) {
   qa_compat_q2_rerelease_source_client *c = ctx;
   if (count != trunc(count) || fabs(count) > 9007199254740991.0 || count < -2147483648.0 || count > 2147483647.0)
     qa_range_error("Native power armor cell count exceeds int32");
   double index = qa_compat_q2_rerelease_guest_module_require_world_profile(c->module)->armor.cells_index;
-  qa_compat_q2_mem_write_i32(qa_compat_q2_rerelease_guest_module_get_memory(c->module), item_at(c, index), (int32_t)count);
+  const qa_compat_q2_memory * m = qa_compat_q2_rerelease_guest_module_get_memory(c->module);
+  qa_guest_address a = item_at(c, index);
+  qa_compat_q2_mem_write_i32(m, a, qa_js_to_int32(count));
 }
 qa_power_armor_cell_binding qa_compat_q2_rerelease_source_client_power_armor_cells(qa_compat_q2_rerelease_source_client *c) {
   return (qa_power_armor_cell_binding){c, cells_read, cells_write};
@@ -130,21 +137,28 @@ qa_raw_entity_view qa_compat_q2_rerelease_source_edict_get_raw(const qa_compat_q
 static qa_compat_q2_memory *mem_of(const qa_compat_q2_rerelease_source_edict *e) { return qa_compat_q2_rerelease_guest_module_get_memory(e->module); }
 qa_guest_address qa_compat_q2_rerelease_source_edict_at(const qa_compat_q2_rerelease_source_edict *e, const char *name) {
   const qa_compat_q2_rerelease_primary_world_profile *profile = qa_compat_q2_rerelease_guest_module_require_world_profile(e->module);
-  return qa_compat_q2_mem_offset(mem_of(e), e->raw.address, (int64_t)qa_compat_q2_rerelease_field_offset(&profile->edict, name));
+  const qa_compat_q2_memory * m = mem_of(e);
+  qa_guest_address a = e->raw.address;
+  int64_t d = (int64_t)qa_compat_q2_rerelease_field_offset(&profile->edict, name);
+  return qa_compat_q2_mem_offset(m, a, d);
 }
-double qa_compat_q2_rerelease_source_edict_generation(const qa_compat_q2_rerelease_source_edict *e) { return qa_compat_q2_mem_read_i32(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, "spawn_count")); }
-double qa_compat_q2_rerelease_source_edict_get_health(const qa_compat_q2_rerelease_source_edict *e) { return qa_compat_q2_mem_read_i32(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, "health")); }
-void qa_compat_q2_rerelease_source_edict_set_health(qa_compat_q2_rerelease_source_edict *e, double value) { qa_compat_q2_mem_write_i32(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, "health"), (int32_t)value); }
-bool qa_compat_q2_rerelease_source_edict_damageable(const qa_compat_q2_rerelease_source_edict *e) { return qa_compat_q2_mem_read_u8(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, "takedamage")) != 0; }
+double qa_compat_q2_rerelease_source_edict_generation(const qa_compat_q2_rerelease_source_edict *e) { const qa_compat_q2_memory * m = mem_of(e); qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, "spawn_count"); return qa_compat_q2_mem_read_i32(m, a); }
+double qa_compat_q2_rerelease_source_edict_get_health(const qa_compat_q2_rerelease_source_edict *e) { const qa_compat_q2_memory * m = mem_of(e); qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, "health"); return qa_compat_q2_mem_read_i32(m, a); }
+void qa_compat_q2_rerelease_source_edict_set_health(qa_compat_q2_rerelease_source_edict *e, double value) { const qa_compat_q2_memory * m = mem_of(e); qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, "health"); qa_compat_q2_mem_write_i32(m, a, qa_js_to_int32(value)); }
+bool qa_compat_q2_rerelease_source_edict_damageable(const qa_compat_q2_rerelease_source_edict *e) { const qa_compat_q2_memory * m = mem_of(e); qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, "takedamage"); return qa_compat_q2_mem_read_u8(m, a) != 0; }
 bool qa_compat_q2_rerelease_source_edict_client(const qa_compat_q2_rerelease_source_edict *e, qa_guest_address *out) {
-  return qa_compat_q2_mem_read_pointer(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, "shared.client"), out);
+  const qa_compat_q2_memory * m = mem_of(e);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, "shared.client");
+  return qa_compat_q2_mem_read_pointer(m, a, out);
 }
 typedef struct combat_ctx { qa_compat_q2_rerelease_source_edict *e; qa_compat_q2_rerelease_source_protection protection; } combat_ctx_t;
 static qa_combat_state combat_read(void *vctx) {
   combat_ctx_t *x = vctx;
   qa_combat_state s; memset(&s, 0, sizeof s);
   s.health = qa_compat_q2_rerelease_source_edict_get_health(x->e);
-  s.mass = qa_compat_q2_mem_read_i32(mem_of(x->e), qa_compat_q2_rerelease_source_edict_at(x->e, "mass"));
+  const qa_compat_q2_memory * m = mem_of(x->e);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(x->e, "mass");
+  s.mass = qa_compat_q2_mem_read_i32(m, a);
   s.can_take_damage = qa_compat_q2_rerelease_source_edict_damageable(x->e);
   s.armor = x->protection.armor(x->protection.ctx);
   qa_compat_q2_rerelease_protection_traits traits = x->protection.traits(x->protection.ctx);
@@ -161,7 +175,9 @@ qa_combat_state_binding qa_compat_q2_rerelease_source_edict_combat(qa_compat_q2_
   return b;
 }
 qa_vec3 qa_compat_q2_rerelease_source_edict_vector(const qa_compat_q2_rerelease_source_edict *e, const char *name) {
-  return qa_compat_q2_mem_read_f32_vector(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, name));
+  const qa_compat_q2_memory * m = mem_of(e);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, name);
+  return qa_compat_q2_mem_read_f32_vector(m, a);
 }
 void qa_compat_q2_rerelease_source_edict_write_vector(const qa_compat_q2_rerelease_source_edict *e, const char *name, qa_vec3 value) {
   qa_guest_address at = qa_compat_q2_rerelease_source_edict_at(e, name);
@@ -173,7 +189,7 @@ typedef struct body_ctx { qa_compat_q2_rerelease_source_edict *e; qa_compat_q2_r
 static qa_body_state body_read(void *vctx) {
   body_ctx_t *x = vctx;
   qa_body_state s; memset(&s, 0, sizeof s);
-  qa_guest_address ground; bool has = qa_compat_q2_mem_read_pointer(mem_of(x->e), qa_compat_q2_rerelease_source_edict_at(x->e, "groundentity"), &ground);
+  qa_guest_address ground; const qa_compat_q2_memory * m = mem_of(x->e); qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(x->e, "groundentity"); bool has = qa_compat_q2_mem_read_pointer(m, a, &ground);
   s.origin = qa_compat_q2_rerelease_source_edict_vector(x->e, "shared.s.origin");
   s.angles = qa_compat_q2_rerelease_source_edict_vector(x->e, "shared.s.angles");
   s.velocity = qa_compat_q2_rerelease_source_edict_vector(x->e, "velocity");
@@ -193,7 +209,9 @@ static void body_write(void *vctx, qa_body_state state) {
   qa_guest_address g; memset(&g, 0, sizeof g);
   bool has = state.ground != NULL;
   if (has) g = x->addresses.address(x->addresses.ctx, *state.ground);
-  qa_compat_q2_mem_write_pointer(mem_of(x->e), qa_compat_q2_rerelease_source_edict_at(x->e, "groundentity"), has, g);
+  const qa_compat_q2_memory * m = mem_of(x->e);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(x->e, "groundentity");
+  qa_compat_q2_mem_write_pointer(m, a, has, g);
 }
 qa_body_state_binding qa_compat_q2_rerelease_source_edict_body(qa_compat_q2_rerelease_source_edict *e, qa_compat_q2_rerelease_actor_addresses addresses) {
   body_ctx_t *x = malloc(sizeof *x); x->e = e; x->addresses = addresses;
@@ -204,7 +222,7 @@ typedef struct cb_ctx { qa_compat_q2_rerelease_source_edict *e; qa_compat_q2_rer
   void *encode_ctx; qa_compat_q2_rerelease_encode_trace_fn encode; } cb_ctx_t;
 static bool callback_present(cb_ctx_t *x, const char *name) {
   char field[64]; snprintf(field, sizeof field, "%s.value", name);
-  qa_guest_address ignored; return qa_compat_q2_mem_read_pointer(mem_of(x->e), qa_compat_q2_rerelease_source_edict_at(x->e, field), &ignored);
+  qa_guest_address ignored; const qa_compat_q2_memory * m = mem_of(x->e); qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(x->e, field); return qa_compat_q2_mem_read_pointer(m, a, &ignored);
 }
 static bool actor_address(cb_ctx_t *x, const qa_actor_id *actor, qa_guest_address *out) {
   if (!actor) return false;
@@ -222,7 +240,7 @@ static qa_guest_call_value cause_mod(const qa_attack_provenance *attack) {
   if (!have || !native.edition || strcmp(native.edition, "rerelease") != 0) qa_range_error("Damage cause has no rerelease mod_t representation");
   qa_guest_call_value v; memset(&v, 0, sizeof v);
   v.kind = QA_GUEST_VALUE_AGGREGATE; v.layout = qa_compat_q2_native_rerelease_mod_layout;
-  uint8_t *bytes = malloc(3); bytes[0] = (uint8_t)native.id; bytes[1] = native.friendly_fire ? 1 : 0; bytes[2] = native.no_point_loss ? 1 : 0;
+  uint8_t *bytes = malloc(3); bytes[0] = qa_js_to_uint8(native.id); bytes[1] = native.friendly_fire ? 1 : 0; bytes[2] = native.no_point_loss ? 1 : 0;
   v.bytes.bytes = bytes; v.bytes.length = 3; return v;
 }
 static void cb_think(void *vctx, qa_owned_actor self, qa_frame_context frame) {
@@ -233,7 +251,9 @@ static void cb_use(void *vctx, qa_owned_actor self, const qa_actor_id *other, co
   (void)self; cb_ctx_t *x = vctx;
   if (!callback_present(x, "use")) return;
   qa_guest_address a, b;
-  qa_guest_call_value args[] = {qa_compat_q2_call_pointer(actor_address(x, other, &a), a), qa_compat_q2_call_pointer(actor_address(x, activator, &b), b)};
+  qa_guest_call_value value = qa_compat_q2_call_pointer(actor_address(x, other, &a), a);
+  qa_guest_call_value value2 = qa_compat_q2_call_pointer(actor_address(x, activator, &b), b);
+  qa_guest_call_value args[] = {value, value2};
   (void)qa_compat_q2_rerelease_source_edict_call(x->e, "use", args, 2, NULL);
 }
 static void cb_touch(void *vctx, qa_touch_contact contact) {
@@ -287,7 +307,9 @@ qa_guest_call_result qa_compat_q2_rerelease_source_edict_call(qa_compat_q2_rerel
                                                               const qa_guest_call_value *arguments, size_t count, const qa_raw_entity_view *other) {
   char field[64]; snprintf(field, sizeof field, "%s.value", name);
   qa_guest_address address;
-  if (!qa_compat_q2_mem_read_pointer(mem_of(e), qa_compat_q2_rerelease_source_edict_at(e, field), &address))
+  const qa_compat_q2_memory * m = mem_of(e);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(e, field);
+  if (!qa_compat_q2_mem_read_pointer(m, a, &address))
     return qa_compat_q2_call_void();
   qa_guest_call_value *all = malloc((count + 1) * sizeof *all);
   all[0] = qa_compat_q2_call_pointer(true, e->raw.address);

@@ -1,11 +1,12 @@
 /* Port of src/compat/qc/machine.ts. GPL-2.0-or-later.
- * fail() aborts via qa_range_error with "QuakeC <fn>:<stmt>: <msg>".
- * Boundary cancel uses setjmp/longjmp internally. Builtin registry
- * entries are caller-owned arrays (borrowed). Snapshot byte arrays
- * are malloc'd, freed by qa_compat_qc_machine_snapshot_destroy. */
+ * fail() raises "QcRuntimeError" through qa_raise, message
+ * "QuakeC <fn>:<stmt>: <msg>": aborts with no qa_try active, otherwise
+ * unwinds like the TS throw (frames, depths and boundary scopes restored
+ * on the way). Cancellation travels the same path under its own name.
+ * Builtin registry entries are caller-owned arrays (borrowed). Snapshot
+ * byte arrays are malloc'd, freed by qa_compat_qc_machine_snapshot_destroy. */
 #ifndef QA_COMPAT_QC_MACHINE_H
 #define QA_COMPAT_QC_MACHINE_H
-#include <setjmp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,9 +23,8 @@ typedef struct qa_compat_qc_named_builtin { const char *name; qa_compat_qc_built
 typedef struct qa_compat_qc_builtin_registry {
   qa_compat_qc_numbered_builtin *numbered; size_t numbered_count, numbered_capacity;
   qa_compat_qc_named_builtin *named; size_t named_count, named_capacity;
-  /* Closure state for builtins installed by createQcBuiltins; the
-   * machine exposes it as qa_compat_qc_machine_get_builtin_state()
-   * during a builtin call. Owned via state_destroy when set. */
+  /* Closure state for builtins installed by createQcBuiltins (each
+   * builtin's ctx). Owned via state_destroy when set. */
   void *state; void (*state_destroy)(void *state);
 } qa_compat_qc_builtin_registry;
 /* Registry helpers (TS Map set/get/has). Names borrowed. */
@@ -41,6 +41,7 @@ typedef struct qa_compat_qc_entity_store_observation {
 typedef struct qa_compat_qc_call_site { int64_t function_index, caller, statement; } qa_compat_qc_call_site;
 
 /* TS QcFunctionExecution (callable + skip + cancel). */
+/* A retained handle stays safe to call after its boundary returned: it fails by name. */
 typedef struct qa_compat_qc_function_execution {
   void *ctx;
   void (*run)(void *ctx, const qa_compat_qc_builtin *prepare); /* prepare may be NULL */
@@ -99,13 +100,12 @@ struct qa_compat_qc_machine {
   int64_t *boundary_functions; size_t boundary_function_count;
   qa_compat_qc_inline_region *inline_regions; size_t inline_region_count;
   bool trace_enabled;
-  void *builtin_state;
-  jmp_buf cancel_jmp; bool cancel_active; const void *cancel_owner; int64_t cancel_words[3]; char cancel_token;
+  /* Live and recently expired continuations (private to machine.c). */
+  struct qa_compat_qc_continuation **continuations; size_t continuation_count, continuation_next;
 };
 
 bool qa_compat_qc_machine_init(qa_compat_qc_machine *m, qa_compat_qc_machine_options options);
 void qa_compat_qc_machine_destroy(qa_compat_qc_machine *m);
-void *qa_compat_qc_machine_get_builtin_state(const qa_compat_qc_machine *m);
 int64_t qa_compat_qc_machine_get_argc(const qa_compat_qc_machine *m);
 int64_t qa_compat_qc_machine_get_current_statement(const qa_compat_qc_machine *m);
 int64_t qa_compat_qc_machine_get_current_function(const qa_compat_qc_machine *m);
@@ -136,5 +136,7 @@ size_t qa_compat_qc_machine_missing_builtins(qa_compat_qc_machine *m, qa_compat_
 void qa_compat_qc_machine_execute(qa_compat_qc_machine *m, int64_t function_index, int64_t argument_count);
 double qa_compat_qc_machine_execute_region(qa_compat_qc_machine *m, qa_compat_qc_inline_region region, int64_t argument_count);
 bool qa_compat_qc_machine_get_snapshot(qa_compat_qc_machine *m, qa_compat_qc_machine_snapshot *out);
+/* TS validateSnapshot: the checks restore runs before it changes anything. */
+void qa_compat_qc_machine_validate_snapshot(qa_compat_qc_machine *m, const qa_compat_qc_machine_snapshot *s);
 bool qa_compat_qc_machine_restore(qa_compat_qc_machine *m, const qa_compat_qc_machine_snapshot *snapshot);
 #endif

@@ -1,49 +1,62 @@
-/* Port of src/app/bootstrap/simulation/q3/guest-artifact.ts.
- * Async becomes synchronous. Compatibility/primary-profile/item-layout
- * reads are host seams over the landed qa_resolved_qvm_artifact
- * (compat/qvm/artifacts.h); the resolved artifact + primary profile
- * still travel as opaque owned handles from the wiring layer.
- * GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/simulation/q3/guest-artifact.ts. Async becomes
+ * synchronous. PreparedQ3Game is one struct tagged by kind: "qvm" (PreparedQ3Qvm:
+ * the resolved bytecode artifact, the declared item layout and the
+ * QvmPrimaryProfile) or "native" (PreparedQ3NativeGame: the native image, the
+ * base weapons and an all-null primary profile). GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_Q3_GUEST_ARTIFACT_H
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_GUEST_ARTIFACT_H
 #include <stdint.h>
+#include "qa/app/bootstrap/simulation/q3/native_guest_source.h"
 #include "qa/app/bootstrap/simulation/q3/types.h"
+#include "qa/compat/qvm/artifacts.h"
+#include "qa/compat/qvm/item_catalog.h"
+#include "qa/compat/qvm/primary_profile.h"
+#include "qa/content/mounts.h"
+#include "qa/content/q3/equipment/lrctf_grapple_profile.h"
 #include "qa/content/q3/guest_items.h"
 
 typedef qa_resolved_execution_module qa_app_q3_game_execution;
+/* The content q3 slices read the artifact through their own mirror type; the
+ * prepared game keeps that view (instructions owned) for its whole life. */
+typedef struct qa_app_q3_equipment_artifact_view {
+  qa_q3_equipment_qvm_artifact artifact;
+  qa_q3_equipment_known_artifact known;
+  qa_q3_equipment_qvm_instruction *instructions;
+} qa_app_q3_equipment_artifact_view;
+/* TS PreparedQ3Game. Everything is owned except execution and resource
+ * (borrowed from the recipe). module is the identity every guest call and save
+ * is attributed to (artifact.module for qvm, image.image.module for native). */
 typedef struct qa_app_prepared_q3_game {
+  const char *kind; /* "qvm" | "native" */
+  qa_module_identity module;
+  qa_app_prepared_q3_native image; /* native */
   qa_app_q3_game_execution execution;
-  void *artifact; /* owned resolved QVM artifact handle */
-  const qa_resolved_resource_reference *resource; /* borrowed */
+  qa_resolved_qvm_artifact artifact;
+  const qa_resolved_resource_reference *resource;
   qa_q3_guest_weapon_list weapons;
-  bool has_items;
-  void *items;   /* owned item-layout handle */
-  void *primary; /* owned primary-profile handle */
+  bool has_items; qa_qvm_item_layout items; /* has_items false = TS undefined */
+  qa_qvm_primary_profile primary;
+  qa_app_q3_equipment_artifact_view equipment;
 } qa_app_prepared_q3_game;
-void qa_app_prepared_q3_game_destroy(qa_app_prepared_q3_game *game,
-    void (*free_handle)(void *ctx, void *handle), void *free_ctx);
+void qa_app_prepared_q3_game_destroy(qa_app_prepared_q3_game *game);
 
 void qa_app_assert_q3_guest_recipe(qa_executable_recipe recipe, const qa_app_q3_game_execution *execution);
-
-typedef struct qa_app_q3_game_prepare_host {
-  void *ctx;
-  /* mounts.read(reference): malloc'd bytes. */
-  uint8_t *(*read_reference)(void *ctx, const qa_resolved_resource_reference *reference, size_t *out_length);
-  /* Declaration read: abi profile string, primary presence, resource. */
-  const char *(*compatibility_profile)(void *ctx, const qa_resolved_resource_reference *reference,
-      bool *out_has_primary, bool *out_has_resource, bool *out_private_inventory);
-  /* resolveQvmArtifact: owned handle + bytecode flag. revision "id:generation". */
-  void *(*resolve_artifact)(void *ctx, const char *abi_profile, const uint8_t *bytes, size_t length,
-      qa_provider_id module_id, const char *artifact_path, qa_content_digest digest, const char *revision,
-      bool *out_is_bytecode);
-  void *(*parse_item_layout)(void *ctx); /* NULL when no primary */
-  qa_q3_guest_weapon_list (*guest_weapons)(void *ctx, void *artifact, void *items, bool private_inventory);
-  bool (*item_source_is_live)(void *ctx, void *items);
-  void *(*builtin_primary)(void *ctx, void *artifact, const qa_q3_guest_weapon *weapons, size_t weapon_count);
-  void *(*read_primary)(void *ctx, void *artifact, const qa_q3_guest_weapon *weapons, size_t weapon_count,
-      bool has_weapons, void *items, bool has_resource);
-  void (*fail_primary)(void *ctx); /* MUST abort: primary.fail(...) */
-} qa_app_q3_game_prepare_host;
-
-qa_app_prepared_q3_game qa_app_prepare_q3_game(qa_app_q3_game_execution execution, qa_app_q3_game_prepare_host host);
+/* prepareQ3Game(execution, mounts). Errors raise (TS throws); *out is owned. */
+void qa_app_prepare_q3_game(qa_app_q3_game_execution execution, qa_content_mounted *mounts, qa_app_prepared_q3_game *out);
+/* prepareQ3NativeGame(execution, mounts): a native qagame is a black box to the original-source bindings. execution is
+ * borrowed for the prepared game's life. Raises for a Quake Live table-interface module. */
+void qa_app_prepare_q3_native_game(const qa_app_q3_game_execution *execution, qa_content_mounted *mounts,
+                                   qa_app_prepared_q3_game *out);
+/* The bytecode artifact through the content q3 mirror type (borrowed from prepared); NULL for a native module. */
+const qa_q3_equipment_qvm_artifact *qa_app_prepared_q3_equipment_artifact(const qa_app_prepared_q3_game *prepared);
+/* The declared item layout through the content q3 mirror type; false = undefined. */
+bool qa_app_prepared_q3_guest_layout(const qa_app_prepared_q3_game *prepared, qa_q3_guest_qvm_item_layout *out);
+/* PreparedQ3Game.primary members (NULL = TS null). */
+const qa_qvm_input_definition *qa_app_prepared_q3_primary_input(const qa_app_prepared_q3_game *prepared);
+const qa_qvm_primary_weapon_profile *qa_app_prepared_q3_primary_weapons(const qa_app_prepared_q3_game *prepared);
+const qa_qvm_primary_combat_profile *qa_app_prepared_q3_primary_combat(const qa_app_prepared_q3_game *prepared);
+const qa_qvm_inventory_profile *qa_app_prepared_q3_primary_inventory(const qa_app_prepared_q3_game *prepared);
+const qa_qvm_pickup_profile *qa_app_prepared_q3_primary_pickups(const qa_app_prepared_q3_game *prepared);
+/* primary.declaration?.digest ?? null. */
+const char *qa_app_prepared_q3_primary_declaration_digest(const qa_app_prepared_q3_game *prepared);
 #endif

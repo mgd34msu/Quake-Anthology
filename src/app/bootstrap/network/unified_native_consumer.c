@@ -12,7 +12,7 @@ typedef struct entry {
   bool has_configs; qa_native_q2_config_string *configs; size_t config_count;
   bool has_frame; qa_actor_id frame_viewer;
   qa_mod_client_presentation_frame frame;
-  qa_session_native_q2_hud_frame native_frame; /* storage behind frame */
+  qa_native_q2_hud_frame native_frame; /* storage behind frame */
   struct qa_app_unified_native_consumers *owner;
 } entry;
 struct qa_app_unified_native_consumers {
@@ -32,6 +32,8 @@ struct qa_app_unified_native_commit {
   struct { entry *entry; qa_actor_id viewer; qa_mod_client_presentation_frame value; }
       *pending_frames; size_t pending_frame_count;
   entry *legacy_entry;
+  /* Entries this commit created; freed with it unless running it adopted them. */
+  entry **created; size_t created_count; bool adopted;
 };
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
@@ -44,7 +46,7 @@ static bool actor_equal(qa_actor_id a, qa_actor_id b) {
 }
 static void current(qa_app_unified_native_consumers *c) {
   c->options.assert_current(c->options.ctx);
-  if (c->closed) qa_range_error("Remote native component collection is retired");
+  if (c->closed) qa_raise("Error", 0, 0, "Remote native component collection is retired");
 }
 static entry *find_entry(qa_app_unified_native_consumers *c, const char *provider) {
   for (size_t i = 0; i < c->count; i++)
@@ -55,7 +57,7 @@ static void source_assert(void *ctx) {
   entry *e = ctx;
   current(e->owner);
   if (find_entry(e->owner, e->active.owner.provider) != e)
-    qa_range_error("Remote native component is retired");
+    qa_raise("Error", 0, 0, "Remote native component is retired");
 }
 static bool source_frame(void *ctx, qa_actor_id actor, qa_mod_client_presentation_frame *out) {
   entry *e = ctx;
@@ -71,9 +73,15 @@ static void entry_free(entry *e) {
   free(e->hud.configstrings);
   free(e->hud.inventory);
   free(e->configs);
-  (void)0; /* native_view is by-value in the landed frame */
   free(e);
 }
+static void commit_track(qa_app_unified_native_commit *commit, entry *e) {
+  entry **grown = realloc(commit->created, (commit->created_count + 1) * sizeof *grown);
+  if (!grown) { entry_free(e); qa_range_error("out of memory"); }
+  commit->created = grown;
+  commit->created[commit->created_count++] = e;
+}
+static void cleanup_commit(void *arg) { qa_app_unified_native_commit_free(arg); }
 static entry *create_entry(qa_app_unified_native_consumers *c,
     const qa_app_unified_native_state *metadata, bool camera_only) {
   const qa_prepared_mod *prepared = NULL;
@@ -85,20 +93,20 @@ static entry *create_entry(qa_app_unified_native_consumers *c,
       && strcmp(instance, metadata->identity.owner.provider) == 0;
   free(instance);
   if (!qualified)
-    qa_range_error("Remote native presentation differs from its locally qualified component");
+    qa_raise("Error", 0, 0, "Remote native presentation differs from its locally qualified component");
   const char *admission_hud = prepared->client_presentation.hud;
   const char *mode = strcmp(admission_hud, "none") == 0 ? NULL
       : strcmp(admission_hud, "replace") == 0 ? "replace-status" : "layout-overlay";
   const char *metadata_mode = metadata->has_hud ? metadata->hud.mode : NULL;
   if (!camera_only && ((mode == NULL) != (metadata_mode == NULL)
           || (mode && strcmp(mode, metadata_mode) != 0)))
-    qa_range_error("Remote native HUD differs from its admitted mode");
+    qa_raise("Error", 0, 0, "Remote native HUD differs from its admitted mode");
   const char *family = NULL, *edition = NULL;
   c->options.product_expectation(c->options.ctx,
       metadata->identity.identity.source.content, &family, &edition);
   if (strcmp(family, "q2") != 0
       || (strcmp(edition, "classic") != 0 && strcmp(edition, "rerelease") != 0))
-    qa_range_error("Remote native presentation has no Q2 source edition");
+    qa_raise("Error", 0, 0, "Remote native presentation has no Q2 source edition");
   entry *e = calloc(1, sizeof *e);
   if (!e) qa_range_error("out of memory");
   e->owner = c;
@@ -107,6 +115,11 @@ static entry *create_entry(qa_app_unified_native_consumers *c,
   e->identity = metadata->identity;
   e->has_hud = metadata->has_hud;
   e->hud = metadata->hud;
+  /* The arrays belong to the update; the entry owns copies once a commit runs. */
+  e->hud.configstrings = NULL;
+  e->hud.configstring_count = 0;
+  e->hud.inventory = NULL;
+  e->hud.inventory_count = 0;
   e->active.owner = metadata->identity.owner;
   e->active.identity = metadata->identity.identity;
   e->active.source.ctx = e;
@@ -133,12 +146,14 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare_update(
     qa_app_unified_native_consumers *c, const qa_app_unified_component_update *update) {
   current(c);
   if (update->revision != c->revision + 1)
-    qa_range_error("Remote native reliable revision is not consecutive");
+    qa_raise("Error", 0, 0, "Remote native reliable revision is not consecutive");
   qa_app_unified_native_commit *commit = calloc(1, sizeof *commit);
   if (!commit) qa_range_error("out of memory");
   commit->consumers = c;
   commit->action = 1;
   commit->revision = update->revision;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_commit, commit);
   size_t count = update->native_count;
   commit->next = xmalloc(count * sizeof *commit->next);
   commit->next_count = count;
@@ -150,13 +165,17 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare_update(
     bool same = previous
         && qa_same_presentation_owner(&previous->active.owner, metadata->identity.owner)
         && previous->active.source.generation == metadata->identity.generation;
-    entry *e = same ? previous : create_entry(c, metadata, false);
+    entry *e = previous;
+    if (!same) {
+      e = create_entry(c, metadata, false);
+      commit_track(commit, e);
+    }
     const char *old_mode = e->has_hud ? e->hud.mode : NULL;
     const char *new_mode = metadata->has_hud ? metadata->hud.mode : NULL;
     if (!qa_same_mod_identity(&e->active.identity, &metadata->identity.identity)
         || ((old_mode == NULL) != (new_mode == NULL)
             || (old_mode && strcmp(old_mode, new_mode) != 0)))
-      qa_range_error("Remote native activation changed its admitted identity or HUD");
+      qa_raise("Error", 0, 0, "Remote native activation changed its admitted identity or HUD");
     bool has_configs = false;
     const qa_native_q2_config_string *configs = NULL;
     size_t config_count = 0;
@@ -174,7 +193,7 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare_update(
     if (metadata->has_hud && (!has_configs
             || strcmp(metadata->hud.protocol.kind,
                 strcmp(e->edition, "classic") == 0 ? "q2-classic" : "q2-rerelease") != 0))
-      qa_range_error("Remote native HUD has no source configstrings or differs from its source edition");
+      qa_raise("Error", 0, 0, "Remote native HUD has no source configstrings or differs from its source edition");
     commit->next[i] = e;
     commit->pending_updates[i].entry = e;
     commit->pending_updates[i].metadata = metadata;
@@ -182,6 +201,7 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare_update(
     commit->pending_updates[i].configs = configs;
     commit->pending_updates[i].config_count = config_count;
   }
+  qa_cleanup_pop(&guard);
   return commit;
 }
 static void read_frame(entry *e, const qa_app_unified_native_frame *frame,
@@ -189,35 +209,36 @@ static void read_frame(entry *e, const qa_app_unified_native_frame *frame,
   if (!qa_same_presentation_owner(&e->active.owner, frame->owner)
       || e->active.source.generation != frame->generation
       || !actor_equal(frame->viewer, viewer))
-    qa_range_error("Remote native frame differs from its source or recipient admission");
+    qa_raise("Error", 0, 0, "Remote native frame differs from its source or recipient admission");
   if ((frame->has_view) != e->view
       || (frame->has_view && strcmp(frame->view.edition, e->edition) != 0))
-    qa_range_error("Remote native camera differs from its admitted source");
+    qa_raise("Error", 0, 0, "Remote native camera differs from its admitted source");
   memset(out, 0, sizeof *out);
   out->kind = QA_MOD_CLIENT_PRESENTATION_NATIVE;
   out->has_native_view = frame->has_view;
   if (frame->has_view) out->native_view = frame->view;
   if ((!e->has_hud) != (!frame->has_hud))
-    qa_range_error("Remote native frame differs from its admitted HUD");
+    qa_raise("Error", 0, 0, "Remote native frame differs from its admitted HUD");
   if (!e->has_hud) { out->has_native_hud = false; return; }
   if (!e->has_configs
       || frame->hud.stat_count != (strcmp(e->edition, "classic") == 0 ? 32u : 64u))
-    qa_range_error("Remote native HUD differs from its source ABI");
+    qa_raise("Error", 0, 0, "Remote native HUD differs from its source ABI");
   out->has_native_hud = true;
   out->native_hud_mode = e->hud.mode;
-  qa_session_native_q2_hud_frame *native = &e->native_frame;
+  qa_native_q2_hud_frame *native = &e->native_frame;
   memset(native, 0, sizeof *native);
   native->protocol = e->hud.protocol;
-  native->configstrings = (const void *)e->configs;
-  native->stats.values = frame->hud.stats;
-  native->stats.count = frame->hud.stat_count;
+  native->configstrings = e->configs;
+  native->configstring_count = e->config_count;
+  native->stats = frame->hud.stats;
+  native->stat_count = frame->hud.stat_count;
   native->server_frame = frame->hud.server_frame;
   native->time_milliseconds = frame->hud.time_milliseconds;
   native->has_frame_time_milliseconds = frame->hud.has_frame_time;
   native->frame_time_milliseconds = frame->hud.frame_time_milliseconds;
   native->layout = e->hud.layout;
-  native->inventory.values = e->hud.inventory;
-  native->inventory.count = e->hud.inventory_count;
+  native->inventory = e->hud.inventory;
+  native->inventory_count = e->hud.inventory_count;
   native->player_number = e->hud.player_number;
   out->native_hud_frame = *native;
 }
@@ -227,7 +248,7 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare(
   current(c);
   if (frames->revision < c->revision) return NULL;
   if (frames->revision != c->revision)
-    qa_range_error("Remote native frame lacks reliable admission");
+    qa_raise("Error", 0, 0, "Remote native frame lacks reliable admission");
   if (legacy && !frames->has_native) {
     qa_app_unified_native_state metadata;
     memset(&metadata, 0, sizeof metadata);
@@ -235,12 +256,22 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare(
     metadata.identity.identity = *(const qa_mod_identity *)legacy->identity;
     metadata.identity.generation = legacy->generation;
     entry *previous = find_entry(c, metadata.identity.owner.provider);
-    entry *e = previous
+    bool reuse = previous
         && qa_same_presentation_owner(&previous->active.owner, metadata.identity.owner)
-        && previous->active.source.generation == metadata.identity.generation
-        ? previous : create_entry(c, &metadata, true);
+        && previous->active.source.generation == metadata.identity.generation;
+    qa_app_unified_native_commit *commit = calloc(1, sizeof *commit);
+    if (!commit) qa_range_error("out of memory");
+    commit->consumers = c;
+    commit->action = 3;
+    qa_cleanup legacy_guard;
+    qa_cleanup_push(&legacy_guard, cleanup_commit, commit);
+    entry *e = previous;
+    if (!reuse) {
+      e = create_entry(c, &metadata, true);
+      commit_track(commit, e);
+    }
     if (!qa_same_mod_identity(&e->active.identity, &metadata.identity.identity))
-      qa_range_error("Remote native activation changed identity");
+      qa_raise("Error", 0, 0, "Remote native activation changed identity");
     qa_app_unified_native_frame frame;
     memset(&frame, 0, sizeof frame);
     frame.owner = metadata.identity.owner;
@@ -251,16 +282,13 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare(
     qa_mod_client_presentation_frame value;
     memset(&value, 0, sizeof value);
     read_frame(e, &frame, viewer, &value);
-    qa_app_unified_native_commit *commit = calloc(1, sizeof *commit);
-    if (!commit) qa_range_error("out of memory");
-    commit->consumers = c;
-    commit->action = 3;
     commit->legacy_entry = e;
     commit->pending_frames = xmalloc(sizeof *commit->pending_frames);
     commit->pending_frame_count = 1;
     commit->pending_frames[0].entry = e;
     commit->pending_frames[0].viewer = viewer;
     commit->pending_frames[0].value = value;
+    qa_cleanup_pop(&legacy_guard);
     return commit;
   }
   qa_app_unified_native_commit *commit = calloc(1, sizeof *commit);
@@ -272,15 +300,17 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare(
   }
   size_t count = frames->has_native ? frames->native_count : 0;
   if (count != c->count)
-    qa_range_error("Remote native frame differs from admitted owners");
+    qa_raise("Error", 0, 0, "Remote native frame differs from admitted owners");
   commit->action = 2;
+  qa_cleanup frames_guard;
+  qa_cleanup_push(&frames_guard, cleanup_commit, commit);
   commit->pending_frames = xmalloc(count * sizeof *commit->pending_frames);
   commit->pending_frame_count = count;
   size_t views = 0, replaces = 0;
   for (size_t i = 0; i < count; i++) {
     const qa_app_unified_native_frame *frame = &frames->native[i];
     entry *e = find_entry(c, frame->owner.provider);
-    if (!e) qa_range_error("Remote native frame has an unadmitted owner");
+    if (!e) qa_raise("Error", 0, 0, "Remote native frame has an unadmitted owner");
     qa_mod_client_presentation_frame value;
     memset(&value, 0, sizeof value);
     read_frame(e, frame, viewer, &value);
@@ -292,7 +322,8 @@ qa_app_unified_native_commit *qa_app_unified_native_consumers_prepare(
     commit->pending_frames[i].value = value;
   }
   if (views > 1 || replaces > 1)
-    qa_range_error("Remote native presentation has conflicting exclusive owners");
+    qa_raise("Error", 0, 0, "Remote native presentation has conflicting exclusive owners");
+  qa_cleanup_pop(&frames_guard);
   return commit;
 }
 void qa_app_unified_native_commit_run(qa_app_unified_native_commit *commit) {
@@ -304,6 +335,7 @@ void qa_app_unified_native_commit_run(qa_app_unified_native_commit *commit) {
     return;
   }
   if (commit->action == 3) {
+    commit->adopted = true;
     entry *e = commit->legacy_entry;
     entry **next = xmalloc(sizeof *next);
     next[0] = e;
@@ -315,12 +347,12 @@ void qa_app_unified_native_commit_run(qa_app_unified_native_commit *commit) {
     c->legacy = true;
     e->has_frame = true;
     e->frame_viewer = commit->pending_frames[0].viewer;
-    (void)0; /* native_view is by-value in the landed frame */
     e->frame = commit->pending_frames[0].value;
     return;
   }
   if (commit->action == 1) {
     current(c);
+    commit->adopted = true;
     for (size_t i = 0; i < c->count; i++) {
       entry *old = c->entries[i];
       entry *replacement = NULL;
@@ -377,12 +409,14 @@ void qa_app_unified_native_commit_run(qa_app_unified_native_commit *commit) {
     entry *e = commit->pending_frames[i].entry;
     e->has_frame = true;
     e->frame_viewer = commit->pending_frames[i].viewer;
-    (void)0; /* native_view is by-value in the landed frame */
     e->frame = commit->pending_frames[i].value;
   }
 }
 void qa_app_unified_native_commit_free(qa_app_unified_native_commit *commit) {
   if (!commit) return;
+  if (!commit->adopted)
+    for (size_t i = 0; i < commit->created_count; i++) entry_free(commit->created[i]);
+  free(commit->created);
   free(commit->next);
   free(commit->pending_updates);
 

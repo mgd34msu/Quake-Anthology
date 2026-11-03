@@ -1,8 +1,11 @@
 /* Port of src/content/q2/missionpacks/projectiles/trap.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/projectiles/trap.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../missionpacks_internal.h"
@@ -13,26 +16,27 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-static void trap_die_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_death_reaction reaction) {
+static void trap_die_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_death_reaction reaction) {
   (void)ctx; (void)reaction;
   qa_q2mp_explode_default(entity, game);
 }
-static qa_q2f_entity *spawn_food(qa_q2f_game *game, qa_q2f_entity *entity, qa_vec3 origin) {
+static qa_q2_entity *spawn_food(qa_q2_game_services *game, qa_q2_entity *entity, qa_vec3 origin) {
   qa_combat_state_result combat = q2mp_cread(game, entity->actor.id);
   char count[64], origin_text[160];
-  (void)snprintf(count, sizeof count, "%g", combat.has_value ? combat.value.mass : 0);
-  (void)snprintf(origin_text, sizeof origin_text, "%g %g %g", origin.x, origin.y, origin.z);
+  (void)snprintf(count, sizeof count, "%s", QA_JS_NUMBER(combat.has_value ? combat.value.mass : 0));
+  (void)snprintf(origin_text, sizeof origin_text, "%s %s %s", QA_JS_NUMBER(origin.x), QA_JS_NUMBER(origin.y), QA_JS_NUMBER(origin.z));
   const char *keys[3] = {"count", "spawnflags", "origin"};
   const char *values[3] = {count, "65536", origin_text};
-  qa_q2f_spawn_fields fields;
+  qa_q2_spawn_fields fields;
   memset(&fields, 0, sizeof fields);
-  fields.ordinal = -1; fields.classname = "item_foodcube"; fields.keys = keys; fields.values = values; fields.count = 3;
-  return game->spawn(game->ctx, fields);
+  fields.ordinal = -1; fields.classname = "item_foodcube";
+  for (size_t i = 0; i < 3; i++) if (!qa_q2_spawn_set(&fields, keys[i], values[i])) qa_range_error("out of memory");
+  return game->spawn(game->ctx, fields); /* spawn owns fields */
 }
 
-static void trap_gib_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void trap_gib_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_projectiles *p = ctx;
-  qa_q2f_entity *trap = q2mp_ent(game, entity->has_owner, entity->owner);
+  qa_q2_entity *trap = q2mp_ent(game, entity->has_owner, entity->owner);
   if (trap == NULL || trap->frame != 5) { game->remove(game->ctx, entity); return; }
   qa_body_state body = q2mp_body(game, entity);
   qa_vec3 origin = q2mp_body(game, trap).origin;
@@ -43,7 +47,7 @@ static void trap_gib_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
                                       q2mp_scale(qa_cross3_double(axes.up, delta), sin(radians))),
                              q2mp_scale(axes.up, q2mp_dot(axes.up, delta) * (1 - cos(radians))));
   qa_trace_result trace = q2mp_trace(game, body.origin, q2mp_sub(origin, rotated), NULL, &entity->actor.id, 3);
-  qa_q2f_body_changes c = q2mp_changes();
+  qa_q2_body_changes c = q2mp_changes();
   c.has_origin = true;
   c.origin = q2mp_add(trace.end, q2mp_scale(q2mp_norm(delta), 15 * q2mp_frame(game)));
   c.has_angles = true; c.angles = q2mp_v3(body.angles.x, body.angles.y + degrees, body.angles.z);
@@ -51,7 +55,7 @@ static void trap_gib_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
   game->schedule(game->ctx, entity, q2mp_frame(game), p->trap_gib);
 }
 
-static void trap_rerelease_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void trap_rerelease_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_projectiles *p = ctx;
   double now = q2mp_now(game);
   qa_body_state body = q2mp_body(game, entity);
@@ -65,11 +69,11 @@ static void trap_rerelease_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *gam
       if (entity->wait < 19) entity->frame++;
     } else if (++entity->frame == 8) {
       game->schedule(game->ctx, entity, 1, qa_q2mp_free_projectile_think());
-      entity->effects = (double)(q2mp_u32(entity->effects) & ~0x2000000u);
+      entity->effects = (double)(qa_js_to_int32(q2mp_u32(entity->effects) & ~0x2000000u));
       double size = 1 + (entity->accel - 100) / 300;
-      qa_q2f_entity *food = spawn_food(game, entity, q2mp_v3(body.origin.x, body.origin.y, body.origin.z + 24 * size));
+      qa_q2_entity *food = spawn_food(game, entity, q2mp_v3(body.origin.x, body.origin.y, body.origin.z + 24 * size));
       food->scale = size;
-      qa_q2f_body_changes c = q2mp_changes();
+      qa_q2_body_changes c = q2mp_changes();
       c.has_angles = true; c.angles = q2mp_v3(0, q2mp_rnd(game) * 360, 0);
       c.has_velocity = true; c.velocity = q2mp_v3(0, 0, 400);
       q2mp_move(game, food, c, false, false);
@@ -81,9 +85,9 @@ static void trap_rerelease_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *gam
     game->show(game->ctx, entity);
     return;
   }
-  entity->effects = (double)(q2mp_u32(entity->effects) & ~0x2000000u);
+  entity->effects = (double)(qa_js_to_int32(q2mp_u32(entity->effects) & ~0x2000000u));
   if (entity->frame >= 4) {
-    entity->effects = (double)(q2mp_u32(entity->effects) | 0x2000000u);
+    entity->effects = (double)(qa_js_to_int32(q2mp_u32(entity->effects) | 0x2000000u));
     if (q2mp_dm(game)) { entity->has_owner = false; game->motion(game->ctx, entity, entity->motion); }
   } else {
     entity->frame++;
@@ -98,7 +102,7 @@ static void trap_rerelease_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *gam
   for (size_t i = 0; i < count; i++) {
     qa_actor_id actor = actors[i];
     if (qa_same_actor(actor, entity->actor.id)) continue;
-    qa_q2f_entity *target = q2mp_ent(game, true, actor);
+    qa_q2_entity *target = q2mp_ent(game, true, actor);
     qa_body_state_result target_body = q2mp_bread(game, actor);
     if (q2mp_dm(game) && target != NULL &&
         (strncmp(target->classname, "info_player_", 12) == 0 || strcmp(target->classname, "misc_teleporter_dest") == 0 ||
@@ -115,27 +119,27 @@ static void trap_rerelease_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *gam
     double distance = q2mp_len(q2mp_sub(body.origin, target_body.value.origin));
     if (!has_best || distance < nearest) { has_best = true; best = actor; nearest = distance; }
   }
-  qa_q2f_owned_result owned = has_best ? game->host->actors.resolve_owned(game->host->actors.ctx, best)
-                                       : (qa_q2f_owned_result){false, entity->actor};
+  qa_owned_actor owned_actor = entity->actor;
+  bool has_owned = has_best && qa_session_actor_registry_resolve_owned(game->host->actors, best, &owned_actor);
   qa_body_state_result target_body = has_best ? q2mp_bread(game, best)
       : (qa_body_state_result){false, {q2mp_zero(), q2mp_zero(), q2mp_zero(), {q2mp_zero(), q2mp_zero()}, NULL}};
-  if (owned.has_value && target_body.has_value) {
-    qa_owned_actor target = owned.value;
+  if (has_owned && target_body.has_value) {
+    qa_owned_actor target = owned_actor;
     qa_vec3 origin = target_body.value.ground == NULL ? target_body.value.origin
         : q2mp_add(target_body.value.origin, q2mp_v3(0, 0, 1));
     qa_vec3 delta = q2mp_sub(body.origin, origin);
     double distance = q2mp_len(delta);
     qa_body_state next = target_body.value;
     next.origin = origin; next.ground = NULL;
-    game->host->bodies.write(game->host->bodies.ctx, target, next);
+    qa_shared_body_table_write(game->host->bodies, target, next);
     double maximum = game->host->is_player(game->host->ctx, target.id) ? 290 : 150;
     double pull = maximum - distance < 64 ? 64 : maximum - distance > maximum ? maximum : maximum - distance;
     qa_q2mp_velocity(game, target.id, q2mp_add(target_body.value.velocity, q2mp_scale(q2mp_norm(delta), pull)), true);
-    if (strcmp(entity->sound_text, "weapons/trapsuck.wav") != 0) {
-      entity->sound_text = "weapons/trapsuck.wav";
-      qa_q2f_presentation_event e;
+    if (strcmp(entity->sound, "weapons/trapsuck.wav") != 0) {
+      entity->sound = "weapons/trapsuck.wav";
+      qa_q2_presentation_event e;
       memset(&e, 0, sizeof e);
-      e.kind = QA_Q2F_EVENT_SOUND; e.actor = &entity->actor.id; e.origin = body.origin; e.path = entity->sound_text;
+      e.kind = "sound"; e.has_actor = true; e.actor = entity->actor.id; e.origin = body.origin; e.path = entity->sound;
       e.channel = 0; e.volume = 1; e.attenuation = 1; e.reliable = false; e.loop = "start";
       game->host->emit(game->host->ctx, e);
     }
@@ -144,27 +148,31 @@ static void trap_rerelease_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *gam
       double mass = combat.has_value ? combat.value.mass : 0;
       if (mass >= 400) { qa_q2mp_explode_default(entity, game); return; }
       q2mp_traits_hurt(game, entity->actor, false);
-      game->solid(game->ctx, entity, QA_Q2F_SOLID_NONE);
-      entity->die = (qa_q2f_die){NULL, NULL};
+      game->solid(game->ctx, entity, "none");
+      entity->die = (qa_q2_die){NULL, NULL};
       q2mp_damage(game, target.id, entity, entity->actor.id, entity->has_team_master ? &entity->team_master : NULL,
                   100000, 1, q2mp_zero(), origin, q2mp_zero(), QA_Q2MP_MOD_TRAP, true, 0, "q2:ammo_trap");
       entity->enemy = target.id; entity->has_enemy = true;
       entity->wait = 64; entity->timestamp = now + 30; entity->accel = mass; entity->frame = 5;
       q2mp_traits_mass(game, entity->actor, trunc(mass / (q2mp_dm(game) ? 4 : 10)));
-      for (size_t i = 0; i < game->entity_count; i++) {
-        qa_q2f_entity *gib = game->entities[i];
+      size_t count = 0;
+      qa_q2_entity **gibs = q2mp_entity_snapshot(game, &count);
+      for (size_t i = 0; i < count; i++) {
+        qa_q2_entity *gib = gibs[i];
+        if (!q2mp_entity_present(game, gib)) continue;
         if (strcmp(gib->classname, "gib") == 0 && q2mp_len(q2mp_sub(q2mp_body(game, gib).origin, body.origin)) <= 128) {
-          game->motion(game->ctx, gib, QA_Q2F_MOTION_STATIONARY);
+          game->motion(game->ctx, gib, "stationary");
           gib->owner = entity->actor.id; gib->has_owner = true;
           trap_gib_fn(p, gib, game);
         }
       }
+      free(gibs);
     }
   }
   game->show(game->ctx, entity);
 }
 
-static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void trap_think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2mp_projectiles *p = ctx;
   double now = q2mp_now(game);
   qa_body_state body = q2mp_body(game, entity);
@@ -177,7 +185,7 @@ static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
       entity->wait -= 2; entity->delay += now;
       qa_angle_vectors axes = q2mp_axes(body.angles);
       for (int index = 0; index < 3; index++) {
-        qa_q2f_entity *gib = game->create(game->ctx, "trap_gib", NULL);
+        qa_q2_entity *gib = game->create(game->ctx, "trap_gib", NULL, 0);
         double radians = (120 * index + entity->delay) * M_PI / 180;
         qa_vec3 rotated = q2mp_add(q2mp_add(q2mp_scale(axes.right, cos(radians)),
                                             q2mp_scale(qa_cross3_double(axes.up, axes.right), sin(radians))),
@@ -188,15 +196,15 @@ static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
             : (combat.has_value ? combat.value.mass : 0) > 200 ? "models/objects/gibs/chest/tris.md2"
             : "models/objects/gibs/sm_meat/tris.md2";
         gib->effects = (entity->style == 1 ? 26 : 1) | 2;
-        gib->server_flags = (double)(q2mp_u32(gib->server_flags) | 4u);
-        qa_q2f_body_changes c = q2mp_changes();
+        gib->server_flags = (double)(qa_js_to_int32(q2mp_u32(gib->server_flags) | 4u));
+        qa_q2_body_changes c = q2mp_changes();
         c.has_origin = true; c.origin = q2mp_v3(point.x, point.y, body.origin.z + entity->wait);
         c.has_angles = true; c.angles = body.angles;
         c.has_bounds = true; c.bounds = (qa_bounds){q2mp_zero(), q2mp_zero()};
         q2mp_move(game, gib, c, false, false);
         q2mp_combat_create(game, gib->actor, 0, 0, true);
-        game->solid(game->ctx, gib, QA_Q2F_SOLID_NONE);
-        game->motion(game->ctx, gib, QA_Q2F_MOTION_TOSS);
+        game->solid(game->ctx, gib, "none");
+        game->motion(game->ctx, gib, "toss");
         game->show(game->ctx, gib);
         game->schedule(game->ctx, gib, 0.1, qa_q2mp_free_projectile_think());
       }
@@ -205,21 +213,21 @@ static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
       entity->frame++;
       if (entity->frame == 8) {
         game->schedule(game->ctx, entity, 1, qa_q2mp_free_projectile_think());
-        qa_q2f_entity *food = spawn_food(game, entity, q2mp_v3(body.origin.x, body.origin.y, body.origin.z + 16));
+        qa_q2_entity *food = spawn_food(game, entity, q2mp_v3(body.origin.x, body.origin.y, body.origin.z + 16));
         food->classname = "foodcube";
-        qa_q2f_body_changes c = q2mp_changes();
+        qa_q2_body_changes c = q2mp_changes();
         c.has_velocity = true; c.velocity = q2mp_v3(0, 0, 400);
         q2mp_move(game, food, c, false, false);
-        game->motion(game->ctx, food, QA_Q2F_MOTION_TOSS);
+        game->motion(game->ctx, food, "toss");
       }
     }
     game->show(game->ctx, entity);
     return;
   }
-  entity->effects = (double)(q2mp_u32(entity->effects) & ~0x2000000u);
+  entity->effects = (double)(qa_js_to_int32(q2mp_u32(entity->effects) & ~0x2000000u));
   if (entity->frame >= 4) {
-    entity->effects = (double)(q2mp_u32(entity->effects) | 0x2000000u);
-    qa_q2f_body_changes c = q2mp_changes();
+    entity->effects = (double)(qa_js_to_int32(q2mp_u32(entity->effects) | 0x2000000u));
+    qa_q2_body_changes c = q2mp_changes();
     c.has_bounds = true; c.bounds = (qa_bounds){q2mp_zero(), q2mp_zero()};
     q2mp_move(game, entity, c, false, false);
   }
@@ -241,14 +249,14 @@ static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
     if (distance < old_length) { old_length = distance; best = actor; }
   }
   if (has_best) {
-    qa_q2f_owned_result owned = game->host->actors.resolve_owned(game->host->actors.ctx, best);
+    qa_owned_actor owned; bool has_owned = qa_session_actor_registry_resolve_owned(game->host->actors, best, &owned);
     qa_body_state_result target_body = q2mp_bread(game, best);
-    if (owned.has_value && target_body.has_value) {
+    if (has_owned && target_body.has_value) {
       qa_vec3 origin = target_body.value.ground == NULL ? target_body.value.origin
           : q2mp_add(target_body.value.origin, q2mp_v3(0, 0, 1));
       qa_body_state next = target_body.value;
       next.origin = origin; next.ground = NULL;
-      game->host->bodies.write(game->host->bodies.ctx, owned.value, next);
+      qa_shared_body_table_write(game->host->bodies, owned, next);
       qa_vec3 delta = q2mp_sub(body.origin, origin);
       double distance = trunc(q2mp_len(delta));
       if (game->host->is_player(game->host->ctx, best))
@@ -268,7 +276,7 @@ static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
         qa_combat_state_result combat = q2mp_cread(game, best);
         double mass = combat.has_value ? combat.value.mass : 0;
         if (mass >= 400) { qa_q2mp_explode_default(entity, game); return; }
-        qa_q2f_entity *best_entity = q2mp_ent(game, true, best);
+        qa_q2_entity *best_entity = q2mp_ent(game, true, best);
         entity->style = best_entity != NULL && strcmp(best_entity->classname, "monster_gekk") == 0 ? 1 : 0;
         q2mp_damage(game, best, entity, entity->actor.id, entity->has_owner ? &entity->owner : NULL, 100000, 1,
                     q2mp_zero(), origin, q2mp_zero(), QA_Q2MP_MOD_TRAP, true, 0, "q2:ammo_trap");
@@ -282,12 +290,10 @@ static void trap_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
   game->show(game->ctx, entity);
 }
 
-qa_q2f_entity *qa_q2mp_projectiles_fire_trap(qa_q2mp_projectiles *p, qa_owned_actor self, qa_q2f_game *game,
+qa_q2_entity *qa_q2mp_projectiles_fire_trap(qa_q2mp_projectiles *p, qa_owned_actor self, qa_q2_game_services *game,
                                              qa_vec3 start, qa_vec3 direction, double damage, double speed,
                                              double timer, double radius, bool held) {
-  /* TS throwMine registers the subclass (virtual) callback set. */
-  game->source_callbacks.register_defs(game->source_callbacks.ctx, qa_q2mp_projectiles_callbacks(p));
-  qa_q2f_entity *trap = qa_q2mp_mines_throw_mine(&p->base.base, self, game, "trap", start, direction, speed);
+  qa_q2_entity *trap = qa_q2mp_mines_throw_mine(&p->base.base, self, game, "trap", start, direction, speed);
   if (q2mp_rr(game)) {
     qa_angle_vectors axes = q2mp_axes(q2mp_vta(direction));
     qa_body_state body = q2mp_body(game, trap);
@@ -300,24 +306,24 @@ qa_q2f_entity *qa_q2mp_projectiles_fire_trap(qa_q2mp_projectiles *p, qa_owned_ac
     }
     trap->classname = "food_cube_trap"; trap->model = "models/weapons/z_trap/tris.md2";
     trap->effects = 0; trap->render_flags = 0;
-    trap->flags = (double)(0x20000u | 0x2000u) + 4294967296.0;
+    trap->flags = (double)(qa_js_to_int32(0x20000u | 0x2000u)) + 4294967296.0;
     trap->die = p->trap_die;
     trap->angular_velocity = q2mp_v3(0, 300, 0);
     trap->clip_mask = (double)(int64_t)0x42004003;
     if (game->host->is_player(game->host->ctx, self.id)) {
       const qa_q2w_input *input = qa_q2w_ballistics_input(p->base.base.base.hooks.base, self.id);
-      if (input != NULL && !input->players_collide) trap->clip_mask = (double)(q2mp_u32(trap->clip_mask) & ~0x40000000u);
+      if (input != NULL && !input->players_collide) trap->clip_mask = (double)(qa_js_to_int32(q2mp_u32(trap->clip_mask) & ~0x40000000u));
     }
     trap->timestamp = q2mp_now(game) + 30;
-    trap->sound_text = "weapons/traploop.wav";
+    trap->sound = "weapons/traploop.wav";
     q2mp_combat_create(game, trap->actor, 20, 0, true);
-    qa_q2f_body_changes c = q2mp_changes();
+    qa_q2_body_changes c = q2mp_changes();
     c.has_angles = true; c.angles = q2mp_zero();
     c.has_velocity = true; c.velocity = q2mp_add(body.velocity, q2mp_scale(axes.up, base_up * (gravity / 800 - 1)));
     c.has_bounds = true; c.bounds = (qa_bounds){q2mp_v3(-4, -4, 0), q2mp_v3(4, 4, 8)};
     q2mp_move(game, trap, c, true, false);
     game->schedule(game->ctx, trap, 1, p->trap_rerelease);
-    qa_q2mp_publish_projectile(trap, game, trap->sound_text, true, (qa_q2mp_projectile_behavior){"q2:ammo_trap", "grenade"});
+    qa_q2mp_publish_projectile(trap, game, trap->sound, true, (qa_q2mp_projectile_behavior){"q2:ammo_trap", "grenade"});
     return trap;
   }
   trap->classname = "htrap"; trap->model = "models/weapons/z_trap/tris.md2";
@@ -325,7 +331,7 @@ qa_q2f_entity *qa_q2mp_projectiles_fire_trap(qa_q2mp_projectiles *p, qa_owned_ac
   trap->has_team_master = false; trap->damage = damage; trap->damage_radius = radius; trap->spawnflags = held ? 3 : 1;
   trap->angular_velocity = q2mp_v3(0, 300, 0);
   trap->timestamp = q2mp_now(game) + 30;
-  qa_q2f_body_changes c = q2mp_changes();
+  qa_q2_body_changes c = q2mp_changes();
   c.has_angles = true; c.angles = q2mp_zero();
   c.has_bounds = true; c.bounds = (qa_bounds){q2mp_v3(-4, -4, 0), q2mp_v3(4, 4, 8)};
   q2mp_move(game, trap, c, true, false);
@@ -343,25 +349,86 @@ qa_q2f_entity *qa_q2mp_projectiles_fire_trap(qa_q2mp_projectiles *p, qa_owned_ac
   return trap;
 }
 
+static qa_q2_callback_definitions projectiles_callbacks_of(void *self) { return qa_q2mp_projectiles_callbacks(self); }
 void qa_q2mp_projectiles_init(qa_q2mp_projectiles *p, qa_q2mp_projectile_hooks hooks) {
   qa_q2mp_nuke_init(&p->base, hooks);
-  p->trap_think = (qa_q2f_think){p, trap_think_fn};
-  p->trap_rerelease = (qa_q2f_think){p, trap_rerelease_fn};
-  p->trap_gib = (qa_q2f_think){p, trap_gib_fn};
-  p->trap_die = (qa_q2f_die){p, trap_die_fn};
+  p->base.base.base.callbacks_self = p;
+  p->base.base.base.callbacks_of = projectiles_callbacks_of;
+  p->trap_think = (qa_q2_think){p, trap_think_fn};
+  p->trap_rerelease = (qa_q2_think){p, trap_rerelease_fn};
+  p->trap_gib = (qa_q2_think){p, trap_gib_fn};
+  p->trap_die = (qa_q2_die){p, trap_die_fn};
   memcpy(p->cb_think, p->base.cb_think, sizeof p->base.cb_think);
-  p->cb_think[15] = (qa_q2f_named_think){"Trap_Think", p->trap_think};
-  p->cb_think[16] = (qa_q2f_named_think){"rerelease/Trap_Think", p->trap_rerelease};
-  p->cb_think[17] = (qa_q2f_named_think){"Trap_Gib_Think", p->trap_gib};
+  p->cb_think[15] = (qa_q2_named_think){"Trap_Think", p->trap_think};
+  p->cb_think[16] = (qa_q2_named_think){"rerelease/Trap_Think", p->trap_rerelease};
+  p->cb_think[17] = (qa_q2_named_think){"Trap_Gib_Think", p->trap_gib};
   memcpy(p->cb_die, p->base.cb_die, sizeof p->base.cb_die);
-  p->cb_die[3] = (qa_q2f_named_die){"trap_die", p->trap_die};
+  p->cb_die[3] = (qa_q2_named_die){"trap_die", p->trap_die};
 }
-qa_q2f_callback_definitions qa_q2mp_projectiles_callbacks(qa_q2mp_projectiles *p) {
-  qa_q2f_callback_definitions defs;
+qa_q2_callback_definitions qa_q2mp_projectiles_callbacks(qa_q2mp_projectiles *p) {
+  qa_q2_callback_definitions defs;
   memset(&defs, 0, sizeof defs);
   defs.trajectory = p->base.base.base.cb_traj; defs.trajectory_count = 4;
   defs.think = p->cb_think; defs.think_count = 18;
   defs.touch = p->base.cb_touch; defs.touch_count = 10;
   defs.die = p->cb_die; defs.die_count = 4;
   return defs;
+}
+
+/* ---- Q2MissionPackMonsterWeapons view of Q2MissionPackProjectiles ---- */
+static qa_q2mp_bolts *monster_bolts(void *ctx) { return &((qa_q2mp_projectiles *)ctx)->base.base.base; }
+static qa_q2_entity *mw_ion_ripper(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                                   qa_vec3 direction, double damage, double speed, double effects) {
+  return qa_q2mp_bolts_fire_ion_ripper(monster_bolts(ctx), self->actor, game, start, direction, damage, speed, effects);
+}
+static qa_q2_entity *mw_blue_blaster(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                                     qa_vec3 direction, double damage, double speed, double effects) {
+  return qa_q2mp_bolts_fire_blue_blaster(monster_bolts(ctx), self->actor, game, start, direction, damage, speed, effects);
+}
+/* TS fireHeatRocket(..., turnFraction = 0.075): an omitted turnFraction takes the default. */
+static qa_q2_entity *mw_heat_rocket(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                                    qa_vec3 direction, double damage, double speed, double radius,
+                                    double radius_damage, bool has_turn_fraction, double turn_fraction) {
+  return has_turn_fraction
+      ? qa_q2mp_bolts_fire_heat_rocket(monster_bolts(ctx), self->actor, game, start, direction, damage, speed, radius,
+                                       radius_damage, turn_fraction)
+      : qa_q2mp_bolts_fire_heat_rocket_default(monster_bolts(ctx), self->actor, game, start, direction, damage, speed,
+                                               radius, radius_damage);
+}
+static qa_q2_entity *mw_plasma(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                               qa_vec3 direction, double damage, double speed, double radius, double radius_damage) {
+  return qa_q2mp_bolts_fire_plasma(monster_bolts(ctx), self->actor, game, start, direction, damage, speed, radius,
+                                   radius_damage);
+}
+static qa_q2_entity *mw_blaster2(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                                 qa_vec3 direction, double damage, double speed, double effects) {
+  return qa_q2mp_bolts_fire_blaster2(monster_bolts(ctx), self->actor, game, start, direction, damage, speed, effects);
+}
+static qa_q2_entity *mw_tracker(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                                qa_vec3 direction, double damage, double speed, const qa_actor_id *enemy) {
+  qa_actor_id none;
+  memset(&none, 0, sizeof none);
+  return qa_q2mp_bolts_fire_tracker(monster_bolts(ctx), self->actor, game, start, direction, damage, speed,
+                                    enemy != NULL, enemy != NULL ? *enemy : none);
+}
+static qa_q2_entity *mw_flechette(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start,
+                                  qa_vec3 direction, double damage, double speed, double kick) {
+  return qa_q2mp_bolts_fire_flechette(monster_bolts(ctx), self->actor, game, start, direction, damage, speed, kick);
+}
+static void mw_heat_beam(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
+                         qa_vec3 offset, double damage, double kick) {
+  qa_q2mp_bolts_fire_heat_beam(monster_bolts(ctx), self->actor, game, start, direction, offset, damage, kick);
+}
+qa_q2mpm_weapons qa_q2mp_projectiles_monster_weapons(qa_q2mp_projectiles *projectiles) {
+  qa_q2mpm_weapons weapons;
+  weapons.ctx = projectiles;
+  weapons.fire_ion_ripper = mw_ion_ripper;
+  weapons.fire_blue_blaster = mw_blue_blaster;
+  weapons.fire_heat_rocket = mw_heat_rocket;
+  weapons.fire_plasma = mw_plasma;
+  weapons.fire_blaster2 = mw_blaster2;
+  weapons.fire_tracker = mw_tracker;
+  weapons.fire_flechette = mw_flechette;
+  weapons.fire_heat_beam = mw_heat_beam;
+  return weapons;
 }

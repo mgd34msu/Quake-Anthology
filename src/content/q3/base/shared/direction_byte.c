@@ -1,8 +1,10 @@
 /* Port of src/content/q3/base/shared/direction-byte.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/shared/direction_byte.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 enum { NUM_VERTEX_NORMALS = 162 };
 static const qa_vec3 BYTE_DIRECTIONS[NUM_VERTEX_NORMALS] = {
@@ -75,7 +77,7 @@ double qa_q3_base_direction_to_byte(const qa_vec3 *value) {
 }
 qa_vec3 qa_q3_base_byte_to_direction(double byte_value) {
   if (!(byte_value == trunc(byte_value) && byte_value >= -9007199254740991.0 && byte_value <= 9007199254740991.0))
-    qa_range_error("Direction byte %g is not a safe integer", byte_value);
+    qa_range_error("Direction byte %s is not a safe integer", QA_JS_NUMBER(byte_value));
   if (byte_value < 0 || byte_value >= NUM_VERTEX_NORMALS) return ZERO_DIRECTION;
-  return BYTE_DIRECTIONS[(int)byte_value];
+  return BYTE_DIRECTIONS[qa_js_to_int32(byte_value)];
 }

@@ -12,6 +12,8 @@
 #include "qa/compat/q2/rerelease/source_state.h"
 #include "qa/content/q2/missionpacks/damage.h"
 #include "qa/world/actors/body.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 typedef struct projection projection_t;
 struct projection {
@@ -88,8 +90,10 @@ static bool field_pointer(qa_compat_q2_rerelease_foreign_actors *f, const qa_com
 }
 static qa_vec3 vector_at(qa_compat_q2_rerelease_foreign_actors *f, qa_guest_address address) {
   qa_compat_q2_memory *m = fmem(f);
-  return (qa_vec3){qa_compat_q2_mem_read_f32(m, address), qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 4)),
-                   qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 8))};
+  double x = qa_compat_q2_mem_read_f32(m, address);
+  double y = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 4));
+  double z = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 8));
+  return (qa_vec3){x, y, z};
 }
 static qa_actor_id actor_at(qa_compat_q2_rerelease_foreign_actors *f, qa_guest_address address) {
   qa_raw_entity_table table = qa_compat_q2_rerelease_guest_module_entities(famod(f));
@@ -170,6 +174,10 @@ bool qa_compat_q2_rerelease_foreign_actors_observing_damage(qa_compat_q2_rerelea
   frame_t *frame = last_frame(f);
   return frame && frame->observing && qa_same_actor(frame->request.target, actor);
 }
+/* TS engaged: true when the slot's actor is owned by a projection or a restore is rebinding slots, so views must go through lookup. */
+bool qa_compat_q2_rerelease_foreign_actors_engaged(qa_compat_q2_rerelease_foreign_actors *f, double slot) {
+  return f->restoring || find_by_slot(f, slot) != NULL;
+}
 qa_compat_q2_rerelease_lookup qa_compat_q2_rerelease_foreign_actors_lookup(qa_compat_q2_rerelease_foreign_actors *f, qa_raw_entity_view view,
                                                                            qa_owned_actor *out) {
   projection_t *entry = find_by_slot(f, view.slot);
@@ -183,7 +191,9 @@ qa_compat_q2_rerelease_lookup qa_compat_q2_rerelease_foreign_actors_lookup(qa_co
       if (!qa_session_actor_registry_resolve_owned(actors, id, &actor))
         qa_range_error("Saved foreign projection actor is no longer live");
       qa_compat_q2_rerelease_source_edict *source = xsource(f, view);
-      bool inuse = qa_compat_q2_mem_read_u8(fmem(f), qa_compat_q2_rerelease_source_edict_at(source, "shared.inuse")) != 0;
+      const qa_compat_q2_memory * m = fmem(f);
+      qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(source, "shared.inuse");
+      bool inuse = qa_compat_q2_mem_read_u8(m, a) != 0;
       double generation = qa_compat_q2_rerelease_source_edict_generation(source);
       qa_compat_q2_rerelease_source_edict_destroy(source);
       if (!inuse) return QA_COMPAT_Q2_RR_LOOKUP_NULL;
@@ -252,15 +262,16 @@ static void sync_projection(qa_compat_q2_rerelease_foreign_actors *f, projection
   binding.write(binding.ctx, body.value);
   qa_compat_q2_rerelease_source_edict_set_health(source, combat.has_value ? combat.value.health : 0);
   qa_compat_q2_mem_write_i32(memory, qa_compat_q2_rerelease_source_edict_at(source, "mass"),
-                             combat.has_value ? (int32_t)combat.value.mass : 0);
+                             combat.has_value ? qa_js_to_int32(combat.value.mass) : 0);
   qa_compat_q2_mem_write_u8(memory, qa_compat_q2_rerelease_source_edict_at(source, "takedamage"),
                             combat.has_value && combat.value.can_take_damage ? 1 : 0);
   qa_compat_q2_mem_write_i32(memory, qa_compat_q2_rerelease_source_edict_at(source, "movetype"), 0);
   qa_compat_q2_mem_write_u32(memory, qa_compat_q2_rerelease_source_edict_at(source, "shared.svflags"), 1);
   qa_guest_address null_address; memset(&null_address, 0, sizeof null_address);
   qa_compat_q2_mem_write_pointer(memory, qa_compat_q2_rerelease_source_edict_at(source, "shared.client"), false, null_address);
-  qa_compat_q2_mem_write_pointer(memory, qa_compat_q2_rerelease_source_edict_at(source, "classname"), true,
-                                 qa_compat_q2_rerelease_core_imports_string(qa_compat_q2_rerelease_q2_guest_host_get_core(f->host), "foreign_actor"));
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(source, "classname");
+  qa_guest_address v = qa_compat_q2_rerelease_core_imports_string(qa_compat_q2_rerelease_q2_guest_host_get_core(f->host), "foreign_actor");
+  qa_compat_q2_mem_write_pointer(memory, a, true, v);
   qa_compat_q2_mem_write_u8(memory, qa_compat_q2_rerelease_source_edict_at(source, "shared.solid"), 2);
   qa_linked_body_result linked = qa_shared_body_table_linked(engine->bodies, entry->actor.id);
   qa_vec3 absmin = linked.has_value ? linked.value.absolute_bounds.min
@@ -314,8 +325,8 @@ qa_guest_address qa_compat_q2_rerelease_foreign_actors_address(qa_compat_q2_rere
 }
 void qa_compat_q2_rerelease_foreign_actors_synchronize(qa_compat_q2_rerelease_foreign_actors *f) {
   size_t count = f->actor_count;
-  projection_t **copy = xmalloc(count * sizeof *copy);
-  memcpy(copy, f->actors, count * sizeof *copy);
+  projection_t **copy = xmalloc((count ? count : 1) * sizeof *copy);
+  if (count) memcpy(copy, f->actors, count * sizeof *copy);
   for (size_t i = 0; i < count; i++) {
     /* Skip entries already removed by an earlier sync in this pass. */
     bool present = false;
@@ -485,6 +496,14 @@ static int64_t read_location(regular_ctx_t *c, qa_compat_q2_rerelease_world_loca
   return strcmp(location.storage, "int32") == 0 ? qa_compat_q2_mem_read_i32(memory, address)
                                                  : (int64_t)qa_compat_q2_mem_read_u32(memory, address);
 }
+/* BigInt(value) for an integral number (RangeError for NaN and infinities), as the
+ * two's-complement low 64 bits a register or memory store keeps. */
+static int64_t bigint_bits(double value) {
+  if (!isfinite(value)) qa_range_error("The number %s cannot be converted to a BigInt because it is not an integer", QA_JS_NUMBER(value));
+  uint64_t magnitude = (uint64_t)fmod(fabs(value), 18446744073709551616.0);
+  uint64_t bits = value < 0 ? (uint64_t)0 - magnitude : magnitude;
+  int64_t out; memcpy(&out, &bits, sizeof out); return out;
+}
 static void write_location(regular_ctx_t *c, qa_compat_q2_rerelease_world_location location, int64_t value) {
   qa_compat_q2_memory *memory = fmem(c->f);
   if (location.is_register) {
@@ -495,8 +514,8 @@ static void write_location(regular_ctx_t *c, qa_compat_q2_rerelease_world_locati
   }
   qa_guest_address address = qa_compat_q2_mem_offset(memory, c->source_stack, (int64_t)location.offset);
   if (strcmp(location.storage, "pointer") == 0) qa_compat_q2_mem_write_u64(memory, address, (uint64_t)value);
-  else if (strcmp(location.storage, "int32") == 0) qa_compat_q2_mem_write_i32(memory, address, (int32_t)value);
-  else qa_compat_q2_mem_write_u32(memory, address, (uint32_t)value);
+  else if (strcmp(location.storage, "int32") == 0) qa_compat_q2_mem_write_i32(memory, address, qa_js_to_int32(value));
+  else qa_compat_q2_mem_write_u32(memory, address, qa_js_to_uint32(value));
 }
 static double regular_original(void *v) {
   regular_ctx_t *c = v;
@@ -547,7 +566,7 @@ static void regular_region(void *v, qa_compat_q2_inline_continuation *continuati
     for (size_t i = 0; i < repair_count; i++) write_location(&ctx, profile->regular_armor.repair[i].target, repair_values[i]);
   }
   free(repair_values);
-  write_location(&ctx, profile->regular_armor.result, (int64_t)trunc(saved));
+  write_location(&ctx, profile->regular_armor.result, bigint_bits(trunc(saved)));
 }
 static void install_armor_hooks(qa_compat_q2_rerelease_foreign_actors *f) {
   qa_compat_q2_runner *r = frunner(f);
@@ -595,7 +614,7 @@ static void incoming_damage(qa_compat_q2_rerelease_foreign_actors *f, const qa_g
   request.direction = vector_at(f, qa_compat_q2_guest_required_pointer(args, count, 3));
   request.point = vector_at(f, qa_compat_q2_guest_required_pointer(args, count, 4));
   request.normal = vector_at(f, qa_compat_q2_guest_required_pointer(args, count, 5));
-  request.delivery = ((int64_t)damage_flags & 1) != 0 ? "radius" : "direct";
+  request.delivery = (qa_js_to_int32(damage_flags) & 1) != 0 ? "radius" : "direct";
   request.attack = f->services.provenance(f->services.ctx, attacker, inflictor, target);
   /* The ids live in this frame; apply() captures the request synchronously. */
   request.attack.attacker = &attacker;
@@ -802,7 +821,7 @@ static qa_source_damage_result damage_execute(void *v, qa_source_damage_observer
   }
   qa_compat_q2_runner *runner = frunner(f);
   void *saved_processor = runner->capture_processor ? runner->capture_processor(runner->ctx) : NULL;
-  ex->mod_bytes[0] = (uint8_t)native.id;
+  ex->mod_bytes[0] = qa_js_to_uint8(native.id); /* Uint8Array store */
   ex->mod_bytes[1] = native.friendly_fire ? 1 : 0;
   ex->mod_bytes[2] = native.no_point_loss ? 1 : 0;
   qa_guest_call_value aggregate; memset(&aggregate, 0, sizeof aggregate);
@@ -934,7 +953,9 @@ static bool damage_accepts(void *v) {
   if (qa_compat_q2_rerelease_foreign_actors_lookup(f, entry->view, &found) == QA_COMPAT_Q2_RR_LOOKUP_UNDEFINED)
     return intercept_native_damage(f);
   qa_compat_q2_rerelease_source_edict *source = xsource(f, entry->view);
-  bool inuse = qa_compat_q2_mem_read_u8(fmem(f), qa_compat_q2_rerelease_source_edict_at(source, "shared.inuse")) != 0;
+  const qa_compat_q2_memory * m = fmem(f);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(source, "shared.inuse");
+  bool inuse = qa_compat_q2_mem_read_u8(m, a) != 0;
   qa_compat_q2_rerelease_source_edict_destroy(source);
   return !entry->releasing && qa_session_actor_registry_is_live(fengine(f)->actors, entry->actor.id) && inuse;
 }

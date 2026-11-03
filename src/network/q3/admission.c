@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js_case.h"
 static char *xstrdup(const char *s) { size_t n = strlen(s); char *r = malloc(n + 1); if (r) memcpy(r, s, n + 1); return r; }
 bool qa_q3_mirror_address_copy(qa_q3_mirror_address *dst, const qa_q3_mirror_address *src) {
   *dst = *src;
@@ -98,7 +99,8 @@ bool qa_q3_is_lan_address(const qa_q3_address *a) {
 static bool ci_eq_n(const char *a, size_t an, const char *b) {
   size_t bn = strlen(b);
   if (an != bn) return false;
-  for (size_t i = 0; i < an; i++) if (tolower((unsigned char)a[i]) != tolower((unsigned char)b[i])) return false;
+  /* TS toLowerCase() === over Latin-1 connectionless text. */
+  for (size_t i = 0; i < an; i++) if (qa_js_latin1_lower((unsigned char)a[i]) != qa_js_latin1_lower((unsigned char)b[i])) return false;
   return true;
 }
 char *qa_q3_info_value(const char *info, const char *key) {
@@ -132,6 +134,19 @@ static char *info_set(const char *info, const char *key, const char *value, qa_q
   print_adapter_t pa = { print, print_ctx };
   qa_info_options o = { QA_COMMAND_DIALECT_Q3, 1024, QA_CVAR_INFO_CLIENT_USERINFO, false, print_adapter, &pa };
   return qa_set_info_value(info, key, value, &o);
+}
+/* TS exported addressText and infoSet. */
+void qa_q3_address_text(const qa_q3_address *address, char *buf, size_t n) { address_text(address, buf, n); }
+char *qa_q3_info_set(const char *info, const char *key, const char *value, qa_q3_message_print_fn print, void *print_ctx) {
+  return info_set(info, key, value, print, print_ctx);
+}
+/* TS q3PeerUserinfo: SV_UserinfoChanged keeps the transport address in the userinfo, because the
+ * banning code and rate rules read it. */
+char *qa_q3_peer_userinfo(const char *info, const qa_q3_address *address, qa_q3_message_print_fn print, void *print_ctx) {
+  char text[128];
+  if (address->kind == QA_Q3_ADDR_LOOPBACK) snprintf(text, sizeof text, "localhost");
+  else address_text(address, text, sizeof text);
+  return info_set(info, "ip", text, print, print_ctx);
 }
 void qa_q3_outgoing_datagram_destroy(qa_q3_outgoing_datagram *d) {
   qa_q3_mirror_address_destroy(&d->to); free(d->payload); d->payload = NULL;
@@ -204,8 +219,7 @@ bool qa_q3_client_admission_resend(qa_q3_client_admission *a, double now, const 
   return ok;
 }
 static bool ci_eq(const char *a, const char *b) {
-  while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false; a++; b++; }
-  return *a == *b;
+  return qa_js_latin1_equals_ignore_case(a, b); /* TS toLowerCase() === over Latin-1 text */
 }
 bool qa_q3_client_admission_receive(qa_q3_client_admission *a, const qa_q3_address *from, const uint8_t *bytes, size_t len, double now, qa_q3_client_admission_result *out) {
   memset(out, 0, sizeof *out);
@@ -213,7 +227,8 @@ bool qa_q3_client_admission_receive(qa_q3_client_admission *a, const qa_q3_addre
   if (len >= 4 && bytes[0] == 255 && bytes[1] == 255 && bytes[2] == 255 && bytes[3] == 255) {
     if (!qa_q3_decode_connectionless(bytes, len, QA_Q3_CONNLESS_CLIENT, NULL, &out->packet)) return false;
     if (ci_eq(out->packet.command, "challengeResponse")) {
-      if (a->phase == QA_Q3_PHASE_CONNECTING) {
+      /* The original lets a proxy on the same host answer from another port, but never another host. */
+      if (a->phase == QA_Q3_PHASE_CONNECTING && a->has_address && qa_q3_mirror_same_address(from, &a->address, false)) {
         a->challenge = qa_native_atoi(out->packet.argument_count ? out->packet.arguments[0] : "");
         a->phase = QA_Q3_PHASE_CHALLENGING; a->connect_packet_count = 0; a->connect_time = -99999;
         qa_q3_mirror_address_destroy(&a->address);
@@ -287,12 +302,12 @@ static void sadm_challenge(qa_q3_server_admission *a, const qa_q3_address *from,
     found = oldest;
     double r1 = b->random(b->ctx), r2 = b->random(b->ctx);
     /* TS (random()<<16)^random()^now with JS ToInt32 of doubles. */
-    found->challenge = (int32_t)(((int32_t)r1 << 16) ^ (int32_t)r2 ^ (int32_t)now);
+    found->challenge = (int32_t)(((uint32_t)qa_int32(r1) << 16) ^ (uint32_t)qa_int32(r2) ^ (uint32_t)qa_int32(now));
     qa_q3_mirror_address_destroy(&found->address);
     qa_q3_mirror_address_copy(&found->address, from); found->has_address = true;
     found->first_time = now; found->time = now; found->connected = false;
   }
-  if (b->is_lan(b->ctx, from) || (int32_t)(now - found->first_time) > 5000) {
+  if (b->is_lan(b->ctx, from) || qa_int32(now - found->first_time) > 5000) {
     found->ping_time = now;
     char buf[64]; snprintf(buf, sizeof buf, "challengeResponse %lld", (long long)found->challenge);
     sadm_reply(a, from, buf);
@@ -350,7 +365,9 @@ static bool sadm_connect(qa_q3_server_admission *a, const qa_q3_address *from, c
   const qa_q3_admission_slot *existing = NULL;
   for (size_t i = 0; i < slot_count; i++)
     if (slots[i].phase != QA_Q3_SLOT_FREE && slot_matches(from, &slots[i], qport)) { existing = &slots[i]; break; }
-  if (existing && (int32_t)(now - existing->last_connect_time) < (int32_t)(host->reconnect_limit_seconds(host->ctx) * 1000)) { free(userinfo); return true; }
+  /* ((now - lastConnectTime) | 0) < Math.imul(reconnectLimitSeconds, 1000) */
+  if (existing && qa_int32(now - existing->last_connect_time)
+        < (int32_t)((uint32_t)qa_int32(host->reconnect_limit_seconds(host->ctx)) * 1000u)) { free(userinfo); return true; }
   if (from->kind != QA_Q3_ADDR_LOOPBACK) {
     qa_q3_challenge *challenge = NULL;
     for (int i = 0; i < 1024; i++) {
@@ -361,7 +378,7 @@ static bool sadm_connect(qa_q3_server_admission *a, const qa_q3_address *from, c
     char text[128]; address_text(from, text, sizeof text);
     char *next = info_set(userinfo, "ip", text, host->print, host->print_ctx); free(userinfo); userinfo = next;
     if (!userinfo) return false;
-    int32_t ping = (int32_t)(now - challenge->ping_time);
+    int32_t ping = qa_int32(now - challenge->ping_time);
     challenge->connected = true;
     if (!host->is_lan(host->ctx, from)) {
       float minp = (float)host->minimum_ping(host->ctx);
@@ -434,7 +451,7 @@ int64_t qa_q3_route_sequenced_packet(const qa_q3_address *from, const uint8_t *b
     const qa_q3_admission_slot *slot = &slots[i];
     if (slot->phase != QA_Q3_SLOT_FREE && slot->has_address
         && qa_q3_mirror_same_address(from, &slot->address, false) && slot->qport == qport)
-      return (int64_t)i;
+      return slot->slot;
   }
   return -1;
 }

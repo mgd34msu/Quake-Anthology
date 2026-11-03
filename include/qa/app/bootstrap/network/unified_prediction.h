@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "qa/app/bootstrap/network/unified_types.h"
 #include "qa/app/bootstrap/simulation/prediction/types.h"
+#include "qa/persistence/value.h"
 #include "qa/world/spatial/index.h"
 typedef struct qa_app_unified_prediction_projection {
   qa_app_movement_prediction_snapshot snapshot; /* q3Arsenal excluded */
@@ -16,9 +17,14 @@ typedef struct qa_app_unified_prediction_projection {
   qa_bounds standing_bounds;
   double standing_view_height;
   qa_spatial_actor *collisions; size_t collision_count; /* owned after decode/project */
+  /* Owned decoded tree (decode only): decoded strings borrow from it. */
+  qa_save_value *tree;
 } qa_app_unified_prediction_projection;
+/* The checkpoint value encodeUnifiedPrediction encodes (owned). */
+qa_save_value *qa_app_unified_prediction_value(const qa_app_unified_prediction_projection *value);
 uint8_t *qa_app_unified_encode_prediction(const qa_app_unified_prediction_projection *value,
     size_t *out_length);
+/* Raises as TS throws; a raise frees everything decoded so far. */
 qa_app_unified_prediction_projection qa_app_unified_decode_prediction(
     const uint8_t *bytes, size_t length, const qa_app_unified_identity_decoder *identity);
 void qa_app_unified_prediction_projection_free(qa_app_unified_prediction_projection *projection);

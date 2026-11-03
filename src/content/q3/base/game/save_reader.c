@@ -10,8 +10,8 @@ static double rf_num(const qa_save_reader *r, const char *n) { qa_save_reader f;
 qa_q3_saved_actor_ref qa_q3_read_actor(const qa_save_reader *reader) {
   qa_q3_saved_actor_ref a = {true, rf_int0(reader, "slot"), rf_int0(reader, "generation")}; return a;
 }
-static qa_q3_game_trajectory_mirror read_traj(const qa_save_reader *r) {
-  qa_save_reader f; qa_q3_game_trajectory_mirror t; t.type = rf_num(r, "type"); t.time = rf_num(r, "time"); t.duration = rf_num(r, "duration");
+static qa_q3_base_trajectory read_traj(const qa_save_reader *r) {
+  qa_save_reader f; qa_q3_base_trajectory t; t.type = rf_num(r, "type"); t.time = rf_num(r, "time"); t.duration = rf_num(r, "duration");
   qa_save_reader_field(r, "base", &f); t.base = qa_q3_read_vector(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(r, "delta", &f); t.delta = qa_q3_read_vector(&f); qa_save_reader_destroy(&f); return t;
 }

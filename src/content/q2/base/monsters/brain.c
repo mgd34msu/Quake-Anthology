@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/monsters/brain.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/monsters/brain.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -9,27 +10,25 @@
 #include "qa/content/q2/base/monsters/tables/brain.h"
 #include "qa/content/q2/foundation/monsters/ai.h"
 
-static qa_q2bm_brain_power_hooks power_hooks;
-void qa_q2bm_brain_set_power_hooks(qa_q2bm_brain_power_hooks hooks) { power_hooks = hooks; }
 
 /* TS WeakSet<OwnedActor> boundPowerArmor (identity: id + owner + token). */
 typedef struct cell_binding {
   qa_owned_actor actor;
-  qa_q2f_entity *entity;
-  qa_q2f_game *game;
+  qa_q2_entity *entity;
+  qa_q2_game_services *game;
   struct cell_binding *next;
 } cell_binding;
 static cell_binding *bindings;
 static double cell_read(void *ctx) {
   cell_binding *b = ctx;
-  return b->game->host->inventory.count(b->game->host->inventory.ctx, b->entity->actor.id, "q2:monster-power");
+  return qa_shared_inventory_table_count(b->game->host->inventory, b->entity->actor.id, "q2:monster-power");
 }
 static void cell_write(void *ctx, double count) {
   cell_binding *b = ctx;
   qa_inventory_entry entry;
   memset(&entry, 0, sizeof entry);
   entry.item = "q2:monster-power"; entry.count = count; entry.capacity = 100;
-  b->game->host->inventory.configure(b->game->host->inventory.ctx, b->entity->actor, entry);
+  qa_shared_inventory_table_configure(b->game->host->inventory, b->entity->actor, entry, NULL, NULL);
 }
 static bool same_owned(qa_owned_actor a, qa_owned_actor b) {
   return qa_same_actor(a.id, b.id) && a.token == b.token
@@ -37,23 +36,22 @@ static bool same_owned(qa_owned_actor a, qa_owned_actor b) {
 }
 static void bind_power_armor_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   for (cell_binding *b = bindings; b; b = b->next)
     if (same_owned(b->actor, entity->actor)) return;
-  if (!power_hooks.bind_cells) qa_q2f_error("Brain power armor has no registered combat hooks");
   cell_binding *b = malloc(sizeof *b);
-  if (!b) qa_q2f_error("Brain power armor binding allocation failed");
+  if (!b) qa_raise("Error", 0, 0, "Brain power armor binding allocation failed");
   b->actor = entity->actor; b->entity = entity; b->game = game; b->next = bindings; bindings = b;
   qa_power_armor_cell_binding cells = {b, cell_read, cell_write};
-  power_hooks.bind_cells(power_hooks.ctx, entity->actor, cells);
+  qa_gameplay_authority_bind_power_armor_cells(game->host->combat, entity->actor, cells);
 }
 static void screen(qa_q2m_context *c, bool active) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
-  if (!power_hooks.set_powered) qa_q2f_error("Brain power armor has no registered combat hooks");
-  double cells = game->host->inventory.count(game->host->inventory.ctx, entity->actor.id, "q2:monster-power");
-  power_hooks.set_powered(power_hooks.ctx, entity->actor, active ? "screen" : "none", active ? cells : 0);
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  double cells = qa_shared_inventory_table_count(game->host->inventory, entity->actor.id, "q2:monster-power");
+  qa_powered_protection_state powered = {active ? "screen" : "none", active ? cells : 0};
+  qa_gameplay_authority_set_powered_protection(game->host->combat, entity->actor, powered);
 }
 static void run_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -71,16 +69,14 @@ static const qa_q2bm_sound_spec swing_left_spec = {"brain/melee2.wav", 4, 1};
 
 static void initialize_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
-  if (!power_hooks.inventory_has || !power_hooks.inventory_create_empty)
-    qa_q2f_error("Brain power armor has no registered combat hooks");
-  if (!power_hooks.inventory_has(power_hooks.ctx, entity->actor.id))
-    power_hooks.inventory_create_empty(power_hooks.ctx, entity->actor);
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  if (!qa_shared_inventory_table_has(game->host->inventory, entity->actor.id))
+    qa_shared_inventory_table_create_entries(game->host->inventory, entity->actor, NULL, 0);
   qa_inventory_entry entry;
   memset(&entry, 0, sizeof entry);
   entry.item = "q2:monster-power"; entry.count = 100; entry.capacity = 100;
-  game->host->inventory.configure(game->host->inventory.ctx, entity->actor, entry);
+  qa_shared_inventory_table_configure(game->host->inventory, entity->actor, entry, NULL, NULL);
   bind_power_armor_fn(NULL, c);
   screen(c, true);
 }
@@ -127,21 +123,31 @@ static void duck_hold_fn(void *ctx, qa_q2m_context *c) {
 static void duck_up_fn(void *ctx, qa_q2m_context *c) { (void)ctx; qa_q2m_set_duck(c, false); }
 static void hit_right_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  if (c->weapons.fire_hit(c->weapons.ctx, c->entity, c->game,
-                          q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.max.x, 8),
-                          15 + floor(q2bm_rnd(c->game) * 5), 40))
+  void * value = c->weapons.ctx;
+  qa_q2_entity * value2 = c->entity;
+  qa_q2_game_services * value3 = c->game;
+  qa_vec3 value4 = q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.max.x, 8);
+  double value5 = 15 + floor(q2bm_rnd(c->game) * 5);
+  if (c->weapons.fire_hit(value, value2, value3,
+                          value4,
+                          value5, 40))
     q2bm_sound(c->game, c->entity, "brain/melee3.wav", true, 1, false, 0, false, 0);
 }
 static void hit_left_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  if (c->weapons.fire_hit(c->weapons.ctx, c->entity, c->game,
-                          q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, 8),
-                          15 + floor(q2bm_rnd(c->game) * 5), 40))
+  void * value = c->weapons.ctx;
+  qa_q2_entity * value2 = c->entity;
+  qa_q2_game_services * value3 = c->game;
+  qa_vec3 value4 = q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, 8);
+  double value5 = 15 + floor(q2bm_rnd(c->game) * 5);
+  if (c->weapons.fire_hit(value, value2, value3,
+                          value4,
+                          value5, 40))
     q2bm_sound(c->game, c->entity, "brain/melee3.wav", true, 1, false, 0, false, 0);
 }
 static void chest_open_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  c->entity->spawnflags = (double)((uint32_t)c->entity->spawnflags & ~65536u);
+  c->entity->spawnflags = (double)(qa_js_to_int32(qa_js_to_uint32(c->entity->spawnflags) & ~65536u));
   screen(c, false);
   q2bm_sound(c->game, c->entity, "brain/brnatck1.wav", true, 4, false, 0, false, 0);
 }
@@ -150,14 +156,14 @@ static void tentacle_fn(void *ctx, qa_q2m_context *c) {
   if (c->weapons.fire_hit(c->weapons.ctx, c->entity, c->game, q2bm_v3(80, 0, 8),
                           10 + floor(q2bm_rnd(c->game) * 5), -600)
       && c->game->options.skill > 0)
-    c->entity->spawnflags = (double)((uint32_t)c->entity->spawnflags | 65536u);
+    c->entity->spawnflags = (double)(qa_js_to_int32(qa_js_to_uint32(c->entity->spawnflags) | 65536u));
   q2bm_sound(c->game, c->entity, "brain/brnatck3.wav", true, 1, false, 0, false, 0);
 }
 static void chest_closed_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   screen(c, true);
-  if (((uint32_t)c->entity->spawnflags & 65536u) != 0) {
-    c->entity->spawnflags = (double)((uint32_t)c->entity->spawnflags & ~65536u);
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 65536u) != 0) {
+    c->entity->spawnflags = (double)(qa_js_to_int32(qa_js_to_uint32(c->entity->spawnflags) & ~65536u));
     q2bm_set_move(c, "brain_move_attack1");
   }
 }

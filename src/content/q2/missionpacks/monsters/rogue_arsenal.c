@@ -13,6 +13,7 @@
 #include "qa/content/q2/foundation/monsters/muzzle.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_chick.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
 
 typedef struct arsenal_bundle {
   qa_q2m_monsters *monsters;
@@ -20,8 +21,8 @@ typedef struct arsenal_bundle {
   qa_q2m_handler machine_gun;
 } arsenal_bundle;
 static void rocket(qa_q2m_context *c, double flash, double head_chance, double blind_offset) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
@@ -32,7 +33,7 @@ static void rocket(qa_q2m_context *c, double flash, double head_chance, double b
   qa_vec3 target = blind ? state->blind_fire_target : enemy.origin;
   qa_vec3 point = target;
   if (!blind) {
-    qa_q2f_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
+    qa_q2_entity *enemy_entity = game->entity(game->ctx, &entity->enemy);
     double view_height = enemy_entity ? enemy_entity->view_height : 22;
     point.z = q2mpm_rnd(game) < head_chance || start.z < enemy.origin.z + enemy.bounds.min.z
         ? target.z + view_height : enemy.origin.z + enemy.bounds.min.z;
@@ -60,7 +61,7 @@ static void rocket(qa_q2m_context *c, double flash, double head_chance, double b
   }
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(point, start));
   (void)c->weapons.fire_rocket(c->weapons.ctx, entity, game, start, direction, 50, speed, 70, 50);
-  qa_q2mpm_monster_flash(c, blind ? flash : 57, start, direction);
+  qa_q2rm_monster_flash(c, blind ? flash : 57, start, direction);
 }
 static double blind_chance(qa_q2m_context *c) {
   return c->state->blind_fire_delay < 1 ? 1 : c->state->blind_fire_delay < 7.5 ? 0.4 : 0.1;
@@ -72,7 +73,7 @@ static bool zero_target(qa_q2m_context *c) {
 static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   arsenal_bundle *bundle = ctx;
   return qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)
-      || qa_q2mpm_blocked_check_platform(c, distance);
+      || qa_q2rm_blocked_check_platform(c, distance);
 }
 static void ignore_shots_fn(void *ctx, qa_q2m_context *c) { (void)ctx; c->state->ignore_shots = true; }
 static void tank_pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
@@ -94,8 +95,8 @@ static void tank_pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction
 }
 static void tank_attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (!entity->has_enemy || !q2mpm_live(game, entity->enemy)) return;
   if (qa_q2m_health(game, &entity->enemy) < 0) {
@@ -113,7 +114,9 @@ static void tank_attack_fn(void *ctx, qa_q2m_context *c) {
   if (zero_target(c) || random > chance) return;
   state->manual_steering = true;
   q2mpm_set_move(c, "tank_move_attack_fire_rocket");
-  state->attack_finished = q2mpm_now(game) + 3 + 2 * q2mpm_rnd(game);
+  double left = q2mpm_now(game) + 3;
+  double right = 2 * q2mpm_rnd(game);
+  state->attack_finished = left + right;
   state->pain_time = q2mpm_now(game) + 5;
 }
 static void tank_rocket_fn(void *ctx, qa_q2m_context *c) {
@@ -169,7 +172,9 @@ static void chick_attack_fn(void *ctx, qa_q2m_context *c) {
     if (zero_target(c) || random > chance) return;
     c->state->manual_steering = true;
     q2mpm_set_move(c, "chick_move_start_attack1");
-    c->state->attack_finished = q2mpm_now(c->game) + 2 * q2mpm_rnd(c->game);
+    double left = q2mpm_now(c->game);
+    double right = 2 * q2mpm_rnd(c->game);
+    c->state->attack_finished = left + right;
     return;
   }
   q2mpm_set_move(c, "chick_move_start_attack1");
@@ -215,13 +220,13 @@ static void commander_init_fn(void *ctx, qa_q2m_context *c) {
   c->state->ignore_shots = true;
   c->entity->skin = 2;
 }
-size_t qa_q2mpm_create_rogue_arsenal_monsters(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_arsenal_monsters(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                               qa_q2mpm_monster_state *source) {
   const qa_q2m_handler *machine_gun = qa_q2mpm_find_callback(qa_q2bm_tank_definition.callbacks,
                                                              qa_q2bm_tank_definition.callback_count, "TankMachineGun");
-  if (!machine_gun) qa_q2f_error("Base Tank is missing its source machine gun callback");
-  arsenal_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue arsenal monsters");
+  if (!machine_gun) qa_raise("Error", 0, 0, "Base Tank is missing its source machine gun callback");
+  arsenal_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue arsenal monsters");
   bundle->monsters = monsters;
   bundle->source = source;
   bundle->machine_gun = *machine_gun;
@@ -240,7 +245,7 @@ size_t qa_q2mpm_create_rogue_arsenal_monsters(qa_q2m_definition *out, qa_q2m_mon
       {"TankMachineGun", {bundle, tank_mg_fn}},
       {"tank_refire_rocket", {NULL, tank_refire_fn}},
     };
-    tank.callbacks = qa_q2mpm_merge_callbacks(tank.callbacks, tank.callback_count, extra, 3, &tank.callback_count);
+    tank.callbacks = qa_q2mpm_merge_callbacks(arena, tank.callbacks, tank.callback_count, extra, 3, &tank.callback_count);
   }
   out[0] = tank;
   out[1] = tank;
@@ -273,7 +278,7 @@ size_t qa_q2mpm_create_rogue_arsenal_monsters(qa_q2m_definition *out, qa_q2m_mon
       {"ChickRocket", {NULL, chick_rocket_fn}},
       {"chick_rerocket", {NULL, chick_rerocket_fn}},
     };
-    chick.callbacks = qa_q2mpm_merge_callbacks(chick.callbacks, chick.callback_count, extra, 6, &chick.callback_count);
+    chick.callbacks = qa_q2mpm_merge_callbacks(arena, chick.callbacks, chick.callback_count, extra, 6, &chick.callback_count);
   }
   out[2] = chick;
   return 3;

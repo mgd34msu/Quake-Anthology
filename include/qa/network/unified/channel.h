@@ -1,48 +1,71 @@
-/* Port of src/network/unified/channel.ts. Deliveries are malloc'd
- * arrays of events (kind string mirrors TS); payloads malloc'd.
+/* Port of src/network/unified/channel.ts: one established peer; control uses a bounded
+ * ordered window and snapshots never block control. Deliveries and datagrams are malloc'd.
+ *
+ * Throws: the invalid-argument RangeErrors abort, per docs/PORTING.md. The two faults TS
+ * raises while running and its callers catch (reliable assembly timeout, retry limit) close
+ * the channel and set `failure` to the TS message; flush and receive then return nothing.
  * GPL-2.0-or-later. */
 #ifndef QA_NETWORK_UNIFIED_CHANNEL_H
 #define QA_NETWORK_UNIFIED_CHANNEL_H
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+typedef struct qa_unified_channel_limits {
+  int64_t datagram_bytes, message_bytes, queued_reliable_bytes, queued_reliable_messages;
+  int64_t reliable_window_messages, fragments, packets_per_flush;
+  int64_t retry_milliseconds, maximum_transmissions, assembly_milliseconds;
+  /* TS inboundMessageBytes: the largest message a peer may announce. 0 stands for the TS
+   * `limits.inboundMessageBytes ?? limits.messageBytes ?? defaults.inboundMessageBytes`
+   * fallback and resolves to message_bytes at init, so the defaults (4 MiB) hold. */
+  int64_t inbound_message_bytes;
+} qa_unified_channel_limits;
+/* TS `defaults`. */
+qa_unified_channel_limits qa_unified_channel_default_limits(void);
+
 typedef struct qa_unified_delivery {
-  const char *kind; /* "reliable"|"frame"|"invalid-frame"|"rejected-fragment" */
+  const char *kind; /* "reliable" | "frame" */
   uint8_t *payload; size_t length;
-  int64_t sequence, required_reliable_sequence, required;
-  const char *reason;
+  int64_t sequence, required_reliable_sequence;
 } qa_unified_delivery;
 void qa_unified_deliveries_destroy(qa_unified_delivery *events, size_t count);
-typedef struct qa_unified_receive_result {
-  qa_unified_delivery *deliveries; size_t delivery_count;
-  uint8_t **replies; size_t *reply_lens; size_t reply_count;
-} qa_unified_receive_result;
-void qa_unified_receive_result_destroy(qa_unified_receive_result *r);
-struct qa_unified_assembly_key { int64_t sequence, fragments, fragment_bytes, total_bytes; };
-struct qa_unified_assembly {
-  struct qa_unified_assembly_key key;
-  uint8_t **chunks; size_t *chunk_lens; int64_t count, size;
-};
-struct qa_unified_pending_frame { int64_t required; uint8_t *payload; size_t length; };
+
+struct qa_unified_outgoing;
+struct qa_unified_assembly;
+struct qa_unified_ack { bool delivered; int64_t sequence, fragment; };
+
 typedef struct qa_unified_channel {
-  char token[33]; int64_t fragment_bytes, max_message_bytes; double retry_ms;
-  int64_t next_packet, reliable_sequence, next_reliable;
-  uint8_t *reliable; size_t reliable_len; bool has_reliable;
-  double reliable_sent_at; bool reliable_sent;
-  int64_t acknowledged_reliable, last_packet, delivered_reliable;
-  double last_received_at; bool ack_sent, ack_dirty;
-  struct qa_unified_assembly *reliable_assembly, *frame_assembly;
-  struct qa_unified_pending_frame *frames; size_t frame_count, frame_cap;
-  int64_t *frame_sequences; size_t seq_count, seq_cap;
+  char token[33];
+  qa_unified_channel_limits limits;
+  bool ended;
+  const char *failure; /* static text; set when a running fault closed the channel */
+  int lane;
+  int64_t next_reliable, next_frame, reliable_received, reliable_acknowledged;
+  int64_t frame_received, newest_frame, queued_bytes, received_bytes;
+  struct qa_unified_outgoing **reliable; size_t reliable_count, reliable_cap;
+  size_t reliable_cursor;
+  struct qa_unified_outgoing *frame, *pending_frame;
+  struct qa_unified_assembly **assemblies; size_t assembly_count, assembly_cap;
+  struct qa_unified_assembly *frame_assembly;
+  qa_unified_delivery waiting_frame; bool has_waiting_frame;
+  struct qa_unified_ack *acks; size_t ack_count, ack_cap;
 } qa_unified_channel;
-void qa_unified_channel_init(qa_unified_channel *c, const char *token, int64_t fragment_bytes,
-                             int64_t max_message_bytes, double retry_ms, int64_t first_sequence, bool has_first);
+
+/* `limits` NULL means the defaults; start from qa_unified_channel_default_limits for a partial set. */
+void qa_unified_channel_init(qa_unified_channel *c, const char *token, const qa_unified_channel_limits *limits);
 void qa_unified_channel_destroy(qa_unified_channel *c);
-bool qa_unified_channel_can_send_reliable(const qa_unified_channel *c);
-void qa_unified_channel_queue_reliable(qa_unified_channel *c, const uint8_t *bytes, size_t length);
-uint8_t **qa_unified_channel_transmit_reliable(qa_unified_channel *c, double now_ms, size_t **out_lens, size_t *out_count);
-uint8_t *qa_unified_channel_transmit_frame(qa_unified_channel *c, const uint8_t *bytes, size_t length,
-                                           bool has_required, int64_t required, size_t *out_len);
-uint8_t **qa_unified_channel_receive(qa_unified_channel *c, const uint8_t *bytes, size_t length, double now_ms,
-                                     qa_unified_receive_result *out);
+void qa_unified_channel_close(qa_unified_channel *c);
+int64_t qa_unified_channel_received_reliable_sequence(const qa_unified_channel *c);
+int64_t qa_unified_channel_acknowledged_reliable_sequence(const qa_unified_channel *c);
+bool qa_unified_channel_closed(const qa_unified_channel *c);
+/* False where queue_reliable would throw: closed, queue overflow, or message over capacity. */
+bool qa_unified_channel_can_queue_reliable(const qa_unified_channel *c, size_t length);
+int64_t qa_unified_channel_queue_reliable(qa_unified_channel *c, const uint8_t *payload, size_t length);
+void qa_unified_channel_queue_frame(qa_unified_channel *c, const uint8_t *payload, size_t length,
+                                    double required_reliable_sequence);
+/* Malloc'd array (NULL when empty). Check c->failure afterwards. */
+qa_unified_delivery *qa_unified_channel_receive(qa_unified_channel *c, const uint8_t *datagram, size_t length,
+                                                double now, size_t *out_count);
+/* Malloc'd datagrams and lengths (NULL when empty). Check c->failure afterwards. */
+uint8_t **qa_unified_channel_flush(qa_unified_channel *c, double now, size_t **out_lengths, size_t *out_count);
 #endif

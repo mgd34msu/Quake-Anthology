@@ -87,6 +87,16 @@ static qa_q1qc_pickup_descriptor string_descriptor(const char *value, qa_item_id
   return descriptor;
 }
 
+typedef struct pickup_builders {
+  stage_builder armor_stage, ammo_stage, weapon_stage, backpack_stage;
+} pickup_builders;
+static void clear_builders(void *arg) {
+  pickup_builders *b = arg;
+  qa_q1qc_pickup_stage_clear(&b->armor_stage.stage);
+  qa_q1qc_pickup_stage_clear(&b->ammo_stage.stage);
+  qa_q1qc_pickup_stage_clear(&b->weapon_stage.stage);
+  qa_q1qc_pickup_stage_clear(&b->backpack_stage.stage);
+}
 typedef struct stage_ctx {
   const qa_q1qc_program *program;
   const char *message; /* "Original" | "QW" */
@@ -125,6 +135,11 @@ static const qa_item_id AMMO_ITEMS[4] = {"q1:ammo/shells", "q1:ammo/nails",
 
 static qa_q1qc_pickup_stage *id1_stages(const qa_q1qc_program *program, size_t *out_count) {
   stage_ctx ctx = {program, "Original"};
+  /* TS builds with GC; a raise caught above frees the partial builders. */
+  pickup_builders b;
+  memset(&b, 0, sizeof b);
+  qa_cleanup node;
+  qa_cleanup_push(&node, clear_builders, &b);
   int64_t armor = check_fn(&ctx, "armor_touch", 128, 1949, 1931, 3, true);
   int64_t ammo = check_fn(&ctx, "ammo_touch", 142, 2389, 2145, 2, true);
   check_statement(&ctx, 1975, QA_Q1QC_OP_LOAD_F, 29, 187, 1951);
@@ -132,20 +147,18 @@ static qa_q1qc_pickup_stage *id1_stages(const qa_q1qc_program *program, size_t *
   check_statement(&ctx, 1982, QA_Q1QC_OP_ADDRESS, 29, 187, 1956);
   check_statement(&ctx, 1994, QA_Q1QC_OP_STORE_PF, 1965, 1958, 0);
   check_statement(&ctx, 1995, QA_Q1QC_OP_ADDRESS, 28, 104, 1966);
-  stage_builder armor_stage = {0};
-  armor_stage.stage.function_index = armor;
-  armor_stage.stage.descriptor_kind = "string";
-  armor_stage.stage.descriptor_field = "classname";
-  builder_value(&armor_stage, string_descriptor("item_armor1", "q1:item_armor1", protection_resource()));
-  builder_value(&armor_stage, string_descriptor("item_armor2", "q1:item_armor2", protection_resource()));
-  builder_value(&armor_stage, string_descriptor("item_armorInv", "q1:item_armorInv", protection_resource()));
-  builder_region(&armor_stage, decision_region(&ctx, armor, 1975, 1980, 1955));
-  builder_region(&armor_stage, grant_region(armor, 1982, 1995));
+  b.armor_stage.stage.function_index = armor;
+  b.armor_stage.stage.descriptor_kind = "string";
+  b.armor_stage.stage.descriptor_field = "classname";
+  builder_value(&b.armor_stage, string_descriptor("item_armor1", "q1:item_armor1", protection_resource()));
+  builder_value(&b.armor_stage, string_descriptor("item_armor2", "q1:item_armor2", protection_resource()));
+  builder_value(&b.armor_stage, string_descriptor("item_armorInv", "q1:item_armorInv", protection_resource()));
+  builder_region(&b.armor_stage, decision_region(&ctx, armor, 1975, 1980, 1955));
+  builder_region(&b.armor_stage, grant_region(armor, 1982, 1995));
 
-  stage_builder ammo_stage = {0};
-  ammo_stage.stage.function_index = ammo;
-  ammo_stage.stage.descriptor_kind = "float";
-  ammo_stage.stage.descriptor_field = "weapon";
+  b.ammo_stage.stage.function_index = ammo;
+  b.ammo_stage.stage.descriptor_kind = "float";
+  b.ammo_stage.stage.descriptor_field = "weapon";
   static const int64_t BRANCHES[4][3] = {{2405, 158, 2153}, {2417, 159, 2161},
                                          {2429, 160, 2169}, {2441, 161, 2177}};
   for (int i = 0; i < 4; i++) {
@@ -153,8 +166,8 @@ static qa_q1qc_pickup_stage *id1_stages(const qa_q1qc_program *program, size_t *
     check_statement(&ctx, entry, QA_Q1QC_OP_LOAD_F, 29, field, temporary);
     check_statement(&ctx, entry + 4, QA_Q1QC_OP_ADDRESS, 29, field, temporary + 2);
     check_statement(&ctx, entry + 8, QA_Q1QC_OP_STORE_PF, temporary + 5, temporary + 2, 0);
-    builder_region(&ammo_stage, decision_region(&ctx, ammo, entry, entry + 2, temporary + 1));
-    builder_region(&ammo_stage, grant_region(ammo, entry + 4, entry + 9));
+    builder_region(&b.ammo_stage, decision_region(&ctx, ammo, entry, entry + 2, temporary + 1));
+    builder_region(&b.ammo_stage, grant_region(ammo, entry + 4, entry + 9));
     qa_q1qc_pickup_descriptor descriptor = {0};
     descriptor.value_number = i + 1;
     descriptor.item = AMMO_ITEMS[i];
@@ -162,21 +175,20 @@ static qa_q1qc_pickup_stage *id1_stages(const qa_q1qc_program *program, size_t *
     descriptor.resource = inventory_resource(AMMO_ITEMS[i]);
     descriptor.has_supply = true;
     descriptor.supply = (qa_q1qc_pickup_supply){AMMO_ITEMS[i], false, "aflag", 0, false, 0};
-    builder_value(&ammo_stage, descriptor);
+    builder_value(&b.ammo_stage, descriptor);
   }
   check_statement(&ctx, 2450, QA_Q1QC_OP_CALL0, 1990, 0, 0);
   check_statement(&ctx, 2451, QA_Q1QC_OP_STORE_V, 29, 4, 0);
-  builder_region(&ammo_stage, grant_region(ammo, 2450, 2451));
+  builder_region(&b.ammo_stage, grant_region(ammo, 2450, 2451));
   check_statement(&ctx, 2470, QA_Q1QC_OP_LOAD_F, 29, 154, 2185);
   check_statement(&ctx, 2483, QA_Q1QC_OP_STORE_ENT, 2145, 28, 0);
   check_statement(&ctx, 2484, QA_Q1QC_OP_ADDRESS, 28, 130, 2188);
-  builder_region(&ammo_stage, make_region(ammo, 2470, 2484, op_kind("weapon-selection")));
+  builder_region(&b.ammo_stage, make_region(ammo, 2470, 2484, op_kind("weapon-selection")));
 
   int64_t weapon = check_fn(&ctx, "weapon_touch", 135, 2119, 2021, 6, true);
-  stage_builder weapon_stage = {0};
-  weapon_stage.stage.function_index = weapon;
-  weapon_stage.stage.descriptor_kind = "string";
-  weapon_stage.stage.descriptor_field = "classname";
+  b.weapon_stage.stage.function_index = weapon;
+  b.weapon_stage.stage.descriptor_kind = "string";
+  b.weapon_stage.stage.descriptor_field = "classname";
   typedef struct weapon_row { const char *value; qa_item_id item, counter; int64_t entry, temporary, field, amount; } weapon_row;
   static const weapon_row WEAPONS[6] = {
     {"weapon_nailgun", "q1:weapon/nailgun", "q1:ammo/nails", 2138, 2035, 159, 304},
@@ -193,17 +205,17 @@ static qa_q1qc_pickup_stage *id1_stages(const qa_q1qc_program *program, size_t *
     check_statement(&ctx, row->entry + 8, QA_Q1QC_OP_ADDRESS, 29, row->field, row->temporary + 4);
     check_statement(&ctx, row->entry + 10, QA_Q1QC_OP_ADD_F, row->temporary + 5, row->amount, row->temporary + 6);
     check_statement(&ctx, row->entry + 11, QA_Q1QC_OP_STORE_PF, row->temporary + 6, row->temporary + 4, 0);
-    builder_region(&weapon_stage, decision_region(&ctx, weapon, row->entry, row->entry + 3, row->temporary + 2));
-    builder_region(&weapon_stage, grant_region(weapon, row->entry + 8, row->entry + 12));
+    builder_region(&b.weapon_stage, decision_region(&ctx, weapon, row->entry, row->entry + 3, row->temporary + 2));
+    builder_region(&b.weapon_stage, grant_region(weapon, row->entry + 8, row->entry + 12));
     qa_q1qc_pickup_descriptor descriptor = string_descriptor(row->value, row->item, inventory_resource(row->item));
     descriptor.has_supply = true;
     descriptor.supply = (qa_q1qc_pickup_supply){row->counter, true, NULL, row->amount, true, 2026};
-    builder_value(&weapon_stage, descriptor);
+    builder_value(&b.weapon_stage, descriptor);
   }
   check_statement(&ctx, 2252, QA_Q1QC_OP_CALL0, 1990, 0, 0);
   check_statement(&ctx, 2270, QA_Q1QC_OP_STORE_ENT, 2025, 28, 0);
   check_statement(&ctx, 2271, QA_Q1QC_OP_IF_NOT, 2026, 2, 0);
-  builder_region(&weapon_stage, grant_region(weapon, 2252, 2271));
+  builder_region(&b.weapon_stage, grant_region(weapon, 2252, 2271));
 
   int64_t backpack = check_fn(&ctx, "BackpackTouch", 159, 3127, 2464, 6, true);
   check_statement(&ctx, 3135, QA_Q1QC_OP_STORE_F, 213, 2469, 0);
@@ -219,40 +231,40 @@ static qa_q1qc_pickup_stage *id1_stages(const qa_q1qc_program *program, size_t *
   check_statement(&ctx, 3275, QA_Q1QC_OP_NOT_F, 35, 0, 2518);
   check_statement(&ctx, 3283, QA_Q1QC_OP_CALL0, 1785, 0, 0);
   check_statement(&ctx, 3284, QA_Q1QC_OP_DONE, 0, 0, 0);
-  stage_builder backpack_stage = {0};
-  backpack_stage.stage.function_index = backpack;
-  backpack_stage.stage.descriptor_kind = "cargo";
+  b.backpack_stage.stage.function_index = backpack;
+  b.backpack_stage.stage.descriptor_kind = "cargo";
   qa_q1qc_pickup_descriptor cargo = {0};
   cargo.value_is_string = true;
   cargo.value_string = "backpack";
   cargo.item = "q1:item_backpack";
-  builder_value(&backpack_stage, cargo);
+  builder_value(&b.backpack_stage, cargo);
   static const qa_q1qc_pickup_counter COUNTERS[4] = {
     {"ammo_shells", "q1:ammo/shells"}, {"ammo_nails", "q1:ammo/nails"},
     {"ammo_rockets", "q1:ammo/rockets"}, {"ammo_cells", "q1:ammo/cells"}};
-  backpack_stage.stage.counters = xmalloc(sizeof COUNTERS);
-  memcpy(backpack_stage.stage.counters, COUNTERS, sizeof COUNTERS);
-  backpack_stage.stage.counter_count = 4;
+  b.backpack_stage.stage.counters = xmalloc(sizeof COUNTERS);
+  memcpy(b.backpack_stage.stage.counters, COUNTERS, sizeof COUNTERS);
+  b.backpack_stage.stage.counter_count = 4;
   static const qa_item_id BACKPACK_WEAPONS[8] = {
     "q1:weapon/axe", "q1:weapon/shotgun", "q1:weapon/supershotgun", "q1:weapon/nailgun",
     "q1:weapon/supernailgun", "q1:weapon/grenadelauncher", "q1:weapon/rocketlauncher",
     "q1:weapon/lightning"};
-  backpack_stage.stage.cargo_weapons = xmalloc(8 * sizeof *backpack_stage.stage.cargo_weapons);
+  b.backpack_stage.stage.cargo_weapons = xmalloc(8 * sizeof *b.backpack_stage.stage.cargo_weapons);
   for (int i = 0; i < 8; i++)
-    backpack_stage.stage.cargo_weapons[i] = (qa_q1qc_pickup_word_item){253 + i, BACKPACK_WEAPONS[i]};
-  backpack_stage.stage.cargo_weapon_count = 8;
-  builder_region(&backpack_stage, make_region(backpack, 3135, 3136, op_kind("admission")));
+    b.backpack_stage.stage.cargo_weapons[i] = (qa_q1qc_pickup_word_item){253 + i, BACKPACK_WEAPONS[i]};
+  b.backpack_stage.stage.cargo_weapon_count = 8;
+  builder_region(&b.backpack_stage, make_region(backpack, 3135, 3136, op_kind("admission")));
   qa_q1qc_pickup_operation ownership = {"cargo-ownership", 2479, 0, NULL, NULL};
-  builder_region(&backpack_stage, make_region(backpack, 3141, 3145, ownership));
-  builder_region(&backpack_stage, grant_region(backpack, 3159, 3192));
-  builder_region(&backpack_stage, make_region(backpack, 3272, 3275, op_kind("consume")));
-  builder_region(&backpack_stage, make_region(backpack, 3275, 3284, op_kind("consumed-selection")));
+  builder_region(&b.backpack_stage, make_region(backpack, 3141, 3145, ownership));
+  builder_region(&b.backpack_stage, grant_region(backpack, 3159, 3192));
+  builder_region(&b.backpack_stage, make_region(backpack, 3272, 3275, op_kind("consume")));
+  builder_region(&b.backpack_stage, make_region(backpack, 3275, 3284, op_kind("consumed-selection")));
 
   qa_q1qc_pickup_stage *stages = xmalloc(4 * sizeof *stages);
-  stages[0] = armor_stage.stage;
-  stages[1] = ammo_stage.stage;
-  stages[2] = weapon_stage.stage;
-  stages[3] = backpack_stage.stage;
+  stages[0] = b.armor_stage.stage;
+  stages[1] = b.ammo_stage.stage;
+  stages[2] = b.weapon_stage.stage;
+  stages[3] = b.backpack_stage.stage;
+  qa_cleanup_pop(&node);
   *out_count = 4;
   return stages;
 }
@@ -268,6 +280,11 @@ static qa_q1qc_pickup_region qw_region(int64_t function_index, int64_t entry, in
 }
 static qa_q1qc_pickup_stage *qw_stages(const qa_q1qc_program *program, size_t *out_count) {
   stage_ctx ctx = {program, "QW"};
+  /* TS builds with GC; a raise caught above frees the partial builders. */
+  pickup_builders b;
+  memset(&b, 0, sizeof b);
+  qa_cleanup node;
+  qa_cleanup_push(&node, clear_builders, &b);
   int64_t armor = check_fn(&ctx, "armor_touch", 98, 1115, 1350, 3, false);
   int64_t ammo = check_fn(&ctx, "ammo_touch", 113, 1627, 1592, 2, false);
   int64_t weapon = check_fn(&ctx, "weapon_touch", 106, 1312, 1451, 7, false);
@@ -279,20 +296,16 @@ static qa_q1qc_pickup_stage *qw_stages(const qa_q1qc_program *program, size_t *o
   check_statement(&ctx, 1154, QA_Q1QC_OP_ADDRESS, 29, 181, 1378);
   check_statement(&ctx, 1166, QA_Q1QC_OP_STORE_PF, 1387, 1380, 0);
   check_statement(&ctx, 1167, QA_Q1QC_OP_ADDRESS, 28, 103, 1388);
-  stage_builder armor_stage = {0};
-  armor_stage.stage.function_index = armor;
-  armor_stage.stage.descriptor_kind = "string";
-  armor_stage.stage.descriptor_field = "classname";
-  builder_value(&armor_stage, string_descriptor("item_armor1", "q1:item_armor1", protection_resource()));
-  builder_value(&armor_stage, string_descriptor("item_armor2", "q1:item_armor2", protection_resource()));
-  builder_value(&armor_stage, string_descriptor("item_armorInv", "q1:item_armorInv", protection_resource()));
-  builder_region(&armor_stage, decision_region(&ctx, armor, 1147, 1152, 1377));
-  builder_region(&armor_stage, grant_region(armor, 1154, 1167));
+  b.armor_stage.stage.function_index = armor;
+  b.armor_stage.stage.descriptor_kind = "string";
+  b.armor_stage.stage.descriptor_field = "classname";
+  builder_value(&b.armor_stage, string_descriptor("item_armor1", "q1:item_armor1", protection_resource()));
+  builder_value(&b.armor_stage, string_descriptor("item_armor2", "q1:item_armor2", protection_resource()));
+  builder_value(&b.armor_stage, string_descriptor("item_armorInv", "q1:item_armorInv", protection_resource()));
 
-  stage_builder ammo_stage = {0};
-  ammo_stage.stage.function_index = ammo;
-  ammo_stage.stage.descriptor_kind = "float";
-  ammo_stage.stage.descriptor_field = "weapon";
+  b.ammo_stage.stage.function_index = ammo;
+  b.ammo_stage.stage.descriptor_kind = "float";
+  b.ammo_stage.stage.descriptor_field = "weapon";
   static const int64_t BRANCHES[4][3] = {{1643, 153, 1600}, {1655, 154, 1608},
                                          {1667, 155, 1616}, {1679, 156, 1624}};
   for (int i = 0; i < 4; i++) {
@@ -300,8 +313,8 @@ static qa_q1qc_pickup_stage *qw_stages(const qa_q1qc_program *program, size_t *o
     check_statement(&ctx, entry, QA_Q1QC_OP_LOAD_F, 29, field, temporary);
     check_statement(&ctx, entry + 4, QA_Q1QC_OP_ADDRESS, 29, field, temporary + 2);
     check_statement(&ctx, entry + 8, QA_Q1QC_OP_STORE_PF, temporary + 5, temporary + 2, 0);
-    builder_region(&ammo_stage, decision_region(&ctx, ammo, entry, entry + 2, temporary + 1));
-    builder_region(&ammo_stage, grant_region(ammo, entry + 4, entry + 9));
+    builder_region(&b.ammo_stage, decision_region(&ctx, ammo, entry, entry + 2, temporary + 1));
+    builder_region(&b.ammo_stage, grant_region(ammo, entry + 4, entry + 9));
     qa_q1qc_pickup_descriptor descriptor = {0};
     descriptor.value_number = i + 1;
     descriptor.item = AMMO_ITEMS[i];
@@ -309,19 +322,18 @@ static qa_q1qc_pickup_stage *qw_stages(const qa_q1qc_program *program, size_t *o
     descriptor.resource = inventory_resource(AMMO_ITEMS[i]);
     descriptor.has_supply = true;
     descriptor.supply = (qa_q1qc_pickup_supply){AMMO_ITEMS[i], false, "aflag", 0, false, 0};
-    builder_value(&ammo_stage, descriptor);
+    builder_value(&b.ammo_stage, descriptor);
   }
   check_statement(&ctx, 1688, QA_Q1QC_OP_CALL0, 1412, 0, 0);
   check_statement(&ctx, 1711, QA_Q1QC_OP_LOAD_F, 29, 149, 1632);
   check_statement(&ctx, 1724, QA_Q1QC_OP_STORE_ENT, 1592, 28, 0);
   check_statement(&ctx, 1725, QA_Q1QC_OP_ADDRESS, 28, 125, 1635);
-  builder_region(&ammo_stage, grant_region(ammo, 1688, 1689));
-  builder_region(&ammo_stage, qw_region(ammo, 1711, 1725, op_kind("weapon-selection")));
+  builder_region(&b.ammo_stage, grant_region(ammo, 1688, 1689));
+  builder_region(&b.ammo_stage, qw_region(ammo, 1711, 1725, op_kind("weapon-selection")));
 
-  stage_builder weapon_stage = {0};
-  weapon_stage.stage.function_index = weapon;
-  weapon_stage.stage.descriptor_kind = "string";
-  weapon_stage.stage.descriptor_field = "classname";
+  b.weapon_stage.stage.function_index = weapon;
+  b.weapon_stage.stage.descriptor_kind = "string";
+  b.weapon_stage.stage.descriptor_field = "classname";
   typedef struct qw_weapon_row { const char *value; qa_item_id item, counter; int64_t entry, temporary, field, amount; } qw_weapon_row;
   static const qw_weapon_row WEAPONS[6] = {
     {"weapon_nailgun", "q1:weapon/nailgun", "q1:ammo/nails", 1349, 1471, 154, 298},
@@ -338,35 +350,35 @@ static qa_q1qc_pickup_stage *qw_stages(const qa_q1qc_program *program, size_t *o
     check_statement(&ctx, row->entry + 8, QA_Q1QC_OP_ADDRESS, 29, row->field, row->temporary + 4);
     check_statement(&ctx, row->entry + 10, QA_Q1QC_OP_ADD_F, row->temporary + 5, row->amount, row->temporary + 6);
     check_statement(&ctx, row->entry + 11, QA_Q1QC_OP_STORE_PF, row->temporary + 6, row->temporary + 4, 0);
-    builder_region(&weapon_stage, decision_region(&ctx, weapon, row->entry, row->entry + 3, row->temporary + 2));
-    builder_region(&weapon_stage, grant_region(weapon, row->entry + 8, row->entry + 12));
+    builder_region(&b.weapon_stage, decision_region(&ctx, weapon, row->entry, row->entry + 3, row->temporary + 2));
+    builder_region(&b.weapon_stage, grant_region(weapon, row->entry + 8, row->entry + 12));
     qa_q1qc_pickup_descriptor descriptor = string_descriptor(row->value, row->item, inventory_resource(row->item));
     descriptor.has_supply = true;
     descriptor.supply = (qa_q1qc_pickup_supply){row->counter, true, NULL, row->amount, true, 1456};
-    builder_value(&weapon_stage, descriptor);
+    builder_value(&b.weapon_stage, descriptor);
   }
   check_statement(&ctx, 1466, QA_Q1QC_OP_CALL0, 1412, 0, 0);
   check_statement(&ctx, 1473, QA_Q1QC_OP_STORE_ENT, 28, 1455, 0);
   check_statement(&ctx, 1491, QA_Q1QC_OP_CALL0, 1084, 0, 0);
   check_statement(&ctx, 1492, QA_Q1QC_OP_STORE_ENT, 1455, 28, 0);
-  builder_region(&weapon_stage, grant_region(weapon, 1466, 1473));
+  builder_region(&b.weapon_stage, grant_region(weapon, 1466, 1473));
   qa_q1qc_pickup_region self_region = qw_region(weapon, 1491, 1492, op_kind("weapon-selection"));
   self_region.self_recipient = true;
-  builder_region(&weapon_stage, self_region);
+  builder_region(&b.weapon_stage, self_region);
   static const qa_q1qc_pickup_word_item SELECTION_WEAPONS[8] = {
     {259, "q1:weapon/axe"}, {248, "q1:weapon/shotgun"}, {249, "q1:weapon/supershotgun"},
     {250, "q1:weapon/nailgun"}, {251, "q1:weapon/supernailgun"},
     {252, "q1:weapon/grenadelauncher"}, {253, "q1:weapon/rocketlauncher"},
     {254, "q1:weapon/lightning"}};
-  weapon_stage.stage.has_source_selection = true;
-  weapon_stage.stage.selection_function = selection;
-  weapon_stage.stage.selection_calls = xmalloc(2 * sizeof *weapon_stage.stage.selection_calls);
-  weapon_stage.stage.selection_calls[0] = 1486;
-  weapon_stage.stage.selection_calls[1] = 1490;
-  weapon_stage.stage.selection_call_count = 2;
-  weapon_stage.stage.selection_weapons = xmalloc(sizeof SELECTION_WEAPONS);
-  memcpy(weapon_stage.stage.selection_weapons, SELECTION_WEAPONS, sizeof SELECTION_WEAPONS);
-  weapon_stage.stage.selection_weapon_count = 8;
+  b.weapon_stage.stage.has_source_selection = true;
+  b.weapon_stage.stage.selection_function = selection;
+  b.weapon_stage.stage.selection_calls = xmalloc(2 * sizeof *b.weapon_stage.stage.selection_calls);
+  b.weapon_stage.stage.selection_calls[0] = 1486;
+  b.weapon_stage.stage.selection_calls[1] = 1490;
+  b.weapon_stage.stage.selection_call_count = 2;
+  b.weapon_stage.stage.selection_weapons = xmalloc(sizeof SELECTION_WEAPONS);
+  memcpy(b.weapon_stage.stage.selection_weapons, SELECTION_WEAPONS, sizeof SELECTION_WEAPONS);
+  b.weapon_stage.stage.selection_weapon_count = 8;
 
   static const int64_t SELECTION_CALLS[4] = {1486, 1490, 2704, 2708};
   for (int i = 0; i < 4; i++) check_statement(&ctx, SELECTION_CALLS[i], QA_Q1QC_OP_CALL2, 1441, 0, 0);
@@ -412,57 +424,61 @@ static qa_q1qc_pickup_stage *qw_stages(const qa_q1qc_program *program, size_t *o
   check_statement(&ctx, 2691, QA_Q1QC_OP_CALL1, 479, 0, 0);
   check_statement(&ctx, 2692, QA_Q1QC_OP_STORE_ENT, 29, 28, 0);
   check_statement(&ctx, 2709, QA_Q1QC_OP_CALL0, 1084, 0, 0);
+  /* TS builds the armor decision inside the returned literal, after every
+   * other statement check, so its join check reports last. */
+  builder_region(&b.armor_stage, decision_region(&ctx, armor, 1147, 1152, 1377));
+  builder_region(&b.armor_stage, grant_region(armor, 1154, 1167));
 
-  stage_builder backpack_stage = {0};
-  backpack_stage.stage.function_index = backpack;
-  backpack_stage.stage.descriptor_kind = "cargo";
+  b.backpack_stage.stage.function_index = backpack;
+  b.backpack_stage.stage.descriptor_kind = "cargo";
   qa_q1qc_pickup_descriptor cargo = {0};
   cargo.value_is_string = true;
   cargo.value_string = "backpack";
   cargo.item = "q1:item_backpack";
-  builder_value(&backpack_stage, cargo);
+  builder_value(&b.backpack_stage, cargo);
   static const qa_q1qc_pickup_counter COUNTERS[4] = {
     {"ammo_shells", "q1:ammo/shells"}, {"ammo_nails", "q1:ammo/nails"},
     {"ammo_rockets", "q1:ammo/rockets"}, {"ammo_cells", "q1:ammo/cells"}};
-  backpack_stage.stage.counters = xmalloc(sizeof COUNTERS);
-  memcpy(backpack_stage.stage.counters, COUNTERS, sizeof COUNTERS);
-  backpack_stage.stage.counter_count = 4;
-  backpack_stage.stage.cargo_weapons = xmalloc(sizeof SELECTION_WEAPONS);
-  memcpy(backpack_stage.stage.cargo_weapons, SELECTION_WEAPONS, sizeof SELECTION_WEAPONS);
-  backpack_stage.stage.cargo_weapon_count = 8;
-  backpack_stage.stage.has_source_effect = true;
-  backpack_stage.stage.source_effect_word = 364;
-  backpack_stage.stage.source_effect_value = 4;
-  backpack_stage.stage.has_source_selection = true;
-  backpack_stage.stage.selection_function = selection;
-  backpack_stage.stage.selection_calls = xmalloc(2 * sizeof *backpack_stage.stage.selection_calls);
-  backpack_stage.stage.selection_calls[0] = 2704;
-  backpack_stage.stage.selection_calls[1] = 2708;
-  backpack_stage.stage.selection_call_count = 2;
-  backpack_stage.stage.selection_weapons = xmalloc(sizeof SELECTION_WEAPONS);
-  memcpy(backpack_stage.stage.selection_weapons, SELECTION_WEAPONS, sizeof SELECTION_WEAPONS);
-  backpack_stage.stage.selection_weapon_count = 8;
-  builder_region(&backpack_stage, qw_region(backpack, 2448, 2452, op_kind("source-effect")));
-  builder_region(&backpack_stage, qw_region(backpack, 2478, 2523, op_kind("consume")));
+  b.backpack_stage.stage.counters = xmalloc(sizeof COUNTERS);
+  memcpy(b.backpack_stage.stage.counters, COUNTERS, sizeof COUNTERS);
+  b.backpack_stage.stage.counter_count = 4;
+  b.backpack_stage.stage.cargo_weapons = xmalloc(sizeof SELECTION_WEAPONS);
+  memcpy(b.backpack_stage.stage.cargo_weapons, SELECTION_WEAPONS, sizeof SELECTION_WEAPONS);
+  b.backpack_stage.stage.cargo_weapon_count = 8;
+  b.backpack_stage.stage.has_source_effect = true;
+  b.backpack_stage.stage.source_effect_word = 364;
+  b.backpack_stage.stage.source_effect_value = 4;
+  b.backpack_stage.stage.has_source_selection = true;
+  b.backpack_stage.stage.selection_function = selection;
+  b.backpack_stage.stage.selection_calls = xmalloc(2 * sizeof *b.backpack_stage.stage.selection_calls);
+  b.backpack_stage.stage.selection_calls[0] = 2704;
+  b.backpack_stage.stage.selection_calls[1] = 2708;
+  b.backpack_stage.stage.selection_call_count = 2;
+  b.backpack_stage.stage.selection_weapons = xmalloc(sizeof SELECTION_WEAPONS);
+  memcpy(b.backpack_stage.stage.selection_weapons, SELECTION_WEAPONS, sizeof SELECTION_WEAPONS);
+  b.backpack_stage.stage.selection_weapon_count = 8;
+  builder_region(&b.backpack_stage, qw_region(backpack, 2448, 2452, op_kind("source-effect")));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2478, 2523, op_kind("consume")));
   qa_q1qc_pickup_operation counter_cells = {"counter", 0, 0, "ammo_cells", "q1:ammo/cells"};
-  builder_region(&backpack_stage, qw_region(backpack, 2504, 2506, counter_cells));
-  builder_region(&backpack_stage, qw_region(backpack, 2524, 2525, op_kind("admission")));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2504, 2506, counter_cells));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2524, 2525, op_kind("admission")));
   qa_q1qc_pickup_operation ownership = {"cargo-ownership", 1981, 0, NULL, NULL};
-  builder_region(&backpack_stage, qw_region(backpack, 2526, 2530, ownership));
-  builder_region(&backpack_stage, grant_region(backpack, 2546, 2566));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2526, 2530, ownership));
+  builder_region(&b.backpack_stage, grant_region(backpack, 2546, 2566));
   qa_q1qc_pickup_operation current = {"cargo-current", 1932, 0, NULL, NULL};
-  builder_region(&backpack_stage, qw_region(backpack, 2570, 2572, current));
-  builder_region(&backpack_stage, grant_region(backpack, 2572, 2580));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2570, 2572, current));
+  builder_region(&b.backpack_stage, grant_region(backpack, 2572, 2580));
   qa_q1qc_pickup_operation counter_rockets = {"counter", 0, 0, "ammo_rockets", "q1:ammo/rockets"};
-  builder_region(&backpack_stage, qw_region(backpack, 2660, 2677, counter_rockets));
-  builder_region(&backpack_stage, qw_region(backpack, 2690, 2693, op_kind("consume")));
-  builder_region(&backpack_stage, qw_region(backpack, 2709, 2710, op_kind("consumed-selection")));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2660, 2677, counter_rockets));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2690, 2693, op_kind("consume")));
+  builder_region(&b.backpack_stage, qw_region(backpack, 2709, 2710, op_kind("consumed-selection")));
 
   qa_q1qc_pickup_stage *stages = xmalloc(4 * sizeof *stages);
-  stages[0] = armor_stage.stage;
-  stages[1] = ammo_stage.stage;
-  stages[2] = weapon_stage.stage;
-  stages[3] = backpack_stage.stage;
+  stages[0] = b.armor_stage.stage;
+  stages[1] = b.ammo_stage.stage;
+  stages[2] = b.weapon_stage.stage;
+  stages[3] = b.backpack_stage.stage;
+  qa_cleanup_pop(&node);
   *out_count = 4;
   return stages;
 }

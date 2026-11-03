@@ -70,6 +70,10 @@ struct qa_resolved_gameplay_mod {
   size_t conflicts_count;
   qa_mod_declaration declaration;
   qa_content_digest declaration_digest;
+  /* C-only: the TS object's key order. discoverGameplayMods builds { selection,
+   * title, sourceTitle, source, requires, conflicts, ... } (false); readGameplayMod
+   * builds { selection, source, title, sourceTitle, ... } (true). Saves write it. */
+  bool read_order;
 };
 
 /* TS modInstanceProvider: `mod:${encodeURIComponent(key)}`. */

@@ -104,8 +104,14 @@ void qa_qvmx_write_source_player_state(qa_qvmx_view view, const qa_q3_player_sta
   qa_qvmx_view_set_i32(&view, 464, qa_int32(state->entity_event_sequence));
 }
 
+static void write_player_state(qa_qvmx_view view, const qa_q3_player_state *state,
+                               qa_qvm_abi_profile profile, const char *persistent_write, bool lenient);
 void qa_qvmx_write_player_state(qa_qvmx_view view, const qa_q3_player_state *state,
                                 qa_qvm_abi_profile profile, const char *persistent_write) {
+  write_player_state(view, state, profile, persistent_write, false);
+}
+static void write_player_state(qa_qvmx_view view, const qa_q3_player_state *state,
+                               qa_qvm_abi_profile profile, const char *persistent_write, bool lenient) {
   check_player_record(&view, profile);
   check_slots(state);
   double persistent[16];
@@ -125,12 +131,16 @@ void qa_qvmx_write_player_state(qa_qvmx_view view, const qa_q3_player_state *sta
   qa_q3_player_state translated = *state;
   qa_double_view persistent_view = {persistent, 16};
   translated.persistent = persistent_view;
-  translated.events[0] = qa_qvmx_event(state->events[0], profile, true);
-  translated.events[1] = qa_qvmx_event(state->events[1], profile, true);
-  translated.external_event = qa_qvmx_event(state->external_event, profile, true);
+  translated.events[0] = qa_qvmx_event_ex(state->events[0], profile, true, lenient);
+  translated.events[1] = qa_qvmx_event_ex(state->events[1], profile, true, lenient);
+  translated.external_event = qa_qvmx_event_ex(state->external_event, profile, true, lenient);
   /* qvmPowerups validation runs after the event mappings, as in the
    * TS object literal passed to writeSourceQvmPlayerState. */
-  if (!modern(profile)) {
+  double powerups[16];
+  if (!modern(profile) && lenient) {
+    for (size_t i = 0; i < state->powerups.count && i < 16; i++) powerups[i] = i < 9 ? state->powerups.values[i] : 0;
+    translated.powerups.values = powerups;
+  } else if (!modern(profile)) {
     for (size_t i = 9; i < state->powerups.count; i++)
       if (state->powerups.values[i] != 0)
         qa_range_error("Legacy ball or private powerup has no modern presentation mapping");
@@ -198,8 +208,9 @@ void qa_qvm_write_snapshot(qa_qvmx_memory *memory, qa_qvmx_view view,
   require_bytes(&view, qa_qvm_snapshot_bytes_for(profile));
   int64_t ps_bytes = modern(profile) ? 468 : 444;
   int64_t entity_bytes = modern(profile) ? 208 : 204;
-  if (snapshot->area_mask_length != 32 || snapshot->entity_count > 256)
-    qa_range_error("Invalid source snapshot_t extent");
+  if (snapshot->area_mask_length != 32) qa_range_error("Invalid source snapshot_t extent");
+  /* CL_GetSnapshot truncates to MAX_ENTITIES_IN_SNAPSHOT */
+  const size_t entity_count = snapshot->entity_count > 256 ? 256 : snapshot->entity_count;
   const qa_qvmx_player_state_fields *ps = &snapshot->player_state;
   int64_t offset = view.bytes - memory->bytes;
   qa_qvmx_view_set_i32(&view, 0, qa_int32(snapshot->flags));
@@ -260,12 +271,12 @@ void qa_qvm_write_snapshot(qa_qvmx_memory *memory, qa_qvmx_view view,
   state.jump_pad_frame = ps->jumppad_frame;
   state.entity_event_sequence = ps->entity_event_sequence;
   qa_qvmx_view player = qa_qvmx_memory_data_view(memory, (double)(offset + 44), (double)ps_bytes);
-  qa_qvmx_write_player_state(player, &state, profile, NULL);
-  qa_qvmx_view_set_i32(&view, 44 + ps_bytes, (int32_t)snapshot->entity_count);
-  for (size_t i = 0; i < snapshot->entity_count; i++) {
+  write_player_state(player, &state, profile, NULL, true);
+  qa_qvmx_view_set_i32(&view, 44 + ps_bytes, (int32_t)entity_count);
+  for (size_t i = 0; i < entity_count; i++) {
     qa_qvmx_view entity = qa_qvmx_memory_data_view(
         memory, (double)(offset + 48 + ps_bytes + (int64_t)i * entity_bytes), (double)entity_bytes);
-    qa_qvm_write_entity_state(entity, &snapshot->entities[i], profile);
+    qa_qvm_write_entity_state_unmapped(entity, &snapshot->entities[i], profile, true);
   }
   qa_qvmx_view_set_i32(&view, (int64_t)qa_qvm_snapshot_bytes_for(profile) - 4,
                        qa_int32(snapshot->server_command_number));

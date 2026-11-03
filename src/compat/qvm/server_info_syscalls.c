@@ -42,7 +42,7 @@ bool qa_qvm_server_information_syscall(const qa_qvm_host_call *call,
       if (qa_qvm_host_call_word(call, 2) == 0) {
         services->configstring_set(services->configstrings_ctx, mapped, "");
       } else {
-        char *value = qa_qvm_memory_read_string(call->guest, qa_qvm_host_call_word(call, 2));
+        char *value = qa_qvm_game_memory_read_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 2));
         services->configstring_set(services->configstrings_ctx, mapped, value);
         free(value);
       }
@@ -54,7 +54,7 @@ bool qa_qvm_server_information_syscall(const qa_qvm_host_call *call,
       config_index(qa_qvm_host_call_word(call, 1), "SV_GetConfigstring");
       int32_t mapped = qa_qvm_legacy_configstring(qa_qvm_host_call_word(call, 1), services->abi_profile);
       const char *value = services->configstring_get(services->configstrings_ctx, mapped);
-      qa_qvm_memory_write_string(call->guest, qa_qvm_host_call_word(call, 2), value,
+      qa_qvm_game_memory_write_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 2), value,
                                  qa_qvm_host_call_word(call, 3));
       *out = 0;
       return true;
@@ -62,7 +62,7 @@ bool qa_qvm_server_information_syscall(const qa_qvm_host_call *call,
     case G_GET_SERVERINFO: {
       capacity(qa_qvm_host_call_word(call, 2), "SV_GetServerinfo");
       char *info = qa_cvar_registry_info_string(services->cvars, QA_CVAR_FLAG_SERVER_INFO, -1);
-      qa_qvm_memory_write_string(call->guest, qa_qvm_host_call_word(call, 1), info != NULL ? info : "",
+      qa_qvm_game_memory_write_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 1), info != NULL ? info : "",
                                  qa_qvm_host_call_word(call, 2));
       free(info);
       *out = 0;

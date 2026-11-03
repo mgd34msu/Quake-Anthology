@@ -11,6 +11,7 @@
 #include "qa/guest/floating_point/binary.h"
 #include "qa/guest/runtime/common/format/arguments.h"
 #include "qa/guest/runtime/common/memory.h"
+#include "qa/foundation/js.h"
 
 static qa_guest_scan_catch *g_catch;
 static void unsupported(const char *format, ...) {
@@ -134,9 +135,11 @@ static void decimal_bytes(const char *token, int bytes, uint8_t *out) {
     if (mantissa[i] != '.') digits[digit_len++] = mantissa[i];
   digits[digit_len] = '\0';
   while (digit_len > 0 && digits[0] == '0') { memmove(digits, digits + 1, digit_len); digit_len--; }
-  long exponent_part = epos != NULL ? strtol(epos + 1, NULL, 10) : 0;
-  long after_dot = dot == NULL ? 0 : (long)(mantissa_len - (size_t)(dot - mantissa) - 1);
-  long exponent = exponent_part - after_dot;
+  /* Number(parts[1] ?? "0") - fraction digits, as doubles: strtol clamped, and the
+   * long subtraction then overflowed for an exponent beyond LONG_MIN. */
+  double exponent_part = epos != NULL ? qa_js_string_to_number(epos + 1) : 0;
+  double after_dot = dot == NULL ? 0 : (double)(mantissa_len - (size_t)(dot - mantissa) - 1);
+  double exponent = exponent_part - after_dot;
   free(mantissa);
   if (digit_len == 0) {
     qa_binary_value zero = qa_fp_zero(sign);
@@ -192,7 +195,7 @@ typedef struct scan_state {
 } scan_state;
 
 static int peek_byte(scan_state *state) {
-  if ((int64_t)state->cursor >= state->options->capacity) return -1;
+  if ((uint64_t)state->cursor >= state->options->capacity) return -1;
   uint8_t byte = qa_memory_read_u8(state->options->memory,
       qa_memory_offset(state->options->memory, state->options->input, (int64_t)state->cursor));
   return byte == 0 ? -1 : byte;
@@ -235,6 +238,18 @@ static bool valid_int_token(const char *token) {
   return true;
 }
 
+/* BigInt(digits) reduced modulo 2^64 (the 4-byte store keeps the low bits); strtoull
+ * saturated at 2^64 - 1 instead. Stops at the first non-digit of `base`. */
+static uint64_t digits_mod_2_64(const char *digits, unsigned base) {
+  uint64_t value = 0;
+  for (; *digits != '\0'; digits++) {
+    unsigned c = (unsigned char)*digits, digit = c >= '0' && c <= '9' ? c - '0'
+        : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+    if (digit >= base) break;
+    value = value * base + digit;
+  }
+  return value;
+}
 static int scan_run(const qa_scan_windows_buffer_options *options) {
   qa_mapped_guest_memory *memory = options->memory;
   char *format = qa_read_string(memory, options->memory_ext, options->format, 1048576);
@@ -333,11 +348,11 @@ static int scan_run(const qa_scan_windows_buffer_options *options) {
         if (dir->code == 'i' && body[0] == '0' && body[1] != '\0' && body[1] != 'x' && body[1] != 'X') {
           bool all_octal = true;
           for (const char *p = body; *p != '\0'; p++) if (*p < '0' || *p > '7') all_octal = false;
-          value = all_octal ? strtoull(body, NULL, 8) : strtoull(body, NULL, 10);
+          value = all_octal ? digits_mod_2_64(body, 8) : digits_mod_2_64(body, 10);
         } else if (body[0] == '0' && (body[1] == 'x' || body[1] == 'X')) {
-          value = strtoull(body, NULL, 16);
+          value = digits_mod_2_64(body + 2, 16);
         } else {
-          value = strtoull(body, NULL, 10);
+          value = digits_mod_2_64(body, 10);
         }
         qa_write_unsigned(memory, destination, 4, negative ? (uint64_t)(-(int64_t)value) : value);
       }

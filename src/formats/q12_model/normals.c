@@ -2,6 +2,7 @@
  * normal table; each component staged through binary32 like
  * Math.fround. GPL-2.0-or-later. */
 #include "qa/formats/q12_model/normals.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 
@@ -181,7 +182,7 @@ const qa_vec3 *qa_alias_normal_table(size_t *out_count) {
 
 qa_vec3 qa_decode_alias_normal(double index) {
   if (index != trunc(index) || index < 0 || index > 161) {
-    qa_range_error("Alias normal index %g outside 0..161", index);
+    qa_range_error("Alias normal index %s outside 0..161", QA_JS_NUMBER(index));
   }
   return alias_normals[(size_t)index];
 }

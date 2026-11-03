@@ -533,21 +533,6 @@ static const qa_q2m_frame f_float_7[] = {
   {QA_Q2M_AI_CHARGE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_CHARGE, NULL, 0, NULL, 0, -1},
 };
-static const qa_q2m_frame f_float_8[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
 static const qa_q2m_frame f_float_9[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
@@ -558,20 +543,6 @@ static const qa_q2m_frame f_float_9[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
 };
 static const qa_q2m_frame f_float_10[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
-static const qa_q2m_frame f_float_11[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
@@ -698,10 +669,8 @@ const qa_q2m_move qa_q2rm_float_moves[] = {
   {"floater_move_attack1a", 31, 44, "floater_run", 0, f_float_5, 14},
   {"floater_move_attack2", 45, 69, "floater_run", 0, f_float_6, 25},
   {"floater_move_attack3", 70, 103, "floater_run", 0, f_float_7, 34},
-  {"floater_move_death", 104, 116, "floater_dead", 0, f_float_8, 13},
   {"floater_move_pain1", 117, 123, "floater_run", 0, f_float_9, 7},
   {"floater_move_pain2", 124, 131, "floater_run", 0, f_float_10, 8},
-  {"floater_move_pain3", 132, 143, "floater_run", 0, f_float_11, 12},
   {"floater_move_walk", 144, 195, NULL, 0, f_float_12, 52},
   {"floater_move_run", 144, 195, NULL, 0, f_float_13, 52},
 };

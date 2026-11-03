@@ -1,5 +1,5 @@
 /* Port of src/app/bootstrap/simulation/arsenal/q2.ts. Uses landed
- * qa_q2w_weapons / qa_q2f_game; inventory mirrors game.host.inventory
+ * qa_q2w_weapons / qa_q2_game_services; inventory mirrors game.host.inventory
  * (entries/count/configure/give). Actor release cleanup is explicit
  * via qa_app_q2_selected_arsenal_release_actor (TS onRelease hook).
  * GPL-2.0-or-later. */
@@ -20,7 +20,7 @@ typedef struct qa_app_q2_inventory_definition { qa_item_id item; double capacity
 typedef struct qa_app_q2_loadout_entry { qa_item_id item; double count; } qa_app_q2_loadout_entry;
 
 typedef struct qa_app_q2_selected_arsenal_options {
-  qa_q2f_game *game;          /* borrowed */
+  qa_q2_game_services *game;          /* borrowed */
   qa_provider_id provider;    /* TS game.options.provider */
   const char *edition;        /* "classic"|"rerelease" */
   qa_q2w_weapons *weapons;    /* borrowed */

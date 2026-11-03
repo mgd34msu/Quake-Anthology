@@ -1,5 +1,6 @@
 /* Port of src/content/mods/qvm-callbacks.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/qvm_callbacks.h"
+#include "qa/content/mods/declaration.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -79,7 +80,7 @@ static const char *fns(const qa_save_reader *r, const char *name) {
   return v;
 }
 static void *xalloc(const qa_save_reader *r, size_t count, size_t size) {
-  void *p = count > 0 ? calloc(count, size) : NULL;
+  void *p = count > 0 ? qa_mod_declaration_calloc(count, size) : NULL;
   if (count > 0 && p == NULL) qa_save_reader_fail(r, "out of memory");
   return p;
 }
@@ -99,7 +100,7 @@ static double nullable_int(const qa_save_reader *r, const char *name, bool *has)
  * src/content/mounts/paths.ts). See callbacks.c. */
 static char *normalize_resource_path(const char *path) {
   size_t n = strlen(path);
-  char *out = (char *)malloc(n + 1);
+  char *out = (char *)qa_mod_declaration_malloc(n + 1);
   if (out == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i <= n; i++) out[i] = path[i] == '\\' ? '/' : path[i];
   bool bad = n == 0;
@@ -735,7 +736,7 @@ static qa_qvm_mod_source_actors *read_source_actors(const qa_save_reader *actors
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    row->initial_stores.values = vals;
+    row->initial_stores.values = qa_mod_declaration_present(vals);
     row->initial_stores.count = count;
   }
   row->inuse = fint(actors, "inuse", 0);
@@ -800,11 +801,11 @@ static qa_qvm_mod_source_actors *read_source_actors(const qa_save_reader *actors
   return row;
 }
 
-qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
+static qa_qvm_mod_callback_declaration *read_qvm_mod_declaration(
     const qa_save_reader *reader) {
   static const char *const profiles[] = {"q3-modern", "q3-1.16n-base"};
   qa_qvm_mod_callback_declaration *decl =
-      (qa_qvm_mod_callback_declaration *)calloc(1, sizeof *decl);
+      (qa_qvm_mod_callback_declaration *)qa_mod_declaration_calloc(1, sizeof *decl);
   if (decl == NULL) return NULL;
   {
     qa_save_reader f = field(reader, "version");
@@ -842,6 +843,7 @@ qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
           &f, read_protection_scalar_adapter, NULL,
           sizeof(qa_qvm_mod_protection_scalar), read_record_offset_adapter, NULL,
           sizeof(qa_qvm_mod_record_offset), &rows->output_count);
+      rows->outputs = qa_mod_declaration_present(rows->outputs);
       qa_save_reader_destroy(&f);
     }
     {
@@ -863,13 +865,14 @@ qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
     rows->disconnect =
         read_source_calls(&clients, "disconnect", &rows->disconnect_count);
     if (fpresent(&clients, "frame"))
-      rows->frame = read_source_calls(&clients, "frame", &rows->frame_count);
+      rows->frame = qa_mod_declaration_present(read_source_calls(&clients, "frame", &rows->frame_count));
     if (fpresent(&clients, "input")) {
       qa_save_reader f = field(&clients, "input");
       rows->input = qa_read_mod_client_input(
           &f, read_source_call_adapter, NULL, sizeof(qa_qvm_mod_source_call),
           read_input_output_adapter, NULL, sizeof(qa_qvm_mod_input_output),
           &rows->input_count);
+      rows->input = qa_mod_declaration_present(rows->input);
       qa_save_reader_destroy(&f);
     }
     qa_save_reader_destroy(&clients);
@@ -897,7 +900,7 @@ qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->protection = rows;
+    decl->protection = qa_mod_declaration_present(rows);
     decl->protection_count = count;
   }
   if (fpresent(reader, "items")) {
@@ -932,7 +935,7 @@ qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->pickups = rows;
+    decl->pickups = qa_mod_declaration_present(rows);
     decl->pickup_count = count;
   }
   if (fpresent(reader, "objectives")) {
@@ -942,6 +945,7 @@ qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
         read_objective_address_adapter, NULL, sizeof(qa_qvm_mod_objective_address),
         read_source_call_adapter, NULL, sizeof(qa_qvm_mod_source_call),
         &decl->objective_count);
+    decl->objectives = qa_mod_declaration_present(decl->objectives);
     qa_save_reader_destroy(&f);
   }
   {
@@ -992,14 +996,34 @@ qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
   return decl;
 }
 
+/* Every block the reader allocates joins one owner (content/mods/declaration.h). */
+qa_qvm_mod_callback_declaration *qa_read_qvm_mod_declaration(
+    const qa_save_reader *reader) {
+  qa_mod_declaration_scope scope;
+  qa_mod_declaration_scope_begin(&scope);
+  qa_qvm_mod_callback_declaration *decl = read_qvm_mod_declaration(reader);
+  qa_mod_declaration_owner *owner = qa_mod_declaration_scope_end(&scope);
+  if (decl == NULL) { qa_mod_declaration_owner_free(owner); return NULL; }
+  decl->owner = owner;
+  return decl;
+}
+
 qa_qvm_mod_callback_declaration *qa_read_qvm_mod_callbacks(const uint8_t *bytes,
-                                                           size_t length) {
+    size_t length) {
   qa_save_value *value = qa_parse_json_value(bytes, length, false);
   if (value == NULL) return NULL;
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, qa_mod_declaration_free_parsed_value, value);
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, NULL)) return NULL;
-  qa_qvm_mod_callback_declaration *decl = qa_read_qvm_mod_declaration(&reader);
-  qa_save_reader_destroy(&reader);
+  qa_qvm_mod_callback_declaration *decl = NULL;
+  if (qa_save_reader_init(&reader, value, NULL)) {
+    decl = qa_read_qvm_mod_declaration(&reader);
+    qa_save_reader_destroy(&reader);
+  }
+  qa_cleanup_pop(&cleanup);
+  /* The declaration's strings borrow the parsed tree; its owner keeps it. */
+  if (decl != NULL) qa_mod_declaration_owner_adopt_value(decl->owner, value);
+  else qa_save_value_free(value);
   return decl;
 }
 

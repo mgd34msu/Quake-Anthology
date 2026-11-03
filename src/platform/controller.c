@@ -1,5 +1,7 @@
 /* Port of src/platform/controller.ts. GPL-2.0-or-later. */
 #include "qa/platform/controller.h"
+#include "qa/platform/signal_hint.h"
+#include "qa/foundation/js.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -13,13 +15,12 @@
 
 /* TS `throw new Error(msg)`, as in src/text/atlas.c. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 /* TS sensorNames order; SDL sensor ids are index + 1 in this order. */
@@ -31,11 +32,6 @@ static const int sensor_ids[QA_CONTROLLER_SENSOR_COUNT] = {1, 2, 3, 4, 5, 6};
 
 static int checked(int value, const char *operation) {
   if (value < 0) qa_error("%s: %s", operation, SDL_GetError());
-  return value;
-}
-
-static void *required_ptr(void *value, const char *operation) {
-  if (value == NULL) qa_error("%s: %s", operation, SDL_GetError());
   return value;
 }
 
@@ -56,13 +52,12 @@ static void integer(double value, double minimum, double maximum, const char *na
 static uint16_t amplitude(double value) {
   if (!isfinite(value) || value < 0 || value > 1)
     qa_range_error("Rumble amplitude must be finite and in 0..1");
-  return (uint16_t)floor(value * 65535.0 + 0.5); /* Math.round */
+  return (uint16_t)qa_js_round(value * 65535.0); /* value is in 0..1 */
 }
 
 static void initialize(void) {
   SDL_SetMainReady();
-  if (SDL_SetHint("SDL_NO_SIGNAL_HANDLERS", "1") != SDL_TRUE)
-    qa_error("SDL must leave signal handling to the Unix signal owner");
+  qa_require_no_signal_handlers(SDL_SetHint("SDL_NO_SIGNAL_HANDLERS", "1"));
   checked(SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER), "SDL_InitSubSystem controller");
 }
 
@@ -92,6 +87,8 @@ struct qa_sdl_controllers {
   size_t route_count;
   int previous_event_state;
   bool closed;
+  /* TS openFailures: controllers skipped because SDL could not open them. */
+  int64_t open_failures;
 };
 
 static qa_sdl_controllers *owner_singleton = NULL;
@@ -176,6 +173,19 @@ static qa_controller_device describe(const owned_controller *device) {
   result.is_virtual = device->is_virtual;
   result.capabilities = capabilities(device->pointer);
   return result;
+}
+
+typedef struct describe_job {
+  const owned_controller *device;
+  qa_controller_device description;
+} describe_job;
+static void describe_run(void *ctx) {
+  describe_job *job = (describe_job *)ctx;
+  job->description = describe(job->device);
+}
+
+int64_t qa_sdl_controllers_open_failures(const qa_sdl_controllers *controllers) {
+  return controllers->open_failures;
 }
 
 static void require_open(qa_sdl_controllers *controllers) {
@@ -303,14 +313,19 @@ static void discover(qa_sdl_controllers *controllers, uint32_t timestamp,
     if (instance < 0 || find_device(controllers, instance) != NULL ||
         SDL_IsGameController(index) == SDL_FALSE)
       continue;
-    SDL_GameController *pointer = (SDL_GameController *)required_ptr(
-        SDL_GameControllerOpen(index), "SDL_GameControllerOpen");
-    SDL_Joystick *joystick = (SDL_Joystick *)required_ptr(
-        SDL_GameControllerGetJoystick(pointer), "SDL_GameControllerGetJoystick");
-    if (checked(SDL_JoystickInstanceID(joystick), "SDL_JoystickInstanceID") !=
-        instance) {
+    /* A device that fails to open (udev permission race, unplug during open,
+       busy HID node) is skipped; a later hotplug event retries. */
+    SDL_GameController *pointer = SDL_GameControllerOpen(index);
+    if (pointer == NULL) {
+      controllers->open_failures++;
+      continue;
+    }
+    SDL_Joystick *joystick = SDL_GameControllerGetJoystick(pointer);
+    if (joystick == NULL || SDL_JoystickInstanceID(joystick) < 0 ||
+        SDL_JoystickInstanceID(joystick) != instance) {
       SDL_GameControllerClose(pointer);
-      qa_error("SDL controller instance changed while opening");
+      controllers->open_failures++;
+      continue;
     }
     char *guid = NULL;
     char *name = NULL;
@@ -359,7 +374,17 @@ static void discover(qa_sdl_controllers *controllers, uint32_t timestamp,
     for (int button = 0; button < QA_CONTROLLER_BUTTON_COUNT; button++)
       device->buttons[button] =
           SDL_GameControllerGetButton(pointer, button) != 0;
-    qa_controller_device description = describe(device);
+    describe_job job = {device, {0}};
+    qa_caught_error caught;
+    if (!qa_try(describe_run, &job, &caught)) {
+      SDL_GameControllerClose(pointer);
+      free(guid);
+      free(name);
+      free(serial);
+      controllers->open_failures++;
+      continue;
+    }
+    qa_controller_device description = job.description;
     controllers->opened_count++;
     qa_controller_event event;
     memset(&event, 0, sizeof event);

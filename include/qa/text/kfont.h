@@ -1,6 +1,6 @@
 /*
  * Port of src/text/kfont.ts: Quake rerelease .kfont parsing and glyph
- * lookup, plus the TrueType-atlas bridge (Kfont_FromTTF).
+ * lookup.
  * C accommodations:
  *  - TS Map<number, KfontCharT> becomes an insertion-ordered entry
  *    array (qa_kfont_glyph_entry); setting an existing codepoint
@@ -8,12 +8,10 @@
  *    (parseInt results), compared with the same equality a Map uses.
  *  - The fixed ASCII table is chars[QA_KFONT_NUM_CHARS] with a
  *    parallel present[] (TS null slots).
- *  - ParsedKfontT owns its texture token and glyph entries; KfontT and
- *    TtfKfontT borrow theirs (the TS shares the parsed objects), which
+ *  - ParsedKfontT owns its texture token and glyph entries; KfontT
+ *    borrows its (the TS shares the parsed objects), which
  *    qa_kfont_from_parsed sets up. Parse returns false for TS null
  *    (malformed input) and on OOM; *out is left zeroed either way.
- *  - Kfont_FromTTF builds a TtfKfontT that owns its entry array and a
- *    copy of `pic`; free with qa_ttf_kfont_destroy.
  * GPL-2.0-or-later.
  */
 #ifndef QA_TEXT_KFONT_H
@@ -21,8 +19,6 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-
-#include "qa/text/truetype.h"
 
 #define QA_KFONT_ASCII_MIN 32
 #define QA_KFONT_ASCII_MAX 126
@@ -60,14 +56,6 @@ typedef struct qa_kfont {
   double line_height;
 } qa_kfont;
 
-/* TS TtfKfontT. Owns pic and chars after qa_kfont_from_ttf. */
-typedef struct qa_ttf_kfont {
-  char *pic;
-  qa_kfont_glyph_entry *chars;
-  size_t char_count;
-  double line_height;
-} qa_ttf_kfont;
-
 /* TS ParseKfont. Input is NUL-terminated bytes (the TS decodes UTF-8;
  * token bytes compare identically for the ASCII grammar). */
 bool qa_parse_kfont(const char *text, qa_parsed_kfont *out);
@@ -78,19 +66,10 @@ const qa_kfont_char *qa_parsed_kfont_glyph(const qa_parsed_kfont *parsed,
 /* Views a parsed font as a KfontT borrowing its storage. */
 qa_kfont qa_kfont_from_parsed(const qa_parsed_kfont *parsed, const char *pic);
 
-/* TS SCR_KFontLookup / kfontGlyph / kfontHasGlyph. NULL/false is the
- * TS null (absent or zero-width glyph). */
+/* TS SCR_KFontLookup / kfontGlyph. NULL is the TS null (absent or
+ * zero-width glyph). */
 const qa_kfont_char *qa_scr_kfont_lookup(const qa_kfont *font,
                                          double codepoint);
 const qa_kfont_char *qa_kfont_glyph(const qa_kfont *font, double codepoint);
-bool qa_kfont_has_glyph(const qa_kfont *font, double codepoint);
-
-/* TS TtfKfont_Lookup. */
-const qa_kfont_char *qa_ttf_kfont_lookup(const qa_ttf_kfont *font,
-                                         double codepoint);
-/* TS Kfont_FromTTF. False only on OOM. */
-bool qa_kfont_from_ttf(const qa_font_atlas *atlas, const char *pic,
-                       qa_ttf_kfont *out);
-void qa_ttf_kfont_destroy(qa_ttf_kfont *font);
 
 #endif

@@ -1,5 +1,6 @@
 /* Port of src/render/scene/visibility.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/visibility.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,14 +27,16 @@ static view_t view_of(qa_decoded_world m) {
   else { v.kind = 2; v.nodes = m.as.q3->nodes; v.node_count = m.as.q3->node_count; v.planes = m.as.q3->planes; v.plane_count = m.as.q3->plane_count; v.leaf_count = m.as.q3->leaf_count; v.map_key = m.as.q3; }
   return v;
 }
+/* A JS array index: fractional, negative and NaN read undefined (checked before any cast). */
+static bool valid_index(double index, size_t count) { return index >= 0 && index == floor(index) && index < (double)count; }
 static const qa_bsp_node *node_at(view_t v, double index) {
-  long i = (long)index;
-  if (index != (double)i || i < 0 || (size_t)i >= v.node_count) qa_range_error("World visibility index %g outside %zu", index, v.node_count);
+  if (!valid_index(index, v.node_count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(index), v.node_count);
+  size_t i = (size_t)index;
   return &v.nodes[i];
 }
 static qa_plane plane_at(view_t v, double index) {
-  long i = (long)index;
-  if (index != (double)i || i < 0 || (size_t)i >= v.plane_count) qa_range_error("World visibility index %g outside %zu", index, v.plane_count);
+  if (!valid_index(index, v.plane_count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(index), v.plane_count);
+  size_t i = (size_t)index;
   return v.planes[i].plane;
 }
 double qa_world_point_leaf(qa_decoded_world map, qa_vec3 point) {
@@ -48,9 +51,14 @@ double qa_world_point_leaf(qa_decoded_world map, qa_vec3 point) {
   return child.index;
 }
 void qa_world_visibility_cache_init(qa_world_visibility_cache *c) { memset(c, 0, sizeof *c); }
+static void free_marks(struct qa_scene_ancestor_marks *m) { free(m->areas); free(m->marks); memset(m, 0, sizeof *m); }
 void qa_world_visibility_cache_destroy(qa_world_visibility_cache *c) {
   if (!c) return;
   if (c->stamps_init) qa_stamp_set_destroy(&c->stamps);
+  free(c->node_parents); free(c->leaf_parents);
+  for (size_t i = 0; i < c->ancestor_mark_count; i++) free_marks(&c->ancestor_marks[i]);
+  for (size_t i = 0; i < c->merged_count; i++) free(c->merged[i].bytes);
+  free(c->merged);
   for (size_t i = 0; i < c->q1_count; i++) free(c->q1_entries[i].bytes);
   for (size_t i = 0; i < c->q2_count; i++) free(c->q2_entries[i].bytes);
   free(c->q1_entries); free(c->q2_entries); memset(c, 0, sizeof *c);
@@ -65,8 +73,8 @@ static void cache_put(struct qa_scene_pvs_entry **e, size_t *n, size_t *cap, dou
   (*e)[*n].key = key; (*e)[*n].bytes = bytes; (*e)[*n].length = len; (*n)++;
 }
 static double leaf_cluster(qa_decoded_world m, view_t v, double index) {
-  long i = (long)index;
-  if (index != (double)i || i < 0 || (size_t)i >= v.leaf_count) qa_range_error("World visibility index %g outside %zu", index, v.leaf_count);
+  if (!valid_index(index, v.leaf_count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(index), v.leaf_count);
+  size_t i = (size_t)index;
   return v.kind == 1 ? m.as.q2->leaves[i].cluster : m.as.q3->leaves[i].cluster;
 }
 static double leaf_contents_q2(qa_decoded_world m, double index) { return m.as.q2->leaves[(long)index].contents; }
@@ -78,8 +86,8 @@ static uint8_t *q2_pvs(qa_decoded_world map, double cluster, qa_world_visibility
     const uint8_t *hit = cache_get((pentry *)cache->q2_entries, cache->q2_count, cluster, out_len);
     if (hit) return (uint8_t *)hit;
   }
-  long ci = (long)cluster;
-  if (cluster != (double)ci || ci < 0 || (size_t)ci >= vis->cluster_count) qa_range_error("World visibility index %g outside %zu", cluster, vis->cluster_count);
+  if (!valid_index(cluster, vis->cluster_count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(cluster), vis->cluster_count);
+  size_t ci = (size_t)cluster;
   qa_q2_visibility_cluster entry = vis->clusters[ci];
   const uint8_t *bytes = vis->compressed.bytes; size_t blen = vis->compressed.length;
   size_t rlen = (size_t)ceil((double)vis->cluster_count / 8);
@@ -113,9 +121,107 @@ static int remaining_frustum(qa_bounds bounds, const qa_plane *planes, size_t n,
   }
   *out = bits; return 1;
 }
+static qa_bsp_child child_of(const qa_bsp_node *node, int side) { return node->children[side]; }
+/* TS ancestorIndex: single parent per node and visible leaf, or unsafe. */
+static void build_ancestor_index(qa_world_visibility_cache *c, view_t v) {
+  c->ancestor_built = true;
+  c->node_parents = xalloc(v.node_count * sizeof *c->node_parents);
+  c->leaf_parents = xalloc(v.leaf_count * sizeof *c->leaf_parents);
+  for (size_t i = 0; i < v.node_count; i++) c->node_parents[i] = -1;
+  for (size_t i = 0; i < v.leaf_count; i++) c->leaf_parents[i] = -1;
+  uint8_t *seen_nodes = xalloc(v.node_count), *seen_leaves = xalloc(v.leaf_count);
+  memset(seen_nodes, 0, v.node_count); memset(seen_leaves, 0, v.leaf_count);
+  bool unsafe = v.node_count == 0;
+  int32_t *stack = xalloc((v.node_count + 1) * sizeof *stack); size_t sp = 0;
+  if (!unsafe) { seen_nodes[0] = 1; stack[sp++] = 0; }
+  while (sp != 0 && !unsafe) {
+    int32_t current = stack[--sp];
+    const qa_bsp_node *node = &v.nodes[current];
+    for (int side = 0; side < 2; side++) {
+      qa_bsp_child child = child_of(node, side);
+      if (child.is_node) {
+        if (child.index < 0 || child.index >= (double)v.node_count || child.index != floor(child.index) || seen_nodes[(size_t)child.index]) { unsafe = true; break; }
+        size_t index = (size_t)child.index;
+        seen_nodes[index] = 1; c->node_parents[index] = current; stack[sp++] = (int32_t)index;
+      } else {
+        /* Q1 solid children all share leaf zero, which is never visible and never marks an ancestor. */
+        bool shared_solid = v.kind == 0 && child.index == 0;
+        if (child.index < 0 || child.index >= (double)v.leaf_count || child.index != floor(child.index) ||
+            (seen_leaves[(size_t)child.index] && !shared_solid)) { unsafe = true; break; }
+        size_t index = (size_t)child.index;
+        seen_leaves[index] = 1; c->leaf_parents[index] = current;
+      }
+    }
+  }
+  free(stack); free(seen_nodes); free(seen_leaves);
+  c->ancestor_unsafe = unsafe;
+}
 void qa_visible_world_destroy(qa_visible_world *v) {
   if (!v) return;
   free(v->leaves); free(v->surfaces); free(v->mask_surfaces); free(v->mask_values); memset(v, 0, sizeof *v);
+}
+/* TS leafVisible. */
+static bool leaf_visible(qa_decoded_world map, view_t v, const qa_world_visibility_options *options, double leaf_index,
+                         const uint8_t *pvs, size_t pvs_len, double from_cluster) {
+  if (v.kind == 0)
+    return leaf_index != 0 && (!pvs || ((((size_t)((long)leaf_index - 1) >> 3) < pvs_len ? pvs[((size_t)((long)leaf_index - 1)) >> 3] : 0) & (1 << (((long)leaf_index - 1) & 7))) != 0);
+  if (!valid_index(leaf_index, v.leaf_count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(leaf_index), v.leaf_count);
+  size_t li = (size_t)leaf_index;
+  double area = v.kind == 1 ? map.as.q2->leaves[li].area : map.as.q3->leaves[li].area;
+  if (options->has_visible_areas) {
+    bool found = false;
+    for (size_t i = 0; i < options->visible_area_count; i++) if (options->visible_areas[i] == area) found = true;
+    if (!found) return false;
+  }
+  double cluster = leaf_cluster(map, v, leaf_index);
+  if (v.kind == 2 && from_cluster < 0) return cluster != -1;
+  return !pvs || (cluster >= 0 && ((((size_t)((long)cluster) >> 3) < pvs_len ? pvs[((size_t)((long)cluster)) >> 3] : 0) & (1 << (((long)cluster) & 7))) != 0);
+}
+/* TS marks: nodes with no visible descendant leaf, cached by PVS identity,
+ * camera cluster and visible areas. */
+static const uint8_t *ancestor_marks(qa_world_visibility_cache *c, qa_decoded_world map, view_t v,
+                                     const qa_world_visibility_options *options, const uint8_t *pvs, size_t pvs_len,
+                                     double from_cluster) {
+  if (!c->ancestor_built) build_ancestor_index(c, v);
+  if (c->ancestor_unsafe) return NULL;
+  for (size_t i = 0; i < c->ancestor_mark_count; i++) {
+    struct qa_scene_ancestor_marks *m = &c->ancestor_marks[i];
+    if (m->from_cluster != from_cluster || m->pvs != pvs || m->pvs_length != (pvs ? pvs_len : 0)) continue;
+    if (m->has_areas != options->has_visible_areas) continue;
+    if (m->has_areas && (m->area_count != options->visible_area_count ||
+                         (m->area_count != 0 && memcmp(m->areas, options->visible_areas, m->area_count * sizeof *m->areas) != 0)))
+      continue;
+    struct qa_scene_ancestor_marks hit = *m;
+    memmove(&c->ancestor_marks[1], &c->ancestor_marks[0], i * sizeof *m);
+    c->ancestor_marks[0] = hit;
+    return hit.marks;
+  }
+  uint8_t *marks = xalloc(v.node_count); memset(marks, 0, v.node_count);
+  for (size_t leaf = 0; leaf < v.leaf_count; leaf++) {
+    if (!leaf_visible(map, v, options, (double)leaf, pvs, pvs_len, from_cluster)) continue;
+    int32_t parent = c->leaf_parents[leaf];
+    while (parent >= 0 && marks[parent] == 0) { marks[parent] = 1; parent = c->node_parents[parent]; }
+  }
+  if (c->ancestor_mark_count == 4) free_marks(&c->ancestor_marks[--c->ancestor_mark_count]);
+  memmove(&c->ancestor_marks[1], &c->ancestor_marks[0], c->ancestor_mark_count * sizeof c->ancestor_marks[0]);
+  struct qa_scene_ancestor_marks *slot = &c->ancestor_marks[0];
+  memset(slot, 0, sizeof *slot);
+  slot->pvs = pvs; slot->pvs_length = pvs ? pvs_len : 0; slot->from_cluster = from_cluster;
+  slot->has_areas = options->has_visible_areas;
+  if (slot->has_areas) {
+    slot->area_count = options->visible_area_count;
+    slot->areas = xalloc(slot->area_count * sizeof *slot->areas);
+    if (slot->area_count) memcpy(slot->areas, options->visible_areas, slot->area_count * sizeof *slot->areas);
+  }
+  slot->marks = marks;
+  c->ancestor_mark_count++;
+  return marks;
+}
+/* TS mergedPvs lookup; *found false on a miss. */
+static struct qa_scene_merged_pvs *merged_pvs(qa_world_visibility_cache *c, double first, double second) {
+  for (size_t i = 0; i < c->merged_count; i++)
+    if (c->merged[i].first == first && c->merged[i].second == second) return &c->merged[i];
+  return NULL;
 }
 bool qa_visible_world_new(qa_decoded_world map, qa_scene_camera camera, const qa_world_visibility_options *options_in, qa_world_visibility_cache *cache, qa_visible_world *out) {
   memset(out, 0, sizeof *out);
@@ -155,12 +261,35 @@ bool qa_visible_world_new(qa_decoded_world map, qa_scene_camera camera, const qa
         if ((oc32 & 1) == 0 && ocl != from_cluster) { has_second = 1; second = ocl; }
       }
       if (has_second && second >= 0 && pvs) {
-        size_t olen = 0; int opresent = 0; uint8_t *other = q2_pvs(map, second, cache, use_cache, &olen, &opresent);
-        if (!opresent) pvs = NULL;
+        /* One merged buffer per cluster pair keeps the mark cache keyed by a stable identity. */
+        struct qa_scene_merged_pvs *hit = use_cache ? merged_pvs(cache, from_cluster, second) : NULL;
+        if (hit != NULL) { pvs = hit->bytes; if (pvs) pvs_len = hit->length; }
         else {
-          uint8_t *merged = xalloc(pvs_len); memcpy(merged, pvs, pvs_len);
-          for (size_t i = 0; i < pvs_len; i++) merged[i] = (uint8_t)(merged[i] | (i < olen ? other[i] : 0));
-          free(pvs_owned); pvs_owned = merged; pvs = merged;
+          size_t olen = 0; int opresent = 0; uint8_t *other = q2_pvs(map, second, cache, use_cache, &olen, &opresent);
+          uint8_t *merged = NULL;
+          if (opresent) {
+            merged = xalloc(pvs_len); memcpy(merged, pvs, pvs_len);
+            for (size_t i = 0; i < pvs_len; i++) merged[i] = (uint8_t)(merged[i] | (i < olen ? other[i] : 0));
+          }
+          if (!use_cache) free(other);
+          if (use_cache) {
+            if (cache->merged_count >= 64) {
+              for (size_t i = 0; i < cache->merged_count; i++) free(cache->merged[i].bytes);
+              cache->merged_count = 0;
+              /* TS marks keep the old buffers alive; here a freed address could be
+               * reused by a new buffer, so marks keyed on them go too. */
+              for (size_t i = 0; i < cache->ancestor_mark_count; i++) free_marks(&cache->ancestor_marks[i]);
+              cache->ancestor_mark_count = 0;
+            }
+            if (cache->merged_count == cache->merged_capacity) {
+              cache->merged_capacity = cache->merged_capacity ? cache->merged_capacity * 2 : 8;
+              cache->merged = xg(cache->merged, cache->merged_capacity * sizeof *cache->merged);
+            }
+            cache->merged[cache->merged_count++] = (struct qa_scene_merged_pvs){from_cluster, second, merged, pvs_len};
+            pvs = merged;
+          } else {
+            free(pvs_owned); pvs_owned = merged; pvs = merged;
+          }
         }
       }
     } else {
@@ -174,6 +303,8 @@ bool qa_visible_world_new(qa_decoded_world map, qa_scene_camera camera, const qa
       }
     }
   }
+  const uint8_t *marks = NULL;
+  if (v.node_count != 0 && use_cache) marks = ancestor_marks(cache, map, v, &options, pvs, pvs_len, from_cluster);
   qa_plane planes[5]; size_t nplanes = 0;
   if (!options.no_cull) {
     nplanes = qa_scene_camera_frustum(camera, planes);
@@ -198,6 +329,7 @@ bool qa_visible_world_new(qa_decoded_world map, qa_scene_camera camera, const qa
   while (sp) {
     sp--; double encoded = stack_child[sp]; int mask = stack_mask[sp], item_planes = stack_planes[sp];
     if (encoded >= 0) {
+      if (marks != NULL && encoded < (double)v.node_count && marks[(size_t)encoded] == 0) continue;
       const qa_bsp_node *node = node_at(v, encoded);
       int remaining = 0, ok;
       if (v.kind == 2) ok = remaining_frustum(node->bounds, planes, nplanes, item_planes, &remaining);
@@ -219,23 +351,10 @@ bool qa_visible_world_new(qa_decoded_world map, qa_scene_camera camera, const qa
       continue;
     }
     double leaf_index = -1 - encoded;
-    /* leafVisible */
-    int visible_flag;
-    if (v.kind == 0) {
-      visible_flag = leaf_index != 0 && (!pvs || ((((size_t)((long)leaf_index - 1) >> 3) < pvs_len ? pvs[((size_t)((long)leaf_index - 1)) >> 3] : 0) & (1 << (((long)leaf_index - 1) & 7))) != 0);
-    } else {
-      long li = (long)leaf_index;
-      if (leaf_index != (double)li || li < 0 || (size_t)li >= v.leaf_count) qa_range_error("World visibility index %g outside %zu", leaf_index, v.leaf_count);
-      double area = v.kind == 1 ? map.as.q2->leaves[li].area : map.as.q3->leaves[li].area;
-      if (options.has_visible_areas) {
-        int found = 0; for (size_t i = 0; i < options.visible_area_count; i++) if (options.visible_areas[i] == area) found = 1;
-        if (!found) continue;
-      }
-      double cluster = leaf_cluster(map, v, leaf_index);
-      if (v.kind == 2 && from_cluster < 0) visible_flag = cluster != -1;
-      else visible_flag = !pvs || (cluster >= 0 && ((((size_t)((long)cluster) >> 3) < pvs_len ? pvs[((size_t)((long)cluster)) >> 3] : 0) & (1 << (((long)cluster) & 7))) != 0);
-    }
+    int visible_flag = leaf_visible(map, v, &options, leaf_index, pvs, pvs_len, from_cluster);
     if (!visible_flag) continue;
+    /* map.leaves[leafIndex] === undefined throws (Q1's leafVisible checks no bounds) */
+    if (!valid_index(leaf_index, v.leaf_count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(leaf_index), v.leaf_count);
     long li = (long)leaf_index;
     qa_bounds lbounds; qa_index_range range; qa_double_view members;
     if (v.kind == 0) { const qa_q1_leaf *l = &map.as.q1->leaves[li]; lbounds = l->bounds; range = l->faces; members = map.as.q1->leaf_faces; }
@@ -245,14 +364,14 @@ bool qa_visible_world_new(qa_decoded_world map, qa_scene_camera camera, const qa
     if (v.kind == 2 ? !remaining_frustum(lbounds, planes, nplanes, item_planes, &rem) : !qa_scene_bounds_in_frustum(lbounds, planes, nplanes)) continue;
     if (out->leaf_count == cleaf) { cleaf = cleaf ? cleaf * 2 : 16; out->leaves = xg(out->leaves, cleaf * sizeof(double)); }
     out->leaves[out->leaf_count++] = leaf_index;
-    for (long i = 0; i < (long)range.count; i++) {
-      long mi = (long)(range.first + i);
-      if (range.first + i != (double)mi || mi < 0 || (size_t)mi >= members.count) qa_range_error("World visibility index %g outside %zu", range.first + i, members.count);
-      double surface = members.values[mi];
+    for (double i = 0; i < range.count; i++) { /* a fractional count iterates like the TS i < range.count */
+      if (!valid_index(range.first + i, members.count)) qa_range_error("World visibility index %s outside %zu", QA_JS_NUMBER(range.first + i), members.count);
+      double surface = members.values[(size_t)(range.first + i)];
       long si = (long)surface;
       /* qa_stamp_set_mark: true first time this epoch (TS seen.mark). */
+      /* TS StampSet.mark of an index outside the set reports a first visit. */
       bool first = (surface == (double)si && si >= 0 && (size_t)si < surf_total)
-        ? qa_stamp_set_mark(stamps, (size_t)si) : false;
+        ? qa_stamp_set_mark(stamps, (size_t)si) : true;
       if (first) {
         if (out->surface_count == csurf) { csurf = csurf ? csurf * 2 : 16; out->surfaces = xg(out->surfaces, csurf * sizeof(double)); out->mask_surfaces = xg(out->mask_surfaces, csurf * sizeof(double)); out->mask_values = xg(out->mask_values, csurf * sizeof(int)); }
         out->surfaces[out->surface_count] = surface;

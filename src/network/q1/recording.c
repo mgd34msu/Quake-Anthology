@@ -1,5 +1,6 @@
 /* Port of src/network/q1/recording.ts. GPL-2.0-or-later. */
 #include "qa/network/q1/recording.h"
+#include "qa/network/common/js_number.h"
 #include "qa/foundation/support.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,17 +60,18 @@ void qa_netquake_recording_state_observe(qa_netquake_recording_state *s,
       copy_message(m, &s->info); s->has_info = true;
       clear_fields(s);
     } else if (!strcmp(k, "static") || !strcmp(k, "static-sound")) {
+      if (s->static_count >= 4096) qa_raise("Error", 0, 0, "Too many static entities");
       if (s->static_count == s->static_cap) { size_t nc = s->static_cap ? s->static_cap * 2 : 16; s->statics = realloc(s->statics, nc * sizeof *s->statics); s->static_cap = nc; }
       copy_message(m, &s->statics[s->static_count++]);
     } else if (!strcmp(k, "baseline")) {
-      snprintf(keybuf, sizeof keybuf, "baseline:%g", m->state.base.number);
+      snprintf(keybuf, sizeof keybuf, "baseline:%s", QA_JS_NUMBER(m->state.base.number));
       set_field(s, keybuf, m);
     } else if (!strcmp(k, "name") || !strcmp(k, "social") || !strcmp(k, "player-info")
                || !strcmp(k, "frags") || !strcmp(k, "colors") || !strcmp(k, "ping")) {
-      snprintf(keybuf, sizeof keybuf, "%s:%g", k, m->slot);
+      snprintf(keybuf, sizeof keybuf, "%s:%s", k, QA_JS_NUMBER(m->slot));
       set_field(s, keybuf, m);
     } else if (!strcmp(k, "stat") || !strcmp(k, "light-style")) {
-      snprintf(keybuf, sizeof keybuf, "%s:%g", k, m->index);
+      snprintf(keybuf, sizeof keybuf, "%s:%s", k, QA_JS_NUMBER(m->index));
       set_field(s, keybuf, m);
     } else if (!strcmp(k, "set-view") || !strcmp(k, "set-angle") || !strcmp(k, "client-data")
                || !strcmp(k, "cd-track") || !strcmp(k, "time") || !strcmp(k, "skybox")
@@ -78,10 +80,20 @@ void qa_netquake_recording_state_observe(qa_netquake_recording_state *s,
     }
   }
 }
+/* A message the selected wire cannot carry throws as in TS; nothing built so far survives. */
+typedef struct seed_scope {
+  const qa_netquake_message **order; uint8_t **out; size_t *lens; size_t written; qa_size_buf buf;
+} seed_scope;
+static void seed_scope_free(void *arg) {
+  seed_scope *scope = arg;
+  qa_size_buf_destroy(&scope->buf);
+  for (size_t i = 0; i < scope->written; i++) free(scope->out[i]);
+  free(scope->out); free(scope->lens); free(scope->order);
+}
 uint8_t **qa_netquake_recording_state_seed(qa_netquake_recording_state *s,
                                            qa_q1_protocol_identity protocol,
                                            size_t **out_lens, size_t *out_count) {
-  if (!s->has_info) qa_range_error("NetQuake recording has no server info");
+  if (!s->has_info) qa_raise("Error", 0, 0, "NetQuake recording has no server info");
   size_t total = 1 + 1 + s->static_count + s->field_count + 2;
   const qa_netquake_message **order = malloc(total * sizeof *order);
   qa_netquake_message signon1, signon2, signon3;
@@ -95,15 +107,30 @@ uint8_t **qa_netquake_recording_state_seed(qa_netquake_recording_state *s,
   for (size_t i = 0; i < s->field_count; i++) order[at++] = &s->fields[i].message;
   order[at++] = &signon2;
   order[at++] = &signon3;
-  uint8_t **out = malloc(at * sizeof *out);
-  size_t *lens = malloc(at * sizeof *lens);
+  seed_scope scope = { order, malloc(at * sizeof *scope.out), malloc(at * sizeof *scope.lens), 0, {0} };
+  uint8_t **out = scope.out;
+  size_t *lens = scope.lens;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, seed_scope_free, &scope);
   for (size_t i = 0; i < at; i++) {
-    qa_size_buf buf; qa_size_buf_init(&buf, 65536, false);
-    qa_write_netquake_message(&buf, protocol, order[i], "known-retail", true);
-    out[i] = qa_size_buf_bytes(&buf, &lens[i]);
-    qa_size_buf_destroy(&buf);
+    qa_size_buf_init(&scope.buf, 65536, false);
+    qa_write_netquake_message(&scope.buf, protocol, order[i], "known-retail", true);
+    out[i] = qa_size_buf_bytes(&scope.buf, &lens[i]);
+    scope.written = i + 1;
+    qa_size_buf_destroy(&scope.buf);
   }
+  qa_cleanup_pop(&guard);
   free(order);
   *out_lens = lens; *out_count = at;
   return out;
+}
+qa_netquake_recording_state *qa_netquake_recording_state_create(void) {
+  qa_netquake_recording_state *s = malloc(sizeof *s);
+  if (s) qa_netquake_recording_state_init(s);
+  return s;
+}
+void qa_netquake_recording_state_free(qa_netquake_recording_state *s) {
+  if (!s) return;
+  qa_netquake_recording_state_destroy(s);
+  free(s);
 }

@@ -122,7 +122,7 @@ typedef struct qa_q3_pres_client_game_state {
   double head_start_yaw, head_end_yaw, head_start_pitch, head_end_pitch, head_start_time, head_end_time;
   double voice_time, crosshair_client_num, crosshair_client_time;
   qa_q3_pres_client_score scores[QA_Q3_PRES_MAX_CLIENTS];
-  double team_scores[2], num_sorted_team_players, sorted_team_players[8];
+  double team_scores[2], num_sorted_team_players, sorted_team_players[32];
   double warmup_count;
   bool level_shot;
   char *info_screen_text; /* owned, NULL = "" */

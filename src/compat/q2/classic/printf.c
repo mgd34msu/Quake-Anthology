@@ -9,8 +9,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/compat/q2/classic/records.h"
+#include "qa/foundation/js_parse_extra.h"
+#include "qa/foundation/js.h"
 
-typedef struct { size_t start, end; char flags[16]; bool width_star; double width_num; bool has_prec, prec_star; double prec_num; char type; } conv_t;
+typedef struct { size_t start, end; char flags[16]; bool width_star; double width_num; bool has_prec, prec_star; double prec_num; char size[4]; char type; } conv_t;
+static const char *const sizes[] = {"hh", "h", "ll", "l", "I64", "I32", "I", "L", "j", "z", "t", "w"};
+/* TS wide(entry): 64-bit integer conversions. */
+static bool wide(const conv_t *c) {
+  return strchr("diuoxX", c->type) != NULL && (strcmp(c->size, "ll") == 0 || strcmp(c->size, "I64") == 0 || strcmp(c->size, "j") == 0);
+}
 static bool parse_conversions(const char *format, conv_t *out, size_t cap, size_t *total) {
   size_t n = 0, len = strlen(format);
   for (size_t i = 0; i < len; i++) {
@@ -26,11 +33,19 @@ static bool parse_conversions(const char *format, conv_t *out, size_t cap, size_
       if (j < len && format[j] == '*') { c.prec_star = true; j++; }
       else { double p = 0; bool any = false; while (j < len && isdigit((unsigned char)format[j])) { p = p * 10 + (format[j] - '0'); j++; any = true; } c.prec_num = any ? p : 0; }
     }
-    if (j < len && format[j] == 'l') j++;
-    if (j >= len || !strchr("%diuoxXcspfeEgG", format[j])) {
-      char near_[13]; size_t m = len - i < 12 ? len - i : 12; memcpy(near_, format + i, m); near_[m] = 0;
-      qa_range_error("Unsupported API 3 printf conversion at %s", near_);
+    /* (hh|h|ll|l|I64|I32|I|L|j|z|t|w)?: the first alternative followed by a conversion type wins, else none. */
+    c.size[0] = 0;
+    for (size_t k = 0; k < sizeof sizes / sizeof *sizes; k++) {
+      size_t n2 = strlen(sizes[k]);
+      if (j + n2 < len && strncmp(format + j, sizes[k], n2) == 0 && strchr("%diuoxXcspfeEgG", format[j + n2]) != NULL) {
+        memcpy(c.size, sizes[k], n2 + 1);
+        j += n2;
+        break;
+      }
     }
+    /* The CRT prints what it cannot convert, so a stray or unsupported specifier is ordinary text.
+     * TS matches within format.slice(index, index + 64). */
+    if (j >= len || !strchr("%diuoxXcspfeEgG", format[j]) || j + 1 - i > 64) continue;
     c.type = format[j]; c.end = j + 1; i = j;
     if (out && n < cap) out[n] = c;
     n++;
@@ -46,7 +61,8 @@ size_t qa_compat_q2_classic_printf_layouts(const char *format, qa_guest_value_la
     qa_guest_value_layout items[3]; size_t m = 0;
     if (conv[i].width_star) items[m++] = qa_compat_q2_q2_int;
     if (conv[i].prec_star) items[m++] = qa_compat_q2_q2_int;
-    items[m++] = strchr("feEgG", conv[i].type) ? qa_compat_q2_q2_double : strchr("sp", conv[i].type) ? qa_compat_q2_q2_pointer : qa_compat_q2_q2_int;
+    static const qa_guest_value_layout q2_int64 = {false, "int64", {0}};
+    items[m++] = strchr("feEgG", conv[i].type) ? qa_compat_q2_q2_double : strchr("sp", conv[i].type) ? qa_compat_q2_q2_pointer : wide(&conv[i]) ? q2_int64 : qa_compat_q2_q2_int;
     for (size_t k = 0; k < m; k++) { if (out && n < capacity) out[n] = items[k]; n++; }
   }
   return n;
@@ -57,22 +73,26 @@ static void sb_put(sbuf *s, const char *t, size_t n) {
   memcpy(s->buf + s->len, t, n); s->len += n; s->buf[s->len] = 0;
 }
 static void sb_str(sbuf *s, const char *t) { sb_put(s, t, strlen(t)); }
-static char *js_fixed(double v, int prec) { char *b = malloc(512); snprintf(b, 512, "%.*f", prec, v); return b; }
+/* value.toFixed / toExponential / toPrecision: JS rounds exact decimal ties up and
+ * prints NaN/Infinity and an unpadded exponent, where "%.*f"/"%.*e" rounded ties to even
+ * and printed "nan"/"inf". The caller pads the exponent and uppercases, as the TS does. */
+static char *js_fixed(double v, int prec) {
+  char *b = malloc(512);
+  if (b == NULL) qa_range_error("API 3 printf out of memory");
+  qa_js_to_fixed(v, prec, b, 512);
+  return b;
+}
 static char *js_exp(double v, int prec, char type) {
-  char *b = malloc(512); snprintf(b, 512, "%.*e", prec, v);
-  /* JS exponent has no zero padding beyond 2 digits handled by caller regex; C gives e+06 form. */
-  (void)type; return b;
+  (void)type;
+  char *b = malloc(512);
+  if (b == NULL) qa_range_error("API 3 printf out of memory");
+  qa_js_to_exponential(v, prec, b, 512);
+  return b;
 }
 static char *js_precision(double v, int prec) {
   char *b = malloc(512);
-  if (v == 0) { /* (0).toPrecision(p) -> "0.00.." / "0" */
-    if (prec <= 1) snprintf(b, 512, "0");
-    else { strcpy(b, "0."); for (int i = 1; i < prec; i++) strcat(b, "0"); }
-    return b;
-  }
-  double av = fabs(v); int e = (int)floor(log10(av));
-  if (e < -6 || e >= prec) snprintf(b, 512, "%.*e", prec - 1, v);
-  else snprintf(b, 512, "%.*f", prec - e - 1 < 0 ? 0 : prec - e - 1, v);
+  if (b == NULL) qa_range_error("API 3 printf out of memory");
+  qa_js_to_precision(v, prec, b, 512);
   return b;
 }
 /* JS /e([+-])(\d)$/ -> e$10$2 (pad single-digit exponent). */
@@ -138,14 +158,26 @@ char *qa_compat_q2_classic_printf(const qa_compat_q2_memory *memory, const char 
       fix_exp(text);
       if (e->type == 'F' || e->type == 'E' || e->type == 'G') for (char *p2 = text; *p2; p2++) *p2 = (char)toupper((unsigned char)*p2);
     } else {
-      if (item->kind != QA_GUEST_VALUE_INT32 && item->kind != QA_GUEST_VALUE_UINT32) qa_range_error("API 3 printf integer required");
-      int32_t sv = (int32_t)item->number_value; uint32_t uv = (uint32_t)item->number_value;
+      const int bits = wide(e) ? 64 : strcmp(e->size, "h") == 0 ? 16 : strcmp(e->size, "hh") == 0 ? 8 : 32;
+      int64_t sv; uint64_t uv;
+      if (bits == 64) {
+        if (item->kind != QA_GUEST_VALUE_INT64 && item->kind != QA_GUEST_VALUE_UINT64) qa_range_error("API 3 printf 64-bit integer required");
+        uv = item->kind == QA_GUEST_VALUE_INT64 ? (uint64_t)item->int64_value : item->uint64_value;
+        sv = (int64_t)uv;
+      } else {
+        if (item->kind != QA_GUEST_VALUE_INT32 && item->kind != QA_GUEST_VALUE_UINT32) qa_range_error("API 3 printf integer required");
+        /* BigInt.asIntN/asUintN(bits, BigInt(value)) */
+        const uint64_t raw = (uint64_t)(int64_t)item->number_value;
+        const uint64_t mask = bits == 32 ? 0xffffffffull : bits == 16 ? 0xffffull : 0xffull;
+        uv = raw & mask;
+        sv = (uv & ((mask >> 1) + 1)) != 0 ? (int64_t)uv - (int64_t)mask - 1 : (int64_t)uv;
+      }
       text = malloc(64);
       if (e->type == 'c') { text[0] = (char)(uv & 255); text[1] = 0; }
-      else if (e->type == 'd' || e->type == 'i') snprintf(text, 64, "%d", sv);
-      else if (e->type == 'o') snprintf(text, 64, "%o", uv);
-      else if (e->type == 'u') snprintf(text, 64, "%u", uv);
-      else snprintf(text, 64, "%x", uv);
+      else if (e->type == 'd' || e->type == 'i') snprintf(text, 64, "%lld", (long long)sv);
+      else if (e->type == 'o') snprintf(text, 64, "%llo", (unsigned long long)uv);
+      else if (e->type == 'u') snprintf(text, 64, "%llu", (unsigned long long)uv);
+      else snprintf(text, 64, "%llx", (unsigned long long)uv);
       if (e->type == 'X') for (char *p2 = text; *p2; p2++) *p2 = (char)toupper((unsigned char)*p2);
       if (has_precision && precision == 0 && uv == 0 && e->type != 'c') strcpy(text, (e->type == 'o' && strchr(e->flags, '#')) ? "0" : "");
       if (has_precision && e->type != 'c') {

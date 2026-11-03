@@ -9,15 +9,16 @@
 
 #include "qa/foundation/support.h"
 
+#define MAXIMUM_HOLES 1024
+
 /* TS `throw new Error(msg)`, as in src/text/atlas.c. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static bool set_vorbis_error(qa_vorbis_error *error, const char *operation, int code) {
@@ -163,12 +164,16 @@ bool qa_vorbis_decoder_read(qa_vorbis_decoder *decoder, int64_t max_frames,
   int16_t *samples = (int16_t *)malloc(capacity * sizeof *samples);
   if (samples == NULL) return set_plain_error(error, "out of memory");
   size_t sample_count = 0;
+  int holes = 0;
   while (sample_count < capacity) {
     size_t remaining_bytes = (capacity - sample_count) * sizeof *samples;
     int bitstream = 0;
     long count = ov_read(&decoder->file, (char *)(samples + sample_count),
                          (int)remaining_bytes, native_big_endian(), 2, 1,
                          &bitstream);
+    /* OV_HOLE is a recoverable gap in the data; libvorbisfile resumes at the
+       next page. */
+    if (count == OV_HOLE && ++holes <= MAXIMUM_HOLES) continue;
     if (count < 0) {
       free(samples);
       return set_vorbis_error(error, "ov_read", (int)count);

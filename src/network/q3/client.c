@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 struct qa_q3_wire_command_history { qa_q3_wire_user_command commands[64]; int32_t number; };
 bool qa_q3_wire_command_history_init(qa_q3_wire_command_history **out) { *out = calloc(1, sizeof **out); return *out != NULL; }
 void qa_q3_wire_command_history_destroy(qa_q3_wire_command_history *h) { free(h); }
@@ -154,7 +155,7 @@ static int64_t compute_ping(qa_q3_client_connection *c, const qa_q3_wire_snapsho
   int64_t outgoing = c->channel ? qa_q3_netchannel_outgoing_sequence(c->channel) : 1;
   for (int index = 0; index < 32; index++) {
     const sent_packet_t *packet = &c->out_packets[((int32_t)(outgoing - 1 - index)) & 31];
-    if (snapshot->player_state.command_time >= packet->server_time) return (int32_t)(real_time - packet->real_time);
+    if (snapshot->player_state.command_time >= packet->server_time) return qa_js_to_int32(real_time - packet->real_time); /* (realTime - packet.realTime) | 0 */
   }
   return 999;
 }
@@ -196,6 +197,10 @@ static int64_t download_size_cb(void *ctx, int64_t size) {
   qa_q3_client_connection *c = ctx;
   return c->bindings.download_size(c->bindings.ctx, size);
 }
+static void cursor_cleanup(void *cursor) { qa_q3_server_message_cursor_destroy(cursor); }
+static void message_cleanup(void *message) { qa_q3_server_message_destroy(message); }
+static void gamestate_cleanup(void *state) { qa_q3_gamestate_destroy(state); }
+static void reader_cleanup(void *reader) { qa_q3_message_reader_destroy(reader); }
 bool qa_q3_client_connection_receive_message(qa_q3_client_connection *c, int64_t sequence, const uint8_t *bytes, size_t len, double real_time, qa_q3_server_message *out) {
   memset(out, 0, sizeof *out);
   c->bindings.assert_current(c->bindings.ctx);
@@ -207,6 +212,12 @@ bool qa_q3_client_connection_receive_message(qa_q3_client_connection *c, int64_t
       c->mode.kind == QA_Q3_CLIENT_MODE_NETWORK ? 4 : 0, c->parse_entities, download_size_cb, c)) return false;
   int64_t acknowledge = 0, command_sequence = 0, client_number = 0, checksum_feed = 0;
   qa_q3_gamestate pending; memset(&pending, 0, sizeof pending);
+  /* Decode and binding raises propagate (TS has no catch here); these nodes free
+   * the cursor, the gamestate in progress and the partial message on that path. */
+  qa_cleanup cursor_guard, out_guard, pending_guard;
+  qa_cleanup_push(&cursor_guard, cursor_cleanup, cursor);
+  qa_cleanup_push(&out_guard, message_cleanup, out);
+  qa_cleanup_push(&pending_guard, gamestate_cleanup, &pending);
   size_t pending_cap = 0;
   bool ok = true, done = false;
   while (!done) {
@@ -327,6 +338,9 @@ bool qa_q3_client_connection_receive_message(qa_q3_client_connection *c, int64_t
     }
     qa_q3_server_message_step_destroy(&step);
   }
+  qa_cleanup_pop(&pending_guard);
+  qa_cleanup_pop(&out_guard);
+  qa_cleanup_pop(&cursor_guard);
   qa_q3_gamestate_destroy(&pending);
   qa_q3_server_message_cursor_destroy(cursor);
   if (!ok) qa_q3_server_message_destroy(out);
@@ -374,12 +388,15 @@ void qa_q3_client_packet_result_destroy(qa_q3_client_packet_result *r) {
 bool qa_q3_client_connection_receive_datagram(qa_q3_client_connection *c, const uint8_t *packet, size_t len, double real_time, qa_q3_client_packet_result *out) {
   memset(out, 0, sizeof *out);
   c->bindings.assert_current(c->bindings.ctx);
-  if (!c->channel || c->mode.kind != QA_Q3_CLIENT_MODE_NETWORK) qa_range_error("Demo connection cannot receive datagrams");
+  if (!c->channel || c->mode.kind != QA_Q3_CLIENT_MODE_NETWORK) qa_raise("Error", 0, 0, "Demo connection cannot receive datagrams");
   if (!qa_q3_netchannel_receive(c->channel, packet, len, NULL, &out->channel)) return false;
   if (out->channel.kind != QA_Q3_CHANNEL_ACCEPTED) return true;
   qa_q3_message_reader *reader = NULL;
   if (!qa_q3_message_reader_init(&reader, out->channel.payload, out->channel.payload_len, QA_Q3_MESSAGE_BITSTREAM, NULL)) return false;
+  qa_cleanup reader_guard;
+  qa_cleanup_push(&reader_guard, reader_cleanup, reader);
   int64_t ack = qa_q3_message_reader_read_long(reader);
+  qa_cleanup_pop(&reader_guard);
   qa_q3_message_reader_destroy(reader);
   if (!qa_q3_xor_server_message(out->channel.payload, out->channel.payload_len, c->mode.challenge, out->channel.sequence,
         qa_q3_reliable_ring_lookup_masked(c->reliable, ack), &out->plaintext)) return false;
@@ -389,13 +406,16 @@ bool qa_q3_client_connection_receive_datagram(qa_q3_client_connection *c, const 
 typedef struct { qa_q3_client_connection *c; } demo_seq_t;
 static void demo_seq(void *ctx, int64_t sequence) { ((demo_seq_t *)ctx)->c->server_message_sequence = sequence; }
 bool qa_q3_client_connection_read_demo(qa_q3_client_connection *c, double real_time, bool *is_end, qa_q3_demo_result *end_out, qa_q3_server_message *message_out) {
-  if (c->mode.kind != QA_Q3_CLIENT_MODE_DEMO) qa_range_error("Network connection cannot read demo messages");
+  if (c->mode.kind != QA_Q3_CLIENT_MODE_DEMO) qa_raise("Error", 0, 0, "Network connection cannot read demo messages");
   demo_seq_t ds = { c };
   qa_q3_demo_result record;
   if (!c->mode.reader.next(c->mode.reader.ctx, demo_seq, &ds, &record)) return false;
   if (record.kind == QA_Q3_DEMO_END) { *is_end = true; if (end_out) *end_out = record; return true; }
   *is_end = false;
+  qa_cleanup payload_guard;
+  qa_cleanup_push(&payload_guard, free, record.payload);
   bool ok = qa_q3_client_connection_receive_message(c, record.sequence, record.payload, record.payload_len, real_time, message_out);
+  qa_cleanup_pop(&payload_guard);
   free(record.payload);
   return ok;
 }
@@ -428,12 +448,12 @@ bool qa_q3_client_connection_get_server_command(qa_q3_client_connection *c, int6
 }
 void qa_q3_client_connection_transmit(qa_q3_client_connection *c, const qa_q3_client_send_options *options, const qa_q3_channel_delivery *delivery) {
   c->bindings.assert_current(c->bindings.ctx);
-  if (!c->channel || c->mode.kind != QA_Q3_CLIENT_MODE_NETWORK) qa_range_error("Demo connection cannot send packets");
-  int64_t packet_dup = (int64_t)trunc(options->packet_dup);
-  if (packet_dup < 0) packet_dup = 0;
-  if (packet_dup > 5) packet_dup = 5;
+  if (!c->channel || c->mode.kind != QA_Q3_CLIENT_MODE_NETWORK) qa_raise("Error", 0, 0, "Demo connection cannot send packets");
+  /* Math.max(0, Math.min(5, Math.trunc(packetDup))): a NaN cvar stays NaN, and
+   * (outgoing - 1 - NaN) & 31 selects slot 0. */
+  double packet_dup = qa_js_max(0, qa_js_min(5, trunc(options->packet_dup)));
   int64_t outgoing = qa_q3_netchannel_outgoing_sequence(c->channel);
-  const sent_packet_t *old = &c->out_packets[((int32_t)(outgoing - 1 - packet_dup)) & 31];
+  const sent_packet_t *old = &c->out_packets[qa_js_to_int32((double)outgoing - 1 - packet_dup) & 31];
   int64_t count = qa_q3_wire_command_history_current_number(c->commands) - old->command_number;
   if (count > 32) count = 32;
   if (count < 0) count = 0;
@@ -442,7 +462,7 @@ void qa_q3_client_connection_transmit(qa_q3_client_connection *c, const qa_q3_cl
   int64_t current = qa_q3_wire_command_history_current_number(c->commands);
   for (int64_t index = 0; index < count; index++) {
     if (!qa_q3_wire_command_history_read(c->commands, current - count + index + 1, &movement.commands[index]))
-      qa_range_error("Outgoing user command was overwritten");
+      qa_raise("Error", 0, 0, "Outgoing user command was overwritten");
   }
   qa_q3_client_header header = { c->server_id, c->server_message_sequence, c->server_command_sequence };
   int64_t outstanding = qa_q3_reliable_ring_outstanding(c->reliable);
@@ -483,17 +503,16 @@ bool qa_q3_client_connection_ready_to_send(const qa_q3_client_connection *c, con
   if (options->downloading && options->real_time - c->last_packet_sent_time < 50) return false;
   if (!options->active && !options->primed && !options->downloading && options->real_time - c->last_packet_sent_time < 1000) return false;
   if (options->local || options->lan) return true;
-  int64_t maximum = (int64_t)trunc(options->maximum_packets);
-  if (maximum < 15) maximum = 15;
-  if (maximum > 125) maximum = 125;
+  /* Math.max(15, Math.min(125, Math.trunc(maximumPackets))): NaN never sends here. */
+  double maximum = qa_js_max(15, qa_js_min(125, trunc(options->maximum_packets)));
   int64_t outgoing = qa_q3_netchannel_outgoing_sequence(c->channel);
   const sent_packet_t *previous = &c->out_packets[((int32_t)(outgoing - 1)) & 31];
-  return options->real_time - previous->real_time >= trunc(1000.0 / (double)maximum);
+  return options->real_time - previous->real_time >= trunc(1000.0 / maximum);
 }
 void qa_q3_client_connection_disconnect_packets(qa_q3_client_connection *c, const qa_q3_client_send_options *options, const qa_q3_channel_delivery *delivery) {
   if (c->mode.kind != QA_Q3_CLIENT_MODE_NETWORK) return;
   qa_q3_reliable_command cmd;
   if (!qa_q3_client_reliable_commands_add(c->reliable, "disconnect", &cmd))
-    qa_range_error("Client command overflow");
+    qa_raise("ReliableOverflowError", 0, 0, "Client command overflow");
   for (int pass = 0; pass < 3; pass++) qa_q3_client_connection_transmit(c, options, delivery);
 }

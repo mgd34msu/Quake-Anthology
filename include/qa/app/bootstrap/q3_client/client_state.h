@@ -5,6 +5,7 @@
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_CLIENT_STATE_H
 #include <stdbool.h>
 #include <stddef.h>
+#include "qa/compat/qvm/client_state.h"
 #include "qa/contracts/identity.h"
 #include "qa/network/q3/client.h"
 #include "qa/network/q3/game_state.h"
@@ -59,4 +60,11 @@ bool qa_app_local_q3_client_state_snapshot_ping(qa_app_local_q3_client_state *st
 bool qa_app_local_q3_client_state_get_server_command(qa_app_local_q3_client_state *state, double sequence,
                                                      char ***argv_out, size_t *argc_out);
 void qa_app_local_q3_client_state_retire(qa_app_local_q3_client_state *state);
+/* TS readonly source: the ApplicationQ3ClientSource view (q3_client.h), owned by the state. Its borrowed results
+ * (game state strings, system info, server command) stay valid until the next call of the same member. */
+struct qa_app_q3_client_source;
+const struct qa_app_q3_client_source *qa_app_local_q3_client_state_source(qa_app_local_q3_client_state *state);
+/* LocalQ3ClientState as Q3ClientState (compat/qvm/client-state.ts): generation, sequences, client number, snapshotPing,
+ * getServerCommand, gameState (get, copySourceRecord) and commands (currentNumber, read). ctx is the state. */
+qa_q3_client_state qa_app_local_q3_client_state_connection(qa_app_local_q3_client_state *state);
 #endif

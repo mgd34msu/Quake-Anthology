@@ -17,8 +17,8 @@
 #include "../rrm_internal.h"
 
 static void screen(qa_q2m_context *c, bool active) {
-  qa_q2f_entity *entity = c->entity;
-  double cells = c->game->host->inventory.count(c->game->host->inventory.ctx, entity->actor.id, "q2:monster-power");
+  qa_q2_entity *entity = c->entity;
+  double cells = qa_shared_inventory_table_count(c->game->host->inventory, entity->actor.id, "q2:monster-power");
   qa_q2rm_set_powered(c->game, entity->actor, active ? "screen" : "none", active ? cells : 0);
 }
 static void run_fn(void *ctx, qa_q2m_context *c) {
@@ -34,8 +34,8 @@ static bool tongue_allowed(qa_vec3 start, qa_vec3 end) {
   return fabs(pitch) <= 30;
 }
 static void hit(qa_q2m_context *c, bool right) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_bounds bounds = q2rm_body(game, entity).bounds;
   qa_vec3 aim = {80, right ? bounds.max.x : bounds.min.x, 8};
   if (c->weapons.fire_hit(c->weapons.ctx, entity, game, aim, 15 + floor(q2rm_rnd(game) * 5), 40))
@@ -47,7 +47,7 @@ typedef struct eye_ctx {
   const qa_vec3 *positions;
   bool update;
 } eye_ctx;
-static void eye_fn(void *ctx, qa_q2f_entity *beam, qa_q2f_game *game) {
+static void eye_fn(void *ctx, qa_q2_entity *beam, qa_q2_game_services *game) {
   eye_ctx *eye = ctx;
   qa_q2m_context *context = beam->has_owner ? qa_q2m_monsters_context(eye->monsters, beam->owner) : NULL;
   if (!context) { qa_q2rm_free_monster_beam_fn(NULL, beam, game); return; }
@@ -61,7 +61,7 @@ static void eye_fn(void *ctx, qa_q2f_entity *beam, qa_q2f_game *game) {
                                  qa_scale3_double(axes.up, position.z));
   qa_vec3 direction;
   if (!qa_q2rm_predicted_direction(context, start, 0, false, 0.1 + q2rm_rnd(game) * 0.1, &direction)) return;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = start;
   q2rm_move_body(game, beam, change, false, false);
@@ -81,8 +81,8 @@ static void melee_fn(void *ctx, qa_q2m_context *c) {
 }
 static void init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  double type = qa_q2f_number_field(&c->entity->spawn, "power_armor_type", 1);
-  double cells = qa_q2f_number_field(&c->entity->spawn, "power_armor_power", 100);
+  double type = qa_q2_number_field(&c->entity->spawn, "power_armor_type", 1);
+  double cells = qa_q2_number_field(&c->entity->spawn, "power_armor_power", 100);
   qa_q2mpm_monster_power_armor(c, type == 2 ? "shield" : "screen", cells);
   if (type == 0) screen(c, false);
 }
@@ -100,8 +100,8 @@ static bool duck_fn(void *ctx, qa_q2m_context *c, double eta) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time) return;
@@ -114,8 +114,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   entity->effects = 0;
@@ -123,8 +123,8 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   if (qa_q2rm_check_gib(c)) {
     q2rm_snd(c, "misc/udeath.wav", 2);
     entity->skin = trunc(entity->skin / 2);
-    qa_q2f_entity *first = game->entity(game->ctx, entity->has_beam ? &entity->beam : NULL);
-    qa_q2f_entity *second = game->entity(game->ctx, entity->has_beam2 ? &entity->beam2 : NULL);
+    qa_q2_entity *first = game->entity(game->ctx, entity->has_beam ? &entity->beam : NULL);
+    qa_q2_entity *second = game->entity(game->ctx, entity->has_beam2 ? &entity->beam2 : NULL);
     if (first) qa_q2rm_free_monster_beam_fn(NULL, first, game);
     if (second) qa_q2rm_free_monster_beam_fn(NULL, second, game);
     qa_q2m_gib_options plain = {false, false, false, false};
@@ -177,8 +177,8 @@ static void chest_closed_fn(void *ctx, qa_q2m_context *c) {
 }
 static void tongue_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
   qa_vec3 start = qa_q2m_project_flash_default(c, q2rm_v3(24, 0, 16));
@@ -193,31 +193,31 @@ static void tongue_fn(void *ctx, qa_q2m_context *c) {
   qa_trace_result trace = q2rm_trace(game, start, end, NULL, &entity->actor.id, (double)0x46004003u);
   if (trace.hit.kind != QA_TRACE_HIT_ACTOR || !qa_same_actor(trace.hit.actor, entity->enemy)) return;
   q2rm_snd(c, "brain/brnatck3.wav", 1);
-  qa_q2bm_extended_event beam;
+  qa_q2_presentation_event beam;
   memset(&beam, 0, sizeof beam);
   beam.kind = "monster-beam";
   beam.effect = "parasite";
-  beam.actor = entity->actor.id;
+  beam.has_actor = true; beam.actor = entity->actor.id;
   beam.start = start; beam.end = end;
-  qa_q2bm_emit_extended(beam);
+  game->host->emit(game->host->ctx, beam);
   (void)q2rm_damage(game, entity->enemy, entity, &entity->actor.id, 5, 0, qa_sub3_double(start, end), end,
                     q2rm_zero(), 36, true, 8);
   qa_body_state body = q2rm_body(game, entity);
-  qa_q2f_owned_result target = game->host->actors.resolve_owned(game->host->actors.ctx, entity->enemy);
+  qa_owned_actor target; bool has_target = qa_session_actor_registry_resolve_owned(game->host->actors, entity->enemy, &target);
   qa_vec3 origin = body.origin;
   origin.z += 1;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = origin;
   q2rm_move_body(game, entity, change, false, false);
-  if (target.has_value) {
+  if (has_target) {
     qa_body_state written = enemy;
     written.velocity = qa_scale3_double(qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).forward, -1200);
-    game->host->bodies.write(game->host->bodies.ctx, target.value, written);
+    qa_shared_body_table_write(game->host->bodies, target, written);
   }
 }
 typedef struct brain_ctx {
-  qa_q2f_think right_eye, left_eye;
+  qa_q2_think right_eye, left_eye;
 } brain_ctx;
 static void laserbeam_fn(void *ctx, qa_q2m_context *c) {
   brain_ctx *brain = ctx;
@@ -235,22 +235,22 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
 }
 
-qa_q2m_definition qa_q2rm_create_rerelease_brain_definition(qa_q2m_monsters *monsters) {
-  eye_ctx *right = malloc(sizeof *right);
-  eye_ctx *left = malloc(sizeof *left);
-  brain_ctx *brain = malloc(sizeof *brain);
-  qa_q2f_named_think *think_defs = malloc(3 * sizeof *think_defs);
-  if (!right || !left || !brain || !think_defs) qa_q2f_error("Out of memory creating rerelease brain definition");
+qa_q2m_definition qa_q2rm_create_rerelease_brain_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
+  eye_ctx *right = qa_q2mpm_arena_alloc(arena, sizeof *right);
+  eye_ctx *left = qa_q2mpm_arena_alloc(arena, sizeof *left);
+  brain_ctx *brain = qa_q2mpm_arena_alloc(arena, sizeof *brain);
+  qa_q2_named_think *think_defs = qa_q2mpm_arena_alloc(arena, 3 * sizeof *think_defs);
+  if (!right || !left || !brain || !think_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease brain definition");
   right->monsters = monsters; right->positions = qa_q2mpm_xatrix_brain_right_eye; right->update = false;
   left->monsters = monsters; left->positions = qa_q2mpm_xatrix_brain_left_eye; left->update = true;
-  brain->right_eye = (qa_q2f_think){right, eye_fn};
-  brain->left_eye = (qa_q2f_think){left, eye_fn};
+  brain->right_eye = (qa_q2_think){right, eye_fn};
+  brain->left_eye = (qa_q2_think){left, eye_fn};
   think_defs[0].name = "rerelease.brain.right_eye_update";
   think_defs[0].cb = brain->right_eye;
   think_defs[1].name = "rerelease.brain.left_eye_update";
@@ -301,7 +301,7 @@ qa_q2m_definition qa_q2rm_create_rerelease_brain_definition(qa_q2m_monsters *mon
   definition.duck_ctx = NULL; definition.duck = duck_fn;
   definition.reactions.pain = pain_fn;
   definition.reactions.die = die_fn;
-  definition.callbacks = qa_q2rm_merge_callbacks(base->callbacks, base->callback_count,
+  definition.callbacks = qa_q2rm_merge_callbacks(arena, base->callbacks, base->callback_count,
                                                  extra, sizeof extra / sizeof extra[0], &definition.callback_count);
   return definition;
 }

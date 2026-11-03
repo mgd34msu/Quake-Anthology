@@ -1,16 +1,17 @@
 /* Port of src/world/actors/registry.ts. GPL-2.0-or-later. */
 #include "qa/world/actors/registry.h"
 
+#include <math.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -319,6 +320,13 @@ static restored_entry *find_restored(const qa_session_actor_registry *registry,
   }
   return NULL;
 }
+/* Map.get(slot) with a number key: a fraction, NaN or out-of-range slot matches no
+ * integral key (a C cast would truncate onto one, or be undefined). */
+static restored_entry *find_restored_number(const qa_session_actor_registry *registry,
+                                            double saved_slot) {
+  if (!(saved_slot == trunc(saved_slot) && fabs(saved_slot) <= 9007199254740991.0)) return NULL;
+  return find_restored(registry, (int64_t)saved_slot);
+}
 static void set_restored(qa_session_actor_registry *registry, int64_t saved_slot,
                          int64_t saved_generation, qa_owned_actor actor) {
   restored_entry *existing = find_restored(registry, saved_slot);
@@ -350,8 +358,8 @@ static void remove_restored_for_actor(qa_session_actor_registry *registry, qa_ow
 
 static char *dup_key(const char *prefix, double slot_value, double generation) {
   char buffer[256];
-  if (prefix != NULL) (void)snprintf(buffer, sizeof buffer, "%s:%.0f/%.0f", prefix, slot_value, generation);
-  else (void)snprintf(buffer, sizeof buffer, "%.0f/%.0f", slot_value, generation);
+  if (prefix != NULL) (void)snprintf(buffer, sizeof buffer, "%s:%s/%s", prefix, QA_JS_NUMBER(slot_value), QA_JS_NUMBER(generation));
+  else (void)snprintf(buffer, sizeof buffer, "%s/%s", QA_JS_NUMBER(slot_value), QA_JS_NUMBER(generation));
   char *key = malloc(strlen(buffer) + 1);
   if (key == NULL) abort();
   strcpy(key, buffer);
@@ -364,9 +372,16 @@ static bool find_saved_ref(const qa_session_actor_registry *registry, const char
   }
   return false;
 }
+/* Map.set: an existing key keeps its position and takes the new value
+ * (rebindRestoredSource replaces the identity restore recorded). */
 static void set_saved_ref(qa_session_actor_registry *registry, char *key, qa_actor_id value) {
-  qa_actor_id existing;
-  if (find_saved_ref(registry, key, &existing)) { free(key); return; }
+  for (size_t i = 0; i < registry->saved_ref_count; i++) {
+    if (strcmp(registry->saved_refs[i].key, key) == 0) {
+      registry->saved_refs[i].value = value;
+      free(key);
+      return;
+    }
+  }
   if (registry->saved_ref_count == registry->saved_ref_capacity) {
     registry->saved_ref_capacity = registry->saved_ref_capacity != 0 ? registry->saved_ref_capacity * 2 : 8;
     registry->saved_refs = xrealloc(registry->saved_refs,
@@ -377,6 +392,15 @@ static void set_saved_ref(qa_session_actor_registry *registry, char *key, qa_act
   registry->saved_ref_count++;
 }
 
+typedef struct release_call {
+  qa_actor_release_fn fn;
+  void *ctx;
+  qa_owned_actor actor;
+} release_call;
+static void run_release_call(void *arg) {
+  release_call *call = arg;
+  call->fn(call->ctx, call->actor);
+}
 void qa_session_actor_registry_release(qa_session_actor_registry *registry,
                                        qa_owned_actor actor) {
   slot *value = require_slot(registry, actor);
@@ -394,10 +418,16 @@ void qa_session_actor_registry_release(qa_session_actor_registry *registry,
     if (snapshot == NULL) abort();
     memcpy(snapshot, registry->releases, count * sizeof *snapshot);
   }
+  /* Every callback runs; failures are collected into one AggregateError. */
+  size_t errors = 0;
   for (size_t i = 0; i < count; i++) {
-    if (snapshot[i].active) snapshot[i].fn(snapshot[i].ctx, actor);
+    if (!snapshot[i].active) continue;
+    release_call call = {snapshot[i].fn, snapshot[i].ctx, actor};
+    qa_caught_error caught;
+    if (!qa_try(run_release_call, &call, &caught)) errors++;
   }
   free(snapshot);
+  if (errors > 0) qa_raise("AggregateError", 0, 0, "Actor release callbacks failed");
 }
 
 qa_actor_observation_result qa_session_actor_registry_observe(
@@ -523,7 +553,7 @@ const qa_source_actor_checkpoint *qa_session_actor_registry_source_checkpoint(
 
 bool qa_session_actor_registry_resolve_saved(const qa_session_actor_registry *registry,
                                              qa_saved_actor_id saved, qa_owned_actor *out) {
-  restored_entry *restored = find_restored(registry, (int64_t)saved.slot);
+  restored_entry *restored = find_restored_number(registry, saved.slot);
   if (restored != NULL) {
     if ((double)restored->saved_generation == saved.generation &&
         qa_session_actor_registry_is_live(registry, restored->actor.id)) {
@@ -532,7 +562,9 @@ bool qa_session_actor_registry_resolve_saved(const qa_session_actor_registry *re
     }
     return false;
   }
-  if (saved.slot < 0 || (size_t)saved.slot >= registry->slot_count) return false;
+  /* this.slots[saved.slot]: a fraction or NaN reads undefined. */
+  if (!(saved.slot >= 0 && saved.slot < (double)registry->slot_count) || saved.slot != trunc(saved.slot))
+    return false;
   const slot *value = &registry->slots[(size_t)saved.slot];
   if (value->has_actor && (double)value->actor.id.generation == saved.generation) {
     *out = value->actor;
@@ -552,11 +584,11 @@ void qa_session_actor_registry_rebind_restored_source(qa_session_actor_registry 
   for (size_t i = 0; i < registry->restored_source_count; i++) {
     qa_source_actor_checkpoint source = registry->restored_sources[i].value;
     if (!str_eq(source.provider, provider)) continue;
-    if (find_restored(registry, (int64_t)source.actor.slot) != NULL)
+    if (find_restored_number(registry, source.actor.slot) != NULL)
       qa_range_error("Saved source actor has not been retired before reconstruction");
     qa_owned_actor actor;
     if (!qa_session_actor_registry_at_source(registry, provider, (int64_t)source.source_slot, &actor))
-      qa_range_error("Reconstructed source is missing saved slot %s/%.0f", provider, source.source_slot);
+      qa_range_error("Reconstructed source is missing saved slot %s/%s", provider, QA_JS_NUMBER(source.source_slot));
     for (size_t j = 0; j < registry->restored_count; j++) {
       if (qa_same_owned_actor(registry->restored[j].actor, actor))
         qa_range_error("Reconstructed actor already has a saved identity");
@@ -671,7 +703,7 @@ qa_session_actor_registry *qa_session_actor_registry_restore(
   }
   for (size_t i = 0; i < source_count; i++) {
     const qa_source_actor_checkpoint *source = &sources[i];
-    restored_entry *restored = find_restored(registry, (int64_t)source->actor.slot);
+    restored_entry *restored = find_restored_number(registry, source->actor.slot);
     qa_owned_actor actor;
     bool have_actor = restored != NULL && (double)restored->saved_generation == source->actor.generation;
     if (have_actor) actor = restored->actor;
@@ -727,16 +759,27 @@ void qa_session_actor_registry_off_release(qa_session_actor_registry *registry, 
   }
 }
 
+typedef struct close_release {
+  qa_session_actor_registry *registry;
+  qa_owned_actor actor;
+} close_release;
+static void run_close_release(void *arg) {
+  close_release *call = arg;
+  qa_session_actor_registry_release(call->registry, call->actor);
+}
 void qa_session_actor_registry_close(qa_session_actor_registry *registry) {
   if (registry->closed) return;
   registry->closed = true;
+  size_t errors = 0;
   for (size_t i = 0; i < registry->slot_count; i++) {
-    while (registry->slots[i].has_actor) {
-      qa_owned_actor actor = registry->slots[i].actor;
-      qa_session_actor_registry_release(registry, actor);
+    if (registry->slots[i].has_actor) {
+      close_release call = {registry, registry->slots[i].actor};
+      qa_caught_error caught;
+      if (!qa_try(run_close_release, &call, &caught)) errors++;
     }
   }
   registry->release_count = 0;
+  if (errors > 0) qa_raise("AggregateError", 0, 0, "Actor registry shutdown failed");
 }
 
 /* --- contracts adapter --- */

@@ -9,6 +9,7 @@
 
 #include "qa/core/binary/index.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js.h"
 
 bool qa_parse_bnvib(const uint8_t *bytes, size_t length, qa_bnvib_pattern *out) {
   memset(out, 0, sizeof *out);
@@ -72,7 +73,7 @@ void qa_bnvib_pattern_dispose(qa_bnvib_pattern *pattern) {
   memset(pattern, 0, sizeof *pattern);
 }
 
-double qa_bnvib_frequency(double byte) { return 10 * pow(2, byte / 32); }
+double qa_bnvib_frequency(double byte) { return 10 * qa_js_pow(2, byte / 32); }
 
 char *qa_tactile_path_for_sound(const char *sound) {
   const char *path = sound[0] == '#' ? sound + 1 : sound;
@@ -149,7 +150,7 @@ qa_haptics_result qa_bnvib_scheduler_update(qa_bnvib_scheduler *scheduler,
   if (pattern == NULL) return unchanged_result();
   double started = scheduler->started;
   double period = 1000 / pattern->sample_rate_hz;
-  double index = fmax(0, floor((now_milliseconds - started) / period));
+  double index = qa_js_max(0, floor((now_milliseconds - started) / period));
   if (index >= (double)pattern->sample_count) {
     if (!pattern->has_loop) {
       return wrapped_result(qa_bnvib_scheduler_stop(scheduler));
@@ -159,7 +160,7 @@ qa_haptics_result qa_bnvib_scheduler_update(qa_bnvib_scheduler *scheduler,
                            loop_length + pattern->loop_interval_samples);
     index = position >= loop_length ? -2 : pattern->loop_start_sample + position;
   }
-  double hold = fmax(50, ceil(period) + 20);
+  double hold = qa_js_max(50, ceil(period) + 20);
   if (index == scheduler->last_index &&
       now_milliseconds - scheduler->last_output < hold / 2) {
     return unchanged_result();

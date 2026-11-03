@@ -162,7 +162,7 @@ void qa_qvm_write_item_storage(const qa_qvm_image *image, qa_qvm_item_storage st
   } else {
     const qa_qvm_item_mask *bit = NULL;
     for (size_t i = 0; i < storage.item_count; i++)
-      if (strcmp(storage.items[i].item, entry.item) == 0) bit = &storage.items[i];
+      if (strcmp(storage.items[i].item, entry.item) == 0) { bit = &storage.items[i]; break; }
     if (bit == NULL || entry.capacity != 1 || (entry.count != 0 && entry.count != 1))
       qa_range_error("QVM packed ownership requires one admitted bit");
     double previous = access.read(access.ctx, storage.field);

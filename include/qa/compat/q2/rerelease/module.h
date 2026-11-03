@@ -85,6 +85,7 @@ void qa_compat_q2_rerelease_guest_module_client_disconnect(qa_compat_q2_rereleas
 void qa_compat_q2_rerelease_guest_module_spawn_entities(qa_compat_q2_rerelease_guest_module *m, const char *map, const char *entities, const char *spawnpoint);
 qa_guest_address qa_compat_q2_rerelease_guest_module_string(qa_compat_q2_rerelease_guest_module *m, const char *text);
 qa_raw_entity_table qa_compat_q2_rerelease_guest_module_entities(qa_compat_q2_rerelease_guest_module *m);
-void qa_compat_q2_rerelease_guest_module_draw_hud(qa_compat_q2_rerelease_guest_module *m, double split, qa_guest_address server_data,
-                                                  const double viewport[4], const double safe_area[4], double scale, double player_number, qa_guest_address player_state);
+/* TS fitRereleaseText: oversized peer text is cut to the guest buffer (UTF-8 bytes < capacity). Malloc'd. */
+char *qa_compat_q2_fit_rerelease_text(const char *text, size_t capacity);
+
 #endif

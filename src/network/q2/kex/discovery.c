@@ -1,5 +1,6 @@
 /* Port of src/network/q2/kex/discovery.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/kex/discovery.h"
+#include "qa/foundation/js.h"
 
 #include <arpa/inet.h>
 #include <ctype.h>
@@ -11,12 +12,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "qa/foundation/support.h"
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/handshake.h"
 #include "qa/network/q2/kex/packet.h"
+#include "qa/foundation/js_case.h"
 
 #define SERVICE_NAME "_game._udp.local"
 #define INSTANCE_NAME "Quake II._game._udp.local"
@@ -28,12 +32,9 @@ static char *dup_str(const char *s) {
   if (out != NULL) memcpy(out, s, n + 1);
   return out;
 }
+/* TS name.toLowerCase() over UTF-8 DNS labels (Unicode lowering). */
 static char *dup_lower(const char *s) {
-  char *out = dup_str(s);
-  if (out != NULL) {
-    for (char *p = out; *p != '\0'; p++) *p = (char)tolower((unsigned char)*p);
-  }
-  return out;
+  return qa_js_to_lower_case(s);
 }
 
 uint8_t *qa_kex_discovery_query(size_t *out_length) {
@@ -55,66 +56,67 @@ uint8_t *qa_kex_discovery_query(size_t *out_length) {
   return out;
 }
 
+/* The reader raises (truncated string or integer, invalid UTF-8) on remote bytes; what one
+ * decode owns is released on that path so a catching caller (the browser's poll) leaks nothing. */
+typedef struct kex_status_scope {
+  char *name, *key, *value;
+  qa_qw_info rules;
+} kex_status_scope;
+static void kex_status_scope_release(void *arg) {
+  kex_status_scope *scope = arg;
+  free(scope->name); free(scope->key); free(scope->value);
+  scope->name = scope->key = scope->value = NULL;
+  qa_qw_info_destroy(&scope->rules);
+}
 bool qa_kex_read_discovery(const uint8_t *bytes, size_t length,
                            qa_server_status *out) {
   memset(out, 0, sizeof *out);
+  kex_status_scope scope;
+  memset(&scope, 0, sizeof scope);
+  qa_qw_info_init(&scope.rules);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, kex_status_scope_release, &scope);
   qa_kex_packet_reader reader;
   qa_kex_packet_reader_init(&reader, bytes, length);
-  char *name = qa_kex_packet_reader_string(&reader);
-  if (name == NULL) return false;
-  uint64_t players = qa_kex_packet_reader_integer(&reader);
-  uint64_t maximum = qa_kex_packet_reader_integer(&reader);
-  if (players > 255 || maximum > 255 || players > maximum || strlen(name) > 1024) {
-    free(name);
-    qa_q2_throw_error("Invalid KEX lobby status");
-  }
-  qa_qw_info rules;
-  qa_qw_info_init(&rules);
-  bool oom = false;
-  while (qa_kex_packet_reader_remaining(&reader) != 0 && !oom) {
-    char *key = qa_kex_packet_reader_string(&reader);
-    if (key == NULL) { oom = true; break; }
-    char *value = qa_kex_packet_reader_string(&reader);
-    if (value == NULL) {
-      free(key);
-      oom = true;
-      break;
+  bool ok = false;
+  scope.name = qa_kex_packet_reader_string(&reader);
+  if (scope.name != NULL) {
+    uint64_t players = qa_kex_packet_reader_integer(&reader);
+    uint64_t maximum = qa_kex_packet_reader_integer(&reader);
+    if (players > 255 || maximum > 255 || players > maximum || strlen(scope.name) > 1024)
+      qa_q2_throw_error("Invalid KEX lobby status");
+    bool oom = false;
+    while (qa_kex_packet_reader_remaining(&reader) != 0) {
+      scope.key = qa_kex_packet_reader_string(&reader);
+      if (scope.key == NULL) { oom = true; break; }
+      scope.value = qa_kex_packet_reader_string(&reader);
+      if (scope.value == NULL) { oom = true; break; }
+      if (scope.rules.count >= 256) qa_q2_throw_error("KEX lobby has too many attributes");
+      qa_qw_info_set(&scope.rules, scope.key, scope.value);
+      free(scope.key); free(scope.value);
+      scope.key = scope.value = NULL;
     }
-    if (rules.count >= 256) {
-      free(key);
-      free(value);
-      qa_qw_info_destroy(&rules);
-      free(name);
-      qa_q2_throw_error("KEX lobby has too many attributes");
+    const char *mapname = qa_qw_info_get(&scope.rules, "map");
+    char *map = oom ? NULL : dup_str(mapname != NULL ? mapname : "");
+    if (map != NULL) {
+      out->name = scope.name;
+      out->map = map;
+      out->players = (double)players;
+      out->max_players = (double)maximum;
+      out->rules = scope.rules;
+      memset(&out->wire, 0, sizeof out->wire);
+      out->wire.protocol.kind = "q2-kex";
+      out->wire.protocol.version = 2023;
+      out->wire.protocol.flags = 0;
+      out->wire.protocol.revision = 0;
+      scope.name = NULL;
+      qa_qw_info_init(&scope.rules);
+      ok = true;
     }
-    qa_qw_info_set(&rules, key, value);
-    free(key);
-    free(value);
   }
-  if (oom) {
-    qa_qw_info_destroy(&rules);
-    free(name);
-    return false;
-  }
-  const char *mapname = qa_qw_info_get(&rules, "map");
-  if (mapname == NULL) mapname = "";
-  out->name = name;
-  out->map = dup_str(mapname);
-  if (out->map == NULL) {
-    free(name);
-    qa_qw_info_destroy(&rules);
-    memset(out, 0, sizeof *out);
-    return false;
-  }
-  out->players = (double)players;
-  out->max_players = (double)maximum;
-  out->rules = rules;
-  memset(&out->wire, 0, sizeof out->wire);
-  out->wire.protocol.kind = "q2-kex";
-  out->wire.protocol.version = 2023;
-  out->wire.protocol.flags = 0;
-  out->wire.protocol.revision = 0;
-  return true;
+  qa_cleanup_pop(&guard);
+  kex_status_scope_release(&scope);
+  return ok;
 }
 
 /* --- mDNS helpers (TS domain/short/record) --- */
@@ -141,7 +143,7 @@ static bool byte_push(byte_list *list, uint8_t value) {
   return bytes_push(list, &value, 1);
 }
 static bool short_push(byte_list *list, double value) {
-  uint32_t v = (uint32_t)(int32_t)value;
+  uint32_t v = qa_js_to_uint32(value); /* value >>> 8 & 255, value & 255 */
   uint8_t pair[2] = {(uint8_t)((v >> 8) & 255u), (uint8_t)(v & 255u)};
   return bytes_push(list, pair, 2);
 }
@@ -214,37 +216,39 @@ static bool utf8_check(const uint8_t *bytes, size_t length) {
   }
   return true;
 }
+static void byte_list_release(void *arg) {
+  byte_list *list = (byte_list *)arg;
+  free(list->data);
+  list->data = NULL;
+}
 static char *dns_name(dns_reader *reader, bool use_position, size_t initial_offset,
                       bool advance) {
   size_t offset = use_position ? reader->position : initial_offset;
   bool has_end = false;
   size_t end = 0;
   byte_list joined = {NULL, 0, 0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, byte_list_release, &joined);
   size_t seen[128];
   size_t seen_count = 0;
+  char *out = NULL;
   for (;;) {
     bool dup = false;
     for (size_t i = 0; i < seen_count; i++) {
       if (seen[i] == offset) dup = true;
     }
-    if (dup || seen_count >= 128) {
-      free(joined.data);
-      qa_q2_throw_error("Invalid mDNS compression");
-    }
+    if (dup || seen_count >= 128) qa_q2_throw_error("Invalid mDNS compression");
     seen[seen_count++] = offset;
     uint8_t size = byte_at(reader->bytes, reader->length, offset++, "Truncated mDNS name");
     if (size == 0) {
       if (advance) reader->position = has_end ? end : offset;
       size_t n = joined.length > 0 ? joined.length - 1 : 0;
-      char *out = (char *)malloc(n + 1);
-      if (out == NULL) {
-        free(joined.data);
-        return NULL;
+      out = (char *)malloc(n + 1);
+      if (out != NULL) {
+        if (n > 0) memcpy(out, joined.data, n);
+        out[n] = '\0';
       }
-      if (n > 0) memcpy(out, joined.data, n);
-      out[n] = '\0';
-      free(joined.data);
-      return out;
+      break;
     }
     if ((size & 192) == 192) {
       uint8_t low = byte_at(reader->bytes, reader->length, offset++, "Truncated mDNS pointer");
@@ -255,20 +259,14 @@ static char *dns_name(dns_reader *reader, bool use_position, size_t initial_offs
       offset = ((size_t)(size & 63) << 8) | low;
       continue;
     }
-    if (size > 63 || offset + size > reader->length) {
-      free(joined.data);
-      qa_q2_throw_error("Invalid mDNS label");
-    }
-    if (!utf8_check(reader->bytes + offset, size)) {
-      free(joined.data);
-      qa_q2_throw_utf8_error();
-    }
-    if (!bytes_push(&joined, reader->bytes + offset, size) || !byte_push(&joined, '.')) {
-      free(joined.data);
-      return NULL;
-    }
+    if (size > 63 || offset + size > reader->length) qa_q2_throw_error("Invalid mDNS label");
+    if (!utf8_check(reader->bytes + offset, size)) qa_q2_throw_utf8_error();
+    if (!bytes_push(&joined, reader->bytes + offset, size) || !byte_push(&joined, '.')) break;
     offset += size;
   }
+  qa_cleanup_pop(&node);
+  free(joined.data);
+  return out;
 }
 
 typedef struct dns_record {
@@ -291,6 +289,9 @@ static void dns_parsed_free(dns_parsed *parsed) {
   }
 }
 
+static void free_arg(void *arg) { free(arg); }
+/* Fills `out` in place so a raise leaves every record it read owned by `out`; the caller frees
+ * it with dns_parsed_free on every path. */
 static bool dns_read(dns_reader *reader, dns_parsed *out) {
   memset(out, 0, sizeof *out);
   int64_t questions = (int64_t)dns_u16_at(reader->bytes, reader->length, 4);
@@ -301,56 +302,36 @@ static bool dns_read(dns_reader *reader, dns_parsed *out) {
   for (int64_t i = 0; i < questions; i++) {
     char *name = dns_name(reader, true, 0, true);
     if (name == NULL) return false;
+    qa_cleanup node;
+    qa_cleanup_push(&node, free_arg, name);
     int64_t type = dns_word(reader);
     (void)dns_word(reader);
+    qa_cleanup_pop(&node);
     char *lower = dup_lower(name);
     free(name);
     if (lower == NULL) return false;
     if (strcmp(lower, SERVICE_NAME) == 0 && (type == 12 || type == 255)) out->question = true;
     free(lower);
   }
-  size_t capacity = 8;
-  size_t total = 0;
-  dns_record *records = (dns_record *)calloc(capacity, sizeof *records);
-  if (records == NULL) return false;
+  if (count > 0) {
+    out->records = (dns_record *)calloc((size_t)count, sizeof *out->records);
+    if (out->records == NULL) return false;
+  }
   for (int64_t i = 0; i < count; i++) {
     char *name = dns_name(reader, true, 0, true);
-    if (name == NULL) {
-      dns_parsed tmp = {out->question, records, total};
-      dns_parsed_free(&tmp);
-      return false;
-    }
-    int64_t type = dns_word(reader);
+    if (name == NULL) return false;
+    dns_record *record = &out->records[out->record_count++];
+    record->name = name;
+    record->type = dns_word(reader);
     (void)dns_word(reader);
     reader->position += 4;
     int64_t rec_len = dns_word(reader);
     size_t start = reader->position;
     reader->position += (size_t)(rec_len > 0 ? rec_len : 0);
-    if (reader->position > reader->length) {
-      free(name);
-      dns_parsed tmp = {out->question, records, total};
-      dns_parsed_free(&tmp);
-      qa_q2_throw_error("Truncated mDNS record");
-    }
-    if (total == capacity) {
-      capacity *= 2;
-      dns_record *grown = (dns_record *)realloc(records, capacity * sizeof *grown);
-      if (grown == NULL) {
-        free(name);
-        dns_parsed tmp = {out->question, records, total};
-        dns_parsed_free(&tmp);
-        return false;
-      }
-      records = grown;
-    }
-    records[total].name = name;
-    records[total].type = type;
-    records[total].start = start;
-    records[total].length = rec_len;
-    total++;
+    if (reader->position > reader->length) qa_q2_throw_error("Truncated mDNS record");
+    record->start = start;
+    record->length = rec_len;
   }
-  out->records = records;
-  out->record_count = total;
   return true;
 }
 
@@ -452,20 +433,23 @@ static const qa_net_address *get_address(const qa_kex_mdns *mdns, const char *ta
 
 static bool ends_with_service(const char *name) {
   const char *suffix = "." SERVICE_NAME;
-  size_t n = strlen(name);
-  size_t s = strlen(suffix);
-  if (n < s) return false;
-  for (size_t i = 0; i < s; i++) {
-    if (tolower((unsigned char)name[n - s + i]) != tolower((unsigned char)suffix[i])) return false;
-  }
-  return true;
+  return qa_js_ends_with_ignore_case(name, suffix); /* TS toLowerCase().endsWith */
 }
 
+static void address_release(void *arg) { qa_net_address_destroy((qa_net_address *)arg); }
+static void dns_parsed_release(void *arg) { dns_parsed_free((dns_parsed *)arg); }
 static void mdns_receive(qa_kex_mdns *mdns, const uint8_t *bytes, size_t length) {
   if (length < 12 || length > 9000) qa_q2_throw_error("Invalid mDNS packet");
   dns_reader reader = {bytes, length, 12};
   dns_parsed parsed;
-  if (!dns_read(&reader, &parsed)) return;
+  memset(&parsed, 0, sizeof parsed);
+  qa_cleanup node;
+  qa_cleanup_push(&node, dns_parsed_release, &parsed);
+  if (!dns_read(&reader, &parsed)) {
+    qa_cleanup_pop(&node);
+    dns_parsed_free(&parsed);
+    return;
+  }
   if (parsed.question) mdns_announce(mdns, 120);
   for (size_t i = 0; i < parsed.record_count; i++) {
     dns_record *entry = &parsed.records[i];
@@ -518,12 +502,26 @@ static void mdns_receive(qa_kex_mdns *mdns, const uint8_t *bytes, size_t length)
       qa_net_address with_port;
       if (qa_net_address_clone(address, &with_port) != 0) {
         with_port.port = (int64_t)mdns->endpoints[i].port;
+        qa_cleanup found_node;
+        qa_cleanup_push(&found_node, address_release, &with_port);
         mdns->found(mdns->found_ctx, &with_port);
+        qa_cleanup_pop(&found_node);
         qa_net_address_destroy(&with_port);
       }
     }
   }
+  qa_cleanup_pop(&node);
   dns_parsed_free(&parsed);
+}
+
+typedef struct receive_scope {
+  qa_kex_mdns *mdns;
+  const uint8_t *bytes;
+  size_t length;
+} receive_scope;
+static void receive_body(void *arg) {
+  receive_scope *scope = (receive_scope *)arg;
+  mdns_receive(scope->mdns, scope->bytes, scope->length);
 }
 
 bool qa_kex_mdns_open(qa_kex_mdns *mdns, bool has_advertised_port, double advertised_port,
@@ -566,6 +564,13 @@ bool qa_kex_mdns_open(qa_kex_mdns *mdns, bool has_advertised_port, double advert
   return true;
 }
 
+bool qa_kex_mdns_message(qa_kex_mdns *mdns, const uint8_t *bytes, size_t length) {
+  /* Unrelated or malformed multicast traffic is ignored, as the TS message handler does. */
+  receive_scope scope = {mdns, bytes, length};
+  qa_caught_error caught;
+  return qa_try(receive_body, &scope, &caught);
+}
+
 size_t qa_kex_mdns_poll(qa_kex_mdns *mdns) {
   if (mdns->closed || mdns->socket_fd < 0) return 0;
   size_t handled = 0;
@@ -574,10 +579,7 @@ size_t qa_kex_mdns_poll(qa_kex_mdns *mdns) {
     ssize_t received = recvfrom(mdns->socket_fd, buffer, sizeof buffer, MSG_DONTWAIT,
                                 NULL, NULL);
     if (received < 0) break;
-    /* TS swallows malformed multicast traffic; the C reader aborts
-     * on malformed data, so probe the size gate before receiving.
-     * Oversize/garbled packets still abort per port error policy. */
-    mdns_receive(mdns, buffer, (size_t)received);
+    (void)qa_kex_mdns_message(mdns, buffer, (size_t)received);
     handled++;
   }
   return handled;

@@ -13,6 +13,7 @@
 #include "qa/movement/q3/constants.h"
 #include "qa/movement/q3/postures.h"
 #include "qa/movement/q3/provider.h"
+#include "qa/foundation/js.h"
 
 qa_movement_state qa_app_copy_movement_state(qa_movement_state state) { return state; }
 
@@ -55,7 +56,7 @@ static qa_weapon_step_result weapon_step(step_ctx *ctx, qa_weapon_step_input inp
   }
   if (!ctx->has_runtime) qa_range_error("Q3 prediction needs the snapshot's private arsenal runtime");
   qa_q3_arsenal_controls controls = resolve_controls(ctx, input.arsenal, input.command, ctx->runtime.product);
-  if (input.command.kind == QA_USER_COMMAND_Q3) controls.use_holdable = (((long long)input.command.as.q3.buttons) & 4) != 0;
+  if (input.command.kind == QA_USER_COMMAND_Q3) controls.use_holdable = ((qa_js_to_int32(input.command.as.q3.buttons)) & 4) != 0;
   qa_q3_arsenal_step stepped = qa_q3_step_arsenal(input, ctx->runtime, controls, NULL, NULL);
   ctx->runtime = stepped.runtime;
   qa_weapon_step_result result = stepped.base;
@@ -93,7 +94,7 @@ static qa_movement_continuation phase_cb(void *v, qa_q1_player_input input, qa_m
   result.is_continue = true; result.state = state; return result;
 }
 static bool firing_cb(void *v, qa_q3_hook_context context) {
-  (void)v; return (((long long)context.command.buttons) & 1) != 0 && context.motion->health > 0;
+  (void)v; return ((qa_js_to_int32(context.command.buttons)) & 1) != 0 && context.motion->health > 0;
 }
 static qa_animation_step_result q3_animation_cb(void *v, qa_q3_animation_request request, qa_q3_hook_context context) {
   step_ctx *ctx = (step_ctx *)v;
@@ -123,7 +124,7 @@ static qa_q3_weapon_phase_result q3_weapon_cb(void *v, qa_q3_hook_context contex
   qa_q3_weapon_phase_result result; memset(&result, 0, sizeof result);
   result.base = weapon_step(ctx, input);
   result.movement_flags = !ctx->has_runtime ? context.motion->pm_flags
-      : (double)(((long long)context.motion->pm_flags & ~(QA_Q3_FLAG_RESPAWNED | QA_Q3_FLAG_USE_ITEM_HELD))
+      : (double)((qa_js_to_int32(context.motion->pm_flags) & ~(QA_Q3_FLAG_RESPAWNED | QA_Q3_FLAG_USE_ITEM_HELD))
           | (ctx->runtime.respawned ? QA_Q3_FLAG_RESPAWNED : 0) | (ctx->runtime.use_item_held ? QA_Q3_FLAG_USE_ITEM_HELD : 0));
   return result;
 }
@@ -169,7 +170,7 @@ qa_app_prediction_step_result qa_app_predict_movement_command(const qa_app_movem
     qa_q3_arsenal_controls controls = resolve_controls(&ctx, ctx.source.arsenal, command, ctx.source.q3_arsenal.product);
     if (command.kind == QA_USER_COMMAND_Q3 && entry.has_arsenal) {
       command.as.q3.weapon = controls.requested_weapon;
-      command.as.q3.buttons = (double)((((long long)command.as.q3.buttons) & ~4) | (controls.use_holdable ? 4 : 0));
+      command.as.q3.buttons = (double)(((qa_js_to_int32(command.as.q3.buttons)) & ~4) | (controls.use_holdable ? 4 : 0));
     }
   } else if (!configuration->movement_only && entry.has_arsenal) {
     if (!entry.arsenal.provider || !ctx.source.arsenal.provider || strcmp(entry.arsenal.provider, ctx.source.arsenal.provider) != 0)
@@ -238,6 +239,8 @@ qa_app_prediction_step_result qa_app_predict_movement_command(const qa_app_movem
     base.profile.has_fixed_milliseconds = options.has_fixed_milliseconds;
     base.profile.fixed_milliseconds = options.fixed_milliseconds;
     base.profile.no_footsteps = options.no_footsteps;
+    /* ladders: options.ladders ?? profile.ladders !== false */
+    if (options.has_ladders) base.profile.ladders_disabled = !options.ladders;
     qa_q3_movement_provider_options *provider_options = malloc(sizeof *provider_options);
     if (!provider_options) qa_range_error("Out of memory");
     memset(provider_options, 0, sizeof *provider_options);
@@ -271,6 +274,7 @@ qa_app_prediction_step_result qa_app_predict_movement_command(const qa_app_movem
       effects[previous + i].sequence = (double)(previous + i); effects[previous + i].time = frame.time;
     }
     result.arsenal = stepped.arsenal; result.animation = stepped.animation;
+    free((void *)result.effects); /* the movement's own array, copied above */
     result.effects = effects; result.effect_count = previous + stepped.effect_count;
   }
   if (configuration->movement_only) { result.arsenal = ctx.source.arsenal; result.animation = ctx.source.animation; }

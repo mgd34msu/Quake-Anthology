@@ -15,8 +15,8 @@ typedef struct qa_q2bm_classic_base_definitions {
   qa_q2bm_mutant_definition mutant;
   qa_q2bm_jorg_definition jorg;
   qa_q2m_definition makron_spawn_wrapped;
-  qa_q2f_named_think makron_think[2];
-  qa_q2f_named_think boss_think[QA_Q2BM_CLASSIC_BASE_DEFINITION_COUNT][3];
+  qa_q2_named_think makron_think[2];
+  qa_q2_named_think boss_think[QA_Q2BM_CLASSIC_BASE_DEFINITION_COUNT][3];
 } qa_q2bm_classic_base_definitions;
 void qa_q2bm_classic_base_monster_definitions(qa_q2bm_classic_base_definitions *out, qa_q2m_monsters *monsters);
 
@@ -26,12 +26,13 @@ typedef struct qa_q2bm_classic_base_module {
   qa_q2m_monsters *monsters;
   qa_q2bm_classic_base_definitions defs;
   qa_q2bm_actor_target_module targets;
-  qa_q2f_named_think *merged_think; size_t merged_think_count;
-  qa_q2f_named_use *merged_use; size_t merged_use_count;
-  qa_q2f_named_touch *merged_touch; size_t merged_touch_count;
+  qa_q2_named_think *merged_think; size_t merged_think_count;
+  qa_q2_named_use *merged_use; size_t merged_use_count;
+  qa_q2_named_touch *merged_touch; size_t merged_touch_count;
+  qa_q2_callback_definitions spawn_callbacks; /* TS callbacks getter, read by Q2EntityServices */
 } qa_q2bm_classic_base_module;
 /* False only on OOM. */
 bool qa_q2bm_register_classic_base_monsters(qa_q2bm_classic_base_module *out, qa_q2m_monsters *monsters);
 void qa_q2bm_classic_base_module_destroy(qa_q2bm_classic_base_module *module);
-qa_q2bm_spawn_module qa_q2bm_classic_base_as_spawn(qa_q2bm_classic_base_module *module);
+qa_q2_spawn_module qa_q2bm_classic_base_as_spawn(qa_q2bm_classic_base_module *module);
 #endif

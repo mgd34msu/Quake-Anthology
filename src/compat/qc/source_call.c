@@ -57,23 +57,38 @@ static qa_mod_runtime_value resolve(qa_mod_callback_value v, const qa_compat_qc_
   for (size_t i=0;i<n;i++) if (strcmp(in[i].name, v.name)==0) return in[i].value;
   qa_range_error("Gameplay callback %s has no %s input", fn, v.name);
 }
+typedef struct { size_t off; uint8_t bytes[12]; size_t len; } SavedGlobal;
+typedef struct {
+  qa_compat_qc_machine *m; qa_mod_runtime_value *args, *gvals; const qa_compat_qc_definition **gdefs; SavedGlobal *saved;
+  size_t global_count; bool staged; uint8_t staging[108];
+} SourceScope;
+static void source_finally(void *arg) {
+  SourceScope *s = arg;
+  if (s->staged) {
+    memcpy(s->m->globals.bytes + 4, s->staging, 108);
+    for (size_t i = 0; i < s->global_count; i++) memcpy(s->m->globals.bytes + s->saved[i].off, s->saved[i].bytes, s->saved[i].len);
+  }
+  free(s->args); free(s->gvals); free(s->gdefs); free(s->saved);
+}
 double qa_compat_qc_with_source_call(qa_compat_qc_machine *m, qa_mod_source_call call, const qa_compat_qc_mod_input_entry *inputs, size_t n, qa_compat_qc_actor_reference ref, qa_compat_qc_source_execute exec) {
-  qa_mod_runtime_value *args = malloc((call.argument_count?call.argument_count:1)*sizeof *args);
-  qa_mod_runtime_value *gvals = malloc((call.global_count?call.global_count:1)*sizeof *gvals);
-  const qa_compat_qc_definition **gdefs = malloc((call.global_count?call.global_count:1)*sizeof *gdefs);
-  if(!args||!gvals||!gdefs) qa_range_error("source call allocation failed");
-  for (size_t i=0;i<call.argument_count;i++) args[i]=resolve(call.arguments[i],inputs,n,call.function);
-  for (size_t i=0;i<call.global_count;i++){ gdefs[i]=qa_compat_qc_program_global_named(m->program,call.globals[i].name); gvals[i]=resolve(call.globals[i].value,inputs,n,call.function); }
-  uint8_t staging[108]; memcpy(staging, m->globals.bytes+4, 108);
-  typedef struct { size_t off; uint8_t bytes[12]; size_t len; } Saved;
-  Saved *saved = malloc((call.global_count?call.global_count:1)*sizeof *saved); if(!saved) qa_range_error("source call allocation failed");
-  for (size_t i=0;i<call.global_count;i++){ if(!gdefs[i]) qa_range_error("Missing validated callback global");
-    saved[i].off=(size_t)gdefs[i]->offset*4; saved[i].len=(strcmp(gdefs[i]->type,"vector")==0?3:1)*4; memcpy(saved[i].bytes,m->globals.bytes+saved[i].off,saved[i].len); }
-  for (size_t i=0;i<call.argument_count;i++) qa_compat_qc_write_source_value(m,&m->globals,4+(int64_t)i*3,args[i],ref);
-  for (size_t i=0;i<call.global_count;i++) qa_compat_qc_write_source_value(m,&m->globals,gdefs[i]->offset,gvals[i],ref);
+  size_t gc = call.global_count;
+  SourceScope s; memset(&s, 0, sizeof s); s.m = m; s.global_count = gc;
+  s.args = malloc((call.argument_count?call.argument_count:1)*sizeof *s.args);
+  s.gvals = malloc((gc?gc:1)*sizeof *s.gvals);
+  s.gdefs = malloc((gc?gc:1)*sizeof *s.gdefs);
+  s.saved = malloc((gc?gc:1)*sizeof *s.saved);
+  if(!s.args||!s.gvals||!s.gdefs||!s.saved) { free(s.args); free(s.gvals); free(s.gdefs); free(s.saved); qa_range_error("source call allocation failed"); }
+  qa_cleanup scope; qa_cleanup_push(&scope, source_finally, &s);
+  for (size_t i=0;i<call.argument_count;i++) s.args[i]=resolve(call.arguments[i],inputs,n,call.function);
+  for (size_t i=0;i<gc;i++){ s.gdefs[i]=qa_compat_qc_program_global_named(m->program,call.globals[i].name); s.gvals[i]=resolve(call.globals[i].value,inputs,n,call.function); }
+  memcpy(s.staging, m->globals.bytes+4, 108);
+  for (size_t i=0;i<gc;i++){ if(!s.gdefs[i]) qa_range_error("Missing validated callback global");
+    s.saved[i].off=(size_t)s.gdefs[i]->offset*4; s.saved[i].len=(strcmp(s.gdefs[i]->type,"vector")==0?3:1)*4; memcpy(s.saved[i].bytes,m->globals.bytes+s.saved[i].off,s.saved[i].len); }
+  s.staged = true; /* TS try begins here: earlier throws leave the staging untouched. */
+  for (size_t i=0;i<call.argument_count;i++) qa_compat_qc_write_source_value(m,&m->globals,4+(int64_t)i*3,s.args[i],ref);
+  for (size_t i=0;i<gc;i++) qa_compat_qc_write_source_value(m,&m->globals,s.gdefs[i]->offset,s.gvals[i],ref);
   double result = exec.fn(exec.ctx, (int64_t)call.argument_count);
-  memcpy(m->globals.bytes+4, staging, 108);
-  for (size_t i=0;i<call.global_count;i++) memcpy(m->globals.bytes+saved[i].off, saved[i].bytes, saved[i].len);
-  free(args); free(gvals); free(gdefs); free(saved);
+  qa_cleanup_pop(&scope);
+  source_finally(&s);
   return result;
 }

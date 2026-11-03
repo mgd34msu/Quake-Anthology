@@ -4,6 +4,9 @@
 #include <math.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_truthy.h"
+
 #include "qa/network/q2/constants.h"
 
 static qa_q2_r1_context *ctx_of(qa_q2_protocol_codec *self) {
@@ -60,7 +63,7 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
                                const qa_q2_wire_entity *to, bool force,
                                bool newentity) {
   qa_q2_r1_context *ctx = ctx_of(self);
-  if (to->number == 0) qa_q2_com_error_throw(QA_Q2_ERR_FATAL, "Unset entity number");
+  if (!qa_js_truthy(to->number)) qa_q2_com_error_throw(QA_Q2_ERR_FATAL, "Unset entity number");
   if (to->number >= QA_Q2_MAX_EDICTS) {
     qa_q2_com_error_throw(QA_Q2_ERR_FATAL, "Entity number >= MAX_EDICTS");
   }
@@ -73,7 +76,7 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   if (to->angles[1] != from->angles[1]) bits |= QA_Q2_U_ANGLE2;
   if (to->angles[2] != from->angles[2]) bits |= QA_Q2_U_ANGLE3;
   if (to->skinnum != from->skinnum) {
-    uint32_t skin = (uint32_t)(int32_t)to->skinnum;
+    uint32_t skin = qa_js_to_uint32(to->skinnum); /* skinnum >>> 0 */
     if (skin < 256u) bits |= QA_Q2_U_SKIN8;
     else if (skin < 0x8000u) bits |= QA_Q2_U_SKIN16;
     else bits |= QA_Q2_U_SKIN8 | QA_Q2_U_SKIN16;
@@ -90,13 +93,13 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
     else bits |= QA_Q2_U_RENDERFX8 | QA_Q2_U_RENDERFX16;
   }
   if (to->solid != from->solid) bits |= QA_Q2_U_SOLID;
-  if (to->event != 0) bits |= QA_Q2_U_EVENT;
+  if (qa_js_truthy(to->event)) bits |= QA_Q2_U_EVENT;
   if (to->modelindex != from->modelindex) bits |= QA_Q2_U_MODEL;
   if (to->modelindex2 != from->modelindex2) bits |= QA_Q2_U_MODEL2;
   if (to->modelindex3 != from->modelindex3) bits |= QA_Q2_U_MODEL3;
   if (to->modelindex4 != from->modelindex4) bits |= QA_Q2_U_MODEL4;
   if (to->sound != from->sound) bits |= QA_Q2_U_SOUND;
-  if (newentity || ((int32_t)to->renderfx & QA_Q2_RF_BEAM) != 0) bits |= QA_Q2_U_OLDORIGIN;
+  if (newentity || (qa_js_to_int32(to->renderfx) & QA_Q2_RF_BEAM) != 0) bits |= QA_Q2_U_OLDORIGIN;
   if (bits == 0 && !force) return;
   if ((bits & (int32_t)0xff000000u) != 0) bits |= QA_Q2_U_MOREBITS3 | QA_Q2_U_MOREBITS2 | QA_Q2_U_MOREBITS1;
   else if ((bits & 0x00ff0000) != 0) bits |= QA_Q2_U_MOREBITS2 | QA_Q2_U_MOREBITS1;
@@ -180,7 +183,7 @@ static void read_delta_entity(qa_q2_protocol_codec *self,
   if ((bits & QA_Q2_U_SKIN8) != 0 && (bits & QA_Q2_U_SKIN16) != 0) to->skinnum = (double)qa_q2_msg_read_long(m);
   else if (bits & QA_Q2_U_SKIN8) to->skinnum = (double)qa_q2_msg_read_byte(m);
   else if (bits & QA_Q2_U_SKIN16) to->skinnum = (double)qa_q2_msg_read_word(m);
-  if ((bits & (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) == (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) to->effects = (double)qa_q2_msg_read_long(m);
+  if ((bits & (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) == (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) to->effects = (double)(uint32_t)qa_q2_msg_read_long(m); /* >>> 0 */
   else if (bits & QA_Q2_U_EFFECTS8) to->effects = (double)qa_q2_msg_read_byte(m);
   else if (bits & QA_Q2_U_EFFECTS16) to->effects = (double)qa_q2_msg_read_word(m);
   if ((bits & (QA_Q2_U_RENDERFX8 | QA_Q2_U_RENDERFX16)) == (QA_Q2_U_RENDERFX8 | QA_Q2_U_RENDERFX16)) to->renderfx = (double)qa_q2_msg_read_long(m);
@@ -239,7 +242,7 @@ static r1_enc encode_player(const qa_q2_wire_player *from, const qa_q2_wire_play
   if (ps->gunoffset[0] != ops->gunoffset[0] || ps->gunoffset[1] != ops->gunoffset[1] || ps->gunoffset[2] != ops->gunoffset[2]) e.extraflags |= QA_Q2_EPS_GUNOFFSET;
   if (ps->gunangles[0] != ops->gunangles[0] || ps->gunangles[1] != ops->gunangles[1] || ps->gunangles[2] != ops->gunangles[2]) e.extraflags |= QA_Q2_EPS_GUNANGLES;
   for (int i = 0; i < QA_Q2_MAX_STATS; i++) {
-    if (ps->stats[i] != ops->stats[i]) e.statbits |= 1 << i;
+    if (ps->stats[i] != ops->stats[i]) e.statbits |= (int32_t)(1u << i);
   }
   if (e.statbits != 0) e.extraflags |= QA_Q2_EPS_STATS;
   return e;
@@ -306,7 +309,7 @@ static void write_player_body(const r1_enc *e, qa_q2_sizebuf *msg) {
   if (extraflags & QA_Q2_EPS_STATS) {
     qa_q2_msg_write_long(msg, (double)e->statbits);
     for (int i = 0; i < QA_Q2_MAX_STATS; i++) {
-      if (e->statbits & (1 << i)) qa_q2_msg_write_short(msg, (double)ps->stats[i]);
+      if (e->statbits & ((int32_t)(1u << i))) qa_q2_msg_write_short(msg, (double)ps->stats[i]);
     }
   }
 }
@@ -403,7 +406,7 @@ static void read_player_fields(qa_q2_sizebuf *msg, const qa_q2_wire_player *from
   if (extraflags & QA_Q2_EPS_STATS) {
     int32_t statbits = qa_q2_msg_read_long(msg);
     for (int i = 0; i < QA_Q2_MAX_STATS; i++) {
-      if (statbits & (1 << i)) t->stats[i] = (int16_t)qa_q2_msg_read_short(msg);
+      if (statbits & ((int32_t)(1u << i))) t->stats[i] = (int16_t)qa_q2_msg_read_short(msg);
     }
   }
 }
@@ -428,10 +431,10 @@ static void write_frame(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   qa_q2_msg_write_byte(msg, (double)(QA_Q2_SVC_FRAME | ((e.extraflags & 0xf0) << 1)));
   int32_t offset = params->lastframe == -1
                        ? 31
-                       : (int32_t)(params->framenum - params->lastframe);
-  int32_t encoded = ((int32_t)params->framenum & 0x07ffffff) | (offset << 27);
+                       : qa_js_to_int32(params->framenum - params->lastframe); /* offset << 27 */
+  int32_t encoded = (qa_js_to_int32(params->framenum) & 0x07ffffff) | (int32_t)((uint32_t)offset << 27);
   qa_q2_msg_write_long(msg, (double)encoded);
-  qa_q2_msg_write_byte(msg, (double)(((int32_t)params->surpress_count & 0x0f) |
+  qa_q2_msg_write_byte(msg, (double)((qa_js_to_int32(params->surpress_count) & 0x0f) |
                                      ((e.extraflags & 0x0f) << 4)));
   qa_q2_msg_write_byte(msg, params->areabytes);
   qa_q2_sz_write(msg, params->areabits, params->areabits_length,
@@ -493,11 +496,11 @@ static void w_usercmd(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   if (cmd->buttons != from->buttons) bits |= 1 << 6;
   if (cmd->impulse != from->impulse) bits |= 1 << 7;
   qa_q2_msg_write_byte(msg, (double)bits);
-  int32_t buttons = (bits & (1 << 6)) != 0 ? (int32_t)cmd->buttons : 0;
+  int32_t buttons = (bits & (1 << 6)) != 0 ? qa_js_to_int32(cmd->buttons) : 0;
   if (compressed && (bits & (1 << 6)) != 0) {
-    if ((bits & (1 << 3)) != 0 && dbl_mod(cmd->forwardmove, 5)) buttons |= BTN_DBLFORWARD;
-    if ((bits & (1 << 4)) != 0 && dbl_mod(cmd->sidemove, 5)) buttons |= BTN_DBLSIDE;
-    if ((bits & (1 << 5)) != 0 && dbl_mod(cmd->upmove, 5)) buttons |= BTN_DBLUP;
+    if ((bits & (1 << 3)) != 0 && dbl_mod(cmd->forwardmove, 5) && fabs(cmd->forwardmove) < 640) buttons |= BTN_DBLFORWARD;
+    if ((bits & (1 << 4)) != 0 && dbl_mod(cmd->sidemove, 5) && fabs(cmd->sidemove) < 640) buttons |= BTN_DBLSIDE;
+    if ((bits & (1 << 5)) != 0 && dbl_mod(cmd->upmove, 5) && fabs(cmd->upmove) < 640) buttons |= BTN_DBLUP;
     if ((bits & (1 << 0)) != 0 && cmd->angles[0] % 64 == 0 &&
         fabs(trunc((double)cmd->angles[0] / 64.0)) < 128) buttons |= BTN_DBL_ANGLE1;
     if ((bits & (1 << 1)) != 0 && cmd->angles[1] % 256 == 0) buttons |= BTN_DBL_ANGLE2;
@@ -566,9 +569,9 @@ static void r_usercmd(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
 static void read_entity_bits(qa_q2_protocol_codec *self, qa_q2_entity_bits *out) {
   qa_q2_sizebuf *m = self->net_message;
   int32_t total = qa_q2_msg_read_byte(m);
-  if (total & QA_Q2_U_MOREBITS1) total |= qa_q2_msg_read_byte(m) << 8;
-  if (total & QA_Q2_U_MOREBITS2) total |= qa_q2_msg_read_byte(m) << 16;
-  if (total & QA_Q2_U_MOREBITS3) total |= qa_q2_msg_read_byte(m) << 24;
+  if (total & QA_Q2_U_MOREBITS1) total |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 8);
+  if (total & QA_Q2_U_MOREBITS2) total |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 16);
+  if (total & QA_Q2_U_MOREBITS3) total |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 24);
   out->number = (total & QA_Q2_U_NUMBER16) != 0 ? (double)qa_q2_msg_read_short(m)
                                                 : (double)qa_q2_msg_read_byte(m);
   out->bits = (double)(uint32_t)total;

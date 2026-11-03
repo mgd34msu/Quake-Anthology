@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 const char *const QA_GL_STAGE_VERTEX_SHADER =
 "#version 120\n"
 "varying vec4 vertexColor;\n"
@@ -176,8 +177,8 @@ static int32_t uniform_loc(simpl *p,const char *name){
   if(loc<0) qa_range_error("OpenGL stage uniform is missing: %s",name);
   return loc;
 }
-static void finite4u(double a,double b,double c,double d){ double w=fmax(fmax(fabs(a),fabs(b)),fmax(fabs(c),fabs(d))); if(!(w<3.4028235677973366e38))qa_range_error("OpenGL lighting uniforms must be finite float32 values"); }
-static void finite_arr(const double *v,size_t n){ double w=0; for(size_t i=0;i<n;i++)w=fmax(w,fabs(v[i])); if(!(w<3.4028235677973366e38))qa_range_error("OpenGL lighting uniforms must be finite float32 values"); }
+static void finite4u(double a,double b,double c,double d){ double w=qa_js_max(qa_js_max(fabs(a),fabs(b)),qa_js_max(fabs(c),fabs(d))); if(!(w<3.4028235677973366e38))qa_range_error("OpenGL lighting uniforms must be finite float32 values"); }
+static void finite_arr(const double *v,size_t n){ double w=0; for(size_t i=0;i<n;i++)w=qa_js_max(w,fabs(v[i])); if(!(w<3.4028235677973366e38))qa_range_error("OpenGL lighting uniforms must be finite float32 values"); }
 bool qa_gl_stage_program_init(qa_gl_stage_program *program,const qa_gl_context *context){
   simpl *p=(simpl*)calloc(1,sizeof *p); if(!p)return false; program->impl=p;
   if(!qa_load_gl_programs(context,&p->library)){ free(p); program->impl=NULL; return false; }
@@ -201,9 +202,15 @@ void qa_gl_stage_program_use(qa_gl_stage_program *program,const char *environmen
   double fog_mode=fog==NULL?0:!strcmp(fog->kind,"constant")?2:(fog->effect&&!strcmp(fog->effect,"none"))?0:(fog->effect&&!strcmp(fog->effect,"rgb"))?3:(fog->effect&&!strcmp(fog->effect,"alpha"))?4:(fog->effect&&!strcmp(fog->effect,"rgba"))?5:(fog->effect&&!strcmp(fog->effect,"overlay"))?6:1;
   gl->glUniform1i(uniform_loc(p,"u_fog_mode"),(int32_t)fog_mode);
   gl->glUniform3f(uniform_loc(p,"u_fog_color"),(float)(fog?fog->color.x:0),(float)(fog?fog->color.y:0),(float)(fog?fog->color.z:0));
-  gl->glUniform1f(uniform_loc(p,"u_fog_amount"),(float)(fog==NULL?0:!strcmp(fog->kind,"exp2")?fog->density:fog->amount));
-  gl->glUniform1i(uniform_loc(p,"secondaryMode"),environment==NULL?0:(int32_t)secondary_mode(environment));
-  gl->glUniform1i(uniform_loc(p,"alphaMode"),(int32_t)alpha_mode(alpha_test));
+  int32_t value7 = uniform_loc(p,"u_fog_amount");
+  float value8 = (float)(fog==NULL?0:!strcmp(fog->kind,"exp2")?fog->density:fog->amount);
+  gl->glUniform1f(value7,value8);
+  int32_t value5 = uniform_loc(p,"secondaryMode");
+  int value6 = environment==NULL?0:(int32_t)secondary_mode(environment);
+  gl->glUniform1i(value5,value6);
+  int32_t value3 = uniform_loc(p,"alphaMode");
+  int32_t value4 = (int32_t)alpha_mode(alpha_test);
+  gl->glUniform1i(value3,value4);
   gl->glUniform1i(uniform_loc(p,"u_luminance_alpha"),luminance_alpha?1:0);
   double lmode=!strcmp(lighting.kind,"vertex")?0:!strcmp(lighting.kind,"q2-model-shadow")?3:(lighting.pass&&!strcmp(lighting.pass,"lightmap"))?1:(lighting.pass&&!strcmp(lighting.pass,"material-lightmap"))?4:(lighting.pass&&!strcmp(lighting.pass,"model"))?5:2;
   gl->glUniform1i(uniform_loc(p,"u_lighting_mode"),(int32_t)lmode);
@@ -247,7 +254,7 @@ void qa_gl_stage_program_use(qa_gl_stage_program *program,const char *environmen
       (void)snprintf(name,sizeof name,"u_light_frac[%zu]",i); gl->glUniform3f(uniform_loc(p,name),(float)ml->fraction.x,(float)ml->fraction.y,(float)ml->fraction.z);
     }
     if(strcmp(shadow.kind,"none")&&atlas==NULL) qa_range_error("Q2 shadow receiver is missing its atlas");
-    (void)snprintf(name,sizeof name,"u_light_shadow[%zu]",i); gl->glUniform1f(uniform_loc(p,name),(float)(!strcmp(shadow.kind,"none")?0:!strcmp(shadow.kind,"cone")?1:2));
+    (void)snprintf(name,sizeof name,"u_light_shadow[%zu]",i); int32_t value = uniform_loc(p,name); float value2 = (float)(!strcmp(shadow.kind,"none")?0:!strcmp(shadow.kind,"cone")?1:2); gl->glUniform1f(value,value2);
     if(strcmp(shadow.kind,"none")){
       qa_vec4 rect=shadow.atlas_rect; finite4u(rect.x,rect.y,rect.z,rect.w);
       (void)snprintf(name,sizeof name,"u_light_atlas[%zu]",i); gl->glUniform4f(uniform_loc(p,name),(float)rect.x,(float)rect.y,(float)rect.z,(float)rect.w);

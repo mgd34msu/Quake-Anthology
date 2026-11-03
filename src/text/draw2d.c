@@ -2,6 +2,7 @@
 #include "qa/text/draw2d.h"
 
 #include <math.h>
+#include "qa/foundation/js.h"
 
 static const qa_vec4 WHITE = {1, 1, 1, 1};
 static const qa_text_texture_rect FULL_UV = {0, 0, 1, 1};
@@ -31,10 +32,10 @@ struct clip_result {
 static bool clip_picture(qa_rect rect, qa_texture_rect uv, qa_rect clip,
                          struct clip_result *out) {
   if (rect.width == 0 || rect.height == 0) return false;
-  double left = fmax(fmin(rect.x, rect.x + rect.width), clip.x);
-  double right = fmin(fmax(rect.x, rect.x + rect.width), clip.x + clip.width);
-  double top = fmax(fmin(rect.y, rect.y + rect.height), clip.y);
-  double bottom = fmin(fmax(rect.y, rect.y + rect.height), clip.y + clip.height);
+  double left = qa_js_max(qa_js_min(rect.x, rect.x + rect.width), clip.x);
+  double right = qa_js_min(qa_js_max(rect.x, rect.x + rect.width), clip.x + clip.width);
+  double top = qa_js_max(qa_js_min(rect.y, rect.y + rect.height), clip.y);
+  double bottom = qa_js_min(qa_js_max(rect.y, rect.y + rect.height), clip.y + clip.height);
   if (left >= right || top >= bottom) return false;
   out->rect.x = left;
   out->rect.y = top;
@@ -59,6 +60,16 @@ void qa_text_command_sink_init(qa_text_command_sink *sink, qa_seat_id seat,
   sink->material = material;
   sink->material_ctx = material_ctx;
   sink->color = WHITE;
+  sink->target_ref = NULL;
+}
+void qa_text_command_sink_share_target(qa_text_command_sink *sink, const qa_rect *target) {
+  sink->target_ref = target;
+}
+static qa_rect command_sink_target(const qa_text_command_sink *sink) {
+  return sink->target_ref != NULL ? *sink->target_ref : sink->target;
+}
+qa_rect qa_text_draw_sink_target(const qa_text_draw_sink *sink) {
+  return sink->target_ref != NULL ? *sink->target_ref : sink->target;
 }
 
 void qa_text_command_sink_set_color(qa_text_command_sink *sink,
@@ -74,9 +85,10 @@ void qa_text_command_sink_stretch_pixels(qa_text_command_sink *sink,
                                          qa_rect rect,
                                          qa_text_texture_rect uv,
                                          const qa_picture_asset *picture) {
+  qa_rect target = command_sink_target(sink);
   qa_rect destination = rect;
-  destination.x = rect.x + sink->target.x;
-  destination.y = rect.y + sink->target.y;
+  destination.x = rect.x + target.x;
+  destination.y = rect.y + target.y;
   if (picture->kind == QA_PICTURE_MATERIAL) {
     qa_material_text_draw draw = {sink->seat, destination, uv, sink->color,
                                   picture->material};
@@ -84,7 +96,7 @@ void qa_text_command_sink_stretch_pixels(qa_text_command_sink *sink,
   } else {
     qa_texture_rect source = {uv.s, uv.t, uv.s2, uv.t2};
     struct clip_result clipped;
-    if (clip_picture(destination, source, sink->target, &clipped)) {
+    if (clip_picture(destination, source, target, &clipped)) {
       qa_render_command command = {0};
       command.kind = QA_RENDER_COMMAND_STRETCH_PIC;
       command.rect = clipped.rect;
@@ -110,14 +122,15 @@ qa_text_draw_sink qa_text_command_sink_sink(qa_text_command_sink *sink) {
   view.ctx = sink;
   view.seat = sink->seat;
   view.target = sink->target;
+  view.target_ref = sink->target_ref;
   view.set_color = sink_set_color;
   view.stretch_pixels = sink_stretch_pixels;
   return view;
 }
 
-double qa_draw2d_width(const qa_draw2d *draw) { return draw->commands.target.width; }
+double qa_draw2d_width(const qa_draw2d *draw) { return qa_text_draw_sink_target(&draw->commands).width; }
 double qa_draw2d_height(const qa_draw2d *draw) {
-  return draw->commands.target.height;
+  return qa_text_draw_sink_target(&draw->commands).height;
 }
 
 double qa_draw2d_scale_x(const qa_draw2d *draw) {

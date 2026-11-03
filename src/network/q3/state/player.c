@@ -8,6 +8,7 @@ bool qa_q3_player_state_slots_init(qa_q3_player_state_slots *s, int64_t length,
   if (has_source && source_length != length)
     qa_range_error("Player state source slots require %lld values, got %lld",
                    (long long)length, (long long)source_length);
+  if (length < 0) qa_range_error("Invalid typed array length: %lld", (long long)length);
   s->length = length;
   s->values = calloc((size_t)(length > 0 ? length : 1), sizeof(int32_t));
   if (!s->values) return false;

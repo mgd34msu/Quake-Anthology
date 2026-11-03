@@ -76,8 +76,11 @@ typedef struct qa_q2_challenge {
 void qa_q2_challenge_free(qa_q2_challenge *challenge);
 bool qa_q2_read_challenge(const qa_q2_connectionless_message *message,
                           qa_q2_challenge *out);
-/* TS readQ2DownloadServer: malloc'd normalized URL or NULL. */
-char *qa_q2_read_download_server(char **arguments, size_t argument_count);
+/* TS readQ2DownloadServer(arguments, server?): malloc'd URL href (new URL normalization:
+ * lowercased host, IPv4/IPv6 canonical, default port dropped, dot segments removed, path
+ * percent-encoded, trailing '/') or NULL. `server` NULL is TS `undefined`. */
+char *qa_q2_read_download_server(char **arguments, size_t argument_count,
+                                 const qa_net_address *server);
 
 /* TS Q2ClientHandshakeState kinds. */
 typedef enum qa_q2_handshake_state_kind {
@@ -150,8 +153,10 @@ bool qa_q2_challenge_table_init(qa_q2_challenge_table *table, qa_q2_random_fn ra
 void qa_q2_challenge_table_destroy(qa_q2_challenge_table *table);
 double qa_q2_challenge_table_issue(qa_q2_challenge_table *table,
                                    const qa_net_address *from, double now);
+/* TS validate(from, challenge, now = 0): a nonzero now also requires the challenge to be at
+ * most 30 s old. */
 bool qa_q2_challenge_table_validate(const qa_q2_challenge_table *table,
-                                    const qa_net_address *from, double challenge);
+                                    const qa_net_address *from, double challenge, double now);
 uint8_t *qa_q2_challenge_table_reply(qa_q2_challenge_table *table,
                                      const qa_net_address *from, double now,
                                      const qa_q2_protocol_identity *protocols,

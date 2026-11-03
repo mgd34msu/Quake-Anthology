@@ -33,7 +33,7 @@ typedef struct qa_compat_qc_mod_actors {
   qa_compat_qc_source_slot_storage_state storage_state;
   qa_source_slot_storage storage_base;
   qa_compat_qc_actor_bindings_state bindings_state;
-  qa_compat_qc_builtin spawn, remove;
+  qa_compat_qc_builtin spawn, remove, bindings_remove;
   qa_frame_scheduler *scheduler;
   qa_scheduler_clock clock_entry;
   qa_owned_actor *owned_actors; int64_t *owned_slots; size_t owned_count, owned_capacity;

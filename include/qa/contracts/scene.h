@@ -566,6 +566,9 @@ typedef struct qa_trace_policy {
   double contents_mask;
   const char *leaf_contents;
   bool curves, player_curve_clip;
+  /* q1: TS `derived: true` skips the width-based hull choice so box extents
+   * are traced exactly. */
+  bool derived;
 } qa_trace_policy;
 
 /* TS QueryTarget: {kind:"world"} | {kind:"model",model,origin,angles}. */
@@ -617,6 +620,13 @@ typedef struct qa_trace_result {
   bool has_secondary;                  /* q2 */
   qa_bsp_plane secondary_plane;
   const qa_q2_surface_info *secondary_surface;
+  /* JS object identity of the normal object that sourcePlane and the
+   * contact plane share (TS sweepBody samePlane compares normals with
+   * ===). 0 is an object created for this trace alone (it equals no
+   * other trace's normal); any other value names a shared object (a
+   * geometry plane or a module constant) and compares equal exactly
+   * when TS would see the same object. Copies of a result keep it. */
+  uintptr_t plane_identity;
 } qa_trace_result;
 
 typedef struct qa_point_contents_query {

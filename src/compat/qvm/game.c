@@ -29,12 +29,14 @@ void qa_qvm_game_init(qa_qvm_game *game, const qa_qvm_module_options *options) {
   wrapped.host = game_host;
   wrapped.host_ctx = game;
   qa_qvm_module_init(&game->module, &wrapped);
-  qa_qvm_game_data_init(&game->data, game->module.memory,
+  const qa_qvm_game_memory memory = qa_qvm_memory_game_memory(game->module.memory);
+  qa_qvm_game_data_init(&game->data, &memory,
                         qa_qvm_module_get_abi_profile(&game->module));
 }
 
 void qa_qvm_game_destroy(qa_qvm_game *game) {
   if (game == NULL) return;
+  qa_qvm_game_data_destroy(&game->data);
   qa_qvm_module_destroy(&game->module);
 }
 

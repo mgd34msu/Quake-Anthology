@@ -33,9 +33,12 @@ extern const qa_menu_art_frame qa_ui_menu_panel_art;
 extern const qa_menu_art_frame qa_ui_menu_focus_art;
 /** TS mainMenuBackground. */
 extern const qa_menu_art_file qa_ui_main_menu_background;
+/** TS splashTitle: drawn by the splash window only; listed so its hash
+ * and size are checked with the other art. */
+extern const qa_menu_art_file qa_ui_splash_title;
 /** TS menuArtFiles: [menuBackground, menuPanel, menuFocus,
- * mainMenuBackground] projected to their MenuArtFile fields. */
-extern const qa_menu_art_file qa_ui_menu_art_files[4];
-#define QA_UI_MENU_ART_FILE_COUNT 4
+ * mainMenuBackground, splashTitle] projected to their MenuArtFile fields. */
+#define QA_UI_MENU_ART_FILE_COUNT 5
+extern const qa_menu_art_file qa_ui_menu_art_files[QA_UI_MENU_ART_FILE_COUNT];
 
 #endif

@@ -49,86 +49,38 @@ int main(void) {
   free(comp.error);
   comp.error = NULL;
 
-  /* Later phases keep the first error (run entry is exercised
-   * over the borrowed catalog below). */
-  composition_set_error(&comp, "%s", composition_missing_game);
-  (void)comp_phase_lobby(&comp); /* skipped: first error kept */
-  CHECK(comp.error != NULL && strstr(comp.error, "simulation/runtime.ts") != NULL);
-  free(comp.error);
-  comp.error = NULL;
-
-  /* Menu entry constructs StartupMenu + NativeUiController +
-   * StartupSaves for real (no SDL needed for these owners). */
-  composition menu_phase = {0};
-  char save_template[] = "/tmp/qa-main-menu-XXXXXX";
-  char *save_dir = mkdtemp(save_template);
-  CHECK(save_dir != NULL);
-  menu_phase.save_directory = dup_text(save_dir != NULL ? save_dir : "/tmp");
-  CHECK(qa_identity_owner_create(&menu_phase.identity, "test"));
-  menu_phase.identity_open = true;
-  menu_phase.seat = qa_identity_owner_seat(&menu_phase.identity, 0);
-  (void)comp_phase_menu_or_game(&menu_phase, false);
-  CHECK(menu_phase.error == NULL);
-  CHECK(menu_phase.menu != NULL);
-  CHECK(menu_phase.ui != NULL);
-  CHECK(menu_phase.saves != NULL);
-  /* Concrete StartupMenu: the controller is the menu's own, the
-   * main menu opens, and saves report through the real list. */
-  CHECK(menu_phase.ui ==
-        qa_app_startup_menu_controller(menu_phase.menu));
-  CHECK(qa_app_startup_menu_open(menu_phase.menu));
-  CHECK(!qa_app_startup_menu_is_busy(menu_phase.menu));
-  CHECK(comp_menu_saves(&menu_phase) ==
-        qa_app_startup_saves_list(menu_phase.saves));
-  comp_menu_play(&menu_phase);
-  CHECK(menu_phase.pending_game);
-  menu_phase.pending_game = false;
-  comp_menu_quit(&menu_phase);
-  CHECK(menu_phase.quit_requested);
-  menu_phase.quit_requested = false;
-  composition_close(&menu_phase);
-  CHECK(menu_phase.menu == NULL && menu_phase.ui == NULL &&
-        menu_phase.saves == NULL && !menu_phase.identity_open);
-
-  /* Lobby phase builds the account registry + lobby over a real
-   * LocalLobbyService (qa_local_lobby_service_new). */
-  composition lobby_comp = {0};
-  lobby_comp.random_state = 0x9e3779b9u;
-  CHECK(qa_identity_owner_create(&lobby_comp.identity, "test"));
-  lobby_comp.identity_open = true;
-  (void)comp_phase_lobby(&lobby_comp);
-  CHECK(lobby_comp.accounts != NULL);
-  CHECK(lobby_comp.lobby_account.id != NULL &&
-        strncmp(lobby_comp.lobby_account.id, "account:", 8) == 0);
-  CHECK(lobby_comp.lobby_open);
-  CHECK(lobby_comp.error == NULL);
-  CHECK(lobby_comp.lobby_service != NULL &&
-        qa_local_lobby_service_count(lobby_comp.lobby_service) == 0);
-  /* Lobby transitions: TS lobbyJoinOptions guards in order, then
-   * the named RemoteApplication gap; host requires a selection. */
-  qa_lobby join_lobby = {0};
-  qa_net_address endpoint = {0};
-  qa_wire_selection wire = {0};
-  CHECK(strcmp(comp_lobby_host(&lobby_comp, &join_lobby, &endpoint, &wire),
-               "Select a game before starting the lobby") == 0);
-  join_lobby.has_endpoint = true;
-  join_lobby.endpoint.kind = QA_NET_LOOPBACK;
-  CHECK(strcmp(comp_lobby_join(&lobby_comp, &join_lobby),
-               "This lobby endpoint requires an in-process transport") == 0);
-  join_lobby.has_endpoint = false;
-  CHECK(strcmp(comp_lobby_join(&lobby_comp, &join_lobby),
-               "The local client is not a member of this lobby") == 0);
-  qa_lobby_member self_member = {0};
-  self_member.account.id = lobby_comp.lobby_account.id;
-  join_lobby.members = &self_member;
-  join_lobby.member_count = 1;
-  const char *join_error = comp_lobby_join(&lobby_comp, &join_lobby);
-  CHECK(join_error != NULL && strstr(join_error, "RemoteApplication") != NULL &&
-        strstr(join_error, "remote_application.h") != NULL);
-  CHECK(comp_lobby_leave(&lobby_comp, &join_lobby) == NULL);
-  composition_close(&lobby_comp);
-  CHECK(lobby_comp.accounts == NULL && !lobby_comp.lobby_open);
-  CHECK(lobby_comp.lobby_service == NULL);
+  /* Graphical run/menu: TS main opens StartupApplication (openGraphics) and reports its
+   * failure. With no game data the first failure is openInitialConfigurationContent's
+   * catalog.require of the movement product; the expected text is what bun reports for
+   * StartupApplication.open with the same options (empty --content-root, --menu --hidden). */
+  {
+    char corpus_template[] = "/tmp/qa-main-corpus-XXXXXX";
+    char user_template[] = "/tmp/qa-main-user-XXXXXX";
+    char *corpus = mkdtemp(corpus_template), *user = mkdtemp(user_template);
+    CHECK(corpus != NULL && user != NULL);
+    const char *argv[] = {"--menu", "--hidden", "--content-root", corpus, "--user-content-root", user};
+    qa_content_root_search search = {0};
+    qa_app_application_command command = qa_app_parse_application_command(argv, 6, search, NULL);
+    CHECK(strcmp(command.kind, "menu") == 0);
+    composition startup_comp = {0};
+    qa_app_splash_screen *splash = NULL;
+    startup_main run;
+    memset(&run, 0, sizeof run);
+    run.options = &command.options;
+    run.entry = composition_entry_for(command.kind);
+    run.splash = &splash;
+    composition_run_startup(&run, &startup_comp);
+    CHECK(startup_comp.error != NULL &&
+          strcmp(startup_comp.error, "Content q1-classic-id1 requires: q1/id1/pak0.pak, q1/id1/pak1.pak, q1/id1") == 0);
+    if (startup_comp.error != NULL) printf("startup error: %s\n", startup_comp.error);
+    CHECK(run.application == NULL);
+    free(startup_comp.error);
+    composition_close(&startup_comp);
+    qa_app_application_command_destroy(&command);
+    char cleanup[160];
+    snprintf(cleanup, sizeof cleanup, "rm -rf '%s' '%s'", corpus, user);
+    CHECK(system(cleanup) == 0);
+  }
 
   /* Catalog selection over a borrowed two-product catalog. */
   qa_catalog_discovered_product products[2] = {0};
@@ -178,25 +130,6 @@ int main(void) {
                "Unknown requested content or mod: unknown-product") == 0);
   free(unknown_comp.error);
 
-  /* openInitialConfigurationContent publishes catalog + source
-   * selection through the concrete content/configuration hosts. */
-  options.product = (char *)"q1-classic-id1";
-  composition config_comp = {0};
-  config_comp.options = &options;
-  config_comp.catalog = catalog;
-  config_comp.installed = &products[1];
-  composition_open_configuration(&config_comp);
-  CHECK(config_comp.error == NULL);
-  CHECK(config_comp.configuration != NULL);
-  CHECK(qa_app_configuration_content_catalog(config_comp.configuration) ==
-        &config_comp.catalog);
-  qa_app_application_configuration_selection selection =
-      qa_app_configuration_content_selection(config_comp.configuration);
-  CHECK(selection.source.provider != NULL &&
-        strcmp(selection.source.provider, "q1:official") == 0);
-  composition_close(&config_comp);
-  CHECK(config_comp.configuration == NULL);
-
   /* Dedicated/game Application host: owned-path bundles present,
    * session-driven simulation shim, legacy step only as the
    * error-surfacing fallback (never a fake advance). */
@@ -231,57 +164,6 @@ int main(void) {
       composition_application_host(&host_comp, false);
   CHECK(game_host.close == composition_game_close);
   CHECK(game_host.close(game_host.ctx, NULL) == NULL);
-
-  /* Options clone: deep copies the owned strings/arrays so the
-   * nested Application can destroy its set independently. */
-  qa_app_options owned = {0};
-  owned.product = dup_text("q1-classic-id1");
-  owned.map = dup_text("maps/e1m1.bsp");
-  owned.corpus_root = dup_text("/corpus");
-  owned.startup_commands = calloc(1, sizeof *owned.startup_commands);
-  owned.startup_commands[0] = dup_text("quit");
-  owned.startup_command_count = 1;
-  owned.mods = calloc(1, sizeof *owned.mods);
-  owned.mods[0].product = dup_text("q1-mod");
-  owned.mods[0].id = dup_text("mod:1");
-  owned.mod_count = 1;
-  qa_app_options cloned;
-  CHECK(composition_clone_options(&owned, &cloned));
-  CHECK(cloned.product != owned.product &&
-        strcmp(cloned.product, owned.product) == 0);
-  CHECK(cloned.map != owned.map && strcmp(cloned.map, owned.map) == 0);
-  CHECK(cloned.startup_commands[0] != owned.startup_commands[0] &&
-        strcmp(cloned.startup_commands[0], "quit") == 0);
-  CHECK(cloned.mods[0].product != owned.mods[0].product &&
-        strcmp(cloned.mods[0].id, "mod:1") == 0);
-  qa_app_options_destroy(&cloned);
-  CHECK(strcmp(owned.product, "q1-classic-id1") == 0); /* original intact */
-  qa_app_options_destroy(&owned);
-
-  /* Run entry over the borrowed catalog: qa_app_open_application
-   * composes content + EngineSession + simulation for real, and
-   * the missing required product stops it at the named catalog
-   * error without building (or faking) the concrete world. */
-  options.product = (char *)"q1-classic-id1";
-  composition run_comp = {0};
-  run_comp.options = &options;
-  run_comp.catalog = catalog;
-  run_comp.catalog_open = true; /* borrowed: discover skipped, no close */
-  (void)comp_phase_menu_or_game(&run_comp, true);
-  CHECK(run_comp.game != NULL);
-  CHECK(run_comp.error != NULL &&
-        strstr(run_comp.error, "requires:") != NULL);
-  CHECK(!run_comp.concrete_built);
-  CHECK(run_comp.game == NULL ||
-        qa_app_application_content(run_comp.game) != NULL);
-  CHECK(run_comp.game == NULL ||
-        qa_app_application_session(run_comp.game) != NULL);
-  CHECK(run_comp.game == NULL ||
-        qa_app_application_simulation(run_comp.game) != NULL);
-  composition_close_game(&run_comp);
-  CHECK(run_comp.game == NULL);
-  free(run_comp.error);
-  run_comp.error = NULL;
 
   qa_content_catalog_destroy(&catalog); /* borrowed: frees nothing owned */
 

@@ -7,6 +7,7 @@
 
 #include "qa/core/binary/index.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static double fr(double value) { return (float)value; }
 
@@ -193,7 +194,7 @@ static double text_metric(const qa_q3_font_set *fonts, const char *input, double
       continue;
     }
     const qa_q3_registered_glyph *glyph = glyph_at(font, text[i]);
-    value = height ? fmax(value, glyph->metrics.height)
+    value = height ? qa_js_max(value, glyph->metrics.height)
                    : fr(value + glyph->metrics.x_skip);
     count++;
   }
@@ -318,7 +319,7 @@ void qa_q3_draw_cg_string(const qa_draw2d *draw, const qa_picture_asset *charset
 
 static double pulse_channel(double value, double t) {
   value = fr(value);
-  return fr(fmax(0, fmin(1, fr(value + fr(t * fr(fr(fr(0.8) * value) - value))))));
+  return fr(qa_js_max(0, qa_js_min(1, fr(value + fr(t * fr(fr(fr(0.8) * value) - value))))));
 }
 
 static void ui_pass(const qa_draw2d *draw, const qa_picture_asset *charset,
@@ -489,7 +490,7 @@ static void paint_glyph(const qa_draw2d *draw, const qa_q3_registered_glyph *gly
   qa_draw2d_stretch_pic(draw, rect, glyph_uv(glyph), glyph->picture);
 }
 static double paint_maximum(size_t length, double limit) {
-  return limit > 0 ? fmin((double)length, trunc(limit)) : (double)length;
+  return limit > 0 ? qa_js_min((double)length, trunc(limit)) : (double)length;
 }
 
 static void paint_text(const qa_draw2d *draw, const qa_q3_font_set *fonts,
@@ -504,7 +505,7 @@ static void paint_text(const qa_draw2d *draw, const qa_q3_font_set *fonts,
   qa_vec4 color = options->color;
   double count = 0;
   const qa_q3_registered_glyph *cursor_glyph =
-      cursor == NULL ? NULL : glyph_at(font, (int32_t)cursor->character & 255);
+      cursor == NULL ? NULL : glyph_at(font, qa_js_to_int32(cursor->character) & 255);
   bool cursor_visible = cursor != NULL && !trunc_is_odd(cursor->time / 200);
   qa_draw2d_set_color(draw, &color);
   for (size_t i = 0; i < length && count < maximum; i++) {

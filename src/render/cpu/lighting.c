@@ -1,15 +1,16 @@
 /* Port of src/render/cpu/lighting.ts. GPL-2.0-or-later. */
 #include "qa/render/cpu/lighting.h"
 #include "qa/materials/q2_lighting.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <string.h>
 qa_cpu_lighting qa_cull_triangle_lights(qa_cpu_lighting lighting, const qa_vec3 pos[3], qa_q2_fragment_light *storage){
   qa_batch_lighting *p=&lighting.parameters;
   if(strcmp(p->kind,"q2-world")||p->light_count==0) return lighting;
-  double minX=fmin(pos[0].x,fmin(pos[1].x,pos[2].x)),maxX=fmax(pos[0].x,fmax(pos[1].x,pos[2].x));
-  double minY=fmin(pos[0].y,fmin(pos[1].y,pos[2].y)),maxY=fmax(pos[0].y,fmax(pos[1].y,pos[2].y));
-  double minZ=fmin(pos[0].z,fmin(pos[1].z,pos[2].z)),maxZ=fmax(pos[0].z,fmax(pos[1].z,pos[2].z));
+  double minX=qa_js_min(pos[0].x,qa_js_min(pos[1].x,pos[2].x)),maxX=qa_js_max(pos[0].x,qa_js_max(pos[1].x,pos[2].x));
+  double minY=qa_js_min(pos[0].y,qa_js_min(pos[1].y,pos[2].y)),maxY=qa_js_max(pos[0].y,qa_js_max(pos[1].y,pos[2].y));
+  double minZ=qa_js_min(pos[0].z,qa_js_min(pos[1].z,pos[2].z)),maxZ=qa_js_max(pos[0].z,qa_js_max(pos[1].z,pos[2].z));
   size_t n=0;
   for(size_t i=0;i<p->light_count;i++){
     const qa_q2_fragment_light *l=&p->lights[i];
@@ -26,8 +27,10 @@ qa_cpu_lighting qa_cull_triangle_lights(qa_cpu_lighting lighting, const qa_vec3 
 qa_cpu_world_attributes qa_cpu_world_attributes_for(qa_batch_lighting lighting, double index){
   qa_cpu_world_attributes out; out.world_position.x=out.world_position.y=out.world_position.z=0; out.world_normal=out.world_position;
   if(!strcmp(lighting.kind,"vertex")) return out;
-  long i=(long)index;
-  if(i<0||(size_t)i>=lighting.world_position_count) qa_range_error("CPU fragment lighting arrays do not cover the vertex");
+  /* worldPositions[index]: a fractional, negative or NaN index reads undefined. */
+  if(!(index>=0&&index==floor(index)&&index<(double)lighting.world_position_count)) qa_range_error("CPU fragment lighting arrays do not cover the vertex");
+  size_t i=(size_t)index;
+  if(i>=lighting.world_position_count) qa_range_error("CPU fragment lighting arrays do not cover the vertex");
   out.world_position=lighting.world_positions[i];
   if(!strcmp(lighting.kind,"q2-world")){
     if((size_t)i>=lighting.normal_count) qa_range_error("CPU fragment lighting arrays do not cover the vertex");
@@ -35,12 +38,13 @@ qa_cpu_world_attributes qa_cpu_world_attributes_for(qa_batch_lighting lighting, 
   }
   return out;
 }
-static double bound(double v,double lo,double hi){ return fmin(hi,fmax(lo,v)); }
+static double bound(double v,double lo,double hi){ return qa_js_min(hi,qa_js_max(lo,v)); }
 static double depth_sample(qa_depth_image_level im,double u,double v){
   double x=bound(floor(u*im.width),0,im.width-1),y=bound(floor(v*im.height),0,im.height-1);
-  size_t idx=(size_t)(y*im.width+x);
-  if(idx>=im.pixel_count) qa_range_error("CPU shadow atlas sample escaped its image");
-  return im.pixels[idx];
+  /* pixels[NaN] and pixels[-1] read undefined in TS: the same RangeError. */
+  double idx=y*im.width+x;
+  if(!(idx>=0&&idx<(double)im.pixel_count)) qa_range_error("CPU shadow atlas sample escaped its image");
+  return im.pixels[(size_t)idx];
 }
 double qa_cpu_shadow_visibility(qa_vec3 position,qa_vec3 origin,double radius,qa_q2_shadow_projection shadow,qa_q2_shadow_atlas atlas,qa_depth_image_level depth,bool model){
   if(!strcmp(shadow.kind,"none")) return 1;
@@ -62,7 +66,7 @@ double qa_cpu_shadow_visibility(qa_vec3 position,qa_vec3 origin,double radius,qa
     else if(ay>=az){face=y>=0?2:3;right=y>=0?x:-x;up=z;axial=ay;}
     else {face=z>=0?4:5;right=z>=0?y:-y;up=x;axial=az;}
     double nearp=atlas.near_plane; if(axial<=nearp)return 1;
-    double farp=fmax(radius,nearp*2); pa=(farp+nearp)/(nearp-farp); pb=2*farp*nearp/(nearp-farp);
+    double farp=qa_js_max(radius,nearp*2); pa=(farp+nearp)/(nearp-farp); pb=2*farp*nearp/(nearp-farp);
     double cw=rect.z/3,ch=rect.w/2,cx=rect.x+fmod(face,3)*cw,cy=rect.y+floor(face/3)*ch;
     baseX=cx+(right/axial*0.5+0.5)*cw;baseY=cy+(up/axial*0.5+0.5)*ch;
     lowX=cx+texel;lowY=cy+texel;highX=cx+cw-texel;highY=cy+ch-texel;
@@ -84,7 +88,7 @@ static qa_vec3 alias_shade(qa_vec3 position,qa_vec4 vertex,double scale,const qa
     double occ=1-qa_cpu_shadow_visibility(position,l->origin,l->radius,l->shadow,atlas,depth,true);
     kr-=l->fraction.x*occ;kg-=l->fraction.y*occ;kb-=l->fraction.z*occ;
   }
-  qa_vec3 o;o.x=fmin(vertex.x*scale*fmax(kr,0),1);o.y=fmin(vertex.y*scale*fmax(kg,0),1);o.z=fmin(vertex.z*scale*fmax(kb,0),1);return o;
+  qa_vec3 o;o.x=qa_js_min(vertex.x*scale*qa_js_max(kr,0),1);o.y=qa_js_min(vertex.y*scale*qa_js_max(kg,0),1);o.z=qa_js_min(vertex.z*scale*qa_js_max(kb,0),1);return o;
 }
 qa_cpu_sample qa_shade_q2_fragment(const qa_cpu_lighting *l,qa_vec3 p,qa_vec3 n,qa_vec4 v,const qa_cpu_sample *t){ qa_cpu_sample o;o.r=o.g=o.b=o.a=0; qa_shade_q2_fragment_into(&o,l,p,n,v,t); return o; }
 void qa_shade_q2_fragment_into(qa_cpu_sample *out,const qa_cpu_lighting *lighting,qa_vec3 position,qa_vec3 normal,qa_vec4 vertex,const qa_cpu_sample *texel){
@@ -104,7 +108,7 @@ void qa_shade_q2_fragment_into(qa_cpu_sample *out,const qa_cpu_lighting *lightin
         if(l->fraction.x==0&&l->fraction.y==0&&l->fraction.z==0)continue;
         double occ=1-qa_cpu_shadow_visibility(position,l->origin,l->radius,l->shadow,*p->atlas,*lighting->depth,true);
         kr-=l->fraction.x*occ;kg-=l->fraction.y*occ;kb-=l->fraction.z*occ; }
-      shade.x=fmin(vertex.x*p->shade_scale*fmax(kr,0),1);shade.y=fmin(vertex.y*p->shade_scale*fmax(kg,0),1);shade.z=fmin(vertex.z*p->shade_scale*fmax(kb,0),1);
+      shade.x=qa_js_min(vertex.x*p->shade_scale*qa_js_max(kr,0),1);shade.y=qa_js_min(vertex.y*p->shade_scale*qa_js_max(kg,0),1);shade.z=qa_js_min(vertex.z*p->shade_scale*qa_js_max(kb,0),1);
       r=shade.x;g=shade.y;b=shade.z;
     }
     for(size_t i=0;i<p->light_count;i++){

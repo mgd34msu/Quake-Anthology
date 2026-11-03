@@ -2,6 +2,7 @@
 #include "qa/input/pitch_drift.h"
 
 #include <math.h>
+#include "qa/foundation/js.h"
 
 void qa_pitch_drift_init(qa_pitch_drift *drift) {
   drift->stopped = true;
@@ -45,8 +46,8 @@ double qa_pitch_drift_sample(qa_pitch_drift *drift, double pitch,
     drift->velocity = 0;
     return pitch;
   }
-  double move = fmin(fabs(delta), seconds * drift->velocity);
+  double move = qa_js_min(fabs(delta), seconds * drift->velocity);
   drift->velocity += seconds * speed;
   if (move == fabs(delta)) drift->velocity = 0;
-  return pitch + (delta > 0 ? 1 : delta < 0 ? -1 : 0) * move;
+  return pitch + qa_js_sign(delta) * move;
 }

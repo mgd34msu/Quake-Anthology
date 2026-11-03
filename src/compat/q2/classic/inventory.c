@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 typedef struct { char *item; double index; bool is_ammo; double offset; } native_item_t;
 struct qa_compat_q2_classic_source_inventory {
@@ -58,7 +59,7 @@ qa_compat_q2_classic_source_inventory *qa_compat_q2_classic_source_inventory_cre
     int32_t flags = qa_compat_q2_mem_read_i32(memory, qa_compat_q2_mem_offset(memory, address, (int64_t)pr->inventory_table.flags));
     native_item_t *it = &inv->items[inv->item_count++];
     it->item = item; it->index = (double)index;
-    if ((flags & (int32_t)pr->inventory_table.ammo_flag) == 0) { it->is_ammo = false; }
+    if ((flags & qa_js_to_int32(pr->inventory_table.ammo_flag)) == 0) { it->is_ammo = false; }
     else {
       int32_t tag = qa_compat_q2_mem_read_i32(memory, qa_compat_q2_mem_offset(memory, address, (int64_t)pr->inventory_table.tag));
       if (tag < 0 || (size_t)tag >= pr->inventory_table.capacity_count) qa_range_error("Native ammo tag has no qualified capacity field");
@@ -127,8 +128,8 @@ static void bind_write(void *ctx, qa_inventory_entry entry) {
   if (!item->is_ammo && entry.capacity != (item->index == b->inv->profile.inventory_table.empty_index ? 0 : 2147483647.0))
     qa_range_error("Native item has a fixed source counter capacity");
   qa_guest_address address = client_of(b);
-  if (item->is_ammo) qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, address, (int64_t)item->offset), (int32_t)entry.capacity);
-  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, address, (int64_t)(b->inv->profile.base.client.inventory + item->index * 4)), (int32_t)entry.count);
+  if (item->is_ammo) qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, address, (int64_t)item->offset), qa_js_to_int32(entry.capacity));
+  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, address, (int64_t)(b->inv->profile.base.client.inventory + item->index * 4)), qa_js_to_int32(entry.count));
 }
 qa_inventory_state_binding qa_compat_q2_classic_source_inventory_bind(qa_compat_q2_classic_source_inventory *inv, qa_raw_entity_view record) {
   qa_owned_actor actor;

@@ -9,6 +9,7 @@
 #include "qa/app/bootstrap/audio/playlist_settings.h"
 #include "qa/content/roots.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static void *xmalloc(size_t n) { void *p = malloc(n == 0 ? 1 : n); if (p == NULL) qa_range_error("Out of memory"); return p; }
 static void *xrealloc(void *p, size_t n) { void *q = realloc(p, n == 0 ? 1 : n); if (q == NULL) qa_range_error("Out of memory"); return q; }
 static char *xstrdup(const char *s) { char *p = strdup(s); if (p == NULL) qa_range_error("Out of memory"); return p; }
@@ -77,7 +78,7 @@ char **qa_app_mounted_music_tracks(qa_content_mounted *mounts, size_t *out_count
   for (size_t i = 0; i < seen_count; i++) free(seen[i]);
   free(seen);
   if (tracks == NULL) tracks = xmalloc(sizeof *tracks);
-  qsort(tracks, track_count, sizeof *tracks, cmp_str);
+  qa_js_sort(tracks, track_count, sizeof *tracks, cmp_str);
   *out_count = track_count;
   return tracks;
 }

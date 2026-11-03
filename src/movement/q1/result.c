@@ -1,6 +1,7 @@
 /* Port of src/movement/q1/result.ts. GPL-2.0-or-later. */
 #include "qa/movement/q1/result.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "qa/foundation/support.h"
@@ -73,6 +74,7 @@ qa_movement_result qa_q1_finish_movement(qa_q1_movement_context *context, qa_mov
   const qa_animation_step_result animation =
       context->services.animation_step(context->services.ctx, animation_input);
   for (size_t i = 0; i < animation.effect_count; i++) qa_q1_context_effect(context, animation.effects[i]);
+  free((void *)animation.effects); /* the animation step hands its effects to the move */
   qa_movement_result result;
   memset(&result, 0, sizeof result);
   result.kind = kind_name(state.kind);

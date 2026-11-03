@@ -1,5 +1,6 @@
 /* Port of src/content/q1/quakec/id1-damage.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/quakec/id1_damage.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -99,6 +100,24 @@ static void frame_cancel(damage_frame *frame) {
    * compat_types.h) is that cancel does not return. */
   qa_range_error("QC function execution cancellation returned");
 }
+/* TS `finally { frame.reactionDepth--; }`: the frame is addressed by its
+ * stack index, since nested damage may reallocate the stack. */
+typedef struct reaction_scope { qa_q1_id1_damage_binding *binding; size_t index; } reaction_scope;
+static void leave_reaction(void *arg) {
+  reaction_scope *scope = arg;
+  scope->binding->active[scope->index].reaction_depth--;
+}
+/* TS `finally { this.active.pop(); }`. */
+static void pop_frame(void *arg) {
+  qa_q1_id1_damage_binding *binding = arg;
+  binding->active_count--;
+}
+/* TS `finally { vm.globals.setInt(plan.damage, original); }`. */
+typedef struct damage_word_scope { qa_q1qc_machine *vm; int64_t word; int32_t original; } damage_word_scope;
+static void restore_damage_word(void *arg) {
+  damage_word_scope *scope = arg;
+  qa_q1qc_words_set_int(&scope->vm->globals, scope->word, scope->original);
+}
 static protection_owner *find_owner(protection_owner *owners, size_t count, qa_owned_actor actor) {
   for (size_t i = 0; i < count; i++)
     if (qa_q1qc_owned_equal(owners[i].actor, actor)) return &owners[i];
@@ -144,7 +163,7 @@ static void run_armor(qa_q1_id1_damage_binding *binding, qa_q1qc_inline_continua
   }
   qa_numeric_operations *numeric = &vm->numeric;
   int32_t word = plan->flags.is_bits
-                     ? (int32_t)trunc(qa_q1qc_words_float(&vm->globals, (int64_t)plan->flags.word)) : 0;
+                     ? qa_js_to_int32(qa_q1qc_words_float(&vm->globals, (int64_t)plan->flags.word)) : 0; /* ToInt32(Math.trunc(word)) */
   qa_attack_damage_flags captured = qa_attack_damage_flags_of(frame->request);
   qa_armor_damage_flags flags = captured.flags;
   double base_scale = flags.has_regular_protection_scale ? flags.regular_protection_scale : 1;
@@ -152,13 +171,13 @@ static void run_armor(qa_q1_id1_damage_binding *binding, qa_q1qc_inline_continua
   flags.regular_protection_scale = numeric->multiply(numeric->ctx, base_scale, frame->regular_scale);
   if (plan->flags.is_bits) {
     if ((int64_t)plan->flags.no_armor != 0)
-      flags.no_armor = (word & (int32_t)plan->flags.no_armor) != 0;
+      flags.no_armor = (word & qa_js_to_int32(plan->flags.no_armor)) != 0;
     if ((int64_t)plan->flags.no_power_armor != 0)
-      flags.no_power_armor = (word & (int32_t)plan->flags.no_power_armor) != 0;
+      flags.no_power_armor = (word & qa_js_to_int32(plan->flags.no_power_armor)) != 0;
     if ((int64_t)plan->flags.no_regular_armor != 0)
-      flags.no_regular_armor = (word & (int32_t)plan->flags.no_regular_armor) != 0;
+      flags.no_regular_armor = (word & qa_js_to_int32(plan->flags.no_regular_armor)) != 0;
     if ((int64_t)plan->flags.energy != 0)
-      flags.energy = (word & (int32_t)plan->flags.energy) != 0;
+      flags.energy = (word & qa_js_to_int32(plan->flags.energy)) != 0;
   }
   qa_armor_stage_input input = {frame->request, frame->request.direction, frame->request.point,
                                 frame->request.normal,
@@ -170,7 +189,9 @@ static void run_armor(qa_q1_id1_damage_binding *binding, qa_q1qc_inline_continua
       !qa_q1qc_owned_equal(again, actor))
     frame_cancel(frame);
   if (!isfinite((double)(float)power_saved)) damage_error("Armor savings exceed QC binary32 range");
-  int32_t original_bits = qa_q1qc_words_int(&vm->globals, (int64_t)plan->damage);
+  damage_word_scope restore = {vm, (int64_t)plan->damage, qa_q1qc_words_int(&vm->globals, (int64_t)plan->damage)};
+  qa_cleanup restore_node;
+  qa_cleanup_push(&restore_node, restore_damage_word, &restore);
   double amount = numeric->subtract(numeric->ctx, input.amount, power_saved);
   qa_q1qc_words_set_float(&vm->globals, (int64_t)plan->damage, amount);
   bool executed = false;
@@ -182,20 +203,16 @@ static void run_armor(qa_q1_id1_damage_binding *binding, qa_q1qc_inline_continua
                              ? armor_original_run(&original)
                              : current->intercept(current->intercept_ctx, regular_input,
                                                   armor_original_run, &original);
-  /* TS restores the damage word in a finally around the writes below. */
+  /* The damage word is restored by the cleanup on a raise (TS finally). */
   if (!qa_session_actor_registry_resolve_owned(binding->source.actors, actor.id, &again) ||
-      !qa_q1qc_owned_equal(again, actor)) {
-    qa_q1qc_words_set_int(&vm->globals, (int64_t)plan->damage, original_bits);
+      !qa_q1qc_owned_equal(again, actor))
     frame_cancel(frame);
-  }
-  if (!isfinite((double)(float)regular_saved)) {
-    qa_q1qc_words_set_int(&vm->globals, (int64_t)plan->damage, original_bits);
-    damage_error("Armor savings exceed QC binary32 range");
-  }
+  if (!isfinite((double)(float)regular_saved)) damage_error("Armor savings exceed QC binary32 range");
   if (!executed) execute.skip_to_join(execute.ctx);
   qa_q1qc_words_set_float(&vm->globals, (int64_t)plan->saved,
                           numeric->add(numeric->ctx, regular_saved, power_saved));
-  qa_q1qc_words_set_int(&vm->globals, (int64_t)plan->damage, original_bits);
+  qa_cleanup_pop(&restore_node);
+  restore_damage_word(&restore);
 }
 
 static void inline_run(void *ctx, qa_q1qc_inline_region region,
@@ -215,28 +232,41 @@ static void inline_run(void *ctx, qa_q1qc_inline_region region,
     return;
   }
   damage_frame *frame = top_frame(binding);
+  /* TS keeps the frame object across execute(); read it before the stack can grow. */
+  bool powerup_owner = frame != NULL && frame->request.attack.has_damage_powerup_owner;
   execute.run(execute.ctx);
-  if (frame != NULL && frame->request.attack.has_damage_powerup_owner)
+  if (powerup_owner)
     qa_q1qc_words_set_float(&binding_vm(binding)->globals, binding->quad_result, 0);
 }
 
+/* isDeepStrictEqual compares numbers with Object.is: NaN equals NaN, -0 differs from 0. */
+static bool same_value(double a, double b) {
+  if (isnan(a) || isnan(b)) return isnan(a) && isnan(b);
+  return a == b && signbit(a) == signbit(b);
+}
 static bool cause_equal(const qa_attack_cause *a, const qa_attack_cause *b) {
   return a->kind == b->kind && str_equal(a->death_type, b->death_type) &&
-         str_equal(a->armor_effect, b->armor_effect) && a->means_of_death == b->means_of_death &&
-         a->damage_flags == b->damage_flags && a->has_native == b->has_native &&
-         a->native.value == b->native.value && a->native.id == b->native.id &&
-         a->native.friendly_fire == b->native.friendly_fire &&
-         a->native.no_point_loss == b->native.no_point_loss && str_equal(a->hazard, b->hazard);
+         str_equal(a->armor_effect, b->armor_effect) &&
+         same_value(a->means_of_death, b->means_of_death) &&
+         same_value(a->damage_flags, b->damage_flags) && a->has_native == b->has_native &&
+         (!a->has_native ||
+          (str_equal(a->native.edition, b->native.edition) && str_equal(a->native.game, b->native.game) &&
+           same_value(a->native.value, b->native.value) && same_value(a->native.id, b->native.id) &&
+           a->native.friendly_fire == b->native.friendly_fire &&
+           a->native.no_point_loss == b->native.no_point_loss)) &&
+         str_equal(a->hazard, b->hazard);
 }
-static bool vec_equal(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+static bool vec_equal(qa_vec3 a, qa_vec3 b) {
+  return same_value(a.x, b.x) && same_value(a.y, b.y) && same_value(a.z, b.z);
+}
 /* TS isDeepStrictEqual over the request with attacker/inflictor nulled. */
 static bool metadata_equal(const qa_damage_request *a, const qa_damage_request *b) {
-  if (a->knockback != b->knockback || !vec_equal(a->direction, b->direction) ||
+  if (!same_value(a->knockback, b->knockback) || !vec_equal(a->direction, b->direction) ||
       !vec_equal(a->point, b->point) || !vec_equal(a->normal, b->normal) ||
       !str_equal(a->delivery, b->delivery)) return false;
   const qa_attack_provenance *x = &a->attack, *y = &b->attack;
-  return x->sequence == y->sequence && x->time.kind == y->time.kind &&
-         x->time.value == y->time.value &&
+  return same_value(x->sequence, y->sequence) && x->time.kind == y->time.kind &&
+         same_value(x->time.value, y->time.value) &&
          x->has_originating_projectile == y->has_originating_projectile &&
          (!x->has_originating_projectile ||
           qa_q1qc_actor_equal(x->originating_projectile, y->originating_projectile)) &&
@@ -277,7 +307,8 @@ static qa_source_damage_result run_source_damage_execute(void *ctx,
        !binding->projection.admit(binding->projection.ctx, effective)) ||
       !qa_session_actor_registry_is_live(binding->source.actors, effective.target))
     return none;
-  if (qa_mod_operation_active(qa_gameplay_authority_damage_operation(binding->authority)) &&
+  if (strcmp(binding->program->damage_kind, "sites") == 0 &&
+      qa_mod_operation_active(qa_gameplay_authority_damage_operation(binding->authority)) &&
       !metadata_equal(&run->request, &effective))
     damage_error("QuakeC damage call accepts actor and amount changes; independent damage metadata requires a replacement");
   if (!isfinite((double)(float)effective.amount))
@@ -291,8 +322,10 @@ static qa_source_damage_result run_source_damage_execute(void *ctx,
     for (size_t i = 0; i < plan->regular_scale_count; i++) {
       const qa_mod_qc_armor_regular_scale *site = &plan->regular_scale[i];
       if ((int64_t)site->statement == run->call.statement &&
-          qa_q1qc_function_named(binding->source.program, site->caller)->index == run->call.caller)
-        regular_scale = site->scale;
+          qa_q1qc_function_named(binding->source.program, site->caller)->index == run->call.caller) {
+        regular_scale = site->scale; /* TS find(): the first match */
+        break;
+      }
     }
   }
   if (binding->active_count == binding->active_capacity) {
@@ -303,6 +336,8 @@ static qa_source_damage_result run_source_damage_execute(void *ctx,
   *frame = (damage_frame){effective, target_reference, observer,
                           effective.attack.movement_provider, run->execute.ctx,
                           run->execute.cancel, regular_scale, {0, "none"}, 0, false};
+  qa_cleanup pop_node;
+  qa_cleanup_push(&pop_node, pop_frame, binding);
   *run->executed = true;
   qa_q1qc_damage_call_values projected = {(double)target_reference, (double)inflictor_reference,
                                           (double)attacker_reference, effective.amount};
@@ -317,10 +352,12 @@ static qa_source_damage_result run_source_damage_execute(void *ctx,
     if (qa_q1qc_words_float(&target, binding->health) <= 0) {
       frame->result.reaction = "death";
       frame->observer.before_reaction(frame->observer.ctx, frame->result);
+      frame = top_frame(binding); /* the observer may grow the frame stack */
     }
   }
   qa_source_damage_result result = frame->result;
-  binding->active_count--;
+  qa_cleanup_pop(&pop_node);
+  pop_frame(binding);
   return result;
 }
 static qa_damage_outcome apply_source_damage(void *ctx, qa_damage_request composed) {
@@ -364,6 +401,24 @@ static void function_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_exe
   if (!qa_q1qc_actor_equal(request.target, captured.target) ||
       (double)(float)request.amount != captured.amount || !attacker_same || !inflictor_same)
     damage_error("id1 damage provenance changed source arguments");
+  const qa_actor_source_result owned = qa_session_actor_registry_source_of(binding->source.actors, captured.target);
+  if (binding->has_projection &&
+      (!owned.has_value || owned.provider == NULL || strcmp(owned.provider, binding->source.provider) != 0)) {
+    /* A foreign actor keeps its own health: its provider applies the
+     * damage, and the source function never runs on its borrowed row. */
+    const double multiplier = strcmp(layout->attribution, "native") == 0
+                                  ? 1
+                                  : qa_q1_id1_damage_multiplier(vm, (int64_t)source_call.attacker,
+                                                                (int64_t)source_call.inflictor);
+    qa_damage_request scaled = request;
+    if (multiplier != 1) scaled.amount = (double)(float)(request.amount * multiplier);
+    const qa_damage_outcome foreign = qa_gameplay_authority_apply(binding->authority, scaled, NULL, NULL);
+    if (binding->projection.completed != NULL)
+      binding->projection.completed(binding->projection.ctx, request, foreign);
+    static const int32_t SKIPPED[3] = {0, 0, 0};
+    execute.skip(execute.ctx, SKIPPED);
+    return;
+  }
   bool executed = false;
   source_damage_ctx run = {binding, vm, call, source_call, request, execute, &executed};
   qa_damage_outcome outcome =
@@ -374,6 +429,19 @@ static void function_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_exe
     static const int32_t ZEROS[3] = {0, 0, 0};
     execute.skip(execute.ctx, ZEROS);
   }
+}
+/* TS `frame.reactionDepth++; try { reaction ?? execute() } finally { frame.reactionDepth--; }`. */
+static void run_reaction(qa_q1_id1_damage_binding *binding, damage_frame *frame,
+                         qa_q1qc_function_execution execute) {
+  reaction_scope scope = {binding, (size_t)(frame - binding->active)};
+  frame->reaction_depth++;
+  qa_cleanup node;
+  qa_cleanup_push(&node, leave_reaction, &scope);
+  if (binding->has_projection && binding->projection.reaction != NULL)
+    binding->projection.reaction(binding->projection.ctx, frame->request, frame->result, execute);
+  else qa_q1qc_execution_run(&execute);
+  qa_cleanup_pop(&node);
+  leave_reaction(&scope);
 }
 static void observe_native_function(qa_q1_id1_damage_binding *binding, qa_q1qc_call_site call,
                                     qa_q1qc_function_execution execute) {
@@ -390,18 +458,17 @@ static void observe_native_function(qa_q1_id1_damage_binding *binding, qa_q1qc_c
       qa_q1qc_execution_run(&execute);
       return;
     }
-    frame->reaction_depth++;
-    if (binding->has_projection && binding->projection.reaction != NULL)
-      binding->projection.reaction(binding->projection.ctx, frame->request, frame->result, execute);
-    else qa_q1qc_execution_run(&execute);
-    frame = top_frame(binding);
-    frame->reaction_depth--;
+    run_reaction(binding, frame, execute);
     return;
   }
   if (strcmp(frame->result.reaction, "none") != 0) {
     qa_q1qc_execution_run(&execute);
     return;
   }
+  /* TS reads vm() and the target row before looking up the reaction site. */
+  qa_q1qc_machine *vm = binding_vm(binding);
+  qa_q1qc_words target;
+  qa_q1qc_entities_from_reference(binding->source.entities, frame->target_reference, &target);
   const char *reaction = NULL;
   for (size_t i = 0; i < layout->reaction_count; i++)
     if (layout->reactions[i].statement == call.statement) reaction = layout->reactions[i].kind;
@@ -409,9 +476,6 @@ static void observe_native_function(qa_q1_id1_damage_binding *binding, qa_q1qc_c
     qa_q1qc_execution_run(&execute);
     return;
   }
-  qa_q1qc_machine *vm = binding_vm(binding);
-  qa_q1qc_words target;
-  qa_q1qc_entities_from_reference(binding->source.entities, frame->target_reference, &target);
   bool death = strcmp(reaction, "death") == 0;
   if (qa_q1qc_words_int(&vm->globals, qa_q1qc_machine_global_offset(vm, "self")) !=
           frame->target_reference ||
@@ -419,18 +483,16 @@ static void observe_native_function(qa_q1_id1_damage_binding *binding, qa_q1qc_c
     qa_q1qc_execution_run(&execute);
     return;
   }
-  if ((qa_q1qc_words_float(&target, binding->health) <= 0) != death)
-    damage_error("Native damage reaction disagrees with target health");
-  if (!frame->health_written)
-    damage_error("Native damage reaction precedes target health mutation");
+  /* A program whose reaction call does not follow a health write (zero-damage pain, custom state) is run without reporting it. */
+  if ((qa_q1qc_words_float(&target, binding->health) <= 0) != death || !frame->health_written) {
+    qa_q1qc_execution_run(&execute);
+    return;
+  }
   frame->result.reaction = reaction;
+  /* The observer may run nested damage that grows the frame stack. */
+  size_t index = (size_t)(frame - binding->active);
   frame->observer.before_reaction(frame->observer.ctx, frame->result);
-  frame->reaction_depth++;
-  if (binding->has_projection && binding->projection.reaction != NULL)
-    binding->projection.reaction(binding->projection.ctx, frame->request, frame->result, execute);
-  else qa_q1qc_execution_run(&execute);
-  frame = top_frame(binding);
-  frame->reaction_depth--;
+  run_reaction(binding, &binding->active[index], execute);
 }
 
 static int64_t binding_field(const qa_q1qc_program *program, const char *name) {
@@ -664,7 +726,9 @@ bool qa_q1_id1_damage_protection_stage(qa_q1_id1_damage_binding *binding,
 
 qa_armor_state qa_q1_id1_damage_read_armor(const qa_q1_id1_damage_binding *binding,
                                           const qa_q1qc_words *words) {
-  uint32_t items = (uint32_t)(int64_t)trunc(qa_q1qc_words_float(words, binding->items));
+  /* items & mask applies ToInt32 to Math.trunc(items): a NaN or huge QC float is 0 or
+   * wraps, where an int64 cast is undefined. */
+  uint32_t items = qa_js_to_uint32(qa_q1qc_words_float(words, binding->items));
   uint32_t green = (uint32_t)(int64_t)binding->program->armor_masks[0];
   uint32_t yellow = (uint32_t)(int64_t)binding->program->armor_masks[1];
   uint32_t red = (uint32_t)(int64_t)binding->program->armor_masks[2];
@@ -732,11 +796,9 @@ void qa_q1_id1_damage_observe_entity_store(qa_q1_id1_damage_binding *binding,
   bool combat_store = false;
   for (int i = 0; i < 5; i++) if (combat_words[i] == store.word) combat_store = true;
   if (native && frame->reaction_depth > 0) return;
-  if (native && combat_store && store.reference != frame->target_reference)
-    damage_error("Unsupported native damage redirects a combat store to another actor");
   if (store.reference != frame->target_reference) return;
-  if (native && combat_store && strcmp(frame->result.reaction, "none") != 0)
-    damage_error("Native damage combat store follows its reaction continuation");
+  /* Stores after the reaction continuation are observation-only: they already ran in the VM and are not reported to the authority. */
+  if (native && combat_store && strcmp(frame->result.reaction, "none") != 0) return;
   if (!native && store.function_index != layout->damage_index) return;
   qa_q1qc_machine *vm = binding_vm(binding);
   (void)vm;
@@ -749,7 +811,9 @@ void qa_q1_id1_damage_observe_entity_store(qa_q1_id1_damage_binding *binding,
     mutation.kind = QA_DAMAGE_MUTATION_HEALTH;
     mutation.health_before = before;
     mutation.health_after = after;
+    size_t index = (size_t)(frame - binding->active);
     frame->observer.stored(frame->observer.ctx, mutation);
+    frame = &binding->active[index]; /* the observer may grow the frame stack */
     frame->health_written = true;
     frame->result = (qa_source_damage_result){
         strcmp(layout->damage_kind, "calls") == 0

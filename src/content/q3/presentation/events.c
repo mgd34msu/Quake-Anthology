@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/events.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/events.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -21,7 +23,7 @@ static double f_(double value) { return (double)(float)value; }
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -263,7 +265,7 @@ static void item_pickup(runtime_t *runtime, double index) {
 
 static void use_item(runtime_t *runtime, qa_q3_pres_client_entity *entity) {
   qa_q3_base_entity_state *es = &entity->current_state;
-  int32_t item = (es->event & ~QA_Q3_BASE_EV_EVENT_BITS) - QA_Q3_EV_USE_ITEM0;
+  int32_t item = (qa_js_to_int32(es->event) & ~QA_Q3_BASE_EV_EVENT_BITS) - QA_Q3_EV_USE_ITEM0;
   if (item < 0 || item > QA_Q3_HI_NUM_HOLDABLE) item = 0;
   if (es->number == snapshot_of(runtime)->player_state.client_num) {
     char text[160];
@@ -306,9 +308,9 @@ static void sliced_name(char *out, size_t out_size, const char *name) {
 }
 static void obituary(runtime_t *runtime, qa_q3_base_entity_state *es) {
   qa_q3_pres_client_event_host *host = &runtime->host;
-  int32_t target = es->other_entity_num;
-  int32_t mod = es->event_parm;
-  int32_t attacker = es->other_entity_num2;
+  int32_t target = qa_js_to_int32(es->other_entity_num);
+  int32_t mod = qa_js_to_int32(es->event_parm);
+  int32_t attacker = qa_js_to_int32(es->other_entity_num2);
   if (target < 0 || target >= 64) {
     qa_common_error(QA_COMMON_ERROR_DROP, "CG_Obituary: target out of range");
   }
@@ -519,7 +521,7 @@ static void debug_name(runtime_t *runtime, const char *name) {
 static void smoke_puff_event(runtime_t *runtime, qa_vec3 origin, qa_vec3 velocity, double radius,
     qa_vec4 color, double duration, double start_time, double fade_in_time, double flags,
     const qa_q3_pres_scene_shader *shader) {
-  qa_q3_pres_smoke_puff_options_mirror options;
+  qa_q3_pres_smoke_puff_options options;
   memset(&options, 0, sizeof options);
   options.origin = origin;
   options.velocity = velocity;
@@ -537,7 +539,7 @@ static void source_entity_event(runtime_t *runtime, qa_q3_pres_client_entity *en
   qa_q3_pres_client_game_state *state = runtime->state;
   qa_q3_pres_client_event_host *host = &runtime->host;
   qa_q3_base_entity_state *es = &entity->current_state;
-  int32_t event = es->event & ~QA_Q3_BASE_EV_EVENT_BITS;
+  int32_t event = qa_js_to_int32(es->event) & ~QA_Q3_BASE_EV_EVENT_BITS;
   if (host->options.debug_events) {
     qa_q3_game_format_arg args[2] = {qa_q3_game_format_number(es->number), qa_q3_game_format_number(event)};
     char *message = qa_q3_game_format("ent:%3i  event:%3i ", args, 2, 32000);
@@ -550,7 +552,7 @@ static void source_entity_event(runtime_t *runtime, qa_q3_pres_client_entity *en
     debug_name(runtime, "ZEROEVENT");
     return;
   }
-  int32_t client_num = es->client_num < 0 || es->client_num >= 64 ? 0 : es->client_num;
+  int32_t client_num = es->client_num < 0 || es->client_num >= 64 ? 0 : (int32_t)es->client_num;
   qa_q3_pres_client_info *info = host->client_info(host->client_info_ctx, client_num);
   bool mission_only = (event >= QA_Q3_EV_PROXIMITY_MINE_STICK && event <= QA_Q3_EV_LIGHTNINGBOLT) ||
                       event >= QA_Q3_EV_TAUNT_YES;
@@ -644,15 +646,19 @@ static void source_entity_event(runtime_t *runtime, qa_q3_pres_client_entity *en
     case QA_Q3_EV_WATER_CLEAR: custom_sound(runtime, entity, CHAN_AUTO, "*gasp.wav"); break;
     case QA_Q3_EV_ITEM_PICKUP:
     case QA_Q3_EV_GLOBAL_ITEM_PICKUP: {
-      int32_t index = es->event_parm;
+      int32_t index = qa_js_to_int32(es->event_parm);
       size_t item_count = 0;
       (void)qa_q3_base_item_list(state->product, &item_count);
       if (index < 1 || index >= (int32_t)item_count) break;
       const qa_q3_base_item_definition *item = qa_q3_base_item_at(state->product, index);
       if (event == QA_Q3_EV_GLOBAL_ITEM_PICKUP) {
         if (item->pickup_sound != NULL) {
-          start_sound(runtime, false, qa_math_vec3(0, 0, 0), snapshot_of(runtime)->player_state.client_num,
-              CHAN_AUTO, host->register_sound(host->ctx, item->pickup_sound, false));
+          runtime_t * runtime3 = runtime;
+          qa_vec3 origin3 = qa_math_vec3(0, 0, 0);
+          double entity_num2 = snapshot_of(runtime)->player_state.client_num;
+          qa_pcm_sound * sound3 = host->register_sound(host->ctx, item->pickup_sound, false);
+          start_sound(runtime3, false, origin3, entity_num2,
+              CHAN_AUTO, sound3);
         }
       } else if (item->type == QA_Q3_BASE_IT_POWERUP || item->type == QA_Q3_BASE_IT_TEAM) {
         media_sound(runtime, entity, CHAN_AUTO, QA_Q3_PRES_N_HEALTH_SOUND);
@@ -702,8 +708,8 @@ static void source_entity_event(runtime_t *runtime, qa_q3_pres_client_entity *en
     case QA_Q3_EV_PROXIMITY_MINE_STICK:
       if (host->product == QA_Q3_BASE_PRODUCT_MISSIONPACK) {
         start_sound(runtime, false, qa_math_vec3(0, 0, 0), es->number, CHAN_AUTO,
-            host->mission_sounds[(es->event_parm & 64) ? QA_Q3_PRES_WSTBIMPL_SOUND
-                : (es->event_parm & 4096) ? QA_Q3_PRES_WSTBIMPM_SOUND : QA_Q3_PRES_WSTBIMPD_SOUND]);
+            host->mission_sounds[(qa_js_to_int32(es->event_parm) & 64) ? QA_Q3_PRES_WSTBIMPL_SOUND
+                : (qa_js_to_int32(es->event_parm) & 4096) ? QA_Q3_PRES_WSTBIMPM_SOUND : QA_Q3_PRES_WSTBIMPD_SOUND]);
       }
       break;
     case QA_Q3_EV_PROXIMITY_MINE_TRIGGER:
@@ -765,32 +771,36 @@ static void source_entity_event(runtime_t *runtime, qa_q3_pres_client_entity *en
       }
       break;
     case QA_Q3_EV_BULLET_HIT_WALL: {
-      qa_q3_pres_bullet_hit_mirror hit = {true, qa_q3_base_byte_to_direction(es->event_parm), 0};
+      qa_q3_pres_bullet_hit hit = {true, qa_q3_base_byte_to_direction(es->event_parm), 0};
       host->weapons.bullet(host->weapons.ctx, es->pos.base, es->other_entity_num, hit);
       break;
     }
     case QA_Q3_EV_BULLET_HIT_FLESH: {
-      qa_q3_pres_bullet_hit_mirror hit = {false, {0, 0, 0}, es->event_parm};
+      qa_q3_pres_bullet_hit hit = {false, {0, 0, 0}, es->event_parm};
       host->weapons.bullet(host->weapons.ctx, es->pos.base, es->other_entity_num, hit);
       break;
     }
     case QA_Q3_EV_SHOTGUN: host->weapons.shotgun_fire(host->weapons.ctx, es); break;
     case QA_Q3_EV_GENERAL_SOUND:
     case QA_Q3_EV_GLOBAL_SOUND: {
-      if (es->event_parm < 0 || (size_t)es->event_parm >= host->media.game_sound_count) {
-        qa_range_error("Unregistered game sound index %lld", (long long)es->event_parm);
+      /* TS gameSounds[es.eventParm] is undefined off the table, including non-integers. */
+      if (!(es->event_parm == trunc(es->event_parm)) || es->event_parm < 0
+          || (size_t)es->event_parm >= host->media.game_sound_count) {
+        qa_range_error("Unregistered game sound index %s", QA_JS_NUMBER(es->event_parm));
       }
-      qa_pcm_sound *sound = host->media.game_sounds[es->event_parm];
-      start_sound(runtime, false, qa_math_vec3(0, 0, 0),
-          event == QA_Q3_EV_GENERAL_SOUND ? (double)es->number
-                                             : snapshot_of(runtime)->player_state.client_num,
-          event == QA_Q3_EV_GENERAL_SOUND ? CHAN_VOICE : CHAN_AUTO,
-          sound == NULL ? host->custom_sound(host->ctx, es->number,
+      qa_pcm_sound *sound = host->media.game_sounds[(size_t)es->event_parm];
+      runtime_t * runtime2 = runtime;
+      qa_vec3 origin = qa_math_vec3(0, 0, 0);
+      double entity_num = event == QA_Q3_EV_GENERAL_SOUND ? (double)es->number
+                                             : snapshot_of(runtime)->player_state.client_num;
+      double channel = event == QA_Q3_EV_GENERAL_SOUND ? CHAN_VOICE : CHAN_AUTO;
+      qa_pcm_sound * sound2 = sound == NULL ? host->custom_sound(host->ctx, es->number,
                               host->sound_config_string(host->ctx, es->event_parm))
-                        : sound);
+                        : sound;
+      start_sound(runtime2, false, origin, entity_num, channel, sound2);
       break;
     }
-    case QA_Q3_EV_GLOBAL_TEAM_SOUND: team_sound(runtime, es->event_parm); break;
+    case QA_Q3_EV_GLOBAL_TEAM_SOUND: team_sound(runtime, qa_js_to_int32(es->event_parm)); break;
     case QA_Q3_EV_PAIN:
       if (es->number != snapshot_of(runtime)->player_state.client_num) {
         qa_q3_pres_client_event_runtime_pain_event(runtime, entity, es->event_parm);
@@ -818,7 +828,7 @@ static void source_entity_event(runtime_t *runtime, qa_q3_pres_client_entity *en
           : event == QA_Q3_EV_POWERUP_BATTLESUIT ? QA_Q3_PRES_PROTECT_SOUND : QA_Q3_PRES_REGEN_SOUND);
       break;
     case QA_Q3_EV_GIB_PLAYER:
-      if (!(es->e_flags & 512)) media_sound(runtime, entity, CHAN_BODY, QA_Q3_PRES_GIB_SOUND);
+      if (!(qa_js_to_int32(es->e_flags) & 512)) media_sound(runtime, entity, CHAN_BODY, QA_Q3_PRES_GIB_SOUND);
       host->effects.gib_player(host->effects.ctx, entity->lerp_origin);
       break;
     case QA_Q3_EV_STOPLOOPINGSOUND:
@@ -834,13 +844,13 @@ void qa_q3_pres_client_event_runtime_check_events(runtime_t *runtime, qa_q3_pres
   qa_q3_base_entity_state *es = &entity->current_state;
   if (es->e_type > QA_Q3_BASE_ET_EVENTS) {
     if (entity->previous_event != 0) return;
-    if (es->e_flags & 16) es->number = es->other_entity_num;
+    if (qa_js_to_int32(es->e_flags) & 16) es->number = es->other_entity_num;
     entity->previous_event = 1;
     es->event = es->e_type - QA_Q3_BASE_ET_EVENTS;
   } else {
     if (es->event == entity->previous_event) return;
     entity->previous_event = es->event;
-    if ((es->event & ~QA_Q3_BASE_EV_EVENT_BITS) == 0) return;
+    if ((qa_js_to_int32(es->event) & ~QA_Q3_BASE_EV_EVENT_BITS) == 0) return;
   }
   entity->lerp_origin = qa_q3_base_evaluate_trajectory(base_trajectory(&es->pos),
       (double)snapshot_of(runtime)->server_time);

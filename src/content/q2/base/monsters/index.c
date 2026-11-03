@@ -41,13 +41,13 @@ void qa_q2bm_classic_base_monster_definitions(qa_q2bm_classic_base_definitions *
     qa_q2bm_with_boss_explosion_callbacks(&out->definitions[i], &base[i], monsters, out->boss_think[i]);
 }
 
-static qa_q2f_callback_definitions classic_callbacks_fn(void *ctx) {
+static qa_q2_callback_definitions classic_callbacks_fn(void *ctx) {
   qa_q2bm_classic_base_module *module = ctx;
-  qa_q2f_callback_definitions core = qa_q2m_monsters_callbacks(module->monsters);
-  qa_q2bm_spawn_module boss = qa_q2bm_boss3_stand_module();
-  qa_q2f_callback_definitions boss_defs = boss.callbacks(boss.ctx);
-  qa_q2bm_spawn_module actor = qa_q2bm_actor_target_as_spawn(&module->targets);
-  qa_q2f_callback_definitions actor_defs = actor.callbacks(actor.ctx);
+  qa_q2_callback_definitions core = qa_q2m_monsters_callbacks(module->monsters);
+  qa_q2_spawn_module boss = qa_q2bm_boss3_stand_module();
+  qa_q2_callback_definitions boss_defs = *boss.callbacks;
+  qa_q2_spawn_module actor = qa_q2bm_actor_target_as_spawn(&module->targets);
+  qa_q2_callback_definitions actor_defs = *actor.callbacks;
   free(module->merged_think); free(module->merged_use); free(module->merged_touch);
   module->merged_think = NULL; module->merged_use = NULL; module->merged_touch = NULL;
   module->merged_think_count = core.think_count + boss_defs.think_count;
@@ -57,7 +57,7 @@ static qa_q2f_callback_definitions classic_callbacks_fn(void *ctx) {
   module->merged_use = malloc((module->merged_use_count ? module->merged_use_count : 1) * sizeof *module->merged_use);
   module->merged_touch = malloc((module->merged_touch_count ? module->merged_touch_count : 1) * sizeof *module->merged_touch);
   if (!module->merged_think || !module->merged_use || !module->merged_touch)
-    qa_q2f_error("Classic base monster callback merge allocation failed");
+    qa_raise("Error", 0, 0, "Classic base monster callback merge allocation failed");
   size_t at = 0;
   for (size_t i = 0; i < core.think_count; i++) module->merged_think[at++] = core.think[i];
   for (size_t i = 0; i < boss_defs.think_count; i++) module->merged_think[at++] = boss_defs.think[i];
@@ -68,17 +68,17 @@ static qa_q2f_callback_definitions classic_callbacks_fn(void *ctx) {
   at = 0;
   for (size_t i = 0; i < core.touch_count; i++) module->merged_touch[at++] = core.touch[i];
   for (size_t i = 0; i < actor_defs.touch_count; i++) module->merged_touch[at++] = actor_defs.touch[i];
-  qa_q2f_callback_definitions merged = core;
+  qa_q2_callback_definitions merged = core;
   merged.think = module->merged_think; merged.think_count = module->merged_think_count;
   merged.use = module->merged_use; merged.use_count = module->merged_use_count;
   merged.touch = module->merged_touch; merged.touch_count = module->merged_touch_count;
   return merged;
 }
-static bool classic_spawn_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static bool classic_spawn_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   qa_q2bm_classic_base_module *module = ctx;
-  qa_q2bm_spawn_module boss = qa_q2bm_boss3_stand_module();
+  qa_q2_spawn_module boss = qa_q2bm_boss3_stand_module();
   if (boss.spawn(boss.ctx, entity, game)) return true;
-  qa_q2bm_spawn_module actor = qa_q2bm_actor_target_as_spawn(&module->targets);
+  qa_q2_spawn_module actor = qa_q2bm_actor_target_as_spawn(&module->targets);
   if (actor.spawn(actor.ctx, entity, game)) return true;
   return qa_q2m_monsters_spawn(module->monsters, entity, game);
 }
@@ -96,7 +96,8 @@ void qa_q2bm_classic_base_module_destroy(qa_q2bm_classic_base_module *module) {
   module->merged_think = NULL; module->merged_use = NULL; module->merged_touch = NULL;
   module->merged_think_count = module->merged_use_count = module->merged_touch_count = 0;
 }
-qa_q2bm_spawn_module qa_q2bm_classic_base_as_spawn(qa_q2bm_classic_base_module *module) {
-  qa_q2bm_spawn_module spawn = {module, classic_callbacks_fn, classic_spawn_fn};
+qa_q2_spawn_module qa_q2bm_classic_base_as_spawn(qa_q2bm_classic_base_module *module) {
+  module->spawn_callbacks = classic_callbacks_fn(module);
+  qa_q2_spawn_module spawn = {module, &module->spawn_callbacks, NULL, classic_spawn_fn};
   return spawn;
 }

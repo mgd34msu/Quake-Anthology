@@ -302,8 +302,13 @@ void qa_q1qc_validate_source_call(const qa_q1qc_program *program,
                                   const char *const *available, size_t available_count,
                                   const char *label) {
   char error[512];
-  if (!qa_q1qc_validate_source_call_check(program, call, available, available_count, label, error, sizeof error))
+  if (!qa_q1qc_validate_source_call_check(program, call, available, available_count, label, error, sizeof error)) {
+    /* TS program.functionNamed() raises its own "missing function" error after
+     * the input check and before the signature check. */
+    if (strncmp(error, "Mod callback ", 13) == 0 && qa_q1qc_function_named_or_null(program, call->function) == NULL)
+      (void)qa_q1qc_function_named(program, call->function);
     qa_range_error("%s", error);
+  }
 }
 static void write_source_value(qa_q1qc_machine *machine, qa_q1qc_words *words, int64_t offset,
                                const qa_mod_runtime_value *value,
@@ -346,6 +351,20 @@ static const qa_mod_runtime_value *resolve_input(const qa_mod_source_call *call,
     if (strcmp(inputs[i].name, value->name) == 0) return &inputs[i].value;
   qa_range_error("Gameplay callback %s has no %s input", call->function, value->name);
 }
+typedef struct source_call_saved { size_t offset; uint8_t bytes[12]; size_t length; } source_call_saved;
+typedef struct source_call_restore {
+  qa_q1qc_machine *machine;
+  uint8_t staging[108];
+  source_call_saved saved[32];
+  size_t count;
+} source_call_restore;
+static void restore_source_call(void *arg) {
+  source_call_restore *restore = arg;
+  memcpy(restore->machine->globals.bytes + 4, restore->staging, sizeof restore->staging);
+  for (size_t i = 0; i < restore->count; i++)
+    memcpy(restore->machine->globals.bytes + restore->saved[i].offset, restore->saved[i].bytes,
+           restore->saved[i].length);
+}
 double qa_q1qc_with_source_call(qa_q1qc_machine *machine, const qa_mod_source_call *call,
                                 const qa_q1qc_source_input *inputs, size_t input_count,
                                 qa_q1qc_actor_reference_fn reference, void *reference_ctx,
@@ -361,25 +380,25 @@ double qa_q1qc_with_source_call(qa_q1qc_machine *machine, const qa_mod_source_ca
     definitions[i] = qa_q1qc_global_by_name(machine->program, call->globals[i].name);
     global_values[i] = *resolve_input(call, &call->globals[i].value, inputs, input_count, &scratch);
   }
-  uint8_t staging[108];
-  memcpy(staging, machine->globals.bytes + 4, sizeof staging);
-  typedef struct saved_global { size_t offset; uint8_t bytes[12]; size_t length; } saved_global;
-  saved_global saved[32];
+  source_call_restore restore;
+  restore.machine = machine;
+  restore.count = call->global_count;
+  memcpy(restore.staging, machine->globals.bytes + 4, sizeof restore.staging);
   for (size_t i = 0; i < call->global_count; i++) {
     if (definitions[i] == NULL) qa_range_error("Missing validated callback global");
-    saved[i].offset = (size_t)definitions[i]->offset * 4;
-    saved[i].length = (strcmp(definitions[i]->type, "vector") == 0 ? 3 : 1) * 4;
-    memcpy(saved[i].bytes, machine->globals.bytes + saved[i].offset, saved[i].length);
+    restore.saved[i].offset = (size_t)definitions[i]->offset * 4;
+    restore.saved[i].length = (strcmp(definitions[i]->type, "vector") == 0 ? 3 : 1) * 4;
+    memcpy(restore.saved[i].bytes, machine->globals.bytes + restore.saved[i].offset, restore.saved[i].length);
   }
-  /* TS restores in a finally; C has no unwind through aborts, which
-   * matches the fatal-error porting rule. */
+  /* TS restores in a finally; a raise caught above this frame runs the same restore. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, restore_source_call, &restore);
   for (size_t i = 0; i < call->argument_count; i++)
     write_source_value(machine, &machine->globals, 4 + (int64_t)i * 3, &args[i], reference, reference_ctx);
   for (size_t i = 0; i < call->global_count; i++)
     write_source_value(machine, &machine->globals, definitions[i]->offset, &global_values[i], reference, reference_ctx);
   double result = execute(execute_ctx, (int64_t)call->argument_count);
-  memcpy(machine->globals.bytes + 4, staging, sizeof staging);
-  for (size_t i = 0; i < call->global_count; i++)
-    memcpy(machine->globals.bytes + saved[i].offset, saved[i].bytes, saved[i].length);
+  qa_cleanup_pop(&node);
+  restore_source_call(&restore);
   return result;
 }

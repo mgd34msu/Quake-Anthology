@@ -27,6 +27,10 @@ typedef struct qa_catalog_product_expectation {
   size_t required_program_count;
   const char *map_witness;       /* nullable */
   const char *unresolved_reason; /* nullable */
+  /* TS nativePrograms (optional): native game modules a mod ships loose in
+   * its directory (Q3 qagamex86.dll, qagamei386.so). Count 0 is absent. */
+  const char *const *native_programs;
+  size_t native_program_count;
 } qa_catalog_product_expectation;
 
 /* TS expectedProducts. */

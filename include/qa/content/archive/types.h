@@ -59,6 +59,10 @@ void qa_archive_check_range(const char *source, int64_t size, int64_t offset,
 /* Malloc'd normalized path; NULL only on OOM. Unsafe paths abort with
  * the exact TS RangeError (`Unsafe archive member path: <JSON>`). */
 char *qa_normalize_entry_path(const char *path);
+/* TS tryNormalizeEntryPath: empty and "." segments collapse. NULL with
+ * *out_unsafe set for a member that can never be addressed safely (TS null);
+ * NULL with *out_unsafe clear only on OOM. */
+char *qa_try_normalize_entry_path(const char *path, bool *out_unsafe);
 /* Malloc'd comparison key (normalized, then folded); NULL only on OOM. */
 char *qa_compare_entry_path(const char *path,
                             qa_archive_path_comparison comparison);

@@ -1,23 +1,25 @@
 /* Port of src/world/session/mod-objectives.ts. GPL-2.0-or-later. */
 #include "qa/world/session/mod_objectives.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
+#include "qa/foundation/support.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/foundation/cleanup.h"
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -85,8 +87,8 @@ static qa_source_objective_state read_declaration(
     if (declaration->state_values[i].value == raw)
       value = &declaration->state_values[i];
   if (value == NULL)
-    qa_errorf("Objective %s has undeclared original state %g",
-              declaration->id, raw);
+    qa_errorf("Objective %s has undeclared original state %s",
+              declaration->id, QA_JS_NUMBER(raw));
   qa_source_objective_state state;
   memset(&state, 0, sizeof state);
   state.stage = value->stage;
@@ -280,11 +282,8 @@ void qa_mod_source_objectives_destroy(qa_mod_source_objectives *objectives) {
   free(objectives);
 }
 
-void qa_mod_source_objectives_activate(qa_mod_source_objectives *objectives) {
-  if (objectives->active) return;
-  qa_mod_objective_storage *storage = &objectives->storage;
-  if (objectives->closed || !storage->current(storage->ctx))
-    qa_errorf("Original objective source is unavailable");
+static void activate_body(void *ctx) {
+  qa_mod_source_objectives *objectives = ctx;
   for (size_t i = 0; i < objectives->count; i++) {
     const qa_source_objective_declaration *declaration =
         &objectives->declarations[i];
@@ -294,6 +293,8 @@ void qa_mod_source_objectives_activate(qa_mod_source_objectives *objectives) {
     (void)read_declaration(objectives, declaration);
     struct removal *removal = malloc(sizeof *removal);
     if (removal == NULL) abort();
+    qa_cleanup node; /* a throwing bindObjective drops the removal */
+    qa_cleanup_push(&node, free, removal);
     removal->binding.objectives = objectives;
     removal->binding.declaration = declaration;
     qa_source_objective_binding binding;
@@ -307,19 +308,35 @@ void qa_mod_source_objectives_activate(qa_mod_source_objectives *objectives) {
     binding.change = binding_change;
     const qa_source_match_services *match = objectives->match;
     removal->unbind = match->bind_objective(match->ctx, binding);
+    qa_cleanup_pop(&node);
     if (qa_cleanup_stack_add(&objectives->removals, run_removal, removal) != 0)
       abort();
   }
   objectives->active = true;
   qa_mod_source_objectives_refresh(objectives);
 }
-
+void qa_mod_source_objectives_activate(qa_mod_source_objectives *objectives) {
+  if (objectives->active) return;
+  qa_mod_objective_storage *storage = &objectives->storage;
+  if (objectives->closed || !storage->current(storage->ctx))
+    qa_errorf("Original objective source is unavailable");
+  /* try { ... } catch (error) { removals.runReverse(); active = false; throw } */
+  qa_caught_error error;
+  if (!qa_try(activate_body, objectives, &error)) {
+    qa_cleanup_stack_run_reverse(&objectives->removals);
+    objectives->active = false;
+    qa_rethrow(&error);
+  }
+}
+static void end_busy(void *arg) { ((qa_mod_source_objectives *)arg)->busy = false; }
 void qa_mod_source_objectives_refresh(qa_mod_source_objectives *objectives) {
   qa_mod_objective_storage *storage = &objectives->storage;
   if (objectives->closed || objectives->busy ||
       !storage->current(storage->ctx))
     return;
   objectives->busy = true;
+  qa_cleanup node; /* finally { busy = false } */
+  qa_cleanup_push(&node, end_busy, objectives);
   for (size_t i = 0; i < objectives->count; i++) {
     const qa_source_objective_declaration *declaration =
         &objectives->declarations[i];
@@ -333,6 +350,7 @@ void qa_mod_source_objectives_refresh(qa_mod_source_objectives *objectives) {
                 declaration->id);
     write_declaration(objectives, declaration, value.value);
   }
+  qa_cleanup_pop(&node);
   objectives->busy = false;
 }
 
@@ -342,6 +360,8 @@ void qa_mod_source_objectives_flush(qa_mod_source_objectives *objectives) {
       !storage->current(storage->ctx))
     return;
   objectives->busy = true;
+  qa_cleanup node; /* finally { busy = false } */
+  qa_cleanup_push(&node, end_busy, objectives);
   for (size_t i = 0; i < objectives->count; i++) {
     const qa_source_objective_declaration *declaration =
         &objectives->declarations[i];
@@ -377,6 +397,7 @@ void qa_mod_source_objectives_flush(qa_mod_source_objectives *objectives) {
       accepted = objectives->match->change_objective(
           objectives->match->ctx, declaration->id, request);
     if (objectives->closed || !storage->current(storage->ctx)) {
+      qa_cleanup_pop(&node);
       objectives->busy = false;
       return;
     }
@@ -385,6 +406,7 @@ void qa_mod_source_objectives_flush(qa_mod_source_objectives *objectives) {
                 declaration->id);
     write_declaration(objectives, declaration, accepted.value);
   }
+  qa_cleanup_pop(&node);
   objectives->busy = false;
 }
 

@@ -656,12 +656,24 @@ static void test_x86_cpu(void) {
   st = qa_i386_cpu_run(&m.cpu, 10, false, A(0));
   CHECK(st.kind == QA_STOP_EXCEPTION && st.exception.kind == QA_EXCEPTION_PROCESSOR && st.exception.vector == 6);
   i386_fini(&m);
-  static const uint8_t c11b[] = {0x90, 0x0f, 0xa2};
+  /* TS cpu.test.ts after the drift: 0F A2 is CPUID now, so SYSCALL (0F 05) is the unsupported stop. */
+  static const uint8_t c11b[] = {0x90, 0x0f, 0x05};
   i386_init(&m, c11b, sizeof c11b);
   st = qa_i386_cpu_run(&m.cpu, 10, false, A(0));
   CHECK(st.kind == QA_STOP_UNSUPPORTED && st.instructions == 1);
   CHECK(st.instruction_address.byte_offset == 0x1001);
-  CHECK(st.instruction_bytes_len == 2 && st.instruction_bytes[0] == 0x0f && st.instruction_bytes[1] == 0xa2);
+  CHECK(st.instruction_bytes_len == 2 && st.instruction_bytes[0] == 0x0f && st.instruction_bytes[1] == 0x05);
+  i386_fini(&m);
+  /* i386 CPUID reports the virtual CPU, with CMPXCHG8B. */
+  static const uint8_t cpuid_leaf1[] = {0xb8, 0x01, 0x00, 0x00, 0x00, 0x0f, 0xa2};
+  i386_init(&m, cpuid_leaf1, sizeof cpuid_leaf1);
+  st = qa_i386_cpu_run(&m.cpu, 2, false, A(0));
+  CHECK(st.kind == QA_STOP_BUDGET && (rr32(&m, QA_REG_RDX) & 0x100u) == 0x100u);
+  i386_fini(&m);
+  static const uint8_t cpuid_vendor[] = {0x31, 0xc0, 0x0f, 0xa2};
+  i386_init(&m, cpuid_vendor, sizeof cpuid_vendor);
+  st = qa_i386_cpu_run(&m.cpu, 2, false, A(0));
+  CHECK(st.kind == QA_STOP_BUDGET && rr32(&m, QA_REG_RBX) == 0x6b617551u);
   i386_fini(&m);
   static const uint8_t c11c[] = {0x83, 0x03, 0x01};
   i386_init(&m, c11c, sizeof c11c);
@@ -718,42 +730,50 @@ static void test_x64_cpu(void) {
   x64_init(&f, cpuid1, sizeof cpuid1, 0x10000);
   qa_processor_flags_set_value(&f.state.flags, 0x8d7);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
-  CHECK(xrr(&f, QA_REG_RDX, 64) == 0x06008101ull);
+  /* CMPXCHG8B (bit 8) is not advertised: the x64 decoder does not implement 0F C7. */
+  CHECK(xrr(&f, QA_REG_RDX, 64) == 0x06008001ull);
   CHECK(xrr(&f, QA_REG_RCX, 64) == 0);
   CHECK(qa_processor_flags_value(&f.state.flags) == 0x8d7);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t cpuid7[] = {0xb8, 7, 0, 0, 0, 0x0f, 0xa2, 0xc3};
   x64_init(&f, cpuid7, sizeof cpuid7, 0x10000);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RBX, 64) == 0);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t cpuid_lock[] = {0xf0, 0x0f, 0xa2};
   x64_init(&f, cpuid_lock, sizeof cpuid_lock, 0x10000);
   qa_guest_execution_stop st = x64_run(&f, 100);
   CHECK(st.kind == QA_STOP_EXCEPTION && st.exception.kind == QA_EXCEPTION_PROCESSOR && st.exception.vector == 6);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t movw[] = {0x48, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xb4, 0x12, 0x66, 0xb8, 0x34, 0x56, 0xc3};
   x64_init(&f, movw, sizeof movw, 0x10000);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 0xffffffffffff5634ull);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t movd[] = {0xb8, 0xef, 0xcd, 0xab, 0x89, 0xc3};
   x64_init(&f, movd, sizeof movd, 0x10000);
   xwr(&f, QA_REG_RAX, UINT64_MAX);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 0x89abcdefull);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t rex1[] = {0x40, 0xb4, 0x80};
   x64_init(&f, rex1, sizeof rex1, 0x10000);
   CHECK(x64_run(&f, 1).kind == QA_STOP_BUDGET);
   CHECK(xrr(&f, QA_REG_RSP, 64) == 0x30080);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t rex2[] = {0x40, 0x66, 0xb4, 0x12, 0xc3};
   x64_init(&f, rex2, sizeof rex2, 0x10000);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 0x1200);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t sib[] = {0x4f, 0x89, 0x4c, 0xa5, 0xf8, 0x4f, 0x8b, 0x54, 0xa5, 0xf8, 0xc3};
@@ -765,6 +785,7 @@ static void test_x64_cpu(void) {
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(r64(&f.mem, 0xffff800000010008ull) == 0xfedcba9876543210ull);
   CHECK(xrr(&f, QA_REG_R10, 64) == 0xfedcba9876543210ull);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t riprel[] = {0xc7, 0x05, 0xf6, 0xff, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12, 0xc3};
@@ -772,6 +793,7 @@ static void test_x64_cpu(void) {
   smap(&f.mem, 0x20000, 4, QA_PERM_READ_WRITE, NULL, 0);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(r32(&f.mem, 0x20000) == 0x12345678u);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t fslea[] = {0x64, 0x48, 0x8b, 0x04, 0x25, 0x08, 0, 0, 0, 0x64, 0x48, 0x8d, 0x0c, 0x25, 0x08, 0, 0, 0, 0xc3};
@@ -782,6 +804,7 @@ static void test_x64_cpu(void) {
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 0x123456789abcdef0ull);
   CHECK(xrr(&f, QA_REG_RCX, 64) == 8);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t carry[] = {0x48, 0x83, 0xc0, 1, 0x49, 0x83, 0xd0, 0, 0xc3};
@@ -789,6 +812,7 @@ static void test_x64_cpu(void) {
   xwr(&f, QA_REG_RAX, UINT64_MAX);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 0 && xrr(&f, QA_REG_R8, 64) == 1);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t ovf[] = {0x48, 0x83, 0xc0, 1, 0xc3};
   x64_init(&f, ovf, sizeof ovf, 0x10000);
@@ -797,6 +821,7 @@ static void test_x64_cpu(void) {
   CHECK(qa_processor_flags_get(&f.state.flags, QA_FLAG_OVERFLOW));
   CHECK(!qa_processor_flags_get(&f.state.flags, QA_FLAG_CARRY));
   CHECK(qa_processor_flags_get(&f.state.flags, QA_FLAG_SIGN));
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t loop[] = {0xb9, 3, 0, 0, 0, 0xe8, 1, 0, 0, 0, 0xc3, 0x48, 0x83, 0xc0, 2, 0xff, 0xc9, 0x75, 0xf8, 0xc3};
@@ -804,6 +829,7 @@ static void test_x64_cpu(void) {
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 6);
   CHECK(xrr(&f, QA_REG_RSP, 64) == 0x30008);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t icall[] = {0xff, 0xd0, 0xc3};
@@ -815,6 +841,8 @@ static void test_x64_cpu(void) {
   CHECK(f.state.instruction_pointer == 0x60000);
   CHECK(xrr(&f, QA_REG_RSP, 64) == 0x30000 - 8);
   CHECK(r64(&f.mem, 0x30000 - 8) == 0x10002);
+  qa_x64_cpu_destroy(&hcpu);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t muldiv[] = {0x48, 0xf7, 0xe1, 0x48, 0xf7, 0xf1, 0xc3};
@@ -823,6 +851,7 @@ static void test_x64_cpu(void) {
   xwr(&f, QA_REG_RCX, 2);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == UINT64_MAX && xrr(&f, QA_REG_RDX, 64) == 0);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t idiv[] = {0x48, 0xf7, 0xf9};
   x64_init(&f, idiv, sizeof idiv, 0x10000);
@@ -833,6 +862,7 @@ static void test_x64_cpu(void) {
   CHECK(st.kind == QA_STOP_EXCEPTION && st.exception.kind == QA_EXCEPTION_PROCESSOR && st.exception.vector == 0);
   CHECK(f.state.instruction_pointer == 0x10000);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 0x8000000000000000ull);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t movsb[] = {0xf3, 0xa4, 0xc3};
@@ -847,6 +877,7 @@ static void test_x64_cpu(void) {
   qa_sparse_copy(&f.mem, at(&f.mem, 0x50000), got5, 5);
   static const uint8_t ones[5] = {1, 1, 1, 1, 1};
   CHECK(memcmp(got5, ones, 5) == 0);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t cmpsb[] = {0xf3, 0xa6, 0xc3};
@@ -857,6 +888,7 @@ static void test_x64_cpu(void) {
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RCX, 64) == 1 && xrr(&f, QA_REG_RSI, 64) == 0x50002);
   CHECK(!qa_processor_flags_get(&f.state.flags, QA_FLAG_ZERO));
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t xadd[] = {0x48, 0x0f, 0xc1, 0x00, 0xc3};
@@ -867,6 +899,7 @@ static void test_x64_cpu(void) {
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 64) == 7);
   CHECK(r64(&f.mem, 0x50000) == 0x50007);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t wfault[] = {0x48, 0x83, 0x00, 1};
@@ -881,6 +914,7 @@ static void test_x64_cpu(void) {
   CHECK(qa_processor_flags_value(&f.state.flags) == 0x803);
   CHECK(f.state.instruction_pointer == 0x10000);
   CHECK(r64(&f.mem, 0x50000) == 7);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t badop[] = {0x0f, 0x05};
@@ -889,6 +923,7 @@ static void test_x64_cpu(void) {
   CHECK(st.kind == QA_STOP_UNSUPPORTED);
   CHECK(st.instruction_bytes_len == 2 && st.instruction_bytes[0] == 0x0f && st.instruction_bytes[1] == 0x05);
   CHECK(st.instruction_address.byte_offset == 0x10000);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   static const uint8_t noncanon[] = {0x48, 0x8b, 0x00};
   x64_init(&f, noncanon, sizeof noncanon, 0x10000);
@@ -896,11 +931,13 @@ static void test_x64_cpu(void) {
   st = x64_run(&f, 100);
   CHECK(st.kind == QA_STOP_EXCEPTION && st.exception.kind == QA_EXCEPTION_PROCESSOR && st.exception.vector == 13);
   CHECK(f.state.instruction_pointer == 0x10000);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   static const uint8_t waitb[] = {0x9b, 0xc3};
   x64_init(&f, waitb, sizeof waitb, 0x10000);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
   x64_init(&f, waitb, sizeof waitb, 0x10000);
   f.state.x87.control_word &= ~1u;
@@ -908,6 +945,7 @@ static void test_x64_cpu(void) {
   st = x64_run(&f, 100);
   CHECK(st.kind == QA_STOP_EXCEPTION && st.exception.kind == QA_EXCEPTION_PROCESSOR && st.exception.vector == 16);
   CHECK(f.state.instruction_pointer == 0x10000 && f.state.x87.status_word == 1);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   /* Live operands / writable alias / remap (fresh-decode semantics). */
@@ -932,6 +970,7 @@ static void test_x64_cpu(void) {
   xwr(&f, QA_REG_RBX, data.byte_offset);
   CHECK(x64_run(&f, 100).kind == QA_STOP_RETURN);
   CHECK(xrr(&f, QA_REG_RAX, 32) == 17);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 
   /* Cursor immediates + canonical boundaries. */
@@ -953,13 +992,15 @@ static void test_x64_cpu(void) {
     uint64_t expect = w == 8 ? UINT64_MAX : ((1ull << (w * 8)) - 1);
     CHECK(qa_x64_cursor_read_unsigned(&cur, w) == expect);
     CHECK(qa_x64_cursor_next_ip(&cur) == 0x10000 + (uint64_t)(w + 1));
-    qa_sparse_guest_memory_destroy(&f.mem);
+    qa_x64_cpu_destroy(&f.cpu);
+  qa_sparse_guest_memory_destroy(&f.mem);
   }
   static const uint8_t sbuf[] = {0x90, 0xff, 0xff, 0xff, 0xff};
   x64_init(&f, sbuf, sizeof sbuf, 0x10000);
   qa_x64_decode_cursor cur;
   qa_x64_decode_cursor_init(&cur, &f.mem, &f.state, NULL);
   CHECK(qa_x64_cursor_read_signed(&cur, 4) == -1);
+  qa_x64_cpu_destroy(&f.cpu);
   qa_sparse_guest_memory_destroy(&f.mem);
 }
 

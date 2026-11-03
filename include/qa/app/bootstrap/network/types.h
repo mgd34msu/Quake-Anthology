@@ -6,9 +6,11 @@
 #ifndef QA_APP_BOOTSTRAP_NETWORK_TYPES_H
 #define QA_APP_BOOTSTRAP_NETWORK_TYPES_H
 #include <stdbool.h>
+#include <stdnoreturn.h>
 #include <stddef.h>
 #include "qa/contracts/identity.h"
 #include "qa/contracts/protocol.h"
+#include "qa/network/common/session.h"
 typedef enum qa_app_network_phase {
   QA_APP_PHASE_CHALLENGING, QA_APP_PHASE_CONNECTING, QA_APP_PHASE_LOADING,
   QA_APP_PHASE_ACTIVE, QA_APP_PHASE_CLOSED, QA_APP_PHASE_REJECTED
@@ -24,8 +26,8 @@ typedef struct qa_app_network_recording {
   void (*detach)(void *detach_ctx);
 } qa_app_network_recording;
 /* TS ApplicationNetwork. poll returns borrowed ActorCommand array
- * (opaque items); async -> synchronous. wire is a borrowed
- * WireSelection (network/common/session). */
+ * (opaque items); async -> synchronous. wire returns the TS
+ * WireSelection (network/common/session; strings borrowed). */
 typedef struct qa_app_application_network {
   void *ctx;
   qa_app_network_role role;
@@ -33,7 +35,7 @@ typedef struct qa_app_application_network {
   bool has_mvd_recording; qa_app_network_recording mvd_recording;
   bool has_recording; qa_app_network_recording recording;
   qa_app_network_phase (*phase)(void *ctx);
-  const void *(*wire)(void *ctx);
+  qa_wire_selection (*wire)(void *ctx); /* TS wire: WireSelection */
   void (*heartbeat)(void *ctx, double now_milliseconds); /* NULL = absent */
   const void *const *(*poll)(void *ctx, double now_milliseconds, size_t *out_count);
   void (*submit)(void *ctx, const void *const *commands, size_t count, double now_milliseconds);
@@ -114,13 +116,16 @@ typedef struct qa_app_q2_server_network_options {
   void *transport; qa_app_q2_server_host host;
   double (*random)(void *ctx); void *random_ctx;
   bool has_timeout_milliseconds; double timeout_milliseconds;
+  bool trusted_networks_only; /* TS trustedNetworksOnly: KEX LAN ignores non-private datagrams (NET-022) */
 } qa_app_q2_server_network_options;
 typedef struct qa_app_q2_client_network_options {
   void *transport; const void *remote; qa_app_q2_client_host host;
   double qport; bool has_timeout_milliseconds; double timeout_milliseconds;
 } qa_app_q2_client_network_options;
-/* TS q2GameCallback: fn returns a borrowed error message or NULL.
- * A message already carrying the Q2GameCallbackError prefix is
- * rethrown as-is; any other aborts wrapped, per the TS catch. */
-void qa_app_q2_game_callback(const char *(*fn)(void *ctx), void *ctx);
+/* TS `throw new Q2GameCallbackError(cause)`: raises name "Q2GameCallbackError", message
+ * "Q2 game callback failed: <cause>". */
+noreturn void qa_app_q2_game_callback_error(const char *cause);
+/* TS q2GameCallback(callback): runs fn(ctx); a Q2GameCallbackError it raises propagates as is,
+ * any other raise is rethrown wrapped in Q2GameCallbackError. */
+void qa_app_q2_game_callback(void (*fn)(void *ctx), void *ctx);
 #endif

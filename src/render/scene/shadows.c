@@ -1,11 +1,13 @@
 /* Port of src/render/scene/shadows.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/shadows.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static float fr(double v) { return (float)v; }
 static void *xalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("Allocation failed"); return p; }
 static void *xg(void *p, size_t n) { void *q = realloc(p, n ? n : 1); if (!q) qa_range_error("Allocation failed"); return q; }
@@ -16,7 +18,7 @@ const qa_shadow_face_basis qa_q2_shadow_cube_faces[6] = {
 static double dot(qa_vec3 a, qa_vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static qa_vec3 vcross(qa_vec3 a, qa_vec3 b) { return (qa_vec3){ a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x }; }
 static qa_vec3 diff3(qa_vec3 a, qa_vec3 b) { return (qa_vec3){ a.x-b.x, a.y-b.y, a.z-b.z }; }
-static double vlen(qa_vec3 a) { return hypot(hypot(a.x, a.y), a.z); }
+static double vlen(qa_vec3 a) { return qa_js_hypot3(a.x, a.y, a.z); }
 static qa_vec3 unit(qa_vec3 a) { double s = vlen(a); return (qa_vec3){ a.x/s, a.y/s, a.z/s }; }
 void qa_scene_shadow_mesh_owned_destroy(qa_scene_shadow_mesh_owned *m) { if (!m) return; free(m->owned_positions); memset(m, 0, sizeof *m); }
 bool qa_shadow_mesh_new(qa_material_geometry geometry, qa_scene_shadow_mesh_owned *out) {
@@ -31,7 +33,7 @@ qa_shadow_caster qa_shadow_caster_new(qa_vec3 origin, const qa_shadow_mesh *mesh
   double r2 = 0;
   for (size_t i = 0; i < count; i++) for (size_t k = 0; k < meshes[i].position_count; k++) {
     double dx = meshes[i].positions[k].x - origin.x, dy = meshes[i].positions[k].y - origin.y, dz = meshes[i].positions[k].z - origin.z;
-    double d = dx*dx + dy*dy + dz*dz; if (d > r2) r2 = d;
+    r2 = qa_js_max(r2, dx*dx + dy*dy + dz*dz); /* Math.max keeps NaN */
   }
   double radius = sqrt(r2);
   return (qa_shadow_caster){ origin, radius > 0 ? radius : 64, meshes, count };
@@ -50,7 +52,7 @@ bool qa_pack_shadow_atlas(const qa_shadow_pack_request *requests, size_t count, 
     if (x + w > size) { y += shelf; shelf = 0; x = 0; }
     if (y + h > size) { out[i].is_null = true; continue; }
     out[i].is_null = false; out[i].rect = (qa_rect){ x, y, w, h };
-    x += w; if (h > shelf) shelf = h;
+    x += w; shelf = qa_js_max(shelf, h);
   }
   return true;
 }
@@ -66,7 +68,7 @@ static int cmp_candidate(const void *a, const void *b) {
 static void fit_candidates(candidate *cands, size_t n, qa_shadow_pack_result *slots) {
   /* TS fit sorts candidates in place (observable: iteration order after fit). */
   for (int attempt = -1; attempt < 4; attempt++) {
-    qsort(cands, n, sizeof(candidate), cmp_candidate);
+    qa_js_sort(cands, n, sizeof(candidate), cmp_candidate);
     qa_shadow_pack_request *reqs = xalloc((n ? n : 1) * sizeof *reqs);
     for (size_t i = 0; i < n; i++) reqs[i] = extent_of(&cands[i]);
     qa_pack_shadow_atlas(reqs, n, false, 0, slots);
@@ -94,7 +96,7 @@ qa_vec4 qa_shadow_project(qa_mat4 m, qa_vec3 p) {
 }
 static qa_mat4 perspective(double fov, double radius) {
   double scale = 1 / tan(fov * 3.141592653589793 / 360);
-  double far_p = radius > 8 ? radius : 8, near_p = QA_Q2_SHADOW_NEAR;
+  double far_p = qa_js_max(radius, 8), near_p = QA_Q2_SHADOW_NEAR;
   qa_mat4 r = { { fr(scale),0,0,0, 0,fr(scale),0,0, 0,0,fr((far_p+near_p)/(near_p-far_p)),-1, 0,0,fr(2*far_p*near_p/(near_p-far_p)),0 } };
   return r;
 }
@@ -111,9 +113,9 @@ static qa_shadow_face_basis cone_basis(qa_vec3 direction) {
   return (qa_shadow_face_basis){ forward, right, vcross(right, forward) };
 }
 double qa_shadow_cone_fov(double cos_half) {
-  double c = cos_half < -1 ? -1 : cos_half > 1 ? 1 : cos_half;
-  double v = acos(c) * 180 / 3.141592653589793 * 2 * 1.15;
-  return v < 175 ? v : 175;
+  /* Math.min/Math.max: a NaN cosine stays NaN through to the result */
+  double c = qa_js_min(1, qa_js_max(-1, cos_half));
+  return qa_js_min(acos(c) * 180 / 3.141592653589793 * 2 * 1.15, 175);
 }
 qa_mat4 qa_shadow_cone_matrix(qa_q2_fragment_light light) {
   if (!light.cone) qa_range_error("A cone projection requires a spotlight direction");
@@ -124,7 +126,7 @@ typedef struct contains { qa_vec3 origin; double radius, limit; int has_cone; qa
 static contains_t make_contains(qa_vec3 origin, double radius, int has_cone, qa_vec3 dir, double cos_half) {
   contains_t t; t.origin = origin; t.radius = radius; t.has_cone = has_cone; t.direction = dir;
   double diagonal = !has_cone ? 3.141592653589793
-    : atan(1.4142135623730951 * tan(fmin(qa_shadow_cone_fov(cos_half) * 3.141592653589793 / 360, 87 * 3.141592653589793 / 180)));
+    : atan(1.4142135623730951 * tan(qa_js_min(qa_shadow_cone_fov(cos_half) * 3.141592653589793 / 360, 87 * 3.141592653589793 / 180)));
   t.limit = cos(diagonal);
   return t;
 }
@@ -134,7 +136,7 @@ static bool contains_test(contains_t t, qa_shadow_sphere caster) {
   if (t.has_cone && distance > caster.radius) {
     double c = dot(delta, t.direction) / distance; c = c < -1 ? -1 : c > 1 ? 1 : c;
     double angle = acos(c);
-    double rc = caster.radius / distance; rc = rc < 1 ? rc : 1;
+    double rc = qa_js_min(1, caster.radius / distance);
     double separation = angle - asin(rc);
     double cl = separation < 0 ? 0 : separation > 3.141592653589793 ? 3.141592653589793 : separation;
     if (cos(cl) < t.limit) return false;
@@ -180,12 +182,12 @@ static qa_shadow_sphere mesh_sphere(const qa_shadow_mesh *mesh) {
   }
   qa_vec3 center = mesh->position_count == 0 ? (qa_vec3){ 0, 0, 0 } : (qa_vec3){ (mnx+mxx)/2, (mny+mxy)/2, (mnz+mxz)/2 };
   double radius = 0;
-  for (size_t i = 0; i < mesh->position_count; i++) { double d = vlen(diff3(mesh->positions[i], center)); if (d > radius) radius = d; }
+  for (size_t i = 0; i < mesh->position_count; i++) radius = qa_js_max(radius, vlen(diff3(mesh->positions[i], center)));
   return (qa_shadow_sphere){ center, radius };
 }
 static bool world_visible(const qa_shadow_mesh *mesh, qa_q2_fragment_light light, const qa_vec3 *forward) {
   qa_shadow_sphere sphere = mesh_sphere(mesh); qa_vec3 delta = diff3(sphere.origin, light.origin);
-  double m = light.radius > 8 ? light.radius : 8;
+  double m = qa_js_max(light.radius, 8);
   if (vlen(delta) > m + sphere.radius) return false;
   return !forward || dot(delta, *forward) + sphere.radius > 0;
 }
@@ -278,7 +280,7 @@ void qa_prepared_shadows_destroy(qa_prepared_shadows *p) {
   memset(p, 0, sizeof *p);
 }
 void qa_q2_shadow_scene_init(qa_q2_shadow_scene *s, qa_scene_image_registry *images) {
-  memset(s, 0, sizeof *s); s->images = images;
+  memset(s, 0, sizeof *s); s->images = images; s->epoch = qa_scene_image_registry_backend_epoch(images);
   scene_cache *c = xalloc(sizeof *c); memset(c, 0, sizeof *c); s->_cached = c; s->_world_draw_cache = c;
 }
 static void free_cache(scene_cache *c) {
@@ -348,8 +350,17 @@ static void append_pass(qa_prepared_shadows *out, candidate *cand, qa_rect viewp
     if (!forward || dot(diff3(cand->casters[i].origin, cand->light.origin), *forward) + cand->casters[i].radius > 0) total += cand->casters[i].mesh_count;
   qa_depth_atlas_draw *draws = xalloc((total ? total : 1) * sizeof *draws);
   double **positions = xalloc((total ? total : 1) * sizeof(double *));
+  /* TS passes share the cached world draw arrays, which stay alive while any pass references them. C passes own a copy:
+   * the cache clears at 256 entries (possibly within this prepare) and on close, while prepared passes live on. */
+  static const qa_polygon_offset WORLD_OFF = { 2, 4 };
   memcpy(draws, world_draws_entry->draws, world_draws_entry->draw_count * sizeof *draws);
-  for (size_t i = 0; i < world_draws_entry->draw_count; i++) positions[i] = NULL; /* borrowed from cache */
+  for (size_t i = 0; i < world_draws_entry->draw_count; i++) {
+    size_t count = draws[i].position_count;
+    positions[i] = xalloc((count ? count : 1) * sizeof(double));
+    if (count) memcpy(positions[i], draws[i].positions, count * sizeof(double));
+    draws[i].positions = positions[i];
+    draws[i].polygon_offset = &WORLD_OFF;
+  }
   size_t n = world_draws_entry->draw_count;
   for (size_t i = 0; i < cand->caster_count; i++) {
     if (forward && dot(diff3(cand->casters[i].origin, cand->light.origin), *forward) + cand->casters[i].radius <= 0) continue;
@@ -378,8 +389,9 @@ bool qa_q2_shadow_scene_prepare(qa_q2_shadow_scene *s, const qa_scene_light *sou
   const qa_scene_light *q2src[64]; size_t nq2all = 0;
   for (size_t i = 0; i < source_count && nq2all < 64; i++) if (source[i].profile.kind && !strcmp(source[i].profile.kind, "q2")) q2src[nq2all++] = &source[i];
   size_t nlights = nq2all < 8 ? nq2all : 8;
-  qa_q2_fragment_light *lights = xalloc((nlights ? nlights : 1) * sizeof *lights);
-  qa_q2_light_cone *cones = xalloc((nlights ? nlights : 1) * sizeof *cones);
+  /* The returned lights block also holds the cones their cone pointers reference (freed with lighting.lights). */
+  qa_q2_fragment_light *lights = xalloc((nlights ? nlights : 1) * (sizeof *lights + sizeof(qa_q2_light_cone)));
+  qa_q2_light_cone *cones = (qa_q2_light_cone *)(lights + (nlights ? nlights : 1));
   for (size_t i = 0; i < nlights; i++) {
     const qa_scene_light *l = q2src[i];
     memset(&lights[i], 0, sizeof lights[i]);
@@ -403,13 +415,17 @@ bool qa_q2_shadow_scene_prepare(qa_q2_shadow_scene *s, const qa_scene_light *sou
     c->casters = c->owned_casters; c->caster_count = nc;
     ncand++;
   }
+  /* A replaced backend restores the atlas to its creation contents, so signatures that say "cached" no longer hold. */
+  if (s->epoch != qa_scene_image_registry_backend_epoch(s->images)) {
+    s->epoch = qa_scene_image_registry_backend_epoch(s->images);
+    scene_cache *cache = (scene_cache *)s->_cached;
+    for (size_t i = 0; i < cache->count; i++) { free(cache->entries[i].sig.casters); cache->entries[i].sig.casters = NULL; }
+    cache->count = 0;
+  }
   if (!enabled) qa_q2_shadow_scene_close(s);
   if (ncand == 0) {
-    out->lighting.lights = xalloc((nlights ? nlights : 1) * sizeof *out->lighting.lights);
-    memcpy(out->lighting.lights, lights, nlights * sizeof *lights);
-    /* re-point cones into copies? lights cone pointers reference `cones` (leaked with lights block below replaced) */
-    out->lighting.light_count = nlights; out->lighting_atlas = NULL;
-    /* cones/lights stay allocated as the returned block's backing */
+    for (size_t i = 0; i < ncand; i++) free(cands[i].owned_casters);
+    out->lighting.lights = lights; out->lighting.light_count = nlights; out->lighting_atlas = NULL;
     return true;
   }
   if (!s->has_image) {
@@ -422,7 +438,7 @@ bool qa_q2_shadow_scene_prepare(qa_q2_shadow_scene *s, const qa_scene_light *sou
     qa_texture_sampling sampling = { "clamp", "nearest" };
     s->image = qa_scene_image_registry_register_generated(s->images, "*q2-shadow-atlas", content, sampling);
     s->has_image = true;
-    /* pixels/level ownership passes to the queued operation view (TS retains) */
+    free(pixels); /* the registry keeps its own copy of created content */
   }
   qa_shadow_pack_result slots[8];
   fit_candidates(cands, ncand, slots);
@@ -464,9 +480,15 @@ bool qa_q2_shadow_scene_prepare(qa_q2_shadow_scene *s, const qa_scene_light *sou
     new_cache[new_count].index = (double)cand->index; new_cache[new_count].sig = sig; new_cache[new_count].present = true; new_count++;
     if (same_signature(prev, prev_present, &sig)) { cached_lights++; continue; }
     rebuilt_lights++; entity_casters += (double)cand->caster_count;
+    /* TS JSON.stringify([index, slot, origin, radius, cone, worldKey]): the cone is part of the key (its matrix
+     * projects the cached draws). */
     char prefix[512];
-    snprintf(prefix, sizeof prefix, "[%zu,%g,%g,%g,%g,%g,%g,%g,%g,%s]", cand->index, slot.x, slot.y, slot.width, slot.height,
-             cand->light.origin.x, cand->light.origin.y, cand->light.origin.z, cand->light.radius, world_key);
+    char cone_key[160] = "null";
+    if (cand->light.cone)
+      snprintf(cone_key, sizeof cone_key, "%s,%s,%s,%s", QA_JS_NUMBER(cand->light.cone->direction.x), QA_JS_NUMBER(cand->light.cone->direction.y),
+               QA_JS_NUMBER(cand->light.cone->direction.z), QA_JS_NUMBER(cand->light.cone->cos_half_angle));
+    snprintf(prefix, sizeof prefix, "[%zu,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s]", cand->index, QA_JS_NUMBER(slot.x), QA_JS_NUMBER(slot.y), QA_JS_NUMBER(slot.width), QA_JS_NUMBER(slot.height),
+             QA_JS_NUMBER(cand->light.origin.x), QA_JS_NUMBER(cand->light.origin.y), QA_JS_NUMBER(cand->light.origin.z), QA_JS_NUMBER(cand->light.radius), cone_key, world_key);
     if (has_matrix) {
       char key[560]; snprintf(key, sizeof key, "%s|cone", prefix);
       struct wd *entry = world_draws_cached(cachep, key, world, nworld, cand->light, NULL, matrix);
@@ -500,7 +522,6 @@ bool qa_q2_shadow_scene_prepare(qa_q2_shadow_scene *s, const qa_scene_light *sou
   out->stats.lights = cached_lights + rebuilt_lights;
   out->stats.cached_lights = cached_lights; out->stats.rebuilt_lights = rebuilt_lights;
   out->stats.faces_rendered = (double)out->pass_count; out->stats.entity_casters = entity_casters;
-  (void)cones;
   return true;
 }
 void qa_q2_shadow_scene_close(qa_q2_shadow_scene *s) {

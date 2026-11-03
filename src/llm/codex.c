@@ -36,10 +36,13 @@ bool qa_llm_subscription_account_id(const char *token, char **out_id, qa_llm_err
     bool decoded_ok = qa_llm_base64url_decode(payload_text, length, &decoded);
     free(payload_text);
     if (!decoded_ok) goto done;
-    /* Buffer.toString("utf8") then JSON.parse */
-    size_t valid_up_to = 0;
-    if (!qa_llm_utf8_valid(decoded.data, decoded.length, &valid_up_to)) goto done;
-    if (!qa_llm_json_parse((const char *)decoded.data, decoded.length, &parsed)) goto done;
+    /* Buffer.toString("utf8") (invalid bytes become U+FFFD) then JSON.parse */
+    qa_llm_bytes text;
+    qa_llm_bytes_init(&text);
+    qa_llm_utf8_decode_lossy(decoded.data, decoded.length, &text);
+    bool parsed_ok = qa_llm_json_parse((const char *)text.data, text.length, &parsed);
+    qa_llm_bytes_free(&text);
+    if (!parsed_ok) goto done;
     qa_llm_error inner;
     if (!qa_llm_record(parsed, &inner)) goto done;
     const qa_llm_json *auth = qa_llm_json_get(parsed, "https://api.openai.com/auth");

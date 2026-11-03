@@ -37,14 +37,20 @@ typedef struct weapon_step {
   qa_q3_source_weapon_options *options;
 } weapon_step;
 
+/* TS Q3SourceWeaponState weapon/weaponState/weaponTime are accessors. */
+static void write_weapon_field(qa_q3_source_weapon_state *s, double *field, double value) {
+  double weapon = s->weapon, weapon_state = s->weapon_state, weapon_time = s->weapon_time;
+  *field = value;
+  if (s->weapon_field_written != NULL) s->weapon_field_written(s->ammo_ctx, weapon, weapon_state, weapon_time);
+}
 static void ws_event(weapon_step *w, double e) { w->options->event(w->options->ctx, e); }
 static void holdable_event(void *ctx, double e) { ws_event(ctx, e); }
 static bool missionpack(weapon_step *w) { return strcmp(w->state->product, "missionpack") == 0; }
 
 static void begin_drop(weapon_step *w) {
   ws_event(w, QA_Q3_EV_CHANGE_WEAPON);
-  w->state->weapon_state = QA_Q3_WEAPON_DROPPING;
-  w->state->weapon_time += 200;
+  write_weapon_field(w->state, &w->state->weapon_state, QA_Q3_WEAPON_DROPPING);
+  write_weapon_field(w->state, &w->state->weapon_time, w->state->weapon_time + 200);
   w->options->start_torso(w->options->ctx, QA_Q3_ANIM_TORSO_DROP);
 }
 static void begin_weapon_change(weapon_step *w, double weapon) {
@@ -62,7 +68,8 @@ static void finish_weapon_change(weapon_step *w) {
   weapon = (rw >= 0 && rw <= 13 && (double)rw == requested) ? requested : QA_Q3_WP_NONE;
   if (weapon >= (missionpack(w) ? 14 : 11)) weapon = QA_Q3_WP_NONE;
   if (!(qa_int32(ps->owned_weapons) & (1 << qa_int32(weapon)))) weapon = QA_Q3_WP_NONE;
-  ps->weapon = weapon; ps->weapon_state = QA_Q3_WEAPON_RAISING; ps->weapon_time += 250;
+  write_weapon_field(ps, &ps->weapon, weapon); write_weapon_field(ps, &ps->weapon_state, QA_Q3_WEAPON_RAISING);
+  write_weapon_field(ps, &ps->weapon_time, ps->weapon_time + 250);
   w->options->start_torso(w->options->ctx, QA_Q3_ANIM_TORSO_RAISE);
 }
 
@@ -71,9 +78,9 @@ void qa_q3_run_weapon_step(qa_q3_source_weapon_state *state, qa_q3_move_command 
   weapon_step w = {state, command, options};
   qa_q3_source_weapon_state *ps = state;
   if (flag(ps->pm_flags, QA_Q3_FLAG_RESPAWNED) || ps->spectator) return;
-  if (ps->health <= 0) { ps->weapon = QA_Q3_WP_NONE; return; }
+  if (ps->health <= 0) { write_weapon_field(ps, &ps->weapon, QA_Q3_WP_NONE); return; }
   if (qa_q3_step_holdable(ps, flag(command.buttons, QA_Q3_BUTTON_USE_HOLDABLE), holdable_event, &w)) return;
-  if (ps->weapon_time > 0) ps->weapon_time -= options->msec;
+  if (ps->weapon_time > 0) write_weapon_field(ps, &ps->weapon_time, ps->weapon_time - options->msec);
   qa_q3_external_weapon_slot *external = options->external_phase;
   if (external != NULL && *external == QA_Q3_WEAPON_SLOT_HOLSTERED) return;
   if (external != NULL && *external == QA_Q3_WEAPON_SLOT_DROPPING) {
@@ -97,17 +104,17 @@ void qa_q3_run_weapon_step(qa_q3_source_weapon_state *state, qa_q3_move_command 
   if (ps->weapon_time > 0) return;
   if (ps->weapon_state == QA_Q3_WEAPON_DROPPING) { finish_weapon_change(&w); return; }
   if (ps->weapon_state == QA_Q3_WEAPON_RAISING) {
-    ps->weapon_state = QA_Q3_WEAPON_READY;
+    write_weapon_field(ps, &ps->weapon_state, QA_Q3_WEAPON_READY);
     options->start_torso(options->ctx, ps->weapon == QA_Q3_WP_GAUNTLET ? QA_Q3_ANIM_TORSO_STAND2 : QA_Q3_ANIM_TORSO_STAND);
     return;
   }
   if (!flag(command.buttons, QA_Q3_BUTTON_ATTACK) || (ps->weapon == QA_Q3_WP_GAUNTLET && !options->gauntlet_hit)) {
-    ps->weapon_time = 0; ps->weapon_state = QA_Q3_WEAPON_READY; return;
+    write_weapon_field(ps, &ps->weapon_time, 0); write_weapon_field(ps, &ps->weapon_state, QA_Q3_WEAPON_READY); return;
   }
   options->start_torso(options->ctx, ps->weapon == QA_Q3_WP_GAUNTLET ? QA_Q3_ANIM_TORSO_ATTACK2 : QA_Q3_ANIM_TORSO_ATTACK);
-  ps->weapon_state = QA_Q3_WEAPON_FIRING;
+  write_weapon_field(ps, &ps->weapon_state, QA_Q3_WEAPON_FIRING);
   double ammo = ps->ammo_get(ps->ammo_ctx, ps->weapon);
-  if (ammo == 0) { ws_event(&w, QA_Q3_EV_NOAMMO); ps->weapon_time += 500; return; }
+  if (ammo == 0) { ws_event(&w, QA_Q3_EV_NOAMMO); write_weapon_field(ps, &ps->weapon_time, ps->weapon_time + 500); return; }
   if (ammo != -1) ps->ammo_set(ps->ammo_ctx, ps->weapon, ammo - 1);
   ws_event(&w, QA_Q3_EV_FIRE_WEAPON);
   double add_time;
@@ -124,7 +131,8 @@ void qa_q3_run_weapon_step(qa_q3_source_weapon_state *state, qa_q3_move_command 
     default: add_time = 400; break;
   }
   double persistent = missionpack(&w) ? ps->persistent_powerup_tag : 0;
-  ps->weapon_time += options->firing_delay != NULL
+  double delay = options->firing_delay != NULL
       ? options->firing_delay(options->ctx, add_time)
       : qa_q3_weapon_delay(add_time, persistent, ps->haste);
+  write_weapon_field(ps, &ps->weapon_time, ps->weapon_time + delay);
 }

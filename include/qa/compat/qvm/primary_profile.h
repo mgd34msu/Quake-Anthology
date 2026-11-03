@@ -1,9 +1,8 @@
 /*
  * Port of src/compat/qvm/primary-profile.ts. The builtin profile
- * converts the landed content factory outputs (which mirror the same
- * TS profile types) into this slice's mirrored structs; fields with
- * no counterpart in the landed structs stay zero and are noted in
- * the slice report. Declaration is a borrowed resolved reference.
+ * converts the content factory outputs (which mirror the same TS
+ * profile types) into this module's structs, closures included.
+ * Declaration is a borrowed resolved reference.
  * GPL-2.0-or-later.
  */
 #ifndef QA_COMPAT_QVM_PRIMARY_PROFILE_H

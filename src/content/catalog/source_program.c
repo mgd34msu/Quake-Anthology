@@ -14,6 +14,7 @@ const qa_catalog_discovered_product *qa_source_program_product(
       if (strcmp(qa_expected_products[i].id, product->expectation.id) == 0)
         builtin = true;
     if (builtin || product->expectation.required_program_count != 0 ||
+        product->expectation.native_program_count != 0 ||
         product->expectation.base_product == NULL) break;
     if (qa_catalog_string_contains((const char *const *)visited.values,
                                    visited.count, product->id)) {

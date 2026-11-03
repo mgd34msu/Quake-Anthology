@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/base-arena-menu.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/base_arena_menu.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -100,13 +101,13 @@ void qa_app_base_arena_menus_update(qa_app_base_arena_menus *menus) {
   }
   /* TS identity = JSON.stringify([result.result, result.podium]). */
   char identity[4096];
-  size_t len = (size_t)snprintf(identity, sizeof identity, "[{\"rank\":%.17g,\"completedTier\":%.17g,\"unlockedMovie\":%s,\"nextLevel\":%.17g,\"awards\":[",
-      result->result.rank, result->result.completed_tier,
-      result->result.unlocked_movie < 0 ? "null" : "?", result->result.next_level);
+  size_t len = (size_t)snprintf(identity, sizeof identity, "[{\"rank\":%s,\"completedTier\":%s,\"unlockedMovie\":%s,\"nextLevel\":%s,\"awards\":[",
+      QA_JS_NUMBER(result->result.rank), QA_JS_NUMBER(result->result.completed_tier),
+      result->result.unlocked_movie < 0 ? "null" : "?", QA_JS_NUMBER(result->result.next_level));
   if (result->result.unlocked_movie >= 0) {
     /* Rebuild the movie field text exactly once. */
     char movie[40];
-    snprintf(movie, sizeof movie, "%.17g", result->result.unlocked_movie);
+    snprintf(movie, sizeof movie, "%s", QA_JS_NUMBER(result->result.unlocked_movie));
     char *marker = strstr(identity, "\"unlockedMovie\":?");
     if (marker) {
       char tail[4096];
@@ -117,12 +118,12 @@ void qa_app_base_arena_menus_update(qa_app_base_arena_menus *menus) {
     }
   }
   for (size_t i = 0; i < result->result.award_count; i++)
-    len += (size_t)snprintf(identity + len, sizeof identity - len, "%s{\"medal\":%.17g,\"amount\":%.17g}",
-        i ? "," : "", result->result.awards[i].medal, result->result.awards[i].amount);
+    len += (size_t)snprintf(identity + len, sizeof identity - len, "%s{\"medal\":%s,\"amount\":%s}",
+        i ? "," : "", QA_JS_NUMBER(result->result.awards[i].medal), QA_JS_NUMBER(result->result.awards[i].amount));
   len += (size_t)snprintf(identity + len, sizeof identity - len, "]},[");
   for (size_t i = 0; i < result->podium_count; i++)
-    len += (size_t)snprintf(identity + len, sizeof identity - len, "%s{\"client\":%.17g,\"rank\":%.17g,\"score\":%.17g}",
-        i ? "," : "", result->podium[i].client, result->podium[i].rank, result->podium[i].score);
+    len += (size_t)snprintf(identity + len, sizeof identity - len, "%s{\"client\":%s,\"rank\":%s,\"score\":%s}",
+        i ? "," : "", QA_JS_NUMBER(result->podium[i].client), QA_JS_NUMBER(result->podium[i].rank), QA_JS_NUMBER(result->podium[i].score));
   snprintf(identity + len, sizeof identity - len, "]]");
   if (menus->shown && strcmp(menus->shown, identity) == 0) return;
   free(menus->shown);

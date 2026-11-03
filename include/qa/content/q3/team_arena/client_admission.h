@@ -29,7 +29,7 @@ typedef struct qa_q3_ta_client_bot_services {
 typedef struct qa_q3_ta_client_admission_host {
   qa_q3_base_product product;
   qa_q3_entity_pool *pool;
-  qa_q3_game_player_slots_mirror *team_scores;
+  qa_q3_base_player_state_slots *team_scores;
   qa_q3_base_server_world *world; /* link_state/unlink used */
   qa_q3_ta_match_state *state;
   qa_q3_ta_game_session_manager *session;

@@ -8,12 +8,22 @@
 
 #include "qa/console/discovery.h"
 #include "qa/core/commands/text.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 #define MAX_TEXT 4096
 
-static const char *const indirect_names[] = {"llm_ask", "llm_exec", "llm_cancel", "exec",
-                                             "vstr",    "alias",    "bind",       "stuffcmds",
-                                             "cmd",     "wait"};
+/* Scripting, session-ending, networking and file-writing commands, plus
+ * cvars whose values the engine runs as commands later. */
+static const char *const indirect_names[] = {
+    "llm_ask",    "llm_exec",   "llm_cancel", "exec",        "vstr",        "alias",
+    "bind",       "unbind",     "unbindall",  "stuffcmds",   "cmd",         "wait",
+    "quit",       "exit",       "connect",    "reconnect",   "disconnect",  "rcon",
+    "say",        "say_team",   "tell",       "condump",     "writeconfig", "screenshot",
+    "screenshotjpeg", "levelshot", "record",  "demo",        "playdemo",    "timedemo",
+    "download",   "load",       "save",       "loadgame",    "savegame",    "map",
+    "devmap",     "changelevel", "startserver", "kill",      "killserver",  "nextmap",
+    "nextdemo",   "nextserver", "nextlevel"};
 
 static bool is_indirect(const char *name) {
   for (size_t i = 0; i < sizeof indirect_names / sizeof *indirect_names; i++)
@@ -334,6 +344,14 @@ static bool visit_lines(validate_state *state, const char *input,
         if (setter && !find_cvar(state, argv1)) {
           *error = make_error("%s requires an existing console setting.", name);
           ok = false;
+        } else if (setter) {
+          char *folded = qa_ascii_fold(argv1);
+          if (folded != NULL && is_indirect(folded)) {
+            *error = make_error("%s cannot be changed by llm_exec because its value runs as a command.",
+                                argv1);
+            ok = false;
+          }
+          free(folded);
         }
       }
       if (ok && !expanded) {
@@ -414,7 +432,7 @@ static int ranked_compare(const void *left, const void *right) {
   const ranked_entry *a = (const ranked_entry *)left;
   const ranked_entry *b = (const ranked_entry *)right;
   if (a->score != b->score) return a->score > b->score ? -1 : 1;
-  return strcmp(a->entry->name, b->entry->name);
+  return qa_js_locale_compare(a->entry->name, b->entry->name);
 }
 
 /* Fills filtered (mode) ranked entries over `entries`; caller frees
@@ -468,7 +486,7 @@ static ranked_entry *ranked_catalog(qa_console_discovery_entry *entries, size_t 
       ranked[ranked_count].score = score;
       ranked_count++;
     }
-    qsort(ranked, ranked_count, sizeof *ranked, ranked_compare);
+    qa_js_sort(ranked, ranked_count, sizeof *ranked, ranked_compare);
   }
   qa_llm_batch_lines_free(words.items, words.count);
   free(folded_prompt);
@@ -508,6 +526,18 @@ static char *catalog_documentation(const ranked_entry *ranked, size_t count,
   return builder_finish(&out);
 }
 
+static bool catalog_name(const char *name) {
+  size_t length = strlen(name);
+  if (length < 1 || length > 64) return false;
+  for (size_t i = 0; i < length; i++) {
+    char c = name[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+          c == '+' || c == '-' || c == '.' || c == ':'))
+      return false;
+  }
+  return true;
+}
+
 char *qa_llm_console_catalog(qa_command_buffer *commands,
                              const qa_command_context *source, const char *prompt,
                              qa_llm_catalog_mode mode, char **out_error) {
@@ -525,7 +555,9 @@ char *qa_llm_console_catalog(qa_command_buffer *commands,
       bool member = false;
       for (size_t r = 0; r < ranked_count; r++)
         if (ranked[r].entry == &entries[i]) member = true;
-      if (!member) continue;
+      /* Mod-chosen names are untrusted prompt text: only command-name
+       * characters are listed (/^[A-Za-z0-9_+\-.:]{1,64}$/). */
+      if (!member || !catalog_name(entries[i].name)) continue;
       if (names.length > 0) builder_add_text(&names, ", ");
       builder_add_format(&names, "%s:%s",
                          qa_console_discovery_kind_name(entries[i].kind), entries[i].name);

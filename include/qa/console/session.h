@@ -72,6 +72,11 @@ typedef struct qa_seat_console {
   double fraction;
   bool opened;
   bool suppress_toggle_text;
+  /* TS selectedEntry: the discovery entry looked up for the selected
+   * completion name, reused while the name stays selected. NULL name is TS
+   * null; a NULL entry with a name is a cached TS undefined. Owned. */
+  char *selected_entry_name;
+  qa_console_discovery_entry *selected_entry;
   /* NULL mirrors the TS null (published); otherwise staged lines. */
   qa_staged_console_output *staged_output;
   size_t staged_count;

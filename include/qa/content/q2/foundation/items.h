@@ -19,6 +19,26 @@ typedef struct qa_q2_item_definition {
   bool (*use)(void *ctx, qa_owned_actor player, qa_q2_game_services *g);
   bool has_use;
 } qa_q2_item_definition;
+typedef struct qa_q2_player_powerups { double quad_until, invulnerability_until, breather_until, enviro_until, haste_until, regen_until, flight_until, invis_until; } qa_q2_player_powerups;
+/* TS Q2ForeignItemServices: the module services a composition-supplied item
+ * definition needs for pickups, powerups and regeneration. ctx is the item
+ * module; the struct lives in the module and outlives every definition. */
+typedef struct qa_q2_foreign_item_services {
+  void *ctx;
+  const qa_q2_item_definition *(*item)(void *ctx, const char *classname); /* NULL = TS undefined */
+  qa_item_id (*item_id)(void *ctx, const qa_q2_item_definition *item);
+  const qa_q2_item_definition *(*ammunition)(void *ctx, size_t *out_count);
+  void (*ensure)(void *ctx, qa_owned_actor actor, qa_q2_game_services *game, qa_item_id item, double capacity);
+  double (*weapon_owned)(void *ctx, qa_q2_game_services *game, qa_actor_id player, const qa_q2_item_definition *item);
+  /* Writes at most one grant to out (TS [] or [grant]) and returns the count. */
+  size_t (*weapon_ammo)(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, const qa_q2_item_definition *item, qa_pickup_ammo_grant *out);
+  void (*weapon_picked)(void *ctx, qa_actor_id player, qa_item_id item, bool first);
+  qa_q2_player_powerups *(*powers)(void *ctx, qa_actor_id player);
+  qa_q2_think regen_think;
+} qa_q2_foreign_item_services;
+/* TS foreignItems result. The item module takes ownership and releases
+ * items and storage with free() when it is destroyed. */
+typedef struct qa_q2_foreign_item_list { qa_q2_item_definition *items; size_t count; void *storage; } qa_q2_foreign_item_list;
 typedef struct qa_q2_item_hooks {
   void *ctx;
   void (*weapon_picked)(void *ctx, qa_actor_id player, qa_item_id item, bool first);
@@ -28,6 +48,16 @@ typedef struct qa_q2_item_hooks {
   qa_q2_entity *(*random_respawn)(void *ctx, qa_q2_entity *e, qa_q2_game_services *g);
   double (*weapon_respawn_seconds)(void *ctx);
   bool has_weapon_respawn_seconds;
+  /* TS pickedUp?(player, item, usable): optional (NULL = TS undefined). */
+  void (*picked_up)(void *ctx, qa_actor_id player, qa_item_id item, bool usable);
+  /* TS edition?: zero (QA_Q2_EDITION_CLASSIC) is TS undefined/"classic";
+   * "rerelease" applies the rerelease item rows at construction. */
+  qa_q2_edition edition;
+  /* TS foreignItems?(services): items authored by another game, supplied by
+   * composition so the Q2 foundation stays independent of foreign content.
+   * NULL = TS undefined. */
+  void *foreign_items_ctx;
+  qa_q2_foreign_item_list (*foreign_items)(void *ctx, const qa_q2_foreign_item_services *services);
 } qa_q2_item_hooks;
 typedef struct qa_q2_pickup_policy {
   void *ctx;
@@ -38,7 +68,6 @@ typedef struct qa_q2_pickup_policy {
   void (*after_pickup)(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id player, bool taken);
   bool (*keep_after_pickup)(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id player);
 } qa_q2_pickup_policy;
-typedef struct qa_q2_player_powerups { double quad_until, invulnerability_until, breather_until, enviro_until, haste_until, regen_until, flight_until, invis_until; } qa_q2_player_powerups;
 typedef struct qa_q2_inventory_item {
   qa_item_id id; const char *classname, *name, *kind;
   double quantity; bool usable, droppable, stay_coop; double capacity; bool weapon;
@@ -91,4 +120,6 @@ bool qa_q2_item_module_observe_supply(qa_q2_item_module *m, qa_q2_game_services 
 void qa_q2_item_module_replace_item(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g, const char *descriptor);
 void qa_q2_item_module_touch(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id player);
 bool qa_q2_item_module_use(qa_q2_item_module *m, qa_owned_actor player, qa_item_id item, qa_q2_game_services *g, double duration);
+/* TS syncPowerArmor(player, game, requested = null): requested NULL is TS null, else "screen"|"shield". */
+void qa_q2_item_module_sync_power_armor(qa_q2_item_module *m, qa_owned_actor player, qa_q2_game_services *g, const char *requested);
 #endif

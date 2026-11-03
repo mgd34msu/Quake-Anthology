@@ -112,6 +112,9 @@ typedef struct qa_q3_pres_scene_target {
   void (*print)(void *ctx, const char *text);
   const qa_actor_id *(*actor)(void *ctx, const qa_q3_pres_ref_model_entity *entity);
   void (*publish)(void *ctx, qa_q3_pres_presented_scene *scene);
+  /* Non-NULL: the TS viewport Rect shared with its owner (read at each
+   * renderScene in place of viewport); borrowed. NULL reads viewport. */
+  const qa_rect *viewport_ref;
 } qa_q3_pres_scene_target;
 typedef struct qa_q3_pres_scene_recorder qa_q3_pres_scene_recorder;
 /* TS Q3SceneRecorder view used by landed resources (fn+ctx table). */

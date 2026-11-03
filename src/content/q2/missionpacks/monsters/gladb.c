@@ -60,12 +60,12 @@ static void melee_hit_fn(void *ctx, qa_q2m_context *c) {
                                  20 + floor(q2mpm_rnd(c->game) * 5), 300);
   q2mpm_snd(c, hit ? "gladiator/melee2.wav" : "gladiator/melee3.wav", 0);
 }
-qa_q2m_definition qa_q2mpm_create_gladb_definition(qa_q2mpm_weapons weapons) {
-  qa_q2mpm_weapons *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating gladb definition");
+qa_q2m_definition qa_q2mpm_create_gladb_definition(qa_q2mpm_arena *arena, qa_q2mpm_weapons weapons) {
+  qa_q2mpm_weapons *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating gladb definition");
   *box = weapons;
-  qa_q2m_named_handler *callbacks = malloc(6 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating gladb definition");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 6 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating gladb definition");
   callbacks[0] = (qa_q2m_named_handler){"gladb_run", {NULL, run_fn}};
   callbacks[1] = (qa_q2m_named_handler){"gladb_dead", {NULL, qa_q2bm_finish_corpse_handler}};
   callbacks[2] = (qa_q2m_named_handler){"gladb_cleaver_swing", {(void *)&swing_spec, qa_q2bm_sound_handler_fn}};

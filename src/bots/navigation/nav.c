@@ -14,7 +14,10 @@ void qa_kex_navigation_asset_destroy(qa_kex_navigation_asset *a) {
   memset(a, 0, sizeof *a);
 }
 static qa_vec3 vector(qa_binary_reader *r) {
-  return (qa_vec3){qa_binary_reader_finite_f32(r), qa_binary_reader_finite_f32(r), qa_binary_reader_finite_f32(r)};
+  double x = qa_binary_reader_finite_f32(r);
+  double y = qa_binary_reader_finite_f32(r);
+  double z = qa_binary_reader_finite_f32(r);
+  return (qa_vec3){x, y, z};
 }
 static int64_t count(qa_binary_reader *r, int64_t stride, const char *source) {
   size_t offset = qa_binary_reader_offset(r);

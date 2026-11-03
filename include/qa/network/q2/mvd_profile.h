@@ -22,7 +22,7 @@ typedef struct qa_q2_mvd_profile {
   double max_config_strings, max_clients_index, max_entities;
 } qa_q2_mvd_profile;
 
-/* TS mvdProfile(revision, flags); unsupported values abort like TS. */
+/* TS mvdProfile(revision, flags); unsupported values raise the TS Error. */
 void qa_q2_get_mvd_profile(double revision, double flags, qa_q2_mvd_profile *out);
 
 /* One configStrings Map entry. */
@@ -42,7 +42,8 @@ typedef struct qa_q2_mvd_header {
   double max_clients;
 } qa_q2_mvd_header;
 
-/* TS readMvdHeader(bytes). False only on OOM. */
+/* TS readMvdHeader(bytes); malformed headers raise the TS Error (nothing is
+ * held on the heap after a caught raise). False only on OOM. */
 bool qa_q2_read_mvd_header(const uint8_t *bytes, size_t length,
                            qa_q2_mvd_header *out);
 void qa_q2_mvd_header_free(qa_q2_mvd_header *header);

@@ -16,7 +16,7 @@ static const double p_rail[] = {56}, f_rail[] = {4};
 static const double p_bfg[] = {39, 45, 50, 55}, f_bfg[] = {9, 17};
 #define N(a) (sizeof(a) / sizeof((a)[0]))
 #define D(name_, item_, cn, ammo_, q, w, vm, wm, pm, al, fl, il, dl, p, f, rep) \
-  {name_, item_, cn, ammo_, q, w, vm, wm, pm, al, fl, il, dl, p, N(p), f, N(f), rep}
+  {name_, item_, cn, ammo_, q, w, vm, wm, pm, al, fl, il, dl, p, N(p), f, N(f), rep, false}
 const qa_q2w_base_definition qa_q2w_base_weapons[] = {
   D("blaster", "q2:weapon_blaster", "weapon_blaster", NULL, 0, 0, "models/weapons/v_blast/tris.md2", "", 1, 4, 8, 52, 55, p_blaster, f_blaster, false),
   D("shotgun", "q2:weapon_shotgun", "weapon_shotgun", "q2:ammo_shells", 1, 5, "models/weapons/v_shotg/tris.md2", "models/weapons/g_shotg/tris.md2", 2, 7, 18, 36, 39, p_shotgun, f_shotgun, false),
@@ -26,7 +26,7 @@ const qa_q2w_base_definition qa_q2w_base_weapons[] = {
   D("grenades", "q2:ammo_grenades", "ammo_grenades", "q2:ammo_grenades", 1, 2, "models/weapons/v_handgr/tris.md2", "models/items/ammo/grenades/medium/tris.md2", 6, 0, 15, 48, 48, p_gren, f_gren, false),
   D("grenadelauncher", "q2:weapon_grenadelauncher", "weapon_grenadelauncher", "q2:ammo_grenades", 1, 5, "models/weapons/v_launch/tris.md2", "models/weapons/g_launch/tris.md2", 7, 5, 16, 59, 64, p_launch, f_launch, false),
   D("rocketlauncher", "q2:weapon_rocketlauncher", "weapon_rocketlauncher", "q2:ammo_rockets", 1, 5, "models/weapons/v_rocket/tris.md2", "models/weapons/g_rocket/tris.md2", 8, 4, 12, 50, 54, p_rocket, f_rocket, false),
-  {"hyperblaster", "q2:weapon_hyperblaster", "weapon_hyperblaster", "q2:ammo_cells", 1, 30, "models/weapons/v_hyperb/tris.md2", "models/weapons/g_hyperb/tris.md2", 9, 5, 20, 49, 53, NULL, 0, f_hyper, N(f_hyper), true},
+  {"hyperblaster", "q2:weapon_hyperblaster", "weapon_hyperblaster", "q2:ammo_cells", 1, 30, "models/weapons/v_hyperb/tris.md2", "models/weapons/g_hyperb/tris.md2", 9, 5, 20, 49, 53, NULL, 0, f_hyper, N(f_hyper), true, false},
   D("railgun", "q2:weapon_railgun", "weapon_railgun", "q2:ammo_slugs", 1, 5, "models/weapons/v_rail/tris.md2", "models/weapons/g_rail/tris.md2", 10, 3, 18, 56, 61, p_rail, f_rail, false),
   D("bfg", "q2:weapon_bfg", "weapon_bfg", "q2:ammo_cells", 50, 50, "models/weapons/v_bfg/tris.md2", "models/weapons/g_bfg/tris.md2", 11, 8, 32, 55, 58, p_bfg, f_bfg, false),
 };
@@ -35,7 +35,7 @@ const size_t qa_q2w_base_weapon_count = N(qa_q2w_base_weapons);
 const qa_q2w_base_definition *qa_q2w_weapon_definition(qa_q2w_name name) {
   for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
     if (strcmp(qa_q2w_base_weapons[i].name, name) == 0) return &qa_q2w_base_weapons[i];
-  qa_q2f_error("Q2 weapon is not registered: %s", name);
+  qa_raise("Error", 0, 0, "Q2 weapon is not registered: %s", name);
 }
 const qa_q2w_base_definition *qa_q2w_weapon_from_classname(const char *classname) {
   for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)

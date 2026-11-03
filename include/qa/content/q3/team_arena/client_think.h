@@ -1,10 +1,4 @@
-/* Port of src/content/q3/team-arena/client-think.ts. GPL-2.0-or-later.
- * Mirror gaps: ps.commandTime/weapon/weaponTime/gravity/speed and the
- * jumppad counters have no landed fields; commandTime/weapon/
- * weaponTime/gravity/speed go through host accessors (NULL setter skips
- * the store), jumppad reset is skipped. Snapshot conversion is a host
- * callback; the default speed multiplier mirrors client-effects logic
- * on mirror slots. */
+/* Port of src/content/q3/team-arena/client-think.ts. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_CLIENT_THINK_H
 #define QA_CONTENT_Q3_TEAM_ARENA_CLIENT_THINK_H
 #include <stdbool.h>
@@ -20,7 +14,8 @@
 
 typedef struct qa_q3_ta_client_think_frame { double time, intermission_time, intermission_queued; } qa_q3_ta_client_think_frame;
 typedef struct qa_q3_ta_client_think_settings {
-  double debug_move; bool synchronous_clients, pmove_fixed; double pmove_msec;
+  double debug_move; bool ladders; /* TS ladders?: every TS caller (simulation/q3/runtime.ts) passes it; options.ladders = settings.ladders !== false */
+  bool synchronous_clients, pmove_fixed; double pmove_msec;
   double gravity, speed, dmflags; bool smooth_clients; double force_respawn_seconds; bool single_player;
 } qa_q3_ta_client_think_settings;
 
@@ -57,14 +52,6 @@ typedef struct qa_q3_ta_client_think_host {
   void (*append_console_command)(void *ctx, const char *command);
   bool (*is_door_trigger)(void *ctx, qa_q3_game_entity *entity);
   void (*bot_test_aas)(void *ctx, qa_vec3 origin);
-  void (*snapshot)(void *ctx, qa_q3_game_client *client, qa_q3_game_entity *entity);
-  void (*snapshot_extrapolate)(void *ctx, qa_q3_game_client *client, qa_q3_game_entity *entity, double time);
-  /* Mirror-gap ps accessors (commandTime is required for msec). */
-  double (*command_time)(void *ctx, qa_q3_game_client *client);
-  double (*weapon)(void *ctx, qa_q3_game_client *client);
-  double (*weapon_time)(void *ctx, qa_q3_game_client *client);
-  void (*set_gravity)(void *ctx, qa_q3_game_client *client, double value);
-  void (*set_speed)(void *ctx, qa_q3_game_client *client, double value);
 } qa_q3_ta_client_think_host;
 
 typedef struct qa_q3_ta_client_think_runtime { qa_q3_ta_client_think_host host; } qa_q3_ta_client_think_runtime;

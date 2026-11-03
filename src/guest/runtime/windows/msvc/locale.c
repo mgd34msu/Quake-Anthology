@@ -223,6 +223,7 @@ static void reg(qa_msvc_locale *locale, int kind, const char *name,
   if (state == NULL) qa_range_error("Guest runtime out of memory");
   state->locale = locale; state->kind = kind;
   memset(&state->word_address, 0, sizeof state->word_address);
+  qa_windows_own(locale->host, state, free);
   qa_windows_import_implementation impl = {state, locale_impl};
   qa_windows_service(locale->host, library, name, parameters, parameter_count, result_is_void,
                      result, impl);
@@ -289,6 +290,7 @@ void qa_msvc_locale_init(qa_msvc_locale *locale, qa_windows_service_host *host) 
     locale_state *state = malloc(sizeof *state);
     if (state == NULL) qa_range_error("Guest runtime out of memory");
     state->locale = locale; state->kind = MS_GETWORD; state->word_address = address;
+    qa_windows_own(host, state, free);
     qa_windows_import_implementation impl = {state, locale_impl};
     char service_name[64];
     (void)snprintf(service_name, sizeof service_name, "?_Get%s@_Locinfo@std@@QEBAPEBDXZ",

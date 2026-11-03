@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "qa/input/support.h"
 #include "qa/app/bootstrap/client_bootstrap.h"
 #include "qa/app/bootstrap/configuration.h"
 #include "qa/app/bootstrap/cvar_archives.h"
@@ -430,6 +431,7 @@ static void test_prepared_startup(void) {
   CHECK(qa_seat_input_binding(seats[0].input, &physical) == NULL);
   qa_input_binding *bound = qa_app_prepared_startup_bindings(prepared, seat_id, &extra, 1, &binding_count);
   CHECK(bound != NULL && binding_count > 0);
+  for (size_t i = 0; i < binding_count; i++) qa_input_binding_dispose(&bound[i]);
   free(bound);
   const qa_input_binding_target *target = qa_seat_input_binding(seats[0].input, &physical);
   CHECK(target != NULL && !target->is_action && text_eq(target->text, "say staged"));
@@ -536,20 +538,6 @@ static bool fake_mounted_open(void *ctx, const char *name, uint8_t **out_bytes, 
   *out_bytes = (uint8_t *)strdup(text);
   return *out_bytes != NULL;
 }
-static void fake_register_shared(void *ctx, qa_cvar_registry *cvars, bool has_format, qa_audio_output_format format) {
-  (void)ctx; (void)has_format; (void)format;
-  qa_cvar_snapshot volume = {0};
-  if (qa_cvar_registry_register(cvars, "volume", "1", 0, &volume)) qa_cvar_read_free(&volume);
-}
-static bool fake_load_text(void *ctx, const char *name, char **out_text) {
-  (void)ctx; (void)name;
-  *out_text = NULL;
-  return false;
-}
-static const char *fake_dump_text(void *ctx, const char *name, const char *text) {
-  (void)ctx; (void)name; (void)text;
-  return NULL;
-}
 static int on_prepared_count;
 static void count_on_prepared(void *ctx, qa_app_prepared_startup *prepared) {
   (void)ctx; (void)prepared;
@@ -607,9 +595,6 @@ static void test_prepare_initial(void) {
   args.identity = &identity;
   args.settings = &settings;
   args.scripts = scripts;
-  args.image_host.register_shared = fake_register_shared;
-  args.image_host.load_text = fake_load_text;
-  args.image_host.dump_text = fake_dump_text;
   args.print = capture_print_text;
   args.default_capacity = 4;
   args.on_prepared = count_on_prepared;

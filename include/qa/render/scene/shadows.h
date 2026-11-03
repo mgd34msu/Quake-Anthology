@@ -68,6 +68,7 @@ typedef struct qa_q2_shadow_scene {
   qa_scene_image_registry *images;
   const qa_scene_image_handle *image; bool has_image;
   void *_cached; void *_world_draw_cache;
+  double epoch; /* images backend epoch the cached signatures belong to */
 } qa_q2_shadow_scene;
 void qa_q2_shadow_scene_init(qa_q2_shadow_scene *s, qa_scene_image_registry *images);
 void qa_q2_shadow_scene_destroy(qa_q2_shadow_scene *s);

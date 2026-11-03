@@ -5,6 +5,7 @@
 #include "qa/content/q3/foundation/arsenal.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
+#include <math.h>
 
 typedef struct binding { qa_item_id item, source; const qa_q3_ta_ammo_regeneration_rule *rule; } binding;
 typedef struct pool_timer {
@@ -188,7 +189,7 @@ qa_save_value *qa_app_q3_mapped_ammo_regeneration_capture(qa_app_q3_mapped_ammo_
 }
 
 static double elapsed_value(const qa_save_reader *reader, pool_timer *timer, double value) {
-  if (value != (double)(long long)value || value < 0 || value >= timer->rule->time)
+  if (!(isfinite(value) && value == trunc(value)) || value < 0 || value >= timer->rule->time)
     qa_save_reader_fail(reader, "Invalid original ammo regeneration counter");
   return value;
 }

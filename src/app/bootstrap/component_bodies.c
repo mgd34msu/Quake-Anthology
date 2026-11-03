@@ -1,15 +1,16 @@
 /* Port of src/app/bootstrap/component-bodies.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/component_bodies.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 /* TS materialKey: JSON of the dedup fields (skin only without shader). */
 static void material_key(const qa_app_body_material *pass, char *buf, size_t cap) {
-  snprintf(buf, cap, "[%s,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%s,%s]",
+  snprintf(buf, cap, "[%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s]",
       pass->has_custom_shader && pass->custom_shader_name ? pass->custom_shader_name : "null",
-      (double)pass->shader_rgba.x, (double)pass->shader_rgba.y, (double)pass->shader_rgba.z, (double)pass->shader_rgba.w,
-      (double)pass->shader_tex_coord.x, (double)pass->shader_tex_coord.y, pass->shader_time, pass->render_flags,
-      (double)pass->lighting_origin.x, (double)pass->lighting_origin.y, (double)pass->lighting_origin.z, pass->shadow_plane,
+      QA_JS_NUMBER((double)pass->shader_rgba.x), QA_JS_NUMBER((double)pass->shader_rgba.y), QA_JS_NUMBER((double)pass->shader_rgba.z), QA_JS_NUMBER((double)pass->shader_rgba.w),
+      QA_JS_NUMBER((double)pass->shader_tex_coord.x), QA_JS_NUMBER((double)pass->shader_tex_coord.y), QA_JS_NUMBER(pass->shader_time), QA_JS_NUMBER(pass->render_flags),
+      QA_JS_NUMBER((double)pass->lighting_origin.x), QA_JS_NUMBER((double)pass->lighting_origin.y), QA_JS_NUMBER((double)pass->lighting_origin.z), QA_JS_NUMBER(pass->shadow_plane),
       pass->non_normalized_axes ? "true" : "false",
       !pass->has_custom_shader && pass->has_custom_skin && pass->custom_skin_surfaces ? pass->custom_skin_surfaces : "null");
 }

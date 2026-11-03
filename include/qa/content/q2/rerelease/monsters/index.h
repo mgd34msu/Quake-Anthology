@@ -29,9 +29,12 @@ typedef struct qa_q2rm_monster_options {
 typedef struct qa_q2rm_ordinary_module {
   qa_q2m_definition definitions[QA_Q2RM_ORDINARY_DEFINITION_COUNT];
   qa_q2rm_mutant_definition mutant;
+  qa_q2mpm_arena arena; /* the definitions' moves, contexts and callback tables */
 } qa_q2rm_ordinary_module;
 void qa_q2rm_register_rerelease_ordinary_monsters(qa_q2rm_ordinary_module *out, qa_q2m_monsters *monsters,
                                                   qa_q2mpm_weapons weapons);
+/* Frees what registration allocated; the registry must not run them after. */
+void qa_q2rm_ordinary_module_destroy(qa_q2rm_ordinary_module *module);
 
 /* TS registerQ2RereleaseMonsters result. Storage for every
  * registered definition plus merged callback tables (rebuilt per
@@ -44,12 +47,15 @@ typedef struct qa_q2rm_monsters_module {
   qa_q2rm_jorg_definition jorg;
   qa_q2rm_actor_module actor;
   qa_q2rm_tank_stand_module tank_stand;
-  qa_q2f_named_think *merged_think; size_t merged_think_count;
-  qa_q2f_named_use *merged_use; size_t merged_use_count;
-  qa_q2f_named_touch *merged_touch; size_t merged_touch_count;
+  qa_q2mpm_arena arena; /* the definitions' moves, contexts and callback tables (TS GC) */
+  qa_q2_named_think *merged_think; size_t merged_think_count;
+  qa_q2_named_use *merged_use; size_t merged_use_count;
+  qa_q2_named_touch *merged_touch; size_t merged_touch_count;
+  qa_q2_callback_definitions spawn_callbacks; /* TS callbacks getter, read by Q2EntityServices */
 } qa_q2rm_monsters_module;
 void qa_q2rm_register_rerelease_monsters(qa_q2rm_monsters_module *out, qa_q2m_monsters *monsters,
                                          qa_q2rm_monster_options options);
+/* Frees the registered definitions' storage and merged callback tables. */
 void qa_q2rm_monsters_module_destroy(qa_q2rm_monsters_module *module);
-qa_q2bm_spawn_module qa_q2rm_monsters_as_spawn(qa_q2rm_monsters_module *module);
+qa_q2_spawn_module qa_q2rm_monsters_as_spawn(qa_q2rm_monsters_module *module);
 #endif

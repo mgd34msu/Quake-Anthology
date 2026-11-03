@@ -2,7 +2,7 @@
  * Port of key cases from tests/network (common primitives, Q1 wire,
  * unified packets): checksum2 lump skipping (qw-client.test.ts),
  * NetQuake print/stat round trips, movement checksum verification,
- * fragment sender/receiver completion, IPX header round trip, unified
+ * IPX header round trip, unified
  * reliable delivery. TypeScript toThrow cases run in a child process
  * and must abort. GPL-2.0-or-later.
  */
@@ -19,7 +19,6 @@
 #include <unistd.h>
 
 #include "qa/network/common/endpoint.h"
-#include "qa/network/common/fragments.h"
 #include "qa/network/common/ipx.h"
 #include "qa/network/q1/checksum.h"
 #include "qa/network/q1/commands.h"
@@ -126,29 +125,7 @@ static void test_message_and_netquake(void) {
   CHECK_ABORTS(qa_net_port_number(0, false));
 }
 
-static void test_fragments_ipx(void) {
-  qa_fragment_sender sender;
-  CHECK(qa_fragment_sender_init(&sender, 4, 16, false));
-  qa_fragment_receiver receiver;
-  CHECK(qa_fragment_receiver_init(&receiver, 16));
-  const uint8_t payload[9] = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-  qa_fragment_sender_begin(&sender, 7, payload, sizeof payload);
-  int completed = 0;
-  qa_message_fragment frag;
-  while (qa_fragment_sender_next(&sender, &frag)) {
-    qa_fragment_result result = qa_fragment_receiver_receive(&receiver, &frag);
-    free(frag.bytes);
-    if (result.kind == QA_FRAGMENT_COMPLETE) {
-      completed = 1;
-      CHECK(result.sequence == 7 && result.length == 9);
-      CHECK(memcmp(result.bytes, payload, 9) == 0);
-      free(result.bytes);
-    }
-  }
-  CHECK(completed == 1);
-  qa_fragment_sender_destroy(&sender);
-  qa_fragment_receiver_destroy(&receiver);
-
+static void test_ipx(void) {
   int64_t node[6] = { 1, 2, 3, 4, 5, 6 };
   qa_ipx_packet packet;
   memset(&packet, 0, sizeof packet);
@@ -174,27 +151,30 @@ static void test_fragments_ipx(void) {
 
 static void test_unified(void) {
   qa_unified_channel a, b;
-  qa_unified_channel_init(&a, "0123456789abcdef0123456789abcdef", 1024, 8192, 1000, 1, true);
-  qa_unified_channel_init(&b, "0123456789abcdef0123456789abcdef", 1024, 8192, 1000, 1, true);
+  qa_unified_channel_init(&a, "0123456789abcdef0123456789abcdef", NULL);
+  qa_unified_channel_init(&b, "0123456789abcdef0123456789abcdef", NULL);
   const uint8_t payload[5] = { 'h', 'e', 'l', 'l', 'o' };
   qa_unified_channel_queue_reliable(&a, payload, sizeof payload);
   size_t *lens = NULL, count = 0;
-  uint8_t **packets = qa_unified_channel_transmit_reliable(&a, 0, &lens, &count);
+  uint8_t **packets = qa_unified_channel_flush(&a, 0, &lens, &count);
   CHECK(count == 1 && lens[0] == 53);
   qa_unified_packet peek;
   CHECK(qa_decode_unified_packet(packets[0], lens[0], &peek) == 1);
   CHECK(peek.kind == QA_UNIFIED_RELIABLE && peek.sequence == 1);
-  qa_unified_receive_result result;
-  (void)qa_unified_channel_receive(&b, packets[0], lens[0], 10, &result);
-  CHECK(result.delivery_count == 1);
-  CHECK(result.deliveries[0].kind && strcmp(result.deliveries[0].kind, "reliable") == 0);
-  CHECK(result.deliveries[0].length == 5 && memcmp(result.deliveries[0].payload, payload, 5) == 0);
-  CHECK(result.reply_count == 1);
-  qa_unified_receive_result ack_result;
-  (void)qa_unified_channel_receive(&a, result.replies[0], result.reply_lens[0], 20, &ack_result);
-  CHECK(qa_unified_channel_can_send_reliable(&a));
-  qa_unified_receive_result_destroy(&ack_result);
-  qa_unified_receive_result_destroy(&result);
+  size_t delivery_count = 0;
+  qa_unified_delivery *deliveries = qa_unified_channel_receive(&b, packets[0], lens[0], 10, &delivery_count);
+  CHECK(delivery_count == 1);
+  CHECK(deliveries[0].kind && strcmp(deliveries[0].kind, "reliable") == 0);
+  CHECK(deliveries[0].length == 5 && memcmp(deliveries[0].payload, payload, 5) == 0);
+  size_t *ack_lens = NULL, ack_count = 0;
+  uint8_t **acks = qa_unified_channel_flush(&b, 10, &ack_lens, &ack_count);
+  CHECK(ack_count == 1);
+  size_t ack_delivery_count = 99;
+  CHECK(qa_unified_channel_receive(&a, acks[0], ack_lens[0], 20, &ack_delivery_count) == NULL);
+  CHECK(ack_delivery_count == 0);
+  CHECK(qa_unified_channel_acknowledged_reliable_sequence(&a) == 1);
+  free(acks[0]); free(acks); free(ack_lens);
+  qa_unified_deliveries_destroy(deliveries, delivery_count);
   for (size_t i = 0; i < count; i++) free(packets[i]);
   free(packets); free(lens);
   qa_unified_channel_destroy(&a);
@@ -226,15 +206,15 @@ static void test_move_checksum_and_rank(void) {
   uint8_t source[3] = { 0xff, 0x00, 0x80 };
   uint8_t encoded[8] = {0};
   size_t written = qa_rank_ascii_encode(encoded, sizeof encoded, source, 3);
-  uint8_t roundtrip[3] = {0};
-  size_t read = qa_rank_ascii_decode(roundtrip, sizeof roundtrip, (const char *)encoded, written);
-  CHECK(read == 3 && memcmp(roundtrip, source, 3) == 0);
+  /* bun: rankAsciiEncode(Uint8Array(8), [0xff, 0, 0x80]) (TS dropped the decoder). */
+  static const uint8_t expected_ascii[8] = {93, 77, 50, 48, 0, 0, 0, 0};
+  CHECK(written == 4 && memcmp(encoded, expected_ascii, 8) == 0);
 }
 
 int main(void) {
   test_checksum2();
   test_message_and_netquake();
-  test_fragments_ipx();
+  test_ipx();
   test_unified();
   test_move_checksum_and_rank();
   printf("test_network_a: %d checks, %d failures\n", checks, failures);

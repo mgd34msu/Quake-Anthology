@@ -10,23 +10,24 @@
 
 static inline qa_vec3 q2mpm_v3(double x, double y, double z) { qa_vec3 v = {x, y, z}; return v; }
 static inline qa_vec3 q2mpm_zero(void) { return q2mpm_v3(0, 0, 0); }
-static inline double q2mpm_now(qa_q2f_game *g) { return g->host->now(g->host->ctx); }
-static inline double q2mpm_rnd(qa_q2f_game *g) { return g->host->random(g->host->ctx); }
-static inline bool q2mpm_rr(qa_q2f_game *g) { return g->options.edition == QA_Q2F_RERELEASE; }
-static inline qa_body_state q2mpm_body(qa_q2f_game *g, qa_q2f_entity *e) { return g->body(g->ctx, e->actor); }
-static inline bool q2mpm_live(qa_q2f_game *g, qa_actor_id a) { return g->host->actors.is_live(g->host->actors.ctx, a); }
+static inline double q2mpm_now(qa_q2_game_services *g) { return g->host->now(g->host->ctx); }
+static inline double q2mpm_rnd(qa_q2_game_services *g) { return g->host->random(g->host->ctx); }
+static inline bool q2mpm_rr(qa_q2_game_services *g) { return g->options.edition == QA_Q2_EDITION_RERELEASE; }
+static inline qa_body_state q2mpm_body(qa_q2_game_services *g, qa_q2_entity *e) { return g->body(g->ctx, e->actor); }
+static inline bool q2mpm_live(qa_q2_game_services *g, qa_actor_id a) { return qa_session_actor_registry_is_live(g->host->actors, a); }
 static inline void q2mpm_set_move(qa_q2m_context *c, const char *name) { c->set_move(c->impl_ctx, c, name, false, false); }
-static inline qa_trace_result q2mpm_trace(qa_q2f_game *g, qa_vec3 start, qa_vec3 end, const qa_bounds *bounds,
+static inline qa_trace_result q2mpm_trace(qa_q2_game_services *g, qa_vec3 start, qa_vec3 end, const qa_bounds *bounds,
                                           const qa_actor_id *ignore, double mask) {
-  qa_q2f_trace_request r;
+  qa_q2_trace_request r;
   memset(&r, 0, sizeof r);
   r.start = start; r.end = end; r.bounds = bounds; r.ignore = ignore; r.mask = mask;
   return g->host->trace(g->host->ctx, r);
 }
 /* TS game.sound(entity, path, channel?, volume?, attenuation?). */
-static inline void q2mpm_sound(qa_q2f_game *g, qa_q2f_entity *e, const char *path, bool has_ch, double ch,
+static inline void q2mpm_sound(qa_q2_game_services *g, qa_q2_entity *e, const char *path, bool has_ch, double ch,
                                bool has_vol, double vol, bool has_att, double att) {
-  g->sound(g->ctx, e->actor, path, has_ch, ch, has_vol, vol, has_att, att);
+  /* TS defaults: channel 2, volume 1, attenuation 1. */
+  g->sound(g->ctx, e->actor, path, has_ch ? ch : 2, has_vol ? vol : 1, has_att ? att : 1);
 }
 static inline void q2mpm_snd(qa_q2m_context *c, const char *path, double ch) {
   q2mpm_sound(c->game, c->entity, path, true, ch, false, 0, false, 0);
@@ -34,35 +35,32 @@ static inline void q2mpm_snd(qa_q2m_context *c, const char *path, double ch) {
 static inline void q2mpm_snd4(qa_q2m_context *c, const char *path, double ch, double vol, double att) {
   q2mpm_sound(c->game, c->entity, path, true, ch, true, vol, true, att);
 }
-static inline void q2mpm_move_body(qa_q2f_game *g, qa_q2f_entity *e, qa_q2f_body_changes ch, bool has_link, bool link) {
-  g->move(g->ctx, e, ch, has_link, link);
+static inline void q2mpm_move_body(qa_q2_game_services *g, qa_q2_entity *e, qa_q2_body_changes ch, bool has_link, bool link) {
+  g->move(g->ctx, e, ch, has_link ? link : true); /* TS link = true */
 }
-static inline void q2mpm_set_damageable(qa_q2f_game *g, qa_q2f_entity *e, bool can) {
-  qa_q2f_combat_traits t;
+static inline void q2mpm_set_damageable(qa_q2_game_services *g, qa_q2_entity *e, bool can) {
+  qa_combat_trait_changes t;
   memset(&t, 0, sizeof t);
   t.has_can_take_damage = true; t.can_take_damage = can;
-  g->host->combat.set_traits(g->host->combat.ctx, e->actor, t);
+  qa_gameplay_authority_set_traits(g->host->combat, e->actor, t);
 }
-static inline void q2mpm_emit_effect(qa_q2f_game *g, const char *effect, qa_vec3 origin, qa_vec3 direction,
+static inline void q2mpm_emit_effect(qa_q2_game_services *g, const char *effect, qa_vec3 origin, qa_vec3 direction,
                                      double count, double color) {
-  qa_q2f_presentation_event e;
+  qa_q2_presentation_event e;
   memset(&e, 0, sizeof e);
-  e.kind = QA_Q2F_EVENT_EFFECT; e.effect = effect; e.origin = origin; e.direction = direction;
+  e.kind = "effect"; e.effect = effect; e.origin = origin; e.direction = direction;
   e.count = count; e.color = color;
   g->host->emit(g->host->ctx, e);
 }
 /* TS game.damage(target, inflictor, attacker, amount, knockback,
  * direction, point, normal, means, flags?). */
-static inline qa_damage_outcome q2mpm_damage(qa_q2f_game *g, qa_actor_id target, qa_q2f_entity *inflictor,
+static inline qa_damage_outcome q2mpm_damage(qa_q2_game_services *g, qa_actor_id target, qa_q2_entity *inflictor,
                                              const qa_actor_id *attacker, double amount, double knockback,
                                              qa_vec3 direction, qa_vec3 point, qa_vec3 normal, double means,
                                              bool has_flags, double flags) {
-  qa_q2f_damage_args a;
-  memset(&a, 0, sizeof a);
-  a.target = target; a.inflictor_entity = inflictor; a.attacker = attacker;
-  a.amount = amount; a.knockback = knockback; a.direction = direction; a.point = point; a.normal = normal;
-  a.means_of_death = means; a.has_flags = has_flags; a.flags = flags;
-  return g->damage(g->ctx, a);
+  qa_actor_id inflictor_id = {0};
+  return g->damage(g->ctx, target, inflictor, inflictor_id, attacker, amount, knockback, direction, point, normal,
+                   means, has_flags ? flags : 0, NULL); /* TS flags = 0, weapon = null */
 }
 /* TS recordAt over typed arrays (index validated by qa_q2m_record_at). */
 static inline double q2mpm_at_d(const double *values, size_t count, double index) {
@@ -83,9 +81,8 @@ static inline double q2mpm_and(double value, int32_t bits) { return (double)((in
 static inline bool q2mpm_has(double value, int32_t bits) { return ((int32_t)value & bits) != 0; }
 
 /* Merged callback table for TS {...base.callbacks, ...extra}: extra
- * entries replace same-named base entries. Malloc'd; definitions
- * live for the process (foundation builtins do the same). */
-qa_q2m_named_handler *qa_q2mpm_merge_callbacks(const qa_q2m_named_handler *base, size_t base_count,
+ * entries replace same-named base entries. Allocated in the module arena. */
+qa_q2m_named_handler *qa_q2mpm_merge_callbacks(qa_q2mpm_arena *arena, const qa_q2m_named_handler *base, size_t base_count,
                                                const qa_q2m_named_handler *extra, size_t extra_count,
                                                size_t *out_count);
 const qa_q2m_handler *qa_q2mpm_find_callback(const qa_q2m_named_handler *table, size_t count, const char *name);

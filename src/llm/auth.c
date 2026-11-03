@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 /* See include/qa/llm/auth.h. GPL-2.0-or-later. */
 #include "qa/llm/auth.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 #include "qa/llm/auth_worker.h"
 
@@ -323,20 +325,9 @@ static void json_stringify_into(qa_llm_strbuf *out, const qa_llm_json *value) {
     case QA_LLM_JSON_NULL: qa_llm_strbuf_append(out, "null"); break;
     case QA_LLM_JSON_BOOL: qa_llm_strbuf_append(out, value->boolean ? "true" : "false"); break;
     case QA_LLM_JSON_NUMBER: {
-      double number = value->number;
-      if (!isfinite(number)) { qa_llm_strbuf_append(out, "null"); break; } /* JSON.stringify */
-      if (number == trunc(number) && fabs(number) < 1e21) qa_llm_strbuf_appendf(out, "%.0f", number);
-      else {
-        char buffer[64];
-        snprintf(buffer, sizeof buffer, "%.17g", number);
-        /* Shortest round-trip approximation of JS Number#toString. */
-        for (int precision = 1; precision <= 17; precision++) {
-          char candidate[64];
-          snprintf(candidate, sizeof candidate, "%.*g", precision, number);
-          if (strtod(candidate, NULL) == number) { snprintf(buffer, sizeof buffer, "%s", candidate); break; }
-        }
-        qa_llm_strbuf_append(out, buffer);
-      }
+      char buffer[40]; /* JSON.stringify: String(number), non-finite as null */
+      qa_net_json_number(value->number, buffer, sizeof buffer);
+      qa_llm_strbuf_append(out, buffer);
       break;
     }
     case QA_LLM_JSON_STRING: json_stringify_string(out, value->string); break;
@@ -468,14 +459,29 @@ typedef struct form_fields {
   size_t capacity;
 } form_fields;
 
+static void form_append(form_fields *form, const char *key, const char *value);
+/* URLSearchParams.set: the first pair with the name takes the value and later
+ * pairs with the name are removed; otherwise the pair is appended. */
 static void form_set(form_fields *form, const char *key, const char *value) {
-  for (size_t i = 0; i < form->count; i++) {
-    if (strcmp(form->keys[i], key) == 0) {
+  bool found = false;
+  for (size_t i = 0; i < form->count;) {
+    if (strcmp(form->keys[i], key) != 0) { i++; continue; }
+    if (!found) {
       free(form->values[i]);
       form->values[i] = qa_llm_strdup(value);
-      return;
+      found = true;
+      i++;
+      continue;
     }
+    free(form->keys[i]);
+    free(form->values[i]);
+    memmove(form->keys + i, form->keys + i + 1, (form->count - i - 1) * sizeof *form->keys);
+    memmove(form->values + i, form->values + i + 1, (form->count - i - 1) * sizeof *form->values);
+    form->count--;
   }
+  if (!found) form_append(form, key, value);
+}
+static void form_append(form_fields *form, const char *key, const char *value) {
   if (form->count == form->capacity) {
     form->capacity = form->capacity == 0 ? 8 : form->capacity * 2;
     form->keys = realloc(form->keys, form->capacity * sizeof *form->keys);
@@ -504,6 +510,21 @@ static void form_free(form_fields *form) {
   free(form->keys);
   free(form->values);
   memset(form, 0, sizeof *form);
+}
+
+/* application/x-www-form-urlencoded parsing of one name or value. */
+static void url_component_decode(qa_llm_strbuf *out, const char *text, size_t length) {
+  for (size_t i = 0; i < length; i++) {
+    char c = text[i];
+    if (c == '+') { qa_llm_strbuf_append_char(out, ' '); continue; }
+    if (c == '%' && i + 2 < length && isxdigit((unsigned char)text[i + 1]) && isxdigit((unsigned char)text[i + 2])) {
+      char hex[3] = {text[i + 1], text[i + 2], '\0'};
+      qa_llm_strbuf_append_char(out, (char)strtol(hex, NULL, 16));
+      i += 2;
+      continue;
+    }
+    qa_llm_strbuf_append_char(out, c);
+  }
 }
 
 static bool default_open_browser(void *ctx, const char *url, qa_llm_abort_signal *signal, qa_llm_error *error) {
@@ -552,7 +573,16 @@ static bool token_request(const qa_llm_subscription_auth_options *options, const
     qa_llm_response_dispose(&response);
     if (!read_ok) goto done;
   }
-  if (!qa_llm_json_parse((const char *)body.data, body.length, &value)) goto done;
+  {
+    /* response.json(): UTF-8 decode (BOM stripped, invalid bytes become U+FFFD), then JSON.parse. */
+    size_t skip = body.length >= 3 && body.data[0] == 0xef && body.data[1] == 0xbb && body.data[2] == 0xbf ? 3 : 0;
+    qa_llm_bytes text;
+    qa_llm_bytes_init(&text);
+    qa_llm_utf8_decode_lossy(body.data + skip, body.length - skip, &text);
+    bool parsed = qa_llm_json_parse((const char *)text.data, text.length, &value);
+    qa_llm_bytes_free(&text);
+    if (!parsed) goto done;
+  }
   if (!qa_llm_record(value, &inner)) goto done;
   {
     const qa_llm_json *expires = qa_llm_json_get(value, "expires_in");
@@ -565,9 +595,13 @@ static bool token_request(const qa_llm_subscription_auth_options *options, const
       bearer = qa_llm_json_string("Bearer");
       token_type = bearer;
     }
-    bool fields_ok = credential_nonempty(qa_llm_json_get(value, "access_token"), &out->access_token, &inner) &&
-                     credential_nonempty(qa_llm_json_get(value, "refresh_token"), &out->refresh_token, &inner) &&
-                     credential_nonempty(token_type, &out->token_type, &inner);
+    /* refreshToken: previous !== undefined && item["refresh_token"] === undefined
+     * ? previous.refreshToken : nonempty(item["refresh_token"]) */
+    const qa_llm_json *refresh = qa_llm_json_get(value, "refresh_token");
+    bool fields_ok = credential_nonempty(qa_llm_json_get(value, "access_token"), &out->access_token, &inner);
+    if (fields_ok && previous != NULL && refresh == NULL) out->refresh_token = qa_llm_strdup(previous->refresh_token);
+    else fields_ok = fields_ok && credential_nonempty(refresh, &out->refresh_token, &inner);
+    fields_ok = fields_ok && credential_nonempty(token_type, &out->token_type, &inner);
     qa_llm_json_free(bearer);
     if (!fields_ok) { qa_llm_subscription_credential_free(out); goto done; }
     out->expires_at = expires_at;
@@ -576,11 +610,13 @@ static bool token_request(const qa_llm_subscription_auth_options *options, const
       /* scope.split(/\s+/).filter(Boolean) */
       const char *text = scope->string;
       size_t capacity = 0;
+      /* \s is every JS WhiteSpace and LineTerminator code point. */
+      size_t space;
       while (*text != '\0') {
-        while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r' || *text == '\v' || *text == '\f') text++;
+        while ((space = qa_js_white_space_length(text)) != 0) text += space;
         if (*text == '\0') break;
         const char *begin = text;
-        while (*text != '\0' && !(*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r' || *text == '\v' || *text == '\f')) text++;
+        while (*text != '\0' && qa_js_white_space_length(text) == 0) text++;
         if (out->scope_count == capacity) {
           capacity = capacity == 0 ? 4 : capacity * 2;
           out->scopes = realloc(out->scopes, capacity * sizeof *out->scopes);
@@ -697,6 +733,8 @@ bool qa_llm_login_subscription(const qa_llm_subscription_auth_options *options, 
   qa_llm_signal_init(&controller);
   controller.parent = signal;
   double callback_timeout = options->has_callback_timeout ? options->callback_timeout_ms : 180000;
+  /* setTimeout under Bun: NaN, below 1 or above 2^31 - 1 fires after 1 ms. */
+  if (!(callback_timeout >= 1 && callback_timeout <= 2147483647.0)) callback_timeout = 1;
   int64_t deadline = qa_llm_monotonic_ms() + (int64_t)callback_timeout;
   char *redirect = NULL;
   char *authorize = NULL;
@@ -725,7 +763,8 @@ bool qa_llm_login_subscription(const qa_llm_subscription_auth_options *options, 
     form_fields params;
     memset(&params, 0, sizeof params);
     if (query != NULL) {
-      /* Preserve pre-existing params (decoded minimally: '+'->' ', %XX). */
+      /* Preserve pre-existing params (URLSearchParams parse: '+' is a space,
+       * %XX decodes; the set re-encodes them). */
       const char *p = query + 1;
       while (*p != '\0' && *p != '#') {
         const char *amp = strchr(p, '&');
@@ -735,14 +774,16 @@ bool qa_llm_login_subscription(const qa_llm_subscription_auth_options *options, 
         qa_llm_strbuf_init(&key);
         qa_llm_strbuf_init(&value);
         size_t key_len = eq != NULL ? (size_t)(eq - p) : span;
-        for (size_t i = 0; i < key_len; i++) qa_llm_strbuf_append_char(&key, p[i] == '+' ? ' ' : p[i]);
-        if (eq != NULL) {
-          for (size_t i = (size_t)(eq - p) + 1; i < span; i++) qa_llm_strbuf_append_char(&value, p[i] == '+' ? ' ' : p[i]);
-        }
-        form_set(&params, qa_llm_strbuf_text(&key), qa_llm_strbuf_text(&value));
+        const char *hash = memchr(p, '#', span);
+        if (hash != NULL) span = (size_t)(hash - p);
+        if (eq != NULL && (size_t)(eq - p) > span) eq = NULL;
+        key_len = eq != NULL ? (size_t)(eq - p) : span;
+        url_component_decode(&key, p, key_len);
+        if (eq != NULL) url_component_decode(&value, eq + 1, span - key_len - 1);
+        if (span > 0) form_append(&params, qa_llm_strbuf_text(&key), qa_llm_strbuf_text(&value)); /* empty sequences are skipped */
         qa_llm_strbuf_free(&key);
         qa_llm_strbuf_free(&value);
-        if (amp == NULL) break;
+        if (amp == NULL || hash != NULL) break;
         p = amp + 1;
       }
     }
@@ -762,10 +803,13 @@ bool qa_llm_login_subscription(const qa_llm_subscription_auth_options *options, 
     form_free(&params);
     qa_llm_strbuf url;
     qa_llm_strbuf_init(&url);
-    if (query != NULL) qa_llm_strbuf_append_n(&url, base, (size_t)(query - base));
-    else qa_llm_strbuf_append(&url, base);
+    const char *fragment = strchr(base, '#');
+    if (query != NULL && fragment != NULL && fragment < query) query = NULL;
+    const char *path_end = query != NULL ? query : fragment != NULL ? fragment : base + strlen(base);
+    qa_llm_strbuf_append_n(&url, base, (size_t)(path_end - base));
     qa_llm_strbuf_append_char(&url, '?');
     qa_llm_strbuf_append(&url, encoded);
+    if (fragment != NULL) qa_llm_strbuf_append(&url, fragment); /* URL keeps its hash */
     free(encoded);
     authorize = qa_llm_strbuf_steal(&url);
   }

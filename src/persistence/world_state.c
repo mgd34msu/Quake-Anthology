@@ -4,6 +4,7 @@
  * reports as the "world:primary-protection" out-of-memory error
  * the former mirrored static raised. GPL-2.0-or-later. */
 #include "qa/persistence/world_state.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -107,8 +108,8 @@ static qa_owned_actor require_actor(const qa_session_actor_registry *actors,
                                     qa_saved_actor_id saved, const char *path) {
   qa_owned_actor restored;
   if (!actors->resolve_saved(actors->ctx, saved, &restored))
-    qa_save_format_error(path, "missing saved actor %.17g/%.17g", saved.slot,
-                         saved.generation);
+    qa_save_format_error(path, "missing saved actor %s/%s", QA_JS_NUMBER(saved.slot),
+                         QA_JS_NUMBER(saved.generation));
   return restored;
 }
 static qa_world_storage_kind storage_of(const qa_shared_world_restore_host *host,

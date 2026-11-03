@@ -92,4 +92,7 @@ struct qa_protocol_codec {
   double (*read_precache_count)(qa_protocol_codec *c);
 };
 typedef qa_protocol_codec qa_qw_protocol_codec;
+/* JS `a << n` on an Int32 operand without C's undefined left shift of negative
+ * or overflowing values; truncated wire reads are -1. */
+static inline int32_t qa_q1_js_shl(int32_t a, int n) { return (int32_t)((uint32_t)a << (n & 31)); }
 #endif

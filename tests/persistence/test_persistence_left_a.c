@@ -24,9 +24,9 @@
 #include "qa/persistence/protection.h"
 #include "qa/persistence/q1.h"
 #include "qa/persistence/q1_foundation.h"
-#include "qa/persistence/q1_quakec.h"
+#include "qa/compat/qc/q1_save.h"
 #include "qa/persistence/q1_selection.h"
-#include "qa/persistence/q1_source.h"
+#include "qa/compat/qc/q1_source_save.h"
 #include "qa/persistence/value.h"
 
 static int failures = 0;
@@ -763,7 +763,7 @@ static void test_q1_foundation(void) {
   memset(&in, 0, sizeof in);
   in.provider = "q1:foundation";
   in.format = "q1-foundation";
-  in.version = 5;
+  in.version = 6;
   in.precaches.phase = "frozen";
   in.precaches.models = models;
   in.precaches.model_count = 2;
@@ -829,11 +829,6 @@ static void test_q1_foundation(void) {
   entity.has_monster = true;
   entity.monster.species = "army";
   entity.monster.mode = "run";
-  entity.monster.frame_index = 2;
-  double sequence[] = {1, 2, 3};
-  entity.monster.sequence = sequence;
-  entity.monster.sequence_count = 3;
-  entity.monster.first_frame = 1;
   entity.monster.has_enemy = true;
   entity.monster.enemy = (qa_saved_actor_id){1, 0};
   entity.monster.path = "path_corner1";
@@ -870,7 +865,7 @@ static void test_q1_foundation(void) {
   qa_persist_q1_foundation_checkpoint out;
   CHECK(qa_decode_q1_foundation_checkpoint(bytes, length, &out));
   CHECK(str_eq(out.provider, "q1:foundation"));
-  CHECK(str_eq(out.format, "q1-foundation") && out.version == 5);
+  CHECK(str_eq(out.format, "q1-foundation") && out.version == 6);
   CHECK(str_eq(out.precaches.phase, "frozen"));
   CHECK(out.precaches.model_count == 2);
   CHECK(str_eq(out.precaches.models[1], "progs/player.mdl"));
@@ -899,8 +894,7 @@ static void test_q1_foundation(void) {
   CHECK(read_entity->door_group_count == 1);
   CHECK(read_entity->has_monster);
   CHECK(str_eq(read_entity->monster.species, "army"));
-  CHECK(read_entity->monster.sequence_count == 3);
-  CHECK(read_entity->monster.sequence[2] == 3);
+  CHECK(str_eq(read_entity->monster.mode, "run") && !read_entity->monster.has_legacy_animation);
   CHECK(read_entity->has_move && str_eq(read_entity->move.done, "army_run"));
   CHECK(str_eq(read_entity->callbacks.think, "army_think"));
   CHECK(read_entity->callbacks.use == NULL);
@@ -914,13 +908,15 @@ static void test_q1_foundation(void) {
   CHECK(out.extensions[0].bytes.length == 3);
   CHECK(memcmp(out.extensions[0].bytes.bytes, extension_bytes, 3) == 0);
   qa_q1_foundation_checkpoint_free(&out);
-  /* A wrong format version literal aborts the reader. */
+  /* A format version outside TS choice(5, 6) aborts the reader (persistence/q1-foundation.ts
+   * readQ1FoundationCheckpoint). The checkpoint above is version 6, as TS Q1 content writes. */
   char *text = malloc(length + 1);
   memcpy(text, bytes, length);
   text[length] = '\0';
-  char *version = strstr(text, "\"version\":5");
+  char *version = memmem(text, length, "\"version\":6", 11);
+  if (version == NULL) fwrite(text, 1, length > 400 ? 400 : length, stderr);
   CHECK(version != NULL);
-  version[10] = '6';
+  version[10] = '7';
   qa_persist_q1_foundation_checkpoint bad;
   CHECK_ABORTS(qa_decode_q1_foundation_checkpoint((const uint8_t *)text,
                                                   length, &bad));

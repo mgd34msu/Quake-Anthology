@@ -110,6 +110,10 @@ typedef struct qa_x64_integer_kernel {
   uint32_t low, high;
   uint8_t checkpoint[128];
   uint32_t memory_low, memory_high;
+  /* Runs passthrough plans; NULL uses qa_execute_x64_plan. A CPU installs its
+   * own so numeric and LOCK faults ride the throw channel. */
+  qa_x64_flow (*execute_plan)(void *ctx, const qa_x64_semantic_plan *plan);
+  void *execute_plan_ctx;
 } qa_x64_integer_kernel;
 
 /* False when the TS create() returns null (non-x86-64 state). */

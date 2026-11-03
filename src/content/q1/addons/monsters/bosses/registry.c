@@ -1,223 +1,253 @@
-/* Port of src/content/q1/addons/monsters/bosses/registry.ts.
- * GPL-2.0-or-later. */
+/* Port of src/content/q1/addons/monsters/bosses/registry.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/addons/monsters/bosses/registry.h"
+#include "qa/foundation/support.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/content/q1/addons/monsters/startup.h"
-#include "qa/foundation/support.h"
+#include "../support.h"
 
-typedef struct boss_entry {
-  qa_owned_actor actor;
-  qa_q1am_monster *monster;
-  struct boss_entry *next;
-} boss_entry;
+typedef struct boss_entry { qa_owned_actor actor; qa_q1_base_monster *monster; } boss_entry;
 struct qa_q1am_boss_registry {
-  qa_q1am_context *context;
-  qa_q1am_boss_create create;
-  char prefix[80];
-  boss_entry *head, *tail;
+  qa_q1_services *game;
+  char *prefix;
+  qa_q1am_boss_create_fn create;
+  void *create_ctx;
+  boss_entry *entries; size_t count, capacity; /* TS Map, insertion order */
+  /* Monsters leave the map at release while their own callback may still
+   * run (die -> remove -> release); they are freed with the registry. */
+  qa_q1_base_monster **retired; size_t retired_count, retired_capacity;
+  int64_t release_subscription;
+  void *monster_callbacks; /* qa_q1_register_monster_callbacks closure state (owned) */
+  qa_q1_state_extension extension;
+  qa_q1am_boss_registry *next;
 };
-static boss_entry *entry_get(qa_q1am_boss_registry *r, qa_owned_actor actor) {
-  for (boss_entry *e = r->head; e; e = e->next)
-    if (qa_q1am_same_owned(e->actor, actor)) return e;
+static qa_q1am_boss_registry *all_registries;
+
+static void *grow(void *items, size_t *capacity, size_t size) {
+  const size_t next = *capacity != 0 ? *capacity * 2 : 8;
+  void *grown = realloc(items, next * size);
+  if (grown == NULL) qa_range_error("out of memory");
+  *capacity = next;
+  return grown;
+}
+static void retire(qa_q1am_boss_registry *r, qa_q1_base_monster *monster) {
+  if (r->retired_count == r->retired_capacity) r->retired = grow(r->retired, &r->retired_capacity, sizeof *r->retired);
+  r->retired[r->retired_count++] = monster;
+}
+static boss_entry *entry_get(const qa_q1am_boss_registry *r, qa_owned_actor actor) {
+  for (size_t i = 0; i < r->count; i++)
+    if (qa_same_owned_actor(r->entries[i].actor, actor)) return &r->entries[i];
   return NULL;
 }
-static void entry_put(qa_q1am_boss_registry *r, qa_q1am_monster *monster) {
-  boss_entry *old = entry_get(r, monster->entity->actor);
-  if (old != NULL) {
-    if (old->monster != monster) r->create.destroy(r->create.ctx, old->monster);
-    old->monster = monster;
+/* TS monsters.set(actor, monster). */
+static void entry_set(qa_q1am_boss_registry *r, qa_owned_actor actor, qa_q1_base_monster *monster) {
+  boss_entry *entry = entry_get(r, actor);
+  if (entry != NULL) {
+    if (entry->monster != monster) retire(r, entry->monster);
+    entry->monster = monster;
     return;
   }
-  boss_entry *entry = malloc(sizeof *entry);
-  if (!entry) qa_range_error("Boss registry allocation failed");
-  entry->actor = monster->entity->actor;
-  entry->monster = monster;
-  entry->next = NULL;
-  if (r->tail) r->tail->next = entry;
-  else r->head = entry;
-  r->tail = entry;
-}
-static void entry_delete(qa_q1am_boss_registry *r, qa_owned_actor actor) {
-  boss_entry **link = &r->head;
-  while (*link) {
-    if (qa_q1am_same_owned((*link)->actor, actor)) {
-      boss_entry *dead = *link;
-      *link = dead->next;
-      r->create.destroy(r->create.ctx, dead->monster);
-      free(dead);
-      return;
-    }
-    link = &(*link)->next;
-  }
+  if (r->count == r->capacity) r->entries = grow(r->entries, &r->capacity, sizeof *r->entries);
+  r->entries[r->count].actor = actor;
+  r->entries[r->count].monster = monster;
+  r->count++;
 }
 static void entries_clear(qa_q1am_boss_registry *r) {
-  while (r->head) {
-    boss_entry *dead = r->head;
-    r->head = dead->next;
-    r->create.destroy(r->create.ctx, dead->monster);
-    free(dead);
-  }
-  r->tail = NULL;
+  for (size_t i = 0; i < r->count; i++) retire(r, r->entries[i].monster);
+  r->count = 0;
 }
-qa_q1am_monster *qa_q1am_require_boss(qa_q1am_boss_registry *registry, qa_q1am_actor *entity) {
-  boss_entry *entry = entry_get(registry, entity->actor);
-  if (entry == NULL) qa_range_error("Missing MG3 boss source state for %s", entity->classname);
-  return entry->monster;
+static qa_q1_base_monster *create(qa_q1am_boss_registry *r, qa_q1_actor *entity) {
+  qa_q1_base_monster *monster = r->create(r->create_ctx, entity);
+  if (monster == NULL) qa_range_error("out of memory");
+  return monster;
 }
-bool qa_q1am_boss_registry_has(qa_q1am_boss_registry *registry, qa_owned_actor actor) {
-  return entry_get(registry, actor) != NULL;
+
+qa_q1_base_monster *qa_q1am_boss_registry_get(const qa_q1am_boss_registry *monsters, qa_owned_actor actor) {
+  const boss_entry *entry = entry_get(monsters, actor);
+  return entry == NULL ? NULL : entry->monster;
 }
-static qa_q1am_monster *lookup(void *ctx, qa_q1am_actor *entity) {
-  return qa_q1am_require_boss(ctx, entity);
+qa_q1_base_monster *qa_q1am_require_boss(qa_q1am_boss_registry *monsters, qa_q1_actor *entity) {
+  qa_q1_base_monster *monster = qa_q1am_boss_registry_get(monsters, entity->actor);
+  if (monster == NULL) qa_range_error("Missing MG3 boss source state for %s", entity->classname);
+  return monster;
 }
-static void on_release(void *ctx, qa_owned_actor actor) { entry_delete(ctx, actor); }
-static void spawn_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
+static qa_q1_base_monster *lookup(void *ctx, qa_q1_actor *entity) { return qa_q1am_require_boss(ctx, entity); }
+static void on_release(void *ctx, qa_owned_actor actor) {
   qa_q1am_boss_registry *r = ctx;
-  qa_q1am_monster *monster = r->create.fn(r->create.ctx, entity);
-  entry_put(r, monster);
-  monster->ops.spawn(monster);
+  for (size_t i = 0; i < r->count; i++)
+    if (qa_same_owned_actor(r->entries[i].actor, actor)) {
+      retire(r, r->entries[i].monster);
+      memmove(&r->entries[i], &r->entries[i + 1], (r->count - i - 1) * sizeof *r->entries);
+      r->count--;
+      return;
+    }
 }
-static uint8_t *capture_all(void *ctx, size_t *out_length) {
+static void spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* TS (_game, entity) */
+  qa_q1am_boss_registry *r = ctx;
+  qa_q1_base_monster *monster = create(r, entity);
+  entry_set(r, entity->actor, monster);
+  qa_q1_base_monster_spawn(monster);
+}
+static void must(bool ok) { if (!ok) qa_range_error("out of memory"); }
+static void set_child(qa_save_value *object, const char *key, qa_save_value *child) {
+  must(child != NULL && qa_save_value_set(object, key, child));
+}
+static bool capture(void *ctx, uint8_t **out, size_t *out_length) {
   qa_q1am_boss_registry *r = ctx;
   qa_save_value *list = qa_save_value_array();
-  for (boss_entry *e = r->head; e; e = e->next) {
+  if (list == NULL) return false;
+  for (size_t i = 0; i < r->count; i++) {
+    const qa_q1_base_monster *monster = r->entries[i].monster;
     qa_save_value *object = qa_save_value_object();
-    qa_save_value_set(object, "slot", qa_save_value_number((double)e->monster->entity->actor.id.slot));
-    qa_save_value_set(object, "generation", qa_save_value_number((double)e->monster->entity->actor.id.generation));
-    qa_save_value_set(object, "state", qa_q1am_monster_capture(e->monster));
-    qa_save_value_push(list, object);
+    must(object != NULL);
+    set_child(object, "slot", qa_save_value_number((double)monster->entity->actor.id.slot));
+    set_child(object, "generation", qa_save_value_number((double)monster->entity->actor.id.generation));
+    set_child(object, "state", qa_q1_base_monster_capture(monster));
+    must(qa_save_value_push(list, object));
   }
-  uint8_t *bytes = qa_encode_checkpoint_value(list, out_length);
+  *out = qa_encode_checkpoint_value(list, out_length);
   qa_save_value_free(list);
-  return bytes;
+  return *out != NULL;
 }
-static void restore_all(void *ctx, const uint8_t *bytes, size_t length) {
+static double field_integer(const qa_save_reader *reader, const char *name) {
+  qa_save_reader value;
+  must(qa_save_reader_field(reader, name, &value));
+  const double result = qa_save_reader_integer_min(&value, 0);
+  qa_save_reader_destroy(&value);
+  return result;
+}
+static void q1_free_decoded_save(void *value) { qa_save_value_free(value); }
+static void restore(void *ctx, const uint8_t *bytes, size_t length) {
   qa_q1am_boss_registry *r = ctx;
+  qa_q1_services *game = r->game;
   entries_clear(r);
-  qa_q1am_game *game = r->context->game;
   qa_save_value *decoded = qa_decode_checkpoint_value(bytes, length);
+  qa_cleanup decoded_cleanup; /* a malformed save raises from the readers */
+  qa_cleanup_push(&decoded_cleanup, q1_free_decoded_save, decoded);
   qa_save_reader root;
-  qa_save_reader_init(&root, decoded, r->prefix);
-  size_t count = qa_save_reader_list_count(&root);
+  must(qa_save_reader_init(&root, decoded, r->prefix));
+  const size_t count = qa_save_reader_list_count(&root);
   for (size_t i = 0; i < count; i++) {
-    qa_save_reader reader, slot, generation, state;
-    qa_save_reader_item(&root, i, &reader);
-    qa_save_reader_field(&reader, "slot", &slot);
-    qa_save_reader_field(&reader, "generation", &generation);
+    qa_save_reader reader, state;
+    must(qa_save_reader_item(&root, i, &reader));
+    qa_saved_actor_id saved;
+    saved.slot = field_integer(&reader, "slot");
+    saved.generation = field_integer(&reader, "generation");
     qa_owned_actor actor;
-    bool resolved = game->actors_resolve_saved(game->ctx, (int64_t)qa_save_reader_integer_min(&slot, 0),
-                                                (int64_t)qa_save_reader_integer_min(&generation, 0), &actor);
-    qa_save_reader_destroy(&slot);
-    qa_save_reader_destroy(&generation);
-    qa_q1am_actor *entity = resolved ? game->entity(game->ctx, true, actor.id) : NULL;
+    qa_q1_actor *entity = qa_session_actor_registry_resolve_saved(game->host.actors, saved, &actor)
+                              ? qa_q1_get_entity(game, &actor.id) : NULL;
     if (entity == NULL) qa_save_reader_fail(&reader, "missing MG3 boss actor");
-    qa_q1am_monster *monster = r->create.fn(r->create.ctx, entity);
-    entry_put(r, monster);
-    qa_save_reader_field(&reader, "state", &state);
-    qa_q1am_monster_restore(monster, &state);
+    qa_q1_base_monster *monster = create(r, entity);
+    must(qa_save_reader_field(&reader, "state", &state));
+    qa_q1_base_monster_restore(monster, &state);
     qa_save_reader_destroy(&state);
+    entry_set(r, entity->actor, monster);
     qa_save_reader_destroy(&reader);
   }
   qa_save_reader_destroy(&root);
+  qa_cleanup_pop(&decoded_cleanup);
   qa_save_value_free(decoded);
 }
-static void clone_one(void *ctx, qa_q1am_actor *source, qa_q1am_actor *target) {
+static void clone(void *ctx, qa_q1_actor *source, qa_q1_actor *target) {
   qa_q1am_boss_registry *r = ctx;
-  boss_entry *entry = entry_get(r, source->actor);
+  const boss_entry *entry = entry_get(r, source->actor);
   if (entry == NULL) return;
-  qa_q1am_monster *clone = r->create.fn(r->create.ctx, target);
-  entry_put(r, clone);
-  qa_save_value *captured = qa_q1am_monster_capture(entry->monster);
+  qa_q1_base_monster *original = entry->monster;
+  qa_q1_base_monster *copy = create(r, target);
+  qa_save_value *captured = qa_q1_base_monster_capture(original);
+  must(captured != NULL);
   qa_save_reader reader;
-  qa_save_reader_init(&reader, captured, r->prefix);
-  qa_q1am_monster_restore(clone, &reader);
+  must(qa_save_reader_init(&reader, captured, r->prefix));
+  qa_q1_base_monster_restore(copy, &reader);
   qa_save_reader_destroy(&reader);
   qa_save_value_free(captured);
+  entry_set(r, target->actor, copy);
 }
-typedef struct boss_action_ctx {
-  qa_q1am_kind kind;
-  const char *kind_error;
-  const char *name;
-  void (*dispatch)(qa_q1am_monster *monster, const char *name);
-} boss_action_ctx;
-static void boss_action_trampoline(void *ctx, qa_q1am_monster *monster) {
-  boss_action_ctx *state = ctx;
-  if (monster->kind != state->kind) qa_range_error("%s", state->kind_error);
-  state->dispatch(monster, state->name);
-}
-const qa_q1am_source *qa_q1am_boss_build_source(
-    const char *prefix, const qa_q1am_frame_table *frames, qa_q1am_kind kind,
-    const char *kind_error, void (*dispatch)(qa_q1am_monster *monster, const char *name),
-    const qa_q1am_action_entry *extra, size_t extra_count) {
-  qa_q1am_source *source = malloc(sizeof *source);
-  if (!source) qa_range_error("Boss registry allocation failed");
-  size_t cap = 16, count = 0;
-  qa_q1am_action_entry *actions = calloc(cap, sizeof *actions);
-  if (!actions) qa_range_error("Boss registry allocation failed");
-  for (size_t f = 0; f < frames->count; f++)
-    for (size_t o = 0; o < frames->frames[f].operation_count; o++) {
-      const qa_q1am_operation *op = &frames->frames[f].operations[o];
-      if (op->kind != QA_Q1AM_OP_ACTION) continue;
-      bool exists = false;
-      for (size_t i = 0; i < count; i++)
-        if (strcmp(actions[i].name, op->name) == 0) exists = true;
-      if (exists) continue;
-      if (count == cap) {
-        cap *= 2;
-        actions = realloc(actions, cap * sizeof *actions);
-        if (!actions) qa_range_error("Boss registry allocation failed");
-      }
-      boss_action_ctx *state = malloc(sizeof *state);
-      if (!state) qa_range_error("Boss registry allocation failed");
-      state->kind = kind;
-      state->kind_error = kind_error;
-      state->name = op->name;
-      state->dispatch = dispatch;
-      actions[count].name = op->name;
-      actions[count].ctx = state;
-      actions[count].fn = boss_action_trampoline;
-      count++;
-    }
-  for (size_t i = 0; i < extra_count; i++) {
-    bool replaced = false;
-    for (size_t j = 0; j < count; j++)
-      if (strcmp(actions[j].name, extra[i].name) == 0) {
-        actions[j] = extra[i];
-        replaced = true;
-      }
-    if (replaced) continue;
-    if (count == cap) {
-      cap *= 2;
-      actions = realloc(actions, cap * sizeof *actions);
-      if (!actions) qa_range_error("Boss registry allocation failed");
-    }
-    actions[count++] = extra[i];
-  }
-  source->callback_prefix = prefix;
-  source->frames = frames;
-  source->actions = actions;
-  source->action_count = count;
-  return source;
-}
-qa_q1am_boss_registry *qa_q1am_register_boss_controllers(qa_q1am_context *context, const char *prefix,
-                                                         const char *classname, qa_q1am_boss_create create) {
-  qa_q1am_game *game = context->game;
+
+qa_q1am_boss_registry *qa_q1am_register_boss_controllers(qa_q1ad_context *context, const char *prefix,
+                                                         const char *classname, qa_q1am_boss_create_fn create_fn,
+                                                         void *create_ctx) {
+  qa_q1_services *game = context->game;
   qa_q1am_boss_registry *r = calloc(1, sizeof *r);
-  if (!r) qa_range_error("Boss registry allocation failed");
-  r->context = context;
-  r->create = create;
-  (void)snprintf(r->prefix, sizeof r->prefix, "%s", prefix);
-  qa_q1am_monster_lookup lookup_value = {r, lookup};
-  game->register_monster_callbacks(game->ctx, game, prefix, lookup_value);
-  qa_q1am_register_mg3_monster_startup(game, prefix, lookup_value);
-  game->register_spawn(game->ctx, classname, spawn_handler, r);
-  game->actors_on_release(game->ctx, on_release, r);
-  qa_q1am_state_extension extension = {r->prefix, r, capture_all, restore_all, clone_one};
-  game->register_state_extension(game->ctx, extension);
+  if (r == NULL) qa_range_error("out of memory");
+  const size_t length = strlen(prefix) + 1;
+  r->prefix = malloc(length);
+  if (r->prefix == NULL) qa_range_error("out of memory");
+  memcpy(r->prefix, prefix, length);
+  r->game = game;
+  r->create = create_fn;
+  r->create_ctx = create_ctx;
+  r->next = all_registries;
+  all_registries = r;
+  r->monster_callbacks = qa_q1_register_monster_callbacks(game, prefix, lookup, r);
+  qa_q1am_register_mg3_monster_startup(game, prefix, lookup, r);
+  qa_q1_register_spawn(game, classname, spawn, r);
+  r->release_subscription = qa_session_actor_registry_on_release(game->host.actors, on_release, r);
+  r->extension.ctx = r;
+  r->extension.id = r->prefix;
+  r->extension.capture = capture;
+  r->extension.restore = restore;
+  r->extension.clone = clone;
+  qa_q1_register_state_extension(game, &r->extension);
   return r;
+}
+void qa_q1am_release_boss_controllers(qa_q1_services *game) {
+  qa_q1am_boss_registry **link = &all_registries;
+  while (*link != NULL) {
+    qa_q1am_boss_registry *r = *link;
+    if (r->game != game) { link = &r->next; continue; }
+    *link = r->next;
+    qa_session_actor_registry_off_release(game->host.actors, r->release_subscription);
+    entries_clear(r);
+    for (size_t i = 0; i < r->retired_count; i++) qa_q1_base_monster_destroy(r->retired[i]);
+    free(r->retired);
+    free(r->entries);
+    free(r->monster_callbacks);
+    free(r->prefix);
+    free(r);
+  }
+}
+
+/* Built action tables, one per (frame table, fn) pair. */
+typedef struct frame_actions {
+  const qa_q1_monster_frame_table *frames;
+  void (*fn)(void *ctx, qa_q1_base_monster *monster);
+  qa_q1_monster_action_entry *entries; size_t count;
+  struct frame_actions *next;
+} frame_actions;
+static frame_actions *all_frame_actions;
+const qa_q1_monster_action_entry *qa_q1am_frame_actions(const qa_q1_monster_frame_table *frames,
+                                                        void (*fn)(void *ctx, qa_q1_base_monster *monster),
+                                                        size_t *count) {
+  for (const frame_actions *built = all_frame_actions; built != NULL; built = built->next)
+    if (built->frames == frames && built->fn == fn) { *count = built->count; return built->entries; }
+  frame_actions *built = calloc(1, sizeof *built);
+  if (built == NULL) qa_range_error("out of memory");
+  size_t capacity = 0;
+  for (size_t f = 0; f < frames->count; f++) {
+    const qa_q1_monster_frame *frame = &frames->entries[f].frame;
+    for (size_t o = 0; o < frame->operation_count; o++) {
+      const qa_q1_monster_operation *op = &frame->operations[o];
+      if (op->kind != QA_Q1_OP_ACTION) continue;
+      bool present = false;
+      for (size_t i = 0; i < built->count && !present; i++) present = strcmp(built->entries[i].name, op->name) == 0;
+      if (present) continue; /* Map.set keeps the first insertion position */
+      if (built->count == capacity) built->entries = grow(built->entries, &capacity, sizeof *built->entries);
+      built->entries[built->count].name = op->name;
+      built->entries[built->count].fn = fn;
+      built->entries[built->count].ctx = (void *)(uintptr_t)op->name; /* the captured operation.name */
+      built->count++;
+    }
+  }
+  built->frames = frames;
+  built->fn = fn;
+  built->next = all_frame_actions;
+  all_frame_actions = built;
+  *count = built->count;
+  return built->entries;
 }

@@ -31,6 +31,7 @@ typedef struct qa_dedicated_console {
   bool ended;
   bool closed;
   char *error_message; /* NULL = TS error null */
+  size_t dropped;      /* TS dropped: lines lost to a full ring or an over-long line */
 } qa_dedicated_console;
 
 /* False only on OOM. */
@@ -48,7 +49,8 @@ void qa_dedicated_console_end(qa_dedicated_console *console);
 void qa_dedicated_console_fail(qa_dedicated_console *console,
                                const char *message);
 bool qa_dedicated_console_eof(const qa_dedicated_console *console);
-/* Appends every queued line plus '\n'; returns the line count.
+/* Appends the dropped-line echo (when any were dropped), then every
+ * queued line plus '\n'; returns the line count.
  * Aborts when closed or after an input error (TS throws). */
 size_t qa_dedicated_console_drain(qa_dedicated_console *console,
                                   qa_command_buffer *commands);

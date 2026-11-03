@@ -1,6 +1,8 @@
 /* Port of src/network/q2/handshake.ts. GPL-2.0-or-later. */
+#include "qa/network/common/js_number.h"
 #include "qa/network/q2/handshake.h"
 
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
@@ -9,9 +11,13 @@
 #include <string.h>
 
 #include "qa/core/common_parse.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/support.h"
 #include "qa/network/q2/codec.h"
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/message.h"
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/support.h"
 
 noreturn void qa_q2_throw_utf8_error(void) {
   qa_q2_throw_error("The encoded data was not valid for encoding utf-8");
@@ -205,7 +211,7 @@ void qa_q2_get_protocol(double version, double minor, qa_q2_protocol_identity *o
     out->kind = "q2-kex";
     out->version = 2023;
   } else {
-    qa_q2_throw_error("Unsupported Q2 wire version %g", version);
+    qa_q2_throw_error("Unsupported Q2 wire version %s", QA_JS_NUMBER(version));
   }
 }
 
@@ -278,11 +284,8 @@ static char *format_string(const char *format, ...) {
 
 static double number_text(double value, char *buffer, size_t capacity) {
   /* TS template interpolation of a number; integers print plainly. */
-  if (value == (double)(int64_t)value && fabs(value) < 9007199254740992.0) {
-    (void)snprintf(buffer, capacity, "%lld", (long long)(int64_t)value);
-  } else {
-    (void)snprintf(buffer, capacity, "%g", value);
-  }
+  /* String(value); the old int64 cast ran before the range test (undefined for NaN). */
+  qa_net_js_number(value, buffer, capacity);
   return value;
 }
 
@@ -422,8 +425,8 @@ uint8_t *qa_q2_write_connect(const qa_q2_connect_request *request,
                    request->compression ? "1" : "0");
   }
   int32_t qport = strcmp(kind, "q2-classic") == 0
-                      ? (int32_t)request->qport & 65535
-                      : (int32_t)request->qport & 255;
+                      ? qa_js_to_int32(request->qport) & 65535
+                      : qa_js_to_int32(request->qport) & 255;
   char *text = format_string("connect %s %s %s \"%s\"%s\n",
                              (number_text((double)request->protocol.version, b3,
                                           sizeof b3), b3),
@@ -540,8 +543,9 @@ bool qa_q2_read_connect(const qa_q2_connectionless_message *message,
     qa_q2_throw_error("KEX native connect is unbound");
   }
   out->protocol = protocol;
-  out->qport = version == 34 ? (double)((int32_t)qport & 65535)
-                              : (double)((int32_t)qport & 255);
+  /* JS `qport & mask` applies ToInt32 to any safe integer. */
+  out->qport = version == 34 ? (double)(qa_js_to_int32(qport) & 65535)
+                              : (double)(qa_js_to_int32(qport) & 255);
   out->challenge = challenge;
   out->userinfo = dup_str(userinfo);
   if (out->userinfo == NULL) return false;
@@ -621,7 +625,402 @@ static bool ascii_case_prefix(const char *s, const char *prefix) {
   return true;
 }
 
-char *qa_q2_read_download_server(char **arguments, size_t argument_count) {
+/* TS privateHost(hostname). */
+static bool private_host(const char *hostname) {
+  size_t n = strlen(hostname);
+  const char *start = hostname;
+  if (n > 0 && start[0] == '[') { start++; n--; }
+  if (n > 0 && start[n - 1] == ']') n--;
+  char host[600];
+  if (n >= sizeof host) n = sizeof host - 1;
+  /* TS hostname.toLowerCase(): Unicode lowering (U+212A becomes the 'k' of "localhost"). */
+  memcpy(host, start, n);
+  host[n] = '\0';
+  {
+    char *lowered = qa_js_to_lower_case(host);
+    if (lowered == NULL) qa_range_error("Out of memory");
+    snprintf(host, sizeof host, "%s", lowered);
+    free(lowered);
+  }
+  size_t len = strlen(host);
+#define ENDS_WITH(s) (len >= sizeof(s) - 1 && strcmp(host + len - (sizeof(s) - 1), s) == 0)
+  if (strcmp(host, "localhost") == 0 || ENDS_WITH(".localhost") || ENDS_WITH(".local") ||
+      ENDS_WITH(".internal"))
+    return true;
+#undef ENDS_WITH
+  /* /^(\d+)\.(\d+)\.\d+\.\d+$/ */
+  {
+    const char *p = host;
+    double part[2] = {0, 0};
+    bool match = true;
+    for (int i = 0; i < 4 && match; i++) {
+      if (!isdigit((unsigned char)*p)) { match = false; break; }
+      double value = 0;
+      while (isdigit((unsigned char)*p)) value = value * 10 + (*p++ - '0');
+      if (i < 2) part[i] = value;
+      if (i < 3) {
+        if (*p != '.') match = false;
+        else p++;
+      }
+    }
+    if (match && *p == '\0') {
+      double a = part[0], b = part[1];
+      return a == 0 || a == 10 || a == 127 || (a == 169 && b == 254) ||
+             (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) ||
+             (a == 100 && b >= 64 && b <= 127);
+    }
+  }
+  if (strchr(host, ':') != NULL) {
+    return strcmp(host, "::") == 0 || strcmp(host, "::1") == 0 ||
+           (host[0] == 'f' && (host[1] == 'c' || host[1] == 'd')) ||
+           (host[0] == 'f' && host[1] == 'e' && host[2] != '\0' &&
+            strchr("89ab", host[2]) != NULL) ||
+           strncmp(host, "::ffff:", 7) == 0;
+  }
+  return false;
+}
+
+/* TS privateAddress(address). */
+static bool private_address(const qa_net_address *address) {
+  if (address->kind == QA_NET_LOOPBACK) return true;
+  if (address->kind == QA_NET_IPV4) {
+    char text[32];
+    snprintf(text, sizeof text, "%u.%u.%u.%u", address->ipv4[0], address->ipv4[1],
+             address->ipv4[2], address->ipv4[3]);
+    return private_host(text);
+  }
+  if (address->kind == QA_NET_IPV6) return private_host(address->host != NULL ? address->host : "");
+  return false;
+}
+
+/* WHATWG IPv4 number parser: false on failure; *value saturates past 2^32. */
+static bool url_ipv4_number(const char *s, size_t n, double *value) {
+  if (n == 0) return false;
+  int radix = 10;
+  if (n >= 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    radix = 16; s += 2; n -= 2;
+  } else if (n >= 2 && s[0] == '0') {
+    radix = 8; s += 1; n -= 1;
+  }
+  double v = 0;
+  for (size_t i = 0; i < n; i++) {
+    int c = (unsigned char)s[i], d;
+    if (c >= '0' && c <= '9') d = c - '0';
+    else if (radix == 16 && c >= 'a' && c <= 'f') d = c - 'a' + 10;
+    else if (radix == 16 && c >= 'A' && c <= 'F') d = c - 'A' + 10;
+    else return false;
+    if (d >= radix) return false;
+    if (v < 1e15) v = v * radix + d;
+  }
+  *value = v;
+  return true;
+}
+
+/* WHATWG "ends in a number" checker. */
+static bool url_ends_in_number(const char *host) {
+  size_t n = strlen(host);
+  if (n > 0 && host[n - 1] == '.') {
+    if (memchr(host, '.', n - 1) == NULL) return false;
+    n--;
+  }
+  const char *dot = NULL;
+  for (size_t i = n; i > 0; i--)
+    if (host[i - 1] == '.') { dot = host + i - 1; break; }
+  const char *last = dot != NULL ? dot + 1 : host;
+  size_t last_n = (size_t)(host + n - last);
+  if (last_n > 0) {
+    bool digits = true;
+    for (size_t i = 0; i < last_n; i++)
+      if (!isdigit((unsigned char)last[i])) digits = false;
+    if (digits) return true;
+  }
+  double ignored;
+  return url_ipv4_number(last, last_n, &ignored);
+}
+
+/* WHATWG IPv4 parser into dotted text; false on failure. */
+static bool url_ipv4(const char *host, char *out, size_t capacity) {
+  size_t n = strlen(host);
+  if (n > 0 && host[n - 1] == '.') n--;
+  double parts[4];
+  size_t count = 0;
+  size_t begin = 0;
+  for (size_t i = 0; i <= n; i++) {
+    if (i == n || host[i] == '.') {
+      if (count == 4) return false;
+      if (!url_ipv4_number(host + begin, i - begin, &parts[count])) return false;
+      count++;
+      begin = i + 1;
+    }
+  }
+  for (size_t i = 0; i + 1 < count; i++)
+    if (parts[i] > 255) return false;
+  if (parts[count - 1] >= qa_js_pow(256, (double)(5 - count))) return false;
+  double ipv4 = parts[count - 1];
+  for (size_t i = 0; i + 1 < count; i++) ipv4 += parts[i] * qa_js_pow(256, (double)(3 - i));
+  uint32_t v = (uint32_t)ipv4;
+  snprintf(out, capacity, "%u.%u.%u.%u", v >> 24, (v >> 16) & 255u, (v >> 8) & 255u, v & 255u);
+  return true;
+}
+
+/* WHATWG IPv6 serializer over inet_pton's binary form. */
+static bool url_ipv6(const char *literal, size_t n, char *out, size_t capacity) {
+  char text[128];
+  if (n >= sizeof text) return false;
+  memcpy(text, literal, n);
+  text[n] = '\0';
+  unsigned char bytes[16];
+  if (inet_pton(AF_INET6, text, bytes) != 1) return false;
+  unsigned pieces[8];
+  for (int i = 0; i < 8; i++) pieces[i] = (unsigned)bytes[2 * i] << 8 | bytes[2 * i + 1];
+  int best = -1, best_len = 1;
+  for (int i = 0; i < 8;) {
+    if (pieces[i] != 0) { i++; continue; }
+    int j = i;
+    while (j < 8 && pieces[j] == 0) j++;
+    if (j - i > best_len) { best = i; best_len = j - i; }
+    i = j;
+  }
+  size_t used = 0;
+  out[used++] = '[';
+  bool ignore0 = false;
+  for (int i = 0; i < 8; i++) {
+    if (ignore0 && pieces[i] == 0) continue;
+    ignore0 = false;
+    if (i == best) {
+      used += (size_t)snprintf(out + used, capacity - used, "%s", i == 0 ? "::" : ":");
+      ignore0 = true;
+      continue;
+    }
+    used += (size_t)snprintf(out + used, capacity - used, "%x%s", pieces[i], i == 7 ? "" : ":");
+  }
+  snprintf(out + used, capacity - used, "]");
+  return true;
+}
+
+static int url_hex(int c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+/* WHATWG host parser for a special scheme; false on failure. Non-ASCII hosts need UTS #46
+ * IDNA processing, which this port does not carry, so they fail. */
+static bool url_host(const char *input, size_t n, char *out, size_t capacity) {
+  if (n == 0) return false;
+  if (input[0] == '[') {
+    if (input[n - 1] != ']') return false;
+    return url_ipv6(input + 1, n - 2, out, capacity);
+  }
+  char decoded[600];
+  size_t d = 0;
+  for (size_t i = 0; i < n; i++) {
+    if (d + 1 >= sizeof decoded) return false;
+    int c = (unsigned char)input[i];
+    if (c == '%' && i + 2 < n && url_hex((unsigned char)input[i + 1]) >= 0 &&
+        url_hex((unsigned char)input[i + 2]) >= 0) {
+      c = url_hex((unsigned char)input[i + 1]) * 16 + url_hex((unsigned char)input[i + 2]);
+      i += 2;
+    }
+    if (c >= 0x80) return false;
+    decoded[d++] = (char)tolower(c);
+  }
+  decoded[d] = '\0';
+  if (d == 0) return false;
+  for (size_t i = 0; i < d; i++) {
+    int c = (unsigned char)decoded[i];
+    if (c <= 0x20 || c == 0x7f || strchr("#%/:<>?@[\\]^|", c) != NULL) return false;
+  }
+  if (url_ends_in_number(decoded)) return url_ipv4(decoded, out, capacity);
+  if (d + 1 > capacity) return false;
+  memcpy(out, decoded, d + 1);
+  return true;
+}
+
+typedef struct url_text {
+  char *data;
+  size_t length, capacity;
+  bool failed;
+} url_text;
+static void url_put(url_text *t, const char *s, size_t n) {
+  if (t->failed) return;
+  if (t->length + n + 1 > t->capacity) {
+    size_t next = (t->length + n + 1) * 2;
+    char *grown = (char *)realloc(t->data, next);
+    if (grown == NULL) { t->failed = true; return; }
+    t->data = grown;
+    t->capacity = next;
+  }
+  memcpy(t->data + t->length, s, n);
+  t->length += n;
+  t->data[t->length] = '\0';
+}
+typedef struct url_segments {
+  url_text *items;
+  size_t count, capacity;
+} url_segments;
+static url_text *url_segment_push(url_segments *segs) {
+  if (segs->count == segs->capacity) {
+    size_t next = segs->capacity > 0 ? segs->capacity * 2 : 8;
+    url_text *grown = (url_text *)realloc(segs->items, next * sizeof *grown);
+    if (grown == NULL) return NULL;
+    segs->items = grown;
+    segs->capacity = next;
+  }
+  url_text *out = &segs->items[segs->count++];
+  memset(out, 0, sizeof *out);
+  url_put(out, "", 0);
+  return out->failed ? NULL : out;
+}
+static bool url_segment_is(const char *s, size_t n, int dots) {
+  /* "." or "%2e" (one dot); "..", ".%2e", "%2e.", "%2e%2e" (two dots). */
+  int found = 0;
+  for (size_t i = 0; i < n;) {
+    if (s[i] == '.') { found++; i++; }
+    else if (i + 3 <= n && s[i] == '%' && s[i + 1] == '2' && (s[i + 2] == 'e' || s[i + 2] == 'E')) {
+      found++;
+      i += 3;
+    }
+    else return false;
+  }
+  return found == dots;
+}
+
+/* new URL(advertised) for an http(s) URL, the fields the TS reads, and the href. False when the
+ * constructor would throw. */
+typedef struct parsed_url {
+  bool https;
+  bool credentials;
+  char host[640];
+  char port[8];
+  url_text path;
+  bool has_query, has_fragment;
+  bool query_empty, fragment_empty;
+} parsed_url;
+static bool parse_http_url(const char *raw, parsed_url *url) {
+  memset(url, 0, sizeof *url);
+  size_t begin = 0, end = strlen(raw);
+  while (begin < end && (unsigned char)raw[begin] <= 0x20) begin++;
+  while (end > begin && (unsigned char)raw[end - 1] <= 0x20) end--;
+  char *input = (char *)malloc(end - begin + 1);
+  if (input == NULL) return false;
+  size_t n = 0;
+  for (size_t i = begin; i < end; i++)
+    if (raw[i] != '\t' && raw[i] != '\n' && raw[i] != '\r') input[n++] = raw[i];
+  input[n] = '\0';
+  size_t i;
+  if (ascii_case_prefix(input, "https:")) { url->https = true; i = 6; }
+  else if (ascii_case_prefix(input, "http:")) i = 5;
+  else { free(input); return false; }
+  while (i < n && (input[i] == '/' || input[i] == '\\')) i++;
+  size_t authority = i;
+  while (i < n && input[i] != '/' && input[i] != '\\' && input[i] != '?' && input[i] != '#') i++;
+  size_t authority_end = i;
+  size_t host_begin = authority;
+  for (size_t k = authority; k < authority_end; k++)
+    if (input[k] == '@') host_begin = k + 1;
+  if (host_begin > authority) {
+    /* username is the userinfo before its first ':', password the rest; both empty only for
+     * "" and ":". */
+    size_t userinfo = host_begin - 1 - authority;
+    url->credentials = !(userinfo == 0 || (userinfo == 1 && input[authority] == ':'));
+  }
+  /* Port: after the last ':' outside an IPv6 literal. */
+  size_t host_end = authority_end;
+  bool bracket = false;
+  size_t colon = (size_t)-1;
+  for (size_t k = host_begin; k < authority_end; k++) {
+    if (input[k] == '[') bracket = true;
+    else if (input[k] == ']') bracket = false;
+    else if (input[k] == ':' && !bracket) { colon = k; break; }
+  }
+  if (colon != (size_t)-1) {
+    host_end = colon;
+    double port = 0;
+    size_t digits = 0;
+    for (size_t k = colon + 1; k < authority_end; k++) {
+      if (!isdigit((unsigned char)input[k])) { free(input); return false; }
+      port = port * 10 + (input[k] - '0');
+      digits++;
+      if (port > 65535) { free(input); return false; }
+    }
+    if (digits > 0 && port != (url->https ? 443 : 80))
+      snprintf(url->port, sizeof url->port, "%d", (int)port);
+  }
+  if (!url_host(input + host_begin, host_end - host_begin, url->host, sizeof url->host)) {
+    free(input);
+    return false;
+  }
+  /* Path with dot-segment removal and the path percent-encode set. */
+  size_t path_end = i;
+  while (path_end < n && input[path_end] != '?' && input[path_end] != '#') path_end++;
+  url_segments segs = {NULL, 0, 0};
+  size_t k = i;
+  if (k < path_end) k++; /* leading separator */
+  bool ok = true;
+  for (;;) {
+    size_t s = k;
+    while (k < path_end && input[k] != '/' && input[k] != '\\') k++;
+    const char *seg = input + s;
+    size_t seg_n = k - s;
+    bool last = k >= path_end;
+    if (url_segment_is(seg, seg_n, 2)) {
+      if (segs.count > 0) free(segs.items[--segs.count].data);
+      if (last && url_segment_push(&segs) == NULL) ok = false;
+    } else if (url_segment_is(seg, seg_n, 1)) {
+      if (last && url_segment_push(&segs) == NULL) ok = false;
+    } else {
+      url_text *out = url_segment_push(&segs);
+      if (out == NULL) {
+        ok = false;
+      } else {
+        for (size_t c = 0; c < seg_n; c++) {
+          unsigned char ch = (unsigned char)seg[c];
+          if (ch < 0x21 || ch > 0x7e || ch == '"' || ch == '#' || ch == '<' || ch == '>' ||
+              ch == '?' || ch == '`' || ch == '{' || ch == '}') {
+            char escaped[4];
+            snprintf(escaped, sizeof escaped, "%%%02X", ch);
+            url_put(out, escaped, 3);
+          } else {
+            url_put(out, (const char *)&ch, 1);
+          }
+        }
+        if (out->failed) ok = false;
+      }
+    }
+    if (last || !ok) break;
+    k++;
+  }
+  url_put(&url->path, "", 0);
+  if (segs.count == 0) url_put(&url->path, "/", 1);
+  for (size_t s = 0; s < segs.count; s++) {
+    url_put(&url->path, "/", 1);
+    if (segs.items[s].length > 0) url_put(&url->path, segs.items[s].data, segs.items[s].length);
+    free(segs.items[s].data);
+  }
+  free(segs.items);
+  if (url->path.failed) ok = false;
+  if (path_end < n && input[path_end] == '?') {
+    url->has_query = true;
+    size_t q = path_end + 1;
+    while (q < n && input[q] != '#') q++;
+    url->query_empty = q == path_end + 1;
+    path_end = q;
+  }
+  if (path_end < n && input[path_end] == '#') {
+    url->has_fragment = true;
+    url->fragment_empty = path_end + 1 == n;
+  }
+  free(input);
+  if (!ok) { free(url->path.data); url->path.data = NULL; }
+  return ok;
+}
+
+/* TS readQ2DownloadServer: Q2PRO client_connect extension. A download server on a private or
+ * loopback host is accepted only when the game server itself is on such a network. */
+char *qa_q2_read_download_server(char **arguments, size_t argument_count,
+                                 const qa_net_address *server) {
   const char *advertised = NULL;
   for (size_t i = 0; i < argument_count; i++) {
     if (strncmp(arguments[i], "dlserver=", 9) == 0) {
@@ -634,27 +1033,19 @@ char *qa_q2_read_download_server(char **arguments, size_t argument_count) {
        !ascii_case_prefix(advertised, "https://"))) {
     return NULL;
   }
-  /* Approximate the TS URL validation: reject credentials, fragment,
-   * query; a full WHATWG parser is out of scope for this port. */
-  const char *rest = strstr(advertised, "://") + 3;
-  if (strchr(advertised, '#') != NULL || strchr(advertised, '?') != NULL) return NULL;
-  const char *slash = strchr(rest, '/');
-  const char *at = strchr(rest, '@');
-  if (at != NULL && (slash == NULL || at < slash)) return NULL;
-  if (rest[0] == '\0' || (slash == rest)) return NULL;
-  for (const char *p = advertised; *p != '\0'; p++) {
-    if (*p == ' ' || *p == '"' || *p == '<' || *p == '>' || *p == '\\') return NULL;
+  parsed_url url;
+  if (!parse_http_url(advertised, &url)) return NULL;
+  char *out = NULL;
+  bool rejected = url.credentials || (url.has_fragment && !url.fragment_empty) ||
+                  (url.has_query && !url.query_empty) ||
+                  (server != NULL && private_host(url.host) && !private_address(server));
+  if (!rejected) {
+    bool slash = url.path.length > 0 && url.path.data[url.path.length - 1] == '/';
+    out = format_string("%s://%s%s%s%s%s%s%s", url.https ? "https" : "http", url.host,
+                        url.port[0] != '\0' ? ":" : "", url.port, url.path.data,
+                        slash ? "" : "/", url.has_query ? "?" : "", url.has_fragment ? "#" : "");
   }
-  size_t n = strlen(advertised);
-  bool ends_slash = slash != NULL && n > 0 && advertised[n - 1] == '/';
-  char *out;
-  if (slash == NULL) {
-    out = format_string("%s/", advertised);
-  } else if (!ends_slash) {
-    out = format_string("%s/", advertised);
-  } else {
-    out = dup_str(advertised);
-  }
+  free(url.path.data);
   return out;
 }
 
@@ -840,8 +1231,8 @@ bool qa_q2_client_handshake_receive(qa_q2_client_handshake *handshake,
     memset(&request, 0, sizeof request);
     request.protocol = selected;
     request.qport = selected.version == 34
-                        ? (double)((int32_t)handshake->qport & 65535)
-                        : (double)((int32_t)handshake->qport & 255);
+                        ? (double)(qa_js_to_int32(handshake->qport) & 65535)
+                        : (double)(qa_js_to_int32(handshake->qport) & 255);
     request.challenge = challenge.challenge;
     request.userinfo = dup_str(call_string(handshake->userinfo, handshake->userinfo_ctx));
     qa_q2_challenge_free(&challenge);
@@ -862,7 +1253,8 @@ bool qa_q2_client_handshake_receive(qa_q2_client_handshake *handshake,
        (message->argument_count > 0 && strcmp(message->arguments[0], "2023") == 0))) {
     free(handshake->download_server);
     handshake->download_server =
-        qa_q2_read_download_server(message->arguments, message->argument_count);
+        qa_q2_read_download_server(message->arguments, message->argument_count,
+                                   &handshake->remote);
     handshake->kind = QA_Q2_HANDSHAKE_CONNECTED;
     return true;
   }
@@ -904,10 +1296,17 @@ double qa_q2_challenge_table_issue(qa_q2_challenge_table *table,
   char *key = qa_net_address_key(from, false);
   if (key == NULL) return 0;
   long found = challenge_find(table, key);
-  if (found >= 0) {
+  /* Challenges expire so a guessed or leaked value is useful only briefly. */
+  if (found >= 0 && now - table->entries[found].time <= 30000) {
     double value = table->entries[found].value;
     free(key);
     return value;
+  }
+  if (found >= 0) {
+    free(table->entries[found].key);
+    memmove(&table->entries[found], &table->entries[found + 1],
+            (table->entry_count - (size_t)found - 1) * sizeof(qa_q2_challenge_entry));
+    table->entry_count--;
   }
   if ((double)table->entry_count >= table->capacity) {
     long oldest = -1;
@@ -925,7 +1324,7 @@ double qa_q2_challenge_table_issue(qa_q2_challenge_table *table,
       table->entry_count--;
     }
   }
-  double value = (double)((int32_t)table->random(table->random_ctx) & 0x7fff);
+  double value = (double)(qa_js_to_int32(table->random(table->random_ctx)) & 0x7fffffff);
   if (table->entry_count == table->entry_capacity) {
     size_t next = table->entry_capacity * 2;
     qa_q2_challenge_entry *grown =
@@ -945,12 +1344,14 @@ double qa_q2_challenge_table_issue(qa_q2_challenge_table *table,
 }
 
 bool qa_q2_challenge_table_validate(const qa_q2_challenge_table *table,
-                                    const qa_net_address *from, double challenge) {
+                                    const qa_net_address *from, double challenge, double now) {
   if (from->kind == QA_NET_LOOPBACK) return true;
   char *key = qa_net_address_key(from, false);
   if (key == NULL) return false;
   long found = challenge_find(table, key);
-  bool ok = found >= 0 && table->entries[found].value == challenge;
+  /* now 0 is the TS default argument: no lifetime check. */
+  bool ok = found >= 0 && table->entries[found].value == challenge &&
+            (now == 0 || now - table->entries[found].time <= 30000);
   free(key);
   return ok;
 }

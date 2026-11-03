@@ -160,10 +160,6 @@ typedef struct qa_ui_list_row {
   qa_resource_id image; /* nullable */
   bool enabled;
 } qa_ui_list_row;
-typedef struct qa_ui_list_row_result {
-  bool has_value;
-  qa_ui_list_row value;
-} qa_ui_list_row_result;
 
 /* TS UiControl = UiControlBase & union on kind: "button"|"toggle"|
  * "slider"|"text-entry"|"choice"|"list"|"owner-draw". All TS
@@ -227,15 +223,6 @@ typedef struct qa_legacy_ui_script {
   const char *source;
 } qa_legacy_ui_script;
 
-typedef struct qa_legacy_ui_feeder {
-  void *ctx;
-  qa_provider_id module;
-  double source_id;
-  double (*count)(void *ctx, qa_seat_id seat);
-  qa_ui_list_row_result (*row)(void *ctx, qa_seat_id seat, double index);
-  void (*select)(void *ctx, qa_seat_id seat, double index);
-} qa_legacy_ui_feeder;
-
 /** TS SeatUiController (function-valued fields share one ctx). */
 typedef struct qa_seat_ui_controller {
   void *ctx;
@@ -255,50 +242,6 @@ typedef struct qa_hud_frame {
   qa_network_snapshot snapshot;
   qa_seat_ui_state ui;
 } qa_hud_frame;
-
-typedef struct qa_hud_provider {
-  void *ctx;
-  qa_provider_id id;
-  const qa_ui_draw_command *(*draw)(void *ctx, qa_hud_frame frame, size_t *out_count);
-} qa_hud_provider;
-
-typedef struct qa_q2_hud_server_data {
-  const char *layout;
-  qa_double_view inventory;
-} qa_q2_hud_server_data;
-
-typedef struct qa_q2_hud_draw {
-  qa_seat_id seat;
-  qa_q2_hud_server_data server_data;
-  qa_rect viewport, safe_area;
-  double scale, player_number;
-  qa_q2_rerelease_player_state player;
-} qa_q2_hud_draw;
-
-/** TS Q2CgameExports. */
-typedef struct qa_q2_cgame_exports {
-  void *ctx;
-  qa_q2_cgame_api_identity api;
-  void (*init)(void *ctx);
-  void (*shutdown)(void *ctx);
-  void (*draw_hud)(void *ctx, qa_q2_hud_draw frame);
-  void (*touch_pictures)(void *ctx);
-  double (*layout_flags)(void *ctx, qa_q2_rerelease_player_state player);
-  double (*active_weapon_wheel_weapon)(void *ctx, qa_q2_rerelease_player_state player);
-  double (*owned_weapon_wheel_weapons)(void *ctx, qa_q2_rerelease_player_state player);
-  double (*weapon_wheel_ammo_count)(void *ctx, qa_q2_rerelease_player_state player,
-                                    double ammo_id);
-  double (*powerup_wheel_count)(void *ctx, qa_q2_rerelease_player_state player,
-                                double powerup_id);
-  double (*hit_marker_damage)(void *ctx, qa_q2_rerelease_player_state player);
-  qa_q2_rerelease_movement_result (*pmove)(void *ctx, qa_q2_rerelease_movement_input input);
-  void (*parse_config_string)(void *ctx, double index, const char *value);
-  void (*parse_center_print)(void *ctx, qa_seat_id seat, const char *text, bool instant);
-  void (*clear_notify)(void *ctx, qa_seat_id seat);
-  void (*clear_center_print)(void *ctx, qa_seat_id seat);
-  void (*notify_message)(void *ctx, qa_seat_id seat, const char *text, bool chat);
-  qa_vec3 (*monster_flash_offset)(void *ctx, double flash_id);
-} qa_q2_cgame_exports;
 
 /* TS StereoView = "center"|"left"|"right"; Q3CgameEventHandling =
  * "none"|"team-menu"|"scoreboard"|"edit-hud" (exact strings). */

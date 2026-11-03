@@ -2,8 +2,8 @@
  * Port of src/capture/index.ts: Q3 screenshot and levelshot capture
  * over owned renderer readbacks. GPL-2.0-or-later.
  * C accommodations:
- *  - Plain TS `Error` throws abort printing the identical message
- *    (the src/camera/spline.ts port pattern).
+ *  - Plain TS `Error` throws are qa_raise("Error", ...) with the TS
+ *    message (catchable with qa_try; uncaught they print and abort).
  *  - Encoded results are malloc'd byte buffers (caller frees), NULL
  *    only on allocation failure, with *out_length set.
  *  - The TS `quality = 90` default has no C form; callers pass 90
@@ -17,7 +17,7 @@
  *    degenerates to direct calls in call order, and async readRgba
  *    to the synchronous callback above. Capture functions return
  *    false only on I/O or allocation failure (the TS promise
- *    rejects); the TS "No free screenshot filename..." Error aborts
+ *    rejects); the TS "No free screenshot filename..." Error raises
  *    like this module's other plain Errors. qa_frame_capture_init
  *    copies root; release with qa_frame_capture_destroy. Screenshot
  *    options defaults (format "png", quality 90) have no C form;
@@ -73,6 +73,8 @@ bool qa_make_levelshot(const qa_image_level *image, const uint8_t *gamma,
 typedef struct qa_frame_capture {
   char *root;
   qa_frame_readback readback;
+  /* TS nextShot: first unnamed screenshot index to try, per format. */
+  double next_shot[3];
 } qa_frame_capture;
 /* False only on OOM. */
 bool qa_frame_capture_init(qa_frame_capture *capture, const char *root,

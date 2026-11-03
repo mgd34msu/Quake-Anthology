@@ -2,9 +2,12 @@
 #include "qa/network/q1/codecs/nq15.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js_truthy.h"
+#include "qa/foundation/js.h"
 static double vg(const qa_wire_vector *v, int i) { return qa_wire_vector_get(v, (size_t)i); }
 static void vs(qa_wire_vector *v, int i, double x) { qa_wire_vector_set(v, (size_t)i, x); }
-static int32_t js_i32(double n) { double m = fmod(trunc(n), 4294967296.0); if (m < 0) m += 4294967296.0; return (int32_t)(uint32_t)m; }
+/* ToInt32 (NaN and infinities are 0; the fmod form cast NaN to uint32_t). */
+static int32_t js_i32(double n) { return qa_js_to_int32(n); }
 static void wc_coord(qa_protocol_codec *c, qa_size_buf *sb, double f, double fl) { (void)c;(void)fl; qa_msg_write_coord(sb, f); }
 static void wc_angle(qa_protocol_codec *c, qa_size_buf *sb, double f, double fl) { (void)c;(void)fl; qa_msg_write_angle(sb, f); }
 static double rc_coord(qa_protocol_codec *c, double fl) { (void)fl; return qa_message_reader_coord(c->reader); }
@@ -77,7 +80,7 @@ static bool wc_sound(qa_protocol_codec *c, qa_size_buf *sb, const qa_q1_sound_me
   qa_msg_write_byte(sb, QA_Q1_SVC_SOUND); qa_msg_write_byte(sb, mask);
   if (mask & QA_Q1_SND_VOLUME) qa_msg_write_byte(sb, s->volume);
   if (mask & QA_Q1_SND_ATTENUATION) qa_msg_write_byte(sb, s->attenuation * 64);
-  qa_msg_write_short(sb, (double)((js_i32(s->ent) << 3) | js_i32(s->channel)));
+  qa_msg_write_short(sb, (double)((qa_q1_js_shl(js_i32(s->ent), 3)) | js_i32(s->channel)));
   qa_msg_write_byte(sb, s->sound_num);
   for (int i = 0; i < 3; i++) qa_msg_write_coord(sb, vg(&s->origin,i));
   return true;
@@ -86,16 +89,16 @@ static void wc_cd(qa_protocol_codec *c, qa_size_buf *sb, const qa_q1_clientdata_
   (void)c;(void)fl;
   int32_t bits = 0;
   if (cd->viewheight != QA_Q1_DEFAULT_VIEWHEIGHT) bits |= QA_Q1_SU_VIEWHEIGHT;
-  if (cd->idealpitch) bits |= QA_Q1_SU_IDEALPITCH;
+  if (qa_js_truthy(cd->idealpitch)) bits |= QA_Q1_SU_IDEALPITCH; /* JS truthiness: NaN is falsy */
   bits |= QA_Q1_SU_ITEMS;
   if (cd->onground) bits |= QA_Q1_SU_ONGROUND;
   if (cd->inwater) bits |= QA_Q1_SU_INWATER;
   for (int i = 0; i < 3; i++) {
-    if (vg(&cd->punchangle,i)) bits |= QA_Q1_SU_PUNCH1 << i;
-    if (vg(&cd->velocity,i)) bits |= QA_Q1_SU_VELOCITY1 << i;
+    if (qa_js_truthy(vg(&cd->punchangle,i))) bits |= QA_Q1_SU_PUNCH1 << i;
+    if (qa_js_truthy(vg(&cd->velocity,i))) bits |= QA_Q1_SU_VELOCITY1 << i;
   }
-  if (cd->weaponframe) bits |= QA_Q1_SU_WEAPONFRAME;
-  if (cd->armorvalue) bits |= QA_Q1_SU_ARMOR;
+  if (qa_js_truthy(cd->weaponframe)) bits |= QA_Q1_SU_WEAPONFRAME;
+  if (qa_js_truthy(cd->armorvalue)) bits |= QA_Q1_SU_ARMOR;
   bits |= QA_Q1_SU_WEAPON;
   qa_msg_write_byte(sb, QA_Q1_SVC_CLIENTDATA); qa_msg_write_short(sb, bits);
   if (bits & QA_Q1_SU_VIEWHEIGHT) qa_msg_write_byte(sb, cd->viewheight);
@@ -131,7 +134,7 @@ static void rc_base(qa_protocol_codec *c, qa_q1_wire_entity_state *b, double v, 
 static double rc_cbits(qa_protocol_codec *c) { return (double)(js_i32(qa_message_reader_short(c->reader)) & 0xffff); }
 static void rc_ctail(qa_protocol_codec *c, double b, qa_q1_clientdata_tail *out) { (void)c;(void)b; qa_q1_clientdata_tail_clear(out); }
 static void rc_sheader(qa_protocol_codec *c, double m, qa_q1_sound_header *out) {
-  (void)m; int32_t channel = js_i32(qa_message_reader_short(c->reader));
+  (void)m; int32_t channel = js_i32(qa_message_reader_short(c->reader)) & 0xffff;
   out->ent = channel >> 3; out->channel = channel & 7; out->sound_num = qa_message_reader_byte(c->reader);
 }
 static double rc_ssidx(qa_protocol_codec *c, double v) { (void)v; return qa_message_reader_byte(c->reader); }

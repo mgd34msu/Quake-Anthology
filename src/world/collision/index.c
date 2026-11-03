@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static float f32(double v){return (float)v;}
 static qa_bounds swept_bounds(qa_trace_query q){
   int is_point=q.shape.kind&&strcmp(q.shape.kind,"point")==0;
@@ -13,13 +14,13 @@ static qa_bounds swept_bounds(qa_trace_query q){
     double mn[3],mx[3],s[3]={q.start.x,q.start.y,q.start.z},e[3]={q.end.x,q.end.y,q.end.z};
     double bmn[3]={b.min.x,b.min.y,b.min.z},bmx[3]={b.max.x,b.max.y,b.max.z};
     for(int i=0;i<3;i++){
-      mn[i]=f32(f32(fmin(s[i],e[i])+bmn[i])+-1);
-      mx[i]=f32(f32(fmax(s[i],e[i])+bmx[i])+1);
+      mn[i]=f32(f32(qa_js_min(s[i],e[i])+bmn[i])+-1);
+      mx[i]=f32(f32(qa_js_max(s[i],e[i])+bmx[i])+1);
     }
     return (qa_bounds){{mn[0],mn[1],mn[2]},{mx[0],mx[1],mx[2]}};
   }
-  return (qa_bounds){{fmin(q.start.x,q.end.x)+b.min.x-1,fmin(q.start.y,q.end.y)+b.min.y-1,fmin(q.start.z,q.end.z)+b.min.z-1},
-    {fmax(q.start.x,q.end.x)+b.max.x+1,fmax(q.start.y,q.end.y)+b.max.y+1,fmax(q.start.z,q.end.z)+b.max.z+1}};
+  return (qa_bounds){{qa_js_min(q.start.x,q.end.x)+b.min.x-1,qa_js_min(q.start.y,q.end.y)+b.min.y-1,qa_js_min(q.start.z,q.end.z)+b.min.z-1},
+    {qa_js_max(q.start.x,q.end.x)+b.max.x+1,qa_js_max(q.start.y,q.end.y)+b.max.y+1,qa_js_max(q.start.z,q.end.z)+b.max.z+1}};
 }
 static bool blocks_q1_ctx(void*ctx,double contents,qa_trace_policy policy){(void)ctx;return qa_blocks_q1_contents(contents,policy);}
 qa_shared_scene_queries *qa_create_scene_queries(qa_decoded_world world){
@@ -142,7 +143,8 @@ qa_leaf_query_result qa_shared_box_leaves(qa_shared_scene_queries*q,qa_bounds b,
   else if(strcmp(q->kind,"q2")==0)src=qa_q2_collision_box_leaves_default(&q->q2,b,limit);
   else{
     free(q->leaf_scratch);
-    size_t cap=limit>0?(size_t)limit:1;
+    /* Unsafe limits (NaN, fractions, > 2^53) reach the topology RangeError; cast only safe ones. */
+    size_t cap=limit>0&&limit<=9007199254740991.0&&limit==floor(limit)?(size_t)limit:1;
     q->leaf_scratch=malloc(cap*sizeof*q->leaf_scratch); if(!q->leaf_scratch)abort();
     src=qa_q3_collision_box_leaves(q->q3,b,limit,q->leaf_scratch,cap);
     q->leaf_scratch_count=src.leaves.count;
@@ -252,12 +254,24 @@ qa_trace_result qa_shared_geometry_trace(qa_shared_scene_queries*q,qa_trace_quer
 static qa_trace_result do_shared_trace(qa_shared_scene_queries*q,qa_trace_query query,const qa_actor_id*excluded,size_t exc){
   qa_trace_result result=qa_shared_geometry_trace(q,query);
   int pk3=query.policy.kind&&strcmp(query.policy.kind,"q3")==0;
-  if(query.target.is_model||result.all_solid||(pk3&&result.fraction==0))return result;
+  int not_q1=!(query.policy.kind&&strcmp(query.policy.kind,"q1")==0);
+  if(query.target.is_model||result.all_solid||(not_q1&&result.fraction==0))return result;
   qa_spatial_actor pass; int has_pass=0; qa_actor_collision pass_col; int has_pass_col=0;
   if(query.pass_actor){
     has_pass=qa_spatial_index_get(q->spatial,*query.pass_actor,&pass)!=0;
     if(q->read_collision)has_pass_col=q->read_collision(q->read_collision_ctx,*query.pass_actor,&pass_col);
     else if(has_pass){pass_col=pass.collision;has_pass_col=1;}
+  }
+  /* SV_ClipToLinks: points never interact with a sized mover. */
+  int pass_sized=0;
+  if(query.policy.kind&&strcmp(query.policy.kind,"q1")==0&&has_pass){
+    qa_spatial_actor current=pass; int live=1;
+    if(q->body_table||q->actor_state_fn||q->read_collision){
+      qa_actor_collision collision=pass.collision;
+      if(q->read_collision)live=q->read_collision(q->read_collision_ctx,pass.body.actor,&collision);
+      live=live&&snapshot_actor(q,pass,collision,&current);
+    }
+    pass_sized=live&&current.body.state.bounds.max.x!=current.body.state.bounds.min.x;
   }
   qa_bounds envelope=swept_bounds(query);
   int missile=query.policy.kind&&strcmp(query.policy.kind,"q1")==0&&query.policy.move&&strcmp(query.policy.move,"missile")==0;
@@ -279,10 +293,11 @@ static qa_trace_result do_shared_trace(qa_shared_scene_queries*q,qa_trace_query 
     int skip=0;
     for(size_t k=0;k<exc;k++)if(qa_same_actor(excluded[k],id))skip=1;
     if(skip)continue;
-    int corpse=collision.q1_corpse||collision.dead_monster||(!(collision.family&&strcmp(collision.family,"q1")==0)&&(((int32_t)collision.contents)&0x04000000)!=0);
+    int corpse=collision.q1_corpse||collision.dead_monster||(!(collision.family&&strcmp(collision.family,"q1")==0)&&(qa_js_to_int32(collision.contents)&0x04000000)!=0);
     int is_point=query.shape.kind&&strcmp(query.shape.kind,"point")==0;
     int point_like=is_point||(query.shape.bounds.min.x==query.shape.bounds.max.x&&query.shape.bounds.min.y==query.shape.bounds.max.y&&query.shape.bounds.min.z==query.shape.bounds.max.z);
-    int corpse_point=corpse&&point_like;
+    /* sv_world.c skips corpses unless the mask carries DEADMONSTER, so the exception is only for other families' corpses. */
+    int corpse_point=corpse&&point_like&&!(collision.family&&query.policy.kind&&strcmp(collision.family,query.policy.kind)==0);
     if(query.pass_actor){
       if(qa_same_actor(*query.pass_actor,id))continue;
       int have_q3=has_pass_col&&pass_col.has_q3_owner&&collision.has_q3_owner;
@@ -303,11 +318,12 @@ static qa_trace_result do_shared_trace(qa_shared_scene_queries*q,qa_trace_query 
     if(no_monsters&&!is_model_shape)continue;
     if(!corpse_point){
       if(query.policy.kind&&strcmp(query.policy.kind,"q1")==0){if(qa_actor_contents(collision,"q1")!=-2)continue;}
-      else if((((int32_t)qa_actor_contents(collision,query.policy.kind))&((int32_t)query.policy.contents_mask))==0)continue;
+      else if((qa_js_to_int32(qa_actor_contents(collision,query.policy.kind))&qa_js_to_int32(query.policy.contents_mask))==0)continue;
     }
     qa_spatial_actor actor;
     if(refresh){if(!snapshot_actor(q,linked,collision,&actor))continue;}
     else{actor=linked;actor.collision=collision;}
+    if(pass_sized&&collision.shape_kind&&strcmp(collision.shape_kind,"box")==0&&actor.body.state.bounds.max.x==actor.body.state.bounds.min.x)continue;
     qa_trace_query moving=query;
     if(missile&&collision.monster){moving.shape.kind="box";moving.shape.bounds=(qa_bounds){{-15,-15,-15},{15,15,15}};}
     qa_trace_result hit;
@@ -321,7 +337,7 @@ static qa_trace_result do_shared_trace(qa_shared_scene_queries*q,qa_trace_query 
     if(pk3){
       if(hit.fraction<result.fraction){int ss=hit.start_solid||result.start_solid;result=hit;result.start_solid=ss!=0;}
       else{result.all_solid=result.all_solid||hit.all_solid;result.start_solid=result.start_solid||(!hit.all_solid&&hit.start_solid);}
-    }else if(hit.all_solid||hit.fraction<result.fraction||(pk1&&hit.start_solid)){
+    }else if(hit.all_solid||hit.fraction<result.fraction||((pk1||(query.policy.kind&&strcmp(query.policy.kind,"q2")==0))&&hit.start_solid)){
       int ss=hit.start_solid||result.start_solid;result=hit;result.start_solid=ss!=0;
     }else if(hit.start_solid)result.start_solid=true;
     if(result.all_solid)break;
@@ -361,8 +377,8 @@ qa_point_contents_result qa_shared_point_contents(qa_shared_scene_queries*q,qa_p
       added=qa_actor_contents(collision,query.policy.kind);
     }
     if(result.kind&&strcmp(result.kind,"q1")==0){if(added==-2)result.contents=-2;}
-    else if(result.kind&&strcmp(result.kind,"q2")==0){result.stored=(double)(((int32_t)result.stored)|((int32_t)added));result.merged=(double)(((int32_t)result.merged)|((int32_t)added));}
-    else result.contents=(double)(((int32_t)result.contents)|((int32_t)added));
+    else if(result.kind&&strcmp(result.kind,"q2")==0){result.stored=(double)(qa_js_to_int32(result.stored)|qa_js_to_int32(added));result.merged=(double)(qa_js_to_int32(result.merged)|qa_js_to_int32(added));}
+    else result.contents=(double)(qa_js_to_int32(result.contents)|qa_js_to_int32(added));
   }
   free(list);
   return result;

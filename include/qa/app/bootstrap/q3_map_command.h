@@ -17,8 +17,9 @@ typedef struct qa_app_q3_map_launch {
   size_t cvar_count;
   char gametype_value[32];
 } qa_app_q3_map_launch;
-/* Aborts (TS Error) for an unknown command. */
-qa_app_q3_map_launch qa_app_q3_map_launch_make(qa_q3_product_policy policy, const char *command, double current_game_type);
+/* Fills *out in place, since cvars[0].value points at out->gametype_value; do
+ * not copy the result. Aborts (TS Error) for an unknown command. */
+void qa_app_q3_map_launch_make(qa_app_q3_map_launch *out, qa_q3_product_policy policy, const char *command, double current_game_type);
 /* phase: "all"|"spawn"|"finish". */
 void qa_app_apply_q3_map_launch(qa_cvar_registry *cvars, const qa_app_q3_map_launch *launch, const char *phase);
 #endif

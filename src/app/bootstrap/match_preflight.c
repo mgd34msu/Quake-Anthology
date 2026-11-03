@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/match-preflight.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/match_preflight.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,8 @@
 #include "qa/content/catalog/source_program.h"
 #include "qa/formats/q1_map/entities.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include <math.h>
 static bool same_ref(qa_provider_reference a, qa_provider_reference b) {
   return strcmp(a.content, b.content) == 0 && strcmp(a.provider, b.provider) == 0;
 }
@@ -33,13 +36,17 @@ void qa_app_preflight_application_match(qa_app_preflight_content content, const 
     double game_type = configured == NULL
         ? (strcmp(recipe->match.provider, "q3:ctf") == 0 ? QA_Q3_BASE_GT_CTF
            : strcmp(mode, "singleplayer") == 0 ? 2 : 0)
-        : strtod(configured, NULL); /* TS Number(configured) */
+        : qa_js_string_to_number(configured); /* TS Number(configured) */
+    /* G_RegisterCvars resets an out-of-range game type to 0 at load (TS Number.isInteger
+       && >= 0 && < GT_MAX_GAME_TYPE; NaN and fractions fail isInteger). */
+    double effective = isfinite(game_type) && game_type == trunc(game_type) && game_type >= 0
+        && game_type < QA_Q3_BASE_GT_MAX_GAME_TYPE ? game_type : 0;
     bool found = false;
     char *program = qa_selected_source_program(recipe->execution, recipe->execution_count, recipe->map.entities, &found);
     qa_q3_base_product product = found && program != NULL && strcmp(program, "missionpack") == 0
         ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
     qa_q3_ta_foreign_objective_adaptation result = qa_q3_ta_adapt_foreign_q3_objectives(
-        content.world_kind, content.world_entities, product, game_type, NULL, 0);
+        content.world_kind, content.world_entities, product, effective, NULL, 0);
     free(program);
     if (result.kind == QA_Q3_TA_OBJECTIVE_MISSING) {
       char joined[256] = "";
@@ -53,9 +60,9 @@ void qa_app_preflight_application_match(qa_app_preflight_content content, const 
     if (result.kind == QA_Q3_TA_OBJECTIVE_UNSUPPORTED) {
       double bad = result.game_type;
       qa_q3_ta_foreign_objective_adaptation_destroy(&result);
-      if (bad == (double)(long long)bad)
-        qa_range_error("Selected Q3 product does not support game type %lld", (long long)bad);
-      qa_range_error("Selected Q3 product does not support game type %g", bad);
+      if ((fabs(bad) < 9.2e18 && bad == trunc(bad)))
+        qa_range_error("Selected Q3 product does not support game type %s", QA_JS_NUMBER(bad));
+      qa_range_error("Selected Q3 product does not support game type %s", QA_JS_NUMBER(bad));
     }
     qa_q3_ta_foreign_objective_adaptation_destroy(&result);
     return;

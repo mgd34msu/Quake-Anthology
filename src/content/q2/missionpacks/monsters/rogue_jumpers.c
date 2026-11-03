@@ -15,6 +15,7 @@
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_berserk.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_mutant.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_parasite.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
 
 typedef struct jumpers_bundle {
   qa_q2m_monsters *monsters;
@@ -24,7 +25,7 @@ static void jump_impulse(qa_q2m_context *c, double forward_speed, double up_spee
   qa_body_state body = q2mpm_body(c->game, c->entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   if (timed) c->entity->timestamp = q2mpm_now(c->game);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true;
   change.velocity = qa_add3_double(body.velocity, qa_add3_double(qa_scale3_double(axes.forward, forward_speed),
@@ -33,7 +34,7 @@ static void jump_impulse(qa_q2m_context *c, double forward_speed, double up_spee
 }
 static void jump_wait(qa_q2m_context *c, bool timed) {
   c->state->next_frame = c->entity->frame
-      + (q2mpm_body(c->game, c->entity).ground != NULL || (timed && qa_q2mpm_monster_jump_finished(c)) ? 1 : 0);
+      + (q2mpm_body(c->game, c->entity).ground != NULL || (timed && qa_q2rm_monster_jump_finished(c)) ? 1 : 0);
 }
 static void jump_to(qa_q2m_context *c, const char *up, const char *down, bool dodge) {
   qa_body_state enemy;
@@ -69,11 +70,11 @@ static void berserk_dodge_fn(void *ctx, qa_q2m_context *c, qa_actor_id attacker,
 }
 static bool berserk_blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   (void)ctx;
-  if (qa_q2mpm_blocked_check_jump_default(c, distance, 256, 40) != QA_Q2MPM_JUMP_NONE) {
+  if (qa_q2rm_blocked_check_jump_default(c, distance, 256, 40) != QA_Q2RM_JUMP_NONE) {
     jump_to(c, "berserk_move_jump2", "berserk_move_jump", true);
     return true;
   }
-  return qa_q2mpm_blocked_check_platform(c, distance);
+  return qa_q2rm_blocked_check_platform(c, distance);
 }
 static void berserk_pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
@@ -88,20 +89,20 @@ static void berserk_pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction react
 static void done_dodge_fn(void *ctx, qa_q2m_context *c) { (void)ctx; qa_q2m_finish_dodge(c); }
 static bool mutant_blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   (void)ctx;
-  if (qa_q2mpm_blocked_check_jump_default(c, distance, 256, 68) != QA_Q2MPM_JUMP_NONE) {
+  if (qa_q2rm_blocked_check_jump_default(c, distance, 256, 68) != QA_Q2RM_JUMP_NONE) {
     jump_to(c, "mutant_move_jump_up", "mutant_move_jump_down", false);
     return true;
   }
-  return qa_q2mpm_blocked_check_platform(c, distance);
+  return qa_q2rm_blocked_check_platform(c, distance);
 }
 static bool parasite_blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   jumpers_bundle *bundle = ctx;
   if (qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)) return true;
-  if (qa_q2mpm_blocked_check_jump_default(c, distance, 256, 68) != QA_Q2MPM_JUMP_NONE) {
+  if (qa_q2rm_blocked_check_jump_default(c, distance, 256, 68) != QA_Q2RM_JUMP_NONE) {
     jump_to(c, "parasite_move_jump_up", "parasite_move_jump_down", false);
     return true;
   }
-  return qa_q2mpm_blocked_check_platform(c, distance);
+  return qa_q2rm_blocked_check_platform(c, distance);
 }
 static bool parasite_check_fn(void *ctx, qa_q2m_context *c) {
   jumpers_bundle *bundle = ctx;
@@ -130,18 +131,18 @@ static void wait_plain_fn(void *ctx, qa_q2m_context *c) { (void)ctx; jump_wait(c
 /* TS createMutantDefinition(monsters, source) via the landed base
  * port; the wrapper storage (callbacks/touch the definition points
  * into) is heap-held for the definition's lifetime. */
-qa_q2m_definition qa_q2mpm_base_create_mutant_definition(qa_q2m_monsters *monsters,
+qa_q2m_definition qa_q2mpm_base_create_mutant_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters,
                                                          const char *edition) {
-  qa_q2bm_mutant_definition *wrapper = malloc(sizeof *wrapper);
-  if (!wrapper) qa_q2f_error("Out of memory creating rogue jumping monsters");
+  qa_q2bm_mutant_definition *wrapper = qa_q2mpm_arena_alloc(arena, sizeof *wrapper);
+  if (!wrapper) qa_raise("Error", 0, 0, "Out of memory creating rogue jumping monsters");
   qa_q2bm_create_mutant_definition_source(wrapper, monsters, edition);
   return wrapper->definition;
 }
 
-size_t qa_q2mpm_create_rogue_jumping_monsters(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_jumping_monsters(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                               qa_q2mpm_monster_state *source) {
-  jumpers_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue jumping monsters");
+  jumpers_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue jumping monsters");
   bundle->monsters = monsters;
   bundle->source = source;
   qa_q2m_definition berserk = qa_q2bm_berserk_definition;
@@ -164,11 +165,11 @@ size_t qa_q2mpm_create_rogue_jumping_monsters(qa_q2m_definition *out, qa_q2m_mon
       {"berserk_jump2_now", {NULL, berserk_jump2_fn}},
       {"berserk_jump_wait_land", {NULL, wait_timed_fn}},
     };
-    berserk.callbacks = qa_q2mpm_merge_callbacks(berserk.callbacks, berserk.callback_count, extra, 5,
+    berserk.callbacks = qa_q2mpm_merge_callbacks(arena, berserk.callbacks, berserk.callback_count, extra, 5,
                                                  &berserk.callback_count);
   }
   out[0] = berserk;
-  qa_q2m_definition mutant = qa_q2mpm_base_create_mutant_definition(monsters, "rogue");
+  qa_q2m_definition mutant = qa_q2mpm_base_create_mutant_definition(arena, monsters, "rogue");
   mutant.moves = qa_q2mpm_rogue_mutant_moves;
   mutant.move_count = qa_q2mpm_rogue_mutant_move_count;
   mutant.blocked_ctx = bundle;
@@ -179,7 +180,7 @@ size_t qa_q2mpm_create_rogue_jumping_monsters(qa_q2m_definition *out, qa_q2m_mon
       {"mutant_jump_down", {NULL, mutant_down_fn}},
       {"mutant_jump_wait_land", {NULL, wait_plain_fn}},
     };
-    mutant.callbacks = qa_q2mpm_merge_callbacks(mutant.callbacks, mutant.callback_count, extra, 3,
+    mutant.callbacks = qa_q2mpm_merge_callbacks(arena, mutant.callbacks, mutant.callback_count, extra, 3,
                                                 &mutant.callback_count);
   }
   out[1] = mutant;
@@ -196,7 +197,7 @@ size_t qa_q2mpm_create_rogue_jumping_monsters(qa_q2m_definition *out, qa_q2m_mon
       {"parasite_jump_down", {NULL, parasite_down_fn}},
       {"parasite_jump_wait_land", {NULL, wait_timed_fn}},
     };
-    parasite.callbacks = qa_q2mpm_merge_callbacks(parasite.callbacks, parasite.callback_count, extra, 3,
+    parasite.callbacks = qa_q2mpm_merge_callbacks(arena, parasite.callbacks, parasite.callback_count, extra, 3,
                                                   &parasite.callback_count);
   }
   out[2] = parasite;

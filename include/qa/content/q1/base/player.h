@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "qa/content/q1/base/foundation_types.h"
+#include "qa/content/q1/foundation/entity_services.h"
 
 /* TS Q1CharacterAttack mirror subset (owner foundation/types.ts). */
 typedef struct qa_q1_base_character_attack {
@@ -50,8 +50,8 @@ typedef struct qa_q1_character_presentation {
 } qa_q1_character_presentation;
 
 typedef struct qa_q1_character_actor qa_q1_character_actor;
-void qa_q1_register_character_callbacks(qa_q1b_game *game);
-qa_q1_character_actor *qa_q1_character_actor_create(qa_q1b_game *game, qa_owned_actor actor,
+void qa_q1_register_character_callbacks(qa_q1_services *game);
+qa_q1_character_actor *qa_q1_character_actor_create(qa_q1_services *game, qa_owned_actor actor,
                                                     const qa_q1_character_options *options);
 void qa_q1_character_actor_destroy(qa_q1_character_actor *character);
 int qa_q1_character_actor_water_level(const qa_q1_character_actor *character);
@@ -63,13 +63,11 @@ qa_q1_character_presentation qa_q1_character_actor_presentation(qa_q1_character_
 qa_q1_character_presentation qa_q1_character_actor_frame(qa_q1_character_actor *character,
                                                          double seconds, qa_q1_character_input input);
 void qa_q1_character_actor_attack(qa_q1_character_actor *character, qa_q1_base_character_attack attack);
-void qa_q1_character_actor_pain(qa_q1_character_actor *character, qa_q1b_opt_actor attacker,
+void qa_q1_character_actor_pain(qa_q1_character_actor *character, const qa_actor_id *attacker,
                                 double damage, bool axe_hit);
-void qa_q1_character_actor_die(qa_q1_character_actor *character, qa_q1b_opt_actor attacker);
+void qa_q1_character_actor_die(qa_q1_character_actor *character, const qa_actor_id *attacker);
 void qa_q1_character_actor_respawn(qa_q1_character_actor *character, const double *health);
 void qa_q1_character_actor_set_suicide_frame(qa_q1_character_actor *character);
 void qa_q1_character_actor_post_move(qa_q1_character_actor *character);
-void qa_q1_character_actor_environment(qa_q1_character_actor *character, double seconds,
-                                       bool suit, bool noclip);
 
 #endif

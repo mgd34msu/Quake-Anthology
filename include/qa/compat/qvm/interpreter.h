@@ -2,8 +2,16 @@
  * Port of src/compat/qvm/interpreter.ts. GPL-2.0-or-later.
  * C accommodations:
  *  - Promise<number> results collapse to synchronous double returns
- *    (invokeAsync/proceedAsync run the synchronous path; the TS async
- *    interleavings have no C counterpart, see docs/PORTING.md).
+ *    (invokeAsync/proceedAsync complete before returning; the TS async
+ *    interleavings have no C counterpart, see docs/PORTING.md). The
+ *    frame's execution kind, validation chain and refusal of asynchronous
+ *    children from a synchronous frame are retained.
+ *  - Throws are qa_range_error, catchable with qa_range_error_catch at
+ *    the same boundaries as a TS try. A cancellation is such a throw, so
+ *    a hook's catch and cleanup run before its target returns zero.
+ *  - Structs handed to a callback (qa_qvm_function_call and friends) are
+ *    valid only during that callback; TS detects use of a retained object
+ *    after its call ended, C has no retained object to detect it on.
  *  - qa_qvmx_* types/functions mirror qvm-b-owned TS files
  *    (memory.ts, syscalls.ts, operations.ts, regions.ts) with a unique
  *    prefix; symbols.ts/registry.ts use their landed headers.
@@ -18,6 +26,7 @@
 
 #include "qa/compat/qvm/allocation.h"
 #include "qa/compat/qvm/image.h"
+#include "qa/compat/qvm/memory.h"
 #include "qa/compat/qvm/regions.h"
 #include "qa/compat/qvm/registry.h"
 #include "qa/compat/qvm/symbols.h"
@@ -110,6 +119,10 @@ struct qa_qvm_syscall {
   double (*invoke_async)(void *ctx, const double *args, size_t arg_count, bool has_index,
                          double instruction_index);
   void (*cancel_function)(void *ctx, qa_qvm_cancellation_scope scope);
+  /* TS invokeAsync's validate parameter (NULL for none). */
+  double (*invoke_async_validated)(void *ctx, const double *args, size_t arg_count,
+                                   double instruction_index, void (*validate)(void *ctx),
+                                   void *validate_ctx);
 };
 
 typedef struct qa_qvm_interpreter_system_call {
@@ -164,6 +177,9 @@ struct qa_qvm_function_call {
   void (*effect)(void *ctx, void (*perform)(void *perform_ctx), void *perform_ctx);
   double (*proceed)(void *ctx);
   double (*proceed_async)(void *ctx);
+  double (*invoke_async_validated)(void *ctx, const double *args, size_t arg_count,
+                                   double instruction_index, void (*validate)(void *ctx),
+                                   void *validate_ctx);
 };
 
 typedef struct qa_qvm_function_hook {
@@ -186,6 +202,10 @@ typedef struct qa_qvm_function_observation {
                          double instruction_index);
   void (*cancel_function)(void *ctx, qa_qvm_cancellation_scope scope);
   double (*argument)(void *ctx, double index);
+  double (*invoke_async_validated)(void *ctx, const double *args, size_t arg_count,
+                                   double instruction_index, void (*validate)(void *ctx),
+                                   void *validate_ctx);
+  qa_qvmx_view words; /* the bounded argument words argument() reads */
 } qa_qvm_function_observation;
 
 typedef struct qa_qvm_function_observer {
@@ -221,11 +241,15 @@ void qa_qvm_interpreter_destroy(qa_qvm_interpreter *interpreter);
 /* Borrowed views into interpreter-owned storage. */
 uint8_t *qa_qvm_interpreter_get_memory(const qa_qvm_interpreter *interpreter, size_t *out_length);
 qa_qvmx_memory *qa_qvm_interpreter_get_address_space(qa_qvm_interpreter *interpreter);
+/* The QvmMemory owning this allocation's committed-store publication. */
+qa_qvm_memory *qa_qvm_interpreter_get_guest(qa_qvm_interpreter *interpreter);
 double qa_qvm_interpreter_get_call_level(const qa_qvm_interpreter *interpreter);
 bool qa_qvm_interpreter_get_is_active(const qa_qvm_interpreter *interpreter);
 double qa_qvm_interpreter_get_stack_pointer(const qa_qvm_interpreter *interpreter);
 double qa_qvm_interpreter_get_break_count(const qa_qvm_interpreter *interpreter);
 bool qa_qvm_interpreter_get_debug_enabled(const qa_qvm_interpreter *interpreter);
+/* TS semantics: "interpreted" is vm_interpreted.c (vm_game 1); "compiled" is the JIT behaviour id ships by default. */
+qa_qvm_semantics qa_qvm_interpreter_get_semantics(const qa_qvm_interpreter *interpreter);
 double qa_qvm_interpreter_get_code_length(qa_qvm_interpreter *interpreter);
 double qa_qvm_interpreter_get_instruction_pointers_length(qa_qvm_interpreter *interpreter);
 
@@ -261,6 +285,9 @@ double qa_qvm_interpreter_invoke(qa_qvm_interpreter *interpreter, const double *
                                  const qa_qvm_read_only_evaluation *evaluation);
 double qa_qvm_interpreter_invoke_async(qa_qvm_interpreter *interpreter, const double *args,
                                        size_t arg_count, double instruction_index);
+double qa_qvm_interpreter_invoke_async_validated(qa_qvm_interpreter *interpreter, const double *args,
+                                                 size_t arg_count, double instruction_index,
+                                                 void (*validate)(void *ctx), void *validate_ctx);
 double qa_qvm_interpreter_evaluate_counter(qa_qvm_interpreter *interpreter, double address,
                                            double initial, const double *functions,
                                            size_t function_count,

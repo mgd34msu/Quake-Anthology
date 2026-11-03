@@ -37,10 +37,22 @@ qa_q3_entity_callback qa_q3_callback_family_resolve(qa_q3_callback_family *f, co
   qa_range_error("Unknown native Q3 callback %s", id);
 }
 void qa_q3_callback_catalog_init(qa_q3_callback_catalog *c) {
+  c->retained = NULL; c->retained_count = c->retained_cap = 0;
   qa_q3_callback_family_init(&c->think); qa_q3_callback_family_init(&c->reached); qa_q3_callback_family_init(&c->blocked);
   qa_q3_callback_family_init(&c->touch); qa_q3_callback_family_init(&c->use); qa_q3_callback_family_init(&c->pain); qa_q3_callback_family_init(&c->die);
 }
+void qa_q3_callback_catalog_retain(qa_q3_callback_catalog *c, void *owned) {
+  if (c->retained_count == c->retained_cap) {
+    size_t cap = c->retained_cap ? c->retained_cap * 2 : 8;
+    void **grown = realloc(c->retained, cap * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    c->retained = grown; c->retained_cap = cap;
+  }
+  c->retained[c->retained_count++] = owned;
+}
 void qa_q3_callback_catalog_destroy(qa_q3_callback_catalog *c) {
+  for (size_t i = 0; i < c->retained_count; i++) free(c->retained[i]);
+  free(c->retained); c->retained = NULL; c->retained_count = c->retained_cap = 0;
   qa_q3_callback_family_destroy(&c->think); qa_q3_callback_family_destroy(&c->reached); qa_q3_callback_family_destroy(&c->blocked);
   qa_q3_callback_family_destroy(&c->touch); qa_q3_callback_family_destroy(&c->use); qa_q3_callback_family_destroy(&c->pain); qa_q3_callback_family_destroy(&c->die);
 }

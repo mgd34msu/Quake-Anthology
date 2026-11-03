@@ -7,6 +7,7 @@
 #include "qa/app/bootstrap/shared_setting_cvars.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/persistence/value.h"
 
 static void cvar_set_(qa_cvar_registry *r, const char *name, const char *value, bool force) {
   qa_cvar_snapshot out; memset(&out, 0, sizeof out);
@@ -92,7 +93,7 @@ void qa_app_view_settings_unbind_cvars(qa_app_view_settings *s) {
 }
 void qa_app_view_settings_set_field_of_view(qa_app_view_settings *s, double value) {
   if (!isfinite(value) || value < 60 || value > 160)
-    qa_range_error("Field of view must be between 60 and 160 degrees");
+    qa_raise("RangeError", 0, 0, "Field of view must be between 60 and 160 degrees");
   s->explicit = true;
   if (s->cvars == NULL) { s->selected = value; s->has_selected = true; s->changed(s->ctx, value); }
   else {
@@ -116,26 +117,37 @@ qa_ui_setting_binding qa_app_view_settings_binding(qa_app_view_settings *s) {
   b.minimum = 60; b.maximum = 160; b.step = 5;
   return b;
 }
+typedef struct load_call { qa_app_view_settings *settings; const qa_save_value *value; } load_call;
+static void load_body(void *ctx) {
+  load_call *call = ctx;
+  const qa_save_value *value = call->value;
+  const qa_save_value *version = value->kind == QA_SAVE_OBJECT ? qa_save_value_get(value, "version") : NULL;
+  const qa_save_value *fov = value->kind == QA_SAVE_OBJECT ? qa_save_value_get(value, "fieldOfView") : NULL;
+  if (version == NULL || version->kind != QA_SAVE_NUMBER || version->number != 1 || fov == NULL || fov->kind != QA_SAVE_NUMBER)
+    qa_raise("Error", 0, 0, "Invalid view preferences");
+  qa_app_view_settings_set_field_of_view(call->settings, fov->number);
+}
 void qa_app_view_settings_load(qa_app_view_settings *s, const qa_config_store *store) {
+  qa_app_view_settings_load_warn(s, store, NULL, NULL);
+}
+void qa_app_view_settings_load_warn(qa_app_view_settings *s, const qa_config_store *store,
+    void (*warn)(void *ctx, const char *text), void *warn_ctx) {
   size_t len = 0;
   char *text = qa_config_store_load_text(store, "view.json", &len);
   if (text == NULL) return;
-  /* Minimal JSON field extraction mirroring the TS shape check:
-   * non-JSON keeps defaults; parsed-but-invalid shape aborts. */
-  const char *p = text;
-  while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-  if (*p != '{') { free(text); return; } /* JSON.parse of e.g. number would fail shape; "not JSON" text keeps defaults */
-  const char *ver = strstr(text, "\"version\"");
-  const char *fov = strstr(text, "\"fieldOfView\"");
-  bool ver_ok = false; double fov_value = 0; bool fov_is_number = false;
-  if (ver) { const char *colon = strchr(ver, ':'); if (colon) ver_ok = strtod(colon + 1, NULL) == 1.0; }
-  if (fov) {
-    const char *colon = strchr(fov, ':');
-    if (colon) { char *end = NULL; fov_value = strtod(colon + 1, &end); fov_is_number = end != colon + 1; }
-  }
+  /* Text that is not JSON keeps the defaults, like absence; parsed values still face validation. */
+  qa_save_value *value = qa_parse_json_value((const uint8_t *)text, len, true);
   free(text);
-  if (!ver_ok || !fov_is_number) qa_range_error("Invalid view preferences");
-  qa_app_view_settings_set_field_of_view(s, fov_value);
+  if (value == NULL) return;
+  load_call call = {s, value};
+  qa_caught_error caught;
+  bool ok = qa_try(load_body, &call, &caught);
+  qa_save_value_free(value);
+  if (!ok && warn != NULL) {
+    char message[QA_CAUGHT_MESSAGE_CAPACITY + 32];
+    snprintf(message, sizeof message, "Ignoring view.json: %s\n", caught.message);
+    warn(warn_ctx, message);
+  }
 }
 void qa_app_view_settings_save(qa_app_view_settings *s, const qa_config_store *store) {
   if (!s->explicit) return;

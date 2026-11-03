@@ -41,8 +41,9 @@ typedef struct qa_qvm_mod_pickup_operations {
   qa_original_pickup_decision (*observe)(void *ctx, qa_actor_id actor,
                                          const qa_original_pickup_execution *observer,
                                          qa_qvm_mod_pickup_execute_fn execute, void *execute_ctx);
-  int32_t (*invoke)(void *ctx, const qa_qvm_mod_source_call *call,
-                    const qa_qvm_pickup_input *inputs, size_t input_count);
+  /* The source return as a number (a float32 return is the decoded float). */
+  double (*invoke)(void *ctx, const qa_qvm_mod_source_call *call,
+                   const qa_qvm_pickup_input *inputs, size_t input_count);
 } qa_qvm_mod_pickup_operations;
 
 typedef struct qa_qvm_mod_pickups {

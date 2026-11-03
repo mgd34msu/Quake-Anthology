@@ -1,8 +1,11 @@
 /* Port of src/network/q2/demo.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/demo.h"
+#include "qa/network/common/js_number.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+#include "qa/foundation/support.h"
 
 #include "qa/network/q2/codec.h"
 #include "qa/network/q2/codecs/vanilla.h"
@@ -22,6 +25,26 @@ static int32_t load_i32(const uint8_t *bytes, size_t offset) {
   int32_t out;
   memcpy(&out, &v, sizeof out);
   return out;
+}
+
+bool qa_q2_demo_next(const uint8_t *bytes, size_t length, size_t *offset, qa_q2_demo_span *out) {
+  memset(out, 0, sizeof *out);
+  if (*offset >= length) return false;
+  if (*offset + 4 > length) qa_q2_throw_error("Truncated Q2 demo record header");
+  size_t start = *offset;
+  int32_t record_length = load_i32(bytes, start);
+  *offset += 4;
+  if (record_length == -1) {
+    *offset = length;
+    return false;
+  }
+  if (record_length < 0 || *offset + (size_t)record_length > length)
+    qa_q2_throw_error("Truncated Q2 demo packet");
+  out->offset = (double)start;
+  out->bytes = bytes + *offset;
+  out->length = (size_t)record_length;
+  *offset += (size_t)record_length;
+  return true;
 }
 
 bool qa_q2_read_demo(const uint8_t *bytes, size_t length, qa_q2_demo_record **out,
@@ -102,30 +125,60 @@ void qa_q2_demo_steps_free(qa_q2_demo_step *steps, size_t count) {
   }
 }
 
+typedef struct steps_held {
+  qa_q2_demo_step *steps;
+  size_t count;
+} steps_held;
+static void steps_release(void *arg) {
+  steps_held *held = (steps_held *)arg;
+  qa_q2_demo_steps_free(held->steps, held->count);
+  held->steps = NULL;
+  held->count = 0;
+}
+
+/* The TS generator interleaves framing and reading: each record reaches the stateful reader
+ * before the next is framed, so a damaged later record raises after the earlier ones were
+ * read. Steps collected so far are released when a raise leaves. */
 bool qa_q2_play_demo(const uint8_t *bytes, size_t length,
                      qa_q2_server_message_reader *reader, qa_q2_demo_step **out,
                      size_t *out_count) {
-  qa_q2_demo_record *records = NULL;
-  size_t record_count = 0;
-  if (!qa_q2_read_demo(bytes, length, &records, &record_count)) return false;
-  qa_q2_demo_step *steps =
-      (qa_q2_demo_step *)calloc(record_count > 0 ? record_count : 1, sizeof *steps);
-  if (steps == NULL) {
-    qa_q2_demo_records_free(records, record_count);
-    return false;
-  }
-  for (size_t i = 0; i < record_count; i++) {
-    if (!qa_q2_server_message_reader_read(reader, records[i].bytes,
-                                         records[i].bytes_length, &steps[i].records,
-                                         &steps[i].record_count)) {
-      qa_q2_demo_steps_free(steps, i);
-      qa_q2_demo_records_free(records, record_count);
+  *out = NULL;
+  *out_count = 0;
+  steps_held held = {NULL, 0};
+  size_t capacity = 0;
+  qa_cleanup node;
+  qa_cleanup_push(&node, steps_release, &held);
+  size_t cursor = 0;
+  qa_q2_demo_span record;
+  while (qa_q2_demo_next(bytes, length, &cursor, &record)) {
+    if (held.count == capacity) {
+      size_t next = capacity > 0 ? capacity * 2 : 16;
+      qa_q2_demo_step *grown = (qa_q2_demo_step *)realloc(held.steps, next * sizeof *grown);
+      if (grown == NULL) {
+        qa_cleanup_pop(&node);
+        steps_release(&held);
+        return false;
+      }
+      held.steps = grown;
+      capacity = next;
+    }
+    qa_q2_demo_step *step = &held.steps[held.count];
+    memset(step, 0, sizeof *step);
+    held.count++;
+    if (!qa_q2_server_message_reader_read(reader, record.bytes, record.length, &step->records,
+                                          &step->record_count)) {
+      qa_cleanup_pop(&node);
+      steps_release(&held);
       return false;
     }
   }
-  qa_q2_demo_records_free(records, record_count);
-  *out = steps;
-  *out_count = record_count;
+  qa_cleanup_pop(&node);
+  if (held.steps == NULL) {
+    held.steps = (qa_q2_demo_step *)calloc(1, sizeof *held.steps);
+    if (held.steps == NULL) return false;
+  }
+  *out = held.steps;
+  *out_count = held.count;
   return true;
 }
 
@@ -187,22 +240,35 @@ static void recorded_protocol(double version, qa_q2_sizebuf *message,
     out->version = 2023;
     return;
   }
-  qa_q2_throw_error("Unsupported recorded Q2 protocol %g", version);
+  qa_q2_throw_error("Unsupported recorded Q2 protocol %s", QA_JS_NUMBER(version));
 }
 
+typedef struct header_held {
+  qa_q2_wire_codec *wire;
+  bool wire_live;
+} header_held;
+static void header_release(void *arg) {
+  header_held *held = (header_held *)arg;
+  if (held->wire_live) qa_q2_wire_codec_destroy(held->wire);
+  held->wire_live = false;
+}
+
+/* Decode the recorded preamble without consuming or changing the replay input. Records are
+ * read lazily as the TS generator does: a damaged record after the serverdata is never read. */
 bool qa_q2_read_demo_header(const uint8_t *bytes, size_t length,
                             qa_q2_demo_header *out) {
-  qa_q2_demo_record *records = NULL;
-  size_t record_count = 0;
-  if (!qa_q2_read_demo(bytes, length, &records, &record_count)) return false;
-  for (size_t r = 0; r < record_count; r++) {
-    qa_q2_sizebuf message;
-    if (!qa_q2_message_create(&message, (int64_t)records[r].bytes_length)) {
-      qa_q2_demo_records_free(records, record_count);
-      return false;
-    }
-    qa_q2_message_load(&message, records[r].bytes, records[r].bytes_length);
-    bool free_records = true;
+  size_t cursor = 0;
+  qa_q2_demo_span record;
+  qa_q2_sizebuf message;
+  qa_q2_sizebuf_init_empty(&message);
+  qa_q2_wire_codec wire;
+  header_held held = {&wire, false};
+  qa_cleanup node;
+  qa_cleanup_push(&node, header_release, &held);
+  while (qa_q2_demo_next(bytes, length, &cursor, &record)) {
+    /* createMessage + loadMessage over the record: the reads never write, so the borrowed
+     * bytes are loaded directly and no buffer is owned. */
+    qa_q2_message_load(&message, (uint8_t *)(uintptr_t)record.bytes, record.length);
     while (message.readcount < message.cursize) {
       int32_t opcode = qa_q2_msg_read_byte(&message);
       switch (opcode) {
@@ -226,28 +292,19 @@ bool qa_q2_read_demo_header(const uint8_t *bytes, size_t length,
           int64_t body = message.readcount;
           qa_q2_protocol_identity protocol;
           recorded_protocol(recorded_version, &message, &protocol);
-          qa_q2_wire_codec wire;
-          if (!qa_q2_wire_codec_init(&wire, protocol)) {
-            qa_q2_message_destroy(&message);
-            qa_q2_demo_records_free(records, record_count);
-            return false;
-          }
-          if (!qa_q2_wire_codec_begin(&wire, records[r].bytes, records[r].bytes_length)) {
-            qa_q2_wire_codec_destroy(&wire);
-            qa_q2_message_destroy(&message);
-            qa_q2_demo_records_free(records, record_count);
+          bool ok = qa_q2_wire_codec_init(&wire, protocol);
+          held.wire_live = ok;
+          if (ok) ok = qa_q2_wire_codec_begin(&wire, record.bytes, record.length);
+          if (!ok) {
+            qa_cleanup_pop(&node);
+            header_release(&held);
             return false;
           }
           wire.message.readcount = body;
           qa_q2_server_data_result data;
           wire.selected_codec->read_server_data(wire.selected_codec, &data);
-          bool serverrecord = recorded_version == 34 &&
-                              (size_t)(body + 4) < records[r].bytes_length &&
-                              records[r].bytes[body + 4] == 2;
-          if (serverrecord) {
-            qa_q2_wire_codec_destroy(&wire);
-            qa_q2_message_destroy(&message);
-            qa_q2_demo_records_free(records, record_count);
+          if (recorded_version == 34 && (size_t)(body + 4) < record.length &&
+              record.bytes[body + 4] == 2) {
             qa_q2_throw_error(
                 "Native serverrecord footage has no player view; use the Q2 server-demo reader, not ordinary demo playback");
           }
@@ -255,22 +312,18 @@ bool qa_q2_read_demo_header(const uint8_t *bytes, size_t length,
           out->recorded_version = recorded_version;
           out->protocol = protocol;
           out->data = data;
-          qa_q2_wire_codec_destroy(&wire);
-          qa_q2_message_destroy(&message);
-          qa_q2_demo_records_free(records, record_count);
-          (void)free_records;
+          qa_cleanup_pop(&node);
+          header_release(&held);
           return true;
         }
         default:
-          qa_q2_message_destroy(&message);
-          qa_q2_demo_records_free(records, record_count);
           qa_q2_throw_error("Q2 demo preamble opcode %d requires serverdata first",
                             (int)opcode);
       }
       qa_q2_message_check_read(&message);
     }
-    qa_q2_message_destroy(&message);
   }
-  qa_q2_demo_records_free(records, record_count);
+  qa_cleanup_pop(&node);
+  header_release(&held);
   qa_q2_throw_error("Q2 demo has no serverdata");
 }

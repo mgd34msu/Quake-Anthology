@@ -22,12 +22,12 @@ typedef struct supertank_ctx {
 } supertank_ctx;
 
 static void gib(qa_q2m_context *c) {
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   q2rm_emit_effect(game, "q2:explosion1-big", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
-  if (entity->sound_text && strcmp(entity->sound_text, "") != 0)
-    q2rm_emit_loop(game, entity, entity->sound_text, 0, "stop");
-  entity->sound_text = "";
+  if (entity->sound && strcmp(entity->sound, "") != 0)
+    q2rm_emit_loop(game, entity, entity->sound, 0, "stop");
+  entity->sound = "";
   entity->skin = trunc(entity->skin / 2);
   qa_q2m_gib_options plain = {false, false, false, false};
   qa_q2m_gib_options metal = {false, true, false, false};
@@ -52,7 +52,7 @@ static void gib(qa_q2m_context *c) {
   c->state->gibbed = true;
 }
 static void init_impl(supertank_ctx *box, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   if (box->is_n64) {
     entity->spawnflags = q2rm_or(entity->spawnflags, 16);
     entity->count = 10;
@@ -73,19 +73,21 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   double range = qa_q2m_target_distance(c);
   qa_vec3 delta = qa_sub3_double(enemy.origin, q2rm_body(game, c->entity).origin);
-  bool chain = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 64));
-  bool rocket = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 70));
-  bool grenade = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE,
+  bool chain = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 64));
+  bool rocket = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 70));
+  bool grenade = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE,
       qa_q2rm_rereleaseFlash_value.SUPERTANK_GRENADE_1));
   if (chain && (!rocket || range <= 540 || q2rm_rnd(game) < 0.3)) {
     if (grenade && (range >= 350 || delta.z > 120 || q2rm_rnd(game) < 0.2)) {
       q2rm_set_move(c, "supertank_move_attack4");
       return;
     }
-    c->entity->timestamp = q2rm_now(game) + 1.5 + q2rm_rnd(game) * 1.2;
+    double left = q2rm_now(game) + 1.5;
+    double right = q2rm_rnd(game) * 1.2;
+    c->entity->timestamp = left + right;
     q2rm_set_move(c, "supertank_move_attack1");
     return;
   }
@@ -98,8 +100,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2
       ? q2rm_or(entity->skin, 1) : q2rm_and(entity->skin, ~1);
@@ -116,8 +118,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (q2rm_has(entity->spawnflags, 1 << 16)) {
     if (qa_q2rm_check_gib(c)) { gib(c); state->dead = true; return; }
@@ -156,7 +158,7 @@ static void machine_gun_fn(void *ctx, qa_q2m_context *c) {
   qa_body_state body = q2rm_body(c->game, c->entity);
   double id = 64 + c->entity->frame - qa_q2rm_supertank_frames_value.attak1_1;
   qa_vec3 angles = {0, body.angles.y, 0};
-  qa_vec3 start = qa_q2m_project_flash(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id), angles);
+  qa_vec3 start = qa_q2m_project_flash(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id), angles);
   qa_vec3 direction;
   if (!qa_q2rm_predicted_direction(c, start, 0, true, -0.1, &direction)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, start, direction, 6, 4, 900, 1500, 0);
@@ -168,7 +170,7 @@ static void rocket_fn(void *ctx, qa_q2m_context *c) {
   if (!qa_q2m_enemy_eye(c, &eye)) return;
   double id = c->entity->frame == qa_q2rm_supertank_frames_value.attak2_8 ? 70
       : c->entity->frame == qa_q2rm_supertank_frames_value.attak2_11 ? 71 : 72;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   bool heat = q2rm_has(c->entity->spawnflags, 8);
   qa_vec3 direction;
   if (heat) direction = qa_normalize3_double_hypot(qa_sub3_double(eye, start));
@@ -183,11 +185,11 @@ static void grenade_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   double id = entity->frame == qa_q2rm_supertank_frames_value.attak4_1
       ? qa_q2rm_rereleaseFlash_value.SUPERTANK_GRENADE_1 : qa_q2rm_rereleaseFlash_value.SUPERTANK_GRENADE_2;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   qa_q2rm_predicted_aim target;
   if (!qa_q2rm_predict_aim(c, start, 0, false, (q2rm_rnd(game) * 2 - 1) * 0.1, &target)) return;
   for (double speed = 500; speed < 1000; speed += 100) {
@@ -202,11 +204,11 @@ static void grenade_fn(void *ctx, qa_q2m_context *c) {
   }
 }
 
-size_t qa_q2rm_create_rerelease_supertank_definitions(qa_q2mpm_weapons weapons, bool is_n64,
+size_t qa_q2rm_create_rerelease_supertank_definitions(qa_q2mpm_arena *arena, qa_q2mpm_weapons weapons, bool is_n64,
                                                       qa_q2m_definition out[2]) {
-  supertank_ctx *box = malloc(sizeof *box);
-  qa_q2f_named_think *think_defs = malloc(sizeof *think_defs);
-  if (!box || !think_defs) qa_q2f_error("Out of memory creating rerelease supertank definitions");
+  supertank_ctx *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  qa_q2_named_think *think_defs = qa_q2mpm_arena_alloc(arena, sizeof *think_defs);
+  if (!box || !think_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease supertank definitions");
   box->weapons = weapons;
   box->is_n64 = is_n64;
   think_defs[0].name = "BossExplode_think";
@@ -234,7 +236,7 @@ size_t qa_q2rm_create_rerelease_supertank_definitions(qa_q2mpm_weapons weapons, 
   tank.attack = (qa_q2m_handler){NULL, attack_fn};
   tank.reactions.pain = pain_fn;
   tank.reactions.die = die_fn;
-  tank.callbacks = qa_q2rm_merge_callbacks(tank.callbacks, tank.callback_count,
+  tank.callbacks = qa_q2rm_merge_callbacks(arena, tank.callbacks, tank.callback_count,
                                            extra, sizeof extra / sizeof extra[0], &tank.callback_count);
   out[0] = tank;
   out[1] = tank;

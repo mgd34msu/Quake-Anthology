@@ -11,13 +11,12 @@
 
 /* TS plain `throw new Error(msg)`. */
 static noreturn void media_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static uint32_t checksum_table[256];
@@ -130,7 +129,7 @@ static int64_t read_i64_le(const uint8_t *bytes, size_t offset) {
 bool qa_decode_ogg_movie(const uint8_t *bytes, size_t length,
                          qa_ogg_movie *out) {
   memset(out, 0, sizeof *out);
-  if (length > (size_t)512 * 1024 * 1024) {
+  if (length > QA_MAX_OGG_MOVIE_BYTES) {
     qa_range_error("Ogg movie exceeds 512 MiB");
   }
   checksum_init();

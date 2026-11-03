@@ -88,7 +88,7 @@ bool qa_qvm_entity_token_syscall(const qa_qvm_host_call *call,
       call->code != QA_QVM_GAME_IMPORT_G_GET_ENTITY_TOKEN)
     return false;
   qa_qvm_entity_token_result result = services.entity_token(services.ctx);
-  qa_qvm_memory_write_string(call->guest, qa_qvm_host_call_word(call, 1), result.token,
+  qa_qvm_game_memory_write_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 1), result.token,
                              qa_qvm_host_call_word(call, 2));
   *out = (!result.ended || result.token[0] != '\0') ? 1 : 0;
   return true;

@@ -8,6 +8,7 @@
 #include "qa/content/q3/base/shared/items.h"
 #include "qa/content/q3/foundation/arsenal.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 static void display_name(const char *value, char *out, size_t out_size) {
   if (!out || out_size == 0) return;
@@ -129,7 +130,7 @@ qa_arsenal_ammo_warning qa_app_q3_arsenal_warning(const char *product, qa_app_it
     bool slow = weapon == QA_Q3_WP_ROCKET_LAUNCHER || weapon == QA_Q3_WP_GRENADE_LAUNCHER
         || weapon == QA_Q3_WP_RAILGUN || weapon == QA_Q3_WP_SHOTGUN
         || (!base && weapon == QA_Q3_WP_PROX_LAUNCHER);
-    int32_t amount = entry->ammo == NULL ? -1 : (int32_t)count(count_ctx, entry->ammo);
+    int32_t amount = entry->ammo == NULL ? -1 : qa_js_to_int32(count(count_ctx, entry->ammo));
     total = (int32_t)(total + amount * (slow ? 1000 : 200));
     if (total >= 5000) return "none";
   }

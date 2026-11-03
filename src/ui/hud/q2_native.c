@@ -125,8 +125,10 @@ char *qa_native_q2_hud_ops_dup(qa_native_q2_hud_operations *out,
 double qa_native_q2_hud_stat(const qa_native_q2_hud_frame *frame, double index,
                              const qa_native_q2_hud_arsenal *arsenal) {
   if (index < 0 || index >= (double)frame->stat_count) {
-    char *text = js_number(index);
-    qa_range_error("Q2 HUD stat %s is outside playerstate", text);
+    char buffer[64], *text = js_number(index);
+    (void)snprintf(buffer, sizeof buffer, "%s", text);
+    free(text); /* the raise is caught by the HUD (NativeQ2HudLayoutError) */
+        qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD stat %s is outside playerstate", buffer);
   }
   if (arsenal != NULL && arsenal->has_ammunition && index == 2)
     return arsenal->ammo_has_count ? 1 : 0;
@@ -141,6 +143,13 @@ static double raw_stat(const qa_native_q2_hud_frame *frame, size_t index) {
 }
 
 /* --- classic layout (SCR_ExecuteLayoutString) --- */
+
+static void tokenizer_release(void *ctx) { qa_tokenizer_destroy(ctx); }
+static void token_release(void *ctx) {
+  char **token = ctx;
+  free(*token);
+  *token = NULL;
+}
 
 typedef struct layout_parser {
   qa_tokenizer tokenizer;
@@ -250,8 +259,10 @@ static client_row client_info(classic_state *s, double index) {
   double max = qa_input_js_parse_number(max_text != NULL ? max_text : "256");
   double limit = max > 1 ? max : 1;
   if (index < 0 || index >= limit) {
-    char *text = js_number(index);
-    qa_range_error("Q2 HUD client %s is outside clientinfo", text);
+    char buffer[64], *text = js_number(index);
+    (void)snprintf(buffer, sizeof buffer, "%s", text);
+    free(text); /* the raise is caught by the HUD (NativeQ2HudLayoutError) */
+        qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD client %s is outside clientinfo", buffer);
   }
   const char *info =
       qa_native_q2_config_string_at(s->frame, s->config.player_skins + index);
@@ -287,7 +298,13 @@ static bool classic_layout(const char *source,
   if (!qa_tokenizer_init(&parser.tokenizer, source, strlen(source),
                          "Q2 HUD layout"))
     return false;
+  /* A layout or parse error is caught by the HUD; the tokenizer and the
+   * current token are released when it unwinds. */
+  qa_cleanup tokenizer_cleanup;
+  qa_cleanup_push(&tokenizer_cleanup, tokenizer_release, &parser.tokenizer);
   char *token = NULL;
+  qa_cleanup token_cleanup;
+  qa_cleanup_push(&token_cleanup, token_release, &token);
   while (parser_next_token(&parser, &token)) {
     if (strcmp(token, "xl") == 0) {
       s.x = parser_integer(&parser);
@@ -314,8 +331,10 @@ static bool classic_layout(const char *source,
       } else {
         double image = cstat(&s, index);
         if (image < 0 || image >= s.config.max_images) {
-          char *text = js_number(image);
-          qa_range_error("Q2 HUD image %s is outside configstrings", text);
+          char buffer[64], *text = js_number(image);
+          (void)snprintf(buffer, sizeof buffer, "%s", text);
+          free(text); /* the raise is caught by the HUD (NativeQ2HudLayoutError) */
+                    qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD image %s is outside configstrings", buffer);
         }
         op_picture(&s, qa_native_q2_config_string_at(frame, s.config.images + image));
       }
@@ -348,7 +367,7 @@ static bool classic_layout(const char *source,
     } else if (strcmp(token, "stat_string") == 0) {
       double index = cstat(&s, parser_integer(&parser));
       if (index < 0 || index >= s.config.max_config_strings)
-        qa_range_error("Q2 HUD stat_string is outside configstrings");
+        qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD stat_string is outside configstrings");
       op_text(&s, qa_native_q2_config_string_at(frame, index), false, s.x, s.y);
     } else if (strcmp(token, "string") == 0 || strcmp(token, "string2") == 0) {
       char *value = parser_next(&parser);
@@ -438,8 +457,43 @@ static bool classic_layout(const char *source,
     token = NULL;
     if (!s.ok) break;
   }
+  qa_cleanup_pop(&token_cleanup);
+  qa_cleanup_pop(&tokenizer_cleanup);
+  free(token);
   qa_tokenizer_destroy(&parser.tokenizer);
   return s.ok;
+}
+
+/* TS layoutOperations (both protocols). Appends to out. */
+typedef struct layout_call {
+  const char *source;
+  const qa_native_q2_hud_frame *frame;
+  double width, height;
+  const qa_native_q2_hud_arsenal *arsenal;
+  qa_native_q2_hud_environment *environment;
+  qa_native_q2_hud_operations *out;
+  bool ok;
+} layout_call;
+static void layout_call_run(void *ctx) {
+  layout_call *c = ctx;
+  if (qa_native_q2_is_rerelease(c->frame->protocol)) {
+    if (c->environment == NULL)
+      qa_raise("Error", 0, 0, "Rerelease HUD requires source localization and font services");
+    c->ok = qa_q2_rerelease_layout_into(c->source, c->frame, c->width, c->height, c->environment, c->arsenal, c->out);
+    return;
+  }
+  c->ok = classic_layout(c->source, c->frame, c->width, c->height, c->arsenal, c->out);
+}
+/* TS q2LayoutOperations: try { layoutOperations(...) } catch (error) { if (error instanceof TextParseError) throw new
+ * NativeQ2HudLayoutError(error.message); throw error; }. Appends to out. */
+static bool layout_into(const char *source, const qa_native_q2_hud_frame *frame, double width, double height,
+                        const qa_native_q2_hud_arsenal *arsenal, qa_native_q2_hud_environment *environment,
+                        qa_native_q2_hud_operations *out) {
+  layout_call call = { source, frame, width, height, arsenal, environment, out, false };
+  qa_caught_error caught;
+  if (qa_try(layout_call_run, &call, &caught)) return call.ok;
+  if (strcmp(caught.name, "TextParseError") == 0) qa_raise("NativeQ2HudLayoutError", 0, 0, "%s", caught.message);
+  qa_rethrow(&caught);
 }
 
 bool qa_q2_layout_operations(const char *source,
@@ -449,15 +503,10 @@ bool qa_q2_layout_operations(const char *source,
                              qa_native_q2_hud_environment *environment,
                              qa_native_q2_hud_operations *out) {
   memset(out, 0, sizeof *out);
-  if (qa_native_q2_is_rerelease(frame->protocol)) {
-    if (environment == NULL)
-      qa_range_error(
-          "Rerelease HUD requires source localization and font services");
-    return qa_q2_rerelease_layout_into(source, frame, width, height,
-                                       environment, arsenal, out);
-  }
-  return classic_layout(source, frame, width, height, arsenal, out);
+  return layout_into(source, frame, width, height, arsenal, environment, out);
 }
+
+static void table_release(void *ctx) { qa_native_q2_hud_table_destroy(ctx); }
 
 typedef struct inv_item {
   const char *name; /* borrowed; classic names borrow configstrings */
@@ -478,11 +527,13 @@ bool qa_q2_native_hud_operations(const qa_native_q2_hud_frame *frame,
   /* TS: a rerelease environment without a table gets a fresh empty
    * table shared by every layout call in this invocation. */
   qa_native_q2_hud_table fresh_table;
+  qa_cleanup table_cleanup; /* released when a layout error unwinds */
   qa_native_q2_hud_environment fresh_env;
   qa_native_q2_hud_environment *env = environment;
   bool fresh = false;
   if (rerelease && env != NULL && env->table == NULL) {
     qa_native_q2_hud_table_init(&fresh_table);
+    qa_cleanup_push(&table_cleanup, table_release, &fresh_table);
     fresh_env = *env;
     fresh_env.table = &fresh_table;
     env = &fresh_env;
@@ -492,40 +543,22 @@ bool qa_q2_native_hud_operations(const qa_native_q2_hud_frame *frame,
   double layouts = raw_stat(frame, 13);
   if (!overlay && !(rerelease && (to_int32(layouts) & 4) != 0)) {
     const char *status = qa_native_q2_config_string_at(frame, 5);
-    if (rerelease) {
-      if (env == NULL)
-        qa_range_error(
-            "Rerelease HUD requires source localization and font services");
-      ok = qa_q2_rerelease_layout_into(status, frame, width, height, env,
-                                       arsenal, out);
-    } else {
-      ok = classic_layout(status, frame, width, height, arsenal, out);
-    }
+    ok = layout_into(status, frame, width, height, arsenal, env, out);
   }
-  if (ok && (to_int32(layouts) & 1) != 0) {
-    if (rerelease) {
-      if (env == NULL)
-        qa_range_error(
-            "Rerelease HUD requires source localization and font services");
-      ok = qa_q2_rerelease_layout_into(frame->layout, frame, width, height,
-                                       env, arsenal, out);
-    } else {
-      ok = classic_layout(frame->layout, frame, width, height, arsenal, out);
-    }
-  }
+  if (ok && (to_int32(layouts) & 1) != 0)
+    ok = layout_into(frame->layout, frame, width, height, arsenal, env, out);
   if (!ok || overlay || (to_int32(layouts) & 2) == 0) {
-    if (fresh) qa_native_q2_hud_table_destroy(&fresh_table);
+    if (fresh) { qa_cleanup_pop(&table_cleanup); qa_native_q2_hud_table_destroy(&fresh_table); }
     return ok;
   }
   if (rerelease) {
     if (env == NULL)
-      qa_range_error(
-          "Rerelease HUD requires source localization and font services");
+      qa_raise("Error", 0, 0, "Rerelease HUD requires source localization and font services");
     ok = qa_q2_rerelease_inventory_into(
         frame, width, height, env,
         arsenal != NULL && arsenal->has_inventory ? &arsenal->inventory : NULL,
         out);
-    if (fresh) qa_native_q2_hud_table_destroy(&fresh_table);
+    if (fresh) { qa_cleanup_pop(&table_cleanup); qa_native_q2_hud_table_destroy(&fresh_table); }
     return ok;
   }
   qa_ui_hud_q2_app_layout config =
@@ -646,6 +679,6 @@ bool qa_q2_native_hud_operations(const qa_native_q2_hud_frame *frame,
     }
   }
   free(items);
-  if (fresh) qa_native_q2_hud_table_destroy(&fresh_table);
+  if (fresh) { qa_cleanup_pop(&table_cleanup); qa_native_q2_hud_table_destroy(&fresh_table); }
   return ok;
 }

@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/q1-client-settings.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q1_client_settings.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 struct qa_app_q1_view_commands {
   qa_command_buffer *commands;
   const char *names[4];
@@ -21,8 +23,8 @@ static void size_handler(void *v, qa_command_invocation *command) {
   if (qa_command_buffer_find_cvar(ctx->commands, "viewsize", &command->source, &size)) {
     char text[64];
     double next = size.numeric_value + ctx->step;
-    if (next == (double)(long long)next) snprintf(text, sizeof text, "viewsize %lld\n", (long long)next);
-    else snprintf(text, sizeof text, "viewsize %g\n", next);
+    if ((fabs(next) < 9.2e18 && next == trunc(next))) snprintf(text, sizeof text, "viewsize %s\n", QA_JS_NUMBER(next));
+    else snprintf(text, sizeof text, "viewsize %s\n", QA_JS_NUMBER(next));
     qa_cvar_read_free(&size);
     qa_command_invocation_insert(command, text);
   }
@@ -114,18 +116,17 @@ void qa_app_q1_view_commands_release(qa_app_q1_view_commands *registration) {
 }
 static char *validate_number(void *ctx, const char *value) {
   (void)ctx;
+  /* value.trim() !== "" && Number.isFinite(Number(value)); strtod missed "0b1" and "0o7". */
   const char *start = value;
-  while (*start != '\0' && isspace((unsigned char)*start)) start++;
-  size_t len = strlen(start);
-  while (len > 0 && isspace((unsigned char)start[len - 1])) len--;
-  if (len == 0) {
+  size_t space;
+  while ((space = qa_js_white_space_length(start)) != 0) start += space;
+  if (*start == '\0') {
     char *message = malloc(26);
     if (message != NULL) memcpy(message, "Expected a finite number", 25);
     return message;
   }
-  char *end = NULL;
-  double number = strtod(start, &end);
-  if (end != start + len || !isfinite(number)) {
+  double number = qa_js_string_to_number(value);
+  if (!isfinite(number)) {
     char *message = malloc(26);
     if (message != NULL) memcpy(message, "Expected a finite number", 25);
     return message;
@@ -181,7 +182,7 @@ bool qa_app_read_q1_view_settings(qa_cvar_registry *cvars, qa_command_dialect pr
   double size = numeric < 30 ? 30 : numeric > 120 ? 120 : numeric;
   if (size != numeric) {
     char text[32];
-    snprintf(text, sizeof text, "%lld", (long long)size);
+    snprintf(text, sizeof text, "%s", QA_JS_NUMBER(size));
     qa_cvar_snapshot snap;
     if (qa_cvar_registry_set(cvars, "viewsize", text, false, &snap)) qa_cvar_read_free(&snap);
   }
@@ -221,7 +222,9 @@ qa_scene_camera qa_app_q1_chase_camera(qa_scene_camera camera, qa_vec3 angles,
   query.shape.kind = "box";
   query.shape.bounds.min.x = -4; query.shape.bounds.min.y = -4; query.shape.bounds.min.z = -4;
   query.shape.bounds.max.x = 4; query.shape.bounds.max.y = 4; query.shape.bounds.max.z = 4;
+  query.policy.derived = true; /* the rear trace alone: policy { ..., derived: true } */
   qa_trace_result rear = scene->trace(scene->ctx, query);
+  query.policy.derived = false;
   qa_vec3 origin = rear.start_solid || rear.all_solid ? camera.origin : rear.end;
   qa_vec3 far = {
       math->store(math->ctx, math->add(math->ctx, camera.origin.x, math->multiply(math->ctx, forward.x, 4096))),

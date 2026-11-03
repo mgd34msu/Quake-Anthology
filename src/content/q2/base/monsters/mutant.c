@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/monsters/mutant.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/monsters/mutant.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -22,37 +23,30 @@ static void hit(qa_q2m_context *c, bool right) {
                                             : "mutant/mutatck1.wav",
              true, 1, false, 0, false, 0);
 }
-static void jump_touch_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *services, qa_touch_contact contact) {
+static void jump_touch_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *services, qa_touch_contact contact) {
   qa_q2m_context *context = qa_q2m_monsters_context(ctx, self->actor.id);
-  if (context == NULL) qa_q2f_error("Mutant jump has no source continuation");
+  if (context == NULL) qa_raise("Error", 0, 0, "Mutant jump has no source continuation");
   if (qa_q2m_health(services, &self->actor.id) <= 0) {
-    self->touch = (qa_q2f_touch){NULL, NULL};
+    self->touch = (qa_q2_touch){NULL, NULL};
     return;
   }
   qa_body_state current = services->body(services->ctx, self->actor);
-  qa_combat_state_result other = services->host->combat.read(services->host->combat.ctx, contact.other);
+  qa_combat_state_result other = qa_gameplay_authority_read(services->host->combat, contact.other);
   bool can_take_damage = other.has_value && other.value.can_take_damage;
   if (can_take_damage && qa_hypot3(current.velocity) > 400) {
     qa_vec3 normal = qa_normalize3_double_hypot(current.velocity);
     qa_vec3 point = qa_add3_double(current.origin, qa_scale3_double(normal, current.bounds.max.x));
     double damage = trunc(40 + 10 * q2bm_rnd(services));
-    qa_q2f_damage_args args;
-    memset(&args, 0, sizeof args);
-    args.target = contact.other; args.inflictor_entity = self; args.inflictor_actor = self->actor.id;
-    args.attacker = &self->actor.id;
-    args.amount = damage; args.knockback = damage;
-    args.direction = current.velocity; args.point = point; args.normal = normal;
-    args.means_of_death = 0; args.has_flags = false; args.weapon = NULL;
-    (void)services->damage(services->ctx, args);
+    (void)services->damage(services->ctx, contact.other, self, self->actor.id, &self->actor.id, damage, damage, current.velocity, point, normal, 0, 0, NULL);
   }
   if (!qa_q2m_check_bottom(context, services->body(services->ctx, self->actor).origin)) {
     if (services->body(services->ctx, self->actor).ground != NULL) {
       context->state->next_frame = qa_q2bm_mutant_frames_value.attack02;
-      self->touch = (qa_q2f_touch){NULL, NULL};
+      self->touch = (qa_q2_touch){NULL, NULL};
     }
     return;
   }
-  self->touch = (qa_q2f_touch){NULL, NULL};
+  self->touch = (qa_q2_touch){NULL, NULL};
 }
 static const qa_q2bm_sound_spec sight_spec = {"mutant/mutsght1.wav", 2, 1};
 static const qa_q2bm_sound_spec search_spec = {"mutant/mutsrch1.wav", 2, 1};
@@ -105,7 +99,7 @@ static void step_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   double n = fmod(floor(q2bm_rnd(c->game) * 3) + 1, 3);
   char path[64];
-  snprintf(path, sizeof path, "mutant/step%g.wav", n + 1);
+  snprintf(path, sizeof path, "mutant/step%s.wav", QA_JS_NUMBER(n + 1));
   q2bm_sound(c->game, c->entity, path, true, 2, false, 0, false, 0);
 }
 static void hit_left_fn(void *ctx, qa_q2m_context *c) { (void)ctx; hit(c, false); }
@@ -117,23 +111,23 @@ static void check_refire_fn(void *ctx, qa_q2m_context *c) {
     c->state->next_frame = qa_q2bm_mutant_frames_value.attack09;
 }
 static void jump_takeoff_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state body = q2bm_body(game, entity);
   qa_vec3 forward = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).forward;
   q2bm_sound(game, entity, "mutant/mutsght1.wav", true, 2, false, 0, false, 0);
   qa_vec3 velocity = qa_scale3_double(forward, 600);
   velocity.z = 250;
   qa_vec3 origin = body.origin; origin.z = body.origin.z + 1;
-  qa_q2f_body_changes changes;
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_origin = true; changes.origin = origin;
   changes.has_velocity = true; changes.velocity = velocity;
-  changes.has_ground = true; changes.ground = NULL;
+  changes.has_ground = true; changes.ground_null = true;
   q2bm_move_body(game, entity, changes, false, false);
   c->state->ducked = true;
   c->state->attack_finished = q2bm_now(game) + 3;
-  entity->touch = (qa_q2f_touch){ctx, jump_touch_fn};
+  entity->touch = (qa_q2_touch){ctx, jump_touch_fn};
 }
 static void check_landing_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -149,7 +143,7 @@ static void check_landing_fn(void *ctx, qa_q2m_context *c) {
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2bm_finish_corpse(c);
-  qa_q2m_fly_check(c);
+  qa_q2m_fly_check(c, true);
 }
 void qa_q2bm_create_mutant_definition_source(qa_q2bm_mutant_definition *out, qa_q2m_monsters *monsters,
                                              const char *source) {
@@ -171,7 +165,7 @@ void qa_q2bm_create_mutant_definition_source(qa_q2bm_mutant_definition *out, qa_
   };
   memcpy(out->callbacks, callbacks, sizeof callbacks);
   out->touch_defs[0].name = touch_name;
-  out->touch_defs[0].cb = (qa_q2f_touch){monsters, jump_touch_fn};
+  out->touch_defs[0].cb = (qa_q2_touch){monsters, jump_touch_fn};
   qa_q2m_definition d = {
     .classname = "monster_mutant", .kind = "mutant", .model = "models/monsters/mutant/tris.md2",
     .health = 300, .gib_health = -120, .mass = 300, .bounds = {{-32, -32, -24}, {32, 32, 48}}, .scale = 1,

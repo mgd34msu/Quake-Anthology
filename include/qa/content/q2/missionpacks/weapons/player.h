@@ -22,5 +22,5 @@ typedef struct qa_q2mp_weapons {
 
 void qa_q2mp_weapons_init(qa_q2mp_weapons *weapons, qa_q2mp_projectiles *projectiles);
 /* TS register(weapons, pack, edition = "classic"). */
-void qa_q2mp_weapons_register(qa_q2mp_weapons *weapons, qa_q2w_weapons *target, qa_q2mp_pack pack, qa_q2f_edition edition);
+void qa_q2mp_weapons_register(qa_q2mp_weapons *weapons, qa_q2w_weapons *target, qa_q2mp_pack pack, qa_q2_edition edition);
 #endif

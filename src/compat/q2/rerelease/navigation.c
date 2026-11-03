@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 struct qa_compat_q2_rerelease_navigation_imports {
   qa_compat_q2_memory *memory; qa_compat_q2_rerelease_navigation_services services;
@@ -64,11 +65,11 @@ qa_guest_call_result qa_compat_q2_rerelease_navigation_imports_invoke(qa_compat_
   size_t points_written = result.point_count < (size_t)point_count ? result.point_count : (size_t)point_count;
   if (has_buffer) for (size_t i = 0; i < points_written; i++)
     write_vector(memory, qa_compat_q2_mem_offset(memory, buffer, (int64_t)(i * 12)), result.points[i]);
-  qa_compat_q2_mem_write_i32(memory, output, (int32_t)points_written);
+  qa_compat_q2_mem_write_i32(memory, output, qa_js_to_int32(points_written));
   qa_compat_q2_mem_write_f32(memory, qa_compat_q2_mem_offset(memory, output, 4), result.distance_squared);
   write_vector(memory, qa_compat_q2_mem_offset(memory, output, 8), result.first);
   write_vector(memory, qa_compat_q2_mem_offset(memory, output, 20), result.second);
-  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, output, 32), (int32_t)result.link_type);
-  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, output, 36), (int32_t)result.code);
+  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, output, 32), qa_js_to_int32(result.link_type));
+  qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, output, 36), qa_js_to_int32(result.code));
   return qa_compat_q2_call_uint32(result.code < 5 ? 1 : 0);
 }

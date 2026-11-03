@@ -3,7 +3,8 @@
  * Scene headers join when that slice lands. GPL-2.0-or-later. */
 #ifndef QA_RENDER_H
 #define QA_RENDER_H
-#include "qa/render/commands/index.h"
+#include "qa/render/commands/frame.h"
+#include "qa/render/commands/material2d.h"
 #include "qa/render/cpu/index.h"
 #include "qa/render/debug_graph.h"
 #include "qa/render/execution.h"

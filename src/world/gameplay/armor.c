@@ -1,15 +1,16 @@
 /* Port of src/world/gameplay/armor.ts. GPL-2.0-or-later. */
 #include "qa/world/gameplay/armor.h"
 
+#include "qa/foundation/support.h"
 #include <math.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -43,14 +44,14 @@ qa_armor_result qa_absorb_native_armor(qa_armor_state armor, double damage,
       (!str_eq(powered.kind, "screen") || context.screen_facing_dot > facing_limit)) {
     double damage_per_cell = str_eq(powered.kind, "screen") || (context.has_q2 && context.q2_ctf) ? 1 : 2;
     double divided_damage = trunc(str_eq(powered.kind, "screen") ? damage / 3 : (2 * damage) / 3);
-    double protected_damage = rerelease ? fmax(1, divided_damage) : divided_damage;
+    double protected_damage = rerelease ? qa_js_max(1, divided_damage) : divided_damage;
     bool doubled_cost = rerelease ? flags.energy : flags.no_regular_armor;
     double base_available = powered.cells * damage_per_cell;
     double divided_available = doubled_cost ? trunc(base_available / 2) : base_available;
-    double available = rerelease ? fmax(1, divided_available) : divided_available;
-    power_saved = fmin(available, protected_damage);
+    double available = rerelease ? qa_js_max(1, divided_available) : divided_available;
+    power_saved = qa_js_min(available, protected_damage);
     double used = trunc(power_saved / damage_per_cell) * (doubled_cost ? 2 : 1);
-    powered.cells = rerelease ? fmax(0, powered.cells - fmax(damage_per_cell, used))
+    powered.cells = rerelease ? qa_js_max(0, powered.cells - qa_js_max(damage_per_cell, used))
                               : powered.cells - used;
   }
   qa_regular_armor_state regular = armor.regular;
@@ -66,7 +67,7 @@ qa_armor_result qa_absorb_native_armor(qa_armor_state armor, double damage,
                                 : regular.absorption * protection_scale;
         double product = binary32 ? fround_of(fround_of(inner) * fround_of(damage - power_saved))
                                   : inner * (damage - power_saved);
-        regular_saved = fmin(regular.points, ceil(product));
+        regular_saved = qa_js_min(regular.points, ceil(product));
         double points_before = regular.points;
         regular.points -= regular_saved;
         regular.absorption = regular_saved >= points_before ? 0 : regular.absorption;
@@ -78,14 +79,14 @@ qa_armor_result qa_absorb_native_armor(qa_armor_state armor, double damage,
                                 : protection * protection_scale;
         double product = binary32 ? fround_of(fround_of(inner) * fround_of(damage - power_saved))
                                   : inner * (damage - power_saved);
-        regular_saved = fmin(regular.points, ceil(product));
+        regular_saved = qa_js_min(regular.points, ceil(product));
         regular.points -= regular_saved;
         break;
       }
       case QA_REGULAR_ARMOR_Q3: {
         double product = fround_of(fround_of(damage - power_saved) *
                                    fround_of(fround_of(regular.protection) * fround_of(protection_scale)));
-        regular_saved = fmin(regular.points, ceil(product));
+        regular_saved = qa_js_min(regular.points, ceil(product));
         regular.points -= regular_saved;
         break;
       }
@@ -101,8 +102,8 @@ qa_armor_result qa_absorb_native_armor(qa_armor_state armor, double damage,
 qa_attack_damage_flags qa_attack_damage_flags_of(qa_damage_request request) {
   qa_attack_cause cause = request.attack.cause;
   /* TS bitwise ops coerce to int32. */
-  int32_t q2 = cause.kind == QA_ATTACK_CAUSE_Q2 ? (int32_t)cause.damage_flags : 0;
-  int32_t q3 = cause.kind == QA_ATTACK_CAUSE_Q3 ? (int32_t)cause.damage_flags : 0;
+  int32_t q2 = cause.kind == QA_ATTACK_CAUSE_Q2 ? qa_js_to_int32(cause.damage_flags) : 0;
+  int32_t q3 = cause.kind == QA_ATTACK_CAUSE_Q3 ? qa_js_to_int32(cause.damage_flags) : 0;
   qa_attack_damage_flags result;
   memset(&result, 0, sizeof result);
   result.flags.no_armor = ((q2 | q3) & 2) != 0 ||

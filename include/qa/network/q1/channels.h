@@ -19,7 +19,7 @@ typedef struct qa_channel_delivery {
 } qa_channel_delivery;
 typedef struct qa_netquake_channel {
   qa_stop_and_wait reliable; double max_message_bytes;
-  uint32_t unreliable_send, unreliable_receive;
+  double unreliable_send, unreliable_receive; /* TS numbers: never wrap at 2^32 */
 } qa_netquake_channel;
 int qa_netquake_channel_init(qa_netquake_channel *c, double max_message_bytes, double fragment_bytes);
 void qa_netquake_channel_destroy(qa_netquake_channel *c);
@@ -51,14 +51,4 @@ uint8_t *qa_quakeworld_channel_transmit(qa_quakeworld_channel *c, const uint8_t 
 int qa_quakeworld_channel_receive(qa_quakeworld_channel *c, const uint8_t *bytes, size_t length, double now_ms,
                                   qa_quakeworld_delivery *out);
 
-/* QuakePeer: kind 0 = NetQuake, 1 = QuakeWorld. Transport borrowed. */
-typedef struct qa_quake_peer {
-  qa_datagram_transport transport; qa_net_address remote;
-  int kind; qa_netquake_channel *nq; qa_quakeworld_channel *qw;
-} qa_quake_peer;
-bool qa_quake_peer_send(qa_quake_peer *p, const uint8_t *bytes, size_t length);
-int qa_quake_peer_receive_nq(qa_quake_peer *p, const qa_net_address *from, const uint8_t *bytes, size_t length,
-                             double now_ms, qa_channel_delivery *out);
-int qa_quake_peer_receive_qw(qa_quake_peer *p, const qa_net_address *from, const uint8_t *bytes, size_t length,
-                             double now_ms, qa_quakeworld_delivery *out);
 #endif

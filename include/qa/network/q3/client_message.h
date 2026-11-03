@@ -1,6 +1,8 @@
 /* Port of src/network/q3/client-message.ts (CL_WritePacket / SV_UserMove).
- * GPL-2.0-or-later. InvalidClientOpcodeError/InvalidClientCommandCountError
- * abort via qa_binary_error with the TS message. */
+ * GPL-2.0-or-later. InvalidClientOpcodeError and InvalidClientCommandCountError
+ * (BinaryError subclasses) raise through qa_raise under their own names with the
+ * TS BinaryError message; caught.code carries the opcode or count, caught.detail
+ * the offset. Reader phase misuse raises "Error" as TS `new Error`. */
 #ifndef QA_NETWORK_Q3_CLIENT_MESSAGE_H
 #define QA_NETWORK_Q3_CLIENT_MESSAGE_H
 #include <stdbool.h>
@@ -10,6 +12,8 @@
 #include "qa/network/q3/reliable.h"
 typedef enum qa_q3_client_opcode { QA_Q3_CLC_NOP = 1, QA_Q3_CLC_MOVE = 2, QA_Q3_CLC_MOVE_NO_DELTA = 3, QA_Q3_CLC_COMMAND = 4, QA_Q3_CLC_EOF = 5 } qa_q3_client_opcode;
 #define QA_Q3_MAX_PACKET_USER_COMMANDS 32
+#define QA_Q3_INVALID_CLIENT_OPCODE_ERROR "InvalidClientOpcodeError"
+#define QA_Q3_INVALID_CLIENT_COMMAND_COUNT_ERROR "InvalidClientCommandCountError"
 typedef struct qa_q3_client_header { int64_t server_id, message_acknowledge, reliable_acknowledge; } qa_q3_client_header;
 typedef enum qa_q3_client_movement_kind { QA_Q3_MOVE, QA_Q3_MOVE_NO_DELTA } qa_q3_client_movement_kind;
 typedef struct qa_q3_client_movement {

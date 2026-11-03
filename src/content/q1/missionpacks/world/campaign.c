@@ -1,140 +1,191 @@
-/* Port of src/content/q1/missionpacks/world/campaign.ts.
- * q1Base(game) is game->q1_base (see types.h). Errors use
- * qa_range_error with the exact TS Error text. GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/campaign.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/campaign.h"
 #include "../missionpacks_internal.h"
+#include "qa/content/q1/base/provider.h"
+#include "qa/content/q1/base/rules.h"
 #include "qa/content/q1/missionpacks/world/common.h"
 #include "qa/content/q1/missionpacks/world/finale_text.h"
 #include "qa/content/q1/missionpacks/world/index.h"
-#include "qa/foundation/support.h"
-#include <stdlib.h>
 
-typedef struct camp_ctx { qa_q1mp_game *game; qa_q1mp_pack pack; qa_q1mp_world_hooks hooks; } camp_ctx;
-void qa_q1mp_start_finale_timer(qa_q1mp_game *game) {
-  if (qa_q1mp_streq(game->base->options.edition, "classic")) return;
-  qa_q1mp_world_later(game, game->base->create(game->base, "mission_finale_timer"), 1, "mission:finale_check");
+static void emit_server_command(qa_q1_services *game, const char *text) {
+  qa_q1_event event = {0};
+  event.kind = "server-command"; event.text = text;
+  qa_q1_emit(game, event);
 }
-static void end_text(camp_ctx *c, qa_q1b_game *g) {
-  qa_q1mp_q1base *base = c->game->q1_base;
-  if (!g->has_intermission && base && base->begin_cutscene) base->begin_cutscene(base->ctx, g->map_name, QA_Q1MP_NONE, g->time);
-  qa_q1mp_source_finale result = {0};
-  if (base && base->advance_finale) result = base->advance_finale(base->ctx, g->time);
-  if (qa_q1mp_streq(result.kind, "finale") || qa_q1mp_streq(result.kind, "sell-screen")) {
-    if (!c->hooks.present_finale) qa_range_error("Hipnotic end text requires the shared finale journal");
-    c->hooks.present_finale(c->hooks.ctx, &result);
+static void emit_achievement(qa_q1_services *game, const char *id) {
+  qa_q1_event event = {0};
+  event.kind = "achievement"; event.id = id;
+  qa_q1_emit(game, event);
+}
+/* TS base.options.officialCampaign !== false / registered !== false. */
+static bool official_campaign(qa_q1_base *base) {
+  const qa_q1_base_options *options = qa_q1_base_options_of(base);
+  return !(options->has_official_campaign && !options->official_campaign);
+}
+static bool registered(qa_q1_base *base) {
+  const qa_q1_base_options *options = qa_q1_base_options_of(base);
+  return !(options->has_registered && !options->registered);
+}
+void qa_q1mp_start_finale_timer(qa_q1_services *game) {
+  if (qa_q1mp_streq(game->options.edition, "classic")) return;
+  qa_q1mp_world_later(game, qa_q1_create(game, "mission_finale_timer", NULL, NULL), 1, "mission:finale_check");
+}
+static void finale_transition(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  (void)ctx;
+  if (g->options.coop) qa_q1_travel(g, "start", NULL);
+  else { emit_server_command(g, "menu_credits\n"); emit_server_command(g, "disconnect\n"); }
+  qa_q1_remove(g, e);
+}
+static void finale_check(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  qa_q1_base *base = ctx;
+  const bool finished = qa_q1_base_has_finished_finale(base);
+  qa_q1mp_world_later(g, e, finished ? 5 : 0.1, finished ? "mission:finale_transition" : "mission:finale_check");
+}
+static int finale(qa_q1_services *game, const char *key, double track, qa_q1_intermission_result *out) {
+  memset(out, 0, sizeof *out);
+  out->kind = "finale";
+  (void)snprintf(out->text, sizeof out->text, "%s", qa_q1mp_mission_finale_text(game->options.edition, key));
+  out->track = track;
+  return 1;
+}
+static int rogue_finale(void *ctx, double stage, const char *next_map, qa_q1_intermission_result *out) {
+  (void)next_map;
+  qa_q1_services *game = ctx;
+  qa_q1_base *base = qa_q1_base_for(game);
+  const char *map = game->map_name;
+  if (stage == 2 && qa_q1mp_streq(map, "r1m7")) return finale(game, "$qc_finale_r1", 3, out);
+  if (stage == 2 && qa_q1mp_streq(map, "r2m8") && game->options.coop && qa_q1mp_streq(game->options.edition, "rerelease")) {
+    emit_server_command(game, "menu_credits\ndisconnect\n");
+    qa_q1_level_rules_defer_exit(qa_q1_base_level_rules(base), game->time + 10000000);
+    memset(out, 0, sizeof *out);
+    out->kind = "finale"; out->track = 3;
+    return 1;
   }
+  return 0;
 }
-static void finale_transition(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  camp_ctx *c = vctx;
-  if (g->options.coop) { if (g->travel) g->travel(g, "start", QA_Q1MP_NONE); }
-  else if (c->game->emit_server_command) { c->game->emit_server_command(c->game->ctx, "menu_credits\n"); c->game->emit_server_command(c->game->ctx, "disconnect\n"); }
-  g->remove(g, e);
-}
-static void finale_check(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  camp_ctx *c = vctx; qa_q1mp_q1base *base = c->game->q1_base;
-  bool finished = base && base->has_finished_finale && base->has_finished_finale(base->ctx);
-  qa_q1mp_world_later(c->game, e, finished ? 5 : 0.1, finished ? "mission:finale_transition" : "mission:finale_check");
-  (void)g;
-}
-static qa_q1mp_source_finale finale_of(qa_q1mp_game *game, const char *key, double track) {
-  qa_q1mp_source_finale f = {0}; f.has = true; f.kind = "finale"; f.track = track;
-  f.text = qa_q1mp_mission_finale_text(game->base->options.edition, key); return f;
-}
-static qa_q1mp_source_finale rule_finale(void *vctx, double stage) {
-  camp_ctx *c = vctx; qa_q1mp_game *game = c->game; qa_q1b_game *g = game->base; qa_q1mp_q1base *base = game->q1_base;
-  qa_q1mp_source_finale none = {0}; const char *map = g->map_name;
-  if (qa_q1mp_streq(c->pack, "rogue")) {
-    if (stage == 2 && qa_q1mp_streq(map, "r1m7")) return finale_of(game, "$qc_finale_r1", 3);
-    if (stage == 2 && qa_q1mp_streq(map, "r2m8") && g->options.coop && qa_q1mp_streq(g->options.edition, "rerelease")) {
-      if (game->emit_server_command) game->emit_server_command(game->ctx, "menu_credits\ndisconnect\n");
-      if (base && base->defer_exit) base->defer_exit(base->ctx, g->time + 10000000);
-      qa_q1mp_source_finale f = {0}; f.has = true; f.kind = "finale"; f.text = ""; f.track = 3; return f;
-    }
-    return none;
-  }
+static int hipnotic_finale(void *ctx, double stage, const char *next_map, qa_q1_intermission_result *out) {
+  (void)next_map;
+  qa_q1_services *game = ctx;
+  qa_q1_base *base = qa_q1_base_for(game);
+  const char *map = game->map_name;
   if (stage == 2) {
-    if (qa_q1mp_streq(map, "hip1m4")) return finale_of(game, "$qc_finale_hip1", 6);
-    if (qa_q1mp_streq(map, "hip2m5")) return finale_of(game, "$qc_finale_hip2", 6);
+    if (qa_q1mp_streq(map, "hip1m4")) return finale(game, "$qc_finale_hip1", 6, out);
+    if (qa_q1mp_streq(map, "hip2m5")) return finale(game, "$qc_finale_hip2", 6, out);
     if (qa_q1mp_streq(map, "hipend")) {
-      bool official = !base || !base->has_official_campaign || base->official_campaign;
-      if (qa_q1mp_streq(g->options.edition, "rerelease") && official && game->emit_achievement) {
-        game->emit_achievement(game->ctx, QA_Q1MP_NONE, "ACH_COMPLETE_HIPEND");
-        if (g->options.skill == 3) game->emit_achievement(game->ctx, QA_Q1MP_NONE, "ACH_COMPLETE_HIPEND_NIGHTMARE");
+      if (qa_q1mp_streq(game->options.edition, "rerelease") && official_campaign(base)) {
+        emit_achievement(game, "ACH_COMPLETE_HIPEND");
+        if (qa_q1_option_skill(game) == 3) emit_achievement(game, "ACH_COMPLETE_HIPEND_NIGHTMARE");
       }
-      return finale_of(game, "$qc_finale_hipend", 2);
+      return finale(game, "$qc_finale_hipend", 2, out);
     }
   }
-  bool registered = !base || !base->has_registered || base->registered;
-  double flags = base && base->campaign_read_flags ? base->campaign_read_flags(base->ctx) : 0;
-  if (stage == 3 && registered && (((int)flags & 15) != 15)) {
-    if (qa_q1mp_streq(map, "hip1m4")) return finale_of(game, "$qc_finale_hip1m4", 6);
-    if (qa_q1mp_streq(map, "hip2m5")) return finale_of(game, "$qc_finale_hip2m5", 6);
-    if (qa_q1mp_streq(map, "hipend")) { if (base && base->defer_exit) base->defer_exit(base->ctx, g->time + 10000000); qa_q1mp_start_finale_timer(game); return finale_of(game, "$qc_finale_hipend2", 2); }
+  if (stage == 3 && registered(base)) {
+    const qa_q1_campaign_binding campaign = qa_q1_base_campaign(base);
+    if ((qa_js_to_int32(campaign.read_flags(campaign.ctx)) & 15) != 15) {
+      if (qa_q1mp_streq(map, "hip1m4")) return finale(game, "$qc_finale_hip1m4", 6, out);
+      if (qa_q1mp_streq(map, "hip2m5")) return finale(game, "$qc_finale_hip2m5", 6, out);
+      if (qa_q1mp_streq(map, "hipend")) {
+        qa_q1_level_rules_defer_exit(qa_q1_base_level_rules(base), game->time + 10000000);
+        qa_q1mp_start_finale_timer(game);
+        return finale(game, "$qc_finale_hipend2", 2, out);
+      }
+    }
   }
-  return none;
+  return 0;
 }
-static void start_end_text_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { (void)e; end_text(vctx, g); }
-static void start_end_text_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)e; (void)o; (void)a; end_text(vctx, g); }
-static void effect_finale_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) {
-  (void)o; (void)a; camp_ctx *c = vctx; qa_q1mp_game *game = c->game;
-  if (qa_q1mp_number(e, "finale_state") == 1) return;
+static void end_text(const qa_q1mp_world_hooks *hooks, qa_q1_services *g) {
+  qa_q1_level_rules *rules = qa_q1_base_level_rules(qa_q1_base_for(g));
+  if (!g->has_intermission) qa_q1_level_rules_begin_cutscene(rules, g->map_name, NULL, g->time);
+  const qa_q1_intermission_result result = qa_q1_level_rules_advance_finale(rules, g->time);
+  if (qa_q1mp_streq(result.kind, "finale") || qa_q1mp_streq(result.kind, "sell-screen")) {
+    if (hooks == NULL || hooks->present_finale == NULL) qa_range_error("Hipnotic end text requires the shared finale journal");
+    hooks->present_finale(hooks->ctx, &result);
+  }
+}
+static void end_text_action(void *ctx, qa_q1_services *g, qa_q1_actor *e) { (void)e; end_text(ctx, g); }
+static void end_text_use(void *ctx, qa_q1_services *g, qa_q1_actor *e, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)e; (void)other; (void)activator; end_text(ctx, g);
+}
+static void effect_finale_use(void *ctx, qa_q1_services *g, qa_q1_actor *e, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)other; (void)activator;
+  const qa_q1mp_world_hooks *hooks = ctx;
+  if (qa_q1_actor_number(e, "finale_state") == 1) return;
   qa_q1mp_world_number(e, "finale_state", 1);
-  qa_q1mp_actor *point = qa_q1mp_find0(game, e->target);
-  if (!point) qa_range_error("no target in finale");
-  if (game->emit_finale) game->emit_finale(game->ctx, "", 1);
-  if ((e->spawnflags & 2) == 0) {
-    qa_q1mp_actor *target = qa_q1mp_find0(game, qa_q1mp_text(e, "mdl"));
-    if (!target) qa_range_error("Hipnotic finale decoy path is missing");
-    qa_actor_id players[16]; size_t np = g->host->players(g->host->ctx, players, 16);
-    qa_q1b_body pb; qa_vec3 origin = QA_Q1MP_V3(0,0,0);
-    if ((e->spawnflags & 1) != 0 && np > 0 && qa_q1mp_body_read(game, players[0], &pb)) origin = pb.origin;
-    else origin = g->body(g, target).origin;
-    if (!c->hooks.become_decoy) qa_range_error("Hipnotic finale requires the source decoy controller");
-    (void)c->hooks.become_decoy(c->hooks.ctx, target->target, origin);
+  qa_q1_actor *point = qa_q1mp_find_first(g, e->target);
+  if (point == NULL) qa_range_error("no target in finale");
+  qa_q1_event event = {0};
+  event.kind = "finale"; event.text = ""; event.stage = 1;
+  qa_q1_emit(g, event);
+  if ((qa_js_to_int32(e->spawnflags) & 2) == 0) {
+    qa_q1_actor *target = qa_q1mp_find_first(g, qa_q1_actor_text(e, "mdl"));
+    if (target == NULL) qa_range_error("Hipnotic finale decoy path is missing");
+    size_t count = 0;
+    const qa_actor_id *players = g->host.players(g->host.ctx, &count);
+    qa_vec3 origin;
+    if ((qa_js_to_int32(e->spawnflags) & 1) != 0 && count != 0) {
+      const qa_body_state_result body = qa_shared_body_table_read(g->host.bodies, players[0]);
+      origin = body.has_value ? body.value.origin : QA_Q1_ZERO;
+    } else origin = qa_q1_get_body(g, target).origin;
+    if (hooks == NULL || hooks->become_decoy == NULL) qa_range_error("Hipnotic finale requires the source decoy controller");
+    (void)hooks->become_decoy(hooks->ctx, target->target, origin);
   }
-  qa_actor_id players[16]; size_t np = g->host->players(g->host->ctx, players, 16);
-  for (size_t i = 0; i < np; i++) if (game->control_player) game->control_player(game->ctx, players[i], "cutscene", g->body(g, point).origin, point->mangle, QA_Q1MP_ZERO);
-  const char *callback = qa_q1mp_text(e, "spawnfunction");
-  if (callback && callback[0]) { qa_q1b_fields_set(e, "hip:finale_callback", callback); qa_q1mp_world_later(game, e, e->wait, "hip:finale_callback"); }
+  size_t count = 0;
+  const qa_actor_id *listed = g->host.players(g->host.ctx, &count);
+  qa_actor_id *players = malloc((count != 0 ? count : 1) * sizeof *players);
+  if (players == NULL) qa_range_error("Out of memory");
+  if (count != 0) memcpy(players, listed, count * sizeof *players);
+  for (size_t i = 0; i < count; i++) qa_q1_control_player(g, players[i], qa_q1_get_body(g, point).origin, point->mangle, QA_Q1_ZERO);
+  free(players);
+  const char *callback = qa_q1_actor_text(e, "spawnfunction");
+  if (callback[0] != '\0') {
+    qa_q1mp_field_text(e, "hip:finale_callback", callback);
+    qa_q1mp_world_later(g, e, e->wait, "hip:finale_callback");
+  }
 }
-static void finale_callback(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  camp_ctx *c = vctx; const char *callback = qa_q1mp_text(e, "hip:finale_callback");
-  if (qa_q1mp_streq(callback, "info_startendtext_use")) { end_text(c, g); return; }
-  if (qa_q1mp_streq(callback, "SUB_UseTargets")) { g->use_targets(g, e, e->activator); return; }
-  if (qa_q1mp_streq(callback, "SUB_Remove")) { g->remove(g, e); return; }
+static void finale_callback(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  const char *callback = qa_q1_actor_text(e, "hip:finale_callback");
+  if (qa_q1mp_streq(callback, "info_startendtext_use")) { end_text(ctx, g); return; }
+  if (qa_q1mp_streq(callback, "SUB_UseTargets")) { qa_q1_use_targets(g, e, e->has_activator ? &e->activator : NULL); return; }
+  if (qa_q1mp_streq(callback, "SUB_Remove")) { qa_q1_remove(g, e); return; }
   if (qa_q1mp_streq(callback, "SUB_Null")) return;
-  char previous[64]; (void)snprintf(previous, sizeof previous, "%s", e->classname);
-  qa_q1mp_set_classname(e, callback); g->spawn_entity(g, e);
-  if (g->entity(g, QA_Q1MP_SOME(e->actor.id))) qa_q1mp_set_classname(e, previous);
+  /* Quake map function fields also name spawn routines. */
+  char *previous = e->classname;
+  e->classname = NULL;
+  qa_q1mp_set_string(&e->classname, callback);
+  const qa_actor_id id = e->actor.id;
+  qa_q1_spawn_entity(g, e);
+  if (qa_q1_get_entity(g, &id) != NULL) { free(e->classname); e->classname = previous; }
+  else free(previous);
 }
-static void effect_finale_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  (void)vctx;
-  if (g->options.deathmatch != 0) { g->remove(g, e); return; }
-  qa_q1b_body_patch p = {0}; p.has_angles = true; p.angles = e->mangle; g->set_body(g, e, &p);
+static void effect_finale_spawn(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  (void)ctx;
+  if (g->options.deathmatch != 0) { qa_q1_remove(g, e); return; }
+  qa_q1_body_patch patch = {0};
+  patch.has_angles = true; patch.angles = e->mangle;
+  qa_q1_set_body(g, e, &patch);
   qa_q1mp_world_number(e, "finale_state", 0);
-  e->use = g->named.use(g->named.ctx, e, "hip:effect_finale");
+  e->use = qa_q1_callback_registry_use(g->named, e, "hip:effect_finale");
 }
-static void startendtext_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { (void)vctx; e->use = g->named.use(g->named.ctx, e, "hip:start_end_text"); }
-void qa_q1mp_register_mission_campaign(qa_q1mp_game *game, qa_q1mp_pack pack, const qa_q1mp_world_hooks *hooks) {
-  camp_ctx *c = malloc(sizeof *c); c->game = game; c->pack = pack;
-  if (hooks) c->hooks = *hooks; else memset(&c->hooks, 0, sizeof c->hooks);
-  qa_q1b_game *g = game->base;
-  qa_q1b_handlers h = {0}; h.ctx = c; h.action = finale_transition;
-  g->named.register_named(g->named.ctx, "mission:finale_transition", &h);
-  qa_q1b_handlers h2 = {0}; h2.ctx = c; h2.action = finale_check;
-  g->named.register_named(g->named.ctx, "mission:finale_check", &h2);
-  if (game->q1_base && game->q1_base->register_intermission_rule) {
-    static char idbuf[64]; (void)snprintf(idbuf, sizeof idbuf, "q1:%s:campaign", pack);
-    qa_q1mp_intermission_rule rule = {idbuf, c, rule_finale};
-    game->q1_base->register_intermission_rule(game->q1_base->ctx, &rule);
-  }
+static void start_end_text_spawn(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  (void)ctx;
+  e->use = qa_q1_callback_registry_use(g->named, e, "hip:start_end_text");
+}
+void qa_q1mp_register_mission_campaign(qa_q1_services *game, qa_q1mp_pack pack, const qa_q1mp_world_hooks *hooks) {
+  qa_q1_base *base = qa_q1_base_for(game);
+  void *hook_ctx = (void *)hooks; /* borrowed for the life of the world (TS closure) */
+  qa_q1_callback_registry_register(game->named, "mission:finale_transition", (qa_q1_callback_handlers){.action = finale_transition});
+  qa_q1_callback_registry_register(game->named, "mission:finale_check", (qa_q1_callback_handlers){.ctx = base, .action = finale_check});
+  const bool rogue = qa_q1mp_streq(pack, "rogue");
+  qa_q1_intermission_rule rule = {0};
+  rule.id = rogue ? "q1:rogue:campaign" : "q1:hipnotic:campaign";
+  rule.ctx = game;
+  rule.finale = rogue ? rogue_finale : hipnotic_finale;
+  qa_q1_level_rules_register_rule(qa_q1_base_level_rules(base), rule);
   if (!qa_q1mp_streq(pack, "hipnotic")) return;
-  qa_q1b_handlers h3 = {0}; h3.ctx = c; h3.action = start_end_text_cb; h3.use = start_end_text_use;
-  g->named.register_named(g->named.ctx, "hip:start_end_text", &h3);
-  qa_q1b_handlers h4 = {0}; h4.ctx = c; h4.use = effect_finale_use;
-  g->named.register_named(g->named.ctx, "hip:effect_finale", &h4);
-  qa_q1b_handlers h5 = {0}; h5.ctx = c; h5.action = finale_callback;
-  g->named.register_named(g->named.ctx, "hip:finale_callback", &h5);
-  g->register_spawn(g, "effect_finale", effect_finale_spawn, c);
-  g->register_spawn(g, "info_startendtext", startendtext_spawn, c);
+  qa_q1_callback_registry_register(game->named, "hip:start_end_text",
+                                   (qa_q1_callback_handlers){.ctx = hook_ctx, .action = end_text_action, .use = end_text_use});
+  qa_q1_callback_registry_register(game->named, "hip:effect_finale", (qa_q1_callback_handlers){.ctx = hook_ctx, .use = effect_finale_use});
+  qa_q1_callback_registry_register(game->named, "hip:finale_callback", (qa_q1_callback_handlers){.ctx = hook_ctx, .action = finale_callback});
+  qa_q1_register_spawn(game, "effect_finale", effect_finale_spawn, NULL);
+  qa_q1_register_spawn(game, "info_startendtext", start_end_text_spawn, NULL);
 }

@@ -2,6 +2,7 @@
 #include "qa/content/q2/multiplayer/lmctf/flags.h"
 #include "../multiplayer_internal.h"
 #include "qa/content/q2/multiplayer/ctf/types.h" /* CTF_FLAGS, otherCtfTeam */
+#include "qa/foundation/js.h"
 
 static const qa_bounds FLAG_BOUNDS = {{-15, -15, -15}, {15, 15, 33}};
 
@@ -18,7 +19,7 @@ struct qa_lmctf_flags {
 static void properties(qa_lmctf_flags *f, qa_q2_entity *flag, qa_q2_game_services *g);
 static bool pickup_impl(qa_lmctf_flags *f, qa_q2_entity *flag, qa_q2_game_services *g, qa_actor_id actor);
 static qa_lmctf_playing_team flag_team_of(qa_q2_entity *flag) {
-  if (flag->count != 1 && flag->count != 2) qa_q2f_error("LMCTF flag has no source team");
+  if (flag->count != 1 && flag->count != 2) qa_raise("Error", 0, 0, "LMCTF flag has no source team");
   return flag->count;
 }
 
@@ -120,7 +121,7 @@ void qa_lmctf_flags_restore(qa_lmctf_flags *f, qa_q2_game_services *g, qa_lmctf_
   for (size_t i = 0; i < saved.flag_count; i++) {
     qa_owned_actor owned;
     if (!qa_session_actor_registry_resolve_saved(g->host->actors, saved.flags[i].actor, &owned))
-      qa_q2f_error("Saved LMCTF flag is absent");
+      qa_raise("Error", 0, 0, "Saved LMCTF flag is absent");
     f->has_flag[(int)saved.flags[i].team] = true;
     f->flag_actors[(int)saved.flags[i].team] = owned.id;
   }
@@ -183,7 +184,7 @@ void qa_lmctf_flags_reset(qa_lmctf_flags *f, qa_q2_entity *flag, const qa_actor_
   }
   qa_q2_entity *entity = player == NULL ? NULL : qa_q2_game_entity_of(g, player);
   if (entity != NULL) {
-    entity->effects = (double)((int64_t)entity->effects & ~0x100);
+    entity->effects = (double)(qa_js_to_int32(entity->effects) & ~0x100);
     entity->model3 = "";
     qa_shared_inventory_table_consume(g->host->inventory, entity->actor, "q2:flag",
                                       qa_q2mp_inv_count(g, entity->actor.id, "q2:flag"));
@@ -243,7 +244,7 @@ static qa_q2_entity *first_named(qa_q2_game_services *g, const char *classname) 
 
 static void spawn_flag(qa_lmctf_flags *f, qa_lmctf_playing_team team, qa_q2_game_services *g) {
   if (qa_lmctf_flags_flag(f, team, g) != NULL || g->options.mode != QA_Q2_MODE_DEATHMATCH ||
-      ((int64_t)f->context->rules->ctf_flags & 256) != 0) return;
+      (qa_js_to_int32(f->context->rules->ctf_flags) & 256) != 0) return;
   const char *classname = team == 1 ? "info_flag_red" : "info_flag_blue";
   qa_q2_entity *spot = first_named(g, classname);
   if (spot == NULL) {
@@ -253,8 +254,8 @@ static void spawn_flag(qa_lmctf_flags *f, qa_lmctf_playing_team team, qa_q2_game
     if (spot == NULL) spot = first_named(g, team == 1 ? "info_player_start" : "target_changelevel");
     if (spot == NULL) return;
     spot->classname = classname;
-    spot->effects = (double)((int64_t)spot->effects | 0x100);
-    spot->render_flags = (double)((int64_t)spot->render_flags | (team == 1 ? 1024 : 4096));
+    spot->effects = (double)(qa_js_to_int32(spot->effects) | 0x100);
+    spot->render_flags = (double)(qa_js_to_int32(spot->render_flags) | (team == 1 ? 1024 : 4096));
     g->show(g->ctx, spot);
   }
   qa_q2_entity *flag = g->create(g->ctx, "flag", NULL, 0);
@@ -326,7 +327,9 @@ void qa_lmctf_flags_drop(qa_lmctf_flags *f, qa_q2_entity *player, qa_q2_game_ser
   flag->timestamp = qa_q2mp_now(g);
   qa_lmctf_stat(f->context, player->actor.id, "flag-lost", 1);
   qa_lmctf_score(f->context, g, player->actor.id, 0, "FC LostFlag", NULL);
-  qa_lmctf_print(g, NULL, "%s lost the %s flag.\n", qa_lmctf_name(f->context, player->actor.id), flag_team_of(flag) == 1 ? "red" : "blue");
+  const char * value2 = qa_lmctf_name(f->context, player->actor.id);
+  char * value3 = flag_team_of(flag) == 1 ? "red" : "blue";
+  qa_lmctf_print(g, NULL, "%s lost the %s flag.\n", value2, value3);
 }
 
 static void capture_flag(qa_lmctf_flags *f, qa_q2_entity *home, qa_q2_game_services *g, qa_q2_entity *player, qa_lmctf_playing_team team) {
@@ -376,7 +379,7 @@ static void capture_flag(qa_lmctf_flags *f, qa_q2_entity *home, qa_q2_game_servi
   qa_lmctf_score(f->context, g, player->actor.id, 5, "F Capture", NULL);
   qa_lmctf_stat(f->context, player->actor.id, "captures", 1);
   double bonus = 10;
-  if (((int64_t)f->context->rules->ctf_flags & 512) != 0) {
+  if ((qa_js_to_int32(f->context->rules->ctf_flags) & 512) != 0) {
     double allies = 1, enemies = 1;
     for (size_t i = 0; i < f->context->state_count; i++) {
       qa_actor_id actor = f->context->states[i].actor;
@@ -436,9 +439,9 @@ static bool pickup_impl(qa_lmctf_flags *f, qa_q2_entity *flag, qa_q2_game_servic
     }
     return false;
   }
-  if (((int64_t)f->context->rules->ref_flags & (int64_t)team) != 0) return false;
-  player->effects = (double)((int64_t)player->effects | 0x100);
-  player->render_flags = (double)((int64_t)player->render_flags | (team == 2 ? 1024 : 4096));
+  if ((qa_js_to_int32(f->context->rules->ref_flags) & qa_js_to_int32(team)) != 0) return false;
+  player->effects = (double)(qa_js_to_int32(player->effects) | 0x100);
+  player->render_flags = (double)(qa_js_to_int32(player->render_flags) | (team == 2 ? 1024 : 4096));
   char own[512], other[512];
   snprintf(own, sizeof own, "%s stole your flag!\n", name);
   snprintf(other, sizeof other, "%s stole the %s flag.\n", name, color);

@@ -1,7 +1,8 @@
 /*
  * Port of src/formats/q12-model/animation.ts. C accommodations: the TS
- * WeakMap caches are dropped — every call builds fresh owned storage
- * with identical values (object identity is not preserved). The TS
+ * topology WeakMaps are dropped — geometry builds fresh owned storage with
+ * identical values; the interpolation PoseLru is kept
+ * (qa_interpolate_alias_frames_cached). The TS
  * generic sampleTimedFrame/mapMd2Geometry become void* element /
  * callback forms. GPL-2.0-or-later.
  */
@@ -23,6 +24,16 @@ const qa_q1_alias_frame *qa_q1_sample_alias_frame(const qa_q1_alias_frame_set *f
 qa_model_vertex *qa_interpolate_alias_frames(const qa_model_frame *current, const qa_model_frame *previous,
                                              double back_lerp, qa_vec3 previous_origin_delta,
                                              size_t *out_count);
+/* TS interpolateAliasFrames with its module PoseLru(256): a repeated
+ * (current, previous, lerp, delta) returns the same borrowed array, valid
+ * until 256 newer poses evict it. A frame that is freed must first be passed
+ * to qa_alias_interpolation_forget (the TS WeakMap id dies with the frame). */
+const qa_model_vertex *qa_interpolate_alias_frames_cached(const qa_model_frame *current,
+                                                          const qa_model_frame *previous, double back_lerp,
+                                                          qa_vec3 previous_origin_delta, size_t *out_count);
+void qa_alias_interpolation_forget(const qa_model_frame *frame);
+size_t qa_alias_interpolation_cache_size(void);
+void qa_alias_interpolation_cache_clear(void);
 
 typedef struct qa_alias_mesh_vertex {
   qa_model_vertex vertex;

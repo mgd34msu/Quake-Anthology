@@ -1,6 +1,7 @@
 /* Port of src/content/q2/missionpacks/monsters/rogue-soldier.ts.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/monsters/rogue_soldier.h"
+#include "qa/foundation/js.h"
 
 #include <stdlib.h>
 
@@ -11,6 +12,7 @@
 #include "qa/content/q2/foundation/monsters/soldier.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_soldier.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
 
 typedef struct soldier_bundle {
   qa_q2m_monsters *monsters;
@@ -25,13 +27,13 @@ static void run_move(qa_q2m_context *c) {
 }
 static void run_fn(void *ctx, qa_q2m_context *c) { (void)ctx; run_move(c); }
 static void stand_move(qa_q2m_context *c) {
-  if (((uint32_t)c->entity->spawnflags & 8u) != 0) q2mpm_set_move(c, "soldier_move_blind");
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 8u) != 0) q2mpm_set_move(c, "soldier_move_blind");
   else qa_q2m_soldier_stand_handler(NULL, c);
 }
 static void stand_fn(void *ctx, qa_q2m_context *c) { (void)ctx; stand_move(c); }
 static void fire_at(qa_q2m_context *c, double input) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_body_state enemy_body;
   if (!qa_q2m_enemy_body(c, &enemy_body)) { state->hold_frame = false; return; }
@@ -41,6 +43,8 @@ static void fire_at(qa_q2m_context *c, double input) {
   qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(game->options.edition, flash));
   qa_vec3 aim = qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward;
   if (index != 5 && index != 6) {
+    qa_vec3 a;
+    qa_vec3 b;
     qa_vec3 eye;
     if (!qa_q2m_enemy_eye(c, &eye)) return;
     qa_vec3 direction = qa_sub3_double(eye, start);
@@ -49,8 +53,8 @@ static void fire_at(qa_q2m_context *c, double input) {
         qa_vector_to_angles_with_rule(direction, QA_VECTOR_TO_ANGLES_NATIVE_AI), QA_ANGLE_RULE_NATIVE);
     double spread = game->options.skill < 2 ? 1000 : 500;
     aim = qa_normalize3_double_hypot(qa_add3_double(qa_scale3_double(axes.forward, 8192),
-        qa_add3_double(qa_scale3_double(axes.right, (q2mpm_rnd(game) * 2 - 1) * spread),
-                       qa_scale3_double(axes.up, (q2mpm_rnd(game) * 2 - 1) * spread * 0.5))));
+        (a = qa_scale3_double(axes.right, (q2mpm_rnd(game) * 2 - 1) * spread), b = qa_scale3_double(axes.up, (q2mpm_rnd(game) * 2 - 1) * spread * 0.5), qa_add3_double(a,
+                       b))));
     qa_trace_result trace = q2mpm_trace(game, start, eye, NULL, &entity->actor.id, 0x6000003);
     if (trace.hit.kind == QA_TRACE_HIT_ACTOR && (!entity->has_enemy || !qa_same_actor(trace.hit.actor, entity->enemy)))
       return;
@@ -60,12 +64,14 @@ static void fire_at(qa_q2m_context *c, double input) {
   } else if (entity->skin <= 3) {
     c->weapons.fire_shotgun(c->weapons.ctx, entity, game, start, aim, 2, 1, 1000, 500, 12, 0);
   } else {
+    double left;
+    double right2;
     if (!state->hold_frame)
-      entity->wait = q2mpm_now(game) + (3 + (double)((uint32_t)floor(q2mpm_rnd(game) * 0x8000) % 8u)) * 0.1;
+      entity->wait = (left = q2mpm_now(game), right2 = (3 + (double)((uint32_t)floor(q2mpm_rnd(game) * 0x8000) % 8u)) * 0.1, left + right2);
     c->weapons.fire_bullet(c->weapons.ctx, entity, game, start, aim, 2, 4, 300, 500, 0);
     state->hold_frame = q2mpm_now(game) < entity->wait;
   }
-  qa_q2mpm_monster_flash(c, flash, start, aim);
+  qa_q2rm_monster_flash(c, flash, start, aim);
 }
 static void duck_move(qa_q2m_context *c, double eta) {
   qa_q2mpm_rogue_duck_down(c);
@@ -82,8 +88,8 @@ static void sidestep_move(qa_q2m_context *c) {
 }
 static void sidestep_fn(void *ctx, qa_q2m_context *c) { (void)ctx; sidestep_move(c); }
 static void refire_move(qa_q2m_context *c, bool first, bool blaster) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   const qa_q2mpm_rogue_soldier_frames *f = &qa_q2mpm_rogue_soldier_frames_value;
   if (first && blaster && state->manual_steering) { state->manual_steering = false; return; }
@@ -95,9 +101,9 @@ static void refire_move(qa_q2m_context *c, bool first, bool blaster) {
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   soldier_bundle *bundle = ctx;
   qa_q2m_finish_dodge(c);
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   if (state->attack_state == QA_Q2M_ATTACK_BLIND) {
     double chance = state->blind_fire_delay < 1 ? 1 : state->blind_fire_delay < 7.5 ? 0.4 : 0.1;
     double random = q2mpm_rnd(game);
@@ -106,7 +112,9 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
     if ((target.x == 0 && target.y == 0 && target.z == 0) || random > chance) return;
     state->manual_steering = true;
     q2mpm_set_move(c, "soldier_move_attack1");
-    state->attack_finished = q2mpm_now(game) + 1.5 + q2mpm_rnd(game);
+    double left = q2mpm_now(game) + 1.5;
+    double right = q2mpm_rnd(game);
+    state->attack_finished = left + right;
     return;
   }
   double random = q2mpm_rnd(game);
@@ -127,8 +135,8 @@ static void sight_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2) entity->skin = q2mpm_or(entity->skin, 1);
   qa_q2m_finish_dodge(c);
@@ -145,7 +153,7 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
     return;
   }
   state->pain_time = q2mpm_now(game) + 3;
-  int32_t skin = (int32_t)entity->skin | 1;
+  int32_t skin = qa_js_to_int32(entity->skin) | 1;
   q2mpm_snd(c, skin == 1 ? "soldier/solpain2.wav" : skin == 3 ? "soldier/solpain1.wav" : "soldier/solpain3.wav", 2);
   if (airborne) {
     if (state->ducked) qa_q2mpm_rogue_duck_up(c);
@@ -170,7 +178,7 @@ static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   soldier_bundle *bundle = ctx;
   return !c->state->dodging && !c->state->ducked
       && (qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)
-          || qa_q2mpm_blocked_check_platform(c, distance));
+          || qa_q2rm_blocked_check_platform(c, distance));
 }
 static void done_dodge_fn(void *ctx, qa_q2m_context *c) { (void)ctx; qa_q2m_finish_dodge(c); }
 static void stop_charge_fn(void *ctx, qa_q2m_context *c) { (void)ctx; c->state->charging = false; }
@@ -209,10 +217,10 @@ static void dead2_fn(void *ctx, qa_q2m_context *c) {
   else qa_q2bm_finish_corpse_bounds(c, bounds);
 }
 
-size_t qa_q2mpm_create_rogue_soldier_definitions(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_soldier_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                                  qa_q2mpm_monster_state *source) {
-  soldier_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue soldier definitions");
+  soldier_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue soldier definitions");
   bundle->monsters = monsters;
   bundle->source = source;
   const qa_q2m_named_handler extra[] = {
@@ -239,7 +247,7 @@ size_t qa_q2mpm_create_rogue_soldier_definitions(qa_q2m_definition *out, qa_q2m_
     {"soldier_dead2", {NULL, dead2_fn}},
   };
   size_t callback_count = 0;
-  qa_q2m_named_handler *callbacks = qa_q2mpm_merge_callbacks(qa_q2m_soldier_callbacks, qa_q2m_soldier_callback_count,
+  qa_q2m_named_handler *callbacks = qa_q2mpm_merge_callbacks(arena, qa_q2m_soldier_callbacks, qa_q2m_soldier_callback_count,
                                                              extra, sizeof extra / sizeof extra[0], &callback_count);
   static const char *const classnames[3] = {"monster_soldier_light", "monster_soldier", "monster_soldier_ss"};
   static const double healths[3] = {20, 30, 40};

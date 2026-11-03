@@ -3,6 +3,7 @@
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/content/q2/rerelease/players.h"
 #include "rr_internal.h"
+#include "qa/foundation/support.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -122,9 +123,12 @@ void qa_q2_enter_rerelease_level(qa_q2_game_services *g, qa_q2_rerelease_players
     const char *dollar = strchr(dest, '$');
     size_t len = dollar ? (size_t)(dollar - dest) : strlen(dest);
     if (len == 0) continue;
-    char buf[512]; if (len >= sizeof buf) len = sizeof buf - 1;
+    char *buf = malloc(len + 1);
+    if (!buf) qa_range_error("Out of memory");
     memcpy(buf, dest, len); buf[len] = '\0';
-    if (!add_level(c, buf)) { rr_diag(g, "More than 8 maps in unit; cannot track remaining levels"); return; }
+    bool added = add_level(c, buf) != NULL;
+    free(buf);
+    if (!added) { rr_diag(g, "More than 8 maps in unit; cannot track remaining levels"); return; }
   }
 }
 void qa_q2_update_rerelease_level(qa_q2_game_services *g, qa_q2_rerelease_campaign_state *c) {
@@ -137,10 +141,6 @@ void qa_q2_update_rerelease_level(qa_q2_game_services *g, qa_q2_rerelease_campai
 static double order_of(const qa_q2_rerelease_level_entry *e) {
   return e->visit_order != 0 ? e->visit_order : (strcmp(e->name, "") == 0 ? 10 : 9);
 }
-static int cmp_entry(const void *a, const void *b) {
-  double d = order_of(a) - order_of(b);
-  return d < 0 ? -1 : d > 0 ? 1 : 0;
-}
 qa_q2_rerelease_level_entry *qa_q2_rerelease_unit_report(const qa_q2_rerelease_campaign_state *c, size_t *n) {
   *n = c->level_count;
   if (!c->level_count) return NULL;
@@ -151,7 +151,14 @@ qa_q2_rerelease_level_entry *qa_q2_rerelease_unit_report(const qa_q2_rerelease_c
     out[i].map = qa_q2rr_dup(c->levels[i].map);
     out[i].name = qa_q2rr_dup(c->levels[i].name);
   }
-  qsort(out, c->level_count, sizeof *out, cmp_entry);
+  /* TS Array.sort is stable: equal orders keep unit insertion order. */
+  for (size_t i = 1; i < c->level_count; i++) {
+    qa_q2_rerelease_level_entry key = out[i];
+    double order = order_of(&key);
+    size_t j = i;
+    while (j > 0 && order_of(&out[j - 1]) - order > 0) { out[j] = out[j - 1]; j--; }
+    out[j] = key;
+  }
   return out;
 }
 void qa_q2_rerelease_unit_report_free(qa_q2_rerelease_level_entry *e, size_t n) {

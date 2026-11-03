@@ -1,12 +1,25 @@
 /* Port of src/world/collision/body.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/body.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 #include "qa/world/collision/contents.h"
 #include "qa/world/collision/q1/hull.h"
 #include "qa/world/collision/q3/model.h"
 #include "qa/world/collision/q3/world.h"
+#include <stdint.h>
 #include <string.h>
 static qa_vec3 Z3(void){qa_vec3 z={0,0,0};return z;}
+/* Plane identities (qa_trace_result.plane_identity) of the shared TS
+ * normal objects: body.ts AXIS_NORMALS[k] (the hull() box planes share
+ * one normal per axis), body.ts `zero`, and hull.ts `zero` (the initial
+ * plane of traceQ1Hull). */
+static const char axis_normal_identity[3] = {0, 0, 0};
+static const char body_zero_identity = 0;
+static const char hull_zero_identity = 0;
+static uintptr_t box_hull_plane_identity(int plane_index){
+  if(plane_index>=0)return (uintptr_t)&axis_normal_identity[plane_index/2];
+  return plane_index==-2?(uintptr_t)&hull_zero_identity:0;
+}
 static void make_hull(qa_bounds bounds,qa_bsp_plane planes[6],qa_q1_clip_node nodes[6],qa_q1_hull*out){
   planes[0]=(qa_bsp_plane){{{1,0,0},bounds.max.x},0,0};
   planes[1]=(qa_bsp_plane){{{1,0,0},bounds.min.x},0,0};
@@ -53,20 +66,23 @@ static qa_trace_result trace_q2_box(qa_trace_query query,qa_spatial_actor actor)
     if(d1>0&&(d2>=0.03125||d2>=d1)){misses=1;break;}
     if(d1<=0&&d2<=0)continue;
     if(d1>d2){
-      double f=BNDIV(BNSUB(d1,0.03125),BNSUB(d1,d2)); if(f<0)f=0;
+      /* body.ts keeps the raw fraction under stored leaf contents and clamps once a side is chosen. */
+      int stored=query.policy.kind&&strcmp(query.policy.kind,"q2")==0&&query.policy.leaf_contents&&strcmp(query.policy.leaf_contents,"stored")==0;
+      double raw=BNDIV(BNSUB(d1,0.03125),BNSUB(d1,d2));
+      double f=stored?raw:qa_js_max(0,raw);
       qa_vec3 normal={axis==0?sign:0,axis==1?sign:0,axis==2?sign:0};
       qa_bsp_plane sp={{normal,dist},sign<0?planes[idx].type+3:planes[idx].type,sign<0?(double)(1<<(int)planes[idx].type):0};
       if(f>enter){enter=f;plane=sp;}
       else if(f>enter2){enter2=f;secondary=sp;has_secondary=1;}
     }else{
-      double f=BNDIV(BNADD(d1,0.03125),BNSUB(d1,d2)); if(f>1)f=1; if(f<leave)leave=f;
+      leave=qa_js_min(leave,qa_js_min(1,BNDIV(BNADD(d1,0.03125),BNSUB(d1,d2))));
     }
   }
   (void)hull;
   int start_solid=!misses&&!start_out;
   int all_solid=start_solid&&!get_out;
   int merged=query.policy.kind&&strcmp(query.policy.kind,"q2")==0&&query.policy.leaf_contents&&strcmp(query.policy.leaf_contents,"merged")==0;
-  double fraction=misses?1:(all_solid&&(stationary||merged))?0:start_solid?1:(enter<leave&&enter>=0)?enter:1;
+  double fraction=misses?1:(all_solid&&(stationary||merged))?0:start_solid?1:(enter<leave&&enter>-1)?qa_js_max(0,enter):1;
   double contents=fraction<1?qa_actor_contents(actor.collision,"q2"):0;
   qa_bsp_plane selected=(misses||start_solid||fraction==1)?(qa_bsp_plane){{{0,0,0},0},0,0}:plane;
   qa_trace_result r; memset(&r,0,sizeof r);
@@ -75,10 +91,12 @@ static qa_trace_result trace_q2_box(qa_trace_query query,qa_spatial_actor actor)
   r.start_solid=start_solid!=0;r.all_solid=all_solid!=0;
   r.contact=(qa_trace_contact){fraction<1&&!all_solid,selected.plane};
   r.source_plane=selected;
+  /* The selected plane is fresh; its zero form carries body.ts `zero`. */
+  r.plane_identity=(misses||start_solid||fraction==1)?(uintptr_t)&body_zero_identity:0;
   r.hit.kind=(fraction<1||start_solid)?QA_TRACE_HIT_ACTOR:QA_TRACE_HIT_NONE; r.hit.actor=actor.body.actor;
-  r.contents=contents;r.surface=NULL;
+  r.contents=contents;r.surface=&qa_q2_null_surface;
   r.has_secondary=has_secondary&&fraction!=1&&!start_solid;
-  r.secondary_plane=secondary;r.secondary_surface=NULL;
+  r.secondary_plane=secondary;r.secondary_surface=r.has_secondary?&qa_q2_null_surface:NULL;
   #undef BNADD
   #undef BNSUB
   #undef BNMUL
@@ -108,6 +126,7 @@ qa_trace_result qa_trace_actor_body(qa_trace_query query,qa_spatial_actor actor)
     r.kind="q1";r.fraction=result.fraction;r.end=end;r.start_solid=result.start_solid;r.all_solid=result.all_solid;
     r.in_open=result.in_open;r.in_water=result.in_water;r.source_plane_q1=result.plane;r.contents=result.contents;
     r.contact=(qa_trace_contact){result.fraction<1,result.plane};
+    r.plane_identity=box_hull_plane_identity(result.plane_index);
     r.hit.kind=(result.fraction<1||result.start_solid)?QA_TRACE_HIT_ACTOR:QA_TRACE_HIT_NONE; r.hit.actor=body.actor;
     return r;
   }

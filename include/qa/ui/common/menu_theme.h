@@ -32,5 +32,8 @@ extern const qa_rect qa_ui_menu_panel_rect;
  * suffix: the art-manifest frame owns the qa_ui_menu_panel_art name. */
 qa_ui_draw_command qa_ui_menu_panel_command(qa_ui_draw_context context,
                                             bool narrow);
+/* TS menuPanel(context, narrow, menuScale). */
+qa_ui_draw_command qa_ui_menu_panel_scaled(qa_ui_draw_context context,
+                                           bool narrow, double menu_scale);
 
 #endif

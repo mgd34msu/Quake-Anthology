@@ -1,6 +1,7 @@
 /* Port of src/media/roq-stream.ts. GPL-2.0-or-later. */
 #include "qa/media/roq_stream.h"
 
+#include "qa/foundation/support.h"
 #include <stdarg.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
@@ -9,13 +10,12 @@
 
 /* TS plain `throw new Error(msg)`. */
 static noreturn void media_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 const char *qa_roq_end_policy_name(qa_roq_end_policy policy) {

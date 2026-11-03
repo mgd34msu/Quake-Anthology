@@ -5,6 +5,7 @@
 #include <string.h>
 #include "qa/app/bootstrap/simulation/prediction/step.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 qa_user_command qa_app_copy_prediction_command(qa_user_command command) { return command; }
 
@@ -75,7 +76,7 @@ void qa_app_selected_movement_prediction_receive(qa_app_selected_movement_predic
 
 void qa_app_selected_movement_prediction_submit(qa_app_selected_movement_prediction *prediction,
     qa_app_prediction_command entry) {
-  if (entry.sequence != (double)(long long)entry.sequence || !isfinite(entry.time_milliseconds))
+  if (!(isfinite(entry.sequence) && entry.sequence == trunc(entry.sequence)) || !isfinite(entry.time_milliseconds))
     qa_range_error("Prediction command needs a finite clock and integer sequence");
   if (strcmp(command_kind_name(entry.command.kind), prediction->options.probe.profile.kind) != 0)
     qa_range_error("Prediction command does not match selected movement");
@@ -90,7 +91,8 @@ void qa_app_selected_movement_prediction_submit(qa_app_selected_movement_predict
   prediction->commands[prediction->command_count++] = entry;
 }
 
-static double short_angle(double word) { return (double)((((long long)word) << 16) >> 16) * 360.0 / 65536.0; }
+/* word << 16 >> 16 runs in int32: it sign-extends the low 16 bits (an int64 shift does not). */
+double qa_app_prediction_short_angle(double word) { return qa_js_shr(qa_js_shl(word, 16), 16) * 360.0 / 65536.0; }
 
 qa_app_movement_prediction_result qa_app_selected_movement_prediction_replay(
     qa_app_selected_movement_prediction *prediction,
@@ -100,16 +102,16 @@ qa_app_movement_prediction_result qa_app_selected_movement_prediction_replay(
   bool q2 = player.state.kind == QA_MOVEMENT_STATE_Q2 || player.state.kind == QA_MOVEMENT_STATE_Q2_RERELEASE;
   double flags = player.state.kind == QA_MOVEMENT_STATE_Q2 ? player.state.as.q2.flags
       : player.state.kind == QA_MOVEMENT_STATE_Q2_RERELEASE ? player.state.as.q2_rerelease.flags : 0;
-  if (q2 && (((long long)flags) & 64) != 0) {
+  if (q2 && ((qa_js_to_int32(flags)) & 64) != 0) {
     if (prediction->command_count) {
       qa_app_prediction_command latest = prediction->commands[prediction->command_count - 1];
       qa_user_command command = prediction->options.probe.relative_command
           ? prediction->options.probe.relative_command(prediction->options.probe.host_ctx, latest, player.state)
           : latest.command;
       if (player.state.kind == QA_MOVEMENT_STATE_Q2 && command.kind == QA_USER_COMMAND_Q2) {
-        player.view_angles.x = short_angle(command.as.q2.angle_shorts.values[0]) + short_angle(player.state.as.q2.delta_angle_shorts.values[0]);
-        player.view_angles.y = short_angle(command.as.q2.angle_shorts.values[1]) + short_angle(player.state.as.q2.delta_angle_shorts.values[1]);
-        player.view_angles.z = short_angle(command.as.q2.angle_shorts.values[2]) + short_angle(player.state.as.q2.delta_angle_shorts.values[2]);
+        player.view_angles.x = qa_app_prediction_short_angle(command.as.q2.angle_shorts.values[0]) + qa_app_prediction_short_angle(player.state.as.q2.delta_angle_shorts.values[0]);
+        player.view_angles.y = qa_app_prediction_short_angle(command.as.q2.angle_shorts.values[1]) + qa_app_prediction_short_angle(player.state.as.q2.delta_angle_shorts.values[1]);
+        player.view_angles.z = qa_app_prediction_short_angle(command.as.q2.angle_shorts.values[2]) + qa_app_prediction_short_angle(player.state.as.q2.delta_angle_shorts.values[2]);
       } else if (player.state.kind == QA_MOVEMENT_STATE_Q2_RERELEASE && command.kind == QA_USER_COMMAND_Q2_RERELEASE) {
         player.view_angles.x = command.as.q2_rerelease.angles.x + player.state.as.q2_rerelease.delta_angles.x;
         player.view_angles.y = command.as.q2_rerelease.angles.y + player.state.as.q2_rerelease.delta_angles.y;
@@ -132,6 +134,9 @@ qa_app_movement_prediction_result qa_app_selected_movement_prediction_replay(
       options.fixed_milliseconds = prediction->options.probe.profile.fixed_milliseconds;
       options.no_footsteps = prediction->options.probe.profile.no_footsteps;
     }
+    /* ladders: profile.kind === "q3" && profile.ladders !== false */
+    options.has_ladders = true;
+    options.ladders = strcmp(prediction->options.probe.profile.kind, "q3") == 0 && !prediction->options.probe.profile.ladders_disabled;
     options.first_command = first;
     qa_app_prediction_step_result stepped = qa_app_predict_movement_command(&prediction->options.probe, player,
         prediction->commands[i], options, NULL);
@@ -144,6 +149,8 @@ qa_app_movement_prediction_result qa_app_selected_movement_prediction_replay(
       memcpy(out.effects + out.effect_count, stepped.result.effects, stepped.result.effect_count * sizeof *effects);
       out.effect_count += stepped.result.effect_count;
     }
+    /* The step's movement result owns its effects and contacts; replay keeps only the copied effects. */
+    free((void *)stepped.result.effects); free((void *)stepped.result.contacts);
     first = false;
     if (observe) observe(observe_ctx, qa_app_copy_prediction_snapshot(player));
   }

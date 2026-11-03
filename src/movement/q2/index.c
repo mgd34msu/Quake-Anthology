@@ -72,6 +72,7 @@ typedef struct trace_adapter {
   qa_trace_hit *entities;
   size_t entity_count;
   size_t entity_capacity;
+  double classic_mask; /* classic PM_trace contents mask */
 } trace_adapter;
 
 static void adapter_init(trace_adapter *adapter, const qa_movement_input *input,
@@ -183,7 +184,7 @@ static double adapter_point_contents(trace_adapter *adapter, const qa_q2_vec3 po
 
 static qa_q2_trace classic_trace_fn(void *data, qa_q2_vec3 start, qa_q2_vec3 mins,
                                     qa_q2_vec3 maxs, qa_q2_vec3 end) {
-  return adapter_trace(data, start, mins, maxs, end, QA_Q2_MASK_CLASSIC_PLAYERSOLID, false);
+  return adapter_trace(data, start, mins, maxs, end, ((trace_adapter *)data)->classic_mask, false);
 }
 
 static qa_q2_trace rerelease_trace_fn(void *data, qa_q2_vec3 start, qa_q2_vec3 mins,
@@ -380,6 +381,9 @@ static qa_q2_movement_result move_q2_classic_physics(qa_q2_movement_input input,
     pm.has_body_bounds = true;
     pm.body_bounds = *output->body_bounds;
   }
+  /* PM_trace in p_client.c lets dead players pass monsters; client prediction always uses the live mask. */
+  scene.classic_mask = str_eq(input.execution, "authoritative") && input.environment.health <= 0
+                             ? QA_Q2_MASK_DEADSOLID : QA_Q2_MASK_CLASSIC_PLAYERSOLID;
   pm.trace = classic_trace_fn;
   pm.pointcontents = adapter_point_contents_fn;
 

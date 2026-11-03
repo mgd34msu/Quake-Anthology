@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 #define BODY 0x02000000
 static float f32(double v){return (float)v;}
 static int finite3(qa_vec3 p){return isfinite(p.x)&&isfinite(p.y)&&isfinite(p.z);}
@@ -17,10 +18,10 @@ typedef struct{qa_vec3 center,mins,extents,offset;int capsule;double radius,half
 static Prepared prepare(qa_q3_trace_shape shape){
   Prepared r; memset(&r,0,sizeof r);
   if(shape.kind&&strcmp(shape.kind,"point")==0)return r;
-  qa_bounds b={shape.mins,shape.maxs}; validate_bounds(b);
+  if(!finite3(shape.mins)||!finite3(shape.maxs))qa_range_error("trace shape requires finite bounds");
   r.center=qa_scale3(qa_add3(shape.mins,shape.maxs),0.5);
   r.mins=qa_sub3(shape.mins,r.center); r.extents=qa_sub3(shape.maxs,r.center);
-  r.radius=fmin(r.extents.x,r.extents.z);
+  r.radius=qa_js_min(r.extents.x,r.extents.z);
   r.capsule=shape.kind&&strcmp(shape.kind,"capsule")==0;
   r.halfheight=r.extents.z;
   r.offset=qa_math_vec3(0,0,f32(r.extents.z-r.radius));
@@ -45,7 +46,7 @@ static void trace_box(Work*w,qa_bounds bounds,qa_vec3 start,qa_vec3 end,Prepared
     brush->check_count=qa_collision_box_storage_check_count(storage);
   }
   double bcontents=brush?brush->contents:BODY;
-  if((((int32_t)mask)&((int32_t)bcontents))==0||(brush&&brush->side_count==0))return;
+  if(((qa_js_to_int32(mask))&(qa_js_to_int32(bcontents)))==0||(brush&&brush->side_count==0))return;
   if(stationary){
     qa_vec3 mn,mx;
     if(retained){mn=retained->min;mx=retained->max;}
@@ -70,7 +71,8 @@ static void trace_box(Work*w,qa_bounds bounds,qa_vec3 start,qa_vec3 end,Prepared
       double signs=plane.signbits;
       if(signs>=8)qa_range_error("CM brush plane signbits outside trace offsets");
       int s=(int)signs;
-      expansion=-qa_dot3(n,qa_math_vec3((s&1)?shape.extents.x:shape.mins.x,(s&2)?shape.extents.y:shape.mins.y,(s&4)?shape.extents.z:shape.mins.z));
+      double x=(s&1)?shape.extents.x:shape.mins.x,y=(s&2)?shape.extents.y:shape.mins.y,z=(s&4)?shape.extents.z:shape.mins.z;
+      expansion=-(double)f32((double)f32((double)f32(n.x*(double)f32(x))+(double)f32(n.y*(double)f32(y)))+(double)f32(n.z*(double)f32(z)));
     }
     double dist=f32(plane.plane.distance+expansion);
     qa_vec3 first=start,last=end;
@@ -88,7 +90,7 @@ static void trace_box(Work*w,qa_bounds bounds,qa_vec3 start,qa_vec3 end,Prepared
     if(d1>d2){
       double f=f32(f32(d1-0.125)/f32(d1-d2)); if(f<0)f=0;
       if(f>enter){enter=f;lead_plane=plane;lead_sf=sf;have_lead=1;}
-    }else{double f=f32(f32(d1+0.125)/f32(d1-d2));if(f>1)f=1;if(f<leave)leave=f;}
+    }else leave=qa_js_min(leave,qa_js_min(1,f32(f32(d1+0.125)/f32(d1-d2)))); /* Math.min: NaN propagates */
   }
   if(!start_out){
     w->start_solid=1;
@@ -169,13 +171,16 @@ static void position_capsule(Work*w,Prepared target,qa_vec3 start,Prepared shape
 qa_temporary_collision_model *qa_temporary_collision_model_create(const char*kind,qa_bounds bounds,qa_collision_counters*counters,qa_collision_box_storage*storage){
   qa_temporary_collision_model*m=malloc(sizeof*m); if(!m)return NULL;
   memset(m,0,sizeof*m);
-  m->kind=kind; m->bounds=bounds; m->storage=storage;
+  /* TS owns vec3(...) copies: each bound coordinate is stored through Math.fround. */
+  const qa_bounds owned={qa_math_vec3(bounds.min.x,bounds.min.y,bounds.min.z),qa_math_vec3(bounds.max.x,bounds.max.y,bounds.max.z)};
+  m->kind=kind; m->bounds=owned; m->storage=storage;
   if(counters)m->counters=counters; else{qa_collision_counters_init(&m->owned_counters);m->counters=&m->owned_counters;}
   if(kind&&strcmp(kind,"box")==0){
-    if(!finite3(bounds.min)||!finite3(bounds.max))qa_range_error("temporary box requires finite plane distances");
+    if(!finite3(owned.min)||!finite3(owned.max)){free(m);qa_range_error("temporary box requires finite plane distances");}
   }else{
+    if(!finite3(bounds.min)||!finite3(bounds.max)||bounds.min.x>bounds.max.x||bounds.min.y>bounds.max.y||bounds.min.z>bounds.max.z)free(m);
     validate_bounds(bounds);
-    qa_q3_trace_shape s={"capsule",bounds.min,bounds.max};
+    qa_q3_trace_shape s={"capsule",owned.min,owned.max};
     Prepared t=prepare(s);
     m->target_center=t.center;m->target_mins=t.mins;m->target_extents=t.extents;m->target_offset=t.offset;
     m->target_radius=t.radius;m->target_halfheight=t.halfheight;
@@ -234,7 +239,7 @@ static qa_source_trace_result do_trace(qa_temporary_collision_model*m,qa_tempora
       trace_box(&w,m->storage->brush->bounds,qa_sub3(start,target.center),qa_sub3(end,target.center),target,stationary,query.mask,m->counters,m->storage,&retained);
     }else if(stationary){
       qa_vec3 mn=qa_add3(start,shape.mins),mx=qa_add3(start,shape.extents);
-      if((((int32_t)query.mask)&BODY)!=0&&mn.x<=shape.extents.x&&mn.y<=shape.extents.y&&mn.z<=shape.extents.z&&mx.x>=shape.mins.x&&mx.y>=shape.mins.y&&mx.z>=shape.mins.z){
+      if(((qa_js_to_int32(query.mask))&BODY)!=0&&mn.x<=shape.extents.x&&mn.y<=shape.extents.y&&mn.z<=shape.extents.z&&mx.x>=shape.mins.x&&mx.y>=shape.mins.y&&mx.z>=shape.mins.z){
         w.fraction=0;w.all_solid=1;w.start_solid=1;w.contents=BODY;
       }
     }else trace_box(&w,(qa_bounds){shape.mins,shape.extents},qa_sub3(start,target.center),qa_sub3(end,target.center),target,stationary,query.mask,m->counters,NULL,NULL);
@@ -243,8 +248,8 @@ static qa_source_trace_result do_trace(qa_temporary_collision_model*m,qa_tempora
     target.center=m->target_center;target.offset=m->target_offset;target.radius=m->target_radius;target.capsule=1;
     position_capsule(&w,target,start,shape);
   }else{
-    qa_vec3 smin=qa_math_vec3(fmin(start.x,end.x)-fabs(shape.offset.x)-shape.radius,fmin(start.y,end.y)-fabs(shape.offset.y)-shape.radius,fmin(start.z,end.z)-fabs(shape.offset.z)-shape.radius);
-    qa_vec3 smax=qa_math_vec3(fmax(start.x,end.x)+fabs(shape.offset.x)+shape.radius,fmax(start.y,end.y)+fabs(shape.offset.y)+shape.radius,fmax(start.z,end.z)+fabs(shape.offset.z)+shape.radius);
+    qa_vec3 smin=qa_math_vec3(qa_js_min(start.x,end.x)-fabs(shape.offset.x)-shape.radius,qa_js_min(start.y,end.y)-fabs(shape.offset.y)-shape.radius,qa_js_min(start.z,end.z)-fabs(shape.offset.z)-shape.radius);
+    qa_vec3 smax=qa_math_vec3(qa_js_max(start.x,end.x)+fabs(shape.offset.x)+shape.radius,qa_js_max(start.y,end.y)+fabs(shape.offset.y)+shape.radius,qa_js_max(start.z,end.z)+fabs(shape.offset.z)+shape.radius);
     qa_bounds b=m->bounds;
     if(!(smin.x>f32(b.max.x+1)||smin.y>f32(b.max.y+1)||smin.z>f32(b.max.z+1)||smax.x<f32(b.min.x-1)||smax.y<f32(b.min.y-1)||smax.z<f32(b.min.z-1))){
       double radius=f32(m->target_radius+shape.radius);

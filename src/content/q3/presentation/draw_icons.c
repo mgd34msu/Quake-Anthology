@@ -61,16 +61,11 @@ void qa_q3_pres_client_draw_icons_draw_head(qa_q3_pres_client_draw_icons *icons,
   qa_q3_pres_client_info *client = &icons->media.static_state->client_info[(size_t)client_num];
   qa_q3_pres_client_draw_icon_settings settings = icons->settings(icons->settings_ctx);
   if (settings.draw_3d_icons) {
-    if (client->head_model.kind != QA_Q3_PRES_SCENE_MODEL_DEFAULT) {
-      qa_vec3 origin = qa_add3(icon_origin(qa_q3_pres_model_bounds(&client->head_model), 0.7), client->head_offset);
-      qa_q3_pres_client_draw_icons_draw_3d_model(icons, rect, client->head_model, client->head_skin, origin,
-                                                 head_angles);
-    } else {
-      /* TS returns here only when the 3D branch runs; default model returns. */
-      if (client->deferred)
-        qa_q3_pres_client_draw_tools_draw_pic(icons->tools, rect, icons->media.defer_shader);
-      return;
-    }
+    /* TS returns before the deferred icon for a default head model. */
+    if (client->head_model.kind == QA_Q3_PRES_SCENE_MODEL_DEFAULT) return;
+    qa_vec3 origin = qa_add3(icon_origin(qa_q3_pres_model_bounds(&client->head_model), 0.7), client->head_offset);
+    qa_q3_pres_client_draw_icons_draw_3d_model(icons, rect, client->head_model, client->head_skin, origin,
+                                               head_angles);
   } else if (settings.draw_icons) {
     qa_q3_pres_client_draw_tools_draw_pic(icons->tools, rect, client->model_icon);
   }

@@ -15,15 +15,15 @@ static qa_vec3 from_tuple(const qa_q2_vec3 v) { qa_vec3 r = {v[0], v[1], v[2]}; 
 static void to_tuple(qa_vec3 v, qa_q2_vec3 out) { out[0] = f32(v.x); out[1] = f32(v.y); out[2] = f32(v.z); }
 
 typedef struct placement_ctx {
-  qa_q2f_game *game;
+  qa_q2_game_services *game;
 } placement_ctx;
 static qa_q2_trace placement_trace(void *ctx, qa_q2_vec3 from, qa_q2_vec3 mins, qa_q2_vec3 maxs, qa_q2_vec3 end) {
   placement_ctx *placement = ctx;
-  qa_q2f_game *game = placement->game;
+  qa_q2_game_services *game = placement->game;
   qa_bounds bounds = {from_tuple(mins), from_tuple(maxs)};
   qa_trace_result trace = q2rm_trace(game, from_tuple(from), from_tuple(end), &bounds, NULL,
                                      qa_q2m_monster_solid_mask(game));
-  if (strcmp(trace.kind, "q2") != 0) qa_q2f_error("Rerelease monster placement requires Q2 trace fields");
+  if (strcmp(trace.kind, "q2") != 0) qa_raise("Error", 0, 0, "Rerelease monster placement requires Q2 trace fields");
   qa_q2_trace result;
   memset(&result, 0, sizeof result);
   result.startsolid = trace.start_solid;
@@ -53,7 +53,7 @@ static qa_q2_trace placement_trace(void *ctx, qa_q2_vec3 from, qa_q2_vec3 mins, 
   return result;
 }
 
-static bool drop_to_floor(qa_q2f_game *game, qa_vec3 origin, qa_bounds bounds, qa_vec3 *out) {
+static bool drop_to_floor(qa_q2_game_services *game, qa_vec3 origin, qa_bounds bounds, qa_vec3 *out) {
   double mask = qa_q2m_monster_solid_mask(game);
   if (q2rm_trace(game, origin, origin, &bounds, NULL, mask).start_solid) origin.z = f32(origin.z + 1);
   qa_vec3 end = origin;
@@ -64,7 +64,7 @@ static bool drop_to_floor(qa_q2f_game *game, qa_vec3 origin, qa_bounds bounds, q
   return true;
 }
 
-bool qa_q2rm_find_rerelease_spawn_point(qa_q2f_game *game, qa_vec3 start, qa_bounds bounds, double max_move_up,
+bool qa_q2rm_find_rerelease_spawn_point(qa_q2_game_services *game, qa_vec3 start, qa_bounds bounds, double max_move_up,
                                         bool drop, qa_vec3 *out) {
   (void)max_move_up;
   if (drop && drop_to_floor(game, start, bounds, out)) return true;
@@ -90,12 +90,12 @@ bool qa_q2rm_find_rerelease_spawn_point(qa_q2f_game *game, qa_vec3 start, qa_bou
   *out = from_tuple(origin);
   return true;
 }
-bool qa_q2rm_find_rerelease_spawn_point_default(qa_q2f_game *game, qa_vec3 start, qa_bounds bounds,
+bool qa_q2rm_find_rerelease_spawn_point_default(qa_q2_game_services *game, qa_vec3 start, qa_bounds bounds,
                                                 double max_move_up, qa_vec3 *out) {
   return qa_q2rm_find_rerelease_spawn_point(game, start, bounds, max_move_up, true, out);
 }
 
-bool qa_q2rm_check_rerelease_ground_spawn_point(qa_q2f_game *game, qa_vec3 origin, qa_bounds bounds,
+bool qa_q2rm_check_rerelease_ground_spawn_point(qa_q2_game_services *game, qa_vec3 origin, qa_bounds bounds,
                                                 double height, double gravity) {
   (void)height; (void)gravity;
   if (!qa_q2mpm_check_rogue_spawn_point(game, origin, bounds)) return false;

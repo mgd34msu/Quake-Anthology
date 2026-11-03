@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/player/commands.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/player/commands.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -10,6 +11,8 @@
 
 #include "qa/content/q2/base/player/index.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 static char *join_args(const char *const *args, size_t count) {
   size_t length = 1;
@@ -30,19 +33,13 @@ static char *dup_text(const char *text) {
   return out;
 }
 /* JS Number.parseInt(value, 10) || 0. */
+/* Number.parseInt(value ?? "0", 10) || 0 */
 static double js_parse_int(const char *value) {
-  if (!value) return 0;
-  while (isspace((unsigned char)*value)) value++;
-  bool negative = false;
-  if (*value == '+' || *value == '-') { negative = *value == '-'; value++; }
-  if (!isdigit((unsigned char)*value)) return 0;
-  double result = 0;
-  while (isdigit((unsigned char)*value)) { result = result * 10 + (*value - '0'); value++; }
-  return negative ? -result : result;
+  double parsed = qa_js_parse_int(value != NULL ? value : "0", 10);
+  return isnan(parsed) || parsed == 0 ? 0 : parsed;
 }
 static void js_number(char *out, size_t size, double value) {
-  if (value == trunc(value) && fabs(value) < 1e21) (void)snprintf(out, size, "%lld", (long long)value);
-  else (void)snprintf(out, size, "%g", value);
+  qa_net_js_number(value, out, size);
 }
 static void pad_start(char *out, size_t size, const char *text, size_t width, char fill) {
   size_t length = strlen(text);
@@ -52,19 +49,14 @@ static void pad_start(char *out, size_t size, const char *text, size_t width, ch
   memset(out, fill, pad);
   (void)snprintf(out + pad, size - pad, "%s", text);
 }
-static bool equals_lower_text(const char *a, const char *b) {
-  while (*a && *b) {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    a++; b++;
-  }
-  return *a == *b;
-}
+/* TS a.toLowerCase() === b (b already lowered): Unicode case folding of client text. */
+static bool equals_lower_text(const char *a, const char *b) { return qa_js_equals_ignore_case(a, b); }
 
 /* TS team(): compares the model or skin half of two skins. */
 static bool same_team(qa_q2_player_context *context, const char *left, const char *right) {
   const char *left_slash = strchr(left, '/');
   const char *right_slash = strchr(right, '/');
-  bool model_side = ((int64_t)context->game->options.deathmatch_flags & 64) != 0;
+  bool model_side = (qa_js_to_int32(qa_q2_options_deathmatch_flags(&context->game->options)) & 128) != 0;
   const char *left_part = left_slash ? (model_side ? left : left_slash + 1) : left;
   const char *right_part = right_slash ? (model_side ? right : right_slash + 1) : right;
   size_t left_length = left_slash && model_side ? (size_t)(left_slash - left) : strlen(left_part);
@@ -72,6 +64,18 @@ static bool same_team(qa_q2_player_context *context, const char *left, const cha
   return left_length == right_length && strncmp(left_part, right_part, left_length) == 0;
 }
 
+/* TS weapons.registeredDefinitions().find(candidate => candidate.item === item). */
+static const qa_q2w_definition *registered_weapon(qa_q2_player_context *context, qa_item_id item) {
+  size_t count = 0;
+  const qa_q2w_definition *const *definitions = qa_q2w_weapons_registered_definitions(context->weapons, &count);
+  for (size_t i = 0; i < count; i++)
+    if (definitions[i]->item && strcmp(definitions[i]->item, item) == 0) return definitions[i];
+  return NULL;
+}
+/* The player entity as TS Q2WeaponOwner ({ actor, viewHeight }). */
+static qa_q2w_owner weapon_owner(qa_q2_player_context *context) {
+  return (qa_q2w_owner){context->entity->actor, context->entity->view_height};
+}
 static void print_to(qa_q2_player_context *context, const char *text) {
   qa_q2_player_event event = {0};
   event.kind = "print";
@@ -99,13 +103,40 @@ static void publish_inventory(qa_q2_player_context *context) {
   free(labels);
 }
 
+/* itemlist order in g_items.c, restricted to what a player can hold; other items keep catalog order after it. */
+static const char *const INVENTORY_ORDER[] = {
+  "item_power_screen", "item_power_shield", "weapon_blaster", "weapon_shotgun", "weapon_supershotgun",
+  "weapon_machinegun", "weapon_chaingun", "ammo_grenades", "weapon_grenadelauncher", "weapon_rocketlauncher",
+  "weapon_hyperblaster", "weapon_railgun", "weapon_bfg", "ammo_shells", "ammo_bullets", "ammo_cells",
+  "ammo_rockets", "ammo_slugs", "item_quad", "item_invulnerability", "item_silencer", "item_breather",
+  "item_enviro", "item_ancient_head", "item_adrenaline", "item_bandolier", "item_pack", "key_data_cd",
+  "key_power_cube", "key_pyramid", "key_data_spinner", "key_pass", "key_blue_key", "key_red_key",
+  "key_commander_head", "key_airstrike_target",
+};
+static double item_rank(const char *classname) {
+  size_t count = sizeof INVENTORY_ORDER / sizeof INVENTORY_ORDER[0];
+  for (size_t i = 0; i < count; i++)
+    if (strcmp(INVENTORY_ORDER[i], classname) == 0) return (double)i;
+  return (double)count;
+}
+static int compare_item_rank(const void *left, const void *right, void *ctx) {
+  (void)ctx;
+  double difference = item_rank(((const qa_q2_inventory_item *)left)->classname) - item_rank(((const qa_q2_inventory_item *)right)->classname);
+  return difference < 0 ? -1 : difference > 0 ? 1 : 0;
+}
+
 /* filter: "all" | "weapon" | "power". */
 static void select_item(qa_q2_player_context *context, double direction, const char *filter) {
   qa_q2_entity *entity = context->entity;
   qa_q2_game_services *game = context->game;
   qa_q2_base_player_state *state = context->state;
   size_t count = 0;
-  const qa_q2_inventory_item *list = qa_q2_item_module_list(context->items, &count);
+  const qa_q2_inventory_item *catalog = qa_q2_item_module_list(context->items, &count);
+  /* [...items.list()].sort((left, right) => itemRank(left.classname) - itemRank(right.classname)) */
+  qa_q2_inventory_item *list = malloc((count ? count : 1) * sizeof *list);
+  if (!list) qa_range_error("Out of memory");
+  if (count) memcpy(list, catalog, count * sizeof *list);
+  qa_js_stable_sort(list, count, sizeof *list, compare_item_rank, NULL);
   int64_t first = -1;
   for (size_t i = 0; i < count; i++)
     if (state->selected_item && list[i].id && strcmp(list[i].id, state->selected_item) == 0) { first = (int64_t)i; break; }
@@ -113,19 +144,27 @@ static void select_item(qa_q2_player_context *context, double direction, const c
     int64_t at = (first + (int64_t)direction * (int64_t)index + (int64_t)count * 2) % (int64_t)count;
     const qa_q2_inventory_item *item = &list[at];
     if (item->usable && qa_shared_inventory_table_count(game->host->inventory, entity->actor.id, item->id) > 0 &&
-        (strcmp(filter, "all") == 0 || (strcmp(filter, "weapon") == 0 && strcmp(item->kind, "weapon") == 0) ||
+        (strcmp(filter, "all") == 0 || (strcmp(filter, "weapon") == 0 && item->weapon) ||
          (strcmp(filter, "power") == 0 && strcmp(item->kind, "power") == 0))) {
       state->selected_item = item->id;
+      free(list);
       return;
     }
   }
   state->selected_item = NULL;
+  free(list);
+}
+/* TS validateSelection: a selected item the player ran out of moves to the next one. */
+static void validate_selection(qa_q2_player_context *context) {
+  qa_q2_base_player_state *state = context->state;
+  if (state->selected_item != NULL &&
+      qa_shared_inventory_table_count(context->game->host->inventory, context->entity->actor.id, state->selected_item) == 0)
+    select_item(context, 1, "all");
 }
 
 static void use_item_value(qa_q2_player_context *context, const char *value) {
   qa_q2_entity *entity = context->entity;
   qa_q2_game_services *game = context->game;
-  qa_q2_base_player_state *state = context->state;
   qa_q2_inventory_item item;
   if (!qa_q2_item_module_lookup(context->items, value, &item)) {
     char message[512];
@@ -140,21 +179,21 @@ static void use_item_value(qa_q2_player_context *context, const char *value) {
     print_to(context, message);
     return;
   }
-  size_t definition_count = 0;
-  const qa_q2_base_weapon_definition *definitions = context->weapons.registered_definitions(context->weapons.ctx, &definition_count);
-  const qa_q2_base_weapon_definition *weapon = NULL;
-  for (size_t i = 0; i < definition_count; i++)
-    if (definitions[i].item && strcmp(definitions[i].item, item.id) == 0) { weapon = &definitions[i]; break; }
+  const qa_q2w_definition *weapon = registered_weapon(context, item.id);
   if (weapon) {
-    const char *result = context->weapons.request_weapon(context->weapons.ctx, entity, game, weapon->name);
-    if (result && (strcmp(result, "no-ammo") == 0 || strcmp(result, "not-enough-ammo") == 0)) {
+    const bool select_empty = context->hooks->select_empty != NULL && context->hooks->select_empty(context->hooks->ctx);
+    qa_q2w_selection result = qa_q2w_weapons_request_weapon(context->weapons, weapon_owner(context), game, weapon->name, select_empty);
+    if (result == QA_Q2W_SEL_NO_AMMO || result == QA_Q2W_SEL_NOT_ENOUGH_AMMO) {
+      qa_q2_inventory_item ammo_item;
+      const char *ammo = weapon->ammo != NULL && qa_q2_item_module_lookup(context->items, weapon->ammo, &ammo_item) ? ammo_item.name : NULL;
       char message[512];
-      (void)snprintf(message, sizeof message, "Not enough %s for %s.\n", weapon->ammo ? weapon->ammo : "ammo", item.name);
+      (void)snprintf(message, sizeof message, "%s %s for %s.\n", result == QA_Q2W_SEL_NO_AMMO ? "No" : "Not enough",
+                     ammo != NULL ? ammo : "ammo", item.name);
       print_to(context, message);
       return;
     }
   } else (void)qa_q2_item_module_use(context->items, entity->actor, item.id, game, 30);
-  state->selected_item = item.id;
+  validate_selection(context);
 }
 
 static void drop_item_value(qa_q2_players *players, qa_q2_player_context *context, const char *value) {
@@ -178,18 +217,15 @@ static void drop_item_value(qa_q2_players *players, qa_q2_player_context *contex
     print_to(context, message);
     return;
   }
-  size_t definition_count = 0;
-  const qa_q2_base_weapon_definition *definitions = context->weapons.registered_definitions(context->weapons.ctx, &definition_count);
-  const qa_q2_base_weapon_definition *weapon = NULL;
-  for (size_t i = 0; i < definition_count; i++)
-    if (definitions[i].item && strcmp(definitions[i].item, item.id) == 0) { weapon = &definitions[i]; break; }
-  if (weapon && !context->weapons.can_drop(context->weapons.ctx, entity, game, weapon->name)) {
+  const qa_q2w_definition *weapon = registered_weapon(context, item.id);
+  if (weapon && !qa_q2w_weapons_can_drop(context->weapons, weapon_owner(context), game, weapon->name)) {
     print_to(context, "Can't drop current weapon\n");
     return;
   }
-  const char *current = context->weapons.weapon(context->weapons.ctx, entity->actor.id);
+  qa_q2w_state *current_state = qa_q2_players_weapon_state(context->players, entity->actor.id);
+  const char *current = current_state ? current_state->weapon : NULL;
   bool grenade = current && strcmp(current, "grenades") == 0 && strcmp(item.id, "q2:ammo_grenades") == 0;
-  double quantity = strcmp(item.kind, "ammo") == 0 ? fmin(item.quantity, count) : 1;
+  double quantity = strcmp(item.kind, "ammo") == 0 ? qa_js_min(item.quantity, count) : 1;
   if (grenade && count - quantity <= 0) { print_to(context, "Can't drop current weapon\n"); return; }
   qa_q2_drop_options options = {0};
   options.player_death = false;
@@ -198,20 +234,22 @@ static void drop_item_value(qa_q2_players *players, qa_q2_player_context *contex
     dropped->count = quantity;
     (void)qa_shared_inventory_table_consume(game->host->inventory, entity->actor, item.id, quantity);
   }
+  if (strcmp(item.kind, "power-armor") == 0) qa_q2_item_module_sync_power_armor(context->items, entity->actor, game, NULL);
+  validate_selection(context);
 }
 
 static void weapon_cycle(qa_q2_player_context *context, double direction) {
-  const char *current = context->weapons.weapon(context->weapons.ctx, context->entity->actor.id);
+  qa_q2w_state *state = qa_q2_players_weapon_state(context->players, context->entity->actor.id);
+  const char *current = state ? state->weapon : NULL;
   size_t count = 0;
-  const qa_q2_base_weapon_definition *definitions = context->weapons.registered_definitions(context->weapons.ctx, &count);
+  const qa_q2w_definition *const *definitions = qa_q2w_weapons_registered_definitions(context->weapons, &count);
   int64_t index = -1;
   for (size_t i = 0; i < count; i++)
-    if (current && definitions[i].name && strcmp(definitions[i].name, current) == 0) { index = (int64_t)i; break; }
+    if (current && definitions[i]->name && strcmp(definitions[i]->name, current) == 0) { index = (int64_t)i; break; }
   for (size_t step = 1; step <= count; step++) {
     int64_t at = (index + (int64_t)direction * (int64_t)step + (int64_t)count * 2) % (int64_t)count;
-    const qa_q2_base_weapon_definition *weapon = &definitions[at];
-    const char *result = context->weapons.request_weapon(context->weapons.ctx, context->entity, context->game, weapon->name);
-    if (result && strcmp(result, "selected") == 0) break;
+    const qa_q2w_definition *weapon = definitions[at];
+    if (qa_q2w_weapons_request_weapon(context->weapons, weapon_owner(context), context->game, weapon->name, false) == QA_Q2W_SEL_SELECTED) break;
   }
 }
 
@@ -222,18 +260,19 @@ bool qa_q2_chat_allowed(qa_q2_player_context *context) {
   if (rules->flood_messages != 0) {
     if (now < state->flood_lock_until) {
       char message[160];
-      (void)snprintf(message, sizeof message, "You can't talk for %lld more seconds\n", (long long)trunc(state->flood_lock_until - now));
+      (void)snprintf(message, sizeof message, "You can't talk for %s more seconds\n", QA_JS_NUMBER(trunc(state->flood_lock_until - now)));
       print_to(context, message);
       return false;
     }
-    size_t back = (size_t)fmin(10, trunc(rules->flood_messages));
-    size_t at = state->flood_time_count > back ? state->flood_time_count - back : 0;
-    bool has_previous = back > 0 && state->flood_time_count > 0;
-    double previous = has_previous ? state->flood_times[at] : 0;
+    /* floodTimes[Math.max(0, length - Math.min(10, Math.trunc(floodMessages)))]: a negative
+     * or NaN cvar indexes past the end (undefined), never a size_t cast of it. */
+    double at = qa_js_max(0, (double)state->flood_time_count - qa_js_min(10, trunc(rules->flood_messages)));
+    bool has_previous = at >= 0 && at < (double)state->flood_time_count;
+    double previous = has_previous ? state->flood_times[(size_t)at] : 0;
     if ((double)state->flood_time_count >= rules->flood_messages && has_previous && now - previous < rules->flood_seconds) {
       state->flood_lock_until = now + rules->flood_wait_seconds;
       char message[160];
-      (void)snprintf(message, sizeof message, "Flood protection:  You can't talk for %lld seconds.\n", (long long)trunc(rules->flood_wait_seconds));
+      (void)snprintf(message, sizeof message, "Flood protection:  You can't talk for %s seconds.\n", QA_JS_NUMBER(trunc(rules->flood_wait_seconds)));
       print_to(context, message);
       return false;
     }
@@ -245,7 +284,10 @@ bool qa_q2_chat_allowed(qa_q2_player_context *context) {
     }
     state->flood_times[state->flood_time_count++] = now;
     if (state->flood_time_count > 10) {
-      memmove(state->flood_times, state->flood_times + 1, --state->flood_time_count * sizeof *state->flood_times);
+      void * destination = state->flood_times;
+      const void * source_value = state->flood_times + 1;
+      unsigned long byte_count = --state->flood_time_count * sizeof *state->flood_times;
+      memmove(destination, source_value, byte_count);
     }
   }
   return true;
@@ -256,7 +298,7 @@ static void say(qa_q2_players *players, qa_q2_player_context *context, const cha
   qa_q2_game_services *game = context->game;
   qa_q2_entity *entity = context->entity;
   if (arg_count == 0 || !qa_q2_chat_allowed(context)) return;
-  bool is_team = team_only && ((int64_t)game->options.deathmatch_flags & (64 | 128)) != 0;
+  bool is_team = team_only && (qa_js_to_int32(qa_q2_options_deathmatch_flags(&game->options)) & (64 | 128)) != 0;
   char *words = join_args(args, arg_count);
   if (words[0] == '"') {
     size_t length = strlen(words);
@@ -362,9 +404,14 @@ static void score_handler(qa_q2_players *players, qa_q2_player_context *context,
   qa_q2_entity *entity = context->entity;
   qa_q2_game_services *game = context->game;
   qa_q2_base_player_state *state = context->state;
-  state->show_inventory = false; state->show_help = false; state->show_scores = !state->show_scores;
+  state->show_inventory = false; state->show_help = false;
+  if (game->options.mode == QA_Q2_MODE_SINGLEPLAYER) {
+    publish_inventory(context);
+    return;
+  }
+  state->show_scores = !state->show_scores;
   publish_inventory(context);
-  if (state->show_scores && game->options.mode != QA_Q2_MODE_SINGLEPLAYER) qa_q2_players_scoreboard(players, entity, game, true);
+  if (state->show_scores) qa_q2_players_scoreboard(players, entity, game, true);
 }
 
 static void show_help_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
@@ -372,18 +419,24 @@ static void show_help_handler(qa_q2_players *players, qa_q2_player_context *cont
   qa_q2_entity *entity = context->entity;
   qa_q2_game_services *game = context->game;
   qa_q2_base_player_state *state = context->state;
+  if (game->options.mode == QA_Q2_MODE_DEATHMATCH) {
+    score_handler(players, context, NULL, 0, "score");
+    return;
+  }
   state->show_inventory = false; state->show_scores = false;
   publish_inventory(context);
-  if (game->options.mode == QA_Q2_MODE_DEATHMATCH) {
-    state->show_scores = true;
-    qa_q2_players_scoreboard(players, entity, game, true);
-  } else {
-    state->show_help = !state->show_help;
-    qa_q2_player_event event = {0};
-    event.kind = "help"; event.actor = entity->actor.id;
-    event.has_visible = true; event.visible = state->show_help;
-    context->hooks->emit(context->hooks->ctx, event);
-  }
+  if (game->options.edition == QA_Q2_EDITION_CLASSIC) {
+    /* Cmd_Help_f: an open computer closes only when no objective changed since it was read. */
+    if (state->show_help && state->game_help_changed == game->help_changed) state->show_help = false;
+    else {
+      state->show_help = true;
+      state->help_changed = 0;
+    }
+  } else state->show_help = !state->show_help;
+  qa_q2_player_event event = {0};
+  event.kind = "help"; event.actor = entity->actor.id;
+  event.has_visible = true; event.visible = state->show_help;
+  context->hooks->emit(context->hooks->ctx, event);
 }
 
 static void use_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
@@ -425,39 +478,49 @@ static void selected_handler(qa_q2_players *players, qa_q2_player_context *conte
   qa_q2_base_player_state *state = context->state;
   if (state->selected_item == NULL || qa_shared_inventory_table_count(game->host->inventory, entity->actor.id, state->selected_item) == 0)
     select_item(context, 1, "all");
-  if (state->selected_item == NULL) print_to(context, "No item to use.\n");
+  if (state->selected_item == NULL) print_to(context, strcmp(command, "invuse") == 0 ? "No item to use.\n" : "No item to drop.\n");
   else if (strcmp(command, "invuse") == 0) use_item_value(context, state->selected_item);
   else drop_item_value(players, context, state->selected_item);
 }
-/* The original next/previous names traverse the item table in
- * reverse/forward order respectively. */
 static void previous_weapon_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
-  (void)players; (void)args; (void)arg_count; (void)command;
-  weapon_cycle(context, 1);
-}
-static void next_weapon_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
   (void)players; (void)args; (void)arg_count; (void)command;
   weapon_cycle(context, -1);
 }
+static void next_weapon_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
+  (void)players; (void)args; (void)arg_count; (void)command;
+  weapon_cycle(context, 1);
+}
 static void last_weapon_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
   (void)players; (void)args; (void)arg_count; (void)command;
-  const char *weapon = context->weapons.last_weapon(context->weapons.ctx, context->entity->actor.id);
-  if (weapon) (void)context->weapons.request_weapon(context->weapons.ctx, context->entity, context->game, weapon);
+  qa_q2w_state *state = qa_q2_players_weapon_state(context->players, context->entity->actor.id);
+  const char *weapon = state ? state->last_weapon : NULL;
+  if (weapon) (void)qa_q2w_weapons_request_weapon(context->weapons, weapon_owner(context), context->game, weapon, false);
 }
 static void kill_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
-  (void)args; (void)arg_count; (void)command;
+  (void)players; (void)args; (void)arg_count; (void)command;
   qa_q2_entity *entity = context->entity;
   qa_q2_game_services *game = context->game;
   qa_q2_base_player_state *state = context->state;
   if ((game->options.edition == QA_Q2_EDITION_RERELEASE && state->spectator) ||
       game->host->now(game->host->ctx) - state->respawn_time < 5) return;
   state->god = false;
-  entity->flags = (double)((int64_t)entity->flags & ~16LL);
+  entity->flags = (double)(qa_js_to_int32(entity->flags) & ~16);
   qa_combat_trait_changes tc = {0};
   tc.has_invulnerable = true; tc.invulnerable = false;
   qa_gameplay_authority_set_traits(game->host->combat, entity->actor, tc);
   qa_combat_state_result combat = qa_gameplay_authority_read(game->host->combat, entity->actor.id);
-  qa_q2_player_context_environment_damage(players, entity, game, fmax(1, combat.has_value ? combat.value.health : 0) + 1, 23, 32);
+  double health = combat.has_value ? combat.value.health : 0;
+  if (health <= 0) return;
+  qa_damage_request request = {0};
+  request.attack = game->attack(game->ctx, entity, entity->actor.id, &entity->actor.id, 23, 32, NULL);
+  request.target = entity->actor.id;
+  request.amount = health;
+  request.knockback = 0;
+  request.direction = QA_Q2_ZERO;
+  request.point = qa_q2_game_body(game, entity).origin;
+  request.normal = QA_Q2_ZERO;
+  request.delivery = "direct";
+  (void)qa_gameplay_authority_apply(game->host->combat, request, NULL, NULL);
 }
 static void putaway_handler(qa_q2_players *players, qa_q2_player_context *context, const char *const *args, size_t arg_count, const char *command) {
   (void)players; (void)args; (void)arg_count; (void)command;
@@ -506,14 +569,14 @@ static void cheat_handler(qa_q2_players *players, qa_q2_player_context *context,
   if (!qa_q2_cheats_allowed(context)) return;
   if (strcmp(command, "god") == 0) {
     state->god = !state->god;
-    entity->flags = (double)((int64_t)entity->flags ^ 16LL);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) ^ 16);
     qa_combat_trait_changes tc = {0};
     tc.has_invulnerable = true; tc.invulnerable = state->god;
     qa_gameplay_authority_set_traits(game->host->combat, entity->actor, tc);
     print_to(context, state->god ? "godmode ON\n" : "godmode OFF\n");
   } else if (strcmp(command, "notarget") == 0) {
     state->notarget = !state->notarget;
-    entity->flags = (double)((int64_t)entity->flags ^ 32LL);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) ^ 32);
     print_to(context, state->notarget ? "notarget ON\n" : "notarget OFF\n");
   } else if (strcmp(command, "noclip") == 0) {
     state->noclip = !state->noclip;
@@ -566,13 +629,19 @@ const qa_q2_client_command_definition qa_q2_client_commands[] = {
 };
 const size_t qa_q2_client_command_count = sizeof qa_q2_client_commands / sizeof qa_q2_client_commands[0];
 
+static bool run_lowered(qa_q2_players *players, qa_q2_player_context *context, const char *source_command,
+                        const char *command, const char *const *args, size_t arg_count);
 bool qa_q2_run_client_command(qa_q2_players *players, qa_q2_player_context *context,
                               const char *source_command, const char *const *args, size_t arg_count) {
-  char command[256];
-  size_t length = strlen(source_command);
-  if (length >= sizeof command) length = sizeof command - 1;
-  for (size_t i = 0; i < length; i++) command[i] = (char)tolower((unsigned char)source_command[i]);
-  command[length] = '\0';
+  /* TS toLowerCase over the whole client-supplied name (no length cap). */
+  char *command = qa_js_to_lower_case(source_command); /* Unicode, as String.toLowerCase */
+  if (!command) qa_range_error("Out of memory");
+  bool handled = run_lowered(players, context, source_command, command, args, arg_count);
+  free(command);
+  return handled;
+}
+static bool run_lowered(qa_q2_players *players, qa_q2_player_context *context, const char *source_command,
+                        const char *command, const char *const *args, size_t arg_count) {
   if (context->hooks->command && context->hooks->command(context->hooks->ctx, context->entity, context->game, command, args, arg_count) == true)
     return true;
   const qa_q2_client_command_definition *definition = NULL;
@@ -622,7 +691,7 @@ static void give_items(qa_q2_player_context *context, const char *const *args, s
   qa_q2_game_services *game = context->game;
   qa_q2_player_hooks *hooks = context->hooks;
   char *requested = join_args(args, arg_count);
-  for (char *p = requested; *p; p++) *p = (char)tolower((unsigned char)*p);
+  { char *lowered = qa_js_to_lower_case(requested); if (!lowered) qa_range_error("Out of memory"); free(requested); requested = lowered; }
   bool all = strcmp(requested, "all") == 0;
   bool rerelease = game->options.edition == QA_Q2_EDITION_RERELEASE;
   size_t catalog_count = 0;
@@ -648,7 +717,7 @@ static void give_items(qa_q2_player_context *context, const char *const *args, s
       for (size_t i = 0; i < catalog_count; i++) {
         if (strcmp(catalog[i].kind, "ammo") != 0) continue;
         const qa_inventory_entry *entry = find_entry(context, catalog[i].id);
-        write_item(context, &catalog[i], fmin((entry ? entry->count : 0) + 1000, entry ? entry->capacity : catalog[i].capacity));
+        write_item(context, &catalog[i], qa_js_min((entry ? entry->count : 0) + 1000, entry ? entry->capacity : catalog[i].capacity));
       }
     }
     if (!all) { free(requested); return; }
@@ -682,8 +751,8 @@ static void give_items(qa_q2_player_context *context, const char *const *args, s
     return;
   }
   /* TS requested/first are the joined and first args lowercased. */
-  char *first_lower = dup_text(first);
-  for (char *p = first_lower; *p; p++) *p = (char)tolower((unsigned char)*p);
+  char *first_lower = qa_js_to_lower_case(first);
+  if (!first_lower) qa_range_error("Out of memory");
   const qa_q2_inventory_item *item = NULL;
   for (size_t i = 0; i < catalog_count; i++) if (equals_lower_text(catalog[i].name, requested)) { item = &catalog[i]; break; }
   if (!item) for (size_t i = 0; i < catalog_count; i++) if (equals_lower_text(catalog[i].name, first_lower)) { item = &catalog[i]; break; }
@@ -744,7 +813,7 @@ static void check_power_armor_after_give(qa_q2_player_context *context) {
     field++;
   }
   double cells = qa_shared_inventory_table_count(game->host->inventory, entity->actor.id, "q2:ammo_cells");
-  bool enough = cells != 0 && (automatic < 0 || (((int64_t)entity->flags & 0x40000000LL) != 0 && cells > automatic));
+  bool enough = cells != 0 && (automatic < 0 || ((qa_js_to_int32(entity->flags) & 0x40000000) != 0 && cells > automatic));
   qa_combat_state_result combat = qa_gameplay_authority_read(game->host->combat, entity->actor.id);
   bool active = combat.has_value && strcmp(combat.value.armor.powered.kind, "none") != 0;
   const char *shield = qa_shared_inventory_table_count(game->host->inventory, entity->actor.id, "q2:item_power_shield") != 0

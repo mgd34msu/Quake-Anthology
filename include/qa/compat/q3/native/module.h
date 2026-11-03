@@ -18,6 +18,8 @@ qa_guest_call_signature qa_compat_q3_native_signature(qa_guest_native_abi abi,
   const qa_abi_storage *parameters, size_t parameter_count,
   bool has_result, qa_abi_storage result, bool variadic,
   qa_abi_value_layout *layouts, qa_abi_value_layout *result_layout);
+/* TS {kind:"int32",value} with the ABI encoder's exactness check and wrap. */
+qa_call_value qa_compat_q3_native_int32(double value);
 /* False = TS null. */
 bool qa_compat_q3_native_export(const qa_guest_image *image, const char *name, qa_guest_core_address *out);
 
@@ -41,6 +43,12 @@ void qa_compat_q3_quakelive_game_module_initialize(qa_compat_q3_quakelive_game_m
 void qa_compat_q3_quakelive_game_module_shutdown(qa_compat_q3_quakelive_game_module *m, bool restart);
 void qa_compat_q3_quakelive_game_module_run_frame(qa_compat_q3_quakelive_game_module *m, double time);
 bool qa_compat_q3_quakelive_game_module_console_command(qa_compat_q3_quakelive_game_module *m);
+/* Export slots 5, 6, 7, 9 and 10 (int client, void result). */
+void qa_compat_q3_quakelive_game_module_client_begin(qa_compat_q3_quakelive_game_module *m, double client);
+void qa_compat_q3_quakelive_game_module_client_command(qa_compat_q3_quakelive_game_module *m, double client);
+void qa_compat_q3_quakelive_game_module_client_think(qa_compat_q3_quakelive_game_module *m, double client);
+void qa_compat_q3_quakelive_game_module_client_userinfo_changed(qa_compat_q3_quakelive_game_module *m, double client);
+void qa_compat_q3_quakelive_game_module_client_disconnect(qa_compat_q3_quakelive_game_module *m, double client);
 bool qa_compat_q3_quakelive_game_module_client_connect(qa_compat_q3_quakelive_game_module *m, double client, bool first_time, bool is_bot, qa_guest_core_address *out);
 
 typedef struct qa_compat_q3_vm_module {

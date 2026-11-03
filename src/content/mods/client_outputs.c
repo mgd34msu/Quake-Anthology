@@ -1,5 +1,6 @@
 /* Port of src/content/mods/client-outputs.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/client_outputs.h"
+#include "qa/content/mods/declaration.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,7 +34,7 @@ static void *read_one(const qa_save_reader *reader, const char *name,
                       void (*read)(void *, const qa_save_reader *, void *),
                       void *ctx, size_t size) {
   qa_save_reader f = field(reader, name);
-  void *storage = malloc(size == 0 ? 1 : size);
+  void *storage = qa_mod_declaration_malloc(size == 0 ? 1 : size);
   if (storage == NULL) qa_save_reader_fail(&f, "out of memory");
   read(ctx, &f, storage);
   qa_save_reader_destroy(&f);
@@ -51,7 +52,7 @@ qa_mod_client_output_declaration *qa_read_client_output_declarations(
   static const char *const modes[] = {"normal", "noclip", "freeze"};
   size_t count = qa_save_reader_list_count(reader);
   qa_mod_client_output_declaration *decls = count > 0
-      ? (qa_mod_client_output_declaration *)calloc(count, sizeof *decls) : NULL;
+      ? (qa_mod_client_output_declaration *)qa_mod_declaration_calloc(count, sizeof *decls) : NULL;
   if (count > 0 && decls == NULL) return NULL;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(reader, i);
@@ -82,7 +83,7 @@ qa_mod_client_output_declaration *qa_read_client_output_declarations(
       if (strcmp(kind, "movement-mode") == 0) {
         decls[i].kind = QA_MOD_CLIENT_OUTPUT_MOVEMENT_MODE;
         qa_mod_client_mode_value *rows = vcount > 0
-            ? (qa_mod_client_mode_value *)malloc(vcount * sizeof *rows) : NULL;
+            ? (qa_mod_client_mode_value *)qa_mod_declaration_malloc(vcount * sizeof *rows) : NULL;
         if (vcount > 0 && rows == NULL) qa_save_reader_fail(&values, "out of memory");
         for (size_t j = 0; j < vcount; j++) {
           qa_save_reader row = item(&values, j);
@@ -100,7 +101,7 @@ qa_mod_client_output_declaration *qa_read_client_output_declarations(
       } else {
         decls[i].kind = QA_MOD_CLIENT_OUTPUT_STANCE;
         qa_mod_client_stance_value *rows = vcount > 0
-            ? (qa_mod_client_stance_value *)malloc(vcount * sizeof *rows) : NULL;
+            ? (qa_mod_client_stance_value *)qa_mod_declaration_malloc(vcount * sizeof *rows) : NULL;
         if (vcount > 0 && rows == NULL) qa_save_reader_fail(&values, "out of memory");
         for (size_t j = 0; j < vcount; j++) {
           qa_save_reader row = item(&values, j);

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 /* KeyCode values from src/input/key-codes.ts (input module pending). */
 enum {
@@ -33,9 +34,52 @@ static char *dup_range(const char *text, size_t length) {
   }
   return out;
 }
-/* JS \s restricted to ASCII bytes (see header note). */
-static bool is_space_byte(char c) {
-  return c == ' ' || (c >= '\t' && c <= '\r');
+/* The TS field is an array of code points: cursor, scroll and
+ * maximumLength count code points. The C buffer keeps UTF-8 bytes and
+ * converts positions; a byte that does not start a valid sequence is
+ * one code point, as the console buffer decodes it. */
+static size_t cp_step(const char *text, size_t length, size_t at) {
+  const unsigned char *bytes = (const unsigned char *)text;
+  unsigned char first = bytes[at];
+  size_t extra = (first & 0xe0) == 0xc0 ? 1 : (first & 0xf0) == 0xe0 ? 2 : (first & 0xf8) == 0xf0 ? 3 : 0;
+  if (extra == 0 || at + extra >= length) return 1;
+  for (size_t i = 1; i <= extra; i++) {
+    if ((bytes[at + i] & 0xc0) != 0x80) return 1;
+  }
+  return extra + 1;
+}
+
+static uint32_t cp_decode(const char *text, size_t length, size_t at, size_t *step) {
+  const unsigned char *bytes = (const unsigned char *)text;
+  *step = cp_step(text, length, at);
+  if (*step == 1) return bytes[at];
+  uint32_t value = bytes[at] & (*step == 2 ? 0x1fu : *step == 3 ? 0x0fu : 0x07u);
+  for (size_t i = 1; i < *step; i++) value = (value << 6) | (bytes[at + i] & 0x3fu);
+  return value;
+}
+
+static size_t cp_count(const char *text, size_t length) {
+  size_t count = 0;
+  for (size_t at = 0; at < length; at += cp_step(text, length, at)) count++;
+  return count;
+}
+
+/* Byte offset of code point `index`, clamped to [0, count]. */
+static size_t cp_offset(const char *text, size_t length, int64_t index) {
+  size_t at = 0;
+  for (int64_t i = 0; i < index && at < length; i++) at += cp_step(text, length, at);
+  return at;
+}
+
+static int64_t field_count(const qa_console_field *field) {
+  return field->characters == NULL ? 0 : (int64_t)cp_count(field->characters, field->length);
+}
+
+/* JS \s: WhiteSpace and LineTerminator code points. */
+static bool is_js_space(uint32_t cp) {
+  return cp == 0x09 || cp == 0x0a || cp == 0x0b || cp == 0x0c || cp == 0x0d || cp == 0x20 ||
+         cp == 0xa0 || cp == 0x1680 || (cp >= 0x2000 && cp <= 0x200a) || cp == 0x2028 ||
+         cp == 0x2029 || cp == 0x202f || cp == 0x205f || cp == 0x3000 || cp == 0xfeff;
 }
 static char fold_byte(char c) { return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c; }
 static bool folded_starts_with(const char *text, const char *prefix, size_t prefix_length) {
@@ -109,17 +153,23 @@ const char *qa_console_field_selected_completion(const qa_console_field *field) 
 
 void qa_console_field_set_text(qa_console_field *field, const char *text) {
   completion_clear(field);
-  size_t maximum = field->maximum_length > 0 ? (size_t)field->maximum_length : 0;
-  size_t count = 0;
-  for (const char *p = text; *p != '\0'; p++)
-    if (!((*p >= '\x00' && *p <= '\x1f') || *p == '\x7f')) count++;
-  if (count > maximum) count = maximum;
-  if (!field_grow(field, count)) return; /* OOM only */
-  size_t at = 0;
-  for (const char *p = text; *p != '\0' && at < count; p++)
-    if (!((*p >= '\x00' && *p <= '\x1f') || *p == '\x7f')) field->characters[at++] = *p;
-  field->length = at;
-  field->cursor = (int64_t)at;
+  /* text.replace(/[\x00-\x1f\x7f]/g, "") as code points, sliced to maximumLength. */
+  size_t text_length = strlen(text);
+  char *clean = (char *)malloc(text_length + 1);
+  if (clean == NULL) return; /* OOM only */
+  size_t clean_length = 0;
+  for (size_t i = 0; i < text_length; i++)
+    if (!((unsigned char)text[i] <= 0x1f || text[i] == '\x7f')) clean[clean_length++] = text[i];
+  int64_t maximum = field->maximum_length > 0 ? field->maximum_length : 0;
+  size_t keep = cp_offset(clean, clean_length, maximum);
+  if (!field_grow(field, keep == 0 ? 1 : keep)) {
+    free(clean);
+    return; /* OOM only */
+  }
+  memcpy(field->characters, clean, keep);
+  free(clean);
+  field->length = keep;
+  field->cursor = field_count(field);
   keep_visible(field);
 }
 
@@ -130,60 +180,80 @@ void qa_console_field_clear(qa_console_field *field) {
   field->scroll = 0;
 }
 
-/* JS Array.splice removal over the byte array. */
+/* JS Array.splice(start, count) over the code points. */
 static void remove_range(qa_console_field *field, int64_t start, int64_t count) {
-  int64_t length = (int64_t)field->length;
+  int64_t length = field_count(field);
   if (start < 0) start = length + start > 0 ? length + start : 0;
   if (start > length) start = length;
   if (count < 0) count = 0;
   if (start + count > length) count = length - start;
   if (count <= 0) return;
-  memmove(field->characters + start, field->characters + start + count,
-          (size_t)(length - start - count));
-  field->length -= (size_t)count;
+  size_t from = cp_offset(field->characters, field->length, start);
+  size_t to = cp_offset(field->characters, field->length, start + count);
+  memmove(field->characters + from, field->characters + to, field->length - to);
+  field->length -= to - from;
 }
 
 void qa_console_field_insert(qa_console_field *field, const char *text) {
   completion_clear(field);
-  for (const char *p = text; *p != '\0'; p++) {
-    char character = *p;
-    if ((unsigned char)character < ' ' || character == '\x7f') continue;
-    if (field->overstrike && field->cursor >= 0 && field->cursor < (int64_t)field->length) {
-      field->characters[field->cursor++] = character;
-    } else if ((int64_t)field->length < field->maximum_length) {
-      if (!field_grow(field, field->length + 1)) return; /* OOM only */
+  size_t text_length = strlen(text);
+  for (size_t p = 0; p < text_length;) {
+    size_t step = cp_step(text, text_length, p);
+    const char *character = text + p;
+    p += step;
+    /* character < " " compares the first UTF-16 unit. */
+    if (step == 1 && ((unsigned char)character[0] < ' ' || character[0] == '\x7f')) continue;
+    int64_t count = field_count(field);
+    if (field->overstrike && field->cursor >= 0 && field->cursor < count) {
+      size_t from = cp_offset(field->characters, field->length, field->cursor);
+      size_t to = cp_offset(field->characters, field->length, field->cursor + 1);
+      size_t length = field->length - (to - from) + step;
+      if (!field_grow(field, length)) return; /* OOM only */
+      memmove(field->characters + from + step, field->characters + to, field->length - to);
+      memcpy(field->characters + from, character, step);
+      field->length = length;
+      field->cursor++;
+    } else if (count < field->maximum_length) {
+      if (!field_grow(field, field->length + step)) return; /* OOM only */
       int64_t at = field->cursor;
       if (at < 0) at = 0;
-      if (at > (int64_t)field->length) at = (int64_t)field->length;
-      memmove(field->characters + at + 1, field->characters + at, field->length - (size_t)at);
-      field->characters[at] = character;
-      field->length++;
+      if (at > count) at = count;
+      size_t from = cp_offset(field->characters, field->length, at);
+      memmove(field->characters + from + step, field->characters + from, field->length - from);
+      memcpy(field->characters + from, character, step);
+      field->length += step;
       field->cursor++;
     }
   }
   keep_visible(field);
 }
 
+/* The code point at index, or -1 for TS "" (outside the array). */
+static int64_t field_char(const qa_console_field *field, int64_t index, int64_t count) {
+  if (index < 0 || index >= count) return -1;
+  size_t at = cp_offset(field->characters, field->length, index), step = 0;
+  return cp_decode(field->characters, field->length, at, &step);
+}
+
 static int64_t word_position(const qa_console_field *field, int direction) {
   int64_t cursor = field->cursor;
-  int64_t length = (int64_t)field->length;
+  int64_t length = field_count(field);
   const int64_t offset = direction == -1 ? -1 : 0;
   while (cursor + direction >= 0 && cursor + direction <= length) {
-    int64_t at = cursor + offset;
-    char c = at >= 0 && at < length ? field->characters[at] : '\0';
-    if (!is_space_byte(c)) break;
+    int64_t c = field_char(field, cursor + offset, length);
+    if (c < 0 || !is_js_space((uint32_t)c)) break;
     cursor += direction;
   }
   while (cursor + direction >= 0 && cursor + direction <= length) {
-    int64_t at = cursor + offset;
-    char c = at >= 0 && at < length ? field->characters[at] : '\0';
-    if (c == '\0' || is_space_byte(c)) break;
+    int64_t c = field_char(field, cursor + offset, length);
+    if (c < 0 || is_js_space((uint32_t)c)) break;
     cursor += direction;
   }
   return cursor;
 }
 
 static bool navigation(qa_console_field *field, int64_t code, bool control) {
+  int64_t count = field_count(field);
   switch (code) {
     case KEY_BACKSPACE:
       if (field->cursor > 0) remove_range(field, --field->cursor, 1);
@@ -197,12 +267,11 @@ static bool navigation(qa_console_field *field, int64_t code, bool control) {
       break;
     case KEY_RIGHT: {
       int64_t next = field->cursor + 1;
-      field->cursor = control ? word_position(field, 1)
-                               : (next < (int64_t)field->length ? next : (int64_t)field->length);
+      field->cursor = control ? word_position(field, 1) : (next < count ? next : count);
       break;
     }
     case KEY_HOME: field->cursor = 0; break;
-    case KEY_END: field->cursor = (int64_t)field->length; break;
+    case KEY_END: field->cursor = count; break;
     case KEY_INSERT: field->overstrike = !field->overstrike; break;
     default: return false;
   }
@@ -229,10 +298,10 @@ bool qa_console_field_key(qa_console_field *field, int64_t code, bool control, b
   if (control) {
     switch (code) {
       case 97: field->cursor = 0; break;
-      case 101: field->cursor = (int64_t)field->length; break;
+      case 101: field->cursor = field_count(field); break;
       case 99:
       case 117: qa_console_field_clear(field); break;
-      case 107: remove_range(field, field->cursor, (int64_t)field->length); break;
+      case 107: remove_range(field, field->cursor, field_count(field)); break;
       case 119: {
         int64_t start = word_position(field, -1);
         remove_range(field, start, field->cursor - start);
@@ -252,7 +321,11 @@ static void parse_line(const char *text, size_t length, size_t *token_start,
                        size_t *token_end) {
   size_t start = length > 0 && (text[0] == '/' || text[0] == '\\') ? 1 : 0;
   size_t end = start;
-  while (end < length && !is_space_byte(text[end])) end++;
+  while (end < length) {
+    size_t step = 0;
+    if (is_js_space(cp_decode(text, length, end, &step))) break;
+    end += step;
+  }
   *token_start = start;
   *token_end = end;
 }
@@ -277,8 +350,13 @@ void qa_console_field_complete(qa_console_field *field, const char *const *names
     size_t token_start = 0, token_end = 0;
     parse_line(field->characters == NULL ? "" : field->characters, field->length,
                &token_start, &token_end);
-    if (field->cursor < (int64_t)token_start || field->cursor > (int64_t)token_end) return;
-    size_t prefix_length = (size_t)field->cursor - token_start;
+    /* tokenStart/tokenEnd and the cursor count code points. */
+    const char *chars = field->characters == NULL ? "" : field->characters;
+    int64_t start_cp = (int64_t)token_start;
+    int64_t end_cp = start_cp + (int64_t)cp_count(chars + token_start, token_end - token_start);
+    if (field->cursor < start_cp || field->cursor > end_cp) return;
+    size_t prefix_length = cp_offset(chars + token_start, token_end - token_start,
+                                     field->cursor - start_cp);
     match_entry *entries = NULL;
     size_t count = 0, capacity = 0;
     for (size_t i = 0; i < name_count; i++) {
@@ -312,7 +390,7 @@ void qa_console_field_complete(qa_console_field *field, const char *const *names
       free(entries);
       return;
     }
-    qsort(entries, count, sizeof *entries, match_compare);
+    qa_js_sort(entries, count, sizeof *entries, match_compare);
     field->completion_text = qa_console_field_text(field);
     field->completion_tail =
         dup_range(field->characters + token_end, field->length - token_end);
@@ -339,7 +417,9 @@ void qa_console_field_complete(qa_console_field *field, const char *const *names
   int64_t index = (field->completion_index + (reverse ? -1 : 1) + total) % total;
   const char *selected = field->completion_matches[index];
   size_t text_length = 1 + strlen(selected) + strlen(field->completion_tail);
-  if ((int64_t)text_length > field->maximum_length) {
+  int64_t text_points = 1 + (int64_t)cp_count(selected, strlen(selected)) +
+                        (int64_t)cp_count(field->completion_tail, strlen(field->completion_tail));
+  if (text_points > field->maximum_length) {
     if (fresh) completion_clear(field); /* TS keeps the fresh cycle unassigned. */
     return;
   }
@@ -359,7 +439,7 @@ void qa_console_field_complete(qa_console_field *field, const char *const *names
   field->completion_matches = NULL;
   field->completion_match_count = 0;
   qa_console_field_set_text(field, text);
-  field->cursor = 1 + (int64_t)strlen(selected_copy);
+  field->cursor = 1 + (int64_t)cp_count(selected_copy, strlen(selected_copy));
   keep_visible(field);
   field->completion_text = text;
   field->completion_tail = tail;
@@ -421,6 +501,8 @@ bool qa_complete_command(const char *text, const char *const *names, size_t name
     while (at < common && fold_byte(first[at]) == fold_byte(matches[i][at])) at++;
     common = at;
   }
+  /* TS compares whole characters: never end inside a UTF-8 sequence. */
+  while (common > 0 && common < strlen(first) && ((unsigned char)first[common] & 0xc0) == 0x80) common--;
   size_t tail_length = length - token_end;
   const char *suffix = tail_length > 0 ? text + token_end : (count == 1 ? " " : "");
   size_t suffix_length = tail_length > 0 ? tail_length : strlen(suffix);

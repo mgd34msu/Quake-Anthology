@@ -9,183 +9,186 @@
 #include "qa/content/q1/missionpacks/monsters/wrath.h"
 #include "monsters_internal.h"
 
-bool qa_q1mpm_is_spawn_point_empty(qa_q1mpm_game *game, qa_q1mpm_actor *point) {
-  qa_actor_id actors[512];
-  size_t count = qa_q1mpm_radius_actors(game, game->body(game, point).origin, 64, actors, 512);
-  for (size_t i = 0; i < count; i++) {
+bool qa_q1mpm_is_spawn_point_empty(qa_q1_services *game, qa_q1_actor *point) {
+  size_t count = 0;
+  qa_actor_id *actors = qa_q1mpm_radius_actors(game, qa_q1_get_body(game, point).origin, 64, &count);
+  bool empty = true;
+  for (size_t i = 0; i < count && empty; i++) {
     if (qa_same_actor(actors[i], point->actor.id)) continue;
-    qa_q1mpm_actor *other = game->entity(game, QA_Q1MPM_SOME(actors[i]));
-    if (((other == NULL ? 0 : other->movement_flags) & 32) != 0 ||
-        qa_q1mpm_str_eq(game->host->classname(game->host->ctx, actors[i]), "player") ||
-        (other != NULL && other->think.name != NULL))
-      return false;
+    qa_q1_actor *other = qa_q1_get_entity(game, &actors[i]);
+    /* QuakeC never clears think, so every item that ran PlaceItem keeps blocking the point; the port clears it
+     * before each callback. */
+    const bool placed_item = other != NULL && (strncmp(other->classname, "item_", 5) == 0 ||
+                                               strncmp(other->classname, "weapon_", 7) == 0);
+    if (qa_js_bit_and(other == NULL ? 0 : other->movement_flags, 32) != 0 ||
+        q1mpm_str_eq(game->host.classname(game->host.ctx, actors[i]), "player") ||
+        (other != NULL && (other->think.fn != NULL || other->think.name != NULL)) || placed_item)
+      empty = false;
   }
-  return true;
+  free(actors);
+  return empty;
 }
-qa_q1mpm_actor *qa_q1mpm_overlord_destination(qa_q1mpm_game *game) {
-  qa_actor_id players[64];
-  size_t player_count = game->host->players(game->host->ctx, players, 64);
-  qa_q1mpm_opt_actor player = player_count > 0 ? QA_Q1MPM_SOME(players[0])
-                              : game->world == NULL ? QA_Q1MPM_NONE
-                                                    : QA_Q1MPM_SOME(game->world->actor.id);
-  qa_q1mpm_body body_value;
-  bool has_body = player.has && game->host->bodies_read(game->host->ctx, player.id, &body_value);
-  qa_q1mpm_basis basis = game->make_vectors(game, has_body ? body_value.angles : QA_Q1MPM_ZERO);
-  qa_vec3 origin = has_body ? body_value.origin : QA_Q1MPM_ZERO;
-  qa_q1mpm_actor *best = NULL, *furthest = NULL;
+qa_q1_actor *qa_q1mpm_overlord_destination(qa_q1_services *game) {
+  const qa_actor_id *player = q1mpm_first_player(game);
+  if (player == NULL && game->world != NULL) player = &game->world->actor.id;
+  qa_q1_body body;
+  const bool has_body = player != NULL && q1mpm_read_body(game, *player, &body);
+  const qa_q1_basis basis = qa_q1_make_vectors(game, has_body ? body.angles : QA_Q1_ZERO);
+  const qa_vec3 origin = has_body ? body.origin : QA_Q1_ZERO;
+  qa_q1_actor *best = NULL, *furthest = NULL;
   double distance = 0;
-  qa_q1mpm_actor *entities[1024];
-  size_t count = game->entities(game, entities, 1024);
-  for (size_t i = 0; i < count; i++) {
-    qa_q1mpm_actor *entity = entities[i];
-    if (strcmp(entity->classname, "info_overlord_destination") != 0 ||
-        !qa_q1mpm_is_spawn_point_empty(game, entity))
+  for (size_t i = 0; i < game->entity_count; i++) {
+    qa_q1_actor *entity = game->entities[i];
+    if (strcmp(entity->classname, "info_overlord_destination") != 0 || !qa_q1mpm_is_spawn_point_empty(game, entity))
       continue;
-    qa_vec3 delta = qa_q1mpm_vsub(game->body(game, entity).origin, origin);
-    double current = qa_q1mpm_length(delta);
-    if (qa_q1mpm_dot(qa_q1mpm_normalize(delta), basis.forward) > 0.6 && current > 150) best = entity;
+    const qa_vec3 delta = qa_q1_vsub(qa_q1_get_body(game, entity).origin, origin);
+    const double current = qa_q1_length(delta);
+    if (qa_q1_dot(qa_q1_normalize(delta), basis.forward) > 0.6 && current > 150) best = entity;
     if (current > distance) { furthest = entity; distance = current; }
   }
   return best != NULL ? best : furthest;
 }
-static void destination_spawn(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity) {
-  (void)ctx;
-  qa_q1mpm_body body = game->body(game, entity);
+/* TS `(_game, entity) => ...` over the registering game (ctx). */
+static void destination_spawn(void *ctx, qa_q1_services *source, qa_q1_actor *entity) {
+  (void)source;
+  qa_q1_services *game = ctx;
+  const qa_q1_body body = qa_q1_get_body(game, entity);
   entity->mangle = body.angles;
-  entity->model[0] = '\0';
-  qa_q1mpm_body_patch patch = {0};
-  patch.has_angles = true; patch.angles = QA_Q1MPM_ZERO;
-  patch.has_origin = true; patch.origin = qa_q1mpm_vadd(body.origin, QA_Q1MPM_V3(0, 0, 27));
-  game->set_body(game, entity, &patch);
+  q1mpm_set_text(&entity->model, "");
+  qa_q1_body_patch patch = {0};
+  patch.has_angles = true; patch.angles = QA_Q1_ZERO;
+  patch.has_origin = true; patch.origin = qa_q1_vadd(body.origin, (qa_vec3){0, 0, 27});
+  qa_q1_set_body(game, entity, &patch);
 }
-void qa_q1mpm_register_overlord_destination(qa_q1mpm_game *game) {
-  game->register_spawn(game, "info_overlord_destination", destination_spawn, game);
+void qa_q1mpm_register_overlord_destination(qa_q1_services *game) {
+  qa_q1_register_spawn(game, "info_overlord_destination", destination_spawn, game);
 }
 static void teleport(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  if ((entity->spawnflags & 2) == 0 || game->host->random(game->host->ctx) > 0.75) return;
-  qa_q1mpm_actor *destination = qa_q1mpm_overlord_destination(game);
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  if (qa_js_bit_and(entity->spawnflags, 2) == 0 || qa_q1_host_random(game) > 0.75) return;
+  qa_q1_actor *destination = qa_q1mpm_overlord_destination(game);
   if (destination == NULL) return;
-  qa_q1mpm_ext_spawn_teleport_fog(game, qa_q1mpm_monster_origin(monster));
-  qa_q1mpm_basis basis = game->make_vectors(game, game->body(game, entity).angles);
-  qa_vec3 origin = game->body(game, destination).origin;
-  qa_q1mpm_ext_spawn_teleport_fog(game, qa_q1mpm_vadd(origin, qa_q1mpm_vscale(basis.forward, 32)));
-  qa_q1mpm_ext_spawn_teledeath(game, origin, entity->actor.id);
-  game->set_origin(game, entity, origin);
-  entity->movement_flags &= ~512;
+  (void)qa_q1_spawn_teleport_fog(game, qa_q1_base_monster_origin(&monster->base));
+  qa_q1_basis basis = qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles);
+  qa_vec3 origin = qa_q1_get_body(game, destination).origin;
+  (void)qa_q1_spawn_teleport_fog(game, qa_q1_vadd(origin, qa_q1_vscale(basis.forward, 32)));
+  (void)qa_q1_spawn_teledeath(game, origin, entity->actor.id);
+  qa_q1_set_origin(game, entity, origin);
+  entity->movement_flags = qa_js_bit_and(entity->movement_flags, qa_js_bit_not(512));
 }
 static void toss(qa_q1mpm_mission_monster *monster, const char *model) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_basis basis = game->make_vectors(game, game->body(game, monster->entity).angles);
-  qa_vec3 velocity = qa_q1mpm_vadd(
-      qa_q1mpm_vadd(qa_q1mpm_vadd(qa_q1mpm_vscale(basis.forward, 250), qa_q1mpm_vscale(basis.up, 300)),
-                    qa_q1mpm_vscale(basis.up, game->host->random(game->host->ctx) * 100 - 50)),
-      qa_q1mpm_vscale(basis.right, game->host->random(game->host->ctx) * 200 - 100));
-  qa_q1mpm_actor *gib = game->create(game, "gib");
-  snprintf(gib->model, sizeof(gib->model), "progs/%s.mdl", model);
+  qa_q1_services *game = monster->base.game;
+  qa_q1_basis basis = qa_q1_make_vectors(game, qa_q1_get_body(game, monster->base.entity).angles);
+  const qa_vec3 lift = qa_q1_vadd(qa_q1_vadd(qa_q1_vscale(basis.forward, 250), qa_q1_vscale(basis.up, 300)),
+                                  qa_q1_vscale(basis.up, qa_q1_host_random(game) * 100 - 50));
+  const qa_vec3 velocity = qa_q1_vadd(lift, qa_q1_vscale(basis.right, qa_q1_host_random(game) * 200 - 100));
+  qa_q1_actor *gib = qa_q1_create(game, "gib", NULL, NULL);
+  char path[96];
+  snprintf(path, sizeof path, "progs/%s.mdl", model);
+  q1mpm_set_text(&gib->model, path);
   gib->movement = "bounce";
-  char buf[32];
-  qa_q1mpm_format_number(buf, sizeof(buf), game->time);
-  qa_q1mpm_fields_set(gib, "ltime", buf);
-  qa_q1mpm_body_patch patch = {0};
-  patch.has_origin = true; patch.origin = qa_q1mpm_monster_origin(monster);
-  patch.has_bounds = true; patch.bounds = QA_Q1MPM_POINT;
-  game->set_body(game, gib, &patch);
-  game->schedule(game, gib, 10 + game->host->random(game->host->ctx) * 10,
-                 game->named.action(game->named.ctx, gib, "SUB_Remove"));
-  qa_q1mpm_body_patch velocity_patch = {0};
+  q1mpm_set_number_text(gib, "ltime", game->time);
+  qa_q1_body_patch patch = {0};
+  patch.has_origin = true; patch.origin = qa_q1_base_monster_origin(&monster->base);
+  patch.has_bounds = true; patch.bounds = QA_Q1_POINT;
+  qa_q1_set_body(game, gib, &patch);
+  const double delay = 10 + qa_q1_host_random(game) * 10;
+  qa_q1_schedule(game, gib, delay, qa_q1_callback_registry_action(game->named, gib, "SUB_Remove"));
+  qa_q1_body_patch velocity_patch = {0};
   velocity_patch.has_velocity = true;
   velocity_patch.velocity = velocity;
-  game->set_body(game, gib, &velocity_patch);
-  game->link(game, gib);
+  qa_q1_set_body(game, gib, &velocity_patch);
+  qa_q1_link(game, gib);
 }
 static void burst(qa_q1mpm_mission_monster *monster, const char *const *models, size_t count) {
-  qa_q1mpm_event event = {0};
+  qa_q1_event event;
+  memset(&event, 0, sizeof event);
   event.kind = "colored-explosion";
   event.has_origin = true;
-  event.origin = qa_q1mpm_monster_origin(monster);
+  event.origin = qa_q1_base_monster_origin(&monster->base);
   event.color_start = 0;
   event.color_length = 4;
-  monster->game->host->emit(monster->game->host->ctx, &event);
+  qa_q1_emit(monster->base.game, event);
   for (size_t i = 0; i < count; i++) toss(monster, models[i]);
 }
 static void smash(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  if (!monster->state.enemy.has || !game->can_damage(game, monster->state.enemy.id, entity->actor.id))
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  if (!monster->base.state->has_enemy || !qa_q1_can_damage(game, monster->base.state->enemy, entity->actor.id))
     return;
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_CHARGE, 10);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_CHARGE, 10);
   qa_vec3 target;
-  if (!qa_q1mpm_monster_target(monster, &target) || qa_q1mpm_monster_distance(monster) > 100) return;
-  double damage = 20 + game->host->random(game->host->ctx) * 10;
-  game->sound(game, entity, "s_wrath/smash.wav", QA_Q1MPM_CH("weapon"), 1, 1);
-  qa_q1mpm_game_damage(game, monster->state.enemy.id, entity->actor.id, QA_Q1MPM_SOME(entity->actor.id), damage);
+  if (!qa_q1_base_monster_target(&monster->base, &target) || qa_q1_base_monster_distance(&monster->base) > 100) return;
+  double damage = 20 + qa_q1_host_random(game) * 10;
+  qa_q1_sound(game, entity->actor.id, "s_wrath/smash.wav", "weapon", 1, 1);
+  (void)qa_q1_damage(game, monster->base.state->enemy, entity->actor.id, &entity->actor.id, damage, NULL, NULL, NULL, NULL);
   qa_vec3 eye_target;
-  qa_vec3 aim = qa_q1mpm_eye(game, monster->state.enemy.id, &eye_target) ? eye_target : target;
-  qa_vec3 direction = qa_q1mpm_normalize(qa_q1mpm_vsub(aim, qa_q1mpm_monster_origin(monster)));
-  qa_q1mpm_event event = {0};
+  qa_vec3 aim = qa_q1mpm_eye(game, monster->base.state->enemy, &eye_target) ? eye_target : target;
+  qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(aim, qa_q1_base_monster_origin(&monster->base)));
+  qa_q1_event event;
+  memset(&event, 0, sizeof event);
   event.kind = "particles";
   event.has_origin = true;
-  event.origin = qa_q1mpm_vsub(target, qa_q1mpm_vscale(direction, 30));
-  event.direction = qa_q1mpm_vscale(direction, -100);
+  event.origin = qa_q1_vsub(target, qa_q1_vscale(direction, 30));
+  event.direction = qa_q1_vscale(direction, -10);
   event.color = 73;
-  event.count_value = damage;
-  game->host->emit(game->host->ctx, &event);
+  event.count = damage * 2;
+  qa_q1_emit(game, event);
 }
 static void melee_impl(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  double r = monster->game->host->random(monster->game->host->ctx);
-  qa_q1mpm_monster_play(monster, r < 0.33 ? "overlord_at_a01" : r < 0.66 ? "overlord_at_b01" : "overlord_at_c01");
+  double r = qa_q1_host_random(monster->base.game);
+  qa_q1_base_monster_play(&monster->base, r < 0.33 ? "overlord_at_a01" : r < 0.66 ? "overlord_at_b01" : "overlord_at_c01");
 }
 static void missile_action(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->game->host->random(monster->game->host->ctx);
-  qa_q1mpm_monster_play(monster, "overlord_msl_a01");
+  (void)qa_q1_host_random(monster->base.game);
+  qa_q1_base_monster_play(&monster->base, "overlord_msl_a01");
 }
 static void missile4(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
   qa_q1mpm_wrath_missile(monster, 4);
 }
-static void die01(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; qa_q1mpm_monster_delay(monster, 0.05); }
+static void die01(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; qa_q1_base_monster_delay(&monster->base, 0.05); }
 static void die02(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->movement_flags |= 1;
-  qa_q1mpm_monster_delay(monster, 0.05);
+  monster->base.entity->movement_flags = qa_js_bit_or(monster->base.entity->movement_flags, 1);
+  qa_q1_base_monster_delay(&monster->base, 0.05);
 }
 static void die17(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->model[0] = '\0';
+  q1mpm_set_text(&monster->base.entity->model, "");
   static const char *const models[] = {"s_wrtgb2", "s_wrtgb3", "wrthgib1", "wrthgib2", "wrthgib3"};
   burst(monster, models, 5);
-  qa_q1mpm_monster_delay(monster, 0.1);
+  qa_q1_base_monster_delay(&monster->base, 0.1);
 }
 static void die18(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
   static const char *const models[] = {"gib1", "gib2", "gib3", "gib1", "gib2", "gib3"};
   burst(monster, models, 6);
-  qa_q1mpm_monster_delay(monster, 0.1);
+  qa_q1_base_monster_delay(&monster->base, 0.1);
 }
 static void die19(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
   static const char *const models[] = {"gib1", "gib2", "gib3", "gib1", "gib2", "gib3"};
   burst(monster, models, 6);
-  monster->game->remove(monster->game, monster->entity);
+  qa_q1_remove(monster->base.game, monster->base.entity);
 }
-static void pain(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker, double damage) {
+static void pain(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker, double damage) {
   (void)ctx; (void)attacker; (void)damage;
-  if (monster->state.pain_finished > monster->game->time) return;
-  double r = monster->game->host->random(monster->game->host->ctx);
+  if (monster->base.state->pain_finished > monster->base.game->time) return;
+  double r = qa_q1_host_random(monster->base.game);
   if (r > 0.2) return;
-  qa_q1mpm_monster_play(monster, r < 0.15 ? "overlord_pn_a01" : "overlord_pn_b01");
-  monster->state.pain_finished = monster->game->time + 2;
-  qa_q1mpm_game_sound(monster->game, monster->entity, "wrath/wpain.wav");
+  qa_q1_base_monster_play(&monster->base, r < 0.15 ? "overlord_pn_a01" : "overlord_pn_b01");
+  monster->base.state->pain_finished = monster->base.game->time + 2;
+  qa_q1_sound_defaults(monster->base.game, monster->base.entity->actor.id, "wrath/wpain.wav");
 }
-static void die(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker) {
+static void die(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker) {
   (void)ctx; (void)attacker;
-  qa_q1mpm_monster_play(monster, "overlord_die02");
+  qa_q1_base_monster_play(&monster->base, "overlord_die02");
 }
 static const char *const classnames[] = {"monster_super_wrath"};
 static const qa_q1mpm_named_action actions[] = {

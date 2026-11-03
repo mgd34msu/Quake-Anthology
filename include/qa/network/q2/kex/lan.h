@@ -41,6 +41,7 @@ typedef struct qa_kex_lan_options {
   double local_players;
   const char *name;          /* host */
   qa_net_address server;     /* client (borrowed; cloned) */
+  bool trusted_networks_only; /* host: ignore non-private datagrams */
 } qa_kex_lan_options;
 
 /* One peer (channel stored by pointer for stable emit binding). */

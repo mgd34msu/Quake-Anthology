@@ -128,4 +128,12 @@ void qa_ui_source_script_copy_text(qa_ui_source_script_storage *script,
 void qa_ui_source_script_compress(qa_ui_source_script_storage *script);
 void qa_ui_source_script_reset(qa_ui_source_script_storage *script);
 
+/* TS compressScriptText (content/legacy-script/memory.ts): COM_Compress over
+ * a string: comments out, whitespace runs reduced to one space or newline,
+ * quoted text kept. The text ends at its first NUL or at `length`. Returns a
+ * malloc'd NUL-terminated buffer (NULL only on OOM); *out_length receives
+ * its length. */
+uint8_t *qa_ui_compress_script_text(const uint8_t *text, size_t length,
+                                    size_t *out_length);
+
 #endif

@@ -21,6 +21,9 @@
 #include "qa/movement/q3/postures.h"
 #include "qa/movement/q3/slide_move.h"
 #include "qa/movement/q3/view.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js_truthy.h"
 
 #define ALL_TIMES (QA_Q3_FLAG_TIME_WATERJUMP | QA_Q3_FLAG_TIME_LAND | QA_Q3_FLAG_TIME_KNOCKBACK)
 #define MASK_WATER (32 | 16 | 8)
@@ -36,11 +39,9 @@ static qa_vec3 v3(double x, double y, double z) { qa_vec3 r = {x, y, z}; return 
 static bool flag(double v, int m) { return (qa_int32(v) & m) != 0; }
 static double flag_set(double v, int m) { return (double)(qa_int32(v) | m); }
 static double flag_clear(double v, int m) { return (double)(qa_int32(v) & ~m); }
-static double js_max(double a, double b) { return fmax(a, b); }
-static double js_min(double a, double b) { return fmin(a, b); }
 
 void qa_q3_drop_movement_timers(qa_q3_motion *state, double milliseconds) {
-  if (state->pm_time) {
+  if (qa_js_truthy(state->pm_time)) {
     if (milliseconds >= state->pm_time) { state->pm_flags = flag_clear(state->pm_flags, ALL_TIMES); state->pm_time = 0; }
     else state->pm_time -= milliseconds;
   }
@@ -86,7 +87,7 @@ static void step_init(move_step *s, qa_q3_motion *state, qa_q3_move_command cmd,
   s->state = state; s->cmd = cmd; s->options = options;
   s->slide.bounds = options->has_current_bounds ? options->current_bounds : options->standing_bounds;
   double raw = cmd.server_time - state->command_time;
-  s->msec = js_max(1, js_min(200, raw));
+  s->msec = qa_js_max(1, qa_js_min(200, raw));
   s->slide.frame_time = f32(s->msec * f32(0.001));
   s->previous_origin = state->origin; s->previous_velocity = state->velocity;
   double mask = options->has_trace_mask ? options->trace_mask : (double)(1 | 0x10000 | CONTENTS_BODY);
@@ -106,7 +107,7 @@ static void step_debug(void *ctx, const char *message) {
   qa_q3_diagnostics *d = s->options->diagnostics;
   if (d != NULL && d->level != 0) {
     char buffer[256];
-    snprintf(buffer, sizeof buffer, "%.0f:%s\n", d->count, message);
+    snprintf(buffer, sizeof buffer, "%s:%s\n", QA_JS_NUMBER(d->count), message);
     d->print(d->ctx, buffer);
   }
 }
@@ -149,29 +150,29 @@ static void friction(move_step *s) {
   double drop = 0, frame_time = s->slide.frame_time;
   if (s->waterlevel <= 1 && s->walking && !(qa_int32(s->ground_surface_flags) & SURF_SLICK) &&
       !flag(ps->pm_flags, QA_Q3_FLAG_TIME_KNOCKBACK))
-    drop = f32(f32(js_max(speed, 100) * 6) * frame_time);
-  if (s->waterlevel) drop = f32(drop + f32(f32(speed * s->waterlevel) * frame_time));
+    drop = f32(f32(qa_js_max(speed, 100) * 6) * frame_time);
+  if (qa_js_truthy(s->waterlevel)) drop = f32(drop + f32(f32(speed * s->waterlevel) * frame_time));
   if (ps->flight) drop = f32(drop + f32(f32(speed * 3) * frame_time));
   if (ps->pm_type == QA_Q3_PM_SPECTATOR) drop = f32(drop + f32(f32(speed * 5) * frame_time));
-  ps->velocity = qa_scale3(velocity, f32(js_max(0, f32(speed - drop)) / speed));
+  ps->velocity = qa_scale3(velocity, f32(qa_js_max(0, f32(speed - drop)) / speed));
 }
 static void accelerate(move_step *s, qa_vec3 direction, double speed, double acceleration) {
   speed = f32(speed);
   double current_speed = f32(qa_dot3(s->state->velocity, direction));
   double add_speed = f32(speed - current_speed);
   if (add_speed <= 0) return;
-  double amount = js_min(f32(f32(acceleration * s->slide.frame_time) * speed), add_speed);
+  double amount = qa_js_min(f32(f32(acceleration * s->slide.frame_time) * speed), add_speed);
   s->state->velocity = qa_add3(s->state->velocity, qa_scale3(direction, amount));
 }
 static double command_scale(move_step *s) {
   double f = s->cmd.forwardmove, r = s->cmd.rightmove, u = s->cmd.upmove;
-  double max_v = js_max(fabs(f), js_max(fabs(r), fabs(u)));
+  double max_v = qa_js_max(fabs(f), qa_js_max(fabs(r), fabs(u)));
   double total = f32(sqrt(f * f + r * r + u * u));
   return max_v == 0 ? 0 : f32(f32(f32(s->state->speed) * max_v) / f32(127 * total));
 }
 static void movement_direction(move_step *s) {
   double f = s->cmd.forwardmove, r = s->cmd.rightmove;
-  if (f || r) s->state->movement_dir = f > 0 ? (r < 0 ? 1 : r > 0 ? 7 : 0) :
+  if (qa_js_truthy(f) || qa_js_truthy(r)) s->state->movement_dir = f > 0 ? (r < 0 ? 1 : r > 0 ? 7 : 0) :
       f < 0 ? (r < 0 ? 3 : r > 0 ? 5 : 4) : r < 0 ? 2 : 6;
   else if (s->state->movement_dir == 2) s->state->movement_dir = 1;
   else if (s->state->movement_dir == 6) s->state->movement_dir = 7;
@@ -218,7 +219,7 @@ static void water_move(move_step *s) {
   friction(s);
   double scale = command_scale(s);
   qa_vec3 wish = scale == 0 ? v3(0, 0, -60) : wish_velocity(s, scale);
-  accelerate(s, qa_normalize3(wish), js_min(qa_length3(wish), s->state->speed * 0.5), 4);
+  accelerate(s, qa_normalize3(wish), qa_js_min(qa_length3(wish), s->state->speed * 0.5), 4);
   if (s->slide.has_ground_normal && qa_dot3(s->state->velocity, s->slide.ground_normal) < 0) {
     double speed = f32(qa_length3(s->state->velocity));
     s->state->velocity = qa_scale3(qa_normalize3(qa_q3_clip_velocity(s->state->velocity, s->slide.ground_normal, 1.001)), speed);
@@ -244,7 +245,7 @@ static void air_move(move_step *s) {
 }
 static void check_ladder(move_step *s) {
   s->ladder = false;
-  if (s->state->pm_time) return;
+  if (s->options->ladders_disabled || qa_js_truthy(s->state->pm_time)) return;
   qa_vec3 flat = qa_normalize3(v3(s->forward.x, s->forward.y, 0));
   qa_trace_result trace = test_trace(s, s->state->origin, qa_add3(s->state->origin, flat));
   if (trace.fraction < 1 && trace.kind != NULL && strcmp(trace.kind, "q3") == 0 &&
@@ -265,8 +266,8 @@ static void ladder_move(move_step *s) {
   qa_vec3 wish_vel = v3(wish.x, wish.y, f32(wish_z));
   accelerate(s, qa_normalize3(wish_vel), f32(qa_length3(wish_vel)), 10);
   if (wish_vel.z == 0) {
-    if (ps->velocity.z > 0) ps->velocity = v3(ps->velocity.x, ps->velocity.y, js_max(0, f32(ps->velocity.z - f32(ps->gravity * s->slide.frame_time))));
-    else ps->velocity = v3(ps->velocity.x, ps->velocity.y, js_min(0, f32(ps->velocity.z + f32(ps->gravity * s->slide.frame_time))));
+    if (ps->velocity.z > 0) ps->velocity = v3(ps->velocity.x, ps->velocity.y, qa_js_max(0, f32(ps->velocity.z - f32(ps->gravity * s->slide.frame_time))));
+    else ps->velocity = v3(ps->velocity.x, ps->velocity.y, qa_js_min(0, f32(ps->velocity.z + f32(ps->gravity * s->slide.frame_time))));
   }
   qa_q3_step_slide_move(&s->slide, false);
 }
@@ -287,24 +288,24 @@ static void walk_move(move_step *s) {
   s->right = qa_normalize3(qa_q3_clip_velocity(v3(s->right.x, s->right.y, 0), normal, 1.001));
   qa_vec3 wish = qa_add3(qa_scale3(s->forward, s->cmd.forwardmove), qa_scale3(s->right, s->cmd.rightmove));
   double wish_speed = f32(f32(qa_length3(wish)) * scale);
-  if (flag(ps->pm_flags, QA_Q3_FLAG_DUCKED)) wish_speed = js_min(wish_speed, ps->speed * 0.25);
-  if (s->waterlevel) {
+  if (flag(ps->pm_flags, QA_Q3_FLAG_DUCKED)) wish_speed = qa_js_min(wish_speed, ps->speed * 0.25);
+  if (qa_js_truthy(s->waterlevel)) {
     double water_scale = f32(1 - 0.5 * f32(s->waterlevel / 3));
-    wish_speed = js_min(wish_speed, f32(ps->speed * water_scale));
+    wish_speed = qa_js_min(wish_speed, f32(ps->speed * water_scale));
   }
   bool sliding = (qa_int32(s->ground_surface_flags) & SURF_SLICK) != 0 || flag(ps->pm_flags, QA_Q3_FLAG_TIME_KNOCKBACK);
   accelerate(s, qa_normalize3(wish), wish_speed, sliding ? 1 : 10);
   if (sliding) ps->velocity = v3(ps->velocity.x, ps->velocity.y, ps->velocity.z - f32(ps->gravity * s->slide.frame_time));
   double speed = f32(qa_length3(ps->velocity));
   ps->velocity = qa_scale3(qa_normalize3(qa_q3_clip_velocity(ps->velocity, normal, 1.001)), speed);
-  if (ps->velocity.x || ps->velocity.y) qa_q3_step_slide_move(&s->slide, false);
+  if (qa_js_truthy(ps->velocity.x) || qa_js_truthy(ps->velocity.y)) qa_q3_step_slide_move(&s->slide, false); /* NaN is falsy */
 }
 static void noclip_move(move_step *s) {
   qa_q3_motion *ps = s->state;
   ps->viewheight = s->options->postures.standing_view_height;
   double speed = f32(qa_length3(ps->velocity));
   ps->velocity = speed < 1 ? v3(0, 0, 0) : qa_scale3(ps->velocity,
-      f32(js_max(0, f32(speed - f32(f32(js_max(100, speed) * 9) * s->slide.frame_time))) / speed));
+      f32(qa_js_max(0, f32(speed - f32(f32(qa_js_max(100, speed) * 9) * s->slide.frame_time))) / speed));
   qa_vec3 wish = wish_velocity(s, 1);
   accelerate(s, qa_normalize3(wish), f32(f32(qa_length3(wish)) * command_scale(s)), 10);
   ps->origin = qa_add3(ps->origin, qa_scale3(ps->velocity, s->slide.frame_time));
@@ -436,8 +437,12 @@ static void check_duck(move_step *s) {
   s->slide.bounds = flag(ps->pm_flags, QA_Q3_FLAG_DUCKED) ? postures.crouched.bounds : standing;
   ps->viewheight = flag(ps->pm_flags, QA_Q3_FLAG_DUCKED) ? postures.crouched.view_height : postures.standing_view_height;
   qa_bounds requested = s->options->has_body_bounds && s->options->body_bounds != NULL ? *s->options->body_bounds : s->slide.bounds;
+  /* id applies the posture hull unconditionally and leaves overlap to
+   * PM_CorrectAllSolid; only a hull supplied by a client output (a foreign
+   * body shape) keeps the shared expansion test. */
   duck_clear clear_ctx = {s};
-  qa_bounds accepted = qa_movement_bounds(previous_bounds, requested, duck_clear_fn, &clear_ctx);
+  bool body = s->options->has_body_bounds && s->options->body_bounds != NULL;
+  qa_bounds accepted = !body ? requested : qa_movement_bounds(previous_bounds, requested, duck_clear_fn, &clear_ctx);
   s->slide.bounds = accepted;
   if (!bounds_equal(accepted, requested)) {
     ps->pm_flags = previous_duck ? flag_set(flag_clear(ps->pm_flags, QA_Q3_FLAG_DUCKED), QA_Q3_FLAG_DUCKED)
@@ -560,8 +565,8 @@ qa_q3_motion_result qa_q3_move_player(qa_q3_motion *state, qa_q3_move_command co
   qa_q3_move_command cmd = command;
   double substep = 0;
   while (state->command_time != final_time) {
-    cmd.server_time = state->command_time + js_min(final_time - state->command_time, fixed);
-    double step_msec = js_max(1, js_min(200, cmd.server_time - state->command_time));
+    cmd.server_time = state->command_time + qa_js_min(final_time - state->command_time, fixed);
+    double step_msec = qa_js_max(1, qa_js_min(200, cmd.server_time - state->command_time));
     bool proceed = options->begin_step(options->ctx, state, &cmd, step_msec, substep);
     substep++;
     if (!proceed) break;

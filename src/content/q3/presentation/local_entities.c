@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/local-entities.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/local_entities.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -14,7 +15,7 @@ static double f32(double value) { return (double)(float)value; }
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -301,7 +302,7 @@ static void blood_trail(system_t *system, qa_q3_pres_local_entity_read_current_f
   for (int32_t time = start; time <= end; time = to_int32((double)time + step)) {
     /* A full pool can recycle this very slot while spawning a puff. */
     qa_vec3 origin = qa_q3_base_evaluate_trajectory(read_current_fn(read_current_ctx)->pos, time);
-    qa_q3_pres_smoke_puff_options_mirror options;
+    qa_q3_pres_smoke_puff_options options;
     memset(&options, 0, sizeof options);
     options.origin = origin;
     options.radius = 20;
@@ -319,7 +320,7 @@ static void bounce_mark(system_t *system, qa_q3_pres_local_entity *entity, qa_ve
   if (entity->le_mark_type != QA_Q3_PRES_LE_MARK_NONE) {
     bool blood = entity->le_mark_type == QA_Q3_PRES_LE_MARK_BLOOD;
     double radius = (blood ? 16 : 8) + (qa_game_random_rand(system->host.random) & (blood ? 31 : 15));
-    qa_q3_pres_impact_mark_request_mirror request;
+    qa_q3_pres_impact_mark_request request;
     memset(&request, 0, sizeof request);
     request.shader = blood ? system->host.media->blood_mark_shader : system->host.media->burn_mark_shader;
     request.origin = origin;
@@ -526,10 +527,11 @@ static void kamikaze(system_t *system, qa_q3_pres_local_entity *entity, visit_st
   if (t > 2000 && t < 3000) {
     qa_vec3 angles = entity->angles.base;
     if (angles.x == 0 && angles.y == 0 && angles.z == 0) {
+      double x2 = f32((double)qa_game_random_random(system->host.random) * 360);
+      double y2 = f32((double)qa_game_random_random(system->host.random) * 360);
+      double z2 = f32((double)qa_game_random_random(system->host.random) * 360);
       entity->angles.base = qa_math_vec3(
-          f32((double)qa_game_random_random(system->host.random) * 360),
-          f32((double)qa_game_random_random(system->host.random) * 360),
-          f32((double)qa_game_random_random(system->host.random) * 360));
+          x2, y2, z2);
     }
     shockwave(system, entity, qa_qvm_angles_to_axis(entity->angles.base), t, 2000, 3000, 2500, 704, visit);
   }
@@ -587,7 +589,7 @@ static void visit_entity(void *ctx, qa_q3_pres_local_entity *entity,
   }
 }
 
-void qa_q3_pres_local_entity_system_init(system_t *system, qa_q3_pres_client_effects_mirror effects,
+void qa_q3_pres_local_entity_system_init(system_t *system, qa_q3_pres_client_effects_view effects,
     qa_q3_pres_local_entity_host host) {
   system->effects = effects;
   system->pool = effects.pool;

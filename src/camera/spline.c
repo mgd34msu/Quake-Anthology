@@ -1,5 +1,6 @@
 /* Port of src/camera/spline.ts. GPL-2.0-or-later. */
 #include "qa/camera/spline.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -10,17 +11,12 @@
 
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
-/* TS throws plain Error in this module; abort with identical message. */
-static noreturn void camera_error(const char *format, ...) {
-  va_list args;
-  va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
-  va_end(args);
-  abort();
-}
+/* TS throws plain Error in this module: a catchable raise named "Error"
+ * (uncaught, it prints "Error: <message>" and aborts as before). */
+#define camera_error(...) qa_raise("Error", 0, 0, __VA_ARGS__)
 
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
@@ -47,60 +43,10 @@ static char *xdup_range(const char *first, size_t length) {
 static float fr(double v) { return (float)v; }
 
 /* JS Number(string), restricted to ASCII whitespace trimming. */
-static double js_number(const char *s) {
-  while (isspace((unsigned char)*s)) s++;
-  size_t len = strlen(s);
-  while (len > 0 && isspace((unsigned char)s[len - 1])) len--;
-  if (len == 0) return 0;
-  char *tmp = xdup_range(s, len);
-  double result;
-  if (strcmp(tmp, "Infinity") == 0 || strcmp(tmp, "+Infinity") == 0) {
-    result = INFINITY;
-  } else if (strcmp(tmp, "-Infinity") == 0) {
-    result = -INFINITY;
-  } else if (len > 2 && tmp[0] == '0' &&
-             (tmp[1] == 'x' || tmp[1] == 'X' || tmp[1] == 'b' || tmp[1] == 'B' ||
-              tmp[1] == 'o' || tmp[1] == 'O')) {
-    int base = (tmp[1] == 'x' || tmp[1] == 'X') ? 16
-               : (tmp[1] == 'b' || tmp[1] == 'B') ? 2 : 8;
-    result = 0;
-    bool ok = true;
-    for (size_t i = 2; i < len; i++) {
-      int d;
-      if (tmp[i] >= '0' && tmp[i] <= '9') d = tmp[i] - '0';
-      else if (tmp[i] >= 'a' && tmp[i] <= 'f') d = tmp[i] - 'a' + 10;
-      else if (tmp[i] >= 'A' && tmp[i] <= 'F') d = tmp[i] - 'A' + 10;
-      else { ok = false; break; }
-      if (d >= base) { ok = false; break; }
-      result = result * base + d;
-    }
-    if (!ok) result = NAN;
-  } else if (isalpha((unsigned char)tmp[0]) ||
-             ((tmp[0] == '+' || tmp[0] == '-') &&
-              isalpha((unsigned char)tmp[1]))) {
-    result = NAN; /* JS rejects inf/nan spellings strtod would accept */
-  } else {
-    char *end = NULL;
-    result = strtod(tmp, &end);
-    if (end == tmp || *end != '\0') result = NAN;
-  }
-  free(tmp);
-  return result;
-}
+static double js_number(const char *s) { return qa_js_string_to_number(s); }
 
 static void format_number(double value, char *buf, size_t size) {
-  if (isnan(value)) { snprintf(buf, size, "NaN"); return; }
-  if (isinf(value)) { snprintf(buf, size, value < 0 ? "-Infinity" : "Infinity"); return; }
-  if (value == 0) { snprintf(buf, size, "0"); return; } /* JS String(-0)=="0" */
-  if (value == trunc(value) && fabs(value) < 1e21) {
-    snprintf(buf, size, "%.0f", value);
-    return;
-  }
-  for (int prec = 1; prec <= 17; prec++) {
-    snprintf(buf, size, "%.*g", prec, value);
-    if (strtod(buf, NULL) == value) return;
-  }
-  snprintf(buf, size, "%.17g", value);
+  qa_net_js_number(value, buf, size);
 }
 
 /* ---- Tokens ---- */
@@ -199,9 +145,8 @@ static const char *tokens_next(tokens *t) {
 static const char *tokens_next_lower(tokens *t) {
   const char *value = tokens_next(t);
   free(t->lower);
-  t->lower = xstrdup(value);
-  for (char *c = t->lower; *c != '\0'; c++)
-    *c = (char)tolower((unsigned char)*c);
+  t->lower = qa_js_to_lower_case(value); /* TS toLowerCase (printed in errors) */
+  if (t->lower == NULL) qa_range_error("Out of memory");
   return t->lower;
 }
 
@@ -256,61 +201,59 @@ void qa_camera_definition_destroy(qa_camera_definition *definition) {
   definition->event_count = 0;
 }
 
+/* The position is built in place in `out` (zeroed by the caller), so a raise
+ * mid-parse leaves it owned by the parse state's cleanup. */
 static void parse_position(tokens *t, qa_camera_position_kind kind,
                            qa_camera_position *out) {
-  static const qa_vec3 zero = {0, 0, 0};
   tokens_expect(t, "{");
-  char *name = xstrdup("position");
-  double time = 0, base_velocity = 0, granularity = 0.025;
-  qa_vec3 point = zero, start = zero, end = zero;
-  qa_camera_velocity *velocities = NULL;
-  size_t velocity_count = 0, velocity_cap = 0;
-  qa_vec3 *points = NULL;
-  size_t point_count = 0, point_cap = 0;
+  out->kind = kind;
+  out->name = xstrdup("position");
+  out->granularity = 0.025;
+  size_t velocity_cap = 0, point_cap = 0;
   const char *peek;
   while ((peek = tokens_peek(t)) == NULL || strcmp(peek, "}") != 0) {
     const char *key = tokens_next_lower(t);
     if (strcmp(key, "name") == 0) {
       char *next_name = xstrdup(tokens_next(t));
-      free(name);
-      name = next_name;
+      free(out->name);
+      out->name = next_name;
     } else if (strcmp(key, "type") == 0) {
       tokens_number(t);
     } else if (strcmp(key, "time") == 0) {
-      time = tokens_number(t);
+      out->time = tokens_number(t);
     } else if (strcmp(key, "basevelocity") == 0) {
-      base_velocity = tokens_number(t);
+      out->base_velocity = tokens_number(t);
     } else if (strcmp(key, "velocity") == 0) {
       qa_camera_velocity v;
       v.start = tokens_number(t);
       v.duration = tokens_number(t);
       v.speed = tokens_number(t);
-      if (velocity_count == velocity_cap) {
+      if (out->velocity_count == velocity_cap) {
         velocity_cap = velocity_cap ? velocity_cap * 2 : 4;
-        velocities = xrealloc(velocities, velocity_cap * sizeof *velocities);
+        out->velocities = xrealloc(out->velocities, velocity_cap * sizeof *out->velocities);
       }
-      velocities[velocity_count++] = v;
+      out->velocities[out->velocity_count++] = v;
     } else if (strcmp(key, "pos") == 0) {
-      point = tokens_vector(t);
+      out->point = tokens_vector(t);
     } else if (strcmp(key, "startpos") == 0) {
-      start = tokens_vector(t);
+      out->start = tokens_vector(t);
     } else if (strcmp(key, "endpos") == 0) {
-      end = tokens_vector(t);
+      out->end = tokens_vector(t);
     } else if (strcmp(key, "target") == 0) {
       tokens_expect(t, "{");
       const char *inner;
       while ((inner = tokens_peek(t)) == NULL || strcmp(inner, "}") != 0) {
         if (inner != NULL && strcmp(inner, "(") == 0) {
           qa_vec3 p = tokens_vector(t);
-          if (point_count == point_cap) {
+          if (out->point_count == point_cap) {
             point_cap = point_cap ? point_cap * 2 : 4;
-            points = xrealloc(points, point_cap * sizeof *points);
+            out->points = xrealloc(out->points, point_cap * sizeof *out->points);
           }
-          points[point_count++] = p;
+          out->points[out->point_count++] = p;
         } else {
           const char *property = tokens_next_lower(t);
           if (strcmp(property, "granularity") == 0)
-            granularity = tokens_number(t);
+            out->granularity = tokens_number(t);
           else if (strcmp(property, "name") == 0)
             tokens_next(t);
           else
@@ -323,26 +266,14 @@ static void parse_position(tokens *t, qa_camera_position_kind kind,
     }
   }
   tokens_expect(t, "}");
-  bool negative = time < 0;
-  for (size_t i = 0; i < velocity_count; i++)
-    if (velocities[i].start < 0 || velocities[i].duration < 0 ||
-        velocities[i].speed < 0)
+  bool negative = out->time < 0;
+  for (size_t i = 0; i < out->velocity_count; i++)
+    if (out->velocities[i].start < 0 || out->velocities[i].duration < 0 ||
+        out->velocities[i].speed < 0)
       negative = true;
   if (negative) camera_error("Negative camera timing or speed");
-  out->kind = kind;
-  out->name = name;
-  out->time = time;
-  out->base_velocity = base_velocity;
-  out->velocities = velocities;
-  out->velocity_count = velocity_count;
-  out->point = point;
-  out->start = start;
-  out->end = end;
-  out->granularity = granularity;
-  out->points = points;
-  out->point_count = point_count;
   if (kind == QA_CAMERA_POSITION_SPLINE &&
-      (granularity < 0.0001 || granularity > 1 || point_count < 4))
+      (out->granularity < 0.0001 || out->granularity > 1 || out->point_count < 4))
     camera_error(
         "Spline requires four points and granularity between 0.0001 and 1");
 }
@@ -356,28 +287,51 @@ static bool ascii_iequals(const char *a, const char *b) {
   return *a == *b;
 }
 
-void qa_parse_camera(const char *text, qa_camera_definition *out) {
+/* Everything a parse owns; the cleanup frees it when a raise abandons it. */
+typedef struct parse_state {
   tokens t;
-  tokens_init(&t, text);
-  const char *first = tokens_peek(&t);
+  qa_camera_position pending;
+  qa_camera_position camera;
+  bool has_camera;
+  qa_camera_position *targets;
+  size_t target_count;
+  qa_camera_event *events;
+  size_t event_count;
+  char *param;
+} parse_state;
+
+static void parse_state_free(void *raw) {
+  parse_state *state = (parse_state *)raw;
+  tokens_destroy(&state->t);
+  destroy_position(&state->pending);
+  destroy_position(&state->camera);
+  for (size_t i = 0; i < state->target_count; i++) destroy_position(&state->targets[i]);
+  free(state->targets);
+  for (size_t i = 0; i < state->event_count; i++) free(state->events[i].param);
+  free(state->events);
+  free(state->param);
+}
+
+void qa_parse_camera(const char *text, qa_camera_definition *out) {
+  parse_state state;
+  memset(&state, 0, sizeof state);
+  qa_cleanup node;
+  qa_cleanup_push(&node, parse_state_free, &state);
+  tokens *t = &state.t;
+  tokens_init(t, text);
+  const char *first = tokens_peek(t);
   if (first != NULL && (ascii_iequals(first, "camera") ||
                         ascii_iequals(first, "camerapathdef")))
-    tokens_next(&t);
-  tokens_expect(&t, "{");
+    tokens_next(t);
+  tokens_expect(t, "{");
   double seconds = 30;
-  bool has_camera = false;
-  qa_camera_position camera;
-  memset(&camera, 0, sizeof camera);
   double value = 90, start = 90, end = 90, time = 0;
-  qa_camera_position *targets = NULL;
-  size_t target_count = 0, target_cap = 0;
-  qa_camera_event *events = NULL;
-  size_t event_count = 0, event_cap = 0;
+  size_t target_cap = 0, event_cap = 0;
   const char *peek;
-  while ((peek = tokens_peek(&t)) == NULL || strcmp(peek, "}") != 0) {
-    const char *key = tokens_next_lower(&t);
+  while ((peek = tokens_peek(t)) == NULL || strcmp(peek, "}") != 0) {
+    const char *key = tokens_next_lower(t);
     if (strcmp(key, "time") == 0) {
-      seconds = tokens_number(&t);
+      seconds = tokens_number(t);
     } else if (strcmp(key, "camera_fixed") == 0 ||
                strcmp(key, "camera_interpolated") == 0 ||
                strcmp(key, "camera_spline") == 0) {
@@ -386,11 +340,11 @@ void qa_parse_camera(const char *text, qa_camera_definition *out) {
           : strcmp(key, "camera_interpolated") == 0
               ? QA_CAMERA_POSITION_INTERPOLATED
               : QA_CAMERA_POSITION_SPLINE;
-      qa_camera_position parsed;
-      parse_position(&t, kind, &parsed);
-      if (has_camera) destroy_position(&camera);
-      camera = parsed;
-      has_camera = true;
+      parse_position(t, kind, &state.pending);
+      destroy_position(&state.camera);
+      state.camera = state.pending;
+      memset(&state.pending, 0, sizeof state.pending);
+      state.has_camera = true;
     } else if (strcmp(key, "target_fixed") == 0 ||
                strcmp(key, "target_interpolated") == 0 ||
                strcmp(key, "target_spline") == 0) {
@@ -399,75 +353,79 @@ void qa_parse_camera(const char *text, qa_camera_definition *out) {
           : strcmp(key, "target_interpolated") == 0
               ? QA_CAMERA_POSITION_INTERPOLATED
               : QA_CAMERA_POSITION_SPLINE;
-      if (target_count == target_cap) {
+      if (state.target_count == target_cap) {
         target_cap = target_cap ? target_cap * 2 : 4;
-        targets = xrealloc(targets, target_cap * sizeof *targets);
+        state.targets = xrealloc(state.targets, target_cap * sizeof *state.targets);
       }
-      parse_position(&t, kind, &targets[target_count++]);
+      memset(&state.targets[state.target_count], 0, sizeof *state.targets);
+      parse_position(t, kind, &state.targets[state.target_count++]);
     } else if (strcmp(key, "event") == 0) {
       double type = 0, event_time = 0;
-      char *param = xstrdup("");
-      tokens_expect(&t, "{");
+      free(state.param);
+      state.param = xstrdup("");
+      tokens_expect(t, "{");
       const char *inner;
-      while ((inner = tokens_peek(&t)) == NULL || strcmp(inner, "}") != 0) {
-        const char *field = tokens_next_lower(&t);
-        if (strcmp(field, "type") == 0) type = tokens_number(&t);
+      while ((inner = tokens_peek(t)) == NULL || strcmp(inner, "}") != 0) {
+        const char *field = tokens_next_lower(t);
+        if (strcmp(field, "type") == 0) type = tokens_number(t);
         else if (strcmp(field, "param") == 0) {
-          char *next_param = xstrdup(tokens_next(&t));
-          free(param);
-          param = next_param;
-        } else if (strcmp(field, "time") == 0) event_time = tokens_number(&t);
+          char *next_param = xstrdup(tokens_next(t));
+          free(state.param);
+          state.param = next_param;
+        } else if (strcmp(field, "time") == 0) event_time = tokens_number(t);
         else camera_error("Unknown camera event property %s", field);
       }
-      tokens_expect(&t, "}");
+      tokens_expect(t, "}");
       if (type != trunc(type) || type < 0 || type > 9 || event_time < 0)
         camera_error("Invalid camera event");
-      if (type == 1 && (!isfinite(js_number(param)) || js_number(param) < 0))
+      if (type == 1 && (!isfinite(js_number(state.param)) || js_number(state.param) < 0))
         camera_error("Invalid camera wait duration");
-      if (event_count == event_cap) {
+      if (state.event_count == event_cap) {
         event_cap = event_cap ? event_cap * 2 : 4;
-        events = xrealloc(events, event_cap * sizeof *events);
+        state.events = xrealloc(state.events, event_cap * sizeof *state.events);
       }
-      events[event_count].type = type;
-      events[event_count].param = param;
-      events[event_count].time = event_time;
-      event_count++;
+      state.events[state.event_count].type = type;
+      state.events[state.event_count].param = state.param;
+      state.events[state.event_count].time = event_time;
+      state.param = NULL;
+      state.event_count++;
     } else if (strcmp(key, "fov") == 0) {
-      tokens_expect(&t, "{");
+      tokens_expect(t, "{");
       const char *inner;
-      while ((inner = tokens_peek(&t)) == NULL || strcmp(inner, "}") != 0) {
-        const char *field = tokens_next_lower(&t);
-        if (strcmp(field, "fov") == 0) value = tokens_number(&t);
-        else if (strcmp(field, "startfov") == 0) start = tokens_number(&t);
-        else if (strcmp(field, "endfov") == 0) end = tokens_number(&t);
-        else if (strcmp(field, "time") == 0) time = tokens_number(&t);
+      while ((inner = tokens_peek(t)) == NULL || strcmp(inner, "}") != 0) {
+        const char *field = tokens_next_lower(t);
+        if (strcmp(field, "fov") == 0) value = tokens_number(t);
+        else if (strcmp(field, "startfov") == 0) start = tokens_number(t);
+        else if (strcmp(field, "endfov") == 0) end = tokens_number(t);
+        else if (strcmp(field, "time") == 0) time = tokens_number(t);
         else camera_error("Unknown camera FOV property %s", field);
       }
-      tokens_expect(&t, "}");
+      tokens_expect(t, "}");
     } else {
       camera_error("Unknown camera property %s", key);
     }
   }
-  tokens_expect(&t, "}");
+  tokens_expect(t, "}");
   bool bad_fov = value <= 0 || value >= 180 || start <= 0 || start >= 180 ||
                  end <= 0 || end >= 180;
-  if (tokens_peek(&t) != NULL || !has_camera || seconds <= 0 || time < 0 ||
+  if (tokens_peek(t) != NULL || !state.has_camera || seconds <= 0 || time < 0 ||
       bad_fov)
     camera_error("Invalid camera definition");
-  for (size_t i = 0; i < event_count; i++) {
-    if (events[i].type != 4) continue;
+  for (size_t i = 0; i < state.event_count; i++) {
+    if (state.events[i].type != 4) continue;
     bool found = false;
-    for (size_t j = 0; j < target_count; j++)
-      if (strcmp(targets[j].name, events[i].param) == 0) found = true;
-    if (!found) camera_error("Unknown camera target %s", events[i].param);
+    for (size_t j = 0; j < state.target_count; j++)
+      if (strcmp(state.targets[j].name, state.events[i].param) == 0) found = true;
+    if (!found) camera_error("Unknown camera target %s", state.events[i].param);
   }
-  tokens_destroy(&t);
+  qa_cleanup_pop(&node);
+  tokens_destroy(t);
   out->seconds = seconds;
-  out->position = camera;
-  out->targets = targets;
-  out->target_count = target_count;
-  out->events = events;
-  out->event_count = event_count;
+  out->position = state.camera;
+  out->targets = state.targets;
+  out->target_count = state.target_count;
+  out->events = state.events;
+  out->event_count = state.event_count;
   out->fov.value = value;
   out->fov.start = start;
   out->fov.end = end;
@@ -576,8 +534,12 @@ static void sb_write_position(strbuf *sb, const qa_camera_position *path,
   sb_append(sb, "}\n");
 }
 
+static void strbuf_free(void *raw) { free(((strbuf *)raw)->data); }
+
 char *qa_serialize_camera(const qa_camera_definition *camera) {
   strbuf sb = {NULL, 0, 0, false};
+  qa_cleanup node;
+  qa_cleanup_push(&node, strbuf_free, &sb);
   sb_append(&sb, "cameraPathDef {\ntime ");
   sb_number(&sb, camera->seconds);
   sb_append(&sb, "\n");
@@ -602,6 +564,7 @@ char *qa_serialize_camera(const qa_camera_definition *camera) {
   sb_append(&sb, "\ntime ");
   sb_number(&sb, camera->fov.time);
   sb_append(&sb, "\n}\n}\n");
+  qa_cleanup_pop(&node);
   if (sb.oom) { free(sb.data); return NULL; }
   return sb.data;
 }
@@ -614,10 +577,10 @@ static bool spline_points(const qa_camera_position *path, qa_vec3 **out,
   for (size_t i = 3; i < path->point_count; i++) {
     for (double t = 0; t < 1.001; t = (double)fr(t + path->granularity)) {
       double weights[4] = {
-          (double)fr(pow(1 - t, 3) / 6),
-          (double)fr((3 * pow(t, 3) - 6 * pow(t, 2) + 4) / 6),
-          (double)fr((-3 * pow(t, 3) + 3 * pow(t, 2) + 3 * t + 1) / 6),
-          (double)fr(pow(t, 3) / 6)};
+          (double)fr(qa_js_pow(1 - t, 3) / 6),
+          (double)fr((3 * qa_js_pow(t, 3) - 6 * qa_js_pow(t, 2) + 4) / 6),
+          (double)fr((-3 * qa_js_pow(t, 3) + 3 * qa_js_pow(t, 2) + 3 * t + 1) / 6),
+          (double)fr(qa_js_pow(t, 3) / 6)};
       qa_vec3 point = {0, 0, 0};
       for (int j = 0; j < 4; j++) {
         size_t index = i - 3 + (size_t)j;
@@ -724,11 +687,11 @@ static qa_vec3 position_playback_sample(qa_camera_position_playback *pb,
         break;
       }
     }
-    pb->traveled += fmax(0, time - pb->last_time) / 1000 * velocity;
+    pb->traveled += qa_js_max(0, time - pb->last_time) / 1000 * velocity;
     pb->last_time = time;
     double fraction = pb->distance == 0
                           ? 0
-                          : fmax(0, fmin(1, pb->traveled / pb->distance));
+                          : qa_js_max(0, qa_js_min(1, pb->traveled / pb->distance));
     return qa_add3(qa_scale3(path->start, 1 - fraction),
                    qa_scale3(path->end, fraction));
   }
@@ -774,13 +737,16 @@ bool qa_camera_playback_init(qa_camera_playback *playback,
   playback->definition = definition;
   playback->start_time = start_time;
   playback->active_target = 0;
-  double total = definition->seconds * 1000;
+  /* seconds * 1000 + waits.reduce((sum, event) => sum + Number(param) * 1000, 0):
+   * the waits sum first, then joins the seconds. */
+  double waits = 0;
   size_t wait_count = 0;
   for (size_t i = 0; i < definition->event_count; i++) {
     if (definition->events[i].type != 1) continue;
-    total += js_number(definition->events[i].param) * 1000;
+    waits = waits + js_number(definition->events[i].param) * 1000;
     wait_count++;
   }
+  double total = definition->seconds * 1000 + waits;
   playback->total_milliseconds = total;
   size_t velocity_count = definition->position.velocity_count + wait_count;
   qa_camera_velocity *velocities = NULL;
@@ -923,7 +889,7 @@ bool qa_camera_playback_sample(qa_camera_playback *playback, double time,
   double fraction =
       fov.time == 0
           ? 0
-          : fmax(0, fmin(1, (time - playback->start_time) / fov.time));
+          : qa_js_max(0, qa_js_min(1, (time - playback->start_time) / fov.time));
   out->origin = origin;
   out->direction = qa_normalize3(qa_sub3(target, origin));
   out->fov = fov.time == 0 ? fov.value

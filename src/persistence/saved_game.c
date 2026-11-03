@@ -5,45 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/persistence/save_image.h"
 #include "qa/persistence/save_policy.h"
 #include "qa/persistence/value.h"
-
-/* Shared-branch prologue of TS decodeSaveImage (save-image.ts),
- * reproduced so malformed shared saves fail here exactly as they
- * fail there; parseSaveImage itself is not yet ported. */
-static noreturn void decode_shared_image(const uint8_t *bytes, size_t length) {
-  static const char magic[] = "QTSAVE3\n";
-  static const char legacy_magic[] = "QTSAVE2\n";
-  double version = 0;
-  if (length >= sizeof magic - 1 && memcmp(bytes, magic, sizeof magic - 1) == 0)
-    version = 3;
-  else if (length >= sizeof legacy_magic - 1 &&
-           memcmp(bytes, legacy_magic, sizeof legacy_magic - 1) == 0)
-    version = 2;
-  else
-    qa_save_format_error("save", "unsupported unified save signature/version");
-  qa_save_value *value =
-      qa_decode_checkpoint_value(bytes + (sizeof magic - 1),
-                                 length - (sizeof magic - 1));
-  if (value == NULL)
-    qa_save_format_error("save", "unified save image codec is not yet ported");
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, NULL)) {
-    qa_save_value_free(value);
-    qa_save_format_error("save", "unified save image codec is not yet ported");
-  }
-  qa_save_reader schema;
-  if (!qa_save_reader_field(&reader, "schemaVersion", &schema)) {
-    qa_save_reader_destroy(&reader);
-    qa_save_value_free(value);
-    qa_save_format_error("save", "unified save image codec is not yet ported");
-  }
-  (void)qa_save_reader_literal_number(&schema, version);
-  qa_save_reader_destroy(&schema);
-  qa_save_reader_destroy(&reader);
-  qa_save_value_free(value);
-  qa_save_format_error("save", "unified save image codec is not yet ported");
-}
 
 /* TS /^[A-Za-z0-9_/-]+$/ plus the split("/") part check. The Q1 map
  * is a byte string in both implementations, so UTF-16 vs byte
@@ -73,8 +37,14 @@ bool qa_decode_saved_game(const uint8_t *bytes, size_t length, qa_saved_game *ou
   memset(out, 0, sizeof *out);
   /* TS indexes bytes[0]/[1]; a short buffer reads as undefined there
    * and misses the shared signature, as the length guard does here. */
-  if (length >= 2 && bytes[0] == 81 && bytes[1] == 84)
-    decode_shared_image(bytes, length);
+  if (length >= 2 && bytes[0] == 81 && bytes[1] == 84) {
+    qa_save_image_result result;
+    if (!qa_decode_save_image(bytes, length, &result)) return false;
+    out->kind = QA_SAVED_GAME_SHARED;
+    out->image = result.image;
+    out->image_root = result.root;
+    return true;
+  }
   if (!qa_decode_q1_save(bytes, length, &out->data)) return false;
   if (!valid_source_map(out->data.map))
     qa_save_format_error("q1.map", "invalid source map name");
@@ -123,11 +93,14 @@ bool qa_read_saved_game(const char *path, qa_saved_game *out) {
 
 bool qa_write_saved_game(const char *directory, const char *path,
                          const qa_saved_game *save) {
-  if (save->kind == QA_SAVED_GAME_SHARED)
-    qa_save_format_error("save", "unified save image codec is not yet ported");
   size_t length = 0;
-  uint8_t *bytes = qa_encode_q1_save(&save->data, &length);
-  if (bytes == NULL) return false;
+  uint8_t *bytes = NULL;
+  if (save->kind == QA_SAVED_GAME_SHARED) {
+    if (!qa_encode_save_image(&save->image, &bytes, &length)) return false;
+  } else {
+    bytes = qa_encode_q1_save(&save->data, &length);
+    if (bytes == NULL) return false;
+  }
   bool ok = qa_write_contained_save(directory, path, bytes, length);
   free(bytes);
   return ok;
@@ -135,6 +108,10 @@ bool qa_write_saved_game(const char *directory, const char *path,
 
 void qa_saved_game_free(qa_saved_game *save) {
   if (save == NULL) return;
+  if (save->kind == QA_SAVED_GAME_SHARED && save->image_root != NULL) {
+    qa_save_image_result result = {save->image, save->image_root};
+    qa_save_image_result_free(&result);
+  }
   qa_q1_save_data_free(&save->data);
   memset(save, 0, sizeof *save);
 }

@@ -106,18 +106,17 @@ qa_app_qvm_cvar_services qa_app_cgame_status_cvars_services(qa_app_cgame_status_
 typedef struct status_record { int32_t pointer; qa_qvm_memory *memory; int32_t handle; } status_record;
 struct qa_app_cgame_status_view {
   qa_app_cgame_status_cvars *wrapper;
-  qa_app_cgame_status_syscall_host host;
+  qa_app_qvm_cvar_services cvars;
   status_record *records;
   size_t record_count, record_capacity;
   uint8_t refresh_words[8];
 };
 qa_app_cgame_status_view *qa_app_cgame_status_view_create(
-    qa_app_qvm_cvar_services source, bool (*visible)(void *ctx), void *visible_ctx,
-    qa_app_cgame_status_syscall_host host) {
+    qa_app_qvm_cvar_services source, bool (*visible)(void *ctx), void *visible_ctx) {
   qa_app_cgame_status_view *v = calloc(1, sizeof *v);
   if (v == NULL) qa_range_error("Out of memory");
   v->wrapper = qa_app_cgame_status_cvars_create(source, visible, visible_ctx);
-  v->host = host;
+  v->cvars = qa_app_cgame_status_cvars_services(v->wrapper);
   return v;
 }
 void qa_app_cgame_status_view_destroy(qa_app_cgame_status_view *view) {
@@ -156,9 +155,9 @@ static void record_set(qa_app_cgame_status_view *v, int32_t pointer, qa_qvm_memo
 }
 bool qa_app_cgame_status_view_syscall(qa_app_cgame_status_view *view, uint8_t *words,
                                       size_t words_length, qa_qvm_memory *memory, double *out_result) {
-  double result = 0;
-  bool has = view->host.cvar_syscall(view->host.ctx, "cgame", words, words_length,
-                                     memory, qa_app_cgame_status_view_cvars(view), &result);
+  qa_qvm_host_result result = 0;
+  const qa_qvm_game_memory game = qa_qvm_memory_game_memory(memory);
+  bool has = qa_qvm_cvar_table_syscall("cgame", words, words_length, &game, &view->cvars, &result);
   int32_t trap = read_i32(words);
   if (has && (trap == 3 || trap == 4)) {
     int32_t pointer = read_i32(words + 4);
@@ -166,7 +165,7 @@ bool qa_app_cgame_status_view_syscall(qa_app_cgame_status_view *view, uint8_t *w
     if (qa_qvm_memory_pointer(memory, pointer, &span)) {
       qa_qvm_writable_view record;
       qa_qvm_memory_view(memory, pointer, 272, 0, &record);
-      int32_t handle = read_i32(record.bytes);
+      int32_t handle = qa_qvm_writable_view_get_int32(&record, 0, true);
       qa_cvar_snapshot snapshot;
       bool found = false;
       qa_app_qvm_cvar_services services = qa_app_cgame_status_view_cvars(view);
@@ -187,15 +186,16 @@ void qa_app_cgame_status_view_refresh(qa_app_cgame_status_view *view) {
     status_record record = view->records[i];
     qa_qvm_writable_view record_view;
     qa_qvm_memory_view(record.memory, record.pointer, 272, 0, &record_view);
-    if (read_i32(record_view.bytes) != record.handle) {
+    if (qa_qvm_writable_view_get_int32(&record_view, 0, true) != record.handle) {
       memmove(&view->records[i], &view->records[i + 1], (view->record_count - i - 1) * sizeof *view->records);
       view->record_count--;
       continue;
     }
     write_i32(view->refresh_words + 4, record.pointer);
-    double ignored = 0;
-    view->host.cvar_syscall(view->host.ctx, "cgame", view->refresh_words, sizeof view->refresh_words,
-                            record.memory, qa_app_cgame_status_view_cvars(view), &ignored);
+    qa_qvm_host_result ignored = 0;
+    const qa_qvm_game_memory game = qa_qvm_memory_game_memory(record.memory);
+    (void)qa_qvm_cvar_table_syscall("cgame", view->refresh_words, sizeof view->refresh_words, &game,
+                                    &view->cvars, &ignored);
     i++;
   }
 }

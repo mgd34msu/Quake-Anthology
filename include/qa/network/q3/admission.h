@@ -42,6 +42,12 @@ bool qa_q3_address_from_net(const qa_net_address *in, qa_q3_address *out);
 bool qa_q3_is_lan_address(const qa_q3_address *address);
 /* q3InfoValue: returns malloc'd value or "" (NULL only on OOM). */
 char *qa_q3_info_value(const char *info, const char *key);
+/* TS addressText into buf (loopback -> "loopback"). */
+void qa_q3_address_text(const qa_q3_address *address, char *buf, size_t n);
+/* TS infoSet (q3 client-userinfo, 1024): malloc'd result. */
+char *qa_q3_info_set(const char *info, const char *key, const char *value, qa_q3_message_print_fn print, void *print_ctx);
+/* TS q3PeerUserinfo: sets "ip" from the transport address ("localhost" for loopback); malloc'd. */
+char *qa_q3_peer_userinfo(const char *info, const qa_q3_address *address, qa_q3_message_print_fn print, void *print_ctx);
 /* TS Q3OutgoingDatagram. */
 typedef struct qa_q3_outgoing_datagram { qa_q3_address to; uint8_t *payload; size_t payload_len; } qa_q3_outgoing_datagram;
 void qa_q3_outgoing_datagram_destroy(qa_q3_outgoing_datagram *d);
@@ -132,7 +138,7 @@ qa_q3_challenge *qa_q3_server_admission_challenges(qa_q3_server_admission *a, si
 const qa_q3_server_admission_bindings *qa_q3_server_admission_get_bindings(const qa_q3_server_admission *a);
 bool qa_q3_server_admission_receive(qa_q3_server_admission *a, const qa_q3_address *from, const uint8_t *bytes, size_t len, double now);
 void qa_q3_server_admission_disconnect(qa_q3_server_admission *a, const qa_q3_address *address);
-/* routeQ3SequencedPacket: returns slot index or -1. */
+/* routeQ3SequencedPacket: returns the matching slot's slot number (TS slot.slot) or -1. */
 int64_t qa_q3_route_sequenced_packet(const qa_q3_address *from, const uint8_t *bytes, size_t len,
                                      const qa_q3_admission_slot *slots, size_t slot_count);
 #endif

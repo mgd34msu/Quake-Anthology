@@ -21,8 +21,12 @@ qa_compat_qc_objective_resolved qa_compat_qc_resolve_objective_storage(qa_compat
   int64_t ref = qa_compat_qc_words_int(&m->globals, qa_compat_qc_machine_global_offset(m, s.global));
   for (size_t i = 0; i < s.indirections.count; i++) {
     if (cur.fn) cur.fn(cur.ctx, true, ref);
-    ref = qa_compat_qc_words_int(qa_compat_qc_entity_memory_from_reference(m->entities, ref), qa_compat_qc_machine_field_offset(m, s.indirections.values[i]));
+    const qa_compat_qc_words * w = qa_compat_qc_entity_memory_from_reference(m->entities, ref);
+    int64_t word = qa_compat_qc_machine_field_offset(m, s.indirections.values[i]);
+    ref = qa_compat_qc_words_int(w, word);
   }
   if (cur.fn) cur.fn(cur.ctx, true, ref);
-  return (qa_compat_qc_objective_resolved){qa_compat_qc_entity_memory_from_reference(m->entities, ref), qa_compat_qc_machine_field_offset(m, s.field), true, ref};
+  qa_compat_qc_words * words = qa_compat_qc_entity_memory_from_reference(m->entities, ref);
+  int64_t offset = qa_compat_qc_machine_field_offset(m, s.field);
+  return (qa_compat_qc_objective_resolved){words, offset, true, ref};
 }

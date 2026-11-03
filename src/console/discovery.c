@@ -7,6 +7,8 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 static char *dup_text(const char *text) {
   if (text == NULL) return NULL;
@@ -191,8 +193,8 @@ static int compare_entries(const void *left, const void *right) {
       (const qa_console_discovery_entry *)left;
   const qa_console_discovery_entry *b =
       (const qa_console_discovery_entry *)right;
-  return strcmp(a->name != NULL ? a->name : "",
-                b->name != NULL ? b->name : "");
+  return qa_js_locale_compare(a->name != NULL ? a->name : "",
+                              b->name != NULL ? b->name : "");
 }
 
 qa_console_discovery_entry *qa_query_console_entries(
@@ -265,7 +267,7 @@ qa_console_discovery_entry *qa_query_console_entries(
   free(snapshots);
   free_strings(map.keys, map.count);
   if (map.count > 1) {
-    qsort(map.entries, map.count, sizeof *map.entries, compare_entries);
+    qa_js_sort(map.entries, map.count, sizeof *map.entries, compare_entries);
   }
   *out_count = map.count;
   return map.entries;

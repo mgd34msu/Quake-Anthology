@@ -16,11 +16,11 @@
 #include "rrm_internal.h"
 
 static void plasma(qa_q2mpm_weapons *weapons, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_vec3 eye;
   if (!qa_q2m_enemy_eye(c, &eye)) return;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 61));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 61));
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(entity->pos1, start));
   bool later = entity->frame > qa_q2rm_gladiator_frames_value.attack3;
   (void)weapons->fire_plasma(weapons->ctx, entity, game, start, direction,
@@ -51,18 +51,18 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
   qa_body_state enemy;
   qa_vec3 eye;
   if (!qa_q2m_enemy_body(c, &enemy) || !qa_q2m_enemy_eye(c, &eye)) return;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   bool close = qa_hypot3(qa_sub3_double(q2rm_body(c->game, entity).origin, enemy.origin)) <= 112
       && c->state->melee_time <= q2rm_now(c->game);
-  if (close || !qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 61))) return;
+  if (close || !qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 61))) return;
   entity->pos1 = eye;
   q2rm_snd(c, entity->style == 1 ? "weapons/plasshot.wav" : "gladiator/railgun.wav", 1);
   q2rm_set_move(c, entity->style == 1 ? "gladb_move_attack_gun" : "gladiator_move_attack_gun");
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   bool airborne = q2rm_body(game, entity).velocity.z > 100;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2
@@ -79,10 +79,12 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
+  /* g_monster.cpp only applies weapon_sound while health > 0. */
+  q2rm_emit_loop(game, entity, entity->style == 1 ? "weapons/phaloop.wav" : "weapons/rg_hum.wav", 1, "stop");
   if (qa_q2rm_check_gib(c)) {
     q2rm_snd(c, "misc/udeath.wav", 2);
     entity->skin = trunc(entity->skin / 2);
@@ -123,7 +125,7 @@ static void melee_fn(void *ctx, qa_q2m_context *c) {
 }
 static void gun_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 61));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 61));
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(c->entity->pos1, start));
   c->weapons.fire_rail(c->weapons.ctx, c->entity, c->game, start, direction, 50, 100);
   qa_q2rm_monster_flash(c, 61, start, direction);
@@ -133,15 +135,15 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
 }
 
-size_t qa_q2rm_create_rerelease_gladiator_definitions(qa_q2mpm_weapons weapons, qa_q2m_definition out[2]) {
-  qa_q2mpm_weapons *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating rerelease gladiator definitions");
+size_t qa_q2rm_create_rerelease_gladiator_definitions(qa_q2mpm_arena *arena, qa_q2mpm_weapons weapons, qa_q2m_definition out[2]) {
+  qa_q2mpm_weapons *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating rerelease gladiator definitions");
   *box = weapons;
   const qa_q2m_named_handler extra[] = {
     {"gladiator_dead", {NULL, corpse_fn}},
@@ -162,7 +164,7 @@ size_t qa_q2rm_create_rerelease_gladiator_definitions(qa_q2mpm_weapons weapons, 
   gladiator.attack = (qa_q2m_handler){NULL, attack_fn};
   gladiator.reactions.pain = pain_fn;
   gladiator.reactions.die = die_fn;
-  gladiator.callbacks = qa_q2rm_merge_callbacks(gladiator.callbacks, gladiator.callback_count,
+  gladiator.callbacks = qa_q2rm_merge_callbacks(arena, gladiator.callbacks, gladiator.callback_count,
                                                 extra, sizeof extra / sizeof extra[0], &gladiator.callback_count);
   out[0] = gladiator;
   out[1] = gladiator;

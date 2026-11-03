@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 struct qa_app_prepared_local_seat_change {
   qa_engine_session *session;
   qa_world_lifetime *world;
@@ -73,7 +74,7 @@ qa_app_prepared_local_seat_change *qa_app_prepare_local_seat_change(qa_engine_se
     if (!(change->has_removed && current[i].seat == change->removed.seat)) change->next[at++] = current[i];
   if (change->has_added) change->next[at++] = change->added;
   change->next_count = at;
-  qsort(change->next, change->next_count, sizeof *change->next, compare_identity);
+  qa_js_sort(change->next, change->next_count, sizeof *change->next, compare_identity);
   return change;
 }
 void qa_app_prepared_local_seat_change_destroy(qa_app_prepared_local_seat_change *change) {

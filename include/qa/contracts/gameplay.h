@@ -243,6 +243,10 @@ struct qa_combat_progress {
   void (*resume_armor)(void *ctx, qa_armor_stage_result result,
                        qa_current_combat_state current, qa_combat_progress *out);
   void (*resume_source)(void *ctx, qa_current_combat_state current, qa_combat_progress *out);
+  /* C ownership (TS GC): a resume frees ctx itself; when the consumer drops a
+   * continuation or armor stage without resuming it, it calls discard(ctx)
+   * instead. NULL = nothing to free. */
+  void (*discard)(void *ctx);
 };
 
 /* TS DamagePreparation: {kind:"continue",amount} | {kind:"cancel"}. */
@@ -352,18 +356,6 @@ typedef struct qa_transition_intent_result {
   bool has_value;
   qa_transition_intent value;
 } qa_transition_intent_result;
-typedef struct qa_campaign_controller {
-  void *ctx;
-  qa_provider_id id;
-  const qa_mission_gate *(*gates)(void *ctx, size_t *out_count);
-  qa_transition_intent_result (*propose_transition)(void *ctx);
-} qa_campaign_controller;
-typedef struct qa_match_controller {
-  void *ctx;
-  qa_provider_id id;
-  void (*confirmed_damage)(void *ctx, qa_damage_outcome outcome);
-  qa_transition_intent_result (*propose_transition)(void *ctx);
-} qa_match_controller;
 typedef struct qa_transition_coordinator {
   void *ctx;
   qa_transition_decision (*resolve)(void *ctx, qa_transition_mode mode,

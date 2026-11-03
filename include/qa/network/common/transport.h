@@ -1,7 +1,7 @@
 /* Port of src/network/common/transport.ts. DatagramTransport<T> becomes
  * a fn+ctx vtable over qa_net_address. UdpTransport: Bun socket -> POSIX
- * nonblocking UDP pumped in poll() (PORTING platform rule). Errors carry
- * a malloc'd message string. RangeError/Error -> qa_range_error.
+ * nonblocking UDP pumped in poll() (PORTING platform rule). Error events carry
+ * a malloc'd message string. Throws go through qa_raise with the TS class name.
  * GPL-2.0-or-later. */
 #ifndef QA_NETWORK_COMMON_TRANSPORT_H
 #define QA_NETWORK_COMMON_TRANSPORT_H
@@ -68,7 +68,7 @@ typedef struct qa_udp_bind_options {
   const qa_datagram_limits *limits; qa_net_now_fn now; void *now_ctx; bool broadcast;
 } qa_udp_bind_options;
 typedef struct qa_udp_transport {
-  int fd; bool ended; qa_packet_queue queue; qa_net_address address;
+  int fd; bool ended, pumping; qa_packet_queue queue; qa_net_address address;
   bool has_socks; qa_socks_association socks;
 } qa_udp_transport;
 int qa_udp_transport_bind(qa_udp_transport *t, const qa_udp_bind_options *opts);
@@ -84,6 +84,13 @@ long long qa_udp_transport_subscribe(qa_udp_transport *t, qa_net_listener_fn fn,
 void qa_udp_transport_unsubscribe(qa_udp_transport *t, long long id);
 void qa_udp_transport_close(qa_udp_transport *t);
 
-/* UnsupportedTransportError: aborts with "<transport>: <detail>". */
+/* TS Pick<UdpTransport, "connectSocks">. */
+typedef struct qa_socks_connector {
+  void *ctx;
+  void (*connect_socks)(void *ctx, const qa_socks_options *options);
+} qa_socks_connector;
+qa_socks_connector qa_udp_transport_as_socks_connector(qa_udp_transport *t);
+
+/* UnsupportedTransportError: raises name "UnsupportedTransportError", "<transport>: <detail>". */
 void qa_unsupported_transport_error(const char *transport, const char *detail);
 #endif

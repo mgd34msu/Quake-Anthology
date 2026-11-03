@@ -3,6 +3,8 @@
 
 #include <stdarg.h>
 #include <stdnoreturn.h>
+#include "qa/foundation/support.h"
+#include "qa/world/handles.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,14 +12,14 @@
 #include "qa/content/mods/selection.h"
 #include "qa/world/session/mod_presentations.h"
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -64,9 +66,20 @@ static void free_retained_identity(qa_mod_identity *identity) {
   free((void *)identity->providers);
 }
 
-static void close_scopes(qa_resource_scope **scopes, size_t count) {
-  for (size_t i = count; i-- > 0;) qa_resource_scope_destroy(scopes[i]);
+/* TS closeScopes: newest first, each in its own try; failures become one
+ * AggregateError. Closes only: the scopes' memory belongs to their mod
+ * records (freed at qa_session_mods_destroy), so a mod that kept its scope or
+ * its assertCurrent closure sees the TS "closed" throw instead of freed memory. */
+static void close_scope_call(void *ctx) { qa_resource_scope_close(ctx); }
+static size_t close_scopes_collect(qa_resource_scope **scopes, size_t count) {
+  size_t errors = 0;
+  for (size_t i = count; i-- > 0;) {
+    qa_caught_error caught;
+    if (!qa_try(close_scope_call, scopes[i], &caught)) errors++;
+  }
+  return errors;
 }
+
 
 struct removal_node {
   qa_mod_operation *operation;
@@ -134,17 +147,21 @@ struct qa_session_mods {
   qa_resource_scope **pending;
   size_t pending_count;
   size_t pending_capacity;
+  /* One per initialized mod: its scope, instance id and initialization
+   * closure state, freed at destroy (TS keeps them while referenced). */
+  struct init_ctx **records;
+  size_t record_count, record_capacity;
   bool closed;
   bool busy;
   int64_t next_order;
   /* Scratch returns. */
   qa_mod_selection *scratch_enabled;
   size_t scratch_enabled_capacity;
-  qa_session_simulation_presentation *scratch_presentations;
+  qa_app_simulation_presentation *scratch_presentations;
   size_t scratch_presentations_capacity;
   qa_session_mod_appearance_group *scratch_groups;
   size_t scratch_groups_capacity;
-  qa_session_simulation_presentation *scratch_group_items;
+  qa_app_simulation_presentation *scratch_group_items;
   size_t scratch_group_items_capacity;
   qa_active_mod_client_presentation *scratch_client_sources;
   size_t scratch_client_sources_capacity;
@@ -162,6 +179,7 @@ static void exclusive_begin(qa_session_mods *mods) {
   mods->busy = true;
 }
 static void exclusive_end(qa_session_mods *mods) { mods->busy = false; }
+static void exclusive_end_cleanup(void *arg) { exclusive_end(arg); }
 
 static struct prepared_entry *find_prepared(qa_session_mods *mods,
                                             const char *key) {
@@ -227,12 +245,19 @@ static void combat_assert_idle(qa_session_mods *mods) {
     qa_gameplay_authority_assert_idle(mods->options.services->combat);
 }
 
+/* Cleanup nodes freeing a pointer variable's current value on a raise. */
+static void free_checkpoints(void *arg) { free(*(qa_mod_checkpoint **)arg); }
+static void free_travel_entries(void *arg) { free(*(qa_mod_travel_entry **)arg); }
+static void free_prepared_list(void *arg) { free(*(struct prepared_entry ***)arg); }
+
 static void capture(qa_session_mods *mods, qa_mod_checkpoint **out_mods,
                     size_t *out_count) {
   combat_assert_idle(mods);
   qa_mod_checkpoint *captured = NULL;
   if (mods->active_count != 0)
     captured = xmalloc(mods->active_count * sizeof *captured);
+  qa_cleanup node; /* a throwing checkpoint drops the partial capture */
+  qa_cleanup_push(&node, free_checkpoints, &captured);
   for (size_t i = 0; i < mods->active_count; i++) {
     struct active_entry *entry = mods->active[i];
     qa_mod_private_checkpoint state =
@@ -243,24 +268,183 @@ static void capture(qa_session_mods *mods, qa_mod_checkpoint **out_mods,
     captured[i].identity = entry->entry->identity;
     captured[i].state = state;
   }
+  qa_cleanup_pop(&node);
   *out_mods = captured;
   *out_count = mods->active_count;
 }
 
+/* A mod's initialization record. The mod's assertCurrent/nextFrame
+ * closures reach it through a handle: once the SessionMods is destroyed (it
+ * was closed first) a late call gets the TS "Mod session is closed". */
 struct init_ctx {
   qa_session_mods *mods;
   qa_resource_scope *resources;
+  char *instance;
+  void *token;
 };
+static struct init_ctx *init_of(void *token) {
+  struct init_ctx *init = qa_world_handle_get(token);
+  if (init == NULL) qa_errorf("Mod session is closed");
+  return init;
+}
 static void init_assert_current(void *ctx) {
-  struct init_ctx *init = ctx;
+  struct init_ctx *init = init_of(ctx);
   assert_open(init->mods);
   qa_resource_scope_assert_open(init->resources);
 }
 static void init_next_frame(void *ctx) {
-  struct init_ctx *init = ctx;
-  init_assert_current(init);
+  struct init_ctx *init = init_of(ctx);
+  init_assert_current(ctx);
   init->mods->options.next_frame(init->mods->options.ctx);
-  init_assert_current(init);
+  init_assert_current(ctx);
+}
+
+
+/* State of one apply() across its try (TS apply's try/catch/finally). */
+struct apply_frame {
+  qa_session_mods *mods;
+  struct prepared_entry **entries;
+  size_t selection_count;
+  const qa_mod_session_checkpoint *saved;
+  const qa_mod_travel_checkpoint *travel;
+  struct active_entry **next;
+  size_t next_count;
+  struct active_entry **opened;
+  size_t opened_count;
+  qa_resource_scope **scopes;
+  size_t scope_count;
+};
+
+static void apply_body(void *ctx) {
+  struct apply_frame *f = ctx;
+  qa_session_mods *mods = f->mods;
+  for (size_t i = 0; i < f->selection_count; i++) {
+    struct prepared_entry *entry = f->entries[i];
+    struct active_entry *previous = NULL;
+    for (size_t j = 0; j < mods->active_count; j++)
+      if (str_eq(mods->active[j]->entry->key, entry->key))
+        previous = mods->active[j];
+    if (previous != NULL) {
+      f->next[f->next_count++] = previous;
+      continue;
+    }
+    char *name = xmalloc(strlen("mod ") + strlen(entry->key) + 1);
+    strcpy(name, "mod ");
+    strcat(name, entry->key);
+    qa_resource_scope *resources = qa_resource_scope_create(name);
+    free(name);
+    if (resources == NULL) abort();
+    char *instance = qa_mod_instance_provider(entry->identity.selection);
+    if (instance == NULL) abort();
+    /* The record owns the scope and instance id from here on. */
+    struct init_ctx *init = xmalloc(sizeof *init);
+    init->mods = mods;
+    init->resources = resources;
+    init->instance = instance;
+    init->token = qa_world_handle_open(init);
+    if (mods->record_count == mods->record_capacity) {
+      mods->record_capacity = mods->record_capacity != 0 ? mods->record_capacity * 2 : 8;
+      mods->records = xrealloc(mods->records, mods->record_capacity * sizeof *mods->records);
+    }
+    mods->records[mods->record_count++] = init;
+    f->scopes[f->scope_count++] = resources;
+    if (mods->pending_count == mods->pending_capacity) {
+      mods->pending_capacity =
+          mods->pending_capacity != 0 ? mods->pending_capacity * 2 : 8;
+      mods->pending = xrealloc(
+          mods->pending, mods->pending_capacity * sizeof *mods->pending);
+    }
+    mods->pending[mods->pending_count++] = resources;
+    const qa_mod_private_checkpoint *state = NULL;
+    if (f->saved != NULL) state = &f->saved->mods[i].state;
+    else if (f->travel != NULL) state = f->travel->mods[i].state;
+    /* TS { ...services, engine: { ...services.engine, events } }: the runtime keeps the
+     * services it is initialized with, so the copies live as long as its resource scope. */
+    const qa_mod_host_services *services = mods->options.services;
+    bool has_owner = false;
+    qa_presentation_owner owner = {NULL, 0};
+    if (services != NULL && services->engine != NULL) {
+      if (mods->options.presentation == NULL)
+        qa_errorf("Component engine output requires presentation ownership");
+      const qa_session_mods_presentation_option *binding =
+          mods->options.presentation;
+      qa_session_mod_bound_events bound = binding->bind_owner(
+          binding->ctx, instance, entry->identity.source.content,
+          state != NULL);
+      qa_resource_scope_own(resources, bound.resource);
+      has_owner = true;
+      owner = bound.owner;
+      qa_session_mod_engine_services *engine_copy = xmalloc(sizeof *engine_copy);
+      qa_resource_scope_defer(resources, free, engine_copy);
+      *engine_copy = *services->engine;
+      engine_copy->events = bound.events;
+      qa_mod_host_services *services_copy = xmalloc(sizeof *services_copy);
+      qa_resource_scope_defer(resources, free, services_copy);
+      *services_copy = *services;
+      services_copy->engine = engine_copy;
+      services = services_copy;
+    }
+    qa_mod_initialization context;
+    memset(&context, 0, sizeof context);
+    context.restoring = state != NULL;
+    context.services = services;
+    context.instance = instance;
+    context.resources = resources;
+    context.ctx = init->token;
+    context.next_frame = init_next_frame;
+    context.assert_current = init_assert_current;
+    qa_mod_runtime runtime =
+        entry->prepared->initialize(entry->prepared->ctx, &context);
+    if (qa_resource_scope_is_closed(resources)) {
+      runtime.close(runtime.ctx);
+      qa_errorf("Mod session closed during initialization");
+    }
+    struct active_entry *active = xmalloc(sizeof *active);
+    memset(active, 0, sizeof *active);
+    active->entry = entry;
+    active->resources = resources;
+    active->runtime = runtime;
+    active->instance = instance;
+    active->has_presentation_owner = has_owner;
+    active->presentation_owner = owner;
+    /* Listed before the scope owns it: a raise below frees it with this apply. */
+    f->opened[f->opened_count++] = active;
+    qa_session_resource wrapped;
+    wrapped.close = (void (*)(void *))runtime_close_ctx;
+    wrapped.ctx = &active->runtime;
+    qa_resource_scope_own(resources, wrapped);
+    init_assert_current(init->token);
+    f->next[f->next_count++] = active;
+    if (state != NULL) {
+      runtime.restore(runtime.ctx, *state);
+      init_assert_current(init->token);
+    }
+    if (runtime.activate != NULL) runtime.activate(runtime.ctx);
+    init_assert_current(init->token);
+  }
+  for (size_t i = 0; i < f->opened_count; i++) {
+    qa_mod_registrations registrations;
+    memset(&registrations, 0, sizeof registrations);
+    registrations.instance = f->opened[i]->instance;
+    registrations.operations = mods->options.operations;
+    registrations.order = mods->next_order++;
+    registrations.resources = f->opened[i]->resources;
+    f->opened[i]->runtime.register_(f->opened[i]->runtime.ctx, &registrations);
+    assert_open(mods);
+  }
+}
+
+/* TS finally { for (const scope of scopes) this.pending.delete(scope) }. */
+static void apply_unpend(struct apply_frame *f) {
+  qa_session_mods *mods = f->mods;
+  for (size_t i = 0; i < f->scope_count; i++)
+    for (size_t j = 0; j < mods->pending_count; j++)
+      if (mods->pending[j] == f->scopes[i]) {
+        memmove(&mods->pending[j], &mods->pending[j + 1],
+                (mods->pending_count - j - 1) * sizeof *mods->pending);
+        mods->pending_count--;
+        break;
+      }
 }
 
 static void apply(qa_session_mods *mods, const qa_mod_selection *selections,
@@ -270,12 +454,18 @@ static void apply(qa_session_mods *mods, const qa_mod_selection *selections,
   struct prepared_entry **entries = NULL;
   if (selection_count != 0)
     entries = xmalloc(selection_count * sizeof *entries);
+  qa_cleanup entries_node; /* the validation below throws */
+  qa_cleanup_push(&entries_node, free_prepared_list, &entries);
   for (size_t i = 0; i < selection_count; i++) {
     char *key = qa_mod_selection_key(selections[i]);
     if (key == NULL) abort();
     entries[i] = find_prepared(mods, key);
-    if (entries[i] == NULL)
-      qa_errorf("Selected mod is not prepared: %s", key);
+    if (entries[i] == NULL) {
+      char message[2048];
+      (void)snprintf(message, sizeof message, "Selected mod is not prepared: %s", key);
+      free(key);
+      qa_errorf("%s", message);
+    }
     free(key);
   }
   struct prepared_entry *hud = NULL, *view = NULL;
@@ -297,137 +487,46 @@ static void apply(qa_session_mods *mods, const qa_mod_selection *selections,
   }
   if (saved != NULL) validate_saved(entries, selection_count, saved);
   if (travel != NULL) validate_travel(entries, selection_count, travel);
-  struct active_entry **next = NULL;
-  size_t next_count = 0;
-  struct active_entry **opened = NULL;
-  size_t opened_count = 0;
-  qa_resource_scope **scopes = NULL;
-  size_t scope_count = 0;
+  qa_cleanup_pop(&entries_node);
+  struct apply_frame f;
+  memset(&f, 0, sizeof f);
+  f.mods = mods;
+  f.entries = entries;
+  f.selection_count = selection_count;
+  f.saved = saved;
+  f.travel = travel;
   if (selection_count != 0) {
-    next = xmalloc(selection_count * sizeof *next);
-    opened = xmalloc(selection_count * sizeof *opened);
-    scopes = xmalloc(selection_count * sizeof *scopes);
+    f.next = xmalloc(selection_count * sizeof *f.next);
+    f.opened = xmalloc(selection_count * sizeof *f.opened);
+    f.scopes = xmalloc(selection_count * sizeof *f.scopes);
   }
-  for (size_t i = 0; i < selection_count; i++) {
-    struct prepared_entry *entry = entries[i];
-    struct active_entry *previous = NULL;
-    for (size_t j = 0; j < mods->active_count; j++)
-      if (str_eq(mods->active[j]->entry->key, entry->key))
-        previous = mods->active[j];
-    if (previous != NULL) {
-      next[next_count++] = previous;
-      continue;
-    }
-    char *name = xmalloc(strlen("mod ") + strlen(entry->key) + 1);
-    strcpy(name, "mod ");
-    strcat(name, entry->key);
-    qa_resource_scope *resources = qa_resource_scope_create(name);
-    free(name);
-    if (resources == NULL) abort();
-    scopes[scope_count++] = resources;
-    if (mods->pending_count == mods->pending_capacity) {
-      mods->pending_capacity =
-          mods->pending_capacity != 0 ? mods->pending_capacity * 2 : 8;
-      mods->pending = xrealloc(
-          mods->pending, mods->pending_capacity * sizeof *mods->pending);
-    }
-    mods->pending[mods->pending_count++] = resources;
-    const qa_mod_private_checkpoint *state = NULL;
-    if (saved != NULL) state = &saved->mods[i].state;
-    else if (travel != NULL) state = travel->mods[i].state;
-    /* Working copies: services/engine with bound owner events. */
-    qa_mod_host_services services_copy;
-    qa_session_mod_engine_services engine_copy;
-    const qa_mod_host_services *services = mods->options.services;
-    bool has_owner = false;
-    qa_presentation_owner owner = {NULL, 0};
-    char *instance = qa_mod_instance_provider(entry->identity.selection);
-    if (instance == NULL) abort();
-    if (services != NULL && services->engine != NULL) {
-      if (mods->options.presentation == NULL)
-        qa_errorf("Component engine output requires presentation ownership");
-      const qa_session_mods_presentation_option *binding =
-          mods->options.presentation;
-      qa_session_mod_bound_events bound = binding->bind_owner(
-          binding->ctx, instance, entry->identity.source.content,
-          state != NULL);
-      qa_resource_scope_own(resources, bound.resource);
-      has_owner = true;
-      owner = bound.owner;
-      engine_copy = *services->engine;
-      engine_copy.events = bound.events;
-      services_copy = *services;
-      services_copy.engine = &engine_copy;
-      services = &services_copy;
-    }
-    struct init_ctx init = {mods, resources};
-    qa_mod_initialization context;
-    memset(&context, 0, sizeof context);
-    context.restoring = state != NULL;
-    context.services = services;
-    context.instance = instance;
-    context.resources = resources;
-    context.ctx = &init;
-    context.next_frame = init_next_frame;
-    context.assert_current = init_assert_current;
-    qa_mod_runtime runtime =
-        entry->prepared->initialize(entry->prepared->ctx, &context);
-    struct active_entry *active = xmalloc(sizeof *active);
-    memset(active, 0, sizeof *active);
-    active->entry = entry;
-    active->resources = resources;
-    active->runtime = runtime;
-    active->instance = instance;
-    active->has_presentation_owner = has_owner;
-    active->presentation_owner = owner;
-    if (qa_resource_scope_is_closed(resources)) {
-      runtime.close(runtime.ctx);
-      qa_errorf("Mod session closed during initialization");
-    }
-    qa_session_resource wrapped = {&active->runtime, NULL};
-    wrapped.close = (void (*)(void *))runtime_close_ctx;
-    wrapped.ctx = &active->runtime;
-    qa_resource_scope_own(resources, wrapped);
-    init_assert_current(&init);
-    opened[opened_count++] = active;
-    next[next_count++] = active;
-    if (state != NULL) {
-      runtime.restore(runtime.ctx, *state);
-      init_assert_current(&init);
-    }
-    if (runtime.activate != NULL) runtime.activate(runtime.ctx);
-    init_assert_current(&init);
+  qa_caught_error error;
+  bool ok = qa_try(apply_body, &f, &error);
+  apply_unpend(&f);
+  if (!ok) {
+    /* catch (error) { closeScopes(scopes) ... throw } */
+    size_t cleanup_errors = close_scopes_collect(f.scopes, f.scope_count);
+    for (size_t i = 0; i < f.opened_count; i++) free(f.opened[i]);
+    free(f.next);
+    free(f.opened);
+    free(f.scopes);
+    free(entries);
+    if (cleanup_errors > 0)
+      qa_raise("AggregateError", 0, 0, "Mod preparation and cleanup failed");
+    qa_rethrow(&error);
   }
-  for (size_t i = 0; i < opened_count; i++) {
-    qa_mod_registrations registrations;
-    memset(&registrations, 0, sizeof registrations);
-    registrations.instance = opened[i]->instance;
-    registrations.operations = mods->options.operations;
-    registrations.order = mods->next_order++;
-    registrations.resources = opened[i]->resources;
-    opened[i]->runtime.register_(opened[i]->runtime.ctx, &registrations);
-    assert_open(mods);
-  }
-  for (size_t i = 0; i < scope_count; i++)
-    for (size_t j = 0; j < mods->pending_count; j++)
-      if (mods->pending[j] == scopes[i]) {
-        memmove(&mods->pending[j], &mods->pending[j + 1],
-                (mods->pending_count - j - 1) * sizeof *mods->pending);
-        mods->pending_count--;
-        break;
-      }
   /* Removed actives close after the new set is published. */
+  struct active_entry **removed_entries = NULL;
   qa_resource_scope **removed = NULL;
   size_t removed_count = 0;
-  if (mods->active_count != 0)
+  if (mods->active_count != 0) {
     removed = xmalloc(mods->active_count * sizeof *removed);
-  struct active_entry **removed_entries = NULL;
-  if (mods->active_count != 0)
     removed_entries = xmalloc(mods->active_count * sizeof *removed_entries);
+  }
   for (size_t i = 0; i < mods->active_count; i++) {
     bool kept = false;
-    for (size_t j = 0; j < next_count; j++)
-      if (next[j] == mods->active[i]) kept = true;
+    for (size_t j = 0; j < f.next_count; j++)
+      if (f.next[j] == mods->active[i]) kept = true;
     if (!kept) {
       removed[removed_count] = mods->active[i]->resources;
       removed_entries[removed_count] = mods->active[i];
@@ -435,19 +534,17 @@ static void apply(qa_session_mods *mods, const qa_mod_selection *selections,
     }
   }
   free(mods->active);
-  mods->active = next;
-  mods->active_count = next_count;
+  mods->active = f.next;
+  mods->active_count = f.next_count;
   mods->active_capacity = selection_count;
-  close_scopes(removed, removed_count);
-  for (size_t i = 0; i < removed_count; i++) {
-    free(removed_entries[i]->instance);
-    free(removed_entries[i]);
-  }
+  free(f.opened);
+  free(f.scopes);
+  free(entries);
+  size_t cleanup_errors = close_scopes_collect(removed, removed_count);
+  for (size_t i = 0; i < removed_count; i++) free(removed_entries[i]);
   free(removed);
   free(removed_entries);
-  free(opened);
-  free(scopes);
-  free(entries);
+  if (cleanup_errors > 0) qa_raise("AggregateError", 0, 0, "Mod cleanup failed");
 }
 
 static void selection_set_for(qa_session_mods *mods,
@@ -465,6 +562,30 @@ static void selection_set_for(qa_session_mods *mods,
     abort();
   free(descriptions);
 }
+
+struct open_call {
+  qa_session_mods *mods;
+  const qa_mod_selection *enabled;
+  size_t enabled_count;
+  const qa_mod_session_checkpoint *saved;
+  const qa_mod_travel_checkpoint *travel;
+};
+/* await owner.exclusive(apply); options.presentation?.finishOwnerRestore() */
+static void open_body(void *ctx) {
+  struct open_call *call = ctx;
+  qa_session_mods *mods = call->mods;
+  exclusive_begin(mods);
+  qa_cleanup node; /* exclusive: finally { busy = false } */
+  qa_cleanup_push(&node, exclusive_end_cleanup, mods);
+  apply(mods, call->enabled, call->enabled_count, call->saved, call->travel);
+  qa_cleanup_pop(&node);
+  exclusive_end(mods);
+  if (mods->options.presentation != NULL &&
+      mods->options.presentation->finish_owner_restore != NULL)
+    mods->options.presentation->finish_owner_restore(
+        mods->options.presentation->ctx);
+}
+static void mods_close_call(void *ctx) { qa_session_mods_close(ctx); }
 
 qa_session_mods *qa_session_mods_open(
     const qa_session_mods_options *options,
@@ -507,7 +628,6 @@ qa_session_mods *qa_session_mods_open(
     mods->prepared[i].identity = identity;
     mods->prepared[i].key = key;
   }
-  exclusive_begin(mods);
   qa_mod_selection_set set;
   selection_set_for(mods, options->enabled, options->enabled_count, &set);
   size_t enabled_count = 0;
@@ -519,13 +639,20 @@ qa_session_mods *qa_session_mods_open(
     memcpy(enabled_copy, enabled, enabled_count * sizeof *enabled_copy);
   }
   qa_mod_selection_set_destroy(&set);
-  apply(mods, enabled_copy, enabled_count, saved, travel);
+  struct open_call call = {mods, enabled_copy, enabled_count, saved, travel};
+  qa_caught_error error;
+  bool ok = qa_try(open_body, &call, &error);
   free(enabled_copy);
-  exclusive_end(mods);
-  if (options->presentation != NULL &&
-      options->presentation->finish_owner_restore != NULL)
-    options->presentation->finish_owner_restore(
-        options->presentation->ctx);
+  if (!ok) {
+    /* catch (error) { try { owner.close() } catch (cleanup) { throw
+     * AggregateError } throw error }: the owner never escapes, so C frees it. */
+    qa_caught_error cleanup;
+    bool closed = qa_try(mods_close_call, mods, &cleanup);
+    qa_session_mods_destroy(mods);
+    if (!closed)
+      qa_raise("AggregateError", 0, 0, "Mod initialization and cleanup failed");
+    qa_rethrow(&error);
+  }
   return mods;
 }
 
@@ -538,6 +665,13 @@ void qa_session_mods_destroy(qa_session_mods *mods) {
     free_retained_identity(&mods->prepared[i].identity);
   }
   free(mods->prepared);
+  for (size_t i = 0; i < mods->record_count; i++) {
+    qa_world_handle_close(mods->records[i]->token);
+    qa_resource_scope_destroy(mods->records[i]->resources);
+    free(mods->records[i]->instance);
+    free(mods->records[i]);
+  }
+  free(mods->records);
   free(mods->active);
   free(mods->pending);
   free(mods->scratch_enabled);
@@ -569,14 +703,14 @@ bool qa_session_mods_owns(qa_session_mods *mods, qa_provider_id provider) {
   return false;
 }
 
-const qa_session_simulation_presentation *qa_session_mods_presentations(
+const qa_app_simulation_presentation *qa_session_mods_presentations(
     qa_session_mods *mods, size_t *out_count) {
   size_t count = 0;
   for (size_t i = 0; i < mods->active_count; i++) {
     qa_mod_runtime *runtime = &mods->active[i]->runtime;
     if (runtime->presentations == NULL) continue;
     size_t entry_count = 0;
-    const qa_session_simulation_presentation *items =
+    const qa_app_simulation_presentation *items =
         runtime->presentations(runtime->ctx, &entry_count);
     if (count + entry_count > mods->scratch_presentations_capacity) {
       mods->scratch_presentations_capacity = count + entry_count;
@@ -602,7 +736,7 @@ const qa_session_mod_appearance_group *qa_session_mods_appearance_overrides(
     qa_mod_runtime *runtime = &mods->active[i]->runtime;
     if (runtime->appearance_overrides == NULL) continue;
     size_t entry_count = 0;
-    const qa_session_simulation_presentation *source =
+    const qa_app_simulation_presentation *source =
         runtime->appearance_overrides(runtime->ctx, &entry_count);
     if (entry_count == 0) continue;
     for (size_t j = 0; j < entry_count; j++)
@@ -611,7 +745,7 @@ const qa_session_mod_appearance_group *qa_session_mods_appearance_overrides(
     /* Group this mod's items per actor (first-appearance order,
      * items in source order), staging copies at the scratch tail. */
     if (item_count + entry_count > mods->scratch_group_items_capacity) {
-      qa_session_simulation_presentation *old_base =
+      qa_app_simulation_presentation *old_base =
           mods->scratch_group_items;
       mods->scratch_group_items_capacity = item_count + entry_count;
       mods->scratch_group_items =
@@ -667,48 +801,25 @@ void qa_session_mods_advance(qa_session_mods *mods,
   if (mods->busy)
     qa_errorf("Cannot advance mods during a lifecycle operation");
   mods->busy = true;
+  qa_cleanup node; /* finally { busy = false } */
+  qa_cleanup_push(&node, exclusive_end_cleanup, mods);
   for (size_t i = 0; i < mods->active_count; i++) {
     qa_mod_runtime *runtime = &mods->active[i]->runtime;
     if (runtime->advance != NULL) runtime->advance(runtime->ctx, frame);
     assert_open(mods);
   }
+  qa_cleanup_pop(&node);
   mods->busy = false;
-}
-
-void qa_session_mods_set_enabled(qa_session_mods *mods,
-                                 qa_mod_selection selection, bool enabled) {
-  exclusive_begin(mods);
-  size_t current_count = 0;
-  const qa_mod_selection *current =
-      qa_session_mods_enabled(mods, &current_count);
-  qa_mod_selection *current_copy = NULL;
-  if (current_count != 0) {
-    current_copy = xmalloc(current_count * sizeof *current_copy);
-    memcpy(current_copy, current, current_count * sizeof *current_copy);
-  }
-  qa_mod_selection_set set;
-  selection_set_for(mods, current_copy, current_count, &set);
-  free(current_copy);
-  qa_mod_selection_set_set_enabled(&set, selection, enabled);
-  size_t next_count = 0;
-  const qa_mod_selection *next =
-      qa_mod_selection_set_enabled(&set, &next_count);
-  qa_mod_selection *next_copy = NULL;
-  if (next_count != 0) {
-    next_copy = xmalloc(next_count * sizeof *next_copy);
-    memcpy(next_copy, next, next_count * sizeof *next_copy);
-  }
-  qa_mod_selection_set_destroy(&set);
-  apply(mods, next_copy, next_count, NULL, NULL);
-  free(next_copy);
-  exclusive_end(mods);
 }
 
 void qa_session_mods_checkpoint(qa_session_mods *mods,
                                 qa_mod_checkpoint **out_mods,
                                 size_t *out_count) {
   exclusive_begin(mods);
+  qa_cleanup node; /* exclusive: finally { busy = false } */
+  qa_cleanup_push(&node, exclusive_end_cleanup, mods);
   capture(mods, out_mods, out_count);
+  qa_cleanup_pop(&node);
   exclusive_end(mods);
 }
 
@@ -790,6 +901,8 @@ void qa_session_mods_checkpoint_for_travel(qa_session_mods *mods,
                                            qa_mod_travel_entry **out_mods,
                                            size_t *out_count) {
   exclusive_begin(mods);
+  qa_cleanup busy_node; /* exclusive: finally { busy = false } */
+  qa_cleanup_push(&busy_node, exclusive_end_cleanup, mods);
   combat_assert_idle(mods);
   qa_mod_travel_entry *entries = NULL;
   /* Retained states live in the same allocation after the entries,
@@ -800,6 +913,8 @@ void qa_session_mods_checkpoint_for_travel(qa_session_mods *mods,
                       mods->active_count * sizeof *states);
     states = (qa_mod_private_checkpoint *)(entries + mods->active_count);
   }
+  qa_cleanup entries_node;
+  qa_cleanup_push(&entries_node, free_travel_entries, &entries);
   for (size_t i = 0; i < mods->active_count; i++) {
     struct active_entry *entry = mods->active[i];
     entries[i].identity = entry->entry->identity;
@@ -812,42 +927,11 @@ void qa_session_mods_checkpoint_for_travel(qa_session_mods *mods,
       entries[i].state = &states[i];
     }
   }
+  qa_cleanup_pop(&entries_node);
+  qa_cleanup_pop(&busy_node);
   exclusive_end(mods);
   *out_mods = entries;
   *out_count = mods->active_count;
-}
-
-void qa_session_mods_restore(qa_session_mods *mods,
-                             const qa_mod_session_checkpoint *saved) {
-  exclusive_begin(mods);
-  struct prepared_entry **entries = NULL;
-  if (mods->active_count != 0)
-    entries = xmalloc(mods->active_count * sizeof *entries);
-  for (size_t i = 0; i < mods->active_count; i++)
-    entries[i] = mods->active[i]->entry;
-  validate_saved(entries, mods->active_count, saved);
-  free(entries);
-  /* The TS captures a rollback checkpoint first; C restore failures
-   * abort, so the capture only validates current state. */
-  qa_mod_checkpoint *previous = NULL;
-  size_t previous_count = 0;
-  capture(mods, &previous, &previous_count);
-  free(previous);
-  for (size_t i = 0; i < mods->active_count; i++) {
-    struct active_entry *entry = mods->active[i];
-    if (mods->options.services != NULL &&
-        mods->options.services->engine != NULL &&
-        mods->options.presentation != NULL &&
-        mods->options.presentation->refresh_owner != NULL)
-      mods->options.presentation->refresh_owner(
-          mods->options.presentation->ctx, entry->instance);
-    entry->runtime.restore(entry->runtime.ctx, saved->mods[i].state);
-    assert_open(mods);
-    if (entry->runtime.activate != NULL)
-      entry->runtime.activate(entry->runtime.ctx);
-    assert_open(mods);
-  }
-  exclusive_end(mods);
 }
 
 void qa_session_mods_close(qa_session_mods *mods) {
@@ -861,14 +945,15 @@ void qa_session_mods_close(qa_session_mods *mods) {
     scopes[total++] = mods->active[i]->resources;
   for (size_t i = 0; i < mods->pending_count; i++)
     scopes[total++] = mods->pending[i];
-  for (size_t i = 0; i < mods->active_count; i++) {
-    free(mods->active[i]->instance);
-    free(mods->active[i]);
-  }
+  /* The scopes own each runtime's close (its ctx is &active->runtime), so they close
+   * before the active entries are freed. */
+  size_t active_count = mods->active_count;
   mods->active_count = 0;
   mods->pending_count = 0;
-  close_scopes(scopes, total);
+  size_t errors = close_scopes_collect(scopes, total);
   free(scopes);
+  for (size_t i = 0; i < active_count; i++) free(mods->active[i]);
+  if (errors > 0) qa_raise("AggregateError", 0, 0, "Mod cleanup failed");
 }
 
 static void mods_close_ctx(void *ctx) {

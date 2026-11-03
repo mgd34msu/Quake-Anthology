@@ -42,6 +42,10 @@ typedef struct qa_app_native_backend_bundle {
   void (*apply_image_resource)(void *ctx, qa_image_resource_operation operation);
   void (*execute_commands)(void *ctx, const qa_render_command *commands, size_t count, const double *captures, size_t capture_count);
   void (*execute_set_color)(void *ctx, qa_vec4 color);
+  /* TS WorkerRenderer.execute(commands, captures, suffix). Preferred over execute_commands. */
+  void (*execute_frame)(void *ctx, const qa_render_command *commands, size_t count, const double *ids, size_t id_count, const qa_image_resource_operation *suffix, size_t suffix_count);
+  /* A worker's image registry and journal; rebound when a restart swaps the journal. */
+  void (*bind_image_state)(void *ctx, qa_scene_image_registry *images, qa_render_image_journal *journal);
   void (*finish)(void *ctx);
   const uint8_t *(*pixels)(void *ctx, size_t *out_length);
   uint8_t *(*read_pixels)(void *ctx, size_t *out_length);
@@ -116,5 +120,8 @@ typedef struct qa_app_frame_capture_request {
   bool aborted; const char *abort_reason; /* NULL -> "Frame capture aborted" */
 } qa_app_frame_capture_request;
 void qa_app_native_renderer_capture_next_frame(qa_app_native_renderer *r, qa_app_frame_capture_request request);
+/* The TS AbortSignal "abort" event of a pending captureNextFrame request: drops the request whose ctx is
+ * request_ctx from the pending and armed captures and rejects it with reason. No-op when none is pending. */
+void qa_app_native_renderer_abort_capture(qa_app_native_renderer *r, void *request_ctx, const char *reason);
 void qa_app_native_renderer_close(qa_app_native_renderer *r);
 #endif

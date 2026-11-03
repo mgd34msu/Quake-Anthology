@@ -1,6 +1,7 @@
 /* Port of src/network/q3/server.ts. GPL-2.0-or-later. */
 #include "qa/network/q3/server.h"
 #include "qa/foundation/event_ring.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <stdlib.h>
@@ -14,8 +15,8 @@ int64_t qa_q3_rate_milliseconds(double message_size, double rate, double max_rat
   }
   if (rate == 0) qa_range_error("Source snapshot rate division by zero");
   /* Math.trunc(Math.imul((messageSize+48)|0, 1000) / rate) | 0 */
-  int32_t imul = (int32_t)((uint32_t)(int32_t)(message_size + 48) * 1000u);
-  return (int32_t)trunc(imul / rate);
+  int32_t imul = (int32_t)((uint32_t)qa_int32(message_size + 48) * 1000u);
+  return qa_int32(trunc(imul / rate));
 }
 typedef struct { uint8_t *data; size_t len; } queued_t;
 struct qa_q3_server_connection {
@@ -37,6 +38,7 @@ struct qa_q3_server_connection {
   bool rate_delayed;
   int64_t reliable_sent;
   int32_t next_reliable_time;
+  bool has_last_resend; int32_t last_resend;
 };
 static void server_print(void *ctx, const char *text) {
   qa_q3_server_connection *s = ctx;
@@ -108,16 +110,34 @@ static bool connection_current(qa_q3_server_connection *s, int64_t server_id) {
   if (s->phase == QA_Q3_SERVER_PHASE_ZOMBIE) return false;
   s->bindings.assert_current(s->bindings.ctx);
   if (server_id != s->bindings.server_id(s->bindings.ctx))
-    qa_range_error("Q3 client callback belongs to a retired server world");
+    qa_raise("Error", 0, 0, "Q3 client callback belongs to a retired server world");
   return true;
+}
+typedef struct read_movement_scope {
+  qa_q3_client_message_reader *reader; const qa_q3_client_key_context *key; qa_q3_unfiltered_client_movement *movement; bool ok;
+} read_movement_scope;
+static void read_movement_body(void *ctx) {
+  read_movement_scope *scope = ctx;
+  scope->ok = qa_q3_client_message_reader_read_movement(scope->reader, scope->key, scope->movement);
+}
+typedef struct next_part_scope { qa_q3_client_message_reader *reader; qa_q3_client_message_part *part; bool ok; } next_part_scope;
+static void next_part_body(void *ctx) {
+  next_part_scope *scope = ctx;
+  scope->ok = qa_q3_client_message_reader_next(scope->reader, scope->part);
 }
 static void user_move(qa_q3_server_connection *s, qa_q3_client_message_reader *reader) {
   qa_q3_server_bindings *host = &s->bindings;
   int64_t server_id = host->server_id(host->ctx);
   qa_q3_client_key_context key_ctx = { host->checksum_feed(host->ctx), lookup_masked_cb, s };
   qa_q3_unfiltered_client_movement movement;
-  /* TS catches InvalidClientCommandCountError here; C aborts (see server.h note). */
-  if (!qa_q3_client_message_reader_read_movement(reader, &key_ctx, &movement)) return;
+  read_movement_scope scope = { reader, &key_ctx, &movement, false };
+  qa_caught_error caught;
+  if (!qa_try(read_movement_body, &scope, &caught)) {
+    if (strcmp(caught.name, QA_Q3_INVALID_CLIENT_COMMAND_COUNT_ERROR) != 0) qa_rethrow(&caught);
+    if (s->bindings.print) s->bindings.print(s->bindings.print_ctx, caught.code < 1 ? "cmdCount < 1\n" : "cmdCount > MAX_PACKET_USERCMDS\n");
+    return;
+  }
+  if (!scope.ok) return;
   qa_q3_server_frame *frame = qa_q3_server_snapshot_history_frame(s->snapshots, s->message_acknowledge);
   frame->message_acked = (int64_t)host->time(host->ctx);
   if (host->pure(host->ctx) && !s->pure_authentic && !s->got_pure_command) {
@@ -165,21 +185,33 @@ void qa_q3_server_connection_execute_message(qa_q3_server_connection *s, qa_q3_c
       && strlen(host->download_name(host->ctx)) == 0
       && !strstr(s->last_client_command_string, "nextdl")) {
     if (header.server_id >= host->restarted_server_id(host->ctx) && header.server_id < host->server_id(host->ctx)) return;
-    if (s->message_acknowledge > s->gamestate_message_number) host->resend_gamestate(host->ctx);
+    /* The client picks both fields, so rebuilding the gamestate is limited to once per second. */
+    int32_t now = (int32_t)host->time(host->ctx);
+    if (s->message_acknowledge > s->gamestate_message_number
+        && (!s->has_last_resend || (int32_t)((uint32_t)now - (uint32_t)s->last_resend) >= 1000)) {
+      s->has_last_resend = true; s->last_resend = now;
+      host->resend_gamestate(host->ctx);
+    }
     return;
   }
   for (;;) {
     host->assert_current(host->ctx);
     qa_q3_client_message_part part;
-    /* TS catches InvalidClientOpcodeError here; C aborts (see server.h note). */
-    if (!qa_q3_client_message_reader_next(reader, &part)) return;
+    next_part_scope scope = { reader, &part, false };
+    qa_caught_error caught;
+    if (!qa_try(next_part_body, &scope, &caught)) {
+      if (strcmp(caught.name, QA_Q3_INVALID_CLIENT_OPCODE_ERROR) != 0) qa_rethrow(&caught);
+      if (host->print) host->print(host->print_ctx, "WARNING: bad command byte for client\n");
+      return;
+    }
+    if (!scope.ok) return;
     if (part.kind == QA_Q3_PART_EOF) return;
     if (part.kind == QA_Q3_PART_COMMAND) {
       if (s->last_client_command >= part.command.sequence) continue;
       if (part.command.sequence > (int32_t)(s->last_client_command + 1)) { host->drop(host->ctx, "Lost reliable commands"); return; }
       bool client_ok = host->client_running(host->ctx) || s->phase != QA_Q3_SERVER_PHASE_ACTIVE
         || !host->flood_protect(host->ctx) || host->time(host->ctx) >= s->next_reliable_time;
-      s->next_reliable_time = (int32_t)(host->time(host->ctx) + 1000);
+      s->next_reliable_time = qa_int32(host->time(host->ctx) + 1000);
       if (!host->command(host->ctx, &part.command, client_ok) || !connection_current(s, server_id)) return;
       s->last_client_command = part.command.sequence;
       free(s->last_client_command_string);
@@ -192,18 +224,30 @@ void qa_q3_server_connection_execute_message(qa_q3_server_connection *s, qa_q3_c
     }
   }
 }
+static void free_slot(void *slot) { free(*(void **)slot); *(void **)slot = NULL; }
+static void reader_slot_cleanup(void *slot) { qa_q3_client_message_reader_destroy(*(qa_q3_client_message_reader **)slot); }
+/* Decode raises (BinaryError from a truncated or malformed client message, game
+ * callback errors) propagate to the caller as in TS; the cleanup nodes free the
+ * payload, plaintext and reader when a caller's qa_try catches them. */
 bool qa_q3_server_connection_receive_datagram(qa_q3_server_connection *s, const uint8_t *packet, size_t len, qa_q3_channel_result *out) {
   s->bindings.assert_current(s->bindings.ctx);
   if (!qa_q3_netchannel_receive(s->channel, packet, len, NULL, out)) return false;
   if (out->kind != QA_Q3_CHANNEL_ACCEPTED || s->phase == QA_Q3_SERVER_PHASE_ZOMBIE) return true;
+  qa_cleanup payload_guard, plain_guard, reader_guard;
+  qa_cleanup_push(&payload_guard, free_slot, &out->payload);
   uint8_t *plain = NULL;
-  if (!qa_q3_xor_client_message(out->payload, out->payload_len, s->challenge, lookup_masked_cb, s, &plain)) return false;
   qa_q3_client_message_reader *reader = NULL;
-  if (!qa_q3_client_message_reader_init(&reader, plain, out->payload_len, NULL)) { free(plain); return false; }
-  qa_q3_server_connection_execute_message(s, reader);
+  qa_cleanup_push(&plain_guard, free_slot, &plain);
+  qa_cleanup_push(&reader_guard, reader_slot_cleanup, &reader);
+  bool ok = qa_q3_xor_client_message(out->payload, out->payload_len, s->challenge, lookup_masked_cb, s, &plain)
+    && qa_q3_client_message_reader_init(&reader, plain, out->payload_len, NULL);
+  if (ok) qa_q3_server_connection_execute_message(s, reader);
+  qa_cleanup_pop(&reader_guard);
+  qa_cleanup_pop(&plain_guard);
+  qa_cleanup_pop(&payload_guard);
   qa_q3_client_message_reader_destroy(reader);
   free(plain);
-  return true;
+  return ok;
 }
 static void transmit(qa_q3_server_connection *s, qa_q3_message_writer *writer, const qa_q3_server_rate *rate, const qa_q3_channel_delivery *delivery) {
   double now_d = s->bindings.time(s->bindings.ctx);
@@ -227,14 +271,14 @@ static void transmit(qa_q3_server_connection *s, qa_q3_message_writer *writer, c
     qa_q3_netchannel_begin_transmit(s->channel, encoded, plain_len, delivery);
     free(encoded);
   }
-  if (rate->local || (rate->force_lan && rate->lan)) { s->next_snapshot_time = (int32_t)(now - 1); return; }
-  int64_t interval = qa_q3_rate_milliseconds((double)qa_q3_message_writer_byte_length(writer), rate->rate, rate->max_rate);
-  if (interval < (int64_t)rate->snapshot_msec) { interval = (int64_t)rate->snapshot_msec; s->rate_delayed = false; }
+  if (rate->local || (rate->force_lan && rate->lan)) { s->next_snapshot_time = qa_int32(now_d - 1); return; }
+  double interval = (double)qa_q3_rate_milliseconds((double)qa_q3_message_writer_byte_length(writer), rate->rate, rate->max_rate);
+  if (interval < rate->snapshot_msec) { interval = rate->snapshot_msec; s->rate_delayed = false; }
   else s->rate_delayed = true;
-  s->next_snapshot_time = (int32_t)(now + interval);
+  s->next_snapshot_time = qa_int32(now_d + interval);
   if (s->phase != QA_Q3_SERVER_PHASE_ACTIVE && strlen(s->bindings.download_name(s->bindings.ctx)) == 0
-      && s->next_snapshot_time < (int32_t)(now + 1000))
-    s->next_snapshot_time = (int32_t)(now + 1000);
+      && s->next_snapshot_time < qa_int32(now_d + 1000))
+    s->next_snapshot_time = qa_int32(now_d + 1000);
 }
 typedef struct { qa_q3_server_connection *s; qa_q3_entity_state_record scratch; } baseline_adapter_t;
 static qa_q3_entity_state_record *baseline_adapter(void *ctx, int64_t number) {
@@ -263,7 +307,9 @@ void qa_q3_server_connection_send_gamestate(qa_q3_server_connection *s, const qa
   ops[pending_count].gamestate = *state;
   ops[pending_count].gamestate.command_sequence = qa_q3_reliable_ring_sequence(s->reliable);
   ops[pending_count].gamestate.checksum_feed = s->bindings.checksum_feed(s->bindings.ctx);
-  baseline_adapter_t adapter = { s, {0} };
+  baseline_adapter_t adapter;
+  memset(&adapter, 0, sizeof adapter);
+  adapter.s = s;
   qa_q3_server_message_context ctx;
   ctx.product = qa_q3_server_snapshot_history_get_product(s->snapshots);
   ctx.message_number = qa_q3_netchannel_outgoing_sequence(s->channel);
@@ -281,8 +327,10 @@ void qa_q3_server_connection_send_gamestate(qa_q3_server_connection *s, const qa
 void qa_q3_server_connection_send_snapshot(qa_q3_server_connection *s, int64_t server_flags, const qa_q3_server_rate *rate,
                                            const qa_q3_channel_delivery *delivery, qa_q3_append_download_fn append_download, void *append_ctx) {
   if (qa_q3_netchannel_has_unsent_fragments(s->channel)) {
-    s->next_snapshot_time = (int32_t)(s->bindings.time(s->bindings.ctx)
-      + qa_q3_rate_milliseconds((double)qa_q3_netchannel_remaining_unsent_bytes(s->channel), rate->rate, rate->max_rate));
+    double left = s->bindings.time(s->bindings.ctx);
+    double right = (double)qa_q3_rate_milliseconds((double)qa_q3_netchannel_remaining_unsent_bytes(s->channel), rate->rate, rate->max_rate);
+    s->next_snapshot_time = qa_int32(left
+      + right);
     qa_q3_server_connection_transmit_next_fragment(s, delivery);
     return;
   }
@@ -301,8 +349,14 @@ void qa_q3_server_connection_send_snapshot(qa_q3_server_connection *s, int64_t s
   }
   free(pending);
   s->reliable_sent = qa_q3_reliable_ring_sequence(s->reliable);
-  qa_q3_server_snapshot_history_write(s->snapshots, writer, qa_q3_netchannel_outgoing_sequence(s->channel),
-    s->delta_message, s->phase == QA_Q3_SERVER_PHASE_ACTIVE, (int64_t)s->bindings.time(s->bindings.ctx),
+  qa_q3_server_snapshot_history * h = s->snapshots;
+  qa_q3_message_writer * writer2 = writer;
+  int64_t sequence2 = qa_q3_netchannel_outgoing_sequence(s->channel);
+  int64_t requested = s->delta_message;
+  bool active = s->phase == QA_Q3_SERVER_PHASE_ACTIVE;
+  int64_t server_time = (int64_t)s->bindings.time(s->bindings.ctx);
+  qa_q3_server_snapshot_history_write(h, writer2, sequence2,
+    requested, active, server_time,
     server_flags | (s->rate_delayed ? 1 : 0) | (s->phase == QA_Q3_SERVER_PHASE_ACTIVE ? 0 : 2));
   if (append_download) append_download(append_ctx, writer);
   if (qa_q3_message_writer_overflowed(writer)) {

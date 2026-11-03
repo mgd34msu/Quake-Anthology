@@ -1,10 +1,12 @@
 /* Port of src/render/scene/world.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/world.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/math.h"
+#include "qa/formats/images/mip.h"
 #include "qa/foundation/support.h"
 #include "qa/materials/dlight.h"
 #include "qa/materials/legacy.h"
@@ -32,6 +34,7 @@ typedef struct op_storage {
   qa_patch_mesh *lod_meshes; size_t nlod, clod;
   qa_batch_lighting *lightings; size_t nlight, clight;
   qa_vec3 **world_arrays; size_t nwa, cwa;
+  struct op_storage **children; size_t nchildren, cchildren; /* nested stores whose operations were copied out */
 } op_storage;
 static op_storage *op_storage_new(void) { op_storage *s = xalloc(sizeof *s); memset(s, 0, sizeof *s); return s; }
 static void op_storage_destroy(op_storage *s) {
@@ -52,6 +55,8 @@ static void op_storage_destroy(op_storage *s) {
   for (size_t i = 0; i < s->nwa; i++) free(s->world_arrays[i]);
   free(s->world_arrays);
   for (size_t i = 0; i < s->count; i++) if (s->ops[i].is_group) qa_scene_group_destroy(&s->ops[i].group);
+  for (size_t i = 0; i < s->nchildren; i++) op_storage_destroy(s->children[i]);
+  free(s->children);
   free(s->ops); free(s);
 }
 static void op_push(op_storage *s, qa_scene_operation op) {
@@ -64,6 +69,14 @@ static void track_batches(op_storage *s, qa_draw_batch *batches, size_t count) {
   if (!batches && !count) return;
   if (s->nlists == s->clists) { s->clists = s->clists ? s->clists * 2 : 8; s->batch_lists = xg(s->batch_lists, s->clists * sizeof(void *)); s->batch_counts_f = xg(s->batch_counts_f, s->clists * sizeof(size_t)); }
   s->batch_lists[s->nlists] = batches; s->batch_counts_f[s->nlists] = count; s->nlists++;
+}
+/* A nested store lives as long as its parent: the parent's groups copy the nested operations by value, and those
+ * operations point into the nested store's batches, geometry and sky blocks. */
+static op_storage *child_storage(op_storage *s) {
+  if (s->nchildren == s->cchildren) { s->cchildren = s->cchildren ? s->cchildren * 2 : 4; s->children = xg(s->children, s->cchildren * sizeof *s->children); }
+  op_storage *child = op_storage_new();
+  s->children[s->nchildren++] = child;
+  return child;
 }
 static void track_scratch(op_storage *s, void *p) { if (s->nscratch == s->cscratch) { s->cscratch = s->cscratch ? s->cscratch * 2 : 16; s->scratch = xg(s->scratch, s->cscratch * sizeof(void *)); } s->scratch[s->nscratch++] = p; }
 void qa_world_operations_destroy(qa_world_operations *o) { if (!o) return; op_storage_destroy(o->_storage); memset(o, 0, sizeof *o); }
@@ -100,6 +113,14 @@ typedef struct wimpl {
   void **scratch; size_t nscratch, cscratch;
   qa_world_scene *self;
 } wimpl;
+/* Surfaces, fog selections and lightmap refreshes keep pointers into the
+ * grid, fog-volume, lightmap, split and brush-face lists: a load reserves
+ * each list for its loop first, so no push moves an element already pointed
+ * at (a realloc mid-loop left those pointers dangling). */
+#define WORLD_RESERVE(field, n, c, extra) do { \
+    size_t need_ = o->n + (extra); \
+    if (need_ > o->c) { o->c = need_; o->field = xg(o->field, o->c * sizeof *o->field); } \
+  } while (0)
 static wimpl *wi(qa_world_scene *s) { return (wimpl *)s->_impl; }
 static void w_scratch(wimpl *o, void *p) { if (o->nscratch == o->cscratch) { o->cscratch = o->cscratch ? o->cscratch * 2 : 16; o->scratch = xg(o->scratch, o->cscratch * sizeof(void *)); } o->scratch[o->nscratch++] = p; }
 static void w_owned(wimpl *o, qa_renderer_image image) { if (o->nowned == o->cowned) { o->cowned = o->cowned ? o->cowned * 2 : 16; o->owned = xg(o->owned, o->cowned * sizeof *o->owned); } o->owned[o->nowned++] = image; }
@@ -180,6 +201,11 @@ static void scene_ctor(qa_world_scene *scene, qa_decoded_world map, qa_scene_sha
   }
   (void)have;
   qa_renderer_noise_init(&scene->noise);
+}
+/* The TS constructor's *fog and *dlight registrations: TS constructs the scene
+ * after its surfaces (lightmaps and shader textures) are prepared. */
+static void scene_images(qa_world_scene *scene, qa_scene_shader_registry *shaders) {
+  wimpl *o = wi(scene);
   qa_image_level fog_level = qa_create_fog_texture(NULL, 0);
   w_scratch(o, (void *)fog_level.pixels.bytes);
   qa_image_level *fog_levels = xalloc(sizeof *fog_levels); *fog_levels = fog_level; w_scratch(o, fog_levels);
@@ -237,6 +263,7 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
       lightmaps[i] = generated_image(out, o, ncopy, q3_lightmap(o, q3->lightmaps[i], options.has_q3_lightmap_overbright ? (int)options.q3_lightmap_overbright : 2), "clamp");
     }
     const qa_fog_volume **fogs = xalloc((q3->fog_count ? q3->fog_count : 1) * sizeof(void *)); w_scratch(o, (void *)fogs);
+    WORLD_RESERVE(fog_volumes, nfog, cfog, q3->fog_count);
     for (size_t i = 0; i < q3->fog_count; i++) {
       qa_registered_scene_material material = qa_scene_shader_registry_register(shaders, q3->fogs[i].shader, NULL);
       const qa_render_material *mat = qa_registered_scene_material_material(material);
@@ -254,7 +281,8 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
       for (size_t k = 0; k < q3->plane_count; k++) planes[k] = q3->planes[k].plane;
       fmap.planes = planes; fmap.plane_count = q3->plane_count;
       if (o->nfog == o->cfog) { o->cfog = o->cfog ? o->cfog * 2 : 4; o->fog_volumes = xg(o->fog_volumes, o->cfog * sizeof *o->fog_volumes); }
-      o->fog_volumes[o->nfog] = qa_prepare_fog_volume(fmap, (double)i, *mat->fog);
+      o->fog_volumes[o->nfog] = qa_prepare_fog_volume(fmap, (double)i, *mat->fog,
+          options.has_q3_identity_light ? options.q3_identity_light : 1);
       fogs[i] = &o->fog_volumes[o->nfog++];
     }
     out->fog_selections = xalloc((q3->fog_count ? q3->fog_count : 1) * sizeof *out->fog_selections);
@@ -262,10 +290,12 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
     for (size_t i = 0; i < q3->fog_count; i++) if (fogs[i]) out->fog_selections[nf++] = (qa_fog_selection){ (double)i, *fogs[i] };
     out->fog_selection_count = nf;
     size_t *patch_ordinals = NULL; size_t npatch_ord = 0, cpatch_ord = 0;
+    WORLD_RESERVE(patch_meshes, npatch, cpatch, q3->surface_count);
+    WORLD_RESERVE(grids, ngrid_store, cgrid_store, q3->surface_count);
     for (size_t index = 0; index < q3->surface_count; index++) {
       const qa_q3_bsp_surface *surface = &q3->surfaces[index];
+      if (!(surface->shader >= 0 && surface->shader == floor(surface->shader) && surface->shader < (double)q3->shader_count)) qa_range_error("Scene world index %s outside %zu", QA_JS_NUMBER(surface->shader), q3->shader_count);
       long shi = (long)surface->shader;
-      if (surface->shader != (double)shi || shi < 0 || (size_t)shi >= q3->shader_count) qa_range_error("Scene world index %g outside %zu", surface->shader, q3->shader_count);
       const qa_q3_bsp_shader *shader = &q3->shaders[shi];
       size_t vfirst = (size_t)surface->vertices.first, vcount = (size_t)surface->vertices.count;
       qa_material_vertex *vertices = xalloc((vcount ? vcount : 1) * sizeof *vertices);
@@ -306,9 +336,9 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
       double lightmap_index = (is_str(surface->kind, "planar") || is_str(surface->kind, "patch")) ? surface->lightmap.image : -3;
       qa_scene_shader_binding binding; memset(&binding, 0, sizeof binding);
       binding.is_world = true; binding.world = material_world; binding.lightmap_index = lightmap_index;
-      long lmi = (long)lightmap_index;
       qa_renderer_image lm_image; const qa_renderer_image *lm_ptr = NULL;
-      if (lightmap_index == (double)lmi && lmi >= 0 && (size_t)lmi < q3->lightmap_count) { lm_image = lightmaps[lmi]; lm_ptr = NULL; binding.has_lightmap = true; binding.lightmap = lm_image; }
+      if (lightmap_index >= 0 && lightmap_index == floor(lightmap_index) && lightmap_index < (double)q3->lightmap_count) {
+        long lmi = (long)lightmap_index; lm_image = lightmaps[lmi]; lm_ptr = NULL; binding.has_lightmap = true; binding.lightmap = lm_image; }
       qa_registered_scene_material material = qa_scene_shader_registry_source_world_material(shaders,
         qa_scene_shader_registry_register(shaders, shader->name, &binding));
       if (binding.has_lightmap) lm_ptr = (void *)0; /* marker; store pointer below */
@@ -385,6 +415,9 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
     }
     /* sky layers keyed by image ordinal */
     struct sky_pair { double ordinal; qa_renderer_image solid, overlay; } *sky_pairs = NULL; size_t nsky = 0, csky = 0;
+    WORLD_RESERVE(brush_faces, nbrush, cbrush, face_count);
+    WORLD_RESERVE(lightmaps, nlm, clm, face_count);
+    WORLD_RESERVE(splits, nsplit, csplit, face_count);
     for (size_t index = 0; index < face_count; index++) {
       qa_bsp_face face = is_q1 ? map.as.q1->faces[index] : map.as.q2->faces[index];
       long tii = (long)face.texture_info;
@@ -433,6 +466,8 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
         qa_image_level direct_level = qa_direct_lightmap_pixels(built);
         qa_renderer_image image = generated_image(out, o, name1, built_image, "clamp");
         qa_renderer_image direct = generated_image(out, o, name2, direct_level, "clamp");
+        /* The registry keeps its own copy of created content; the built pixels are not referenced again. */
+        qa_built_lightmap_destroy(&built); qa_image_level_destroy(&direct_level);
         if (o->nlm == o->clm) { o->clm = o->clm ? o->clm * 2 : 16; o->lightmaps = xg(o->lightmaps, o->clm * sizeof *o->lightmaps); }
         lightmap = &o->lightmaps[o->nlm++];
         lightmap->face = prepared->lightmap; lightmap->image = image; lightmap->direct = direct;
@@ -520,6 +555,7 @@ void qa_world_scene_load(qa_decoded_world map, qa_scene_shader_registry *shaders
     free(sky_pairs);
   }
   out->surfaces = surfaces; out->surface_count = nsurf;
+  scene_images(out, shaders);
   if (map.kind == QA_DECODED_WORLD_Q2 && options.q2_sky_name) {
     o->q2_sky = xalloc(6 * sizeof *o->q2_sky); o->q2_sky_count = 6;
     for (int i = 0; i < 6; i++) {
@@ -595,8 +631,8 @@ static int surface_remap(qa_world_scene *scene, const qa_world_surface *surface,
   return 0;
 }
 static qa_world_surface *surface_at(qa_world_scene *scene, double index) {
+  if (!(index >= 0 && index == floor(index) && index < (double)scene->surface_count)) qa_range_error("Scene world index %s outside %zu", QA_JS_NUMBER(index), scene->surface_count);
   long i = (long)index;
-  if (index != (double)i || i < 0 || (size_t)i >= scene->surface_count) qa_range_error("Scene world index %g outside %zu", index, scene->surface_count);
   return &scene->surfaces[i];
 }
 static int local_box_culled(qa_bounds bounds, qa_scene_camera camera, const qa_scene_model_transform *model) {
@@ -717,10 +753,11 @@ static void sky_operations(qa_world_scene *scene, qa_registered_scene_material s
   qa_deform_geometry dgeom = geometry;
   qa_sky_builder_clip(&source->sky, &dgeom, 1, input->camera.origin);
   double far_v = qa_scene_far_clip(input->camera.origin, scene->bounds); if (far_v < 2048) far_v = 2048;
-  if (!store->sky_geoms) { store->sky_geoms = xalloc(sizeof *store->sky_geoms); store->nsky = 0; }
+  /* One built sky per sky surface: each stays with the store until it is destroyed. */
+  store->sky_geoms = xg(store->sky_geoms, (store->nsky + 1) * sizeof *store->sky_geoms);
   qa_sky_geometry *built = &store->sky_geoms[store->nsky];
   *built = qa_sky_builder_build(&source->sky, input->camera.origin, far_v);
-  store->nsky = 1;
+  store->nsky++;
   qa_render_operation depth; memset(&depth, 0, sizeof depth); depth.kind = QA_RENDER_OP_DEPTH_RANGE; depth.range[0] = 1; depth.range[1] = 1;
   op_push_plain(store, depth);
   const qa_mat_compiled_material *compiled = qa_registered_scene_material_compiled(shader);
@@ -729,8 +766,8 @@ static void sky_operations(qa_world_scene *scene, qa_registered_scene_material s
     static const char *SUFFIXES[6] = { "rt", "lf", "bk", "ft", "up", "dn" };
     for (size_t fi = 0; fi < built->face_count; fi++) {
       qa_sky_face *face = &built->box[fi];
+      if (!(face->face >= 0 && face->face == floor(face->face) && face->face < (double)6)) qa_range_error("Sky face is outside the cube");
       long fi_l = (long)face->face;
-      if (face->face != (double)fi_l || fi_l < 0 || fi_l >= 6) qa_range_error("Sky face is outside the cube");
       qa_render_operation op; memset(&op, 0, sizeof op);
       op.kind = QA_RENDER_OP_SKY_SIDE;
       op.image = sky->outer->image(sky->outer->ctx, SUFFIXES[fi_l]).image;
@@ -795,7 +832,7 @@ static void shader_operations(qa_world_scene *scene, qa_world_surface *surface, 
   qa_patch_grid *grid = surface->is_q3 ? surface->grid : NULL;
   const qa_fog_volume *fog_vol = surface->is_q3 ? surface->fog : NULL;
   if (surface->is_q3 && (surface->flare || surface->skip)) {
-    op_storage *sub = op_storage_new(); track_scratch(store, sub);
+    op_storage *sub = child_storage(store);
     if (surface->flare && input->prepare_flare) {
       size_t n = 0; const qa_render_operation *ops = input->prepare_flare(input->prepare_flare_ctx, surface, &ctx->context, &n);
       for (size_t i = 0; i < n; i++) op_push_plain(sub, ops[i]);
@@ -812,7 +849,6 @@ static void shader_operations(qa_world_scene *scene, qa_world_surface *surface, 
       g.operations = plain; g.operation_count = sub->count;
       op_push_group(store, g);
     }
-    sub->count = 0; sub->ops = NULL; /* ownership moved */
     return;
   }
   const qa_render_material *rmat = qa_registered_scene_material_material(shader);
@@ -856,7 +892,7 @@ static void shader_operations(qa_world_scene *scene, qa_world_surface *surface, 
   }
   const qa_mat_compiled_material *compiled = qa_registered_scene_material_compiled(shader);
   if (is_str(compiled->finished.iterator.kind, "sky")) {
-    op_storage *sub = op_storage_new(); track_scratch(store, sub);
+    op_storage *sub = child_storage(store);
     sky_operations(scene, shader, geometry, input, &draw_ctx, has_rem ? (qa_scene_shader_registry *)rem.source : scene->shaders, sub);
     qa_scene_group g; memset(&g, 0, sizeof g);
     if (has_order) { qa_scene_group tmp = qa_source_draw_group(source_shader, order, NULL, 0); g.order = tmp.order; free(tmp.owned_operation); }
@@ -867,9 +903,18 @@ static void shader_operations(qa_world_scene *scene, qa_world_surface *surface, 
     for (size_t i = 0; i < sub->nlists; i++) track_batches(store, sub->batch_lists[i], sub->batch_counts_f[i]);
     for (size_t i = 0; i < sub->nscratch; i++) track_scratch(store, sub->scratch[i]);
     for (size_t i = 0; i < sub->nsky_ops; i++) { if (store->nsky_ops == store->csky_ops) { store->csky_ops = store->csky_ops ? store->csky_ops * 2 : 4; store->sky_ops = xg(store->sky_ops, store->csky_ops * sizeof *store->sky_ops); } store->sky_ops[store->nsky_ops++] = sub->sky_ops[i]; }
-    if (sub->sky_geoms) { if (!store->sky_geoms) { store->sky_geoms = sub->sky_geoms; store->nsky = sub->nsky; } else track_scratch(store, sub->sky_geoms); }
+    if (sub->nsky != 0) { /* every built sky moves to the store, which destroys them */
+      store->sky_geoms = xg(store->sky_geoms, (store->nsky + sub->nsky) * sizeof *store->sky_geoms);
+      memcpy(store->sky_geoms + store->nsky, sub->sky_geoms, sub->nsky * sizeof *sub->sky_geoms);
+      store->nsky += sub->nsky;
+    }
+    free(sub->sky_geoms);
+    /* The moved entries now belong to the store; the sub keeps only its emptied arrays. */
+    free(sub->batch_lists); free(sub->batch_counts_f); free(sub->scratch); free(sub->sky_ops);
+    sub->batch_lists = NULL; sub->batch_counts_f = NULL; sub->scratch = NULL; sub->sky_ops = NULL;
     sub->nlists = 0; sub->nscratch = 0; sub->nsky_ops = 0; sub->sky_geoms = NULL; sub->nsky = 0;
     g.operations = plain; g.operation_count = sub->count;
+    free(sub->ops); sub->ops = NULL; sub->count = 0; /* copied into plain */
     op_push_group(store, g);
     return;
   }
@@ -940,7 +985,7 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
     if (is_str(material->kind, "q2") && (i32d(material->surface_flags) & 128) && !(i32d(material->surface_flags) & 4)) return;
     if (surface->has_plane && qa_dot3(ctx->context.local_view_origin, surface->plane.normal) - surface->plane.distance < -0.01) return;
     if (surface->has_q1_sky && input->source_sky) {
-      op_storage *sub = op_storage_new(); track_scratch(store, sub);
+      op_storage *sub = child_storage(store);
       q2_sky_operations(scene, surface->geometry, input, ctx, sub, 1);
       qa_scene_group g; memset(&g, 0, sizeof g); g.order.kind = QA_GROUP_SEQUENCE; g.order.phase = QA_SEQUENCE_SKY;
       qa_render_operation *plain = xalloc((sub->count ? sub->count : 1) * sizeof *plain); track_scratch(store, plain);
@@ -953,7 +998,7 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
     }
     if (surface->has_q1_sky) { q1_sky_batches(scene, surface, input, ctx, store); return; }
     if (is_str(material->kind, "q2") && (i32d(material->surface_flags) & 4)) {
-      op_storage *sub = op_storage_new(); track_scratch(store, sub);
+      op_storage *sub = child_storage(store);
       q2_sky_operations(scene, surface->geometry, input, ctx, sub, 1);
       qa_scene_group g; memset(&g, 0, sizeof g); g.order.kind = QA_GROUP_SEQUENCE; g.order.phase = QA_SEQUENCE_SKY;
       qa_render_operation *plain = xalloc((sub->count ? sub->count : 1) * sizeof *plain); track_scratch(store, plain);
@@ -983,6 +1028,19 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
       }
       source_lights = transformed;
     }
+    /* Only lights that can reach this face force a rebuild; the rest leave its cached static
+     * lightmap valid (TS lights = face.lighting === null ? [] : filter(dynamicLightReachesFace)). */
+    {
+      const qa_lightmap_face *reach_face = &lightmap->face;
+      qa_surface_dynamic_light *reaching = xalloc((nsl ? nsl : 1) * sizeof *reaching); track_scratch(store, reaching);
+      size_t nreach = 0;
+      if (reach_face->lighting != NULL)
+        for (size_t i = 0; i < nsl; i++) {
+          const qa_surface_dynamic_light *light = &source_lights[i];
+          if (qa_dynamic_light_reaches_face(reach_face, light)) reaching[nreach++] = *light;
+        }
+      source_lights = reaching; nsl = nreach;
+    }
     double styles_list[1024]; size_t nslist = 0;
     styles_list[nslist++] = q2mod(scene);
     const qa_lightmap_face *face = &lightmap->face;
@@ -992,14 +1050,14 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
       if (is_str(material->kind, "q1")) {
         const double *src = input->q1_styles ? input->q1_styles : q1_defaults();
         size_t sc = input->q1_styles ? input->q1_style_count : 256;
+        if (!(index >= 0 && index == floor(index) && index < (double)sc)) qa_range_error("Scene world index %s outside %zu", QA_JS_NUMBER(index), sc);
         long si = (long)index;
-        if (index != (double)si || si < 0 || (size_t)si >= sc) qa_range_error("Scene world index %g outside %zu", index, sc);
         styles_list[nslist++] = src[si];
       } else {
         const qa_q2_light_style *src = input->q2_styles ? input->q2_styles : q2_defaults();
         size_t sc = input->q2_styles ? input->q2_style_count : 256;
+        if (!(index >= 0 && index == floor(index) && index < (double)sc)) qa_range_error("Scene world index %s outside %zu", QA_JS_NUMBER(index), sc);
         long si = (long)index;
-        if (index != (double)si || si < 0 || (size_t)si >= sc) qa_range_error("Scene world index %g outside %zu", index, sc);
         styles_list[nslist++] = src[si].rgb.x; styles_list[nslist++] = src[si].rgb.y; styles_list[nslist++] = src[si].rgb.z;
       }
     }
@@ -1020,7 +1078,10 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
       }
       qa_scene_image_registry_update(scene->shaders->textures->images, lightmap->image, 0, built.image);
       qa_image_level direct = qa_direct_lightmap_pixels(built);
+      qa_built_lightmap_destroy(&built);
       qa_scene_image_registry_update(scene->shaders->textures->images, lightmap->direct, 0, direct);
+      /* Each queued update owns a copy of its level. */
+      qa_image_level_destroy(&direct);
       if (reusable) {
         if (o->nstyles == o->cstyles) { o->cstyles = o->cstyles ? o->cstyles * 2 : 8; o->styles = xg(o->styles, o->cstyles * sizeof *o->styles); }
         double *copy = xalloc((nslist ? nslist : 1) * sizeof(double)); memcpy(copy, styles_list, nslist * sizeof(double));
@@ -1053,12 +1114,12 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
     fb_for_anim = fb_lookup(scene, animated, &fb_present);
   }
   char cache_key[256] = "";
-  if (cacheable) snprintf(cache_key, sizeof cache_key, "%g|%d|%g|%g|%g|%g|%d|%d|%d|%g|%g",
-    anim_bucket, (input->has_alternate_animation && input->alternate_animation) ? 1 : 0,
-    ctx->context.entity_rgba.x, ctx->context.entity_rgba.y, ctx->context.entity_rgba.z, ctx->context.entity_rgba.w,
+  if (cacheable) snprintf(cache_key, sizeof cache_key, "%s|%d|%s|%s|%s|%s|%d|%d|%d|%s|%s",
+    QA_JS_NUMBER(anim_bucket), (input->has_alternate_animation && input->alternate_animation) ? 1 : 0,
+    QA_JS_NUMBER(ctx->context.entity_rgba.x), QA_JS_NUMBER(ctx->context.entity_rgba.y), QA_JS_NUMBER(ctx->context.entity_rgba.z), QA_JS_NUMBER(ctx->context.entity_rgba.w),
     (input->has_q1_fog && input->q1_fog.density > 0) ? 1 : 0,
     is_str(material->kind, "q1") ? (fb_present ? 1 : 0) : 0,
-    ctx->context.deform_view.mirror ? 1 : 0, ctx->context.depth_range[0], ctx->context.depth_range[1]);
+    ctx->context.deform_view.mirror ? 1 : 0, QA_JS_NUMBER(ctx->context.depth_range[0]), QA_JS_NUMBER(ctx->context.depth_range[1]));
   if (cacheable && !input->has_q2_fragment_lighting) {
     for (size_t i = 0; i < o->nlc; i++) if (o->legacy_cache[i].index == surface->index && !strcmp(o->legacy_cache[i].key, cache_key)) {
       op_storage *cached = o->legacy_cache[i].storage;
@@ -1147,9 +1208,9 @@ static void surface_operations(qa_world_scene *scene, qa_world_surface *surface,
 typedef struct range_info { double first, count; qa_bounds bounds; } range_info;
 static range_info model_range(qa_world_scene *scene, double model_index) {
   qa_decoded_world map = scene->map;
-  long i = (long)model_index;
   size_t count = map.kind == QA_DECODED_WORLD_Q1 ? map.as.q1->model_count : map.kind == QA_DECODED_WORLD_Q2 ? map.as.q2->model_count : map.as.q3->model_count;
-  if (model_index != (double)i || i < 0 || (size_t)i >= count) qa_range_error("Scene world index %g outside %zu", model_index, count);
+  if (!(model_index >= 0 && model_index == floor(model_index) && model_index < (double)count)) qa_range_error("Scene world index %s outside %zu", QA_JS_NUMBER(model_index), count);
+  long i = (long)model_index;
   if (map.kind == QA_DECODED_WORLD_Q3) { const qa_q3_bsp_model *m = &map.as.q3->models[i]; return (range_info){ m->surfaces.first, m->surfaces.count, m->bounds }; }
   if (map.kind == QA_DECODED_WORLD_Q1) { const qa_q1_world_model *m = &map.as.q1->models[i]; return (range_info){ m->faces.first, m->faces.count, m->bounds }; }
   const qa_q2_world_model *m = &map.as.q2->models[i]; return (range_info){ m->faces.first, m->faces.count, m->bounds };
@@ -1216,24 +1277,32 @@ void qa_world_scene_prepare_world_operations(qa_world_scene *scene, const qa_wor
   }
   int any_null_shader = 0; for (size_t i = 0; i < ns; i++) if (!surfaces[i]->has_shader) any_null_shader = 1;
   if (any_null_shader) {
-    /* stable sort by order */
-    for (size_t i = 1; i < ns; i++) {
-      qa_world_surface *t = surfaces[i]; size_t j = i;
-      while (j) {
-        qa_scene_material_remap r1, r2;
-        qa_world_surface *a = surfaces[j-1], *b = t;
-        double oa, ob;
-        qa_registered_scene_material sa = surface_remap(scene, a, &r1) ? r1.material : a->shader;
-        qa_registered_scene_material sb = surface_remap(scene, b, &r2) ? r2.material : b->shader;
-        oa = (a->has_shader || surface_remap(scene, a, &r1)) ? qa_registered_scene_material_finished(sa)->sort
-           : (a->has_q1_sky || (is_str(a->material.kind, "q2") && (i32d(a->material.surface_flags) & 4)) ? 2 : a->material.alpha < 1 ? 9 : 3);
-        ob = (b->has_shader || surface_remap(scene, b, &r2)) ? qa_registered_scene_material_finished(sb)->sort
-           : (b->has_q1_sky || (is_str(b->material.kind, "q2") && (i32d(b->material.surface_flags) & 4)) ? 2 : b->material.alpha < 1 ? 9 : 3);
-        if (oa <= ob) break;
-        surfaces[j] = surfaces[j-1]; j--;
-      }
-      surfaces[j] = t;
+    /* Stable sort by order. The walk is front to back; blended legacy surfaces must draw back to
+     * front (Q2 R_DrawAlphaSurfaces), so order 9 ties sort by descending visit rank. */
+    size_t *rank = xalloc((ns ? ns : 1) * sizeof *rank);
+    double *order = xalloc((ns ? ns : 1) * sizeof *order);
+    for (size_t i = 0; i < ns; i++) {
+      qa_scene_material_remap r1;
+      qa_world_surface *a = surfaces[i];
+      bool remapped = surface_remap(scene, a, &r1);
+      qa_registered_scene_material sa = remapped ? r1.material : a->shader;
+      rank[i] = i;
+      order[i] = (a->has_shader || remapped) ? qa_registered_scene_material_finished(sa)->sort
+               : (a->has_q1_sky || (is_str(a->material.kind, "q2") && (i32d(a->material.surface_flags) & 4)) ? 2 : a->material.alpha < 1 ? 9 : 3);
     }
+    for (size_t i = 1; i < ns; i++) {
+      qa_world_surface *t = surfaces[i]; size_t tr = rank[i]; double to = order[i]; size_t j = i;
+      while (j) {
+        double oa = order[j-1];
+        /* (a, t) out of order iff order(a) - order(t) || (order(a) === 9 ? rank(t) - rank(a) : 0) > 0 */
+        double compare = oa - to;
+        if (compare == 0 && oa == 9) compare = (double)tr - (double)rank[j-1];
+        if (!(compare > 0)) break;
+        surfaces[j] = surfaces[j-1]; rank[j] = rank[j-1]; order[j] = order[j-1]; j--;
+      }
+      surfaces[j] = t; rank[j] = tr; order[j] = to;
+    }
+    free(rank); free(order);
   }
   qa_plane frustum[5]; size_t nfrustum = qa_scene_camera_frustum(input->camera, frustum);
   const qa_q3_dynamic_light *lights = input->visibility.q3_lights; size_t nlights = input->visibility.q3_light_count;
@@ -1279,9 +1348,13 @@ void qa_prepared_world_view_destroy(qa_prepared_world_view *v) {
     if (list[3]) { qa_finished_operations *f = list[3]; qa_finished_operations_destroy(f); free(f); }
     if (list[4]) { qa_scene_fogged_operations *g = list[4]; qa_scene_fogged_operations_destroy(g); free(g); }
     free(list[5]); /* sky images view storage */
+    free(list[6]); free(list[7]); free(list[8]); /* clear, clip plane, shadow-finished operations */
     free(list);
   }
   memset(v, 0, sizeof *v);
+}
+static bool scene_operation_translucent(const qa_scene_operation *operation) {
+  return operation->is_group && operation->group.order.kind == QA_GROUP_SEQUENCE && operation->group.order.phase == QA_SEQUENCE_TRANSLUCENT;
 }
 void qa_world_scene_prepare_view(qa_world_scene *scene, const qa_world_view_input *input, qa_prepared_world_view *out) {
   memset(out, 0, sizeof *out);
@@ -1311,8 +1384,14 @@ void qa_world_scene_prepare_view(qa_world_scene *scene, const qa_world_view_inpu
   int has_q2fog = !input->no_world_model && input->has_q2_fog;
   qa_scene_operation *combined = xalloc(((total + 1) ? total + 1 : 1) * sizeof *combined);
   size_t w = 0;
-  for (size_t i = 0; i < nparts; i++) { memcpy(combined + w, parts[i].operations, parts[i].count * sizeof *combined); w += parts[i].count; }
+  /* Legacy sequence groups keep insertion order downstream, so translucent world/brush surfaces
+   * must be deferred until opaque model and entity submission is complete or later opaque draws
+   * overwrite the blend. */
+  for (size_t i = 0; i < nparts; i++)
+    for (size_t k = 0; k < parts[i].count; k++) if (!scene_operation_translucent(&parts[i].operations[k])) combined[w++] = parts[i].operations[k];
   for (size_t i = 0; i < input->operation_count; i++) combined[w++] = input->operations[i];
+  for (size_t i = 0; i < nparts; i++)
+    for (size_t k = 0; k < parts[i].count; k++) if (scene_operation_translucent(&parts[i].operations[k])) combined[w++] = parts[i].operations[k];
   if (has_q2fog) {
     int sky_drawn = 0;
     for (size_t i = 0; i < out->visibility.surface_count; i++) {
@@ -1331,9 +1410,25 @@ void qa_world_scene_prepare_view(qa_world_scene *scene, const qa_world_view_inpu
   }
   qa_finished_operations *finished = xalloc(sizeof *finished); memset(finished, 0, sizeof *finished);
   qa_finish_scene_operations(combined, w, finished);
+  /* RB_ShadowFinish runs once after the whole draw list, and only where stencil volumes were drawn. */
+  int shadow_volumes = 0;
+  if (input->model_shadows == 2)
+    for (size_t i = 0; i < finished->count; i++) if (finished->operations[i].kind == QA_RENDER_OP_SHADOW_VOLUME) shadow_volumes = 1;
+  qa_render_operation *shadow_finished = NULL;
+  const qa_render_operation *sorted_ops = finished->operations; size_t sorted_count = finished->count;
+  if (shadow_volumes) {
+    shadow_finished = xalloc((finished->count + 1) * sizeof *shadow_finished);
+    memcpy(shadow_finished, finished->operations, finished->count * sizeof *shadow_finished);
+    qa_render_operation *finish = &shadow_finished[finished->count];
+    memset(finish, 0, sizeof *finish);
+    finish->kind = QA_RENDER_OP_SHADOW_FINISH;
+    finish->white_image = scene->shaders->textures->white->image;
+    qa_shadow_finish_quad(&input->camera, finish->finish_positions);
+    sorted_ops = shadow_finished; sorted_count = finished->count + 1;
+  }
   qa_scene_fogged_operations *fogged = xalloc(sizeof *fogged); memset(fogged, 0, sizeof *fogged);
   size_t fogged_count = 0;
-  const qa_render_operation *fogged_ops = qa_fog_scene_operations(finished->operations, finished->count,
+  const qa_render_operation *fogged_ops = qa_fog_scene_operations(sorted_ops, sorted_count,
     (input->no_world_model || !input->has_q1_fog) ? NULL : &input->q1_fog, fogged, &fogged_count);
   qa_merged_operations *merged = xalloc(sizeof *merged); memset(merged, 0, sizeof *merged);
   qa_merge_draw_operations(fogged_ops, fogged_count, merged);
@@ -1342,18 +1437,23 @@ void qa_world_scene_prepare_view(qa_world_scene *scene, const qa_world_view_inpu
   view->target_is_seat = input->target_is_seat; view->target_seat = input->target_seat; view->target_preview_id = input->target_preview_id;
   view->time = input->time;
   view->state.viewport = input->camera.viewport;
-  qa_render_view_clear default_clear; memset(&default_clear, 0, sizeof default_clear); default_clear.depth = 1;
-  static qa_render_view_clear stored_clear;
-  stored_clear = input->clear ? *input->clear : default_clear;
-  view->state.clear = &stored_clear;
+  /* Each prepared view owns its clear and clip plane (several views are
+   * prepared before one frame executes). */
+  qa_render_view_clear *stored_clear = xalloc(sizeof *stored_clear);
+  memset(stored_clear, 0, sizeof *stored_clear); stored_clear->depth = 1;
+  if (input->clear) *stored_clear = *input->clear;
+  /* clear: clear !== null && modelShadows === 2 ? { ...clear, stencil: true } : clear */
+  if (input->model_shadows == 2) stored_clear->stencil = true;
+  view->state.clear = stored_clear;
   qa_vec4 clip; int has_clip = qa_scene_portal_clip_plane(input->camera, &clip);
-  static qa_vec4 clip_storage;
-  if (has_clip) { clip_storage = clip; view->state.clip_plane = &clip_storage; }
+  qa_vec4 *clip_storage = NULL;
+  if (has_clip) { clip_storage = xalloc(sizeof *clip_storage); *clip_storage = clip; view->state.clip_plane = clip_storage; }
   view->state.has_view_projection = true; view->state.view_projection = qa_scene_view_projection_matrix(input->camera);
   view->before_view = input->before_view; view->before_view_count = input->before_view_count;
   view->operations = merged->operations; view->operation_count = merged->count;
-  void **list = xalloc(6 * sizeof(void *));
+  void **list = xalloc(9 * sizeof(void *));
   list[0] = parts; list[1] = (void *)(uintptr_t)nparts; list[2] = merged; list[3] = finished; list[4] = fogged; list[5] = combined;
+  list[6] = stored_clear; list[7] = clip_storage; list[8] = shadow_finished;
   out->_storage = list;
 }
 void qa_world_scene_prepare_views(qa_world_scene *scene, const qa_world_view_input *input, const qa_portal_entity *portals, size_t portal_count, qa_prepared_world_view *out_views, size_t *out_count) {

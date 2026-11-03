@@ -9,6 +9,7 @@ static qa_netquake_message to_nq(qa_quakeworld_message m) {
   r.angles = m.angles; r.origin = m.origin; r.index = m.index; r.value = m.value;
   r.channel = m.channel; r.volume = m.volume; r.attenuation = m.attenuation; r.armor = m.armor; r.blood = m.blood;
   r.effect = m.effect; r.paused = m.paused; r.count = m.count;
+  r.source = m.source; r.str_value = m.str_value; r.state = m.state;
   return r;
 }
 void qa_compat_qc_present_quakeworld_message(qa_compat_qc_routed_message entry, const qa_actor_id *target, qa_compat_qc_local_messages state, qa_compat_qc_local_message_host host) {

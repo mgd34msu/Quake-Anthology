@@ -7,15 +7,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 static qa_query_target map_target(void) {
   qa_query_target t; memset(&t, 0, sizeof t); t.is_model = true; t.model = 0; return t;
 }
 static void at_check_d(double index, size_t count) {
   if (!isfinite(index) || index != trunc(index) || index < 0 || index >= (double)count)
-    qa_range_error("Navigation record %lld exceeds %lld", (long long)index, (long long)count);
+    qa_range_error("Navigation record %s exceeds %zu", QA_JS_NUMBER(index), count); /* `${index}`: NaN, 1.5 */
 }
-static double js_round(double v) { return floor(v + 0.5); }
 
 typedef struct {
   const qa_navigation_world *world;
@@ -86,7 +87,7 @@ static bool grounded_once(Build *b, const qa_navigation_profile *posture, bool c
   return has;
 }
 static void insert_node(Build *b, qa_vec3 origin, qa_navigation_source source, const qa_navigation_profile *posture, bool crouched) {
-  int64_t kx = (int64_t)js_round(origin.x / 8), ky = (int64_t)js_round(origin.y / 8), kz = (int64_t)js_round(origin.z / 4);
+  int64_t kx = (int64_t)qa_js_round(origin.x / 8), ky = (int64_t)qa_js_round(origin.y / 8), kz = (int64_t)qa_js_round(origin.z / 4);
   if (seen_has(b, kx, ky, kz) || !qa_nav_clear(b->world, posture, origin, origin, map_target())) return;
   int64_t medium = qa_nav_contents(b->world, &b->profile, origin, map_target());
   if ((medium & 6) != 0) return;
@@ -120,12 +121,12 @@ static void publish_candidate(Build *b, qa_vec3 point, qa_navigation_source sour
   }
 }
 static bool inside_polygon(qa_vec3 point, const qa_vec3 *polygon, size_t count) {
-  int sign = 0;
+  double sign = 0; /* Math.sign: a NaN cross product makes every later test fail */
   for (size_t i = 0; i < count; i++) {
     qa_vec3 a = polygon[i], bb = polygon[(i + 1) % count];
     double cross = (bb.x - a.x) * (point.y - a.y) - (bb.y - a.y) * (point.x - a.x);
     if (fabs(cross) < 0.001) continue;
-    int s = cross > 0 ? 1 : -1;
+    double s = qa_js_sign(cross);
     if (sign != 0 && s != sign) return false;
     sign = s;
   }
@@ -161,7 +162,7 @@ static qa_vec3 triangle_normal(qa_vec3 a, qa_vec3 bb, qa_vec3 c) {
   double x = (bb.y - a.y) * (c.z - a.z) - (bb.z - a.z) * (c.y - a.y);
   double y = (bb.z - a.z) * (c.x - a.x) - (bb.x - a.x) * (c.z - a.z);
   double z = (bb.x - a.x) * (c.y - a.y) - (bb.y - a.y) * (c.x - a.x);
-  double length = hypot(hypot(x, y), z);
+  double length = qa_js_hypot3(x, y, z);
   if (length == 0) return (qa_vec3){0, 0, 0};
   return (qa_vec3){x / length, y / length, z / length};
 }
@@ -355,7 +356,7 @@ bool qa_construct_navigation(qa_navigation_graph *out, qa_navigation_constructio
         /* node ids are insertion indexes in constructed graphs */
         double rise = other->origin.z - node.origin.z;
         if (hypot(node.origin.x - other->origin.x, node.origin.y - other->origin.y) > link_distance ||
-            fabs(rise) > fmax(b.profile.maximum_drop, link_distance)) continue;
+            fabs(rise) > qa_js_max(b.profile.maximum_drop, link_distance)) continue;
         qa_travel_mode mode = ((node.contents & 1) != 0 && (other->contents & 1) != 0) ? QA_TM_SWIM
                             : ((node.contents & 8) != 0 && (other->contents & 8) != 0) ? QA_TM_LADDER
                             : rise > b.profile.maximum_step ? QA_TM_JUMP

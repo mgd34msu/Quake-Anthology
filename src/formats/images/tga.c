@@ -1,5 +1,6 @@
 /* Port of src/formats/images/tga.ts. GPL-2.0-or-later. */
 #include "qa/formats/images/tga.h"
+#include "qa/formats/images/limits.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -95,12 +96,30 @@ static void tga_write(struct tga_state *state, const uint8_t rgba[4]) {
   state->pixel++;
 }
 
+/* Owned decode state released when a BinaryError unwinds the decoder. */
+typedef struct decode_guard {
+  qa_binary_reader *reader;
+  void **owned[3];
+} decode_guard;
+
+static void decode_guard_release(void *raw) {
+  decode_guard *guard = (decode_guard *)raw;
+  for (int i = 0; i < 3; i++)
+    if (guard->owned[i] != NULL) free(*guard->owned[i]);
+  qa_binary_reader_destroy(guard->reader);
+}
+
 int qa_decode_tga(const uint8_t *bytes, size_t length, const char *source,
                   qa_tga_image *out) {
   const char *name = source != NULL ? source : "<tga>";
   qa_binary_reader reader;
   if (!qa_binary_reader_init(&reader, (uint8_t *)bytes, length, name)) return 0;
   memset(out, 0, sizeof *out);
+  uint8_t *palette = NULL, *pixels = NULL;
+  uint16_t *indices = NULL;
+  decode_guard guard_state = {&reader, {(void **)&palette, (void **)&pixels, (void **)&indices}};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, decode_guard_release, &guard_state);
   int64_t id_length = qa_binary_reader_u8(&reader);
   int64_t map_type = qa_binary_reader_u8(&reader);
   int64_t type = qa_binary_reader_u8(&reader);
@@ -120,8 +139,7 @@ int qa_decode_tga(const uint8_t *bytes, size_t length, const char *source,
   int depth_ok = indexed ? depth == 8 || depth == 16
                  : gray  ? depth == 8 || depth == 16
                          : depth == 16 || depth == 24 || depth == 32;
-  if (!type_ok || width == 0 || height == 0 ||
-      (double)width * (double)height * 4.0 > 2147483647.0 ||
+  if (!type_ok || !qa_image_size_allowed((double)width, (double)height) ||
       (descriptor & 192) != 0 || map_type != (indexed ? 1 : 0) || !depth_ok) {
     qa_binary_error(name, 0, "Unsupported TGA header");
   }
@@ -138,13 +156,12 @@ int qa_decode_tga(const uint8_t *bytes, size_t length, const char *source,
   state.gray = gray;
   state.width = width;
   state.height = height;
-  uint8_t *palette = NULL;
   if (indexed) {
     palette = map_length == 0 ? NULL
                               : (uint8_t *)malloc((size_t)map_length * 4);
     if (map_length != 0 && palette == NULL) {
       qa_binary_reader_destroy(&reader);
-      return 0;
+      qa_cleanup_pop(&guard); return 0;
     }
     for (int64_t entry = 0; entry < map_length; entry++) {
       tga_color(&state, map_depth, palette + entry * 4);
@@ -152,14 +169,14 @@ int qa_decode_tga(const uint8_t *bytes, size_t length, const char *source,
   }
   state.palette = palette;
   size_t count = (size_t)(width * height);
-  uint8_t *pixels = (uint8_t *)malloc(count * 4);
-  uint16_t *indices = indexed ? (uint16_t *)calloc(count, sizeof(uint16_t)) : NULL;
+  pixels = (uint8_t *)malloc(count * 4);
+  indices = indexed ? (uint16_t *)calloc(count, sizeof(uint16_t)) : NULL;
   if (pixels == NULL || (indexed && indices == NULL)) {
     free(pixels);
     free(indices);
     free(palette);
     qa_binary_reader_destroy(&reader);
-    return 0;
+    qa_cleanup_pop(&guard); return 0;
   }
   state.pixels = pixels;
   state.indices = indices;
@@ -195,7 +212,7 @@ int qa_decode_tga(const uint8_t *bytes, size_t length, const char *source,
   out->first = map_first;
   out->palette_rgba = palette;
   out->palette_rgba_length = indexed ? (size_t)map_length * 4 : 0;
-  return 1;
+  qa_cleanup_pop(&guard); return 1;
 }
 
 uint8_t *qa_encode_tga(const qa_image_level *image, size_t *out_length) {

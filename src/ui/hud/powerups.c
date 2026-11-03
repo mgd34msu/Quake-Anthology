@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 /* UTF-8 code-point count (TS Array.from / string length in units is
  * approximated by code points; ASCII matches exactly). */
@@ -57,16 +59,16 @@ bool qa_ui_draw_powerup_timers(const qa_active_powerup_timer *timers,
     if (timers[i].remaining_seconds > 0) active_count++;
   if (active_count == 0) return true;
   double cap_height = skin.has_cap_ink ? skin.cap_ink_height : 8;
-  double available_height = fmax(0, bottom - area.y - 8);
-  double rows_d = fmin((double)active_count,
-                       fmax(1, floor(available_height / 12)));
+  double available_height = qa_js_max(0, bottom - area.y - 8);
+  double rows_d = qa_js_min((double)active_count,
+                       qa_js_max(1, floor(available_height / 12)));
   size_t rows = (size_t)rows_d;
   double columns = ceil((double)active_count / (double)rows);
-  double scale = fmin(fmax(8 / cap_height, requested_scale),
-                      fmax(1, available_height / (double)rows - 4)
+  double scale = qa_js_min(qa_js_max(8 / cap_height, requested_scale),
+                      qa_js_max(1, available_height / (double)rows - 4)
                           / cap_height);
   double row_height = cap_height * scale + 4;
-  double width = fmin(200, area.width / fmax(2, columns) - 8);
+  double width = qa_js_min(200, area.width / qa_js_max(2, columns) - 8);
   out->commands = malloc(active_count * 2 * sizeof *out->commands);
   out->owned = calloc(active_count, sizeof *out->owned);
   if (out->commands == NULL || out->owned == NULL) {
@@ -81,7 +83,7 @@ bool qa_ui_draw_powerup_timers(const qa_active_powerup_timer *timers,
     double x = area.x + area.width - (double)(column + 1) * (width + 8) + 4;
     double y = bottom - (double)(rows - row) * row_height;
     char value[64];
-    snprintf(value, sizeof value, "%.0fs", ceil(timer->remaining_seconds));
+    snprintf(value, sizeof value, "%ss", QA_JS_NUMBER(ceil(timer->remaining_seconds)));
     const char *localized = localize(localize_ctx, timer->label);
     /* label is an array of code points; pop until it fits. */
     size_t keep = cp_count(localized);

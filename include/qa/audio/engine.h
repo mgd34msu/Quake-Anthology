@@ -90,6 +90,11 @@ qa_unified_audio *qa_unified_audio_create(
 /* TS close()/[Symbol.dispose]; destroy also frees everything. */
 void qa_unified_audio_close(qa_unified_audio *audio);
 void qa_unified_audio_destroy(qa_unified_audio *audio);
+/* TS retireAbsentActors(live): frees the audio entities of actors that are no
+ * longer live and can no longer be heard, for reuse by later actors. */
+void qa_unified_audio_retire_absent_actors(qa_unified_audio *audio,
+                                           const qa_actor_id *live,
+                                           size_t live_count);
 
 int64_t qa_unified_audio_sample_rate(const qa_unified_audio *audio);
 qa_audio_output_format qa_unified_audio_output_format(

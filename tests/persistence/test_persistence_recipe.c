@@ -278,7 +278,7 @@ static qa_save_value *fixture_tree(int version, bool legacy_armor) {
   return tree;
 }
 static void check_image(const qa_save_image *image) {
-  CHECK(image->schema_version == 3);
+  CHECK(image->schema_version == 4);
   CHECK(strcmp(image->recipe.id, "recipe:fixture:1") == 0);
   CHECK(strcmp(image->recipe.map.geometry.requested_path,
                "maps/start.bsp") == 0);
@@ -336,7 +336,7 @@ static void test_save_image_round_trip(void) {
   uint8_t *bytes = NULL;
   size_t length = 0;
   CHECK(qa_encode_save_image(&parsed.image, &bytes, &length));
-  CHECK(length > 8 && memcmp(bytes, "QTSAVE3\n", 8) == 0);
+  CHECK(length > 12 && memcmp(bytes, "QTSAVE5\n", 8) == 0);
   qa_save_image_result_free(&parsed);
   qa_save_value_free(tree);
 
@@ -371,7 +371,8 @@ static void test_save_image_legacy(void) {
   free(payload);
   qa_save_image_result decoded;
   CHECK(qa_decode_save_image(bytes, 8 + payload_length, &decoded));
-  CHECK(decoded.image.schema_version == 3);
+  CHECK(decoded.image.schema_version == 4);
+  CHECK(decoded.image.consumption_count == 0);
   CHECK(decoded.image.legacy_armor_layout);
   CHECK(decoded.image.combat[0].state.armor.regular.kind == QA_REGULAR_ARMOR_Q2);
   CHECK(strcmp(decoded.image.combat[0].state.armor.powered.kind, "screen") == 0);

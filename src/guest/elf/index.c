@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t size) {
   void *p = malloc(size == 0 ? 1 : size);
@@ -201,7 +202,7 @@ bool qa_load_elf(qa_elf_guest_image *out, const qa_elf_load_options *options) {
     boundaries[boundary_count++] = page_down(segment->address);
     boundaries[boundary_count++] = page_up(segment->address + segment->memory_size);
   }
-  qsort(boundaries, boundary_count, sizeof(uint64_t), cmp_u64);
+  qa_js_sort(boundaries, boundary_count, sizeof(uint64_t), cmp_u64);
   size_t unique_count = 0;
   for (size_t i = 0; i < boundary_count; i++)
     if (unique_count == 0 || boundaries[i] != boundaries[unique_count - 1])
@@ -235,6 +236,10 @@ bool qa_load_elf(qa_elf_guest_image *out, const qa_elf_load_options *options) {
     planned_count++;
   }
   free(boundaries);
+  /* The PE loader refuses images over 256 MiB for the same reason: the guest can size its own mappings. */
+  uint64_t planned_total = 0;
+  for (size_t i = 0; i < planned_count; i++) planned_total += planned[i].byte_length;
+  if (planned_total > 256u * 1024u * 1024u) elf_error("ELF image exceeds the supported mapped size");
 
   for (size_t i = 0; i < planned_count; i++)
     (void)qa_gmem_map(ext, planned[i].base, planned[i].byte_length,

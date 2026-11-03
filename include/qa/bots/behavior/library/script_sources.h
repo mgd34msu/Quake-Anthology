@@ -78,4 +78,30 @@ bool qa_bot_script_sources_resolve(qa_bot_script_sources *s,
                                    const qa_ui_script_include_request *request,
                                    qa_ui_script_source *out);
 
+/** TS BotScriptReader (IncludeResolver plus globals/debugEval/resolveRoot). */
+typedef struct qa_bot_script_reader {
+  void *ctx;
+  qa_ui_script_global_defines *globals; /* borrowed */
+  qa_ui_script_write_fn debug_eval;     /* NULL: absent */
+  void *debug_eval_ctx;
+  bool (*resolve_root)(void *ctx, const char *path, qa_ui_script_source *out);
+  qa_ui_script_resolve_fn resolve;
+} qa_bot_script_reader;
+
+static inline bool qa_bot_script_sources_reader_root_(void *ctx, const char *path,
+                                                      qa_ui_script_source *out) {
+  return qa_bot_script_sources_resolve_root(ctx, path, out);
+}
+static inline bool qa_bot_script_sources_reader_include_(
+    void *ctx, const qa_ui_script_include_request *request, qa_ui_script_source *out) {
+  return qa_bot_script_sources_resolve(ctx, request, out);
+}
+/* BotScriptSources viewed as a BotScriptReader; globals/debug_eval are read now. */
+static inline qa_bot_script_reader qa_bot_script_sources_reader(qa_bot_script_sources *s) {
+  qa_bot_script_reader reader = {s, s->globals, s->debug_eval, s->debug_eval_ctx,
+                                 qa_bot_script_sources_reader_root_,
+                                 qa_bot_script_sources_reader_include_};
+  return reader;
+}
+
 #endif

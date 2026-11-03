@@ -24,7 +24,7 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static const qa_q2bm_sound_spec sight_spec = {"gladiator/sight.wav", 2, 1};
 static const qa_q2bm_sound_spec idle_spec = {"gladiator/gldidle1.wav", 2, 2};
-static const qa_q2bm_sound_spec search_spec = {"gladiator/gldsrch1.wav", 2, 2};
+static const qa_q2bm_sound_spec search_spec = {"gladiator/gldsrch1.wav", 2, 1};
 static const qa_q2bm_sound_spec cleaver_spec = {"gladiator/melee1.wav", 1, 1};
 
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
@@ -48,9 +48,14 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
 }
 static void melee_cb_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  bool hit = c->weapons.fire_hit(c->weapons.ctx, c->entity, c->game,
-                                 q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, -4),
-                                 20 + floor(q2bm_rnd(c->game) * 5), 300);
+  void * value = c->weapons.ctx;
+  qa_q2_entity * value2 = c->entity;
+  qa_q2_game_services * value3 = c->game;
+  qa_vec3 value4 = q2bm_v3(80, q2bm_body(c->game, c->entity).bounds.min.x, -4);
+  double value5 = 20 + floor(q2bm_rnd(c->game) * 5);
+  bool hit = c->weapons.fire_hit(value, value2, value3,
+                                 value4,
+                                 value5, 300);
   q2bm_sound(c->game, c->entity, hit ? "gladiator/melee2.wav" : "gladiator/melee3.wav",
              true, 0, false, 0, false, 0);
 }

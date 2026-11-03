@@ -83,20 +83,25 @@ struct qa_q3_client_message_reader {
   enum read_phase phase;
   qa_q3_client_header header; qa_q3_client_movement_kind movement_kind;
 };
+static void reader_cleanup(void *r) { qa_q3_client_message_reader_destroy(r); }
 bool qa_q3_client_message_reader_init(qa_q3_client_message_reader **out, const uint8_t *bytes, size_t len, const char *source) {
   const char *src = source ? source : "<client-message>";
+  /* Validate the source cap before copying a caller-owned datagram (MessageReader throws over cap). */
+  qa_q3_message_reader *validated = NULL;
+  if (!qa_q3_message_reader_init(&validated, bytes, len, QA_Q3_MESSAGE_BITSTREAM, src)) return false;
+  qa_q3_message_reader_destroy(validated);
   qa_q3_client_message_reader *r = calloc(1, sizeof *r);
   if (!r) return false;
-  /* Validate cap before copying (reader init throws BinaryError over cap). */
-  qa_q3_message_reader *validated = NULL;
-  if (!qa_q3_message_reader_init(&validated, bytes, len, QA_Q3_MESSAGE_BITSTREAM, src)) { free(r); return false; }
-  qa_q3_message_reader_destroy(validated);
   r->owned = malloc(len ? len : 1);
   if (!r->owned) { free(r); return false; }
   memcpy(r->owned, bytes, len);
   if (!qa_q3_message_reader_init(&r->reader, r->owned, len, QA_Q3_MESSAGE_BITSTREAM, src)) { free(r->owned); free(r); return false; }
+  /* The prefix longs raise BinaryError on a short datagram; the reader is not yet the caller's. */
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, reader_cleanup, r);
   r->prefix_server_id = qa_q3_message_reader_read_long(r->reader);
   r->prefix_msg_ack = qa_q3_message_reader_read_long(r->reader);
+  qa_cleanup_pop(&guard);
   r->phase = RP_HEADER;
   *out = r; return true;
 }
@@ -109,7 +114,7 @@ void qa_q3_client_message_reader_prefix(const qa_q3_client_message_reader *r, in
 }
 int64_t qa_q3_client_message_reader_read_count(const qa_q3_client_message_reader *r) { return qa_q3_message_reader_read_count(r->reader); }
 qa_q3_client_header qa_q3_client_message_reader_read_header(qa_q3_client_message_reader *r) {
-  if (r->phase != RP_HEADER) qa_range_error("Cannot read client header during %s", phase_kind(r->phase));
+  if (r->phase != RP_HEADER) qa_raise("Error", 0, 0, "Cannot read client header during %s", phase_kind(r->phase));
   r->phase = RP_FAILED;
   qa_q3_client_header h = { r->prefix_server_id, r->prefix_msg_ack, qa_q3_message_reader_read_long(r->reader) };
   r->phase = RP_COMMANDS; r->header = h;
@@ -117,7 +122,7 @@ qa_q3_client_header qa_q3_client_message_reader_read_header(qa_q3_client_message
 }
 bool qa_q3_client_message_reader_next(qa_q3_client_message_reader *r, qa_q3_client_message_part *out) {
   memset(out, 0, sizeof *out);
-  if (r->phase != RP_COMMANDS) qa_range_error("Cannot read next client part during %s", phase_kind(r->phase));
+  if (r->phase != RP_COMMANDS) qa_raise("Error", 0, 0, "Cannot read next client part during %s", phase_kind(r->phase));
   enum read_phase phase = r->phase;
   r->phase = RP_FAILED;
   int64_t opcode = qa_q3_message_reader_read_byte(r->reader);
@@ -133,7 +138,8 @@ bool qa_q3_client_message_reader_next(qa_q3_client_message_reader *r, qa_q3_clie
   }
   if (opcode == QA_Q3_CLC_EOF) { r->phase = RP_DONE; out->kind = QA_Q3_PART_EOF; return true; }
   if (opcode != QA_Q3_CLC_MOVE && opcode != QA_Q3_CLC_MOVE_NO_DELTA)
-    qa_binary_error(qa_q3_message_reader_source(r->reader), qa_q3_message_reader_read_count(r->reader), "Invalid client opcode %lld", (long long)opcode);
+    qa_raise(QA_Q3_INVALID_CLIENT_OPCODE_ERROR, (int)opcode, qa_q3_message_reader_read_count(r->reader), "%s:%lld: Invalid client opcode %lld",
+             qa_q3_message_reader_source(r->reader), (long long)qa_q3_message_reader_read_count(r->reader), (long long)opcode);
   qa_q3_client_movement_kind kind = opcode == QA_Q3_CLC_MOVE ? QA_Q3_MOVE : QA_Q3_MOVE_NO_DELTA;
   r->phase = RP_MOVEMENT; r->movement_kind = kind;
   out->kind = QA_Q3_PART_MOVEMENT; out->movement_kind = kind;
@@ -142,13 +148,14 @@ bool qa_q3_client_message_reader_next(qa_q3_client_message_reader *r, qa_q3_clie
 }
 bool qa_q3_client_message_reader_read_movement(qa_q3_client_message_reader *r, const qa_q3_client_key_context *context, qa_q3_unfiltered_client_movement *out) {
   memset(out, 0, sizeof *out);
-  if (r->phase != RP_MOVEMENT) qa_range_error("Cannot read client movement during %s", phase_kind(r->phase));
+  if (r->phase != RP_MOVEMENT) qa_raise("Error", 0, 0, "Cannot read client movement during %s", phase_kind(r->phase));
   qa_q3_client_movement_kind kind = r->movement_kind;
   qa_q3_client_header header = r->header;
   r->phase = RP_FAILED;
   int64_t count = qa_q3_message_reader_read_byte(r->reader);
   if (count < 1 || count > QA_Q3_MAX_PACKET_USER_COMMANDS)
-    qa_binary_error(qa_q3_message_reader_source(r->reader), qa_q3_message_reader_read_count(r->reader), "Invalid user command count %lld", (long long)count);
+    qa_raise(QA_Q3_INVALID_CLIENT_COMMAND_COUNT_ERROR, (int)count, qa_q3_message_reader_read_count(r->reader), "%s:%lld: Invalid user command count %lld",
+             qa_q3_message_reader_source(r->reader), (long long)qa_q3_message_reader_read_count(r->reader), (long long)count);
   int64_t key = move_key(&header, context);
   qa_q3_wire_user_command zero; memset(&zero, 0, sizeof zero);
   qa_q3_wire_user_command old;
@@ -164,7 +171,7 @@ bool qa_q3_client_message_reader_read_movement(qa_q3_client_message_reader *r, c
   return true;
 }
 void qa_q3_client_message_reader_validate_terminal(qa_q3_client_message_reader *r) {
-  if (r->phase != RP_TERMINAL) qa_range_error("Cannot validate client terminal during %s", phase_kind(r->phase));
+  if (r->phase != RP_TERMINAL) qa_raise("Error", 0, 0, "Cannot validate client terminal during %s", phase_kind(r->phase));
   r->phase = RP_FAILED;
   if (qa_q3_message_reader_read_byte(r->reader) != QA_Q3_CLC_EOF)
     qa_binary_error(qa_q3_message_reader_source(r->reader), qa_q3_message_reader_read_count(r->reader), "Missing terminal clc_EOF after movement");
@@ -185,17 +192,24 @@ void qa_q3_filter_client_movement(const qa_q3_unfiltered_client_movement *moveme
   out->base = movement->base; out->delta_message = movement->delta_message;
   out->executable_count = n; out->last_user_command_time = last_user_command_time;
 }
+static void free_commands(void *slot) { free(*(qa_q3_reliable_command **)slot); }
 void qa_q3_decoded_client_message_destroy(qa_q3_decoded_client_message *m) { free(m->commands); m->commands = NULL; m->command_count = 0; }
 bool qa_q3_decode_client_message(const uint8_t *bytes, size_t len, const qa_q3_client_decode_context *context,
                                  const char *source, qa_q3_decoded_client_message *out) {
   memset(out, 0, sizeof *out);
   qa_q3_client_message_reader *reader = NULL;
   if (!qa_q3_client_message_reader_init(&reader, bytes, len, source)) return false;
-  qa_q3_client_header header = qa_q3_client_message_reader_read_header(reader);
+  /* Any decode raise below abandons this frame; the nodes free the reader and the
+   * command list (the TS objects are collected). */
   qa_q3_reliable_command *commands = NULL; size_t count = 0, cap = 0;
+  qa_cleanup reader_guard, commands_guard;
+  qa_cleanup_push(&reader_guard, reader_cleanup, reader);
+  qa_cleanup_push(&commands_guard, free_commands, &commands);
+  qa_q3_client_header header = qa_q3_client_message_reader_read_header(reader);
   int64_t last = context->last_client_command;
   out->header = header; out->last_client_command = last;
-  #define REJECT(rsn, hdr) do { out->kind = QA_Q3_CLIENT_REJECTED; out->reason = (rsn); out->header = (hdr); \
+  #define RELEASE() do { qa_cleanup_pop(&commands_guard); qa_cleanup_pop(&reader_guard); } while (0)
+  #define REJECT(rsn, hdr) do { RELEASE(); out->kind = QA_Q3_CLIENT_REJECTED; out->reason = (rsn); out->header = (hdr); \
     out->commands = commands; out->command_count = count; out->last_client_command = last; \
     qa_q3_client_message_reader_destroy(reader); return true; } while (0)
   if (header.message_acknowledge < 0) REJECT(QA_Q3_CLIENT_NEGATIVE_MESSAGE_ACK, header);
@@ -207,26 +221,28 @@ bool qa_q3_decode_client_message(const uint8_t *bytes, size_t len, const qa_q3_c
   if (header.reliable_acknowledge > context->reliable_sequence) REJECT(QA_Q3_CLIENT_FUTURE_RELIABLE_ACK, header);
   for (;;) {
     qa_q3_client_message_part part;
-    if (!qa_q3_client_message_reader_next(reader, &part)) { free(commands); qa_q3_client_message_reader_destroy(reader); return false; }
+    if (!qa_q3_client_message_reader_next(reader, &part)) { RELEASE(); free(commands); qa_q3_client_message_reader_destroy(reader); return false; }
     if (part.kind == QA_Q3_PART_COMMAND) {
       if (part.command.sequence > last) {
         if (part.command.sequence > last + 1) REJECT(QA_Q3_CLIENT_LOST_RELIABLE_COMMAND, header);
         if (count == cap) {
           size_t nc = cap ? cap * 2 : 8;
           qa_q3_reliable_command *nn = realloc(commands, nc * sizeof *nn);
-          if (!nn) { free(commands); qa_q3_client_message_reader_destroy(reader); return false; }
+          if (!nn) { RELEASE(); free(commands); qa_q3_client_message_reader_destroy(reader); return false; }
           commands = nn; cap = nc;
         }
         commands[count++] = part.command;
         last = part.command.sequence;
       }
     } else if (part.kind == QA_Q3_PART_EOF) {
+      RELEASE();
       out->kind = QA_Q3_CLIENT_ACCEPTED; out->commands = commands; out->command_count = count; out->last_client_command = last;
       qa_q3_client_message_reader_destroy(reader); return true;
     } else {
       qa_q3_unfiltered_client_movement movement;
-      if (!qa_q3_client_message_reader_read_movement(reader, &context->key, &movement)) { free(commands); qa_q3_client_message_reader_destroy(reader); return false; }
+      if (!qa_q3_client_message_reader_read_movement(reader, &context->key, &movement)) { RELEASE(); free(commands); qa_q3_client_message_reader_destroy(reader); return false; }
       qa_q3_client_message_reader_validate_terminal(reader);
+      RELEASE();
       out->kind = QA_Q3_CLIENT_ACCEPTED; out->commands = commands; out->command_count = count; out->last_client_command = last;
       out->has_movement = true;
       qa_q3_filter_client_movement(&movement, context->last_user_command_time, &out->movement);
@@ -234,4 +250,5 @@ bool qa_q3_decode_client_message(const uint8_t *bytes, size_t len, const qa_q3_c
     }
   }
   #undef REJECT
+  #undef RELEASE
 }

@@ -3,9 +3,10 @@
 #include "qa/app/bootstrap/rerelease_presentation/fog.h"
 #include <math.h>
 #include <stdint.h>
+#include "qa/foundation/js.h"
 static double fr(double v) { return (double)(float)v; }
 static double fraction(double value) {
-  int64_t whole = (int64_t)trunc(fr(value * 255));
+  int64_t whole = qa_js_to_int32(trunc(fr(value * 255))); /* Math.trunc(...) & 255 */
   return fr((double)(whole & 255) / 255.0);
 }
 static qa_vec3 color_of(qa_vec3 v) {
@@ -19,9 +20,9 @@ qa_q2_fog_state qa_app_q2_fog_from_source(qa_q2_fog_state value) {
   out.fog.sky_factor = fraction(value.fog.sky_factor);
   out.height_fog.start_color = color_of(value.height_fog.start_color);
   /* TS |0: ToInt32. */
-  out.height_fog.start_distance = (double)(int32_t)value.height_fog.start_distance;
+  out.height_fog.start_distance = (double)qa_js_to_int32(value.height_fog.start_distance);
   out.height_fog.end_color = color_of(value.height_fog.end_color);
-  out.height_fog.end_distance = (double)(int32_t)value.height_fog.end_distance;
+  out.height_fog.end_distance = (double)qa_js_to_int32(value.height_fog.end_distance);
   out.height_fog.falloff = fr(value.height_fog.falloff);
   out.height_fog.density = fr(value.height_fog.density);
   return out;
@@ -68,7 +69,7 @@ qa_scene_fog qa_app_rerelease_fog_current(const qa_app_rerelease_fog *fog, doubl
   return out;
 }
 qa_q2_fog_state qa_app_q2_fog_from_wire(qa_q2_fog_state previous, qa_q2_svc_fog_data value) {
-  int64_t bits = (int64_t)value.bits;
+  int64_t bits = qa_js_to_int32(value.bits); /* value.bits & bit */
   qa_q2_fog_state out;
   out.fog.density = (bits & QA_Q2_SVC_FOG_BIT_DENSITY) ? value.density : previous.fog.density;
   out.fog.sky_factor = (bits & QA_Q2_SVC_FOG_BIT_DENSITY) ? value.skyfactor / 255 : previous.fog.sky_factor;

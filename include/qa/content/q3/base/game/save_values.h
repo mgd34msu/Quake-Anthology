@@ -1,7 +1,6 @@
 /* Port of src/content/q3/base/game/save-values.ts. GPL-2.0-or-later.
- * Value structs mirror the TS Pick<> sets over the state mirrors; string
- * fields are owned copies (free with *_destroy). Player/Network fields not
- * present in the shared mirrors are carried as plain doubles. */
+ * Value structs are the TS Pick<> sets; string fields are owned copies
+ * (free with *_destroy). */
 #ifndef QA_CONTENT_Q3_BASE_GAME_SAVE_VALUES_H
 #define QA_CONTENT_Q3_BASE_GAME_SAVE_VALUES_H
 #include <stdbool.h>
@@ -29,17 +28,16 @@ typedef struct qa_q3_client_values {
 } qa_q3_client_values;
 qa_q3_client_values qa_q3_capture_client_values(qa_q3_game_client *source);
 void qa_q3_restore_client_values(qa_q3_game_client *target, qa_q3_client_values state);
+/* TS PlayerValues = Pick<PlayerState, ...> in TS field order. */
 typedef struct qa_q3_player_values {
-  double pm_type, pm_flags, pm_time, legs_anim, torso_anim; qa_vec3 grapple_point; double e_flags;
-  double external_event, external_event_parm, client_num, weapon_state; qa_vec3 viewangles; double viewheight, loop_sound;
-  qa_q3_game_player_slots_mirror delta_angles;
-  /* TS PlayerState fields outside the mirror, carried verbatim. */
-  double command_time, bob_cycle, weapon_time, gravity, speed, ground_entity_num, legs_timer, torso_timer,
-    movement_dir, event_sequence, external_event_time, weapon, damage_event, damage_yaw, damage_pitch,
-    damage_count, generic1, jumppad_ent, ping, pmove_framecount, jumppad_frame, entity_event_sequence;
+  double command_time, pm_type, bob_cycle, pm_flags, pm_time, weapon_time, gravity, speed; qa_vec3 delta_angles;
+  double ground_entity_num, legs_timer, legs_anim, torso_timer, torso_anim, movement_dir; qa_vec3 grapple_point;
+  double e_flags, event_sequence, external_event, external_event_parm, external_event_time, client_num, weapon, weapon_state;
+  qa_vec3 viewangles; double viewheight, damage_event, damage_yaw, damage_pitch, damage_count, generic1, loop_sound;
+  double jumppad_ent, ping, pmove_framecount, jumppad_frame, entity_event_sequence;
 } qa_q3_player_values;
-qa_q3_player_values qa_q3_capture_player_values(qa_q3_game_player_state_mirror *source);
-void qa_q3_restore_player_values(qa_q3_game_player_state_mirror *target, qa_q3_player_values state);
+qa_q3_player_values qa_q3_capture_player_values(qa_q3_base_player_state *source);
+void qa_q3_restore_player_values(qa_q3_base_player_state *target, qa_q3_player_values state);
 typedef struct qa_q3_persistant_values {
   double connected; bool local_client, initial_spawn, predict_item_pickup, pmove_fixed; char *netname;
   double max_health, enter_time, vote_count, team_vote_count; bool team_info;
@@ -59,8 +57,8 @@ typedef struct qa_q3_network_values {
   double modelindex, modelindex2, client_num, frame, solid, event, event_parm, powerups, weapon;
   double legs_anim, torso_anim, generic1;
 } qa_q3_network_values;
-qa_q3_network_values qa_q3_capture_network_values(qa_q3_game_entity_state_mirror *source);
-void qa_q3_restore_network_values(qa_q3_game_entity_state_mirror *target, qa_q3_network_values state);
+qa_q3_network_values qa_q3_capture_network_values(qa_q3_entity_state_record *source);
+void qa_q3_restore_network_values(qa_q3_entity_state_record *target, qa_q3_network_values state);
 typedef struct qa_q3_level_values {
   double time, start_time, warmup_time, warmup_modification_count; bool restarted;
   double num_connected_clients, num_non_spectator_clients, num_playing_clients, num_voting_clients;

@@ -9,13 +9,18 @@ int qa_loopback_hub_init(qa_loopback_hub *h, const qa_datagram_limits *limits, q
   h->limits = limits ? *limits : QA_UNIFIED_DATAGRAM_LIMITS_NET;
   h->now = now; h->now_ctx = now_ctx; return 1;
 }
+static void transport_free(qa_loopback_transport *t) {
+  qa_packet_queue_destroy(&t->queue); qa_net_address_destroy(&t->address); free(t->id); free(t);
+}
 void qa_loopback_hub_destroy(qa_loopback_hub *h) {
-  qa_loopback_hub_close(h); free(h->endpoints); memset(h, 0, sizeof *h);
+  qa_loopback_hub_close(h);
+  for (size_t i = 0; i < h->retired_count; i++) transport_free(h->retired[i]);
+  free(h->retired); free(h->endpoints); memset(h, 0, sizeof *h);
 }
 qa_loopback_transport *qa_loopback_hub_bind(qa_loopback_hub *h, const char *id) {
-  if (!id[0]) qa_range_error("Loopback endpoint must have a unique nonempty name");
+  if (!id[0]) qa_raise("Error", 0, 0, "Loopback endpoint must have a unique nonempty name");
   for (size_t i = 0; i < h->count; i++) if (strcmp(h->endpoints[i]->id, id) == 0)
-    qa_range_error("Loopback endpoint must have a unique nonempty name");
+    qa_raise("Error", 0, 0, "Loopback endpoint must have a unique nonempty name");
   qa_loopback_transport *t = calloc(1, sizeof *t); if (!t) return NULL;
   (void)qa_net_make_loopback(&t->address, id);
   (void)qa_packet_queue_init(&t->queue, h->limits, h->now, h->now_ctx);
@@ -30,11 +35,10 @@ void qa_loopback_hub_close(qa_loopback_hub *h) {
   while (h->count > 0) {
     qa_loopback_transport *t = h->endpoints[0];
     qa_loopback_transport_close(t);
-    qa_packet_queue_destroy(&t->queue); qa_net_address_destroy(&t->address); free(t->id); free(t);
   }
 }
 bool qa_loopback_transport_closed(const qa_loopback_transport *t) { return t->ended; }
-static void opened(const qa_loopback_transport *t) { if (t->ended) qa_range_error("Loopback transport is closed"); }
+static void opened(const qa_loopback_transport *t) { if (t->ended) qa_raise("Error", 0, 0, "Loopback transport is closed"); }
 void qa_loopback_transport_receive(qa_loopback_transport *t, const qa_net_address *from, const uint8_t *bytes, size_t length) {
   opened(t); qa_packet_queue_accept(&t->queue, from, bytes, length, false);
 }
@@ -62,6 +66,13 @@ void qa_loopback_transport_close(qa_loopback_transport *t) {
     memmove(&h->endpoints[i], &h->endpoints[i + 1], (h->count - i - 1) * sizeof *h->endpoints);
     h->count--; break;
   }
+  if (h->retired_count == h->retired_capacity) {
+    size_t nc = h->retired_capacity ? h->retired_capacity * 2 : 4;
+    qa_loopback_transport **grown = realloc(h->retired, nc * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    h->retired = grown; h->retired_capacity = nc;
+  }
+  h->retired[h->retired_count++] = t;
   qa_packet_queue_close(&t->queue);
 }
 static int vt_addr(void *ctx, qa_net_address *out) { return qa_net_address_clone(&((qa_loopback_transport *)ctx)->address, out); }

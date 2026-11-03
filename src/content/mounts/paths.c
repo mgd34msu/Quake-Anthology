@@ -1,6 +1,7 @@
 /* Port of src/content/mounts/paths.ts. GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/content/mounts/paths.h"
+#include "qa/foundation/support.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -14,11 +15,10 @@
 
 #include "qa/foundation/support.h"
 
+/* A TS `throw new Error(...)`: catchable (qa_try), aborting only when
+   nothing catches it. */
 static noreturn void plain_error(const char *format, const char *argument) {
-  fprintf(stderr, "Error: ");
-  fprintf(stderr, format, argument);
-  fputc('\n', stderr);
-  abort();
+  qa_raise("Error", 0, 0, format, argument);
 }
 static noreturn void fs_error(const char *path) {
   fprintf(stderr, "Error: %s: %s\n", path, strerror(errno));

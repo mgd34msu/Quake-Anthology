@@ -4,6 +4,7 @@
 #include <string.h>
 #include "qa/content/q3/equipment/threewave_grapple_profile.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static const char STOCK[]="sha256:57c52bf22e4f528c064f8af1553a7103723bab0a02276bb11eed944bf829b219";
 typedef struct cap { double limit; } cap;
 typedef struct cap3 {
@@ -36,7 +37,7 @@ static int32_t read_i32(qa_q3_equipment_qvm_memory m,double address){
 static double cap_stock(void*ctx,qa_q3_equipment_qvm_memory m,double weapon){ (void)m;(void)weapon; return ((cap*)ctx)->limit; }
 static double cap_threewave(void*ctx,qa_q3_equipment_qvm_memory m,double weapon){
   cap3*c=ctx;
-  bool special=read_i32(m,c->game_type)==(int32_t)c->special_mode||read_i32(m,c->lithium)!=0;
+  bool special=read_i32(m,c->game_type)==qa_js_to_int32(c->special_mode)||read_i32(m,c->lithium)!=0;
   if(!special) return c->ordinary;
   for(size_t i=0;i<c->count;i++) if(c->keys[i]==weapon) return c->limits[i];
   return c->fallback;

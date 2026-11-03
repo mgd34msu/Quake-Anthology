@@ -8,13 +8,7 @@
 #include <stddef.h>
 #include "qa/contracts/content.h"
 #include "qa/contracts/presentation.h"
-/* SimulationPresentationEvent fields read here (has_owner gates owner). */
-typedef struct qa_app_finale_event {
-  const char *kind; const char *event_kind;
-  bool has_owner; qa_presentation_owner owner;
-  qa_content_id content;
-  const char *text; double seconds; double stage;
-} qa_app_finale_event;
+#include "qa/app/bootstrap/simulation/types.h"
 typedef struct qa_app_source_finale qa_app_source_finale;
 typedef struct qa_app_finale_host {
   void *ctx;
@@ -31,7 +25,11 @@ typedef struct qa_app_finale_host {
 qa_app_source_finale *qa_app_source_finale_create(qa_app_finale_host host);
 void qa_app_source_finale_destroy(qa_app_source_finale *finale);
 bool qa_app_source_finale_active(const qa_app_source_finale *finale);
-void qa_app_source_finale_receive(qa_app_source_finale *finale, const qa_app_finale_event *events, size_t count);
+void qa_app_source_finale_receive(qa_app_source_finale *finale, const qa_app_sim_presentation_event *events, size_t count);
 const char *qa_app_source_finale_prepare(qa_app_source_finale *finale);
 void qa_app_source_finale_draw(qa_app_source_finale *finale, double seconds);
+/* The draw surface size (TS draw.width/height of the Draw2D passed to draw). */
+void qa_app_source_finale_resize(qa_app_source_finale *finale, double width, double height);
+/* The active finale's content (TS state.content), NULL when inactive. */
+const char *qa_app_source_finale_content(const qa_app_source_finale *finale);
 #endif

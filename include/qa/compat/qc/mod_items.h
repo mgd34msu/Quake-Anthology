@@ -30,6 +30,9 @@ typedef struct qa_compat_qc_mod_items_operations {
   /* media resources: model path -> resolved resource */
   qa_content_id media_content;
   bool (*media_resource)(void *ctx, const char *path, qa_resolved_resource_reference *out);
+  /* TS services.clients?.forActor(actor) != null, read by the weapon stage.
+   * Nullable: client_is_current stands in. */
+  bool (*has_client)(void *ctx, qa_actor_id actor);
 } qa_compat_qc_mod_items_operations;
 typedef struct qa_compat_qc_mod_items_entry {
   qa_owned_actor actor; int64_t reference; qa_source_item_lease lease;
@@ -57,4 +60,12 @@ void qa_compat_qc_mod_items_admit(qa_compat_qc_mod_items *items, qa_actor_id act
 void qa_compat_qc_mod_items_observe(qa_compat_qc_mod_items *items, qa_compat_qc_entity_store_observation store, const qa_original_pickup_execution *pickup);
 void qa_compat_qc_mod_items_release(qa_compat_qc_mod_items *items, qa_actor_id actor);
 void qa_compat_qc_mod_items_close(qa_compat_qc_mod_items *items);
+/* TS items.weapons: NULL when the mod declares no weapon consumer. */
+const qa_q1qc_weapon_stage_binding *qa_compat_qc_mod_items_weapons(const qa_compat_qc_mod_items *items);
+/* TS weapons.composeFunctions / composeRegions over this instance's binding. */
+void qa_compat_qc_mod_items_compose_functions(qa_compat_qc_mod_items *items, qa_q1qc_weapon_function_composed *composed, qa_q1qc_function_boundary inner);
+void qa_compat_qc_mod_items_compose_regions(qa_compat_qc_mod_items *items, qa_q1qc_weapon_region_composed *composed, qa_q1qc_inline_boundary inner);
+/* Machine-level run through a composed boundary. */
+void qa_compat_qc_mod_items_run_function(qa_compat_qc_mod_items *items, const qa_q1qc_function_boundary *boundary, qa_compat_qc_call_site call, qa_compat_qc_function_execution execute);
+void qa_compat_qc_mod_items_run_region(qa_compat_qc_mod_items *items, const qa_q1qc_inline_boundary *boundary, qa_compat_qc_inline_region region, qa_compat_qc_inline_continuation execute);
 #endif

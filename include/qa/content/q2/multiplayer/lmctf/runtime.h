@@ -60,6 +60,9 @@ bool qa_q2_lmctf_spawn(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_serv
 void qa_q2_lmctf_post_spawn(qa_q2_lmctf *lmctf, qa_q2_game_services *game);
 void qa_q2_lmctf_capture_travel(qa_q2_lmctf *lmctf, qa_lmctf_travel *out);
 void qa_q2_lmctf_capture(qa_q2_lmctf *lmctf, qa_lmctf_capture *out);
+/* TS capture() as the tree encodeCheckpointValue encodes: same keys, same
+ * order. Owned by the caller (qa_save_value_free). */
+qa_save_value *qa_q2_lmctf_capture_value(qa_q2_lmctf *lmctf);
 void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2_game_services *game);
 void qa_q2_lmctf_team_totals(qa_q2_lmctf *lmctf, double out[2]);
 void qa_q2_lmctf_admitted(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_services *game);

@@ -7,9 +7,11 @@
 #include "qa/foundation/support.h"
 enum { MAX_QPATH = 64, MAX_SHADER_REMAPS = 128, ENTRY_BUFFER_BYTES = 64 * 2 + 5, STATE_BUFFER_BYTES = 1024 * 4 };
 static char *dupstr(const char *v) { size_t n = strlen(v); char *d = malloc(n + 1); if (d) memcpy(d, v, n + 1); return d; }
-static const char *quake_path(const char *v) {
-  if (strlen(v) >= MAX_QPATH) qa_range_error("shader remap paths must fit MAX_QPATH including the terminator");
-  return v;
+/* Returns a malloc'd copy. strcpy overruns the 64-byte slot in id's AddRemap; map and cvar text is cut to what fits instead. */
+static char *quake_path(const char *v) {
+  size_t n = strlen(v); if (n >= MAX_QPATH) n = MAX_QPATH - 1;
+  char *d = malloc(n + 1); if (!d) qa_range_error("out of memory");
+  memcpy(d, v, n); d[n] = 0; return d;
 }
 static int fold(int b) { return b >= 97 && b <= 122 ? b - 32 : b; }
 static int path_equal(const char *a, const char *b) {
@@ -25,12 +27,14 @@ void qa_q3_shader_remap_registry_destroy(qa_q3_shader_remap_registry *r) {
   for (size_t i = 0; i < r->count; i++) { free(r->remaps[i].old_name); free(r->remaps[i].new_name); } free(r->remaps); r->remaps = NULL; r->count = r->cap = 0;
 }
 void qa_q3_shader_remap_registry_add(qa_q3_shader_remap_registry *r, const char *old_name, const char *new_name, double time_offset) {
-  const char *o = quake_path(old_name), *n = quake_path(new_name); double t = stored_time(time_offset);
-  for (size_t i = 0; i < r->count; i++) if (path_equal(o, r->remaps[i].old_name)) { free(r->remaps[i].new_name); r->remaps[i].new_name = dupstr(n); r->remaps[i].time_offset = t; return; }
+  char *o = quake_path(old_name), *n = quake_path(new_name); double t = stored_time(time_offset);
+  for (size_t i = 0; i < r->count; i++) if (path_equal(o, r->remaps[i].old_name)) { free(r->remaps[i].new_name); r->remaps[i].new_name = n; r->remaps[i].time_offset = t; free(o); return; }
   if (r->count < MAX_SHADER_REMAPS) {
     if (r->count == r->cap) { size_t cap = r->cap ? r->cap * 2 : 8; void *m = realloc(r->remaps, cap * sizeof *r->remaps); if (!m) qa_range_error("out of memory"); r->remaps = m; r->cap = cap; }
-    r->remaps[r->count].old_name = dupstr(o); r->remaps[r->count].new_name = dupstr(n); r->remaps[r->count].time_offset = t; r->count++;
+    r->remaps[r->count].old_name = o; r->remaps[r->count].new_name = n; r->remaps[r->count].time_offset = t; r->count++;
+    return;
   }
+  free(o); free(n);
 }
 char *qa_q3_shader_remap_registry_build_config(qa_q3_shader_remap_registry *r) {
   char *state = calloc(1, 1); if (!state) return NULL; size_t slen = 0;
@@ -65,7 +69,7 @@ void qa_q3_shader_remap_registry_restore(qa_q3_shader_remap_registry *r, const q
     qa_save_reader_field(&entry, "oldName", &f); const char *o = qa_save_reader_string(&f); qa_save_reader_destroy(&f);
     qa_save_reader_field(&entry, "newName", &f); const char *nn = qa_save_reader_string(&f); qa_save_reader_destroy(&f);
     qa_save_reader_field(&entry, "timeOffset", &f); double t = qa_save_reader_number(&f); qa_save_reader_destroy(&f);
-    list[i].old_name = dupstr(quake_path(o)); list[i].new_name = dupstr(quake_path(nn)); list[i].time_offset = stored_time(t);
+    list[i].old_name = quake_path(o); list[i].new_name = quake_path(nn); list[i].time_offset = stored_time(t);
     qa_save_reader_destroy(&entry);
   }
   int bad = n > MAX_SHADER_REMAPS;

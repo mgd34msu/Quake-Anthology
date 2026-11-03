@@ -37,6 +37,29 @@ static const qa_compat_q2_native_primary_weapon_profile xatrix={
  .equipment_contexts=ectx,.equipment_context_count=1,
  .delay_flag=FLD("image",0x6b694,"int32"),.delay_entry=0x3676f,.delay_join=0x36793,.delay_evaluate_kind="source-flag",.delay_factors=xf,.delay_factor_count=2,
  .damage_kind="source-flag",.damage_address=0x6b690,.damage_encoding="int32",.damage_factors=xdf,.damage_factor_count=2,.damage_region_entry=0x36748,.damage_region_join=0x3676f};
+/* 1998 retail Xatrix DLL (PE32, 0b0d119e). Every address below is the 8187df profile's counterpart found by instruction shape in this PE:
+ * Think_Weapon 0x352c0 (is_quad store 0x68e70, is_quadfire 0x68e74), Weapon_Generic 0x35710, PutClientInServer 0x30bd0. The client record
+ * has no resp.spectator in this build (resp.cmd_angles 0xd84 is followed directly by old_pmove 0xd90), so buttons sit at 0xdc0 and
+ * sizeof(gclient_t) is 0xee4. */
+static const qa_native_weapon_decision_field x98b[]={{FLD("client",0xdc0,"int32"),1},{FLD("client",0xdc8,"int32"),1}};
+static const qa_native_weapon_decision_field x98s[]={{FLD("client",0xdc0,"int32"),1}};
+static const qa_native_weapon_decision x98d[]={{0x35846,0x35856,x98b,2},{0x35c6d,0x35c7e,x98b,2},{0x37e2d,0x37e3e,x98b,2},{0x364a2,0x364a9,x98s,1},{0x366d8,0x366df,x98s,1},{0x36b1d,0x36b24,x98s,1},{0x36b47,0x36b4e,x98s,1}};
+static const qa_native_item_test x98a[]={ST("image",0x740a8,"float32",0),ST("entity",0x1ec,"int32",0)};
+static const qa_native_item_test x98c0[]={ST("client",0xdf4,"int32",3)};
+static const qa_native_item_test_row x98cont[]={{x98c0,1}};
+static const qa_compat_q2_native_region_span_fwd x98skip[]={{0x3571b,0x35795},{0x3579a,0x35996},{0x358e1,0x3597c}};
+static const qa_compat_q2_native_primary_weapon_profile xatrix1998={
+ .digest="sha256:0b0d119ea9ed1abbce02f32fe1243bcb69457d10a34a49b775c473210bcb65a3",.abi={"windows-i386","pe32",4,"cdecl"},
+ .dispatcher={{"rva",NULL,0x352c0},"entity",0,1},.decisions=x98d,.decision_count=7,
+ .spawn_entry=0x30bd0,.active=x98a,.active_count=2,.continuations=x98cont,.continuation_count=1,
+ .time_address=0x73fe4,.time_encoding="float32",.time_milliseconds=1000,
+ .entity_client=84,.entity_water_level=FLD("entity",0x264,"int32"),.entity_view_height=FLD("entity",0x1fc,"int32"),.entity_max_health=FLD("entity",0x1e4,"int32"),
+ .client_byte_length=3812,.client_view_angles=0xe38,.client_buttons=FLD("client",0xdc0,"int32"),.client_latched_buttons=FLD("client",0xdc8,"int32"),
+ .attack_animation_entry=0x35710,.attack_skip=x98skip,.attack_skip_count=3,
+ .anim_frame=FLD("entity",56,"int32"),.anim_end=FLD("client",0xe70,"int32"),.anim_priority=FLD("client",0xe74,"int32"),.anim_duck=FLD("client",0xe78,"int32"),.anim_run=FLD("client",0xe7c,"int32"),
+ .equipment_contexts=ectx,.equipment_context_count=1,
+ .delay_flag=FLD("image",0x68e74,"int32"),.delay_entry=0x3531f,.delay_join=0x35343,.delay_evaluate_kind="source-flag",.delay_factors=xf,.delay_factor_count=2,
+ .damage_kind="source-flag",.damage_address=0x68e70,.damage_encoding="int32",.damage_factors=xdf,.damage_factor_count=2,.damage_region_entry=0x352f8,.damage_region_join=0x3531f};
 static const qa_compat_q2_native_primary_weapon_profile retail={
  .digest="sha256:045d49c53722d9b922caf14f168dd28a97d4c514a6e443a3140560f8668baccd",.abi={"windows-x86-64","pe32+",8,"microsoft-x64"},
  .dispatcher={{"rva",NULL,0xf05d0},"entity",0,1},.decisions=rd,.decision_count=11,
@@ -53,5 +76,6 @@ static const qa_compat_q2_native_primary_weapon_profile retail={
  .damage_kind="source-result",.damage_entry=0xef5f0,.damage_result="uint8"};
 const qa_compat_q2_native_primary_weapon_profile *qa_compat_q2_get_native_primary_weapon_profile(qa_content_digest digest) {
  if (digest && strcmp(digest,xatrix.digest)==0) return &xatrix;
+ if (digest && strcmp(digest,xatrix1998.digest)==0) return &xatrix1998;
  if (digest && strcmp(digest,retail.digest)==0) return &retail;
  return NULL; }

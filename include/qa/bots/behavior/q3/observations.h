@@ -24,6 +24,8 @@ typedef struct qa_aas_entity_info_bots_a {
   double ground_entity, solid, model_index, model_index2, frame, event, event_parameter, powerups,
       weapon, legs_animation, torso_animation;
 } qa_aas_entity_info_bots_a;
+/* TS emptyInfo (exported): the invalid, zeroed record for entity `number`. */
+qa_aas_entity_info_bots_a qa_aas_entity_info_empty_bots_a(int64_t number);
 typedef struct qa_bot_entity_observations {
   qa_aas_entity_info_bots_a *records;
   int64_t capacity;

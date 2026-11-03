@@ -1,5 +1,6 @@
 /* Port of src/persistence/value.ts. GPL-2.0-or-later. */
 #include "qa/persistence/value.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -7,30 +8,23 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/support.h"
+
+static noreturn void save_format_errorv(const char *path, const char *format, va_list args) {
+  char text[1024];
+  vsnprintf(text, sizeof text, format, args);
+  qa_raise("SaveFormatError", 0, 0, "%s: %s", path, text);
+}
 noreturn void qa_save_format_error(const char *path, const char *format, ...) {
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "SaveFormatError: %s: ", path);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
-  va_end(args);
-  abort();
+  save_format_errorv(path, format, args);
 }
 
-/* JSON.parse / fatal TextDecoder failures abort with a SyntaxError /
- * TypeError class name, matching the TS runtime error shape. Quiet
- * parses (TS try/catch sites) longjmp back instead. */
-#include <setjmp.h>
-static jmp_buf quiet_jump;
-static bool quiet_active = false;
-static noreturn void syntax_error(const char *message) {
-  if (quiet_active) longjmp(quiet_jump, 1);
-  fprintf(stderr, "SyntaxError: %s\n", message);
-  abort();
-}
-static noreturn void type_error(const char *message) {
-  fprintf(stderr, "TypeError: %s\n", message);
-  abort();
+/* JSON.parse / fatal TextDecoder failures raise a SyntaxError / TypeError, matching
+ * the TS runtime error shape; quiet parses (TS try/catch sites) catch them. */
+static noreturn void syntax_error_message(const char *message) {
+  qa_raise("SyntaxError", 0, 0, "JSON Parse error: %s", message);
 }
 
 static char *dup_range(const char *text, size_t length) {
@@ -48,6 +42,39 @@ static qa_save_value *value_new(qa_save_value_kind kind) {
   if (value != NULL) value->kind = kind;
   return value;
 }
+/* JS own-key order (Object.keys, JSON.stringify): array-index keys
+ * ("0" or [1-9][0-9]* below 2^32 - 1) ascending, then the other keys in
+ * insertion order. */
+static bool js_array_index_key(const char *key, uint32_t *out) {
+  if (key[0] == '\0' || (key[0] == '0' && key[1] != '\0')) return false;
+  uint64_t value = 0;
+  for (const char *p = key; *p != '\0'; p++) {
+    if (*p < '0' || *p > '9') return false;
+    value = value * 10 + (uint64_t)(*p - '0');
+    if (value > 4294967294u) return false;
+  }
+  *out = (uint32_t)value;
+  return true;
+}
+
+static void js_order_entries(qa_save_entry *entries, size_t count) {
+  /* Stable insertion sort: index keys first by value; others keep order. */
+  for (size_t i = 1; i < count; i++) {
+    qa_save_entry entry = entries[i];
+    uint32_t value = 0;
+    if (!js_array_index_key(entry.key, &value)) continue;
+    size_t j = i;
+    while (j > 0) {
+      uint32_t other = 0;
+      bool other_index = js_array_index_key(entries[j - 1].key, &other);
+      if (other_index && other <= value) break;
+      entries[j] = entries[j - 1];
+      j--;
+    }
+    entries[j] = entry;
+  }
+}
+
 qa_save_value *qa_save_value_undefined(void) { return value_new(QA_SAVE_UNDEFINED); }
 qa_save_value *qa_save_value_null(void) { return value_new(QA_SAVE_NULL); }
 qa_save_value *qa_save_value_boolean(bool b) {
@@ -124,7 +151,20 @@ void qa_save_value_free(qa_save_value *value) {
     qa_save_value_free(value->entries[i].value);
   }
   free(value->entries);
+  free(value->attachment);
   free(value);
+}
+bool qa_save_value_attach(qa_save_value *value, const void *data, size_t length) {
+  void *copy = malloc(length ? length : 1);
+  if (copy == NULL) return false;
+  memcpy(copy, data, length);
+  free(value->attachment);
+  value->attachment = copy;
+  value->attachment_length = length;
+  return true;
+}
+const void *qa_save_value_attachment(const qa_save_value *value, size_t length) {
+  return value != NULL && value->attachment_length == length ? value->attachment : NULL;
 }
 const qa_save_value *qa_save_value_get(const qa_save_value *object, const char *key) {
   if (object == NULL || object->kind != QA_SAVE_OBJECT) return NULL;
@@ -229,15 +269,7 @@ static bool text_add_char(text_buffer *b, char c) { return text_add(b, &c, 1); }
 
 /* JS String(finite number) via shortest round-trip decimal. */
 static void format_js_number(double value, char *buffer, size_t size) {
-  if (value == 0.0) { (void)snprintf(buffer, size, "0"); return; }
-  if (value == trunc(value) && fabs(value) <= 9007199254740991.0) {
-    (void)snprintf(buffer, size, "%lld", (long long)value);
-    return;
-  }
-  for (int precision = 15; precision <= 17; precision++) {
-    (void)snprintf(buffer, size, "%.*g", precision, value);
-    if (strtod(buffer, NULL) == value) return;
-  }
+  qa_net_js_number(value, buffer, size);
 }
 
 static bool write_json_string(text_buffer *out, const char *text) {
@@ -270,10 +302,33 @@ static bool write_json_string(text_buffer *out, const char *text) {
 /* TS pack(): writes the packed JSON directly. `path` is built lazily
  * only on the error paths that need it. */
 static bool pack_value(const qa_save_value *value, text_buffer *out, char *path, size_t path_cap);
+static size_t *js_key_order(const qa_save_value *object);
 static void path_child(char *path, size_t cap, const char *suffix, char *out, size_t out_cap) {
   (void)snprintf(out, out_cap, "%s%s", path, suffix);
   (void)cap;
 }
+static bool js_array_index_key(const char *key, uint32_t *out);
+static size_t *js_key_order(const qa_save_value *object) {
+  size_t *order = (size_t *)malloc((object->entry_count + 1) * sizeof *order);
+  if (order == NULL) return NULL;
+  size_t n = 0;
+  for (size_t i = 0; i < object->entry_count; i++) order[n++] = i;
+  for (size_t i = 1; i < n; i++) {
+    size_t entry = order[i];
+    uint32_t value = 0;
+    if (!js_array_index_key(object->entries[entry].key, &value)) continue;
+    size_t j = i;
+    while (j > 0) {
+      uint32_t other = 0;
+      if (js_array_index_key(object->entries[order[j - 1]].key, &other) && other <= value) break;
+      order[j] = order[j - 1];
+      j--;
+    }
+    order[j] = entry;
+  }
+  return order;
+}
+
 static bool pack_tagged(text_buffer *out, const char *tag, const char *encoded) {
   return text_add_cstr(out, "{\"$qts\":") && write_json_string(out, tag) &&
          text_add_cstr(out, ",\"value\":") && write_json_string(out, encoded) &&
@@ -324,14 +379,24 @@ static bool pack_value(const qa_save_value *value, text_buffer *out, char *path,
         if (strcmp(value->entries[i].key, "$qts") == 0)
           qa_save_format_error(path, "$qts is reserved by the save envelope");
       if (!text_add_char(out, '{')) return false;
-      for (size_t i = 0; i < value->entry_count; i++) {
-        if (i > 0 && !text_add_char(out, ',')) return false;
-        if (!write_json_string(out, value->entries[i].key)) return false;
-        if (!text_add_char(out, ':')) return false;
-        (void)snprintf(child, sizeof child, "%s.%s", path, value->entries[i].key);
-        if (!pack_value(value->entries[i].value, out, child, sizeof child)) return false;
+      size_t *order = js_key_order(value);
+      if (order == NULL) return false;
+      qa_cleanup order_guard;
+      qa_cleanup_push(&order_guard, free, order);
+      bool ok = true;
+      for (size_t n = 0; n < value->entry_count && ok; n++) {
+        size_t i = order[n];
+        if (n > 0 && !text_add_char(out, ',')) ok = false;
+        else if (!write_json_string(out, value->entries[i].key)) ok = false;
+        else if (!text_add_char(out, ':')) ok = false;
+        else {
+          (void)snprintf(child, sizeof child, "%s.%s", path, value->entries[i].key);
+          if (!pack_value(value->entries[i].value, out, child, sizeof child)) ok = false;
+        }
       }
-      return text_add_char(out, '}');
+      qa_cleanup_pop(&order_guard);
+      free(order);
+      return ok && text_add_char(out, '}');
     }
     default:
       qa_save_format_error(path, "checkpoint contains a non-data value");
@@ -372,14 +437,38 @@ static bool utf8_valid(const uint8_t *bytes, size_t length) {
   return true;
 }
 
-typedef struct json_parser { const char *text; size_t offset; size_t length; } json_parser;
-static qa_save_value *json_value(json_parser *p);
-static void json_ws(json_parser *p) {
-  while (p->offset < p->length) {
-    char c = p->text[p->offset];
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') p->offset++;
-    else break;
-  }
+/* JavaScriptCore LiteralParser (strict JSON), which is what Bun's JSON.parse
+ * runs: the lexer stays one token ahead of the parser, and a failure reports
+ * "JSON Parse error: " plus the lexer's message when the current token is a
+ * lexer error, else the parser's message, else (trailing tokens) "Unable to
+ * parse JSON string". Offsets are UTF-8 bytes; the texts JSC prints per UTF-16
+ * unit print the whole UTF-8 character here. */
+typedef enum json_token {
+  JT_LBRACKET, JT_RBRACKET, JT_LPAREN, JT_RPAREN, JT_LBRACE, JT_RBRACE,
+  JT_COMMA, JT_COLON, JT_ASSIGN, JT_SEMI, JT_DOT, JT_STRING, JT_NUMBER,
+  JT_TRUE, JT_FALSE, JT_NULL, JT_IDENTIFIER, JT_END, JT_ERROR
+} json_token;
+typedef struct json_parser {
+  const char *text;
+  size_t offset;
+  size_t length;
+  int depth;
+  json_token token;
+  size_t token_start, token_end;
+  char *token_string; /* decoded JT_STRING text, owned until taken */
+  double token_number;
+  char lex_error[160];
+} json_parser;
+/* JSON.parse throws RangeError on stack exhaustion in TS, and a packet of open brackets
+ * reaches this parser from the wire; the recursion here and in unpack_value and
+ * qa_save_value_free stays well inside a default thread stack at this depth. */
+#define JSON_MAXIMUM_DEPTH 1024
+static void cleanup_value(void *arg) { qa_save_value_free(arg); }
+static void cleanup_text(void *arg) { free(arg); }
+static void cleanup_token(void *arg) {
+  json_parser *p = arg;
+  free(p->token_string);
+  p->token_string = NULL;
 }
 static bool encode_utf8(text_buffer *out, uint32_t cp) {
   char buf[4]; size_t n;
@@ -395,174 +484,325 @@ static int hex_value(char c) {
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   return -1;
 }
-static uint32_t json_hex4(json_parser *p) {
-  if (p->offset + 4 > p->length) syntax_error("Invalid Unicode escape");
-  uint32_t value = 0;
-  for (int i = 0; i < 4; i++) {
-    int d = hex_value(p->text[p->offset++]);
-    if (d < 0) syntax_error("Invalid Unicode escape");
-    value = (value << 4) | (uint32_t)d;
-  }
-  return value;
+/* Byte length of the UTF-8 character at offset (1 for a stray byte). */
+static size_t json_char_length(const json_parser *p, size_t offset) {
+  unsigned char c = (unsigned char)p->text[offset];
+  size_t n = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 1;
+  return offset + n <= p->length ? n : p->length - offset;
 }
-/* Malloc'd decoded string; NULL only on OOM. Assumes current char '"'. */
-static char *json_string(json_parser *p) {
-  p->offset++;
+static json_token lex_fail(json_parser *p, const char *message) {
+  snprintf(p->lex_error, sizeof p->lex_error, "%s", message);
+  p->token = JT_ERROR;
+  return JT_ERROR;
+}
+static json_token lex_fail_char(json_parser *p, const char *prefix, size_t at, const char *suffix) {
+  snprintf(p->lex_error, sizeof p->lex_error, "%s%.*s%s", prefix,
+           (int)json_char_length(p, at), p->text + at, suffix);
+  p->token = JT_ERROR;
+  return JT_ERROR;
+}
+static bool json_digit(const json_parser *p, size_t at) {
+  return at < p->length && p->text[at] >= '0' && p->text[at] <= '9';
+}
+/* -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? ; an exponent marker not
+ * followed by digits ends the number before it. */
+static json_token lex_number(json_parser *p) {
+  size_t at = p->offset;
+  if (at < p->length && p->text[at] == '-') at++;
+  if (at < p->length && p->text[at] == '0') at++;
+  else if (at < p->length && p->text[at] >= '1' && p->text[at] <= '9') {
+    while (json_digit(p, at)) at++;
+  } else {
+    return lex_fail(p, "Invalid number");
+  }
+  if (at < p->length && p->text[at] == '.') {
+    at++;
+    if (!json_digit(p, at)) return lex_fail(p, "Invalid digits after decimal point");
+    while (json_digit(p, at)) at++;
+  }
+  if (at < p->length && (p->text[at] == 'e' || p->text[at] == 'E')) {
+    size_t exponent = at + 1;
+    if (exponent < p->length && (p->text[exponent] == '+' || p->text[exponent] == '-')) exponent++;
+    if (json_digit(p, exponent)) {
+      at = exponent;
+      while (json_digit(p, at)) at++;
+    }
+  }
+  char *token = dup_range(p->text + p->offset, at - p->offset);
+  if (token == NULL) qa_range_error("Out of memory");
+  p->token_number = strtod(token, NULL);
+  free(token);
+  p->offset = at;
+  p->token = JT_NUMBER;
+  return JT_NUMBER;
+}
+/* UTF-16 units in the 4-unit window after "\u", as UTF-8 bytes. */
+static size_t escape_window(const json_parser *p, size_t at, size_t *units) {
+  size_t bytes = 0;
+  *units = 0;
+  while (*units < 4 && at + bytes < p->length) {
+    size_t n = json_char_length(p, at + bytes);
+    *units += n == 4 ? 2 : 1;
+    bytes += n;
+  }
+  return bytes;
+}
+static json_token lex_string(json_parser *p) {
+  size_t at = p->offset + 1;
   text_buffer out = {NULL, 0, 0};
   for (;;) {
-    if (p->offset >= p->length) { free(out.data); syntax_error("Unterminated string"); }
-    unsigned char c = (unsigned char)p->text[p->offset++];
-    if (c == '"') break;
-    if (c < 0x20) { free(out.data); syntax_error("Bad control character in string"); }
-    if (c == '\\') {
-      if (p->offset >= p->length) { free(out.data); syntax_error("Unterminated string"); }
-      char e = p->text[p->offset++];
-      bool ok = true;
-      switch (e) {
-        case '"': ok = text_add_char(&out, '"'); break;
-        case '\\': ok = text_add_char(&out, '\\'); break;
-        case '/': ok = text_add_char(&out, '/'); break;
-        case 'b': ok = text_add_char(&out, '\b'); break;
-        case 'f': ok = text_add_char(&out, '\f'); break;
-        case 'n': ok = text_add_char(&out, '\n'); break;
-        case 'r': ok = text_add_char(&out, '\r'); break;
-        case 't': ok = text_add_char(&out, '\t'); break;
-        case 'u': {
-          uint32_t cp = json_hex4(p);
-          if (cp >= 0xd800 && cp <= 0xdbff && p->offset + 1 < p->length &&
-              p->text[p->offset] == '\\' && p->text[p->offset + 1] == 'u') {
-            size_t save = p->offset;
-            p->offset += 2;
-            uint32_t lo = json_hex4(p);
-            if (lo >= 0xdc00 && lo <= 0xdfff) cp = 0x10000 + ((cp - 0xd800) << 10) + (lo - 0xdc00);
-            else p->offset = save;
-          }
-          ok = encode_utf8(&out, cp);
-          break;
-        }
-        default: free(out.data); syntax_error("Bad escape in string");
-      }
-      if (!ok) { free(out.data); return NULL; }
-    } else if (!text_add_char(&out, (char)c)) {
-      free(out.data);
-      return NULL;
+    size_t run = at;
+    while (at < p->length) {
+      unsigned char c = (unsigned char)p->text[at];
+      if (c < 0x20 || c == '"' || c == '\\') break;
+      at++;
     }
+    if (at > run && !text_add(&out, p->text + run, at - run)) qa_range_error("Out of memory");
+    if (at >= p->length) { free(out.data); return lex_fail(p, "Unterminated string"); }
+    char c = p->text[at];
+    if (c == '"') { at++; break; }
+    if (c != '\\') { free(out.data); return lex_fail(p, "Unterminated string"); }
+    at++;
+    if (at >= p->length) { free(out.data); return lex_fail(p, "Unterminated string"); }
+    char e = p->text[at];
+    char simple = e == '"' ? '"' : e == '\\' ? '\\' : e == '/' ? '/' : e == 'b' ? '\b'
+                : e == 'f' ? '\f' : e == 'n' ? '\n' : e == 'r' ? '\r' : e == 't' ? '\t' : 0;
+    if (simple != 0) {
+      if (!text_add_char(&out, simple)) qa_range_error("Out of memory");
+      at++;
+      continue;
+    }
+    if (e != 'u') {
+      free(out.data);
+      return lex_fail_char(p, "Invalid escape character ", at, "");
+    }
+    size_t units;
+    size_t window = escape_window(p, at + 1, &units);
+    if (units < 4) { free(out.data); return lex_fail(p, "\\u must be followed by 4 hex digits"); }
+    uint32_t cp = 0;
+    bool hex = window == 4;
+    for (size_t i = 0; hex && i < 4; i++) {
+      int d = hex_value(p->text[at + 1 + i]);
+      if (d < 0) hex = false;
+      else cp = (cp << 4) | (uint32_t)d;
+    }
+    if (!hex) {
+      free(out.data);
+      snprintf(p->lex_error, sizeof p->lex_error, "\"\\u%.*s\" is not a valid unicode escape",
+               (int)window, p->text + at + 1);
+      p->token = JT_ERROR;
+      return JT_ERROR;
+    }
+    at += 5;
+    /* A high surrogate joins a following \u low surrogate; lone halves stay (WTF-8). */
+    if (cp >= 0xd800 && cp <= 0xdbff && at + 6 <= p->length && p->text[at] == '\\' &&
+        p->text[at + 1] == 'u') {
+      uint32_t low = 0;
+      bool ok = true;
+      for (size_t i = 0; ok && i < 4; i++) {
+        int d = hex_value(p->text[at + 2 + i]);
+        if (d < 0) ok = false;
+        else low = (low << 4) | (uint32_t)d;
+      }
+      if (ok && low >= 0xdc00 && low <= 0xdfff) {
+        cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+        at += 6;
+      }
+    }
+    if (!encode_utf8(&out, cp)) qa_range_error("Out of memory");
   }
-  if (out.data == NULL) return dup_text("");
-  return out.data;
+  p->token_string = out.data != NULL ? out.data : dup_text("");
+  if (p->token_string == NULL) qa_range_error("Out of memory");
+  p->offset = at;
+  p->token = JT_STRING;
+  return JT_STRING;
 }
-static qa_save_value *json_value(json_parser *p) {
-  json_ws(p);
-  if (p->offset >= p->length) syntax_error("Unexpected end of JSON input");
+static bool json_literal(json_parser *p, const char *word, size_t length) {
+  return p->length - p->offset >= length && memcmp(p->text + p->offset, word, length) == 0;
+}
+static json_token json_lex(json_parser *p) {
+  free(p->token_string);
+  p->token_string = NULL;
+  while (p->offset < p->length) {
+    char c = p->text[p->offset];
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') p->offset++;
+    else break;
+  }
+  p->token_start = p->offset;
+  if (p->offset >= p->length) { p->token = JT_END; return JT_END; }
   char c = p->text[p->offset];
-  if (c == '"') {
-    char *s = json_string(p);
-    if (s == NULL) return NULL;
+  json_token single = c == '[' ? JT_LBRACKET : c == ']' ? JT_RBRACKET : c == '(' ? JT_LPAREN
+                    : c == ')' ? JT_RPAREN : c == '{' ? JT_LBRACE : c == '}' ? JT_RBRACE
+                    : c == ',' ? JT_COMMA : c == ':' ? JT_COLON : c == '=' ? JT_ASSIGN
+                    : c == ';' ? JT_SEMI : c == '.' ? JT_DOT : JT_ERROR;
+  if (single != JT_ERROR) {
+    p->offset++;
+    p->token = single;
+    return single;
+  }
+  if (c == '"') return lex_string(p);
+  if (c == '-' || (c >= '0' && c <= '9')) return lex_number(p);
+  if (c == 't' && json_literal(p, "true", 4)) { p->offset += 4; p->token = JT_TRUE; return JT_TRUE; }
+  if (c == 'f' && json_literal(p, "false", 5)) { p->offset += 5; p->token = JT_FALSE; return JT_FALSE; }
+  if (c == 'n' && json_literal(p, "null", 4)) { p->offset += 4; p->token = JT_NULL; return JT_NULL; }
+  if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$') {
+    while (p->offset < p->length) {
+      char d = p->text[p->offset];
+      if ((d >= 'a' && d <= 'z') || (d >= 'A' && d <= 'Z') || (d >= '0' && d <= '9') || d == '_' || d == '$')
+        p->offset++;
+      else break;
+    }
+    p->token_end = p->offset;
+    p->token = JT_IDENTIFIER;
+    return JT_IDENTIFIER;
+  }
+  if (c == '\'') return lex_fail(p, "Single quotes (') are not allowed in JSON");
+  return lex_fail_char(p, "Unrecognized token '", p->offset, "'");
+}
+/* LiteralParser::getErrorMessage: the lexer's message wins. */
+static noreturn void json_fail(json_parser *p, const char *message) {
+  if (p->token == JT_ERROR) syntax_error_message(p->lex_error);
+  syntax_error_message(message);
+}
+static noreturn void json_unexpected(json_parser *p) {
+  char message[256];
+  char token = 0;
+  switch (p->token) {
+    case JT_END: json_fail(p, "Unexpected EOF");
+    case JT_IDENTIFIER:
+      snprintf(message, sizeof message, "Unexpected identifier \"%.*s\"",
+               (int)(p->token_end - p->token_start), p->text + p->token_start);
+      json_fail(p, message);
+    case JT_LBRACKET: token = '['; break;
+    case JT_RBRACKET: token = ']'; break;
+    case JT_LPAREN: token = '('; break;
+    case JT_RPAREN: token = ')'; break;
+    case JT_LBRACE: token = '{'; break;
+    case JT_RBRACE: token = '}'; break;
+    case JT_COMMA: token = ','; break;
+    case JT_COLON: token = ':'; break;
+    case JT_ASSIGN: token = '='; break;
+    case JT_SEMI: token = ';'; break;
+    case JT_DOT: token = '.'; break;
+    default: json_fail(p, "Unable to parse JSON string");
+  }
+  snprintf(message, sizeof message, "Unexpected token '%c'", token);
+  json_fail(p, message);
+}
+static qa_save_value *json_value(json_parser *p);
+static qa_save_value *json_object_body(json_parser *p, qa_save_value *v) {
+  json_lex(p);
+  if (p->token == JT_RBRACE) { json_lex(p); return v; }
+  if (p->token != JT_STRING) json_fail(p, "Expected '}'");
+  for (;;) {
+    char *key = p->token_string;
+    p->token_string = NULL;
+    qa_cleanup key_guard;
+    qa_cleanup_push(&key_guard, cleanup_text, key);
+    json_lex(p);
+    if (p->token != JT_COLON) json_fail(p, "Expected ':' before value in object property definition");
+    json_lex(p);
+    qa_save_value *child = json_value(p);
+    qa_cleanup_pop(&key_guard);
+    if (child == NULL) { free(key); return NULL; }
+    /* JS objects keep the last duplicate key; replace in place. */
+    bool replaced = false;
+    for (size_t i = 0; i < v->entry_count; i++) {
+      if (strcmp(v->entries[i].key, key) == 0) {
+        qa_save_value_free(v->entries[i].value);
+        v->entries[i].value = child;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      qa_save_entry *entries = (qa_save_entry *)realloc(v->entries, (v->entry_count + 1) * sizeof *entries);
+      if (entries == NULL) { free(key); qa_save_value_free(child); return NULL; }
+      v->entries = entries;
+      v->entries[v->entry_count].key = key;
+      v->entries[v->entry_count].value = child;
+      v->entry_count++;
+    } else free(key);
+    if (p->token == JT_COMMA) {
+      json_lex(p);
+      if (p->token != JT_STRING) json_fail(p, "Property name must be a string literal");
+      continue;
+    }
+    if (p->token == JT_RBRACE) {
+      json_lex(p);
+      js_order_entries(v->entries, v->entry_count); /* JSON.parse result key order */
+      return v;
+    }
+    json_fail(p, "Expected '}'");
+  }
+}
+static qa_save_value *json_array_body(json_parser *p, qa_save_value *v) {
+  json_lex(p);
+  if (p->token == JT_RBRACKET) { json_lex(p); return v; }
+  for (;;) {
+    qa_save_value *child = json_value(p);
+    if (child == NULL) return NULL;
+    if (!qa_save_value_push(v, child)) { qa_save_value_free(child); return NULL; }
+    if (p->token == JT_COMMA) {
+      json_lex(p);
+      if (p->token == JT_RBRACKET) json_fail(p, "Unexpected comma at the end of array expression");
+      continue;
+    }
+    if (p->token == JT_RBRACKET) { json_lex(p); return v; }
+    json_fail(p, "Expected ']'");
+  }
+}
+/* Parses the value at the current token and leaves the next token current. */
+static qa_save_value *json_value(json_parser *p) {
+  json_token token = p->token;
+  if (token == JT_STRING) {
     qa_save_value *v = value_new(QA_SAVE_STRING);
-    if (v == NULL) { free(s); return NULL; }
-    v->text = s;
+    if (v == NULL) return NULL;
+    v->text = p->token_string;
+    p->token_string = NULL;
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, cleanup_value, v);
+    json_lex(p);
+    qa_cleanup_pop(&guard);
     return v;
   }
-  if (c == '{') {
-    p->offset++;
-    qa_save_value *v = value_new(QA_SAVE_OBJECT);
-    if (v == NULL) return NULL;
-    json_ws(p);
-    if (p->offset < p->length && p->text[p->offset] == '}') { p->offset++; return v; }
-    for (;;) {
-      json_ws(p);
-      if (p->offset >= p->length || p->text[p->offset] != '"') { qa_save_value_free(v); syntax_error("Expected object key"); }
-      char *key = json_string(p);
-      if (key == NULL) { qa_save_value_free(v); return NULL; }
-      json_ws(p);
-      if (p->offset >= p->length || p->text[p->offset] != ':') { free(key); qa_save_value_free(v); syntax_error("Expected ':' in object"); }
-      p->offset++;
-      qa_save_value *child = json_value(p);
-      if (child == NULL) { free(key); qa_save_value_free(v); return NULL; }
-      /* JS objects keep the last duplicate key; replace in place. */
-      bool replaced = false;
-      for (size_t i = 0; i < v->entry_count; i++) {
-        if (strcmp(v->entries[i].key, key) == 0) {
-          qa_save_value_free(v->entries[i].value);
-          v->entries[i].value = child;
-          replaced = true;
-          break;
-        }
-      }
-      if (!replaced) {
-        qa_save_entry *entries = (qa_save_entry *)realloc(v->entries, (v->entry_count + 1) * sizeof *entries);
-        if (entries == NULL) { free(key); qa_save_value_free(child); qa_save_value_free(v); return NULL; }
-        v->entries = entries;
-        v->entries[v->entry_count].key = key;
-        v->entries[v->entry_count].value = child;
-        v->entry_count++;
-      } else free(key);
-      json_ws(p);
-      if (p->offset < p->length && p->text[p->offset] == ',') { p->offset++; continue; }
-      if (p->offset < p->length && p->text[p->offset] == '}') { p->offset++; return v; }
-      qa_save_value_free(v);
-      syntax_error("Expected ',' or '}' in object");
-    }
+  if (token == JT_LBRACE || token == JT_LBRACKET) {
+    if (p->depth >= JSON_MAXIMUM_DEPTH) qa_range_error("Maximum call stack size exceeded.");
+    p->depth++;
+    qa_save_value *v = value_new(token == JT_LBRACE ? QA_SAVE_OBJECT : QA_SAVE_ARRAY);
+    if (v == NULL) { p->depth--; return NULL; }
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, cleanup_value, v);
+    qa_save_value *result = token == JT_LBRACE ? json_object_body(p, v) : json_array_body(p, v);
+    qa_cleanup_pop(&guard);
+    if (result == NULL) qa_save_value_free(v);
+    p->depth--;
+    return result;
   }
-  if (c == '[') {
-    p->offset++;
-    qa_save_value *v = value_new(QA_SAVE_ARRAY);
-    if (v == NULL) return NULL;
-    json_ws(p);
-    if (p->offset < p->length && p->text[p->offset] == ']') { p->offset++; return v; }
-    for (;;) {
-      qa_save_value *child = json_value(p);
-      if (child == NULL || !qa_save_value_push(v, child)) {
-        qa_save_value_free(child);
-        qa_save_value_free(v);
-        return NULL;
-      }
-      json_ws(p);
-      if (p->offset < p->length && p->text[p->offset] == ',') { p->offset++; continue; }
-      if (p->offset < p->length && p->text[p->offset] == ']') { p->offset++; return v; }
-      qa_save_value_free(v);
-      syntax_error("Expected ',' or ']' in array");
-    }
+  qa_save_value *v;
+  if (token == JT_NUMBER) v = qa_save_value_number(p->token_number);
+  else if (token == JT_TRUE) v = qa_save_value_boolean(true);
+  else if (token == JT_FALSE) v = qa_save_value_boolean(false);
+  else if (token == JT_NULL) v = value_new(QA_SAVE_NULL);
+  else json_unexpected(p);
+  if (v == NULL) return NULL;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_value, v);
+  json_lex(p);
+  qa_cleanup_pop(&guard);
+  return v;
+}
+/* LiteralParser::tryLiteralParse (StrictJSON): one value, then the end. */
+static qa_save_value *json_document(json_parser *p) {
+  json_lex(p);
+  qa_save_value *parsed = json_value(p);
+  if (parsed == NULL) return NULL;
+  if (p->token != JT_END) {
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, cleanup_value, parsed);
+    json_fail(p, "Unable to parse JSON string");
   }
-  if (p->offset + 4 <= p->length && memcmp(p->text + p->offset, "null", 4) == 0) {
-    p->offset += 4;
-    return value_new(QA_SAVE_NULL);
-  }
-  if (p->offset + 4 <= p->length && memcmp(p->text + p->offset, "true", 4) == 0) {
-    p->offset += 4;
-    return qa_save_value_boolean(true);
-  }
-  if (p->offset + 5 <= p->length && memcmp(p->text + p->offset, "false", 5) == 0) {
-    p->offset += 5;
-    return qa_save_value_boolean(false);
-  }
-  /* JSON number grammar: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? */
-  size_t start = p->offset;
-  if (p->offset < p->length && p->text[p->offset] == '-') p->offset++;
-  if (p->offset < p->length && p->text[p->offset] == '0') p->offset++;
-  else {
-    if (p->offset >= p->length || p->text[p->offset] < '1' || p->text[p->offset] > '9')
-      syntax_error("Unexpected token in JSON");
-    while (p->offset < p->length && p->text[p->offset] >= '0' && p->text[p->offset] <= '9') p->offset++;
-  }
-  if (p->offset < p->length && p->text[p->offset] == '.') {
-    p->offset++;
-    if (p->offset >= p->length || p->text[p->offset] < '0' || p->text[p->offset] > '9')
-      syntax_error("Invalid JSON number");
-    while (p->offset < p->length && p->text[p->offset] >= '0' && p->text[p->offset] <= '9') p->offset++;
-  }
-  if (p->offset < p->length && (p->text[p->offset] == 'e' || p->text[p->offset] == 'E')) {
-    p->offset++;
-    if (p->offset < p->length && (p->text[p->offset] == '+' || p->text[p->offset] == '-')) p->offset++;
-    if (p->offset >= p->length || p->text[p->offset] < '0' || p->text[p->offset] > '9')
-      syntax_error("Invalid JSON number");
-    while (p->offset < p->length && p->text[p->offset] >= '0' && p->text[p->offset] <= '9') p->offset++;
-  }
-  char *token = dup_range(p->text + start, p->offset - start);
-  if (token == NULL) return NULL;
-  double number = strtod(token, NULL);
-  free(token);
-  return qa_save_value_number(number);
+  return parsed;
 }
 
 /* TS unpack(): transforms the raw tree in place where possible. */
@@ -627,74 +867,106 @@ static qa_save_value *unpack_value(qa_save_value *value, const char *path) {
   return value;
 }
 
-qa_save_value *qa_decode_checkpoint_value(const uint8_t *bytes, size_t length) {
-  if (!utf8_valid(bytes, length))
-    type_error("The encoded data was not valid for encoding utf-8");
-  char *text = dup_range((const char *)bytes, length);
-  if (text == NULL) return NULL;
-  json_parser parser = {text, 0, length};
-  qa_save_value *parsed = json_value(&parser);
-  if (parsed == NULL) { free(text); return NULL; }
-  json_ws(&parser);
-  if (parser.offset != parser.length) {
-    qa_save_value_free(parsed);
-    free(text);
-    syntax_error("Unexpected non-whitespace character after JSON");
-  }
+static void cleanup_value_slot(void *arg) { qa_save_value_free(*(qa_save_value **)arg); }
+typedef struct decode_job {
+  const uint8_t *bytes;
+  size_t length;
+  qa_save_value *parsed;
+  bool oom;
+} decode_job;
+
+static void decode_parse_run(void *raw) {
+  decode_job *job = raw;
+  char *text = dup_range((const char *)job->bytes, job->length);
+  if (text == NULL) { job->oom = true; return; }
+  qa_cleanup text_guard;
+  qa_cleanup_push(&text_guard, cleanup_text, text);
+  json_parser parser;
+  memset(&parser, 0, sizeof parser);
+  parser.text = text;
+  parser.length = job->length;
+  qa_cleanup token_guard;
+  qa_cleanup_push(&token_guard, cleanup_token, &parser);
+  qa_save_value *parsed = json_document(&parser);
+  qa_cleanup_pop(&token_guard);
+  cleanup_token(&parser);
+  if (parsed == NULL) { qa_cleanup_pop(&text_guard); free(text); job->oom = true; return; }
+  qa_cleanup_pop(&text_guard);
   free(text);
-  return unpack_value(parsed, "checkpoint");
+  job->parsed = parsed;
 }
 
+/* TS decodeCheckpointValue wraps the fatal TextDecoder and JSON.parse
+ * failures as SaveFormatError("checkpoint", error.message); both texts are
+ * Bun's (the parser above reproduces JavaScriptCore's JSON.parse messages). */
+qa_save_value *qa_decode_checkpoint_value(const uint8_t *bytes, size_t length) {
+  if (!utf8_valid(bytes, length)) qa_save_format_error("checkpoint", "Invalid byte sequence");
+  decode_job job = {bytes, length, NULL, false};
+  qa_caught_error caught;
+  if (!qa_try(decode_parse_run, &job, &caught)) {
+    if (strcmp(caught.name, "SyntaxError") != 0) qa_rethrow(&caught);
+    char message[QA_CAUGHT_MESSAGE_CAPACITY];
+    snprintf(message, sizeof message, "%s", caught.message);
+    qa_save_format_error("checkpoint", "%s", message);
+  }
+  if (job.oom) return NULL;
+  /* unpack_value frees replaced nodes as it goes; a raise in it leaves the
+   * tree as it was then, released by this guard. */
+  qa_save_value *parsed = job.parsed;
+  qa_cleanup parsed_guard;
+  qa_cleanup_push(&parsed_guard, cleanup_value_slot, &parsed);
+  qa_save_value *result = unpack_value(parsed, "checkpoint");
+  qa_cleanup_pop(&parsed_guard);
+  return result;
+}
+
+typedef struct json_parse_scope { const char *text; size_t length; qa_save_value *parsed; } json_parse_scope;
+static void json_parse_body(void *ctx) {
+  json_parse_scope *scope = ctx;
+  json_parser parser;
+  memset(&parser, 0, sizeof parser);
+  parser.text = scope->text;
+  parser.length = scope->length;
+  qa_cleanup token_guard;
+  qa_cleanup_push(&token_guard, cleanup_token, &parser);
+  qa_save_value *parsed = json_document(&parser);
+  qa_cleanup_pop(&token_guard);
+  cleanup_token(&parser);
+  scope->parsed = parsed;
+}
 qa_save_value *qa_parse_json_value(const uint8_t *bytes, size_t length, bool quiet) {
   char *text = dup_range((const char *)bytes, length);
   if (text == NULL) return NULL;
-  qa_save_value *parsed = NULL;
-  bool failed = false;
+  json_parse_scope scope = {text, length, NULL};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_text, text);
   if (quiet) {
-    quiet_active = true;
-    if (setjmp(quiet_jump) != 0) failed = true;
-  }
-  if (!failed) {
-    json_parser parser = {text, 0, length};
-    parsed = json_value(&parser);
-    if (parsed != NULL) {
-      json_ws(&parser);
-      if (parser.offset != parser.length) {
-        if (!quiet) {
-          qa_save_value_free(parsed);
-          free(text);
-          syntax_error("Unexpected non-whitespace character after JSON");
-        }
-        qa_save_value_free(parsed);
-        parsed = NULL;
-      }
-    }
-  }
-  quiet_active = false;
+    qa_caught_error caught;
+    if (!qa_try(json_parse_body, &scope, &caught)) scope.parsed = NULL;
+  } else json_parse_body(&scope);
+  qa_cleanup_pop(&guard);
   free(text);
-  if (failed) return NULL;
-  return parsed;
+  return scope.parsed;
 }
 
 /* --- SaveReader --- */
 bool qa_save_reader_init(qa_save_reader *reader, const qa_save_value *value, const char *path) {
   reader->value = value;
-  reader->path = dup_text(path != NULL ? path : "save");
-  return reader->path != NULL;
+  const char *text = path != NULL ? path : "save";
+  size_t length = strlen(text);
+  if (length >= sizeof reader->path) length = sizeof reader->path - 1;
+  memcpy(reader->path, text, length);
+  reader->path[length] = '\0';
+  return true;
 }
 void qa_save_reader_destroy(qa_save_reader *reader) {
-  free(reader->path);
-  reader->path = NULL;
+  reader->path[0] = '\0';
   reader->value = NULL;
 }
 noreturn void qa_save_reader_fail(const qa_save_reader *reader, const char *format, ...) {
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "SaveFormatError: %s: ", reader->path);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
-  va_end(args);
-  abort();
+  save_format_errorv(reader->path, format, args);
 }
 static const qa_save_value *reader_value(const qa_save_reader *reader) { return reader->value; }
 bool qa_save_reader_is_undefined(const qa_save_reader *reader) {
@@ -800,14 +1072,17 @@ const char *qa_save_reader_choice_string(const qa_save_reader *reader,
   if (value != NULL && value->kind == QA_SAVE_STRING)
     for (size_t i = 0; i < count; i++)
       if (strcmp(value->text, choices[i]) == 0) return choices[i];
-  /* Build the TS "a or b or c" message. */
+  /* Build the TS "a or b or c" message; the buffer is released before the raise. */
   text_buffer message = {NULL, 0, 0};
   (void)text_add_cstr(&message, "expected ");
   for (size_t i = 0; i < count; i++) {
     if (i > 0) (void)text_add_cstr(&message, " or ");
     (void)text_add_cstr(&message, choices[i]);
   }
-  qa_save_reader_fail(reader, "%s", message.data != NULL ? message.data : "expected");
+  char text[1024];
+  snprintf(text, sizeof text, "%s", message.data != NULL ? message.data : "expected");
+  free(message.data);
+  qa_save_reader_fail(reader, "%s", text);
 }
 double qa_save_reader_choice_number(const qa_save_reader *reader,
                                     const double *choices, size_t count) {
@@ -823,7 +1098,10 @@ double qa_save_reader_choice_number(const qa_save_reader *reader,
     if (i > 0) (void)text_add_cstr(&message, " or ");
     (void)text_add_cstr(&message, buffer);
   }
-  qa_save_reader_fail(reader, "%s", message.data != NULL ? message.data : "expected");
+  char text[1024];
+  snprintf(text, sizeof text, "%s", message.data != NULL ? message.data : "expected");
+  free(message.data);
+  qa_save_reader_fail(reader, "%s", text);
 }
 const char *qa_namespaced(const qa_save_reader *reader) {
   const char *value = qa_save_reader_string(reader);

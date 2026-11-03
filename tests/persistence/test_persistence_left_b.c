@@ -922,7 +922,7 @@ static void test_world_state(void) {
       {.actor = {1, 0}, .entries = child_entries, .entry_count = 1}};
   qa_save_image save;
   memset(&save, 0, sizeof save);
-  save.schema_version = 3;
+  save.schema_version = 4;
   save.actors = slots;
   save.actor_count = 2;
   save.bodies = bodies;

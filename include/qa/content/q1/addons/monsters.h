@@ -37,8 +37,13 @@
 #include "qa/content/q1/addons/monsters/infected/species.h"
 #include "qa/content/q1/addons/monsters/ordinary/army.h"
 #include "qa/content/q1/addons/monsters/ordinary/attack.h"
+#include "qa/content/q1/addons/monsters/ordinary/chthon.h"
+#include "qa/content/q1/addons/monsters/ordinary/classic.h"
 #include "qa/content/q1/addons/monsters/ordinary/index.h"
+#include "qa/content/q1/addons/monsters/ordinary/nightmare.h"
 #include "qa/content/q1/addons/monsters/ordinary/rocket_ogre.h"
+#include "qa/content/q1/addons/monsters/ordinary/slime.h"
+#include "qa/content/q1/addons/monsters/ordinary/source_frames.h"
 #include "qa/content/q1/addons/monsters/startup.h"
 
 #endif

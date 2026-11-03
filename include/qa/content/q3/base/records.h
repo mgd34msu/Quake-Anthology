@@ -1,11 +1,8 @@
 /* Port of src/content/q3/base/records.ts. GPL-2.0-or-later.
- * GameEntity/GameClient are the landed game/state mirror types: entity
- * health/takedamage/body accessors read the inline body mirror rather
- * than forwarding to the authority/body tables (the authority binding
- * below still forwards), and ammoTimerStored has no mirror slot hook.
- * damageInflictor's shared-actor origin ctx is a malloc'd cell owned
- * by the records (freed on destroy is not tracked; cells are small and
- * bounded by foreign-damage calls). */
+ * Entity body/health/takedamage and the client PlayerAuthorityBinding
+ * forward to the session body, combat and inventory tables; client
+ * ammoTimes notify host.ammo_timer_stored. damageInflictor's shared-actor
+ * origin ctx is a cell owned by the records until destroy. */
 #ifndef QA_CONTENT_Q3_BASE_RECORDS_H
 #define QA_CONTENT_Q3_BASE_RECORDS_H
 #include <stdbool.h>

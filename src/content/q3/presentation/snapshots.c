@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/snapshots.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/snapshots.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -15,18 +17,14 @@
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
   return result;
 }
 static void fmt_num(char *buffer, size_t size, double value) {
-  if (value == trunc(value) && fabs(value) < 1e21) {
-    snprintf(buffer, size, "%lld", (long long)value);
-  } else {
-    snprintf(buffer, size, "%g", value);
-  }
+  qa_net_js_number(value, buffer, size);
 }
 
 void qa_q3_pres_history_snapshot_source_init(qa_q3_pres_history_snapshot_source *source,
@@ -170,7 +168,7 @@ static bool next_snapshot(runtime_t *runtime, const qa_q3_wire_snapshot *input) 
     qa_q3_base_entity_state *entry = &snapshot->entities[index];
     qa_q3_pres_client_entity *entity = entity_at(runtime, entry->number);
     qa_q3_entity_state_record_copy_from(&entity->next_state, entry);
-    entity->interpolate = entity->current_valid && ((entity->current_state.e_flags ^ entry->e_flags) & 4) == 0;
+    entity->interpolate = entity->current_valid && ((qa_js_to_int32(entity->current_state.e_flags) ^ qa_js_to_int32(entry->e_flags)) & 4) == 0;
   }
   state->next_frame_teleport =
       ((to_int32(snapshot->player_state.e_flags) ^ to_int32(previous->player_state.e_flags)) & 4) != 0 ||

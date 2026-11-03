@@ -12,13 +12,12 @@
 #include "qa/persistence/execution.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 static char *dup_text(const char *text) {
   size_t length = strlen(text);
@@ -233,10 +232,16 @@ static qa_save_value *build_save(const qa_q2_classic_original_save *save) {
   if (!set_own(obj, "abi", qa_save_value_string("windows-i386")) ||
       !set_own(obj, "autosave", qa_save_value_boolean(save->autosave)))
     goto fail;
+  /* Key order follows the TS object: capture() builds { cvars, configstrings,
+   * portals }; a decoded save spreads the level state before cvars. */
   qa_save_value *server = qa_save_value_object();
-  if (server == NULL || !build_level_state_into(server, &save->server.state) ||
-      !set_own(server, "cvars", qa_save_value_bytes(save->server.cvars.bytes,
-                                                    save->server.cvars.length)) ||
+  bool decoded = save->root != NULL;
+  if (server == NULL ||
+      (!decoded && !set_own(server, "cvars", qa_save_value_bytes(save->server.cvars.bytes,
+                                                                 save->server.cvars.length))) ||
+      !build_level_state_into(server, &save->server.state) ||
+      (decoded && !set_own(server, "cvars", qa_save_value_bytes(save->server.cvars.bytes,
+                                                                save->server.cvars.length))) ||
       !set_own(obj, "server", server))
     goto fail;
   if (!set_own(obj, "game", qa_save_value_bytes(save->game.bytes, save->game.length)) ||
@@ -507,12 +512,18 @@ static size_t handle_read(void *ctx, size_t offset, uint8_t *out, size_t length)
   if (count > 0) memcpy(out, entry->bytes + offset, count);
   return count;
 }
+/* Generous against retail Q2 savegames, which stay under a few MB. */
+#define MAX_NATIVE_SAVE_BYTES ((size_t)256 * 1024 * 1024)
 static bool entry_resize(file_entry *entry, size_t length) {
   if (length > entry->capacity) {
-    uint8_t *bytes = (uint8_t *)realloc(entry->bytes, length);
+    /* A write extends with spare capacity: max(end, length * 2, 4096). */
+    size_t capacity = length;
+    if (entry->length * 2 > capacity) capacity = entry->length * 2;
+    if (capacity < 4096) capacity = 4096;
+    uint8_t *bytes = (uint8_t *)realloc(entry->bytes, capacity);
     if (bytes == NULL) return false;
     entry->bytes = bytes;
-    entry->capacity = length;
+    entry->capacity = capacity;
   }
   /* TS growth always copies into a fresh zero-filled Uint8Array, so
    * bytes beyond the old length read as zero even within capacity. */
@@ -527,6 +538,8 @@ static int64_t handle_write(void *ctx, size_t offset, const uint8_t *bytes,
   handle_live(handle);
   if (!handle->can_write) qa_error("Native save file is not writable");
   check_range(offset, length);
+  if (offset + length > MAX_NATIVE_SAVE_BYTES)
+    qa_range_error("Native save file exceeds its size limit");
   file_entry *entry = &handle->owner->entries[handle->entry_index];
   if (offset + length > entry->length && !entry_resize(entry, offset + length))
     qa_error("out of memory");

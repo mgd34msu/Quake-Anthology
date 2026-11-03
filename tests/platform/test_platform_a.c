@@ -194,18 +194,6 @@ static void test_open_native_library(void) {
                                             &failing_probe, &failing));
 }
 
-static void test_dedicated_platform(void) {
-  qa_platform_options options = {0};
-  options.kind = QA_PLATFORM_DEDICATED;
-  qa_platform platform;
-  CHECK(qa_open_platform(&options, &platform));
-  CHECK(platform.kind == QA_PLATFORM_DEDICATED);
-  CHECK(!qa_platform_closed(&platform));
-  qa_platform_close(&platform);
-  qa_platform_close(&platform);
-  CHECK(qa_platform_closed(&platform));
-}
-
 static void test_clipboard_bytes(void) {
   size_t length = 0;
   const uint8_t plain[] = "abc\ndef";
@@ -414,33 +402,15 @@ static void test_window_validation(void) {
   }
 }
 
-static void test_graphical_platform(void) {
-  qa_platform_options options = {0};
-  options.kind = QA_PLATFORM_GRAPHICAL;
-  options.window.title = "graphical runtime";
-  options.window.width = 2;
-  options.window.height = 2;
-  options.window.backend = QA_SDL_BACKEND_CPU;
-  options.window.hidden = true;
-  qa_platform platform;
-  CHECK(qa_open_platform(&options, &platform));
-  CHECK(platform.kind == QA_PLATFORM_GRAPHICAL);
-  CHECK(!qa_platform_closed(&platform));
-  qa_platform_close(&platform);
-  CHECK(qa_platform_closed(&platform));
-}
-
 int main(void) {
   setenv("SDL_VIDEODRIVER", "dummy", 1);
   test_native_libraries();
   test_open_native_library();
-  test_dedicated_platform();
   test_clipboard_bytes();
   test_display_helpers();
   test_decode_event();
   test_window_validation();
   test_cpu_window();
-  test_graphical_platform();
   printf("%d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;
 }

@@ -3,6 +3,7 @@
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_DEMO_RECORDING_H
 #define QA_APP_BOOTSTRAP_DEMO_RECORDING_H
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "qa/contracts/math.h"
@@ -39,7 +40,9 @@ typedef struct qa_app_demo_recording qa_app_demo_recording;
 /* Malloc'd; caller frees. Aborts via normalizeResourcePath as TS. */
 char *qa_app_recording_path(const char *root, const char *name, qa_app_demo_recording_identity identity);
 /* TS DemoRecording.open: *out_error set (static text) on failure, NULL return. */
-qa_app_demo_recording *qa_app_demo_recording_open(const char *root, const char *name, qa_app_demo_recording_seed seed, const char **out_error);
+/* TS open(root, name, seed, replace = false): replace opens "w" (a typed name overwrites), else "wx". */
+qa_app_demo_recording *qa_app_demo_recording_open(const char *root, const char *name, qa_app_demo_recording_seed seed, bool replace,
+                                                  const char **out_error);
 const char *qa_app_demo_recording_path(const qa_app_demo_recording *recording);
 qa_app_demo_recording_identity qa_app_demo_recording_identity_of(const qa_app_demo_recording *recording);
 /* Sink view of the recording itself (append forwards, errors as strings). */

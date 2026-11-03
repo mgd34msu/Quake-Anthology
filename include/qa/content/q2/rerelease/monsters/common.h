@@ -9,34 +9,12 @@
 #include "qa/core/random/q2_rerelease.h"
 #include "qa/world/gameplay/authority.h"
 
-/* Mirrored unported surface (TS owner: src/content/q2/foundation/
- * host.ts Q2FoundationHost.gravity(); the qa_q2f host mirror has no
- * gravity member). The host wires the hook with
- * qa_q2rm_set_gravity_hook; use without it aborts. */
-typedef struct qa_q2rm_gravity_hook {
-  void *ctx;
-  double (*gravity)(void *ctx);
-} qa_q2rm_gravity_hook;
-void qa_q2rm_set_gravity_hook(qa_q2rm_gravity_hook hook);
-double qa_q2rm_host_gravity(qa_q2f_game *game);
+/* TS game.host.gravity(). */
+double qa_q2rm_host_gravity(qa_q2_game_services *game);
 
-/* Mirrored unported surface (TS owners: src/world/gameplay/
- * authority.ts GameplayAuthority.bindPowerArmorCells/
- * setPoweredProtection and src/world/gameplay/inventory.ts
- * SharedInventoryTable.has/create; the qa_q2f combat/inventory
- * mirrors lack these members). The host wires hooks with
- * qa_q2rm_set_power_hooks; use without them aborts. kind is
- * "none" | "screen" | "shield". */
-typedef struct qa_q2rm_power_hooks {
-  void *ctx;
-  void (*bind_cells)(void *ctx, qa_owned_actor actor, qa_power_armor_cell_binding cells);
-  void (*set_powered)(void *ctx, qa_owned_actor actor, const char *kind, double cells);
-  bool (*inventory_has)(void *ctx, qa_actor_id actor);
-  void (*inventory_create_empty)(void *ctx, qa_owned_actor actor);
-} qa_q2rm_power_hooks;
-void qa_q2rm_set_power_hooks(qa_q2rm_power_hooks hooks);
-/* TS setPoweredProtection(actor, {kind, cells}) via the mirror. */
-void qa_q2rm_set_powered(qa_q2f_game *game, qa_owned_actor actor, const char *kind, double cells);
+/* TS game.host.combat.setPoweredProtection(actor, {kind, cells});
+ * kind is "none" | "screen" | "shield". */
+void qa_q2rm_set_powered(qa_q2_game_services *game, qa_owned_actor actor, const char *kind, double cells);
 
 /* TS rereleaseRandom: aborts (TS Error) without the session stream. */
 qa_q2_rerelease_random *qa_q2rm_rerelease_random(qa_q2m_context *context);

@@ -1,7 +1,12 @@
 /* Port of src/formats/images/png.ts. GPL-2.0-or-later. */
 #include "qa/formats/images/png.h"
+#include "qa/formats/images/limits.h"
+#include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
@@ -269,9 +274,7 @@ static int png_general(const char *name, const uint8_t *raw,
           int64_t value = png_sample(rows, row, px, 0, channels, bit_depth);
           int64_t gray = bit_depth == 16 ? value >> 8
                          : bit_depth == 8 ? value
-                                          : (int64_t)floor((double)value * 255.0 /
-                                                                ((1 << bit_depth) - 1) +
-                                                            0.5);
+                                          : (int64_t)qa_js_round((double)value * 255.0 / ((1 << bit_depth) - 1));
           pixels[produced] = (uint8_t)gray;
           pixels[produced + 1] = (uint8_t)gray;
           pixels[produced + 2] = (uint8_t)gray;
@@ -280,9 +283,7 @@ static int png_general(const char *name, const uint8_t *raw,
             int64_t alpha = bit_depth == 16 ? alpha_sample >> 8
                             : bit_depth == 8
                                 ? alpha_sample
-                                : (int64_t)floor((double)alpha_sample * 255.0 /
-                                                     ((1 << bit_depth) - 1) +
-                                                 0.5);
+                                : (int64_t)qa_js_round((double)alpha_sample * 255.0 / ((1 << bit_depth) - 1));
             pixels[produced + 3] = (uint8_t)alpha;
           } else {
             pixels[produced + 3] =
@@ -298,9 +299,7 @@ static int png_general(const char *name, const uint8_t *raw,
             int64_t converted = bit_depth == 16 ? value >> 8
                                 : bit_depth == 8
                                     ? value
-                                    : (int64_t)floor((double)value * 255.0 /
-                                                         ((1 << bit_depth) - 1) +
-                                                     0.5);
+                                    : (int64_t)qa_js_round((double)value * 255.0 / ((1 << bit_depth) - 1));
             pixels[produced + ch] = (uint8_t)converted;
           }
           if (color_type == 6) {
@@ -308,9 +307,7 @@ static int png_general(const char *name, const uint8_t *raw,
             int64_t converted = bit_depth == 16 ? value >> 8
                                 : bit_depth == 8
                                     ? value
-                                    : (int64_t)floor((double)value * 255.0 /
-                                                         ((1 << bit_depth) - 1) +
-                                                     0.5);
+                                    : (int64_t)qa_js_round((double)value * 255.0 / ((1 << bit_depth) - 1));
             pixels[produced + 3] = (uint8_t)converted;
           } else {
             pixels[produced + 3] = has_transparency && samples[0] == tg_gray &&
@@ -331,6 +328,24 @@ static int png_general(const char *name, const uint8_t *raw,
                        (size_t)(width * height), out);
   }
   return 1;
+}
+
+static void free_owned3(void *raw) {
+  uint8_t ***slots = (uint8_t ***)raw;
+  for (int i = 0; i < 3; i++) free(*slots[i]);
+}
+
+typedef struct png_decode_guard {
+  struct idat_part **idat;
+  uint8_t **palette;
+  uint8_t **transparency;
+} png_decode_guard;
+
+static void png_decode_guard_release(void *raw) {
+  png_decode_guard *guard = (png_decode_guard *)raw;
+  free(*guard->idat);
+  free(*guard->palette);
+  free(*guard->transparency);
 }
 
 static int png_expand(const char *name, const uint8_t *bytes,
@@ -380,16 +395,35 @@ static int png_expand(const char *name, const uint8_t *bytes,
     stream.avail_out = (uInt)raw_length;
     int status = inflateInit(&stream);
     if (status == Z_OK) status = inflate(&stream, Z_NO_FLUSH);
+    /* node inflateSync({ maxOutputLength }): one more byte of output past
+     * the expected size is "Cannot create a Buffer larger than N bytes". */
+    bool too_large = false;
+    if (status == Z_OK && stream.avail_out == 0) {
+      uint8_t extra = 0;
+      stream.next_out = &extra;
+      stream.avail_out = 1;
+      status = inflate(&stream, Z_NO_FLUSH);
+      if (stream.avail_out == 0) too_large = true;
+    }
     uLong produced = stream.total_out;
-    const char *message = stream.msg != NULL ? stream.msg : zError(status);
-    if (status == Z_STREAM_END || status == Z_OK) inflateEnd(&stream);
-    else if (status != Z_MEM_ERROR || produced != 0) inflateEnd(&stream);
-    if (status != Z_STREAM_END) {
+    char message[160];
+    /* Node's messages: zlib's own text, except an incomplete stream
+     * ("unexpected end of file") and a preset dictionary. */
+    if (too_large)
+      snprintf(message, sizeof message, "Cannot create a Buffer larger than %lld bytes",
+               (long long)raw_length);
+    else if (status == Z_BUF_ERROR || status == Z_OK)
+      snprintf(message, sizeof message, "unexpected end of file");
+    else if (status == Z_NEED_DICT)
+      snprintf(message, sizeof message, "Missing dictionary");
+    else
+      snprintf(message, sizeof message, "%s", stream.msg != NULL ? stream.msg : zError(status));
+    if (status != Z_MEM_ERROR || produced != 0) inflateEnd(&stream);
+    if (status != Z_STREAM_END || too_large) {
       free(compressed);
       free(raw);
       if (status == Z_MEM_ERROR) return 0;
-      qa_binary_error(name, 8, "PNG inflate: %s",
-                      message != NULL ? message : "unknown error");
+      qa_binary_error(name, 8, "PNG inflate: %s", message);
     }
     if (produced != (uLong)raw_length) {
       free(compressed);
@@ -418,10 +452,15 @@ static int png_expand(const char *name, const uint8_t *bytes,
   }
   int64_t transparent_gray =
       has_transparency && color_type == 0 ? (int64_t)get_u16_be(transparency, 0) : -1;
+  /* A BinaryError from the scanline loops must not leak the buffers. */
+  uint8_t **owned_buffers[3] = {&raw, &pixels, &indices};
+  qa_cleanup expand_guard;
+  qa_cleanup_push(&expand_guard, free_owned3, owned_buffers);
   if (bit_depth == 8 && interlace == 0) {
     int result = png_fast(name, raw, width, height, color_type, channels,
                           has_transparency, transparency, transparency_length,
                           palette, palette_length, pixels, indices, out);
+    qa_cleanup_pop(&expand_guard);
     free(raw);
     if (!result) { free(pixels); free(indices); return 0; }
     out->level.width = (double)width;
@@ -435,6 +474,7 @@ static int png_expand(const char *name, const uint8_t *bytes,
                            byte_stride, has_transparency, transparency,
                            transparency_length, transparent_gray, palette,
                            palette_length, pixels, indices, out);
+  qa_cleanup_pop(&expand_guard);
   free(raw);
   if (!result) { free(pixels); free(indices); return 0; }
   out->level.width = (double)width;
@@ -465,6 +505,9 @@ int qa_decode_png(const uint8_t *bytes, size_t length, const char *source,
   size_t compressed_length = 0;
   struct idat_part *idat = NULL;
   size_t idat_count = 0, idat_capacity = 0;
+  png_decode_guard guard_state = {&idat, &palette, &transparency};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, png_decode_guard_release, &guard_state);
   for (size_t offset = 8; offset + 12 <= length;) {
     uint32_t chunk_length = get_u32_be(bytes, offset);
     size_t start = offset + 8;
@@ -560,7 +603,7 @@ int qa_decode_png(const uint8_t *bytes, size_t length, const char *source,
     offset = (size_t)end + 4;
   }
   if (!ended || width <= 0 || height <= 0 ||
-      (double)width * (double)height * 4.0 > 2147483647.0 || idat_count == 0) {
+      !qa_image_size_allowed((double)width, (double)height) || idat_count == 0) {
     qa_binary_error(name, 8, "PNG: missing chunks or invalid dimensions");
   }
   if (color_type == 3 && palette == NULL) {
@@ -571,6 +614,7 @@ int qa_decode_png(const uint8_t *bytes, size_t length, const char *source,
                             width, height, bit_depth, color_type, interlace,
                             palette, palette_length, has_transparency,
                             transparency, transparency_length, out);
+    qa_cleanup_pop(&guard);
     free(idat);
     free(transparency);
     if (result) {
@@ -588,6 +632,7 @@ int qa_decode_png(const uint8_t *bytes, size_t length, const char *source,
     return result;
   }
 oom:
+  qa_cleanup_pop(&guard);
   free(idat);
   free(palette);
   free(transparency);

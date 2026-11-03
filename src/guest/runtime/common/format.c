@@ -8,6 +8,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/guest/runtime/common/memory.h"
+#include "qa/foundation/js.h"
 
 void qa_guest_format_fortify_failure(const char *message) { qa_range_error("%s", message); }
 
@@ -236,6 +237,64 @@ static void parsed_format_free(parsed_format *parsed) {
   memset(parsed, 0, sizeof *parsed);
 }
 
+/* TS retainedFormat: per dialect and pointer width, FIFO over 256 sources of at
+ * most 4096 bytes. Entries live for the process, as the TS module-level maps do. */
+#define RETAINED_FORMAT_CAPACITY 256u
+#define RETAINED_FORMAT_LIMIT 4096u
+typedef struct retained_format_table {
+  char *keys[RETAINED_FORMAT_CAPACITY];
+  uint32_t hashes[RETAINED_FORMAT_CAPACITY];
+  parsed_format values[RETAINED_FORMAT_CAPACITY];
+  size_t count, oldest;
+} retained_format_table;
+static retained_format_table *retained_formats[2][2];
+
+static uint32_t format_text_hash(const char *text) {
+  uint32_t hash = 2166136261u;
+  for (const unsigned char *at = (const unsigned char *)text; *at != 0; at++) hash = (hash ^ *at) * 16777619u;
+  return hash;
+}
+
+/* Returns the parse to use. *scratch receives a source too long to retain, and
+ * *scratch_used tells the caller to release it. */
+static const parsed_format *retained_format(const char *text, const qa_guest_format_request *request,
+                                            parsed_format *scratch, bool *scratch_used) {
+  *scratch_used = false;
+  if (strlen(text) > RETAINED_FORMAT_LIMIT) {
+    parse_format(scratch, text, request);
+    *scratch_used = true;
+    return scratch;
+  }
+  retained_format_table **slot =
+      &retained_formats[request->dialect == QA_FORMAT_WINDOWS ? 1 : 0][request->memory->pointer_bytes == 8 ? 1 : 0];
+  if (*slot == NULL) {
+    *slot = (retained_format_table *)calloc(1, sizeof **slot);
+    if (*slot == NULL) qa_range_error("Out of memory");
+  }
+  retained_format_table *table = *slot;
+  uint32_t hash = format_text_hash(text);
+  for (size_t i = 0; i < table->count; i++)
+    if (table->hashes[i] == hash && strcmp(table->keys[i], text) == 0) return &table->values[i];
+  parsed_format parsed;
+  parse_format(&parsed, text, request);
+  size_t at;
+  if (table->count == RETAINED_FORMAT_CAPACITY) {
+    at = table->oldest;
+    table->oldest = (table->oldest + 1) % RETAINED_FORMAT_CAPACITY;
+    free(table->keys[at]);
+    parsed_format_free(&table->values[at]);
+  } else {
+    at = table->count++;
+  }
+  size_t length = strlen(text);
+  table->keys[at] = (char *)malloc(length + 1);
+  if (table->keys[at] == NULL) qa_range_error("Out of memory");
+  memcpy(table->keys[at], text, length + 1);
+  table->hashes[at] = hash;
+  table->values[at] = parsed;
+  return &table->values[at];
+}
+
 typedef struct output {
   const qa_guest_format_request *request;
   int64_t total, used;
@@ -335,7 +394,7 @@ static bool readonly_format(const qa_guest_format_request *request, size_t lengt
   if (live == NULL) return false;
   qa_guest_mapping *sorted = xmalloc(count * sizeof *sorted);
   memcpy(sorted, live, count * sizeof *sorted);
-  qsort(sorted, count, sizeof *sorted, cmp_mapping);
+  qa_js_sort(sorted, count, sizeof *sorted, cmp_mapping);
   uint64_t cursor = request->format.byte_offset;
   uint64_t end = cursor + length + 1;
   bool result = false;
@@ -433,8 +492,10 @@ static int64_t amount_value(format_run *run, amount value) {
 
 static qa_guest_format_result format_run_body(const qa_guest_format_request *request, output *out) {
   char *text = qa_read_string(request->memory, request->memory_ext, request->format, 1048576);
-  parsed_format parsed;
-  parse_format(&parsed, text, request);
+  parsed_format long_format;
+  bool long_format_used;
+  const parsed_format *retained = retained_format(text, request, &long_format, &long_format_used);
+  const parsed_format parsed = *retained;
   qa_format_arguments reader;
   bool has_reader = parsed.reference_count > 0;
   if (has_reader)
@@ -609,7 +670,7 @@ static qa_guest_format_result format_run_body(const qa_guest_format_request *req
   final = output_finish(out, false, 0, false);
   for (size_t i = 0; i < run.value_count; i++) qa_format_argument_free(&run.values[i]);
   free(run.values);
-  parsed_format_free(&parsed);
+  if (long_format_used) parsed_format_free(&long_format);
   free(text);
   return final;
 }

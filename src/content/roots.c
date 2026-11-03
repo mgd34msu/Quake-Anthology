@@ -11,6 +11,8 @@
 #include <unistd.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 static const char *const ANCHORS[3] = {"id1", "baseq2", "baseq3"};
 static const char *const CANONICAL[3] = {"q1", "q2", "q3a"};
@@ -21,22 +23,10 @@ static char *copy_text(const char *text) {
   if (copy != NULL) memcpy(copy, text, length);
   return copy;
 }
-static char *lowered(const char *text) {
-  char *out = copy_text(text);
-  if (out == NULL) return NULL;
-  for (size_t i = 0; out[i] != '\0'; i++)
-    if (out[i] >= 'A' && out[i] <= 'Z') out[i] = (char)(out[i] - 'A' + 'a');
-  return out;
-}
-static bool ascii_iequal(const char *left, const char *right) {
-  while (*left != '\0' && *right != '\0') {
-    char a = *left++, b = *right++;
-    if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
-    if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
-    if (a != b) return false;
-  }
-  return *left == '\0' && *right == '\0';
-}
+/* TS toLowerCase on UTF-8 names: Unicode lowering (U+212A KELVIN SIGN lowers to 'k'). */
+static char *lowered(const char *text) { return qa_js_to_lower_case(text); }
+/* TS left.toLowerCase() === right (right already lowered). */
+static bool ascii_iequal(const char *left, const char *right) { return qa_js_equals_ignore_case(left, right); }
 
 /* Lexical absolute normalization (node:path resolve). */
 static char *normalize_absolute(const char *joined) {
@@ -152,7 +142,8 @@ static bool is_directory(const char *path) {
 static int compare_child_names(const void *left, const void *right) {
   const char *a = *(char *const *)left;
   const char *b = *(char *const *)right;
-  char *lower_a = lowered(a), *lower_b = lowered(b);
+  /* TS name.toLowerCase(): Unicode lowering of the UTF-8 directory name. */
+  char *lower_a = qa_js_to_lower_case(a), *lower_b = qa_js_to_lower_case(b);
   int order = 0;
   if (lower_a != NULL && lower_b != NULL) order = strcmp(lower_a, lower_b);
   free(lower_a);
@@ -210,7 +201,7 @@ static bool child_directories(const char *directory, char ***out, size_t *out_co
     count++;
   }
   (void)closedir(dir);
-  if (count > 1) qsort(names, count, sizeof *names, compare_child_names);
+  if (count > 1) qa_js_sort(names, count, sizeof *names, compare_child_names);
   *out = names;
   *out_count = count;
   return true;
@@ -244,8 +235,9 @@ static char *anchored_game_root(const char *root, qa_game_family family) {
     char *found = canonical_path != NULL
                       ? child_directory(canonical_path, anchor)
                       : NULL;
+    bool has_anchor = found != NULL;
     free(found);
-    if (found != NULL) {
+    if (has_anchor) {
       free(canonical);
       free(absolute);
       return canonical_path;
@@ -267,8 +259,9 @@ static char *anchored_game_root(const char *root, qa_game_family family) {
     if (ascii_iequal(children[i], CANONICAL[family])) continue;
     char *child_path = resolve2(absolute, children[i]);
     char *found = child_path != NULL ? child_directory(child_path, anchor) : NULL;
+    bool has_anchor = found != NULL;
     free(found);
-    if (found != NULL) {
+    if (has_anchor) {
       result = child_path;
       break;
     }
@@ -383,22 +376,26 @@ static bool steam_apps_directories(const char *home, char ***out, size_t *out_co
     char *text = read_entire_file(vdf_path);
     free(vdf_path);
     if (text == NULL) continue; /* This Steam root is not installed. */
-    const char *cursor = text;
-    while ((cursor = strstr(cursor, "\"path\"")) != NULL) {
+    /* TS /"path"\s+"([^"]+)"/g: at least one whitespace and a nonempty
+     * value; a failed attempt resumes the scan one byte later. */
+    const char *search = text, *cursor;
+    while ((cursor = strstr(search, "\"path\"")) != NULL) {
+      search = cursor + 1;
       cursor += strlen("\"path\"");
+      const char *spaces = cursor;
       while (*cursor == ' ' || *cursor == '\t' || *cursor == '\n' ||
-             *cursor == '\r')
+             *cursor == '\r' || *cursor == '\v' || *cursor == '\f')
         cursor++;
-      if (*cursor != '"') continue;
+      if (cursor == spaces || *cursor != '"') continue;
       cursor++;
       const char *end = strchr(cursor, '"');
-      if (end == NULL) break;
+      if (end == NULL || end == cursor) continue;
+      search = end + 1;
       size_t library_length = (size_t)(end - cursor);
       char *library = (char *)malloc(library_length + 1);
       if (library == NULL) { free(text); goto oom; }
       memcpy(library, cursor, library_length);
       library[library_length] = '\0';
-      cursor = end + 1;
       /* TS: library.replaceAll("\\\\", "/") (escaped backslash pairs). */
       char *flattened = (char *)malloc(library_length + 1);
       if (flattened == NULL) { free(library); free(text); goto oom; }

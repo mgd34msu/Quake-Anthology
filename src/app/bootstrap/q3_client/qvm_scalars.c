@@ -14,6 +14,8 @@
 #include "qa/input/keys.h"
 #include "qa/input/mouse_buttons.h"
 #include "qa/platform/sdl.h"
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
 static int32_t word_i32(const qa_qvm_host_call *call, size_t offset) {
   int32_t v;
@@ -46,13 +48,10 @@ static qa_physical_input physical(int32_t key) {
   }
   return input;
 }
+/* TS a.toLowerCase() === b.toLowerCase(). */
 static bool ieq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return false;
-  while (*a != '\0' && *b != '\0') {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    a++; b++;
-  }
-  return *a == '\0' && *b == '\0';
+  return qa_js_equals_ignore_case(a, b);
 }
 bool qa_app_qvm_client_input_syscall(const qa_qvm_host_call *call, qa_app_qvm_client_input input,
                                      qa_qvm_host_result *out) {
@@ -112,16 +111,16 @@ bool qa_app_qvm_client_input_syscall(const qa_qvm_host_call *call, qa_app_qvm_cl
 static qa_vec3 read_vector(qa_qvm_memory *guest, int32_t pointer) {
   qa_qvm_writable_view view;
   qa_qvm_memory_view(guest, pointer, 12, 0, &view);
-  float values[3];
-  memcpy(values, view.bytes, sizeof values);
-  qa_vec3 out = {values[0], values[1], values[2]};
+  qa_vec3 out = {qa_qvm_writable_view_get_float32(&view, 0, true), qa_qvm_writable_view_get_float32(&view, 4, true),
+                 qa_qvm_writable_view_get_float32(&view, 8, true)};
   return out;
 }
 static void write_vector(qa_qvm_memory *guest, int32_t pointer, qa_vec3 value) {
   qa_qvm_writable_view view;
   qa_qvm_memory_view(guest, pointer, 12, 0, &view);
-  float values[3] = {(float)value.x, (float)value.y, (float)value.z};
-  memcpy(view.bytes, values, sizeof values);
+  qa_qvm_writable_view_set_float32(&view, 0, value.x, true);
+  qa_qvm_writable_view_set_float32(&view, 4, value.y, true);
+  qa_qvm_writable_view_set_float32(&view, 8, value.z, true);
 }
 void qa_app_qvm_application_scalars_init(qa_app_qvm_application_scalars *scalars,
                                          qa_app_qvm_application_scalar_options options) {
@@ -146,8 +145,9 @@ bool qa_app_qvm_application_scalars_dispatch(qa_app_qvm_application_scalars *sca
     qa_qvm_memory_fill_bytes(guest, span.byte_offset, span.byte_length, 0);
     qa_qvm_writable_view view;
     qa_qvm_memory_view(guest, pointer, 3084, 0, &view);
-    int32_t fields[3] = {(int32_t)state.phase, (int32_t)state.connect_packet_count, (int32_t)state.client_number};
-    memcpy(view.bytes, fields, sizeof fields);
+    qa_qvm_writable_view_set_int32(&view, 0, qa_js_to_int32(state.phase), true);
+    qa_qvm_writable_view_set_int32(&view, 4, qa_js_to_int32(state.connect_packet_count), true);
+    qa_qvm_writable_view_set_int32(&view, 8, qa_js_to_int32(state.client_number), true);
     qa_qvm_memory_write_string(guest, pointer + 12, state.server_name, 1024);
     qa_qvm_memory_write_string(guest, pointer + 2060, state.message, 1024);
     *out = 0;
@@ -226,7 +226,7 @@ bool qa_app_qvm_application_scalars_dispatch(qa_app_qvm_application_scalars *sca
                            local.tm_year, local.tm_wday, local.tm_yday, dst};
       qa_qvm_writable_view view;
       qa_qvm_memory_view(guest, pointer, 36, 0, &view);
-      memcpy(view.bytes, fields, sizeof fields);
+      for (int i = 0; i < 9; i++) qa_qvm_writable_view_set_int32(&view, i * 4, fields[i], true);
     }
     *out = (qa_qvm_host_result)(int32_t)now;
     return true;

@@ -8,295 +8,304 @@
 #include "qa/content/q1/missionpacks/monsters/gremlin_ai.h"
 #include "qa/content/q1/missionpacks/monsters/helpers.h"
 #include "monsters_internal.h"
+#include "qa/foundation/js.h"
 
 static const char *const weapons[] = {"axe", "shotgun", "supershotgun", "nailgun", "supernailgun",
                                       "grenadelauncher", "rocketlauncher", "lightning",
                                       "hipnotic:laser", "hipnotic:proximity", "hipnotic:mjolnir"};
 const char *qa_q1mpm_gremlin_weapon(qa_q1mpm_mission_monster *monster) {
-  const char *value = qa_q1mpm_fields_get(monster->entity, "gremlin:weapon");
+  const char *value = qa_q1_actor_field_get(monster->base.entity, "gremlin:weapon");
   if (value == NULL) return NULL;
   for (size_t i = 0; i < sizeof(weapons) / sizeof(weapons[0]); i++)
     if (strcmp(weapons[i], value) == 0) return weapons[i];
   return NULL;
 }
 static void ammo(qa_q1mpm_mission_monster *monster, qa_item_id item, double used) {
-  double count = monster->game->host->inventory_adjust_source_counter(
-      monster->game->host->ctx, monster->entity->actor, item, -used);
+  const double count = qa_shared_inventory_table_adjust_source_counter(monster->base.game->host.inventory,
+                                                                     monster->base.entity->actor, item, -used);
   qa_q1mpm_number(monster, "currentammo", count);
 }
 bool qa_q1mpm_gremlin_has_ammo(qa_q1mpm_mission_monster *monster) {
-  if (qa_q1mpm_actor_number(monster->entity, "currentammo") > 0) return true;
+  if (qa_q1_actor_number(monster->base.entity, "currentammo") > 0) return true;
   qa_q1mpm_number(monster, "stoleweapon", 0);
   return false;
 }
-static void configure(qa_q1mpm_game *game, qa_owned_actor actor, qa_item_id item, double count, double capacity) {
-  qa_q1mpm_inventory_entry entry = {item, count, capacity, NULL, NULL};
-  game->host->inventory_configure(game->host->ctx, actor, &entry);
+/* TS game.host.inventory.configure(actor, { item, count, capacity }). */
+static void configure(qa_q1_services *game, qa_owned_actor actor, qa_item_id item, double count, double capacity) {
+  qa_inventory_entry entry;
+  memset(&entry, 0, sizeof entry);
+  entry.item = item;
+  entry.count = count;
+  entry.capacity = capacity;
+  qa_shared_inventory_table_configure(game->host.inventory, actor, entry, NULL, NULL);
 }
 bool qa_q1mpm_gremlin_steal(qa_q1mpm_mission_monster *monster) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  const qa_q1mpm_host *host = game->host;
-  if (qa_q1mpm_actor_number(entity, "stoleweapon") != 0 || !monster->state.enemy.has ||
-      !game->is_player(game, monster->state.enemy) || qa_q1mpm_monster_distance(monster) > 100 ||
-      host->random(host->ctx) < 0.5)
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  qa_shared_inventory_table *inventory = game->host.inventory;
+  if (qa_q1_actor_number(entity, "stoleweapon") != 0 || !monster->base.state->has_enemy ||
+      !qa_q1_is_player(game, qa_q1_base_monster_enemy(&monster->base)) || qa_q1_base_monster_distance(&monster->base) > 100 ||
+      qa_q1_host_random(game) < 0.5)
     return false;
-  qa_q1mpm_player_state *victim = game->player(game, monster->state.enemy.id);
+  qa_q1_player_state *victim = qa_q1_player(game, monster->base.state->enemy);
   if (victim == NULL) return false;
   const char *weapon = victim->weapon;
-  if (qa_q1mpm_str_eq(weapon, "axe") || qa_q1mpm_str_eq(weapon, "shotgun") ||
-      qa_q1mpm_str_eq(weapon, "hipnotic:mjolnir"))
+  if (q1mpm_str_eq(weapon, "axe") || q1mpm_str_eq(weapon, "shotgun") ||
+      q1mpm_str_eq(weapon, "hipnotic:mjolnir"))
     return false;
-  qa_item_id weapon_item = game->weapon_item(game, weapon);
-  host->inventory_consume(host->ctx, victim->actor, weapon_item,
-                          host->inventory_count(host->ctx, victim->actor.id, weapon_item));
-  configure(game, entity->actor, weapon_item, 1, 1);
-  qa_q1mpm_fields_set(entity, "gremlin:weapon", weapon);
-  const char *item = game->weapon_ammo(game, weapon);
+  qa_owned_actor actor2 = victim->actor;
+  qa_item_id item2 = qa_q1_services_weapon_item(game, weapon);
+  double count = qa_shared_inventory_table_count(inventory, victim->actor.id,
+                                                                          qa_q1_services_weapon_item(game, weapon));
+  (void)qa_shared_inventory_table_consume(inventory, actor2, item2, count);
+  configure(game, entity->actor, qa_q1_services_weapon_item(game, weapon), 1, 1);
+  (void)qa_q1_actor_field_set(entity, "gremlin:weapon", weapon);
+  const qa_item_id item = qa_q1_services_weapon_ammo(game, weapon);
   if (item != NULL) {
-    double cap = qa_q1mpm_str_eq(weapon, "supershotgun") ? 20
-                 : qa_q1mpm_str_eq(weapon, "grenadelauncher") || qa_q1mpm_str_eq(weapon, "rocketlauncher") ||
-                       qa_q1mpm_str_eq(weapon, "hipnotic:proximity")
-                     ? 5
-                     : 40;
-    double amount = fmin(host->inventory_count(host->ctx, victim->actor.id, item), cap);
-    host->inventory_consume(host->ctx, victim->actor, item, amount);
-    configure(game, entity->actor, item, host->inventory_count(host->ctx, entity->actor.id, item) + amount, 1000000);
-    qa_q1mpm_number(monster, "currentammo", host->inventory_count(host->ctx, entity->actor.id, item));
+    const double cap = q1mpm_str_eq(weapon, "supershotgun") ? 20
+                       : q1mpm_str_eq(weapon, "grenadelauncher") || q1mpm_str_eq(weapon, "rocketlauncher") ||
+                               q1mpm_str_eq(weapon, "hipnotic:proximity")
+                           ? 5
+                           : 40;
+    const double amount = qa_js_min(qa_shared_inventory_table_count(inventory, victim->actor.id, item), cap);
+    (void)qa_shared_inventory_table_consume(inventory, victim->actor, item, amount);
+    configure(game, entity->actor, item, qa_shared_inventory_table_count(inventory, entity->actor.id, item) + amount, 1000000);
+    qa_q1mpm_number(monster, "currentammo", qa_shared_inventory_table_count(inventory, entity->actor.id, item));
     const char *label_rerelease = NULL, *label_classic = NULL;
-    if (qa_q1mpm_str_eq(weapon, "supershotgun")) { label_rerelease = "$qc_gremlin_ssg"; label_classic = "Gremlin stole your Super Shotgun\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "nailgun")) { label_rerelease = "$qc_gremlin_ng"; label_classic = "Gremlin stole your Nailgun\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "supernailgun")) { label_rerelease = "$qc_gremlin_sng"; label_classic = "Gremlin stole your Super Nailgun\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "grenadelauncher")) { label_rerelease = "$qc_gremlin_gl"; label_classic = "Gremlin stole your Grenade Launcher\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "rocketlauncher")) { label_rerelease = "$qc_gremlin_rl"; label_classic = "Gremlin stole your Rocket Launcher\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "lightning")) { label_rerelease = "$qc_gremlin_lg"; label_classic = "Gremlin stole your Lightning Gun\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "hipnotic:laser")) { label_rerelease = "$qc_gremlin_lc"; label_classic = "Gremlin stole your Laser Cannon\n"; }
-    else if (qa_q1mpm_str_eq(weapon, "hipnotic:proximity")) { label_rerelease = "$qc_gremlin_prox"; label_classic = "Gremlin stole your Proximity Gun\n"; }
+    if (q1mpm_str_eq(weapon, "supershotgun")) { label_rerelease = "$qc_gremlin_ssg"; label_classic = "Gremlin stole your Super Shotgun\n"; }
+    else if (q1mpm_str_eq(weapon, "nailgun")) { label_rerelease = "$qc_gremlin_ng"; label_classic = "Gremlin stole your Nailgun\n"; }
+    else if (q1mpm_str_eq(weapon, "supernailgun")) { label_rerelease = "$qc_gremlin_sng"; label_classic = "Gremlin stole your Super Nailgun\n"; }
+    else if (q1mpm_str_eq(weapon, "grenadelauncher")) { label_rerelease = "$qc_gremlin_gl"; label_classic = "Gremlin stole your Grenade Launcher\n"; }
+    else if (q1mpm_str_eq(weapon, "rocketlauncher")) { label_rerelease = "$qc_gremlin_rl"; label_classic = "Gremlin stole your Rocket Launcher\n"; }
+    else if (q1mpm_str_eq(weapon, "lightning")) { label_rerelease = "$qc_gremlin_lg"; label_classic = "Gremlin stole your Lightning Gun\n"; }
+    else if (q1mpm_str_eq(weapon, "hipnotic:laser")) { label_rerelease = "$qc_gremlin_lc"; label_classic = "Gremlin stole your Laser Cannon\n"; }
+    else if (q1mpm_str_eq(weapon, "hipnotic:proximity")) { label_rerelease = "$qc_gremlin_prox"; label_classic = "Gremlin stole your Proximity Gun\n"; }
     if (label_rerelease != NULL)
-      game->message(game, QA_Q1MPM_SOME(victim->actor.id),
-                    qa_q1mpm_str_eq(game->options.edition, "rerelease") ? label_rerelease : label_classic, false);
+      qa_q1_message(game, &victim->actor.id,
+                    q1mpm_str_eq(game->options.edition, "rerelease") ? label_rerelease : label_classic, false, NULL, 0);
   }
-  game->select_weapon(game, victim->actor, game->choose_best(game, victim->actor));
+  (void)qa_q1_select_weapon(game, victim->actor, qa_q1_choose_best(game, victim->actor));
   qa_q1mpm_number(monster, "stoleweapon", 1);
-  monster->state.attack_finished = game->time;
-  qa_q1mpm_references_set(entity, "lastvictim",
-                          host->random(host->ctx) > 0.65 ? QA_Q1MPM_SOME(victim->actor.id)
-                                                         : QA_Q1MPM_SOME(entity->actor.id));
-  qa_q1mpm_opt_actor next = qa_q1mpm_gremlin_find_victim(monster);
-  if (next.has) {
-    qa_q1mpm_monster_found(monster, next.id);
-    monster->state.attack_finished = game->time;
-    monster->state.search_until = game->time + 1;
+  monster->base.state->attack_finished = game->time;
+  (void)qa_q1_actor_reference_set(entity, "lastvictim",
+                                  qa_q1_host_random(game) > 0.65 ? &victim->actor.id : &entity->actor.id);
+  qa_actor_id next;
+  if (qa_q1mpm_gremlin_find_victim(monster, &next)) {
+    qa_q1_base_monster_found(&monster->base, next);
+    monster->base.state->attack_finished = game->time;
+    monster->base.state->search_until = game->time + 1;
   }
   return true;
 }
+/* TS entity.fields.set(key, `${angles.x} ${angles.y} ${angles.z}`). */
+static void set_angles_field(qa_q1_actor *entity, const char *key, qa_vec3 angles) {
+  char x[40], y[40], z[40], text[128];
+  qa_net_js_number(angles.x, x, sizeof x);
+  qa_net_js_number(angles.y, y, sizeof y);
+  qa_net_js_number(angles.z, z, sizeof z);
+  snprintf(text, sizeof text, "%s %s %s", x, y, z);
+  (void)qa_q1_actor_field_set(entity, key, text);
+}
 static qa_vec3 aim(qa_q1mpm_mission_monster *monster, double spread) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   qa_vec3 target;
-  qa_vec3 target_or_zero = qa_q1mpm_monster_target(monster, &target) ? target : QA_Q1MPM_ZERO;
-  qa_vec3 direction = qa_q1mpm_normalize(qa_q1mpm_vsub(target_or_zero, qa_q1mpm_monster_origin(monster)));
-  qa_vec3 angles = qa_q1mpm_velocity_angles(direction);
-  char buf[96];
-  char fx[32], fy[32], fz[32];
-  qa_q1mpm_format_number(fx, sizeof(fx), angles.x);
-  qa_q1mpm_format_number(fy, sizeof(fy), angles.y);
-  qa_q1mpm_format_number(fz, sizeof(fz), angles.z);
-  snprintf(buf, sizeof(buf), "%s %s %s", fx, fy, fz);
-  qa_q1mpm_fields_set(entity, "v_angle", buf);
-  qa_q1mpm_basis basis = game->make_vectors(game, angles);
-  const qa_q1mpm_host *host = game->host;
-  return qa_q1mpm_normalize(qa_q1mpm_vadd(
-      qa_q1mpm_vadd(direction, qa_q1mpm_vscale(basis.right, (host->random(host->ctx) * 2 - 1) * spread)),
-      qa_q1mpm_vscale(game->basis.up, (host->random(host->ctx) * 2 - 1) * spread)));
+  qa_vec3 target_or_zero = qa_q1_base_monster_target(&monster->base, &target) ? target : QA_Q1_ZERO;
+  qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(target_or_zero, qa_q1_base_monster_origin(&monster->base)));
+  const qa_vec3 angles = qa_q1mp_velocity_angles(direction);
+  set_angles_field(entity, "v_angle", angles);
+  const qa_q1_basis basis = qa_q1_make_vectors(game, angles);
+  const qa_vec3 right = qa_q1_vadd(direction, qa_q1_vscale(basis.right, (qa_q1_host_random(game) * 2 - 1) * spread));
+  return qa_q1_normalize(qa_q1_vadd(right, qa_q1_vscale(game->basis.up, (qa_q1_host_random(game) * 2 - 1) * spread)));
 }
 void qa_q1mpm_gremlin_fire_nail(qa_q1mpm_mission_monster *monster) {
   ammo(monster, "q1:ammo/nails", 1);
-  monster->entity->effects |= 2;
-  monster->game->sound(monster->game, monster->entity, "weapons/rocket1i.wav", QA_Q1MPM_CH("weapon"), 1, 1);
+  monster->base.entity->effects = qa_js_bit_or(monster->base.entity->effects, 2);
+  qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "weapons/rocket1i.wav", "weapon", 1, 1);
   qa_vec3 direction = aim(monster, 0.1);
-  qa_q1mpm_ext_launch_spike(monster->game, QA_Q1MPM_SOME(monster->entity->actor.id),
-                            qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster), QA_Q1MPM_V3(0, 0, 16)),
-                            qa_q1mpm_vscale(direction, 1000));
+  (void)qa_q1_launch_spike(monster->base.game, &monster->base.entity->actor.id,
+                           qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, 16}),
+                           qa_q1_vscale(direction, 1000), "spike");
 }
 void qa_q1mpm_gremlin_fire_laser(qa_q1mpm_mission_monster *monster) {
   ammo(monster, "q1:ammo/cells", 1);
-  monster->entity->effects |= 2;
-  monster->game->sound(monster->game, monster->entity, "weapons/rocket1i.wav", QA_Q1MPM_CH("weapon"), 1, 1);
+  monster->base.entity->effects = qa_js_bit_or(monster->base.entity->effects, 2);
+  qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "weapons/rocket1i.wav", "weapon", 1, 1);
   qa_vec3 direction = aim(monster, 0.1);
-  qa_q1mpm_ext_launch_hipnotic_laser(monster->game, monster->entity->actor.id,
-                                     qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster), QA_Q1MPM_V3(0, 0, 16)),
-                                     direction, false);
+  (void)qa_q1mp_launch_hipnotic_laser(monster->base.game, monster->base.entity->actor.id,
+                                      qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, 16}),
+                                      direction, false, NULL);
 }
 static void shotgun(qa_q1mpm_mission_monster *monster, bool is_double) {
   ammo(monster, "q1:ammo/shells", is_double ? 2 : 1);
-  monster->entity->effects |= 2;
-  monster->game->sound(monster->game, monster->entity, is_double ? "weapons/shotgn2.wav" : "weapons/guncock.wav",
-                        QA_Q1MPM_CH("weapon"), 1, 1);
+  monster->base.entity->effects = qa_js_bit_or(monster->base.entity->effects, 2);
+  qa_q1_sound(monster->base.game, monster->base.entity->actor.id, is_double ? "weapons/shotgn2.wav" : "weapons/guncock.wav", "weapon", 1, 1);
   qa_vec3 direction = aim(monster, is_double ? 0.3 : 0.1);
-  qa_vec3 angles = qa_q1mpm_velocity_angles(direction);
-  char buf[96];
-  char fx[32], fy[32], fz[32];
-  qa_q1mpm_format_number(fx, sizeof(fx), angles.x);
-  qa_q1mpm_format_number(fy, sizeof(fy), angles.y);
-  qa_q1mpm_format_number(fz, sizeof(fz), angles.z);
-  snprintf(buf, sizeof(buf), "%s %s %s", fx, fy, fz);
-  qa_q1mpm_fields_set(monster->entity, "v_angle", buf);
-  qa_q1mpm_ext_fire_bullets(monster->game, monster->entity->actor, direction, angles, is_double ? 14 : 6,
+  const qa_vec3 angles = qa_q1mp_velocity_angles(direction);
+  set_angles_field(monster->base.entity, "v_angle", angles);
+  qa_q1_fire_bullets(monster->base.game, monster->base.entity->actor, direction, angles, is_double ? 14 : 6,
                             is_double ? 0.14 : 0.04, is_double ? 0.08 : 0.04,
                             is_double ? "supershotgun" : "shotgun");
 }
 static void rocket(qa_q1mpm_mission_monster *monster) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   ammo(monster, "q1:ammo/rockets", 1);
-  entity->effects |= 2;
-  game->sound(game, entity, "weapons/sgun1.wav", QA_Q1MPM_CH("weapon"), 1, 1);
-  qa_q1mpm_fields_set(entity, "punchangle", "-2 0 0");
+  entity->effects = qa_js_bit_or(entity->effects, 2);
+  qa_q1_sound(game, entity->actor.id, "weapons/sgun1.wav", "weapon", 1, 1);
+  (void)qa_q1_actor_field_set(entity, "punchangle", "-2 0 0");
   qa_vec3 direction = aim(monster, 0.1);
-  qa_vec3 origin = qa_q1mpm_vadd(qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster),
-                                               qa_q1mpm_vscale(game->basis.forward, 8)),
-                                 QA_Q1MPM_V3(0, 0, 16));
-  qa_q1mpm_actor *shot = qa_q1mpm_missile(game, entity->actor.id, "missile", "progs/missile.mdl", origin,
-                                          qa_q1mpm_vscale(direction, 1000), "projectile_touch", 5);
+  qa_vec3 origin = qa_q1_vadd(qa_q1_vadd(qa_q1_base_monster_origin(&monster->base),
+                                               qa_q1_vscale(game->basis.forward, 8)),
+                                 (qa_vec3){0, 0, 16});
+  qa_q1_actor *shot = qa_q1mpm_missile(game, entity->actor.id, "missile", "progs/missile.mdl", origin,
+                                          qa_q1_vscale(direction, 1000), "projectile_touch", 5);
   shot->projectile = "rocket";
   shot->projectile_weapon = "rocketlauncher";
-  qa_q1mpm_body_patch patch = {0};
+  qa_q1_body_patch patch = {0};
   patch.has_angles = true;
-  patch.angles = qa_q1mpm_velocity_angles(game->body(game, shot).velocity);
-  game->set_body(game, shot, &patch);
+  patch.angles = qa_q1mp_velocity_angles(qa_q1_get_body(game, shot).velocity);
+  qa_q1_set_body(game, shot, &patch);
 }
 void qa_q1mpm_gremlin_fire_lightning(qa_q1mpm_mission_monster *monster) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  const qa_q1mpm_host *host = game->host;
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   if (entity->water_type <= -3) {
-    double cells = host->inventory_count(host->ctx, entity->actor.id, "q1:ammo/cells");
+    const double cells = qa_shared_inventory_table_count(game->host.inventory, entity->actor.id, "q1:ammo/cells");
     configure(game, entity->actor, "q1:ammo/cells", 0, 1000000);
-    qa_q1mpm_opt_actor ignore = game->world == NULL ? QA_Q1MPM_NONE : QA_Q1MPM_SOME(game->world->actor.id);
-    game->radius_damage(game, entity->actor.id, QA_Q1MPM_SOME(entity->actor.id), 35 * cells, ignore, "lightning", "discharge");
+    qa_q1_radius_damage(game, entity->actor.id, &entity->actor.id, 35 * cells,
+                        game->world == NULL ? NULL : &game->world->actor.id, "lightning", "discharge");
     return;
   }
-  entity->effects |= 2;
-  qa_q1mpm_monster_face(monster);
+  entity->effects = qa_js_bit_or(entity->effects, 2);
+  qa_q1_base_monster_face(&monster->base);
   ammo(monster, "q1:ammo/cells", 2);
-  qa_vec3 origin = qa_q1mpm_monster_origin(monster);
-  qa_vec3 start = qa_q1mpm_vadd(origin, QA_Q1MPM_V3(0, 0, 16));
-  qa_vec3 direction = aim(monster, 0.1);
-  qa_q1mpm_trace_request wall_request = {start, qa_q1mpm_vadd(origin, qa_q1mpm_vscale(direction, 600)),
-                                         QA_Q1MPM_POINT, QA_Q1MPM_SOME(entity->actor.id), false, false};
-  qa_q1mpm_trace wall = host->trace(host->ctx, &wall_request);
-  qa_q1mpm_event beam = {0};
+  const qa_vec3 start = qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, 16});
+  const qa_vec3 direction = aim(monster, 0.1);
+  const qa_q1_trace wall = q1mpm_trace(game, start, qa_q1_vadd(qa_q1_base_monster_origin(&monster->base),
+                                                               qa_q1_vscale(direction, 600)),
+                                       QA_Q1_POINT, &entity->actor.id, false);
+  qa_q1_event beam;
+  memset(&beam, 0, sizeof beam);
   beam.kind = "beam";
-  beam.style = "lightning2";
-  beam.actor = QA_Q1MPM_SOME(entity->actor.id);
+  beam.beam_style = "lightning2";
+  beam.has_actor = true;
+  beam.actor = entity->actor.id;
   beam.start = start;
   beam.end = wall.end;
-  host->emit(host->ctx, &beam);
-  qa_vec3 end = qa_q1mpm_vadd(wall.end, qa_q1mpm_vscale(direction, 4));
-  qa_vec3 delta = qa_q1mpm_vsub(end, start);
+  game->host.emit(game->host.ctx, beam);
+  qa_vec3 end = qa_q1_vadd(wall.end, qa_q1_vscale(direction, 4));
+  qa_vec3 delta = qa_q1_vsub(end, start);
   qa_vec3 side = {-delta.y * 16, -delta.y * 16, 0};
   qa_vec3 offsets[3];
-  offsets[0] = QA_Q1MPM_ZERO;
+  offsets[0] = QA_Q1_ZERO;
   offsets[1] = side;
-  offsets[2] = qa_q1mpm_vscale(side, -1);
+  offsets[2] = qa_q1_vscale(side, -1);
   qa_actor_id hit[3];
   size_t hit_count = 0;
   for (int i = 0; i < 3; i++) {
-    qa_q1mpm_trace_request request = {qa_q1mpm_vadd(start, offsets[i]), qa_q1mpm_vadd(end, offsets[i]),
-                                      QA_Q1MPM_POINT, QA_Q1MPM_SOME(entity->actor.id), true, false};
-    qa_q1mpm_trace trace = host->trace(host->ctx, &request);
-    if (!trace.actor.has) continue;
+    const qa_q1_trace trace = q1mpm_trace(game, qa_q1_vadd(start, offsets[i]), qa_q1_vadd(end, offsets[i]), QA_Q1_POINT,
+                                          &entity->actor.id, true);
+    if (!trace.has_actor) continue;
+    const qa_actor_id target = trace.actor;
     bool seen = false;
-    for (size_t j = 0; j < hit_count; j++) if (qa_same_actor(hit[j], trace.actor.id)) seen = true;
+    for (size_t j = 0; j < hit_count; j++) if (qa_same_actor(hit[j], target)) seen = true;
     if (seen) continue;
-    hit[hit_count++] = trace.actor.id;
-    qa_q1mpm_combat_read combat;
-    if (host->combat_read(host->ctx, trace.actor.id, &combat) && combat.can_take_damage) {
-      game->effect(game, "blood", trace.end, trace.actor, 120);
-      game->damage(game, trace.actor.id, entity->actor.id, QA_Q1MPM_SOME(entity->actor.id), 30,
-                   "lightning", "direct", "electric");
+    hit[hit_count++] = target;
+    if (q1mpm_can_take_damage(game, target)) {
+      qa_q1_event particles;
+      memset(&particles, 0, sizeof particles);
+      particles.kind = "particles";
+      particles.has_origin = true;
+      particles.origin = trace.end;
+      particles.direction = (qa_vec3){0, 0, 100};
+      particles.color = 225;
+      particles.count = 120;
+      game->host.emit(game->host.ctx, particles);
+      (void)qa_q1_damage(game, target, entity->actor.id, &entity->actor.id, 30, "lightning", "direct", "electric", NULL);
     }
   }
 }
 static void proximity(qa_q1mpm_mission_monster *monster) {
   ammo(monster, "q1:ammo/rockets", 1);
-  monster->game->sound(monster->game, monster->entity, "weapons/grenade.wav", QA_Q1MPM_CH("weapon"), 1, 1);
+  qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "weapons/grenade.wav", "weapon", 1, 1);
   qa_vec3 direction = aim(monster, 0.1);
-  qa_vec3 velocity = qa_q1mpm_vscale(direction, 600);
+  qa_vec3 velocity = qa_q1_vscale(direction, 600);
   velocity.z = 200;
-  qa_q1mpm_ext_launch_hipnotic_proximity(monster->game, monster->entity->actor.id,
-                                         qa_q1mpm_monster_origin(monster), velocity);
+  (void)qa_q1mp_launch_hipnotic_proximity(monster->base.game, monster->base.entity->actor.id,
+                                          qa_q1_base_monster_origin(&monster->base), velocity);
 }
 bool qa_q1mpm_gremlin_weapon_attack(qa_q1mpm_mission_monster *monster) {
   if (!qa_q1mpm_gremlin_has_ammo(monster)) return false;
-  qa_q1mpm_number(monster, "show_hostile", monster->game->time + 1);
+  qa_q1mpm_number(monster, "show_hostile", monster->base.game->time + 1);
   const char *weapon = qa_q1mpm_gremlin_weapon(monster);
-  if (qa_q1mpm_str_eq(weapon, "shotgun")) {
-    qa_q1mpm_monster_play(monster, "gremlin_shot1");
+  if (q1mpm_str_eq(weapon, "shotgun")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_shot1");
     shotgun(monster, false);
-    qa_q1mpm_monster_attack_finished(monster, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "supershotgun")) {
-    qa_q1mpm_monster_play(monster, "gremlin_shot1");
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+  } else if (q1mpm_str_eq(weapon, "supershotgun")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_shot1");
     shotgun(monster, true);
-    qa_q1mpm_monster_attack_finished(monster, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "nailgun") || qa_q1mpm_str_eq(weapon, "supernailgun")) {
-    qa_q1mpm_monster_play(monster, "gremlin_nail3");
-    qa_q1mpm_monster_attack_finished(monster, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "grenadelauncher")) {
-    qa_q1mpm_monster_play(monster, "gremlin_rocket1");
-    qa_q1mpm_ext_launch_ogre_grenade(monster);
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+  } else if (q1mpm_str_eq(weapon, "nailgun") || q1mpm_str_eq(weapon, "supernailgun")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_nail3");
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+  } else if (q1mpm_str_eq(weapon, "grenadelauncher")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_rocket1");
+    qa_q1_launch_ogre_grenade(&monster->base);
     ammo(monster, "q1:ammo/rockets", 1);
-    qa_q1mpm_monster_attack_finished(monster, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "rocketlauncher")) {
-    qa_q1mpm_monster_play(monster, "gremlin_rocket1");
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+  } else if (q1mpm_str_eq(weapon, "rocketlauncher")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_rocket1");
     rocket(monster);
-    qa_q1mpm_monster_attack_finished(monster, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "lightning")) {
-    qa_q1mpm_monster_play(monster, "gremlin_light1");
-    qa_q1mpm_monster_attack_finished(monster, 1);
-    monster->game->sound(monster->game, monster->entity, "weapons/lstart.wav", QA_Q1MPM_CH("auto"), 1, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "hipnotic:laser")) {
-    qa_q1mpm_monster_play(monster, "gremlin_laser3");
-    qa_q1mpm_monster_attack_finished(monster, 1);
-  } else if (qa_q1mpm_str_eq(weapon, "hipnotic:proximity")) {
-    qa_q1mpm_monster_play(monster, "gremlin_rocket1");
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+  } else if (q1mpm_str_eq(weapon, "lightning")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_light1");
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+    qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "weapons/lstart.wav", "auto", 1, 1);
+  } else if (q1mpm_str_eq(weapon, "hipnotic:laser")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_laser3");
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
+  } else if (q1mpm_str_eq(weapon, "hipnotic:proximity")) {
+    qa_q1_base_monster_play(&monster->base, "gremlin_rocket1");
     proximity(monster);
-    qa_q1mpm_monster_attack_finished(monster, 1);
+    qa_q1_base_monster_attack_finished(&monster->base, 1);
   }
   return true;
 }
 void qa_q1mpm_gremlin_drop_backpack(qa_q1mpm_mission_monster *monster) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  const qa_q1mpm_host *host = game->host;
-  qa_q1mpm_actor *pack = game->create(game, "item_backpack");
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  qa_shared_inventory_table *inventory = game->host.inventory;
+  qa_q1_actor *pack = qa_q1_create(game, "item_backpack", NULL, NULL);
   const char *selected = NULL;
-  for (size_t i = 0; i < sizeof(weapons) / sizeof(weapons[0]); i++) {
-    if (host->inventory_count(host->ctx, entity->actor.id, game->weapon_item(game, weapons[i])) > 0) {
+  for (size_t i = 0; i < sizeof weapons / sizeof weapons[0] && selected == NULL; i++)
+    if (qa_shared_inventory_table_count(inventory, entity->actor.id, qa_q1_services_weapon_item(game, weapons[i])) > 0)
       selected = weapons[i];
-      break;
-    }
-  }
-  monster->runtime->base->backpacks_set(
-      monster->runtime->base->ctx, pack->actor, selected, NULL, 0,
-      fmax(0, host->inventory_count(host->ctx, entity->actor.id, "q1:ammo/shells")),
-      fmax(0, host->inventory_count(host->ctx, entity->actor.id, "q1:ammo/nails")),
-      fmax(0, host->inventory_count(host->ctx, entity->actor.id, "q1:ammo/rockets")),
-      fmax(0, host->inventory_count(host->ctx, entity->actor.id, "q1:ammo/cells")));
-  snprintf(pack->model, sizeof(pack->model), "%s", "progs/backpack.mdl");
+  qa_q1_backpack_contents contents;
+  memset(&contents, 0, sizeof contents);
+  contents.weapon = selected;
+  contents.has_extra = true; /* TS extra: [] */
+  contents.shells = qa_js_max(0, qa_shared_inventory_table_count(inventory, entity->actor.id, "q1:ammo/shells"));
+  contents.nails = qa_js_max(0, qa_shared_inventory_table_count(inventory, entity->actor.id, "q1:ammo/nails"));
+  contents.rockets = qa_js_max(0, qa_shared_inventory_table_count(inventory, entity->actor.id, "q1:ammo/rockets"));
+  contents.cells = qa_js_max(0, qa_shared_inventory_table_count(inventory, entity->actor.id, "q1:ammo/cells"));
+  qa_q1_creatures_backpacks_set(qa_q1_base_creatures(monster->runtime->base), pack->actor, &contents);
+  q1mpm_set_text(&pack->model, "progs/backpack.mdl");
   pack->solid = "trigger";
   pack->movement = "toss";
   pack->movement_flags = 256;
-  qa_q1mpm_body_patch patch = {0};
+  const double x = -100 + qa_q1_host_random(game) * 200;
+  const double y = -100 + qa_q1_host_random(game) * 200;
+  qa_q1_body_patch patch = {0};
   patch.has_origin = true;
-  patch.origin = qa_q1mpm_vadd(qa_q1mpm_monster_origin(monster), QA_Q1MPM_V3(0, 0, -24));
+  patch.origin = qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, -24});
   patch.has_velocity = true;
-  patch.velocity = QA_Q1MPM_V3(-100 + host->random(host->ctx) * 200, -100 + host->random(host->ctx) * 200, 300);
+  patch.velocity = (qa_vec3){x, y, 300};
   patch.has_bounds = true;
   patch.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
-  game->set_body(game, pack, &patch);
-  pack->touch = game->named.touch(game->named.ctx, pack, "base:backpack_touch");
-  game->schedule(game, pack, 120, game->named.action(game->named.ctx, pack, "SUB_Remove"));
-  game->link(game, pack);
+  qa_q1_set_body(game, pack, &patch);
+  pack->touch = qa_q1_callback_registry_touch(game->named, pack, "base:backpack_touch");
+  qa_q1_schedule(game, pack, 120, qa_q1_callback_registry_action(game->named, pack, "SUB_Remove"));
+  qa_q1_link(game, pack);
 }

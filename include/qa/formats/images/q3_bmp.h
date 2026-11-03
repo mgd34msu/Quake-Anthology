@@ -1,8 +1,8 @@
 /*
  * Port of src/formats/images/q3-bmp.ts (Q3 LoadBMP profile). The TS
  * decodeBmp here becomes qa_decode_q3_bmp (qa_decode_bmp is the
- * format-oriented reader in bmp.h). BmpDropError aborts printing
- * "BmpDropError: <message>" (the TS Error string form). C
+ * format-oriented reader in bmp.h). BmpDropError is qa_raise with name
+ * "BmpDropError" (catchable with qa_try, as the TS throw is). C
  * accommodations: byte inputs are pointer+length; `source` NULL means
  * "<buffer>". Returns 0 only on allocation failure.
  * GPL-2.0-or-later.

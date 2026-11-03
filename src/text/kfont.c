@@ -6,28 +6,12 @@
 #include <string.h>
 
 #include "qa/core/common_parse.h"
+#include "qa/foundation/js.h"
 
 /* JS parseInt(text, 10): leading whitespace, a sign, then digits;
  * NaN when no digit is present. */
-static double js_parse_int(const char *text) {
-  const unsigned char *p = (const unsigned char *)(text != NULL ? text : "");
-  while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\v' || *p == '\f' ||
-         *p == '\r') {
-    p++;
-  }
-  bool negative = false;
-  if (*p == '+' || *p == '-') {
-    negative = *p == '-';
-    p++;
-  }
-  if (*p < '0' || *p > '9') return NAN;
-  double value = 0;
-  while (*p >= '0' && *p <= '9') {
-    value = value * 10 + (double)(*p - '0');
-    p++;
-  }
-  return negative ? -value : value;
-}
+/* parseInt(text, 10); parseInt(undefined) reads "undefined", which is NaN. */
+static double js_parse_int(const char *text) { return qa_js_parse_int(text != NULL ? text : "", 10); }
 
 static char *next_token(qa_legacy_parse_state *state) {
   char *token = qa_parse_q2_token(state, QA_Q2_TOKEN_MAX);
@@ -185,46 +169,3 @@ const qa_kfont_char *qa_kfont_glyph(const qa_kfont *font, double codepoint) {
   return ch;
 }
 
-bool qa_kfont_has_glyph(const qa_kfont *font, double codepoint) {
-  return qa_kfont_glyph(font, codepoint) != NULL;
-}
-
-const qa_kfont_char *qa_ttf_kfont_lookup(const qa_ttf_kfont *font,
-                                         double codepoint) {
-  const qa_kfont_char *ch = map_get(font->chars, font->char_count, codepoint);
-  if (ch == NULL || ch->w == 0 || isnan(ch->w)) return NULL;
-  return ch;
-}
-
-bool qa_kfont_from_ttf(const qa_font_atlas *atlas, const char *pic,
-                       qa_ttf_kfont *out) {
-  memset(out, 0, sizeof *out);
-  size_t capacity = 0;
-  for (size_t i = 0; i < atlas->glyph_count; i++) {
-    const qa_atlas_rect *rect = &atlas->glyphs[i];
-    qa_kfont_char glyph = {(double)rect->x, (double)rect->y, (double)rect->w,
-                           (double)rect->h, true, rect->color};
-    if (!map_set(&out->chars, &out->char_count, &capacity,
-                 (double)atlas->codepoints[i], glyph)) {
-      qa_ttf_kfont_destroy(out);
-      return false;
-    }
-  }
-  if (pic != NULL) {
-    size_t length = strlen(pic);
-    out->pic = (char *)malloc(length + 1);
-    if (out->pic == NULL) {
-      qa_ttf_kfont_destroy(out);
-      return false;
-    }
-    memcpy(out->pic, pic, length + 1);
-  }
-  out->line_height = (double)atlas->line_height;
-  return true;
-}
-
-void qa_ttf_kfont_destroy(qa_ttf_kfont *font) {
-  free(font->pic);
-  free(font->chars);
-  memset(font, 0, sizeof *font);
-}

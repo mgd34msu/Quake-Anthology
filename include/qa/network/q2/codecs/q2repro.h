@@ -46,13 +46,13 @@ void qa_q2repro_context_init(qa_q2repro_context *ctx, qa_q2_sizebuf *net_message
 /* TS context helpers. */
 double qa_q2repro_combine_bits(double lo, double hi);
 bool qa_q2repro_bits_has_hi(double bits, double hi_flag);
-int32_t qa_q2repro_encode_alpha(double x);
+double qa_q2repro_encode_alpha(double x);
 double qa_q2repro_decode_alpha(double b);
-int32_t qa_q2repro_encode_scale(double x);
+double qa_q2repro_encode_scale(double x);
 double qa_q2repro_decode_scale(double b);
-int32_t qa_q2repro_encode_loop_volume(double x);
+double qa_q2repro_encode_loop_volume(double x);
 double qa_q2repro_decode_loop_volume(double b);
-int32_t qa_q2repro_encode_loop_attenuation(double x);
+double qa_q2repro_encode_loop_attenuation(double x);
 double qa_q2repro_decode_loop_attenuation(double b);
 int32_t qa_q2repro_pm_float_to_short(double f);
 void qa_q2repro_write_entity_bits_wide(qa_q2_sizebuf *msg, uint32_t lo0, uint32_t hi,

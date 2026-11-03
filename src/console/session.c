@@ -1,6 +1,7 @@
 /* Port of src/console/session.ts. GPL-2.0-or-later. */
 #include "qa/console/session.h"
 
+#include "qa/foundation/support.h"
 #include <stdarg.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
@@ -8,6 +9,8 @@
 #include <string.h>
 
 #include "qa/core/commands/text.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 /* KeyCode values from src/input/key-codes.ts (input module pending). */
 enum {
@@ -29,13 +32,12 @@ enum {
 
 /* TS plain `throw new Error(msg)`: same message, then abort. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_text(const char *text) {
@@ -43,6 +45,44 @@ static char *dup_text(const char *text) {
   char *out = (char *)malloc(length + 1);
   if (out != NULL) memcpy(out, text, length + 1);
   return out;
+}
+
+static char *copy_text(const char *text) {
+  if (text == NULL) return NULL;
+  char *out = dup_text(text);
+  if (out == NULL) qa_range_error("Out of memory");
+  return out;
+}
+
+static char **copy_texts(char *const *texts, size_t count) {
+  if (texts == NULL) return NULL;
+  char **out = (char **)calloc(count == 0 ? 1 : count, sizeof *out);
+  if (out == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < count; i++) out[i] = copy_text(texts[i]);
+  return out;
+}
+
+/* Deep copy, freed with qa_console_discovery_entries_free(entry, 1). */
+static qa_console_discovery_entry *copy_entry(const qa_console_discovery_entry *entry) {
+  qa_console_discovery_entry *out = (qa_console_discovery_entry *)malloc(sizeof *out);
+  if (out == NULL) qa_range_error("Out of memory");
+  *out = *entry;
+  out->name = copy_text(entry->name);
+  out->summary = copy_text(entry->summary);
+  out->usage = copy_text(entry->usage);
+  out->examples = copy_texts(entry->examples, entry->example_count);
+  out->allowed_values = copy_texts(entry->allowed_values, entry->allowed_value_count);
+  out->value = copy_text(entry->value);
+  out->reset_value = copy_text(entry->reset_value);
+  out->latched_value = copy_text(entry->latched_value);
+  return out;
+}
+
+static void clear_selected_entry(qa_seat_console *console) {
+  if (console->selected_entry != NULL) qa_console_discovery_entries_free(console->selected_entry, 1);
+  console->selected_entry = NULL;
+  free(console->selected_entry_name);
+  console->selected_entry_name = NULL;
 }
 
 static bool key_held(const qa_seat_console *console, double code) {
@@ -111,31 +151,38 @@ void qa_seat_console_destroy(qa_seat_console *console) {
   qa_console_buffer_destroy(&console->buffer);
   free(console->keys);
   staged_clear(console);
+  clear_selected_entry(console);
   memset(console, 0, sizeof *console);
 }
 
 qa_console_discovery_entry *qa_seat_console_selected_completion_entry(qa_seat_console *console) {
   const char *selected = qa_console_field_selected_completion(&console->field);
-  if (selected == NULL) return NULL;
-  size_t count = 0;
-  qa_console_discovery_entry *entries =
-      qa_query_console_entries(console->options.commands, &console->options.context, &count);
-  for (size_t i = 0; i < count; i++) {
-    if (strcmp(entries[i].name, selected) == 0) {
-      qa_console_discovery_entry *found =
-          (qa_console_discovery_entry *)malloc(sizeof *found);
-      if (found == NULL) {
-        qa_console_discovery_entries_free(entries, count);
-        return NULL; /* OOM only */
-      }
-      *found = entries[i];
-      memset(&entries[i], 0, sizeof entries[i]);
-      qa_console_discovery_entries_free(entries, count);
-      return found;
-    }
+  if (selected == NULL) {
+    clear_selected_entry(console);
+    return NULL;
   }
-  qa_console_discovery_entries_free(entries, count);
-  return NULL;
+  /* TS caches the lookup per selected name (selectedEntry); the C API still
+   * hands the caller its own copy. */
+  if (console->selected_entry_name == NULL || strcmp(console->selected_entry_name, selected) != 0) {
+    clear_selected_entry(console);
+    console->selected_entry_name = copy_text(selected);
+    size_t count = 0;
+    qa_console_discovery_entry *entries =
+        qa_query_console_entries(console->options.commands, &console->options.context, &count);
+    for (size_t i = 0; i < count; i++) {
+      if (strcmp(entries[i].name, selected) == 0) {
+        qa_console_discovery_entry *found =
+            (qa_console_discovery_entry *)malloc(sizeof *found);
+        if (found == NULL) qa_range_error("Out of memory");
+        *found = entries[i];
+        memset(&entries[i], 0, sizeof entries[i]);
+        console->selected_entry = found;
+        break;
+      }
+    }
+    qa_console_discovery_entries_free(entries, count);
+  }
+  return console->selected_entry == NULL ? NULL : copy_entry(console->selected_entry);
 }
 
 void qa_seat_console_publish(qa_seat_console *console, qa_seat_input_focus focus) {
@@ -260,8 +307,11 @@ void qa_seat_console_submit(qa_seat_console *console) {
     qa_seat_console_print(console, echo);
     free(echo);
   }
+  /* text.trimStart(): JS white space and line terminators. */
   const char *command_text = text;
-  while (*command_text == ' ' || (*command_text >= '\t' && *command_text <= '\r')) command_text++;
+  for (size_t skip = qa_js_white_space_length(command_text); skip != 0;
+       skip = qa_js_white_space_length(command_text))
+    command_text += skip;
   bool explicit = command_text[0] == '/' || command_text[0] == '\\';
   const char *body = explicit ? command_text + 1 : command_text;
   qa_command_tokens tokens;
@@ -272,15 +322,10 @@ void qa_seat_console_submit(qa_seat_console *console) {
   size_t entry_count = 0;
   qa_console_discovery_entry *entries = qa_query_console_entries(
       console->options.commands, &console->options.context, &entry_count);
-  char *folded_first = qa_ascii_fold(first);
+  /* entry.name.toLowerCase() === first.toLowerCase() */
   bool known = false;
-  for (size_t i = 0; i < entry_count && !known; i++) {
-    char *folded_name = qa_ascii_fold(entries[i].name);
-    known = folded_first != NULL && folded_name != NULL &&
-            strcmp(folded_name, folded_first) == 0;
-    free(folded_name);
-  }
-  free(folded_first);
+  for (size_t i = 0; i < entry_count && !known; i++)
+    known = qa_js_equals_ignore_case(entries[i].name, first);
   qa_console_discovery_entries_free(entries, entry_count);
   if (have_tokens) qa_command_tokens_destroy(&tokens);
   bool chat = console->options.connected(console->options.connected_ctx) &&
@@ -372,11 +417,10 @@ bool qa_seat_console_input(qa_seat_console *console, const qa_seat_input_event *
       size_t entry_count = 0;
       qa_console_discovery_entry *entries = qa_query_console_entries(
           console->options.commands, &console->options.context, &entry_count);
-      const char **names = entry_count == 0
-                               ? NULL
-                               : (const char **)malloc(entry_count * sizeof *names);
+      const char **names = (const char **)malloc((entry_count == 0 ? 1 : entry_count) * sizeof *names);
       if (names != NULL) {
         for (size_t i = 0; i < entry_count; i++) names[i] = entries[i].name;
+        /* An empty name list still advances a live completion cycle. */
         qa_console_field_complete(field, names, entry_count, shift);
         free(names);
       }

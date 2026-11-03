@@ -10,6 +10,7 @@
 #include "qa/input/support.h"
 #include "qa/network/q2/handshake.h"
 #include "qa/persistence/value.h"
+#include "qa/network/common/js_number.h"
 
 static bool cvar_exists_(qa_cvar_registry *r, const char *name) {
   qa_cvar_read out; memset(&out, 0, sizeof out);
@@ -305,7 +306,7 @@ bool qa_app_server_operator_filter_command(qa_app_server_operator_state *s, qa_a
   }
   if (strcmp(name, "writeip") == 0) {
     const char *prefix = is_q2(host.dialect) ? "sv " : "";
-    snprintf(buf, sizeof buf, "set filterban %.0f\n", trunc(qa_cvar_registry_variable_value(host.cvars, "filterban")));
+    snprintf(buf, sizeof buf, "set filterban %s\n", QA_JS_NUMBER(trunc(qa_cvar_registry_variable_value(host.cvars, "filterban"))));
     char *text = xdup(buf);
     size_t n = 0; qa_ipv4_filter *snap = qa_ip_filter_list_snapshot(&s->filters, &n);
     for (size_t i = 0; i < n; i++) { char fb[64]; filter_text(snap[i], fb, sizeof fb); append_str(&text, prefix); append_str(&text, "addip "); append_str(&text, fb); append_str(&text, "\n"); }
@@ -483,4 +484,12 @@ qa_server_administration qa_app_source_server_administration(const qa_app_source
   a->options = *options;
   qa_server_administration admin = {a, admin_password, admin_execute, admin_rejects, admin_masters, admin_record};
   return admin;
+}
+void qa_app_source_server_administration_destroy(qa_server_administration *administration) {
+  if (administration == NULL || administration->ctx == NULL) return;
+  admin_ctx *a = administration->ctx;
+  free(a->password);
+  free_masters(a->masters, a->master_count);
+  free(a);
+  administration->ctx = NULL;
 }

@@ -1,0 +1,29 @@
+mount:tools:fixture <root>
+[
+  {
+    "requestedPath": "view.camera",
+    "provenance": {
+      "kind": "loose",
+      "mount": {
+        "kind": "loose",
+        "identity": {
+          "id": "mount:tools:fixture",
+          "content": "q3:classic:base:fixture",
+          "generation": 0
+        },
+        "rootPath": "<root>"
+      },
+      "memberPath": "view.camera"
+    },
+    "digest": "sha256:2550efd2faa6bfde1d9a23212077721b45f966a710034a3f113e0b0ff274fb5f",
+    "byteLength": 85,
+    "resolution": {
+      "kind": "default-order",
+      "plan": "mount-plan:tools:fixture",
+      "rank": 0
+    },
+    "id": "resource:q3:classic:base:fixture:mount:tools:fixture:0:<eroot>:view.camera:sha256:2550efd2faa6bfde1d9a23212077721b45f966a710034a3f113e0b0ff274fb5f:mount-plan:tools:fixture:default:0"
+  }
+]
+view.camera
+1 files

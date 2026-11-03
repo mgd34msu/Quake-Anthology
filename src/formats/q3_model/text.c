@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-model/text.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_model/text.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -8,6 +9,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t size) {
   void *p = malloc(size == 0 ? 1 : size);
@@ -15,9 +17,28 @@ static void *xmalloc(size_t size) {
   return p;
 }
 
+/* TS throws a catchable ModelTextError; model loaders recover from it. */
 noreturn void qa_model_text_error(const char *source, size_t offset, const char *message) {
-  fprintf(stderr, "ModelTextError: %s:%zu: %s\n", source, offset, message);
-  abort();
+  qa_raise("ModelTextError", 0, (long long)offset, "%s:%zu: %s", source, offset, message);
+}
+
+/* JSON.stringify of a token for the expect/number messages. */
+static void json_quote(const char *text, char *out, size_t capacity) {
+  size_t w = 0;
+  out[w++] = '"';
+  for (const unsigned char *p = (const unsigned char *)text; *p != 0 && w + 8 < capacity; p++) {
+    const char *escape = *p == '"' ? "\\\"" : *p == '\\' ? "\\\\" : *p == '\b' ? "\\b" : *p == '\f' ? "\\f"
+                         : *p == '\n' ? "\\n" : *p == '\r' ? "\\r" : *p == '\t' ? "\\t" : NULL;
+    if (escape != NULL) {
+      w += (size_t)snprintf(out + w, capacity - w, "%s", escape);
+    } else if (*p < 0x20) {
+      w += (size_t)snprintf(out + w, capacity - w, "\\u%04x", *p);
+    } else {
+      out[w++] = (char)*p;
+    }
+  }
+  out[w++] = '"';
+  out[w] = '\0';
 }
 
 void qa_model_tokens_init(qa_model_tokens *tokens, const char *text, const char *source) {
@@ -103,8 +124,10 @@ char *qa_model_tokens_token(qa_model_tokens *tokens) {
 void qa_model_tokens_expect(qa_model_tokens *tokens, const char *expected) {
   char *actual = qa_model_tokens_token(tokens);
   if (strcmp(actual, expected) != 0) {
-    char message[1024];
-    snprintf(message, sizeof message, "expected \"%s\", got \"%s\"", expected, actual);
+    char want[512], got[512], message[1100];
+    json_quote(expected, want, sizeof want);
+    json_quote(actual, got, sizeof got);
+    snprintf(message, sizeof message, "expected %s, got %s", want, got);
     free(actual);
     qa_model_tokens_fail(tokens, message);
   }
@@ -113,12 +136,12 @@ void qa_model_tokens_expect(qa_model_tokens *tokens, const char *expected) {
 
 double qa_model_tokens_number(qa_model_tokens *tokens) {
   char *token = qa_model_tokens_token(tokens);
-  char *end = NULL;
-  double value = strtod(token, &end);
-  bool valid = token[0] != '\0' && end != token && *end == '\0' && isfinite(value);
+  double value = qa_js_string_to_number(token); /* Number(token); strtod missed "0b1" and " 1" */
+  bool valid = token[0] != '\0' && isfinite(value);
   if (!valid) {
-    char message[1024];
-    snprintf(message, sizeof message, "invalid number \"%s\"", token);
+    char quoted[512], message[600];
+    json_quote(token, quoted, sizeof quoted);
+    snprintf(message, sizeof message, "invalid number %s", quoted);
     free(token);
     qa_model_tokens_fail(tokens, message);
   }
@@ -136,7 +159,7 @@ double qa_model_tokens_integer(qa_model_tokens *tokens, double minimum, double m
   double value = qa_model_tokens_number(tokens);
   if (value != trunc(value) || value < minimum || value > maximum) {
     char message[256];
-    snprintf(message, sizeof message, "integer %g outside %g..%g", value, minimum, maximum);
+    snprintf(message, sizeof message, "integer %s outside %s..%s", QA_JS_NUMBER(value), QA_JS_NUMBER(minimum), QA_JS_NUMBER(maximum));
     qa_model_tokens_fail(tokens, message);
   }
   return value;
@@ -144,8 +167,10 @@ double qa_model_tokens_integer(qa_model_tokens *tokens, double minimum, double m
 
 qa_vec3 qa_model_tokens_vector(qa_model_tokens *tokens) {
   qa_model_tokens_expect(tokens, "(");
-  qa_vec3 result = {qa_model_tokens_float(tokens), qa_model_tokens_float(tokens),
-                    qa_model_tokens_float(tokens)};
+  qa_vec3 result;
+  result.x = qa_model_tokens_float(tokens);
+  result.y = qa_model_tokens_float(tokens);
+  result.z = qa_model_tokens_float(tokens);
   qa_model_tokens_expect(tokens, ")");
   return result;
 }
@@ -160,23 +185,38 @@ void qa_model_tokens_end(qa_model_tokens *tokens) {
 
 size_t qa_q3_model_at(double index, size_t count, const char *label) {
   if (index != trunc(index) || index < 0 || index >= (double)count) {
-    qa_range_error("Missing %s %g", label, index);
+    qa_range_error("Missing %s %s", label, QA_JS_NUMBER(index));
   }
   return (size_t)index;
 }
 
+typedef struct indexed_scratch {
+  uint8_t *records, *seen;
+} indexed_scratch;
+
+static void indexed_release(void *raw) {
+  indexed_scratch *scratch = raw;
+  free(scratch->records);
+  free(scratch->seen);
+}
+
 void *qa_q3_indexed_records(qa_model_tokens *tokens, size_t count, const char *kind, size_t elem_size,
                             qa_q3_record_read_fn read_record, void *ctx) {
-  uint8_t *records = xmalloc(count * elem_size);
-  uint8_t *seen = xmalloc(count);
-  memset(seen, 0, count);
-  memset(records, 0, count * elem_size);
+  indexed_scratch scratch;
+  scratch.records = xmalloc(count * elem_size);
+  scratch.seen = xmalloc(count);
+  memset(scratch.seen, 0, count);
+  memset(scratch.records, 0, count * elem_size);
+  /* A caught ModelTextError releases the partial records (TS GC). */
+  qa_cleanup node;
+  qa_cleanup_push(&node, indexed_release, &scratch);
+  uint8_t *records = scratch.records, *seen = scratch.seen;
   for (size_t i = 0; i < count; i++) {
     qa_model_tokens_expect(tokens, kind);
     double index = qa_model_tokens_integer(tokens, 0, count > 0 ? (double)count - 1 : -1);
     if (seen[(size_t)index]) {
       char message[256];
-      snprintf(message, sizeof message, "duplicate %s %g", kind, index);
+      snprintf(message, sizeof message, "duplicate %s %s", kind, QA_JS_NUMBER(index));
       qa_model_tokens_fail(tokens, message);
     }
     seen[(size_t)index] = 1;
@@ -189,6 +229,7 @@ void *qa_q3_indexed_records(qa_model_tokens *tokens, size_t count, const char *k
       qa_model_tokens_fail(tokens, message);
     }
   }
+  qa_cleanup_pop(&node);
   free(seen);
   return records;
 }

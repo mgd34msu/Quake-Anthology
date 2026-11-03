@@ -75,22 +75,27 @@ static int compare_text(const char *left, const char *right) {
   }
 }
 static void view_entry_at(qa_q3_browser_view *v, int64_t generation) {
-  if (v->closed || generation != v->generation) qa_range_error("Q3 browser view operation completed after close");
+  if (v->closed || generation != v->generation) qa_raise("Error", 0, 0, "Q3 browser view operation completed after close");
   v->options.browser.assert_open(v->options.browser.ctx);
 }
 static void view_entry(qa_q3_browser_view *v) { view_entry_at(v, v->generation); }
+/* Cleanup adapters: host callbacks (assertOpen, resolve, print, save) raise, and
+ * a catching caller must lose nothing held here. */
+static void release_address(void *arg) { qa_q3_mirror_address_destroy(arg); }
+static void release_string(void *arg) { char **text = arg; free(*text); *text = NULL; }
 typedef struct { qa_q3_browser_view *v; } info_print_t;
 static void info_print(void *ctx, const char *text) {
   info_print_t *p = ctx;
   if (p->v->options.print) p->v->options.print(p->v->options.print_ctx, text);
   view_entry(p->v);
 }
-static char *set_info(qa_q3_browser_view *v, const char *result, const char *key, const char *value) {
+/* TS info(pairs): setInfoValue over each pair in order; the print hook reenters entry(). */
+static void set_info(qa_q3_browser_view *v, char **result, const char *key, const char *value) {
   info_print_t pa = { v };
   qa_info_options o = { QA_COMMAND_DIALECT_Q3, 1024, QA_CVAR_INFO_CLIENT_USERINFO, false, info_print, &pa };
-  char *next = qa_set_info_value(result, key, value, &o);
-  free((void *)result);
-  return next;
+  char *next = qa_set_info_value(*result, key, value, &o);
+  if (!next) qa_range_error("browser info allocation failed");
+  free(*result); *result = next;
 }
 static bool seen_has(const list_t *l, const char *key) {
   for (size_t i = 0; i < l->seen_count; i++) if (strcmp(l->seen[i], key) == 0) return true;
@@ -222,15 +227,15 @@ static row_t *view_row(qa_q3_browser_view *v, int64_t source, int64_t index) {
   if (!list || index < 0 || (size_t)index >= list->capacity) return NULL;
   return &list->rows[index];
 }
-static const qa_q3_mirror_server_status *row_status(qa_q3_browser_view *v, const row_t *row) {
+static const qa_server_status *row_status(qa_q3_browser_view *v, const row_t *row) {
   if (!row->has_address) return NULL;
-  const qa_q3_mirror_server_status *status = NULL;
+  const qa_server_status *status = NULL;
   qa_q3_mirror_server_browser *core = &v->options.browser.q3_core;
   if (!core->entry_status(core->ctx, &row->address, &status)) return NULL;
   return status;
 }
 static char *row_name(qa_q3_browser_view *v, const row_t *row) {
-  const qa_q3_mirror_server_status *status = row_status(v, row);
+  const qa_server_status *status = row_status(v, row);
   const char *base = NULL;
   char *key = NULL;
   if (status && status->name && status->name[0]) base = status->name;
@@ -243,9 +248,9 @@ static char *row_name(qa_q3_browser_view *v, const row_t *row) {
   if (strlen(text) > 31) text[31] = 0;
   return text;
 }
-static const char *rule_get(const qa_q3_mirror_server_status *s, const char *key) {
+static const char *rule_get(const qa_server_status *s, const char *key) {
   if (!s) return "";
-  for (size_t i = 0; i < s->rule_count; i++) if (strcmp(s->rules[i].key, key) == 0) return s->rules[i].value;
+  for (size_t i = 0; i < s->rules.count; i++) if (strcmp(s->rules.entries[i].key, key) == 0) return s->rules.entries[i].value;
   return "";
 }
 static char *slice31(const char *s) {
@@ -291,34 +296,65 @@ char *qa_q3_browser_view_get_server_address_string(qa_q3_browser_view *v, int64_
   row_t *row = view_row(v, source, index);
   if (!row) return xstrdup("");
   char *key = row->has_address ? qa_q3_mirror_address_key(&row->address, true) : NULL;
+  if (row->has_address && !key) qa_range_error("browser address allocation failed");
   const char *text = row->has_address ? key : "bot";
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_string, &key);
   if (write) write(write_ctx, text);
   char *r = copy_string(text, size);
+  qa_cleanup_pop(&guard);
   free(key);
   return r;
+}
+#define INFO_PAIRS 12
+typedef struct { char *values[INFO_PAIRS]; char *result; } info_scratch;
+static void info_scratch_release(void *arg) {
+  info_scratch *sc = arg;
+  for (int i = 0; i < INFO_PAIRS; i++) { free(sc->values[i]); sc->values[i] = NULL; }
+  free(sc->result); sc->result = NULL;
+}
+static char *owned_number(int64_t value) {
+  char num[32];
+  snprintf(num, sizeof num, "%lld", (long long)value);
+  return xstrdup(num);
+}
+static char *owned_slice31_source(const char *text) {
+  char *t = qa_source_command_text(text);
+  if (!t) return NULL;
+  if (strlen(t) > 31) t[31] = 0;
+  return t;
 }
 char *qa_q3_browser_view_get_server_info(qa_q3_browser_view *v, int64_t source, int64_t index, int64_t size, qa_q3_browser_write_fn write, void *write_ctx) {
   row_t *row = view_row(v, source, index);
   if (!row) return xstrdup("");
-  const qa_q3_mirror_server_status *status = row_status(v, row);
-  char *result = xstrdup("");
-  char num[32];
-  char *hostname = row_name(v, row);
-  result = set_info(v, result, "hostname", hostname); free(hostname);
-  { char *t = qa_source_command_text(status ? status->map : ""); char *s31 = t ? slice31(t) : xstrdup(""); result = set_info(v, result, "mapname", s31); free(t); free(s31); }
-  snprintf(num, sizeof num, "%lld", (long long)(status ? status->players : 0)); result = set_info(v, result, "clients", num);
-  snprintf(num, sizeof num, "%lld", (long long)(status ? status->max_players : 0)); result = set_info(v, result, "sv_maxclients", num);
-  snprintf(num, sizeof num, "%lld", (long long)row->ping); result = set_info(v, result, "ping", num);
-  snprintf(num, sizeof num, "%d", qa_native_atoi(rule_get(status, "minping"))); result = set_info(v, result, "minping", num);
-  snprintf(num, sizeof num, "%d", qa_native_atoi(rule_get(status, "maxping"))); result = set_info(v, result, "maxping", num);
-  { char *t = qa_source_command_text(rule_get(status, "game")); char *s31 = t ? slice31(t) : xstrdup(""); result = set_info(v, result, "game", s31); free(t); free(s31); }
-  snprintf(num, sizeof num, "%d", qa_native_atoi(rule_get(status, "gametype"))); result = set_info(v, result, "gametype", num);
-  result = set_info(v, result, "nettype", row->has_address ? "1" : "0");
-  { char *k = row->has_address ? qa_q3_mirror_address_key(&row->address, true) : NULL; result = set_info(v, result, "addr", row->has_address ? k : "bot"); free(k); }
-  snprintf(num, sizeof num, "%d", qa_native_atoi(rule_get(status, "punkbuster"))); result = set_info(v, result, "punkbuster", num);
-  if (write) write(write_ctx, result);
-  char *r = copy_string(result, size);
-  free(result);
+  static const char *const keys[INFO_PAIRS] = { "hostname", "mapname", "clients", "sv_maxclients", "ping", "minping",
+    "maxping", "game", "gametype", "nettype", "addr", "punkbuster" };
+  info_scratch sc;
+  memset(&sc, 0, sizeof sc);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, info_scratch_release, &sc);
+  /* TS builds every pair (status lookups included) before the first setInfoValue. */
+  const qa_server_status *status = row_status(v, row);
+  sc.values[0] = row_name(v, row);
+  sc.values[1] = owned_slice31_source(status ? status->map : "");
+  sc.values[2] = owned_number(status ? (int64_t)status->players : 0);
+  sc.values[3] = owned_number(status ? (int64_t)status->max_players : 0);
+  sc.values[4] = owned_number(row->ping);
+  sc.values[5] = owned_number(qa_native_atoi(rule_get(status, "minping")));
+  sc.values[6] = owned_number(qa_native_atoi(rule_get(status, "maxping")));
+  sc.values[7] = owned_slice31_source(rule_get(status, "game"));
+  sc.values[8] = owned_number(qa_native_atoi(rule_get(status, "gametype")));
+  sc.values[9] = xstrdup(row->has_address ? "1" : "0");
+  sc.values[10] = row->has_address ? qa_q3_mirror_address_key(&row->address, true) : xstrdup("bot");
+  sc.values[11] = owned_number(qa_native_atoi(rule_get(status, "punkbuster")));
+  sc.result = xstrdup("");
+  for (int i = 0; i < INFO_PAIRS; i++) if (!sc.values[i]) qa_range_error("browser info allocation failed");
+  if (!sc.result) qa_range_error("browser info allocation failed");
+  for (int i = 0; i < INFO_PAIRS; i++) set_info(v, &sc.result, keys[i], sc.values[i]);
+  if (write) write(write_ctx, sc.result);
+  char *r = copy_string(sc.result, size);
+  qa_cleanup_pop(&guard);
+  info_scratch_release(&sc);
   return r;
 }
 int64_t qa_q3_browser_view_get_server_ping(qa_q3_browser_view *v, int64_t source, int64_t index) {
@@ -345,15 +381,21 @@ int64_t qa_q3_browser_view_compare_servers(qa_q3_browser_view *v, int64_t source
   int64_t compared = 0;
   if (key == 0) {
     char *na = row_name(v, a), *nb = row_name(v, b);
+    if (!na || !nb) { free(na); free(nb); qa_range_error("browser name allocation failed"); }
     compared = compare_text(na, nb); free(na); free(nb);
   } else if (key == 1) {
-    const qa_q3_mirror_server_status *sa = row_status(v, a), *sb = row_status(v, b);
+    const qa_server_status *sa = row_status(v, a), *sb = row_status(v, b);
     char *ma = slice31(sa ? sa->map : ""), *mb = slice31(sb ? sb->map : "");
+    if (!ma || !mb) { free(ma); free(mb); qa_range_error("browser map allocation failed"); }
     compared = compare_text(ma, mb); free(ma); free(mb);
   } else {
-    const qa_q3_mirror_server_status *sa = row_status(v, a), *sb = row_status(v, b);
-    int64_t left = key == 2 ? (sa ? sa->players : 0) : key == 3 ? qa_native_atoi(rule_get(sa, "gametype")) : key == 4 ? a->ping : 0;
-    int64_t right = key == 2 ? (sb ? sb->players : 0) : key == 3 ? qa_native_atoi(rule_get(sb, "gametype")) : key == 4 ? b->ping : 0;
+    int64_t left = 0, right = 0;
+    if (key == 2 || key == 3) {
+      const qa_server_status *sa = row_status(v, a);
+      left = key == 2 ? (sa ? (int64_t)sa->players : 0) : qa_native_atoi(rule_get(sa, "gametype"));
+      const qa_server_status *sb = row_status(v, b);
+      right = key == 2 ? (sb ? (int64_t)sb->players : 0) : qa_native_atoi(rule_get(sb, "gametype"));
+    } else if (key == 4) { left = a->ping; right = b->ping; }
     compared = left < right ? -1 : left > right ? 1 : 0;
   }
   return direction == 0 || compared == 0 ? compared : -compared;
@@ -363,10 +405,13 @@ int64_t qa_q3_browser_view_add_server(qa_q3_browser_view *v, int64_t source, qa_
   if (!list || (size_t)list->count >= list->capacity) return -1;
   int64_t generation = v->generation;
   qa_q3_mirror_network_address resolved; memset(&resolved, 0, sizeof resolved);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_address, &resolved);
   bool ok = v->options.browser.resolve_q3(v->options.browser.ctx, address(address_ctx), &resolved);
   view_entry_at(v, generation);
-  if (!ok) qa_range_error("LAN_AddServer: address resolution failed");
-  for (int64_t i = 0; i < list->count; i++) if (rows_same(&list->rows[i], &resolved)) { qa_q3_mirror_address_destroy(&resolved); return 0; }
+  if (!ok) qa_raise("Error", 0, 0, "LAN_AddServer: address resolution failed");
+  for (int64_t i = 0; i < list->count; i++)
+    if (rows_same(&list->rows[i], &resolved)) { qa_cleanup_pop(&guard); qa_q3_mirror_address_destroy(&resolved); return 0; }
   row_t *row = &list->rows[list->count];
   row_set_address(row, &resolved);
   char *text = qa_source_command_text(name(name_ctx));
@@ -377,6 +422,7 @@ int64_t qa_q3_browser_view_add_server(qa_q3_browser_view *v, int64_t source, qa_
   char *k = qa_q3_mirror_address_key(&resolved, true);
   if (k) { seen_add(list, k); free(k); }
   list->generation = v->options.browser.q3_list(v->options.browser.ctx, source).generation;
+  qa_cleanup_pop(&guard);
   qa_q3_mirror_address_destroy(&resolved);
   return 1;
 }
@@ -385,18 +431,21 @@ void qa_q3_browser_view_remove_server(qa_q3_browser_view *v, int64_t source, qa_
   if (!list) return;
   int64_t generation = v->generation;
   qa_q3_mirror_network_address resolved; memset(&resolved, 0, sizeof resolved);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_address, &resolved);
   bool ok = v->options.browser.resolve_q3(v->options.browser.ctx, address(address_ctx), &resolved);
   view_entry_at(v, generation);
-  if (!ok) qa_range_error("LAN_RemoveServer: address resolution failed");
+  if (!ok) qa_raise("Error", 0, 0, "LAN_RemoveServer: address resolution failed");
   int64_t index = -1;
   for (int64_t i = 0; i < list->count; i++) if (rows_same(&list->rows[i], &resolved)) { index = i; break; }
-  if (index < 0) { qa_q3_mirror_address_destroy(&resolved); return; }
+  if (index < 0) { qa_cleanup_pop(&guard); qa_q3_mirror_address_destroy(&resolved); return; }
   v->options.browser.remove_q3(v->options.browser.ctx, source, &resolved);
   for (int64_t next = index; next < list->count - 1; next++) row_copy(&list->rows[next], &list->rows[next + 1]);
   list->count--;
   char *k = qa_q3_mirror_address_key(&resolved, true);
   if (k) { seen_delete(list, k); free(k); }
   list->generation = v->options.browser.q3_list(v->options.browser.ctx, source).generation;
+  qa_cleanup_pop(&guard);
   qa_q3_mirror_address_destroy(&resolved);
 }
 static void view_release(qa_q3_browser_view *v, qa_q3_mirror_discovery_handle handle) {
@@ -425,6 +474,13 @@ static ping_slot_t *ping_slot_at(qa_q3_browser_view *v, int64_t index) {
   if (index < 0 || index >= 32) qa_range_error("Server browser source index %lld outside %d", (long long)index, 32);
   return &v->pings[index];
 }
+typedef struct ping_info_scope { qa_q3_browser_view *v; const char *text; char *info; } ping_info_scope;
+static void ping_info_body(void *ctx) {
+  ping_info_scope *scope = ctx;
+  info_print_t pa = { scope->v };
+  qa_info_options o = { QA_COMMAND_DIALECT_Q3, 1024, QA_CVAR_INFO_CLIENT_USERINFO, false, info_print, &pa };
+  scope->info = qa_set_info_value(scope->text, "nettype", "1", &o);
+}
 static int64_t ping_time(qa_q3_browser_view *v, ping_slot_t *slot) {
   qa_q3_mirror_request_result result;
   bool has = slot->handle != 0 && v->options.browser.q3_core.request_result(v->options.browser.q3_core.ctx, slot->handle, &result);
@@ -432,14 +488,26 @@ static int64_t ping_time(qa_q3_browser_view *v, ping_slot_t *slot) {
     size_t cap = 256, len = 0;
     char *text = calloc(cap, 1);
     if (!text) qa_range_error("ping info allocation failed");
-    if (result.status) for (size_t i = 0; i < result.status->rule_count; i++) {
-      size_t need = strlen(result.status->rules[i].key) + strlen(result.status->rules[i].value) + 3;
-      if (len + need >= cap) { while (len + need >= cap) cap *= 2; text = realloc(text, cap); if (!text) qa_range_error("ping info allocation failed"); }
-      len += (size_t)snprintf(text + len, cap - len, "\\%s\\%s", result.status->rules[i].key, result.status->rules[i].value);
+    if (result.status) for (size_t i = 0; i < result.status->rules.count; i++) {
+      size_t need = strlen(result.status->rules.entries[i].key) + strlen(result.status->rules.entries[i].value) + 3;
+      if (len + need >= cap) {
+        while (len + need >= cap) cap *= 2;
+        char *grown = realloc(text, cap);
+        if (!grown) { free(text); qa_range_error("ping info allocation failed"); }
+        text = grown;
+      }
+      len += (size_t)snprintf(text + len, cap - len, "\\%s\\%s", result.status->rules.entries[i].key, result.status->rules.entries[i].value);
     }
-    char *info = set_info(v, text, "nettype", "1");
+    /* Any server on the network can send this text, so one too long for an info
+     * string just leaves the row blank (TS catches RangeError only). */
+    ping_info_scope scope = { v, text, NULL };
+    qa_caught_error caught;
+    bool ok = qa_try(ping_info_body, &scope, &caught);
     free(text);
-    free(slot->info); slot->info = info ? info : xstrdup("");
+    if (!ok && strcmp(caught.name, "RangeError") != 0) qa_rethrow(&caught);
+    char *info = ok && scope.info ? scope.info : xstrdup("");
+    if (!info) qa_range_error("ping info allocation failed");
+    free(slot->info); slot->info = info;
     return (int64_t)trunc(result.ping_milliseconds) + 1;
   }
   return 0;
@@ -453,15 +521,25 @@ bool qa_q3_browser_view_get_ping(qa_q3_browser_view *v, int64_t index, int64_t s
     return *address_out != NULL;
   }
   char *text = qa_q3_mirror_address_key(&slot->address, true);
+  if (!text) qa_range_error("browser address allocation failed");
+  qa_cleanup text_guard;
+  qa_cleanup_push(&text_guard, release_string, &text);
   if (write) write(write_ctx, text);
-  *address_out = copy_string(text, size);
+  char *address = copy_string(text, size);
+  qa_cleanup_pop(&text_guard);
   free(text);
+  /* The copied address is returned; release it if the timing callbacks raise. */
+  qa_cleanup address_guard;
+  qa_cleanup_push(&address_guard, release_string, &address);
   int64_t measured = ping_time(v, slot);
   int64_t elapsed = (int64_t)trunc(v->options.now(v->options.ctx) - slot->start);
-  int64_t threshold = v->options.max_ping(v->options.ctx);
-  if (threshold < 100) threshold = 100;
-  *time_out = measured != 0 ? measured : elapsed < threshold ? 0 : elapsed;
+  /* TS Math.max(100, maxPing()): NaN stays NaN, so the comparison fails and the elapsed time is reported. */
+  double max_ping = v->options.max_ping(v->options.ctx);
+  double threshold = isnan(max_ping) ? max_ping : max_ping > 100 ? max_ping : 100;
+  *time_out = measured != 0 ? measured : (double)elapsed < threshold ? 0 : elapsed;
   publish_ping(v, &slot->address, measured);
+  qa_cleanup_pop(&address_guard);
+  *address_out = address;
   return true;
 }
 char *qa_q3_browser_view_source_ping_info(qa_q3_browser_view *v, int64_t index, int64_t size, qa_q3_browser_write_fn write, void *write_ctx) {
@@ -480,19 +558,17 @@ static void start_ping(qa_q3_browser_view *v, ping_slot_t *slot, const qa_q3_mir
   slot->has_address = true;
   slot->start = v->options.now(v->options.ctx);
   slot->published = false;
+  /* A failed send (handle 0, TS null) leaves the slot pending to time out like a
+   * lost packet; the source ignores send failures. */
   slot->handle = v->options.browser.q3_core.request(v->options.browser.q3_core.ctx, address, slot->start, QA_Q3_DISCOVERY_INFO);
-  if (slot->handle == 0) {
-    qa_q3_mirror_address_destroy(&slot->address); slot->has_address = false;
-    qa_range_error("Could not send Q3 ping");
-  }
 }
 bool qa_q3_browser_view_update_visible_pings(qa_q3_browser_view *v, int64_t source) {
   list_t *list = view_list(v, source);
   if (!list) return false;
   int64_t count = qa_q3_browser_view_get_ping_queue_count(v);
   bool active = false;
-  for (int64_t i = 0; i < list->count; i++) {
-    if (count >= 32) break;
+  int64_t row_count = list->count;
+  for (int64_t i = 0; i < row_count; i++) {
     row_t *row = &list->rows[i];
     if (row->visible == 0) continue;
     if (source == 2 && row->ping == 0) {
@@ -509,6 +585,9 @@ bool qa_q3_browser_view_update_visible_pings(qa_q3_browser_view *v, int64_t sour
     bool queued = false;
     for (int j = 0; j < 32; j++) if (v->pings[j].has_address && rows_same(row, &v->pings[j].address)) queued = true;
     if (queued) continue;
+    /* cl_main.c tests the queue limit only for rows that need a ping, so later
+     * ping 0 rows still consume overflow addresses. */
+    if (count >= 32) break;
     ping_slot_t *slot = NULL;
     for (int j = 0; j < 32; j++) if (!v->pings[j].has_address) { slot = &v->pings[j]; break; }
     if (!slot) break;
@@ -542,9 +621,11 @@ void qa_q3_browser_view_ping(qa_q3_browser_view *v, const char *address) {
   view_entry(v);
   int64_t generation = v->generation;
   qa_q3_mirror_network_address resolved; memset(&resolved, 0, sizeof resolved);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_address, &resolved);
   bool ok = v->options.browser.resolve_q3(v->options.browser.ctx, address, &resolved);
   view_entry_at(v, generation);
-  if (!ok) return;
+  if (!ok) { qa_cleanup_pop(&guard); qa_q3_mirror_address_destroy(&resolved); return; }
   double now = v->options.now(v->options.ctx);
   ping_slot_t *slot = NULL;
   for (int i = 0; i < 32 && !slot; i++) {
@@ -559,6 +640,7 @@ void qa_q3_browser_view_ping(qa_q3_browser_view *v, const char *address) {
   }
   start_ping(v, slot, &resolved);
   publish_ping(v, &resolved, 0);
+  qa_cleanup_pop(&guard);
   qa_q3_mirror_address_destroy(&resolved);
 }
 static bool status_same(const status_slot_t *s, const qa_q3_mirror_network_address *a) {
@@ -576,33 +658,47 @@ static status_slot_t *status_slot_for(qa_q3_browser_view *v, const qa_q3_mirror_
   for (int i = 1; i < 16; i++) if (v->statuses[i].start < oldest->start) oldest = &v->statuses[i];
   return oldest;
 }
-static char *status_text(const qa_q3_mirror_server_status *status) {
-  size_t cap = 8192, len = 0;
-  char *text = calloc(cap, 1);
-  if (!text) return NULL;
-  for (size_t i = 0; i < status->rule_count; i++) {
-    int n = snprintf(text + len, cap - len, "\\%s\\%s", status->rules[i].key, status->rules[i].value);
-    len += (size_t)(n < 0 ? 0 : n);
-    if (len > 8191) { len = 8191; text[len] = 0; }
+/* Growable text with the TS `.slice(0, 8191)` steps applied where TS applies them. */
+typedef struct { char *text; size_t len, cap; } status_buf;
+static void status_append(status_buf *b, const char *text, size_t n) {
+  if (b->len + n + 1 > b->cap) {
+    size_t cap = b->cap ? b->cap : 256;
+    while (b->len + n + 1 > cap) cap *= 2;
+    char *grown = realloc(b->text, cap);
+    if (!grown) qa_range_error("browser status allocation failed");
+    b->text = grown; b->cap = cap;
   }
-  if (len > 8191) len = 8191;
-  text[len] = 0;
-  /* slice(0,8191) + "\\" then per-player appends re-sliced to 8191 */
-  {
-    size_t base = len < 8191 ? len : 8191;
-    text[base] = '\\'; text[base + 1] = 0; len = base + 1;
+  memcpy(b->text + b->len, text, n); b->len += n; b->text[b->len] = 0;
+}
+static void status_slice(status_buf *b, size_t limit) {
+  if (b->len > limit) { b->len = limit; b->text[limit] = 0; }
+}
+static char *status_text(const qa_server_status *status) {
+  status_buf b = { NULL, 0, 0 };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_string, &b.text);
+  status_append(&b, "", 0);
+  for (size_t i = 0; i < status->rules.count; i++) {
+    status_append(&b, "\\", 1);
+    status_append(&b, status->rules.entries[i].key, strlen(status->rules.entries[i].key));
+    status_append(&b, "\\", 1);
+    status_append(&b, status->rules.entries[i].value, strlen(status->rules.entries[i].value));
   }
-  for (size_t i = 0; i < status->player_detail_count; i++) {
-    char row[1100];
-    snprintf(row, sizeof row, "\\%lld %lld \"%s\"", (long long)status->player_details[i].score, (long long)status->player_details[i].ping, status->player_details[i].name);
-    size_t rn = strlen(row);
-    size_t room = len < 8191 ? 8191 - len : 0;
-    if (rn > room) rn = room;
-    memcpy(text + len, row, rn); len += rn; text[len] = 0;
+  status_slice(&b, 8191);
+  status_append(&b, "\\", 1);
+  for (size_t i = 0; i < status->player_count; i++) {
+    const qa_player_detail *player = &status->player_details[i];
+    char head[64];
+    int n = snprintf(head, sizeof head, "\\%lld %lld \"", (long long)player->score, (long long)player->ping);
+    status_append(&b, head, (size_t)n);
+    status_append(&b, player->name, strlen(player->name));
+    status_append(&b, "\"", 1);
+    status_slice(&b, 8191);
   }
-  if (len < 8191) { text[len++] = '\\'; text[len] = 0; }
-  else { text[8191] = 0; }
-  return text;
+  status_append(&b, "\\", 1);
+  status_slice(&b, 8191);
+  qa_cleanup_pop(&guard);
+  return b.text;
 }
 static void start_status(qa_q3_browser_view *v, status_slot_t *slot, const qa_q3_mirror_network_address *address) {
   view_release(v, slot->handle);
@@ -612,10 +708,13 @@ static void start_status(qa_q3_browser_view *v, status_slot_t *slot, const qa_q3
   slot->has_address = true;
   slot->start = v->options.now(v->options.ctx);
   slot->retrieved = false;
+  /* A failed send (handle 0) leaves the request unretrieved with no handle, so
+   * the next call resends it. */
   slot->handle = v->options.browser.q3_core.request(v->options.browser.q3_core.ctx, address, slot->start, QA_Q3_DISCOVERY_STATUS);
-  if (slot->handle == 0) { slot->retrieved = true; qa_range_error("Could not send Q3 server status request"); }
 }
 char *qa_q3_browser_view_server_status(qa_q3_browser_view *v, const char *address, bool has_size, int64_t size, qa_q3_browser_write_fn write, void *write_ctx) {
+  double left;
+  double right;
   view_entry(v);
   if (!address) {
     for (int i = 0; i < 16; i++) {
@@ -628,67 +727,86 @@ char *qa_q3_browser_view_server_status(qa_q3_browser_view *v, const char *addres
   }
   int64_t generation = v->generation;
   qa_q3_mirror_network_address resolved; memset(&resolved, 0, sizeof resolved);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_address, &resolved);
   bool ok = v->options.browser.resolve_q3(v->options.browser.ctx, address, &resolved);
   view_entry_at(v, generation);
-  if (!ok) return NULL;
+  char *value = NULL;
+  if (!ok) goto done;
   if (!has_size) {
-    for (int i = 0; i < 16; i++) {
-      status_slot_t *slot = &v->statuses[i];
-      if (status_same(slot, &resolved)) {
-        view_release(v, slot->handle); slot->handle = 0;
-        qa_q3_mirror_address_destroy(&slot->address); slot->has_address = false;
-        slot->retrieved = true; slot->print = false;
-        break;
-      }
-    }
-    qa_q3_mirror_address_destroy(&resolved);
-    return NULL;
+    /* CL_ServerStatus only marks the slot retrieved, keeping its address and cached result. */
+    status_slot_t *slot = status_slot_for(v, &resolved);
+    slot->retrieved = true; slot->print = false;
+    goto done;
   }
   status_slot_t *slot = status_slot_for(v, &resolved);
-  if (!status_same(slot, &resolved) && !slot->retrieved) { qa_q3_mirror_address_destroy(&resolved); return NULL; }
+  if (!status_same(slot, &resolved) && !slot->retrieved) goto done;
   qa_q3_mirror_request_result result;
   bool has_result = slot->handle != 0 && v->options.browser.q3_core.request_result(v->options.browser.q3_core.ctx, slot->handle, &result);
-  if (status_same(slot, &resolved) && has_result && result.kind == QA_Q3_REQ_COMPLETED) {
+  if (status_same(slot, &resolved) && has_result && result.kind == QA_Q3_REQ_COMPLETED && result.status) {
     char *text = status_text(result.status);
-    if (write && text) write(write_ctx, text);
-    char *value = text ? copy_string(text, size) : NULL;
+    qa_cleanup text_guard;
+    qa_cleanup_push(&text_guard, release_string, &text);
+    if (write) write(write_ctx, text);
+    value = copy_string(text, size);
+    qa_cleanup_pop(&text_guard);
     free(text);
     slot->retrieved = true; slot->start = 0;
-    qa_q3_mirror_address_destroy(&resolved);
-    return value;
+    goto done;
   }
   if (!status_same(slot, &resolved) || slot->handle == 0
-      || slot->start < v->options.now(v->options.ctx) - v->options.status_resend_time(v->options.ctx)) {
+      || slot->start < (left = v->options.now(v->options.ctx), right = v->options.status_resend_time(v->options.ctx), left - right)) {
     slot->print = false;
     start_status(v, slot, &resolved);
   }
+done:
+  qa_cleanup_pop(&guard);
   qa_q3_mirror_address_destroy(&resolved);
-  return NULL;
+  return value;
 }
 void qa_q3_browser_view_server_status_command(qa_q3_browser_view *v, const char *address) {
   view_entry(v);
   int64_t generation = v->generation;
   qa_q3_mirror_network_address resolved; memset(&resolved, 0, sizeof resolved);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_address, &resolved);
   bool ok = v->options.browser.resolve_q3(v->options.browser.ctx, address, &resolved);
   view_entry_at(v, generation);
-  if (!ok) return;
-  status_slot_t *slot = status_slot_for(v, &resolved);
-  start_status(v, slot, &resolved);
-  slot->print = true;
+  if (ok) {
+    status_slot_t *slot = status_slot_for(v, &resolved);
+    start_status(v, slot, &resolved);
+    slot->print = true;
+  }
+  qa_cleanup_pop(&guard);
   qa_q3_mirror_address_destroy(&resolved);
 }
-static void print_padded(qa_q3_browser_view *v, const char *key, size_t width, const char *value) {
-  char buf[64];
-  size_t n = strlen(key);
-  const char *k = key;
-  char tmp[64] = "";
-  if (n > sizeof tmp - 1) { memcpy(tmp, key, sizeof tmp - 1); k = tmp; }
-  snprintf(buf, sizeof buf, "%-*s", (int)width, k);
-  if (v->options.print) {
-    v->options.print(v->options.print_ctx, buf);
-    v->options.print(v->options.print_ctx, value);
-    v->options.print(v->options.print_ctx, "\n");
-  }
+/* One TS options.print(text) call with an owned line. */
+static void print_owned(qa_q3_browser_view *v, char *line) {
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_string, &line);
+  if (v->options.print) v->options.print(v->options.print_ctx, line);
+  qa_cleanup_pop(&guard);
+  free(line);
+}
+/* `${key.padEnd(24, " ")}${value}\n` */
+static void print_rule(qa_q3_browser_view *v, const char *key, const char *value) {
+  size_t kn = strlen(key), vn = strlen(value), width = kn < 24 ? 24 : kn;
+  char *line = malloc(width + vn + 2);
+  if (!line) qa_range_error("browser print allocation failed");
+  memcpy(line, key, kn); memset(line + kn, ' ', width - kn);
+  memcpy(line + width, value, vn); line[width + vn] = '\n'; line[width + vn + 1] = 0;
+  print_owned(v, line);
+}
+/* `${String(index).padEnd(2)}   ${String(score).padEnd(3)}    ${String(ping).padEnd(3)}   "${name}"\n` */
+static void print_player(qa_q3_browser_view *v, size_t index, const qa_player_detail *player) {
+  char head[96];
+  int hn = snprintf(head, sizeof head, "%-2zu   %-3lld    %-3lld   \"", index, (long long)player->score, (long long)player->ping);
+  size_t nn = strlen(player->name);
+  char *line = malloc((size_t)hn + nn + 3);
+  if (!line) qa_range_error("browser print allocation failed");
+  memcpy(line, head, (size_t)hn); memcpy(line + hn, player->name, nn);
+  memcpy(line + (size_t)hn + nn, "\"\n", 3);
+  print_owned(v, line);
 }
 void qa_q3_browser_view_poll(qa_q3_browser_view *v) {
   view_entry(v);
@@ -705,19 +823,11 @@ void qa_q3_browser_view_poll(qa_q3_browser_view *v) {
     if (!v->options.browser.q3_core.request_result(v->options.browser.q3_core.ctx, slot->handle, &result)) continue;
     if (result.kind != QA_Q3_REQ_COMPLETED || !result.status) continue;
     if (v->options.print) v->options.print(v->options.print_ctx, "Server settings:\n");
-    for (size_t j = 0; j < result.status->rule_count; j++)
-      print_padded(v, result.status->rules[j].key, 24, result.status->rules[j].value);
+    for (size_t j = 0; j < result.status->rules.count; j++)
+      print_rule(v, result.status->rules.entries[j].key, result.status->rules.entries[j].value);
     if (v->options.print) v->options.print(v->options.print_ctx, "\nPlayers:\nnum: score: ping: name:\n");
-    for (size_t j = 0; j < result.status->player_detail_count; j++) {
-      const qa_q3_mirror_player_detail *p = &result.status->player_details[j];
-      char head[64];
-      snprintf(head, sizeof head, "%-2zu   %-3lld    %-3lld   \"", j, (long long)p->score, (long long)p->ping);
-      if (v->options.print) {
-        v->options.print(v->options.print_ctx, head);
-        v->options.print(v->options.print_ctx, p->name);
-        v->options.print(v->options.print_ctx, "\"\n");
-      }
-    }
+    for (size_t j = 0; j < result.status->player_count; j++)
+      print_player(v, j, &result.status->player_details[j]);
     slot->print = false; slot->retrieved = true;
     view_entry(v);
   }
@@ -733,10 +843,13 @@ void qa_q3_browser_cache_view_destroy(qa_q3_browser_cache_view *view) {
   free(view->lists);
   memset(view, 0, sizeof *view);
 }
+static void release_cache(void *arg) { qa_q3_browser_cache_view_destroy(arg); }
 void qa_q3_browser_view_load_cached_servers(qa_q3_browser_view *v) {
   view_entry(v);
   gen_assert_t ga = { v, v->generation };
   qa_q3_browser_cache_view cache; memset(&cache, 0, sizeof cache);
+  qa_cleanup cache_guard;
+  qa_cleanup_push(&cache_guard, release_cache, &cache);
   bool has_cache = v->options.browser.load_q3_cache(v->options.browser.ctx, gen_assert, &ga, &cache);
   view_entry_at(v, ga.generation);
   static const int cached[3] = {1, 2, 3};
@@ -745,7 +858,7 @@ void qa_q3_browser_view_load_cached_servers(qa_q3_browser_view *v) {
     list_t *list = view_list(v, source);
     if (!list) continue;
     const qa_q3_browser_cache_list *saved = NULL;
-    if (has_cache) for (size_t i = 0; i < cache.list_count; i++) if (cache.lists[i].source == source) saved = &cache.lists[i];
+    if (has_cache) for (size_t i = 0; i < cache.list_count && !saved; i++) if (cache.lists[i].source == source) saved = &cache.lists[i];
     if (!saved) continue;
     if (source == 2) {
       qa_q3_browser_list_state canonical = v->options.browser.q3_list(v->options.browser.ctx, source);
@@ -805,6 +918,7 @@ void qa_q3_browser_view_load_cached_servers(qa_q3_browser_view *v) {
       }
     }
   }
+  qa_cleanup_pop(&cache_guard);
   qa_q3_browser_cache_view_destroy(&cache);
 }
 void qa_q3_browser_view_save_servers_to_cache(qa_q3_browser_view *v) {
@@ -813,6 +927,8 @@ void qa_q3_browser_view_save_servers_to_cache(qa_q3_browser_view *v) {
   qa_q3_browser_cache_view view; memset(&view, 0, sizeof view);
   view.lists = calloc(3, sizeof *view.lists);
   if (!view.lists) qa_range_error("browser cache allocation failed");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_cache, &view);
   static const int cached[3] = {1, 2, 3};
   for (int ci = 0; ci < 3; ci++) {
     int64_t source = cached[ci];
@@ -833,6 +949,7 @@ void qa_q3_browser_view_save_servers_to_cache(qa_q3_browser_view *v) {
     }
   }
   v->options.browser.save_q3_cache(v->options.browser.ctx, &view);
+  qa_cleanup_pop(&guard);
   qa_q3_browser_cache_view_destroy(&view);
   view_entry_at(v, generation);
 }

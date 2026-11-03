@@ -65,6 +65,7 @@ typedef struct qa_mod_commands qa_mod_commands;
 qa_mod_commands *qa_mod_commands_create(
     qa_command_context context, qa_mod_commands_buffer_fn commands,
     void *commands_ctx);
+/* Frees the commands and every port bound to them; close the owning mod scopes first. */
 void qa_mod_commands_destroy(qa_mod_commands *commands);
 void qa_mod_commands_append(qa_mod_commands *commands, const char *text,
                             qa_command_context source,

@@ -4,10 +4,10 @@
  * BoundedQueue. Re-exports EditField/FieldControls/FieldClipboard
  * from source-field.ts, as the TS file does.
  * C accommodations: the TS field edits an array of Unicode code
- * points; here text is NUL-terminated bytes and cursor/scroll/
- * maximumLength count bytes, so positions differ for non-ASCII
- * input (see docs/PORTING.md). The TS \s classes likewise match
- * ASCII whitespace bytes only. Key codes are the numeric KeyCode
+ * points; here the text is stored as UTF-8 bytes while cursor,
+ * scroll and maximumLength count code points, as in TS (a byte that
+ * starts no valid sequence counts as one). The TS \s classes match
+ * the JS white space code points. Key codes are the numeric KeyCode
  * values of src/input/key-codes.ts (input module not yet ported;
  * values are named in field.c). The clipboard closure becomes a
  * function pointer + ctx returning a borrowed string or NULL.

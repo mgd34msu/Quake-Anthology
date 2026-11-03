@@ -7,17 +7,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/ui/common/legacy/script/token_memory.h"
 
 _Noreturn void qa_ui_script_plain_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *copy_text(const char *text, size_t length) {
@@ -633,7 +633,7 @@ static int64_t decimal_escape_value(qa_ui_script_lexer *lexer,
   for (size_t index = 0; index < length; index++) {
     value = value * 10 + ((uint8_t)text[index] - 48);
     if (value > 2147483647)
-      qa_range_error("decimal escape exceeds the source signed-int range");
+      lexer_fail(lexer, "decimal escape exceeds the source signed-int range\n");
   }
   return finish_escape_value(lexer, value);
 }
@@ -650,7 +650,7 @@ static int64_t source_escape_hex_value(qa_ui_script_lexer *lexer,
     else digit = character - 'a' + 10;
     value = value * 16 + digit;
     if (value > 2147483647)
-      qa_range_error("hex escape exceeds the source signed-int range");
+      lexer_fail(lexer, "hex escape exceeds the source signed-int range\n");
   }
   return finish_escape_value(lexer, value);
 }
@@ -834,11 +834,9 @@ static void number_values(const char *text, size_t length, int64_t flags,
       }
       index++;
     }
-    double integer_value = trunc(value);
-    if (!isfinite(integer_value) || integer_value < 0
-        || integer_value > 4294967295.0)
-      qa_range_error("NumberValue floating conversion exceeds the source unsigned-long range");
-    *out_integer = (uint32_t)integer_value;
+    /* The C double-to-unsigned-long conversion has no range check; the
+       32-bit result wraps (TS Math.trunc(value) >>> 0). */
+    *out_integer = qa_js_to_uint32(trunc(value));
     *out_float = value;
     return;
   }

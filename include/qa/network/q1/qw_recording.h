@@ -9,6 +9,9 @@
 typedef struct qa_quakeworld_recording_state qa_quakeworld_recording_state;
 void qa_quakeworld_recording_state_init(qa_quakeworld_recording_state *s);
 void qa_quakeworld_recording_state_destroy(qa_quakeworld_recording_state *s);
+/* Heap instance for callers that cannot see the struct size; NULL on OOM. */
+qa_quakeworld_recording_state *qa_quakeworld_recording_state_create(void);
+void qa_quakeworld_recording_state_free(qa_quakeworld_recording_state *s);
 void qa_quakeworld_recording_state_observe(qa_quakeworld_recording_state *s,
                                            const qa_quakeworld_message *messages, size_t count);
 qa_quakeworld_demo_record *qa_quakeworld_recording_state_seed(qa_quakeworld_recording_state *s,

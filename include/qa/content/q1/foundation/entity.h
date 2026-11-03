@@ -1,8 +1,8 @@
 /*
  * Port of src/content/q1/foundation/entity.ts. GPL-2.0-or-later.
  * Callbacks are named bound slots (name + handler); qa_q1_callback_name
- * aborts on a handler without a name (TS callbackName throw). Body/health
- * are actor-local mirrors of the shared tables (see types.h note).
+ * aborts on a handler without a name (TS callbackName throw). Bodies,
+ * health and liveness live in the shared world tables (game->host).
  */
 #ifndef QA_CONTENT_Q1_FOUNDATION_ENTITY_H
 #define QA_CONTENT_Q1_FOUNDATION_ENTITY_H
@@ -32,17 +32,24 @@ typedef struct qa_q1_move { qa_vec3 destination; qa_q1_bound_action done; } qa_q
 typedef const char *qa_q1_monster_species;
 extern const qa_q1_monster_species QA_Q1_MONSTER_SPECIES[28];
 
+/* TS Q1Monster. */
 typedef struct qa_q1_monster {
   qa_q1_monster_species species;
-  const char *mode; /* stand|walk|run|attack|leap|pain|death */
-  double frame_index, first_frame;
-  double sequence[32]; size_t sequence_count;
+  const char *mode; /* stand|walk|run */
   bool has_enemy; qa_actor_id enemy;
   bool has_old_enemy; qa_actor_id old_enemy;
   char *path;
   double pause_until, attack_finished, pain_finished, search_until;
-  bool death_drop, refired;
+  bool refired;
 } qa_q1_monster;
+/* TS Q1LegacyAnimation (checkpoint.ts): where a version 5 grunt or dog
+ * was in its frame sequence; version 6 saves the animation in the base
+ * controller. mode is a static literal. */
+typedef struct qa_q1_legacy_animation {
+  const char *mode; /* stand|walk|run|attack|leap|pain|death */
+  double first_frame;
+  double frame_index;
+} qa_q1_legacy_animation;
 
 typedef struct qa_q1_field { char *key, *value; } qa_q1_field;
 typedef struct qa_q1_reference { char *key; bool has_actor; qa_actor_id actor; } qa_q1_reference;
@@ -52,6 +59,11 @@ typedef struct qa_q1_body {
   qa_bounds bounds;
   bool has_ground; qa_actor_id ground;
 } qa_q1_body;
+
+/* Pure conversions between the Q1 body value and the shared BodyState.
+ * to_state's ground points into *body (valid while *body lives). */
+qa_q1_body qa_q1_body_from_state(qa_body_state state);
+qa_body_state qa_q1_body_to_state(const qa_q1_body *body);
 
 struct qa_q1_actor {
   qa_owned_actor actor;
@@ -64,7 +76,7 @@ struct qa_q1_actor {
   qa_q1_reference *references; size_t reference_count, reference_capacity;
   char *target, *targetname, *killtarget, *message;
   double delay, spawnflags, sounds, wait, speed, damage, max_health;
-  bool damageable, aimed_damage, activated;
+  bool aimed_damage, activated;
   double next_think;
   qa_q1_bound_action think, path_end;
   qa_q1_bound_use use;
@@ -86,22 +98,25 @@ struct qa_q1_actor {
   qa_q1_weapon projectile_weapon; /* NULL */
   double water_level, water_type, movement_flags, ideal_yaw, yaw_speed;
   const char *attack_state; /* straight|melee|missile|dodging */
-  /* Actor-local mirrors of shared body/combat state (types.h note). */
-  qa_q1_body body;
-  double health;
-  bool live;
+  qa_gameplay_authority *combat; /* borrowed (TS private readonly combat) */
 };
 
-/* False only on OOM. source may be NULL (TS undefined). */
+/* False only on OOM. source may be NULL (TS undefined); combat is borrowed. */
 bool qa_q1_actor_init(qa_q1_actor *entity, qa_owned_actor actor, const char *classname,
-                      const double *source_ordinal, const qa_q1_entity *source);
+                      const double *source_ordinal, qa_gameplay_authority *combat,
+                      const qa_q1_entity *source);
 void qa_q1_actor_free(qa_q1_actor *entity);
+/* TS Q1Actor.damageable getter/setter (combat canTakeDamage). */
+bool qa_q1_actor_damageable(const qa_q1_actor *entity);
+void qa_q1_actor_set_damageable(qa_q1_actor *entity, bool value);
 const char *qa_q1_actor_text(const qa_q1_actor *entity, const char *key);
 double qa_q1_actor_number(const qa_q1_actor *entity, const char *key);
 double qa_q1_actor_number_or(const qa_q1_actor *entity, const char *key, double fallback);
 qa_vec3 qa_q1_actor_vector(const qa_q1_actor *entity, const char *key);
 bool qa_q1_actor_field_set(qa_q1_actor *entity, const char *key, const char *value);
 const char *qa_q1_actor_field_get(const qa_q1_actor *entity, const char *key); /* NULL absent */
+/* TS entity.fields.delete(key): true when the key existed. */
+bool qa_q1_actor_field_delete(qa_q1_actor *entity, const char *key);
 bool qa_q1_actor_reference_set(qa_q1_actor *entity, const char *key, const qa_actor_id *actor);
 bool qa_q1_actor_reference_get(const qa_q1_actor *entity, const char *key, qa_actor_id *out); /* false = absent/null */
 

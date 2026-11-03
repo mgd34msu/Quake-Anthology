@@ -86,16 +86,16 @@ __attribute__((unused)) static bool merge_into(qa_save_value *object, qa_save_va
   return true;
 }
 
-static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_pickup_entry *out);
-static qa_save_value *build_q2_pickup_entry(const qa_q2_pickup_entry *in);
-static void read_q2_player_powerups(const qa_save_reader *reader, qa_persist_q2_player_powerups *out);
-static qa_save_value *build_q2_player_powerups(const qa_persist_q2_player_powerups *in);
-static void read_q2_power_entry(const qa_save_reader *reader, qa_q2_power_entry *out);
-static qa_save_value *build_q2_power_entry(const qa_q2_power_entry *in);
-static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_persist_q2_items_checkpoint *out);
-static qa_save_value *build_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *in);
+static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_item_pickup_checkpoint *out);
+static qa_save_value *build_q2_pickup_entry(const qa_q2_item_pickup_checkpoint *in);
+static void read_q2_player_powerups(const qa_save_reader *reader, qa_q2_player_powerups *out);
+static qa_save_value *build_q2_player_powerups(const qa_q2_player_powerups *in);
+static void read_q2_power_entry(const qa_save_reader *reader, qa_q2_item_power_checkpoint *out);
+static qa_save_value *build_q2_power_entry(const qa_q2_item_power_checkpoint *in);
+static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_q2_items_checkpoint *out, qa_persist_decoded *owner);
+static qa_save_value *build_q2_items_checkpoint(const qa_q2_items_checkpoint *in);
 
-static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_pickup_entry *out) {
+static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_item_pickup_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "actor");
     (*out).actor = read_actor(&f0);
@@ -115,7 +115,7 @@ static void read_q2_pickup_entry(const qa_save_reader *reader, qa_q2_pickup_entr
     }
     qa_save_reader_destroy(&f4); }
 }
-static qa_save_value *build_q2_pickup_entry(const qa_q2_pickup_entry *in) {
+static qa_save_value *build_q2_pickup_entry(const qa_q2_item_pickup_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
@@ -129,7 +129,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_player_powerups(const qa_save_reader *reader, qa_persist_q2_player_powerups *out) {
+static void read_q2_player_powerups(const qa_save_reader *reader, qa_q2_player_powerups *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "quadUntil");
     (*out).quad_until = qa_save_reader_number(&f0);
@@ -156,7 +156,7 @@ static void read_q2_player_powerups(const qa_save_reader *reader, qa_persist_q2_
     (*out).invis_until = qa_save_reader_is_undefined(&f7) ? 0 : qa_save_reader_number(&f7);
     qa_save_reader_destroy(&f7); }
 }
-static qa_save_value *build_q2_player_powerups(const qa_persist_q2_player_powerups *in) {
+static qa_save_value *build_q2_player_powerups(const qa_q2_player_powerups *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "quadUntil", qa_save_value_number((*in).quad_until))) goto fail;
@@ -173,7 +173,7 @@ fail:
   return NULL;
 }
 
-static void read_q2_power_entry(const qa_save_reader *reader, qa_q2_power_entry *out) {
+static void read_q2_power_entry(const qa_save_reader *reader, qa_q2_item_power_checkpoint *out) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "actor");
     (*out).actor = read_actor(&f0);
@@ -182,7 +182,7 @@ static void read_q2_power_entry(const qa_save_reader *reader, qa_q2_power_entry 
     read_q2_player_powerups(&f1, &(*out).state);
     qa_save_reader_destroy(&f1); }
 }
-static qa_save_value *build_q2_power_entry(const qa_q2_power_entry *in) {
+static qa_save_value *build_q2_power_entry(const qa_q2_item_power_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
@@ -193,61 +193,61 @@ fail:
   return NULL;
 }
 
-static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_persist_q2_items_checkpoint *out) {
+static void read_q2_items_checkpoint(const qa_save_reader *reader, qa_q2_items_checkpoint *out, qa_persist_decoded *owner) {
   memset(out, 0, sizeof *out);
   { qa_save_reader f0 = field(reader, "powerCubeCount");
     (*out).power_cube_count = qa_save_reader_number(&f0);
     qa_save_reader_destroy(&f0); }
   { qa_save_reader f1 = field(reader, "pickups");
-    (*out).pickups_count = qa_save_reader_list_count(&f1);
-    (*out).pickups = (qa_q2_pickup_entry *)calloc((*out).pickups_count != 0 ? (*out).pickups_count : 1, sizeof(qa_q2_pickup_entry));
-    if ((*out).pickups == NULL) qa_save_reader_fail(&f1, "out of memory");
-    for (size_t i1 = 0; i1 < (*out).pickups_count; i1++) {
+    (*out).pickup_count = qa_save_reader_list_count(&f1);
+    qa_q2_item_pickup_checkpoint *pickups_v = qa_persist_decoded_array(owner, (*out).pickup_count, sizeof *pickups_v);
+    (*out).pickups = pickups_v;
+    for (size_t i1 = 0; i1 < (*out).pickup_count; i1++) {
       qa_save_reader it2 = item(&f1, i1);
-      read_q2_pickup_entry(&it2, &(*out).pickups[i1]);
+      read_q2_pickup_entry(&it2, &pickups_v[i1]);
       qa_save_reader_destroy(&it2);
     }
     qa_save_reader_destroy(&f1); }
   { qa_save_reader f2 = field(reader, "powers");
-    (*out).powers_count = qa_save_reader_list_count(&f2);
-    (*out).powers = (qa_q2_power_entry *)calloc((*out).powers_count != 0 ? (*out).powers_count : 1, sizeof(qa_q2_power_entry));
-    if ((*out).powers == NULL) qa_save_reader_fail(&f2, "out of memory");
-    for (size_t i3 = 0; i3 < (*out).powers_count; i3++) {
+    (*out).power_count = qa_save_reader_list_count(&f2);
+    qa_q2_item_power_checkpoint *powers_v = qa_persist_decoded_array(owner, (*out).power_count, sizeof *powers_v);
+    (*out).powers = powers_v;
+    for (size_t i3 = 0; i3 < (*out).power_count; i3++) {
       qa_save_reader it4 = item(&f2, i3);
-      read_q2_power_entry(&it4, &(*out).powers[i3]);
+      read_q2_power_entry(&it4, &powers_v[i3]);
       qa_save_reader_destroy(&it4);
     }
     qa_save_reader_destroy(&f2); }
   { qa_save_reader f3 = field(reader, "powerArmorBindings");
-    (*out).power_armor_bindings_count = qa_save_reader_list_count(&f3);
-    (*out).power_armor_bindings = (qa_saved_actor_id *)calloc((*out).power_armor_bindings_count != 0 ? (*out).power_armor_bindings_count : 1, sizeof(qa_saved_actor_id));
-    if ((*out).power_armor_bindings == NULL) qa_save_reader_fail(&f3, "out of memory");
-    for (size_t i5 = 0; i5 < (*out).power_armor_bindings_count; i5++) {
+    (*out).binding_count = qa_save_reader_list_count(&f3);
+    qa_saved_actor_id *power_armor_bindings_v = qa_persist_decoded_array(owner, (*out).binding_count, sizeof *power_armor_bindings_v);
+    (*out).power_armor_bindings = power_armor_bindings_v;
+    for (size_t i5 = 0; i5 < (*out).binding_count; i5++) {
       qa_save_reader it6 = item(&f3, i5);
-      (*out).power_armor_bindings[i5] = read_actor(&it6);
+      power_armor_bindings_v[i5] = read_actor(&it6);
       qa_save_reader_destroy(&it6);
     }
     qa_save_reader_destroy(&f3); }
 }
-static qa_save_value *build_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *in) {
+static qa_save_value *build_q2_items_checkpoint(const qa_q2_items_checkpoint *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   if (!set_own(obj, "powerCubeCount", qa_save_value_number((*in).power_cube_count))) goto fail;
   { qa_save_value *arr7 = qa_save_value_array();
     if (arr7 == NULL) goto fail;
-    for (size_t i8 = 0; i8 < (*in).pickups_count; i8++) {
+    for (size_t i8 = 0; i8 < (*in).pickup_count; i8++) {
       if (!push_own(arr7, build_q2_pickup_entry(&(*in).pickups[i8]))) { qa_save_value_free(arr7); goto fail; }
     }
     if (!set_own(obj, "pickups", arr7)) goto fail; }
   { qa_save_value *arr9 = qa_save_value_array();
     if (arr9 == NULL) goto fail;
-    for (size_t i10 = 0; i10 < (*in).powers_count; i10++) {
+    for (size_t i10 = 0; i10 < (*in).power_count; i10++) {
       if (!push_own(arr9, build_q2_power_entry(&(*in).powers[i10]))) { qa_save_value_free(arr9); goto fail; }
     }
     if (!set_own(obj, "powers", arr9)) goto fail; }
   { qa_save_value *arr11 = qa_save_value_array();
     if (arr11 == NULL) goto fail;
-    for (size_t i12 = 0; i12 < (*in).power_armor_bindings_count; i12++) {
+    for (size_t i12 = 0; i12 < (*in).binding_count; i12++) {
       if (!push_own(arr11, actor_value(&(*in).power_armor_bindings[i12]))) { qa_save_value_free(arr11); goto fail; }
     }
     if (!set_own(obj, "powerArmorBindings", arr11)) goto fail; }
@@ -257,29 +257,26 @@ fail:
   return NULL;
 }
 
-
-
-
-qa_persist_q2_items_checkpoint qa_read_q2_items_checkpoint(const qa_save_reader *reader) {
-  qa_persist_q2_items_checkpoint out;
-  read_q2_items_checkpoint(reader, &out);
+qa_q2_items_checkpoint qa_read_q2_items_checkpoint(const qa_save_reader *reader, qa_persist_decoded *owner) {
+  qa_q2_items_checkpoint out;
+  read_q2_items_checkpoint(reader, &out, owner);
   return out;
 }
-uint8_t *qa_encode_q2_items_checkpoint(const qa_persist_q2_items_checkpoint *checkpoint, size_t *out_length) {
+uint8_t *qa_encode_q2_items_checkpoint(const qa_q2_items_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *value = build_q2_items_checkpoint(checkpoint);
   if (value == NULL) return NULL;
   uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
   qa_save_value_free(value);
   return bytes;
 }
-bool qa_decode_q2_items_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_items_checkpoint *out) {
+bool qa_decode_q2_items_checkpoint(const uint8_t *bytes, size_t length, qa_q2_items_checkpoint *out,
+                                   qa_persist_decoded *owner) {
   qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
   if (root == NULL) return false;
   qa_save_reader reader;
   if (!qa_save_reader_init(&reader, root, "q2-items")) { qa_save_value_free(root); return false; }
-  read_q2_items_checkpoint(&reader, out);
+  owner->root = root;
+  read_q2_items_checkpoint(&reader, out, owner);
   qa_save_reader_destroy(&reader);
-  out->root = root;
   return true;
 }
-

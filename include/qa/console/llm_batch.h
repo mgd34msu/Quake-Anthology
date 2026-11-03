@@ -9,8 +9,7 @@
  *  - Lengths count bytes where TS counts UTF-16 units; batch text
  *    is restricted to printable ASCII by validation itself, so
  *    counts agree on every admitted batch.
- *  - Ranking ties use strcmp where TS uses localeCompare (same
- *    accommodation as discovery).
+ *  - Ranking ties use localeCompare (qa_js_locale_compare), as in TS.
  * All returned strings/arrays are malloc'd; caller frees.
  * GPL-2.0-or-later.
  */

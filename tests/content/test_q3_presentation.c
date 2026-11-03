@@ -129,7 +129,7 @@ static void test_refdef(void) {
 static void test_ref_entity(void) {
   CHECK(QA_Q3_PRES_RF_MINLIGHT == 1 && QA_Q3_PRES_RF_THIRD_PERSON == 2 && QA_Q3_PRES_RF_FIRST_PERSON == 4);
   CHECK(QA_Q3_PRES_RF_DEPTHHACK == 8 && QA_Q3_PRES_RF_NOSHADOW == 64 && QA_Q3_PRES_RF_LIGHTING_ORIGIN == 128);
-  CHECK(QA_Q3_PRES_RF_SHADOW_PLANE == 256 && QA_Q3_PRES_RF_WRAP_FRAMES == 512);
+  CHECK(QA_Q3_PRES_RF_SHADOW_PLANE == 256);
   CHECK(strcmp(qa_q3_pres_default_model.path, "*default") == 0);
   CHECK(qa_q3_pres_default_model.kind == QA_Q3_PRES_SCENE_MODEL_DEFAULT);
   qa_q3_pres_ref_model_entity model = qa_q3_pres_create_model_entity_default();
@@ -339,16 +339,16 @@ static void test_core_client_info_and_config(void) {
     qa_q3_pres_client_info_set_animations(&bad, cells, missing, QA_Q3_TOTAL_ANIMATION_COUNT);
   });
 
-  /* config.ts cvarTable: 89 base rows, 101 missionpack rows. */
+  /* config.ts cvarTable: 90 base rows, 102 missionpack rows (bun, after pmove_ladders). */
   size_t count = 0;
   const qa_q3_pres_cvar_definition *base = qa_q3_pres_cvar_table(QA_Q3_BASE_PRODUCT_BASEQ3, &count);
-  CHECK(count == 89);
+  CHECK(count == 90);
   const qa_q3_pres_cvar_definition *mission =
       qa_q3_pres_cvar_table(QA_Q3_BASE_PRODUCT_MISSIONPACK, &count);
-  CHECK(count == 101);
+  CHECK(count == 102);
   const qa_q3_pres_cvar_definition *base_defer = NULL, *mission_defer = NULL;
-  for (size_t i = 0; i < 89; i++) if (base[i].symbol == QA_Q3_PRES_VM_CG_DEFER_PLAYERS) base_defer = &base[i];
-  for (size_t i = 0; i < 101; i++) {
+  for (size_t i = 0; i < 90; i++) if (base[i].symbol == QA_Q3_PRES_VM_CG_DEFER_PLAYERS) base_defer = &base[i];
+  for (size_t i = 0; i < 102; i++) {
     if (mission[i].symbol == QA_Q3_PRES_VM_CG_DEFER_PLAYERS) mission_defer = &mission[i];
   }
   CHECK(base_defer != NULL && strcmp(base_defer->default_value, "1") == 0);
@@ -463,17 +463,17 @@ static void probe_hit_player(void *ctx, double w, qa_vec3 o, qa_vec3 d, double n
   (void)w; (void)o; (void)d; (void)n; probe_call(ctx, "missileHitPlayer");
 }
 static void probe_hit_wall(void *ctx, double w, double c, qa_vec3 o, qa_vec3 d,
-    qa_q3_pres_impact_sound_mirror s) {
+    qa_q3_pres_impact_sound s) {
   (void)w; (void)c; (void)o; (void)d; (void)s; probe_call(ctx, "missileHitWall");
 }
 static void probe_rail(void *ctx, double c, qa_vec3 a, qa_vec3 b) {
   (void)c; (void)a; (void)b; probe_call(ctx, "railTrail");
 }
-static void probe_bullet(void *ctx, qa_vec3 e, double s, qa_q3_pres_bullet_hit_mirror h) {
+static void probe_bullet(void *ctx, qa_vec3 e, double s, qa_q3_pres_bullet_hit h) {
   (void)e; (void)s; (void)h; probe_call(ctx, "bullet");
 }
 static void probe_shotgun(void *ctx, qa_q3_base_entity_state *s) { (void)s; probe_call(ctx, "shotgun"); }
-static qa_q3_pres_local_entity *probe_smoke(void *ctx, qa_q3_pres_smoke_puff_options_mirror o) {
+static qa_q3_pres_local_entity *probe_smoke(void *ctx, qa_q3_pres_smoke_puff_options o) {
   (void)o;
   probe_call(ctx, "unexpectedSmoke");
   return NULL;
@@ -836,7 +836,7 @@ static void test_core_media_sounds(void) {
   qa_q3_pres_q3_renderer_resources *resources = make_resources(&resource_fixture);
   CHECK(resources != NULL);
   qa_q3_pres_client_sound_bank bank = {&probe, bank_register, bank_index};
-  qa_q3_pres_client_weapon_media_registry_mirror registry;
+  qa_q3_pres_client_weapon_media_registry_view registry;
   memset(&registry, 0, sizeof registry);
   registry.ctx = &probe;
   registry.register_item_visuals = registry_items;
@@ -1144,7 +1144,6 @@ static void test_draw_stack_tools_and_weapons(void) {
   qa_vec4 health = qa_q3_pres_get_color_for_health(100, 0);
   CHECK(health.x == 1 && health.y == 1 && health.z == 1);
   CHECK(qa_q3_pres_get_color_for_health(0, 50).x == 0);
-  CHECK(qa_q3_pres_proportional_size_scale(0x10) == 0.75);
   /* Weapon selection cycles owned+stocked weapons, skipping gauntlet. */
   qa_q3_pres_client_game_state state;
   CHECK(qa_q3_pres_client_game_state_init(&state, QA_Q3_BASE_PRODUCT_BASEQ3, 0, 0));

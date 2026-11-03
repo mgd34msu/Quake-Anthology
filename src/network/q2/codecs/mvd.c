@@ -1,5 +1,7 @@
 /* Port of src/network/q2/codecs/mvd.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/codecs/mvd.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <string.h>
@@ -8,7 +10,8 @@
 #include "qa/network/q2/constants.h"
 
 void qa_q2_msg_write_mvd_cmd(qa_q2_sizebuf *msg, double op, double extrabits) {
-  int32_t v = (int32_t)op | ((int32_t)extrabits << QA_Q2_MVD_SVCMD_BITS);
+  int32_t v = qa_js_to_int32(op) |
+              (int32_t)((uint32_t)qa_js_to_int32(extrabits) << QA_Q2_MVD_SVCMD_BITS);
   qa_q2_msg_write_byte(msg, (double)(v & 0xff));
 }
 void qa_q2_msg_read_mvd_cmd(qa_q2_sizebuf *msg, qa_q2_mvd_cmd *out) {
@@ -35,7 +38,7 @@ void qa_q2_msg_write_delta_mvd_playerstate(qa_q2_sizebuf *msg,
                                            const qa_q2_wire_player *to_or_null,
                                            double number, bool force) {
   if (!qa_q2_msg_valid_mvd_client_number(number)) {
-    qa_q2_throw_error("MSG_WriteDeltaMvdPlayerstate: bad number: %g", number);
+    qa_q2_throw_error("MSG_WriteDeltaMvdPlayerstate: bad number: %s", QA_JS_NUMBER(number));
   }
   if (to_or_null == NULL) {
     qa_q2_msg_write_byte(msg, number);
@@ -69,7 +72,7 @@ void qa_q2_msg_write_delta_mvd_playerstate(qa_q2_sizebuf *msg,
   if (vec3_diff(to->gunangles, f->gunangles)) pflags |= QA_Q2_PPS_GUNANGLES;
   int32_t statbits = 0;
   for (int i = 0; i < QA_Q2_MVD_MAX_STATS_OLD; i++) {
-    if (to->stats[i] != f->stats[i]) statbits |= 1 << i;
+    if (to->stats[i] != f->stats[i]) statbits |= (int32_t)(1u << i);
   }
   if (statbits != 0) pflags |= QA_Q2_PPS_STATS;
   if (pflags == 0 && !force) return;
@@ -108,7 +111,7 @@ void qa_q2_msg_write_delta_mvd_playerstate(qa_q2_sizebuf *msg,
   if (pflags & QA_Q2_PPS_STATS) {
     qa_q2_msg_write_long(msg, (double)statbits);
     for (int i = 0; i < QA_Q2_MVD_MAX_STATS_OLD; i++) {
-      if (statbits & (1 << i)) qa_q2_msg_write_short(msg, (double)to->stats[i]);
+      if (statbits & (int32_t)(1u << i)) qa_q2_msg_write_short(msg, (double)to->stats[i]);
     }
   }
 }
@@ -190,21 +193,23 @@ void qa_q2_msg_read_delta_mvd_playerstate(qa_q2_sizebuf *msg,
   qa_q2_msg_read_delta_mvd_playerstate_body(msg, from_or_null, number, out);
 }
 
-static int32_t scaled_short(double x, double scale) {
+/* TS numbers: Math.max/min keep NaN, so a NaN component compares changed
+ * (NaN !== NaN) and its write stores ToInt32(NaN) = 0. */
+static double scaled_short(double x, double scale) {
   double v = trunc(x * scale);
   if (v < -32768) v = -32768;
   if (v > 32767) v = 32767;
-  return (int32_t)v;
+  return v;
 }
-static int32_t blend_byte(float x) {
+static double blend_byte(float x) {
   double v = trunc((double)x * 255.0);
   if (v < 0) v = 0;
   if (v > 255) v = 255;
-  return (int32_t)v;
+  return v;
 }
 static int32_t packed_gun_index(const qa_q2_wire_player *ps) {
-  return ((int32_t)ps->gunindex & 0x1fff) |
-         (((int32_t)ps->gunskin & 0x7) << QA_Q2_MVD_GUNINDEX_BITS);
+  return (qa_js_to_int32(ps->gunindex) & 0x1fff) |
+         ((qa_js_to_int32(ps->gunskin) & 0x7) << QA_Q2_MVD_GUNINDEX_BITS);
 }
 static bool blend_changed_rr(const qa_q2_wire_player *from,
                              const qa_q2_wire_player *to) {
@@ -223,10 +228,10 @@ static void write_delta_blend(qa_q2_sizebuf *msg, const qa_q2_wire_player *from,
   }
   qa_q2_msg_write_byte(msg, (double)bflags);
   for (int i = 0; i < 4; i++) {
-    if (bflags & (1 << i)) qa_q2_msg_write_byte(msg, (double)blend_byte(to->blend[i]));
+    if (bflags & (1 << i)) qa_q2_msg_write_byte(msg, blend_byte(to->blend[i]));
   }
   for (int i = 0; i < 4; i++) {
-    if (bflags & (1 << (4 + i))) qa_q2_msg_write_byte(msg, (double)blend_byte(to->damage_blend[i]));
+    if (bflags & (1 << (4 + i))) qa_q2_msg_write_byte(msg, blend_byte(to->damage_blend[i]));
   }
 }
 static void read_delta_blend(qa_q2_sizebuf *msg, qa_q2_wire_player *ps) {
@@ -243,7 +248,7 @@ void qa_q2_msg_write_delta_mvd_playerstate_rerelease(
     qa_q2_sizebuf *msg, const qa_q2_wire_player *from_or_null,
     const qa_q2_wire_player *to_or_null, double number, bool force) {
   if (!qa_q2_msg_valid_mvd_client_number(number)) {
-    qa_q2_throw_error("MSG_WriteDeltaMvdPlayerstateRerelease: bad number: %g", number);
+    qa_q2_throw_error("MSG_WriteDeltaMvdPlayerstateRerelease: bad number: %s", QA_JS_NUMBER(number));
   }
   if (to_or_null == NULL) {
     qa_q2_msg_write_byte(msg, number);
@@ -258,14 +263,14 @@ void qa_q2_msg_write_delta_mvd_playerstate_rerelease(
   if (to->pmove.pm_type != f->pmove.pm_type) pflags |= QA_Q2_PPS_M_TYPE;
   if (to->pmove.origin[0] != f->pmove.origin[0] || to->pmove.origin[1] != f->pmove.origin[1]) pflags |= QA_Q2_PPS_M_ORIGIN;
   if (to->pmove.origin[2] != f->pmove.origin[2]) pflags |= QA_Q2_PPS_M_ORIGIN2;
-  int32_t to_vo[3];
-  int32_t from_vo[3];
-  int32_t to_kick[3];
-  int32_t from_kick[3];
-  int32_t to_go[3];
-  int32_t from_go[3];
-  int32_t to_ga[3];
-  int32_t from_ga[3];
+  double to_vo[3];
+  double from_vo[3];
+  double to_kick[3];
+  double from_kick[3];
+  double to_go[3];
+  double from_go[3];
+  double to_ga[3];
+  double from_ga[3];
   for (int i = 0; i < 3; i++) {
     to_vo[i] = scaled_short((double)to->viewoffset[i], QA_Q2_MVD_RERELEASE_VIEWOFFSET_SCALE);
     from_vo[i] = scaled_short((double)f->viewoffset[i], QA_Q2_MVD_RERELEASE_VIEWOFFSET_SCALE);
@@ -416,7 +421,8 @@ void qa_q2_mvd_read_player(qa_q2_sizebuf *message,
   int32_t flags = qa_q2_msg_read_word(message);
   if ((flags & QA_Q2_PPS_MOREBITS) != 0) {
     if (profile.fog) {
-      flags |= qa_q2_msg_read_byte(message) << 16;
+      /* JS <<: a truncated read (-1) sets every high bit instead of overflowing. */
+      flags |= (int32_t)((uint32_t)qa_q2_msg_read_byte(message) << 16);
     } else {
       out->number = number;
       out->removed = true;

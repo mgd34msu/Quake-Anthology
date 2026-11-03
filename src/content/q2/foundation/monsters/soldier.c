@@ -1,5 +1,6 @@
 /* Port of src/content/q2/foundation/monsters/soldier.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/monsters/soldier.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 
@@ -17,7 +18,9 @@ static bool alive_enemy(qa_q2m_context *c) {
 }
 static bool needs_cock(qa_q2m_context *c) { return c->state->weapon == QA_Q2M_WEAPON_SHOTGUN && !c->state->cocked; }
 static bool melee_range(qa_q2m_context *c) {
-  return qa_q2m_target_distance(c) <= (!q2m_rr(c->game) ? 80 : 20);
+  double left = qa_q2m_target_distance(c);
+  double right = (!q2m_rr(c->game) ? 80 : 20);
+  return left <= right;
 }
 static bool refire(qa_q2m_context *c, bool force) {
   if (!q2m_rr(c->game))
@@ -34,10 +37,10 @@ typedef struct frame_tables {
 void qa_q2m_soldier_stand_handler(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_state *state = c->state;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   if (q2m_rr(game)) {
-    if (((uint32_t)entity->spawnflags & 8u) != 0) { set_move(c, "soldier_move_blind"); return; }
+    if ((qa_js_to_uint32(entity->spawnflags) & 8u) != 0) { set_move(c, "soldier_move_blind"); return; }
     double r = q2m_rnd(game);
     set_move(c, strcmp(state->move->name, "soldier_move_stand1") != 0 || r < 0.6 ? "soldier_move_stand1"
                : r < 0.8 ? "soldier_move_stand2" : "soldier_move_stand3");
@@ -62,7 +65,7 @@ void qa_q2m_soldier_run_handler(void *ctx, qa_q2m_context *c) {
 }
 void qa_q2m_soldier_attack_handler(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (!q2m_rr(game)) {
     set_move(c, state->weapon == QA_Q2M_WEAPON_MACHINEGUN ? "soldier_move_attack4"
@@ -77,7 +80,9 @@ void qa_q2m_soldier_attack_handler(void *ctx, qa_q2m_context *c) {
     if (qa_hypot3(state->blind_fire_target) == 0 || r > chance) return;
     state->manual_steering = true;
     set_move(c, "soldier_move_attack1");
-    state->attack_finished = q2m_now(game) + 1.5 + q2m_rnd(game);
+    double left = q2m_now(game) + 1.5;
+    double right = q2m_rnd(game);
+    state->attack_finished = left + right;
     return;
   }
   double r = q2m_rnd(game);
@@ -86,18 +91,18 @@ void qa_q2m_soldier_attack_handler(void *ctx, qa_q2m_context *c) {
   const qa_q2m_muzzle_ids *ids = &qa_q2m_muzzle_ids_value;
   if (state->weapon != QA_Q2M_WEAPON_MACHINEGUN) {
     bool first = !(state->weapon == QA_Q2M_WEAPON_SHOTGUN && qa_q2m_target_distance(c) <= 286)
-              && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, ids->SOLDIER_BLASTER_1));
-    bool second = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, ids->SOLDIER_BLASTER_2));
+              && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, ids->SOLDIER_BLASTER_1));
+    bool second = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, ids->SOLDIER_BLASTER_2));
     if (first && (!second || q2m_rnd(game) < 0.5)) { set_move(c, "soldier_move_attack1"); return; }
     if (second) { set_move(c, "soldier_move_attack2"); return; }
-  } else if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, ids->SOLDIER_MACHINEGUN_4))) {
+  } else if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, ids->SOLDIER_MACHINEGUN_4))) {
     set_move(c, "soldier_move_attack4");
     return;
   }
 }
 void qa_q2m_soldier_sight_handler(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   q2m_sound(game, c->entity, q2m_rnd(game) < 0.5 ? "soldier/solsght1.wav" : "soldier/solsrch1.wav",
             true, 2, false, 0, false, 0);
   if (!q2m_rr(game)) {
@@ -105,19 +110,19 @@ void qa_q2m_soldier_sight_handler(void *ctx, qa_q2m_context *c) {
       set_move(c, "soldier_move_attack6");
   } else if (qa_q2m_visible_enemy(c) && qa_q2m_target_distance(c) >= 440 && q2m_rnd(game) > 0.75) {
     if (c->state->weapon != QA_Q2M_WEAPON_MACHINEGUN) set_move(c, "soldier_move_attack6");
-    else if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, qa_q2m_muzzle_ids_value.SOLDIER_MACHINEGUN_4)))
+    else if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, qa_q2m_muzzle_ids_value.SOLDIER_MACHINEGUN_4)))
       set_move(c, "soldier_move_attack4");
   }
 }
 void qa_q2m_soldier_pain_handler(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   bool rr = q2m_rr(game);
   if (qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2)
-    entity->skin = (double)((uint32_t)entity->skin | 1u);
-  else if (rr) entity->skin = (double)((uint32_t)entity->skin & ~1u);
+    entity->skin = (double)(qa_js_to_int32(qa_js_to_uint32(entity->skin) | 1u));
+  else if (rr) entity->skin = (double)(qa_js_to_int32(qa_js_to_uint32(entity->skin) & ~1u));
   if (rr) { qa_q2m_finish_dodge(c); state->charging = false; state->manual_steering = false; }
   qa_vec3 velocity = q2m_body(game, entity).velocity;
   const char *move = state->move->name;
@@ -145,9 +150,9 @@ void qa_q2m_soldier_pain_handler(void *ctx, qa_q2m_context *c, qa_pain_reaction 
 }
 
 static void fire_soldier(qa_q2m_context *c, double flash_number, bool angle_limited) {
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   bool rr = q2m_rr(game);
   const qa_q2m_muzzle_ids *ids = &qa_q2m_muzzle_ids_value;
   const double blaster_flash[9] = {39, 40, 83, 86, 89, 92, 95, 98, ids->SOLDIER_BLASTER_9};
@@ -159,13 +164,13 @@ static void fire_soldier(qa_q2m_context *c, double flash_number, bool angle_limi
   qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(game->options.edition, flash));
   qa_vec3 aim = qa_math_angle_vectors_rule(q2m_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward;
   if (flash_number == 5 || flash_number == 6) {
-    if (rr && ((uint32_t)entity->spawnflags & 65536u) != 0) return;
+    if (rr && (qa_js_to_uint32(entity->spawnflags) & 65536u) != 0) return;
   } else {
     qa_vec3 enemy;
     if (!qa_q2m_enemy_eye(c, &enemy)) { state->hold_frame = false; return; }
     qa_vec3 end = enemy;
     if (state->attack_state == QA_Q2M_ATTACK_BLIND) {
-      qa_q2f_entity *enemy_entity = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+      qa_q2_entity *enemy_entity = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
       end = state->blind_fire_target;
       end.z = state->blind_fire_target.z + (enemy_entity ? enemy_entity->view_height : 22);
     }
@@ -187,15 +192,19 @@ static void fire_soldier(qa_q2m_context *c, double flash_number, bool angle_limi
     if (rr) state->cocked = false;
   } else {
     if (!state->hold_frame) {
-      if (rr) state->fire_wait = q2m_now(game) + 0.3 + q2m_rnd(game) * 0.8;
-      else state->pause_time = q2m_now(game) + (3 + floor(q2m_rnd(game) * 8)) * 0.1;
+      double left2;
+      double right3;
+      double left;
+      double right2;
+      if (rr) state->fire_wait = (left2 = q2m_now(game) + 0.3, right3 = q2m_rnd(game) * 0.8, left2 + right3);
+      else state->pause_time = (left = q2m_now(game), right2 = (3 + floor(q2m_rnd(game) * 8)) * 0.1, left + right2);
     }
     c->weapons.fire_bullet(c->weapons.ctx, entity, game, start, aim, 2, 4, 300, 500, 0);
     state->hold_frame = q2m_now(game) < (rr ? state->fire_wait : state->pause_time);
   }
-  qa_q2f_presentation_event e;
+  qa_q2_presentation_event e;
   memset(&e, 0, sizeof e);
-  e.kind = QA_Q2F_EVENT_MONSTER_MUZZLEFLASH; e.actor = &entity->actor.id; e.flash = flash;
+  e.kind = "monster-muzzleflash"; e.has_actor = true; e.actor = entity->actor.id; e.flash = flash;
   e.origin = start; e.direction = aim;
   game->host->emit(game->host->ctx, e);
 }
@@ -203,8 +212,8 @@ static void fire_soldier(qa_q2m_context *c, double flash_number, bool angle_limi
 static void death_shrink(void *ctx, qa_q2m_context *c);
 void qa_q2m_soldier_die_handler(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   bool rr = q2m_rr(game);
   const qa_attack_cause *cause = entity->last_attack ? &entity->last_attack->cause : NULL;
@@ -226,8 +235,8 @@ void qa_q2m_soldier_die_handler(void *ctx, qa_q2m_context *c, qa_death_reaction 
       qa_q2m_gib_options head = {true, false, true, false};
       (void)qa_q2m_throw_gib(entity, game, "models/monsters/soldier/gibs/head.md2", damage, head);
     } else {
-      for (int i = 0; i < 2; i++) (void)qa_q2m_throw_gib(entity, game, "models/objects/gibs/bone/tris.md2", damage, plain);
-      for (int i = 0; i < 4; i++) (void)qa_q2m_throw_gib(entity, game, "models/objects/gibs/sm_meat/tris.md2", damage, plain);
+      for (int i = 0; i < 3; i++) (void)qa_q2m_throw_gib(entity, game, "models/objects/gibs/sm_meat/tris.md2", damage, plain);
+      (void)qa_q2m_throw_gib(entity, game, "models/objects/gibs/chest/tris.md2", damage, plain);
       (void)qa_q2m_throw_head(entity, game, "models/objects/gibs/head2/tris.md2", damage);
     }
     state->dead = true; state->gibbed = true;
@@ -235,10 +244,11 @@ void qa_q2m_soldier_die_handler(void *ctx, qa_q2m_context *c, qa_death_reaction 
   }
   if (state->dead) return;
   state->dead = true;
-  qa_q2f_combat_traits traits;
+  if (!rr) entity->skin = (double)(qa_js_to_int32(entity->skin) | 1);
+  qa_combat_trait_changes traits;
   memset(&traits, 0, sizeof traits);
   traits.has_can_take_damage = true; traits.can_take_damage = true;
-  game->host->combat.set_traits(game->host->combat.ctx, entity->actor, traits);
+  qa_gameplay_authority_set_traits(game->host->combat, entity->actor, traits);
   q2m_sound(game, entity, state->weapon == QA_Q2M_WEAPON_BLASTER ? "soldier/soldeth2.wav"
             : state->weapon == QA_Q2M_WEAPON_SHOTGUN ? "soldier/soldeth1.wav" : "soldier/soldeth3.wav",
             true, 2, false, 0, false, 0);
@@ -281,9 +291,9 @@ static void hyper_ripper(qa_q2m_context *c, double flash, bool limited) {
 }
 static void laser_sound(qa_q2m_context *c, bool start) {
   if (c->entity->skin >= 6 && c->state->weapon == QA_Q2M_WEAPON_MACHINEGUN) {
-    qa_q2f_presentation_event e;
+    qa_q2_presentation_event e;
     memset(&e, 0, sizeof e);
-    e.kind = QA_Q2F_EVENT_SOUND; e.actor = &c->entity->actor.id;
+    e.kind = "sound"; e.has_actor = true; e.actor = c->entity->actor.id;
     e.origin = q2m_body(c->game, c->entity).origin; e.path = "weapons/laser2.wav";
     e.channel = 1; e.volume = 1; e.attenuation = 1; e.loop = start ? "start" : "stop";
     c->game->host->emit(c->game->host->ctx, e);
@@ -360,9 +370,11 @@ static void cb_a2_shotgun(void *ctx, qa_q2m_context *c) {
   if (needs_cock(c)) { c->state->next_frame = SFIELD(c, attak210); c->state->force_refire = true; }
 }
 static void cb_a3_refire(void *ctx, qa_q2m_context *c) {
+  double left;
+  double right;
   (void)ctx;
   if (q2m_rr(c->game) && needs_cock(c)) c->state->hold_frame = q2m_now(c->game) < c->state->duck_wait;
-  else if (q2m_now(c->game) + 0.4 < (!q2m_rr(c->game) ? c->state->pause_time : c->state->duck_wait))
+  else if ((left = q2m_now(c->game) + 0.4, right = (!q2m_rr(c->game) ? c->state->pause_time : c->state->duck_wait), left < right))
     c->state->next_frame = SFIELD(c, attak303);
 }
 static void cb_a6_refire(void *ctx, qa_q2m_context *c) {
@@ -429,8 +441,8 @@ static void dead_cb(void *ctx, qa_q2m_context *c) { (void)ctx; qa_q2m_corpse(c);
 static void death_shrink(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_body_state body = q2m_body(c->game, c->entity);
-  c->entity->server_flags = (double)((uint32_t)c->entity->server_flags | 2u);
-  qa_q2f_body_changes changes; memset(&changes, 0, sizeof changes);
+  c->entity->server_flags = (double)(qa_js_to_int32(qa_js_to_uint32(c->entity->server_flags) | 2u));
+  qa_q2_body_changes changes; memset(&changes, 0, sizeof changes);
   changes.has_bounds = true; changes.bounds = body.bounds; changes.bounds.max.z = 0;
   q2m_move(c->game, c->entity, changes, false, false);
 }

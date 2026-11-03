@@ -11,8 +11,7 @@
 #include "qa/world/session/clocks.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -33,9 +32,10 @@ double qa_compare_invocation_order(qa_frame_ordering ordering, qa_invocation_ord
                                    void *source_slot_ctx) {
   if (ordering.kind == QA_FRAME_ORDERING_MIXED) {
     int64_t left_provider = -1, right_provider = -1;
+    /* Array.prototype.indexOf: the first match. */
     for (size_t i = 0; i < ordering.provider_count; i++) {
-      if (str_eq(ordering.providers[i], left.provider)) left_provider = (int64_t)i;
-      if (str_eq(ordering.providers[i], right.provider)) right_provider = (int64_t)i;
+      if (left_provider < 0 && str_eq(ordering.providers[i], left.provider)) left_provider = (int64_t)i;
+      if (right_provider < 0 && str_eq(ordering.providers[i], right.provider)) right_provider = (int64_t)i;
     }
     if (left_provider < 0 || right_provider < 0)
       qa_range_error("Provider is absent from mixed frame ordering");
@@ -93,8 +93,6 @@ typedef struct pending_think {
   qa_owned_actor owned;
   qa_callback_id callback;
   qa_think_timing timing;
-  int64_t source_slot;
-  int64_t provider_rank;
 } pending_think;
 
 struct qa_frame_scheduler {
@@ -103,11 +101,7 @@ struct qa_frame_scheduler {
   pending_think *scheduled; /* keyed by actor slot via linear scan */
   size_t scheduled_count;
   size_t scheduled_capacity;
-  bool advancing;
   bool closed;
-  qa_think_advance_result *scratch;
-  size_t scratch_count;
-  size_t scratch_capacity;
 };
 
 static pending_think *find_pending(qa_frame_scheduler *scheduler, int64_t slot_value) {
@@ -156,6 +150,11 @@ static qa_clock_profile profile_for(qa_frame_scheduler *scheduler, qa_provider_i
   qa_error(message);
 }
 
+static void scheduler_release(void *arg) {
+  qa_frame_scheduler *scheduler = arg;
+  free(scheduler->ordering_providers);
+  free(scheduler);
+}
 qa_frame_scheduler *qa_frame_scheduler_create(qa_scheduler_options options) {
   qa_frame_scheduler *scheduler = calloc(1, sizeof *scheduler);
   if (scheduler == NULL) return NULL;
@@ -167,6 +166,9 @@ qa_frame_scheduler *qa_frame_scheduler_create(qa_scheduler_options options) {
            options.ordering.provider_count * sizeof *scheduler->ordering_providers);
     scheduler->options.ordering.providers = scheduler->ordering_providers;
   }
+  /* A constructor throw leaves nothing behind in TS. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, scheduler_release, scheduler);
   char message[1024];
   for (size_t i = 0; i < options.clock_count; i++) {
     for (size_t j = 0; j < i; j++) {
@@ -189,13 +191,13 @@ qa_frame_scheduler *qa_frame_scheduler_create(qa_scheduler_options options) {
       (void)profile_for(scheduler, options.ordering.providers[rank]);
     }
   }
+  qa_cleanup_pop(&node);
   return scheduler;
 }
 void qa_frame_scheduler_destroy(qa_frame_scheduler *scheduler) {
   if (scheduler == NULL) return;
   free(scheduler->ordering_providers);
   free(scheduler->scheduled);
-  free(scheduler->scratch);
   free(scheduler);
 }
 
@@ -253,8 +255,6 @@ void qa_frame_scheduler_schedule(qa_frame_scheduler *scheduler, qa_owned_actor a
   value.owned = actor;
   value.callback = callback;
   value.timing = timing;
-  value.source_slot = source_slot;
-  value.provider_rank = provider_rank;
   set_pending(scheduler, value);
 }
 
@@ -350,84 +350,6 @@ qa_think_result qa_frame_scheduler_run(qa_frame_scheduler *scheduler, qa_actor_i
       return result;
     }
   }
-}
-
-static double compare_pending(pending_think left, pending_think right, bool invocations) {
-  double by_rank = (double)(left.provider_rank - right.provider_rank);
-  if (by_rank != 0) return by_rank;
-  double by_slot = (double)(left.source_slot - right.source_slot);
-  if (by_slot != 0) return by_slot;
-  return invocations ? left.timing.order.sequence - right.timing.order.sequence : 0;
-}
-
-const qa_think_advance_result *qa_frame_scheduler_advance(qa_frame_scheduler *scheduler,
-                                                          const qa_provider_frame *frames,
-                                                          size_t frame_count,
-                                                          qa_think_boundary boundary,
-                                                          size_t *out_count) {
-  assert_open(scheduler);
-  if (scheduler->advancing) qa_error("Scheduler advance is already running");
-  char message[1024];
-  for (size_t i = 0; i < frame_count; i++) {
-    (void)profile_for(scheduler, frames[i].provider);
-    for (size_t j = 0; j < i; j++) {
-      if (str_eq(frames[i].provider, frames[j].provider)) {
-        (void)snprintf(message, sizeof message, "Duplicate provider frame: %s", frames[i].provider);
-        qa_error(message);
-      }
-    }
-  }
-  scheduler->scratch_count = 0;
-  bool has_cursor = false;
-  pending_think cursor;
-  memset(&cursor, 0, sizeof cursor);
-  scheduler->advancing = true;
-  while (!scheduler->closed) {
-    bool has_next = false;
-    pending_think next;
-    memset(&next, 0, sizeof next);
-    for (size_t i = 0; i < scheduler->scheduled_count;) {
-      pending_think pending = scheduler->scheduled[i];
-      if (!scheduler->options.actors.is_live(scheduler->options.actors.ctx, pending.actor)) {
-        remove_pending(scheduler, pending.actor.slot);
-        continue;
-      }
-      i++;
-      if (has_cursor && compare_pending(pending, cursor, false) <= 0) continue;
-      if (!has_next || compare_pending(pending, next, true) < 0) {
-        next = pending;
-        has_next = true;
-      }
-    }
-    if (!has_next) break;
-    cursor = next;
-    has_cursor = true;
-    qa_provider_id execution_provider =
-        next.timing.has_execution_provider ? next.timing.execution_provider : next.owned.owner;
-    const qa_frame_context *frame = NULL;
-    for (size_t i = 0; i < frame_count; i++) {
-      if (str_eq(frames[i].provider, execution_provider)) frame = &frames[i].frame;
-    }
-    if (frame == NULL) {
-      scheduler->advancing = false;
-      (void)snprintf(message, sizeof message, "Missing source frame for provider: %s",
-                     execution_provider != NULL ? execution_provider : "");
-      qa_error(message);
-    }
-    qa_think_result result = qa_frame_scheduler_run(scheduler, next.actor, *frame, boundary);
-    if (scheduler->scratch_count == scheduler->scratch_capacity) {
-      scheduler->scratch_capacity =
-          scheduler->scratch_capacity != 0 ? scheduler->scratch_capacity * 2 : 8;
-      scheduler->scratch = xrealloc(scheduler->scratch,
-                                    scheduler->scratch_capacity * sizeof *scheduler->scratch);
-    }
-    scheduler->scratch[scheduler->scratch_count].actor = next.actor;
-    scheduler->scratch[scheduler->scratch_count].result = result;
-    scheduler->scratch_count++;
-  }
-  scheduler->advancing = false;
-  *out_count = scheduler->scratch_count;
-  return scheduler->scratch;
 }
 
 void qa_frame_scheduler_close(qa_frame_scheduler *scheduler) {

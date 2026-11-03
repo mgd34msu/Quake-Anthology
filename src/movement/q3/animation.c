@@ -8,6 +8,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 /* TS result() emits the animation effect on object identity change
  * (a spread copy), even when every field compares equal. */
@@ -33,7 +34,7 @@ static qa_animation_step_result result_changed(qa_q3_animation_context context, 
 }
 static qa_animation_state require_q3(qa_q3_animation_context context, const char *message) {
   if (context.animation.state.kind == NULL || strcmp(context.animation.state.kind, "q3") != 0)
-    qa_range_error("%s", message);
+    qa_raise("TypeError", 0, 0, "%s", message); /* TS throws TypeError */
   return context.animation.state;
 }
 
@@ -57,8 +58,8 @@ qa_animation_step_result qa_q3_run_animation_operation(qa_q3_animation_request r
     case QA_Q3_ANIM_DROP_TIMERS: {
       double elapsed = context.elapsed_milliseconds;
       qa_animation_state next = state;
-      if (state.legs_timer_milliseconds > 0) next.legs_timer_milliseconds = fmax(0, state.legs_timer_milliseconds - elapsed);
-      if (state.torso_timer_milliseconds > 0) next.torso_timer_milliseconds = fmax(0, state.torso_timer_milliseconds - elapsed);
+      if (state.legs_timer_milliseconds > 0) next.legs_timer_milliseconds = qa_js_max(0, state.legs_timer_milliseconds - elapsed);
+      if (state.torso_timer_milliseconds > 0) next.torso_timer_milliseconds = qa_js_max(0, state.torso_timer_milliseconds - elapsed);
       return result_changed(context, next, true, NULL, 0);
     }
     case QA_Q3_ANIM_GESTURE: {

@@ -147,12 +147,12 @@ bool qa_lmctf_context_flags_touchable(qa_lmctf_context *context) { return contex
 
 qa_lmctf_player_state *qa_lmctf_player(qa_lmctf_context *context, qa_actor_id actor) {
   qa_lmctf_player_state *state = qa_lmctf_context_get(context, actor);
-  if (state == NULL) qa_q2f_error("LMCTF player has not been admitted");
+  if (state == NULL) qa_raise("Error", 0, 0, "LMCTF player has not been admitted");
   return state;
 }
 
 const char *qa_lmctf_name(qa_lmctf_context *context, qa_actor_id actor) {
-  qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, actor);
+  qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, actor);
   return player == NULL ? "player" : player->name;
 }
 
@@ -178,8 +178,8 @@ void qa_lmctf_stat(qa_lmctf_context *context, qa_actor_id actor, const char *nam
 }
 
 void qa_lmctf_score(qa_lmctf_context *context, qa_q2_game_services *game, qa_actor_id actor, double amount, const char *name, const qa_actor_id *victim) {
-  qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, actor);
-  if (player == NULL) qa_q2f_error("LMCTF score requires the shared player state");
+  qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, actor);
+  if (player == NULL) qa_raise("Error", 0, 0, "LMCTF score requires the shared player state");
   player->score += amount;
   qa_lmctf_stat(context, actor, "score", amount);
   qa_lmctf_event event = {0};
@@ -195,7 +195,7 @@ void qa_lmctf_score(qa_lmctf_context *context, qa_q2_game_services *game, qa_act
 
 bool qa_lmctf_active(qa_lmctf_context *context, qa_q2_game_services *game, qa_actor_id actor) {
   qa_lmctf_player_state *state = qa_lmctf_context_get(context, actor);
-  qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, actor);
+  qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, actor);
   return state != NULL && player != NULL && player->connected && !player->spectator &&
          (state->team != 0 || game->options.mode != QA_Q2_MODE_DEATHMATCH) &&
          qa_session_actor_registry_is_live(game->host->actors, actor);

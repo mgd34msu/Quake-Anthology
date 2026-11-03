@@ -87,12 +87,12 @@ qa_app_unified_component_projection qa_app_unified_component_publisher_project(
             || strcmp(source->identity.abi, old->identity.abi) != 0
             || strcmp(source->identity.runtime, old->identity.runtime) != 0
             || !actor_equal(source->viewer, old->viewer)))
-      qa_range_error("Component activation changed identity or recipient");
+      qa_raise("Error", 0, 0, "Component activation changed identity or recipient");
     const qa_qvm_scene_context *scene = source->scene;
     double sequence = scene ? (double)scene->snapshot.server_command_sequence : 0;
     double *stored = sequence_slot(publisher, source->identity.owner.provider);
     double base = same && stored ? *stored : sequence;
-    if (sequence < base) qa_range_error("Original component command sequence moved backward");
+    if (sequence < base) qa_raise("Error", 0, 0, "Original component command sequence moved backward");
     size_t available = scene ? scene->command_count : 0;
     size_t first = 0;
     while (first < available && (double)scene->commands[first].sequence <= base) first++;
@@ -100,17 +100,18 @@ qa_app_unified_component_projection qa_app_unified_component_publisher_project(
     if (sequence != base && (command_count == 0
             || (double)scene->commands[first].sequence != base + 1
             || (double)scene->commands[available - 1].sequence != sequence))
-      qa_range_error("Original component reliable commands exceeded their retained window");
+      qa_raise("Error", 0, 0, "Original component reliable commands exceeded their retained window");
     bool game_changed = !same || old->game_state_revision != source->game_state_revision;
     if (same && source->game_state_revision < old->game_state_revision)
-      qa_range_error("Original component configstring revision moved backward");
+      qa_raise("Error", 0, 0, "Original component configstring revision moved backward");
     changed = changed || !same || game_changed || command_count > 0;
     sequence_set(publisher, source->identity.owner.provider, sequence);
     memset(&states[i], 0, sizeof states[i]);
     states[i].identity = source->identity;
     states[i].game_state_revision = source->game_state_revision;
-    states[i].has_game_state = game_changed;
-    if (game_changed && source->game_state) states[i].game_state = *source->game_state;
+    /* TS gameChanged ? context.gameState : null, and context.gameState may itself be null. */
+    states[i].has_game_state = game_changed && source->game_state != NULL;
+    if (states[i].has_game_state) states[i].game_state = *source->game_state;
     states[i].command_base = base;
     states[i].command_count = command_count;
     states[i].commands = xmalloc(command_count * sizeof *states[i].commands);

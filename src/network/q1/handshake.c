@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 static char *dupstr(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
 static char *dupn(const char *s, size_t n) { char *p = malloc(n + 1); if (p) { memcpy(p, s, n); p[n] = '\0'; } return p; }
 void qa_netquake_control_destroy(qa_netquake_control *m) {
@@ -51,6 +53,8 @@ uint8_t *qa_encode_netquake_control(const qa_netquake_control *m, size_t *out_le
   uint8_t *out = qa_size_buf_bytes(&s, out_len);
   qa_size_buf_destroy(&s); return out;
 }
+/* A raise after fields were read releases them, as the abandoned TS object is collected. */
+static void control_slot_destroy(void *arg) { qa_netquake_control_destroy(arg); }
 void qa_decode_netquake_control(const uint8_t *bytes, size_t length, qa_netquake_control *out) {
   memset(out, 0, sizeof *out);
   if (length < 5) qa_q1_packet_error("Short control header", 0);
@@ -94,12 +98,17 @@ void qa_decode_netquake_control(const uint8_t *bytes, size_t length, qa_netquake
       qa_q1_packet_error(msg, 4);
     }
   }
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, control_slot_destroy, out);
   qa_message_reader_finish(&r);
+  qa_cleanup_pop(&guard);
 }
 uint8_t *qa_answer_netquake_control(const uint8_t *bytes, size_t length, const qa_net_address *from,
                                     double now_ms, const qa_netquake_host *host, size_t *out_len) {
   *out_len = 0;
   qa_netquake_control m; qa_decode_netquake_control(bytes, length, &m);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, control_slot_destroy, &m);
   uint8_t *result = NULL;
   if (m.kind == QA_NQ_SERVER_INFO_REQUEST) {
     if (m.game && strcmp(m.game, "QUAKE") == 0) {
@@ -140,6 +149,7 @@ uint8_t *qa_answer_netquake_control(const uint8_t *bytes, size_t length, const q
       }
     }
   }
+  qa_cleanup_pop(&guard);
   qa_netquake_control_destroy(&m);
   return result;
 }
@@ -228,37 +238,48 @@ void qa_qw_challenges_destroy(qa_qw_challenges *c) {
   for (size_t i = 0; i < c->count; i++) free(c->records[i].key);
   free(c->records); memset(c, 0, sizeof *c);
 }
-static int32_t ji(double n) { double m = fmod(trunc(n), 4294967296.0); if (m < 0) m += 4294967296.0; return (int32_t)(uint32_t)m; }
+/* ToInt32 (NaN and infinities are 0; the fmod form cast NaN to uint32_t). */
+static int32_t ji(double n) { return qa_js_to_int32(n); }
 double qa_qw_challenges_issue(qa_qw_challenges *c, const qa_net_address *address, double now_ms) {
   char *key = qa_net_address_key(address, false);
-  for (size_t i = 0; i < c->count; i++) if (strcmp(c->records[i].key, key) == 0) { double v = c->records[i].challenge; free(key); return v; }
-  if ((double)c->count >= c->capacity && c->count > 0) {
-    size_t oldest = 0; double time = INFINITY;
-    for (size_t i = 0; i < c->count; i++) if (c->records[i].issued < time) { oldest = i; time = c->records[i].issued; }
-    free(c->records[oldest].key);
-    memmove(&c->records[oldest], &c->records[oldest+1], (c->count - oldest - 1) * sizeof *c->records);
+  for (size_t i = 0; i < c->count; i++) {
+    if (strcmp(c->records[i].key, key) != 0) continue;
+    if (now_ms / 1000 - c->records[i].issued <= 30) { double v = c->records[i].challenge; free(key); return v; }
+    free(c->records[i].key);
+    memmove(&c->records[i], &c->records[i + 1], (c->count - i - 1) * sizeof *c->records);
     c->count--;
+    break;
   }
-  int32_t challenge = ((ji(c->random(c->random_ctx)) & 32767) << 16) ^ (ji(c->random(c->random_ctx)) & 32767);
+  if ((double)c->count >= c->capacity) {
+    /* TS deletes the oldest key, or the empty key (absent) when nothing is older than Infinity. */
+    size_t oldest = c->count; double time = INFINITY;
+    for (size_t i = 0; i < c->count; i++) if (c->records[i].issued < time) { oldest = i; time = c->records[i].issued; }
+    if (oldest < c->count) {
+      free(c->records[oldest].key);
+      memmove(&c->records[oldest], &c->records[oldest + 1], (c->count - oldest - 1) * sizeof *c->records);
+      c->count--;
+    }
+  }
+  int32_t challenge = ji(c->random(c->random_ctx)) & 0x7fffffff;
+  if (challenge == 0) challenge = 1;
   if (c->count == c->cap) { size_t nc = c->cap ? c->cap * 2 : 8; c->records = realloc(c->records, nc * sizeof *c->records); c->cap = nc; }
   c->records[c->count].key = key; c->records[c->count].challenge = challenge;
   c->records[c->count].issued = trunc(now_ms / 1000); c->count++;
   return challenge;
 }
 bool qa_qw_challenges_validate(qa_qw_challenges *c, const qa_net_address *address, double challenge) {
+  return qa_qw_challenges_validate_at(c, address, challenge, false, 0);
+}
+bool qa_qw_challenges_validate_at(qa_qw_challenges *c, const qa_net_address *address, double challenge,
+                                  bool has_now, double now_ms) {
   char *key = qa_net_address_key(address, false);
   bool ok = false;
-  for (size_t i = 0; i < c->count; i++) if (strcmp(c->records[i].key, key) == 0) ok = c->records[i].challenge == challenge;
+  for (size_t i = 0; i < c->count; i++)
+    if (strcmp(c->records[i].key, key) == 0)
+      ok = c->records[i].challenge == challenge && (!has_now || now_ms / 1000 - c->records[i].issued <= 30);
   free(key); return ok;
 }
-static double js_parse_int(const char *s) {
-  if (!s) return NAN;
-  while (isspace((unsigned char)*s)) s++;
-  char *end = NULL;
-  long v = strtol(s, &end, 10);
-  if (end == s) return NAN;
-  return (double)v;
-}
+static double js_parse_int(const char *s) { return s == NULL ? NAN : qa_js_parse_int(s, 10); }
 static void push_reply(uint8_t ***arr, size_t **lens, size_t *count, size_t *cap, uint8_t *bytes, size_t len) {
   if (*count == *cap) { size_t nc = *cap ? *cap * 2 : 4; *arr = realloc(*arr, nc * sizeof **arr); *lens = realloc(*lens, nc * sizeof **lens); *cap = nc; }
   (*arr)[*count] = bytes; (*lens)[*count] = len; (*count)++;
@@ -280,96 +301,146 @@ static void oob_write(void *ctx, const char *text, size_t length) {
   }
 }
 static char *lower_dup(const char *s) { char *p = dupstr(s); for (char *q = p; *q; q++) *q = (char)tolower((unsigned char)*q); return p; }
+void qa_qw_connectionless_server_destroy(qa_qw_connectionless_server *s) { qa_rcon_guard_destroy(&s->rcon_guard); }
+/* Everything one receive() owns, released on return and by a caught raise from a host
+ * callback (connect, executeAdmin), as TS leaves it to the collector. */
+typedef struct oob_scope {
+  struct oob_acc acc; /* replies accumulate here */
+  char *text, *line, **args; size_t argc;
+  qa_qw_info info; bool has_info;
+  char *spec_dup, *pw_lower, *userinfo, *cmd;
+  qa_net_address from; bool has_from;
+} oob_scope;
+static void oob_scope_release(oob_scope *o, bool replies_too) {
+  if (replies_too) {
+    for (size_t i = 0; i < o->acc.count; i++) free(o->acc.replies[i]);
+    free(o->acc.replies); free(o->acc.lens);
+    o->acc.replies = NULL; o->acc.lens = NULL; o->acc.count = 0;
+  }
+  free(o->acc.buf); o->acc.buf = NULL;
+  for (size_t i = 0; i < o->argc; i++) free(o->args[i]);
+  free(o->args); o->args = NULL; o->argc = 0;
+  free(o->text); free(o->line); o->text = o->line = NULL;
+  if (o->has_info) qa_qw_info_destroy(&o->info);
+  o->has_info = false;
+  free(o->spec_dup); free(o->pw_lower); free(o->userinfo); free(o->cmd);
+  o->spec_dup = o->pw_lower = o->userinfo = o->cmd = NULL;
+  if (o->has_from) qa_net_address_destroy(&o->from);
+  o->has_from = false;
+}
+static void oob_scope_abandon(void *arg) { oob_scope_release(arg, true); }
+static void reply_text(oob_scope *o, const char *text) {
+  size_t n = 0;
+  uint8_t *b = qa_quakeworld_out_of_band(text, false, &n);
+  push_reply(&o->acc.replies, &o->acc.lens, &o->acc.count, &o->acc.rcap, b, n);
+}
+static void reply_n(oob_scope *o, const char *text) {
+  size_t length = strlen(text);
+  char *msg = malloc(length + 2);
+  msg[0] = 'n'; memcpy(msg + 1, text, length + 1);
+  reply_text(o, msg);
+  free(msg);
+}
+static void connectionless_body(qa_qw_connectionless_server *s, const uint8_t *bytes, size_t length,
+                                const qa_net_address *from, double now_ms, oob_scope *o) {
+  if (s->host.blocked(s->host.ctx, from)) { reply_text(o, "n\nbanned.\n"); return; }
+  o->text = qa_read_quakeworld_out_of_band(bytes, length);
+  o->line = dupstr(o->text);
+  char *nl = strchr(o->line, '\n'); if (nl) *nl = '\0';
+  o->args = qa_quakeworld_command_arguments(o->line, &o->argc);
+  char **args = o->args; size_t argc = o->argc;
+  const char *command = argc > 0 ? args[0] : NULL;
+  if ((command && strcmp(command, "ping") == 0) || strcmp(o->text, "k") == 0) { reply_text(o, "l"); return; }
+  if (command && strcmp(command, "getchallenge") == 0) {
+    char buf[64]; snprintf(buf, sizeof buf, "c%s", QA_JS_NUMBER(qa_qw_challenges_issue(s->challenges, from, now_ms)));
+    reply_text(o, buf);
+    return;
+  }
+  if (command && strcmp(command, "status") == 0) {
+    char *st = s->host.status(s->host.ctx);
+    o->cmd = st;
+    reply_n(o, st);
+    return;
+  }
+  if (command && strcmp(command, "log") == 0) {
+    double seq = js_parse_int(argc > 1 ? args[1] : "-1");
+    o->cmd = s->host.log(s->host.ctx, seq);
+    reply_text(o, o->cmd ? o->cmd : "m");
+    return;
+  }
+  if (command && strcmp(command, "rcon") == 0) {
+    if (s->rcon_guard.max_sources == 0) qa_rcon_guard_init(&s->rcon_guard, 3, 1024);
+    if (!qa_rcon_guard_permitted(&s->rcon_guard, from, now_ms)) return;
+    if (!qa_password_matches(s->host.rcon_password, argc > 1 ? args[1] : "")) {
+      qa_rcon_guard_failed(&s->rcon_guard, from, now_ms);
+      reply_text(o, "nBad rcon_password.\n");
+      return;
+    }
+    qa_rcon_guard_succeeded(&s->rcon_guard, from);
+    size_t need = 1; for (size_t i = 2; i < argc; i++) need += strlen(args[i]) + 1;
+    o->cmd = malloc(need); size_t at = 0; o->cmd[0] = '\0';
+    for (size_t i = 2; i < argc; i++) at += (size_t)snprintf(o->cmd + at, need - at, "%s ", args[i]);
+    s->host.execute_admin(s->host.ctx, o->cmd, oob_write, &o->acc);
+    oob_flush(&o->acc);
+    return;
+  }
+  if (!command || strcmp(command, "connect") != 0) return;
+  if (argc < 2 || strcmp(args[1], "28") != 0) { reply_text(o, "n\nServer uses QuakeWorld protocol 28.\n"); return; }
+  double qport = js_parse_int(argc > 2 ? args[2] : ""), challenge = js_parse_int(argc > 3 ? args[3] : "");
+  if (!isfinite(qport) || qport != trunc(qport) || qport < 0 || qport > 65535
+      || !qa_qw_challenges_validate_at(s->challenges, from, challenge, true, now_ms)) {
+    reply_text(o, "n\nBad challenge.\n");
+    return;
+  }
+  const char *raw = argc > 4 ? args[4] : "";
+  char *sliced = dupn(raw, strlen(raw) < 1022 ? strlen(raw) : 1022);
+  qa_quakeworld_info_parse(sliced, &o->info); free(sliced);
+  o->has_info = true;
+  const char *spec_key = qa_qw_info_get(&o->info, "spectator");
+  o->spec_dup = dupstr(spec_key ? spec_key : "");
+  bool spectator = o->spec_dup[0] && strcmp(o->spec_dup, "0") != 0;
+  const char *password = spectator ? s->host.spectator_password : s->host.password;
+  const char *supplied_password = qa_qw_info_get(&o->info, "password");
+  const char *supplied = spectator ? o->spec_dup : (supplied_password ? supplied_password : "");
+  o->pw_lower = lower_dup(password);
+  if (password[0] && strcmp(o->pw_lower, "none") != 0 && strcmp(password, supplied) != 0) {
+    reply_text(o, spectator ? "n\nrequires a spectator password\n\n" : "n\nserver requires a password\n\n");
+    return;
+  }
+  qa_qw_info_delete(&o->info, spectator ? "spectator" : "password");
+  if (spectator) qa_qw_info_set(&o->info, "*spectator", "1");
+  const char *wide = qa_qw_info_get(&o->info, "*wide");
+  bool donor = wide && strcmp(wide, "1") == 0;
+  o->userinfo = qa_qw_info_string(&o->info);
+  if (!s->host.high_characters) {
+    size_t w = 0;
+    for (size_t i = 0; o->userinfo[i]; i++) if ((uint8_t)o->userinfo[i] > 31 && (uint8_t)o->userinfo[i] <= 127) o->userinfo[w++] = o->userinfo[i];
+    o->userinfo[w] = '\0';
+  }
+  if (strlen(o->userinfo) > 195) o->userinfo[195] = '\0';
+  qa_qw_connect_request req; memset(&req, 0, sizeof req);
+  if (!qa_net_address_clone(from, &o->from)) qa_range_error("out of memory");
+  o->has_from = true;
+  req.from = o->from;
+  req.qport = qport; req.challenge = challenge; req.userinfo = o->userinfo;
+  req.spectator = spectator; req.donor_wide = donor;
+  qa_qw_host_result res = s->host.connect(s->host.ctx, &req, now_ms);
+  if (res.kind == 0) reply_text(o, "j");
+  else if (res.kind == 1) reply_n(o, res.reason);
+}
 uint8_t **qa_qw_connectionless_receive(qa_qw_connectionless_server *s, const uint8_t *bytes, size_t length,
                                        const qa_net_address *from, double now_ms,
                                        size_t **reply_lens, size_t *reply_count) {
-  uint8_t **replies = NULL; size_t *lens = NULL, count = 0, cap = 0;
-  size_t n = 0; uint8_t *b;
-  if (s->host.blocked(s->host.ctx, from)) {
-    b = qa_quakeworld_out_of_band("n\nbanned.\n", false, &n); push_reply(&replies, &lens, &count, &cap, b, n);
-    *reply_lens = lens; *reply_count = count; return replies;
-  }
-  char *text = qa_read_quakeworld_out_of_band(bytes, length);
-  char *line = dupstr(text); char *nl = strchr(line, '\n'); if (nl) *nl = '\0';
-  size_t argc = 0; char **args = qa_quakeworld_command_arguments(line, &argc);
-  const char *command = argc > 0 ? args[0] : NULL;
-  if ((command && strcmp(command, "ping") == 0) || strcmp(text, "k") == 0) {
-    b = qa_quakeworld_out_of_band("l", false, &n); push_reply(&replies, &lens, &count, &cap, b, n);
-  } else if (command && strcmp(command, "getchallenge") == 0) {
-    char buf[64]; snprintf(buf, sizeof buf, "c%g", qa_qw_challenges_issue(s->challenges, from, now_ms));
-    b = qa_quakeworld_out_of_band(buf, false, &n); push_reply(&replies, &lens, &count, &cap, b, n);
-  } else if (command && strcmp(command, "status") == 0) {
-    char *st = s->host.status(s->host.ctx);
-    char *msg = malloc(strlen(st) + 2); msg[0] = 'n'; strcpy(msg + 1, st); free(st);
-    b = qa_quakeworld_out_of_band(msg, false, &n); free(msg); push_reply(&replies, &lens, &count, &cap, b, n);
-  } else if (command && strcmp(command, "log") == 0) {
-    double seq = js_parse_int(argc > 1 ? args[1] : "-1");
-    char *reply = s->host.log(s->host.ctx, seq);
-    b = qa_quakeworld_out_of_band(reply ? reply : "m", false, &n); free(reply);
-    push_reply(&replies, &lens, &count, &cap, b, n);
-  } else if (command && strcmp(command, "rcon") == 0) {
-    if (s->host.rcon_password[0] == '\0' || argc < 2 || strcmp(args[1], s->host.rcon_password) != 0) {
-      b = qa_quakeworld_out_of_band("nBad rcon_password.\n", false, &n); push_reply(&replies, &lens, &count, &cap, b, n);
-    } else {
-      size_t need = 1; for (size_t i = 2; i < argc; i++) need += strlen(args[i]) + 1;
-      char *cmd = malloc(need); size_t at = 0; cmd[0] = '\0';
-      for (size_t i = 2; i < argc; i++) at += (size_t)snprintf(cmd + at, need - at, "%s ", args[i]);
-      struct oob_acc acc; memset(&acc, 0, sizeof acc);
-      acc.replies = replies; acc.lens = lens; acc.count = count; acc.rcap = cap;
-      s->host.execute_admin(s->host.ctx, cmd, oob_write, &acc);
-      oob_flush(&acc);
-      replies = acc.replies; lens = acc.lens; count = acc.count; cap = acc.rcap;
-      free(acc.buf); free(cmd);
-    }
-  } else if (command && strcmp(command, "connect") == 0) {
-    if (argc < 2 || strcmp(args[1], "28") != 0) {
-      b = qa_quakeworld_out_of_band("n\nServer uses QuakeWorld protocol 28.\n", false, &n); push_reply(&replies, &lens, &count, &cap, b, n);
-    } else {
-      double qport = js_parse_int(argc > 2 ? args[2] : ""), challenge = js_parse_int(argc > 3 ? args[3] : "");
-      if (!isfinite(qport) || qport != trunc(qport) || qport < 0 || qport > 65535 || !qa_qw_challenges_validate(s->challenges, from, challenge)) {
-        b = qa_quakeworld_out_of_band("n\nBad challenge.\n", false, &n); push_reply(&replies, &lens, &count, &cap, b, n);
-      } else {
-        const char *raw = argc > 4 ? args[4] : "";
-        char *sliced = dupn(raw, strlen(raw) < 1022 ? strlen(raw) : 1022);
-        qa_qw_info info; qa_quakeworld_info_parse(sliced, &info); free(sliced);
-        const char *spec_key = qa_qw_info_get(&info, "spectator");
-        char *spec_dup = dupstr(spec_key ? spec_key : "");
-        bool spectator = spec_dup[0] && strcmp(spec_dup, "0") != 0;
-        const char *password = spectator ? s->host.spectator_password : s->host.password;
-        const char *supplied = spectator ? spec_dup : (qa_qw_info_get(&info, "password") ? qa_qw_info_get(&info, "password") : "");
-        char *pw_lower = lower_dup(password);
-        if (password[0] && strcmp(pw_lower, "none") != 0 && strcmp(password, supplied) != 0) {
-          b = qa_quakeworld_out_of_band(spectator ? "n\nrequires a spectator password\n\n" : "n\nserver requires a password\n\n", false, &n);
-          push_reply(&replies, &lens, &count, &cap, b, n);
-        } else {
-          qa_qw_info_delete(&info, spectator ? "spectator" : "password");
-          if (spectator) qa_qw_info_set(&info, "*spectator", "1");
-          bool donor = false; const char *wide = qa_qw_info_get(&info, "*wide"); donor = wide && strcmp(wide, "1") == 0;
-          char *userinfo = qa_qw_info_string(&info);
-          if (!s->host.high_characters) {
-            size_t w = 0; for (size_t i = 0; userinfo[i]; i++) if ((uint8_t)userinfo[i] > 31 && (uint8_t)userinfo[i] <= 127) userinfo[w++] = userinfo[i];
-            userinfo[w] = '\0';
-          }
-          if (strlen(userinfo) > 195) userinfo[195] = '\0';
-          qa_qw_connect_request req; memset(&req, 0, sizeof req);
-          (void)qa_net_address_clone(from, &req.from);
-          req.qport = qport; req.challenge = challenge; req.userinfo = userinfo;
-          req.spectator = spectator; req.donor_wide = donor;
-          qa_qw_host_result res = s->host.connect(s->host.ctx, &req, now_ms);
-          if (res.kind == 0) { b = qa_quakeworld_out_of_band("j", false, &n); push_reply(&replies, &lens, &count, &cap, b, n); }
-          else if (res.kind == 1) {
-            char *msg = malloc(strlen(res.reason) + 2); msg[0] = 'n'; strcpy(msg + 1, res.reason);
-            b = qa_quakeworld_out_of_band(msg, false, &n); free(msg); push_reply(&replies, &lens, &count, &cap, b, n);
-          }
-          qa_net_address_destroy(&req.from); free(userinfo);
-        }
-        free(pw_lower); free(spec_dup); qa_qw_info_destroy(&info);
-      }
-    }
-  }
-  for (size_t i = 0; i < argc; i++) free(args[i]);
-  free(args); free(line); free(text);
-  *reply_lens = lens; *reply_count = count; return replies;
+  oob_scope o;
+  memset(&o, 0, sizeof o);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, oob_scope_abandon, &o);
+  connectionless_body(s, bytes, length, from, now_ms, &o);
+  qa_cleanup_pop(&guard);
+  uint8_t **replies = o.acc.replies;
+  *reply_lens = o.acc.lens; *reply_count = o.acc.count;
+  oob_scope_release(&o, false);
+  return replies;
 }
 int qa_qw_connect_client_init(qa_qw_connect_client *c, double qport, const char *userinfo) {
   memset(c, 0, sizeof *c); c->kind = 0; c->sent_at = -INFINITY; c->qport = qport;
@@ -381,7 +452,7 @@ uint8_t *qa_qw_connect_client_next(qa_qw_connect_client *c, double now_ms, size_
   c->sent_at = now_ms;
   if (c->kind == 0) return qa_quakeworld_out_of_band("getchallenge\n", false, out_len);
   char *msg = malloc(strlen(c->userinfo) + 128);
-  snprintf(msg, strlen(c->userinfo) + 128, "connect 28 %g %g \"%s\"\n", c->qport, c->challenge, c->userinfo);
+  snprintf(msg, strlen(c->userinfo) + 128, "connect 28 %s %s \"%s\"\n", QA_JS_NUMBER(c->qport), QA_JS_NUMBER(c->challenge), c->userinfo);
   uint8_t *b = qa_quakeworld_out_of_band(msg, false, out_len); free(msg); return b;
 }
 void qa_qw_connect_client_receive(qa_qw_connect_client *c, const uint8_t *bytes, size_t length) {
@@ -394,7 +465,7 @@ void qa_qw_connect_client_receive(qa_qw_connect_client *c, const uint8_t *bytes,
   free(text);
 }
 uint8_t *qa_quakeworld_heartbeat(double sequence, double active_clients, size_t *out_len) {
-  char buf[96]; snprintf(buf, sizeof buf, "a\n%g\n%g\n", sequence, active_clients);
+  char buf[96]; snprintf(buf, sizeof buf, "a\n%s\n%s\n", QA_JS_NUMBER(sequence), QA_JS_NUMBER(active_clients));
   return qa_quakeworld_out_of_band(buf, false, out_len);
 }
 uint8_t *qa_quakeworld_shutdown(size_t *out_len) { return qa_quakeworld_out_of_band("C\n", false, out_len); }

@@ -77,6 +77,8 @@ typedef struct qa_app_prediction_step_options {
   bool has_fixed_milliseconds;
   double fixed_milliseconds;
   bool no_footsteps, gauntlet_hit;
+  /* TS `ladders?: boolean`: has_ladders false is undefined (the profile's own setting applies). */
+  bool has_ladders, ladders;
   bool has_trace_mask;
   double trace_mask;
   bool first_command;

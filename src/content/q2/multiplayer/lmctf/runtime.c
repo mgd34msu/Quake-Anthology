@@ -7,6 +7,8 @@
 #include "qa/content/q2/multiplayer/lmctf/spawns.h"
 #include "qa/persistence/save_image.h"
 #include <ctype.h>
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/js.h"
 
 struct qa_q2_lmctf {
   qa_lmctf_hooks hooks;
@@ -23,7 +25,15 @@ struct qa_q2_lmctf {
   qa_q2_named_think *thinks;
   qa_q2_named_touch *touchs;
   qa_q2_callback_definitions callbacks;
+  /* Restored mapList strings (TS GC strings): owned here, the rules hold the array. */
+  char **restored_maps; size_t restored_map_count;
 };
+static void free_restored_maps(qa_q2_lmctf *lmctf) {
+  for (size_t i = 0; i < lmctf->restored_map_count; i++) free(lmctf->restored_maps[i]);
+  free(lmctf->restored_maps);
+  lmctf->restored_maps = NULL;
+  lmctf->restored_map_count = 0;
+}
 
 static bool rule_can_score(void *ctx) { return qa_lmctf_match_can_score(ctx); }
 static bool rule_flags_touchable(void *ctx) {
@@ -34,10 +44,9 @@ static qa_q2_entity *red_flag(void *ctx, qa_q2_game_services *g) {
   return qa_lmctf_flags_flag(lmctf->flags, 1, g);
 }
 
-struct frame_repeat { qa_lmctf_runes *runes; qa_q2mp_weapon_context *context; };
-static void rules_post_native_think(void *ctx, qa_q2mp_weapon_context *context, void *repeat_ctx, void (*repeat)(void *repeat_ctx)) {
+static void rules_post_native_think(void *ctx, qa_q2w_context *context, void *repeat_ctx, void (*repeat)(void *repeat_ctx)) {
   qa_q2_lmctf *lmctf = ctx;
-  qa_lmctf_runes_weapon_frame(lmctf->runes, context->actor, context->game, context->state->animation.source_firing, repeat, repeat_ctx);
+  qa_lmctf_runes_weapon_frame(lmctf->runes, context->self.actor, context->game, context->state->source_firing, repeat, repeat_ctx);
 }
 
 #define MERGE_L(field, type)                                                                 \
@@ -102,11 +111,11 @@ qa_q2_lmctf *qa_q2_lmctf_create(qa_lmctf_hooks hooks, const qa_lmctf_rules *rule
     lmctf->callbacks.die = hc.die;
     lmctf->callbacks.die_count = hc.die_count;
   }
-  qa_q2mp_source_rules source_rules = {0};
+  qa_q2w_source_rules source_rules = {0};
   source_rules.kind = "lmctf";
   source_rules.ctx = lmctf;
   source_rules.post_native_think = rules_post_native_think;
-  hooks.weapons->set_source_rules(hooks.weapons->ctx, source_rules);
+  qa_q2w_weapons_set_source_rules(hooks.weapons, source_rules);
   return lmctf;
 }
 
@@ -124,6 +133,7 @@ void qa_q2_lmctf_destroy(qa_q2_lmctf *lmctf) {
   free(lmctf->context.states);
   if (lmctf->has_travel) qa_lmctf_travel_destroy(&lmctf->travel);
   qa_lmctf_rules_destroy(&lmctf->rules);
+  free_restored_maps(lmctf);
   free(lmctf);
 }
 
@@ -159,7 +169,7 @@ bool qa_q2_lmctf_spawn(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_serv
     return true;
   }
   if (qa_lmctf_flags_spawn(lmctf->flags, entity, g) || qa_lmctf_runes_spawn(lmctf->runes, entity, g)) return true;
-  if (strcmp(entity->classname, "item_invulnerability") == 0 && ((int64_t)lmctf->rules.ctf_flags & 2) == 0 &&
+  if (strcmp(entity->classname, "item_invulnerability") == 0 && (qa_js_to_int32(lmctf->rules.ctf_flags) & 2) == 0 &&
       g->options.mode == QA_Q2_MODE_DEATHMATCH) {
     g->remove(g->ctx, entity);
     return true;
@@ -184,7 +194,7 @@ void qa_q2_lmctf_capture_travel(qa_q2_lmctf *lmctf, qa_lmctf_travel *out) {
   for (size_t i = 0; i < lmctf->context.state_count; i++) {
     qa_actor_id actor = lmctf->context.states[i].actor;
     qa_lmctf_player_state *state = &lmctf->context.states[i].state;
-    qa_q2mp_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, actor);
+    qa_q2_base_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, actor);
     if (player == NULL) continue;
     out->players[out->player_count++] = (qa_lmctf_travel_player){player->slot, state->team, state->observer_team, state->extra_flags};
   }
@@ -256,36 +266,157 @@ void qa_q2_lmctf_capture(qa_q2_lmctf *lmctf, qa_lmctf_capture *out) {
   }
 }
 
+/* ---- TS encodeCheckpointValue(capture()) tree ---- */
+static qa_save_value *sv_must(qa_save_value *value) {
+  if (value == NULL) qa_raise("Error", 0, 0, "Out of memory");
+  return value;
+}
+static void sv_set(qa_save_value *object, const char *key, qa_save_value *child) {
+  if (!qa_save_value_set(object, key, sv_must(child))) qa_raise("Error", 0, 0, "Out of memory");
+}
+static void sv_push(qa_save_value *array, qa_save_value *child) {
+  if (!qa_save_value_push(array, sv_must(child))) qa_raise("Error", 0, 0, "Out of memory");
+}
+static qa_save_value *sv_actor(qa_saved_actor_id actor) {
+  qa_save_value *out = sv_must(qa_save_value_object());
+  sv_set(out, "slot", qa_save_value_number(actor.slot));
+  sv_set(out, "generation", qa_save_value_number(actor.generation));
+  return out;
+}
+static void capture_value_free(void *arg) { qa_save_value_free(*(qa_save_value **)arg); }
+static void capture_struct_free(void *arg) { qa_lmctf_capture_destroy(arg); }
+
+qa_save_value *qa_q2_lmctf_capture_value(qa_q2_lmctf *lmctf) {
+  qa_lmctf_capture capture;
+  qa_q2_lmctf_capture(lmctf, &capture);
+  qa_save_value *root = NULL;
+  qa_cleanup capture_cleanup, root_cleanup;
+  qa_cleanup_push(&capture_cleanup, capture_struct_free, &capture);
+  qa_cleanup_push(&root_cleanup, capture_value_free, &root);
+  root = sv_must(qa_save_value_object());
+  /* const { refPassword, rconPassword, ...rules } = this.rules: createLmctfRules key order. */
+  qa_save_value *rules = sv_must(qa_save_value_object());
+  sv_set(root, "rules", rules);
+  sv_set(rules, "ctfFlags", qa_save_value_number(capture.rules.ctf_flags));
+  sv_set(rules, "refFlags", qa_save_value_number(capture.rules.ref_flags));
+  sv_set(rules, "runes", qa_save_value_number(capture.rules.runes));
+  sv_set(rules, "skinSet", qa_save_value_number(capture.rules.skin_set));
+  sv_set(rules, "flagInit", qa_save_value_boolean(capture.rules.flag_init));
+  sv_set(rules, "disabledWeapons", qa_save_value_number(capture.rules.disabled_weapons));
+  sv_set(rules, "timeLimitMinutes", qa_save_value_number(capture.rules.time_limit_minutes));
+  sv_set(rules, "fragLimit", qa_save_value_number(capture.rules.frag_limit));
+  qa_save_value *maps = sv_must(qa_save_value_array());
+  sv_set(rules, "mapList", maps);
+  for (size_t i = 0; i < capture.rules.map_count; i++) sv_push(maps, qa_save_value_string(capture.rules.map_list[i]));
+  sv_set(rules, "fastSwitch", qa_save_value_boolean(capture.rules.fast_switch));
+  sv_set(rules, "autoLock", qa_save_value_boolean(capture.rules.auto_lock));
+  sv_set(rules, "countdownSeconds", qa_save_value_number(capture.rules.countdown_seconds));
+  sv_set(rules, "quadSeconds", qa_save_value_number(capture.rules.quad_seconds));
+  /* match.capture(): { pendingMap, phase, remaining, nextThink, paused, teamsLocked } */
+  qa_save_value *match = sv_must(qa_save_value_object());
+  sv_set(root, "match", match);
+  if (capture.match.has_pending_map) {
+    qa_save_value *pending = sv_must(qa_save_value_object());
+    sv_set(match, "pendingMap", pending);
+    sv_set(pending, "map", qa_save_value_string(capture.match.pending_map.map));
+    sv_set(pending, "countdown", qa_save_value_boolean(capture.match.pending_map.countdown));
+  } else sv_set(match, "pendingMap", qa_save_value_null());
+  sv_set(match, "phase", qa_save_value_string(capture.match.phase));
+  sv_set(match, "remaining", qa_save_value_number(capture.match.remaining));
+  sv_set(match, "nextThink", qa_save_value_number(capture.match.next_think));
+  sv_set(match, "paused", qa_save_value_boolean(capture.match.paused));
+  sv_set(match, "teamsLocked", qa_save_value_boolean(capture.match.teams_locked));
+  /* vote.capture(): { startedAt } */
+  qa_save_value *vote = sv_must(qa_save_value_object());
+  sv_set(root, "vote", vote);
+  sv_set(vote, "startedAt", capture.has_vote_started ? qa_save_value_number(capture.vote_started_at) : qa_save_value_null());
+  sv_set(root, "plasmaQuad", qa_save_value_boolean(capture.plasma_quad));
+  /* flags.capture(): { flags: [{ team, actor }], lastTakenSound } */
+  qa_save_value *flags = sv_must(qa_save_value_object());
+  sv_set(root, "flags", flags);
+  qa_save_value *flag_list = sv_must(qa_save_value_array());
+  sv_set(flags, "flags", flag_list);
+  for (size_t i = 0; i < capture.flags.flag_count; i++) {
+    qa_save_value *flag = sv_must(qa_save_value_object());
+    sv_push(flag_list, flag);
+    sv_set(flag, "team", qa_save_value_number(capture.flags.flags[i].team));
+    sv_set(flag, "actor", sv_actor(capture.flags.flags[i].actor));
+  }
+  sv_set(flags, "lastTakenSound", qa_save_value_number(capture.flags.last_taken_sound));
+  qa_save_value *runes = sv_must(qa_save_value_object());
+  sv_set(root, "runes", runes);
+  sv_set(runes, "forward", qa_save_value_boolean(capture.runes_forward));
+  /* players: { actor, state: { ...LmctfPlayerState, ...captureLmctfGrapple, rune, statistics } };
+   * rune and statistics keep their LmctfPlayerState positions, the grapple keys append. */
+  qa_save_value *players = sv_must(qa_save_value_array());
+  sv_set(root, "players", players);
+  for (size_t i = 0; i < capture.player_count; i++) {
+    const qa_lmctf_player_checkpoint_entry *entry = &capture.players[i];
+    qa_save_value *player = sv_must(qa_save_value_object());
+    sv_push(players, player);
+    sv_set(player, "actor", sv_actor(entry->actor));
+    qa_save_value *state = sv_must(qa_save_value_object());
+    sv_set(player, "state", state);
+    sv_set(state, "plasmaMode", qa_save_value_boolean(entry->plasma_mode));
+    sv_set(state, "team", qa_save_value_number(entry->team));
+    sv_set(state, "observerTeam", qa_save_value_number(entry->observer_team));
+    sv_set(state, "rune", entry->has_rune ? sv_actor(entry->rune) : qa_save_value_null());
+    sv_set(state, "regenFrame", qa_save_value_number(entry->regen_frame));
+    sv_set(state, "killCarrierTime", qa_save_value_number(entry->kill_carrier_time));
+    sv_set(state, "hitCarrierTime", qa_save_value_number(entry->hit_carrier_time));
+    sv_set(state, "returnFlagTime", qa_save_value_number(entry->return_flag_time));
+    sv_set(state, "defendFlagTime", qa_save_value_number(entry->defend_flag_time));
+    sv_set(state, "extraFlags", qa_save_value_number(entry->extra_flags));
+    sv_set(state, "spawnState", qa_save_value_number(entry->spawn_state));
+    qa_save_value *statistics = sv_must(qa_save_value_array());
+    sv_set(state, "statistics", statistics);
+    for (size_t j = 0; j < entry->statistic_count; j++) {
+      qa_save_value *statistic = sv_must(qa_save_value_object());
+      sv_push(statistics, statistic);
+      sv_set(statistic, "key", qa_save_value_string(entry->statistics[j].key));
+      sv_set(statistic, "count", qa_save_value_number(entry->statistics[j].count));
+    }
+    sv_set(state, "hook", entry->grapple.has_hook ? sv_actor(entry->grapple.hook) : qa_save_value_null());
+    sv_set(state, "hookState", qa_save_value_number(entry->grapple.hook_state));
+    sv_set(state, "hookLength", qa_save_value_number(entry->grapple.hook_length));
+    sv_set(state, "hookHeld", qa_save_value_boolean(entry->grapple.hook_held));
+  }
+  qa_cleanup_pop(&root_cleanup);
+  qa_cleanup_pop(&capture_cleanup);
+  qa_lmctf_capture_destroy(&capture);
+  return root;
+}
+
 static double rd_finite(const qa_save_reader *r, const char *name) {
   qa_save_reader f;
-  if (!qa_save_reader_field(r, name, &f)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(r, name, &f)) qa_raise("Error", 0, 0, "Out of memory");
   double v = qa_save_reader_finite(&f);
   qa_save_reader_destroy(&f);
   return v;
 }
 static double rd_integer(const qa_save_reader *r, const char *name) {
   qa_save_reader f;
-  if (!qa_save_reader_field(r, name, &f)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(r, name, &f)) qa_raise("Error", 0, 0, "Out of memory");
   double v = qa_save_reader_integer(&f);
   qa_save_reader_destroy(&f);
   return v;
 }
 static double rd_integer_min(const qa_save_reader *r, const char *name, double minimum) {
   qa_save_reader f;
-  if (!qa_save_reader_field(r, name, &f)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(r, name, &f)) qa_raise("Error", 0, 0, "Out of memory");
   double v = qa_save_reader_integer_min(&f, minimum);
   qa_save_reader_destroy(&f);
   return v;
 }
 static bool rd_bool(const qa_save_reader *r, const char *name) {
   qa_save_reader f;
-  if (!qa_save_reader_field(r, name, &f)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(r, name, &f)) qa_raise("Error", 0, 0, "Out of memory");
   bool v = qa_save_reader_boolean(&f);
   qa_save_reader_destroy(&f);
   return v;
 }
 static void rd_sub(const qa_save_reader *r, const char *name, qa_save_reader *out) {
-  if (!qa_save_reader_field(r, name, out)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(r, name, out)) qa_raise("Error", 0, 0, "Out of memory");
 }
 
 void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2_game_services *g) {
@@ -300,18 +431,20 @@ void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2
     rd_sub(&rules, "mapList", &list);
     size_t count = qa_save_reader_list_count(&list);
     const char **maps = qa_q2mp_xalloc(malloc((count == 0 ? 1 : count) * sizeof *maps));
+    char **owned = qa_q2mp_xalloc(malloc((count == 0 ? 1 : count) * sizeof *owned));
     for (size_t i = 0; i < count; i++) {
       qa_save_reader item;
-      if (!qa_save_reader_item(&list, i, &item)) qa_q2f_error("Out of memory");
-      /* Restored strings are owned copies (TS GC strings); the rules
-       * array is freed by destroy, the strings intentionally leak with
-       * the module lifetime. */
-      maps[i] = qa_q2mp_dup(qa_save_reader_string(&item));
+      if (!qa_save_reader_item(&list, i, &item)) qa_raise("Error", 0, 0, "Out of memory");
+      owned[i] = qa_q2mp_dup(qa_save_reader_string(&item));
+      maps[i] = owned[i];
       qa_save_reader_destroy(&item);
     }
     free(lmctf->rules.map_list);
+    free_restored_maps(lmctf);
     lmctf->rules.map_list = maps;
     lmctf->rules.map_count = count;
+    lmctf->restored_maps = owned;
+    lmctf->restored_map_count = count;
     qa_save_reader_destroy(&list);
   }
   lmctf->rules.ctf_flags = rd_integer_min(&rules, "ctfFlags", 0);
@@ -335,7 +468,7 @@ void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2
   static const double hook_choices[3] = {0, 1, 2};
   for (size_t i = 0; i < player_count; i++) {
     qa_save_reader entry, saved, field;
-    if (!qa_save_reader_item(&players_reader, i, &entry)) qa_q2f_error("Out of memory");
+    if (!qa_save_reader_item(&players_reader, i, &entry)) qa_raise("Error", 0, 0, "Out of memory");
     rd_sub(&entry, "actor", &field);
     qa_saved_actor_id saved_actor = qa_read_saved_actor(&field);
     qa_save_reader_destroy(&field);
@@ -345,7 +478,7 @@ void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2
       qa_save_reader_destroy(&entry);
       qa_save_reader_destroy(&players_reader);
       free(restored);
-      qa_q2f_error("LMCTF restore requires an admitted source player");
+      qa_raise("Error", 0, 0, "LMCTF restore requires an admitted source player");
     }
     restored[i].actor = owned.id;
     rd_sub(&entry, "state", &saved);
@@ -374,7 +507,8 @@ void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2
       qa_save_reader_destroy(&field);
       grapple.hook_length = rd_finite(&saved, "hookLength");
       grapple.hook_held = rd_bool(&saved, "hookHeld");
-      *qa_lmctf_grapple_state_of(equipment, owned.id) = qa_restore_lmctf_grapple(grapple, g);
+      qa_lmctf_grapple_state * ref = &*qa_lmctf_grapple_state_of(equipment, owned.id);
+      *ref = qa_restore_lmctf_grapple(grapple, g);
     }
     state->regen_frame = rd_integer(&saved, "regenFrame");
     state->kill_carrier_time = rd_finite(&saved, "killCarrierTime");
@@ -388,7 +522,7 @@ void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2
     size_t stat_count = qa_save_reader_list_count(&stats);
     for (size_t j = 0; j < stat_count; j++) {
       qa_save_reader item, key_field;
-      if (!qa_save_reader_item(&stats, j, &item)) qa_q2f_error("Out of memory");
+      if (!qa_save_reader_item(&stats, j, &item)) qa_raise("Error", 0, 0, "Out of memory");
       rd_sub(&item, "key", &key_field);
       const char *key = qa_save_reader_string(&key_field);
       double count = rd_finite(&item, "count");
@@ -421,7 +555,7 @@ void qa_q2_lmctf_restore(qa_q2_lmctf *lmctf, const qa_save_reader *reader, qa_q2
     static const double flag_teams[2] = {1, 2};
     for (size_t i = 0; i < flag_count; i++) {
       qa_save_reader item, field;
-      if (!qa_save_reader_item(&flags_list, i, &item)) qa_q2f_error("Out of memory");
+      if (!qa_save_reader_item(&flags_list, i, &item)) qa_raise("Error", 0, 0, "Out of memory");
       rd_sub(&item, "team", &field);
       checkpoint.flags[i].team = qa_save_reader_choice_number(&field, flag_teams, 2);
       qa_save_reader_destroy(&field);
@@ -448,7 +582,7 @@ void qa_q2_lmctf_team_totals(qa_q2_lmctf *lmctf, double out[2]) {
   for (size_t i = 0; i < lmctf->context.state_count; i++) {
     qa_actor_id actor = lmctf->context.states[i].actor;
     qa_lmctf_player_state *state = &lmctf->context.states[i].state;
-    qa_q2mp_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, actor);
+    qa_q2_base_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, actor);
     double score = player == NULL ? 0 : player->score;
     if (state->team == 1) red += score;
     else if (state->team == 2) blue += score;
@@ -459,7 +593,7 @@ void qa_q2_lmctf_team_totals(qa_q2_lmctf *lmctf, double out[2]) {
 
 static void set_team(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_services *g, qa_lmctf_playing_team team) {
   qa_lmctf_player_state *state = qa_lmctf_player(&lmctf->context, entity->actor.id);
-  qa_q2mp_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
   state->team = team;
   state->observer_team = 0;
   if (player != NULL) {
@@ -469,7 +603,7 @@ static void set_team(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_servic
   }
   qa_combat_trait_changes traits = {0};
   traits.has_team = true;
-  traits.team = ((int64_t)lmctf->rules.ctf_flags & 128) != 0 ? NULL : team == 1 ? "RED" : "BLUE";
+  traits.team = (qa_js_to_int32(lmctf->rules.ctf_flags) & 128) != 0 ? NULL : team == 1 ? "RED" : "BLUE";
   qa_gameplay_authority_set_traits(g->host->combat, entity->actor, traits);
   qa_lmctf_print(g, NULL, "%s is now on the %s team.\n", qa_lmctf_name(&lmctf->context, entity->actor.id), team == 1 ? "red" : "blue");
 }
@@ -478,8 +612,8 @@ void qa_q2_lmctf_admitted(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_s
   qa_lmctf_grapple_equipment *equipment = qa_lmctf_grapple_module_equipment(lmctf->grapple);
   if (equipment != NULL) qa_lmctf_grapple_bind(equipment, g);
   if (qa_lmctf_context_get(&lmctf->context, entity->actor.id) != NULL) return;
-  qa_q2mp_player_state *common = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
-  if (common == NULL) qa_q2f_error("LMCTF admission requires shared source player state");
+  qa_q2_base_player_state *common = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
+  if (common == NULL) qa_raise("Error", 0, 0, "LMCTF admission requires shared source player state");
   qa_lmctf_player_state fresh;
   qa_lmctf_player_state_init(&fresh);
   qa_lmctf_player_state *state = qa_lmctf_context_set(&lmctf->context, entity->actor.id, fresh);
@@ -536,19 +670,19 @@ void qa_q2_lmctf_player_spawned(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_
   }
   qa_combat_trait_changes traits = {0};
   traits.has_team = true;
-  traits.team = state->team == 0 || ((int64_t)lmctf->rules.ctf_flags & 128) != 0 ? NULL : state->team == 1 ? "RED" : "BLUE";
+  traits.team = state->team == 0 || (qa_js_to_int32(lmctf->rules.ctf_flags) & 128) != 0 ? NULL : state->team == 1 ? "RED" : "BLUE";
   qa_gameplay_authority_set_traits(g->host->combat, entity->actor, traits);
 }
 
 void qa_q2_lmctf_join(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_services *g, qa_lmctf_playing_team team) {
   qa_lmctf_player_state *state = qa_lmctf_player(&lmctf->context, entity->actor.id);
-  qa_q2mp_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
   if (state->team == team || player == NULL) return;
   if (qa_lmctf_match_teams_locked(lmctf->match)) {
     qa_lmctf_print(g, &entity->actor.id, "Teams are locked.\n");
     return;
   }
-  if (((int64_t)lmctf->rules.ctf_flags & 8) != 0) {
+  if ((qa_js_to_int32(lmctf->rules.ctf_flags) & 8) != 0) {
     qa_q2_presentation_event event = {0};
     event.kind = "centerprint";
     event.has_actor = true;
@@ -572,7 +706,7 @@ void qa_q2_lmctf_join(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_servi
 
 void qa_q2_lmctf_observer(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_game_services *g, qa_lmctf_team team) {
   qa_lmctf_player_state *state = qa_lmctf_player(&lmctf->context, entity->actor.id);
-  qa_q2mp_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = lmctf->hooks.player(lmctf->hooks.ctx, entity->actor.id);
   if (player == NULL) return;
   qa_q2_lmctf_drop_inventory(lmctf, entity, g);
   state->team = 0;
@@ -630,17 +764,19 @@ void qa_q2_lmctf_player_frame(qa_q2_lmctf *lmctf, qa_q2_entity *entity, qa_q2_ga
 bool qa_q2_lmctf_can_move(qa_q2_lmctf *lmctf, qa_actor_id actor) {
   qa_lmctf_player_state *state = qa_lmctf_context_get(&lmctf->context, actor);
   double flags = state == NULL ? 0 : state->extra_flags;
-  return !qa_lmctf_match_paused(lmctf->match) || ((int64_t)flags & 2) != 0;
+  return !qa_lmctf_match_paused(lmctf->match) || (qa_js_to_int32(flags) & 2) != 0;
 }
 
 double qa_q2_lmctf_gravity_scale(qa_q2_lmctf *lmctf, qa_actor_id actor) {
   return qa_lmctf_grapple_module_gravity_scale(lmctf->grapple, actor);
 }
 
+/* TS toLowerCase (Unicode) into a bounded buffer. */
 static void lower_into(char *out, size_t size, const char *text) {
-  size_t i = 0;
-  for (; text[i] && i + 1 < size; i++) out[i] = (char)tolower((unsigned char)text[i]);
-  out[i] = '\0';
+  char *lowered = qa_js_to_lower_case(text);
+  if (!lowered) qa_range_error("Out of memory");
+  snprintf(out, size, "%s", lowered);
+  free(lowered);
 }
 static char *join_args(const char *const *args, size_t count) {
   size_t len = 1;

@@ -1,14 +1,17 @@
-/* Port of src/app/bootstrap/q3-client/assets.ts.
- * ApplicationAssets / ProviderSceneAssets (../assets.ts, sibling
- * slice) are host fn+ctx mirrors; name indexing, synchronous
- * retention, the sound decode cache and the resourceHost routing
- * of this file are ported here. Async loads are synchronous.
+/* Port of src/app/bootstrap/q3-client/assets.ts. The ApplicationAssets
+ * and ProviderSceneAssets surface this file reads is the
+ * qa_app_q3_application_assets_host table;
+ * qa_app_q3_application_assets_host_create builds it from the real
+ * qa_app_application_assets (../assets.h), and
+ * qa_app_application_q3_assets_create_from_application is the TS
+ * ApplicationQ3Assets.create(assets, ...). Async loads are synchronous.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_Q3_CLIENT_ASSETS_H
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_ASSETS_H
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qa/app/bootstrap/assets.h"
 #include "qa/audio/types.h"
 #include "qa/content/mounts.h"
 #include "qa/content/q3/presentation/audio.h"
@@ -60,11 +63,19 @@ typedef struct qa_app_q3_application_assets_host {
    * (false = absent). */
   qa_content_id (*character_content)(void *ctx);
   bool (*weapon_content)(void *ctx, qa_content_id *out);
-  /* assets.world.map.models count for the world() host reply and
-   * assets.world.remapShader: false result is the TS "stale". */
+  /* assets.world.map.models for the world() host reply. */
   void (*world_map_models)(void *ctx, qa_q3_pres_world_scene *out);
-  bool (*remap_shader)(void *ctx, const char *original, const char *replacement, double time_offset, bool current);
+  /* assets.world.remapShader(original, replacement, timeOffset,
+   * { source: source's shaders, current }): false is the TS "stale". */
+  bool (*remap_shader)(void *ctx, const char *original, const char *replacement, double time_offset,
+                       const qa_app_q3_provider_scene_assets *source, bool (*current)(void *current_ctx),
+                       void *current_ctx);
 } qa_app_q3_application_assets_host;
+/* The host over a real ApplicationAssets (borrowed; must outlive the
+ * host). host.ctx owns the interned provider/catalog/world views; free
+ * with qa_app_q3_application_assets_host_destroy. NULL ctx only on OOM. */
+qa_app_q3_application_assets_host qa_app_q3_application_assets_host_create(qa_app_application_assets *assets);
+void qa_app_q3_application_assets_host_destroy(qa_app_q3_application_assets_host *host);
 /* TS ApplicationQ3Assets. */
 typedef struct qa_app_application_q3_assets qa_app_application_q3_assets;
 /* mode: "source-sync"|"guest-async"; scope: "selected"|"source".
@@ -74,9 +85,23 @@ qa_app_application_q3_assets *qa_app_application_q3_assets_create(
     void (*print)(void *ctx, const char *text), void *print_ctx,
     bool (*save_font_data)(void *ctx), void *save_font_data_ctx,
     const char *mode, const char *scope);
+/* TS ApplicationQ3Assets.create(assets, content, print, saveFontData,
+ * mode, scope) over a real ApplicationAssets; the built host is owned by
+ * the result. */
+qa_app_application_q3_assets *qa_app_application_q3_assets_create_from_application(
+    qa_app_application_assets *assets, qa_content_id content,
+    void (*print)(void *ctx, const char *text), void *print_ctx,
+    bool (*save_font_data)(void *ctx), void *save_font_data_ctx,
+    const char *mode, const char *scope);
 void qa_app_application_q3_assets_destroy(qa_app_application_q3_assets *assets);
+/* TS ApplicationQ3Assets.assets: the ApplicationAssets the assets were
+ * created over (create_from_application, or a host from
+ * qa_app_q3_application_assets_host_create); NULL for any other host. */
+qa_app_application_assets *qa_app_application_q3_assets_application(const qa_app_application_q3_assets *assets);
 /* TS readonly fields. */
 qa_content_id qa_app_application_q3_assets_content(const qa_app_application_q3_assets *assets);
+/* TS assets.content.catalog.product(content).userContent?.root: NULL is null. */
+const char *qa_app_application_q3_assets_user_content_root(const qa_app_application_q3_assets *assets);
 void qa_app_application_q3_assets_print(const qa_app_application_q3_assets *assets, const char *text);
 qa_q3_pres_presentation_sound_bank *qa_app_application_q3_assets_bank(qa_app_application_q3_assets *assets);
 qa_q3_renderer_font_registry *qa_app_application_q3_assets_fonts(qa_app_application_q3_assets *assets);
@@ -101,6 +126,6 @@ const uint8_t *qa_app_application_q3_assets_read_sync(qa_app_application_q3_asse
 const qa_sound_asset *qa_app_application_q3_assets_sound(qa_app_application_q3_assets *assets, const char *name);
 /* TS resourceHost(scene): scene is the recorder mirror token. */
 qa_q3_pres_resource_host qa_app_application_q3_assets_resource_host(
-    qa_app_application_q3_assets *assets, qa_q3_pres_scene_recorder_mirror scene);
+    qa_app_application_q3_assets *assets, qa_q3_pres_scene_recorder_view scene);
 void qa_app_application_q3_assets_close(qa_app_application_q3_assets *assets);
 #endif

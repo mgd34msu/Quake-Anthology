@@ -1,5 +1,6 @@
 /* Port of src/content/q2/rerelease/goals.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/rerelease/goals.h"
+#include "qa/network/common/js_number.h"
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/content/q2/rerelease/players.h"
 #include "rr_internal.h"
@@ -44,7 +45,7 @@ static void goal_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_
   else {
     g->counters->found_goals++;
     if (g->counters->found_goals == g->counters->total_goals && rr_band(e->spawnflags, 1) == 0) {
-      char tb[64]; snprintf(tb, sizeof tb, "%lld", (long long)(int64_t)qa_q2_number_field(&e->spawn, "sounds", 0));
+      char tb[64]; snprintf(tb, sizeof tb, "%s", QA_JS_NUMBER(qa_q2_number_field(&e->spawn, "sounds", 0))); /* String(numberField) */
       qa_q2_presentation_event ev; memset(&ev, 0, sizeof ev); ev.kind = "music"; ev.track = tb; rr_emit_host(g, ev);
     }
     if (gl->goals) {
@@ -92,7 +93,7 @@ bool qa_q2_rerelease_goals_spawn(qa_q2_rerelease_goals *gl, qa_q2_entity *e, qa_
   return true;
 }
 void qa_q2_rerelease_goals_notify(qa_q2_rerelease_goals *gl, qa_q2_entity *e, qa_q2_game_services *g) {
-  qa_q2rr_player_state *st = qa_q2rr_players_get_state(gl->players, e->actor.id);
+  qa_q2_base_player_state *st = qa_q2_players_get_state(gl->players->base, e->actor.id);
   qa_q2rr_player_extra_state *extra = qa_q2rr_players_get_extra_or_null(gl->players, e->actor.id);
   if (g->options.mode == QA_Q2_MODE_DEATHMATCH || !st || !extra || !extra->spawned || rr_now(g) - st->entered_at < 0.3) return;
   qa_q2rr_mission *m = &gl->campaign->mission;
@@ -155,16 +156,17 @@ void qa_q2_rerelease_goals_end_player_frame(qa_q2_rerelease_goals *gl, qa_q2_ent
   rr_emit_rr(&gl->hooks, ev);
 }
 void qa_q2_rerelease_goals_help(qa_q2_rerelease_goals *gl, qa_q2_entity *e, qa_q2_game_services *g) {
-  if (!gl->players->intermission.playing) return;
-  qa_q2rr_player_state *st = qa_q2_rerelease_players_context(gl->players, e, g).state;
+  if (!(strcmp(qa_q2_players_intermission(gl->players->base).kind, "playing") == 0)) return;
+  qa_q2_base_player_state *st = qa_q2_players_context(gl->players->base, e, g).state;
   qa_q2rr_player_extra_state *extra = qa_q2_rerelease_players_get_extra(gl->players, e->actor.id);
   qa_q2rr_mission *m = &gl->campaign->mission;
   st->show_inventory = false; st->show_scores = false;
   if (st->show_help && (extra->game_help1_changed == m->primary_changes || extra->game_help2_changed == m->secondary_changes)) st->show_help = false;
   else { st->show_help = true; extra->help_changed = 0; }
-  qa_q2rr_player_event pev; memset(&pev, 0, sizeof pev);
-  pev.kind = "help"; pev.has_actor = true; pev.actor = e->actor.id; pev.has_visible = true; pev.visible = st->show_help;
-  gl->players->hooks.emit(gl->players->hooks.ctx, pev);
+  qa_q2_player_event pev; memset(&pev, 0, sizeof pev);
+  pev.kind = "help"; pev.actor = e->actor.id; pev.has_visible = true; pev.visible = st->show_help;
+  qa_q2_player_hooks *hooks = qa_q2_players_hooks(gl->players->base);
+  hooks->emit(hooks->ctx, pev);
   qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);
   ev.kind = "help-computer"; ev.has_actor = true; ev.actor = e->actor.id; ev.visible = st->show_help;
   ev.primary = m->primary; ev.secondary = m->secondary; ev.slow_time = st->show_help;

@@ -36,7 +36,7 @@ void qa_q2_ctf_drop_inventory(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_s
 void qa_q2_ctf_death(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *game);
 void qa_q2_ctf_disconnect(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *game);
 void qa_q2_ctf_before_player(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *game);
-qa_q2mp_weapon_input qa_q2_ctf_weapon_input(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *game, qa_q2mp_weapon_input input);
+qa_q2w_input qa_q2_ctf_weapon_input(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *game, qa_q2w_input input);
 void qa_q2_ctf_after_player(qa_q2_ctf *ctf, qa_q2_entity *entity, qa_q2_game_services *game);
 void qa_q2_ctf_after_player_frames(qa_q2_ctf *ctf, qa_q2_game_services *game);
 bool qa_q2_ctf_check_rules(qa_q2_ctf *ctf, qa_q2_game_services *game);

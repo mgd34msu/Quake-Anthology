@@ -1,9 +1,11 @@
 /* Port of src/render/scene/geometry.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/geometry.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 static void *xalloc(size_t n) { void *p = malloc(n?n:1); if (!p) qa_range_error("Allocation failed"); return p; }
 static void *xg(void *p, size_t n) { void *q = realloc(p, n?n:1); if (!q) qa_range_error("Allocation failed"); return q; }
@@ -11,12 +13,9 @@ qa_bounds qa_scene_geometry_bounds(const qa_vec3 *pos, size_t n) {
   if (!n) return (qa_bounds){{0,0,0},{0,0,0}};
   qa_vec3 mn = {INFINITY,INFINITY,INFINITY}, mx = {-INFINITY,-INFINITY,-INFINITY};
   for (size_t i = 0; i < n; i++) {
-    if (pos[i].x<mn.x) mn.x=pos[i].x;
-    if (pos[i].y<mn.y) mn.y=pos[i].y;
-    if (pos[i].z<mn.z) mn.z=pos[i].z;
-    if (pos[i].x>mx.x) mx.x=pos[i].x;
-    if (pos[i].y>mx.y) mx.y=pos[i].y;
-    if (pos[i].z>mx.z) mx.z=pos[i].z;
+    /* Math.min/Math.max keep NaN */
+    mn.x = qa_js_min(mn.x, pos[i].x); mn.y = qa_js_min(mn.y, pos[i].y); mn.z = qa_js_min(mn.z, pos[i].z);
+    mx.x = qa_js_max(mx.x, pos[i].x); mx.y = qa_js_max(mx.y, pos[i].y); mx.z = qa_js_max(mx.z, pos[i].z);
   }
   return (qa_bounds){ mn, mx };
 }
@@ -52,9 +51,9 @@ static void split_water(const qa_vec3 *pts, size_t n, double size, polys *out) {
   out->items[out->n++] = p;
 }
 static const void *atg(const void *base, size_t count, size_t sz, double index) {
-  long i = (long)index; /* TS values[index]: fractional/negative are undefined */
-  if (index != (double)i || i < 0 || (size_t)i >= count) qa_range_error("Brush surface index %g outside %zu", index, count);
-  return (const char *)base + (size_t)i*sz;
+  /* TS values[index]: fractional, negative and NaN indices are undefined. */
+  if (!(index >= 0 && index == floor(index) && index < (double)count)) qa_range_error("Brush surface index %s outside %zu", QA_JS_NUMBER(index), count);
+  return (const char *)base + (size_t)index*sz;
 }
 static qa_q1_texture_info at_q1ti(const qa_q1_texture_info*a,size_t n,double i){return *(const qa_q1_texture_info*)atg(a,n,sizeof*a,i);}
 static qa_q2_texture_info at_q2ti(const qa_q2_texture_info*a,size_t n,double i){return *(const qa_q2_texture_info*)atg(a,n,sizeof*a,i);}
@@ -86,9 +85,9 @@ bool qa_prepare_brush_face(bool is_q1, const qa_q1_world_geometry *q1, const qa_
   size_t npts = face.edges.count > 0 ? (size_t)face.edges.count : 0;
   qa_vec3 *points = xalloc((npts?npts:1)*sizeof *points);
   for (size_t ei = 0; ei < npts; ei++) {
-    long si = (long)(face.edges.first + (double)ei);
-    if (face.edges.first + (double)ei != (double)si || si < 0 || (size_t)si >= sedges.count) qa_range_error("Brush surface index %g outside %zu", face.edges.first+(double)ei, sedges.count);
-    double signed_edge = sedges.values[si];
+    double sd = face.edges.first + (double)ei;
+    if (!(sd >= 0 && sd == floor(sd) && sd < (double)sedges.count)) qa_range_error("Brush surface index %s outside %zu", QA_JS_NUMBER(face.edges.first+(double)ei), sedges.count);
+    double signed_edge = sedges.values[(size_t)sd];
     qa_bsp_edge e = at_be(edges, nedges, fabs(signed_edge));
     points[ei] = at_v3(verts, nverts, e.vertices[signed_edge >= 0 ? 0 : 1]);
   }
@@ -96,14 +95,12 @@ bool qa_prepare_brush_face(bool is_q1, const qa_q1_world_geometry *q1, const qa_
   for (size_t i = 0; i < npts; i++) {
     double s = qa_dot3(points[i], (qa_vec3){proj.s.x,proj.s.y,proj.s.z}) + proj.s.w;
     double t = qa_dot3(points[i], (qa_vec3){proj.t.x,proj.t.y,proj.t.z}) + proj.t.w;
-    if (s<minS) minS=s;
-    if (t<minT) minT=t;
-    if (s>maxS) maxS=s;
-    if (t>maxT) maxT=t;
+    minS = qa_js_min(minS, s); minT = qa_js_min(minT, t);
+    maxS = qa_js_max(maxS, s); maxT = qa_js_max(maxT, t);
   }
   qa_vec2 mins = { floor(minS/16)*16, floor(minT/16)*16 };
   const qa_decoupled_lightmap *mapping = NULL;
-  if (dec && face_index == trunc(face_index) && face_index >= 0 && (size_t)face_index < ndec) mapping = &dec[(size_t)face_index];
+  if (dec && face_index == trunc(face_index) && face_index >= 0 && face_index < (double)ndec) mapping = &dec[(size_t)face_index];
   qa_lightmap_projection projection;
   memset(&projection, 0, sizeof projection);
   if (!mapping) { projection.kind = "classic"; projection.texture = proj; projection.texture_mins = mins; }
@@ -114,11 +111,12 @@ bool qa_prepare_brush_face(bool is_q1, const qa_q1_world_geometry *q1, const qa_
   if (!mapping) { has_off = face.has_lighting_offset; sample_off = face.lighting_offset; }
   else { has_off = mapping->has_lighting_offset; sample_off = mapping->lighting_offset; }
   bool has_offset = has_off; double offset = has_off ? sample_off * (is_q1 && rgb_q1 ? 3 : 1) : 0;
-  static qa_bsp_lighting stored;
-  stored = lighting;
+  /* TS lighting: geometry.lighting (the face keeps a reference to its own map's lighting; one static copy shared by
+   * every map made faces of a world read the last decoded BSP's samples, e.g. a Quake ammo box's). */
+  const qa_bsp_lighting *lighting_source = is_q1 ? &q1->lighting : &q2->lighting;
   qa_lightmap_face lm; memset(&lm, 0, sizeof lm);
   lm.width = width; lm.height = height; lm.plane = plane; lm.projection = projection;
-  lm.lighting = has_offset ? &stored : NULL; lm.offset = has_offset ? offset : 0;
+  lm.lighting = has_offset ? lighting_source : NULL; lm.offset = has_offset ? offset : 0;
   lm.styles = face.styles.values; lm.style_count = face.styles.count;
   polys list = {0};
   if (warp) split_water(points, npts, subdivision, &list);

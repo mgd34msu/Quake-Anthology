@@ -1,13 +1,16 @@
 /* Port of src/render/scene/models/transform.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/models/transform.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "qa/core/math.h"
 #include "qa/formats/q3_model/md3.h"
 #include "qa/formats/q3_model/md5.h"
 #include "qa/formats/q3_model/scene.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 
 static double fr(double value) { return (double)(float)value; }
@@ -18,7 +21,7 @@ const void *qa_model_at(const void *values, size_t count, size_t element_size,
    * integer array index. */
   if (values == NULL || !(index >= 0) || trunc(index) != index ||
       index >= (double)count)
-    qa_range_error("Missing %s %g", label, index);
+    qa_range_error("Missing %s %s", label, QA_JS_NUMBER(index));
   return (const char *)values + (size_t)index * element_size;
 }
 
@@ -106,10 +109,8 @@ bool qa_model_attachment_tag(const qa_scene_entity *entity, const char *name,
     double wanted[2] = {pose->previous_frame, pose->frame};
     const qa_model_tag **found[2] = {&first, &second};
     for (int which = 0; which < 2; which++) {
-      double row = wanted[which] < (double)mesh->frame_count - 1
-                       ? wanted[which]
-                       : (double)mesh->frame_count - 1;
-      if (row >= 0 && trunc(row) == row && (size_t)row < mesh->tag_row_count) {
+      double row = qa_js_min(wanted[which], (double)mesh->frame_count - 1); /* NaN stays NaN: no row */
+      if (row >= 0 && trunc(row) == row && row < (double)mesh->tag_row_count) {
         const qa_model_tag *tags = mesh->tag_rows[(size_t)row];
         size_t count = mesh->tag_row_counts[(size_t)row];
         for (size_t i = 0; i < count; i++)
@@ -124,7 +125,9 @@ bool qa_model_attachment_tag(const qa_scene_entity *entity, const char *name,
     qa_md3_tag end = {(char *)second->name, second->origin, second->axis};
     qa_md3_tag tag;
     qa_md3_interpolate_tags(&start, &end, name, 1 - pose->back_lerp, &tag);
-    out->tag.name = tag.name;
+    /* TS returns { name, ... }: the caller's name, not the interpolated tag's copy. */
+    free(tag.name);
+    out->tag.name = name;
     out->tag.origin = tag.origin;
     out->tag.axis = tag.axes;
     out->scale = 1;
@@ -150,8 +153,12 @@ bool qa_model_attachment_tag(const qa_scene_entity *entity, const char *name,
       joints = qa_sample_md5_pose(md5, pose->frame, pose->previous_frame,
                                   pose->back_lerp, &owned, &joint_count);
     }
-    if (joints == NULL || (size_t)index >= joint_count) return false;
+    if (joints == NULL || (size_t)index >= joint_count) {
+      if (owned) free((void *)joints);
+      return false;
+    }
     qa_joint_attachment_pose joint = qa_joint_attachment_tag(name, joints[index]);
+    if (owned) free((void *)joints);
     out->tag = joint.tag;
     out->scale = joint.scale;
     return true;

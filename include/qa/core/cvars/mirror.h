@@ -68,4 +68,12 @@ void qa_shared_cvar_mirror_close(qa_shared_cvar_mirror *mirror);
 /* close plus freeing the mirror itself. */
 void qa_shared_cvar_mirror_destroy(qa_shared_cvar_mirror *mirror);
 
+/* A CvarRegistry as the registry surface above (TS passes the registry
+ * itself). ctx is the registry, so shared subscriptions key on registry
+ * identity; session is the registry context's session token and dialect
+ * its TS dialect text. Borrowed strings stay valid until the next find or
+ * variable_string through any registry view. */
+struct qa_cvar_registry;
+qa_cvar_mirror_registry qa_cvar_registry_mirror_view(struct qa_cvar_registry *registry);
+
 #endif

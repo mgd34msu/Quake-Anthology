@@ -10,6 +10,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
 #include "qa/render/scene/models/transform.h"
+#include "qa/foundation/js.h"
 
 static const qa_vec3 ZERO={0,0,0}, UNIT={1,1,1};
 static void *xrealloc(void*p,size_t n){ void*q=realloc(p,n?n:1); if(!q) qa_range_error("out of memory"); return q; }
@@ -58,15 +59,15 @@ static void ensure_passes(qa_q3_character_presenter*p,size_t n){
 const qa_q3_character_pass *qa_q3_character_presenter_frame(qa_q3_character_presenter *p,
     qa_q3_character_view view, qa_q3_character_render_options options, size_t *out_count){
   *out_count=0;
-  if(((int32_t)view.source_flags&0x80)!=0) return p->passes;
+  if((qa_js_to_int32(view.source_flags)&0x80)!=0) return p->passes;
   qa_q3_calculate_player_pose_input pose_in={0};
   pose_in.entity=(qa_q3_pose_entity_state){view.source_flags,view.velocity,view.movement_direction,view.animation.legs,view.animation.torso};
   pose_in.fixed_legs=p->assets->animation.fixed_legs; pose_in.fixed_torso=p->assets->animation.fixed_torso;
   pose_in.lerp_angles=view.angles; pose_in.time_ms=options.time_milliseconds;
   pose_in.frame_time_ms=options.frame_milliseconds; pose_in.swing_speed=options.swing_speed;
   qa_q3_player_pose axes=qa_q3_calculate_player_pose(&p->pose,pose_in);
-  double speed_scale=((int32_t)view.powerups&(1<<QA_Q3_PW_HASTE))?1.5:1;
-  double legs_animation=(p->pose.legs.yawing&&((int32_t)view.animation.legs&~QA_Q3_ANIMATION_TOGGLE_BIT)==QA_Q3_ANIM_LEGS_IDLE)
+  double speed_scale=(qa_js_to_int32(view.powerups)&(1<<QA_Q3_PW_HASTE))?1.5:1;
+  double legs_animation=(p->pose.legs.yawing&&(qa_js_to_int32(view.animation.legs)&~QA_Q3_ANIMATION_TOGGLE_BIT)==QA_Q3_ANIM_LEGS_IDLE)
     ?QA_Q3_ANIM_LEGS_TURN:view.animation.legs;
   qa_q3_animation_set set=qa_q3_animation_set_from_config(&p->assets->animation);
   qa_q3_run_lerp_frame(set,&p->pose.legs.base,(qa_q3_run_lerp_frame_input){options.time_milliseconds,legs_animation,speed_scale,options.no_player_animations},NULL,NULL);
@@ -104,12 +105,12 @@ const qa_q3_character_pass *qa_q3_character_presenter_frame(qa_q3_character_pres
   size_t max_passes=4+options.weapon_count; ensure_passes(p,max_passes);
   size_t count=0;
   const char *wanted[4]; size_t wanted_count=0;
-  int32_t pw=(int32_t)view.powerups;
+  int32_t pw=qa_js_to_int32(view.powerups);
   if(pw&(1<<QA_Q3_PW_INVIS)) wanted[wanted_count++]="powerups/invisibility";
   else {
     wanted[wanted_count++]=NULL;
     if(pw&(1<<QA_Q3_PW_QUAD)) wanted[wanted_count++]=view.team&&strcmp(view.team,"red")==0?"powerups/blueflag":"powerups/quad";
-    if((pw&(1<<QA_Q3_PW_REGEN))&&(int32_t)trunc(options.time_milliseconds/100)%10==1) wanted[wanted_count++]="powerups/regen";
+    if((pw&(1<<QA_Q3_PW_REGEN))&&qa_js_to_int32(trunc(options.time_milliseconds/100))%10==1) wanted[wanted_count++]="powerups/regen";
     if(pw&(1<<QA_Q3_PW_BATTLESUIT)) wanted[wanted_count++]="powerups/battleSuit";
   }
   for(size_t i=0;i<wanted_count;i++){
@@ -135,4 +136,3 @@ const qa_q3_character_pass *qa_q3_character_presenter_frame(qa_q3_character_pres
   }
   *out_count=count; return p->passes;
 }
-qa_axis qa_q3_identity_axis(void){ return qa_qvm_angles_to_axis(ZERO); }

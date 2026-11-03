@@ -1,8 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
 /* Port of src/app/bootstrap/qvm-grapple-selection.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/qvm_grapple_selection.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/content/q3/equipment/grapple_profiles.h"
 #include "qa/compat/qvm/grapple_profile.h"
 #include "qa/content/q3/equipment/lrctf_grapple_profile.h"
 #include "qa/content/q3/equipment/threewave_grapple_profile.h"
@@ -11,8 +13,14 @@
 void qa_app_prepared_qvm_grapple_destroy(qa_app_prepared_qvm_grapple *prepared) {
   if (prepared == NULL) return;
   qa_resolved_qvm_artifact_destroy(&prepared->artifact);
-  qa_content_mounted_destroy(prepared->mounts);
+  /* The lists q3GrappleProfile allocated (qa_qvm_grapple_profile_free without the struct itself). */
+  free((void *)prepared->profile.fire_arguments.values);
+  free((void *)prepared->profile.movement.words);
+  free((void *)prepared->profile.initial_cvars);
+  free((void *)prepared->profile.presentation.view_attachments);
+  if (!prepared->borrowed_mounts) qa_content_mounted_destroy(prepared->mounts);
   free(prepared->module_id);
+  free(prepared->artifact_path); free(prepared->digest); free(prepared->revision);
   memset(prepared, 0, sizeof *prepared);
 }
 static bool from_mounts(qa_content_id content, qa_content_mounted *mounts,
@@ -101,26 +109,79 @@ static bool values_equal(const qa_save_value *a, const qa_save_value *b) {
     default: return true;
   }
 }
-bool qa_app_prepare_application_qvm_grapple(qa_app_qvm_grapple_selection selection,
-    qa_app_for_content_fn for_content, void *for_content_ctx,
-    const qa_app_qvm_grapple_host *host, qa_app_prepared_qvm_grapple *out) {
+/* TS q3GrappleProfile over the content profile's artifact view. */
+bool qa_app_qvm_grapple_profile(const qa_resolved_qvm_artifact *artifact, qa_qvm_grapple_definition *out,
+    char **artifact_path, char **digest, char **revision) {
+  qa_q3_equipment_qvm_artifact view;
+  memset(&view, 0, sizeof view);
+  qa_q3_equipment_known_artifact known = {0};
+  view.module = artifact->module;
+  view.role = artifact->role;
+  view.abi_profile = artifact->has_abi_profile ? artifact->abi_profile : NULL;
+  if (artifact->known != NULL) { known.product = artifact->known->product; view.known = &known; }
+  view.image.initialized_data = artifact->image.initialized_data;
+  view.image.initialized_data_length = artifact->image.initialized_length;
+  view.image.allocated_data_length = (double)artifact->image.allocated_data_length;
+  view.image.data_length = (double)artifact->image.data_length;
+  view.image.literal_length = (double)artifact->image.literal_length;
+  view.image.bss_length = (double)artifact->image.bss_length;
+  qa_q3_equipment_qvm_instruction *instructions = calloc(artifact->image.instruction_count + 1, sizeof *instructions);
+  if (instructions == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < artifact->image.instruction_count; i++) {
+    instructions[i].byte_offset = (double)artifact->image.instructions[i].byte_offset;
+    instructions[i].opcode = (double)artifact->image.instructions[i].opcode;
+    instructions[i].operand_width = (double)artifact->image.instructions[i].operand_width;
+    instructions[i].operand = (double)artifact->image.instructions[i].operand;
+  }
+  view.image.instructions = instructions;
+  view.image.instruction_count = artifact->image.instruction_count;
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, free, instructions);
+  bool found = qa_q3_grapple_profile(&view, out);
+  qa_cleanup_pop(&cleanup);
+  free(instructions);
+  if (!found) return false;
+  *artifact_path = strdup(out->module.artifact_path);
+  *digest = strdup(out->module.digest);
+  *revision = strdup(out->module.revision);
+  if (*artifact_path == NULL || *digest == NULL || *revision == NULL) qa_range_error("Out of memory");
+  out->module.artifact_path = *artifact_path;
+  out->module.digest = *digest;
+  out->module.revision = *revision;
+  return true;
+}
+typedef struct concrete_profile { char *artifact_path, *digest, *revision; } concrete_profile;
+static bool concrete_profile_for(void *ctx, const qa_resolved_qvm_artifact *artifact, qa_qvm_grapple_definition *out) {
+  concrete_profile *strings = ctx;
+  return qa_app_qvm_grapple_profile(artifact, out, &strings->artifact_path, &strings->digest, &strings->revision);
+}
+void qa_app_prepare_application_qvm_grapple(qa_app_qvm_grapple_selection selection,
+    qa_app_for_content_fn for_content, void *for_content_ctx, qa_app_prepared_qvm_grapple *out) {
   qa_content_mounted *mounts = for_content(for_content_ctx, selection.source.content);
+  concrete_profile strings = {NULL, NULL, NULL};
+  const qa_app_qvm_grapple_host host = {&strings, NULL, concrete_profile_for};
   qa_app_prepared_qvm_grapple mounted;
-  bool found = from_mounts(selection.source.content, mounts, host, &mounted);
+  bool found = from_mounts(selection.source.content, mounts, &host, &mounted);
+  if (found) {
+    mounted.borrowed_mounts = true;
+    mounted.artifact_path = strings.artifact_path; mounted.digest = strings.digest; mounted.revision = strings.revision;
+  } else {
+    free(strings.artifact_path); free(strings.digest); free(strings.revision);
+  }
   bool matches = found && strcmp(mounted.selection.source.provider, selection.source.provider) == 0;
   if (matches) {
     qa_save_value *installed = qa_qvm_grapple_profile_declaration(&mounted.profile);
     qa_save_value *wanted = qa_qvm_grapple_profile_declaration(selection.profile);
-    matches = installed != NULL && wanted != NULL && values_equal(installed, wanted);
+    if (installed == NULL || wanted == NULL) qa_range_error("Out of memory");
+    matches = values_equal(installed, wanted);
     qa_save_value_free(installed);
     qa_save_value_free(wanted);
   }
   if (!matches) {
     if (found) qa_app_prepared_qvm_grapple_destroy(&mounted);
-    else qa_content_mounted_destroy(mounts);
-    qa_range_error("Selected grapple differs from its installed source executable or declaration");
+    qa_raise("Error", 0, 0, "Selected grapple differs from its installed source executable or declaration");
   }
+  /* { ...mounted, selection } */
   *out = mounted;
   out->selection = selection;
-  return true;
 }

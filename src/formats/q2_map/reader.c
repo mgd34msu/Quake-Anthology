@@ -1,5 +1,6 @@
 /* Port of src/formats/q2-map/reader.ts. GPL-2.0-or-later. */
 #include "qa/formats/q2_map/reader.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -29,19 +30,27 @@ static char *xstrdup(const char *text) {
 }
 
 static qa_vec3 vector(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static qa_vec3 short_vector(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_i16(reader), qa_binary_reader_i16(reader), qa_binary_reader_i16(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_i16(reader);
+  v.y = qa_binary_reader_i16(reader);
+  v.z = qa_binary_reader_i16(reader);
   return v;
 }
 
 static qa_vec4 projection(qa_binary_reader *reader) {
-  qa_vec4 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader)};
+  qa_vec4 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
+  v.w = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
@@ -62,7 +71,9 @@ static double nullable_index(qa_binary_reader *reader, bool extended) {
 }
 
 static qa_index_range read_range(qa_binary_reader *reader, bool extended) {
-  qa_index_range range = {read_index(reader, extended), read_index(reader, extended)};
+  qa_index_range range;
+  range.first = read_index(reader, extended);
+  range.count = read_index(reader, extended);
   return range;
 }
 
@@ -341,7 +352,7 @@ static void validate_fail(const char *message) {
 static void reference(double value, double count, const char *label) {
   if (value < 0 || value >= count) {
     char message[256];
-    snprintf(message, sizeof message, "Invalid %s index %g for %g records", label, value, count);
+    snprintf(message, sizeof message, "Invalid %s index %s for %s records", label, QA_JS_NUMBER(value), QA_JS_NUMBER(count));
     validate_fail(message);
   }
 }
@@ -507,7 +518,7 @@ uint8_t *qa_decompress_q2_visibility(const qa_q2_visibility *visibility, double 
     return row;
   }
   if (cluster != trunc(cluster) || cluster < 0 || cluster >= (double)visibility->cluster_count) {
-    qa_range_error("Invalid Q2 visibility cluster %g", cluster);
+    qa_range_error("Invalid Q2 visibility cluster %s", QA_JS_NUMBER(cluster));
   }
   const qa_q2_visibility_cluster *entry = &visibility->clusters[(size_t)cluster];
   double offset = strcmp(kind, "pvs") == 0 ? entry->pvs_offset : entry->phs_offset;
@@ -516,7 +527,7 @@ uint8_t *qa_decompress_q2_visibility(const qa_q2_visibility *visibility, double 
     return row;
   }
   char source[128];
-  snprintf(source, sizeof source, "Q2 %s cluster %g", kind, cluster);
+  snprintf(source, sizeof source, "Q2 %s cluster %s", kind, QA_JS_NUMBER(cluster));
   qa_binary_reader reader;
   if (!qa_binary_reader_init(&reader, (uint8_t *)visibility->compressed.bytes,
                              visibility->compressed.length, source))

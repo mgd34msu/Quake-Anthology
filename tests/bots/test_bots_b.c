@@ -337,7 +337,8 @@ static void test_reachability_entities(void) {
   qa_vec3 vec;
   CHECK(qa_aas_reachability_entities_vector(&entities, 1, "origin", &vec));
   CHECK(vec.x == 1.5 && vec.y == -2 && vec.z == 30);
-  CHECK_ABORTS((void)qa_aas_reachability_entities_int(&entities, 1, "big", &iv));
+  /* TS 2026-11-01: an oversized integer epair saturates (bun: {found: true, value: 2147483647}). */
+  CHECK(qa_aas_reachability_entities_int(&entities, 1, "big", &iv) && iv == 2147483647);
   CHECK_ABORTS((void)qa_aas_reachability_entities_value(&entities, 1, "classname", buffer, 0));
   qa_aas_reachability_entities_destroy(&entities);
 }

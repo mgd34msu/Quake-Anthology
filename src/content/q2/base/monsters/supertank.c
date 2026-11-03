@@ -22,7 +22,7 @@ static void search_fn(void *ctx, qa_q2m_context *c) {
   q2bm_sound(c->game, c->entity, q2bm_rnd(c->game) < 0.5 ? "bosstank/btkunqv1.wav" : "bosstank/btkunqv2.wav",
              true, 2, false, 0, false, 0);
 }
-static const qa_q2bm_sound_spec tread_spec = {"bosstank/btkengn1.wav", 4, 1};
+static const qa_q2bm_sound_spec tread_spec = {"bosstank/btkengn1.wav", 2, 1};
 
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;

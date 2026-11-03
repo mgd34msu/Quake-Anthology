@@ -20,6 +20,8 @@ const char *const *qa_app_frame_time_cvar_names(qa_command_dialect dialect, size
 /* FrameTimeCvarMirror ctor filter: names present in owner. Malloc'd
  * array of borrowed names; caller frees the array. */
 const char **qa_app_frame_time_mirror_names(qa_cvar_registry *owner, size_t *out_count);
+/* TS minimumFrameMilliseconds(cvars, dedicated): cvars NULL is TS null. */
+double qa_app_minimum_frame_milliseconds(qa_cvar_registry *cvars, bool dedicated);
 void qa_app_refresh_frame_time_cvars(qa_cvar_registry *owner, qa_cvar_registry *mirror);
 void qa_app_register_frame_time_cvars(qa_cvar_registry *cvars);
 qa_app_frame_time_controls qa_app_read_frame_time_controls(qa_cvar_registry *cvars);

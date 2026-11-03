@@ -5,5 +5,7 @@
 
 bool qa_monster_target_eligible(double health,
                                 const qa_monster_target_observation *observation) {
-  return health > 0 && observation != NULL && !observation->notarget;
+  /* FL_NOTARGET is read only when acquiring a target (FindTarget), never by
+     a monster already chasing. */
+  return health > 0 && observation != NULL;
 }

@@ -11,6 +11,8 @@
 #include "qa/content/mounts/paths.h"
 #include "qa/content/user_data.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 static char *dup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
 static char *join_path(const char *a, const char *b) {
   size_t cap = strlen(a) + strlen(b) + 2;
@@ -158,7 +160,11 @@ qa_app_console_script_files *qa_app_console_script_files_create(qa_app_console_s
   files->options = options;
   return files;
 }
-void qa_app_console_script_files_destroy(qa_app_console_script_files *files) { free(files); }
+void qa_app_console_script_files_destroy(qa_app_console_script_files *files) {
+  if (files == NULL) return;
+  if (files->options.release != NULL) files->options.release(files->options.release_ctx);
+  free(files);
+}
 const char *qa_app_console_script_files_root(const qa_app_console_script_files *files) { return files->options.settings->root; }
 static void acquire(qa_app_console_script_files *files) {
   if (files->retiring) qa_range_error("Configuration reader is retired");
@@ -167,6 +173,19 @@ static void acquire(qa_app_console_script_files *files) {
 static void release_read(qa_app_console_script_files *files) { files->reads--; }
 static int by_entry_name(const void *a, const void *b) {
   return strcmp(((const qa_app_console_script_entry *)a)->name, ((const qa_app_console_script_entry *)b)->name);
+}
+/* TS entries.set(name.toLowerCase(), { name, kind }): a Unicode case-insensitive key keeps
+ * its first position and takes the latest entry. */
+static void set_entry(qa_app_console_script_entry **entries, size_t *count, char *name, const char *kind) {
+  for (size_t j = 0; j < *count; j++) {
+    if (qa_js_equals_ignore_case((*entries)[j].name, name)) {
+      free((*entries)[j].name);
+      (*entries)[j] = (qa_app_console_script_entry){name, kind};
+      return;
+    }
+  }
+  *entries = realloc(*entries, (*count + 1) * sizeof **entries);
+  (*entries)[(*count)++] = (qa_app_console_script_entry){name, kind};
 }
 qa_app_console_script_entry *qa_app_console_script_files_list(qa_app_console_script_files *files, qa_command_context source, size_t *out_count) {
   acquire(files);
@@ -179,29 +198,18 @@ qa_app_console_script_entry *qa_app_console_script_files_list(qa_app_console_scr
   size_t count = 0;
   char **names = NULL; size_t name_count = 0, name_cap = 0;
   config_names(files->options.settings->root, "", &names, &name_count, &name_cap);
-  for (size_t i = 0; i < name_count; i++) {
-    entries = realloc(entries, (count + 1) * sizeof *entries);
-    entries[count++] = (qa_app_console_script_entry){names[i], "product"};
-  }
+  for (size_t i = 0; i < name_count; i++) set_entry(&entries, &count, names[i], "product");
   free(names);
   if (origin->kind == QA_COMMAND_ORIGIN_LOCAL_SEAT) {
     qa_config_store seat_store;
     qa_app_seat_console_config(files->options.console_root, origin->seat, &seat_store);
     names = NULL; name_count = 0; name_cap = 0;
     config_names(seat_store.root, "", &names, &name_count, &name_cap);
-    for (size_t i = 0; i < name_count; i++) {
-      bool replaced = false;
-      for (size_t j = 0; j < count; j++) {
-        bool same = strlen(entries[j].name) == strlen(names[i]);
-        if (same) for (size_t k = 0; names[i][k]; k++) if (tolower((unsigned char)entries[j].name[k]) != tolower((unsigned char)names[i][k])) same = false;
-        if (same) { free(entries[j].name); entries[j] = (qa_app_console_script_entry){names[i], "seat"}; replaced = true; break; }
-      }
-      if (!replaced) { entries = realloc(entries, (count + 1) * sizeof *entries); entries[count++] = (qa_app_console_script_entry){names[i], "seat"}; }
-    }
+    for (size_t i = 0; i < name_count; i++) set_entry(&entries, &count, names[i], "seat");
     free(names);
     qa_config_store_destroy(&seat_store);
   }
-  qsort(entries, count, sizeof *entries, by_entry_name);
+  qa_js_sort(entries, count, sizeof *entries, by_entry_name);
   release_read(files);
   *out_count = count;
   return entries;
@@ -272,4 +280,100 @@ void qa_app_console_script_files_close(qa_app_console_script_files *files) {
 const char *qa_app_console_script_files_write(qa_app_console_script_files *files, const char *(*operation)(void *ctx), void *ctx) {
   if (files->retiring) return "Configuration reader is retired";
   return operation(ctx);
+}
+
+/* ---- TS sourceScriptReader ---- */
+#include "qa/content/catalog/index.h"
+#include "qa/content/mounts.h"
+typedef struct source_script_reader {
+  qa_mounted_content_reader *reader;
+  char *plan_id; /* the reader's plan borrows it */
+  char **owners; size_t owner_count;
+} source_script_reader;
+static bool source_script_owned(void *ctx, const qa_content_mount *mount) {
+  const source_script_reader *state = ctx;
+  const qa_mount_identity *identity = mount->kind == QA_CONTENT_MOUNT_ARCHIVE ? &mount->as.archive.identity : &mount->as.loose.identity;
+  for (size_t i = 0; i < state->owner_count; i++) if (strcmp(state->owners[i], identity->content) == 0) return true;
+  return false;
+}
+static bool source_script_open(void *ctx, const char *name, uint8_t **out_bytes, size_t *out_count) {
+  source_script_reader *state = ctx;
+  qa_content_opened_resource opened;
+  if (!qa_mounted_content_reader_open(state->reader, name, source_script_owned, state, &opened)) return false;
+  *out_bytes = opened.bytes;
+  *out_count = opened.byte_length;
+  return true;
+}
+static const qa_mount_identity *plan_mount_identity(const qa_resolved_mount_plan *plan, const char *id) {
+  for (size_t i = 0; i < plan->mount_count; i++) {
+    const qa_content_mount *mount = &plan->mounts[i];
+    const qa_mount_identity *identity = mount->kind == QA_CONTENT_MOUNT_ARCHIVE ? &mount->as.archive.identity : &mount->as.loose.identity;
+    if (strcmp(identity->id, id) == 0) return identity;
+  }
+  return NULL;
+}
+qa_app_source_script_reader qa_app_source_script_reader_create(const qa_content_catalog *catalog,
+    qa_content_mounted *mounts, const char *source) {
+  source_script_reader *state = calloc(1, sizeof *state);
+  if (state == NULL) qa_range_error("Out of memory");
+  const qa_catalog_discovered_product *product = qa_content_catalog_product(catalog, source);
+  for (;;) {
+    for (size_t i = 0; i < state->owner_count; i++)
+      if (strcmp(state->owners[i], product->id) == 0) {
+        for (size_t j = 0; j < state->owner_count; j++) free(state->owners[j]);
+        free(state->owners); free(state);
+        qa_raise("Error", 0, 0, "Cyclic configuration source dependency: %s", source);
+      }
+    char **owners = realloc(state->owners, (state->owner_count + 1) * sizeof *owners);
+    if (owners == NULL) qa_range_error("Out of memory");
+    state->owners = owners;
+    state->owners[state->owner_count] = strdup(product->id);
+    if (state->owners[state->owner_count] == NULL) qa_range_error("Out of memory");
+    state->owner_count++;
+    if (product->expectation.base_product == NULL) break;
+    product = qa_content_catalog_product(catalog, product->expectation.base_product);
+  }
+  const qa_resolved_mount_plan *plan = qa_content_mounted_plan(mounts);
+  qa_mount_id *order = calloc(plan->default_order_count + 1, sizeof *order);
+  if (order == NULL) qa_range_error("Out of memory");
+  size_t count = 0;
+  /* owners.flatMap(owner => defaultOrder.filter(id => byMount.get(id)?.identity.content === owner)) */
+  for (size_t o = 0; o < state->owner_count; o++)
+    for (size_t i = 0; i < plan->default_order_count; i++) {
+      const qa_mount_identity *identity = plan_mount_identity(plan, plan->default_order[i]);
+      if (identity != NULL && strcmp(identity->content, state->owners[o]) == 0) order[count++] = plan->default_order[i];
+    }
+  size_t primary = count;
+  for (size_t i = 0; i < plan->default_order_count; i++) {
+    bool ordered = false;
+    for (size_t j = 0; j < primary; j++) if (strcmp(order[j], plan->default_order[i]) == 0) { ordered = true; break; }
+    if (!ordered) order[count++] = plan->default_order[i];
+  }
+  /* createMountPlanId("configuration", Buffer.from(`${plan.id}/${source}`).toString("hex")) */
+  size_t text_length = strlen(plan->id) + 1 + strlen(source);
+  char *hex = malloc(text_length * 2 + 1);
+  if (hex == NULL) qa_range_error("Out of memory");
+  size_t at = 0;
+  for (const char *p = plan->id; *p != '\0'; p++, at += 2) (void)snprintf(hex + at, 3, "%02x", (unsigned char)*p);
+  (void)snprintf(hex + at, 3, "%02x", (unsigned char)'/'); at += 2;
+  for (const char *p = source; *p != '\0'; p++, at += 2) (void)snprintf(hex + at, 3, "%02x", (unsigned char)*p);
+  hex[at] = '\0';
+  char *id = qa_create_mount_plan_id("configuration", hex);
+  free(hex);
+  if (id == NULL) qa_range_error("Out of memory");
+  state->plan_id = id;
+  state->reader = qa_content_mounted_borrow_ordered_reader(mounts, id, order, count, NULL, 0);
+  free((void *)order);
+  if (state->reader == NULL) qa_range_error("Out of memory");
+  qa_app_source_script_reader reader = { state, source_script_open };
+  return reader;
+}
+void qa_app_source_script_reader_destroy(qa_app_source_script_reader reader) {
+  source_script_reader *state = reader.ctx;
+  if (state == NULL) return;
+  qa_mounted_content_reader_destroy(state->reader);
+  free(state->plan_id);
+  for (size_t i = 0; i < state->owner_count; i++) free(state->owners[i]);
+  free(state->owners);
+  free(state);
 }

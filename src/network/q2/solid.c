@@ -1,6 +1,8 @@
 /* Port of src/network/q2/solid.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/solid.h"
 
+#include "qa/foundation/js.h"
+
 #include <math.h>
 #include <string.h>
 
@@ -34,7 +36,7 @@ static int32_t clamp_trunc(double value, int32_t minimum, int32_t maximum) {
   double t = trunc(value);
   if (t < (double)minimum) t = (double)minimum;
   if (t > (double)maximum) t = (double)maximum;
-  return (int32_t)t;
+  return qa_js_to_int32(t); /* NaN bounds stay NaN in TS; the | and << make them 0 */
 }
 
 uint32_t qa_q2_pack_solid(qa_bounds bounds, qa_q2_solid_encoding encoding) {
@@ -62,7 +64,7 @@ uint32_t qa_q2_pack_solid(qa_bounds bounds, qa_q2_solid_encoding encoding) {
 
 qa_bounds qa_q2_unpack_solid(double solid_value, qa_q2_solid_encoding encoding) {
   /* TS bitwise ops apply ToInt32/ToUint32 to the number first. */
-  uint32_t solid = (uint32_t)(int32_t)solid_value;
+  uint32_t solid = qa_js_to_uint32(solid_value);
   double x = encoding == QA_Q2_SOLID_SHORT ? (double)(solid & 31u) * 8.0
                                             : (double)(solid & 255u);
   double y = encoding == QA_Q2_SOLID_Q2PRO_V2 ? (double)((solid >> 8) & 255u) : x;

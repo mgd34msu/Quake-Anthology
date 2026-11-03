@@ -213,7 +213,7 @@ static void test_direct_servers(void) {
   CHECK_ABORTS(qa_app_read_direct_servers("{\"version\":2,\"servers\":[]}", &count));
   const char *body = "# comment\none.example:27000\n\none.example:27000\ntwo.example\n";
   size_t list_count = 0;
-  char **list = qa_app_parse_server_master_list((const uint8_t *)body, strlen(body), &list_count);
+  char **list = qa_app_parse_server_master_list((const uint8_t *)body, strlen(body), NULL, NULL, &list_count);
   CHECK(list_count == 2 && strcmp(list[1], "two.example") == 0);
   for (size_t i = 0; i < list_count; i++) free(list[i]);
   free(list);
@@ -268,18 +268,18 @@ static void test_pump(void) {
 
 static void test_rerelease_fog(void) {
   /* Fog rides the real RereleaseFog (fog.h), no host fog callbacks. */
-  qa_app_rerelease_host host; memset(&host, 0, sizeof host);
   qa_actor_id actor; memset(&actor, 0, sizeof actor); actor.slot = 1;
   qa_app_rerelease_seat seat; memset(&seat, 0, sizeof seat);
   seat.actor = actor;
   qa_app_rerelease_presentation *p =
-      qa_app_rerelease_presentation_create(host, &seat, 1, NULL);
+      qa_app_rerelease_presentation_create(NULL, &seat, 1, NULL); /* fog reads no provider */
   CHECK(p != NULL);
   qa_q2_fog_state on = qa_q2_create_fog();
   on.fog.density = 0.6; on.fog.color = (qa_vec3){0.2, 0.3, 0.4}; on.fog.sky_factor = 1;
-  qa_app_rerelease_event event; memset(&event, 0, sizeof event);
-  event.kind = "q2-rerelease"; event.event_kind = "fog";
-  event.actor = actor; event.fog_value = on; event.seconds = 2;
+  qa_q2_rerelease_event fog; memset(&fog, 0, sizeof fog);
+  fog.kind = "fog"; fog.has_actor = true; fog.actor = actor; fog.fog_value = on;
+  qa_app_sim_presentation_event event; memset(&event, 0, sizeof event);
+  event.kind = "q2-rerelease"; event.q2_rerelease = &fog; event.seconds = 2;
   qa_app_rerelease_receive(p, &event, 1);
   qa_app_rerelease_view view = qa_app_rerelease_view_of(p, actor, 2);
   CHECK(view.has_fog);

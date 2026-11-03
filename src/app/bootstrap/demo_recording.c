@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <sys/stat.h>
 #include "qa/content/mounts/paths.h"
@@ -59,7 +60,8 @@ static const char *write_bytes(qa_app_demo_recording *r, const uint8_t *bytes, s
   }
   return NULL;
 }
-qa_app_demo_recording *qa_app_demo_recording_open(const char *root, const char *name, qa_app_demo_recording_seed seed, const char **out_error) {
+qa_app_demo_recording *qa_app_demo_recording_open(const char *root, const char *name, qa_app_demo_recording_seed seed, bool replace,
+                                                  const char **out_error) {
   *out_error = NULL;
   if (seed.packet_count == 0) { *out_error = "Recording requires matching initial source state"; return NULL; }
   for (size_t i = 0; i < seed.packet_count; i++)
@@ -70,7 +72,8 @@ qa_app_demo_recording *qa_app_demo_recording_open(const char *root, const char *
   r->identity = seed.identity;
   r->accepting = true;
   mkdir_parents(r->path);
-  r->file = fopen(r->path, "wxb");
+  /* A name the user typed replaces an existing demo like the original clients; generated names must not collide. */
+  r->file = fopen(r->path, replace ? "wb" : "wxb");
   if (!r->file) {
     *out_error = errno == EEXIST ? "EEXIST: recording file already exists" : "could not open recording file";
     free(r->path); free(r);
@@ -86,7 +89,14 @@ qa_app_demo_recording *qa_app_demo_recording_open(const char *root, const char *
     error = write_bytes(r, header, len); free(header);
   }
   for (size_t i = 0; !error && i < seed.packet_count; i++) error = qa_app_demo_recording_append(r, seed.packets[i]);
-  if (error) { qa_app_demo_recording_abort(r); *out_error = error; qa_app_demo_recording_destroy(r); return NULL; }
+  if (error) {
+    qa_app_demo_recording_abort(r);
+    /* A recording that never got its seed is a truncated file, not a demo; the write failure is the error reported. */
+    (void)unlink(r->path);
+    *out_error = error;
+    qa_app_demo_recording_destroy(r);
+    return NULL;
+  }
   return r;
 }
 const char *qa_app_demo_recording_path(const qa_app_demo_recording *r) { return r->path; }

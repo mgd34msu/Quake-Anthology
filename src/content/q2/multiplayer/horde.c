@@ -78,6 +78,11 @@ static void tick(qa_q2_horde *h, qa_q2_game_services *g) {
     h->intermission_ticks = 0;
     h->wave++;
     h->spawned_this_wave = 0;
+    if (h->wave > TOTAL_WAVES) {
+      qa_q2_presentation_event done = {0};
+      done.kind = "print"; done.level = "high"; done.text = "Horde complete: all waves cleared.\n";
+      g->host->emit(g->host->ctx, done);
+    }
     return;
   }
   if (h->wave == 0) h->wave = 1;
@@ -90,11 +95,19 @@ static void tick(qa_q2_horde *h, qa_q2_game_services *g) {
   double batch = 4;
   if (wave_quota(h) - h->spawned_this_wave < batch) batch = wave_quota(h) - h->spawned_this_wave;
   if (room < batch) batch = room;
+  double spawned = 0;
   for (double index = 0; index < batch; index++) {
     size_t pi = (size_t)h->spawned_this_wave + (size_t)index;
     qa_q2_entity *point = h->points[pi % h->point_count];
     const char *classname = pool[pi % pool_size];
     qa_vec3 origin = qa_q2_game_body(g, point).origin;
+    /* A monster or player still standing on the point blocks the rest of this batch. */
+    static const qa_bounds monster_bounds = {{-16, -16, -24}, {16, 16, 32}};
+    qa_q2_trace_request occupied_request = {0};
+    occupied_request.start = origin; occupied_request.end = origin; occupied_request.bounds = &monster_bounds;
+    occupied_request.ignore = &point->actor.id; occupied_request.mask = 0x2020003;
+    qa_trace_result occupied = g->host->trace(g->host->ctx, occupied_request);
+    if (occupied.start_solid || occupied.hit.kind == QA_TRACE_HIT_ACTOR) break;
     char ox[64], oy[64], oz[64], origin_text[200];
     qa_q2mp_format_number(ox, sizeof ox, origin.x);
     qa_q2mp_format_number(oy, sizeof oy, origin.y);
@@ -108,8 +121,9 @@ static void tick(qa_q2_horde *h, qa_q2_game_services *g) {
     qa_q2_spawn_set(&fields, "angle", "0");
     qa_q2_entity *monster = g->spawn(g->ctx, fields);
     add_monster(h, monster->actor.id);
+    spawned++;
   }
-  h->spawned_this_wave += batch;
+  h->spawned_this_wave += spawned;
 }
 
 static void think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *g) {

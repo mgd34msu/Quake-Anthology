@@ -6,10 +6,11 @@
 #include <stddef.h>
 
 #include "qa/content/q2/foundation/monsters/index.h"
+#include "qa/content/q2/missionpacks/monsters/types.h"
 #include "qa/content/q2/missionpacks/monsters/state.h"
 
 /* Writes 3 definitions (tank, tank commander, chick); returns 3. */
-size_t qa_q2mpm_create_rogue_arsenal_monsters(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_arsenal_monsters(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                               qa_q2mpm_monster_state *source);
 
 #endif

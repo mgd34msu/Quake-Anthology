@@ -1,7 +1,6 @@
 /* Port of src/content/q3/base/game/targets.ts. GPL-2.0-or-later.
- * Laser trace and item touch are host fn+ctx (combat spatial mirror /
- * ItemLifecycleContext in TS); save capture/restore of locations is
- * reduced to linked+head slot values. */
+ * Item touch is host fn+ctx (ItemLifecycleContext in TS); save
+ * capture/restore of locations is reduced to linked+head slot values. */
 #ifndef QA_CONTENT_Q3_BASE_GAME_TARGETS_H
 #define QA_CONTENT_Q3_BASE_GAME_TARGETS_H
 #include <stdbool.h>
@@ -18,12 +17,10 @@ void qa_q3_target_location_state_reset(qa_q3_target_location_state *state);
 typedef struct qa_q3_target_location_save { bool linked; bool has_head; double head_slot; } qa_q3_target_location_save;
 qa_q3_target_location_save qa_q3_target_location_capture(const qa_q3_target_location_state *state);
 void qa_q3_target_location_restore(qa_q3_target_location_state *state, qa_q3_target_location_save save, qa_q3_entity_pool *pool);
-/* Laser trace mirror: hit_kind 0 none, 1 actor. */
-typedef struct qa_q3_target_laser_trace { int hit_kind; qa_actor_id hit_actor; qa_vec3 end; } qa_q3_target_laser_trace;
 /* TS TargetRuntime (host interface as fn+ctx). */
 typedef struct qa_q3_target_runtime {
   void *ctx; qa_q3_entity_pool *entities; qa_q3_target_location_state location;
-  qa_q3_server_world_mirror world; qa_q3_kill_box_host kill_box;
+  qa_q3_base_server_world world; qa_q3_kill_box_host kill_box;
   bool has_participants; qa_q3_use_participant_services participants;
   bool item_lifecycle_matches;
   qa_q3_game_combat_context *(*combat)(void *ctx);
@@ -36,8 +33,6 @@ typedef struct qa_q3_target_runtime {
   void (*set_configstring)(void *ctx, double index, const char *value);
   void (*warn)(void *ctx, const char *message);
   void (*touch_item)(void *ctx, qa_q3_game_entity *target, qa_q3_game_entity *activator);
-  qa_q3_target_laser_trace (*laser_trace)(void *ctx, qa_vec3 start, qa_vec3 end, qa_actor_id pass, double mask);
-  qa_q3_damage_participant (*participant)(void *ctx, qa_actor_id actor);
 } qa_q3_target_runtime;
 void qa_q3_target_runtime_init(qa_q3_target_runtime *runtime, void *ctx, qa_q3_entity_pool *entities);
 size_t qa_q3_target_spawn_handlers(qa_q3_target_runtime *runtime, qa_q3_spawn_handler_entry *out, size_t out_cap);

@@ -6,7 +6,12 @@
 #include <stddef.h>
 #include "qa/contracts/math.h"
 typedef struct qa_cell_face { qa_plane plane; qa_vec3 *vertices; size_t vertex_count; } qa_cell_face;
-typedef struct qa_convex_cell { qa_cell_face *faces; size_t face_count; } qa_convex_cell;
+/* bounds_state is TS's cellBounds WeakMap slot: 0 not computed, 1 bmin/bmax are
+ * valid, 2 the cell has no finite bounds. */
+typedef struct qa_convex_cell {
+  qa_cell_face *faces; size_t face_count;
+  int bounds_state; double bmin[3], bmax[3];
+} qa_convex_cell;
 double qa_cell_dot(qa_vec3 a, qa_vec3 b);
 qa_vec3 qa_cell_add(qa_vec3 a, qa_vec3 b);
 qa_vec3 qa_cell_sub(qa_vec3 a, qa_vec3 b);
@@ -19,6 +24,7 @@ qa_vec3 qa_cell_lerp(qa_vec3 a, qa_vec3 b, double t);
 extern const qa_vec3 qa_cell_axes[3];
 qa_convex_cell *qa_box_cell(qa_bounds bounds);
 void qa_convex_cell_destroy(qa_convex_cell *cell);
+qa_convex_cell *qa_convex_cell_clone(const qa_convex_cell *cell);
 qa_convex_cell *qa_clip_cell(qa_convex_cell *cell, qa_plane plane);
 typedef struct qa_split_result { qa_convex_cell *front; qa_convex_cell *back; } qa_split_result;
 qa_split_result qa_split_cell(qa_convex_cell *cell, qa_plane plane);

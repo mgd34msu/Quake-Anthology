@@ -1,6 +1,7 @@
 /* Port of src/content/q2/missionpacks/monsters/xatrix-variants.ts.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/monsters/xatrix_variants.h"
+#include "qa/foundation/js.h"
 
 #include <stdlib.h>
 
@@ -17,6 +18,7 @@
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/tables/xatrix_brain.h"
 #include "qa/content/q2/missionpacks/monsters/tables/xatrix_infantry.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
 
 const qa_vec3 qa_q2mpm_xatrix_brain_right_eye[11] = {
   {0.7467, 0.23837, 34.16769}, {-1.07639, 0.23837, 33.386372}, {-1.3355, 5.3343, 32.17717},
@@ -58,8 +60,8 @@ static void brain_pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reactio
 }
 static void tongue_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
   qa_vec3 start = qa_q2m_project_flash_default(c, q2mpm_v3(24, 0, 16));
@@ -69,31 +71,31 @@ static void tongue_fn(void *ctx, qa_q2m_context *c) {
   qa_trace_result trace = q2mpm_trace(game, start, enemy.origin, NULL, &entity->actor.id, 0x6000003);
   if (trace.hit.kind != QA_TRACE_HIT_ACTOR || !qa_same_actor(trace.hit.actor, entity->enemy)) return;
   q2mpm_snd(c, "brain/brnatck3.wav", 1);
-  qa_q2bm_extended_event beam;
+  qa_q2_presentation_event beam;
   memset(&beam, 0, sizeof beam);
-  beam.kind = "monster-beam"; beam.effect = "parasite"; beam.actor = entity->actor.id;
+  beam.kind = "monster-beam"; beam.effect = "parasite"; beam.has_actor = true; beam.actor = entity->actor.id;
   beam.start = start; beam.end = enemy.origin;
-  qa_q2bm_emit_extended(beam);
+  game->host->emit(game->host->ctx, beam);
   (void)q2mpm_damage(game, entity->enemy, entity, &entity->actor.id, 5, 0,
                      qa_sub3_double(start, enemy.origin), enemy.origin, q2mpm_zero(), 36, true, 8);
   qa_body_state body = q2mpm_body(game, entity);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true;
   change.origin = body.origin;
   change.origin.z += 1;
   q2mpm_move_body(game, entity, change, true, false);
-  qa_q2f_owned_result target = game->host->actors.resolve_owned(game->host->actors.ctx, entity->enemy);
-  if (target.has_value) {
+  qa_owned_actor target; bool has_target = qa_session_actor_registry_resolve_owned(game->host->actors, entity->enemy, &target);
+  if (has_target) {
     qa_body_state written = enemy;
     written.velocity = qa_scale3_double(qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).forward, -1200);
-    game->host->bodies.write(game->host->bodies.ctx, target.value, written);
+    qa_shared_body_table_write(game->host->bodies, target, written);
   }
 }
 static void laserbeam_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   if (q2mpm_rnd(game) > 0.8) q2mpm_snd4(c, "misc/lasfly.wav", 0, 1, 3);
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
@@ -133,7 +135,7 @@ const qa_q2m_definition *qa_q2mpm_get_xatrix_brain_definition(void) {
       {"brain_laserbeam", {NULL, laserbeam_fn}},
       {"brain_laserbeam_reattack", {NULL, laser_reattack_fn}},
     };
-    brain_definition.callbacks = qa_q2mpm_merge_callbacks(brain_definition.callbacks, brain_definition.callback_count,
+    brain_definition.callbacks = qa_q2mpm_merge_callbacks(NULL, brain_definition.callbacks, brain_definition.callback_count,
                                                           extra, 3, &brain_definition.callback_count);
     brain_ready = true;
   }
@@ -146,8 +148,8 @@ static void infantry_fire(qa_q2m_context *c) {
     if (handler) handler->fn(handler->ctx, c);
     return;
   }
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   bool has_enemy = qa_q2m_enemy_body(c, &enemy);
   qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(game->options.edition, 26));
@@ -155,13 +157,13 @@ static void infantry_fire(qa_q2m_context *c) {
   if (!has_enemy) {
     direction = qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward;
   } else {
-    qa_q2f_entity *enemy_entity = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+    qa_q2_entity *enemy_entity = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
     qa_vec3 point = qa_add3_double(enemy.origin, qa_scale3_double(enemy.velocity, -0.2));
     point.z += enemy_entity ? enemy_entity->view_height : 22;
     direction = qa_normalize3_double_hypot(qa_sub3_double(point, start));
   }
   c->weapons.fire_bullet(c->weapons.ctx, entity, game, start, direction, 3, 4, 300, 500, 0);
-  qa_q2mpm_monster_flash(c, 26, start, direction);
+  qa_q2rm_monster_flash(c, 26, start, direction);
 }
 static void infantry_fire_fn(void *ctx, qa_q2m_context *c) { (void)ctx; infantry_fire(c); }
 static void idle_fn(void *ctx, qa_q2m_context *c) {
@@ -178,7 +180,9 @@ static void dodge_fn(void *ctx, qa_q2m_context *c, qa_actor_id attacker, double 
 }
 static void set_firetime_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  c->state->pause_time = q2mpm_now(c->game) + (floor(q2mpm_rnd(c->game) * 16) + 5) * 0.1;
+  double left = q2mpm_now(c->game);
+  double right = (floor(q2mpm_rnd(c->game) * 16) + 5) * 0.1;
+  c->state->pause_time = left + right;
 }
 static void cock_fn(void *ctx, qa_q2m_context *c) { (void)ctx; q2mpm_snd(c, "infantry/infatck3.wav", 1); }
 static void fire_hold_fn(void *ctx, qa_q2m_context *c) {
@@ -217,7 +221,7 @@ const qa_q2m_definition *qa_q2mpm_get_xatrix_infantry_definition(void) {
       {"infantry_cock_gun", {NULL, cock_fn}},
       {"infantry_fire", {NULL, fire_hold_fn}},
     };
-    infantry_definition.callbacks = qa_q2mpm_merge_callbacks(qa_q2m_infantry_callbacks, qa_q2m_infantry_callback_count,
+    infantry_definition.callbacks = qa_q2mpm_merge_callbacks(NULL, qa_q2m_infantry_callbacks, qa_q2m_infantry_callback_count,
                                                              extra, 4, &infantry_definition.callback_count);
     infantry_ready = true;
   }
@@ -225,13 +229,13 @@ const qa_q2m_definition *qa_q2mpm_get_xatrix_infantry_definition(void) {
 }
 static void tank_init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  if (((uint32_t)c->entity->spawnflags & 8u) != 0) qa_q2mpm_monster_power_armor(c, "shield", 400);
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 8u) != 0) qa_q2mpm_monster_power_armor(c, "shield", 400);
 }
 static void tank_restore_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  if (((uint32_t)c->entity->spawnflags & 8u) != 0) qa_q2mpm_restore_monster_power_armor(c);
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 8u) != 0) qa_q2mpm_restore_monster_power_armor(c);
 }
-size_t qa_q2mpm_create_xatrix_base_variants(qa_q2m_definition *out, qa_q2m_monsters *monsters) {
+size_t qa_q2mpm_create_xatrix_base_variants(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters) {
   out[0] = *qa_q2mpm_get_xatrix_brain_definition();
   out[1] = *qa_q2mpm_get_xatrix_infantry_definition();
   qa_q2m_definition tank = qa_q2bm_supertank_definition;
@@ -239,8 +243,8 @@ size_t qa_q2mpm_create_xatrix_base_variants(qa_q2m_definition *out, qa_q2m_monst
   tank.restore = (qa_q2m_handler){NULL, tank_restore_fn};
   tank.stand = qa_q2bm_move_handler("supertank_move_stand");
   size_t think_room = tank.source_callbacks.think_count + 1;
-  qa_q2f_named_think *storage = malloc(think_room * sizeof *storage);
-  if (!storage) qa_q2f_error("Out of memory creating xatrix base variants");
+  qa_q2_named_think *storage = qa_q2mpm_arena_alloc(arena, think_room * sizeof *storage);
+  if (!storage) qa_raise("Error", 0, 0, "Out of memory creating xatrix base variants");
   qa_q2bm_with_boss_explosion_callbacks(&out[2], &tank, monsters, storage);
   return 3;
 }

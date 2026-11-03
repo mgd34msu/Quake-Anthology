@@ -1,6 +1,9 @@
 /* Port of src/app/bootstrap/network/q3.ts (Q3ServerNetwork).
- * Operation serialization is synchronous (reentrant calls abort
- * with the TS message). Host gameState/snapshot/pure/rate payloads
+ * Operation serialization is synchronous: a reentrant call raises
+ * "Error" with the TS message. Each received datagram runs under qa_try
+ * as the TS per-packet catch: the message is printed (budgeted, made
+ * printable) and a Q3GameCallbackError costs the sending peer its
+ * connection; the server keeps running. Host gameState/snapshot/pure/rate payloads
  * are the landed qa_q3_gamestate / snapshot records /
  * qa_q3_pure_server / qa_q3_server_rate behind the q3-types
  * opaque pointers. GPL-2.0-or-later. */

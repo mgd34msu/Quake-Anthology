@@ -1,6 +1,7 @@
 /* Port of src/world/collision/q1/index.ts (Q1Collision + hull re-exports).
  * Trace result carries TS Q1CollisionTrace.contents in `contents`.
- * Prepared-clip cache is a direct derive (cache is performance-only).
+ * The clip-cell LRU and prepared derivers follow TS: prepared cells decompose
+ * differently from a per-envelope derive, so they shape trace results.
  * GPL-2.0-or-later. */
 #ifndef QA_WORLD_COLLISION_Q1_INDEX_H
 #define QA_WORLD_COLLISION_Q1_INDEX_H
@@ -18,6 +19,8 @@ typedef struct qa_q1_collision_options {
 } qa_q1_collision_options;
 typedef struct qa_q1_geometry_coverage { const char *arbitrary_shapes; const char *clip_only; } qa_q1_geometry_coverage;
 typedef struct qa_q1_collision qa_q1_collision;
+typedef struct qa_q1_clip_cell_entry qa_q1_clip_cell_entry;
+typedef struct qa_q1_authored_cells qa_q1_authored_cells;
 struct qa_q1_collision {
   const qa_q1_world_geometry *geometry;
   qa_q1_solid_space solid_space;
@@ -27,6 +30,13 @@ struct qa_q1_collision {
   qa_stamp_set leaf_stamps;
   double *leaf_scratch; size_t leaf_scratch_count;
   uint8_t *vis_scratch; size_t vis_scratch_length;
+  /* TS preparedClip, per entry of hull_models. */
+  struct qa_prepared_clip_deriver **prepared_clip;
+  /* TS clipCells: insertion-ordered, oldest first, at most 128 entries. */
+  qa_q1_clip_cell_entry *clip_cells; size_t clip_cell_entries;
+  size_t clip_cell_count, clip_face_count, clip_vertex_count;
+  /* TS brushCells, one slot per BRUSHLIST model and brush. */
+  qa_q1_authored_cells *authored_cells;
 };
 bool qa_q1_collision_init(qa_q1_collision *c, const qa_q1_world_geometry *geometry, qa_q1_collision_options options);
 void qa_q1_collision_destroy(qa_q1_collision *c);

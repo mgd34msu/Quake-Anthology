@@ -5,11 +5,13 @@
 #include "qa/content/q2/rerelease/fog.h"
 #include "qa/content/q2/rerelease/world_text.h"
 #include "qa/core/math.h"
+#include "qa/foundation/support.h"
 #include "rr_internal.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 bool qa_q2rr_health_target_set(qa_q2_rerelease_entities *e, qa_actor_id k, qa_actor_id v) {
   for (size_t i = 0; i < e->ht_count; i++) if (qa_same_actor(e->health_targets[i].key, k)) { e->health_targets[i].value = v; return true; }
@@ -111,11 +113,13 @@ static void healthbar_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, cons
 }
 static void changelevel_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *other, const qa_actor_id *act) {
   qa_q2_rerelease_entities *m = c;
-  if (!m->players->intermission.playing) return;
+  if (!(strcmp(qa_q2_players_intermission(m->players->base).kind, "playing") == 0)) return;
   if (g->options.mode == QA_Q2_MODE_SINGLEPLAYER) {
     bool ok = false;
-    for (size_t i = 0; i < m->players->state_count; i++)
-      if (m->players->states[i].state->slot == 0) { ok = rr_health(g, m->players->states[i].actor) > 0; break; }
+    for (size_t i = 0; i < qa_q2_players_state_count(m->players->base); i++) {
+      qa_actor_id actor; qa_q2_base_player_state *st;
+      if (qa_q2_players_state_at(m->players->base, i, &actor, &st) && st->slot == 0) { ok = rr_health(g, actor) > 0; break; }
+    }
     if (!ok) return;
   }
   if (g->options.mode == QA_Q2_MODE_DEATHMATCH) {
@@ -126,7 +130,7 @@ static void changelevel_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, co
       return;
     }
     if (rr_now(g) < 10) return;
-    qa_q2rr_player_state *pl = act ? qa_q2rr_players_get_state(m->players, *act) : NULL;
+    qa_q2_base_player_state *pl = act ? qa_q2_players_get_state(m->players->base, *act) : NULL;
     if (pl) {
       const char *args[1] = {pl->name};
       qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);
@@ -136,7 +140,7 @@ static void changelevel_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, co
   }
   if (e->map && strchr(e->map, '*')) g->counters->server_flags = rr_band(g->counters->server_flags, 0x0000ff00);
   qa_q2_landmark_carry landmark; const qa_q2_landmark_carry *lm = NULL;
-  if (act && g->options.mode != QA_Q2_MODE_DEATHMATCH && qa_q2rr_players_get_state(m->players, *act)) {
+  if (act && g->options.mode != QA_Q2_MODE_DEATHMATCH && qa_q2_players_get_state(m->players->base, *act)) {
     qa_q2_entity *target = g->pick_target(g->ctx, e->target ? e->target : "");
     e->has_goal = target != NULL; if (target) e->goal = target->actor.id;
     qa_body_state_result br = qa_shared_body_table_read(g->host->bodies, *act);
@@ -217,12 +221,15 @@ static void poi_use(void *c, qa_q2_entity *source, qa_q2_game_services *g, const
   m->poi.has_dynamic = has_dyn; m->poi.dynamic = dyn;
 }
 
-static qa_q2_entity **eligible(qa_q2_rerelease_entities *m, qa_q2_game_services *g, qa_q2_entity **buf, size_t *n) {
+/* Malloc'd, one slot per connected player (TS array; no fixed cap). */
+static qa_q2_entity **eligible(qa_q2_rerelease_entities *m, qa_q2_game_services *g, size_t *n) {
   size_t pn = 0; const qa_actor_id *pls = g->host->players(g->host->ctx, &pn);
+  qa_q2_entity **buf = malloc((pn ? pn : 1) * sizeof *buf);
+  if (!buf) qa_range_error("Out of memory");
   size_t k = 0;
   for (size_t i = 0; i < pn; i++) {
     qa_q2_entity *pl = rr_ent(g, &pls[i]);
-    qa_q2rr_player_state *st = qa_q2rr_players_get_state(m->players, pls[i]);
+    qa_q2_base_player_state *st = qa_q2_players_get_state(m->players->base, pls[i]);
     if (pl && st && !st->dead && !st->spectator && !st->noclip && rr_health(g, pls[i]) > 0) buf[k++] = pl;
   }
   *n = k; return buf;
@@ -236,10 +243,9 @@ static void coop_relay_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, con
   (void)other; qa_q2_rerelease_entities *m = c;
   if (g->options.mode != QA_Q2_MODE_COOP) { fire_relay(e, g, act); return; }
   qa_bounds bounds = abs_bounds(e, g);
-  qa_q2_entity *buf[64]; size_t n = 0; eligible(m, g, buf, &n); if (n > 64) n = 64;
-  qa_q2_entity *outside[64]; size_t on = 0;
-  for (size_t i = 0; i < n; i++) if (!bounds_intersect(bounds, abs_bounds(buf[i], g))) outside[on++] = buf[i];
-  if (on == 0) { fire_relay(e, g, act); return; }
+  size_t n = 0; qa_q2_entity **outside = eligible(m, g, &n); size_t on = 0;
+  for (size_t i = 0; i < n; i++) if (!bounds_intersect(bounds, abs_bounds(outside[i], g))) outside[on++] = outside[i];
+  if (on == 0) { free(outside); fire_relay(e, g, act); return; }
   if (e->timestamp < rr_now(g)) {
     for (size_t i = 0; i < on; i++) {
       qa_q2_presentation_event ev; memset(&ev, 0, sizeof ev);
@@ -250,15 +256,16 @@ static void coop_relay_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, con
       ev.kind = "centerprint"; ev.has_actor = true; ev.actor = *act; ev.text = e->message; rr_emit_host(g, ev);
     }
   }
+  free(outside);
   e->timestamp = rr_now(g) + 5;
 }
 static void coop_relay_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_rerelease_entities *m = c;
   qa_bounds bounds = abs_bounds(e, g);
-  qa_q2_entity *buf[64]; size_t n = 0; eligible(m, g, buf, &n); if (n > 64) n = 64;
-  qa_q2_entity *inside[64]; size_t in_n = 0;
-  for (size_t i = 0; i < n; i++) if (bounds_intersect(bounds, abs_bounds(buf[i], g))) inside[in_n++] = buf[i];
+  size_t n = 0; qa_q2_entity **inside = eligible(m, g, &n); size_t in_n = 0;
+  for (size_t i = 0; i < n; i++) if (bounds_intersect(bounds, abs_bounds(inside[i], g))) inside[in_n++] = inside[i];
   if (in_n == n) {
+    free(inside);
     size_t pn = 0; const qa_actor_id *pls = g->host->players(g->host->ctx, &pn);
     fire_relay(e, g, pn ? &pls[0] : NULL); g->remove(g->ctx, e); return;
   }
@@ -273,6 +280,7 @@ static void coop_relay_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     }
     e->timestamp = rr_now(g) + 5;
   }
+  free(inside);
   g->schedule(g->ctx, e, e->wait, m->coop_relay_think);
 }
 
@@ -417,9 +425,9 @@ bool qa_q2_rerelease_entities_spawn(qa_q2_rerelease_entities *m, qa_q2_entity *e
     return false;
   }
   if (strcmp(name, "misc_flare") == 0) {
-    long sf = (long)(int32_t)e->spawnflags;
-    long rf = 0x200000L | ((sf & 7) << 10) | ((sf & 8) != 0 ? 1 : 0) | (qa_q2_spawn_get(&e->spawn, "image") ? 256 : 0);
-    e->render_flags = (double)(int32_t)rf;
+    int32_t sf = qa_js_to_int32(e->spawnflags); /* (int32_t) of a double is UB out of range */
+    int32_t rf = 0x200000 | ((sf & 7) << 10) | ((sf & 8) != 0 ? 1 : 0) | (qa_q2_spawn_get(&e->spawn, "image") ? 256 : 0);
+    e->render_flags = (double)rf;
     e->scale = qa_q2_number_field(&e->spawn, "radius", 0);
     g->solid(g->ctx, e, "none");
     qa_q2_body_changes ch; memset(&ch, 0, sizeof ch); ch.has_bounds = true;
@@ -504,6 +512,9 @@ void qa_q2_rerelease_entities_force_fog(qa_q2_rerelease_entities *m, qa_actor_id
 void qa_q2_rerelease_entities_end_player_frame(qa_q2_rerelease_entities *m, qa_q2_entity *ent, qa_q2_game_services *g) {
   qa_q2_rerelease_entities_force_fog(m, ent->actor.id, false);
   for (int slot = 0; slot < 2; slot++) {
+    void * value;
+    qa_vec3 value2;
+    qa_vec3 value3;
     qa_q2rr_health_bar *bar = &m->health_bars[slot];
     if (!bar->has) continue;
     qa_q2_entity *controller = rr_ent(g, &bar->controller);
@@ -540,7 +551,7 @@ void qa_q2_rerelease_entities_end_player_frame(qa_q2_rerelease_entities *m, qa_q
     }
     bool empty = bar->has_dead_until || health <= 0;
     bool visible = empty || rr_band(controller->spawnflags, 1) == 0 ||
-                   (target && g->host->in_pvs(g->host->ctx, rr_body_of(g, ent).origin, rr_body_of(g, target).origin));
+                   (target && (value = g->host->ctx, value2 = rr_body_of(g, ent).origin, value3 = rr_body_of(g, target).origin, g->host->in_pvs(value, value2, value3)));
     double frac = 0;
     if (!empty && target) { frac = health / target->max_health; frac = frac < 0 ? 0 : frac > 1 ? 1 : frac; }
     qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);

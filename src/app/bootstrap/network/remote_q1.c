@@ -1,16 +1,20 @@
 /* Port of src/app/bootstrap/network/remote-q1.ts.
  * GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/remote_q1.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/app/bootstrap/network/q1_client.h"
+#include "qa/content/q1/foundation/types.h"
 #include "qa/contracts/world.h"
 #include "qa/core/commands/text.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q1/constants.h"
+#include "qa/foundation/js.h"
+#include "qa/text/localization_key.h"
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -32,16 +36,14 @@ static const weapon_def weapons[] = {
 #define WEAPON_COUNT (sizeof weapons / sizeof weapons[0])
 static const char *sound_channel(double value, const char **out_name) {
   static const char *channels[] = {"auto", "weapon", "voice", "item", "body", NULL, NULL, NULL};
-  int64_t index = (int64_t)value;
+  /* range-check the number before the cast: NaN or 1e300 must be rejected, not cast */
+  int64_t index = value >= 0 && value <= 7 ? (int64_t)value : -1;
   if (index < 0 || index > 7 || value != (double)index)
-    qa_range_error("Invalid NetQuake sound channel");
+    qa_raise("Error", 0, 0, "Invalid NetQuake sound channel");
   *out_name = channels[index];
   return *out_name;
 }
 typedef struct entity_entry { double number; qa_q1_extended_entity_state state; } entity_entry;
-typedef struct event_entry {
-  qa_app_sim_presentation_event event; qa_app_q1_remote_event payload; char *text;
-} event_entry;
 struct qa_app_q1_remote {
   qa_app_q1_remote_options options;
   qa_app_remote_world_content *world;
@@ -61,7 +63,8 @@ struct qa_app_q1_remote {
   struct { char *key; qa_resolved_resource_reference reference; } *resources;
   size_t resource_count, resource_cap;
   struct { double index; char *value; } *styles; size_t style_count, style_cap;
-  event_entry *events; size_t event_head, event_count, event_cap;
+  /* Admitted events are owned copies (qa_app_sim_presentation_event_copy). */
+  qa_app_sim_presentation_event *events; size_t event_count, event_cap;
   qa_simulation_event *sounds_pending; size_t sound_head, sound_pending_count, sound_cap;
   qa_actor_id *sound_actors; size_t sound_actor_cap;
   qa_simulation_output published; bool has_published;
@@ -72,10 +75,11 @@ struct qa_app_q1_remote {
   qa_scene_light_style *published_styles; size_t published_style_count;
   qa_scene_snapshot_world published_world;
   qa_simulation_event *published_events; size_t published_event_count;
+  qa_simulation_event *drained_sounds; /* drainPresentationEvents' taken sounds */
   qa_app_q1_client_table *scoreboard;
   qa_netquake_message *records; size_t record_count;
   qa_app_simulation_presentation *presentations; size_t presentation_cap;
-  qa_app_sim_presentation_event *drained; size_t drained_cap;
+  qa_app_sim_presentation_event *drained; size_t drained_count;
   qa_inventory_entry ui_inventory[4];
   qa_app_sim_player_ui_item ui_items[8];
   char *ui_item_ids[8];
@@ -93,7 +97,7 @@ static qa_content_id source_content(qa_app_q1_remote *remote) {
     if (execution->kind == QA_EXECUTION_MODULE_QUAKEC)
       return execution->owner.content;
   }
-  return recipe->map.geometry_content;
+  return recipe->map.entities.content;
 }
 static qa_actor_id actor_of(qa_app_q1_remote *remote, double number) {
   for (size_t i = 0; i < remote->actor_count; i++)
@@ -119,34 +123,79 @@ static bool player_of(qa_app_q1_remote *remote, qa_app_q1_player *out) {
   out->source_entity = remote->view_entity;
   return true;
 }
-static event_entry *event_push(qa_app_q1_remote *remote) {
+static void events_release(qa_app_sim_presentation_event *events, size_t count) {
+  for (size_t i = 0; i < count; i++) qa_app_sim_presentation_event_release(&events[i]);
+}
+/* TS events.admit(event): EventRing<SimulationPresentationEvent>(8192) throws when full; the ring
+ * keeps an owned copy of the borrowed view. */
+static void event_admit(qa_app_q1_remote *remote, const qa_app_sim_presentation_event *event) {
+  if (remote->event_count >= 8192)
+    qa_range_error("Event ring capacity exhausted (8192 undrained records); drain before admitting more");
   if (remote->event_count == remote->event_cap) {
     size_t new_cap = remote->event_cap ? remote->event_cap * 2 : 64;
-    event_entry *grown = xmalloc(new_cap * sizeof *grown);
-    for (size_t i = 0; i < remote->event_count; i++)
-      grown[i] = remote->events[(remote->event_head + i) % remote->event_cap];
-    free(remote->events);
+    qa_app_sim_presentation_event *grown = realloc(remote->events, new_cap * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
     remote->events = grown;
     remote->event_cap = new_cap;
-    remote->event_head = 0;
   }
-  event_entry *entry = &remote->events[(remote->event_head + remote->event_count) % remote->event_cap];
-  memset(entry, 0, sizeof *entry);
+  if (!qa_app_sim_presentation_event_copy(&remote->events[remote->event_count], event))
+    qa_range_error("out of memory");
   remote->event_count++;
-  entry->event.sequence = remote->sequence++;
-  entry->event.seconds = remote->seconds;
-  entry->event.content = recipe_of(remote)->map.geometry_content;
-  entry->event.event = &entry->payload;
-  return entry;
 }
-static void emit(qa_app_q1_remote *remote, qa_app_q1_remote_event_kind kind,
-    const char *event_kind, bool has_source, double source_entity) {
-  event_entry *entry = event_push(remote);
-  entry->event.kind = "q1";
-  entry->event.event_kind = event_kind;
-  entry->event.has_source_entity = has_source;
-  entry->event.source_entity = source_entity;
-  entry->payload.kind = kind;
+/* TS emit(event, sourceEntity = null): { kind: 'q1', event, content: recipe.map.entities.content,
+ * seconds, sequence: this.sequence++, sourceEntity }. */
+static void emit(qa_app_q1_remote *remote, const qa_q1_event *payload, bool has_source_entity,
+    double source_entity) {
+  qa_app_sim_presentation_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = "q1";
+  event.q1 = payload;
+  event.content = recipe_of(remote)->map.entities.content;
+  event.seconds = remote->seconds;
+  event.sequence = remote->sequence++;
+  event.has_source_entity = has_source_entity;
+  event.source_entity = source_entity;
+  event_admit(remote, &event);
+}
+/* The stamp of the other kinds: { kind, ..., content, seconds, sequence: this.sequence++ }. */
+static qa_app_sim_presentation_event event_stamp(qa_app_q1_remote *remote, const char *kind,
+    qa_content_id content) {
+  qa_app_sim_presentation_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = kind;
+  event.content = content;
+  event.seconds = remote->seconds;
+  event.sequence = remote->sequence++;
+  return event;
+}
+static qa_q1_event q1_event(const char *kind) {
+  qa_q1_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = kind;
+  return event;
+}
+/* TS emit({ kind: 'message', player, text, center, args? }); localized NULL leaves args absent. */
+static void emit_message(qa_app_q1_remote *remote, qa_actor_id player, const char *text, bool center,
+    const qa_localization_key_text *localized) {
+  qa_q1_event event = q1_event("message");
+  event.has_player = true;
+  event.player = player;
+  event.text = text;
+  event.center = center;
+  qa_q1_msg_arg *args = NULL;
+  if (localized) {
+    args = malloc((localized->arg_count ? localized->arg_count : 1) * sizeof *args);
+    if (!args) qa_range_error("out of memory");
+    for (size_t i = 0; i < localized->arg_count; i++)
+      args[i] = (qa_q1_msg_arg){false, 0, localized->args[i]};
+    event.args = args;
+    event.arg_count = localized->arg_count;
+  }
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, args);
+  emit(remote, &event, false, 0);
+  qa_cleanup_pop(&guard);
+  free(args);
 }
 static const entity_entry *entity_find(const entity_entry *entries, size_t count, double number) {
   for (size_t i = 0; i < count; i++)
@@ -186,13 +235,14 @@ static qa_q1_extended_entity_state sampled(qa_app_q1_remote *remote,
 static void bonus_flash(qa_app_q1_remote *remote) {
   qa_actor_id actor = actor_of(remote, remote->view_entity);
   const entity_entry *entity = entity_find(remote->current, remote->current_count, remote->view_entity);
-  emit(remote, QA_APP_Q1_REMOTE_EFFECT, "effect", true, remote->view_entity);
-  event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-  entry->payload.effect = "pickup";
-  entry->payload.has_actor = true;
-  entry->payload.actor = actor;
-  entry->payload.origin = entity ? entity->state.base.origin : (qa_vec3){0, 0, 0};
-  entry->payload.amount = 1;
+  qa_q1_event event = q1_event("effect");
+  event.effect = "pickup";
+  event.has_actor = true;
+  event.actor = actor;
+  event.has_origin = true;
+  event.origin = entity ? entity->state.base.origin : (qa_vec3){0, 0, 0};
+  event.amount = 1;
+  emit(remote, &event, true, remote->view_entity);
 }
 static void publish_remote(qa_app_q1_remote *remote) {
   qa_app_q1_player player;
@@ -278,8 +328,8 @@ static void publish_remote(qa_app_q1_remote *remote) {
   for (size_t i = 0; i < remote->sound_pending_count; i++)
     remote->published_events[i] = remote->sounds_pending[
         (remote->sound_head + i) % (remote->sound_cap ? remote->sound_cap : 1)];
-  remote->published.events = NULL;
-  remote->published.event_count = 0;
+  remote->published.events = remote->published_events;
+  remote->published.event_count = remote->published_event_count;
   remote->has_published = true;
   qa_simulation_output output = remote->published;
   output.events = NULL;
@@ -317,8 +367,7 @@ void qa_app_q1_remote_destroy(qa_app_q1_remote *remote) {
   free(remote->resources);
   for (size_t i = 0; i < remote->style_count; i++) free(remote->styles[i].value);
   free(remote->styles);
-  for (size_t i = 0; i < remote->event_count; i++)
-    free(remote->events[(remote->event_head + i) % remote->event_cap].text);
+  events_release(remote->events, remote->event_count);
   free(remote->events);
   free(remote->sounds_pending);
   free(remote->sound_actors);
@@ -326,9 +375,11 @@ void qa_app_q1_remote_destroy(qa_app_q1_remote *remote) {
   free(remote->published_actors);
   free(remote->published_styles);
   free(remote->published_events);
+  free(remote->drained_sounds);
   for (size_t i = 0; i < remote->record_count; i++) qa_netquake_message_destroy(&remote->records[i]);
   free(remote->records);
   free(remote->presentations);
+  events_release(remote->drained, remote->drained_count);
   free(remote->drained);
   for (size_t i = 0; i < 8; i++) free(remote->ui_item_ids[i]);
   free(remote->ui_ammo_id);
@@ -394,9 +445,10 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
     const char *kind = message->kind ? message->kind : "";
     if (strcmp(kind, "server-info") == 0) {
       const char *map = message->model_count ? message->models[0] : NULL;
-      if (!map || strncmp(map, "maps/", 5) != 0 || !strstr(map, ".bsp")
-          || strcmp(strstr(map, ".bsp"), ".bsp") != 0)
-        qa_range_error("NetQuake server has no world model");
+      size_t map_length = map ? strlen(map) : 0;
+      /* startsWith('maps/') && endsWith('.bsp') */
+      if (!map || strncmp(map, "maps/", 5) != 0 || map_length < 4 || strcmp(map + map_length - 4, ".bsp") != 0)
+        qa_raise("Error", 0, 0, "NetQuake server has no world model");
       qa_app_q1_remote_world_info world = {map,
           (const char *const *)message->models, message->model_count,
           (const char *const *)message->sounds, message->sound_count};
@@ -414,9 +466,7 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
       qa_app_q1_client_table_destroy(remote->scoreboard);
       remote->scoreboard = qa_app_q1_client_table_create();
       if (!remote->scoreboard) qa_range_error("out of memory");
-      for (size_t j = 0; j < remote->event_count; j++)
-        free(remote->events[(remote->event_head + j) % remote->event_cap].text);
-      remote->event_head = 0;
+      events_release(remote->events, remote->event_count);
       remote->event_count = 0;
       remote->sound_head = 0;
       remote->sound_pending_count = 0;
@@ -458,6 +508,9 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
     } else if (strcmp(kind, "entity") == 0) {
       entity_set(&remote->current, &remote->current_count, &remote->current_cap, message->state);
     } else if (strcmp(kind, "static") == 0) {
+      /* Native Quake stops at 128 statics; extended protocols raise the figure, so this is a
+       * generous ceiling rather than the native one. */
+      if (remote->static_count >= 1024) qa_raise("Error", 0, 0, "Too many static entities");
       if (remote->static_count == remote->static_cap) {
         remote->static_cap = remote->static_cap ? remote->static_cap * 2 : 32;
         remote->statics = realloc(remote->statics, remote->static_cap * sizeof *remote->statics);
@@ -470,15 +523,16 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
       remote->view_angles = message->angles;
       qa_app_q1_player player;
       if (player_of(remote, &player)) {
-        event_entry *entry = event_push(remote);
-        entry->event.kind = "view-reset";
-        entry->event.event_kind = "source";
-        entry->event.actor = player.actor;
-        entry->event.angles = message->angles;
-        entry->payload.kind = QA_APP_Q1_REMOTE_VIEW_RESET;
-        entry->payload.has_actor = true;
-        entry->payload.actor = player.actor;
-        entry->payload.angles = message->angles;
+        qa_app_sim_presentation_event event;
+        memset(&event, 0, sizeof event);
+        event.kind = "view-reset";
+        event.view_reset.reason = "source";
+        event.view_reset.actor = player.actor;
+        event.view_reset.angles = message->angles;
+        event.sequence = remote->sequence++;
+        event.seconds = remote->seconds;
+        event.content = recipe_of(remote)->map.entities.content;
+        event_admit(remote, &event);
       }
     } else if (strcmp(kind, "client-data") == 0) {
       remote->data = message->data;
@@ -503,82 +557,98 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
         remote->style_count++;
       }
     } else if (strcmp(kind, "cd-track") == 0) {
-      event_entry *entry = event_push(remote);
-      entry->event.kind = "music";
-      entry->event.event_kind = "cd-track";
-      entry->event.track = message->track;
-      entry->payload.kind = QA_APP_Q1_REMOTE_CD_TRACK;
-      entry->payload.track = message->track;
+      qa_app_sim_presentation_event event = event_stamp(remote, "music",
+          recipe_of(remote)->map.entities.content);
+      event.music.kind = "cd-track";
+      event.music.track = message->track;
+      event_admit(remote, &event);
     } else if (strcmp(kind, "name") == 0 || strcmp(kind, "colors") == 0
         || strcmp(kind, "frags") == 0 || strcmp(kind, "ping") == 0
         || strcmp(kind, "social") == 0 || strcmp(kind, "player-info") == 0) {
-      qa_app_q1_client_metadata_event metadata = {0};
+      /* TS updateQ1ClientMetadata(scoreboard, message), then { kind: 'q1-client', event: message, ... }.
+       * NetQuake name/social/player-info carry their text in `value` (str_value). */
+      bool text = strcmp(kind, "name") == 0 || strcmp(kind, "social") == 0
+          || strcmp(kind, "player-info") == 0;
+      qa_app_sim_q1_client_metadata_event metadata = {0};
       metadata.kind = kind;
       metadata.slot = message->slot;
-      metadata.text_value = message->text;
-      metadata.number_value = message->value;
-      qa_app_update_q1_client_metadata(remote->scoreboard, metadata);
-      event_entry *entry = event_push(remote);
-      entry->event.kind = "q1-client";
-      entry->event.event_kind = kind;
-      entry->event.content = source_content(remote);
-      entry->payload.kind = QA_APP_Q1_REMOTE_CLIENT_METADATA;
-      entry->payload.metadata = metadata;
-      entry->text = message->text ? copy_text(message->text) : NULL;
-      entry->payload.metadata.text_value = entry->text;
+      if (text) metadata.text = message->str_value ? message->str_value : "";
+      else metadata.value = message->value;
+      qa_app_update_q1_client_metadata(remote->scoreboard, &metadata);
+      qa_app_sim_presentation_event event = event_stamp(remote, "q1-client", source_content(remote));
+      event.q1_client.kind = kind;
+      event.q1_client.slot = message->slot;
+      if (text) event.q1_client.text = message->str_value ? message->str_value : "";
+      else event.q1_client.value = message->value;
+      event_admit(remote, &event);
     } else if (strcmp(kind, "skybox") == 0) {
-      event_entry *entry = event_push(remote);
-      entry->event.kind = "q1-sky";
-      entry->event.event_kind = "skybox";
-      entry->event.content = source_content(remote);
-      entry->event.name = entry->text = copy_text(message->text ? message->text : "");
-      entry->payload.kind = QA_APP_Q1_REMOTE_SKYBOX;
-      entry->payload.text = entry->text;
+      qa_app_sim_presentation_event event = event_stamp(remote, "q1-sky", source_content(remote));
+      event.q1_sky.kind = "skybox";
+      event.q1_sky.name = message->text ? message->text : "";
+      event_admit(remote, &event);
     } else if (strcmp(kind, "print") == 0) {
-      remote->options.print(remote->options.ctx, message->text ? message->text : "");
+      const char *text = message->text ? message->text : "";
+      qa_localization_key_text localized;
+      bool has_localized = qa_decode_localization_key(text, &localized);
+      qa_app_q1_player player;
+      if (has_localized && player_of(remote, &player)) {
+        emit_message(remote, player.actor, localized.key, false, &localized);
+        qa_localization_key_text_release(&localized);
+      } else {
+        if (has_localized) qa_localization_key_text_release(&localized);
+        char *plain = qa_plain_localization_text(text);
+        qa_cleanup guard;
+        qa_cleanup_push(&guard, free, plain);
+        remote->options.print(remote->options.ctx, plain);
+        qa_cleanup_pop(&guard);
+        free(plain);
+      }
     } else if (strcmp(kind, "center-print") == 0) {
       qa_app_q1_player player;
       if (player_of(remote, &player)) {
-        emit(remote, QA_APP_Q1_REMOTE_MESSAGE, "message", false, 0);
-        event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-        entry->payload.has_actor = true;
-        entry->payload.actor = player.actor;
-        entry->payload.center = true;
-        entry->text = copy_text(message->text ? message->text : "");
-        entry->payload.text = entry->text;
+        const char *text = message->text ? message->text : "";
+        qa_localization_key_text localized;
+        if (qa_decode_localization_key(text, &localized)) {
+          emit_message(remote, player.actor, localized.key, true, &localized);
+          qa_localization_key_text_release(&localized);
+        } else {
+          char *plain = qa_plain_localization_text(text);
+          emit_message(remote, player.actor, plain, true, NULL);
+          free(plain);
+        }
       }
     } else if (strcmp(kind, "sound") == 0 || strcmp(kind, "static-sound") == 0) {
       bool is_static = strcmp(kind, "static-sound") == 0;
       int64_t index = (int64_t)message->index - 1;
       if (index < 0 || (size_t)index >= remote->sound_count)
-        qa_range_error("Unknown NetQuake sound index %.17g", message->index);
+        qa_raise("Error", 0, 0, "Unknown NetQuake sound index %s", QA_JS_NUMBER(message->index));
       const char *path = remote->sounds[index];
       if (is_static) {
-        emit(remote, QA_APP_Q1_REMOTE_AMBIENT, "ambient", false, 0);
-        event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-        entry->payload.path = path;
-        entry->payload.origin = message->origin;
-        entry->payload.volume = message->volume / 255;
-        entry->payload.attenuation = message->attenuation;
+        qa_q1_event event = q1_event("ambient");
+        event.path = path;
+        event.has_origin = true;
+        event.origin = message->origin;
+        event.volume = message->volume / 255;
+        event.attenuation = message->attenuation;
+        emit(remote, &event, false, 0);
       } else {
-        const char *channel = NULL;
-        sound_channel(message->channel, &channel);
-        emit(remote, QA_APP_Q1_REMOTE_SOUND, "sound", true, message->entity);
-        event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, message->entity);
-        entry->payload.path = path;
-        entry->payload.channel = channel;
-        entry->payload.channel_number = message->channel;
-        entry->payload.origin = message->origin;
-        entry->payload.volume = message->volume / 255;
-        entry->payload.attenuation = message->attenuation;
-        char key[512];
-        snprintf(key, sizeof key, "sound/%s", path);
+        qa_q1_event event = q1_event("sound");
+        event.has_actor = true;
+        event.actor = actor_of(remote, message->entity);
+        event.path = path;
+        sound_channel(message->channel, &event.sound_channel);
+        event.has_origin = true;
+        event.origin = message->origin;
+        event.volume = message->volume / 255;
+        event.attenuation = message->attenuation;
+        emit(remote, &event, true, message->entity);
         const qa_resolved_resource_reference *resource = NULL;
         for (size_t j = 0; j < remote->resource_count; j++)
-          if (strcmp(remote->resources[j].key, key) == 0) resource = &remote->resources[j].reference;
-        if (!resource) qa_range_error("Unresolved NetQuake sound %s", path);
+          if (strncmp(remote->resources[j].key, "sound/", 6) == 0 && strcmp(remote->resources[j].key + 6, path) == 0)
+            resource = &remote->resources[j].reference;
+        if (!resource) qa_raise("Error", 0, 0, "Unresolved NetQuake sound %s", path);
+        if (remote->sound_pending_count >= 8192)
+          qa_range_error("Event ring capacity exhausted (8192 undrained records); drain before admitting more");
         if (remote->sound_pending_count == remote->sound_cap) {
           size_t new_cap = remote->sound_cap ? remote->sound_cap * 2 : 64;
           qa_simulation_event *grown = xmalloc(new_cap * sizeof *grown);
@@ -615,47 +685,51 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
         remote->sound_pending_count++;
       }
     } else if (strcmp(kind, "stop-sound") == 0) {
-      emit(remote, QA_APP_Q1_REMOTE_STOP_SOUND, "stop-sound", true, message->entity);
-      event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-      entry->payload.has_actor = true;
-      entry->payload.actor = actor_of(remote, message->entity);
-      entry->payload.channel_number = message->channel;
+      qa_q1_event event = q1_event("stop-sound");
+      event.has_actor = true;
+      event.actor = actor_of(remote, message->entity);
+      event.channel = message->channel;
+      emit(remote, &event, true, message->entity);
     } else if (strcmp(kind, "particle") == 0) {
-      emit(remote, QA_APP_Q1_REMOTE_PARTICLES, "particles", false, 0);
-      event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-      entry->payload.origin = message->origin;
-      entry->payload.direction = message->direction;
-      entry->payload.color = message->color_value;
-      entry->payload.count = message->count;
+      qa_q1_event event = q1_event("particles");
+      event.has_origin = true;
+      event.origin = message->origin;
+      event.direction = message->direction;
+      event.color = message->color_value;
+      event.count = message->count;
+      emit(remote, &event, false, 0);
     } else if (strcmp(kind, "temporary-entity") == 0) {
       const qa_temporary_entity *effect = &message->effect;
       if (effect->kind == QA_TE_EXPLOSION_COLORS) {
-        emit(remote, QA_APP_Q1_REMOTE_COLORED_EXPLOSION, "colored-explosion", false, 0);
-        event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-        entry->payload.origin = effect->origin;
-        entry->payload.color_start = effect->color_start;
-        entry->payload.color_length = effect->color_length;
+        qa_q1_event event = q1_event("colored-explosion");
+        event.has_origin = true;
+        event.origin = effect->origin;
+        event.color_start = effect->color_start;
+        event.color_length = effect->color_length;
+        emit(remote, &event, false, 0);
       } else if (effect->kind == QA_TE_BEAM) {
-        emit(remote, QA_APP_Q1_REMOTE_BEAM, "beam", false, 0);
-        event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-        entry->payload.style = effect->type == 5 ? "lightning1" : effect->type == 6 ? "lightning2"
+        qa_q1_event event = q1_event("beam");
+        event.beam_style = effect->type == 5 ? "lightning1" : effect->type == 6 ? "lightning2"
             : effect->type == 9 ? "lightning3" : "grapple";
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, effect->entity);
-        entry->payload.start = effect->start;
-        entry->payload.end = effect->end;
+        event.has_actor = true;
+        event.actor = actor_of(remote, effect->entity);
+        event.start = effect->start;
+        event.end = effect->end;
+        emit(remote, &event, false, 0);
       } else {
         const char *effect_kind = effect->type == 0 ? "spike" : effect->type == 1 ? "superspike"
             : effect->type == 2 ? "gunshot" : effect->type == 3 ? "explosion"
             : effect->type == 4 ? "tar-explosion" : effect->type == 7 ? "wizard-spike"
             : effect->type == 8 ? "knight-spike" : effect->type == 10 ? "lava-splash"
             : effect->type == 11 ? "teleport" : NULL;
-        if (!effect_kind) qa_range_error("Unsupported NetQuake temporary entity %.17g", effect->type);
-        emit(remote, QA_APP_Q1_REMOTE_EFFECT, "effect", false, 0);
-        event_entry *entry = &remote->events[(remote->event_head + remote->event_count - 1) % remote->event_cap];
-        entry->payload.effect = effect_kind;
-        entry->payload.origin = effect->origin;
-        entry->payload.amount = effect->count;
+        if (!effect_kind) qa_raise("Error", 0, 0, "Unsupported NetQuake temporary entity %s", QA_JS_NUMBER(effect->type));
+        qa_q1_event event = q1_event("effect");
+        event.effect = effect_kind;
+        event.has_actor = false; /* TS actor: null */
+        event.has_origin = true;
+        event.origin = effect->origin;
+        event.amount = effect->count;
+        emit(remote, &event, false, 0);
       }
     } else if (strcmp(kind, "bonus-flash") == 0) {
       bonus_flash(remote);
@@ -671,14 +745,17 @@ void qa_app_q1_remote_receive(qa_app_q1_remote *remote,
           qa_range_error("out of memory");
         char *name = qa_ascii_fold(tokens.argc ? tokens.argv[0] : "");
         if (!name) qa_range_error("out of memory");
-        char *trimmed = cursor;
-        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
-        size_t trimmed_length = strlen(trimmed);
-        while (trimmed_length && (trimmed[trimmed_length - 1] == ' '
-            || trimmed[trimmed_length - 1] == '\t' || trimmed[trimmed_length - 1] == '\r'))
-          trimmed[--trimmed_length] = '\0';
+        /* line.trim() === 'reconnect' (JS whitespace), without altering the printed line. */
+        const char *first = cursor;
+        while (*first == ' ' || (*first >= '\t' && *first <= '\r') || (unsigned char)*first == 0xa0) first++;
+        size_t trimmed_length = strlen(first);
+        while (trimmed_length && (first[trimmed_length - 1] == ' '
+            || (first[trimmed_length - 1] >= '\t' && first[trimmed_length - 1] <= '\r')
+            || (unsigned char)first[trimmed_length - 1] == 0xa0))
+          trimmed_length--;
+        bool reconnect = trimmed_length == 9 && strncmp(first, "reconnect", 9) == 0;
         if (strcmp(name, "bf") == 0) bonus_flash(remote);
-        else if (strcmp(trimmed, "reconnect") == 0) remote->has_published = false;
+        else if (reconnect) remote->has_published = false;
         else if (name[0] != '\0') {
           char *line = xmalloc(strlen(cursor) + 32);
           snprintf(line, strlen(cursor) + 32, "Unhandled server command: %s\n", cursor);
@@ -703,7 +780,7 @@ const qa_world_text *qa_app_q1_remote_world_text(qa_app_q1_remote *remote, size_
 qa_app_sim_player_view qa_app_q1_remote_player_view(qa_app_q1_remote *remote, qa_actor_id actor) {
   qa_app_q1_player player;
   if (!player_of(remote, &player) || !qa_same_actor(player.actor, actor) || !remote->has_data)
-    qa_range_error("Remote Q1 player has no clientdata");
+    qa_raise("Error", 0, 0, "Remote Q1 player has no clientdata");
   const entity_entry *entity = entity_find(remote->current, remote->current_count, remote->view_entity);
   qa_app_sim_player_view view = {0};
   view.origin = entity ? sampled(remote, entity->state).base.origin : (qa_vec3){0, 0, 0};
@@ -719,10 +796,10 @@ qa_app_sim_player_view qa_app_q1_remote_player_view(qa_app_q1_remote *remote, qa
 }
 qa_app_sim_player_ui qa_app_q1_remote_player_ui(qa_app_q1_remote *remote, qa_actor_id actor) {
   qa_app_q1_remote_player_view(remote, actor);
-  if (!remote->has_data) qa_range_error("No Q1 clientdata");
+  if (!remote->has_data) qa_raise("Error", 0, 0, "No Q1 clientdata");
   const qa_q1_client_data *data = &remote->data;
   const weapon_def *weapon = NULL;
-  for (size_t i = 0; i < WEAPON_COUNT; i++)
+  for (size_t i = 0; i < WEAPON_COUNT && weapon == NULL; i++) /* Array.find: first match */
     if (weapons[i].bit == data->active_weapon
         || (strcmp(weapons[i].name, "axe") == 0 && data->active_weapon == 0
             && data->weapon_model >= 1 && (size_t)(data->weapon_model - 1) < remote->model_count
@@ -736,8 +813,8 @@ qa_app_sim_player_ui qa_app_q1_remote_player_ui(qa_app_q1_remote *remote, qa_act
   else {
     ui.armor.regular.kind = QA_REGULAR_ARMOR_Q1;
     ui.armor.regular.points = data->armor;
-    ui.armor.regular.absorption = ((int64_t)data->items & 32768) != 0 ? 0.8
-        : ((int64_t)data->items & 16384) != 0 ? 0.6 : 0.3;
+    ui.armor.regular.absorption = (qa_js_to_int32(data->items) & 32768) != 0 ? 0.8
+        : (qa_js_to_int32(data->items) & 16384) != 0 ? 0.6 : 0.3;
     ui.armor.regular.item = "q1:armor";
   }
   free(remote->ui_weapon_id);
@@ -793,7 +870,7 @@ qa_app_sim_player_ui qa_app_q1_remote_player_ui(qa_app_q1_remote *remote, qa_act
     item->label = weapons[i].name;
     item->kind = "weapon";
     item->source_ordinal = (double)i + 1;
-    item->owned = ((int64_t)data->items & (int64_t)weapons[i].bit) != 0;
+    item->owned = (qa_js_to_int32(data->items) & (int64_t)weapons[i].bit) != 0;
     double ammo = 0;
     if (weapons[i].ammo)
       for (size_t j = 0; j < 4; j++)
@@ -834,11 +911,11 @@ const qa_app_simulation_presentation *qa_app_q1_remote_presentations(qa_app_q1_r
       int64_t model_index = (int64_t)state.base.model_index - 1;
       const char *path = model_index >= 0 && (size_t)model_index < remote->model_count
           ? remote->models[model_index] : NULL;
-      if (!path) qa_range_error("Unknown NetQuake model %.17g", state.base.model_index);
+      if (!path) qa_raise("Error", 0, 0, "Unknown NetQuake model %s", QA_JS_NUMBER(state.base.model_index));
       qa_app_simulation_presentation *item = &remote->presentations[count++];
       memset(item, 0, sizeof *item);
       item->actor = actor_of(remote, number);
-      item->content = recipe->map.geometry_content;
+      item->content = recipe->map.entities.content;
       item->family = QA_GAME_FAMILY_Q1;
       item->path = path;
       item->frame = state.base.frame;
@@ -855,8 +932,8 @@ const qa_app_simulation_presentation *qa_app_q1_remote_presentations(qa_app_q1_r
         for (size_t j = 0; j < row_count; j++)
           if (rows[j].slot == state.base.color_map - 1) {
             item->has_player_colors = true;
-            double top = (double)(((int64_t)rows[j].colors >> 4) & 15);
-            double bottom = (double)((int64_t)rows[j].colors & 15);
+            double top = (double)((qa_js_to_int32(rows[j].colors) >> 4) & 15);
+            double bottom = (double)(qa_js_to_int32(rows[j].colors) & 15);
             item->player_color_top = top > 13 ? 13 : top;
             item->player_color_bottom = bottom > 13 ? 13 : bottom;
           }
@@ -868,12 +945,12 @@ const qa_app_simulation_presentation *qa_app_q1_remote_presentations(qa_app_q1_r
     int64_t model_index = (int64_t)remote->data.weapon_model - 1;
     const char *path = model_index >= 0 && (size_t)model_index < remote->model_count
         ? remote->models[model_index] : NULL;
-    if (!path) qa_range_error("Unknown Q1 weapon model");
+    if (!path) qa_raise("Error", 0, 0, "Unknown Q1 weapon model");
     qa_app_sim_player_view view = qa_app_q1_remote_player_view(remote, player.actor);
     qa_app_simulation_presentation *item = &remote->presentations[count++];
     memset(item, 0, sizeof *item);
     item->actor = player.actor;
-    item->content = recipe->map.geometry_content;
+    item->content = recipe->map.entities.content;
     item->family = QA_GAME_FAMILY_Q1;
     item->path = path;
     item->frame = remote->data.weapon_frame;
@@ -887,7 +964,7 @@ const qa_app_simulation_presentation *qa_app_q1_remote_presentations(qa_app_q1_r
     item->has_alpha = true;
     item->alpha = qa_q1_entalpha_decode(remote->weapon_alpha);
     item->scale = 1;
-    item->visible = remote->data.health > 0 && ((int64_t)remote->data.items & 524288) == 0;
+    item->visible = remote->data.health > 0 && (qa_js_to_int32(remote->data.items) & 524288) == 0;
     item->view_weapon = true;
   }
   *out_count = count;
@@ -918,12 +995,12 @@ static void select_weapon(qa_app_q1_remote *remote, qa_actor_id actor, const cha
       remote->pending_impulse = ui.items[i].source_ordinal;
       return;
     }
-  qa_range_error("Native Q1 weapon is not owned: %s", requested);
+  qa_raise("Error", 0, 0, "Native Q1 weapon is not owned: %s", requested);
 }
 qa_q1_user_command qa_app_q1_remote_command(qa_app_q1_remote *remote,
     const qa_actor_command *command) {
   if (command->command.kind != QA_USER_COMMAND_Q1)
-    qa_range_error("Native Q1 requires NetQuake input");
+    qa_raise("Error", 0, 0, "Native Q1 requires NetQuake input");
   qa_app_q1_remote_player_view(remote, command->actor);
   remote->view_angles = command->command.as.q1.view_angles;
   if (command->arsenal && command->arsenal->weapon) {
@@ -932,20 +1009,19 @@ qa_q1_user_command qa_app_q1_remote_command(qa_app_q1_remote *remote,
       select_weapon(remote, command->actor, command->arsenal->weapon);
   }
   qa_q1_user_command result = command->command.as.q1;
-  result.impulse = result.impulse != 0 ? result.impulse : remote->pending_impulse;
+  /* command.impulse || pendingImpulse: 0 and NaN are falsy. */
+  result.impulse = result.impulse != 0 && !isnan(result.impulse) ? result.impulse : remote->pending_impulse;
   remote->pending_impulse = 0;
   return result;
 }
 void qa_app_q1_remote_player_command(qa_app_q1_remote *remote, qa_actor_id actor,
     const char *name, const char *const *args, size_t count) {
   qa_app_q1_remote_player_view(remote, actor);
-  const char *values[64];
-  values[0] = name;
-  for (size_t i = 0; i < count && i < 63; i++) values[i + 1] = args[i];
-  for (size_t i = 0; i <= count && i < 64; i++)
-    for (const char *p = values[i]; *p; p++)
+  /* [name, ...args].some(/["\n\r;]/): every argument, however many. */
+  for (size_t i = 0; i <= count; i++)
+    for (const char *p = i == 0 ? name : args[i - 1]; *p; p++)
       if (*p == '"' || *p == '\n' || *p == '\r' || *p == ';')
-        qa_range_error("Invalid native command delimiter");
+        qa_raise("Error", 0, 0, "Invalid native command delimiter");
   if (strcmp(name, "use") == 0) {
     size_t total = 1;
     for (size_t i = 0; i < count; i++) total += strlen(args[i]);
@@ -1000,7 +1076,7 @@ const qa_simulation_output *qa_app_q1_remote_sample_presentation(qa_app_q1_remot
   double duration = remote->seconds - remote->previous_seconds;
   if (duration < 0) duration = 0;
   remote->fraction = duration == 0 ? 1
-      : fmax(0, fmin(1, (now - remote->received_at) / (duration * 1000)));
+      : qa_js_max(0, qa_js_min(1, (now - remote->received_at) / (duration * 1000)));
   publish_remote(remote);
   return remote->has_published ? &remote->published : NULL;
 }
@@ -1020,7 +1096,7 @@ const qa_simulation_output *qa_app_q1_remote_sample_demo(qa_app_q1_remote *remot
     remote->previous_seconds = remote->seconds - 0.1;
   double duration = remote->seconds - remote->previous_seconds;
   remote->fraction = duration <= 0 ? 1
-      : fmax(0, fmin(1, (seconds - remote->previous_seconds) / duration));
+      : qa_js_max(0, qa_js_min(1, (seconds - remote->previous_seconds) / duration));
   if (remote->has_demo_angles)
     remote->view_angles = qa_lerp_angles_wrapped(remote->demo_previous, remote->demo_current,
         remote->fraction);
@@ -1031,24 +1107,28 @@ const qa_app_sim_presentation_event *qa_app_q1_remote_drain_events(qa_app_q1_rem
     size_t *out_count) {
   *out_count = 0;
   if (!remote->has_published) return NULL;
+  /* soundsPending.take(cursor): every sound admitted since the last drain, read now. */
+  free(remote->drained_sounds);
+  remote->drained_sounds = xmalloc((remote->sound_pending_count ? remote->sound_pending_count : 1) * sizeof *remote->drained_sounds);
+  for (size_t i = 0; i < remote->sound_pending_count; i++)
+    remote->drained_sounds[i] = remote->sounds_pending[(remote->sound_head + i) % remote->sound_cap];
   qa_simulation_output output = remote->published;
-  output.events = remote->published_events;
-  output.event_count = remote->published_event_count;
+  output.events = remote->drained_sounds;
+  output.event_count = remote->sound_pending_count;
   remote->options.publish(remote->options.ctx, &output);
   remote->sound_head = (remote->sound_head + remote->sound_pending_count)
       % (remote->sound_cap ? remote->sound_cap : 1);
   remote->sound_pending_count = 0;
-  if (remote->drained_cap < remote->event_count) {
-    remote->drained = realloc(remote->drained, remote->event_count * sizeof *remote->drained);
-    if (!remote->drained) qa_range_error("out of memory");
-    remote->drained_cap = remote->event_count;
-  }
-  for (size_t i = 0; i < remote->event_count; i++)
-    remote->drained[i] = remote->events[(remote->event_head + i) % remote->event_cap].event;
-  *out_count = remote->event_count;
-  remote->event_head = (remote->event_head + remote->event_count)
-      % (remote->event_cap ? remote->event_cap : 1);
+  /* events.take(cursor) then retire: the taken events move to the remote's drained set, which
+   * it owns until the next drain or destroy. */
+  events_release(remote->drained, remote->drained_count);
+  free(remote->drained);
+  remote->drained = remote->events;
+  remote->drained_count = remote->event_count;
+  remote->events = NULL;
   remote->event_count = 0;
+  remote->event_cap = 0;
+  *out_count = remote->drained_count;
   return remote->drained;
 }
 void qa_app_q1_remote_disconnected(qa_app_q1_remote *remote, const char *reason) {

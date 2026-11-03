@@ -15,6 +15,7 @@
 
 #include "qa/contracts/protocol.h"
 #include "qa/network/common/endpoint.h"
+#include "qa/network/common/rcon_guard.h"
 #include "qa/network/q2/handshake.h"
 #include "qa/network/services/discovery.h"
 
@@ -100,6 +101,10 @@ typedef struct qa_q2_connectionless_host {
   void (*recharge_rcon_rate)(void *ctx);
   void (*execute_rcon)(void *ctx, const char *command, bool limited,
                        void (*output)(void *octx, const char *text), void *output_ctx);
+  /* TS rconGuards.get(host): the password-failure backoff of this host object. NULL is a host
+   * object seen for the first time (a fresh guard for this call only, as when the TS caller
+   * spreads a new host object per packet). */
+  qa_rcon_guard *rcon_guard;
 } qa_q2_connectionless_host;
 
 /* TS q2InfoText: malloc'd or NULL. */

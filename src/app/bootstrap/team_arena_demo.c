@@ -6,6 +6,7 @@
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/network/common/js_number.h"
 void qa_app_team_arena_demo_free(qa_app_team_arena_demo *d) { free(d->name); free(d->path); d->name = NULL; d->path = NULL; }
 static bool map_ok(const char *map) {
   if (map[0] == '\0') return false;
@@ -31,8 +32,8 @@ bool qa_app_team_arena_demo_lookup(const char *map, double game_type, double pro
   if (!map_ok(map) || game_type != trunc(game_type) || game_type < 0 || protocol != trunc(protocol) || protocol < 0)
     qa_range_error("Invalid Team Arena demo selection");
   char name[1024], path[1100];
-  snprintf(name, sizeof name, "%s_%.0f", map, game_type);
-  snprintf(path, sizeof path, "demos/%s.dm_%.0f", name, protocol);
+  snprintf(name, sizeof name, "%s_%s", map, QA_JS_NUMBER(game_type));
+  snprintf(path, sizeof path, "demos/%s.dm_%s", name, QA_JS_NUMBER(protocol));
   if (!exists(ctx, path)) return false;
   out->name = qa_input_dup(name);
   out->path = qa_input_dup(path);

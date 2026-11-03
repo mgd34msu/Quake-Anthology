@@ -10,6 +10,9 @@
 #include "qa/foundation/support.h"
 #include "qa/world/gameplay/armor.h"
 
+/* TS Map<OwnedActor, ArmorIntercept>: one actor per guest slot at most. */
+#define QA_PROTECTION_CAPACITY 1024
+
 typedef struct intercept_entry {
   qa_owned_actor actor;
   qa_armor_stage_intercept_fn intercept;
@@ -32,20 +35,43 @@ struct qa_qvm_combat_bindings {
   bool admitted_present[1024];
   qa_owned_actor proxies[1024];
   bool proxies_present[1024];
-  intercept_entry protection_powered[64];
-  intercept_entry protection_regular[64];
+  intercept_entry protection_powered[QA_PROTECTION_CAPACITY];
+  intercept_entry protection_regular[QA_PROTECTION_CAPACITY];
   size_t removals[8];
   size_t removal_count;
   int64_t release_subscription;
   bool has_armor_hook;
   size_t armor_removal;
   incoming_damage incoming;
-  double mode_words[16];
+  double *mode_words; /* owned */
+  void **owned_contexts; /* owned: binding and stage contexts handed to the authority */
+  size_t owned_count, owned_capacity;
   bool closed;
 };
 
+static void *owned_context(qa_qvm_combat_bindings *bindings, size_t size) {
+  if (bindings->owned_count == bindings->owned_capacity) {
+    size_t capacity = bindings->owned_capacity == 0 ? 16 : bindings->owned_capacity * 2;
+    void **grown = realloc(bindings->owned_contexts, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("out of memory");
+    bindings->owned_contexts = grown;
+    bindings->owned_capacity = capacity;
+  }
+  void *context = calloc(1, size);
+  if (context == NULL) qa_range_error("out of memory");
+  bindings->owned_contexts[bindings->owned_count++] = context;
+  return context;
+}
+
 static bool is_integer(double v) { return isfinite(v) && v == trunc(v); }
-static bool same_vector(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+/* TS isDeepStrictEqual on numbers is Object.is. */
+static bool same_number(double a, double b) {
+  if (isnan(a) || isnan(b)) return isnan(a) && isnan(b);
+  return a == b && signbit(a) == signbit(b);
+}
+static bool same_vector(qa_vec3 a, qa_vec3 b) {
+  return same_number(a.x, b.x) && same_number(a.y, b.y) && same_number(a.z, b.z);
+}
 static bool actor_id_equal(qa_actor_id a, qa_actor_id b) {
   return a.slot == b.slot && a.generation == b.generation && a.token == b.token &&
          a.session.token == b.session.token;
@@ -54,7 +80,7 @@ static bool owned_equal(qa_owned_actor a, qa_owned_actor b) {
   return actor_id_equal(a.id, b.id) && a.token == b.token && strcmp(a.owner, b.owner) == 0;
 }
 
-static int32_t call_word(qa_qvmy_function_call *call, double word_index) {
+static int32_t call_word(qa_qvm_module_function_call *call, double word_index) {
   int64_t offset = (int64_t)word_index * 4;
   if (offset < 0 || offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
@@ -63,7 +89,7 @@ static int32_t call_word(qa_qvmy_function_call *call, double word_index) {
                   ((uint32_t)p[3] << 24);
   return (int32_t)bits;
 }
-static void set_call_word(qa_qvmy_function_call *call, double word_index, int32_t value) {
+static void set_call_word(qa_qvm_module_function_call *call, double word_index, int32_t value) {
   int64_t offset = (int64_t)word_index * 4;
   if (offset < 0 || offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
@@ -97,7 +123,7 @@ typedef struct admit_ctx {
 } admit_ctx;
 
 static void remove_unused_armor_hook(qa_qvm_combat_bindings *bindings) {
-  for (size_t i = 0; i < 64; i++)
+  for (size_t i = 0; i < QA_PROTECTION_CAPACITY; i++)
     if (bindings->protection_powered[i].occupied || bindings->protection_regular[i].occupied) return;
   if (bindings->has_armor_hook) {
     qa_qvm_module_unbind(&bindings->options.game->module, bindings->armor_removal);
@@ -322,7 +348,7 @@ static void admit_write_traits(void *ctx, qa_combat_traits traits) {
   } else if (strcmp(declared->storage, "float32") == 0) {
     qa_qvm_writable_view_set_float32(&view, (int64_t)declared->offset, qa_float32(traits.mass), true);
   } else {
-    qa_qvm_writable_view_set_int32(&view, (int64_t)declared->offset, (int32_t)trunc(traits.mass), true);
+    qa_qvm_writable_view_set_int32(&view, (int64_t)declared->offset, qa_int32(traits.mass), true); /* setInt32(Math.trunc(mass)) */
   }
   int32_t flags = qa_qvm_writable_view_get_int32(&view, (int64_t)definition->reactions.flags, true);
   flags = traits.invulnerable ? flags | qa_int32(definition->state.flags.invulnerable)
@@ -355,9 +381,11 @@ typedef struct stage_ctx {
   qa_qvm_combat_bindings *bindings;
   qa_owned_actor actor;
   qa_protection_channel channel;
+  qa_armor_stage_intercept_fn intercept;
+  void *intercept_ctx;
 } stage_ctx;
 
-static int32_t check_armor_hook(void *ctx, qa_qvmy_function_call *call);
+static int32_t check_armor_hook(void *ctx, qa_qvm_module_function_call *call);
 static qa_armor_stage_removal armor_stage_bind(void *ctx, qa_armor_stage_intercept_fn intercept,
                                                void *intercept_ctx);
 static void stage_remove(void *ctx) {
@@ -366,21 +394,17 @@ static void stage_remove(void *ctx) {
   intercept_entry *entries = stage->channel == QA_PROTECTION_POWERED
                                  ? bindings->protection_powered
                                  : bindings->protection_regular;
-  for (size_t i = 0; i < 64; i++)
+  /* TS: if (bindings.get(actor) === intercept) bindings.delete(actor). */
+  for (size_t i = 0; i < QA_PROTECTION_CAPACITY; i++)
     if (entries[i].occupied && owned_equal(entries[i].actor, stage->actor) &&
-        entries[i].intercept_ctx == ((stage_ctx *)ctx)->bindings /* marker unused */)
+        entries[i].intercept == stage->intercept && entries[i].intercept_ctx == stage->intercept_ctx)
       entries[i].occupied = false;
-  /* Remove by actor when the intercept matches the stored one. */
-  for (size_t i = 0; i < 64; i++)
-    if (entries[i].occupied && owned_equal(entries[i].actor, stage->actor)) entries[i].occupied = false;
   remove_unused_armor_hook(bindings);
-  free(stage);
 }
 
 static qa_source_armor_stage make_armor_stage(qa_qvm_combat_bindings *bindings,
                                               qa_owned_actor actor, qa_protection_channel channel) {
-  stage_ctx *stage = malloc(sizeof *stage);
-  if (stage == NULL) qa_range_error("out of memory");
+  stage_ctx *stage = owned_context(bindings, sizeof *stage);
   stage->bindings = bindings;
   stage->actor = actor;
   stage->channel = channel;
@@ -396,14 +420,14 @@ static qa_armor_stage_removal armor_stage_bind(void *ctx, qa_armor_stage_interce
                                  ? bindings->protection_powered
                                  : bindings->protection_regular;
   if (!profile_live(bindings, stage->actor)) qa_range_error("Source armor owner is retired");
-  for (size_t i = 0; i < 64; i++)
+  for (size_t i = 0; i < QA_PROTECTION_CAPACITY; i++)
     if (entries[i].occupied && owned_equal(entries[i].actor, stage->actor))
       qa_range_error("Source %s armor stage already has an owner",
                      stage->channel == QA_PROTECTION_POWERED ? "powered" : "regular");
-  size_t slot = 64;
-  for (size_t i = 0; i < 64; i++)
+  size_t slot = QA_PROTECTION_CAPACITY;
+  for (size_t i = 0; i < QA_PROTECTION_CAPACITY; i++)
     if (!entries[i].occupied) { slot = i; break; }
-  if (slot == 64) qa_range_error("out of memory");
+  if (slot == QA_PROTECTION_CAPACITY) qa_range_error("out of memory");
   entries[slot].actor = stage->actor;
   entries[slot].intercept = intercept;
   entries[slot].intercept_ctx = intercept_ctx;
@@ -418,9 +442,10 @@ static qa_armor_stage_removal armor_stage_bind(void *ctx, qa_armor_stage_interce
                                                           &reference, check_armor_hook, bindings);
     bindings->has_armor_hook = true;
   }
-  stage_ctx *removal = malloc(sizeof *removal);
-  if (removal == NULL) qa_range_error("out of memory");
+  stage_ctx *removal = owned_context(bindings, sizeof *removal);
   *removal = *stage;
+  removal->intercept = intercept;
+  removal->intercept_ctx = intercept_ctx;
   qa_armor_stage_removal result = {removal, stage_remove};
   return result;
 }
@@ -430,8 +455,7 @@ void qa_qvm_combat_bindings_admit(qa_qvm_combat_bindings *bindings, qa_owned_act
   if (!bindings->options.slot(bindings->options.ctx, actor.id, &slot) || slot >= 1022) return;
   bindings->admitted[(size_t)slot] = actor;
   bindings->admitted_present[(size_t)slot] = true;
-  admit_ctx *admit = malloc(sizeof *admit);
-  if (admit == NULL) qa_range_error("out of memory");
+  admit_ctx *admit = owned_context(bindings, sizeof *admit);
   admit->bindings = bindings;
   admit->slot = slot;
   admit->actor = actor;
@@ -471,12 +495,12 @@ static qa_vec3 bindings_vector(qa_qvm_combat_bindings *bindings, int32_t word) {
 }
 
 static intercept_entry *find_intercept(intercept_entry *entries, qa_owned_actor actor) {
-  for (size_t i = 0; i < 64; i++)
+  for (size_t i = 0; i < QA_PROTECTION_CAPACITY; i++)
     if (entries[i].occupied && owned_equal(entries[i].actor, actor)) return &entries[i];
   return NULL;
 }
 
-typedef struct proceed_ctx { qa_qvmy_function_call *call; } proceed_ctx;
+typedef struct proceed_ctx { qa_qvm_module_function_call *call; } proceed_ctx;
 static double proceed_original(void *ctx) {
   proceed_ctx *proceed = ctx;
   return proceed->call->proceed(proceed->call->call_ctx);
@@ -489,7 +513,18 @@ static double role_index_of(qa_qvm_combat_call call, const char *role) {
   return -1;
 }
 
-static int32_t check_armor_hook(void *ctx, qa_qvmy_function_call *call) {
+typedef struct amount_restore {
+  qa_qvm_module_function_call *call;
+  double index;
+  int32_t amount;
+} amount_restore;
+
+static void restore_amount(void *ctx) {
+  amount_restore *restore = ctx;
+  set_call_word(restore->call, restore->index, restore->amount);
+}
+
+static int32_t check_armor_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_combat_bindings *bindings = ctx;
   qa_qvm_primary_combat_profile *definition = &bindings->options.definition;
   qa_qvm_combat_call roles = definition->armor.call;
@@ -527,11 +562,18 @@ static int32_t check_armor_hook(void *ctx, qa_qvmy_function_call *call) {
   int32_t power_saved = (int32_t)trunc(saved);
   int32_t remaining = amount - power_saved;
   set_call_word(call, role_index_of(roles, "amount"), remaining);
+  /* TS try { ... } finally { restore the source amount }. */
+  amount_restore restore = {call, role_index_of(roles, "amount"), amount};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, restore_amount, &restore);
   double regular_saved;
   if (regular == NULL) {
     regular_saved = call->proceed(call->call_ctx);
   } else {
     geometry_input.amount = remaining;
+    geometry_input.direction =
+        bindings_vector(bindings, call_word(frame->call, role_index_of(damage, "direction")));
+    geometry_input.point = bindings_vector(bindings, call_word(frame->call, role_index_of(damage, "point")));
     geometry_input.flags.stage = "regular";
     geometry_input.flags.no_armor =
         (call_word(call, role_index_of(roles, "flags")) & qa_int32(definition->damage_flags.no_armor)) != 0;
@@ -544,6 +586,7 @@ static int32_t check_armor_hook(void *ctx, qa_qvmy_function_call *call) {
     proceed_ctx proceed = {call};
     regular_saved = regular->intercept(regular->intercept_ctx, geometry_input, proceed_original, &proceed);
   }
+  qa_cleanup_pop(&guard);
   set_call_word(call, role_index_of(roles, "amount"), amount);
   if (!profile_live(bindings, frame->actor)) qa_qvm_damage_scopes_cancel(bindings->scopes, frame, call);
   if (!isfinite(regular_saved) || regular_saved < 0 || regular_saved > (remaining > 0 ? remaining : 0))
@@ -573,19 +616,56 @@ static bool text_equal(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
   return strcmp(a, b) == 0;
 }
+static bool optional_actor_equal(const qa_actor_id *a, const qa_actor_id *b) {
+  if (a == NULL || b == NULL) return a == b;
+  return actor_id_equal(*a, *b);
+}
+static bool cause_equal(const qa_attack_cause *a, const qa_attack_cause *b) {
+  if (a->kind != b->kind) return false;
+  switch (a->kind) {
+    case QA_ATTACK_CAUSE_Q1:
+      return text_equal(a->death_type, b->death_type) && text_equal(a->armor_effect, b->armor_effect);
+    case QA_ATTACK_CAUSE_Q2:
+      if (!same_number(a->means_of_death, b->means_of_death) ||
+          !same_number(a->damage_flags, b->damage_flags) || a->has_native != b->has_native)
+        return false;
+      return !a->has_native ||
+             (text_equal(a->native.edition, b->native.edition) && text_equal(a->native.game, b->native.game) &&
+              same_number(a->native.value, b->native.value) && same_number(a->native.id, b->native.id) &&
+              a->native.friendly_fire == b->native.friendly_fire &&
+              a->native.no_point_loss == b->native.no_point_loss);
+    case QA_ATTACK_CAUSE_Q3:
+      return same_number(a->means_of_death, b->means_of_death) &&
+             same_number(a->damage_flags, b->damage_flags);
+    case QA_ATTACK_CAUSE_ENVIRONMENT:
+      return text_equal(a->hazard, b->hazard);
+  }
+  return false;
+}
+/* TS isDeepStrictEqual(effective, request). */
 static bool request_equal(const qa_damage_request *a, const qa_damage_request *b) {
-  if (!actor_id_equal(a->target, b->target) || a->amount != b->amount || a->knockback != b->knockback ||
-      !same_vector(a->direction, b->direction) || !same_vector(a->point, b->point) ||
-      !same_vector(a->normal, b->normal) || !text_equal(a->delivery, b->delivery))
+  if (!actor_id_equal(a->target, b->target) || !same_number(a->amount, b->amount) ||
+      !same_number(a->knockback, b->knockback) || !same_vector(a->direction, b->direction) ||
+      !same_vector(a->point, b->point) || !same_vector(a->normal, b->normal) ||
+      !text_equal(a->delivery, b->delivery))
     return false;
   const qa_attack_provenance *pa = &a->attack, *pb = &b->attack;
-  bool attacker = (pa->attacker == NULL) == (pb->attacker == NULL) &&
-                  (pa->attacker == NULL || actor_id_equal(*pa->attacker, *pb->attacker));
-  bool inflictor = (pa->inflictor == NULL) == (pb->inflictor == NULL) &&
-                   (pa->inflictor == NULL || actor_id_equal(*pa->inflictor, *pb->inflictor));
-  return attacker && inflictor && text_equal(pa->weapon, pb->weapon) &&
-         pa->cause.kind == pb->cause.kind && pa->cause.means_of_death == pb->cause.means_of_death &&
-         pa->cause.damage_flags == pb->cause.damage_flags;
+  if (!same_number(pa->sequence, pb->sequence) || pa->time.kind != pb->time.kind ||
+      !same_number(pa->time.value, pb->time.value) ||
+      !optional_actor_equal(pa->attacker, pb->attacker) ||
+      !optional_actor_equal(pa->inflictor, pb->inflictor) ||
+      pa->has_originating_projectile != pb->has_originating_projectile ||
+      (pa->has_originating_projectile &&
+       !actor_id_equal(pa->originating_projectile, pb->originating_projectile)) ||
+      !text_equal(pa->weapon, pb->weapon) || !text_equal(pa->weapon_provider, pb->weapon_provider) ||
+      pa->has_damage_powerup_owner != pb->has_damage_powerup_owner ||
+      (pa->has_damage_powerup_owner &&
+       !text_equal(pa->damage_powerup_owner, pb->damage_powerup_owner)) ||
+      !text_equal(pa->combat_provider, pb->combat_provider) ||
+      !text_equal(pa->inventory_provider, pb->inventory_provider) ||
+      !text_equal(pa->movement_provider, pb->movement_provider))
+    return false;
+  return cause_equal(&pa->cause, &pb->cause);
 }
 
 static qa_qvm_game_damage lower_request(qa_qvm_combat_bindings *bindings, qa_damage_request request,
@@ -600,7 +680,6 @@ static qa_qvm_game_damage lower_request(qa_qvm_combat_bindings *bindings, qa_dam
     lowered.has_attacker =
         bindings->options.slot(bindings->options.ctx, *request.attack.attacker, &attacker_slot);
     lowered.attacker = attacker_slot;
-    (void)lowered;
   }
   bool has_inflictor_slot = false;
   double inflictor_slot = 0;
@@ -639,18 +718,34 @@ static qa_qvm_game_damage lower_request(qa_qvm_combat_bindings *bindings, qa_dam
 
 typedef struct invoke_words_ctx {
   qa_qvm_combat_bindings *bindings;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_damage_request effective, original;
   qa_source_damage_observer observer;
   qa_source_damage_result result;
+  qa_owned_actor actor;
+  double slot;
 } invoke_words_ctx;
+
+typedef struct saved_word { double index; int32_t word; } saved_word;
+typedef struct saved_words {
+  qa_qvm_module_function_call *call;
+  const saved_word *words;
+  size_t count;
+} saved_words;
+
+/* TS finally { saved.forEach(... call.words.setInt32(...)) }. */
+static void restore_saved_words(void *ctx) {
+  saved_words *restore = ctx;
+  for (size_t i = 0; i < restore->count; i++)
+    set_call_word(restore->call, restore->words[i].index, restore->words[i].word);
+}
 
 static void enter_damage_invoke(void *ctx, const double *words, size_t count) {
   (void)count;
   invoke_words_ctx *invoke = ctx;
   qa_qvm_combat_bindings *bindings = invoke->bindings;
   qa_qvm_combat_call roles = bindings->options.definition.base.damage_call;
-  struct { double index; int32_t word; } saved[16];
+  saved_word saved[16];
   size_t saved_count = 0;
   for (size_t i = 0; i < roles.role_count; i++) {
     saved[saved_count].index = roles.roles[i].index;
@@ -678,19 +773,18 @@ static void enter_damage_invoke(void *ctx, const double *words, size_t count) {
       qa_range_error("Source damage role lost its declared argument");
     set_call_word(invoke->call, index, qa_int32(words[(size_t)index]));
   }
-  qa_owned_actor actor;
-  double slot = 0;
-  if (owned_from_slot(bindings, invoke->effective.target, &actor) &&
-      bindings->options.slot(bindings->options.ctx, invoke->effective.target, &slot))
-    invoke->result =
-        qa_qvm_damage_scopes_run(bindings->scopes, invoke->call, actor, slot, invoke->effective,
-                                 invoke->observer);
-  for (size_t i = 0; i < saved_count; i++) set_call_word(invoke->call, saved[i].index, saved[i].word);
+  saved_words restore = {invoke->call, saved, saved_count};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, restore_saved_words, &restore);
+  invoke->result = qa_qvm_damage_scopes_run(bindings->scopes, invoke->call, invoke->actor, invoke->slot,
+                                            invoke->effective, invoke->observer);
+  qa_cleanup_pop(&guard);
+  restore_saved_words(&restore);
 }
 
 typedef struct composed_ctx {
   qa_qvm_combat_bindings *bindings;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_damage_request original;
   int32_t flags;
 } composed_ctx;
@@ -707,7 +801,7 @@ static qa_source_damage_result composed_execute(void *ctx, qa_source_damage_obse
     return none;
   if (request_equal(&effective, &composed->original))
     return qa_qvm_damage_scopes_run(bindings->scopes, composed->call, actor, slot, effective, observer);
-  invoke_words_ctx invoke = {bindings, composed->call, effective, composed->original, observer, none};
+  invoke_words_ctx invoke = {bindings, composed->call, effective, composed->original, observer, none, actor, slot};
   qa_qvm_damage_invoke damage_invoke = {&invoke, enter_damage_invoke};
   qa_qvm_game_combat_damage(&bindings->source_combat,
                             lower_request(bindings, effective, slot, composed->flags),
@@ -721,7 +815,7 @@ static qa_damage_outcome composed_source_damage(void *ctx, qa_damage_request com
                                                  composed_execute, composed);
 }
 
-static int32_t enter_damage_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t enter_damage_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_combat_bindings *bindings = ctx;
   incoming_damage incoming = bindings->incoming;
   bindings->incoming.has = false;
@@ -783,6 +877,19 @@ typedef struct module_words_ctx {
   incoming_damage *incoming;
 } module_words_ctx;
 
+typedef struct incoming_restore {
+  qa_qvm_combat_bindings *bindings;
+  incoming_damage previous;
+  int32_t *call_words;
+} incoming_restore;
+
+/* TS finally { this.incoming = previous; }. */
+static void restore_incoming(void *ctx) {
+  incoming_restore *restore = ctx;
+  restore->bindings->incoming = restore->previous;
+  free(restore->call_words);
+}
+
 static void module_words_invoke(void *ctx, const double *words, size_t count) {
   module_words_ctx *invoke = ctx;
   qa_qvm_combat_bindings *bindings = invoke->bindings;
@@ -792,11 +899,14 @@ static void module_words_invoke(void *ctx, const double *words, size_t count) {
   int32_t *call_words = malloc((count == 0 ? 1 : count) * sizeof(int32_t));
   if (call_words == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i < count; i++) call_words[i] = qa_int32(words[i]);
+  incoming_restore restore = {bindings, previous, call_words};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, restore_incoming, &restore);
   (void)qa_qvm_module_call(&bindings->options.game->module, call_words, count,
                            (int64_t)bindings->options.definition.base.callback_damage);
-  free(call_words);
+  qa_cleanup_pop(&guard);
   invoke->incoming->result = bindings->incoming.result;
-  bindings->incoming = previous;
+  restore_incoming(&restore);
 }
 
 static qa_source_damage_result damage_execute(void *ctx, qa_source_damage_observer observer,
@@ -823,7 +933,7 @@ static qa_damage_outcome bindings_damage(qa_qvm_combat_bindings *bindings, qa_da
                                                  &execute);
 }
 
-static int32_t free_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t free_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_combat_bindings *bindings = ctx;
   int32_t pointer = call_word(call, 0);
   double slot = qa_qvm_game_data_number_from_pointer(&bindings->options.game->data, pointer);
@@ -854,7 +964,7 @@ static void free_entity(qa_qvm_combat_bindings *bindings, double slot) {
 
 static void release_listener(void *ctx, qa_owned_actor actor) {
   qa_qvm_combat_bindings *bindings = ctx;
-  for (size_t i = 0; i < 64; i++) {
+  for (size_t i = 0; i < QA_PROTECTION_CAPACITY; i++) {
     if (bindings->protection_powered[i].occupied &&
         owned_equal(bindings->protection_powered[i].actor, actor))
       bindings->protection_powered[i].occupied = false;
@@ -903,7 +1013,7 @@ void qa_qvm_combat_bindings_bind_proxy(qa_qvm_combat_bindings *bindings, double 
     qa_qvm_writable_view view;
     qa_qvm_game_data_entity_bytes(&bindings->options.game->data, slot, &view);
     qa_qvm_writable_view_set_int32(&view, (int64_t)bindings->options.definition.base.field_health,
-                                   (int32_t)trunc(current.value.health), true);
+                                   qa_int32(current.value.health), true); /* setInt32(Math.trunc(health)) */
   }
 }
 
@@ -1063,12 +1173,11 @@ qa_qvm_combat_bindings *qa_qvm_combat_bindings_create(qa_qvm_combat_bindings_opt
   scope_options.points_stat = definition->armor.points_stat;
   scope_options.has_tier_stat = definition->armor.has_tiers;
   if (definition->armor.has_tiers) scope_options.tier_stat = definition->armor.tiers.stat;
-  double mode_words[16];
-  size_t mode_count = 0;
-  if (definition->armor.has_tiers)
-    for (size_t i = 0; i < definition->armor.tiers.when_any_count && mode_count < 16; i++)
-      mode_words[mode_count++] = definition->armor.tiers.when_any[i].offset;
-  memcpy(bindings->mode_words, mode_words, mode_count * sizeof(double));
+  size_t mode_count = definition->armor.has_tiers ? definition->armor.tiers.when_any_count : 0;
+  bindings->mode_words = malloc((mode_count == 0 ? 1 : mode_count) * sizeof(double));
+  if (bindings->mode_words == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < mode_count; i++)
+    bindings->mode_words[i] = definition->armor.tiers.when_any[i].offset;
   scope_options.mode_words = bindings->mode_words;
   scope_options.mode_word_count = mode_count;
   scope_options.reactions.pain = definition->reactions.pain;
@@ -1081,6 +1190,7 @@ qa_qvm_combat_bindings *qa_qvm_combat_bindings_create(qa_qvm_combat_bindings_opt
   bindings->scopes = qa_qvm_damage_scopes_create(scope_options);
   if (bindings->scopes == NULL) {
     qa_qvm_game_combat_destroy(&bindings->source_combat);
+    free(bindings->mode_words);
     free(bindings);
     return NULL;
   }
@@ -1106,5 +1216,8 @@ void qa_qvm_combat_bindings_destroy(qa_qvm_combat_bindings *bindings) {
   qa_qvm_combat_bindings_close(bindings);
   qa_qvm_damage_scopes_destroy(bindings->scopes);
   qa_qvm_game_combat_destroy(&bindings->source_combat);
+  for (size_t i = 0; i < bindings->owned_count; i++) free(bindings->owned_contexts[i]);
+  free(bindings->owned_contexts);
+  free(bindings->mode_words);
   free(bindings);
 }

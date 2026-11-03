@@ -15,7 +15,7 @@ typedef struct qa_q2mpm_gravity_fn {
   void *ctx;
   double (*fn)(void *ctx);
 } qa_q2mpm_gravity_fn;
-qa_q2m_definition qa_q2mpm_create_stalker_definition(qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
+qa_q2m_definition qa_q2mpm_create_stalker_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
                                                      qa_q2mpm_monster_state *source, qa_q2mpm_gravity_fn gravity);
 
 #endif

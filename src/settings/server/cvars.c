@@ -1,6 +1,7 @@
 /* Port of src/settings/server/cvars.ts. GPL-2.0-or-later. */
 #include "qa/settings/server/cvars.h"
 
+#include "qa/foundation/support.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
@@ -8,15 +9,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_text(const char *text) {
@@ -29,37 +30,8 @@ static char *dup_text(const char *text) {
 /* TS Number(string): JS whitespace trim (ASCII subset; cvar values
  * are engine text), then empty is 0, 0x/0b/0o integers, Infinity,
  * else a full decimal parse — anything else is NaN. */
-static double js_number(const char *text) {
-  const char *start = text;
-  while (*start != '\0' && isspace((unsigned char)*start)) start++;
-  const char *end = start + strlen(start);
-  while (end > start && isspace((unsigned char)end[-1])) end--;
-  size_t length = (size_t)(end - start);
-  if (length == 0) return 0;
-  char *copy = (char *)malloc(length + 1);
-  if (copy == NULL) return NAN;
-  memcpy(copy, start, length);
-  copy[length] = '\0';
-  double result;
-  if (strcmp(copy, "Infinity") == 0 || strcmp(copy, "+Infinity") == 0) {
-    result = INFINITY;
-  } else if (strcmp(copy, "-Infinity") == 0) {
-    result = -INFINITY;
-  } else if (length > 2 && copy[0] == '0' &&
-             (copy[1] == 'x' || copy[1] == 'X' || copy[1] == 'b' || copy[1] == 'B' ||
-              copy[1] == 'o' || copy[1] == 'O')) {
-    int base = (copy[1] == 'x' || copy[1] == 'X') ? 16 : (copy[1] == 'b' || copy[1] == 'B') ? 2 : 8;
-    char *stop = NULL;
-    unsigned long long parsed = strtoull(copy + 2, &stop, base);
-    result = (stop != NULL && *stop == '\0') ? (double)parsed : NAN;
-  } else {
-    char *stop = NULL;
-    double parsed = strtod(copy, &stop);
-    result = (stop != NULL && *stop == '\0' && stop != copy) ? parsed : NAN;
-  }
-  free(copy);
-  return result;
-}
+/* TS Number(text). */
+static double js_number(const char *text) { return qa_js_string_to_number(text); }
 
 /* JS ToInt32 for the bitwise operators in projected/merged. */
 static int32_t js_int32(double value) {

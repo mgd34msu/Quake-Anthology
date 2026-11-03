@@ -134,27 +134,59 @@ static char *first_tag(char **values, size_t count) {
   return count > 0 ? values[0] : NULL;
 }
 
-bool qa_parse_addon_catalog(const qa_save_value *value, qa_addon_package_list *out) {
-  memset(out, 0, sizeof *out);
-  if (!is_array(value)) qa_catalog_error("Invalid Quaddicted catalog");
-  size_t capacity = 0;
-  for (size_t r = 0; r < value->item_count; r++) {
-    const qa_save_value *row = value->items[r];
+/* One catalog row (the TS loop body inside its try). Allocations live in
+ * the row state so a raise part way releases them in the caller. */
+typedef struct addon_row {
+  const qa_save_value *row;
+  char **tags;
+  size_t tag_count;
+  char **filenames;
+  size_t filename_count;
+  char **urls;
+  size_t url_count;
+  qa_addon_package package;
+  bool has_package; /* package is filled and ready to append */
+  bool oom;
+} addon_row;
+
+static void addon_row_release(addon_row *state) {
+  free_strings(state->urls, state->url_count);
+  state->urls = NULL;
+  state->url_count = 0;
+  free_strings(state->filenames, state->filename_count);
+  state->filenames = NULL;
+  state->filename_count = 0;
+  if (state->package.tags == state->tags) {
+    state->package.tags = NULL;
+    state->package.tag_count = 0;
+  }
+  free_strings(state->tags, state->tag_count);
+  state->tags = NULL;
+  state->tag_count = 0;
+  qa_addon_package_free(&state->package);
+}
+
+static void parse_addon_row(void *raw) {
+  addon_row *state = raw;
+  const qa_save_value *row = state->row;
+  qa_addon_package package = {0};
+  {
     if (!is_record(row)) qa_catalog_error("Invalid Quaddicted package");
     size_t tag_count = 0;
     char **tags = strings_value(qa_save_value_get(row, "tags"), &tag_count);
-    if (tags == NULL && tag_count != 0) { qa_addon_package_list_free(out); return false; }
+    state->tags = tags;
+    state->tag_count = tag_count;
+    if (tags == NULL && tag_count != 0) { state->oom = true; return; }
     size_t filename_count = 0;
     char **filenames = qa_addon_tags((const char *const *)tags, tag_count,
                                      "filename", &filename_count);
+    state->filenames = filenames;
+    state->filename_count = filename_count;
     const char *filename = first_tag(filenames, filename_count);
     bool wanted = qa_catalog_string_contains((const char *const *)tags, tag_count, "game=quake") &&
                   qa_catalog_string_contains((const char *const *)tags, tag_count, "game_mode=singleplayer") &&
                   filename != NULL && qa_catalog_ends_with(filename, ".zip");
-    if (!wanted) {
-      free_strings(tags, tag_count); free_strings(filenames, filename_count);
-      continue;
-    }
+    if (!wanted) return;
     const qa_save_value *sha_value = qa_save_value_get(row, "sha256");
     const qa_save_value *bytes_value = qa_save_value_get(row, "bytes");
     const char *sha256 = sha_value != NULL && sha_value->kind == QA_SAVE_STRING
@@ -173,19 +205,22 @@ bool qa_parse_addon_catalog(const qa_save_value *value, qa_addon_package_list *o
       url_count = 0;
     } else {
       urls = strings_value(urls_value, &url_count);
+      state->urls = urls;
+      state->url_count = url_count;
     }
     char *url = NULL;
     for (size_t i = 0; i < url_count; i++) {
       if (strstr(urls[i], "://") == NULL)
-        qa_catalog_error("Invalid URL: %s", urls[i]); /* TS new URL throws */
+        /* Bun's new URL TypeError text. */
+        qa_raise("TypeError", 0, 0, "\"%s\" cannot be parsed as a URL.", urls[i]);
       if (valid_quaddicted_url(urls[i], sha256)) { url = qa_catalog_dup(urls[i]); break; }
     }
     free_strings(urls, url_count);
-    if (url == NULL) {
-      free_strings(tags, tag_count); free_strings(filenames, filename_count);
-      continue;
-    }
-    qa_addon_package package = {0};
+    state->urls = NULL;
+    state->url_count = 0;
+    if (url == NULL) return;
+    package.url = url;
+    state->package = package;
     size_t command_count = 0;
     char **commands = qa_addon_tags((const char *const *)tags, tag_count,
                                     "commandline", &command_count);
@@ -227,6 +262,10 @@ bool qa_parse_addon_catalog(const qa_save_value *value, qa_addon_package_list *o
       }
     }
     free(commandline);
+    state->package = package;
+    if (package.game_directory != NULL &&
+        (strcmp(package.game_directory, ".") == 0 || strcmp(package.game_directory, "..") == 0))
+      qa_catalog_error("Invalid game directory: %s", package.game_directory);
     const qa_save_value *install = qa_save_value_get(row, "install");
     char *install_error = NULL;
     {
@@ -314,7 +353,6 @@ bool qa_parse_addon_catalog(const qa_save_value *value, qa_addon_package_list *o
     }
     free_strings(groups, group_count);
     package.bytes = (int64_t)bytes_number;
-    package.url = url;
     package.tags = tags;
     package.tag_count = tag_count;
     size_t start_count = 0;
@@ -338,16 +376,55 @@ bool qa_parse_addon_catalog(const qa_save_value *value, qa_addon_package_list *o
     package.starts = kept.values;
     package.start_count = kept.count;
     free_strings(filenames, filename_count);
+    state->filenames = NULL;
+    state->filename_count = 0;
+    state->tags = NULL; /* now owned by the package */
+    state->tag_count = 0;
+    state->package = package;
+    state->has_package = true;
+  }
+}
+
+bool qa_parse_addon_catalog_reporting(const qa_save_value *value,
+                                      qa_addon_skip_fn skipped, void *skipped_ctx,
+                                      qa_addon_package_list *out) {
+  memset(out, 0, sizeof *out);
+  if (!is_array(value)) qa_catalog_error("Invalid Quaddicted catalog");
+  size_t capacity = 0;
+  for (size_t r = 0; r < value->item_count; r++) {
+    /* One malformed row is skipped; it must not hide the rest of the catalog. */
+    addon_row state;
+    memset(&state, 0, sizeof state);
+    state.row = value->items[r];
+    qa_caught_error caught;
+    if (!qa_try(parse_addon_row, &state, &caught)) {
+      addon_row_release(&state);
+      if (skipped != NULL) skipped(skipped_ctx, caught.message);
+      continue;
+    }
+    if (state.oom) {
+      addon_row_release(&state);
+      qa_addon_package_list_free(out);
+      return false;
+    }
+    if (!state.has_package) {
+      addon_row_release(&state);
+      continue;
+    }
     if (out->count == capacity) {
       size_t next = capacity != 0 ? capacity * 2 : 8;
       qa_addon_package *grown =
           (qa_addon_package *)realloc(out->values, next * sizeof *grown);
-      if (grown == NULL) { qa_addon_package_free(&package); qa_addon_package_list_free(out); return false; }
+      if (grown == NULL) { addon_row_release(&state); qa_addon_package_list_free(out); return false; }
       out->values = grown; capacity = next;
     }
-    out->values[out->count++] = package;
+    out->values[out->count++] = state.package;
   }
   return true;
+}
+
+bool qa_parse_addon_catalog(const qa_save_value *value, qa_addon_package_list *out) {
+  return qa_parse_addon_catalog_reporting(value, NULL, NULL, out);
 }
 
 char *qa_addon_install_path(const qa_addon_package *package,
@@ -683,8 +760,9 @@ char *qa_managed_addon_title(const char *root, const char *content_directory) {
   size_t length = 0;
   char *bytes = read_file_bytes(path, &length);
   free(path);
-  if (bytes == NULL) qa_catalog_error("%s", strerror(errno));
-  qa_save_value *value = qa_parse_json_value((const uint8_t *)bytes, length, false);
+  /* TS catches a failed read or JSON parse and returns null. */
+  if (bytes == NULL) return NULL;
+  qa_save_value *value = qa_parse_json_value((const uint8_t *)bytes, length, true);
   free(bytes);
   if (value == NULL) return NULL;
   char *title = NULL;

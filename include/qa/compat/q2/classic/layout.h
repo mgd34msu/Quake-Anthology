@@ -40,6 +40,8 @@ typedef struct qa_compat_q2_memory {
   uint64_t (*observe_writes)(void *ctx, qa_guest_address address, double byte_length,
                              void *cb_ctx, qa_compat_q2_write_observer_fn cb); /* may be NULL */
   void (*unobserve_writes)(void *ctx, uint64_t handle);
+  /* TS allocate({ ..., pooled: true }): a 4096-byte page from the shared slab pool; NULL = unpooled allocate. */
+  qa_guest_address (*allocate_pooled)(void *ctx, double byte_length, int64_t alignment, const char *label);
 } qa_compat_q2_memory;
 
 qa_guest_address qa_compat_q2_mem_offset(const qa_compat_q2_memory *m, qa_guest_address a, int64_t d);
@@ -67,6 +69,8 @@ void qa_compat_q2_mem_write_pointer(const qa_compat_q2_memory *m, qa_guest_addre
 /* guest/runtime/common/memory.ts allocateNativeMemory/nativeAllocationBytes. */
 double qa_compat_q2_native_allocation_bytes(double logical_bytes);
 qa_guest_address qa_compat_q2_allocate_native_memory(const qa_compat_q2_memory *m, double logical_bytes, const char *label);
+/* allocateNativeMemory(memory, bytes, label, true): engine-owned scratch whose single page comes from the slab pool. */
+qa_guest_address qa_compat_q2_allocate_pooled_native_memory(const qa_compat_q2_memory *m, double logical_bytes, const char *label);
 /* Little-endian DataView helpers over a borrowed host view. */
 int16_t qa_compat_q2_view_i16(const uint8_t *v, size_t off);
 uint16_t qa_compat_q2_view_u16(const uint8_t *v, size_t off);
@@ -120,6 +124,18 @@ typedef struct qa_compat_q2_runner {
   void *variadic_ctx;
   size_t (*variadic_layouts)(void *ctx, qa_callback_id id, const qa_guest_call_value *fixed, size_t fixed_count,
                              qa_guest_value_layout *out, size_t capacity);
+  /* cpu.state.registers.read/write by TS register name ("rsp", "rax", ...). */
+  uint64_t (*read_register)(void *ctx, const char *name, int width_bits);
+  void (*write_register)(void *ctx, const char *name, int width_bits, uint64_t value);
+  /* bindInlineRegion with its accepts predicate. */
+  uint64_t (*bind_inline_region_accepts)(void *ctx, qa_guest_address entry, qa_guest_address join, qa_native_call_abi abi,
+                                         void *cb_ctx, void (*cb)(void *, qa_compat_q2_inline_continuation *),
+                                         void *accepts_ctx, bool (*accepts)(void *));
+  /* Releases a capture_processor snapshot; may be NULL. */
+  void (*free_processor)(void *ctx, void *snapshot);
+  /* The runner's try/finally for calls abandoned by a host-side unwind
+   * (qa/compat/q2/native_throw.h): pop active calls deeper than depth. May be NULL. */
+  void (*unwind)(void *ctx, double depth);
 } qa_compat_q2_runner;
 
 /* TS guest/runtime/common/memory.ts argument/integer/pointer helpers,

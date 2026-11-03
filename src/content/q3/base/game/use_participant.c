@@ -6,7 +6,9 @@ qa_q3_use_participant qa_q3_require_use_participant(const qa_q3_use_participant 
   if (!p) qa_range_error("Target handler requires an activator");
   return *p;
 }
-qa_q3_game_entity *qa_q3_use_client(qa_q3_use_participant p, const qa_q3_use_participant_services *services) {
+qa_q3_game_entity *qa_q3_use_client(const qa_q3_use_participant *participant, const qa_q3_use_participant_services *services) {
+  if (!participant) return NULL;
+  qa_q3_use_participant p = *participant;
   if (p.entity) return p.entity->client == NULL ? NULL : p.entity;
   if (!services) qa_range_error("Shared target activator requires actor observations");
   if (!services->live(services->ctx, p.actor) || !services->is_player(services->ctx, p.actor)) return NULL;

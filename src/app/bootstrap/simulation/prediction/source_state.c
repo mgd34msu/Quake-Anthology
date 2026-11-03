@@ -7,6 +7,7 @@
 #include "qa/content/q3/base/shared/items.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 qa_trace_hit qa_app_prediction_source_hit(double number, qa_app_prediction_source_entities entities) {
   qa_trace_hit hit; memset(&hit, 0, sizeof hit);
@@ -80,7 +81,7 @@ qa_app_movement_prediction_snapshot qa_app_read_prediction_source_state(qa_app_m
       if (ps->state_product != QA_Q3_BASE_PRODUCT_MISSIONPACK && item->weapon >= 11) continue;
       memset(&ammo[count], 0, sizeof ammo[count]);
       ammo[count].item = item->item;
-      ammo[count].count = (((long long)slot_get(&ps->stats, schema->weapons) & (1LL << (long long)item->weapon)) != 0) ? 1 : 0;
+      ammo[count].count = ((qa_js_to_int32(slot_get(&ps->stats, schema->weapons)) & qa_js_to_int32(qa_js_shl(1, item->weapon))) != 0) ? 1 : 0;
       ammo[count].capacity = 1; count++;
       if (item->ammo) {
         memset(&ammo[count], 0, sizeof ammo[count]);
@@ -93,12 +94,12 @@ qa_app_movement_prediction_snapshot qa_app_read_prediction_source_state(qa_app_m
   if (source.state.kind == QA_MOVEMENT_STATE_Q3) { source.state.as.q3 = q3; }
   else if (source.state.kind == QA_MOVEMENT_STATE_Q2) {
     qa_vec3 origin = q3.origin, velocity = q3.velocity;
-    source.state.as.q2.origin_eighths.values[0] = (double)(long long)(origin.x * 8);
-    source.state.as.q2.origin_eighths.values[1] = (double)(long long)(origin.y * 8);
-    source.state.as.q2.origin_eighths.values[2] = (double)(long long)(origin.z * 8);
-    source.state.as.q2.velocity_eighths.values[0] = (double)(long long)(velocity.x * 8);
-    source.state.as.q2.velocity_eighths.values[1] = (double)(long long)(velocity.y * 8);
-    source.state.as.q2.velocity_eighths.values[2] = (double)(long long)(velocity.z * 8);
+    source.state.as.q2.origin_eighths.values[0] = trunc(origin.x * 8); /* Math.trunc */
+    source.state.as.q2.origin_eighths.values[1] = trunc(origin.y * 8);
+    source.state.as.q2.origin_eighths.values[2] = trunc(origin.z * 8);
+    source.state.as.q2.velocity_eighths.values[0] = trunc(velocity.x * 8);
+    source.state.as.q2.velocity_eighths.values[1] = trunc(velocity.y * 8);
+    source.state.as.q2.velocity_eighths.values[2] = trunc(velocity.z * 8);
   } else if (source.state.kind == QA_MOVEMENT_STATE_Q1) { source.state.as.q1.origin = q3.origin; source.state.as.q1.velocity = q3.velocity; }
   else if (source.state.kind == QA_MOVEMENT_STATE_QW) { source.state.as.qw.origin = q3.origin; source.state.as.qw.velocity = q3.velocity; }
   else if (source.state.kind == QA_MOVEMENT_STATE_Q2_RERELEASE) { source.state.as.q2_rerelease.origin = q3.origin; source.state.as.q2_rerelease.velocity = q3.velocity; }
@@ -126,8 +127,8 @@ qa_app_movement_prediction_snapshot qa_app_read_prediction_source_state(qa_app_m
     held = qa_q3_base_item_at(ps->state_product, holdable);
     runtime.persistent_powerup_tag = persistent ? persistent->tag : 0;
     runtime.holdable_item = holdable; runtime.holdable_tag = held ? held->tag : 0;
-    runtime.respawned = (((long long)ps->pm_flags) & QA_Q3_FLAG_RESPAWNED) != 0;
-    runtime.use_item_held = (((long long)ps->pm_flags) & QA_Q3_FLAG_USE_ITEM_HELD) != 0;
+    runtime.respawned = ((qa_js_to_int32(ps->pm_flags)) & QA_Q3_FLAG_RESPAWNED) != 0;
+    runtime.use_item_held = ((qa_js_to_int32(ps->pm_flags)) & QA_Q3_FLAG_USE_ITEM_HELD) != 0;
     runtime.event_sequence = ps->event_sequence;
     runtime.fractional_milliseconds = source.has_q3_arsenal ? source.q3_arsenal.fractional_milliseconds : 0;
     runtime.external_slot = source.has_q3_arsenal ? source.q3_arsenal.external_slot : QA_Q3_WEAPON_SLOT_ACTIVE;
@@ -183,7 +184,7 @@ void qa_app_write_prediction_source_state(qa_q3_base_player_state_record *ps,
     qa_q3_base_player_state_slots_set(&ps->stats, schema->weapons, (double)owned);
     if (output.has_q3_arsenal) {
       qa_q3_base_player_state_slots_set(&ps->stats, schema->holdable_item, output.q3_arsenal.holdable_item);
-      ps->pm_flags = (double)((((long long)ps->pm_flags) & ~(QA_Q3_FLAG_RESPAWNED | QA_Q3_FLAG_USE_ITEM_HELD))
+      ps->pm_flags = (double)(((qa_js_to_int32(ps->pm_flags)) & ~(QA_Q3_FLAG_RESPAWNED | QA_Q3_FLAG_USE_ITEM_HELD))
           | (output.q3_arsenal.respawned ? QA_Q3_FLAG_RESPAWNED : 0) | (output.q3_arsenal.use_item_held ? QA_Q3_FLAG_USE_ITEM_HELD : 0));
     }
   }

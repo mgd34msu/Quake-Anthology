@@ -40,12 +40,12 @@ static bool actor_id_equal(qa_actor_id a, qa_actor_id b) {
          a.session.token == b.session.token;
 }
 
-static int32_t proceed(qa_qvmy_function_call *call) {
+static int32_t proceed(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                       : call->proceed_async(call->call_ctx);
 }
 
-static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset) {
+static int32_t call_word(const qa_qvm_module_function_call *call, int64_t byte_offset) {
   if (byte_offset < 0 || byte_offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
   const uint8_t *p = call->words + byte_offset;
@@ -54,13 +54,13 @@ static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset)
   return (int32_t)bits;
 }
 
-static int32_t guest_i32(qa_qvmy_function_call *call, int64_t address) {
+static int32_t guest_i32(qa_qvm_module_function_call *call, int64_t address) {
   qa_qvm_writable_view view;
   qa_qvm_memory_data_view(call->guest, address, 4, &view);
   return qa_qvm_writable_view_get_int32(&view, 0, true);
 }
 
-static qa_vec3 guest_vector(qa_qvmy_function_call *call, int64_t address) {
+static qa_vec3 guest_vector(qa_qvm_module_function_call *call, int64_t address) {
   qa_qvm_writable_view view;
   qa_qvm_memory_data_view(call->guest, address, 12, &view);
   qa_vec3 v = {qa_qvm_writable_view_get_float32(&view, 0, true),
@@ -69,7 +69,7 @@ static qa_vec3 guest_vector(qa_qvmy_function_call *call, int64_t address) {
   return v;
 }
 
-static void guest_write_vector(qa_qvmy_function_call *call, int64_t address, qa_vec3 value) {
+static void guest_write_vector(qa_qvm_module_function_call *call, int64_t address, qa_vec3 value) {
   qa_qvm_writable_view view;
   qa_qvm_memory_data_view(call->guest, address, 12, &view);
   qa_qvm_writable_view_set_float32(&view, 0, value.x, true);
@@ -77,7 +77,7 @@ static void guest_write_vector(qa_qvmy_function_call *call, int64_t address, qa_
   qa_qvm_writable_view_set_float32(&view, 8, value.z, true);
 }
 
-static bool admit(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call, frame *out) {
+static bool admit(qa_qvm_equipment_movement *m, qa_qvm_module_function_call *call, frame *out) {
   int32_t movement_word = call_word(call, 0);
   int32_t player = guest_i32(call, movement_word);
   qa_qvm_game_data_state located = qa_qvm_game_data_checkpoint(&m->game->data);
@@ -111,7 +111,7 @@ static frame *top_frame(qa_qvm_equipment_movement *m) {
   return m->frame_count == 0 ? NULL : &m->frames[m->frame_count - 1];
 }
 
-static frame *current(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call) {
+static frame *current(qa_qvm_equipment_movement *m, qa_qvm_module_function_call *call) {
   frame *f = top_frame(m);
   if (f == NULL || !f->present) return NULL;
   if (!m->services.live(m->services.ctx, f->actor)) return NULL;
@@ -122,7 +122,7 @@ static frame *current(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call)
 
 typedef struct slice_run_ctx {
   qa_qvm_equipment_movement *movement;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   uint64_t sequence;
 } slice_run_ctx;
 
@@ -147,12 +147,12 @@ static const char *slice_run(void *ctx, void *control_ctx) {
   return "skip";
 }
 
-static int32_t slice(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call,
+static int32_t slice(qa_qvm_equipment_movement *m, qa_qvm_module_function_call *call,
                      int32_t (*run)(void *ctx), void *run_ctx) {
   frame *f = top_frame(m);
   if (f != NULL && f->present && f->pose != NULL && m->services.live(m->services.ctx, f->actor)) {
     slice_run_ctx run_ctx_local = {m, call, f->sequence};
-    qa_qvmy_region_binding binding = {(int64_t)m->profile.locomotion_entry,
+    qa_qvm_module_region_binding binding = {(int64_t)m->profile.locomotion_entry,
                                       (int64_t)m->profile.locomotion_join, &run_ctx_local,
                                       slice_run, NULL};
     call->regions(call->call_ctx, &binding, 1);
@@ -161,8 +161,14 @@ static int32_t slice(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call,
   return run(run_ctx);
 }
 
+/* TS catch: a cancelled scope pops its frame. */
+static void movement_unwind(void *ctx) {
+  qa_qvm_equipment_movement *m = ctx;
+  m->frame_count--;
+}
+
 int32_t qa_qvm_equipment_movement_movement(qa_qvm_equipment_movement *m,
-                                           qa_qvmy_function_call *call, const char *kind,
+                                           qa_qvm_module_function_call *call, const char *kind,
                                            int32_t (*run)(void *ctx), void *run_ctx) {
   if (strcmp(kind, "movement-slice") == 0) return slice(m, call, run, run_ctx);
   frame f;
@@ -179,7 +185,10 @@ int32_t qa_qvm_equipment_movement_movement(qa_qvm_equipment_movement *m,
   }
   m->frames[m->frame_count++] = f;
   uint64_t sequence = f.sequence;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, movement_unwind, m);
   int32_t result = run(run_ctx);
+  qa_cleanup_pop(&guard);
   frame *top = top_frame(m);
   if (top == NULL || top->sequence != sequence)
     qa_range_error("Selected movement scope completed out of order");
@@ -204,7 +213,7 @@ static void weapon_write(qa_qvm_memory *guest, int64_t address, double bytes, in
 }
 
 bool qa_qvm_equipment_movement_prepare_weapon(qa_qvm_equipment_movement *m, qa_actor_id actor,
-                                              qa_qvmy_function_call *call,
+                                              qa_qvm_module_function_call *call,
                                               qa_qvm_equipment_weapon_restore *out) {
   frame *f = top_frame(m);
   if (f == NULL || !f->present || !actor_id_equal(f->actor, actor) ||
@@ -235,7 +244,7 @@ void qa_qvm_equipment_weapon_restore_call(qa_qvm_equipment_weapon_restore *resto
 }
 
 typedef struct apply_ctx {
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_qvm_equipment_movement *movement;
   frame *frame;
   const qa_movement_body_shape *body;
@@ -267,7 +276,7 @@ static void apply_perform(void *ctx) {
 }
 
 typedef struct restore_ctx {
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   int64_t at;
   const uint8_t *saved;
   size_t length;
@@ -278,8 +287,15 @@ static void restore_perform(void *ctx) {
   qa_qvm_memory_write_bytes(restore->call->guest, restore->at, restore->saved, restore->length);
 }
 
+/* TS catch: restore(); throw. */
+static void restore_unwind(void *ctx) {
+  restore_ctx *restore = ctx;
+  restore_perform(restore);
+  free((void *)restore->saved);
+}
+
 typedef struct scratch_ctx {
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_qvm_equipment_movement *movement;
   frame *frame;
   int64_t at;
@@ -288,16 +304,15 @@ typedef struct scratch_ctx {
 
 static void scratch_perform(void *ctx) {
   scratch_ctx *scratch = ctx;
-  (void)scratch->movement;
   guest_write_vector(scratch->call, scratch->at + 56,
                      guest_vector(scratch->call, (int64_t)scratch->frame->player + 20));
   guest_write_vector(scratch->call, scratch->at + 68, scratch->requested->min);
   guest_write_vector(scratch->call, scratch->at + 80, scratch->requested->max);
 }
 
-static int32_t body_shape(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call, frame *f);
+static int32_t body_shape(qa_qvm_equipment_movement *m, qa_qvm_module_function_call *call, frame *f);
 
-static int32_t duck_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t duck_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_equipment_movement *m = ctx;
   frame *f = current(m, call);
   if (f == NULL) return proceed(call);
@@ -315,7 +330,7 @@ static int32_t duck_hook(void *ctx, qa_qvmy_function_call *call) {
   return 0;
 }
 
-static int32_t body_finish(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call, frame *f,
+static int32_t body_finish(qa_qvm_equipment_movement *m, qa_qvm_module_function_call *call, frame *f,
                            const qa_movement_body_shape *body, int32_t previous_duck,
                            int32_t previous_height, int32_t result) {
   body->current_actor(body->ctx);
@@ -339,6 +354,9 @@ static int32_t body_finish(qa_qvm_equipment_movement *m, qa_qvmy_function_call *
   uint8_t *saved = malloc(saved_length == 0 ? 1 : saved_length);
   if (saved == NULL) qa_range_error("out of memory");
   if (saved_length > 0) memcpy(saved, call->memory + at, saved_length);
+  restore_ctx restore = {call, at, saved, saved_length};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, restore_unwind, &restore);
   {
     scratch_ctx scratch = {call, m, f, at, requested};
     call->effect(call->call_ctx, scratch_perform, &scratch);
@@ -354,15 +372,13 @@ static int32_t body_finish(qa_qvm_equipment_movement *m, qa_qvmy_function_call *
       qa_qvm_writable_view_get_int32(&checked_view, 0, true) == 0 ? requested : previous;
   apply_ctx apply = {call, m, f, body, accepted, requested, previous_duck, previous_height};
   call->effect(call->call_ctx, apply_perform, &apply);
-  {
-    restore_ctx restore = {call, at, saved, saved_length};
-    call->effect(call->call_ctx, restore_perform, &restore);
-  }
+  qa_cleanup_pop(&guard);
+  call->effect(call->call_ctx, restore_perform, &restore);
   free(saved);
   return result;
 }
 
-static int32_t body_shape(qa_qvm_equipment_movement *m, qa_qvmy_function_call *call, frame *f) {
+static int32_t body_shape(qa_qvm_equipment_movement *m, qa_qvm_module_function_call *call, frame *f) {
   const qa_movement_body_shape *body = f->body;
   if (body == NULL || !m->profile.has_body_trace) {
     if (body != NULL && body->has_requested)
@@ -371,7 +387,9 @@ static int32_t body_shape(qa_qvm_equipment_movement *m, qa_qvmy_function_call *c
   }
   int32_t previous_duck = guest_i32(call, (int64_t)f->player + 12) & 1;
   int32_t previous_height = guest_i32(call, (int64_t)f->player + 164);
+  size_t index = (size_t)(f - m->frames);
   int32_t result = proceed(call);
+  f = &m->frames[index]; /* a nested scope may have grown the stack */
   return body_finish(m, call, f, body, previous_duck, previous_height, result);
 }
 

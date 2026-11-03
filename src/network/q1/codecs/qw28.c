@@ -1,13 +1,16 @@
 /* Port of src/network/q1/codecs/qw28.ts. GPL-2.0-or-later. */
 #include "qa/network/q1/codecs/qw28.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 void qa_qw_no_netquake_op(double protocol, const char *op) {
-  char buf[256]; snprintf(buf, sizeof buf, "protocol %g (QuakeWorld) has no %s", protocol, op);
+  char buf[256]; snprintf(buf, sizeof buf, "protocol %s (QuakeWorld) has no %s", QA_JS_NUMBER(protocol), op);
   qa_q1_sys_error(buf);
 }
-static int32_t js_i32(double n) { uint32_t u; double m = fmod(trunc(n), 4294967296.0); if (m < 0) m += 4294967296.0; u = (uint32_t)m; return (int32_t)u; }
+/* ToInt32 (NaN and infinities are 0; the fmod form cast NaN to uint32_t). */
+static int32_t js_i32(double n) { return qa_js_to_int32(n); }
 void qa_qw_write_angle(qa_size_buf *sb, double f) { qa_msg_write_byte(sb, (double)(js_i32(trunc((f * 256) / 360)) & 255)); }
 void qa_qw_write_angle16(qa_size_buf *sb, double f) { qa_msg_write_short(sb, (double)(js_i32(trunc((f * 65536) / 360)) & 65535)); }
 double qa_qw_read_angle16(qa_message_reader *reader) { return qa_message_reader_short(reader) * (360.0 / 65536); }
@@ -73,7 +76,7 @@ static bool wc_sound(qa_protocol_codec *c, qa_size_buf *sb, const qa_q1_sound_me
   (void)c;(void)fl;
   if (s->ent >= 1024 || s->channel >= 8) return false;
   if (s->sound_num >= QA_QW28_MAX_PRECACHE) return false;
-  int32_t chan = (js_i32(s->ent) << 3) | js_i32(s->channel);
+  int32_t chan = (qa_q1_js_shl(js_i32(s->ent), 3)) | js_i32(s->channel);
   if (s->volume != QA_QW_DEFAULT_SOUND_PACKET_VOLUME) chan |= QA_QW_SND_VOLUME;
   if (s->attenuation != QA_QW_DEFAULT_SOUND_PACKET_ATTENUATION) chan |= QA_QW_SND_ATTENUATION;
   qa_msg_write_byte(sb, QA_QW_SVC_SOUND); qa_msg_write_short(sb, chan);

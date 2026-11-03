@@ -72,7 +72,7 @@ struct fixture {
   double now;
   qa_owned_actor world;
   qa_owned_actor owned[MAX_PLAYERS];
-  qa_q2mp_player_state players[MAX_PLAYERS];
+  qa_q2_base_player_state players[MAX_PLAYERS];
   int player_count;
   /* recorded presentation prints */
   char prints[MAX_EVENTS][512];
@@ -88,12 +88,8 @@ struct fixture {
   char destinations[16][64];
   int destination_count;
   double deathmatch_flags;
-  /* fake weapons mirror */
-  qa_q2mp_weapons_port weapons;
-  qa_q2mp_weapon_state weapon_states[MAX_PLAYERS];
-  qa_q2mp_source_rules source_rules;
-  bool has_source_rules;
-  int weapons_registered;
+  /* TS fixture: new Q2Weapons({ emit, noise, dodge, current-world lag, ammoChanged, canTarget: true }). */
+  qa_q2w_weapons weapons;
 };
 
 static struct fixture *F;
@@ -169,56 +165,27 @@ static qa_bounds abs_bounds(void *ctx, qa_owned_actor a, qa_body_state s) {
 static void on_link(void *ctx, qa_linked_body b) { (void)ctx; (void)b; }
 static void on_unlink(void *ctx, qa_actor_id a) { (void)ctx; (void)a; }
 
-/* fake weapons mirror */
 static int player_index(qa_actor_id actor) {
   for (int i = 0; i < F->player_count; i++)
     if (qa_same_actor(F->owned[i].id, actor)) return i;
   return -1;
 }
-static qa_q2mp_weapon_state *w_get_state(void *ctx, qa_actor_id actor) {
-  (void)ctx;
-  int i = player_index(actor);
-  return i < 0 ? NULL : &F->weapon_states[i];
-}
-static bool w_get_input(void *ctx, qa_actor_id actor, qa_q2mp_weapon_input *out) {
-  (void)ctx; (void)actor;
-  memset(out, 0, sizeof *out);
-  out->hand = "right";
-  out->has_players_collide = true;
-  out->players_collide = true;
-  return true;
-}
-static void w_register(void *ctx, qa_q2mp_weapon_extension e) { (void)ctx; (void)e; F->weapons_registered++; }
-static void w_set_rules(void *ctx, qa_q2mp_source_rules rules) { (void)ctx; F->source_rules = rules; F->has_source_rules = true; }
-static const char *w_request(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, const char *name) { (void)ctx; (void)e; (void)g; (void)name; return "selected"; }
-static void w_kick(void *ctx, qa_q2mp_weapon_context *c, qa_vec3 o, qa_vec3 a) { (void)ctx; (void)c; (void)o; (void)a; }
-static void w_generic(void *ctx, qa_q2mp_weapon_context *c) { (void)ctx; (void)c; }
-static double w_silencer(void *ctx, qa_actor_id a) { (void)ctx; (void)a; return 0; }
-static void w_noise(void *ctx, qa_actor_id a, qa_q2_game_services *g, qa_vec3 o, const char *k) { (void)ctx; (void)a; (void)g; (void)o; (void)k; }
-static const qa_q2f_weapon_definition *w_definition(void *ctx, const char *name) { (void)ctx; (void)name; return NULL; }
-static double w_ammo(void *ctx, qa_q2mp_weapon_context *c) { (void)ctx; (void)c; return 100; }
-static void w_no_ammo(void *ctx, qa_q2mp_weapon_context *c, bool s) { (void)ctx; (void)c; (void)s; }
-static void w_project(void *ctx, qa_q2mp_weapon_context *c, qa_vec3 off, qa_vec3 *start, qa_vec3 *dir) {
-  (void)ctx; (void)c; (void)off;
-  *start = (qa_vec3){0, 0, 0};
-  *dir = (qa_vec3){1, 0, 0};
-}
+static void w_emit(void *ctx, qa_q2w_event e) { (void)ctx; (void)e; }
+static void w_noise(void *ctx, qa_actor_id a, qa_vec3 o, bool s) { (void)ctx; (void)a; (void)o; (void)s; }
+static void w_dodge(void *ctx, qa_actor_id m, qa_actor_id a, double eta, qa_trace_result t) { (void)ctx; (void)m; (void)a; (void)eta; (void)t; }
 static void w_ammo_changed(void *ctx, qa_actor_id a, qa_item_id i) { (void)ctx; (void)a; (void)i; }
+static bool w_can_target(void *ctx, const qa_actor_id *a, qa_actor_id t) { (void)ctx; (void)a; (void)t; return true; }
 
 /* hooks shared by CTF and LMCTF fixtures */
-static qa_q2mp_player_state *hook_player(void *ctx, qa_actor_id actor) {
+static qa_q2_base_player_state *hook_player(void *ctx, qa_actor_id actor) {
   (void)ctx;
   int i = player_index(actor);
   return i < 0 ? NULL : &F->players[i];
 }
 static void hook_set_skin(void *ctx, qa_actor_id actor, const char *skin) {
   (void)ctx;
-  static char skins[MAX_PLAYERS][128];
   int i = player_index(actor);
-  if (i >= 0) {
-    snprintf(skins[i], sizeof skins[i], "%s", skin);
-    F->players[i].skin = skins[i];
-  }
+  if (i >= 0) snprintf(F->players[i].skin, sizeof F->players[i].skin, "%s", skin);
 }
 static qa_q2_ctf *cur_ctf;
 static void hook_spawn_player_ctf(void *ctx, qa_q2_entity *entity, qa_q2_game_services *g) {
@@ -254,13 +221,53 @@ static void hook_teleport(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa
 static void hook_chase(void *ctx, qa_actor_id a) { (void)ctx; (void)a; }
 static void hook_prediction(void *ctx, qa_actor_id a, bool s) { (void)ctx; (void)a; (void)s; }
 static double hook_gravity(void *ctx) { (void)ctx; return 800; }
+/* Event strings and arrays are borrowed for the emit call only: recorded
+ * events keep their own text, and drop the arrays no check reads. */
+static char **recorded_texts;
+static size_t recorded_text_count;
+static const char *record_text(const char *text) {
+  if (text == NULL) return NULL;
+  size_t size = strlen(text) + 1;
+  char *copy = malloc(size);
+  char **grown = realloc(recorded_texts, (recorded_text_count + 1) * sizeof *grown);
+  if (copy == NULL || grown == NULL) { fprintf(stderr, "oom\n"); exit(2); }
+  memcpy(copy, text, size);
+  recorded_texts = grown;
+  recorded_texts[recorded_text_count++] = copy;
+  return copy;
+}
+static void recorded_texts_free(void) {
+  for (size_t i = 0; i < recorded_text_count; i++) free(recorded_texts[i]);
+  free(recorded_texts);
+  recorded_texts = NULL;
+  recorded_text_count = 0;
+}
 static void hook_emit_ctf(void *ctx, qa_q2_ctf_event event) {
   (void)ctx;
-  if (F->ctf_event_count < 64) F->ctf_events[F->ctf_event_count++] = event;
+  if (F->ctf_event_count >= 64) return;
+  event.layout = record_text(event.layout);
+  event.title = record_text(event.title);
+  event.text = record_text(event.text);
+  event.match = record_text(event.match);
+  event.tech = record_text(event.tech);
+  event.red = event.blue = event.spectators = NULL;
+  event.red_count = event.blue_count = event.spectator_count = 0;
+  event.entries = NULL;
+  event.entry_count = 0;
+  F->ctf_events[F->ctf_event_count++] = event;
 }
 static void hook_emit_lmctf(void *ctx, qa_lmctf_event event) {
   (void)ctx;
-  if (F->lmctf_event_count < 64) F->lmctf_events[F->lmctf_event_count++] = event;
+  if (F->lmctf_event_count >= 64) return;
+  event.title = record_text(event.title);
+  event.layout = record_text(event.layout);
+  event.rune = record_text(event.rune);
+  event.name = record_text(event.name);
+  event.entries = NULL;
+  event.entry_count = 0;
+  event.rows = NULL;
+  event.row_count = 0;
+  F->lmctf_events[F->lmctf_event_count++] = event;
 }
 static void hook_end_level(void *ctx, qa_q2_game_services *g, const char *map) {
   (void)ctx; (void)g;
@@ -327,12 +334,11 @@ static void fixture_init(struct fixture *fx, int player_count) {
   fx->player_count = player_count;
   for (int i = 0; i < player_count; i++) {
     fx->owned[i] = qa_session_actor_registry_allocate(fx->actors, "q3:character", "q3:sarge");
-    qa_q2mp_player_state_init(&fx->players[i], i, 0);
-    fx->players[i].name = names[i];
-    fx->players[i].skin = "male/grunt";
-    static char infos[MAX_PLAYERS][128];
-    snprintf(infos[i], sizeof infos[i], "\\name\\%s\\skin\\male/grunt", names[i]);
-    fx->players[i].userinfo = infos[i];
+    qa_q2_base_player_state_init(&fx->players[i], i, 0);
+    snprintf(fx->players[i].name, sizeof fx->players[i].name, "%s", names[i]);
+    snprintf(fx->players[i].skin, sizeof fx->players[i].skin, "male/grunt");
+    snprintf(fx->players[i].userinfo, sizeof fx->players[i].userinfo, "\\name\\%s\\skin\\male/grunt", names[i]);
+    fx->players[i].connected = true;
     qa_body_state body = {0};
     body.origin = (qa_vec3){i * 512.0, 0, 64};
     body.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
@@ -344,26 +350,14 @@ static void fixture_init(struct fixture *fx, int player_count) {
     combat.armor.powered.kind = "none";
     qa_gameplay_authority_create_state(fx->combat, fx->owned[i], combat, NULL, NULL);
     qa_shared_inventory_table_create_entries(fx->inventory, fx->owned[i], NULL, 0);
-    memset(&fx->weapon_states[i], 0, sizeof fx->weapon_states[i]);
-    fx->weapon_states[i].animation.phase = "ready";
-    fx->weapon_states[i].weapon = "blaster";
-    fx->weapon_states[i].primary_handoff = "active";
   }
-  fx->weapons.get_state = w_get_state;
-  fx->weapons.get_input = w_get_input;
-  fx->weapons.register_weapon = w_register;
-  fx->weapons.set_source_rules = w_set_rules;
-  fx->weapons.request_weapon = w_request;
-  fx->weapons.kick = w_kick;
-  fx->weapons.generic_classic = w_generic;
-  fx->weapons.generic_rerelease = w_generic;
-  fx->weapons.silencer_shots = w_silencer;
-  fx->weapons.player_noise = w_noise;
-  fx->weapons.definition = w_definition;
-  fx->weapons.ammo = w_ammo;
-  fx->weapons.no_ammo = w_no_ammo;
-  fx->weapons.project = w_project;
-  fx->weapons.ammo_changed = w_ammo_changed;
+  qa_q2w_hooks weapon_hooks = {0};
+  weapon_hooks.emit = w_emit;
+  weapon_hooks.noise = w_noise;
+  weapon_hooks.dodge = w_dodge;
+  weapon_hooks.ammo_changed = w_ammo_changed;
+  weapon_hooks.can_target = w_can_target;
+  CHECK(qa_q2w_weapons_init(&fx->weapons, weapon_hooks));
   qa_q2_item_hooks item_hooks = {0};
   item_hooks.weapon_picked = item_hook_noop;
   item_hooks.silencer = item_silencer;
@@ -385,9 +379,27 @@ static void fixture_start_services(struct fixture *fx, const qa_q2_spawn_module 
   options.combat_provider = "q2:combat";
   options.inventory_provider = "q2:inventory";
   options.movement_provider = "q3:movement";
+  /* A fresh source gets fresh services (the previous ones are released here). */
+  if (fx->services != NULL) qa_q2_entity_services_destroy(fx->services);
   fx->services = qa_q2_entity_services_create(&fx->host, options, modules, module_count);
   CHECK(fx->services != NULL);
   fx->game = qa_q2_entity_services_game(fx->services);
+}
+
+/* Teardown in dependency order, after the test destroyed its source module. */
+static void fixture_close(struct fixture *fx) {
+  if (fx->services != NULL) qa_q2_entity_services_destroy(fx->services);
+  qa_q2w_weapons_destroy(&fx->weapons);
+  qa_q2_item_module_destroy(fx->items);
+  qa_shared_inventory_table_destroy(fx->inventory);
+  qa_gameplay_authority_destroy(fx->combat);
+  qa_actor_callback_table_destroy(fx->callbacks);
+  qa_shared_body_table_destroy(fx->bodies);
+  qa_session_actor_registry_close(fx->actors);
+  qa_session_actor_registry_destroy(fx->actors);
+  qa_identity_owner_destroy(&fx->identities);
+  for (int i = 0; i < fx->player_count; i++) qa_q2_base_player_state_destroy(&fx->players[i]);
+  F = NULL;
 }
 
 static void fixture_advance(struct fixture *fx, double time) {
@@ -563,6 +575,7 @@ static void test_horde(void) {
   free(saved.monsters);
   qa_q2_horde_destroy(restored);
   qa_q2_horde_destroy(horde);
+  fixture_close(&fx);
 }
 
 /* ---------------- CTF (core.test.ts key cases) ---------------- */
@@ -574,12 +587,14 @@ static qa_q2_ctf *ctf_fixture(struct fixture *fx) {
   fx->modules[0] = qa_q2_ctf_as_spawn(ctf);
   fx->modules[1] = qa_q2_item_module_as_spawn(fx->items);
   fixture_start_services(fx, fx->modules, 2);
+  qa_q2_source_callbacks_register(fx->game->source_callbacks, qa_q2w_ballistics_callbacks(&fx->weapons.base));
   fixture_spawn(fx, "info_player_team1", 0);
   fixture_spawn(fx, "info_player_team2", 1024);
   fixture_spawn(fx, "info_player_deathmatch", 512);
   for (int i = 0; i < 3; i++) {
     qa_q2_entity *entity = qa_q2_entity_services_attach_player(fx->services, fx->owned[i]);
     CHECK(entity != NULL);
+    (void)qa_q2w_weapons_bind(&fx->weapons, fx->owned[i], fx->game, NULL); /* TS new Q2WeaponState("blaster") */
     qa_q2_ctf_admitted(ctf, entity, fx->game);
     qa_q2_ctf_join(ctf, entity, fx->game, i == 2 ? 2 : 1, false);
   }
@@ -636,6 +651,7 @@ static void test_ctf_flags(void) {
     if (strcmp(fx.print_levels[i], "chat") == 0) chat++;
   CHECK(chat == 2);
   qa_q2_ctf_destroy(ctf);
+  fixture_close(&fx);
 }
 
 static void test_ctf_match_and_checkpoint(void) {
@@ -702,6 +718,7 @@ static void test_ctf_match_and_checkpoint(void) {
   CHECK(qa_q2_ctf_match_vote(match, blue, fx.game, true));
   CHECK(fx.destination_count >= 2 && strcmp(fx.destinations[fx.destination_count - 1], "q2ctf2") == 0);
   qa_q2_ctf_destroy(ctf);
+  fixture_close(&fx);
 }
 
 /* ---------------- LMCTF ---------------- */
@@ -761,6 +778,11 @@ static void test_lmctf_runtime(void) {
   item_hooks2.power_armor = item_power;
   qa_lmctf_hooks next_hooks = lmctf_hooks(&fx);
   next_hooks.items = qa_q2_item_module_create(item_hooks2);
+  /* ...and a fresh Q2Weapons: TS register() throws on a second plasma. */
+  qa_q2w_hooks weapon_hooks2 = fx.weapons.base.hooks;
+  qa_q2w_weapons next_weapons;
+  CHECK(qa_q2w_weapons_init(&next_weapons, weapon_hooks2));
+  next_hooks.weapons = &next_weapons;
   CHECK(next_hooks.items != NULL);
   qa_q2_lmctf *next = qa_q2_lmctf_create(next_hooks, &travel.rules, &travel, NULL);
   CHECK(next != NULL);
@@ -775,9 +797,110 @@ static void test_lmctf_runtime(void) {
   CHECK(strcmp(capture.phase, "countdown") == 0);
   CHECK(capture.remaining == 15);
   CHECK(capture.teams_locked);
+  /* Composition save: encodeCheckpointValue(capture()) -> decode -> SaveReader -> restore
+   * into the next source; its own capture encodes to the same bytes. */
+  qa_save_value *saved = qa_q2_lmctf_capture_value(lmctf);
+  size_t saved_length = 0;
+  uint8_t *saved_bytes = qa_encode_checkpoint_value(saved, &saved_length);
+  qa_save_value *decoded = qa_decode_checkpoint_value(saved_bytes, saved_length);
+  qa_save_reader reader;
+  CHECK(decoded != NULL && qa_save_reader_init(&reader, decoded, "q2-match"));
+  qa_q2_lmctf_restore(next, &reader, fx.game);
+  qa_save_reader_destroy(&reader);
+  qa_save_value *again = qa_q2_lmctf_capture_value(next);
+  size_t again_length = 0;
+  uint8_t *again_bytes = qa_encode_checkpoint_value(again, &again_length);
+  CHECK(again_length == saved_length && memcmp(again_bytes, saved_bytes, saved_length) == 0);
+  CHECK(qa_lmctf_context_get(qa_q2_lmctf_get_context(next), fx.owned[0].id) != NULL);
+  free(again_bytes); qa_save_value_free(again); qa_save_value_free(decoded); free(saved_bytes); qa_save_value_free(saved);
   qa_lmctf_travel_destroy(&travel);
   qa_q2_lmctf_destroy(next);
   qa_q2_lmctf_destroy(lmctf);
+  qa_q2_item_module_destroy(next_hooks.items);
+  qa_q2w_weapons_destroy(&next_weapons);
+  fixture_close(&fx);
+}
+
+/* TS encodeCheckpointValue(lmctf.capture()) for this state, printed by bun
+ * (scratch script: rules with passwords, pending countdown map, vote,
+ * plasmaQuad, runes, two players with statistics, rune and hook). */
+static const char LMCTF_CAPTURE_ORACLE[] =
+    "{\"rules\":{\"ctfFlags\":5,\"refFlags\":0,\"runes\":15,\"skinSet\":0,\"flagInit\":false,\"disabledWeapo"
+    "ns\":0,\"timeLimitMinutes\":0,\"fragLimit\":0,\"mapList\":[\"lmctf09\",\"q2dm1\"],\"fastSwitch\":false,"
+    "\"autoLock\":true,\"countdownSeconds\":10,\"quadSeconds\":30},\"match\":{\"pendingMap\":{\"map\":\"lmct"
+    "f09\",\"countdown\":true},\"phase\":\"countdown\",\"remaining\":0,\"nextThink\":0,\"paused\":false,\"tea"
+    "msLocked\":false},\"vote\":{\"startedAt\":12.5},\"plasmaQuad\":true,\"flags\":{\"flags\":[],\"lastTake"
+    "nSound\":0},\"runes\":{\"forward\":true},\"players\":[{\"actor\":{\"slot\":0,\"generation\":0},\"state\":"
+    "{\"plasmaMode\":true,\"team\":1,\"observerTeam\":0,\"rune\":{\"slot\":2,\"generation\":0},\"regenFrame\""
+    ":3,\"killCarrierTime\":1.25,\"hitCarrierTime\":0,\"returnFlagTime\":0,\"defendFlagTime\":0,\"extraF"
+    "lags\":48,\"spawnState\":0,\"statistics\":[{\"key\":\"kills\",\"count\":2},{\"key\":\"deaths\",\"count\":1}"
+    "],\"hook\":{\"slot\":2,\"generation\":0},\"hookState\":2,\"hookLength\":40.5,\"hookHeld\":true}},{\"act"
+    "or\":{\"slot\":1,\"generation\":0},\"state\":{\"plasmaMode\":false,\"team\":2,\"observerTeam\":1,\"rune\""
+    ":null,\"regenFrame\":0,\"killCarrierTime\":0,\"hitCarrierTime\":0,\"returnFlagTime\":0,\"defendFlag"
+    "Time\":0,\"extraFlags\":48,\"spawnState\":1,\"statistics\":[],\"hook\":null,\"hookState\":0,\"hookLeng"
+    "th\":0,\"hookHeld\":false}}]}";
+static void test_lmctf_capture_value(void) {
+  struct fixture fx;
+  fixture_init(&fx, 0);
+  qa_identity_owner ids;
+  CHECK(qa_identity_owner_create(&ids, "lmctf-capture"));
+  qa_session_actor_registry *actors = qa_session_actor_registry_create(&ids, 64);
+  qa_owned_actor a = qa_session_actor_registry_allocate(actors, "q3:character", "q3:sarge");
+  qa_owned_actor b = qa_session_actor_registry_allocate(actors, "q3:character", "q3:sarge");
+  qa_owned_actor rune = qa_session_actor_registry_allocate(actors, "q2:game", "q2:rune");
+  qa_lmctf_rules rules;
+  qa_create_lmctf_rules(&rules);
+  rules.ctf_flags = 5;
+  free(rules.ref_password);
+  rules.ref_password = strdup("secret");
+  static const char *const maps[2] = {"lmctf09", "q2dm1"};
+  rules.map_list = malloc(sizeof maps);
+  memcpy(rules.map_list, maps, sizeof maps);
+  rules.map_count = 2;
+  rules.countdown_seconds = 10;
+  rules.auto_lock = true;
+  qa_q2_lmctf *lmctf = qa_q2_lmctf_create(lmctf_hooks(&fx), &rules, NULL, NULL);
+  qa_lmctf_rules_destroy(&rules);
+  CHECK(lmctf != NULL);
+  qa_lmctf_match_change_map(qa_q2_lmctf_get_match(lmctf), "lmctf09", true);
+  qa_save_value *vote = qa_save_value_object();
+  CHECK(vote != NULL && qa_save_value_set(vote, "startedAt", qa_save_value_number(12.5)));
+  qa_save_reader vote_reader;
+  CHECK(qa_save_reader_init(&vote_reader, vote, "vote"));
+  qa_lmctf_vote_restore(qa_q2_lmctf_get_vote(lmctf), &vote_reader);
+  qa_save_reader_destroy(&vote_reader);
+  qa_save_value_free(vote);
+  qa_q2_lmctf_get_context(lmctf)->plasma_quad = true;
+  qa_lmctf_runes_restore(qa_q2_lmctf_get_runes(lmctf), true);
+  qa_lmctf_player_state first;
+  qa_lmctf_player_state_init(&first);
+  first.team = 1; first.plasma_mode = true; first.has_rune = true; first.rune = rune.id;
+  first.regen_frame = 3; first.kill_carrier_time = 1.25;
+  qa_lmctf_player_state_set_stat(&first, "kills", 2);
+  qa_lmctf_player_state_set_stat(&first, "deaths", 1);
+  qa_lmctf_player_state second;
+  qa_lmctf_player_state_init(&second);
+  second.team = 2; second.observer_team = 1; second.spawn_state = 1;
+  (void)qa_lmctf_context_set(qa_q2_lmctf_get_context(lmctf), a.id, first);
+  (void)qa_lmctf_context_set(qa_q2_lmctf_get_context(lmctf), b.id, second);
+  qa_lmctf_grapple_state hook;
+  qa_lmctf_grapple_state_init(&hook);
+  hook.has_hook = true; hook.hook = rune.id; hook.hook_state = 2; hook.hook_length = 40.5; hook.hook_held = true;
+  qa_lmctf_grapple_module_state_set(qa_q2_lmctf_get_grapple(lmctf), a.id, hook);
+  qa_save_value *value = qa_q2_lmctf_capture_value(lmctf);
+  CHECK(value != NULL);
+  size_t length = 0;
+  uint8_t *bytes = qa_encode_checkpoint_value(value, &length);
+  CHECK(bytes != NULL && length == strlen(LMCTF_CAPTURE_ORACLE) && memcmp(bytes, LMCTF_CAPTURE_ORACLE, length) == 0);
+  if (bytes != NULL && (length != strlen(LMCTF_CAPTURE_ORACLE) || memcmp(bytes, LMCTF_CAPTURE_ORACLE, length) != 0))
+    fprintf(stderr, "C capture: %.*s\n", (int)length, (const char *)bytes);
+  free(bytes);
+  qa_save_value_free(value);
+  qa_q2_lmctf_destroy(lmctf);
+  qa_session_actor_registry_close(actors);
+  qa_session_actor_registry_destroy(actors);
+  qa_identity_owner_destroy(&ids);
+  fixture_close(&fx);
 }
 
 static void test_lmctf_vote(void) {
@@ -805,6 +928,7 @@ static void test_lmctf_vote(void) {
   CHECK(!qa_lmctf_vote_started_at(vote, &started));
   CHECK(fx.destination_count == 1); /* 3 of 4 = 75% passes -> endLevel(null) */
   qa_q2_lmctf_destroy(lmctf);
+  fixture_close(&fx);
 }
 
 int main(void) {
@@ -814,6 +938,8 @@ int main(void) {
   test_ctf_match_and_checkpoint();
   test_lmctf_runtime();
   test_lmctf_vote();
+  test_lmctf_capture_value();
+  recorded_texts_free();
   if (failures) {
     fprintf(stderr, "%d/%d checks failed\n", failures, checks);
     return 1;

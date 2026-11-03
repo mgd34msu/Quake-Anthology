@@ -18,7 +18,7 @@
 typedef struct qa_q3_base_spawn_handlers_host {
   qa_q3_base_product product;
   qa_q3_misc_spawn_host misc;
-  qa_q3_mover_spawn_host movers;
+  qa_q3_mover_spawn_runtime *movers; /* TS host.movers.handlers() */
   qa_q3_trigger_host triggers;
   qa_q3_target_runtime *targets;
   qa_q3_ta_team_runtime *team;

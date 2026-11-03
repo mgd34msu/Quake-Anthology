@@ -103,9 +103,11 @@ void qa_prepare_patch_grids(qa_patch_grid *grids, size_t count, qa_scene_count_f
       for (size_t j = 0; j < count; j++) {
         if (!same_group(go, gr, &grids[j])) continue;
         while (stitch(&grids[i].mesh, &grids[j].mesh)) {
-          grids[j].lod_fixed = 0; grids[j].lod_stitched = (j == i) ? grids[j].lod_stitched : false;
+          /* TS replaces grids[j] with a fresh record (lodFixed 0, lodStitched false), the source grid included when
+           * it stitched itself: R_CreateSurfaceGridMesh zeroes the new grid, so it is visited again. */
+          grids[j].lod_fixed = 0; grids[j].lod_stitched = false;
           if (on_replaced) on_replaced(rctx, (double)j, &grids[j]);
-          stitch_count = stitch_count + 1;
+          stitch_count = (int32_t)((uint32_t)stitch_count + 1u); /* (stitchCount + 1) | 0 */
         }
       }
     }

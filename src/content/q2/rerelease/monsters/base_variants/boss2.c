@@ -23,15 +23,15 @@ static void attack_machinegun(qa_q2m_context *c) {
 static void attack_mg_fn(void *ctx, qa_q2m_context *c) { (void)ctx; attack_machinegun(c); }
 typedef struct rocket_shot { double flash, lead, spread; bool lower; } rocket_shot;
 static void fire_rocket(qa_q2m_context *c, bool predictive) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
   qa_vec3 right = qa_math_angle_vectors_rule(q2rm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).right;
   static const rocket_shot shots[4] = {
     {78, -0.1, 0.4, true}, {79, -0.05, 0.025, false}, {80, 0.05, -0.025, false}, {81, 0.1, -0.4, true}};
   for (int i = 0; i < 4; i++) {
-    qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, shots[i].flash));
+    qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, shots[i].flash));
     qa_vec3 direction;
     if (predictive) {
       if (!qa_q2rm_predicted_direction(c, start, 750, false, shots[i].lead, &direction)) continue;
@@ -46,15 +46,15 @@ static void fire_rocket(qa_q2m_context *c, bool predictive) {
   }
 }
 static void bullet(qa_q2m_context *c, double flash) {
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, flash));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, flash));
   qa_vec3 direction;
   if (!qa_q2rm_predicted_direction(c, start, 0, true, -0.2, &direction)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, start, direction, 6, 4, 900, 500, 0);
   qa_q2rm_monster_flash(c, flash, start, direction);
 }
 static void gib(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   q2rm_emit_effect(game, "q2:explosion1-big", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
   qa_q2bm_stop_loop(c);
@@ -80,7 +80,7 @@ static void gib(qa_q2m_context *c) {
   static const char *const arms[2] = {"models/monsters/boss2/gibs/larm.md2", "models/monsters/boss2/gibs/rarm.md2"};
   for (int f = 0; f < 3; f++)
     for (int p = 0; p < 2; p++) {
-      qa_q2f_entity *piece = qa_q2m_throw_gib(entity, game, arms[p], 500, skin_up);
+      qa_q2_entity *piece = qa_q2m_throw_gib(entity, game, arms[p], 500, skin_up);
       if (piece) {
         piece->scale = (entity->scale != 0 ? entity->scale : 1) * factors[f];
         game->show(game->ctx, piece);
@@ -111,8 +111,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time) return;
@@ -124,8 +124,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (q2rm_has(entity->spawnflags, 65536)) {
     if (qa_q2rm_check_gib(c)) { gib(c); return; }
@@ -134,7 +134,7 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
     q2rm_sound(game, entity, "bosshovr/bhvdeth1.wav", true, 2, true, 1, true, 0);
     state->dead = true; state->can_take_damage = false; entity->count = 0;
     q2rm_set_damageable(game, entity, false);
-    qa_q2f_body_changes change;
+    qa_q2_body_changes change;
     memset(&change, 0, sizeof change);
     change.has_velocity = true; change.velocity = q2rm_zero();
     q2rm_move_body(game, entity, change, false, false);
@@ -156,13 +156,13 @@ static void rocket_fn(void *ctx, qa_q2m_context *c) {
 }
 static void rocket64_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
   qa_vec3 right = qa_math_angle_vectors_rule(q2rm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).right;
   double size = entity->scale != 0 ? entity->scale : 1;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 78));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 78));
   start.z += 10 * size;
   start = qa_sub3_double(start, qa_scale3_double(right, (2 + fmod(entity->count, 4) * 8) * size));
   entity->count++;
@@ -182,12 +182,12 @@ static void hyper_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   double id = q2rm_has(entity->frame, 1) ? qa_q2rm_rereleaseFlash_value.BOSS2_MACHINEGUN_L2
                                           : qa_q2rm_rereleaseFlash_value.BOSS2_MACHINEGUN_R2;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
-  qa_q2f_entity *enemy_entity = game->entity(game->ctx, entity->has_enemy ? &entity->enemy : NULL);
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
+  qa_q2_entity *enemy_entity = game->entity(game->ctx, entity->has_enemy ? &entity->enemy : NULL);
   qa_vec3 target = enemy.origin;
   target.z += enemy_entity ? enemy_entity->view_height : 22;
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(target, start));
@@ -199,7 +199,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   bounds.max.z = 50;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -237,8 +237,8 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_boss2_definition(void) {
   boss2_definition.move_count = qa_q2rm_boss2_move_count;
   boss2_definition.has_yaw_speed = true;
   boss2_definition.yaw_speed = 50;
-  qa_q2f_named_think *think_defs = malloc(sizeof *think_defs);
-  if (!think_defs) qa_q2f_error("Out of memory creating rerelease boss2 definition");
+  qa_q2_named_think *think_defs = malloc(sizeof *think_defs);
+  if (!think_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease boss2 definition");
   think_defs[0].name = "BossExplode_think";
   think_defs[0].cb = qa_q2rm_boss_explode_think();
   boss2_definition.has_source_callbacks = true;
@@ -251,7 +251,7 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_boss2_definition(void) {
   boss2_definition.attack = (qa_q2m_handler){NULL, attack_fn};
   boss2_definition.reactions.pain = pain_fn;
   boss2_definition.reactions.die = die_fn;
-  boss2_definition.callbacks = qa_q2rm_merge_callbacks(
+  boss2_definition.callbacks = qa_q2rm_merge_callbacks(NULL, 
       boss2_definition.callbacks, boss2_definition.callback_count,
       extra_callbacks, sizeof extra_callbacks / sizeof extra_callbacks[0], &boss2_definition.callback_count);
   boss2_ready = true;

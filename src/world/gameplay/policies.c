@@ -1,5 +1,6 @@
 /* Port of src/world/gameplay/policies.ts. GPL-2.0-or-later. */
 #include "qa/world/gameplay/policies.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -49,9 +50,12 @@ static const qa_combat_state *attacker_of(qa_current_combat_state current,
   return result.has_value ? storage : NULL;
 }
 
+/* The progress owns the copy; the authority frees it once committed
+ * (authority.c release_progress_mutations). No mutations: NULL. */
 static qa_damage_mutation *copy_mutations(const qa_damage_mutation *mutations, size_t count) {
-  qa_damage_mutation *copy = xcalloc((count != 0 ? count : 1) * sizeof *copy);
-  if (count != 0) memcpy(copy, mutations, count * sizeof *copy);
+  if (count == 0) return NULL;
+  qa_damage_mutation *copy = xcalloc(count * sizeof *copy);
+  memcpy(copy, mutations, count * sizeof *copy);
   return copy;
 }
 static void decision_progress(qa_combat_progress *out, qa_damage_request request,
@@ -84,6 +88,7 @@ typedef struct stage_state {
   void *resume_ctx;
   void (*resume)(void *ctx, double saved, qa_current_combat_state current,
                  qa_combat_progress *out);
+  void (*resume_discard)(void *ctx);
 } stage_state;
 static qa_armor_result stage_fallback(void *ctx, qa_armor_state current) {
   stage_state *state = ctx;
@@ -99,11 +104,19 @@ static void stage_resume(void *ctx, qa_armor_stage_result result,
   free(state);
   resume(resume_ctx, saved, current, out);
 }
+/* Drop a continuation state without resuming it (qa_combat_progress.discard). */
+static void discard_flat(void *ctx) { free(ctx); }
+static void stage_discard(void *ctx) {
+  stage_state *state = ctx;
+  if (state->resume_discard != NULL) state->resume_discard(state->resume_ctx);
+  free(state);
+}
 static void armor_stage(qa_combat_progress *out, qa_protection_channel channel,
                         qa_damage_request request, double amount, qa_armor_damage_flags flags,
                         qa_victim_armor_policy armor, void *resume_ctx,
                         void (*resume)(void *ctx, double saved, qa_current_combat_state current,
-                                       qa_combat_progress *out)) {
+                                       qa_combat_progress *out),
+                        void (*resume_discard)(void *ctx)) {
   const char *stage = channel == QA_PROTECTION_POWERED ? "power" : "regular";
   qa_armor_damage_flags stage_flags = flags;
   stage_flags.has_stage = true;
@@ -115,6 +128,7 @@ static void armor_stage(qa_combat_progress *out, qa_protection_channel channel,
   state->armor = armor;
   state->resume_ctx = resume_ctx;
   state->resume = resume;
+  state->resume_discard = resume_discard;
   memset(out, 0, sizeof *out);
   out->kind = "armor-stage";
   out->channel = channel;
@@ -128,11 +142,13 @@ static void armor_stage(qa_combat_progress *out, qa_protection_channel channel,
   out->ctx = state;
   out->fallback = stage_fallback;
   out->resume_armor = stage_resume;
+  out->discard = stage_discard;
 }
 static void continuation(qa_combat_progress *out, qa_damage_request request,
                          const qa_damage_mutation *mutations, size_t count, void *ctx,
                          void (*resume)(void *ctx, qa_current_combat_state current,
-                                        qa_combat_progress *out)) {
+                                        qa_combat_progress *out),
+                         void (*discard)(void *ctx)) {
   memset(out, 0, sizeof *out);
   out->kind = "source-continuation";
   out->request = request;
@@ -140,6 +156,7 @@ static void continuation(qa_combat_progress *out, qa_damage_request request,
   out->mutation_count = count;
   out->ctx = ctx;
   out->resume_source = resume;
+  out->discard = discard;
 }
 
 /* ================= Q1 ================= */
@@ -237,7 +254,7 @@ static void q1_after_armor(q1_options *options, qa_damage_request request,
   state->context = context;
   state->damage = damage;
   state->take = take;
-  continuation(out, request, mutations, count, state, q1_health_resume);
+  continuation(out, request, mutations, count, state, q1_health_resume, discard_flat);
 }
 
 typedef struct q1_regular_state {
@@ -276,7 +293,7 @@ static void q1_power_resume(void *ctx, double power_saved, qa_current_combat_sta
   next->power_saved = power_saved;
   qa_attack_damage_flags flags = qa_attack_damage_flags_of(state->request);
   armor_stage(out, QA_PROTECTION_REGULAR, state->request, state->damage - power_saved,
-              flags.flags, state->options->value.armor, next, q1_regular_resume);
+              flags.flags, state->options->value.armor, next, q1_regular_resume, discard_flat);
   free(state);
 }
 typedef struct q1_gate_state {
@@ -313,7 +330,7 @@ static void q1_gate_resume(void *ctx, qa_current_combat_state current, qa_combat
   next->damage = state->damage;
   qa_attack_damage_flags flags = qa_attack_damage_flags_of(state->request);
   armor_stage(out, QA_PROTECTION_POWERED, state->request, state->damage, flags.flags,
-              state->options->value.armor, next, q1_power_resume);
+              state->options->value.armor, next, q1_power_resume, discard_flat);
   free(state);
 }
 
@@ -364,7 +381,7 @@ static void q1_decide(void *ctx, qa_damage_request request, qa_combat_state targ
   state->request = request;
   state->context = context;
   state->damage = damage;
-  continuation(out, request, NULL, 0, state, q1_gate_resume);
+  continuation(out, request, NULL, 0, state, q1_gate_resume, discard_flat);
 }
 qa_combat_policy qa_create_q1_combat_policy(qa_q1_combat_policy_options options) {
   q1_options *state = xcalloc(sizeof *state);
@@ -448,6 +465,11 @@ static void q2_regular_zero(void *ctx, qa_current_combat_state current, qa_comba
   free(state->final);
   free(state);
 }
+static void q2_zero_discard(void *ctx) {
+  q2_zero_state *state = ctx;
+  free(state->final);
+  free(state);
+}
 
 typedef struct q2_after_power_state {
   q2_options *options;
@@ -488,11 +510,11 @@ static void q2_after_power(double power_saved, q2_after_power_state *state,
   final->after_power_take = after_power_take;
   if (allowed) {
     armor_stage(out, QA_PROTECTION_REGULAR, state->request, after_power_take,
-                state->flags.flags, state->options->value.armor, final, q2_regular_resume);
+                state->flags.flags, state->options->value.armor, final, q2_regular_resume, discard_flat);
   } else {
     q2_zero_state *zero = xcalloc(sizeof *zero);
     zero->final = final;
-    continuation(out, state->request, NULL, 0, zero, q2_regular_zero);
+    continuation(out, state->request, NULL, 0, zero, q2_regular_zero, q2_zero_discard);
   }
 }
 static void q2_power_resume(void *ctx, double saved, qa_current_combat_state current,
@@ -508,6 +530,11 @@ static void q2_power_wrap_resume(void *ctx, qa_current_combat_state current,
   free(wrap->next_state);
   free(wrap);
 }
+static void q2_power_wrap_discard(void *ctx) {
+  q2_power_wrap *wrap = ctx;
+  free(wrap->next_state);
+  free(wrap);
+}
 static void q2_power_resume(void *ctx, double saved, qa_current_combat_state current,
                             qa_combat_progress *out) {
   (void)current;
@@ -515,7 +542,7 @@ static void q2_power_resume(void *ctx, double saved, qa_current_combat_state cur
   q2_power_wrap *wrap = xcalloc(sizeof *wrap);
   wrap->next_state = state;
   wrap->saved = saved;
-  continuation(out, state->request, NULL, 0, wrap, q2_power_wrap_resume);
+  continuation(out, state->request, NULL, 0, wrap, q2_power_wrap_resume, q2_power_wrap_discard);
 }
 typedef struct q2_power_zero {
   q2_after_power_state *next_state;
@@ -524,6 +551,11 @@ static void q2_power_zero_resume(void *ctx, qa_current_combat_state current,
                                  qa_combat_progress *out) {
   q2_power_zero *zero = ctx;
   q2_after_power(0, zero->next_state, current, out);
+  free(zero->next_state);
+  free(zero);
+}
+static void q2_power_zero_discard(void *ctx) {
+  q2_power_zero *zero = ctx;
   free(zero->next_state);
   free(zero);
 }
@@ -564,10 +596,10 @@ static void q2_step2_resume(void *ctx, qa_current_combat_state current, qa_comba
   if (!allowed) {
     q2_power_zero *zero = xcalloc(sizeof *zero);
     zero->next_state = next;
-    continuation(out, state->request, NULL, 0, zero, q2_power_zero_resume);
+    continuation(out, state->request, NULL, 0, zero, q2_power_zero_resume, q2_power_zero_discard);
   } else {
     armor_stage(out, QA_PROTECTION_POWERED, state->request, amount, state->flags.flags,
-                state->options->value.armor, next, q2_power_resume);
+                state->options->value.armor, next, q2_power_resume, discard_flat);
   }
   free(state);
 }
@@ -602,7 +634,7 @@ static void q2_step1_resume(void *ctx, qa_current_combat_state current, qa_comba
                          : trunc(state->request.knockback);
   if (!state->flags.no_knockback && state->context.movable) {
     double coefficient = state->context.player && self_damage(state->request) ? 1600 : 500;
-    double divisor = victim.value.mass > 50 ? victim.value.mass : 50;
+    double divisor = qa_js_max(50, victim.value.mass);
     double amount = number_for(state->context.arithmetic,
         number_for(state->context.arithmetic, coefficient * knockback) / divisor);
     if (amount != 0) {
@@ -620,7 +652,7 @@ static void q2_step1_resume(void *ctx, qa_current_combat_state current, qa_comba
   next->flags = state->flags;
   next->damage = damage;
   next->knockback = knockback;
-  continuation(out, state->request, mutations, count, next, q2_step2_resume);
+  continuation(out, state->request, mutations, count, next, q2_step2_resume, discard_flat);
   free(state);
 }
 
@@ -636,14 +668,11 @@ static void q2_decide(void *ctx, qa_damage_request request, qa_combat_state targ
   double damage = trunc(request.amount);
   if (!self_damage(request) && context.team_damage_enabled && same_team(target, attacker) &&
       !context.friendly_fire && !context.nuke) damage = 0;
-  if (context.easy_skill && !context.deathmatch && context.player) {
-    double halved = trunc(damage * 0.5);
-    damage = halved > 1 ? halved : 1;
-  }
-  if (context.defender_sphere && context.player) {
-    double halved = trunc(damage * 0.5);
-    damage = halved > 1 ? halved : 1;
-  }
+  /* Math.max: a NaN amount stays NaN. */
+  if (context.easy_skill && !context.deathmatch && context.player)
+    damage = qa_js_max(1, trunc(damage * 0.5));
+  if (context.defender_sphere && context.player)
+    damage = qa_js_max(1, trunc(damage * 0.5));
   if (!str_eq(request.delivery, "radius") && context.monster && context.attacker_player &&
       !context.has_enemy && target.health > 0) damage = trunc(damage * 2);
   q2_step1_state *state = xcalloc(sizeof *state);
@@ -652,7 +681,7 @@ static void q2_decide(void *ctx, qa_damage_request request, qa_combat_state targ
   state->context = context;
   state->flags = flags;
   state->base_damage = damage;
-  continuation(out, request, NULL, 0, state, q2_step1_resume);
+  continuation(out, request, NULL, 0, state, q2_step1_resume, discard_flat);
 }
 static const char *q2_after_health(void *ctx, qa_damage_decision decision,
                                    qa_current_combat_state current) {
@@ -695,7 +724,7 @@ static void q3_regular_resume(void *ctx, double saved, qa_current_combat_state c
   q3_regular_state *state = ctx;
   qa_combat_state_result latest = current.target(current.ctx);
   if (!latest.has_value) { none_progress(out, state->request); free(state); return; }
-  double take = (double)(int32_t)(state->amount - (state->power_saved + saved));
+  double take = (double)qa_js_to_int32(state->amount - (state->power_saved + saved));
   qa_combat_result feedback;
   memset(&feedback, 0, sizeof feedback);
   feedback.has_feedback = true;
@@ -708,7 +737,7 @@ static void q3_regular_resume(void *ctx, double saved, qa_current_combat_state c
     free(state);
     return;
   }
-  double health = (double)(int32_t)(latest.value.health - take);
+  double health = (double)qa_js_to_int32(latest.value.health - take);
   if (health < -999) health = -999;
   qa_damage_mutation mutation;
   memset(&mutation, 0, sizeof mutation);
@@ -739,7 +768,7 @@ static void q3_power_resume(void *ctx, double power_saved, qa_current_combat_sta
   next->knockback = state->knockback;
   next->battlesuit = state->battlesuit;
   armor_stage(out, QA_PROTECTION_REGULAR, state->request, state->amount - power_saved,
-              state->flags.flags, state->options->value.armor, next, q3_regular_resume);
+              state->flags.flags, state->options->value.armor, next, q3_regular_resume, discard_flat);
   free(state);
 }
 typedef struct q3_stage_state {
@@ -760,7 +789,7 @@ static void q3_stage_resume(void *ctx, qa_current_combat_state current, qa_comba
   next->knockback = state->knockback;
   next->battlesuit = state->battlesuit;
   armor_stage(out, QA_PROTECTION_POWERED, state->request, state->amount, state->flags.flags,
-              state->options->value.armor, next, q3_power_resume);
+              state->options->value.armor, next, q3_power_resume, discard_flat);
   free(state);
 }
 static void q3_decide(void *ctx, qa_damage_request request, qa_combat_state target,
@@ -782,7 +811,7 @@ static void q3_decide(void *ctx, qa_damage_request request, qa_combat_state targ
     double maximum = context.attacker_guard ? trunc(context.attacker_max_health / 2)
                                             : context.attacker_max_health;
     /* TS Math.trunc(Math.imul(damage, maximum) / 100). */
-    int32_t product = (int32_t)((uint32_t)(int32_t)damage * (uint32_t)(int32_t)maximum);
+    int32_t product = (int32_t)((uint32_t)qa_js_to_int32(damage) * (uint32_t)qa_js_to_int32(maximum));
     damage = trunc((double)product / 100);
   }
   qa_damage_mutation mutations[1];
@@ -791,7 +820,7 @@ static void q3_decide(void *ctx, qa_damage_request request, qa_combat_state targ
                              (target.has_no_knockback && target.no_knockback) ||
                              flags.no_knockback
                          ? 0
-                         : (damage < 200 ? damage : 200);
+                         : qa_js_min(damage, 200);
   bool battlesuit = false;
   if (context.player && !context.no_knockback &&
       !(target.has_no_knockback && target.no_knockback) && !flags.no_knockback) {
@@ -838,7 +867,7 @@ static void q3_decide(void *ctx, qa_damage_request request, qa_combat_state targ
   state->amount = damage;
   state->knockback = knockback;
   state->battlesuit = battlesuit;
-  continuation(out, request, mutations, count, state, q3_stage_resume);
+  continuation(out, request, mutations, count, state, q3_stage_resume, discard_flat);
 }
 qa_combat_policy qa_create_q3_combat_policy(qa_q3_combat_policy_options options) {
   q3_options *state = xcalloc(sizeof *state);
@@ -861,6 +890,9 @@ static qa_armor_result native_armor_call(void *ctx, qa_damage_request request,
   native_armor_state *state = ctx;
   return qa_absorb_native_armor(armor, damage, flags, state->context(state->ctx, request));
 }
+void qa_combat_policy_free(qa_combat_policy policy) { free(policy.ctx); }
+void qa_victim_armor_policy_free(qa_victim_armor_policy policy) { free(policy.ctx); }
+
 qa_victim_armor_policy qa_native_victim_armor(
     qa_victim_armor_context (*context)(void *ctx, qa_damage_request request), void *ctx) {
   native_armor_state *state = xcalloc(sizeof *state);

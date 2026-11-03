@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/player-state.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/player_state.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <string.h>
@@ -14,7 +15,7 @@ static double f32(double value) { return (double)(float)value; }
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -200,10 +201,12 @@ void qa_q3_pres_player_state_runtime_check_playerstate_events(runtime_t *runtime
   }
   qa_q3_pres_client_entity *entity = &state->predicted_player_entity;
   for (double index = (double)to_int32(current->event_sequence - 2); index < current->event_sequence; index++) {
+    double left;
+    double right;
     if (index >= previous->event_sequence ||
         (index > (double)to_int32(previous->event_sequence - 2) &&
-         qa_q3_base_player_state_slots_get(&current->events, to_int32(index) & 1) !=
-             qa_q3_base_player_state_slots_get(&previous->events, to_int32(index) & 1))) {
+         (left = qa_q3_base_player_state_slots_get(&current->events, to_int32(index) & 1), right = qa_q3_base_player_state_slots_get(&previous->events, to_int32(index) & 1), left !=
+             right))) {
       double event = qa_q3_base_player_state_slots_get(&current->events, to_int32(index) & 1);
       entity->current_state.event = to_int32(event);
       entity->current_state.event_parm =
@@ -220,10 +223,12 @@ void qa_q3_pres_player_state_runtime_check_changed_predictable_events(runtime_t 
   qa_q3_pres_client_game_state *state = runtime->state;
   qa_q3_pres_client_entity *entity = &state->predicted_player_entity;
   for (double index = (double)to_int32(ps->event_sequence - 2); index < ps->event_sequence; index++) {
+    double left;
+    double right;
     if (index >= state->event_sequence) continue;
     if (index > (double)to_int32(state->event_sequence - 16) &&
-        qa_q3_base_player_state_slots_get(&ps->events, to_int32(index) & 1) !=
-            qa_q3_base_player_state_slots_get(&state->predictable_events, to_int32(index) & 15)) {
+        (left = qa_q3_base_player_state_slots_get(&ps->events, to_int32(index) & 1), right = qa_q3_base_player_state_slots_get(&state->predictable_events, to_int32(index) & 15), left !=
+            right)) {
       double event = qa_q3_base_player_state_slots_get(&ps->events, to_int32(index) & 1);
       entity->current_state.event = to_int32(event);
       entity->current_state.event_parm =
@@ -252,11 +257,19 @@ static void push_reward(runtime_t *runtime, qa_pcm_sound *sound, const qa_q3_pre
 
 void qa_q3_pres_player_state_runtime_check_local_sounds(runtime_t *runtime,
     const qa_q3_base_source_player_state *ps, const qa_q3_base_source_player_state *previous) {
-  if (pers_get(ps, QA_Q3_BASE_PERS_TEAM) != pers_get(previous, QA_Q3_BASE_PERS_TEAM)) return;
+  double left5;
+  double right5;
+  double left4;
+  double right4;
+  double left3 = pers_get(ps, QA_Q3_BASE_PERS_TEAM);
+  double right3 = pers_get(previous, QA_Q3_BASE_PERS_TEAM);
+  if (left3 != right3) return;
   qa_q3_pres_player_state_host *host = &runtime->host;
   qa_q3_pres_client_game_state *state = runtime->state;
   qa_q3_pres_client_game_static_state *cgs = host->static_state;
-  if (pers_get(ps, QA_Q3_BASE_PERS_HITS) > pers_get(previous, QA_Q3_BASE_PERS_HITS)) {
+  double left2 = pers_get(ps, QA_Q3_BASE_PERS_HITS);
+  double right2 = pers_get(previous, QA_Q3_BASE_PERS_HITS);
+  if (left2 > right2) {
     int32_t armor = to_int32(pers_get(ps, QA_Q3_BASE_PERS_ATTACKEE_ARMOR)) & 255;
     int32_t health = to_int32(pers_get(ps, QA_Q3_BASE_PERS_ATTACKEE_ARMOR)) >> 8;
     if (host->product == QA_Q3_BASE_PRODUCT_MISSIONPACK && armor > 50) {
@@ -266,7 +279,7 @@ void qa_q3_pres_player_state_runtime_check_local_sounds(runtime_t *runtime,
     } else {
       local_sound(runtime, QA_Q3_PRES_HIT_SOUND, LOCAL_SOUND);
     }
-  } else if (pers_get(ps, QA_Q3_BASE_PERS_HITS) < pers_get(previous, QA_Q3_BASE_PERS_HITS)) {
+  } else if ((left5 = pers_get(ps, QA_Q3_BASE_PERS_HITS), right5 = pers_get(previous, QA_Q3_BASE_PERS_HITS), left5 < right5)) {
     local_sound(runtime, QA_Q3_PRES_HIT_TEAM_SOUND, LOCAL_SOUND);
   }
   double ps_health = qa_q3_base_player_state_record_health(ps);
@@ -313,8 +326,10 @@ void qa_q3_pres_player_state_runtime_check_local_sounds(runtime_t *runtime,
     AWARD(host->sounds[QA_Q3_PRES_ASSIST_SOUND], QA_Q3_PRES_MEDAL_ASSIST, QA_Q3_BASE_PERS_ASSIST_COUNT);
   }
   if (CHANGED(QA_Q3_BASE_PERS_PLAYEREVENTS)) {
-    int32_t changed_bits = to_int32(pers_get(ps, QA_Q3_BASE_PERS_PLAYEREVENTS)) ^
-                           to_int32(pers_get(previous, QA_Q3_BASE_PERS_PLAYEREVENTS));
+    int32_t left = to_int32(pers_get(ps, QA_Q3_BASE_PERS_PLAYEREVENTS));
+    int32_t right = to_int32(pers_get(previous, QA_Q3_BASE_PERS_PLAYEREVENTS));
+    int32_t changed_bits = left ^
+                           right;
     if ((changed_bits & 1) != 0) local_sound(runtime, QA_Q3_PRES_DENIED_SOUND, ANNOUNCER);
     else if ((changed_bits & 2) != 0) local_sound(runtime, QA_Q3_PRES_HUMILIATION_SOUND, ANNOUNCER);
     else if ((changed_bits & 4) != 0) local_sound(runtime, QA_Q3_PRES_HOLY_SHIT_SOUND, ANNOUNCER);
@@ -334,7 +349,7 @@ void qa_q3_pres_player_state_runtime_check_local_sounds(runtime_t *runtime,
     }
   }
   if (!rewarded && state->warmup == 0 &&
-      pers_get(ps, QA_Q3_BASE_PERS_RANK) != pers_get(previous, QA_Q3_BASE_PERS_RANK) &&
+      (left4 = pers_get(ps, QA_Q3_BASE_PERS_RANK), right4 = pers_get(previous, QA_Q3_BASE_PERS_RANK), left4 != right4) &&
       cgs->game_type < QA_Q3_BASE_GT_TEAM) {
     double rank = pers_get(ps, QA_Q3_BASE_PERS_RANK);
     if (rank == 0) buffered(runtime, QA_Q3_PRES_TAKEN_LEAD_SOUND);
@@ -386,7 +401,9 @@ void qa_q3_pres_player_state_runtime_transition_player_state(runtime_t *runtime,
     qa_q3_pres_player_state_runtime_damage_feedback(runtime, current->damage_yaw, current->damage_pitch,
         current->damage_count);
   }
-  if (pers_get(current, QA_Q3_BASE_PERS_SPAWN_COUNT) != pers_get(previous, QA_Q3_BASE_PERS_SPAWN_COUNT)) {
+  double left = pers_get(current, QA_Q3_BASE_PERS_SPAWN_COUNT);
+  double right = pers_get(previous, QA_Q3_BASE_PERS_SPAWN_COUNT);
+  if (left != right) {
     qa_q3_pres_player_state_runtime_respawn(runtime);
   }
   if (state->map_restart) {

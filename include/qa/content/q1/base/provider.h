@@ -6,7 +6,7 @@
 #include <stddef.h>
 
 #include "qa/content/q1/base/creatures.h"
-#include "qa/content/q1/base/foundation_types.h"
+#include "qa/content/q1/foundation/entity_services.h"
 #include "qa/content/q1/base/monsters.h"
 
 typedef struct qa_q1_level_rules qa_q1_level_rules;
@@ -44,11 +44,11 @@ size_t qa_q1_base_classnames(const char *const **out);
 
 typedef struct qa_q1_base qa_q1_base;
 /* TS q1Base(game): aborts when base content was not registered. */
-qa_q1_base *qa_q1_base_for(qa_q1b_game *game);
-qa_q1_base *qa_q1_base_create(qa_q1b_game *game, const qa_q1_base_options *options);
-qa_q1_base *qa_q1_register_base(qa_q1b_game *game, const qa_q1_base_options *options);
+qa_q1_base *qa_q1_base_for(qa_q1_services *game);
+qa_q1_base *qa_q1_base_create(qa_q1_services *game, const qa_q1_base_options *options);
+qa_q1_base *qa_q1_register_base(qa_q1_services *game, const qa_q1_base_options *options);
 void qa_q1_base_destroy(qa_q1_base *base);
-qa_q1b_game *qa_q1_base_game(qa_q1_base *base);
+qa_q1_services *qa_q1_base_game(qa_q1_base *base);
 const qa_q1_base_options *qa_q1_base_options_of(qa_q1_base *base);
 qa_q1_creatures *qa_q1_base_creatures(qa_q1_base *base);
 qa_q1_level_rules *qa_q1_base_level_rules(qa_q1_base *base);
@@ -60,9 +60,12 @@ void qa_q1_base_register_kill_count_rule(qa_q1_base *base, const char *id,
                                          qa_q1_kill_count_rule_fn rule, void *ctx);
 bool qa_q1_base_count_monster_kill(qa_q1_base *base, qa_q1_base_monster *monster);
 const char *qa_q1_base_next_hell_knight_melee(qa_q1_base *base);
-void qa_q1_base_spawn_lightning(qa_q1_base *base, qa_q1b_actor *entity);
+void qa_q1_base_spawn_lightning(qa_q1_base *base, qa_q1_actor *entity);
 void qa_q1_base_finale(qa_q1_base *base, qa_q1_base_monster *monster);
 void qa_q1_base_finish_finale(qa_q1_base *base, qa_q1_base_monster *monster);
+/* This object as TS MonsterServices (Q1Base implements it), e.g. for
+ * `new BaseMonster(game, entity, spec, context.base, source)`. */
+qa_q1_monster_services qa_q1_base_as_monster_services(qa_q1_base *base);
 void qa_q1_base_dismiss_finale(qa_q1_base *base);
 void qa_q1_base_reset_finale(qa_q1_base *base);
 bool qa_q1_base_has_finished_finale(qa_q1_base *base);

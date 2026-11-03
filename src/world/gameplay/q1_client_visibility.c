@@ -64,10 +64,12 @@ bool qa_q1_client_visibility_check(qa_q1_client_visibility *visibility, qa_q1_cl
       client = visibility->client(visibility->client_ctx, slot);
     }
     qa_q1_client_eye client_eye = {client.origin, client.view_offset};
+    /* The new state literal is built (eyeCluster runs) before it replaces the old. */
+    double cluster = eye_cluster(visibility, client_eye, numeric);
     visibility->state.last_check_slot = (double)slot;
     visibility->state.last_check_time = time_seconds;
     visibility->state.has_checked_cluster = true;
-    visibility->state.checked_cluster = eye_cluster(visibility, client_eye, numeric);
+    visibility->state.checked_cluster = cluster;
   }
   qa_q1_visibility_client client =
       visibility->client(visibility->client_ctx, (int64_t)visibility->state.last_check_slot);

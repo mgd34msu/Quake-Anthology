@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/monsters/tank.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/monsters/tank.h"
+#include "qa/foundation/js.h"
 
 #include "base_internal.h"
 #include "qa/content/q2/base/monsters/common.h"
@@ -44,7 +45,7 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
   if (qa_q2m_health(c->game, &c->entity->actor.id) < c->entity->max_health / 2)
-    c->entity->skin = (double)((uint32_t)c->entity->skin | 1u);
+    c->entity->skin = (double)(qa_js_to_int32(qa_js_to_uint32(c->entity->skin) | 1u));
   if (reaction.damage <= 10 || q2bm_now(c->game) < c->state->pain_time) return;
   if (reaction.damage <= 30 && q2bm_rnd(c->game) > 0.2) return;
   double frame = c->entity->frame;
@@ -60,8 +61,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2m_health(game, &entity->actor.id) <= state->gib_health) {

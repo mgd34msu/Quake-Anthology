@@ -32,5 +32,5 @@ bool qa_q2_ctf_grapple_module_fire_grapple_default(qa_q2_ctf_grapple *grapple, q
 void qa_q2_ctf_grapple_module_player_frame(qa_q2_ctf_grapple *grapple, qa_q2_entity *player, qa_q2_game_services *game, const char *binding);
 void qa_q2_ctf_grapple_module_command(qa_q2_ctf_grapple *grapple, qa_q2_entity *player, bool pressed);
 void qa_q2_ctf_grapple_module_register(qa_q2_ctf_grapple *grapple);
-void qa_q2_ctf_grapple_module_fire(qa_q2_ctf_grapple *grapple, qa_q2mp_weapon_context *context);
+void qa_q2_ctf_grapple_module_fire(qa_q2_ctf_grapple *grapple, qa_q2w_context *context);
 #endif

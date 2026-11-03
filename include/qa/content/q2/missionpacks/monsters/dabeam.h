@@ -7,10 +7,10 @@
 
 #include "qa/content/q2/foundation/monsters/index.h"
 
-qa_q2f_callback_definitions qa_q2mpm_monster_dabeam_callbacks(void);
-qa_q2f_think qa_q2mpm_dabeam_hit_think(void);
+qa_q2_callback_definitions qa_q2mpm_monster_dabeam_callbacks(void);
+qa_q2_think qa_q2mpm_dabeam_hit_think(void);
 /* target NULL mirrors TS null. */
-qa_q2f_entity *qa_q2mpm_monster_dabeam(qa_q2f_entity *owner, qa_q2f_game *game, const qa_actor_id *target,
+qa_q2_entity *qa_q2mpm_monster_dabeam(qa_q2_entity *owner, qa_q2_game_services *game, const qa_actor_id *target,
                                        qa_vec3 origin, qa_vec3 angles, double damage, bool medic);
 
 #endif

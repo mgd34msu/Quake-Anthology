@@ -1,5 +1,6 @@
 /* Port of src/text/truetype.ts. GPL-2.0-or-later. */
 #include "qa/text/truetype.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <setjmp.h>
@@ -12,6 +13,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 /* Internal error channel standing in for the BinaryError/RangeError
  * throws parseFont catches. Aborts would change observable behavior. */
@@ -843,6 +845,22 @@ static bool private_entry_of(tt_err *err, const tt_cff_dict *dict,
   return true;
 }
 
+/* DataView position ToIndex(value): NaN is 0, fractions truncate; a negative or
+ * huge position fails the bounds check as the TS RangeError does (no C cast of
+ * NaN or an out-of-range double). */
+static int64_t cff_position(double value) {
+  if (isnan(value)) return 0;
+  double t = trunc(value);
+  if (t < 0) return -1;
+  return t > 9007199254740992.0 ? (int64_t)9007199254740992LL : (int64_t)t;
+}
+/* Typed-array subarray bound: relative index clamped to 0..length. */
+static int64_t subarray_bound(double value, size_t length) {
+  double relative = isnan(value) ? 0 : trunc(value);
+  double from_end = (double)length + relative;
+  double bound = relative < 0 ? (from_end > 0 ? from_end : 0) : (relative < (double)length ? relative : (double)length);
+  return (int64_t)bound;
+}
 static void parse_private_and_local_subrs(tt_err *err, tt_slice buf,
                                           tt_slice view, bool have_private,
                                           double size, double offset,
@@ -855,15 +873,12 @@ static void parse_private_and_local_subrs(tt_err *err, tt_slice buf,
     *out_bias = subr_bias(0);
     return;
   }
-  int64_t off = (int64_t)offset;
-  int64_t sz = (int64_t)size;
-  /* buf.subarray(offset, offset+size) clamps like a typed array. */
+  /* buf.subarray(offset, offset + size): each bound is ToIntegerOrInfinity (NaN to
+   * 0), a negative bound counts from the end, and both clamp to the length. */
   tt_slice priv;
-  if (off < 0) off = 0;
-  if (off > (int64_t)buf.n) off = (int64_t)buf.n;
-  int64_t end = (int64_t)offset + sz;
+  int64_t off = subarray_bound(offset, buf.n);
+  int64_t end = subarray_bound(offset + size, buf.n);
   if (end < off) end = off;
-  if (end > (int64_t)buf.n) end = (int64_t)buf.n;
   priv.p = buf.p + off;
   priv.n = (size_t)(end - off);
   tt_cff_dict priv_dict = parse_cff_dict(err, priv);
@@ -875,7 +890,7 @@ static void parse_private_and_local_subrs(tt_err *err, tt_slice buf,
   }
   double rel = dict_at(err, subrs_rel, 0, "subrsRel");
   cff_dict_free(&priv_dict);
-  tt_cff_index_result idx = read_cff_index(err, buf, view, (int64_t)offset + (int64_t)rel);
+  tt_cff_index_result idx = read_cff_index(err, buf, view, cff_position(offset + rel));
   *out_subrs = idx.items;
   *out_bias = subr_bias((int64_t)idx.items.n);
 }
@@ -946,7 +961,7 @@ static bool parse_cff(tt_err *err, tt_slice buf, int64_t table_offset,
     return false;
   }
   double cs_offset = dict_at(err, cs_off, 0, "charStringsOff");
-  tt_cff_index_result cs_idx = read_cff_index(err, cff, cff, (int64_t)cs_offset);
+  tt_cff_index_result cs_idx = read_cff_index(err, cff, cff, cff_position(cs_offset));
   out->char_strings = cs_idx.items;
   out->is_cid = cff_dict_get(&top_dict, 1230) != NULL;
   out->global_subrs = global_idx.items;
@@ -966,7 +981,7 @@ static bool parse_cff(tt_err *err, tt_slice buf, int64_t table_offset,
     if (have_fd_select) fd_select_offset = dict_at(err, fd_select_off, 0, "fdSelectOff");
     if (have_fd_array) {
       tt_cff_index_result fd_idx =
-          read_cff_index(err, cff, cff, (int64_t)fd_array_offset);
+          read_cff_index(err, cff, cff, cff_position(fd_array_offset));
       out->fd_count = fd_idx.items.n;
       out->fd_local_subrs = (tt_slice_list *)tt_calloc(
           err, out->fd_count, sizeof(tt_slice_list));
@@ -984,7 +999,7 @@ static bool parse_cff(tt_err *err, tt_slice buf, int64_t table_offset,
       free(fd_idx.items.v);
     }
     if (have_fd_select) {
-      out->fd_select = parse_fd_select(err, cff, cff, (int64_t)fd_select_offset,
+      out->fd_select = parse_fd_select(err, cff, cff, cff_position(fd_select_offset),
                                        (int64_t)out->char_strings.n);
       out->fd_select_len = out->char_strings.n;
     }
@@ -1005,6 +1020,9 @@ typedef struct tt_type2_ctx {
   tt_num_list stack;
   int64_t n_stems;
   bool width_parsed;
+  /* Remaining charstring operations; subroutine fan-out is otherwise
+     exponential. */
+  int64_t budget;
 } tt_type2_ctx;
 
 static void t2_push_current(tt_err *err, tt_type2_ctx *ctx) {
@@ -1164,7 +1182,7 @@ static tt_slice subr_at(tt_err *err, const tt_slice_list *list, double index,
     if (index == trunc(index) && fabs(index) < 9.0e15) {
       tt_fail(err, "Missing %s at index %lld", ctx, (long long)index);
     }
-    tt_fail(err, "Missing %s at index %g", ctx, index);
+    tt_fail(err, "Missing %s at index %s", ctx, QA_JS_NUMBER(index));
   }
   return list->v[(size_t)index];
 }
@@ -1178,6 +1196,7 @@ static void exec_charstring(tt_err *err, tt_slice code, tt_type2_ctx *ctx,
   tt_num_list *stack = &ctx->stack;
   int64_t i = 0;
   while (i < (int64_t)code.n) {
+    if (--ctx->budget < 0) tt_fail(err, "CFF charstring exceeds its operation budget");
     int b0 = at_u8(err, code, i, "code");
     if (b0 >= 32 || b0 == 28) {
       double v;
@@ -1197,6 +1216,7 @@ static void exec_charstring(tt_err *err, tt_slice code, tt_type2_ctx *ctx,
         v = (double)read_int32_be(err, code, i + 1) / 65536.0;
         i += 5;
       }
+      if (stack->n >= 513) tt_fail(err, "CFF charstring stack overflow");
       num_push(err, stack, v);
       continue;
     }
@@ -1422,6 +1442,7 @@ static qa_tt_contours get_cff_contours(tt_err *err, const tt_cff_font *cff,
   }
   tt_type2_ctx ctx;
   memset(&ctx, 0, sizeof ctx);
+  ctx.budget = 1000000;
   exec_charstring(err, code, &ctx, &cff->global_subrs, cff->global_bias,
                   local_subrs, local_bias, 0);
   if (ctx.has_current && ctx.current.count > 0) {
@@ -1588,6 +1609,9 @@ static void parse_cpal(tt_err *err, qa_parsed_font *font, tt_slice view,
 typedef struct tt_glyph_ctx {
   qa_parsed_font *font;
   tt_err *err;
+  /* Components can reference themselves at every level, so breadth needs a
+     budget as well as depth. */
+  int64_t resolve_budget;
 } tt_glyph_ctx;
 
 static tt_raw_set get_raw(void *ctx_ptr, int64_t gid, int64_t depth) {
@@ -1595,9 +1619,13 @@ static tt_raw_set get_raw(void *ctx_ptr, int64_t gid, int64_t depth) {
   qa_parsed_font *font = ctx->font;
   tt_err *err = ctx->err;
   tt_raw_set empty = {NULL, 0, 0};
-  if (depth == 0 && gid >= 0 && gid < font->num_glyphs &&
-      font->raw_valid[gid]) {
-    return font->raw_cache[gid];
+  if (depth == 0) {
+    if (gid >= 0 && gid < font->num_glyphs && font->raw_valid[gid]) {
+      return font->raw_cache[gid];
+    }
+    ctx->resolve_budget = 4096;
+  } else if (--ctx->resolve_budget < 0) {
+    tt_fail(err, "Composite glyph exceeds its component budget");
   }
   if (gid < 0 || gid >= font->num_glyphs) return empty;
   if (depth > 8) {
@@ -1896,6 +1924,7 @@ qa_tt_contours qa_parsed_font_contours(qa_parsed_font *font, int64_t gid) {
     tt_glyph_ctx ctx;
     ctx.font = font;
     ctx.err = err;
+    ctx.resolve_budget = 0;
     tt_raw_set raw = get_raw(&ctx, gid, 0);
     tt_flat_builder builder;
     memset(&builder, 0, sizeof builder);
@@ -1985,7 +2014,6 @@ bool qa_parsed_font_palette_color(const qa_parsed_font *font,
 
 /* --- rasterization --- */
 
-static double js_round(double value) { return floor(value + 0.5); }
 
 /* Uint8Array store conversion: truncate toward zero, wrap mod 256. */
 static uint8_t tt_to_u8(double value) {
@@ -2112,7 +2140,7 @@ bool qa_truetype_rasterize_contours(const qa_flattened_contour *contours,
           }
         }
         if (xs_count < 2) continue;
-        qsort(xs, xs_count, sizeof(tt_scan_x), scan_x_compare);
+        qa_js_sort(xs, xs_count, sizeof(tt_scan_x), scan_x_compare);
         int winding = 0;
         for (size_t k = 0; k + 1 < xs_count; k++) {
           winding += xs[k].dir;
@@ -2136,7 +2164,7 @@ bool qa_truetype_rasterize_contours(const qa_flattened_contour *contours,
   }
   for (size_t i = 0; i < total; i++) {
     double v = (double)coverage[i];
-    bytes[i] = v <= 0 ? 0 : v >= 1 ? 255 : tt_to_u8(js_round(v * 255.0));
+    bytes[i] = v <= 0 ? 0 : v >= 1 ? 255 : tt_to_u8(qa_js_round(v * 255.0));
   }
   free(coverage);
   out->width = width;
@@ -2195,13 +2223,16 @@ bool qa_truetype_rasterize_glyph(qa_parsed_font *font, int64_t gid, double px,
                                  qa_rasterized_glyph *out) {
   memset(out, 0, sizeof *out);
   double scale = px / (double)font->units_per_em;
-  double w = js_round((double)qa_parsed_font_advance_width(font, gid) * scale);
-  int64_t width = (int64_t)(w > 1.0 ? w : 1.0);
+  /* Metrics come from the font file; a glyph cell is never legitimately many
+     times the pixel size. */
+  double limit = qa_js_max(64, ceil(px * 4));
+  double w = qa_js_round((double)qa_parsed_font_advance_width(font, gid) * scale);
+  int64_t width = (int64_t)qa_js_min(limit, w > 1.0 ? w : 1.0);
   qa_tt_contours contours = qa_parsed_font_contours(font, gid);
   double bottom = contours_y_min(&contours);
   if (bottom > 0) bottom = 0;
-  double h = js_round(((double)font->ascent - bottom) * scale);
-  int64_t height = (int64_t)(h > 1.0 ? h : 1.0);
+  double h = qa_js_round(((double)font->ascent - bottom) * scale);
+  int64_t height = (int64_t)qa_js_min(limit, h > 1.0 ? h : 1.0);
   if (contours.count == 0) {
     size_t total = (size_t)width * (size_t)height;
     uint8_t *bytes = (uint8_t *)calloc(total == 0 ? 1 : total, 1);
@@ -2238,10 +2269,10 @@ static void composite_over(uint8_t *pixels, size_t i, double src_coverage,
   double out_a = src_a + dst_a * (1.0 - src_a);
   if (out_a <= 0) return;
   double dst_factor = dst_a * (1.0 - src_a);
-  pixels[o] = tt_to_u8(js_round((color.r * src_a + (double)pixels[o] * dst_factor) / out_a));
-  pixels[o + 1] = tt_to_u8(js_round((color.g * src_a + (double)pixels[o + 1] * dst_factor) / out_a));
-  pixels[o + 2] = tt_to_u8(js_round((color.b * src_a + (double)pixels[o + 2] * dst_factor) / out_a));
-  pixels[o + 3] = tt_to_u8(js_round(out_a * 255.0));
+  pixels[o] = tt_to_u8(qa_js_round((color.r * src_a + (double)pixels[o] * dst_factor) / out_a));
+  pixels[o + 1] = tt_to_u8(qa_js_round((color.g * src_a + (double)pixels[o + 1] * dst_factor) / out_a));
+  pixels[o + 2] = tt_to_u8(qa_js_round((color.b * src_a + (double)pixels[o + 2] * dst_factor) / out_a));
+  pixels[o + 3] = tt_to_u8(qa_js_round(out_a * 255.0));
 }
 
 bool qa_truetype_rasterize_color_glyph(qa_parsed_font *font, int64_t base_gid,
@@ -2261,8 +2292,9 @@ bool qa_truetype_rasterize_color_glyph(qa_parsed_font *font, int64_t base_gid,
     return false;
   }
   double scale = px / (double)font->units_per_em;
-  double w = js_round((double)qa_parsed_font_advance_width(font, base_gid) * scale);
-  int64_t width = (int64_t)(w > 1.0 ? w : 1.0);
+  double limit = qa_js_max(64, ceil(px * 4));
+  double w = qa_js_round((double)qa_parsed_font_advance_width(font, base_gid) * scale);
+  int64_t width = (int64_t)qa_js_min(limit, w > 1.0 ? w : 1.0);
   /* Resolved layers borrow contour caches; colors are copied. */
   qa_tt_color *colors = NULL;
   int64_t *layer_gids = NULL;
@@ -2296,8 +2328,8 @@ bool qa_truetype_rasterize_color_glyph(qa_parsed_font *font, int64_t base_gid,
   }
   free(layers);
   double bottom = y_min < 0 ? y_min : 0;
-  double h = js_round(((double)font->ascent - bottom) * scale);
-  int64_t height = (int64_t)(h > 1.0 ? h : 1.0);
+  double h = qa_js_round(((double)font->ascent - bottom) * scale);
+  int64_t height = (int64_t)qa_js_min(limit, h > 1.0 ? h : 1.0);
   size_t total = (size_t)width * (size_t)height;
   uint8_t *pixels = (uint8_t *)calloc(total == 0 ? 1 : total * 4, 1);
   if (pixels == NULL) {
@@ -2385,6 +2417,52 @@ bool qa_font_atlas_rect_for(const qa_font_atlas *atlas, int64_t codepoint,
   return false;
 }
 
+enum { ATLAS_CELL_SKIP, ATLAS_CELL_READY, ATLAS_CELL_OOM };
+typedef struct atlas_cell_job {
+  qa_parsed_font *font;
+  double px;
+  tt_atlas_cell cell;
+  int status;
+} atlas_cell_job;
+static void atlas_cell_run(void *ctx) {
+  atlas_cell_job *job = (atlas_cell_job *)ctx;
+  qa_parsed_font *font = job->font;
+  job->status = ATLAS_CELL_SKIP;
+  int64_t gid = qa_parsed_font_cmap_lookup(font, job->cell.codepoint);
+  if (gid == 0) return;
+  qa_color_layer *layers = NULL;
+  size_t layer_count = 0;
+  bool has_layers = qa_parsed_font_color_layers(font, gid, &layers, &layer_count);
+  free(layers);
+  if (has_layers) {
+    qa_rasterized_color_glyph raster;
+    bool raster_oom = false;
+    if (!qa_truetype_rasterize_color_glyph(font, gid, job->px, 0, NULL, &raster,
+                                           &raster_oom)) {
+      if (raster_oom) job->status = ATLAS_CELL_OOM;
+      return;
+    }
+    job->cell.width = raster.width;
+    job->cell.height = raster.height;
+    job->cell.color = true;
+    job->cell.data = raster.pixels;
+  } else {
+    qa_rasterized_glyph raster;
+    if (!qa_truetype_rasterize_glyph(font, gid, job->px, &raster)) {
+      job->status = ATLAS_CELL_OOM;
+      return;
+    }
+    job->cell.width = raster.width;
+    job->cell.height = raster.height;
+    job->cell.color = false;
+    job->cell.data = raster.coverage;
+  }
+  job->status = ATLAS_CELL_READY;
+}
+
+/* 4096 x 4096 texels, the practical GL texture ceiling for UI atlases. */
+#define MAX_ATLAS_PIXELS ((int64_t)4096 * 4096)
+
 bool qa_truetype_build_font_atlas(qa_parsed_font *font,
                                   const int64_t *codepoints, size_t count,
                                   double px, int64_t max_width,
@@ -2399,40 +2477,26 @@ bool qa_truetype_build_font_atlas(qa_parsed_font *font,
   int64_t line_height = 0;
   bool oom = false;
   for (size_t ci = 0; ci < count && !oom; ci++) {
-    int64_t cp = codepoints[ci];
-    int64_t gid = qa_parsed_font_cmap_lookup(font, cp);
-    if (gid == 0) continue;
-    tt_atlas_cell cell;
-    memset(&cell, 0, sizeof cell);
-    cell.codepoint = cp;
-    qa_color_layer *layers = NULL;
-    size_t layer_count = 0;
-    bool has_layers =
-        qa_parsed_font_color_layers(font, gid, &layers, &layer_count);
-    free(layers);
-    if (has_layers) {
-      qa_rasterized_color_glyph raster;
-      bool raster_oom = false;
-      if (!qa_truetype_rasterize_color_glyph(font, gid, px, 0, NULL, &raster,
-                                             &raster_oom)) {
-        if (raster_oom) oom = true;
-        continue;
+    /* cmap, outline and color tables decode lazily, so a hostile glyph
+       raises here (RangeError, skipped) rather than in parseFont. */
+    atlas_cell_job job;
+    memset(&job, 0, sizeof job);
+    job.font = font;
+    job.px = px;
+    job.cell.codepoint = codepoints[ci];
+    qa_caught_error caught;
+    if (!qa_try(atlas_cell_run, &job, &caught)) {
+      free(job.cell.data);
+      if (strcmp(caught.name, "RangeError") != 0) {
+        for (size_t i = 0; i < cell_count; i++) free(cells[i].data);
+        free(cells);
+        qa_rethrow(&caught);
       }
-      cell.width = raster.width;
-      cell.height = raster.height;
-      cell.color = true;
-      cell.data = raster.pixels;
-    } else {
-      qa_rasterized_glyph raster;
-      if (!qa_truetype_rasterize_glyph(font, gid, px, &raster)) {
-        oom = true;
-        break;
-      }
-      cell.width = raster.width;
-      cell.height = raster.height;
-      cell.color = false;
-      cell.data = raster.coverage;
+      continue;
     }
+    if (job.status == ATLAS_CELL_OOM) { oom = true; break; }
+    if (job.status == ATLAS_CELL_SKIP) continue;
+    tt_atlas_cell cell = job.cell;
     if (cell.height > line_height) line_height = cell.height;
     if (cell_count == cell_cap) {
       size_t cap = cell_cap == 0 ? 8 : cell_cap * 2;
@@ -2468,7 +2532,7 @@ bool qa_truetype_build_font_atlas(qa_parsed_font *font,
   if (!oom) {
     for (size_t i = 0; i < cell_count; i++) order[i] = i;
     g_sort_cells = cells;
-    qsort(order, cell_count, sizeof(size_t), cell_order_compare);
+    qa_js_sort(order, cell_count, sizeof(size_t), cell_order_compare);
     const int64_t gap = 1;
     for (size_t i = 0; i < cell_count; i++) {
       int64_t need = cells[i].width + gap * 2;
@@ -2496,6 +2560,15 @@ bool qa_truetype_build_font_atlas(qa_parsed_font *font,
       if (cell->height > shelf_height) shelf_height = cell->height;
     }
     atlas_height = cursor_y + shelf_height + gap;
+    if (atlas_width * atlas_height > MAX_ATLAS_PIXELS) {
+      for (size_t i = 0; i < cell_count; i++) free(cells[i].data);
+      free(cells);
+      free(order);
+      free(place_x);
+      free(place_y);
+      free(place_cp);
+      qa_range_error("Font atlas exceeds the size limit");
+    }
     pixels = (uint8_t *)calloc(
         (size_t)(atlas_width * atlas_height) == 0
             ? 1

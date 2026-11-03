@@ -8,7 +8,7 @@
 typedef struct qa_q2bm_mutant_definition {
   qa_q2m_definition definition;
   qa_q2m_named_handler callbacks[12];
-  qa_q2f_named_touch touch_defs[1];
+  qa_q2_named_touch touch_defs[1];
 } qa_q2bm_mutant_definition;
 void qa_q2bm_create_mutant_definition(qa_q2bm_mutant_definition *out, qa_q2m_monsters *monsters);
 /* source is "classic" or "rogue" (NULL = "classic", the TS default). */

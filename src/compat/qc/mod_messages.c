@@ -11,12 +11,44 @@ static bool client_fn_impl(void *ctx, qa_actor_id actor) {
   M *m = ctx;
   return !m->operations.has_clients ? m->operations.client_is_player(m->operations.ctx, actor) : m->operations.clients_for_actor(m->operations.ctx, actor);
 }
+typedef struct qa_compat_qc_mod_messages_host HostWrap;
+/* TS host.message: the sink is optional and required only when used. */
+static void wrap_message(void *ctx, qa_network_event event, const qa_actor_id *target) {
+  HostWrap *w = ctx;
+  if (!w->inner.message) qa_range_error("Source mod message requires a destination message sink");
+  w->inner.message(w->inner.ctx, event, target);
+}
+/* TS emit(event, recipient = target ?? undefined). */
+static void wrap_emit(void *ctx, qa_q1_event event, const qa_actor_id *recipient) {
+  HostWrap *w = ctx; M *m = w->m;
+  /* False publishesKills: the objective owner publishes the kill, so the borrower's copy would double it. */
+  if (m->operations.withholds_kills && event.kind != NULL && strcmp(event.kind, "monster-killed") == 0) return;
+  const qa_actor_id *to = recipient ? recipient : w->has_target ? &w->target : NULL;
+  if (m->operations.emit) m->operations.emit(m->operations.ctx, event, to);
+  else w->inner.emit(w->inner.ctx, event, to);
+}
+static void wrap_present(void *ctx, qa_netquake_message message, const qa_actor_id *target, qa_compat_qc_local_messages state, const qa_actor_id *fixed) {
+  HostWrap *w = ctx; w->inner.present_local(w->inner.ctx, message, target, state, fixed);
+}
+/* TS muzzle: players only, body origin with the camera's angles. */
+static bool wrap_muzzle(void *ctx, qa_actor_id actor, qa_vec3 *origin, qa_vec3 *angles) {
+  HostWrap *w = ctx; M *m = w->m;
+  if (!m->operations.body_origin || !m->operations.camera_angles) return w->inner.muzzle(w->inner.ctx, actor, origin, angles);
+  size_t count = 0; const qa_actor_id *players = m->operations.players(m->operations.ctx, &count);
+  bool player = false; for (size_t i = 0; i < count; i++) if (actor_eq(players[i], actor)) player = true;
+  if (!player || !m->operations.body_origin(m->operations.ctx, actor, origin)) return false;
+  return m->operations.camera_angles(m->operations.ctx, actor, angles);
+}
+static qa_actor_id wrap_actor_of(void *ctx, int64_t slot) { HostWrap *w = ctx; return w->m->operations.world_actor(w->m->operations.ctx, slot); }
 static qa_compat_qc_local_message_host host_of(M *m, const qa_actor_id *target) {
   size_t count = 0; const qa_actor_id *players = m->operations.players(m->operations.ctx, &count);
   qa_actor_id source = m->operations.world_actor(m->operations.ctx, 0);
-  qa_compat_qc_local_message_host host = m->operations.host(m->operations.host_ctx, target, m->operations.time_seconds(m->operations.ctx), players, count, source);
-  /* override emit/message/muzzle/actor_of wiring per TS host(): host impl supplied by operations already targets engine events; keep its mapping. */
-  (void)host;
+  qa_compat_qc_local_message_host inner = m->operations.host(m->operations.host_ctx, target, m->operations.time_seconds(m->operations.ctx), players, count, source);
+  HostWrap *w = &m->hosts[m->host_next++ % (sizeof m->hosts / sizeof m->hosts[0])];
+  w->m = m; w->inner = inner; w->has_target = target != NULL; if (target) w->target = *target;
+  qa_compat_qc_local_message_host host = inner;
+  host.ctx = w; host.message = wrap_message; host.emit = wrap_emit; host.muzzle = wrap_muzzle; host.actor_of = wrap_actor_of;
+  if (inner.present_local) host.present_local = wrap_present;
   return host;
 }
 static int64_t admitted_cursor(M *m, qa_actor_id actor) { for(size_t i=0;i<m->admitted_count;i++) if(actor_eq(m->admitted[i].actor,actor)) return m->admitted[i].cursor; return 0; }
@@ -171,7 +203,6 @@ qa_save_value *qa_compat_qc_mod_messages_capture(M *m) {
   qa_save_value_set(o, "views", views_value);
   if (m->is_quakeworld) {
     qa_save_value *qw = qa_save_value_object();
-    /* signon entries: captured without message ownership transfer (shallow until restore re-decodes) */
     qa_save_value_set(qw, "signon", qa_compat_qc_broadcast_capture_entries(&m->messages, m->signon, m->signon_count));
     qa_save_value *adm = qa_save_value_array();
     for (size_t i = 0; i < m->admitted_count; i++) {
@@ -255,7 +286,7 @@ void qa_compat_qc_mod_messages_close(M *m) {
   if (m->has_unsubscribe) { m->unsubscribe.invoke(m->unsubscribe.ctx); m->has_unsubscribe = false; }
   for (size_t i = 0; i < m->signon_count; i++) qa_quakeworld_message_destroy(&m->signon[i].message);
   m->signon_count = 0; m->admitted_count = 0;
-  if (m->actors) qa_session_actor_registry_off_release(m->actors, m->release_id);
+  if (m->actors) { qa_session_actor_registry_off_release(m->actors, m->release_id); m->actors = NULL; }
 }
 
 /* Landed-owner adapter: qa_app_sim_quakec_local_messages behind the ops seam. */

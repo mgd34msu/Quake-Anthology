@@ -58,21 +58,6 @@ int32_t qa_collision_box_storage_check_count(const qa_collision_box_storage *s);
 typedef struct qa_box_side_read { qa_q3_collision_plane plane; double surface_flags; } qa_box_side_read;
 qa_box_side_read qa_collision_box_read_side(qa_collision_box_storage *s, double index);
 void qa_collision_box_set_bounds(qa_collision_box_storage *s, qa_vec3 mins, qa_vec3 maxs, bool capsule);
-typedef struct qa_collision_map_resource {
-  qa_collision_map_data data;
-  char *source; qa_hunk_accounting_profile memory;
-  qa_collision_debug_surface *debug; qa_q3_collision_box_model *box_model;
-  bool owns_box_model;
-  qa_collision_box_storage box_storage;
-  size_t num_planes, num_sides, num_brushes, num_leaf_brushes;
-} qa_collision_map_resource;
-/* box_model NULL creates an owned one. */
-qa_collision_map_resource *qa_collision_map_resource_create(const char *source, qa_hunk_accounting_profile memory, qa_collision_debug_surface *debug, qa_q3_collision_box_model *box_model);
-void qa_collision_map_resource_destroy(qa_collision_map_resource *r);
-const char *qa_collision_map_resource_entities(qa_collision_map_resource *r);
-const uint8_t *qa_collision_map_resource_visibility(qa_collision_map_resource *r, size_t *out_length);
-void qa_collision_map_resource_load(qa_collision_map_resource *r, const uint8_t *bytes, size_t byte_length);
-void qa_collision_map_resource_initialize_box_hull(qa_collision_map_resource *r);
 /* Heap decoded map; destroy with qa_collision_map_data_destroy+free via helper. */
 qa_collision_map_data *qa_decoded_collision_map(const qa_q3_world_geometry *map, qa_collision_debug_surface *debug);
 void qa_decoded_collision_map_destroy(qa_collision_map_data *m);

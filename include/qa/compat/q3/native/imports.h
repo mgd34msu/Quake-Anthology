@@ -16,6 +16,13 @@
 #include "qa/compat/q3/native/module.h"
 #include "qa/guest/core/callbacks.h"
 
+/* TS NativeQ3GameServices: the engine services plus the server clock a native
+ * server-game host reads (ctx is engine.ctx). */
+typedef struct qa_compat_q3_native_game_services {
+  qa_compat_q3_native_engine_services engine;
+  double (*milliseconds)(void *ctx);
+} qa_compat_q3_native_game_services;
+
 typedef struct qa_compat_q3_native_service_coverage {
   int64_t slot; const char *name; bool implemented; int64_t reached;
 } qa_compat_q3_native_service_coverage;

@@ -48,10 +48,5 @@ void qa_finished_shader_result_free(qa_finished_shader_result *result);
 void qa_implicit_shader_input(qa_finish_implicit_shader_input input,
                               qa_finish_shader_input_result *out);
 void qa_finish_shader_input_result_free(qa_finish_shader_input_result *result);
-/* TS finishImplicitShader / finishFailedShader. */
-void qa_finish_implicit_shader(qa_finish_implicit_shader_input input,
-                               qa_finished_shader_result *out);
-void qa_finish_failed_shader(qa_finish_failed_shader_input input,
-                             qa_finished_shader_result *out);
 
 #endif

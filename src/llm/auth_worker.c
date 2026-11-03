@@ -2,6 +2,7 @@
 /* See include/qa/llm/auth_worker.h. GPL-2.0-or-later. */
 #include "qa/llm/auth_worker.h"
 
+#include <math.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
@@ -52,8 +53,8 @@ void qa_llm_auth_worker_parse_data(const qa_llm_json *worker_data, int *out_port
   if (!qa_llm_json_is_object(worker_data)) qa_llm_plain_error("Invalid subscription callback worker data.");
   const qa_llm_json *port = qa_llm_json_get(worker_data, "port");
   const qa_llm_json *state = qa_llm_json_get(worker_data, "state");
-  if (port == NULL || port->kind != QA_LLM_JSON_NUMBER || port->number != (double)(int)port->number ||
-      port->number < 0 || port->number > 65535 ||
+  if (port == NULL || port->kind != QA_LLM_JSON_NUMBER || port->number != floor(port->number) ||
+      !(port->number >= 0 && port->number <= 65535) ||
       state == NULL || state->kind != QA_LLM_JSON_STRING || state->string[0] == '\0') {
     qa_llm_plain_error("Invalid subscription callback worker data.");
   }
@@ -168,7 +169,7 @@ void qa_llm_auth_worker_handle_request(qa_llm_auth_worker *worker, const char *m
   bool matches = state != NULL && strcmp(state, worker->expected_state) == 0;
   free(state);
   if (!matches) {
-    post_message(worker, QA_LLM_AUTH_WORKER_STATE_MISMATCH, NULL);
+    /* A stray request must not cancel the sign-in: TS posts nothing and keeps waiting. */
     *out_status = 400;
     *out_body = qa_llm_strdup("Sign-in failed. State mismatch.");
     return;

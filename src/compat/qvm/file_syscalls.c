@@ -5,6 +5,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <strings.h>
 
 #include "qa/compat/qvm/abi.h"
 #include "qa/content/mounts.h"
@@ -25,11 +27,13 @@ typedef struct file_handle {
   qa_resolved_resource_reference reference; /* strings borrowed */
   /* write */
   qa_writable_binary_file file;
+  uint64_t order; /* TS Map insertion order, reported by capture */
 } file_handle;
 
 struct qa_qvm_files {
   qa_qvm_file_services services;
   file_handle handles[64]; /* slots 1..63 */
+  uint64_t next_order;
   bool closed;
 };
 
@@ -48,7 +52,7 @@ static bool reference_is_pk3(const qa_resolved_resource_reference *reference) {
 }
 
 static void validate_read_identity(const qa_resolved_resource_reference *reference,
-                                   const uint8_t *bytes, size_t length, double position,
+                                   const uint8_t *bytes, size_t length,
                                    const qa_save_reader *failure_reader) {
   char *digest = qa_digest_bytes(bytes, length);
   if (digest == NULL) qa_range_error("out of memory");
@@ -60,6 +64,11 @@ static void validate_read_identity(const qa_resolved_resource_reference *referen
       qa_save_reader_fail(failure_reader, "opened bytes differ from resource identity");
     qa_range_error("opened bytes differ from resource identity");
   }
+}
+
+/* Streamed loose files may seek beyond EOF. Their exact cursor remains valid. */
+static void validate_read_cursor(const qa_resolved_resource_reference *reference, size_t length,
+                                 double position, const qa_save_reader *failure_reader) {
   if (reference_is_pk3(reference) && position > (double)length) {
     if (failure_reader != NULL) qa_save_reader_fail(failure_reader, "ZIP cursor exceeds opened bytes");
     qa_range_error("ZIP cursor exceeds opened bytes");
@@ -112,10 +121,22 @@ bool qa_qvm_files_capture_checkpoint(qa_qvm_files *files, qa_qvm_files_checkpoin
     out->handles = calloc(count, sizeof *out->handles);
     if (out->handles == NULL) return false;
   }
-  size_t index = 0;
+  /* TS [...handles]: Map insertion order, not slot order. */
+  int ordered[64];
+  size_t ordered_count = 0;
   for (int slot = 1; slot < 64; slot++) {
+    if (!files->handles[slot].occupied) continue;
+    size_t at = ordered_count++;
+    while (at > 0 && files->handles[ordered[at - 1]].order > files->handles[slot].order) {
+      ordered[at] = ordered[at - 1];
+      at--;
+    }
+    ordered[at] = slot;
+  }
+  size_t index = 0;
+  for (size_t position = 0; position < ordered_count; position++) {
+    int slot = ordered[position];
     file_handle *handle = &files->handles[slot];
-    if (!handle->occupied) continue;
     qa_qvm_file_handle_checkpoint *entry = &out->handles[index];
     entry->slot = slot;
     entry->is_write = handle->is_write;
@@ -144,8 +165,8 @@ bool qa_qvm_files_capture_checkpoint(qa_qvm_files *files, qa_qvm_files_checkpoin
       memcpy(entry->bytes, handle->bytes, handle->byte_length);
       entry->byte_length = handle->byte_length;
       entry->position = (double)handle->position;
-      validate_read_identity(&entry->reference, entry->bytes, entry->byte_length,
-                             entry->position, NULL);
+      validate_read_identity(&entry->reference, entry->bytes, entry->byte_length, NULL);
+      validate_read_cursor(&entry->reference, entry->byte_length, entry->position, NULL);
     }
     index++;
   }
@@ -228,11 +249,11 @@ static bool read_files_checkpoint(const qa_save_value *value, qa_qvm_files_check
       memcpy(entry->bytes, bytes, length);
       entry->byte_length = length;
       qa_save_reader_destroy(&bytes_reader);
+      validate_read_identity(&entry->reference, entry->bytes, entry->byte_length, &resource);
       reader_field(&item, "position", &position_reader);
       entry->position = qa_save_reader_integer_min(&position_reader, 0);
       qa_save_reader_destroy(&position_reader);
-      validate_read_identity(&entry->reference, entry->bytes, entry->byte_length,
-                             entry->position, &resource);
+      validate_read_cursor(&entry->reference, entry->byte_length, entry->position, &item);
       qa_save_reader_destroy(&resource);
     }
     out->handle_count++;
@@ -254,6 +275,7 @@ void qa_qvm_files_restore_checkpoint(qa_qvm_files *files, const qa_save_value *v
     file_handle *handle = &files->handles[(size_t)entry->slot];
     handle->occupied = true;
     handle->is_write = entry->is_write;
+    handle->order = files->next_order++;
     if (!entry->is_write) {
       handle->bytes = entry->bytes;
       entry->bytes = NULL;
@@ -274,6 +296,8 @@ void qa_qvm_files_restore_checkpoint(qa_qvm_files *files, const qa_save_value *v
 }
 
 void qa_qvm_files_close_all(qa_qvm_files *files) {
+  /* Cleanup paths close files that construction never created (TS `files?.closeAll()` / an absent owner). */
+  if (files == NULL) return;
   files->closed = true;
   for (int i = 1; i < 64; i++) {
     if (files->handles[i].occupied && files->handles[i].is_write)
@@ -282,6 +306,24 @@ void qa_qvm_files_close_all(qa_qvm_files *files) {
     files->handles[i].bytes = NULL;
     files->handles[i].occupied = false;
   }
+}
+
+/* TS IMMUTABLE_NAME: /(?:\.(?:pk3|qvm|dll|so|dylib)|(?:^|\/)(?:q3key|q3config\.cfg|autoexec\.cfg))$/i
+ * over the path with backslashes as slashes. */
+static bool immutable_name(const char *path) {
+  const size_t length = strlen(path);
+  static const char *const extensions[] = {".pk3", ".qvm", ".dll", ".so", ".dylib"};
+  static const char *const names[] = {"q3key", "q3config.cfg", "autoexec.cfg"};
+  for (size_t i = 0; i < sizeof extensions / sizeof *extensions; i++) {
+    const size_t n = strlen(extensions[i]);
+    if (length >= n && strncasecmp(path + length - n, extensions[i], n) == 0) return true;
+  }
+  for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
+    const size_t n = strlen(names[i]);
+    if (length < n || strncasecmp(path + length - n, names[i], n) != 0) continue;
+    if (length == n || path[length - n - 1] == '/') return true;
+  }
+  return false;
 }
 
 static int free_slot(qa_qvm_files *files) {
@@ -301,10 +343,26 @@ double qa_qvm_files_open_write(qa_qvm_files *files, const char *path, qa_writabl
   strcpy(normalized, path);
   for (char *p = normalized; *p != '\0'; p++)
     if (*p == '\\') *p = '/';
+  /* ioquake3 FS_CheckFilenameIsMutable: guests cannot plant code or packages, and here they cannot touch credentials or startup configs either. */
+  if (immutable_name(normalized)) {
+    free(normalized);
+    if (files->services.print != NULL) {
+      const size_t size = strlen(path) + 40;
+      char *warning = malloc(size);
+      if (warning == NULL) qa_range_error("out of memory");
+      snprintf(warning, size, "WARNING: %s is not a mutable name\n", path);
+      files->services.print(files->services.ctx, warning);
+      free(warning);
+    }
+    qa_qvm_files_assert_current(files);
+    publish.call(publish.ctx, 0);
+    return -1;
+  }
   qa_writable_binary_file file;
   bool opened = qa_user_file_store_open(files->services.writable, normalized, mode, writable_print,
                                         files, &file);
   free(normalized);
+  qa_qvm_files_assert_current(files);
   if (!opened) {
     publish.call(publish.ctx, 0);
     return -1;
@@ -312,6 +370,7 @@ double qa_qvm_files_open_write(qa_qvm_files *files, const char *path, qa_writabl
   files->handles[slot].occupied = true;
   files->handles[slot].is_write = true;
   files->handles[slot].file = file;
+  files->handles[slot].order = files->next_order++;
   publish.call(publish.ctx, slot);
   return 0;
 }
@@ -370,6 +429,7 @@ double qa_qvm_files_open(qa_qvm_files *files, const char *path,
   handle->position = 0;
   handle->reference = *resource.reference;
   handle->is_pk3_archive = reference_is_pk3(resource.reference);
+  handle->order = files->next_order++;
   publish->call(publish->ctx, slot);
   return (double)resource.byte_length;
 }
@@ -457,7 +517,13 @@ char **qa_qvm_files_list(qa_qvm_files *files, const char *path, const char *exte
   for (size_t i = 0; expected[i] != '\0'; i++)
     modlist = modlist && tolower((unsigned char)path[i]) == expected[i];
   modlist = modlist && path[strlen(expected)] == '\0';
-  if (modlist) qa_range_error("QVM $modlist requires an installed-mod catalog owner");
+  /* The stock UI asks for installed mods on its main menu; no mod catalog owner exists, so none are listed. */
+  if (modlist) {
+    *out_count = 0;
+    char **none = malloc(sizeof *none);
+    if (none == NULL) qa_range_error("out of memory");
+    return none;
+  }
   char **names = qa_content_mounted_list_files(files->services.mounts, path, extension, out_count);
   qa_qvm_files_assert_current(files);
   return names;
@@ -473,18 +539,18 @@ static void publish_slot(void *ctx, double slot) {
   publish_ctx *publish = ctx;
   qa_qvm_files_assert_current(publish->files);
   qa_qvm_writable_view view;
-  qa_qvm_memory_view(publish->call->guest, publish->destination, 4, 0, &view);
+  qa_qvm_game_memory_view(QA_SHARED_GUEST(publish->call), publish->destination, 4, 0, &view);
   qa_qvm_writable_view_set_int32(&view, 0, qa_int32(slot), true);
 }
 
 typedef struct read_ctx {
-  const qa_qvm_host_call *call;
-  int64_t offset;
+  const qa_qvm_game_memory *guest;
+  qa_qvm_game_region buffer;
 } read_ctx;
 
 static void read_set(void *ctx, const uint8_t *bytes, size_t length) {
   read_ctx *read = ctx;
-  if (length != 0) qa_qvm_memory_write_bytes(read->call->guest, read->offset, bytes, length);
+  if (length != 0) qa_qvm_game_memory_region_write(read->guest, &read->buffer, bytes, length);
 }
 
 bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
@@ -504,7 +570,8 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
       !(has_list && trap == list))
     return false;
   qa_qvm_files_assert_current(files);
-  qa_qvm_memory *guest = call->guest;
+  const qa_qvm_game_memory guest_memory = qa_qvm_host_call_game_memory(call);
+  const qa_qvm_game_memory *guest = &guest_memory;
   if (trap == open) {
     int32_t path_word = qa_qvm_host_call_word(call, 1);
     int32_t destination = qa_qvm_host_call_word(call, 2);
@@ -512,7 +579,7 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
     if (mode < 0 || mode > 3) qa_common_error(QA_COMMON_ERROR_FATAL, "FSH_FOpenFile: bad mode");
     if (game && destination != 0) {
       qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, destination, 4, 0, &view);
+      qa_qvm_game_memory_view(guest, destination, 4, 0, &view);
     }
     if (game && destination == 0 && mode != 0)
       qa_range_error("Writable file open requires a nonnull handle pointer");
@@ -520,11 +587,11 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
       qa_common_error(QA_COMMON_ERROR_FATAL, "FS_FOpenFileRead: NULL 'filename' parameter passed\n");
     if (!game && destination != 0) {
       qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, destination, 4, 0, &view);
+      qa_qvm_game_memory_view(guest, destination, 4, 0, &view);
     }
     publish_ctx pctx = {files, call, destination};
     qa_qvm_file_publish publish = {&pctx, publish_slot};
-    char *path = qa_qvm_memory_read_string(guest, path_word);
+    char *path = qa_qvm_game_memory_read_string(guest, path_word);
     if (path == NULL) qa_range_error("out of memory");
     double result;
     if (mode == 0) {
@@ -551,15 +618,15 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
       *out = 0;
       return true;
     }
-    qa_qvm_memory_span span = {0, 0};
+    static uint8_t empty_bytes[1];
+    qa_qvm_game_region buffer = {empty_bytes, 0, false};
     bool empty = pointer == 0 && length == 0;
-    if (!empty) span = qa_qvm_memory_get_span(guest, pointer, length, 0);
+    if (!empty) buffer = qa_qvm_game_memory_span(guest, pointer, length, 0);
     if (trap == open + 2) {
-      qa_qvm_files_write(files, slot, empty ? guest->bytes : guest->bytes + span.byte_offset,
-                         empty ? 0 : (size_t)span.byte_length);
+      qa_qvm_files_write(files, slot, buffer.bytes, buffer.length);
     } else {
-      read_ctx rctx = {call, span.byte_offset};
-      qa_qvm_file_destination destination = {&rctx, empty ? 0 : (size_t)span.byte_length, read_set};
+      read_ctx rctx = {guest, buffer};
+      qa_qvm_file_destination destination = {&rctx, buffer.length, read_set};
       qa_qvm_files_read(files, slot, destination);
     }
     *out = 0;
@@ -576,8 +643,8 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
                                       qa_qvm_host_call_word(call, 3)));
     return true;
   }
-  char *path = qa_qvm_memory_read_string(guest, qa_qvm_host_call_word(call, 1));
-  char *extension = qa_qvm_memory_read_string(guest, qa_qvm_host_call_word(call, 2));
+  char *path = qa_qvm_game_memory_read_string(guest, qa_qvm_host_call_word(call, 1));
+  char *extension = qa_qvm_game_memory_read_string(guest, qa_qvm_host_call_word(call, 2));
   if (path == NULL || extension == NULL) qa_range_error("out of memory");
   int32_t pointer = qa_qvm_host_call_word(call, 3);
   int32_t length = qa_qvm_host_call_word(call, 4);
@@ -586,7 +653,7 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
     free(extension);
     qa_range_error("File listing requires a nonempty destination");
   }
-  (void)qa_qvm_memory_get_span(guest, pointer, length, 0);
+  (void)qa_qvm_game_memory_span(guest, pointer, length, 0);
   size_t name_count = 0;
   char **names = qa_qvm_files_list(files, path, extension, &name_count);
   free(path);
@@ -594,7 +661,7 @@ bool qa_qvm_file_syscall(const qa_qvm_host_call *call, qa_qvm_files *files,
   if (names == NULL) qa_range_error("out of memory");
   qa_qvm_files_assert_current(files);
   qa_qvm_writable_view destination;
-  qa_qvm_memory_view(guest, pointer, length, 0, &destination);
+  qa_qvm_game_memory_view(guest, pointer, length, 0, &destination);
   qa_qvm_writable_view_set_uint8(&destination, 0, 0);
   int64_t offset = 0;
   int32_t count = 0;

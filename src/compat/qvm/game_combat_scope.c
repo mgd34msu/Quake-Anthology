@@ -1,6 +1,7 @@
 /* Port of src/compat/qvm/game-combat-scope.ts. GPL-2.0-or-later. */
 #include "qa/compat/qvm/game_combat_scope.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,13 +31,26 @@ qa_qvm_damage_frame *qa_qvm_damage_scopes_current(qa_qvm_damage_scopes *scopes, 
   return frame->pointer == pointer && !frame->reacting ? frame : NULL;
 }
 
+typedef struct cancel_job {
+  qa_qvm_module_function_call *call;
+  qa_qvm_cancellation_scope scope;
+} cancel_job;
+
+static void cancel_body(void *ctx) {
+  cancel_job *job = ctx;
+  job->call->cancel_function(job->call->call_ctx, job->scope);
+}
+
 void qa_qvm_damage_scopes_cancel(qa_qvm_damage_scopes *scopes, qa_qvm_damage_frame *frame,
-                                 qa_qvmy_function_call *call) {
+                                 qa_qvm_module_function_call *call) {
   (void)scopes;
+  /* TS: try { call.cancelFunction(...) } catch (error) { frame.cancelled = { error }; throw error; } */
+  cancel_job job = {call, frame->cancellation};
+  qa_caught_error caught;
+  if (qa_try(cancel_body, &job, &caught)) qa_range_error("QVM function scope cancelled");
   frame->cancelled = true;
-  call->cancel_function(call->call_ctx, frame->cancellation);
-  /* cancel_function does not return in the interpreter port. */
-  qa_range_error("QVM function scope cancelled");
+  snprintf(frame->cancelled_error, sizeof frame->cancelled_error, "%s", caught.message);
+  qa_rethrow(&caught);
 }
 
 static bool same_vector(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
@@ -48,6 +62,7 @@ static bool same_armor(qa_armor_state a, qa_armor_state b) {
                    a.regular.protection == b.regular.protection;
 }
 
+struct run_ctx;
 typedef struct run_ctx {
   qa_qvm_damage_scopes *scopes;
   qa_qvm_damage_frame *frame;
@@ -57,8 +72,9 @@ typedef struct run_ctx {
   qa_qvm_writable_view entity;
   int64_t health_offset;
   qa_qvm_write_range health_range, velocity_range;
-  qa_qvm_write_range armor_ranges[16];
+  qa_qvm_write_range *armor_ranges; /* owned */
   size_t armor_range_count;
+  qa_qvm_write_range *ranges; /* owned */
   int32_t health;
   qa_armor_state armor;
   qa_vec3 velocity;
@@ -73,6 +89,19 @@ typedef struct run_ctx {
     const char *reaction;
     qa_qvm_reaction_call roles;
   } reactions[2];
+  size_t watch;
+  size_t refresh_watches[2];
+  bool cleaned;
+  qa_cleanup guard;
+  struct reaction_ctx {
+    struct run_ctx *run;
+    int index;
+    double entry;
+  } reaction_contexts[2];
+  struct refresh_ctx {
+    struct run_ctx *run;
+    int index;
+  } refresh_contexts[2];
 } run_ctx;
 
 static bool actor_equal(qa_owned_actor a, qa_owned_actor b) {
@@ -193,13 +222,9 @@ static void write_observer(void *ctx, const qa_qvm_committed_write *event) {
   }
 }
 
-typedef struct reaction_ctx {
-  run_ctx *run;
-  int index;
-  double entry;
-} reaction_ctx;
+typedef struct reaction_ctx reaction_ctx;
 
-static int32_t call_argument(qa_qvmy_function_call *call, double argument_index) {
+static int32_t call_argument(qa_qvm_module_function_call *call, double argument_index) {
   int64_t offset = (int64_t)argument_index * 4;
   if (offset < 0 || offset > (int64_t)call->words_length - 4)
     qa_range_error("QVM argument index outside source call");
@@ -209,9 +234,9 @@ static int32_t call_argument(qa_qvmy_function_call *call, double argument_index)
   return (int32_t)bits;
 }
 
-static void reaction_observe(void *ctx, qa_qvmy_function_call *call, int64_t argument_base) {
+static void reaction_observe(void *ctx, qa_qvm_module_function_call *call, int64_t argument_base) {
   (void)argument_base;
-  reaction_ctx *reaction = ctx;
+  struct reaction_ctx *reaction = ctx;
   run_ctx *run = reaction->run;
   int index = reaction->index;
   if (qa_qvm_writable_view_get_int32(&run->entity, run->reactions[index].offset, true) !=
@@ -227,7 +252,7 @@ static void reaction_observe(void *ctx, qa_qvmy_function_call *call, int64_t arg
     qa_qvm_damage_scopes_cancel(run->scopes, run->frame, call);
 }
 
-static void reaction_refresh(run_ctx *run, int index, reaction_ctx *reaction_contexts) {
+static void reaction_refresh(run_ctx *run, int index) {
   qa_qvm_damage_scope_options *options = &run->scopes->options;
   int32_t next = qa_qvm_writable_view_get_int32(&run->entity, run->reactions[index].offset, true);
   if (next == (int32_t)run->reactions[index].entry) return;
@@ -237,38 +262,66 @@ static void reaction_refresh(run_ctx *run, int index, reaction_ctx *reaction_con
   }
   run->reactions[index].entry = next;
   if (next != 0) {
-    reaction_contexts[index].run = run;
-    reaction_contexts[index].index = index;
-    reaction_contexts[index].entry = next;
+    run->reaction_contexts[index].run = run;
+    run->reaction_contexts[index].index = index;
+    run->reaction_contexts[index].entry = next;
     qa_guest_callback_reference reference;
     memset(&reference, 0, sizeof reference);
     reference.kind = QA_GUEST_CALLBACK_QVM;
     reference.module = qa_qvm_module_get_profile(&options->game->module)->module;
     reference.instruction_index = next;
     run->reactions[index].removal = qa_qvm_module_observe_function(
-        &options->game->module, &reference, reaction_observe, &reaction_contexts[index]);
+        &options->game->module, &reference, reaction_observe, &run->reaction_contexts[index]);
     run->reactions[index].has_removal = true;
   }
 }
 
-typedef struct refresh_ctx {
-  run_ctx *run;
-  int index;
-  reaction_ctx *contexts;
-} refresh_ctx;
-
 static void refresh_observer(void *ctx, const qa_qvm_committed_write *event) {
   (void)event;
-  refresh_ctx *refresh = ctx;
-  reaction_refresh(refresh->run, refresh->index, refresh->contexts);
+  struct refresh_ctx *refresh = ctx;
+  reaction_refresh(refresh->run, refresh->index);
 }
 
-static int32_t call_word(qa_qvmy_function_call *call, double byte_index) {
+/* TS finally: removals.runAll() and frames.pop(). The caller guarantees the
+ * run owns the top frame. */
+static void run_cleanup(run_ctx *run) {
+  if (run->cleaned) return;
+  run->cleaned = true;
+  qa_qvm_game *game = run->scopes->options.game;
+  qa_qvm_memory_writes_unobserve(&game->module.memory->writes, run->watch);
+  for (int i = 0; i < 2; i++) {
+    if (run->reactions[i].has_removal) qa_qvm_module_unbind(&game->module, run->reactions[i].removal);
+    run->reactions[i].has_removal = false;
+    qa_qvm_memory_writes_unobserve(&game->module.memory->writes, run->refresh_watches[i]);
+  }
+  run->frame->run = NULL;
+  run->scopes->frame_count--;
+}
+
+static int32_t call_word(qa_qvm_module_function_call *call, double byte_index) {
   return call_argument(call, byte_index / 4);
 }
 
+static void proceed_body(void *ctx) {
+  qa_qvm_module_function_call *call = ctx;
+  (void)call->proceed(call->call_ctx);
+}
+
+static void run_free(run_ctx *run) {
+  free(run->armor_ranges);
+  free(run->ranges);
+  free(run);
+}
+
+/* A throw leaving run(): TS finally. */
+static void run_guard_unwind(void *ctx) {
+  run_ctx *run = ctx;
+  run_cleanup(run);
+  run_free(run);
+}
+
 qa_source_damage_result qa_qvm_damage_scopes_run(qa_qvm_damage_scopes *scopes,
-                                                 qa_qvmy_function_call *call, qa_owned_actor actor,
+                                                 qa_qvm_module_function_call *call, qa_owned_actor actor,
                                                  double slot, qa_damage_request request,
                                                  qa_source_damage_observer observer) {
   qa_qvm_damage_scope_options *options = &scopes->options;
@@ -281,19 +334,24 @@ qa_source_damage_result qa_qvm_damage_scopes_run(qa_qvm_damage_scopes *scopes,
   frame->call = call;
   frame->pointer = call_word(call, options->target_argument * 4);
   frame->cancellation = call->cancellation_scope(call->call_ctx);
-  run_ctx run;
-  memset(&run, 0, sizeof run);
-  run.scopes = scopes;
-  run.frame = frame;
-  run.actor = actor;
-  run.slot = slot;
-  run.observer = observer;
-  run.result.reaction = "none";
-  qa_qvm_game_data_entity_bytes(&game->data, slot, &run.entity);
-  int64_t entity_offset = run.entity.start;
-  run.health_offset = (int64_t)options->health;
-  run.health_range.byte_offset = entity_offset + run.health_offset;
-  run.health_range.byte_length = 4;
+  run_ctx *run = calloc(1, sizeof *run);
+  if (run == NULL) qa_range_error("out of memory");
+  size_t armor_capacity = 2 + options->mode_word_count;
+  run->armor_ranges = malloc(armor_capacity * sizeof *run->armor_ranges);
+  run->ranges = malloc((armor_capacity + 2) * sizeof *run->ranges);
+  if (run->armor_ranges == NULL || run->ranges == NULL) qa_range_error("out of memory");
+  frame->run = run;
+  run->scopes = scopes;
+  run->frame = frame;
+  run->actor = actor;
+  run->slot = slot;
+  run->observer = observer;
+  run->result.reaction = "none";
+  qa_qvm_game_data_entity_bytes(&game->data, slot, &run->entity);
+  int64_t entity_offset = run->entity.start;
+  run->health_offset = (int64_t)options->health;
+  run->health_range.byte_offset = entity_offset + run->health_offset;
+  run->health_range.byte_length = 4;
   bool has_client = slot < qa_qvm_game_data_get_num_clients(&game->data);
   qa_qvm_writable_view client;
   int64_t client_offset = -1;
@@ -302,64 +360,60 @@ qa_source_damage_result qa_qvm_damage_scopes_run(qa_qvm_damage_scopes *scopes,
     client_offset = client.start;
   }
   if (client_offset >= 0) {
-    run.armor_ranges[run.armor_range_count].byte_offset =
+    run->armor_ranges[run->armor_range_count].byte_offset =
         client_offset + 184 + (int64_t)options->points_stat * 4;
-    run.armor_ranges[run.armor_range_count].byte_length = 4;
-    run.armor_range_count++;
+    run->armor_ranges[run->armor_range_count].byte_length = 4;
+    run->armor_range_count++;
     if (options->has_tier_stat) {
-      run.armor_ranges[run.armor_range_count].byte_offset =
+      run->armor_ranges[run->armor_range_count].byte_offset =
           client_offset + 184 + (int64_t)options->tier_stat * 4;
-      run.armor_ranges[run.armor_range_count].byte_length = 4;
-      run.armor_range_count++;
+      run->armor_ranges[run->armor_range_count].byte_length = 4;
+      run->armor_range_count++;
     }
-    for (size_t i = 0; i < options->mode_word_count && run.armor_range_count < 16; i++) {
-      run.armor_ranges[run.armor_range_count].byte_offset = (int64_t)options->mode_words[i];
-      run.armor_ranges[run.armor_range_count].byte_length = 4;
-      run.armor_range_count++;
+    for (size_t i = 0; i < options->mode_word_count; i++) {
+      run->armor_ranges[run->armor_range_count].byte_offset = (int64_t)options->mode_words[i];
+      run->armor_ranges[run->armor_range_count].byte_length = 4;
+      run->armor_range_count++;
     }
   }
-  run.velocity_range.byte_offset = client_offset < 0 ? entity_offset + 36 : client_offset + 32;
-  run.velocity_range.byte_length = 12;
-  qa_qvm_memory_data_view(game->module.memory, run.velocity_range.byte_offset, 12,
-                          &run.velocity_view);
-  run.health = qa_qvm_writable_view_get_int32(&run.entity, run.health_offset, true);
-  run.armor = options->armor(options->ctx, slot);
-  run.velocity = read_velocity(&run);
+  run->velocity_range.byte_offset = client_offset < 0 ? entity_offset + 36 : client_offset + 32;
+  run->velocity_range.byte_length = 12;
+  qa_qvm_memory_data_view(game->module.memory, run->velocity_range.byte_offset, 12,
+                          &run->velocity_view);
+  run->health = qa_qvm_writable_view_get_int32(&run->entity, run->health_offset, true);
+  run->armor = options->armor(options->ctx, slot);
+  run->velocity = read_velocity(run);
   scopes->frame_count++;
-  qa_qvm_write_range ranges[18];
-  ranges[0] = run.health_range;
-  ranges[1] = run.velocity_range;
-  for (size_t i = 0; i < run.armor_range_count; i++) ranges[2 + i] = run.armor_ranges[i];
-  size_t watch = qa_qvm_memory_observe_writes(game->module.memory, ranges,
-                                              2 + run.armor_range_count, write_observer, &run,
-                                              NULL, NULL);
-  reaction_ctx reaction_contexts[2];
-  refresh_ctx refresh_contexts[2];
-  size_t refresh_watches[2] = {0, 0};
+  run->ranges[0] = run->health_range;
+  run->ranges[1] = run->velocity_range;
+  for (size_t i = 0; i < run->armor_range_count; i++) run->ranges[2 + i] = run->armor_ranges[i];
+  run->watch = qa_qvm_memory_observe_writes(game->module.memory, run->ranges,
+                                            2 + run->armor_range_count, write_observer, run,
+                                            NULL, NULL);
   const double offsets[2] = {options->reactions.pain, options->reactions.die};
   const qa_qvm_reaction_call roles[2] = {options->reactions.pain_call, options->reactions.die_call};
   const char *names[2] = {"pain", "death"};
   for (int i = 0; i < 2; i++) {
-    run.reactions[i].offset = (int64_t)offsets[i];
-    run.reactions[i].reaction = names[i];
-    run.reactions[i].roles = roles[i];
-    refresh_contexts[i].run = &run;
-    refresh_contexts[i].index = i;
-    refresh_contexts[i].contexts = reaction_contexts;
+    run->reactions[i].offset = (int64_t)offsets[i];
+    run->reactions[i].reaction = names[i];
+    run->reactions[i].roles = roles[i];
+    run->refresh_contexts[i].run = run;
+    run->refresh_contexts[i].index = i;
     qa_qvm_write_range range = {entity_offset + (int64_t)offsets[i], 4};
-    refresh_watches[i] = qa_qvm_memory_observe_writes(game->module.memory, &range, 1,
-                                                      refresh_observer, &refresh_contexts[i],
-                                                      NULL, NULL);
-    reaction_refresh(&run, i, reaction_contexts);
+    run->refresh_watches[i] = qa_qvm_memory_observe_writes(game->module.memory, &range, 1,
+                                                           refresh_observer, &run->refresh_contexts[i],
+                                                           NULL, NULL);
+    reaction_refresh(run, i);
   }
-  (void)call->proceed(call->call_ctx);
-  /* TS removals.runAll(): main watch first, then per-reaction pairs. */
-  qa_qvm_memory_writes_unobserve(&game->module.memory->writes, watch);
-  for (int i = 0; i < 2; i++) {
-    if (run.reactions[i].has_removal)
-      qa_qvm_module_unbind(&game->module, run.reactions[i].removal);
-    qa_qvm_memory_writes_unobserve(&game->module.memory->writes, refresh_watches[i]);
-  }
-  scopes->frame_count--;
-  return run.result;
+  /* TS: try { call.proceed(); } catch (error) { if (frame.cancelled?.error !== error) throw error; } */
+  qa_cleanup_push(&run->guard, run_guard_unwind, run);
+  qa_caught_error caught;
+  if (!qa_try(proceed_body, call, &caught) &&
+      !(frame->cancelled && strcmp(caught.message, frame->cancelled_error) == 0))
+    qa_rethrow(&caught);
+  qa_cleanup_pop(&run->guard);
+  run_cleanup(run);
+  qa_source_damage_result result = run->result;
+  run_free(run);
+  return result;
 }

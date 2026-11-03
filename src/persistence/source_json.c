@@ -1,5 +1,6 @@
 /* Port of src/persistence/source-json.ts. GPL-2.0-or-later. */
 #include "qa/persistence/source_json.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <string.h>
 
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 static char *dup_range(const char *text, size_t length) {
   char *out = (char *)malloc(length + 1);
@@ -127,15 +129,7 @@ qa_save_json *qa_save_number_create(const char *text) {
   return number_from_range(text, strlen(text));
 }
 static void format_js_number(double value, char *buffer, size_t size) {
-  if (value == 0.0) { (void)snprintf(buffer, size, "0"); return; }
-  if (value == trunc(value) && fabs(value) <= 9007199254740991.0) {
-    (void)snprintf(buffer, size, "%lld", (long long)value);
-    return;
-  }
-  for (int precision = 15; precision <= 17; precision++) {
-    (void)snprintf(buffer, size, "%.*g", precision, value);
-    if (strtod(buffer, NULL) == value) return;
-  }
+  qa_net_js_number(value, buffer, size);
 }
 qa_save_json *qa_save_number_from_double(double value) {
   char buffer[64];
@@ -149,9 +143,7 @@ qa_save_json *qa_save_number_from_bigint_text(const char *decimal) {
   return qa_save_number_create(decimal);
 }
 double qa_save_number_number(const qa_save_json *number) {
-  /* TS Number(text): strtod accepts the same decimal forms (and the
-   * Infinity/NaN spellings the source grammar admits). */
-  return strtod(number->text, NULL);
+  return qa_js_string_to_number(number->text); /* Number(this.text) */
 }
 const char *qa_save_number_bigint_text(const qa_save_json *number) {
   /* TS BigInt(text) accepts only integer text; the source grammar's

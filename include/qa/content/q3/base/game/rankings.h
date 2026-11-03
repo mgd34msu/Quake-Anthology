@@ -9,6 +9,7 @@ typedef struct qa_q3_ranking_report {
 typedef struct qa_q3_ranking_reports {
   void *ctx; void (*sink)(void *ctx, qa_q3_ranking_report report); bool (*warmup)(void *ctx); bool attached;
   bool has_last_hit; double last_hit_frame, last_hit_self, last_hit_attacker, last_hit_mod; /* TS lastHit string */
+  double grapple_death; /* TS grappleDeath: MOD_GRAPPLE is 23 in base Q3 and 28 under MISSIONPACK, where MOD_NAIL takes 23. */
 } qa_q3_ranking_reports;
 void qa_q3_ranking_reports_init(qa_q3_ranking_reports *reports);
 /* TS attach returns detach closure: call qa_q3_ranking_reports_detach. */

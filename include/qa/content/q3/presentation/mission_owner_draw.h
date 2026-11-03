@@ -6,6 +6,7 @@
 #include "qa/content/q3/presentation/config.h"
 #include "qa/content/q3/presentation/draw_icons.h"
 #include "qa/content/q3/presentation/media.h"
+#include "qa/content/q3/presentation/player_state.h"
 #include "qa/content/q3/presentation/state.h"
 #include "qa/contracts/math.h"
 #include "qa/text/q3_font.h"
@@ -33,6 +34,7 @@ typedef enum qa_q3_pres_mission_owner_draw_id {
   QA_Q3_PRES_OD_HARVESTER_SKULLS2D = 65, QA_Q3_PRES_OD_CAPFRAGLIMIT = 66, QA_Q3_PRES_OD_1STPLACE = 67,
   QA_Q3_PRES_OD_2NDPLACE = 68, QA_Q3_PRES_OD_CAPTURES = 69
 } qa_q3_pres_mission_owner_draw_id;
+/* TS MissionOwnerDrawId[id]; NULL is TS undefined. */
 const char *qa_q3_pres_mission_owner_draw_id_name(qa_q3_pres_mission_owner_draw_id id);
 enum {
   QA_Q3_PRES_OD_SHOW_BLUE_TEAM_HAS_REDFLAG = 0x1, QA_Q3_PRES_OD_SHOW_RED_TEAM_HAS_BLUEFLAG = 0x2,
@@ -46,7 +48,8 @@ enum {
   QA_Q3_PRES_OD_SHOW_YOURTEAMHASENEMYFLAG = 0x40000, QA_Q3_PRES_OD_SHOW_ANYNONTEAMGAME = 0x80000,
   QA_Q3_PRES_OD_SHOW_2DONLY = 0x10000000
 };
-/* TS MissionOwnerDrawHost. media picks: armor/ammo icons + item icons. */
+/* TS MissionOwnerDrawHost plus the TS media.weaponRegistry/resources picks. All
+ * leaves are required except weapon_hud and take ctx (weapon_hud_ctx for it). */
 typedef struct qa_q3_pres_mission_owner_draw_host {
   qa_q3_pres_client_draw_icons *icons;
   void *ctx;
@@ -55,27 +58,40 @@ typedef struct qa_q3_pres_mission_owner_draw_host {
   const char *(*config_string)(void *ctx, double index);
   double (*selected_player)(void *ctx);
   void (*chat)(void *ctx, const char **system, const char **team1, const char **team2);
-  const qa_q3_pres_scene_shader *armor_icon; /* nullable */
   const qa_q3_pres_scene_shader *(*weapon_icon)(void *ctx, double weapon);
+  /* TS media.weaponRegistry.registerItemVisuals: false only on OOM. */
+  bool (*register_item_visuals)(void *ctx, double item_index);
   const qa_q3_pres_scene_shader *(*item_icon)(void *ctx, double item_index);
-  /* TS media.graphics + media.resources.registerShader (nullable). */
+  /* TS media.graphics + media.resources.registerShader. */
   const qa_q3_pres_client_media_graphics *graphics;
   const qa_q3_pres_scene_shader *(*register_shader)(void *ctx, const char *path);
   /* TS host.random (playerHead). */
   double (*crandom)(void *ctx);
   double (*random_value)(void *ctx);
+  /* TS weaponHud. NULL is the TS absent optional. */
+  void *weapon_hud_ctx;
+  qa_q3_pres_weapon_hud_reading (*weapon_hud)(void *ctx);
+  /* TS media.weaponRegistry.weapon(n).ammoIcon / .ammoModel. */
+  const qa_q3_pres_scene_shader *(*ammo_icon)(void *ctx, double weapon);
+  qa_q3_pres_scene_model (*ammo_model)(void *ctx, double weapon);
 } qa_q3_pres_mission_owner_draw_host;
 typedef struct qa_q3_pres_mission_owner_draw {
   qa_q3_pres_client_game_state *state;
   qa_q3_pres_client_game_static_state *static_state;
   qa_q3_pres_mission_owner_draw_host host;
 } qa_q3_pres_mission_owner_draw;
+/* Mixed owners abort with the TS Error text. */
 void qa_q3_pres_mission_owner_draw_init(qa_q3_pres_mission_owner_draw *draw,
     qa_q3_pres_client_game_state *state, qa_q3_pres_client_game_static_state *static_state,
     qa_q3_pres_mission_owner_draw_host host);
-/* TS paint(UiOwnerDrawPaintRequest). */
+/* TS paint(UiOwnerDrawPaintRequest): the async item and powerup registrations
+ * run synchronously, and an OOM from them aborts. */
 void qa_q3_pres_mission_owner_draw_paint(qa_q3_pres_mission_owner_draw *draw,
                                          const qa_ui_owner_draw_paint_request *request);
 bool qa_q3_pres_mission_owner_draw_other_team_has_flag(qa_q3_pres_mission_owner_draw *draw);
 bool qa_q3_pres_mission_owner_draw_your_team_has_flag(qa_q3_pres_mission_owner_draw *draw);
+double qa_q3_pres_mission_owner_draw_value(qa_q3_pres_mission_owner_draw *draw, double id);
+double qa_q3_pres_mission_owner_draw_width(qa_q3_pres_mission_owner_draw *draw, double id, double scale);
+bool qa_q3_pres_mission_owner_draw_visible(qa_q3_pres_mission_owner_draw *draw, double flags);
+const qa_q3_pres_scene_shader *qa_q3_pres_mission_owner_draw_status_handle(qa_q3_pres_mission_owner_draw *draw, double task);
 #endif

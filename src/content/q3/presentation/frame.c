@@ -9,6 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 const char *qa_q3_pres_frame_stereo_name(qa_q3_pres_frame_stereo stereo) {
   return stereo == QA_Q3_PRES_STEREO_LEFT ? "left" : stereo == QA_Q3_PRES_STEREO_RIGHT ? "right" : "center";
@@ -46,6 +47,17 @@ void qa_q3_pres_presentation_frame_runtime_close(qa_q3_pres_presentation_frame_r
   if (runtime->drawing && !runtime->scene_drawing) qa_range_error("Cannot retire cgame during a frame");
   runtime->closed = true;
   qa_q3_pres_scene_recorder_clear_scene(runtime->host.scene);
+}
+/* TS Set<number> of weapons: first insertion decides the registration order. */
+typedef struct weapon_set { double *values; size_t count; } weapon_set;
+static bool weapon_set_init(weapon_set *set, size_t maximum) {
+  set->values = malloc(maximum * sizeof *set->values);
+  set->count = 0;
+  return set->values != NULL;
+}
+static void weapon_set_add(weapon_set *set, double weapon) {
+  for (size_t i = 0; i < set->count; i++) if (set->values[i] == weapon) return;
+  set->values[set->count++] = weapon;
 }
 static void check_clock(double value) {
   if (value != trunc(value) || value < -2147483648.0 || value > 2147483647.0)
@@ -108,7 +120,7 @@ static void fade_timescale(qa_q3_pres_presentation_frame_runtime *runtime) {
   qa_cvar_read_free(&current_snapshot);
   if (current == end) return;
   double delta = f32(f32(speed * f32(runtime->state->frame_time)) / 1000);
-  double value = current < end ? fmin(end, f32(current + delta)) : fmax(end, f32(current - delta));
+  double value = current < end ? qa_js_min(end, f32(current + delta)) : qa_js_max(end, f32(current - delta));
   (void)qa_q3_pres_client_configuration_set_vm_numeric_value(configuration, QA_Q3_PRES_VM_CG_TIMESCALE, value);
   if (speed != 0) runtime->host.set_timescale(runtime->host.ctx, value);
 }
@@ -140,7 +152,7 @@ bool qa_q3_pres_presentation_frame_runtime_draw_scene_frame(qa_q3_pres_presentat
   if (!state->snap || (state->snap->flags & 2) != 0) { ok = true; goto done; }
   if (!qa_q3_base_player_state_copy(&state->predicted_player_state, &state->snap->player_state)) goto done;
   state->physics_time = state->snap->server_time;
-  state->frame_time = fmax(0, qa_int32(state->time - state->old_time));
+  state->frame_time = qa_js_max(0, qa_int32(state->time - state->old_time));
   state->old_time = state->time;
   state->client_frame = qa_int32(state->client_frame + 1);
   state->refdef.view_origin = camera.origin;
@@ -153,23 +165,23 @@ bool qa_q3_pres_presentation_frame_runtime_draw_scene_frame(qa_q3_pres_presentat
   state->refdef.fov_y = atan(1.0 / camera.projection.values[5]) * 360.0 / 3.141592653589793;
   state->refdef.time = state->time;
   {
-    bool required[16] = {false};
     double count = qa_q3_base_weapon_count(state->product);
-    double own = state->predicted_player_state.weapon;
-    if (own == trunc(own) && own >= 0 && own < 16) required[(size_t)own] = true;
+    weapon_set required;
+    if (!weapon_set_init(&required, state->snap->entity_count + 1)) goto done;
+    weapon_set_add(&required, state->predicted_player_state.weapon);
     for (size_t i = 0; i < state->snap->entity_count; i++) {
       qa_q3_base_entity_state *entity = &state->snap->entities[i];
       if (entity->e_type == QA_Q3_BASE_ET_PLAYER || entity->e_type == QA_Q3_BASE_ET_MISSILE ||
-          entity->e_type == QA_Q3_BASE_ET_GRAPPLE) {
-        double weapon = entity->weapon > count ? 0 : entity->weapon;
-        if (weapon == trunc(weapon) && weapon >= 0 && weapon < 16) required[(size_t)weapon] = true;
-      }
+          entity->e_type == QA_Q3_BASE_ET_GRAPPLE)
+        weapon_set_add(&required, entity->weapon > count ? 0 : entity->weapon);
     }
-    for (int weapon = 0; weapon < 16; weapon++) {
-      if (!required[weapon]) continue;
-      if (!qa_q3_pres_client_weapon_media_registry_register_weapon(host->weapon_registry, weapon)) goto done;
-      if (runtime->closed) qa_range_error("Supplemental cgame retired during its frame");
+    bool registered = true;
+    for (size_t i = 0; registered && i < required.count; i++) {
+      registered = qa_q3_pres_client_weapon_media_registry_register_weapon(host->weapon_registry, required.values[i]);
+      if (registered && runtime->closed) qa_range_error("Supplemental cgame retired during its frame");
     }
+    free(required.values);
+    if (!registered) goto done;
   }
   qa_q3_pres_packet_entity_presenter_add_packet_entities(host->packet, host->packet_options(host->ctx));
   if (!add_marks_and_particles(runtime)) goto done;
@@ -212,30 +224,28 @@ bool qa_q3_pres_presentation_frame_runtime_draw_active_frame(qa_q3_pres_presenta
   if (!qa_q3_pres_prediction_runtime_predict_player_state(host->prediction)) goto done;
   (void)qa_q3_pres_view_runtime_calculate_view_values(host->view);
   {
-    bool required[16] = {false};
-    double own = state->predicted_player_state.weapon;
-    if (own == trunc(own) && own >= 0 && own < 16) required[(size_t)own] = true;
     const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(state->product);
-    double owned = qa_q3_base_player_state_slots_get(&state->snap->player_state.stats, schema->weapons);
-    double count = qa_q3_base_weapon_count(state->product);
-    for (double weapon = 1; weapon < count && weapon < 16; weapon++)
-      if (((int64_t)owned & (1LL << (int)weapon)) != 0) required[(size_t)weapon] = true;
+    int32_t owned = qa_int32(qa_q3_base_player_state_slots_get(&state->snap->player_state.stats, schema->weapons));
+    int32_t count = qa_js_to_int32(qa_q3_base_weapon_count(state->product));
+    weapon_set required;
+    if (!weapon_set_init(&required, state->snap->entity_count + (size_t)count + 1)) goto done;
+    weapon_set_add(&required, state->predicted_player_state.weapon);
+    for (int32_t weapon = 1; weapon < count; weapon++)
+      if (((uint32_t)owned & (UINT32_C(1) << (weapon & 31))) != 0) weapon_set_add(&required, weapon);
     for (size_t i = 0; i < state->snap->entity_count; i++) {
       qa_q3_pres_client_entity *current_entity =
           qa_q3_pres_client_game_state_entity_at(state, state->snap->entities[i].number);
       qa_q3_base_entity_state *current = &current_entity->current_state;
-      if (current->e_type == QA_Q3_BASE_ET_PLAYER) {
-        if (current->weapon == trunc(current->weapon) && current->weapon >= 0 && current->weapon < 16)
-          required[(size_t)current->weapon] = true;
-      } else if (current->e_type == QA_Q3_BASE_ET_MISSILE || current->e_type == QA_Q3_BASE_ET_GRAPPLE) {
-        double weapon = current->weapon > count ? 0 : current->weapon;
-        if (weapon == trunc(weapon) && weapon >= 0 && weapon < 16) required[(size_t)weapon] = true;
-      }
+      if (current->e_type == QA_Q3_BASE_ET_PLAYER)
+        weapon_set_add(&required, current->weapon > count ? 0 : current->weapon);
+      else if (current->e_type == QA_Q3_BASE_ET_MISSILE || current->e_type == QA_Q3_BASE_ET_GRAPPLE)
+        weapon_set_add(&required, current->weapon > count ? 0 : current->weapon);
     }
-    for (int weapon = 0; weapon < 16; weapon++) {
-      if (!required[weapon]) continue;
-      if (!qa_q3_pres_client_weapon_media_registry_register_weapon(host->weapon_registry, weapon)) goto done;
-    }
+    bool registered = true;
+    for (size_t i = 0; registered && i < required.count; i++)
+      registered = qa_q3_pres_client_weapon_media_registry_register_weapon(host->weapon_registry, required.values[i]);
+    free(required.values);
+    if (!registered) goto done;
   }
   if (!state->rendering_third_person) {
     qa_q3_pres_ref_sprite_entity damage;
@@ -274,14 +284,14 @@ bool qa_q3_pres_presentation_frame_runtime_draw_active_frame(qa_q3_pres_presenta
     qa_q3_pres_client_frame_audio_powerup_timer_sounds(host->frame_audio);
     host->set_listener(host->ctx, state->snap->player_state.client_num, refdef.view_origin, refdef.view_axis);
     if (input.stereo != QA_Q3_PRES_STEREO_RIGHT) {
-      state->frame_time = fmax(0, qa_int32(state->time - state->old_time));
+      state->frame_time = qa_js_max(0, qa_int32(state->time - state->old_time));
       state->old_time = state->time;
       qa_q3_pres_client_draw_status_add_lagometer_frame_info(host->status);
     }
     fade_timescale(runtime);
-    double team = qa_q3_base_player_state_slots_get(&state->snap->player_state.persistant, 1); /* PERS_TEAM */
+    double team = qa_q3_base_player_state_slots_get(&state->snap->player_state.persistant, QA_Q3_BASE_PERS_TEAM);
     if (team == QA_Q3_BASE_TEAM_SPECTATOR &&
-        ((int64_t)state->snap->player_state.pm_flags & 32) != 0) { /* MoveFlags.SCOREBOARD */
+        (qa_int32(state->snap->player_state.pm_flags) & QA_Q3_FLAG_SCOREBOARD) != 0) {
       (void)qa_q3_pres_client_hud_draw_tourney_scoreboard(host->hud);
       ok = true;
       goto done;

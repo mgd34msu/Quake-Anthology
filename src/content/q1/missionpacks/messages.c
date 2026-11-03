@@ -1,7 +1,8 @@
 /* Port of src/content/q1/missionpacks/messages.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/messages.h"
+
 #include "missionpacks_internal.h"
-#include <stdio.h>
+
 static const struct { const char *key; const char *value; } CLASSIC[] = {
   {"$qc_wetsuit","Wetsuit"},{"$qc_empathy_shields","Empathy Shields"},{"$qc_mjolnir","Mjolnir"},{"$qc_laser_cannon","Laser Cannon"},{"$qc_prox_gun","Proximity Gun"},
   {"$qc_power_shield","Power Shield"},{"$qc_anti_grav_belt","Anti-Grav Belt"},{"$qc_vengeance_sphere","Vengeance Sphere"},{"$qc_lava_nails","lava nails"},{"$qc_multi_rockets","multi rockets"},
@@ -21,17 +22,22 @@ const char *qa_q1mp_mission_classic(const char *key) {
     if (qa_q1mp_streq(CLASSIC[i].key, key)) return CLASSIC[i].value;
   return NULL;
 }
-void qa_q1mp_mission_message(qa_q1mp_game *game, qa_q1mp_opt_actor player, const char *key) {
+void qa_q1mp_mission_message(qa_q1_services *game, const qa_actor_id *player, const char *key) {
   const char *text = key;
-  if (qa_q1mp_streq(game->base->options.edition, "classic")) { const char *c = qa_q1mp_mission_classic(key); text = c ? c : key; }
-  game->base->message(game->base, player, text, false);
-}
-void qa_q1mp_mission_pickup_message(qa_q1mp_game *game, qa_actor_id player, const char *key) {
-  if (qa_q1mp_streq(game->base->options.edition, "classic")) {
-    char buf[512]; const char *c = qa_q1mp_mission_classic(key);
-    (void)snprintf(buf, sizeof buf, "You got the %s\n", c ? c : key);
-    game->base->message(game->base, QA_Q1MP_SOME(player), buf, false); return;
+  if (qa_q1mp_streq(game->options.edition, "classic")) {
+    const char *classic = qa_q1mp_mission_classic(key);
+    text = classic != NULL ? classic : key;
   }
-  if (game->message_args) { const char *args[] = {key}; game->message_args(game->ctx, QA_Q1MP_SOME(player), "$qc_got_item", false, args, 1); }
-  else game->base->message(game->base, QA_Q1MP_SOME(player), "$qc_got_item", false);
+  qa_q1_message(game, player, text, false, NULL, 0);
+}
+void qa_q1mp_mission_pickup_message(qa_q1_services *game, qa_actor_id player, const char *key) {
+  if (qa_q1mp_streq(game->options.edition, "classic")) {
+    char text[512];
+    const char *classic = qa_q1mp_mission_classic(key);
+    (void)snprintf(text, sizeof text, "You got the %s\n", classic != NULL ? classic : key);
+    qa_q1_message(game, &player, text, false, NULL, 0);
+    return;
+  }
+  const qa_q1_msg_arg args[1] = {{false, 0, key}};
+  qa_q1_message(game, &player, "$qc_got_item", false, args, 1);
 }

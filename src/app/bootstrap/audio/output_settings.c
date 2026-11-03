@@ -2,12 +2,14 @@
  * GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/app/bootstrap/audio/output_settings.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 static void reg_ignored(qa_cvar_registry *cvars, const char *name, const char *value, double flags) {
   qa_cvar_snapshot ignored;
   if (qa_cvar_registry_register(cvars, name, value, flags, &ignored)) qa_cvar_read_free(&ignored);
@@ -42,7 +44,36 @@ static bool format_valid(qa_audio_output_format f, double raw[3]) {
   return true;
 }
 typedef struct validate_ctx { qa_audio_output_format defaults; int field; } validate_ctx;
-static validate_ctx contexts[3];
+/* Per-registration storage the registry borrows for its life (TS closures over `defaults`):
+ * interned by value, so every registry with the same defaults shares one bounded record and
+ * the records stay reachable (process lifetime) instead of leaking per registration. */
+typedef struct output_registration {
+  validate_ctx context;
+  char usage[64], example[64];
+  const char *examples[1];
+} output_registration;
+static output_registration **registrations;
+static size_t registration_count;
+static output_registration *intern_registration(qa_audio_output_format defaults, int field, const char *usage, const char *example) {
+  for (size_t i = 0; i < registration_count; i++) {
+    output_registration *r = registrations[i];
+    if (r->context.field == field && r->context.defaults.sample_rate == defaults.sample_rate &&
+        r->context.defaults.sample_bits == defaults.sample_bits && r->context.defaults.channels == defaults.channels &&
+        strcmp(r->usage, usage) == 0 && strcmp(r->example, example) == 0)
+      return r;
+  }
+  output_registration **grown = realloc(registrations, (registration_count + 1) * sizeof *grown);
+  output_registration *r = calloc(1, sizeof *r);
+  if (grown == NULL || r == NULL) qa_range_error("Out of memory");
+  registrations = grown;
+  r->context.defaults = defaults;
+  r->context.field = field;
+  snprintf(r->usage, sizeof r->usage, "%s", usage);
+  snprintf(r->example, sizeof r->example, "%s", example);
+  r->examples[0] = r->example;
+  registrations[registration_count++] = r;
+  return r;
+}
 static bool is_trim_empty(const char *text) {
   for (; *text != '\0'; text++) if (!isspace((unsigned char)*text)) return false;
   return true;
@@ -52,11 +83,7 @@ static char *validate_field(void *ctx, const char *text) {
   if (is_trim_empty(text)) return strdup("Expected an integer audio format value");
   double raw[3] = {(double)c->defaults.sample_rate, (double)c->defaults.sample_bits,
                    (double)c->defaults.channels};
-  /* JS Number(text): strtod over the trimmed text, junk -> NaN. */
-  char *end = NULL;
-  double value = strtod(text, &end);
-  if (end == text) value = NAN;
-  else { while (*end != '\0' && isspace((unsigned char)*end)) end++; if (*end != '\0') value = NAN; }
+  double value = qa_js_string_to_number(text); /* Number(text) */
   if (c->field == 0) raw[0] = value; else if (c->field == 1) raw[1] = value; else raw[2] = value;
   if (!format_valid(c->defaults, raw))
     return strdup("Audio output requires 8000\xe2\x80\x93" "192000 Hz, 1 or 2 channels, and 8 or 16 bits");
@@ -71,9 +98,9 @@ static char *khz_read(void *ctx, const char *value) {
   if (strcmp(value, "48000") == 0) return strdup("48");
   char buf[64];
   /* JS String(Number(value) / 1000): integral values print plain. */
-  double scaled = strtod(value, NULL) / 1000.0;
+  double scaled = qa_js_string_to_number(value) / 1000.0;
   if (scaled == trunc(scaled) && fabs(scaled) < 1e15) snprintf(buf, sizeof buf, "%lld", (long long)scaled);
-  else snprintf(buf, sizeof buf, "%g", scaled);
+  else snprintf(buf, sizeof buf, "%s", QA_JS_NUMBER(scaled));
   return strdup(buf);
 }
 static bool khz_write(void *ctx, const char *value, char **out_value, char **out_message) {
@@ -96,23 +123,15 @@ void qa_app_register_audio_output_cvars(qa_cvar_registry *cvars, const qa_audio_
     char text[32];
     snprintf(text, sizeof text, "%lld", (long long)value);
     reg_ignored(cvars, fields[i].name, text, QA_CVAR_FLAG_ARCHIVE);
-    contexts[i].defaults = defaults;
-    contexts[i].field = fields[i].field;
-    qa_cvar_registry_bind_value(cvars, fields[i].name,
-        (qa_cvar_value_binding){&contexts[i], validate_field, changed_noop});
     char usage[64], example[64];
     snprintf(usage, sizeof usage, "%s <value>", fields[i].name);
     snprintf(example, sizeof example, "%s %lld", fields[i].name, (long long)value);
-    /* Documentation strings must outlive the call: leak small copies
-     * (process-lifetime cvar docs, as the TS strings are GC-rooted). */
-    char *usage_copy = strdup(usage), *example_copy = strdup(example);
-    if (usage_copy == NULL || example_copy == NULL) qa_range_error("Out of memory");
-    const char **examples = malloc(sizeof *examples);
-    if (examples == NULL) qa_range_error("Out of memory");
-    examples[0] = example_copy;
+    output_registration *registration = intern_registration(defaults, fields[i].field, usage, example);
+    qa_cvar_registry_bind_value(cvars, fields[i].name,
+        (qa_cvar_value_binding){&registration->context, validate_field, changed_noop});
     qa_cvar_registry_document(cvars, fields[i].name, (qa_command_documentation){
       "Shared output format; apply with snd_restart or the audio menu.",
-      usage_copy, examples, 1, NULL, 0});
+      registration->usage, registration->examples, 1, NULL, 0});
   }
   qa_cvar_registry_register_alias(cvars, (qa_cvar_alias){"s_khz", "s_outputRate",
     (qa_command_documentation){"Source sample-rate convention for the shared output; apply with snd_restart.",

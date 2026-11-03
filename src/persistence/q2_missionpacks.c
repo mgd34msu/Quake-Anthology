@@ -4,676 +4,324 @@
 #include <stdlib.h>
 #include <string.h>
 
-static qa_save_reader field(const qa_save_reader *reader, const char *name) {
-  qa_save_reader out;
-  if (!qa_save_reader_field(reader, name, &out))
-    qa_save_reader_fail(reader, "out of memory");
-  return out;
-}
-static qa_save_reader item(const qa_save_reader *reader, size_t index) {
-  qa_save_reader out;
-  if (!qa_save_reader_item(reader, index, &out))
-    qa_save_reader_fail(reader, "out of memory");
-  return out;
-}
-/* TS readSavedActor (save-image.ts, not yet ported as a module):
- * {slot: integer(0), generation: integer(0)}. Local copy only. */
-static qa_saved_actor_id read_actor(const qa_save_reader *reader) {
-  qa_saved_actor_id actor;
-  qa_save_reader slot = field(reader, "slot");
-  actor.slot = qa_save_reader_integer_min(&slot, 0);
-  qa_save_reader_destroy(&slot);
-  qa_save_reader generation = field(reader, "generation");
-  actor.generation = qa_save_reader_integer_min(&generation, 0);
-  qa_save_reader_destroy(&generation);
-  return actor;
-}
+#include "q2_codec_internal.h"
+
+/* ---- value builders (TS encodeCheckpointValue of the captured object) ---- */
 static bool set_own(qa_save_value *object, const char *key, qa_save_value *child) {
   if (child == NULL) return false;
   if (!qa_save_value_set(object, key, child)) { qa_save_value_free(child); return false; }
   return true;
 }
-static bool push_own(qa_save_value *array, qa_save_value *child) {
-  if (child == NULL) return false;
-  if (!qa_save_value_push(array, child)) { qa_save_value_free(child); return false; }
+/* TS decode*(bytes): readX(new SaveReader(decodeCheckpointValue(bytes), path)). */
+typedef bool (*read_fn)(const qa_save_reader *reader, void *out);
+static bool decode_with(const uint8_t *bytes, size_t length, const char *path, read_fn read, void *out) {
+  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
+  if (root == NULL) return false;
+  qa_save_reader reader;
+  if (!qa_save_reader_init(&reader, root, path)) { qa_save_value_free(root); return false; }
+  bool ok = read(&reader, out);
+  qa_save_reader_destroy(&reader);
+  qa_save_value_free(root);
+  return ok;
+}
+
+/* ---- Q2MissionPackItemsCheckpoint ---- */
+bool qa_read_q2_mission_pack_items_checkpoint(const qa_save_reader *reader, qa_q2mp_items_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  qa_save_reader powers = q2c_field(reader, "powers");
+  size_t count = qa_save_reader_list_count(&powers);
+  if (count != 0) {
+    out->powers = calloc(count, sizeof *out->powers);
+    if (out->powers == NULL) { qa_save_reader_destroy(&powers); return false; }
+  }
+  for (size_t i = 0; i < count; i++) {
+    qa_save_reader value = q2c_item(&powers, i);
+    qa_q2mp_item_power_checkpoint *entry = &out->powers[i];
+    entry->actor = q2c_actor(&value, "actor");
+    qa_save_reader state = q2c_field(&value, "state");
+    entry->state.quad_fire_until = q2c_number(&state, "quadFireUntil");
+    entry->state.double_until = q2c_number(&state, "doubleUntil");
+    entry->state.ir_until = q2c_number(&state, "irUntil");
+    qa_save_reader_destroy(&state);
+    qa_save_reader_destroy(&value);
+    out->power_count = i + 1;
+  }
+  qa_save_reader_destroy(&powers);
   return true;
 }
-__attribute__((unused)) static qa_save_value *str_value(const char *text) {
-  return qa_save_value_string(text != NULL ? text : "");
+/* TS Q2MissionPackItems.capture: { powers: [{ actor, state: { quadFireUntil, doubleUntil, irUntil } }] }. */
+static qa_save_value *items_value(const qa_q2mp_items_checkpoint *checkpoint) {
+  qa_save_value *obj = qa_save_value_object(), *powers = qa_save_value_array();
+  if (obj == NULL || powers == NULL) goto fail;
+  for (size_t i = 0; i < checkpoint->power_count; i++) {
+    const qa_q2mp_item_power_checkpoint *entry = &checkpoint->powers[i];
+    qa_save_value *power = qa_save_value_object(), *state = qa_save_value_object();
+    if (power == NULL || state == NULL || !set_own(state, "quadFireUntil", qa_save_value_number(entry->state.quad_fire_until)) ||
+        !set_own(state, "doubleUntil", qa_save_value_number(entry->state.double_until)) ||
+        !set_own(state, "irUntil", qa_save_value_number(entry->state.ir_until)) ||
+        !set_own(power, "actor", q2c_actor_value(entry->actor))) {
+      qa_save_value_free(power); qa_save_value_free(state);
+      goto fail;
+    }
+    if (!set_own(power, "state", state)) { qa_save_value_free(power); goto fail; }
+    if (!q2c_push(powers, power)) goto fail;
+  }
+  if (!set_own(obj, "powers", powers)) { powers = NULL; goto fail; }
+  return obj;
+fail:
+  qa_save_value_free(powers);
+  qa_save_value_free(obj);
+  return NULL;
 }
-__attribute__((unused)) static qa_save_value *vec_value(const qa_vec3 *vector) {
+uint8_t *qa_encode_q2_mission_pack_items_checkpoint(const qa_q2mp_items_checkpoint *checkpoint, size_t *out_length) {
+  return q2c_encode(items_value(checkpoint), out_length);
+}
+static bool read_items(const qa_save_reader *reader, void *out) {
+  if (qa_read_q2_mission_pack_items_checkpoint(reader, out)) return true;
+  qa_q2mp_items_checkpoint_free(out);
+  return false;
+}
+bool qa_decode_q2_mission_pack_items_checkpoint(const uint8_t *bytes, size_t length, qa_q2mp_items_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  return decode_with(bytes, length, "q2-missionpack-items", read_items, out);
+}
+
+/* ---- Q2MissionPackMonstersCheckpoint ---- */
+static bool read_monster_state(const qa_save_reader *state, qa_q2mpm_saved_state *out) {
+  out->blocked = q2c_boolean(state, "blocked");
+  out->turret_orientation = q2c_number(state, "turretOrientation");
+  out->has_healer = q2c_nullable_actor(state, "healer", &out->healer);
+  out->has_bad_medic1 = q2c_nullable_actor(state, "badMedic1", &out->bad_medic1);
+  out->has_bad_medic2 = q2c_nullable_actor(state, "badMedic2", &out->bad_medic2);
+  out->medic_tries = q2c_number(state, "medicTries");
+  qa_save_reader list = q2c_field(state, "chosenReinforcements");
+  size_t count = qa_save_reader_list_count(&list);
+  if (count != 0) {
+    out->chosen_reinforcements = calloc(count, sizeof *out->chosen_reinforcements);
+    if (out->chosen_reinforcements == NULL) { qa_save_reader_destroy(&list); return false; }
+  }
+  for (size_t i = 0; i < count; i++) {
+    qa_save_reader value = q2c_item(&list, i);
+    double index = qa_save_reader_integer_min(&value, 0);
+    if (index >= 255) qa_save_reader_fail(&value, "expected a reinforcement index below 255");
+    out->chosen_reinforcements[i] = index;
+    out->reinforcement_count = i + 1;
+    qa_save_reader_destroy(&value);
+  }
+  qa_save_reader_destroy(&list);
+  qa_save_reader react = q2c_field(state, "reactToDamageTime");
+  out->react_to_damage_time = qa_save_reader_finite(&react);
+  qa_save_reader_destroy(&react);
+  out->summon_strength = q2c_number(state, "summonStrength");
+  out->has_last_player_enemy = q2c_nullable_actor(state, "lastPlayerEnemy", &out->last_player_enemy);
+  out->has_bad_area = q2c_nullable_actor(state, "badArea", &out->bad_area);
+  out->good_guy = q2c_boolean(state, "goodGuy");
+  out->widow_quad_until = q2c_number(state, "widowQuadUntil");
+  out->widow_double_until = q2c_number(state, "widowDoubleUntil");
+  out->widow_invulnerable_until = q2c_number(state, "widowInvulnerableUntil");
+  return true;
+}
+bool qa_read_q2_mission_pack_monsters_checkpoint(const qa_save_reader *reader, qa_q2mpm_monsters_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  qa_save_reader f = q2c_field(reader, "version");
+  out->version = qa_save_reader_literal_number(&f, 1);
+  qa_save_reader_destroy(&f);
+  f = q2c_field(reader, "flyerNextMove");
+  static const char *const moves[] = {"none", "run"};
+  out->flyer_next_move = strcmp(qa_save_reader_choice_string(&f, moves, 2), "run") == 0 ? QA_Q2MPM_FLYER_RUN : QA_Q2MPM_FLYER_NONE;
+  qa_save_reader_destroy(&f);
+  f = q2c_field(reader, "hints");
+  if (!qa_save_reader_is_null(&f)) {
+    if (!qa_q2mpm_decode_hints_checkpoint(&f, &out->hints)) { qa_save_reader_destroy(&f); return false; }
+    out->has_hints = true;
+  }
+  qa_save_reader_destroy(&f);
+  out->widow_shots_fired = q2c_number(reader, "widowShotsFired");
+  f = q2c_field(reader, "widowDamageMultiplier");
+  static const double multipliers[] = {1, 2, 4};
+  out->widow_damage_multiplier = qa_save_reader_choice_number(&f, multipliers, 3);
+  qa_save_reader_destroy(&f);
+  qa_save_reader actors = q2c_field(reader, "actors");
+  size_t count = qa_save_reader_list_count(&actors);
+  if (count != 0) {
+    out->actors = calloc(count, sizeof *out->actors);
+    if (out->actors == NULL) { qa_save_reader_destroy(&actors); return false; }
+  }
+  for (size_t i = 0; i < count; i++) {
+    qa_save_reader value = q2c_item(&actors, i);
+    out->actors[i].actor = q2c_actor(&value, "actor");
+    qa_save_reader state = q2c_field(&value, "state");
+    out->actor_count = i + 1;
+    bool ok = read_monster_state(&state, &out->actors[i].state);
+    qa_save_reader_destroy(&state);
+    qa_save_reader_destroy(&value);
+    if (!ok) { qa_save_reader_destroy(&actors); return false; }
+  }
+  qa_save_reader_destroy(&actors);
+  return true;
+}
+/* TS Q2RogueHints.capture: { version, present, starts, nodes: [{ actor, chain, next }],
+ * monsters: [{ actor, goal, lastTime }] }. */
+static qa_save_value *hints_value(const qa_q2mpm_hints_checkpoint *hints) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
-  if (!set_own(obj, "x", qa_save_value_number(vector->x)) ||
-      !set_own(obj, "y", qa_save_value_number(vector->y)) ||
-      !set_own(obj, "z", qa_save_value_number(vector->z))) {
+  if (!set_own(obj, "version", qa_save_value_number(hints->version)) ||
+      !set_own(obj, "present", qa_save_value_boolean(hints->present))) goto fail;
+  qa_save_value *starts = qa_save_value_array();
+  if (!set_own(obj, "starts", starts)) goto fail;
+  for (size_t i = 0; i < hints->start_count; i++)
+    if (!q2c_push(starts, q2c_actor_value(hints->starts[i]))) goto fail;
+  qa_save_value *nodes = qa_save_value_array();
+  if (!set_own(obj, "nodes", nodes)) goto fail;
+  for (size_t i = 0; i < hints->node_count; i++) {
+    const qa_q2mpm_hint_node_checkpoint *node = &hints->nodes[i];
+    qa_save_value *value = qa_save_value_object();
+    if (!q2c_push(nodes, value)) goto fail;
+    if (!set_own(value, "actor", q2c_actor_value(node->actor)) || !set_own(value, "chain", qa_save_value_number(node->chain)) ||
+        !set_own(value, "next", q2c_nullable_actor_value(node->has_next, node->next))) goto fail;
+  }
+  qa_save_value *monsters = qa_save_value_array();
+  if (!set_own(obj, "monsters", monsters)) goto fail;
+  for (size_t i = 0; i < hints->monster_count; i++) {
+    const qa_q2mpm_hint_monster_checkpoint *monster = &hints->monsters[i];
+    qa_save_value *value = qa_save_value_object();
+    if (!q2c_push(monsters, value)) goto fail;
+    if (!set_own(value, "actor", q2c_actor_value(monster->actor)) ||
+        !set_own(value, "goal", q2c_nullable_actor_value(monster->has_goal, monster->goal)) ||
+        !set_own(value, "lastTime", qa_save_value_number(monster->last_time))) goto fail;
+  }
+  return obj;
+fail:
+  qa_save_value_free(obj);
+  return NULL;
+}
+/* TS Q2MissionPackMonsterState.capture state: { ...RogueMonsterState } key order. */
+static qa_save_value *monster_state_value(const qa_q2mpm_saved_state *state) {
+  qa_save_value *obj = qa_save_value_object();
+  if (obj == NULL) return NULL;
+  if (!set_own(obj, "blocked", qa_save_value_boolean(state->blocked)) ||
+      !set_own(obj, "turretOrientation", qa_save_value_number(state->turret_orientation)) ||
+      !set_own(obj, "healer", q2c_nullable_actor_value(state->has_healer, state->healer)) ||
+      !set_own(obj, "badMedic1", q2c_nullable_actor_value(state->has_bad_medic1, state->bad_medic1)) ||
+      !set_own(obj, "badMedic2", q2c_nullable_actor_value(state->has_bad_medic2, state->bad_medic2)) ||
+      !set_own(obj, "medicTries", qa_save_value_number(state->medic_tries))) goto fail;
+  qa_save_value *chosen = qa_save_value_array();
+  if (!set_own(obj, "chosenReinforcements", chosen)) goto fail;
+  for (size_t i = 0; i < state->reinforcement_count; i++)
+    if (!q2c_push(chosen, qa_save_value_number(state->chosen_reinforcements[i]))) goto fail;
+  if (!set_own(obj, "reactToDamageTime", qa_save_value_number(state->react_to_damage_time)) ||
+      !set_own(obj, "summonStrength", qa_save_value_number(state->summon_strength)) ||
+      !set_own(obj, "lastPlayerEnemy", q2c_nullable_actor_value(state->has_last_player_enemy, state->last_player_enemy)) ||
+      !set_own(obj, "badArea", q2c_nullable_actor_value(state->has_bad_area, state->bad_area)) ||
+      !set_own(obj, "goodGuy", qa_save_value_boolean(state->good_guy)) ||
+      !set_own(obj, "widowQuadUntil", qa_save_value_number(state->widow_quad_until)) ||
+      !set_own(obj, "widowDoubleUntil", qa_save_value_number(state->widow_double_until)) ||
+      !set_own(obj, "widowInvulnerableUntil", qa_save_value_number(state->widow_invulnerable_until))) goto fail;
+  return obj;
+fail:
+  qa_save_value_free(obj);
+  return NULL;
+}
+/* TS Q2MissionPackMonsters.capture: { ...source.capture(game), hints } keeps the source
+ * capture's key order: version, actors, flyerNextMove, hints, widowShotsFired,
+ * widowDamageMultiplier. */
+static qa_save_value *monsters_value(const qa_q2mpm_monsters_checkpoint *checkpoint) {
+  qa_save_value *obj = qa_save_value_object();
+  if (obj == NULL) return NULL;
+  if (!set_own(obj, "version", qa_save_value_number(checkpoint->version))) goto fail;
+  qa_save_value *actors = qa_save_value_array();
+  if (!set_own(obj, "actors", actors)) goto fail;
+  for (size_t i = 0; i < checkpoint->actor_count; i++) {
+    qa_save_value *entry = qa_save_value_object();
+    if (!q2c_push(actors, entry)) goto fail;
+    if (!set_own(entry, "actor", q2c_actor_value(checkpoint->actors[i].actor)) ||
+        !set_own(entry, "state", monster_state_value(&checkpoint->actors[i].state))) goto fail;
+  }
+  if (!set_own(obj, "flyerNextMove", qa_save_value_string(checkpoint->flyer_next_move == QA_Q2MPM_FLYER_RUN ? "run" : "none")) ||
+      !set_own(obj, "hints", checkpoint->has_hints ? hints_value(&checkpoint->hints) : qa_save_value_null()) ||
+      !set_own(obj, "widowShotsFired", qa_save_value_number(checkpoint->widow_shots_fired)) ||
+      !set_own(obj, "widowDamageMultiplier", qa_save_value_number(checkpoint->widow_damage_multiplier))) goto fail;
+  return obj;
+fail:
+  qa_save_value_free(obj);
+  return NULL;
+}
+uint8_t *qa_encode_q2_mission_pack_monsters_checkpoint(const qa_q2mpm_monsters_checkpoint *checkpoint, size_t *out_length) {
+  return q2c_encode(monsters_value(checkpoint), out_length);
+}
+static bool read_monsters(const qa_save_reader *reader, void *out) {
+  if (qa_read_q2_mission_pack_monsters_checkpoint(reader, out)) return true;
+  qa_q2mpm_monsters_checkpoint_free(out);
+  return false;
+}
+bool qa_decode_q2_mission_pack_monsters_checkpoint(const uint8_t *bytes, size_t length, qa_q2mpm_monsters_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  return decode_with(bytes, length, "q2-missionpack-monsters", read_monsters, out);
+}
+
+/* ---- Q2RogueEntitiesCheckpoint: { steamId } ---- */
+bool qa_read_q2_rogue_entities_checkpoint(const qa_save_reader *reader, qa_q2mp_rogue_entities_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  out->steam_id = q2c_number(reader, "steamId");
+  return true;
+}
+uint8_t *qa_encode_q2_rogue_entities_checkpoint(const qa_q2mp_rogue_entities_checkpoint *checkpoint, size_t *out_length) {
+  qa_save_value *obj = qa_save_value_object();
+  if (obj != NULL && !set_own(obj, "steamId", qa_save_value_number(checkpoint->steam_id))) { qa_save_value_free(obj); obj = NULL; }
+  return q2c_encode(obj, out_length);
+}
+static bool read_rogue(const qa_save_reader *reader, void *out) { return qa_read_q2_rogue_entities_checkpoint(reader, out); }
+bool qa_decode_q2_rogue_entities_checkpoint(const uint8_t *bytes, size_t length, qa_q2mp_rogue_entities_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  return decode_with(bytes, length, "q2-rogue-entities", read_rogue, out);
+}
+
+/* ---- Q2TagCheckpoint: { token, owner, count } ---- */
+bool qa_read_q2_tag_checkpoint(const qa_save_reader *reader, qa_q2mp_tag_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  out->has_token = q2c_nullable_actor(reader, "token", &out->token);
+  out->has_owner = q2c_nullable_actor(reader, "owner", &out->owner);
+  out->count = q2c_number(reader, "count");
+  return true;
+}
+uint8_t *qa_encode_q2_tag_checkpoint(const qa_q2mp_tag_checkpoint *checkpoint, size_t *out_length) {
+  qa_save_value *obj = qa_save_value_object();
+  if (obj != NULL && (!set_own(obj, "token", q2c_nullable_actor_value(checkpoint->has_token, checkpoint->token)) ||
+                      !set_own(obj, "owner", q2c_nullable_actor_value(checkpoint->has_owner, checkpoint->owner)) ||
+                      !set_own(obj, "count", qa_save_value_number(checkpoint->count)))) {
     qa_save_value_free(obj);
-    return NULL;
+    obj = NULL;
   }
-  return obj;
+  return q2c_encode(obj, out_length);
 }
-static qa_save_value *actor_value(const qa_saved_actor_id *actor) {
+static bool read_tag(const qa_save_reader *reader, void *out) { return qa_read_q2_tag_checkpoint(reader, out); }
+bool qa_decode_q2_tag_checkpoint(const uint8_t *bytes, size_t length, qa_q2mp_tag_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  return decode_with(bytes, length, "q2-tag", read_tag, out);
+}
+
+/* ---- Q2DeathBallCheckpoint: { ball, starts, team1Score, team2Score } ---- */
+bool qa_read_q2_death_ball_checkpoint(const qa_save_reader *reader, qa_q2mp_deathball_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  out->has_ball = q2c_nullable_actor(reader, "ball", &out->ball);
+  out->starts = q2c_number(reader, "starts");
+  out->team1_score = q2c_number(reader, "team1Score");
+  out->team2_score = q2c_number(reader, "team2Score");
+  return true;
+}
+uint8_t *qa_encode_q2_death_ball_checkpoint(const qa_q2mp_deathball_checkpoint *checkpoint, size_t *out_length) {
   qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "slot", qa_save_value_number(actor->slot)) ||
-      !set_own(obj, "generation", qa_save_value_number(actor->generation))) {
+  if (obj != NULL && (!set_own(obj, "ball", q2c_nullable_actor_value(checkpoint->has_ball, checkpoint->ball)) ||
+                      !set_own(obj, "starts", qa_save_value_number(checkpoint->starts)) ||
+                      !set_own(obj, "team1Score", qa_save_value_number(checkpoint->team1_score)) ||
+                      !set_own(obj, "team2Score", qa_save_value_number(checkpoint->team2_score)))) {
     qa_save_value_free(obj);
-    return NULL;
+    obj = NULL;
   }
-  return obj;
+  return q2c_encode(obj, out_length);
 }
-__attribute__((unused)) static qa_save_value *time_value(const qa_source_time *time) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "kind", qa_save_value_string(
-          time->kind == QA_SOURCE_TIME_SECONDS ? "seconds" : "milliseconds")) ||
-      !set_own(obj, "value", qa_save_value_number(time->value))) {
-    qa_save_value_free(obj);
-    return NULL;
-  }
-  return obj;
-}
-/* Moves every entry of `child` into `object` (TS object spread). */
-__attribute__((unused)) static bool merge_into(qa_save_value *object, qa_save_value *child) {
-  for (size_t i = 0; i < child->entry_count; i++) {
-    qa_save_value *value = child->entries[i].value;
-    child->entries[i].value = NULL;
-    if (!qa_save_value_set(object, child->entries[i].key, value)) {
-      child->entries[i].value = value;
-      return false;
-    }
-  }
-  return true;
-}
-
-static void read_q2_mission_pack_powerups(const qa_save_reader *reader, qa_q2_mission_pack_powerups *out);
-static qa_save_value *build_q2_mission_pack_powerups(const qa_q2_mission_pack_powerups *in);
-static void read_q2_mission_pack_power_entry(const qa_save_reader *reader, qa_q2_mission_pack_power_entry *out);
-static qa_save_value *build_q2_mission_pack_power_entry(const qa_q2_mission_pack_power_entry *in);
-static void read_q2_mission_pack_items_checkpoint(const qa_save_reader *reader, qa_q2_mission_pack_items_checkpoint *out);
-static qa_save_value *build_q2_mission_pack_items_checkpoint(const qa_q2_mission_pack_items_checkpoint *in);
-static void read_q2_rogue_hint_node(const qa_save_reader *reader, qa_q2_rogue_hint_node *out);
-static qa_save_value *build_q2_rogue_hint_node(const qa_q2_rogue_hint_node *in);
-static void read_q2_rogue_hint_monster(const qa_save_reader *reader, qa_q2_rogue_hint_monster *out);
-static qa_save_value *build_q2_rogue_hint_monster(const qa_q2_rogue_hint_monster *in);
-static void read_q2_rogue_hints_checkpoint(const qa_save_reader *reader, qa_q2_rogue_hints_checkpoint *out);
-static qa_save_value *build_q2_rogue_hints_checkpoint(const qa_q2_rogue_hints_checkpoint *in);
-static void read_q2_mission_pack_monster_state(const qa_save_reader *reader, qa_q2_mission_pack_monster_state *out);
-static qa_save_value *build_q2_mission_pack_monster_state(const qa_q2_mission_pack_monster_state *in);
-static void read_q2_mission_pack_monster_entry(const qa_save_reader *reader, qa_q2_mission_pack_monster_entry *out);
-static qa_save_value *build_q2_mission_pack_monster_entry(const qa_q2_mission_pack_monster_entry *in);
-static void read_q2_mission_pack_monsters_checkpoint(const qa_save_reader *reader, qa_q2_mission_pack_monsters_checkpoint *out);
-static qa_save_value *build_q2_mission_pack_monsters_checkpoint(const qa_q2_mission_pack_monsters_checkpoint *in);
-static void read_q2_rogue_entities_checkpoint(const qa_save_reader *reader, qa_q2_rogue_entities_checkpoint *out);
-static qa_save_value *build_q2_rogue_entities_checkpoint(const qa_q2_rogue_entities_checkpoint *in);
-static void read_q2_tag_checkpoint(const qa_save_reader *reader, qa_q2_tag_checkpoint *out);
-static qa_save_value *build_q2_tag_checkpoint(const qa_q2_tag_checkpoint *in);
-static void read_q2_death_ball_checkpoint(const qa_save_reader *reader, qa_q2_death_ball_checkpoint *out);
-static qa_save_value *build_q2_death_ball_checkpoint(const qa_q2_death_ball_checkpoint *in);
-
-static void read_q2_mission_pack_powerups(const qa_save_reader *reader, qa_q2_mission_pack_powerups *out) {
+static bool read_death_ball(const qa_save_reader *reader, void *out) { return qa_read_q2_death_ball_checkpoint(reader, out); }
+bool qa_decode_q2_death_ball_checkpoint(const uint8_t *bytes, size_t length, qa_q2mp_deathball_checkpoint *out) {
   memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "quadFireUntil");
-    (*out).quad_fire_until = qa_save_reader_number(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "doubleUntil");
-    (*out).double_until = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "irUntil");
-    (*out).ir_until = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
+  return decode_with(bytes, length, "q2-deathball", read_death_ball, out);
 }
-static qa_save_value *build_q2_mission_pack_powerups(const qa_q2_mission_pack_powerups *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "quadFireUntil", qa_save_value_number((*in).quad_fire_until))) goto fail;
-  if (!set_own(obj, "doubleUntil", qa_save_value_number((*in).double_until))) goto fail;
-  if (!set_own(obj, "irUntil", qa_save_value_number((*in).ir_until))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_mission_pack_power_entry(const qa_save_reader *reader, qa_q2_mission_pack_power_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "state");
-    read_q2_mission_pack_powerups(&f1, &(*out).state);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_mission_pack_power_entry(const qa_q2_mission_pack_power_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "state", build_q2_mission_pack_powerups(&(*in).state))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_mission_pack_items_checkpoint(const qa_save_reader *reader, qa_q2_mission_pack_items_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "powers");
-    (*out).powers_count = qa_save_reader_list_count(&f0);
-    (*out).powers = (qa_q2_mission_pack_power_entry *)calloc((*out).powers_count != 0 ? (*out).powers_count : 1, sizeof(qa_q2_mission_pack_power_entry));
-    if ((*out).powers == NULL) qa_save_reader_fail(&f0, "out of memory");
-    for (size_t i1 = 0; i1 < (*out).powers_count; i1++) {
-      qa_save_reader it2 = item(&f0, i1);
-      read_q2_mission_pack_power_entry(&it2, &(*out).powers[i1]);
-      qa_save_reader_destroy(&it2);
-    }
-    qa_save_reader_destroy(&f0); }
-}
-static qa_save_value *build_q2_mission_pack_items_checkpoint(const qa_q2_mission_pack_items_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  { qa_save_value *arr3 = qa_save_value_array();
-    if (arr3 == NULL) goto fail;
-    for (size_t i4 = 0; i4 < (*in).powers_count; i4++) {
-      if (!push_own(arr3, build_q2_mission_pack_power_entry(&(*in).powers[i4]))) { qa_save_value_free(arr3); goto fail; }
-    }
-    if (!set_own(obj, "powers", arr3)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rogue_hint_node(const qa_save_reader *reader, qa_q2_rogue_hint_node *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "chain");
-    (*out).chain = qa_save_reader_integer_min(&f1, -1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "next");
-    if (!qa_save_reader_is_null(&f2)) { (*out).has_next = true;
-      (*out).next = read_actor(&f2);
-    }
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_rogue_hint_node(const qa_q2_rogue_hint_node *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "chain", qa_save_value_number((*in).chain))) goto fail;
-  if (!set_own(obj, "next", (*in).has_next ? actor_value(&(*in).next) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rogue_hint_monster(const qa_save_reader *reader, qa_q2_rogue_hint_monster *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "goal");
-    if (!qa_save_reader_is_null(&f1)) { (*out).has_goal = true;
-      (*out).goal = read_actor(&f1);
-    }
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "lastTime");
-    (*out).last_time = qa_save_reader_finite(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_rogue_hint_monster(const qa_q2_rogue_hint_monster *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "goal", (*in).has_goal ? actor_value(&(*in).goal) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "lastTime", qa_save_value_number((*in).last_time))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rogue_hints_checkpoint(const qa_save_reader *reader, qa_q2_rogue_hints_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "version");
-    (*out).version = qa_save_reader_literal_number(&f0, 1);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "present");
-    (*out).present = qa_save_reader_boolean(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "starts");
-    (*out).starts_count = qa_save_reader_list_count(&f2);
-    (*out).starts = (qa_saved_actor_id *)calloc((*out).starts_count != 0 ? (*out).starts_count : 1, sizeof(qa_saved_actor_id));
-    if ((*out).starts == NULL) qa_save_reader_fail(&f2, "out of memory");
-    for (size_t i5 = 0; i5 < (*out).starts_count; i5++) {
-      qa_save_reader it6 = item(&f2, i5);
-      (*out).starts[i5] = read_actor(&it6);
-      qa_save_reader_destroy(&it6);
-    }
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "nodes");
-    (*out).nodes_count = qa_save_reader_list_count(&f3);
-    (*out).nodes = (qa_q2_rogue_hint_node *)calloc((*out).nodes_count != 0 ? (*out).nodes_count : 1, sizeof(qa_q2_rogue_hint_node));
-    if ((*out).nodes == NULL) qa_save_reader_fail(&f3, "out of memory");
-    for (size_t i7 = 0; i7 < (*out).nodes_count; i7++) {
-      qa_save_reader it8 = item(&f3, i7);
-      read_q2_rogue_hint_node(&it8, &(*out).nodes[i7]);
-      qa_save_reader_destroy(&it8);
-    }
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "monsters");
-    (*out).monsters_count = qa_save_reader_list_count(&f4);
-    (*out).monsters = (qa_q2_rogue_hint_monster *)calloc((*out).monsters_count != 0 ? (*out).monsters_count : 1, sizeof(qa_q2_rogue_hint_monster));
-    if ((*out).monsters == NULL) qa_save_reader_fail(&f4, "out of memory");
-    for (size_t i9 = 0; i9 < (*out).monsters_count; i9++) {
-      qa_save_reader it10 = item(&f4, i9);
-      read_q2_rogue_hint_monster(&it10, &(*out).monsters[i9]);
-      qa_save_reader_destroy(&it10);
-    }
-    qa_save_reader_destroy(&f4); }
-  if (out->starts_count > 100) qa_save_reader_fail(reader, "invalid hint chain index");
-  for (size_t i = 0; i < out->nodes_count; i++) if (out->nodes[i].chain >= (double)out->starts_count) qa_save_reader_fail(reader, "invalid hint chain index");
-}
-static qa_save_value *build_q2_rogue_hints_checkpoint(const qa_q2_rogue_hints_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
-  if (!set_own(obj, "present", qa_save_value_boolean((*in).present))) goto fail;
-  { qa_save_value *arr11 = qa_save_value_array();
-    if (arr11 == NULL) goto fail;
-    for (size_t i12 = 0; i12 < (*in).starts_count; i12++) {
-      if (!push_own(arr11, actor_value(&(*in).starts[i12]))) { qa_save_value_free(arr11); goto fail; }
-    }
-    if (!set_own(obj, "starts", arr11)) goto fail; }
-  { qa_save_value *arr13 = qa_save_value_array();
-    if (arr13 == NULL) goto fail;
-    for (size_t i14 = 0; i14 < (*in).nodes_count; i14++) {
-      if (!push_own(arr13, build_q2_rogue_hint_node(&(*in).nodes[i14]))) { qa_save_value_free(arr13); goto fail; }
-    }
-    if (!set_own(obj, "nodes", arr13)) goto fail; }
-  { qa_save_value *arr15 = qa_save_value_array();
-    if (arr15 == NULL) goto fail;
-    for (size_t i16 = 0; i16 < (*in).monsters_count; i16++) {
-      if (!push_own(arr15, build_q2_rogue_hint_monster(&(*in).monsters[i16]))) { qa_save_value_free(arr15); goto fail; }
-    }
-    if (!set_own(obj, "monsters", arr15)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_mission_pack_monster_state(const qa_save_reader *reader, qa_q2_mission_pack_monster_state *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "blocked");
-    (*out).blocked = qa_save_reader_boolean(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "turretOrientation");
-    (*out).turret_orientation = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "healer");
-    if (!qa_save_reader_is_null(&f2)) { (*out).has_healer = true;
-      (*out).healer = read_actor(&f2);
-    }
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "badMedic1");
-    if (!qa_save_reader_is_null(&f3)) { (*out).has_bad_medic1 = true;
-      (*out).bad_medic1 = read_actor(&f3);
-    }
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "badMedic2");
-    if (!qa_save_reader_is_null(&f4)) { (*out).has_bad_medic2 = true;
-      (*out).bad_medic2 = read_actor(&f4);
-    }
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "medicTries");
-    (*out).medic_tries = qa_save_reader_number(&f5);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "chosenReinforcements");
-    (*out).chosen_reinforcements_count = qa_save_reader_list_count(&f6);
-    (*out).chosen_reinforcements = (double *)calloc((*out).chosen_reinforcements_count != 0 ? (*out).chosen_reinforcements_count : 1, sizeof(double));
-    if ((*out).chosen_reinforcements == NULL) qa_save_reader_fail(&f6, "out of memory");
-    for (size_t i17 = 0; i17 < (*out).chosen_reinforcements_count; i17++) {
-      qa_save_reader it18 = item(&f6, i17);
-      double v19 = qa_save_reader_integer_min(&it18, 0);
-      if (v19 >= 255) qa_save_reader_fail(&it18, "expected a reinforcement index below 255");
-      (*out).chosen_reinforcements[i17] = v19;
-      qa_save_reader_destroy(&it18);
-    }
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "reactToDamageTime");
-    (*out).react_to_damage_time = qa_save_reader_finite(&f7);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "summonStrength");
-    (*out).summon_strength = qa_save_reader_number(&f8);
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "lastPlayerEnemy");
-    if (!qa_save_reader_is_null(&f9)) { (*out).has_last_player_enemy = true;
-      (*out).last_player_enemy = read_actor(&f9);
-    }
-    qa_save_reader_destroy(&f9); }
-  { qa_save_reader f10 = field(reader, "badArea");
-    if (!qa_save_reader_is_null(&f10)) { (*out).has_bad_area = true;
-      (*out).bad_area = read_actor(&f10);
-    }
-    qa_save_reader_destroy(&f10); }
-  { qa_save_reader f11 = field(reader, "goodGuy");
-    (*out).good_guy = qa_save_reader_boolean(&f11);
-    qa_save_reader_destroy(&f11); }
-  { qa_save_reader f12 = field(reader, "widowQuadUntil");
-    (*out).widow_quad_until = qa_save_reader_number(&f12);
-    qa_save_reader_destroy(&f12); }
-  { qa_save_reader f13 = field(reader, "widowDoubleUntil");
-    (*out).widow_double_until = qa_save_reader_number(&f13);
-    qa_save_reader_destroy(&f13); }
-  { qa_save_reader f14 = field(reader, "widowInvulnerableUntil");
-    (*out).widow_invulnerable_until = qa_save_reader_number(&f14);
-    qa_save_reader_destroy(&f14); }
-}
-static qa_save_value *build_q2_mission_pack_monster_state(const qa_q2_mission_pack_monster_state *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "blocked", qa_save_value_boolean((*in).blocked))) goto fail;
-  if (!set_own(obj, "turretOrientation", qa_save_value_number((*in).turret_orientation))) goto fail;
-  if (!set_own(obj, "healer", (*in).has_healer ? actor_value(&(*in).healer) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "badMedic1", (*in).has_bad_medic1 ? actor_value(&(*in).bad_medic1) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "badMedic2", (*in).has_bad_medic2 ? actor_value(&(*in).bad_medic2) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "medicTries", qa_save_value_number((*in).medic_tries))) goto fail;
-  { qa_save_value *arr20 = qa_save_value_array();
-    if (arr20 == NULL) goto fail;
-    for (size_t i21 = 0; i21 < (*in).chosen_reinforcements_count; i21++) {
-      if (!push_own(arr20, qa_save_value_number((*in).chosen_reinforcements[i21]))) { qa_save_value_free(arr20); goto fail; }
-    }
-    if (!set_own(obj, "chosenReinforcements", arr20)) goto fail; }
-  if (!set_own(obj, "reactToDamageTime", qa_save_value_number((*in).react_to_damage_time))) goto fail;
-  if (!set_own(obj, "summonStrength", qa_save_value_number((*in).summon_strength))) goto fail;
-  if (!set_own(obj, "lastPlayerEnemy", (*in).has_last_player_enemy ? actor_value(&(*in).last_player_enemy) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "badArea", (*in).has_bad_area ? actor_value(&(*in).bad_area) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "goodGuy", qa_save_value_boolean((*in).good_guy))) goto fail;
-  if (!set_own(obj, "widowQuadUntil", qa_save_value_number((*in).widow_quad_until))) goto fail;
-  if (!set_own(obj, "widowDoubleUntil", qa_save_value_number((*in).widow_double_until))) goto fail;
-  if (!set_own(obj, "widowInvulnerableUntil", qa_save_value_number((*in).widow_invulnerable_until))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_mission_pack_monster_entry(const qa_save_reader *reader, qa_q2_mission_pack_monster_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "state");
-    read_q2_mission_pack_monster_state(&f1, &(*out).state);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_mission_pack_monster_entry(const qa_q2_mission_pack_monster_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "state", build_q2_mission_pack_monster_state(&(*in).state))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_mission_pack_monsters_checkpoint(const qa_save_reader *reader, qa_q2_mission_pack_monsters_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "version");
-    (*out).version = qa_save_reader_literal_number(&f0, 1);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "flyerNextMove");
-    static const char *const ch22[] = {"none", "run"};
-    (*out).flyer_next_move = qa_save_reader_choice_string(&f1, ch22, 2);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "hints");
-    if (!qa_save_reader_is_null(&f2)) { (*out).has_hints = true;
-      read_q2_rogue_hints_checkpoint(&f2, &(*out).hints);
-    }
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "widowShotsFired");
-    (*out).widow_shots_fired = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "widowDamageMultiplier");
-    static const double ch23[] = {1, 2, 4};
-    (*out).widow_damage_multiplier = qa_save_reader_choice_number(&f4, ch23, 3);
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "actors");
-    (*out).actors_count = qa_save_reader_list_count(&f5);
-    (*out).actors = (qa_q2_mission_pack_monster_entry *)calloc((*out).actors_count != 0 ? (*out).actors_count : 1, sizeof(qa_q2_mission_pack_monster_entry));
-    if ((*out).actors == NULL) qa_save_reader_fail(&f5, "out of memory");
-    for (size_t i24 = 0; i24 < (*out).actors_count; i24++) {
-      qa_save_reader it25 = item(&f5, i24);
-      read_q2_mission_pack_monster_entry(&it25, &(*out).actors[i24]);
-      qa_save_reader_destroy(&it25);
-    }
-    qa_save_reader_destroy(&f5); }
-}
-static qa_save_value *build_q2_mission_pack_monsters_checkpoint(const qa_q2_mission_pack_monsters_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
-  if (!set_own(obj, "flyerNextMove", str_value((*in).flyer_next_move))) goto fail;
-  if (!set_own(obj, "hints", (*in).has_hints ? build_q2_rogue_hints_checkpoint(&(*in).hints) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "widowShotsFired", qa_save_value_number((*in).widow_shots_fired))) goto fail;
-  if (!set_own(obj, "widowDamageMultiplier", qa_save_value_number((*in).widow_damage_multiplier))) goto fail;
-  { qa_save_value *arr26 = qa_save_value_array();
-    if (arr26 == NULL) goto fail;
-    for (size_t i27 = 0; i27 < (*in).actors_count; i27++) {
-      if (!push_own(arr26, build_q2_mission_pack_monster_entry(&(*in).actors[i27]))) { qa_save_value_free(arr26); goto fail; }
-    }
-    if (!set_own(obj, "actors", arr26)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rogue_entities_checkpoint(const qa_save_reader *reader, qa_q2_rogue_entities_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "steamId");
-    (*out).steam_id = qa_save_reader_number(&f0);
-    qa_save_reader_destroy(&f0); }
-}
-static qa_save_value *build_q2_rogue_entities_checkpoint(const qa_q2_rogue_entities_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "steamId", qa_save_value_number((*in).steam_id))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_tag_checkpoint(const qa_save_reader *reader, qa_q2_tag_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "token");
-    if (!qa_save_reader_is_null(&f0)) { (*out).has_token = true;
-      (*out).token = read_actor(&f0);
-    }
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "owner");
-    if (!qa_save_reader_is_null(&f1)) { (*out).has_owner = true;
-      (*out).owner = read_actor(&f1);
-    }
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "count");
-    (*out).count = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_tag_checkpoint(const qa_q2_tag_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "token", (*in).has_token ? actor_value(&(*in).token) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "owner", (*in).has_owner ? actor_value(&(*in).owner) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "count", qa_save_value_number((*in).count))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_death_ball_checkpoint(const qa_save_reader *reader, qa_q2_death_ball_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "ball");
-    if (!qa_save_reader_is_null(&f0)) { (*out).has_ball = true;
-      (*out).ball = read_actor(&f0);
-    }
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "starts");
-    (*out).starts = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "team1Score");
-    (*out).team1_score = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "team2Score");
-    (*out).team2_score = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_death_ball_checkpoint(const qa_q2_death_ball_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "ball", (*in).has_ball ? actor_value(&(*in).ball) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "starts", qa_save_value_number((*in).starts))) goto fail;
-  if (!set_own(obj, "team1Score", qa_save_value_number((*in).team1_score))) goto fail;
-  if (!set_own(obj, "team2Score", qa_save_value_number((*in).team2_score))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-
-
-qa_q2_mission_pack_items_checkpoint qa_read_q2_mission_pack_items_checkpoint(const qa_save_reader *reader) {
-  qa_q2_mission_pack_items_checkpoint out;
-  read_q2_mission_pack_items_checkpoint(reader, &out);
-  return out;
-}
-uint8_t *qa_encode_q2_mission_pack_items_checkpoint(const qa_q2_mission_pack_items_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_mission_pack_items_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
-}
-bool qa_decode_q2_mission_pack_items_checkpoint(const uint8_t *bytes, size_t length, qa_q2_mission_pack_items_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-missionpack-items")) { qa_save_value_free(root); return false; }
-  read_q2_mission_pack_items_checkpoint(&reader, out);
-  qa_save_reader_destroy(&reader);
-  out->root = root;
-  return true;
-}
-
-
-
-qa_q2_rogue_hints_checkpoint qa_read_q2_rogue_hints_checkpoint(const qa_save_reader *reader) {
-  qa_q2_rogue_hints_checkpoint out;
-  read_q2_rogue_hints_checkpoint(reader, &out);
-  return out;
-}
-qa_save_value *qa_q2_rogue_hints_checkpoint_value(const qa_q2_rogue_hints_checkpoint *checkpoint) {
-  return build_q2_rogue_hints_checkpoint(checkpoint);
-}
-
-
-
-qa_q2_mission_pack_monsters_checkpoint qa_read_q2_mission_pack_monsters_checkpoint(const qa_save_reader *reader) {
-  qa_q2_mission_pack_monsters_checkpoint out;
-  read_q2_mission_pack_monsters_checkpoint(reader, &out);
-  return out;
-}
-uint8_t *qa_encode_q2_mission_pack_monsters_checkpoint(const qa_q2_mission_pack_monsters_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_mission_pack_monsters_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
-}
-bool qa_decode_q2_mission_pack_monsters_checkpoint(const uint8_t *bytes, size_t length, qa_q2_mission_pack_monsters_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-missionpack-monsters")) { qa_save_value_free(root); return false; }
-  read_q2_mission_pack_monsters_checkpoint(&reader, out);
-  qa_save_reader_destroy(&reader);
-  out->root = root;
-  return true;
-}
-
-qa_q2_rogue_entities_checkpoint qa_read_q2_rogue_entities_checkpoint(const qa_save_reader *reader) {
-  qa_q2_rogue_entities_checkpoint out;
-  read_q2_rogue_entities_checkpoint(reader, &out);
-  return out;
-}
-uint8_t *qa_encode_q2_rogue_entities_checkpoint(const qa_q2_rogue_entities_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_rogue_entities_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
-}
-bool qa_decode_q2_rogue_entities_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rogue_entities_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-rogue-entities")) { qa_save_value_free(root); return false; }
-  read_q2_rogue_entities_checkpoint(&reader, out);
-  qa_save_reader_destroy(&reader);
-  out->root = root;
-  return true;
-}
-
-qa_q2_tag_checkpoint qa_read_q2_tag_checkpoint(const qa_save_reader *reader) {
-  qa_q2_tag_checkpoint out;
-  read_q2_tag_checkpoint(reader, &out);
-  return out;
-}
-uint8_t *qa_encode_q2_tag_checkpoint(const qa_q2_tag_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_tag_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
-}
-bool qa_decode_q2_tag_checkpoint(const uint8_t *bytes, size_t length, qa_q2_tag_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-tag")) { qa_save_value_free(root); return false; }
-  read_q2_tag_checkpoint(&reader, out);
-  qa_save_reader_destroy(&reader);
-  out->root = root;
-  return true;
-}
-
-qa_q2_death_ball_checkpoint qa_read_q2_death_ball_checkpoint(const qa_save_reader *reader) {
-  qa_q2_death_ball_checkpoint out;
-  read_q2_death_ball_checkpoint(reader, &out);
-  return out;
-}
-uint8_t *qa_encode_q2_death_ball_checkpoint(const qa_q2_death_ball_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_death_ball_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
-}
-bool qa_decode_q2_death_ball_checkpoint(const uint8_t *bytes, size_t length, qa_q2_death_ball_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-deathball")) { qa_save_value_free(root); return false; }
-  read_q2_death_ball_checkpoint(&reader, out);
-  qa_save_reader_destroy(&reader);
-  out->root = root;
-  return true;
-}
-

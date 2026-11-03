@@ -47,8 +47,9 @@ typedef struct qa_qvm_mod_protection_operations {
   void (*current)(void *ctx);
   bool (*eligible)(void *ctx, qa_actor_id actor);
   int64_t (*pointer)(void *ctx, qa_actor_id actor, const char *record);
-  int32_t (*invoke)(void *ctx, const qa_qvm_mod_source_call *call,
-                    const qa_qvm_protection_input *inputs, size_t input_count);
+  /* The source return as a number (a float32 return is the decoded float). */
+  double (*invoke)(void *ctx, const qa_qvm_mod_source_call *call,
+                   const qa_qvm_protection_input *inputs, size_t input_count);
   /* Optional; fills borrowed rule pointers, returns count. */
   size_t (*pickups)(void *ctx, qa_actor_id actor, qa_protection_channel channel,
                     const qa_original_pickup_rule **out, size_t capacity);

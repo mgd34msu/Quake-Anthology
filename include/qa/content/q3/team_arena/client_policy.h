@@ -1,6 +1,4 @@
-/* Port of src/content/q3/team-arena/client-policy.ts. GPL-2.0-or-later.
- * TS ps.speed has no field in the landed game/state player-state mirror;
- * spectatorThink's speed assignment is dropped (see .c). */
+/* Port of src/content/q3/team-arena/client-policy.ts. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_CLIENT_POLICY_H
 #define QA_CONTENT_Q3_TEAM_ARENA_CLIENT_POLICY_H
 #include <stdbool.h>
@@ -29,4 +27,8 @@ void qa_q3_ta_spectator_think(qa_q3_ta_client_policy_context *context, qa_q3_gam
 void qa_q3_ta_spectator_client_end_frame(qa_q3_ta_client_policy_context *context, qa_q3_game_entity *entity);
 bool qa_q3_ta_client_inactivity_timer(qa_q3_ta_client_policy_context *context, qa_q3_game_client *client);
 void qa_q3_ta_client_intermission_think(qa_q3_game_client *client);
+/* TS snapshotViewSource(own, clientAt): the followed client's ps while own has
+ * PMF_FOLLOW, else own. */
+const qa_q3_base_player_state *qa_q3_ta_snapshot_view_source(const qa_q3_base_player_state *own,
+    qa_q3_game_client *(*client_at)(void *ctx, double number), void *ctx);
 #endif

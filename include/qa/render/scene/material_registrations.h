@@ -14,6 +14,8 @@
 typedef struct qa_scene_material_registrations qa_scene_material_registrations;
 typedef struct qa_provider_shader_registrations qa_provider_shader_registrations;
 typedef struct qa_shader_replacement_stage qa_shader_replacement_stage;
+/* TS SceneShaderRegistry (shaders.h, which includes this header). */
+typedef struct qa_scene_shader_registry qa_scene_shader_registry;
 typedef struct qa_shader_registration {
   qa_provider_shader_registrations *provider;
   char *name; /* owned normalized */
@@ -48,7 +50,7 @@ typedef struct qa_scene_shader_binding {
   const qa_scene_texture *base_texture;
 } qa_scene_shader_binding;
 typedef struct qa_scene_material_remap {
-  qa_registered_scene_material material; double time_offset; void *source; /* SceneShaderRegistry* */
+  qa_registered_scene_material material; double time_offset; qa_scene_shader_registry *source;
 } qa_scene_material_remap;
 typedef enum qa_shader_remap_result { QA_REMAP_COMMITTED, QA_REMAP_UNCHANGED, QA_REMAP_STALE } qa_shader_remap_result;
 const char *qa_shader_remap_result_name(qa_shader_remap_result result);
@@ -102,7 +104,7 @@ double qa_scene_material_registrations_revision(const qa_scene_material_registra
 /* currentRemap free function: false is TS null. Non-handle materials -> null. */
 bool qa_current_remap(const qa_compiled_material *material, const qa_scene_material_handle *handle, qa_scene_material_remap *out);
 bool qa_scene_material_registrations_current_remap(qa_scene_material_registrations *r, qa_registered_scene_material material, qa_scene_material_remap *out);
-typedef struct qa_scene_remap_definition { const char *replacement; void *source; double time_offset; } qa_scene_remap_definition;
+typedef struct qa_scene_remap_definition { const char *replacement; qa_scene_shader_registry *source; double time_offset; } qa_scene_remap_definition;
 bool qa_scene_material_registrations_remap_definition(qa_scene_material_registrations *r, const char *name, qa_scene_remap_definition *out);
 void qa_scene_material_registrations_bind_world(qa_scene_material_registrations *r, qa_scene_world_service world);
 void qa_scene_material_registrations_release_world(qa_scene_material_registrations *r, qa_scene_world_service world);

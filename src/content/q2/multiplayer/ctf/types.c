@@ -3,18 +3,6 @@
 #include "../multiplayer_internal.h"
 #include <stdarg.h>
 
-void qa_q2mp_player_state_init(qa_q2mp_player_state *state, double slot, double entered_at) {
-  memset(state, 0, sizeof *state);
-  state->slot = slot;
-  state->entered_at = entered_at;
-  state->use_q2_weapons = true;
-  state->userinfo = "";
-  state->name = "";
-  state->skin = "male/grunt";
-  state->hand = "right";
-  state->connected = true;
-}
-
 static const char *const DEFAULT_WARP[] = {"q2ctf1", "q2ctf2", "q2ctf3", "q2ctf4", "q2ctf5"};
 
 void qa_create_q2_ctf_rules(qa_q2_ctf_rules *out) {
@@ -176,7 +164,7 @@ const char *qa_ctf_team_name(qa_q2_ctf_team team) { return team == 1 ? "RED" : t
 
 qa_q2_ctf_player_state *qa_ctf_player(qa_q2_ctf_context *context, qa_actor_id actor) {
   qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(context, actor);
-  if (state == NULL) qa_q2f_error("CTF player has not been admitted to the shared match");
+  if (state == NULL) qa_raise("Error", 0, 0, "CTF player has not been admitted to the shared match");
   return state;
 }
 
@@ -196,13 +184,13 @@ void qa_ctf_print(qa_q2_game_services *game, const qa_actor_id *actor, const cha
 }
 
 const char *qa_ctf_name(qa_q2_ctf_context *context, qa_actor_id actor) {
-  qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, actor);
+  qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, actor);
   return player == NULL ? "player" : player->name;
 }
 
 void qa_ctf_score(qa_q2_ctf_context *context, qa_actor_id actor, double amount) {
-  qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, actor);
-  if (player == NULL) qa_q2f_error("CTF score requires the shared player state");
+  qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, actor);
+  if (player == NULL) qa_raise("Error", 0, 0, "CTF score requires the shared player state");
   player->score += amount;
 }
 

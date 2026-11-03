@@ -6,10 +6,11 @@
 
 #include "qa/content/q3/base/game/rankings.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
-static double s32(double v) { return (int32_t)v; }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
-static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
+static double s32(double v) { return qa_js_to_int32(v); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
+static void slot_set(qa_q3_base_player_state_slots *s, double i, double v) { qa_q3_base_player_state_slots_set(s, (size_t)i, v); }
 
 static void use_teleporter(qa_q3_ta_client_events_context *context, qa_q3_game_entity *entity);
 
@@ -35,12 +36,12 @@ void qa_q3_ta_client_events(qa_q3_ta_client_events_context *context, qa_q3_game_
   qa_q3_game_client *client = entity->client;
   if (client == NULL) qa_range_error("ClientEvents requires a client entity");
   old_event_sequence = s32(old_event_sequence);
-  double oldest = s32(client->ps.generic - 2);
+  double oldest = s32(client->ps.event_sequence - 2);
   if (old_event_sequence < oldest) old_event_sequence = oldest;
-  for (double index = old_event_sequence; index < client->ps.generic; index = s32(index + 1)) {
-    double event = slot_get(&client->ps.events, (double)((int32_t)index & 1));
+  for (double index = old_event_sequence; index < client->ps.event_sequence; index = s32(index + 1)) {
+    double event = slot_get(&client->ps.events, (double)(qa_js_to_int32(index) & 1));
     if (event == QA_Q3_EV_FALL_MEDIUM || event == QA_Q3_EV_FALL_FAR) {
-      if (entity->s.e_type != QA_Q3_BASE_ET_PLAYER || ((int32_t)context->dmflags & 8) != 0) continue;
+      if (entity->s.e_type != QA_Q3_BASE_ET_PLAYER || (qa_js_to_int32(context->dmflags) & 8) != 0) continue;
       entity->pain_debounce_time = s32(context->combat->time + 200);
       qa_q3_damage_participant target = qa_q3_participant_entity(entity);
       qa_q3_combat_damage(context->combat, target, NULL, NULL, NULL, NULL,
@@ -94,22 +95,22 @@ void qa_q3_ta_drop_teleport_objectives(qa_q3_ta_teleport_objectives_context *con
       : qa_q3_base_find_item_for_powerup(context->product, (qa_q3_powerup)powerup);
   if (flag != NULL) {
     qa_q3_game_entity *dropped = context->drop_item(context->ctx, entity, flag, 0);
-    dropped->count = fmax(1, trunc(s32(slot_get(&client->ps.powerups, powerup) - context->combat->time) / 1000));
+    dropped->count = qa_js_max(1, trunc(s32(slot_get(&client->ps.powerups, powerup) - context->combat->time) / 1000));
     slot_set(&client->ps.powerups, powerup, 0);
   }
   if (context->product == QA_Q3_BASE_PRODUCT_MISSIONPACK &&
       context->combat->game_type == QA_Q3_BASE_GT_HARVESTER &&
-      context->generic1(context->ctx, client) > 0) {
+      client->ps.generic1 > 0) {
     const qa_q3_base_item_definition *cube = qa_q3_base_find_item(context->product,
         client->sess.session_team == QA_Q3_BASE_TEAM_RED ? "Blue Cube" : "Red Cube");
     if (cube != NULL) {
-      for (double count = 0; count < context->generic1(context->ctx, client); count = s32(count + 1)) {
+      for (double count = 0; count < client->ps.generic1; count = s32(count + 1)) {
         qa_q3_game_entity *dropped = context->drop_item(context->ctx, entity, cube, 0);
         dropped->spawnflags = client->sess.session_team == QA_Q3_BASE_TEAM_RED
             ? QA_Q3_BASE_TEAM_BLUE : QA_Q3_BASE_TEAM_RED;
       }
     }
-    context->set_generic1(context->ctx, client, 0);
+    client->ps.generic1 = 0;
   }
 }
 
@@ -117,8 +118,8 @@ static void use_teleporter(qa_q3_ta_client_events_context *context, qa_q3_game_e
   qa_q3_game_client *client = entity->client;
   if (client == NULL) qa_range_error("Teleporter requires a client entity");
   qa_q3_ta_teleport_objectives_context objectives = {context->product, context->combat,
-      context->ctx, context->drop_item, context->generic1, context->set_generic1};
+      context->ctx, context->drop_item};
   qa_q3_ta_drop_teleport_objectives(&objectives, entity);
-  qa_q3_ta_spawn_pose spawn = context->select_spawn_point(context->ctx, client->ps.origin);
+  qa_q3_ta_spawn_pose spawn = context->select_spawn_point(context->ctx, qa_q3_base_player_state_record_origin(&client->ps));
   qa_q3_teleport_player(context->teleport, entity, spawn.origin, spawn.angles);
 }

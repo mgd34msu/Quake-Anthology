@@ -35,6 +35,8 @@ qa_registered_scene_material qa_scene_shader_registry_source_world_material(qa_s
 typedef void (*qa_scene_load_scripts_fn)(void *ctx);
 void qa_scene_shader_registry_initialize_source_materials(qa_scene_shader_registry *r, qa_scene_load_scripts_fn load_scripts, void *ctx);
 void qa_scene_shader_registry_add_script(qa_scene_shader_registry *r, const char *text, const char *source);
+/* TS addScriptFiles: id ScanAndLoadShaderFiles precedence over files in FS_ListFilteredFiles order. */
+void qa_scene_shader_registry_add_script_files(qa_scene_shader_registry *r, const char *const *texts, const char *const *sources, size_t count);
 bool qa_scene_shader_registry_has_authored(qa_scene_shader_registry *r, const char *name);
 bool qa_scene_shader_registry_has_cinematic(qa_scene_shader_registry *r, const char *name);
 typedef struct qa_scene_material_binding { qa_registered_scene_material material; qa_scene_shader_binding binding; } qa_scene_material_binding;

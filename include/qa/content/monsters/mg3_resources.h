@@ -1,5 +1,6 @@
 /* Port of src/content/monsters/mg3-resources.ts (const data;
- * generated in TS from quakec_mg3 precache declarations).
+ * generated in TS from the MG3 progs.dat spawn-function closure plus the
+ * module precache declarations).
  * GPL-2.0-or-later. */
 #ifndef QA_CONTENT_MONSTERS_MG3_RESOURCES_H
 #define QA_CONTENT_MONSTERS_MG3_RESOURCES_H

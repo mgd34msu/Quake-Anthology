@@ -44,5 +44,6 @@ typedef struct qa_app_q1_server_host {
 typedef struct qa_app_q1_server_network_options {
   void *transport; qa_app_q1_server_host host;
   bool has_timeout_milliseconds; double timeout_milliseconds;
+  bool trusted_networks_only; /* TS trustedNetworksOnly: ignore datagrams from non-private addresses (NET-007) */
 } qa_app_q1_server_network_options;
 #endif

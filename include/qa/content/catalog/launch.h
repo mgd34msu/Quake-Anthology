@@ -57,7 +57,9 @@ typedef struct qa_selected_launch {
 typedef bool (*qa_launch_mount_predicate)(void *ctx,
                                           const qa_content_mount *mount);
 
-/* Minimal MountedContent surface launch.ts uses. */
+/* Minimal MountedContent surface launch.ts uses. The references open and
+ * resolve write are borrowed views owned by the service: valid until its
+ * close. Keep one longer only as an owned copy (qa_resolved_resource_copy). */
 typedef struct qa_launch_mounted qa_launch_mounted;
 struct qa_launch_mounted {
   void *ctx;
@@ -115,9 +117,11 @@ qa_selected_launch qa_select_launch(qa_launch_choice choice,
 void qa_validate_launch_roles(const qa_selected_launch *launch,
                               const qa_content_catalog *catalog);
 
-/* TS resolveLaunchResource. kind is "map" or "artifact". The
- * resolved reference is written to *out; strings inside it are
- * recorded in `strings` (caller frees). False only on OOM. */
+/* TS resolveLaunchResource. kind is "map" or "artifact". *out is an
+ * owned reference (release with qa_resolved_resource_release); it does
+ * not depend on `mounted` or the reader borrowed for an artifact, which
+ * is closed before return. Plan id strings built on the way are recorded
+ * in `strings` (caller frees). False only on OOM. */
 typedef struct qa_launch_string_list {
   char **values;
   size_t count;
@@ -148,7 +152,11 @@ bool qa_prepare_launch_mount_plan(const qa_resolve_launch_options *options,
                                   qa_resolved_mount_plan *out_plan);
 void qa_prepare_launch_result_free(qa_prepare_launch_result *result);
 
-/* TS resolveLaunch result: the recipe plus all owned backing. */
+/* TS resolveLaunch result: the recipe plus all owned backing. The recipe's
+ * map.geometry, resources (the same array as `resources`) and the execution
+ * artifacts (`artifacts`) are owned references that outlive the mount set
+ * resolveLaunch opened and closed; qa_resolve_launch_result_free releases
+ * them. */
 typedef struct qa_resolve_launch_result {
   qa_executable_recipe recipe;
   qa_prepare_launch_result prepared;
@@ -157,7 +165,8 @@ typedef struct qa_resolve_launch_result {
   qa_resolved_resource_reference *artifacts; /* owned */
   qa_resolved_resource_reference *resources; /* owned */
   qa_catalog_timing_list timing;
-  qa_provider_id *ordering_providers; /* owned */
+  qa_provider_id *ordering_providers; /* owned, with its strings */
+  size_t ordering_provider_count;
   qa_launch_string_list strings;
   qa_provider_timing *weapon_timing;
   size_t weapon_timing_count;

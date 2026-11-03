@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/audio.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/audio.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,7 @@ struct qa_q3_pres_presentation_sound_bank {
   entry *requests; size_t request_count, request_cap;
   const qa_sound_asset **registered; size_t registered_count, registered_cap;
   double operations;
+  double failed_sounds;
 };
 static const qa_pcm_sound *pcm_of(const qa_sound_asset *asset) { return asset ? &asset->pcm : NULL; }
 static bool is_zero(qa_q3_pres_presentation_sound_bank *b, const qa_sound_asset *asset) {
@@ -98,7 +100,9 @@ bool qa_q3_pres_presentation_sound_bank_register_sound(qa_q3_pres_presentation_s
   b->operations--;
   if (!ok) return false;
   entry *created = NULL;
-  if (!add_request(b, path, compressed, sound, &created)) return false;
+  bool missing = sound == NULL || is_zero(b, sound);
+  if (!missing || b->failed_sounds++ < 256)
+    if (!add_request(b, path, compressed, sound, &created)) return false;
   if (!note_registered(b, sound)) return false;
   *out = result_of(b, sound);
   return true;
@@ -138,7 +142,7 @@ qa_pcm_sound *qa_q3_pres_presentation_sound_bank_sound_at_index(qa_q3_pres_prese
     sound = b->registered[(size_t)index - 1];
   if (!sound) {
     if (index == trunc(index)) qa_range_error("Q3 sound handle %lld is not registered", (long long)index);
-    qa_range_error("Q3 sound handle %g is not registered", index);
+    qa_range_error("Q3 sound handle %s is not registered", QA_JS_NUMBER(index));
   }
   return (qa_pcm_sound *)&sound->pcm;
 }

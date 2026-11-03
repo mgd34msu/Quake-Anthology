@@ -9,6 +9,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
 #include "qa/network/q3/adapters.h"
+#include "qa/foundation/js.h"
 
 struct qa_app_q3_guest_movement_projection {
   qa_app_q3_guest_movement_host host;
@@ -73,7 +74,7 @@ qa_app_sim_movement_prediction_player qa_app_q3_guest_movement_projection_refres
     player.source_movement.fixed_msec = msec < 8 ? 8 : msec > 33 ? 33 : msec;
   }
   double dmflags = projection->host.cvar_value(projection->host.ctx, "dmflags");
-  player.source_movement.no_footsteps = dmflags != 0 && (((long long)dmflags) & 32) != 0;
+  player.source_movement.no_footsteps = dmflags != 0 && ((qa_js_to_int32(dmflags)) & 32) != 0;
   qa_vec3 mins, maxs;
   projection->host.entity_bounds(projection->host.ctx, projection->player.source_entity, &mins, &maxs);
   player.bounds = (qa_bounds){mins, maxs};
@@ -113,7 +114,7 @@ qa_app_sim_movement_prediction_player qa_app_q3_guest_movement_projection_refres
       if (!missionpack && item->weapon >= 11) continue;
       memset(&projection->ammo[count], 0, sizeof projection->ammo[count]);
       projection->ammo[count].item = item->item;
-      projection->ammo[count].count = (((long long)view_at(ps.stats, schema->weapons)) & (1LL << (long long)item->weapon)) == 0 ? 0 : 1;
+      projection->ammo[count].count = ((qa_js_to_int32(view_at(ps.stats, schema->weapons))) & qa_js_to_int32(qa_js_shl(1, item->weapon))) == 0 ? 0 : 1;
       projection->ammo[count].capacity = 1; count++;
       if (item->ammo) {
         memset(&projection->ammo[count], 0, sizeof projection->ammo[count]);
@@ -142,8 +143,8 @@ qa_app_sim_movement_prediction_player qa_app_q3_guest_movement_projection_refres
   held = qa_q3_base_item_at(missionpack ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3, holdable);
   runtime.persistent_powerup_tag = persistent ? persistent->tag : 0;
   runtime.holdable_item = holdable; runtime.holdable_tag = held ? held->tag : 0;
-  runtime.respawned = (((long long)ps.movement_flags) & QA_Q3_FLAG_RESPAWNED) != 0;
-  runtime.use_item_held = (((long long)ps.movement_flags) & QA_Q3_FLAG_USE_ITEM_HELD) != 0;
+  runtime.respawned = ((qa_js_to_int32(ps.movement_flags)) & QA_Q3_FLAG_RESPAWNED) != 0;
+  runtime.use_item_held = ((qa_js_to_int32(ps.movement_flags)) & QA_Q3_FLAG_USE_ITEM_HELD) != 0;
   runtime.event_sequence = ps.event_sequence;
   player.has_q3_arsenal = true; player.q3_arsenal = runtime;
   return player;

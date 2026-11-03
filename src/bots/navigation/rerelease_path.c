@@ -1,7 +1,10 @@
 /* Port of src/bots/navigation/rerelease-path.ts. GPL-2.0-or-later. */
 #include "qa/bots/navigation/rerelease_path.h"
 #include "qa/bots/navigation/helpers.h"
+#include "qa/bots/navigation/graph.h"
+#include "qa/bots/navigation/heap.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +30,7 @@ static bool node_allowed(const qa_navigation_node *node, qa_rerelease_path_reque
 }
 static int64_t link_type(const qa_navigation_edge *edge) {
   if (edge->mode == QA_TM_DROP) return 1;
-  if (edge->mode == QA_TM_JUMP) return edge->source_travel_type == 5 ? 3 : 2;
+  if (edge->mode == QA_TM_JUMP) return qa_navigation_edge_is_barrier_jump(edge) ? 3 : 2;
   return edge->mode == QA_TM_MOVER ? 4 : 0;
 }
 static bool link_allowed(const qa_navigation_edge *edge, qa_rerelease_path_request request) {
@@ -36,8 +39,8 @@ static bool link_allowed(const qa_navigation_edge *edge, qa_rerelease_path_reque
   switch (edge->mode) {
     case QA_TM_WALK: case QA_TM_SWIM: return !edge->has_entity;
     case QA_TM_DROP: return (request.flags & 4) != 0 && (request.drop_height <= 0 || edge->start.z - edge->end.z <= request.drop_height);
-    case QA_TM_JUMP: return (request.flags & (edge->source_travel_type == 5 ? 16 : 8)) != 0 &&
-                            (edge->source_travel_type != 5 || request.jump_height <= 0 || edge->end.z - edge->start.z <= request.jump_height);
+    case QA_TM_JUMP: return (request.flags & (qa_navigation_edge_is_barrier_jump(edge) ? 16 : 8)) != 0 &&
+                            (!qa_navigation_edge_is_barrier_jump(edge) || request.jump_height <= 0 || edge->end.z - edge->start.z <= request.jump_height);
     case QA_TM_MOVER: return (request.flags & 32) != 0;
     default: return false;
   }
@@ -51,23 +54,41 @@ static qa_trace_result do_trace(qa_navigation_runtime *runtime, qa_vec3 start, q
   qa_trace_query q = {start, end, shape, target, policy, runtime->graph->profile.movement.numeric, world->pass_actor};
   return world->scene.trace(world->scene.ctx, q);
 }
+typedef struct nearest_candidate { const qa_navigation_node *node; double d; size_t order; } nearest_candidate;
+/* TS sort((a, b) => a.d - b.d || b.order - a.order): orders are distinct, so the order is total. */
+static int nearest_compare(const void *left, const void *right) {
+  const nearest_candidate *a = left, *b = right;
+  if (a->d != b->d) return a->d < b->d ? -1 : 1;
+  return a->order < b->order ? 1 : a->order > b->order ? -1 : 0;
+}
 static const qa_navigation_node *nearest_node(qa_navigation_runtime *runtime, qa_vec3 point, qa_rerelease_path_request request) {
-  const qa_navigation_node *selected = NULL;
-  double best = request.radius > 0 ? request.radius : 512;
+  double limit = request.radius > 0 ? request.radius : 512;
+  nearest_candidate *candidates = malloc((runtime->graph->node_count ? runtime->graph->node_count : 1) * sizeof *candidates);
+  if (candidates == NULL) qa_range_error("Out of memory");
+  size_t count = 0;
   for (size_t i = 0; i < runtime->graph->node_count; i++) {
     const qa_navigation_node *node = &runtime->graph->nodes[i];
     if (!node_allowed(node, request) ||
         node->origin.z < point.z - (request.min_height > 0 ? request.min_height : 64) ||
         node->origin.z > point.z + (request.max_height > 0 ? request.max_height : 64)) continue;
-    double d = hypot(node->origin.x - point.x, node->origin.y - point.y);
-    if (d > best) continue;
-    qa_vec3 dest = node->origin; dest.z += 32;
+    double d = qa_js_hypot2(node->origin.x - point.x, node->origin.y - point.y);
+    if (d <= limit) candidates[count++] = (nearest_candidate){node, d, i};
+  }
+  /* Nearest first, so only the candidates closer than the winner are traced; of equal distances the later node
+     wins, as a forward scan would. */
+  qsort(candidates, count, sizeof *candidates, nearest_compare);
+  const qa_navigation_node *selected = NULL;
+  for (size_t i = 0; i < count && selected == NULL; i++) {
+    qa_vec3 dest = candidates[i].node->origin; dest.z += 32;
     qa_trace_result result = do_trace(runtime, point, dest);
     if (result.fraction < 1 || result.start_solid || result.all_solid) continue;
-    selected = node; best = d;
+    selected = candidates[i].node;
   }
+  free(candidates);
   return selected;
 }
+typedef struct path_item { int64_t node; double cost; } path_item;
+static double path_item_cost(const void *value) { return ((const path_item *)value)->cost; }
 typedef struct { int64_t node; double cost; const qa_navigation_edge *previous; bool has_cost; } Cost;
 qa_rerelease_path_info qa_rerelease_path_to_goal(qa_navigation_runtime *runtime, qa_rerelease_path_request request) {
   if (!runtime || runtime->graph->node_count == 0) return failure(8);
@@ -82,8 +103,11 @@ qa_rerelease_path_info qa_rerelease_path_to_goal(qa_navigation_runtime *runtime,
     if (do_trace(runtime, request.goal, request.goal).start_solid) return failure(7);
   }
   Cost *costs = NULL; size_t cn = 0, ccap = 0;
-  typedef struct { int64_t node; double cost; } Item;
-  Item *queue = NULL; size_t qn = 0, qcap = 0;
+  qa_min_heap queue;
+  qa_min_heap_init(&queue, sizeof(path_item), path_item_cost);
+  /* TS `allowed` map: runtime.edgeAllowed is asked once per edge per search. */
+  typedef struct { int64_t id; bool usable; } Allowed;
+  Allowed *allowed = NULL; size_t an = 0, acap = 0;
 #define PUSH_COST(id_, cost_, prev_) do { \
     Cost *found_ = NULL; \
     for (size_t i_ = 0; i_ < cn; i_++) if (costs[i_].node == (id_)) found_ = &costs[i_]; \
@@ -91,14 +115,9 @@ qa_rerelease_path_info qa_rerelease_path_to_goal(qa_navigation_runtime *runtime,
     else { found_->cost = (cost_); found_->previous = (prev_); found_->has_cost = true; } \
   } while (0)
   PUSH_COST(start->id, 0, NULL);
-  queue = malloc(16 * sizeof *queue); if (!queue) qa_range_error("Out of memory");
-  qcap = 16; queue[qn++] = (Item){start->id, 0};
-  while (qn > 0) {
-    size_t best = 0;
-    for (size_t i = 1; i < qn; i++) if (queue[i].cost < queue[best].cost) best = i;
-    Item current = queue[best];
-    memmove(&queue[best], &queue[best + 1], (qn - best - 1) * sizeof *queue);
-    qn--;
+  if (!qa_min_heap_push(&queue, &(path_item){start->id, 0})) qa_range_error("Out of memory");
+  path_item current;
+  while (qa_min_heap_pop(&queue, &current)) {
     Cost *known = NULL;
     for (size_t i = 0; i < cn; i++) if (costs[i].node == current.node) known = &costs[i];
     if (!known || known->cost != current.cost) continue;
@@ -108,8 +127,15 @@ qa_rerelease_path_info qa_rerelease_path_to_goal(qa_navigation_runtime *runtime,
     for (size_t i = 0; i < oc; i++) {
       const qa_navigation_edge *edge = edges[i];
       const qa_navigation_node *node = qa_navigation_runtime_node(runtime, edge->to);
-      if (!node || !node_allowed(node, request) || !link_allowed(edge, request) ||
-          !qa_navigation_runtime_edge_allowed(runtime, edge, NULL)) continue;
+      if (!node || !node_allowed(node, request) || !link_allowed(edge, request)) continue;
+      Allowed *cached = NULL;
+      for (size_t a = 0; a < an && cached == NULL; a++) if (allowed[a].id == edge->id) cached = &allowed[a];
+      if (cached == NULL) {
+        if (an == acap) { acap = acap ? acap * 2 : 16; allowed = realloc(allowed, acap * sizeof *allowed); if (!allowed) qa_range_error("Out of memory"); }
+        allowed[an] = (Allowed){edge->id, qa_navigation_runtime_edge_allowed(runtime, edge, NULL)};
+        cached = &allowed[an++];
+      }
+      if (!cached->usable) continue;
       const qa_navigation_node *from_node = qa_navigation_runtime_node(runtime, edge->from);
       qa_vec3 from_origin = from_node ? from_node->origin : edge->start;
       double cost = current.cost + (edge->mode == QA_TM_TELEPORT ? 1 : qa_nav_distance(from_origin, node->origin));
@@ -117,11 +143,11 @@ qa_rerelease_path_info qa_rerelease_path_to_goal(qa_navigation_runtime *runtime,
       for (size_t j = 0; j < cn; j++) if (costs[j].node == edge->to) existing = &costs[j];
       if (cost >= (existing && existing->has_cost ? existing->cost : INFINITY)) continue;
       PUSH_COST(edge->to, cost, edge);
-      if (qn == qcap) { qcap *= 2; queue = realloc(queue, qcap * sizeof *queue); if (!queue) qa_range_error("Out of memory"); }
-      queue[qn++] = (Item){edge->to, cost};
+      if (!qa_min_heap_push(&queue, &(path_item){edge->to, cost})) qa_range_error("Out of memory");
     }
   }
-  free(queue);
+  qa_min_heap_destroy(&queue);
+  free(allowed);
   Cost *goal_cost = NULL;
   for (size_t i = 0; i < cn; i++) if (costs[i].node == goal->id) goal_cost = &costs[i];
   if (!goal_cost || !goal_cost->previous) { free(costs); return failure(11); }

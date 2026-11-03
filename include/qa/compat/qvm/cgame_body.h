@@ -25,7 +25,7 @@ typedef struct qa_qvm_body_capture {
   void *ctx;
   bool (*selected)(void *ctx, double entity);
   bool (*submit)(void *ctx, double entity, qa_qvm_body_part part,
-                 const qa_qvm_source_ref_entity_record *source, bool base);
+                 const qa_q3_pres_source_ref_entity_record *source, bool base);
 } qa_qvm_body_capture;
 
 typedef struct qa_qvm_body_hidden_fn {

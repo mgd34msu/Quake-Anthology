@@ -1,17 +1,19 @@
 /*
- * Port of src/content/q1/foundation/weapons.ts. Bodies/combat
- * reads use the actor-local mirrors (see entity_services.c):
- * canTakeDamage is qa_q1_actor.damageable and the shooter team is
- * unavailable (NULL), so aim's teamplay gate never excludes a
- * target in the mirror. GPL-2.0-or-later.
+ * Port of src/content/q1/foundation/weapons.ts. Bodies, combat
+ * (canTakeDamage, team) and liveness are the shared world tables of
+ * game->host. GPL-2.0-or-later.
  */
 #include "qa/content/q1/foundation/weapons.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <stdio.h>
+
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 #include "qa/world/gameplay/q1_aim.h"
 
 const char *qa_q1_weapon_model(qa_q1_weapon weapon) {
@@ -27,11 +29,14 @@ const char *qa_q1_weapon_model(qa_q1_weapon weapon) {
   return "progs/v_light.mdl"; /* lightning; TS switch is exhaustive */
 }
 qa_q1_weapon qa_q1_best_weapon(qa_q1_services *game, qa_owned_actor actor) {
+  return qa_q1_best_weapon_counted(game, actor, NULL, NULL);
+}
+qa_q1_weapon qa_q1_best_weapon_counted(qa_q1_services *game, qa_owned_actor actor,
+                                       qa_q1_ammo_count_fn ammo_count, void *ammo_count_ctx) {
   static const qa_q1_weapon fallback_order[] = {"lightning", "supernailgun",
       "supershotgun", "nailgun", "shotgun", "axe"};
   /* TS: game.weaponOrder ?? fallback. The mirror order is present
-   * exactly when an owner registered it. The TS ammoCount override
-   * has no C parameter; qa_q1_weapon_available reads inventory. */
+   * exactly when an owner registered it. */
   const qa_q1_weapon *order = fallback_order;
   size_t count = 6;
   if (game->weapon_order_owner != NULL) {
@@ -41,35 +46,27 @@ qa_q1_weapon qa_q1_best_weapon(qa_q1_services *game, qa_owned_actor actor) {
   qa_q1_player_state *player = qa_q1_player(game, actor.id);
   if (player == NULL) return "axe";
   for (size_t i = 0; i < count; i++)
-    if (qa_q1_weapon_available(game, player, order[i], "best")) return order[i];
+    if (qa_q1_weapon_available_counted(game, player, order[i], "best", ammo_count, ammo_count_ctx)) return order[i];
   return "axe";
 }
 
 typedef struct aim_ctx {
   qa_q1_services *game;
   qa_owned_actor actor;
+  const char *team; /* TS combat.read(actor)?.team ?? null */
 } aim_ctx;
 static qa_body_state_result aim_body(void *ctx, qa_actor_id actor) {
   aim_ctx *aim = ctx;
-  qa_body_state_result result;
-  memset(&result, 0, sizeof result);
-  qa_q1_actor *entity = qa_q1_get_entity(aim->game, &actor);
-  if (entity == NULL) return result;
-  result.has_value = true;
-  result.value.origin = entity->body.origin;
-  result.value.angles = entity->body.angles;
-  result.value.velocity = entity->body.velocity;
-  result.value.bounds = entity->body.bounds;
-  result.value.ground = entity->body.has_ground ? &entity->body.ground : NULL;
-  return result;
+  return qa_shared_body_table_read(aim->game->host.bodies, actor);
 }
 static bool aim_eligible(void *ctx, qa_actor_id target) {
   aim_ctx *aim = ctx;
   qa_q1_source_target traits = qa_q1_get_source_target(aim->game, target);
-  qa_q1_actor *entity = qa_q1_get_entity(aim->game, &target);
-  return !qa_same_actor(target, aim->actor.id) &&
-         (traits.aimed_damage || traits.player) && entity != NULL &&
-         entity->damageable;
+  const qa_combat_state_result state = qa_gameplay_authority_read(aim->game->host.combat, target);
+  const double teamplay = qa_q1_option_teamplay(aim->game);
+  return !qa_same_actor(target, aim->actor.id) && (traits.aimed_damage || traits.player) &&
+         state.has_value && state.value.can_take_damage &&
+         !(teamplay != 0 && aim->team != NULL && state.value.team != NULL && !strcmp(aim->team, state.value.team));
 }
 static bool aim_trace(void *ctx, qa_vec3 start, qa_vec3 end, qa_actor_id *out) {
   aim_ctx *aim = ctx;
@@ -87,45 +84,47 @@ static bool aim_trace(void *ctx, qa_vec3 start, qa_vec3 end, qa_actor_id *out) {
   return true;
 }
 qa_vec3 qa_q1_aim(qa_q1_services *game, qa_owned_actor actor, qa_vec3 forward) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor.id);
-  if (entity == NULL) return forward;
-  qa_actor_id *targets = malloc(
-      (game->entity_count != 0 ? game->entity_count : 1) * sizeof *targets);
-  if (targets == NULL) qa_range_error("Out of memory");
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor.id);
+  if (!body.has_value) return forward;
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, actor.id);
   size_t count = 0;
-  for (size_t i = 0; i < game->entity_count; i++)
-    if (game->entities[i] != NULL && game->entities[i]->live)
-      targets[count++] = game->entities[i]->actor.id;
-  aim_ctx aim = {game, actor};
+  const qa_actor_observation *observations = qa_session_actor_registry_observations(game->host.actors, &count);
+  qa_actor_id *targets = malloc((count != 0 ? count : 1) * sizeof *targets);
+  if (targets == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < count; i++) targets[i] = observations[i].id;
+  aim_ctx aim = {game, actor, combat.has_value ? combat.value.team : NULL};
   qa_q1_aim_targets host = {targets, count, &aim, aim_body, aim_eligible,
                             aim_trace};
   double threshold =
       game->options.has_aim_threshold ? game->options.aim_threshold : 0.93;
-  qa_vec3 result = qa_aim_q1(entity->body.origin, forward, threshold, host);
+  qa_vec3 result = qa_aim_q1(body.value.origin, forward, threshold, host);
   free(targets);
   return result;
 }
+static bool can_take_damage(qa_q1_services *game, qa_actor_id actor);
 void qa_q1_fire_bullets(qa_q1_services *game, qa_owned_actor shooter,
                         qa_vec3 direction, qa_vec3 view_angles, double count,
                         double spread_x, double spread_y, qa_q1_weapon weapon) {
-  qa_q1_actor *shooter_entity = qa_q1_get_entity(game, &shooter.id);
-  if (shooter_entity == NULL) return;
-  qa_q1_body body = shooter_entity->body;
+  const qa_body_state_result read = qa_shared_body_table_read(game->host.bodies, shooter.id);
+  if (!read.has_value) return;
+  const qa_body_state body = read.value;
   qa_q1_basis basis = qa_q1_make_vectors(game, view_angles);
   qa_vec3 source = qa_q1_vadd(body.origin, qa_q1_vscale(basis.forward, 10));
-  source.z = (float)(body.origin.z + body.bounds.min.z +
+  /* absmin carries SV_LinkEdict's one unit of padding. */
+  source.z = (float)(body.origin.z + body.bounds.min.z - 1 +
                      (body.bounds.max.z - body.bounds.min.z) * 0.7);
-  bool has_pending = false;
+  bool has_pending = false, holed = false;
   qa_actor_id pending;
   memset(&pending, 0, sizeof pending);
   double total = 0;
   for (double shot = 0; shot < count; shot++) {
-    qa_vec3 ray = qa_q1_vadd(
-        qa_q1_vadd(direction,
+    qa_vec3 a = qa_q1_vadd(direction,
                    qa_q1_vscale(game->basis.right,
-                                (qa_q1_host_random(game) * 2 - 1) * spread_x)),
-        qa_q1_vscale(game->basis.up,
-                     (qa_q1_host_random(game) * 2 - 1) * spread_y));
+                                (qa_q1_host_random(game) * 2 - 1) * spread_x));
+    qa_vec3 b = qa_q1_vscale(game->basis.up,
+                     (qa_q1_host_random(game) * 2 - 1) * spread_y);
+    qa_vec3 ray = qa_q1_vadd(
+        a, b);
     qa_q1_trace_request request;
     memset(&request, 0, sizeof request);
     request.start = source;
@@ -144,12 +143,12 @@ void qa_q1_fire_bullets(qa_q1_services *game, qa_owned_actor shooter,
         game->host.weapon_impact != NULL)
       game->host.weapon_impact(game->host.ctx, shooter.id, trace.end);
     qa_vec3 impact = qa_q1_vsub(trace.end, qa_q1_vscale(ray, 4));
-    if (trace.has_actor && hit != NULL && hit->damageable) {
+    if (trace.has_actor && can_take_damage(game, trace.actor)) {
       qa_q1_effect(game, "blood", impact, &trace.actor, 4);
       if (!has_pending || !qa_same_actor(pending, trace.actor)) {
-        if (has_pending && qa_q1_get_entity(game, &pending) != NULL)
+        if (has_pending && qa_session_actor_registry_is_live(game->host.actors, pending))
           qa_q1_damage(game, pending, shooter.id, &shooter.id, total, weapon,
-                       "direct", "");
+                       "direct", "", NULL);
         total = 0;
         has_pending = true;
         pending = trace.actor;
@@ -159,10 +158,15 @@ void qa_q1_fire_bullets(qa_q1_services *game, qa_owned_actor shooter,
       qa_q1_effect(game, "gunshot", impact,
                    trace.has_actor ? &trace.actor : NULL, 1);
     }
+    if (!holed && game->source_bullet_hole.fn != NULL &&
+        (!trace.has_actor || (game->world != NULL && qa_same_actor(trace.actor, game->world->actor.id)))) {
+      holed = true;
+      game->source_bullet_hole.fn(game->source_bullet_hole.ctx, shooter, trace.end, trace.normal);
+    }
   }
-  if (has_pending && qa_q1_get_entity(game, &pending) != NULL)
+  if (has_pending && qa_session_actor_registry_is_live(game->host.actors, pending))
     qa_q1_damage(game, pending, shooter.id, &shooter.id, total, weapon,
-                 "direct", "");
+                 "direct", "", NULL);
 }
 
 static double fr(double value) { return (float)value; }
@@ -180,16 +184,17 @@ static void set_string(char **slot, const char *value) {
   free(*slot);
   *slot = copy;
 }
+/* TS game.host.bodies.read(actor); false = null. */
 static bool body_of(qa_q1_services *game, qa_actor_id actor, qa_q1_body *out) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity == NULL) return false;
-  *out = entity->body;
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!body.has_value) return false;
+  *out = qa_q1_body_from_state(body.value);
   return true;
 }
+/* TS game.host.combat.read(actor)?.canTakeDamage. */
 static bool can_take_damage(qa_q1_services *game, qa_actor_id actor) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity != NULL) return entity->damageable;
-  return qa_q1_is_player(game, &actor);
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, actor);
+  return combat.has_value && combat.value.can_take_damage;
 }
 static const char *classname_of(qa_q1_services *game, qa_actor_id actor) {
   if (game->host.classname) {
@@ -218,11 +223,11 @@ static qa_q1_actor *projectile(qa_q1_services *game, qa_q1_player_state *player,
                              : !strcmp(kind, "superspike") ? "progs/s_spike.mdl"
                                                            : "progs/spike.mdl");
   if (!strcmp(kind, "grenade")) entity->angular_velocity = v3(300, 300, 300);
+  /* weapons.qc orients rockets and spikes along their velocity
+   * (vectoangles); unified body angles use view convention. */
   const qa_vec3 angles =
-      !strcmp(kind, "grenade")
-          ? QA_Q1_ZERO
-          : v3(-atan2(velocity.z, hypot(velocity.x, velocity.y)) * 180 / 3.141592653589793,
-               qa_q1_yaw_for(velocity), 0);
+      v3(-atan2(velocity.z, qa_js_hypot2(velocity.x, velocity.y)) * 180 / 3.141592653589793,
+         qa_q1_yaw_for(velocity), 0);
   qa_q1_body patch = qa_q1_get_body(game, entity);
   patch.origin = origin;
   patch.velocity = velocity;
@@ -230,9 +235,12 @@ static qa_q1_actor *projectile(qa_q1_services *game, qa_q1_player_state *player,
   qa_q1_set_body_patch(game, entity, &patch, true, true, true, false, false);
   qa_q1_link(game, entity);
   entity->touch = qa_q1_callback_registry_touch(game->named, entity, "projectile_touch");
-  qa_q1_schedule(game, entity, !strcmp(kind, "grenade") ? 2.5 : !strcmp(kind, "rocket") ? 5 : 6,
-                 qa_q1_callback_registry_action(game->named, entity,
-                                                  !strcmp(kind, "grenade") ? "GrenadeExplode" : "SUB_Remove"));
+  if (!strcmp(kind, "grenade") && game->source_grenade_fix)
+    qa_q1_schedule(game, entity, 0.05, qa_q1_callback_registry_action(game->named, entity, "GrenadeThink"));
+  else
+    qa_q1_schedule(game, entity, !strcmp(kind, "grenade") ? 2.5 : !strcmp(kind, "rocket") ? 5 : 6,
+                   qa_q1_callback_registry_action(game->named, entity,
+                                                    !strcmp(kind, "grenade") ? "GrenadeExplode" : "SUB_Remove"));
   qa_q1_launch_projectile_behavior(game, entity, player->actor.id, player->weapon,
                                    !strcmp(kind, "rocket") ? "rocket"
                                    : !strcmp(kind, "grenade") ? "grenade"
@@ -246,9 +254,11 @@ static void explode(qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id
   if (rocket && direct != NULL && qa_q1_health(game, *direct) != 0) {
     double amount = fr(100 + qa_q1_host_random(game) * 20);
     const char *classname = classname_of(game, *direct);
-    if (classname != NULL && !strcmp(classname, "monster_shambler")) amount *= 0.5;
+    if (classname != NULL && (!strcmp(classname, "monster_shambler") ||
+                              (game->source_bloody_nightmare.fn != NULL && !strcmp(classname, "monster_super_shambler"))))
+      amount *= 0.5;
     (void)qa_q1_damage(game, *direct, entity->actor.id, entity->has_owner ? &entity->owner : NULL,
-                       amount, entity->projectile_weapon, "direct", "");
+                       amount, entity->projectile_weapon, "direct", "", NULL);
   }
   qa_q1_radius_damage(game, entity->actor.id, entity->has_owner ? &entity->owner : NULL, 120, direct,
                       entity->projectile_weapon, "");
@@ -270,9 +280,8 @@ void qa_q1_projectile_touch(qa_q1_services *game, qa_q1_actor *entity, const qa_
   }
   const bool is_grenade = entity->projectile != NULL && !strcmp(entity->projectile, "grenade");
   if (!is_grenade &&
-      ((surface != NULL && ((long)surface->native_flags & 4) != 0) ||
-       (game->host.contents != NULL &&
-        !strcmp(game->host.contents(game->host.ctx, qa_q1_get_body(game, entity).origin), "sky")))) {
+      ((surface != NULL && (qa_js_to_int32(surface->native_flags) & 4) != 0) ||
+       !strcmp(game->host.contents(game->host.ctx, qa_q1_get_body(game, entity).origin), "sky"))) {
     qa_q1_remove(game, entity);
     return;
   }
@@ -280,12 +289,25 @@ void qa_q1_projectile_touch(qa_q1_services *game, qa_q1_actor *entity, const qa_
   if (!strcmp(entity->projectile, "rocket")) {
     explode(game, entity, other, true);
   } else if (is_grenade) {
+    if (other != NULL && game->source_grenade_fix && qa_q1_get_source_target(game, *other).aimed_damage) {
+      const char *classname = classname_of(game, *other);
+      if (classname != NULL && (!strcmp(classname, "monster_boss") || !strcmp(classname, "monster_oldone_new"))) {
+        (void)qa_q1_damage(game, *other, entity->actor.id, entity->has_owner ? &entity->owner : NULL, 120,
+                           entity->projectile_weapon, "direct", "", NULL);
+        explode(game, entity, other, false);
+        return;
+      }
+    }
     if (other != NULL) {
       const qa_q1_source_target traits = qa_q1_get_source_target(game, *other);
       if (traits.aimed_damage || traits.player) {
         explode(game, entity, NULL, false);
         return;
       }
+    }
+    if (game->source_grenade_fix) {
+      if (entity->attack_finished >= game->time) return;
+      entity->attack_finished = game->time + 0.1;
     }
     qa_q1_sound(game, entity->actor.id, "weapons/bounce.wav", "weapon", 1, 1);
   } else if (!strcmp(entity->projectile, "spike") || !strcmp(entity->projectile, "superspike")) {
@@ -295,7 +317,7 @@ void qa_q1_projectile_touch(qa_q1_services *game, qa_q1_actor *entity, const qa_
     if (other != NULL && can_take_damage(game, *other)) {
       qa_q1_effect(game, "blood", origin, other, amount);
       (void)qa_q1_damage(game, *other, entity->actor.id, entity->has_owner ? &entity->owner : NULL,
-                         amount, entity->projectile_weapon, "direct", "");
+                         amount, entity->projectile_weapon, "direct", "", NULL);
     } else {
       qa_q1_effect(game,
                    !strcmp(entity->classname, "wizard_spike") ? "wizard-spike"
@@ -310,7 +332,7 @@ void qa_q1_projectile_touch(qa_q1_services *game, qa_q1_actor *entity, const qa_
 static void lightning(qa_q1_services *game, qa_q1_player_state *player) {
   qa_q1_body body;
   if (!body_of(game, player->actor.id, &body)) return;
-  const double cells = qa_q1_inventory_count(game, player->actor.id, "q1:ammo/cells");
+  const double cells = qa_shared_inventory_table_count(game->host.inventory, player->actor.id, "q1:ammo/cells");
   if (player->water_level > 1) {
     weapon_impact_at(game, player->actor.id, body.origin);
     (void)qa_q1_consume_weapon_ammo(game, player, "q1:ammo/cells", cells);
@@ -352,8 +374,15 @@ static void lightning(qa_q1_services *game, qa_q1_player_state *player) {
                        strcmp(hit_entity->solid, "trigger") != 0))
       weapon_impact_at(game, player->actor.id, trace.end);
     hit[hit_count++] = trace.actor;
-    qa_q1_effect(game, "blood", trace.end, &trace.actor, 120);
-    (void)qa_q1_damage(game, trace.actor, player->actor.id, &player->actor.id, 30, "lightning", "direct", "");
+    qa_q1_event particles = {0};
+    particles.kind = "particles";
+    particles.has_origin = true;
+    particles.origin = trace.end;
+    particles.direction = v3(0, 0, 100);
+    particles.color = game->mg3_pickups ? 246 : 225;
+    particles.count = 120;
+    qa_q1_emit(game, particles);
+    (void)qa_q1_damage(game, trace.actor, player->actor.id, &player->actor.id, 30, "lightning", "direct", "", NULL);
   }
 }
 
@@ -380,7 +409,7 @@ bool qa_q1_fire_base_weapon(qa_q1_services *game, qa_q1_player_state *player) {
       game->time < (repeating ? player->next_weapon_frame : player->attack_finished))
     return false;
   const qa_item_id ammo = qa_q1_ammo_item(player->weapon);
-  if (ammo != NULL && qa_q1_inventory_count(game, player->actor.id, ammo) < 1) {
+  if (ammo != NULL && qa_shared_inventory_table_count(game->host.inventory, player->actor.id, ammo) < 1) {
     (void)qa_q1_select_weapon(game, player->actor, qa_q1_best_weapon(game, player->actor));
     return false;
   }
@@ -421,7 +450,7 @@ bool qa_q1_fire_base_weapon(qa_q1_services *game, qa_q1_player_state *player) {
     }
   } else if (!strcmp(weapon, "shotgun") || !strcmp(weapon, "supershotgun")) {
     const bool super_shot = !strcmp(weapon, "supershotgun") &&
-                            qa_q1_inventory_count(game, player->actor.id, "q1:ammo/shells") > 1;
+                            qa_shared_inventory_table_count(game->host.inventory, player->actor.id, "q1:ammo/shells") > 1;
     (void)qa_q1_consume_weapon_ammo(game, player, "q1:ammo/shells", super_shot ? 2 : 1);
     delay = !strcmp(weapon, "supershotgun") ? 0.7 : 0.5;
     punch = super_shot ? -4 : -2;
@@ -431,8 +460,10 @@ bool qa_q1_fire_base_weapon(qa_q1_services *game, qa_q1_player_state *player) {
                        player->view_angles, super_shot ? 14 : 6, super_shot ? 0.14 : 0.04,
                        super_shot ? 0.08 : 0.04, weapon);
   } else if (!strcmp(weapon, "nailgun") || !strcmp(weapon, "supernailgun")) {
+    qa_vec3 a3;
+    double s;
     const bool super_nail = !strcmp(weapon, "supernailgun") &&
-                            qa_q1_inventory_count(game, player->actor.id, "q1:ammo/nails") >= 2;
+                            qa_shared_inventory_table_count(game->host.inventory, player->actor.id, "q1:ammo/nails") >= 2;
     delay = 0.2;
     (void)qa_q1_consume_weapon_ammo(game, player, "q1:ammo/nails", super_nail ? 2 : 1);
     qa_q1_sound(game, player->actor.id, super_nail ? "weapons/spike2.wav" : "weapons/rocket1i.wav",
@@ -440,8 +471,8 @@ bool qa_q1_fire_base_weapon(qa_q1_services *game, qa_q1_player_state *player) {
     const qa_vec3 origin = qa_q1_vadd(qa_q1_vadd(body.origin, v3(0, 0, 16)),
                                       qa_q1_vscale(basis.right, super_nail ? 0 : player->nail_side * 4));
     (void)projectile(game, player, super_nail ? "superspike" : "spike",
-                     qa_q1_vscale(qa_q1_aim(game, player->actor, basis.forward),
-                                  qa_q1_nail_speed(game, player, 1000)),
+                     (a3 = qa_q1_aim(game, player->actor, basis.forward), s = qa_q1_nail_speed(game, player, 1000), qa_q1_vscale(a3,
+                                  s)),
                      origin);
     player->nail_side *= -1;
   } else if (!strcmp(weapon, "grenadelauncher")) {
@@ -453,10 +484,11 @@ bool qa_q1_fire_base_weapon(qa_q1_services *game, qa_q1_player_state *player) {
       velocity = qa_q1_vscale(qa_q1_aim(game, player->actor, basis.forward), 600);
       velocity.z = 200;
     } else {
+      qa_vec3 a2 = qa_q1_vadd(qa_q1_vadd(qa_q1_vscale(basis.forward, 600), qa_q1_vscale(basis.up, 200)),
+                     qa_q1_vscale(basis.right, (qa_q1_host_random(game) * 2 - 1) * 10));
+      qa_vec3 b = qa_q1_vscale(basis.up, (qa_q1_host_random(game) * 2 - 1) * 10);
       velocity = qa_q1_vadd(
-          qa_q1_vadd(qa_q1_vadd(qa_q1_vscale(basis.forward, 600), qa_q1_vscale(basis.up, 200)),
-                     qa_q1_vscale(basis.right, (qa_q1_host_random(game) * 2 - 1) * 10)),
-          qa_q1_vscale(basis.up, (qa_q1_host_random(game) * 2 - 1) * 10));
+          a2, b);
     }
     (void)projectile(game, player, "grenade", velocity, body.origin);
   } else if (!strcmp(weapon, "rocketlauncher")) {
@@ -474,6 +506,13 @@ bool qa_q1_fire_base_weapon(qa_q1_services *game, qa_q1_player_state *player) {
     }
     lightning(game, player);
     if (!repeating) qa_q1_sound(game, player->actor.id, "weapons/lstart.wav", "auto", 1, volume);
+  }
+  /* SuperDamageSound, limited by super_sound to once a second. */
+  if (strcmp(weapon, "axe") != 0 && qa_q1_powerup_expires(game, player->actor.id, "quad") > game->time &&
+      qa_q1_player_timer_get(game->quad_sounds, game->quad_sound_count, player) < game->time) {
+    qa_q1_player_timer_set(&game->quad_sounds, &game->quad_sound_count, &game->quad_sound_capacity, player,
+                           game->time + 1);
+    qa_q1_sound(game, player->actor.id, "items/damage3.wav", "body", 1, 1);
   }
   player->attack_finished = fr(game->time + qa_q1_weapon_attack_delay(game, player, delay));
   player->weapon_frame = player->continuous_firing
@@ -501,6 +540,11 @@ static void axe_strike(void *ctx, qa_q1_services *game, qa_q1_actor *strike) {
     qa_q1_remove(game, strike);
     return;
   }
+  /* In QC the hit runs in a player frame that death and intermission replace. */
+  if (qa_q1_health(game, player->actor.id) <= 0 || game->has_intermission) {
+    qa_q1_remove(game, strike);
+    return;
+  }
   qa_q1_body current;
   if (!body_of(game, player->actor.id, &current)) {
     qa_q1_remove(game, strike);
@@ -516,15 +560,53 @@ static void axe_strike(void *ctx, qa_q1_services *game, qa_q1_actor *strike) {
     if (!trace.sky && (!trace.has_actor || hit_entity == NULL || hit_entity->solid == NULL ||
                        strcmp(hit_entity->solid, "trigger") != 0))
       weapon_impact_at(game, player->actor.id, trace.end);
+    const qa_vec3 org = qa_q1_vsub(trace.end, qa_q1_vscale(forward, 4));
     if (trace.has_actor && can_take_damage(game, trace.actor)) {
-      qa_q1_effect(game, "blood", trace.end, &trace.actor, 20);
-      (void)qa_q1_damage(game, trace.actor, player->actor.id, &player->actor.id, 20, "axe", "direct", "");
+      qa_q1_effect(game, "blood", org, &trace.actor, 20);
+      (void)qa_q1_damage(game, trace.actor, player->actor.id, &player->actor.id, 20, "axe", "direct", "", NULL);
     } else {
       qa_q1_sound(game, player->actor.id, "player/axhit2.wav", "weapon", 1, 1);
-      qa_q1_effect(game, "gunshot", trace.end, NULL, 3);
+      qa_q1_effect(game, "gunshot", org, NULL, 3);
     }
   }
   qa_q1_remove(game, strike);
+}
+
+/* MG GrenadeThink: counts 50 ticks to the explosion and reflects a grenade
+ * that stopped against a floor it was falling onto. */
+static void grenade_think(void *ctx, qa_q1_services *game, qa_q1_actor *grenade) {
+  (void)ctx;
+  grenade->count++;
+  if (grenade->count == 50) {
+    explode(game, grenade, NULL, false);
+    return;
+  }
+  const qa_vec3 previous = qa_q1_actor_vector(grenade, "oldorigin");
+  const qa_q1_body body = qa_q1_get_body(game, grenade);
+  if (qa_q1_length(body.velocity) == 0 && qa_q1_length(previous) > 120 && previous.z < 0) {
+    qa_q1_trace_request request = {qa_q1_vadd(body.origin, v3(0, 0, 4)), qa_q1_vsub(body.origin, v3(0, 0, 8)),
+                                   QA_Q1_POINT, true, grenade->actor.id, false, false, false};
+    const qa_q1_trace trace = qa_q1_host_trace(game, request);
+    if (trace.fraction < 1) {
+      const qa_vec3 reflected =
+          qa_q1_vsub(previous, qa_q1_vscale(trace.normal, 2 * qa_q1_dot(previous, trace.normal)));
+      qa_q1_body_patch patch;
+      memset(&patch, 0, sizeof patch);
+      patch.has_velocity = true;
+      patch.velocity = qa_q1_vscale(reflected, 0.6);
+      patch.has_ground = true;
+      patch.ground = NULL;
+      qa_q1_set_body(game, grenade, &patch);
+      grenade->movement_flags = (double)(qa_js_to_int32(grenade->movement_flags) & ~512);
+      grenade->angular_velocity = v3(400, 400, 400);
+    }
+  }
+  const qa_vec3 velocity = qa_q1_get_body(game, grenade).velocity;
+  char text[128];
+  (void)snprintf(text, sizeof text, "%s %s %s", QA_JS_NUMBER(velocity.x), QA_JS_NUMBER(velocity.y),
+                 QA_JS_NUMBER(velocity.z));
+  (void)qa_q1_actor_field_set(grenade, "oldorigin", text);
+  qa_q1_schedule(game, grenade, 0.05, qa_q1_callback_registry_action(game->named, grenade, "GrenadeThink"));
 }
 
 static void touch_projectile(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
@@ -544,6 +626,9 @@ void qa_q1_register_weapon_callbacks(qa_q1_services *game) {
   qa_q1_callback_handlers explode_action = {0};
   explode_action.action = grenade_explode;
   qa_q1_callback_registry_register(game->named, "GrenadeExplode", explode_action);
+  qa_q1_callback_handlers think = {0};
+  think.action = grenade_think;
+  qa_q1_callback_registry_register(game->named, "GrenadeThink", think);
   qa_q1_callback_handlers axe = {0};
   axe.action = axe_strike;
   qa_q1_callback_registry_register(game->named, "player_axe3", axe);

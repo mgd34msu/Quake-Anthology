@@ -1,5 +1,6 @@
 /* Port of src/bots/navigation/movement.ts. GPL-2.0-or-later. */
 #include "qa/bots/navigation/movement.h"
+#include "qa/network/common/js_number.h"
 #include "qa/bots/navigation/helpers.h"
 #include "qa/contracts/protocol.h"
 #include "qa/contracts/time.h"
@@ -92,8 +93,8 @@ qa_traversal_admission qa_movement_route_admission_admit(qa_movement_route_admis
     }
   }
   a->failed = true; free(trajectory);
-  snprintf(reason_buf, sizeof reason_buf, "selected movement did not reach the landing within %gs/%lld commands",
-           a->max_seconds, (long long)a->max_commands);
+  snprintf(reason_buf, sizeof reason_buf, "selected movement did not reach the landing within %ss/%lld commands",
+           QA_JS_NUMBER(a->max_seconds), (long long)a->max_commands);
   adm.reason = reason_buf; return adm;
 }
 static qa_traversal_admission admit_thunk(void *ctx, qa_traversal_request req) {

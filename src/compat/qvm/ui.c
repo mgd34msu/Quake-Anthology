@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "qa/compat/qvm/abi.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
 /* Landed QvmUiExport / QvmUiMenu values (TS abi.ts). */
@@ -166,4 +167,44 @@ bool qa_qvm_ui_has_unique_cd_key(qa_qvm_ui *ui) {
     qa_range_error("Legacy UI does not export UI_HASUNIQUECDKEY");
   int32_t words[] = {UI_HASUNIQUECDKEY};
   return call(ui, words, 1) != 0;
+}
+
+static void exports_init(void *ctx, bool connecting) { qa_qvm_ui_init_export(ctx, connecting); }
+static void exports_shutdown(void *ctx) { qa_qvm_ui_shutdown(ctx); }
+static void exports_key_event(void *ctx, double key, bool down) {
+  qa_qvm_ui_key_event(ctx, qa_int32(key), down);
+}
+static void exports_mouse_event(void *ctx, double dx, double dy) {
+  qa_qvm_ui_mouse_event(ctx, qa_int32(dx), qa_int32(dy));
+}
+static void exports_refresh(void *ctx, double time) { qa_qvm_ui_refresh(ctx, qa_int32(time)); }
+static bool exports_is_fullscreen(void *ctx) { return qa_qvm_ui_is_fullscreen(ctx); }
+static void exports_set_active_menu(void *ctx, qa_q3_menu_command menu) {
+  qa_qvm_ui_set_active_menu(ctx, menu);
+}
+static bool exports_console_command(void *ctx, double time, qa_string_view_list arguments) {
+  return qa_qvm_ui_console_command(ctx, qa_int32(time), arguments.values, arguments.count);
+}
+static void exports_draw_connect_screen(void *ctx, bool overlay) {
+  qa_qvm_ui_draw_connect_screen(ctx, overlay);
+}
+static bool exports_has_unique_cd_key(void *ctx) { return qa_qvm_ui_has_unique_cd_key(ctx); }
+
+qa_q3_ui_exports qa_qvm_ui_as_exports(qa_qvm_ui *ui) {
+  qa_q3_ui_exports exports;
+  memset(&exports, 0, sizeof exports);
+  exports.ctx = ui;
+  exports.api = ui->api;
+  exports.seat = ui->seat;
+  exports.init = exports_init;
+  exports.shutdown = exports_shutdown;
+  exports.key_event = exports_key_event;
+  exports.mouse_event = exports_mouse_event;
+  exports.refresh = exports_refresh;
+  exports.is_fullscreen = exports_is_fullscreen;
+  exports.set_active_menu = exports_set_active_menu;
+  exports.console_command = exports_console_command;
+  exports.draw_connect_screen = exports_draw_connect_screen;
+  exports.has_unique_cd_key = exports_has_unique_cd_key;
+  return exports;
 }

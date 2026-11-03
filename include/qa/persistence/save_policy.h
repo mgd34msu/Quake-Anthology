@@ -76,4 +76,11 @@ char *qa_contained_save_name(const char *directory, const char *path);
 bool qa_write_contained_save(const char *directory, const char *path,
                              const uint8_t *bytes, size_t length);
 
+/* TS assertLoadPathAllowed. source NULL is TS undefined; RangeErrors (the
+ * exact TS message) unless the path is inside the save directory or a
+ * trusted directory, or the source is a local console/seat. */
+#include "qa/contracts/common.h"
+void qa_assert_load_path_allowed(const char *directory, const char *path, const qa_command_context *source,
+                                 bool allow_any_path, const char *const *trusted_directories, size_t trusted_count);
+
 #endif

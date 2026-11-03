@@ -82,8 +82,9 @@ static flat_cells all_cells(qa_console_buffer *buffer) {
   for (size_t i = 0; i < row_count; i++) total += rows[i].cell_count;
   flat.cells = (qa_console_cell *)malloc((total + 1) * sizeof *flat.cells);
   for (size_t i = 0; i < row_count; i++) {
-    memcpy(flat.cells + flat.count, rows[i].cells,
-           rows[i].cell_count * sizeof *flat.cells);
+    if (rows[i].cell_count > 0)
+      memcpy(flat.cells + flat.count, rows[i].cells,
+             rows[i].cell_count * sizeof *flat.cells);
     flat.count += rows[i].cell_count;
   }
   qa_console_rows_free(rows, row_count);

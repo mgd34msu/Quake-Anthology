@@ -1,5 +1,7 @@
 /* Port of src/content/q3/base/records.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/records.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -30,8 +32,14 @@ struct qa_q3_base_entity_records {
   qa_q3_game_client *clients;
   struct { int32_t source_stats[16]; int32_t special_ammo[16]; } backing[QA_Q3_MAX_CLIENTS];
   binding_slot_ctx binding_ctx[QA_Q3_MAX_CLIENTS];
+  qa_q3_base_player_authority_binding authority[QA_Q3_MAX_CLIENTS]; /* borrowed by clients[i].ps */
+  void **origin_cells; size_t origin_cell_count, origin_cell_cap; /* shared-actor participant cells */
   int64_t release_subscription;
   bool subscribed;
+  /* TS byActorSlot: Map<actor slot, SourceRecord[]> in insertion order. Open-addressed on the actor slot;
+     buckets are never removed (TS keeps empty arrays too). */
+  struct actor_bucket { int64_t key; bool used; uint16_t *items; size_t count, cap; } *by_actor_slot;
+  size_t by_actor_slot_cap, by_actor_slot_used;
 };
 
 static qa_body_state zero_body(void) {
@@ -41,7 +49,7 @@ static qa_body_state zero_body(void) {
 }
 static source_record *record_at(qa_q3_base_entity_records *records, double slot) {
   if (slot != trunc(slot) || slot < 0 || slot >= QA_Q3_MAX_GENTITIES)
-    qa_range_error("Q3 entity %g outside 0..1023", slot);
+    qa_range_error("Q3 entity %s outside 0..1023", QA_JS_NUMBER(slot));
   return &records->records[(size_t)slot];
 }
 static const char *admit_request(void *ctx, qa_damage_request request) {
@@ -50,6 +58,72 @@ static const char *admit_request(void *ctx, qa_damage_request request) {
   if (records->host.admit_damage == NULL) return "continue";
   return records->host.admit_damage(records->host.ctx, &record->entity, request) == QA_Q3_BASE_ADMIT_HANDLED
       ? "handled" : "continue";
+}
+static uint64_t slot_hash(int64_t key) { uint64_t x = (uint64_t)key * 0x9E3779B97F4A7C15ull; return x ^ (x >> 29); }
+static struct actor_bucket *bucket_find(qa_q3_base_entity_records *records, int64_t key) {
+  if (records->by_actor_slot_cap == 0) return NULL;
+  size_t mask = records->by_actor_slot_cap - 1;
+  for (size_t i = (size_t)slot_hash(key) & mask;; i = (i + 1) & mask) {
+    struct actor_bucket *b = &records->by_actor_slot[i];
+    if (!b->used) return NULL;
+    if (b->key == key) return b;
+  }
+}
+static struct actor_bucket *bucket_insert(qa_q3_base_entity_records *records, int64_t key) {
+  if ((records->by_actor_slot_used + 1) * 2 > records->by_actor_slot_cap) {
+    size_t cap = records->by_actor_slot_cap ? records->by_actor_slot_cap * 2 : 64;
+    struct actor_bucket *grown = calloc(cap, sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    for (size_t i = 0; i < records->by_actor_slot_cap; i++) {
+      struct actor_bucket *b = &records->by_actor_slot[i];
+      if (!b->used) continue;
+      size_t j = (size_t)slot_hash(b->key) & (cap - 1);
+      while (grown[j].used) j = (j + 1) & (cap - 1);
+      grown[j] = *b;
+    }
+    free(records->by_actor_slot);
+    records->by_actor_slot = grown; records->by_actor_slot_cap = cap;
+  }
+  size_t mask = records->by_actor_slot_cap - 1, i = (size_t)slot_hash(key) & mask;
+  while (records->by_actor_slot[i].used) i = (i + 1) & mask;
+  struct actor_bucket *b = &records->by_actor_slot[i];
+  b->used = true; b->key = key; b->items = NULL; b->count = b->cap = 0;
+  records->by_actor_slot_used++;
+  return b;
+}
+/* TS assign: every write of record.actor goes through here to keep byActorSlot current. */
+static void assign_actor(source_record *record, bool has_actor, qa_owned_actor actor) {
+  qa_q3_base_entity_records *records = record->owner;
+  uint16_t index = (uint16_t)record->slot;
+  if (record->has_actor) {
+    struct actor_bucket *b = bucket_find(records, record->actor.id.slot);
+    if (b) for (size_t i = 0; i < b->count; i++) if (b->items[i] == index) {
+      memmove(&b->items[i], &b->items[i + 1], (b->count - i - 1) * sizeof *b->items); b->count--; break;
+    }
+  }
+  record->has_actor = has_actor;
+  if (has_actor) record->actor = actor;
+  if (has_actor) {
+    struct actor_bucket *b = bucket_find(records, actor.id.slot);
+    if (!b) b = bucket_insert(records, actor.id.slot);
+    if (b->count == b->cap) {
+      size_t cap = b->cap ? b->cap * 2 : 2;
+      uint16_t *grown = realloc(b->items, cap * sizeof *grown);
+      if (!grown) qa_range_error("out of memory");
+      b->items = grown; b->cap = cap;
+    }
+    b->items[b->count++] = index;
+  }
+}
+/* TS recordOf: actor lookups run per trace hit and per tick, so records are indexed by actor slot instead of scanned. */
+static source_record *record_of(qa_q3_base_entity_records *records, qa_actor_id actor) {
+  struct actor_bucket *b = bucket_find(records, actor.slot);
+  if (!b) return NULL;
+  for (size_t i = 0; i < b->count; i++) {
+    source_record *record = &records->records[b->items[i]];
+    if (record->has_actor && qa_same_actor(record->actor.id, actor)) return record;
+  }
+  return NULL;
 }
 static qa_owned_actor ensure_actor(qa_q3_base_entity_records *records, double slot);
 static void bind_callbacks(source_record *record);
@@ -81,8 +155,7 @@ static qa_owned_actor ensure_actor(qa_q3_base_entity_records *records, double sl
   }
   qa_owned_actor actor = qa_session_actor_registry_allocate_at_source(
       records->host.actors, records->provider, (int64_t)slot, slot < QA_Q3_MAX_CLIENTS ? "q3:player" : "q3:entity");
-  record->actor = actor;
-  record->has_actor = true;
+  assign_actor(record, true, actor);
   qa_shared_body_table_create_body(records->host.bodies, actor, zero_body());
   bind_owned_services(record);
   return actor;
@@ -109,12 +182,62 @@ static void binding_run_think(void *ctx, double time_ms) {
   record->owner->host.run_think(record->owner->host.ctx,
       ensure_actor(record->owner, record->slot), time_ms);
 }
+/* TS binding.body (EntityBodyBinding) over the session body table. */
+static qa_body_state binding_body_read(void *ctx) {
+  source_record *record = ctx;
+  if (!record->has_actor) return zero_body();
+  qa_body_state_result body = qa_shared_body_table_read(record->owner->host.bodies, record->actor.id);
+  return body.has_value ? body.value : zero_body();
+}
+static void binding_body_write(void *ctx, qa_body_state value) {
+  source_record *record = ctx;
+  qa_shared_body_table_write(record->owner->host.bodies, ensure_actor(record->owner, record->slot), value);
+}
+static bool binding_body_linked(void *ctx, qa_linked_body *out) {
+  source_record *record = ctx;
+  if (!record->has_actor) return false;
+  qa_linked_body_result linked = qa_shared_body_table_linked(record->owner->host.bodies, record->actor.id);
+  if (linked.has_value) *out = linked.value;
+  return linked.has_value;
+}
+static double binding_health(void *ctx) {
+  source_record *record = ctx;
+  if (!record->has_actor) return 0;
+  qa_combat_state_result state = qa_gameplay_authority_read(record->owner->host.combat, record->actor.id);
+  return state.has_value ? state.value.health : 0;
+}
+static void binding_set_health(void *ctx, double value) {
+  source_record *record = ctx;
+  qa_gameplay_authority_set_health(record->owner->host.combat, ensure_actor(record->owner, record->slot), value);
+}
+static bool binding_takedamage(void *ctx) {
+  source_record *record = ctx;
+  if (!record->has_actor) return false;
+  qa_combat_state_result state = qa_gameplay_authority_read(record->owner->host.combat, record->actor.id);
+  return state.has_value && state.value.can_take_damage;
+}
+static void binding_set_takedamage(void *ctx, bool value) {
+  source_record *record = ctx;
+  qa_combat_trait_changes changes;
+  memset(&changes, 0, sizeof changes);
+  changes.has_can_take_damage = true;
+  changes.can_take_damage = value;
+  qa_gameplay_authority_set_traits(record->owner->host.combat, ensure_actor(record->owner, record->slot), changes);
+}
+/* TS GameClient ammoTimerStored closure: forwards to the host with the
+ * slot's actor, skipped while the slot has none. */
+static void client_ammo_timer_stored(void *ctx, double weapon, double value) {
+  binding_slot_ctx *slot_ctx = ctx;
+  source_record *record = &slot_ctx->records->records[(size_t)slot_ctx->slot];
+  if (record->has_actor)
+    slot_ctx->records->host.ammo_timer_stored(slot_ctx->records->host.ctx, record->actor.id, weapon, value);
+}
 static void on_actor_release(void *ctx, qa_owned_actor actor) {
   qa_q3_base_entity_records *records = ctx;
   for (int i = 0; i < QA_Q3_MAX_GENTITIES; i++) {
     source_record *record = &records->records[i];
     if (record->has_actor && qa_same_owned_actor(record->actor, actor)) {
-      record->has_actor = false;
+      assign_actor(record, false, actor);
       record->active = false;
     }
   }
@@ -140,18 +263,31 @@ bool qa_q3_base_entity_records_init(qa_q3_base_entity_records *records,
     qa_q3_game_entity_binding binding;
     memset(&binding, 0, sizeof binding);
     binding.ctx = record;
+    binding.body.ctx = record;
+    binding.body.read = binding_body_read;
+    binding.body.write = binding_body_write;
+    binding.body.linked = binding_body_linked;
     binding.actor = binding_actor;
     binding.active = binding_active;
+    binding.health = binding_health;
+    binding.set_health = binding_set_health;
+    binding.takedamage = binding_takedamage;
+    binding.set_takedamage = binding_set_takedamage;
     binding.schedule = binding_schedule;
     binding.run_think = binding_run_think;
     qa_q3_game_entity_init(&record->entity, slot, binding);
   }
-  qa_q3_game_product game_product = product == QA_Q3_BASE_PRODUCT_MISSIONPACK
-      ? QA_Q3_GAME_PRODUCT_MISSIONPACK : QA_Q3_GAME_PRODUCT_BASEQ3;
   for (int slot = 0; slot < QA_Q3_MAX_CLIENTS; slot++) {
-    qa_q3_game_client_init(&records->clients[slot], game_product);
     records->binding_ctx[slot].records = records;
     records->binding_ctx[slot].slot = slot;
+    records->authority[slot] = qa_q3_base_entity_records_player_binding(records, slot);
+    if (!qa_q3_game_client_init_bound(&records->clients[slot], product, &records->authority[slot],
+        &records->binding_ctx[slot], host.ammo_timer_stored != NULL ? client_ammo_timer_stored : NULL)) {
+      for (int i = 0; i < slot; i++) qa_q3_game_client_destroy(&records->clients[i]);
+      free(records->records); free(records->clients);
+      records->records = NULL; records->clients = NULL;
+      return false;
+    }
   }
   records->release_subscription = qa_session_actor_registry_on_release(host.actors, on_actor_release, records);
   records->subscribed = true;
@@ -168,6 +304,12 @@ void qa_q3_base_entity_records_destroy(qa_q3_base_entity_records *records) {
     free(records->clients);
     records->clients = NULL;
   }
+  for (size_t i = 0; i < records->origin_cell_count; i++) free(records->origin_cells[i]);
+  free(records->origin_cells);
+  records->origin_cells = NULL; records->origin_cell_count = records->origin_cell_cap = 0;
+  for (size_t i = 0; i < records->by_actor_slot_cap; i++) free(records->by_actor_slot[i].items);
+  free(records->by_actor_slot);
+  records->by_actor_slot = NULL; records->by_actor_slot_cap = records->by_actor_slot_used = 0;
 }
 void qa_q3_base_entity_records_close(qa_q3_base_entity_records *records) {
   if (records->subscribed) {
@@ -210,8 +352,8 @@ void qa_q3_base_entity_records_restore_ownership(qa_q3_base_entity_records *reco
   for (size_t slot = 0; slot < count; slot++) {
     source_record *record = record_at(records, (double)slot);
     if (record->has_actor) qa_range_error("Q3 ownership hydration requires fresh records");
-    record->has_actor = states[slot].has_actor;
-    record->actor = states[slot].actor;
+    assign_actor(record, states[slot].has_actor, states[slot].actor);
+    if (!states[slot].has_actor) record->actor = states[slot].actor;
     record->active = states[slot].active;
     record->borrowed = states[slot].borrowed;
   }
@@ -243,7 +385,7 @@ void qa_q3_base_entity_records_restore_client_backing(qa_q3_base_entity_records 
     qa_range_error("Invalid Q3 private client backing");
   int32_t *stats, *ammo;
   backing_at(records, slot, &stats, &ammo);
-  for (int i = 0; i < 16; i++) { stats[i] = (int32_t)source_stats[i]; ammo[i] = (int32_t)special_ammo[i]; }
+  for (int i = 0; i < 16; i++) { stats[i] = qa_js_to_int32(source_stats[i]); ammo[i] = qa_js_to_int32(special_ammo[i]); }
 }
 
 qa_q3_game_entity *qa_q3_base_entity_records_get(qa_q3_base_entity_records *records, double slot) {
@@ -252,17 +394,14 @@ qa_q3_game_entity *qa_q3_base_entity_records_get(qa_q3_base_entity_records *reco
 }
 qa_q3_game_client *qa_q3_base_entity_records_client(qa_q3_base_entity_records *records, double slot) {
   if (slot != trunc(slot) || slot < 0 || slot >= QA_Q3_MAX_CLIENTS)
-    qa_range_error("Q3 client %g outside 0..63", slot);
+    qa_range_error("Q3 client %s outside 0..63", QA_JS_NUMBER(slot));
   return &records->clients[(size_t)slot];
 }
 qa_q3_game_entity *qa_q3_base_entity_records_native_by_actor(qa_q3_base_entity_records *records,
     bool has_actor, qa_actor_id actor) {
   if (!has_actor) return NULL;
-  for (int i = 0; i < QA_Q3_MAX_GENTITIES; i++) {
-    source_record *record = &records->records[i];
-    if (record->has_actor && qa_same_actor(record->actor.id, actor)) return &record->entity;
-  }
-  return NULL;
+  source_record *record = record_of(records, actor);
+  return record ? &record->entity : NULL;
 }
 qa_q3_game_entity *qa_q3_base_entity_records_by_actor(qa_q3_base_entity_records *records,
     bool has_actor, qa_actor_id actor) {
@@ -277,8 +416,7 @@ qa_q3_game_entity *qa_q3_base_entity_records_adopt(qa_q3_base_entity_records *re
       record->has_actor || qa_q3_base_entity_records_native_by_actor(records, true, actor.id) != NULL ||
       !qa_shared_body_table_read(records->host.bodies, actor.id).has_value)
     qa_range_error("Q3 owned actor adoption requires an unused entity slot and its existing body");
-  record->actor = actor;
-  record->has_actor = true;
+  assign_actor(record, true, actor);
   record->active = true;
   record->borrowed = false;
   record->entity.s.number = slot;
@@ -290,9 +428,8 @@ qa_q3_game_entity *qa_q3_base_entity_records_attach(qa_q3_base_entity_records *r
   qa_session_actor_registry_assert_owned(records->host.actors, actor);
   source_record *record = record_at(records, slot);
   if (record->has_actor && !qa_same_owned_actor(record->actor, actor))
-    qa_range_error("Q3 slot %g already has an actor", slot);
-  record->actor = actor;
-  record->has_actor = true;
+    qa_range_error("Q3 slot %s already has an actor", QA_JS_NUMBER(slot));
+  assign_actor(record, true, actor);
   record->active = true;
   record->borrowed = true;
   if (player) record->entity.client = qa_q3_base_entity_records_client(records, slot);
@@ -309,7 +446,7 @@ void qa_q3_base_entity_records_deactivate_client(qa_q3_base_entity_records *reco
   source_record *record = record_at(records, slot);
   if (record->has_actor && !record->borrowed)
     qa_session_actor_registry_release(records->host.actors, record->actor);
-  record->has_actor = false;
+  assign_actor(record, false, record->actor);
   record->active = false;
   record->borrowed = false;
 }
@@ -318,7 +455,7 @@ void qa_q3_base_entity_records_release(qa_q3_base_entity_records *records, qa_q3
   if (&record->entity != entity) qa_range_error("Q3 entity belongs to another record owner");
   if (record->has_actor && !record->borrowed)
     qa_session_actor_registry_release(records->host.actors, record->actor);
-  record->has_actor = false;
+  assign_actor(record, false, record->actor);
   record->active = false;
   record->borrowed = false;
   qa_q3_game_entity_binding binding = entity->binding;
@@ -343,6 +480,13 @@ qa_q3_damage_inflictor qa_q3_base_entity_records_damage_inflictor(qa_q3_base_ent
   if (native != NULL) return qa_q3_participant_entity(native);
   origin_cell *cell = malloc(sizeof *cell);
   if (!cell) qa_range_error("out of memory");
+  if (records->origin_cell_count == records->origin_cell_cap) {
+    size_t cap = records->origin_cell_cap ? records->origin_cell_cap * 2 : 16;
+    void **grown = realloc(records->origin_cells, cap * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    records->origin_cells = grown; records->origin_cell_cap = cap;
+  }
+  records->origin_cells[records->origin_cell_count++] = cell;
   cell->records = records;
   cell->actor = actor;
   qa_q3_damage_inflictor out;
@@ -489,7 +633,7 @@ static bool stats_read(void *ctx, double index, int32_t *out) {
       qa_combat_state_result state = qa_gameplay_authority_read(records->host.combat, record->actor.id);
       health = state.has_value ? state.value.health : 0;
     }
-    *out = (int32_t)health;
+    *out = qa_js_to_int32(health);
     return true;
   }
   if (index == schema->armor) {
@@ -499,7 +643,7 @@ static bool stats_read(void *ctx, double index, int32_t *out) {
       if (state.has_value && state.value.armor.regular.kind != QA_REGULAR_ARMOR_NONE)
         points = state.value.armor.regular.points;
     }
-    *out = (int32_t)points;
+    *out = qa_js_to_int32(points);
     return true;
   }
   if (index == schema->weapons) {
@@ -508,14 +652,14 @@ static bool stats_read(void *ctx, double index, int32_t *out) {
       for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT; i++) {
         const qa_q3_weapon_item *weapon = &qa_q3_weapon_items[i];
         if (qa_shared_inventory_table_count(records->host.inventory, record->actor.id, weapon->item) > 0)
-          bits |= 1 << (int)weapon->weapon;
+          bits |= 1 << qa_js_to_int32(weapon->weapon);
       }
     }
     *out = bits;
     return true;
   }
   if (index != trunc(index) || index < 0 || index >= 16)
-    qa_range_error("Q3 stat %g outside 0..15", index);
+    qa_range_error("Q3 stat %s outside 0..15", QA_JS_NUMBER(index));
   *out = records->backing[(size_t)slot_ctx->slot].source_stats[(size_t)index];
   return true;
 }
@@ -540,12 +684,12 @@ static void stats_write(void *ctx, double index, int32_t value) {
   if (index == schema->weapons) {
     for (int i = 0; i < QA_Q3_WEAPON_ITEM_COUNT; i++) {
       const qa_q3_weapon_item *weapon = &qa_q3_weapon_items[i];
-      configure_item(slot_ctx, weapon->item, (value & (1 << (int)weapon->weapon)) ? 1 : 0, 1);
+      configure_item(slot_ctx, weapon->item, (value & (1 << qa_js_to_int32(weapon->weapon))) ? 1 : 0, 1);
     }
     return;
   }
   if (index != trunc(index) || index < 0 || index >= 16)
-    qa_range_error("Q3 stat %g outside 0..15", index);
+    qa_range_error("Q3 stat %s outside 0..15", QA_JS_NUMBER(index));
   records->backing[(size_t)slot_ctx->slot].source_stats[(size_t)index] = value;
 }
 static bool ammo_read(void *ctx, double index, int32_t *out) {
@@ -555,11 +699,11 @@ static bool ammo_read(void *ctx, double index, int32_t *out) {
   if (weapon != NULL && weapon->ammo != NULL) {
     source_record *record = &records->records[(size_t)slot_ctx->slot];
     *out = record->has_actor
-        ? (int32_t)qa_shared_inventory_table_count(records->host.inventory, record->actor.id, weapon->ammo) : 0;
+        ? qa_js_to_int32(qa_shared_inventory_table_count(records->host.inventory, record->actor.id, weapon->ammo)) : 0;
     return true;
   }
   if (index != trunc(index) || index < 0 || index >= 16)
-    qa_range_error("Q3 ammo %g outside 0..15", index);
+    qa_range_error("Q3 ammo %s outside 0..15", QA_JS_NUMBER(index));
   *out = records->backing[(size_t)slot_ctx->slot].special_ammo[(size_t)index];
   return true;
 }
@@ -572,7 +716,7 @@ static void ammo_write(void *ctx, double index, int32_t value) {
     return;
   }
   if (index != trunc(index) || index < 0 || index >= 16)
-    qa_range_error("Q3 ammo %g outside 0..15", index);
+    qa_range_error("Q3 ammo %s outside 0..15", QA_JS_NUMBER(index));
   records->backing[(size_t)slot_ctx->slot].special_ammo[(size_t)index] = value;
 }
 qa_q3_base_player_authority_binding qa_q3_base_entity_records_player_binding(

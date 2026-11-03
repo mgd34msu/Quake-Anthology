@@ -11,6 +11,7 @@
 #include "qa/content/q2/rerelease/monsters/common.h"
 #include "qa/content/q2/rerelease/monsters/tables/berserk.h"
 #include "rrm_internal.h"
+#include "qa/foundation/js.h"
 
 static bool jumping(qa_q2m_context *c) {
   const char *name = c->state->move->name;
@@ -36,44 +37,44 @@ static void melee_impl(qa_q2m_context *c) {
 static void melee_fn(void *ctx, qa_q2m_context *c) { (void)ctx; melee_impl(c); }
 
 void qa_q2rm_slam_radius_damage(qa_q2m_context *context, qa_vec3 origin, double damage, double kick, double radius) {
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *entity = context->entity;
   qa_vec3 point = origin;
   size_t count = 0;
   const qa_actor_id *actors = game->host->nearby(game->host->ctx, q2rm_body(game, entity).origin, radius * 2, &count);
   for (size_t i = 0; i < count; i++) {
     qa_actor_id actor = actors[i];
     if (qa_same_actor(actor, entity->actor.id)) continue;
-    qa_combat_state_result combat = game->host->combat.read(game->host->combat.ctx, actor);
+    qa_combat_state_result combat = qa_gameplay_authority_read(game->host->combat, actor);
     if (!combat.has_value || !combat.value.can_take_damage) continue;
     if (!game->can_damage(game->ctx, actor, entity->actor)) continue;
-    qa_body_state_result target = game->host->bodies.read(game->host->bodies.ctx, actor);
+    qa_body_state_result target = qa_shared_body_table_read(game->host->bodies, actor);
     if (!target.has_value) continue;
     if (game->host->is_player(game->host->ctx, actor) && !target.value.ground) continue;
     qa_vec3 min = qa_add3_double(target.value.origin, target.value.bounds.min);
     qa_vec3 max = qa_add3_double(target.value.origin, target.value.bounds.max);
-    qa_vec3 closest = {fmax(min.x, fmin(max.x, point.x)), fmax(min.y, fmin(max.y, point.y)),
-                       fmax(min.z, fmin(max.z, point.z))};
-    double amount = fmin(1, 1 - qa_hypot3(qa_sub3_double(closest, point)) / radius);
+    qa_vec3 closest = {qa_js_max(min.x, qa_js_min(max.x, point.x)), qa_js_max(min.y, qa_js_min(max.y, point.y)),
+                       qa_js_max(min.z, qa_js_min(max.z, point.z))};
+    double amount = qa_js_min(1, 1 - qa_hypot3(qa_sub3_double(closest, point)) / radius);
     if (amount <= 0) continue;
     qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(target.value.origin, point));
     point.z = min.z;
     double scaled_damage = damage * amount * amount;
-    (void)q2rm_damage(game, actor, entity, &entity->actor.id, trunc(fmax(1, scaled_damage)),
+    (void)q2rm_damage(game, actor, entity, &entity->actor.id, trunc(qa_js_max(1, scaled_damage)),
                       trunc(kick * amount * amount), direction, point, direction, 0, true, 1);
-    qa_q2f_owned_result owned = game->host->actors.resolve_owned(game->host->actors.ctx, actor);
-    qa_body_state_result after = game->host->bodies.read(game->host->bodies.ctx, actor);
-    if (game->host->is_player(game->host->ctx, actor) && owned.has_value && after.has_value) {
+    qa_owned_actor owned; bool has_owned = qa_session_actor_registry_resolve_owned(game->host->actors, actor, &owned);
+    qa_body_state_result after = qa_shared_body_table_read(game->host->bodies, actor);
+    if (game->host->is_player(game->host->ctx, actor) && has_owned && after.has_value) {
       qa_body_state written = after.value;
-      written.velocity.z = fmax(270, after.value.velocity.z);
-      game->host->bodies.write(game->host->bodies.ctx, owned.value, written);
+      written.velocity.z = qa_js_max(270, after.value.velocity.z);
+      qa_shared_body_table_write(game->host->bodies, owned, written);
     }
   }
 }
 
 static void slam(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   q2rm_snd(c, "mutant/thud1.wav", 1);
   q2rm_sound(game, entity, "world/explod2.wav", true, 0, true, 0.75, false, 0);
   qa_vec3 start = qa_q2m_project_flash_default(c, q2rm_v3(20, -14.3, -21));
@@ -81,7 +82,7 @@ static void slam(qa_q2m_context *c) {
   q2rm_emit_effect(game, "q2:berserk-slam", trace.end, q2rm_v3(0, 0, 1), 1, 0);
   entity->gravity = 1;
   entity->flags = q2rm_or(entity->flags, 1 << 23);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = q2rm_zero();
   q2rm_move_body(game, entity, change, false, false);
@@ -90,14 +91,14 @@ static void slam(qa_q2m_context *c) {
 }
 static void high_gravity(qa_q2m_context *c) {
   qa_actor_id world = c->game->host->world_actor(c->game->host->ctx);
-  qa_q2f_entity *world_entity = c->game->entity(c->game->ctx, &world);
-  double gravity = !world_entity ? 800 : qa_q2f_number_field(&world_entity->spawn, "gravity", 800);
+  qa_q2_entity *world_entity = c->game->entity(c->game->ctx, &world);
+  double gravity = !world_entity ? 800 : qa_q2_number_field(&world_entity->spawn, "gravity", 800);
   c->entity->gravity = (q2rm_body(c->game, c->entity).velocity.z < 0 ? 2.25 : 5.25) * (800 / gravity);
   c->game->motion(c->game->ctx, c->entity, c->entity->motion);
 }
 static void high_gravity_fn(void *ctx, qa_q2m_context *c) { (void)ctx; high_gravity(c); }
 
-static void touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2m_monsters *monsters = ctx;
   (void)contact;
   qa_q2m_context *context = qa_q2m_monsters_context(monsters, entity->actor.id);
@@ -112,8 +113,8 @@ static void touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_tou
 
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   double distance = qa_q2m_target_distance(c);
   if (c->state->melee_time <= q2rm_now(game) && distance < 80) { melee_impl(c); return; }
   if (!q2rm_has(entity->spawnflags, 8) && entity->timestamp < q2rm_now(game) && q2rm_rnd(game) < 0.5 && distance > 150) {
@@ -138,8 +139,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -238,12 +239,12 @@ static void takeoff_fn(void *ctx, qa_q2m_context *c) {
   velocity.z = 450;
   qa_vec3 origin = body.origin;
   origin.z += 1;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = origin;
   change.has_velocity = true; change.velocity = velocity;
   change.has_angles = true; change.angles = angles;
-  change.has_ground = true; change.ground = NULL;
+  change.has_ground = true; change.ground_null = true;
   q2rm_move_body(c->game, c->entity, change, false, false);
   c->state->ducked = true;
   c->state->attack_finished = q2rm_now(c->game) + 3;
@@ -270,7 +271,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -280,7 +281,7 @@ static void jump_now_impl(qa_q2m_context *c, double forward_scale, double up_sca
   qa_angle_vectors axis = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   qa_vec3 velocity = qa_add3_double(body.velocity,
       qa_add3_double(qa_scale3_double(axis.forward, forward_scale), qa_scale3_double(axis.up, up_scale)));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = velocity;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -296,9 +297,9 @@ static const qa_q2bm_sound_spec sight_spec = {"berserk/sight.wav", 2, 1};
 static const qa_q2bm_sound_spec search_spec = {"berserk/bersrch1.wav", 2, 1};
 static const qa_q2bm_sound_spec swing_spec = {"berserk/attack.wav", 1, 1};
 
-qa_q2m_definition qa_q2rm_create_rerelease_berserk_definition(qa_q2m_monsters *monsters) {
+qa_q2m_definition qa_q2rm_create_rerelease_berserk_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
   qa_q2m_named_handler *callbacks = malloc(13 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating rerelease berserk definition");
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating rerelease berserk definition");
   callbacks[0] = (qa_q2m_named_handler){"berserk_stand", {(void *)"berserk_move_stand", qa_q2bm_move_handler_fn}};
   callbacks[1] = (qa_q2m_named_handler){"berserk_run", {NULL, run_fn}};
   callbacks[2] = (qa_q2m_named_handler){"berserk_dead", {NULL, corpse_fn}};
@@ -319,10 +320,10 @@ qa_q2m_definition qa_q2rm_create_rerelease_berserk_definition(qa_q2m_monsters *m
     {"berserk_jump_wait_land", {NULL, wait_land_fn}},
   };
   size_t callback_count = 0;
-  qa_q2m_named_handler *merged = qa_q2rm_merge_callbacks(callbacks, 13, extra, 3, &callback_count);
+  qa_q2m_named_handler *merged = qa_q2rm_merge_callbacks(arena, callbacks, 13, extra, 3, &callback_count);
   free(callbacks);
-  qa_q2f_named_touch *touch_defs = malloc(sizeof *touch_defs);
-  if (!touch_defs) qa_q2f_error("Out of memory creating rerelease berserk definition");
+  qa_q2_named_touch *touch_defs = qa_q2mpm_arena_alloc(arena, sizeof *touch_defs);
+  if (!touch_defs) qa_raise("Error", 0, 0, "Out of memory creating rerelease berserk definition");
   touch_defs[0].name = "berserk_jump_touch";
   touch_defs[0].cb.ctx = monsters;
   touch_defs[0].cb.fn = touch_fn;

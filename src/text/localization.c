@@ -108,7 +108,10 @@ static loc_parse_result loc_parse(const char *format) {
     }
     size_t arg_start = rover;
     rover++;
-    if (rover < length && format[rover] == '{') continue;
+    if (rover < length && format[rover] == '{') {
+      rover++; /* "{{" is a literal brace */
+      continue;
+    }
     if (result.count == QA_LOC_MAX_ARGS) {
       result.error = "too many arguments";
       return result;
@@ -164,6 +167,19 @@ static bool loc_has_arguments(const char *base) {
     if (base[i] != '{') return true;
   }
   return false;
+}
+
+/* TS unescapeBraces: "{{" is the literal brace. NULL is OOM. */
+static char *unescape_braces_range(const char *text, size_t length) {
+  char *out = (char *)malloc(length + 1);
+  if (out == NULL) return NULL;
+  size_t w = 0;
+  for (size_t i = 0; i < length; i++) {
+    out[w++] = text[i];
+    if (text[i] == '{' && i + 1 < length && text[i + 1] == '{') i++;
+  }
+  out[w] = '\0';
+  return out;
 }
 
 #define PARSE_FLAG_ESCAPE 1
@@ -273,17 +289,20 @@ static char *com_parse_token(token_state *state, int64_t size, int flags) {
     }
   }
   do {
+    bool consumed = false;
     if (c == 0x5c && (flags & PARSE_FLAG_ESCAPE) != 0) {
+      state->index++;
       int esc = parse_escape_sequence(state);
       if (esc < 0) break;
       c = esc;
+      consumed = true;
     }
     if (len + 1 < size && !builder_push(&result, (char)c)) {
       free(result.data);
       return NULL;
     }
     len++;
-    state->index++;
+    if (!consumed) state->index++;
     c = token_cc(state, state->index);
   } while (c > 32 && c != 0x3d);
   char *out = loc_strlcpy(result.data == NULL ? "" : result.data, size);
@@ -441,6 +460,9 @@ static int64_t loc_parse_into(qa_localization_table *table, qa_byte_view bytes,
       }
       free(equals);
       equals = com_parse_token(&state, MAX_STRING_CHARS, 0);
+    }
+    if (!stop && equals != NULL && strcmp(equals, "=") != 0) {
+      log_warn(log, "loc parse error (%s): expected \"=\", rest of file ignored", key);
     }
     if (stop || equals == NULL || strcmp(equals, "=") != 0) {
       free(key);
@@ -610,8 +632,13 @@ char *qa_localization_table_localize_source(qa_localization_table *table, const 
     return result;
   }
   if (str == NULL || str->argument_count == 0) {
-    result = str == NULL ? loc_strlcpy(working, output_length)
-                         : loc_strlcpy(str->format, output_length);
+    if (str == NULL) {
+      result = loc_strlcpy(working, output_length);
+    } else {
+      char *plain = unescape_braces_range(str->format, strlen(str->format));
+      result = plain == NULL ? NULL : loc_strlcpy(plain, output_length);
+      free(plain);
+    }
     if (own_format) free(in_place.format);
     free(working);
     return result;
@@ -637,7 +664,9 @@ char *qa_localization_table_localize_source(qa_localization_table *table, const 
   /* Copy the format/args: recursion may not mutate the table, but the
    * in-place format must outlive the building loop anyway. */
   const qa_loc_arg *arg = &str->arguments[0];
-  char *output = loc_strnlcpy(str->format, arg->start, output_length);
+  char *head = unescape_braces_range(str->format, arg->start);
+  char *output = head == NULL ? NULL : loc_strnlcpy(head, arg->start, output_length);
+  free(head);
   for (size_t i = 0; output != NULL && i + 1 < str->argument_count; i++) {
     const char *raw = args == NULL ? "" : args[arg->arg_index];
     char *localized = qa_localization_table_localize_source(
@@ -655,8 +684,11 @@ char *qa_localization_table_localize_source(qa_localization_table *table, const 
     if (i + 1 >= str->argument_count)
       qa_range_error("Missing localization argument record");
     const qa_loc_arg *next_arg = &str->arguments[i + 1];
-    next = loc_strnlcat(output, str->format + arg->end, next_arg->start - arg->end,
-                        output_length);
+    char *between = unescape_braces_range(str->format + arg->end, next_arg->start - arg->end);
+    next = between == NULL ? NULL
+                           : loc_strnlcat(output, between, next_arg->start - arg->end,
+                                          output_length);
+    free(between);
     free(output);
     output = next;
     arg = next_arg;
@@ -674,7 +706,9 @@ char *qa_localization_table_localize_source(qa_localization_table *table, const 
       free(output);
       output = next;
       if (output != NULL) {
-        next = loc_strlcat(output, str->format + arg->end, output_length);
+        char *tail = unescape_braces_range(str->format + arg->end, strlen(str->format + arg->end));
+        next = tail == NULL ? NULL : loc_strlcat(output, tail, output_length);
+        free(tail);
         free(output);
         output = next;
       }

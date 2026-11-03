@@ -5,6 +5,7 @@
 
 #include "catalog_internal.h"
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 enum { QC_OP_ADDRESS = 30, QC_OP_STORE_FN = 36, QC_OP_STORE_P_FN = 42 };
 
@@ -223,7 +224,7 @@ qa_qc_trajectory_binding_inspection *qa_inspect_qc_trajectory_bindings(
     functions[function_count++] = fn;
   }
   if (function_count > 1)
-    qsort(functions, function_count, sizeof *functions, compare_functions);
+    qa_js_sort(functions, function_count, sizeof *functions, compare_functions);
   qa_qc_trajectory_binding_inspection *result = NULL;
   size_t capacity = 0;
   for (size_t index = 0; index < function_count; index++) {

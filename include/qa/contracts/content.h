@@ -145,11 +145,32 @@ typedef struct qa_resolved_resource_reference {
   qa_content_digest digest;
   int64_t byte_length;
   qa_resource_resolution resolution;
+  /* C-only: the JS key order save encodings preserve. False (the zero
+   * default) is the mounts/index.ts order `{ ...resource, id }` with catalog
+   * provenance and mount records; true is persistence/recipe.ts readResource
+   * order `{ id, ...resource }` with readProvenance/readMount records. */
+  bool parsed_order;
 } qa_resolved_resource_reference;
 
 /* TS createResourceId takes Omit<ResolvedResourceReference, "id">;
  * the C port takes the full struct and ignores its id field. */
 char *qa_create_resource_id(const qa_resolved_resource_reference *resource);
+
+/* Ownership of a ResolvedResourceReference value. TS references are plain
+ * immutable values, so one kept past the mount set, reader or save tree it
+ * came from must be an owned copy. An owned reference holds its own copy of
+ * every string (id, requested path, digest, member path, resolution plan,
+ * prefix, source prefix, target path) and one malloc'd provenance mount
+ * record (archive or loose) whose identity id, content id and archive path,
+ * archive digest or root path are owned too.
+ * qa_resolved_resource_copy fills *out with such a copy of *source (out may
+ * equal source); false only on OOM, leaving *out untouched.
+ * qa_resolved_resource_release frees an owned reference (the result of
+ * qa_resolved_resource_copy or qa_read_resource) and zeroes it; it must not
+ * be called on a borrowed view such as a mount set's opened reference. */
+bool qa_resolved_resource_copy(const qa_resolved_resource_reference *source,
+                               qa_resolved_resource_reference *out);
+void qa_resolved_resource_release(qa_resolved_resource_reference *resource);
 
 typedef struct qa_provider_reference {
   qa_provider_id provider;
@@ -267,8 +288,6 @@ typedef struct qa_presentation_selection {
   qa_provider_reference audio;
 } qa_presentation_selection;
 
-/* TS ModuleRole = "server-game" | "client-game" | "ui" (exact strings). */
-typedef const char *qa_module_role;
 /* TS NativeModuleProfile = NativeAbi. */
 typedef qa_native_abi qa_native_module_profile;
 
@@ -278,6 +297,9 @@ typedef qa_native_abi qa_native_module_profile;
  * a qa_resolved_resource_reference for qa_resolved_execution_module
  * (typescript carries implementation instead of artifact). Role/api
  * pairing follows the TS SourceModuleApi intersections. */
+/* TS SourceModuleApi["role"] (the ModuleRole alias was dropped):
+ * "server-game" | "client-game" | "ui" (exact strings). */
+typedef const char *qa_module_role;
 typedef enum qa_execution_module_kind {
   QA_EXECUTION_MODULE_TYPESCRIPT, QA_EXECUTION_MODULE_QUAKEC,
   QA_EXECUTION_MODULE_QVM, QA_EXECUTION_MODULE_NATIVE
@@ -376,6 +398,11 @@ typedef struct qa_executable_recipe {
   const qa_provider_timing *timing;
   size_t timing_count;
   qa_frame_ordering ordering;
+  /* C-only: the JS key order the save encoder preserves. A recipe resolved by
+   * resolveLaunch is `{ ...selected, schemaVersion, map, execution, timing,
+   * ordering, mounts, resources }` (selected ends ...ordering, preset); a parsed
+   * or literal recipe keeps the declared order (false). */
+  bool launch_key_order;
 } qa_executable_recipe;
 
 #endif

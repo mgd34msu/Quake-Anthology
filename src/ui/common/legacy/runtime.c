@@ -10,11 +10,14 @@
 #include "qa/core/commands/text.h"
 #include "qa/core/game_numeric.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/input/key_codes.h"
 #include "qa/ui/common/legacy/borders.h"
 
 #define FR(x) ((double)(float)(x))
+/* Menu scripts nest through open/close/transition; the original recursed without a bound. */
+#define MAX_SCRIPT_DEPTH 64
 #define MAX_OPEN_MENUS 16
 #define SCROLLBAR_SIZE 16
 #define SLIDER_WIDTH 96
@@ -54,11 +57,13 @@ typedef struct cinematic_entry {
   qa_ui_cinematic_asset asset;
 } cinematic_entry;
 
-typedef struct binding_state {
-  const char *command;
-  int64_t first;
-  int64_t second;
-} binding_state;
+/* TS cvarScriptTokens entry: one cvar script's tokens, parsed once. A NULL
+   token is the TS null (String_Alloc failed). */
+typedef struct cvar_script_tokens {
+  char *script;
+  char **tokens;
+  size_t count;
+} cvar_script_tokens;
 
 typedef enum capture_kind {
   CAPTURE_IDLE,
@@ -91,8 +96,6 @@ struct qa_ui_runtime {
   size_t cinematic_count, cinematic_capacity;
   menu_state **open_stack;
   size_t open_count, open_capacity;
-  binding_state *bindings;
-  size_t binding_count;
   item_state **item_arena;
   size_t arena_count, arena_capacity;
   /* allocationOffset -> item_state slot map */
@@ -104,14 +107,18 @@ struct qa_ui_runtime {
   double display_cursor_x, display_cursor_y;
   int32_t real_time;
   int32_t last_list_click_time;
-  item_state *editing_item;
-  item_state *binding_item;
-  bool waiting_for_key;
   capture_state capture;
+  cvar_script_tokens *cvar_scripts; /* TS cvarScriptTokens Map */
+  size_t cvar_script_count, cvar_script_capacity;
+  int64_t script_depth;             /* TS scriptDepth */
   int32_t next_scroll_time, next_scroll_adjust_time, scroll_adjust_value;
   bool debug;
   qa_common_parse_state *source_parser;
   qa_common_parse_state owned_parser;
+  /* setbackground's shader references: window memory borrows them, so the
+   * runtime owns each until a later setbackground replaces it or destroy. */
+  qa_ui_shader_reference **backgrounds;
+  size_t background_count, background_capacity;
 };
 
 typedef qa_ui_runtime runtime_t;
@@ -401,13 +408,6 @@ static char *cvar_buffer(runtime_t *rt, const char *name) {
   return out;
 }
 
-static void execute_text(runtime_t *rt, const char *text) {
-  if (rt->options.context.kind == QA_UI_RUNTIME_CONTEXT_CGAME)
-    qa_ui_script_plain_error("UI executeText is unavailable in cgame context");
-  qa_command_buffer_append(rt->options.commands, text,
-                           &rt->options.command_context, -1);
-}
-
 static void runtime_print(runtime_t *rt, const char *text) {
   if (rt->options.print != NULL) rt->options.print(rt->options.print_ctx, text);
 }
@@ -417,63 +417,6 @@ static char *game_format1(const char *format, qa_q3_game_format_arg arg) {
   return qa_q3_game_format(format, &arg, 1, 32000);
 }
 
-/* ---- bindings ---- */
-
-static const char *const bind_commands[] = {
-    "+scores", "+button2", "+speed", "+forward", "+back", "+moveleft",
-    "+moveright", "+moveup", "+movedown", "+left", "+right", "+strafe",
-    "+lookup", "+lookdown", "+mlook", "centerview", "+zoom",
-    "weapon 1", "weapon 2", "weapon 3", "weapon 4", "weapon 5", "weapon 6",
-    "weapon 7", "weapon 8", "weapon 9", "weapon 10", "weapon 11", "weapon 12",
-    "weapon 13", "+attack", "weapprev", "weapnext", "+button3", "+button4",
-    "prevTeamMember", "nextTeamMember", "nextOrder", "confirmOrder",
-    "denyOrder", "taskOffense", "taskDefense", "taskPatrol", "taskCamp",
-    "taskFollow", "taskRetrieve", "taskEscort", "taskOwnFlag", "taskSuicide",
-    "tauntKillInsult", "tauntPraise", "tauntTaunt", "tauntDeathInsult",
-    "tauntGauntlet", "scoresUp", "scoresDown", "messagemode", "messagemode2",
-    "messagemode3", "messagemode4"};
-#define BIND_COMMAND_COUNT (sizeof bind_commands / sizeof bind_commands[0])
-
-static binding_state *load_bindings(const qa_ui_runtime_bindings *host,
-                                    size_t *out_count) {
-  binding_state *bindings = calloc(BIND_COMMAND_COUNT, sizeof *bindings);
-  *out_count = BIND_COMMAND_COUNT;
-  for (size_t i = 0; i < BIND_COMMAND_COUNT; i++) {
-    bindings[i].command = bind_commands[i];
-    bindings[i].first = -1;
-    bindings[i].second = -1;
-  }
-  if (host == NULL) return bindings;
-  for (size_t i = 0; i < BIND_COMMAND_COUNT; i++) {
-    for (int64_t key = 0; key < 256; key++) {
-      char *binding = host->get_binding(host->ctx, (double)key);
-      bool match = false;
-      if (binding != NULL) {
-        size_t length = strlen(binding);
-        if (length > 255) binding[255] = '\0';
-        match = equal_name(binding, bindings[i].command);
-      }
-      free(binding);
-      if (match) {
-        if (bindings[i].first == -1) {
-          bindings[i].first = key;
-        } else {
-          bindings[i].second = key;
-          break;
-        }
-      }
-    }
-  }
-  return bindings;
-}
-
-static const qa_ui_runtime_bindings *binding_host(runtime_t *rt,
-                                                  const char *operation) {
-  if (rt->options.context.kind == QA_UI_RUNTIME_CONTEXT_CGAME)
-    qa_ui_script_plain_error("UI %s is unavailable in cgame context",
-                             operation);
-  return &rt->options.context.bindings;
-}
 
 /* ---- menu/item states ---- */
 
@@ -1027,12 +970,6 @@ qa_ui_runtime *qa_ui_runtime_create(const qa_ui_runtime_options *options) {
   for (size_t i = 0; i < options->definitions.menu_count; i++)
     push_menu_state(rt, make_menu(rt, options->definitions.menus[i]));
   rt->active_menu_count = (int64_t)rt->menu_len;
-  if (options->context.kind == QA_UI_RUNTIME_CONTEXT_UI) {
-    rt->bindings =
-        load_bindings(&options->context.bindings, &rt->binding_count);
-  } else {
-    rt->bindings = load_bindings(NULL, &rt->binding_count);
-  }
   for (int64_t i = 0; i < rt->active_menu_count; i++) {
     menu_state *menu = rt->menus[i];
     int32_t item_count = qa_ui_menu_item_count(menu->def);
@@ -1050,7 +987,13 @@ void qa_ui_runtime_destroy(qa_ui_runtime *rt) {
   free(rt->slot_offsets);
   free(rt->slot_items);
   free(rt->open_stack);
-  free(rt->bindings);
+  for (size_t i = 0; i < rt->cvar_script_count; i++) {
+    for (size_t j = 0; j < rt->cvar_scripts[i].count; j++)
+      free(rt->cvar_scripts[i].tokens[j]);
+    free(rt->cvar_scripts[i].tokens);
+    free(rt->cvar_scripts[i].script);
+  }
+  free(rt->cvar_scripts);
   for (size_t i = 0; i < rt->picture_count; i++) free(rt->pictures[i].key);
   free(rt->pictures);
   for (size_t i = 0; i < rt->sound_count; i++) free(rt->sounds[i].key);
@@ -1060,15 +1003,15 @@ void qa_ui_runtime_destroy(qa_ui_runtime *rt) {
   for (size_t i = 0; i < rt->cinematic_count; i++)
     free(rt->cinematics[i].key);
   free(rt->cinematics);
+  for (size_t i = 0; i < rt->background_count; i++)
+    qa_ui_resource_reference_destroy(rt->backgrounds[i]);
+  free(rt->backgrounds);
   free(rt);
 }
 
 void qa_ui_runtime_retire(qa_ui_runtime *rt) {
   rt->disposed = true;
   rt->capture.kind = CAPTURE_IDLE;
-  rt->editing_item = NULL;
-  rt->binding_item = NULL;
-  rt->waiting_for_key = false;
 }
 
 void qa_ui_runtime_dispose(qa_ui_runtime *rt) {
@@ -1079,21 +1022,6 @@ void qa_ui_runtime_dispose(qa_ui_runtime *rt) {
 
 /* ---- definitions management ---- */
 
-static void write_bindings(runtime_t *rt);
-
-void qa_ui_runtime_reload_bindings(qa_ui_runtime *rt) {
-  opened(rt);
-  const qa_ui_runtime_bindings *host = binding_host(rt, "reload bindings");
-  size_t count = 0;
-  binding_state *loaded = load_bindings(host, &count);
-  size_t shared = rt->binding_count < count ? rt->binding_count : count;
-  for (size_t i = 0; i < shared; i++) {
-    rt->bindings[i].first = loaded[i].first;
-    rt->bindings[i].second = loaded[i].second;
-  }
-  free(loaded);
-}
-
 void qa_ui_runtime_reset_definitions(qa_ui_runtime *rt,
                                      qa_ui_runtime_reset reset) {
   opened(rt);
@@ -1101,8 +1029,6 @@ void qa_ui_runtime_reset_definitions(qa_ui_runtime *rt,
   if (reset == QA_UI_RUNTIME_RESET_STRINGS) {
     rt->item_allocation_point = 0;
     rt->open_count = 0;
-    if (rt->options.context.kind == QA_UI_RUNTIME_CONTEXT_UI)
-      qa_ui_runtime_reload_bindings(rt);
   }
 }
 
@@ -1255,6 +1181,15 @@ void qa_ui_runtime_append_menu(qa_ui_runtime *rt,
   }
   rt->active_menu_count++;
   sync_definitions_menus(rt);
+}
+
+void qa_ui_runtime_set_fonts(qa_ui_runtime *rt, const qa_q3_font_set *fonts) {
+  rt->options.fonts = *fonts;
+}
+
+void qa_ui_runtime_set_widget_assets(qa_ui_runtime *rt,
+                                     const qa_ui_widget_assets *assets) {
+  rt->options.widget_assets = *assets;
 }
 
 void qa_ui_runtime_reload_definitions(
@@ -1676,6 +1611,24 @@ static void script_close(runtime_t *rt, qa_ui_script_cursor *cursor) {
   free(name.text);
 }
 
+static void adopt_background(runtime_t *rt, qa_ui_resource_reference *previous,
+                             qa_ui_shader_reference *reference) {
+  for (size_t i = 0; previous != NULL && i < rt->background_count; i++)
+    if (rt->backgrounds[i] == previous) {
+      qa_ui_resource_reference_destroy(previous);
+      rt->backgrounds[i] = rt->backgrounds[--rt->background_count];
+      break;
+    }
+  if (reference == NULL) return;
+  if (rt->background_count == rt->background_capacity) {
+    size_t capacity = rt->background_capacity == 0 ? 8 : rt->background_capacity * 2;
+    qa_ui_shader_reference **grown = realloc(rt->backgrounds, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("UI memory allocation failed");
+    rt->backgrounds = grown;
+    rt->background_capacity = capacity;
+  }
+  rt->backgrounds[rt->background_count++] = reference;
+}
 static void script_set_background(runtime_t *rt, item_state *item,
                                   qa_ui_script_cursor *cursor) {
   cursor_string path = cursor_string_read(cursor);
@@ -1694,8 +1647,11 @@ static void script_set_background(runtime_t *rt, item_state *item,
       handle = (int32_t)handles->picture_handle(
           handles->ctx, has ? &background : NULL);
     }
+    qa_ui_resource_reference *previous =
+        qa_ui_memory_allocation_get_resource(item->def->window.alloc, 176);
     qa_ui_window_set_background(&item->def->window, reference, has_handle,
                                 handle);
+    adopt_background(rt, previous, reference);
   }
   char *key = resource_key(path.text);
   pictures_set(rt, key, has, &background);
@@ -1839,17 +1795,12 @@ static void script_set_cvar(runtime_t *rt, qa_ui_script_cursor *cursor,
 }
 
 static void script_exec(runtime_t *rt, qa_ui_script_cursor *cursor) {
+  (void)rt;
   cursor_string value = cursor_string_read(cursor);
-  if (value.kind != QA_UI_SCRIPT_STRING_NONE) {
-    qa_q3_game_format_arg arg[1];
-    arg[0] = value.kind == QA_UI_SCRIPT_STRING_NULL
-                 ? qa_q3_game_format_null()
-                 : qa_q3_game_format_string(value.text);
-    char *text = qa_q3_game_format("%s ; ", arg, 1, 32000);
-    execute_text(rt, text);
-    free(text);
-  }
+  const bool present = value.kind != QA_UI_SCRIPT_STRING_NONE;
   free(value.text);
+  if (present)
+    qa_ui_script_plain_error("UI exec is unavailable in the cgame menu runtime");
 }
 
 static void script_play(runtime_t *rt, qa_ui_script_cursor *cursor) {
@@ -2057,6 +2008,14 @@ static void run_script(runtime_t *rt, menu_state *menu, item_state *item,
     free(text);
     return;
   }
+  /* Menu scripts nest through open/close/transition; the original recursed
+     without a bound. */
+  if (rt->script_depth >= MAX_SCRIPT_DEPTH) {
+    free(text);
+    runtime_print(rt, "menu script nesting limit reached\n");
+    return;
+  }
+  rt->script_depth++;
   script_owner owner = {menu, item};
   qa_ui_script_cursor *cursor =
       script_cursor_create(text, rt->source_parser, rt->definitions.memory);
@@ -2092,6 +2051,7 @@ static void run_script(runtime_t *rt, menu_state *menu, item_state *item,
     }
   }
   script_cursor_destroy(cursor);
+  rt->script_depth--;
 }
 
 void qa_ui_runtime_run_menu_script(qa_ui_runtime *rt, const char *menu_name,
@@ -2147,29 +2107,59 @@ static bool item_passes_cvar(runtime_t *rt, item_state *item, int purpose) {
   }
   char *current = cvar_buffer(rt, cvar_test);
   free(cvar_test);
-  qa_ui_script_cursor *cursor =
-      script_cursor_create(script_text, rt->source_parser,
-                           rt->definitions.memory);
-  free(script_text);
+  /* TS cvarScriptTokens: each script text is tokenized once per runtime. */
+  cvar_script_tokens *entry = NULL;
+  for (size_t i = 0; i < rt->cvar_script_count; i++)
+    if (strcmp(rt->cvar_scripts[i].script, script_text) == 0) {
+      entry = &rt->cvar_scripts[i];
+      break;
+    }
+  if (entry == NULL) {
+    cvar_script_tokens built = {script_text, NULL, 0};
+    size_t capacity = 0;
+    qa_ui_script_cursor *cursor =
+        script_cursor_create(script_text, rt->source_parser,
+                             rt->definitions.memory);
+    for (;;) {
+      cursor_string value = cursor_string_read(cursor);
+      if (value.kind == QA_UI_SCRIPT_STRING_NONE) break;
+      if (built.count == capacity) {
+        capacity = capacity == 0 ? 8 : capacity * 2;
+        char **grown = realloc(built.tokens, capacity * sizeof *grown);
+        if (grown == NULL) qa_range_error("UI runtime allocation failed");
+        built.tokens = grown;
+      }
+      built.tokens[built.count++] =
+          value.kind == QA_UI_SCRIPT_STRING_NULL ? NULL : value.text;
+    }
+    script_cursor_destroy(cursor);
+    if (rt->cvar_script_count == rt->cvar_script_capacity) {
+      size_t grown_capacity =
+          rt->cvar_script_capacity == 0 ? 8 : rt->cvar_script_capacity * 2;
+      cvar_script_tokens *grown =
+          realloc(rt->cvar_scripts, grown_capacity * sizeof *grown);
+      if (grown == NULL) qa_range_error("UI runtime allocation failed");
+      rt->cvar_scripts = grown;
+      rt->cvar_script_capacity = grown_capacity;
+    }
+    rt->cvar_scripts[rt->cvar_script_count] = built;
+    entry = &rt->cvar_scripts[rt->cvar_script_count++];
+  } else {
+    free(script_text);
+  }
   bool result = (flags & flag) == 0;
-  for (;;) {
-    cursor_string value = cursor_string_read(cursor);
-    if (value.kind == QA_UI_SCRIPT_STRING_NONE) break;
-    if (value.kind == QA_UI_SCRIPT_STRING_NULL) {
-      script_cursor_destroy(cursor);
+  for (size_t i = 0; i < entry->count; i++) {
+    const char *value = entry->tokens[i];
+    if (value == NULL) {
       free(current);
       qa_ui_script_plain_error(
           "Item_EnableShowViaCvar dereferences NULL token after String_Alloc");
     }
-    bool match = strcmp(value.text, ";") != 0 &&
-                 equal_name(value.text, current);
-    free(value.text);
-    if (match) {
+    if (strcmp(value, ";") != 0 && equal_name(value, current)) {
       result = (flags & flag) != 0;
       break;
     }
   }
-  script_cursor_destroy(cursor);
   free(current);
   return result;
 }
@@ -2431,6 +2421,10 @@ static item_state *focus_relative(runtime_t *rt, menu_state *menu,
       qa_ui_menu_set_cursor_item(menu->def,
                                  direction < 0 ? i32_sub(count, 1) : 0);
     }
+    /* Already wrapped once and nothing took focus. */
+    if (qa_ui_menu_cursor_item(menu->def) < 0 ||
+        qa_ui_menu_cursor_item(menu->def) >= qa_ui_menu_item_count(menu->def))
+      break;
     item_state *item =
         menu_item_at(rt, menu, qa_ui_menu_cursor_item(menu->def));
     if (item != NULL &&
@@ -2450,9 +2444,7 @@ static void mouse_move_menu(runtime_t *rt, menu_state *menu, double x,
   if ((qa_ui_window_flags(&menu->def->window) &
        (QA_UI_WINDOW_VISIBLE | QA_UI_WINDOW_FORCED)) == 0)
     return;
-  if (rt->capture.kind != CAPTURE_IDLE || rt->waiting_for_key ||
-      rt->editing_item != NULL)
-    return;
+  if (rt->capture.kind != CAPTURE_IDLE) return;
   bool focus_set = false;
   for (int pass = 0; pass < 2; pass++) {
     MENU_ITEMS(rt, menu, item, ii) {
@@ -2779,6 +2771,28 @@ static double slider_thumb_position(runtime_t *rt, item_state *item) {
 static bool handle_slider_key(runtime_t *rt, item_state *item, int32_t key) {
   char *cvar = qa_ui_item_cvar(item->def);
   qa_rect rect = qa_ui_window_rect(&item->def->window);
+  /* Left/Right step a focused slider by a twentieth of its range. */
+  if (cvar != NULL &&
+      (qa_ui_window_flags(&item->def->window) & QA_UI_WINDOW_HAS_FOCUS) !=
+          0 &&
+      (key == QA_KEY_LEFT || key == QA_KEY_RIGHT)) {
+    qa_ui_edit_field_definition edit;
+    if (qa_ui_item_edit_data(item->def, &edit) &&
+        qa_ui_edit_maximum(&edit) > qa_ui_edit_minimum(&edit)) {
+      const double minimum = qa_ui_edit_minimum(&edit),
+                   maximum = qa_ui_edit_maximum(&edit);
+      const double step = FR(FR(maximum - minimum) / 20);
+      const double value =
+          FR(cvar_value(rt, cvar) + (key == QA_KEY_RIGHT ? step : -step));
+      char *text = game_format1(
+          "%f", qa_q3_game_format_number(
+                    qa_js_max(minimum, qa_js_min(maximum, value))));
+      cvar_set_direct(rt, cvar, text, true);
+      free(text);
+      free(cvar);
+      return true;
+    }
+  }
   if (cvar != NULL &&
       (qa_ui_window_flags(&item->def->window) & QA_UI_WINDOW_HAS_FOCUS) !=
           0 &&
@@ -2850,15 +2864,21 @@ static void start_capture(runtime_t *rt, item_state *item, int32_t key) {
 
 /* ---- item key handlers ---- */
 
+/* id requires the pointer over a widget; Enter on the focused widget also
+   activates it so keyboard and pad players can operate it. */
+static bool activates_at_pointer(runtime_t *rt, qa_rect rect, int32_t key) {
+  return is_activate_key(key) &&
+         (key == QA_KEY_ENTER ||
+          rect_contains(rect, rt->display_cursor_x, rt->display_cursor_y));
+}
+
 static bool handle_yes_no_key(runtime_t *rt, item_state *item, int32_t key) {
   char *cvar = qa_ui_item_cvar(item->def);
   qa_rect rect = qa_ui_window_rect(&item->def->window);
   bool ok = cvar != NULL &&
             (qa_ui_window_flags(&item->def->window) &
              QA_UI_WINDOW_HAS_FOCUS) != 0 &&
-            rect_contains(rect, rt->display_cursor_x,
-                          rt->display_cursor_y) &&
-            is_activate_key(key);
+            activates_at_pointer(rt, rect, key);
   if (!ok) {
     free(cvar);
     return false;
@@ -2876,9 +2896,7 @@ static bool handle_multi_key(runtime_t *rt, item_state *item, int32_t key) {
             cvar != NULL &&
             (qa_ui_window_flags(&item->def->window) &
              QA_UI_WINDOW_HAS_FOCUS) != 0 &&
-            rect_contains(rect, rt->display_cursor_x,
-                          rt->display_cursor_y) &&
-            is_activate_key(key);
+            activates_at_pointer(rt, rect, key);
   if (!ok) {
     free(cvar);
     return false;
@@ -2931,257 +2949,6 @@ static bool handle_multi_key(runtime_t *rt, item_state *item, int32_t key) {
   return true;
 }
 
-static void text_move(uint8_t *buffer, int64_t destination, int64_t source,
-                      int64_t count) {
-  if (destination < 0 || source < 0 || count < 0 ||
-      destination + count > 1024 || source + count > 1024)
-    qa_range_error(
-        "Item_TextField_HandleKey memmove exceeds local char[1024]");
-  memmove(buffer + destination, buffer + source, (size_t)count);
-}
-
-static void text_publish(runtime_t *rt, item_state *item, uint8_t *buffer) {
-  size_t end = 0;
-  while (end < 1024 && buffer[end] != 0) end++;
-  if (end == 1024)
-    qa_range_error(
-        "Item_TextField_HandleKey passes unterminated local char[1024]");
-  char *text = dupnstr((const char *)buffer, end);
-  char *cvar = qa_ui_item_cvar(item->def);
-  set_cvar(rt, cvar, text, true);
-  free(cvar);
-  free(text);
-}
-
-static bool handle_text_key(runtime_t *rt, item_state *item, int32_t key) {
-  qa_ui_edit_field_definition edit;
-  bool has_edit = qa_ui_item_edit_data(item->def, &edit);
-  char *cvar = qa_ui_item_cvar(item->def);
-  if (cvar == NULL) return false;
-  char *value = cvar_buffer(rt, cvar);
-  free(cvar);
-  uint8_t buffer[1024];
-  memset(buffer, 0, sizeof buffer);
-  size_t value_length = strlen(value);
-  for (size_t i = 0; i < value_length; i++)
-    buffer[i] = (uint8_t)value[i];
-  int64_t length = (int64_t)value_length;
-  free(value);
-  if (!has_edit)
-    qa_ui_script_plain_error(
-        "Item_TextField_HandleKey dereferences NULL typeData at maxChars");
-  int32_t max_chars = qa_ui_edit_max_chars(&edit);
-  int32_t max_paint = qa_ui_edit_max_paint_chars(&edit);
-  if (max_chars != 0 && length > max_chars) length = max_chars;
-  int32_t cursor = qa_ui_item_cursor_position(item->def);
-  if ((key & QA_KEY_CHAR_FLAG) != 0) {
-    key &= ~QA_KEY_CHAR_FLAG;
-    if (key == 8) {
-      if (cursor > 0) {
-        text_move(buffer, (int64_t)cursor - 1, cursor,
-                  length + 1 - cursor);
-        cursor = i32_sub(cursor, 1);
-        qa_ui_item_set_cursor_position(item->def, cursor);
-        if (cursor < qa_ui_edit_paint_offset(&edit))
-          qa_ui_edit_set_paint_offset(
-              &edit, i32_sub(qa_ui_edit_paint_offset(&edit), 1));
-      }
-      text_publish(rt, item, buffer);
-      return true;
-    }
-    if (key < 32) return true;
-    if (qa_ui_item_behavior(item->def) == QA_UI_BEHAVIOR_NUMERIC_FIELD &&
-        (key < 48 || key > 57))
-      return false;
-    if (!binding_host(rt, "edit overstrike")
-             ->get_overstrike(rt->options.context.bindings.ctx)) {
-      if (length == 255 || (max_chars != 0 && length >= max_chars))
-        return true;
-      text_move(buffer, (int64_t)cursor + 1, cursor, length + 1 - cursor);
-    } else {
-      if (max_chars != 0 && cursor >= max_chars) return true;
-    }
-    if (cursor < 0 || cursor >= 1024)
-      qa_range_error(
-          "Item_TextField_HandleKey writes outside local char[1024]");
-    buffer[cursor] = (uint8_t)key;
-    text_publish(rt, item, buffer);
-    if (cursor < length + 1) {
-      cursor = i32_add(cursor, 1);
-      qa_ui_item_set_cursor_position(item->def, cursor);
-      if (max_paint != 0 && cursor > max_paint)
-        qa_ui_edit_set_paint_offset(
-            &edit, i32_add(qa_ui_edit_paint_offset(&edit), 1));
-    }
-  } else if (key == QA_KEY_DELETE || key == QA_KEY_KEYPAD_DELETE) {
-    if (cursor < length) {
-      text_move(buffer, cursor, (int64_t)cursor + 1, length - cursor);
-      text_publish(rt, item, buffer);
-    }
-    return true;
-  } else if (key == QA_KEY_RIGHT || key == QA_KEY_KEYPAD_RIGHT) {
-    if (max_paint != 0 && cursor >= max_paint && cursor < length) {
-      qa_ui_item_set_cursor_position(item->def, i32_add(cursor, 1));
-      qa_ui_edit_set_paint_offset(
-          &edit, i32_add(qa_ui_edit_paint_offset(&edit), 1));
-      return true;
-    }
-    if (cursor < length)
-      qa_ui_item_set_cursor_position(item->def, i32_add(cursor, 1));
-    return true;
-  } else if (key == QA_KEY_LEFT || key == QA_KEY_KEYPAD_LEFT) {
-    if (cursor > 0) cursor = i32_sub(cursor, 1);
-    qa_ui_item_set_cursor_position(item->def, cursor);
-    if (cursor < qa_ui_edit_paint_offset(&edit))
-      qa_ui_edit_set_paint_offset(
-          &edit, i32_sub(qa_ui_edit_paint_offset(&edit), 1));
-    return true;
-  } else if (key == QA_KEY_HOME || key == QA_KEY_KEYPAD_HOME) {
-    qa_ui_item_set_cursor_position(item->def, 0);
-    qa_ui_edit_set_paint_offset(&edit, 0);
-    return true;
-  } else if (key == QA_KEY_END || key == QA_KEY_KEYPAD_END) {
-    qa_ui_item_set_cursor_position(item->def, (int32_t)length);
-    if (length > max_paint)
-      qa_ui_edit_set_paint_offset(&edit, (int32_t)(length - max_paint));
-    return true;
-  } else if (key == QA_KEY_INSERT || key == QA_KEY_KEYPAD_INSERT) {
-    const qa_ui_runtime_bindings *bindings =
-        binding_host(rt, "edit overstrike");
-    bindings->set_overstrike(bindings->ctx,
-                             !bindings->get_overstrike(bindings->ctx));
-    return true;
-  }
-  if (key == QA_KEY_TAB || key == QA_KEY_DOWN || key == QA_KEY_KEYPAD_DOWN) {
-    item_state *next = focus_relative(rt, menu_for(rt, item), 1);
-    if (next != NULL &&
-        (qa_ui_item_behavior(next->def) == QA_UI_BEHAVIOR_EDIT_FIELD ||
-         qa_ui_item_behavior(next->def) == QA_UI_BEHAVIOR_NUMERIC_FIELD))
-      rt->editing_item = next;
-  }
-  if (key == QA_KEY_UP || key == QA_KEY_KEYPAD_UP) {
-    item_state *previous = focus_relative(rt, menu_for(rt, item), -1);
-    if (previous != NULL &&
-        (qa_ui_item_behavior(previous->def) == QA_UI_BEHAVIOR_EDIT_FIELD ||
-         qa_ui_item_behavior(previous->def) ==
-             QA_UI_BEHAVIOR_NUMERIC_FIELD))
-      rt->editing_item = previous;
-  }
-  return key != QA_KEY_ENTER && key != QA_KEY_KEYPAD_ENTER &&
-         key != QA_KEY_ESCAPE;
-}
-
-static binding_state *binding_by_name(runtime_t *rt, const char *name) {
-  if (name == NULL) return NULL;
-  for (size_t i = 0; i < rt->binding_count; i++) {
-    if (equal_name(rt->bindings[i].command, name)) return &rt->bindings[i];
-  }
-  return NULL;
-}
-
-static void write_bindings(runtime_t *rt) {
-  const qa_ui_runtime_bindings *host = binding_host(rt, "write bindings");
-  for (size_t i = 0; i < rt->binding_count; i++) {
-    binding_state *binding = &rt->bindings[i];
-    if (binding->first != -1) {
-      host->set_binding(host->ctx, (double)binding->first, binding->command);
-      if (binding->second != -1)
-        host->set_binding(host->ctx, (double)binding->second,
-                          binding->command);
-    }
-  }
-  qa_command_buffer_append(rt->options.commands, "in_restart\n",
-                           &rt->options.command_context, -1);
-}
-
-void qa_ui_runtime_reset_bindings(qa_ui_runtime *rt) {
-  opened(rt);
-  for (size_t i = 0; i < rt->binding_count; i++) {
-    rt->bindings[i].first = -1;
-    rt->bindings[i].second = -1;
-  }
-}
-
-void qa_ui_runtime_apply_bindings(qa_ui_runtime *rt) {
-  opened(rt);
-  write_bindings(rt);
-}
-
-bool qa_ui_runtime_binding_pending(qa_ui_runtime *rt) {
-  opened(rt);
-  return rt->waiting_for_key;
-}
-
-static bool handle_bind_key(runtime_t *rt, item_state *item, int32_t key,
-                            bool down) {
-  qa_rect rect = qa_ui_window_rect(&item->def->window);
-  if (rect_contains(rect, rt->display_cursor_x, rt->display_cursor_y) &&
-      !rt->waiting_for_key) {
-    if (down && (key == QA_KEY_MOUSE1 || key == QA_KEY_ENTER)) {
-      rt->waiting_for_key = true;
-      rt->binding_item = item;
-    }
-    return true;
-  }
-  if (!rt->waiting_for_key || rt->binding_item == NULL) return true;
-  if ((key & QA_KEY_CHAR_FLAG) != 0) return true;
-  if (key == QA_KEY_ESCAPE) {
-    rt->waiting_for_key = false;
-    return true;
-  }
-  char *cvar = qa_ui_item_cvar(item->def);
-  binding_state *target = binding_by_name(rt, cvar);
-  free(cvar);
-  if (key == QA_KEY_BACKSPACE) {
-    if (target != NULL) {
-      target->first = -1;
-      target->second = -1;
-    }
-    write_bindings(rt);
-    rt->waiting_for_key = false;
-    rt->binding_item = NULL;
-    return true;
-  }
-  if (key == 96) return true;
-  if (key != -1) {
-    for (size_t i = 0; i < rt->binding_count; i++) {
-      binding_state *binding = &rt->bindings[i];
-      if (binding->second == key) binding->second = -1;
-      if (binding->first == key) {
-        binding->first = binding->second;
-        binding->second = -1;
-      }
-    }
-  }
-  if (target != NULL) {
-    if (key == -1) {
-      const qa_ui_runtime_bindings *host = binding_host(rt, "clear binding");
-      if (target->first != -1) {
-        host->set_binding(host->ctx, (double)target->first, "");
-        target->first = -1;
-      }
-      if (target->second != -1) {
-        host->set_binding(host->ctx, (double)target->second, "");
-        target->second = -1;
-      }
-    } else if (target->first == -1) {
-      target->first = key;
-    } else if (target->first != key && target->second == -1) {
-      target->second = key;
-    } else {
-      const qa_ui_runtime_bindings *host =
-          binding_host(rt, "replace binding");
-      host->set_binding(host->ctx, (double)target->first, "");
-      host->set_binding(host->ctx, (double)target->second, "");
-      target->first = key;
-      target->second = -1;
-    }
-  }
-  write_bindings(rt);
-  rt->waiting_for_key = false;
-  return true;
-}
-
 static bool handle_item_key(runtime_t *rt, item_state *item, int32_t key,
                             bool down) {
   if (rt->capture.kind != CAPTURE_IDLE) {
@@ -3210,19 +2977,12 @@ static bool handle_item_key(runtime_t *rt, item_state *item, int32_t key,
       return result.handled;
     }
     case QA_UI_BEHAVIOR_BIND:
-      return handle_bind_key(rt, item, key, down);
+      return false;
     case QA_UI_BEHAVIOR_SLIDER:
       return handle_slider_key(rt, item, key);
     default:
       return false;
   }
-}
-
-static void begin_editing(runtime_t *rt, item_state *item) {
-  qa_ui_item_set_cursor_position(item->def, 0);
-  rt->editing_item = item;
-  const qa_ui_runtime_bindings *host = binding_host(rt, "edit overstrike");
-  host->set_overstrike(host->ctx, true);
 }
 
 static bool menu_over_active_item(runtime_t *rt, menu_state *menu, double x,
@@ -3274,40 +3034,11 @@ static void handle_out_of_bounds(runtime_t *rt, menu_state *menu,
                     rt->display_cursor_y);
     (void)handle_menu_key(rt, candidate, key, down);
   }
-  bool any_active = false;
-  for (int64_t i = 0; i < rt->active_menu_count; i++) {
-    if ((qa_ui_window_flags(&rt->menus[i]->def->window) &
-         (QA_UI_WINDOW_FORCED | QA_UI_WINDOW_VISIBLE)) != 0)
-      any_active = true;
-  }
-  if (!any_active &&
-      rt->options.context.kind == QA_UI_RUNTIME_CONTEXT_UI) {
-    rt->options.context.pause(rt->options.context.pause_ctx, false);
-    opened(rt);
-  }
   close_cinematics(rt);
 }
 
 static bool handle_menu_key(runtime_t *rt, menu_state *menu, int32_t key,
                             bool down) {
-  if (rt->waiting_for_key && down) {
-    item_state *item = rt->binding_item;
-    return item == NULL ? true : handle_bind_key(rt, item, key, down);
-  }
-  if (rt->editing_item != NULL && down) {
-    item_state *editing = rt->editing_item;
-    if (!handle_text_key(rt, editing, key)) {
-      rt->editing_item = NULL;
-      return true;
-    }
-    if (is_mouse_key(key)) {
-      rt->editing_item = NULL;
-      (void)qa_ui_runtime_pointer_move(rt, rt->display_cursor_x,
-                                       rt->display_cursor_y);
-    } else if (key == QA_KEY_TAB || key == QA_KEY_UP || key == QA_KEY_DOWN) {
-      return true;
-    }
-  }
   qa_rect menu_rect = qa_ui_window_rect(&menu->def->window);
   if (down &&
       (qa_ui_window_flags(&menu->def->window) & QA_UI_WINDOW_POPUP) == 0 &&
@@ -3333,10 +3064,6 @@ static bool handle_menu_key(runtime_t *rt, menu_state *menu, int32_t key,
     if (cvar_value(rt, "developer") != 0) rt->debug = !rt->debug;
     return true;
   }
-  if (key == QA_KEY_F12) {
-    if (cvar_value(rt, "developer") != 0) execute_text(rt, "screenshot\n");
-    return true;
-  }
   if (key == QA_KEY_UP || key == QA_KEY_KEYPAD_UP) {
     (void)focus_relative(rt, menu, -1);
     return true;
@@ -3347,7 +3074,7 @@ static bool handle_menu_key(runtime_t *rt, menu_state *menu, int32_t key,
   }
   if (key == QA_KEY_ESCAPE) {
     qa_ui_menu_script *on_escape = qa_ui_menu_on_escape(menu->def);
-    if (!rt->waiting_for_key && on_escape != NULL)
+    if (on_escape != NULL)
       run_script(rt, menu, NULL, on_escape);
     return true;
   }
@@ -3362,8 +3089,8 @@ static bool handle_menu_key(runtime_t *rt, menu_state *menu, int32_t key,
         run_script(rt, menu, item, action);
     } else if (kind == QA_UI_BEHAVIOR_EDIT_FIELD ||
                kind == QA_UI_BEHAVIOR_NUMERIC_FIELD) {
-      if (rect_contains(rect, rt->display_cursor_x, rt->display_cursor_y))
-        begin_editing(rt, item);
+      /* Edit fields are inert in the cgame menu runtime: no key-binding or
+         overstrike host exists. */
     } else {
       qa_ui_menu_script *action = qa_ui_item_action(item->def);
       if (rect_contains(rect, rt->display_cursor_x, rt->display_cursor_y) &&
@@ -3374,10 +3101,8 @@ static bool handle_menu_key(runtime_t *rt, menu_state *menu, int32_t key,
   }
   if ((key == QA_KEY_ENTER || key == QA_KEY_KEYPAD_ENTER) && item != NULL) {
     qa_ui_item_behavior_kind kind = qa_ui_item_behavior(item->def);
-    if (kind == QA_UI_BEHAVIOR_EDIT_FIELD ||
-        kind == QA_UI_BEHAVIOR_NUMERIC_FIELD) {
-      begin_editing(rt, item);
-    } else {
+    if (kind != QA_UI_BEHAVIOR_EDIT_FIELD &&
+        kind != QA_UI_BEHAVIOR_NUMERIC_FIELD) {
       qa_ui_menu_script *action = qa_ui_item_action(item->def);
       if (action != NULL) run_script(rt, menu, item, action);
     }
@@ -4126,22 +3851,7 @@ static void paint_text_field(runtime_t *rt, item_state *item,
   options.adjust = 0;
   options.limit = qa_ui_edit_max_paint_chars(&edit);
   options.style = qa_ui_item_text_style(item->def);
-  if ((qa_ui_window_flags(&item->def->window) & QA_UI_WINDOW_HAS_FOCUS) !=
-          0 &&
-      rt->editing_item != NULL) {
-    qa_q3_text_cursor cursor;
-    cursor.position =
-        (double)i32_sub(qa_ui_item_cursor_position(item->def), paint_offset);
-    cursor.character =
-        binding_host(rt, "paint edit cursor")
-                ->get_overstrike(rt->options.context.bindings.ctx)
-            ? 95
-            : 124;
-    cursor.time = rt->real_time;
-    qa_q3_text_paint_with_cursor(draw, &rt->options.fonts, &options, cursor);
-  } else {
-    qa_q3_text_paint(draw, &rt->options.fonts, &options);
-  }
+  qa_q3_text_paint(draw, &rt->options.fonts, &options);
   free(value);
 }
 
@@ -4231,40 +3941,6 @@ static void paint_multi(runtime_t *rt, item_state *item,
   free(text);
 }
 
-static char *upper_slice(const char *text, size_t max) {
-  size_t length = strlen(text);
-  if (length > max) length = max;
-  char *out = dupnstr(text, length);
-  if (out == NULL) return NULL;
-  for (size_t i = 0; out[i] != '\0'; i++) {
-    unsigned char c = (unsigned char)out[i];
-    out[i] = (char)(c >= 'a' && c <= 'z' ? c - 32 : c);
-  }
-  return out;
-}
-
-static char *binding_text(runtime_t *rt, item_state *item) {
-  const qa_ui_runtime_bindings *host = binding_host(rt, "paint binding");
-  char *cvar = qa_ui_item_cvar(item->def);
-  binding_state *binding = binding_by_name(rt, cvar);
-  free(cvar);
-  if (binding == NULL || binding->first == -1) return dupstr("???");
-  char *first_name = host->key_name(host->ctx, (double)binding->first);
-  char *first = upper_slice(first_name != NULL ? first_name : "", 31);
-  free(first_name);
-  if (binding->second == -1) return first;
-  char *second_name = host->key_name(host->ctx, (double)binding->second);
-  char *second = upper_slice(second_name != NULL ? second_name : "", 31);
-  free(second_name);
-  size_t length = strlen(first) + strlen(second) + 5;
-  char *combined = malloc(length);
-  snprintf(combined, length, "%s or %s", first, second);
-  free(first);
-  free(second);
-  if (strlen(combined) > 31) combined[31] = '\0';
-  return combined;
-}
-
 static void paint_bind(runtime_t *rt, item_state *item,
                        const qa_draw2d *draw) {
   qa_ui_edit_field_definition edit;
@@ -4274,21 +3950,16 @@ static void paint_bind(runtime_t *rt, item_state *item,
   if (cvar != NULL) (void)cvar_value(rt, cvar);
   free(cvar);
   qa_vec4 color = value_color(rt, item);
-  if ((qa_ui_window_flags(&item->def->window) & QA_UI_WINDOW_HAS_FOCUS) !=
-          0 &&
-      rt->binding_item == item) {
-    menu_state *menu = menu_for(rt, item);
-    qa_vec4 low = {FR(0.8), 0, 0, FR(0.8)};
-    color = lerp_color(rt, qa_ui_menu_focus_color(menu->def), low);
-  }
   qa_rect text_rect = qa_ui_item_text_rect(item->def);
   double x = text_rect.x;
+  /* "FIXME" is id's literal in Item_Bind_Paint (ui_shared.c) for a bind item
+     without text; it is not a leftover. */
   char *text = dupstr("FIXME");
   char *item_text = qa_ui_item_text(item->def);
   if (item_text != NULL) {
     paint_text(rt, item, draw);
     free(text);
-    text = binding_text(rt, item);
+    text = dupstr("???");
     text_rect = qa_ui_item_text_rect(item->def);
     x = FR(FR(text_rect.x + text_rect.width) + 8);
   }

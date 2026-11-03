@@ -14,7 +14,7 @@ typedef struct qa_qvm_game_data_state {
 } qa_qvm_game_data_state;
 
 typedef struct qa_qvm_game_data {
-  qa_qvm_memory *memory; /* borrowed */
+  qa_qvm_game_memory memory; /* borrows the module allocation, interpreted or native */
   qa_qvm_abi_profile abi_profile;
   bool has_entities;
   int64_t entities;
@@ -26,11 +26,15 @@ typedef struct qa_qvm_game_data {
   int64_t cached_offsets[1024];
   qa_qvm_shared_entity cached_entities[1024];
   size_t cached_count;
+  /* TS Map is unbounded: relocated tables keep adding offsets. */
+  struct qa_qvm_game_data_cache_block *cached_overflow;
 } qa_qvm_game_data;
 
 /* abi_profile NULL means "q3-modern". */
-void qa_qvm_game_data_init(qa_qvm_game_data *data, qa_qvm_memory *memory,
+void qa_qvm_game_data_init(qa_qvm_game_data *data, const qa_qvm_game_memory *memory,
                            qa_qvm_abi_profile abi_profile);
+/* Releases cached borrows past the inline table; safe without any. */
+void qa_qvm_game_data_destroy(qa_qvm_game_data *data);
 void qa_qvm_game_data_set_client_count(qa_qvm_game_data *data, double count);
 double qa_qvm_game_data_get_num_clients(const qa_qvm_game_data *data);
 double qa_qvm_game_data_get_num_entities(const qa_qvm_game_data *data);

@@ -1,10 +1,12 @@
 /* See include/qa/compat/qvm/memory_writes.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/memory_writes.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct watch {
   size_t id;
@@ -53,6 +55,35 @@ static void *xmalloc(size_t size) {
   void *result = malloc(size == 0 ? 1 : size);
   if (result == NULL) qa_range_error("QVM memory allocation failed");
   return result;
+}
+
+/* Raw views (qa_qvmx_view) carry no owner, so stores into an interpreter's
+ * allocation find its one writes owner here. The TS engine is single threaded
+ * and so is every QVM call path. */
+#define RAW_OWNER_CAPACITY 64
+static qa_qvm_memory_writes *raw_owners[RAW_OWNER_CAPACITY];
+static size_t raw_owner_count;
+
+void qa_qvm_memory_writes_bind_raw(qa_qvm_memory_writes *writes) {
+  if (raw_owner_count == RAW_OWNER_CAPACITY) qa_range_error("Too many live QVM allocations");
+  raw_owners[raw_owner_count++] = writes;
+}
+
+void qa_qvm_memory_writes_unbind_raw(qa_qvm_memory_writes *writes) {
+  for (size_t i = 0; i < raw_owner_count; i++) {
+    if (raw_owners[i] == writes) {
+      raw_owners[i] = raw_owners[--raw_owner_count];
+      return;
+    }
+  }
+}
+
+qa_qvm_memory_writes *qa_qvmx_writes_for(const uint8_t *bytes) {
+  for (size_t i = 0; i < raw_owner_count; i++) {
+    qa_qvm_memory_writes *owner = raw_owners[i];
+    if (bytes >= owner->bytes && bytes < owner->bytes + owner->length) return owner;
+  }
+  return NULL;
 }
 
 void qa_qvm_memory_writes_init(qa_qvm_memory_writes *writes, uint8_t *bytes,
@@ -110,7 +141,7 @@ size_t qa_qvm_memory_writes_observe(qa_qvm_memory_writes *writes,
     qa_qvm_memory_writes_range(writes, ranges[i].byte_offset, ranges[i].byte_length);
     if (ranges[i].byte_length != 0) sorted[kept++] = ranges[i];
   }
-  qsort(sorted, kept, sizeof *sorted, compare_range);
+  qa_js_sort(sorted, kept, sizeof *sorted, compare_range);
   size_t merged_count = 0;
   for (size_t i = 0; i < kept; i++) {
     if (merged_count != 0) {
@@ -215,6 +246,36 @@ static void run_after(void *ctx) {
   job->publish(job->ctx, job->event);
 }
 
+typedef struct delivery_job {
+  qa_qvm_publish_fn publish;
+  void *ctx;
+  const qa_qvm_committed_write *event;
+} delivery_job;
+
+static void run_delivery(void *ctx) {
+  delivery_job *job = ctx;
+  job->publish(job->ctx, job->event);
+}
+
+typedef struct after_publication_job {
+  qa_qvm_memory_writes *writes;
+  qa_qvm_write_capture *captures;
+  const qa_qvm_committed_write *events;
+} after_publication_job;
+
+static void run_after_publications(void *ctx) {
+  after_publication_job *job = ctx;
+  qa_qvm_memory_writes *writes = job->writes;
+  for (size_t e = 0; e < job->captures->entry_count; e++) {
+    capture_entry *entry = &job->captures->entries[e];
+    if (watch_active(writes, entry->watch_id) && !writes->closed && entry->after_publication != NULL) {
+      after_job after = {entry->after_publication, entry->after_ctx, &job->events[e]};
+      if (writes->effect != NULL) writes->effect(writes->effect_ctx, run_after, &after);
+      else run_after(&after);
+    }
+  }
+}
+
 void qa_qvm_memory_writes_after(qa_qvm_memory_writes *writes, qa_qvm_write_capture *captures) {
   if (captures == NULL) return;
   int64_t sequence = ++writes->sequence;
@@ -240,20 +301,27 @@ void qa_qvm_memory_writes_after(qa_qvm_memory_writes *writes, qa_qvm_write_captu
     events[e].ranges = ranges;
     events[e].range_count = entry->range_count;
   }
+  /* Every live listener drains even when an earlier one throws; one failure
+   * rethrows as itself and several become the TS AggregateError message. */
+  char failure[512];
+  size_t failure_count = 0;
   writes->publishing = true;
   for (size_t e = 0; e < captures->entry_count; e++) {
     capture_entry *entry = &captures->entries[e];
-    if (watch_active(writes, entry->watch_id) && entry->publish != NULL)
-      entry->publish(entry->publish_ctx, &events[e]);
+    if (watch_active(writes, entry->watch_id) && entry->publish != NULL) {
+      delivery_job job = {entry->publish, entry->publish_ctx, &events[e]};
+      char message[512];
+      if (!qa_range_error_catch(run_delivery, &job, message, sizeof message)) {
+        if (failure_count == 0) memcpy(failure, message, sizeof failure);
+        failure_count++;
+      }
+    }
   }
   writes->publishing = false;
-  for (size_t e = 0; e < captures->entry_count; e++) {
-    capture_entry *entry = &captures->entries[e];
-    if (watch_active(writes, entry->watch_id) && !writes->closed && entry->after_publication != NULL) {
-      after_job job = {entry->after_publication, entry->after_ctx, &events[e]};
-      if (writes->effect != NULL) writes->effect(writes->effect_ctx, run_after, &job);
-      else run_after(&job);
-    }
+  bool after_failed = false;
+  if (failure_count == 0) {
+    after_publication_job job = {writes, captures, events};
+    after_failed = !qa_range_error_catch(run_after_publications, &job, failure, sizeof failure);
   }
   for (size_t e = 0; e < captures->entry_count; e++) {
     for (size_t r = 0; r < captures->entries[e].range_count; r++) {
@@ -269,6 +337,8 @@ void qa_qvm_memory_writes_after(qa_qvm_memory_writes *writes, qa_qvm_write_captu
   free(events);
   free(captures->entries);
   free(captures);
+  if (failure_count == 1 || after_failed) qa_range_error("%s", failure);
+  if (failure_count > 1) qa_range_error("QVM committed store publication failed");
 }
 
 void qa_qvm_memory_writes_clear(qa_qvm_memory_writes *writes) {
@@ -294,6 +364,13 @@ static size_t view_offset(const qa_qvm_writable_view *view, int64_t byte_offset,
   return (size_t)(view->start + byte_offset);
 }
 
+void qa_qvm_memory_writes_store(qa_qvm_memory_writes *writes, int64_t offset, const void *bytes, size_t length) {
+  qa_qvm_write_capture *capture = qa_qvm_memory_writes_get_intercepts(writes)
+      ? qa_qvm_memory_writes_before(writes, offset, (int64_t)length) : NULL;
+  memcpy(writes->bytes + offset, bytes, length);
+  qa_qvm_memory_writes_after(writes, capture);
+}
+
 static uint64_t load_bits(const qa_qvm_writable_view *view, int64_t byte_offset, int size, bool little_endian) {
   size_t at = view_offset(view, byte_offset, size);
   uint64_t result = 0;
@@ -307,6 +384,15 @@ static uint64_t load_bits(const qa_qvm_writable_view *view, int64_t byte_offset,
 static void store_bits(qa_qvm_writable_view *view, int64_t byte_offset, uint64_t value, int size, bool little_endian) {
   size_t at;
   qa_qvm_write_capture *capture = NULL;
+  if (view->read_only) qa_raise("RangeError", 0, 0, "Native module memory is read-only");
+  if (view->writes == NULL) {
+    at = view_offset(view, byte_offset, size);
+    for (int i = 0; i < size; i++) {
+      int shift = little_endian ? i * 8 : (size - 1 - i) * 8;
+      view->bytes[at + (size_t)i] = (uint8_t)(value >> shift);
+    }
+    return;
+  }
   if (!qa_qvm_memory_writes_get_intercepts(view->writes)) {
     at = view_offset(view, byte_offset, size);
   } else {
@@ -330,6 +416,7 @@ void qa_qvm_writable_view_init(qa_qvm_writable_view *view, uint8_t *bytes,
   view->start = start;
   view->length = length;
   view->writes = writes;
+  view->read_only = false;
 }
 
 int8_t qa_qvm_writable_view_get_int8(const qa_qvm_writable_view *v, int64_t o) { return (int8_t)load_bits(v, o, 1, true); }
@@ -345,14 +432,15 @@ float qa_qvm_writable_view_get_float32(const qa_qvm_writable_view *v, int64_t o,
   uint32_t bits = (uint32_t)load_bits(v, o, 4, le);
   float value;
   memcpy(&value, &bits, sizeof value);
-  return value;
+  /* DataView.getFloat32 yields the canonical quiet NaN for every payload. */
+  return isnan(value) ? NAN : value;
 }
 
 double qa_qvm_writable_view_get_float64(const qa_qvm_writable_view *v, int64_t o, bool le) {
   uint64_t bits = load_bits(v, o, 8, le);
   double value;
   memcpy(&value, &bits, sizeof value);
-  return value;
+  return isnan(value) ? NAN : value;
 }
 
 void qa_qvm_writable_view_set_int8(qa_qvm_writable_view *v, int64_t o, int32_t x) { store_bits(v, o, (uint8_t)x, 1, true); }

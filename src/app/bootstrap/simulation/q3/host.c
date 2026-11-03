@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 struct qa_app_q3_created_source_host {
   qa_app_q3_host_operations operations;
@@ -90,22 +91,15 @@ static void configstring_set(void *v, double index, const char *value) {
   event.kind = QA_APP_Q3_EVENT_CONFIGSTRING; event.index = index; event.value = value;
   emit_event(created, event);
 }
-/* Top-level host ctx stays the operations ctx (other callbacks keep
- * their contract); the two overridden top-level seams recover the
- * wrapper from this registry. */
-static qa_app_q3_created_source_host *CREATED[16];
-static qa_app_q3_created_source_host *find_created(void *ctx) {
-  for (size_t i = 0; i < 16; i++)
-    if (CREATED[i] && CREATED[i]->operations.base.ctx == ctx) return CREATED[i];
-  return NULL;
-}
+/* entityEvent and sourceCommand are the two closures createQ3SourceHost
+ * replaces; they take the created host as their own context. */
 static void entity_event_cb(void *v, qa_app_q3_source_entity_event entity) {
   qa_app_q3_source_event event; memset(&event, 0, sizeof event);
   event.kind = QA_APP_Q3_EVENT_ENTITY; event.entity = entity;
-  emit_event(find_created(v), event);
+  emit_event((qa_app_q3_created_source_host *)v, event);
 }
 static qa_q3_base_user_command source_command_cb(void *v, qa_actor_command input) {
-  qa_app_q3_created_source_host *created = find_created(v);
+  qa_app_q3_created_source_host *created = v;
   qa_q3_base_user_command command = created->operations.base.source_command(created->operations.base.ctx, input);
   double client = created->operations.client_number(created->operations.emit_ctx, input.actor);
   qa_app_q3_wire_user_command wire = command;
@@ -123,7 +117,7 @@ qa_app_q3_created_source_host *qa_app_create_q3_source_host(qa_app_q3_host_opera
   created->gametype_value = malloc(32);
   created->single_player_value = malloc(2);
   if (!created->cvars || !created->gametype_value || !created->single_player_value) qa_range_error("Out of memory");
-  snprintf(created->gametype_value, 32, "%lld", (long long)settings.game_type);
+  snprintf(created->gametype_value, 32, "%s", QA_JS_NUMBER(settings.game_type));
   snprintf(created->single_player_value, 2, "%s", settings.single_player ? "1" : "0");
   size_t count = 0;
   if (!settings.source_registry) created->cvars[count++] = (qa_app_q3_host_cvar){"g_gametype", created->gametype_value};
@@ -144,8 +138,8 @@ qa_app_q3_created_source_host *qa_app_create_q3_source_host(qa_app_q3_host_opera
   created->host.server_state = created->server_state;
   created->host.cvars = qa_app_q3_server_state_cvars(created->server_state);
   created->host.bots = operations.bots;
+  created->host.entity_event_ctx = created;
   created->host.entity_event = entity_event_cb;
-  for (size_t i = 0; i < 16; i++) if (!CREATED[i]) { CREATED[i] = created; break; }
   created->host.configstrings_ctx = created;
   created->host.configstring_get = configstring_get;
   created->host.configstring_set = configstring_set;
@@ -159,12 +153,12 @@ qa_app_q3_created_source_host *qa_app_create_q3_source_host(qa_app_q3_host_opera
   created->host.engine.get_user_command = engine_user_command;
   created->host.engine.append_console_command = engine_append;
   created->host.engine.execute_console_now = engine_now;
+  created->host.source_command_ctx = created;
   created->host.source_command = source_command_cb;
   return created;
 }
 void qa_app_q3_created_source_host_destroy(qa_app_q3_created_source_host *host) {
   if (!host) return;
-  for (size_t i = 0; i < 16; i++) if (CREATED[i] == host) CREATED[i] = NULL;
   qa_app_q3_server_state_destroy(host->server_state);
   free(host->cvars); free(host->gametype_value); free(host->single_player_value);
   free(host);

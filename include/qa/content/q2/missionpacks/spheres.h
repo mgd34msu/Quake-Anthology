@@ -20,25 +20,25 @@ typedef struct qa_q2mp_sphere_hooks {
 typedef struct qa_q2mp_spheres {
   qa_q2mp_projectiles *projectiles;
   qa_q2mp_sphere_hooks hooks;
-  qa_q2f_named_think cb_think[4];
-  qa_q2f_named_pain cb_pain[3];
-  qa_q2f_named_die cb_die[2];
-  qa_q2f_named_touch cb_touch[2];
-  qa_q2f_think expire, defender_think, hunter_think, vengeance_think;
-  qa_q2f_pain defender_pain, hunter_pain, vengeance_pain;
-  qa_q2f_die die, idle_die;
-  qa_q2f_touch hunter_touch, vengeance_touch;
+  qa_q2_named_think cb_think[4];
+  qa_q2_named_pain cb_pain[3];
+  qa_q2_named_die cb_die[2];
+  qa_q2_named_touch cb_touch[2];
+  qa_q2_think expire, defender_think, hunter_think, vengeance_think;
+  qa_q2_pain defender_pain, hunter_pain, vengeance_pain;
+  qa_q2_die die, idle_die;
+  qa_q2_touch hunter_touch, vengeance_touch;
 } qa_q2mp_spheres;
 
 void qa_q2mp_spheres_init(qa_q2mp_spheres *spheres, qa_q2mp_projectiles *projectiles, qa_q2mp_sphere_hooks hooks);
-qa_q2f_callback_definitions qa_q2mp_spheres_callbacks(qa_q2mp_spheres *spheres);
+qa_q2_callback_definitions qa_q2mp_spheres_callbacks(qa_q2mp_spheres *spheres);
 /* NULL return is TS null. */
-qa_q2f_entity *qa_q2mp_spheres_owned_sphere(qa_q2mp_spheres *s, qa_actor_id actor, qa_q2f_game *game);
+qa_q2_entity *qa_q2mp_spheres_owned_sphere(qa_q2mp_spheres *s, qa_actor_id actor, qa_q2_game_services *game);
 void qa_q2mp_spheres_owner_damaged(qa_q2mp_spheres *s, qa_actor_id actor, const qa_attack_provenance *attack,
-                                   qa_q2f_game *game);
-void qa_q2mp_spheres_owner_died(qa_q2mp_spheres *s, qa_actor_id actor, qa_q2f_game *game,
+                                   qa_q2_game_services *game);
+void qa_q2mp_spheres_owner_died(qa_q2mp_spheres *s, qa_actor_id actor, qa_q2_game_services *game,
                                 const qa_attack_provenance *attack);
-void qa_q2mp_spheres_disconnect(qa_q2mp_spheres *s, qa_actor_id actor, qa_q2f_game *game);
-qa_q2f_entity *qa_q2mp_spheres_launch(qa_q2mp_spheres *s, qa_q2f_entity *owner, qa_q2f_game *game,
+void qa_q2mp_spheres_disconnect(qa_q2mp_spheres *s, qa_actor_id actor, qa_q2_game_services *game);
+qa_q2_entity *qa_q2mp_spheres_launch(qa_q2mp_spheres *s, qa_q2_entity *owner, qa_q2_game_services *game,
                                       qa_q2mp_sphere_kind kind, bool dopple);
 #endif

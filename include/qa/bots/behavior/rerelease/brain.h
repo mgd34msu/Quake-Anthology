@@ -48,6 +48,13 @@ typedef struct qa_bot_id_time { int64_t entity; double time; } qa_bot_id_time;
 typedef struct qa_bot_id_origin { int64_t entity; qa_bot_vec3 origin; } qa_bot_id_origin;
 typedef struct qa_bot_awareness_entry { int64_t entity; qa_bot_awareness value; } qa_bot_awareness_entry;
 
+/* Property order of the TS memory object, which JSON save bytes keep:
+ *  FRESH: newBrainMemory order (a brain never restored);
+ *  READ: the readRereleaseBehavior memory() order (a checkpoint as read);
+ *  RESTORED: a brain restored from a READ checkpoint (its scalars in read order,
+ *  then awareness, unreachableUntil, objectiveHome, saidThisLevel).
+ * A brain restored from a FRESH or RESTORED checkpoint keeps that order. */
+typedef enum qa_bot_brain_layout { QA_BOT_BRAIN_LAYOUT_FRESH, QA_BOT_BRAIN_LAYOUT_READ, QA_BOT_BRAIN_LAYOUT_RESTORED } qa_bot_brain_layout;
 typedef struct qa_bot_brain_memory {
   double trigger_weapon, trigger_held_since, trigger_ready_at;
   qa_bot_aim_state aim;
@@ -74,11 +81,14 @@ typedef struct qa_bot_brain_memory {
   bool has_gate_shoot_at; qa_bot_vec3 gate_shoot_at; double gate_fired_at;
   bool coop_regrouping; double coop_regroup_at, coop_regroup_until;
   char **said_this_level; size_t said_count, said_cap;
-  bool level_started; double check_six_until, check_six_next_at;
+  bool level_started; double check_six_until;
+  double check_six_yaw; /* yaw to look at for the whole window, fixed when it opens */
+  double check_six_next_at;
   bool has_roam_point; qa_bot_vec3 roam_point; double roam_until;
   qa_bot_usercmd last_cmd;
   bool spawned_once; double last_weapon_number;
   double dead_since, respawn_wait; bool respawn_press;
+  qa_bot_brain_layout layout;
 } qa_bot_brain_memory;
 
 /* Checkpoint form: deep copies; strings/paths owned. */
@@ -98,7 +108,7 @@ typedef struct qa_bot_brain_checkpoint_memory {
   bool touch_goal, hold_position;
   bool has_gate_shoot_at; qa_bot_vec3 gate_shoot_at; double gate_fired_at;
   bool coop_regrouping; double coop_regroup_at, coop_regroup_until;
-  bool level_started; double check_six_until, check_six_next_at;
+  bool level_started; double check_six_until, check_six_yaw, check_six_next_at;
   bool has_roam_point; qa_bot_vec3 roam_point; double roam_until;
   bool spawned_once; double last_weapon_number, dead_since, respawn_wait; bool respawn_press;
   qa_bot_aim_state aim;
@@ -111,6 +121,7 @@ typedef struct qa_bot_brain_checkpoint_memory {
   char **said_this_level; size_t said_count;
   bool has_explicit_goal; qa_bot_explicit_goal explicit_goal;
   qa_bot_usercmd last_cmd;
+  qa_bot_brain_layout layout;
 } qa_bot_brain_checkpoint_memory;
 typedef struct qa_bot_brain_checkpoint {
   int64_t version;
@@ -124,6 +135,14 @@ typedef struct qa_bot_brain {
   qa_bot_brain_config config;
   const qa_bot_skill_settings *settings;
   qa_bot_brain_memory state;
+  /* TS failedPlanGoal: goal of the last failed plan; pacing only, so not checkpointed. */
+  bool has_failed_plan_goal; qa_bot_vec3 failed_plan_goal;
+  /* TS plannedGoal: the goal the current path was planned for. */
+  bool has_planned_goal; qa_bot_vec3 planned_goal;
+  /* TS hazardNodes/hazardByNode: node hazard contents per navigation graph (keyed by the navigation
+     interface's ctx, which owns one graph's node list); derived, so not checkpointed. */
+  const void *hazard_nav;
+  struct qa_bot_id_time *hazard_memo; size_t hazard_count, hazard_cap;
 } qa_bot_brain;
 /* Config is copied (game_mode string duplicated). False only on OOM;
  * no available skill aborts with the TS Error text. */
@@ -140,10 +159,8 @@ void qa_bot_brain_clear_explicit_goal(qa_bot_brain *brain);
 void qa_bot_brain_reset_for_level(qa_bot_brain *brain);
 /* Takes ownership of mode's owned string copy semantics: duplicates. False on OOM. */
 bool qa_bot_brain_set_game_mode(qa_bot_brain *brain, qa_bot_game_mode mode);
-const qa_bot_awareness *qa_bot_brain_awareness_of(qa_bot_brain *brain, int64_t id);
 double qa_bot_brain_current_target(qa_bot_brain *brain);
 const qa_nav_path *qa_bot_brain_current_path(qa_bot_brain *brain);
-int64_t qa_bot_brain_current_path_index(qa_bot_brain *brain);
 void qa_bot_brain_emit_chat(qa_bot_brain *brain, const char *type);
 qa_bot_usercmd qa_bot_brain_think(qa_bot_brain *brain, qa_bot_world *world);
 qa_bot_usercmd qa_bot_brain_last_usercmd(qa_bot_brain *brain);

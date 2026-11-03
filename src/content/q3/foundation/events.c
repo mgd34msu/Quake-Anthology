@@ -6,6 +6,7 @@
 #include <string.h>
 #include "qa/core/numeric.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 const char *qa_q3_footstep_material_name(qa_q3_footstep_material m){
   switch(m){case QA_Q3_FOOTSTEP_MATERIAL_BOOT:return "boot";case QA_Q3_FOOTSTEP_MATERIAL_FLESH:return "flesh";
@@ -34,7 +35,7 @@ static qa_q3_character_presentation_effect kind_eff(qa_q3_character_presentation
 size_t qa_q3_character_event_presenter_pain(qa_q3_character_event_presenter *p,
     double time_ms, double health, qa_q3_character_presentation_effect *out, size_t capacity){
   sink s={out,capacity,0};
-  if(((int32_t)((uint32_t)(int32_t)time_ms-(uint32_t)(int32_t)p->pose->pain_time))<500) return 0;
+  if(((int32_t)((uint32_t)qa_js_to_int32(time_ms)-(uint32_t)qa_js_to_int32(p->pose->pain_time)))<500) return 0;
   int level=health<25?25:health<50?50:health<75?75:100;
   p->pose->pain_time=time_ms; p->pose->pain_direction=!p->pose->pain_direction;
   char name[64]; snprintf(name,sizeof name,"*pain%d_1.wav",level);
@@ -64,7 +65,7 @@ size_t qa_q3_character_event_presenter_event(qa_q3_character_event_presenter *p,
       return s.count;
     case QA_Q3_EV_STEP_4: case QA_Q3_EV_STEP_8: case QA_Q3_EV_STEP_12: case QA_Q3_EV_STEP_16: {
       if(!options.local||!options.predict_steps) return 0;
-      int32_t elapsed=(int32_t)((uint32_t)(int32_t)time-(uint32_t)(int32_t)p->step_time);
+      int32_t elapsed=(int32_t)((uint32_t)qa_js_to_int32(time)-(uint32_t)qa_js_to_int32(p->step_time));
       double previous=elapsed<200?(float)((float)(p->step_change*(float)(int32_t)(200-elapsed))/200.0f):0;
       double v=(float)(previous+4*(event-QA_Q3_EV_STEP_4+1));
       p->step_change=v<32?v:32; p->step_time=time; return 0;
@@ -93,7 +94,7 @@ size_t qa_q3_character_event_presenter_event(qa_q3_character_event_presenter *p,
       push(&s,custom_eff(name,"voice")); return s.count;
     }
     case QA_Q3_EV_GIB_PLAYER:
-      if(((int32_t)options.source_flags&0x200)!=0) push(&s,kind_eff(QA_Q3_EFFECT_GIB_PLAYER));
+      if((qa_js_to_int32(options.source_flags)&0x200)!=0) push(&s,kind_eff(QA_Q3_EFFECT_GIB_PLAYER));
       else { push(&s,sound_eff("sound/player/gibsplt1.wav","body")); push(&s,kind_eff(QA_Q3_EFFECT_GIB_PLAYER)); }
       return s.count;
     case QA_Q3_EV_STOPLOOPINGSOUND: push(&s,kind_eff(QA_Q3_EFFECT_STOP_LOOPING_SOUND)); return s.count;

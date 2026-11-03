@@ -2,6 +2,7 @@
  * platforms, secret doors and supporting brush entities.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/base/entities/movers.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -63,7 +64,8 @@ static void secret_die_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_deat
 static void platform_blocked_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_actor_id);
 static void secret_blocked_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_actor_id);
 
-static int64_t sf(const qa_q2_entity *e) { return (int64_t)e->spawnflags; }
+/* TS `spawnflags & x` applies ToInt32: the int32 view of the number. */
+static int32_t sf(const qa_q2_entity *e) { return qa_js_to_int32(e->spawnflags); }
 
 static qa_q2_base_platform_state *find_platform(qa_q2_base_mover_entities *m, qa_q2_entity *e) {
   for (size_t i = 0; i < m->platform_count; i++) if (m->platforms[i].e == e) return &m->platforms[i].state;
@@ -110,7 +112,8 @@ static void loop_sound(qa_q2_entity *entity, qa_q2_game_services *game, const ch
   qa_q2_presentation_event ev = {0};
   ev.kind = "sound"; ev.has_actor = true; ev.actor = entity->actor.id;
   ev.origin = qa_q2_game_body(game, entity).origin; ev.path = path;
-  ev.channel = 2; ev.volume = 1; ev.attenuation = 3; ev.reliable = false;
+  ev.channel = 2; ev.volume = 1; ev.attenuation = game->options.edition == QA_Q2_EDITION_RERELEASE ? 3 : 1;
+  ev.reliable = false;
   ev.loop = start ? "start" : "stop";
   game->host->emit(game->host->ctx, ev);
 }
@@ -339,7 +342,9 @@ static void secret_touch_fn(void *c, qa_q2_entity *self, qa_q2_game_services *ga
   qa_q2_presentation_event ev = {0};
   ev.kind = "centerprint"; ev.has_actor = true; ev.actor = contact.other; ev.text = self->message;
   game->host->emit(game->host->ctx, ev);
-  game->sound(game->ctx, self->actor, "misc/talk1.wav", 0, 1, 1);
+  /* TS game.sound(game.entity(contact.other) ?? self, ...). */
+  qa_q2_entity *heard = game->entity(game->ctx, &contact.other);
+  game->sound(game->ctx, heard != NULL ? heard->actor : self->actor, "misc/talk1.wav", 0, 1, 1);
 }
 static void secret_blocked_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game, qa_actor_id other) {
   if (!game->host->is_player(game->host->ctx, other) && !game->host->is_monster(game->host->ctx, other)) { crush(self, game, other); return; }
@@ -380,8 +385,8 @@ static void elevator_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *ga
 }
 static void conveyor_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game, const qa_actor_id *o, const qa_actor_id *a) {
   (void)c; (void)game; (void)o; (void)a;
-  if ((sf(self) & 1) != 0) { self->speed = 0; self->spawnflags = (double)(sf(self) & ~1LL); }
-  else { self->speed = self->count; self->spawnflags = (double)(sf(self) | 1LL); }
+  if ((sf(self) & 1) != 0) { self->speed = 0; self->spawnflags = (double)(sf(self) & ~1); }
+  else { self->speed = self->count; self->spawnflags = (double)(sf(self) | 1); }
   if ((sf(self) & 2) == 0) self->count = 0;
 }
 static void killbox_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game, const qa_actor_id *o, const qa_actor_id *a) {
@@ -520,9 +525,9 @@ bool qa_q2_base_mover_entities_spawn(qa_q2_base_mover_entities *m, qa_q2_entity 
     qa_bounds bounds = {qa_q2_add(original.min, (qa_vec3){1, 1, 1}), qa_q2_add(original.max, (qa_vec3){-1, -1, -1})};
     if (entity->spawnflags == 0) game->schedule(game->ctx, entity, 2 * game->host->frame_seconds(game->host->ctx), TCB(m, object_release_fn));
     else { entity->visible = false; game->solid(game->ctx, entity, "none"); entity->use = UCB(m, object_use_fn); }
-    if ((sf(entity) & 2) != 0) entity->effects = (double)((int64_t)entity->effects | 0x1000);
-    if ((sf(entity) & 4) != 0) entity->effects = (double)((int64_t)entity->effects | 0x2000);
-    entity->clip_mask = 0x2010003;
+    if ((sf(entity) & 2) != 0) entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x1000);
+    if ((sf(entity) & 4) != 0) entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x2000);
+    entity->clip_mask = 0x2020003;
     qa_q2_body_changes changes = {0};
     changes.has_bounds = true; changes.bounds = bounds;
     game->move(game->ctx, entity, changes, true);

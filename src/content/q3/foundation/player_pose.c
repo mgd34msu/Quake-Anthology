@@ -7,6 +7,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 static float f32(double v){ return (float)v; }
 static qa_q3_pose_lerp_frame create_pose_frame(void){ qa_q3_pose_lerp_frame r={0}; r.base=qa_q3_create_lerp_frame(); return r; }
@@ -23,6 +24,8 @@ static double ms_checked(double v,const char*name,bool allow_negative){
 }
 static double angle_subtract(double a,double b){
   float angle=f32(a-b);
+  /* At large magnitudes angle - 360 rounds back to angle in binary32 and the source loop never ends. JS % is fmod. */
+  if(fabs(angle)>0x1000000) angle=f32(fmod(angle,360));
   while(angle>180) angle=f32(angle-360);
   while(angle<-180) angle=f32(angle+360);
   return angle;
@@ -58,7 +61,7 @@ qa_q3_swing_angles_result qa_q3_swing_angles(qa_q3_swing_angles_input input){
 qa_vec3 qa_q3_add_pain_twitch(qa_vec3 torso, qa_q3_pain_twitch_input input){
   double time_ms=ms_checked(input.time_ms,"pose time",true);
   double pain_time=ms_checked(input.pain_time,"pain time",true);
-  int32_t elapsed=(int32_t)((uint32_t)(int32_t)time_ms-(uint32_t)(int32_t)pain_time);
+  int32_t elapsed=(int32_t)((uint32_t)qa_js_to_int32(time_ms)-(uint32_t)qa_js_to_int32(pain_time));
   if(elapsed>=200) return qa_math_vec3(torso.x,torso.y,torso.z);
   float fraction=f32(1.0-(double)f32(f32((double)elapsed)/200.0f));
   float roll=f32(20.0f*fraction);
@@ -69,7 +72,7 @@ static qa_vec3 subtract_angles(qa_vec3 a,qa_vec3 b){
 }
 static const double OFFSETS[8]={0,22,45,-22,0,22,-45,-22};
 static double movement_offset(qa_q3_pose_entity_state e){
-  if(((int32_t)e.e_flags&1)!=0) return 0;
+  if((qa_js_to_int32(e.e_flags)&1)!=0) return 0;
   int32_t dir=qa_qvm_float_to_int(e.movement_direction);
   if(dir<0||dir>=8) qa_common_error(QA_COMMON_ERROR_DROP,"Bad player movement angle");
   return OFFSETS[dir];
@@ -84,8 +87,8 @@ qa_q3_player_pose qa_q3_calculate_player_pose(qa_q3_player_pose_state *state, qa
   if(swing_speed<0) qa_range_error("swing speed must be non-negative");
   qa_vec3 head=qa_math_vec3(input.lerp_angles.x,qa_qvm_angle_mod(input.lerp_angles.y),input.lerp_angles.z);
   qa_vec3 legs_angles=qa_math_vec3(0,0,0), torso_angles=qa_math_vec3(0,0,0);
-  if(((int32_t)input.entity.legs_anim&~QA_Q3_ANIMATION_TOGGLE_BIT)!=QA_Q3_ANIM_LEGS_IDLE
-    ||((int32_t)input.entity.torso_anim&~QA_Q3_ANIMATION_TOGGLE_BIT)!=QA_Q3_ANIM_TORSO_STAND){
+  if((qa_js_to_int32(input.entity.legs_anim)&~QA_Q3_ANIMATION_TOGGLE_BIT)!=QA_Q3_ANIM_LEGS_IDLE
+    ||(qa_js_to_int32(input.entity.torso_anim)&~QA_Q3_ANIMATION_TOGGLE_BIT)!=QA_Q3_ANIM_TORSO_STAND){
     state->torso.yawing=true; state->torso.pitching=true; state->legs.yawing=true;
   }
   double offset=movement_offset(input.entity);

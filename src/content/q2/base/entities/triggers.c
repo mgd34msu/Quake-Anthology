@@ -1,6 +1,7 @@
 /* Port of src/content/q2/base/entities/triggers.ts. Quake II
  * g_trigger.c environmental triggers. GPL-2.0-or-later. */
 #include "qa/content/q2/base/entities/triggers.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -30,7 +31,8 @@ static void gravity_touch_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_t
 static void jump_touch_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_touch_contact);
 static void hurt_use_fn(void *, qa_q2_entity *, qa_q2_game_services *, const qa_actor_id *, const qa_actor_id *);
 
-static int64_t sf(const qa_q2_entity *e) { return (int64_t)e->spawnflags; }
+/* TS `spawnflags & x` applies ToInt32: the int32 view of the number. */
+static int32_t sf(const qa_q2_entity *e) { return qa_js_to_int32(e->spawnflags); }
 
 static wind_entry *wind_find(qa_q2_environmental_triggers *t, qa_actor_id actor) {
   for (size_t i = 0; i < t->wind_count; i++) if (qa_same_actor(t->wind[i].actor, actor)) return &t->wind[i];
@@ -78,8 +80,10 @@ static void set_velocity(qa_q2_game_services *game, qa_actor_id actor, qa_vec3 v
 }
 
 static void init_trigger(qa_q2_entity *entity, qa_q2_game_services *game) {
+  /* InitTrigger leaves movedir zero for an unrotated brush. */
+  qa_vec3 body_angles = qa_q2_game_body(game, entity).angles;
   entity->visible = false;
-  entity->movedir = qa_q2_movedir(qa_q2_game_body(game, entity).angles);
+  entity->movedir = body_angles.x == 0 && body_angles.y == 0 && body_angles.z == 0 ? QA_Q2_ZERO : qa_q2_movedir(body_angles);
   qa_q2_body_changes angles = {0};
   angles.has_angles = true; angles.angles = QA_Q2_ZERO;
   game->move(game->ctx, entity, angles, false);
@@ -150,12 +154,16 @@ static void push_touch_fn(void *c, qa_q2_entity *self, qa_q2_game_services *serv
 }
 
 static void hurt_touch_fn(void *c, qa_q2_entity *self, qa_q2_game_services *services, qa_touch_contact contact) {
+  double left2;
+  double right2;
   (void)c;
   qa_body_state_result body = qa_shared_body_table_read(services->host->bodies, contact.other);
   qa_combat_state_result combat = qa_gameplay_authority_read(services->host->combat, contact.other);
   if (!body.has_value || !combat.has_value || !combat.value.can_take_damage || self->timestamp > services->host->now(services->host->ctx)) return;
-  self->timestamp = services->host->now(services->host->ctx) + ((sf(self) & 16) != 0 ? 1 : services->host->frame_seconds(services->host->ctx));
-  if ((sf(self) & 4) == 0 && (int64_t)llround(services->host->now(services->host->ctx) / services->host->frame_seconds(services->host->ctx)) % 10 == 0) {
+  double left = services->host->now(services->host->ctx);
+  double right = ((sf(self) & 16) != 0 ? 1 : services->host->frame_seconds(services->host->ctx));
+  self->timestamp = left + right;
+  if ((sf(self) & 4) == 0 && fmod(qa_js_round((left2 = services->host->now(services->host->ctx), right2 = services->host->frame_seconds(services->host->ctx), left2 / right2)), 10) == 0) {
     qa_q2_presentation_event ev = {0};
     ev.kind = "sound"; ev.has_actor = true; ev.actor = contact.other; ev.origin = body.value.origin;
     ev.path = "world/electro.wav"; ev.channel = 0; ev.volume = 1; ev.attenuation = 1; ev.reliable = false; ev.loop = "once";
@@ -177,7 +185,7 @@ static void jump_touch_fn(void *c, qa_q2_entity *self, qa_q2_game_services *serv
   qa_q2_entity *other = services->entity(services->ctx, &contact.other);
   qa_body_state_result body = qa_shared_body_table_read(services->host->bodies, contact.other);
   if (!body.has_value || !services->host->is_monster(services->host->ctx, contact.other)) return;
-  if (other && (((int64_t)other->flags & 3) != 0 || ((int64_t)other->server_flags & 8) != 0)) return;
+  if (other && ((qa_js_to_int32(other->flags) & 3) != 0 || (qa_js_to_int32(other->server_flags) & 2) != 0)) return;
   qa_vec3 value = {self->movedir.x * self->speed, self->movedir.y * self->speed,
                    body.value.ground == NULL ? body.value.velocity.z : self->movedir.z};
   set_velocity(services, contact.other, value, true, NULL);

@@ -488,3 +488,50 @@ void qa_ui_source_script_destroy(qa_ui_source_script_storage *script) {
   qa_ui_source_token_memory_destroy(script->token);
   free(script);
 }
+
+uint8_t *qa_ui_compress_script_text(const uint8_t *text, size_t length,
+                                    size_t *out_length) {
+  /* Output never exceeds the input: each emitted separator replaces at least
+     one consumed byte. */
+  uint8_t *output = malloc(length + 1);
+  if (output == NULL) return NULL;
+  size_t o = 0, index = 0;
+  bool newline = false, whitespace = false;
+#define AT(offset) ((offset) < length ? text[offset] : 0)
+  uint8_t byte;
+  while ((byte = AT(index)) != 0) {
+    if (byte == 47 && AT(index + 1) == 47) {
+      while ((byte = AT(index)) != 0 && byte != 10) index++;
+    } else if (byte == 47 && AT(index + 1) == 42) {
+      while (AT(index) != 0 && (AT(index) != 42 || AT(index + 1) != 47))
+        index++;
+      if (AT(index) != 0) index += 2;
+    } else if (byte == 10 || byte == 13) {
+      newline = true;
+      index++;
+    } else if (byte == 32 || byte == 9) {
+      whitespace = true;
+      index++;
+    } else {
+      if (newline) {
+        output[o++] = '\n';
+        newline = false;
+        whitespace = false;
+      }
+      if (whitespace) {
+        output[o++] = ' ';
+        whitespace = false;
+      }
+      output[o++] = text[index++];
+      if (byte == 34) {
+        while ((byte = AT(index)) != 0 && byte != 34)
+          output[o++] = text[index++];
+        if (byte == 34) output[o++] = text[index++];
+      }
+    }
+  }
+#undef AT
+  output[o] = 0;
+  *out_length = o;
+  return output;
+}

@@ -29,6 +29,9 @@ typedef struct qa_ogg_movie {
 void qa_ogg_movie_dispose(qa_ogg_movie *movie);
 
 /* False only on OOM; malformed input aborts as thrown. */
+/* MAX_OGG_MOVIE_BYTES: checked against the input size before the whole
+ * file is read into memory. */
+#define QA_MAX_OGG_MOVIE_BYTES ((size_t)512 * 1024 * 1024)
 bool qa_decode_ogg_movie(const uint8_t *bytes, size_t length,
                          qa_ogg_movie *out);
 

@@ -1,5 +1,9 @@
 /* See include/qa/compat/qvm/mod_provider.h. GPL-2.0-or-later. */
 #include "qa/compat/qvm/mod_provider.h"
+#include "qa/network/common/js_number.h"
+#include "qa/app/bootstrap/simulation/q3/guest_world.h"
+#include "qa/app/bootstrap/simulation/q3/host.h"
+#include "qa/foundation/js.h"
 
 /* Checkpoint forms are qa_qvm_cp_* in mod_presentation_checkpoint.h;
  * borrowed view forms are qa_qvm_* in mod_presentations.h. */
@@ -64,6 +68,15 @@ static void *xrealloc(void *ptr, size_t size) {
   if (next == NULL) qa_range_error("QVM memory allocation failed");
   return next;
 }
+/* Records a table the runtimes borrow for the provider's lifetime. */
+static void *own_table(qa_qvm_mod_provider *p, void *table) {
+  if (p->owned_table_count == p->owned_table_capacity) {
+    p->owned_table_capacity = p->owned_table_capacity ? p->owned_table_capacity * 2 : 8;
+    p->owned_tables = xrealloc(p->owned_tables, p->owned_table_capacity * sizeof *p->owned_tables);
+  }
+  p->owned_tables[p->owned_table_count++] = table;
+  return table;
+}
 static char *xstrdup(const char *text) {
   size_t length = strlen(text) + 1;
   char *copy = xrealloc(NULL, length);
@@ -73,6 +86,16 @@ static char *xstrdup(const char *text) {
 static bool safe_int(double value) {
   return isfinite(value) && trunc(value) == value && value >= -9007199254740991.0 &&
          value <= 9007199254740991.0;
+}
+/* TS image.instructions[pc] of a fraction or NaN is undefined: the store fails.
+ * -1 has no instruction either, so the C bootstrap fails the same way. */
+static int64_t store_pc(double pc) { return safe_int(pc) ? (int64_t)pc : -1; }
+/* words[release.argument]: TS validation only bounds it above, so a negative,
+ * fractional or NaN declaration reaches the array read, which finds undefined. */
+static bool release_word(double argument, size_t count, size_t *index) {
+  if (!safe_int(argument) || argument < 0 || argument >= (double)count) return false;
+  *index = (size_t)argument;
+  return true;
 }
 static bool is_int(double value) { return isfinite(value) && trunc(value) == value; }
 
@@ -86,7 +109,9 @@ static int32_t scalar_of(double value, const char *encoding) {
   return (int32_t)trunc(value);
 }
 static int64_t field_size(const qa_qvm_mod_actor_field *field) {
-  if (text_eq(field->binding, "private")) return (int64_t)field->byte_length;
+  /* Validated byte lengths are below the record stride; TS slice(a, a + NaN) is empty. */
+  if (text_eq(field->binding, "private"))
+    return field->byte_length >= 0 && field->byte_length < 9007199254740992.0 ? (int64_t)field->byte_length : 0;
   const char *b = field->binding;
   if (text_eq(b, "origin") || text_eq(b, "velocity") || text_eq(b, "angles") ||
       text_eq(b, "bounds-min") || text_eq(b, "bounds-max") || text_eq(b, "constant-vector"))
@@ -289,14 +314,16 @@ void qa_qvm_validate_mod(const qa_resolved_qvm_artifact *artifact,
                                        field->team_values, field->team_value_count};
         qa_validate_source_match_field(match);
       }
-      int64_t size = field_size(field);
+      /* TS compares the declared number: a fractional byte length is not truncated here. */
+      double size = text_eq(field->binding, "private") ? field->byte_length : (double)field_size(field);
       if (!safe_int(field->offset) || field->offset < 0 || fmod(field->offset, 4) != 0 ||
-          size < 1 || field->offset + (double)size > record->stride)
+          size < 1 || field->offset + size > record->stride)
         qa_range_error("QVM mod actor field exceeds its source record");
       for (size_t q = 0; q < f; q++) {
         const qa_qvm_mod_actor_field *other = &record->fields[q];
-        if (field->offset < other->offset + (double)field_size(other) &&
-            other->offset < field->offset + (double)size)
+        double other_size = text_eq(other->binding, "private") ? other->byte_length : (double)field_size(other);
+        if (field->offset < other->offset + other_size &&
+            other->offset < field->offset + size)
           qa_range_error("Overlapping QVM mod actor fields");
       }
       if (field->access != NULL && !shared_field(field))
@@ -390,7 +417,7 @@ void qa_qvm_validate_mod(const qa_resolved_qvm_artifact *artifact,
     size_t store_count = lifecycle == NULL ? 0 : lifecycle->initial_stores.count;
     int64_t *stores = xrealloc(NULL, (store_count == 0 ? 1 : store_count) * sizeof *stores);
     qa_qvm_actor_store *out = xrealloc(NULL, (store_count == 0 ? 1 : store_count) * sizeof *out);
-    for (size_t i = 0; i < store_count; i++) stores[i] = (int64_t)lifecycle->initial_stores.values[i];
+    for (size_t i = 0; i < store_count; i++) stores[i] = store_pc(lifecycle->initial_stores.values[i]);
     qa_qvm_actor_bootstrap(stores, store_count, artifact->image.instructions,
                            artifact->image.instruction_count,
                            (int64_t)artifact->image.initialized_length, artifact->image.data_length,
@@ -407,7 +434,9 @@ void qa_qvm_validate_mod(const qa_resolved_qvm_artifact *artifact,
     qa_qvm_validate_mod_actor_frame(lifecycle->frame, artifact->image.instructions,
                                     artifact->image.instruction_count,
                                     (int64_t)artifact->image.initialized_length,
-                                    artifact->image.bss_length, record, (int64_t)lifecycle->inuse);
+                                    artifact->image.bss_length, record,
+                                    /* TS compares operand !== inuse: a fraction or NaN never matches. */
+                                    safe_int(lifecycle->inuse) ? (int64_t)lifecycle->inuse : INT64_MIN);
     static const char *const avail[] = {"time", "elapsed"};
     check_call(&v, &lifecycle->frame->call, avail, 2);
   }
@@ -1689,8 +1718,9 @@ static Execution *begin_call(P *p, const qa_qvm_mod_source_call *call,
   }
   const qa_qvm_mod_source_actors *source = p->declaration->source_actors;
   if (source != NULL && call->entry == source->release.entry) {
-    size_t argument = (size_t)source->release.argument;
-    if (argument >= execution->word_count) qa_range_error("Missing source release argument");
+    size_t argument;
+    if (!release_word(source->release.argument, execution->word_count, &argument))
+      qa_range_error("Missing source release argument");
     int32_t pointer = execution->words[argument];
     qa_actor_id actor;
     bool has_actor = actor_at(p, pointer_slot(p, pointer), &actor);
@@ -1772,10 +1802,10 @@ double qa_qvm_mod_provider_invoke(qa_qvm_mod_provider *p, const qa_qvm_mod_sourc
 }
 static int32_t invoke_adapter(P *p, const qa_qvm_mod_source_call *call,
                               const qa_qvm_mod_provider_input *inputs, size_t input_count) {
-  /* Landed subsystem invoke operations return int32 (their callers
-   * widen to double); float32 source returns therefore truncate
-   * here, where TS would pass the decoded float. */
-  return (int32_t)qa_qvm_mod_provider_invoke(p, call, inputs, input_count);
+  /* Actor calls declare int32 returns (exact here) and item calls discard the
+   * result; protection and pickups take the number itself (see their invokes).
+   * qa_js_to_int32 keeps a discarded float32 return defined. */
+  return qa_js_to_int32(qa_qvm_mod_provider_invoke(p, call, inputs, input_count));
 }
 static qa_original_pickup_decision pickup_context(
     P *p, const qa_qvm_mod_pickup *definition, const qa_original_pickup_offer *offer,
@@ -1825,17 +1855,33 @@ static void engine_print(void *ctx, const char *text) {
   if (p->services->engine != NULL && p->services->engine->print != NULL)
     p->services->engine->print(p->services->engine->ctx, text);
 }
+/* TS cvars.register/set results are discarded; the C out snapshots
+ * are required and owned. */
+static void force_server_variable(qa_cvar_registry *cvars, const char *name, const char *value,
+                                  double flags) {
+  qa_cvar_snapshot snapshot;
+  (void)qa_cvar_registry_register(cvars, name, value, flags, &snapshot);
+  qa_cvar_read_free(&snapshot);
+  (void)qa_cvar_registry_set(cvars, name, value, true, &snapshot);
+  qa_cvar_read_free(&snapshot);
+}
 static void bind_server_variables(P *p, qa_cvar_registry *cvars) {
-  /* TS also binds mapname from engine.presentation.map; the landed
-   * engine fragment carries presentation as an opaque pointer, so
-   * the map name is unresolved here. */
   const qa_session_mod_engine_services *engine = p->services->engine;
+  if (engine != NULL && engine->presentation_map != NULL) {
+    const char *map = engine->presentation_map;
+    if (strncmp(map, "maps/", 5) == 0) map += 5;
+    size_t length = strlen(map);
+    if (length >= 4 && strcmp(map + length - 4, ".bsp") == 0) length -= 4;
+    char *name = xrealloc(NULL, length + 1);
+    memcpy(name, map, length);
+    name[length] = '\0';
+    force_server_variable(cvars, "mapname", name, QA_CVAR_FLAG_SERVER_INFO | QA_CVAR_FLAG_READ_ONLY);
+    free(name);
+  }
   if (engine != NULL && engine->has_environment) {
     char buffer[64];
-    snprintf(buffer, sizeof buffer, "%g", engine->environment_max_clients);
-    (void)qa_cvar_registry_register(cvars, "sv_maxclients", buffer,
-                                    QA_CVAR_FLAG_SERVER_INFO | QA_CVAR_FLAG_LATCH, NULL);
-    (void)qa_cvar_registry_set(cvars, "sv_maxclients", buffer, true, NULL);
+    snprintf(buffer, sizeof buffer, "%s", QA_JS_NUMBER(engine->environment_max_clients));
+    force_server_variable(cvars, "sv_maxclients", buffer, QA_CVAR_FLAG_SERVER_INFO | QA_CVAR_FLAG_LATCH);
   }
 }
 static qa_cvar_registry *new_cvars(P *p) {
@@ -2017,7 +2063,10 @@ static CpScene *scene_publication(P *p) {
       entry->actor = p->client_scratch[i].actor;
       entry->slot = p->client_scratch[i].slot;
       qa_qvm_writable_view view;
-      view_of(p, player_address(p, entry->actor), qa_qvm_player_state_bytes(p->declaration->abi_profile), &view);
+      P * p2 = p;
+      int64_t address = player_address(p, entry->actor);
+      int64_t size = qa_qvm_player_state_bytes(p->declaration->abi_profile);
+      view_of(p2, address, size, &view);
       qa_qvm_read_source_player_state(&view, p->declaration->abi_profile, &entry->state);
     }
   }
@@ -2100,7 +2149,27 @@ static void build_scene_view(P *p, const CpScene *scene, qa_qvm_mod_scene_public
 }
 static void presentation_client_command(P *p, qa_actor_id actor,
                                         const char *const *arguments, size_t count);
-static qa_session_qvm_presentation_context presentation_context_of(void *ctx, qa_actor_id viewer) {
+/* The context's snapshot player state views its own slot storage. */
+static void context_player_slots(qa_qvm_presentation_context *context) {
+  context->snapshot_player_state.stats.values = context->player_slots;
+  context->snapshot_player_state.stats.count = 16;
+  context->snapshot_player_state.persistent.values = context->player_slots + 16;
+  context->snapshot_player_state.persistent.count = 16;
+  context->snapshot_player_state.powerups.values = context->player_slots + 32;
+  context->snapshot_player_state.powerups.count = 16;
+  context->snapshot_player_state.ammo.values = context->player_slots + 48;
+  context->snapshot_player_state.ammo.count = 16;
+}
+static void context_copy_view(double *slots, qa_double_view view) {
+  for (size_t i = 0; i < 16; i++) slots[i] = i < view.count ? view.values[i] : 0;
+}
+static bool presentation_weapon(P *p, qa_actor_id viewer) {
+  return p->services->weapons != NULL &&
+         p->services->weapons->presented(p->services->weapons->ctx, viewer, p->artifact->module.id);
+}
+/* TS presentationSource.context: Omit<QvmPresentationContext,
+ * "frameTimeMilliseconds" | "viewOrigin"> | null. */
+static const qa_qvm_presentation_context *presentation_context_of(void *ctx, qa_actor_id viewer) {
   P *p = ctx;
   current(p);
   if (p->frame_count != 0) qa_range_error("Cannot read presentation during an original source call");
@@ -2110,32 +2179,42 @@ static qa_session_qvm_presentation_context presentation_context_of(void *ctx, qa
   int64_t client_number;
   if (!qa_qvm_mod_client_bindings_slot(&p->client_bindings, viewer, &client_number))
     qa_range_error("Presentation viewer has no admitted source client slot");
-  bool weapon = p->services->weapons != NULL &&
-                p->services->weapons->presented(p->services->weapons->ctx, viewer,
-                                                 p->artifact->module.id);
-  qa_qvm_mod_provider_presentation_context *context = p->presentation_context;
+  qa_qvm_presentation_context *context = p->presentation_context;
   memset(context, 0, sizeof *context);
-  context->weapon_presented = weapon;
   if (text_eq(presentation_runtime(p->declaration), "qvm-scene")) {
     CpScene *state = scene_publication(p);
     const qa_qvm_mod_scene_client *player = NULL;
-    for (size_t i = 0; i < state->client_count; i++)
+    for (size_t i = 0; i < state->client_count && player == NULL; i++)
       if (actor_eq(state->clients[i].actor, viewer)) player = &state->clients[i];
     if (player == NULL) return NULL;
+    context->has_client_number = true;
     context->client_number = player->slot;
-    context->game_state = &state->game_state;
+    context->has_weapon_presented = true;
+    context->weapon_presented = presentation_weapon(p, viewer);
+    context->game_state = state->game_state;
     context->game_state_revision = state->game_state_revision;
-    context->server_time = state->server_time;
-    context->player_state = player->state;
+    context->snapshot_server_time = state->server_time;
+    context->snapshot_player_state = player->state;
+    context_copy_view(context->player_slots, player->state.stats);
+    context_copy_view(context->player_slots + 16, player->state.persistent);
+    context_copy_view(context->player_slots + 32, player->state.powerups);
+    context_copy_view(context->player_slots + 48, player->state.ammo);
+    context_player_slots(context);
     return context;
   }
+  context->has_client_number = true;
   context->client_number = client_number;
-  context->game_state = game_state_of(p);
+  context->has_weapon_presented = true;
+  context->weapon_presented = presentation_weapon(p, viewer);
+  context->game_state = *game_state_of(p);
   context->game_state_revision = p->presentation_revision;
-  context->server_time = (int64_t)trunc(seconds_of(p->services) * 1000);
+  context->snapshot_server_time = (int64_t)trunc(seconds_of(p->services) * 1000);
   qa_qvm_writable_view view;
-  view_of(p, player_address(p, viewer), qa_qvm_player_state_bytes(p->declaration->abi_profile), &view);
-  qa_qvm_read_source_player_state(&view, p->declaration->abi_profile, &context->player_state);
+  int64_t address = player_address(p, viewer);
+  int64_t size = qa_qvm_player_state_bytes(p->declaration->abi_profile);
+  view_of(p, address, size, &view);
+  context_player_slots(context);
+  qa_qvm_read_source_player_state(&view, p->declaration->abi_profile, &context->snapshot_player_state);
   return context;
 }
 static bool presentation_files(void *ctx, qa_qvm_presentation_files *out) {
@@ -2272,6 +2351,113 @@ static bool inline_model_of(P *p, double index, qa_bounds *out_bounds,
     qa_range_error("QVM inline models require destination map model services");
   return engine->inline_model(engine->ctx, index, out_bounds, out_content, out_family);
 }
+/* TS physics.bindSource closures and collision(). */
+struct qa_qvm_mod_physics_cell {
+  P *provider;
+  qa_owned_actor actor;
+  int64_t slot;
+  int handle;
+  qa_actor_id owner;
+};
+typedef struct qa_qvm_mod_physics_cell PhysicsCell;
+static const qa_session_mod_engine_physics *engine_physics(P *p) {
+  const qa_session_mod_engine_services *engine = p->services->engine;
+  return engine == NULL ? NULL : (const qa_session_mod_engine_physics *)engine->physics;
+}
+static const qa_session_mod_engine_scene *engine_scene(P *p) {
+  const qa_session_mod_engine_services *engine = p->services->engine;
+  return engine == NULL ? NULL : (const qa_session_mod_engine_scene *)engine->scene;
+}
+static bool source_collision(void *ctx, qa_app_sim_shared_solid *out) {
+  PhysicsCell *cell = ctx;
+  P *p = cell->provider;
+  qa_qvm_shared_entity entity;
+  entity_of(p, cell->slot, &entity);
+  qa_qvm_entity_collision_model model = qa_qvm_shared_entity_get_model(&entity);
+  int32_t contents = qa_qvm_shared_entity_get_contents(&entity);
+  bool is_inline = text_eq(model.kind, "inline");
+  memset(out, 0, sizeof *out);
+  out->solid = contents == 0 ? "none" : is_inline ? "brush"
+               : ((uint32_t)contents & 0x40000000u) != 0 ? "trigger" : "box";
+  out->family = "q3";
+  out->has_model = is_inline;
+  out->model = is_inline ? model.index : 0;
+  out->owner = actor_at(p, qa_qvm_shared_entity_get_owner_num(&entity), &cell->owner) ? &cell->owner : NULL;
+  return true;
+}
+static bool source_motion(void *ctx, qa_q2_motion *out) {
+  (void)ctx; (void)out;
+  return false;
+}
+static qa_app_sim_shared_physics_flags source_flags(void *ctx) {
+  (void)ctx;
+  qa_app_sim_shared_physics_flags flags;
+  memset(&flags, 0, sizeof flags);
+  return flags;
+}
+static void source_write_flags(void *ctx, qa_app_sim_shared_physics_flags changes) {
+  (void)ctx; (void)changes;
+  qa_range_error("QVM source actor flags require an authored field declaration");
+}
+static void source_write_angular(void *ctx, qa_vec3 value) {
+  (void)ctx; (void)value;
+  qa_range_error("QVM source angular movement belongs to its declared update callback");
+}
+static void source_water(void *ctx) { (void)ctx; }
+static qa_actor_collision collision_of(P *p, int64_t slot, qa_actor_id *owner_storage) {
+  qa_qvm_shared_entity entity;
+  entity_of(p, slot, &entity);
+  qa_qvm_entity_collision_model model = qa_qvm_shared_entity_get_model(&entity);
+  qa_actor_collision collision;
+  memset(&collision, 0, sizeof collision);
+  collision.family = "q3";
+  bool is_inline = text_eq(model.kind, "inline");
+  collision.shape_kind = is_inline ? "model" : model.kind;
+  collision.shape_model = is_inline ? model.index : 0;
+  collision.contents = qa_qvm_shared_entity_get_contents(&entity);
+  collision.owner = actor_at(p, qa_qvm_shared_entity_get_owner_num(&entity), owner_storage) ? owner_storage : NULL;
+  collision.role = "solid";
+  collision.monster = false;
+  collision.dead_monster = false;
+  return collision;
+}
+static void set_collision(P *p, qa_owned_actor actor, int64_t slot) {
+  const qa_session_mod_engine_physics *physics = engine_physics(p);
+  qa_actor_id owner;
+  physics->set_collision(physics->ctx, actor, collision_of(p, slot, &owner));
+}
+static void physics_unbind(P *p, qa_actor_id actor) {
+  for (size_t i = 0; i < p->physics_count; i++)
+    if (p->physics[i] != NULL && actor_eq(p->physics[i]->actor.id, actor)) {
+      const qa_session_mod_engine_physics *physics = engine_physics(p);
+      if (physics != NULL) physics->unbind_source(physics->ctx, p->physics[i]->handle);
+      free(p->physics[i]);
+      memmove(&p->physics[i], &p->physics[i + 1], (p->physics_count - i - 1) * sizeof *p->physics);
+      p->physics_count--;
+      return;
+    }
+}
+static void physics_unbind_all(P *p) {
+  while (p->physics_count > 0) physics_unbind(p, p->physics[0]->actor.id);
+}
+static void physics_bind(P *p, qa_owned_actor actor, int64_t slot) {
+  const qa_session_mod_engine_physics *physics = engine_physics(p);
+  physics_unbind(p, actor.id);
+  PhysicsCell *cell = xrealloc(NULL, sizeof *cell);
+  memset(cell, 0, sizeof *cell);
+  cell->provider = p;
+  cell->actor = actor;
+  cell->slot = slot;
+  qa_app_sim_source_body_physics source = {cell, source_collision, source_motion, source_flags,
+                                           source_write_flags, source_write_angular, source_water};
+  cell->handle = physics->bind_source(physics->ctx, actor, source);
+  if (p->physics_count == p->physics_capacity) {
+    p->physics_capacity = p->physics_capacity ? p->physics_capacity * 2 : 16;
+    p->physics = xrealloc(p->physics, p->physics_capacity * sizeof *p->physics);
+  }
+  p->physics[p->physics_count++] = cell;
+  set_collision(p, actor, slot);
+}
 static void bind_owned(P *p, qa_owned_actor actor, int64_t slot) {
   const qa_session_mod_engine_services *engine = p->services->engine;
   if (engine == NULL || engine->physics == NULL)
@@ -2282,8 +2468,7 @@ static void bind_owned(P *p, qa_owned_actor actor, int64_t slot) {
   cell->slot = slot;
   qa_body_state_binding binding = {cell, body_read, body_write, body_linked};
   qa_shared_body_table_rebind(p->services->bodies, actor, binding);
-  /* physics.bindSource / setCollision target the opaque landed
-   * physics fragment and remain unresolved. */
+  physics_bind(p, actor, slot);
   if (p->has_actor_semantics) qa_qvm_mod_actors_admit(&p->actor_semantics, actor);
   qa_qvm_shared_entity entity;
   entity_of(p, slot, &entity);
@@ -2316,10 +2501,15 @@ static void bind_owned(P *p, qa_owned_actor actor, int64_t slot) {
 static void release_source(P *p, int64_t slot) {
   const qa_qvm_mod_source_actors *source = p->declaration->source_actors;
   if (source == NULL) return;
-  size_t count = (size_t)source->release.argument + 1;
-  int32_t *words = xrealloc(NULL, count * sizeof *words);
+  /* new Array(argument + 1): any length that is not an integer in 0..2^32-1 throws.
+   * argument -1 gives an empty array; the words[-1] store is a property, not a word. */
+  double length = source->release.argument + 1;
+  if (!(length >= 0 && length <= 4294967295.0 && length == trunc(length)))
+    qa_range_error("Invalid array length");
+  size_t count = (size_t)length;
+  int32_t *words = xrealloc(NULL, (count == 0 ? 1 : count) * sizeof *words);
   for (size_t i = 0; i < count; i++) words[i] = 0;
-  words[(size_t)source->release.argument] = (int32_t)entity_address(p, slot);
+  if (count != 0) words[count - 1] = (int32_t)entity_address(p, slot);
   (void)qa_qvm_module_call(&p->module, words, count, (int64_t)source->release.entry);
   free(words);
 }
@@ -2356,8 +2546,9 @@ static void complete_direct_lifecycle(P *p, const qa_qvm_mod_source_call *call,
   if (source == NULL) return;
   if (call->entry == source->allocate) adopt_source(p, result);
   else if (call->entry == source->release.entry) {
-    size_t argument = (size_t)source->release.argument;
-    if (argument >= count) qa_range_error("Missing source release argument");
+    size_t argument;
+    if (!release_word(source->release.argument, count, &argument))
+      qa_range_error("Missing source release argument");
     retire_source(p, pointer_slot(p, words[argument]));
   }
 }
@@ -2365,7 +2556,7 @@ typedef struct {
   P *provider;
   bool allocate;
 } HookCell;
-static int32_t lifecycle_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t lifecycle_hook(void *ctx, qa_qvm_module_function_call *call) {
   HookCell *cell = ctx;
   P *p = cell->provider;
   const qa_qvm_mod_source_actors *source = p->declaration->source_actors;
@@ -2374,7 +2565,13 @@ static int32_t lifecycle_hook(void *ctx, qa_qvmy_function_call *call) {
     adopt_source(p, pointer);
     return pointer;
   }
-  size_t offset = (size_t)source->release.argument * 4;
+  /* DataView.getInt32(argument * 4): ToIndex truncates (NaN is 0) and rejects
+   * negative or out-of-bounds offsets. */
+  double raw = trunc(source->release.argument * 4);
+  if (isnan(raw)) raw = 0;
+  if (raw < 0 || raw + 4 > (double)call->words_length)
+    qa_range_error("Offset is outside the bounds of the DataView");
+  size_t offset = (size_t)raw;
   const uint8_t *b = call->words + offset;
   int32_t pointer = (int32_t)((uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 |
                               (uint32_t)b[3] << 24);
@@ -2409,11 +2606,65 @@ static void bind_lifecycle(P *p) {
     p->hooks[p->hook_count++] = id;
   }
 }
-static void emit_source_event(P *p) {
-  /* Q3SourceEvent emission targets the opaque landed engine events
-   * fragment; only the TS missing-service error is reproducible. */
-  (void)p;
-  qa_range_error("QVM presentation requires destination event services");
+/* TS engine.events.emit(content, {kind:"q3-source",event}, time?, recipient?). */
+static void emit_with(P *p, const qa_app_q3_source_event *event, bool has_time, const qa_actor_id *recipient) {
+  const qa_session_mod_engine_services *engine = p->services->engine;
+  if (engine == NULL || engine->events.emit == NULL)
+    qa_range_error("QVM presentation requires destination event services");
+  qa_session_mod_emit emit;
+  memset(&emit, 0, sizeof emit);
+  emit.event.kind = "q3-source";
+  emit.event.content = p->content;
+  emit.event.q3_source = event;
+  if (recipient != NULL) {
+    emit.event.has_recipient = true;
+    emit.event.recipient = *recipient;
+  }
+  emit.has_time = has_time;
+  if (has_time) emit.time = p->services->time(p->services->ctx);
+  engine->events.emit(engine->events.ctx, &emit);
+}
+static void emit_source_event(P *p, const qa_app_q3_source_event *event) {
+  emit_with(p, event, false, NULL);
+}
+static void wire_trajectory(qa_q3_wire_trajectory *out, qa_qvm_trajectory in) {
+  out->type = in.type;
+  out->time = in.time;
+  out->duration = in.duration;
+  out->base = in.base;
+  out->delta = in.delta;
+}
+/* TS `new EntityState().copyFrom(state)`: the QVM fields are numbers, copied as is. */
+static void state_record_of(const qa_qvm_entity_state_fields *f, qa_q3_entity_state_record *out) {
+  qa_q3_entity_state_init(out);
+  out->number = f->number;
+  out->e_type = f->e_type;
+  out->e_flags = f->e_flags;
+  wire_trajectory(&out->pos, f->pos);
+  wire_trajectory(&out->apos, f->apos);
+  out->time = f->time;
+  out->time2 = f->time2;
+  out->origin = f->origin;
+  out->origin2 = f->origin2;
+  out->angles = f->angles;
+  out->angles2 = f->angles2;
+  out->other_entity_num = f->other_entity_num;
+  out->other_entity_num2 = f->other_entity_num2;
+  out->ground_entity_num = f->ground_entity_num;
+  out->constant_light = f->constant_light;
+  out->loop_sound = f->loop_sound;
+  out->modelindex = f->modelindex;
+  out->modelindex2 = f->modelindex2;
+  out->client_num = f->client_num;
+  out->frame = f->frame;
+  out->solid = f->solid;
+  out->event = f->event;
+  out->event_parm = f->event_parm;
+  out->powerups = f->powerups;
+  out->weapon = f->weapon;
+  out->legs_anim = f->legs_anim;
+  out->torso_anim = f->torso_anim;
+  out->generic1 = f->generic1;
 }
 static void link_entity(P *p, int64_t slot) {
   qa_qvm_shared_entity entity;
@@ -2436,16 +2687,17 @@ static void link_entity(P *p, int64_t slot) {
   /* TS byte(): Math.max(1, Math.min(255, Math.trunc(v))). */
   double zb = trunc((double)(float)(maxs.z + 32));
   double nb = trunc(-mins.z), xb = trunc(maxs.x);
-  int32_t bzb = (int32_t)(zb < 1 ? 1 : zb > 255 ? 255 : zb);
-  int32_t bnb = (int32_t)(nb < 1 ? 1 : nb > 255 ? 255 : nb);
-  int32_t bxb = (int32_t)(xb < 1 ? 1 : xb > 255 ? 255 : xb);
+  /* A NaN guest bound makes byte() NaN, and `<<`/`|` turn it into 0. */
+  int32_t bzb = qa_js_to_int32(qa_js_max(1, qa_js_min(255, zb)));
+  int32_t bnb = qa_js_to_int32(qa_js_max(1, qa_js_min(255, nb)));
+  int32_t bxb = qa_js_to_int32(qa_js_max(1, qa_js_min(255, xb)));
   fields.solid = text_eq(model.kind, "inline") ? 0xffffff
                  : (contents & (1 | 0x2000000)) == 0 ? 0
                  : (bzb << 16) | (bnb << 8) | bxb;
   set_entity_fields(p, slot, &fields);
   qa_shared_body_table_unlink(p->services->bodies, owner);
   qa_qvm_shared_entity_set_linked(&entity, false);
-  /* physics.setCollision for owned actors is unresolved (opaque). */
+  if (owned_has(p, actor)) set_collision(p, owner, slot);
   qa_shared_body_table_link(p->services->bodies, owner, NULL);
   qa_linked_body_result linked = qa_shared_body_table_linked(p->services->bodies, actor);
   if (linked.has_value) {
@@ -2478,10 +2730,16 @@ static void publish(P *p) {
     snprintf(key, sizeof key, "%d:%d", qa_int32(fields.event), qa_int32(fields.e_type));
     if (text_eq(event_key_get(p, actor), key)) continue;
     event_key_set(p, actor, key);
-    if (p->services->engine == NULL) emit_source_event(p);
-    /* Entity-event emission into the opaque engine events fragment
-     * is unresolved; the snapshot/key bookkeeping above matches TS. */
-    emit_source_event(p);
+    qa_app_q3_source_event event;
+    memset(&event, 0, sizeof event);
+    event.kind = QA_APP_Q3_EVENT_ENTITY;
+    event.entity.kind = "entity-event";
+    event.entity.actor = actor;
+    state_record_of(&fields, &event.entity.state);
+    event.entity.origin = qa_qvm_shared_entity_get_current_origin(&entity);
+    event.entity.time = trunc(seconds_of(p->services) * 1000);
+    event.actor = actor;
+    emit_source_event(p, &event);
   }
 }
 
@@ -2570,7 +2828,7 @@ static bool engine_syscall(P *p, const qa_qvm_host_call *call, int32_t *out) {
         const qa_session_mod_engine_services *engine = p->services->engine;
         if (engine == NULL || engine->physics == NULL)
           qa_range_error("QVM brush models require destination collision services");
-        /* physics.setCollision is unresolved (opaque fragment). */
+        set_collision(p, owner, slot);
       }
       link_entity(p, slot);
       *out = 0;
@@ -2579,15 +2837,51 @@ static bool engine_syscall(P *p, const qa_qvm_host_call *call, int32_t *out) {
     case QA_QVM_GAME_IMPORT_G_SEND_SERVER_COMMAND: {
       if (qa_qvm_host_call_word(call, 1) != -1)
         qa_range_error("Targeted QVM component commands require declared source client bindings");
-      emit_source_event(p);
+      char *text = qa_qvm_memory_read_string(call->guest, qa_qvm_host_call_word(call, 2));
+      qa_app_q3_source_event event;
+      memset(&event, 0, sizeof event);
+      event.kind = QA_APP_Q3_EVENT_SERVER_COMMAND;
+      event.client = -1;
+      event.text = text;
+      emit_source_event(p, &event);
+      free(text);
       *out = 0;
       return true;
     }
-    case QA_QVM_GAME_IMPORT_G_ADJUST_AREA_PORTAL_STATE:
-      /* Q3GuestWorld portals and scene topology are unresolved. */
-      qa_range_error("QVM portal state requires destination topology services");
-    case QA_QVM_GAME_IMPORT_G_AREAS_CONNECTED:
-      qa_range_error("QVM area connectivity requires destination topology services");
+    case QA_QVM_GAME_IMPORT_G_ADJUST_AREA_PORTAL_STATE: {
+      const qa_session_mod_engine_scene *scene = engine_scene(p);
+      qa_actor_id actor;
+      bool has_actor = actor_at(p, pointer_slot(p, qa_qvm_host_call_word(call, 1)), &actor);
+      if (p->portals == NULL || scene == NULL || scene->queries.box_leaves == NULL || scene->shared == NULL)
+        qa_range_error("QVM portal state requires destination topology services");
+      qa_linked_body_result linked = {0};
+      if (has_actor) linked = qa_shared_body_table_linked(p->services->bodies, actor);
+      if (!linked.has_value) {
+        *out = 0;
+        return true;
+      }
+      qa_leaf_query_result leaves =
+          scene->queries.box_leaves(scene->queries.ctx, linked.value.absolute_bounds, 128);
+      double areas[2];
+      size_t area_count = 0;
+      for (size_t i = 0; i < leaves.leaves.count && area_count < 2; i++) {
+        double area = qa_shared_leaf_area(scene->shared, leaves.leaves.values[i]);
+        if (area_count == 0 || areas[0] != area) areas[area_count++] = area;
+      }
+      if (area_count == 2)
+        qa_app_q3_guest_world_adjust_area_portal_state(p->portals, areas[0], areas[1],
+                                                       qa_qvm_host_call_word(call, 2) != 0);
+      *out = 0;
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_G_AREAS_CONNECTED: {
+      const qa_session_mod_engine_scene *scene = engine_scene(p);
+      if (scene == NULL || scene->queries.areas_connected == NULL)
+        qa_range_error("QVM area connectivity requires destination topology services");
+      *out = scene->queries.areas_connected(scene->queries.ctx, qa_qvm_host_call_word(call, 1),
+                                            qa_qvm_host_call_word(call, 2)) ? 1 : 0;
+      return true;
+    }
     default:
       return false;
   }
@@ -2622,8 +2916,26 @@ static bool spatial_syscall(P *p, const qa_qvm_host_call *call, int32_t *out) {
     qa_bounds bounds = {guest_vector(call, qa_qvm_host_call_word(call, 1)),
                         guest_vector(call, qa_qvm_host_call_word(call, 2))};
     bool capsule = call->code == QA_QVM_GAME_IMPORT_G_ENTITY_CONTACTCAPSULE;
-    if (text_eq(model.kind, "inline"))
-      qa_range_error("QVM entity contact requires destination scene services");
+    if (text_eq(model.kind, "inline")) {
+      const qa_session_mod_engine_scene *scene = engine_scene(p);
+      if (scene == NULL) qa_range_error("QVM entity contact requires destination scene services");
+      qa_trace_query query;
+      memset(&query, 0, sizeof query);
+      query.shape.kind = capsule ? "capsule" : "box";
+      query.shape.bounds = bounds;
+      query.target.is_model = true;
+      query.target.model = model.index;
+      query.target.origin = qa_qvm_shared_entity_get_current_origin(&entity);
+      query.target.angles = qa_qvm_shared_entity_get_current_angles(&entity);
+      query.numeric = qa_q3_binary32_profile;
+      query.policy.kind = "q3";
+      query.policy.contents_mask = -1;
+      query.policy.curves = true;
+      query.policy.player_curve_clip = true;
+      qa_trace_result result = scene->queries.trace(scene->queries.ctx, query);
+      *out = (result.start_solid || result.all_solid) ? 1 : 0;
+      return true;
+    }
     qa_bounds target = {qa_qvm_shared_entity_get_mins(&entity),
                         qa_qvm_shared_entity_get_maxs(&entity)};
     qa_collision_counters counters;
@@ -2649,10 +2961,64 @@ static bool spatial_syscall(P *p, const qa_qvm_host_call *call, int32_t *out) {
     *out = (result.start_solid || result.all_solid) ? 1 : 0;
     return true;
   }
-  if (call->code == QA_QVM_GAME_IMPORT_G_TRACE || call->code == QA_QVM_GAME_IMPORT_G_TRACECAPSULE)
-    qa_range_error("QVM trace requires destination scene services");
-  if (call->code == QA_QVM_GAME_IMPORT_G_POINT_CONTENTS)
-    qa_range_error("QVM point contents requires destination scene services");
+  if (call->code == QA_QVM_GAME_IMPORT_G_TRACE || call->code == QA_QVM_GAME_IMPORT_G_TRACECAPSULE) {
+    const qa_session_mod_engine_scene *scene = engine_scene(p);
+    if (scene == NULL) qa_range_error("QVM trace requires destination scene services");
+    qa_vec3 zero = {0, 0, 0};
+    int32_t mins = qa_qvm_host_call_word(call, 3), maxs = qa_qvm_host_call_word(call, 4);
+    qa_trace_query query;
+    memset(&query, 0, sizeof query);
+    query.start = guest_vector(call, qa_qvm_host_call_word(call, 2));
+    query.end = guest_vector(call, qa_qvm_host_call_word(call, 5));
+    query.shape.kind = call->code == QA_QVM_GAME_IMPORT_G_TRACECAPSULE ? "capsule" : "box";
+    query.shape.bounds.min = mins == 0 ? zero : guest_vector(call, mins);
+    query.shape.bounds.max = maxs == 0 ? zero : guest_vector(call, maxs);
+    qa_actor_id pass;
+    query.pass_actor = actor_at(p, qa_qvm_host_call_word(call, 6), &pass) ? &pass : NULL;
+    query.numeric = qa_q3_binary32_profile;
+    query.policy.kind = "q3";
+    query.policy.contents_mask = qa_qvm_host_call_word(call, 7);
+    query.policy.curves = true;
+    query.policy.player_curve_clip = true;
+    qa_trace_result result = scene->queries.trace(scene->queries.ctx, query);
+    if (!text_eq(result.kind, "q3")) qa_range_error("QVM trace lost its source collision policy");
+    qa_qvm_trace_record record;
+    memset(&record, 0, sizeof record);
+    record.result.all_solid = result.all_solid;
+    record.result.start_solid = result.start_solid;
+    record.result.fraction = result.fraction;
+    record.result.end = result.end;
+    record.result.plane.plane = result.source_plane.plane;
+    record.result.plane.type = result.source_plane.type;
+    record.result.plane.signbits = result.source_plane.signbits;
+    record.result.surface_flags = result.surface_flags;
+    record.result.contents = result.contents;
+    record.entity_num = result.hit.kind == QA_TRACE_HIT_ACTOR ? (int32_t)entity_slot(p, result.hit.actor)
+                        : result.fraction == 1 ? 1023 : 1022;
+    qa_qvm_writable_view view;
+    qa_qvm_memory_data_view(call->guest, qa_qvm_host_call_word(call, 1), QA_QVM_TRACE_BYTES, &view);
+    qa_qvm_write_trace_view(&view, &record);
+    *out = 0;
+    return true;
+  }
+  if (call->code == QA_QVM_GAME_IMPORT_G_POINT_CONTENTS) {
+    const qa_session_mod_engine_scene *scene = engine_scene(p);
+    if (scene == NULL) qa_range_error("QVM point contents requires destination scene services");
+    qa_point_contents_query query;
+    memset(&query, 0, sizeof query);
+    query.point = guest_vector(call, qa_qvm_host_call_word(call, 1));
+    qa_actor_id pass;
+    query.pass_actor = actor_at(p, qa_qvm_host_call_word(call, 2), &pass) ? &pass : NULL;
+    query.numeric = qa_q3_binary32_profile;
+    query.policy.kind = "q3";
+    query.policy.contents_mask = -1;
+    query.policy.curves = true;
+    query.policy.player_curve_clip = true;
+    qa_point_contents_result result = scene->queries.point_contents(scene->queries.ctx, query);
+    if (!text_eq(result.kind, "q3")) qa_range_error("QVM contents lost its source policy");
+    *out = qa_int32(result.contents);
+    return true;
+  }
   return false;
 }
 static void command_port_of(P *p) {
@@ -2731,6 +3097,20 @@ static void client_drop(void *ctx, double slot, const char *reason) {
   P *p = ((SyscallCtx *)ctx)->provider;
   if (p->has_client_bindings) qa_qvm_mod_client_bindings_drop_client(&p->client_bindings, (int64_t)slot, reason);
 }
+/* TS pureQueries: traps that read engine state without changing it. */
+static bool pure_query(int32_t code) {
+  switch (code) {
+    case QA_QVM_GAME_IMPORT_G_TRACE: case QA_QVM_GAME_IMPORT_G_TRACECAPSULE: case QA_QVM_GAME_IMPORT_G_POINT_CONTENTS:
+    case QA_QVM_GAME_IMPORT_G_ENTITIES_IN_BOX: case QA_QVM_GAME_IMPORT_G_ENTITY_CONTACT:
+    case QA_QVM_GAME_IMPORT_G_ENTITY_CONTACTCAPSULE: case QA_QVM_GAME_IMPORT_G_MILLISECONDS: case QA_QVM_GAME_IMPORT_G_IN_PVS:
+    case QA_QVM_GAME_IMPORT_G_IN_PVS_IGNORE_PORTALS: case QA_QVM_GAME_IMPORT_G_AREAS_CONNECTED:
+    case QA_QVM_GAME_IMPORT_G_CVAR_VARIABLE_INTEGER_VALUE:
+      return true;
+    default:
+      return false;
+  }
+}
+
 static qa_qvm_host_result provider_syscall(void *ctx, const qa_qvm_host_call *call) {
   P *p = ctx;
   current(p);
@@ -2774,6 +3154,11 @@ static qa_qvm_host_result provider_syscall(void *ctx, const qa_qvm_host_call *ca
   if (!handled) handled = engine_syscall(p, call, &result);
   if (!handled) handled = spatial_syscall(p, call, &result);
   if (!handled) qa_qvm_reject_syscall(call);
+  /* Pure queries leave engine state as the preceding flush and refresh left it, so projected fields cannot have changed. */
+  if (strcmp(call->kind, "engine") == 0 && strcmp(call->role, "qagame") == 0 && pure_query(call->code)) {
+    current(p);
+    return result;
+  }
   current(p);
   refresh(p);
   return result;
@@ -2883,7 +3268,7 @@ void qa_qvm_mod_provider_initialize(qa_qvm_mod_provider *p) {
     int64_t *stores = xrealloc(NULL, store_count * sizeof *stores);
     qa_qvm_actor_store *out = xrealloc(NULL, store_count * sizeof *out);
     for (size_t i = 0; i < store_count; i++)
-      stores[i] = (int64_t)p->declaration->source_actors->initial_stores.values[i];
+      stores[i] = store_pc(p->declaration->source_actors->initial_stores.values[i]);
     qa_qvm_actor_bootstrap(stores, store_count, p->artifact->image.instructions,
                            p->artifact->image.instruction_count,
                            (int64_t)p->artifact->image.initialized_length, p->artifact->image.data_length,
@@ -3081,12 +3466,14 @@ void qa_qvm_mod_provider_advance(qa_qvm_mod_provider *p, qa_frame_context frame)
     qa_qvm_mod_client_bindings_frame(&p->client_bindings, frame_invoke_actor, &ctx);
   if (!p->closed) publish(p);
 }
-const qa_session_simulation_presentation *qa_qvm_mod_provider_presentations(
+const qa_app_simulation_presentation *qa_qvm_mod_provider_presentations(
     qa_qvm_mod_provider *p, size_t *out_count) {
-  if (p->projection_count > p->presentations_scratch_capacity) {
-    p->presentations_scratch =
-        xrealloc(p->presentations_scratch, p->projection_count * sizeof *p->presentations_scratch);
-    p->presentations_scratch_capacity = p->projection_count;
+  if (p->projection_count > p->presentation_payload_capacity) {
+    p->presentation_payloads =
+        xrealloc(p->presentation_payloads, p->projection_count * sizeof *p->presentation_payloads);
+    p->presentation_paths =
+        xrealloc(p->presentation_paths, p->projection_count * sizeof *p->presentation_paths);
+    p->presentation_payload_capacity = p->projection_count;
   }
   size_t count = 0;
   for (size_t i = 0; i < p->projection_count; i++) {
@@ -3111,15 +3498,34 @@ const qa_session_simulation_presentation *qa_qvm_mod_provider_presentations(
         (qa_qvm_shared_entity_get_sv_flags(&entity) & 1) != 0 || fields.modelindex == 0 ||
         path == NULL || path[0] == '\0')
       continue;
-    /* The landed presentation shape carries only actor/viewWeapon;
-     * path/frame/origin/etc. stay unresolved (header note). */
-    p->presentations_scratch[count].actor = actor;
-    p->presentations_scratch[count].view_weapon = false;
-    p->presentations_scratch[count].opaque = NULL;
+    qa_app_simulation_presentation *payload = &p->presentation_payloads[count];
+    qa_bounds ignored_bounds;
+    qa_content_id inline_content = p->content;
+    const char *inline_family = "q3";
+    if (text_eq(model.kind, "inline"))
+      (void)inline_model_of(p, model.index, &ignored_bounds, &inline_content, &inline_family);
+    memset(payload, 0, sizeof *payload);
+    payload->actor = actor;
+    payload->content = inline_content;
+    payload->family = text_eq(inline_family, "q1") ? QA_GAME_FAMILY_Q1
+                      : text_eq(inline_family, "q2") ? QA_GAME_FAMILY_Q2 : QA_GAME_FAMILY_Q3;
+    /* inline_path is per-iteration stack text: keep it in payload storage. */
+    if (path == inline_path) {
+      snprintf(p->presentation_paths[count], sizeof p->presentation_paths[count], "%s", inline_path);
+      path = p->presentation_paths[count];
+    }
+    payload->path = path;
+    payload->frame = fields.frame;
+    payload->old_frame = fields.frame;
+    if (text_eq(presentation_runtime(p->declaration), "qvm-scene")) payload->render_owner = "source-client";
+    payload->origin = qa_qvm_shared_entity_get_current_origin(&entity);
+    payload->angles = qa_qvm_shared_entity_get_current_angles(&entity);
+    payload->scale = 1;
+    payload->visible = true;
     count++;
   }
   *out_count = count;
-  return p->presentations_scratch;
+  return p->presentation_payloads;
 }
 
 /* ---- subsystem adapters ---- */
@@ -3174,7 +3580,9 @@ static void objectives_write_scalar(void *ctx, const void *storage_opaque, doubl
   P *p = ctx;
   const qa_qvm_mod_objective_scalar *storage = storage_opaque;
   qa_qvm_mod_objective_address address = objective_scalar_address(storage);
-  write_word(p, objective_address_of(p, &address), scalar_of(value, storage->encoding));
+  int64_t address2 = objective_address_of(p, &address);
+  int32_t value2 = scalar_of(value, storage->encoding);
+  write_word(p, address2, value2);
 }
 static bool objectives_read_actor(void *ctx, const void *storage_opaque, qa_actor_id *out) {
   P *p = ctx;
@@ -3258,7 +3666,9 @@ static bool input_live(void *ctx, qa_actor_id actor) {
 static void input_player_state(void *ctx, qa_actor_id actor, qa_q3_player_state *out) {
   P *p = ctx;
   qa_qvm_writable_view view;
-  view_of(p, player_address(p, actor), qa_qvm_player_state_bytes(p->declaration->abi_profile), &view);
+  int64_t address = player_address(p, actor);
+  int64_t size = qa_qvm_player_state_bytes(p->declaration->abi_profile);
+  view_of(p, address, size, &view);
   qa_qvm_read_player_state(&view, p->declaration->abi_profile, out);
 }
 
@@ -3380,8 +3790,12 @@ static void clients_send(void *ctx, const char *text, const qa_actor_id *recipie
   if (p->services->engine == NULL)
     qa_range_error("QVM server command requires destination presentation");
   scene_command_push(p, text, recipient);
-  /* Destination event emission is unresolved (opaque events). */
-  emit_source_event(p);
+  qa_app_q3_source_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_APP_Q3_EVENT_SERVER_COMMAND;
+  event.client = -1;
+  event.text = text;
+  emit_with(p, &event, true, recipient);
 }
 
 static void protection_current(void *ctx) { current(ctx); }
@@ -3396,9 +3810,10 @@ static int64_t protection_pointer(void *ctx, qa_actor_id actor, const char *reco
     qa_range_error("QVM protection source projection is unavailable");
   return pointer_for(p, &actor, record);
 }
-static int32_t protection_invoke(void *ctx, const qa_qvm_mod_source_call *call,
-                                 const qa_qvm_protection_input *inputs, size_t input_count) {
-  return invoke_adapter(ctx, call, (const qa_qvm_mod_provider_input *)inputs, input_count);
+static double protection_invoke(void *ctx, const qa_qvm_mod_source_call *call,
+                                const qa_qvm_protection_input *inputs, size_t input_count) {
+  /* TS returns the decoded float32 savings unchanged (no truncation). */
+  return qa_qvm_mod_provider_invoke(ctx, call, (const qa_qvm_mod_provider_input *)inputs, input_count);
 }
 static size_t protection_pickups(void *ctx, qa_actor_id actor, qa_protection_channel channel,
                                  const qa_original_pickup_rule **out, size_t capacity) {
@@ -3443,9 +3858,10 @@ static qa_original_pickup_decision pickups_observe(
       p->protection_channels[0], actor, observer, pickup_observe_execute, &observe);
   return (qa_original_pickup_decision)result.saved;
 }
-static int32_t pickups_invoke(void *ctx, const qa_qvm_mod_source_call *call,
-                              const qa_qvm_pickup_input *inputs, size_t input_count) {
-  return invoke_adapter(ctx, call, (const qa_qvm_mod_provider_input *)inputs, input_count);
+static double pickups_invoke(void *ctx, const qa_qvm_mod_source_call *call,
+                             const qa_qvm_pickup_input *inputs, size_t input_count) {
+  /* TS compares the decoded float32 decision with 0: 0.5 is nonzero. */
+  return qa_qvm_mod_provider_invoke(ctx, call, (const qa_qvm_mod_provider_input *)inputs, input_count);
 }
 
 static bool items_pickup(void *ctx, qa_original_pickup_execution *out) {
@@ -3513,8 +3929,11 @@ static double events_time(void *ctx) {
   return trunc(seconds_of(((P *)ctx)->services) * 1000);
 }
 static void events_emit(void *ctx, const qa_app_q3_source_player_event *event) {
-  (void)event;
-  emit_source_event(ctx);
+  qa_app_q3_source_event source;
+  memset(&source, 0, sizeof source);
+  source.kind = QA_APP_Q3_EVENT_PLAYER;
+  source.player = *event;
+  emit_source_event(ctx, &source);
 }
 
 static bool actor_frame_owned(void *ctx, int32_t pointer) {
@@ -3583,8 +4002,8 @@ static qa_save_value *mount_value(const qa_mount_identity *identity, bool archiv
   }
   return value;
 }
-/* Inverse of persistence/recipe.ts qa_read_resource (no landed
- * writer exists; formats mirrored from the reader). */
+/* TS resource checkpoint form: the inverse of persistence/recipe.ts
+ * qa_read_resource. */
 static qa_save_value *resource_value(const qa_resolved_resource_reference *resource) {
   qa_save_value *value = save_object();
   save_set(value, "id", qa_save_value_string(resource->id));
@@ -3631,8 +4050,12 @@ static qa_save_value *resource_value(const qa_resolved_resource_reference *resou
 }
 static qa_save_value *files_value(P *p) {
   if (p->files == NULL) return qa_save_value_null();
+  return qa_qvm_files_checkpoint_value(p->files);
+}
+/* TS QvmFiles.captureCheckpoint() as its saved value. */
+qa_save_value *qa_qvm_files_checkpoint_value(qa_qvm_files *files) {
   qa_qvm_files_checkpoint checkpoint;
-  if (!qa_qvm_files_capture_checkpoint(p->files, &checkpoint))
+  if (!qa_qvm_files_capture_checkpoint(files, &checkpoint))
     qa_range_error("QVM memory allocation failed");
   qa_save_value *value = save_object();
   qa_save_value *handles = save_array();
@@ -3760,7 +4183,8 @@ static qa_qvm_host_checkpoint host_checkpoint(void *ctx) {
   save_set(root, "configstrings", configstrings);
   save_set(root, "cvars", qa_cvar_registry_capture_save_state(p->cvars));
   save_set(root, "files", files_value(p));
-  save_set(root, "portals", qa_save_value_null());
+  save_set(root, "portals", p->portals != NULL ? qa_app_q3_guest_world_capture_portal_checkpoint(p->portals)
+                                               : qa_save_value_null());
   save_set(root, "entityTokens", qa_qvm_entity_tokens_capture(&p->entity_tokens));
   qa_save_value *presentation = save_object();
   save_set(presentation, "revision", qa_save_value_number((double)p->presentation_revision));
@@ -3842,8 +4266,10 @@ static void host_restore(void *ctx, const qa_qvm_host_checkpoint *state) {
   qa_qvm_entity_tokens_restore(&p->entity_tokens, field.value);
   qa_save_reader_destroy(&field);
   reader_field(&reader, "portals", &field);
-  if (!qa_save_reader_is_undefined(&field) && !qa_save_reader_is_null(&field))
-    qa_range_error("Saved QVM mod portals require destination topology");
+  if (!qa_save_reader_is_undefined(&field) && !qa_save_reader_is_null(&field)) {
+    if (p->portals == NULL) qa_range_error("Saved QVM mod portals require destination topology");
+    qa_app_q3_guest_world_restore_portal_checkpoint(p->portals, field.value);
+  }
   qa_save_reader_destroy(&field);
   qa_qvm_files *files = p->mounts == NULL ? NULL : new_files(p);
   if (p->mounts != NULL && files == NULL) qa_range_error("QVM memory allocation failed");
@@ -3888,6 +4314,7 @@ static void host_restore(void *ctx, const qa_qvm_host_checkpoint *state) {
     qa_save_reader_destroy(&entry);
   }
   qa_save_reader_destroy(&field);
+  physics_unbind_all(p);
   if (p->has_actor_semantics) qa_qvm_mod_actors_clear_actors(&p->actor_semantics);
   p->owned_count = 0;
   p->projection_count = 0;
@@ -4245,6 +4672,7 @@ static void on_actor_release(void *ctx, qa_owned_actor actor) {
   int64_t slot;
   bool has_slot = projection_slot(p, id, &slot);
   bool owned = owned_has(p, id);
+  physics_unbind(p, id);
   owned_delete(p, id);
   event_key_delete(p, id);
   if (p->has_client_bindings) qa_qvm_mod_client_bindings_forget(&p->client_bindings, id);
@@ -4265,7 +4693,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
                               qa_qvm_mod_provider_current_fn assert_current,
                               void *assert_current_ctx, qa_content_id content,
                               qa_content_mounted *mounts, qa_user_file_store *writable,
-                              qa_qvmy_interpreter_runtime *interpreter,
+                              qa_qvm_interpreter_runtime *interpreter,
                               const qa_guest_memory *guest_memory) {
   memset(p, 0, sizeof *p);
   p->artifact = artifact;
@@ -4316,6 +4744,13 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
   p->information.configstrings_ctx = p;
   p->information.configstring_get = information_get;
   p->information.configstring_set = information_set;
+  {
+    const qa_session_mod_engine_scene *scene = engine_scene(p);
+    if (scene != NULL && scene->shared != NULL) {
+      p->portals = qa_app_q3_guest_world_create(scene->shared);
+      if (p->portals == NULL) return false;
+    }
+  }
   if (mounts != NULL) {
     p->files = new_files(p);
     if (p->files == NULL) return false;
@@ -4374,13 +4809,13 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
                                  artifact->module.id, &operations);
     /* Runtimes borrow the operations pointer; keep an owned copy. */
     qa_qvm_mod_protection_operations *owned_operations =
-        xrealloc(NULL, sizeof *owned_operations);
+        own_table(p, xrealloc(NULL, sizeof *owned_operations));
     *owned_operations = operations;
     for (size_t i = 0; i < p->protection_count; i++)
       p->protection_channels[i]->operations = owned_operations;
   }
   {
-    qa_qvm_mod_pickup_operations *operations = xrealloc(NULL, sizeof *operations);
+    qa_qvm_mod_pickup_operations *operations = own_table(p, xrealloc(NULL, sizeof *operations));
     operations->ctx = p;
     operations->current = protection_current;
     operations->eligible = pickups_eligible;
@@ -4391,7 +4826,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
                             services, artifact->module.id, operations);
   }
   if (declaration->items != NULL) {
-    qa_qvm_mod_item_operations *operations = xrealloc(NULL, sizeof *operations);
+    qa_qvm_mod_item_operations *operations = own_table(p, xrealloc(NULL, sizeof *operations));
     operations->ctx = p;
     operations->pointer = items_pointer;
     operations->live = items_live;
@@ -4404,7 +4839,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
   }
   if ((declaration->source_actors != NULL && declaration->source_actors->callbacks != NULL) ||
       declaration->combat != NULL) {
-    qa_qvm_mod_actors_options *options = xrealloc(NULL, sizeof *options);
+    qa_qvm_mod_actors_options *options = own_table(p, xrealloc(NULL, sizeof *options));
     memset(options, 0, sizeof *options);
     options->module = &p->module;
     options->declaration = declaration;
@@ -4419,7 +4854,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
     p->has_actor_semantics = true;
   }
   {
-    qa_qvm_mod_input_operations *operations = xrealloc(NULL, sizeof *operations);
+    qa_qvm_mod_input_operations *operations = own_table(p, xrealloc(NULL, sizeof *operations));
     memset(operations, 0, sizeof *operations);
     operations->module = &p->module;
     operations->abi_profile = declaration->abi_profile;
@@ -4435,7 +4870,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
         if (text_eq(declaration->clients->input[i].phase, "before"))
           output_count += declaration->clients->input[i].output_count;
     qa_qvm_mod_input_output *outputs =
-        xrealloc(NULL, (output_count == 0 ? 1 : output_count) * sizeof *outputs);
+        own_table(p, xrealloc(NULL, (output_count == 0 ? 1 : output_count) * sizeof *outputs));
     size_t written = 0;
     if (declaration->clients != NULL)
       for (size_t i = 0; i < declaration->clients->input_count; i++) {
@@ -4447,7 +4882,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p, const qa_resolved_qvm_arti
     qa_qvm_mod_input_init(&p->input, operations, outputs, written);
   }
   if (declaration->clients != NULL && services->clients != NULL) {
-    qa_qvm_mod_client_operations *operations = xrealloc(NULL, sizeof *operations);
+    qa_qvm_mod_client_operations *operations = own_table(p, xrealloc(NULL, sizeof *operations));
     memset(operations, 0, sizeof *operations);
     operations->content = content;
     operations->services = services->clients;
@@ -4542,11 +4977,17 @@ void qa_qvm_mod_provider_destroy(qa_qvm_mod_provider *p) {
   free(p->reservations);
   free(p->pickup_bindings);
   free(p->bindings_scratch);
-  free(p->presentations_scratch);
+  free(p->presentation_payloads);
+  free(p->presentation_paths);
+  for (size_t i = 0; i < p->physics_count; i++) free(p->physics[i]);
+  free(p->physics);
+  if (p->portals != NULL) qa_app_q3_guest_world_destroy(p->portals);
   free(p->objective_location);
   free(p->configstring_scratch);
   free(p->host_state_bytes);
   free(p->client_scratch);
+  for (size_t i = 0; i < p->owned_table_count; i++) free(p->owned_tables[i]);
+  free(p->owned_tables);
   free(p->scene_view_clients);
   free(p->scene_view_entities);
   free(p->scene_view_commands);

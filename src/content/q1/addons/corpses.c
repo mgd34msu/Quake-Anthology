@@ -1,11 +1,14 @@
-/* Port of src/content/q1/addons/corpses.ts. GPL-2.0-or-later. */
+/* Port of src/content/q1/addons/corpses.ts (quakec_mg1/misc_corpses.qc and
+ * MG3 inhibition). GPL-2.0-or-later. */
 #include "qa/content/q1/addons/corpses.h"
 
 #include <stdio.h>
 #include <string.h>
 
+#include "qa/content/q1/base/map_entities.h"
 #include "qa/foundation/support.h"
 
+/* Final corpse-frame macros from the corresponding source model frame declarations. */
 static const struct { const char *model; double frame; } POSES[] = {
   {"progs/demon.mdl", 53}, {"progs/dog.mdl", 16}, {"progs/dog.mdl", 25}, {"progs/enforcer.mdl", 54}, {"progs/enforcer.mdl", 65}, {"progs/fish.mdl", 38},
   {"progs/hknight.mdl", 53}, {"progs/hknight.mdl", 62}, {"progs/knight.mdl", 85}, {"progs/knight.mdl", 96}, {"progs/ogre.mdl", 116}, {"progs/ogre.mdl", 126},
@@ -17,66 +20,63 @@ static const struct { const char *model; double frame; } POSES[] = {
 };
 #define POSE_COUNT (sizeof POSES / sizeof POSES[0])
 
-static void spawn_corpse(qa_q1ad_context *context, qa_q1ad_actor *entity) {
+static void spawn_corpse(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game;
+  qa_q1ad_context *context = ctx;
   if (context->program == QA_Q1AD_MG3 &&
-      (qa_q1ad_removed_outside_coop(context, entity, true) ||
-       qa_q1ad_removed_for_runes(context, entity))) return;
-  double style = qa_q1ad_actor_number(entity, "style");
-  if (style < 0 || style >= (double)POSE_COUNT || style != (double)(int64_t)style)
+      (qa_q1ad_removed_outside_coop(context, entity, true) || qa_q1ad_removed_for_runes(context, entity))) return;
+  /* poses[entity.number("style")]: only an integer index in range names a pose. */
+  double style = qa_q1_actor_number(entity, "style");
+  if (!(style >= 0 && style < (double)POSE_COUNT && style == (double)(size_t)style))
     qa_range_error("misc_corpse with invalid style");
-  entity->model = POSES[(size_t)style].model;
+  qa_q1ad_set_text(&entity->model, POSES[(size_t)style].model);
   entity->frame = POSES[(size_t)style].frame;
   entity->solid = "none";
   entity->movement = "none";
 }
 
-static const struct { const char *classname, *sound; double volume; } AMBIENT[] = {
-  {"ambient_suck_wind", "suck1", 1}, {"ambient_drone", "drone6", 0.5},
-  {"ambient_flouro_buzz", "buzz1", 1}, {"ambient_drip", "drip1", 0.5},
-  {"ambient_comp_hum", "comp1", 1}, {"ambient_thunder", "thunder1", 0.5},
-  {"ambient_light_buzz", "fl_hum1", 0.5}, {"ambient_swamp1", "swamp1", 0.5},
-  {"ambient_swamp2", "swamp2", 0.5},
-};
-static void ambient_spawn(qa_q1ad_context *context, qa_q1ad_actor *entity, const char *sound, double volume) {
-  char path[64];
-  (void)snprintf(path, sizeof path, "ambience/%s.wav", sound);
-  const char *cached = context->game.precache_sound != NULL
-      ? context->game.precache_sound(context->game.ctx, path) : path;
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
-  qa_q1ad_host_event event = {.kind = "ambient", .origin = body.origin, .path = cached,
-                              .volume = volume, .attenuation = 3};
-  qa_q1ad_host_emit(context, &event);
-  if (context->game.make_static != NULL) context->game.make_static(context->game.ctx, entity);
-}
-#define AMBIENT_SPAWN(i) \
-  static void spawn_ambient_##i(qa_q1ad_context *c, qa_q1ad_actor *e) { \
-    ambient_spawn(c, e, AMBIENT[i].sound, AMBIENT[i].volume); }
-AMBIENT_SPAWN(0) AMBIENT_SPAWN(1) AMBIENT_SPAWN(2) AMBIENT_SPAWN(3) AMBIENT_SPAWN(4)
-AMBIENT_SPAWN(5) AMBIENT_SPAWN(6) AMBIENT_SPAWN(7) AMBIENT_SPAWN(8)
-#undef AMBIENT_SPAWN
-static const qa_q1ad_spawn_fn AMBIENT_FNS[] = {
-  spawn_ambient_0, spawn_ambient_1, spawn_ambient_2, spawn_ambient_3, spawn_ambient_4,
-  spawn_ambient_5, spawn_ambient_6, spawn_ambient_7, spawn_ambient_8,
+typedef struct ambient_sound { const char *classname, *sound; double volume; } ambient_sound;
+static const ambient_sound AMBIENT[] = {
+  {"ambient_suck_wind", "suck1", 1}, {"ambient_drone", "drone6", 0.5}, {"ambient_flouro_buzz", "buzz1", 1},
+  {"ambient_drip", "drip1", 0.5}, {"ambient_comp_hum", "comp1", 1}, {"ambient_thunder", "thunder1", 0.5},
+  {"ambient_light_buzz", "fl_hum1", 0.5}, {"ambient_swamp1", "swamp1", 0.5}, {"ambient_swamp2", "swamp2", 0.5},
 };
 
-static void spawn_ambient_generic(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  const char *path = qa_q1ad_actor_text(entity, "noise");
-  if (path[0] == '\0') { qa_q1ad_remove(context, entity); return; }
-  if (context->game.precache_sound != NULL) (void)context->game.precache_sound(context->game.ctx, path);
-  qa_q1ad_body body = qa_q1ad_body_of(context, entity);
-  double volume = qa_q1ad_actor_number(entity, "volume");
-  qa_q1ad_host_event event = {.kind = "ambient", .origin = body.origin, .path = path,
-      .volume = volume != 0 ? volume : 0.5, .attenuation = entity->delay != 0 ? entity->delay : 3};
-  qa_q1ad_host_emit(context, &event);
-  if (context->game.make_static != NULL) context->game.make_static(context->game.ctx, entity);
+static void emit_ambient(qa_q1_services *game, qa_q1_actor *entity, const char *path, double volume, double attenuation) {
+  qa_q1_event event = {.kind = "ambient", .has_origin = true, .origin = qa_q1_get_body(game, entity).origin,
+                       .path = path, .volume = volume, .attenuation = attenuation};
+  qa_q1_emit(game, event);
+}
+
+/* ctx: the captured ambient row (TS closure over [classname, sound, volume]). */
+static void spawn_ambient(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const ambient_sound *row = ctx;
+  char wav[64];
+  (void)snprintf(wav, sizeof wav, "ambience/%s.wav", row->sound);
+  const char *path = qa_q1_services_precache_sound(game, wav);
+  emit_ambient(game, entity, path, row->volume, 3);
+  qa_q1_make_static(game, entity);
+}
+
+static void spawn_ambient_generic(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  const char *path = qa_q1_actor_text(entity, "noise");
+  if (path[0] == '\0') { qa_q1_remove(game, entity); return; }
+  (void)qa_q1_services_precache_sound(game, path);
+  double volume = qa_q1_actor_number(entity, "volume");
+  emit_ambient(game, entity, path, volume != 0 ? volume : 0.5, entity->delay == 0 || entity->delay != entity->delay ? 3 : entity->delay);
+  qa_q1_make_static(game, entity);
 }
 
 void qa_q1ad_register_corpses(qa_q1ad_context *context) {
-  qa_q1ad_register_spawn(context, "misc_corpse", false, spawn_corpse);
+  qa_q1_services *game = context->game;
+  qa_q1_register_spawn(game, "misc_corpse", spawn_corpse, context);
   for (size_t i = 0; i < sizeof AMBIENT / sizeof AMBIENT[0]; i++) {
-    bool plain = strcmp(AMBIENT[i].classname, "ambient_drone") == 0 ||
-                 strcmp(AMBIENT[i].classname, "ambient_comp_hum") == 0;
-    qa_q1ad_register_spawn(context, AMBIENT[i].classname, !plain, AMBIENT_FNS[i]);
+    void *row = (void *)&AMBIENT[i];
+    if (strcmp(AMBIENT[i].classname, "ambient_drone") == 0 || strcmp(AMBIENT[i].classname, "ambient_comp_hum") == 0)
+      qa_q1_register_spawn(game, AMBIENT[i].classname, spawn_ambient, row);
+    else
+      qa_q1_replace_spawn(game, AMBIENT[i].classname, spawn_ambient, row);
   }
-  qa_q1ad_register_spawn(context, "ambient_generic", false, spawn_ambient_generic);
+  qa_q1_register_spawn(game, "ambient_generic", spawn_ambient_generic, context);
 }

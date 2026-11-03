@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static double fr(double value) { return (float)value; }
 static qa_vec3 v3(double x, double y, double z) {
@@ -28,7 +29,8 @@ static void set_string(char **slot, const char *value) {
   free(*slot);
   *slot = copy;
 }
-static long flags_of(const qa_q1_actor *entity) { return (long)entity->spawnflags; }
+/* TS `spawnflags & x` applies ToInt32: the int32 view of the number. */
+static int32_t flags_of(const qa_q1_actor *entity) { return qa_js_to_int32(entity->spawnflags); }
 static void set_activator(qa_q1_actor *entity, const qa_actor_id *activator) {
   entity->has_activator = activator != NULL;
   if (activator) entity->activator = *activator;
@@ -48,6 +50,27 @@ static qa_q1_bound_action named_action(qa_q1_services *game, qa_q1_actor *entity
   return qa_q1_callback_registry_action(game->named, entity, name);
 }
 
+/* MG1 and MG3 let a door, key or button override the map's worldtype (SUB_SetWorldtype). */
+static double entity_world_type(qa_q1_services *game, const qa_q1_actor *entity) {
+  const double authored = game->source_door_keys ? qa_q1_actor_number(entity, "worldtype") : 0;
+  return authored > 0 && authored <= 3 ? authored - 1 : game->world_type;
+}
+enum { DOOR_CRUSHER = 64, DOOR_NONSOLID = 4096 };
+/* MG1 and MG3 doors and buttons take a map-authored `movedir` vector as the
+ * whole travel instead of deriving one from angles; false = TS null. */
+static bool authored_move_direction(qa_q1_services *game, const qa_q1_actor *entity, qa_vec3 *out) {
+  if (!game->source_door_keys || qa_q1_actor_field_get(entity, "movedir") == NULL) return false;
+  const qa_vec3 direction = qa_q1_actor_vector(entity, "movedir");
+  if (direction.x == 0 && direction.y == 0 && direction.z == 0) return false;
+  *out = direction;
+  return true;
+}
+/* TS lockKey: gold (8), silver (16), or NULL. */
+static const char *lock_key(const qa_q1_actor *entity) {
+  return (qa_js_to_int32(entity->spawnflags) & 8) != 0    ? "q1:key/gold"
+         : (qa_js_to_int32(entity->spawnflags) & 16) != 0 ? "q1:key/silver" : NULL;
+}
+
 static const char *door_sound(const qa_q1_actor *entity, bool moving) {
   if (entity->sounds == 1) return moving ? "doors/doormv1.wav" : "doors/drclos4.wav";
   if (entity->sounds == 2) return moving ? "doors/hydro1.wav" : "doors/hydro2.wav";
@@ -60,18 +83,25 @@ void qa_q1_door_down(qa_q1_services *game, qa_q1_actor *entity) {
   qa_q1_sound_defaults(game, entity->actor.id, door_sound(entity, true));
   entity->state = "down";
   if (entity->max_health > 0) {
-    qa_q1_set_health(game, entity->actor, entity->max_health);
-    entity->damageable = true;
+    qa_gameplay_authority_set_health(game->host.combat, entity->actor, entity->max_health);
+    qa_q1_actor_set_damageable(entity, true);
   }
-  qa_q1_calc_move(game, entity, entity->pos1, entity->speed, named_action(game, entity, "door_hit_bottom"));
+  double closing = entity->speed;
+  if (game->source_door_keys) {
+    const double speed2 = qa_q1_actor_number(entity, "speed2");
+    closing = speed2 != 0 ? speed2 : entity->speed;
+  }
+  qa_q1_calc_move(game, entity, entity->pos1, closing, named_action(game, entity, "door_hit_bottom"));
 }
 
 void qa_q1_door_up(qa_q1_services *game, qa_q1_actor *entity) {
   if (entity->state != NULL && !strcmp(entity->state, "up")) return;
   if (entity->state != NULL && !strcmp(entity->state, "top")) {
+    double due_seconds;
+    qa_q1_bound_action callback;
     if (entity->wait >= 0 && (flags_of(entity) & 32) == 0)
-      qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + entity->wait),
-                        named_action(game, entity, "door_go_down"));
+      (due_seconds = fr(qa_q1_actor_number(entity, "ltime") + entity->wait), callback = named_action(game, entity, "door_go_down"), qa_q1_schedule_at(game, entity, due_seconds,
+                        callback));
     return;
   }
   qa_q1_sound_defaults(game, entity->actor.id, door_sound(entity, true));
@@ -80,8 +110,25 @@ void qa_q1_door_up(qa_q1_services *game, qa_q1_actor *entity) {
   qa_q1_use_targets(game, entity, activator_of(entity));
 }
 
+static void key_message(qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const char *key) {
+  const double world_type = entity_world_type(game, entity);
+  char need[64];
+  (void)snprintf(need, sizeof need, "$qc_need_%s_%s", !strcmp(key, "q1:key/gold") ? "gold" : "silver",
+                 world_type == 2 ? "keycard" : world_type == 1 ? "runekey" : "key");
+  qa_q1_message(game, &other, need, true, NULL, 0);
+  qa_q1_sound_defaults(game, entity->actor.id,
+                       world_type == 2 ? "doors/basetry.wav" : world_type == 1 ? "doors/runetry.wav" : "doors/medtry.wav");
+}
+static void key_use_sound(qa_q1_services *game, qa_q1_actor *entity) {
+  const double world_type = entity_world_type(game, entity);
+  qa_q1_sound(game, entity->actor.id,
+              world_type == 2 ? "doors/baseuse.wav" : world_type == 1 ? "doors/runeuse.wav" : "doors/meduse.wav",
+              "item", 1, 1);
+}
+
 static void door_use(qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *activator) {
   qa_q1_actor *master = entity->door_group_count ? entity->door_group[0] : entity;
+  if (lock_key(master) != NULL) key_use_sound(game, master);
   const bool down = (flags_of(master) & 32) != 0 && master->state != NULL &&
                     (!strcmp(master->state, "up") || !strcmp(master->state, "top"));
   if (master->door_group_count == 0) {
@@ -102,8 +149,9 @@ void qa_q1_spawn_door(qa_q1_services *game, qa_q1_actor *entity) {
   static const char *const KEY_SOUNDS[3][2] = {{"doors/medtry.wav", "doors/meduse.wav"},
                                                {"doors/runetry.wav", "doors/runeuse.wav"},
                                                {"doors/basetry.wav", "doors/baseuse.wav"}};
-  if (game->world_type == 0 || game->world_type == 1 || game->world_type == 2)
-    for (size_t i = 0; i < 2; i++) precache_sound(game, KEY_SOUNDS[(size_t)game->world_type][i]);
+  const double world_type = entity_world_type(game, entity);
+  if (world_type == 0 || world_type == 1 || world_type == 2)
+    for (size_t i = 0; i < 2; i++) precache_sound(game, KEY_SOUNDS[(size_t)world_type][i]);
   static const char *const SOUNDS[5][2] = {
       {"misc/null.wav", "misc/null.wav"}, {"doors/drclos4.wav", "doors/doormv1.wav"},
       {"doors/hydro1.wav", "doors/hydro2.wav"}, {"doors/stndr1.wav", "doors/stndr2.wav"},
@@ -111,9 +159,11 @@ void qa_q1_spawn_door(qa_q1_services *game, qa_q1_actor *entity) {
   if (entity->sounds >= 0 && entity->sounds <= 4 && entity->sounds == floor(entity->sounds))
     for (size_t i = 0; i < 2; i++) precache_sound(game, SOUNDS[(size_t)entity->sounds][i]);
   const qa_q1_body body = qa_q1_get_body(game, entity);
-  entity->movedir = qa_q1_move_direction(body.angles, game);
+  qa_vec3 authored;
+  const bool has_authored = authored_move_direction(game, entity, &authored);
+  entity->movedir = has_authored ? authored : qa_q1_move_direction(body.angles, game);
   set_angles_zero(game, entity);
-  entity->solid = "bsp";
+  entity->solid = game->source_door_keys && (flags_of(entity) & DOOR_NONSOLID) != 0 ? "none" : "bsp";
   entity->movement = "push";
   if (!entity->speed) entity->speed = 100;
   if (!entity->wait) entity->wait = 3;
@@ -124,8 +174,10 @@ void qa_q1_spawn_door(qa_q1_services *game, qa_q1_actor *entity) {
   const qa_vec3 absolute = v3(fabs(entity->movedir.x), fabs(entity->movedir.y), fabs(entity->movedir.z));
   const bool rerelease = game->options.edition != NULL && !strcmp(game->options.edition, "rerelease");
   const double distance = rerelease ? qa_q1_dot(absolute, size) : fabs(qa_q1_dot(entity->movedir, size));
-  entity->pos2 = qa_q1_vadd(entity->pos1,
-                            qa_q1_vscale(entity->movedir, distance - (qa_q1_actor_number(entity, "lip") ? qa_q1_actor_number(entity, "lip") : 8)));
+  entity->pos2 = has_authored
+                     ? qa_q1_vadd(entity->pos1, authored)
+                     : qa_q1_vadd(entity->pos1,
+                                  qa_q1_vscale(entity->movedir, distance - (qa_q1_actor_number(entity, "lip") ? qa_q1_actor_number(entity, "lip") : 8)));
   if ((flags_of(entity) & 1) != 0) {
     const qa_vec3 closed = entity->pos1;
     entity->pos1 = entity->pos2;
@@ -135,7 +187,7 @@ void qa_q1_spawn_door(qa_q1_services *game, qa_q1_actor *entity) {
   entity->use = qa_q1_callback_registry_use(game->named, entity, "door_use");
   entity->blocked = qa_q1_callback_registry_blocked(game->named, entity, "door_blocked");
   if (entity->max_health > 0) {
-    entity->damageable = true;
+    qa_q1_actor_set_damageable(entity, true);
     entity->die = qa_q1_callback_registry_die(game->named, entity, "door_killed");
   }
   entity->touch = qa_q1_callback_registry_touch(game->named, entity, "door_touch");
@@ -146,8 +198,12 @@ void qa_q1_link_doors(qa_q1_services *game) {
     qa_q1_actor *master = game->entities[m];
     if (master == NULL || master->classname == NULL || strcmp(master->classname, "func_door") != 0) continue;
     if (master->door_group_count > 0) continue;
-    qa_q1_actor *group[64];
-    size_t group_count = 0;
+    /* TS builds an unbounded array; a fixed 64 dropped later doors. */
+    size_t group_count = 0, group_capacity = 8;
+    qa_q1_actor **group = malloc(group_capacity * sizeof *group);
+    if (group == NULL) qa_range_error("Out of memory");
+    qa_cleanup group_cleanup; /* "cross connected doors" raises */
+    qa_cleanup_push(&group_cleanup, free, group);
     group[group_count++] = master;
     qa_q1_body master_body = qa_q1_get_body(game, master);
     qa_vec3 min = master_body.bounds.min, max = master_body.bounds.max;
@@ -158,21 +214,30 @@ void qa_q1_link_doors(qa_q1_services *game) {
         if (candidate == NULL || candidate->classname == NULL ||
             strcmp(candidate->classname, "func_door") != 0)
           continue;
-        if (!qa_q1_overlaps(qa_q1_get_body(game, current).bounds, qa_q1_get_body(game, candidate).bounds))
+        qa_bounds a = qa_q1_get_body(game, current).bounds;
+        qa_bounds b = qa_q1_get_body(game, candidate).bounds;
+        if (!qa_q1_overlaps(a, b))
           continue;
         if (candidate->door_group_count != 0) qa_range_error("cross connected doors");
-        if (group_count < 64) group[group_count++] = candidate;
+        if (group_count == group_capacity) {
+          qa_q1_actor **grown = realloc(group, group_capacity * 2 * sizeof *group);
+          if (grown == NULL) qa_range_error("Out of memory");
+          group = grown;
+          group_cleanup.arg = group;
+          group_capacity *= 2;
+        }
+        group[group_count++] = candidate;
         current = candidate;
         const qa_bounds bounds = qa_q1_get_body(game, candidate).bounds;
-        min = v3(fmin(min.x, bounds.min.x), fmin(min.y, bounds.min.y), fmin(min.z, bounds.min.z));
-        max = v3(fmax(max.x, bounds.max.x), fmax(max.y, bounds.max.y), fmax(max.z, bounds.max.z));
+        min = v3(qa_js_min(min.x, bounds.min.x), qa_js_min(min.y, bounds.min.y), qa_js_min(min.z, bounds.min.z));
+        max = v3(qa_js_max(max.x, bounds.max.x), qa_js_max(max.y, bounds.max.y), qa_js_max(max.z, bounds.max.z));
         if (candidate->targetname != NULL && strcmp(candidate->targetname, "") != 0)
           set_string(&master->targetname, candidate->targetname);
         if (candidate->message != NULL && strcmp(candidate->message, "") != 0)
           set_string(&master->message, candidate->message);
         if (candidate->max_health != 0) {
           master->max_health = candidate->max_health;
-          qa_q1_set_health(game, master->actor, candidate->max_health);
+          qa_gameplay_authority_set_health(game->host.combat, master->actor, candidate->max_health);
         }
       }
     }
@@ -184,6 +249,8 @@ void qa_q1_link_doors(qa_q1_services *game) {
       group[i]->door_group = copy;
       group[i]->door_group_count = group_count;
     }
+    qa_cleanup_pop(&group_cleanup);
+    free(group);
     if ((flags_of(master) & (4 | 8 | 16)) != 0 || master->max_health > 0 ||
         (master->targetname != NULL && strcmp(master->targetname, "") != 0))
       continue;
@@ -216,16 +283,23 @@ void qa_q1_spawn_button(qa_q1_services *game, qa_q1_actor *entity) {
   entity->movement = "push";
   if (!entity->speed) entity->speed = 40;
   if (!entity->wait) entity->wait = 1;
-  entity->movedir = qa_q1_move_direction(body.angles, game);
+  qa_vec3 authored;
+  const bool has_authored = authored_move_direction(game, entity, &authored);
+  entity->movedir = has_authored ? authored : qa_q1_move_direction(body.angles, game);
   set_angles_zero(game, entity);
   entity->pos1 = body.origin;
-  entity->pos2 = qa_q1_vadd(body.origin,
-                            qa_q1_vscale(entity->movedir,
-                                         fabs(qa_q1_dot(entity->movedir, qa_q1_vsub(body.bounds.max, body.bounds.min))) -
-                                             (qa_q1_actor_number(entity, "lip") ? qa_q1_actor_number(entity, "lip") : 4)));
+  const qa_vec3 size = qa_q1_vsub(body.bounds.max, body.bounds.min);
+  const qa_vec3 absolute = v3(fabs(entity->movedir.x), fabs(entity->movedir.y), fabs(entity->movedir.z));
+  const bool rerelease = game->options.edition != NULL && !strcmp(game->options.edition, "rerelease");
+  const double distance = rerelease ? qa_q1_dot(absolute, size) : fabs(qa_q1_dot(entity->movedir, size));
+  entity->pos2 = has_authored
+                     ? qa_q1_vadd(body.origin, authored)
+                     : qa_q1_vadd(body.origin,
+                                  qa_q1_vscale(entity->movedir,
+                                               distance - (qa_q1_actor_number(entity, "lip") ? qa_q1_actor_number(entity, "lip") : 4)));
   entity->use = qa_q1_callback_registry_use(game->named, entity, "button_use");
   if (entity->max_health > 0) {
-    entity->damageable = true;
+    qa_q1_actor_set_damageable(entity, true);
     entity->die = qa_q1_callback_registry_die(game->named, entity, "button_killed");
   } else {
     entity->touch = qa_q1_callback_registry_touch(game->named, entity, "button_touch");
@@ -257,8 +331,8 @@ void qa_q1_spawn_secret_door(qa_q1_services *game, qa_q1_actor *entity) {
   if (!entity->damage) entity->damage = 2;
   entity->pos1 = body.origin;
   if (!entity->sounds) entity->sounds = 3;
-  entity->damageable = secret_shootable(entity);
-  qa_q1_set_health(game, entity->actor, 10000);
+  qa_q1_actor_set_damageable(entity, secret_shootable(entity));
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 10000);
   entity->use = qa_q1_callback_registry_use(game->named, entity, "fd_secret_use");
   entity->pain = qa_q1_callback_registry_pain(game->named, entity, "fd_secret_use");
   entity->die = qa_q1_callback_registry_die(game->named, entity, "fd_secret_use");
@@ -324,34 +398,35 @@ static void door_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_
   if (master->attack_finished > game->time) return;
   master->attack_finished = game->time + 2;
   qa_q1_message(game, &other, master->message ? master->message : "", true, NULL, 0);
-  const char *key = (flags_of(entity) & 8) != 0 ? "q1:key/gold"
-                    : (flags_of(entity) & 16) != 0 ? "q1:key/silver" : NULL;
+  if (master->message != NULL && master->message[0] != '\0') {
+    qa_owned_actor owner;
+    if (qa_session_actor_registry_resolve_owned(game->host.actors, other, &owner))
+      qa_q1_sound_defaults(game, owner.id, "misc/talk.wav");
+  }
+  const char *key = lock_key(entity);
   if (key == NULL) return;
   qa_q1_player_state *player = qa_q1_player(game, other);
   if (player == NULL) return;
-  if (!qa_q1_inventory_consume(game, player->actor, key, 1)) {
-    char need[64];
-    (void)snprintf(need, sizeof need, "$qc_need_%s_%s",
-                   !strcmp(key, "q1:key/gold") ? "gold" : "silver",
-                   game->world_type == 2 ? "keycard" : game->world_type == 1 ? "runekey" : "key");
-    qa_q1_message(game, &other, need, true, NULL, 0);
-    qa_q1_sound_defaults(game, entity->actor.id,
-                         game->world_type == 2 ? "doors/basetry.wav"
-                         : game->world_type == 1 ? "doors/runetry.wav" : "doors/medtry.wav");
+  if (!qa_shared_inventory_table_consume(game->host.inventory, player->actor, key, 1)) {
+    key_message(game, entity, other, key);
     return;
   }
-  for (size_t i = 0; i < master->door_group_count; i++)
-    memset(&master->door_group[i]->touch, 0, sizeof master->door_group[i]->touch);
-  qa_q1_sound(game, entity->actor.id,
-              game->world_type == 2 ? "doors/baseuse.wav"
-              : game->world_type == 1 ? "doors/runeuse.wav" : "doors/meduse.wav",
-              "item", 1, 1);
+  /* door_touch clears only this door and the next one in the link ring. */
+  memset(&entity->touch, 0, sizeof entity->touch);
+  if (master->door_group_count > 0) {
+    size_t index = master->door_group_count; /* TS indexOf -1 */
+    for (size_t i = 0; i < master->door_group_count; i++)
+      if (master->door_group[i] == entity) { index = i; break; }
+    /* (indexOf + 1) % length: -1 + 1 = 0 when absent. */
+    const size_t next = index == master->door_group_count ? 0 : (index + 1) % master->door_group_count;
+    memset(&master->door_group[next]->touch, 0, sizeof master->door_group[next]->touch);
+  }
   door_use(game, master, &other);
 }
 
 static void button_fire(qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *activator) {
-  if (entity->state != NULL && (!strcmp(entity->state, "up") || !strcmp(entity->state, "top"))) return;
   set_activator(entity, activator);
+  if (entity->state != NULL && (!strcmp(entity->state, "up") || !strcmp(entity->state, "top"))) return;
   entity->state = "up";
   const char *sound = button_sound(entity);
   qa_q1_sound_defaults(game, entity->actor.id, sound ? sound : "buttons/airbut1.wav");
@@ -365,11 +440,11 @@ static const char *secret_sound(const qa_q1_actor *entity, bool moving) {
 }
 
 static void secret_fire(qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *activator) {
-  qa_q1_set_health(game, entity->actor, 10000);
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 10000);
   if (entity->state == NULL || strcmp(entity->state, "bottom") != 0 || entity->has_move) return;
   set_string(&entity->message, "");
   qa_q1_use_targets(game, entity, activator);
-  entity->damageable = false;
+  qa_q1_actor_set_damageable(entity, false);
   entity->state = "up";
   const qa_q1_basis basis = qa_q1_make_vectors(game, entity->mangle);
   const qa_bounds bounds = qa_q1_get_body(game, entity).bounds;
@@ -425,12 +500,14 @@ static void door_hit_bottom(void *ctx, qa_q1_services *game, qa_q1_actor *entity
   qa_q1_sound_defaults(game, entity->actor.id, door_sound(entity, false));
 }
 static void door_hit_top(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  double due_seconds;
+  qa_q1_bound_action callback;
   (void)ctx;
   entity->state = "top";
   qa_q1_sound_defaults(game, entity->actor.id, door_sound(entity, false));
   if (entity->wait >= 0 && (flags_of(entity) & 32) == 0)
-    qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + entity->wait),
-                      named_action(game, entity, "door_go_down"));
+    (due_seconds = fr(qa_q1_actor_number(entity, "ltime") + entity->wait), callback = named_action(game, entity, "door_go_down"), qa_q1_schedule_at(game, entity, due_seconds,
+                      callback));
 }
 static void door_go_down(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
@@ -443,7 +520,8 @@ static void door_use_cb(void *ctx, qa_q1_services *game, qa_q1_actor *entity, co
 }
 static void door_blocked(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other) {
   (void)ctx;
-  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "crush");
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "crush", NULL);
+  if (game->source_door_keys && (flags_of(entity) & DOOR_CRUSHER) != 0) return;
   if (entity->wait >= 0) {
     if (entity->state != NULL && !strcmp(entity->state, "down")) qa_q1_door_up(game, entity);
     else qa_q1_door_down(game, entity);
@@ -452,8 +530,8 @@ static void door_blocked(void *ctx, qa_q1_services *game, qa_q1_actor *entity, q
 static void door_killed(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
   (void)ctx;
   qa_q1_actor *master = entity->door_group_count ? entity->door_group[0] : entity;
-  qa_q1_set_health(game, master->actor, master->max_health);
-  master->damageable = false;
+  qa_gameplay_authority_set_health(game->host.combat, master->actor, master->max_health);
+  qa_q1_actor_set_damageable(master, false);
   door_use(game, master, attacker);
 }
 static void door_trigger_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
@@ -473,20 +551,33 @@ static void button_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, con
 static void button_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
                          const qa_vec3 *normal, const qa_touch_surface *surface) {
   (void)ctx; (void)normal; (void)surface;
-  if (qa_q1_is_player(game, &other)) button_fire(game, entity, &other);
+  if (!qa_q1_is_player(game, &other)) return;
+  const char *key = game->source_door_keys ? lock_key(entity) : NULL;
+  if (key != NULL) {
+    qa_q1_player_state *player = qa_q1_player(game, other);
+    if (player == NULL) return;
+    if (!qa_shared_inventory_table_consume(game->host.inventory, player->actor, key, 1)) {
+      key_message(game, entity, other, key);
+      return;
+    }
+    key_use_sound(game, entity);
+  }
+  button_fire(game, entity, &other);
 }
 static void button_killed(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
   (void)ctx;
-  qa_q1_set_health(game, entity->actor, entity->max_health);
-  entity->damageable = false;
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, entity->max_health);
+  qa_q1_actor_set_damageable(entity, false);
   button_fire(game, entity, attacker);
 }
 static void button_wait(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  double due_seconds;
+  qa_q1_bound_action callback;
   (void)ctx;
   entity->state = "top";
   if (entity->wait >= 0)
-    qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + entity->wait),
-                      named_action(game, entity, "button_return"));
+    (due_seconds = fr(qa_q1_actor_number(entity, "ltime") + entity->wait), callback = named_action(game, entity, "button_return"), qa_q1_schedule_at(game, entity, due_seconds,
+                      callback));
   qa_q1_use_targets(game, entity, activator_of(entity));
   entity->frame = 1;
 }
@@ -494,7 +585,7 @@ static void button_return(void *ctx, qa_q1_services *game, qa_q1_actor *entity) 
   (void)ctx;
   entity->state = "down";
   entity->frame = 0;
-  if (entity->max_health > 0) entity->damageable = true;
+  if (entity->max_health > 0) qa_q1_actor_set_damageable(entity, true);
   qa_q1_calc_move(game, entity, entity->pos1, entity->speed, named_action(game, entity, "button_done"));
 }
 static void button_done(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
@@ -517,8 +608,9 @@ static void secret_die(void *ctx, qa_q1_services *game, qa_q1_actor *entity, con
 static void secret_move1(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   qa_q1_sound_defaults(game, entity->actor.id, secret_sound(entity, false));
-  qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 1),
-                    named_action(game, entity, "fd_secret_move2"));
+  double due_seconds = fr(qa_q1_actor_number(entity, "ltime") + 1);
+  qa_q1_bound_action callback = named_action(game, entity, "fd_secret_move2");
+  qa_q1_schedule_at(game, entity, due_seconds, callback);
 }
 static void secret_move2(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
@@ -526,12 +618,14 @@ static void secret_move2(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   qa_q1_calc_move(game, entity, entity->dest2, entity->speed, named_action(game, entity, "fd_secret_move3"));
 }
 static void secret_move3(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  double due_seconds;
+  qa_q1_bound_action callback;
   (void)ctx;
   entity->state = "top";
   qa_q1_sound_defaults(game, entity->actor.id, secret_sound(entity, false));
   if ((flags_of(entity) & 1) == 0)
-    qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + entity->wait),
-                      named_action(game, entity, "fd_secret_move4"));
+    (due_seconds = fr(qa_q1_actor_number(entity, "ltime") + entity->wait), callback = named_action(game, entity, "fd_secret_move4"), qa_q1_schedule_at(game, entity, due_seconds,
+                      callback));
 }
 static void secret_move4(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
@@ -542,8 +636,9 @@ static void secret_move4(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
 static void secret_move5(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   qa_q1_sound_defaults(game, entity->actor.id, secret_sound(entity, false));
-  qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 1),
-                    named_action(game, entity, "fd_secret_move6"));
+  double due_seconds = fr(qa_q1_actor_number(entity, "ltime") + 1);
+  qa_q1_bound_action callback = named_action(game, entity, "fd_secret_move6");
+  qa_q1_schedule_at(game, entity, due_seconds, callback);
 }
 static void secret_move6(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
@@ -553,15 +648,15 @@ static void secret_move6(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
 static void secret_done(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   entity->state = "bottom";
-  entity->damageable = secret_shootable(entity);
-  qa_q1_set_health(game, entity->actor, 10000);
+  qa_q1_actor_set_damageable(entity, secret_shootable(entity));
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 10000);
   qa_q1_sound_defaults(game, entity->actor.id, secret_sound(entity, false));
 }
 static void secret_blocked(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other) {
   (void)ctx;
   if (entity->attack_finished > game->time) return;
   entity->attack_finished = game->time + 0.5;
-  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "crush");
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "crush", NULL);
 }
 static void secret_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
                          const qa_vec3 *normal, const qa_touch_surface *surface) {
@@ -579,12 +674,13 @@ static void plat_hit_top(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   entity->state = "top";
   qa_q1_sound_defaults(game, entity->actor.id, plat_sound(entity, false));
-  qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 3),
-                    named_action(game, entity, "plat_go_down"));
+  double due_seconds = fr(qa_q1_actor_number(entity, "ltime") + 3);
+  qa_q1_bound_action callback = named_action(game, entity, "plat_go_down");
+  qa_q1_schedule_at(game, entity, due_seconds, callback);
 }
 static void plat_crush(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other) {
   (void)ctx;
-  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, 1, NULL, "direct", "crush");
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, 1, NULL, "direct", "crush", NULL);
   if (entity->state != NULL && !strcmp(entity->state, "up")) plat_down(NULL, game, entity);
   else plat_up(game, entity);
 }
@@ -604,8 +700,9 @@ static void plat_center_touch(void *ctx, qa_q1_services *game, qa_q1_actor *trig
   if (entity->state != NULL && !strcmp(entity->state, "bottom")) {
     plat_up(game, entity);
   } else if (entity->state != NULL && !strcmp(entity->state, "top")) {
-    qa_q1_schedule_at(game, entity, fr(qa_q1_actor_number(entity, "ltime") + 1),
-                      named_action(game, entity, "plat_go_down"));
+    double due_seconds = fr(qa_q1_actor_number(entity, "ltime") + 1);
+    qa_q1_bound_action callback = named_action(game, entity, "plat_go_down");
+    qa_q1_schedule_at(game, entity, due_seconds, callback);
   }
 }
 

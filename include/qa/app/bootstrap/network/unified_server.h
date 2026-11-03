@@ -2,8 +2,9 @@
  * (UnifiedServerNetwork). The authoritative host mirrors
  * UnifiedApplicationServerHost (simulation/network-unified owner
  * in TS; declared here since the landed header carries only the
- * presentation half). Per-packet TS try/catch drops map to
- * aborting decoders (documented at call sites). GPL-2.0-or-later. */
+ * presentation half). A fault raised while handling one peer's
+ * message (decode error, queue overflow, host failure) is caught
+ * and drops that peer, as the TS try/catch does. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_UNIFIED_SERVER_H
 #define QA_APP_BOOTSTRAP_NETWORK_UNIFIED_SERVER_H
 #include <stdbool.h>

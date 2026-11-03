@@ -1,0 +1,49 @@
+error qw-ipx QuakeWorld requires UDP
+error q3-ipv6 Native Q3 remote requires IPv4
+error q2-null-permission Q2 remote client has no download policy
+family q1
+  qport 4242 phase connecting
+  send 127.0.0.1:26000 8000000c015155414b450003
+  poll 1000 phase connecting
+  poll 1100 phase loading
+  poll 1200 phase loading
+  send 127.0.0.1:26001 001000090000000002
+  closed phase closed transport true
+family qw
+  qport 4242 phase connecting
+  send 127.0.0.1:27500 ffffffff6765746368616c6c656e67650a
+  poll 1000 phase connecting
+  poll 1100 phase connecting
+  send 127.0.0.1:27500 ffffffff636f6e6e6563742032382034323432203132333435363720225c6e616d655c5465737465725c726174655c3235303030220a
+  poll 1200 phase connecting
+  closed phase closed transport true
+family q2
+  qport 4242 phase challenging
+  send 127.0.0.1:27910 ffffffff6765746368616c6c656e67650a
+  poll 1000 phase challenging
+  poll 1100 phase connecting
+  send 127.0.0.1:27910 ffffffff636f6e6e6563742033342034323432203132333435363720225c726174655c32353030305c6e616d655c546573746572220a
+  poll 1200 phase connecting
+  closed phase closed transport true
+family q3
+  qport 4242 phase connecting
+  send 127.0.0.1:27960 ffffffff6765746368616c6c656e6765
+  poll 1000 phase connecting
+  poll 1100 phase connecting
+  send 127.0.0.1:27960 ffffffff636f6e6e6563742000424474308e050cc726c314ec8ef967301a26c14c5800ebc376b067711c1c12fbc2c971f12f2aae318718576b0d8e22d5b1950e544ce30c998a5370ce030cc23500
+  poll 1200 phase connecting
+  closed phase closed transport true
+promoted q2
+  networkPhase challenging
+  seatId 2
+  networkAddress 127.0.0.1:40000
+  localPlayers 0
+  downloadProgress 0
+  sameSource true network true
+  sourceForActor Remote input actor has no active native channel
+  peerWorldCurrent false
+  peerWorldCurrent true
+  sendCommand Q2 client is not connected
+  ownsPublishedSource true
+  ownsPublishedSource closing false
+  ownsPublishedSource peer-closed false

@@ -9,6 +9,7 @@
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct curve { float *positions; size_t count; double frame, subframe, subframes; } curve;
 typedef struct move {
@@ -77,7 +78,7 @@ static void accelerate_state(move *st, qa_q2_entity *e) {
   }
   if (st->current_speed < e->speed) {
     double old = st->current_speed;
-    st->current_speed = fmin(st->current_speed + e->accel, e->speed);
+    st->current_speed = qa_js_min(st->current_speed + e->accel, e->speed);
     if (st->remaining - st->current_speed >= st->decel_distance) return;
     double first = st->remaining - st->decel_distance;
     double first_speed = (old + st->move_speed) / 2;
@@ -147,7 +148,9 @@ static void curve_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     distance = cv->positions[fi];
   }
   qa_vec3 target = qa_q2_add(st->reference, qa_q2_scale(st->direction, distance));
-  set_velocity(e, g, qa_q2_scale(qa_q2_subtract(target, qa_q2_game_body(g, e).origin), 1 / g->host->frame_seconds(g->host->ctx)));
+  qa_vec3 value = qa_q2_subtract(target, qa_q2_game_body(g, e).origin);
+  double scale = 1 / g->host->frame_seconds(g->host->ctx);
+  set_velocity(e, g, qa_q2_scale(value, scale));
   g->schedule(g->ctx, e, g->host->frame_seconds(g->host->ctx), (qa_q2_think){m, curve_fn});
 }
 

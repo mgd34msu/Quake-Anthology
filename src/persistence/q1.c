@@ -1,5 +1,6 @@
 /* Port of src/persistence/q1.ts. GPL-2.0-or-later. */
 #include "qa/persistence/q1.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -8,6 +9,7 @@
 
 #include "qa/persistence/source_bytes.h"
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 static char *dup_range(const char *text, size_t length) {
   char *out = (char *)malloc(length + 1);
@@ -78,37 +80,11 @@ static bool js_space(unsigned char byte) {
          byte == '\r' || byte == 0xa0;
 }
 static bool js_number(const char *text, size_t length, double *out) {
-  size_t lo = 0, hi = length;
-  while (lo < hi && js_space((unsigned char)text[lo])) lo++;
-  while (hi > lo && js_space((unsigned char)text[hi - 1])) hi--;
-  if (lo == hi) { *out = 0; return true; }
-  if (hi - lo > 2 && text[lo] == '0' &&
-      (text[lo + 1] == 'x' || text[lo + 1] == 'X' || text[lo + 1] == 'b' ||
-       text[lo + 1] == 'B' || text[lo + 1] == 'o' || text[lo + 1] == 'O')) {
-    int base = (text[lo + 1] == 'x' || text[lo + 1] == 'X') ? 16
-               : (text[lo + 1] == 'b' || text[lo + 1] == 'B') ? 2 : 8;
-    double value = 0;
-    for (size_t i = lo + 2; i < hi; i++) {
-      int digit;
-      char c = text[i];
-      if (c >= '0' && c <= '9') digit = c - '0';
-      else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
-      else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
-      else return false;
-      if (digit >= base) return false;
-      value = value * (double)base + (double)digit;
-    }
-    *out = value;
-    return true;
-  }
-  char *copy = dup_range(text + lo, hi - lo);
+  char *copy = dup_range(text, length);
   if (copy == NULL) return false;
-  char *end = NULL;
-  double value = strtod(copy, &end);
-  bool ok = end != copy && *end == '\0';
+  *out = qa_js_string_to_number(copy);
   free(copy);
-  if (ok) *out = value;
-  return ok;
+  return true;
 }
 
 /* False only on OOM (token allocation). */
@@ -213,7 +189,7 @@ bool qa_decode_q1_save(const uint8_t *bytes, size_t length, qa_q1_save_data *out
     if (out->game_directories == NULL) goto oom;
   } else {
     char shown[64];
-    (void)snprintf(shown, sizeof shown, "%.17g", version);
+    (void)snprintf(shown, sizeof shown, "%s", QA_JS_NUMBER(version));
     qa_save_format_error("q1", "unsupported save version %s", shown);
   }
   out->comment = scan_token(&scan, &token_length);
@@ -319,8 +295,8 @@ static const char *encode_token(const char *value) {
 
 static bool buffer_decimal(text_buffer *buffer, double value) {
   if (!isfinite(value)) qa_save_format_error("q1", "non-finite header number");
-  char shown[512];
-  (void)snprintf(shown, sizeof shown, "%.6f", value);
+  char shown[QA_JS_TO_FIXED_CAPACITY];
+  qa_js_to_fixed(value, 6, shown, sizeof shown); /* value.toFixed(6): exact ties round up */
   return buffer_line(buffer, shown);
 }
 
@@ -358,7 +334,7 @@ uint8_t *qa_encode_q1_save(const qa_q1_save_data *save, size_t *out_length) {
   if (isnan(save->skill)) (void)snprintf(shown, sizeof shown, "NaN");
   else if (isinf(save->skill))
     (void)snprintf(shown, sizeof shown, "%s", save->skill < 0 ? "-Infinity" : "Infinity");
-  else (void)snprintf(shown, sizeof shown, "%.0f", trunc(save->skill));
+  else (void)snprintf(shown, sizeof shown, "%s", QA_JS_NUMBER(trunc(save->skill))); /* String(): -0 is "0" */
   if (!buffer_line(&buffer, shown)) goto oom;
   if (!buffer_line(&buffer, encode_token(save->map))) goto oom;
   if (!buffer_decimal(&buffer, save->time)) goto oom;

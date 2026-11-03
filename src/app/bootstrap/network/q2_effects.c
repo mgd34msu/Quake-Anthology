@@ -35,7 +35,7 @@ static const qa_q2_temp_field *find_field(const qa_q2_temp_entity *value,
     if (value->fields[i].kind == kind && value->fields[i].name == name) return &value->fields[i];
   return NULL;
 }
-bool qa_app_q2_beam_from_wire(const qa_q2_temp_entity *value, qa_app_q2_beam_event *out) {
+bool qa_app_q2_beam_from_wire(const qa_q2_temp_entity *value, qa_q2w_event *out) {
   const char *effect = NULL;
   for (size_t i = 0; i < sizeof trails / sizeof trails[0]; i++)
     if ((double)trails[i].type == value->type) effect = trails[i].effect;
@@ -43,14 +43,16 @@ bool qa_app_q2_beam_from_wire(const qa_q2_temp_entity *value, qa_app_q2_beam_eve
   const qa_q2_temp_field *start = find_field(value, QA_Q2_TEMP_FIELD_VECTOR, QA_Q2_TEMP_NAME_POSITION1);
   const qa_q2_temp_field *end = find_field(value, QA_Q2_TEMP_FIELD_VECTOR, QA_Q2_TEMP_NAME_POSITION2);
   if (!start || !end) qa_range_error("Q2 trail requires both source endpoints");
-  out->effect = effect; out->has_actor = false;
+  memset(out, 0, sizeof *out);
+  out->kind = QA_Q2W_EVENT_BEAM;
+  out->effect = effect; out->actor = NULL;
   out->start = start->vector_value; out->end = end->vector_value; out->duration = 0.1;
   return true;
 }
 static void push_field(qa_q2_temp_entity *out, qa_q2_temp_field field) {
   out->fields[out->field_count++] = field;
 }
-bool qa_app_q2_effect_to_wire(const qa_app_q2_effect_event *event, qa_q2_temp_entity *out) {
+bool qa_app_q2_effect_to_wire(const qa_q2_presentation_event *event, qa_q2_temp_entity *out) {
   const char *name = event->effect;
   if (strncmp(name, "q2:", 3) == 0) name += 3;
   size_t found = EFFECT_COUNT;
@@ -75,7 +77,7 @@ bool qa_app_q2_effect_to_wire(const qa_app_q2_effect_event *event, qa_q2_temp_en
   }
   return true;
 }
-bool qa_app_q2_effect_from_wire(const qa_q2_temp_entity *value, qa_app_q2_effect_event *out) {
+bool qa_app_q2_effect_from_wire(const qa_q2_temp_entity *value, qa_q2_presentation_event *out) {
   size_t found = EFFECT_COUNT;
   for (size_t i = 0; i < EFFECT_COUNT; i++)
     if ((double)effects[i].type == value->type) found = i;
@@ -85,6 +87,8 @@ bool qa_app_q2_effect_from_wire(const qa_q2_temp_entity *value, qa_app_q2_effect
   const qa_q2_temp_field *count = find_field(value, QA_Q2_TEMP_FIELD_INTEGER, QA_Q2_TEMP_NAME_COUNT);
   const qa_q2_temp_field *color = find_field(value, QA_Q2_TEMP_FIELD_INTEGER, QA_Q2_TEMP_NAME_COLOR);
   qa_vec3 zero = {0, 0, 0};
+  memset(out, 0, sizeof *out);
+  out->kind = "effect";
   out->effect = effects[found].name;
   out->origin = pos ? pos->vector_value : zero;
   out->direction = dir ? dir->vector_value : zero;

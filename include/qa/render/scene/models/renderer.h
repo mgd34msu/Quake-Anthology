@@ -1,18 +1,20 @@
 /*
- * Port of src/render/scene/models/renderer.ts. C accommodations:
- *  - SceneTexture/SceneTextureLoader (TS owner: textures.ts),
- *    SceneShaderRegistry/currentRemap (TS owners: shaders.ts,
- *    material-registrations.ts), SceneModelGroup constructors (TS
- *    owner: submissions.ts; see types.h) and ShadowCaster/ShadowMesh
- *    (TS owner: shadows.ts) are mirrored here with collision-proof
- *    names; async preloads are synchronous and the pending/WeakMap
- *    batch caches are dropped (values identical).
+ * Port of src/render/scene/models/renderer.ts. The renderer takes the real
+ * WorldScene (render/scene/world.h) and a ModelRenderProvider over the real
+ * SceneTextureLoader (textures.h) and SceneShaderRegistry (shaders.h).
+ * C accommodations:
+ *  - SceneModelGroup constructors (TS owner: submissions.ts; see types.h)
+ *    and ShadowCaster/ShadowMesh (TS owner: shadows.ts) are mirrored here
+ *    with collision-proof names; async preloads are synchronous and the
+ *    pending/WeakMap batch caches are dropped (values identical).
  *  - floodSkin (skin.ts), cameraFrustum/createViewProjector
  *    (view.ts), entityCastsShadow/shadowMaterialGeometry
  *    (shadow-geometry.ts) and shadowCaster/shadowMesh (shadows.ts)
  *    are mirrored locally in renderer.c.
  *  - The per-entity light cache keys on entity identity fields
  *    (resource id pointer + origin + skin); TS keys on the object.
+ *  - Material contexts from world.materialContext stay with the renderer
+ *    until it is destroyed: prepared batches point into them.
  * GPL-2.0-or-later.
  */
 #ifndef QA_RENDER_SCENE_MODELS_RENDERER_H
@@ -29,53 +31,30 @@
 #include "qa/render/scene/models/light_sampler.h"
 #include "qa/render/scene/models/replacements.h"
 #include "qa/render/scene/models/types.h"
+#include "qa/render/scene/shaders.h"
+#include "qa/render/scene/textures.h"
+#include "qa/render/scene/world.h"
 
-/* Mirrored SceneTexture (TS owner: textures.ts). */
-typedef struct qa_render_scene_texture {
-  const char *name;
-  double width, height;
-  qa_renderer_image image;
-  qa_render_image content;
-  const qa_renderer_image *fullbright; /* nullable */
-  qa_renderer_image fullbright_value;
-} qa_render_scene_texture;
-
-/* Mirrored SceneTextureLoader surface used here. The loader struct
- * address is its identity (provider.textures comparison in TS). */
-typedef struct qa_render_scene_texture_loader {
-  void *ctx;
-  qa_render_scene_texture white, missing;
-  /* TS register(name, content, sampling, source?): source NULL when
-   * the TS passes no source image. */
-  qa_render_scene_texture (*register_texture)(
-      void *ctx, const char *name, qa_render_image content,
-      qa_texture_sampling sampling, const qa_renderer_image *source);
-  /* TS load(name, {family, usage, mipmap}): false is TS null. */
-  bool (*load)(void *ctx, const char *name, qa_game_family family,
-               const char *usage, bool mipmap, qa_render_scene_texture *out);
-} qa_render_scene_texture_loader;
-
-/* Mirrored SceneShaderRegistry surface used here. */
-typedef struct qa_render_scene_shader_registry {
-  void *ctx;
-  const qa_mat_compiled_material *(*register_shader)(void *ctx, const char *name);
-  bool (*has_cinematic)(void *ctx, const char *name);
-  /* TS currentRemap: NULL when no remap; *time_offset_out set then. */
-  const qa_mat_compiled_material *(*current_remap)(
-      void *ctx, const qa_mat_compiled_material *material,
-      double *time_offset_out);
-} qa_render_scene_shader_registry;
-
-/* TS ModelRenderProvider. palette NULL is TS null. */
+/* TS ModelRenderProvider. palette NULL is TS null. textures, shaders and
+ * palette are borrowed and must outlive every renderer given the provider.
+ * A provider object whose textures and modelPolicy are getters (TS
+ * ProviderSceneAssets: textures reads shaders.textures, modelPolicy the
+ * assets' current policy; see qa_app_application_assets_render_provider)
+ * sets the getters, called with getter_ctx wherever TS reads the property;
+ * a NULL getter reads the stored member, as a TS plain object does. */
 typedef struct qa_model_render_provider {
-  bool has_model_policy;
+  bool has_model_policy; /* false is TS undefined */
   qa_model_replacement_policy model_policy;
   qa_game_family family;
   const qa_palette *palette;
-  qa_palette palette_value;
-  qa_render_scene_texture_loader textures;
-  qa_render_scene_shader_registry shaders;
+  qa_scene_texture_loader *textures;
+  qa_scene_shader_registry *shaders;
+  void *getter_ctx;
+  qa_scene_texture_loader *(*textures_getter)(void *ctx);
+  qa_model_replacement_policy (*model_policy_getter)(void *ctx);
 } qa_model_render_provider;
+/* TS provider.textures: the getter's value when set, else the member. */
+qa_scene_texture_loader *qa_model_render_provider_textures(const qa_model_render_provider *provider);
 
 /* Mirrored ShadowMesh/ShadowCaster (TS owner: shadows.ts). Owned. */
 typedef struct qa_render_scene_shadow_mesh {
@@ -97,20 +76,21 @@ void qa_render_scene_shadow_casters_destroy(
 typedef struct qa_scene_model_renderer qa_scene_model_renderer;
 struct qa_scene_model_renderer {
   qa_model_render_provider provider;
-  const qa_render_scene_world *world; /* borrowed */
+  qa_world_scene *world; /* borrowed; must outlive the renderer */
   qa_model_light_sampler lighting;
   void *materials; /* private key -> material map */
   size_t material_count, material_capacity;
-  const void *textures_identity;
+  qa_scene_texture_loader *textures; /* TS private textures */
 };
 
 /* TS SourceOptions closure: fn NULL yields empty options. */
 typedef qa_model_source_options (*qa_model_source_options_fn)(
     void *ctx, const qa_scene_entity *entity);
 
+/* TS new SceneModelRenderer(provider, world). False only on OOM. */
 bool qa_scene_model_renderer_init(qa_scene_model_renderer *renderer,
                                   qa_model_render_provider provider,
-                                  const qa_render_scene_world *world);
+                                  qa_world_scene *world);
 void qa_scene_model_renderer_destroy(qa_scene_model_renderer *renderer);
 /* Synchronous preload. Cinematic deferral aborts with the TS Error. */
 void qa_scene_model_renderer_preload(qa_scene_model_renderer *renderer,
@@ -126,7 +106,7 @@ void qa_scene_model_renderer_preload_model(
 /* Owned groups. skinning_frame NULL is TS undefined. */
 qa_scene_model_group *qa_scene_model_renderer_prepare(
     qa_scene_model_renderer *renderer, const qa_scene_entity *entities,
-    size_t entity_count, const qa_render_scene_world_view_input *input,
+    size_t entity_count, const qa_world_view_input *input,
     qa_model_source_options_fn source_options, void *source_options_ctx,
     const qa_model_skinning_frame *skinning_frame, size_t *out_count);
 /* retain_body NULL is TS undefined. Owned casters. */
@@ -134,7 +114,7 @@ typedef bool (*qa_model_retain_body_fn)(void *ctx,
                                         qa_render_scene_shadow_sphere sphere);
 qa_render_scene_shadow_caster *qa_scene_model_renderer_prepare_shadow_casters(
     qa_scene_model_renderer *renderer, const qa_scene_entity *entities,
-    size_t entity_count, const qa_render_scene_world_view_input *input,
+    size_t entity_count, const qa_world_view_input *input,
     qa_model_source_options_fn options, void *options_ctx,
     const qa_model_skinning_frame *skinning_frame,
     qa_model_retain_body_fn retain_body, void *retain_body_ctx,

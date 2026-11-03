@@ -9,7 +9,8 @@
 
 #define QVM_MAGIC 0x12721444
 #define HEADER_LENGTH 32
-#define MAX_DATA_LENGTH 0x40000000LL
+/* Retail modules need a few MiB; the source allocates module data from a hunk of 56 to 128 MiB. */
+#define MAX_DATA_LENGTH 0x4000000LL
 #define MAX_CODE_LENGTH 0x1fffffffLL
 
 noreturn void qa_qvm_header_error(const char *source) {
@@ -55,7 +56,7 @@ bool qa_qvm_parse_restart(const uint8_t *bytes, size_t length, const char *sourc
   int64_t initialized_length = header.data_length + header.literal_length;
   int64_t total = initialized_length + header.bss_length;
   if (total > MAX_DATA_LENGTH)
-    qa_binary_error(src, 28, "QVM data exceeds positive signed power-of-two allocation range");
+    qa_binary_error(src, 28, "QVM data exceeds the supported hunk allocation");
   int64_t allocated = 1;
   while (allocated < total) allocated *= 2;
   qa_binary_reader reader;
@@ -159,7 +160,7 @@ bool qa_qvm_parse(const uint8_t *bytes, size_t length, const char *source, qa_qv
   int64_t initialized_length = (int64_t)data_length + literal_length;
   int64_t total = initialized_length + bss_length;
   if (total > MAX_DATA_LENGTH)
-    qa_binary_error(src, 28, "QVM data exceeds positive signed power-of-two allocation range");
+    qa_binary_error(src, 28, "QVM data exceeds the supported hunk allocation");
   check_section(&reader, code_offset, code_length, 8);
   check_section(&reader, data_offset, initialized_length, 16);
   if (initialized_length > 0 && code_offset < (int64_t)data_offset + initialized_length &&

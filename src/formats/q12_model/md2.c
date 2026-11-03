@@ -1,5 +1,7 @@
 /* Port of src/formats/q12-model/md2.ts. GPL-2.0-or-later. */
 #include "qa/formats/q12_model/md2.h"
+#include "qa/formats/q12_model/animation.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -82,8 +84,8 @@ static void md2_section(qa_binary_reader *reader, double offset, double count, d
                         qa_binary_reader *out) {
   double size = count * stride;
   if (size != trunc(size) || size > 9007199254740991.0 || offset < 68 || offset > end - size) {
-    qa_binary_error(reader->source, (int64_t)reader->cursor, "MD2 section %g+%g exceeds header/model bounds",
-                    offset, size);
+    qa_binary_error(reader->source, (int64_t)reader->cursor, "MD2 section %s+%s exceeds header/model bounds",
+                    QA_JS_NUMBER(offset), QA_JS_NUMBER(size));
   }
   if (!qa_binary_reader_section(reader, (int64_t)offset, (int64_t)size, out)) qa_range_error("Out of memory");
 }
@@ -111,7 +113,7 @@ void qa_parse_md2(const uint8_t *data, size_t data_length, const char *source, q
   double command_offset = qa_binary_reader_i32(&reader);
   double end = qa_binary_reader_i32(&reader);
   if (end < 68 || end > (double)reader.length) {
-    qa_binary_error(reader.source, (int64_t)reader.cursor, "invalid model end %g", end);
+    qa_binary_error(reader.source, (int64_t)reader.cursor, "invalid model end %s", QA_JS_NUMBER(end));
   }
   if (frame_size < 40 + vertex_count * 4) qa_q12_fail(&reader, "frame size is smaller than its vertices");
   qa_binary_reader skin_reader, coordinate_reader, triangle_reader, frame_reader, command_reader;
@@ -197,6 +199,8 @@ void qa_q2_alias_model_destroy(qa_q2_alias_model *model) {
   free((void *)model->texture_coordinates);
   free((void *)model->triangles);
   for (size_t i = 0; i < model->frame_count; i++) {
+    /* The interpolation PoseLru keys by frame address (TS WeakMap identity): forget it before the address is freed. */
+    qa_alias_interpolation_forget(&model->frames[i].frame);
     free((void *)model->frames[i].frame.name);
     free((void *)model->frames[i].frame.vertices);
     free((void *)model->frames[i].compressed_vertices);

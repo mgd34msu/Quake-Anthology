@@ -46,7 +46,7 @@ typedef struct qa_qvm_combat_source {
   /* TS provenance minus attacker/inflictor/cause: fills those fields of out. */
   void (*provenance)(void *ctx, const qa_actor_id *attacker, const qa_actor_id *inflictor,
                      qa_actor_id target, qa_attack_provenance *out);
-  void (*after_free)(void *ctx, double pointer, qa_qvmy_function_call *call); /* optional */
+  void (*after_free)(void *ctx, double pointer, qa_qvm_module_function_call *call); /* optional */
 } qa_qvm_combat_source;
 
 typedef struct qa_qvm_combat_bindings_options {

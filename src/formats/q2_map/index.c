@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js_case.h"
 
 static void *xmalloc(size_t size) {
   void *p = malloc(size == 0 ? 1 : size);
@@ -53,7 +54,8 @@ static qa_q2_texture_info *convert_textures(qa_q2_bsp *map, const qa_q2_map_reso
     memcpy(name, texture->name, name_length);
     name[name_length] = '\0';
     char key[32];
-    for (size_t j = 0; j <= name_length; j++) key[j] = (char)tolower((unsigned char)name[j]);
+    /* TS name.toLowerCase() over a fixedByteString (Latin-1) texture name. */
+    for (size_t j = 0; j <= name_length; j++) key[j] = (char)qa_js_latin1_lower((unsigned char)name[j]);
     const char *material = NULL;
     for (size_t j = 0; j < cache_count; j++) {
       if (strcmp(cache[j].key, key) == 0) { material = cache[j].material; break; }
@@ -105,6 +107,36 @@ static qa_q2_texture_info *convert_textures(qa_q2_bsp *map, const qa_q2_map_reso
   return result;
 }
 
+/* TS toQ2WorldGeometry reads each BSPX extension in a try that turns a
+ * BinaryError into a diagnostic and rethrows anything else. */
+typedef struct bspx_job {
+  const qa_q2_bspx_lump *lump;
+  double face_count, lighting_bytes, corners;
+  qa_q2_decoupled_lightmaps decoupled;
+  qa_q2_lightgrid *lightgrid;
+  qa_q2_face_normals *face_normals;
+} bspx_job;
+
+static void read_decoupled_run(void *raw) {
+  bspx_job *job = raw;
+  qa_read_q2_decoupled_lightmaps(job->lump, job->face_count, job->lighting_bytes, &job->decoupled);
+}
+
+static void read_lightgrid_run(void *raw) {
+  bspx_job *job = raw;
+  qa_read_q2_lightgrid(job->lump, job->lightgrid);
+}
+
+static void read_face_normals_run(void *raw) {
+  bspx_job *job = raw;
+  qa_read_q2_face_normals(job->lump, job->corners, job->face_normals);
+}
+
+static void caught_diagnostic(const qa_caught_error *caught, qa_q2_string_list *diagnostics) {
+  if (strcmp(caught->name, "BinaryError") != 0) qa_rethrow(caught);
+  list_push(diagnostics, xstrdup(caught->message));
+}
+
 void qa_to_q2_world_geometry(qa_q2_bsp *map, const qa_q2_map_resources *resources,
                              qa_q2_decoded_map *out) {
   memset(out, 0, sizeof *out);
@@ -121,26 +153,54 @@ void qa_to_q2_world_geometry(qa_q2_bsp *map, const qa_q2_map_resources *resource
   qa_q2_face_normals *face_normals = NULL;
   const qa_q2_bspx_directory *bspx = map->has_bspx ? &map->bspx : NULL;
   const qa_q2_bspx_lump *lump = bspx != NULL ? qa_q2_bspx_find(bspx, "DECOUPLED_LM") : NULL;
+  qa_caught_error caught;
   if (lump != NULL) {
-    qa_q2_decoupled_lightmaps result;
-    qa_read_q2_decoupled_lightmaps(lump, (double)map->face_count, (double)map->lighting_length, &result);
-    decoupled = result.faces;
-    decoupled_count = result.face_count;
-    for (size_t i = 0; i < result.diagnostics.count; i++)
-      list_push(&out->diagnostics, result.diagnostics.values[i]);
-    free(result.diagnostics.values);
+    bspx_job job;
+    memset(&job, 0, sizeof job);
+    job.lump = lump;
+    job.face_count = (double)map->face_count;
+    job.lighting_bytes = (double)map->lighting_length;
+    if (qa_try(read_decoupled_run, &job, &caught)) {
+      decoupled = job.decoupled.faces;
+      decoupled_count = job.decoupled.face_count;
+      for (size_t i = 0; i < job.decoupled.diagnostics.count; i++)
+        list_push(&out->diagnostics, job.decoupled.diagnostics.values[i]);
+      free(job.decoupled.diagnostics.values);
+    } else {
+      qa_q2_decoupled_lightmaps_destroy(&job.decoupled);
+      caught_diagnostic(&caught, &out->diagnostics);
+    }
   }
   lump = bspx != NULL ? qa_q2_bspx_find(bspx, "LIGHTGRID_OCTREE") : NULL;
   if (lump != NULL) {
+    bspx_job job;
+    memset(&job, 0, sizeof job);
+    job.lump = lump;
     lightgrid = xmalloc(sizeof *lightgrid);
-    qa_read_q2_lightgrid(lump, lightgrid);
+    memset(lightgrid, 0, sizeof *lightgrid);
+    job.lightgrid = lightgrid;
+    if (!qa_try(read_lightgrid_run, &job, &caught)) {
+      qa_q2_lightgrid_destroy(lightgrid);
+      free(lightgrid);
+      lightgrid = NULL;
+      caught_diagnostic(&caught, &out->diagnostics);
+    }
   }
   lump = bspx != NULL ? qa_q2_bspx_find(bspx, "FACENORMALS") : NULL;
   if (lump != NULL) {
-    double corners = 0;
-    for (size_t i = 0; i < map->face_count; i++) corners += map->faces[i].edges.count;
+    bspx_job job;
+    memset(&job, 0, sizeof job);
+    job.lump = lump;
+    for (size_t i = 0; i < map->face_count; i++) job.corners += map->faces[i].edges.count;
     face_normals = xmalloc(sizeof *face_normals);
-    qa_read_q2_face_normals(lump, corners, face_normals);
+    memset(face_normals, 0, sizeof *face_normals);
+    job.face_normals = face_normals;
+    if (!qa_try(read_face_normals_run, &job, &caught)) {
+      qa_q2_face_normals_destroy(face_normals);
+      free(face_normals);
+      face_normals = NULL;
+      caught_diagnostic(&caught, &out->diagnostics);
+    }
   }
   qa_q2_leaf *leaves = xmalloc(map->leaf_count * sizeof *leaves);
   for (size_t i = 0; i < map->leaf_count; i++) {

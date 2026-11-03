@@ -1,8 +1,6 @@
 /* Port of src/compat/q2/rerelease/host.ts. GPL-2.0-or-later.
  * Async *Loading variants are synchronous with a next-frame
- * callback. NativePrimaryPickups is the landed reduced module, so
- * pickup supply exposes bind + owns only (classic host precedent),
- * and its assertIdle has no C counterpart. */
+ * callback. */
 #ifndef QA_COMPAT_Q2_RERELEASE_HOST_H
 #define QA_COMPAT_Q2_RERELEASE_HOST_H
 #include <stdbool.h>
@@ -96,6 +94,10 @@ qa_compat_q2_rerelease_foreign_actors *qa_compat_q2_rerelease_q2_guest_host_get_
 void qa_compat_q2_rerelease_q2_guest_host_retire_input_client(qa_compat_q2_rerelease_q2_guest_host *h, double slot);
 void qa_compat_q2_rerelease_q2_guest_host_finish_input_retirement(qa_compat_q2_rerelease_q2_guest_host *h, double slot);
 void qa_compat_q2_rerelease_q2_guest_host_bind_pickup_supply(qa_compat_q2_rerelease_q2_guest_host *h, qa_compat_q2_native_pickup_supply owner);
+/* TS bindPickupSupply's returned remover. */
+void qa_compat_q2_rerelease_q2_guest_host_unbind_pickup_supply(qa_compat_q2_rerelease_q2_guest_host *h, qa_compat_q2_native_pickup_supply owner);
+/* TS pickupSupply: valid while the held source grant settles. */
+qa_compat_q2_native_pickup_supply_evaluation qa_compat_q2_rerelease_q2_guest_host_pickup_supply(qa_compat_q2_rerelease_q2_guest_host *h, const qa_original_pickup_offer *offer);
 bool qa_compat_q2_rerelease_q2_guest_host_pickup_supply_owns(qa_compat_q2_rerelease_q2_guest_host *h, qa_actor_id actor, qa_item_id item, qa_actor_id pickup);
 /* False return is the TS null. */
 bool qa_compat_q2_rerelease_q2_guest_host_actor(qa_compat_q2_rerelease_q2_guest_host *h, qa_raw_entity_view view, qa_owned_actor *out);
@@ -138,6 +140,9 @@ qa_compat_q2_rerelease_source_save qa_compat_q2_rerelease_q2_guest_host_write_sa
     qa_compat_q2_rerelease_q2_guest_host *h, const char *kind, bool automatic_or_transition, void (*next_frame)(void *), void *next_ctx);
 void qa_compat_q2_rerelease_q2_guest_host_read_save(qa_compat_q2_rerelease_q2_guest_host *h, const char *kind,
                                                     qa_compat_q2_rerelease_source_save saved, const char *domain);
+/* TS #dispatchImport(call): the import itself, outside importBoundary (the
+ * boundary's invoke closure; a native mod host replays restore links with it). */
+qa_guest_call_result qa_compat_q2_rerelease_q2_guest_host_dispatch_import(qa_compat_q2_rerelease_q2_guest_host *h, qa_compat_q2_rerelease_import_call call);
 /* clipped_entity NULL is the TS undefined. */
 qa_guest_call_result qa_compat_q2_rerelease_q2_guest_host_encode_trace(qa_compat_q2_rerelease_q2_guest_host *h, qa_trace_result trace,
                                                                        const qa_guest_address *clipped_entity);

@@ -46,10 +46,20 @@ qa_image_picture qa_native_ui_art_picture(const qa_native_ui_art *art,
 /** TS NativeUiArt.close(): idempotent. */
 void qa_native_ui_art_close(qa_native_ui_art *art);
 
-/** TS loadNativeUiArt(font, images, read), synchronous in C. */
-qa_native_ui_art qa_ui_load_native_art(qa_resource_id font,
+/** TS loadNativeUiArt(font, images, read), synchronous in C. Fills *art in
+ * place, since art->skin points at art's own slices; do not copy the result. */
+void qa_ui_load_native_art(qa_native_ui_art *art, qa_resource_id font,
                                        qa_scene_image_registry *images,
                                        qa_native_ui_art_read_fn read,
                                        void *read_ctx);
+/** TS loadNativeUiArt(font, images, read, { frames, mainBackground }): the
+ * selection the application and remote application pass ({ frames: false,
+ * mainBackground: false } loads only the white image and a frameless skin).
+ * qa_ui_load_native_art is the TS default selection (both true). */
+void qa_ui_load_native_art_selected(qa_native_ui_art *art, qa_resource_id font,
+                                    qa_scene_image_registry *images,
+                                    qa_native_ui_art_read_fn read,
+                                    void *read_ctx, bool frames,
+                                    bool main_background);
 
 #endif

@@ -1,0 +1,1279 @@
+module	ts_files	functions_read	functions_total	bugs_fixed	status
+content/q2/missionpacks/entities/movers.ts	1	31	31	2	read in full (content-q2mp)
+content/q2/missionpacks/entities/xatrix.ts	1	16	16	2	read in full (content-q2mp)
+content/q2/missionpacks/projectiles/bolts.ts	1	24	24	2	read in full (content-q2mp)
+content/q2/missionpacks/projectiles/mines.ts	1	25	25	1	read in full (content-q2mp)
+content/q2/missionpacks/projectiles/nuke.ts	1	7	7	0	read in full (content-q2mp); int32 flags fix predates, test added
+content/q2/missionpacks/projectiles/trap.ts	1	6	6	0	read in full (content-q2mp)
+content/q2/missionpacks/projectiles/common.ts	1	8	8	0	read in full (content-q2mp)
+content/q2/missionpacks/spheres.ts	1	22	22	2	read in full (content-q2mp)
+content/q2/missionpacks/weapons/player.ts	1	12	12	1	read in full (content-q2mp)
+bots/behavior/director.ts	1	33	33	0	read in full; ported from the stub forwarding table (bots-finish)
+bots/behavior/population.ts	1	7	7	0	read in full; moved onto the real director (bots-finish)
+bots/behavior/q3/source-game.ts	1	19	19	0	read in full; ported over the Q3 subsystem owner (bots-finish)
+bots/behavior/q3/ai-definitions.ts	1	0	0	1	read in full; added the duplicate-valued match subtype/variable members (bots-finish)
+bots/behavior/q3/ai-input.ts	1	10	10	0	read in full; complete (bots-finish)
+foundation	8	112	112	1	read in full (review-a): stamp begin epoch ceiling; event-ring cursor reopen made idempotent (not TS-observable)
+text	15	198	243	8	read except truetype.ts (review-a): localization {{ escape/unescape, unquoted escape, missing '=' warn; subtitle skipped/raise paths, double BOM, live failed; q3 font registry pending/finally; truetype.ts still unread (review-b did not reach it)
+console	11	113	113	10	read in full (review-a): dedicated drop/backpressure; metrics letter class + Math.max/min; field code points; session trimStart/toLowerCase/empty completion; source-field paste finally; llm no prime at register + UTF-16 prompt length; llm-batch indirect set, setter guard, catalog name filter. src/console/log.c has no TS (log.ts deleted after baseline)
+formats	48	423	423	36	read in full (review-a, review-b): review-b read bsp-kind; q1-map/{index,records,extensions,queries,types}; q2-map/*; q3-map/{decode,ibsp44,world,index}; q12-model/*; q3-model/*. review-b fixed: q1 requireAcyclic missing; q1 lighting selected before nodes/leaves (error order); q1 BSPX exact() order; q1 FACENORMALS allocation sized by corner count; q1LeafPvs did not catch BinaryError; q2 BSPX extension BinaryErrors aborted instead of becoming diagnostics; q2 leafless lightgrid skipped cycle check; q3 leaf area upper bound; q3 surface-work budget; IBSP44 walk budget, polygon vertex range, INT32_MIN negation; MDL dataView over JS numbers (UB cast); q12 magic JSON.stringify; q12 bounds Math.min/max; SP2 Math.hypot; skin tokenizer unterminated comment; ModelTextError aborted (assets.c catch dead); model text JSON.stringify; md5anim expansion budget; md5 scale JSON validity, Object.entries order/duplicates, raw UTF-8 and control chars; MD3 LOD BinaryError catch; JpegSourceError aborted (now a catchable BinaryError, code QA_JPEG_SOURCE_ERROR_CODE); JPEG fabricated-entropy bound and 256-scan limit missing; PoseLru ported (qa_interpolate_alias_frames_cached). review-b also read images/jpeg, jpeg-encoder (encoder: no divergence). Decoders now release partial state on a caught raise (q3 BSP, IBSP44, MD3, MD5, lightgrid, JPEG). review-c fixed: qa_q12_read_timed leaked its group entries and frames when a grouped MDL skin or SPR frame raised partway (now reads into the caller-owned slot; SPR/SP2 parsers release partial state on a caught raise; read_skin/read_sprite_frame no longer leak their own partial frame). Renderer: render/scene/models/prepare.c now calls qa_interpolate_alias_frames_cached (TS PoseLru) and MDL/MD2 model destroy forgets each frame from the cache first.
+core	28	486	576	24	in progress (review-a, review-b, review-c): review-a read common-error, info-string, renderer-math, cvars/numbers, cvars/info, cvars/mirror, commands/text, commands/filter, omnitimer, random/q2-rerelease, resource-name-index, q3-product-policy; fixed mirror undeclared-cvar abort + refresh finally, omnitimer measure finally. review-b read binary/index, md4, q3-cd-key, game-numeric, numeric, save-value encode/decode; fixed game-numeric byte() past the end, scanGameFloat offset clamp, Q3Random.restore UB cast, md4 memcpy from NULL, decodeCheckpointValue error wrapping, checkpoint key order. review-c read commands/index (113), commands/deque (16; C uses qa_event_ring, bounded at 32768 chunks where TS is unbounded: texts are capped by the buffer length), commands/documentation (types), files/atomic+contained+writable (15; C in settings/config.c and platform/files; Node error texts become strerror), key-codes (constants match), save-value SaveReader+namespaced (17), common-parse (36), math (124, incl. createMutableVectorMath closures; qa_hypot3 fuzzed equal to qa_js_hypot3). review-c fixed: CommandBuffer insertFor/insertFromDefer overflow aborted (TS prints "Cbuf_InsertText overflowed"); drain line overflow aborted (TS prints and discards the line); drain had no 65536 dispatch budget; dispatch did not catch tokenizer/macro RangeError ("; command ignored"); dispatch try/finally only wrapped the handler (CommandUsageError from routing/fallback/alias, frame left dangling on any other raise); script-completion listener raise left the frame dangling; executeBatch*/executeCommandAsync left the batch active when execute or completeBatch raised; drainAsync left asyncDraining set on a raise; preparePrefix had no catch (restoreTail, phase "failed"); retiredProducers/retiredClients were copied where TS shares them between authority and prepared/replacement buffers; tokenizeCommand/expandCommandMacros leaked partial tokens on a caught RangeError; writeAtomic lacked the file and directory fsync; parseEntities leaked its partial list on a caught TextParseError; CommonParseState.restore cast a line past int32 (UB; now ToInt32, see comment); prepareCandidate() without print dropped the owner's print. cvars/index partly read (review-c: TS lines 1-530, CvarRegistry constructor through find(), prepareCandidate/prepareTransfer, prepareRegistryRestore, registerAlias; the rest unread). TS tests ported (review-c): cvar-aliases (test_cvar_aliases.c; live find() getter and Object.keys checks not portable), cvar-transfer (test_cvar_transfer.c), component-command-owner first case (test_component_command_owner.c). Not ported: component-command-owner second case (SeatInput/bindings/discovery), local-seat-change (EngineSession, prepareLocalSeatChange, prepareRemoteSeatIdentities)
+persistence	36	12	300	1	started (review-a): read saved-game, source-bytes (C), save-policy saveUnavailable/saveCommandPath, protection capture (partial). No divergence found. Unread: every other persistence file, including recipe, save-image, execution, world-state, all q1*/q2*/qvm*/kex/source-* codecs, value, shared, mods; review-b: persistence/value.ts is a re-export of core/save-value.ts (reviewed under core). Still unread: every other persistence file except saved-game and source-bytes. TS tests not yet ported: q3-native-runtime, q3-native-server, qvm-local-runtime, qvm-map-lifecycle, qvm-runtime-save, reference-save-fixtures, save-mutation review-c: test_persistence_b and test_q2_checkpoint_bytes updated to current TS q2-weapons (formatVersion 2 and 3 accepted, decoded as 3; capture bytes from bun); the C codec was right. Not read further by review-c. review-c fixed: decodeSaveImage leaked the decoded header and body trees whenever a SaveFormatError was raised while reading them (29 MB over the 1,800 save-mutation mutants; now 34 KB, all in recipe.c partial reader allocations, still open). Ported save-mutation (tests/persistence/test_save_mutation.c, accepted/rejected counts equal bun per seed). Not ported: q3-native-runtime, q3-native-server, qvm-local-runtime, qvm-map-lifecycle, qvm-runtime-save (need retail SharedSimulation loads), reference-save-fixtures.
+contracts	42	0	0	0	not started (review-a): mostly types and const data; unread; still unread after review-b
+camera	2	30	30	2	read in full (review-d): every camera Error aborted (malformed/missing file, usage, write failure) where TS prints "Camera: <message>" (queued load/write) or raises CommandUsageError; core dispatch gained the TS CommandUsageError catch (src/core/commands/index.c); CameraPlayback totalMilliseconds summed waits in the wrong association
+capture	1	7	7	2	read in full (review-d): FrameCapture nextShot per format not ported (rescanned from shot0000, mkdir every index); plain Errors aborted (now qa_raise "Error")
+debug	2	10	10	0	read in full (review-d): no divergence
+llm	11	103	103	15	read in full (review-d): SSE/model-list decoder waited on impossible UTF-8 tails (delivered events TS never sees); codex display_name null; UTF-16 lengths (models, settings, session clip/trim); JS trim (Unicode spaces, trailing BOM); account-id payload lossy UTF-8; session transcript in prompt not instructions (drift) and warm-up signal (PLATFORM-013); token refresh keeps previous refresh_token (PLATFORM-014); scope split/response.json decode; authorize URL params decode/dup/fragment; wrong-state callback aborted sign-in (PLATFORM-015); editablePreferences/editableCredentials defaults. Open: JSON parser depth limit 512 where JSC has none
+movement	34	327	327	9	read in full (review-d, gate-world). review-d: q3/{slide-move,view,postures,jump-pad,grapple,index,move,animation,weapon}, q2/{math,view,dimensions}, q1/{water-transition,player-actions}, body-shape; fixed 4 (q3 checkDuck posture hull; q3 ladders option; q3 slide impactSpeed NaN; q3 move truthiness). gate-world read 244 functions (named functions, methods and closures; review-d's total of 306 undercounted): swept-body 1, client-outputs 3, q2/swept 3, q2/classic 26, q2/rerelease 38 (function by function after the class restructure), q2/index 23, q2/types 2, q1/common 35, q1/result 1, q1/monsters 14, q1/pusher 5, q1/netquake 33, q1/quakeworld 24, q3/provider 21, q3/prediction 15; q1/types, q1/index, q3/types, q3/constants have no functions. gate-world fixed 5: sweepBody accepted a candidate when a candidate/plane dot was NaN (TS every(... dot >= 0) rejects); clientMovementMode returned the mode for NaN health; pushQ1Pusher's try/finally did not re-enable pusher collision when push raised and leaked the pushed list on raise; Q3 prediction replay loop overflowed int32 at command number INT32_MAX (TS loop variable is a double); Q3 prediction leaked every movement result's effect and contact arrays. No divergence: q2 classic/rerelease/index/swept/types, q1 common/monsters/netquake/quakeworld/result, q3 provider. Tests: tests/movement/test_gate_movement.c (oracle tests/movement/oracles/gate_movement.ts). Open: q1 result.c frees animation-step effects but not weapon-step effects (ownership convention set by the app hosts, not changed); movement entry points do not run application.end(state, true) on a raise (TS catch-and-rethrow; C errors there are invariant violations).
+input	22	31	193	0	partial (review-d): read impulse, buttons, pitch-drift, mouse, mouse-buttons, binding-store, device-settings, keys; no divergence (command text is byte strings, so charCodeAt is the byte). Unread: seat, router, bindings, user-command, midi, gamepad, haptics, source-joystick, source-input, weapon-bindings, client-commands, sdl-keys, mouse-settings, source-midi
+media	16	9	152	0	partial (review-d): read roq-audio (no divergence), source (create/bytes/file; readMedia not compared), audio.ts and material.ts TS only. Unread: playback, roq, roq-stream, roq-playback, roq-codebook, cin, cin-playback, ogg, ogv-playback, presentation, still, types
+platform	15	2	222	0	partial (review-d): freetype-layout freeTypeBitmapLength/normalizeFreeTypeBitmapRows only. Unread: everything else (sdl, controller, audio incl. the SDL3 backend gap already listed, freetype, vorbis, theora, ipx, ipx-native, gl*, sdl-render-context, native-libraries, signal-hint)
+audio	14	0	252	0	not started (review-d)
+materials	20	0	188	0	not started (review-d)
+world	61	803	803	61	read in full (gate-world, gate-render, gate-world2). Read function by function: collision/contents 9, body 3, media 2, index 30, q1/hull 10, q1/index 27, q2 29, q3/index 14, q3/settings 6, q3/counters 1, q3/world 47, q3/model 23; spatial/index 9; actors/triggers 1, actors/source-slots 7, actors/body attachment paths 7 (ctor release hook, rebind, attach, detach, attachment, transportAttachments, translatedBodyBounds). Fixed 23: contents adaptTraceResult q1 branch skipped ToInt32 on surface flags without the ladder bit; q3->q2 adapted surfaces shared one mutable static (a later trace changed earlier traces' surface flags); media and body/q2/q3-world/q3-model/q3-patch `leave = Math.min(...)` and media/q1 Math.min/Math.max sites dropped NaN (9 sites); q2 expand capsule radius Math.min NaN; q1 and q2 clusterVisible cast a NaN/fractional `to` to size_t (UB) where TS applies ToInt32, and q2 returned false for an in-range fractional `from` where TS throws; q1 PHS row read source bytes past the row; q3 PHS `to` NaN cast; q3 world capsule position bounds and traceMedia envelope skipped vec3 Math.fround staging; temporary collision models kept raw bounds where TS owns fround-staged copies (box finiteness checked after fround) and leaked the model on a constructor raise; patch block counter used signed int32 overflow; body table iterated attachments in slot order where TS iterates the attachments Map in insertion order (transport and released-anchor child release order); q3 entity lifetime set clear "source-gentity", which TS dropped. No divergence: collision/index, spatial/index, q1/hull, actors/triggers, source-slots allocation. Tests: tests/world/test_gate_world.c (oracle tests/world/oracles/gate_world.ts). Unread: collision/q3/{patch (only tracePatch's leave and the block counter checked), topology (only clusterVisible), polylib, clip-models, map-resource}; geometry/q1-solid/*; scheduler; actors/{registry, callbacks, index, body read/write/updateBodySnapshot/link/unlink/linkState/restoreLinkState}; gameplay/* (all); session/* (all). gate-render (2026-11-03) read 395 more, function by function: collision/q3 patch 32 (generatePatchCollide closures, positionInPatch, tracePatch, debug surface), topology 23, polylib 31, clip-models 14, map-resource 9; geometry/q1-solid 38 (index 1, polyhedron 18, sweep 10, clipspace 9); scheduler 12; actors registry 25, callbacks 19, body 15 (read/write/updateBodySnapshot/link/unlink/linkState/restoreLinkState/bind/create/record and copies); gameplay 145 (damage-modifier 1, q1-aim 1, transitions 3, q1-client-visibility 5, armor 2, mod-composition 5, weapon-behaviors 12, original-pickups 10, pickups 21, policies 20, inventory 32, authority 33 of ~60); session 32 (clocks 7, mod-callback-inputs 1, mod-client-input-values 1, mod-files 3, mod-client-applications 10, resources 5, session.ts closeAll/step/stepAsync/beginStep/completeStep 5). Fixed 27 groups (checks in tests/world/test_gate_world_render.c, oracle tests/world/oracles/gate_world_render.ts): patch drop message, Infinity dimensions, Math.max fractions, NaN findPlane/positionInPatch, CM_ValidateFacet live winding, raise-path leaks (patch, polylib clip/chop/check, topology restore, mod dispatch, weapon reader); CheckWinding count message; map-resource index/portal messages and ToInt32 store; topology version literal; q1-solid NaN min/max, clamp -0, `|| 1`, Error class; scheduler indexOf and ctor leak; registry Map.set saved refs after rebind, release/close AggregateError; callbacks invocation finally; body link order, linked-callback use-after-free, release aggregate; transitions committing finally; visibility state order; mod continuation failure rethrow; weapon restore rollback; pickup scope close on raise and grant failure rethrow; pickups find-first, Map dedupe; policies NaN max/min; inventory give NaN, adjust operand order, configure before-copy, group/pickup-binding use-after-free; authority activeHits/activePickups/cursor finally, dispatchedDamage tracking, pickup failure rethrow, reservation close/bind finally/catch and slot ABA, release aggregate; session arsenal impulse fallthrough, client-application error semantics, every session qa_errorf aborted instead of raising, ResourceScope.close aggregate, step stepping finally. Still unread: gameplay/authority observeStore, advanceSourceCursors, commitMutations, cursor helpers, writeArmorInternal, set*/read/readState/createState/normalizeLegacyArmor/binding/protectionBinding; session mod-client-command, mod-client-input, mod-client-outputs, mod-commands, mod-match, mod-objectives, mods, and the rest of session.ts. Open: session.ts closeAll (13 sites, distinct AggregateError messages) not mirrored in session.c (retired bundles close sequentially and free themselves, so a second close reads freed memory); mod-files path.resolve normalization; absorbProtection/mod/client-application observers live on the C stack (a retained observer called later is undefined, TS throws closed); original-pickups retains every scope until destroy (growth). gate-world2 (2026-11-03) read the rest, 183 functions: gameplay/authority 34 (binding, protectionBinding, readState, writeArmor and its ownership closure, currentCursor, observePublicWrite, openCursor, closeCursor, assertCursor, cursorFor, observeStore, advanceSourceCursors, commitMutations, validateMutations, read, setHealth, setArmor, normalizeLegacyArmor, setRegularPoints, setRegularArmor, setPoweredProtection, setTraits, create and its 4 binding closures, copiedPrimaryArmor, assertIdle, normalizeLegacyPowerOnlyArmor, regular/powered/armorEqual); session.ts 50 (the rest of WorldLifetime, SessionClient, SessionSeat, eventTargetsSeat, EngineSession); mod-client-command 6; mod-client-input 5; mod-client-outputs 20; mod-commands 20; mod-match 10; mod-objectives 11; mods 27; mod-clients, mod-presentations, mod-client-presentation and index are types only. gate-world2 fixed 11 groups (checks in tests/world/test_gate_world2.c, oracle tests/world/oracles/gate_world2.ts): session.c closeAll at all 13 TS sites with their messages and order (the first failure used to abort the rest), retired bundles reached through a closure handle so a second close is a no-op instead of reading freed memory, a client closing a seat a bundle or closeSeat already freed, prepared-client cleanup skipping seats while closing them, Map.set slot replacement (a duplicate slot entry made clientAt return the old closed client), close() finally, closed prepared clients/seats leaked, seat presentation scope leaked when its close raised; mod-files node path.resolve normalization (".", "..", repeated and trailing slashes, relative roots against the working directory) and store pointers invalidated by realloc; observers kept past their call (armor absorb, pickup protection, source damage, original-pickup take observer and current(), client-application output, mod assertCurrent/nextFrame) were C stack or freed memory, now closure handles (include/qa/world/handles.h) that raise the TS "closed" error; original-pickups kept every scope, cargo copy, match list, selection and lifetime until destroy, now released when the scope closes; authority rebind kept the copied flag, and rebind/bindDamageAdjustment/bindDamageAdmission replaced the binding in place so writeArmor, withPickupProtection and apply missed the TS binding identity change (now a binding version); mod-client-input had no try/catch (an open failure left its scope opening forever so no cleanup ran; failures not aggregated; unsubscribe leaked on a raise); mod-client-outputs lease identity (a retired lease published into and closed a later owner's channel), lease freed on close (double close read freed memory), find-last instead of Array.find, uint32 casts, leaks on raise; mod-match objective identity by array pointer (memmove/realloc dropped listings and read freed memory), unsnapshotted listings, unbind freed itself (second call read freed memory); mod-objectives activate catch, refresh/flush busy finally, removal leak; mods apply/open had no catch (scopes, pending entries and actives leaked, busy stuck, owner leaked), closeScopes not aggregated, mod scopes freed while mods still hold them, advance/checkpoint finally and partial-capture leaks; mod-commands readModCommand/execute leaks on raise. Open (gate-world2): authority keeps every closed damage cursor, decision mutation copy, pickup-match closure state and create() state until destroy (growth per hit and pickup); a late grant() on an original-pickup selection used before its scope closed returns stale where TS throws "already consumed"; retired session worlds/seats/clients are freed when their bundle closes, so a caller that kept such a pointer and reads it later is undefined (TS keeps it readable) and retired-world pointer comparisons can see address reuse; listeners receive a stack event pointer; mod records, client-output leases and match unbind records stay allocated until their owner is destroyed (bounded by binds); app/bootstrap/simulation native_mod.c and qvm_mod.c destroy a command port their mod scope still owns (D1c area); closure handles are process-wide and single-threaded.
+render	79	293	-	38	partial (gate-render, gate-render2 2026-11-03). gate-render read scene/models/stencil-shadow and shadow-bounds (7). gate-render2 read 286 functions against current TS: scene/textures 12, resources 19, q2-image 1, image-policy 4, q1-fog 1, skin 1, source-sort 4, shadow-geometry 4, debug-shapes 1, portal 3, flare 3, world-text 1, view 12, geometry 4, q2-sky 4, patch-lod 10, patch 6 (tessellate/insert/createMesh/midpoint/transpose/at; the Allocated/TemporaryPatchMesh block classes only skimmed), submissions 22, visibility 9, shadows 27, material-registrations 15 (ProviderShaderRegistrations, ShaderReplacementStage, snapshot), particles/legacy 7, particles/primitives 7; models attachment 1, image-path 1, replacements 3, types 2, sprites 3, lighting 7, grip 2, md3-bounds 3, light-sampler 4, transform 9 (shadedots is the table only); image-journal 5, output-gamma 1, q3-hardware 4, debug-graph 7, execution 6, worker-entry 1, commands/frame 10, commands/dynamic-texture 2, commands/material2d 1; cpu/source 2, cpu/commands 4, cpu/fog 3, cpu/lines 4, cpu/textures 11. Fixed (checks in tests/render/test_gate_render2.c, oracle tests/render/oracles/gate_render2.ts): textures undecodable candidates aborted (TS skips unless strict or the registry is closed), original-size adoption missing for q2 .pcx, q1 .lmp and readOriginal(path), adoption decode errors aborted, a failed load kept its request, animation records pointed into a reallocating array and stopped animations still fed sampleSurface, zero-frame GIF read uninitialized frames, decoded storage freed without its contents (leak); resources isolate had no try/finally, queued updates leaked their level (now owned by the drained array); world nested op stores and load/refresh lightmap pixels leaked; material registrations leaked cancelled/discarded registrations; transform md3 tag name and MD5 pose leaks, NaN frame picked the last tag row; source-sort int32 shift UB; skin short palette treated as black; portal, view farClip, geometry bounds, q2-sky, patch, debug-graph netgraph and 7 shadows sites dropped NaN in Math.min/max; view frustum used hypot not Math.hypot; patch Infinity dims UB cast; patch-lod self-stitched grid not revisited (TS replaces it with lodStitched false) and counter overflow UB; execution draw cleanup only for RangeError and rethrew as RangeError; submissions NaN comparator; visibility Q1 leaf index unchecked and fractional face count; shadows world-draw cache key lacked the cone (stale draws), passes borrowed cache draws freed at the 256-entry clear, atlas pixels (16 MB) and the cone/light blocks leaked; image-policy trim missed VT/FF. Unread: scene/world, scene/shaders, scene/material-registrations (SceneMaterialRegistrations bind/remap/refresh, ~20), models/prepare, models/renderer, particles/q3-system and q3-types, cpu/{rasterizer, triangle-kernel, lighting, row-parallel, row-worker}, gl/* (11), worker, worker-protocol, worker-transport, worker-runtime. Model shadows (r_shadows 2/3: modelShadowGroups, SceneShadowGroup, shadowVolumeGroup) remain unported.
+content/q1/addons/base-triggers.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/brushes.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/campaign.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/commands.ts	1	-	-	1	drift-done (d3-q1): isQ1AddonDeveloperImpulse ported as qa_q1ad_is_developer_impulse (its caller, composition/q1/runtime.ts sv_gate_dev_impulses gate, is open)
+content/q1/addons/context.ts	1	-	-	0	drift-done (d3-q1): ordinaryMonsters is the per-context store of ordinary/index.c (store_for); source* flags already on qa_q1_services; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/coop-spawns.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/addons/ctf/arsenal.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/drops.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/flags.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/index.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/maps.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/observer.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/scoring.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/teams.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/ctf/types.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/addons/effects.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/horde/index.ts	1	-	-	1	drift-done (d3-q1): dropped the army/dog fallback in the found action and spawnMonster check (ordinary controller owns them)
+content/q1/addons/horde/loot.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/addons/horde/squads.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/addons/index.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/items/common.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/items/pickups.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/items/upgrades.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/lights.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/ai/controller.ts	1	-	-	1	drift-done (d3-q1): word()/sourceWord on game.sourceWorldWords when there is no Q1 world; contents damage sourced from the monster without a world
+content/q1/addons/monsters/ai/path.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/ai/targets.ts	1	-	-	1	drift-done (d3-q1): destination via game.pathGoal; "mg3:world-words" state extension with restoreAbsent; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/bosses/final.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/bosses/ghost.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/bosses/oldnew-children.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/bosses/oldnew.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/bosses/orb.ts	1	-	-	1	drift-done (d3-q1): removed dead launchOrbMissile (TS removed it; no C caller)
+content/q1/addons/monsters/bosses/sacrifice.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/bosses/szombie.ts	1	-	-	1	drift-done (d3-q1): removed spawnHomingFlame and the homing_flame_think callback (TS removed both)
+content/q1/addons/monsters/demodog-frames.ts	1	-	-	0	drift-done (d3-q1): demodog and dog tables equal TS (test_q1_frame_tables)
+content/q1/addons/monsters/heavy/index.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/heavy/lava-man.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/heavy/rune-knight.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/infected/controller.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/ordinary/army.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/ordinary/attack.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/monsters/ordinary/chthon.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/addons/monsters/ordinary/classic.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/addons/monsters/ordinary/index.ts	1	-	-	1	drift-done (d3-q1): ordinarySpecies now filters base army/dog (C listed them twice and matched the base army spec); spawn registration hasSpawn ? replace : register; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/ordinary/nightmare.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/addons/monsters/ordinary/slime.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/addons/monsters/startup.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/addons/qc-math.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/addons/triggers.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/base/animation.ts	1	0	0	0	read in full (gate-q1, 2026-11-03): types only
+content/q1/base/creatures.ts	1	20	20	3	read in full (gate-q1, 2026-11-03): wizard shot right x/y/z read in an unsequenced initializer; backpack extras capped at 32 on restore; restored-monster list leaked on raise
+content/q1/base/frames.ts	1	0	0	0	read in full (gate-q1, 2026-11-03): table; equal to TS by test_q1_frame_tables
+content/q1/base/grunt.ts	1	12	12	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/base/map-entities.ts	1	35	35	1	read in full (gate-q1, 2026-11-03): ambient and static-model events lacked has_origin
+content/q1/base/messages.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): table compared entry for entry with the TS map (53 entries)
+content/q1/base/monster-actions.ts	1	10	10	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/base/monsters.ts	1	53	53	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/base/player.ts	1	19	19	2	read in full (gate-q1, 2026-11-03): character viewOffset x/y/z read in an unsequenced compound literal; decoded save tree leaked on raise
+content/q1/base/projectiles.ts	1	33	33	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/base/provider.ts	1	29	29	1	read in full (gate-q1, 2026-11-03): q1:base restore leaked the decoded save tree on raise
+content/q1/base/rules.ts	1	24	24	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/base/species.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): species data and precacheId1Monster order compared string for string
+content/q1/base/travel.ts	1	5	5	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/checkpoint.ts	1	6	6	4	read in full (gate-q1, 2026-11-03): restore set game.time directly (TS time setter frounds); door-group array and extension flags leaked when a saved reference raises; capture arena leaked when an unnamed callback raises
+content/q1/foundation/entity-services.ts	1	103	103	6	read in full (gate-q1, 2026-11-03): dropQ1Punch/calcMove Math.max kept -0/NaN wrongly; registerWeaponRules checked consumption before the duplicate id; adjoin and spawnEntity(context) did not restore state when the callee raised (TS finally); useTargets/radiusDamage target arrays leaked on raise
+content/q1/foundation/entity.ts	1	10	10	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/movers.ts	1	55	55	1	read in full (gate-q1, 2026-11-03): linkDoors capped a door group at 64 (TS unbounded); group array now released on the cross-connected raise
+content/q1/foundation/pickups.ts	1	21	21	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/spawns.ts	1	53	53	1	read in full (gate-q1, 2026-11-03): UnknownQ1SpawnError raised as its own class so the foreign-world load can catch it
+content/q1/foundation/text.ts	1	2	2	0	read in full (gate-q1, 2026-11-03): message map compared with bun dump (68 entries)
+content/q1/foundation/types.ts	1	11	11	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/weapons.ts	1	17	17	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/missionpacks/backpacks.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/grapple.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/hipnotic-weapons.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/items.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/missionpacks/monsters/armagon.ts	1	-	-	1	drift-done (d3-q1): action key SUB_AttackFinished(1)
+content/q1/missionpacks/monsters/charmed-base.ts	1	-	-	1	drift-done (d3-q1): army/dog check attack, pain, bite, leap, shells, walk back delegate to base/grunt.c
+content/q1/missionpacks/monsters/gremlin-weapons.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/monsters/gremlin.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/monsters/helpers.ts	1	-	-	1	drift-done (d3-q1): removed emptyPain and setPointBounds
+content/q1/missionpacks/monsters/lavaman.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/monsters/morph.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/monsters/overlord.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/monsters/paths.ts	1	-	-	1	drift-done (d3-q1): t_movetarget uses pathGoal (no empty-target guard)
+content/q1/missionpacks/monsters/runtime.ts	1	-	-	2	drift-done (d3-q1): hipnotic species loop skips army/dog; definitions hasSpawn ? replace : register; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/missionpacks/monsters/species-variants.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/missionpacks/monsters/tables/hiparma.ts	1	-	-	1	drift-done (d3-q1): regenerated names: SUB_AttackFinished(1), hiparma:armagon_stop2 (test_q1_frame_tables)
+content/q1/missionpacks/monsters/types.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/missionpacks/pickup-rules.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/player.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/rogue-weapons.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/runtime.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/travel.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/types.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/missionpacks/world/finale-text.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/missionpacks/world/hipnotic-hazards.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/world/hipnotic-holes.ts	1	-	-	0	drift-done (d3-q1): added in TS: C port present and compared with the TS file
+content/q1/missionpacks/world/hipnotic-triggers.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/world/index.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/world/rogue-runes.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change; gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/missionpacks/world/rogue-tag.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/world/rogue-teams.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/missionpacks/world/rogue-time.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/armor-stage.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/damage-call.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/quakec/damage-scale.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/id1-attacks.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/id1-damage.ts	1	-	-	3	drift-done (d3-q1): reaction/health mismatch and post-reaction combat stores run unreported; metadata check only for sites layouts
+content/q1/quakec/id1-environment.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/id1-pickups.ts	1	-	-	0	drift-done (d3-q1): types only; C types already match
+content/q1/quakec/id1-program.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/id1-projectiles.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/pickup-callers.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/quakec/weapon-stage.ts	1	-	-	0	drift-done (d3-q1): hunks checked against C; C already had the change
+content/q1/foundation/index.ts	1	-	-	0	drift-done (d3-q1): removed in TS: deleted the empty src/content/q1/foundation/index.c; foundation.h umbrella kept (used by test_q1_quakec.c)
+content/q1/foundation/monsters.ts	1	-	-	0	drift-done (d3-q1): removed in TS: C counterpart already deleted; grunt/dog behaviour lives in base/grunt.c
+content/q1/missionpacks/index.ts	1	-	-	0	drift-done (d3-q1): removed in TS: deleted missionpacks/index.c, index.h and the unused missionpacks.h umbrella
+bots/behavior/assets.ts	1	-	-	0	drift-done (d5-q3bots): unread navigation entries, add_with_legacy, provenance/legacy provenance (SHA-256) in assets.c; mounted opener kept alive
+bots/behavior/director.ts	1	-	-	0	drift-done (d5-q3bots): save version 2; restore accepts 1 (legacy_provenance) or 2; navigation(library, bsp) already present
+bots/behavior/library/bsp-entities.ts	1	-	-	0	drift-done (d5-q3bots): oversized integer epairs saturate
+bots/behavior/library/character.ts	1	-	-	0	drift-done (d5-q3bots): import paths only
+bots/behavior/library/chat-data.ts	1	-	-	0	drift-done (d5-q3bots): integer subtype error is a parse failure; unclosed synonym context fails the parse
+bots/behavior/library/chat.ts	1	-	-	0	drift-done (d5-q3bots): issues ring of 256; find_match_into bound 255; random via qa_bot_source_unit_random; removed dump_configuration/print_reply_chat_keys (and test lines)
+bots/behavior/library/genetic.ts	1	-	-	0	drift-done (d5-q3bots): sourceUnitRandom moved to weights.ts; local copy has identical semantics
+bots/behavior/library/goals.ts	1	-	-	0	drift-done (d5-q3bots): sourceGoalsByActor is a lookup index; C linear find gives the same binding
+bots/behavior/library/log.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/library/memory.ts	1	-	-	0	drift-done (d5-q3bots): removed print_memory_labels/dump_memory; cached DataView has no C counterpart (stable byte pointer)
+bots/behavior/library/script-sources.ts	1	-	-	0	drift-done (d5-q3bots): import paths only
+bots/behavior/library/structure.ts	1	-	-	0	drift-done (d5-q3bots): import paths only
+bots/behavior/library/weapons.ts	1	-	-	0	drift-done (d5-q3bots): projectile dump field model at offset 80
+bots/behavior/library/weights.ts	1	-	-	0	drift-done (d5-q3bots): expectInteger fails on non-integer; qa_bot_source_unit_random exported
+bots/behavior/orders.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/prediction.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/q3/ai-chat.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/q3/ai-combat.ts	1	-	-	0	drift-done (d5-q3bots): already uses close_range_aim_penalty
+bots/behavior/q3/ai-command.ts	1	-	-	0	drift-done (d5-q3bots): already present (netname fallback, waypoint free list)
+bots/behavior/q3/ai-context.ts	1	-	-	0	drift-done (d5-q3bots): already present (255-char cut)
+bots/behavior/q3/ai-main.ts	1	-	-	0	drift-done (d5-q3bots): empty goal stack names ''; short quoted command skipped; saveroutingcache message; entity_observation checks observable
+bots/behavior/q3/ai-navigation.ts	1	-	-	0	drift-done (d5-q3bots): already present (depth break)
+bots/behavior/q3/ai-state.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/q3/arsenal-knowledge.ts	1	-	-	1	drift-done (d5-q3bots): close_range_aim_penalty set (was never set, so ai_combat never applied it)
+bots/behavior/q3/catalog.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/q3/library.ts	1	-	-	0	drift-done (d5-q3bots): import path only
+bots/behavior/q3/movement-state.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/q3/navigation-services.ts	1	-	-	0	drift-done (d5-q3bots): already present (bsp_entities, model_bounds)
+bots/behavior/q3/navigation.ts	1	-	-	0	drift-done (d5-q3bots): best_reachable_area drops through the AAS area tree (qa_aas_trace_client_bbox); rest already present
+bots/behavior/q3/observations.ts	1	-	-	0	drift-done (d5-q3bots): emptyInfo exported as qa_aas_entity_info_empty_bots_a
+bots/behavior/q3/source-game.ts	1	-	-	0	drift-done (d5-q3bots): already present (observable)
+bots/behavior/q3/travel/controller.ts	1	-	-	0	drift-done (d5-q3bots): jump-pad crossing selects from the extrapolated end; KEX_TRAVEL_ELEVATOR; rest already present
+bots/behavior/q3/travel/routing.ts	1	-	-	0	drift-done (d5-q3bots): KEX_TRAVEL_BARRIER_JUMP; select_from already present
+bots/behavior/q3/travel/types.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/rerelease/brain.ts	1	-	-	0	drift-done (d5-q3bots): replan pacing (failed/planned goal, id-spread interval); move re-projection after aim; sight trace only in a view cone; carrier chat needs a carrier; escort before goal; per-graph hazard memo; removed awareness_of/current_path_index
+bots/behavior/rerelease/checkpoint.ts	1	-	-	0	drift-done (d5-q3bots): already present (optional checkSixYaw)
+bots/behavior/rerelease/data/botdata.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/behavior/rerelease/nav.ts	1	-	-	0	drift-done (d5-q3bots): barrier jump by source kind; KEX_TRAVEL_TRAIN; node views/avoid already present
+bots/behavior/rerelease/path-follow.ts	1	-	-	0	drift-done (d5-q3bots): already present (no rng parameter)
+bots/navigation/aas-cluster.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/navigation/aas-reachability-geometry.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/navigation/aas-reachability-spatial.ts	1	-	-	0	drift-done (d5-q3bots): trace moved to aas.c (qa_aas_trace_client_bbox); oversized integer epairs saturate
+bots/navigation/aas-reachability-types.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/navigation/aas.ts	1	-	-	0	drift-done (d5-q3bots): load validation (root node, single parent, reach overlap, cluster/portal ranges); qa_aas_trace_client_bbox
+bots/navigation/construct.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/navigation/estimate-aas.ts	1	-	-	0	drift-done (d5-q3bots): NaN/out-of-range distance clamps to 1; EstimateStore sharing not ported (see open items)
+bots/navigation/estimate-store.ts	1	-	-	0	drift-done (d5-q3bots): added: mapped to estimates.c/estimate_aas.c per-runtime LRU caches; cross-runtime sharing not ported (open item)
+bots/navigation/estimates.ts	1	-	-	0	drift-done (d5-q3bots): AAS equal-area answer before range test; origin check only for non-AAS; MinHeap already identical; store sharing open
+bots/navigation/graph.ts	1	-	-	0	drift-done (d5-q3bots): AAS/KEX travel constants and qa_navigation_edge_is_barrier_jump
+bots/navigation/heap.ts	1	-	-	0	drift-done (d5-q3bots): added: ported as src/bots/navigation/heap.c (used by rerelease_path.c)
+bots/navigation/load.ts	1	-	-	0	drift-done (d5-q3bots): asset whose graph fails to build falls back to construction (qa_try), resource NULL
+bots/navigation/movement.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/navigation/nav.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+bots/navigation/rerelease-path.ts	1	-	-	0	drift-done (d5-q3bots): MinHeap queue, nearest-first candidates, per-search edgeAllowed memo, barrier jump by source kind
+bots/navigation/runtime.ts	1	-	-	0	drift-done (d5-q3bots): AAS edges test only the entered area and no drop limit; KEX_TRAVEL_ELEVATOR; edge/mover_edge/edge_selectable already present; estimate scope open
+bots/navigation/types.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/bot-debug.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/combat-bridge.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/ballistics-math.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/combat.ts	1	-	-	0	drift-done (d5-q3bots): death reaction sets target->enemy = native owner (combat.c)
+content/q3/base/game/death.ts	1	-	-	0	drift-done (d5-q3bots): player_die records self->enemy = attacker entity (death.c)
+content/q3/base/game/entities.ts	1	-	-	0	drift-done (d5-q3bots): pool init sets rankings.grapple_death 28 missionpack / 23 base (entities.c)
+content/q3/base/game/grapple.ts	1	-	-	0	drift-done (d5-q3bots): Q3_GRAPPLE_SPEED/q3GrappleVelocity moved to movement/q3/grapple.ts (D7); C keeps qa_q3_grapple_velocity in grapple.c, behaviour unchanged
+content/q3/base/game/hitscan.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/item-lifecycle.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/item-motion.ts	1	-	-	0	drift-done (d5-q3bots): already present: return when the think freed the item
+content/q3/base/game/item-pickup.ts	1	-	-	0	drift-done (d5-q3bots): removed unused qa_q3_add_ammo (TS addAmmo deleted)
+content/q3/base/game/missile.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/mover-spawn.ts	1	-	-	0	drift-done (d5-q3bots): train leg duration clamped to >= 1 ms (qa_js_max); removed unused qa_q3_create_mover_spawn_handlers
+content/q3/base/game/rankings.ts	1	-	-	0	drift-done (d5-q3bots): grapple_death field; the four MOD_GRAPPLE switch cases key on it (grapple_case)
+content/q3/base/game/save-state.ts	1	-	-	0	drift-done (d5-q3bots): coverage types only; no C counterpart
+content/q3/base/game/save-values.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/shader-remaps.ts	1	-	-	0	drift-done (d5-q3bots): over-long remap paths cut to 63 bytes instead of aborting (add and restore)
+content/q3/base/game/spawn.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/state.ts	1	-	-	0	drift-done (d5-q3bots): removed TS createGameClient/createGameEntity had no C counterpart
+content/q3/base/game/targets.ts	1	-	-	0	drift-done (d5-q3bots): null activator tolerated: use_client(NULL)=NULL, speaker/kill return, relay no longer aborts
+content/q3/base/game/use-participant.ts	1	-	-	0	drift-done (d5-q3bots): qa_q3_use_client takes a nullable pointer (call sites in targets.c, triggers.c)
+content/q3/base/game/utilities.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/game/weapon.ts	1	-	-	0	drift-done (d5-q3bots): kamikaze skips an unlinked victim instead of aborting
+content/q3/base/records.ts	1	-	-	0	drift-done (d5-q3bots): actor-slot index (assign_actor/record_of) replaces the linear record scans; insertion order kept
+content/q3/base/settings.ts	1	-	-	0	drift-done (d5-q3bots): already present: pmove_ladders, sv_rankingsGameKey/GameID
+content/q3/base/shared/definitions.ts	1	-	-	0	drift-done (d5-q3bots): removed QA_Q3_BASE_EV_EVENT_BIT2
+content/q3/base/shared/entity-shared.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/shared/items.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/shared/player-state.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/base/world.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/foundation/animation-config.ts	1	-	-	0	drift-done (d5-q3bots): CG_Printf overflow and nonprogress cycle raise TextParseError with line (qa_text_parse_error)
+content/q3/foundation/character.ts	1	-	-	0	drift-done (d5-q3bots): removed QA_Q3_CHARACTER_VIEW_HEIGHT
+content/q3/foundation/player-pose.ts	1	-	-	0	drift-done (d5-q3bots): angle_subtract reduces magnitudes above 2^24 with fmod first
+content/q3/foundation/presentation.ts	1	-	-	0	drift-done (d5-q3bots): removed qa_q3_identity_axis (and its test lines)
+content/q3/guest-items.ts	1	-	-	0	drift-done (d5-q3bots): catalog accepts artifact NULL (TS source null, native module): no table, keeps initial weapons
+content/q3/presentation/audio.ts	1	-	-	0	drift-done (d5-q3bots): failed_sounds cap: at most 256 missing sounds cached
+content/q3/presentation/client.ts	1	-	-	0	drift-done (d5-q3bots): ladders setting from pmove_ladders; clients entity_reset hook; close runs every step under qa_try and rethrows one/AggregateError; particles reset_round
+content/q3/presentation/config.ts	1	-	-	0	drift-done (d5-q3bots): pmove_ladders VM cvar (enum, both tables, names); table counts 90/102 per bun
+content/q3/presentation/console.ts	1	-	-	0	drift-done (d5-q3bots): failed command prints 'Console command failed: ...' and returns true unless closed (qa_try)
+content/q3/presentation/draw-icons.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/draw-status.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/draw-tools.ts	1	-	-	0	drift-done (d5-q3bots): removed qa_q3_pres_proportional_size_scale (and its test line)
+content/q3/presentation/effects.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/events.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/frame-audio.ts	1	-	-	0	drift-done (d5-q3bots): sound_buffer_out wraps mod 20
+content/q3/presentation/frame.ts	1	-	-	0	drift-done (d5-q3bots): player weapon above count registers weapon 0
+content/q3/presentation/hud-corners.ts	1	-	-	0	drift-done (d5-q3bots): weapon icon via weapon_or_empty (client.c corner_weapon_icon)
+content/q3/presentation/hud.ts	1	-	-	0	drift-done (d5-q3bots): ammo model via weapon_or_empty
+content/q3/presentation/local-entities.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/mark-projector.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/media.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/mission-hud.ts	1	-	-	0	drift-done (d5-q3bots): menu sources compressed (compress_script_text, mirror of legacy-script/memory.ts compressScriptText); UiRuntime commands fields kept until D8 drops them
+content/q3/presentation/movement-host.ts	1	-	-	0	drift-done (d5-q3bots): ladders_disabled option
+content/q3/presentation/player-state.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/players.ts	1	-	-	0	drift-done (d5-q3bots): skull trail no longer aborts; read_file_length host; team not validated; entity reset after a load
+content/q3/presentation/prediction.ts	1	-	-	0	drift-done (d5-q3bots): ladders_disabled setting passed to movement; boxModel cache is perf-only (C builds a temp box per trace, same results)
+content/q3/presentation/ref-entity.ts	1	-	-	1	drift-done (d5-q3bots): admissibility checks added; removed RF_WRAP_FRAMES, rail-rings constructor, copy_source_ref_entity; emit_rail_trail/emit_plasma_trail rewritten to the TS code (C bodies were wrong)
+content/q3/presentation/resources.ts	1	-	-	0	drift-done (d5-q3bots): failed model/skin lookups cached only up to 256; lowerNames is a perf cache
+content/q3/presentation/scene.ts	1	-	-	0	drift-done (d5-q3bots): reject inadmissible entities/polys/lights with one warning
+content/q3/presentation/server-commands.ts	1	-	-	0	drift-done (d5-q3bots): unknown game type kept; CTF flag status of empty string; voice buffer wraps mod 32; team info clamp already present
+content/q3/presentation/state.ts	1	-	-	0	drift-done (d5-q3bots): already present: sorted_team_players[32]
+content/q3/presentation/ui-adapters.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/presentation/weapons.ts	1	-	-	0	drift-done (d5-q3bots): weapon_or_empty; register_weapon range/item guard; failed registration clears its flag (qa_cleanup); view weapon team not validated
+content/q3/team-arena/client-effects.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/team-arena/client-events.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/team-arena/client-policy.ts	1	-	-	0	drift-done (d5-q3bots): already present: qa_q3_ta_snapshot_view_source
+content/q3/team-arena/client-spawn.ts	1	-	-	0	drift-done (d5-q3bots): already present: selected_weapon_after_targets
+content/q3/team-arena/client-think.ts	1	-	-	0	drift-done (d5-q3bots): ladders passed as settings.ladders (comments updated)
+content/q3/team-arena/commands.ts	1	-	-	0	drift-done (d5-q3bots): trailing ESC ends sanitize; follow cycle no abort; gc order < 7; say location needs target client; vote rejects ; CR LF quote; dispatch reports GameCommandError
+content/q3/team-arena/foreign-objectives.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/team-arena/match.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/team-arena/objective-placement.ts	1	-	-	0	drift-done (d5-q3bots): types-only: SPDX header or type-level change, no C change
+content/q3/team-arena/server-commands.ts	1	-	-	0	drift-done (d5-q3bots): IP filter needing absent octets no longer matches
+content/q3/team-arena/team.ts	1	-	-	0	drift-done (d5-q3bots): removed qa_q3_ta_team_color_string (and its test line)
+bots/behavior/rerelease/index.ts	1	-	-	0	drift-done (d5-q3bots): removed in TS: deleted rerelease/index.c and the rerelease.h barrel
+bots/behavior/rerelease/q2-exports.ts	1	-	-	0	drift-done (d5-q3bots): removed in TS (bot exports run in the native DLL); deleted q2_exports.c/.h, no C users
+content/q3/base/index.ts	1	-	-	0	drift-done (d5-q3bots): removed in TS: deleted base/index.c and the unused base.h umbrella
+content/q3/base/shared/slide-move.ts	1	-	-	0	drift-done (d5-q3bots): removed in TS: deleted slide_move.c/.h (unused typedef)
+content/q3/presentation/index.ts	1	-	-	0	drift-done (d5-q3bots): removed in TS: deleted presentation/index.c; presentation.h kept as a test include convenience
+content/q3/team-arena/index.ts	1	-	-	0	drift-done (d5-q3bots): removed in TS: deleted team_arena/index.c and the unused team_arena.h umbrella
+content/q2/base/entities/movers.ts	1	-	-	0	drift-done (d4-q2): plat loop-sound attenuation by edition, secret-door talk1 on the toucher, plat trigger clipMask 0x2020003
+content/q2/base/entities/scenery.ts	1	-	-	0	drift-done (d4-q2): teleporter amb10 loop attenuation by edition
+content/q2/base/entities/triggers.ts	1	-	-	0	drift-done (d4-q2): InitTrigger zero movedir for unrotated brush; trigger_monsterjump checks serverFlags & 2
+content/q2/base/monsters/boss2.ts	1	-	-	0	drift-done (d4-q2): search sound on a 50% roll with attenuation 0
+content/q2/base/monsters/chick.ts	1	-	-	0	drift-done (d4-q2): chick_dead corpse bounds {-16,-16,0}..{16,16,16}
+content/q2/base/monsters/gladiator.ts	1	-	-	0	drift-done (d4-q2): search sound attenuation 1
+content/q2/base/monsters/hover.ts	1	-	-	0	drift-done (d4-q2): named source think q2:base/hover_deadthink with entity.timestamp deadline
+content/q2/base/monsters/mutant.ts	1	-	-	0	drift-done (d4-q2): flyCheck(context, true) was already ported
+content/q2/base/monsters/supertank.ts	1	-	-	0	drift-done (d4-q2): TreadSound on channel 2
+content/q2/base/player/character.ts	1	-	-	0	drift-done (d4-q2): PlayerNoise ignores landmark-fall, landmark-noise and FL_DISGUISED noises
+content/q2/base/player/checkpoint.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/base/player/commands.ts	1	-	-	0	drift-done (d4-q2): team flag 128, g_items inventory order, weapon filter, validateSelection, drop syncPowerArmor, invdrop message, weapnext/weapprev direction, kill applies direct damage; help/score/use were already ported
+content/q2/base/player/index.ts	1	-	-	0	drift-done (d4-q2): spawn callbacks merged, instagib railgun selection, setInventory catalog capacities, obituary killer enemy, power-off at first death, death scoreboard, spectator jump chase, chase `from`; buildView help was already ported
+content/q2/base/player/landmarks.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/base/player/spawns.ts	1	-	-	0	drift-done (d4-q2): SP_CreateCoopSpots/SP_FixCoopSpots named think callbacks (qa_q2_player_spawn_callbacks)
+content/q2/base/player/types.ts	1	-	-	0	drift-done (d4-q2): Q2PlayerMovement.upMove added; helpIcon/selectEmpty/helpChanged/jumpHeld were already ported
+content/q2/base/player/view.ts	1	-	-	0	drift-done (d4-q2): kick min/max order; layouts split by deathmatch
+content/q2/equipment/ctf-grapple.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/equipment/grapple-weapon.ts	1	-	-	0	drift-done (d4-q2): rerelease CTF grapple noHaste
+content/q2/equipment/hand-grenades.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/entity-services.ts	1	-	-	0	drift-done (d4-q2): dodge candidate set (markDodgeable/dodgeables), noise_index message sound; slot reuse and nextTargetActor were already equivalent
+content/q2/foundation/host.ts	1	-	-	0	drift-done (d4-q2): options.instagib, markDodgeable/dodgeables; local, itemDropped, helpChanged, disguiseViolation, playerName were already ported
+content/q2/foundation/infinite-ammo.ts	1	-	-	0	drift-done (d4-q2): new infinite_ammo.c (qa_q2_no_infinite_ammo)
+content/q2/foundation/items.ts	1	-	-	0	drift-done (d4-q2): foreign Q3 items moved to composition (foreign_items hook, composition/q2_q3_items.c), instagib, noInfiniteAmmo, disintegrator swap, weapon-stay rerelease respawn, syncPowerArmor, power armor print/sounds, quad/invuln use sounds
+content/q2/foundation/monsters/actions.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/monsters/ai.ts	1	-	-	0	drift-done (d4-q2): already ported; waterAboveWaistAt made public (qa_q2m_water_above_waist_at) and shared
+content/q2/foundation/monsters/checkpoint.ts	1	-	-	0	drift-done (d4-q2): noise primaryRecord/secondaryRecord were already ported
+content/q2/foundation/monsters/gibs.ts	1	-	-	0	drift-done (d4-q2): ThrowHead clears model2-4 and stops the loop sound
+content/q2/foundation/monsters/index.ts	1	-	-	0	drift-done (d4-q2): soldier variants (incl. rerelease ripper/hypergun/lasergun), ducked pain + skill 3 pain time, medic owner and gib-time slot refund, endFrame early return, dodgeables(); other hunks were already ported
+content/q2/foundation/monsters/perception.ts	1	-	-	0	drift-done (d4-q2): rogue classic slide chance, closeEnough +2, release removes noise entities and keeps Map order; other hunks were already ported
+content/q2/foundation/monsters/soldier.ts	1	-	-	0	drift-done (d4-q2): classic gib set (3 meat + chest), classic death skin |= 1
+content/q2/foundation/monsters/types.ts	1	-	-	0	drift-done (d4-q2): definition soldier field; new MonsterState fields were already ported
+content/q2/foundation/motion.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/movers.ts	1	-	-	0	drift-done (d4-q2): button keeps message/touch, door-blocked explosion effect, train blocked removes non-actors, door touch talk1 on toucher; train wait, point_combat bounds and loop attenuation were already ported
+content/q2/foundation/rerelease-ammo.ts	1	-	-	0	drift-done (d4-q2): rerelease_ammo.c already existed; manifest row added
+content/q2/foundation/scenery.ts	1	-	-	0	drift-done (d4-q2): already ported
+content/q2/foundation/shadow-lights.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/start-items.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/targets.ts	1	-	-	0	drift-done (d4-q2): mine3 secret message, changelevel latch timeout + timestamp, trigger_counter talk1 on activator; exit print and helpChanged were already ported
+content/q2/foundation/weapon-attachments.ts	1	-	-	0	drift-done (d4-q2): renames and comments only
+content/q2/foundation/weapons/ballistics.ts	1	-	-	0	drift-done (d4-q2): markDodgeable, rerelease bfg-laser beam ends at the target center; noise/disguise and bolt serverFlags were already ported
+content/q2/foundation/weapons/checkpoint.ts	1	-	-	0	drift-done (d4-q2): formatVersion 3 was already ported (v2 accepted by persistence)
+content/q2/foundation/weapons/generic-frame.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/weapons/player.ts	1	-	-	0	drift-done (d4-q2): localSound lowammo, noInfiniteAmmo, partial consume, noHaste animation, dualfire tech3 sound
+content/q2/foundation/weapons/presentation.ts	1	-	-	0	drift-done (d4-q2): animation rate noHaste
+content/q2/foundation/weapons/types.ts	1	-	-	0	drift-done (d4-q2): definition noHaste; retired Q2NoiseRecord type removed
+content/q2/missionpacks/entities/rogue.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/missionpacks/entities/types.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/missionpacks/items.ts	1	-	-	0	drift-done (d4-q2): q2MissionAmmoPackCapacity (qa_q2mp_mission_ammo_pack_capacity) in ammoPack; registration capacities were already ported
+content/q2/missionpacks/modes/deathball.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/missionpacks/modes/tag.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/missionpacks/monsters/dabeam.ts	1	-	-	0	drift-done (d4-q2): dabeam_free hides the beam before freeing
+content/q2/missionpacks/monsters/fixbot.ts	1	-	-	0	drift-done (d4-q2): missing goal ends the goal move (dropGoal) instead of aborting
+content/q2/missionpacks/monsters/flyer.ts	1	-	-	0	drift-done (d4-q2): rerelease kamikaze-less blocked returns false
+content/q2/missionpacks/monsters/gekk.ts	1	-	-	0	drift-done (d4-q2): WATER_WAIST wet test, NOSWIM, rerelease attack/blocked/jump moves, gekk_shrink, pain enters water
+content/q2/missionpacks/monsters/hints.ts	1	-	-	0	drift-done (d4-q2): formatting only
+content/q2/missionpacks/monsters/hover.ts	1	-	-	0	drift-done (d4-q2): hover_dying callback
+content/q2/missionpacks/monsters/index.ts	1	-	-	0	drift-done (d4-q2): soldierh variants dropped from fallbacks, rerelease fallbacks registered with rereleaseMissionPackMoves; source.bind was already ported
+content/q2/missionpacks/monsters/rogue-variants.ts	1	-	-	0	drift-done (d4-q2): rogue boss2 move distances
+content/q2/missionpacks/monsters/stalker.ts	1	-	-	0	drift-done (d4-q2): rerelease blocked: no shot check, 10% pounce after platform
+content/q2/missionpacks/monsters/state.ts	1	-	-	0	drift-done (d4-q2): bind on release was already ported
+content/q2/missionpacks/monsters/widow.ts	1	-	-	0	drift-done (d4-q2): rerelease blocked returns false
+content/q2/missionpacks/monsters/widow2.ts	1	-	-	0	drift-done (d4-q2): widow2_step callback
+content/q2/missionpacks/projectiles/common.ts	1	-	-	0	drift-done (d4-q2): markDodgeable
+content/q2/missionpacks/random-items.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/missionpacks/spheres.ts	1	-	-	0	drift-done (d4-q2): dopple wait was already ported
+content/q2/missionpacks/weapons/definitions.ts	1	-	-	0	drift-done (d4-q2): prox launcher v_plaunch/g_plaunch models, chainfist noHaste
+content/q2/multiplayer/ctf/index.ts	1	-	-	0	drift-done (d4-q2): ctf-menu join/match guards were already ported
+content/q2/multiplayer/ctf/match.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/multiplayer/ctf/presentation.ts	1	-	-	0	drift-done (d4-q2): say_team: %-expansion cache per key, stop at 1023, literal % before newline
+content/q2/multiplayer/ctf/types.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/multiplayer/horde.ts	1	-	-	0	drift-done (d4-q2): occupied spawn point stops the batch, spawned count, completion print
+content/q2/multiplayer/lmctf/admin.ts	1	-	-	0	drift-done (d4-q2): pause commands require referee
+content/q2/multiplayer/lmctf/flags.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/multiplayer/lmctf/types.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/multiplayer/lmctf/vote.ts	1	-	-	0	drift-done (d4-q2): ballots reset only before a vote starts
+content/q2/rerelease/entities.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/rerelease/goals.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/rerelease/index.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/rerelease/monsters/base-variants/medic.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/rerelease/monsters/common.ts	1	-	-	0	drift-done (d4-q2): blockedCheckJump uses waterAboveWaistAt
+content/q2/rerelease/monsters/gladiator.ts	1	-	-	0	drift-done (d4-q2): die stops the weapon loop sound
+content/q2/rerelease/monsters/shambler.ts	1	-	-	0	drift-done (d4-q2): shambler_bolt beam entity was already ported
+content/q2/rerelease/monsters/tables/boss31.ts	1	-	-	0	drift-done (d4-q2): removed jorg start/end walk moves
+content/q2/rerelease/monsters/tables/boss32.ts	1	-	-	0	drift-done (d4-q2): removed makron_move_death3
+content/q2/rerelease/monsters/tables/brain.ts	1	-	-	0	drift-done (d4-q2): removed brain_move_defense
+content/q2/rerelease/monsters/tables/float.ts	1	-	-	0	drift-done (d4-q2): removed floater death/pain3 moves
+content/q2/rerelease/monsters/tables/flyer.ts	1	-	-	0	drift-done (d4-q2): removed roll/bank/defense moves
+content/q2/rerelease/monsters/tables/hover.ts	1	-	-	0	drift-done (d4-q2): removed attack2 start/end moves
+content/q2/rerelease/monsters/tables/missionpack.ts	1	-	-	0	drift-done (d4-q2): new tables/missionpack.c (rereleaseMissionPackMoves)
+content/q2/rerelease/monsters/tables/parasite.ts	1	-	-	0	drift-done (d4-q2): removed stop run/walk moves
+content/q2/rerelease/monsters/tables/supertank.ts	1	-	-	0	drift-done (d4-q2): removed turn moves
+content/q2/rerelease/monsters/tables/tank.ts	1	-	-	0	drift-done (d4-q2): removed stop walk/run moves
+content/q2/rerelease/players.ts	1	-	-	0	drift-done (d4-q2): instagib railgun selection; cloakAlpha, fade on fire and coop respawn spectator were already ported
+content/q2/rerelease/q64/index.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/rerelease/triggers.ts	1	-	-	0	drift-done (d4-q2): zero movedir for unrotated triggers without angle
+content/q2/rerelease/types.ts	1	-	-	0	drift-done (d4-q2): SPDX header only
+content/q2/foundation/index.ts	1	-	-	0	drift-done (d4-q2): removed in TS: C barrel TU deleted, umbrella header kept for C includes
+content/q2/multiplayer/lmctf/index.ts	1	-	-	0	drift-done (d4-q2): removed in TS: C barrel TU deleted, header kept for the lmctf.h umbrella
+content/q2/rerelease/monsters/generate-tables.ts	1	-	-	0	drift-done (d4-q2): removed in TS (generator dropped): C generator and its test deleted
+content/composition/q2-q3-items.ts	1	-	-	0	drift-done (d4-q2): new composition/q2_q3_items.c (q3ForeignItemDefinitions, moved from the Q2 item module), wired through qa_q2_item_hooks.foreign_items in composition/q2, foreign_q2_world and the adjunct world
+compat/q2/classic/combat-binding.ts	1	-	-	0	drift-done (d6-compat): stand-in actors, damage proxies kept per actor with reload observer, skin team fallback
+compat/q2/classic/combat-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix viewAngles 3640
+compat/q2/classic/cvars.ts	1	-	-	0	drift-done (d6-compat): already present (private cvars, reusable strings, relink)
+compat/q2/classic/host.ts	1	-	-	0	drift-done (d6-compat): standInActor, observeReload, command strings, AddCommandString filter, TagMalloc limit, userinfo fit, nullsurface, world edict on no hit
+compat/q2/classic/layout.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/classic/pickup-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix pickup profile
+compat/q2/classic/pmove.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/classic/printf.ts	1	-	-	0	drift-done (d6-compat): size prefixes (hh/h/ll/I64/j 64-bit), stray specifiers print as text
+compat/q2/classic/records.ts	1	-	-	0	drift-done (d6-compat): fitClassicUserinfo (in classic/host.c); record cache and findZero fast path are perf
+compat/q2/classic/world-profile.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/guest-console.ts	1	-	-	0	drift-done (d6-compat): new guest_console.c
+compat/q2/guest-strings.ts	1	-	-	0	drift-done (d6-compat): C port already existed (guest_strings.c); manifest row added
+compat/q2/native-combat-call.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-input.ts	1	-	-	0	drift-done (d6-compat): already present (touch planes, groundplane)
+compat/q2/native-mod-armor.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-mod-clients.ts	1	-	-	0	drift-done (d6-compat): loop rewrite, no behaviour change
+compat/q2/native-mod-combat.ts	1	-	-	0	drift-partial (d6-compat): shared callback address keeps first binding; per-slot field watch (perf) not mirrored
+compat/q2/native-mod-deferred.ts	1	-	-	0	drift-done (d6-compat): watchedFields helper for the per-slot watch (perf); no C change
+compat/q2/native-mod-invocations.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-mod-items.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-mod-protection.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-mod-provider.ts	1	-	-	0	drift-partial (d6-compat): ownership mismatch reported after restores; readOnlyImports skip, projection index (perf) and close aggregation not mirrored
+compat/q2/native-mod-region.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-primary-command-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix profile
+compat/q2/native-primary-commands.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-primary-drop-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix profile
+compat/q2/native-primary-inventory-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix profile
+compat/q2/native-primary-inventory.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/native-primary-player-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix profile
+compat/q2/native-primary-weapon-profile.ts	1	-	-	0	drift-done (d6-compat): 1998 Xatrix profile
+compat/q2/native-primary-weapons.ts	1	-	-	0	drift-done (d6-compat): saved fields restored only while the actor is current
+compat/q2/native-primary.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/api.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/body-shape.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/debug-shapes.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/deferred-damage.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/foreign-actors.ts	1	-	-	0	drift-done (d6-compat): engaged()
+compat/q2/rerelease/host.ts	1	-	-	0	drift-partial (d6-compat): BoxEdicts filters may link; direct reconcile skip (perf) not mirrored
+compat/q2/rerelease/imports.ts	1	-	-	0	drift-done (d6-compat): command strings, AddCommandString filter; private cvars already present
+compat/q2/rerelease/layouts.ts	1	-	-	0	drift-done (d6-compat): cg_server_data_t removed; fieldOffset cache (perf)
+compat/q2/rerelease/module.ts	1	-	-	0	drift-done (d6-compat): fitRereleaseText on ClientConnect, per-depth command records, drawHud removed
+compat/q2/rerelease/native-entries.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/player-state.ts	1	-	-	0	drift-done (d6-compat): writeRereleasePlayerState removed
+compat/q2/rerelease/world-profile.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q2/rerelease/world-text.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/q3/native/game-syscalls.ts	1	-	-	0	drift-done (d6-compat): new game_syscalls.c (qa_native_q3_game_call)
+compat/q3/native/guest-services.ts	1	-	-	0	drift-done (d6-compat): new guest_services.c (writeGuestString, updateGuestCvar), used by imports.c
+compat/q3/native/imports.ts	1	-	-	0	drift-done (d6-compat): uses guest-services; NativeQ3GameServices type
+compat/q3/native/index.ts	1	-	-	0	drift-done (d6-compat): umbrella exports added
+compat/q3/native/memory.ts	1	-	-	0	drift-done (d6-compat): new memory.c (NativeGameMemory: read-only copies refuse stores)
+compat/q3/native/module.ts	1	-	-	0	drift-done (d6-compat): client export slots 5,6,7,9,10; callAsync has no C counterpart
+compat/q3/native/syscall.ts	1	-	-	0	drift-partial (d6-compat): 16-word trap handler replaces per-code bindings (C API changed; its test needs rework, see open items)
+compat/qc/borrowed-actors.ts	1	-	-	0	drift-done (d6-compat): velocity writes admitted; observeStore already present
+compat/qc/builtins.ts	1	-	-	0	drift-done (d6-compat): objerror (#11), inert diagnostics 6/28/31, find matches string 0
+compat/qc/entity-host.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qc/executor.ts	1	-	-	0	drift-done (d6-compat): QuakeCExecutor removed (C class deleted, test reworked), preflightQcCheckpoint
+compat/qc/index.ts	1	-	-	0	drift-done (d6-compat): barrel: QuakeCExecutor export removed
+compat/qc/machine.ts	1	-	-	0	drift-done (d6-compat): validateSnapshot split out; functionEnd/copyReturnWords already present
+compat/qc/memory.ts	1	-	-	0	drift-done (d6-compat): copyReturnWords/intern/engine growth already present
+compat/qc/mod-clients.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qc/mod-combat.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qc/mod-environment.ts	1	-	-	0	drift-done (d6-compat): QuakeWorld dprint unconditional
+compat/qc/mod-items.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qc/mod-messages.ts	1	-	-	0	drift-done (d6-compat): publishesKills (withholds_kills) for borrowed writable kill objectives
+compat/qc/mod-pickups.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qc/mod-protection.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qc/mod-provider.ts	1	-	-	0	drift-partial (d6-compat): freed-edict reads, empty model, publishesKills, foreign slot quarantine, flush at checkpoint/advance, preflight on restore; close aggregation not represented
+compat/qc/mod-validation.ts	1	-	-	0	drift-done (d6-compat): validateQcMod moved (diffed); maps to qc/mod_provider.c
+compat/qc/movement-host.ts	1	-	-	0	drift-done (d6-compat): freed goal reads as world
+compat/qc/presentation-host.ts	1	-	-	0	drift-done (d6-compat): ex_* localization keys, NQ sprint/centerprint to non-client prints; routeDropping already present
+compat/qc/program.ts	1	-	-	0	drift-done (d6-compat): functionEnd
+compat/qc/q1-save.ts	1	-	-	0	drift-done (d6-compat): moved from persistence/q1-quakec.ts: C file/header moved to compat/qc/q1_save.*
+compat/qc/q1-source-save.ts	1	-	-	0	drift-done (d6-compat): moved from persistence/q1-source.ts: C file/header moved to compat/qc/q1_source_save.*
+compat/qc/save.ts	1	-	-	0	drift-done (d6-compat): QcTextPair type now from persistence/q1 (types only)
+compat/qc/spatial-host.ts	1	-	-	0	drift-done (d6-compat): QuakeWorld setmodel sizes only inline models
+compat/qc/world-host.ts	1	-	-	0	drift-done (d6-compat): prepareEntities
+compat/qvm/abi.ts	1	-	-	0	drift-done (d6-compat): enumDecoder refactor; C switch decoders admit the same members (enum unchanged)
+compat/qvm/allocation.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/artifacts.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/bot-library-syscalls.ts	1	-	-	0	drift-done (d6-compat): SharedHostCall/regions; startedFrame and -1 level-item already present
+compat/qvm/bot-navigation-syscalls.ts	1	-	-	0	drift-done (d6-compat): SharedHostCall/regions; area centre, traceAreas clamp, presence print, portal reachability already present
+compat/qvm/cgame-body.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/client-audio-syscalls.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/client-collision-syscalls.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/client-script-syscalls.ts	1	-	-	0	drift-done (d6-compat): import path move only
+compat/qvm/client-state-record.ts	1	-	-	0	drift-done (d6-compat): snapshot entities truncated to 256, lenient player/entity writes
+compat/qvm/client-state.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/common-syscalls.ts	1	-	-	0	drift-done (d6-compat): SharedHostCall
+compat/qvm/compatibility.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/cvar-syscalls.ts	1	-	-	0	drift-done (d6-compat): Q3GameMemory (q3_client/status.c call site wraps its qa_qvm_memory)
+compat/qvm/entity-record.ts	1	-	-	0	drift-done (d6-compat): lenient entity writes (writeQvmEntityState unmapped "ignore")
+compat/qvm/file-syscalls.ts	1	-	-	0	drift-done (d6-compat): immutable-name refusal with warning, $modlist lists none, SharedHostCall regions; closeAll tolerates NULL
+compat/qvm/game-combat-binding.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/game-data.ts	1	-	-	0	drift-done (d6-compat): Q3GameMemory, guest-allocation bounds and messages
+compat/qvm/game-equipment-movement.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/game-input.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/game-inventory.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/game-memory.ts	1	-	-	0	drift-done (d6-compat): new Q3GameMemory interface: qa_qvm_game_memory (ops+ctx) in qvm/game_memory.h
+compat/qvm/image.ts	1	-	-	0	drift-done (d6-compat): 64 MiB data limit and message
+compat/qvm/interpreter.ts	1	-	-	0	drift-partial (d6-compat): 100M instruction budget, 2*65536 return-word cap, compiled OP_BLOCK_COPY whole words forward, semantics getter; lazy resolver words (perf) not mirrored
+compat/qvm/item-catalog.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/legacy-bot-syscalls.ts	1	-	-	0	drift-done (d6-compat): SharedHostCall regions
+compat/qvm/legacy-client-abi.ts	1	-	-	0	drift-done (d6-compat): null for unmapped/invalid (already present)
+compat/qvm/legacy-presentation.ts	1	-	-	0	drift-done (d6-compat): lenient forms (_ex) for remote values
+compat/qvm/memory-syscalls.ts	1	-	-	0	drift-done (d6-compat): Q3GameMemory; overlapping memcpy/strncpy now memmove, self-copy writes nothing
+compat/qvm/memory-writes.ts	1	-	-	0	drift-partial (d6-compat): watched-page index (perf) not mirrored; capture semantics unchanged
+compat/qvm/memory.ts	1	-	-	0	drift-done (d6-compat): QvmMemory implements Q3GameMemory (qa_qvm_memory_game_memory, address, pointerWord, region ops)
+compat/qvm/mod-actors.ts	1	-	-	0	drift-done (d6-compat): lazy words resolver (perf) - semantics unchanged
+compat/qvm/mod-checkpoint.ts	1	-	-	0	drift-done (d6-compat): decode/validation moved out of mod-provider unchanged (diffed); maps to qvm/mod_provider.c; checkpoint bytes unchanged
+compat/qvm/mod-clients.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/mod-fields.ts	1	-	-	0	drift-done (d6-compat): helpers moved from mod-provider; maps to qvm/mod_provider.c
+compat/qvm/mod-items.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/mod-player-events.ts	1	-	-	0	drift-partial (d6-compat): untouched-record skip (perf) not mirrored
+compat/qvm/mod-presentation.ts	1	-	-	0	drift-done (d6-compat): baseline snapshot entity bounds check
+compat/qvm/mod-projections.ts	1	-	-	0	drift-done (d6-compat): ProjectionSlots reverse index (perf); C linear lookup is equivalent
+compat/qvm/mod-protection.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/mod-provider.ts	1	-	-	0	drift-partial (d6-compat): refactor into mod-* files (verified moves); pureQueries skip-refresh ported; observe() reuse and ProjectionSlots (perf) not mirrored; close error aggregation not represented (C close has no catch)
+compat/qvm/mod-spatial.ts	1	-	-	0	drift-done (d6-compat): spatial syscall moved from mod-provider (diffed identical); maps to qvm/mod_provider.c
+compat/qvm/mod-validation.ts	1	-	-	0	drift-done (d6-compat): validateQvmMod moved (diffed: modCallbackInputs inline equivalent); maps to qvm/mod_provider.c
+compat/qvm/module.ts	1	-	-	0	drift-done (d6-compat): numeric profile id q3:qvm-binary32, qvmSemanticsFromCvar (qa_qvm_semantics_from_cvar); options.semantics already present
+compat/qvm/operations.ts	1	-	-	0	drift-done (d6-compat): shift count masked to 5 bits (already present)
+compat/qvm/player-record.ts	1	-	-	0	drift-done (d6-compat): lenient player writes (qa_qvm_write_player_state_unmapped)
+compat/qvm/regions.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/registry.ts	1	-	-	0	drift-done (d6-compat): vminfo prints interpreter semantics
+compat/qvm/render-record.ts	1	-	-	0	drift-done (d6-compat): NUL check removal already present
+compat/qvm/script-record.ts	1	-	-	0	drift-done (d6-compat): import path move only
+compat/qvm/snap-vector-syscalls.ts	1	-	-	0	drift-done (d6-compat): Q3GameMemory regionView
+compat/qvm/symbols.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/syscalls.ts	1	-	-	0	drift-done (d6-compat): SharedHostCall (host call carries game_memory), qvmIntrinsicSyscall
+compat/qvm/ui-key-syscalls.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+compat/qvm/weapon-behavior-profile.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/abi/adapter.ts	1	-	-	0	drift-done (d6-compat): perf-only (scratch scalar view)
+guest/abi/classify.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/abi/runner.ts	1	-	-	0	drift-done (d6-compat): chargeBytes added; recover already present; invokeAsync/promise suspension has no C counterpart
+guest/core/callbacks.ts	1	-	-	0	drift-done (d6-compat): invokeSync == C invoke (no promises in C)
+guest/core/contracts.ts	1	-	-	0	drift-done (d6-compat): pooled already present; GuestSimdScratch is a perf view cache and async host callbacks have no C counterpart (sync runner)
+guest/core/cpuid.ts	1	-	-	0	drift-done (d6-compat): new guest/core/cpuid.c; x86 CPUID (cmpxchg8 advertised) and x64 CPUID (not advertised) use it
+guest/core/memory.ts	1	-	-	0	drift-partial (d6-compat): quota (maximumMappedBytes/mappedTotal, fault "quota"), writeDeliveries, scalarRead/scalarWrite, allocatorImage/restoreAllocator ported; pooled pages already present; PERF1 page-indexed observer lookup not mirrored (full scan gives the same deliveries)
+guest/core/registers.ts	1	-	-	0	drift-done (d6-compat): simd scratch views are a perf cache; no C change
+guest/elf/index.ts	1	-	-	0	drift-done (d6-compat): 256 MiB mapped-image limit
+guest/elf/parse.ts	1	-	-	0	drift-done (d6-compat): GNU hash chain revisit skip
+guest/elf/relocate.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/elf/unwind.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/floating-point/binary.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/floating-point/contracts.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/floating-point/fast-arithmetic.ts	1	-	-	0	drift-partial (d6-compat): NOT ported: exact fast paths for SSE/x87 binary ops (perf); listed in open items
+guest/floating-point/raw-sse.ts	1	-	-	0	drift-done (d6-compat): perf-only (scratch buffers)
+guest/floating-point/sse.ts	1	-	-	0	drift-partial (d6-compat): fastBinary (perf) not mirrored
+guest/floating-point/x87-extended.ts	1	-	-	0	drift-done (d6-compat): new x87_extended.c over qa_bigint (F2XM1, FYL2X, FYL2XP1, FSCALE, FPREM/FPREM1, FXTRACT, FSINCOS, FPTAN)
+guest/floating-point/x87.ts	1	-	-	0	drift-partial (d6-compat): new D9 F0/F1/F2/F4/F5/F8/F9/FB/FD dispatch ported; fastBinaryInstruction (perf) not mirrored
+guest/pe/directories.ts	1	-	-	0	drift-done (d6-compat): load-config size only has to fit the image
+guest/pe/exports.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/pe/format.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/runtime/common/format.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/runtime/common/format/scan.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/runtime/common/memory.ts	1	-	-	0	drift-done (d6-compat): pooled parameter: its only TS caller (compat/q2/guest-strings) has its own C path
+guest/runtime/system-v/contracts.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/runtime/system-v/iostream.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/runtime/system-v/runtime.ts	1	-	-	0	drift-done (d6-compat): heapState/restoreHeapState over contracts NativeHeapBlock
+guest/runtime/system-v/stdio.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/runtime/windows/contracts.ts	1	-	-	0	drift-done (d6-compat): host tables (heaps/reservations/tls/fls) and chargeBytes on the service host
+guest/runtime/windows/crt.ts	1	-	-	0	drift-done (d6-compat): UCRT quicksort replaces heapsort (qa_ucrt_quick_sort), chargeBytes on heap/mem/str services, strcmp whole-string reads
+guest/runtime/windows/kernel.ts	1	-	-	0	drift-done (d6-compat): kernel uses host tables, TLS/FLS kept in TS insertion order
+guest/runtime/windows/runtime.ts	1	-	-	0	drift-done (d6-compat): tables owned by the runtime; heapState/restoreHeapState (WindowsHeapTables incl. fls) and chargeBytes
+guest/x64/cpu.ts	1	-	-	0	drift-done (d6-compat): decode cache 262144 + decodeCacheClears, CPUID via cpuid.c (no CMPXCHG8B bit), 0F 77 takes no ModRM
+guest/x64/decoder.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/x64/integer-kernel.ts	1	-	-	0	drift-done (d6-compat): block ends only when a store reached an observer (writeDeliveries)
+guest/x64/plan.ts	1	-	-	0	drift-done (d6-compat): no semantic change (SPDX/import-order or type-only)
+guest/x86/cpu.ts	1	-	-	0	drift-partial (d6-compat): CPUID 0F A2 and register checkpoint after the host-call hook ported; decode cache and I386Fast fast path (perf) not mirrored
+guest/x86/decoder.ts	1	-	-	0	drift-done (d6-compat): prefetched replay is part of the unmirrored decode cache; cursor wrap unchanged semantics
+guest/x86/fast.ts	1	-	-	0	drift-partial (d6-compat): NOT ported: predecoded perf fast path (TS differential tests prove it equals the generic path); listed in open items
+compat/q2/rerelease/cgame.ts	1	-	-	0	drift-done (d6-compat): removed in TS: C cgame.c/.h deleted (no users)
+compat/q2/rerelease/index.ts	1	-	-	0	drift-done (d6-compat): removed in TS: C index.c and rerelease.h umbrella deleted
+compat/qvm/index.ts	1	-	-	0	drift-done (d6-compat): removed in TS (barrel): C index.c and qvm.h umbrella deleted
+compat/qvm/raw-entities.ts	1	-	-	0	drift-done (d6-compat): removed in TS: C raw_entities.c/.h and its test block deleted
+movement/q1/netquake.ts	1	-	-	1	drift-done (d7-net): ladder probe step truncates toward zero; sourceWaterDrag already added by D1
+movement/q1/pusher.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+movement/q2/classic.ts	1	-	-	0	drift-done (d7-net): 2a2cb7bd restructure (closure to class) plus savedBindings typing; checked test-name diff only, function-by-function compare left to the gate read
+movement/q2/index.ts	1	-	-	1	drift-done (d7-net): authoritative dead players trace with MASK_DEADSOLID; prediction keeps the live mask
+movement/q2/math.ts	1	-	-	0	drift-done (d7-net): createMovementMath cache is perf only
+movement/q2/rerelease.ts	1	-	-	0	drift-done (d7-net): same restructure and variant cache keyed per multiplier; function-by-function compare left to the gate read
+movement/q2/types.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+movement/q3/grapple.ts	1	-	-	0	drift-done (d7-net): new: q3GrappleVelocity stays in content/q3/base/game/grapple.c; manifest row maps it there
+movement/q3/move.ts	1	-	-	0	drift-done (d7-net): ladders option, unconditional posture hull and grapple import: C already had them
+movement/q3/prediction.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+movement/q3/provider.ts	1	-	-	0	drift-done (d7-net): ladders profile plumbing already present
+movement/q3/types.ts	1	-	-	0	drift-done (d7-net): ladders option field already present
+movement/q3/weapon.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+movement/swept-body.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/common/diagnostics.ts	1	-	-	0	drift-done (d7-net): new: C already existed (diagnostics.c); manifest row added
+network/common/endpoint.ts	1	-	-	0	drift-done (d7-net): sameAddress fields, isPrivateHost/isPrivateNetworkAddress: C already had them
+network/common/ipx-host.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/common/ipx.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/common/movement-budget.ts	1	-	-	0	drift-done (d7-net): new: C already existed; manifest row added
+network/common/peer-table.ts	1	-	-	1	drift-done (d7-net): new: ported as src/network/common/peer_table.c
+network/common/rcon-guard.ts	1	-	-	1	drift-done (d7-net): C existed with string keys; now over qa_peer_table as TS
+network/common/reliability.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/common/scheduling.ts	1	-	-	1	drift-done (d7-net): PacketScheduler removed in TS; C scheduler and its C test deleted
+network/common/session.ts	1	-	-	1	drift-done (d7-net): NetworkSession removed in TS; C NetworkSession (no users) deleted
+network/common/transport.ts	1	-	-	0	drift-done (d7-net): port 0 drop and relay-skip loop: C already had them
+network/q1/channels.ts	1	-	-	1	drift-done (d7-net): QuakePeer removed in TS; C qa_quake_peer (no users) deleted; QW sequence-jump cap already present
+network/q1/codecs/codec.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q1/codecs/nq15.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/codecs/qw28.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q1/codecs/qw29.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/codecs/wide.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/commands.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q1/demos.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q1/handshake.ts	1	-	-	0	drift-done (d7-net): challenge expiry, rcon guard: C already had them
+network/q1/netquake.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/profile.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q1/quakeworld.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/qw-recording.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/recording.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q1/session.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/channel.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/client-messages.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/codec.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/codecs/kex-write.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/codecs/kexdemo.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/codecs/q2pro.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/codecs/q2repro.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/codecs/r1q2.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/codecs/vanilla.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/connectionless.ts	1	-	-	0	drift-done (d7-net): rcon guard present; Q2ConnectionlessServer removed in TS but kept in C (used by tests/app/test_server_browser.c); app q2.c passes a fresh guard per packet (open item, D2)
+network/q2/frames.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/gtv-transport.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/gtv.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/handshake.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/kex/channel.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/kex/discovery.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/kex/lan.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/message.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/mvd-broadcast.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/mvd-encoding.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/mvd-profile.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/prediction.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/server-demo.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/server-messages.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/server-write.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q2/solid.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/state.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q2/temp-entities.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/adapters.ts	1	-	-	1	drift-done (d7-net): toQ3EntityState/toQ3Snapshot/trajectoryKind removed in TS; C counterparts (no users) deleted
+network/q3/admission.ts	1	-	-	1	drift-done (d7-net): addressText/infoSet exported; q3PeerUserinfo ported as qa_q3_peer_userinfo (app q3.c adoption is D2); proxy same-host check already present
+network/q3/browser-view.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q3/client-authorization.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q3/client-message.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/client.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/configstrings.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/content.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/download.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/message.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q3/pure.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/recording.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/server.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q3/state-delta.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/q3/state/player.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/state/trajectory.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/q3/visibility.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/services/admin.ts	1	-	-	1	drift-done (d7-net): FloodLimiter and RconService moved onto qa_peer_table as TS; ConnectionlessGate and rcon guard already present
+network/services/discovery.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/services/download-types.ts	1	-	-	0	drift-done (d7-net): new: C already existed; manifest row added
+network/services/downloads.ts	1	-	-	3	drift-done (d7-net): DownloadSink.resumable/suspend/resumedFrom ported; one-shot close now raises when the staged file vanished; DownloadWindow, downloadHttp, verifyPureContent removed (C copies and qa_http_download_to_sink deleted)
+network/services/http-downloads.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/services/online.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/services/rank-codec.ts	1	-	-	1	drift-done (d7-net): decoders removed in TS; C qa_rank_ascii_decode/qa_rank_decode_player_id deleted, tests switched to bun-oracle encoder values
+network/services/rankings.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/unified/channel.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+network/unified/packet.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/cpu/fog.ts	1	-	-	0	drift-done (d7-net): per-run depth amount cache mirrored (output identical)
+render/cpu/lighting.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+render/cpu/rasterizer.ts	1	-	-	3	drift-done (d7-net): stencil readback packs rows tightly; shadow ops return without 4 stencil bits; sky-side forces opaque blend/no alpha test; atlas target drops its row pool; rowPoolFailure added; rowParallelLevelsSent not ported (JS worker transport counter)
+render/cpu/row-parallel.ts	1	-	-	0	drift-done (d7-net): level/lighting-base registries are JS worker structured-clone transport; the C pthread pool shares memory, so not applicable; tryCreate failure reason ported
+render/cpu/row-worker.ts	1	-	-	0	drift-done (d7-net): JS worker level/lighting-base registry; not applicable to the shared-memory C pool
+render/cpu/textures.ts	1	-	-	0	drift-done (d7-net): SharedArrayBuffer depth levels for JS workers; C workers already share memory
+render/cpu/triangle-kernel.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/debug-graph.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/execution.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/gl/fog.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/gl/renderer.ts	1	-	-	2	drift-done (d7-net): sky disables blend and alpha test; shadow ops return without 4 stencil bits
+render/gl/textures.ts	1	-	-	0	drift-done (d7-net): withoutPixels is JS heap retention only; C keeps no level pixels after upload
+render/image-journal.ts	1	-	-	0	drift-done (d7-net): TS stopped copying creations (memory); C journal keeps its copy (ownership), output identical
+render/scene/image-policy.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/material-registrations.ts	1	-	-	0	drift-done (d7-net): sorted snapshot cache and byRegistration map are perf only; not mirrored
+render/scene/models/md3-bounds.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/models/prepare.ts	1	-	-	1	drift-done (d7-net): MAX_MODEL_BEAM_SEGMENTS 512 cap ported; PoseLru caches are perf only
+render/scene/models/renderer.ts	1	-	-	0	drift-done (d7-net): SHADEDOT constants equal; modelShadowGroups (r_shadows 2/3 model shadows) NOT ported: open item
+render/scene/models/stencil-shadow.ts	1	-	-	1	drift-done (d7-net): new: ported as stencil_shadow.c (qa_make_stencil_shadow_volume)
+render/scene/models/types.ts	1	-	-	0	drift-done (d7-net): SceneShadowGroup in ModelGroupContext: part of the open model-shadow item
+render/scene/particles/legacy.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/particles/primitives.ts	1	-	-	1	drift-done (d7-net): rail int32/segment guards return empty geometry instead of throwing; spriteFog removed
+render/scene/particles/q3-system.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/particles/q3-types.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/patch.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/q2-sky.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/resources.ts	1	-	-	1	drift-done (d7-net): backendEpoch/invalidateBackend ported (app renderer.c call sites are D2)
+render/scene/shaders.ts	1	-	-	1	drift-done (d7-net): addScriptFiles (ScanAndLoadShaderFiles precedence) ported; app assets.c still calls add_script per file (open item, D2); sourceRecordIndex is perf only
+render/scene/shadow-geometry.ts	1	-	-	0	drift-done (d7-net): shadowFinishQuad exported as qa_shadow_finish_quad; world.c uses it
+render/scene/shadows.ts	1	-	-	1	drift-done (d7-net): Q2ShadowScene drops cached signatures when the backend epoch changes
+render/scene/submissions.ts	1	-	-	0	drift-done (d7-net): PERF2 retainedMerge is perf only (same merged output), not mirrored; SceneShadowGroup/shadowVolumeGroup part of the open model-shadow item
+render/scene/textures.ts	1	-	-	1	drift-done (d7-net): ambiguous candidate paths skipped like absent ones (content/mounts still aborts on them: open item)
+render/scene/view.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+render/scene/visibility.ts	1	-	-	0	drift-done (d7-net): PERF3 ancestor marks and merged-PVS cache are perf only, not mirrored
+render/scene/world.ts	1	-	-	2	drift-done (d7-net): B2: legacy translucent surfaces sort back to front and defer after opaque entity submission; dynamic lights filtered by dynamicLightReachesFace; q3IdentityLight option not ported (needs materials fog identityLight, D8; TS sets it nowhere); modelShadows finish already present
+render/worker-protocol.ts	1	-	-	0	drift-done (d7-net): JS worker wire protocol; not applicable to C
+render/worker-runtime.ts	1	-	-	0	drift-done (d7-net): JS worker runtime; not applicable to C
+render/worker-transport.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/actors/body.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/actors/index.ts	1	-	-	0	drift-done (d7-net): q3EntityLifetime export removed in TS; C qa_q3_entity_lifetime kept (used by tests/world/test_js_semantics_world.c)
+world/actors/registry.ts	1	-	-	0	drift-done (d7-net): lowestFree is perf only (same lowest-slot result)
+world/actors/source-slots.ts	1	-	-	0	drift-done (d7-net): q3EntityLifetime removed in TS; C kept for its test (open item)
+world/collision/body.ts	1	-	-	1	drift-done (d7-net): Q2 box actor traces report the null surface; stored-leaf raw fraction and enter > -1 already present
+world/collision/contents.ts	1	-	-	1	drift-done (d7-net): Q2_NULL_SURFACE added; geometryMask same-family fast path ported
+world/collision/index.ts	1	-	-	0	drift-done (d7-net): q2 startSolid merge, passSized, corpsePoint family, non-q1 fraction 0: C already had them
+world/collision/media.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/collision/q1/hull.ts	1	-	-	0	drift-done (d7-net): drawing node cache is perf only
+world/collision/q1/index.ts	1	-	-	0	drift-done (d7-net): hull by width already present; brush cell cache and envelope skip are perf only
+world/collision/q2.ts	1	-	-	2	drift-done (d7-net): null surface when no textured side; area portal numbers accepted up to the lump count
+world/collision/q3/allocation.ts	1	-	-	1	drift-done (d7-net): hunk accounting types and SOURCE_HUNK_RELEASE32 removed
+world/collision/q3/index.ts	1	-	-	1	drift-done (d7-net): createSourceQ3Collision removed in TS; C counterpart deleted
+world/collision/q3/map-resource.ts	1	-	-	1	drift-done (d7-net): CollisionMapResource and CollisionBoxModel class removed in TS; C resource loader deleted (box storage kept)
+world/collision/q3/model.ts	1	-	-	1	drift-done (d7-net): finite-only bounds check; binary32-staged signbit expansion
+world/collision/q3/patch.ts	1	-	-	1	drift-done (d7-net): PatchAllocator/storePatch removed; C allocator path deleted
+world/collision/q3/world.ts	1	-	-	1	drift-done (d7-net): reversed bounds accepted; binary32-staged expansion at both sites
+world/gameplay/authority.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/gameplay/inventory.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/gameplay/original-pickups.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/gameplay/pickups.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/gameplay/policies.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/gameplay/q1-client-visibility.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/geometry/q1-solid/index.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/geometry/q1-solid/polyhedron.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/geometry/q1-solid/sweep.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/scheduler.ts	1	-	-	1	drift-done (d7-net): advance/ProviderFrame removed in TS; C advance deleted (no users)
+world/session/clocks.ts	1	-	-	1	drift-done (d7-net): ProviderRuntimeState removed in TS; C counterpart deleted
+world/session/index.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+world/session/mod-callback-inputs.ts	1	-	-	1	drift-done (d7-net): new: ported as mod_callback_inputs.c (QC/QVM validation adoption is D6)
+world/session/mod-client-input.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/session/mod-client-outputs.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/session/mod-client-presentation.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/session/mod-commands.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/session/mod-files.ts	1	-	-	0	drift-done (d7-net): hunks checked against C; header/comment only or C already had the change
+world/session/mods.ts	1	-	-	1	drift-done (d7-net): setEnabled/restore removed in TS; C counterparts deleted (no users); apply reuse path is dead in both (apply only runs from open)
+world/session/resources.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+world/session/session.ts	1	-	-	1	drift-done (d7-net): WorldLifetime no longer owns ProviderRuntimeState
+world/spatial/index.ts	1	-	-	0	drift-done (d7-net): types-only: no behaviour change
+network/common/commands.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/common/fragments.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/common/index.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/common/loopback.ts	1	-	-	1	drift-done (d7-net): moved to tests/support in TS; C loopback kept for the C tests (manifest removed-in-ts)
+network/q1/index.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/q1/prediction.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/q3/index.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/q3/rcon.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+network/services/index.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+render/commands/index.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+render/scene/particles/index.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+world/collision/q3/checksum.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+world/collision/q3/map-loader.ts	1	-	-	1	drift-done (d7-net): removed in TS; C counterpart deleted (see manifest)
+app/bootstrap/simulation/actor-execution.ts	1	-	-	0	drift-done (d1-sim): seconds exported; C uses qa_ss_seconds (support.c)
+app/bootstrap/simulation/arsenal-intent.ts	1	-	-	0	drift-done (d1-sim): unknown/foreign weapon intent is no request instead of a throw; first-match lookup
+app/bootstrap/simulation/arsenal/q1.ts	1	-	-	0	drift-done (d1-sim): C already had the no-request intent rule
+app/bootstrap/simulation/arsenal/q2.ts	1	-	-	0	drift-done (d1-sim): intent outside the arsenal is no request (was a throw)
+app/bootstrap/simulation/arsenal/q3-ammo-regen.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/arsenal/q3-source-legacy.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/arsenal/q3-source.ts	1	-	-	0	drift-done (d1-sim): presented-client configstring cache and conditional pos/apos refresh ported
+app/bootstrap/simulation/arsenal/q3.ts	1	-	-	0	drift-done (d1-sim): intent outside the product is no request; setSpawnWeapon already in C
+app/bootstrap/simulation/bot-assets.ts	1	-	-	0	drift-done (d1-sim): legacyProvenance load (qa_app_sim_load_application_bot_assets_with; application_bots.c passes restore/true); provenance uses qa_bot_asset_files_provenance
+app/bootstrap/simulation/bot-prediction.ts	1	-	-	0	drift-done (d1-sim): C already had ground events, SE_GAP, SE_HITBOUNDINGBOX
+app/bootstrap/simulation/bot-q1-knowledge.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/bot-q2-knowledge.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/bot-rerelease-world.ts	1	-	-	0	drift-done (d1-sim): C already had RereleaseFrameSnapshot
+app/bootstrap/simulation/bot-rerelease.ts	1	-	-	0	drift-done (d1-sim): C already had observation index and frame snapshot
+app/bootstrap/simulation/bot-selected-knowledge.ts	1	-	-	0	drift-done (d1-sim): import move only
+app/bootstrap/simulation/bot-world.ts	1	-	-	0	drift-done (d1-sim): C already had observable
+app/bootstrap/simulation/bots.ts	1	-	-	0	drift-done (d1-sim): C already passed bspEntities to the navigation factory
+app/bootstrap/simulation/classic-guest-files.ts	1	-	-	0	drift-done (d1-sim): C already had write quotas and protected writes
+app/bootstrap/simulation/classic-guest-services.ts	1	-	-	0	drift-done (d1-sim): standInActor + #proxyActors table wired to compat combat bindings
+app/bootstrap/simulation/classic-guest-source.ts	1	-	-	0	drift-done (d1-sim): C already had x87 0x7f, runner.recover
+app/bootstrap/simulation/classic-guest-world.ts	1	-	-	0	drift-done (d1-sim): C already had fitClassicUserinfo; travel stages stay one synchronous C path
+app/bootstrap/simulation/diagnostics.ts	1	-	-	0	drift-partial (d1-sim): SimulationDiagnostics view not ported (test-only API)
+app/bootstrap/simulation/dropped-pickups.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/equipment-runtime.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/events.ts	1	-	-	0	drift-done (d1-sim): C already dropped unreliable events on a full queue
+app/bootstrap/simulation/foreign-deathball-rules.ts	1	-	-	0	drift-partial (d1-sim): rules kept as runtime functions in shared_simulation_worlds.c
+app/bootstrap/simulation/foreign-horde-rules.ts	1	-	-	0	drift-partial (d1-sim): rules kept as runtime functions in shared_simulation_worlds.c
+app/bootstrap/simulation/foreign-lmctf-rules.ts	1	-	-	0	drift-partial (d1-sim): rules kept as runtime functions in shared_simulation_worlds.c
+app/bootstrap/simulation/foreign-match-host.ts	1	-	-	0	drift-partial (d1-sim): rules kept as runtime functions in shared_simulation_worlds.c
+app/bootstrap/simulation/foreign-match-rules.ts	1	-	-	0	drift-partial (d1-sim): rules kept as runtime functions in shared_simulation_worlds.c
+app/bootstrap/simulation/foreign-q2-world.ts	1	-	-	0	drift-done (d1-sim): C already passed edition and Q3 foreign items
+app/bootstrap/simulation/foreign-tag-rules.ts	1	-	-	0	drift-partial (d1-sim): rules kept as runtime functions in shared_simulation_worlds.c
+app/bootstrap/simulation/guest-monsters.ts	1	-	-	0	drift-done (d1-sim): quote fix in C; GuestMonsterPlans = sim guest_monster_plans cache
+app/bootstrap/simulation/monster-admission.ts	1	-	-	0	drift-partial (d1-sim): admission kept in shared_simulation_worlds.c
+app/bootstrap/simulation/monster-checkpoint.ts	1	-	-	0	drift-done (d1-sim): C already read the adjunct record
+app/bootstrap/simulation/monster-runtime.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/native-commands.ts	1	-	-	0	drift-done (d1-sim): C already had nativeMoveSlices
+app/bootstrap/simulation/native-guest-travel.ts	1	-	-	0	drift-done (d1-sim): C travel is synchronous; one path per guest world
+app/bootstrap/simulation/native-mod-host.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/native-pmove-contacts.ts	1	-	-	0	drift-done (d1-sim): native_pmove_contacts.c exists
+app/bootstrap/simulation/native-primary-weapons.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/native-q2-map.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/native-q2-rerelease-save.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/navigation.ts	1	-	-	0	drift-done (d1-sim): C already had teleport/jump-pad capabilities and entity -1 probe
+app/bootstrap/simulation/network-q1-quakec.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/network-q2-guest-core.ts	1	-	-	0	drift-partial (d1-sim): not extracted; logic duplicated in both guest network hosts
+app/bootstrap/simulation/network-q2-guest.ts	1	-	-	0	drift-partial (d1-sim): behavior matches; shared host core (network-q2-guest-core.ts) not extracted
+app/bootstrap/simulation/network-q2-rerelease-native.ts	1	-	-	0	drift-partial (d1-sim): behavior matches; shared host core not extracted
+app/bootstrap/simulation/network-q3.ts	1	-	-	0	drift-done (d1-sim): C already had snapshotViewSource and area numbering
+app/bootstrap/simulation/network-qw.ts	1	-	-	0	drift-done (d1-sim): C already had networkInfo, download types, info limits
+app/bootstrap/simulation/network-unified.ts	1	-	-	0	drift-done (d1-sim): C already had unifiedCommandInBounds
+app/bootstrap/simulation/network.ts	1	-	-	0	drift-done (d1-sim): C already had frame state cache, help icon, multicast reach
+app/bootstrap/simulation/physics.ts	1	-	-	0	drift-done (d1-sim): C already had the changes; 3 new TS physics tests ported to test_sim_c.c
+app/bootstrap/simulation/player-movement.ts	1	-	-	0	drift-done (d1-sim): sourceMovement.ladders compared and passed into the Q3 profile
+app/bootstrap/simulation/players.ts	1	-	-	0	drift-done (d1-sim): upMove, sourceWaterDrag (movement/q1 netquake.c + types.h field), QW SV_RunCmd angles
+app/bootstrap/simulation/prediction/presentation.ts	1	-	-	0	drift-done (d1-sim): ladders step option
+app/bootstrap/simulation/prediction/qw-source-state.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/prediction/runtime.ts	1	-	-	0	drift-done (d1-sim): ladders step option
+app/bootstrap/simulation/prediction/sequence.ts	1	-	-	0	drift-done (d1-sim): ladders step option
+app/bootstrap/simulation/prediction/step.ts	1	-	-	0	drift-done (d1-sim): ladders ?? profile ladders
+app/bootstrap/simulation/q1-fog.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/q1-punch.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/q3/engine.ts	1	-	-	0	drift-done (d1b-sim): Q3GameEngine as qa_app_q3_game_engine (ops table + kind/module/data) in include/qa/app/bootstrap/simulation/q3/engine.h; q3GuestHostState inline there
+app/bootstrap/simulation/q3/guest-artifact.ts	1	-	-	0	drift-done (d1b-sim): PreparedQ3Game tagged kind qvm|native with module; prepareQ3NativeGame (qa_app_prepare_q3_native_game) refuses quake-live-elf, base weapons, all-null primary
+app/bootstrap/simulation/q3/guest-bots.ts	1	-	-	0	drift-partial (d1-sim): not reviewed hunk by hunk (native-guest engine split)
+app/bootstrap/simulation/q3/guest-player.ts	1	-	-	0	drift-done (d1-sim): missing catalog weapon shows no active weapon instead of a throw
+app/bootstrap/simulation/q3/guest-runtime.ts	1	-	-	0	drift-done (d1b-sim): Q3ServerGame (C name qa_app_q3_qvm_server_game) drives qa_app_q3_game_engine (qvm or native, options.module); traps via Q3ServerTraps; native traps wrapped in current(); qvmGame() raises for native; captureHost checks engine.active; restoreCheckpoint discards on failure (AggregateError text)
+app/bootstrap/simulation/q3/guest-spatial.ts	1	-	-	0	drift-done (d1-sim): C already had modelBounds
+app/bootstrap/simulation/q3/guest-world.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/q3/host.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/q3/native-guest-source.ts	1	-	-	0	drift-done (d1b-sim): native_guest_source.c: q3NativeProfile, prepareQ3Native, Q3NativeGuestSource (PE/ELF q3 lifecycles, Quake Live table lifecycle with services, checkpoint v2 with heap image/allocator/Windows tables, restore incl. v1 layout rule, retire/close). tests/app/test_q3_native_engine.c matches bun (tests/app/oracles/q3_native_engine.ts) for authored PE, heap PE (FLS) and synthetic ELF, 57 lines 0 mismatches
+app/bootstrap/simulation/q3/qvm-engine.ts	1	-	-	0	drift-done (d1b-sim): qvm_engine.c Q3QvmEngine (host currentCall bookkeeping, clientDisconnect re-entry through the current call, active includes currentCall)
+app/bootstrap/simulation/q3/runtime.ts	1	-	-	0	drift-partial (d1-sim): not reviewed hunk by hunk
+app/bootstrap/simulation/q3/server-traps.ts	1	-	-	0	drift-done (d1b-sim): server_traps.c Q3ServerTraps.dispatch + disabledBot
+app/bootstrap/simulation/quakec-mod.ts	1	-	-	0	drift-done (d1-sim): import move only
+app/bootstrap/simulation/quakec-player-ui.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/quakec-source.ts	1	-	-	0	drift-done (d1-sim): presentMessage localization-key path added; rest C had
+app/bootstrap/simulation/quakec-weapon-behavior.ts	1	-	-	0	drift-done (d1-sim): C already had intern and slot return
+app/bootstrap/simulation/qvm-component-state.ts	1	-	-	0	drift-partial (d1-sim): not extracted
+app/bootstrap/simulation/qvm-grapple-source.ts	1	-	-	0	drift-partial (d1-sim): behavior matches; QvmComponentState/qvmComponentSpatial not extracted
+app/bootstrap/simulation/qvm-mod.ts	1	-	-	0	drift-done (d1-sim): import move only
+app/bootstrap/simulation/qvm-weapon-behavior.ts	1	-	-	0	drift-partial (d1-sim): behavior matches; QvmComponentState not extracted
+app/bootstrap/simulation/rerelease-guest-services.ts	1	-	-	0	drift-done (d1-sim): C already had scratch buffer and live configstrings
+app/bootstrap/simulation/rerelease-guest-source.ts	1	-	-	0	drift-done (d1-sim): C already had runner.recover
+app/bootstrap/simulation/rerelease-guest-world.ts	1	-	-	0	drift-done (d1-sim): C already had fitRereleaseText; travel stages stay synchronous
+app/bootstrap/simulation/rerelease-weapon-behavior.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/runtime.ts	1	-	-	0	drift-partial (d1-sim): step split into TS phases; strategy dispatch for step/spawn/userinfo/pause/commands/guest UI; every source-kind check goes through sim->strategy (as_*); remaining named strategy members still inline
+app/bootstrap/simulation/save.ts	1	-	-	0	drift-done (d1b-sim): simulationGuestCheckpoint native-guest branch (Native Q3, abi vs profile), simulationQ3GuestCheckpoint (qvm|native-guest), validateSimulationSave "Q3 guest players must remain owned..."
+app/bootstrap/simulation/source-hosts.ts	1	-	-	0	drift-done (d1-sim): Q2 inPvs/inPhs area test added; leafContents and sky probe C had
+app/bootstrap/simulation/source-strategy.ts	1	226	226	0	drift-partial (d1-sim, d1b-sim, d1c-sim): 204 of 226 SourceStrategy members are qa_app_source_strategy members with each class's TS override (table in docs/runtime_layout.md "SourceStrategy members"); D1c converted 123 (combat/monsters, selected arsenals, equipment, arsenal step and commands, roster/lifecycle, client outputs and reactions, match/team, identity/grants, UI/views/presentations, travel); sim->strategy is now a pointer to a shared per-class table. Open: 22 save/restore members (requireLoaded, assertSaveReady, reconstructsActor, checkpointProviders, checkpointGuests, checkpointExtras, nativeClients, sourceCvarSnapshots, expectedDeclaration, legacyCombat, requireInventoryProjection, inventoryCoverage, assertSavable, captureGuestSave, originalSave, restoreLoading, restoreGuest, monsterProxy, restoreContinuation, restoreFoundation, restoreGravity, ammoTimer) still run as as_*() branches in shared_simulation_checkpoint.c / shared_simulation_core.c / shared_simulation_worlds.c
+app/bootstrap/simulation/types.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/vec.ts	1	-	-	0	drift-done (d1-sim): qa_ss_add (binary32 add) in shared_simulation_support.c
+app/bootstrap/simulation/weapon-behavior-runtime.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+app/bootstrap/simulation/weapon-slot.ts	1	-	-	0	drift-done (d1-sim): diff is the SPDX header only
+content/composition/q1/runtime.ts	1	-	-	1	drift-done (d8-misc): wired sv_gate_dev_impulses (qa_q1ad_is_developer_impulse), Rogue always-gib, CTF LOG lines (logLine/logDeath/connect), obituaryVariant, obituary aflag; rest (pending disconnects, horde coop spawn, q3 pickups hook, fog push, ctf weapon cycle) already in C
+settings/config.ts	1	-	-	1	drift-done (d8-misc): ConfigStore.decoded quarantine ported (qa_try; schema failure renames to .bad, loads absent); seat-settings free made NULL-safe for partial parses; settingsPath/writeAtomic stay in config.c (core/files/atomic maps there)
+core/cvars/index.ts	1	-	-	1	drift-done (d8-misc): archiveCommands skips names with whitespace/"/; and strips "/CR/LF from values; alias declaration raises no longer leak keys; localInfo already in C
+core/save-value.ts	1	-	-	0	drift-done (d8-misc): moved from persistence/value.ts; C stays in src/persistence/value.c, which already wraps JSON decode errors as SaveFormatError("checkpoint"); d8c: value.c's JSON parser now reproduces JavaScriptCore's JSON.parse lexer/parser and its messages (bun), checked by 36 cases in test_persistence_review
+persistence/value.ts	1	-	-	0	drift-done (d8-misc): now re-exports core/save-value; C value.c is the single implementation
+persistence/save-image.ts	1	-	-	0	drift-done (d8-misc): 1	C already had QTSAVE5/v4 header, consumption, header-vs-recipe check; writeSaveImage now opens the temp exclusively 0600 and fsyncs before rename
+content/legacy-script/lexer.ts	1	-	-	1	drift-done (d8-misc): moved from ui/common/legacy/script (C stays at src/ui/common/legacy/script/lexer.c); escape overflow now a source failure (lexer_fail with TS message), NumberValue float conversion wraps (>>>0) instead of raising; SIMPLE_ESCAPES hoist is not observable
+content/legacy-script/memory.ts	1	-	-	0	drift-done (d8-misc): moved; compressScriptText added here as qa_ui_compress_script_text (moved out of mission_hud.c); cachedView is a perf cache with no observable effect
+content/legacy-script/precomp-memory.ts	1	-	-	0	drift-done (d8-misc): moved; import path only
+content/legacy-script/preprocessor.ts	1	-	-	1	drift-done (d8-misc): finite default limits (64/1e6/16e6/1e6); 32-bit wrapping arithmetic (|0, Math.imul); shift range checks are source failures; macro argument and expansion try/catch frees token chains (guarded() over the script-fail and read-false channels); writeChecked 1024-byte limit for stringize/paste; stringized tokens no longer carry the uninitialized marker; #eval/sign tokens get defined zero metadata; evaluateExpression finally frees the expression chain; included-frame dispose already present
+content/legacy-script/source-memory.ts	1	-	-	0	drift-done (d8-misc): moved; import path only
+content/legacy-script/token-memory.ts	1	-	-	0	drift-done (d8-misc): moved; cachedBytes is a perf cache with no observable effect
+ui/common/legacy/runtime.ts	1	-	-	1	drift-done (d8-misc): dropped the ui context (bindings, overstrike, pause, editing, bind keys, F12 screenshot, executeText, commands/commandContext options and the four binding APIs); exec now raises "UI exec is unavailable in the cgame menu runtime"; MAX_SCRIPT_DEPTH 64 nesting limit; focusRelative stops after one wrap; Enter activates focused yes/no and multi (activatesAtPointer); slider Left/Right steps; cvarScriptTokens cache; bind paint shows "???"; resourceKey cache and deferred text measurement are perf-only
+ui/common/legacy/menu.ts	1	-	-	1	drift-done (d8-misc): only the HUD load plan remains (qa_ui_menu_load_plan is {set_path}); menuSink and the hud flag removed; assetGlobalDef font no longer sets fontRegistered; registrations always recorded; parse failures abort (no catch in C), so the cursor-dispose finally needs no C path
+ui/common/legacy/team-arena/memory.ts	1	-	-	1	drift-done (d8-misc): String_Alloc appends a new string at the real chain tail instead of replacing the penultimate link
+content/monsters/mg3-resources.ts	1	-	-	1	drift-done (d8-misc): table regenerated from TS (progs.dat closure resources)
+content/monsters/expansions.ts	1	-	-	1	drift-done (d8-misc): table regenerated from TS (new hipnotic spikemine, rogue dragon/morph, extra sounds; mg3 creatures now use mg3MonsterResources directly)
+content/monsters/target.ts	1	-	-	1	drift-done (d8-misc): monsterTargetEligible no longer checks notarget; cloakAlpha already in C
+core/commands/index.ts	1	-	-	1	drift-done (d8-misc): chunk storage moved to the unbounded Deque (core/commands/deque.ts ported as src/core/commands/deque.c); adjacent inserts from one source merge into the head chunk (TS head.source === source; C tracks a per-chunk source identity, frames inherit the identity of the chunk they run from); the rest (overflow prints, dispatch budget, line discard, CommandUsageError, serverinfo/localinfo, RetiredClients) was already in C
+core/commands/deque.ts	1	-	-	1	drift-done (d8-misc): added: ported as src/core/commands/deque.c / include/qa/core/commands/deque.h
+ui/common/controller.ts	1	-	-	1	drift-done (d8-misc): pad text entry (X/Y/shoulders), Back+B capture chord, d-pad held repeat, modifier keys tracked with no menu open, empty safe area draws nothing, 8-px text floor, row-height-limited text, fitText localizes first, localized slider/list labels
+ui/common/localization.ts	1	-	-	0	drift-done (d8-misc): added: already ported as src/ui/common/localization.c (qa_ui_menu_localize); verified by the UI-019 case
+contracts/execution.ts	1	-	-	1	drift-done (d8-misc): GuestRegionPermissions (6 values), GuestMappingRecord, GuestAllocatorImage, NativeHeapBlock, WindowsHeapTables, NativeGuestHeapImage; native-guest checkpoint version 2 + heap; SourceGameLifecycle removed
+persistence/execution.ts	1	-	-	1	drift-done (d8-misc): readRegionPermissions and readNativeHeap (version 1 images read as heap null); qa_guest_checkpoint_release frees the reader's lists; save_image.c writes version and heap and releases guest lists
+audio/source-paint.ts	1	-	-	0	drift-done (d8-misc): trimmed to writeLinearBlastStereo16 (chunk painter, resampler, DMA transfer, byte swap removed with adpcm/wavelet); f64 path now stores NaN as 0 through qa_js helpers
+audio/adpcm.ts	1	-	-	0	drift-done (d8-misc): removed in TS: src/audio/adpcm.c and header deleted (only tests used them); test_audio adpcm case and tests/audio/test_js_semantics_bitwise.c removed with it
+audio/wavelet.ts	1	-	-	0	drift-done (d8-misc): removed in TS: src/audio/wavelet.c and header deleted (no C users)
+audio/bank.ts	1	-	-	1	drift-done (d8-misc): non-mono effects are skipped like a missing file
+audio/music.ts	1	-	-	1	drift-done (d8-misc): onFault: a decoder raise during mix stops the track, reports through on_fault and mixes silence
+audio/streams.ts	1	-	-	1	drift-done (d8-misc): POSIX: the temporary Vorbis file and directory are removed right after the decoder opens
+materials/fog.ts	1	-	-	1	drift-done (d8-misc): prepareFogVolume identityLight (render world passes the new q3_identity_light option); fogAdjustment/shaderSort/shaderFogPass removed (no C users)
+core/files/contained.ts	1	-	-	1	drift-done (d8-misc): moved from platform/files (C stays at src/platform/files/contained.c); open/mkdir failures use the Node text "<CODE>: <description>, <syscall> '<path>'"
+core/files/writable.ts	1	-	-	0	drift-done (d8-misc): moved from platform/files; C stays at src/platform/files/writable.c
+core/files/atomic.ts	1	-	-	0	drift-done (d8-misc): settingsPath/writeAtomic moved here; C already implements them in src/settings/config.c (fsync + directory sync)
+core/key-codes.ts	1	-	-	0	drift-done (d8-misc): moved from input/key-codes.ts unchanged; C stays at src/input/key_codes.c
+input/key-codes.ts	1	-	-	0	drift-done (d8-misc): moved to core/key-codes.ts (manifest row renamed)
+ui/common/legacy/input.ts	1	-	-	1	drift-done (d8-misc): removed in TS: src/ui/common/legacy/input.c and header deleted; test_ui legacy runtime case drives the runtime directly
+content/mounts/paths.ts	1	-	-	1	drift-done (d8-misc): ambiguous-path and symlink-escape errors raise (qa_raise Error) instead of aborting
+contracts/ui.ts	1	-	-	0	drift-done (d8-misc): removed LegacyUiFeeder, HudProvider, Q2HudServerData, Q2HudDraw, Q2CgameExports (no C users)
+contracts/protocol.ts	1	-	-	0	drift-done (d8-misc): removed SeatUserCommand, NetworkDelivery, ProtocolSupport (no C users)
+contracts/gameplay.ts	1	-	-	0	drift-done (d8-misc): removed CampaignController, MatchController (no C users)
+contracts/common.ts	1	-	-	0	drift-done (d8-misc): removed CvarPolicy (no C users)
+contracts/world.ts	1	-	-	0	drift-done (d8-misc): removed ClientAdmission; ActorLifetimePolicy.clear is only "source-edict" (world/actors/source_slots.c still sets "source-gentity" for Q3: D7 area, open)
+contracts/content.ts	1	-	-	0	drift-done (d8-misc): ModuleRole alias dropped; C keeps qa_module_role as the SourceModuleApi role type
+contracts/session.ts	1	-	-	0	drift-done (d8-misc): SelectionConsumptionEntry / schema 4 already in C
+contracts/movement.ts	1	-	-	0	drift-done (d8-misc): Q3 ladders already in C (ladders_disabled)
+contracts/scene.ts	1	-	-	0	drift-done (d8-misc): types moved to scene-trace.ts; C header unchanged
+contracts/scene-trace.ts	1	-	-	0	drift-done (d8-misc): added: the trace types already live in include/qa/contracts/scene.h
+persistence/q2-monsters.ts	1	-	-	0	drift-done (d8-misc): optional timers and noise records already in C
+persistence/q1-foundation.ts	1	-	-	0	drift-done (d8-misc): version 5/6 legacy monster reader already in C
+ui/common/legacy/script/lexer.ts	1	-	-	0	drift-done (d8-misc): moved to content/legacy-script/lexer.ts; manifest row renamed, C file kept in place (see that row)
+ui/common/legacy/script/memory.ts	1	-	-	0	drift-done (d8-misc): moved to content/legacy-script/memory.ts; manifest row renamed, C file kept in place (see that row)
+ui/common/legacy/script/precomp-memory.ts	1	-	-	0	drift-done (d8-misc): moved to content/legacy-script/precomp-memory.ts; manifest row renamed, C file kept in place (see that row)
+ui/common/legacy/script/preprocessor.ts	1	-	-	0	drift-done (d8-misc): moved to content/legacy-script/preprocessor.ts; manifest row renamed, C file kept in place (see that row)
+ui/common/legacy/script/source-memory.ts	1	-	-	0	drift-done (d8-misc): moved to content/legacy-script/source-memory.ts; manifest row renamed, C file kept in place (see that row)
+ui/common/legacy/script/token-memory.ts	1	-	-	0	drift-done (d8-misc): moved to content/legacy-script/token-memory.ts; manifest row renamed, C file kept in place (see that row)
+platform/files/contained.ts	1	-	-	0	drift-done (d8-misc): moved to core/files/contained.ts; manifest row renamed, C file kept at src/platform/files/contained.c
+platform/files/writable.ts	1	-	-	0	drift-done (d8-misc): moved to core/files/writable.ts; manifest row renamed, C file kept at src/platform/files/writable.c
+app/bootstrap/addon-library.ts	1	24	24	2	read in full (startup2, 2026-11-03): concrete over real IO (libcurl catalog fetch with 20 s timeout and cancel, qa_parse_addon_catalog_reporting skipped-row count, cache fallback, HttpDownloadQueue installs, file: packages, importLocal, removeInstalled, purgeHidden, hide, ensureDirectory); fixed: the root string was borrowed after the caller freed it, selected/selectedLocal now outlive catalog/installed replacement; test_addon_library compares statuses, entries and file trees with the bun oracle tests/app/oracles/addon_library.ts
+app/bootstrap/application.ts	1	-	-	1	drift-partial (d2-app): C application was ported from TS 6420d047^ (layout doc), so the WorldTransition/StageSlot, seat factory, world replacement, game log, dedicated fault ring, frame loop etc. are present; later change ported: Q2 guest capabilities use the deterministic 1.7e12+ticks clock. Open: step must add simulation.takeAdmissionSettleMilliseconds() to elapsed (aacb3b45) once D1 provides it D1b: step adds simulation.takeAdmissionSettleMilliseconds() to elapsed before the pause check (application_step.c).
+app/bootstrap/assets.ts	1	-	-	1	drift-done (d2-app): shader scripts load together through qa_scene_shader_registry_add_script_files (D7); shader path order, shader profile, warnOnce and createWorldAssets were already in C
+app/bootstrap/audio-settings.ts	1	-	-	1	drift-done (d2-app): qa_app_load_audio_settings_warn prints "Ignoring audio.json: ..."; configuration.c passes the host printer
+app/bootstrap/audio.ts	1	-	-	0	drift-done (d2-app): C already keyed actor audio by slot:generation, deduplicates snapshot actors/bodies and retires absent actors; caches insert only on success
+app/bootstrap/audio/music.ts	1	-	-	1	drift-done (d2-app): in-place source update already in C; loop-open raise now closes the intro. Open: player.onFault needs a fault hook in src/audio/music.c MusicPlayer.mix (D8)
+app/bootstrap/audio/playlist-settings.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/audio/q3.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/authored-start.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/base-arena-catalog.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/base-arena-postgame.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/base-arena-progression.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/cached-promise.ts	1	-	-	0	drift-done (d2-app): added; no C file: every C cache inserts an entry only after its load succeeds (sync), which is cacheEvictingRejection's observable behaviour (manifest status inlined)
+app/bootstrap/character-turntable.ts	1	-	-	0	drift-done (d2-app): C already had the inline wrap and success-only mount caching
+app/bootstrap/client-bootstrap.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/component-bodies.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/configuration.ts	1	-	-	1	drift-done (d2-app): client.cfg archive filtered by qa_app_archive_data_text; audio/view loads warn through the host printer; shared archive reloads audio.json and writes output cvars only when outputFormat is present (new has_output_format); helper refactors already inline
+app/bootstrap/content.ts	1	-	-	1	drift-partial (d2-app): assertRecipeInstalled ported; native Q3 qagame execution check (and assertQ3GuestRecipe in the qvm branch) added. Open: selectedQ3NativeGame (--vm-game 0) needs catalog expectation.nativePrograms in C, and prepareQ3NativeGame (D1) is still a raise D1b: selectedQ3NativeGame (--vm-game 0, catalog expectation.native_programs[0], .dll -> windows-i386, else linux-i386) and prepareQ3NativeGame in the prepare step.
+app/bootstrap/controller-settings.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/cvar-archives.ts	1	-	-	1	drift-done (d2-app): malformed archive restores nothing (qa_try); archiveDataText ported as qa_app_archive_data_text
+app/bootstrap/demo-commands.ts	1	-	-	1	drift-done (d2-app): local world stage prints the dedicated-server message instead of raising
+app/bootstrap/demo-library.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/demo-local-recording.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/demo-recording-commands.ts	1	-	-	1	drift-done (d2-app): typed names and rerecord open with replace=true
+app/bootstrap/demo-recording.ts	1	-	-	1	drift-done (d2-app): open gains replace ("w" vs "wx"); a failed seed unlinks the truncated file
+app/bootstrap/diagnostic-tools.ts	1	-	-	1	drift-done (d2-app): negative/non-finite cl_avidemo or timescale returns {elapsed, false} instead of raising
+app/bootstrap/effects.ts	1	-	-	0	drift-done (d2-app): C already holds still on rewound time, retires Q2 lasers with their actor, bounds beam segments
+app/bootstrap/effects/particles.ts	1	-	-	1	drift-done (d2-app): q2 reverse already in C; zero-length colour range drops the explosion; invalid range raises Error
+app/bootstrap/effects/q2-muzzle.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/effects/q2-view.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/effects/q3.ts	1	-	-	0	drift-done (d2-app): C never had blood owners/hiddenFor; owner lookup memo is a cache
+app/bootstrap/finale.ts	1	-	-	0	drift-done (d2-app): C already ends the finale with a warn-once when the banner fails
+app/bootstrap/frame-loop.ts	1	-	-	0	drift-done (d2-app): added; C frame_loop.c compared with the TS file (setImmediate yield has no C counterpart)
+app/bootstrap/frame-time.ts	1	-	-	1	drift-done (d2-app): sys_ticrate registered for Q1; Q2 clamp 200/5000 ms; Q3 timescale overflow yields 0 instead of raising (minimumFrameMilliseconds already in C)
+app/bootstrap/game-prompt.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/gtv-commands.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/held-weapon.ts	1	-	-	0	drift-done (d2-app): C caches only on success (cacheEvictingRejection)
+app/bootstrap/image-settings.ts	1	-	-	0	drift-done (d2-app): C already had stable signature, per-assets application and save error reporting
+app/bootstrap/index.ts	1	-	-	0	drift-done (d2-app): removed in TS; deleted src/app/bootstrap/index.c and the umbrella include/qa/app/bootstrap.h (nothing else included it)
+app/bootstrap/input-devices.ts	1	-	-	0	drift-done (d2-app): C already had bind_print
+app/bootstrap/input.ts	1	-	-	0	drift-done (d2-app): C already shares createSeatConsole/createSeatHaptics/bindSeatUiInput between initial and joined seats, binds the input-device printer when not owning devices, and has no LLM primer
+app/bootstrap/loading.ts	1	-	-	0	drift-done (d2-app): closure restructuring only (AUDIT-001 retention); no C change
+app/bootstrap/local-lobby.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/local-seat-change.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/match-preflight.ts	1	-	-	1	drift-done (d2-app): out-of-range/non-integer g_gametype resets to 0 before objective adaptation
+app/bootstrap/match-results.ts	1	-	-	0	drift-done (d2-app): added; C match_results.c exists (ApplicationMatchRankings, matchResultOf); manifest row added
+app/bootstrap/menu-art.ts	1	-	-	1	drift-done (d2-app): title.png added; no decoded cache retained; fixed inverted qa_decode_png success test; default reader from assets/ui when no host bytes hook
+app/bootstrap/mod-presentation.ts	1	-	-	0	drift-done (d2-app): import move only (legacy-script); no C change
+app/bootstrap/mod-presentations.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/native-held-weapon.ts	1	-	-	0	drift-done (d2-app): C already returns no grip/attachment for a carrier without definition
+app/bootstrap/network/client-download-policy.ts	1	-	-	1	drift-done (d2-app): cl_http_package_downloads cvar and package gate on HTTP
+app/bootstrap/network/gtv-source.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/index.ts	1	-	-	0	drift-done (d2-app): removed in TS; deleted src/app/bootstrap/network/index.c and include/qa/app/bootstrap/network.h
+app/bootstrap/network/q1-client.ts	1	-	-	0	drift-done (d2-app): C already rejects the connection on a malformed datagram or bad maxClients
+app/bootstrap/network/q1-demo.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q1-types.ts	1	-	-	0	drift-done (d2-app): C already had trusted_networks_only (NET-007)
+app/bootstrap/network/q1.ts	1	-	-	0	drift-done (d2-app): C already had peer cap, connectionless gate, trusted networks and the unanswered timeout
+app/bootstrap/network/q2-client-receiver.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q2-demo.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q2-downloads.ts	1	-	-	1	drift-done (d2-app): native downloads stage through qa_download_sink_create_resumable and request "download PATH OFFSET" when resuming; close suspends, a receive error discards; drop errors, filelist cap, budgets, served types and sprites were already in C (the per-peer opening flag cannot trip with a synchronous open)
+app/bootstrap/network/q2-effects.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q2-mvd-presentation.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q2-remote-view.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q2-rerelease-hud-events.ts	1	-	-	0	drift-done (d2-app): C already returns true for a POI image without configstring
+app/bootstrap/network/q2-service-presentation.ts	1	-	-	0	drift-done (d2-app): C already skips empty sound slots and out-of-table flashes
+app/bootstrap/network/q2.ts	1	-	-	1	drift-done (d2-app): server rcon now uses one persistent qa_rcon_guard (D7 PeerTable) instead of a fresh guard per packet; gate, per-address cap, budget, signon guard, msg level, rate drop, publishPeer drop, Connection refused and dropOnServerError were already in C
+app/bootstrap/network/q3-client-downloads.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q3-client.ts	1	-	-	0	drift-done (d2-app): C already filters print by same peer address
+app/bootstrap/network/q3-demo.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q3-downloads.ts	1	-	-	0	drift-done (d2-app): C already skips rehashing an unchanged mounted archive
+app/bootstrap/network/q3-types.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/q3.ts	1	-	-	1	drift-done (d2-app): userinfo now stamped through qa_q3_peer_userinfo (D7) after a 1023-byte cut; gate, per-address cap, diagnostics and "Server game error" disconnect already in C
+app/bootstrap/network/qw-camera.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/qw-downloads.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/qw-server-types.ts	1	-	-	0	drift-done (d2-app): C already had network_info
+app/bootstrap/network/qw-server.ts	1	-	-	0	drift-done (d2-app): C already had peer cap 8, connectionless gate, movement budget, one clc_move per packet, best-effort farewell, diagnostic budget, send-failure disconnect
+app/bootstrap/network/qw-types.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/recorded-source.ts	1	-	-	0	drift-done (d2-app): C already ends playback as truncated when a reader raises
+app/bootstrap/network/remote-q1.ts	1	-	-	0	drift-done (d2-app): C already caps statics at 1024 and decodes localization keys in print/centerprint
+app/bootstrap/network/remote-q3.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/remote-qw.ts	1	-	-	0	drift-done (d2-app): C already bounds set-info key/value/count
+app/bootstrap/network/remote-unified.ts	1	-	-	0	drift-done (d2-app): C already keys identities by slot with generation and bounds slots at 65536
+app/bootstrap/network/transport.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/types.ts	1	-	-	0	drift-done (d2-app): C already had trusted_networks_only (NET-022)
+app/bootstrap/network/unified-client.ts	1	-	-	0	drift-done (d2-app): C already skipped transport error events
+app/bootstrap/network/unified-components.ts	1	-	-	0	drift-done (d2-app): C already validates player vectors; next-NUL table is a scan optimization
+app/bootstrap/network/unified-content.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/unified-control.ts	1	-	-	0	drift-done (d2-app): C already had unifiedCommandInBounds and the q3 axis / 255 ms bounds
+app/bootstrap/network/unified-event-codec.ts	1	-	-	1	drift-done (d2-app): optional q1 sound "local", Q2 player view "helpIcon" and attack provenance "damagePowerupOwner" read/written; nonfinite drop and positive/nonNegative already in C. Typed->tree conversion of the new fields belongs to the unified remote packet
+app/bootstrap/network/unified-finite.ts	1	-	-	0	drift-done (d2-app): added; C unified_finite.c compared with the TS file
+app/bootstrap/network/unified-frame-codec.ts	1	-	-	1	drift-done (d2-app): frame version 10 written; 2..10 accepted
+app/bootstrap/network/unified-frame-values.ts	1	-	-	0	drift-done (d2-app): C already had nonNegative/positive/finiteVectors checks
+app/bootstrap/network/unified-native-components.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/unified-native-consumer.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/network/unified-prediction.ts	1	-	-	1	drift-done (d2-app): q3 profile ladders written/read when present (new has_ladders in contracts/movement.h, set by simulation/player_movement.c)
+app/bootstrap/network/unified-server.ts	1	-	-	0	drift-done (d2-app): C already had HMAC cookies, per-address cap, inbound limit, movement budget, signon timeout, nonfinite drop/zeroing
+app/bootstrap/options.ts	1	-	-	1	drift-done (d2-app): --vm-game (has_vm_game/vm_game), bind address validation, "--" value rejection, dedicated+connect and bot-skill messages, explicit singleplayer conflict, help text
+app/bootstrap/player-death.ts	1	-	-	0	drift-done (d2-app): import move only (core/key-codes)
+app/bootstrap/player-progress.ts	1	-	-	0	drift-done (d2-app): C already had ranked-match events, version 2 and clear-on-invalid
+app/bootstrap/player-service-status.ts	1	-	-	0	drift-done (d2-app): removed in TS (unused); deleted player_service_status.c/.h and its check in tests/app/test_top_b.c
+app/bootstrap/prepared-startup.ts	1	-	-	1	drift-done (d2-app): helpers moved to startup-commands; C equivalent inline; bind/unbind/unbindall note now ASCII-folds the command name
+app/bootstrap/presentation-scene.ts	1	-	-	0	drift-done (d2-app): C already prunes presenters, skips null held frames and falls back to players/male for Q2
+app/bootstrap/presentation.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/q1-client-settings.ts	1	-	-	1	drift-done (d2-app): chase rear trace passes policy.derived = true
+app/bootstrap/q1-service-presentation.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/q1-wheel.ts	1	-	-	0	drift-done (d2-app): C already warns once for invalid wheels and missing icons
+app/bootstrap/q2-console.ts	1	-	-	1	drift-done (d2-app): status prints selectionConsumption entries via new selection_consumption option (application_commands.c wires SharedSimulation)
+app/bootstrap/q2-native-hud.ts	1	-	-	0	drift-done (d2-app): C already skips layout errors and caps pictures at 512
+app/bootstrap/q3-client.ts	1	-	-	0	drift-done (d2-app): C already applies systeminfo on change via applyServerSystemInfo, render settings (rail, curveError) and cg_shadows modelShadows
+app/bootstrap/q3-client/assets.ts	1	-	-	0	drift-done (d2-app): import move; shared per-mount opened-bytes table is a read cache with the same results (not mirrored)
+app/bootstrap/q3-client/qvm-scalars.ts	1	-	-	0	drift-done (d2-app): import move only
+app/bootstrap/q3-client/qvm.ts	1	-	-	0	drift-done (d2-app): C already registers vm_<role> semantics and drops unmapped legacy cs commands
+app/bootstrap/q3-client/scene.ts	1	-	-	0	drift-done (d2-app): C already took options.rail
+app/bootstrap/q3-client/services.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/q3-client/source.ts	1	-	-	0	drift-done (d2-app): scratch configstring array reuse is allocation-only; same values
+app/bootstrap/q3-client/userinfo.ts	1	-	-	0	drift-done (d2-app): C already had qa_app_apply_server_system_info
+app/bootstrap/q3-client/visibility.ts	1	-	-	0	drift-done (d2-app): per-call PVS byte memo is a cache over a pure query; C computes the same bytes
+app/bootstrap/q3-rankings.ts	1	-	-	1	drift-done (d2-app): publishGame sets sv_rankingsGameKey/sv_rankingsGameID on every service state change
+app/bootstrap/q3-selected-weapon.ts	1	-	-	0	drift-done (d2-app): C already warns once and draws nothing for a hands model without the tag
+app/bootstrap/remote-application.ts	1	-	-	0	drift-done (d2-app): C already had serverMapPath, createWorldAssets with warn, frameless art, unavailable server sound/image prints, sourceConsoleScripts, seat factory, q3 render settings, effect-gap reset, peerWorldCurrent change, frame loop and the image-refresh assets filter; promotedSource is an identity cache with no C counterpart
+app/bootstrap/remote-seat-identities.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/remote-seat-pump.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/remote-seat-source.ts	1	-	-	0	drift-done (d2-app): C already used qa_app_server_map_path
+app/bootstrap/remote-seat-view.ts	1	-	-	0	drift-done (d2-app): C already used createWorldAssets, the seat factory and q3 render settings
+app/bootstrap/render-settings.ts	1	-	-	0	drift-done (d2-app): C already had registerQ3RendererCvars, q3RendererSettings and shaderProfileFromCvars
+app/bootstrap/renderer.ts	1	-	-	1	drift-done (d2-app): images.invalidateBackend after journal replay on backend prepare and CPU resize
+app/bootstrap/rerelease-presentation.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/seat-factory.ts	1	-	-	0	drift-done (d2-app): added; createSeatPresentation is qa_app_world_seat_presentation_create (presentation.c), createSeatUi the seat UI constructors; manifest row added
+app/bootstrap/seat-hud-state.ts	1	-	-	0	drift-done (d2-app): C already loads POI/damage/pickup pictures optionally with a missing set
+app/bootstrap/server-browser-cache.ts	1	-	-	0	drift-done (d2-app): C already drops unstorable statuses
+app/bootstrap/server-browser.ts	1	-	-	0	drift-done (d2-app): C already tolerates invalid saved lists/cache, adds master addresses in one pass, counts skipped names, finds entries by resolved address and bounds rules/players; the rows cache is a memo (not mirrored)
+app/bootstrap/server-map.ts	1	-	-	0	drift-done (d2-app): added; C server_map.c compared with the TS file
+app/bootstrap/server-master-list.ts	1	-	-	0	drift-done (d2-app): C already skips and counts invalid lines
+app/bootstrap/sound-captions.ts	1	-	-	0	drift-done (d2-app): C already retires finished voices and warns on sidecar failures
+app/bootstrap/splash.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/startup-commands.ts	1	-	-	0	drift-done (d2-app): applyStartupVariables/inheritedBindingBaseline/applySelectedBindingDefaults/noteBindingCommand exist inline in prepared_startup.c (asciiFold added)
+app/bootstrap/startup-menu.ts	1	52	52	3	read in full (startup2, 2026-11-03): TS options shape (StartupSelectionModel, NativeUiArt, body/title fonts, appearance, characterTurntable, teamArena); draw, captionCommands, builderLayout/builderFields/builderDropdownSpec/builderFooter/builderViewer, row(); fixed: select-menu fit() covered the "> " prefix, factory scratch grew without bound (now retired per generation), measure() was a byte-length stub; test_startup_menu matches the bun draw oracle (13919 render-command lines)
+app/bootstrap/startup-saves.ts	1	-	-	0	drift-done (d2-app): C already lists saves from readSaveHeader (map/game/unavailable) before the full read
+app/bootstrap/startup-selection.ts	1	-	-	0	drift-done (d2-app): C already had file-set caching and bindingItemsKey
+app/bootstrap/startup-source.ts	1	-	-	1	drift-done (d2-app): sv_gate_dev_impulses "0" added to the non-Q3 source defaults
+app/bootstrap/startup.ts	1	-	-	1	drift-done (d2-app): C StartupApplication already had match rankings, user data save dir, optional browser, persistPreferencesOrWarn, bindingItemsKey, frames:false art, quitRequested, frontend command skip, map/load path errors with assertLoadPathAllowed, failActiveSource, gtv reset, close error collection; no LLM primer; startup3 (2026-11-03): openGraphics, graphics.draw and graphics.captionCommands ported over the real NativeRenderer/window, SdlControllers, StartupAudio, InputRouter, ControllerSettings, ApplicationCapture, ApplicationVideoRestart and the client record (startup_application_graphics.c); fixed: refreshPreferenceBaseline used catalog.require where TS uses catalog.product (a missing product aborted the baseline before openInitialConfigurationContent's TS error); test_startup_graphics matches the bun oracle tests/app/oracles/startup_graphics.ts (1496 lines: 6 RenderFrames from a hidden 640x480 CPU window, active menu/status per step, host prints, captionCommands through the client)
+app/bootstrap/team-arena-demo.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/team-arena-overrides.ts	1	-	-	0	drift-done (d2-app): formatting only after Biome
+app/bootstrap/team-arena-results.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/team-arena-scores.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/team-arena-skirmish.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/ui.ts	1	-	-	0	drift-done (d2-app): C already had the menu localizer, caption warn sink and scaled menu panel
+app/bootstrap/view-settings.ts	1	-	-	1	drift-done (d2-app): load parses real JSON and warns "Ignoring view.json" on invalid preferences (qa_app_view_settings_load_warn; configuration.c passes the host printer); setter raises RangeError
+app/bootstrap/weapon-behavior-selection.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/weapon-behavior-tool-options.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/weapon-behavior-tool.ts	1	-	-	0	drift-done (d2-app): types-only; the Biome-normalized diff is empty, no C change
+app/bootstrap/weapon-hud.ts	1	-	-	0	drift-done (d2-app): C inserts the pending icon only after a successful load, matching cacheEvictingRejection
+app/bootstrap/world-replacement.ts	1	-	-	0	drift-done (d2-app): added; WorldReplacement lives in application_transition.c; manifest row added
+foundation/binary.ts	1	-	-	0	drift-done (d8b): loadF64LE/storeF64LE added as qa_load_f64_le/qa_store_f64_le (low word first)
+foundation/stamp.ts	1	-	-	0	drift-done (d8b): epoch wrap at 0xffffffff was already in C; TS epoch-wrap test ported to test_foundation
+foundation/index.ts	1	-	-	0	drift-done (d8b): barrel lost arena/handles/pool/sys-queue/vec; include/qa/foundation.h updated
+foundation/arena.ts	1	-	-	0	drift-done (d8b): removed in TS: src/foundation/arena.c and header deleted (only tests used them)
+foundation/handles.ts	1	-	-	0	drift-done (d8b): removed in TS: src/foundation/handles.c and header deleted (only tests used them)
+foundation/pool.ts	1	-	-	0	drift-done (d8b): removed in TS: src/foundation/pool.c and header deleted (only tests used them)
+foundation/sys-queue.ts	1	-	-	0	drift-done (d8b): removed in TS: src/foundation/sys_queue.c and header deleted (only tests used them)
+foundation/vec.ts	1	-	-	0	drift-done (d8b): removed in TS: src/foundation/vec.c and header deleted (only tests used them)
+core/common-parse.ts	1	-	-	0	drift-done (d8b): import path only (SaveReader from core/save-value)
+core/game-numeric.ts	1	-	-	0	drift-done (d8b): already in C (byte() returns 0 at or past the end; scanGameFloat clamps the offset)
+core/diagnostics.ts	1	-	-	0	drift-done (d8b): removed in TS: src/core/diagnostics.c and header deleted (only test_core_rest used them; its case removed)
+console/log.ts	1	-	-	0	drift-done (d8b): removed in TS: src/console/log.c and header deleted (only test_console_b used them; its case removed)
+console/index.ts	1	-	-	0	drift-done (d8b): removed in TS: src/console/index.c and include/qa/console.h deleted (no users)
+media/index.ts	1	-	-	0	drift-done (d8b): removed in TS: src/media/index.c, include/qa/media/index.h and include/qa/media.h deleted; test_media includes the module headers
+media/roq-presentation.ts	1	-	-	0	drift-done (d8b): removed in TS: src/media/roq_presentation.c and header deleted (no C callers)
+media/transitions.ts	1	-	-	0	drift-done (d8b): removed in TS: src/media/transitions.c and header deleted; test_media fullscreen case no longer routes through a transition (cinematic.test.ts)
+formats/images/bmp.ts	1	-	-	0	drift-done (d8b): imageSizeAllowed already in C
+formats/images/gif.ts	1	-	-	0	drift-done (d8b): imageSizeAllowed and the frame/retained-bytes limit already in C
+formats/images/indexed.ts	1	-	-	0	drift-done (d8b): imageSizeAllowed already in C
+formats/images/jpeg.ts	1	-	-	0	drift-done (d8b): size limit, fabricated-entropy bound and 256-scan limit already in C; lookahead table is perf only; limits.test.ts JPEG cases added to test_formats_review
+formats/images/png.ts	1	-	-	0	drift-done (d8b): imageSizeAllowed already in C
+formats/images/png-encoder.ts	1	-	-	0	drift-done (d8b): zlib crc32 equals the old bitwise CRC; C keeps its table-free CRC (test_formats_review checks every chunk CRC)
+formats/images/tga.ts	1	-	-	0	drift-done (d8b): imageSizeAllowed already in C
+formats/images/limits.ts	1	-	-	0	drift-done (d8b): added: already ported as src/formats/images/limits.c
+formats/q12-model/animation.ts	1	-	-	0	drift-done (d8b): PoseLru-backed cache already in C (qa_interpolate_alias_frames_cached)
+formats/q12-model/pose-lru.ts	1	-	-	0	drift-done (d8b): added: already ported as src/formats/q12_model/pose_lru.c (manifest maps there)
+formats/q1-map/index.ts	1	-	-	0	drift-done (d8b): requireAcyclic over drawing nodes and clipnodes already in C; the owned-copy lump views are allocation-only
+formats/q1-map/queries.ts	1	-	-	0	drift-done (d8b): q1LeafPvs BinaryError catch already in C
+formats/q2-map/bspx.ts	1	-	-	0	drift-done (d8b): leafless lightgrid cycle walk already in C
+formats/q3-map/decode.ts	1	-	-	0	drift-done (d8b): MAX_MAP_AREAS 1024 and the surface-work budget already in C
+formats/q3-map/ibsp44.ts	1	-	-	0	drift-done (d8b): polygon vertex range and node-walk budget already in C
+formats/q3-model/lod.ts	1	-	-	0	drift-done (d8b): loaded slot no longer carries bytes (C never had it on the slot)
+formats/q3-model/md3.ts	1	-	-	0	drift-done (d8b): DecodedMd3Model.bytes removed (qa_decoded_md3_model.bytes dropped)
+formats/q3-model/md4.ts	1	-	-	0	drift-done (d8b): DecodedMd4Model.bytes removed (qa_decoded_md4_model.bytes/bytes_length dropped); md4.test.ts check ported
+formats/q3-model/md5.ts	1	-	-	0	drift-done (d8b): md5anim expansion budget already in C
+formats/q3-model/animation.ts	1	-	-	0	drift-done (d8b): removed in TS (moved to content/q3/foundation/animation-config): src/formats/q3_model/animation.c and header deleted (no C users)
+formats/q3-model/index.ts	1	-	-	0	drift-done (d8b): removed in TS: src/formats/q3_model/index.c and include/qa/formats/q3_model.h deleted; test_maps_models includes the module headers
+media/ogg.ts	1	-	-	0	drift-done (d8b): MAX_OGG_MOVIE_BYTES exported as QA_MAX_OGG_MOVIE_BYTES; single-piece packet reuse is allocation-only
+media/playback.ts	1	-	-	0	drift-done (d8b): ogv input over 512 MiB raises RangeError before the read (input closed first); tick sharing the retained picture is allocation-only (C still hands the caller a copy)
+camera/application.ts	1	-	-	0	drift-done (d8b): CommandUsageError("Camera: ...") wrapper already in C
+capture/index.ts	1	-	-	0	drift-done (d8b): per-format nextShot already in C; import path only otherwise
+console/dedicated.ts	1	-	-	0	drift-done (d8b): enqueue drop counting, 65536-char pending cap and the dropped echo already in C (test_console_review covers dedicated.test.ts)
+console/field.ts	1	-	-	0	drift-done (d8b): import path only (core/key-codes)
+console/source-field.ts	1	-	-	0	drift-done (d8b): import path only (core/key-codes)
+console/session.ts	1	-	-	1	drift-done (d8b): selectedCompletionEntry caches the looked-up entry per selected name (selected_entry_name/selected_entry); the C API still returns a caller-owned copy
+console/llm.ts	1	-	-	0	drift-done (d8b): primeLlmConsoleSession removed (qa_prime_llm_console_session deleted; registration never primed in C); llm.test.ts PLATFORM-009 already in test_console_b
+console/llm-batch.ts	1	-	-	0	drift-done (d8b): extended indirect set, command-valued cvar rejection and catalog name filter already in C; llm.test.ts PLATFORM-006 ported to test_console_b
+audio/engine.ts	1	-	-	2	drift-done (d8b): pump checks a named output for removal at most once a second (performance.now) and falls back to the default device, detaching when that fails (selectOutput's AggregateError is now a qa_raise caught there); queued PCM keeps min(previous + new, queuedFrames * 2) samples instead of a JS negative-slice tail; IdIndex/free-entity reuse and retireAbsentActors were already in C
+audio/mixer.ts	1	-	-	1	drift-done (d8b): MAXIMUM_VOICES 128 channel stealing (acquire_channel: oldest ordinary effect, listener sounds only for the listener, else refuse) in start_shared_sound and the source-sound path; MixerSoundMemory, queueRawBytes, queueMusic, getRawSamplePointer and musicVolume removed; entityActive already in C; paint scratch is allocation-only. Tests: PLATFORM-010, Doppler singularity signs, occupied-channel replacement added to test_audio_engine
+content/archive/types.ts	1	-	-	1	drift-done (d8b): tryNormalizeEntryPath added (qa_try_normalize_entry_path): empty and "." segments collapse, NULL for ":"/NUL/escaping/empty; normalizeEntryPath raises on that NULL
+content/archive/pak.ts	1	-	-	1	drift-done (d8b): unaddressable members are skipped instead of rejecting the archive
+content/archive/zip.ts	1	-	-	2	drift-done (d8b): unaddressable members (including a NUL in the raw name) are skipped and ordinals count kept entries; decodeZipEntry rejects entries over MAX_ZIP_ENTRY_BYTES (256 MiB) with ArchiveError. Tests: archive.test.ts FORMATS-012 cases in test_content_archive; archive-mutation.test.ts ported as tests/content/test_archive_mutation.c
+content/catalog/addons.ts	1	-	-	2	drift-done (d8b): parseAddonCatalog skips a malformed row (per-row qa_try; qa_parse_addon_catalog_reporting passes each reason to a skipped callback) and rejects -game . / ..; new URL failure is Bun's TypeError text; managedAddonTitle returns NULL on an unreadable or non-JSON file; qa_catalog_error is now a qa_raise("Error") so TS catches see it. addons.test.ts row-skip case and the contained-path message ported
+content/catalog/index.ts	1	-	-	4	drift-done (d8b): Q3 archive order keeps the first 1024 pk3s and sorts by FS_PathCmp keys (upper-case ASCII, `\`/`:` as `/`); an invalid mod directory name is skipped instead of raising; (qa)game*.dll/.so marks mod content; q3NativeModules fills the new expectation.native_programs; availability now enforces requiredPrograms through the base chain (archives, loose root, user overlay; remote overlays exempt), deciding every result before applying it as TS reads unchecked base availability; catalog read misses say "Resource not found: <path>". Tests: required-programs.test.ts and the Q3 order cases in test_content_catalog (fake inspector now lists progs.dat)
+content/catalog/source-program.ts	1	-	-	1	drift-done (d8b): a product with native programs stops the source-program walk
+content/catalog/products.ts	1	-	-	0	drift-done (d8b): optional nativePrograms added to qa_catalog_product_expectation (all built-in rows NULL, 0)
+content/mounts/index.ts	1	-	-	2	drift-done (d8b): an unnameable requested path is a miss (normalize RangeError caught) instead of a fault; a loose stat ENOENT/ENOTDIR is a miss, other stat errors raise; stale digest pruning and the unique temporary file were already in C. The cached-listing-first lookup is not reproduced (C always reads the directory fresh, which TS falls back to on a cached miss). mounts.test.ts "Resource not found" case ported to test_content_archive
+content/user-data.ts	1	-	-	0	drift-done (d8b): userDataDirectory already in C (qa_user_data_directory)
+content/composition/q1/commands.ts	1	-	-	0	drift-done (d8b): q1CtfWeaponCycle already in C (qa_comp_q1_ctf_weapon_cycle)
+content/composition/q1/give.ts	1	-	-	0	drift-done (d8b): usage/unknown-item/unavailable-ammo/not-giveable now print to the player instead of throwing; already in C
+content/composition/q1-hipnotic-supply.ts	1	-	-	0	drift-done (d8b): refactor onto hipnotic-overlay; derived profile unchanged (C keeps the static table)
+content/composition/hipnotic-overlay.ts	1	-	-	0	drift-done (d8b): added helper (hipnoticOverlay/overlayWeapons/overlayOwners); C spells out the derived q1/q2/q3 hipnotic supply tables statically, so it maps to those files (manifest row points at q1_hipnotic_supply.c)
+content/composition/q2-q1-supply.ts	1	-	-	0	drift-done (d8b): refactor onto hipnotic-overlay; profile unchanged
+content/composition/q3-q1-supply.ts	1	-	-	0	drift-done (d8b): refactor onto hipnotic-overlay; profile unchanged
+content/composition/q2-expansion-arsenal.ts	1	-	-	0	drift-done (d8b): q2MissionWeaponInventory(pack, edition) already in C
+content/composition/q2/index.ts	1	-	-	0	drift-done (d8b): coopKill score, item edition/foreign items/pickedUp bonus, classic quad-drop dmflag, playerName and the q2:login/entered-the-game admission already in C
+content/composition/q1/q3-pickups.ts	1	-	-	0	drift-done (d8b): verified mapping: registerQ3PickupHook is qa_comp_q1_register_q3_pickup_hook; foreignQ3Pickup is qa_q1_foreign_q3_pickup (content/q1/foundation/pickups.c, d3-q1) with the same respawn, cap, shard and grant rules
+audio/geometry.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+audio/types.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+camera/spline.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+console/buffer.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+content/catalog/launch.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+content/catalog/qvm-weapon-behaviors.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+content/catalog/weapon-behaviors.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+content/composition/q1/types.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+content/composition/q2/types.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+core/commands/text.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+core/cvars/mirror.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+core/omnitimer.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+core/q3-product-policy.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+core/resource-name-index.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/images/jpeg-encoder.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/images/palette.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/images/wad.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/q1-map/types.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/q12-model/index.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/q12-model/md2.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/q2-map/reader.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/q3-model/replacements.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+formats/q3-model/scene.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+media/cin.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+media/roq-codebook.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+media/roq-stream.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+media/types.ts	1	-	-	0	drift-done (d8b): types-only; no C change
+input/bindings.ts	1	-	-	0	drift-done (d8c): import path only (core/key-codes); no C change
+input/keys.ts	1	-	-	0	drift-done (d8c): import path only; no C change
+input/router.ts	1	-	-	1	drift-done (d8c): mouse-motion goes straight to the seat with the raw position in game focus (no native size queries) and skips updateCapture
+input/sdl-keys.ts	1	-	-	0	drift-done (d8c): import path only; no C change
+input/seat.ts	1	-	-	1	drift-done (d8c): fractional wheel notches accumulate (wheel_remainder); releaseDevice sends left-x/left-y 0 to the UI binding; button timestamp and impulse byte errors are CommandUsageError (printed, frame continues); test_input PLATFORM-004/011, UI-007
+input/source-joystick.ts	1	-	-	0	drift-done (d8c): import path only; no C change
+input/source-midi.ts	1	-	-	0	drift-done (d8c): import path only; no C change
+input/gamepad.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/haptics.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/mouse.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/pitch-drift.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/source-input.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/user-command.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/weapon-bindings.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+input/index.ts	1	-	-	0	drift-done (d8c): removed barrel: src/input/index.c and include/qa/input/index.h deleted (no users); manifest removed-in-ts
+llm/auth.ts	1	-	-	0	drift-done (d8c): already in C (refresh keeps previous refresh_token)
+llm/auth-worker.ts	1	-	-	0	drift-done (d8c): already in C (wrong state answers 400 and keeps waiting)
+llm/session.ts	1	-	-	0	drift-done (d8c): already in C (transcript in prompt, warm-up gets the caller signal)
+llm/settings.ts	1	-	-	1	drift-done (d8c): load chmods the file 0600 after reading; subscription token exchange runs on its own controller with the request timeout (close() aborts it), caller cancellation only stops waiting; editable prefs/credentials were already in C; test_llm PLATFORM-017 added
+llm/models.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+llm/request.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+llm/sse.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+materials/deform.ts	1	-	-	1	drift-done (d8c): autosprite/autosprite2 process whole quads and drop a partial tail instead of raising; pivot index lookup reads past the end as no match; projectionshadow without context is skipped
+materials/legacy-fog.ts	1	-	-	1	drift-done (d8c): q2 height fog needs falloff > 0
+materials/lighting.ts	1	-	-	1	drift-done (d8c): dynamicLightReachesFace ported (qa_dynamic_light_reaches_face); render/scene/world.c now calls it instead of its inline copy; pixel loop change is equivalent
+materials/material-finish.ts	1	-	-	1	drift-done (d8c): finishImplicitShader/finishFailedShader removed (C functions deleted; test_materials_b composes implicitShaderInput+finishShader)
+materials/material.ts	1	-	-	1	drift-done (d8c): rgbGen const uses sourceVector (missing parts read 0); stray brace in recover mode skips its section; shaderTableIndex out of range is 0 (both C copies); tex coords finiteOrZero (material.c and the evaluate.c mirror); test_materials_drift
+materials/sky.ts	1	-	-	1	drift-done (d8c): cloud coordinates non-finite -> 0; test_materials_drift (sky.test.ts)
+materials/compile.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+materials/material-iterator.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+materials/q2-lightgrid.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+materials/source-state.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+materials/index.ts	1	-	-	0	drift-done (d8c): removed barrel: C index.c/index.h deleted (no users)
+persistence/kex-q2-save.ts	1	-	-	1	drift-done (d8c): gunzip output bounded at 256 MiB with Node's message (Cannot create a Buffer larger than 268435456 bytes)
+persistence/q2-classic-guest.ts	1	-	-	1	drift-done (d8c): writes beyond 256 MiB raise RangeError Native save file exceeds its size limit; geometric capacity growth
+persistence/q2-containers.ts	1	-	-	1	drift-done (d8c): configstring of exactly width bytes written unterminated (writeConfigstringSlot); test_persistence_core bytes from bun
+persistence/q2-foundation.ts	1	-	-	0	drift-done (d8c): already in C (itemDropped optional)
+persistence/q2-movers.ts	1	-	-	1	drift-done (d8c): train wait read when present (was always dropped)
+persistence/q2-players.ts	1	-	-	0	drift-done (d8c): already in C (jumpHeld false, helpChanged/gameHelpChanged optional)
+persistence/q2-weapons.ts	1	-	-	0	drift-done (d8c): already in C (formatVersion 2|3 -> 3, noise records ignored)
+persistence/saved-game.ts	1	-	-	0	drift-done (d8c): re-export of readSaveHeader; already in C (save_image.h)
+persistence/save-policy.ts	1	-	-	0	drift-done (d8c): already in C (assertLoadPathAllowed)
+persistence/source-json.ts	1	-	-	0	drift-done (d8c): whitespace/string/number scanning rewritten for speed with identical results; no C change
+persistence/index.ts	1	-	-	0	drift-done (d8c): barrel drops q1-quakec and q3 exports; qa/persistence.h no longer includes persistence/q3.h
+persistence/q3.ts	1	-	-	0	drift-done (d8c): removed in TS: src/persistence/q3.c and header deleted (only tests used them; those checks dropped); manifest removed-in-ts
+persistence/q1.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+persistence/q2-classic.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+persistence/q2-rerelease.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+persistence/q2-typescript.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+platform/audio.ts	1	-	-	1	drift-done (d8c): SdlAudioDevice.removed ported (qa_sdl_audio_removed); test_platform_b PLATFORM-020. audio/engine.c (D8b) keeps a private copy that aborts when no output is enumerated
+platform/controller.ts	1	-	-	1	drift-done (d8c): open failures are skipped and counted (qa_sdl_controllers_open_failures) instead of raising; requireNoSignalHandlers
+platform/sdl.ts	1	-	-	1	drift-done (d8c): requireNoSignalHandlers (raises Error, was RangeError)
+platform/vorbis.ts	1	-	-	1	drift-done (d8c): OV_HOLE skipped up to 1024 times; test_platform_b PLATFORM-002 (needs QUAKE_TEST_OGG)
+platform/signal-hint.ts	1	-	-	1	drift-done (d8c): added: src/platform/signal_hint.c
+platform/runtime.ts	1	-	-	0	drift-done (d8c): removed in TS: src/platform/runtime.c/h deleted (only test_platform_a used them; those two cases dropped)
+platform/index.ts	1	-	-	0	drift-done (d8c): removed barrel: C index.c/index.h deleted
+platform/freetype.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+platform/ipx-native.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+platform/theora.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+settings/server/q2-owner.ts	1	-	-	0	drift-done (d8c): already in C (g_infinite_ammo, instagib, no_health/armor/items, g_select_empty)
+settings/setting-spec.ts	1	-	-	1	drift-done (d8c): added: include/qa/settings/setting_spec.h (qa_cvar_setting_spec, qa_setting_category); ui/settings/index.h aliases them
+settings/restart.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+settings/server/library.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+settings/server/lmctf-cvars.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+settings/server/types.ts	1	-	-	0	drift-done (d8c): types-only (CvarSettingSpec import moved); no C change
+settings/index.ts	1	-	-	0	drift-done (d8c): removed barrel: src/settings/index.c deleted
+text/captions.ts	1	-	-	0	drift-done (d8c): already in C (skipped callback per invalid cue)
+text/kfont.ts	1	-	-	1	drift-done (d8c): kfontHasGlyph, TtfKfont_Lookup, Kfont_FromTTF removed (C functions and qa_ttf_kfont deleted; test_text_a uses qa_kfont_glyph)
+text/layout.ts	1	-	-	1	drift-done (d8c): seatTextScale removed (qa_seat_text_scale_of deleted with its test check)
+text/localization.ts	1	-	-	0	drift-done (d8c): already in C (escape consumption, {{ unescape, expected = warning)
+text/localization-resources.ts	1	-	-	1	drift-done (d8c): optional log reaches merge: qa_load_(server_)localization_resources_logged; test_text_review server-localization case
+text/media-captions.ts	1	-	-	0	drift-done (d8c): already in C (warn hook)
+text/truetype.ts	1	-	-	1	drift-done (d8c): CFF operation budget and 513-entry stack, composite component budget 4096, glyph cell limit max(64, ceil(px*4)), atlas skips RangeError glyphs, 4096x4096 atlas limit. The TS hostile-font test needs a fake ParsedFontT and is not ported
+text/localization-key.ts	1	-	-	0	drift-done (d8c): added: already ported as src/text/localization_key.c (manifest row added)
+text/atlas.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+text/draw2d.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+text/q3-font.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+text/world.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+text/index.ts	1	-	-	0	drift-done (d8c): removed barrel: C index.c/index.h deleted
+ui/common/art-manifest.ts	1	-	-	1	drift-done (d8c): splashTitle added to menuArtFiles (5 files)
+ui/common/assets.ts	1	-	-	0	drift-done (d8c): already in C (frames/mainBackground selection)
+ui/common/menu-theme.ts	1	-	-	1	drift-done (d8c): backdrop ratio from the art manifest; menuPanel menuScale and empty safe area were already in C
+ui/common/index.ts	1	-	-	0	drift-done (d8c): barrel adds localization and controls (qa/ui/common.h includes them)
+ui/common/controls.ts	1	-	-	1	drift-done (d8c): added: src/ui/common/controls.c (qa_ui_button_control, qa_ui_wrap_words in UTF-16 units with JS \s); tests/ui/test_ui_controls.c with bun lines
+ui/hud/q2-native.ts	1	-	-	0	drift-done (d8c): already in C (NativeQ2HudLayoutError); token cache is a perf cache
+ui/hud/q2-rerelease-layout.ts	1	-	-	0	drift-done (d8c): already in C (NativeQ2HudLayoutError)
+ui/hud/index.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+ui/hud/wheel.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+ui/library/match.ts	1	-	-	1	drift-done (d8c): Back button rect {64,414,496,30}
+ui/library/menu.ts	1	-	-	0	drift-done (d8c): buttonControl refactor; same control fields; no C change
+ui/mods/menu.ts	1	-	-	1	drift-done (d8c): detail lines use wrapWords(42)
+ui/saves/menu.ts	1	-	-	1	drift-done (d8c): info lines use wrapWords(48)
+ui/settings/gyro.ts	1	-	-	0	drift-done (d8c): buttonControl refactor only; no C change
+ui/settings/llm.ts	1	-	-	1	drift-done (d8c): message lines use wrapWords(54)
+ui/settings/local-lobby.ts	1	-	-	0	drift-done (d8c): buttonControl refactor only; no C change
+ui/settings/ranking-account.ts	1	-	-	1	drift-done (d8c): status lines use wrapWords(64)
+ui/settings/server.ts	1	-	-	1	drift-done (d8c): lines() is wrapWords(60)
+ui/settings/index.ts	1	-	-	1	drift-done (d8c): types-only drift (spec moved to settings/setting-spec); fixed the C leak: settingControl closure state is caller-owned qa_ui_setting_control_storage (menus reuse a pooled array, server.c one field, startup_menu.c sc_alloc), scroll ids pooled; test_ui_controller_fixes LSan-clean
+ui/settings/action-catalog.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+ui/settings/bindings.ts	1	-	-	0	drift-done (d8c): types-only; no C change
+app/bootstrap/audio/music.ts	1	-	-	1	drift-done (d8c): player.onFault wired: prints WARNING: music playback stopped: <message>
+app/bootstrap/network/unified-event-codec.ts	1	-	-	0	unified-net (2026-11-03): typed SimulationPresentationEvent <-> event tree for every kind and variant in network/unified_event_values.c, one pair per TS writer; tests/network/test_unified_event_values.c round-trips all 217 corpus presentation rows to the TS bytes (named C domain gaps: sourceEntity null/undefined, Q1ClientSnapshot slot/shirt/pants and CtfStatus flags/runeItems int64, Q2 model attachedModels [3])
+app/bootstrap/network/remote-unified.ts	1	-	-	1	unified-net (2026-11-03): PresentationState media (per offer) receiving typed events; consumers admit/retire on it; typed drainPresentationEvents/drainSimulationEvents; predictor scene was unset (NULL trace) and now is the replica scene; ran in the unified loopback against TS
+app/bootstrap/network/unified-prediction.ts	1	-	-	1	unified-net (2026-11-03): projectPrediction deep-copies jump pad, client outputs, linked ground/collision owner (free(): invalid size on the server's first frame)
+app/bootstrap/network/unified-server.ts	1	-	-	0	unified-net (2026-11-03): cookie secret from getrandom (TS randomBytes); ran against the TS and C unified clients
+app/bootstrap/network/unified-client.ts	1	-	-	0	unified-net (2026-11-03): nonce from getrandom (TS crypto.getRandomValues)
+app/bootstrap/network/unified-content.ts	1	-	-	0	unified-net (2026-11-03): host gains open_plan/close_plan (TS `using opened = await openMountPlan(plan)`); concrete host in remote_application_unified.c
+app/bootstrap/simulation/network-unified.ts	1	-	-	1	unified-net (2026-11-03): presentationEvents takes the application's typed events (was reading them as save trees)
+app/bootstrap/remote-components.ts	1	3	3	0	unified-net (2026-11-03): RemoteComponentView over ApplicationModPresentations and the replica's media (was a host mirror); prepareMedia/prepare ran in the unified loopback (no component sources in its recipes)
+app/bootstrap/remote-seat-view.ts	1	-	-	0	unified-net (2026-11-03): unified branch (component view, seat.receive(drainSimulationEvents)); systemCinematics is the TS function; not run against TS (one seat in the loopback)
+app/bootstrap/remote-application.ts	1	-	-	0	unified-net (2026-11-03): loadUnifiedContent host, adoptUnifiedProfile mounted content, bindSeat/step unified branches; unified and q2-q1-q3 unified loopbacks 0 differing; profile-change path (Q2 client of a Q1 server) raised in prepareClientCommands (fixed by unified2, socks-settings route)
+app/bootstrap/network/socks-settings.ts	1	3	3	1	unified2 (2026-11-03): route(base) returns a new routing per call (C stored one base on the shared settings, so a candidate configuration's staged route changed the published route's visible set: the unified profile change raised "Candidate client commands require isolated cvar owners"); register snapshots freed
+app/bootstrap/remote-application.ts	1	-	-	0	unified2 (2026-11-03): adoptUnifiedProfile profile change ran against TS (unified-cross Q2->Q1, unified-cross-q1 Q1->Q2, unified-cross-q3 Q3->Q1, 0 differing); C GC: a cleared presentation and the bound seat UI are freed at destroy, unhandled effects freed per step, RemoteSeatView frees its seat UI
+app/bootstrap/application.ts	1	1	1	1	unified2 (2026-11-03): publishSourceCommands' releaseDemos runs after closeOwned dropped ownedDemos (C skipped the detach once has_owned_demos was cleared); the startup ClientDemoCommands and the server definitions array are freed at destroy
+content/q1/foundation/callbacks.ts	1	9	9	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/extensions.ts	1	0	0	0	read in full (gate-q1, 2026-11-03): types only
+content/q1/foundation/held-weapons.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/precache.ts	1	9	9	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/precache-world.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): precache order equal to TS
+content/q1/foundation/runtime.ts	1	3	3	3	read in full (gate-q1, 2026-11-03): foreign worlds pre-checked a fixed classname list instead of catching UnknownQ1SpawnError (foreignPickup classes and throwing spawners were reported foreign); spawn report/replacements and spawnMap bounds leaked on raise
+content/q1/foundation/shambler-damage.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/foundation/weapon-names.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): no divergence found
+content/q1/base/finales.ts	1	1	1	0	read in full (gate-q1, 2026-11-03): table compared entry for entry (7 entries)
+content/q1/base/index.ts	1	0	0	0	read in full (gate-q1, 2026-11-03): re-exports only
+content/q1/addons/ctf/travel.ts	1	-	-	1	gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/demodog.ts	1	-	-	1	gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/bosses/registry.ts	1	-	-	1	gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/infected/index.ts	1	-	-	1	gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/addons/monsters/heavy/runtime.ts	1	-	-	1	gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/equipment/threewave-grapple.ts	1	-	-	1	gate-q1 partial (not a full read): decoded save tree now released when a malformed save raises
+content/q1/missionpacks/world/hipnotic-misc.ts	1	-	-	1	gate-q1 partial (not a full read): ambient event lacked has_origin

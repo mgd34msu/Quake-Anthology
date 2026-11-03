@@ -8,6 +8,8 @@
 #include "qa/core/common_parse.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js_case.h"
+#include <math.h>
 
 static void cvar_set_(qa_cvar_registry *r, const char *name, const char *value, bool force) {
   qa_cvar_snapshot out; memset(&out, 0, sizeof out);
@@ -32,13 +34,13 @@ struct qa_app_team_arena_campaign {
 };
 static char *xdup(const char *s) { char *r = qa_input_dup(s); if (!r) qa_range_error("Out of memory"); return r; }
 static char *lower_dup(const char *s) {
-  char *r = xdup(s);
-  for (char *p = r; *p; p++) *p = (char)tolower((unsigned char)*p);
+  /* TS toLowerCase over latin1-decoded campaign text: Latin-1 folding. */
+  char *r = qa_js_latin1_to_lower_case(s);
+  if (!r) qa_range_error("Out of memory");
   return r;
 }
 static bool ci_eq(const char *a, const char *b) {
-  while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false; a++; b++; }
-  return *a == *b;
+  return qa_js_latin1_equals_ignore_case(a, b);
 }
 /* sections(): parse into named row lists. Rows owned. */
 typedef struct sec { char *name; char ***rows; size_t *row_lens; size_t row_count; } sec;
@@ -113,7 +115,7 @@ static double integer_at(char **row, size_t len, size_t index) {
   if (*p == '\0') qa_range_error("Invalid Team Arena metadata integer");
   for (; *p; p++) if (!isdigit((unsigned char)*p)) qa_range_error("Invalid Team Arena metadata integer");
   double n = qa_input_js_parse_number(v);
-  if (n != (double)(long long)n || n > 9007199254740991.0 || n < -9007199254740991.0)
+  if (!(isfinite(n) && n == trunc(n)) || n > 9007199254740991.0 || n < -9007199254740991.0)
     qa_range_error("Team Arena metadata integer is out of range");
   return n;
 }

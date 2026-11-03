@@ -1,6 +1,7 @@
 /* Port of src/network/common/session.ts. GPL-2.0-or-later. */
 #include "qa/network/common/session.h"
 #include "qa/foundation/support.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 /* --- SHA-256 (FIPS 180-4), written for this port. --- */
@@ -15,39 +16,59 @@ static const uint32_t SHA_K[64] = {
   0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
 #define ROR(x,n) (((x) >> (n)) | ((x) << (32 - (n))))
-void qa_net_sha256_hex(const uint8_t *data, size_t length, char out[65]) {
-  uint32_t h[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
-  size_t total = length + 9;
-  size_t padded = (total + 63) / 64 * 64;
-  uint8_t *msg = calloc(padded, 1);
-  memcpy(msg, data, length); msg[length] = 0x80;
-  uint64_t bits = (uint64_t)length * 8;
-  for (int i = 0; i < 8; i++) msg[padded - 8 + (size_t)i] = (uint8_t)(bits >> (56 - 8 * i));
-  for (size_t off = 0; off < padded; off += 64) {
-    uint32_t w[64];
-    for (int i = 0; i < 16; i++)
-      w[i] = ((uint32_t)msg[off+4*(size_t)i]<<24)|((uint32_t)msg[off+4*(size_t)i+1]<<16)|((uint32_t)msg[off+4*(size_t)i+2]<<8)|msg[off+4*(size_t)i+3];
-    for (int i = 16; i < 64; i++) {
-      uint32_t s0 = ROR(w[i-15],7) ^ ROR(w[i-15],18) ^ (w[i-15] >> 3);
-      uint32_t s1 = ROR(w[i-2],17) ^ ROR(w[i-2],19) ^ (w[i-2] >> 10);
-      w[i] = w[i-16] + s0 + w[i-7] + s1;
-    }
-    uint32_t a=h[0],b=h[1],c=h[2],dd=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
-    for (int i = 0; i < 64; i++) {
-      uint32_t s1 = ROR(e,6) ^ ROR(e,11) ^ ROR(e,25);
-      uint32_t ch = (e & f) ^ (~e & g);
-      uint32_t t1 = hh + s1 + ch + SHA_K[i] + w[i];
-      uint32_t s0 = ROR(a,2) ^ ROR(a,13) ^ ROR(a,22);
-      uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
-      uint32_t t2 = s0 + mj;
-      hh=g; g=f; f=e; e=dd+t1; dd=c; c=b; b=a; a=t1+t2;
-    }
-    h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=dd; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+static void sha256_block(uint32_t h[8], const uint8_t *msg) {
+  uint32_t w[64];
+  for (int i = 0; i < 16; i++)
+    w[i] = ((uint32_t)msg[4*i]<<24)|((uint32_t)msg[4*i+1]<<16)|((uint32_t)msg[4*i+2]<<8)|msg[4*i+3];
+  for (int i = 16; i < 64; i++) {
+    uint32_t s0 = ROR(w[i-15],7) ^ ROR(w[i-15],18) ^ (w[i-15] >> 3);
+    uint32_t s1 = ROR(w[i-2],17) ^ ROR(w[i-2],19) ^ (w[i-2] >> 10);
+    w[i] = w[i-16] + s0 + w[i-7] + s1;
   }
-  free(msg);
+  uint32_t a=h[0],b=h[1],c=h[2],dd=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+  for (int i = 0; i < 64; i++) {
+    uint32_t s1 = ROR(e,6) ^ ROR(e,11) ^ ROR(e,25);
+    uint32_t ch = (e & f) ^ (~e & g);
+    uint32_t t1 = hh + s1 + ch + SHA_K[i] + w[i];
+    uint32_t s0 = ROR(a,2) ^ ROR(a,13) ^ ROR(a,22);
+    uint32_t mj = (a & b) ^ (a & c) ^ (b & c);
+    uint32_t t2 = s0 + mj;
+    hh=g; g=f; f=e; e=dd+t1; dd=c; c=b; b=a; a=t1+t2;
+  }
+  h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=dd; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+}
+void qa_net_sha256_init(qa_net_sha256 *hash) {
+  static const uint32_t initial[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+  memcpy(hash->state, initial, sizeof initial); hash->length = 0; hash->buffered = 0;
+}
+void qa_net_sha256_update(qa_net_sha256 *hash, const uint8_t *data, size_t length) {
+  hash->length += length;
+  while (length > 0) {
+    size_t take = 64 - hash->buffered; if (take > length) take = length;
+    memcpy(hash->buffer + hash->buffered, data, take);
+    hash->buffered += take; data += take; length -= take;
+    if (hash->buffered == 64) { sha256_block(hash->state, hash->buffer); hash->buffered = 0; }
+  }
+}
+void qa_net_sha256_digest(qa_net_sha256 *hash, uint8_t out[32]) {
+  uint64_t bits = hash->length * 8;
+  uint8_t pad = 0x80, zero = 0;
+  uint64_t length = hash->length;
+  qa_net_sha256_update(hash, &pad, 1);
+  while (hash->buffered != 56) qa_net_sha256_update(hash, &zero, 1);
+  uint8_t tail[8]; for (int i = 0; i < 8; i++) tail[i] = (uint8_t)(bits >> (56 - 8 * i));
+  qa_net_sha256_update(hash, tail, 8);
+  hash->length = length;
+  for (int i = 0; i < 8; i++) for (int j = 0; j < 4; j++) out[i*4+j] = (uint8_t)(hash->state[i] >> (24 - 8*j));
+}
+void qa_net_sha256_hex_digest(qa_net_sha256 *hash, char out[65]) {
+  uint8_t bytes[32]; qa_net_sha256_digest(hash, bytes);
   static const char hexd[] = "0123456789abcdef";
-  for (int i = 0; i < 8; i++) for (int j = 0; j < 8; j++) out[i*8+j] = hexd[(h[i] >> (28 - 4*j)) & 15];
+  for (int i = 0; i < 32; i++) { out[i*2] = hexd[bytes[i] >> 4]; out[i*2+1] = hexd[bytes[i] & 15]; }
   out[64] = '\0';
+}
+void qa_net_sha256_hex(const uint8_t *data, size_t length, char out[65]) {
+  qa_net_sha256 hash; qa_net_sha256_init(&hash); qa_net_sha256_update(&hash, data, length); qa_net_sha256_hex_digest(&hash, out);
 }
 static char *dupstr(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
 void qa_composition_identity_destroy(qa_composition_identity *id) {
@@ -112,171 +133,4 @@ qa_wire_admission qa_admit_wire(const qa_composition_identity *identity, const q
   a.reasons = malloc(n * sizeof *a.reasons);
   for (size_t i = 0; i < n; i++) a.reasons[i] = dupstr(reasons[i]);
   return a;
-}
-void qa_client_attachment_destroy(qa_client_attachment *a) {
-  qa_net_address_destroy(&a->endpoint); free(a->remote_seats); a->remote_seats = NULL;
-}
-void qa_network_session_init(qa_network_session *s, const qa_identity_owner *identities,
-                             const qa_composition_identity *identity,
-                             qa_source_wire_supports_fn supports, void *supports_ctx) {
-  memset(s, 0, sizeof *s);
-  s->identities = identities; s->identity = identity; s->supports = supports; s->supports_ctx = supports_ctx;
-}
-void qa_network_session_destroy(qa_network_session *s) {
-  for (size_t i = 0; i < s->count; i++) {
-    qa_client_attachment_destroy(&s->clients[i].value.attachment);
-    qa_event_ring_destroy(&s->clients[i].events);
-  }
-  free(s->clients); memset(s, 0, sizeof *s);
-}
-qa_session_id qa_network_session_get_session(const qa_network_session *s) { return s->identities->session; }
-static void opened(qa_network_session *s) { if (s->ended) qa_range_error("Network session is closed"); }
-static struct qa_client_record *find_record(qa_network_session *s, qa_client_id id) {
-  opened(s);
-  struct qa_client_record *rec = NULL;
-  for (size_t i = 0; i < s->count; i++) if (s->clients[i].value.id.slot == id.slot) rec = &s->clients[i];
-  if (!qa_identity_owner_owns_client(s->identities, id) || !rec || !qa_same_client(rec->value.id, id))
-    qa_range_error("Client is stale or belongs to another network session");
-  return rec;
-}
-static bool seat_in(const qa_seat_id *seats, size_t n, qa_seat_id seat) {
-  for (size_t i = 0; i < n; i++) if (qa_same_seat(seats[i], seat)) return true;
-  return false;
-}
-qa_wire_admission qa_network_session_connect(qa_network_session *s, qa_client_id id,
-                                             const qa_client_attachment *attachment,
-                                             const qa_wire_selection *wire, double now) {
-  opened(s);
-  bool slot_taken = false;
-  for (size_t i = 0; i < s->count; i++) if (s->clients[i].value.id.slot == id.slot) slot_taken = true;
-  if (!qa_identity_owner_owns_client(s->identities, id) || slot_taken)
-    qa_range_error("Client slot is foreign or already connected");
-  if (strcmp(attachment->kind, "local") == 0) {
-    if (!qa_identity_owner_owns_seat(s->identities, attachment->seat))
-      qa_range_error("Seat belongs to another session");
-    for (size_t i = 0; i < s->count; i++) {
-      const qa_client_attachment *a = &s->clients[i].value.attachment;
-      if (strcmp(a->kind, "local") == 0 && qa_same_seat(a->seat, attachment->seat))
-        qa_range_error("Seat is already connected");
-    }
-  }
-  if (strcmp(attachment->kind, "remote") == 0) {
-    bool bad = false;
-    for (size_t i = 0; i < attachment->remote_seat_count && !bad; i++) {
-      double idx = attachment->remote_seats[i].index;
-      if (idx != (double)(int64_t)idx || idx < 0 || !qa_identity_owner_owns_seat(s->identities, attachment->remote_seats[i].seat)) bad = true;
-      for (size_t j = i + 1; j < attachment->remote_seat_count; j++) {
-        if (attachment->remote_seats[j].index == idx) bad = true;
-        if (attachment->remote_seats[j].seat.index == attachment->remote_seats[i].seat.index) bad = true;
-      }
-    }
-    if (bad) qa_range_error("Invalid remote seat bindings");
-  }
-  /* Assigned seats vs existing seats overlap check. */
-  size_t assigned_count = strcmp(attachment->kind, "local") == 0 ? 1
-    : strcmp(attachment->kind, "remote") == 0 ? attachment->remote_seat_count : 0;
-  qa_seat_id *assigned = malloc((assigned_count ? assigned_count : 1) * sizeof *assigned);
-  if (assigned_count == 1 && strcmp(attachment->kind, "local") == 0) assigned[0] = attachment->seat;
-  else for (size_t i = 0; i < assigned_count; i++) assigned[i] = attachment->remote_seats[i].seat;
-  for (size_t i = 0; i < s->count; i++) {
-    const qa_client_attachment *a = &s->clients[i].value.attachment;
-    if (strcmp(a->kind, "local") == 0) {
-      if (seat_in(assigned, assigned_count, a->seat)) { free(assigned); qa_range_error("Seat already belongs to a connected client"); }
-    } else if (strcmp(a->kind, "remote") == 0) {
-      for (size_t j = 0; j < a->remote_seat_count; j++)
-        if (seat_in(assigned, assigned_count, a->remote_seats[j].seat)) { free(assigned); qa_range_error("Seat already belongs to a connected client"); }
-    }
-  }
-  free(assigned);
-  qa_wire_admission result = qa_admit_wire(s->identity, wire, s->supports, s->supports_ctx);
-  if (!result.supported) return result;
-  if (s->count == s->capacity) { size_t nc = s->capacity ? s->capacity * 2 : 8; s->clients = realloc(s->clients, nc * sizeof *s->clients); s->capacity = nc; }
-  struct qa_client_record *rec = &s->clients[s->count++];
-  memset(rec, 0, sizeof *rec);
-  rec->value.id = id;
-  rec->value.attachment.kind = attachment->kind;
-  rec->value.attachment.seat = attachment->seat;
-  (void)qa_net_address_clone(&attachment->endpoint, &rec->value.attachment.endpoint);
-  rec->value.attachment.remote_seat_count = attachment->remote_seat_count;
-  if (attachment->remote_seat_count) {
-    rec->value.attachment.remote_seats = malloc(attachment->remote_seat_count * sizeof *rec->value.attachment.remote_seats);
-    memcpy(rec->value.attachment.remote_seats, attachment->remote_seats,
-           attachment->remote_seat_count * sizeof *rec->value.attachment.remote_seats);
-  }
-  rec->value.wire = *wire;
-  rec->value.phase = "connected"; rec->value.connected_at = now; rec->value.last_received_at = now;
-  (void)qa_event_ring_init(&rec->events, 8192, sizeof(qa_simulation_event));
-  return result;
-}
-const qa_session_client *qa_network_session_get_client(qa_network_session *s, qa_client_id id) { return &find_record(s, id)->value; }
-size_t qa_network_session_client_count(qa_network_session *s) { opened(s); return s->count; }
-const qa_session_client *qa_network_session_client_at(qa_network_session *s, size_t index) {
-  opened(s); return &s->clients[index].value;
-}
-void qa_network_session_prime(qa_network_session *s, qa_client_id id) {
-  struct qa_client_record *rec = find_record(s, id);
-  if (strcmp(rec->value.phase, "connected") != 0) qa_range_error("Client is not awaiting gamestate");
-  rec->value.phase = "primed";
-}
-void qa_network_session_activate(qa_network_session *s, qa_client_id id) {
-  struct qa_client_record *rec = find_record(s, id);
-  if (strcmp(rec->value.phase, "primed") != 0) qa_range_error("Client has not received gamestate");
-  rec->value.phase = "active";
-}
-void qa_network_session_received(qa_network_session *s, qa_client_id id, double now) {
-  find_record(s, id)->value.last_received_at = now;
-}
-void qa_network_session_rebind(qa_network_session *s, qa_client_id id, const qa_net_address *endpoint) {
-  struct qa_client_record *rec = find_record(s, id);
-  if (!qa_net_same_address(&rec->value.attachment.endpoint, endpoint, false))
-    qa_range_error("Port rebinding cannot change base address");
-  qa_net_address_destroy(&rec->value.attachment.endpoint);
-  (void)qa_net_address_clone(endpoint, &rec->value.attachment.endpoint);
-}
-void qa_network_session_route(qa_network_session *s, const qa_simulation_event *event) {
-  opened(s);
-  for (size_t i = 0; i < s->count; i++) {
-    struct qa_client_record *rec = &s->clients[i];
-    const qa_event_audience *aud = &event->audience;
-    bool admit = strcmp(aud->kind, "world") == 0
-      || (strcmp(aud->kind, "client") == 0 && qa_same_client(rec->value.id, aud->client));
-    if (!admit && strcmp(aud->kind, "seat") == 0) {
-      const qa_client_attachment *a = &rec->value.attachment;
-      if (strcmp(a->kind, "local") == 0 && qa_same_seat(a->seat, aud->seat)) admit = true;
-      if (strcmp(a->kind, "remote") == 0)
-        for (size_t j = 0; j < a->remote_seat_count; j++) if (qa_same_seat(a->remote_seats[j].seat, aud->seat)) admit = true;
-    }
-    if (admit) (void)qa_event_ring_admit(&rec->events, event);
-  }
-}
-qa_simulation_event *qa_network_session_drain(qa_network_session *s, qa_client_id id, size_t *out_count) {
-  struct qa_client_record *rec = find_record(s, id);
-  return qa_event_ring_drain_all(&rec->events, out_count);
-}
-qa_client_id *qa_network_session_expired(qa_network_session *s, double now, double timeout_ms, size_t *out_count) {
-  opened(s);
-  qa_client_id *out = malloc((s->count ? s->count : 1) * sizeof *out);
-  size_t n = 0;
-  for (size_t i = 0; i < s->count; i++) {
-    const qa_session_client *c = &s->clients[i].value;
-    if (strcmp(c->attachment.kind, "local") != 0 && now - c->last_received_at > timeout_ms) out[n++] = c->id;
-  }
-  *out_count = n; return out;
-}
-void qa_network_session_disconnect(qa_network_session *s, qa_client_id id) {
-  struct qa_client_record *rec = find_record(s, id);
-  size_t idx = (size_t)(rec - s->clients);
-  qa_client_attachment_destroy(&rec->value.attachment);
-  qa_event_ring_destroy(&rec->events);
-  memmove(&s->clients[idx], &s->clients[idx + 1], (s->count - idx - 1) * sizeof *s->clients);
-  s->count--;
-}
-void qa_network_session_close(qa_network_session *s) {
-  if (s->ended) return;
-  s->ended = true;
-  for (size_t i = 0; i < s->count; i++) {
-    qa_client_attachment_destroy(&s->clients[i].value.attachment);
-    qa_event_ring_destroy(&s->clients[i].events);
-  }
-  s->count = 0;
 }

@@ -1,10 +1,12 @@
 /* Port of src/content/q3/base/shared/items.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/shared/items.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "qa/core/common_error.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 enum { ITEM_COUNT = 52, BASE_ITEM_COUNT = 36 };
 static const qa_q3_base_item_definition DEFINITIONS[ITEM_COUNT] = {
@@ -70,7 +72,7 @@ static size_t list_count(qa_q3_base_product p){ return p==QA_Q3_BASE_PRODUCT_BAS
 const qa_q3_base_item_definition *qa_q3_base_item_at(qa_q3_base_product product, double index) {
   /* TS array index: non-integer/out-of-range is undefined -> RangeError. */
   if (!(index == trunc(index)) || index < 0 || index >= (double)list_count(product))
-    qa_range_error("Item index out of range: %g", index);
+    qa_range_error("Item index out of range: %s", QA_JS_NUMBER(index));
   return &DEFINITIONS[(size_t)index];
 }
 static bool folded_equal(const char *a, const char *b) {
@@ -127,7 +129,7 @@ static int32_t to_int32(double v) {
   double m = fmod(trunc(v), 4294967296.0);
   if (m >= 2147483648.0) m -= 4294967296.0;
   if (m < -2147483648.0) m += 4294967296.0;
-  return (int32_t)m;
+  return qa_js_to_int32(m);
 }
 bool qa_q3_base_can_item_be_grabbed(double gametype, qa_q3_base_pickup_entity ent, const qa_q3_base_player_inventory *ps) {
   if (ent.model_index < 1 || ent.model_index >= (double)list_count(ps->product))

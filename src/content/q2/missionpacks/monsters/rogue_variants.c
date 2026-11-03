@@ -22,6 +22,7 @@
 #include "qa/content/q2/missionpacks/monsters/rogue_soldier.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_brain.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_float.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
 
 /* TS makronDefinition/jorg createJorgDefinition/makron
  * withMakronSpawnCallbacks via the landed base ports. The makron
@@ -30,15 +31,15 @@
  * the definition's lifetime. The with-makron helper appends only
  * think source callbacks in TS, so use_storage is unused beyond
  * the *definition copy the base helper performs. */
-qa_q2m_definition qa_q2mpm_base_create_jorg_definition(qa_q2m_monsters *monsters) {
-  qa_q2bm_jorg_definition *wrapper = malloc(sizeof *wrapper);
-  if (!wrapper) qa_q2f_error("Out of memory creating rogue base variants");
+qa_q2m_definition qa_q2mpm_base_create_jorg_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
+  qa_q2bm_jorg_definition *wrapper = qa_q2mpm_arena_alloc(arena, sizeof *wrapper);
+  if (!wrapper) qa_raise("Error", 0, 0, "Out of memory creating rogue base variants");
   qa_q2bm_create_jorg_definition(wrapper, monsters);
   return wrapper->definition;
 }
 void qa_q2mpm_with_makron_spawn_callbacks(qa_q2m_definition *out, const qa_q2m_definition *definition,
-                                          qa_q2m_monsters *monsters, qa_q2f_named_think *think_storage,
-                                          qa_q2f_named_use *use_storage) {
+                                          qa_q2m_monsters *monsters, qa_q2_named_think *think_storage,
+                                          qa_q2_named_use *use_storage) {
   (void)use_storage;
   qa_q2bm_with_makron_spawn_callbacks(out, definition, monsters, think_storage);
 }
@@ -51,7 +52,7 @@ static bool shot_blocked(variants_bundle *bundle, qa_q2m_context *c) {
   return qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source);
 }
 static bool blocked_both(void *ctx, qa_q2m_context *c, double distance) {
-  return shot_blocked(ctx, c) || qa_q2mpm_blocked_check_platform(c, distance);
+  return shot_blocked(ctx, c) || qa_q2rm_blocked_check_platform(c, distance);
 }
 static bool blocked_shot(void *ctx, qa_q2m_context *c, double distance) {
   (void)distance;
@@ -105,13 +106,13 @@ static void floater_fire_fn(void *ctx, qa_q2m_context *c) {
   double effect = c->entity->frame == f->attak104 || c->entity->frame == f->attak107 ? 64 : 0;
   (void)c->weapons.fire_blaster(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, 1, 1000, effect,
                                 false, false, 0);
-  qa_q2mpm_monster_flash(c, 82, aim.start, aim.direction);
+  qa_q2rm_monster_flash(c, 82, aim.start, aim.direction);
 }
 static void boss_rockets(qa_q2m_context *c, bool predictive) {
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_vec3 right = qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).right;
   if (predictive) game->host->diagnostic(game->host->ctx, "predictive fire");
   static const double spreads[] = {0.4, 0.025, -0.025, -0.4};
@@ -131,14 +132,38 @@ static void boss_rockets(qa_q2m_context *c, bool predictive) {
           qa_scale3_double(right, q2mpm_at_d(spreads, 4, index))));
     }
     (void)c->weapons.fire_rocket(c->weapons.ctx, entity, game, start, direction, 50, predictive ? 750 : 500, 70, 50);
-    qa_q2mpm_monster_flash(c, flash, start, direction);
+    qa_q2rm_monster_flash(c, flash, start, direction);
   }
 }
 static void boss_bullet(qa_q2m_context *c, bool right) {
   qa_q2bm_shot_result aim;
   if (!qa_q2bm_shot(c, right ? 133 : 73, right ? 0.2 : -0.2, &aim)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, 6, 4, 900, 500, 0);
-  qa_q2mpm_monster_flash(c, right ? 133 : 73, aim.start, aim.direction);
+  qa_q2rm_monster_flash(c, right ? 133 : 73, aim.start, aim.direction);
+}
+/* Rogue's m_boss2.c changed these distances ("normally all 8's"; rocket frame 12 "was -20"). */
+static const struct { const char *move; double distance; } ROGUE_BOSS2_DISTANCES[] = {
+  {"boss2_move_walk", 10}, {"boss2_move_run", 10}, {"boss2_move_attack_pre_mg", 2},
+  {"boss2_move_attack_mg", 2}, {"boss2_move_attack_post_mg", 2}, {"boss2_move_attack_rocket", 2},
+};
+static const qa_q2m_move *rogue_boss2_moves(qa_q2mpm_arena *arena, const qa_q2m_move *moves, size_t count) {
+  qa_q2m_move *out = qa_q2mpm_arena_alloc(arena, count * sizeof *out);
+  if (!out) qa_raise("Error", 0, 0, "Out of memory creating rogue boss2 moves");
+  for (size_t i = 0; i < count; i++) {
+    out[i] = moves[i];
+    for (size_t k = 0; k < sizeof ROGUE_BOSS2_DISTANCES / sizeof ROGUE_BOSS2_DISTANCES[0]; k++) {
+      if (strcmp(moves[i].name, ROGUE_BOSS2_DISTANCES[k].move) != 0) continue;
+      qa_q2m_frame *frames = qa_q2mpm_arena_alloc(arena, (moves[i].frame_count ? moves[i].frame_count : 1) * sizeof *frames);
+      if (!frames) qa_raise("Error", 0, 0, "Out of memory creating rogue boss2 moves");
+      for (size_t f = 0; f < moves[i].frame_count; f++) {
+        frames[f] = moves[i].frames[f];
+        frames[f].distance = strcmp(moves[i].name, "boss2_move_attack_rocket") == 0 && f == 12 ? -5 : ROGUE_BOSS2_DISTANCES[k].distance;
+      }
+      out[i].frames = frames;
+      break;
+    }
+  }
+  return out;
 }
 static bool boss2_check_fn(void *ctx, qa_q2m_context *c) { (void)ctx; return qa_q2bm_boss_check_attack(c, true, true); }
 static void boss2_pred_fn(void *ctx, qa_q2m_context *c) { (void)ctx; boss_rockets(c, true); }
@@ -158,7 +183,7 @@ static void tank_rocket_fn(void *ctx, qa_q2m_context *c) {
   qa_q2bm_shot_result aim;
   if (!qa_q2bm_shot_default(c, flash, &aim)) return;
   (void)c->weapons.fire_rocket(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, 50, 500, 70, 50);
-  qa_q2mpm_monster_flash(c, flash, aim.start, aim.direction);
+  qa_q2rm_monster_flash(c, flash, aim.start, aim.direction);
 }
 static void tank_mg_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -169,7 +194,7 @@ static void tank_mg_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 start = qa_q2m_project_flash(c, qa_q2m_muzzle_offset(c->game->options.edition, flash), flat);
   qa_vec3 direction = qa_normalize3_double_hypot(qa_sub3_double(eye, start));
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, start, direction, 6, 4, 300, 500, 0);
-  qa_q2mpm_monster_flash(c, flash, start, direction);
+  qa_q2rm_monster_flash(c, flash, start, direction);
 }
 typedef struct jorg_init_ctx {
   qa_q2m_handler base_initialize;
@@ -179,20 +204,20 @@ static void jorg_init_fn(void *ctx, qa_q2m_context *c) {
   if (init->base_initialize.fn) init->base_initialize.fn(init->base_initialize.ctx, c);
   c->state->ignore_shots = true;
 }
-static void with_boss(qa_q2m_definition *out, qa_q2m_definition *definition, qa_q2m_monsters *monsters) {
-  qa_q2f_named_think *storage = malloc((definition->source_callbacks.think_count + 1) * sizeof *storage);
-  if (!storage) qa_q2f_error("Out of memory creating rogue base variants");
+static void with_boss(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_definition *definition, qa_q2m_monsters *monsters) {
+  qa_q2_named_think *storage = qa_q2mpm_arena_alloc(arena, (definition->source_callbacks.think_count + 1) * sizeof *storage);
+  if (!storage) qa_raise("Error", 0, 0, "Out of memory creating rogue base variants");
   qa_q2bm_with_boss_explosion_callbacks(out, definition, monsters, storage);
 }
-size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_base_variants(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                            qa_q2mpm_monster_state *source) {
-  variants_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue base variants");
+  variants_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue base variants");
   bundle->monsters = monsters;
   bundle->source = source;
   size_t n = 0;
-  n += qa_q2mpm_create_rogue_soldier_definitions(out + n, monsters, source);
-  out[n++] = qa_q2mpm_create_rogue_infantry_definition(monsters, source);
+  n += qa_q2mpm_create_rogue_soldier_definitions(arena, out + n, monsters, source);
+  out[n++] = qa_q2mpm_create_rogue_infantry_definition(arena, monsters, source);
   /* brain */
   qa_q2m_definition brain = qa_q2bm_brain_definition;
   brain.moves = qa_q2mpm_rogue_brain_moves;
@@ -208,7 +233,7 @@ size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monste
       {"monster_duck_hold", {NULL, qa_q2mpm_rogue_duck_hold_handler}},
       {"monster_duck_up", {NULL, qa_q2mpm_rogue_duck_up_handler}},
     };
-    brain.callbacks = qa_q2mpm_merge_callbacks(brain.callbacks, brain.callback_count, extra, 3, &brain.callback_count);
+    brain.callbacks = qa_q2mpm_merge_callbacks(arena, brain.callbacks, brain.callback_count, extra, 3, &brain.callback_count);
   }
   out[n++] = brain;
   /* floater */
@@ -217,8 +242,8 @@ size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monste
     size_t kept = 0;
     for (size_t i = 0; i < qa_q2mpm_rogue_float_move_count; i++)
       if (strcmp(qa_q2mpm_rogue_float_moves[i].name, "floater_move_activate") != 0) kept++;
-    qa_q2m_move *moves = malloc(kept * sizeof *moves);
-    if (!moves) qa_q2f_error("Out of memory creating rogue base variants");
+    qa_q2m_move *moves = qa_q2mpm_arena_alloc(arena, kept * sizeof *moves);
+    if (!moves) qa_raise("Error", 0, 0, "Out of memory creating rogue base variants");
     size_t at = 0;
     for (size_t i = 0; i < qa_q2mpm_rogue_float_move_count; i++)
       if (strcmp(qa_q2mpm_rogue_float_moves[i].name, "floater_move_activate") != 0) moves[at++] = qa_q2mpm_rogue_float_moves[i];
@@ -230,7 +255,7 @@ size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monste
   floater.attack = (qa_q2m_handler){NULL, floater_attack_fn};
   {
     const qa_q2m_named_handler extra[] = {{"floater_fire_blaster", {NULL, floater_fire_fn}}};
-    floater.callbacks = qa_q2mpm_merge_callbacks(floater.callbacks, floater.callback_count, extra, 1,
+    floater.callbacks = qa_q2mpm_merge_callbacks(arena, floater.callbacks, floater.callback_count, extra, 1,
                                                  &floater.callback_count);
   }
   out[n++] = floater;
@@ -243,6 +268,7 @@ size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monste
   qa_q2m_definition boss2 = qa_q2bm_boss2_definition;
   boss2.has_yaw_speed = true;
   boss2.yaw_speed = 50;
+  boss2.moves = rogue_boss2_moves(arena, qa_q2bm_boss2_definition.moves, qa_q2bm_boss2_definition.move_count);
   boss2.check_attack = boss2_check_fn;
   {
     const qa_q2m_named_handler extra[] = {
@@ -252,9 +278,9 @@ size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monste
       {"boss2_firebullet_left", {NULL, boss2_left_fn}},
       {"Boss2MachineGun", {NULL, boss2_mg_fn}},
     };
-    boss2.callbacks = qa_q2mpm_merge_callbacks(boss2.callbacks, boss2.callback_count, extra, 5, &boss2.callback_count);
+    boss2.callbacks = qa_q2mpm_merge_callbacks(arena, boss2.callbacks, boss2.callback_count, extra, 5, &boss2.callback_count);
   }
-  with_boss(&out[n], &boss2, monsters);
+  with_boss(arena, &out[n], &boss2, monsters);
   n++;
   /* supertank */
   qa_q2m_definition tank = qa_q2bm_supertank_definition;
@@ -266,28 +292,28 @@ size_t qa_q2mpm_create_rogue_base_variants(qa_q2m_definition *out, qa_q2m_monste
       {"supertankRocket", {NULL, tank_rocket_fn}},
       {"supertankMachineGun", {NULL, tank_mg_fn}},
     };
-    tank.callbacks = qa_q2mpm_merge_callbacks(tank.callbacks, tank.callback_count, extra, 2, &tank.callback_count);
+    tank.callbacks = qa_q2mpm_merge_callbacks(arena, tank.callbacks, tank.callback_count, extra, 2, &tank.callback_count);
   }
-  with_boss(&out[n], &tank, monsters);
+  with_boss(arena, &out[n], &tank, monsters);
   n++;
   /* jorg */
-  qa_q2m_definition jorg = qa_q2mpm_base_create_jorg_definition(monsters);
+  qa_q2m_definition jorg = qa_q2mpm_base_create_jorg_definition(arena, monsters);
   {
-    jorg_init_ctx *init = malloc(sizeof *init);
-    if (!init) qa_q2f_error("Out of memory creating rogue base variants");
+    jorg_init_ctx *init = qa_q2mpm_arena_alloc(arena, sizeof *init);
+    if (!init) qa_raise("Error", 0, 0, "Out of memory creating rogue base variants");
     init->base_initialize = jorg.initialize;
     qa_q2m_definition wrapped = jorg;
     wrapped.initialize = (qa_q2m_handler){init, jorg_init_fn};
-    with_boss(&out[n], &wrapped, monsters);
+    with_boss(arena, &out[n], &wrapped, monsters);
     n++;
   }
   /* makron */
   {
     qa_q2m_definition makron = qa_q2mpm_base_makron_definition;
     makron.initialize = (qa_q2m_handler){NULL, ignore_shots_fn};
-    qa_q2f_named_think *think_storage = malloc((makron.source_callbacks.think_count + 2) * sizeof *think_storage);
-    qa_q2f_named_use *use_storage = malloc((makron.source_callbacks.use_count + 2) * sizeof *use_storage);
-    if (!think_storage || !use_storage) qa_q2f_error("Out of memory creating rogue base variants");
+    qa_q2_named_think *think_storage = qa_q2mpm_arena_alloc(arena, (makron.source_callbacks.think_count + 2) * sizeof *think_storage);
+    qa_q2_named_use *use_storage = qa_q2mpm_arena_alloc(arena, (makron.source_callbacks.use_count + 2) * sizeof *use_storage);
+    if (!think_storage || !use_storage) qa_raise("Error", 0, 0, "Out of memory creating rogue base variants");
     qa_q2mpm_with_makron_spawn_callbacks(&out[n], &makron, monsters, think_storage, use_storage);
     n++;
   }

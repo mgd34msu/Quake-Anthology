@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 qa_app_sim_quakec_weapon_ui qa_app_sim_quakec_weapon_ui_of(double items, double weapon, double current_ammo,
     const qa_app_sim_quakec_weapon_ui_binding *bindings, size_t binding_count) {
   const qa_app_sim_quakec_weapon_ui_binding *active = NULL;
@@ -12,7 +13,7 @@ qa_app_sim_quakec_weapon_ui qa_app_sim_quakec_weapon_ui_of(double items, double 
   };
   qa_item_id ammo_item = NULL;
   for (size_t i = 0; i < sizeof ammunition / sizeof ammunition[0]; i++)
-    if (((int)items & ammunition[i].bit) != 0) { ammo_item = ammunition[i].item; break; }
+    if ((qa_js_to_int32(items) & ammunition[i].bit) != 0) { ammo_item = ammunition[i].item; break; }
   qa_app_sim_quakec_weapon_ui out; memset(&out, 0, sizeof out);
   out.active_weapon = active != NULL ? active->item : NULL;
   out.has_ammo = ammo_item != NULL; out.ammo_item = ammo_item; out.ammo_count = current_ammo;
@@ -23,7 +24,7 @@ qa_app_sim_quakec_weapon_ui qa_app_sim_quakec_weapon_ui_of(double items, double 
     const qa_app_sim_quakec_weapon_ui_binding *b = &bindings[i];
     qa_app_sim_player_ui_item *item = &out.items[i]; memset(item, 0, sizeof *item);
     item->id = b->item; item->label = b->label; item->kind = "weapon"; item->source_ordinal = b->impulse;
-    item->owned = (((int)items & (int)b->bit) != 0);
+    item->owned = ((qa_js_to_int32(items) & (int)b->bit) != 0);
     item->has_ammo = b != active || ammo_item == NULL || current_ammo > 0;
     item->has_count = b == active && ammo_item != NULL;
     item->count = item->has_count ? current_ammo : 0;

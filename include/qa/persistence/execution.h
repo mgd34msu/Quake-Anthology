@@ -17,5 +17,9 @@ qa_native_call_abi qa_read_native_call_abi(const qa_save_reader *reader);
 qa_native_abi qa_read_native_abi(const qa_save_reader *reader);
 qa_guest_layout qa_read_layout(const qa_save_reader *reader);
 qa_guest_checkpoint qa_read_guest(const qa_save_reader *reader);
+/* Frees the malloc'd lists of a checkpoint read by qa_read_guest (random,
+ * callbacks, call stack, operand stack, regions, native heap image); the
+ * borrowed strings and bytes stay with the checkpoint tree. */
+void qa_guest_checkpoint_release(qa_guest_checkpoint *checkpoint);
 
 #endif

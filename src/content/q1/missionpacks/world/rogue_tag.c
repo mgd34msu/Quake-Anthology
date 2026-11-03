@@ -1,134 +1,159 @@
-/* Port of src/content/q1/missionpacks/world/rogue-tag.ts.
- * Spawn selection (q1Base spawnSelector, TS owner base/provider.ts)
- * is the ext below. GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/rogue-tag.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/rogue_tag.h"
 #include "../missionpacks_internal.h"
+#include "qa/content/q1/base/provider.h"
+#include "qa/content/q1/base/rules.h"
 #include "qa/content/q1/missionpacks/world/common.h"
 #include "qa/content/q1/missionpacks/world/index.h"
-#include "qa/foundation/support.h"
-#include <stdlib.h>
 
-qa_q1mp_actor *qa_q1mp_ext_select_spawn_point(qa_q1mp_game *game, bool deathmatch);
 static void announce(qa_q1mp_rogue_tag *tag, const char *text, qa_actor_id actor) {
-  if (!tag->hooks || !tag->hooks->player_name) qa_range_error("Rogue token messages require shared player names");
-  qa_actor_id players[32]; size_t n = tag->game->base->host->players(tag->game->base->host->ctx, players, 32);
-  const char *args[] = {tag->hooks->player_name(tag->hooks->ctx, actor)};
-  for (size_t i = 0; i < n; i++) if (tag->game->emit_message_event) tag->game->emit_message_event(tag->game->ctx, players[i], text, args, 1, false);
+  qa_q1_services *game = tag->game;
+  qa_owned_actor owner;
+  /* The token holder may have left. */
+  if (!qa_session_actor_registry_resolve_owned(game->host.actors, actor, &owner)) return;
+  if (tag->hooks == NULL || tag->hooks->player_name == NULL) qa_range_error("Rogue token messages require shared player names");
+  size_t count = 0;
+  const qa_actor_id *players = game->host.players(game->host.ctx, &count);
+  for (size_t i = 0; i < count; i++) {
+    const qa_q1_msg_arg arg = {.is_number = false, .text = tag->hooks->player_name(tag->hooks->ctx, actor)};
+    qa_q1_event event = {0};
+    event.kind = "message"; event.has_player = true; event.player = players[i]; event.text = text;
+    event.args = &arg; event.arg_count = 1; event.center = false;
+    qa_q1_emit(game, event);
+  }
 }
-static qa_q1mp_actor *find_token(qa_q1mp_rogue_tag *tag) {
-  qa_q1mp_actor *ents[512]; size_t n = tag->game->base->entities(tag->game->base, ents, 512);
-  for (size_t i = 0; i < n; i++) if (qa_q1mp_streq(ents[i]->classname, "dmatch_tag_token")) return ents[i];
+static qa_q1_actor *token_of(qa_q1_services *game) {
+  for (size_t i = 0; i < game->entity_count; i++)
+    if (qa_q1mp_streq(game->entities[i]->classname, "dmatch_tag_token")) return game->entities[i];
   return NULL;
 }
-static bool drop_floor(qa_q1mp_rogue_tag *tag, qa_q1mp_actor *entity) {
-  qa_q1b_game *g = tag->game->base; qa_q1b_body body = g->body(g, entity);
-  qa_q1b_trace_request req = {body.origin, qa_q1mp_vadd(body.origin, QA_Q1MP_V3(0,0,-256)), body.bounds, QA_Q1MP_SOME(entity->actor.id), true, false};
-  qa_q1b_trace hit = g->host->trace(g->host->ctx, &req);
+static bool drop_floor(qa_q1_services *game, qa_q1_actor *entity) {
+  const qa_q1_body body = qa_q1_get_body(game, entity);
+  qa_q1_trace_request request = {0};
+  request.start = body.origin; request.end = qa_q1_vadd(body.origin, QA_Q1MP_V3(0, 0, -256));
+  request.bounds = body.bounds; request.has_ignore = true; request.ignore = entity->actor.id; request.monsters = true;
+  const qa_q1_trace hit = game->host.trace(game->host.ctx, request);
   if (hit.fraction == 1 || hit.all_solid) return false;
-  qa_q1b_body_patch p = {0}; p.has_origin = true; p.origin = hit.end; p.has_ground = true; p.ground = hit.actor;
-  qa_q1mp_patch(tag->game, entity, &p); g->link(g, entity); return true;
+  qa_q1_body_patch patch = {0};
+  patch.has_origin = true; patch.origin = hit.end;
+  patch.has_ground = true; patch.ground = hit.has_actor ? &hit.actor : NULL;
+  qa_q1_set_body(game, entity, &patch);
+  qa_q1_link(game, entity);
+  return true;
 }
-static void take_token(qa_q1mp_rogue_tag *tag, qa_q1mp_actor *token, qa_actor_id actor, double announcement_delay) {
-  qa_q1b_game *g = tag->game->base;
-  if (g->world) qa_q1b_references_set(g->world, "rogue:tag_token_owner", QA_Q1MP_SOME(actor));
-  token->owner = QA_Q1MP_SOME(actor);
+static void set_owner_reference(qa_q1_services *game, const qa_actor_id *actor) {
+  if (game->world != NULL && !qa_q1_actor_reference_set(game->world, "rogue:tag_token_owner", actor)) qa_range_error("Out of memory");
+}
+static void take(qa_q1mp_rogue_tag *tag, qa_q1_actor *token, qa_actor_id actor, double announcement_delay) {
+  qa_q1_services *game = tag->game;
+  set_owner_reference(game, &actor);
+  token->has_owner = true; token->owner = actor;
   qa_q1mp_world_number(token, "tag_frags", 0);
-  qa_q1mp_world_number(token, "tag_message_time", g->time + announcement_delay);
-  token->solid = "none"; token->touch.has = false;
-  qa_q1mp_world_later(tag->game, token, 0.1, "rogue:tag_think");
+  qa_q1mp_world_number(token, "tag_message_time", game->time + announcement_delay);
+  token->solid = "none"; token->touch = (qa_q1_bound_touch){0};
+  qa_q1mp_world_later(game, token, 0.1, "rogue:tag_think");
 }
-static void respawn_token(qa_q1mp_rogue_tag *tag) {
-  qa_q1mp_actor *token = find_token(tag);
-  if (!token) return;
-  qa_q1b_game *g = tag->game->base;
-  qa_q1mp_actor *point = qa_q1mp_ext_select_spawn_point(tag->game, true);
-  if (!point) qa_range_error("Tag token has no respawn point");
-  g->set_origin(g, token, g->body(g, point).origin);
-  if (g->world) qa_q1b_references_set(g->world, "rogue:tag_token_owner", QA_Q1MP_NONE);
+static void respawn(qa_q1mp_rogue_tag *tag) {
+  qa_q1_actor *token = token_of(tag->game);
+  if (token == NULL) return;
+  qa_q1_services *game = tag->game;
+  qa_q1_actor *point = qa_q1_spawn_selector_select(qa_q1_base_spawn_selector(qa_q1_base_for(game)), true);
+  if (point == NULL) qa_range_error("Tag token has no respawn point");
+  qa_q1_set_origin(game, token, qa_q1_get_body(game, point).origin);
+  set_owner_reference(game, NULL);
   token->solid = "trigger";
-  token->touch = g->named.touch(g->named.ctx, token, "rogue:tag_touch");
-  token->think = g->named.action(g->named.ctx, token, "SUB_Null");
-  token->owner = QA_Q1MP_NONE; qa_q1mp_world_number(token, "tag_frags", 0);
-  (void)drop_floor(tag, token);
+  token->touch = qa_q1_callback_registry_touch(game->named, token, "rogue:tag_touch");
+  token->think = qa_q1_callback_registry_action(game->named, token, "SUB_Null");
+  token->has_owner = false;
+  qa_q1mp_world_number(token, "tag_frags", 0);
+  (void)drop_floor(game, token);
+}
+static void tag_respawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) { (void)game; (void)entity; respawn(ctx); }
+static void tag_fall(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_world_number(entity, "tag_frags", 0);
+  (void)drop_floor(game, entity);
+  qa_q1mp_world_later(game, entity, 30, "rogue:tag_respawn");
+}
+static void tag_place(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->movement = "toss"; entity->solid = "trigger";
+  qa_q1_set_origin(game, entity, qa_q1_vadd(qa_q1_get_body(game, entity).origin, QA_Q1MP_V3(0, 0, 6)));
+  if (!drop_floor(game, entity)) qa_q1_remove(game, entity);
+}
+static void tag_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1mp_rogue_tag *tag = ctx;
+  if (entity->has_owner && qa_q1_health(game, entity->owner) > 0) {
+    if (qa_q1_actor_number(entity, "tag_message_time") < game->time) {
+      announce(tag, "$qc_has_token", entity->owner);
+      qa_q1mp_world_number(entity, "tag_message_time", game->time + 30);
+    }
+    const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, entity->owner);
+    qa_q1_set_origin(game, entity, qa_q1_vadd(body.has_value ? body.value.origin : QA_Q1_ZERO, QA_Q1MP_V3(0, 0, 48)));
+    qa_q1mp_world_later(game, entity, 0.1, "rogue:tag_think");
+    return;
+  }
+  if (entity->has_owner) announce(tag, "$qc_lost_token", entity->owner);
+  qa_q1mp_world_number(entity, "tag_frags", 0);
+  entity->solid = "trigger"; entity->has_owner = false;
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:tag_touch");
+  qa_q1mp_world_later(game, entity, 0.1, "rogue:tag_fall");
+}
+static void tag_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                      const qa_touch_surface *surface) {
+  (void)normal; (void)surface;
+  qa_q1mp_rogue_tag *tag = ctx;
+  if (!qa_q1_is_player(game, &other)) return;
+  take(tag, entity, other, 30);
+  qa_q1_sound(game, entity->actor.id, "runes/end1.wav", "voice", 1, 1);
+  announce(tag, "$qc_got_token", other);
+}
+static void token_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (!(qa_q1_option_teamplay(game) == 3)) { qa_q1_remove(game, entity); return; }
+  qa_q1mp_set_string(&entity->model, "progs/sphere.mdl"); entity->skin = 1;
+  entity->effects = qa_js_bit_or(entity->effects, 8);
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:tag_touch");
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, -16}, {16, 16, 16}});
+  qa_q1mp_world_later(game, entity, 0.2, "rogue:tag_place");
+}
+void qa_q1mp_rogue_tag_init(qa_q1mp_rogue_tag *tag, qa_q1_services *game, const qa_q1mp_world_hooks *hooks) {
+  tag->game = game; tag->hooks = hooks;
+  qa_q1_callback_registry_register(game->named, "rogue:tag_respawn", (qa_q1_callback_handlers){.ctx = tag, .action = tag_respawn});
+  qa_q1_callback_registry_register(game->named, "rogue:tag_fall", (qa_q1_callback_handlers){.ctx = tag, .action = tag_fall});
+  qa_q1_callback_registry_register(game->named, "rogue:tag_place", (qa_q1_callback_handlers){.ctx = tag, .action = tag_place});
+  qa_q1_callback_registry_register(game->named, "rogue:tag_think", (qa_q1_callback_handlers){.ctx = tag, .action = tag_think});
+  qa_q1_callback_registry_register(game->named, "rogue:tag_touch", (qa_q1_callback_handlers){.ctx = tag, .touch = tag_touch});
+  qa_q1_register_spawn(game, "dmatch_tag_token", token_spawn, tag);
 }
 double qa_q1mp_tag_score(qa_q1mp_rogue_tag *tag, qa_actor_id victim, qa_actor_id attacker) {
-  qa_q1mp_actor *token = find_token(tag);
-  if (!token) return 1;
-  qa_q1b_game *g = tag->game->base;
-  qa_q1mp_opt_actor owner = g->world ? qa_q1b_references_get(g->world, "rogue:tag_token_owner") : QA_Q1MP_NONE;
-  if (owner.has && qa_same_actor(attacker, owner.id)) {
-    qa_q1mp_world_number(token, "tag_frags", qa_q1mp_number(token, "tag_frags") + 1);
-    if (qa_q1mp_number(token, "tag_frags") == 5) {
-      qa_q1mp_player_state *player = g->player(g, attacker);
-      if (player) {
-        g->message(g, QA_Q1MP_SOME(attacker), "$qc_got_quad", false);
-        if (tag->game->give_powerup) tag->game->give_powerup(tag->game->ctx, player, "quad", false, 0);
+  qa_q1_actor *token = token_of(tag->game);
+  if (token == NULL) return 1;
+  qa_q1_services *game = tag->game;
+  qa_actor_id owner;
+  const bool has_owner = game->world != NULL && qa_q1_actor_reference_get(game->world, "rogue:tag_token_owner", &owner);
+  if (has_owner && qa_same_actor(attacker, owner)) {
+    qa_q1mp_world_number(token, "tag_frags", qa_q1_actor_number(token, "tag_frags") + 1);
+    if (qa_q1_actor_number(token, "tag_frags") == 5) {
+      qa_q1_player_state *player = qa_q1_player(game, attacker);
+      if (player != NULL) {
+        qa_q1_message(game, &attacker, "$qc_got_quad", false, NULL, 0);
+        qa_q1_give_powerup(game, player, "quad", 30);
+        qa_q1_sound(game, player->actor.id, "items/damage.wav", "item", 1, 1);
+        const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, attacker);
+        if (body.has_value) qa_q1_effect(game, "pickup", body.value.origin, &attacker, 1);
       }
-    } else if (qa_q1mp_number(token, "tag_frags") == 10) { announce(tag, "$qc_lost_token", attacker); respawn_token(tag); }
+    } else if (qa_q1_actor_number(token, "tag_frags") == 10) {
+      announce(tag, "$qc_lost_token", attacker);
+      respawn(tag);
+    }
     return 3;
   }
-  if (owner.has && qa_same_actor(victim, owner.id)) {
+  if (has_owner && qa_same_actor(victim, owner)) {
     qa_owned_actor source;
-    if (g->host->actors_resolve_owned(g->host->ctx, victim, &source)) g->sound_owned(g, source, "runes/end1.wav", QA_Q1MP_CH("auto"), 1, 1);
-    if (g->is_player(g, QA_Q1MP_SOME(attacker))) take_token(tag, token, attacker, 0.5);
+    if (qa_session_actor_registry_resolve_owned(game->host.actors, victim, &source)) qa_q1_sound(game, source.id, "runes/end1.wav", "voice", 1, 1);
+    if (qa_q1_is_player(game, &attacker)) take(tag, token, attacker, 0.5);
     return 5;
   }
   return 1;
-}
-static void respawn_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { (void)g; (void)e; respawn_token(vctx); }
-static void fall_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  (void)g; qa_q1mp_rogue_tag *tag = vctx;
-  qa_q1mp_world_number(e, "tag_frags", 0); (void)drop_floor(tag, e);
-  qa_q1mp_world_later(tag->game, e, 30, "rogue:tag_respawn");
-}
-static void place_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  qa_q1mp_rogue_tag *tag = vctx;
-  e->movement = "toss"; e->solid = "trigger";
-  g->set_origin(g, e, qa_q1mp_vadd(g->body(g, e).origin, QA_Q1MP_V3(0,0,6)));
-  if (!drop_floor(tag, e)) g->remove(g, e);
-}
-static void think_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  qa_q1mp_rogue_tag *tag = vctx;
-  if (e->owner.has && g->health(g, e->owner.id) > 0) {
-    if (qa_q1mp_number(e, "tag_message_time") < g->time) { announce(tag, "$qc_has_token", e->owner.id); qa_q1mp_world_number(e, "tag_message_time", g->time + 30); }
-    qa_q1b_body body; qa_vec3 origin = qa_q1mp_body_read(tag->game, e->owner.id, &body) ? body.origin : QA_Q1MP_ZERO;
-    g->set_origin(g, e, qa_q1mp_vadd(origin, QA_Q1MP_V3(0,0,48)));
-    qa_q1mp_world_later(tag->game, e, 0.1, "rogue:tag_think"); return;
-  }
-  if (e->owner.has) announce(tag, "$qc_lost_token", e->owner.id);
-  qa_q1mp_world_number(e, "tag_frags", 0); e->solid = "trigger"; e->owner = QA_Q1MP_NONE;
-  e->touch = g->named.touch(g->named.ctx, e, "rogue:tag_touch");
-  qa_q1mp_world_later(tag->game, e, 0.1, "rogue:tag_fall");
-}
-static void touch_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; qa_q1mp_rogue_tag *tag = vctx;
-  if (!g->is_player(g, QA_Q1MP_SOME(other))) return;
-  take_token(tag, e, other, 30);
-  qa_q1mp_sound(tag->game, e, "runes/end1.wav");
-  announce(tag, "$qc_got_token", other);
-}
-static void token_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  qa_q1mp_rogue_tag *tag = vctx;
-  if (qa_q1mp_teamplay(tag->game) != 3 || !g->options.has_teamplay) {
-    /* TS: game.options.teamplay !== 3 (undefined !== 3 also removes) */
-    if (!(g->options.has_teamplay && g->options.teamplay == 3)) { g->remove(g, e); return; }
-  }
-  qa_q1mp_set_model(e, "progs/sphere.mdl"); e->skin = 1; e->effects |= 8;
-  e->touch = g->named.touch(g->named.ctx, e, "rogue:tag_touch");
-  g->set_bounds(g, e, (qa_bounds){{-16,-16,-16},{16,16,16}});
-  qa_q1mp_world_later(tag->game, e, 0.2, "rogue:tag_place");
-}
-void qa_q1mp_rogue_tag_init(qa_q1mp_rogue_tag *tag, qa_q1mp_game *game, const qa_q1mp_world_hooks *hooks) {
-  tag->game = game; tag->hooks = hooks; qa_q1b_game *g = game->base;
-  qa_q1b_handlers h = {0}; h.ctx = tag; h.action = respawn_cb;
-  g->named.register_named(g->named.ctx, "rogue:tag_respawn", &h);
-  qa_q1b_handlers hf = {0}; hf.ctx = tag; hf.action = fall_cb;
-  g->named.register_named(g->named.ctx, "rogue:tag_fall", &hf);
-  qa_q1b_handlers hp = {0}; hp.ctx = tag; hp.action = place_cb;
-  g->named.register_named(g->named.ctx, "rogue:tag_place", &hp);
-  qa_q1b_handlers ht = {0}; ht.ctx = tag; ht.action = think_cb;
-  g->named.register_named(g->named.ctx, "rogue:tag_think", &ht);
-  qa_q1b_handlers hto = {0}; hto.ctx = tag; hto.touch = touch_cb;
-  g->named.register_named(g->named.ctx, "rogue:tag_touch", &hto);
-  g->register_spawn(g, "dmatch_tag_token", token_spawn, tag);
 }

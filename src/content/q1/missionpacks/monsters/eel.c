@@ -7,62 +7,61 @@
 
 static void pitch(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  if (!qa_q1mpm_str_eq(game->host->contents(game->host->ctx, qa_q1mpm_monster_origin(monster)), "water")) {
-    qa_q1mpm_drop_to_floor(monster);
-    qa_actor_id world = game->world == NULL ? entity->actor.id : game->world->actor.id;
-    game->damage(game, entity->actor.id, world,
-                 game->world == NULL ? QA_Q1MPM_NONE : QA_Q1MPM_SOME(game->world->actor.id), 6, NULL, "direct", "");
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
+  if (strcmp(game->host.contents(game->host.ctx, qa_q1_base_monster_origin(&monster->base)), "water") != 0) {
+    (void)qa_q1mpm_drop_to_floor(monster);
+    const qa_actor_id inflictor = game->world == NULL ? entity->actor.id : game->world->actor.id;
+    (void)qa_q1_damage(game, entity->actor.id, inflictor, game->world == NULL ? NULL : &game->world->actor.id, 6,
+                       NULL, NULL, NULL, NULL);
     return;
   }
   if (game->time < entity->delay) return;
-  double weapon = qa_q1mpm_actor_number(entity, "weapon");
+  double weapon = qa_q1_actor_number(entity, "weapon");
   if (weapon > 10) weapon = -10;
-  qa_q1mpm_body body = game->body(game, entity);
+  qa_q1_body body = qa_q1_get_body(game, entity);
   if (weapon != 0) {
-    qa_q1mpm_body_patch patch = {0};
+    qa_q1_body_patch patch = {0};
     patch.has_angles = true;
     patch.angles = body.angles;
     patch.angles.x = body.angles.x + (weapon < 0 ? -1.5 : 1.5);
-    game->set_body(game, entity, &patch);
+    qa_q1_set_body(game, entity, &patch);
   }
   qa_q1mpm_number(monster, "weapon", weapon + 1);
 }
 static void charge(void *ctx, qa_q1mpm_mission_monster *monster) {
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_CHARGE, 8);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_CHARGE, 8);
   pitch(ctx, monster);
 }
 static void attack8(void *ctx, qa_q1mpm_mission_monster *monster) {
-  monster->entity->effects = 8;
-  monster->entity->skin = 1;
+  monster->base.entity->effects = 8;
+  monster->base.entity->skin = 1;
   charge(ctx, monster);
-  monster->game->sound(monster->game, monster->entity, "eel/eatt1.wav", QA_Q1MPM_CH("weapon"), 1, 1);
+  qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "eel/eatt1.wav", "weapon", 1, 1);
 }
 static void attack9(void *ctx, qa_q1mpm_mission_monster *monster) {
-  monster->entity->skin = 2;
+  monster->base.entity->skin = 2;
   charge(ctx, monster);
 }
 static void attack10(void *ctx, qa_q1mpm_mission_monster *monster) {
-  monster->entity->skin = 3;
+  monster->base.entity->skin = 3;
   charge(ctx, monster);
 }
 static void attack11(void *ctx, qa_q1mpm_mission_monster *monster) {
-  monster->entity->effects = 4;
-  monster->entity->skin = 4;
+  monster->base.entity->effects = 4;
+  monster->base.entity->skin = 4;
   charge(ctx, monster);
 }
 static void attack12(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->skin = 5;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
+  monster->base.entity->skin = 5;
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   qa_vec3 target;
-  if (monster->state.enemy.has && qa_q1mpm_monster_target(monster, &target)) {
-    qa_q1mpm_trace_request request = {qa_q1mpm_monster_origin(monster), target, QA_Q1MPM_POINT,
-                                      QA_Q1MPM_SOME(entity->actor.id), true, false};
-    qa_q1mpm_trace trace = game->host->trace(game->host->ctx, &request);
-    if (trace.actor.has && qa_same_actor(trace.actor.id, monster->state.enemy.id) &&
+  if (monster->base.state->has_enemy && qa_q1_base_monster_target(&monster->base, &target)) {
+    qa_q1_trace trace = q1mpm_trace(game, qa_q1_base_monster_origin(&monster->base), target, QA_Q1_POINT,
+                                    &entity->actor.id, true);
+    if (trace.has_actor && qa_same_actor(trace.actor, monster->base.state->enemy) &&
         !(trace.in_open && trace.in_water))
       qa_q1mpm_eel_zap(monster);
   }
@@ -71,51 +70,51 @@ static void attack12(void *ctx, qa_q1mpm_mission_monster *monster) {
 }
 static void death1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->skin = 0;
-  monster->entity->effects = 0;
-  qa_q1mpm_game_sound(monster->game, monster->entity, "eel/edie3r.wav");
+  monster->base.entity->skin = 0;
+  monster->base.entity->effects = 0;
+  qa_q1_sound_defaults(monster->base.game, monster->base.entity->actor.id, "eel/edie3r.wav");
 }
 static void death11(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->movement_flags -= 2;
+  monster->base.entity->movement_flags -= 2;
 }
 static void droptofloor_action(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_drop_to_floor(monster);
+  (void)qa_q1mpm_drop_to_floor(monster);
 }
 static void pain1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  if (monster->state.pain_finished > monster->game->time) return;
-  monster->state.pain_finished = monster->game->time + 1;
-  qa_q1mpm_game_sound(monster->game, monster->entity, "eel/epain3.wav");
-  monster->entity->skin = 0;
+  if (monster->base.state->pain_finished > monster->base.game->time) return;
+  monster->base.state->pain_finished = monster->base.game->time + 1;
+  qa_q1_sound_defaults(monster->base.game, monster->base.entity->actor.id, "eel/epain3.wav");
+  monster->base.entity->skin = 0;
 }
 static void spawn(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->delay = monster->game->time + monster->game->host->random(monster->game->host->ctx) * 6;
+  monster->base.entity->delay = monster->base.game->time + qa_q1_host_random(monster->base.game) * 6;
   qa_q1mpm_number(monster, "weapon", 0);
   qa_q1mpm_monster_spawn_default(monster);
 }
-static void pain(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker, double damage) {
+static void pain(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker, double damage) {
   (void)ctx; (void)attacker; (void)damage;
-  qa_q1mpm_monster_play(monster, "eel_pain1");
+  qa_q1_base_monster_play(&monster->base, "eel_pain1");
 }
 static void melee_action(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_monster_play(monster, "eel_attack1");
+  qa_q1_base_monster_play(&monster->base, "eel_attack1");
 }
-static void die(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker) {
+static void die(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker) {
   (void)ctx; (void)attacker;
-  monster->entity->movement_flags += 2;
-  monster->game->set_bounds(monster->game, monster->entity, QA_Q1MPM_POINT);
-  if (monster->game->health(monster->game, monster->entity->actor.id) < -12) {
-    monster->entity->skin = 0;
-    monster->entity->effects = 0;
+  monster->base.entity->movement_flags += 2;
+  qa_q1_set_bounds(monster->base.game, monster->base.entity, QA_Q1_POINT);
+  if (qa_q1_health(monster->base.game, monster->base.entity->actor.id) < -12) {
+    monster->base.entity->skin = 0;
+    monster->base.entity->effects = 0;
     static const char *const gibs[] = {"gib1", "gib1", "gib1"};
     qa_q1mpm_gib(monster, "eelgib", gibs, 3, "");
     return;
   }
-  qa_q1mpm_monster_play(monster, "eel_death1");
+  qa_q1_base_monster_play(&monster->base, "eel_death1");
 }
 static const char *const classnames[] = {"monster_eel"};
 static const char *const spec_gibs[] = {"gib1", "gib1", "gib1"};
@@ -142,5 +141,6 @@ const qa_q1mpm_pack_monster_definition qa_q1mpm_eel_definition = {
     {spawn, NULL}, {NULL, NULL},
     pain, NULL, die, NULL,
     {melee_action, NULL},
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 };

@@ -2,6 +2,7 @@
 #include "qa/world/collision/q3/index.h"
 #include "qa/core/numeric.h"
 #include "qa/world/collision/contents.h"
+#include "qa/foundation/js.h"
 #include <stdlib.h>
 #include <string.h>
 void qa_q3_collision_init_geometry(qa_q3_collision*c,const qa_q3_world_geometry*geometry){
@@ -28,20 +29,6 @@ void qa_q3_collision_destroy(qa_q3_collision*c){
 qa_q3_collision *qa_create_q3_collision(const qa_q3_world_geometry*geometry){
   qa_q3_collision*c=malloc(sizeof*c); if(!c)return NULL;
   qa_q3_collision_init_geometry(c,geometry); return c;
-}
-qa_q3_collision *qa_create_source_q3_collision(const uint8_t*bytes,size_t len,const char*source){
-  qa_q3_collision*c=malloc(sizeof*c); if(!c)return NULL;
-  memset(c,0,sizeof*c);
-  qa_hunk_accounting_profile mem={"unaccounted",NULL,NULL};
-  qa_collision_map_resource*res=qa_collision_map_resource_create(source?source:"<q3-bsp>",mem,NULL,NULL);
-  qa_collision_map_resource_load(res,bytes,len);
-  qa_collision_map_resource_initialize_box_hull(res);
-  /* Leak resource intentionally like a retained map (owner is the collision; freed never in TS session scope either keeps map). Store world over its data. */
-  qa_collision_world_profile prof={"disabled",NULL,NULL};
-  qa_collision_world_init(&c->world_storage,&res->data,prof,NULL);
-  c->world=&c->world_storage; c->owns_world=true; c->owns_map=false;
-  (void)res;
-  return c;
 }
 double qa_q3_collision_point_leaf(qa_q3_collision*c,qa_vec3 p){return qa_collision_world_point_leafnum(c->world,p);}
 double qa_q3_collision_leaf_area(qa_q3_collision*c,double i){return qa_collision_world_leaf_area(c->world,i);}
@@ -84,7 +71,9 @@ bool qa_q3_collision_cluster_visible(qa_q3_collision*c,double from,double to,con
     }
     c->phs_keys[c->phs_count]=from;c->phs_rows[c->phs_count]=row;c->phs_lengths[c->phs_count]=row_len;c->phs_count++;
   }
-  return ((row[(size_t)to>>3])&(1u<<((size_t)to&7)))!=0;
+  /* row[to >> 3] ?? 0 and 1 << (to & 7) apply ToInt32 (a NaN `to` passes the range test). */
+  const int32_t word=qa_js_to_int32(to);
+  return (size_t)(word>>3)<row_len&&((row[word>>3])&(1u<<(word&7)))!=0;
 }
 void qa_q3_collision_adjust_area_portal_state(qa_q3_collision*c,double a,double b,bool o){qa_collision_world_adjust_area_portal_state(c->world,a,b,o);}
 qa_point_contents_result qa_q3_collision_point_contents(qa_q3_collision*c,qa_point_contents_query query){

@@ -2,6 +2,7 @@
 #include "qa/content/q2/base/entities/index.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "qa/foundation/support.h"
 
@@ -107,6 +108,16 @@ qa_q2_base_entities_module_checkpoint qa_q2_base_entity_module_capture(qa_q2_bas
   out.turrets = qa_q2_turret_entities_capture(m->turrets, game);
   out.wind_times = qa_q2_environmental_triggers_capture(m->triggers, game, &out.wind_time_count);
   return out;
+}
+void qa_q2_base_entities_module_checkpoint_free(qa_q2_base_entities_module_checkpoint *checkpoint) {
+  free(checkpoint->movers.platforms);
+  free(checkpoint->movers.secrets);
+  free(checkpoint->scenery.animations);
+  free(checkpoint->scenery.clocks);
+  free(checkpoint->turrets.breaches);
+  free(checkpoint->turrets.drivers);
+  free(checkpoint->wind_times);
+  memset(checkpoint, 0, sizeof *checkpoint);
 }
 void qa_q2_base_entity_module_restore(qa_q2_base_entity_module *m, qa_q2_game_services *game, qa_q2_base_entities_module_checkpoint checkpoint) {
   qa_q2_base_mover_entities_restore(m->movers, game, checkpoint.movers);

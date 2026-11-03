@@ -4,7 +4,8 @@
 #include "qa/foundation/support.h"
 static int32_t i32(double v) { if (!isfinite(v)) return 0; double m = fmod(trunc(v), 4294967296.0); if (m < 0) m += 4294967296.0; if (m >= 2147483648.0) m -= 4294967296.0; return (int32_t)m; }
 uint32_t qa_pack_source_draw_sort(double s, double e, double f, double d) {
-  return (uint32_t)((i32(s) << 17) | (i32(e) << 7) | (i32(f) << 2) | i32(d));
+  /* JS int32 shifts wrap; shifting a negative or overflowing int32 is undefined in C, so shift the bits unsigned. */
+  return ((uint32_t)i32(s) << 17) | ((uint32_t)i32(e) << 7) | ((uint32_t)i32(f) << 2) | (uint32_t)i32(d);
 }
 typedef struct iv { int lo, hi; } iv;
 static void defer(iv *st, int *n, int lo, int hi) {

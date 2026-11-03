@@ -1,7 +1,6 @@
 /* Port of src/world/collision/q3/patch.ts. PatchCollide is heap-owned
- * (planes carry source signbits). DebugSurface host via fn+ctx.
- * generate's allocator path stores planes/facets identically; raw
- * hunk byte-pointer identity is not reproduced. GPL-2.0-or-later. */
+ * (planes carry source signbits). DebugSurface host via fn+ctx. TS dropped the
+ * source-hunk allocator. GPL-2.0-or-later. */
 #ifndef QA_WORLD_COLLISION_Q3_PATCH_H
 #define QA_WORLD_COLLISION_Q3_PATCH_H
 #include <stdbool.h>
@@ -19,7 +18,6 @@ typedef struct qa_patch_collide {
   qa_bounds bounds;
 } qa_patch_collide;
 void qa_patch_collide_destroy(qa_patch_collide *p);
-typedef qa_hunk_allocation (*qa_patch_allocator_fn)(void *ctx, const char *source, double bytes);
 typedef struct qa_patch_shape {
   const char *kind; /* "point"|"box"|"capsule" */
   qa_vec3 mins, extents; double radius; qa_vec3 offset;
@@ -49,7 +47,7 @@ void qa_collision_debug_record_trace(qa_collision_debug_surface *d, const qa_pat
 void qa_collision_debug_record_mixed_border(qa_collision_debug_surface *d, const qa_vec3 points[4]);
 void qa_collision_debug_draw(qa_collision_debug_surface *d, qa_collision_debug_polygon_fn draw, void *ctx);
 qa_patch_collide *qa_generate_patch_collide(double width, double height, const qa_vec3 *points, size_t point_count,
-  qa_collision_debug_surface *debug, qa_patch_allocator_fn allocate, void *alloc_ctx);
+                                            qa_collision_debug_surface *debug);
 bool qa_position_in_patch(const qa_patch_collide *patch, qa_vec3 start, qa_patch_shape shape);
 typedef struct qa_patch_trace_hit { double fraction; qa_plane plane; } qa_patch_trace_hit;
 bool qa_trace_patch(const qa_patch_collide *patch, qa_vec3 start, qa_vec3 end, qa_patch_shape shape, double max_fraction, qa_collision_debug_surface *debug, qa_patch_trace_hit *out);

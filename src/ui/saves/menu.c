@@ -1,7 +1,6 @@
 /* Port of src/ui/saves/menu.ts. GPL-2.0-or-later. */
 #include "qa/ui/saves/menu.h"
 
-#include <ctype.h>
 #include <stdarg.h>
 #include <math.h>
 #include <stdio.h>
@@ -10,6 +9,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/ui/common/controls.h"
 #include "qa/ui/common/layout.h"
 
 typedef struct saves_state saves_state;
@@ -25,6 +25,7 @@ struct saves_state {
   char *draft;
   char *selected; /* NULL = TS null */
   bool busy;
+  bool disposed; /* menus unregistered while an operation is pending */
   char *message;
   int handles[4];
   qa_ui_control controls[16];
@@ -94,45 +95,62 @@ static const char *reason(saves_state *s, bool saving) {
   return "Remote games cannot be saved or loaded here.";
 }
 
-/* TS run(): busy guard, "Working...", error text into message. */
-typedef const char *(*saves_op)(saves_state *s, const char *arg);
-static void run_op(saves_state *s, saves_op op, const char *arg) {
-  if (s->busy) return;
+/* TS run(operation): busy guard, "Working...", then message = "" on
+ * resolve or the rejection's message; busy until the operation settles. */
+static void saves_free(saves_state *s);
+static void run_finish(saves_state *s, const char *error) {
+  set_str(&s->message, error == NULL ? "" : error);
+  s->busy = false;
+  if (s->disposed) saves_free(s);
+}
+static bool run_begin(saves_state *s) {
+  if (s->busy) return false;
   s->busy = true;
   set_str(&s->message, "Working...");
-  const char *error = op(s, arg);
-  if (error == NULL)
-    set_str(&s->message, "");
-  else
-    set_str(&s->message, error);
-  s->busy = false;
+  return true;
 }
-static const char *op_refresh(saves_state *s, const char *arg) {
-  (void)arg;
-  if (s->service == NULL) return NULL;
-  return s->service->refresh(s->service->ctx);
+static void settled_finish(void *ctx, const char *error) { run_finish(ctx, error); }
+static qa_ui_saves_settle finish_settle(saves_state *s) {
+  qa_ui_saves_settle settle = { settled_finish, s };
+  return settle;
 }
-static const char *op_write(saves_state *s, const char *arg) {
-  (void)arg;
+/* refresh: run(async () => { await service?.refresh(); }) */
+static void do_refresh(saves_state *s) {
+  if (!run_begin(s)) return;
+  if (s->service == NULL) { run_finish(s, NULL); return; }
+  s->service->refresh(s->service->ctx, finish_settle(s));
+}
+/* write: run(async () => { if (service === undefined) throw ...; await service.save(draft, selected);
+ * await service.refresh(); controller.closeMenu(); message = "Game saved."; }) */
+static void write_refreshed(void *ctx, const char *error) {
+  saves_state *s = ctx;
+  if (error != NULL) { run_finish(s, error); return; }
+  if (!s->disposed) qa_native_ui_controller_close_menu(s->controller);
+  set_str(&s->message, "Game saved.");
+  run_finish(s, NULL);
+}
+static void write_saved(void *ctx, const char *error) {
+  saves_state *s = ctx;
+  if (error != NULL) { run_finish(s, error); return; }
+  qa_ui_saves_settle settle = { write_refreshed, s };
+  s->service->refresh(s->service->ctx, settle);
+}
+static void do_write(saves_state *s) {
+  if (!run_begin(s)) return;
   if (s->service == NULL) {
     const char *value = reason(s, true);
-    return value != NULL ? value : "Saving unavailable";
+    run_finish(s, value != NULL ? value : "Saving unavailable");
+    return;
   }
-  const char *error =
-      s->service->save(s->service->ctx, s->draft, s->selected);
-  if (error != NULL) return error;
-  error = s->service->refresh(s->service->ctx);
-  if (error != NULL) return error;
-  qa_native_ui_controller_close_menu(s->controller);
-  set_str(&s->message, "Game saved.");
-  return NULL;
+  qa_ui_saves_settle settle = { write_saved, s };
+  s->service->save(s->service->ctx, s->draft, s->selected, settle);
 }
-static const char *op_load(saves_state *s, const char *arg) {
-  if (s->service == NULL) return NULL;
-  return s->service->load(s->service->ctx, arg);
+/* load: run(async () => { if (service !== undefined) await service.load(row.id); }) */
+static void do_load(saves_state *s, const char *id) {
+  if (!run_begin(s)) return;
+  if (s->service == NULL) { run_finish(s, NULL); return; }
+  s->service->load(s->service->ctx, id, finish_settle(s));
 }
-static void do_refresh(saves_state *s) { run_op(s, op_refresh, NULL); }
-static void do_write(saves_state *s) { run_op(s, op_write, NULL); }
 
 static void on_activate(void *v, qa_seat_id seat) {
   (void)seat;
@@ -179,7 +197,7 @@ static void on_activate(void *v, qa_seat_id seat) {
         set_str(&s->message, unavailable);
         break;
       }
-      run_op(s, op_load, s->slot_ids[c->slot]);
+      do_load(s, s->slot_ids[c->slot]);
       break;
     }
     case S_PREVIOUS: case S_NEXT: {
@@ -244,39 +262,15 @@ static void add_button(saves_state *s, size_t *at, const char *id,
   control->enabled = enabled && !s->busy;
   control->activate_seat = on_activate;
 }
-/* TS info(): greedy word wrap at 48 columns, at most 2 rows. */
+/* TS info(): wrapWords(label, 48), at most 2 rows. */
 static void add_info(saves_state *s, size_t *at, const char *label) {
-  char *lines[64];
   size_t line_count = 0;
-  size_t line_length = 0, buffer_capacity = strlen(label) + 1;
-  char *line = malloc(buffer_capacity);
-  if (line == NULL) qa_range_error("Out of memory");
-  line[0] = '\0';
-  const char *cursor = label;
-  while (*cursor != '\0') {
-    while (*cursor != '\0' && isspace((unsigned char)*cursor)) cursor++;
-    if (*cursor == '\0') break;
-    const char *start = cursor;
-    while (*cursor != '\0' && !isspace((unsigned char)*cursor)) cursor++;
-    size_t word_length = (size_t)(cursor - start);
-    if (line_length + word_length > 48) {
-      if (line_count < 64) lines[line_count++] = pool_dup(s, line);
-      memcpy(line, start, word_length);
-      line[word_length] = '\0';
-      line_length = word_length;
-    } else {
-      if (line_length > 0) line[line_length++] = ' ';
-      memcpy(line + line_length, start, word_length);
-      line_length += word_length;
-      line[line_length] = '\0';
-    }
-  }
-  if (line_count < 64) lines[line_count++] = pool_dup(s, line);
-  free(line);
+  char **lines = qa_ui_wrap_words(label, 48, &line_count);
   size_t shown = line_count < 2 ? line_count : 2;
   for (size_t i = 0; i < shown; i++)
-    add_button(s, at, pool_format(s, "ui:saves:message:%zu", i), lines[i],
+    add_button(s, at, pool_format(s, "ui:saves:message:%zu", i), pool_dup(s, lines[i]),
                9 + (double)i, S_NONE, 0, false);
+  qa_ui_wrapped_lines_free(lines, line_count);
 }
 static void add_back(saves_state *s, size_t *at) {
   add_button(s, at, "ui:saves:back", "Cancel", 11, S_BACK, 0, true);
@@ -308,9 +302,15 @@ static size_t build_rows(saves_state *s, bool saving, qa_ui_control *controls,
     const char *label = pool_format(
         s, "%s - %s", row->label,
         row->unavailable == NULL ? row->map : "unavailable");
-    add_button(s, &at, pool_format(s, "ui:saves:slot:%s", row->id), label,
-               (double)shown + 1, saving ? S_SAVE_SLOT : S_LOAD_SLOT, shown,
-               reason(s, saving) == NULL);
+    saves_state * s2 = s;
+    size_t * at2 = &at;
+    const char * id2 = pool_format(s, "ui:saves:slot:%s", row->id);
+    double row2 = (double)shown + 1;
+    int action = saving ? S_SAVE_SLOT : S_LOAD_SLOT;
+    size_t slot2 = shown;
+    bool enabled = reason(s, saving) == NULL;
+    add_button(s2, at2, id2, label,
+               row2, action, slot2, enabled);
     shown++;
   }
   if (pages > 1) {
@@ -392,11 +392,7 @@ static qa_ui_menu confirm_factory(void *v) {
                    on_noop);
 }
 
-static void saves_dispose(qa_ui_saved_game_menus *menus) {
-  saves_state *s = menus->state;
-  if (s == NULL) return;
-  for (int i = 3; i >= 0; i--)
-    qa_native_ui_controller_unregister(s->controller, s->handles[i]);
+static void saves_free(saves_state *s) {
   clear_pool(s);
   free(s->pool);
   for (size_t i = 0; i < 5; i++) {
@@ -408,7 +404,17 @@ static void saves_dispose(qa_ui_saved_game_menus *menus) {
   free(s->selected);
   free(s->message);
   free(s);
+}
+static void saves_dispose(qa_ui_saved_game_menus *menus) {
+  saves_state *s = menus->state;
+  if (s == NULL) return;
+  for (int i = 3; i >= 0; i--)
+    qa_native_ui_controller_unregister(s->controller, s->handles[i]);
   menus->state = NULL;
+  /* A pending operation's settle still runs its continuation (TS GC keeps
+   * the closures); the state is freed when it settles. */
+  if (s->busy) s->disposed = true;
+  else saves_free(s);
 }
 void qa_ui_saved_game_menus_dispose(qa_ui_saved_game_menus *menus) {
   if (menus == NULL || menus->state == NULL) return;

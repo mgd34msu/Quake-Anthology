@@ -39,46 +39,4 @@ qa_frame_context qa_source_clock_advance(qa_source_clock *clock,
 qa_frame_context qa_source_clock_enter(qa_source_clock *clock,
                                        qa_frame_phase phase);
 
-/** TS ProviderRuntimeState checkpoint() result. Arrays are malloc'd;
- * random states are deep copies. Release with the dispose call. */
-typedef struct qa_provider_runtime_checkpoint {
-  qa_save_clock *clocks;
-  size_t clock_count;
-  qa_save_random *random;
-  size_t random_count;
-} qa_provider_runtime_checkpoint;
-void qa_provider_runtime_checkpoint_dispose(
-    qa_provider_runtime_checkpoint *checkpoint);
-
-/** TS ProviderRuntimeState. Registered clocks are borrowed. */
-typedef struct qa_provider_runtime_entry {
-  qa_provider_id provider;
-  qa_source_clock *clock;
-  qa_random_source random;
-} qa_provider_runtime_entry;
-typedef struct qa_provider_runtime_state {
-  qa_provider_runtime_entry *entries;
-  size_t count;
-  size_t capacity;
-  bool closed;
-} qa_provider_runtime_state;
-
-void qa_provider_runtime_state_init(qa_provider_runtime_state *state);
-void qa_provider_runtime_state_destroy(qa_provider_runtime_state *state);
-void qa_provider_runtime_state_register(qa_provider_runtime_state *state,
-                                        qa_provider_id provider,
-                                        qa_source_clock *clock,
-                                        qa_random_source random);
-qa_source_clock *qa_provider_runtime_state_clock(
-    qa_provider_runtime_state *state, qa_provider_id provider);
-qa_random_source qa_provider_runtime_state_random(
-    qa_provider_runtime_state *state, qa_provider_id provider);
-/* False only on allocation failure. */
-bool qa_provider_runtime_state_checkpoint(
-    qa_provider_runtime_state *state,
-    qa_provider_runtime_checkpoint *out);
-void qa_provider_runtime_state_close(qa_provider_runtime_state *state);
-/* The state viewed as a TS {close} resource is session.h's concern;
- * WorldLifetime closes it directly. */
-
 #endif

@@ -25,7 +25,14 @@
 #include "qa/formats/q1_map.h"
 #include "qa/formats/q2_map.h"
 #include "qa/formats/q3_map.h"
-#include "qa/formats/q3_model.h"
+#include "qa/formats/q3_model/lod.h"
+#include "qa/formats/q3_model/md3.h"
+#include "qa/formats/q3_model/md4.h"
+#include "qa/formats/q3_model/md5.h"
+#include "qa/formats/q3_model/quaternion.h"
+#include "qa/formats/q3_model/replacements.h"
+#include "qa/formats/q3_model/scene.h"
+#include "qa/formats/q3_model/text.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -1095,8 +1102,15 @@ static void test_md4(void) {
   CHECK(vec3_is(vertices[0].normal, 169, 181, 193));
   CHECK(vec3_is(vertices[1].position, 0, 0, 0));
   free(vertices);
+  /* md4.test.ts: the decoded model keeps no byte copy; its name matches a
+   * fresh parse of the fixture. */
+  uint8_t *fresh_bytes = md4_fixture(&length);
+  qa_decoded_md4_model fresh;
+  qa_parse_md4(fresh_bytes, length, NULL, &fresh);
   memset(bytes, 0, length);
-  CHECK(model.bytes[0] == 73);
+  CHECK(strcmp(model.model.name, fresh.model.name) == 0);
+  qa_decoded_md4_model_destroy(&fresh);
+  free(fresh_bytes);
   qa_decoded_md4_model_destroy(&model);
   free(bytes);
 

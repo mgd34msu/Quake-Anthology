@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "qa/compat/qvm/interpreter.h"
+#include "qa/compat/qvm/memory.h"
 #include "qa/persistence/value.h"
 
 typedef struct qa_qvm_item_layout {
@@ -73,14 +74,24 @@ typedef struct qa_qvm_source_item_catalog {
   bool has_records;
   qa_qvm_catalog_records records;
   bool closed;
+  /* The allocation's committed-store owner: live records are dropped when
+   * an original store changes their locator, records or strings. */
+  qa_qvm_memory_writes *writes;
+  bool watching;
+  size_t watch_id;
+  qa_qvmx_memory memory_view;
 } qa_qvm_source_item_catalog;
 
 void qa_qvm_source_item_catalog_init(qa_qvm_source_item_catalog *catalog, qa_qvmx_memory *memory,
                                      qa_qvm_item_layout layout, const uint8_t *initialized,
                                      size_t initialized_length);
+/* The same over a QvmMemory, whose writes own publication for `memory`. */
+void qa_qvm_source_item_catalog_init_observed(qa_qvm_source_item_catalog *catalog, qa_qvm_memory *memory,
+                                              qa_qvm_item_layout layout, const uint8_t *initialized,
+                                              size_t initialized_length);
 void qa_qvm_source_item_catalog_destroy(qa_qvm_source_item_catalog *catalog);
 void qa_qvm_source_item_catalog_reset(qa_qvm_source_item_catalog *catalog);
-/* Borrowed cached records. False only on OOM. */
+/* Borrowed cached records, valid until the next records() or reset. False only on OOM. */
 bool qa_qvm_source_item_catalog_records(qa_qvm_source_item_catalog *catalog,
                                         const qa_qvm_catalog_records **out);
 void qa_qvm_source_item_catalog_close(qa_qvm_source_item_catalog *catalog);

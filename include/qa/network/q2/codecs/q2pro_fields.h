@@ -22,10 +22,15 @@ typedef struct qa_q2pro_features {
 bool qa_q2pro_extensions(qa_q2pro_features features);
 bool qa_q2pro_extensions_v2(qa_q2pro_features features);
 
-/* TS readQ2ProInt23(message, previous=0) / writeQ2ProInt23. */
+/* TS readQ2ProInt23(message, previous=0) / writeQ2ProInt23 over TS numbers.
+ * The write raises RangeError for a non-integer or out-of-range current. */
+double qa_q2pro_read_int23_number(qa_q2_sizebuf *message, double previous);
+void qa_q2pro_write_int23_number(qa_q2_sizebuf *message, double current, double previous);
+/* Int32Array-element forms: the read result is the TS number stored into an
+ * Int32Array element (ToInt32). */
 int32_t qa_q2pro_read_int23(qa_q2_sizebuf *message, int32_t previous);
 void qa_q2pro_write_int23(qa_q2_sizebuf *message, int32_t current, int32_t previous);
-/* TS readQ2ProVar64 / writeQ2ProVar64 (TS throws become aborts). */
+/* TS readQ2ProVar64 / writeQ2ProVar64 (Error raises, catchable with qa_try). */
 uint64_t qa_q2pro_read_var64(qa_q2_sizebuf *message);
 void qa_q2pro_write_var64(qa_q2_sizebuf *message, uint64_t value);
 /* TS readQ2ProFog / q2proFogBits / writeQ2ProFog. */

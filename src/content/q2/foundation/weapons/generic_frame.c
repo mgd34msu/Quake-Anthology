@@ -2,9 +2,10 @@
 #include "qa/content/q2/foundation/weapons/generic_frame.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 double qa_q2w_millisecond_sum(double time, double seconds) {
-  return (round(time * 1000) + round(seconds * 1000)) / 1000;
+  return (qa_js_round(time * 1000) + qa_js_round(seconds * 1000)) / 1000;
 }
 static bool includes(const double *values, size_t count, double frame) {
   for (size_t i = 0; i < count; i++) if (values[i] == frame) return true;

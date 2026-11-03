@@ -4,4 +4,7 @@
 #include "qa/compat/q3/native/imports.h"
 #include "qa/compat/q3/native/module.h"
 #include "qa/compat/q3/native/syscall.h"
+#include "qa/compat/q3/native/game_syscalls.h"
+#include "qa/compat/q3/native/memory.h"
+#include "qa/compat/q3/native/guest_services.h"
 #endif

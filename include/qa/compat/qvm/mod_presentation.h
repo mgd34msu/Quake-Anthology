@@ -29,7 +29,7 @@ void qa_qvm_validate_mod_presentation(const qa_resolved_qvm_artifact *artifact, 
 typedef struct qa_qvm_body_mesh {
   qa_qvm_body_part part;
   bool base;
-  qa_qvm_source_ref_entity_record *passes; /* owned */
+  qa_q3_pres_source_ref_entity_record *passes; /* owned; kind model */
   size_t pass_count;
   size_t pass_capacity;
 } qa_qvm_body_mesh;
@@ -97,8 +97,12 @@ typedef struct qa_qvm_mod_presentation {
   void *commands; /* opaque */
   size_t command_count;
   size_t command_capacity;
-  const char *const *arguments; /* borrowed */
+  const char *const *arguments; /* owned: TS arguments_ */
   size_t argument_count;
+  char **command_arguments;      /* owned: TS commandArguments while a console command runs */
+  size_t command_argument_count;
+  void *hooks[3];                /* owned body hook contexts */
+  size_t hook_count;
   void *scene_actors; /* opaque */
   size_t scene_actor_count;
   size_t scene_actor_capacity;

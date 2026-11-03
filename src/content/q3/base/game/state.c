@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/game/state.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/game/state.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,65 +9,38 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
-const char *qa_q3_game_product_name(qa_q3_game_product p) { return p == QA_Q3_GAME_PRODUCT_BASEQ3 ? "baseq3" : "missionpack"; }
-static float f32(double v) { return (float)v; }
-static double seconds(double ms) { return f32(f32(ms) * f32(0.001)); }
-static double periodic_radians(qa_q3_game_trajectory_mirror tr, double at) {
-  double fraction = f32(f32((double)qa_int32(at - tr.time)) / f32(tr.duration));
-  return f32(f32(fraction * f32(3.141592653589793)) * 2);
-}
-qa_vec3 qa_q3_game_evaluate_trajectory_mirror(qa_q3_game_trajectory_mirror tr, double at) {
-  if (tr.type == QA_Q3_TR_STATIONARY || tr.type == QA_Q3_TR_INTERPOLATE) return tr.base;
-  if (tr.type == QA_Q3_TR_LINEAR) return qa_add3(tr.base, qa_scale3(tr.delta, seconds(qa_int32(at - tr.time))));
-  if (tr.type == QA_Q3_TR_SINE) return qa_add3(tr.base, qa_scale3(tr.delta, f32(sin(periodic_radians(tr, at)))));
-  if (tr.type == QA_Q3_TR_LINEAR_STOP) {
-    double end = qa_int32(tr.time + tr.duration), time = at > end ? end : at;
-    double dt = seconds(qa_int32(time - tr.time)); if (dt < 0) dt = 0;
-    return qa_add3(tr.base, qa_scale3(tr.delta, dt));
-  }
-  if (tr.type == QA_Q3_TR_GRAVITY) {
-    double dt = seconds(qa_int32(at - tr.time)); qa_vec3 r = qa_add3(tr.base, qa_scale3(tr.delta, dt));
-    double fall = f32(f32(0.5 * 800 * dt) * dt); return qa_math_vec3(r.x, r.y, r.z - fall);
-  }
-  { char buf[128]; snprintf(buf, sizeof buf, "BG_EvaluateTrajectory: unknown trType: %g", tr.type); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
-}
-qa_vec3 qa_q3_game_evaluate_trajectory_delta_mirror(qa_q3_game_trajectory_mirror tr, double at) {
-  qa_vec3 zero = {0, 0, 0};
-  if (tr.type == QA_Q3_TR_STATIONARY || tr.type == QA_Q3_TR_INTERPOLATE) return zero;
-  if (tr.type == QA_Q3_TR_LINEAR) return tr.delta;
-  if (tr.type == QA_Q3_TR_SINE) return qa_scale3(tr.delta, f32(f32(cos(periodic_radians(tr, at))) * 0.5));
-  if (tr.type == QA_Q3_TR_LINEAR_STOP) return at > qa_int32(tr.time + tr.duration) ? zero : tr.delta;
-  if (tr.type == QA_Q3_TR_GRAVITY) { double dt = seconds(qa_int32(at - tr.time)); return qa_math_vec3(tr.delta.x, tr.delta.y, tr.delta.z - f32(800 * dt)); }
-  { char buf[128]; snprintf(buf, sizeof buf, "BG_EvaluateTrajectoryDelta: unknown trType: %g", tr.type); qa_common_error(QA_COMMON_ERROR_DROP, buf); }
-}
-double qa_q3_game_slots_get_mirror(const qa_q3_game_player_slots_mirror *s, size_t i) {
-  if (i >= s->length) qa_range_error("Player state slot %zu outside %zu", i, s->length);
-  return s->values[i];
-}
-void qa_q3_game_slots_set_mirror(qa_q3_game_player_slots_mirror *s, size_t i, double v) {
-  if (i >= s->length) qa_range_error("Player state slot %zu outside %zu", i, s->length);
-  s->values[i] = qa_int32(v);
-}
-void qa_q3_game_player_state_add_event_mirror(qa_q3_game_player_state_mirror *ps, double ev, double parm) {
-  /* Mirror of shared/player-state.ts addEvent ring over eventSequence. */
-  size_t i = ps->events.length ? (size_t)((int)ps->event_sequence % (int)ps->events.length) : 0;
-  if (ps->events.length) { qa_q3_game_slots_set_mirror(&ps->events, i, ev); qa_q3_game_slots_set_mirror(&ps->event_parms, i, parm); ps->event_sequence += 1; }
-}
+#include "qa/movement/q3/constants.h"
 void qa_q3_player_team_state_init(qa_q3_player_team_state *s) { memset(s, 0, sizeof *s); s->state = QA_Q3_TEAM_STATE_BEGIN; }
 void qa_q3_client_session_init(qa_q3_client_session *s) { memset(s, 0, sizeof *s); s->session_team = 0; s->spectator_state = QA_Q3_SPEC_NOT; }
 void qa_q3_client_persistant_init(qa_q3_client_persistant *p) {
   memset(p, 0, sizeof *p); p->connected = QA_Q3_CONN_DISCONNECTED; p->netname = NULL; qa_q3_player_team_state_init(&p->team_state);
 }
 void qa_q3_client_persistant_destroy(qa_q3_client_persistant *p) { free(p->netname); p->netname = NULL; }
-static void slots_init(qa_q3_game_player_slots_mirror *s, size_t n) { memset(s->values, 0, sizeof s->values); s->length = n < QA_Q3_GAME_SLOTS_CAP ? n : QA_Q3_GAME_SLOTS_CAP; }
-void qa_q3_game_client_init(qa_q3_game_client *c, qa_q3_game_product product) {
-  memset(c, 0, sizeof *c); c->ps.product = product;
-  slots_init(&c->ps.stats, 16); slots_init(&c->ps.persistant, 16); slots_init(&c->ps.powerups, 16);
-  slots_init(&c->ps.ammo, 16); slots_init(&c->ps.events, 2); slots_init(&c->ps.event_parms, 2); slots_init(&c->ps.delta_angles, 3);
+bool qa_q3_game_client_init_bound(qa_q3_game_client *c, qa_q3_base_product product,
+    const qa_q3_base_player_authority_binding *authority,
+    void *ammo_timer_ctx, void (*ammo_timer_stored)(void *ctx, double index, double value)) {
+  memset(c, 0, sizeof *c);
+  if (!qa_q3_base_player_state_init(&c->ps, product, authority)) return false;
   qa_q3_client_persistant_init(&c->pers); qa_q3_client_session_init(&c->sess);
-  slots_init(&c->ammo_times, product == QA_Q3_GAME_PRODUCT_BASEQ3 ? 11 : 14);
+  if (!qa_q3_base_player_state_slots_init(&c->ammo_times, qa_q3_base_weapon_count(product), NULL, 0, false, NULL,
+      ammo_timer_ctx, ammo_timer_stored)) {
+    qa_q3_base_player_state_record_destroy(&c->ps); return false;
+  }
+  return true;
 }
-void qa_q3_game_client_destroy(qa_q3_game_client *c) { qa_q3_client_persistant_destroy(&c->pers); free(c->areabits); c->areabits = NULL; }
+bool qa_q3_game_client_init(qa_q3_game_client *c, qa_q3_base_product product) {
+  return qa_q3_game_client_init_bound(c, product, NULL, NULL, NULL);
+}
+void qa_q3_game_client_destroy(qa_q3_game_client *c) {
+  qa_q3_client_persistant_destroy(&c->pers); free(c->areabits); c->areabits = NULL;
+  qa_q3_base_player_state_record_destroy(&c->ps); qa_q3_base_player_state_slots_destroy(&c->ammo_times);
+}
+void qa_q3_game_player_state_reset(qa_q3_base_player_state *ps, qa_q3_base_copy_stores stores) {
+  qa_q3_base_player_state fresh;
+  if (!qa_q3_base_player_state_init(&fresh, qa_q3_base_player_state_record_product(ps), NULL)) qa_range_error("out of memory");
+  qa_q3_base_player_state_record_copy_from(ps, &fresh, stores);
+  qa_q3_base_player_state_record_destroy(&fresh);
+}
 qa_q3_damage_participant qa_q3_participant_entity(qa_q3_game_entity *e) { qa_q3_damage_participant p; memset(&p, 0, sizeof p); p.entity = e; return p; }
 bool qa_q3_game_entity_inuse(const qa_q3_game_entity *e) { return e->binding.active ? e->binding.active(e->binding.ctx) : false; }
 qa_owned_actor qa_q3_game_entity_actor(const qa_q3_game_entity *e) {
@@ -85,19 +59,64 @@ qa_q3_game_classname_capture qa_q3_game_entity_capture_classname(const qa_q3_gam
   if (e->classname_client) { out.kind = 1; out.client = e->classname_client; } else out.value = e->classname;
   return out;
 }
-double qa_q3_game_entity_health(const qa_q3_game_entity *e) { return e->binding.body.health; }
-void qa_q3_game_entity_set_health(qa_q3_game_entity *e, double v) { e->binding.body.health = v; }
-bool qa_q3_game_entity_takedamage(const qa_q3_game_entity *e) { return e->binding.body.takedamage; }
-void qa_q3_game_entity_set_takedamage(qa_q3_game_entity *e, bool v) { e->binding.body.takedamage = v; }
+double qa_q3_game_entity_health(const qa_q3_game_entity *e) { return e->binding.health(e->binding.ctx); }
+void qa_q3_game_entity_set_health(qa_q3_game_entity *e, double v) { e->binding.set_health(e->binding.ctx, v); }
+bool qa_q3_game_entity_takedamage(const qa_q3_game_entity *e) { return e->binding.takedamage(e->binding.ctx); }
+void qa_q3_game_entity_set_takedamage(qa_q3_game_entity *e, bool v) { e->binding.set_takedamage(e->binding.ctx, v); }
 void qa_q3_game_entity_set_nextthink(qa_q3_game_entity *e, double v) { e->nextthink = v; if (e->binding.schedule) e->binding.schedule(e->binding.ctx, v); }
 void qa_q3_game_entity_restore_next_think(qa_q3_game_entity *e, double v) { e->nextthink = v; }
 void qa_q3_game_entity_init(qa_q3_game_entity *e, double slot, qa_q3_game_entity_binding binding) {
   if (slot != trunc(slot) || slot < 0 || slot >= QA_Q3_MAX_GENTITIES) qa_range_error("Game entity slot outside 0..1023");
   memset(e, 0, sizeof *e); e->slot = slot; e->binding = binding; e->mover_state = QA_Q3_MOVER_POS1;
+  qa_q3_base_entity_shared_init(&e->r, binding.body);
 }
 void qa_q3_game_entity_destroy(qa_q3_game_entity *e) {
   free(e->classname); free(e->model); free(e->model2); free(e->message); free(e->target);
   free(e->targetname); free(e->team); free(e->target_shader_name); free(e->target_shader_new_name);
   e->classname = e->model = e->model2 = e->message = e->target = e->targetname = e->team = NULL;
   e->target_shader_name = e->target_shader_new_name = NULL;
+}
+static double snap_component(double component) {
+  double value = (float)component;
+  return value >= -2147483648.0 && value < 2147483648.0 ? trunc(value) + 0.0 : -2147483648.0;
+}
+static qa_vec3 copy_position(qa_vec3 value, bool snap) {
+  if (!snap) return value;
+  return (qa_vec3){snap_component(value.x), snap_component(value.y), snap_component(value.z)};
+}
+void qa_q3_game_player_state_to_entity_state(qa_q3_base_player_state *ps, qa_q3_entity_state_record *s,
+    bool snap, bool has_extrapolation, double extrapolation_time) {
+  double health = qa_q3_base_player_state_record_health(ps);
+  s->e_type = ps->pm_type == QA_Q3_PM_INTERMISSION || ps->pm_type == QA_Q3_PM_SPECTATOR || health <= -40 ? 10 : 1;
+  s->number = ps->client_num;
+  s->pos.type = has_extrapolation ? QA_Q3_BASE_TR_LINEAR_STOP : QA_Q3_BASE_TR_INTERPOLATE;
+  s->pos.base = copy_position(qa_q3_base_player_state_record_origin(ps), snap);
+  s->pos.delta = qa_q3_base_player_state_record_velocity(ps);
+  if (has_extrapolation) { s->pos.time = extrapolation_time; s->pos.duration = 50; }
+  s->apos.type = QA_Q3_BASE_TR_INTERPOLATE;
+  s->apos.base = copy_position(ps->viewangles, snap);
+  s->angles2.y = (float)ps->movement_dir;
+  s->legs_anim = ps->legs_anim;
+  s->torso_anim = ps->torso_anim;
+  s->client_num = ps->client_num;
+  s->e_flags = qa_q3_base_player_state_record_health(ps) <= 0 ? (qa_int32(ps->e_flags) | 1) : (qa_int32(ps->e_flags) & ~1);
+  if (ps->external_event != 0) {
+    s->event = ps->external_event;
+    s->event_parm = ps->external_event_parm;
+  } else if (ps->entity_event_sequence < ps->event_sequence) {
+    double oldest = qa_int32(ps->event_sequence - 2);
+    if (ps->entity_event_sequence < oldest) ps->entity_event_sequence = oldest;
+    int32_t sequence = qa_int32(ps->entity_event_sequence), slot = sequence & 1;
+    s->event = qa_int32(qa_q3_base_player_state_slots_get(&ps->events, slot)) | ((sequence & 3) << 8);
+    s->event_parm = qa_q3_base_player_state_slots_get(&ps->event_parms, slot);
+    ps->entity_event_sequence = qa_int32(ps->entity_event_sequence + 1);
+  }
+  s->weapon = ps->weapon;
+  s->ground_entity_num = ps->ground_entity_num;
+  int32_t powerups = 0;
+  for (double index = 0; index < ps->powerups.length; index++)
+    if (qa_q3_base_player_state_slots_get(&ps->powerups, index) != 0) powerups |= (int32_t)(1u << (unsigned)index);
+  s->powerups = powerups;
+  s->loop_sound = ps->loop_sound;
+  s->generic1 = ps->generic1;
 }

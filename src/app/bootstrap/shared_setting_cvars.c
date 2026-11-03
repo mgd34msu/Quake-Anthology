@@ -4,6 +4,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/app/bootstrap/audio/output_settings.h"
+#include "qa/app/bootstrap/audio/playlist_settings.h"
 #include "qa/app/bootstrap/render_settings.h"
 #include "qa/input/device_settings.h"
 #include "qa/input/support.h"
@@ -103,11 +105,11 @@ static bool gamma_write(void *ctx, const char *value, char **out_value, char **o
   *out_value = qa_input_js_number(1.0 / n);
   return true;
 }
-void qa_app_register_shared_client_settings(qa_cvar_registry *cvars, qa_audio_output_format output_format, qa_app_shared_audio_settings_host host) {
+void qa_app_register_shared_client_settings(qa_cvar_registry *cvars, const qa_audio_output_format *output_format) {
   qa_app_register_render_settings(cvars);
   qa_register_input_device_cvars(cvars);
-  if (host.register_audio_output_cvars) host.register_audio_output_cvars(host.ctx, cvars, output_format);
-  if (host.register_music_settings) host.register_music_settings(host.ctx, cvars);
+  qa_app_register_audio_output_cvars(cvars, output_format);
+  qa_app_register_music_settings(cvars);
   cvar_register_(cvars, "s_geometryAcoustics", "0", QA_CVAR_FLAG_ARCHIVE);
   qa_cvar_value_binding geo = {NULL, validate_use01, changed_noop};
   qa_cvar_registry_bind_value(cvars, "s_geometryAcoustics", geo);
@@ -139,16 +141,14 @@ void qa_app_register_shared_client_settings(qa_cvar_registry *cvars, qa_audio_ou
     a.documentation = (qa_command_documentation){"Quake II brightness convention: lower values brighten. Alias of r_gamma with vid_gamma = 1 / r_gamma.", "vid_gamma <1/3..2>", ex, 1, NULL, 0};
     qa_cvar_registry_register_alias(cvars, a); }
   qa_cvar_alias_conversion ident; memset(&ident, 0, sizeof ident); ident.is_identity = true;
-  struct { const char *name, *target, *summary, *usage, *example; } aliases[3] = {
+  static const struct { const char *name, *target, *summary, *usage, *example; } aliases[3] = {
       {"s_volume", "volume", "Alias of volume. Changes the same effects gain and audio menu preference.", "s_volume <0..1>", "s_volume 0.7"},
       {"s_musicvolume", "bgmvolume", "Alias of bgmvolume. Changes the same music gain and audio menu preference.", "s_musicvolume <0..1>", "s_musicvolume 0.5"},
       {"ogg_volume", "bgmvolume", "Quake II music volume. Alias of bgmvolume and the shared music gain.", "ogg_volume <0..1>", "ogg_volume 0.5"}};
   for (int i = 0; i < 3; i++) {
     qa_cvar_alias a; memset(&a, 0, sizeof a);
     a.name = aliases[i].name; a.target = aliases[i].target; a.conversion = ident;
-    const char *const *ex = malloc(sizeof(char *)); /* leaked: registry borrows docs for its lifetime */
-    if (ex) { ((const char **)ex)[0] = aliases[i].example; }
-    a.documentation = (qa_command_documentation){aliases[i].summary, aliases[i].usage, ex, 1, NULL, 0};
+    a.documentation = (qa_command_documentation){aliases[i].summary, aliases[i].usage, &aliases[i].example, 1, NULL, 0};
     qa_cvar_registry_register_alias(cvars, a);
   }
   { static const char *const ex[] = {"volume 0.7", "volume 0"};
@@ -158,8 +158,8 @@ void qa_app_register_shared_client_settings(qa_cvar_registry *cvars, qa_audio_ou
     qa_command_documentation doc = {"Music volume shared with the audio menu. Output clamps to 0 through 1.", "bgmvolume <0..1>", ex, 2, NULL, 0};
     qa_cvar_registry_document(cvars, "bgmvolume", doc); }
 }
-void qa_app_apply_audio_output_settings(qa_cvar_registry *cvars, qa_app_audio_output_target audio, qa_app_shared_audio_settings_host host) {
-  qa_audio_output_format desired = host.read_audio_output_cvars(host.ctx, cvars);
+void qa_app_apply_audio_output_settings(qa_cvar_registry *cvars, qa_app_audio_output_target audio) {
+  qa_audio_output_format desired = qa_app_read_audio_output_cvars(cvars);
   qa_audio_output_format current = audio.output_format(audio.ctx);
   if (desired.sample_rate != current.sample_rate || desired.sample_bits != current.sample_bits || desired.channels != current.channels)
     audio.select_output_format(audio.ctx, desired);

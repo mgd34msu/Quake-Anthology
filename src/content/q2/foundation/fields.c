@@ -2,12 +2,14 @@
 #include "qa/content/q2/foundation/fields.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/core/common_parse.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 const qa_vec3 QA_Q2_ZERO = {0, 0, 0};
 
@@ -68,35 +70,50 @@ static char *entity_token(qa_legacy_parse_state *st, double limit, bool *is_eof)
   return qa_parse_q2_token(st, limit);
 }
 
-bool qa_q2_parse_entities(const char *source, qa_q2_edition edition, qa_q2_spawn_fields **out, size_t *out_count) {
+/* TS throws plain Errors for malformed text; startup selection catches them
+ * and marks the map unavailable with the message, so the parse reports them. */
+qa_q2_parse_status qa_q2_parse_entities_checked(const char *source, qa_q2_edition edition, qa_q2_spawn_fields **out,
+                                                size_t *out_count, char *message, size_t message_size) {
   qa_legacy_parse_state st = {.data = source, .length = strlen(source), .index = 0};
   qa_q2_spawn_fields *list = NULL;
   size_t count = 0, cap = 0;
   double limit = edition == QA_Q2_EDITION_CLASSIC ? 128 : 512;
+  qa_q2_parse_status status = QA_Q2_PARSE_OOM;
+  *out = NULL; *out_count = 0;
+  if (message_size > 0) message[0] = '\0';
   for (;;) {
     bool eof = false;
     char *tok = entity_token(&st, limit, &eof);
     if (eof) break;
-    if (!tok) goto oom;
-    if (strcmp(tok, "{") != 0) { free(tok); qa_range_error("Q2 entity %zu: expected opening brace", count); }
+    if (!tok) goto fail;
+    if (strcmp(tok, "{") != 0) {
+      free(tok);
+      if (message_size > 0) snprintf(message, message_size, "Q2 entity %zu: expected opening brace", count);
+      status = QA_Q2_PARSE_MALFORMED; goto fail;
+    }
     free(tok);
     qa_q2_spawn_fields fields = {.ordinal = (double)count, .classname = ""};
     for (;;) {
       bool keof = false;
       char *key = entity_token(&st, limit, &keof);
-      if (keof) { qa_q2_spawn_fields_free(&fields); qa_range_error("Q2 entity %zu: EOF without closing brace", count); }
-      if (!key) { qa_q2_spawn_fields_free(&fields); goto oom_list; }
+      if (keof) {
+        qa_q2_spawn_fields_free(&fields);
+        if (message_size > 0) snprintf(message, message_size, "Q2 entity %zu: EOF without closing brace", count);
+        status = QA_Q2_PARSE_MALFORMED; goto fail;
+      }
+      if (!key) { qa_q2_spawn_fields_free(&fields); goto fail; }
       if (strcmp(key, "}") == 0) { free(key); break; }
       bool veof = false;
       char *val = entity_token(&st, limit, &veof);
       if (veof || (val && strcmp(val, "}") == 0)) {
-        free(val); qa_q2_spawn_fields_free(&fields);
-        qa_range_error("Q2 entity %zu: missing value for %s", count, key);
+        if (message_size > 0) snprintf(message, message_size, "Q2 entity %zu: missing value for %s", count, key);
+        free(val); free(key); qa_q2_spawn_fields_free(&fields);
+        status = QA_Q2_PARSE_MALFORMED; goto fail;
       }
-      if (!val) { free(key); qa_q2_spawn_fields_free(&fields); goto oom_list; }
+      if (!val) { free(key); qa_q2_spawn_fields_free(&fields); goto fail; }
       char *unesc = entity_string(val);
       free(val);
-      if (!unesc || !qa_q2_spawn_set(&fields, key, unesc)) { free(key); free(unesc); qa_q2_spawn_fields_free(&fields); goto oom_list; }
+      if (!unesc || !qa_q2_spawn_set(&fields, key, unesc)) { free(key); free(unesc); qa_q2_spawn_fields_free(&fields); goto fail; }
       free(key); free(unesc);
     }
     const char *cn = qa_q2_spawn_get(&fields, "classname");
@@ -104,18 +121,24 @@ bool qa_q2_parse_entities(const char *source, qa_q2_edition edition, qa_q2_spawn
     if (count == cap) {
       size_t ncap = cap ? cap * 2 : 16;
       qa_q2_spawn_fields *next = realloc(list, ncap * sizeof *next);
-      if (!next) { qa_q2_spawn_fields_free(&fields); goto oom_list; }
+      if (!next) { qa_q2_spawn_fields_free(&fields); goto fail; }
       list = next; cap = ncap;
     }
     list[count++] = fields;
   }
   *out = list; *out_count = count;
-  return true;
-oom_list:
+  return QA_Q2_PARSE_OK;
+fail:
   for (size_t i = 0; i < count; i++) qa_q2_spawn_fields_free(&list[i]);
   free(list);
-oom:
-  return false;
+  return status;
+}
+
+bool qa_q2_parse_entities(const char *source, qa_q2_edition edition, qa_q2_spawn_fields **out, size_t *out_count) {
+  char message[512];
+  qa_q2_parse_status status = qa_q2_parse_entities_checked(source, edition, out, out_count, message, sizeof message);
+  if (status == QA_Q2_PARSE_MALFORMED) qa_range_error("%s", message);
+  return status == QA_Q2_PARSE_OK;
 }
 
 void qa_q2_entities_free(qa_q2_spawn_fields *e, size_t n) {
@@ -125,7 +148,7 @@ void qa_q2_entities_free(qa_q2_spawn_fields *e, size_t n) {
 
 bool qa_q2_inhibit_spawn(const qa_q2_spawn_fields *f, qa_q2_game_options o) {
   if (strcmp(f->classname, "worldspawn") == 0) return false;
-  int64_t flags = (int64_t)qa_q2_integer_field(f, "spawnflags", 0);
+  int32_t flags = qa_js_to_int32(qa_q2_integer_field(f, "spawnflags", 0)); /* nativeAtoi: int32 already */
   if (o.mode == QA_Q2_MODE_DEATHMATCH) return (flags & 2048) != 0;
   if (o.edition == QA_Q2_EDITION_RERELEASE) {
     if (o.mode == QA_Q2_MODE_COOP && (flags & 4096) != 0) return true;

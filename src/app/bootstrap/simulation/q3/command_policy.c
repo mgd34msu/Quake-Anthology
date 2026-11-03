@@ -1,6 +1,7 @@
 /* Port of src/app/bootstrap/simulation/q3/command-policy.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/q3/command_policy.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef struct policy { qa_q3_base_user_command before, after; bool frozen; } policy;
 static double forward_axis(policy p, double value, double changed) {
   return p.frozen ? 0 : p.before.forwardmove == p.after.forwardmove ? value : changed;
@@ -19,8 +20,9 @@ static qa_vec3 angles(policy p, qa_vec3 value, qa_vec3 changed) {
 }
 static double buttons(policy p, double value, double changed, long long jump_mask) {
   if (p.frozen) return 0;
-  long long mask = 1 | (p.before.upmove == p.after.upmove ? 0 : jump_mask);
-  return (double)((((long long)value) & ~mask) | (((long long)changed) & mask));
+  /* JS (value & ~mask) | (changed & mask): every operand through ToInt32. */
+  int32_t mask = 1 | (p.before.upmove == p.after.upmove ? 0 : qa_js_to_int32((double)jump_mask));
+  return (double)((qa_js_to_int32(value) & ~mask) | (qa_js_to_int32(changed) & mask));
 }
 qa_actor_command qa_app_apply_q3_command_policy(qa_actor_command pending, qa_q3_base_user_command before,
     qa_q3_base_user_command after, qa_user_command converted, bool frozen,

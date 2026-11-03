@@ -62,8 +62,11 @@ qa_app_qw_download_request_result qa_app_qw_download_receiver_retry(qa_app_qw_do
   char *path = receiver->paused_path;
   qa_app_qw_download_category category = receiver->paused_category;
   receiver->has_paused = false; receiver->paused_path = NULL; receiver->resume_requested = false;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, path);
   qa_app_qw_download_request_result result =
       qa_app_qw_download_receiver_request(receiver, path, category);
+  qa_cleanup_pop(&guard);
   free(path);
   return result;
 }
@@ -99,7 +102,7 @@ static void print_message(qa_app_qw_download_receiver *r, const char *prefix,
 }
 qa_app_qw_download_request_result qa_app_qw_download_receiver_request(
     qa_app_qw_download_receiver *receiver, const char *path, qa_app_qw_download_category category) {
-  if (receiver->transfer) qa_range_error("QuakeWorld download already active");
+  if (receiver->transfer) qa_raise("Error", 0, 0, "QuakeWorld download already active");
   if (category == QA_APP_QW_DL_MODEL && path[0] == '*') return QA_APP_QW_DL_SKIPPED;
   size_t part_count = 0;
   char **parts = qa_download_path(path, &part_count);
@@ -110,7 +113,7 @@ qa_app_qw_download_request_result qa_app_qw_download_receiver_request(
       || (skin && strncmp(path, "skins/", 6) != 0)
       || (sound && strncmp(path, "sound/", 6) != 0)
       || (model && (strncmp(path, "skins/", 6) == 0 || strncmp(path, "sound/", 6) == 0)))
-    qa_range_error("Invalid QuakeWorld download path or category");
+    qa_raise("Error", 0, 0, "Invalid QuakeWorld download path or category");
   double generation = receiver->generation;
   if (receiver->options.exists(receiver->options.ctx, path, category))
     return generation == receiver->generation ? QA_APP_QW_DL_AVAILABLE : QA_APP_QW_DL_SKIPPED;
@@ -144,6 +147,34 @@ qa_app_qw_download_request_result qa_app_qw_download_receiver_request(
   free(command);
   return QA_APP_QW_DL_WAITING;
 }
+typedef struct sink_scope {
+  qa_app_qw_download_receiver *receiver; transfer *t; const uint8_t *bytes; size_t length; double percent;
+  qa_app_qw_download_receive_result outcome;
+} sink_scope;
+static void sink_body(void *ctx) {
+  sink_scope *scope = ctx;
+  qa_app_qw_download_receiver *receiver = scope->receiver;
+  transfer *t = scope->t;
+  if (!t->has_sink) {
+    qa_download_expectation expected = {true, NULL, 0,
+        receiver->options.has_maximum_bytes ? receiver->options.maximum_bytes : 64 * 1024 * 1024};
+    if (!qa_download_sink_create(&t->sink, t->root, t->path, expected)) qa_raise("Error", 0, 0, "out of memory");
+    t->has_sink = true;
+  }
+  qa_download_sink_append(&t->sink, scope->bytes, scope->length);
+  t->percent = scope->percent;
+  if (scope->percent != 100) {
+    receiver->waiting_block = true;
+    receiver->options.send_command(receiver->options.ctx, "nextdl");
+    scope->outcome = QA_APP_QW_DL_RX_WAITING;
+    return;
+  }
+  char *digest = qa_download_sink_finish(&t->sink);
+  free(digest);
+  qa_download_sink_destroy(&t->sink); t->has_sink = false;
+  free(t->path); free(t); receiver->transfer = NULL;
+  scope->outcome = QA_APP_QW_DL_RX_COMPLETE;
+}
 qa_app_qw_download_receive_result qa_app_qw_download_receiver_receive(
     qa_app_qw_download_receiver *receiver, qa_app_qw_download_result result) {
   if (receiver->options.demo_playback(receiver->options.ctx)) {
@@ -160,7 +191,7 @@ qa_app_qw_download_receive_result qa_app_qw_download_receiver_receive(
     return QA_APP_QW_DL_RX_WAITING;
   }
   transfer *t = receiver->transfer;
-  if (!t) qa_range_error("Unsolicited QuakeWorld download");
+  if (!t) qa_raise("Error", 0, 0, "Unsolicited QuakeWorld download");
   if (result.missing) {
     print_message(receiver, "QuakeWorld file not found: ", t->path, "\n");
     qa_app_qw_download_receiver_close(receiver);
@@ -169,7 +200,7 @@ qa_app_qw_download_receive_result qa_app_qw_download_receiver_receive(
   if (result.percent != trunc(result.percent) || result.percent < t->percent
       || result.percent > 100 || result.length > 768) {
     qa_app_qw_download_receiver_close(receiver);
-    qa_range_error("Invalid QuakeWorld download block");
+    qa_raise("Error", 0, 0, "Invalid QuakeWorld download block");
   }
   if (receiver->options.permission) {
     qa_app_client_download_category permission_category =
@@ -182,28 +213,19 @@ qa_app_qw_download_receive_result qa_app_qw_download_receiver_receive(
       return QA_APP_QW_DL_RX_MISSING;
     }
   }
-  /* TS wraps sink failures: print + 'missing'. The landed sink aborts
-   * on write failure, so only create() failure reaches that path. */
-  if (!t->has_sink) {
-    qa_download_expectation expected = {true, NULL, 0,
-        receiver->options.has_maximum_bytes ? receiver->options.maximum_bytes : 64 * 1024 * 1024};
-    if (!qa_download_sink_create(&t->sink, t->root, t->path, expected)) {
-      print_message(receiver, "QuakeWorld download failed for ", t->path, ": out of memory\n");
-      qa_app_qw_download_receiver_close(receiver);
-      return QA_APP_QW_DL_RX_MISSING;
-    }
-    t->has_sink = true;
+  /* TS: try { sink ??= create; append; ...; finish } catch { close(); print; return 'missing' } */
+  sink_scope scope = { receiver, t, result.bytes, result.length, result.percent, QA_APP_QW_DL_RX_COMPLETE };
+  qa_caught_error caught;
+  if (!qa_try(sink_body, &scope, &caught)) {
+    char *path = copy_text(t->path);
+    qa_app_qw_download_receiver_close(receiver);
+    size_t total = strlen(path) + strlen(caught.message) + 4;
+    char *detail = malloc(total);
+    if (detail) snprintf(detail, total, "%s: %s", path, caught.message);
+    print_message(receiver, "QuakeWorld download failed for ", detail ? detail : path, "\n");
+    free(detail); free(path);
+    return QA_APP_QW_DL_RX_MISSING;
   }
-  qa_download_sink_append(&t->sink, result.bytes, result.length);
-  t->percent = result.percent;
-  if (result.percent != 100) {
-    receiver->waiting_block = true;
-    receiver->options.send_command(receiver->options.ctx, "nextdl");
-    return QA_APP_QW_DL_RX_WAITING;
-  }
-  char *digest = qa_download_sink_finish(&t->sink);
-  free(digest);
-  qa_download_sink_destroy(&t->sink); t->has_sink = false;
-  free(t->path); free(t); receiver->transfer = NULL;
-  return QA_APP_QW_DL_RX_COMPLETE;
+  return scope.outcome;
 }
+

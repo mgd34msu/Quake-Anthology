@@ -1,5 +1,6 @@
 /* Port of src/world/session/mod-client-outputs.ts. GPL-2.0-or-later. */
 #include "qa/world/session/mod_client_outputs.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -8,16 +9,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static void *xrealloc(void *ptr, size_t size) {
   void *next = realloc(ptr, size != 0 ? size : 1);
@@ -34,6 +36,8 @@ struct output_value {
 };
 struct channel_entry {
   bool occupied;
+  /* TS Entry identity: each claim makes a new entry object. */
+  uint64_t generation;
   qa_provider_id owner;
   struct output_value *values;
   size_t count;
@@ -43,6 +47,11 @@ struct qa_mod_client_outputs {
   qa_mod_client_live_fn live;
   void *live_ctx;
   struct channel_entry channels[4];
+  uint64_t next_generation;
+  /* Every lease claimed, freed at destroy: a holder may call a closed
+   * lease (TS: publish throws retired, close is a no-op). */
+  struct lease_state **leases;
+  size_t lease_count, lease_capacity;
   /* Scratch backing read() pointers until the next read. */
   qa_vec3 scratch_view;
   qa_bounds scratch_body;
@@ -51,9 +60,15 @@ struct qa_mod_client_outputs {
 struct lease_state {
   qa_mod_client_outputs *outputs;
   qa_mod_client_output_channel *channels;
+  uint64_t *generations; /* the entry this lease created, per channel */
   size_t channel_count;
   bool active;
 };
+/* TS this.owners.get(channel) === entry */
+static bool lease_owns(const struct lease_state *lease, size_t i) {
+  const struct channel_entry *entry = &lease->outputs->channels[lease->channels[i]];
+  return entry->occupied && entry->generation == lease->generations[i];
+}
 
 static qa_vec3 checked_vector(qa_vec3 value) {
   if (!isfinite(value.x) || !isfinite(value.y) || !isfinite(value.z))
@@ -118,7 +133,7 @@ static const qa_mod_client_output *entry_get(
 static void lease_current(const struct lease_state *lease) {
   if (!lease->active) qa_errorf("Component client output owner is retired");
   for (size_t i = 0; i < lease->channel_count; i++)
-    if (!lease->outputs->channels[lease->channels[i]].occupied)
+    if (!lease_owns(lease, i))
       qa_errorf("Component client output owner is retired");
 }
 static void lease_publish(void *ctx, qa_actor_id actor,
@@ -148,22 +163,24 @@ static void lease_publish(void *ctx, qa_actor_id actor,
 }
 static void lease_release(void *ctx, qa_actor_id actor) {
   struct lease_state *lease = ctx;
+  /* A retired lease's entry is detached in TS: deleting from it changes
+   * nothing a reader can see. */
   for (size_t i = 0; i < lease->channel_count; i++)
-    entry_delete(&lease->outputs->channels[lease->channels[i]], actor);
+    if (lease_owns(lease, i))
+      entry_delete(&lease->outputs->channels[lease->channels[i]], actor);
 }
 static void lease_close(void *ctx) {
   struct lease_state *lease = ctx;
   if (!lease->active) return;
   lease->active = false;
   for (size_t i = 0; i < lease->channel_count; i++) {
+    if (!lease_owns(lease, i)) continue;
     struct channel_entry *entry =
         &lease->outputs->channels[lease->channels[i]];
     entry->count = 0;
     entry->occupied = false;
     entry->owner = NULL;
   }
-  free(lease->channels);
-  free(lease);
 }
 
 qa_mod_client_outputs *qa_mod_client_outputs_create(
@@ -178,6 +195,12 @@ void qa_mod_client_outputs_destroy(qa_mod_client_outputs *outputs) {
   if (outputs == NULL) return;
   qa_mod_client_outputs_close(outputs);
   for (size_t i = 0; i < 4; i++) free(outputs->channels[i].values);
+  for (size_t i = 0; i < outputs->lease_count; i++) {
+    free(outputs->leases[i]->channels);
+    free(outputs->leases[i]->generations);
+    free(outputs->leases[i]);
+  }
+  free(outputs->leases);
   free(outputs);
 }
 
@@ -201,18 +224,27 @@ qa_mod_client_output_lease qa_mod_client_outputs_claim(
   lease->outputs = outputs;
   lease->channel_count = channel_count;
   lease->channels = NULL;
+  lease->generations = NULL;
   lease->active = true;
   if (channel_count != 0) {
     lease->channels = malloc(channel_count * sizeof *lease->channels);
-    if (lease->channels == NULL) abort();
+    lease->generations = malloc(channel_count * sizeof *lease->generations);
+    if (lease->channels == NULL || lease->generations == NULL) abort();
     memcpy(lease->channels, channels,
            channel_count * sizeof *lease->channels);
   }
   for (size_t i = 0; i < channel_count; i++) {
     outputs->channels[channels[i]].occupied = true;
+    outputs->channels[channels[i]].generation = ++outputs->next_generation;
     outputs->channels[channels[i]].owner = owner;
     outputs->channels[channels[i]].count = 0;
+    lease->generations[i] = outputs->channels[channels[i]].generation;
   }
+  if (outputs->lease_count == outputs->lease_capacity) {
+    outputs->lease_capacity = outputs->lease_capacity != 0 ? outputs->lease_capacity * 2 : 4;
+    outputs->leases = xrealloc(outputs->leases, outputs->lease_capacity * sizeof *outputs->leases);
+  }
+  outputs->leases[outputs->lease_count++] = lease;
   qa_mod_client_output_lease result = {lease, lease_publish, lease_release,
                                        lease_close};
   return result;
@@ -298,26 +330,29 @@ void qa_read_mod_client_outputs(
       qa_errorf(
           "Client output requires a finite source value, integral when "
           "masked");
+    /* (raw & mask) >>> 0 */
     double value =
         !declaration->has_mask
             ? raw
-            : (double)((uint32_t)(int64_t)raw & (uint32_t)declaration->mask);
+            : (double)(qa_js_to_uint32(raw) & qa_js_to_uint32(declaration->mask));
     if (declaration->kind == QA_MOD_CLIENT_OUTPUT_MOVEMENT_MODE) {
       bool found = false;
       for (size_t j = 0; j < declaration->mode_value_count; j++)
         if (declaration->mode_values[j].value == value) {
           out[i].mode = declaration->mode_values[j].mode;
           found = true;
+          break; /* Array.find: the first match */
         }
-      if (!found) qa_errorf("Undeclared source movement mode %g", value);
+      if (!found) qa_errorf("Undeclared source movement mode %s", QA_JS_NUMBER(value));
     } else {
       bool found = false;
       for (size_t j = 0; j < declaration->stance_value_count; j++)
         if (declaration->stance_values[j].value == value) {
           out[i].stance = declaration->stance_values[j].crouched;
           found = true;
+          break; /* Array.find: the first match */
         }
-      if (!found) qa_errorf("Undeclared source client stance %g", value);
+      if (!found) qa_errorf("Undeclared source client stance %s", QA_JS_NUMBER(value));
     }
   }
 }
@@ -446,6 +481,8 @@ static qa_vec3 adapt_vector(void *ctx, const void *field) {
                                   field);
 }
 
+static void free_values(void *arg) { free(*(qa_mod_client_output **)arg); }
+static void free_channels(void *arg) { free(*(qa_mod_client_output_channel **)arg); }
 void qa_source_mod_client_outputs_publish(
     qa_source_mod_client_outputs *outputs, qa_actor_id actor) {
   if (outputs->count == 0) return;
@@ -453,6 +490,8 @@ void qa_source_mod_client_outputs_publish(
       malloc(outputs->count * sizeof *values);
   if (values == NULL) abort();
   struct read_adapter adapter = {outputs, actor};
+  qa_cleanup node; /* a throwing read, claim or publish drops the values */
+  qa_cleanup_push(&node, free_values, &values);
   qa_read_mod_client_outputs(outputs->declarations, outputs->count,
                              adapt_scalar, adapt_vector, &adapter, values);
   if (!outputs->has_lease) {
@@ -463,12 +502,16 @@ void qa_source_mod_client_outputs_publish(
     if (channels == NULL) abort();
     for (size_t i = 0; i < outputs->count; i++)
       channels[i] = outputs->declarations[i].kind;
+    qa_cleanup channels_node;
+    qa_cleanup_push(&channels_node, free_channels, &channels);
     outputs->lease = outputs->claim(outputs->claim_ctx, outputs->owner,
                                     channels, outputs->count);
+    qa_cleanup_pop(&channels_node);
     free(channels);
     outputs->has_lease = true;
   }
   outputs->lease.publish(outputs->lease.ctx, actor, values, outputs->count);
+  qa_cleanup_pop(&node);
   free(values);
   if (!qa_source_mod_client_outputs_has(outputs, actor)) {
     if (outputs->actor_count == outputs->actor_capacity) {

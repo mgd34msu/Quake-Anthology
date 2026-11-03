@@ -11,6 +11,8 @@
 #include "qa/content/q2/foundation/monsters/muzzle.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_gunner.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
+#include "qa/foundation/js.h"
 
 typedef struct gunner_bundle {
   qa_q2m_monsters *monsters;
@@ -34,8 +36,8 @@ static bool grenade_check(qa_q2m_context *c) {
 static void grenade(qa_q2m_context *c) {
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   const qa_q2mpm_rogue_gunner_frames *f = &qa_q2mpm_rogue_gunner_frames_value;
   bool blind = state->manual_steering;
@@ -52,11 +54,11 @@ static void grenade(qa_q2m_context *c) {
   double distance = qa_hypot3(aim);
   if (distance > 512 && aim.z < 64 && aim.z > -64) aim.z += distance - 512;
   double pitch = qa_normalize3_double_hypot(aim).z;
-  pitch = fmax(-0.5, fmin(0.4, pitch));
+  pitch = qa_js_max(-0.5, qa_js_min(0.4, pitch));
   qa_vec3 direction = qa_add3_double(qa_add3_double(axes.forward, qa_scale3_double(axes.right, 0.02 + index * 0.03)),
                                      qa_scale3_double(axes.up, pitch));
   (void)c->weapons.fire_grenade(c->weapons.ctx, entity, game, start, direction, 50, 600, 2.5, 90, false, false, true, NULL);
-  qa_q2mpm_monster_flash(c, flash, start, direction);
+  qa_q2rm_monster_flash(c, flash, start, direction);
 }
 static void duck_down_grenade(qa_q2m_context *c) {
   c->state->ducked = true;
@@ -96,7 +98,7 @@ static void jump_now(qa_q2m_context *c, bool up) {
   qa_body_state body = q2mpm_body(c->game, c->entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   c->entity->timestamp = q2mpm_now(c->game);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true;
   change.velocity = qa_add3_double(body.velocity, qa_add3_double(qa_scale3_double(axes.forward, up ? 150 : 100),
@@ -107,7 +109,7 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
   gunner_bundle *bundle = ctx;
   qa_q2m_finish_dodge(c);
   qa_q2m_state *state = c->state;
-  qa_q2f_game *game = c->game;
+  qa_q2_game_services *game = c->game;
   if (state->attack_state == QA_Q2M_ATTACK_BLIND) {
     double chance = state->blind_fire_delay < 1 ? 1 : state->blind_fire_delay < 7.5 ? 0.4 : 0.1;
     double random = q2mpm_rnd(game);
@@ -117,7 +119,9 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
     state->manual_steering = true;
     if (grenade_check(c)) {
       q2mpm_set_move(c, "gunner_move_attack_grenade");
-      state->attack_finished = q2mpm_now(game) + 2 * q2mpm_rnd(game);
+      double left = q2mpm_now(game);
+      double right = 2 * q2mpm_rnd(game);
+      state->attack_finished = left + right;
     }
     state->manual_steering = false;
     return;
@@ -131,8 +135,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
   qa_q2bm_damaged_skin(c);
   qa_q2m_finish_dodge(c);
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (q2mpm_body(game, entity).ground == NULL || q2mpm_now(game) < state->pain_time) return;
   state->pain_time = q2mpm_now(game) + 3;
@@ -155,8 +159,8 @@ static bool duck_field_fn(void *ctx, qa_q2m_context *c, double eta) { (void)ctx;
 static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   gunner_bundle *bundle = ctx;
   if (qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)
-      || qa_q2mpm_blocked_check_platform(c, distance)) return true;
-  if (qa_q2mpm_blocked_check_jump_default(c, distance, 192, 40) == QA_Q2MPM_JUMP_NONE) return false;
+      || qa_q2rm_blocked_check_platform(c, distance)) return true;
+  if (qa_q2rm_blocked_check_jump_default(c, distance, 192, 40) == QA_Q2RM_JUMP_NONE) return false;
   qa_body_state enemy;
   if (qa_q2m_enemy_body(c, &enemy)) {
     qa_q2m_finish_dodge(c);
@@ -175,7 +179,7 @@ static void fire_fn(void *ctx, qa_q2m_context *c) {
   qa_q2bm_shot_result aim;
   if (!qa_q2bm_shot(c, flash, -0.2, &aim)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, 3, 4, 300, 500, 0);
-  qa_q2mpm_monster_flash(c, flash, aim.start, aim.direction);
+  qa_q2rm_monster_flash(c, flash, aim.start, aim.direction);
 }
 static void blind_check_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -189,12 +193,12 @@ static void jump2_fn(void *ctx, qa_q2m_context *c) { (void)ctx; jump_now(c, true
 static void jump_wait_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   c->state->next_frame = c->entity->frame
-      + (q2mpm_body(c->game, c->entity).ground != NULL || qa_q2mpm_monster_jump_finished(c) ? 1 : 0);
+      + (q2mpm_body(c->game, c->entity).ground != NULL || qa_q2rm_monster_jump_finished(c) ? 1 : 0);
 }
-qa_q2m_definition qa_q2mpm_create_rogue_gunner_definition(qa_q2m_monsters *monsters,
+qa_q2m_definition qa_q2mpm_create_rogue_gunner_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters,
                                                           qa_q2mpm_monster_state *source) {
-  gunner_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue gunner definition");
+  gunner_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue gunner definition");
   bundle->monsters = monsters;
   bundle->source = source;
   qa_q2m_definition definition = qa_q2bm_gunner_definition;
@@ -224,7 +228,7 @@ qa_q2m_definition qa_q2mpm_create_rogue_gunner_definition(qa_q2m_monsters *monst
     {"gunner_jump2_now", {NULL, jump2_fn}},
     {"gunner_jump_wait_land", {NULL, jump_wait_fn}},
   };
-  definition.callbacks = qa_q2mpm_merge_callbacks(definition.callbacks, definition.callback_count,
+  definition.callbacks = qa_q2mpm_merge_callbacks(arena, definition.callbacks, definition.callback_count,
                                                   extra, sizeof extra / sizeof extra[0], &definition.callback_count);
   return definition;
 }

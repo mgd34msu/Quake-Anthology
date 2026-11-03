@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js_case.h"
 void qa_q3_archive_checksums(const qa_archive_handle *archive, int64_t checksum_feed, int64_t *checksum_out, int64_t *pure_checksum_out) {
   if (archive->format == QA_ARCHIVE_FORMAT_PAK)
     qa_range_error("Q3 pak checksums require a ZIP/PK3 central directory");
@@ -86,8 +87,21 @@ void qa_q3_check_download_name(const char *name) {
     }
   }
   if (bad) {
-    /* TS message JSON.stringify(name): quoted with escapes; approximated by raw name in quotes. */
-    qa_range_error("Unsafe package download name: \"%s\"", name);
+    /* TS message: JSON.stringify(name) (quote, backslash and control escapes). */
+    char quoted[4096 * 6 + 3];
+    size_t used = 0;
+    quoted[used++] = '"';
+    for (size_t i = 0; i < len && used + 8 < sizeof quoted; i++) {
+      unsigned char c = (unsigned char)name[i];
+      const char *escape = c == '"' ? "\\\"" : c == '\\' ? "\\\\" : c == '\b' ? "\\b" : c == '\f' ? "\\f"
+        : c == '\n' ? "\\n" : c == '\r' ? "\\r" : c == '\t' ? "\\t" : NULL;
+      if (escape) { memcpy(quoted + used, escape, 2); used += 2; }
+      else if (c < 0x20) used += (size_t)snprintf(quoted + used, sizeof quoted - used, "\\u%04x", c);
+      else quoted[used++] = (char)c;
+    }
+    quoted[used++] = '"';
+    quoted[used] = '\0';
+    qa_range_error("Unsafe package download name: %s", quoted);
   }
 }
 bool qa_q3_stock_package(const char *name, qa_q3_product *out) {
@@ -97,7 +111,7 @@ bool qa_q3_stock_package(const char *name, qa_q3_product *out) {
   for (size_t i = 0; i < len; i++) {
     char c = name[i];
     if (c == '\\' || c == ':') c = '/';
-    norm[i] = (char)tolower((unsigned char)c);
+    norm[i] = (char)qa_js_latin1_lower((unsigned char)c); /* TS toLowerCase, Latin-1 text */
   }
   norm[len] = 0;
   struct { const char *prefix; qa_q3_product product; } cases[2] = {
@@ -121,6 +135,9 @@ char *qa_q3_compare_packages(const qa_q3_server_pak *referenced, size_t referenc
   if (capacity < 1) qa_range_error("Package comparison needs a nonempty buffer");
   char *result = calloc((size_t)capacity, 1);
   if (!result) return NULL;
+  /* checkQ3DownloadName raises on a server-supplied name; free the partial result then. */
+  qa_cleanup result_guard;
+  qa_cleanup_push(&result_guard, free, result);
   size_t result_len = 0;
   for (size_t i = 0; i < referenced_count; i++) {
     const qa_q3_server_pak *pack = &referenced[i];
@@ -132,10 +149,13 @@ char *qa_q3_compare_packages(const qa_q3_server_pak *referenced, size_t referenc
     if (qa_q3_stock_package(pack->name, &prod)) continue;
     size_t rn = strlen(pack->name) + 5;
     char *remote = malloc(rn);
-    if (!remote) { free(result); return NULL; }
+    if (!remote) { qa_cleanup_pop(&result_guard); free(result); return NULL; }
     snprintf(remote, rn, "%s.pk3", pack->name);
+    qa_cleanup remote_guard;
+    qa_cleanup_push(&remote_guard, free, remote);
     qa_q3_check_download_name(remote);
     bool present = exists(exists_ctx, remote);
+    qa_cleanup_pop(&remote_guard);
     #define APPEND(txt) do { \
       const char *t_ = (txt); \
       int64_t room = capacity - 1 - (int64_t)result_len; \
@@ -144,13 +164,13 @@ char *qa_q3_compare_packages(const qa_q3_server_pak *referenced, size_t referenc
     } while (0)
     if (download) {
       char *at = malloc(rn + 2);
-      if (!at) { free(remote); free(result); return NULL; }
+      if (!at) { qa_cleanup_pop(&result_guard); free(remote); free(result); return NULL; }
       snprintf(at, rn + 2, "@%s@", remote);
       APPEND(at); free(at);
       if (present) {
         size_t an = strlen(pack->name) + 16;
         char *alt = malloc(an);
-        if (!alt) { free(remote); free(result); return NULL; }
+        if (!alt) { qa_cleanup_pop(&result_guard); free(remote); free(result); return NULL; }
         snprintf(alt, an, "%s.%08x.pk3", pack->name, (uint32_t)pack->checksum);
         APPEND(alt); free(alt);
       } else APPEND(remote);
@@ -162,5 +182,6 @@ char *qa_q3_compare_packages(const qa_q3_server_pak *referenced, size_t referenc
     #undef APPEND
     free(remote);
   }
+  qa_cleanup_pop(&result_guard);
   return result;
 }

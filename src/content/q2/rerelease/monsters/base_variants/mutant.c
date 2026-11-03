@@ -13,8 +13,8 @@
 #include "../rrm_internal.h"
 
 static void hit(qa_q2m_context *c, bool right) {
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_bounds bounds = q2rm_body(game, entity).bounds;
   qa_vec3 aim = {80, right ? bounds.max.x : bounds.min.x, 8};
   bool connected = c->weapons.fire_hit(c->weapons.ctx, entity, game, aim,
@@ -27,18 +27,18 @@ static void jump_impl(qa_q2m_context *c, bool up) {
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   qa_vec3 velocity = qa_add3_double(body.velocity,
       qa_add3_double(qa_scale3_double(axes.forward, up ? 200 : 100), qa_scale3_double(axes.up, up ? 450 : 300)));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = velocity;
   q2rm_move_body(c->game, c->entity, change, false, false);
 }
-static void touch_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game, qa_touch_contact contact) {
+static void touch_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_touch_contact contact) {
   qa_q2m_monsters *monsters = ctx;
   qa_q2m_context *context = qa_q2m_monsters_context(monsters, entity->actor.id);
   if (!context) return;
   if (qa_q2m_health(game, &entity->actor.id) <= 0) { entity->touch.fn = NULL; entity->touch.ctx = NULL; return; }
   qa_body_state body = q2rm_body(game, entity);
-  qa_combat_state_result combat = game->host->combat.read(game->host->combat.ctx, contact.other);
+  qa_combat_state_result combat = qa_gameplay_authority_read(game->host->combat, contact.other);
   if (entity->style == 1 && combat.has_value && combat.value.can_take_damage && qa_hypot3(body.velocity) > 30) {
     qa_vec3 normal = qa_normalize3_double_hypot(body.velocity);
     qa_vec3 point = qa_add3_double(body.origin, qa_scale3_double(normal, body.bounds.max.x));
@@ -66,8 +66,8 @@ static void slide_left_fn(void *ctx, qa_q2m_context *c, double distance) {
 static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_state *state = c->state;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   if (!qa_q2bm_alive_enemy(c)) return false;
   if (qa_q2m_target_distance(c) <= 80 && state->melee_time <= q2rm_now(game)) {
     state->attack_state = QA_Q2M_ATTACK_MELEE;
@@ -87,8 +87,8 @@ static bool check_attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time) return;
@@ -100,8 +100,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -154,8 +154,8 @@ static void check_refire_fn(void *ctx, qa_q2m_context *c) {
     c->state->next_frame = qa_q2rm_mutant_frames_value.attack09;
 }
 static void takeoff_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   qa_body_state body = q2rm_body(game, entity);
   qa_vec3 forward = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE).forward;
@@ -164,11 +164,11 @@ static void takeoff_fn(void *ctx, qa_q2m_context *c) {
   origin.z += 1;
   qa_vec3 velocity = qa_scale3_double(forward, 425);
   velocity.z = 160;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_origin = true; change.origin = origin;
   change.has_velocity = true; change.velocity = velocity;
-  change.has_ground = true; change.ground = NULL;
+  change.has_ground = true; change.ground_null = true;
   q2rm_move_body(game, entity, change, false, false);
   state->ducked = true;
   state->attack_finished = q2rm_now(game) + 3;
@@ -181,7 +181,9 @@ static void check_landing_fn(void *ctx, qa_q2m_context *c) {
   (void)qa_q2rm_monster_jump_finished(c);
   if (q2rm_body(c->game, c->entity).ground) {
     q2rm_snd(c, "mutant/thud1.wav", 1);
-    c->state->attack_finished = q2rm_now(c->game) + 0.5 + q2rm_rnd(c->game);
+    double left = q2rm_now(c->game) + 0.5;
+    double right = q2rm_rnd(c->game);
+    c->state->attack_finished = left + right;
     if (qa_q2m_target_distance(c) <= 160) c->melee(c->impl_ctx, c);
     return;
   }
@@ -200,7 +202,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -209,7 +211,7 @@ static void monster_dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   qa_q2m_corpse(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -239,7 +241,7 @@ void qa_q2rm_create_rerelease_mutant_definition(qa_q2rm_mutant_definition *out, 
     while (j < count && strcmp(out->callbacks[j].name, extra[i].name) != 0) j++;
     if (j < count) out->callbacks[j] = extra[i];
     else {
-      if (count >= 24) qa_q2f_error("Rerelease mutant callback table overflow");
+      if (count >= 24) qa_raise("Error", 0, 0, "Rerelease mutant callback table overflow");
       out->callbacks[count++] = extra[i];
     }
   }

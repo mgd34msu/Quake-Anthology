@@ -18,6 +18,7 @@ qa_q2_fog_state qa_q2_rerelease_fog_fields(const qa_q2_spawn_fields *f, bool off
   r.height_fog.end_distance = qa_q2_number_field(f, KEY("heightfog_end_dist"), 0);
   r.height_fog.density = qa_q2_number_field(f, KEY("heightfog_density"), 0);
   r.height_fog.falloff = qa_q2_number_field(f, KEY("heightfog_falloff"), 0);
+  r.height_fog.density_first = true;
 #undef KEY
   return r;
 }
@@ -34,6 +35,7 @@ qa_q2_fog_state qa_q2_interpolate_fog(qa_q2_fog_state off, qa_q2_fog_state on, d
   r.height_fog.end_distance = sc(off.height_fog.end_distance, on.height_fog.end_distance, f);
   r.height_fog.falloff = sc(off.height_fog.falloff, on.height_fog.falloff, f);
   r.height_fog.density = sc(off.height_fog.density, on.height_fog.density, f);
+  r.height_fog.density_first = false;
   return r;
 }
 static bool veq(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }

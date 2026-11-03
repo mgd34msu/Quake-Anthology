@@ -59,6 +59,8 @@ noreturn void qa_compat_qc_program_error(const char *source, const char *format,
 char *qa_compat_qc_byte_string(const uint8_t *bytes, size_t length, int64_t offset);
 int64_t qa_compat_qc_signed_branch(int64_t word);
 /* First-match name lookups (TS *ByName maps); NULL when absent. */
+/* TS functionEnd: the statement index one past the function, the next function's first statement or the end of the program. */
+int64_t qa_compat_qc_program_function_end(const qa_compat_qc_program *p, int64_t first_statement);
 const qa_compat_qc_definition *qa_compat_qc_program_global_named(const qa_compat_qc_program *p, const char *name);
 const qa_compat_qc_definition *qa_compat_qc_program_field_named(const qa_compat_qc_program *p, const char *name);
 const qa_compat_qc_function *qa_compat_qc_program_function_named_map(const qa_compat_qc_program *p, const char *name);

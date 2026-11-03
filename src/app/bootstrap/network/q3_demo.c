@@ -14,7 +14,7 @@ struct qa_app_q3_demo_playback {
 };
 static void assert_current(qa_app_q3_demo_playback *p) {
   if (strcmp(p->state, "closed") == 0)
-    qa_range_error("Q3 demo belongs to a retired source");
+    qa_raise("Error", 0, 0, "Q3 demo belongs to a retired source");
 }
 static void lc_assert(void *ctx) { assert_current(ctx); }
 static void lc_cleared(void *ctx) {
@@ -67,7 +67,7 @@ const char *qa_app_q3_demo_playback_phase(const qa_app_q3_demo_playback *playbac
 }
 static void begin(qa_app_q3_demo_playback *p) {
   assert_current(p);
-  if (p->busy) qa_range_error("Q3 demo message processing is already in progress");
+  if (p->busy) qa_raise("Error", 0, 0, "Q3 demo message processing is already in progress");
   p->busy = true;
 }
 static const qa_q3_demo_result *read_one(qa_app_q3_demo_playback *p, double real_time) {
@@ -87,23 +87,51 @@ static const qa_q3_demo_result *read_one(qa_app_q3_demo_playback *p, double real
   }
   return NULL;
 }
-const qa_q3_demo_result *qa_app_q3_demo_playback_prime(
-    qa_app_q3_demo_playback *playback, double real_time) {
-  begin(playback);
+typedef struct prime_scope { qa_app_q3_demo_playback *p; double real_time; const qa_q3_demo_result *result; } prime_scope;
+static void prime_body(void *ctx) {
+  prime_scope *scope = ctx;
+  qa_app_q3_demo_playback *playback = scope->p;
   const qa_q3_demo_result *result = NULL;
   while (strcmp(playback->state, "loading") == 0) {
-    result = read_one(playback, real_time);
+    result = read_one(playback, scope->real_time);
     if (result) break;
   }
   if (!result && playback->has_end) result = &playback->end;
+  scope->result = result;
+}
+/* TS: begin(); try { ... } finally { busy = false }. */
+const qa_q3_demo_result *qa_app_q3_demo_playback_prime(
+    qa_app_q3_demo_playback *playback, double real_time) {
+  begin(playback);
+  prime_scope scope = { playback, real_time, NULL };
+  qa_caught_error caught;
+  bool ok = qa_try(prime_body, &scope, &caught);
   playback->busy = false;
-  return result;
+  if (!ok) qa_rethrow(&caught);
+  return scope.result;
+}
+typedef struct frame_scope { qa_app_q3_demo_playback *p; double real_time; qa_app_recorded_q3_options options; qa_app_q3_demo_frame frame; } frame_scope;
+static qa_app_q3_demo_frame advance_frame(qa_app_q3_demo_playback *p, double real_time, qa_app_recorded_q3_options options);
+static void frame_body(void *ctx) {
+  frame_scope *scope = ctx;
+  scope->frame = advance_frame(scope->p, scope->real_time, scope->options);
 }
 qa_app_q3_demo_frame qa_app_q3_demo_playback_advance_frame(
     qa_app_q3_demo_playback *p, double real_time, qa_app_recorded_q3_options options) {
+  begin(p);
+  frame_scope scope;
+  memset(&scope, 0, sizeof scope);
+  scope.p = p; scope.real_time = real_time; scope.options = options;
+  qa_caught_error caught;
+  bool ok = qa_try(frame_body, &scope, &caught);
+  p->busy = false;
+  if (!ok) qa_rethrow(&caught);
+  return scope.frame;
+}
+static qa_app_q3_demo_frame advance_frame(
+    qa_app_q3_demo_playback *p, double real_time, qa_app_recorded_q3_options options) {
   qa_app_q3_demo_frame frame = {0};
   frame.kind = "pending";
-  begin(p);
   if (p->has_end) goto completed;
   while (strcmp(p->state, "loading") == 0) {
     if (read_one(p, real_time)) goto completed;
@@ -146,7 +174,6 @@ completed:
     }
   }
 done:
-  p->busy = false;
   return frame;
 }
 void qa_app_q3_demo_playback_close(qa_app_q3_demo_playback *playback) {

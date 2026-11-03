@@ -109,7 +109,7 @@ static void write_source_snapshot(qa_qvm_memory *memory, qa_qvm_writable_view *v
   int entity_bytes = (int)qa_qvm_entity_state_bytes_for(profile);
   int64_t offset = view->start;
   qa_qvm_writable_view_set_int32(view, 0, qa_int32(snapshot->flags), true);
-  qa_qvm_writable_view_set_int32(view, 4, (int32_t)snapshot->player_state.ping_milliseconds, true);
+  qa_qvm_writable_view_set_int32(view, 4, qa_int32(snapshot->player_state.ping_milliseconds), true); /* setInt32 */
   qa_qvm_writable_view_set_int32(view, 8, qa_int32(snapshot->server_time), true);
   qa_qvm_memory_write_bytes(memory, offset + 12, snapshot->area_mask, 32);
   qa_qvm_writable_view player_view;

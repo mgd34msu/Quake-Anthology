@@ -1,6 +1,7 @@
 /* Port of src/content/q2/missionpacks/monsters/soldierh.ts.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/monsters/soldierh.h"
+#include "qa/foundation/js.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,27 +38,31 @@ static void duck_down(qa_q2m_context *c) {
   c->state->pause_time = q2mpm_now(c->game) + 1;
 }
 static void pain_sound(qa_q2m_context *c, bool death) {
-  int32_t n = (int32_t)c->entity->skin | 1;
+  int32_t n = qa_js_to_int32(c->entity->skin) | 1;
   int variant = n == 1 ? 2 : n == 3 ? 1 : 3;
   char buffer[40];
   snprintf(buffer, sizeof buffer, "soldier/%s%d.wav", death ? "soldeth" : "solpain", variant);
   q2mpm_snd(c, buffer, 2);
 }
 static void fire_at(qa_q2mpm_weapons *weapons, qa_q2m_context *c, double index) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  double left;
+  double right2;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double flash = q2mpm_at_d(entity->skin < 4 ? blaster_flashes : machinegun_flashes, 8, index);
   qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(game->options.edition, flash));
   qa_vec3 direction = qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward;
   if (index != 5 && index != 6) {
+    qa_vec3 a;
+    qa_vec3 b;
     qa_vec3 eye;
     if (!qa_q2m_enemy_eye(c, &eye)) return;
     qa_angle_vectors aim = qa_math_angle_vectors_rule(
         qa_vector_to_angles_with_rule(qa_sub3_double(eye, start), QA_VECTOR_TO_ANGLES_NATIVE_AI), QA_ANGLE_RULE_NATIVE);
     direction = qa_normalize3_double_hypot(qa_add3_double(qa_scale3_double(aim.forward, 8192),
-        qa_add3_double(qa_scale3_double(aim.right, (q2mpm_rnd(game) * 2 - 1) * 100),
-                       qa_scale3_double(aim.up, (q2mpm_rnd(game) * 2 - 1) * 50))));
+        (a = qa_scale3_double(aim.right, (q2mpm_rnd(game) * 2 - 1) * 100), b = qa_scale3_double(aim.up, (q2mpm_rnd(game) * 2 - 1) * 50), qa_add3_double(a,
+                       b))));
   }
   if (entity->skin < 2) {
     (void)weapons->fire_ion_ripper(weapons->ctx, entity, game, start, direction, 5, 600, 0x100000);
@@ -69,7 +74,7 @@ static void fire_at(qa_q2mpm_weapons *weapons, qa_q2m_context *c, double index) 
     qa_q2bm_muzzle(c, 17, direction, start);
     return;
   }
-  if (!state->hold_frame) state->pause_time = q2mpm_now(game) + (3 + floor(q2mpm_rnd(game) * 8)) * 0.1;
+  if (!state->hold_frame) state->pause_time = (left = q2mpm_now(game), right2 = (3 + floor(q2mpm_rnd(game) * 8)) * 0.1, left + right2);
   if (q2mpm_rnd(game) > 0.8) q2mpm_snd4(c, "misc/lasfly.wav", 0, 1, 3);
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
@@ -101,7 +106,7 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void after_spawn_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  c->entity->max_health = qa_q2mp_integer_field(&c->entity->spawn, "health", 0);
+  c->entity->max_health = qa_q2_integer_field(&c->entity->spawn, "health", 0);
 }
 static void sight_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -130,8 +135,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (qa_q2m_health(game, &entity->actor.id) <= state->gib_health) {
     q2mpm_snd(c, "misc/udeath.wav", 2);
@@ -237,12 +242,12 @@ static void duck_hold_fn(void *ctx, qa_q2m_context *c) {
 static void skin2_fn(void *ctx, qa_q2m_context *c) { (void)ctx; c->entity->skin = 2; }
 static void skin4_fn(void *ctx, qa_q2m_context *c) { (void)ctx; c->entity->skin = 4; }
 
-size_t qa_q2mpm_create_soldier_heavy_definitions(qa_q2m_definition *out, qa_q2mpm_weapons weapons) {
-  qa_q2mpm_weapons *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating soldier heavy definitions");
+size_t qa_q2mpm_create_soldier_heavy_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2mpm_weapons weapons) {
+  qa_q2mpm_weapons *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating soldier heavy definitions");
   *box = weapons;
-  qa_q2m_named_handler *callbacks = malloc(27 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating soldier heavy definitions");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 27 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating soldier heavy definitions");
   size_t n = 0;
   callbacks[n++] = (qa_q2m_named_handler){"soldierh_stand", {NULL, stand_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"soldierh_run", {NULL, run_fn}};

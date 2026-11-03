@@ -11,13 +11,12 @@
 #include "qa/foundation/support.h"
 
 static noreturn void media_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 const char *qa_roq_playback_status_name(qa_roq_playback_status status) {

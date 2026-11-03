@@ -1,4 +1,5 @@
 /* Port of src/movement/q2/math.ts. GPL-2.0-or-later. */
+#include <string.h>
 #include "qa/movement/q2/math.h"
 
 #include <math.h>
@@ -214,13 +215,16 @@ void qa_q2_math_slide_clip_velocity(const qa_q2_movement_math *math, const qa_q2
   const double backoff =
       qa_q2_n_multiply(n, qa_q2_math_dot_product(math, a, normal),
                        qa_q2_math_scalar(math, overbounce));
-  qa_q2_math_vec3(math, 0, 0, 0, out);
+  /* TS returns a fresh vector: build it apart so `out` may alias `a`/`normal`. */
+  qa_q2_vec3 result;
+  qa_q2_math_vec3(math, 0, 0, 0, result);
   for (int k = 0; k < 3; k++) {
     const int i = qa_q2_axes[k];
-    out[i] = qa_q2_n_subtract(n, a[i], qa_q2_n_multiply(n, normal[i], backoff));
-    if (out[i] > -qa_q2_math_scalar(math, 0.1) && out[i] < qa_q2_math_scalar(math, 0.1))
-      out[i] = 0;
+    result[i] = qa_q2_n_subtract(n, a[i], qa_q2_n_multiply(n, normal[i], backoff));
+    if (result[i] > -qa_q2_math_scalar(math, 0.1) && result[i] < qa_q2_math_scalar(math, 0.1))
+      result[i] = 0;
   }
+  memcpy(out, result, sizeof result);
 }
 
 void qa_q2_math_g_add_blend(const qa_q2_movement_math *math, double r, double g, double b,

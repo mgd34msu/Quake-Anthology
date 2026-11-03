@@ -1,5 +1,6 @@
 /* Port of src/content/q2/foundation/monsters/types.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/monsters/types.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 
@@ -49,39 +50,39 @@ const char *qa_q2m_attack_state_name(qa_q2m_attack_state state) {
 
 size_t qa_q2m_record_at(size_t count, double index) {
   if (!(index == trunc(index)) || index < 0 || index >= (double)count)
-    qa_range_error("Monster source table index %g outside %zu", index, count);
+    qa_range_error("Monster source table index %s outside %zu", QA_JS_NUMBER(index), count);
   return (size_t)index;
 }
 
-static void mw_bullet(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction,
+static void mw_bullet(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
                       double damage, double kick, double hspread, double vspread, double mod) {
   qa_q2w_ballistics_fire_bullet(ctx, self->actor, game, start, direction, damage, kick, hspread, vspread, mod);
 }
-static void mw_shotgun(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction,
+static void mw_shotgun(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
                        double damage, double kick, double hspread, double vspread, double count, double mod) {
   qa_q2w_ballistics_fire_shotgun(ctx, self->actor, game, start, direction, damage, kick, hspread, vspread, count, mod);
 }
-static qa_q2f_entity *mw_blaster(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction,
+static qa_q2_entity *mw_blaster(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
                                  double damage, double speed, double effects, bool hyper, bool has_mod, double mod) {
   return has_mod ? qa_q2w_ballistics_fire_blaster(ctx, self->actor, game, start, direction, damage, speed, effects, hyper, mod)
                  : qa_q2w_ballistics_fire_blaster_default(ctx, self->actor, game, start, direction, damage, speed, effects, hyper);
 }
-static bool mw_hit(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 aim, double damage, double kick) {
+static bool mw_hit(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 aim, double damage, double kick) {
   return qa_q2w_ballistics_fire_hit(ctx, self, game, aim, damage, kick);
 }
-static qa_q2f_entity *mw_rocket(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction,
+static qa_q2_entity *mw_rocket(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
                                 double damage, double speed, double radius, double radius_damage) {
   return qa_q2w_ballistics_fire_rocket(ctx, self->actor, game, start, direction, damage, speed, radius, radius_damage);
 }
-static qa_q2f_entity *mw_grenade(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction,
+static qa_q2_entity *mw_grenade(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
                                  double damage, double speed, double timer, double radius, bool hand, bool held, bool monster,
                                  const qa_q2w_grenade_adjustment *adjustment) {
   return qa_q2w_ballistics_fire_grenade(ctx, self->actor, game, start, direction, damage, speed, timer, radius, hand, held, monster, adjustment);
 }
-static void mw_rail(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction, double damage, double kick) {
+static void mw_rail(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction, double damage, double kick) {
   qa_q2w_ballistics_fire_rail(ctx, self->actor, game, start, direction, damage, kick);
 }
-static qa_q2f_entity *mw_bfg(void *ctx, qa_q2f_entity *self, qa_q2f_game *game, qa_vec3 start, qa_vec3 direction,
+static qa_q2_entity *mw_bfg(void *ctx, qa_q2_entity *self, qa_q2_game_services *game, qa_vec3 start, qa_vec3 direction,
                              double damage, double speed, double radius) {
   return qa_q2w_ballistics_fire_bfg(ctx, self->actor, game, start, direction, damage, speed, radius);
 }

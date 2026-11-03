@@ -14,8 +14,8 @@ typedef enum qa_q3_invuln_kind { QA_Q3_INVULN_MISS, QA_Q3_INVULN_HIT } qa_q3_inv
 typedef struct qa_q3_invuln_impact { qa_q3_invuln_kind kind; qa_vec3 impact_point, bounce_direction; } qa_q3_invuln_impact;
 typedef struct qa_q3_bullet_event { qa_vec3 point, normal; bool has_target; qa_actor_id target; bool flesh; } qa_q3_bullet_event;
 typedef struct qa_q3_bullet_host {
-  qa_q3_game_product product; qa_q3_game_random_pick random; void *ctx;
-  qa_q3_actor_trace_result_mirror (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
+  qa_q3_base_product product; qa_q3_game_random_pick random; void *ctx;
+  qa_q3_base_actor_trace_result (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
   bool (*target)(void *ctx, qa_actor_id actor, qa_q3_bullet_target *out);
   void (*impact)(void *ctx, qa_vec3 point); void (*emit)(void *ctx, qa_q3_bullet_event event);
   void (*damage)(void *ctx, qa_actor_id target, qa_vec3 direction, qa_vec3 point, double amount);
@@ -28,8 +28,8 @@ typedef struct qa_q3_contact_event {
   qa_q3_contact_event_kind kind; qa_vec3 point, normal, start, end; qa_actor_id target;
 } qa_q3_contact_event;
 typedef struct qa_q3_contact_host {
-  qa_q3_game_product product; void *ctx;
-  qa_q3_actor_trace_result_mirror (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
+  qa_q3_base_product product; void *ctx;
+  qa_q3_base_actor_trace_result (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
   bool (*target)(void *ctx, qa_actor_id actor, qa_q3_bullet_target *out);
   void (*impact)(void *ctx, qa_vec3 point); void (*emit)(void *ctx, qa_q3_contact_event event);
   void (*damage)(void *ctx, qa_actor_id target, qa_vec3 direction, qa_vec3 point, double amount);
@@ -40,8 +40,8 @@ bool qa_q3_gauntlet_attack(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_b
 void qa_q3_lightning_fire(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bullet_attack *attack);
 typedef struct qa_q3_shotgun_event { qa_vec3 muzzle, direction; double seed; } qa_q3_shotgun_event;
 typedef struct qa_q3_shotgun_host {
-  qa_q3_game_product product; void *ctx; qa_game_random *random;
-  qa_q3_actor_trace_result_mirror (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
+  qa_q3_base_product product; void *ctx; qa_game_random *random;
+  qa_q3_base_actor_trace_result (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
   bool (*target)(void *ctx, qa_actor_id actor, qa_q3_bullet_target *out);
   void (*impact)(void *ctx, qa_vec3 point);
   void (*damage)(void *ctx, qa_actor_id target, qa_vec3 direction, qa_vec3 point, double amount);
@@ -55,8 +55,8 @@ void qa_q3_shotgun_fire(qa_q3_shotgun_host host, qa_actor_id shooter, qa_q3_bull
 typedef enum qa_q3_rail_impact_kind { QA_Q3_RAIL_NONE, QA_Q3_RAIL_SURFACE } qa_q3_rail_impact_kind;
 typedef struct qa_q3_rail_trail { qa_vec3 start, end; qa_q3_rail_impact_kind impact_kind; qa_vec3 impact_normal; } qa_q3_rail_trail;
 typedef struct qa_q3_rail_host {
-  qa_q3_game_product product; void *ctx;
-  qa_q3_actor_trace_result_mirror (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
+  qa_q3_base_product product; void *ctx;
+  qa_q3_base_actor_trace_result (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
   bool (*target)(void *ctx, qa_actor_id actor, qa_q3_bullet_target *out);
   void (*impact)(void *ctx, qa_vec3 point);
   void (*damage)(void *ctx, qa_actor_id target, qa_vec3 direction, qa_vec3 point, double amount);

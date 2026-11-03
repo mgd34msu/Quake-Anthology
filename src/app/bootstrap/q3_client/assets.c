@@ -2,18 +2,26 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
 #include "qa/app/bootstrap/q3_client/assets.h"
+#include "qa/audio/wav.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <math.h>
 #include "qa/audio/bank.h"
+#include "qa/content/catalog/index.h"
+#include "qa/render/scene/material_registrations.h"
+#include "qa/render/scene/shaders.h"
+#include "qa/render/scene/world.h"
 #include "qa/audio/streams.h"
 #include "qa/content/mounts/paths.h"
 #include "qa/formats/q3_model/md3.h"
 #include "qa/text/mounted.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 typedef struct retained_entry { char *key; uint8_t *bytes; size_t length; qa_resource_id resource; } retained_entry;
 typedef struct sound_entry { char *path; qa_sound_asset sound; } sound_entry;
 typedef struct model_entry {
@@ -43,11 +51,19 @@ struct qa_app_application_q3_assets {
   qa_q3_renderer_font_registry fonts;
   qa_q3_ui_asset_registry font_registry;
   bool fonts_init;
+  /* TS registry pictures are fresh objects per registration: each shader
+   * reply keeps its own identity (and name copy) for the assets' lifetime. */
+  qa_material_picture **pictures; size_t picture_count, picture_capacity;
+  bool owns_host; /* create_from_application built host */
+  void *font_write; /* font generation services context (font_write_ctx), owned */
+  /* Parsed skins stay valid for the assets' lifetime (TS values). */
+  qa_q3_pres_scene_skin **skins; size_t skin_count, skin_capacity;
 };
 static char *xstrdup(const char *s) { char *p = strdup(s != NULL ? s : ""); if (p == NULL) qa_range_error("Out of memory"); return p; }
+/* TS path.toLowerCase(): Unicode lowering of UTF-8 paths. */
 static char *lowered_copy(const char *s) {
-  char *out = xstrdup(s);
-  for (char *p = out; *p != '\0'; p++) *p = (char)tolower((unsigned char)*p);
+  char *out = qa_js_to_lower_case(s != NULL ? s : "");
+  if (out == NULL) qa_range_error("Out of memory");
   return out;
 }
 static bool ends_with_ci(const char *v, const char *suffix) {
@@ -225,6 +241,7 @@ qa_app_application_q3_assets *qa_app_application_q3_assets_create(
   write_ctx->root = user_root;
   write_ctx->save_font_data = save_font_data;
   write_ctx->save_ctx = save_font_data_ctx;
+  a->font_write = write_ctx;
   qa_q3_font_generation_services generation = {write_ctx, font_image_bridge, font_save_bridge, font_write_file};
   qa_q3_renderer_font_registry_init(&a->fonts, qa_mounted_font_reader_as_reader(&a->font_reader),
                                     font_picture_bridge, a, sync_noop, NULL, &generation);
@@ -282,8 +299,29 @@ void qa_app_application_q3_assets_destroy(qa_app_application_q3_assets *assets) 
   qa_sound_bank_destroy(assets->sound_bank);
   for (size_t i = 0; i < assets->name_count; i++) free(assets->names[i]);
   free(assets->names);
+  for (size_t i = 0; i < assets->picture_count; i++) {
+    free((char *)assets->pictures[i]->name);
+    free(assets->pictures[i]);
+  }
+  free(assets->pictures);
+  for (size_t i = 0; i < assets->skin_count; i++) {
+    qa_q3_pres_scene_skin *skin = assets->skins[i];
+    for (size_t j = 0; j < skin->surface_count; j++) {
+      free((char *)skin->surfaces[j].name);
+      free((char *)skin->surfaces[j].shader);
+    }
+    free((void *)skin->surfaces);
+    free((char *)skin->path);
+    free(skin);
+  }
+  free(assets->skins);
   free(assets->content_copy);
+  free(assets->font_write);
+  if (assets->owns_host) qa_app_q3_application_assets_host_destroy(&assets->host);
   free(assets);
+}
+const char *qa_app_application_q3_assets_user_content_root(const qa_app_application_q3_assets *assets) {
+  return assets->host.user_content_root(assets->host.ctx, assets->content);
 }
 qa_content_id qa_app_application_q3_assets_content(const qa_app_application_q3_assets *assets) { return assets->content; }
 void qa_app_application_q3_assets_print(const qa_app_application_q3_assets *assets, const char *text) {
@@ -327,7 +365,7 @@ char **qa_app_application_q3_assets_list(qa_app_application_q3_assets *assets, c
   for (size_t i = 0; i < assets->name_count; i++)
     if (strncmp(assets->names[i], lowered, prefix_len) == 0) out[count++] = xstrdup(assets->names[i]);
   free(lowered);
-  qsort(out, count, sizeof *out, cmp_str);
+  qa_js_sort(out, count, sizeof *out, cmp_str);
   *out_count = count;
   return out;
 }
@@ -428,12 +466,10 @@ static bool host_model_load(void *ctx, const char *path, qa_q3_pres_scene_model 
       return true;
     }
   }
+  /* assets.model(content, path) as a SceneModel: brush models become
+   * inline models with their bounds (a missing bounds row raises
+   * "Missing inline model bounds <path>" in the host). */
   a->host.model(a->host.ctx, content, path, out);
-  if (out->kind == QA_Q3_PRES_SCENE_MODEL_INLINE) {
-    /* TS bounds lookup: the host model adapter fills bounds; a
-     * zero-area sentinel is not distinguishable here, so the
-     * missing-bounds Error is the host adapter's abort. */
-  }
   if (a->model_count == a->model_capacity) {
     size_t cap = a->model_capacity == 0 ? 16 : a->model_capacity * 2;
     model_entry *next = realloc(a->models, cap * sizeof *next);
@@ -479,23 +515,45 @@ static bool host_skin(void *ctx, const char *path, const qa_q3_pres_scene_skin *
   skin->path = xstrdup(path);
   skin->surfaces = surfaces;
   skin->surface_count = surface_count;
+  if (a->skin_count == a->skin_capacity) {
+    size_t cap = a->skin_capacity == 0 ? 8 : a->skin_capacity * 2;
+    qa_q3_pres_scene_skin **next = realloc(a->skins, cap * sizeof *next);
+    if (next == NULL) qa_range_error("Out of memory");
+    a->skins = next; a->skin_capacity = cap;
+  }
+  a->skins[a->skin_count++] = skin;
   *out = skin;
   return true;
 }
 typedef struct shader_load_ctx { qa_app_application_q3_assets *assets; bool mip; } shader_load_ctx;
+/* provider.shaders.registerSourcePicture(valid, mip): false is TS null. */
 static bool host_shader_load(void *ctx, const char *path, void *out) {
   shader_load_ctx *c = ctx;
   qa_material_picture picture;
   if (!c->assets->provider.register_source_picture(c->assets->provider.ctx, path, c->mip, &picture))
     return false;
+  /* The picture's name can view the normalized request path, which the
+   * request frees on return: the reply owns a copy. */
+  picture.name = xstrdup(picture.name);
   *(qa_material_picture *)out = picture;
   return true;
 }
 static bool host_shader(void *ctx, const char *path, bool mip, const qa_material_picture **out) {
-  static _Thread_local qa_material_picture picture;
-  shader_load_ctx load = {ctx, mip};
+  qa_app_application_q3_assets *a = ctx;
+  qa_material_picture picture;
+  shader_load_ctx load = {a, mip};
   if (!qa_app_register_q3_shader_request(path, host_shader_load, &load, &picture)) { *out = NULL; return true; }
-  *out = &picture;
+  if (a->picture_count == a->picture_capacity) {
+    size_t cap = a->picture_capacity == 0 ? 16 : a->picture_capacity * 2;
+    qa_material_picture **next = realloc(a->pictures, cap * sizeof *next);
+    if (next == NULL) { free((char *)picture.name); return false; }
+    a->pictures = next; a->picture_capacity = cap;
+  }
+  qa_material_picture *owned = malloc(sizeof *owned);
+  if (owned == NULL) { free((char *)picture.name); return false; }
+  *owned = picture; /* owns the name host_shader_load copied */
+  a->pictures[a->picture_count++] = owned;
+  *out = owned;
   return true;
 }
 static bool host_world(void *ctx, const char *requested_path, qa_q3_pres_world_scene *out) {
@@ -504,16 +562,17 @@ static bool host_world(void *ctx, const char *requested_path, qa_q3_pres_world_s
   a->host.world_map_models(a->host.ctx, out);
   return true;
 }
+/* TS current: () => !this.closed. */
+static bool remap_current(void *ctx) { return !((qa_app_application_q3_assets *)ctx)->closed; }
 static void host_remap(void *ctx, const char *original, const char *replacement, const char *offset) {
   qa_app_application_q3_assets *a = ctx;
-  char *end = NULL;
-  double value = strtod(offset, &end);
-  double time_offset = end == offset ? 0 : value;
-  if (!a->host.remap_shader(a->host.ctx, original, replacement, time_offset, !a->closed))
-    qa_range_error("Shader remap belongs to a retired source request");
+  double value = qa_js_parse_float(offset); /* Number.parseFloat(offset); NaN -> 0 */
+  double time_offset = isnan(value) ? 0 : value;
+  if (!a->host.remap_shader(a->host.ctx, original, replacement, time_offset, &a->provider, remap_current, a))
+    qa_raise("Error", 0, 0, "Shader remap belongs to a retired source request");
 }
 qa_q3_pres_resource_host qa_app_application_q3_assets_resource_host(
-    qa_app_application_q3_assets *assets, qa_q3_pres_scene_recorder_mirror scene) {
+    qa_app_application_q3_assets *assets, qa_q3_pres_scene_recorder_view scene) {
   qa_q3_pres_resource_host host;
   host.scene = scene;
   host.zero_picture = assets->provider.source_default_picture;
@@ -540,7 +599,10 @@ void qa_app_application_q3_assets_close(qa_app_application_q3_assets *assets) {
   assets->retained = NULL;
   assets->retained_count = 0;
   assets->retained_capacity = 0;
-  for (size_t i = 0; i < assets->sound_count; i++) free(assets->sounds[i].path);
+  for (size_t i = 0; i < assets->sound_count; i++) {
+    qa_pcm_sound_dispose(&assets->sounds[i].sound.pcm);
+    free(assets->sounds[i].path);
+  }
   free(assets->sounds);
   assets->sounds = NULL;
   assets->sound_count = 0;
@@ -553,4 +615,274 @@ void qa_app_application_q3_assets_close(qa_app_application_q3_assets *assets) {
   assets->models = NULL;
   assets->model_count = 0;
   assets->model_capacity = 0;
+}
+
+/* --- The host over a real ApplicationAssets --- */
+
+typedef struct host_provider_row {
+  const qa_content_mounted *mounts;
+  const char **archive_paths; size_t archive_count;
+  const char **loose_roots; size_t loose_count;
+} host_provider_row;
+typedef struct host_archive_row {
+  char *path;
+  const char **names; size_t count;
+} host_archive_row;
+typedef struct application_host {
+  qa_app_application_assets *assets;
+  host_provider_row *providers; size_t provider_count, provider_capacity;
+  host_archive_row *archives; size_t archive_count, archive_capacity;
+  char **paths; size_t path_count, path_capacity;
+  qa_bounds *world_bounds;
+} application_host;
+
+static void *grow_array(void *items, size_t *capacity, size_t count, size_t size) {
+  if (count < *capacity) return items;
+  size_t cap = *capacity == 0 ? 8 : *capacity * 2;
+  void *next = realloc(items, cap * size);
+  if (next == NULL) qa_range_error("Out of memory");
+  *capacity = cap;
+  return next;
+}
+static const qa_content_catalog *host_catalog(application_host *h) {
+  return qa_app_loaded_content_catalog(qa_app_application_assets_content(h->assets));
+}
+static const qa_catalog_discovered_product *host_product(application_host *h, qa_content_id content) {
+  return qa_content_catalog_product(host_catalog(h), content);
+}
+/* SceneModel paths live as long as the host (TS strings are values). */
+static const char *host_intern(application_host *h, const char *path) {
+  for (size_t i = 0; i < h->path_count; i++) if (strcmp(h->paths[i], path) == 0) return h->paths[i];
+  h->paths = grow_array(h->paths, &h->path_capacity, h->path_count, sizeof *h->paths);
+  h->paths[h->path_count] = xstrdup(path);
+  return h->paths[h->path_count++];
+}
+/* provider.shaders.registerPicture(path) (mipmap default false). */
+static bool app_register_picture(void *ctx, const char *path, qa_material_picture *out) {
+  *out = qa_scene_shader_registry_register_picture(ctx, path, false).material;
+  return true;
+}
+/* provider.shaders.registerSourcePicture(path, mip): false is TS null. */
+static bool app_register_source_picture(void *ctx, const char *path, bool mip, qa_material_picture *out) {
+  qa_picture_asset asset;
+  if (!qa_scene_shader_registry_register_source_picture(ctx, path, mip, &asset)) return false;
+  *out = asset.material;
+  return true;
+}
+/* registerGeneratedPicture(name, { kind: "rgba8", levels: [{ width: 256,
+ * height: 256, pixels: rgba }], borderColor: { 0, 0, 0, 0 } }). */
+static bool app_register_generated_picture(void *ctx, const char *name, qa_byte_view rgba, qa_material_picture *out) {
+  qa_image_level level = {256, 256, rgba};
+  qa_render_image image;
+  memset(&image, 0, sizeof image);
+  image.kind = QA_RENDER_IMAGE_RGBA8;
+  image.levels = &level;
+  image.level_count = 1;
+  *out = qa_scene_shader_registry_register_generated_picture(ctx, name, image).material;
+  return true;
+}
+/* provider.mounts.plan.mounts split by kind, cached per mount plan. */
+static host_provider_row *host_provider_row_of(application_host *h, const qa_content_mounted *mounts) {
+  for (size_t i = 0; i < h->provider_count; i++) if (h->providers[i].mounts == mounts) return &h->providers[i];
+  h->providers = grow_array(h->providers, &h->provider_capacity, h->provider_count, sizeof *h->providers);
+  host_provider_row *row = &h->providers[h->provider_count++];
+  memset(row, 0, sizeof *row);
+  row->mounts = mounts;
+  const qa_resolved_mount_plan *plan = qa_content_mounted_plan(mounts);
+  size_t count = plan->mount_count;
+  row->archive_paths = malloc((count == 0 ? 1 : count) * sizeof *row->archive_paths);
+  row->loose_roots = malloc((count == 0 ? 1 : count) * sizeof *row->loose_roots);
+  if (row->archive_paths == NULL || row->loose_roots == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < count; i++) {
+    const qa_content_mount *mount = &plan->mounts[i];
+    if (mount->kind == QA_CONTENT_MOUNT_ARCHIVE) row->archive_paths[row->archive_count++] = mount->as.archive.archive_path;
+    else row->loose_roots[row->loose_count++] = mount->as.loose.root_path;
+  }
+  return row;
+}
+/* assets.provider(content). */
+static void host_app_provider(void *ctx, qa_content_id content, qa_app_q3_provider_scene_assets *out) {
+  application_host *h = ctx;
+  qa_app_provider_scene_assets provider = qa_app_application_assets_provider(h->assets, content);
+  memset(out, 0, sizeof *out);
+  out->ctx = provider.shaders;
+  out->mounts = provider.mounts;
+  out->register_picture = app_register_picture;
+  out->register_source_picture = app_register_source_picture;
+  out->register_generated_picture = app_register_generated_picture;
+  out->source_default_picture = qa_scene_shader_registry_source_default_picture(provider.shaders).material;
+  host_provider_row *row = host_provider_row_of(h, provider.mounts);
+  out->archive_paths = row->archive_paths;
+  out->archive_path_count = row->archive_count;
+  out->loose_roots = row->loose_roots;
+  out->loose_root_count = row->loose_count;
+}
+/* TS world.models[index]?.bounds over the decoded world. */
+static bool world_model_bounds(const qa_decoded_world *world, double index, qa_bounds *out) {
+  if (!(index >= 0) || index != floor(index)) return false;
+  size_t i = (size_t)index;
+  if (world->kind == QA_DECODED_WORLD_Q1 && i < world->as.q1->model_count) { *out = world->as.q1->models[i].bounds; return true; }
+  if (world->kind == QA_DECODED_WORLD_Q2 && i < world->as.q2->model_count) { *out = world->as.q2->models[i].bounds; return true; }
+  if (world->kind == QA_DECODED_WORLD_Q3 && i < world->as.q3->model_count) { *out = world->as.q3->models[i].bounds; return true; }
+  return false;
+}
+/* const asset = await this.assets.model(content, path); brush models
+ * become { kind: "inline", path, index, geometry, resource, bounds },
+ * everything else { kind: "model", path, model, resource }. */
+static void host_app_model(void *ctx, qa_content_id content, const char *path, qa_q3_pres_scene_model *out) {
+  application_host *h = ctx;
+  qa_app_model_asset asset = qa_app_application_assets_model(h->assets, content, path);
+  memset(out, 0, sizeof *out);
+  out->path = host_intern(h, path);
+  out->resource = asset.resource;
+  if (asset.model.kind == QA_DECODED_MODEL_BRUSH_MODEL) {
+    qa_bounds bounds;
+    if (!world_model_bounds(&asset.model.brush_world, asset.model.brush_model_index, &bounds))
+      qa_raise("Error", 0, 0, "Missing inline model bounds %s", path);
+    out->kind = QA_Q3_PRES_SCENE_MODEL_INLINE;
+    out->index = asset.model.brush_model_index;
+    out->geometry = asset.model.brush_world;
+    out->bounds = bounds;
+    return;
+  }
+  out->kind = QA_Q3_PRES_SCENE_MODEL_LOADED;
+  out->model = asset.model;
+}
+/* catalog.products[].archives with this path: every entry path. */
+static bool host_app_archive_entries(void *ctx, const char *archive_path, const char *const **out_names, size_t *out_count) {
+  application_host *h = ctx;
+  for (size_t i = 0; i < h->archive_count; i++)
+    if (strcmp(h->archives[i].path, archive_path) == 0) {
+      *out_names = h->archives[i].names;
+      *out_count = h->archives[i].count;
+      return true;
+    }
+  const qa_content_catalog *catalog = host_catalog(h);
+  bool found = false;
+  size_t total = 0;
+  for (size_t p = 0; p < catalog->product_count; p++)
+    for (size_t a = 0; a < catalog->products[p].archive_count; a++)
+      if (strcmp(catalog->products[p].archives[a].path, archive_path) == 0) {
+        found = true;
+        total += catalog->products[p].archives[a].entry_count;
+      }
+  if (!found) return false;
+  h->archives = grow_array(h->archives, &h->archive_capacity, h->archive_count, sizeof *h->archives);
+  host_archive_row *row = &h->archives[h->archive_count++];
+  row->path = xstrdup(archive_path);
+  row->names = malloc((total == 0 ? 1 : total) * sizeof *row->names);
+  if (row->names == NULL) qa_range_error("Out of memory");
+  row->count = 0;
+  for (size_t p = 0; p < catalog->product_count; p++)
+    for (size_t a = 0; a < catalog->products[p].archive_count; a++) {
+      const qa_catalog_archive *archive = &catalog->products[p].archives[a];
+      if (strcmp(archive->path, archive_path) != 0) continue;
+      for (size_t e = 0; e < archive->entry_count; e++) row->names[row->count++] = archive->entries[e].path;
+    }
+  *out_names = row->names;
+  *out_count = row->count;
+  return true;
+}
+/* catalog.product(content).userContent?.root ?? null. */
+static const char *host_app_user_root(void *ctx, qa_content_id content) {
+  const qa_catalog_discovered_product *product = host_product(ctx, content);
+  return product->user_content == NULL ? NULL : product->user_content->root;
+}
+/* catalog.product(content).expectation.family === "q3". */
+static bool host_app_product_is_q3(void *ctx, qa_content_id content) {
+  return host_product(ctx, content)->expectation.family == QA_GAME_FAMILY_Q3;
+}
+static const qa_executable_recipe *host_recipe(application_host *h) {
+  return qa_app_loaded_content_recipe(qa_app_application_assets_content(h->assets));
+}
+/* recipe.character.appearance.content. */
+static qa_content_id host_app_character(void *ctx) { return host_recipe(ctx)->character.appearance.content; }
+/* recipe.weapons.find(weapon => product(weapon.content) is q3)?.content. */
+static bool host_app_weapon(void *ctx, qa_content_id *out) {
+  application_host *h = ctx;
+  const qa_executable_recipe *recipe = host_recipe(h);
+  for (size_t i = 0; i < recipe->weapons.count; i++)
+    if (host_app_product_is_q3(h, recipe->weapons.values[i].content)) {
+      *out = recipe->weapons.values[i].content;
+      return true;
+    }
+  return false;
+}
+/* { map: { models: this.assets.world.map.models } }. */
+static void host_app_world_models(void *ctx, qa_q3_pres_world_scene *out) {
+  application_host *h = ctx;
+  const qa_decoded_world *map = &qa_app_application_assets_world(h->assets)->map;
+  size_t count = map->kind == QA_DECODED_WORLD_Q1 ? map->as.q1->model_count
+               : map->kind == QA_DECODED_WORLD_Q2 ? map->as.q2->model_count : map->as.q3->model_count;
+  free(h->world_bounds);
+  h->world_bounds = malloc((count == 0 ? 1 : count) * sizeof *h->world_bounds);
+  if (h->world_bounds == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < count; i++) (void)world_model_bounds(map, (double)i, &h->world_bounds[i]);
+  out->model_bounds = h->world_bounds;
+  out->model_count = count;
+}
+/* this.assets.world.remapShader(original, replacement, timeOffset,
+ * { source: source.shaders, current }) !== "stale". */
+static bool host_app_remap(void *ctx, const char *original, const char *replacement, double time_offset,
+                           const qa_app_q3_provider_scene_assets *source, bool (*current)(void *current_ctx),
+                           void *current_ctx) {
+  application_host *h = ctx;
+  return qa_world_scene_remap_shader(qa_app_application_assets_world(h->assets), original, replacement, time_offset,
+                                     source->ctx, current, current_ctx) != QA_REMAP_STALE;
+}
+
+qa_app_q3_application_assets_host qa_app_q3_application_assets_host_create(qa_app_application_assets *assets) {
+  qa_app_q3_application_assets_host host;
+  memset(&host, 0, sizeof host);
+  application_host *h = calloc(1, sizeof *h);
+  if (h == NULL) return host;
+  h->assets = assets;
+  host.ctx = h;
+  host.provider = host_app_provider;
+  host.model = host_app_model;
+  host.catalog_archive_entries = host_app_archive_entries;
+  host.user_content_root = host_app_user_root;
+  host.product_is_q3 = host_app_product_is_q3;
+  host.character_content = host_app_character;
+  host.weapon_content = host_app_weapon;
+  host.world_map_models = host_app_world_models;
+  host.remap_shader = host_app_remap;
+  return host;
+}
+/* TS ApplicationQ3Assets.assets: the ApplicationAssets behind an
+ * application-built host (NULL for any other host). */
+qa_app_application_assets *qa_app_application_q3_assets_application(const qa_app_application_q3_assets *assets) {
+  if (assets->host.provider != host_app_provider || assets->host.ctx == NULL) return NULL;
+  return ((const application_host *)assets->host.ctx)->assets;
+}
+void qa_app_q3_application_assets_host_destroy(qa_app_q3_application_assets_host *host) {
+  application_host *h = host->ctx;
+  if (h == NULL) return;
+  for (size_t i = 0; i < h->provider_count; i++) {
+    free(h->providers[i].archive_paths);
+    free(h->providers[i].loose_roots);
+  }
+  free(h->providers);
+  for (size_t i = 0; i < h->archive_count; i++) {
+    free(h->archives[i].path);
+    free(h->archives[i].names);
+  }
+  free(h->archives);
+  for (size_t i = 0; i < h->path_count; i++) free(h->paths[i]);
+  free(h->paths);
+  free(h->world_bounds);
+  free(h);
+  host->ctx = NULL;
+}
+qa_app_application_q3_assets *qa_app_application_q3_assets_create_from_application(
+    qa_app_application_assets *assets, qa_content_id content,
+    void (*print)(void *ctx, const char *text), void *print_ctx,
+    bool (*save_font_data)(void *ctx), void *save_font_data_ctx,
+    const char *mode, const char *scope) {
+  qa_app_q3_application_assets_host host = qa_app_q3_application_assets_host_create(assets);
+  if (host.ctx == NULL) qa_range_error("Out of memory");
+  qa_app_application_q3_assets *result = qa_app_application_q3_assets_create(
+      host, content, print, print_ctx, save_font_data, save_font_data_ctx, mode, scope);
+  result->owns_host = true;
+  return result;
 }

@@ -12,7 +12,7 @@
 enum {
   QA_Q3_PRES_RF_MINLIGHT = 1, QA_Q3_PRES_RF_THIRD_PERSON = 2, QA_Q3_PRES_RF_FIRST_PERSON = 4,
   QA_Q3_PRES_RF_DEPTHHACK = 8, QA_Q3_PRES_RF_NOSHADOW = 64, QA_Q3_PRES_RF_LIGHTING_ORIGIN = 128,
-  QA_Q3_PRES_RF_SHADOW_PLANE = 256, QA_Q3_PRES_RF_WRAP_FRAMES = 512
+  QA_Q3_PRES_RF_SHADOW_PLANE = 256
 };
 typedef enum qa_q3_pres_scene_model_kind {
   QA_Q3_PRES_SCENE_MODEL_DEFAULT, /* "default" */
@@ -112,7 +112,6 @@ qa_q3_pres_ref_model_entity qa_q3_pres_create_model_entity_default(void); /* TS 
 qa_q3_pres_ref_sprite_entity qa_q3_pres_create_sprite_entity(void);
 qa_q3_pres_ref_beam_entity qa_q3_pres_create_beam_entity(void);
 qa_q3_pres_ref_rail_entity qa_q3_pres_create_rail_core_entity(void);
-qa_q3_pres_ref_rail_entity qa_q3_pres_create_rail_rings_entity(void);
 qa_q3_pres_ref_rail_entity qa_q3_pres_create_lightning_entity(void);
 qa_q3_pres_ref_portal_entity qa_q3_pres_create_portal_entity(void);
 /* Wrap a per-kind record as a tagged qa_q3_pres_ref_entity. */
@@ -132,7 +131,12 @@ typedef struct qa_q3_pres_source_model_handle {
 typedef struct qa_q3_pres_source_ref_handle {
   bool is_handle;
   double handle;
-  const void *value; /* SceneShader* / SceneSkin*, nullable when not a handle */
+  /* Not a handle: customShader's SceneShader | null or customSkin's
+   * SceneSkin | null (NULL is TS null). */
+  union {
+    const qa_q3_pres_scene_shader *shader;
+    const qa_q3_pres_scene_skin *skin;
+  } value;
 } qa_q3_pres_source_ref_handle;
 /** The complete refEntity_t value survives admission, including retained
  * backend pose reads. TS SourceRefEntityRecord (all model fields + radius +
@@ -160,6 +164,9 @@ typedef struct qa_q3_pres_admitted_ref_entity {
   qa_q3_pres_source_ref_entity_record record;   /* is_poly_record */
 } qa_q3_pres_admitted_ref_entity;
 qa_q3_pres_admitted_ref_entity qa_q3_pres_copy_admitted_ref_entity(const qa_q3_pres_admitted_ref_entity *entity);
+/* TS refEntityIsAdmissible / refPolyIsAdmissible: the source never bounds scene coordinates, but values past
+ * 1e9 or non-finite ones only poison lighting, fog and vertex upload. */
+bool qa_q3_pres_ref_entity_is_admissible(const qa_q3_pres_admitted_ref_entity *entity);
 /* TS SourceRefEntity = SourceHandles<RefEntity> | SourceRefEntityRecord.
  * has_lighting_origin is the TS `"lightingOrigin" in entity` test (true for
  * records and model handles). Fields are the record superset. */
@@ -167,8 +174,8 @@ typedef struct qa_q3_pres_source_ref_entity {
   qa_q3_pres_source_ref_entity_record fields;
   bool has_lighting_origin;
 } qa_q3_pres_source_ref_entity;
-qa_q3_pres_source_ref_entity qa_q3_pres_copy_source_ref_entity(const qa_q3_pres_source_ref_entity *entity);
 /* Deep-copies vertices into owned storage. False only on OOM. */
 bool qa_q3_pres_copy_ref_poly(const qa_q3_pres_ref_poly *poly, qa_q3_pres_ref_poly *out);
 void qa_q3_pres_ref_poly_destroy(qa_q3_pres_ref_poly *poly);
+bool qa_q3_pres_ref_poly_is_admissible(const qa_q3_pres_ref_poly *poly);
 #endif

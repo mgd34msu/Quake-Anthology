@@ -14,5 +14,15 @@ void qa_compat_q2_native_mod_client_stages_init(qa_compat_q2_native_mod_client_s
 void qa_compat_q2_write_native_user_command(uint8_t *view, size_t len, qa_user_command command, void *rr_ctx, void (*write_rerelease)(void *, uint8_t *, size_t, qa_q2_rerelease_user_command));
 /* TS nativeModUserCommand inputs (modClientInputValues mirrored). */
 typedef struct qa_compat_q2_mod_command_inputs { double attack,jump,impulse,forward_move,side_move,up_move; bool has[6]; } qa_compat_q2_mod_command_inputs;
+/* TS NativeModClientStages over the full NativeModHost table: exclusions
+ * apply only while their declaring original call is active. */
+typedef struct qa_compat_q2_native_mod_host qa_compat_q2_native_mod_host;
+typedef struct qa_native_mod_source_call qa_native_mod_source_call;
+typedef struct qa_compat_q2_native_mod_stage_scope qa_compat_q2_native_mod_stage_scope;
+typedef struct qa_compat_q2_native_mod_stage_runner { const qa_compat_q2_native_mod_host *host; qa_compat_q2_native_mod_stage_scope *active; } qa_compat_q2_native_mod_stage_runner;
+void qa_compat_q2_native_mod_stage_runner_init(qa_compat_q2_native_mod_stage_runner *s, const qa_compat_q2_native_mod_host *host);
+/* TS run(call, invoke, extra): extra (may be NULL) binds, extra_remove undoes it. */
+void qa_compat_q2_native_mod_stage_runner_run(qa_compat_q2_native_mod_stage_runner *s, const qa_native_mod_source_call *call, void *invoke_ctx, void (*invoke)(void *),
+    void *extra_ctx, void (*extra)(void *), void (*extra_remove)(void *));
 size_t qa_compat_q2_native_mod_user_command(uint8_t *out, bool rerelease, double frame, double elapsed_ms, qa_vec3 aim, qa_compat_q2_mod_command_inputs in, void *rr_ctx, void (*write_rerelease)(void *, uint8_t *, size_t, qa_q2_rerelease_user_command));
 #endif

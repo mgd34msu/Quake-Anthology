@@ -1,5 +1,6 @@
 /* Port of src/content/q3/team-arena/team.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/team.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -16,13 +17,14 @@
 #include "qa/content/q3/base/shared/entity_shared.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 enum { AWARDS = 0x8 | 0x40 | 0x800 | 0x8000 | 0x10000 | 0x20000 };
-static double s32(double v) { return (int32_t)v; }
+static double s32(double v) { return qa_js_to_int32(v); }
 static double f32(double v) { return (float)v; }
-static double imul(double a, double b) { return (int32_t)((int32_t)a * (int32_t)b); }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
-static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
+static double imul(double a, double b) { return (int32_t)(qa_js_to_int32(a) * qa_js_to_int32(b)); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
+static void slot_set(qa_q3_base_player_state_slots *s, double i, double v) { qa_q3_base_player_state_slots_set(s, (size_t)i, v); }
 static bool mission(qa_q3_ta_team_runtime *r) { return r->host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK; }
 
 void qa_q3_ta_team_game_state_init(qa_q3_ta_team_game_state *state) {
@@ -40,10 +42,6 @@ const char *qa_q3_ta_team_name(qa_q3_base_team team) {
       : team == QA_Q3_BASE_TEAM_SPECTATOR ? "SPECTATOR" : "FREE";
 }
 const char *qa_q3_ta_other_team_name(qa_q3_base_team team) { return qa_q3_ta_team_name(qa_q3_ta_other_team(team)); }
-const char *qa_q3_ta_team_color_string(qa_q3_base_team team) {
-  return team == QA_Q3_BASE_TEAM_RED ? "^1" : team == QA_Q3_BASE_TEAM_BLUE ? "^4"
-      : team == QA_Q3_BASE_TEAM_SPECTATOR ? "^3" : "^7";
-}
 bool qa_q3_ta_on_same_team(double game_type, qa_q3_game_entity *first, qa_q3_game_entity *second) {
   return first->client != NULL && second->client != NULL && game_type >= QA_Q3_BASE_GT_TEAM &&
       first->client->sess.session_team == second->client->sess.session_team;
@@ -153,7 +151,7 @@ void qa_q3_ta_team_runtime_print_message(qa_q3_ta_team_runtime *runtime, qa_q3_g
 
 void qa_q3_ta_team_runtime_add_team_score(qa_q3_ta_team_runtime *runtime, qa_vec3 origin, qa_q3_base_team team, double score) {
   qa_q3_game_entity *event = qa_q3_entity_pool_temp_entity(runtime->host.pool, origin, QA_Q3_EV_GLOBAL_TEAM_SOUND);
-  event->r.sv_flags = (double)((int32_t)event->r.sv_flags | QA_Q3_BASE_SVF_BROADCAST);
+  event->r.sv_flags = (double)(qa_js_to_int32(event->r.sv_flags) | QA_Q3_BASE_SVF_BROADCAST);
   double red = slot_get(runtime->host.team_scores, QA_Q3_BASE_TEAM_RED);
   double blue = slot_get(runtime->host.team_scores, QA_Q3_BASE_TEAM_BLUE);
   if (team == QA_Q3_BASE_TEAM_RED)
@@ -192,13 +190,13 @@ void qa_q3_ta_team_runtime_force_gesture(qa_q3_ta_team_runtime *runtime, qa_q3_b
   for (int index = 0; index < QA_Q3_MAX_CLIENTS; index++) {
     qa_q3_game_entity *entity = qa_q3_entity_pool_at(runtime->host.pool, index);
     if (qa_q3_game_entity_inuse(entity) && entity->client != NULL && entity->client->sess.session_team == team)
-      entity->flags = (double)((int32_t)entity->flags | QA_Q3_GAME_FLAG_FORCE_GESTURE);
+      entity->flags = (double)(qa_js_to_int32(entity->flags) | QA_Q3_GAME_FLAG_FORCE_GESTURE);
   }
 }
 
 static void award(qa_q3_ta_team_runtime *runtime, qa_q3_game_entity *player, double flag) {
   qa_q3_game_client *client = client_of(player);
-  client->ps.e_flags = (double)(((int32_t)client->ps.e_flags & ~AWARDS) | (int32_t)flag);
+  client->ps.e_flags = (double)((qa_js_to_int32(client->ps.e_flags) & ~AWARDS) | qa_js_to_int32(flag));
   client->reward_time = s32(runtime->host.time + 2000);
 }
 
@@ -206,7 +204,7 @@ void qa_q3_ta_team_runtime_check_hurt_carrier(qa_q3_ta_team_runtime *runtime, qa
   if (target->client == NULL || attacker->client == NULL) return;
   double flag = target->client->sess.session_team == QA_Q3_BASE_TEAM_RED ? QA_Q3_PW_BLUEFLAG : QA_Q3_PW_REDFLAG;
   if ((slot_get(&target->client->ps.powerups, flag) != 0 ||
-       runtime->host.generic1(runtime->host.ctx, target->client) != 0) &&
+       target->client->ps.generic1 != 0) &&
       target->client->sess.session_team != attacker->client->sess.session_team)
     attacker->client->pers.team_state.last_hurt_carrier = f32(runtime->host.time);
 }
@@ -219,6 +217,12 @@ static void print_formatted(qa_q3_ta_team_runtime *r, qa_q3_game_entity *entity,
 }
 
 void qa_q3_ta_team_runtime_frag_bonuses(qa_q3_ta_team_runtime *runtime, qa_q3_game_entity *target, qa_q3_game_entity *attacker) {
+  void * value10;
+  qa_vec3 value11;
+  qa_vec3 value12;
+  void * value7;
+  qa_vec3 value8;
+  qa_vec3 value9;
   if (target->client == NULL || attacker == NULL || attacker->client == NULL || target == attacker ||
       qa_q3_ta_on_same_team(runtime->host.game_type, target, attacker)) return;
   qa_q3_game_client *victim = target->client, *killer = attacker->client;
@@ -228,12 +232,12 @@ void qa_q3_ta_team_runtime_frag_bonuses(qa_q3_ta_team_runtime *runtime, qa_q3_ga
   double enemy_flag = runtime->host.game_type == QA_Q3_BASE_GT_1FCTF ? QA_Q3_PW_NEUTRALFLAG
       : team == QA_Q3_BASE_TEAM_RED ? QA_Q3_PW_BLUEFLAG : QA_Q3_PW_REDFLAG;
   double tokens = (mission(runtime) && runtime->host.game_type == QA_Q3_BASE_GT_HARVESTER)
-      ? runtime->host.generic1(runtime->host.ctx, victim) : 0;
+      ? victim->ps.generic1 : 0;
   bool miss = mission(runtime);
   if (slot_get(&victim->ps.powerups, enemy_flag) != 0 || tokens != 0) {
     bool has_flag = slot_get(&victim->ps.powerups, enemy_flag) != 0;
     killer->pers.team_state.last_fragged_carrier = f32(runtime->host.time);
-    runtime->host.add_score(runtime->host.ctx, attacker, target->r.current_origin,
+    runtime->host.add_score(runtime->host.ctx, attacker, qa_q3_base_entity_shared_current_origin(&target->r),
         has_flag ? (miss ? 20 : 2) : imul(imul(miss ? 20 : 2, tokens), tokens));
     killer->pers.team_state.frag_carrier = s32(killer->pers.team_state.frag_carrier + 1);
     qa_q3_game_format_arg args[] = {qa_q3_game_format_string(killer->pers.netname),
@@ -249,7 +253,7 @@ void qa_q3_ta_team_runtime_frag_bonuses(qa_q3_ta_team_runtime *runtime, qa_q3_ga
   }
   if (victim->pers.team_state.last_hurt_carrier != 0 &&
       f32(f32(runtime->host.time) - victim->pers.team_state.last_hurt_carrier) < 8000) {
-    runtime->host.add_score(runtime->host.ctx, attacker, target->r.current_origin, miss ? 5 : 2);
+    runtime->host.add_score(runtime->host.ctx, attacker, qa_q3_base_entity_shared_current_origin(&target->r), miss ? 5 : 2);
     killer->pers.team_state.carrier_defense = s32(killer->pers.team_state.carrier_defense + 1);
     victim->pers.team_state.last_hurt_carrier = 0;
     slot_set(&killer->ps.persistant, QA_Q3_BASE_PERS_DEFEND_COUNT,
@@ -274,14 +278,18 @@ void qa_q3_ta_team_runtime_frag_bonuses(qa_q3_ta_team_runtime *runtime, qa_q3_ga
   }
   qa_q3_game_entity *base = NULL;
   while ((base = qa_q3_find_entity(runtime->host.pool, base, QA_Q3_FIELD_CLASSNAME, classname)) != NULL)
-    if (((int32_t)base->flags & QA_Q3_GAME_FLAG_DROPPED_ITEM) == 0) break;
+    if ((qa_js_to_int32(base->flags) & QA_Q3_GAME_FLAG_DROPPED_ITEM) == 0) break;
   if (base == NULL) return;
-  double target_distance = qa_length3(qa_sub3(target->r.current_origin, base->r.current_origin));
-  double attacker_distance = qa_length3(qa_sub3(attacker->r.current_origin, base->r.current_origin));
-  if (((target_distance < 1000 && runtime->host.in_pvs(runtime->host.ctx, base->r.current_origin, target->r.current_origin)) ||
-       (attacker_distance < 1000 && runtime->host.in_pvs(runtime->host.ctx, base->r.current_origin, attacker->r.current_origin))) &&
+  qa_vec3 a3 = qa_q3_base_entity_shared_current_origin(&target->r);
+  qa_vec3 b3 = qa_q3_base_entity_shared_current_origin(&base->r);
+  double target_distance = qa_length3(qa_sub3(a3, b3));
+  qa_vec3 a2 = qa_q3_base_entity_shared_current_origin(&attacker->r);
+  qa_vec3 b2 = qa_q3_base_entity_shared_current_origin(&base->r);
+  double attacker_distance = qa_length3(qa_sub3(a2, b2));
+  if (((target_distance < 1000 && (value10 = runtime->host.ctx, value11 = qa_q3_base_entity_shared_current_origin(&base->r), value12 = qa_q3_base_entity_shared_current_origin(&target->r), runtime->host.in_pvs(value10, value11, value12))) ||
+       (attacker_distance < 1000 && (value7 = runtime->host.ctx, value8 = qa_q3_base_entity_shared_current_origin(&base->r), value9 = qa_q3_base_entity_shared_current_origin(&attacker->r), runtime->host.in_pvs(value7, value8, value9)))) &&
       killer->sess.session_team != victim->sess.session_team) {
-    runtime->host.add_score(runtime->host.ctx, attacker, target->r.current_origin, miss ? 10 : 1);
+    runtime->host.add_score(runtime->host.ctx, attacker, qa_q3_base_entity_shared_current_origin(&target->r), miss ? 10 : 1);
     killer->pers.team_state.base_defense = s32(killer->pers.team_state.base_defense + 1);
     slot_set(&killer->ps.persistant, QA_Q3_BASE_PERS_DEFEND_COUNT,
         slot_get(&killer->ps.persistant, QA_Q3_BASE_PERS_DEFEND_COUNT) + 1);
@@ -289,11 +297,19 @@ void qa_q3_ta_team_runtime_frag_bonuses(qa_q3_ta_team_runtime *runtime, qa_q3_ga
     return;
   }
   if (carrier != NULL && carrier != attacker) {
-    double distance = qa_length3(qa_sub3(attacker->r.current_origin, carrier->r.current_origin));
-    if (((distance < 1000 && runtime->host.in_pvs(runtime->host.ctx, carrier->r.current_origin, target->r.current_origin)) ||
-         (attacker_distance < 1000 && runtime->host.in_pvs(runtime->host.ctx, carrier->r.current_origin, attacker->r.current_origin))) &&
+    void * value4;
+    qa_vec3 value5;
+    qa_vec3 value6;
+    void * value;
+    qa_vec3 value2;
+    qa_vec3 value3;
+    qa_vec3 a = qa_q3_base_entity_shared_current_origin(&attacker->r);
+    qa_vec3 b = qa_q3_base_entity_shared_current_origin(&carrier->r);
+    double distance = qa_length3(qa_sub3(a, b));
+    if (((distance < 1000 && (value4 = runtime->host.ctx, value5 = qa_q3_base_entity_shared_current_origin(&carrier->r), value6 = qa_q3_base_entity_shared_current_origin(&target->r), runtime->host.in_pvs(value4, value5, value6))) ||
+         (attacker_distance < 1000 && (value = runtime->host.ctx, value2 = qa_q3_base_entity_shared_current_origin(&carrier->r), value3 = qa_q3_base_entity_shared_current_origin(&attacker->r), runtime->host.in_pvs(value, value2, value3)))) &&
         killer->sess.session_team != victim->sess.session_team) {
-      runtime->host.add_score(runtime->host.ctx, attacker, target->r.current_origin, miss ? 2 : 1);
+      runtime->host.add_score(runtime->host.ctx, attacker, qa_q3_base_entity_shared_current_origin(&target->r), miss ? 2 : 1);
       killer->pers.team_state.carrier_defense = s32(killer->pers.team_state.carrier_defense + 1);
       slot_set(&killer->ps.persistant, QA_Q3_BASE_PERS_DEFEND_COUNT,
           slot_get(&killer->ps.persistant, QA_Q3_BASE_PERS_DEFEND_COUNT) + 1);
@@ -308,7 +324,7 @@ qa_q3_game_entity *qa_q3_ta_team_runtime_reset_flag(qa_q3_ta_team_runtime *runti
   if (classname == NULL) return NULL;
   qa_q3_game_entity *entity = NULL, *base = NULL;
   while ((entity = qa_q3_find_entity(runtime->host.pool, entity, QA_Q3_FIELD_CLASSNAME, classname)) != NULL) {
-    if (((int32_t)entity->flags & QA_Q3_GAME_FLAG_DROPPED_ITEM) != 0) qa_q3_entity_pool_free(runtime->host.pool, entity);
+    if ((qa_js_to_int32(entity->flags) & QA_Q3_GAME_FLAG_DROPPED_ITEM) != 0) qa_q3_entity_pool_free(runtime->host.pool, entity);
     else { base = entity; runtime->host.respawn_item(runtime->host.ctx, entity); }
   }
   qa_q3_ta_team_runtime_set_flag_status(runtime, team, QA_Q3_TA_FLAG_AT_BASE);
@@ -327,7 +343,7 @@ void qa_q3_ta_team_runtime_reset_flags(qa_q3_ta_team_runtime *runtime) {
 static void flag_sound(qa_q3_ta_team_runtime *r, qa_q3_game_entity *entity, qa_q3_ta_global_team_sound sound) {
   qa_q3_game_entity *event = qa_q3_entity_pool_temp_entity(r->host.pool, entity->s.pos.base, QA_Q3_EV_GLOBAL_TEAM_SOUND);
   event->s.event_parm = sound;
-  event->r.sv_flags = (double)((int32_t)event->r.sv_flags | QA_Q3_BASE_SVF_BROADCAST);
+  event->r.sv_flags = (double)(qa_js_to_int32(event->r.sv_flags) | QA_Q3_BASE_SVF_BROADCAST);
 }
 
 void qa_q3_ta_team_runtime_return_flag_sound(qa_q3_ta_team_runtime *runtime, qa_q3_game_entity *entity, qa_q3_base_team team) {
@@ -377,11 +393,11 @@ double qa_q3_ta_team_runtime_touch_our_flag(qa_q3_ta_team_runtime *runtime, qa_q
   bool one_flag = miss && runtime->host.game_type == QA_Q3_BASE_GT_1FCTF;
   double enemy_flag = one_flag ? QA_Q3_PW_NEUTRALFLAG
       : client->sess.session_team == QA_Q3_BASE_TEAM_RED ? QA_Q3_PW_BLUEFLAG : QA_Q3_PW_REDFLAG;
-  if (!one_flag && ((int32_t)entity->flags & QA_Q3_GAME_FLAG_DROPPED_ITEM) != 0) {
+  if (!one_flag && (qa_js_to_int32(entity->flags) & QA_Q3_GAME_FLAG_DROPPED_ITEM) != 0) {
     qa_q3_game_format_arg a[] = {qa_q3_game_format_string(client->pers.netname),
         qa_q3_game_format_string(qa_q3_ta_team_name(team))};
     print_formatted(runtime, NULL, "%s^7 returned the %s flag!\n", a, 2);
-    runtime->host.add_score(runtime->host.ctx, other, entity->r.current_origin, miss ? 10 : 1);
+    runtime->host.add_score(runtime->host.ctx, other, qa_q3_base_entity_shared_current_origin(&entity->r), miss ? 10 : 1);
     client->pers.team_state.flag_recovery = s32(client->pers.team_state.flag_recovery + 1);
     client->pers.team_state.last_returned_flag = f32(runtime->host.time);
     qa_q3_ta_team_runtime_return_flag_sound(runtime, qa_q3_ta_team_runtime_reset_flag(runtime, team), team);
@@ -405,7 +421,7 @@ double qa_q3_ta_team_runtime_touch_our_flag(qa_q3_ta_team_runtime *runtime, qa_q
   qa_q3_ranking_reports_capture(&runtime->host.pool->rankings, other->slot);
   award(runtime, other, 0x800);
   slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_CAPTURES, slot_get(&client->ps.persistant, QA_Q3_BASE_PERS_CAPTURES) + 1);
-  runtime->host.add_score(runtime->host.ctx, other, entity->r.current_origin, miss ? 100 : 5);
+  runtime->host.add_score(runtime->host.ctx, other, qa_q3_base_entity_shared_current_origin(&entity->r), miss ? 100 : 5);
   qa_q3_ta_team_runtime_capture_flag_sound(runtime, entity, team);
   for (double index = 0; index < runtime->host.pool->max_clients; index++) {
     qa_q3_game_entity *player = qa_q3_entity_pool_at(runtime->host.pool, index);
@@ -413,13 +429,13 @@ double qa_q3_ta_team_runtime_touch_our_flag(qa_q3_ta_team_runtime *runtime, qa_q
     qa_q3_game_client *teammate = client_of(player);
     if (teammate->sess.session_team != client->sess.session_team) teammate->pers.team_state.last_hurt_carrier = -5;
     else {
-      if (player != other) runtime->host.add_score(runtime->host.ctx, player, entity->r.current_origin, miss ? 25 : 0);
+      if (player != other) runtime->host.add_score(runtime->host.ctx, player, qa_q3_base_entity_shared_current_origin(&entity->r), miss ? 25 : 0);
       bool has_bonus = false;
       double bonus = 0;
       if (f32(teammate->pers.team_state.last_returned_flag + 10000) > f32(runtime->host.time)) { bonus = miss ? 10 : 1; has_bonus = true; }
       else if (f32(teammate->pers.team_state.last_fragged_carrier + 10000) > f32(runtime->host.time)) { bonus = miss ? 10 : 2; has_bonus = true; }
       if (has_bonus) {
-        runtime->host.add_score(runtime->host.ctx, player, entity->r.current_origin, bonus);
+        runtime->host.add_score(runtime->host.ctx, player, qa_q3_base_entity_shared_current_origin(&entity->r), bonus);
         client->pers.team_state.assists = s32(client->pers.team_state.assists + 1);
         slot_set(&teammate->ps.persistant, QA_Q3_BASE_PERS_ASSIST_COUNT,
             slot_get(&teammate->ps.persistant, QA_Q3_BASE_PERS_ASSIST_COUNT) + 1);
@@ -450,7 +466,7 @@ double qa_q3_ta_team_runtime_touch_enemy_flag(qa_q3_ta_team_runtime *runtime, qa
         team == QA_Q3_BASE_TEAM_RED ? QA_Q3_PW_REDFLAG : QA_Q3_PW_BLUEFLAG);
     qa_q3_ta_team_runtime_set_flag_status(runtime, team, QA_Q3_TA_FLAG_TAKEN);
   }
-  runtime->host.add_score(runtime->host.ctx, other, entity->r.current_origin, miss ? 10 : 0);
+  runtime->host.add_score(runtime->host.ctx, other, qa_q3_base_entity_shared_current_origin(&entity->r), miss ? 10 : 0);
   client->pers.team_state.flag_since = f32(runtime->host.time);
   qa_q3_ta_team_runtime_take_flag_sound(runtime, entity, team);
   return -1;
@@ -462,8 +478,7 @@ double qa_q3_ta_team_runtime_pickup_team(qa_q3_ta_team_runtime *runtime, qa_q3_g
     if (runtime->host.game_type == QA_Q3_BASE_GT_OBELISK) { qa_q3_entity_pool_free(runtime->host.pool, entity); return 0; }
     if (runtime->host.game_type == QA_Q3_BASE_GT_HARVESTER) {
       if (entity->spawnflags != client->sess.session_team)
-        runtime->host.set_generic1(runtime->host.ctx, client,
-            s32(runtime->host.generic1(runtime->host.ctx, client) + 1));
+        client->ps.generic1 = s32(client->ps.generic1 + 1);
       qa_q3_entity_pool_free(runtime->host.pool, entity);
       return 0;
     }
@@ -491,9 +506,14 @@ qa_q3_game_entity *qa_q3_ta_team_runtime_get_location(qa_q3_ta_team_runtime *run
   qa_q3_game_entity *best = NULL;
   double best_length = 3.0 * 8192 * 8192;
   for (qa_q3_game_entity *location = runtime->host.location_head; location != NULL; location = location->next_train) {
-    qa_vec3 delta = qa_sub3(entity->r.current_origin, location->r.current_origin);
+    void * value;
+    qa_vec3 value2;
+    qa_vec3 value3;
+    qa_vec3 a = qa_q3_base_entity_shared_current_origin(&entity->r);
+    qa_vec3 b = qa_q3_base_entity_shared_current_origin(&location->r);
+    qa_vec3 delta = qa_sub3(a, b);
     double length = qa_dot3(delta, delta);
-    if (length > best_length || !runtime->host.in_pvs(runtime->host.ctx, entity->r.current_origin, location->r.current_origin)) continue;
+    if (length > best_length || !(value = runtime->host.ctx, value2 = qa_q3_base_entity_shared_current_origin(&entity->r), value3 = qa_q3_base_entity_shared_current_origin(&location->r), runtime->host.in_pvs(value, value2, value3))) continue;
     best_length = length;
     best = location;
   }
@@ -505,7 +525,7 @@ char *qa_q3_ta_team_runtime_get_location_message(qa_q3_ta_team_runtime *runtime,
   if (location == NULL) { *out_is_null = true; return NULL; }
   *out_is_null = false;
   if (location->count != 0) {
-    location->count = fmax(0, fmin(7, location->count));
+    location->count = qa_js_max(0, qa_js_min(7, location->count));
     qa_q3_game_format_arg a[] = {qa_q3_game_format_number(94), qa_q3_game_format_number(location->count + 48),
         qa_q3_game_format_string(location->message)};
     return qa_q3_game_format("%c%c%s^7", a, 3, capacity);
@@ -525,16 +545,16 @@ void qa_q3_ta_team_runtime_teamplay_info_message(qa_q3_ta_team_runtime *runtime,
   size_t client_count = 0;
   for (double index = 0; index < runtime->host.pool->max_clients && client_count < 32; index++) {
     if ((size_t)index >= runtime->host.sorted_client_count)
-      qa_range_error("Missing sorted client slot %g", index);
+      qa_range_error("Missing sorted client slot %s", QA_JS_NUMBER(index));
     double client_num = runtime->host.sorted_clients[(size_t)index];
     qa_q3_game_entity *player = qa_q3_entity_pool_at(runtime->host.pool, client_num);
     if (qa_q3_game_entity_inuse(player) && client_of(player)->sess.session_team == client_of(entity)->sess.session_team) {
       if ((size_t)index >= runtime->host.sorted_client_count)
-        qa_range_error("Missing sorted client slot %g", index);
+        qa_range_error("Missing sorted client slot %s", QA_JS_NUMBER(index));
       clients[client_count++] = runtime->host.sorted_clients[(size_t)index];
     }
   }
-  qsort(clients, client_count, sizeof(double), compare_doubles);
+  qa_js_sort(clients, client_count, sizeof(double), compare_doubles);
   char message[8193] = "";
   size_t length = 0;
   double count = 0;
@@ -543,12 +563,13 @@ void qa_q3_ta_team_runtime_teamplay_info_message(qa_q3_ta_team_runtime *runtime,
     qa_q3_game_entity *player = qa_q3_entity_pool_at(runtime->host.pool, index);
     if (!qa_q3_game_entity_inuse(player) || client_of(player)->sess.session_team != client_of(entity)->sess.session_team) continue;
     qa_q3_game_client *client = client_of(player);
-    qa_q3_game_format_arg a[] = {qa_q3_game_format_number(index),
-        qa_q3_game_format_number(client->pers.team_state.location),
-        qa_q3_game_format_number(fmax(0, client->ps.health)),
-        qa_q3_game_format_number(fmax(0, slot_get(&client->ps.stats, schema->armor))),
-        qa_q3_game_format_number(player->s.weapon), /* TS ps.weapon: no mirror field */
-        qa_q3_game_format_number(player->s.powerups)};
+    qa_q3_game_format_arg value = qa_q3_game_format_number(index);
+    qa_q3_game_format_arg value2 = qa_q3_game_format_number(client->pers.team_state.location);
+    qa_q3_game_format_arg value3 = qa_q3_game_format_number(qa_js_max(0, qa_q3_base_player_state_record_health(&client->ps)));
+    qa_q3_game_format_arg value4 = qa_q3_game_format_number(qa_js_max(0, slot_get(&client->ps.stats, schema->armor)));
+    qa_q3_game_format_arg value5 = qa_q3_game_format_number(client->ps.weapon);
+    qa_q3_game_format_arg value6 = qa_q3_game_format_number(player->s.powerups);
+    qa_q3_game_format_arg a[] = {value, value2, value3, value4, value5, value6};
     char *entry = qa_q3_game_format(" %i %i %i %i %i %i", a, 6, 1024);
     size_t entry_length = strlen(entry);
     if (length + entry_length > 8192) { free(entry); break; }
@@ -609,7 +630,7 @@ static void obelisk_regen_fn(void *ctx, qa_q3_game_entity *self) {
   double health = qa_q3_game_entity_health(self);
   if (health >= settings.health) return;
   qa_q3_entity_pool_add_event(r->host.pool, self, QA_Q3_EV_POWERUP_REGEN, 0);
-  health = fmin(s32(health + settings.regen_amount), settings.health);
+  health = qa_js_min(s32(health + settings.regen_amount), settings.health);
   qa_q3_game_entity_set_health(self, health);
   qa_q3_game_entity *model = obelisk_model(self);
   model->s.modelindex2 = s32(trunc(imul(health, 255) / settings.health));
@@ -640,9 +661,9 @@ static void obelisk_die_fn(void *ctx, qa_q3_game_entity *self, qa_q3_damage_infl
   model->s.frame = 2;
   qa_q3_entity_pool_add_event(r->host.pool, model, QA_Q3_EV_OBELISKEXPLODE, 0);
   if (attacker.entity != NULL && attacker.entity->client != NULL) {
-    r->host.add_score(r->host.ctx, attacker.entity, self->r.current_origin, 100);
+    r->host.add_score(r->host.ctx, attacker.entity, qa_q3_base_entity_shared_current_origin(&self->r), 100);
     award(r, attacker.entity, 0x800);
-    qa_q3_game_player_slots_mirror *p = &attacker.entity->client->ps.persistant;
+    qa_q3_base_player_state_slots *p = &attacker.entity->client->ps.persistant;
     slot_set(p, QA_Q3_BASE_PERS_CAPTURES, slot_get(p, QA_Q3_BASE_PERS_CAPTURES) + 1);
   }
   r->state.red_obelisk_attacked_time = 0;
@@ -653,7 +674,7 @@ static void obelisk_touch_fn(void *ctx, qa_q3_game_entity *self, qa_q3_damage_pa
   qa_q3_ta_team_runtime *r = ctx;
   if (other.entity == NULL || other.entity->client == NULL ||
       qa_q3_ta_other_team((qa_q3_base_team)other.entity->client->sess.session_team) != self->spawnflags) return;
-  double tokens = r->host.generic1(r->host.ctx, other.entity->client);
+  double tokens = other.entity->client->ps.generic1;
   if (tokens <= 0) return;
   qa_q3_game_format_arg a[] = {qa_q3_game_format_string(other.entity->client->pers.netname),
       qa_q3_game_format_number(tokens), qa_q3_game_format_string(tokens != 0 ? "s" : "")};
@@ -663,22 +684,24 @@ static void obelisk_touch_fn(void *ctx, qa_q3_game_entity *self, qa_q3_damage_pa
   qa_q3_ta_team_runtime_add_team_score(r, self->s.pos.base,
       (qa_q3_base_team)other.entity->client->sess.session_team, tokens);
   qa_q3_ta_team_runtime_force_gesture(r, (qa_q3_base_team)other.entity->client->sess.session_team);
-  r->host.add_score(r->host.ctx, other.entity, self->r.current_origin, imul(100, tokens));
+  r->host.add_score(r->host.ctx, other.entity, qa_q3_base_entity_shared_current_origin(&self->r), imul(100, tokens));
   award(r, other.entity, 0x800);
-  qa_q3_game_player_slots_mirror *p = &other.entity->client->ps.persistant;
+  qa_q3_base_player_state_slots *p = &other.entity->client->ps.persistant;
   slot_set(p, QA_Q3_BASE_PERS_CAPTURES, slot_get(p, QA_Q3_BASE_PERS_CAPTURES) + tokens);
-  r->host.set_generic1(r->host.ctx, other.entity->client, 0);
+  other.entity->client->ps.generic1 = 0;
   r->host.calculate_ranks(r->host.ctx);
   qa_q3_ta_team_runtime_capture_flag_sound(r, self, obelisk_team(self));
 }
 static void obelisk_pain_fn(void *ctx, qa_q3_game_entity *self, qa_q3_damage_participant attacker, double amount) {
   qa_q3_ta_team_runtime *r = ctx;
-  double actual = fmax(1, trunc(amount / 10));
+  double actual = qa_js_max(1, trunc(amount / 10));
   qa_q3_game_entity *model = obelisk_model(self);
-  model->s.modelindex2 = s32(trunc(imul(qa_q3_game_entity_health(self), 255) / obelisk_settings(r).health));
+  double left = imul(qa_q3_game_entity_health(self), 255);
+  double right = obelisk_settings(r).health;
+  model->s.modelindex2 = s32(trunc(left / right));
   if (model->s.frame == 0) qa_q3_entity_pool_add_event(r->host.pool, self, QA_Q3_EV_OBELISKPAIN, 0);
   model->s.frame = 1;
-  if (attacker.entity != NULL) r->host.add_score(r->host.ctx, attacker.entity, self->r.current_origin, actual);
+  if (attacker.entity != NULL) r->host.add_score(r->host.ctx, attacker.entity, qa_q3_base_entity_shared_current_origin(&self->r), actual);
 }
 static qa_q3_entity_callback make_callback(const void *fn, size_t fn_size, void *ctx) {
   qa_q3_entity_callback c = {NULL, ctx};
@@ -701,9 +724,9 @@ qa_q3_game_entity *qa_q3_ta_team_runtime_spawn_obelisk(qa_q3_ta_team_runtime *ru
   qa_q3_game_entity *entity = qa_q3_entity_pool_spawn(runtime->host.pool);
   entity->s.origin = origin;
   entity->s.pos.base = origin;
-  entity->r.current_origin = origin;
-  entity->r.mins = qa_math_vec3(-15, -15, 0);
-  entity->r.maxs = qa_math_vec3(15, 15, 87);
+  qa_q3_base_entity_shared_set_current_origin(&entity->r, origin);
+  qa_q3_base_entity_shared_set_mins(&entity->r, qa_math_vec3(-15, -15, 0));
+  qa_q3_base_entity_shared_set_maxs(&entity->r, qa_math_vec3(15, 15, 87));
   entity->s.e_type = QA_Q3_BASE_ET_GENERAL;
   entity->flags = QA_Q3_GAME_FLAG_NO_KNOCKBACK;
   if (runtime->host.game_type == QA_Q3_BASE_GT_OBELISK) {
@@ -719,13 +742,14 @@ qa_q3_game_entity *qa_q3_ta_team_runtime_spawn_obelisk(qa_q3_ta_team_runtime *ru
     entity->r.contents = 0x40000000;
     entity->touch = qa_q3_callback_family_resolve(&runtime->host.pool->callbacks.touch, "q3.team-arena.team.spawnObelisk.touch");
   }
-  if (((int32_t)spawnflags & 1) != 0) qa_q3_set_origin(entity, entity->s.origin);
+  if ((qa_js_to_int32(spawnflags) & 1) != 0) qa_q3_set_origin(entity, entity->s.origin);
   else {
     entity->s.origin = qa_math_vec3(origin.x, origin.y, origin.z + 1);
     qa_vec3 destination = qa_math_vec3(entity->s.origin.x, entity->s.origin.y, entity->s.origin.z - 4096);
     qa_actor_id pass = qa_q3_game_entity_actor(entity).id;
-    qa_q3_base_actor_trace_query query = {entity->s.origin, destination,
-        {QA_Q3_BASE_SHAPE_BOX, entity->r.mins, entity->r.maxs}, 1, &pass};
+    qa_vec3 mins = qa_q3_base_entity_shared_mins(&entity->r);
+    qa_vec3 maxs = qa_q3_base_entity_shared_maxs(&entity->r);
+    qa_q3_base_actor_trace_query query = {entity->s.origin, destination, {QA_Q3_BASE_SHAPE_BOX, mins, maxs}, 1, &pass};
     qa_q3_base_actor_trace_result trace = runtime->host.spatial->trace_actor(runtime->host.spatial->ctx, query);
     if (trace.solidity != QA_Q3_BASE_SOLID_CLEAR) {
       entity->s.origin = qa_math_vec3(entity->s.origin.x, entity->s.origin.y, entity->s.origin.z - 1);
@@ -738,9 +762,7 @@ qa_q3_game_entity *qa_q3_ta_team_runtime_spawn_obelisk(qa_q3_ta_team_runtime *ru
       qa_q3_write_ground(entity, NULL, runtime->host.pool);
       qa_q3_set_origin(entity, entity->s.origin);
     } else {
-      qa_q3_game_trace_hit_mirror hit = {trace.hit_kind == QA_Q3_BASE_HIT_ACTOR ? QA_Q3_HIT_ACTOR
-          : trace.hit_kind == QA_Q3_BASE_HIT_WORLD ? QA_Q3_HIT_WORLD : QA_Q3_HIT_NONE, trace.hit_actor};
-      qa_q3_trace_ground(entity, hit, runtime->host.pool);
+      qa_q3_trace_ground(entity, trace.hit_kind, trace.hit_actor, runtime->host.pool);
       qa_q3_set_origin(entity, trace.end);
     }
   }

@@ -24,6 +24,7 @@ typedef struct qa_qvm_weapon_profile {
   const char *fire_abi; /* "entity-pointer-start-direction" */
   qa_weapon_behavior_definition definition;
   char *owned_id; /* owned storage for definition.id when read */
+  char *owned_title; /* owned storage for definition.title when read */
 } qa_qvm_weapon_profile;
 
 qa_save_value *qa_qvm_weapon_profile_declaration(const qa_qvm_weapon_profile *profile,

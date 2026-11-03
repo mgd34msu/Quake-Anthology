@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/shared/player-state.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/shared/player_state.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,11 +8,11 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 /* Minimal JS String(number): integral below 1e21 as integer text. */
 static void num_str(double v, char *buf, size_t cap) {
-  if (v == trunc(v) && fabs(v) < 1e21) snprintf(buf, cap, "%.0f", v);
-  else snprintf(buf, cap, "%g", v);
+  qa_net_js_number(v, buf, cap);
 }
 /* JS (x)|0 and Int32Array store conversion (ToInt32). */
 static int32_t to_int32(double v) {
@@ -19,7 +20,7 @@ static int32_t to_int32(double v) {
   double m = fmod(trunc(v), 4294967296.0);
   if (m >= 2147483648.0) m -= 4294967296.0;
   if (m < -2147483648.0) m += 4294967296.0;
-  return (int32_t)m;
+  return qa_js_to_int32(m);
 }
 
 bool qa_q3_base_player_state_slots_init(qa_q3_base_player_state_slots *slots, double length,

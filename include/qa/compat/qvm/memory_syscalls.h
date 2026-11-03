@@ -13,6 +13,6 @@
 #include "qa/compat/qvm/memory.h"
 
 bool qa_qvm_memory_syscall(const char *role, const uint8_t *words, size_t words_length,
-                           qa_qvm_memory *memory, int32_t *out);
+                           const qa_qvm_game_memory *memory, int32_t *out);
 
 #endif

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include "qa/core/commands/text.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static bool reg_cvar(qa_cvar_registry *r, const char *name, const char *value, double flags, void *unused) {
   (void)unused;
@@ -72,8 +73,10 @@ void qa_app_register_frame_time_cvars(qa_cvar_registry *cvars) {
   row_t rows[3];
   size_t n = 0;
   rows[n++] = (row_t){"timescale", "1", q1 ? 0 : q2 ? QA_Q2_CVAR_FLAG_CHEAT : QA_CVAR_FLAG_CHEAT | QA_CVAR_FLAG_SYSTEM_INFO};
-  if (q1) rows[n++] = (row_t){"host_framerate", "0", 0};
-  else {
+  if (q1) {
+    rows[n++] = (row_t){"host_framerate", "0", 0};
+    rows[n++] = (row_t){"sys_ticrate", "0.05", 0};
+  } else {
     rows[n++] = (row_t){"fixedtime", "0", q2 ? QA_Q2_CVAR_FLAG_CHEAT : QA_CVAR_FLAG_CHEAT};
     if (!q2) rows[n++] = (row_t){"com_cameraMode", "0", QA_CVAR_FLAG_CHEAT};
   }
@@ -109,11 +112,13 @@ double qa_app_source_frame_milliseconds(qa_command_dialect dialect, double raw_m
   if (dialect == QA_COMMAND_DIALECT_Q1_NETQUAKE || dialect == QA_COMMAND_DIALECT_Q1_QUAKEWORLD) {
     if (controls.host_framerate > 0) return controls.host_framerate * 1000;
     double scaled = controls.timescale == 0 ? raw_milliseconds : raw_milliseconds * controls.timescale;
-    return fmax(1, fmin(100, scaled));
+    return qa_js_max(1, qa_js_min(100, scaled));
   }
   if (dialect == QA_COMMAND_DIALECT_Q2_CLASSIC || dialect == QA_COMMAND_DIALECT_Q2_RERELEASE) {
     if (controls.fixedtime != 0) return controls.fixedtime;
-    return controls.timescale == 0 ? raw_milliseconds : fmax(1, raw_milliseconds * controls.timescale);
+    double scaled = controls.timescale == 0 ? raw_milliseconds : qa_js_max(1, raw_milliseconds * controls.timescale);
+    /* sv_main.c never lets the server fall more than one tic behind; this bounds a stall such as a map load. */
+    return qa_js_min(scaled, host.dedicated || !host.local_server ? 5000 : 200);
   }
   double milliseconds = trunc(raw_milliseconds);
   float scale = (float)controls.timescale; /* Math.fround */
@@ -121,10 +126,21 @@ double qa_app_source_frame_milliseconds(qa_command_dialect dialect, double raw_m
   if (fixedtime != 0) milliseconds = fixedtime;
   else if (scale != 0 || camera_mode != 0) {
     float product = (float)((float)milliseconds * scale); /* Math.fround staged */
-    if (!isfinite(product) || product < -2147483648.0f || product >= 2147483648.0f)
-      qa_range_error("Undefined native common float-to-int time conversion");
-    milliseconds = trunc(product) + 0;
+    /* timescale is a console cvar; a value that overflows the source's int cast just stops the clock for this frame. */
+    milliseconds = !isfinite(product) || product < -2147483648.0f || product >= 2147483648.0f ? 0 : trunc(product) + 0;
   }
   if (milliseconds < 1 && scale != 0) milliseconds = 1;
-  return fmin(milliseconds, host.dedicated || !host.local_server ? 5000 : 200);
+  return qa_js_min(milliseconds, host.dedicated || !host.local_server ? 5000 : 200);
+}
+
+/* TS minimumFrameMilliseconds: Host_FilterTime, Q1 hosts never run above 72 Hz,
+ * and dedicated servers pace to sys_ticrate. */
+double qa_app_minimum_frame_milliseconds(qa_cvar_registry *cvars, bool dedicated) {
+  if (cvars == NULL) return 4;
+  qa_command_dialect dialect = qa_cvar_registry_dialect(cvars);
+  if (dialect != QA_COMMAND_DIALECT_Q1_NETQUAKE && dialect != QA_COMMAND_DIALECT_Q1_QUAKEWORLD) return 4;
+  qa_cvar_read found;
+  double ticrate = 0.05;
+  if (qa_cvar_registry_find(cvars, "sys_ticrate", &found)) { ticrate = found.numeric_value; qa_cvar_read_free(&found); }
+  return dedicated && isfinite(ticrate) && ticrate > 0 ? ticrate * 1000 : 1000.0 / 72;
 }

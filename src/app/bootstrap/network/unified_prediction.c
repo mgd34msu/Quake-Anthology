@@ -60,13 +60,13 @@ static qa_bounds read_bounds(const qa_save_reader *reader) {
 }
 static void read_triple(const qa_save_reader *reader, double out[3]) {
   size_t count = qa_save_reader_list_count(reader);
-  if (count != 3) qa_save_reader_fail(reader, "expected three numbers");
-  for (size_t i = 0; i < 3; i++) {
+  for (size_t i = 0; i < count; i++) {
     qa_save_reader item;
     if (!qa_save_reader_item(reader, i, &item)) qa_range_error("out of memory");
-    out[i] = qa_save_reader_finite(&item);
-    qa_save_reader_destroy(&item);
+    double value = qa_save_reader_finite(&item);
+    if (i < 3) out[i] = value;
   }
+  if (count != 3) qa_save_reader_fail(reader, "expected three numbers");
 }
 static qa_save_value *write_triple(const double values[3]) {
   qa_save_value *out = qa_save_value_array();
@@ -208,14 +208,14 @@ static qa_save_value *write_movement(const qa_movement_state *state) {
   }
   return out;
 }
-static qa_movement_state read_movement(const qa_save_reader *reader,
-    const qa_app_unified_identity_decoder *identity) {
+/* Fills a zeroed state the caller frees; the jump pad lands in it before the next read. */
+static void read_movement(const qa_save_reader *reader,
+    const qa_app_unified_identity_decoder *identity, qa_movement_state *destination) {
   static const char *kinds[] = {"q1-netquake", "q1-quakeworld", "q2-classic", "q2-rerelease", "q3"};
   qa_save_reader kind_reader = field_of(reader, "kind");
   const char *kind = qa_save_reader_choice_string(&kind_reader, kinds, 5);
   qa_save_reader_destroy(&kind_reader);
-  qa_movement_state state;
-  memset(&state, 0, sizeof state);
+#define state (*destination)
   if (strcmp(kind, "q1-netquake") == 0) {
     state.kind = QA_MOVEMENT_STATE_Q1;
     qa_q1_movement_state *s = &state.as.q1;
@@ -308,15 +308,16 @@ static qa_movement_state read_movement(const qa_save_reader *reader,
     s->predictable_event_sequence = finite_field(reader, "predictableEventSequence");
     qa_save_reader jump = field_of(reader, "jumpPad");
     if (!qa_save_reader_is_null(&jump)) {
+      qa_actor_id pad = qa_app_unified_read_actor(&jump, identity);
       qa_actor_id *owned = xmalloc(sizeof *owned);
-      *owned = qa_app_unified_read_actor(&jump, identity);
+      *owned = pad;
       s->jump_pad = owned;
     }
     qa_save_reader_destroy(&jump);
     s->movement_frame = finite_field(reader, "movementFrame");
     s->jump_pad_frame = finite_field(reader, "jumpPadFrame");
   }
-  return state;
+#undef state
 }
 static qa_save_value *write_time(qa_source_time time) {
   qa_save_value *out = object();
@@ -386,21 +387,17 @@ static qa_save_value *write_inventory(const qa_inventory_entry *entries, size_t 
     qa_save_value *entry = object();
     set(entry, "item", qa_save_value_string(entries[i].item));
     set(entry, "count", num(entries[i].count));
+    set(entry, "capacity", num(entries[i].capacity));
+    if (entries[i].has_count_policy) {
+      qa_save_value *policy = object();
+      set(policy, "kind", qa_save_value_string(entries[i].count_policy.kind));
+      if (strcmp(entries[i].count_policy.kind, "source-counter") == 0)
+        set(policy, "arithmetic", qa_save_value_string(entries[i].count_policy.arithmetic));
+      set(entry, "countPolicy", policy);
+    }
     push(list, entry);
   }
   return list;
-}
-static size_t read_inventory(const qa_save_reader *reader, qa_inventory_entry **out) {
-  size_t count = qa_save_reader_list_count(reader);
-  qa_inventory_entry *entries = xmalloc(count * sizeof *entries);
-  for (size_t i = 0; i < count; i++) {
-    qa_save_reader row;
-    if (!qa_save_reader_item(reader, i, &row)) qa_range_error("out of memory");
-    entries[i] = qa_read_inventory_entry(&row);
-    qa_save_reader_destroy(&row);
-  }
-  *out = entries;
-  return count;
 }
 static qa_save_value *write_arsenal(const qa_arsenal_state *arsenal) {
   qa_save_value *out = object();
@@ -411,9 +408,8 @@ static qa_save_value *write_arsenal(const qa_arsenal_state *arsenal) {
   set(out, "ammo", write_inventory(arsenal->ammo, arsenal->ammo_count));
   return out;
 }
-static qa_arsenal_state read_arsenal(const qa_save_reader *reader) {
-  qa_arsenal_state arsenal;
-  memset(&arsenal, 0, sizeof arsenal);
+static void read_arsenal(const qa_save_reader *reader, qa_arsenal_state *destination) {
+#define arsenal (*destination)
   qa_save_reader provider = field_of(reader, "provider");
   arsenal.provider = qa_namespaced(&provider);
   qa_save_reader_destroy(&provider);
@@ -424,11 +420,17 @@ static qa_arsenal_state read_arsenal(const qa_save_reader *reader) {
   arsenal.state = read_weapon(&state);
   qa_save_reader_destroy(&state);
   qa_save_reader ammo = field_of(reader, "ammo");
-  qa_inventory_entry *entries = NULL;
-  arsenal.ammo_count = read_inventory(&ammo, &entries);
+  size_t count = qa_save_reader_list_count(&ammo);
+  qa_inventory_entry *entries = calloc(count ? count : 1, sizeof *entries);
+  if (!entries) qa_range_error("out of memory");
   arsenal.ammo = entries;
-  qa_save_reader_destroy(&ammo);
-  return arsenal;
+  arsenal.ammo_count = count;
+  for (size_t i = 0; i < count; i++) {
+    qa_save_reader row;
+    if (!qa_save_reader_item(&ammo, i, &row)) qa_range_error("out of memory");
+    entries[i] = qa_read_inventory_entry(&row);
+  }
+#undef arsenal
 }
 static qa_save_value *write_animation(const qa_animation_state *state) {
   qa_save_value *out = object();
@@ -599,6 +601,7 @@ static qa_save_value *write_profile(const qa_movement_profile *profile) {
     if (profile->has_fixed_milliseconds) set(out, "fixedMilliseconds", num(profile->fixed_milliseconds));
     else set(out, "fixedMilliseconds", qa_save_value_null());
     set(out, "noFootsteps", qa_save_value_boolean(profile->no_footsteps));
+    if (profile->has_ladders) set(out, "ladders", qa_save_value_boolean(!profile->ladders_disabled));
   }
   return out;
 }
@@ -674,6 +677,13 @@ static qa_movement_profile read_profile(const qa_save_reader *reader) {
     qa_save_reader footsteps = field_of(reader, "noFootsteps");
     profile.no_footsteps = qa_save_reader_boolean(&footsteps);
     qa_save_reader_destroy(&footsteps);
+    /* ...(r.field("ladders").value === undefined ? {} : { ladders: boolean }) */
+    qa_save_reader ladders = field_of(reader, "ladders");
+    if (!qa_save_reader_is_undefined(&ladders)) {
+      profile.has_ladders = true;
+      profile.ladders_disabled = !qa_save_reader_boolean(&ladders);
+    }
+    qa_save_reader_destroy(&ladders);
   }
   return profile;
 }
@@ -720,10 +730,10 @@ static qa_save_value *write_collision(const qa_spatial_actor *actor) {
   set(out, "collision", collision);
   return out;
 }
-static qa_spatial_actor read_collision(const qa_save_reader *reader,
-    const qa_app_unified_identity_decoder *identity) {
-  qa_spatial_actor out;
-  memset(&out, 0, sizeof out);
+/* Fills a zeroed slot the caller frees; each actor is read before its allocation. */
+static void read_collision(const qa_save_reader *reader,
+    const qa_app_unified_identity_decoder *identity, qa_spatial_actor *destination) {
+#define out (*destination)
   qa_save_reader b = field_of(reader, "body");
   qa_save_reader s = field_of(&b, "state");
   qa_save_reader c = field_of(reader, "collision");
@@ -743,8 +753,9 @@ static qa_spatial_actor read_collision(const qa_save_reader *reader,
   qa_save_reader_destroy(&bounds);
   qa_save_reader ground = field_of(&s, "ground");
   if (!qa_save_reader_is_null(&ground)) {
+    qa_actor_id actor = qa_app_unified_read_actor(&ground, identity);
     qa_actor_id *owned = xmalloc(sizeof *owned);
-    *owned = qa_app_unified_read_actor(&ground, identity);
+    *owned = actor;
     out.body.state.ground = owned;
   }
   qa_save_reader_destroy(&ground);
@@ -773,8 +784,9 @@ static qa_spatial_actor read_collision(const qa_save_reader *reader,
   qa_save_reader_destroy(&contents);
   qa_save_reader owner = field_of(&c, "owner");
   if (!qa_save_reader_is_null(&owner)) {
+    qa_actor_id actor = qa_app_unified_read_actor(&owner, identity);
     qa_actor_id *owned = xmalloc(sizeof *owned);
-    *owned = qa_app_unified_read_actor(&owner, identity);
+    *owned = actor;
     out.collision.owner = owned;
   }
   qa_save_reader_destroy(&owner);
@@ -804,7 +816,7 @@ static qa_spatial_actor read_collision(const qa_save_reader *reader,
   }
   qa_save_reader_destroy(&flag);
   qa_save_reader_destroy(&c);
-  return out;
+#undef out
 }
 static qa_save_value *write_environment(const qa_movement_environment *environment,
     qa_mod_client_movement_outputs *outputs_storage) {
@@ -830,10 +842,12 @@ static qa_save_value *write_environment(const qa_movement_environment *environme
   }
   return out;
 }
-uint8_t *qa_app_unified_encode_prediction(const qa_app_unified_prediction_projection *value,
-    size_t *out_length) {
+static void cleanup_root(void *arg) { qa_save_value_free(arg); }
+qa_save_value *qa_app_unified_prediction_value(const qa_app_unified_prediction_projection *value) {
   const qa_app_movement_prediction_snapshot *snapshot = &value->snapshot;
   qa_save_value *root = object();
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_root, root);
   set(root, "schema", qa_save_value_string("qts-unified-prediction"));
   set(root, "version", num(1));
   set(root, "actor", qa_app_unified_wire_actor(value->actor));
@@ -867,85 +881,80 @@ uint8_t *qa_app_unified_encode_prediction(const qa_app_unified_prediction_projec
   for (size_t i = 0; i < value->collision_count; i++)
     push(collisions, write_collision(&value->collisions[i]));
   set(root, "collisions", collisions);
+  qa_cleanup_pop(&guard);
+  return root;
+}
+uint8_t *qa_app_unified_encode_prediction(const qa_app_unified_prediction_projection *value,
+    size_t *out_length) {
+  qa_save_value *root = qa_app_unified_prediction_value(value);
   uint8_t *bytes = qa_encode_checkpoint_value(root, out_length);
   qa_save_value_free(root);
   return bytes;
 }
+static void cleanup_projection(void *arg) { qa_app_unified_prediction_projection_free(arg); }
 qa_app_unified_prediction_projection qa_app_unified_decode_prediction(
     const uint8_t *bytes, size_t length, const qa_app_unified_identity_decoder *identity) {
-  if (length > 32 * 1024 * 1024) qa_range_error("Unified prediction exceeds byte limit");
-  qa_save_value *tree = qa_decode_checkpoint_value(bytes, length);
-  if (!tree) qa_range_error("out of memory");
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, tree, "unified-prediction")) qa_range_error("out of memory");
-  qa_save_reader schema = field_of(&reader, "schema");
-  qa_save_reader_literal_string(&schema, "qts-unified-prediction");
-  qa_save_reader_destroy(&schema);
-  qa_save_reader version = field_of(&reader, "version");
-  qa_save_reader_literal_number(&version, 1);
-  qa_save_reader_destroy(&version);
+  if (length > 32 * 1024 * 1024) qa_raise("RangeError", 0, 0, "Unified prediction exceeds byte limit");
   qa_app_unified_prediction_projection out;
   memset(&out, 0, sizeof out);
-  qa_save_reader state_reader = field_of(&reader, "state");
-  qa_movement_state state = read_movement(&state_reader, identity);
-  qa_save_reader_destroy(&state_reader);
-  qa_save_reader profile_reader = field_of(&reader, "profile");
-  qa_movement_profile profile = read_profile(&profile_reader);
-  qa_save_reader_destroy(&profile_reader);
-  if (strcmp(movement_kind_name(state.kind), profile.kind) != 0)
+  out.tree = qa_decode_checkpoint_value(bytes, length);
+  if (!out.tree) qa_range_error("out of memory");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, cleanup_projection, &out);
+  qa_save_reader reader;
+  if (!qa_save_reader_init(&reader, out.tree, "unified-prediction")) qa_range_error("out of memory");
+  qa_save_reader f = field_of(&reader, "schema");
+  qa_save_reader_literal_string(&f, "qts-unified-prediction");
+  f = field_of(&reader, "version");
+  qa_save_reader_literal_number(&f, 1);
+  f = field_of(&reader, "state");
+  read_movement(&f, identity, &out.snapshot.state);
+  f = field_of(&reader, "profile");
+  out.profile = read_profile(&f);
+  qa_save_reader environment = field_of(&reader, "environment");
+  if (strcmp(movement_kind_name(out.snapshot.state.kind), out.profile.kind) != 0)
     qa_save_reader_fail(&reader, "movement state differs from profile");
-  out.snapshot.state = state;
-  out.profile = profile;
-  qa_save_reader actor_reader = field_of(&reader, "actor");
-  out.actor = qa_app_unified_read_actor(&actor_reader, identity);
-  qa_save_reader_destroy(&actor_reader);
-  qa_save_reader sequence = field_of(&reader, "sequence");
-  out.snapshot.sequence = qa_save_reader_integer_min(&sequence, -1);
-  qa_save_reader_destroy(&sequence);
+  f = field_of(&reader, "actor");
+  out.actor = qa_app_unified_read_actor(&f, identity);
+  f = field_of(&reader, "sequence");
+  out.snapshot.sequence = qa_save_reader_integer_min(&f, -1);
   out.snapshot.command_time_milliseconds = finite_field(&reader, "commandTimeMilliseconds");
-  qa_save_reader arsenal = field_of(&reader, "arsenal");
-  out.snapshot.arsenal = read_arsenal(&arsenal);
-  qa_save_reader_destroy(&arsenal);
+  f = field_of(&reader, "arsenal");
+  read_arsenal(&f, &out.snapshot.arsenal);
   qa_save_reader animation = field_of(&reader, "animation");
-  qa_save_reader provider = field_of(&animation, "provider");
-  out.snapshot.animation.provider = qa_namespaced(&provider);
-  qa_save_reader_destroy(&provider);
-  qa_save_reader anim_state = field_of(&animation, "state");
-  out.snapshot.animation.state = read_animation(&anim_state);
-  qa_save_reader_destroy(&anim_state);
-  qa_save_reader_destroy(&animation);
-  qa_save_reader bounds = field_of(&reader, "standingBounds");
-  out.standing_bounds = read_bounds(&bounds);
-  qa_save_reader_destroy(&bounds);
+  f = field_of(&animation, "provider");
+  out.snapshot.animation.provider = qa_namespaced(&f);
+  f = field_of(&animation, "state");
+  out.snapshot.animation.state = read_animation(&f);
+  f = field_of(&reader, "standingBounds");
+  out.standing_bounds = read_bounds(&f);
   out.standing_view_height = finite_field(&reader, "standingViewHeight");
-  bounds = field_of(&reader, "bounds");
-  out.snapshot.bounds = read_bounds(&bounds);
-  qa_save_reader_destroy(&bounds);
+  f = field_of(&reader, "bounds");
+  out.snapshot.bounds = read_bounds(&f);
   out.snapshot.view_angles = vec_field(&reader, "viewAngles");
   out.snapshot.view_height = finite_field(&reader, "viewHeight");
   out.snapshot.view_offset = vec_field(&reader, "viewOffset");
-  qa_save_reader environment = field_of(&reader, "environment");
-  qa_movement_environment env;
-  memset(&env, 0, sizeof env);
-  env.health = finite_field(&environment, "health");
-  qa_save_reader flag = field_of(&environment, "flight");
-  env.flight = qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
-  flag = field_of(&environment, "haste");
-  env.haste = qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
-  flag = field_of(&environment, "invulnerable");
-  env.invulnerable = qa_save_reader_boolean(&flag); qa_save_reader_destroy(&flag);
-  env.gravity_multiplier = finite_field(&environment, "gravityMultiplier");
+  qa_movement_environment *env = &out.snapshot.environment;
+  env->health = finite_field(&environment, "health");
+  f = field_of(&environment, "flight");
+  env->flight = qa_save_reader_boolean(&f);
+  f = field_of(&environment, "haste");
+  env->haste = qa_save_reader_boolean(&f);
+  f = field_of(&environment, "invulnerable");
+  env->invulnerable = qa_save_reader_boolean(&f);
+  env->gravity_multiplier = finite_field(&environment, "gravityMultiplier");
   qa_save_reader outputs_reader = field_of(&environment, "clientOutputs");
   if (!qa_save_reader_is_undefined(&outputs_reader)) {
-    qa_mod_client_movement_outputs *outputs = xmalloc(sizeof *outputs);
-    memset(outputs, 0, sizeof *outputs);
+    qa_mod_client_movement_outputs *outputs = calloc(1, sizeof *outputs);
+    if (!outputs) qa_range_error("out of memory");
+    env->client_outputs = outputs;
     qa_save_reader part = field_of(&outputs_reader, "viewOffset");
     if (!qa_save_reader_is_undefined(&part)) {
+      qa_vec3 value = qa_app_unified_read_vector(&part);
       qa_vec3 *offset = xmalloc(sizeof *offset);
-      *offset = qa_app_unified_read_vector(&part);
+      *offset = value;
       outputs->view_offset = offset;
     }
-    qa_save_reader_destroy(&part);
     part = field_of(&outputs_reader, "mode");
     if (!qa_save_reader_is_undefined(&part)) {
       static const char *modes[] = {"normal", "noclip", "freeze"};
@@ -955,57 +964,45 @@ qa_app_unified_prediction_projection qa_app_unified_decode_prediction(
           : strcmp(mode, "freeze") == 0 ? QA_MOD_CLIENT_MOVEMENT_FREEZE
           : QA_MOD_CLIENT_MOVEMENT_NORMAL;
     }
-    qa_save_reader_destroy(&part);
     part = field_of(&outputs_reader, "stance");
     if (!qa_save_reader_is_undefined(&part)) {
-      outputs->has_stance = true;
       outputs->stance = qa_save_reader_boolean(&part);
+      outputs->has_stance = true;
     }
-    qa_save_reader_destroy(&part);
     part = field_of(&outputs_reader, "bodyBounds");
     if (!qa_save_reader_is_undefined(&part)) {
+      qa_bounds value = read_bounds(&part);
       qa_bounds *body_bounds = xmalloc(sizeof *body_bounds);
-      *body_bounds = read_bounds(&part);
+      *body_bounds = value;
       outputs->body_bounds = body_bounds;
     }
-    qa_save_reader_destroy(&part);
-    env.client_outputs = outputs;
   }
-  qa_save_reader_destroy(&outputs_reader);
-  out.snapshot.environment = env;
-  qa_save_reader_destroy(&environment);
   qa_save_reader contact = field_of(&reader, "contact");
   if (!qa_save_reader_is_null(&contact)) {
+    f = field_of(&contact, "ground");
+    out.snapshot.contact_ground = read_hit(&f, identity);
+    f = field_of(&contact, "waterLevel");
+    out.snapshot.contact_water_level = qa_save_reader_integer(&f);
+    f = field_of(&contact, "waterType");
+    out.snapshot.contact_water_type = qa_save_reader_integer(&f);
     out.snapshot.has_contact = true;
-    qa_save_reader ground = field_of(&contact, "ground");
-    out.snapshot.contact_ground = read_hit(&ground, identity);
-    qa_save_reader_destroy(&ground);
-    qa_save_reader level = field_of(&contact, "waterLevel");
-    out.snapshot.contact_water_level = qa_save_reader_integer(&level);
-    qa_save_reader_destroy(&level);
-    qa_save_reader type = field_of(&contact, "waterType");
-    out.snapshot.contact_water_type = qa_save_reader_integer(&type);
-    qa_save_reader_destroy(&type);
   }
-  qa_save_reader_destroy(&contact);
   qa_save_reader collisions = field_of(&reader, "collisions");
   size_t collision_count = qa_save_reader_list_count(&collisions);
-  qa_spatial_actor *actors = xmalloc(collision_count * sizeof *actors);
+  out.collisions = calloc(collision_count ? collision_count : 1, sizeof *out.collisions);
+  if (!out.collisions) qa_range_error("out of memory");
+  out.collision_count = collision_count;
   for (size_t i = 0; i < collision_count; i++) {
     qa_save_reader row;
     if (!qa_save_reader_item(&collisions, i, &row)) qa_range_error("out of memory");
-    actors[i] = read_collision(&row, identity);
-    qa_save_reader_destroy(&row);
+    read_collision(&row, identity, &out.collisions[i]);
   }
-  out.collisions = actors;
-  out.collision_count = collision_count;
-  qa_save_reader_destroy(&collisions);
-  qa_save_reader_destroy(&reader);
-  qa_save_value_free(tree);
+  qa_cleanup_pop(&guard);
   return out;
 }
 void qa_app_unified_prediction_projection_free(qa_app_unified_prediction_projection *projection) {
-  free((void *)projection->snapshot.state.as.q3.jump_pad);
+  if (projection->snapshot.state.kind == QA_MOVEMENT_STATE_Q3)
+    free((void *)projection->snapshot.state.as.q3.jump_pad);
   free((void *)projection->snapshot.arsenal.ammo);
   if (projection->snapshot.environment.client_outputs) {
     const qa_mod_client_movement_outputs *outputs = projection->snapshot.environment.client_outputs;
@@ -1018,6 +1015,7 @@ void qa_app_unified_prediction_projection_free(qa_app_unified_prediction_project
     free((void *)projection->collisions[i].collision.owner);
   }
   free(projection->collisions);
+  qa_save_value_free(projection->tree);
   memset(projection, 0, sizeof *projection);
 }
 typedef struct collect_ctx {
@@ -1040,7 +1038,7 @@ qa_app_unified_prediction_projection qa_app_unified_project_prediction(
     double acknowledged_input) {
   qa_app_unified_prediction_player player;
   if (!simulation->movement_player(simulation->ctx, actor, &player))
-    qa_range_error("Unified prediction requires an admitted movement player");
+    qa_raise("Error", 0, 0, "Unified prediction requires an admitted movement player");
   qa_app_movement_prediction_snapshot input;
   memset(&input, 0, sizeof input);
   input.sequence = acknowledged_input;
@@ -1072,5 +1070,42 @@ qa_app_unified_prediction_projection qa_app_unified_project_prediction(
       && strcmp(player.character_kind, "q3") == 0 ? 26 : 22;
   out.collisions = collect.actors;
   out.collision_count = collect.count;
+  /* A projection owns what qa_app_unified_prediction_projection_free releases (as a decoded one
+   * does): the player's jump pad, client movement outputs and each linked body's ground and
+   * collision owner are the simulation's until copied here. */
+  if (out.snapshot.state.kind == QA_MOVEMENT_STATE_Q3 && out.snapshot.state.as.q3.jump_pad) {
+    qa_actor_id *pad = xmalloc(sizeof *pad);
+    *pad = *out.snapshot.state.as.q3.jump_pad;
+    out.snapshot.state.as.q3.jump_pad = pad;
+  }
+  if (out.snapshot.environment.client_outputs) {
+    const qa_mod_client_movement_outputs *source = out.snapshot.environment.client_outputs;
+    qa_mod_client_movement_outputs *outputs = xmalloc(sizeof *outputs);
+    *outputs = *source;
+    if (source->view_offset) {
+      qa_vec3 *offset = xmalloc(sizeof *offset);
+      *offset = *source->view_offset;
+      outputs->view_offset = offset;
+    }
+    if (source->body_bounds) {
+      qa_bounds *bounds = xmalloc(sizeof *bounds);
+      *bounds = *source->body_bounds;
+      outputs->body_bounds = bounds;
+    }
+    out.snapshot.environment.client_outputs = outputs;
+  }
+  for (size_t i = 0; i < out.collision_count; i++) {
+    qa_spatial_actor *entry = &out.collisions[i];
+    if (entry->body.state.ground) {
+      qa_actor_id *ground = xmalloc(sizeof *ground);
+      *ground = *entry->body.state.ground;
+      entry->body.state.ground = ground;
+    }
+    if (entry->collision.owner) {
+      qa_actor_id *owner = xmalloc(sizeof *owner);
+      *owner = *entry->collision.owner;
+      entry->collision.owner = owner;
+    }
+  }
   return out;
 }

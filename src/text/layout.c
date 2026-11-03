@@ -9,15 +9,15 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static const qa_vec4 COLORS[8] = {{0, 0, 0, 1}, {1, 0, 0, 1}, {0, 1, 0, 1},
@@ -253,7 +253,7 @@ bool qa_layout_text(const qa_text_layout_options *options,
     qa_resolved_text_glyph glyph = qa_resolve_text_glyph(
         &options->font, character == '\t' ? 32 : (double)character,
         options->alternate);
-    double scale = line_height / fmax(1, glyph.atlas->line_height);
+    double scale = line_height / qa_js_max(1, glyph.atlas->line_height);
     double cell_advance =
         character == '\t'
             ? line_height * tab_columns -
@@ -320,7 +320,7 @@ bool qa_layout_text(const qa_text_layout_options *options,
       positioned->color = row[i].color;
       x += row[i].advance;
     }
-    widest = fmax(widest, row_width);
+    widest = qa_js_max(widest, row_width);
   }
   state_free(&state);
   out->width = widest;
@@ -355,40 +355,6 @@ void qa_draw_text_layout(const qa_draw2d *draw, const qa_text_layout *layout,
   if (shadow_offset > 0) draw_pass(draw, layout, origin, shadow_offset, true);
   draw_pass(draw, layout, origin, shadow_offset, false);
   qa_draw2d_set_color(draw, NULL);
-}
-
-/* JS ToInt32 for the `& ~7` in seatTextScale. */
-static int32_t to_int32(double value) {
-  if (!isfinite(value)) return 0;
-  double magnitude = fmod(fabs(trunc(value)), 4294967296.0);
-  uint32_t bits = (uint32_t)magnitude;
-  if (value < 0) bits = ~bits + 1u;
-  return (int32_t)bits;
-}
-
-qa_seat_text_scale qa_seat_text_scale_of(qa_rect viewport, double console_scale,
-                                         double status_bar_scale,
-                                         double crosshair_scale) {
-  double automatic = fmax(1, floor(viewport.height / 300));
-  double requested = console_scale > 0 ? console_scale : automatic;
-  double raw_width = floor(fmax(320, fmin(viewport.width / requested,
-                                         fmax(320, viewport.width))));
-  double console_width = fmax(8, (double)(to_int32(raw_width) & ~7));
-  double fit = fmax(1, fmin(floor(viewport.width / 320),
-                            floor(viewport.height / 144)));
-  qa_seat_text_scale out;
-  out.console = viewport.width / console_width;
-  out.console_width = console_width;
-  out.console_height = viewport.width <= 0
-                           ? viewport.height
-                           : floor(console_width * viewport.height /
-                                       viewport.width +
-                                   0.5); /* Math.round */
-  out.status_bar = status_bar_scale > 0
-                       ? fmax(1, fmin(status_bar_scale, fit))
-                       : fit;
-  out.crosshair = fmax(1, fmin(crosshair_scale, 10));
-  return out;
 }
 
 void qa_seat_text_presentation_init(qa_seat_text_presentation *presentation,

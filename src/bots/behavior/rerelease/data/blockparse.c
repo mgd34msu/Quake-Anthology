@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static char *dupn(const char *s, size_t n) { char *p = malloc(n + 1); if (!p) return NULL; memcpy(p, s, n); p[n] = 0; return p; }
 static bool is_space(char c) { return c == ' ' || c == '\t' || c == '\r'; }
 typedef struct { char **v; size_t n, cap; } SVec;
@@ -67,9 +68,8 @@ bool qa_parse_blocks(qa_block_parse_result *out, const char *text) {
   out->blocks = blocks; out->block_count = bn; out->errors = errors.v; out->error_count = errors.n; return true;
 }
 bool qa_field_string(const char *const *v, size_t n, const char **out) { if (n != 1) return false; *out = v[0]; return true; }
-bool qa_field_number(const char *const *v, size_t n, double *out) { if (n != 1 || !v[0][0]) return false; char *end = NULL; double x = strtod(v[0], &end);
-  /* JS Number(): whole-string parse; also accepts hex etc. - strtod covers decimal/hex float; trailing junk fails. */
-  if (!end || *end) { /* JS Number("0x10")=16 handled by strtod; "Infinity" strtod too but isFinite rejects */ return false; }
+bool qa_field_number(const char *const *v, size_t n, double *out) { if (n != 1 || !v[0][0]) return false;
+  double x = qa_js_string_to_number(v[0]); /* Number(values[0]); strtod took "0x1p3" and "-0x10", missed "0b11" */
   if (!isfinite(x)) return false;
   *out = x; return true; }
 bool qa_field_bool(const char *const *v, size_t n, bool *out) { if (n != 1) return false; if (!strcmp(v[0], "true")) { *out = true; return true; } if (!strcmp(v[0], "false")) { *out = false; return true; } return false; }

@@ -124,14 +124,14 @@ void qa_qvm_validate_weapon_stage(const qa_qvm_weapon_stage *stage,
   if (!has_dispatcher) qa_range_error("QVM continuation omits its original weapon dispatcher");
 }
 
-static int32_t proceed_call(qa_qvmy_function_call *call) {
+static int32_t proceed_call(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                      : call->proceed_async(call->call_ctx);
 }
 
 typedef struct dispatch_scope {
   qa_actor_id actor;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
 } dispatch_scope;
 
 typedef struct evaluation {
@@ -195,11 +195,10 @@ typedef struct predicate_state {
   bool *reached;
 } predicate_state;
 
-static bool decide_predicate(void *ctx, bool original, void *call_ctx, qa_qvmy_cancel_fn cancel) {
+static bool decide_predicate(void *ctx, bool original, void *call_ctx, qa_qvm_cancel_fn cancel) {
   predicate_state *state = ctx;
-  if (!state->dispatcher->operations.live(state->dispatcher->operations.ctx, state->actor)) {
-    cancel(call_ctx, state->cancellation);
-  }
+  if (!state->dispatcher->operations.live(state->dispatcher->operations.ctx, state->actor))
+    { cancel(call_ctx, state->cancellation); qa_range_error("QVM function scope cancelled"); }
   *state->reached = true;
   return state->dispatcher->operations.selected(state->dispatcher->operations.ctx, state->actor)
       ? original : state->unselected;
@@ -214,7 +213,7 @@ static void push_scope(qa_qvm_weapon_dispatcher_runtime *dispatcher, dispatch_sc
   ((dispatch_scope *)dispatcher->dispatchers)[dispatcher->dispatcher_count++] = scope;
 }
 
-static void remove_scope(qa_qvm_weapon_dispatcher_runtime *dispatcher, qa_qvmy_function_call *call) {
+static void remove_scope(qa_qvm_weapon_dispatcher_runtime *dispatcher, qa_qvm_module_function_call *call) {
   dispatch_scope *scopes = dispatcher->dispatchers;
   for (size_t i = dispatcher->dispatcher_count; i-- > 0;) {
     if (scopes[i].call == call) {
@@ -225,7 +224,25 @@ static void remove_scope(qa_qvm_weapon_dispatcher_runtime *dispatcher, qa_qvmy_f
   }
 }
 
-static int32_t dispatch_hook(void *ctx, qa_qvmy_function_call *call) {
+typedef struct dispatch_unwind_ctx {
+  qa_qvm_weapon_dispatcher_runtime *dispatcher;
+  qa_qvm_module_function_call *call;
+  void (*cleanup)(void *);
+  void *cleanup_ctx;
+  qa_qvm_module_branch_binding *bindings;
+  predicate_state *states;
+} dispatch_unwind_ctx;
+
+/* TS catch: try { cleanup(); } finally { remove(); }. */
+static void dispatch_unwind(void *ctx) {
+  dispatch_unwind_ctx *unwind = ctx;
+  if (unwind->cleanup != NULL) unwind->cleanup(unwind->cleanup_ctx);
+  remove_scope(unwind->dispatcher, unwind->call);
+  free(unwind->bindings);
+  free(unwind->states);
+}
+
+static int32_t dispatch_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_weapon_dispatcher_runtime *dispatcher = ctx;
   qa_actor_id actor;
   bool has_actor = dispatcher->operations.actor(dispatcher->operations.ctx,
@@ -249,7 +266,7 @@ static int32_t dispatch_hook(void *ctx, qa_qvmy_function_call *call) {
   bool reached = false;
   push_scope(dispatcher, (dispatch_scope){actor, call});
   size_t count = dispatcher->definition->predicate_count;
-  qa_qvmy_branch_binding *bindings = xmalloc(count * sizeof *bindings);
+  qa_qvm_module_branch_binding *bindings = xmalloc(count * sizeof *bindings);
   predicate_state *states = xmalloc(count * sizeof *states);
   for (size_t i = 0; i < count; i++) {
     states[i] = (predicate_state){dispatcher, actor, cancellation,
@@ -263,7 +280,11 @@ static int32_t dispatch_hook(void *ctx, qa_qvmy_function_call *call) {
   void *cleanup_ctx = NULL;
   if (dispatcher->operations.prepare != NULL)
     dispatcher->operations.prepare(dispatcher->operations.ctx, actor, call, &cleanup, &cleanup_ctx);
+  dispatch_unwind_ctx unwind = {dispatcher, call, cleanup, cleanup_ctx, bindings, states};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, dispatch_unwind, &unwind);
   int32_t result = proceed_call(call);
+  qa_cleanup_pop(&guard);
   if (cleanup != NULL) cleanup(cleanup_ctx);
   if (dispatcher->operations.live(dispatcher->operations.ctx, actor))
     dispatcher->operations.completed(dispatcher->operations.ctx, actor, reached);
@@ -273,7 +294,7 @@ static int32_t dispatch_hook(void *ctx, qa_qvmy_function_call *call) {
   return result;
 }
 
-static int32_t request_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t request_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_weapon_dispatcher_runtime *dispatcher = ctx;
   if (dispatcher->dispatcher_count == 0) return proceed_call(call);
   dispatch_scope *scopes = dispatcher->dispatchers;
@@ -295,7 +316,7 @@ static int32_t request_hook(void *ctx, qa_qvmy_function_call *call) {
   return result;
 }
 
-static size_t bind_dispatcher(qa_qvm_weapon_dispatcher_runtime *dispatcher, double entry, qa_qvmy_function_hook_fn hook) {
+static size_t bind_dispatcher(qa_qvm_weapon_dispatcher_runtime *dispatcher, double entry, qa_qvm_function_hook_fn hook) {
   qa_guest_callback_reference reference;
   memset(&reference, 0, sizeof reference);
   reference.kind = QA_GUEST_CALLBACK_QVM;
@@ -320,6 +341,12 @@ void qa_qvm_weapon_dispatcher_runtime_destroy(qa_qvm_weapon_dispatcher_runtime *
   memset(dispatcher, 0, sizeof *dispatcher);
 }
 
+/* TS finally { this.evaluations.pop(); }. */
+static void evaluate_unwind(void *ctx) {
+  qa_qvm_weapon_dispatcher_runtime *dispatcher = ctx;
+  dispatcher->evaluation_count--;
+}
+
 int32_t qa_qvm_weapon_dispatcher_runtime_evaluate(qa_qvm_weapon_dispatcher_runtime *dispatcher, qa_actor_id actor,
                                           const qa_qvm_region_evaluation *region,
                                           const int64_t *inputs, size_t input_count) {
@@ -336,8 +363,11 @@ int32_t qa_qvm_weapon_dispatcher_runtime_evaluate(qa_qvm_weapon_dispatcher_runti
   current->inputs = inputs;
   current->input_count = input_count;
   current->entered = false;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, evaluate_unwind, dispatcher);
   int32_t result = qa_qvm_module_call(dispatcher->operations.module, NULL, 0,
                                       (int64_t)dispatcher->definition->dispatcher.entry);
+  qa_cleanup_pop(&guard);
   dispatcher->evaluation_count--;
   return result;
 }
@@ -356,7 +386,7 @@ typedef struct stage_input {
   bool entered;
 } stage_input;
 
-static int64_t resolve_address(qa_qvm_memory *memory, const qa_qvm_mod_input_pointer *pointer, qa_qvmy_function_call *call) {
+static int64_t resolve_address(qa_qvm_memory *memory, const qa_qvm_mod_input_pointer *pointer, qa_qvm_module_function_call *call) {
   int32_t value;
   if (!pointer->is_global) {
     size_t offset = (size_t)(int64_t)pointer->index * 4;
@@ -377,7 +407,7 @@ static int64_t resolve_address(qa_qvm_memory *memory, const qa_qvm_mod_input_poi
 }
 
 static bool stage_actor_lookup(qa_qvm_mod_weapon_stage *stage, const qa_qvm_weapon_actor *source,
-                               qa_qvmy_function_call *call, qa_actor_id *out) {
+                               qa_qvm_module_function_call *call, qa_actor_id *out) {
   if (stage->application_count == 0) return false;
   qa_actor_id actor = stage->applications[stage->application_count - 1]->identity.actor;
   if (!stage->operations.live(stage->operations.ctx, actor)) return false;
@@ -388,7 +418,7 @@ static bool stage_actor_lookup(qa_qvm_mod_weapon_stage *stage, const qa_qvm_weap
 }
 
 static qa_qvm_cancellation_scope stage_cancellation(qa_qvm_mod_weapon_stage *stage, qa_actor_id actor,
-                                                     qa_qvmy_function_call *call) {
+                                                     qa_qvm_module_function_call *call) {
   stage_input *inputs = stage->inputs;
   for (size_t i = stage->input_count; i-- > 0;) {
     if (qa_same_actor(inputs[i].actor, actor) && inputs[i].has_cancellation)
@@ -401,16 +431,16 @@ typedef struct stage_adapter {
   qa_qvm_mod_weapon_stage *stage;
 } stage_adapter;
 
-static bool adapter_actor(void *ctx, const qa_qvm_weapon_actor *source, qa_qvmy_function_call *call, qa_actor_id *out) {
+static bool adapter_actor(void *ctx, const qa_qvm_weapon_actor *source, qa_qvm_module_function_call *call, qa_actor_id *out) {
   return stage_actor_lookup(((stage_adapter *)ctx)->stage, source, call, out);
 }
 
-static qa_qvm_cancellation_scope adapter_cancellation(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call) {
+static qa_qvm_cancellation_scope adapter_cancellation(void *ctx, qa_actor_id actor, qa_qvm_module_function_call *call) {
   return stage_cancellation(((stage_adapter *)ctx)->stage, actor, call);
 }
 
 
-static int32_t input_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t input_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_mod_weapon_stage *stage = ctx;
   if (stage->input_count == 0) return proceed_call(call);
   stage_input *inputs = stage->inputs;
@@ -422,15 +452,11 @@ static int32_t input_hook(void *ctx, qa_qvmy_function_call *call) {
   /* Copy out: nested applies may realloc the inputs array. */
   qa_actor_id actor = input->actor;
   qa_qvm_cancellation_scope cancellation = input->cancellation;
-  if (!stage->operations.live(stage->operations.ctx, actor)) {
-    call->cancel_function(call->call_ctx, cancellation);
-    qa_range_error("QVM cancellation requires the current source invocation");
-  }
+  if (!stage->operations.live(stage->operations.ctx, actor))
+    { call->cancel_function(call->call_ctx, cancellation); qa_range_error("QVM function scope cancelled"); }
   int32_t result = proceed_call(call);
-  if (!stage->operations.live(stage->operations.ctx, actor)) {
-    call->cancel_function(call->call_ctx, cancellation);
-    qa_range_error("QVM cancellation requires the current source invocation");
-  }
+  if (!stage->operations.live(stage->operations.ctx, actor))
+    { call->cancel_function(call->call_ctx, cancellation); qa_range_error("QVM function scope cancelled"); }
   return result;
 }
 
@@ -442,19 +468,19 @@ typedef struct continuation_state {
   bool *continued;
 } continuation_state;
 
-static bool decide_continuation_predicate(void *ctx, bool original, void *call_ctx, qa_qvmy_cancel_fn cancel) {
+static bool decide_continuation_predicate(void *ctx, bool original, void *call_ctx, qa_qvm_cancel_fn cancel) {
   continuation_state *state = ctx;
   if (!state->stage->operations.live(state->stage->operations.ctx, state->actor))
-    cancel(call_ctx, state->cancellation);
+    { cancel(call_ctx, state->cancellation); qa_range_error("QVM function scope cancelled"); }
   return state->stage->operations.selected(state->stage->operations.ctx, state->actor)
       ? original : state->unselected;
 }
 
-static bool decide_continuation_boundary(void *ctx, bool original, void *call_ctx, qa_qvmy_cancel_fn cancel) {
+static bool decide_continuation_boundary(void *ctx, bool original, void *call_ctx, qa_qvm_cancel_fn cancel) {
   continuation_state *state = ctx;
   qa_qvm_mod_weapon_stage *stage = state->stage;
   if (!stage->operations.live(stage->operations.ctx, state->actor))
-    cancel(call_ctx, state->cancellation);
+    { cancel(call_ctx, state->cancellation); qa_range_error("QVM function scope cancelled"); }
   if (original != stage->definition->continuation.original_taken ||
       !qa_qvm_weapon_dispatcher_runtime_matches(&stage->dispatcher, state->actor,
           stage->definition->continuation.when, stage->definition->continuation.when_count))
@@ -477,7 +503,18 @@ static void write_word_at(qa_qvm_memory *memory, int64_t address, int32_t value)
   qa_qvm_writable_view_set_int32(&view, 0, value, true);
 }
 
-static int32_t continue_hook(void *ctx, qa_qvmy_function_call *call) {
+typedef struct continue_storage {
+  qa_qvm_module_branch_binding *bindings;
+  continuation_state *states;
+} continue_storage;
+
+static void continue_unwind(void *ctx) {
+  continue_storage *storage = ctx;
+  free(storage->bindings);
+  free(storage->states);
+}
+
+static int32_t continue_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_mod_weapon_stage *stage = ctx;
   qa_actor_id actor;
   if (!stage_actor_lookup(stage, &stage->definition->continuation.actor, call, &actor))
@@ -487,7 +524,7 @@ static int32_t continue_hook(void *ctx, qa_qvmy_function_call *call) {
                                      &stage->definition->continuation.projection.movement, call);
   bool continued = false;
   size_t count = stage->definition->continuation.predicate_count + 1;
-  qa_qvmy_branch_binding *bindings = xmalloc(count * sizeof *bindings);
+  qa_qvm_module_branch_binding *bindings = xmalloc(count * sizeof *bindings);
   continuation_state *states = xmalloc(count * sizeof *states);
   for (size_t i = 0; i + 1 < count; i++) {
     states[i] = (continuation_state){stage, actor, cancellation,
@@ -501,6 +538,9 @@ static int32_t continue_hook(void *ctx, qa_qvmy_function_call *call) {
   bindings[count - 1].ctx = &states[count - 1];
   bindings[count - 1].decide = decide_continuation_boundary;
   call->branches(call->call_ctx, bindings, count);
+  continue_storage storage = {bindings, states};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, continue_unwind, &storage);
   int32_t result = proceed_call(call);
   if (continued) {
     const qa_qvm_weapon_projection *projection = &stage->definition->continuation.projection;
@@ -514,19 +554,17 @@ static int32_t continue_hook(void *ctx, qa_qvmy_function_call *call) {
         stage->operations.pointer(stage->operations.ctx, actor, projection->ground.record) +
             (int64_t)projection->ground.offset, posture.ground);
     for (size_t i = 0; i < stage->definition->continuation.call_count; i++) {
-      if (!stage->operations.live(stage->operations.ctx, actor)) {
-        call->cancel_function(call->call_ctx, cancellation);
-        qa_range_error("QVM cancellation requires the current source invocation");
-      }
+      if (!stage->operations.live(stage->operations.ctx, actor))
+        { call->cancel_function(call->call_ctx, cancellation); qa_range_error("QVM function scope cancelled"); }
       (void)stage->operations.invoke(stage->operations.ctx, actor, &stage->definition->continuation.calls[i].call);
     }
   }
-  free(bindings);
-  free(states);
+  qa_cleanup_pop(&guard);
+  continue_unwind(&storage);
   return result;
 }
 
-static size_t bind_stage(qa_qvm_mod_weapon_stage *stage, double entry, qa_qvmy_function_hook_fn hook) {
+static size_t bind_stage(qa_qvm_mod_weapon_stage *stage, double entry, qa_qvm_function_hook_fn hook) {
   qa_guest_callback_reference reference;
   memset(&reference, 0, sizeof reference);
   reference.kind = QA_GUEST_CALLBACK_QVM;
@@ -629,6 +667,12 @@ void qa_qvm_mod_weapon_stage_open(qa_qvm_mod_weapon_stage *stage, qa_mod_client_
   *remove_ctx = state;
 }
 
+/* TS finally { this.inputs.pop(); }. */
+static void apply_unwind(void *ctx) {
+  qa_qvm_mod_weapon_stage *stage = ctx;
+  stage->input_count--;
+}
+
 int32_t qa_qvm_mod_weapon_stage_apply(qa_qvm_mod_weapon_stage *stage, qa_actor_id actor,
                                       qa_qvm_weapon_run_fn run, void *run_ctx) {
   if (stage->input_count == stage->input_capacity) {
@@ -639,7 +683,10 @@ int32_t qa_qvm_mod_weapon_stage_apply(qa_qvm_mod_weapon_stage *stage, qa_actor_i
   stage_input *input = &((stage_input *)stage->inputs)[stage->input_count++];
   memset(input, 0, sizeof *input);
   input->actor = actor;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, apply_unwind, stage);
   int32_t result = run(run_ctx);
+  qa_cleanup_pop(&guard);
   stage->input_count--;
   return result;
 }
@@ -648,8 +695,9 @@ void qa_qvm_mod_weapon_stage_cancel_retired(qa_qvm_mod_weapon_stage *stage, qa_a
   if (stage->operations.live(stage->operations.ctx, actor)) return;
   stage_input *inputs = stage->inputs;
   for (size_t i = stage->input_count; i-- > 0;) {
-    if (qa_same_actor(inputs[i].actor, actor) && inputs[i].has_cancellation)
+    if (qa_same_actor(inputs[i].actor, actor) && inputs[i].has_cancellation) {
       qa_qvm_module_cancel_function(stage->operations.module, inputs[i].cancellation);
+    }
   }
 }
 

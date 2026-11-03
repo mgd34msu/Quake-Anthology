@@ -28,15 +28,17 @@ typedef struct qa_q1_entity_source_state {
 
 typedef struct qa_q1_saved_field { const char *key, *value; } qa_q1_saved_field;
 typedef struct qa_q1_saved_reference { const char *key; bool has_actor; qa_saved_actor_id actor; } qa_q1_saved_reference;
+/* TS Q1SavedEntity.monster: Q1Monster with saved enemy references, plus
+ * the version 5 grunt and dog cursor (legacyAnimation, absent from
+ * version 6). mode is stand|walk|run. */
 typedef struct qa_q1_saved_monster {
   qa_q1_monster_species species; const char *mode;
-  double frame_index, first_frame;
-  const double *sequence; size_t sequence_count;
   bool has_enemy; qa_saved_actor_id enemy;
   bool has_old_enemy; qa_saved_actor_id old_enemy;
   const char *path;
   double pause_until, attack_finished, pain_finished, search_until;
-  bool death_drop, refired;
+  bool refired;
+  bool has_legacy_animation; qa_q1_legacy_animation legacy_animation;
 } qa_q1_saved_monster;
 
 typedef struct qa_q1_saved_entity {
@@ -77,7 +79,7 @@ typedef struct qa_q1_saved_player {
 typedef struct qa_q1_foundation_checkpoint {
   const char *format; /* "q1-foundation" */
   qa_provider_id provider;
-  double version; /* 5 */
+  double version; /* 5 | 6 */
   qa_q1_precache_tables precaches;
   const char *edition;
   double time, frame_seconds, force_retouch;

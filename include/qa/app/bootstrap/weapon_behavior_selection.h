@@ -17,6 +17,25 @@ typedef struct qa_app_weapon_behavior_choice {
   const qa_resolved_weapon_behavior_selection *selection; /* borrowed, NULL = TS null */
 } qa_app_weapon_behavior_choice;
 /* TS PreparedWeaponBehavior discriminated on kind; payloads opaque. */
+/* The payloads of the "qvm" and "rerelease-native" PreparedWeaponBehavior arms (TS artifact/profile/mounts and
+ * prepared/declaration/mounts); the payload of a prepared entry of that kind points at one. */
+typedef struct qa_resolved_qvm_artifact qa_resolved_qvm_artifact;
+typedef struct qa_qvm_weapon_profile qa_qvm_weapon_profile;
+typedef struct qa_app_sim_prepared_rerelease_guest qa_app_sim_prepared_rerelease_guest;
+typedef struct qa_content_mounted qa_content_mounted;
+typedef struct qa_app_prepared_qvm_weapon_behavior {
+  const qa_resolved_qvm_artifact *artifact; const qa_qvm_weapon_profile *profile; qa_content_mounted *mounts;
+  void *owner; /* C-only: the discovery storage behind artifact and profile (prepareApplicationWeaponBehavior) */
+} qa_app_prepared_qvm_weapon_behavior;
+typedef struct qa_app_prepared_native_weapon_behavior {
+  const qa_app_sim_prepared_rerelease_guest *prepared; const qa_native_weapon_behavior_declaration *declaration; qa_content_mounted *mounts;
+} qa_app_prepared_native_weapon_behavior;
+/* The payload of the "quakec" arm (TS program/resources/mounts). */
+typedef struct qa_compat_qc_program qa_compat_qc_program;
+typedef struct qa_app_sim_quakec_resources qa_app_sim_quakec_resources;
+typedef struct qa_app_prepared_quakec_weapon_behavior {
+  const qa_compat_qc_program *program; const qa_app_sim_quakec_resources *resources; qa_content_mounted *mounts;
+} qa_app_prepared_quakec_weapon_behavior;
 typedef struct qa_app_prepared_weapon_behavior {
   const char *kind; /* "qvm"|"quakec"|"rerelease-native" */
   qa_resolved_weapon_behavior_selection selection;
@@ -51,6 +70,25 @@ qa_executable_recipe qa_app_select_weapon_behavior(qa_app_weapon_behavior_host h
 typedef struct qa_app_prepared_configured_recipe { qa_content_catalog *catalog; qa_executable_recipe recipe; } qa_app_prepared_configured_recipe;
 qa_app_prepared_configured_recipe qa_app_prepare_configured_recipe(qa_app_weapon_behavior_host host, qa_content_catalog *catalog,
                                                                    const qa_app_options *options, qa_executable_recipe recipe);
-qa_app_prepared_weapon_behavior qa_app_prepare_weapon_behavior(qa_app_weapon_behavior_host host, qa_content_catalog *catalog,
-                                                               qa_resolved_weapon_behavior_selection selection);
+/* TS prepareApplicationWeaponBehavior(catalog, selection, forContent): revalidates the
+ * selection against the mounted declaration and artifact and prepares its executable
+ * (QVM artifact and profile, rerelease native guest, or QuakeC program and resources).
+ * The entry's payload is an owned kind record (qa_app_prepared_{qvm,native,quakec}_
+ * weapon_behavior); mounts are the forContent mounts (borrowed). Raises Error with the
+ * TS messages. Release with qa_app_prepared_weapon_behavior_destroy. */
+typedef struct qa_content_mounted *(*qa_app_weapon_behavior_for_content_fn)(void *ctx, qa_content_id content);
+qa_app_prepared_weapon_behavior qa_app_prepare_application_weapon_behavior(qa_content_catalog *catalog,
+    qa_resolved_weapon_behavior_selection selection, qa_app_weapon_behavior_for_content_fn for_content, void *for_content_ctx);
+void qa_app_prepared_weapon_behavior_destroy(qa_app_prepared_weapon_behavior *prepared);
+/* Concrete TS applicationWeaponBehaviorChoices + choicesFromMounts
+ * over the landed catalog/mount/compat services (the host's
+ * choices_for_product seam, filled by content.c's native loader).
+ * Rows and selections borrow backing storage freed as one unit. */
+typedef struct qa_app_weapon_behavior_choice_list {
+  qa_app_weapon_behavior_choice *items; size_t count;
+  void *backing; /* owned mounts/discovery/selection storage */
+} qa_app_weapon_behavior_choice_list;
+qa_app_weapon_behavior_choice_list qa_app_weapon_behavior_choices_native(qa_content_catalog *catalog,
+    const char *product_id);
+void qa_app_weapon_behavior_choice_list_free(qa_app_weapon_behavior_choice_list *list);
 #endif

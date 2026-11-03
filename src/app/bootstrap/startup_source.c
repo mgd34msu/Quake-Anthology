@@ -3,7 +3,10 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/app/bootstrap/frame_time.h"
+#include "qa/app/bootstrap/q3_common_cvars.h"
 #include "qa/app/bootstrap/server_administration.h"
+#include "qa/app/bootstrap/simulation/quakeworld_cvars.h"
 #include "qa/content/q3/base/settings.h"
 #include "qa/core/q3_product_policy.h"
 #include "qa/foundation/support.h"
@@ -33,7 +36,15 @@ static void set_or_register(qa_cvar_registry *cvars, const char *name, const cha
   else cvar_set_(cvars, name, value, true);
 }
 static char *num(double v) { char *r = qa_input_js_number(v); if (!r) qa_range_error("Out of memory"); return r; }
-qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, const qa_app_options *options,
+/* registerQ3ProductPolicy(cvars) over the source registry. */
+static bool q3_register_cvar(void *ctx, const char *name, const char *default_value, int64_t flags, int64_t *out_integer_value) {
+  qa_cvar_snapshot snapshot = {0};
+  if (!qa_cvar_registry_register(ctx, name, default_value, (double)flags, &snapshot)) return false;
+  *out_integer_value = (int64_t)snapshot.integer_value;
+  qa_cvar_read_free(&snapshot);
+  return true;
+}
+qa_cvar_registry *qa_app_create_startup_source(const qa_app_options *options,
                                                qa_app_application_source_selection selection, qa_command_dialect dialect,
                                                qa_command_context context, double max_clients,
                                                qa_command_print_fn print, void *print_ctx) {
@@ -48,7 +59,8 @@ qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, 
       cvar_set_(cvars, "com_prereleaseTeamArenaDemo", qa_q3_team_arena_demo(options->q3_product.policy) ? "1" : "0", true);
       cvar_set_(cvars, "fs_restrict", options->q3_product.restriction.kind == QA_Q3_MOUNT_DEMO ? "1" : "0", true);
     }
-    if (host.register_q3_product_policy) host.register_q3_product_policy(host.ctx, cvars);
+    qa_q3_cvar_registrar registrar = {cvars, q3_register_cvar};
+    (void)qa_register_q3_product_policy(&registrar);
     cvar_register_(cvars, "fs_restrict", "0", QA_CVAR_FLAG_INIT);
     bool missionpack = selection.source.content && strstr(selection.source.content, "missionpack") != NULL;
     size_t count = 0;
@@ -59,7 +71,8 @@ qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, 
         {"skill", "1"}, {"deathmatch", "0"}, {"coop", "0"}, {"teamplay", "0"}, {"sv_cheats", "0"},
         {"sv_aim", dialect == QA_COMMAND_DIALECT_Q1_QUAKEWORLD ? "2" : "0.93"}, {"developer", "0"},
         {"pausable", "1"}, {"sv_gravity", "800"}, {"sv_maxspeed", "320"}, {"samelevel", "0"},
-        {"timelimit", "0"}, {"fraglimit", "0"}, {"gamecfg", "0"}, {"registered", "1"}, {"footsteps", "1"}};
+        {"timelimit", "0"}, {"fraglimit", "0"}, {"gamecfg", "0"}, {"registered", "1"}, {"footsteps", "1"},
+        {"sv_gate_dev_impulses", "0"}};
     for (size_t i = 0; i < sizeof defaults / sizeof defaults[0]; i++)
       cvar_register_(cvars, defaults[i].name, defaults[i].value, 0);
   }
@@ -78,11 +91,12 @@ qa_cvar_registry *qa_app_create_startup_source(qa_app_startup_source_host host, 
   char *clients = num(max_clients);
   set_or_register(cvars, dialect == QA_COMMAND_DIALECT_Q3 ? "sv_maxclients" : "maxclients", clients);
   free(clients);
-  if (dialect == QA_COMMAND_DIALECT_Q1_QUAKEWORLD && host.register_quakeworld_engine_cvars)
-    host.register_quakeworld_engine_cvars(host.ctx, cvars);
-  if (dialect == QA_COMMAND_DIALECT_Q3 && host.register_q3_server_cvars)
-    host.register_q3_server_cvars(host.ctx, cvars, max_clients, options->map);
-  if (host.register_frame_time_cvars) host.register_frame_time_cvars(host.ctx, cvars);
+  if (dialect == QA_COMMAND_DIALECT_Q1_QUAKEWORLD) qa_app_sim_register_quakeworld_engine_cvars(cvars);
+  if (dialect == QA_COMMAND_DIALECT_Q3) {
+    qa_app_q3_server_cvar_settings settings = {max_clients, options->map};
+    qa_app_register_q3_server_cvars(cvars, settings);
+  }
+  qa_app_register_frame_time_cvars(cvars);
   qa_app_register_source_administration_cvars(cvars);
   if (!options->dedicated && options->network_kind && strcmp(options->network_kind, "offline") == 0 && dialect != QA_COMMAND_DIALECT_Q3) {
     cvar_register_(cvars, "sv_autosave", "1", QA_CVAR_FLAG_ARCHIVE);

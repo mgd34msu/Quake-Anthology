@@ -7,7 +7,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "qa/app/bootstrap/simulation/types.h"
+#include "qa/content/q1/foundation/types.h"
 #include "qa/contracts/math.h"
+#include "qa/contracts/protocol.h"
 #include "qa/network/q1/netquake.h"
 typedef struct qa_app_sim_quakec_local_messages qa_app_sim_quakec_local_messages;
 qa_app_sim_quakec_local_messages *qa_app_sim_quakec_local_messages_create(void);
@@ -67,8 +69,9 @@ typedef struct qa_app_sim_quakec_local_view_source {
 bool qa_app_sim_quakec_local_view(qa_actor_id actor, qa_app_sim_quakec_local_messages *state,
     qa_app_sim_quakec_local_view_source source, qa_app_sim_player_view *out);
 
-/* Event payloads are carried as qa_app_sim_presentation_event views
- * (kind/event_kind + flat fields) for emit/message callbacks. */
+/* TS QuakeCLocalMessageHost. emit takes a Q1Event and message a
+ * NetworkEvent, both borrowed for the call; a NULL recipient/actor is TS
+ * undefined/null. */
 typedef struct qa_app_sim_quakec_local_message_host {
   void *ctx;
   qa_actor_id (*actor)(void *ctx, double slot);
@@ -78,13 +81,13 @@ typedef struct qa_app_sim_quakec_local_message_host {
   void (*camera)(void *ctx, qa_actor_id actor, qa_vec3 *out_origin, qa_vec3 *out_angles);
   const char *(*sound)(void *ctx, double index);
   const char *(*model)(void *ctx, double index);
-  void (*emit)(void *ctx, qa_app_sim_presentation_event event, const qa_actor_id *recipient);
-  void (*message)(void *ctx, qa_app_sim_presentation_event event, const qa_actor_id *actor);
+  void (*emit)(void *ctx, const qa_q1_event *event, const qa_actor_id *recipient);
+  void (*message)(void *ctx, qa_network_event event, const qa_actor_id *actor);
   void (*music)(void *ctx, double track);
   void (*angles)(void *ctx, qa_actor_id actor, qa_vec3 angles);
   void (*pause)(void *ctx, bool paused);
   void (*sky)(void *ctx, const char *name, const qa_actor_id *recipient);
-  void (*client_metadata)(void *ctx, qa_netquake_message event, const qa_actor_id *recipient);
+  void (*client_metadata)(void *ctx, qa_app_sim_q1_client_metadata_event event, const qa_actor_id *recipient);
   void (*session)(void *ctx, const char *kind, const qa_actor_id *recipient);
   void (*prompt)(void *ctx, qa_app_sim_quakec_prompt value);
   void (*fog)(void *ctx, qa_netquake_message value, const qa_actor_id *recipient);

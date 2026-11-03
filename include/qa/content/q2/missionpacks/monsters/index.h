@@ -59,45 +59,55 @@
 #include "qa/content/q2/missionpacks/monsters/widow/death.h"
 #include "qa/content/q2/missionpacks/monsters/widow2.h"
 #include "qa/content/q2/missionpacks/monsters/xatrix_variants.h"
+#include "qa/content/q2/rerelease/monsters/tables/missionpack.h"
 
-/* TS MissionPackMonsters class. Definitions are owned by the module
- * (merged callback tables inside them are process-lifetime). */
+/* TS MissionPackMonsters class. Definitions, and every bundle and merged
+ * callback table their builders allocate (arena), are owned by the module
+ * and freed by qa_q2mpm_monsters_destroy. */
 typedef struct qa_q2mpm_monsters_module {
   qa_q2mpm_pack pack;
   qa_q2m_monsters *monsters;
-  qa_q2mpm_hints hints;
+  bool has_hints; qa_q2mpm_hints hints;  /* TS hints: Q2RogueHints | null (rogue only) */
   qa_q2mpm_monster_state source;
   qa_q2m_source_combat_hooks rogue_hooks;
-  bool registered;
-  bool found_hint;
+  qa_q2mpm_services *gravity_box;        /* owned; backs the stalker gravity closure */
   qa_q2m_definition *definitions; size_t definition_count;
-  qa_q2f_callback_definitions merged_callbacks;
-  bool callbacks_built;
+  qa_q2_named_think boss5_think[3];
+  const char **original_source_fallbacks; size_t original_source_fallback_count;
+  qa_q2_named_think *merged_think; qa_q2_named_touch *merged_touch;
+  qa_q2mpm_arena arena;
+  qa_q2_callback_definitions spawn_callbacks; /* TS callbacks getter, read by Q2EntityServices */
+  /* Rerelease fallback registrations: { ...definition, moves: rereleaseMissionPackMoves(...) } (owned). */
+  qa_q2m_definition *rerelease_definitions; size_t rerelease_definition_count;
+  qa_q2rm_mission_pack_moves *rerelease_moves;
 } qa_q2mpm_monsters_module;
 
-/* TS createQ2MissionPackMonsters. weapons NULL mirrors TS undefined
- * (the heat chick, gladb and boss5 are then absent). False only on
- * OOM. */
+/* TS q2OriginalMissionPackFallbacks. */
+#define QA_Q2MPM_ORIGINAL_FALLBACK_COUNT 13
+extern const char *const qa_q2mpm_original_mission_pack_fallbacks[QA_Q2MPM_ORIGINAL_FALLBACK_COUNT];
+/* TS Q2MissionPackMonsters constructor / registerQ2MissionPackMonsters:
+ * builds the pack's definitions, registers them (classic edition: all of
+ * them under "classic"; the original-source fallbacks also edition-free),
+ * installs rogue hint paths and the source combat rules. The module must
+ * not move after init (registered definitions and hooks point into it).
+ * False only on OOM. */
 bool qa_q2mpm_monsters_init(qa_q2mpm_monsters_module *module, qa_q2mpm_pack pack, qa_q2m_monsters *monsters,
-                            qa_q2mpm_services services, const qa_q2mpm_weapons *weapons);
+                            qa_q2mpm_services services, const qa_q2mpm_weapons *weapons, qa_q2_edition edition);
 void qa_q2mpm_monsters_destroy(qa_q2mpm_monsters_module *module);
-qa_q2f_callback_definitions qa_q2mpm_monsters_callbacks(qa_q2mpm_monsters_module *module);
-qa_q2bm_spawn_module qa_q2mpm_monsters_as_spawn(qa_q2mpm_monsters_module *module);
-bool qa_q2mpm_monsters_spawn(qa_q2mpm_monsters_module *module, qa_q2f_entity *entity, qa_q2f_game *game);
-/* False only on OOM; out receives the hint initialization report. */
-bool qa_q2mpm_monsters_finalize(qa_q2mpm_monsters_module *module, qa_q2f_game *game,
+/* TS get callbacks(): monsters.callbacks + dabeam think + hint touch. The
+ * returned arrays stay valid until the next call or destroy. */
+qa_q2_callback_definitions qa_q2mpm_monsters_callbacks(qa_q2mpm_monsters_module *module);
+qa_q2_spawn_module qa_q2mpm_monsters_as_spawn(qa_q2mpm_monsters_module *module);
+bool qa_q2mpm_monsters_spawn(qa_q2mpm_monsters_module *module, qa_q2_entity *entity, qa_q2_game_services *game);
+/* TS hints?.finalize(game): a xatrix module reports no hint paths. */
+bool qa_q2mpm_monsters_finalize(qa_q2mpm_monsters_module *module, qa_q2_game_services *game,
                                 qa_q2mpm_hint_initialization *out);
-bool qa_q2mpm_monsters_capture(qa_q2mpm_monsters_module *module, qa_q2f_game *game,
+bool qa_q2mpm_monsters_capture(qa_q2mpm_monsters_module *module, qa_q2_game_services *game,
                                qa_q2mpm_monsters_checkpoint *out);
-void qa_q2mpm_monsters_restore(qa_q2mpm_monsters_module *module, qa_q2f_game *game,
+/* TS restore: a checkpoint with hints for a module without them is a TS Error. */
+void qa_q2mpm_monsters_restore(qa_q2mpm_monsters_module *module, qa_q2_game_services *game,
                                const qa_q2mpm_monsters_checkpoint *checkpoint);
-void qa_q2mpm_monsters_target_anger(qa_q2mpm_monsters_module *module, qa_q2f_entity *entity,
-                                    qa_q2f_entity *target, qa_q2f_game *game);
-
-/* TS createQ2XatrixAdditions: registers xatrix additions into
- * monsters and returns the number of definitions registered (9), or
- * 0 on OOM. The definitions are written to caller storage (room 9). */
-size_t qa_q2mpm_create_xatrix_additions(qa_q2m_definition *out, qa_q2m_monsters *monsters,
-                                        qa_q2mpm_weapons weapons);
+void qa_q2mpm_monsters_target_anger(qa_q2mpm_monsters_module *module, qa_q2_entity *entity,
+                                    qa_q2_entity *target, qa_q2_game_services *game);
 
 #endif

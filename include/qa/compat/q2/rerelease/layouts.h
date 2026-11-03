@@ -31,7 +31,6 @@ extern qa_guest_layout qa_compat_q2_rerelease_server_entity_layout;
 extern qa_guest_layout qa_compat_q2_rerelease_edict_layout;
 extern qa_guest_layout qa_compat_q2_rerelease_private_edict_prefix_layout;
 extern qa_guest_layout qa_compat_q2_rerelease_rectangle_layout;
-extern qa_guest_layout qa_compat_q2_rerelease_cgame_server_data_layout;
 /* TS importTableLayout/exportTableLayout: fields are malloc'd and
  * retained for the process (the TS layouts are immortal consts). */
 qa_guest_layout qa_compat_q2_rerelease_import_table_layout(const char *kind, const char *const *names, size_t count);

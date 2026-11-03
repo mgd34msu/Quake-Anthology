@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static double f32d(double v){ return (double)(float)v; }
 typedef struct cache_entry { const void *vertices; const double *indices; const char *lighting; bool pair; const void *world_positions; const void *normals; double seen; bool has_arrays; qa_gl_geometry_arrays arrays; } cache_entry;
 static cache_entry *g_cache; static size_t g_cache_count, g_cache_cap;
@@ -41,23 +42,23 @@ static qa_gl_geometry_arrays pack_into(qa_draw_batch batch,float *storage){
     a.positions[four]=(float)pos.x;a.positions[four+1]=(float)pos.y;a.positions[four+2]=(float)pos.z;a.positions[four+3]=(float)pos.w;
     a.colors[four]=(float)col.x;a.colors[four+1]=(float)col.y;a.colors[four+2]=(float)col.z;a.colors[four+3]=(float)col.w;
     a.coordinates[two]=(float)tc.x;a.coordinates[two+1]=(float)tc.y;
-    double m=fmax(fmax(fabs(pos.x),fabs(pos.y)),fmax(fabs(pos.z),fabs(pos.w)));
-    m=fmax(m,fmax(fmax(fabs(col.x),fabs(col.y)),fmax(fabs(col.z),fabs(col.w))));
-    worst=fmax(worst,fmax(m,fmax(fabs(tc.x),fabs(tc.y))));
+    double m=qa_js_max(qa_js_max(fabs(pos.x),fabs(pos.y)),qa_js_max(fabs(pos.z),fabs(pos.w)));
+    m=qa_js_max(m,qa_js_max(qa_js_max(fabs(col.x),fabs(col.y)),qa_js_max(fabs(col.z),fabs(col.w))));
+    worst=qa_js_max(worst,qa_js_max(m,qa_js_max(fabs(tc.x),fabs(tc.y))));
     four+=4;two+=2;
   }
   if(batch.texturing_is_pair){ size_t off=0; for(size_t i=0;i<verts;i++){ qa_vec2 t=batch.pair_vertices[i].tex_coord2;
-    a.coordinates2[off]=(float)t.x;a.coordinates2[off+1]=(float)t.y; worst=fmax(worst,fmax(fabs(t.x),fabs(t.y))); off+=2; } }
+    a.coordinates2[off]=(float)t.x;a.coordinates2[off+1]=(float)t.y; worst=qa_js_max(worst,qa_js_max(fabs(t.x),fabs(t.y))); off+=2; } }
   if(strcmp(batch.lighting.kind,"vertex")){
     if(batch.lighting.world_position_count!=verts) qa_range_error("Q2 world positions must match the draw's vertex count");
     size_t off=0; for(size_t i=0;i<verts;i++){ qa_vec3 p=batch.lighting.world_positions[i];
       a.world_positions[off]=(float)p.x;a.world_positions[off+1]=(float)p.y;a.world_positions[off+2]=(float)p.z;
-      worst=fmax(worst,fmax(fabs(p.x),fmax(fabs(p.y),fabs(p.z)))); off+=3; }
+      worst=qa_js_max(worst,qa_js_max(fabs(p.x),qa_js_max(fabs(p.y),fabs(p.z)))); off+=3; }
     if(!strcmp(batch.lighting.kind,"q2-world")){
       if(batch.lighting.normal_count!=verts) qa_range_error("Q2 normals must match the draw's vertex count");
       off=0; for(size_t i=0;i<verts;i++){ qa_vec3 n=batch.lighting.normals[i];
         a.normals[off]=(float)n.x;a.normals[off+1]=(float)n.y;a.normals[off+2]=(float)n.z;
-        worst=fmax(worst,fmax(fabs(n.x),fmax(fabs(n.y),fabs(n.z)))); off+=3; }
+        worst=qa_js_max(worst,qa_js_max(fabs(n.x),qa_js_max(fabs(n.y),fabs(n.z)))); off+=3; }
     }
   }
   if(!(worst<3.4028235677973366e38)) qa_range_error("OpenGL attributes must be finite float32 values");

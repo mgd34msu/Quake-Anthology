@@ -8,7 +8,7 @@
 typedef struct qa_q3_level_capture {
   qa_q3_level_values values; double *team_scores; size_t team_score_count;
   double num_team_voting_clients[2]; double *sorted_clients; size_t sorted_count;
-  qa_q3_vote_state_mirror vote, team_votes[2];
+  qa_q3_ta_vote_state vote; qa_q3_ta_team_vote_state team_votes[2];
 } qa_q3_level_capture;
 qa_q3_level_capture qa_q3_capture_level(qa_q3_game_level *level);
 void qa_q3_level_capture_destroy(qa_q3_level_capture *capture);

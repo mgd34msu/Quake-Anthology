@@ -44,7 +44,6 @@
 #include "qa/ui/common/legacy/borders.h"
 #include "qa/core/commands/index.h"
 #include "qa/core/cvars/index.h"
-#include "qa/ui/common/legacy/input.h"
 #include "qa/ui/common/legacy/menu.h"
 #include "qa/ui/common/legacy/runtime.h"
 #include "qa/ui/common/menu_theme.h"
@@ -1906,33 +1905,44 @@ static const char *fake_mods_status(void *ctx) {
 typedef struct fake_saves {
   qa_ui_startup_save_row rows[1];
   int saves;
+  int refreshes;
   char saved_name[64];
+  bool queue;                 /* settle save later, as the application's step does */
+  bool pending;
+  qa_ui_saves_settle settle;  /* the queued save's settlement */
 } fake_saves;
 static qa_ui_startup_save_list fake_saves_list(void *ctx) {
   fake_saves *f = ctx;
   return (qa_ui_startup_save_list){ f->rows, 1, NULL };
 }
-static const char *fake_saves_refresh(void *ctx) {
-  (void)ctx;
-  return NULL;
+static void fake_saves_refresh(void *ctx, qa_ui_saves_settle settle) {
+  fake_saves *f = ctx;
+  f->refreshes++;
+  settle.fn(settle.ctx, NULL);
 }
 static const char *fake_saves_unavailable(void *ctx, const char *action) {
   (void)ctx;
   (void)action;
   return NULL;
 }
-static const char *fake_saves_save(void *ctx, const char *name,
-                                   const char *overwrite) {
+static void fake_saves_save(void *ctx, const char *name,
+                            const char *overwrite, qa_ui_saves_settle settle) {
   (void)overwrite;
   fake_saves *f = ctx;
   f->saves++;
   snprintf(f->saved_name, sizeof f->saved_name, "%s", name);
-  return NULL;
+  if (f->queue) {
+    f->pending = true;
+    f->settle = settle;
+    return;
+  }
+  settle.fn(settle.ctx, NULL);
 }
-static const char *fake_saves_load(void *ctx, const char *id) {
+static void fake_saves_load(void *ctx, const char *id,
+                            qa_ui_saves_settle settle) {
   (void)ctx;
   (void)id;
-  return NULL;
+  settle.fn(settle.ctx, NULL);
 }
 
 static void test_mods_saves_menus(void) {
@@ -1999,7 +2009,37 @@ static void test_mods_saves_menus(void) {
   CHECK(draw_has(&h, "Save 002"));
   send_click(&h, 100, 184); /* Save game (menuRow 3) */
   CHECK(saves.saves == 1 && strcmp(saves.saved_name, "Save 002") == 0);
+  /* A queued save (TS saveMenu settles it in step): the menu stays busy with
+   * "Working..." until the promise settles; a rejection shows its message. */
+  saves.queue = true;
+  qa_native_ui_controller_open_menu(h.controller, save_menus.save);
+  send_click(&h, 100, 100); /* New saved game */
+  CHECK(menu_is(&h, "menu:saves:name"));
+  int refreshes = saves.refreshes;
+  send_click(&h, 100, 184); /* Save game */
+  CHECK(saves.saves == 2 && saves.pending);
+  CHECK(draw_has(&h, "Working..."));
+  send_click(&h, 100, 184); /* busy: the second write is refused */
+  CHECK(saves.saves == 2);
+  saves.pending = false;
+  saves.settle.fn(saves.settle.ctx, "Disk full");
+  CHECK(saves.refreshes == refreshes); /* rejected: no refresh, menu stays */
+  CHECK(menu_is(&h, "menu:saves:name"));
+  CHECK(draw_has(&h, "Disk full"));
+  send_click(&h, 100, 184); /* Save game again, resolved later */
+  CHECK(saves.saves == 3 && saves.pending);
+  saves.pending = false;
+  saves.settle.fn(saves.settle.ctx, NULL);
+  CHECK(saves.refreshes == refreshes + 1); /* resolved: refresh, then close */
+  CHECK(!menu_is(&h, "menu:saves:name"));
+  /* disposed while a save is pending: the settle still runs (TS GC). */
+  qa_native_ui_controller_open_menu(h.controller, save_menus.save);
+  send_click(&h, 100, 100);
+  send_click(&h, 100, 184);
+  CHECK(saves.pending);
   qa_ui_saved_game_menus_dispose(&save_menus);
+  saves.pending = false;
+  saves.settle.fn(saves.settle.ctx, NULL);
   harness_destroy(&h);
 }
 /* ---- end appended hud/library/mods/saves section ---- */
@@ -2195,31 +2235,6 @@ static void legacy_paint_model(void *ctx,
   (void)ctx;
   (void)request;
 }
-static char *legacy_key_name(void *ctx, double key) {
-  (void)ctx;
-  (void)key;
-  return strdup("K");
-}
-static char *legacy_get_binding(void *ctx, double key) {
-  (void)ctx;
-  (void)key;
-  return strdup("");
-}
-static void legacy_set_binding(void *ctx, double key, const char *command) {
-  (void)ctx;
-  (void)key;
-  (void)command;
-}
-static bool legacy_get_overstrike(void *ctx) {
-  return ((legacy_host_log *)ctx)->overstrike;
-}
-static void legacy_set_overstrike(void *ctx, bool enabled) {
-  ((legacy_host_log *)ctx)->overstrike = enabled;
-}
-static void legacy_pause(void *ctx, bool paused) {
-  (void)paused;
-  ((legacy_host_log *)ctx)->pauses++;
-}
 static double legacy_feeder_count(void *ctx, double feeder) {
   (void)ctx;
   (void)feeder;
@@ -2296,11 +2311,6 @@ static qa_vec4 legacy_team_color(void *ctx) {
   qa_vec4 color = {1, 0, 0, 1};
   return color;
 }
-static void legacy_restart(void *ctx, qa_command_invocation *command) {
-  (void)command;
-  ((legacy_host_log *)ctx)->restarts++;
-}
-
 static void legacy_stretch_count(void *ctx, qa_rect rect,
                                  qa_text_texture_rect uv,
                                  const qa_picture_asset *picture) {
@@ -2336,8 +2346,7 @@ static void test_legacy_menu_runtime(void) {
   parse_options.has_memory = true;
   parse_options.memory.kind = QA_UI_MENU_MEMORY_QVM32;
   parse_options.memory.memory = memory;
-  const char *set_paths[] = {"ui/menus.txt"};
-  qa_ui_menu_load_plan plan = {QA_UI_LOAD_PLAN_UI, set_paths, 1, NULL};
+  qa_ui_menu_load_plan plan = {"ui/menus.txt"};
   qa_ui_menu_definitions definitions;
   qa_ui_load_menu_definitions(&host, &plan, NULL, &parse_options,
                               &definitions);
@@ -2376,7 +2385,7 @@ static void test_legacy_menu_runtime(void) {
   CHECK_ABORTS((void)qa_ui_multi_label(&multi, 32));
   CHECK_ABORTS((void)qa_ui_menu_item_at(menu, 96));
 
-  /* HUD plan parses the same set through COM text. */
+  /* The default HUD plan parses the same set through COM text. */
   qa_ui_team_arena_memory *hud_memory = qa_ui_team_arena_memory_create(
       "qvm32", legacy_print, &log, QA_UI_TEAM_ARENA_MODULE_UI);
   qa_ui_menu_parse_options hud_options = parse_options;
@@ -2390,8 +2399,7 @@ static void test_legacy_menu_runtime(void) {
   qa_ui_team_arena_memory_destroy(hud_memory);
 
   /* Missing set file is a ScriptLanguageError abort. */
-  const char *missing_paths[] = {"ui/nope.txt"};
-  qa_ui_menu_load_plan missing = {QA_UI_LOAD_PLAN_UI, missing_paths, 1, NULL};
+  qa_ui_menu_load_plan missing = {"ui/nope.txt"};
   qa_ui_menu_definitions dropped;
   CHECK_ABORTS(qa_ui_load_menu_definitions(&host, &missing, NULL,
                                            &parse_options, &dropped));
@@ -2411,19 +2419,11 @@ static void test_legacy_menu_runtime(void) {
   cvar_options.dialect = QA_COMMAND_DIALECT_Q3;
   cvar_options.context = context;
   qa_cvar_registry *cvars = qa_cvar_registry_create(&cvar_options);
-  qa_command_buffer_options buffer_options;
-  memset(&buffer_options, 0, sizeof buffer_options);
-  buffer_options.dialect = QA_COMMAND_DIALECT_Q3;
-  buffer_options.context = context;
-  buffer_options.cvars = cvars;
-  qa_command_buffer *commands = qa_command_buffer_create(&buffer_options);
   qa_cvar_snapshot snapshot;
   if (qa_cvar_registry_register(cvars, "s_volume", "0.25", 0, &snapshot))
     qa_cvar_read_free(&snapshot);
   if (qa_cvar_registry_register(cvars, "ui_opened", "0", 0, &snapshot))
     qa_cvar_read_free(&snapshot);
-  CHECK(qa_command_buffer_register(commands, "map_restart", legacy_restart,
-                                   &log, NULL, QA_COMMAND_WORLD));
 
   static qa_q3_registered_font fake_font;
   memset(&fake_font, 0, sizeof fake_font);
@@ -2437,8 +2437,6 @@ static void test_legacy_menu_runtime(void) {
   memset(&options, 0, sizeof options);
   options.definitions = definitions;
   options.cvars = cvars;
-  options.commands = commands;
-  options.command_context = context;
   options.resources.handles.kind = QA_UI_HANDLES_DIAGNOSTIC;
   options.resources.ctx = &log;
   options.resources.register_font = legacy_register_font;
@@ -2465,15 +2463,6 @@ static void test_legacy_menu_runtime(void) {
   options.cinematics.draw = legacy_cine_draw;
   options.cinematics.stop = legacy_cine_noop;
   options.paint_model = legacy_paint_model;
-  options.context.kind = QA_UI_RUNTIME_CONTEXT_UI;
-  options.context.bindings.ctx = &log;
-  options.context.bindings.key_name = legacy_key_name;
-  options.context.bindings.get_binding = legacy_get_binding;
-  options.context.bindings.set_binding = legacy_set_binding;
-  options.context.bindings.get_overstrike = legacy_get_overstrike;
-  options.context.bindings.set_overstrike = legacy_set_overstrike;
-  options.context.pause = legacy_pause;
-  options.context.pause_ctx = &log;
   options.feeder.ctx = &log;
   options.feeder.count = legacy_feeder_count;
   options.feeder.item = legacy_feeder_item;
@@ -2502,8 +2491,8 @@ static void test_legacy_menu_runtime(void) {
   CHECK(((int)snap.menus[0].items[1].flags & QA_UI_WINDOW_VISIBLE) == 0);
   qa_ui_runtime_snapshot_destroy(&snap);
 
-  /* Seat input: click play -> show confirm, hide play group. */
-  qa_legacy_ui_seat *input = qa_legacy_ui_seat_create(seat, runtime);
+  /* Click play -> show confirm, hide play group (the TS LegacyUiSeat is
+     gone; keys go straight to the runtime). */
   int stretches = 0;
   qa_draw2d draw;
   memset(&draw, 0, sizeof draw);
@@ -2513,46 +2502,20 @@ static void test_legacy_menu_runtime(void) {
   draw.commands.set_color = legacy_set_color_count;
   draw.commands.stretch_pixels = legacy_stretch_count;
   draw.space = QA_COORD_TEAM_UI_640;
-  qa_seat_input_event event;
-  memset(&event, 0, sizeof event);
-  event.seat = qa_identity_owner_seat(&owner, 0);
-  event.kind = "key";
-  event.code = 13;
-  event.down = true;
-  CHECK(!qa_legacy_ui_seat_input(input, &event, &draw)); /* other seat */
   qa_ui_runtime_frame frame = {1000, 16, &draw};
   qa_ui_runtime_run_frame(runtime, frame, 60);
-  /* click helper inline: motion + down + up through route/drain */
-  for (int click_index = 0; click_index < 2; click_index++) {
-    double cx = 110, cy = click_index == 0 ? 110 : 150;
-    memset(&event, 0, sizeof event);
-    event.seat = seat;
-    event.time_milliseconds = 1000;
-    event.kind = "mouse-motion";
-    event.position.x = cx + 640;
-    event.position.y = cy;
-    CHECK(qa_legacy_ui_seat_route(input, &event));
-    event.kind = "mouse-button";
-    event.button = 1;
-    event.down = true;
-    CHECK(qa_legacy_ui_seat_route(input, &event));
-    event.down = false;
-    CHECK(qa_legacy_ui_seat_route(input, &event));
-    qa_legacy_ui_seat_drain(input, &draw);
-    if (click_index == 0) {
-      snap = qa_ui_runtime_take_snapshot(runtime);
-      CHECK(((int)snap.menus[0].items[1].flags & QA_UI_WINDOW_VISIBLE) != 0);
-      CHECK(((int)snap.menus[0].items[0].flags & QA_UI_WINDOW_VISIBLE) == 0);
-      qa_ui_runtime_snapshot_destroy(&snap);
-      CHECK(qa_command_buffer_execute(commands) == 0);
-      CHECK(log.restarts == 0);
-    }
-  }
-  CHECK(qa_command_buffer_execute(commands) == 1);
-  CHECK(log.restarts == 1);
+  qa_ui_key_event click = {QA_UI_KEY_EVENT_KEY, QA_KEY_MOUSE1, true};
+  qa_ui_runtime_set_display_cursor(runtime, 110, 110);
+  CHECK(qa_ui_runtime_pointer_move(runtime, 110, 110));
+  CHECK(qa_ui_runtime_handle_key(runtime, click, 110, 110));
   snap = qa_ui_runtime_take_snapshot(runtime);
-  CHECK(((int)snap.menus[0].flags & QA_UI_WINDOW_VISIBLE) == 0);
+  CHECK(((int)snap.menus[0].items[1].flags & QA_UI_WINDOW_VISIBLE) != 0);
+  CHECK(((int)snap.menus[0].items[0].flags & QA_UI_WINDOW_VISIBLE) == 0);
   qa_ui_runtime_snapshot_destroy(&snap);
+  /* The cgame menu runtime has no command host: exec is an Error. */
+  qa_ui_runtime_set_display_cursor(runtime, 110, 150);
+  CHECK(qa_ui_runtime_pointer_move(runtime, 110, 150));
+  CHECK_ABORTS((void)qa_ui_runtime_handle_key(runtime, click, 110, 150));
 
   /* Multi cycles the cvar; unknown script commands go external. */
   CHECK(qa_ui_runtime_activate(runtime, "main"));
@@ -2573,18 +2536,10 @@ static void test_legacy_menu_runtime(void) {
   CHECK_ABORTS((void)qa_ui_runtime_pointer_move(runtime, NAN, 0));
   CHECK_ABORTS(qa_ui_runtime_set_display_time(runtime, 2147483648.0));
 
-  qa_legacy_ui_seat_close(input);
-  memset(&event, 0, sizeof event);
-  event.seat = seat;
-  event.kind = "key";
-  event.code = 13;
-  event.down = true;
-  CHECK_ABORTS((void)qa_legacy_ui_seat_route(input, &event));
+  qa_ui_runtime_retire(runtime);
   CHECK_ABORTS((void)qa_ui_runtime_take_snapshot(runtime));
 
-  qa_legacy_ui_seat_destroy(input);
   qa_ui_runtime_destroy(runtime);
-  qa_command_buffer_destroy(commands);
   qa_cvar_registry_destroy(cvars);
   qa_ui_menu_definitions_destroy(&definitions);
   qa_ui_team_arena_memory_destroy(memory);

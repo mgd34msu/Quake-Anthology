@@ -29,6 +29,10 @@ typedef struct qa_app_runtime_diagnostic_services {
   /* TS queue(Promise): run the operation now (synchronous port). */
   void (*queue)(void *ctx, void (*operation)(void *op_ctx), void *op_ctx);
 } qa_app_runtime_diagnostic_services;
+struct qa_content_mounted;
+/* TS RuntimeDiagnosticServices.mounts as a MountedContent (borrowed): the path report, the opened resources
+ * (JSON.stringify(openedResources, null, 2)), listFiles and open. */
+qa_app_runtime_mounts qa_app_runtime_mounts_of(struct qa_content_mounted *mounts);
 qa_app_capture_frame_result qa_app_source_capture_frame(double elapsed, double fps, double timescale, bool active, bool force);
 /* Release handles; destroy unregisters (TS returned disposers). */
 qa_app_diagnostic_tools *qa_app_register_diagnostic_tools(qa_command_buffer *commands, qa_omni_timer *timer,

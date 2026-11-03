@@ -7,9 +7,9 @@
 /* TS Q2RoguePlayerSpawns (stateless). */
 typedef struct qa_q2mp_rogue_player_spawns { int unused; } qa_q2mp_rogue_player_spawns;
 void qa_q2mp_rogue_player_spawns_init(qa_q2mp_rogue_player_spawns *spawns);
-bool qa_q2mp_rogue_player_spawns_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2f_entity *entity, qa_q2f_game *game);
+bool qa_q2mp_rogue_player_spawns_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2_entity *entity, qa_q2_game_services *game);
 /* False return is TS null. */
 typedef struct qa_q2mp_spawn_point { qa_vec3 origin, angles; } qa_q2mp_spawn_point;
-bool qa_q2mp_rogue_player_spawns_select_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2f_game *game,
+bool qa_q2mp_rogue_player_spawns_select_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2_game_services *game,
                                               qa_q2mp_spawn_point *out);
 #endif

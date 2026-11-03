@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/base-arena-select-menu.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/base_arena_select_menu.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -88,9 +89,9 @@ qa_app_arena_selection_view qa_app_arena_selection_menu_view(qa_app_arena_select
       len += (size_t)snprintf(view.opponents + len, sizeof view.opponents - len, "%s%s", i ? ", " : "", view.current->arena->bots[i]);
     const qa_app_base_arena *arena = view.current->arena;
     if (arena->frag_limit > 0 && arena->time_limit > 0)
-      snprintf(view.limits, sizeof view.limits, "%.17g frags · %.17g minutes", arena->frag_limit, arena->time_limit);
-    else if (arena->frag_limit > 0) snprintf(view.limits, sizeof view.limits, "%.17g frags", arena->frag_limit);
-    else if (arena->time_limit > 0) snprintf(view.limits, sizeof view.limits, "%.17g minutes", arena->time_limit);
+      snprintf(view.limits, sizeof view.limits, "%s frags · %s minutes", QA_JS_NUMBER(arena->frag_limit), QA_JS_NUMBER(arena->time_limit));
+    else if (arena->frag_limit > 0) snprintf(view.limits, sizeof view.limits, "%s frags", QA_JS_NUMBER(arena->frag_limit));
+    else if (arena->time_limit > 0) snprintf(view.limits, sizeof view.limits, "%s minutes", QA_JS_NUMBER(arena->time_limit));
   }
   return view;
 }

@@ -7,6 +7,7 @@
 
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 
 static double fr(double value) { return (double)(float)value; }
 
@@ -215,7 +216,8 @@ qa_legacy_particle_batch qa_q2_beam_batch(
   return out;
 }
 
-qa_legacy_particle_image qa_legacy_particle_image_make(const char *profile) {
+void qa_legacy_particle_image_make(qa_legacy_particle_image *out, const char *profile) {
+  memset(out, 0, sizeof *out);
   static const char *const DOT_Q1[8] = {"01100000", "11110000", "11110000",
                                         "01100000", "00000000", "00000000",
                                         "00000000", "00000000"};
@@ -224,22 +226,20 @@ qa_legacy_particle_image qa_legacy_particle_image_make(const char *profile) {
                                         "00000000", "00000000"};
   const char *const *dot =
       (profile != NULL && strcmp(profile, "q1") == 0) ? DOT_Q1 : DOT_Q2;
-  qa_legacy_particle_image out = {0};
-  out.pixels = calloc(8 * 8 * 4, 1);
-  if (out.pixels != NULL) {
+  out->pixels = calloc(8 * 8 * 4, 1);
+  if (out->pixels != NULL) {
     for (int y = 0; y < 8; y++)
       for (int x = 0; x < 8; x++) {
-        uint8_t *pixel = out.pixels + (y * 8 + x) * 4;
+        uint8_t *pixel = out->pixels + (y * 8 + x) * 4;
         pixel[0] = pixel[1] = pixel[2] = 255;
         pixel[3] = dot[x][y] == '1' ? 255 : 0;
       }
   }
-  out.level = (qa_image_level){8, 8, {out.pixels, 8 * 8 * 4}};
-  out.image.kind = QA_RENDER_IMAGE_RGBA8;
-  out.image.levels = &out.level;
-  out.image.level_count = 1;
-  out.image.border_color = (qa_vec4){0, 0, 0, 0};
-  return out;
+  out->level = (qa_image_level){8, 8, {out->pixels, 8 * 8 * 4}};
+  out->image.kind = QA_RENDER_IMAGE_RGBA8;
+  out->image.levels = &out->level;
+  out->image.level_count = 1;
+  out->image.border_color = (qa_vec4){0, 0, 0, 0};
 }
 
 static const double RAMP1[8] = {111, 109, 107, 105, 103, 101, 99, 97};
@@ -307,7 +307,7 @@ bool qa_sample_q2_particle(qa_q2_particle_state particle, double milliseconds,
   memset(out, 0, sizeof *out);
   out->is_rgba = false;
   out->palette_index = particle.color;
-  out->alpha = fmin(1, alpha);
+  out->alpha = qa_js_min(1, alpha);
   out->size = 1;
   out->origin = (qa_vec3){
       fr(particle.origin.x + particle.velocity.x * seconds +

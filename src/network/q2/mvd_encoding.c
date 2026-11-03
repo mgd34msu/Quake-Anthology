@@ -1,5 +1,6 @@
 /* Port of src/network/q2/mvd-encoding.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/mvd_encoding.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -108,8 +109,8 @@ static void player_delta(qa_q2_sizebuf *message, const qa_q2_wire_player *from,
       double value = origin_at(to, rr, axis);
       if (rr) qa_q2_msg_write_float(message, value);
       else if (profile->v2) {
-        qa_q2pro_write_int23(message, (int32_t)value,
-                             (int32_t)origin_at(prev, rr, axis));
+        /* writeQ2ProInt23 range-checks the number: 1.5 or 2^40 throw, not truncate. */
+        qa_q2pro_write_int23_number(message, value, origin_at(prev, rr, axis));
       } else qa_q2_msg_write_short(message, value);
     }
   }
@@ -131,7 +132,7 @@ static void player_delta(qa_q2_sizebuf *message, const qa_q2_wire_player *from,
   }
   if (bits & QA_Q2_PPS_WEAPONINDEX) {
     /* TS: to.gunindex | to.gunskin << 13 (ToInt32 then writeShort). */
-    int32_t packed = (int32_t)to->gunindex | ((int32_t)to->gunskin << 13);
+    int32_t packed = qa_js_to_int32(to->gunindex) | (qa_js_to_int32(to->gunskin) << 13);
     qa_q2_msg_write_short(message, (double)packed);
   }
   if (bits & QA_Q2_PPS_WEAPONFRAME) {
@@ -183,6 +184,8 @@ static void player_delta(qa_q2_sizebuf *message, const qa_q2_wire_player *from,
   }
 }
 
+static void message_release(void *arg) { qa_q2_message_destroy((qa_q2_sizebuf *)arg); }
+
 uint8_t *qa_q2_encode_mvd_emission(const qa_q2_mvd_emission *event,
                                    size_t *out_length) {
   if (event->length < 1 || event->length >= 2048) {
@@ -190,6 +193,8 @@ uint8_t *qa_q2_encode_mvd_emission(const qa_q2_mvd_emission *event,
   }
   qa_q2_sizebuf message;
   if (!qa_q2_message_create(&message, (int64_t)event->length + 5)) return NULL;
+  qa_cleanup node;
+  qa_cleanup_push(&node, message_release, &message);
   double high = (double)(event->length >> 8);
   double opcode;
   if (event->recipient.kind == QA_Q2_MVD_RECIPIENT_PLAYER) {
@@ -214,6 +219,7 @@ uint8_t *qa_q2_encode_mvd_emission(const qa_q2_mvd_emission *event,
     qa_q2_msg_write_short(&message, leaf);
   }
   qa_q2_sz_write(&message, event->bytes, event->length, (int64_t)event->length);
+  qa_cleanup_pop(&node);
   uint8_t *out = qa_q2_message_bytes(&message, out_length);
   qa_q2_message_destroy(&message);
   return out;
@@ -312,6 +318,17 @@ static bool remember(qa_q2_mvd_encoder *e, const qa_q2_mvd_capture *c) {
   return true;
 }
 
+static void wire_release(void *arg) { qa_q2_wire_codec_destroy((qa_q2_wire_codec *)arg); }
+typedef struct held_blocks {
+  qa_q2_mvd_byte_block *blocks;
+  size_t count;
+} held_blocks;
+static void blocks_release(void *arg) {
+  held_blocks *held = (held_blocks *)arg;
+  qa_q2_mvd_byte_blocks_free(held->blocks, held->count);
+  held->blocks = NULL;
+}
+
 bool qa_q2_mvd_encoder_capture(qa_q2_mvd_encoder *encoder,
                                const qa_q2_mvd_capture *capture,
                                qa_q2_mvd_byte_block **out, size_t *out_count) {
@@ -325,15 +342,20 @@ bool qa_q2_mvd_encoder_capture(qa_q2_mvd_encoder *encoder,
                  encoder->flags != capture->flags;
   qa_q2_wire_codec wire;
   if (!qa_q2_wire_codec_init(&wire, profile.protocol)) return false;
+  qa_cleanup wire_node;
+  qa_cleanup_push(&wire_node, wire_release, &wire);
   if (strcmp(profile.protocol.kind, "q2-q2pro") == 0) {
     qa_q2_wire_codec_accept_q2pro_features(&wire, (double)profile.protocol.revision,
                                            profile.v2 ? 24 : 8);
   }
   qa_q2_sizebuf message;
   if (!qa_q2_message_create(&message, QA_Q2_MVD_MAX_MESSAGE)) {
+    qa_cleanup_pop(&wire_node);
     qa_q2_wire_codec_destroy(&wire);
     return false;
   }
+  qa_cleanup message_node;
+  qa_cleanup_push(&message_node, message_release, &message);
   if (changed) {
     qa_q2_msg_write_mvd_cmd(&message, QA_Q2_MVD_SERVERDATA,
                             capture->revision < 2012 || profile.rerelease
@@ -426,6 +448,8 @@ bool qa_q2_mvd_encoder_capture(qa_q2_mvd_encoder *encoder,
     }
   }
   codec->write_packet_entities_end(codec, &message);
+  qa_cleanup_pop(&message_node);
+  qa_cleanup_pop(&wire_node);
   size_t total = 1 + capture->message_count;
   qa_q2_mvd_byte_block *blocks =
       (qa_q2_mvd_byte_block *)calloc(total, sizeof *blocks);
@@ -441,14 +465,20 @@ bool qa_q2_mvd_encoder_capture(qa_q2_mvd_encoder *encoder,
     free(blocks);
     return false;
   }
+  /* encodeMvdEmission raises on a bad routed payload; the blocks built so far go with it. */
+  held_blocks held = {blocks, total};
+  qa_cleanup blocks_node;
+  qa_cleanup_push(&blocks_node, blocks_release, &held);
   for (size_t i = 0; i < capture->message_count; i++) {
     blocks[1 + i].bytes =
         qa_q2_encode_mvd_emission(&capture->messages[i], &blocks[1 + i].length);
     if (blocks[1 + i].bytes == NULL) {
+      qa_cleanup_pop(&blocks_node);
       qa_q2_mvd_byte_blocks_free(blocks, 1 + i);
       return false;
     }
   }
+  qa_cleanup_pop(&blocks_node);
   if (!remember(encoder, capture)) {
     qa_q2_mvd_byte_blocks_free(blocks, total);
     return false;

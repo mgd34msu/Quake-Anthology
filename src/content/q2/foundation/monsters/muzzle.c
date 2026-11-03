@@ -578,7 +578,7 @@ const qa_vec3 qa_q2m_muzzle_rerelease[] = {
   {0, 0, 0},
 };
 const size_t qa_q2m_muzzle_rerelease_count = sizeof qa_q2m_muzzle_rerelease / sizeof qa_q2m_muzzle_rerelease[0];
-qa_vec3 qa_q2m_muzzle_offset(qa_q2f_edition edition, double flash) {
-  return edition == QA_Q2F_CLASSIC ? qa_q2m_muzzle_classic[qa_q2m_record_at(qa_q2m_muzzle_classic_count, flash)]
+qa_vec3 qa_q2m_muzzle_offset(qa_q2_edition edition, double flash) {
+  return edition == QA_Q2_EDITION_CLASSIC ? qa_q2m_muzzle_classic[qa_q2m_record_at(qa_q2m_muzzle_classic_count, flash)]
                                    : qa_q2m_muzzle_rerelease[qa_q2m_record_at(qa_q2m_muzzle_rerelease_count, flash)];
 }

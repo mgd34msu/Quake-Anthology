@@ -1,7 +1,6 @@
 /* Port of src/app/bootstrap/network/remote-q1.ts
- * (Q1RemotePresentation). Events are qa_app_sim_presentation_event
- * with the payload struct below (kind "q1"/"view-reset"/"music"/
- * "q1-client"/"q1-sky"). GPL-2.0-or-later. */
+ * (Q1RemotePresentation). Events are SimulationPresentationEvent (kind
+ * "q1"/"view-reset"/"music"/"q1-client"/"q1-sky"). GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_REMOTE_Q1_H
 #define QA_APP_BOOTSTRAP_NETWORK_REMOTE_Q1_H
 #include <stdbool.h>
@@ -21,24 +20,6 @@ typedef struct qa_app_q1_remote_world_info {
   const char *const *models; size_t model_count;
   const char *const *sounds; size_t sound_count;
 } qa_app_q1_remote_world_info;
-typedef enum qa_app_q1_remote_event_kind {
-  QA_APP_Q1_REMOTE_MESSAGE, QA_APP_Q1_REMOTE_AMBIENT, QA_APP_Q1_REMOTE_SOUND,
-  QA_APP_Q1_REMOTE_STOP_SOUND, QA_APP_Q1_REMOTE_PARTICLES,
-  QA_APP_Q1_REMOTE_COLORED_EXPLOSION, QA_APP_Q1_REMOTE_BEAM,
-  QA_APP_Q1_REMOTE_EFFECT, QA_APP_Q1_REMOTE_CD_TRACK,
-  QA_APP_Q1_REMOTE_CLIENT_METADATA, QA_APP_Q1_REMOTE_SKYBOX,
-  QA_APP_Q1_REMOTE_VIEW_RESET
-} qa_app_q1_remote_event_kind;
-typedef struct qa_app_q1_remote_event {
-  qa_app_q1_remote_event_kind kind;
-  bool has_actor; qa_actor_id actor;
-  qa_vec3 origin, direction, start, end, angles;
-  const char *path, *text, *effect, *style;
-  double volume, attenuation, color, count, color_start, color_length, amount, track;
-  const char *channel; double channel_number;
-  bool center;
-  qa_app_q1_client_metadata_event metadata;
-} qa_app_q1_remote_event;
 typedef void (*qa_app_q1_remote_assert_fn)(void *ctx);
 typedef struct qa_app_q1_remote_options {
   void *ctx;
@@ -92,6 +73,8 @@ double qa_app_q1_remote_recorded_seconds(const qa_app_q1_remote *remote);
 void qa_app_q1_remote_set_demo_view_angles(qa_app_q1_remote *remote,
     qa_vec3 current, bool interpolate);
 const qa_simulation_output *qa_app_q1_remote_sample_demo(qa_app_q1_remote *remote, double seconds);
+/* TS drainPresentationEvents: none (NULL, 0) before the first publish. The
+ * events are owned copies the remote keeps until the next drain or destroy. */
 const qa_app_sim_presentation_event *qa_app_q1_remote_drain_events(qa_app_q1_remote *remote,
     size_t *out_count);
 void qa_app_q1_remote_disconnected(qa_app_q1_remote *remote, const char *reason);

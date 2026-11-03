@@ -1,8 +1,7 @@
 /*
  * Port of tests/foundation/primitives.test.ts and event-ring.test.ts.
- * Vector-store expectations are bit patterns produced by the TypeScript
- * implementation (see docs/PORTING.md); core/math cross-checks land with
- * the core port. TypeScript `toThrow(RangeError)` cases run in a child
+ * The arena, pool, handles, vector-store and system-queue cases left with
+ * those TS modules (removed 2026-11). TypeScript `toThrow(RangeError)` cases run in a child
  * process and must abort. GPL-2.0-or-later.
  */
 #include <math.h>
@@ -50,12 +49,6 @@ static int checks = 0;
     }                                                                   \
   } while (0)
 
-static uint32_t fbits(float value) {
-  uint32_t bits;
-  memcpy(&bits, &value, sizeof bits);
-  return bits;
-}
-
 static void samples(double *out, int count) {
   int32_t seed = 22222;
   for (int i = 0; i < count; i++) {
@@ -92,6 +85,13 @@ static void test_binary(void) {
   CHECK(qa_load_f32_le(bytes, sizeof bytes, 4) == 1.5f);
   CHECK(qa_load_u16_le(bytes, sizeof bytes, 0) == 0xbeefu);
   CHECK_ABORTS((void)qa_load_u32_le(bytes, sizeof bytes, 6));
+
+  /* loadF64LE/storeF64LE (binary.ts): low word first. */
+  uint8_t wide[8] = {0};
+  qa_store_f64_le(wide, sizeof wide, 0, -273.15);
+  CHECK(qa_load_u32_le(wide, sizeof wide, 0) == (uint32_t)qa_float64_bits(-273.15));
+  CHECK(qa_load_u32_le(wide, sizeof wide, 4) == (uint32_t)(qa_float64_bits(-273.15) >> 32));
+  CHECK(qa_load_f64_le(wide, sizeof wide, 0) == -273.15);
 }
 
 static void test_stamp(void) {
@@ -110,6 +110,17 @@ static void test_stamp(void) {
   CHECK(qa_stamp_set_test(&stamps, 2) == false);
   CHECK(stamps.capacity == 4);
   qa_stamp_set_destroy(&stamps);
+
+  /* primitives.test.ts "the epoch re-zeroes at the 32-bit limit". */
+  qa_stamp_set wrap;
+  CHECK(qa_stamp_set_init(&wrap, 2));
+  wrap.epoch = 0xffffffffu;
+  CHECK(qa_stamp_set_mark(&wrap, 1) == true);
+  qa_stamp_set_begin(&wrap);
+  CHECK(wrap.epoch == 1);
+  CHECK(qa_stamp_set_mark(&wrap, 1) == true);
+  CHECK(qa_stamp_set_mark(&wrap, 1) == false);
+  qa_stamp_set_destroy(&wrap);
 }
 
 static void test_strings(void) {
@@ -135,49 +146,6 @@ static void test_strings(void) {
   CHECK(qa_quake_name_flags("func_door") & QA_NAME_FUNC);
   CHECK(qa_quake_name_flags("info_player_start") & QA_NAME_PLAYER_START);
   qa_string_table_destroy(strings);
-}
-
-static void test_arena_pool(void) {
-  qa_byte_arena arena;
-  CHECK(qa_byte_arena_init(&arena, 16));
-  CHECK(qa_byte_arena_alloc(&arena, 3, 1) == 0);
-  CHECK(qa_byte_arena_alloc(&arena, 4, 4) == 4);
-  CHECK(qa_byte_arena_alloc(&arena, 100, 1) == -1);
-  CHECK(arena.overflows == 1);
-  const uint8_t two[] = {7, 8};
-  int64_t offset = qa_byte_arena_alloc_copy(&arena, two, 2, 1);
-  uint8_t *view = qa_byte_arena_view(&arena, offset, 2);
-  CHECK(view[0] == 7 && view[1] == 8);
-  qa_byte_arena_reset(&arena);
-  CHECK(arena.used == 0);
-  CHECK(qa_byte_arena_alloc(&arena, 16, 1) == 0);
-  CHECK(arena.capacity == 16);
-  qa_byte_arena_destroy(&arena);
-  CHECK_ABORTS({ qa_byte_arena bad; qa_byte_arena_init(&bad, 0); });
-
-  qa_fixed_pool pool;
-  CHECK(qa_fixed_pool_init(&pool, 2, sizeof(int), NULL, NULL));
-  int32_t first = qa_fixed_pool_take_slot(&pool);
-  int32_t second = qa_fixed_pool_take_slot(&pool);
-  CHECK(first == 0 && second == 1);
-  CHECK(qa_fixed_pool_take_slot(&pool) == -1);
-  CHECK(pool.overflows == 1);
-  *(int *)qa_fixed_pool_at(&pool, first) = 42;
-  CHECK(*(int *)qa_fixed_pool_at(&pool, first) == 42);
-  qa_fixed_pool_release(&pool, first);
-  CHECK(qa_fixed_pool_take_slot(&pool) == first);
-  CHECK(pool.peak == 2);
-  qa_fixed_pool_reset(&pool);
-  CHECK(pool.active == 0);
-  CHECK(qa_fixed_pool_is_leased(&pool, second) == false);
-  qa_fixed_pool_destroy(&pool);
-  CHECK_ABORTS({
-    qa_fixed_pool p;
-    qa_fixed_pool_init(&p, 1, sizeof(int), NULL, NULL);
-    int32_t s = qa_fixed_pool_take_slot(&p);
-    qa_fixed_pool_release(&p, s);
-    qa_fixed_pool_release(&p, s);
-  });
 }
 
 static bool eq_int(const void *value, void *ctx) {
@@ -286,17 +254,7 @@ static void test_cleanup(void) {
   qa_cleanup_stack_destroy(&stack);
 }
 
-static void test_handles_id_index(void) {
-  int64_t key = qa_pack_actor_key(495, 7);
-  CHECK(qa_actor_key_slot(key) == 495);
-  CHECK(qa_actor_key_generation(key) == 7);
-  CHECK(qa_pack_actor_key(1, 0) == 1);
-  CHECK(qa_actor_key_slot(QA_INVALID_ACTOR_KEY) == -1);
-  CHECK(qa_actor_key_generation(QA_INVALID_ACTOR_KEY) == -1);
-  CHECK(qa_is_valid_actor_key(key));
-  CHECK(!qa_is_valid_actor_key(-1));
-  CHECK_ABORTS((void)qa_pack_actor_key(1 << 20, 0));
-
+static void test_id_index(void) {
   qa_id_index index;
   qa_id_index_init(&index);
   qa_id_index_reserve(&index, 3);
@@ -342,94 +300,6 @@ static void test_handles_id_index(void) {
   CHECK(qa_id_index_next(&grown, &gc) == 100);
   CHECK(qa_id_index_next(&grown, &gc) == -1);
   qa_id_index_destroy(&grown);
-}
-
-static const uint32_t oracle_a[4][3] = {
-    {0x446c426cu, 0x444cae70u, 0x440b61a4u},
-    {0xc382f370u, 0x442f319cu, 0xc3216080u},
-    {0xc310beb0u, 0x441a1938u, 0xc38be868u},
-    {0xc4132fb0u, 0xc211dfc0u, 0xc452ccd8u}};
-static const uint32_t oracle_b[4][3] = {
-    {0x441a1938u, 0xc38be868u, 0xc4132fb0u},
-    {0xc211dfc0u, 0xc452ccd8u, 0x447300fcu},
-    {0x43025f00u, 0x441646b4u, 0xc39477d0u},
-    {0x4467412cu, 0x42b37180u, 0x4476ae64u}};
-static const uint32_t oracle_dot[4] = {0x46c4bde0u, 0xc93439bcu, 0x48d445c6u, 0xc9a87138u};
-static const uint32_t oracle_cross[4][3] = {
-    {0xc89f3009u, 0x495bbc9eu, 0xc93bc460u},
-    {0x49051432u, 0x487e5a73u, 0x48709e03u},
-    {0xc667bc50u, 0xc79b31ecu, 0xc82371b3u},
-    {0x471af500u, 0xc84261a8u, 0xc6952254u}};
-static const uint32_t oracle_ma[4][3] = {
-    {0x4489645du, 0x443b3163u, 0x43cd2b70u},
-    {0xc387826eu, 0x43f4fcccu, 0x42a340f8u},
-    {0xc2e04de0u, 0x443faae5u, 0xc3b1065cu},
-    {0xc3b2becau, 0xc1609c00u, 0xc415213fu}};
-static const uint32_t oracle_norm[4][3] = {
-    {0x3f30b755u, 0x3f1918b7u, 0x3ed081f1u},
-    {0xbeaf3634u, 0x3f6a6891u, 0xbe57ebeeu},
-    {0xbe561dbeu, 0x3f63f3e4u, 0xbecef5feu},
-    {0xbf1276e1u, 0xbd112897u, 0xbf51c429u}};
-
-static void test_vec(void) {
-  double values[3 * 40];
-  samples(values, 3 * 40);
-  const size_t len = 8 * 3;
-  float *store = qa_create_vec3_store(8);
-  CHECK(store != NULL);
-  for (int index = 0; index < 4; index++) {
-    double ax = values[index * 3], ay = values[index * 3 + 1], az = values[index * 3 + 2];
-    double bx = values[(index * 3 + 7) % 120];
-    double by = values[(index * 3 + 8) % 120];
-    double bz = values[(index * 3 + 9) % 120];
-    qa_vec3_set(store, len, 0, ax, ay, az);
-    qa_vec3_set(store, len, 1, bx, by, bz);
-    CHECK(fbits(store[0]) == oracle_a[index][0]);
-    CHECK(fbits(store[1]) == oracle_a[index][1]);
-    CHECK(fbits(store[2]) == oracle_a[index][2]);
-    CHECK(fbits(store[3]) == oracle_b[index][0]);
-    CHECK(fbits(qa_vec3_dot(store, len, 0, 1)) == oracle_dot[index]);
-    qa_vec3_cross(store, len, 2, 0, 1);
-    CHECK(fbits(store[6]) == oracle_cross[index][0]);
-    CHECK(fbits(store[7]) == oracle_cross[index][1]);
-    CHECK(fbits(store[8]) == oracle_cross[index][2]);
-    qa_vec3_ma(store, len, 3, 0, 0.25, 1);
-    CHECK(fbits(store[9]) == oracle_ma[index][0]);
-    CHECK(fbits(store[10]) == oracle_ma[index][1]);
-    CHECK(fbits(store[11]) == oracle_ma[index][2]);
-    qa_vec3_normalize(store, len, 4, 0);
-    CHECK(fbits(store[12]) == oracle_norm[index][0]);
-    CHECK(fbits(store[13]) == oracle_norm[index][1]);
-    CHECK(fbits(store[14]) == oracle_norm[index][2]);
-  }
-  qa_vec3_set(store, len, 0, 15, 40, -70);
-  qa_vec3_angle_vectors(store, len, 1, 2, 3, 0);
-  CHECK(fbits(store[3]) == 0x3f3d6cd8u);
-  CHECK(fbits(store[4]) == 0x3f1ef254u);
-  CHECK(fbits(store[5]) == 0xbe8483eeu);
-  CHECK(fbits(store[6]) == 0x3ecff3b6u);
-  CHECK(fbits(store[7]) == 0xbdd8698cu);
-  CHECK(fbits(store[8]) == 0x3f685d48u);
-  CHECK(fbits(store[9]) == 0xbf094528u);
-  CHECK(fbits(store[10]) == 0x3f46d8e0u);
-  CHECK(fbits(store[11]) == 0x3ea925bfu);
-  qa_vec3_set(store, len, 0, -0.0, 0, 0);
-  qa_vec3_normalize(store, len, 1, 0);
-  CHECK(fbits(store[3]) == 0x80000000u);
-  CHECK(qa_vec3_equal(store, len, 0, 1) == true);
-  free(store);
-
-  const size_t blen = 2 * 6;
-  float *bounds = qa_create_bounds_store(2);
-  CHECK(bounds != NULL);
-  qa_bounds_set(bounds, blen, 0, 0, 0, 0, 10, 10, 10);
-  qa_bounds_set(bounds, blen, 1, 10, 20, 0, 30, 30, 30);
-  CHECK(qa_bounds_overlap(bounds, blen, 0, 1) == false);
-  qa_bounds_set(bounds, blen, 1, 10, 5, 0, 30, 30, 30);
-  CHECK(qa_bounds_overlap(bounds, blen, 0, 1) == true);
-  CHECK(qa_bounds_contains_point(bounds, blen, 0, 10, 10, 10) == true);
-  CHECK(qa_bounds_contains_point(bounds, blen, 0, 11, 10, 10) == false);
-  free(bounds);
 }
 
 struct seen { int64_t values[16]; size_t count; qa_event_ring *ring; int64_t appends; };
@@ -596,75 +466,14 @@ static void test_event_ring(void) {
   });
 }
 
-static void test_sys_queue(void) {
-  qa_sys_event_queue queue;
-  CHECK(qa_sys_event_queue_init(&queue, 4, 64));
-  qa_sys_event_cursor keys, packets;
-  CHECK(qa_sys_event_queue_open_cursor(&queue, &keys));
-  CHECK(qa_sys_event_queue_open_cursor(&queue, &packets));
-  CHECK(qa_sys_event_queue_admit(&queue, QA_SYS_PACKET, 65) == QA_SYS_OVERSIZE);
-  CHECK(qa_sys_event_queue_oversize(&queue, QA_SYS_PACKET) == 1);
-  CHECK(qa_sys_event_queue_frame(&queue, 1000000) == QA_SYS_ACCEPTED);
-  const uint8_t payload[] = {9, 8, 7};
-  CHECK(qa_sys_event_queue_push(&queue, QA_SYS_PACKET, 2000000, 1, 2, 3, 4,
-                                payload, 3, NULL, 0) == QA_SYS_ACCEPTED);
-  CHECK(qa_sys_event_queue_push(&queue, QA_SYS_KEY, 3000000, 32, 0, 1, 0,
-                                NULL, 0, NULL, 0) == QA_SYS_ACCEPTED);
-  qa_sys_event_slot *slot;
-  slot = qa_sys_event_queue_read(&queue, &keys);
-  CHECK(slot != NULL && slot->kind == QA_SYS_TIME);
-  qa_sys_event_queue_consume(&queue, &keys);
-  slot = qa_sys_event_queue_read(&queue, &keys);
-  CHECK(slot != NULL && slot->kind == QA_SYS_PACKET);
-  qa_sys_event_queue_consume(&queue, &keys);
-  slot = qa_sys_event_queue_read(&queue, &keys);
-  CHECK(slot != NULL && slot->kind == QA_SYS_KEY && slot->a == 32);
-  qa_sys_event_queue_consume(&queue, &keys);
-  slot = qa_sys_event_queue_read(&queue, &packets);
-  CHECK(slot != NULL && slot->kind == QA_SYS_TIME);
-  qa_sys_event_queue_consume(&queue, &packets);
-  slot = qa_sys_event_queue_read(&queue, &packets);
-  CHECK(slot != NULL && slot->kind == QA_SYS_PACKET);
-  size_t payload_length = 0;
-  const uint8_t *bytes = qa_sys_event_queue_payload_of(&queue, slot, &payload_length);
-  CHECK(payload_length == 3 && bytes[0] == 9 && bytes[1] == 8 && bytes[2] == 7);
-  qa_sys_event_queue_consume(&queue, &packets);
-  qa_sys_event_queue_consume(&queue, &packets);
-  qa_sys_queue_stats stats = qa_sys_event_queue_stats_of(&queue);
-  CHECK(stats.accepted == 3 && stats.consumed == 6 && stats.records == 0 && stats.bytes == 0);
-  qa_sys_event_queue_destroy(&queue);
-
-  CHECK(qa_sys_event_queue_init(&queue, 2, 16));
-  qa_sys_event_cursor cursor;
-  CHECK(qa_sys_event_queue_open_cursor(&queue, &cursor));
-  CHECK(qa_sys_event_queue_push(&queue, QA_SYS_QUIT, 0, 0, 0, 0, 0,
-                                NULL, 0, NULL, 0) == QA_SYS_ACCEPTED);
-  CHECK(qa_sys_event_queue_quit_requested(&queue) == true);
-  CHECK(qa_sys_event_queue_pending(&queue, QA_SYS_QUIT) == true);
-  CHECK(qa_sys_event_queue_push(&queue, QA_SYS_KEY, 0, 1, 0, 0, 0,
-                                NULL, 0, NULL, 0) == QA_SYS_ACCEPTED);
-  CHECK(qa_sys_event_queue_push(&queue, QA_SYS_KEY, 0, 2, 0, 0, 0,
-                                NULL, 0, NULL, 0) == QA_SYS_FULL);
-  CHECK(qa_sys_event_queue_stats_of(&queue).full_records == 1);
-  slot = qa_sys_event_queue_read(&queue, &cursor);
-  CHECK(slot != NULL && slot->kind == QA_SYS_QUIT);
-  qa_sys_event_queue_reset(&queue);
-  CHECK(qa_sys_event_queue_quit_requested(&queue) == false);
-  CHECK(qa_sys_event_queue_live(&queue) == 0);
-  qa_sys_event_queue_destroy(&queue);
-}
-
 int main(void) {
   test_binary();
   test_stamp();
   test_strings();
-  test_arena_pool();
   test_bounded_queue();
   test_cleanup();
-  test_handles_id_index();
-  test_vec();
+  test_id_index();
   test_event_ring();
-  test_sys_queue();
   if (failures == 0) {
     printf("foundation: %d checks passed\n", checks);
     return 0;

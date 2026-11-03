@@ -49,6 +49,8 @@ typedef struct qa_app_sim_provider_player {
   bool has_source_movement; qa_app_sim_client_movement_options source_movement;
 } qa_app_sim_provider_player;
 qa_movement_provider qa_app_sim_create_player_movement_provider(qa_app_sim_provider_player player, qa_app_sim_player_movement_hooks hooks);
+/* Frees what qa_app_sim_create_player_movement_provider allocated for provider (TS: garbage). */
+void qa_app_sim_release_player_movement_provider(qa_app_sim_player_movement_hooks hooks, qa_movement_provider provider);
 
 typedef struct qa_app_sim_player_movement_prediction qa_app_sim_player_movement_prediction;
 typedef struct qa_app_sim_prediction_simulation {

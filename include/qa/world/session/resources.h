@@ -1,9 +1,8 @@
 /*
  * Port of src/world/session/resources.ts: session resources and the
- * reverse-order ResourceScope. TS plain Error throws abort with the
- * identical message. TS close() collects cleanup failures into an
- * AggregateError; C cleanups abort on failure directly (they cannot
- * throw recoverably), so the first failure is fatal here.
+ * reverse-order ResourceScope. TS Error throws raise (qa_raise) with
+ * the identical message. close() runs every cleanup in its own try and
+ * raises one AggregateError "Failed to close <name>" for failures.
  * Scopes are heap objects; close() mirrors TS close, destroy() also
  * frees. The scope name is copied. GPL-2.0-or-later.
  */

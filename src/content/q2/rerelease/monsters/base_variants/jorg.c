@@ -23,9 +23,9 @@ typedef struct jorg_ctx {
 } jorg_ctx;
 
 static void end_sound(qa_q2m_context *c) {
-  if (c->entity->sound_text && strcmp(c->entity->sound_text, "") != 0) {
+  if (c->entity->sound && strcmp(c->entity->sound, "") != 0) {
     q2rm_snd(c, "boss3/bs3atck1_end.wav", 1);
-    c->entity->sound_text = "";
+    c->entity->sound = "";
     qa_q2bm_stop_loop(c);
   }
 }
@@ -41,7 +41,7 @@ static void stand_fn(void *ctx, qa_q2m_context *c) {
   end_sound(c);
 }
 static void bullet(qa_q2m_context *c, double flash, double offset) {
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, flash));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, flash));
   qa_vec3 direction;
   if (!qa_q2rm_predicted_direction(c, start, 0, false, offset, &direction)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, start, direction, 6, 4, 300, 500, 0);
@@ -66,8 +66,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   if (q2rm_rnd(c->game) <= 0.75) {
     q2rm_snd(c, "boss3/bs3atck1.wav", 1);
-    c->entity->sound_text = "boss3/w_loop.wav";
-    qa_q2bm_loop_sound(c, c->entity->sound_text);
+    c->entity->sound = "boss3/w_loop.wav";
+    qa_q2bm_loop_sound(c, c->entity->sound);
     q2rm_set_move(c, "jorg_move_start_attack1");
     return;
   }
@@ -76,8 +76,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double frame = entity->frame;
   const qa_q2rm_boss31_frames *f = &qa_q2rm_boss31_frames_value;
@@ -130,12 +130,12 @@ static void bullet_left_fn(void *ctx, qa_q2m_context *c) { (void)ctx; bullet(c, 
 static void bullet_right_fn(void *ctx, qa_q2m_context *c) { (void)ctx; bullet(c, 126, -0.2); }
 static void firebullet_fn(void *ctx, qa_q2m_context *c) { (void)ctx; bullet(c, 120, 0.2); bullet(c, 126, -0.2); }
 static void dead_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   q2rm_emit_effect(game, "q2:explosion1-big", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
   qa_q2bm_stop_loop(c);
-  entity->sound_text = "";
+  entity->sound = "";
   entity->skin = trunc(entity->skin / 2);
   qa_q2m_gib_options plain = {false, false, false, false};
   qa_q2m_gib_options metal = {false, true, false, false};
@@ -163,12 +163,12 @@ static void dead_fn(void *ctx, qa_q2m_context *c) {
   toss(ctx, c);
 }
 
-void qa_q2rm_create_rerelease_jorg_definition(qa_q2rm_jorg_definition *out, qa_q2m_monsters *monsters,
+void qa_q2rm_create_rerelease_jorg_definition(qa_q2mpm_arena *arena, qa_q2rm_jorg_definition *out, qa_q2m_monsters *monsters,
                                               qa_q2rm_healthbar_transfer transfer) {
   memset(out, 0, sizeof *out);
   qa_q2bm_create_jorg_definition(&out->base, monsters);
-  jorg_ctx *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating rerelease jorg definition");
+  jorg_ctx *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating rerelease jorg definition");
   box->monsters = monsters;
   box->transfer = transfer;
   qa_q2m_definition definition = out->base.definition;
@@ -191,7 +191,7 @@ void qa_q2rm_create_rerelease_jorg_definition(qa_q2rm_jorg_definition *out, qa_q
     while (j < count && strcmp(out->callbacks[j].name, extra[i].name) != 0) j++;
     if (j < count) out->callbacks[j] = extra[i];
     else {
-      if (count >= 24) qa_q2f_error("Rerelease jorg callback table overflow");
+      if (count >= 24) qa_raise("Error", 0, 0, "Rerelease jorg callback table overflow");
       out->callbacks[count++] = extra[i];
     }
   }

@@ -93,7 +93,8 @@ void qa_q2_source_callbacks_register(qa_q2_source_callbacks *c, qa_q2_callback_d
 void qa_q2_source_callbacks_project_trajectory(qa_q2_source_callbacks *c, qa_q2_entity *e, qa_weapon_trajectory_update u) {
   if (e->touch.fn == NULL) return;
   const char *name = NULL;
-  for (size_t i = 0; i < c->touch.n; i++)
+  /* TS touch.name(): the first name registered for this callback. */
+  for (size_t i = 0; i < c->touch.n && name == NULL; i++)
     if (c->touch.v[i].fn == (uintptr_t)e->touch.fn && c->touch.v[i].ctx == e->touch.ctx) name = c->touch.v[i].name;
   /* TS: touch.name() throws for unnamed non-null callbacks. */
   if (name == NULL) qa_range_error("Q2 save encountered an unnamed source callback");
@@ -113,3 +114,16 @@ KIND(touch, qa_q2_touch, touch)
 KIND(pain, qa_q2_pain, pain)
 KIND(die, qa_q2_die, die)
 KIND(blocked, qa_q2_blocked, blocked)
+
+size_t qa_q2_source_callbacks_names(const qa_q2_source_callbacks *c, const char *kind, const char **out, size_t capacity) {
+  if (strcmp(kind, "trajectory") == 0) {
+    for (size_t i = 0; i < c->tr_n && i < capacity; i++) out[i] = c->tr[i].name;
+    return c->tr_n;
+  }
+  const map *m = strcmp(kind, "think") == 0 ? &c->think : strcmp(kind, "use") == 0 ? &c->use
+               : strcmp(kind, "touch") == 0 ? &c->touch : strcmp(kind, "pain") == 0 ? &c->pain
+               : strcmp(kind, "die") == 0 ? &c->die : strcmp(kind, "blocked") == 0 ? &c->blocked : NULL;
+  if (m == NULL) qa_range_error("Unknown Q2 source callback kind %s", kind);
+  for (size_t i = 0; i < m->n && i < capacity; i++) out[i] = m->v[i].name;
+  return m->n;
+}

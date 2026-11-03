@@ -88,7 +88,7 @@ static void read_function_calls(const qa_resolved_qvm_artifact *artifact, qa_sav
 
 static int64_t read_argument(qa_save_reader *reader) {
   int64_t index = (int64_t)qa_save_reader_integer_min(reader, 0);
-  if (index >= 62) qa_save_reader_fail(reader, "pickup argument is outside the source ABI");
+  if (index >= QA_QVM_MAX_PRIVATE_ARGUMENT_WORDS) qa_save_reader_fail(reader, "pickup argument is outside the source ABI");
   return index;
 }
 
@@ -123,7 +123,7 @@ typedef struct branch_decision {
   bool taken;
 } branch_decision;
 
-static bool decide_branch(void *ctx, bool original_taken, void *call_ctx, qa_qvmy_cancel_fn cancel) {
+static bool decide_branch(void *ctx, bool original_taken, void *call_ctx, qa_qvm_cancel_fn cancel) {
   (void)original_taken;
   (void)call_ctx;
   (void)cancel;
@@ -132,9 +132,9 @@ static bool decide_branch(void *ctx, bool original_taken, void *call_ctx, qa_qvm
 
 bool qa_qvm_primary_pickup_grant_eligible(void *ctx, qa_qvm_pickup_eligibility context) {
   qa_qvm_pickup_branches *captured = ctx;
-  qa_qvmy_function_call *call = context.call;
+  qa_qvm_module_function_call *call = context.call;
   size_t branch_count = captured == NULL ? 0 : captured->branch_count;
-  qa_qvmy_branch_binding *bindings = xmalloc(branch_count * sizeof *bindings);
+  qa_qvm_module_branch_binding *bindings = xmalloc(branch_count * sizeof *bindings);
   branch_decision *decisions = xmalloc(branch_count * sizeof *decisions);
   for (size_t i = 0; i < branch_count; i++) {
     decisions[i].taken = captured->branches[i].taken;
@@ -299,11 +299,11 @@ void qa_qvm_primary_pickup_profile_free(qa_qvm_pickup_profile *profile) {
   for (size_t i = 0; i < profile->grant_count; i++) {
     free((void *)grants[i].calls);
     free((void *)grants[i].weapon_quantity.inputs);
-    qa_qvm_pickup_branches *captured = grants[i].eligible_ctx;
-    if (captured != NULL) {
-      free(captured->branches);
-      free(captured);
+    if (grants[i].eligible == qa_qvm_primary_pickup_grant_eligible) {
+      qa_qvm_pickup_branches *captured = grants[i].eligible_ctx;
+      if (captured != NULL) free(captured->branches);
     }
+    free(grants[i].eligible_ctx);
   }
   free(grants);
   memset(profile, 0, sizeof *profile);

@@ -38,15 +38,16 @@ void qa_bot_memory_destroy(qa_bot_memory *m);
 bool qa_bot_memory_allocate(qa_bot_memory *m, int64_t size, qa_bot_memory_kind kind, bool clear,
                             qa_bot_memory_allocation *out);
 void qa_bot_memory_free(qa_bot_memory *m, qa_bot_memory_allocation *a);
+/* TS allocation.bytes getter: aborts once the allocation has been freed, also
+ * through a copy of the handle (qa_bot_memory_free clears only the one passed). */
+uint8_t *qa_bot_memory_allocation_bytes(const qa_bot_memory_allocation *a);
 void qa_bot_memory_reset_hunk(qa_bot_memory *m);
 void qa_bot_memory_dispose(qa_bot_memory *m);
 double qa_bot_memory_available_memory(qa_bot_memory *m);
 size_t qa_bot_memory_get_live_allocations(const qa_bot_memory *m);
 size_t qa_bot_memory_get_allocated_bytes(const qa_bot_memory *m);
 void qa_bot_memory_print_used_memory_size(qa_bot_memory *m);
-void qa_bot_memory_print_memory_labels(qa_bot_memory *m);
 int64_t qa_bot_memory_memory_byte_size(qa_bot_memory *m, qa_bot_memory_allocation *a);
-void qa_bot_memory_dump_memory(qa_bot_memory *m);
 /** TS BotMemoryCapture: owned save image plus the live allocations
  * snapshot (allocation order) taken at checkpoint time. */
 typedef struct qa_bot_memory_capture {

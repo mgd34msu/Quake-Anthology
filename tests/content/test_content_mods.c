@@ -75,8 +75,10 @@ static void test_target(void) {
   CHECK(!qa_monster_target_eligible(0, &observation));
   CHECK(!qa_monster_target_eligible(-1, &observation));
   CHECK(!qa_monster_target_eligible(10, NULL));
+  /* bun: monsterTargetEligible(10, {notarget: true, ...}) === true; FL_NOTARGET
+     is read only when acquiring a target, never by a monster already chasing. */
   observation.notarget = true;
-  CHECK(!qa_monster_target_eligible(10, &observation));
+  CHECK(qa_monster_target_eligible(10, &observation));
 }
 
 static void test_monster_sources(void) {

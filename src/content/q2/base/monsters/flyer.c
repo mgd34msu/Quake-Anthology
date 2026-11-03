@@ -11,17 +11,17 @@
 #include "qa/content/q2/foundation/monsters/ai.h"
 
 /* TS WeakMap<Q2GameServices, "melee"|"attack"|"run"> nextMoves. */
-typedef struct next_move_entry { qa_q2f_game *game; int mode; struct next_move_entry *next; } next_move_entry;
+typedef struct next_move_entry { qa_q2_game_services *game; int mode; struct next_move_entry *next; } next_move_entry;
 enum { NEXT_MELEE, NEXT_ATTACK, NEXT_RUN };
 static next_move_entry *next_moves;
-static void next_set(qa_q2f_game *game, int mode) {
+static void next_set(qa_q2_game_services *game, int mode) {
   for (next_move_entry *e = next_moves; e; e = e->next)
     if (e->game == game) { e->mode = mode; return; }
   next_move_entry *e = malloc(sizeof *e);
-  if (!e) qa_q2f_error("Flyer next-move allocation failed");
+  if (!e) qa_raise("Error", 0, 0, "Flyer next-move allocation failed");
   e->game = game; e->mode = mode; e->next = next_moves; next_moves = e;
 }
-static bool next_get(qa_q2f_game *game, int *out) {
+static bool next_get(qa_q2_game_services *game, int *out) {
   for (next_move_entry *e = next_moves; e; e = e->next)
     if (e->game == game) { *out = e->mode; return true; }
   return false;

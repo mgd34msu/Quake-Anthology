@@ -29,6 +29,9 @@ struct qa_qvm_client_scripts {
   qa_ui_script_source_reader *readers[64];
   bool occupied[64];
   bool pending[64];
+  uint64_t order[64]; /* TS Map insertion order, reported by capture */
+  uint64_t next_order;
+  char *include_path; /* canonical path of the last resolved include */
   bool closed;
   int operations;
   qa_bot_memory bot_memory;
@@ -129,6 +132,7 @@ void qa_qvm_client_scripts_destroy(qa_qvm_client_scripts *scripts) {
     if (scripts->occupied[i]) qa_ui_script_source_reader_destroy(scripts->readers[i]);
   mem_dispose(scripts);
   qa_bot_memory_destroy(&scripts->bot_memory);
+  free(scripts->include_path);
   free(scripts->entries);
   free(scripts);
 }
@@ -216,6 +220,9 @@ static bool resolve_include(void *ctx, const qa_ui_script_include_request *reque
   }
   filename[used] = '\0';
   qa_ui_source_script_storage *storage = load_source(scripts, filename);
+  /* A TS ScriptSource carries the path it was allocated with: the
+   * normalized name or the retry, never the raw requested spelling. */
+  char *canonical = filename;
   if (storage == NULL && !system) {
     const char *prefix = request->include_path == NULL ? "" : request->include_path;
     size_t retry_length = strlen(prefix) + strlen(filename);
@@ -228,11 +235,13 @@ static bool resolve_include(void *ctx, const qa_ui_script_include_request *reque
     strcpy(retry, prefix);
     strcat(retry, filename);
     storage = load_source(scripts, retry);
-    free(retry);
+    free(filename);
+    canonical = retry;
   }
-  free(filename);
+  free(scripts->include_path);
+  scripts->include_path = canonical;
   if (storage == NULL) return false;
-  out->path = request->requested_path;
+  out->path = canonical;
   out->text = NULL;
   out->text_length = 0;
   out->storage = storage;
@@ -272,8 +281,20 @@ qa_save_value *qa_qvm_client_scripts_capture(qa_qvm_client_scripts *scripts) {
     qa_bot_memory_capture_destroy(&bot_capture);
     return NULL;
   }
+  /* TS [...readers]: Map insertion order, not handle order. */
+  int ordered[64];
+  size_t ordered_count = 0;
   for (int handle = 0; handle < 64; handle++) {
     if (!scripts->occupied[handle]) continue;
+    size_t at = ordered_count++;
+    while (at > 0 && scripts->order[ordered[at - 1]] > scripts->order[handle]) {
+      ordered[at] = ordered[at - 1];
+      at--;
+    }
+    ordered[at] = handle;
+  }
+  for (size_t position = 0; position < ordered_count; position++) {
+    int handle = ordered[position];
     qa_save_value *row = qa_save_value_object();
     qa_save_value *handle_value = qa_save_value_number(handle);
     qa_save_value *state =
@@ -348,6 +369,7 @@ void qa_qvm_client_scripts_restore(qa_qvm_client_scripts *scripts, const qa_save
     if (restored_reader == NULL) qa_range_error("out of memory");
     scripts->readers[(size_t)handle] = restored_reader;
     scripts->occupied[(size_t)handle] = true;
+    scripts->order[(size_t)handle] = scripts->next_order++;
     qa_save_reader_destroy(&item);
   }
   qa_save_reader_destroy(&readers_reader);
@@ -402,6 +424,7 @@ double qa_qvm_client_scripts_load(qa_qvm_client_scripts *scripts, const char *fi
   }
   scripts->readers[handle] = reader;
   scripts->occupied[handle] = true;
+  scripts->order[handle] = scripts->next_order++;
   scripts->pending[handle] = false;
   completed(scripts);
   return handle;

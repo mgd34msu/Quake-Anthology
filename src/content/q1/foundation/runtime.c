@@ -2,14 +2,15 @@
  * Port of src/content/q1/foundation/runtime.ts. GPL-2.0-or-later.
  * Q1Foundation is qa_q1_services plus these functions (see header).
  * Monster admission has no field on qa_q1_services, so it is kept in
- * a per-game side table here. Foreign-world admission pre-checks
- * with qa_q1_spawn_known instead of catching UnknownQ1SpawnError.
- * Monster replacements allocate through qa_q1_create with the TS
- * definition id (`provider/classname`) as classname: the raw
- * allocateAtSource/bodies.create/combat.create host sequence has no
- * narrower mirror.
+ * a per-game side table here. Foreign-world admission catches
+ * UnknownQ1SpawnError (a qa_raise by that name) as TS does.
+ * Monster replacements allocate directly in the shared actor, body and
+ * combat tables (TS allocateAtSource/bodies.create/combat.create); the
+ * registry borrows their `provider/classname` definition strings, which
+ * are interned process-wide.
  */
 #include "qa/content/q1/foundation/runtime.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -21,6 +22,30 @@
 #include "qa/content/q1/foundation/spawns.h"
 #include "qa/formats/q1_map/entities.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+
+/* `${provider}/${classname}`, interned: the actor registry borrows it. */
+static const char *replacement_definition(const char *provider, const char *classname) {
+  static char **interned = NULL;
+  static size_t count = 0, capacity = 0;
+  const size_t provider_length = strlen(provider), length = provider_length + strlen(classname) + 2;
+  for (size_t i = 0; i < count; i++)
+    if (!strncmp(interned[i], provider, provider_length) && interned[i][provider_length] == '/' &&
+        !strcmp(interned[i] + provider_length + 1, classname))
+      return interned[i];
+  if (count == capacity) {
+    const size_t grown = capacity ? capacity * 2 : 8;
+    char **next = realloc(interned, grown * sizeof *next);
+    if (next == NULL) qa_range_error("Out of memory");
+    interned = next;
+    capacity = grown;
+  }
+  char *definition = malloc(length);
+  if (definition == NULL) qa_range_error("Out of memory");
+  (void)snprintf(definition, length, "%s/%s", provider, classname);
+  interned[count++] = definition;
+  return definition;
+}
 
 typedef struct admission_entry {
   qa_q1_services *game;
@@ -110,12 +135,13 @@ static void set_string(char **slot, const char *value) {
 
 static const char *inhibit(qa_q1_services *game, const char *classname, double flags, char *buffer, size_t size) {
   if (game->options.deathmatch != 0 &&
-      (((long)flags & 2048) != 0 || strncmp(classname, "monster_", 8) == 0))
+      ((qa_js_to_int32(flags) & 2048) != 0 || strncmp(classname, "monster_", 8) == 0))
     return "deathmatch";
   if (game->options.deathmatch == 0) {
-    const long bit = game->options.skill == 0 ? 256 : game->options.skill == 1 ? 512 : 1024;
-    if (((long)flags & bit) != 0) {
-      (void)snprintf(buffer, size, "skill-%g", game->options.skill);
+    const double skill = qa_q1_option_skill(game);
+    const int32_t bit = skill == 0 ? 256 : skill == 1 ? 512 : 1024;
+    if ((qa_js_to_int32(flags) & bit) != 0) {
+      (void)snprintf(buffer, size, "skill-%s", QA_JS_NUMBER(skill));
       return buffer;
     }
   }
@@ -141,20 +167,18 @@ static bool push_note(qa_q1_spawn_note **notes, size_t *count, size_t *capacity,
   return true;
 }
 
-static bool has_spawner(qa_q1_services *game, const char *classname) {
-  for (size_t i = 0; i < game->spawner_count; i++)
-    if (game->spawners[i].classname != NULL && !strcmp(game->spawners[i].classname, classname)) return true;
-  return false;
+static void free_report_arg(void *report) { qa_q1_spawn_report_free(report); }
+typedef struct spawn_attempt { qa_q1_services *game; qa_q1_actor *actor; } spawn_attempt;
+static void spawn_attempt_run(void *ctx) {
+  const spawn_attempt *attempt = ctx;
+  qa_q1_spawn_entity(attempt->game, attempt->actor);
 }
 
 bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *entity_list, size_t entity_count,
                                      const qa_bounds *model_bounds, size_t model_count, const char *map_name,
                                      const double *keep, size_t keep_count, qa_q1_spawn_report *out) {
   memset(out, 0, sizeof *out);
-  size_t existing = 0;
-  for (size_t i = 0; i < game->entity_count; i++)
-    if (game->entities[i] != NULL && game->entities[i]->live) existing++;
-  if (existing > 0) qa_range_error("Q1 map entities already spawned");
+  if (game->entity_count > 0) qa_range_error("Q1 map entities already spawned"); /* TS Error throw */
   report_storage *storage = calloc(1, sizeof *storage);
   if (!storage) return false;
   out->storage = storage;
@@ -168,6 +192,11 @@ bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *e
     qa_q1_spawn_report_free(out);
     return false;
   }
+  /* A spawn function or a bad inline model raises out of the map load (TS
+   * throws to the map command); release what this call allocated. */
+  qa_cleanup report_cleanup, replacements_cleanup;
+  qa_cleanup_push(&report_cleanup, free_report_arg, out);
+  qa_cleanup_push(&replacements_cleanup, free, replacements);
   if (admission != NULL && admission->resolve != NULL) {
     for (size_t ordinal = 0; ordinal < entity_count; ordinal++) {
       if (!kept(keep, keep_count, ordinal)) continue;
@@ -176,7 +205,7 @@ bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *e
       if (classname == NULL) classname = "";
       const char *flags_text = qa_q1_entity_value(source, "spawnflags");
       char reason_buffer[32];
-      if (inhibit(game, classname, flags_text ? strtod(flags_text, NULL) : 0, reason_buffer, sizeof reason_buffer))
+      if (inhibit(game, classname, flags_text ? qa_js_string_to_number(flags_text) : 0, reason_buffer, sizeof reason_buffer))
         continue;
       const char *provider = NULL, *def_classname = NULL;
       if (admission->resolve(admission->ctx, classname, source, &provider, &def_classname)) {
@@ -202,12 +231,13 @@ bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *e
     const char *classname = qa_q1_entity_value(source, "classname");
     if (classname == NULL) classname = "";
     const char *flags_text = qa_q1_entity_value(source, "spawnflags");
-    const double flags = flags_text ? strtod(flags_text, NULL) : 0;
+    const double flags = flags_text ? qa_js_string_to_number(flags_text) : 0; /* Number(spawnflags ?? 0) */
     char reason_buffer[32];
     const char *reason = inhibit(game, classname, flags, reason_buffer, sizeof reason_buffer);
     if (reason != NULL) {
-      const qa_q1_spawn_note note = {(double)ordinal, storage_dup(storage, classname),
-                                     storage_dup(storage, reason)};
+      const char * classname2 = storage_dup(storage, classname);
+      const char * reason2 = storage_dup(storage, reason);
+      const qa_q1_spawn_note note = {(double)ordinal, classname2, reason2};
       oom = !push_note(&out->inhibited, &out->inhibited_count, &inhibited_cap, note);
       continue;
     }
@@ -218,26 +248,29 @@ bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *e
     }
     const double ordinal_d = (double)ordinal;
     if (replacements[ordinal].has && admission != NULL) {
-      char definition[512];
-      (void)snprintf(definition, sizeof definition, "%s/%s", replacements[ordinal].provider,
-                     replacements[ordinal].classname);
-      qa_q1_actor *actor = qa_q1_create(game, definition, source, &ordinal_d);
-      if (actor == NULL) {
-        oom = true;
-        break;
-      }
-      qa_q1_body patch = qa_q1_get_body(game, actor);
+      const double slot = ordinal == 0 ? 0 : ordinal_d + (game->options.has_max_clients ? game->options.max_clients : 0);
+      const qa_owned_actor actor = qa_session_actor_registry_allocate_at_source(
+          game->host.actors, qa_q1_services_provider(game), (int64_t)slot,
+          replacement_definition(replacements[ordinal].provider, replacements[ordinal].classname));
+      qa_body_state body;
+      memset(&body, 0, sizeof body);
       const char *origin_text = qa_q1_entity_value(source, "origin");
-      patch.origin = qa_q1_parse_vector(origin_text ? origin_text : "");
-      patch.angles = qa_q1_source_angles(source);
-      patch.velocity = QA_Q1_ZERO;
-      patch.bounds = QA_Q1_POINT;
-      patch.has_ground = false;
-      qa_q1_set_body_patch(game, actor, &patch, true, true, true, true, true);
-      qa_q1_set_health(game, actor->actor, 0);
-      if (admission->spawn)
-        admission->spawn(admission->ctx, actor->actor, source, ordinal_d, replacements[ordinal].provider,
-                         replacements[ordinal].classname);
+      body.origin = qa_q1_parse_vector(origin_text ? origin_text : "");
+      body.angles = qa_q1_source_angles(source);
+      body.velocity = QA_Q1_ZERO;
+      body.bounds = QA_Q1_POINT;
+      body.ground = NULL;
+      qa_shared_body_table_create_body(game->host.bodies, actor, body);
+      qa_combat_state combat;
+      memset(&combat, 0, sizeof combat);
+      combat.health = 0;
+      combat.armor.regular.kind = QA_REGULAR_ARMOR_NONE;
+      combat.armor.powered.kind = "none";
+      combat.mass = 100;
+      combat.team = NULL;
+      qa_gameplay_authority_create_state(game->host.combat, actor, combat, NULL, NULL);
+      admission->spawn(admission->ctx, actor, source, ordinal_d, replacements[ordinal].provider,
+                       replacements[ordinal].classname);
       continue;
     }
     qa_q1_actor *actor = qa_q1_create(game, classname, source, &ordinal_d);
@@ -247,8 +280,9 @@ bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *e
     }
     const qa_q1_body body = qa_q1_get_body(game, actor);
     if (actor->model != NULL && actor->model[0] == '*') {
-      const double index = strtod(actor->model + 1, NULL);
-      if (!(index >= 0) || (size_t)index >= model_count || model_bounds == NULL)
+      /* modelBounds[Number(model.slice(1))]: "*" is index 0; "*1.5", "*1x" are undefined. */
+      const double index = qa_js_string_to_number(actor->model + 1);
+      if (!(index >= 0) || index != trunc(index) || index >= (double)model_count || model_bounds == NULL)
         qa_range_error("Missing inline model %s", actor->model);
       const qa_bounds bounds = model_bounds[(size_t)index];
       qa_q1_body patch = body;
@@ -256,22 +290,31 @@ bool qa_q1_foundation_spawn_entities(qa_q1_services *game, const qa_q1_entity *e
       patch.bounds.max = qa_q1_vadd(bounds.max, (qa_vec3){1, 1, 1});
       qa_q1_set_body_patch(game, actor, &patch, false, false, false, true, false);
     }
-    if (game->options.foreign_world && !qa_q1_spawn_known(game, classname, actor) &&
-        !has_spawner(game, classname)) {
-      const qa_q1_spawn_note note = {(double)ordinal, storage_dup(storage, classname), NULL};
-      oom = !push_note(&out->foreign, &out->foreign_count, &foreign_cap, note);
-      qa_q1_remove(game, actor);
+    if (!game->options.foreign_world) {
+      qa_q1_spawn_entity(game, actor);
       continue;
     }
-    qa_q1_spawn_entity(game, actor);
+    /* try { spawnEntity } catch (error) { if (!(error instanceof
+     * UnknownQ1SpawnError)) throw error; foreign.push(...); remove(actor) } */
+    spawn_attempt attempt = {game, actor};
+    qa_caught_error caught;
+    if (qa_try(spawn_attempt_run, &attempt, &caught)) continue;
+    if (caught.name == NULL || strcmp(caught.name, "UnknownQ1SpawnError") != 0) qa_rethrow(&caught);
+    const char *unknown = qa_q1_last_unknown_spawn();
+    const qa_q1_spawn_note note = {(double)ordinal, storage_dup(storage, unknown != NULL ? unknown : classname), NULL};
+    oom = !push_note(&out->foreign, &out->foreign_count, &foreign_cap, note);
+    qa_q1_remove(game, actor);
   }
+  qa_cleanup_pop(&replacements_cleanup);
   free(replacements);
   if (oom) {
+    qa_cleanup_pop(&report_cleanup);
     qa_q1_spawn_report_free(out);
     return false;
   }
   qa_q1_link_doors(game);
   qa_q1_precache_freeze(game->precaches);
+  qa_cleanup_pop(&report_cleanup);
   const size_t spawned_count = qa_q1_presentations(game, NULL, 0);
   if (spawned_count > 0) {
     out->spawned = malloc(spawned_count * sizeof *out->spawned);
@@ -302,8 +345,11 @@ bool qa_q1_foundation_spawn_map(qa_q1_services *game, const qa_q1_map *map, qa_q
   (void)snprintf(name, sizeof name, "%s", base);
   const size_t len = strlen(name);
   if (len >= 4 && !strcmp(name + len - 4, ".bsp")) name[len - 4] = '\0';
+  qa_cleanup bounds_cleanup;
+  qa_cleanup_push(&bounds_cleanup, free, bounds);
   const bool ok = qa_q1_foundation_spawn_entities(game, map->entity_list, map->entity_count, bounds,
                                                   map->world.model_count, name, NULL, 0, out);
+  qa_cleanup_pop(&bounds_cleanup);
   free(bounds);
   return ok;
 }

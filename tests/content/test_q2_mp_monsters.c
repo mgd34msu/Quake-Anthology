@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "qa/content/q2/missionpacks/monsters/dabeam.h"
 #include "qa/content/q2/missionpacks/monsters/index.h"
 #include "qa/core/math.h"
 
@@ -45,57 +46,86 @@ static int checks, failures;
     }                                                                   \
   } while (0)
 
-/* ---- stub host for state/spawn/combat cases ---- */
-static bool stub_is_live(void *ctx, qa_actor_id actor) { (void)ctx; (void)actor; return true; }
-static qa_actor_id stub_reference(void *ctx, qa_saved_actor_id saved) {
-  (void)ctx;
-  qa_actor_id actor;
-  memset(&actor, 0, sizeof actor);
-  actor.slot = (uint64_t)saved.slot;
-  actor.generation = (uint64_t)saved.generation;
-  return actor;
-}
-static qa_q2f_owned_result stub_resolve_saved(void *ctx, qa_saved_actor_id saved) {
-  (void)ctx;
-  qa_q2f_owned_result result;
-  memset(&result, 0, sizeof result);
-  result.has_value = true;
-  result.value.id.slot = (uint64_t)saved.slot;
-  result.value.id.generation = (uint64_t)saved.generation;
-  return result;
-}
+/* ---- host over real world tables for state/spawn/combat cases; every
+ * callback checks a sentinel ctx ---- */
+static int host_sentinel, game_sentinel;
+#define HOST_CTX ((void *)&host_sentinel)
+#define GAME_CTX ((void *)&game_sentinel)
+#define EXPECT_CTX(ctx, want) CHECK((ctx) == (want))
+static qa_identity_owner identities;
+static qa_session_actor_registry *registry;
 static qa_actor_id stub_world_actor(void *ctx) {
-  (void)ctx;
+  EXPECT_CTX(ctx, HOST_CTX);
   qa_actor_id world;
   memset(&world, 0, sizeof world);
   return world;
 }
 static qa_trace_result trace_script[4];
 static int trace_index;
-static qa_trace_result stub_trace(void *ctx, qa_q2f_trace_request request) {
-  (void)ctx; (void)request;
+static qa_trace_result stub_trace(void *ctx, qa_q2_trace_request request) {
+  EXPECT_CTX(ctx, HOST_CTX); (void)request;
   qa_trace_result result = trace_script[trace_index < 4 ? trace_index : 3];
   trace_index++;
   return result;
 }
-static qa_q2f_host stub_host;
-static qa_q2f_game stub_game;
-static void stub_host_init(void) {
+static double stub_point_contents(void *ctx, qa_vec3 point) { EXPECT_CTX(ctx, HOST_CTX); (void)point; return 0; }
+static bool stub_is_player(void *ctx, qa_actor_id actor) { EXPECT_CTX(ctx, HOST_CTX); (void)actor; return false; }
+static bool stub_is_monster(void *ctx, qa_actor_id actor) { EXPECT_CTX(ctx, HOST_CTX); (void)actor; return false; }
+static int beam_emitted, other_emitted;
+static qa_q2_presentation_event last_beam;
+static void stub_emit(void *ctx, qa_q2_presentation_event event) {
+  EXPECT_CTX(ctx, HOST_CTX);
+  if (strcmp(event.kind, "beam") == 0) { beam_emitted++; last_beam = event; } else other_emitted++;
+}
+static qa_body_state stub_body(void *ctx, qa_owned_actor actor) {
+  EXPECT_CTX(ctx, GAME_CTX); (void)actor;
+  qa_body_state body;
+  memset(&body, 0, sizeof body);
+  return body;
+}
+static int scheduled;
+static void stub_schedule(void *ctx, qa_q2_entity *entity, double delay, qa_q2_think think) {
+  EXPECT_CTX(ctx, GAME_CTX); (void)entity; (void)delay; (void)think;
+  scheduled++;
+}
+static qa_q2_entity *stub_entity(void *ctx, const qa_actor_id *actor) { EXPECT_CTX(ctx, GAME_CTX); (void)actor; return NULL; }
+static qa_q2_foundation_host stub_host;
+static qa_q2_game_services stub_game;
+static void stub_host_bind(qa_session_actor_registry *actors) {
   memset(&stub_host, 0, sizeof stub_host);
   memset(&stub_game, 0, sizeof stub_game);
-  stub_host.actors.is_live = stub_is_live;
-  stub_host.actors.reference_saved = stub_reference;
-  stub_host.actors.resolve_saved = stub_resolve_saved;
+  stub_host.ctx = HOST_CTX;
+  stub_host.actors = actors;
   stub_host.world_actor = stub_world_actor;
   stub_host.trace = stub_trace;
+  stub_host.point_contents = stub_point_contents;
+  stub_host.is_player = stub_is_player;
+  stub_host.is_monster = stub_is_monster;
+  stub_host.emit = stub_emit;
+  stub_game.ctx = GAME_CTX;
   stub_game.host = &stub_host;
-  stub_game.options.edition = QA_Q2F_CLASSIC;
-  stub_game.options.mode = "singleplayer";
+  stub_game.options.edition = QA_Q2_EDITION_CLASSIC;
+  stub_game.options.mode = QA_Q2_MODE_SINGLEPLAYER;
   stub_game.options.skill = 1;
+  stub_game.body = stub_body;
+  stub_game.schedule = stub_schedule;
+  stub_game.entity = stub_entity;
+}
+static void stub_host_init(void) {
+  qa_identity_owner_create(&identities, "q2-mp-monsters");
+  registry = qa_session_actor_registry_create(&identities, 64);
+  stub_host_bind(registry);
   for (int i = 0; i < 4; i++) {
     memset(&trace_script[i], 0, sizeof trace_script[i]);
     trace_script[i].kind = "q2";
     trace_script[i].fraction = 1;
+  }
+}
+/* Allocates registry slots in order until the requested slot. */
+static qa_owned_actor allocate_at(qa_session_actor_registry *actors, int64_t slot) {
+  for (;;) {
+    qa_owned_actor actor = qa_session_actor_registry_allocate(actors, "q2:test", "q2:test");
+    if (actor.id.slot == slot) return actor;
   }
 }
 
@@ -126,15 +156,14 @@ static void test_state(void) {
   qa_q2mpm_monster_state state;
   qa_q2mpm_state_init(&state);
   CHECK(state.widow_damage_multiplier == 1);
-  qa_q2f_entity entity;
+  qa_q2_entity entity;
   memset(&entity, 0, sizeof entity);
-  entity.actor.id.slot = 7;
-  entity.actor.id.generation = 3;
+  entity.actor = allocate_at(registry, 7);
+  qa_owned_actor healer = allocate_at(registry, 9);
   qa_q2mpm_rogue_state *saved = qa_q2mpm_state_get(&state, &entity);
   CHECK(saved->blocked == false);
   saved->has_healer = true;
-  saved->healer.slot = 9;
-  saved->healer.generation = 1;
+  saved->healer = healer.id;
   saved->summon_strength = 3;
   saved->widow_quad_until = 42;
   state.widow_damage_multiplier = 4;
@@ -144,9 +173,21 @@ static void test_state(void) {
   CHECK(checkpoint.actor_count == 1);
   CHECK(checkpoint.actors[0].state.has_healer);
   CHECK(checkpoint.actors[0].state.healer.slot == 9);
+  /* Restore into a session registry rebuilt from the registry checkpoint,
+   * the way a loaded save resolves saved actor ids. */
+  size_t slot_count = 0, source_count = 0;
+  const qa_actor_slot_checkpoint *slots = qa_session_actor_registry_checkpoint(registry, &slot_count);
+  const qa_source_actor_checkpoint *sources = qa_session_actor_registry_source_checkpoint(registry, &source_count);
+  qa_session_actor_registry *loaded = qa_session_actor_registry_restore(&identities, slots, slot_count, sources, source_count, 64);
+  stub_host_bind(loaded);
   qa_q2mpm_monster_state restored;
   qa_q2mpm_state_init(&restored);
   qa_q2mpm_state_restore(&restored, &stub_game, &checkpoint);
+  qa_owned_actor loaded_entity;
+  qa_saved_actor_id entity_saved;
+  CHECK(qa_q2_save_actor(&entity.actor.id, &entity_saved));
+  CHECK(qa_session_actor_registry_resolve_saved(loaded, entity_saved, &loaded_entity));
+  entity.actor = loaded_entity;
   CHECK(restored.widow_damage_multiplier == 4);
   CHECK(restored.flyer_next_move == QA_Q2MPM_FLYER_RUN);
   qa_q2mpm_rogue_state *again = qa_q2mpm_state_get(&restored, &entity);
@@ -154,6 +195,9 @@ static void test_state(void) {
   qa_q2mpm_monsters_checkpoint_free(&checkpoint);
   qa_q2mpm_state_destroy(&state);
   qa_q2mpm_state_destroy(&restored);
+  qa_session_actor_registry_close(loaded);
+  qa_session_actor_registry_destroy(loaded);
+  stub_host_bind(registry);
 }
 
 static void test_spawn_points(void) {
@@ -195,19 +239,24 @@ static void test_boss5_definition(void) {
   CHECK(found);
 }
 
-static qa_q2f_entity *damage_target;
-static int beam_emitted;
-static void beam_emit(void *ctx, qa_q2mpm_beam_event event) { (void)ctx; (void)event; beam_emitted++; }
-static void test_beam_sink(void) {
-  qa_q2mpm_beam_event event;
-  memset(&event, 0, sizeof event);
-  CHECK_ABORTS(qa_q2mpm_emit_beam(event));
-  qa_q2mpm_beam_sink sink = {NULL, beam_emit};
-  qa_q2mpm_set_beam_sink(sink);
-  beam_emitted = 0;
-  qa_q2mpm_emit_beam(event);
+/* TS dabeam emits its beam through game.host.emit({kind: "beam"}); the
+ * C removed its process-global beam sink, so the host emit is the path. */
+static void test_beam_emit(void) {
+  qa_q2_entity beam;
+  memset(&beam, 0, sizeof beam);
+  beam.actor = allocate_at(registry, 11);
+  beam.movedir = (qa_vec3){1, 0, 0};
+  beam.skin = 0xf2f2f0f0;
+  trace_index = 0;
+  trace_script[0].end = (qa_vec3){512, 0, 0};
+  beam_emitted = 0; other_emitted = 0; scheduled = 0;
+  qa_q2_think hit = qa_q2mpm_dabeam_hit_think();
+  hit.fn(hit.ctx, &beam, &stub_game);
   CHECK(beam_emitted == 1);
-  (void)damage_target;
+  CHECK(other_emitted == 0);
+  CHECK(strcmp(last_beam.kind, "beam") == 0 && last_beam.has_actor && qa_same_actor(last_beam.actor, beam.actor.id));
+  CHECK(last_beam.end.x == 512 && last_beam.width == 2 && last_beam.color == 0xf2f2f0f0 && last_beam.visible);
+  CHECK(scheduled == 1);
 }
 
 static void test_eye_arrays(void) {
@@ -222,8 +271,11 @@ int main(void) {
   test_spawn_points();
   test_stalker_angles();
   test_boss5_definition();
-  test_beam_sink();
+  test_beam_emit();
   test_eye_arrays();
+  qa_session_actor_registry_close(registry);
+  qa_session_actor_registry_destroy(registry);
+  qa_identity_owner_destroy(&identities);
   printf("%s: %d checks, %d failures\n", failures ? "FAIL" : "PASS", checks, failures);
   return failures ? 1 : 0;
 }

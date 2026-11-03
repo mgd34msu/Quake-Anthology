@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/game/triggers.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/game/triggers.h"
+#include "qa/content/q3/base/shared/jump_pad.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 #define FRAMETIME_MS 100
 #define CONTENTS_TRIGGER_V (double)(int32_t)0x40000000
 #define MOD_TRIGGER_HURT 22
@@ -37,7 +39,7 @@ static void dispatch(RT *r, qa_q3_game_entity *e, const qa_q3_use_participant *a
   uc.remap_shader = r->host.remap_shader; uc.warn = r->host.warn;
   qa_q3_use_targets(uc, e, activator);
 }
-static double src_float_int(double v) { return v >= -2147483648.0 && v < 2147483648.0 ? trunc(v) : -2147483648.0; }
+static double src_float_int(double v) { return v >= -2147483648.0 && v < 2147483648.0 ? trunc(v) + 0.0 : -2147483648.0; }
 static double src_schedule(double time, double wait, double random, double cr) {
   double seconds = f32(f32(wait) + f32(f32(random) * f32(cr)));
   double ms = f32(f32(1000) * seconds); return src_float_int(f32(f32(time) + ms));
@@ -78,11 +80,11 @@ static void multi_trigger(RT *r, qa_q3_game_entity *e, const qa_q3_use_participa
   e->has_activation = activator != NULL; if (activator) e->activation = *activator;
   if (e->nextthink != 0) return;
   if (!activator) qa_range_error("trigger_multiple requires an activator");
-  qa_q3_game_entity *act = qa_q3_use_client(*activator, r->host.has_participants ? &r->host.participants : NULL);
+  qa_q3_game_entity *act = qa_q3_use_client(activator, r->host.has_participants ? &r->host.participants : NULL);
   qa_q3_game_client *client = act ? act->client : NULL;
   if (client) {
-    if (((int)e->spawnflags & 1) != 0 && client->sess.session_team != 1) return;
-    if (((int)e->spawnflags & 2) != 0 && client->sess.session_team != 2) return;
+    if ((qa_js_to_int32(e->spawnflags) & 1) != 0 && client->sess.session_team != 1) return;
+    if ((qa_js_to_int32(e->spawnflags) & 2) != 0 && client->sess.session_team != 2) return;
   }
   dispatch(r, e, activator);
   if (e->wait > 0) {
@@ -100,7 +102,7 @@ static void timer_think(RT *r, qa_q3_game_entity *e) {
 }
 static void sound_at(RT *r, qa_q3_damage_participant other, double sound) {
   qa_vec3 origin; bool have;
-  if (other.entity) { origin = other.entity->r.current_origin; have = true; }
+  if (other.entity) { origin = qa_q3_base_entity_shared_current_origin(&other.entity->r); have = true; }
   else have = other.origin != NULL && other.origin(other.origin_ctx, &origin);
   if (!have) return;
   qa_q3_game_entity *ev = qa_q3_entity_pool_temp_entity(r->host.entities, origin, QA_Q3_EV_GENERAL_SOUND);
@@ -115,17 +117,20 @@ static void cb_multi_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_partici
 static void cb_multi_use(void *ctx, qa_q3_game_entity *s, const qa_q3_use_participant *o, const qa_q3_use_participant *a) { (void)o; multi_trigger(ctx, s, a); }
 static void cb_always(void *ctx, qa_q3_game_entity *s) { RT *r = ctx; qa_q3_use_participant self = qa_q3_participant_entity(s); dispatch(r, s, &self); qa_q3_entity_pool_free(r->host.entities, s); }
 static void cb_push_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_participant o, qa_touch_contact c) {
-  (void)c; RT *r = ctx; if (o.entity && o.entity->client) r->host.touch_jump_pad(r->host.ctx, o.entity->client, s);
+  (void)c; (void)ctx;
+  if (o.entity && o.entity->client) {
+    qa_q3_base_touch_jump_pad(&o.entity->client->ps, &s->s);
+  }
 }
 static void cb_push_think(void *ctx, qa_q3_game_entity *s) {
   RT *r = ctx; qa_q3_aim_at_target_context ac; ac.selection = selection(r); ac.gravity_ctx = r->host.ctx; ac.gravity = r->host.gravity;
-  qa_q3_aim_at_target(ac, s, qa_scale3(qa_add3(s->r.absmin, s->r.absmax), 0.5));
+  qa_q3_aim_at_target(ac, s, qa_scale3(qa_add3(qa_q3_base_entity_shared_absmin(&s->r), qa_q3_base_entity_shared_absmax(&s->r)), 0.5));
 }
 static void cb_tele_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_participant o, qa_touch_contact c) {
   (void)c; RT *r = ctx; if (!o.entity) return;
   qa_q3_game_client *client = o.entity->client;
-  if (!client || (int)client->ps.pm_type == QA_Q3_PM_DEAD) return;
-  if (((int)s->spawnflags & 1) != 0 && client->sess.session_team != 3) return;
+  if (!client || qa_js_to_int32(client->ps.pm_type) == QA_Q3_PM_DEAD) return;
+  if ((qa_js_to_int32(s->spawnflags) & 1) != 0 && client->sess.session_team != 3) return;
   qa_q3_game_entity *dest = qa_q3_pick_target(selection(r), s->target);
   if (!dest) { r->host.warn(r->host.ctx, "Couldn't find teleporter destination\n"); return; }
   qa_q3_teleport_context tc; tc.combat = combat_ctx(r); tc.kill_box = r->host.kill_box; tc.world = r->host.world;
@@ -135,15 +140,15 @@ static void cb_hurt_touch(void *ctx, qa_q3_game_entity *s, qa_q3_damage_particip
   (void)c; RT *r = ctx;
   bool damageable = o.entity ? qa_q3_game_entity_takedamage(o.entity) : r->host.can_take_damage(r->host.ctx, qa_q3_use_actor(o));
   if (!damageable || s->timestamp > game_time(r)) return;
-  s->timestamp = qa_int32(game_time(r) + (((int)s->spawnflags & 16) != 0 ? 1000 : FRAMETIME_MS));
-  if (((int)s->spawnflags & 4) == 0) sound_at(r, o, s->noise_index);
-  double flags = ((int)s->spawnflags & 8) != 0 ? QA_Q3_DAMAGE_NO_PROTECTION : 0;
+  s->timestamp = qa_int32(game_time(r) + ((qa_js_to_int32(s->spawnflags) & 16) != 0 ? 1000 : FRAMETIME_MS));
+  if ((qa_js_to_int32(s->spawnflags) & 4) == 0) sound_at(r, o, s->noise_index);
+  double flags = (qa_js_to_int32(s->spawnflags) & 8) != 0 ? QA_Q3_DAMAGE_NO_PROTECTION : 0;
   qa_q3_damage_participant self = qa_q3_participant_entity(s);
   qa_q3_combat_damage(combat_ctx(r), o, &self, &self, NULL, NULL, s->damage, flags, MOD_TRIGGER_HURT);
 }
 static void cb_hurt_use(void *ctx, qa_q3_game_entity *s, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)o; (void)a; RT *r = ctx;
-  if (s->r.linked) { if (r->host.entities->options.unlink) r->host.entities->options.unlink(r->host.entities->options.ctx, s); }
+  if (qa_q3_base_entity_shared_linked(&s->r)) { if (r->host.entities->options.unlink) r->host.entities->options.unlink(r->host.entities->options.ctx, s); }
   else pool_link(r, s);
 }
 static void cb_timer_use(void *ctx, qa_q3_game_entity *s, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
@@ -172,7 +177,8 @@ void qa_q3_trigger_runtime_bind_save_callbacks(RT *r) {
 }
 void qa_q3_trigger_runtime_init(RT *r, qa_q3_trigger_host host) { r->host = host; qa_q3_trigger_runtime_bind_save_callbacks(r); }
 void qa_q3_bind_trigger_save_callbacks(qa_q3_trigger_host host) {
-  RT *r = malloc(sizeof *r); if (!r) qa_range_error("out of memory"); qa_q3_trigger_runtime_init(r, host);
+  RT *r = malloc(sizeof *r); if (!r) qa_range_error("out of memory");
+  qa_q3_callback_catalog_retain(&host.entities->callbacks, r); qa_q3_trigger_runtime_init(r, host);
 }
 /* Spawn handlers. */
 static void h_multiple(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
@@ -191,7 +197,7 @@ static void h_always(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variable
 }
 static void h_push(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   (void)v; RT *r = ctx; qa_q3_trigger_runtime_bind_save_callbacks(r); owned(r, e); init_trigger(r, e);
-  e->r.sv_flags = (int)e->r.sv_flags & ~1; (void)r->host.sound_index(r->host.ctx, "sound/world/jumppad.wav");
+  e->r.sv_flags = qa_js_to_int32(e->r.sv_flags) & ~1; (void)r->host.sound_index(r->host.ctx, "sound/world/jumppad.wav");
   e->s.e_type = 8; /* ET_PUSH_TRIGGER */
   e->touch = qa_q3_callback_family_resolve(&r->host.entities->callbacks.touch, "q3.base.game.triggers.spawnTriggerPush.touch");
   e->think = qa_q3_callback_family_resolve(&r->host.entities->callbacks.think, "q3.base.game.triggers.spawnTriggerPush.think");
@@ -199,7 +205,7 @@ static void h_push(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables 
 }
 static void h_teleport(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   (void)v; RT *r = ctx; qa_q3_trigger_runtime_bind_save_callbacks(r); owned(r, e); init_trigger(r, e);
-  if (((int)e->spawnflags & 1) != 0) e->r.sv_flags = (int)e->r.sv_flags | 1; else e->r.sv_flags = (int)e->r.sv_flags & ~1;
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) e->r.sv_flags = qa_js_to_int32(e->r.sv_flags) | 1; else e->r.sv_flags = qa_js_to_int32(e->r.sv_flags) & ~1;
   (void)r->host.sound_index(r->host.ctx, "sound/world/jumppad.wav");
   e->s.e_type = 9; /* ET_TELEPORT_TRIGGER */
   e->touch = qa_q3_callback_family_resolve(&r->host.entities->callbacks.touch, "q3.base.game.triggers.spawnTriggerTeleport.touch");
@@ -211,8 +217,8 @@ static void h_hurt(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables 
   e->touch = qa_q3_callback_family_resolve(&r->host.entities->callbacks.touch, "q3.base.game.triggers.spawnTriggerHurt.touch");
   if (e->damage == 0) e->damage = 5;
   e->r.contents = CONTENTS_TRIGGER_V;
-  if (((int)e->spawnflags & 2) != 0) e->use = qa_q3_callback_family_resolve(&r->host.entities->callbacks.use, "q3.base.game.triggers.spawnTriggerHurt.use");
-  if (((int)e->spawnflags & 1) == 0) pool_link(r, e);
+  if ((qa_js_to_int32(e->spawnflags) & 2) != 0) e->use = qa_q3_callback_family_resolve(&r->host.entities->callbacks.use, "q3.base.game.triggers.spawnTriggerHurt.use");
+  if ((qa_js_to_int32(e->spawnflags) & 1) == 0) pool_link(r, e);
 }
 static void h_timer(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   RT *r = ctx; qa_q3_trigger_runtime_bind_save_callbacks(r); owned(r, e);
@@ -226,14 +232,15 @@ static void h_timer(void *ctx, qa_q3_game_entity *e, const qa_q3_spawn_variables
     char *msg = qa_q3_game_format("func_timer at %s has random >= wait\n", &arg, 1, 32000);
     r->host.warn(r->host.ctx, msg); free(msg);
   }
-  if (((int)e->spawnflags & 1) != 0) {
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) {
     qa_q3_game_entity_set_nextthink(e, qa_int32(game_time(r) + FRAMETIME_MS));
     e->activation = qa_q3_participant_entity(e); e->has_activation = true;
   }
   e->r.sv_flags = 1;
 }
 size_t qa_q3_trigger_spawn_handlers(qa_q3_trigger_host host, qa_q3_spawn_handler_entry *out, size_t cap) {
-  RT *r = malloc(sizeof *r); if (!r) qa_range_error("out of memory"); qa_q3_trigger_runtime_init(r, host);
+  RT *r = malloc(sizeof *r); if (!r) qa_range_error("out of memory");
+  qa_q3_callback_catalog_retain(&host.entities->callbacks, r); qa_q3_trigger_runtime_init(r, host);
   static const struct { const char *name; qa_q3_spawn_handler_fn fn; } T[] = {
     {"trigger_multiple", h_multiple}, {"trigger_always", h_always}, {"trigger_push", h_push},
     {"trigger_teleport", h_teleport}, {"trigger_hurt", h_hurt}, {"func_timer", h_timer}};

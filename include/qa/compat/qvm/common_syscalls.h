@@ -36,6 +36,9 @@ typedef struct qa_qvm_common_services {
   const char *const *(*arguments)(void *ctx, size_t *out_count);
   qa_qvm_console_commands commands;
   double (*real_time)(void *ctx, bool has_output, qa_qvm_calendar *out_calendar);
+  /* TS cvars as an abstract QvmCvarServices; when non-NULL it is used in
+   * place of the registry `cvars`. */
+  const qa_qvm_cvar_table *cvar_table;
 } qa_qvm_common_services;
 
 bool qa_qvm_common_syscall(const qa_qvm_host_call *call, qa_qvm_common_services services,

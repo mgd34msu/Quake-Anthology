@@ -1,7 +1,5 @@
-/* Port of src/render/cpu/row-parallel.ts. C accommodation (PORTING.md):
- * worker threads become direct/pumped calls: the pool encodes setups to
- * the same 129-wide Float64 layout, then rasterizes row bands in-process
- * in setup order, which is bit-identical (bands are row-disjoint).
+/* Port of src/render/cpu/row-parallel.ts. Node workers become pthreads sharing
+ * the framebuffer. The setup buffer keeps the TS 129-wide Float64 layout.
  * GPL-2.0-or-later. */
 #ifndef QA_RENDER_CPU_ROW_PARALLEL_H
 #define QA_RENDER_CPU_ROW_PARALLEL_H
@@ -25,13 +23,17 @@ typedef struct qa_row_lighting_registration { double id; qa_batch_lighting param
 typedef struct qa_row_depth_registration { double id; qa_depth_image_level depth; } qa_row_depth_registration;
 typedef struct qa_row_job_message { const char *kind; double count, band_rows; double *job_buffer; size_t job_count; const qa_row_texture_registration *textures; size_t texture_count; const qa_row_lighting_registration *lightings; size_t lighting_count; const qa_row_depth_registration *depths; size_t depth_count; } qa_row_job_message;
 typedef struct qa_row_parallel_pool qa_row_parallel_pool;
-struct qa_row_parallel_pool { void *impl; double jobs_run; };
-/* TS tryCreate returns null when no workers are configured; the C pool
- * is always creatable but reports worker_count 0 in that case and the
- * rasterizer then stays serial. Returns false only on OOM. */
+struct qa_row_parallel_pool { void *impl; double jobs_run; double worker_count;
+  /* TS tryCreate's `failed` callback: why the workers could not start (NULL when they started
+   * or none were configured), so a silent fallback to serial drawing stays diagnosable. */
+  const char *failure; };
+/* TS tryCreate: returns false (null) when QTS_CPU_WORKERS or the CPU count selects
+ * no workers, or when the threads cannot start. */
 bool qa_row_parallel_pool_try_create(qa_row_parallel_pool *pool, qa_row_shared_framebuffer shared);
 double qa_row_parallel_pool_worker_count(const qa_row_parallel_pool *pool);
 qa_row_registries qa_row_parallel_pool_registries(qa_row_parallel_pool *pool);
+/* Synchronous: setups and everything they reference must outlive the call, and
+ * nothing else may touch the shared framebuffer until it returns. */
 void qa_row_parallel_pool_run(qa_row_parallel_pool *pool, const qa_triangle_setup *setups, size_t setup_count);
 void qa_row_parallel_pool_close(qa_row_parallel_pool *pool);
 #endif

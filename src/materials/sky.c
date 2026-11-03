@@ -5,6 +5,7 @@
 
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 #include "qa/materials/sky.h"
 
 static float fr(double v) { return (float)v; }
@@ -132,18 +133,22 @@ void qa_sky_builder_initialize_cloud_coordinates(qa_sky_builder *builder,
                                                  double height) {
   if (!isfinite(fr(height)))
     qa_range_error("sky cloud height must be finite float32");
+  /* The source leaves NaN here as a visual glitch; texture coordinates must
+     stay finite for upload. */
   for (int face = 0; face < 6; face++)
-    for (int index = 0; index < 81; index++)
-      builder->cloud_coords[face][index] = qa_cloud_tex_coord(
+    for (int index = 0; index < 81; index++) {
+      qa_vec2 coordinate = qa_cloud_tex_coord(
           face, (index % 9 - 4) / 4.0, (index / 9 - 4) / 4.0, height);
+      builder->cloud_coords[face][index].x = isfinite(coordinate.x) ? coordinate.x : 0;
+      builder->cloud_coords[face][index].y = isfinite(coordinate.y) ? coordinate.y : 0;
+    }
 }
 
 static qa_vec3 vertex_at(const qa_deform_geometry *mesh, double index_d) {
-  int64_t index = (int64_t)index_d;
-  if (index < 0 || (size_t)index >= mesh->vertex_count)
-    qa_range_error("sky index %lld outside %zu", (long long)index,
+  if (!(index_d >= 0 && index_d == floor(index_d) && index_d < (double)mesh->vertex_count))
+    qa_range_error("sky index %s outside %zu", QA_JS_NUMBER(index_d),
                    mesh->vertex_count);
-  return mesh->vertices[index].position;
+  return mesh->vertices[(size_t)index_d].position;
 }
 
 void qa_sky_builder_clip(qa_sky_builder *builder,

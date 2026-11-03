@@ -25,6 +25,7 @@ typedef struct qa_q3_pres_movement_options {
   bool has_fixed_msec; /* false is TS null */
   double fixed_msec;
   bool no_footsteps;
+  bool ladders_disabled; /* TS ladders === false; prediction passes ladders: settings.ladders !== false */
   bool gauntlet_hit;
 } qa_q3_pres_movement_options;
 /* Prediction invokes the recipe's selected movement, arsenal and character

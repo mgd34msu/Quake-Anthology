@@ -1,46 +1,25 @@
 /* Port of src/network/q2/mvd-profile.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/mvd_profile.h"
+#include "qa/network/common/js_number.h"
 
-#include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/message.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/support.h"
 
-/* JS Number(text): trimmed, empty is 0, full parse or NaN. */
-static double js_number(const char *text) {
-  while (*text != '\0' && isspace((unsigned char)*text)) text++;
-  size_t n = strlen(text);
-  while (n > 0 && isspace((unsigned char)text[n - 1])) n--;
-  if (n == 0) return 0;
-  char *copy = (char *)malloc(n + 1);
-  if (copy == NULL) return NAN;
-  memcpy(copy, text, n);
-  copy[n] = '\0';
-  double value;
-  if (n > 2 && copy[0] == '0' && (copy[1] == 'b' || copy[1] == 'B' ||
-                                  copy[1] == 'o' || copy[1] == 'O')) {
-    int base = (copy[1] == 'b' || copy[1] == 'B') ? 2 : 8;
-    char *end = NULL;
-    unsigned long long parsed = strtoull(copy + 2, &end, base);
-    value = end != copy + 2 && *end == '\0' ? (double)parsed : NAN;
-  } else {
-    char *end = NULL;
-    value = strtod(copy, &end);
-    if (end == copy || *end != '\0') value = NAN;
-  }
-  free(copy);
-  return value;
-}
+/* TS Number(text): trimmed, empty is 0, full parse or NaN. */
+static double js_number(const char *text) { return qa_js_string_to_number(text); }
 
 void qa_q2_get_mvd_profile(double revision, double flags, qa_q2_mvd_profile *out) {
   if (!((revision >= 2009 && revision <= 2013) || revision == 3038)) {
-    qa_q2_throw_error("Unsupported MVD revision %g", revision);
+    qa_q2_throw_error("Unsupported MVD revision %s", QA_JS_NUMBER(revision));
   }
   bool rerelease = revision == 3038;
-  int32_t iflags = (int32_t)flags;
+  int32_t iflags = qa_js_to_int32(flags); /* flags & 4, flags & 8 */
   bool extended = rerelease || (revision >= 2011 && (iflags & 4) != 0);
   bool v2 = !rerelease && revision >= 2012 && (iflags & 8) != 0;
   if (v2 && !extended) qa_q2_throw_error("MVD extended-v2 requires extended limits");
@@ -86,19 +65,27 @@ void qa_q2_mvd_header_free(qa_q2_mvd_header *header) {
   header->config_string_count = 0;
 }
 
+/* Owned configstring list held across reads that can raise. */
+typedef struct header_entries {
+  qa_q2_mvd_config_string *items;
+  size_t count;
+} header_entries;
+static void header_entries_release(void *arg) {
+  header_entries *held = (header_entries *)arg;
+  for (size_t i = 0; i < held->count; i++) free(held->items[i].value);
+  free(held->items);
+  held->items = NULL;
+  held->count = 0;
+}
+
 bool qa_q2_read_mvd_header(const uint8_t *bytes, size_t length,
                            qa_q2_mvd_header *out) {
   memset(out, 0, sizeof *out);
+  /* createMessage + loadMessage: reads never write, so the borrowed bytes are loaded directly
+   * and nothing on the heap is held across the raising reads below. */
   qa_q2_sizebuf message;
-  if (!qa_q2_message_create(&message, (int64_t)length)) return false;
-  /* loadMessage over a private copy (bytes are const here). */
-  uint8_t *copy = (uint8_t *)malloc(length > 0 ? length : 1);
-  if (copy == NULL) {
-    qa_q2_message_destroy(&message);
-    return false;
-  }
-  if (length > 0) memcpy(copy, bytes, length);
-  qa_q2_message_load(&message, copy, length);
+  qa_q2_sizebuf_init_empty(&message);
+  qa_q2_message_load(&message, (uint8_t *)(uintptr_t)bytes, length);
   int32_t command = qa_q2_msg_read_byte(&message);
   if ((command & 31) != 4 || qa_q2_msg_read_long(&message) != 37) {
     qa_q2_throw_error("MVD gamestate header expected");
@@ -112,15 +99,10 @@ bool qa_q2_read_mvd_header(const uint8_t *bytes, size_t length,
   char gamedir[2048];
   qa_q2_msg_read_string(&message, gamedir, sizeof gamedir);
   double dummy = (double)qa_q2_msg_read_short(&message);
-  size_t capacity = 16;
-  size_t count = 0;
-  qa_q2_mvd_config_string *entries =
-      (qa_q2_mvd_config_string *)calloc(capacity, sizeof *entries);
-  if (entries == NULL) {
-    free(copy);
-    qa_q2_message_destroy(&message);
-    return false;
-  }
+  size_t capacity = 0;
+  header_entries held = {NULL, 0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, header_entries_release, &held);
   for (;;) {
     double index = (double)qa_q2_msg_read_word(&message);
     qa_q2_message_check_read(&message);
@@ -130,59 +112,58 @@ bool qa_q2_read_mvd_header(const uint8_t *bytes, size_t length,
     }
     char value[2048];
     qa_q2_msg_read_string(&message, value, sizeof value);
-    /* Map.set replaces an existing key. */
-    size_t at = count;
-    for (size_t i = 0; i < count; i++) {
-      if (entries[i].index == index) at = i;
-    }
     size_t vlen = strlen(value);
     char *owned = (char *)malloc(vlen + 1);
+    if (owned != NULL) memcpy(owned, value, vlen + 1);
     if (owned == NULL) {
-      for (size_t i = 0; i < count; i++) free(entries[i].value);
-      free(entries);
-      free(copy);
-      qa_q2_message_destroy(&message);
+      qa_cleanup_pop(&node);
+      header_entries_release(&held);
       return false;
     }
-    memcpy(owned, value, vlen + 1);
-    if (at == count) {
-      if (count == capacity) {
-        capacity *= 2;
-        qa_q2_mvd_config_string *grown =
-            (qa_q2_mvd_config_string *)realloc(entries, capacity * sizeof *entries);
-        if (grown == NULL) {
-          free(owned);
-          for (size_t i = 0; i < count; i++) free(entries[i].value);
-          free(entries);
-          free(copy);
-          qa_q2_message_destroy(&message);
-          return false;
-        }
-        entries = grown;
-      }
-      entries[count].index = index;
-      entries[count].value = owned;
-      count++;
-    } else {
-      free(entries[at].value);
-      entries[at].value = owned;
+    /* Map.set replaces an existing key in place. */
+    size_t at = held.count;
+    for (size_t i = 0; i < held.count; i++) {
+      if (held.items[i].index == index) at = i;
     }
+    if (at < held.count) {
+      free(held.items[at].value);
+      held.items[at].value = owned;
+      continue;
+    }
+    if (held.count == capacity) {
+      size_t next = capacity > 0 ? capacity * 2 : 16;
+      qa_q2_mvd_config_string *grown =
+          (qa_q2_mvd_config_string *)realloc(held.items, next * sizeof *grown);
+      if (grown == NULL) {
+        free(owned);
+        qa_cleanup_pop(&node);
+        header_entries_release(&held);
+        return false;
+      }
+      held.items = grown;
+      capacity = next;
+    }
+    held.items[held.count].index = index;
+    held.items[held.count].value = owned;
+    held.count++;
   }
-  out->config_strings = entries;
-  out->config_string_count = count;
+  out->config_strings = held.items;
+  out->config_string_count = held.count;
   const char *max_str = qa_q2_mvd_header_config_string(out, out->profile.max_clients_index);
   double max_clients = max_str != NULL ? js_number(max_str) : NAN;
-  if (max_clients != trunc(max_clients) || max_clients < 1 || max_clients > 256 ||
-      dummy < -1 || dummy >= max_clients) {
+  /* Number.isInteger rejects NaN and the infinities before the range test. */
+  if (!isfinite(max_clients) || max_clients != trunc(max_clients) || max_clients < 1 ||
+      max_clients > 256 || dummy < -1 || dummy >= max_clients) {
     qa_q2_throw_error("Invalid MVD player limits");
   }
   qa_q2_message_check_read(&message);
+  qa_cleanup_pop(&node);
   memset(&out->data, 0, sizeof out->data);
   out->data.servercount = servercount;
-  size_t glen = strlen(gamedir);
-  memcpy(out->data.gamedir, gamedir, glen + 1 < sizeof out->data.gamedir
-                                        ? glen + 1
-                                        : sizeof out->data.gamedir);
+  memcpy(out->data.gamedir, gamedir, sizeof out->data.gamedir < sizeof gamedir
+                                         ? sizeof out->data.gamedir
+                                         : sizeof gamedir);
+  out->data.gamedir[sizeof out->data.gamedir - 1] = '\0';
   out->data.clientnum = 0;
   const char *level = qa_q2_mvd_header_config_string(out, 0);
   if (level != NULL) {
@@ -204,7 +185,5 @@ bool qa_q2_read_mvd_header(const uint8_t *bytes, size_t length,
   out->frame_offset = (double)message.readcount;
   out->dummy = dummy;
   out->max_clients = max_clients;
-  free(copy);
-  qa_q2_message_destroy(&message);
   return true;
 }

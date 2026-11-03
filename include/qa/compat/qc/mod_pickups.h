@@ -1,10 +1,12 @@
 /* Port of src/compat/qc/mod-pickups.ts. GPL-2.0-or-later.
- * Inventory bindPickup is an operations fn (session owner);
- * rules are built per actor and cached in the struct. */
+ * Rules are built per actor and stay valid until destroy (TS GC: a
+ * returned rule outlives its release). bind_pickup, resolve_owned,
+ * client_of, actor_of_client are overrides: NULL uses services. */
 #ifndef QA_COMPAT_QC_MOD_PICKUPS_H
 #define QA_COMPAT_QC_MOD_PICKUPS_H
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "qa/compat/qc/source_call.h"
 #include "qa/contracts/original_pickups.h"
 #include "qa/world/session/mods.h"
@@ -21,10 +23,12 @@ typedef struct qa_compat_qc_mod_pickups_operations {
 typedef struct qa_compat_qc_mod_pickups {
   qa_mod_callback_declaration declaration; qa_provider_id provider;
   qa_mod_host_services *services; qa_compat_qc_mod_pickups_operations operations;
-  /* per-actor state */
-  struct qa_compat_qc_mod_pickups_entry { qa_actor_id actor; qa_client_id client; void (*remove[8])(void *); void *remove_ctx[8]; size_t remove_count;
-    qa_original_pickup_rule *rules; size_t rule_count; qa_original_pickup_rule *pickup_rules; } *entries;
-  size_t entry_count, entry_capacity;
+  /* per-actor state: TS entries and rules are separate maps */
+  struct qa_compat_qc_mod_pickups_entry { qa_actor_id actor; qa_client_id client; uint64_t generation; qa_owned_actor owner;
+    void (*remove)(void *); void *remove_ctx; bool has_inventory_binding; int64_t inventory_binding; } *entries;
+  size_t entry_count, entry_capacity; uint64_t next_generation;
+  struct qa_compat_qc_mod_pickups_rules { qa_actor_id actor; bool retired; qa_original_pickup_rule *rules; size_t rule_count; qa_original_pickup_rule *inventory_rules; } *rule_sets;
+  size_t rule_set_count, rule_set_capacity;
   struct qa_compat_qc_mod_pickups_take **take_storage; size_t take_count, take_capacity;
   struct qa_compat_qc_mod_pickups *self_ref;
 } qa_compat_qc_mod_pickups;

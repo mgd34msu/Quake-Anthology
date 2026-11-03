@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/weapons.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/weapons.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -14,6 +15,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 enum { CONTENTS_WATER = 32, SURF_NOIMPACT = 16, SURF_METALSTEPS = 4096 };
 #define MASK_SHOT (1 | 0x2000000 | 0x4000000)
@@ -39,7 +41,7 @@ const char *qa_q3_pres_eject_brass_name(qa_q3_pres_eject_brass brass) {
   }
 }
 void qa_q3_pres_emit_shotgun_presentation(qa_q3_pres_shotgun_presentation_host host, qa_q3_pres_shotgun_event shot) {
-  if (host.smoke_enabled && ((int64_t)host.contents(host.ctx, shot.muzzle) & CONTENTS_WATER) == 0)
+  if (host.smoke_enabled && (qa_js_to_int32(host.contents(host.ctx, shot.muzzle)) & CONTENTS_WATER) == 0)
     host.smoke(host.ctx, ma3(shot.muzzle, 32, qa_normalize3(qa_sub3(shot.direction, shot.muzzle))));
   qa_q3_shotgun_endpoints endpoints = qa_q3_shotgun_endpoints_compute(shot.muzzle, shot.direction, shot.seed);
   for (int i = 0; i < QA_Q3_SHOTGUN_PELLET_COUNT; i++) {
@@ -48,18 +50,18 @@ void qa_q3_pres_emit_shotgun_presentation(qa_q3_pres_shotgun_presentation_host h
     double source_contents = host.contents(host.ctx, shot.muzzle);
     double destination_contents = host.contents(host.ctx, trace.end);
     if (source_contents == destination_contents) {
-      if (((int64_t)source_contents & CONTENTS_WATER) != 0) host.bubbles(host.ctx, shot.muzzle, trace.end);
-    } else if (((int64_t)source_contents & CONTENTS_WATER) != 0) {
+      if ((qa_js_to_int32(source_contents) & CONTENTS_WATER) != 0) host.bubbles(host.ctx, shot.muzzle, trace.end);
+    } else if ((qa_js_to_int32(source_contents) & CONTENTS_WATER) != 0) {
       host.bubbles(host.ctx, shot.muzzle, host.water(host.ctx, end, shot.muzzle));
-    } else if (((int64_t)destination_contents & CONTENTS_WATER) != 0) {
+    } else if ((qa_js_to_int32(destination_contents) & CONTENTS_WATER) != 0) {
       host.bubbles(host.ctx, trace.end, host.water(host.ctx, shot.muzzle, end));
     }
-    if (((int64_t)trace.surface_flags & SURF_NOIMPACT) != 0) continue;
+    if ((qa_js_to_int32(trace.surface_flags) & SURF_NOIMPACT) != 0) continue;
     if (trace.has_target && host.is_player(host.ctx, trace.target))
       host.blood(host.ctx, trace.end, trace.normal, trace.target);
     else
       host.wall(host.ctx, trace.end, trace.normal,
-                ((int64_t)trace.surface_flags & SURF_METALSTEPS) != 0 ? QA_Q3_PRES_IMPACT_SOUND_METAL
+                (qa_js_to_int32(trace.surface_flags) & SURF_METALSTEPS) != 0 ? QA_Q3_PRES_IMPACT_SOUND_METAL
                                                                       : QA_Q3_PRES_IMPACT_SOUND_DEFAULT);
   }
 }
@@ -76,12 +78,12 @@ static bool selectable(qa_q3_pres_client_weapon_selection *selection, double num
   double ammo = qa_q3_base_player_state_slots_get(&state->snap->player_state.ammo, number);
   double weapons = qa_q3_base_player_state_slots_get(&state->snap->player_state.stats,
       qa_q3_base_stat_schema_for(state->product)->weapons);
-  return ammo != 0 && ((int64_t)weapons & (1LL << (int)number)) != 0;
+  return ammo != 0 && (qa_js_to_int32(weapons) & (1 << qa_js_to_int32(number))) != 0;
 }
 static void cycle_weapon(qa_q3_pres_client_weapon_selection *selection, double direction) {
   qa_q3_pres_client_game_state *state = selection->state;
   if (!state->snap) return;
-  if (((int64_t)state->snap->player_state.pm_flags & 8) != 0) return; /* MoveFlags.FOLLOW = PMF_FOLLOW (8) */
+  if ((qa_js_to_int32(state->snap->player_state.pm_flags) & 8) != 0) return; /* MoveFlags.FOLLOW = PMF_FOLLOW (8) */
   state->weapon_select_time = state->time;
   double original = state->weapon_select;
   for (int i = 0; i < 16; i++) {
@@ -98,11 +100,11 @@ void qa_q3_pres_client_weapon_selection_previous_weapon(qa_q3_pres_client_weapon
 void qa_q3_pres_client_weapon_selection_select_weapon(qa_q3_pres_client_weapon_selection *selection, double number) {
   qa_q3_pres_client_game_state *state = selection->state;
   if (!state->snap) return;
-  if (((int64_t)state->snap->player_state.pm_flags & 8) != 0 || number < 1 || number > 15) return;
+  if ((qa_js_to_int32(state->snap->player_state.pm_flags) & 8) != 0 || number < 1 || number > 15) return;
   state->weapon_select_time = state->time;
   double weapons = qa_q3_base_player_state_slots_get(&state->snap->player_state.stats,
       qa_q3_base_stat_schema_for(state->product)->weapons);
-  if (((int64_t)weapons & (1LL << (int)number)) != 0) {
+  if ((qa_js_to_int32(weapons) & (1 << qa_js_to_int32(number))) != 0) {
     state->weapon_select = number;
     if (selection->selected) selection->selected(selection->selected_ctx, number);
   }
@@ -184,8 +186,15 @@ qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_weapon(
     qa_q3_pres_client_weapon_media_registry *r, double number) {
   if (number != trunc(number) || number < 0 || number >= 16) {
     if (number == trunc(number)) qa_range_error("Invalid weapon media index %lld", (long long)number);
-    qa_range_error("Invalid weapon media index %g", number);
+    qa_range_error("Invalid weapon media index %s", QA_JS_NUMBER(number));
   }
+  return &r->weapons[(size_t)number];
+}
+/* Server-supplied weapon numbers may be out of range; cgame reads a neighboring record, so this falls back to the
+   empty one (TS weaponRecords[number] ?? weaponRecords[0]; record 0 always exists). */
+qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_weapon_or_empty(
+    qa_q3_pres_client_weapon_media_registry *r, double number) {
+  if (number != trunc(number) || number < 0 || number >= 16) return &r->weapons[0];
   return &r->weapons[(size_t)number];
 }
 qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_require_weapon(
@@ -193,7 +202,7 @@ qa_q3_pres_client_weapon_info *qa_q3_pres_client_weapon_media_registry_require_w
   if (number != 0 && !(number == trunc(number) && number >= 0 && number < 16 && r->ready_weapons[(size_t)number])) {
     if (number == trunc(number))
       qa_range_error("Weapon %lld must finish registration before synchronous presentation", (long long)number);
-    qa_range_error("Weapon %g must finish registration before synchronous presentation", number);
+    qa_range_error("Weapon %s must finish registration before synchronous presentation", QA_JS_NUMBER(number));
   }
   return qa_q3_pres_client_weapon_media_registry_weapon(r, number);
 }
@@ -217,7 +226,7 @@ static bool register_weapon_specific(qa_q3_pres_client_weapon_media_registry *r,
                                      qa_q3_pres_client_weapon_info *w) {
   qa_q3_pres_registered_weapon_effects *fx = &r->effects;
   qa_pcm_sound *sound = NULL;
-  switch ((int)number) {
+  switch (qa_js_to_int32(number)) {
     case QA_Q3_WP_GAUNTLET:
       w->flash_dlight_color = (qa_vec3){0.6, 0.6, 1};
       if (!reg_sound(r, "sound/weapons/melee/fstrun.wav", &w->firing_sound)) return false;
@@ -283,7 +292,7 @@ static bool register_weapon_specific(qa_q3_pres_client_weapon_media_registry *r,
       return reg_shader(r, "rocketExplosion", &fx->rocket_explosion_shader);
     case QA_Q3_WP_PROX_LAUNCHER:
     case QA_Q3_WP_GRENADE_LAUNCHER: {
-      bool prox = (int)number == QA_Q3_WP_PROX_LAUNCHER;
+      bool prox = qa_js_to_int32(number) == QA_Q3_WP_PROX_LAUNCHER;
       if (!reg_model(r, prox ? "models/weaphits/proxmine.md3" : "models/ammo/grenade1.md3", &w->base.missile_model))
         return false;
       w->base.has_missile_trail = true;
@@ -333,17 +342,29 @@ static bool register_weapon_specific(qa_q3_pres_client_weapon_media_registry *r,
   }
 }
 static bool register_weapon_now(qa_q3_pres_client_weapon_media_registry *r, double number);
+/* TS try { load } catch { registered.delete(number); throw }: a raise unwinding through the load clears the flag. */
+static void clear_registered_flag(void *arg) { *(bool *)arg = false; }
+static bool load_item_visuals(qa_q3_pres_client_weapon_media_registry *r, size_t index,
+                              const qa_q3_base_item_definition *item);
 static bool register_item_now(qa_q3_pres_client_weapon_media_registry *r, double number) {
   if (number < 0 || number >= (double)r->item_count) {
     if (number == trunc(number))
       qa_range_error("CG_RegisterItemVisuals: itemNum %lld out of range [0-%lld]", (long long)number,
                      (long long)r->item_count - 1);
-    qa_range_error("CG_RegisterItemVisuals: itemNum %g out of range [0-%lld]", number, (long long)r->item_count - 1);
+    qa_range_error("CG_RegisterItemVisuals: itemNum %s out of range [0-%lld]", QA_JS_NUMBER(number), (long long)r->item_count - 1);
   }
   const qa_q3_base_item_definition *item = qa_q3_base_item_at(r->product, number);
   size_t index = (size_t)number;
   if (r->registered_items[index]) return true;
   r->registered_items[index] = true;
+  qa_cleanup node;
+  qa_cleanup_push(&node, clear_registered_flag, &r->registered_items[index]);
+  bool ok = load_item_visuals(r, index, item);
+  qa_cleanup_pop(&node);
+  return ok;
+}
+static bool load_item_visuals(qa_q3_pres_client_weapon_media_registry *r, size_t index,
+                              const qa_q3_base_item_definition *item) {
   qa_q3_pres_scene_model model = qa_q3_pres_default_model;
   if (item->world_models[0] && !reg_model(r, item->world_models[0], &model)) return false;
   const qa_q3_pres_scene_shader *icon = NULL;
@@ -363,10 +384,18 @@ static bool register_item_now(qa_q3_pres_client_weapon_media_registry *r, double
   }
   return true;
 }
+static bool load_weapon(qa_q3_pres_client_weapon_media_registry *r, double number);
 static bool register_weapon_now(qa_q3_pres_client_weapon_media_registry *r, double number) {
   (void)qa_q3_pres_client_weapon_media_registry_weapon(r, number);
   if (number == 0 || r->registered_weapons[(size_t)number]) return true;
   r->registered_weapons[(size_t)number] = true;
+  qa_cleanup node;
+  qa_cleanup_push(&node, clear_registered_flag, &r->registered_weapons[(size_t)number]);
+  bool ok = load_weapon(r, number);
+  qa_cleanup_pop(&node);
+  return ok;
+}
+static bool load_weapon(qa_q3_pres_client_weapon_media_registry *r, double number) {
   size_t count = 0;
   const qa_q3_base_item_definition *items = qa_q3_base_item_list(r->product, &count);
   int found = -1;
@@ -420,7 +449,18 @@ static bool register_weapon_now(qa_q3_pres_client_weapon_media_registry *r, doub
   r->ready_weapons[(size_t)number] = true;
   return true;
 }
+/* A number with no weapon item is left unregistered; cgame only indexes cg_weapons for it, so a peer-supplied byte
+   cannot fault the chain. TS chains registrations on one promise and a failed one stays with its own caller; the C
+   registration is synchronous, so a raise already reaches only this caller. */
 bool qa_q3_pres_client_weapon_media_registry_register_weapon(qa_q3_pres_client_weapon_media_registry *r, double number) {
+  if (number != trunc(number) || number < 0 || number >= 16 || r->ready_weapons[(size_t)number]) return true;
+  if (number != 0) {
+    size_t count = 0;
+    const qa_q3_base_item_definition *items = qa_q3_base_item_list(r->product, &count);
+    bool any = false;
+    for (size_t i = 0; i < count && !any; i++) any = items[i].type == QA_Q3_BASE_IT_WEAPON && items[i].tag == number;
+    if (!any) return true;
+  }
   return register_weapon_now(r, number);
 }
 bool qa_q3_pres_client_weapon_media_registry_register_item_visuals(qa_q3_pres_client_weapon_media_registry *r,
@@ -485,14 +525,14 @@ void qa_q3_pres_client_weapon_runtime_fire_weapon(qa_q3_pres_client_weapon_runti
       qa_q3_pres_client_weapon_media_registry_weapon(rt->registry, ent->weapon);
   cent->muzzle_flash_time = rt_state(rt)->time;
   if (ent->weapon == QA_Q3_WP_LIGHTNING && cent->player.lightning_firing != 0) return;
-  if (((int64_t)ent->powerups & (1 << QA_Q3_PW_QUAD)) != 0)
+  if ((qa_js_to_int32(ent->powerups) & (1 << QA_Q3_PW_QUAD)) != 0)
     rt->host.start_sound(rt->host.ctx, NULL, ent->number, 4, rt->host.media.sounds.quad);
   int length = 4;
   for (int i = 0; i < 4; i++) {
     if (!weapon->flash_sounds[i]) { length = i; break; }
   }
   if (length > 0) {
-    int index = (int)rt->host.rand(rt->host.random_ctx) % length;
+    int index = qa_js_to_int32(rt->host.rand(rt->host.random_ctx)) % length;
     qa_pcm_sound *sound = weapon->flash_sounds[index];
     if (sound) rt->host.start_sound(rt->host.ctx, NULL, ent->number, 2, sound);
   }
@@ -514,22 +554,27 @@ static void eject_brass(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_client_
   if (brass_time <= 0) return;
   bool shotgun = kind == QA_Q3_PRES_EJECT_SHOTGUN;
   for (int i = 0; i < (shotgun ? 2 : 1); i++) {
+    double x2;
+    double y3;
+    double z3;
+    double y2;
+    double z2;
     qa_q3_pres_scene_model model = shotgun ? rt->host.media.models.shotgun_brass : rt->host.media.models.machinegun_brass;
     qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_model(qa_q3_pres_create_model_entity(model));
     qa_q3_pres_local_entity *le =
         qa_q3_pres_local_entity_pool_allocate(rt->host.local_entities, QA_Q3_PRES_LE_FRAGMENT, ref);
     qa_vec3 velocity = shotgun
-        ? (qa_vec3){f32(60 + f32(60 * rt->host.crandom(rt->host.random_ctx))),
-                    f32((i == 0 ? 40 : -40) + f32(10 * rt->host.crandom(rt->host.random_ctx))),
-                    f32(100 + f32(50 * rt->host.crandom(rt->host.random_ctx)))}
-        : (qa_vec3){0, f32(-50 + f32(40 * rt->host.crandom(rt->host.random_ctx))),
-                    f32(100 + f32(50 * rt->host.crandom(rt->host.random_ctx)))};
+        ? (x2 = f32(60 + f32(60 * rt->host.crandom(rt->host.random_ctx))), y3 = f32((i == 0 ? 40 : -40) + f32(10 * rt->host.crandom(rt->host.random_ctx))), z3 = f32(100 + f32(50 * rt->host.crandom(rt->host.random_ctx))), (qa_vec3){x2,
+                    y3,
+                    z3})
+        : (y2 = f32(-50 + f32(40 * rt->host.crandom(rt->host.random_ctx))), z2 = f32(100 + f32(50 * rt->host.crandom(rt->host.random_ctx))), (qa_vec3){0, y2,
+                    z2});
     le->start_time = time;
     le->end_time = qa_qvm_float_to_int(f32(f32(qa_int32(time + (double)((int64_t)brass_time * (shotgun ? 3 : 1)))) +
         f32(f32(shotgun ? brass_time : trunc(brass_time / 4)) * rt->host.random(rt->host.random_ctx))));
-    double pos_time = shotgun ? time : qa_int32(time - ((int32_t)rt->host.rand(rt->host.random_ctx) & 15));
+    double pos_time = shotgun ? time : qa_int32(time - (qa_js_to_int32(rt->host.rand(rt->host.random_ctx)) & 15));
     qa_vec3 origin = qa_add3(cent->lerp_origin, transform3((qa_vec3){8, shotgun ? 0 : -4, 24}, axis));
-    double water = ((int64_t)rt->host.point_contents(rt->host.prediction_ctx, origin, -1) & CONTENTS_WATER) != 0
+    double water = (qa_js_to_int32(rt->host.point_contents(rt->host.prediction_ctx, origin, -1)) & CONTENTS_WATER) != 0
                        ? f32(0.1) : 1;
     le->pos.type = QA_Q3_BASE_TR_GRAVITY;
     le->pos.time = pos_time;
@@ -542,9 +587,10 @@ static void eject_brass(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_client_
     le->angles.type = QA_Q3_BASE_TR_LINEAR;
     le->angles.time = time;
     le->angles.duration = 0;
-    le->angles.base = (qa_vec3){(double)((int32_t)rt->host.rand(rt->host.random_ctx) & 31),
-                                (double)((int32_t)rt->host.rand(rt->host.random_ctx) & 31),
-                                (double)((int32_t)rt->host.rand(rt->host.random_ctx) & 31)};
+    double x = (double)(qa_js_to_int32(rt->host.rand(rt->host.random_ctx)) & 31);
+    double y = (double)(qa_js_to_int32(rt->host.rand(rt->host.random_ctx)) & 31);
+    double z = (double)(qa_js_to_int32(rt->host.rand(rt->host.random_ctx)) & 31);
+    le->angles.base = (qa_vec3){x, y, z};
     le->angles.delta = shotgun ? (qa_vec3){1, 0.5, 0} : (qa_vec3){2, 1, 0};
     le->le_flags = QA_Q3_PRES_LEF_TUMBLE;
     le->le_bounce_sound_type = QA_Q3_PRES_LE_SOUND_BRASS;
@@ -580,8 +626,8 @@ void qa_q3_pres_client_weapon_runtime_missile_trail(qa_q3_pres_client_weapon_run
   qa_vec3 previous = eval_pos(&es->pos, cent->trail_time);
   double last_contents = rt->host.point_contents(rt->host.prediction_ctx, previous, -1);
   cent->trail_time = time;
-  if (((int64_t)contents & (32 | 16 | 8)) != 0) {
-    if (((int64_t)contents & (int64_t)last_contents & CONTENTS_WATER) != 0)
+  if ((qa_js_to_int32(contents) & (32 | 16 | 8)) != 0) {
+    if ((qa_js_to_int32(contents) & qa_js_to_int32(last_contents) & CONTENTS_WATER) != 0)
       rt->host.bubble_trail(rt->host.effects_ctx, previous, origin, 8);
     return;
   }
@@ -692,7 +738,7 @@ static bool muzzle_point(qa_q3_pres_client_weapon_runtime *rt, double entity_num
   qa_q3_pres_client_entity *cent = qa_q3_pres_client_game_state_entity_at(state, entity_num);
   if (!cent->current_valid) return false;
   qa_q3_base_entity_state *es = &cent->current_state;
-  double anim = (double)((int64_t)es->legs_anim & ~128LL);
+  double anim = (double)(qa_js_to_int32(es->legs_anim) & ~128);
   double height = (anim == 9 || anim == 11) ? 12 : 26; /* LEGS_WALKCR / LEGS_IDLECR */
   *out = ma3(qa_add3(es->pos.base, (qa_vec3){0, 0, height}), 14, qa_qvm_angle_vectors(es->apos.base).forward);
   return true;
@@ -704,15 +750,17 @@ void qa_q3_pres_client_weapon_runtime_bullet(qa_q3_pres_client_weapon_runtime *r
     if (muzzle_point(rt, source, &start)) {
       double a = rt->host.collision_point_contents(rt->host.prediction_ctx, start);
       double b = rt->host.collision_point_contents(rt->host.prediction_ctx, end);
-      if (a == b && ((int64_t)a & CONTENTS_WATER) != 0) rt->host.bubble_trail(rt->host.effects_ctx, start, end, 32);
-      else if (((int64_t)a & CONTENTS_WATER) != 0) {
+      if (a == b && (qa_js_to_int32(a) & CONTENTS_WATER) != 0) rt->host.bubble_trail(rt->host.effects_ctx, start, end, 32);
+      else if ((qa_js_to_int32(a) & CONTENTS_WATER) != 0) {
         qa_vec3 water = rt->host.collision_trace_end(rt->host.prediction_ctx, end, start, CONTENTS_WATER);
         rt->host.bubble_trail(rt->host.effects_ctx, start, water, 32);
-      } else if (((int64_t)b & CONTENTS_WATER) != 0) {
+      } else if ((qa_js_to_int32(b) & CONTENTS_WATER) != 0) {
         qa_vec3 water = rt->host.collision_trace_end(rt->host.prediction_ctx, start, end, CONTENTS_WATER);
         rt->host.bubble_trail(rt->host.effects_ctx, water, end, 32);
       }
-      if (rt->host.random(rt->host.random_ctx) < rt->host.settings(rt->host.ctx).tracer_chance)
+      double left = rt->host.random(rt->host.random_ctx);
+      double right = rt->host.settings(rt->host.ctx).tracer_chance;
+      if (left < right)
         qa_q3_pres_client_weapon_runtime_tracer(rt, start, end);
     }
   }
@@ -729,7 +777,7 @@ void qa_q3_pres_client_weapon_runtime_tracer(qa_q3_pres_client_weapon_runtime *r
   if (length < 100) return;
   qa_q3_pres_weapon_presentation_settings settings = rt->host.settings(rt->host.ctx);
   double begin = f32(50 + f32(rt->host.random(rt->host.random_ctx) * f32(length - 60)));
-  double end = fmin(f32(begin + settings.tracer_length), length);
+  double end = qa_js_min(f32(begin + settings.tracer_length), length);
   qa_vec3 start = ma3(source, begin, forward), finish = ma3(source, end, forward);
   qa_axis axis = rt_state(rt)->refdef.view_axis;
   qa_vec3 right = qa_normalize3(ma3(qa_scale3(axis.vectors[1], qa_dot3(forward, axis.vectors[2])),
@@ -778,9 +826,10 @@ static void lightning_bolt(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_clie
     qa_q3_pres_ref_model_entity ref =
         qa_q3_pres_create_model_entity(rt->registry->effects.lightning_explosion_model);
     ref.origin = ma3(trace.result.end, -16, qa_normalize3(qa_sub3(beam.as.rail.old_origin, beam.as.rail.origin)));
-    qa_vec3 random_angles = {(double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360),
-                             (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360),
-                             (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360)};
+    double x2 = (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360);
+    double y2 = (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360);
+    double z2 = (double)(qa_int32(rt->host.rand(rt->host.random_ctx)) % 360);
+    qa_vec3 random_angles = {x2, y2, z2};
     ref.axis = qa_angles_to_axis(random_angles);
     qa_q3_pres_ref_entity ref_entity = qa_q3_pres_ref_entity_from_model(ref);
     rt->host.add_ref_entity(rt->host.ctx, &ref_entity);
@@ -797,7 +846,7 @@ static double spin_angle(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_client
     double speed = f32(f32(0.5) * f32(f32(0.9) + f32(f32((double)qa_int32(1000 - (double)delta)) / 1000)));
     angle = f32(player->barrel_angle + f32(f32((double)delta) * speed));
   }
-  bool firing = ((int64_t)cent->current_state.e_flags & 256) != 0;
+  bool firing = (qa_js_to_int32(cent->current_state.e_flags) & 256) != 0;
   if (player->barrel_spinning != firing) {
     player->barrel_time = state->time;
     player->barrel_angle = qa_qvm_angle_mod(angle);
@@ -811,8 +860,8 @@ static double spin_angle(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_client
 }
 static void add_weapon_with_powerups(qa_q3_pres_client_weapon_runtime *rt, qa_q3_pres_ref_model_entity gun,
                                      double powerups) {
-  int64_t bits = (int64_t)powerups;
-  if ((bits & (1LL << QA_Q3_PW_INVIS)) != 0) {
+  int32_t bits = qa_js_to_int32(powerups); /* TS powerups & (1 << pw): ToInt32 */
+  if ((bits & (1 << QA_Q3_PW_INVIS)) != 0) {
     gun.shading.custom_shader = rt->host.media.shaders.invis;
     qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_model(gun);
     rt->host.add_ref_entity(rt->host.ctx, &ref);
@@ -820,12 +869,12 @@ static void add_weapon_with_powerups(qa_q3_pres_client_weapon_runtime *rt, qa_q3
   }
   qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_model(gun);
   rt->host.add_ref_entity(rt->host.ctx, &ref);
-  if ((bits & (1LL << QA_Q3_PW_BATTLESUIT)) != 0) {
+  if ((bits & (1 << QA_Q3_PW_BATTLESUIT)) != 0) {
     gun.shading.custom_shader = rt->host.media.shaders.battle_weapon;
     ref = qa_q3_pres_ref_entity_from_model(gun);
     rt->host.add_ref_entity(rt->host.ctx, &ref);
   }
-  if ((bits & (1LL << QA_Q3_PW_QUAD)) != 0) {
+  if ((bits & (1 << QA_Q3_PW_QUAD)) != 0) {
     gun.shading.custom_shader = rt->host.media.shaders.quad_weapon;
     ref = qa_q3_pres_ref_entity_from_model(gun);
     rt->host.add_ref_entity(rt->host.ctx, &ref);
@@ -859,7 +908,7 @@ void qa_q3_pres_client_weapon_runtime_add_player_weapon(qa_q3_pres_client_weapon
   if (gun.model.kind == QA_Q3_PRES_SCENE_MODEL_DEFAULT) return;
   if (player_state == NULL) {
     entity->player.lightning_firing = 0;
-    if (((int64_t)entity->current_state.e_flags & 256) != 0 && weapon->firing_sound != NULL) {
+    if ((qa_js_to_int32(entity->current_state.e_flags) & 256) != 0 && weapon->firing_sound != NULL) {
       rt->host.add_loop_sound(rt->host.ctx, entity->current_state.number, entity->lerp_origin, (qa_vec3){0, 0, 0},
                               weapon->firing_sound, false);
       entity->player.lightning_firing = 1;
@@ -879,7 +928,7 @@ void qa_q3_pres_client_weapon_runtime_add_player_weapon(qa_q3_pres_client_weapon
       qa_q3_pres_client_game_state_entity_at(state, entity->current_state.client_num);
   bool continuous = (weapon_num == QA_Q3_WP_LIGHTNING || weapon_num == QA_Q3_WP_GAUNTLET ||
                      weapon_num == QA_Q3_WP_GRAPPLING_HOOK) &&
-                    ((int64_t)non_predicted->current_state.e_flags & 256) != 0;
+                    (qa_js_to_int32(non_predicted->current_state.e_flags) & 256) != 0;
   if (!continuous) {
     if (qa_int32(state->time - entity->muzzle_flash_time) > 20 && !entity->player.railgun_flash) return;
   }
@@ -915,7 +964,7 @@ void qa_q3_pres_client_weapon_runtime_add_player_weapon(qa_q3_pres_client_weapon
   }
 }
 static void weapon_position(qa_q3_pres_client_game_state *state, qa_vec3 *out_origin, qa_vec3 *out_angles) {
-  double scale = ((int64_t)state->bob_cycle & 1) != 0 ? -state->xyspeed : state->xyspeed;
+  double scale = (qa_js_to_int32(state->bob_cycle) & 1) != 0 ? -state->xyspeed : state->xyspeed;
   double roll = f32(f32(scale * state->bob_frac_sin) * f32(0.005));
   double yaw = f32(f32(scale * state->bob_frac_sin) * f32(0.01));
   double pitch = f32(f32(state->xyspeed * state->bob_frac_sin) * f32(0.005));
@@ -952,7 +1001,7 @@ void qa_q3_pres_client_weapon_runtime_add_view_weapon(qa_q3_pres_client_weapon_r
       player_state->pm_type == QA_Q3_PM_INTERMISSION || state->rendering_third_person) return;
   qa_q3_pres_weapon_presentation_settings settings = rt->host.settings(rt->host.ctx);
   if (!settings.draw_gun) {
-    if (((int64_t)state->predicted_player_state.e_flags & 256) != 0)
+    if ((qa_js_to_int32(state->predicted_player_state.e_flags) & 256) != 0)
       lightning_bolt(rt, qa_q3_pres_client_game_state_entity_at(state, player_state->client_num),
                      ma3(state->refdef.view_origin, -8, state->refdef.view_axis.vectors[2]));
     return;
@@ -980,9 +1029,6 @@ void qa_q3_pres_client_weapon_runtime_add_view_weapon(qa_q3_pres_client_weapon_r
   }
   hand.shading.render_flags = QA_Q3_PRES_RF_DEPTHHACK | QA_Q3_PRES_RF_FIRST_PERSON | QA_Q3_PRES_RF_MINLIGHT;
   double team = qa_q3_base_player_state_slots_get(&player_state->persistant, QA_Q3_BASE_PERS_TEAM);
-  if (team != QA_Q3_BASE_TEAM_FREE && team != QA_Q3_BASE_TEAM_RED && team != QA_Q3_BASE_TEAM_BLUE &&
-      team != QA_Q3_BASE_TEAM_SPECTATOR)
-    qa_range_error("Invalid view weapon team");
   qa_q3_pres_client_weapon_runtime_add_player_weapon(rt, &hand, player_state, cent, (qa_q3_base_team)team);
 }
 void qa_q3_pres_client_weapon_runtime_draw_weapon_select(qa_q3_pres_client_weapon_runtime *rt) {
@@ -999,14 +1045,14 @@ void qa_q3_pres_client_weapon_runtime_draw_weapon_select(qa_q3_pres_client_weapo
   double weapons = qa_q3_base_player_state_slots_get(&snap_ps->stats,
       qa_q3_base_stat_schema_for(state->product)->weapons);
   int count = 0;
-  for (int i = 1; i < 16; i++) if (((int64_t)weapons & (1LL << i)) != 0) count++;
+  for (int i = 1; i < 16; i++) if ((qa_js_to_int32(weapons) & (1 << i)) != 0) count++;
   double x = 320 - count * 20;
   for (int i = 1; i < 16; i++) {
-    if (((int64_t)weapons & (1LL << i)) == 0) continue;
+    if ((qa_js_to_int32(weapons) & (1 << i)) == 0) continue;
     qa_q3_pres_client_weapon_info *weapon =
         qa_q3_pres_client_weapon_media_registry_require_weapon(rt->registry, i);
     drawing->draw_pic(drawing->ctx, x, 380, 32, 32, weapon->weapon_icon);
-    if (i == (int)state->weapon_select)
+    if (i == qa_js_to_int32(state->weapon_select))
       drawing->draw_pic(drawing->ctx, x - 4, 376, 40, 40, rt->host.media.shaders.select);
     if (qa_q3_base_player_state_slots_get(&snap_ps->ammo, i) == 0)
       drawing->draw_pic(drawing->ctx, x, 380, 32, 32, rt->host.media.shaders.noammo);
@@ -1058,7 +1104,7 @@ void qa_q3_pres_emit_weapon_impact(qa_q3_base_product product, qa_q3_pres_client
   double impact_weapon = weapon;
   if (product == QA_Q3_BASE_PRODUCT_BASEQ3 &&
       (weapon == QA_Q3_WP_PROX_LAUNCHER || weapon == QA_Q3_WP_CHAINGUN)) impact_weapon = QA_Q3_WP_NONE;
-  switch ((int)impact_weapon) {
+  switch (qa_js_to_int32(impact_weapon)) {
     case QA_Q3_WP_NAILGUN:
       if (product == QA_Q3_BASE_PRODUCT_MISSIONPACK) {
         sound = sound_type == QA_Q3_PRES_IMPACT_SOUND_FLESH ? host->media.sounds.nail_hit_flesh
@@ -1071,7 +1117,7 @@ void qa_q3_pres_emit_weapon_impact(qa_q3_base_product product, qa_q3_pres_client
       /* fall through */
     default:
     case QA_Q3_WP_LIGHTNING: {
-      int32_t choice = (int32_t)host->rand(host->random_ctx) & 3;
+      int32_t choice = qa_js_to_int32(host->rand(host->random_ctx)) & 3;
       sound = effects->lightning_hit_sounds[choice < 2 ? 1 : choice == 2 ? 0 : 2];
       mark = host->media.shaders.hole_mark;
       radius = 12;
@@ -1134,7 +1180,7 @@ void qa_q3_pres_emit_weapon_impact(qa_q3_base_product product, qa_q3_pres_client
               : sound_type == QA_Q3_PRES_IMPACT_SOUND_METAL ? host->media.sounds.chaingun_hit_metal
                                                             : host->media.sounds.chaingun_hit;
       mark = host->media.shaders.bullet_mark;
-      int32_t choice = (int32_t)host->rand(host->random_ctx) & 3;
+      int32_t choice = qa_js_to_int32(host->rand(host->random_ctx)) & 3;
       sound = choice < 2 ? host->media.sounds.ricochet1 : choice == 2 ? host->media.sounds.ricochet2
                                                                         : host->media.sounds.ricochet3;
       radius = 8;
@@ -1144,7 +1190,7 @@ void qa_q3_pres_emit_weapon_impact(qa_q3_base_product product, qa_q3_pres_client
       model = host->media.models.bullet_flash;
       shader = effects->bullet_explosion_shader;
       mark = host->media.shaders.bullet_mark;
-      int32_t choice = (int32_t)host->rand(host->random_ctx) & 3;
+      int32_t choice = qa_js_to_int32(host->rand(host->random_ctx)) & 3;
       sound = choice == 0 ? host->media.sounds.ricochet1 : choice == 1 ? host->media.sounds.ricochet2
                                                                         : host->media.sounds.ricochet3;
       radius = 8;
@@ -1176,64 +1222,106 @@ void qa_q3_pres_emit_weapon_impact(qa_q3_base_product product, qa_q3_pres_client
     free(polys);
   }
 }
+static qa_vec4 color_bytes(qa_vec3 color, double scale, double alpha) {
+  return (qa_vec4){(double)(qa_qvm_float_to_int(f32(color.x * scale)) & 255),
+                   (double)(qa_qvm_float_to_int(f32(color.y * scale)) & 255),
+                   (double)(qa_qvm_float_to_int(f32(color.z * scale)) & 255), alpha};
+}
 void qa_q3_pres_emit_rail_trail(double time, qa_q3_pres_client_weapon_media_registry *registry,
     qa_q3_pres_client_weapon_host *host, double client_num, qa_vec3 *start, qa_vec3 end) {
   qa_q3_pres_client_info *info = host->client_info(host->ctx, client_num);
   qa_q3_pres_weapon_presentation_settings settings = host->settings(host->ctx);
   start->z = f32(start->z - 4);
-  qa_q3_pres_ref_entity ref = qa_q3_pres_ref_entity_from_rail(QA_Q3_PRES_REF_RAIL_CORE,
-                                                              qa_q3_pres_create_rail_core_entity());
-  qa_q3_pres_local_entity *le =
-      qa_q3_pres_local_entity_pool_allocate(host->local_entities, QA_Q3_PRES_LE_FADE_RGB, ref);
-  le->start_time = time;
-  le->end_time = qa_qvm_float_to_int(f32(f32(time) + settings.rail_trail_time));
-  le->life_rate = f32(1.0 / f32(qa_int32(le->end_time - time)));
-  le->ref_entity.as.rail.shading.shader_time = f32(f32(time) / 1000);
-  le->ref_entity.as.rail.shading.custom_shader = registry->effects.rail_core_shader;
-  le->ref_entity.as.rail.origin = *start;
-  le->ref_entity.as.rail.old_origin = end;
-  le->ref_entity.as.rail.shading.shader_rgba = (qa_vec4){
-      (double)(qa_qvm_float_to_int(f32(info->color1.x * 255)) & 255),
-      (double)(qa_qvm_float_to_int(f32(info->color1.y * 255)) & 255),
-      (double)(qa_qvm_float_to_int(f32(info->color1.z * 255)) & 255), 255};
-  le->color = (qa_vec4){f32(info->color1.x), f32(info->color1.y), f32(info->color1.z), 1};
-  if (settings.old_rail) return;
-  /* Spiral rings: one fade-rgb rings entity per 16 units (cg_weapons). */
+  qa_vec3 move = *start;
   qa_vec3 delta = qa_sub3(end, *start);
   double length = qa_length3(delta);
   qa_vec3 direction = qa_normalize3(delta);
   qa_vec3 temp = qa_perpendicular_vector(direction);
-  double distance = 0;
-  int index = 0;
-  while (distance < length) {
-    qa_vec3 point = ma3(*start, distance, direction);
-    qa_vec3 axis_point = qa_qvm_rotate_point_around_vector(direction, temp, index * 10.0);
-    qa_q3_pres_ref_entity rings = qa_q3_pres_ref_entity_from_rail(QA_Q3_PRES_REF_RAIL_RINGS,
-                                                                  qa_q3_pres_create_rail_rings_entity());
-    qa_q3_pres_local_entity *ring =
-        qa_q3_pres_local_entity_pool_allocate(host->local_entities, QA_Q3_PRES_LE_FADE_RGB, rings);
-    ring->start_time = time;
-    ring->end_time = le->end_time;
-    ring->life_rate = le->life_rate;
-    ring->ref_entity.as.rail.origin = ma3(point, 8, axis_point);
-    ring->ref_entity.as.rail.old_origin = point;
-    ring->ref_entity.as.rail.shading.custom_shader = registry->effects.rail_rings_shader;
-    ring->ref_entity.as.rail.shading.shader_rgba = (qa_vec4){
-        (double)(qa_qvm_float_to_int(f32(info->color2.x * 255)) & 255),
-        (double)(qa_qvm_float_to_int(f32(info->color2.y * 255)) & 255),
-        (double)(qa_qvm_float_to_int(f32(info->color2.z * 255)) & 255), 255};
-    ring->color = (qa_vec4){f32(info->color2.x), f32(info->color2.y), f32(info->color2.z), 1};
-    distance += 16;
-    index = (index + 1) % 36;
+  qa_vec3 axis[36];
+  for (int i = 0; i < 36; i++) axis[i] = qa_qvm_rotate_point_around_vector(direction, temp, i * 10.0);
+  qa_q3_pres_local_entity *le = qa_q3_pres_local_entity_pool_allocate(host->local_entities, QA_Q3_PRES_LE_FADE_RGB,
+      qa_q3_pres_ref_entity_from_rail(QA_Q3_PRES_REF_RAIL_CORE, qa_q3_pres_create_rail_core_entity()));
+  qa_q3_pres_ref_rail_entity *ref = &le->ref_entity.as.rail;
+  le->start_time = time;
+  le->end_time = qa_qvm_float_to_int(f32(f32(time) + settings.rail_trail_time));
+  le->life_rate = f32(1.0 / f32(qa_int32(le->end_time - time)));
+  ref->shading.shader_time = f32(f32(time) / 1000);
+  ref->shading.custom_shader = registry->effects.rail_core_shader;
+  ref->origin = *start;
+  ref->old_origin = end;
+  ref->shading.shader_rgba = color_bytes(info->color1, 255, 255);
+  le->color = (qa_vec4){f32(info->color1.x * f32(0.75)), f32(info->color1.y * f32(0.75)), f32(info->color1.z * f32(0.75)), 1};
+  move = ma3(move, 20, direction);
+  qa_vec3 step = qa_scale3(direction, 5);
+  if (settings.old_rail) {
+    ref->origin = qa_add3(ref->origin, (qa_vec3){0, 0, -8});
+    ref->old_origin = qa_add3(ref->old_origin, (qa_vec3){0, 0, -8});
+    return;
+  }
+  double skip = -1;
+  int j = 18;
+  for (double i = 0; i < length; i += 5) {
+    if (i != skip) {
+      skip = i + 5;
+      qa_q3_pres_local_entity *ring = qa_q3_pres_local_entity_pool_allocate(host->local_entities,
+          QA_Q3_PRES_LE_MOVE_SCALE_FADE, qa_q3_pres_ref_entity_from_sprite(qa_q3_pres_create_sprite_entity()));
+      qa_q3_pres_ref_sprite_entity *sprite = &ring->ref_entity.as.sprite;
+      qa_vec3 side = axis[j];
+      ring->le_flags = QA_Q3_PRES_LEF_PUFF_DONT_SCALE;
+      ring->start_time = time;
+      ring->end_time = qa_int32(time + (double)(qa_js_to_int32(i) >> 1) + 600);
+      ring->life_rate = f32(1.0 / f32(qa_int32(ring->end_time - time)));
+      sprite->shading.shader_time = f32(f32(time) / 1000);
+      sprite->radius = f32(1.1);
+      sprite->shading.custom_shader = registry->effects.rail_rings_shader;
+      sprite->shading.shader_rgba = color_bytes(info->color2, 255, 255);
+      ring->color = (qa_vec4){f32(info->color2.x * f32(0.75)), f32(info->color2.y * f32(0.75)), f32(info->color2.z * f32(0.75)), 1};
+      ring->pos.type = QA_Q3_BASE_TR_LINEAR;
+      ring->pos.time = time;
+      ring->pos.duration = 0;
+      ring->pos.base = ma3(move, 4, side);
+      ring->pos.delta = qa_scale3(side, 6);
+    }
+    move = qa_add3(move, step);
+    j = (j + 1) % 36;
   }
 }
 void qa_q3_pres_emit_plasma_trail(double time, qa_vec3 origin, qa_vec3 angles, double weapon,
     qa_q3_pres_client_weapon_media_registry *registry, qa_q3_pres_client_weapon_host *host) {
-  (void)angles;
-  (void)weapon;
-  if (host->settings(host->ctx).old_plasma || host->settings(host->ctx).no_projectile_trail) return;
-  qa_q3_pres_smoke_puff_options options = {origin, {0, 0, 0}, 16, {1, 1, 1, 0.33}, 350, time, 0, 0,
-                                           registry->effects.plasma_explosion_shader};
-  qa_q3_pres_local_entity *smoke = host->smoke_puff(host->effects_ctx, options);
-  if (smoke) smoke->le_type = QA_Q3_PRES_LE_SCALE_FADE;
+  qa_q3_pres_weapon_presentation_settings settings = host->settings(host->ctx);
+  if (settings.no_projectile_trail || settings.old_plasma) return;
+  qa_q3_pres_local_entity *le = qa_q3_pres_local_entity_pool_allocate(host->local_entities,
+      QA_Q3_PRES_LE_MOVE_SCALE_FADE, qa_q3_pres_ref_entity_from_sprite(qa_q3_pres_create_sprite_entity()));
+  qa_q3_pres_ref_sprite_entity *ref = &le->ref_entity.as.sprite;
+  /* TS evaluates the three crandom() calls left to right. */
+  double vx = f32(60 - f32(120 * host->crandom(host->random_ctx)));
+  double vy = f32(40 - f32(80 * host->crandom(host->random_ctx)));
+  double vz = f32(100 - f32(200 * host->crandom(host->random_ctx)));
+  qa_vec3 velocity = {vx, vy, vz};
+  le->le_flags = QA_Q3_PRES_LEF_TUMBLE;
+  le->start_time = time;
+  le->end_time = qa_int32(time + 600);
+  qa_axis axis = qa_qvm_angles_to_axis(angles);
+  ref->origin = qa_add3(origin, transform3((qa_vec3){2, 2, 2}, axis));
+  double water = (qa_js_to_int32(host->point_contents(host->prediction_ctx, ref->origin, -1)) & CONTENTS_WATER) != 0 ? f32(0.1) : 1;
+  le->pos.type = QA_Q3_BASE_TR_GRAVITY;
+  le->pos.time = time;
+  le->pos.duration = 0;
+  le->pos.base = ref->origin;
+  le->pos.delta = qa_scale3(transform3(velocity, axis), water);
+  ref->shading.shader_time = f32(f32(time) / 1000);
+  ref->radius = f32(0.25);
+  ref->shading.custom_shader = registry->effects.rail_rings_shader;
+  le->bounce_factor = f32(0.3);
+  qa_vec3 color = qa_q3_pres_client_weapon_media_registry_weapon(registry, weapon)->flash_dlight_color;
+  ref->shading.shader_rgba = color_bytes(color, 63, 63);
+  le->color = (qa_vec4){f32(color.x * f32(0.2)), f32(color.y * f32(0.2)), f32(color.z * f32(0.2)), f32(0.25)};
+  le->angles.type = QA_Q3_BASE_TR_LINEAR;
+  le->angles.time = time;
+  le->angles.duration = 0;
+  double ax = (double)(qa_js_to_int32(host->rand(host->random_ctx)) & 31);
+  double ay = (double)(qa_js_to_int32(host->rand(host->random_ctx)) & 31);
+  double az = (double)(qa_js_to_int32(host->rand(host->random_ctx)) & 31);
+  le->angles.base = (qa_vec3){ax, ay, az};
+  le->angles.delta = (qa_vec3){1, 0.5, 0};
 }

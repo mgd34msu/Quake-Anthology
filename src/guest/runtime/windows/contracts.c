@@ -1,6 +1,9 @@
 /* Port of src/guest/runtime/windows/contracts.ts. GPL-2.0-or-later. */
 #include "qa/guest/runtime/windows/contracts.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 #include "qa/foundation/support.h"
 
 uint32_t qa_windows_last_error_get(qa_windows_service_host *host) { return host->get_last_error(host->ctx); }
@@ -50,4 +53,17 @@ const qa_pe_image *const *qa_windows_images(qa_windows_service_host *host, size_
 void qa_unsupported_windows_import(const char *library, const char *symbol, const char *detail) {
   qa_range_error("Unsupported Windows guest import %s!%s: %s", library, symbol,
                  detail != NULL ? detail : "runtime service is not implemented");
+}
+void qa_windows_own(qa_windows_service_host *host, void *resource, void (*release)(void *resource)) {
+  host->own(host->ctx, resource, release);
+}
+void qa_windows_charge_bytes(qa_windows_service_host *host, size_t byte_length) {
+  if (host->charge_bytes != NULL) host->charge_bytes(host->ctx, byte_length);
+}
+void qa_windows_kernel_tables_free(qa_windows_kernel_tables *tables) {
+  free(tables->heaps);
+  free(tables->reservations);
+  free(tables->tls);
+  free(tables->fls);
+  memset(tables, 0, sizeof *tables);
 }

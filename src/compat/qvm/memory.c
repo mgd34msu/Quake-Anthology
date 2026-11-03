@@ -173,3 +173,68 @@ void qa_qvm_memory_write_bounded_string(qa_qvm_memory *memory, int64_t word, con
   q_strncpyz(memory->bytes + pointer.byte_offset, pointer.byte_length, true, text, capacity);
   qa_qvm_memory_writes_after(&memory->writes, capture);
 }
+
+/* --- Q3GameMemory (TS `QvmMemory implements Q3GameMemory`) --- */
+bool qa_qvm_memory_address(const qa_qvm_memory *memory, int64_t word, int64_t *out) {
+  qa_qvm_memory_span pointer;
+  if (!qa_qvm_memory_pointer(memory, word, &pointer)) return false;
+  *out = pointer.byte_offset;
+  return true;
+}
+int64_t qa_qvm_memory_pointer_word(const qa_qvm_memory *memory, bool has_address, int64_t address) {
+  return !has_address ? 0 : address == 0 ? (int64_t)memory->length : address;
+}
+static int64_t region_offset(const qa_qvm_memory *memory, const qa_qvm_game_region *region) {
+  return (int64_t)(region->bytes - memory->bytes);
+}
+static bool game_pointer(void *ctx, int64_t word, qa_qvm_game_region *out) {
+  qa_qvm_memory *memory = ctx;
+  qa_qvm_memory_span pointer;
+  if (!qa_qvm_memory_pointer(memory, word, &pointer)) return false;
+  out->bytes = memory->bytes + pointer.byte_offset;
+  out->length = (size_t)pointer.byte_length;
+  out->read_only = false;
+  return true;
+}
+static qa_qvm_game_region game_span(void *ctx, int64_t word, int64_t length, int64_t relative_offset) {
+  qa_qvm_memory *memory = ctx;
+  const qa_qvm_memory_span span = qa_qvm_memory_get_span(memory, word, length, relative_offset);
+  qa_qvm_game_region region = {memory->bytes + span.byte_offset, (size_t)span.byte_length, false};
+  return region;
+}
+static void game_view(void *ctx, int64_t word, int64_t length, int64_t relative_offset, qa_qvm_writable_view *out) {
+  qa_qvm_memory_view(ctx, word, length, relative_offset, out);
+}
+static char *game_read_string(void *ctx, int64_t word) { return qa_qvm_memory_read_string(ctx, word); }
+static void game_write_string(void *ctx, int64_t word, const char *text, int64_t capacity) {
+  qa_qvm_memory_write_string(ctx, word, text, capacity);
+}
+static bool game_address(void *ctx, int64_t word, int64_t *out) { return qa_qvm_memory_address(ctx, word, out); }
+static int64_t game_pointer_word(void *ctx, bool has_address, int64_t address) {
+  return qa_qvm_memory_pointer_word(ctx, has_address, address);
+}
+static void game_view_at(void *ctx, int64_t address, int64_t length, qa_qvm_writable_view *out) {
+  qa_qvm_memory_data_view(ctx, address, length, out);
+}
+static void game_region_view(void *ctx, const qa_qvm_game_region *region, int64_t offset, int64_t length,
+                             qa_qvm_writable_view *out) {
+  qa_qvm_memory *memory = ctx;
+  if (length < 0) length = (int64_t)region->length - offset;
+  qa_qvm_memory_data_view(memory, region_offset(memory, region) + offset, length, out);
+}
+static void game_region_write(void *ctx, const qa_qvm_game_region *region, const uint8_t *bytes, size_t length) {
+  qa_qvm_memory *memory = ctx;
+  qa_qvm_memory_write_bytes(memory, region_offset(memory, region), bytes, length);
+}
+static void game_region_fill(void *ctx, const qa_qvm_game_region *region, int64_t start, int64_t length, int32_t value) {
+  qa_qvm_memory *memory = ctx;
+  qa_qvm_memory_fill_bytes(memory, region_offset(memory, region) + start, length, value);
+}
+static const qa_qvm_game_memory_ops qvm_game_memory_ops = {
+    game_pointer, game_span, game_view, game_read_string, game_write_string, game_address,
+    game_pointer_word, game_view_at, game_region_view, game_region_write, game_region_fill,
+};
+qa_qvm_game_memory qa_qvm_memory_game_memory(qa_qvm_memory *memory) {
+  qa_qvm_game_memory result = {&qvm_game_memory_ops, memory};
+  return result;
+}

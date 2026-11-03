@@ -60,9 +60,7 @@ static qa_qc_pickup_scalar read_scalar(const qa_save_reader *reader) {
 static qa_qc_pickup_item read_item(const qa_save_reader *reader) {
   qa_qc_pickup_item result;
   memset(&result, 0, sizeof result);
-  qa_save_reader item_reader = field(reader, "item");
-  result.item = qa_namespaced(&item_reader);
-  qa_save_reader_destroy(&item_reader);
+  /* TS item() reads "resource" before "item", so a malformed resource reports first. */
   qa_save_reader resource_reader = field(reader, "resource");
   if (!qa_save_reader_is_null(&resource_reader)) {
     qa_pickup_resource *resource = xmalloc_at(reader, sizeof *resource);
@@ -83,6 +81,9 @@ static qa_qc_pickup_item read_item(const qa_save_reader *reader) {
     result.resource = resource;
   }
   qa_save_reader_destroy(&resource_reader);
+  qa_save_reader item_reader = field(reader, "item");
+  result.item = qa_namespaced(&item_reader);
+  qa_save_reader_destroy(&item_reader);
   qa_save_reader count_reader = field(reader, "count");
   if (!qa_save_reader_is_undefined(&count_reader)) {
     qa_qc_pickup_scalar *count = xmalloc_at(reader, sizeof *count);
@@ -185,7 +186,9 @@ static void destroy_item(const qa_qc_pickup_item *item) {
 static noreturn void fail_caller(const qa_q1qc_program *program, const char *reason) {
   qa_q1qc_program_error(program, "Invalid declared pickup caller: %s", reason);
 }
-static bool is_integer(double value) { return value == (double)(int64_t)value; }
+/* Number.isInteger, limited to safe integers so the int64 casts that follow are defined;
+ * callers reject larger integers anyway (statement indices are small). */
+static bool is_integer(double value) { return fabs(value) <= 9007199254740991.0 && value == trunc(value); }
 static void check_global_word(const qa_q1qc_program *program, double word) {
   if (!is_integer(word) || word < 0 || word * 4 >= (double)program->initial_globals_length)
     fail_caller(program, "global word is outside source memory");

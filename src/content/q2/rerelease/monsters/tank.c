@@ -27,16 +27,16 @@ static bool blind_aim(qa_q2m_context *c, qa_vec3 start, qa_vec3 target, qa_vec3 
   return false;
 }
 static void init_impl(qa_q2m_context *c) {
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   if (q2rm_has(entity->spawnflags, 8)) {
-    entity->max_health = 1500 * qa_q2f_number_field(&entity->spawn, "health_multiplier", 1);
-    game->host->combat.set_health(game->host->combat.ctx, entity->actor, entity->max_health);
-    if (qa_q2f_number_field(&entity->spawn, "scale", 0) == 0) {
+    entity->max_health = 1500 * qa_q2_number_field(&entity->spawn, "health_multiplier", 1);
+    qa_gameplay_authority_set_health(game->host->combat, entity->actor, entity->max_health);
+    if (qa_q2_number_field(&entity->spawn, "scale", 0) == 0) {
       entity->scale = 1.5;
       state->scale = 1.5;
-      qa_q2f_body_changes change;
+      qa_q2_body_changes change;
       memset(&change, 0, sizeof change);
       change.has_bounds = true;
       change.bounds.min = q2rm_v3(-48, -48, -24);
@@ -57,8 +57,8 @@ static void commander_init_fn(void *ctx, qa_q2m_context *c) {
 }
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
@@ -72,8 +72,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
     double choice = q2rm_rnd(game);
     state->blind_fire_delay += 5.2 + q2rm_rnd(game) * 3;
     if (qa_hypot3(state->blind_fire_target) == 0 || choice > chance) return;
-    bool rocket = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 23));
-    bool blaster = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 1));
+    bool rocket = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 23));
+    bool blaster = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 1));
     if (!rocket && !blaster) return;
     state->manual_steering = true;
     if (rocket && blaster ? q2rm_rnd(game) < 0.5 : rocket) q2rm_set_move(c, "tank_move_attack_fire_rocket");
@@ -81,20 +81,22 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
       q2rm_set_move(c, "tank_move_attack_blast");
       state->next_frame = qa_q2rm_tank_frames_value.attak108;
     }
-    state->attack_finished = q2rm_now(game) + 3 + q2rm_rnd(game) * 2;
+    double left = q2rm_now(game) + 3;
+    double right = q2rm_rnd(game) * 2;
+    state->attack_finished = left + right;
     state->pain_time = q2rm_now(game) + 5;
     return;
   }
   double range = qa_hypot3(qa_sub3_double(enemy.origin, q2rm_body(game, entity).origin));
   double choice = q2rm_rnd(game);
   if (range <= 250) {
-    qa_q2f_entity *enemy_entity = game->entity(game->ctx, entity->has_enemy ? &entity->enemy : NULL);
+    qa_q2_entity *enemy_entity = game->entity(game->ctx, entity->has_enemy ? &entity->enemy : NULL);
     bool machinegun = (!enemy_entity || strcmp(enemy_entity->classname, "tesla_mine") != 0)
-        && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 8));
+        && qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 8));
     if (machinegun && choice < (range <= 125 ? 0.5 : 0.25)) { q2rm_set_move(c, "tank_move_attack_chain"); return; }
   } else {
-    bool machinegun = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 8));
-    bool rocket = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 23));
+    bool machinegun = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 8));
+    bool rocket = qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 23));
     if (machinegun && choice < 0.33) { q2rm_set_move(c, "tank_move_attack_chain"); return; }
     if (rocket && choice < 0.66) {
       state->pain_time = q2rm_now(game) + 5;
@@ -102,12 +104,12 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
       return;
     }
   }
-  if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, 1))) q2rm_set_move(c, "tank_move_attack_blast");
+  if (qa_q2m_clear_shot(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, 1))) q2rm_set_move(c, "tank_move_attack_blast");
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   const qa_q2rm_tank_frames *frame = &qa_q2rm_tank_frames_value;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2
@@ -126,8 +128,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -157,16 +159,18 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
     qa_body_state body = q2rm_body(game, entity);
     qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
     qa_q2m_gib_options skin_up = {false, false, true, true};
-    qa_q2f_entity *arm = qa_q2m_throw_gib(entity, game, "models/monsters/tank/gibs/barm.md2", damage, skin_up);
+    qa_q2_entity *arm = qa_q2m_throw_gib(entity, game, "models/monsters/tank/gibs/barm.md2", damage, skin_up);
     if (arm) {
-      arm->angular_velocity = q2rm_v3((q2rm_rnd(game) * 2 - 1) * 15, (q2rm_rnd(game) * 2 - 1) * 15, 180);
+      double x = (q2rm_rnd(game) * 2 - 1) * 15;
+      double y = (q2rm_rnd(game) * 2 - 1) * 15;
+      arm->angular_velocity = q2rm_v3(x, y, 180);
       arm->skin = trunc(arm->skin / 2);
       qa_vec3 origin = qa_add3_double(body.origin,
           qa_add3_double(qa_scale3_double(axes.right, -16), qa_scale3_double(axes.up, 23)));
       qa_vec3 velocity = qa_add3_double(qa_scale3_double(axes.up, 100), qa_scale3_double(axes.right, -120));
       qa_vec3 angles = body.angles;
       angles.z = -90;
-      qa_q2f_body_changes change;
+      qa_q2_body_changes change;
       memset(&change, 0, sizeof change);
       change.has_origin = true; change.origin = origin;
       change.has_velocity = true; change.velocity = velocity;
@@ -189,7 +193,7 @@ static void blind_check_fn(void *ctx, qa_q2m_context *c) {
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_q2m_corpse(c);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-16, -16, -16);
@@ -201,7 +205,7 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
@@ -232,11 +236,11 @@ static void blaster_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   const qa_q2rm_tank_frames *frame = &qa_q2rm_tank_frames_value;
   double id = entity->frame == frame->attak110 ? 1 : entity->frame == frame->attak113 ? 2 : 3;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   qa_vec3 direction;
   bool have;
   if (c->state->manual_steering) {
@@ -249,14 +253,14 @@ static void blaster_fn(void *ctx, qa_q2m_context *c) {
 }
 static void rocket_fn(void *ctx, qa_q2m_context *c) {
   qa_q2mpm_weapons *weapons = ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return;
   const qa_q2rm_tank_frames *frame = &qa_q2rm_tank_frames_value;
   double id = entity->frame == frame->attak324 ? 23 : entity->frame == frame->attak327 ? 24 : 25;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   bool heat = q2rm_has(entity->spawnflags, 16);
   double speed = entity->speed != 0 ? entity->speed : heat ? 500 : 650;
   qa_vec3 target;
@@ -297,10 +301,10 @@ static void machine_gun_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   qa_vec3 eye;
   if (!qa_q2m_enemy_eye(c, &eye)) return;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   const qa_q2rm_tank_frames *frame = &qa_q2rm_tank_frames_value;
   double id = 4 + entity->frame - frame->attak406;
-  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2F_RERELEASE, id));
+  qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(QA_Q2_EDITION_RERELEASE, id));
   qa_vec3 angles = q2rm_body(c->game, entity).angles;
   qa_vec3 aim_angles = {
     qa_vector_to_angles_with_rule(qa_sub3_double(eye, start), QA_VECTOR_TO_ANGLES_NATIVE_AI).x,
@@ -311,9 +315,9 @@ static void machine_gun_fn(void *ctx, qa_q2m_context *c) {
   qa_q2rm_monster_flash(c, id, start, direction);
 }
 
-size_t qa_q2rm_create_rerelease_tank_definitions(qa_q2mpm_weapons weapons, qa_q2m_definition out[2]) {
-  qa_q2mpm_weapons *box = malloc(sizeof *box);
-  if (!box) qa_q2f_error("Out of memory creating rerelease tank definitions");
+size_t qa_q2rm_create_rerelease_tank_definitions(qa_q2mpm_arena *arena, qa_q2mpm_weapons weapons, qa_q2m_definition out[2]) {
+  qa_q2mpm_weapons *box = qa_q2mpm_arena_alloc(arena, sizeof *box);
+  if (!box) qa_raise("Error", 0, 0, "Out of memory creating rerelease tank definitions");
   *box = weapons;
   const qa_q2m_named_handler extra[] = {
     {"tank_blind_check", {NULL, blind_check_fn}},
@@ -336,7 +340,7 @@ size_t qa_q2rm_create_rerelease_tank_definitions(qa_q2mpm_weapons weapons, qa_q2
   tank.attack = (qa_q2m_handler){NULL, attack_fn};
   tank.reactions.pain = pain_fn;
   tank.reactions.die = die_fn;
-  tank.callbacks = qa_q2rm_merge_callbacks(tank.callbacks, tank.callback_count,
+  tank.callbacks = qa_q2rm_merge_callbacks(arena, tank.callbacks, tank.callback_count,
                                            extra, sizeof extra / sizeof extra[0], &tank.callback_count);
   out[0] = tank;
   out[1] = tank;
@@ -347,49 +351,49 @@ size_t qa_q2rm_create_rerelease_tank_definitions(qa_q2mpm_weapons weapons, qa_q2
   return 2;
 }
 
-static void stand_think_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static void stand_think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   (void)ctx;
-  qa_q2f_think self = {NULL, stand_think_fn};
+  qa_q2_think self = {NULL, stand_think_fn};
   entity->frame = entity->frame == qa_q2rm_tank_frames_value.stand30
       ? qa_q2rm_tank_frames_value.stand01 : entity->frame + 1;
   game->show(game->ctx, entity);
   game->schedule(game->ctx, entity, 0.1, self);
 }
-static void stand_use_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game,
+static void stand_use_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game,
                          const qa_actor_id *other, const qa_actor_id *activator) {
   (void)ctx; (void)other; (void)activator;
   q2rm_emit_effect(game, "q2:boss-teleport", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
   game->remove(game->ctx, entity);
 }
-static qa_q2f_callback_definitions stand_callbacks(void *ctx) {
+static qa_q2_callback_definitions stand_callbacks(void *ctx) {
   qa_q2rm_tank_stand_module *module = ctx;
-  qa_q2f_callback_definitions definitions;
+  qa_q2_callback_definitions definitions;
   memset(&definitions, 0, sizeof definitions);
   definitions.think = module->think_defs; definitions.think_count = 1;
   definitions.use = module->use_defs; definitions.use_count = 1;
   return definitions;
 }
-static bool stand_spawn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static bool stand_spawn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   (void)ctx;
   if (strcmp(entity->classname, "monster_tank_stand") != 0) return false;
-  if (strcmp(game->options.mode, "deathmatch") == 0) { game->remove(game->ctx, entity); return true; }
-  double scale_field = qa_q2f_number_field(&entity->spawn, "scale", 0);
+  if (game->options.mode == QA_Q2_MODE_DEATHMATCH) { game->remove(game->ctx, entity); return true; }
+  double scale_field = qa_q2_number_field(&entity->spawn, "scale", 0);
   entity->scale = scale_field != 0 ? scale_field : 1.5;
   entity->model = "models/monsters/tank/tris.md2";
   entity->frame = qa_q2rm_tank_frames_value.stand01;
   entity->skin = 2;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = qa_scale3_double(q2rm_v3(-32, -32, -16), entity->scale);
   change.bounds.max = qa_scale3_double(q2rm_v3(32, 32, 64), entity->scale);
   q2rm_move_body(game, entity, change, false, false);
-  game->motion(game->ctx, entity, QA_Q2F_MOTION_STEP);
-  game->solid(game->ctx, entity, QA_Q2F_SOLID_BOX);
+  game->motion(game->ctx, entity, "step");
+  game->solid(game->ctx, entity, "box");
   game->show(game->ctx, entity);
   entity->use.ctx = NULL;
   entity->use.fn = stand_use_fn;
-  qa_q2f_think think = {NULL, stand_think_fn};
+  qa_q2_think think = {NULL, stand_think_fn};
   game->schedule(game->ctx, entity, 0.1, think);
   return true;
 }
@@ -402,7 +406,8 @@ void qa_q2rm_create_tank_stand_module(qa_q2rm_tank_stand_module *out) {
   out->use_defs[0].cb.ctx = NULL;
   out->use_defs[0].cb.fn = stand_use_fn;
 }
-qa_q2bm_spawn_module qa_q2rm_tank_stand_as_spawn(qa_q2rm_tank_stand_module *module) {
-  qa_q2bm_spawn_module spawn = {module, stand_callbacks, stand_spawn};
+qa_q2_spawn_module qa_q2rm_tank_stand_as_spawn(qa_q2rm_tank_stand_module *module) {
+  module->spawn_callbacks = stand_callbacks(module);
+  qa_q2_spawn_module spawn = {module, &module->spawn_callbacks, NULL, stand_spawn};
   return spawn;
 }

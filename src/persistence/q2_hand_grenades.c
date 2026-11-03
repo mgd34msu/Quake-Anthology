@@ -298,3 +298,12 @@ bool qa_decode_hand_grenades_checkpoint(const uint8_t *bytes, size_t length, qa_
   return true;
 }
 
+
+/* Releases a decoded or read checkpoint: the actors array and, when
+ * decoded, the owned tree its strings borrow. */
+void qa_persist_hand_grenades_checkpoint_free(qa_persist_hand_grenades_checkpoint *checkpoint) {
+  if (checkpoint == NULL) return;
+  free(checkpoint->actors);
+  qa_save_value_free(checkpoint->root);
+  memset(checkpoint, 0, sizeof *checkpoint);
+}

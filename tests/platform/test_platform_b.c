@@ -440,6 +440,37 @@ static void test_vorbis(void) {
   CHECK(memcmp(chunk.samples, retained, retained_count * sizeof(int16_t)) == 0);
   qa_vorbis_pcm_chunk_dispose(&chunk);
   free(retained);
+
+  /* PLATFORM-002: a corrupt page (64 inverted bytes mid-file) is skipped
+   * instead of failing the read. */
+  FILE *source = fopen(fixture, "rb");
+  CHECK(source != NULL);
+  if (source == NULL) return;
+  fseek(source, 0, SEEK_END);
+  long size = ftell(source);
+  fseek(source, 0, SEEK_SET);
+  uint8_t *bytes = (uint8_t *)malloc((size_t)size);
+  CHECK(bytes != NULL && fread(bytes, 1, (size_t)size, source) == (size_t)size);
+  fclose(source);
+  long middle = size / 2;
+  for (long index = 0; index < 64 && middle + index < size; index++) bytes[middle + index] ^= 0xff;
+  char corrupt[] = "/tmp/qa-vorbis-hole-XXXXXX";
+  int corrupt_fd = mkstemp(corrupt);
+  CHECK(corrupt_fd >= 0 && write(corrupt_fd, bytes, (size_t)size) == (ssize_t)size);
+  close(corrupt_fd);
+  free(bytes);
+  qa_vorbis_decoder hole;
+  CHECK(qa_vorbis_decoder_open(&hole, corrupt, &error));
+  int64_t frames = 0;
+  qa_vorbis_pcm_chunk piece;
+  bool more = false;
+  while (qa_vorbis_decoder_read(&hole, 4096, &piece, &more, &error) && more) {
+    frames += (int64_t)piece.frames;
+    qa_vorbis_pcm_chunk_dispose(&piece);
+  }
+  CHECK(frames > 4096);
+  CHECK(qa_vorbis_decoder_close(&hole, &error) == 0);
+  unlink(corrupt);
 }
 
 static void test_theora(void) {
@@ -652,6 +683,25 @@ static void test_audio(void) {
   qa_sdl_audio_close(&device);
   CHECK(qa_sdl_audio_state_of(&device) == QA_SDL_AUDIO_CLOSED);
   CHECK_ABORTS((void)qa_sdl_audio_queued_frames(&device));
+
+  /* PLATFORM-020: removal is reported only for a named output that is no
+   * longer enumerated. */
+  if (device_name != NULL) {
+    qa_sdl_audio_options named_options = {48000, 2, 0, device_name, 256};
+    qa_sdl_audio_device named;
+    if (qa_sdl_audio_device_open(&named_options, &named, error, sizeof error) ==
+        QA_SDL_AUDIO_OPEN_OK) {
+      CHECK(!qa_sdl_audio_removed(&named));
+      qa_sdl_audio_device fallback;
+      qa_sdl_audio_options fallback_options = {48000, 2, 0, NULL, 256};
+      CHECK(qa_sdl_audio_device_open(&fallback_options, &fallback, error, sizeof error) ==
+            QA_SDL_AUDIO_OPEN_OK);
+      CHECK(!qa_sdl_audio_removed(&fallback));
+      qa_sdl_audio_close(&fallback);
+      qa_sdl_audio_close(&named);
+      CHECK_ABORTS((void)qa_sdl_audio_removed(&named));
+    }
+  }
 
   qa_sdl_audio_options missing = options;
   missing.device_name = "quake-typescript-no-such-output";

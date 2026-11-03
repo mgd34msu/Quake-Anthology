@@ -1,8 +1,10 @@
 /* Port of src/world/session/mod-files.ts. GPL-2.0-or-later. */
 #include "qa/world/session/mod_files.h"
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void *xrealloc(void *ptr, size_t size) {
   void *next = realloc(ptr, size != 0 ? size : 1);
@@ -42,23 +44,63 @@ static char *encode_component(const char *text) {
   return out;
 }
 
-static char *join_path(const char *root, const char *product,
-                       const char *id) {
-  size_t needed = strlen(root) + strlen("/.mods/") + strlen(product) + 1 +
-                  strlen(id) + 1;
-  char *out = malloc(needed);
+/* Node path.resolve (POSIX) over segments: right to left until a segment
+ * is absolute, then the working directory; "." segments drop, ".." pops
+ * (never above "/"), empty segments and repeated or trailing slashes
+ * vanish. "." and ".." survive encodeURIComponent, so a selection component
+ * can climb out of ".mods" exactly as in TS. */
+static char *node_path_resolve(const char *const *segments, size_t count) {
+  size_t start = 0;
+  bool absolute = false;
+  for (size_t i = count; i-- > 0;)
+    if (segments[i][0] == '/') {
+      start = i;
+      absolute = true;
+      break;
+    }
+  char *cwd = NULL;
+  if (!absolute) {
+    cwd = getcwd(NULL, 0); /* process.cwd() */
+    if (cwd == NULL) abort();
+  }
+  size_t total = (cwd != NULL ? strlen(cwd) : 0) + 2;
+  for (size_t i = start; i < count; i++) total += strlen(segments[i]) + 1;
+  char *out = malloc(total);
   if (out == NULL) abort();
-  strcpy(out, root);
-  strcat(out, "/.mods/");
-  strcat(out, product);
-  strcat(out, "/");
-  strcat(out, id);
+  size_t used = 0;
+  out[used++] = '/';
+  /* The texts to join: the working directory when nothing is absolute. */
+  size_t parts = count - start + (cwd != NULL ? 1 : 0);
+  for (size_t part = 0; part < parts; part++) {
+    const char *text = cwd != NULL ? (part == 0 ? cwd : segments[start + part - 1])
+                                   : segments[start + part];
+    const char *cursor = text;
+    while (*cursor != '\0') {
+      while (*cursor == '/') cursor++;
+      const char *end = cursor;
+      while (*end != '\0' && *end != '/') end++;
+      size_t length = (size_t)(end - cursor);
+      if (length == 0 || (length == 1 && cursor[0] == '.')) {
+        /* skip */
+      } else if (length == 2 && cursor[0] == '.' && cursor[1] == '.') {
+        while (used > 1 && out[used - 1] != '/') used--;
+        if (used > 1) used--; /* the separator before the popped name */
+      } else {
+        if (used > 1) out[used++] = '/';
+        memcpy(out + used, cursor, length);
+        used += length;
+      }
+      cursor = end;
+    }
+  }
+  out[used] = '\0';
+  free(cwd);
   return out;
 }
 
 struct store_entry {
   char *key; /* owned */
-  qa_user_file_store store;
+  qa_user_file_store *store; /* owned; returned pointers stay valid */
 };
 struct qa_mod_user_files {
   char *root; /* owned */
@@ -77,7 +119,8 @@ void qa_mod_user_files_destroy(qa_mod_user_files *files) {
   if (files == NULL) return;
   for (size_t i = 0; i < files->count; i++) {
     free(files->stores[i].key);
-    qa_user_file_store_destroy(&files->stores[i].store);
+    qa_user_file_store_destroy(files->stores[i].store);
+    free(files->stores[i].store);
   }
   free(files->stores);
   free(files->root);
@@ -94,11 +137,12 @@ qa_user_file_store *qa_mod_user_files_for(qa_mod_user_files *files,
   for (size_t i = 0; i < files->count; i++)
     if (strcmp(files->stores[i].key, key) == 0) {
       free(key);
-      return &files->stores[i].store;
+      return files->stores[i].store;
     }
   char *product = encode_component(selection.product);
   char *id = encode_component(selection.id);
-  char *path = join_path(files->root, product, id);
+  const char *segments[4] = {files->root, ".mods", product, id};
+  char *path = node_path_resolve(segments, 4);
   free(product);
   free(id);
   if (files->count == files->capacity) {
@@ -108,9 +152,10 @@ qa_user_file_store *qa_mod_user_files_for(qa_mod_user_files *files,
   }
   struct store_entry *entry = &files->stores[files->count++];
   entry->key = key;
-  if (!qa_user_file_store_init(&entry->store, path)) abort();
+  entry->store = malloc(sizeof *entry->store);
+  if (entry->store == NULL || !qa_user_file_store_init(entry->store, path)) abort();
   free(path);
-  return &entry->store;
+  return entry->store;
 }
 
 /* sha256 hex (the createHash digest) via the mounter's digest, whose

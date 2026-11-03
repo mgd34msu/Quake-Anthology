@@ -64,8 +64,16 @@ void qa_q2_gtv_connection_close(qa_q2_gtv_connection *c) {
     c->socket_fd = -1;
   }
 }
-/* TS fail(): before the hello the ready promise rejects (C abort);
- * after it, one closed event is delivered. */
+typedef struct dispatch_scope {
+  qa_q2_gtv_connection *c;
+  const qa_q2_gtv_event *event;
+} dispatch_scope;
+static void dispatch_body(void *arg) {
+  dispatch_scope *scope = (dispatch_scope *)arg;
+  dispatch(scope->c, scope->event);
+}
+/* TS fail(): before the hello the ready promise rejects (a raise out of connect); after it, one
+ * closed event is delivered and its handler's failure is ignored (.catch(() => {})). */
 static void connection_fail(qa_q2_gtv_connection *c, const char *reason) {
   if (c->closed) return;
   bool opened = c->opened;
@@ -77,33 +85,54 @@ static void connection_fail(qa_q2_gtv_connection *c, const char *reason) {
   size_t n = strlen(reason);
   event.reason = (char *)malloc(n + 1);
   if (event.reason != NULL) memcpy(event.reason, reason, n + 1);
-  dispatch(c, &event);
+  dispatch_scope scope = {c, &event};
+  qa_caught_error caught;
+  (void)qa_try(dispatch_body, &scope, &caught);
   free(event.reason);
+}
+typedef struct chunk_events {
+  qa_q2_gtv_event *events;
+  size_t count;
+} chunk_events;
+static void chunk_events_release(void *arg) {
+  chunk_events *held = (chunk_events *)arg;
+  qa_q2_gtv_events_free(held->events, held->count);
 }
 /* Process one received chunk through the client; returns dispatched
  * count. Mirrors the TS data handler's per-event loop. */
 static size_t process_chunk(qa_q2_gtv_connection *c, const uint8_t *bytes,
                             size_t length) {
-  qa_q2_gtv_event *events = NULL;
-  size_t count = 0;
-  if (!qa_q2_gtv_client_receive(&c->client, bytes, length, &events, &count)) {
+  chunk_events held = {NULL, 0};
+  if (!qa_q2_gtv_client_receive(&c->client, bytes, length, &held.events, &held.count)) {
     qa_range_error("out of memory");
   }
+  qa_cleanup node;
+  qa_cleanup_push(&node, chunk_events_release, &held);
   size_t dispatched = 0;
-  for (size_t i = 0; i < count; i++) {
-    if (events[i].kind == QA_Q2_GTV_EVENT_HELLO) {
+  for (size_t i = 0; i < held.count; i++) {
+    if (held.events[i].kind == QA_Q2_GTV_EVENT_HELLO) {
       c->opened = true;
       c->next_ping_ms = now_ms() + 60000;
     }
-    dispatch(c, &events[i]);
+    dispatch(c, &held.events[i]);
     dispatched++;
-    if (events[i].kind == QA_Q2_GTV_EVENT_CLOSED) {
+    if (held.events[i].kind == QA_Q2_GTV_EVENT_CLOSED) {
       qa_q2_gtv_connection_close(c);
       break;
     }
   }
-  qa_q2_gtv_events_free(events, count);
+  qa_cleanup_pop(&node);
+  qa_q2_gtv_events_free(held.events, held.count);
   return dispatched;
+}
+typedef struct chunk_scope {
+  qa_q2_gtv_connection *c;
+  const uint8_t *bytes;
+  size_t length, dispatched;
+} chunk_scope;
+static void chunk_body(void *arg) {
+  chunk_scope *scope = (chunk_scope *)arg;
+  scope->dispatched = process_chunk(scope->c, scope->bytes, scope->length);
 }
 /* One recv step. Returns false when the connection has failed/closed. */
 static bool receive_step(qa_q2_gtv_connection *c, size_t *dispatched) {
@@ -124,7 +153,16 @@ static bool receive_step(qa_q2_gtv_connection *c, size_t *dispatched) {
     return false;
   }
   if (c->closed) return false;
-  *dispatched = process_chunk(c, buffer, (size_t)n);
+  /* TS processing.catch(error => fail(error)): a malformed stream or a failing event handler
+   * fails this connection with that error's message. */
+  chunk_scope scope = {c, buffer, (size_t)n, 0};
+  qa_caught_error caught;
+  if (!qa_try(chunk_body, &scope, &caught)) {
+    *dispatched = scope.dispatched;
+    connection_fail(c, caught.message);
+    return false;
+  }
+  *dispatched = scope.dispatched;
   return !c->closed;
 }
 
@@ -205,6 +243,10 @@ void qa_q2_gtv_connection_destroy(qa_q2_gtv_connection *c) {
   c->socket_fd = -1;
 }
 
+static void ping_body(void *arg) {
+  qa_q2_gtv_client_ping(&((qa_q2_gtv_connection *)arg)->client);
+}
+
 size_t qa_q2_gtv_connection_poll(qa_q2_gtv_connection *c,
                                  double wait_milliseconds) {
   if (c->closed || c->socket_fd < 0) return 0;
@@ -214,15 +256,21 @@ size_t qa_q2_gtv_connection_poll(qa_q2_gtv_connection *c,
   }
   if (c->next_ping_ms > 0 && now_ms() >= c->next_ping_ms) {
     c->next_ping_ms = now_ms() + 60000;
-    /* TS keepalive failure fails the connection. A throw here already
-     * aborts with the send failure; the closed check mirrors fail(). */
-    if (!c->closed) qa_q2_gtv_client_ping(&c->client);
+    /* TS: try { ping() } catch { fail(new Error('GTV keepalive failed')) } */
+    if (!c->closed) {
+      qa_caught_error caught;
+      if (!qa_try(ping_body, c, &caught)) {
+        connection_fail(c, "GTV keepalive failed");
+        return 0;
+      }
+    }
   }
   struct pollfd item;
   item.fd = c->socket_fd;
   item.events = POLLIN;
   item.revents = 0;
-  int wait = wait_milliseconds < 0 ? 0 : (int)wait_milliseconds;
+  /* poll() needs an int: NaN and negatives wait 0, huge waits saturate. */
+  int wait = !(wait_milliseconds > 0) ? 0 : wait_milliseconds >= 2147483647.0 ? 2147483647 : (int)wait_milliseconds;
   int ready = poll(&item, 1, wait);
   if (ready <= 0) return 0;
   if ((item.revents & (POLLERR | POLLNVAL)) != 0) {

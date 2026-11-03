@@ -1,0 +1,3040 @@
+admitted 271:1 view-height 22
+players 1
+== frame 0
+source q2-native
+time 0
+frame-context 0 seconds:0 seconds:0 frame-entry
+actors 358
+actor-kind q2:official q2-native:edict 358
+actor q2-native:edict -1025 1598 -23.96875
+actor q2-native:edict -1040 480 104
+actor q2-native:edict -1040 496 104
+actor q2-native:edict -1048 600 104
+actor q2-native:edict -1048 624 104
+actor q2-native:edict -1144 1792 32
+actor q2-native:edict -1152 1432 143.03125
+actor q2-native:edict -1176 1520 -32.96875
+actor q2-native:edict -120 576 -120
+actor q2-native:edict -1208 1512 56
+actor q2-native:edict -1224 40 72
+actor q2-native:edict -1232 32 72
+actor q2-native:edict -1248 -8 72
+actor q2-native:edict -1248 1560 -32
+actor q2-native:edict -1248 16 72
+actor q2-native:edict -1248 1739.199951171875 -23.96875
+actor q2-native:edict -1248 1816 -32
+actor q2-native:edict -1248 40 72
+actor q2-native:edict -1248 64 72
+actor q2-native:edict -1256 1024 72
+actor q2-native:edict -1280 56 72
+actor q2-native:edict -1288 1600 -48
+actor q2-native:edict -1288 1864 8
+actor q2-native:edict -1312 1648 -64
+actor q2-native:edict -1376 1404 -23.96875
+actor q2-native:edict -1384 1936 216
+actor q2-native:edict -1408 1936 216
+actor q2-native:edict -144 736 -120
+actor q2-native:edict -1456 1664 -47.96875
+actor q2-native:edict -1464 1280 104
+actor q2-native:edict -1488 1712 -47.96875
+actor q2-native:edict -1496 1824 -23.96875
+actor q2-native:edict -1536 1232 176
+actor q2-native:edict -158 1424 -128
+actor q2-native:edict -1584 1936 216
+actor q2-native:edict -160 1128 104
+actor q2-native:edict -1608 1936 216
+actor q2-native:edict -1644 1584 -16.96875
+actor q2-native:edict -1644 1624 -16.96875
+actor q2-native:edict -168 1168 64
+actor q2-native:edict -1720 1488 192
+actor q2-native:edict -1744 1576 48
+actor q2-native:edict -1768 1296 -23.96875
+actor q2-native:edict -1768 1528 72
+actor q2-native:edict -1768 1536 128
+actor q2-native:edict -1784 1936 216
+actor q2-native:edict -1808 1936 216
+actor q2-native:edict -184 -128 120
+actor q2-native:edict -184 1144 -240
+actor q2-native:edict -184 1344 108
+actor q2-native:edict -1856 1280 104
+actor q2-native:edict -192 -32 264
+actor q2-native:edict -192 1424 -112.96875
+actor q2-native:edict -1920 1232 176
+actor q2-native:edict -1960 1469 120.03125
+actor q2-native:edict -1968 1408 104
+actor q2-native:edict -1968 1792 104
+actor q2-native:edict -2008 1504 64
+actor q2-native:edict -2056 1536 216
+actor q2-native:edict -2056 1560 216
+actor q2-native:edict -2064 1472 -48
+actor q2-native:edict -2064 1520 216
+actor q2-native:edict -2064 1544 216
+actor q2-native:edict -2080 1472 -48
+actor q2-native:edict -2080 1472 -8
+actor q2-native:edict -2156 1492 -32.96875
+actor q2-native:edict -2156 1536 -32.96875
+actor q2-native:edict -2156 1580 -32.96875
+actor q2-native:edict -224 1288 -240
+actor q2-native:edict -226 1424 -112.96875
+actor q2-native:edict -227.1999969482422 840 -103.96875
+actor q2-native:edict -24 864 -127.96875
+actor q2-native:edict -256 -176 40
+actor q2-native:edict -260 1424 -112.96875
+actor q2-native:edict -288 840 -120
+actor q2-native:edict -32 560 -120
+actor q2-native:edict -32 808 -120
+actor q2-native:edict -320 576 -112.96875
+actor q2-native:edict -336 80 -32.96875
+actor q2-native:edict -348 -180 0
+actor q2-native:edict -352 728 120
+actor q2-native:edict -360 -208 0
+actor q2-native:edict -360 -210 -2
+actor q2-native:edict -360 576 -112.96875
+actor q2-native:edict -360 696 64
+actor q2-native:edict -366 -162 -2
+actor q2-native:edict -368 680 -112
+actor q2-native:edict -368 704 -112
+actor q2-native:edict -368 744 64
+actor q2-native:edict -376 -456 -64
+actor q2-native:edict -376 1344 108
+actor q2-native:edict -384 -180 0
+actor q2-native:edict -384 -544 -88.96875
+actor q2-native:edict -384 0 -48
+actor q2-native:edict -384 1208 -240
+actor q2-native:edict -384 80 -32.96875
+actor q2-native:edict -408 -40 8
+actor q2-native:edict -408 704 -112.96875
+actor q2-native:edict -412 32 104
+actor q2-native:edict -424 -12 48
+actor q2-native:edict -428 -28 8
+actor q2-native:edict -428 -56 8
+actor q2-native:edict -440 0 48
+actor q2-native:edict -45.45441436767578 573.4544067382812 -103.96875
+actor q2-native:edict -456 -12 48
+actor q2-native:edict -456 -12 52
+actor q2-native:edict -460 -36 8
+actor q2-native:edict -460 -38 8
+actor q2-native:edict -48 0 104
+actor q2-native:edict -496 320 64
+actor q2-native:edict -536 1168 -240
+actor q2-native:edict -536 424 -32.96875
+actor q2-native:edict -544 1280 -240
+actor q2-native:edict -544 888 -32
+actor q2-native:edict -552 848 -32
+actor q2-native:edict -576 336 -40
+actor q2-native:edict -584 -248 -88
+actor q2-native:edict -584 632 -40
+actor q2-native:edict -584 776 -40
+actor q2-native:edict -614 866 -23.96875
+actor q2-native:edict -632 192 -48
+actor q2-native:edict -632 456 64
+actor q2-native:edict -632 80 -8
+actor q2-native:edict -648 112 40
+actor q2-native:edict -648 600 64
+actor q2-native:edict -656 136 -48
+actor q2-native:edict -672 72 40
+actor q2-native:edict -672 936 16
+actor q2-native:edict -676.7999877929688 336 -23.96875
+actor q2-native:edict -696 1200 -240
+actor q2-native:edict -700.4000244140625 632 -23.96875
+actor q2-native:edict -728 845 -32.96875
+actor q2-native:edict -728 880 -32.96875
+actor q2-native:edict -780 336 -40
+actor q2-native:edict -784 632 -40
+actor q2-native:edict -784 776 -40
+actor q2-native:edict -792 832 536
+actor q2-native:edict -792 928 504
+actor q2-native:edict -8 -272 80
+actor q2-native:edict -8 -312 192
+actor q2-native:edict -8 -336 192
+actor q2-native:edict -8 1032 80
+actor q2-native:edict -816 832 536
+actor q2-native:edict -824 840 480
+actor q2-native:edict -824 848 536
+actor q2-native:edict -824 912 472
+actor q2-native:edict -824 928 504
+actor q2-native:edict -832 944 504
+actor q2-native:edict -840 832 536
+actor q2-native:edict -848 928 504
+actor q2-native:edict -856 584 -23.96875
+actor q2-native:edict -872 928 504
+actor q2-native:edict -88 792 -120
+actor q2-native:edict -88 840 -120
+actor q2-native:edict -880 832 536
+actor q2-native:edict -880 856 472
+actor q2-native:edict -880 896 472
+actor q2-native:edict -894 258 -48
+actor q2-native:edict -904 1064 56
+actor q2-native:edict -904 1416 -32
+actor q2-native:edict -904 856 -32
+actor q2-native:edict -904 972.4000244140625 -23.96875
+actor q2-native:edict -912 1344 56
+actor q2-native:edict -920 1584 56
+actor q2-native:edict -928 264 -32.96875
+actor q2-native:edict -96 -176 88
+actor q2-native:edict -96 16 104
+actor q2-native:edict -962 248 -48
+actor q2-native:edict -976 296 -32.96875
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 624 88
+actor q2-native:edict 1 1 1
+actor q2-native:edict 1024 -224 -152
+actor q2-native:edict 1024 -64 -40
+actor q2-native:edict 1024 424 40
+actor q2-native:edict 1032 -48 -224
+actor q2-native:edict 104 -408 264
+actor q2-native:edict 1048 224 -167.96875
+actor q2-native:edict 1048 480 -240
+actor q2-native:edict 1048 936 -216.96875
+actor q2-native:edict 1056 344 -176.96875
+actor q2-native:edict 1056 384 -176.96875
+actor q2-native:edict 1056 536 -208
+actor q2-native:edict 1056 888 -216.96875
+actor q2-native:edict 1060 -140 -191.96875
+actor q2-native:edict 1064 -192 40
+actor q2-native:edict 1066 860 -224
+actor q2-native:edict 1080 56 -152
+actor q2-native:edict 1088 256 -40
+actor q2-native:edict 1088 323.20001220703125 -31.96875
+actor q2-native:edict 1088 408 -40
+actor q2-native:edict 1088 936 -216.96875
+actor q2-native:edict 1104 872 -232
+actor q2-native:edict 1128 -96 -40.96875
+actor q2-native:edict 1128 936 -216.96875
+actor q2-native:edict 1136 248 72
+actor q2-native:edict 1144 -104 40
+actor q2-native:edict 1184 -96 -40.96875
+actor q2-native:edict 1184 416 -40.96875
+actor q2-native:edict 124 -296 264
+actor q2-native:edict 1272 272 72
+actor q2-native:edict 128 -320 32
+actor q2-native:edict 128 -320 42
+actor q2-native:edict 1280 296 16
+actor q2-native:edict 1328 200 8
+actor q2-native:edict 1348 292 4
+actor q2-native:edict 136 40 0.03125
+actor q2-native:edict 1372 308 4
+actor q2-native:edict 16 -320 192
+actor q2-native:edict 16 -352 192
+actor q2-native:edict 16 1032 80
+actor q2-native:edict 168 -384 288
+actor q2-native:edict 168 -416 48
+actor q2-native:edict 176 -300 288
+actor q2-native:edict 184 -24 0.03125
+actor q2-native:edict 184 -336 288
+actor q2-native:edict 184 -384 288
+actor q2-native:edict 184 -416 64
+actor q2-native:edict 20 -56 244
+actor q2-native:edict 20 -56 248
+actor q2-native:edict 200 -336 288
+actor q2-native:edict 208 -360 80
+actor q2-native:edict 24 776 -120
+actor q2-native:edict 240 -256 40
+actor q2-native:edict 256 680 -240
+actor q2-native:edict 304 544 -208
+actor q2-native:edict 32 -240 152
+actor q2-native:edict 32 -72 232
+actor q2-native:edict 32 1216 -240
+actor q2-native:edict 32 736 -112.96875
+actor q2-native:edict 32 936 64
+actor q2-native:edict 348 -348 -83.96875
+actor q2-native:edict 352 -224 -228.96875
+actor q2-native:edict 352 1248 -208
+actor q2-native:edict 352 488 -240
+actor q2-native:edict 352 864 -208
+actor q2-native:edict 384 -184 -244
+actor q2-native:edict 384 240 24
+actor q2-native:edict 40 -344 192
+actor q2-native:edict 40 -368 192
+actor q2-native:edict 40 272 -64
+actor q2-native:edict 40 896 104
+actor q2-native:edict 416 608 -160
+actor q2-native:edict 416 608 -72
+actor q2-native:edict 424 152 -128
+actor q2-native:edict 432 -208 -128
+actor q2-native:edict 432 248 -64
+actor q2-native:edict 472 936 224
+actor q2-native:edict 48 112 88
+actor q2-native:edict 48 688 88
+actor q2-native:edict 480 864 224
+actor q2-native:edict 496 128 40
+actor q2-native:edict 52 -140 208
+actor q2-native:edict 56 -420 66
+actor q2-native:edict 592 -128 16
+actor q2-native:edict 60 -424 72
+actor q2-native:edict 600 -192 -152
+actor q2-native:edict 600 0 -152
+actor q2-native:edict 600 0 40
+actor q2-native:edict 608 536 -208
+actor q2-native:edict 64 -352 192
+actor q2-native:edict 64 -368 264
+actor q2-native:edict 64 -376 192
+actor q2-native:edict 64 760 -120
+actor q2-native:edict 640 -32 -48
+actor q2-native:edict 640 144 -48
+actor q2-native:edict 680 -216 -224
+actor q2-native:edict 680 40 -224
+actor q2-native:edict 716 -240 4
+actor q2-native:edict 72 688 88
+actor q2-native:edict 728 -72 -40
+actor q2-native:edict 728 112 -96
+actor q2-native:edict 728 80 -184
+actor q2-native:edict 736 -48 -184
+actor q2-native:edict 744 -336 -96
+actor q2-native:edict 752 -216 -96
+actor q2-native:edict 752 -272 28
+actor q2-native:edict 752 488 -240
+actor q2-native:edict 76 -440 72
+actor q2-native:edict 76 -448 66
+actor q2-native:edict 768 416 40
+actor q2-native:edict 789.4544067382812 34.54558563232422 -167.96875
+actor q2-native:edict 8 -72 232
+actor q2-native:edict 8 304 40
+actor q2-native:edict 8 584 104
+actor q2-native:edict 8 800 -120
+actor q2-native:edict 80 584 -120
+actor q2-native:edict 80 808 -127.96875
+actor q2-native:edict 800 -240 32
+actor q2-native:edict 800 -96 -176.96875
+actor q2-native:edict 824 -296 32
+actor q2-native:edict 84 -300 44
+actor q2-native:edict 848 -208 32
+actor q2-native:edict 852 -240 4
+actor q2-native:edict 856 -268 44
+actor q2-native:edict 856 -48 -184
+actor q2-native:edict 864 544 -208
+actor q2-native:edict 88 -256 40
+actor q2-native:edict 88 710 -32
+actor q2-native:edict 88 736 -120
+actor q2-native:edict 88 872 -127.96875
+actor q2-native:edict 896 128 -224
+actor q2-native:edict 896 376 -224
+actor q2-native:edict 92 -424 72
+actor q2-native:edict 928 24 -176.96875
+actor q2-native:edict 950 -198 -191.96875
+actor q2-native:edict 992 24 -176.96875
+bodies 358
+body 0:0 o -158 1424 -128 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o -368 744 64 v 0 0 0 a 0 0 0 g -
+body 3:0 o -360 696 64 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 744 -336 -96 v 0 0 0 a 0 180 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o -962 248 -48 v 0 0 0 a 0 0 0 g -
+body 9:0 o -894 258 -48 v 0 0 0 a 0 0 0 g -
+body 10:0 o -656 136 -48 v 0 0 0 a 0 0 0 g -
+body 11:0 o -632 192 -48 v 0 0 0 a 0 0 0 g -
+body 12:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o -1224 40 72 v 0 0 0 a 0 0 0 g -
+body 14:0 o -1232 32 72 v 0 0 0 a 0 90 0 g -
+body 15:0 o -1248 64 72 v 0 0 0 a 0 0 0 g -
+body 16:0 o -1248 40 72 v 0 0 0 a 0 0 0 g -
+body 17:0 o -1248 16 72 v 0 0 0 a 0 0 0 g -
+body 18:0 o -1248 -8 72 v 0 0 0 a 0 0 0 g -
+body 19:0 o -1256 1024 72 v 0 0 0 a 0 0 0 g -
+body 20:0 o -832 944 504 v 0 0 0 a 0 0 0 g -
+body 21:0 o -824 840 480 v 0 0 0 a 0 0 0 g -
+body 22:0 o -792 928 504 v 0 0 0 a 0 0 0 g -
+body 23:0 o 472 936 224 v 0 0 0 a 0 0 0 g -
+body 24:0 o -824 928 504 v 0 0 0 a 0 0 0 g -
+body 25:0 o -848 928 504 v 0 0 0 a 0 0 0 g -
+body 26:0 o -872 928 504 v 0 0 0 a 0 0 0 g -
+body 27:0 o -816 832 536 v 0 0 0 a 0 0 0 g -
+body 28:0 o -824 848 536 v 0 0 0 a 0 0 0 g -
+body 29:0 o -792 832 536 v 0 0 0 a 0 0 0 g -
+body 30:0 o -840 832 536 v 0 0 0 a 0 0 0 g -
+body 31:0 o 480 864 224 v 0 0 0 a 0 0 0 g -
+body 32:0 o -880 832 536 v 0 0 0 a 0 0 0 g -
+body 33:0 o -824 912 472 v 0 0 0 a 0 0 0 g -
+body 34:0 o 64 -352 192 v 0 0 0 a 0 0 0 g -
+body 35:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 32 -240 152 v 0 0 0 a 0 0 0 g -
+body 38:0 o 16 -320 192 v 0 0 0 a 0 0 0 g -
+body 39:0 o 40 -344 192 v 0 0 0 a 0 0 0 g -
+body 40:0 o -8 -312 192 v 0 0 0 a 0 0 0 g -
+body 41:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o -8 -272 80 v 0 0 0 a 0 0 0 g -
+body 43:0 o 208 -360 80 v 0 0 0 a 0 0 0 g -
+body 44:0 o 184 -416 64 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o -1720 1488 192 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o -976 296 -32.96875 v 0 0 0 a 0 0 0 g -
+body 50:0 o -2080 1472 -48 v 0 0 0 a 0 0 0 g -
+body 51:0 o -2064 1472 -48 v 0 0 0 a 0 0 0 g -
+body 52:0 o -2080 1472 -8 v 0 0 0 a 0 0 0 g -
+body 53:0 o 1 1 1 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:0 o -1608 1936 216 v 0 0 0 a 0 0 0 g -
+body 56:0 o -1808 1936 216 v 0 0 0 a 0 0 0 g -
+body 57:0 o -2064 1544 216 v 0 0 0 a 0 0 0 g -
+body 58:0 o -1408 1936 216 v 0 0 0 a 0 0 0 g -
+body 59:0 o -2056 1560 216 v 0 0 0 a 0 0 0 g -
+body 60:0 o -8 1032 80 v 0 0 0 a 0 0 0 g -
+body 61:0 o 48 688 88 v 0 0 0 a 0 0 0 g -
+body 62:0 o 32 936 64 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 624 88 v 0 0 0 a 0 0 0 g -
+body 64:0 o -168 1168 64 v 0 0 0 a 0 0 0 g -
+body 65:0 o 48 112 88 v 0 0 0 a 0 0 0 g -
+body 66:0 o 1066 860 -224 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 1104 872 -232 v 0 0 0 a 0 0 0 g -
+body 69:0 o 384 -184 -244 v 0 0 0 a 0 0 0 g -
+body 70:0 o -912 1344 56 v 0 0 0 a 0 0 0 g -
+body 71:0 o -904 1064 56 v 0 0 0 a 0 0 0 g -
+body 72:0 o -920 1584 56 v 0 0 0 a 0 0 0 g -
+body 73:0 o -1048 600 104 v 0 0 0 a 0 0 0 g -
+body 74:0 o -1040 480 104 v 0 0 0 a 0 0 0 g -
+body 75:0 o 184 -336 288 v 0 0 0 a 0 0 0 g -
+body 76:0 o 184 -384 288 v 0 0 0 a 0 0 0 g -
+body 77:0 o -1768 1528 72 v 0 0 0 a 0 0 0 g -
+body 78:0 o 40 272 -64 v 0 0 0 a 0 0 0 g -
+body 79:0 o 432 248 -64 v 0 0 0 a 0 0 0 g -
+body 80:0 o -224 1288 -240 v 0 0 0 a 0 0 0 g -
+body 81:0 o -536 1168 -240 v 0 0 0 a 0 0 0 g -
+body 82:0 o -544 1280 -240 v 0 0 0 a 0 0 0 g -
+body 83:0 o -384 1208 -240 v 0 0 0 a 0 0 0 g -
+body 84:0 o -376 -456 -64 v 0 0 0 a 0 0 0 g -
+body 85:0 o -584 -248 -88 v 0 0 0 a 0 0 0 g -
+body 86:0 o 600 -192 -152 v 0 0 0 a 0 0 0 g -
+body 87:0 o 600 0 -152 v 0 0 0 a 0 0 0 g -
+body 88:0 o 1080 56 -152 v 0 0 0 a 0 0 0 g -
+body 89:0 o 1144 -104 40 v 0 0 0 a 0 0 0 g -
+body 90:0 o 592 -128 16 v 0 0 0 a 0 0 0 g -
+body 91:0 o 768 416 40 v 0 0 0 a 0 0 0 g -
+body 92:0 o 1024 424 40 v 0 0 0 a 0 0 0 g -
+body 93:0 o 1024 -224 -152 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1064 -192 40 v 0 0 0 a 0 0 0 g -
+body 95:0 o 496 128 40 v 0 0 0 a 0 0 0 g -
+body 96:0 o 1328 200 8 v 0 0 0 a 0 0 0 g -
+body 97:0 o -1536 1232 176 v 0 0 0 a 0 0 0 g -
+body 98:0 o -1144 1792 32 v 0 0 0 a 0 0 0 g -
+body 99:0 o -672 936 16 v 0 0 0 a 0 0 0 g -
+body 100:0 o -1920 1232 176 v 0 0 0 a 0 0 0 g -
+body 101:0 o -648 600 64 v 0 0 0 a 0 0 0 g -
+body 102:0 o -496 320 64 v 0 0 0 a 0 0 0 g -
+body 103:0 o -632 456 64 v 0 0 0 a 0 0 0 g -
+body 104:0 o 352 488 -240 v 0 0 0 a 0 0 0 g -
+body 105:0 o 752 488 -240 v 0 0 0 a 0 0 0 g -
+body 106:0 o 1048 480 -240 v 0 0 0 a 0 0 0 g -
+body 107:0 o 32 1216 -240 v 0 0 0 a 0 0 0 g -
+body 108:0 o -184 1144 -240 v 0 0 0 a 0 0 0 g -
+body 109:0 o -696 1200 -240 v 0 0 0 a 0 0 0 g -
+body 110:0 o 256 680 -240 v 0 0 0 a 0 0 0 g -
+body 111:0 o 416 608 -160 v 0 0 0 a 0 0 0 g -
+body 112:0 o 384 240 24 v 0 0 0 a 0 0 0 g -
+body 113:0 o 8 304 40 v 0 0 0 a 0 0 0 g -
+body 114:0 o -256 -176 40 v 0 0 0 a 0 0 0 g -
+body 115:0 o 240 -256 40 v 0 0 0 a 0 0 0 g -
+body 116:0 o 600 0 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o 432 -208 -128 v 0 0 0 a 0 0 0 g -
+body 118:0 o 680 -216 -224 v 0 0 0 a 0 0 0 g -
+body 119:0 o 896 376 -224 v 0 0 0 a 0 0 0 g -
+body 120:0 o 1032 -48 -224 v 0 0 0 a 0 0 0 g -
+body 121:0 o 896 128 -224 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 152 -128 v 0 0 0 a 0 0 0 g -
+body 123:0 o 1056 536 -208 v 0 0 0 a 0 0 0 g -
+body 124:0 o 864 544 -208 v 0 0 0 a 0 0 0 g -
+body 125:0 o 608 536 -208 v 0 0 0 a 0 0 0 g -
+body 126:0 o 304 544 -208 v 0 0 0 a 0 0 0 g -
+body 127:0 o 352 864 -208 v 0 0 0 a 0 0 0 g -
+body 128:0 o 352 1248 -208 v 0 0 0 a 0 0 0 g -
+body 129:0 o 680 40 -224 v 0 0 0 a 0 0 0 g -
+body 130:0 o -1208 1512 56 v 0 0 0 a 0 0 0 g -
+body 131:0 o -1288 1864 8 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o -384 0 -48 v 0 0 0 a 0 0 0 g -
+body 135:0 o -408 704 -112.96875 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o -1488 1712 -47.96875 v 0 0 0 a 0 0 0 g -
+body 139:0 o -1456 1664 -47.96875 v 0 0 0 a 0 0 0 g -
+body 140:0 o -1312 1648 -64 v 0 0 0 a 14.578082084655762 5.892513751983643 6.635944366455078 g -
+body 141:0 o -1288 1600 -48 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:0 o -1644 1584 -16.96875 v 0 0 0 a 0 0 0 g -
+body 145:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 146:0 o -376 1344 108 v 0 0 0 a 0 270 0 g -
+body 147:0 o -184 1344 108 v 0 0 0 a 0 270 0 g -
+body 148:0 o -544 888 -32 v 0 0 0 a 0 0 0 g -
+body 149:0 o -552 848 -32 v 0 0 0 a 0 0 0 g -
+body 150:0 o 348 -348 -83.96875 v 0 0 0 a 0 315 0 g -
+body 151:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 152:0 o 8 800 -120 v 0 0 0 a 0 0 0 g -
+body 153:0 o 24 776 -120 v 0 0 0 a 0 0 0 g -
+body 154:0 o 64 760 -120 v 0 0 0 a 0 0 0 g -
+body 155:0 o -32 808 -120 v 0 0 0 a 0 0 0 g -
+body 156:0 o -1496 1824 -23.96875 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o -614 866 -23.96875 v 0 0 0 a 0 0 0 g -
+body 159:0 o -728 880 -32.96875 v 0 0 0 a 0 0 0 g -
+body 160:0 o -904 972.4000244140625 -23.96875 v 0 0 0 a 0 -90 0 g -
+body 161:0 o -227.1999969482422 840 -103.96875 v 0 0 0 a 0 0 0 g -
+body 162:0 o -288 840 -120 v 0 0 0 a 0 0 0 g -
+body 163:0 o -88 840 -120 v 0 0 0 a 0 0 0 g -
+body 164:0 o 88 736 -120 v 0 0 0 a 0 0 0 g -
+body 165:0 o 80 584 -120 v 0 0 0 a 0 0 0 g -
+body 166:0 o -88 792 -120 v 0 0 0 a 0 0 0 g -
+body 167:0 o -856 584 -23.96875 v 0 0 0 a 0 270 0 g -
+body 168:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 169:0 o 80 808 -127.96875 v 0 0 0 a 0 0 0 g -
+body 170:0 o 88 872 -127.96875 v 0 0 0 a 0 0 0 g -
+body 171:0 o -24 864 -127.96875 v 0 0 0 a 0 0 0 g -
+body 172:0 o 176 -300 288 v 0 0 0 a 0 0 0 g -
+body 173:0 o -384 -544 -88.96875 v 0 0 0 a 0 0 0 g -
+body 174:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 175:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 176:0 o -1768 1296 -23.96875 v 0 0 0 a 0 270 0 g -
+body 177:0 o -1376 1404 -23.96875 v 0 0 0 a 0 90 0 g -
+body 178:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 179:0 o -1248 1739.199951171875 -23.96875 v 0 0 0 a 0 270 0 g -
+body 180:0 o -1025 1598 -23.96875 v 0 0 0 a 0 0 0 g -
+body 181:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 182:0 o 1048 224 -167.96875 v 0 0 0 a 0 180 0 g -
+body 183:0 o 789.4544067382812 34.54558563232422 -167.96875 v 0 0 0 a 0 135 0 g -
+body 184:0 o 736 -48 -184 v 0 0 0 a 0 0 0 g -
+body 185:0 o 856 -48 -184 v 0 0 0 a 0 0 0 g -
+body 186:0 o 728 80 -184 v 0 0 0 a 0 0 0 g -
+body 187:0 o 640 144 -48 v 0 0 0 a 0 0 0 g -
+body 188:0 o 640 -32 -48 v 0 0 0 a 0 0 0 g -
+body 189:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 190:0 o 1088 323.20001220703125 -31.96875 v 0 0 0 a 0 -90 0 g -
+body 191:0 o 1088 408 -40 v 0 0 0 a 0 0 0 g -
+body 192:0 o 1088 256 -40 v 0 0 0 a 0 0 0 g -
+body 193:0 o -45.45441436767578 573.4544067382812 -103.96875 v 0 0 0 a 0 315 0 g -
+body 194:0 o -700.4000244140625 632 -23.96875 v 0 0 0 a 0 0 0 g -
+body 195:0 o -676.7999877929688 336 -23.96875 v 0 0 0 a 0 180 0 g -
+body 196:0 o 136 40 0.03125 v 0 0 0 a 0 0 0 g -
+body 197:0 o 184 -24 0.03125 v 0 0 0 a 0 0 0 g -
+body 198:0 o 1024 -64 -40 v 0 0 0 a 0 0 0 g -
+body 199:0 o 728 -72 -40 v 0 0 0 a 0 0 0 g -
+body 200:0 o -1960 1469 120.03125 v 0 0 0 a 0 90 0 g -
+body 201:0 o -1968 1792 104 v 0 0 0 a 0 0 0 g -
+body 202:0 o -1968 1408 104 v 0 0 0 a 0 0 0 g -
+body 203:0 o -1464 1280 104 v 0 0 0 a 0 0 0 g -
+body 204:0 o -1856 1280 104 v 0 0 0 a 0 0 0 g -
+body 205:0 o -1248 1816 -32 v 0 0 0 a 0 0 0 g -
+body 206:0 o -1248 1560 -32 v 0 0 0 a 0 0 0 g -
+body 207:0 o -904 1416 -32 v 0 0 0 a 0 0 0 g -
+body 208:0 o -904 856 -32 v 0 0 0 a 0 0 0 g -
+body 209:0 o -32 560 -120 v 0 0 0 a 0 0 0 g -
+body 210:0 o -120 576 -120 v 0 0 0 a 0 0 0 g -
+body 211:0 o -144 736 -120 v 0 0 0 a 0 0 0 g -
+body 212:0 o -784 776 -40 v 0 0 0 a 0 0 0 g -
+body 213:0 o -584 776 -40 v 0 0 0 a 0 0 0 g -
+body 214:0 o -584 632 -40 v 0 0 0 a 0 0 0 g -
+body 215:0 o -784 632 -40 v 0 0 0 a 0 0 0 g -
+body 216:0 o -576 336 -40 v 0 0 0 a 0 0 0 g -
+body 217:0 o -780 336 -40 v 0 0 0 a 0 0 0 g -
+body 218:0 o 416 608 -72 v 0 0 0 a 0 60 0 g -
+body 219:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 220:0 o 1060 -140 -191.96875 v 0 0 0 a 0 0 0 g -
+body 221:0 o 950 -198 -191.96875 v 0 0 0 a 0 0 0 g -
+body 222:0 o 52 -140 208 v 0 0 0 a 0 0 0 g -
+body 223:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 224:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 225:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 226:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 227:0 o 128 -320 32 v 0 0 0 a 0 135 0 g -
+body 228:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 229:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 230:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 231:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 232:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 233:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 234:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 235:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 236:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 237:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 238:0 o -226 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 239:0 o -260 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 240:0 o -192 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 241:0 o -440 0 48 v 0 0 0 a 0 0 0 g -
+body 242:0 o -424 -12 48 v 0 0 0 a 0 0 0 g -
+body 243:0 o -456 -12 48 v 0 0 0 a 0 0 0 g -
+body 244:0 o -428 -28 8 v 0 0 0 a 0 0 0 g -
+body 245:0 o -408 -40 8 v 0 0 0 a 0 0 0 g -
+body 246:0 o -460 -36 8 v 0 0 0 a 0 0 0 g -
+body 247:0 o -348 -180 0 v 0 0 0 a 0 0 0 g -
+body 248:0 o -384 -180 0 v 0 0 0 a 0 0 0 g -
+body 249:0 o -360 -208 0 v 0 0 0 a 0 0 0 g -
+body 250:0 o 8 -72 232 v 0 0 0 a 0 0 0 g -
+body 251:0 o 32 -72 232 v 0 0 0 a 0 0 0 g -
+body 252:0 o 20 -56 244 v 0 0 0 a 0 0 0 g -
+body 253:0 o 92 -424 72 v 0 0 0 a 0 0 0 g -
+body 254:0 o 60 -424 72 v 0 0 0 a 0 0 0 g -
+body 255:0 o 76 -440 72 v 0 0 0 a 0 0 0 g -
+body 256:0 o 752 -216 -96 v 0 0 0 a 0 0 0 g -
+body 257:0 o 728 112 -96 v 0 0 0 a 0 0 0 g -
+body 258:0 o -352 728 120 v 0 0 0 a 0 0 0 g -
+body 259:0 o -48 0 104 v 0 0 0 a 0 0 0 g -
+body 260:0 o -192 -32 264 v 0 0 0 a 0 0 0 g -
+body 261:0 o -184 -128 120 v 0 0 0 a 0 0 0 g -
+body 262:0 o -96 -176 88 v 0 0 0 a 0 0 0 g -
+body 263:0 o -96 16 104 v 0 0 0 a 0 0 0 g -
+body 264:0 o 848 -208 32 v 0 0 0 a 0 0 0 g -
+body 265:0 o 800 -240 32 v 0 0 0 a 0 0 0 g -
+body 266:0 o 824 -296 32 v 0 0 0 a 0 0 0 g -
+body 267:0 o -648 112 40 v 0 0 0 a 0 0 0 g -
+body 268:0 o -672 72 40 v 0 0 0 a 0 0 0 g -
+body 269:0 o -632 80 -8 v 0 0 0 a 0 0 0 g -
+body 270:0 o -1280 56 72 v 0 0 0 a 0 0 0 g -
+body 271:1 o 128 -320 42 v 0 0 0 a 0 135 0 g -
+body 272:0 o -880 896 472 v 0 0 0 a 0 0 0 g -
+body 274:0 o -880 856 472 v 0 0 0 a 0 0 0 g -
+body 276:0 o 64 -376 192 v 0 0 0 a 0 0 0 g -
+body 277:0 o 16 -352 192 v 0 0 0 a 0 0 0 g -
+body 278:0 o 40 -368 192 v 0 0 0 a 0 0 0 g -
+body 279:0 o -8 -336 192 v 0 0 0 a 0 0 0 g -
+body 280:0 o 168 -416 48 v 0 0 0 a 0 0 0 g -
+body 281:0 o 88 710 -32 v 0 0 0 a 5 145 0 g -
+body 282:0 o -928 264 -32.96875 v 0 0 0 a 0 0 0 g -
+body 283:0 o -2156 1536 -32.96875 v 0 0 0 a 0 0 0 g -
+body 284:0 o -2156 1492 -32.96875 v 0 0 0 a 0 0 0 g -
+body 285:0 o -2156 1580 -32.96875 v 0 0 0 a 0 0 0 g -
+body 286:0 o -2008 1504 64 v 0 0 0 a 0 0 0 g -
+body 287:0 o -1584 1936 216 v 0 0 0 a 0 0 0 g -
+body 288:0 o -1784 1936 216 v 0 0 0 a 0 0 0 g -
+body 289:0 o -2064 1520 216 v 0 0 0 a 0 0 0 g -
+body 290:0 o -1384 1936 216 v 0 0 0 a 0 0 0 g -
+body 291:0 o -2056 1536 216 v 0 0 0 a 0 0 0 g -
+body 292:0 o 16 1032 80 v 0 0 0 a 0 0 0 g -
+body 293:0 o 72 688 88 v 0 0 0 a 0 0 0 g -
+body 294:0 o 40 896 104 v 0 0 0 a 0 0 0 g -
+body 295:0 o 8 584 104 v 0 0 0 a 0 0 0 g -
+body 296:0 o -160 1128 104 v 0 0 0 a 0 0 0 g -
+body 297:0 o 1056 888 -216.96875 v 0 0 0 a 0 0 0 g -
+body 298:0 o 1088 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 299:0 o 1048 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 300:0 o 1128 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 301:0 o 352 -224 -228.96875 v 0 0 0 a 0 0 0 g -
+body 302:0 o -368 680 -112 v 0 0 0 a 0 0 0 g -
+body 303:0 o -1644 1624 -16.96875 v 0 0 0 a 0 0 0 g -
+body 304:0 o 32 736 -112.96875 v 0 0 0 a 0 0 0 g -
+body 305:0 o -368 704 -112 v 0 0 0 a 0 0 0 g -
+body 306:0 o 88 -256 40 v 0 0 0 a 0 0 0 g -
+body 307:0 o -384 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 308:0 o -1040 496 104 v 0 0 0 a 0 0 0 g -
+body 309:0 o -1048 624 104 v 0 0 0 a 0 0 0 g -
+body 310:0 o 200 -336 288 v 0 0 0 a 0 0 0 g -
+body 311:0 o 168 -384 288 v 0 0 0 a 0 0 0 g -
+body 312:0 o 1056 384 -176.96875 v 0 0 0 a 0 0 0 g -
+body 313:0 o 1056 344 -176.96875 v 0 0 0 a 0 0 0 g -
+body 314:0 o -1176 1520 -32.96875 v 0 0 0 a 0 0 0 g -
+body 315:0 o 84 -300 44 v 0 0 0 a 0 0 0 g -
+body 316:0 o -336 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 317:0 o 852 -240 4 v 0 0 0 a 0 0 0 g -
+body 318:0 o 1348 292 4 v 0 0 0 a 0 0 0 g -
+body 319:0 o 716 -240 4 v 0 0 0 a 0 0 0 g -
+body 320:0 o 752 -272 28 v 0 0 0 a 0 0 0 g -
+body 321:0 o 856 -268 44 v 0 0 0 a 0 0 0 g -
+body 322:0 o 1372 308 4 v 0 0 0 a 0 0 0 g -
+body 323:0 o -366 -162 -2 v 0 0 0 a 0 0 0 g -
+body 324:0 o -360 -210 -2 v 0 0 0 a 0 0 0 g -
+body 325:0 o -460 -38 8 v 0 0 0 a 0 0 0 g -
+body 326:0 o -428 -56 8 v 0 0 0 a 0 0 0 g -
+body 327:0 o 56 -420 66 v 0 0 0 a 0 0 0 g -
+body 328:0 o 76 -448 66 v 0 0 0 a 0 0 0 g -
+body 329:0 o 104 -408 264 v 0 0 0 a 0 0 0 g -
+body 330:0 o 64 -368 264 v 0 0 0 a 0 0 0 g -
+body 331:0 o 1184 416 -40.96875 v 0 0 0 a 0 0 0 g -
+body 332:0 o 1184 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 333:0 o 1128 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 334:0 o 928 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 335:0 o 992 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 336:0 o 800 -96 -176.96875 v 0 0 0 a 0 0 0 g -
+body 337:0 o -728 845 -32.96875 v 0 0 0 a 0 0 0 g -
+body 338:0 o -1152 1432 143.03125 v 0 0 0 a 0 0 0 g -
+body 339:0 o -360 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 340:0 o -320 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 341:0 o -536 424 -32.96875 v 0 0 0 a 0 0 0 g -
+body 342:0 o -1768 1536 128 v 0 0 0 a 0 0 0 g -
+body 343:0 o 124 -296 264 v 0 0 0 a 0 0 0 g -
+body 344:0 o -1744 1576 48 v 0 0 0 a 0 0 0 g -
+body 345:0 o 20 -56 248 v 0 0 0 a 0 0 0 g -
+body 346:0 o -412 32 104 v 0 0 0 a 0 0 0 g -
+body 347:0 o -456 -12 52 v 0 0 0 a 0 0 0 g -
+body 348:0 o 1280 296 16 v 0 0 0 a 0 0 0 g -
+body 349:0 o 1136 248 72 v 0 0 0 a 0 0 0 g -
+body 350:0 o 1272 272 72 v 0 0 0 a 0 0 0 g -
+body 351:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 352:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 353:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 354:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 355:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 356:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 357:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 358:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 359:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+inventory 271 
+player body o 128 -320 42 v 0 0 0 a 0 135 0 min -16 -16 -24 max 16 16 32
+player view o 128 -320 42 a 0 135 0 h 22
+player combat -
+player inventory 
+console "==== InitGame ====\n"
+console "28 entities inhibited\n"
+console "1 teams with 2 entities\n"
+checkpoint world:actors world:source-slots 1 7adfc6b952ae3670 canonical 14f9158b85f9e4a6
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q2:official q2:classic-native-original 1 56c8986c10b1e137 canonical b19082ac5f2311cd
+checkpoint q2:official world:simulation 11 675f3a62d2e3c0ae canonical 63f0545a28787b3d
+checkpoint-image 71128860be7ea081 canonical fbe920c00d62dde9 ca0208bb788b9f3f
+== frame 1
+source q2-native
+time 0.1
+frame-context 1 seconds:0.1 seconds:0.1 frame-exit
+actors 358
+actor-kind q2:official q2-native:edict 358
+actor q2-native:edict -1025 1598 -23.96875
+actor q2-native:edict -1040 480 104
+actor q2-native:edict -1040 496 104
+actor q2-native:edict -1048 600 104
+actor q2-native:edict -1048 624 104
+actor q2-native:edict -1144 1792 32
+actor q2-native:edict -1152 1432 143.03125
+actor q2-native:edict -1176 1520 -32.96875
+actor q2-native:edict -120 576 -120
+actor q2-native:edict -1208 1512 56
+actor q2-native:edict -1224 40 72
+actor q2-native:edict -1232 32 72
+actor q2-native:edict -1248 -8 72
+actor q2-native:edict -1248 1560 -32
+actor q2-native:edict -1248 16 72
+actor q2-native:edict -1248 1734.39990234375 -23.96875
+actor q2-native:edict -1248 1816 -32
+actor q2-native:edict -1248 40 72
+actor q2-native:edict -1248 64 72
+actor q2-native:edict -1256 1024 72
+actor q2-native:edict -1280 56 72
+actor q2-native:edict -1288 1600 -48
+actor q2-native:edict -1288 1864 8
+actor q2-native:edict -1312 1648 -88
+actor q2-native:edict -1376 1404 -23.96875
+actor q2-native:edict -1384 1936 216
+actor q2-native:edict -1408 1936 216
+actor q2-native:edict -144 736 -120
+actor q2-native:edict -1456 1664 -47.96875
+actor q2-native:edict -1464 1280 104
+actor q2-native:edict -1488 1712 -47.96875
+actor q2-native:edict -1496 1824 -23.96875
+actor q2-native:edict -1536 1232 176
+actor q2-native:edict -158 1424 -128
+actor q2-native:edict -1584 1936 216
+actor q2-native:edict -160 1128 104
+actor q2-native:edict -1608 1936 216
+actor q2-native:edict -1644 1584 -16.96875
+actor q2-native:edict -1644 1624 -16.96875
+actor q2-native:edict -168 1168 64
+actor q2-native:edict -1720 1488 192
+actor q2-native:edict -1744 1576 48
+actor q2-native:edict -1768 1296 -23.96875
+actor q2-native:edict -1768 1528 72
+actor q2-native:edict -1768 1536 128
+actor q2-native:edict -1784 1936 216
+actor q2-native:edict -1808 1936 216
+actor q2-native:edict -184 -128 120
+actor q2-native:edict -184 1144 -240
+actor q2-native:edict -184 1344 108
+actor q2-native:edict -1856 1280 104
+actor q2-native:edict -192 -32 264
+actor q2-native:edict -192 1424 -112.96875
+actor q2-native:edict -1920 1232 176
+actor q2-native:edict -1960 1473 120.03125
+actor q2-native:edict -1968 1408 104
+actor q2-native:edict -1968 1792 104
+actor q2-native:edict -2008 1504 64
+actor q2-native:edict -2056 1536 216
+actor q2-native:edict -2056 1560 216
+actor q2-native:edict -2064 1472 -48
+actor q2-native:edict -2064 1520 216
+actor q2-native:edict -2064 1544 216
+actor q2-native:edict -2080 1472 -48
+actor q2-native:edict -2080 1472 -8
+actor q2-native:edict -2156 1492 -32.96875
+actor q2-native:edict -2156 1536 -32.96875
+actor q2-native:edict -2156 1580 -32.96875
+actor q2-native:edict -222.39999389648438 840 -103.96875
+actor q2-native:edict -224 1288 -240
+actor q2-native:edict -226 1424 -112.96875
+actor q2-native:edict -24 864 -127.96875
+actor q2-native:edict -256 -176 40
+actor q2-native:edict -260 1424 -112.96875
+actor q2-native:edict -288 840 -120
+actor q2-native:edict -32 560 -120
+actor q2-native:edict -32 808 -120
+actor q2-native:edict -320 576 -112.96875
+actor q2-native:edict -336 80 -32.96875
+actor q2-native:edict -348 -180 0
+actor q2-native:edict -352 728 120
+actor q2-native:edict -360 -208 0
+actor q2-native:edict -360 -210 -2
+actor q2-native:edict -360 576 -112.96875
+actor q2-native:edict -360 696 64
+actor q2-native:edict -366 -162 -2
+actor q2-native:edict -368 680 -112
+actor q2-native:edict -368 704 -112
+actor q2-native:edict -368 744 64
+actor q2-native:edict -376 -456 -64
+actor q2-native:edict -376 1344 108
+actor q2-native:edict -384 -180 0
+actor q2-native:edict -384 -544 -88.96875
+actor q2-native:edict -384 0 -48
+actor q2-native:edict -384 1208 -240
+actor q2-native:edict -384 80 -32.96875
+actor q2-native:edict -408 -40 8
+actor q2-native:edict -408 704 -112.96875
+actor q2-native:edict -412 32 104
+actor q2-native:edict -424 -12 48
+actor q2-native:edict -428 -28 8
+actor q2-native:edict -428 -56 8
+actor q2-native:edict -440 0 48
+actor q2-native:edict -45.45441436767578 573.4544067382812 -103.96875
+actor q2-native:edict -456 -12 48
+actor q2-native:edict -456 -12 52
+actor q2-native:edict -460 -36 8
+actor q2-native:edict -460 -38 8
+actor q2-native:edict -48 0 104
+actor q2-native:edict -496 320 64
+actor q2-native:edict -536 1168 -240
+actor q2-native:edict -536 424 -32.96875
+actor q2-native:edict -544 1280 -240
+actor q2-native:edict -544 888 -32
+actor q2-native:edict -552 848 -32
+actor q2-native:edict -576 336 -40
+actor q2-native:edict -584 -248 -88
+actor q2-native:edict -584 632 -40
+actor q2-native:edict -584 776 -40
+actor q2-native:edict -614 866 -23.96875
+actor q2-native:edict -632 192 -48
+actor q2-native:edict -632 456 64
+actor q2-native:edict -632 80 -8
+actor q2-native:edict -648 112 40
+actor q2-native:edict -648 600 64
+actor q2-native:edict -656 136 -48
+actor q2-native:edict -672 72 40
+actor q2-native:edict -672 936 16
+actor q2-native:edict -681.5999755859375 336 -23.96875
+actor q2-native:edict -693.2000122070312 632 -23.96875
+actor q2-native:edict -696 1200 -240
+actor q2-native:edict -728 845 -32.96875
+actor q2-native:edict -728 880 -32.96875
+actor q2-native:edict -780 336 -40
+actor q2-native:edict -784 632 -40
+actor q2-native:edict -784 776 -40
+actor q2-native:edict -792 832 536
+actor q2-native:edict -792 928 504
+actor q2-native:edict -8 -272 80
+actor q2-native:edict -8 -312 192
+actor q2-native:edict -8 -336 192
+actor q2-native:edict -8 1032 80
+actor q2-native:edict -816 832 536
+actor q2-native:edict -824 840 480
+actor q2-native:edict -824 848 536
+actor q2-native:edict -824 912 472
+actor q2-native:edict -824 928 504
+actor q2-native:edict -832 944 504
+actor q2-native:edict -840 832 536
+actor q2-native:edict -848 928 504
+actor q2-native:edict -856 584 -23.96875
+actor q2-native:edict -872 928 504
+actor q2-native:edict -88 792 -120
+actor q2-native:edict -88 840 -120
+actor q2-native:edict -880 832 536
+actor q2-native:edict -880 856 472
+actor q2-native:edict -880 896 472
+actor q2-native:edict -894 258 -48
+actor q2-native:edict -904 1064 56
+actor q2-native:edict -904 1416 -32
+actor q2-native:edict -904 856 -32
+actor q2-native:edict -904 965.2000122070312 -23.96875
+actor q2-native:edict -912 1344 56
+actor q2-native:edict -920 1584 56
+actor q2-native:edict -928 264 -32.96875
+actor q2-native:edict -96 -176 88
+actor q2-native:edict -96 16 104
+actor q2-native:edict -962 248 -48
+actor q2-native:edict -976 296 -32.96875
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 10
+actor q2-native:edict 0 624 88
+actor q2-native:edict 1 1 1
+actor q2-native:edict 1024 -224 -152
+actor q2-native:edict 1024 -64 -40
+actor q2-native:edict 1024 424 40
+actor q2-native:edict 1032 -48 -224
+actor q2-native:edict 104 -408 264
+actor q2-native:edict 1048 224 -167.96875
+actor q2-native:edict 1048 480 -240
+actor q2-native:edict 1048 936 -216.96875
+actor q2-native:edict 1056 344 -176.96875
+actor q2-native:edict 1056 384 -176.96875
+actor q2-native:edict 1056 536 -208
+actor q2-native:edict 1056 888 -216.96875
+actor q2-native:edict 1060 -140 -191.96875
+actor q2-native:edict 1064 -192 40
+actor q2-native:edict 1066 860 -224
+actor q2-native:edict 1080 56 -152
+actor q2-native:edict 1088 256 -40
+actor q2-native:edict 1088 318.4000244140625 -31.96875
+actor q2-native:edict 1088 408 -40
+actor q2-native:edict 1088 936 -216.96875
+actor q2-native:edict 1104 872 -232
+actor q2-native:edict 1128 -96 -40.96875
+actor q2-native:edict 1128 936 -216.96875
+actor q2-native:edict 1136 248 72
+actor q2-native:edict 1144 -104 40
+actor q2-native:edict 1184 -96 -40.96875
+actor q2-native:edict 1184 416 -40.96875
+actor q2-native:edict 124 -296 264
+actor q2-native:edict 1272 272 72
+actor q2-native:edict 128 -320 32
+actor q2-native:edict 1280 296 16
+actor q2-native:edict 130 -320.25 34
+actor q2-native:edict 1328 200 8
+actor q2-native:edict 1348 292 4
+actor q2-native:edict 136 40 0.03125
+actor q2-native:edict 1372 308 4
+actor q2-native:edict 16 -320 192
+actor q2-native:edict 16 -352 192
+actor q2-native:edict 16 1032 80
+actor q2-native:edict 168 -384 288
+actor q2-native:edict 168 -416 48
+actor q2-native:edict 176 -300 288
+actor q2-native:edict 184 -24 0.03125
+actor q2-native:edict 184 -336 288
+actor q2-native:edict 184 -384 288
+actor q2-native:edict 184 -416 64
+actor q2-native:edict 20 -56 244
+actor q2-native:edict 20 -56 248
+actor q2-native:edict 200 -336 288
+actor q2-native:edict 208 -360 80
+actor q2-native:edict 24 776 -120
+actor q2-native:edict 240 -256 40
+actor q2-native:edict 256 680 -240
+actor q2-native:edict 304 544 -208
+actor q2-native:edict 32 -240 152
+actor q2-native:edict 32 -72 232
+actor q2-native:edict 32 1216 -240
+actor q2-native:edict 32 736 -112.96875
+actor q2-native:edict 32 936 64
+actor q2-native:edict 348 -348 -83.96875
+actor q2-native:edict 352 -224 -228.96875
+actor q2-native:edict 352 1248 -208
+actor q2-native:edict 352 488 -240
+actor q2-native:edict 352 864 -208
+actor q2-native:edict 384 -184 -244
+actor q2-native:edict 384 240 24
+actor q2-native:edict 40 -344 192
+actor q2-native:edict 40 -368 192
+actor q2-native:edict 40 272 -64
+actor q2-native:edict 40 896 104
+actor q2-native:edict 416 608 -160
+actor q2-native:edict 416 608 -72
+actor q2-native:edict 424 152 -128
+actor q2-native:edict 432 -208 -128
+actor q2-native:edict 432 248 -64
+actor q2-native:edict 472 936 224
+actor q2-native:edict 48 112 88
+actor q2-native:edict 48 688 88
+actor q2-native:edict 480 864 224
+actor q2-native:edict 496 128 40
+actor q2-native:edict 52 -140 208
+actor q2-native:edict 56 -420 66
+actor q2-native:edict 592 -128 16
+actor q2-native:edict 60 -424 72
+actor q2-native:edict 600 -192 -152
+actor q2-native:edict 600 0 -152
+actor q2-native:edict 600 0 40
+actor q2-native:edict 608 536 -208
+actor q2-native:edict 64 -352 192
+actor q2-native:edict 64 -368 264
+actor q2-native:edict 64 -376 192
+actor q2-native:edict 64 760 -120
+actor q2-native:edict 640 -32 -48
+actor q2-native:edict 640 144 -48
+actor q2-native:edict 680 -216 -224
+actor q2-native:edict 680 40 -224
+actor q2-native:edict 716 -240 4
+actor q2-native:edict 72 688 88
+actor q2-native:edict 728 -72 -40
+actor q2-native:edict 728 112 -96
+actor q2-native:edict 728 80 -184
+actor q2-native:edict 736 -48 -184
+actor q2-native:edict 744 -336 -96
+actor q2-native:edict 752 -216 -96
+actor q2-native:edict 752 -272 28
+actor q2-native:edict 752 488 -240
+actor q2-native:edict 76 -440 72
+actor q2-native:edict 76 -448 66
+actor q2-native:edict 768 416 40
+actor q2-native:edict 784.3632202148438 39.63675308227539 -167.96875
+actor q2-native:edict 8 -72 232
+actor q2-native:edict 8 304 40
+actor q2-native:edict 8 584 104
+actor q2-native:edict 8 800 -120
+actor q2-native:edict 80 584 -120
+actor q2-native:edict 80 808 -127.96875
+actor q2-native:edict 800 -240 32
+actor q2-native:edict 800 -96 -176.96875
+actor q2-native:edict 824 -296 32
+actor q2-native:edict 84 -300 44
+actor q2-native:edict 848 -208 32
+actor q2-native:edict 852 -240 4
+actor q2-native:edict 856 -268 44
+actor q2-native:edict 856 -48 -184
+actor q2-native:edict 864 544 -208
+actor q2-native:edict 88 -256 40
+actor q2-native:edict 88 710 -32
+actor q2-native:edict 88 736 -120
+actor q2-native:edict 88 872 -127.96875
+actor q2-native:edict 896 128 -224
+actor q2-native:edict 896 376 -224
+actor q2-native:edict 92 -424 72
+actor q2-native:edict 928 24 -176.96875
+actor q2-native:edict 950 -198 -191.96875
+actor q2-native:edict 992 24 -176.96875
+bodies 358
+body 0:0 o -158 1424 -128 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o -368 744 64 v 0 0 0 a 0 0 0 g -
+body 3:0 o -360 696 64 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 744 -336 -96 v 0 0 0 a 0 180 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o -962 248 -48 v 0 0 0 a 0 0 0 g -
+body 9:0 o -894 258 -48 v 0 0 0 a 0 0 0 g -
+body 10:0 o -656 136 -48 v 0 0 0 a 0 0 0 g -
+body 11:0 o -632 192 -48 v 0 0 0 a 0 0 0 g -
+body 12:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o -1224 40 72 v 0 0 0 a 0 0 0 g -
+body 14:0 o -1232 32 72 v 0 0 0 a 0 90 0 g -
+body 15:0 o -1248 64 72 v 0 0 0 a 0 0 0 g -
+body 16:0 o -1248 40 72 v 0 0 0 a 0 0 0 g -
+body 17:0 o -1248 16 72 v 0 0 0 a 0 0 0 g -
+body 18:0 o -1248 -8 72 v 0 0 0 a 0 0 0 g -
+body 19:0 o -1256 1024 72 v 0 0 0 a 0 0 0 g -
+body 20:0 o -832 944 504 v 0 0 0 a 0 0 0 g -
+body 21:0 o -824 840 480 v 0 0 0 a 0 0 0 g -
+body 22:0 o -792 928 504 v 0 0 0 a 0 0 0 g -
+body 23:0 o 472 936 224 v 0 0 0 a 0 0 0 g -
+body 24:0 o -824 928 504 v 0 0 0 a 0 0 0 g -
+body 25:0 o -848 928 504 v 0 0 0 a 0 0 0 g -
+body 26:0 o -872 928 504 v 0 0 0 a 0 0 0 g -
+body 27:0 o -816 832 536 v 0 0 0 a 0 0 0 g -
+body 28:0 o -824 848 536 v 0 0 0 a 0 0 0 g -
+body 29:0 o -792 832 536 v 0 0 0 a 0 0 0 g -
+body 30:0 o -840 832 536 v 0 0 0 a 0 0 0 g -
+body 31:0 o 480 864 224 v 0 0 0 a 0 0 0 g -
+body 32:0 o -880 832 536 v 0 0 0 a 0 0 0 g -
+body 33:0 o -824 912 472 v 0 0 0 a 0 0 0 g -
+body 34:0 o 64 -352 192 v 0 0 0 a 0 0 0 g -
+body 35:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 32 -240 152 v 0 0 0 a 0 0 0 g -
+body 38:0 o 16 -320 192 v 0 0 0 a 0 0 0 g -
+body 39:0 o 40 -344 192 v 0 0 0 a 0 0 0 g -
+body 40:0 o -8 -312 192 v 0 0 0 a 0 0 0 g -
+body 41:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o -8 -272 80 v 0 0 0 a 0 0 0 g -
+body 43:0 o 208 -360 80 v 0 0 0 a 0 0 0 g -
+body 44:0 o 184 -416 64 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o -1720 1488 192 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o -976 296 -32.96875 v 0 0 0 a 0 0 0 g -
+body 50:0 o -2080 1472 -48 v 0 0 0 a 0 0 0 g -
+body 51:0 o -2064 1472 -48 v 0 0 0 a 0 0 0 g -
+body 52:0 o -2080 1472 -8 v 0 0 0 a 0 0 0 g -
+body 53:0 o 1 1 1 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:0 o -1608 1936 216 v 0 0 0 a 0 0 0 g -
+body 56:0 o -1808 1936 216 v 0 0 0 a 0 0 0 g -
+body 57:0 o -2064 1544 216 v 0 0 0 a 0 0 0 g -
+body 58:0 o -1408 1936 216 v 0 0 0 a 0 0 0 g -
+body 59:0 o -2056 1560 216 v 0 0 0 a 0 0 0 g -
+body 60:0 o -8 1032 80 v 0 0 0 a 0 0 0 g -
+body 61:0 o 48 688 88 v 0 0 0 a 0 0 0 g -
+body 62:0 o 32 936 64 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 624 88 v 0 0 0 a 0 0 0 g -
+body 64:0 o -168 1168 64 v 0 0 0 a 0 0 0 g -
+body 65:0 o 48 112 88 v 0 0 0 a 0 0 0 g -
+body 66:0 o 1066 860 -224 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 1104 872 -232 v 0 0 0 a 0 0 0 g -
+body 69:0 o 384 -184 -244 v 0 0 0 a 0 0 0 g -
+body 70:0 o -912 1344 56 v 0 0 0 a 0 0 0 g -
+body 71:0 o -904 1064 56 v 0 0 0 a 0 0 0 g -
+body 72:0 o -920 1584 56 v 0 0 0 a 0 0 0 g -
+body 73:0 o -1048 600 104 v 0 0 0 a 0 0 0 g -
+body 74:0 o -1040 480 104 v 0 0 0 a 0 0 0 g -
+body 75:0 o 184 -336 288 v 0 0 0 a 0 0 0 g -
+body 76:0 o 184 -384 288 v 0 0 0 a 0 0 0 g -
+body 77:0 o -1768 1528 72 v 0 0 0 a 0 0 0 g -
+body 78:0 o 40 272 -64 v 0 0 0 a 0 0 0 g -
+body 79:0 o 432 248 -64 v 0 0 0 a 0 0 0 g -
+body 80:0 o -224 1288 -240 v 0 0 0 a 0 0 0 g -
+body 81:0 o -536 1168 -240 v 0 0 0 a 0 0 0 g -
+body 82:0 o -544 1280 -240 v 0 0 0 a 0 0 0 g -
+body 83:0 o -384 1208 -240 v 0 0 0 a 0 0 0 g -
+body 84:0 o -376 -456 -64 v 0 0 0 a 0 0 0 g -
+body 85:0 o -584 -248 -88 v 0 0 0 a 0 0 0 g -
+body 86:0 o 600 -192 -152 v 0 0 0 a 0 0 0 g -
+body 87:0 o 600 0 -152 v 0 0 0 a 0 0 0 g -
+body 88:0 o 1080 56 -152 v 0 0 0 a 0 0 0 g -
+body 89:0 o 1144 -104 40 v 0 0 0 a 0 0 0 g -
+body 90:0 o 592 -128 16 v 0 0 0 a 0 0 0 g -
+body 91:0 o 768 416 40 v 0 0 0 a 0 0 0 g -
+body 92:0 o 1024 424 40 v 0 0 0 a 0 0 0 g -
+body 93:0 o 1024 -224 -152 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1064 -192 40 v 0 0 0 a 0 0 0 g -
+body 95:0 o 496 128 40 v 0 0 0 a 0 0 0 g -
+body 96:0 o 1328 200 8 v 0 0 0 a 0 0 0 g -
+body 97:0 o -1536 1232 176 v 0 0 0 a 0 0 0 g -
+body 98:0 o -1144 1792 32 v 0 0 0 a 0 0 0 g -
+body 99:0 o -672 936 16 v 0 0 0 a 0 0 0 g -
+body 100:0 o -1920 1232 176 v 0 0 0 a 0 0 0 g -
+body 101:0 o -648 600 64 v 0 0 0 a 0 0 0 g -
+body 102:0 o -496 320 64 v 0 0 0 a 0 0 0 g -
+body 103:0 o -632 456 64 v 0 0 0 a 0 0 0 g -
+body 104:0 o 352 488 -240 v 0 0 0 a 0 0 0 g -
+body 105:0 o 752 488 -240 v 0 0 0 a 0 0 0 g -
+body 106:0 o 1048 480 -240 v 0 0 0 a 0 0 0 g -
+body 107:0 o 32 1216 -240 v 0 0 0 a 0 0 0 g -
+body 108:0 o -184 1144 -240 v 0 0 0 a 0 0 0 g -
+body 109:0 o -696 1200 -240 v 0 0 0 a 0 0 0 g -
+body 110:0 o 256 680 -240 v 0 0 0 a 0 0 0 g -
+body 111:0 o 416 608 -160 v 0 0 0 a 0 0 0 g -
+body 112:0 o 384 240 24 v 0 0 0 a 0 0 0 g -
+body 113:0 o 8 304 40 v 0 0 0 a 0 0 0 g -
+body 114:0 o -256 -176 40 v 0 0 0 a 0 0 0 g -
+body 115:0 o 240 -256 40 v 0 0 0 a 0 0 0 g -
+body 116:0 o 600 0 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o 432 -208 -128 v 0 0 0 a 0 0 0 g -
+body 118:0 o 680 -216 -224 v 0 0 0 a 0 0 0 g -
+body 119:0 o 896 376 -224 v 0 0 0 a 0 0 0 g -
+body 120:0 o 1032 -48 -224 v 0 0 0 a 0 0 0 g -
+body 121:0 o 896 128 -224 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 152 -128 v 0 0 0 a 0 0 0 g -
+body 123:0 o 1056 536 -208 v 0 0 0 a 0 0 0 g -
+body 124:0 o 864 544 -208 v 0 0 0 a 0 0 0 g -
+body 125:0 o 608 536 -208 v 0 0 0 a 0 0 0 g -
+body 126:0 o 304 544 -208 v 0 0 0 a 0 0 0 g -
+body 127:0 o 352 864 -208 v 0 0 0 a 0 0 0 g -
+body 128:0 o 352 1248 -208 v 0 0 0 a 0 0 0 g -
+body 129:0 o 680 40 -224 v 0 0 0 a 0 0 0 g -
+body 130:0 o -1208 1512 56 v 0 0 0 a 0 0 0 g -
+body 131:0 o -1288 1864 8 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o -384 0 -48 v 0 0 0 a 0 0 0 g -
+body 135:0 o -408 704 -112.96875 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o -1488 1712 -47.96875 v 0 0 0 a 0 0 0 g -
+body 139:0 o -1456 1664 -47.96875 v 0 0 0 a 0 0 0 g -
+body 140:0 o -1312 1648 -88 v 0 0 0 a 21.867122650146484 8.838770866394043 9.953916549682617 g -
+body 141:0 o -1288 1600 -48 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 10 v 0 0 0 a 0 0 0 g -
+body 144:0 o -1644 1584 -16.96875 v 0 0 0 a 0 0 0 g -
+body 145:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 146:0 o -376 1344 108 v 0 0 0 a 0 270 0 g -
+body 147:0 o -184 1344 108 v 0 0 0 a 0 270 0 g -
+body 148:0 o -544 888 -32 v 0 0 0 a 0 0 0 g -
+body 149:0 o -552 848 -32 v 0 0 0 a 0 0 0 g -
+body 150:0 o 348 -348 -83.96875 v 0 0 0 a 0 315 0 g -
+body 151:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 152:0 o 8 800 -120 v 0 0 0 a 0 0 0 g -
+body 153:0 o 24 776 -120 v 0 0 0 a 0 0 0 g -
+body 154:0 o 64 760 -120 v 0 0 0 a 0 0 0 g -
+body 155:0 o -32 808 -120 v 0 0 0 a 0 0 0 g -
+body 156:0 o -1496 1824 -23.96875 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o -614 866 -23.96875 v 0 0 0 a 0 0 0 g -
+body 159:0 o -728 880 -32.96875 v 0 0 0 a 0 0 0 g -
+body 160:0 o -904 965.2000122070312 -23.96875 v 0 0 0 a 0 -90 0 g -
+body 161:0 o -222.39999389648438 840 -103.96875 v 0 0 0 a 0 0 0 g -
+body 162:0 o -288 840 -120 v 0 0 0 a 0 0 0 g -
+body 163:0 o -88 840 -120 v 0 0 0 a 0 0 0 g -
+body 164:0 o 88 736 -120 v 0 0 0 a 0 0 0 g -
+body 165:0 o 80 584 -120 v 0 0 0 a 0 0 0 g -
+body 166:0 o -88 792 -120 v 0 0 0 a 0 0 0 g -
+body 167:0 o -856 584 -23.96875 v 0 0 0 a 0 270 0 g -
+body 168:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 169:0 o 80 808 -127.96875 v 0 0 0 a 0 0 0 g -
+body 170:0 o 88 872 -127.96875 v 0 0 0 a 0 0 0 g -
+body 171:0 o -24 864 -127.96875 v 0 0 0 a 0 0 0 g -
+body 172:0 o 176 -300 288 v 0 0 0 a 0 0 0 g -
+body 173:0 o -384 -544 -88.96875 v 0 0 0 a 0 0 0 g -
+body 174:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 175:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 176:0 o -1768 1296 -23.96875 v 0 0 0 a 0 270 0 g -
+body 177:0 o -1376 1404 -23.96875 v 0 0 0 a 0 90 0 g -
+body 178:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 179:0 o -1248 1734.39990234375 -23.96875 v 0 0 0 a 0 270 0 g -
+body 180:0 o -1025 1598 -23.96875 v 0 0 0 a 0 0 0 g -
+body 181:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 182:0 o 1048 224 -167.96875 v 0 0 0 a 0 180 0 g -
+body 183:0 o 784.3632202148438 39.63675308227539 -167.96875 v 0 0 0 a 0 135 0 g -
+body 184:0 o 736 -48 -184 v 0 0 0 a 0 0 0 g -
+body 185:0 o 856 -48 -184 v 0 0 0 a 0 0 0 g -
+body 186:0 o 728 80 -184 v 0 0 0 a 0 0 0 g -
+body 187:0 o 640 144 -48 v 0 0 0 a 0 0 0 g -
+body 188:0 o 640 -32 -48 v 0 0 0 a 0 0 0 g -
+body 189:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 190:0 o 1088 318.4000244140625 -31.96875 v 0 0 0 a 0 -90 0 g -
+body 191:0 o 1088 408 -40 v 0 0 0 a 0 0 0 g -
+body 192:0 o 1088 256 -40 v 0 0 0 a 0 0 0 g -
+body 193:0 o -45.45441436767578 573.4544067382812 -103.96875 v 0 0 0 a 0 334.9951171875 0 g -
+body 194:0 o -693.2000122070312 632 -23.96875 v 0 0 0 a 0 0 0 g -
+body 195:0 o -681.5999755859375 336 -23.96875 v 0 0 0 a 0 180 0 g -
+body 196:0 o 136 40 0.03125 v 0 0 0 a 0 0 0 g -
+body 197:0 o 184 -24 0.03125 v 0 0 0 a 0 0 0 g -
+body 198:0 o 1024 -64 -40 v 0 0 0 a 0 0 0 g -
+body 199:0 o 728 -72 -40 v 0 0 0 a 0 0 0 g -
+body 200:0 o -1960 1473 120.03125 v 0 0 0 a 0 90 0 g -
+body 201:0 o -1968 1792 104 v 0 0 0 a 0 0 0 g -
+body 202:0 o -1968 1408 104 v 0 0 0 a 0 0 0 g -
+body 203:0 o -1464 1280 104 v 0 0 0 a 0 0 0 g -
+body 204:0 o -1856 1280 104 v 0 0 0 a 0 0 0 g -
+body 205:0 o -1248 1816 -32 v 0 0 0 a 0 0 0 g -
+body 206:0 o -1248 1560 -32 v 0 0 0 a 0 0 0 g -
+body 207:0 o -904 1416 -32 v 0 0 0 a 0 0 0 g -
+body 208:0 o -904 856 -32 v 0 0 0 a 0 0 0 g -
+body 209:0 o -32 560 -120 v 0 0 0 a 0 0 0 g -
+body 210:0 o -120 576 -120 v 0 0 0 a 0 0 0 g -
+body 211:0 o -144 736 -120 v 0 0 0 a 0 0 0 g -
+body 212:0 o -784 776 -40 v 0 0 0 a 0 0 0 g -
+body 213:0 o -584 776 -40 v 0 0 0 a 0 0 0 g -
+body 214:0 o -584 632 -40 v 0 0 0 a 0 0 0 g -
+body 215:0 o -784 632 -40 v 0 0 0 a 0 0 0 g -
+body 216:0 o -576 336 -40 v 0 0 0 a 0 0 0 g -
+body 217:0 o -780 336 -40 v 0 0 0 a 0 0 0 g -
+body 218:0 o 416 608 -72 v 0 0 0 a 0 90 0 g -
+body 219:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 220:0 o 1060 -140 -191.96875 v 0 0 0 a 0 0 0 g -
+body 221:0 o 950 -198 -191.96875 v 0 0 0 a 0 0 0 g -
+body 222:0 o 52 -140 208 v 0 0 0 a 0 0 0 g -
+body 223:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 224:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 225:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 226:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 227:0 o 128 -320 32 v 0 0 0 a 0 135 0 g -
+body 228:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 229:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 230:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 231:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 232:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 233:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 234:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 235:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 236:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 237:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 238:0 o -226 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 239:0 o -260 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 240:0 o -192 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 241:0 o -440 0 48 v 0 0 0 a 0 0 0 g -
+body 242:0 o -424 -12 48 v 0 0 0 a 0 0 0 g -
+body 243:0 o -456 -12 48 v 0 0 0 a 0 0 0 g -
+body 244:0 o -428 -28 8 v 0 0 0 a 0 0 0 g -
+body 245:0 o -408 -40 8 v 0 0 0 a 0 0 0 g -
+body 246:0 o -460 -36 8 v 0 0 0 a 0 0 0 g -
+body 247:0 o -348 -180 0 v 0 0 0 a 0 0 0 g -
+body 248:0 o -384 -180 0 v 0 0 0 a 0 0 0 g -
+body 249:0 o -360 -208 0 v 0 0 0 a 0 0 0 g -
+body 250:0 o 8 -72 232 v 0 0 0 a 0 0 0 g -
+body 251:0 o 32 -72 232 v 0 0 0 a 0 0 0 g -
+body 252:0 o 20 -56 244 v 0 0 0 a 0 0 0 g -
+body 253:0 o 92 -424 72 v 0 0 0 a 0 0 0 g -
+body 254:0 o 60 -424 72 v 0 0 0 a 0 0 0 g -
+body 255:0 o 76 -440 72 v 0 0 0 a 0 0 0 g -
+body 256:0 o 752 -216 -96 v 0 0 0 a 0 0 0 g -
+body 257:0 o 728 112 -96 v 0 0 0 a 0 0 0 g -
+body 258:0 o -352 728 120 v 0 0 0 a 0 0 0 g -
+body 259:0 o -48 0 104 v 0 0 0 a 0 0 0 g -
+body 260:0 o -192 -32 264 v 0 0 0 a 0 0 0 g -
+body 261:0 o -184 -128 120 v 0 0 0 a 0 0 0 g -
+body 262:0 o -96 -176 88 v 0 0 0 a 0 0 0 g -
+body 263:0 o -96 16 104 v 0 0 0 a 0 0 0 g -
+body 264:0 o 848 -208 32 v 0 0 0 a 0 0 0 g -
+body 265:0 o 800 -240 32 v 0 0 0 a 0 0 0 g -
+body 266:0 o 824 -296 32 v 0 0 0 a 0 0 0 g -
+body 267:0 o -648 112 40 v 0 0 0 a 0 0 0 g -
+body 268:0 o -672 72 40 v 0 0 0 a 0 0 0 g -
+body 269:0 o -632 80 -8 v 0 0 0 a 0 0 0 g -
+body 270:0 o -1280 56 72 v 0 0 0 a 0 0 0 g -
+body 271:1 o 130 -320.25 34 v 20.375 -2.5 -80 a 0 6.998291015625 0.1985543668270111 g -
+body 272:0 o -880 896 472 v 0 0 0 a 0 0 0 g -
+body 273:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 274:0 o -880 856 472 v 0 0 0 a 0 0 0 g -
+body 276:0 o 64 -376 192 v 0 0 0 a 0 0 0 g -
+body 277:0 o 16 -352 192 v 0 0 0 a 0 0 0 g -
+body 278:0 o 40 -368 192 v 0 0 0 a 0 0 0 g -
+body 279:0 o -8 -336 192 v 0 0 0 a 0 0 0 g -
+body 280:0 o 168 -416 48 v 0 0 0 a 0 0 0 g -
+body 281:0 o 88 710 -32 v 0 0 0 a 5 145 0 g -
+body 282:0 o -928 264 -32.96875 v 0 0 0 a 0 0 0 g -
+body 283:0 o -2156 1536 -32.96875 v 0 0 0 a 0 0 0 g -
+body 284:0 o -2156 1492 -32.96875 v 0 0 0 a 0 0 0 g -
+body 285:0 o -2156 1580 -32.96875 v 0 0 0 a 0 0 0 g -
+body 286:0 o -2008 1504 64 v 0 0 0 a 0 0 0 g -
+body 287:0 o -1584 1936 216 v 0 0 0 a 0 0 0 g -
+body 288:0 o -1784 1936 216 v 0 0 0 a 0 0 0 g -
+body 289:0 o -2064 1520 216 v 0 0 0 a 0 0 0 g -
+body 290:0 o -1384 1936 216 v 0 0 0 a 0 0 0 g -
+body 291:0 o -2056 1536 216 v 0 0 0 a 0 0 0 g -
+body 292:0 o 16 1032 80 v 0 0 0 a 0 0 0 g -
+body 293:0 o 72 688 88 v 0 0 0 a 0 0 0 g -
+body 294:0 o 40 896 104 v 0 0 0 a 0 0 0 g -
+body 295:0 o 8 584 104 v 0 0 0 a 0 0 0 g -
+body 296:0 o -160 1128 104 v 0 0 0 a 0 0 0 g -
+body 297:0 o 1056 888 -216.96875 v 0 0 0 a 0 0 0 g -
+body 298:0 o 1088 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 299:0 o 1048 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 300:0 o 1128 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 301:0 o 352 -224 -228.96875 v 0 0 0 a 0 0 0 g -
+body 302:0 o -368 680 -112 v 0 0 0 a 0 0 0 g -
+body 303:0 o -1644 1624 -16.96875 v 0 0 0 a 0 0 0 g -
+body 304:0 o 32 736 -112.96875 v 0 0 0 a 0 0 0 g -
+body 305:0 o -368 704 -112 v 0 0 0 a 0 0 0 g -
+body 306:0 o 88 -256 40 v 0 0 0 a 0 0 0 g -
+body 307:0 o -384 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 308:0 o -1040 496 104 v 0 0 0 a 0 0 0 g -
+body 309:0 o -1048 624 104 v 0 0 0 a 0 0 0 g -
+body 310:0 o 200 -336 288 v 0 0 0 a 0 0 0 g -
+body 311:0 o 168 -384 288 v 0 0 0 a 0 0 0 g -
+body 312:0 o 1056 384 -176.96875 v 0 0 0 a 0 0 0 g -
+body 313:0 o 1056 344 -176.96875 v 0 0 0 a 0 0 0 g -
+body 314:0 o -1176 1520 -32.96875 v 0 0 0 a 0 0 0 g -
+body 315:0 o 84 -300 44 v 0 0 0 a 0 0 0 g -
+body 316:0 o -336 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 317:0 o 852 -240 4 v 0 0 0 a 0 0 0 g -
+body 318:0 o 1348 292 4 v 0 0 0 a 0 0 0 g -
+body 319:0 o 716 -240 4 v 0 0 0 a 0 0 0 g -
+body 320:0 o 752 -272 28 v 0 0 0 a 0 0 0 g -
+body 321:0 o 856 -268 44 v 0 0 0 a 0 0 0 g -
+body 322:0 o 1372 308 4 v 0 0 0 a 0 0 0 g -
+body 323:0 o -366 -162 -2 v 0 0 0 a 0 0 0 g -
+body 324:0 o -360 -210 -2 v 0 0 0 a 0 0 0 g -
+body 325:0 o -460 -38 8 v 0 0 0 a 0 0 0 g -
+body 326:0 o -428 -56 8 v 0 0 0 a 0 0 0 g -
+body 327:0 o 56 -420 66 v 0 0 0 a 0 0 0 g -
+body 328:0 o 76 -448 66 v 0 0 0 a 0 0 0 g -
+body 329:0 o 104 -408 264 v 0 0 0 a 0 0 0 g -
+body 330:0 o 64 -368 264 v 0 0 0 a 0 0 0 g -
+body 331:0 o 1184 416 -40.96875 v 0 0 0 a 0 0 0 g -
+body 332:0 o 1184 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 333:0 o 1128 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 334:0 o 928 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 335:0 o 992 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 336:0 o 800 -96 -176.96875 v 0 0 0 a 0 0 0 g -
+body 337:0 o -728 845 -32.96875 v 0 0 0 a 0 0 0 g -
+body 338:0 o -1152 1432 143.03125 v 0 0 0 a 0 0 0 g -
+body 339:0 o -360 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 340:0 o -320 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 341:0 o -536 424 -32.96875 v 0 0 0 a 0 0 0 g -
+body 342:0 o -1768 1536 128 v 0 0 0 a 0 0 0 g -
+body 343:0 o 124 -296 264 v 0 0 0 a 0 0 0 g -
+body 344:0 o -1744 1576 48 v 0 0 0 a 0 0 0 g -
+body 345:0 o 20 -56 248 v 0 0 0 a 0 0 0 g -
+body 346:0 o -412 32 104 v 0 0 0 a 0 0 0 g -
+body 347:0 o -456 -12 52 v 0 0 0 a 0 0 0 g -
+body 348:0 o 1280 296 16 v 0 0 0 a 0 0 0 g -
+body 349:0 o 1136 248 72 v 0 0 0 a 0 0 0 g -
+body 350:0 o 1272 272 72 v 0 0 0 a 0 0 0 g -
+body 351:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 352:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 353:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 354:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 355:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 356:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 357:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 358:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 359:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+inventory 271 
+player body o 130 -320.25 34 v 20.375 -2.5 -80 a 0 6.998291015625 0.1985543668270111 min -16 -16 -24 max 16 16 32
+player view o 130 -320.25 34 a 0 6.998291015625 0 h 22
+player combat -
+player inventory 
+presentation q2 733
+checkpoint world:actors world:source-slots 1 f3f193e1b96918a0 canonical acedff89b0baf4af
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q2:official q2:classic-native-original 1 635371d3c574a4c1 canonical 1de60da75d159276
+checkpoint q2:official world:simulation 11 3da1d7e5973d4de3 canonical 10ee6b9a29c160e1
+checkpoint-image 28be1c3c0c9f0c5b canonical fbe920c00d62dde9 8c6899792e462fe5
+== frame 10
+source q2-native
+time 0.9999999999999999
+frame-context 10 seconds:0.9999999999999999 seconds:0.1 frame-exit
+actors 357
+actor-kind q2:official q2-native:edict 357
+actor q2-native:edict -1025 1598 -23.96875
+actor q2-native:edict -1040 480 104
+actor q2-native:edict -1040 496 104
+actor q2-native:edict -1048 600 104
+actor q2-native:edict -1048 624 104
+actor q2-native:edict -1144 1792 32
+actor q2-native:edict -1152 1432 143.03125
+actor q2-native:edict -1176 1520 -32.96875
+actor q2-native:edict -120 576 -120
+actor q2-native:edict -1208 1512 56
+actor q2-native:edict -1224 40 72
+actor q2-native:edict -1232 80 72
+actor q2-native:edict -1248 -8 72
+actor q2-native:edict -1248 1560 -32
+actor q2-native:edict -1248 16 72
+actor q2-native:edict -1248 1674.39990234375 -23.96875
+actor q2-native:edict -1248 1816 -32
+actor q2-native:edict -1248 40 72
+actor q2-native:edict -1248 64 72
+actor q2-native:edict -1256 1024 72
+actor q2-native:edict -1280 56 72
+actor q2-native:edict -1288 1600 -48
+actor q2-native:edict -1288 1864 8
+actor q2-native:edict -1312 1648 -664
+actor q2-native:edict -1376 1404 -23.96875
+actor q2-native:edict -1384 1936 216
+actor q2-native:edict -1408 1936 216
+actor q2-native:edict -144 736 -120
+actor q2-native:edict -1456 1664 -47.96875
+actor q2-native:edict -1464 1280 104
+actor q2-native:edict -1488 1712 -47.96875
+actor q2-native:edict -1496 1824 -23.96875
+actor q2-native:edict -1536 1232 176
+actor q2-native:edict -158 1424 -128
+actor q2-native:edict -1584 1936 216
+actor q2-native:edict -160 1128 104
+actor q2-native:edict -1608 1936 216
+actor q2-native:edict -162.39999389648438 840 -103.96875
+actor q2-native:edict -1644 1584 -16.96875
+actor q2-native:edict -1644 1624 -16.96875
+actor q2-native:edict -168 1168 64
+actor q2-native:edict -1720 1488 192
+actor q2-native:edict -1744 1576 48
+actor q2-native:edict -1768 1296 -23.96875
+actor q2-native:edict -1768 1528 72
+actor q2-native:edict -1768 1536 128
+actor q2-native:edict -1784 1936 216
+actor q2-native:edict -1808 1936 216
+actor q2-native:edict -184 -128 120
+actor q2-native:edict -184 1144 -240
+actor q2-native:edict -184 1344 108
+actor q2-native:edict -1856 1280 104
+actor q2-native:edict -192 -32 264
+actor q2-native:edict -192 1424 -112.96875
+actor q2-native:edict -1920 1232 176
+actor q2-native:edict -1960 1513 120.03125
+actor q2-native:edict -1968 1408 104
+actor q2-native:edict -1968 1792 104
+actor q2-native:edict -2008 1504 64
+actor q2-native:edict -2056 1536 216
+actor q2-native:edict -2056 1560 216
+actor q2-native:edict -2064 1472 -48
+actor q2-native:edict -2064 1520 216
+actor q2-native:edict -2064 1544 216
+actor q2-native:edict -2080 1472 -48
+actor q2-native:edict -2080 1472 -8
+actor q2-native:edict -21.660301208496094 576.8485717773438 -103.96875
+actor q2-native:edict -2156 1492 -32.96875
+actor q2-native:edict -2156 1536 -32.96875
+actor q2-native:edict -2156 1580 -32.96875
+actor q2-native:edict -224 1288 -240
+actor q2-native:edict -226 1424 -112.96875
+actor q2-native:edict -24 864 -127.96875
+actor q2-native:edict -256 -176 40
+actor q2-native:edict -260 1424 -112.96875
+actor q2-native:edict -288 840 -120
+actor q2-native:edict -32 560 -120
+actor q2-native:edict -32 808 -120
+actor q2-native:edict -320 576 -112.96875
+actor q2-native:edict -336 80 -32.96875
+actor q2-native:edict -348 -180 0
+actor q2-native:edict -352 728 120
+actor q2-native:edict -360 -208 0
+actor q2-native:edict -360 -210 -2
+actor q2-native:edict -360 576 -112.96875
+actor q2-native:edict -360 696 64
+actor q2-native:edict -366 -162 -2
+actor q2-native:edict -368 680 -112
+actor q2-native:edict -368 704 -112
+actor q2-native:edict -368 744 64
+actor q2-native:edict -376 -456 -64
+actor q2-native:edict -376 1344 108
+actor q2-native:edict -384 -180 0
+actor q2-native:edict -384 -544 -88.96875
+actor q2-native:edict -384 0 -48
+actor q2-native:edict -384 1208 -240
+actor q2-native:edict -384 80 -32.96875
+actor q2-native:edict -408 -40 8
+actor q2-native:edict -408 704 -112.96875
+actor q2-native:edict -412 32 104
+actor q2-native:edict -424 -12 48
+actor q2-native:edict -428 -28 8
+actor q2-native:edict -428 -56 8
+actor q2-native:edict -440 0 48
+actor q2-native:edict -456 -12 48
+actor q2-native:edict -456 -12 52
+actor q2-native:edict -460 -36 8
+actor q2-native:edict -460 -38 8
+actor q2-native:edict -48 0 104
+actor q2-native:edict -496 320 64
+actor q2-native:edict -536 1168 -240
+actor q2-native:edict -536 424 -32.96875
+actor q2-native:edict -544 1280 -240
+actor q2-native:edict -544 888 -32
+actor q2-native:edict -552 848 -32
+actor q2-native:edict -576 336 -40
+actor q2-native:edict -584 -248 -88
+actor q2-native:edict -584 632 -40
+actor q2-native:edict -584 776 -40
+actor q2-native:edict -614 866 -23.96875
+actor q2-native:edict -632 192 -48
+actor q2-native:edict -632 456 64
+actor q2-native:edict -632 80 -8
+actor q2-native:edict -648 112 40
+actor q2-native:edict -648 600 64
+actor q2-native:edict -656 136 -48
+actor q2-native:edict -665.5999755859375 632 -23.96875
+actor q2-native:edict -672 72 40
+actor q2-native:edict -672 936 16
+actor q2-native:edict -696 1200 -240
+actor q2-native:edict -728 845 -32.96875
+actor q2-native:edict -728 880 -32.96875
+actor q2-native:edict -741.5999755859375 336 -23.96875
+actor q2-native:edict -776 848 536
+actor q2-native:edict -776 944 504
+actor q2-native:edict -780 336 -40
+actor q2-native:edict -784 632 -40
+actor q2-native:edict -784 776 -40
+actor q2-native:edict -792 832 536
+actor q2-native:edict -792 928 504
+actor q2-native:edict -8 -272 80
+actor q2-native:edict -8 -312 192
+actor q2-native:edict -8 -336 192
+actor q2-native:edict -8 1032 80
+actor q2-native:edict -816 832 536
+actor q2-native:edict -824 840 480
+actor q2-native:edict -824 912 472
+actor q2-native:edict -824 928 504
+actor q2-native:edict -840 832 536
+actor q2-native:edict -848 928 504
+actor q2-native:edict -856 584 -23.96875
+actor q2-native:edict -872 928 504
+actor q2-native:edict -88 792 -120
+actor q2-native:edict -88 840 -120
+actor q2-native:edict -880 832 536
+actor q2-native:edict -880 856 472
+actor q2-native:edict -880 896 472
+actor q2-native:edict -894 258 -48
+actor q2-native:edict -904 1064 56
+actor q2-native:edict -904 1416 -32
+actor q2-native:edict -904 856 -32
+actor q2-native:edict -904 937.5999755859375 -23.96875
+actor q2-native:edict -912 1344 56
+actor q2-native:edict -920 1584 56
+actor q2-native:edict -928 264 -32.96875
+actor q2-native:edict -96 -176 88
+actor q2-native:edict -96 16 104
+actor q2-native:edict -962 248 -48
+actor q2-native:edict -976 296 -32.96875
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 100
+actor q2-native:edict 0 624 88
+actor q2-native:edict 1 1 1
+actor q2-native:edict 1024 -224 -152
+actor q2-native:edict 1024 -64 -40
+actor q2-native:edict 1024 424 40
+actor q2-native:edict 1032 -48 -224
+actor q2-native:edict 104 -408 264
+actor q2-native:edict 1048 224 -167.96875
+actor q2-native:edict 1048 480 -240
+actor q2-native:edict 1048 936 -216.96875
+actor q2-native:edict 1056 344 -176.96875
+actor q2-native:edict 1056 384 -176.96875
+actor q2-native:edict 1056 536 -208
+actor q2-native:edict 1056 888 -216.96875
+actor q2-native:edict 1060 -140 -191.96875
+actor q2-native:edict 1064 -192 40
+actor q2-native:edict 1066 860 -224
+actor q2-native:edict 1080 56 -152
+actor q2-native:edict 1088 256 -40
+actor q2-native:edict 1088 278.8000183105469 -31.96875
+actor q2-native:edict 1088 408 -40
+actor q2-native:edict 1088 936 -216.96875
+actor q2-native:edict 1104 872 -232
+actor q2-native:edict 1128 -96 -40.96875
+actor q2-native:edict 1128 936 -216.96875
+actor q2-native:edict 1136 248 72
+actor q2-native:edict 1144 -104 40
+actor q2-native:edict 1184 -96 -40.96875
+actor q2-native:edict 1184 416 -40.96875
+actor q2-native:edict 124 -296 264
+actor q2-native:edict 1272 272 72
+actor q2-native:edict 128 -320 32
+actor q2-native:edict 1280 296 16
+actor q2-native:edict 1328 200 8
+actor q2-native:edict 1348 292 4
+actor q2-native:edict 136 40 0.03125
+actor q2-native:edict 1372 308 4
+actor q2-native:edict 16 -320 192
+actor q2-native:edict 16 -352 192
+actor q2-native:edict 16 1032 80
+actor q2-native:edict 168 -384 288
+actor q2-native:edict 168 -416 48
+actor q2-native:edict 176 -300 288
+actor q2-native:edict 184 -24 0.03125
+actor q2-native:edict 184 -336 288
+actor q2-native:edict 184 -384 288
+actor q2-native:edict 184 -416 64
+actor q2-native:edict 20 -56 244
+actor q2-native:edict 20 -56 248
+actor q2-native:edict 200 -336 288
+actor q2-native:edict 208 -360 80
+actor q2-native:edict 235.875 -219.125 24.125
+actor q2-native:edict 24 776 -120
+actor q2-native:edict 240 -256 40
+actor q2-native:edict 256 680 -240
+actor q2-native:edict 304 544 -208
+actor q2-native:edict 32 -240 152
+actor q2-native:edict 32 -72 232
+actor q2-native:edict 32 1216 -240
+actor q2-native:edict 32 736 -112.96875
+actor q2-native:edict 32 936 64
+actor q2-native:edict 348 -348 -83.96875
+actor q2-native:edict 352 -224 -228.96875
+actor q2-native:edict 352 1248 -208
+actor q2-native:edict 352 488 -240
+actor q2-native:edict 352 864 -208
+actor q2-native:edict 384 -184 -244
+actor q2-native:edict 384 240 24
+actor q2-native:edict 40 -344 192
+actor q2-native:edict 40 -368 192
+actor q2-native:edict 40 272 -64
+actor q2-native:edict 40 896 104
+actor q2-native:edict 416 608 -160
+actor q2-native:edict 416 608 -72
+actor q2-native:edict 424 152 -128
+actor q2-native:edict 432 -208 -128
+actor q2-native:edict 432 248 -64
+actor q2-native:edict 472 936 224
+actor q2-native:edict 48 112 88
+actor q2-native:edict 48 688 88
+actor q2-native:edict 480 864 224
+actor q2-native:edict 496 128 40
+actor q2-native:edict 52 -140 208
+actor q2-native:edict 56 -420 66
+actor q2-native:edict 592 -128 16
+actor q2-native:edict 60 -424 72
+actor q2-native:edict 600 -192 -152
+actor q2-native:edict 600 0 -152
+actor q2-native:edict 600 0 40
+actor q2-native:edict 608 536 -208
+actor q2-native:edict 64 -352 192
+actor q2-native:edict 64 -368 264
+actor q2-native:edict 64 -376 192
+actor q2-native:edict 64 760 -120
+actor q2-native:edict 640 -32 -48
+actor q2-native:edict 640 144 -48
+actor q2-native:edict 680 -216 -224
+actor q2-native:edict 680 40 -224
+actor q2-native:edict 716 -240 4
+actor q2-native:edict 72 688 88
+actor q2-native:edict 728 -72 -40
+actor q2-native:edict 728 112 -96
+actor q2-native:edict 728 80 -184
+actor q2-native:edict 736 -48 -184
+actor q2-native:edict 744 -336 -96
+actor q2-native:edict 752 -216 -96
+actor q2-native:edict 752 -272 28
+actor q2-native:edict 752 488 -240
+actor q2-native:edict 76 -440 72
+actor q2-native:edict 76 -448 66
+actor q2-native:edict 764.8469848632812 59.15290069580078 -167.96875
+actor q2-native:edict 768 416 40
+actor q2-native:edict 8 -72 232
+actor q2-native:edict 8 304 40
+actor q2-native:edict 8 584 104
+actor q2-native:edict 8 800 -120
+actor q2-native:edict 80 584 -120
+actor q2-native:edict 80 808 -127.96875
+actor q2-native:edict 800 -240 32
+actor q2-native:edict 800 -96 -176.96875
+actor q2-native:edict 824 -296 32
+actor q2-native:edict 84 -300 44
+actor q2-native:edict 848 -208 32
+actor q2-native:edict 852 -240 4
+actor q2-native:edict 856 -268 44
+actor q2-native:edict 856 -48 -184
+actor q2-native:edict 864 544 -208
+actor q2-native:edict 88 -256 40
+actor q2-native:edict 88 710 -32
+actor q2-native:edict 88 736 -120
+actor q2-native:edict 88 872 -127.96875
+actor q2-native:edict 896 128 -224
+actor q2-native:edict 896 376 -224
+actor q2-native:edict 92 -424 72
+actor q2-native:edict 928 24 -176.96875
+actor q2-native:edict 950 -198 -191.96875
+actor q2-native:edict 992 24 -176.96875
+bodies 357
+body 0:0 o -158 1424 -128 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o -368 744 64 v 0 0 0 a 0 0 0 g -
+body 3:0 o -360 696 64 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 744 -336 -96 v 0 0 0 a 0 180 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o -962 248 -48 v 0 0 0 a 0 0 0 g -
+body 9:0 o -894 258 -48 v 0 0 0 a 0 0 0 g -
+body 10:0 o -656 136 -48 v 0 0 0 a 0 0 0 g -
+body 11:0 o -632 192 -48 v 0 0 0 a 0 0 0 g -
+body 12:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o -1224 40 72 v 0 0 0 a 0 0 0 g -
+body 14:0 o -1232 80 72 v 0 0 0 a 0 90 0 g -
+body 15:0 o -1248 64 72 v 0 0 0 a 0 0 0 g -
+body 16:0 o -1248 40 72 v 0 0 0 a 0 0 0 g -
+body 17:0 o -1248 16 72 v 0 0 0 a 0 0 0 g -
+body 18:0 o -1248 -8 72 v 0 0 0 a 0 0 0 g -
+body 19:0 o -1256 1024 72 v 0 0 0 a 0 0 0 g -
+body 20:0 o -776 944 504 v 0 0 0 a 0 0 0 g -
+body 21:0 o -824 840 480 v 0 0 0 a 0 0 0 g -
+body 22:0 o -792 928 504 v 0 0 0 a 0 0 0 g -
+body 23:0 o 472 936 224 v 0 0 0 a 0 0 0 g -
+body 24:0 o -824 928 504 v 0 0 0 a 0 0 0 g -
+body 25:0 o -848 928 504 v 0 0 0 a 0 0 0 g -
+body 26:0 o -872 928 504 v 0 0 0 a 0 0 0 g -
+body 27:0 o -816 832 536 v 0 0 0 a 0 0 0 g -
+body 28:0 o -776 848 536 v 0 0 0 a 0 0 0 g -
+body 29:0 o -792 832 536 v 0 0 0 a 0 0 0 g -
+body 30:0 o -840 832 536 v 0 0 0 a 0 0 0 g -
+body 31:0 o 480 864 224 v 0 0 0 a 0 0 0 g -
+body 32:0 o -880 832 536 v 0 0 0 a 0 0 0 g -
+body 33:0 o -824 912 472 v 0 0 0 a 0 0 0 g -
+body 34:0 o 64 -352 192 v 0 0 0 a 0 0 0 g -
+body 35:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 32 -240 152 v 0 0 0 a 0 0 0 g -
+body 38:0 o 16 -320 192 v 0 0 0 a 0 0 0 g -
+body 39:0 o 40 -344 192 v 0 0 0 a 0 0 0 g -
+body 40:0 o -8 -312 192 v 0 0 0 a 0 0 0 g -
+body 42:0 o -8 -272 80 v 0 0 0 a 0 0 0 g -
+body 43:0 o 208 -360 80 v 0 0 0 a 0 0 0 g -
+body 44:0 o 184 -416 64 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o -1720 1488 192 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o -976 296 -32.96875 v 0 0 0 a 0 0 0 g -
+body 50:0 o -2080 1472 -48 v 0 0 0 a 0 0 0 g -
+body 51:0 o -2064 1472 -48 v 0 0 0 a 0 0 0 g -
+body 52:0 o -2080 1472 -8 v 0 0 0 a 0 0 0 g -
+body 53:0 o 1 1 1 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:0 o -1608 1936 216 v 0 0 0 a 0 0 0 g -
+body 56:0 o -1808 1936 216 v 0 0 0 a 0 0 0 g -
+body 57:0 o -2064 1544 216 v 0 0 0 a 0 0 0 g -
+body 58:0 o -1408 1936 216 v 0 0 0 a 0 0 0 g -
+body 59:0 o -2056 1560 216 v 0 0 0 a 0 0 0 g -
+body 60:0 o -8 1032 80 v 0 0 0 a 0 0 0 g -
+body 61:0 o 48 688 88 v 0 0 0 a 0 0 0 g -
+body 62:0 o 32 936 64 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 624 88 v 0 0 0 a 0 0 0 g -
+body 64:0 o -168 1168 64 v 0 0 0 a 0 0 0 g -
+body 65:0 o 48 112 88 v 0 0 0 a 0 0 0 g -
+body 66:0 o 1066 860 -224 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 1104 872 -232 v 0 0 0 a 0 0 0 g -
+body 69:0 o 384 -184 -244 v 0 0 0 a 0 0 0 g -
+body 70:0 o -912 1344 56 v 0 0 0 a 0 0 0 g -
+body 71:0 o -904 1064 56 v 0 0 0 a 0 0 0 g -
+body 72:0 o -920 1584 56 v 0 0 0 a 0 0 0 g -
+body 73:0 o -1048 600 104 v 0 0 0 a 0 0 0 g -
+body 74:0 o -1040 480 104 v 0 0 0 a 0 0 0 g -
+body 75:0 o 184 -336 288 v 0 0 0 a 0 0 0 g -
+body 76:0 o 184 -384 288 v 0 0 0 a 0 0 0 g -
+body 77:0 o -1768 1528 72 v 0 0 0 a 0 0 0 g -
+body 78:0 o 40 272 -64 v 0 0 0 a 0 0 0 g -
+body 79:0 o 432 248 -64 v 0 0 0 a 0 0 0 g -
+body 80:0 o -224 1288 -240 v 0 0 0 a 0 0 0 g -
+body 81:0 o -536 1168 -240 v 0 0 0 a 0 0 0 g -
+body 82:0 o -544 1280 -240 v 0 0 0 a 0 0 0 g -
+body 83:0 o -384 1208 -240 v 0 0 0 a 0 0 0 g -
+body 84:0 o -376 -456 -64 v 0 0 0 a 0 0 0 g -
+body 85:0 o -584 -248 -88 v 0 0 0 a 0 0 0 g -
+body 86:0 o 600 -192 -152 v 0 0 0 a 0 0 0 g -
+body 87:0 o 600 0 -152 v 0 0 0 a 0 0 0 g -
+body 88:0 o 1080 56 -152 v 0 0 0 a 0 0 0 g -
+body 89:0 o 1144 -104 40 v 0 0 0 a 0 0 0 g -
+body 90:0 o 592 -128 16 v 0 0 0 a 0 0 0 g -
+body 91:0 o 768 416 40 v 0 0 0 a 0 0 0 g -
+body 92:0 o 1024 424 40 v 0 0 0 a 0 0 0 g -
+body 93:0 o 1024 -224 -152 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1064 -192 40 v 0 0 0 a 0 0 0 g -
+body 95:0 o 496 128 40 v 0 0 0 a 0 0 0 g -
+body 96:0 o 1328 200 8 v 0 0 0 a 0 0 0 g -
+body 97:0 o -1536 1232 176 v 0 0 0 a 0 0 0 g -
+body 98:0 o -1144 1792 32 v 0 0 0 a 0 0 0 g -
+body 99:0 o -672 936 16 v 0 0 0 a 0 0 0 g -
+body 100:0 o -1920 1232 176 v 0 0 0 a 0 0 0 g -
+body 101:0 o -648 600 64 v 0 0 0 a 0 0 0 g -
+body 102:0 o -496 320 64 v 0 0 0 a 0 0 0 g -
+body 103:0 o -632 456 64 v 0 0 0 a 0 0 0 g -
+body 104:0 o 352 488 -240 v 0 0 0 a 0 0 0 g -
+body 105:0 o 752 488 -240 v 0 0 0 a 0 0 0 g -
+body 106:0 o 1048 480 -240 v 0 0 0 a 0 0 0 g -
+body 107:0 o 32 1216 -240 v 0 0 0 a 0 0 0 g -
+body 108:0 o -184 1144 -240 v 0 0 0 a 0 0 0 g -
+body 109:0 o -696 1200 -240 v 0 0 0 a 0 0 0 g -
+body 110:0 o 256 680 -240 v 0 0 0 a 0 0 0 g -
+body 111:0 o 416 608 -160 v 0 0 0 a 0 0 0 g -
+body 112:0 o 384 240 24 v 0 0 0 a 0 0 0 g -
+body 113:0 o 8 304 40 v 0 0 0 a 0 0 0 g -
+body 114:0 o -256 -176 40 v 0 0 0 a 0 0 0 g -
+body 115:0 o 240 -256 40 v 0 0 0 a 0 0 0 g -
+body 116:0 o 600 0 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o 432 -208 -128 v 0 0 0 a 0 0 0 g -
+body 118:0 o 680 -216 -224 v 0 0 0 a 0 0 0 g -
+body 119:0 o 896 376 -224 v 0 0 0 a 0 0 0 g -
+body 120:0 o 1032 -48 -224 v 0 0 0 a 0 0 0 g -
+body 121:0 o 896 128 -224 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 152 -128 v 0 0 0 a 0 0 0 g -
+body 123:0 o 1056 536 -208 v 0 0 0 a 0 0 0 g -
+body 124:0 o 864 544 -208 v 0 0 0 a 0 0 0 g -
+body 125:0 o 608 536 -208 v 0 0 0 a 0 0 0 g -
+body 126:0 o 304 544 -208 v 0 0 0 a 0 0 0 g -
+body 127:0 o 352 864 -208 v 0 0 0 a 0 0 0 g -
+body 128:0 o 352 1248 -208 v 0 0 0 a 0 0 0 g -
+body 129:0 o 680 40 -224 v 0 0 0 a 0 0 0 g -
+body 130:0 o -1208 1512 56 v 0 0 0 a 0 0 0 g -
+body 131:0 o -1288 1864 8 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 134:0 o -384 0 -48 v 0 0 0 a 0 0 0 g -
+body 135:0 o -408 704 -112.96875 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o -1488 1712 -47.96875 v 0 0 0 a 0 0 0 g -
+body 139:0 o -1456 1664 -47.96875 v 0 0 0 a 0 0 0 g -
+body 140:0 o -1312 1648 -664 v 0 0 0 a 87.4684829711914 35.35508346557617 39.815670013427734 g -
+body 141:0 o -1288 1600 -48 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 100 v 0 0 0 a 0 0 0 g -
+body 144:0 o -1644 1584 -16.96875 v 0 0 0 a 0 0 0 g -
+body 145:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 146:0 o -376 1344 108 v 0 0 0 a 0 270 0 g -
+body 147:0 o -184 1344 108 v 0 0 0 a 0 270 0 g -
+body 148:0 o -544 888 -32 v 0 0 0 a 0 0 0 g -
+body 149:0 o -552 848 -32 v 0 0 0 a 0 0 0 g -
+body 150:0 o 348 -348 -83.96875 v 0 0 0 a 0 315 0 g -
+body 151:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 152:0 o 8 800 -120 v 0 0 0 a 0 0 0 g -
+body 153:0 o 24 776 -120 v 0 0 0 a 0 0 0 g -
+body 154:0 o 64 760 -120 v 0 0 0 a 0 0 0 g -
+body 155:0 o -32 808 -120 v 0 0 0 a 0 0 0 g -
+body 156:0 o -1496 1824 -23.96875 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o -614 866 -23.96875 v 0 0 0 a 0 0 0 g -
+body 159:0 o -728 880 -32.96875 v 0 0 0 a 0 0 0 g -
+body 160:0 o -904 937.5999755859375 -23.96875 v 0 0 0 a 0 -90 0 g -
+body 161:0 o -162.39999389648438 840 -103.96875 v 0 0 0 a 0 0 0 g -
+body 162:0 o -288 840 -120 v 0 0 0 a 0 0 0 g -
+body 163:0 o -88 840 -120 v 0 0 0 a 0 0 0 g -
+body 164:0 o 88 736 -120 v 0 0 0 a 0 0 0 g -
+body 165:0 o 80 584 -120 v 0 0 0 a 0 0 0 g -
+body 166:0 o -88 792 -120 v 0 0 0 a 0 0 0 g -
+body 167:0 o -856 584 -23.96875 v 0 0 0 a 0 270 0 g -
+body 168:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 169:0 o 80 808 -127.96875 v 0 0 0 a 0 0 0 g -
+body 170:0 o 88 872 -127.96875 v 0 0 0 a 0 0 0 g -
+body 171:0 o -24 864 -127.96875 v 0 0 0 a 0 0 0 g -
+body 172:0 o 176 -300 288 v 0 0 0 a 0 0 0 g -
+body 173:0 o -384 -544 -88.96875 v 0 0 0 a 0 0 0 g -
+body 174:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 175:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 176:0 o -1768 1296 -23.96875 v 0 0 0 a 0 270 0 g -
+body 177:0 o -1376 1404 -23.96875 v 0 0 0 a 0 90 0 g -
+body 178:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 179:0 o -1248 1674.39990234375 -23.96875 v 0 0 0 a 0 270 0 g -
+body 180:0 o -1025 1598 -23.96875 v 0 0 0 a 0 0 0 g -
+body 181:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 182:0 o 1048 224 -167.96875 v 0 0 0 a 0 180 0 g -
+body 183:0 o 764.8469848632812 59.15290069580078 -167.96875 v 0 0 0 a 0 135 0 g -
+body 184:0 o 736 -48 -184 v 0 0 0 a 0 0 0 g -
+body 185:0 o 856 -48 -184 v 0 0 0 a 0 0 0 g -
+body 186:0 o 728 80 -184 v 0 0 0 a 0 0 0 g -
+body 187:0 o 640 144 -48 v 0 0 0 a 0 0 0 g -
+body 188:0 o 640 -32 -48 v 0 0 0 a 0 0 0 g -
+body 189:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 190:0 o 1088 278.8000183105469 -31.96875 v 0 0 0 a 0 329.9853515625 0 g -
+body 191:0 o 1088 408 -40 v 0 0 0 a 0 0 0 g -
+body 192:0 o 1088 256 -40 v 0 0 0 a 0 0 0 g -
+body 193:0 o -21.660301208496094 576.8485717773438 -103.96875 v 0 0 0 a 0 0 0 g -
+body 194:0 o -665.5999755859375 632 -23.96875 v 0 0 0 a 0 0 0 g -
+body 195:0 o -741.5999755859375 336 -23.96875 v 0 0 0 a 0 180 0 g -
+body 196:0 o 136 40 0.03125 v 0 0 0 a 0 0 0 g -
+body 197:0 o 184 -24 0.03125 v 0 0 0 a 0 0 0 g -
+body 198:0 o 1024 -64 -40 v 0 0 0 a 0 0 0 g -
+body 199:0 o 728 -72 -40 v 0 0 0 a 0 0 0 g -
+body 200:0 o -1960 1513 120.03125 v 0 0 0 a 0 90 0 g -
+body 201:0 o -1968 1792 104 v 0 0 0 a 0 0 0 g -
+body 202:0 o -1968 1408 104 v 0 0 0 a 0 0 0 g -
+body 203:0 o -1464 1280 104 v 0 0 0 a 0 0 0 g -
+body 204:0 o -1856 1280 104 v 0 0 0 a 0 0 0 g -
+body 205:0 o -1248 1816 -32 v 0 0 0 a 0 0 0 g -
+body 206:0 o -1248 1560 -32 v 0 0 0 a 0 0 0 g -
+body 207:0 o -904 1416 -32 v 0 0 0 a 0 0 0 g -
+body 208:0 o -904 856 -32 v 0 0 0 a 0 0 0 g -
+body 209:0 o -32 560 -120 v 0 0 0 a 0 0 0 g -
+body 210:0 o -120 576 -120 v 0 0 0 a 0 0 0 g -
+body 211:0 o -144 736 -120 v 0 0 0 a 0 0 0 g -
+body 212:0 o -784 776 -40 v 0 0 0 a 0 0 0 g -
+body 213:0 o -584 776 -40 v 0 0 0 a 0 0 0 g -
+body 214:0 o -584 632 -40 v 0 0 0 a 0 0 0 g -
+body 215:0 o -784 632 -40 v 0 0 0 a 0 0 0 g -
+body 216:0 o -576 336 -40 v 0 0 0 a 0 0 0 g -
+body 217:0 o -780 336 -40 v 0 0 0 a 0 0 0 g -
+body 218:0 o 416 608 -72 v 0 0 0 a 0 360 0 g -
+body 219:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 220:0 o 1060 -140 -191.96875 v 0 0 0 a 0 0 0 g -
+body 221:0 o 950 -198 -191.96875 v 0 0 0 a 0 0 0 g -
+body 222:0 o 52 -140 208 v 0 0 0 a 0 0 0 g -
+body 223:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 224:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 225:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 226:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 227:0 o 128 -320 32 v 0 0 0 a 0 135 0 g -
+body 228:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 229:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 230:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 231:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 232:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 233:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 234:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 235:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 236:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 237:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 238:0 o -226 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 239:0 o -260 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 240:0 o -192 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 241:0 o -440 0 48 v 0 0 0 a 0 0 0 g -
+body 242:0 o -424 -12 48 v 0 0 0 a 0 0 0 g -
+body 243:0 o -456 -12 48 v 0 0 0 a 0 0 0 g -
+body 244:0 o -428 -28 8 v 0 0 0 a 0 0 0 g -
+body 245:0 o -408 -40 8 v 0 0 0 a 0 0 0 g -
+body 246:0 o -460 -36 8 v 0 0 0 a 0 0 0 g -
+body 247:0 o -348 -180 0 v 0 0 0 a 0 0 0 g -
+body 248:0 o -384 -180 0 v 0 0 0 a 0 0 0 g -
+body 249:0 o -360 -208 0 v 0 0 0 a 0 0 0 g -
+body 250:0 o 8 -72 232 v 0 0 0 a 0 0 0 g -
+body 251:0 o 32 -72 232 v 0 0 0 a 0 0 0 g -
+body 252:0 o 20 -56 244 v 0 0 0 a 0 0 0 g -
+body 253:0 o 92 -424 72 v 0 0 0 a 0 0 0 g -
+body 254:0 o 60 -424 72 v 0 0 0 a 0 0 0 g -
+body 255:0 o 76 -440 72 v 0 0 0 a 0 0 0 g -
+body 256:0 o 752 -216 -96 v 0 0 0 a 0 0 0 g -
+body 257:0 o 728 112 -96 v 0 0 0 a 0 0 0 g -
+body 258:0 o -352 728 120 v 0 0 0 a 0 0 0 g -
+body 259:0 o -48 0 104 v 0 0 0 a 0 0 0 g -
+body 260:0 o -192 -32 264 v 0 0 0 a 0 0 0 g -
+body 261:0 o -184 -128 120 v 0 0 0 a 0 0 0 g -
+body 262:0 o -96 -176 88 v 0 0 0 a 0 0 0 g -
+body 263:0 o -96 16 104 v 0 0 0 a 0 0 0 g -
+body 264:0 o 848 -208 32 v 0 0 0 a 0 0 0 g -
+body 265:0 o 800 -240 32 v 0 0 0 a 0 0 0 g -
+body 266:0 o 824 -296 32 v 0 0 0 a 0 0 0 g -
+body 267:0 o -648 112 40 v 0 0 0 a 0 0 0 g -
+body 268:0 o -672 72 40 v 0 0 0 a 0 0 0 g -
+body 269:0 o -632 80 -8 v 0 0 0 a 0 0 0 g -
+body 270:0 o -1280 56 72 v 0 0 0 a 0 0 0 g -
+body 271:1 o 235.875 -219.125 24.125 v -0.125 205.875 0 a 0 69.9993896484375 -2.821316719055176 g 229
+body 272:0 o -880 896 472 v 0 0 0 a 0 0 0 g -
+body 273:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 274:0 o -880 856 472 v 0 0 0 a 0 0 0 g -
+body 276:0 o 64 -376 192 v 0 0 0 a 0 0 0 g -
+body 277:0 o 16 -352 192 v 0 0 0 a 0 0 0 g -
+body 278:0 o 40 -368 192 v 0 0 0 a 0 0 0 g -
+body 279:0 o -8 -336 192 v 0 0 0 a 0 0 0 g -
+body 280:0 o 168 -416 48 v 0 0 0 a 0 0 0 g -
+body 281:0 o 88 710 -32 v 0 0 0 a 5 145 0 g -
+body 282:0 o -928 264 -32.96875 v 0 0 0 a 0 0 0 g -
+body 283:0 o -2156 1536 -32.96875 v 0 0 0 a 0 0 0 g -
+body 284:0 o -2156 1492 -32.96875 v 0 0 0 a 0 0 0 g -
+body 285:0 o -2156 1580 -32.96875 v 0 0 0 a 0 0 0 g -
+body 286:0 o -2008 1504 64 v 0 0 0 a 0 0 0 g -
+body 287:0 o -1584 1936 216 v 0 0 0 a 0 0 0 g -
+body 288:0 o -1784 1936 216 v 0 0 0 a 0 0 0 g -
+body 289:0 o -2064 1520 216 v 0 0 0 a 0 0 0 g -
+body 290:0 o -1384 1936 216 v 0 0 0 a 0 0 0 g -
+body 291:0 o -2056 1536 216 v 0 0 0 a 0 0 0 g -
+body 292:0 o 16 1032 80 v 0 0 0 a 0 0 0 g -
+body 293:0 o 72 688 88 v 0 0 0 a 0 0 0 g -
+body 294:0 o 40 896 104 v 0 0 0 a 0 0 0 g -
+body 295:0 o 8 584 104 v 0 0 0 a 0 0 0 g -
+body 296:0 o -160 1128 104 v 0 0 0 a 0 0 0 g -
+body 297:0 o 1056 888 -216.96875 v 0 0 0 a 0 0 0 g -
+body 298:0 o 1088 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 299:0 o 1048 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 300:0 o 1128 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 301:0 o 352 -224 -228.96875 v 0 0 0 a 0 0 0 g -
+body 302:0 o -368 680 -112 v 0 0 0 a 0 0 0 g -
+body 303:0 o -1644 1624 -16.96875 v 0 0 0 a 0 0 0 g -
+body 304:0 o 32 736 -112.96875 v 0 0 0 a 0 0 0 g -
+body 305:0 o -368 704 -112 v 0 0 0 a 0 0 0 g -
+body 306:0 o 88 -256 40 v 0 0 0 a 0 0 0 g -
+body 307:0 o -384 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 308:0 o -1040 496 104 v 0 0 0 a 0 0 0 g -
+body 309:0 o -1048 624 104 v 0 0 0 a 0 0 0 g -
+body 310:0 o 200 -336 288 v 0 0 0 a 0 0 0 g -
+body 311:0 o 168 -384 288 v 0 0 0 a 0 0 0 g -
+body 312:0 o 1056 384 -176.96875 v 0 0 0 a 0 0 0 g -
+body 313:0 o 1056 344 -176.96875 v 0 0 0 a 0 0 0 g -
+body 314:0 o -1176 1520 -32.96875 v 0 0 0 a 0 0 0 g -
+body 315:0 o 84 -300 44 v 0 0 0 a 0 0 0 g -
+body 316:0 o -336 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 317:0 o 852 -240 4 v 0 0 0 a 0 0 0 g -
+body 318:0 o 1348 292 4 v 0 0 0 a 0 0 0 g -
+body 319:0 o 716 -240 4 v 0 0 0 a 0 0 0 g -
+body 320:0 o 752 -272 28 v 0 0 0 a 0 0 0 g -
+body 321:0 o 856 -268 44 v 0 0 0 a 0 0 0 g -
+body 322:0 o 1372 308 4 v 0 0 0 a 0 0 0 g -
+body 323:0 o -366 -162 -2 v 0 0 0 a 0 0 0 g -
+body 324:0 o -360 -210 -2 v 0 0 0 a 0 0 0 g -
+body 325:0 o -460 -38 8 v 0 0 0 a 0 0 0 g -
+body 326:0 o -428 -56 8 v 0 0 0 a 0 0 0 g -
+body 327:0 o 56 -420 66 v 0 0 0 a 0 0 0 g -
+body 328:0 o 76 -448 66 v 0 0 0 a 0 0 0 g -
+body 329:0 o 104 -408 264 v 0 0 0 a 0 0 0 g -
+body 330:0 o 64 -368 264 v 0 0 0 a 0 0 0 g -
+body 331:0 o 1184 416 -40.96875 v 0 0 0 a 0 0 0 g -
+body 332:0 o 1184 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 333:0 o 1128 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 334:0 o 928 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 335:0 o 992 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 336:0 o 800 -96 -176.96875 v 0 0 0 a 0 0 0 g -
+body 337:0 o -728 845 -32.96875 v 0 0 0 a 0 0 0 g -
+body 338:0 o -1152 1432 143.03125 v 0 0 0 a 0 0 0 g -
+body 339:0 o -360 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 340:0 o -320 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 341:0 o -536 424 -32.96875 v 0 0 0 a 0 0 0 g -
+body 342:0 o -1768 1536 128 v 0 0 0 a 0 0 0 g -
+body 343:0 o 124 -296 264 v 0 0 0 a 0 0 0 g -
+body 344:0 o -1744 1576 48 v 0 0 0 a 0 0 0 g -
+body 345:0 o 20 -56 248 v 0 0 0 a 0 0 0 g -
+body 346:0 o -412 32 104 v 0 0 0 a 0 0 0 g -
+body 347:0 o -456 -12 52 v 0 0 0 a 0 0 0 g -
+body 348:0 o 1280 296 16 v 0 0 0 a 0 0 0 g -
+body 349:0 o 1136 248 72 v 0 0 0 a 0 0 0 g -
+body 350:0 o 1272 272 72 v 0 0 0 a 0 0 0 g -
+body 351:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 352:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 353:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 354:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 355:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 356:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 357:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 358:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 359:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+inventory 271 
+player body o 235.875 -219.125 24.125 v -0.125 205.875 0 a 0 69.9993896484375 -2.821316719055176 min -16 -16 -24 max 16 16 32
+player view o 235.875 -219.125 24.125 a 0 69.9993896484375 0 h 22.200820922851562
+player combat -
+player inventory 
+presentation q2 7147
+checkpoint world:actors world:source-slots 1 ac8c890da2af1960 canonical 657f8de0c52f73fc
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q2:official q2:classic-native-original 1 d0e80eaf91d796cb canonical 3ffced347fc86c10
+checkpoint q2:official world:simulation 11 99b594b5ad921dc8 canonical b188b42843cee8d6
+checkpoint-image f5cf7833f374945d canonical fbe920c00d62dde9 b05e586f4172cad0
+== frame 100
+source q2-native
+time 9.99999999999998
+frame-context 100 seconds:9.99999999999998 seconds:0.1 frame-exit
+actors 407
+actor-kind q2:official q2-native:edict 407
+actor q2-native:edict -1025 1598 -23.96875
+actor q2-native:edict -1040 480 104
+actor q2-native:edict -1040 496 104
+actor q2-native:edict -1048 600 104
+actor q2-native:edict -1048 624 104
+actor q2-native:edict -106.9404296875 273.572265625 -63.96875
+actor q2-native:edict -110.01748657226562 277.91656494140625 -63.96875
+actor q2-native:edict -111.46249389648438 296.4441833496094 -63.96875
+actor q2-native:edict -1144 1792 32
+actor q2-native:edict -1152 1432 143.03125
+actor q2-native:edict -1176 1520 -32.96875
+actor q2-native:edict -120 576 -120
+actor q2-native:edict -1208 1512 56
+actor q2-native:edict -1224 40 72
+actor q2-native:edict -1232 32 72
+actor q2-native:edict -1248 -8 72
+actor q2-native:edict -1248 1560 -32
+actor q2-native:edict -1248 1580.7998046875 -23.96875
+actor q2-native:edict -1248 16 72
+actor q2-native:edict -1248 1816 -32
+actor q2-native:edict -1248 40 72
+actor q2-native:edict -1248 64 72
+actor q2-native:edict -1256 1024 72
+actor q2-native:edict -126.49339294433594 315.03814697265625 -63.96875
+actor q2-native:edict -1280 56 72
+actor q2-native:edict -1288 1600 -48
+actor q2-native:edict -1288 1864 8
+actor q2-native:edict -1312 1648 -18656
+actor q2-native:edict -1376 1404 -23.96875
+actor q2-native:edict -1384 1936 216
+actor q2-native:edict -1408 1936 216
+actor q2-native:edict -144 736 -120
+actor q2-native:edict -1456 1664 -47.96875
+actor q2-native:edict -1464 1280 104
+actor q2-native:edict -1488 1712 -47.96875
+actor q2-native:edict -1496 1824 -23.96875
+actor q2-native:edict -1536 1232 176
+actor q2-native:edict -158 1424 -128
+actor q2-native:edict -1584 1936 216
+actor q2-native:edict -160 1128 104
+actor q2-native:edict -1608 1936 216
+actor q2-native:edict -1644 1584 -16.96875
+actor q2-native:edict -1644 1624 -16.96875
+actor q2-native:edict -168 1168 64
+actor q2-native:edict -1720 1488 192
+actor q2-native:edict -1744 1576 48
+actor q2-native:edict -1768 1296 -23.96875
+actor q2-native:edict -1768 1528 72
+actor q2-native:edict -1768 1536 128
+actor q2-native:edict -1784 1936 216
+actor q2-native:edict -1808 1936 216
+actor q2-native:edict -184 -128 120
+actor q2-native:edict -184 1144 -240
+actor q2-native:edict -184 1344 108
+actor q2-native:edict -1856 1280 104
+actor q2-native:edict -192 -32 264
+actor q2-native:edict -192 1424 -112.96875
+actor q2-native:edict -1920 1232 176
+actor q2-native:edict -1960.06982421875 1616.0006103515625 120.03125
+actor q2-native:edict -1968 1408 104
+actor q2-native:edict -1968 1792 104
+actor q2-native:edict -2008 1504 64
+actor q2-native:edict -2056 1536 216
+actor q2-native:edict -2056 1560 216
+actor q2-native:edict -2064 1472 -48
+actor q2-native:edict -2064 1520 216
+actor q2-native:edict -2064 1544 216
+actor q2-native:edict -2080 1472 -48
+actor q2-native:edict -2080 1472 -8
+actor q2-native:edict -209.19996643066406 840 -103.96875
+actor q2-native:edict -2156 1492 -32.96875
+actor q2-native:edict -2156 1536 -32.96875
+actor q2-native:edict -2156 1580 -32.96875
+actor q2-native:edict -224 1288 -240
+actor q2-native:edict -226 1424 -112.96875
+actor q2-native:edict -24 864 -127.96875
+actor q2-native:edict -256 -176 40
+actor q2-native:edict -26.709524154663086 136.13851928710938 16.03125
+actor q2-native:edict -260 1424 -112.96875
+actor q2-native:edict -288 840 -120
+actor q2-native:edict -32 560 -120
+actor q2-native:edict -32 808 -120
+actor q2-native:edict -320 576 -112.96875
+actor q2-native:edict -331.731201171875 -27.037696838378906 -23.96875
+actor q2-native:edict -336 80 -32.96875
+actor q2-native:edict -34.641929626464844 300.4481201171875 -63.96875
+actor q2-native:edict -348 -180 0
+actor q2-native:edict -352 728 120
+actor q2-native:edict -360 -208 0
+actor q2-native:edict -360 -210 -2
+actor q2-native:edict -360 576 -112.96875
+actor q2-native:edict -360 696 64
+actor q2-native:edict -366 -162 -2
+actor q2-native:edict -368 680 -112
+actor q2-native:edict -368 704 -112
+actor q2-native:edict -368 744 64
+actor q2-native:edict -374.8341064453125 -13.44168472290039 -47.96875
+actor q2-native:edict -376 -456 -64
+actor q2-native:edict -376 1344 108
+actor q2-native:edict -384 -180 0
+actor q2-native:edict -384 -544 -88.96875
+actor q2-native:edict -384 0 -48
+actor q2-native:edict -384 1208 -240
+actor q2-native:edict -384 80 -32.96875
+actor q2-native:edict -408 -40 8
+actor q2-native:edict -408 704 -112.96875
+actor q2-native:edict -412 32 104
+actor q2-native:edict -424 -12 48
+actor q2-native:edict -428 -28 8
+actor q2-native:edict -428 -56 8
+actor q2-native:edict -440 0 48
+actor q2-native:edict -456 -12 48
+actor q2-native:edict -456 -12 52
+actor q2-native:edict -460 -36 8
+actor q2-native:edict -460 -38 8
+actor q2-native:edict -48 0 104
+actor q2-native:edict -48.783233642578125 298.7657165527344 -63.96875
+actor q2-native:edict -496 320 64
+actor q2-native:edict -536 1168 -240
+actor q2-native:edict -536 424 -32.96875
+actor q2-native:edict -544 1280 -240
+actor q2-native:edict -544 888 -32
+actor q2-native:edict -552 848 -32
+actor q2-native:edict -576 336 -40
+actor q2-native:edict -58.1507568359375 144.4093017578125 16.03125
+actor q2-native:edict -58.279823303222656 189.6021728515625 0.03125
+actor q2-native:edict -58.653846740722656 261.3587341308594 -63.96875
+actor q2-native:edict -584 -248 -88
+actor q2-native:edict -584 632 -40
+actor q2-native:edict -584 776 -40
+actor q2-native:edict -614 866 -23.96875
+actor q2-native:edict -619.0774536132812 775.1055908203125 -23.96875
+actor q2-native:edict -632 192 -48
+actor q2-native:edict -632 456 64
+actor q2-native:edict -632 80 -8
+actor q2-native:edict -648 112 40
+actor q2-native:edict -648 600 64
+actor q2-native:edict -656 136 -48
+actor q2-native:edict -67.18820190429688 284.6575622558594 -63.96875
+actor q2-native:edict -672 72 40
+actor q2-native:edict -672 936 16
+actor q2-native:edict -68.8854751586914 295.4245300292969 -63.96875
+actor q2-native:edict -696 1200 -240
+actor q2-native:edict -71.77030944824219 154.832275390625 -63.96875
+actor q2-native:edict -728 845 -32.96875
+actor q2-native:edict -728 880 -32.96875
+actor q2-native:edict -77.31529998779297 176.44947814941406 -63.96875
+actor q2-native:edict -780 336 -40
+actor q2-native:edict -784 632 -40
+actor q2-native:edict -784 776 -40
+actor q2-native:edict -792 832 536
+actor q2-native:edict -792 928 504
+actor q2-native:edict -8 -272 80
+actor q2-native:edict -8 -312 192
+actor q2-native:edict -8 -336 192
+actor q2-native:edict -8 1032 80
+actor q2-native:edict -81.22602844238281 102.25566864013672 0.03125
+actor q2-native:edict -816 832 536
+actor q2-native:edict -82.31742858886719 312.2607421875 -63.96875
+actor q2-native:edict -824 840 480
+actor q2-native:edict -824 848 536
+actor q2-native:edict -824 912 472
+actor q2-native:edict -824 928 504
+actor q2-native:edict -832 944 504
+actor q2-native:edict -840 832 536
+actor q2-native:edict -848 928 504
+actor q2-native:edict -856 584 -23.96875
+actor q2-native:edict -872 928 504
+actor q2-native:edict -88 792 -120
+actor q2-native:edict -88 840 -120
+actor q2-native:edict -880 832 536
+actor q2-native:edict -880 856 472
+actor q2-native:edict -880 896 472
+actor q2-native:edict -894 258 -48
+actor q2-native:edict -9.308098793029785 225.6917724609375 -63.96875
+actor q2-native:edict -904 1051.5999755859375 -23.96875
+actor q2-native:edict -904 1064 56
+actor q2-native:edict -904 1416 -32
+actor q2-native:edict -904 856 -32
+actor q2-native:edict -912 1344 56
+actor q2-native:edict -920 1584 56
+actor q2-native:edict -928 264 -32.96875
+actor q2-native:edict -96 -176 88
+actor q2-native:edict -96 16 104
+actor q2-native:edict -962 248 -48
+actor q2-native:edict -976 296 -32.96875
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 0 0
+actor q2-native:edict 0 624 88
+actor q2-native:edict 1 1 1
+actor q2-native:edict 10.766141891479492 292.7181091308594 -63.96875
+actor q2-native:edict 1024 -224 -152
+actor q2-native:edict 1024 -64 -40
+actor q2-native:edict 1024 424 40
+actor q2-native:edict 1032 -48 -224
+actor q2-native:edict 104 -408 264
+actor q2-native:edict 1048 224 -167.96875
+actor q2-native:edict 1048 480 -240
+actor q2-native:edict 1048 936 -216.96875
+actor q2-native:edict 1056 344 -176.96875
+actor q2-native:edict 1056 384 -176.96875
+actor q2-native:edict 1056 536 -208
+actor q2-native:edict 1056 888 -216.96875
+actor q2-native:edict 1060 -140 -191.96875
+actor q2-native:edict 1064 -192 40
+actor q2-native:edict 1066 860 -224
+actor q2-native:edict 1080 56 -152
+actor q2-native:edict 1088 256 -40
+actor q2-native:edict 1088 370.0000305175781 -31.96875
+actor q2-native:edict 1088 408 -40
+actor q2-native:edict 1088 936 -216.96875
+actor q2-native:edict 1104 872 -232
+actor q2-native:edict 1128 -96 -40.96875
+actor q2-native:edict 1128 936 -216.96875
+actor q2-native:edict 1136 248 72
+actor q2-native:edict 1144 -104 40
+actor q2-native:edict 1184 -96 -40.96875
+actor q2-native:edict 1184 416 -40.96875
+actor q2-native:edict 121.02693939208984 53.85820007324219 0.03125
+actor q2-native:edict 124 -296 264
+actor q2-native:edict 1272 272 72
+actor q2-native:edict 128 -320 32
+actor q2-native:edict 1280 296 16
+actor q2-native:edict 1328 200 8
+actor q2-native:edict 1348 292 4
+actor q2-native:edict 135.09552001953125 11.688940048217773 0.03125
+actor q2-native:edict 1372 308 4
+actor q2-native:edict 140.375 -338.375 24.25
+actor q2-native:edict 152.7252655029297 -54.9501838684082 0.03125
+actor q2-native:edict 158.1258544921875 -356.4001770019531 38.25
+actor q2-native:edict 159.4701690673828 21.519832611083984 0.03125
+actor q2-native:edict 159.50225830078125 -357.10162353515625 38.25
+actor q2-native:edict 16 -320 192
+actor q2-native:edict 16 -352 192
+actor q2-native:edict 16 1032 80
+actor q2-native:edict 163.58302307128906 90.31802368164062 0.03125
+actor q2-native:edict 164.11117553710938 287.28179931640625 -2005.256103515625
+actor q2-native:edict 164.2640380859375 -60.078826904296875 0.03125
+actor q2-native:edict 164.60501098632812 220.19337463378906 -2361.31494140625
+actor q2-native:edict 168 -384 288
+actor q2-native:edict 168 -416 48
+actor q2-native:edict 17.603315353393555 138.40037536621094 16.03125
+actor q2-native:edict 170.35134887695312 21.61336326599121 0.03125
+actor q2-native:edict 172.6602020263672 5.0743842124938965 0.03125
+actor q2-native:edict 176 -300 288
+actor q2-native:edict 179.8548583984375 -41.41114044189453 0.03125
+actor q2-native:edict 184 -336 288
+actor q2-native:edict 184 -384 288
+actor q2-native:edict 184 -416 64
+actor q2-native:edict 186.1756134033203 -7.7179083824157715 0.031250059604644775
+actor q2-native:edict 197.02125549316406 -76.1729736328125 0.03125
+actor q2-native:edict 20 -56 244
+actor q2-native:edict 20 -56 248
+actor q2-native:edict 200 -336 288
+actor q2-native:edict 208 -360 80
+actor q2-native:edict 208.5644989013672 -63.71702575683594 0.03125
+actor q2-native:edict 212.9337158203125 226.3116912841797 -2158.464599609375
+actor q2-native:edict 225.6318359375 1.3499605655670166 0.03125
+actor q2-native:edict 232.0716552734375 21.390113830566406 0.03125
+actor q2-native:edict 232.70208740234375 -13.170232772827148 0.03125
+actor q2-native:edict 24 776 -120
+actor q2-native:edict 240 -256 40
+actor q2-native:edict 256 680 -240
+actor q2-native:edict 258.1374816894531 -206.95205688476562 -243.96875
+actor q2-native:edict 304 544 -208
+actor q2-native:edict 32 -240 152
+actor q2-native:edict 32 -72 232
+actor q2-native:edict 32 1216 -240
+actor q2-native:edict 32 736 -112.96875
+actor q2-native:edict 32 936 64
+actor q2-native:edict 32.803131103515625 -32.163333892822266 -2161.6845703125
+actor q2-native:edict 33.42680358886719 227.9572296142578 -2108.414794921875
+actor q2-native:edict 348 -348 -83.96875
+actor q2-native:edict 352 -224 -228.96875
+actor q2-native:edict 352 1248 -208
+actor q2-native:edict 352 488 -240
+actor q2-native:edict 352 864 -208
+actor q2-native:edict 384 -184 -244
+actor q2-native:edict 384 240 24
+actor q2-native:edict 40 -344 192
+actor q2-native:edict 40 -368 192
+actor q2-native:edict 40 272 -64
+actor q2-native:edict 40 896 104
+actor q2-native:edict 41.20409393310547 -175.50181579589844 -1984.294921875
+actor q2-native:edict 416 608 -160
+actor q2-native:edict 416 608 -72
+actor q2-native:edict 424 152 -128
+actor q2-native:edict 432 -208 -128
+actor q2-native:edict 432 248 -64
+actor q2-native:edict 472 936 224
+actor q2-native:edict 48 112 88
+actor q2-native:edict 48 688 88
+actor q2-native:edict 480 864 224
+actor q2-native:edict 496 128 40
+actor q2-native:edict 50.95677185058594 145.51084899902344 16.03125
+actor q2-native:edict 51.8073844909668 -107.4989013671875 -2017.71142578125
+actor q2-native:edict 52 -140 208
+actor q2-native:edict 56 -420 66
+actor q2-native:edict 592 -128 16
+actor q2-native:edict 60 -424 72
+actor q2-native:edict 600 -192 -152
+actor q2-native:edict 600 0 -152
+actor q2-native:edict 600 0 40
+actor q2-native:edict 608 536 -208
+actor q2-native:edict 64 -352 192
+actor q2-native:edict 64 -368 264
+actor q2-native:edict 64 -376 192
+actor q2-native:edict 64 760 -120
+actor q2-native:edict 640 -32 -48
+actor q2-native:edict 640 144 -48
+actor q2-native:edict 66.20861053466797 207.9173126220703 -63.96875
+actor q2-native:edict 66.61178588867188 34.70507049560547 -2068.271484375
+actor q2-native:edict 680 -216 -224
+actor q2-native:edict 680 40 -224
+actor q2-native:edict 70.87920379638672 58.125160217285156 0.03125
+actor q2-native:edict 71.30091094970703 0.6420480608940125 0.031249940395355225
+actor q2-native:edict 716 -240 4
+actor q2-native:edict 72 688 88
+actor q2-native:edict 728 -72 -40
+actor q2-native:edict 728 112 -96
+actor q2-native:edict 728 80 -184
+actor q2-native:edict 736 -48 -184
+actor q2-native:edict 744 -336 -96
+actor q2-native:edict 75.77445220947266 726.3834228515625 -103.96875
+actor q2-native:edict 752 -216 -96
+actor q2-native:edict 752 -272 28
+actor q2-native:edict 752 488 -240
+actor q2-native:edict 76 -440 72
+actor q2-native:edict 76 -448 66
+actor q2-native:edict 768 416 40
+actor q2-native:edict 8 -72 232
+actor q2-native:edict 8 304 40
+actor q2-native:edict 8 584 104
+actor q2-native:edict 8 800 -120
+actor q2-native:edict 80 584 -120
+actor q2-native:edict 80 808 -127.96875
+actor q2-native:edict 800 -240 32
+actor q2-native:edict 800 -96 -176.96875
+actor q2-native:edict 819.0209350585938 -33.45021057128906 -167.96875
+actor q2-native:edict 824 -296 32
+actor q2-native:edict 84 -300 44
+actor q2-native:edict 848 -208 32
+actor q2-native:edict 852 -240 4
+actor q2-native:edict 856 -268 44
+actor q2-native:edict 856 -48 -184
+actor q2-native:edict 864 544 -208
+actor q2-native:edict 88 -256 40
+actor q2-native:edict 88 710 -32
+actor q2-native:edict 88 736 -120
+actor q2-native:edict 88 872 -127.96875
+actor q2-native:edict 896 128 -224
+actor q2-native:edict 896 376 -224
+actor q2-native:edict 90.08882141113281 196.1832275390625 -2498.0517578125
+actor q2-native:edict 91.39982604980469 -28.562633514404297 0.03125
+actor q2-native:edict 92 -424 72
+actor q2-native:edict 92.07428741455078 62.43772888183594 0.03125
+actor q2-native:edict 928 24 -176.96875
+actor q2-native:edict 950 -198 -191.96875
+actor q2-native:edict 98.51992797851562 82.59693908691406 0.03125011920928955
+actor q2-native:edict 992 24 -176.96875
+bodies 407
+body 0:0 o -158 1424 -128 v 0 0 0 a 0 0 0 g -
+body 1:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 2:0 o -368 744 64 v 0 0 0 a 0 0 0 g -
+body 3:0 o -360 696 64 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 744 -336 -96 v 0 0 0 a 0 180 0 g -
+body 6:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 7:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 8:0 o -962 248 -48 v 0 0 0 a 0 0 0 g -
+body 9:0 o -894 258 -48 v 0 0 0 a 0 0 0 g -
+body 10:0 o -656 136 -48 v 0 0 0 a 0 0 0 g -
+body 11:0 o -632 192 -48 v 0 0 0 a 0 0 0 g -
+body 12:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o -1224 40 72 v 0 0 0 a 0 0 0 g -
+body 14:0 o -1232 32 72 v 0 0 0 a 0 90 0 g -
+body 15:0 o -1248 64 72 v 0 0 0 a 0 0 0 g -
+body 16:0 o -1248 40 72 v 0 0 0 a 0 0 0 g -
+body 17:0 o -1248 16 72 v 0 0 0 a 0 0 0 g -
+body 18:0 o -1248 -8 72 v 0 0 0 a 0 0 0 g -
+body 19:0 o -1256 1024 72 v 0 0 0 a 0 0 0 g -
+body 20:0 o -832 944 504 v 0 0 0 a 0 0 0 g -
+body 21:0 o -824 840 480 v 0 0 0 a 0 0 0 g -
+body 22:0 o -792 928 504 v 0 0 0 a 0 0 0 g -
+body 23:0 o 472 936 224 v 0 0 0 a 0 0 0 g -
+body 24:0 o -824 928 504 v 0 0 0 a 0 0 0 g -
+body 25:0 o -848 928 504 v 0 0 0 a 0 0 0 g -
+body 26:0 o -872 928 504 v 0 0 0 a 0 0 0 g -
+body 27:0 o -816 832 536 v 0 0 0 a 0 0 0 g -
+body 28:0 o -824 848 536 v 0 0 0 a 0 0 0 g -
+body 29:0 o -792 832 536 v 0 0 0 a 0 0 0 g -
+body 30:0 o -840 832 536 v 0 0 0 a 0 0 0 g -
+body 31:0 o 480 864 224 v 0 0 0 a 0 0 0 g -
+body 32:0 o -880 832 536 v 0 0 0 a 0 0 0 g -
+body 33:0 o -824 912 472 v 0 0 0 a 0 0 0 g -
+body 34:0 o 64 -352 192 v 0 0 0 a 0 0 0 g -
+body 35:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:0 o 32 -240 152 v 0 0 0 a 0 0 0 g -
+body 38:0 o 16 -320 192 v 0 0 0 a 0 0 0 g -
+body 39:0 o 40 -344 192 v 0 0 0 a 0 0 0 g -
+body 40:0 o -8 -312 192 v 0 0 0 a 0 0 0 g -
+body 41:11 o 225.6318359375 1.3499605655670166 0.03125 v 0 0 0 a 341.37579345703125 155.8385009765625 154.09527587890625 g -
+body 42:0 o -8 -272 80 v 0 0 0 a 0 0 0 g -
+body 43:0 o 208 -360 80 v 0 0 0 a 0 0 0 g -
+body 44:0 o 184 -416 64 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o -1720 1488 192 v 0 0 0 a 0 0 0 g -
+body 48:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:0 o -976 296 -32.96875 v 0 0 0 a 0 0 0 g -
+body 50:0 o -2080 1472 -48 v 0 0 0 a 0 0 0 g -
+body 51:0 o -2064 1472 -48 v 0 0 0 a 0 0 0 g -
+body 52:0 o -2080 1472 -8 v 0 0 0 a 0 0 0 g -
+body 53:0 o 1 1 1 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:0 o -1608 1936 216 v 0 0 0 a 0 0 0 g -
+body 56:0 o -1808 1936 216 v 0 0 0 a 0 0 0 g -
+body 57:0 o -2064 1544 216 v 0 0 0 a 0 0 0 g -
+body 58:0 o -1408 1936 216 v 0 0 0 a 0 0 0 g -
+body 59:0 o -2056 1560 216 v 0 0 0 a 0 0 0 g -
+body 60:0 o -8 1032 80 v 0 0 0 a 0 0 0 g -
+body 61:0 o 48 688 88 v 0 0 0 a 0 0 0 g -
+body 62:0 o 32 936 64 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 624 88 v 0 0 0 a 0 0 0 g -
+body 64:0 o -168 1168 64 v 0 0 0 a 0 0 0 g -
+body 65:0 o 48 112 88 v 0 0 0 a 0 0 0 g -
+body 66:0 o 1066 860 -224 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 1104 872 -232 v 0 0 0 a 0 0 0 g -
+body 69:0 o 384 -184 -244 v 0 0 0 a 0 0 0 g -
+body 70:0 o -912 1344 56 v 0 0 0 a 0 0 0 g -
+body 71:0 o -904 1064 56 v 0 0 0 a 0 0 0 g -
+body 72:0 o -920 1584 56 v 0 0 0 a 0 0 0 g -
+body 73:0 o -1048 600 104 v 0 0 0 a 0 0 0 g -
+body 74:0 o -1040 480 104 v 0 0 0 a 0 0 0 g -
+body 75:0 o 184 -336 288 v 0 0 0 a 0 0 0 g -
+body 76:0 o 184 -384 288 v 0 0 0 a 0 0 0 g -
+body 77:0 o -1768 1528 72 v 0 0 0 a 0 0 0 g -
+body 78:0 o 40 272 -64 v 0 0 0 a 0 0 0 g -
+body 79:0 o 432 248 -64 v 0 0 0 a 0 0 0 g -
+body 80:0 o -224 1288 -240 v 0 0 0 a 0 0 0 g -
+body 81:0 o -536 1168 -240 v 0 0 0 a 0 0 0 g -
+body 82:0 o -544 1280 -240 v 0 0 0 a 0 0 0 g -
+body 83:0 o -384 1208 -240 v 0 0 0 a 0 0 0 g -
+body 84:0 o -376 -456 -64 v 0 0 0 a 0 0 0 g -
+body 85:0 o -584 -248 -88 v 0 0 0 a 0 0 0 g -
+body 86:0 o 600 -192 -152 v 0 0 0 a 0 0 0 g -
+body 87:0 o 600 0 -152 v 0 0 0 a 0 0 0 g -
+body 88:0 o 1080 56 -152 v 0 0 0 a 0 0 0 g -
+body 89:0 o 1144 -104 40 v 0 0 0 a 0 0 0 g -
+body 90:0 o 592 -128 16 v 0 0 0 a 0 0 0 g -
+body 91:0 o 768 416 40 v 0 0 0 a 0 0 0 g -
+body 92:0 o 1024 424 40 v 0 0 0 a 0 0 0 g -
+body 93:0 o 1024 -224 -152 v 0 0 0 a 0 0 0 g -
+body 94:0 o 1064 -192 40 v 0 0 0 a 0 0 0 g -
+body 95:0 o 496 128 40 v 0 0 0 a 0 0 0 g -
+body 96:0 o 1328 200 8 v 0 0 0 a 0 0 0 g -
+body 97:0 o -1536 1232 176 v 0 0 0 a 0 0 0 g -
+body 98:0 o -1144 1792 32 v 0 0 0 a 0 0 0 g -
+body 99:0 o -672 936 16 v 0 0 0 a 0 0 0 g -
+body 100:0 o -1920 1232 176 v 0 0 0 a 0 0 0 g -
+body 101:0 o -648 600 64 v 0 0 0 a 0 0 0 g -
+body 102:0 o -496 320 64 v 0 0 0 a 0 0 0 g -
+body 103:0 o -632 456 64 v 0 0 0 a 0 0 0 g -
+body 104:0 o 352 488 -240 v 0 0 0 a 0 0 0 g -
+body 105:0 o 752 488 -240 v 0 0 0 a 0 0 0 g -
+body 106:0 o 1048 480 -240 v 0 0 0 a 0 0 0 g -
+body 107:0 o 32 1216 -240 v 0 0 0 a 0 0 0 g -
+body 108:0 o -184 1144 -240 v 0 0 0 a 0 0 0 g -
+body 109:0 o -696 1200 -240 v 0 0 0 a 0 0 0 g -
+body 110:0 o 256 680 -240 v 0 0 0 a 0 0 0 g -
+body 111:0 o 416 608 -160 v 0 0 0 a 0 0 0 g -
+body 112:0 o 384 240 24 v 0 0 0 a 0 0 0 g -
+body 113:0 o 8 304 40 v 0 0 0 a 0 0 0 g -
+body 114:0 o -256 -176 40 v 0 0 0 a 0 0 0 g -
+body 115:0 o 240 -256 40 v 0 0 0 a 0 0 0 g -
+body 116:0 o 600 0 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o 432 -208 -128 v 0 0 0 a 0 0 0 g -
+body 118:0 o 680 -216 -224 v 0 0 0 a 0 0 0 g -
+body 119:0 o 896 376 -224 v 0 0 0 a 0 0 0 g -
+body 120:0 o 1032 -48 -224 v 0 0 0 a 0 0 0 g -
+body 121:0 o 896 128 -224 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 152 -128 v 0 0 0 a 0 0 0 g -
+body 123:0 o 1056 536 -208 v 0 0 0 a 0 0 0 g -
+body 124:0 o 864 544 -208 v 0 0 0 a 0 0 0 g -
+body 125:0 o 608 536 -208 v 0 0 0 a 0 0 0 g -
+body 126:0 o 304 544 -208 v 0 0 0 a 0 0 0 g -
+body 127:0 o 352 864 -208 v 0 0 0 a 0 0 0 g -
+body 128:0 o 352 1248 -208 v 0 0 0 a 0 0 0 g -
+body 129:0 o 680 40 -224 v 0 0 0 a 0 0 0 g -
+body 130:0 o -1208 1512 56 v 0 0 0 a 0 0 0 g -
+body 131:0 o -1288 1864 8 v 0 0 0 a 0 0 0 g -
+body 132:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:1 o 158.1258544921875 -356.4001770019531 38.25 v 0 0 0 a 0 0 0 g -
+body 134:0 o -384 0 -48 v 0 0 0 a 0 0 0 g -
+body 135:0 o -408 704 -112.96875 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o -1488 1712 -47.96875 v 0 0 0 a 0 0 0 g -
+body 139:0 o -1456 1664 -47.96875 v 0 0 0 a 0 0 0 g -
+body 140:0 o -1312 1648 -18656 v 0 0 0 a 743.482666015625 300.5183410644531 338.4331359863281 g -
+body 141:0 o -1288 1600 -48 v 0 0 0 a 0 0 0 g -
+body 142:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:0 o -1644 1584 -16.96875 v 0 0 0 a 0 0 0 g -
+body 146:0 o -376 1344 108 v 0 0 0 a 0 270 0 g -
+body 147:0 o -184 1344 108 v 0 0 0 a 0 270 0 g -
+body 148:0 o -544 888 -32 v 0 0 0 a 0 0 0 g -
+body 149:0 o -552 848 -32 v 0 0 0 a 0 0 0 g -
+body 150:0 o 348 -348 -83.96875 v 0 0 0 a 0 315 0 g -
+body 151:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 152:0 o 8 800 -120 v 0 0 0 a 0 0 0 g -
+body 153:0 o 24 776 -120 v 0 0 0 a 0 0 0 g -
+body 154:0 o 64 760 -120 v 0 0 0 a 0 0 0 g -
+body 155:0 o -32 808 -120 v 0 0 0 a 0 0 0 g -
+body 156:0 o -1496 1824 -23.96875 v 0 0 0 a 0 0 0 g -
+body 157:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 158:0 o -614 866 -23.96875 v 0 0 0 a 0 0 0 g -
+body 159:0 o -728 880 -32.96875 v 0 0 0 a 0 0 0 g -
+body 160:0 o -904 1051.5999755859375 -23.96875 v 0 0 0 a 0 90 0 g -
+body 161:0 o -209.19996643066406 840 -103.96875 v 0 0 0 a 0 180 0 g -
+body 162:0 o -288 840 -120 v 0 0 0 a 0 0 0 g -
+body 163:0 o -88 840 -120 v 0 0 0 a 0 0 0 g -
+body 164:0 o 88 736 -120 v 0 0 0 a 0 0 0 g -
+body 165:0 o 80 584 -120 v 0 0 0 a 0 0 0 g -
+body 166:0 o -88 792 -120 v 0 0 0 a 0 0 0 g -
+body 167:0 o -856 584 -23.96875 v 0 0 0 a 0 270 0 g -
+body 168:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 169:0 o 80 808 -127.96875 v 0 0 0 a 0 0 0 g -
+body 170:0 o 88 872 -127.96875 v 0 0 0 a 0 0 0 g -
+body 171:0 o -24 864 -127.96875 v 0 0 0 a 0 0 0 g -
+body 172:0 o 176 -300 288 v 0 0 0 a 0 0 0 g -
+body 173:0 o -384 -544 -88.96875 v 0 0 0 a 0 0 0 g -
+body 174:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 175:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 176:0 o -1768 1296 -23.96875 v 0 0 0 a 0 270 0 g -
+body 177:0 o -1376 1404 -23.96875 v 0 0 0 a 0 90 0 g -
+body 178:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 179:0 o -1248 1580.7998046875 -23.96875 v 0 0 0 a 0 309.990234375 0 g -
+body 180:0 o -1025 1598 -23.96875 v 0 0 0 a 0 0 0 g -
+body 181:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 182:0 o 1048 224 -167.96875 v 0 0 0 a 0 180 0 g -
+body 183:0 o 819.0209350585938 -33.45021057128906 -167.96875 v 0 0 0 a 0 119.970703125 0 g -
+body 184:0 o 736 -48 -184 v 0 0 0 a 0 0 0 g -
+body 185:0 o 856 -48 -184 v 0 0 0 a 0 0 0 g -
+body 186:0 o 728 80 -184 v 0 0 0 a 0 0 0 g -
+body 187:0 o 640 144 -48 v 0 0 0 a 0 0 0 g -
+body 188:0 o 640 -32 -48 v 0 0 0 a 0 0 0 g -
+body 189:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 190:0 o 1088 370.0000305175781 -31.96875 v 0 0 0 a 0 90 0 g -
+body 191:0 o 1088 408 -40 v 0 0 0 a 0 0 0 g -
+body 192:0 o 1088 256 -40 v 0 0 0 a 0 0 0 g -
+body 193:0 o 75.77445220947266 726.3834228515625 -103.96875 v 0 0 0 a 0 108.995361328125 0 g -
+body 194:0 o -619.0774536132812 775.1055908203125 -23.96875 v 0 0 0 a 0 135 0 g -
+body 195:0 o -331.731201171875 -27.037696838378906 -23.96875 v 0 0 0 a 0 0 0 g -
+body 197:1 o -58.653846740722656 261.3587341308594 -63.96875 v 0 0 0 a 138.83480834960938 14.755091667175293 217.0305938720703 g -
+body 198:0 o 1024 -64 -40 v 0 0 0 a 0 0 0 g -
+body 199:0 o 728 -72 -40 v 0 0 0 a 0 0 0 g -
+body 200:0 o -1960.06982421875 1616.0006103515625 120.03125 v 0 0 0 a 0 270 0 g -
+body 201:0 o -1968 1792 104 v 0 0 0 a 0 0 0 g -
+body 202:0 o -1968 1408 104 v 0 0 0 a 0 0 0 g -
+body 203:0 o -1464 1280 104 v 0 0 0 a 0 0 0 g -
+body 204:0 o -1856 1280 104 v 0 0 0 a 0 0 0 g -
+body 205:0 o -1248 1816 -32 v 0 0 0 a 0 0 0 g -
+body 206:0 o -1248 1560 -32 v 0 0 0 a 0 0 0 g -
+body 207:0 o -904 1416 -32 v 0 0 0 a 0 0 0 g -
+body 208:0 o -904 856 -32 v 0 0 0 a 0 0 0 g -
+body 209:0 o -32 560 -120 v 0 0 0 a 0 0 0 g -
+body 210:0 o -120 576 -120 v 0 0 0 a 0 0 0 g -
+body 211:0 o -144 736 -120 v 0 0 0 a 0 0 0 g -
+body 212:0 o -784 776 -40 v 0 0 0 a 0 0 0 g -
+body 213:0 o -584 776 -40 v 0 0 0 a 0 0 0 g -
+body 214:0 o -584 632 -40 v 0 0 0 a 0 0 0 g -
+body 215:0 o -784 632 -40 v 0 0 0 a 0 0 0 g -
+body 216:0 o -576 336 -40 v 0 0 0 a 0 0 0 g -
+body 217:0 o -780 336 -40 v 0 0 0 a 0 0 0 g -
+body 218:0 o 416 608 -72 v 0 0 0 a 0 3060 0 g -
+body 219:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 220:0 o 1060 -140 -191.96875 v 0 0 0 a 0 0 0 g -
+body 221:0 o 950 -198 -191.96875 v 0 0 0 a 0 0 0 g -
+body 222:0 o 52 -140 208 v 0 0 0 a 0 0 0 g -
+body 223:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 224:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 225:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 226:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 227:0 o 128 -320 32 v 0 0 0 a 0 135 0 g -
+body 228:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 229:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 230:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 231:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 232:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 233:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 234:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 235:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 236:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 237:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 238:0 o -226 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 239:0 o -260 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 240:0 o -192 1424 -112.96875 v 0 0 0 a 0 0 0 g -
+body 241:0 o -440 0 48 v 0 0 0 a 0 0 0 g -
+body 242:0 o -424 -12 48 v 0 0 0 a 0 0 0 g -
+body 243:0 o -456 -12 48 v 0 0 0 a 0 0 0 g -
+body 244:0 o -428 -28 8 v 0 0 0 a 0 0 0 g -
+body 245:0 o -408 -40 8 v 0 0 0 a 0 0 0 g -
+body 246:0 o -460 -36 8 v 0 0 0 a 0 0 0 g -
+body 247:0 o -348 -180 0 v 0 0 0 a 0 0 0 g -
+body 248:0 o -384 -180 0 v 0 0 0 a 0 0 0 g -
+body 249:0 o -360 -208 0 v 0 0 0 a 0 0 0 g -
+body 250:0 o 8 -72 232 v 0 0 0 a 0 0 0 g -
+body 251:0 o 32 -72 232 v 0 0 0 a 0 0 0 g -
+body 252:0 o 20 -56 244 v 0 0 0 a 0 0 0 g -
+body 253:0 o 92 -424 72 v 0 0 0 a 0 0 0 g -
+body 254:0 o 60 -424 72 v 0 0 0 a 0 0 0 g -
+body 255:0 o 76 -440 72 v 0 0 0 a 0 0 0 g -
+body 256:0 o 752 -216 -96 v 0 0 0 a 0 0 0 g -
+body 257:0 o 728 112 -96 v 0 0 0 a 0 0 0 g -
+body 258:0 o -352 728 120 v 0 0 0 a 0 0 0 g -
+body 259:0 o -48 0 104 v 0 0 0 a 0 0 0 g -
+body 260:0 o -192 -32 264 v 0 0 0 a 0 0 0 g -
+body 261:0 o -184 -128 120 v 0 0 0 a 0 0 0 g -
+body 262:0 o -96 -176 88 v 0 0 0 a 0 0 0 g -
+body 263:0 o -96 16 104 v 0 0 0 a 0 0 0 g -
+body 264:0 o 848 -208 32 v 0 0 0 a 0 0 0 g -
+body 265:0 o 800 -240 32 v 0 0 0 a 0 0 0 g -
+body 266:0 o 824 -296 32 v 0 0 0 a 0 0 0 g -
+body 267:0 o -648 112 40 v 0 0 0 a 0 0 0 g -
+body 268:0 o -672 72 40 v 0 0 0 a 0 0 0 g -
+body 269:0 o -632 80 -8 v 0 0 0 a 0 0 0 g -
+body 270:0 o -1280 56 72 v 0 0 0 a 0 0 0 g -
+body 271:1 o 140.375 -338.375 24.25 v 0 0 0 a 0 -20.0006103515625 0 g 229
+body 272:0 o -880 896 472 v 0 0 0 a 0 0 0 g -
+body 273:2 o 159.50225830078125 -357.10162353515625 38.25 v 0 0 0 a 0 0 0 g -
+body 274:0 o -880 856 472 v 0 0 0 a 0 0 0 g -
+body 275:3 o 90.08882141113281 196.1832275390625 -2498.0517578125 v 0 0 0 a 1410.275390625 187.59727478027344 1273.99560546875 g -
+body 276:0 o 64 -376 192 v 0 0 0 a 0 0 0 g -
+body 277:0 o 16 -352 192 v 0 0 0 a 0 0 0 g -
+body 278:0 o 40 -368 192 v 0 0 0 a 0 0 0 g -
+body 279:0 o -8 -336 192 v 0 0 0 a 0 0 0 g -
+body 280:0 o 168 -416 48 v 0 0 0 a 0 0 0 g -
+body 281:0 o 88 710 -32 v 0 0 0 a 5 145 0 g -
+body 282:0 o -928 264 -32.96875 v 0 0 0 a 0 0 0 g -
+body 283:0 o -2156 1536 -32.96875 v 0 0 0 a 0 0 0 g -
+body 284:0 o -2156 1492 -32.96875 v 0 0 0 a 0 0 0 g -
+body 285:0 o -2156 1580 -32.96875 v 0 0 0 a 0 0 0 g -
+body 286:0 o -2008 1504 64 v 0 0 0 a 0 0 0 g -
+body 287:0 o -1584 1936 216 v 0 0 0 a 0 0 0 g -
+body 288:0 o -1784 1936 216 v 0 0 0 a 0 0 0 g -
+body 289:0 o -2064 1520 216 v 0 0 0 a 0 0 0 g -
+body 290:0 o -1384 1936 216 v 0 0 0 a 0 0 0 g -
+body 291:0 o -2056 1536 216 v 0 0 0 a 0 0 0 g -
+body 292:0 o 16 1032 80 v 0 0 0 a 0 0 0 g -
+body 293:0 o 72 688 88 v 0 0 0 a 0 0 0 g -
+body 294:0 o 40 896 104 v 0 0 0 a 0 0 0 g -
+body 295:0 o 8 584 104 v 0 0 0 a 0 0 0 g -
+body 296:0 o -160 1128 104 v 0 0 0 a 0 0 0 g -
+body 297:0 o 1056 888 -216.96875 v 0 0 0 a 0 0 0 g -
+body 298:0 o 1088 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 299:0 o 1048 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 300:0 o 1128 936 -216.96875 v 0 0 0 a 0 0 0 g -
+body 301:0 o 352 -224 -228.96875 v 0 0 0 a 0 0 0 g -
+body 302:0 o -368 680 -112 v 0 0 0 a 0 0 0 g -
+body 303:0 o -1644 1624 -16.96875 v 0 0 0 a 0 0 0 g -
+body 304:0 o 32 736 -112.96875 v 0 0 0 a 0 0 0 g -
+body 305:0 o -368 704 -112 v 0 0 0 a 0 0 0 g -
+body 306:0 o 88 -256 40 v 0 0 0 a 0 0 0 g -
+body 307:0 o -384 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 308:0 o -1040 496 104 v 0 0 0 a 0 0 0 g -
+body 309:0 o -1048 624 104 v 0 0 0 a 0 0 0 g -
+body 310:0 o 200 -336 288 v 0 0 0 a 0 0 0 g -
+body 311:0 o 168 -384 288 v 0 0 0 a 0 0 0 g -
+body 312:0 o 1056 384 -176.96875 v 0 0 0 a 0 0 0 g -
+body 313:0 o 1056 344 -176.96875 v 0 0 0 a 0 0 0 g -
+body 314:0 o -1176 1520 -32.96875 v 0 0 0 a 0 0 0 g -
+body 315:0 o 84 -300 44 v 0 0 0 a 0 0 0 g -
+body 316:0 o -336 80 -32.96875 v 0 0 0 a 0 0 0 g -
+body 317:0 o 852 -240 4 v 0 0 0 a 0 0 0 g -
+body 318:0 o 1348 292 4 v 0 0 0 a 0 0 0 g -
+body 319:0 o 716 -240 4 v 0 0 0 a 0 0 0 g -
+body 320:0 o 752 -272 28 v 0 0 0 a 0 0 0 g -
+body 321:0 o 856 -268 44 v 0 0 0 a 0 0 0 g -
+body 322:0 o 1372 308 4 v 0 0 0 a 0 0 0 g -
+body 323:0 o -366 -162 -2 v 0 0 0 a 0 0 0 g -
+body 324:0 o -360 -210 -2 v 0 0 0 a 0 0 0 g -
+body 325:0 o -460 -38 8 v 0 0 0 a 0 0 0 g -
+body 326:0 o -428 -56 8 v 0 0 0 a 0 0 0 g -
+body 327:0 o 56 -420 66 v 0 0 0 a 0 0 0 g -
+body 328:0 o 76 -448 66 v 0 0 0 a 0 0 0 g -
+body 329:0 o 104 -408 264 v 0 0 0 a 0 0 0 g -
+body 330:0 o 64 -368 264 v 0 0 0 a 0 0 0 g -
+body 331:0 o 1184 416 -40.96875 v 0 0 0 a 0 0 0 g -
+body 332:0 o 1184 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 333:0 o 1128 -96 -40.96875 v 0 0 0 a 0 0 0 g -
+body 334:0 o 928 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 335:0 o 992 24 -176.96875 v 0 0 0 a 0 0 0 g -
+body 336:0 o 800 -96 -176.96875 v 0 0 0 a 0 0 0 g -
+body 337:0 o -728 845 -32.96875 v 0 0 0 a 0 0 0 g -
+body 338:0 o -1152 1432 143.03125 v 0 0 0 a 0 0 0 g -
+body 339:0 o -360 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 340:0 o -320 576 -112.96875 v 0 0 0 a 0 0 0 g -
+body 341:0 o -536 424 -32.96875 v 0 0 0 a 0 0 0 g -
+body 342:0 o -1768 1536 128 v 0 0 0 a 0 0 0 g -
+body 343:0 o 124 -296 264 v 0 0 0 a 0 0 0 g -
+body 344:0 o -1744 1576 48 v 0 0 0 a 0 0 0 g -
+body 345:0 o 20 -56 248 v 0 0 0 a 0 0 0 g -
+body 346:0 o -412 32 104 v 0 0 0 a 0 0 0 g -
+body 347:0 o -456 -12 52 v 0 0 0 a 0 0 0 g -
+body 348:0 o 1280 296 16 v 0 0 0 a 0 0 0 g -
+body 349:0 o 1136 248 72 v 0 0 0 a 0 0 0 g -
+body 350:0 o 1272 272 72 v 0 0 0 a 0 0 0 g -
+body 351:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 352:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 353:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 354:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 355:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 356:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 357:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 358:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 359:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 360:0 o 164.2640380859375 -60.078826904296875 0.03125 v 0 0 0 a 168.022705078125 187.21273803710938 127.0973892211914 g -
+body 361:0 o 258.1374816894531 -206.95205688476562 -243.96875 v 0 0 0 a 350.3647766113281 817.9935302734375 673.7388916015625 g -
+body 362:0 o 172.6602020263672 5.0743842124938965 0.03125 v 0 0 0 a 98.20612335205078 88.7356185913086 16.293222427368164 g -
+body 363:0 o 152.7252655029297 -54.9501838684082 0.03125 v 0 0 0 a 100.16175079345703 270.6381530761719 138.6791534423828 g -
+body 364:0 o 164.60501098632812 220.19337463378906 -2361.31494140625 v 0 0 0 a 1059.572021484375 398.9074401855469 1233.527587890625 g -
+body 365:0 o 186.1756134033203 -7.7179083824157715 0.031250059604644775 v 0 0 0 a 6.088442802429199 200.1495361328125 263.1232604980469 g -
+body 366:0 o 179.8548583984375 -41.41114044189453 0.03125 v 0 0 0 a 111.78563690185547 45.95721435546875 63.975341796875 g -
+body 367:0 o 232.70208740234375 -13.170232772827148 0.03125 v 0 0 0 a 179.47813415527344 201.4624481201172 14.040955543518066 g -
+body 368:0 o 232.0716552734375 21.390113830566406 0.03125 v 0 0 0 a 36.695457458496094 195.37217712402344 146.5474395751953 g -
+body 369:0 o 170.35134887695312 21.61336326599121 0.03125 v 0 0 0 a 51.893672943115234 67.03329467773438 134.5719757080078 g -
+body 370:0 o 208.5644989013672 -63.71702575683594 0.03125 v 0 0 0 a 187.6522216796875 373.9457092285156 241.2176971435547 g -
+body 371:0 o 197.02125549316406 -76.1729736328125 0.03125 v 0 0 0 a 69.44486999511719 148.46644592285156 287.942138671875 g -
+body 372:0 o -111.46249389648438 296.4441833496094 -63.96875 v 0 0 0 a 909.4979248046875 262.03192138671875 538.6651000976562 g -
+body 373:0 o -58.279823303222656 189.6021728515625 0.03125 v 0 0 0 a 143.0023956298828 87.40989685058594 357.54998779296875 g -
+body 374:0 o -71.77030944824219 154.832275390625 -63.96875 v 0 0 0 a 126.53707885742188 28.067262649536133 174.17526245117188 g -
+body 375:0 o -126.49339294433594 315.03814697265625 -63.96875 v 0 0 0 a 951.174072265625 964.185791015625 107.3012466430664 g -
+body 376:0 o -67.18820190429688 284.6575622558594 -63.96875 v 0 0 0 a 419.34991455078125 592.6864624023438 725.7130126953125 g -
+body 377:0 o -82.31742858886719 312.2607421875 -63.96875 v 0 0 0 a 142.51901245117188 213.77853393554688 648.5537109375 g -
+body 378:0 o -68.8854751586914 295.4245300292969 -63.96875 v 0 0 0 a 884.3167724609375 213.77305603027344 462.208984375 g -
+body 379:0 o -48.783233642578125 298.7657165527344 -63.96875 v 0 0 0 a 313.33966064453125 152.30262756347656 261.15301513671875 g -
+body 380:0 o 10.766141891479492 292.7181091308594 -63.96875 v 0 0 0 a 782.2064819335938 65.71306610107422 736.1980590820312 g -
+body 381:0 o 66.20861053466797 207.9173126220703 -63.96875 v 0 0 0 a 681.12353515625 761.1065063476562 716.5391845703125 g -
+body 382:0 o 98.51992797851562 82.59693908691406 0.03125011920928955 v 0 0 0 a 707.8158569335938 19.28159523010254 394.53106689453125 g -
+body 383:0 o -77.31529998779297 176.44947814941406 -63.96875 v 0 0 0 a 738.6331787109375 85.21988677978516 441.0046691894531 g -
+body 384:0 o -374.8341064453125 -13.44168472290039 -47.96875 v 0 0 0 a 196.60452270507812 78.55831909179688 250.94815063476562 g -
+body 385:0 o -81.22602844238281 102.25566864013672 0.03125 v 0 0 0 a 270.0375671386719 85.56414031982422 303.4955749511719 g -
+body 386:0 o 50.95677185058594 145.51084899902344 16.03125 v 0 0 0 a 733.5354614257812 476.7699279785156 729.5364379882812 g -
+body 387:0 o -34.641929626464844 300.4481201171875 -63.96875 v 0 0 0 a 209.79031372070312 1057.1915283203125 250.03453063964844 g -
+body 388:0 o 17.603315353393555 138.40037536621094 16.03125 v 0 0 0 a 295.9606018066406 567.4978637695312 161.06085205078125 g -
+body 389:0 o -9.308098793029785 225.6917724609375 -63.96875 v 0 0 0 a 967.4417114257812 374.72216796875 1029.8021240234375 g -
+body 390:0 o -58.1507568359375 144.4093017578125 16.03125 v 0 0 0 a 65.74419403076172 70.43733215332031 468.16558837890625 g -
+body 391:0 o -110.01748657226562 277.91656494140625 -63.96875 v 0 0 0 a 401.06622314453125 836.0355224609375 1030.735595703125 g -
+body 392:0 o -106.9404296875 273.572265625 -63.96875 v 0 0 0 a 520.9144287109375 661.4850463867188 378.8494873046875 g -
+body 393:0 o -26.709524154663086 136.13851928710938 16.03125 v 0 0 0 a 82.31208038330078 68.0404052734375 310.3952331542969 g -
+body 394:0 o 70.87920379638672 58.125160217285156 0.03125 v 0 0 0 a 750.7919921875 447.6423645019531 685.353515625 g -
+body 395:0 o 163.58302307128906 90.31802368164062 0.03125 v 0 0 0 a 0.9356974363327026 258.8293151855469 20.764795303344727 g -
+body 396:0 o 92.07428741455078 62.43772888183594 0.03125 v 0 0 0 a 261.71331787109375 339.530029296875 2.0380263328552246 g -
+body 397:0 o 51.8073844909668 -107.4989013671875 -2017.71142578125 v 0 0 0 a 1137.4566650390625 1177.845703125 429.91552734375 g -
+body 398:0 o 159.4701690673828 21.519832611083984 0.03125 v 0 0 0 a 207.95556640625 176.87062072753906 201.01199340820312 g -
+body 399:0 o 164.11117553710938 287.28179931640625 -2005.256103515625 v 0 0 0 a 542.8694458007812 1312.44677734375 702.6135864257812 g -
+body 400:0 o 212.9337158203125 226.3116912841797 -2158.464599609375 v 0 0 0 a 208.640380859375 286.93316650390625 120.53468322753906 g -
+body 401:0 o 121.02693939208984 53.85820007324219 0.03125 v 0 0 0 a 50.52766799926758 148.49574279785156 79.03256225585938 g -
+body 402:0 o 91.39982604980469 -28.562633514404297 0.03125 v 0 0 0 a 277.4022521972656 38.706016540527344 348.9144592285156 g -
+body 403:0 o 66.61178588867188 34.70507049560547 -2068.271484375 v 0 0 0 a 571.886962890625 1055.331298828125 1161.42041015625 g -
+body 404:0 o 71.30091094970703 0.6420480608940125 0.031249940395355225 v 0 0 0 a 406.5505065917969 306.1470642089844 172.62245178222656 g -
+body 405:0 o 33.42680358886719 227.9572296142578 -2108.414794921875 v 0 0 0 a 428.2309265136719 212.89413452148438 471.3152160644531 g -
+body 406:0 o 41.20409393310547 -175.50181579589844 -1984.294921875 v 0 0 0 a 1329.8822021484375 1116.7777099609375 616.1082763671875 g -
+body 407:0 o 135.09552001953125 11.688940048217773 0.03125 v 0 0 0 a 116.52639770507812 125.80644989013672 345.4261779785156 g -
+body 408:0 o 32.803131103515625 -32.163333892822266 -2161.6845703125 v 0 0 0 a 1186.05810546875 714.0692138671875 976.3644409179688 g -
+inventory 271 
+player body o 140.375 -338.375 24.25 v 0 0 0 a 0 -20.0006103515625 0 min -16 -16 -24 max 16 16 32
+player view o 140.375 -338.375 24.25 a 0 -20.0006103515625 0 h 22
+player combat -
+player inventory 
+presentation q2 74008
+checkpoint world:actors world:source-slots 1 c3db14e45b92e8ed canonical 50569648b94df89e
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q2:official q2:classic-native-original 1 54f15e6eee0007c4 canonical bc576cd01f95240a
+checkpoint q2:official world:simulation 11 781007ee147cddac canonical 34cffcc0100a918f
+checkpoint-image 54f751cc615656c8 canonical fbe920c00d62dde9 c07f230ebcfe29e1

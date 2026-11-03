@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 #define MAX_REACHABILITY 65536
 
@@ -84,7 +85,7 @@ void qa_aas_link_set_travel_time(qa_aas_linked_reachability *l, double value) {
   double integer = trunc(value);
   if (!isfinite(integer) || integer < -2147483648.0 || integer > 2147483647.0)
     qa_range_error("AAS reachability travel time exceeds source integer conversion range");
-  uint32_t u = (uint32_t)(int32_t)integer & 0xffffu;
+  uint32_t u = (uint32_t)qa_js_to_int32(integer) & 0xffffu;
   l->bytes[40] = (uint8_t)u; l->bytes[41] = (uint8_t)(u >> 8);
 }
 void qa_aas_link_clear(qa_aas_linked_reachability *l) {
@@ -139,7 +140,7 @@ void qa_aas_reachability_result_destroy(qa_aas_asset *asset) {
 }
 static double default_variable(void *ctx, const char *name, const char *initial) {
   (void)ctx; (void)name;
-  return strtod(initial, NULL); /* TS Number(initial) for the decimal defaults */
+  return qa_js_string_to_number(initial); /* Number(initial) */
 }
 static const char *geometry_entities(qa_decoded_world geometry) {
   switch (geometry.kind) {

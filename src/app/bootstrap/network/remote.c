@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/network/remote.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/remote.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 #include "qa/app/bootstrap/simulation/arsenal/weapon_status.h"
 #include "qa/app/bootstrap/simulation/players.h"
 #include "qa/app/bootstrap/simulation/prediction/runtime.h"
+#include "qa/content/q2/base/player/types.h"
 #include "qa/content/q2/foundation/monsters/muzzle.h"
 #include "qa/content/q2/foundation/weapons/definitions.h"
 #include "qa/contracts/world.h"
@@ -21,6 +23,8 @@
 #include "qa/network/q2/codec.h"
 #include "qa/network/q2/codecs/q2pro_fields.h"
 #include "qa/network/q2/solid.h"
+#include "qa/world/collision/index.h"
+#include "qa/foundation/js.h"
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -44,10 +48,9 @@ static qa_vec3 interpolate(qa_vec3 from, qa_vec3 to, double fraction) {
       from.y + (to.y - from.y) * fraction, from.z + (to.z - from.z) * fraction};
   return out;
 }
+/* a + (((b - a + 540) % 360) - 180) * fraction, with JS `%` (sign of the dividend). */
 static double interp_angle(double a, double b, double fraction) {
-  double delta = fmod(b - a + 540, 360);
-  if (delta < 0) delta += 360;
-  return a + (delta - 180) * fraction;
+  return a + (fmod(b - a + 540, 360) - 180) * fraction;
 }
 static qa_vec3 interpolate_angles(qa_vec3 from, qa_vec3 to, double fraction) {
   qa_vec3 out = {interp_angle(from.x, to.x, fraction),
@@ -55,9 +58,8 @@ static qa_vec3 interpolate_angles(qa_vec3 from, qa_vec3 to, double fraction) {
   return out;
 }
 
-/* Retained-record copy: deep-copies the owned fields remote
- * records consume (raw span, text, inventory counts, download
- * bytes); other event payloads are plain values in the struct. */
+/* TS keeps the records themselves (sourceRecords); the copy owns every pointer field: raw span,
+ * text, inventory counts, download bytes, damage indicators, private name and frame storage. */
 static void record_copy_local(const qa_q2_server_record *in, qa_q2_server_record *out) {
   memset(out, 0, sizeof *out);
   out->seat = in->seat;
@@ -79,9 +81,16 @@ static void record_copy_local(const qa_q2_server_record *in, qa_q2_server_record
     memcpy(out->event.bytes, in->event.bytes, in->event.bytes_length);
   }
   out->event.indicators = NULL;
-  out->event.indicator_count = 0;
+  if (in->event.indicators && in->event.indicator_count) {
+    out->event.indicators = xmalloc(in->event.indicator_count * sizeof *out->event.indicators);
+    memcpy(out->event.indicators, in->event.indicators,
+        in->event.indicator_count * sizeof *out->event.indicators);
+  }
   out->event.private_name = in->event.private_name ? copy_text(in->event.private_name) : NULL;
   memset(&out->event.frame, 0, sizeof out->event.frame);
+  if (in->event.kind == QA_Q2_SERVER_FRAME
+      && !qa_q2_wire_frame_clone(&in->event.frame, &out->event.frame))
+    qa_range_error("out of memory");
 }
 static void records_free_local(qa_q2_server_record *records, size_t count) {
   if (!records) return;
@@ -91,18 +100,29 @@ static void records_free_local(qa_q2_server_record *records, size_t count) {
     free(records[i].event.counts);
     free(records[i].event.bytes);
     free(records[i].event.private_name);
+    free(records[i].event.indicators);
+    if (records[i].event.kind == QA_Q2_SERVER_FRAME) qa_q2_wire_frame_free(&records[i].event.frame);
   }
   free(records);
 }
+typedef struct local_records { qa_q2_server_record *records; size_t count; } local_records;
+static void local_records_release(void *arg) {
+  local_records *held = arg;
+  records_free_local(held->records, held->count);
+  held->records = NULL; held->count = 0;
+}
 typedef struct config_entry { double index; char *value; } config_entry;
 typedef struct resource_entry { char *key; qa_resolved_resource_reference reference; } resource_entry;
-typedef struct event_entry {
-  qa_app_sim_presentation_event event;
-  qa_app_q2_remote_event payload;
-  qa_app_q2_effect_event effect;
-  qa_app_q2_beam_event beam;
-  char *text, *path;
-} event_entry;
+#define REMOTE_EVENT_CAPACITY 8192 /* TS new EventRing(8192) */
+/* Admitted events are owned copies (qa_app_sim_presentation_event_copy): TS keeps the objects
+ * themselves, and the borrowed payloads built here do not outlive the admitting call. */
+static void events_release(qa_app_sim_presentation_event *events, size_t count) {
+  for (size_t i = 0; i < count; i++) qa_app_sim_presentation_event_release(&events[i]);
+}
+typedef struct cinematic_closure {
+  struct qa_app_q2_remote *remote; double servercount; bool completed; double revision;
+  qa_app_q2_remote_assert_fn assert_current; void *assert_ctx;
+} cinematic_closure;
 struct qa_app_q2_remote {
   qa_app_q2_remote_options options;
   qa_app_q2_download_receiver *downloads;
@@ -113,7 +133,7 @@ struct qa_app_q2_remote {
   struct { double number; qa_actor_id actor; } *actors; size_t actor_count, actor_cap;
   config_entry *configs; size_t config_count, config_cap;
   resource_entry *resources; size_t resource_count, resource_cap;
-  event_entry *events; size_t event_head, event_count, event_cap;
+  qa_app_sim_presentation_event *events; size_t event_count, event_cap;
   bool has_current, has_previous;
   qa_q2_wire_frame current, previous_frame;
   double stats_current[64], stats_previous[64];
@@ -135,16 +155,18 @@ struct qa_app_q2_remote {
   qa_app_remote_world_content *world;
   qa_app_selected_movement_prediction *prediction_owner;
   bool has_predicted; qa_app_movement_prediction_result predicted;
+  qa_movement_profile prediction_profile; /* TS `profile` captured by the owner's getter */
   double packet_acknowledged;
   qa_app_q2_mvd_visibility_state *visibility;
   qa_app_simulation_presentation *presentations; size_t presentation_cap;
   char **presentation_paths; size_t presentation_path_cap;
-  qa_app_sim_presentation_event *drained; size_t drained_cap;
+  qa_app_sim_presentation_event *drained; size_t drained_count;
   qa_weapon_hud_status weapon_status;
   qa_inventory_entry *ui_inventory; size_t ui_inventory_cap;
   qa_app_sim_player_ui_item *ui_items;
   qa_body_snapshot *sample_bodies;
-  struct { qa_app_q2_remote *remote; double servercount; bool completed; double revision; } cinematic_state;
+  /* TS cinematic `ended` closures outlive their serverData call; each keeps its own state. */
+  cinematic_closure **cinematics; size_t cinematic_count;
   qa_q2_server_message_options message_options;
 };
 static const qa_executable_recipe *recipe_of(qa_app_q2_remote *remote) {
@@ -187,25 +209,38 @@ static void config_set(qa_app_q2_remote *remote, double index, const char *value
   remote->configs[remote->config_count].value = copy_text(value ? value : "");
   remote->config_count++;
 }
-static event_entry *event_push(qa_app_q2_remote *remote) {
+/* The stamp TS writes ahead of the payload, in its literal's order: { kind,
+ * sequence: this.eventSequence++, content: recipe.map.entities.content, seconds, sourceEntity }.
+ * A borrowed view: the caller sets the kind's payload member, then admits it. */
+static qa_app_sim_presentation_event event_stamp(qa_app_q2_remote *remote, const char *kind,
+    double seconds, bool has_source_entity, double source_entity) {
+  qa_app_sim_presentation_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = kind;
+  event.sequence = remote->event_sequence++;
+  event.content = recipe_of(remote)->map.entities.content;
+  event.seconds = seconds;
+  event.has_source_entity = has_source_entity;
+  event.source_entity = source_entity;
+  return event;
+}
+/* TS events.admit(event): a full ring throws as EventRing.admit does; the ring keeps an owned
+ * copy. */
+static void event_admit(qa_app_q2_remote *remote, const qa_app_sim_presentation_event *event) {
+  if (remote->event_count >= REMOTE_EVENT_CAPACITY)
+    qa_raise("RangeError", 0, 0,
+        "Event ring capacity exhausted (%d undrained records); drain before admitting more",
+        REMOTE_EVENT_CAPACITY);
   if (remote->event_count == remote->event_cap) {
     size_t new_cap = remote->event_cap ? remote->event_cap * 2 : 64;
-    event_entry *grown = xmalloc(new_cap * sizeof *grown);
-    for (size_t i = 0; i < remote->event_count; i++)
-      grown[i] = remote->events[(remote->event_head + i) % remote->event_cap];
-    free(remote->events);
+    qa_app_sim_presentation_event *grown = realloc(remote->events, new_cap * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
     remote->events = grown;
     remote->event_cap = new_cap;
-    remote->event_head = 0;
   }
-  event_entry *entry = &remote->events[(remote->event_head + remote->event_count) % remote->event_cap];
-  memset(entry, 0, sizeof *entry);
+  if (!qa_app_sim_presentation_event_copy(&remote->events[remote->event_count], event))
+    qa_range_error("out of memory");
   remote->event_count++;
-  entry->event.sequence = remote->event_sequence++;
-  const qa_executable_recipe *recipe = recipe_of(remote);
-  entry->event.content = recipe->map.geometry_content;
-  entry->event.event = &entry->payload;
-  return entry;
 }
 static bool is_rerelease(qa_app_q2_remote *remote) {
   const char *kind = remote->selected_protocol.kind;
@@ -248,27 +283,18 @@ static qa_vec3 sampled_player_origin(qa_app_q2_remote *remote, const qa_q2_wire_
 }
 static void require_player(qa_app_q2_remote *remote, qa_actor_id actor) {
   if (!remote->has_player || !qa_same_actor(remote->player.actor, actor) || !remote->has_current)
-    qa_range_error("Remote Q2 player has no decoded frame");
+    qa_raise("Error", 0, 0, "Remote Q2 player has no decoded frame");
 }
 static const qa_app_q2_remote_mounts *downloads_content(void *ctx) {
   qa_app_q2_remote *remote = ctx;
-  if (!remote->download_content) qa_range_error("Q2 downloads require prepared server content");
+  if (!remote->download_content) qa_raise("Error", 0, 0, "Q2 downloads require prepared server content");
   return remote->download_content;
-}
-static const char *state_gamedir(const void *data) {
-  return ((const qa_q2_server_data_result *)data)->gamedir;
-}
-static const char *state_config_string(const void *config_strings, double index) {
-  const qa_app_q2_config_snapshot *snapshot = config_strings;
-  for (size_t i = 0; i < snapshot->count; i++)
-    if (snapshot->entries[i].index == index) return snapshot->entries[i].value;
-  return NULL;
 }
 typedef struct refresh_ctx { qa_app_q2_remote *remote; double revision; } refresh_ctx;
 static void refresh_assert(void *ctx) {
   refresh_ctx *refresh = ctx;
   if (qa_app_q2_download_receiver_revision(refresh->remote->downloads) != refresh->revision)
-    qa_range_error("Q2 package refresh was retired");
+    qa_raise("Error", 0, 0, "Q2 package refresh was retired");
 }
 static void refresh_downloads(void *ctx) {
   qa_app_q2_remote *remote = ctx;
@@ -287,7 +313,7 @@ static void host_print(void *ctx, const char *text) {
 }
 qa_app_q2_remote *qa_app_q2_remote_create(qa_app_q2_remote_options options) {
   if (options.protocol.kind && strcmp(options.protocol.kind, "q2-kex-demo") == 0)
-    qa_range_error("KEX native live transport is not bound");
+    qa_raise("Error", 0, 0, "KEX native live transport is not bound");
   qa_app_q2_remote *remote = calloc(1, sizeof *remote);
   if (!remote) return NULL;
   remote->options = options;
@@ -301,11 +327,10 @@ qa_app_q2_remote *qa_app_q2_remote_create(qa_app_q2_remote_options options) {
   qa_app_q2_rerelease_view_height_init(&remote->view_height);
   remote->world = qa_app_remote_world_content_create(options.world_host, options.content);
   if (!remote->world) { free(remote->layout_text); free(remote); return NULL; }
-  qa_app_q2_state_access state_access = {state_gamedir, state_config_string};
   remote->downloads = qa_app_q2_download_receiver_create(downloads_content, remote,
       send_command_text, remote, host_print, remote,
       options.refresh_downloads ? refresh_downloads : NULL, remote,
-      options.download_permission, state_access);
+      options.download_permission);
   if (!remote->downloads) {
     qa_app_remote_world_content_destroy(remote->world);
     free(remote->layout_text);
@@ -330,12 +355,11 @@ void qa_app_q2_remote_destroy(qa_app_q2_remote *remote) {
   free(remote->configs);
   for (size_t i = 0; i < remote->resource_count; i++) free(remote->resources[i].key);
   free(remote->resources);
-  for (size_t i = 0; i < remote->event_count; i++) {
-    event_entry *entry = &remote->events[(remote->event_head + i) % remote->event_cap];
-    free(entry->text);
-    free(entry->path);
-  }
+  events_release(remote->events, remote->event_count);
   free(remote->events);
+  events_release(remote->drained, remote->drained_count);
+  for (size_t i = 0; i < remote->cinematic_count; i++) free(remote->cinematics[i]);
+  free(remote->cinematics);
   free(remote->published_bodies);
   free(remote->published_actors);
   free(remote->published_styles);
@@ -390,7 +414,7 @@ static const char *visibility_model_path(void *ctx, double index) {
 }
 qa_q2_mvd_visibility qa_app_q2_remote_mvd_visibility(qa_app_q2_remote *remote) {
   if (!remote->options.has_recorded_profile)
-    qa_range_error("MVD presentation requires its recorded profile");
+    qa_raise("Error", 0, 0, "MVD presentation requires its recorded profile");
   if (!remote->visibility) {
     qa_app_q2_mvd_visibility_host host = {0};
     host.ctx = remote;
@@ -404,10 +428,10 @@ qa_q2_mvd_visibility qa_app_q2_remote_mvd_visibility(qa_app_q2_remote *remote) {
 }
 void qa_app_q2_remote_select_recorded_view(qa_app_q2_remote *remote, double clientnum) {
   const char *maximum_text = config_get(remote, remote->layout.max_clients);
-  double maximum = maximum_text ? strtod(maximum_text, NULL) : NAN;
+  double maximum = maximum_text ? qa_js_string_to_number(maximum_text) : NAN;
   if (clientnum != trunc(clientnum) || clientnum < 0 || maximum != trunc(maximum)
       || clientnum >= maximum)
-    qa_range_error("Recorded viewpoint is outside its admitted player range");
+    qa_raise("Error", 0, 0, "Recorded viewpoint is outside its admitted player range");
   if (!remote->has_player || remote->player.source_entity != clientnum + 1) {
     if (remote->has_current) {
       qa_q2_wire_frame_free(&remote->current);
@@ -459,9 +483,9 @@ bool qa_app_q2_remote_is_player(qa_app_q2_remote *remote, qa_actor_id actor) {
   if (remote->has_player && qa_same_actor(remote->player.actor, actor)) return true;
   if (!remote->has_current) return false;
   const char *maximum_text = config_get(remote, remote->layout.max_clients);
-  double maximum = maximum_text ? strtod(maximum_text, NULL) : NAN;
+  double maximum = maximum_text ? qa_js_string_to_number(maximum_text) : NAN;
   if (maximum != trunc(maximum) || maximum < 1 || maximum > 256)
-    qa_range_error("Remote Q2 frame has no valid advertised client range");
+    qa_raise("Error", 0, 0, "Remote Q2 frame has no valid advertised client range");
   for (size_t i = 0; i < remote->current.entity_count; i++) {
     double number = remote->current.entities[i].number;
     if (number < 1 || number > maximum) continue;
@@ -479,15 +503,24 @@ static void server_data_assert(void *ctx) {
   server_data_ctx *data = ctx;
   data->assert_current(data->assert_ctx);
   if (qa_app_q2_download_receiver_revision(data->remote->downloads) != data->revision)
-    qa_range_error("Q2 server content preparation was retired");
+    qa_raise("Error", 0, 0, "Q2 server content preparation was retired");
+}
+static void cinematic_current(void *ctx) {
+  cinematic_closure *closure = ctx;
+  server_data_ctx context = {closure->remote, closure->revision,
+      closure->assert_current, closure->assert_ctx};
+  server_data_assert(&context);
 }
 static void cinematic_ended(void *ctx) {
-  qa_app_q2_remote *remote = ctx;
-  if (remote->cinematic_state.completed) return;
-  remote->cinematic_state.completed = true;
+  cinematic_closure *closure = ctx;
+  if (closure->completed) return;
+  /* TS try { current(); } catch { return; } */
+  qa_caught_error caught;
+  if (!qa_try(cinematic_current, closure, &caught)) return;
+  closure->completed = true;
   char line[96];
-  snprintf(line, sizeof line, "nextserver %.17g\n", remote->cinematic_state.servercount);
-  remote->options.send_command(remote->options.ctx, line);
+  snprintf(line, sizeof line, "nextserver %s\n", QA_JS_NUMBER(closure->servercount));
+  closure->remote->options.send_command(closure->remote->options.ctx, line);
 }
 void qa_app_q2_remote_server_data(qa_app_q2_remote *remote, const void *data_value,
     qa_app_q2_remote_assert_fn assert_current, void *assert_ctx) {
@@ -501,7 +534,7 @@ void qa_app_q2_remote_server_data(qa_app_q2_remote *remote, const void *data_val
   remote->download_content = prepared;
   if (data->clientnum < 0) {
     if (!remote->options.has_cinematic)
-      qa_range_error("Q2 cinematic serverdata requires the shared media owner");
+      qa_raise("Error", 0, 0, "Q2 cinematic serverdata requires the shared media owner");
     if (remote->has_current) {
       qa_q2_wire_frame_free(&remote->current);
       remote->has_current = false;
@@ -523,11 +556,16 @@ void qa_app_q2_remote_server_data(qa_app_q2_remote *remote, const void *data_val
       free(remote->predicted.effects);
       remote->has_predicted = false;
     }
-    remote->cinematic_state.remote = remote;
-    remote->cinematic_state.servercount = data->servercount;
-    remote->cinematic_state.completed = false;
+    cinematic_closure *closure = xmalloc(sizeof *closure);
+    cinematic_closure **grown = realloc(remote->cinematics,
+        (remote->cinematic_count + 1) * sizeof *grown);
+    if (!grown) { free(closure); qa_range_error("out of memory"); }
+    remote->cinematics = grown;
+    remote->cinematics[remote->cinematic_count++] = closure;
+    *closure = (cinematic_closure){remote, data->servercount, false, context.revision,
+        assert_current, assert_ctx};
     remote->options.cinematic.start(remote->options.cinematic.ctx, data->levelname,
-        cinematic_ended, remote);
+        cinematic_ended, closure);
     server_data_assert(&context);
   }
 }
@@ -535,32 +573,34 @@ static void player_info(qa_app_q2_remote *remote, double index, const char *valu
   if (index < remote->layout.player_skins || index >= remote->layout.player_skins + 256) return;
   double slot = index - remote->layout.player_skins;
   const char *split = strchr(value, '\\');
-  event_entry *entry = event_push(remote);
-  entry->event.kind = "q2-player";
-  entry->event.event_kind = "userinfo";
-  entry->event.seconds = seconds;
-  entry->event.has_source_entity = true;
-  entry->event.source_entity = slot + 1;
-  entry->event.actor = actor_of(remote, slot + 1);
-  entry->payload.kind = QA_APP_Q2_REMOTE_USERINFO;
-  entry->payload.has_actor = true;
-  entry->payload.actor = entry->event.actor;
-  entry->payload.slot = slot;
+  qa_app_sim_presentation_event event = event_stamp(remote, "q2-player", seconds, true, slot + 1);
+  qa_q2_player_event payload;
+  memset(&payload, 0, sizeof payload);
+  payload.kind = "userinfo";
+  payload.actor = actor_of(remote, slot + 1);
+  payload.slot = slot;
+  char *name = NULL;
   if (split) {
     size_t length = (size_t)(split - value);
-    entry->text = xmalloc(length + 1);
-    memcpy(entry->text, value, length);
-    entry->text[length] = '\0';
-    entry->payload.name = entry->text;
-    entry->payload.skin = split + 1;
-    entry->path = copy_text(split + 1);
-    entry->payload.skin = entry->path;
+    name = xmalloc(length + 1);
+    memcpy(name, value, length);
+    name[length] = '\0';
+    payload.name = name;
+    payload.skin = split + 1;
   } else {
-    entry->payload.name = value;
-    entry->payload.skin = "";
+    payload.name = value;
+    payload.skin = "";
   }
+  event.q2_player = &payload;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, name);
+  event_admit(remote, &event);
+  qa_cleanup_pop(&guard);
+  free(name);
 }
 void qa_app_q2_remote_game_state(qa_app_q2_remote *remote, qa_app_q2_game_state state) {
+  uint32_t left;
+  uint32_t right;
   const qa_q2_server_data_result *data = state.data;
   qa_q2_protocol_identity offered = remote->options.protocol;
   if (offered.kind && strcmp(offered.kind, "q2-r1q2") == 0) {
@@ -594,16 +634,16 @@ void qa_app_q2_remote_game_state(qa_app_q2_remote *remote, qa_app_q2_game_state 
   const qa_executable_recipe *recipe = remote->options.content_recipe(remote->options.ctx, content);
   const char *requested = recipe->map.geometry.requested_path;
   if (!path || !requested || strcmp(path, requested) != 0)
-    qa_range_error("Q2 server map %s requires application content replacement",
+    qa_raise("Error", 0, 0, "Q2 server map %s requires application content replacement",
         path ? path : "<missing>");
   size_t map_length = 0;
   const uint8_t *map_bytes = remote->options.content_read(remote->options.ctx, content,
       &recipe->map.geometry, &map_length);
   if (qa_app_q2_download_receiver_revision(remote->downloads) != revision) return;
-  if (!checksum || (uint32_t)strtod(checksum, NULL) != qa_block_checksum(map_bytes, map_length))
-    qa_range_error("Q2 server map checksum differs from mounted content");
+  if (!checksum || (left = qa_js_to_uint32(qa_js_string_to_number(checksum)), right = qa_block_checksum(map_bytes, map_length), left != right)) /* Number(checksum) >>> 0 */
+    qa_raise("Error", 0, 0, "Q2 server map checksum differs from mounted content");
   if (data->clientnum < 0)
-    qa_range_error("Q2 remote multi-seat/cinematic serverdata requires its source presentation binding");
+    qa_raise("Error", 0, 0, "Q2 remote multi-seat/cinematic serverdata requires its source presentation binding");
   qa_app_remote_world_set_loaded(remote->world, content);
   if (remote->download_content && remote->options.rebind_download_content)
     remote->download_content = remote->options.rebind_download_content(
@@ -636,12 +676,7 @@ void qa_app_q2_remote_game_state(qa_app_q2_remote *remote, qa_app_q2_game_state 
   remote->inventory_count = 0;
   free(remote->layout_text);
   remote->layout_text = copy_text("");
-  for (size_t i = 0; i < remote->event_count; i++) {
-    event_entry *entry = &remote->events[(remote->event_head + i) % remote->event_cap];
-    free(entry->text);
-    free(entry->path);
-  }
-  remote->event_head = 0;
+  events_release(remote->events, remote->event_count);
   remote->event_count = 0;
   for (size_t i = 0; i < snapshot->count; i++)
     config_set(remote, snapshot->entries[i].index, snapshot->entries[i].value);
@@ -734,12 +769,12 @@ qa_app_sim_player_ui qa_app_q2_remote_player_ui(qa_app_q2_remote *remote, qa_act
   const char *weapon_model = config_get(remote, remote->layout.models + frame->player.gunindex);
   const qa_q2w_base_definition *weapon = NULL;
   for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
-    if (weapon_model && qa_q2w_base_weapons[i].view_model
+    if (!weapon && weapon_model && qa_q2w_base_weapons[i].view_model
         && strcmp(qa_q2w_base_weapons[i].view_model, weapon_model) == 0)
       weapon = &qa_q2w_base_weapons[i];
   const qa_executable_recipe *recipe = recipe_of(remote);
   if (recipe->weapons.count == 0)
-    qa_range_error("Remote Q2 presentation requires its selected weapon provider");
+    qa_raise("Error", 0, 0, "Remote Q2 presentation requires its selected weapon provider");
   if (remote->ui_inventory_cap < remote->inventory_count) {
     remote->ui_inventory = realloc(remote->ui_inventory,
         remote->inventory_count * sizeof *remote->ui_inventory);
@@ -754,7 +789,8 @@ qa_app_sim_player_ui qa_app_q2_remote_player_ui(qa_app_q2_remote *remote, qa_act
     char *normalized = normalized_name(label);
     const qa_q2w_base_definition *definition = NULL;
     for (size_t i = 0; i < qa_q2w_base_weapon_count; i++)
-      if (qa_q2w_base_weapons[i].name && strcmp(qa_q2w_base_weapons[i].name, normalized) == 0)
+      if (!definition && qa_q2w_base_weapons[i].name
+          && strcmp(qa_q2w_base_weapons[i].name, normalized) == 0)
         definition = &qa_q2w_base_weapons[i];
     free(normalized);
     if (!definition) continue;
@@ -852,50 +888,42 @@ const qa_app_simulation_presentation *qa_app_q2_remote_presentations(qa_app_q2_r
     const char *skin_path = NULL;
     if (entity->modelindex == 255) {
       const char *value = config_get(remote,
-          remote->layout.player_skins + (double)((int64_t)entity->skinnum & 255));
+          remote->layout.player_skins + (double)(qa_js_to_int32(entity->skinnum) & 255));
       if (!value) value = "player\\male/grunt";
       const char *appearance = strchr(value, '\\');
       appearance = appearance ? appearance + 1 : value;
       const char *slash = strchr(appearance, '/');
-      char model[64], skin[64];
-      if (!slash) {
-        snprintf(model, sizeof model, "male");
-        snprintf(skin, sizeof skin, "grunt");
-      } else {
-        size_t model_length = (size_t)(slash - appearance);
-        if (model_length >= sizeof model) model_length = sizeof model - 1;
-        memcpy(model, appearance, model_length);
-        model[model_length] = '\0';
-        snprintf(skin, sizeof skin, "%s", slash + 1);
-      }
-      char *model_path = xmalloc(strlen(model) + 24);
-      snprintf(model_path, strlen(model) + 24, "players/%s/tris.md2", model);
+      int model_length = slash ? (int)(slash - appearance) : 4;
+      const char *model = slash ? appearance : "male";
+      const char *skin = slash ? slash + 1 : "grunt";
+      size_t model_size = (size_t)model_length + 24;
+      char *model_path = xmalloc(model_size);
+      snprintf(model_path, model_size, "players/%.*s/tris.md2", model_length, model);
       remote->presentation_paths[path_index] = model_path;
       path = remote->presentation_paths[path_index++];
-      char *skin_file = xmalloc(strlen(model) + strlen(skin) + 24);
-      snprintf(skin_file, strlen(model) + strlen(skin) + 24, "players/%s/%s.pcx", model, skin);
+      size_t skin_size = (size_t)model_length + strlen(skin) + 24;
+      char *skin_file = xmalloc(skin_size);
+      snprintf(skin_file, skin_size, "players/%.*s/%s.pcx", model_length, model, skin);
       remote->presentation_paths[path_index] = skin_file;
       skin_path = remote->presentation_paths[path_index++];
     }
     if (!path || entity->modelindex == 0) continue;
     const qa_q2_wire_entity *prior = NULL;
     if (remote->has_previous)
-      for (size_t j = 0; j < remote->previous_frame.entity_count; j++)
+      for (size_t j = 0; j < remote->previous_frame.entity_count && !prior; j++)
         if (remote->previous_frame.entities[j].number == entity->number)
           prior = &remote->previous_frame.entities[j];
     bool continuous = false;
     if (prior && prior->modelindex == entity->modelindex && entity->event != 6 && entity->event != 7) {
-      double max_delta = 0;
-      double deltas[3] = {fabs(entity->origin[0] - prior->origin[0]),
-          fabs(entity->origin[1] - prior->origin[1]), fabs(entity->origin[2] - prior->origin[2])};
-      for (size_t j = 0; j < 3; j++)
-        if (deltas[j] > max_delta) max_delta = deltas[j];
+      /* Math.max(...[0, 1, 2].map(abs delta)) <= 512; a NaN delta is never continuous. */
+      double max_delta = qa_js_max(qa_js_max(fabs(entity->origin[0] - prior->origin[0]),
+          fabs(entity->origin[1] - prior->origin[1])), fabs(entity->origin[2] - prior->origin[2]));
       continuous = max_delta <= 512;
     }
     qa_app_simulation_presentation *item = &remote->presentations[count++];
     memset(item, 0, sizeof *item);
     item->actor = actor_of(remote, entity->number);
-    item->content = recipe->map.geometry_content;
+    item->content = recipe->map.entities.content;
     item->family = QA_GAME_FAMILY_Q2;
     item->path = path;
     item->frame = entity->frame;
@@ -911,7 +939,7 @@ const qa_app_simulation_presentation *qa_app_q2_remote_presentations(qa_app_q2_r
         : vec_of(entity->origin);
     item->angles = continuous ? interpolate_angles(vec_of(prior->angles), vec_of(entity->angles), remote->fraction)
         : vec_of(entity->angles);
-    item->scale = entity->scale != 0 ? entity->scale : 1;
+    item->scale = entity->scale != 0 && !isnan(entity->scale) ? entity->scale : 1; /* scale || 1 */
     item->visible = true;
   }
   const char *gun_path = config_get(remote, remote->layout.models + current->player.gunindex);
@@ -921,7 +949,7 @@ const qa_app_simulation_presentation *qa_app_q2_remote_presentations(qa_app_q2_r
     qa_app_simulation_presentation *item = &remote->presentations[count++];
     memset(item, 0, sizeof *item);
     item->actor = remote->player.actor;
-    item->content = recipe->map.geometry_content;
+    item->content = recipe->map.entities.content;
     item->family = QA_GAME_FAMILY_Q2;
     item->path = gun_path;
     item->frame = current->player.gunframe;
@@ -967,22 +995,22 @@ void qa_app_q2_remote_register_resource(qa_app_q2_remote *remote, qa_content_id 
 void qa_app_q2_remote_player_command(qa_app_q2_remote *remote, qa_actor_id actor,
     const char *name, const char *const *args, size_t count) {
   require_player(remote, actor);
-  const char *values[64];
-  values[0] = name;
-  for (size_t i = 0; i < count && i < 63; i++) values[i + 1] = args[i];
   size_t total = strlen(name) + 1;
-  for (size_t i = 0; i <= count && i < 64; i++) {
-    const char *value = values[i];
+  for (size_t i = 0; i <= count; i++) {
+    const char *value = i == 0 ? name : args[i - 1];
     for (const char *p = value; *p; p++)
       if (*p == '"' || *p == '\n' || *p == '\r' || *p == ';')
-        qa_range_error("Q2 console argument contains a command delimiter");
+        qa_raise("Error", 0, 0, "Q2 console argument contains a command delimiter");
     if (i) total += strlen(value) + 3;
   }
   char *line = xmalloc(total);
   size_t used = (size_t)snprintf(line, total, "%s", name);
   for (size_t i = 0; i < count; i++)
     used += (size_t)snprintf(line + used, total - used, " \"%s\"", args[i]);
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, line);
   remote->options.send_command(remote->options.ctx, line);
+  qa_cleanup_pop(&node);
   free(line);
 }
 qa_q2_wire_usercmd qa_app_q2_remote_wire_command(qa_app_q2_remote *remote,
@@ -990,7 +1018,7 @@ qa_q2_wire_usercmd qa_app_q2_remote_wire_command(qa_app_q2_remote *remote,
   require_player(remote, command->actor);
   if (command->command.kind != QA_USER_COMMAND_Q2
       && command->command.kind != QA_USER_COMMAND_Q2_RERELEASE)
-    qa_range_error("Native Q2 client requires Q2 movement commands");
+    qa_raise("Error", 0, 0, "Native Q2 client requires Q2 movement commands");
   qa_app_q2_remote_player player = native_player(remote, &remote->current, false);
   return qa_app_q2_remote_command(command->command.kind == QA_USER_COMMAND_Q2_RERELEASE,
       &command->command.as.q2, &command->command.as.q2_rerelease, &player);
@@ -1009,19 +1037,38 @@ static bool is_brush_hit(void *ctx, qa_trace_hit hit) {
   }
   return false;
 }
+/* TS `get profile()`: the selected profile with the advertised air acceleration and the
+ * strafejump hack (classic) or N64 physics (rerelease), read each time the prediction runs. */
+static qa_movement_profile prediction_profile(qa_app_q2_remote *remote) {
+  qa_movement_profile profile = remote->prediction_profile;
+  const char *air_text = config_get(remote, remote->layout.air_accelerate);
+  profile.air_accelerate = qa_js_string_to_number(air_text ? air_text : "0");
+  if (profile.kind && strcmp(profile.kind, "q2-rerelease") == 0) {
+    const char *n64_text = remote->layout.has_n64_physics
+        ? config_get(remote, remote->layout.n64_physics) : NULL;
+    profile.n64_physics = remote->layout.has_n64_physics
+        && qa_js_string_to_number(n64_text ? n64_text : "0") != 0;
+  } else {
+    profile.has_strafejump_hack = true;
+    profile.strafejump_hack = remote->strafejump_hack;
+  }
+  return profile;
+}
+static void refresh_prediction_profile(qa_app_q2_remote *remote) {
+  qa_app_movement_prediction_options *options = (qa_app_movement_prediction_options *)
+      qa_app_selected_movement_prediction_options(remote->prediction_owner);
+  options->probe.profile = prediction_profile(remote);
+}
 static void receive_prediction(qa_app_q2_remote *remote, const qa_q2_wire_frame *frame) {
   if (!remote->has_player) return;
   qa_app_q2_remote_player native = native_player(remote, frame, false);
-  void *loaded = qa_app_remote_world_loaded(remote->world);
   const qa_executable_recipe *recipe = recipe_of(remote);
   qa_movement_profile profile = qa_app_sim_movement_profile(*recipe);
   const char *kind = profile.kind ? profile.kind : "";
   if (strcmp(kind, "q2-classic") != 0 && strcmp(kind, "q2-rerelease") != 0) return;
   bool profile_rerelease = strcmp(kind, "q2-rerelease") == 0;
   if (profile_rerelease != native.rerelease)
-    qa_range_error("Q2 server movement API differs from selected prediction profile");
-  const char *air_text = config_get(remote, remote->layout.air_accelerate);
-  profile.air_accelerate = air_text ? strtod(air_text, NULL) : 0;
+    qa_raise("Error", 0, 0, "Q2 server movement API differs from selected prediction profile");
   qa_app_sim_player_ui ui = qa_app_q2_remote_player_ui(remote, remote->player.actor);
   qa_app_movement_prediction_snapshot snapshot = {0};
   snapshot.sequence = remote->packet_acknowledged;
@@ -1031,11 +1078,13 @@ static void receive_prediction(qa_app_q2_remote *remote, const qa_q2_wire_frame 
     snapshot.state.as.q2_rerelease = native.modern.movement;
     snapshot.view_angles = native.modern.view.view_angles;
     snapshot.view_offset = native.modern.view.view_offset;
+    snapshot.arsenal.state.gun_frame = native.modern.view.gun_frame;
   } else {
     snapshot.state.kind = QA_MOVEMENT_STATE_Q2;
     snapshot.state.as.q2 = native.classic.movement;
     snapshot.view_angles = native.classic.view.view_angles;
     snapshot.view_offset = native.classic.view.view_offset;
+    snapshot.arsenal.state.gun_frame = native.classic.view.gun_frame;
   }
   snapshot.view_height = qa_app_q2_remote_view_height(&native);
   snapshot.bounds = qa_app_q2_remote_body_bounds(&native);
@@ -1048,23 +1097,29 @@ static void receive_prediction(qa_app_q2_remote *remote, const qa_q2_wire_frame 
   snapshot.arsenal.ammo = ui.inventory;
   snapshot.arsenal.ammo_count = ui.inventory_count;
   snapshot.arsenal.state.kind = "q2";
+  snapshot.arsenal.state.grenade_time = (qa_source_time){QA_SOURCE_TIME_SECONDS, 0};
   snapshot.animation.provider = recipe->character.definition.provider;
   snapshot.animation.state.kind = "q2";
   if (!remote->prediction_owner) {
+    remote->prediction_profile = profile;
     qa_app_movement_prediction_options options = {0};
     options.probe.actor = remote->options.owned_actor(remote->options.ctx,
         remote->player.actor, &recipe->map.entities);
     options.seat = remote->options.seat;
     options.probe.recipe = recipe;
-    options.probe.profile = profile;
+    options.probe.profile = prediction_profile(remote);
     options.probe.standing_bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
     options.probe.standing_view_height = 22;
+    options.probe.scene = qa_shared_as_scene_queries(qa_app_remote_world_scene(remote->world));
     options.probe.host_ctx = remote;
     options.probe.is_brush = is_brush_hit;
-    (void)loaded;
     remote->prediction_owner = qa_app_selected_movement_prediction_create(options, snapshot);
     if (!remote->prediction_owner) qa_range_error("out of memory");
-  } else qa_app_selected_movement_prediction_receive(remote->prediction_owner, snapshot);
+  } else {
+    refresh_prediction_profile(remote);
+    qa_app_selected_movement_prediction_receive(remote->prediction_owner, snapshot);
+  }
+  refresh_prediction_profile(remote);
   if (remote->has_predicted) {
     qa_app_movement_prediction_snapshot_destroy(&remote->predicted.player);
     free(remote->predicted.effects);
@@ -1074,35 +1129,33 @@ static void receive_prediction(qa_app_q2_remote *remote, const qa_q2_wire_frame 
 }
 static void link_solids(qa_app_q2_remote *remote, const qa_q2_wire_frame *frame,
     const qa_body_snapshot *bodies, size_t body_count) {
-  if (!remote->options.scene_link) return;
-  void *scene = qa_app_remote_world_scene(remote->world);
+  qa_shared_scene_queries *scene = qa_app_remote_world_scene(remote->world);
   for (size_t i = 0; i < remote->actor_count; i++)
-    remote->options.scene_unlink(remote->options.ctx, scene, remote->actors[i].actor);
+    qa_shared_unlink(scene, remote->actors[i].actor);
   for (size_t i = 0; i < frame->entity_count; i++) {
     const qa_q2_wire_entity *entity = &frame->entities[i];
     if (entity->solid == 0) continue;
     const qa_body_snapshot *body = NULL;
     qa_actor_id actor = actor_of(remote, entity->number);
-    for (size_t j = 0; j < body_count; j++)
+    for (size_t j = 0; j < body_count && !body; j++)
       if (qa_same_actor(bodies[j].actor, actor)) body = &bodies[j];
     if (!body) continue;
     const char *path = config_get(remote, remote->layout.models + entity->modelindex);
     bool has_model = false;
     double model = 0;
     if (entity->solid == 31 && path && path[0] == '*') {
-      char *end = NULL;
-      model = strtod(path + 1, &end);
-      has_model = end != path + 1 && model == trunc(model);
+      model = qa_js_string_to_number(path + 1); /* Number(path.slice(1)); "*" is 0 */
+      has_model = isfinite(model) && model == trunc(model); /* Number.isInteger */
     }
     if (entity->solid == 31 && !has_model) continue;
     qa_bounds bounds = has_model
-        ? remote->options.scene_model_bounds(remote->options.ctx, scene, model)
+        ? qa_shared_model_bounds(scene, model)
         : body->body.bounds;
     qa_vec3 origin = body->body.origin;
     double rx = fabs(bounds.min.x) > fabs(bounds.max.x) ? fabs(bounds.min.x) : fabs(bounds.max.x);
     double ry = fabs(bounds.min.y) > fabs(bounds.max.y) ? fabs(bounds.min.y) : fabs(bounds.max.y);
     double rz = fabs(bounds.min.z) > fabs(bounds.max.z) ? fabs(bounds.min.z) : fabs(bounds.max.z);
-    double radius = sqrt(rx * rx + ry * ry + rz * rz);
+    double radius = qa_js_hypot3(rx, ry, rz);
     bool rotated = has_model && (body->body.angles.x != 0 || body->body.angles.y != 0
         || body->body.angles.z != 0);
     qa_bounds linked = rotated ? (qa_bounds){{-radius, -radius, -radius}, {radius, radius, radius}} : bounds;
@@ -1121,8 +1174,13 @@ static void link_solids(qa_app_q2_remote *remote, const qa_q2_wire_frame *frame,
     collision.contents = has_model ? 1 : 0x2000000;
     collision.role = "solid";
     collision.monster = !has_model;
-    remote->options.scene_link(remote->options.ctx, scene, linked_body, collision);
+    qa_shared_link(scene, linked_body, collision);
   }
+}
+static void frame_release(void *arg) {
+  qa_q2_wire_frame *frame = arg;
+  qa_q2_wire_frame_free(frame);
+  memset(frame, 0, sizeof *frame);
 }
 void qa_app_q2_remote_frame(qa_app_q2_remote *remote, qa_q2_wire_frame frame,
     const qa_q2_server_record *records, size_t count, double now_milliseconds) {
@@ -1131,35 +1189,44 @@ void qa_app_q2_remote_frame(qa_app_q2_remote *remote, qa_q2_wire_frame frame,
       config_set(remote, records[i].event.index, records[i].event.text);
   if (!remote->has_player) {
     qa_q2_wire_frame_free(&frame);
-    qa_range_error("Q2 frame precedes application signon");
+    qa_raise("Error", 0, 0, "Q2 frame precedes application signon");
   }
   qa_app_q2_remote_player native = native_player(remote, &frame, false);
   bool continuous = true;
   if (native.rerelease) {
     continuous = false;
-    if (remote->has_current && remote->current.valid) {
-      qa_app_q2_remote_player prior = native_player(remote, &remote->current, false);
+    /* previous !== null && previous.valid !== false && priorNative.kind === 'q2-rerelease' */
+    if (remote->has_current && !(remote->current.has_valid && !remote->current.valid)) {
+      qa_app_q2_remote_player prior = native_player(remote, &remote->current, true);
       if (prior.rerelease) {
         double event = 0;
         for (size_t i = 0; i < frame.entity_count; i++)
-          if (frame.entities[i].number == remote->player.source_entity)
+          if (frame.entities[i].number == remote->player.source_entity) {
             event = frame.entities[i].event;
+            break;
+          }
         continuous = qa_app_q2_rerelease_view_continuous(&prior.modern, &native.modern,
             remote->current.server_frame, frame.server_frame, event);
       }
     }
   }
+  /* TS `previous` is the frame this one replaces, whether or not it stays the interpolation
+   * source; the loop-sound diff below reads it either way. */
   double previous_frame_number = remote->has_current ? remote->current.server_frame : 0;
   bool had_previous = remote->has_current;
+  qa_q2_wire_frame replaced;
+  memset(&replaced, 0, sizeof replaced);
+  bool has_replaced = false;
   if (remote->has_previous) qa_q2_wire_frame_free(&remote->previous_frame);
   if (remote->has_current && continuous) {
     remote->previous_frame = remote->current;
     remote->has_previous = true;
-    memcpy(remote->stats_previous, remote->stats_current, sizeof remote->stats_previous);
   } else {
-    if (remote->has_current) qa_q2_wire_frame_free(&remote->current);
+    if (remote->has_current) { replaced = remote->current; has_replaced = true; }
     remote->has_previous = false;
   }
+  qa_cleanup replaced_node;
+  qa_cleanup_push(&replaced_node, frame_release, &replaced);
   remote->current = frame;
   remote->has_current = true;
   if (remote->has_predicted) {
@@ -1213,8 +1280,11 @@ void qa_app_q2_remote_frame(qa_app_q2_remote *remote, qa_q2_wire_frame frame,
     const char *pattern = config_get(remote, remote->layout.lights + (double)style);
     if (!pattern) continue;
     size_t length = strlen(pattern);
+    /* pattern.charCodeAt(Math.floor(time / 100) % pattern.length): a negative or non-finite
+     * position reads NaN. */
+    double position = length == 0 ? 0 : fmod(floor(time / 100), (double)length);
     double value = length == 0 ? 1
-        : ((double)(unsigned char)pattern[(size_t)floor(time / 100) % length] - 97) / 12;
+        : position >= 0 ? ((double)(unsigned char)pattern[(size_t)position] - 97) / 12 : NAN;
     qa_scene_light_style *entry = &remote->published_styles[style_count++];
     entry->is_q2 = true;
     entry->style = (double)style;
@@ -1277,74 +1347,71 @@ void qa_app_q2_remote_frame(qa_app_q2_remote *remote, qa_q2_wire_frame frame,
   for (size_t i = 0; i < frame.entity_count; i++) {
     const qa_q2_wire_entity *entity = &frame.entities[i];
     if (entity->event == 0) continue;
-    event_entry *entry = event_push(remote);
-    entry->event.kind = "q2";
-    entry->event.event_kind = "entity-event";
-    entry->event.seconds = seconds;
-    entry->event.has_source_entity = true;
-    entry->event.source_entity = entity->number;
-    entry->payload.kind = QA_APP_Q2_REMOTE_ENTITY_EVENT;
-    entry->payload.has_actor = true;
-    entry->payload.actor = actor_of(remote, entity->number);
-    entry->event.actor = entry->payload.actor;
-    entry->payload.event = entity->event;
+    qa_app_sim_presentation_event event = event_stamp(remote, "q2", seconds, true, entity->number);
+    qa_q2_presentation_event payload;
+    memset(&payload, 0, sizeof payload);
+    payload.kind = "entity-event";
+    payload.has_actor = true;
+    payload.actor = actor_of(remote, entity->number);
+    payload.event = entity->event;
+    event.q2 = &payload;
+    event_admit(remote, &event);
   }
-  if (had_previous) {
-    /* Previous frame entities were moved/freed above; loop-sound
-     * stop/start diffing uses the retained previous frame. */
-    const qa_q2_wire_frame *previous = remote->has_previous ? &remote->previous_frame : NULL;
-    if (previous) {
-      for (size_t i = 0; i < previous->entity_count; i++) {
-        const qa_q2_wire_entity *entity = &previous->entities[i];
-        if (entity->sound == 0) continue;
-        bool present = false;
-        for (size_t j = 0; j < frame.entity_count; j++)
-          if (frame.entities[j].number == entity->number && frame.entities[j].sound == entity->sound)
-            present = true;
-        if (present) continue;
-        event_entry *entry = event_push(remote);
-        entry->event.kind = "q2";
-        entry->event.event_kind = "sound";
-        entry->event.seconds = seconds;
-        entry->event.has_source_entity = true;
-        entry->event.source_entity = entity->number;
-        entry->payload.kind = QA_APP_Q2_REMOTE_SOUND_STOP;
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, entity->number);
-        entry->event.actor = entry->payload.actor;
-        entry->payload.origin = vec_of(entity->origin);
-        { const char *sound_path = config_get(remote, remote->layout.sounds + entity->sound); entry->path = copy_text(sound_path ? sound_path : ""); }
-        entry->payload.path = entry->path;
-      }
-      for (size_t i = 0; i < frame.entity_count; i++) {
-        const qa_q2_wire_entity *entity = &frame.entities[i];
-        if (entity->sound == 0) continue;
-        bool present = false;
-        for (size_t j = 0; j < previous->entity_count; j++)
-          if (previous->entities[j].number == entity->number
-              && previous->entities[j].sound == entity->sound) present = true;
-        if (present) continue;
-        const char *path = config_get(remote, remote->layout.sounds + entity->sound);
-        if (!path) qa_range_error("Q2 loop sound %.17g has no configstring", entity->sound);
-        event_entry *entry = event_push(remote);
-        entry->event.kind = "q2";
-        entry->event.event_kind = "sound";
-        entry->event.seconds = seconds;
-        entry->event.has_source_entity = true;
-        entry->event.source_entity = entity->number;
-        entry->payload.kind = QA_APP_Q2_REMOTE_SOUND_START;
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, entity->number);
-        entry->event.actor = entry->payload.actor;
-        entry->payload.origin = vec_of(entity->origin);
-        entry->payload.path = path;
-        entry->payload.volume = 1;
-        entry->payload.attenuation = 1;
-      }
-    }
+  const qa_q2_wire_frame *previous = !had_previous ? NULL
+      : has_replaced ? &replaced : &remote->previous_frame;
+  for (size_t i = 0; previous && i < previous->entity_count; i++) {
+    const qa_q2_wire_entity *entity = &previous->entities[i];
+    if (entity->sound == 0) continue;
+    bool present = false;
+    for (size_t j = 0; j < frame.entity_count && !present; j++)
+      present = frame.entities[j].number == entity->number && frame.entities[j].sound == entity->sound;
+    if (present) continue;
+    qa_app_sim_presentation_event event = event_stamp(remote, "q2", seconds, true, entity->number);
+    qa_q2_presentation_event payload;
+    memset(&payload, 0, sizeof payload);
+    payload.kind = "sound";
+    payload.has_actor = true;
+    payload.actor = actor_of(remote, entity->number);
+    payload.origin = vec_of(entity->origin);
+    /* TS this.configs.get(sounds + entity.sound) ?? '' */
+    const char *path = config_get(remote, remote->layout.sounds + entity->sound);
+    payload.path = path ? path : "";
+    payload.channel = 0;
+    payload.volume = 0;
+    payload.attenuation = 0;
+    payload.reliable = false;
+    payload.loop = "stop";
+    event.q2 = &payload;
+    event_admit(remote, &event);
   }
-  (void)records;
-  (void)count;
+  for (size_t i = 0; i < frame.entity_count; i++) {
+    const qa_q2_wire_entity *entity = &frame.entities[i];
+    if (entity->sound == 0) continue;
+    bool present = false;
+    for (size_t j = 0; previous && j < previous->entity_count && !present; j++)
+      present = previous->entities[j].number == entity->number
+          && previous->entities[j].sound == entity->sound;
+    if (present) continue;
+    const char *path = config_get(remote, remote->layout.sounds + entity->sound);
+    if (!path) qa_raise("Error", 0, 0, "Q2 loop sound %s has no configstring", QA_JS_NUMBER(entity->sound));
+    qa_app_sim_presentation_event event = event_stamp(remote, "q2", seconds, true, entity->number);
+    qa_q2_presentation_event payload;
+    memset(&payload, 0, sizeof payload);
+    payload.kind = "sound";
+    payload.has_actor = true;
+    payload.actor = actor_of(remote, entity->number);
+    payload.origin = vec_of(entity->origin);
+    payload.path = path;
+    payload.channel = 0;
+    payload.volume = 1;
+    payload.attenuation = 1;
+    payload.reliable = false;
+    payload.loop = "start";
+    event.q2 = &payload;
+    event_admit(remote, &event);
+  }
+  qa_cleanup_pop(&replaced_node);
+  frame_release(&replaced);
 }
 static const qa_simulation_output *sample_frame(qa_app_q2_remote *remote, double fraction) {
   if (!remote->has_current || !remote->has_published || !remote->has_player) return NULL;
@@ -1360,10 +1427,13 @@ static const qa_simulation_output *sample_frame(qa_app_q2_remote *remote, double
   double prior_time = remote->published.snapshot.frame.time.kind == QA_SOURCE_TIME_MILLISECONDS
       ? remote->published.snapshot.frame.time.value
       : remote->published.snapshot.frame.time.value * 1000;
+  /* TS maps output.snapshot.bodies, which is the previous sample when no frame arrived since: copy before
+   * releasing the previous sample's storage. */
+  qa_body_snapshot *sampled = xmalloc((remote->published.snapshot.body_count + 1) * sizeof *sampled);
+  for (size_t i = 0; i < remote->published.snapshot.body_count; i++) sampled[i] = remote->published.snapshot.bodies[i];
   free(remote->sample_bodies);
-  remote->sample_bodies = xmalloc(remote->published.snapshot.body_count * sizeof *remote->sample_bodies);
+  remote->sample_bodies = sampled;
   for (size_t i = 0; i < remote->published.snapshot.body_count; i++) {
-    remote->sample_bodies[i] = remote->published.snapshot.bodies[i];
     qa_body_snapshot *body = &remote->sample_bodies[i];
     if (qa_same_actor(body->actor, remote->player.actor)) {
       body->body.origin = sampled_player_origin(remote, &remote->current);
@@ -1414,8 +1484,8 @@ void qa_app_q2_remote_records(qa_app_q2_remote *remote,
     remote->last_records = xmalloc(count * sizeof *remote->last_records);
     for (size_t i = 0; i < count; i++) {
       record_copy_local(&records[i], &remote->last_records[i]);
+      remote->last_record_count++;
     }
-    remote->last_record_count = count;
   }
   double seconds = (remote->has_current ? remote->current.server_frame : 0)
       * remote->frame_milliseconds / 1000;
@@ -1425,17 +1495,17 @@ void qa_app_q2_remote_records(qa_app_q2_remote *remote,
       config_set(remote, event->index, event->text);
       if (remote->has_player) player_info(remote, event->index, event->text ? event->text : "", seconds);
     } else if (event->kind == QA_Q2_SERVER_PRINT && event->level == 3 && remote->has_player) {
-      event_entry *entry = event_push(remote);
-      entry->event.kind = "q2-player";
-      entry->event.event_kind = "print";
-      entry->event.seconds = seconds;
-      entry->event.has_source_entity = true;
-      entry->event.source_entity = remote->player.source_entity;
-      entry->payload.kind = QA_APP_Q2_REMOTE_PRINT;
-      entry->payload.has_actor = true;
-      entry->payload.actor = remote->player.actor;
-      entry->text = copy_text(event->text ? event->text : "");
-      entry->payload.text = entry->text;
+      qa_app_sim_presentation_event item = event_stamp(remote, "q2-player", seconds, true,
+          remote->player.source_entity);
+      qa_q2_player_event payload;
+      memset(&payload, 0, sizeof payload);
+      payload.kind = "print";
+      payload.has_target = true;
+      payload.target = remote->player.actor;
+      payload.level = "chat";
+      payload.text = event->text ? event->text : "";
+      item.q2_player = &payload;
+      event_admit(remote, &item);
     } else if (event->kind == QA_Q2_SERVER_INVENTORY) {
       free(remote->inventory);
       remote->inventory = xmalloc(event->count_count * sizeof *remote->inventory);
@@ -1445,124 +1515,109 @@ void qa_app_q2_remote_records(qa_app_q2_remote *remote,
       free(remote->layout_text);
       remote->layout_text = copy_text(event->text ? event->text : "");
     } else if (event->kind == QA_Q2_SERVER_TEMPORARY_ENTITY) {
-      event_entry *entry = NULL;
-      qa_app_q2_effect_event effect = {0};
-      if (qa_app_q2_effect_from_wire(&event->temp, &effect)) {
-        entry = event_push(remote);
-        entry->effect = effect;
-        entry->event.kind = "q2";
-        entry->event.event_kind = "effect";
-        entry->payload.kind = QA_APP_Q2_REMOTE_EFFECT;
-        entry->payload.effect = &entry->effect;
+      qa_q2_presentation_event decoded;
+      if (qa_app_q2_effect_from_wire(&event->temp, &decoded)) {
+        qa_app_sim_presentation_event item = event_stamp(remote, "q2", seconds, false, 0);
+        item.q2 = &decoded;
+        event_admit(remote, &item);
       } else {
-        qa_app_q2_beam_event beam = {0};
+        qa_q2w_event beam;
         if (qa_app_q2_beam_from_wire(&event->temp, &beam)) {
-          entry = event_push(remote);
-          entry->beam = beam;
-          entry->event.kind = "q2-weapon";
-          entry->event.event_kind = "beam";
-          entry->payload.kind = QA_APP_Q2_REMOTE_BEAM;
-          entry->payload.effect = &entry->beam;
+          qa_app_sim_presentation_event item = event_stamp(remote, "q2-weapon", seconds, false, 0);
+          item.q2_weapon = &beam;
+          event_admit(remote, &item);
         }
       }
-      if (entry) entry->event.seconds = seconds;
     } else if (event->kind == QA_Q2_SERVER_SOUND) {
       const char *path = config_get(remote, remote->layout.sounds + event->sound.index);
-      if (!path) qa_range_error("Q2 sound %.17g has no configstring", event->sound.index);
-      qa_vec3 origin = {0, 0, 0};
-      if (event->sound.has_position) origin = event->sound.position;
-      else if (remote->has_current)
-        for (size_t j = 0; j < remote->current.entity_count; j++)
+      if (!path) qa_raise("Error", 0, 0, "Q2 sound %s has no configstring", QA_JS_NUMBER(event->sound.index));
+      const qa_q2_wire_entity *entity = NULL;
+      if (remote->has_current)
+        for (size_t j = 0; j < remote->current.entity_count && !entity; j++)
           if (remote->current.entities[j].number == event->sound.entity)
-            origin = vec_of(remote->current.entities[j].origin);
-      event_entry *entry = event_push(remote);
-      entry->event.kind = "q2";
-      entry->event.event_kind = "sound";
-      entry->event.seconds = seconds;
-      entry->event.has_source_entity = true;
-      entry->event.source_entity = event->sound.entity;
-      entry->payload.kind = QA_APP_Q2_REMOTE_SOUND_ONCE;
+            entity = &remote->current.entities[j];
+      qa_app_sim_presentation_event item = event_stamp(remote, "q2", seconds, true, event->sound.entity);
+      qa_q2_presentation_event payload;
+      memset(&payload, 0, sizeof payload);
+      payload.kind = "sound";
       if (event->sound.entity != 0) {
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, event->sound.entity);
-        entry->event.actor = entry->payload.actor;
+        payload.has_actor = true;
+        payload.actor = actor_of(remote, event->sound.entity);
       }
-      entry->payload.origin = origin;
-      entry->payload.path = path;
-      entry->payload.volume = event->sound.volume;
-      entry->payload.attenuation = event->sound.attenuation;
-      entry->payload.channel = event->sound.channel;
+      qa_vec3 zero = {0, 0, 0};
+      payload.origin = event->sound.has_position ? event->sound.position
+          : entity == NULL ? zero : vec_of(entity->origin);
+      payload.path = path;
+      payload.volume = event->sound.volume;
+      payload.attenuation = event->sound.attenuation;
+      payload.channel = event->sound.channel;
+      payload.reliable = false;
+      payload.loop = "once";
+      item.q2 = &payload;
+      event_admit(remote, &item);
     } else if (event->kind == QA_Q2_SERVER_MUZZLE_FLASH) {
       if (event->monster) {
         const qa_q2_wire_entity *entity = NULL;
         if (remote->has_current)
-          for (size_t j = 0; j < remote->current.entity_count; j++)
+          for (size_t j = 0; j < remote->current.entity_count && !entity; j++)
             if (remote->current.entities[j].number == event->flash_entity)
               entity = &remote->current.entities[j];
         if (!entity) continue;
         qa_angle_vectors axes = qa_math_angle_vectors_rule(vec_of(entity->angles), QA_ANGLE_RULE_NATIVE);
-        qa_vec3 offset = qa_q2m_muzzle_offset(QA_Q2F_CLASSIC, event->flash);
+        qa_vec3 offset = qa_q2m_muzzle_offset(QA_Q2_EDITION_CLASSIC, event->flash);
         qa_vec3 origin = vec_of(entity->origin);
-        event_entry *entry = event_push(remote);
-        entry->event.kind = "q2";
-        entry->event.event_kind = "monster-muzzleflash";
-        entry->event.seconds = seconds;
-        entry->event.has_source_entity = true;
-        entry->event.source_entity = event->flash_entity;
-        entry->payload.kind = QA_APP_Q2_REMOTE_MONSTER_MUZZLEFLASH;
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, event->flash_entity);
-        entry->event.actor = entry->payload.actor;
-        entry->payload.flash = event->flash;
-        entry->payload.origin = (qa_vec3){
+        qa_app_sim_presentation_event item = event_stamp(remote, "q2", seconds, true, event->flash_entity);
+        qa_q2_presentation_event payload;
+        memset(&payload, 0, sizeof payload);
+        payload.kind = "monster-muzzleflash";
+        payload.has_actor = true;
+        payload.actor = actor_of(remote, event->flash_entity);
+        payload.flash = event->flash;
+        payload.origin = (qa_vec3){
             origin.x + axes.forward.x * offset.x + axes.right.x * offset.y,
             origin.y + axes.forward.y * offset.x + axes.right.y * offset.y,
             origin.z + axes.forward.z * offset.x + axes.right.z * offset.y + offset.z};
-        entry->payload.direction = axes.forward;
+        payload.direction = axes.forward;
+        item.q2 = &payload;
+        event_admit(remote, &item);
       } else {
-        event_entry *entry = event_push(remote);
-        entry->event.kind = "q2-weapon";
-        entry->event.event_kind = "muzzleflash";
-        entry->event.seconds = seconds;
-        entry->event.has_source_entity = true;
-        entry->event.source_entity = event->flash_entity;
-        entry->payload.kind = QA_APP_Q2_REMOTE_MUZZLEFLASH;
-        entry->payload.has_actor = true;
-        entry->payload.actor = actor_of(remote, event->flash_entity);
-        entry->event.actor = entry->payload.actor;
-        entry->payload.flash = event->flash;
-        entry->payload.silenced = event->silenced;
+        qa_app_sim_presentation_event item = event_stamp(remote, "q2-weapon", seconds, true, event->flash_entity);
+        qa_actor_id actor = actor_of(remote, event->flash_entity);
+        qa_q2w_event payload;
+        memset(&payload, 0, sizeof payload);
+        payload.kind = QA_Q2W_EVENT_MUZZLEFLASH;
+        payload.actor = &actor;
+        payload.flash = event->flash;
+        payload.silenced = event->silenced;
+        item.q2_weapon = &payload;
+        event_admit(remote, &item);
       }
     } else if (event->kind == QA_Q2_SERVER_CENTER_PRINT && remote->has_player) {
-      event_entry *entry = event_push(remote);
-      entry->event.kind = "q2";
-      entry->event.event_kind = "centerprint";
-      entry->event.seconds = seconds;
-      entry->event.has_source_entity = true;
-      entry->event.source_entity = remote->player.source_entity;
-      entry->payload.kind = QA_APP_Q2_REMOTE_CENTERPRINT;
-      entry->payload.has_actor = true;
-      entry->payload.actor = remote->player.actor;
-      entry->event.actor = remote->player.actor;
-      entry->text = copy_text(event->text ? event->text : "");
-      entry->payload.text = entry->text;
+      qa_app_sim_presentation_event item = event_stamp(remote, "q2", seconds, true,
+          remote->player.source_entity);
+      qa_q2_presentation_event payload;
+      memset(&payload, 0, sizeof payload);
+      payload.kind = "centerprint";
+      payload.has_actor = true;
+      payload.actor = remote->player.actor;
+      payload.text = event->text ? event->text : "";
+      item.q2 = &payload;
+      event_admit(remote, &item);
     }
   }
 }
+/* TS drainPresentationEvents: take every live record, then retire them. The drained events are
+ * owned by the remote and stay valid until the next drain or destroy. */
 const qa_app_sim_presentation_event *qa_app_q2_remote_drain_events(qa_app_q2_remote *remote,
     size_t *out_count) {
-  if (remote->drained_cap < remote->event_count) {
-    remote->drained = realloc(remote->drained, remote->event_count * sizeof *remote->drained);
-    if (!remote->drained) qa_range_error("out of memory");
-    remote->drained_cap = remote->event_count;
-  }
-  /* Drained events alias ring payloads; ring storage is retained
-   * (entries are not freed on drain, matching take+retire reuse). */
-  for (size_t i = 0; i < remote->event_count; i++)
-    remote->drained[i] = remote->events[(remote->event_head + i) % remote->event_cap].event;
-  *out_count = remote->event_count;
-  remote->event_head = (remote->event_head + remote->event_count) % (remote->event_cap ? remote->event_cap : 1);
+  events_release(remote->drained, remote->drained_count);
+  free(remote->drained);
+  remote->drained = remote->events;
+  remote->drained_count = remote->event_count;
+  remote->events = NULL;
   remote->event_count = 0;
+  remote->event_cap = 0;
+  *out_count = remote->drained_count;
   return remote->drained;
 }
 void qa_app_q2_remote_prediction_acknowledged(qa_app_q2_remote *remote,
@@ -1572,7 +1627,15 @@ void qa_app_q2_remote_prediction_acknowledged(qa_app_q2_remote *remote,
 }
 void qa_app_q2_remote_prediction_sent(qa_app_q2_remote *remote,
     double sequence, const qa_q2_wire_usercmd *command, double now_milliseconds) {
-  if (!remote->prediction_owner) return;
+  if (!remote->prediction_owner) {
+    /* this.predicted = this.predictionOwner?.replay() ?? null */
+    if (remote->has_predicted) {
+      qa_app_movement_prediction_snapshot_destroy(&remote->predicted.player);
+      free(remote->predicted.effects);
+      remote->has_predicted = false;
+    }
+    return;
+  }
   qa_app_prediction_command entry = {0};
   entry.sequence = sequence;
   entry.time_milliseconds = now_milliseconds;
@@ -1585,6 +1648,7 @@ void qa_app_q2_remote_prediction_sent(qa_app_q2_remote *remote,
     entry.command.kind = QA_USER_COMMAND_Q2;
     qa_q2_to_command(command, &entry.command.as.q2);
   }
+  refresh_prediction_profile(remote);
   qa_app_selected_movement_prediction_submit(remote->prediction_owner, entry);
   if (remote->has_predicted) {
     qa_app_movement_prediction_snapshot_destroy(&remote->predicted.player);
@@ -1604,7 +1668,6 @@ void qa_app_q2_remote_disconnected(qa_app_q2_remote *remote, const char *reason)
 void qa_app_q2_remote_print(qa_app_q2_remote *remote, const char *text) {
   remote->options.print(remote->options.ctx, text);
 }
-static const void *host_downloads_of(void *ctx) { return ctx; }
 static void host_server_data(void *ctx, const void *data,
     void (*assert_current)(void *), void *assert_ctx) {
   qa_app_q2_remote *remote = ctx;
@@ -1629,22 +1692,30 @@ static void host_frame(void *ctx, const void *frame, const void *const *records,
   qa_q2_wire_frame copy = {0};
   if (!qa_q2_wire_frame_clone((const qa_q2_wire_frame *)frame, &copy)) qa_range_error("out of memory");
   const qa_q2_server_record **list = (const qa_q2_server_record **)records;
-  qa_q2_server_record *flat = xmalloc(count * sizeof *flat);
+  local_records held = {xmalloc(count * sizeof *held.records), 0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, local_records_release, &held);
   for (size_t i = 0; i < count; i++) {
-    record_copy_local(list[i], &flat[i]);
+    record_copy_local(list[i], &held.records[i]);
+    held.count++;
   }
-  qa_app_q2_remote_frame(remote, copy, flat, count, now);
-  records_free_local(flat, count);
+  qa_app_q2_remote_frame(remote, copy, held.records, count, now);
+  qa_cleanup_pop(&node);
+  local_records_release(&held);
 }
 static void host_records(void *ctx, const void *const *records, size_t count) {
   qa_app_q2_remote *remote = ctx;
   const qa_q2_server_record **list = (const qa_q2_server_record **)records;
-  qa_q2_server_record *flat = xmalloc(count * sizeof *flat);
+  local_records held = {xmalloc(count * sizeof *held.records), 0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, local_records_release, &held);
   for (size_t i = 0; i < count; i++) {
-    record_copy_local(list[i], &flat[i]);
+    record_copy_local(list[i], &held.records[i]);
+    held.count++;
   }
-  qa_app_q2_remote_records(remote, flat, count);
-  records_free_local(flat, count);
+  qa_app_q2_remote_records(remote, held.records, count);
+  qa_cleanup_pop(&node);
+  local_records_release(&held);
 }
 static const void *host_command(void *ctx, const void *actor_command) {
   qa_app_q2_remote *remote = ctx;
@@ -1673,6 +1744,5 @@ qa_app_q2_client_host qa_app_q2_remote_as_client_host(qa_app_q2_remote *remote) 
   host.command = host_command;
   host.disconnected = host_disconnected;
   host.print = host_print_text;
-  (void)host_downloads_of;
   return host;
 }

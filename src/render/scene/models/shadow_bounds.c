@@ -5,11 +5,12 @@
 #include <stdlib.h>
 
 #include "qa/formats/q3_model/quaternion.h"
+#include "qa/foundation/js.h"
 
 static const double ROUNDOFF = 0x1p-22, UNDERFLOW = 1e-30, MAXIMUM = 1e30;
 
 static double vlength(qa_vec3 v) {
-  return sqrt(v.x * v.x + v.y * v.y + v.z * v.z); /* TS Math.hypot */
+  return qa_js_hypot3(v.x, v.y, v.z); /* TS Math.hypot(v.x, v.y, v.z) */
 }
 static bool bounded(double value) {
   return isfinite(value) && value >= 0 && value <= MAXIMUM;
@@ -36,7 +37,7 @@ static bool weights_of(const qa_md5_mesh *mesh, weight_envelope *out) {
     double sum = 0;
     for (double i = 0; i < w.count; i++) {
       double wi = w.first + i;
-      if (!(wi >= 0) || trunc(wi) != wi || (size_t)wi >= mesh->weight_count)
+      if (!(wi >= 0) || trunc(wi) != wi || wi >= (double)mesh->weight_count)
         goto fail;
       const qa_md5_mesh_weight *weight = &mesh->weights[(size_t)wi];
       if (trunc(weight->joint) != weight->joint || weight->joint < 0) goto fail;
@@ -67,7 +68,7 @@ fail:
 
 static double operator_norm(qa_vec3 a, qa_vec3 b, qa_vec3 c) {
   double ab = fabs(dot(a, b)), ac = fabs(dot(a, c)), bc = fabs(dot(b, c));
-  double m = fmax(dot(a, a) + ab + ac, fmax(dot(b, b) + ab + bc, dot(c, c) + ac + bc));
+  double m = qa_js_max(dot(a, a) + ab + ac, qa_js_max(dot(b, b) + ab + bc, dot(c, c) + ac + bc));
   return sqrt(m) * (1 + ROUNDOFF);
 }
 
@@ -101,7 +102,7 @@ bool qa_md5_shadow_envelope(const qa_md5_mesh *meshes, size_t mesh_count,
     }
     double accumulated = (metadata.bias_sum * point_radius +
                           metadata.count * UNDERFLOW) *
-                         pow(1 + ROUNDOFF, metadata.count);
+                         qa_js_pow(1 + ROUNDOFF, metadata.count);
     free(metadata.joint_radii);
     if (!ok || !bounded(accumulated)) return false;
     if (accumulated > radius) radius = accumulated;
@@ -120,8 +121,7 @@ bool qa_md5_shadow_envelope(const qa_md5_mesh *meshes, size_t mesh_count,
     columns[i] = (qa_vec3){axis.x * scale, axis.y * scale, axis.z * scale};
   }
   double norm = operator_norm(columns[0], columns[1], columns[2]);
-  double frobenius = sqrt(pow(vlength(columns[0]), 2) + pow(vlength(columns[1]), 2) +
-                           pow(vlength(columns[2]), 2));
+  double frobenius = qa_js_hypot3(vlength(columns[0]), vlength(columns[1]), vlength(columns[2]));
   double origin = vlength(transform.origin);
   double transformed = norm * radius, products = frobenius * radius;
   if (!bounded(norm) || !bounded(frobenius) || !bounded(origin) ||
@@ -131,6 +131,6 @@ bool qa_md5_shadow_envelope(const qa_md5_mesh *meshes, size_t mesh_count,
       transformed + 32 * ROUNDOFF * (products + origin) + UNDERFLOW;
   if (!bounded(world_radius)) return false;
   out->origin = transform.origin;
-  out->radius = fmax(64, world_radius);
+  out->radius = qa_js_max(64, world_radius);
   return true;
 }

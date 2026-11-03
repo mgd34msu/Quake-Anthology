@@ -9,10 +9,13 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t n){ void *p=malloc(n?n:1); if(!p) qa_range_error("out of memory"); return p; }
 static char *xstrdup(const char *s){ size_t n=strlen(s)+1; char *p=xmalloc(n); memcpy(p,s,n); return p; }
-static void lower_into(char *dst,size_t cap,const char *src){ size_t i=0; for(;src[i]&&i+1<cap;i++) dst[i]=(char)tolower((unsigned char)src[i]); dst[i]='\0'; }
+/* TS toLowerCase (Unicode) into a bounded buffer. */
+static void lower_into(char *dst,size_t cap,const char *src){ char *l=qa_js_to_lower_case(src); if(!l) qa_range_error("Out of memory"); snprintf(dst,cap,"%s",l); free(l); }
 
 const char *qa_q3_player_footsteps_name(qa_q3_player_footsteps v){
   switch(v){case QA_Q3_FOOTSTEPS_BOOT:return "boot";case QA_Q3_FOOTSTEPS_FLESH:return "flesh";
@@ -30,6 +33,7 @@ typedef struct ctx {
   const qa_q3_player_animation_parse_context *context;
   qa_common_parse_state *parser;
   qa_q3_animation_warning *warnings; size_t count, cap;
+  const char *source;
 } ctx;
 /* TS print(): %s substitution, 1024-byte buffer check on message length. */
 static char *print_fmt(ctx *c, const char *format, const char *a, const char *b){
@@ -39,7 +43,7 @@ static char *print_fmt(ctx *c, const char *format, const char *a, const char *b)
     else buf[o++]=format[i];
   }
   buf[o]='\0';
-  if(o>=1024) qa_range_error("CG_Printf exceeds its 1024-byte source buffer");
+  if(o>=1024) qa_text_parse_error(c->source,(c->parser->line+1)|0,1,"CG_Printf exceeds its 1024-byte source buffer");
   if(c->context&&c->context->print) c->context->print(c->context->print_ctx,buf);
   return xstrdup(buf);
 }
@@ -62,7 +66,7 @@ void qa_q3_parse_player_animation_config(const char *text, const char *source,
   qa_q3_player_animation_target *target=(context&&context->target)?context->target:&owned;
   qa_common_parse_state owned_parser; qa_common_parse_state_init(&owned_parser);
   qa_common_parse_state *parser=(context&&context->parser)?context->parser:&owned_parser;
-  ctx c={context,parser,NULL,0,0};
+  ctx c={context,parser,NULL,0,0,source};
   size_t length=strlen(text);
   if(length==0) qa_text_parse_error(source,1,1,"empty animation file");
   if(length>19998){ char *m=print_fmt(&c,"File %s too long\n",source,NULL); const char *mm=m; qa_text_parse_error(source,1,1,"%s",mm); }
@@ -99,7 +103,7 @@ void qa_q3_parse_player_animation_config(const char *text, const char *source,
       char first=token[0];
       if(first>='0'&&first<='9'){ if(prev_has) qa_common_parse_cursor_set_offset(&cursor,previous); else qa_common_parse_cursor_set_null(&cursor); free(token); break; }
       warn_fmt(&c,"unknown token '%s' is %s\n",token,source);
-      if(prev_has==cursor.has_offset&&previous==cursor.offset){ free(token); qa_common_parse_cursor_destroy(&cursor); qa_range_error("CG animation prelude reached the source nonprogress cycle"); }
+      if(prev_has==cursor.has_offset&&previous==cursor.offset){ free(token); qa_common_parse_cursor_destroy(&cursor); qa_text_parse_error(source,(parser->line+1)|0,1,"animation prelude reached the source nonprogress cycle"); }
     }
     free(token);
   }
@@ -119,13 +123,13 @@ void qa_q3_parse_player_animation_config(const char *text, const char *source,
       break;
     }
     animation->first_frame=qa_game_atoi(first_token); free(first_token);
-    if(index==QA_Q3_ANIM_LEGS_WALKCR) skip=(int32_t)((int32_t)animation->first_frame-(int32_t)cell(target,QA_Q3_ANIM_TORSO_GESTURE)->first_frame);
-    if(index>=QA_Q3_ANIM_LEGS_WALKCR&&index<QA_Q3_ANIM_TORSO_GETFLAG) animation->first_frame=(double)(int32_t)((int32_t)animation->first_frame-skip);
+    if(index==QA_Q3_ANIM_LEGS_WALKCR) skip=(int32_t)(qa_js_to_int32(animation->first_frame)-qa_js_to_int32(cell(target,QA_Q3_ANIM_TORSO_GESTURE)->first_frame));
+    if(index>=QA_Q3_ANIM_LEGS_WALKCR&&index<QA_Q3_ANIM_TORSO_GETFLAG) animation->first_frame=(double)(int32_t)(qa_js_to_int32(animation->first_frame)-skip);
     char *count_token=xstrdup(qa_common_parse_state_parse(parser,&cursor,true));
     if(count_token[0]=='\0'){ free(count_token); break; }
     animation->num_frames=qa_game_atoi(count_token); free(count_token);
     animation->reversed=false; animation->flipflop=false;
-    if(animation->num_frames<0){ animation->num_frames=(double)(int32_t)(-(int32_t)animation->num_frames); animation->reversed=true; }
+    if(animation->num_frames<0){ animation->num_frames=(double)(int32_t)(-qa_js_to_int32(animation->num_frames)); animation->reversed=true; }
     char *loop_token=xstrdup(qa_common_parse_state_parse(parser,&cursor,true));
     if(loop_token[0]=='\0'){ free(loop_token); break; }
     animation->loop_frames=qa_game_atoi(loop_token); free(loop_token);

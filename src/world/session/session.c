@@ -8,15 +8,16 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/world/handles.h"
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -38,12 +39,46 @@ static qa_resource_scope *new_scope(const char *name) {
   return scope;
 }
 
+/* TS closeAll(resources, message): every resource closes in its own try;
+ * failures become one AggregateError carrying the site's message. The collect
+ * form returns the failure count so a caller can free memory before raising. */
+static void resource_close_call(void *ctx) {
+  const qa_session_resource *resource = ctx;
+  resource->close(resource->ctx);
+}
+static size_t close_all_collect(const qa_session_resource *resources, size_t count) {
+  size_t errors = 0;
+  for (size_t i = 0; i < count; i++) {
+    qa_caught_error caught;
+    if (!qa_try(resource_close_call, (void *)&resources[i], &caught)) errors++;
+  }
+  return errors;
+}
+static void raise_aggregate(size_t errors, const char *message) {
+  if (errors > 0) qa_raise("AggregateError", 0, 0, "%s", message);
+}
+static void close_all(const qa_session_resource *resources, size_t count, const char *message) {
+  raise_aggregate(close_all_collect(resources, count), message);
+}
+static void scope_close_resource(void *ctx) { qa_resource_scope_close(ctx); }
+static qa_session_resource scope_resource(qa_resource_scope *scope) {
+  qa_session_resource resource = {scope, scope_close_resource};
+  return resource;
+}
+/* Closes then frees a scope whose owner dropped it (TS lets the GC have it). */
+static void scope_dispose(qa_resource_scope *scope) {
+  if (scope == NULL) return;
+  qa_caught_error caught;
+  bool ok = qa_try(scope_close_resource, scope, &caught);
+  qa_resource_scope_destroy(scope);
+  if (!ok) qa_rethrow(&caught);
+}
+
 /* ---------- WorldLifetime ---------- */
 
 struct qa_world_lifetime {
   qa_simulation simulation;
   qa_resource_scope *resources;
-  qa_provider_runtime_state providers;
   bool closed;
 };
 
@@ -52,14 +87,12 @@ qa_world_lifetime *qa_world_lifetime_create(qa_simulation simulation) {
   if (world == NULL) return NULL;
   world->simulation = simulation;
   world->resources = new_scope("World resources");
-  qa_provider_runtime_state_init(&world->providers);
   return world;
 }
 void qa_world_lifetime_destroy(qa_world_lifetime *world) {
   if (world == NULL) return;
   qa_world_lifetime_close(world);
   qa_resource_scope_destroy(world->resources);
-  qa_provider_runtime_state_destroy(&world->providers);
   free(world);
 }
 qa_simulation qa_world_lifetime_simulation(const qa_world_lifetime *world) {
@@ -68,19 +101,16 @@ qa_simulation qa_world_lifetime_simulation(const qa_world_lifetime *world) {
 qa_resource_scope *qa_world_lifetime_resources(qa_world_lifetime *world) {
   return world->resources;
 }
-qa_provider_runtime_state *qa_world_lifetime_providers(
-    qa_world_lifetime *world) {
-  return &world->providers;
-}
 bool qa_world_lifetime_is_closed(const qa_world_lifetime *world) {
   return world->closed;
 }
 void qa_world_lifetime_close(qa_world_lifetime *world) {
   if (world->closed) return;
   world->closed = true;
-  world->simulation.close(world->simulation.ctx);
-  qa_resource_scope_close(world->resources);
-  qa_provider_runtime_state_close(&world->providers);
+  qa_session_resource resources[2] = {
+      {world->simulation.ctx, world->simulation.close},
+      scope_resource(world->resources)};
+  close_all(resources, 2, "World shutdown failed");
 }
 static void world_close_ctx(void *ctx) {
   qa_world_lifetime_close((qa_world_lifetime *)ctx);
@@ -226,6 +256,15 @@ static void seat_unbind_cb(void *ctx) {
     }
   free(unbind);
 }
+static void close_bound_seat(void *ctx) {
+  struct seat_unbind owned = *(struct seat_unbind *)ctx;
+  free(ctx);
+  for (size_t i = 0; i < owned.client->seat_count; i++)
+    if (owned.client->seats[i] == owned.seat) {
+      qa_session_seat_close(owned.seat);
+      return;
+    }
+}
 void qa_session_client_bind_seat(qa_session_client *client,
                                  qa_session_seat *seat) {
   qa_session_client_validate_seat_binding(client, seat);
@@ -240,8 +279,13 @@ void qa_session_client_bind_seat(qa_session_client *client,
   unbind->client = client;
   unbind->seat = seat;
   qa_resource_scope_defer(seat->resources, seat_unbind_cb, unbind);
-  qa_resource_scope_own(client->resources,
-                        qa_session_seat_as_resource(seat));
+  /* TS this.resources.own(seat). A seat retired and freed before its client
+   * closes has already unbound itself (closing it is then a TS no-op), so the
+   * client closes it only while it is still bound. */
+  struct seat_unbind *owned = xmalloc(sizeof *owned);
+  owned->client = client;
+  owned->seat = seat;
+  qa_resource_scope_defer(client->resources, close_bound_seat, owned);
 }
 
 qa_session_connection *qa_session_client_replace_connection(
@@ -264,22 +308,52 @@ qa_session_connection *qa_session_client_connect(qa_session_client *client,
   return qa_session_client_replace_connection(client, kind, &retired);
 }
 
+static void seat_clear_resource(void *ctx) {
+  qa_session_seat_clear_presentation((qa_session_seat *)ctx);
+}
+/* TS clearSeatPresentations: closeAll over a snapshot of the bound seats. */
 static void clear_seat_presentations(qa_session_client *client) {
-  for (size_t i = 0; i < client->seat_count; i++)
-    qa_session_seat_clear_presentation(client->seats[i]);
+  size_t count = client->seat_count;
+  if (count == 0) return;
+  qa_session_resource *resources = xmalloc(count * sizeof *resources);
+  for (size_t i = 0; i < count; i++) {
+    resources[i].ctx = client->seats[i];
+    resources[i].close = seat_clear_resource;
+  }
+  size_t errors = close_all_collect(resources, count);
+  free(resources);
+  raise_aggregate(errors, "Seat presentation shutdown failed");
+}
+static void clear_seats_resource(void *ctx) {
+  clear_seat_presentations((qa_session_client *)ctx);
+}
+static void connection_close_resource(void *ctx) {
+  qa_session_connection_close((qa_session_connection *)ctx);
 }
 
 void qa_session_client_disconnect(qa_session_client *client) {
   qa_session_connection *connection = client->active_connection;
   client->active_connection = NULL;
   qa_resource_scope *active = client->active_resources;
+  /* TS keeps the closed scope once the client is closed; C frees it below,
+   * so a closed client holds none. */
   client->active_resources =
       qa_session_client_is_closed(client)
           ? NULL
           : new_scope("Client world resources");
-  clear_seat_presentations(client);
+  qa_session_resource resources[3];
+  size_t count = 0;
+  resources[count].ctx = client;
+  resources[count++].close = clear_seats_resource;
+  if (active != NULL) resources[count++] = scope_resource(active);
+  if (connection != NULL) {
+    resources[count].ctx = connection;
+    resources[count++].close = connection_close_resource;
+  }
+  size_t errors = close_all_collect(resources, count);
   if (active != NULL) qa_resource_scope_destroy(active);
   qa_session_connection_destroy(connection);
+  raise_aggregate(errors, "Client disconnect failed");
 }
 
 qa_resource_scope *qa_session_client_replace_world_resources(
@@ -292,8 +366,11 @@ qa_resource_scope *qa_session_client_replace_world_resources(
 void qa_session_client_clear_world(qa_session_client *client) {
   qa_resource_scope *previous =
       qa_session_client_replace_world_resources(client);
-  clear_seat_presentations(client);
-  if (previous != NULL) qa_resource_scope_destroy(previous);
+  qa_session_resource resources[2] = {{client, clear_seats_resource},
+                                      scope_resource(previous)};
+  size_t errors = close_all_collect(resources, 2);
+  qa_resource_scope_destroy(previous);
+  raise_aggregate(errors, "Client world shutdown failed");
 }
 void qa_session_client_close(qa_session_client *client) {
   qa_resource_scope_close(client->resources);
@@ -383,14 +460,14 @@ qa_resource_scope *qa_session_seat_attach_presentation(
   qa_resource_scope_defer(resources, cleanup, cleanup_ctx);
   qa_resource_scope *previous =
       qa_session_seat_replace_presentation(seat, &presentation, resources);
-  if (previous != NULL) qa_resource_scope_destroy(previous);
+  scope_dispose(previous);
   return resources;
 }
 
 void qa_session_seat_clear_presentation(qa_session_seat *seat) {
   qa_resource_scope *previous =
       qa_session_seat_replace_presentation(seat, NULL, NULL);
-  if (previous != NULL) qa_resource_scope_destroy(previous);
+  scope_dispose(previous);
 }
 
 void qa_session_seat_receive(qa_session_seat *seat,
@@ -486,7 +563,38 @@ struct qa_engine_session {
   qa_simulation_event *scratch_events;
   size_t scratch_event_count, scratch_event_capacity;
   qa_simulation_output scratch_output;
+  /* Clients and seats that left every session map without a retired bundle
+   * or closeClient freeing them (TS lets the GC have them): a closed slot
+   * occupant replaced by Map.set, a prepared one closed before publication,
+   * and everything close() closed. Freed by destroy. */
+  qa_session_client **buried_clients;
+  size_t buried_client_count, buried_client_capacity;
+  qa_session_seat **buried_seats;
+  size_t buried_seat_count, buried_seat_capacity;
 };
+
+static void bury_client(qa_engine_session *session, qa_session_client *client) {
+  for (size_t i = 0; i < session->buried_client_count; i++)
+    if (session->buried_clients[i] == client) return;
+  if (session->buried_client_count == session->buried_client_capacity) {
+    session->buried_client_capacity =
+        session->buried_client_capacity != 0 ? session->buried_client_capacity * 2 : 8;
+    session->buried_clients = xrealloc(
+        session->buried_clients, session->buried_client_capacity * sizeof *session->buried_clients);
+  }
+  session->buried_clients[session->buried_client_count++] = client;
+}
+static void bury_seat(qa_engine_session *session, qa_session_seat *seat) {
+  for (size_t i = 0; i < session->buried_seat_count; i++)
+    if (session->buried_seats[i] == seat) return;
+  if (session->buried_seat_count == session->buried_seat_capacity) {
+    session->buried_seat_capacity =
+        session->buried_seat_capacity != 0 ? session->buried_seat_capacity * 2 : 8;
+    session->buried_seats = xrealloc(
+        session->buried_seats, session->buried_seat_capacity * sizeof *session->buried_seats);
+  }
+  session->buried_seats[session->buried_seat_count++] = seat;
+}
 
 static qa_session_client *client_at_slot(qa_engine_session *session,
                                          int64_t slot) {
@@ -532,7 +640,7 @@ static void remove_seat_slot(qa_engine_session *session, int64_t index) {
       return;
     }
 }
-static void remove_prepared_client(qa_engine_session *session,
+static bool remove_prepared_client(qa_engine_session *session,
                                    qa_session_client *client) {
   for (size_t i = 0; i < session->prepared_client_count; i++)
     if (session->prepared_clients[i].client == client) {
@@ -541,10 +649,11 @@ static void remove_prepared_client(qa_engine_session *session,
               (session->prepared_client_count - i - 1) *
                   sizeof *session->prepared_clients);
       session->prepared_client_count--;
-      return;
+      return true;
     }
+  return false;
 }
-static void remove_prepared_seat(qa_engine_session *session,
+static bool remove_prepared_seat(qa_engine_session *session,
                                  qa_session_seat *seat) {
   for (size_t i = 0; i < session->prepared_seat_count; i++)
     if (session->prepared_seats[i].seat == seat) {
@@ -552,11 +661,19 @@ static void remove_prepared_seat(qa_engine_session *session,
               (session->prepared_seat_count - i - 1) *
                   sizeof *session->prepared_seats);
       session->prepared_seat_count--;
-      return;
+      return true;
     }
+  return false;
 }
+/* TS Map.set: an existing slot keeps its insertion position. */
 static void put_client_slot(qa_engine_session *session,
                             qa_session_client *client) {
+  for (size_t i = 0; i < session->client_count; i++)
+    if (session->clients[i].slot == client->id.slot) {
+      if (session->clients[i].client != client) bury_client(session, session->clients[i].client);
+      session->clients[i].client = client;
+      return;
+    }
   if (session->client_count == session->client_capacity) {
     session->client_capacity =
         session->client_capacity != 0 ? session->client_capacity * 2 : 8;
@@ -568,6 +685,12 @@ static void put_client_slot(qa_engine_session *session,
   session->client_count++;
 }
 static void put_seat_slot(qa_engine_session *session, qa_session_seat *seat) {
+  for (size_t i = 0; i < session->seat_count; i++)
+    if (session->seats[i].index == seat->id.index) {
+      if (session->seats[i].seat != seat) bury_seat(session, session->seats[i].seat);
+      session->seats[i].seat = seat;
+      return;
+    }
   if (session->seat_count == session->seat_capacity) {
     session->seat_capacity =
         session->seat_capacity != 0 ? session->seat_capacity * 2 : 8;
@@ -579,7 +702,11 @@ static void put_seat_slot(qa_engine_session *session, qa_session_seat *seat) {
   session->seat_count++;
 }
 
-/* Retired bundle: destroys its contents on close. */
+/* A retired bundle: TS { close: () => closeAll(retired, message) }. Closing
+ * closes every item in order (one AggregateError with the site's message),
+ * then frees the items, which nothing in the session references any more.
+ * The returned resource's ctx is a closure handle, so a second close (a TS
+ * no-op: every item is already closed) finds no bundle and returns. */
 enum retired_kind { RET_WORLD, RET_SEAT, RET_CLIENT, RET_SCOPE };
 struct retired_item {
   enum retired_kind kind;
@@ -588,11 +715,12 @@ struct retired_item {
 struct retired_bundle {
   struct retired_item *items;
   size_t count, capacity;
-  bool closed;
+  const char *message;
 };
-static struct retired_bundle *bundle_new(void) {
+static struct retired_bundle *bundle_new(const char *message) {
   struct retired_bundle *bundle = calloc(1, sizeof *bundle);
   if (bundle == NULL) abort();
+  bundle->message = message;
   return bundle;
 }
 static void bundle_add(struct retired_bundle *bundle, enum retired_kind kind,
@@ -607,48 +735,72 @@ static void bundle_add(struct retired_bundle *bundle, enum retired_kind kind,
   bundle->items[bundle->count].ptr = ptr;
   bundle->count++;
 }
-static void bundle_close(void *ctx) {
-  struct retired_bundle *bundle = ctx;
-  if (bundle->closed) return;
-  bundle->closed = true;
+static void world_close_resource(void *ctx) { qa_world_lifetime_close(ctx); }
+static void seat_close_resource(void *ctx) { qa_session_seat_close(ctx); }
+static void client_close_resource(void *ctx) { qa_session_client_close(ctx); }
+static void bundle_close(void *token) {
+  struct retired_bundle *bundle = qa_world_handle_get(token);
+  if (bundle == NULL) return;
+  qa_world_handle_close(token);
+  qa_session_resource *resources = NULL;
+  if (bundle->count != 0) resources = xmalloc(bundle->count * sizeof *resources);
   for (size_t i = 0; i < bundle->count; i++) {
+    resources[i].ctx = bundle->items[i].ptr;
     switch (bundle->items[i].kind) {
-      case RET_WORLD:
-        qa_world_lifetime_destroy(bundle->items[i].ptr);
-        break;
-      case RET_SEAT:
-        qa_session_seat_destroy(bundle->items[i].ptr);
-        break;
-      case RET_CLIENT:
-        qa_session_client_destroy(bundle->items[i].ptr);
-        break;
-      case RET_SCOPE:
-        qa_resource_scope_destroy(bundle->items[i].ptr);
-        break;
+      case RET_WORLD: resources[i].close = world_close_resource; break;
+      case RET_SEAT: resources[i].close = seat_close_resource; break;
+      case RET_CLIENT: resources[i].close = client_close_resource; break;
+      case RET_SCOPE: resources[i].close = scope_close_resource; break;
     }
   }
+  size_t errors = close_all_collect(resources, bundle->count);
+  free(resources);
+  for (size_t i = 0; i < bundle->count; i++) {
+    switch (bundle->items[i].kind) {
+      case RET_WORLD: qa_world_lifetime_destroy(bundle->items[i].ptr); break;
+      case RET_SEAT: qa_session_seat_destroy(bundle->items[i].ptr); break;
+      case RET_CLIENT: qa_session_client_destroy(bundle->items[i].ptr); break;
+      case RET_SCOPE: qa_resource_scope_destroy(bundle->items[i].ptr); break;
+    }
+  }
+  const char *message = bundle->message;
   free(bundle->items);
   free(bundle);
+  raise_aggregate(errors, message);
 }
 static qa_session_resource bundle_resource(struct retired_bundle *bundle) {
-  qa_session_resource resource = {bundle, bundle_close};
+  qa_session_resource resource = {qa_world_handle_open(bundle), bundle_close};
   return resource;
 }
 
+/* TS closeAll([...map.values()].reverse(), message) over a snapshot. */
 static void close_clients_reverse(qa_engine_session *session, bool prepared) {
   size_t count = prepared ? session->prepared_client_count
                           : session->client_count;
-  for (size_t i = count; i-- > 0;)
-    qa_session_client_close(prepared
-                                ? session->prepared_clients[i].client
-                                : session->clients[i].client);
+  if (count == 0) return;
+  qa_session_resource *resources = xmalloc(count * sizeof *resources);
+  for (size_t i = 0; i < count; i++) {
+    resources[i].ctx = prepared ? session->prepared_clients[count - 1 - i].client
+                                : session->clients[count - 1 - i].client;
+    resources[i].close = client_close_resource;
+  }
+  size_t errors = close_all_collect(resources, count);
+  free(resources);
+  raise_aggregate(errors, prepared ? "Prepared client shutdown failed" : "Client shutdown failed");
 }
 static void close_seats_reverse(qa_engine_session *session, bool prepared) {
   size_t count =
       prepared ? session->prepared_seat_count : session->seat_count;
-  for (size_t i = count; i-- > 0;)
-    qa_session_seat_close(prepared ? session->prepared_seats[i].seat
-                                   : session->seats[i].seat);
+  if (count == 0) return;
+  qa_session_resource *resources = xmalloc(count * sizeof *resources);
+  for (size_t i = 0; i < count; i++) {
+    resources[i].ctx = prepared ? session->prepared_seats[count - 1 - i].seat
+                                : session->seats[count - 1 - i].seat;
+    resources[i].close = seat_close_resource;
+  }
+  size_t errors = close_all_collect(resources, count);
+  free(resources);
+  raise_aggregate(errors, prepared ? "Prepared seat shutdown failed" : "Seat shutdown failed");
 }
 static void defer_clients(void *ctx) {
   close_clients_reverse((qa_engine_session *)ctx, false);
@@ -682,10 +834,18 @@ qa_engine_session *qa_engine_session_create(
   qa_resource_scope_defer(session->resources, defer_world, session);
   return session;
 }
+static void session_close_call(void *ctx) { qa_engine_session_close(ctx); }
 void qa_engine_session_destroy(qa_engine_session *session) {
   if (session == NULL) return;
-  qa_engine_session_close(session);
-  /* close() closed and freed the clients/seats/world already. */
+  qa_caught_error caught;
+  bool ok = qa_try(session_close_call, session, &caught);
+  /* Seats first: a seat's close reaches its client. Each was closed above. */
+  for (size_t i = 0; i < session->buried_seat_count; i++)
+    qa_session_seat_destroy(session->buried_seats[i]);
+  for (size_t i = 0; i < session->buried_client_count; i++)
+    qa_session_client_destroy(session->buried_clients[i]);
+  free(session->buried_seats);
+  free(session->buried_clients);
   qa_resource_scope_destroy(session->resources);
   free(session->clients);
   free(session->prepared_clients);
@@ -694,6 +854,7 @@ void qa_engine_session_destroy(qa_engine_session *session) {
   free(session->generations);
   free(session->scratch_events);
   free(session);
+  if (!ok) qa_rethrow(&caught);
 }
 qa_session_id qa_engine_session_id(const qa_engine_session *session) {
   return session->session;
@@ -873,7 +1034,7 @@ qa_session_resource qa_engine_session_replace_world(
   }
   qa_world_lifetime *world = qa_world_lifetime_create(simulation);
   if (world == NULL) abort();
-  struct retired_bundle *retired = bundle_new();
+  struct retired_bundle *retired = bundle_new("Retired world shutdown failed");
   if (session->current_world != NULL)
     bundle_add(retired, RET_WORLD, session->current_world);
   for (size_t i = 0; i < seats.removed_count; i++) {
@@ -952,7 +1113,7 @@ qa_session_resource qa_engine_session_publish_local_seats(
     qa_session_seat_change seats) {
   qa_engine_session_validate_local_seats(session, presentations,
                                          presentation_count, clients, seats);
-  struct retired_bundle *retired = bundle_new();
+  struct retired_bundle *retired = bundle_new("Retired local seats shutdown failed");
   for (size_t i = 0; i < seats.removed_count; i++) {
     remove_seat_slot(session, seats.removed[i]->id.index);
     bundle_add(retired, RET_SEAT, seats.removed[i]);
@@ -981,7 +1142,7 @@ qa_session_resource qa_engine_session_publish_local_seats(
 
 qa_session_resource qa_engine_session_detach_world(
     qa_engine_session *session) {
-  struct retired_bundle *retired = bundle_new();
+  struct retired_bundle *retired = bundle_new("World replacement failed");
   if (session->current_world != NULL)
     bundle_add(retired, RET_WORLD, session->current_world);
   session->current_world = NULL;
@@ -1009,13 +1170,23 @@ struct prepared_client_cleanup {
   qa_session_client *client;
 };
 static void prepared_client_cleanup_cb(void *ctx) {
-  struct prepared_client_cleanup *cleanup = ctx;
-  qa_engine_session *session = cleanup->session;
-  remove_prepared_client(session, cleanup->client);
+  struct prepared_client_cleanup cleanup = *(struct prepared_client_cleanup *)ctx;
+  free(ctx);
+  qa_engine_session *session = cleanup.session;
+  if (remove_prepared_client(session, cleanup.client)) bury_client(session, cleanup.client);
+  /* closeAll(over a snapshot: each close deletes its preparedSeats entry) */
+  size_t count = 0;
+  qa_session_resource *resources = NULL;
+  if (session->prepared_seat_count != 0)
+    resources = xmalloc(session->prepared_seat_count * sizeof *resources);
   for (size_t i = 0; i < session->prepared_seat_count; i++)
-    if (session->prepared_seats[i].seat->client == cleanup->client)
-      qa_session_seat_close(session->prepared_seats[i].seat);
-  free(cleanup);
+    if (session->prepared_seats[i].seat->client == cleanup.client) {
+      resources[count].ctx = session->prepared_seats[i].seat;
+      resources[count++].close = seat_close_resource;
+    }
+  size_t errors = close_all_collect(resources, count);
+  free(resources);
+  raise_aggregate(errors, "Prepared client seats shutdown failed");
 }
 
 qa_session_client *qa_engine_session_prepare_client(
@@ -1097,10 +1268,21 @@ void qa_engine_session_close_client(qa_engine_session *session,
     }
   }
   remove_client_slot(session, id.slot);
+  /* closeAll([...bound.reverse(), client], ...): bound is already newest first. */
+  qa_session_resource *resources = xmalloc((bound_count + 1) * sizeof *resources);
+  for (size_t i = 0; i < bound_count; i++) {
+    resources[i].ctx = bound[i];
+    resources[i].close = seat_close_resource;
+  }
+  resources[bound_count].ctx = client;
+  resources[bound_count].close = client_close_resource;
+  size_t errors = close_all_collect(resources, bound_count + 1);
+  free(resources);
   for (size_t i = 0; i < bound_count; i++)
     qa_session_seat_destroy(bound[i]);
   free(bound);
   qa_session_client_destroy(client);
+  raise_aggregate(errors, "Client shutdown failed");
 }
 
 struct prepared_seat_cleanup {
@@ -1109,7 +1291,7 @@ struct prepared_seat_cleanup {
 };
 static void prepared_seat_cleanup_cb(void *ctx) {
   struct prepared_seat_cleanup *cleanup = ctx;
-  remove_prepared_seat(cleanup->session, cleanup->seat);
+  if (remove_prepared_seat(cleanup->session, cleanup->seat)) bury_seat(cleanup->session, cleanup->seat);
   free(cleanup);
 }
 
@@ -1171,9 +1353,13 @@ void qa_engine_session_close_seat(qa_engine_session *session,
   qa_session_seat *seat = seat_at_index(session, id.index);
   if (seat == NULL || !qa_same_seat(seat->id, id)) return;
   remove_seat_slot(session, id.index);
+  qa_caught_error caught;
+  bool ok = qa_try(seat_close_resource, seat, &caught);
   qa_session_seat_destroy(seat);
+  if (!ok) qa_rethrow(&caught);
 }
 
+static void end_stepping(void *arg) { ((qa_engine_session *)arg)->stepping = false; }
 static qa_world_lifetime *begin_step(qa_engine_session *session) {
   qa_resource_scope_assert_open(session->resources);
   if (session->stepping) qa_errorf("Simulation step is already running");
@@ -1196,9 +1382,12 @@ static qa_simulation_output complete_step(qa_engine_session *session,
 qa_simulation_output qa_engine_session_step(qa_engine_session *session,
                                             qa_input_batch input) {
   qa_world_lifetime *world = begin_step(session);
+  qa_cleanup node; /* finally { stepping = false } */
+  qa_cleanup_push(&node, end_stepping, session);
   qa_simulation_output output =
       world->simulation.step(world->simulation.ctx, input);
   output = complete_step(session, world, output);
+  qa_cleanup_pop(&node);
   session->stepping = false;
   return output;
 }
@@ -1235,6 +1424,8 @@ qa_simulation_output qa_engine_session_step_async(
     qa_engine_session *session, qa_input_batch input,
     qa_session_progress_fn progress, void *progress_ctx) {
   qa_world_lifetime *world = begin_step(session);
+  qa_cleanup node; /* finally { stepping = false } */
+  qa_cleanup_push(&node, end_stepping, session);
   session->scratch_event_count = 0;
   qa_simulation_output output;
   if (progress != NULL && world->simulation.step_async != NULL) {
@@ -1248,6 +1439,7 @@ qa_simulation_output qa_engine_session_step_async(
     output = world->simulation.step(world->simulation.ctx, input);
   }
   complete_step(session, world, output);
+  qa_cleanup_pop(&node);
   session->stepping = false;
   if (session->scratch_event_count == 0) return output;
   size_t progressed = session->scratch_event_count;
@@ -1290,43 +1482,30 @@ void qa_engine_session_publish(qa_engine_session *session,
   free(seats);
 }
 
+static void session_scope_close(void *ctx) {
+  qa_resource_scope_close(((qa_engine_session *)ctx)->resources);
+}
 void qa_engine_session_close(qa_engine_session *session) {
   if (qa_engine_session_is_closed(session)) return;
-  /* Save struct arrays for destroy: the defers close (not free) the
-   * clients and seats; the world is destroyed by close_world. */
-  qa_session_client **clients = NULL;
-  size_t clients_total =
-      session->client_count + session->prepared_client_count;
-  if (clients_total != 0) {
-    clients = xmalloc(clients_total * sizeof *clients);
-    size_t n = 0;
-    for (size_t i = 0; i < session->client_count; i++)
-      clients[n++] = session->clients[i].client;
-    for (size_t i = 0; i < session->prepared_client_count; i++)
-      clients[n++] = session->prepared_clients[i].client;
-  }
-  qa_session_seat **seats = NULL;
-  size_t seats_total = session->seat_count + session->prepared_seat_count;
-  if (seats_total != 0) {
-    seats = xmalloc(seats_total * sizeof *seats);
-    size_t n = 0;
-    for (size_t i = 0; i < session->seat_count; i++)
-      seats[n++] = session->seats[i].seat;
-    for (size_t i = 0; i < session->prepared_seat_count; i++)
-      seats[n++] = session->prepared_seats[i].seat;
-  }
-  qa_resource_scope_close(session->resources);
+  /* The closed clients and seats stay allocated until destroy (callers may
+   * still hold them, as TS references keep them alive). */
+  for (size_t i = 0; i < session->client_count; i++)
+    bury_client(session, session->clients[i].client);
+  for (size_t i = 0; i < session->prepared_client_count; i++)
+    bury_client(session, session->prepared_clients[i].client);
+  for (size_t i = 0; i < session->seat_count; i++)
+    bury_seat(session, session->seats[i].seat);
+  for (size_t i = 0; i < session->prepared_seat_count; i++)
+    bury_seat(session, session->prepared_seats[i].seat);
+  /* try { return this.resources.close() } finally { clear the maps } */
+  qa_caught_error caught;
+  bool ok = qa_try(session_scope_close, session, &caught);
   session->client_count = 0;
   session->prepared_client_count = 0;
   session->prepared_seat_count = 0;
   session->seat_count = 0;
   session->has_published = false;
-  for (size_t i = 0; i < seats_total; i++)
-    qa_session_seat_destroy(seats[i]);
-  for (size_t i = 0; i < clients_total; i++)
-    qa_session_client_destroy(clients[i]);
-  free(seats);
-  free(clients);
+  if (!ok) qa_rethrow(&caught);
 }
 static void session_close_ctx(void *ctx) {
   qa_engine_session_close((qa_engine_session *)ctx);

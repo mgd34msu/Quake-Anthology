@@ -1,8 +1,5 @@
 /* Port of src/content/q3/base/game/triggers.ts. GPL-2.0-or-later.
- * touchJumpPad host fn: landed shared/jump_pad.h needs the real player/
- * entity records, incompatible with the game mirror (TS owner
- * ../shared/jump-pad.ts). Combat spatial identity check in TS cannot be
- * expressed against the world mirror and is reduced to pool+time. */
+ * Combat spatial identity check in TS is reduced to pool+time. */
 #ifndef QA_CONTENT_Q3_BASE_GAME_TRIGGERS_H
 #define QA_CONTENT_Q3_BASE_GAME_TRIGGERS_H
 #include <stddef.h>
@@ -14,7 +11,7 @@
 #include "qa/content/q3/base/game/utilities.h"
 typedef struct qa_q3_trigger_host {
   void *ctx; qa_q3_entity_pool *entities;
-  qa_q3_server_world_mirror world; qa_q3_kill_box_host kill_box;
+  qa_q3_base_server_world world; qa_q3_kill_box_host kill_box;
   bool has_participants; qa_q3_use_participant_services participants;
   qa_q3_game_combat_context *(*combat)(void *ctx);
   double (*gravity)(void *ctx); double (*rand_value)(void *ctx); double (*crandom)(void *ctx);
@@ -22,7 +19,6 @@ typedef struct qa_q3_trigger_host {
   double (*sound_index)(void *ctx, const char *path);
   void (*remap_shader)(void *ctx, const char *old_name, const char *new_name, double time_seconds);
   void (*warn)(void *ctx, const char *message);
-  void (*touch_jump_pad)(void *ctx, qa_q3_game_client *client, qa_q3_game_entity *trigger);
   bool (*can_take_damage)(void *ctx, qa_actor_id actor);
 } qa_q3_trigger_host;
 typedef struct qa_q3_trigger_runtime { qa_q3_trigger_host host; } qa_q3_trigger_runtime;

@@ -1,6 +1,7 @@
 /* Port of src/app/bootstrap/network/remote-qw.ts.
  * GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/remote_qw.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,8 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q1/handshake.h"
+#include "qa/foundation/js.h"
+#include "qa/world/collision/index.h"
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -71,6 +74,7 @@ struct qa_app_qw_remote {
   char **skin_names; size_t skin_name_count;
   qa_app_simulation_presentation *presentations; size_t presentation_cap;
   qa_body_snapshot *sample_bodies;
+  qa_simulation_output sample_output; /* samplePresentation result: the shared output with this seat's body view */
 };
 static const qa_executable_recipe *recipe_of(qa_app_qw_remote *remote) {
   return remote->options.shared.content_recipe(remote->options.shared.ctx,
@@ -302,8 +306,10 @@ static char *policy_signature(qa_app_qw_remote *remote) {
   const char *base = policy->baseskin ? policy->baseskin(policy->ctx) : "";
   const char *all = policy->allskins ? policy->allskins(policy->ctx) : "";
   double noskins = policy->noskins ? policy->noskins(policy->ctx) : 0;
-  char *out = xmalloc(strlen(base) + strlen(all) + 32);
-  snprintf(out, strlen(base) + strlen(all) + 32, "%.17g|%s|%s", noskins, base, all);
+  /* TS joins with NUL; length prefixes keep the fields equally unambiguous in a C string. */
+  size_t size = strlen(base) + strlen(all) + 96;
+  char *out = xmalloc(size);
+  snprintf(out, size, "%s|%zu:%s|%zu:%s", QA_JS_NUMBER(noskins), strlen(base), base, strlen(all), all);
   return out;
 }
 void qa_app_qw_remote_prepare_skins(qa_app_qw_remote *remote,
@@ -313,7 +319,7 @@ void qa_app_qw_remote_prepare_skins(qa_app_qw_remote *remote,
   char *policy = policy_signature(remote);
   size_t total = strlen(policy) + 32;
   char *signature = xmalloc(total);
-  snprintf(signature, total, "%s|%.17g", policy, remote->skin_revision);
+  snprintf(signature, total, "%s|%s", policy, QA_JS_NUMBER(remote->skin_revision));
   if (strcmp(signature, remote->skin_signature) == 0) {
     free(policy);
     free(signature);
@@ -465,7 +471,7 @@ double qa_app_qw_remote_game_state(qa_app_qw_remote *remote, const qa_quakeworld
     qa_quakeworld_message_destroy(&remote->intermission);
     remote->has_intermission = false;
   }
-  if (model_count == 0) qa_range_error("QW has no world model");
+  if (model_count == 0) qa_raise("Error", 0, 0, "QW has no world model");
   const char *map = models[0];
   qa_netquake_message server_info = {0};
   server_info.kind = "server-info";
@@ -513,6 +519,12 @@ double qa_app_qw_remote_game_state(qa_app_qw_remote *remote, const qa_quakeworld
 typedef struct translated_list {
   qa_netquake_message *items; size_t count, cap;
 } translated_list;
+static void translated_free(void *arg) {
+  translated_list *list = arg;
+  for (size_t i = 0; i < list->count; i++) qa_netquake_message_destroy(&list->items[i]);
+  free(list->items);
+  memset(list, 0, sizeof *list);
+}
 static void translated_push(translated_list *list, qa_netquake_message message) {
   if (list->count == list->cap) {
     list->cap = list->cap ? list->cap * 2 : 32;
@@ -523,7 +535,7 @@ static void translated_push(translated_list *list, qa_netquake_message message) 
 }
 static void scoreboard_info(qa_app_qw_remote *remote, double slot, qa_qw_info *info,
     translated_list *translated) {
-  if (slot != trunc(slot) || slot < 0 || slot >= 32) qa_range_error("Invalid QW userinfo slot");
+  if (slot != trunc(slot) || slot < 0 || slot >= 32) qa_raise("Error", 0, 0, "Invalid QW userinfo slot");
   userinfo_entry *entry = userinfo_of(remote, slot, true);
   qa_qw_info_destroy(&entry->info);
   entry->info = *info;
@@ -534,7 +546,7 @@ static void scoreboard_info(qa_app_qw_remote *remote, double slot, qa_qw_info *i
   name_message.slot = slot;
   char trimmed[16] = "";
   snprintf(trimmed, sizeof trimmed, "%s", name ? name : "");
-  name_message.text = copy_text(trimmed);
+  name_message.str_value = copy_text(trimmed);
   name_message.value = 0;
   translated_push(translated, name_message);
   const char *top = qa_qw_info_get(info, "topcolor");
@@ -564,13 +576,14 @@ static void link_solids(qa_app_qw_remote *remote, const qa_qw_player_state *play
   for (size_t i = 0; i < remote->entity_count; i++) states[state_count++] = remote->entities[i];
   for (size_t i = 0; i < nail_count; i++) states[state_count++] = nails[i];
   for (size_t i = 0; i < player_count; i++) states[state_count++] = player_entity(players[i]);
-  /* Deduplicate by number, last wins (Map semantics). */
+  /* new Map(entries): a repeated number keeps its first position and takes the last value. */
   size_t unique_count = 0;
   for (size_t i = 0; i < state_count; i++) {
-    bool later = false;
-    for (size_t j = i + 1; j < state_count; j++)
-      if (states[j].base.number == states[i].base.number) later = true;
-    if (!later) states[unique_count++] = states[i];
+    size_t at = unique_count;
+    for (size_t j = 0; j < unique_count; j++)
+      if (states[j].base.number == states[i].base.number) at = j;
+    states[at] = states[i];
+    if (at == unique_count) unique_count++;
   }
   for (size_t index = 0; index < unique_count; index++) {
     if (index >= output->snapshot.body_count) break;
@@ -586,12 +599,11 @@ static void link_solids(qa_app_qw_remote *remote, const qa_qw_player_state *play
     bool has_model = false;
     double model = 0;
     if (path && path[0] == '*') {
-      char *end = NULL;
-      model = strtod(path + 1, &end);
-      has_model = end != path + 1 && model == trunc(model);
+      model = qa_js_string_to_number(path + 1); /* Number(path.slice(1)); "*" is 0 */
+      has_model = isfinite(model) && model == trunc(model); /* Number.isInteger */
     }
     if (!player && !has_model) continue;
-    if (player && ((int64_t)player->flags & 512) != 0) continue;
+    if (player && (qa_js_to_int32(player->flags) & 512) != 0) continue;
     qa_bounds bounds = has_model
         ? remote->options.scene_model_bounds(remote->options.shared.ctx, scene, model)
         : body->body.bounds;
@@ -637,9 +649,15 @@ static qa_app_qw_move_variables move_variables_of(qa_qw_move_variables variables
   out.entity_gravity = variables.entity_gravity;
   return out;
 }
+/* TS isBrush: hit.kind === "world" || (hit.kind === "actor" && this.scene.spatial.get(hit.actor)?.collision.shape.kind
+ * === "model"). The scene is the shared Q1 scene (qa_shared_scene_queries). */
 static bool is_brush_hit(void *ctx, qa_trace_hit hit) {
-  (void)ctx;
-  return hit.kind == QA_TRACE_HIT_WORLD;
+  qa_app_qw_remote *remote = ctx;
+  if (hit.kind == QA_TRACE_HIT_WORLD) return true;
+  if (hit.kind != QA_TRACE_HIT_ACTOR) return false;
+  qa_spatial_actor linked;
+  if (!qa_shared_linked_actor(qa_app_q1_remote_scene(remote->shared), hit.actor, &linked)) return false;
+  return linked.collision.shape_kind != NULL && strcmp(linked.collision.shape_kind, "model") == 0;
 }
 static void receive_prediction(qa_app_qw_remote *remote, double now) {
   if (!remote->has_own_player || !remote->has_variables || !remote->has_data) return;
@@ -685,6 +703,7 @@ static void receive_prediction(qa_app_qw_remote *remote, double now) {
     options.probe.profile = qa_app_sim_movement_profile(*recipe);
     options.probe.standing_bounds = bounds;
     options.probe.standing_view_height = 22;
+    options.probe.scene = qa_shared_as_scene_queries(qa_app_q1_remote_scene(remote->shared)); /* TS scene: this.scene */
     options.probe.host_ctx = remote;
     options.probe.is_brush = is_brush_hit;
     remote->predictor = qa_app_quakeworld_prediction_create(options, base, variables);
@@ -714,6 +733,8 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
     return;
   }
   translated_list translated = {0};
+  qa_cleanup translated_guard;
+  qa_cleanup_push(&translated_guard, translated_free, &translated);
   qa_qw_player_state *players = xmalloc(count * sizeof *players);
   size_t player_count = 0;
   qa_q1_extended_entity_state *nails = xmalloc((count * 64 + 1) * sizeof *nails);
@@ -778,6 +799,12 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
       scoreboard_info(remote, message->slot, &info, &translated);
     } else if (strcmp(kind, "set-info") == 0) {
       userinfo_entry *existing = userinfo_of(remote, message->slot, false);
+      /* Native info strings are at most 512 bytes; bound keys and values so a flood stays linear. */
+      const char *set_key = message->key ? message->key : "";
+      bool known = existing && qa_qw_info_get(&existing->info, set_key) != NULL;
+      if (strlen(set_key) > 63 || strlen(message->str_value ? message->str_value : "") > 511
+          || (!known && (existing ? existing->info.count : 0) >= 64))
+        qa_raise("Error", 0, 0, "QuakeWorld set-info exceeds its limits");
       qa_qw_info info;
       qa_qw_info_init(&info);
       if (existing)
@@ -809,7 +836,7 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
       translated_push(&translated, music);
     } else if (strcmp(kind, "sound") == 0 || strcmp(kind, "static-sound") == 0) {
       if (message->index < 1 || message->index > (double)remote->sound_count)
-        qa_range_error("Invalid QW sound index");
+        qa_raise("Error", 0, 0, "Invalid QW sound index");
       if (remote->available_sounds[(size_t)message->index]) {
         qa_netquake_message sound = {0};
         sound.kind = kind;
@@ -844,6 +871,9 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
       qa_netquake_message copy = {0};
       copy.kind = kind;
       copy.text = message->text ? copy_text(message->text) : NULL;
+      /* light-style carries its pattern in value (str_value) on both wires. */
+      copy.str_value = message->str_value ? copy_text(message->str_value) : NULL;
+      copy.source = message->source;
       copy.index = message->index;
       copy.value = message->value;
       copy.entity = message->entity;
@@ -891,8 +921,8 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
     }
     qa_netquake_message client_data = {0};
     client_data.kind = "client-data";
-    client_data.data.view_height = ((int64_t)remote->own_player.flags & 1024) != 0 ? 8
-        : ((int64_t)remote->own_player.flags & 512) != 0 ? -16 : 22;
+    client_data.data.view_height = (qa_js_to_int32(remote->own_player.flags) & 1024) != 0 ? 8
+        : (qa_js_to_int32(remote->own_player.flags) & 512) != 0 ? -16 : 22;
     client_data.data.punch_angles = (qa_vec3){remote->kick, 0, 0};
     client_data.data.velocity = remote->own_player.velocity;
     client_data.data.items = stat_of(remote, 15);
@@ -911,8 +941,8 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
   }
   qa_app_q1_remote_receive(remote->shared, translated.items, translated.count, now,
       (qa_app_q1_remote_assert_fn)assert_current, assert_ctx);
-  for (size_t i = 0; i < translated.count; i++) qa_netquake_message_destroy(&translated.items[i]);
-  free(translated.items);
+  qa_cleanup_pop(&translated_guard);
+  translated_free(&translated);
   if (assert_current) assert_current(assert_ctx);
   qa_app_qw_remote_prepare_skins(remote, assert_current, assert_ctx);
   if (assert_current) assert_current(assert_ctx);
@@ -926,7 +956,7 @@ void qa_app_qw_remote_receive(qa_app_qw_remote *remote,
 }
 qa_qw_user_command qa_app_qw_remote_command(qa_app_qw_remote *remote,
     const qa_actor_command *input) {
-  if (input->command.kind != QA_USER_COMMAND_QW) qa_range_error("QW requires QuakeWorld input");
+  if (input->command.kind != QA_USER_COMMAND_QW) qa_raise("Error", 0, 0, "QW requires QuakeWorld input");
   qa_qw_user_command command = input->command.as.qw;
   if (remote->has_data && remote->data.spectator && remote->has_own_player && !remote->has_intermission) {
     qa_app_qw_camera_frame frame = {0};
@@ -1018,7 +1048,7 @@ qa_app_sim_player_view qa_app_qw_remote_player_view(qa_app_qw_remote *remote, qa
   if (has_camera && remote->has_data && remote->data.spectator) {
     view.origin = camera.origin;
     view.angles = camera.angles;
-    view.view_height = ((int64_t)camera.target.flags & 512) != 0 && camera.chase ? -16 : 22;
+    view.view_height = (qa_js_to_int32(camera.target.flags) & 512) != 0 && camera.chase ? -16 : 22;
     view.has_kick_angles = true;
     view.kick_angles = (qa_vec3){0, 0, 0};
     view.has_pitch_drift = true;
@@ -1037,7 +1067,7 @@ qa_app_sim_player_view qa_app_qw_remote_player_view(qa_app_qw_remote *remote, qa
   view.pitch_drift_ideal_pitch = 0;
   view.pitch_drift_disabled = view.pitch_drift_disabled
       || (remote->has_data && remote->data.spectator);
-  if (remote->has_own_player && ((int64_t)remote->own_player.flags & 512) != 0)
+  if (remote->has_own_player && (qa_js_to_int32(remote->own_player.flags) & 512) != 0)
     view.angles.z = 80;
   return view;
 }
@@ -1119,7 +1149,8 @@ const qa_simulation_output *qa_app_qw_remote_sample_presentation(qa_app_qw_remot
   qa_app_q1_player player;
   if (!qa_app_q1_remote_player(remote->shared, &player)) return output;
   qa_app_sim_player_view view = qa_app_qw_remote_player_view(remote, player.actor);
-  qa_simulation_output *mutable_output = (qa_simulation_output *)output;
+  /* TS returns a new output ({ ...output, snapshot: { ...output.snapshot, bodies } }); the
+   * shared presentation's own output keeps its bodies. */
   free(remote->sample_bodies);
   remote->sample_bodies = xmalloc(output->snapshot.body_count * sizeof *remote->sample_bodies);
   for (size_t i = 0; i < output->snapshot.body_count; i++) {
@@ -1129,12 +1160,13 @@ const qa_simulation_output *qa_app_qw_remote_sample_presentation(qa_app_qw_remot
       remote->sample_bodies[i].body.angles = view.angles;
     }
   }
-  mutable_output->snapshot.bodies = remote->sample_bodies;
-  qa_simulation_output sampled = *mutable_output;
+  remote->sample_output = *output;
+  remote->sample_output.snapshot.bodies = remote->sample_bodies;
+  qa_simulation_output sampled = remote->sample_output;
   sampled.events = NULL;
   sampled.event_count = 0;
   remote->options.shared.publish(remote->options.shared.ctx, &sampled);
-  return output;
+  return &remote->sample_output;
 }
 const qa_app_sim_presentation_event *qa_app_qw_remote_drain_events(qa_app_qw_remote *remote,
     size_t *out_count) {

@@ -1,8 +1,8 @@
 /* Port of src/app/bootstrap/q3-client/services.ts.
  * ApplicationAudio (../audio.ts, sibling slice) and the assets
- * world surface are host mirrors; scene/resources/audio/draw
- * construction and the Q3ClientSound adapter are ported here
- * over landed pres classes. Creation is synchronous.
+ * world surface are host mirrors; scene/resources/audio/draw/
+ * cinematics construction and the Q3ClientSound adapter are ported
+ * here over landed pres classes. Creation is synchronous.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_Q3_CLIENT_SERVICES_H
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_SERVICES_H
@@ -13,6 +13,7 @@
 #include "qa/app/bootstrap/q3_client/collision.h"
 #include "qa/audio/types.h"
 #include "qa/content/q3/presentation/audio.h"
+#include "qa/content/q3/presentation/client.h"
 #include "qa/content/q3/presentation/resources.h"
 #include "qa/content/q3/presentation/scene.h"
 #include "qa/contracts/identity.h"
@@ -51,7 +52,10 @@ typedef struct qa_app_application_q3_service_options {
   qa_app_q3_services_world world;
   qa_app_q3_application_audio audio;
   qa_seat_id seat;
-  qa_rect viewport;
+  /* TS viewport: the caller's Rect object, shared by the scene recorder
+   * and the text sink (both read it where TS reads it). Borrowed; must
+   * outlive the services. */
+  const qa_rect *viewport;
   qa_scene_queries queries;
   qa_shared_scene_queries *shared_queries; /* NULL = not SharedSceneQueries */
   bool (*actor_at)(void *ctx, double number, qa_actor_id *out);
@@ -65,30 +69,15 @@ typedef struct qa_app_application_q3_service_options {
   void (*output_text)(void *ctx, const qa_material_text_draw *draw);
   void (*output_audio)(void *ctx, qa_app_q3_seat_audio_operation operation);
   void (*output_listener)(void *ctx, qa_vec3 origin, qa_axis axis);
-  /* Cinematic image/picture hosts forwarded to cinematics. */
-  qa_app_q3_cinematics_host cinematics_host;
 } qa_app_application_q3_service_options;
-/* TS Q3ClientSound (the sound field of the services record). */
-typedef struct qa_app_q3_client_sound {
-  void *ctx;
-  qa_q3_pres_presentation_sound_bank *bank;
-  void (*start_sound)(void *ctx, const qa_vec3 *origin, double entity, double channel, qa_pcm_sound *pcm);
-  void (*start_source_sound)(void *ctx, qa_pcm_sound *pcm, qa_start_sound_options options);
-  void (*start_local_sound)(void *ctx, qa_pcm_sound *pcm, double channel);
-  void (*add_loop_sound)(void *ctx, double entity, qa_vec3 origin, qa_vec3 velocity, qa_pcm_sound *pcm, bool real);
-  void (*update_sound_position)(void *ctx, double entity, qa_vec3 position);
-  void (*stop_looping_sound)(void *ctx, double entity);
-  void (*clear_looping_sounds)(void *ctx, bool kill_all);
-  void (*set_listener)(void *ctx, double client, qa_vec3 origin, qa_axis axis);
-  void (*start_background_track)(void *ctx, const char *intro, const char *loop);
-} qa_app_q3_client_sound;
 /* TS ApplicationQ3Services record. */
 typedef struct qa_app_application_q3_services qa_app_application_q3_services;
 qa_app_application_q3_services *qa_app_create_application_q3_services(qa_app_application_q3_service_options options);
 void qa_app_application_q3_services_destroy(qa_app_application_q3_services *services);
 qa_q3_pres_scene_recorder *qa_app_application_q3_services_scene(qa_app_application_q3_services *services);
 qa_q3_pres_q3_renderer_resources *qa_app_application_q3_services_resources(qa_app_application_q3_services *services);
-qa_app_q3_client_sound qa_app_application_q3_services_sound(qa_app_application_q3_services *services);
+/* TS services.sound: the content Q3ClientSound over these services. */
+qa_q3_pres_client_sound qa_app_application_q3_services_sound(qa_app_application_q3_services *services);
 qa_draw2d *qa_app_application_q3_services_draw(qa_app_application_q3_services *services);
 qa_q3_pres_collision_world qa_app_application_q3_services_collision(qa_app_application_q3_services *services);
 qa_app_application_q3_cinematics *qa_app_application_q3_services_cinematics(qa_app_application_q3_services *services);

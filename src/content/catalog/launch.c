@@ -294,6 +294,15 @@ bool qa_resolve_launch_resource(qa_content_catalog *catalog,
   bool found = reader->open(reader->ctx, request.path, accept_mount, &accept,
                             &opened);
   free(order);
+  /* The TS result is a plain value that outlives the borrowed reader: keep
+   * an owned copy, then close the reader. */
+  qa_resolved_resource_reference resolved = {0};
+  bool copied = found && qa_resolved_resource_copy(&opened.reference, &resolved);
+  if (reader == &borrowed && borrowed.close != NULL) borrowed.close(borrowed.ctx);
+  if (found && !copied) {
+    qa_content_catalog_mount_list_free(&allowed);
+    return false;
+  }
   if (!found) {
     qa_content_catalog_mount_list_free(&allowed);
     qa_catalog_error("Required resource is missing: %s/%s", request.content,
@@ -302,14 +311,14 @@ bool qa_resolve_launch_resource(qa_content_catalog *catalog,
   bool in_allowed = false;
   for (size_t i = 0; i < allowed.count; i++)
     if (strcmp(mount_path_of(&allowed.mounts[i]),
-               provenance_mount_path(&opened.reference.provenance)) == 0)
+               provenance_mount_path(&resolved.provenance)) == 0)
       in_allowed = true;
   qa_content_catalog_mount_list_free(&allowed);
   if (!in_allowed)
     qa_catalog_error(
         "Required %s is absent from its selected content and base: %s/%s",
         kind, request.content, request.path);
-  *out = opened.reference;
+  *out = resolved;
   return true;
 }
 
@@ -542,28 +551,53 @@ static bool resource_seen(const qa_resolved_resource_reference *values,
   return false;
 }
 
+/* TS resources.set(id, resource). Takes ownership of `resource` (an owned
+ * copy): it is stored, or released when its id is already present. False
+ * only on OOM (the resource is released). */
 static bool resources_push(qa_resolved_resource_reference **values, size_t *count,
                            size_t *capacity,
                            qa_resolved_resource_reference resource) {
-  if (resource_seen(*values, *count, resource.id)) return true;
+  if (resource_seen(*values, *count, resource.id)) {
+    qa_resolved_resource_release(&resource);
+    return true;
+  }
   if (*count == *capacity) {
     size_t next = *capacity != 0 ? *capacity * 2 : 8;
     qa_resolved_resource_reference *grown =
         (qa_resolved_resource_reference *)realloc(*values, next * sizeof *grown);
-    if (grown == NULL) return false;
+    if (grown == NULL) { qa_resolved_resource_release(&resource); return false; }
     *values = grown; *capacity = next;
   }
   (*values)[(*count)++] = resource;
   return true;
 }
+/* Pushes an owned copy of `resource`, which the caller keeps. */
+static bool resources_push_copy(qa_resolved_resource_reference **values, size_t *count,
+                                size_t *capacity,
+                                const qa_resolved_resource_reference *resource) {
+  if (resource_seen(*values, *count, resource->id)) return true;
+  qa_resolved_resource_reference copy;
+  if (!qa_resolved_resource_copy(resource, &copy)) return false;
+  return resources_push(values, count, capacity, copy);
+}
+static void resources_free(qa_resolved_resource_reference *values, size_t count) {
+  for (size_t i = 0; i < count; i++) qa_resolved_resource_release(&values[i]);
+  free(values);
+}
 
 void qa_resolve_launch_result_free(qa_resolve_launch_result *result) {
   free(result->execution);
+  if (result->artifacts != NULL)
+    for (size_t i = 0; i < result->prepared.selected.base.execution_count; i++)
+      qa_resolved_resource_release(&result->artifacts[i]);
   free(result->artifacts);
-  free(result->resources);
+  resources_free(result->resources, result->recipe.resource_count);
+  qa_resolved_resource_release(&result->recipe.map.geometry);
   for (size_t i = 0; i < result->timing.count; i++)
     free((void *)result->timing.values[i].numeric.id);
   qa_catalog_timing_list_free(&result->timing);
+  for (size_t i = 0; result->ordering_providers != NULL && i < result->ordering_provider_count; i++)
+    free((void *)result->ordering_providers[i]);
   free(result->ordering_providers);
   qa_launch_string_list_free(&result->strings);
   qa_selected_weapon_timing_free(result->weapon_timing, result->weapon_timing_count);
@@ -592,8 +626,9 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
   if (!qa_resolve_launch_resource(options->catalog, &mounted,
                                   selected->base.map.geometry, "map",
                                   &out->strings, &geometry) ||
-      !resources_push(&resources, &resource_count, &resource_capacity, geometry)) {
-    free(resources);
+      !resources_push_copy(&resources, &resource_count, &resource_capacity, &geometry)) {
+    qa_resolved_resource_release(&geometry);
+    resources_free(resources, resource_count);
     if (mounted.close != NULL) mounted.close(mounted.ctx);
     qa_resolve_launch_result_free(out);
     return false;
@@ -649,23 +684,27 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
           free(order);
           qa_content_catalog_mount_list_free(&allowed);
           for (size_t gg = 0; gg < 4; gg++) qa_catalog_resource_list_free(&groups[gg]);
-          free(resources);
+          resources_free(resources, resource_count);
+          qa_resolved_resource_release(&geometry);
           if (mounted.close != NULL) mounted.close(mounted.ctx);
           qa_resolve_launch_result_free(out);
           qa_catalog_error(
               "Required %s resource is absent from its selected content and base: %s/%s",
               group_kinds[g], content, groups[g].values[q].path);
         }
-        ok = resources_push(&resources, &resource_count, &resource_capacity,
-                            resource);
+        /* The reader's reference is a view it owns: keep a copy. */
+        ok = resources_push_copy(&resources, &resource_count, &resource_capacity,
+                                 &resource);
       }
+      if (source_mounts.close != NULL) source_mounts.close(source_mounts.ctx);
       free(order);
       qa_content_catalog_mount_list_free(&allowed);
     }
   }
   for (size_t g = 0; g < 4; g++) qa_catalog_resource_list_free(&groups[g]);
   if (!ok) {
-    free(resources);
+    resources_free(resources, resource_count);
+    qa_resolved_resource_release(&geometry);
     if (mounted.close != NULL) mounted.close(mounted.ctx);
     qa_resolve_launch_result_free(out);
     return false;
@@ -688,8 +727,10 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
     qa_resolved_resource_reference artifact = {0};
     if (!qa_resolve_launch_resource(options->catalog, &mounted, *request,
                                     "artifact", &out->strings, &artifact) ||
-        !resources_push(&resources, &resource_count, &resource_capacity, artifact)) {
-      free(resources);
+        !resources_push_copy(&resources, &resource_count, &resource_capacity, &artifact)) {
+      qa_resolved_resource_release(&artifact);
+      resources_free(resources, resource_count);
+      qa_resolved_resource_release(&geometry);
       if (mounted.close != NULL) mounted.close(mounted.ctx);
       qa_resolve_launch_result_free(out);
       return false;
@@ -723,6 +764,7 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
       }
       free(order);
       bool modern = profile != NULL && strcmp(profile, "q3-modern") == 0;
+      if (scoped.close != NULL) scoped.close(scoped.ctx);
       qa_game_api_identity api = {0};
       api.kind = QA_GAME_API_Q3;
       if (strcmp(module->role, "server-game") == 0) {
@@ -818,8 +860,13 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
     if (!in_timing) (void)qa_catalog_timing_push(&timing, enemy_profile);
     else free((void *)enemy_profile.numeric.id);
   }
-  for (size_t i = 0; i < weapon_timing_count; i++)
+  for (size_t i = 0; i < weapon_timing_count; i++) {
+    /* The timing list owns its numeric ids; weapon_timing keeps its own. */
+    size_t before = timing.count;
     qa_admit_weapon_timing(&timing, weapon_profiles[i]);
+    if (timing.count > before)
+      timing.values[timing.count - 1].numeric.id = qa_catalog_dup(timing.values[timing.count - 1].numeric.id);
+  }
   out->timing = timing;
   /* Ordering. */
   qa_catalog_string_list source_order = {0};
@@ -888,6 +935,7 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
     ordering.provider_count = ordering_count;
   }
   out->ordering_providers = ordering_providers;
+  out->ordering_provider_count = ordering_providers != NULL ? ordering_count : 0;
   qa_catalog_string_list_free(&source_order);
   qa_catalog_string_list_free(&selected_sources);
   /* Recipe. */
@@ -898,6 +946,7 @@ bool qa_resolve_launch(const qa_resolve_launch_options *options,
   recipe->mods = selected->base.mods;
   recipe->mod_count = selected->base.mod_count;
   recipe->schema_version = 3;
+  recipe->launch_key_order = true;
   recipe->id = selected->base.id;
   recipe->preset = selected->preset;
   recipe->map.geometry_content = selected->base.map.geometry.content;

@@ -3,11 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 #include "qa/core/common_error.h"
 #include "qa/core/math.h"
 #include "qa/core/renderer_math.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 #include "qa/materials/deform.h"
 #include "qa/materials/shader_types.h"
 
@@ -22,13 +24,6 @@ static qa_material_vertex vertex_at(qa_deform_geometry mesh, int64_t index) {
                    mesh.vertex_count);
   return mesh.vertices[index];
 }
-static double index_at(qa_deform_geometry mesh, int64_t index) {
-  if (index < 0 || (size_t)index >= mesh.index_count)
-    qa_range_error("deformation index %lld outside %zu", (long long)index,
-                   mesh.index_count);
-  return mesh.indices[index];
-}
-
 /* Linux rand(): Park-Miller seed expansion, additive recurrence. */
 struct linux_random {
   uint32_t state[31];
@@ -64,13 +59,14 @@ void qa_renderer_noise_init(qa_renderer_noise *noise) {
   }
 }
 
-static double lattice(const qa_renderer_noise *noise, int64_t ix, int64_t iy,
-                      int64_t iz, int64_t it, int64_t dx, int64_t dy,
-                      int64_t dz, int64_t dt) {
-  int p1 = noise->permutation[(it + dt) & 255];
-  int p2 = noise->permutation[(iz + dz + p1) & 255];
-  int p3 = noise->permutation[(iy + dy + p2) & 255];
-  int p4 = noise->permutation[(ix + dx + p3) & 255];
+/* perm(index & 255): the sums are JS doubles and `&` applies ToInt32 (NaN to 0). */
+static double lattice(const qa_renderer_noise *noise, double ix, double iy,
+                      double iz, double it, int dx, int dy,
+                      int dz, int dt) {
+  int p1 = noise->permutation[qa_js_to_int32(it + dt) & 255];
+  int p2 = noise->permutation[qa_js_to_int32(iz + dz + p1) & 255];
+  int p3 = noise->permutation[qa_js_to_int32(iy + dy + p2) & 255];
+  int p4 = noise->permutation[qa_js_to_int32(ix + dx + p3) & 255];
   return noise->values[p4];
 }
 static double lerp_f(double a, double b, double amount) {
@@ -79,10 +75,9 @@ static double lerp_f(double a, double b, double amount) {
 
 double qa_renderer_noise_sample(const qa_renderer_noise *noise, double x,
                                 double y, double z, double time) {
-  int64_t ix = (int64_t)floor(x), iy = (int64_t)floor(y);
-  int64_t iz = (int64_t)floor(z), it = (int64_t)floor(time);
-  double fx = fr(x - (double)ix), fy = fr(y - (double)iy);
-  double fz = fr(z - (double)iz), ft = fr(time - (double)it);
+  double ix = floor(x), iy = floor(y), iz = floor(z), it = floor(time);
+  double fx = fr(x - ix), fy = fr(y - iy);
+  double fz = fr(z - iz), ft = fr(time - it);
   double corners[2][2][2][2];
   for (int dt = 0; dt < 2; dt++)
     for (int dz = 0; dz < 2; dz++)
@@ -147,13 +142,13 @@ static void projection_shadow(qa_material_deform_state *tess,
 
 static void sprite_geometry(qa_material_deform_state *tess,
                             qa_deform_geometry mesh, qa_deform_view view) {
-  if (mesh.vertex_count % 4 != 0 ||
-      mesh.index_count != mesh.vertex_count / 4 * 6)
-    qa_range_error("autosprite requires independent four-vertex quads");
+  /* tr_shade_calc.c only warns about an odd vertex or index count and then
+     processes whole quads; a trailing partial quad is dropped. */
+  size_t quad_vertices = mesh.vertex_count - mesh.vertex_count % 4;
   qa_material_vertex *vertices = malloc(
-      (mesh.vertex_count > 0 ? mesh.vertex_count : 1) * sizeof *vertices);
+      (quad_vertices > 0 ? quad_vertices : 1) * sizeof *vertices);
   double *indices = malloc(
-      (mesh.index_count > 0 ? mesh.index_count : 1) * sizeof *indices);
+      (quad_vertices > 0 ? quad_vertices / 4 * 6 : 1) * sizeof *indices);
   if (vertices == NULL || indices == NULL)
     qa_range_error("deform allocation failed");
   qa_vec3 left_dir = local_direction(view.axis.vectors[1], view);
@@ -165,7 +160,7 @@ static void sprite_geometry(qa_material_deform_state *tess,
   }
   size_t out_v = 0, out_i = 0;
   static const qa_vec2 coords[4] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
-  for (size_t start = 0; start < mesh.vertex_count; start += 4) {
+  for (size_t start = 0; start < quad_vertices; start += 4) {
     qa_material_vertex first = vertex_at(mesh, (int64_t)start);
     qa_vec3 center = qa_scale3(
         qa_add3(qa_add3(first.position, vertex_at(mesh, (int64_t)start + 1).position),
@@ -202,10 +197,10 @@ static void sprite_geometry(qa_material_deform_state *tess,
 
 static void text_geometry(qa_material_deform_state *tess, double index_d,
                           qa_deform_view view) {
-  int64_t index = (int64_t)index_d;
-  if (index < 0 || (size_t)index >= tess->render_text_count)
-    qa_range_error("deformation index %lld outside %zu", (long long)index,
+  if (!(index_d >= 0 && index_d == floor(index_d) && index_d < (double)tess->render_text_count))
+    qa_range_error("deformation index %s outside %zu", QA_JS_NUMBER(index_d),
                    tess->render_text_count);
+  size_t index = (size_t)index_d;
   const char *text = tess->render_text[index];
   qa_material_vertex quad[4];
   qa_material_deform_state_text_quad(tess, quad);
@@ -254,9 +249,6 @@ static void text_geometry(qa_material_deform_state *tess, double index_d,
 
 static void pivot_geometry(qa_material_deform_state *tess,
                            qa_deform_geometry mesh, qa_deform_view view) {
-  if (mesh.vertex_count % 4 != 0 ||
-      mesh.index_count != mesh.vertex_count / 4 * 6)
-    qa_range_error("autosprite2 requires independent four-vertex quads");
   qa_vec3 forward = local_direction(view.axis.vectors[0], view);
   qa_material_vertex *vertices = malloc(
       (mesh.vertex_count > 0 ? mesh.vertex_count : 1) * sizeof *vertices);
@@ -267,7 +259,7 @@ static void pivot_geometry(qa_material_deform_state *tess,
                              mesh.index_count};
   static const int edges[6][2] = {{0, 1}, {0, 2}, {0, 3},
                                   {1, 2}, {1, 3}, {2, 3}};
-  for (size_t start = 0; start < work.vertex_count; start += 4) {
+  for (size_t start = 0; start + 4 <= work.vertex_count; start += 4) {
     int shortest = 0, second = 0;
     double first_length = 999999, second_length = 999999;
     for (int e = 0; e < 6; e++) {
@@ -299,9 +291,11 @@ static void pivot_geometry(qa_material_deform_state *tess,
       int a = edges[selected[s]][0], b = edges[selected[s]][1];
       bool follows = false;
       for (int k = 0; k < 5; k++) {
-        int64_t base = (int64_t)(start / 4 * 6) + k;
-        if (index_at(mesh, base) == (double)start + a &&
-            index_at(mesh, base + 1) == (double)start + b)
+        /* Plain indexing: past the end reads undefined, which never matches. */
+        size_t base = start / 4 * 6 + (size_t)k;
+        if (base + 1 < mesh.index_count &&
+            mesh.indices[base] == (double)start + a &&
+            mesh.indices[base + 1] == (double)start + b)
           follows = true;
       }
       double radius = sqrt(lengths[s]) * 0.5 * (follows ? -1 : 1);
@@ -338,8 +332,7 @@ qa_deform_geometry qa_deform_geometry_apply(
       continue;
     }
     if (eq(deform.kind, "projectionshadow")) {
-      if (projection == NULL)
-        qa_range_error("projectionshadow deformation requires retained entity orientation and lighting");
+      if (projection == NULL) continue;
       projection_shadow(tess, result, *projection);
       continue;
     }

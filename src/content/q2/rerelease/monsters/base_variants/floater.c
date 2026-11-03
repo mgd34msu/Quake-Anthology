@@ -47,8 +47,8 @@ static void attack_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time || strcmp(state->move->name, "floater_move_disguise") == 0
@@ -61,8 +61,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   q2rm_snd(c, "floater/fltdeth1.wav", 2);
   q2rm_emit_effect(game, "q2:explosion1", q2rm_body(game, entity).origin, q2rm_zero(), 1, 0);
@@ -96,8 +96,8 @@ static void wham_fn(void *ctx, qa_q2m_context *c) {
 }
 static void zap_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
   qa_vec3 direction = qa_sub3_double(enemy.origin, q2rm_body(game, entity).origin);
@@ -129,7 +129,7 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_floater_definition(void) {
   floater_definition.attack = (qa_q2m_handler){NULL, attack_fn};
   floater_definition.reactions.pain = pain_fn;
   floater_definition.reactions.die = die_fn;
-  floater_definition.callbacks = qa_q2rm_merge_callbacks(
+  floater_definition.callbacks = qa_q2rm_merge_callbacks(NULL, 
       floater_definition.callbacks, floater_definition.callback_count,
       extra_callbacks, sizeof extra_callbacks / sizeof extra_callbacks[0], &floater_definition.callback_count);
   floater_ready = true;

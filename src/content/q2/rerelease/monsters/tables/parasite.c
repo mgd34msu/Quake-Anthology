@@ -223,14 +223,6 @@ static const qa_q2m_frame f_parasite_5[] = {
   {QA_Q2M_AI_RUN, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_RUN, NULL, 30, NULL, 0, -1},
 };
-static const qa_q2m_frame f_parasite_6[] = {
-  {QA_Q2M_AI_RUN, NULL, 20, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 20, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 12, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 10, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 0, NULL, 0, -1},
-};
 static const qa_q2m_action a_parasite_7_2[] = {
   {false, "monster_footstep", 0, false},
 };
@@ -258,14 +250,6 @@ static const qa_q2m_action a_parasite_8_1[] = {
 static const qa_q2m_frame f_parasite_8[] = {
   {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_WALK, NULL, 30, a_parasite_8_1, 1, -1},
-};
-static const qa_q2m_frame f_parasite_9[] = {
-  {QA_Q2M_AI_WALK, NULL, 20, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 20, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 12, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 10, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
 };
 static const qa_q2m_action a_parasite_10_1[] = {
   {false, "parasite_break_noise", 0, false},
@@ -436,10 +420,8 @@ const qa_q2m_move qa_q2rm_parasite_moves[] = {
   {"parasite_move_stand", 83, 99, "parasite_stand", 0, f_parasite_3, 17},
   {"parasite_move_run", 70, 76, NULL, 0, f_parasite_4, 7},
   {"parasite_move_start_run", 68, 69, "parasite_run", 0, f_parasite_5, 2},
-  {"parasite_move_stop_run", 77, 82, NULL, 0, f_parasite_6, 6},
   {"parasite_move_walk", 70, 76, "parasite_walk", 0, f_parasite_7, 7},
   {"parasite_move_start_walk", 68, 69, NULL, 0, f_parasite_8, 2},
-  {"parasite_move_stop_walk", 77, 82, NULL, 0, f_parasite_9, 6},
   {"parasite_move_break", 0, 31, "parasite_start_run", 0, f_parasite_10, 32},
   {"parasite_move_fire_proboscis", 39, 56, "parasite_start_run", 0, f_parasite_11, 18},
   {"parasite_move_jump_up", 118, 125, "parasite_run", 0, f_parasite_12, 8},

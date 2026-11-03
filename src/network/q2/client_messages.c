@@ -1,5 +1,6 @@
 /* Port of src/network/q2/client-messages.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/client_messages.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -11,6 +12,13 @@
 #include "qa/network/q2/handshake.h"
 #include "qa/network/q2/message.h"
 
+/* blockSequenceChecksum's Number.isSafeInteger check happens on the number: a
+ * fractional, NaN or unsafe sequence maps to -1, which the C check rejects with
+ * the same RangeError instead of being truncated (or cast undefined). */
+static int64_t checksum_sequence(double sequence) {
+  return isfinite(sequence) && sequence == trunc(sequence) && fabs(sequence) <= 9007199254740991.0
+    ? (int64_t)sequence : -1;
+}
 static bool kind_is(const qa_q2_protocol_identity *p, const char *kind) {
   return p->kind != NULL && strcmp(p->kind, kind) == 0;
 }
@@ -84,6 +92,11 @@ static char *read_kex_control_string(qa_q2_sizebuf *m) {
     free(bytes);
     qa_q2_throw_utf8_error();
   }
+  /* TextDecoder drops one leading byte order mark (ignoreBOM defaults to false). */
+  if (length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf) {
+    memmove(bytes, bytes + 3, length - 3);
+    length -= 3;
+  }
   char *out = (char *)realloc(bytes, length + 1);
   if (out == NULL) {
     free(bytes);
@@ -124,6 +137,15 @@ static uint8_t *slice_raw(qa_q2_sizebuf *m, int64_t start, size_t *out_length) {
   return raw;
 }
 
+typedef struct read_held {
+  record_list *list;
+  qa_q2_client_event *event;
+} read_held;
+static void read_held_release(void *arg) {
+  read_held *held = (read_held *)arg;
+  event_clear(held->event);
+  qa_q2_client_records_free(held->list->records, held->list->count);
+}
 bool qa_q2_read_client_messages(qa_q2_wire_codec *wire, const uint8_t *bytes,
                                 size_t length, double sequence, double seats,
                                 qa_q2_client_record **out, size_t *out_count) {
@@ -132,11 +154,17 @@ bool qa_q2_read_client_messages(qa_q2_wire_codec *wire, const uint8_t *bytes,
   qa_q2_protocol_codec *codec = wire->selected_codec;
   record_list list = {NULL, 0, 0};
   bool moved = false;
+  int string_commands = 0;
+  /* A raise abandons the records read so far and the event being read, as TS drops them. */
+  qa_q2_client_event event;
+  memset(&event, 0, sizeof event);
+  read_held held = {&list, &event};
+  qa_cleanup node;
+  qa_cleanup_push(&node, read_held_release, &held);
   while (m->readcount < m->cursize) {
     int64_t start = m->readcount;
     int32_t raw = qa_q2_msg_read_byte(m);
     int32_t op = kind_is(&wire->selected_protocol, "q2-q2pro") ? raw & 31 : raw;
-    qa_q2_client_event event;
     memset(&event, 0, sizeof event);
     double selected_seat = 0;
     bool handled_move = false;
@@ -205,8 +233,9 @@ bool qa_q2_read_client_messages(qa_q2_wire_codec *wire, const uint8_t *bytes,
           qa_q2_throw_error("Selected Q2 wire has no client move decoder");
         }
         double last_frame = (double)qa_q2_msg_read_long(m);
-        int64_t seat_total = kind_is(&wire->selected_protocol, "q2-kex") ? (int64_t)seats : 1;
-        for (int64_t seat = 0; seat < seat_total; seat++) {
+        /* seat < seats on the number: 2.5 seats reads three, NaN reads none. */
+        double seat_total = kind_is(&wire->selected_protocol, "q2-kex") ? seats : 1;
+        for (int64_t seat = 0; (double)seat < seat_total; seat++) {
           qa_q2_wire_usercmd oldest;
           qa_q2_wire_usercmd old_cmd;
           qa_q2_wire_usercmd current;
@@ -230,7 +259,7 @@ bool qa_q2_read_client_messages(qa_q2_wire_codec *wire, const uint8_t *bytes,
             int64_t span = m->readcount - checksum_start;
             const uint8_t *span_data = m->data + (checksum_start > 0 ? (size_t)checksum_start : 0);
             size_t span_len = span > 0 ? (size_t)span : 0;
-            if (qa_q2_block_sequence_checksum(span_data, span_len, (int64_t)sequence) != checksum) {
+            if (qa_q2_block_sequence_checksum(span_data, span_len, checksum_sequence(sequence)) != checksum) {
               qa_q2_throw_error("Q2 command sequence checksum mismatch");
             }
           }
@@ -271,25 +300,33 @@ bool qa_q2_read_client_messages(qa_q2_wire_codec *wire, const uint8_t *bytes,
     }
     if (handled_move) continue;
     qa_q2_message_check_read(m);
+    /* sv_user.c MAX_STRINGCMDS: past the seventh string command in a packet, the rest are read
+     * and ignored. */
+    if (event.kind == QA_Q2_CLIENT_COMMAND && ++string_commands >= 8) {
+      event_clear(&event);
+      continue;
+    }
     qa_q2_client_record record;
     memset(&record, 0, sizeof record);
     record.seat = selected_seat;
     record.event = event;
     record.raw = slice_raw(m, start, &record.raw_length);
-    if (record.raw == NULL) {
-      event_clear(&event);
-      goto oom;
-    }
+    if (record.raw == NULL) goto oom;
     if (!record_push(&list, record)) {
       event_clear(&record.event);
       free(record.raw);
+      memset(&event, 0, sizeof event);
       goto oom;
     }
+    memset(&event, 0, sizeof event);
   }
+  qa_cleanup_pop(&node);
   *out = list.records;
   *out_count = list.count;
   return true;
 oom:
+  qa_cleanup_pop(&node);
+  event_clear(&event);
   qa_q2_client_records_free(list.records, list.count);
   return false;
 }
@@ -318,7 +355,7 @@ uint8_t *qa_q2_encode_move(qa_q2_wire_codec *wire, double sequence, double last_
   if (checksum) {
     int64_t span = m.cursize - checksum_start;
     m.data[1] = (uint8_t)qa_q2_block_sequence_checksum(
-        m.data + (size_t)checksum_start, span > 0 ? (size_t)span : 0, (int64_t)sequence);
+        m.data + (size_t)checksum_start, span > 0 ? (size_t)span : 0, checksum_sequence(sequence));
   }
   uint8_t *out = qa_q2_message_bytes(&m, out_length);
   qa_q2_message_destroy(&m);
@@ -461,7 +498,7 @@ void qa_q2_rate_window_init(qa_q2_rate_window *window) {
 static bool frame_slot(double server_frame, size_t *out) {
   if (!isfinite(server_frame) || server_frame != trunc(server_frame) ||
       server_frame < 0) return false;
-  *out = (size_t)((int64_t)server_frame % 10);
+  *out = (size_t)fmod(server_frame, 10); /* serverFrame % 10, any magnitude */
   return true;
 }
 bool qa_q2_rate_window_drop(qa_q2_rate_window *window, double server_frame,
@@ -478,7 +515,7 @@ bool qa_q2_rate_window_drop(qa_q2_rate_window *window, double server_frame,
 void qa_q2_rate_window_sent(qa_q2_rate_window *window, double server_frame,
                             double bytes) {
   size_t slot;
-  if (frame_slot(server_frame, &slot)) window->sizes[slot] = (uint32_t)bytes;
+  if (frame_slot(server_frame, &slot)) window->sizes[slot] = qa_js_to_uint32(bytes); /* Uint32Array store */
 }
 double qa_q2_rate_window_take_suppressed(qa_q2_rate_window *window) {
   double value = window->suppressed;

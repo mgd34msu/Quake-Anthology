@@ -10,6 +10,7 @@
 #include "qa/foundation/support.h"
 #include "qa/network/q3/admission.h"
 #include "qa/network/q3/pak_references.h"
+#include "qa/foundation/js_case.h"
 typedef struct pure_system_info {
   bool pure; char *game; int64_t *checksums; size_t checksum_count;
   uint32_t checksum_feed;
@@ -21,6 +22,7 @@ struct qa_app_q3_client_content {
   pure_system_info settings; bool closed;
 };
 static void system_info_free(pure_system_info *info) { free(info->game); free(info->checksums); }
+static void pak_set_cleanup(void *set) { qa_q3_server_pak_set_destroy(set); }
 static pure_system_info system_info(const char *info, double checksum_feed) {
   if (checksum_feed != trunc(checksum_feed) || checksum_feed < -2147483648.0
       || checksum_feed > 4294967295.0)
@@ -28,7 +30,13 @@ static pure_system_info system_info(const char *info, double checksum_feed) {
   qa_q3_server_pak_set *loaded = NULL;
   if (!qa_q3_server_pak_set_init(&loaded)) qa_range_error("out of memory");
   char *paks = qa_q3_info_value(info, "sv_paks");
+  /* sv_paks and fs_game come from the server: a parse raise must not leak. */
+  qa_cleanup loaded_guard, paks_guard;
+  qa_cleanup_push(&loaded_guard, pak_set_cleanup, loaded);
+  qa_cleanup_push(&paks_guard, free, paks);
   qa_q3_server_pak_set_set_checksums(loaded, paks);
+  qa_cleanup_pop(&paks_guard);
+  qa_cleanup_pop(&loaded_guard);
   free(paks);
   size_t count = 0;
   const int64_t *sums = qa_q3_server_pak_set_checksums(loaded, &count);
@@ -42,12 +50,17 @@ static pure_system_info system_info(const char *info, double checksum_feed) {
   out.pure = qa_native_atoi(pure) != 0;
   free(pure);
   char *game = qa_q3_info_value(info, "fs_game");
+  qa_cleanup checksums_guard, game_guard;
+  qa_cleanup_push(&checksums_guard, free, out.checksums);
+  qa_cleanup_push(&game_guard, free, game);
   qa_remote_content_selection selection;
   if (!qa_remote_content_selection_make("q3-baseq3", game, &selection))
     qa_range_error("out of memory");
+  qa_cleanup_pop(&game_guard);
+  qa_cleanup_pop(&checksums_guard);
   free(game);
   out.game = selection.directory; /* owned; base is a borrowed literal */
-  out.checksum_feed = (uint32_t)(int64_t)checksum_feed;
+  out.checksum_feed = qa_uint32(checksum_feed);
   return out;
 }
 typedef struct collect_ctx {
@@ -70,6 +83,11 @@ static bool collect_is_q3(void *ctx, const qa_resolved_resource_reference *refer
   (void)reference;
   return *flag;
 }
+typedef struct packages_scope { const qa_app_q3_package_mount *mounts; size_t count; double checksum_feed; qa_app_q3_packages *packages; } packages_scope;
+static void packages_body(void *ctx) {
+  packages_scope *scope = ctx;
+  scope->packages = qa_app_q3_packages_open(scope->mounts, scope->count, scope->checksum_feed);
+}
 qa_app_q3_client_content *qa_app_q3_client_content_open(qa_app_q3_content_host host,
     const char *info, double checksum_feed) {
   pure_system_info settings = system_info(info, checksum_feed);
@@ -79,16 +97,13 @@ qa_app_q3_client_content *qa_app_q3_client_content_open(qa_app_q3_content_host h
   }
   const char *slash = strrchr(host.product_content_directory, '/');
   const char *tail = slash ? slash + 1 : host.product_content_directory;
-  size_t length = strlen(tail);
-  char *game = malloc(length + 1);
+  char *game = qa_js_to_lower_case(tail); /* TS toLowerCase (Unicode) */
   if (!game) { system_info_free(&settings); return NULL; }
-  for (size_t i = 0; i < length; i++) game[i] = tolower((unsigned char)tail[i]);
-  game[length] = '\0';
   bool matches = strcmp(settings.game, game) == 0;
   free(game);
   if (!matches) {
     system_info_free(&settings);
-    qa_range_error("Server game directory differs from the selected Q3 content");
+    qa_raise("Error", 0, 0, "Server game directory differs from the selected Q3 content");
   }
   qa_app_q3_client_content *content = calloc(1, sizeof *content);
   if (!content) { system_info_free(&settings); return NULL; }
@@ -108,7 +123,20 @@ qa_app_q3_client_content *qa_app_q3_client_content_open(qa_app_q3_content_host h
   content->loaded = loaded;
   size_t mount_count = 0;
   const qa_app_q3_package_mount *mounts = host.loaded_mounts(host.ctx, loaded, &mount_count);
-  content->packages = qa_app_q3_packages_open(mounts, mount_count, checksum_feed);
+  /* TS: try { Q3ApplicationPackages.open(content) } catch (error) { await content.close(); throw error; } */
+  packages_scope scope = { mounts, mount_count, checksum_feed, NULL };
+  qa_caught_error caught;
+  if (!qa_try(packages_body, &scope, &caught)) {
+    host.close_content(host.ctx, loaded);
+    content->loaded = NULL;
+    qa_app_q3_packages_destroy(catalog);
+    free(storage);
+    content->settings.checksums = NULL; content->settings.checksum_count = 0;
+    system_info_free(&settings);
+    free(content);
+    qa_rethrow(&caught);
+  }
+  content->packages = scope.packages;
   if (!content->packages) {
     host.close_content(host.ctx, loaded);
     content->loaded = NULL;
@@ -155,7 +183,7 @@ bool qa_app_q3_client_content_matches(qa_app_q3_client_content *content,
 }
 char *qa_app_q3_client_content_referenced_pure_command(
     qa_app_q3_client_content *content, double server_id) {
-  if (content->closed) qa_range_error("Q3 client content is closed");
+  if (content->closed) qa_raise("Error", 0, 0, "Q3 client content is closed");
   collect_ctx collect = {0};
   collect.packages = content->packages;
   content->host.collect_opened(content->host.ctx, content->loaded, collect_visit, &collect);

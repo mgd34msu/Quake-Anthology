@@ -73,11 +73,24 @@ const void *qa_app_loaded_content_mounts(const qa_app_loaded_content *content);
 void qa_app_loaded_content_set_mounts(qa_app_loaded_content *content, const void *mounts);
 bool qa_app_loaded_content_q3_policy(const qa_app_loaded_content *content, qa_q3_product_policy *out);
 void qa_app_loaded_content_set_q3_policy(qa_app_loaded_content *content, qa_q3_product_policy policy);
+/* TS q3Product: false is TS null. */
+bool qa_app_loaded_content_q3_product(const qa_app_loaded_content *content, qa_q3_application_product *out);
 const void *qa_app_loaded_content_for_content(qa_app_loaded_content *content, qa_content_id content_id);
 size_t qa_app_loaded_content_opened_mounts(qa_app_loaded_content *content, const void **out, size_t capacity);
 void qa_app_loaded_content_prepare_mods(qa_app_loaded_content *content, const char *purpose);
+/* TS preparedMods (native loader): the qa_prepared_mod pointers SimulationOptions.preparedMods
+ * takes, owned by the content; never NULL (empty before prepareMods, as TS modOwners = []). */
+const void *const *qa_app_loaded_content_prepared_mods(const qa_app_loaded_content *content, size_t *out_count);
 void qa_app_loaded_content_prepare_qvm_grapple(qa_app_loaded_content *content);
 void qa_app_loaded_content_prepare_weapon_behaviors(qa_app_loaded_content *content);
+/* TS preparedWeaponBehaviors / preparedQvmGrapple of the concrete loader (owned by
+ * the content; NULL grapple is TS null). On the concrete loader prepareWeaponBehaviors
+ * and prepareQvmGrapple run prepareApplicationWeaponBehavior and
+ * prepareApplicationQvmGrapple over forContent, raising Error as TS throws. */
+struct qa_app_prepared_weapon_behavior;
+struct qa_app_prepared_qvm_grapple;
+const struct qa_app_prepared_weapon_behavior *qa_app_loaded_content_prepared_weapon_behaviors(const qa_app_loaded_content *content, size_t *out_count);
+const struct qa_app_prepared_qvm_grapple *qa_app_loaded_content_prepared_qvm_grapple(const qa_app_loaded_content *content);
 void qa_app_loaded_content_close(qa_app_loaded_content *content);
 qa_executable_recipe qa_app_resolve_application_travel(qa_app_loaded_content *content, const char *path);
 /* Configuration content (TS ApplicationConfigurationContent). */
@@ -93,6 +106,11 @@ void qa_app_configuration_content_set_catalog(qa_app_configuration_content *cont
 bool qa_app_configuration_content_q3_product(const qa_app_configuration_content *content, const void **out);
 void qa_app_configuration_content_set_q3_product(qa_app_configuration_content *content, const void *product);
 void qa_app_configuration_content_close(qa_app_configuration_content *content);
+/* TS adoptUnifiedProfile's `{ catalog, mounts, q3Product, close, selection }` over a loaded content: shares its
+ * catalog, mounts and Q3 product (owned by the loaded content), selection from its recipe (map.entities,
+ * engineBehavior, match, combat, movement, timing); closing runs close(close_ctx). NULL only on OOM. */
+qa_app_configuration_content *qa_app_configuration_content_over_loaded(qa_app_loaded_content *loaded,
+    void (*close)(void *ctx), void *close_ctx);
 qa_launch_preset qa_app_application_preset(qa_app_content_host host, const qa_app_options *options);
 qa_launch_preset qa_app_application_configuration_preset(qa_app_content_host host, const qa_app_options *options);
 /* --- Concrete catalog composition (TS content.ts over the landed
@@ -121,6 +139,12 @@ bool qa_app_application_source_selection_for_catalog(const qa_content_catalog *c
     const char *product, const char *rules, qa_app_source_selection_result *out);
 /* TS movementContentProduct. */
 const qa_catalog_discovered_product *qa_app_movement_content_product(const qa_content_catalog *catalog, const char *movement_product);
+/* TS resolveApplicationMovement: options with movement and movementProduct taken
+ * from the movement product (the TS spread). The result is a shallow copy:
+ * movement_product borrows the catalog's product id, every other string is
+ * options'; do not qa_app_options_destroy it. Raises as catalog.product /
+ * movementContentProduct do for an unknown or uninstalled product. */
+qa_app_options qa_app_resolve_application_movement(const qa_content_catalog *catalog, const qa_app_options *options);
 /* TS applicationPreset / applicationConfigurationPreset. False only on
  * OOM; selection errors abort with the exact TS messages. The preset
  * result borrows catalog product ids and options strings; keep both
@@ -141,11 +165,27 @@ qa_catalog_archive_inspector qa_app_default_archive_inspector(void);
  * zeroed when the recipe needs none of them; the catalog/mount/world
  * assembly itself is concrete. Returns NULL only on OOM or when a
  * required guest preparation has no landed concrete host (see the
- * .c note); TS validation errors abort with the exact messages. */
+ * .c note); TS validation errors abort with the exact messages.
+ * options is taken over by the content (destroyed with it, or on a NULL
+ * return). restored_recipe is borrowed: keep it alive while the content
+ * lives.
+ * Resource references the content keeps past a mount set (pure-policy
+ * recipe resources, map sidecars) are owned copies it releases. */
 qa_app_loaded_content *qa_app_load_application_content_native(qa_app_content_host guest_host, qa_app_options options,
     const qa_executable_recipe *restored_recipe, bool has_recipe, const qa_pure_mount_policy *pure,
     qa_content_catalog *installed_catalog, const qa_app_content_source *presentation_source);
 qa_app_application_world qa_app_loaded_content_world(const qa_app_loaded_content *content);
+/* TS preparedQuakeC / preparedQ3Game / preparedQ2Game (NULL is TS null; owned by the content).
+ * The Q2 guest is a qa_app_sim_prepared_classic_guest or qa_app_sim_prepared_rerelease_guest per *out_edition. */
+struct qa_app_sim_prepared_quakec_source;
+struct qa_app_prepared_q3_game;
+const struct qa_app_sim_prepared_quakec_source *qa_app_loaded_content_prepared_quakec(const qa_app_loaded_content *content);
+const struct qa_app_prepared_q3_game *qa_app_loaded_content_prepared_q3_game(const qa_app_loaded_content *content);
+const void *qa_app_loaded_content_prepared_q2_game(const qa_app_loaded_content *content, const char **out_edition);
+/* TS nativeCommandContext producer over preparedQ2Game.execution; NULL is TS preparedQ2Game null. Owned by the content. */
+const struct qa_command_producer *qa_app_loaded_content_native_command_producer(qa_app_loaded_content *content);
+/* C-only: keeps record alive until the content is destroyed (release runs newest first). */
+void qa_app_loaded_content_keep(qa_app_loaded_content *content, void *record, void (*release)(void *record));
 const qa_app_application_map_sidecar *qa_app_loaded_content_map_sidecars(const qa_app_loaded_content *content, size_t *out_count);
 /* TS LoadedApplicationContent.retainMainMounts: release fn + ctx. */
 typedef struct qa_app_main_mount_lease { void *ctx; void (*release)(void *ctx); } qa_app_main_mount_lease;
@@ -206,6 +246,11 @@ typedef struct qa_app_configuration_request_native {
 qa_app_configuration_content *qa_app_open_application_configuration_content_native(
     qa_content_catalog *catalog, qa_app_configuration_request_native request,
     const qa_q3_application_product *q3_product);
+/* TS openInitialConfigurationContent(options, recipe?, installedCatalog?) (configuration.ts) over the
+ * concrete catalog. recipe / installed_catalog NULL are TS undefined; a discovered catalog is owned by
+ * the result. Writes options->q3_product when the product is Q3. NULL only on OOM. */
+qa_app_configuration_content *qa_app_open_initial_configuration_content_native(qa_app_options *options,
+    const qa_executable_recipe *recipe, qa_content_catalog *installed_catalog);
 /* Full TS selection.timing list (the single `timing` field above
  * carries the movement entry, as qa_app_configuration_movement_
  * dialect expects). Borrowed; count 0 when unset. */
@@ -214,4 +259,33 @@ const qa_provider_timing *qa_app_configuration_content_timing(const qa_app_confi
 /* Concrete Q3 product value; false mirrors an absent q3Product. */
 bool qa_app_configuration_content_q3_value(const qa_app_configuration_content *content,
     qa_q3_application_product *out);
+/* --- Startup selection exports (additive; startup-selection.ts reads
+ * these content.ts / mod-selection.ts / q3-product.ts pieces). --- */
+/* The concrete openMountPlan + readQvmCompatibility launch services. */
+qa_launch_services qa_app_native_launch_services(void);
+/* TS applicationPlayerProducts. has_native_source false is TS undefined.
+ * Results borrow catalog product ids. */
+void qa_app_application_player_products(const qa_content_catalog *catalog, const qa_app_options *options,
+    bool has_native_source, bool native_source, const char **out_movement, const char **out_character);
+/* TS prepareQ3ApplicationProduct over the concrete host. *backing (NULL
+ * unless the product is Q3) owns any restricted catalog in *out; free it
+ * with qa_app_q3_product_backing_free once that catalog is unused. */
+struct qa_app_prepared_q3_product;
+void qa_app_prepare_q3_application_product_native(qa_content_catalog *catalog, const char *content,
+    const qa_app_options *options, struct qa_app_prepared_q3_product *out, void **backing);
+void qa_app_q3_product_backing_free(void *backing);
+/* TS applicationModChoices over the concrete gameplay-mod and weapon-
+ * behavior hosts, with the weapon-behavior conflict augmentation. The
+ * choices are owned by *backing (free with qa_app_mod_choices_backing_free). */
+struct qa_app_mod_choices;
+const struct qa_app_mod_choices *qa_app_application_mod_choices_native(qa_content_catalog *catalog, void **backing);
+void qa_app_mod_choices_backing_free(void *backing);
+/* catalog.mountsFor(content) opened with its default order under plan id
+ * createMountPlanId(plan_name_space, hex(content)); demo selects
+ * q3Restriction "demo". Aborts on OOM. */
+typedef struct qa_app_product_mounts qa_app_product_mounts;
+qa_app_product_mounts *qa_app_open_product_mounts(qa_content_catalog *catalog, qa_content_id content,
+    const char *plan_name_space, bool demo);
+qa_content_mounted *qa_app_product_mounts_mounted(qa_app_product_mounts *mounts);
+void qa_app_product_mounts_destroy(qa_app_product_mounts *mounts);
 #endif

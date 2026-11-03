@@ -7,6 +7,7 @@
 #include "qa/compat/qvm/player_record.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
+#include "qa/foundation/js.h"
 
 static void *xmalloc(size_t size) {
   void *result = malloc(size == 0 ? 1 : size);
@@ -381,7 +382,7 @@ void qa_qvm_mod_player_events_publish(qa_qvm_mod_player_events *events) {
     current->cursor.has_external_order = false;
     current->cursor.predictable_count = 0;
   }
-  qsort(list, count, sizeof *list, compare_pending);
+  if (count > 1) qa_js_sort(list, count, sizeof *list, compare_pending);
   /* The player-state views point into each element's own slots, so
    * rebind them after the realloc growth above and the qsort moves. */
   for (size_t i = 0; i < count; i++) {

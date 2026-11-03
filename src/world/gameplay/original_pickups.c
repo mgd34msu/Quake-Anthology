@@ -8,12 +8,12 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/world/handles.h"
 #include "qa/world/gameplay/authority.h"
 #include "qa/world/gameplay/inventory.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -111,6 +111,14 @@ typedef struct pickup_scope {
   bool open;
   int consumption; /* 0 live, 1 removing, 2 consumed */
   bool accepted;
+  /* Owned until the scope closes (TS drops them with the scope). The
+   * selection and lifetime closures reach their state through handles, so a
+   * source calling them after the close sees the TS closed-scope result. */
+  qa_current_original_pickup *matches;
+  struct selection_state *selection;
+  void *selection_token;
+  struct lifetime_state *lifetime;
+  void *lifetime_token;
 } pickup_scope;
 
 struct qa_shared_original_pickup_admission {
@@ -121,18 +129,7 @@ struct qa_shared_original_pickup_admission {
   void *eligible_ctx;
   qa_actor_id *touching;
   size_t touching_count, touching_capacity;
-  void **retained;
-  size_t retained_count, retained_capacity;
 };
-static void retain(qa_shared_original_pickup_admission *admission, void *ptr) {
-  if (admission->retained_count == admission->retained_capacity) {
-    admission->retained_capacity =
-        admission->retained_capacity != 0 ? admission->retained_capacity * 2 : 16;
-    admission->retained = xrealloc(admission->retained,
-                                   admission->retained_capacity * sizeof *admission->retained);
-  }
-  admission->retained[admission->retained_count++] = ptr;
-}
 
 qa_shared_original_pickup_admission *qa_shared_original_pickup_admission_create(
     qa_session_actor_registry *actors, qa_gameplay_authority *combat,
@@ -149,8 +146,6 @@ qa_shared_original_pickup_admission *qa_shared_original_pickup_admission_create(
 }
 void qa_shared_original_pickup_admission_destroy(qa_shared_original_pickup_admission *admission) {
   if (admission == NULL) return;
-  for (size_t i = 0; i < admission->retained_count; i++) free(admission->retained[i]);
-  free(admission->retained);
   free(admission->touching);
   free(admission);
 }
@@ -207,13 +202,11 @@ static pickup_scope *open_scope(qa_shared_original_pickup_admission *admission,
     if (bad) qa_range_error("Pickup cargo has invalid counts or duplicate items");
   }
   pickup_scope *scope = xcalloc(sizeof *scope);
-  retain(admission, scope);
   scope->recipient = recipient;
   scope->pickup = pickup;
   scope->request = offer;
   if (offer.cargo != NULL && offer.cargo_count != 0) {
     scope->cargo_copy = xcalloc(offer.cargo_count * sizeof *scope->cargo_copy);
-    retain(admission, scope->cargo_copy);
     memcpy(scope->cargo_copy, offer.cargo, offer.cargo_count * sizeof *scope->cargo_copy);
     scope->request.cargo = scope->cargo_copy;
   }
@@ -238,6 +231,14 @@ static bool scope_current(qa_shared_original_pickup_admission *admission, pickup
 static void close_scope(qa_shared_original_pickup_admission *admission, pickup_scope *scope) {
   scope->open = false;
   set_touching(admission, scope->pickup.id, false);
+  /* TS lets the scope go here; its closures stay callable through handles. */
+  qa_world_handle_close(scope->selection_token);
+  qa_world_handle_close(scope->lifetime_token);
+  free(scope->selection);
+  free(scope->lifetime);
+  free(scope->matches);
+  free(scope->cargo_copy);
+  free(scope);
 }
 
 static bool writes_equal(qa_pickup_writes a, qa_pickup_writes b) {
@@ -267,21 +268,31 @@ static bool selection_current(selection_state *state) {
   }
   return true;
 }
-static bool selection_current_fn(void *ctx) { return selection_current(ctx); }
+/* After its scope closed: TS current(scope) is false (scope.open). */
+static bool selection_current_fn(void *ctx) {
+  selection_state *state = qa_world_handle_get(ctx);
+  return state != NULL && selection_current(state);
+}
 
 typedef struct grant_state {
   selection_state *selection;
   qa_pickup_writes declared;
   qa_protection_observer stores;
+  void *token; /* the take() observer's closure handle */
   bool open;
   qa_original_pickup_decision result;
+  bool failed; /* TS failure.value !== null */
+  qa_caught_error failure;
 } grant_state;
 static bool grant_current(void *ctx) {
-  grant_state *state = ctx;
-  return state->open && selection_current(state->selection);
+  grant_state *state = qa_world_handle_get(ctx);
+  return state != NULL && state->open && selection_current(state->selection);
 }
-static void grant_stored(void *ctx, qa_protection_store change) {
-  grant_state *state = ctx;
+typedef struct grant_store_call { grant_state *state; qa_protection_store change; } grant_store_call;
+static void grant_stored_body(void *arg) {
+  grant_store_call *call = arg;
+  grant_state *state = call->state;
+  qa_protection_store change = call->change;
   if (!state->open) qa_error("Original pickup observer is closed");
   if (!selection_current(state->selection))
     qa_error("Original pickup resource binding is no longer current");
@@ -296,24 +307,48 @@ static void grant_stored(void *ctx, qa_protection_store change) {
     qa_error("Original pickup changed undeclared protection");
   state->stores.stored(state->stores.ctx, change);
 }
+/* The observer records a throw before rethrowing it; the grant rethrows it even
+ * when take() catches it and returns. */
+static void grant_stored(void *ctx, qa_protection_store change) {
+  grant_state *state = qa_world_handle_get(ctx);
+  if (state == NULL) qa_error("Original pickup observer is closed");
+  grant_store_call call = {state, change};
+  if (!qa_try(grant_stored_body, &call, &state->failure)) {
+    state->failed = true;
+    qa_rethrow(&state->failure);
+  }
+}
+static void grant_close(void *arg) {
+  grant_state *state = arg;
+  state->open = false;
+  qa_world_handle_close(state->token);
+}
 static void *grant_operation(void *ctx, qa_protection_observer stores) {
   grant_state *state = ctx;
   state->stores = stores;
   state->open = true;
   const qa_current_original_pickup *selected = &state->selection->matches[0];
   qa_original_pickup_execution execution;
-  execution.observer.ctx = state;
+  state->token = qa_world_handle_open(state);
+  execution.observer.ctx = state->token;
   execution.observer.stored = grant_stored;
   execution.writes = state->declared;
-  execution.current_ctx = state;
+  execution.current_ctx = state->token;
   execution.current = grant_current;
+  qa_cleanup node; /* finally { open = false } */
+  qa_cleanup_push(&node, grant_close, state);
   state->result = selected->captured.take(selected->captured.ctx,
                                           state->selection->scope->request, execution);
-  state->open = false;
+  if (state->failed) qa_rethrow(&state->failure);
+  qa_cleanup_pop(&node);
+  grant_close(state);
   return NULL;
 }
 static qa_original_pickup_outcome selection_grant(void *ctx) {
-  selection_state *state = ctx;
+  selection_state *state = qa_world_handle_get(ctx);
+  /* After its scope closed TS returns "stale" from current() (a grant
+   * already used before the close throws in TS; C no longer has it). */
+  if (state == NULL) return QA_ORIGINAL_PICKUP_OUTCOME_STALE;
   if (state->used) qa_error("Original source pickup grant already consumed");
   state->used = true;
   if (!selection_current(state)) return QA_ORIGINAL_PICKUP_OUTCOME_STALE;
@@ -321,6 +356,8 @@ static qa_original_pickup_outcome selection_grant(void *ctx) {
   grant.selection = state;
   grant.declared = state->matches[0].captured.writes;
   grant.open = false;
+  grant.token = NULL;
+  grant.failed = false;
   grant.result = QA_ORIGINAL_PICKUP_REFUSED;
   (void)qa_gameplay_authority_with_pickup_protection(
       state->admission->combat, state->scope->recipient, state->matches[0].owner,
@@ -356,7 +393,8 @@ static qa_source_pickup_selection make_selection(qa_shared_original_pickup_admis
     return selection;
   }
   qa_current_original_pickup *matches = xcalloc(total * sizeof *matches);
-  retain(admission, matches);
+  free(scope->matches);
+  scope->matches = matches;
   if (armor.match_count != 0)
     memcpy(matches, armor.matches, armor.match_count * sizeof *matches);
   if (items.match_count != 0)
@@ -412,13 +450,14 @@ static qa_source_pickup_selection make_selection(qa_shared_original_pickup_admis
     qa_error(message);
   }
   selection_state *state = xcalloc(sizeof *state);
-  retain(admission, state);
   state->admission = admission;
   state->scope = scope;
   state->matches = matches;
   state->match_count = total;
+  scope->selection = state;
+  scope->selection_token = qa_world_handle_open(state);
   selection.kind = QA_SOURCE_PICKUP_REPLACEMENT;
-  selection.ctx = state;
+  selection.ctx = scope->selection_token;
   selection.current = selection_current_fn;
   selection.grant = selection_grant;
   return selection;
@@ -429,9 +468,16 @@ typedef struct lifetime_state {
   pickup_scope *scope; /* NULL for the stale lifetime */
   qa_source_pickup_selection selection;
 } lifetime_state;
+static void consume_stale(void *ctx, void (*remove)(void *remove_ctx), void *remove_ctx) {
+  (void)ctx; /* TS: the stale lifetime closes over nothing */
+  (void)remove;
+  (void)remove_ctx;
+  qa_error("Stale pickup cannot be consumed");
+}
 static void consume_pickup(void *ctx, void (*remove)(void *remove_ctx), void *remove_ctx) {
-  lifetime_state *state = ctx;
-  if (state->scope == NULL) qa_error("Stale pickup cannot be consumed");
+  lifetime_state *state = qa_world_handle_get(ctx);
+  /* After the scope closed TS fails its current(scope) check. */
+  if (state == NULL) qa_error("Original pickup consumption lost its source scope");
   pickup_scope *scope = state->scope;
   qa_source_pickup_selection *selected = &state->selection;
   if (!scope->accepted || scope->consumption != 0 || !scope_current(state->admission, scope) ||
@@ -452,6 +498,15 @@ static void consume_pickup(void *ctx, void (*remove)(void *remove_ctx), void *re
     qa_error("Original pickup consumption changed its recipient binding");
 }
 
+typedef struct scope_guard {
+  qa_shared_original_pickup_admission *admission;
+  pickup_scope *scope;
+} scope_guard;
+static void close_scope_cleanup(void *arg) {
+  scope_guard *guard = arg;
+  close_scope(guard->admission, guard->scope);
+}
+
 void *qa_shared_original_pickup_admission_run_source(
     qa_shared_original_pickup_admission *admission, qa_original_pickup_offer offer,
     void *(*execute)(void *ctx, qa_source_pickup_selection selection,
@@ -459,28 +514,31 @@ void *qa_shared_original_pickup_admission_run_source(
     void *execute_ctx) {
   pickup_scope *scope = open_scope(admission, offer);
   if (scope == NULL) {
-    lifetime_state *state = xcalloc(sizeof *state);
-    retain(admission, state);
-    state->admission = admission;
     qa_source_pickup_selection stale;
     memset(&stale, 0, sizeof stale);
     stale.kind = QA_SOURCE_PICKUP_STALE;
     qa_source_pickup_lifetime lifetime;
-    lifetime.ctx = state;
-    lifetime.consume_pickup = consume_pickup;
+    lifetime.ctx = NULL;
+    lifetime.consume_pickup = consume_stale;
     return execute(execute_ctx, stale, lifetime);
   }
+  /* try { ... } catch { close(scope); throw } */
+  scope_guard guard = {admission, scope};
+  qa_cleanup node;
+  qa_cleanup_push(&node, close_scope_cleanup, &guard);
   qa_source_pickup_selection selected = make_selection(admission, scope);
   if (selected.kind == QA_SOURCE_PICKUP_ORIGINAL) scope->accepted = true;
   lifetime_state *state = xcalloc(sizeof *state);
-  retain(admission, state);
   state->admission = admission;
   state->scope = scope;
   state->selection = selected;
+  scope->lifetime = state;
+  scope->lifetime_token = qa_world_handle_open(state);
   qa_source_pickup_lifetime lifetime;
-  lifetime.ctx = state;
+  lifetime.ctx = scope->lifetime_token;
   lifetime.consume_pickup = consume_pickup;
   void *result = execute(execute_ctx, selected, lifetime);
+  qa_cleanup_pop(&node);
   close_scope(admission, scope);
   return result;
 }
@@ -490,12 +548,18 @@ qa_original_pickup_outcome qa_shared_original_pickup_admission_touch(
     qa_original_pickup_continuation continuation) {
   pickup_scope *scope = open_scope(admission, offer);
   if (scope == NULL) return QA_ORIGINAL_PICKUP_OUTCOME_STALE;
+  /* try { ... } finally { close(scope) } */
+  scope_guard guard = {admission, scope};
+  qa_cleanup node;
+  qa_cleanup_push(&node, close_scope_cleanup, &guard);
   qa_original_pickup_outcome outcome = QA_ORIGINAL_PICKUP_OUTCOME_REFUSED;
   if (continuation.eligible != NULL && !continuation.eligible(continuation.ctx)) {
+    qa_cleanup_pop(&node);
     close_scope(admission, scope);
     return QA_ORIGINAL_PICKUP_OUTCOME_REFUSED;
   }
   if (!scope_current(admission, scope)) {
+    qa_cleanup_pop(&node);
     close_scope(admission, scope);
     return QA_ORIGINAL_PICKUP_OUTCOME_STALE;
   }
@@ -506,10 +570,12 @@ qa_original_pickup_outcome qa_shared_original_pickup_admission_touch(
     outcome = QA_ORIGINAL_PICKUP_OUTCOME_ACCEPTED;
   if (outcome == QA_ORIGINAL_PICKUP_OUTCOME_STALE || !scope_current(admission, scope) ||
       (selected.kind == QA_SOURCE_PICKUP_REPLACEMENT && !selected.current(selected.ctx))) {
+    qa_cleanup_pop(&node);
     close_scope(admission, scope);
     return QA_ORIGINAL_PICKUP_OUTCOME_STALE;
   }
   continuation.complete(continuation.ctx, outcome == QA_ORIGINAL_PICKUP_OUTCOME_ACCEPTED);
+  qa_cleanup_pop(&node);
   close_scope(admission, scope);
   return outcome;
 }

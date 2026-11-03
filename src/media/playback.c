@@ -9,15 +9,15 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/media/ogg.h"
 
 static noreturn void media_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 const char *qa_cinematic_format_name(qa_cinematic_format format) {
@@ -319,6 +319,11 @@ bool qa_cinematic_playback_init(qa_cinematic_playback *playback,
       if (input == NULL) {
         ok = false;
         break;
+      }
+      if (input->byte_length > (int64_t)QA_MAX_OGG_MOVIE_BYTES) {
+        /* TS throws inside try/finally: the input closes first. */
+        qa_media_input_close(input);
+        qa_range_error("Ogg movie exceeds 512 MiB");
       }
       uint8_t *bytes = qa_read_media(input, 0, input->byte_length);
       size_t length = (size_t)input->byte_length;

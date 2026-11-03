@@ -3,13 +3,18 @@
 #include "qa/core/binary/index.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 #define FLOAT_INT_BITS 13
 #define FLOAT_INT_BIAS 4096
-/* Field descriptors: bits==0 -> float (double storage), else int32 storage at offset.
- * Player event slots use kind 2 with offset of array and index. */
+/* Field descriptors. Every entity field is a TS number with double storage
+ * (qa_q3_entity_state_record). Player integer fields use the record's int32
+ * storage at offset (event slots: array offset plus index); bits==0 fields and
+ * the player delta_angles vector are double storage. */
 typedef struct { const char *name; int bits; size_t offset; int index; } field_t;
 #define EI(f, b) { #f, (b), offsetof(qa_q3_entity_state_record, f), 0 }
 #define EV(f, c, n) { (n), 0, offsetof(qa_q3_entity_state_record, f) + offsetof(qa_vec3, c), 0 }
@@ -73,12 +78,15 @@ static const field_t PLAYER_FIELDS[] = {
 };
 #define N_PF (sizeof PLAYER_FIELDS / sizeof PLAYER_FIELDS[0])
 /* Player delta_angles entries have bits=16 but Vec3 double storage: TS playerVector
- * passes bits through, so get returns the double and rawValue does |0. Our float/int
- * split by storage: fields with bits!=0 read storage as double->int for vec offsets.
- * Distinguish by a parallel marker: delta_angles offsets fall in that member range. */
+ * passes bits through, so get returns the double and rawValue does |0. */
 static bool player_float_int(const field_t *f) {
   size_t base = offsetof(qa_q3_player_state_record, delta_angles);
   return f->offset >= base && f->offset < base + sizeof(qa_vec3);
+}
+/* Storage is double for every entity field, for float fields, and for the
+ * player delta_angles; the remaining player integer fields are int32. */
+static bool double_storage(const field_t *f, bool player) {
+  return f->bits == 0 || !player || player_float_int(f);
 }
 static double fget_d(const void *s, const field_t *f) { double v; memcpy(&v, (const char *)s + f->offset, sizeof v); return v; }
 static int32_t fget_i(const void *s, const field_t *f) {
@@ -86,19 +94,19 @@ static int32_t fget_i(const void *s, const field_t *f) {
 }
 static void fset_d(void *s, const field_t *f, double v) { memcpy((char *)s + f->offset, &v, sizeof v); }
 static void fset_i(void *s, const field_t *f, int32_t v) { memcpy((char *)s + f->offset + (size_t)f->index * sizeof(int32_t), &v, sizeof v); }
+/* TS rawValue: float32ToBits(value) for floats, value | 0 otherwise. */
 static int32_t raw_value(const field_t *f, const void *s, bool player) {
   if (f->bits == 0) return (int32_t)qa_float32_to_bits(fget_d(s, f));
-  if (player && player_float_int(f)) return (int32_t)fget_d(s, f); /* TS value|0 */
+  if (double_storage(f, player)) return qa_int32(fget_d(s, f));
   return fget_i(s, f);
 }
+/* TS field.set: number storage keeps the value as is. */
 static void field_set(const field_t *f, void *s, double value, bool player) {
-  if (f->bits == 0) fset_d(s, f, value);
-  else if (player && player_float_int(f)) fset_d(s, f, (int32_t)value);
-  else fset_i(s, f, (int32_t)value);
+  if (double_storage(f, player)) fset_d(s, f, value);
+  else fset_i(s, f, qa_js_to_int32(value)); /* int32 storage: no undefined cast of NaN or 2^31 */
 }
 static double field_get(const field_t *f, const void *s, bool player) {
-  if (f->bits == 0) return fget_d(s, f);
-  if (player && player_float_int(f)) return fget_d(s, f);
+  if (double_storage(f, player)) return fget_d(s, f);
   return fget_i(s, f);
 }
 static int last_changed(const field_t *fields, size_t n, const void *from, const void *to, bool player) {
@@ -110,7 +118,7 @@ static void write_field(qa_q3_message_writer *w, const field_t *f, const void *f
   bool changed = raw_value(f, from, player) != raw_value(f, to, player);
   qa_q3_message_writer_write_bits(w, changed ? 1 : 0, 1);
   if (!changed) return;
-  double value = f->bits == 0 ? (float)field_get(f, to, player) : (int32_t)field_get(f, to, player);
+  double value = f->bits == 0 ? (float)field_get(f, to, player) : qa_int32(field_get(f, to, player));
   if (entity) {
     qa_q3_message_writer_write_bits(w, value == 0 ? 0 : 1, 1);
     if (value == 0) {
@@ -119,8 +127,8 @@ static void write_field(qa_q3_message_writer *w, const field_t *f, const void *f
       return;
     }
   }
-  if (f->bits != 0) { qa_q3_message_writer_write_bits(w, (int32_t)value, f->bits); return; }
-  bool compact = value == (int32_t)value && value >= -FLOAT_INT_BIAS && value < FLOAT_INT_BIAS;
+  if (f->bits != 0) { qa_q3_message_writer_write_bits(w, qa_js_to_int32(value), f->bits); return; }
+  bool compact = value >= -FLOAT_INT_BIAS && value < FLOAT_INT_BIAS && value == trunc(value);
   qa_q3_message_writer_write_bits(w, compact ? 0 : 1, 1);
   if (compact) qa_q3_message_writer_write_bits(w, (int32_t)value + FLOAT_INT_BIAS, FLOAT_INT_BITS);
   else qa_q3_message_writer_write_float(w, value);
@@ -154,8 +162,9 @@ static void read_field(qa_q3_message_reader *r, const field_t *f, const void *fr
     diag->print(diag->print_ctx, buf);
   }
 }
-static void check_entity_number(int64_t n) {
-  if (n < 0 || n >= QA_Q3_MAX_ENTITIES) qa_range_error("Bad delta entity number %lld", (long long)n);
+/* TS checkEntityNumber: integral and inside [0, MAX_ENTITIES). */
+static void check_entity_number(double n) {
+  if (!(n == trunc(n)) || n < 0 || n >= QA_Q3_MAX_ENTITIES) qa_range_error("Bad delta entity number %s", QA_JS_NUMBER(n));
 }
 const qa_q3_state_delta_field *qa_q3_state_delta_fields(int kind, size_t *count) {
   static qa_q3_state_delta_field e_out[N_EF], p_out[N_PF];
@@ -173,7 +182,7 @@ void qa_q3_write_delta_entity(qa_q3_message_writer *w, const qa_q3_entity_state_
   if (!to) {
     if (!from) return;
     check_entity_number(from->number);
-    qa_q3_message_writer_write_bits(w, from->number, QA_Q3_ENTITY_NUMBER_BITS);
+    qa_q3_message_writer_write_bits(w, (int64_t)from->number, QA_Q3_ENTITY_NUMBER_BITS);
     qa_q3_message_writer_write_bits(w, 1, 1);
     return;
   }
@@ -182,7 +191,7 @@ void qa_q3_write_delta_entity(qa_q3_message_writer *w, const qa_q3_entity_state_
   const qa_q3_entity_state_record *base = from ? from : &zero;
   int last = last_changed(ENTITY_FIELDS, N_EF, base, to, false);
   if (last == 0 && !force) return;
-  qa_q3_message_writer_write_bits(w, to->number, QA_Q3_ENTITY_NUMBER_BITS);
+  qa_q3_message_writer_write_bits(w, (int64_t)to->number, QA_Q3_ENTITY_NUMBER_BITS);
   qa_q3_message_writer_write_bits(w, 0, 1);
   qa_q3_message_writer_write_bits(w, last == 0 ? 0 : 1, 1);
   if (last == 0) return;
@@ -194,7 +203,7 @@ void qa_q3_write_delta_entity(qa_q3_message_writer *w, const qa_q3_entity_state_
 static int64_t shownet_of(const qa_q3_delta_message_diagnostics *d) { return d && d->shownet ? d->shownet(d->shownet_ctx) : 0; }
 void qa_q3_read_delta_entity(qa_q3_message_reader *r, const qa_q3_entity_state_record *from, int64_t number,
                              const qa_q3_delta_message_diagnostics *diag, qa_q3_entity_state_record *out) {
-  check_entity_number(number);
+  check_entity_number((double)number);
   int64_t offset = diag ? diag->offset : 0;
   int64_t start_bit = diag_bit_pos(r, offset);
   if (qa_q3_message_reader_read_bits(r, 1) != 0) {
@@ -207,16 +216,16 @@ void qa_q3_read_delta_entity(qa_q3_message_reader *r, const qa_q3_entity_state_r
     }
     return;
   }
-  if (qa_q3_message_reader_read_bits(r, 1) == 0) { *out = *from; out->number = (int32_t)number; return; }
+  if (qa_q3_message_reader_read_bits(r, 1) == 0) { *out = *from; out->number = (double)number; return; }
   int64_t last = qa_q3_message_reader_read_byte(r);
   const qa_q3_delta_message_diagnostics *printing =
     (diag && (shownet_of(diag) >= 2 || shownet_of(diag) == -1)) ? diag : NULL;
   if (printing && printing->print) {
     char buf[128]; snprintf(buf, sizeof buf, "%3lld: #%-3d ",
-      (long long)(qa_q3_message_reader_read_count(r) + offset), out->number);
+      (long long)(qa_q3_message_reader_read_count(r) + offset), qa_js_to_int32(out->number));
     printing->print(printing->print_ctx, buf);
   }
-  out->number = (int32_t)number;
+  out->number = (double)number;
   if (last > (int64_t)N_EF)
     qa_binary_error(qa_q3_message_reader_source(r), qa_q3_message_reader_read_count(r), "Invalid entity last field %lld", (long long)last);
   for (int64_t i = 0; i < last; i++) read_field(r, &ENTITY_FIELDS[i], from, out, true, false, printing);

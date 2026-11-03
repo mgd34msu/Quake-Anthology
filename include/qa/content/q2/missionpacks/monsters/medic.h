@@ -13,7 +13,7 @@
 /* False is TS null. */
 bool qa_q2mpm_pick_rogue_coop_target(qa_q2m_context *context, qa_actor_id *out);
 /* Writes 2 definitions (medic, medic commander); returns 2. */
-size_t qa_q2mpm_create_rogue_medic_definitions(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_medic_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                                qa_q2mpm_weapons weapons, qa_q2mpm_monster_state *source);
 
 #endif

@@ -22,4 +22,10 @@ void qa_q2_ctf_grapple_fire_from_pose(qa_q2_ctf_grapple_equipment *e, qa_actor_i
 bool qa_q2_ctf_grapple_fire(qa_q2_ctf_grapple_equipment *e, qa_actor_id owner, qa_q2_game_services *g, qa_vec3 start, qa_vec3 dir, double damage, double speed, double effects);
 void qa_q2_ctf_grapple_pull(qa_q2_ctf_grapple_equipment *e, qa_q2_entity *hook, qa_q2_game_services *g, bool damage_pulse);
 void qa_q2_ctf_grapple_player_frame(qa_q2_ctf_grapple_equipment *e, qa_actor_id player, qa_q2_game_services *g, bool damage_pulse);
+/* TS readonly states Map: get (NULL is undefined), ordered iteration and clear.
+ * Map.set is the creating state() accessor followed by assignment. */
+qa_ctf_grapple_state *qa_q2_ctf_grapple_find_state(qa_q2_ctf_grapple_equipment *e, qa_actor_id a);
+size_t qa_q2_ctf_grapple_state_count(const qa_q2_ctf_grapple_equipment *e);
+qa_ctf_grapple_state *qa_q2_ctf_grapple_state_at(qa_q2_ctf_grapple_equipment *e, size_t index, qa_actor_id *out_actor);
+void qa_q2_ctf_grapple_clear_states(qa_q2_ctf_grapple_equipment *e);
 #endif

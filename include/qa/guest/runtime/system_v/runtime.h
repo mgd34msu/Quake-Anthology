@@ -96,5 +96,10 @@ void qa_system_v_guest_runtime_initialize(qa_system_v_guest_runtime *runtime, qa
                                           const qa_system_v_initialize_options *options);
 void qa_system_v_guest_runtime_finalize(qa_system_v_guest_runtime *runtime, qa_elf_guest_image *image,
                                         const qa_system_v_initialize_options *options);
+/* TS heapState: malloc'd blocks in heap-table order (heap 0); caller frees. */
+qa_native_heap_block *qa_system_v_guest_runtime_heap_state(const qa_system_v_guest_runtime *runtime, size_t *count);
+/* TS restoreHeapState: every block must lie in a mapping already restored. */
+void qa_system_v_guest_runtime_restore_heap_state(qa_system_v_guest_runtime *runtime, const qa_native_heap_block *blocks,
+                                                  size_t count);
 
 #endif

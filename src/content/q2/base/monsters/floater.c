@@ -31,7 +31,7 @@ static size_t active_move_count;
 static void build_active_moves(void) {
   if (active_moves) return;
   active_moves = malloc(qa_q2bm_float_move_count * sizeof *active_moves);
-  if (!active_moves) qa_q2f_error("Floater move table allocation failed");
+  if (!active_moves) qa_raise("Error", 0, 0, "Floater move table allocation failed");
   for (size_t i = 0; i < qa_q2bm_float_move_count; i++)
     if (strcmp(qa_q2bm_float_moves[i].name, "floater_move_activate") != 0)
       active_moves[active_move_count++] = qa_q2bm_float_moves[i];
@@ -74,22 +74,15 @@ static void wham_fn(void *ctx, qa_q2m_context *c) {
 }
 static void zap_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
   qa_vec3 direction = qa_sub3_double(enemy.origin, q2bm_body(game, entity).origin);
   qa_vec3 origin = qa_q2m_project_flash_default(c, q2bm_v3(18.5, -0.9, 10));
   q2bm_sound(game, entity, "floater/fltatck2.wav", true, 1, false, 0, false, 0);
   q2bm_emit_effect(game, "q2:splash", origin, direction, 32, 1);
-  qa_q2f_damage_args args;
-  memset(&args, 0, sizeof args);
-  args.target = entity->enemy; args.inflictor_entity = entity; args.inflictor_actor = entity->actor.id;
-  args.attacker = &entity->actor.id;
-  args.amount = 5 + floor(q2bm_rnd(game) * 6); args.knockback = -10;
-  args.direction = direction; args.point = enemy.origin; args.normal = q2bm_zero();
-  args.means_of_death = 0; args.has_flags = true; args.flags = 4; args.weapon = NULL;
-  (void)game->damage(game->ctx, args);
+  (void)game->damage(game->ctx, entity->enemy, entity, entity->actor.id, &entity->actor.id, 5 + floor(q2bm_rnd(game) * 6), -10, direction, enemy.origin, q2bm_zero(), 0, 4, NULL);
 }
 #define CB(name, fn) {name, {NULL, fn}}
 static const qa_q2m_named_handler floater_callbacks[] = {

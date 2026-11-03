@@ -10,7 +10,7 @@
 #include "qa/foundation/support.h"
 
 static char *read_string(const qa_qvm_host_call *call, size_t word_index) {
-  char *text = qa_qvm_memory_read_string(call->guest, qa_qvm_host_call_word(call, word_index));
+  char *text = qa_qvm_game_memory_read_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, word_index));
   if (text == NULL) qa_range_error("out of memory");
   return text;
 }
@@ -18,8 +18,11 @@ static char *read_string(const qa_qvm_host_call *call, size_t word_index) {
 bool qa_qvm_common_syscall(const qa_qvm_host_call *call, qa_qvm_common_services services,
                            qa_qvm_host_result *out) {
   if (strcmp(call->kind, "engine") != 0 || strcmp(call->role, services.role) != 0) return false;
-  if (qa_qvm_cvar_syscall(call->role, call->base.words, call->base.words_length, call->guest,
-                          services.cvars, out))
+  if (services.cvar_table != NULL
+          ? qa_qvm_cvar_table_syscall(call->role, call->base.words, call->base.words_length, QA_SHARED_GUEST(call),
+                                      services.cvar_table, out)
+          : qa_qvm_cvar_syscall(call->role, call->base.words, call->base.words_length, QA_SHARED_GUEST(call),
+                                services.cvars, out))
     return true;
   int32_t trap = call->code;
   bool ui = strcmp(services.role, "ui") == 0;
@@ -62,7 +65,7 @@ bool qa_qvm_common_syscall(const qa_qvm_host_call *call, qa_qvm_common_services 
                   : game ? QA_QVM_GAME_IMPORT_G_ARGV : QA_QVM_CGAME_IMPORT_CG_ARGV)) {
     int32_t index = qa_qvm_host_call_word(call, 1);
     const char *value = index >= 0 && index < (int64_t)argv_count ? argv[index] : "";
-    qa_qvm_memory_write_string(call->guest, qa_qvm_host_call_word(call, 2), value,
+    qa_qvm_game_memory_write_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 2), value,
                                qa_qvm_host_call_word(call, 3));
     *out = 0;
     return true;
@@ -87,7 +90,7 @@ bool qa_qvm_common_syscall(const qa_qvm_host_call *call, qa_qvm_common_services 
           free(value);
           qa_range_error("Cmd_Args exceeds its source buffer");
         }
-        qa_qvm_memory_write_string(call->guest, qa_qvm_host_call_word(call, 1), value,
+        qa_qvm_game_memory_write_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 1), value,
                                    qa_qvm_host_call_word(call, 2));
         free(value);
         *out = 0;
@@ -131,7 +134,7 @@ bool qa_qvm_common_syscall(const qa_qvm_host_call *call, qa_qvm_common_services 
                                        pointer != 0 ? &calendar : NULL);
     if (pointer != 0) {
       qa_qvm_writable_view output;
-      qa_qvm_memory_view(call->guest, pointer, 36, 0, &output);
+      qa_qvm_game_memory_view(QA_SHARED_GUEST(call), pointer, 36, 0, &output);
       double values[9] = {calendar.second, calendar.minute, calendar.hour, calendar.day,
                           calendar.month,  calendar.year,   calendar.weekday,
                           calendar.year_day, calendar.is_dst};

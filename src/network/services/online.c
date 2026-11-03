@@ -1,6 +1,8 @@
 /* Port of src/network/services/online.ts. GPL-2.0-or-later. */
 #include "qa/network/services/online.h"
+#include "qa/network/common/js_number.h"
 #include "qa/foundation/support.h"
+#include "qa/persistence/value.h"
 #include <ctype.h>
 #include <fcntl.h>
 #include <math.h>
@@ -8,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "qa/foundation/js.h"
 static char *dupstr(const char *s) { if (!s) return NULL; size_t n = strlen(s) + 1; char *p = malloc(n); memcpy(p, s, n); return p; }
 /* --- SHA-256 with context (for HMAC/scrypt). --- */
 struct sha256 { uint32_t h[8]; uint64_t len; uint8_t buf[64]; size_t buflen; };
@@ -207,6 +210,8 @@ struct qa_local_authorization {
   struct token_entry *tokens; size_t token_count, token_cap;
 };
 void qa_local_authorization_init(qa_local_authorization *a) { memset(a, 0, sizeof *a); }
+qa_local_authorization *qa_local_authorization_create(void) { return calloc(1, sizeof (qa_local_authorization)); }
+void qa_local_authorization_free(qa_local_authorization *a) { if (a) { qa_local_authorization_destroy(a); free(a); } }
 void qa_local_authorization_destroy(qa_local_authorization *a) {
   for (size_t i = 0; i < a->account_count; i++) {
     qa_online_account_destroy(&a->accounts[i].account);
@@ -225,7 +230,7 @@ static bool trimmed_empty(const char *s) {
 }
 void qa_local_authorization_register(qa_local_authorization *a, const char *name, const char *password, qa_online_account *out) {
   if (trimmed_empty(name) || password[0] == '\0' || find_account(a, name))
-    qa_range_error("Account requires an unused name and a password");
+    qa_raise("Error", 0, 0, "Account requires an unused name and a password");
   char idbuf[48], hexbuf[33];
   random_hex(hexbuf, 16);
   snprintf(idbuf, sizeof idbuf, "account:%s", hexbuf);
@@ -313,28 +318,6 @@ char *qa_local_authorization_save(qa_local_authorization *a) {
   cat_raw(&buf, &len, &cap, "]}");
   return buf;
 }
-static const char *jfind(const char *obj, const char *key) {
-  char pat[64]; snprintf(pat, sizeof pat, "\"%s\"", key);
-  const char *p = strstr(obj, pat);
-  if (!p) return NULL;
-  p = strchr(p, ':');
-  if (!p) return NULL;
-  p++;
-  while (*p == ' ' || *p == '\t' || *p == '\n') p++;
-  return p;
-}
-static int jstring(const char *obj, const char *key, char *out, size_t outsz) {
-  const char *v = jfind(obj, key);
-  if (!v || *v != '"') return 0;
-  v++;
-  size_t n = 0;
-  while (*v && *v != '"' && n + 1 < outsz) {
-    if (*v == '\\' && v[1]) v++;
-    out[n++] = *v++;
-  }
-  out[n] = '\0';
-  return *v == '"';
-}
 static bool is_account_id(const char *v) {
   if (strncmp(v, "account:", 8) != 0 || strlen(v) != 40) return false;
   for (int i = 8; i < 40; i++) if (!isxdigit((unsigned char)v[i]) || (v[i] >= 'A' && v[i] <= 'F')) return false;
@@ -345,53 +328,51 @@ static bool is_hex_lower(const char *v, size_t n) {
   for (size_t i = 0; i < n; i++) if (!isxdigit((unsigned char)v[i]) || (v[i] >= 'A' && v[i] <= 'F')) return false;
   return true;
 }
+static void free_json(void *value) { qa_save_value_free(value); }
+static const qa_save_value *field(const qa_save_value *object, const char *key) {
+  return object && object->kind == QA_SAVE_OBJECT ? qa_save_value_get(object, key) : NULL;
+}
+static bool is_string_value(const qa_save_value *v) { return v && v->kind == QA_SAVE_STRING; }
+static void destroy_authorization(void *a) { qa_local_authorization_destroy(a); }
 void qa_local_authorization_restore(qa_local_authorization *a, const char *text) {
-  const char *ver = jfind(text, "version");
-  const char *acc = jfind(text, "accounts");
-  if (!ver || strtod(ver, NULL) != 1 || !acc || *acc != '[') qa_range_error("Invalid local account save");
-  struct account_record *restored = NULL; char **names = NULL; size_t count = 0, cap = 0;
-  const char *p = acc + 1;
-  for (;;) {
-    while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-    if (*p == ']' || *p == '\0') break;
-    if (*p != '{') qa_range_error("Invalid account record");
-    const char *start = p;
-    int depth = 0; bool in_str = false, esc = false;
-    for (; *p; p++) {
-      if (esc) { esc = false; continue; }
-      if (*p == '\\' && in_str) { esc = true; continue; }
-      if (*p == '"') in_str = !in_str;
-      if (in_str) continue;
-      if (*p == '{') depth++;
-      if (*p == '}' && --depth == 0) { p++; break; }
+  qa_save_value *value = qa_parse_json_value((const uint8_t *)text, strlen(text), false);
+  if (!value) qa_range_error("Out of memory");
+  qa_cleanup value_guard; qa_cleanup_push(&value_guard, free_json, value);
+  const qa_save_value *version = field(value, "version"), *rows = field(value, "accounts");
+  if (value->kind != QA_SAVE_OBJECT || !version || version->kind != QA_SAVE_NUMBER || version->number != 1
+      || !rows || rows->kind != QA_SAVE_ARRAY)
+    qa_raise("Error", 0, 0, "Invalid local account save");
+  qa_local_authorization restored; qa_local_authorization_init(&restored);
+  qa_cleanup restored_guard; qa_cleanup_push(&restored_guard, destroy_authorization, &restored);
+  for (size_t r = 0; r < rows->item_count; r++) {
+    const qa_save_value *row = rows->items[r], *account = field(row, "account");
+    if (!row || row->kind != QA_SAVE_OBJECT || !account || account->kind != QA_SAVE_OBJECT) qa_raise("Error", 0, 0, "Invalid account record");
+    const qa_save_value *id = field(account, "id"), *name = field(account, "name"), *salt = field(row, "salt"), *hash = field(row, "passwordHash");
+    bool duplicate = false;
+    if (is_string_value(name) && is_string_value(id))
+      for (size_t i = 0; i < restored.account_count; i++)
+        if (strcmp(restored.names[i], name->text) == 0 || strcmp(restored.accounts[i].account.id, id->text) == 0) duplicate = true;
+    if (!is_string_value(id) || !is_account_id(id->text) || !is_string_value(name) || name->text[0] == '\0'
+        || !is_string_value(salt) || !is_hex_lower(salt->text, 32) || !is_string_value(hash) || !is_hex_lower(hash->text, 64) || duplicate)
+      qa_raise("Error", 0, 0, "Invalid account fields");
+    if (restored.account_count == restored.account_cap) {
+      size_t nc = restored.account_cap ? restored.account_cap * 2 : 8;
+      struct account_record *accounts = realloc(restored.accounts, nc * sizeof *accounts);
+      if (!accounts) qa_range_error("Out of memory");
+      restored.accounts = accounts;
+      char **names = realloc(restored.names, nc * sizeof *names);
+      if (!names) qa_range_error("Out of memory");
+      restored.names = names; restored.account_cap = nc;
     }
-    if (depth != 0) qa_range_error("Invalid account record");
-    char *obj = malloc((size_t)(p - start) + 1);
-    memcpy(obj, start, (size_t)(p - start)); obj[p - start] = '\0';
-    const char *acct = jfind(obj, "account");
-    char id[64] = {0}, name[512] = {0}, salt[64] = {0}, hash[80] = {0};
-    bool ok = acct && jstring(acct, "id", id, sizeof id) && jstring(acct, "name", name, sizeof name)
-      && jstring(obj, "salt", salt, sizeof salt) && jstring(obj, "passwordHash", hash, sizeof hash);
-    free(obj);
-    if (!ok || !is_account_id(id) || name[0] == '\0' || !is_hex_lower(salt, 32) || !is_hex_lower(hash, 64))
-      qa_range_error("Invalid account fields");
-    for (size_t i = 0; i < count; i++)
-      if (strcmp(names[i], name) == 0 || strcmp(restored[i].account.id, id) == 0)
-        qa_range_error("Invalid account fields");
-    if (count == cap) { size_t nc = cap ? cap * 2 : 8; restored = realloc(restored, nc * sizeof *restored); names = realloc(names, nc * sizeof *names); cap = nc; }
-    restored[count].account.id = dupstr(id); restored[count].account.name = dupstr(name);
-    restored[count].salt = dupstr(salt); restored[count].password_hash = dupstr(hash);
-    names[count] = dupstr(name);
-    count++;
+    struct account_record *record = &restored.accounts[restored.account_count];
+    record->account.id = dupstr(id->text); record->account.name = dupstr(name->text);
+    record->salt = dupstr(salt->text); record->password_hash = dupstr(hash->text);
+    restored.names[restored.account_count++] = dupstr(name->text);
   }
-  for (size_t i = 0; i < a->account_count; i++) {
-    qa_online_account_destroy(&a->accounts[i].account);
-    free(a->accounts[i].salt); free(a->accounts[i].password_hash); free(a->names[i]);
-  }
-  for (size_t i = 0; i < a->token_count; i++) { free(a->tokens[i].token); qa_online_account_destroy(&a->tokens[i].account); }
-  free(a->accounts); free(a->names);
-  a->accounts = restored; a->names = names; a->account_count = count; a->account_cap = cap;
-  a->token_count = 0;
+  qa_cleanup_pop(&restored_guard);
+  qa_cleanup_pop(&value_guard); qa_save_value_free(value);
+  qa_local_authorization_destroy(a);
+  *a = restored;
 }
 static void provider_authorize(void *ctx, const char *name, const char *credential, qa_authorization *out) {
   qa_local_authorization_authorize(ctx, name, credential, out);
@@ -427,7 +408,7 @@ void qa_local_lobby_service_destroy(qa_local_lobby_service *s) {
 }
 static qa_lobby *require_lobby(qa_local_lobby_service *s, const char *id) {
   for (size_t i = 0; i < s->count; i++) if (strcmp(s->lobbies[i].id, id) == 0) return &s->lobbies[i];
-  qa_range_error("Lobby no longer exists");
+  qa_raise("Error", 0, 0, "Lobby no longer exists");
 }
 static bool is_safe_d(double v) { return isfinite(v) && v == trunc(v) && v >= -9007199254740991.0 && v <= 9007199254740991.0; }
 const qa_lobby *qa_local_lobby_service_create(qa_local_lobby_service *s, const qa_online_account *owner,
@@ -458,8 +439,8 @@ const qa_lobby *qa_local_lobby_service_join(qa_local_lobby_service *s, const cha
     if (strcmp(l->members[i].account.id, account->id) == 0) member = true;
     total += l->members[i].seats;
   }
-  if (strcmp(l->phase, "open") != 0 || member) qa_range_error("Cannot join this lobby");
-  if (!is_safe_d(seats) || seats < 1 || total > l->capacity) qa_range_error("Lobby has insufficient seat capacity");
+  if (strcmp(l->phase, "open") != 0 || member) qa_raise("Error", 0, 0, "Cannot join this lobby");
+  if (!is_safe_d(seats) || seats < 1 || total > l->capacity) qa_raise("Error", 0, 0, "Lobby has insufficient seat capacity");
   l->members = realloc(l->members, (l->member_count + 1) * sizeof *l->members);
   qa_lobby_member *m = &l->members[l->member_count++];
   m->account.id = dupstr(account->id); m->account.name = dupstr(account->name);
@@ -470,7 +451,7 @@ const qa_lobby *qa_local_lobby_service_ready(qa_local_lobby_service *s, const ch
   qa_lobby *l = require_lobby(s, id);
   bool member = false;
   for (size_t i = 0; i < l->member_count; i++) if (strcmp(l->members[i].account.id, account) == 0) member = true;
-  if (strcmp(l->phase, "open") != 0 || !member) qa_range_error("Account cannot change readiness");
+  if (strcmp(l->phase, "open") != 0 || !member) qa_raise("Error", 0, 0, "Account cannot change readiness");
   for (size_t i = 0; i < l->member_count; i++) if (strcmp(l->members[i].account.id, account) == 0) l->members[i].ready = ready;
   return l;
 }
@@ -479,7 +460,7 @@ const qa_lobby *qa_local_lobby_service_start(qa_local_lobby_service *s, const ch
   bool any_unready = false;
   for (size_t i = 0; i < l->member_count; i++) if (!l->members[i].ready) any_unready = true;
   if (strcmp(l->owner, owner) != 0 || strcmp(l->phase, "open") != 0 || any_unready)
-    qa_range_error("Lobby is not ready to start");
+    qa_raise("Error", 0, 0, "Lobby is not ready to start");
   l->phase = "starting";
   l->match_generation += 1;
   return l;
@@ -488,11 +469,11 @@ const qa_lobby *qa_local_lobby_service_publish(qa_local_lobby_service *s, const 
                                                double match_generation, const qa_net_address *endpoint, const qa_wire_selection *wire) {
   qa_lobby *l = require_lobby(s, id);
   if (strcmp(l->owner, owner) != 0 || strcmp(l->phase, "starting") != 0 || l->match_generation != match_generation)
-    qa_range_error("Lobby launch is no longer current");
+    qa_raise("Error", 0, 0, "Lobby launch is no longer current");
   if (wire->is_unified) {
     bool bad = !wire->composition || !l->composition->digest || strcmp(wire->composition, l->composition->digest) != 0
       || !wire->snapshot_schema || strcmp(wire->snapshot_schema, l->composition->composition.snapshot_schema) != 0;
-    if (bad) qa_range_error("Bound lobby wire does not match its prepared composition");
+    if (bad) qa_raise("Error", 0, 0, "Bound lobby wire does not match its prepared composition");
   }
   if (l->has_endpoint) qa_net_address_destroy(&l->endpoint);
   (void)qa_net_address_clone(endpoint, &l->endpoint);
@@ -501,7 +482,7 @@ const qa_lobby *qa_local_lobby_service_publish(qa_local_lobby_service *s, const 
 }
 const qa_lobby *qa_local_lobby_service_complete(qa_local_lobby_service *s, const char *id, const char *owner, double match_generation) {
   qa_lobby *l = require_lobby(s, id);
-  if (strcmp(l->owner, owner) != 0) qa_range_error("Only the lobby owner can complete its match");
+  if (strcmp(l->owner, owner) != 0) qa_raise("Error", 0, 0, "Only the lobby owner can complete its match");
   if (strcmp(l->phase, "open") == 0 || l->match_generation != match_generation) return l;
   l->phase = "open";
   if (l->has_endpoint) { qa_net_address_destroy(&l->endpoint); l->has_endpoint = false; }
@@ -531,6 +512,8 @@ struct stored_player { char *account; double score; bool won; struct { char *key
 struct stored_report { char *key, *match, *rules; struct stored_player *players; size_t player_count; };
 struct qa_local_ranking_service { struct stored_report *reports; size_t count, capacity; };
 void qa_local_ranking_service_init(qa_local_ranking_service *s) { memset(s, 0, sizeof *s); }
+qa_local_ranking_service *qa_local_ranking_service_create(void) { return calloc(1, sizeof (qa_local_ranking_service)); }
+void qa_local_ranking_service_free(qa_local_ranking_service *s) { if (s) { qa_local_ranking_service_destroy(s); free(s); } }
 static void free_report(struct stored_report *r) {
   free(r->key); free(r->match); free(r->rules);
   for (size_t i = 0; i < r->player_count; i++) {
@@ -557,7 +540,7 @@ bool qa_local_ranking_service_submit(qa_local_ranking_service *s, const qa_onlin
     for (size_t j = i + 1; j < report->player_count; j++)
       if (strcmp(report->players[i].account, report->players[j].account) == 0) bad = true;
   }
-  if (bad) { free(key); qa_range_error("Invalid ranking report"); }
+  if (bad) { free(key); qa_raise("Error", 0, 0, "Invalid ranking report"); }
   if (s->count == s->capacity) { size_t nc = s->capacity ? s->capacity * 2 : 8; s->reports = realloc(s->reports, nc * sizeof *s->reports); s->capacity = nc; }
   struct stored_report *r = &s->reports[s->count++];
   memset(r, 0, sizeof *r);
@@ -624,14 +607,14 @@ qa_ranking_entry *qa_local_ranking_service_standings(qa_local_ranking_service *s
       }
     }
   }
-  qsort(entries, count, sizeof *entries, cmp_ranking);
+  qa_js_sort(entries, count, sizeof *entries, cmp_ranking);
   *out_count = count;
   return entries ? entries : calloc(1, sizeof *entries);
 }
 char *qa_local_ranking_service_save(qa_local_ranking_service *s) {
   char *buf = NULL; size_t len = 0, cap = 0;
   cat_raw(&buf, &len, &cap, "[");
-  char num[64];
+  char num[112];
   for (size_t ri = 0; ri < s->count; ri++) {
     struct stored_report *r = &s->reports[ri];
     if (ri) cat_raw(&buf, &len, &cap, ",");
@@ -645,13 +628,16 @@ char *qa_local_ranking_service_save(qa_local_ranking_service *s) {
       if (pi) cat_raw(&buf, &len, &cap, ",");
       cat_raw(&buf, &len, &cap, "{\"account\":\"");
       json_escape_cat(&buf, &len, &cap, p->account);
-      snprintf(num, sizeof num, "\",\"score\":%g,\"won\":%s,\"statistics\":[", p->score, p->won ? "true" : "false");
+      char number[40];
+      qa_net_json_number(p->score, number, sizeof number);
+      snprintf(num, sizeof num, "\",\"score\":%s,\"won\":%s,\"statistics\":[", number, p->won ? "true" : "false");
       cat_raw(&buf, &len, &cap, num);
       for (size_t j = 0; j < p->stat_count; j++) {
         if (j) cat_raw(&buf, &len, &cap, ",");
         cat_raw(&buf, &len, &cap, "[\"");
         json_escape_cat(&buf, &len, &cap, p->stats[j].key);
-        snprintf(num, sizeof num, "\",%g]", p->stats[j].value);
+        qa_net_json_number(p->stats[j].value, number, sizeof number);
+        snprintf(num, sizeof num, "\",%s]", number);
         cat_raw(&buf, &len, &cap, num);
       }
       cat_raw(&buf, &len, &cap, "]}");
@@ -661,116 +647,63 @@ char *qa_local_ranking_service_save(qa_local_ranking_service *s) {
   cat_raw(&buf, &len, &cap, "]");
   return buf;
 }
+struct ranking_restore { qa_local_ranking_service restored; qa_ranking_report_player *players; size_t player_count; qa_stat_entry *stats; };
+static void ranking_restore_cleanup(void *arg) {
+  struct ranking_restore *r = arg;
+  if (r->players) for (size_t i = 0; i < r->player_count; i++) free((void *)r->players[i].statistics);
+  free(r->players); r->players = NULL; free(r->stats); r->stats = NULL;
+  qa_local_ranking_service_destroy(&r->restored);
+}
 void qa_local_ranking_service_restore(qa_local_ranking_service *s, const char *text) {
-  const char *p = text;
-  while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-  if (*p != '[') qa_range_error("Invalid ranking save");
-  qa_local_ranking_service restored; qa_local_ranking_service_init(&restored);
-  p++;
-  for (;;) {
-    while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-    if (*p == ']' || *p == '\0') break;
-    if (*p != '{') qa_range_error("Invalid ranking report");
-    const char *start = p;
-    int depth = 0; bool in_str = false, esc = false;
-    for (; *p; p++) {
-      if (esc) { esc = false; continue; }
-      if (*p == '\\' && in_str) { esc = true; continue; }
-      if (*p == '"') in_str = !in_str;
-      if (in_str) continue;
-      if (*p == '{') depth++;
-      if (*p == '}' && --depth == 0) { p++; break; }
-    }
-    if (depth != 0) qa_range_error("Invalid ranking report");
-    char *obj = malloc((size_t)(p - start) + 1);
-    memcpy(obj, start, (size_t)(p - start)); obj[p - start] = '\0';
-    char match[512] = {0}, rules[512] = {0};
-    if (!jstring(obj, "match", match, sizeof match) || !jstring(obj, "rules", rules, sizeof rules)
-        || !strchr(rules, ':'))
-      qa_range_error("Invalid ranking report");
-    const char *players_at = jfind(obj, "players");
-    if (!players_at || *players_at != '[') qa_range_error("Invalid ranking report");
-    /* Parse players array objects. */
-    qa_ranking_report_player *players = NULL; qa_stat_entry *all_stats = NULL;
-    char **owned = NULL; size_t owned_count = 0, owned_cap = 0;
-    size_t player_count = 0, player_cap = 0;
-    const char *q = players_at + 1;
-    for (;;) {
-      while (*q == ' ' || *q == ',' || *q == '\n' || *q == '\t' || *q == '\r') q++;
-      if (*q == ']' || *q == '\0') break;
-      if (*q != '{') qa_range_error("Invalid ranked player");
-      const char *ps = q;
-      int d2 = 0; bool ins = false, esc2 = false;
-      for (; *q; q++) {
-        if (esc2) { esc2 = false; continue; }
-        if (*q == '\\' && ins) { esc2 = true; continue; }
-        if (*q == '"') ins = !ins;
-        if (ins) continue;
-        if (*q == '{') d2++;
-        if (*q == '}' && --d2 == 0) { q++; break; }
+  qa_save_value *value = qa_parse_json_value((const uint8_t *)text, strlen(text), false);
+  if (!value) qa_range_error("Out of memory");
+  qa_cleanup value_guard; qa_cleanup_push(&value_guard, free_json, value);
+  if (value->kind != QA_SAVE_ARRAY) qa_raise("Error", 0, 0, "Invalid ranking save");
+  struct ranking_restore work; memset(&work, 0, sizeof work);
+  qa_local_ranking_service_init(&work.restored);
+  qa_cleanup work_guard; qa_cleanup_push(&work_guard, ranking_restore_cleanup, &work);
+  for (size_t r = 0; r < value->item_count; r++) {
+    const qa_save_value *row = value->items[r], *match = field(row, "match"), *rules = field(row, "rules"), *players = field(row, "players");
+    if (!row || row->kind != QA_SAVE_OBJECT || !is_string_value(match) || !is_string_value(rules) || !strchr(rules->text, ':')
+        || !players || players->kind != QA_SAVE_ARRAY)
+      qa_raise("Error", 0, 0, "Invalid ranking report");
+    work.players = calloc(players->item_count ? players->item_count : 1, sizeof *work.players);
+    if (!work.players) qa_range_error("Out of memory");
+    work.player_count = 0;
+    for (size_t p = 0; p < players->item_count; p++) {
+      const qa_save_value *player = players->items[p], *account = field(player, "account"), *score = field(player, "score"),
+        *won = field(player, "won"), *statistics = field(player, "statistics");
+      if (!player || player->kind != QA_SAVE_OBJECT || !is_string_value(account) || !is_account_id(account->text)
+          || !score || score->kind != QA_SAVE_NUMBER || !won || won->kind != QA_SAVE_BOOLEAN || !statistics || statistics->kind != QA_SAVE_ARRAY)
+        qa_raise("Error", 0, 0, "Invalid ranked player");
+      work.stats = calloc(statistics->item_count ? statistics->item_count : 1, sizeof *work.stats);
+      if (!work.stats) qa_range_error("Out of memory");
+      size_t stat_count = 0;
+      for (size_t i = 0; i < statistics->item_count; i++) {
+        const qa_save_value *pair = statistics->items[i];
+        if (!pair || pair->kind != QA_SAVE_ARRAY || pair->item_count != 2 || !is_string_value(pair->items[0]) || pair->items[1]->kind != QA_SAVE_NUMBER)
+          qa_raise("Error", 0, 0, "Invalid rank statistic");
+        /* statistics.set(key, value): a repeated key keeps its first position and takes the last value. */
+        size_t at = stat_count;
+        for (size_t j = 0; j < stat_count; j++) if (strcmp(work.stats[j].key, pair->items[0]->text) == 0) at = j;
+        work.stats[at].key = pair->items[0]->text; work.stats[at].value = pair->items[1]->number;
+        if (at == stat_count) stat_count++;
       }
-      char *pobj = malloc((size_t)(q - ps) + 1);
-      memcpy(pobj, ps, (size_t)(q - ps)); pobj[q - ps] = '\0';
-      if (owned_count == owned_cap) { size_t nc = owned_cap ? owned_cap * 2 : 8; owned = realloc(owned, nc * sizeof *owned); owned_cap = nc; }
-      owned[owned_count++] = pobj;
-      char account[128] = {0};
-      const char *scorev = jfind(pobj, "score"), *wonv = jfind(pobj, "won"), *statsv = jfind(pobj, "statistics");
-      if (!jstring(pobj, "account", account, sizeof account) || !is_account_id(account)
-          || !scorev || !wonv || (strncmp(wonv, "true", 4) != 0 && strncmp(wonv, "false", 5) != 0)
-          || !statsv || *statsv != '[')
-        qa_range_error("Invalid ranked player");
-      /* Statistics pairs: ["key",value],... */
-      qa_stat_entry *stats = NULL; size_t stat_count = 0, stat_cap = 0;
-      const char *sp = statsv + 1;
-      for (;;) {
-        while (*sp == ' ' || *sp == ',' || *sp == '\n') sp++;
-        if (*sp == ']' || *sp == '\0') break;
-        if (*sp != '[') qa_range_error("Invalid rank statistic");
-        sp++;
-        while (*sp == ' ') sp++;
-        if (*sp != '"') qa_range_error("Invalid rank statistic");
-        sp++;
-        const char *ks = sp;
-        while (*sp && *sp != '"') sp++;
-        if (*sp != '"') qa_range_error("Invalid rank statistic");
-        char *skey = malloc((size_t)(sp - ks) + 1);
-        memcpy(skey, ks, (size_t)(sp - ks)); skey[sp - ks] = '\0';
-        sp++;
-        while (*sp == ' ' || *sp == ',') sp++;
-        char *end = NULL;
-        double val = strtod(sp, &end);
-        if (end == sp) qa_range_error("Invalid rank statistic");
-        sp = end;
-        while (*sp == ' ') sp++;
-        if (*sp != ']') qa_range_error("Invalid rank statistic");
-        sp++;
-        if (owned_count == owned_cap) { size_t nc = owned_cap ? owned_cap * 2 : 8; owned = realloc(owned, nc * sizeof *owned); owned_cap = nc; }
-        owned[owned_count++] = skey;
-        if (stat_count == stat_cap) { size_t nc = stat_cap ? stat_cap * 2 : 4; stats = realloc(stats, nc * sizeof *stats); stat_cap = nc; }
-        stats[stat_count].key = skey; stats[stat_count].value = val; stat_count++;
-      }
-      if (player_count == player_cap) { size_t nc = player_cap ? player_cap * 2 : 4; players = realloc(players, nc * sizeof *players); player_cap = nc; }
-      players[player_count].account = dupstr(account);
-      players[player_count].score = strtod(scorev, NULL);
-      players[player_count].won = strncmp(wonv, "true", 4) == 0;
-      players[player_count].statistics = stats;
-      players[player_count].statistic_count = stat_count;
-      player_count++;
-      /* keep stats allocations reachable for free via all_stats chain: store in owned as raw ptrs not possible;
-         leak-free handled below by freeing stats arrays after submit copies them. */
-      (void)all_stats;
+      work.players[work.player_count].account = account->text;
+      work.players[work.player_count].score = score->number;
+      work.players[work.player_count].won = won->boolean;
+      work.players[work.player_count].statistics = work.stats; work.stats = NULL;
+      work.players[work.player_count].statistic_count = stat_count;
+      work.player_count++;
     }
-    qa_online_ranking_report report;
-    report.match = match; report.rules = rules; report.players = players; report.player_count = player_count;
-    bool added = qa_local_ranking_service_submit(&restored, &report);
-    for (size_t i = 0; i < player_count; i++) { free((void *)players[i].account); free((void *)players[i].statistics); }
-    free(players);
-    for (size_t i = 0; i < owned_count; i++) free(owned[i]);
-    free(owned);
-    free(obj);
-    if (!added) qa_range_error("Duplicate saved match");
+    qa_online_ranking_report report = { match->text, rules->text, work.players, work.player_count };
+    bool added = qa_local_ranking_service_submit(&work.restored, &report);
+    for (size_t i = 0; i < work.player_count; i++) free((void *)work.players[i].statistics);
+    free(work.players); work.players = NULL; work.player_count = 0;
+    if (!added) qa_raise("Error", 0, 0, "Duplicate saved match");
   }
-  for (size_t i = 0; i < s->count; i++) free_report(&s->reports[i]);
-  free(s->reports);
-  *s = restored;
+  qa_cleanup_pop(&work_guard);
+  qa_cleanup_pop(&value_guard); qa_save_value_free(value);
+  qa_local_ranking_service_destroy(s);
+  *s = work.restored;
 }

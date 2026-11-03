@@ -1,16 +1,18 @@
 /* Port of src/content/q3/presentation/mark-projector.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/mark_projector.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/math.h"
 #include "qa/core/renderer_math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 enum { MAX_CLIP = 64, MAX_SURF = 64 };
 static float f32(double v) { return (float)v; }
 static const void *at_idx(const void *base, size_t stride, size_t count, double index) {
   if (index < 0 || index != (double)(size_t)index || (size_t)index >= count)
-    qa_range_error("mark geometry index %g outside %zu", index, count);
+    qa_range_error("mark geometry index %s outside %zu", QA_JS_NUMBER(index), count);
   return (const char *)base + stride * (size_t)index;
 }
 #define AT(arr, count, idx) (*(const __typeof__(*(arr)) *)at_idx((arr), sizeof *(arr), (count), (idx)))
@@ -113,7 +115,7 @@ static size_t box_surfaces(qa_q3_pres_bsp_mark_projector *p, qa_bounds b, qa_vec
       const qa_q3_pres_mark_surface *s = &AT(g->surfaces, g->surfaces_count, si);
       if (visited && (size_t)si < sc) { if (visited[(size_t)si]) continue; visited[(size_t)si] = true; }
       if (s->kind == QA_Q3_PRES_MARK_SKIP) continue;
-      if ((((int)s->surface_flags) & 0x30) != 0 || (((int)s->content_flags) & 64) != 0) continue;
+      if (((qa_js_to_int32(s->surface_flags)) & 0x30) != 0 || ((qa_js_to_int32(s->content_flags)) & 64) != 0) continue;
       if (s->kind == QA_Q3_PRES_MARK_FACE &&
           (box_side(b, s->plane) != 3 || qa_dot3(s->plane.normal, dir) > -0.5)) continue;
       out[n++] = s;
@@ -135,8 +137,8 @@ double qa_q3_pres_bsp_mark_projector_mark_fragments_record(qa_q3_pres_bsp_mark_p
     if (i < MAX_CLIP) pts[count++] = pt;
     qa_vec3 cand[3] = {pt, qa_add3(pt, projection), qa_add3(pt, qa_scale3(direction, -20))};
     for (int k = 0; k < 3; k++) {
-      mn.x = fmin(mn.x, cand[k].x); mn.y = fmin(mn.y, cand[k].y); mn.z = fmin(mn.z, cand[k].z);
-      mx.x = fmax(mx.x, cand[k].x); mx.y = fmax(mx.y, cand[k].y); mx.z = fmax(mx.z, cand[k].z);
+      mn.x = qa_js_min(mn.x, cand[k].x); mn.y = qa_js_min(mn.y, cand[k].y); mn.z = qa_js_min(mn.z, cand[k].z);
+      mx.x = qa_js_max(mx.x, cand[k].x); mx.y = qa_js_max(mx.y, cand[k].y); mx.z = qa_js_max(mx.z, cand[k].z);
     }
   }
   if (q.max_fragments == 0 || q.max_points == 0) return 0;

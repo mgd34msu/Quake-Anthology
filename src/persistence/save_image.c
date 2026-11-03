@@ -2,12 +2,14 @@
 #define _POSIX_C_SOURCE 200809L
 #include "qa/persistence/save_image.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "qa/compat/q2/rerelease/native_weapon_declaration.h"
+#include "qa/content/mods/declaration_writer.h"
 #include "qa/persistence/execution.h"
 #include "qa/persistence/mods.h"
 #include "qa/persistence/recipe.h"
@@ -420,23 +422,31 @@ static qa_body_checkpoint read_body_checkpoint(const qa_save_reader *reader) {
   qa_save_reader_destroy(&linked);
   return body;
 }
+static void release_partial_image(void *arg) {
+  qa_save_image_result_free((qa_save_image_result *)arg);
+}
 bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) {
-  static const double versions[] = {2, 3};
+  static const double versions[] = {2, 3, 4};
   static const char *const boundaries[] = {"before-physics", "during-physics",
                                            "after-physics"};
   memset(out, 0, sizeof *out);
   qa_save_image *image = &out->image;
   qa_save_reader reader;
   if (!qa_save_reader_init(&reader, value, NULL)) return false;
+  /* A malformed save raises part way; everything read so far is attached to
+     *out as it is allocated, so this node frees it (the role GC plays in TS). */
+  qa_cleanup partial;
+  qa_cleanup_push(&partial, release_partial_image, out);
   qa_save_reader version_reader = field(&reader, "schemaVersion");
-  double version = qa_save_reader_choice_number(&version_reader, versions, 2);
+  double version = qa_save_reader_choice_number(&version_reader, versions, 3);
   qa_save_reader_destroy(&version_reader);
   qa_save_reader legacy = field(&reader, "legacyArmorLayout");
   bool legacy_true = false;
   if (!qa_save_reader_is_undefined(&legacy))
     legacy_true = qa_save_reader_literal_boolean(&legacy, true);
   qa_save_reader_destroy(&legacy);
-  image->schema_version = 3;
+  image->schema_version = 4;
+  image->key_order = QA_SAVE_IMAGE_ORDER_PARSED;
   image->legacy_armor_layout = version == 2 || legacy_true;
   {
     qa_save_reader recipe = field(&reader, "recipe");
@@ -453,7 +463,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader clocks = field(&reader, "clocks");
     size_t count = qa_save_reader_list_count(&clocks);
     qa_save_clock *values = xalloc(&clocks, count, sizeof *values);
+    image->clocks = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->clock_count = i + 1;
       qa_save_reader entry = item_at(&clocks, i);
       values[i].provider = field_namespaced(&entry, "provider");
       values[i].time = field_time(&entry, "time");
@@ -467,7 +479,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader random = field(&reader, "random");
     size_t count = qa_save_reader_list_count(&random);
     qa_save_random *values = xalloc(&random, count, sizeof *values);
+    image->random = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->random_count = i + 1;
       qa_save_reader entry = item_at(&random, i);
       values[i].provider = field_namespaced(&entry, "provider");
       qa_save_reader state = field(&entry, "state");
@@ -483,7 +497,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader actors = field(&reader, "actors");
     size_t count = qa_save_reader_list_count(&actors);
     qa_actor_slot_checkpoint *values = xalloc(&actors, count, sizeof *values);
+    image->actors = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->actor_count = i + 1;
       qa_save_reader entry = item_at(&actors, i);
       values[i] = read_actor_slot(&entry);
       qa_save_reader_destroy(&entry);
@@ -496,7 +512,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader bodies = field(&reader, "bodies");
     size_t count = qa_save_reader_list_count(&bodies);
     qa_body_checkpoint *values = xalloc(&bodies, count, sizeof *values);
+    image->bodies = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->body_count = i + 1;
       qa_save_reader entry = item_at(&bodies, i);
       values[i] = read_body_checkpoint(&entry);
       qa_save_reader_destroy(&entry);
@@ -509,7 +527,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader combat = field(&reader, "combat");
     size_t count = qa_save_reader_list_count(&combat);
     qa_combat_checkpoint *values = xalloc(&combat, count, sizeof *values);
+    image->combat = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->combat_count = i + 1;
       qa_save_reader entry = item_at(&combat, i);
       values[i].actor = field_saved_actor(&entry, "actor");
       qa_save_reader state = field(&entry, "state");
@@ -525,13 +545,17 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader inventories = field(&reader, "inventories");
     size_t count = qa_save_reader_list_count(&inventories);
     qa_inventory_checkpoint *values = xalloc(&inventories, count, sizeof *values);
+    image->inventories = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->inventory_count = i + 1;
       qa_save_reader entry = item_at(&inventories, i);
       values[i].actor = field_saved_actor(&entry, "actor");
       qa_save_reader entries = field(&entry, "entries");
       size_t entry_count = qa_save_reader_list_count(&entries);
       qa_inventory_entry *items = xalloc(&entries, entry_count, sizeof *items);
+      values[i].entries = items;
       for (size_t k = 0; k < entry_count; k++) {
+        values[i].entry_count = k + 1;
         qa_save_reader item_reader = item_at(&entries, k);
         items[k] = qa_read_inventory_entry(&item_reader);
         qa_save_reader_destroy(&item_reader);
@@ -550,7 +574,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     size_t count = qa_save_reader_list_count(&configurations);
     qa_actor_configuration_checkpoint *values =
         xalloc(&configurations, count, sizeof *values);
+    image->configurations = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->configuration_count = i + 1;
       qa_save_reader entry = item_at(&configurations, i);
       values[i].actor = field_saved_actor(&entry, "actor");
       qa_save_reader movement = field(&entry, "movement");
@@ -562,7 +588,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
       qa_save_reader weapons = field(&entry, "weapons");
       size_t weapon_count = qa_save_reader_list_count(&weapons);
       qa_provider_reference *refs = xalloc(&weapons, weapon_count, sizeof *refs);
+      values[i].weapons.values = refs;
       for (size_t k = 0; k < weapon_count; k++) {
+        values[i].weapons.count = k + 1;
         qa_save_reader weapon = item_at(&weapons, k);
         refs[k] = qa_read_provider(&weapon);
         qa_save_reader_destroy(&weapon);
@@ -583,7 +611,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader thinks = field(&reader, "thinks");
     size_t count = qa_save_reader_list_count(&thinks);
     qa_think_checkpoint *values = xalloc(&thinks, count, sizeof *values);
+    image->thinks = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->think_count = i + 1;
       qa_save_reader entry = item_at(&thinks, i);
       values[i].actor = field_saved_actor(&entry, "actor");
       values[i].callback = field_namespaced(&entry, "callback");
@@ -612,7 +642,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader providers = field(&reader, "providers");
     size_t count = qa_save_reader_list_count(&providers);
     qa_provider_checkpoint *values = xalloc(&providers, count, sizeof *values);
+    image->providers = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->provider_count = i + 1;
       qa_save_reader entry = item_at(&providers, i);
       values[i].provider = field_namespaced(&entry, "provider");
       values[i].schema = field_namespaced(&entry, "schema");
@@ -631,7 +663,9 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader guests = field(&reader, "guests");
     size_t count = qa_save_reader_list_count(&guests);
     qa_guest_checkpoint *values = xalloc(&guests, count, sizeof *values);
+    image->guests = values; /* attached early: a raise frees what was read */
     for (size_t i = 0; i < count; i++) {
+      image->guest_count = i + 1;
       qa_save_reader entry = item_at(&guests, i);
       values[i] = qa_read_guest(&entry);
       qa_save_reader_destroy(&entry);
@@ -644,16 +678,43 @@ bool qa_parse_save_image(const qa_save_value *value, qa_save_image_result *out) 
     qa_save_reader mods = field(&reader, "mods");
     if (!qa_save_reader_is_undefined(&mods)) {
       qa_mod_session_checkpoint *session = xalloc(&mods, 1, sizeof *session);
-      *session = qa_read_mod_session(&mods);
       image->mods = session;
+      *session = qa_read_mod_session(&mods);
     }
     qa_save_reader_destroy(&mods);
+  }
+  /* Versions 2 and 3 predate the record; they migrate to an empty one. */
+  if (version == 4) {
+    static const char *const axes[] = {"enemies", "movement", "character"};
+    static const char *const outcomes[] = {"honored", "partial", "guest-native"};
+    qa_save_reader consumption = field(&reader, "consumption");
+    size_t count = qa_save_reader_list_count(&consumption);
+    qa_selection_consumption_entry *values =
+        xalloc(&consumption, count, sizeof *values);
+    image->consumption = values; /* attached early: a raise frees what was read */
+    for (size_t i = 0; i < count; i++) {
+      image->consumption_count = i + 1;
+      qa_save_reader entry = item_at(&consumption, i);
+      values[i].axis = field_choice(&entry, "axis", axes, 3);
+      qa_save_reader text = field(&entry, "requested");
+      values[i].requested = qa_save_reader_string(&text);
+      qa_save_reader_destroy(&text);
+      values[i].outcome = field_choice(&entry, "outcome", outcomes, 3);
+      text = field(&entry, "detail");
+      values[i].detail = qa_save_reader_string(&text);
+      qa_save_reader_destroy(&text);
+      qa_save_reader_destroy(&entry);
+    }
+    qa_save_reader_destroy(&consumption);
+    image->consumption = values;
+    image->consumption_count = count;
   }
   if (image->recipe.mod_count != 0 && image->mods == NULL) {
     qa_save_reader mods = field(&reader, "mods");
     qa_save_reader_fail(&mods,
                         "selected gameplay mods require their saved checkpoint");
   }
+  qa_cleanup_pop(&partial);
   qa_save_reader_destroy(&reader);
   return true;
 }
@@ -661,6 +722,9 @@ void qa_save_image_result_free(qa_save_image_result *result) {
   if (result == NULL) return;
   qa_save_image *image = &result->image;
   free((void *)image->clocks);
+  /* qa_read_random allocates the word lists. */
+  for (size_t i = 0; i < image->random_count; i++)
+    free((void *)image->random[i].state.words.values);
   free((void *)image->random);
   for (size_t i = 0; i < image->actor_count; i++)
     free((void *)image->actors[i].freed_at);
@@ -682,46 +746,156 @@ void qa_save_image_result_free(qa_save_image_result *result) {
   free((void *)image->configurations);
   free((void *)image->thinks);
   free((void *)image->providers);
+  for (size_t i = 0; i < image->guest_count; i++)
+    qa_guest_checkpoint_release((qa_guest_checkpoint *)&image->guests[i]);
   free((void *)image->guests);
+  free((void *)image->consumption);
   if (image->mods != NULL) free((void *)image->mods->mods);
   free((void *)image->mods);
+  qa_executable_recipe_free(&image->recipe);
   qa_save_value_free(result->root);
   memset(result, 0, sizeof *result);
 }
-static const char SAVE_MAGIC[] = "QTSAVE3\n";
+static const char SAVE_MAGIC[] = "QTSAVE5\n";
+static const char SAVE_V4_MAGIC[] = "QTSAVE4\n";
+static const char SAVE_V3_MAGIC[] = "QTSAVE3\n";
 static const char SAVE_LEGACY_MAGIC[] = "QTSAVE2\n";
+enum { SAVE_MAGIC_LENGTH = 8, SAVE_HEADER_LIMIT = 4096 };
+/* TS indexes bytes[i] past the end as undefined, which simply fails the
+ * signature comparison on a short buffer. */
+static bool starts_with(const uint8_t *bytes, size_t length, const char *magic) {
+  return length >= SAVE_MAGIC_LENGTH && memcmp(bytes, magic, SAVE_MAGIC_LENGTH) == 0;
+}
+static size_t header_length(const uint8_t *bytes, size_t length) {
+  if (length < SAVE_MAGIC_LENGTH + 4) qa_save_format_error("save", "truncated save header");
+  const uint8_t *p = bytes + SAVE_MAGIC_LENGTH;
+  uint32_t value = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+  if (value > SAVE_HEADER_LIMIT) qa_save_format_error("save", "save header is too large");
+  return value;
+}
+/* TS readSaveHeaderValue: borrowed strings from `value`. */
+static qa_save_header read_save_header_value(const qa_save_value *value) {
+  qa_save_reader reader;
+  if (!qa_save_reader_init(&reader, value, "save-header")) qa_save_format_error("save-header", "out of memory");
+  qa_save_header header;
+  qa_save_reader map = field(&reader, "map");
+  header.map = qa_save_reader_string(&map);
+  qa_save_reader_destroy(&map);
+  qa_save_reader content = field(&reader, "content");
+  header.content = qa_read_content_id(&content);
+  qa_save_reader_destroy(&content);
+  qa_save_reader_destroy(&reader);
+  return header;
+}
+static bool text_equal(const char *a, const char *b) {
+  return a == b || (a != NULL && b != NULL && strcmp(a, b) == 0);
+}
+static void release_value_slot(void *raw) {
+  qa_save_value **slot = (qa_save_value **)raw;
+  qa_save_value_free(*slot);
+  *slot = NULL;
+}
 bool qa_decode_save_image(const uint8_t *bytes, size_t length,
                           qa_save_image_result *out) {
   memset(out, 0, sizeof *out);
-  /* TS indexes bytes[i] past the end as undefined, which simply
-   * fails the signature comparisons on a short buffer. */
-  double version = 0;
-  if (length >= sizeof SAVE_MAGIC - 1 &&
-      memcmp(bytes, SAVE_MAGIC, sizeof SAVE_MAGIC - 1) == 0)
-    version = 3;
-  else if (length >= sizeof SAVE_LEGACY_MAGIC - 1 &&
-           memcmp(bytes, SAVE_LEGACY_MAGIC, sizeof SAVE_LEGACY_MAGIC - 1) == 0)
-    version = 2;
-  else
+  double version = starts_with(bytes, length, SAVE_MAGIC) ? 5
+      : starts_with(bytes, length, SAVE_V4_MAGIC) ? 4
+      : starts_with(bytes, length, SAVE_V3_MAGIC) ? 3
+      : starts_with(bytes, length, SAVE_LEGACY_MAGIC) ? 2 : 0;
+  if (version == 0)
     qa_save_format_error("save", "unsupported unified save signature/version");
-  qa_save_value *value = qa_decode_checkpoint_value(
-      bytes + (sizeof SAVE_MAGIC - 1), length - (sizeof SAVE_MAGIC - 1));
-  if (value == NULL) return false;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, NULL)) {
-    qa_save_value_free(value);
-    return false;
+  const uint8_t *body = bytes + SAVE_MAGIC_LENGTH;
+  size_t body_length = length - SAVE_MAGIC_LENGTH;
+  /* TS has GC: a SaveFormatError raised while reading the decoded trees must not leak them. */
+  qa_save_value *header_tree = NULL, *value = NULL;
+  qa_cleanup header_guard, value_guard;
+  qa_cleanup_push(&header_guard, release_value_slot, &header_tree);
+  qa_cleanup_push(&value_guard, release_value_slot, &value);
+  if (version >= 4) {
+    size_t header_size = header_length(bytes, length), start = SAVE_MAGIC_LENGTH + 4;
+    if (length < start + header_size) qa_save_format_error("save", "truncated save header");
+    header_tree = qa_decode_checkpoint_value(bytes + start, header_size);
+    if (header_tree == NULL) goto oom;
+    (void)read_save_header_value(header_tree);
+    body = bytes + start + header_size;
+    body_length = length - start - header_size;
   }
+  value = qa_decode_checkpoint_value(body, body_length);
+  if (value == NULL) goto oom;
+  qa_save_reader reader;
+  if (!qa_save_reader_init(&reader, value, NULL)) goto oom;
   qa_save_reader schema = field(&reader, "schemaVersion");
-  (void)qa_save_reader_literal_number(&schema, version);
+  (void)qa_save_reader_literal_number(&schema, version == 5 ? 4 : version == 4 ? 3 : version);
   qa_save_reader_destroy(&schema);
   qa_save_reader_destroy(&reader);
-  if (!qa_parse_save_image(value, out)) {
-    qa_save_value_free(value);
+  if (!qa_parse_save_image(value, out)) goto oom;
+  bool same = true;
+  if (header_tree != NULL) {
+    qa_save_header header = read_save_header_value(header_tree);
+    same = text_equal(header.map, out->image.recipe.map.geometry.requested_path) &&
+           text_equal(header.content, out->image.recipe.map.entities.content);
+  }
+  qa_cleanup_pop(&value_guard);
+  qa_cleanup_pop(&header_guard);
+  qa_save_value_free(header_tree);
+  out->root = value;
+  if (!same) {
+    qa_save_image_result_free(out);
+    memset(out, 0, sizeof *out);
+    qa_save_format_error("save", "save header differs from its recipe");
+  }
+  return true;
+oom:
+  qa_cleanup_pop(&value_guard);
+  qa_cleanup_pop(&header_guard);
+  qa_save_value_free(header_tree);
+  qa_save_value_free(value);
+  return false;
+}
+
+bool qa_read_save_header(const char *path, qa_save_header_result *out) {
+  memset(out, 0, sizeof *out);
+  FILE *file = fopen(path, "rb");
+  if (file == NULL) return false;
+  uint8_t prefix[SAVE_MAGIC_LENGTH + 4];
+  size_t got = fread(prefix, 1, sizeof prefix, file);
+  if (ferror(file)) {
+    fclose(file);
     return false;
   }
-  out->root = value;
+  if (!starts_with(prefix, got, SAVE_MAGIC) && !starts_with(prefix, got, SAVE_V4_MAGIC)) {
+    fclose(file);
+    out->present = false;
+    return true;
+  }
+  size_t size = header_length(prefix, got);
+  uint8_t *bytes = malloc(size == 0 ? 1 : size);
+  if (bytes == NULL) {
+    fclose(file);
+    return false;
+  }
+  size_t read = fread(bytes, 1, size, file);
+  bool failed = ferror(file) != 0;
+  fclose(file);
+  if (failed) {
+    free(bytes);
+    return false;
+  }
+  if (read != size) {
+    free(bytes);
+    qa_save_format_error("save", "truncated save header");
+  }
+  out->root = qa_decode_checkpoint_value(bytes, size);
+  free(bytes);
+  if (out->root == NULL) return false;
+  out->header = read_save_header_value(out->root);
+  out->present = true;
   return true;
+}
+void qa_save_header_result_free(qa_save_header_result *result) {
+  if (result == NULL) return;
+  qa_save_value_free(result->root);
+  memset(result, 0, sizeof *result);
 }
 bool qa_read_save_image(const char *path, qa_save_image_result *out) {
   FILE *file = fopen(path, "rb");
@@ -781,10 +955,19 @@ bool qa_write_save_image(const char *path, const qa_save_image *image) {
   else
     snprintf(temporary, temporary_length, "%.*s.%s.%ld-%u.tmp",
              (int)directory_length, path, base, (long)getpid(), counter++);
+  /* TS open(temporary, "wx", 0o600), writeFile, sync, close, then rename. */
   bool ok = false;
-  FILE *file = fopen(temporary, "wb");
-  if (file != NULL) {
-    ok = fwrite(bytes, 1, length, file) == length && fclose(file) == 0;
+  int fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0600);
+  if (fd >= 0) {
+    ok = true;
+    size_t written = 0;
+    while (ok && written < length) {
+      ssize_t chunk = write(fd, bytes + written, length - written);
+      if (chunk <= 0) ok = false;
+      else written += (size_t)chunk;
+    }
+    if (ok && fsync(fd) != 0) ok = false;
+    if (close(fd) != 0) ok = false;
     if (ok) ok = rename(temporary, path) == 0;
   }
   remove(temporary);
@@ -951,10 +1134,10 @@ static qa_save_value *ordering_value(qa_frame_ordering ordering) {
       set_str(o, "ties", "provider-entity-invocation"));
   return o;
 }
+/* TS readRandom / SourceRandom.checkpoint key order: kind first, draws last. */
 static qa_save_value *random_value(qa_random_state s) {
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
-  TRY(set_num(o, "draws", s.draws));
   switch (s.kind) {
     case QA_RANDOM_STATE_Q3_LCG:
     case QA_RANDOM_STATE_MSVCRT_RAND:
@@ -981,8 +1164,8 @@ static qa_save_value *random_value(qa_random_state s) {
             set_num(o, "rear", s.rear));
       } else {
         TRY(set_str(o, "kind", "q2-rerelease-mt19937") &&
-            set_own(o, "words", words) && set_num(o, "index", s.index) &&
-            set_str(o, "distribution", "msvc-2022-17.6"));
+            set_str(o, "distribution", "msvc-2022-17.6") &&
+            set_own(o, "words", words) && set_num(o, "index", s.index));
       }
       break;
     }
@@ -991,6 +1174,7 @@ static qa_save_value *random_value(qa_random_state s) {
           set_bytes(o, "bytes", s.bytes));
       break;
   }
+  TRY(set_num(o, "draws", s.draws));
   return o;
 }
 static qa_save_value *frame_value(qa_frame_context f) {
@@ -1017,22 +1201,38 @@ static qa_save_value *mount_identity_value(qa_mount_identity identity) {
       set_num(o, "generation", (double)identity.generation));
   return o;
 }
-static qa_save_value *mount_value(qa_content_mount mount) {
+/* `parsed`: persistence/recipe.ts readMount order `{ identity, kind, ... }`;
+ * otherwise the catalog's mountsFor record order `{ kind, identity, ... }`. */
+static qa_save_value *mount_value(qa_content_mount mount, bool parsed) {
   static const char *const formats[] = {"pak", "pk3", "kpf", "zip"};
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
+  if (parsed) {
+    if (mount.kind == QA_CONTENT_MOUNT_LOOSE) {
+      TRY(set_own(o, "identity", mount_identity_value(mount.as.loose.identity)) &&
+          set_str(o, "kind", "loose") &&
+          set_str(o, "rootPath", mount.as.loose.root_path));
+      return o;
+    }
+    TRY(set_own(o, "identity", mount_identity_value(mount.as.archive.identity)) &&
+        set_str(o, "kind", "archive") &&
+        set_str(o, "format", formats[mount.as.archive.format]) &&
+        set_str(o, "archivePath", mount.as.archive.archive_path) &&
+        set_str(o, "archiveDigest", mount.as.archive.archive_digest));
+    return o;
+  }
   if (mount.kind == QA_CONTENT_MOUNT_LOOSE) {
-    TRY(set_own(o, "identity", mount_identity_value(mount.as.loose.identity)) &&
-        set_str(o, "kind", "loose") &&
+    TRY(set_str(o, "kind", "loose") &&
+        set_own(o, "identity", mount_identity_value(mount.as.loose.identity)) &&
         set_str(o, "rootPath", mount.as.loose.root_path));
     return o;
   }
-  TRY(set_own(o, "identity",
+  TRY(set_str(o, "kind", "archive") &&
+      set_own(o, "identity",
               mount_identity_value(mount.as.archive.identity)) &&
-      set_str(o, "kind", "archive") &&
-      set_str(o, "format", formats[mount.as.archive.format]) &&
       set_str(o, "archivePath", mount.as.archive.archive_path) &&
-      set_str(o, "archiveDigest", mount.as.archive.archive_digest));
+      set_str(o, "archiveDigest", mount.as.archive.archive_digest) &&
+      set_str(o, "format", formats[mount.as.archive.format]));
   return o;
 }
 static qa_save_value *resource_value(qa_resolved_resource_reference r) {
@@ -1051,18 +1251,22 @@ static qa_save_value *resource_value(qa_resolved_resource_reference r) {
       memset(&mount, 0, sizeof mount);
       mount.kind = QA_CONTENT_MOUNT_ARCHIVE;
       mount.as.archive = *r.provenance.archive_mount;
-      ok = set_str(pv, "memberPath", r.provenance.member_path) &&
-           set_str(pv, "kind", "archive") &&
-           set_own(pv, "mount", mount_value(mount)) &&
+      /* mounts/index.ts: kind, mount, memberPath, memberIndex;
+       * readProvenance: kind, memberPath, mount, memberIndex. */
+      ok = set_str(pv, "kind", "archive") &&
+           (!r.parsed_order || set_str(pv, "memberPath", r.provenance.member_path)) &&
+           set_own(pv, "mount", mount_value(mount, r.parsed_order)) &&
+           (r.parsed_order || set_str(pv, "memberPath", r.provenance.member_path)) &&
            set_num(pv, "memberIndex", (double)r.provenance.member_index);
     } else {
       qa_content_mount mount;
       memset(&mount, 0, sizeof mount);
       mount.kind = QA_CONTENT_MOUNT_LOOSE;
       mount.as.loose = *r.provenance.loose_mount;
-      ok = set_str(pv, "memberPath", r.provenance.member_path) &&
-           set_str(pv, "kind", "loose") &&
-           set_own(pv, "mount", mount_value(mount));
+      ok = set_str(pv, "kind", "loose") &&
+           (!r.parsed_order || set_str(pv, "memberPath", r.provenance.member_path)) &&
+           set_own(pv, "mount", mount_value(mount, r.parsed_order)) &&
+           (r.parsed_order || set_str(pv, "memberPath", r.provenance.member_path));
     }
     if (!ok) {
       qa_save_value_free(provenance);
@@ -1077,20 +1281,24 @@ static qa_save_value *resource_value(qa_resolved_resource_reference r) {
     return NULL;
   }
   {
-    bool ok = set_str(resolution, "plan", r.resolution.plan);
+    /* TS readResolution: { kind, plan, ... }. */
+    bool ok = true;
     if (ok) {
       switch (r.resolution.kind) {
         case QA_RESOURCE_RESOLUTION_DEFAULT_ORDER:
           ok = set_str(resolution, "kind", "default-order") &&
+               set_str(resolution, "plan", r.resolution.plan) &&
                set_num(resolution, "rank", (double)r.resolution.rank);
           break;
         case QA_RESOURCE_RESOLUTION_PREFIX_ORDER:
           ok = set_str(resolution, "kind", "prefix-order") &&
+               set_str(resolution, "plan", r.resolution.plan) &&
                set_num(resolution, "rank", (double)r.resolution.rank) &&
                set_str(resolution, "prefix", r.resolution.prefix);
           break;
         case QA_RESOURCE_RESOLUTION_LINK:
           ok = set_str(resolution, "kind", "link") &&
+               set_str(resolution, "plan", r.resolution.plan) &&
                set_str(resolution, "sourcePrefix", r.resolution.source_prefix) &&
                set_str(resolution, "targetPath", r.resolution.target_path);
           break;
@@ -1103,12 +1311,18 @@ static qa_save_value *resource_value(qa_resolved_resource_reference r) {
       return NULL;
     }
   }
-  TRY(set_str(o, "id", r.id) && set_str(o, "requestedPath", r.requested_path) &&
+  /* mounts/index.ts builds `{ ...resource, id }` (id last); a reference read
+   * back by recipe.ts readResource is `{ id, ...resource }` (id first). */
+  TRY((!r.parsed_order || set_str(o, "id", r.id)) &&
+      set_str(o, "requestedPath", r.requested_path) &&
       set_own(o, "provenance", provenance) &&
       set_str(o, "digest", r.digest) &&
       set_num(o, "byteLength", (double)r.byte_length) &&
-      set_own(o, "resolution", resolution));
+      set_own(o, "resolution", resolution) && (r.parsed_order || set_str(o, "id", r.id)));
   return o;
+}
+qa_save_value *qa_save_resource_reference_value(const qa_resolved_resource_reference *resource) {
+  return resource_value(*resource);
 }
 static qa_save_value *api_value(qa_game_api_identity api) {
   qa_save_value *o = obj();
@@ -1188,6 +1402,21 @@ static qa_save_value *layout_value(qa_guest_layout layout) {
       set_own(o, "fields", fields));
   return o;
 }
+/* { ...PROCESSOR_LAYOUT, pointerBytes }: the native Q3 processor layout's spread key order. */
+static qa_save_value *native_processor_layout_value(qa_guest_layout layout) {
+  qa_save_value *o = obj();
+  if (o == NULL) return NULL;
+  qa_save_value *fields = arr();
+  if (fields == NULL || layout.field_count != 0) {
+    qa_save_value_free(fields);
+    qa_save_value_free(o);
+    return layout.field_count != 0 ? layout_value(layout) : NULL;
+  }
+  TRY(set_str(o, "id", layout.id) && set_num(o, "byteLength", layout.byte_length) &&
+      set_num(o, "alignment", layout.alignment) && set_str(o, "byteOrder", "little-endian") &&
+      set_own(o, "fields", fields) && set_num(o, "pointerBytes", (double)layout.pointer_bytes));
+  return o;
+}
 static qa_save_value *value_layout_value(qa_guest_value_layout layout) {
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
@@ -1258,6 +1487,132 @@ static qa_save_value *private_value(qa_guest_private_state state) {
       set_str(o, "format", state.format) && set_bytes(o, "bytes", state.bytes));
   return o;
 }
+/* Moves the listed keys, in order, to the front of an object (the rest keep
+ * their relative order): a producer's JS insertion order. */
+static void order_keys(qa_save_value *o, const char *const *keys, size_t key_count) {
+  size_t at = 0;
+  for (size_t k = 0; k < key_count; k++)
+    for (size_t i = at; i < o->entry_count; i++)
+      if (strcmp(o->entries[i].key, keys[k]) == 0) {
+        qa_save_entry moved = o->entries[i];
+        memmove(&o->entries[at + 1], &o->entries[at], (i - at) * sizeof *o->entries);
+        o->entries[at++] = moved;
+        break;
+      }
+}
+/* The checkpoint producers' key orders (QvmModule.checkpoint, QuakeC executor checkpoint). */
+static void order_guest_checkpoint(qa_save_value *o, qa_guest_checkpoint_kind kind) {
+  static const char *const qvm[] = {"kind", "module", "api", "abiProfile", "data", "instructionIndex", "programStack", "operandStack",
+      "random", "callbacks", "hostState"};
+  static const char *const quakec[] = {"kind", "module", "api", "random", "callbacks", "globals", "entities", "entityStrideBytes",
+      "entityCount", "strings", "statement", "functionIndex", "argumentCount", "callStack", "locals", "hostState"};
+  if (o == NULL) return;
+  if (kind == QA_GUEST_CHECKPOINT_QVM) order_keys(o, qvm, sizeof qvm / sizeof qvm[0]);
+  else if (kind == QA_GUEST_CHECKPOINT_QUAKEC) order_keys(o, quakec, sizeof quakec / sizeof quakec[0]);
+}
+/* TS NativeGuestHeapImage, keys in the producer's order. */
+static qa_save_value *bigint_or_null(bool present, int64_t value) {
+  return present ? qa_save_value_bigint_i64(value) : qa_save_value_null();
+}
+static qa_save_value *windows_tables_value(const qa_windows_heap_tables *w) {
+  qa_save_value *o = obj();
+  if (o == NULL) return NULL;
+  qa_save_value *heaps = arr(), *reservations = arr(), *tls = arr(), *fls = arr();
+  bool ok = heaps != NULL && reservations != NULL && tls != NULL && fls != NULL;
+  for (size_t i = 0; ok && i < w->heap_count; i++) ok = push_own(heaps, qa_save_value_bigint_i64(w->heaps[i]));
+  for (size_t i = 0; ok && i < w->reservation_count; i++) {
+    qa_save_value *entry = obj();
+    ok = entry != NULL && set_own(entry, "base", qa_save_value_bigint_i64(w->reservations[i].base)) &&
+         set_num(entry, "size", w->reservations[i].size);
+    if (ok) ok = push_own(reservations, entry);
+    else qa_save_value_free(entry);
+  }
+  for (size_t i = 0; ok && i < w->tls_count; i++) ok = push_own(tls, qa_save_value_number(w->tls[i]));
+  for (size_t i = 0; ok && i < w->fls_count; i++) {
+    qa_save_value *slot = obj();
+    ok = slot != NULL && set_num(slot, "index", w->fls[i].index) &&
+         set_own(slot, "callback", bigint_or_null(w->fls[i].has_callback, w->fls[i].callback)) &&
+         set_own(slot, "value", bigint_or_null(w->fls[i].has_value, w->fls[i].value));
+    if (ok) ok = push_own(fls, slot);
+    else qa_save_value_free(slot);
+  }
+  if (!ok) {
+    qa_save_value_free(heaps);
+    qa_save_value_free(reservations);
+    qa_save_value_free(tls);
+    qa_save_value_free(fls);
+    qa_save_value_free(o);
+    return NULL;
+  }
+  TRY(set_own(o, "heaps", heaps) && set_own(o, "reservations", reservations) && set_own(o, "tls", tls) &&
+      set_own(o, "fls", fls) && set_num(o, "lastError", w->last_error));
+  return o;
+}
+static qa_save_value *native_heap_value(const qa_native_guest_heap_image *heap) {
+  if (heap == NULL) return qa_save_value_null();
+  qa_save_value *o = obj();
+  if (o == NULL) return NULL;
+  qa_save_value *layout = arr(), *allocator = obj(), *hints = arr(), *slabs = arr(), *free_pages = arr(),
+                *blocks = arr();
+  bool ok = layout != NULL && allocator != NULL && hints != NULL && slabs != NULL && free_pages != NULL &&
+            blocks != NULL;
+  for (size_t i = 0; ok && i < heap->layout_count; i++) {
+    const qa_guest_mapping_record *m = &heap->layout[i];
+    qa_save_value *entry = obj();
+    ok = entry != NULL && set_own(entry, "base", qa_save_value_bigint_i64(m->base)) &&
+         set_num(entry, "byteLength", m->byte_length) && set_str(entry, "permissions", m->permissions) &&
+         set_str(entry, "label", m->label);
+    if (ok) ok = push_own(layout, entry);
+    else qa_save_value_free(entry);
+  }
+  for (size_t i = 0; ok && i < heap->allocator.hint_count; i++) {
+    const qa_guest_allocator_hint *h = &heap->allocator.hints[i];
+    qa_save_value *entry = obj();
+    ok = entry != NULL && set_own(entry, "alignment", qa_save_value_bigint_i64(h->alignment)) &&
+         set_own(entry, "base", qa_save_value_bigint_i64(h->base)) && set_num(entry, "byteLength", h->byte_length);
+    if (ok) ok = push_own(hints, entry);
+    else qa_save_value_free(entry);
+  }
+  for (size_t i = 0; ok && i < heap->allocator.slab_count; i++) {
+    const qa_guest_allocator_slab *sl = &heap->allocator.slabs[i];
+    qa_save_value *entry = obj();
+    ok = entry != NULL && set_own(entry, "base", qa_save_value_bigint_i64(sl->base)) &&
+         set_bytes(entry, "used", sl->used) && set_num(entry, "next", sl->next);
+    if (ok) ok = push_own(slabs, entry);
+    else qa_save_value_free(entry);
+  }
+  for (size_t i = 0; ok && i < heap->allocator.free_page_count; i++)
+    ok = push_own(free_pages, qa_save_value_number(heap->allocator.free_pages[i]));
+  for (size_t i = 0; ok && i < heap->block_count; i++) {
+    const qa_native_heap_block *b = &heap->blocks[i];
+    qa_save_value *entry = obj();
+    ok = entry != NULL && set_own(entry, "base", qa_save_value_bigint_i64(b->base)) && set_num(entry, "size", b->size) &&
+         set_own(entry, "heap", qa_save_value_bigint_i64(b->heap));
+    if (ok) ok = push_own(blocks, entry);
+    else qa_save_value_free(entry);
+  }
+  if (ok) {
+    ok = set_own(allocator, "hints", hints);
+    hints = NULL;
+    if (ok) ok = set_own(allocator, "slabs", slabs);
+    slabs = NULL;
+    if (ok) ok = set_own(allocator, "freePages", free_pages);
+    free_pages = NULL;
+  }
+  if (!ok) {
+    qa_save_value_free(layout);
+    qa_save_value_free(allocator);
+    qa_save_value_free(hints);
+    qa_save_value_free(slabs);
+    qa_save_value_free(free_pages);
+    qa_save_value_free(blocks);
+    qa_save_value_free(o);
+    return NULL;
+  }
+  TRY(set_own(o, "layout", layout) && set_own(o, "allocator", allocator) && set_own(o, "blocks", blocks) &&
+      set_own(o, "windows", heap->windows == NULL ? qa_save_value_null() : windows_tables_value(heap->windows)));
+  return o;
+}
 static qa_save_value *guest_value(const qa_guest_checkpoint *guest) {
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
@@ -1273,6 +1628,8 @@ static qa_save_value *guest_value(const qa_guest_checkpoint *guest) {
     if (!push_own(random, random_value(guest->random[i]))) goto oom;
   for (size_t i = 0; i < guest->callback_count; i++)
     if (!push_own(callbacks, callback_value(guest->callbacks[i]))) goto oom;
+  /* A native Q3 process image is written in Q3NativeGuestSource.checkpoint()'s key order: kind and version first. */
+  if (guest->kind == QA_GUEST_CHECKPOINT_NATIVE_GUEST && !(set_str(o, "kind", "native-guest") && set_num(o, "version", 2))) goto oom;
   TRY(set_own(o, "module", module_value(guest->module)) &&
       set_own(o, "random", random) && set_own(o, "callbacks", callbacks));
   random = NULL;
@@ -1358,11 +1715,11 @@ static qa_save_value *guest_value(const qa_guest_checkpoint *guest) {
           goto oom;
         }
       }
-      TRY(set_str(o, "kind", "native-guest") &&
-          set_own(o, "abi", abi_value(guest->abi)) &&
+      TRY(set_own(o, "abi", abi_value(guest->abi)) &&
           set_own(o, "regions", regions) &&
+          set_own(o, "heap", native_heap_value(guest->heap)) &&
           set_own(o, "processorLayout",
-                  layout_value(guest->processor_layout)) &&
+                  native_processor_layout_value(guest->processor_layout)) &&
           set_bytes(o, "processorState", guest->processor_state) &&
           set_own(o, "runtimeState", private_value(guest->runtime_state)));
       break;
@@ -1375,37 +1732,27 @@ oom:
   qa_save_value_free(o);
   return NULL;
 }
+/* TS readExecution: { kind, owner, implementation | artifact, profile?, role, api }. */
 static qa_save_value *execution_value(qa_resolved_execution_module module) {
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
-  TRY(set_own(o, "owner", provider_value(module.owner)) &&
-      set_own(o, "api", api_value(module.api)) &&
-      set_str(o, "role", module.role));
-  switch (module.kind) {
-    case QA_EXECUTION_MODULE_TYPESCRIPT:
-      TRY(set_str(o, "kind", "typescript") &&
-          set_str(o, "implementation", module.implementation));
-      break;
-    case QA_EXECUTION_MODULE_QUAKEC:
-      TRY(set_str(o, "kind", "quakec") &&
-          set_own(o, "artifact",
-                  resource_value(*(const qa_resolved_resource_reference *)
-                                     module.artifact)));
-      break;
-    case QA_EXECUTION_MODULE_QVM:
-      TRY(set_str(o, "kind", "qvm") &&
-          set_own(o, "artifact",
-                  resource_value(*(const qa_resolved_resource_reference *)
-                                     module.artifact)));
-      break;
-    case QA_EXECUTION_MODULE_NATIVE:
-      TRY(set_str(o, "kind", "native") &&
-          set_own(o, "artifact",
-                  resource_value(*(const qa_resolved_resource_reference *)
-                                     module.artifact)) &&
-          set_own(o, "profile", abi_value(module.profile)));
-      break;
-  }
+  static const char *const kinds[] = {"typescript", "quakec", "qvm", "native"};
+  const char *kind = module.kind == QA_EXECUTION_MODULE_TYPESCRIPT ? kinds[0]
+      : module.kind == QA_EXECUTION_MODULE_QUAKEC ? kinds[1]
+      : module.kind == QA_EXECUTION_MODULE_QVM ? kinds[2] : kinds[3];
+  /* Key order of the content.ts selections (launch replaces artifact in
+   * place): typescript {kind, owner, implementation, role, api}; quakec,
+   * qvm and native {kind, owner, role, artifact, api, profile?}. */
+  TRY(set_str(o, "kind", kind) && set_own(o, "owner", provider_value(module.owner)));
+  if (module.kind == QA_EXECUTION_MODULE_TYPESCRIPT)
+    TRY(set_str(o, "implementation", module.implementation) && set_str(o, "role", module.role));
+  else
+    TRY(set_str(o, "role", module.role) &&
+        set_own(o, "artifact",
+                resource_value(*(const qa_resolved_resource_reference *)module.artifact)));
+  TRY(set_own(o, "api", api_value(module.api)));
+  if (module.kind == QA_EXECUTION_MODULE_NATIVE)
+    TRY(set_own(o, "profile", abi_value(module.profile)));
   return o;
 }
 static qa_save_value *character_value(qa_character_selection c) {
@@ -1549,7 +1896,7 @@ oom:
   qa_save_value_free(o);
   return NULL;
 }
-static qa_save_value *mount_plan_value(qa_resolved_mount_plan plan) {
+static qa_save_value *mount_plan_value(qa_resolved_mount_plan plan, bool parsed) {
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
   qa_save_value *mounts = arr();
@@ -1557,7 +1904,7 @@ static qa_save_value *mount_plan_value(qa_resolved_mount_plan plan) {
   qa_save_value *orders = arr();
   if (mounts == NULL || order == NULL || orders == NULL) goto oom;
   for (size_t i = 0; i < plan.mount_count; i++)
-    if (!push_own(mounts, mount_value(plan.mounts[i]))) goto oom;
+    if (!push_own(mounts, mount_value(plan.mounts[i], parsed))) goto oom;
   for (size_t i = 0; i < plan.default_order_count; i++)
     if (!push_own(order, qa_save_value_string(plan.default_order[i]))) goto oom;
   for (size_t i = 0; i < plan.prefix_order_count; i++) {
@@ -1606,16 +1953,10 @@ static qa_save_value *behavior_callback_value(qa_weapon_behavior_callback cb) {
   }
   return o;
 }
-static qa_save_value *weapon_behavior_value(
-    qa_resolved_weapon_behavior_selection behavior) {
-  qa_save_value *o = obj();
-  if (o == NULL) return NULL;
-  const qa_weapon_behavior_definition *definition = behavior.definition;
+/* WeaponBehaviorDefinition { id, title, module, role, aspect, fire, activate }. */
+static qa_save_value *behavior_definition_value(const qa_weapon_behavior_definition *definition) {
   qa_save_value *value = obj();
-  if (value == NULL) {
-    qa_save_value_free(o);
-    return NULL;
-  }
+  if (value == NULL) return NULL;
   bool ok = set_str(value, "id", definition->id) &&
             set_str(value, "title", definition->title) &&
             set_own(value, "module", module_value(definition->module)) &&
@@ -1628,6 +1969,16 @@ static qa_save_value *weapon_behavior_value(
                  : set_null(value, "activate"));
   if (!ok) {
     qa_save_value_free(value);
+    return NULL;
+  }
+  return value;
+}
+static qa_save_value *weapon_behavior_value(
+    qa_resolved_weapon_behavior_selection behavior) {
+  qa_save_value *o = obj();
+  if (o == NULL) return NULL;
+  qa_save_value *value = behavior_definition_value(behavior.definition);
+  if (value == NULL) {
     qa_save_value_free(o);
     return NULL;
   }
@@ -1691,11 +2042,33 @@ static qa_save_value *selection_value(qa_mod_selection selection) {
       set_str(o, "id", selection.id));
   return o;
 }
+static qa_save_value *selections_value(const qa_mod_selection *rows, size_t count) {
+  qa_save_value *a = arr();
+  if (a == NULL) return NULL;
+  for (size_t i = 0; i < count; i++)
+    if (!push_own(a, selection_value(rows[i]))) {
+      qa_save_value_free(a);
+      return NULL;
+    }
+  return a;
+}
+/* The TS ResolvedGameplayMod object as the image holds it: discoverGameplayMods'
+ * key order, or readGameplayMod's for a mod read back from a save. */
 static qa_save_value *gameplay_mod_value(const qa_resolved_gameplay_mod *mod) {
-  /* No checkpoint-value writer for qa_mod_declaration yet. */
-  (void)mod;
-  qa_save_format_error("save",
-                       "gameplay mod declaration writer is not yet ported");
+  qa_save_value *o = obj();
+  if (o == NULL) return NULL;
+  TRY(set_own(o, "selection", selection_value(mod->selection)));
+  if (mod->read_order)
+    TRY(set_own(o, "source", provider_value(mod->source)) && set_str(o, "title", mod->title) &&
+        set_str(o, "sourceTitle", mod->source_title));
+  else
+    TRY(set_str(o, "title", mod->title) && set_str(o, "sourceTitle", mod->source_title) &&
+        set_own(o, "source", provider_value(mod->source)));
+  TRY(set_own(o, "requires", selections_value(mod->requires, mod->requires_count)) &&
+      set_own(o, "conflicts", selections_value(mod->conflicts, mod->conflicts_count)) &&
+      set_own(o, "declaration", qa_gameplay_mod_declaration_value(mod->declaration)) &&
+      set_str(o, "declarationDigest", mod->declaration_digest));
+  return o;
 }
 static qa_save_value *recipe_value(const qa_executable_recipe *recipe) {
   qa_save_value *o = obj();
@@ -1784,8 +2157,14 @@ static qa_save_value *recipe_value(const qa_executable_recipe *recipe) {
       qa_save_value *entry = obj();
       ok = entry != NULL &&
            set_str(entry, "provider", recipe->timing[i].provider) &&
-           set_own(entry, "clock", clock_value(recipe->timing[i].clock)) &&
+           /* Catalog timing (nativeProviderTiming, equipment) is
+            * { provider, numeric, clock }; recipe.ts readRecipe reads
+            * { provider, clock, numeric }. */
+           (recipe->launch_key_order ||
+            set_own(entry, "clock", clock_value(recipe->timing[i].clock))) &&
            set_own(entry, "numeric", numeric_value(recipe->timing[i].numeric)) &&
+           (!recipe->launch_key_order ||
+            set_own(entry, "clock", clock_value(recipe->timing[i].clock))) &&
            push_own(timing, entry);
     }
     if (!ok) {
@@ -1796,6 +2175,28 @@ static qa_save_value *recipe_value(const qa_executable_recipe *recipe) {
       qa_save_value_free(campaign);
       qa_save_value_free(map);
       goto oom;
+    }
+    if (recipe->launch_key_order) {
+      TRY(set_str(o, "id", recipe->id) &&
+          set_own(o, "map", map) && set_own(o, "campaign", campaign) &&
+          set_own(o, "movement", provider_value(recipe->movement)) &&
+          set_own(o, "character", character_value(recipe->character)) &&
+          set_own(o, "weapons", weapons) &&
+          set_own(o, "equipment", equipment_value(recipe->equipment)) &&
+          set_own(o, "enemies", enemies_value(recipe->enemies)) &&
+          set_own(o, "presentation", presentation_value(recipe->presentation)) &&
+          set_own(o, "engineBehavior", provider_value(recipe->engine_behavior)) &&
+          set_own(o, "combat", provider_value(recipe->combat)) &&
+          set_own(o, "inventory", provider_value(recipe->inventory)) &&
+          set_own(o, "match", provider_value(recipe->match)) &&
+          set_own(o, "transition", provider_value(recipe->transition)) &&
+          set_own(o, "execution", execution) && set_own(o, "timing", timing) &&
+          set_own(o, "ordering", ordering_value(recipe->ordering)) &&
+          set_str(o, "preset", recipe->preset) &&
+          set_num(o, "schemaVersion", (double)recipe->schema_version) &&
+          set_own(o, "mounts", mount_plan_value(recipe->mounts, !recipe->launch_key_order)) &&
+          set_own(o, "resources", resources));
+      return o;
     }
     TRY(set_num(o, "schemaVersion", (double)recipe->schema_version) &&
         set_str(o, "id", recipe->id) && set_str(o, "preset", recipe->preset) &&
@@ -1813,7 +2214,7 @@ static qa_save_value *recipe_value(const qa_executable_recipe *recipe) {
         set_own(o, "match", provider_value(recipe->match)) &&
         set_own(o, "transition", provider_value(recipe->transition)) &&
         set_own(o, "execution", execution) &&
-        set_own(o, "mounts", mount_plan_value(recipe->mounts)) &&
+        set_own(o, "mounts", mount_plan_value(recipe->mounts, !recipe->launch_key_order)) &&
         set_own(o, "resources", resources) && set_own(o, "timing", timing) &&
         set_own(o, "ordering", ordering_value(recipe->ordering)));
   }
@@ -1996,15 +2397,38 @@ static qa_save_value *mod_session_value(
       set_own(o, "mods", mods));
   return o;
 }
+static qa_save_value *consumption_value(const qa_save_image *image) {
+  qa_save_value *list = arr();
+  if (list == NULL) return NULL;
+  for (size_t i = 0; i < image->consumption_count; i++) {
+    const qa_selection_consumption_entry *entry = &image->consumption[i];
+    qa_save_value *o = obj();
+    bool ok = o != NULL && set_str(o, "axis", entry->axis) &&
+              set_str(o, "requested", entry->requested) &&
+              set_str(o, "outcome", entry->outcome) &&
+              set_str(o, "detail", entry->detail);
+    if (!ok || !push_own(list, o)) {
+      if (!ok) qa_save_value_free(o);
+      qa_save_value_free(list);
+      return NULL;
+    }
+  }
+  return list;
+}
 static qa_save_value *image_value(const qa_save_image *image) {
   qa_save_value *o = obj();
   if (o == NULL) return NULL;
+  bool parsed = image->key_order == QA_SAVE_IMAGE_ORDER_PARSED;
   TRY(set_num(o, "schemaVersion", (double)image->schema_version) &&
       (!image->legacy_armor_layout ||
        set_bool(o, "legacyArmorLayout", true)) &&
       set_own(o, "recipe", recipe_value(&image->recipe)) &&
       set_own(o, "frame", frame_value(image->frame)) &&
       set_num(o, "nextEventSequence", image->next_event_sequence));
+  if (!parsed) {
+    if (image->mods != NULL) TRY(set_own(o, "mods", mod_session_value(image->mods)));
+    TRY(set_own(o, "consumption", consumption_value(image)));
+  }
   {
     qa_save_value *clocks = arr();
     if (clocks == NULL) goto oom;
@@ -2074,6 +2498,8 @@ static qa_save_value *image_value(const qa_save_image *image) {
       bool ok = entry != NULL &&
                 set_own(entry, "actor", actor_value(body->actor)) &&
                 set_own(entry, "body", saved_body_value(body->body));
+      /* captureSharedBodies writes linkCount before attachment; readSaveImage after. */
+      if (!parsed) ok = ok && set_num(entry, "linkCount", body->link_count);
       if (ok && body->attachment != NULL) {
         qa_save_value *attachment = obj();
         qa_save_value *follow = obj();
@@ -2099,7 +2525,7 @@ static qa_save_value *image_value(const qa_save_image *image) {
       } else if (ok) {
         ok = set_null(entry, "attachment");
       }
-      ok = ok && set_num(entry, "linkCount", body->link_count);
+      if (parsed) ok = ok && set_num(entry, "linkCount", body->link_count);
       if (ok && body->linked != NULL) {
         qa_save_value *linked = obj();
         ok = linked != NULL &&
@@ -2186,14 +2612,19 @@ static qa_save_value *image_value(const qa_save_image *image) {
     for (size_t i = 0; i < image->think_count; i++) {
       const qa_think_checkpoint *think = &image->thinks[i];
       qa_save_value *entry = obj();
+      /* checkpointFromSource spreads executionProvider after callback;
+       * parseSaveImage appends it after sequence. */
       bool ok = entry != NULL &&
                 set_own(entry, "actor", actor_value(think->actor)) &&
                 set_str(entry, "callback", think->callback) &&
+                (parsed || !think->has_execution_provider ||
+                 set_str(entry, "executionProvider",
+                         think->execution_provider)) &&
                 set_own(entry, "due", time_value(think->due)) &&
                 set_str(entry, "boundary", boundaries[think->boundary]) &&
                 set_str(entry, "provider", think->provider) &&
                 set_num(entry, "sequence", think->sequence) &&
-                (!think->has_execution_provider ||
+                (!parsed || !think->has_execution_provider ||
                  set_str(entry, "executionProvider",
                          think->execution_provider)) &&
                 push_own(thinks, entry);
@@ -2218,40 +2649,97 @@ static qa_save_value *image_value(const qa_save_image *image) {
   {
     qa_save_value *guests = arr();
     if (guests == NULL) goto oom;
-    for (size_t i = 0; i < image->guest_count; i++)
-      if (!push_own(guests, guest_value(&image->guests[i]))) {
+    for (size_t i = 0; i < image->guest_count; i++) {
+      qa_save_value *guest = guest_value(&image->guests[i]);
+      if (!parsed) order_guest_checkpoint(guest, image->guests[i].kind);
+      if (!push_own(guests, guest)) {
         qa_save_value_free(guests);
         goto oom;
       }
+    }
     TRY(set_own(o, "guests", guests));
   }
-  if (image->mods != NULL) TRY(set_own(o, "mods", mod_session_value(image->mods)));
+  if (parsed) {
+    if (image->mods != NULL) TRY(set_own(o, "mods", mod_session_value(image->mods)));
+    TRY(set_own(o, "consumption", consumption_value(image)));
+  }
   return o;
 oom:
   qa_save_value_free(o);
   return NULL;
 }
 #undef TRY
+/* TS saveHeaderOf + encodeSaveImage: magic, u32 LE header length, the
+ * header record {map, content}, then the image payload. */
 bool qa_encode_save_image(const qa_save_image *image, uint8_t **out_bytes,
                           size_t *out_length) {
   *out_bytes = NULL;
   *out_length = 0;
+  qa_save_value *header = obj();
+  if (header == NULL) return false;
+  if (!set_str(header, "map", image->recipe.map.geometry.requested_path) ||
+      !set_str(header, "content", image->recipe.map.entities.content)) {
+    qa_save_value_free(header);
+    return false;
+  }
+  size_t header_size = 0;
+  uint8_t *header_bytes = qa_encode_checkpoint_value(header, &header_size);
+  qa_save_value_free(header);
+  if (header_bytes == NULL) return false;
   qa_save_value *value = image_value(image);
-  if (value == NULL) return false;
+  if (value == NULL) {
+    free(header_bytes);
+    return false;
+  }
   size_t payload_length = 0;
   uint8_t *payload = qa_encode_checkpoint_value(value, &payload_length);
   qa_save_value_free(value);
-  if (payload == NULL) return false;
-  size_t magic_length = sizeof SAVE_MAGIC - 1;
-  uint8_t *output = malloc(magic_length + payload_length);
+  if (payload == NULL) {
+    free(header_bytes);
+    return false;
+  }
+  size_t total = SAVE_MAGIC_LENGTH + 4 + header_size + payload_length;
+  uint8_t *output = malloc(total);
   if (output == NULL) {
+    free(header_bytes);
     free(payload);
     return false;
   }
-  memcpy(output, SAVE_MAGIC, magic_length);
-  memcpy(output + magic_length, payload, payload_length);
+  memcpy(output, SAVE_MAGIC, SAVE_MAGIC_LENGTH);
+  /* TS storeU32LE(output, 8, header.length): the length wraps modulo 2^32. */
+  uint32_t stored = (uint32_t)header_size;
+  output[8] = (uint8_t)stored;
+  output[9] = (uint8_t)(stored >> 8);
+  output[10] = (uint8_t)(stored >> 16);
+  output[11] = (uint8_t)(stored >> 24);
+  memcpy(output + SAVE_MAGIC_LENGTH + 4, header_bytes, header_size);
+  memcpy(output + SAVE_MAGIC_LENGTH + 4 + header_size, payload, payload_length);
+  free(header_bytes);
   free(payload);
   *out_bytes = output;
-  *out_length = magic_length + payload_length;
+  *out_length = total;
   return true;
 }
+
+/* TS persistence of a GuestCheckpoint value (the guest_value encoder). */
+qa_save_value *qa_save_guest_checkpoint_value(const qa_guest_checkpoint *guest) { return guest_value(guest); }
+
+/* Public value builders over the encoder's writers (the TS plain records
+ * other checkpoint codecs embed). NULL only on OOM. */
+qa_save_value *qa_save_actor_value(qa_saved_actor_id actor) { return actor_value(actor); }
+qa_save_value *qa_save_vector_value(qa_vec3 vector) { return vector_value(vector); }
+qa_save_value *qa_save_bounds_value(qa_bounds bounds) { return bounds_value(bounds); }
+qa_save_value *qa_save_time_value(qa_source_time time) { return time_value(time); }
+qa_save_value *qa_save_frame_value(qa_frame_context frame) { return frame_value(frame); }
+qa_save_value *qa_save_random_value(qa_random_state state) { return random_value(state); }
+qa_save_value *qa_save_provider_value(qa_provider_reference provider) { return provider_value(provider); }
+qa_save_value *qa_save_armor_value(qa_armor_state armor) { return armor_value(armor); }
+qa_save_value *qa_save_combat_value(qa_combat_state state) { return combat_value(state); }
+qa_save_value *qa_save_inventory_entry_value(qa_inventory_entry entry) { return inventory_entry_value(entry); }
+qa_save_value *qa_save_recipe_value(const qa_executable_recipe *recipe) { return recipe_value(recipe); }
+qa_save_value *qa_save_weapon_behavior_definition_value(const qa_weapon_behavior_definition *definition) {
+  return behavior_definition_value(definition);
+}
+qa_save_value *qa_save_guest_value(const qa_guest_checkpoint *guest) { return guest_value(guest); }
+/* The saved form of a ModIdentity (owned tree; NULL only on OOM). */
+qa_save_value *qa_save_mod_identity_value(const qa_mod_identity *identity) { return mod_identity_value(*identity); }

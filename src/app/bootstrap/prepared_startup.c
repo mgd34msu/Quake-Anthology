@@ -14,6 +14,8 @@
 #include "qa/app/bootstrap/shared_setting_cvars.h"
 #include "qa/app/bootstrap/startup_commands.h"
 #include "qa/foundation/support.h"
+#include "qa/input/support.h"
+#include "qa/foundation/js.h"
 
 bool qa_app_allow_seat_configuration_command(qa_command_context source) {
   const qa_command_origin *origin = &source.origin;
@@ -529,6 +531,8 @@ void qa_app_prepared_startup_close(qa_app_prepared_startup *startup) {
   free(startup);
 }
 /* --- concrete constructor --- */
+static qa_cvar_registry *current_routing_owner(void *ctx, const char *name, qa_command_context source);
+static qa_cvar_registry *const *current_routing_visible(void *ctx, qa_command_context source, size_t *out_count);
 qa_app_prepared_startup *qa_app_prepared_startup_create_concrete(
     qa_cvar_registry *source, qa_cvar_registry *movement,
     qa_app_console_script_files *scripts,
@@ -596,7 +600,11 @@ qa_app_prepared_startup *qa_app_prepared_startup_create_concrete(
   buffer_options.dialect = options->dialect;
   buffer_options.context = qa_cvar_registry_context(source);
   buffer_options.cvars = startup->fallback;
-  buffer_options.cvar_routing = startup->routing;
+  /* cvarRouting: { owner: (name, context) => this.routing.owner(name, context), visible: context => this.routing.visible(context) }:
+   * the buffer reads the current routing, which adopt replaces (and frees the previous owner of). */
+  buffer_options.cvar_routing.ctx = startup;
+  buffer_options.cvar_routing.owner = current_routing_owner;
+  buffer_options.cvar_routing.visible = current_routing_visible;
   buffer_options.read_script = read_script_adapter;
   buffer_options.read_script_ctx = startup;
   buffer_options.on_script_complete = script_complete_adapter;
@@ -756,6 +764,14 @@ void qa_app_prepared_startup_validate_owners(qa_app_prepared_startup *startup, c
     if (!same_session(qa_cvar_registry_context(registries[i]).session, session)) foreign = true;
   if (foreign) qa_range_error("Prepared profile registry belongs to another session or dialect");
   qa_command_buffer_validate_profile(startup->commands, qa_cvar_registry_dialect(owners->source), owners->fallback);
+}
+static qa_cvar_registry *current_routing_owner(void *ctx, const char *name, qa_command_context source) {
+  qa_app_prepared_startup *startup = ctx;
+  return startup->routing.owner(startup->routing.ctx, name, source);
+}
+static qa_cvar_registry *const *current_routing_visible(void *ctx, qa_command_context source, size_t *out_count) {
+  qa_app_prepared_startup *startup = ctx;
+  return startup->routing.visible(startup->routing.ctx, source, out_count);
 }
 static bool seat_index_is_active(const qa_app_prepared_startup *startup, size_t index) {
   return seat_is_active(startup, startup->seats[index].id);
@@ -967,9 +983,10 @@ static bool weapon_command_text(const qa_input_binding *binding) {
   for (size_t i = 0; i < 3; i++) {
     size_t length = strlen(words[i]);
     bool match = true;
-    for (size_t j = 0; j < length; j++)
+    for (size_t j = 0; j < length && match; j++) /* stops at the terminator of a shorter text */
       if (tolower((unsigned char)binding->target.text[j]) != words[i][j]) match = false;
-    if (match && isspace((unsigned char)binding->target.text[length])) return true;
+    /* TS /^(?:weapon|impulse|use)\s/i: \s is JS white space. */
+    if (match && qa_js_white_space_length(binding->target.text + length) != 0) return true;
   }
   return false;
 }
@@ -1013,7 +1030,13 @@ void qa_app_prepared_startup_adopt_binding_defaults(qa_app_prepared_startup *sta
 }
 qa_input_binding *qa_app_prepared_startup_bindings(qa_app_prepared_startup *startup,
     qa_seat_id id, const qa_input_binding *defaults, size_t default_count, size_t *out_count) {
-  qa_input_binding *bindings = qa_app_prepared_startup_preview_bindings(startup, id, defaults, default_count, out_count);
+  qa_input_binding *preview = qa_app_prepared_startup_preview_bindings(startup, id, defaults, default_count, out_count);
+  /* The preview borrows strings from the seat's stored bindings, which binding the seat replaces and frees: the
+   * result is a deep copy (TS returns binding objects that stay alive by reference). */
+  qa_input_binding *bindings = xmalloc((*out_count + 1) * sizeof *bindings);
+  for (size_t i = 0; i < *out_count; i++)
+    if (!qa_input_binding_copy(&bindings[i], &preview[i])) qa_range_error("Out of memory");
+  free(preview);
   qa_app_prepared_startup_adopt_binding_defaults(startup, id, defaults, default_count);
   qa_app_prepared_seat *seat = find_seat(startup, id, NULL);
   if (seat != NULL) {
@@ -1068,6 +1091,34 @@ bool qa_app_prepared_startup_seat_choices(const qa_app_prepared_startup *startup
     return true;
   }
   return false;
+}
+bool qa_app_prepared_startup_clear_overridden_keys(qa_app_prepared_startup *startup, qa_seat_id id) {
+  size_t index = 0;
+  if (find_seat(startup, id, &index) == NULL) return false;
+  seat_state *state = &startup->states[index];
+  for (size_t i = 0; i < state->overridden_count; i++) free(state->overridden_keys[i]);
+  state->overridden_count = 0;
+  return true;
+}
+bool qa_app_prepared_startup_publish_seat_choices(qa_app_prepared_startup *startup, qa_seat_id id,
+    bool all_bindings_chosen, bool has_selected, const qa_input_binding *selected, size_t selected_count,
+    bool has_authored, const qa_input_binding *authored, size_t authored_count,
+    const char *const *overridden_keys, size_t overridden_count) {
+  size_t index = 0;
+  qa_app_prepared_seat *seat = find_seat(startup, id, &index);
+  if (seat == NULL) return false;
+  seat_state *state = &startup->states[index];
+  seat->all_bindings_chosen = all_bindings_chosen;
+  free(state->selected);
+  state->has_selected = has_selected;
+  state->selected = has_selected ? copy_bindings(selected, selected_count) : NULL;
+  state->selected_count = has_selected ? selected_count : 0;
+  free(state->authored);
+  state->has_authored = has_authored;
+  state->authored = has_authored ? copy_bindings(authored, authored_count) : NULL;
+  state->authored_count = has_authored ? authored_count : 0;
+  for (size_t i = 0; i < overridden_count; i++) overridden_add(state, overridden_keys[i]);
+  return true;
 }
 /* --- run()/execute()/advanceFrame() --- */
 static void apply_startup_variables(qa_app_prepared_startup *startup) {
@@ -1178,10 +1229,15 @@ static void collect_bindings(void *ctx) {
   if (!seat->collecting_bindings) return;
   size_t count = 0;
   char *const *tokens = qa_command_buffer_tokenized_arguments(startup->commands, &count);
-  const char *name = count > 0 ? tokens[0] : NULL;
+  /* TS noteBindingCommand: the command name is ASCII-folded. */
+  char *name = qa_ascii_fold(count > 0 ? tokens[0] : "");
+  if (name == NULL) qa_range_error("Out of memory");
   const char *key = count > 1 ? tokens[1] : NULL;
-  if (name != NULL && strcmp(name, "unbindall") == 0) seat->all_bindings_chosen = true;
-  if (name != NULL && key != NULL && (strcmp(name, "bind") == 0 || strcmp(name, "unbind") == 0)) {
+  bool unbind_all = strcmp(name, "unbindall") == 0;
+  bool binding = strcmp(name, "bind") == 0 || strcmp(name, "unbind") == 0;
+  free(name);
+  if (unbind_all) seat->all_bindings_chosen = true;
+  if (key != NULL && binding) {
     qa_physical_input input = {0};
     if (qa_named_physical_input(key, 0, &input)) {
       char *physical_key = qa_physical_input_key(&input);
@@ -1257,7 +1313,8 @@ static bool run_step(qa_app_prepared_startup *startup) {
         if (startup->active == NULL) qa_range_error("Out of memory");
         if (startup->seat_count > 0) startup->seats[index].collecting_bindings = index != 0;
       }
-      bool done = qa_app_startup_config_execute_frame(startup->active, startup->commands,
+      qa_app_startup_config_append plain = { NULL, NULL };
+      bool done = qa_app_startup_config_execute_frame(startup->active, startup->commands, plain,
           collect_bindings, &startup->apply, run_should_continue, startup);
       if (!done) return false;
       qa_app_startup_config_destroy(startup->active);
@@ -1389,6 +1446,7 @@ struct qa_app_prepared_client_commands {
   bool has_original_console;
   staged_seat *seats; size_t seat_count;
   qa_binding_commands_registration *binding_registration;
+  void *print_state; /* the registration's print ctx (TS closure), freed with the client */
   qa_app_q1_view_commands *view_registration;
 };
 static staged_seat *staged_find(qa_app_prepared_client_commands *client, qa_seat_id id) {
@@ -1491,8 +1549,8 @@ qa_app_prepared_client_commands *qa_app_prepare_client_commands(qa_command_buffe
   }
   client->binding_registration = qa_register_binding_commands(client->program->commands,
       staged_lookup, client, staged_print_text, print_state, console_view);
+  client->print_state = print_state;
   if (client->binding_registration == NULL) qa_range_error("Out of memory");
-  /* print_state leaks with the registration, as the TS closure. */
   client->view_registration = qa_app_register_q1_view_commands(client->program->commands);
   return client;
 }
@@ -1565,6 +1623,7 @@ void qa_app_prepared_client_commands_publish(qa_app_prepared_client_commands *cl
 void qa_app_prepared_client_commands_destroy(qa_app_prepared_client_commands *client) {
   if (client == NULL) return;
   if (client->binding_registration != NULL) qa_binding_commands_registration_destroy(client->binding_registration);
+  free(client->print_state);
   if (client->view_registration != NULL) qa_app_q1_view_commands_release(client->view_registration);
   if (client->staged_console != NULL) qa_binding_store_destroy(client->staged_console);
   free(client->original_console);

@@ -1,4 +1,5 @@
 /* Port of src/network/q2/connectionless.ts. GPL-2.0-or-later. */
+#include "qa/network/common/js_number.h"
 #include "qa/network/q2/connectionless.h"
 
 #include <ctype.h>
@@ -11,6 +12,7 @@
 #include "qa/foundation/support.h"
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/message.h"
+#include "qa/foundation/js.h"
 
 static char *dup_str(const char *s) {
   size_t n = strlen(s);
@@ -19,30 +21,8 @@ static char *dup_str(const char *s) {
   return out;
 }
 /* JS Number(text): trimmed, empty is 0, full parse or NaN. */
-static double js_number(const char *text) {
-  while (*text != '\0' && isspace((unsigned char)*text)) text++;
-  size_t n = strlen(text);
-  while (n > 0 && isspace((unsigned char)text[n - 1])) n--;
-  if (n == 0) return 0;
-  char *copy = (char *)malloc(n + 1);
-  if (copy == NULL) return NAN;
-  memcpy(copy, text, n);
-  copy[n] = '\0';
-  double value;
-  if (n > 2 && copy[0] == '0' && (copy[1] == 'b' || copy[1] == 'B' ||
-                                  copy[1] == 'o' || copy[1] == 'O')) {
-    int base = (copy[1] == 'b' || copy[1] == 'B') ? 2 : 8;
-    char *end = NULL;
-    unsigned long long parsed = strtoull(copy + 2, &end, base);
-    value = end != copy + 2 && *end == '\0' ? (double)parsed : NAN;
-  } else {
-    char *end = NULL;
-    value = strtod(copy, &end);
-    if (end == copy || *end != '\0') value = NAN;
-  }
-  free(copy);
-  return value;
-}
+/* TS Number(text). */
+static double js_number(const char *text) { return qa_js_string_to_number(text); }
 
 static char *dup_span(const char *s, size_t n) {
   char *out = (char *)malloc(n + 1);
@@ -54,11 +34,8 @@ static char *dup_span(const char *s, size_t n) {
 }
 /* JS number-to-string for the values used here (integers plainly). */
 static void number_text(double value, char *buffer, size_t capacity) {
-  if (value == (double)(int64_t)value) {
-    (void)snprintf(buffer, capacity, "%lld", (long long)(int64_t)value);
-  } else {
-    (void)snprintf(buffer, capacity, "%g", value);
-  }
+  /* String(value); the old int64 cast was undefined for NaN and beyond 2^63. */
+  qa_net_js_number(value, buffer, capacity);
 }
 
 char *qa_q2_status_text(const qa_q2_status *status, bool has_maximum, double maximum) {
@@ -488,7 +465,7 @@ bool qa_q2_connectionless_server_receive(qa_q2_connectionless_server *server,
       qa_q2_connect_request_free(&request);
       result = true;
     } else if (!qa_q2_challenge_table_validate(server->challenges, from,
-                                               request.challenge)) {
+                                               request.challenge, now)) {
       host_reply_text(host, from, "print\nBad challenge.\n");
       qa_q2_connect_request_free(&request);
       result = true;
@@ -569,24 +546,66 @@ static void rcon_output(void *vctx, const char *text) {
   }
 }
 
+typedef struct rcon_scope {
+  const qa_q2_connectionless_host *host;
+  const qa_net_address *from;
+  const qa_q2_connectionless_message *message;
+  double now;
+  qa_rcon_guard *guard;
+} rcon_scope;
+static void rcon_body(void *arg);
+typedef struct execute_scope {
+  const qa_q2_connectionless_host *host;
+  const char *command;
+  bool limited;
+  void *buffer;
+} execute_scope;
+static void rcon_output(void *ctx, const char *text);
+static void execute_body(void *arg) {
+  execute_scope *scope = (execute_scope *)arg;
+  scope->host->execute_rcon(scope->host->ctx, scope->command, scope->limited, rcon_output,
+                            scope->buffer);
+}
+typedef struct rcon_owned { char *buffer; } rcon_owned;
+static void rcon_owned_release(void *arg) { free(((rcon_owned *)arg)->buffer); }
 void qa_q2_handle_rcon(const qa_q2_connectionless_host *host,
                        const qa_net_address *from,
                        const qa_q2_connectionless_message *message, double now) {
   if (host->profile_rerelease && !host->rcon_rate_allowed(host->ctx, now)) return;
+  qa_rcon_guard fresh;
+  qa_rcon_guard *guard = host->rcon_guard;
+  if (guard == NULL) {
+    qa_rcon_guard_init(&fresh, 3, 1024);
+    guard = &fresh;
+  }
+  rcon_scope scope = {host, from, message, now, guard};
+  qa_caught_error caught;
+  bool ok = qa_try(rcon_body, &scope, &caught);
+  if (guard == &fresh) qa_rcon_guard_destroy(&fresh);
+  if (!ok) qa_rethrow(&caught);
+}
+static void rcon_body(void *arg) {
+  rcon_scope *scope = (rcon_scope *)arg;
+  const qa_q2_connectionless_host *host = scope->host;
+  const qa_net_address *from = scope->from;
+  const qa_q2_connectionless_message *message = scope->message;
+  qa_rcon_guard *guard = scope->guard;
+  if (!qa_rcon_guard_permitted(guard, from, scope->now)) return;
   const char *password = message->argument_count > 0 ? message->arguments[0] : "";
   const char *full = host->rcon_password(host->ctx);
   const char *limit_password = NULL;
   const char **prefixes = NULL;
   size_t prefix_count = 0;
   bool has_limit = host->limited_rcon(host->ctx, &limit_password, &prefixes, &prefix_count);
-  bool full_ok = full != NULL && full[0] != '\0' && strcmp(password, full) == 0;
+  bool full_ok = qa_password_matches(full != NULL ? full : "", password);
   bool limited = !full_ok && host->profile_rerelease && has_limit &&
-                 limit_password != NULL && limit_password[0] != '\0' &&
-                 strcmp(password, limit_password) == 0;
+                 qa_password_matches(limit_password != NULL ? limit_password : "", password);
   if (!full_ok && !limited) {
+    qa_rcon_guard_failed(guard, from, scope->now);
     host_reply_text(host, from, "print\nBad rcon_password.\n");
     return;
   }
+  qa_rcon_guard_succeeded(guard, from);
   if (host->profile_rerelease) host->recharge_rcon_rate(host->ctx);
   char *command = NULL;
   if (!host->profile_rerelease) {
@@ -626,8 +645,16 @@ void qa_q2_handle_rcon(const qa_q2_connectionless_host *host,
     }
   }
   rcon_buffer buffer = {host, from, NULL, 0, 0};
-  host->execute_rcon(host->ctx, command, limited, rcon_output, &buffer);
-  rcon_flush(&buffer);
-  free(buffer.buffer);
+  /* TS try { await host.executeRcon(...) } finally { flush(); } */
+  execute_scope execute = {host, command, limited, &buffer};
+  qa_caught_error caught;
+  bool ok = qa_try(execute_body, &execute, &caught);
   free(command);
+  rcon_owned owned = {buffer.buffer};
+  qa_cleanup node;
+  qa_cleanup_push(&node, rcon_owned_release, &owned);
+  rcon_flush(&buffer);
+  qa_cleanup_pop(&node);
+  free(buffer.buffer);
+  if (!ok) qa_rethrow(&caught);
 }

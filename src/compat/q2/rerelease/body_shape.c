@@ -45,8 +45,10 @@ static bool fits_cb(void *vctx, qa_bounds bounds) {
   return result.bytes.bytes[0] == 0;
 }
 static void apply_frame(frame_t *f) {
+  qa_vec3 min2;
+  qa_vec3 max2;
   if (f->body->current_actor) f->body->current_actor(f->body->ctx);
-  qa_bounds desired = f->body->has_requested ? f->body->requested : (qa_bounds){read_vec(f, "mins"), read_vec(f, "maxs")};
+  qa_bounds desired = f->body->has_requested ? f->body->requested : (min2 = read_vec(f, "mins"), max2 = read_vec(f, "maxs"), (qa_bounds){min2, max2});
   qa_bounds next = qa_movement_bounds(f->accepted, desired, fits_cb, f);
   bool same = next.min.x == desired.min.x && next.min.y == desired.min.y && next.min.z == desired.min.z &&
               next.max.x == desired.max.x && next.max.y == desired.max.y && next.max.z == desired.max.z;

@@ -1,61 +1,56 @@
 /*
- * Port of src/content/q1/foundation/entity-services.ts: the
- * getters (entity()/player()/isPlayer()/body()/sourceTarget(), the
- * renamed qa_q1_get_*; a qa_q1_entity() function would collide
- * with the qa_q1_entity typedef), dropQ1Punch/ammoItem, the
- * registration family, attachExisting/attachPlayer, weapon
- * selection, inventory, scheduling, and the emit/host forwards,
- * plus attack/weaponInput/playerFrame/physicsStep/physicsEntity
- * (with applyProjectileBehavior/projectilePhysics) on the landed
- * weapons.ts fire paths and the host weapon-behavior/pusher
- * ports. qa_q1_services_init registers the landed module
- * callbacks including registerWeaponCallbacks. GPL-2.0-or-later.
- *
- * TS resolves actors through host.actors.resolveOwned and the
- * entities/players OwnedActor maps; the C qa_q1_host mirror keeps
- * bodies/live state actor-local (see types.h), so resolution is a
- * scan of the services' entity/player arrays gated on the actor's
- * live flag (resolveOwned returns null for a released actor).
- * qa_q1_remove splices the arrays (the TS onRelease map deletes)
- * but does not free the actor/player structs: TS has GC, and the
- * C arrays may hold caller-owned storage.
+ * Port of src/content/q1/foundation/entity-services.ts. The getters
+ * entity()/player()/isPlayer()/body()/sourceTarget() are the renamed
+ * qa_q1_get_* (a qa_q1_entity() function would collide with the
+ * qa_q1_entity typedef). Bodies, combat, inventory, callbacks and actor
+ * liveness are the shared world tables on game->host, called directly
+ * as TS does. GPL-2.0-or-later.
  */
 #include "qa/content/q1/foundation/entity_services.h"
+#include "qa/content/q1/foundation/shambler_damage.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/content/q1/foundation/checkpoint.h"
-#include "qa/content/q1/foundation/monsters.h"
 #include "qa/content/q1/foundation/movers.h"
 #include "qa/content/q1/foundation/pickups.h"
 #include "qa/content/q1/foundation/spawns.h"
 #include "qa/content/q1/foundation/weapons.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/movement/q1/pusher.h"
 #include "qa/movement/q1/water_transition.h"
+#include "qa/world/gameplay/damage_modifier.h"
 
-qa_q1_actor *qa_q1_get_entity(qa_q1_services *game, const qa_actor_id *actor) {
-  if (actor == NULL) return NULL;
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q1_actor *entity = game->entities[i];
-    if (entity != NULL && entity->live && qa_same_actor(entity->actor.id, *actor))
-      return entity;
-  }
+/* TS entities.get(owner) / players.get(owner): Maps keyed by OwnedActor. */
+static qa_q1_actor *entity_of(qa_q1_services *game, qa_owned_actor owner) {
+  for (size_t i = 0; i < game->entity_count; i++)
+    if (qa_same_owned_actor(game->entities[i]->actor, owner)) return game->entities[i];
   return NULL;
 }
-qa_q1_player_state *qa_q1_player(qa_q1_services *game, qa_actor_id actor) {
-  for (size_t i = 0; i < game->player_count; i++) {
-    qa_q1_player_state *player = game->players[i];
-    if (player != NULL && qa_same_actor(player->actor.id, actor)) return player;
-  }
+static qa_q1_player_state *player_of(qa_q1_services *game, qa_owned_actor owner) {
+  for (size_t i = 0; i < game->player_count; i++)
+    if (qa_same_owned_actor(game->players[i]->actor, owner)) return game->players[i];
   return NULL;
+}
+qa_q1_actor *qa_q1_get_entity(qa_q1_services *game, const qa_actor_id *actor) {
+  if (actor == NULL) return NULL;
+  qa_owned_actor owner;
+  if (!qa_session_actor_registry_resolve_owned(game->host.actors, *actor, &owner)) return NULL;
+  return entity_of(game, owner);
+}
+qa_q1_player_state *qa_q1_player(qa_q1_services *game, qa_actor_id actor) {
+  qa_owned_actor owner;
+  if (!qa_session_actor_registry_resolve_owned(game->host.actors, actor, &owner)) return NULL;
+  return player_of(game, owner);
 }
 bool qa_q1_is_player(qa_q1_services *game, const qa_actor_id *actor) {
   if (actor == NULL) return false;
   if (qa_q1_player(game, *actor) != NULL) return true;
-  if (game->host.players == NULL) return false;
   size_t count = 0;
   const qa_actor_id *players = game->host.players(game->host.ctx, &count);
   for (size_t i = 0; i < count; i++)
@@ -63,11 +58,9 @@ bool qa_q1_is_player(qa_q1_services *game, const qa_actor_id *actor) {
   return false;
 }
 qa_q1_body qa_q1_get_body(qa_q1_services *game, qa_q1_actor *entity) {
-  (void)game;
-  /* TS: host.bodies.read(entity.actor.id); null throws. The
-   * actor-local mirror has no body once the actor is released. */
-  if (entity == NULL || !entity->live) qa_range_error("Missing Q1 body");
-  return entity->body;
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, entity->actor.id);
+  if (!body.has_value) qa_range_error("Missing Q1 body"); /* TS Error throw */
+  return qa_q1_body_from_state(body.value);
 }
 qa_q1_source_target qa_q1_get_source_target(qa_q1_services *game, qa_actor_id actor) {
   if (game->host.source_target != NULL) {
@@ -75,11 +68,12 @@ qa_q1_source_target qa_q1_get_source_target(qa_q1_services *game, qa_actor_id ac
     if (game->host.source_target(game->host.ctx, actor, &observed)) return observed;
   }
   qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
+  bool aimed_damage2 = entity != NULL && entity->aimed_damage;
+  bool push2 = entity != NULL && entity->movement != NULL && strcmp(entity->movement, "push") == 0;
+  bool player = qa_q1_is_player(game, &actor);
+  bool slidebox2 = entity != NULL && entity->solid != NULL && strcmp(entity->solid, "slidebox") == 0;
   qa_q1_source_target result = {
-      entity != NULL && entity->aimed_damage,
-      entity != NULL && entity->movement != NULL && strcmp(entity->movement, "push") == 0,
-      qa_q1_is_player(game, &actor),
-      entity != NULL && entity->solid != NULL && strcmp(entity->solid, "slidebox") == 0};
+      aimed_damage2, push2, player, slidebox2};
   return result;
 }
 
@@ -122,17 +116,6 @@ static const qa_q1_weapon_definition *registered(qa_q1_services *game,
       return game->registered_weapons[i].def;
   return NULL;
 }
-static qa_q1_actor *entity_any(qa_q1_services *game, qa_actor_id actor) {
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q1_actor *entity = game->entities[i];
-    if (entity != NULL && qa_same_actor(entity->actor.id, actor)) return entity;
-  }
-  return NULL;
-}
-static qa_q1_player_state *player_owned(qa_q1_services *game,
-                                        qa_owned_actor actor) {
-  return qa_q1_player(game, actor.id);
-}
 
 /* --- dropQ1Punch / ammoItem --- */
 qa_vec3 qa_q1_drop_punch(qa_vec3 angles, double elapsed,
@@ -142,36 +125,25 @@ qa_vec3 qa_q1_drop_punch(qa_vec3 angles, double elapsed,
   qa_vec3 direction = angles;
   double magnitude =
       qa_mvm_vector_normalize(&math, qa_vec3_access_plain(&direction));
-  double remaining = numeric->subtract(
-      numeric->ctx, magnitude, numeric->multiply(numeric->ctx, 10, elapsed));
-  if (remaining < 0) remaining = 0;
+  /* Math.max(0, x): keeps NaN and turns -0 into +0. */
+  const double remaining = qa_js_max(0, numeric->subtract(
+      numeric->ctx, magnitude, numeric->multiply(numeric->ctx, 10, elapsed)));
   qa_vec3 punch = QA_Q1_ZERO;
   qa_mvm_vector_scale(&math, qa_vec3_access_plain(&direction), remaining,
                       qa_vec3_access_plain(&punch));
   return punch;
 }
+/* Ammunition of the id1 weapons; weapons that other programs add register
+ * their own through registerWeapon. */
 qa_item_id qa_q1_ammo_item(qa_q1_weapon weapon) {
-  if (same(weapon, "axe")) return NULL;
   if (same(weapon, "shotgun") || same(weapon, "supershotgun"))
     return "q1:ammo/shells";
   if (same(weapon, "nailgun") || same(weapon, "supernailgun"))
     return "q1:ammo/nails";
   if (same(weapon, "grenadelauncher") || same(weapon, "rocketlauncher"))
     return "q1:ammo/rockets";
-  if (same(weapon, "lightning") || same(weapon, "hipnotic:laser") ||
-      same(weapon, "mg3:laser"))
-    return "q1:ammo/cells";
-  if (same(weapon, "hipnotic:mjolnir") || same(weapon, "rogue:grapple") ||
-      same(weapon, "ctf:grapple") || same(weapon, "mg3:mjolnir"))
-    return NULL;
-  if (same(weapon, "hipnotic:proximity")) return "q1:ammo/rockets";
-  if (same(weapon, "rogue:lava-nailgun") ||
-      same(weapon, "rogue:lava-supernailgun"))
-    return "rogue:ammo/lava-nails";
-  if (same(weapon, "rogue:multi-grenade") || same(weapon, "rogue:multi-rocket"))
-    return "rogue:ammo/multi-rockets";
-  if (same(weapon, "rogue:plasma")) return "rogue:ammo/plasma";
-  return NULL; /* TS switch is exhaustive over Q1Weapon */
+  if (same(weapon, "lightning")) return "q1:ammo/cells";
+  return NULL; /* TS default: null */
 }
 
 /* --- services accessors --- */
@@ -199,16 +171,108 @@ void qa_q1_set_base_team_health(qa_q1_services *game, bool enabled) {
   game->base_team_health = enabled;
 }
 double qa_q1_host_random(qa_q1_services *game) {
-  return game->host.random != NULL ? game->host.random(game->host.ctx) : 0;
+  return game->host.random(game->host.ctx);
 }
 qa_q1_trace qa_q1_host_trace(qa_q1_services *game, qa_q1_trace_request request) {
-  if (game->host.trace != NULL) return game->host.trace(game->host.ctx, request);
-  qa_q1_trace empty;
-  memset(&empty, 0, sizeof empty);
-  return empty;
+  return game->host.trace(game->host.ctx, request);
+}
+/* Content-addressed game-lifetime storage for qa_q1_emit (open addressing). */
+typedef struct emit_blob { uint64_t hash; size_t length; unsigned char *bytes; } emit_blob;
+struct qa_q1_emit_intern { emit_blob *slots; size_t count, capacity; };
+static uint64_t blob_hash(const void *bytes, size_t length) {
+  const unsigned char *p = bytes;
+  uint64_t hash = 1469598103934665603ULL;
+  for (size_t i = 0; i < length; i++) { hash ^= p[i]; hash *= 1099511628211ULL; }
+  return hash;
+}
+static const void *intern_blob(qa_q1_services *game, const void *bytes, size_t length) {
+  struct qa_q1_emit_intern *table = game->emit_intern;
+  if (table == NULL) {
+    table = calloc(1, sizeof *table);
+    if (table == NULL) qa_range_error("out of memory");
+    game->emit_intern = table;
+  }
+  if ((table->count + 1) * 4 >= table->capacity * 3) {
+    size_t capacity = table->capacity == 0 ? 64 : table->capacity * 2;
+    emit_blob *slots = calloc(capacity, sizeof *slots);
+    if (slots == NULL) qa_range_error("out of memory");
+    for (size_t i = 0; i < table->capacity; i++) {
+      if (table->slots[i].bytes == NULL) continue;
+      size_t at = (size_t)(table->slots[i].hash & (capacity - 1));
+      while (slots[at].bytes != NULL) at = (at + 1) & (capacity - 1);
+      slots[at] = table->slots[i];
+    }
+    free(table->slots);
+    table->slots = slots;
+    table->capacity = capacity;
+  }
+  uint64_t hash = blob_hash(bytes, length);
+  size_t at = (size_t)(hash & (table->capacity - 1));
+  while (table->slots[at].bytes != NULL) {
+    emit_blob *slot = &table->slots[at];
+    if (slot->hash == hash && slot->length == length && memcmp(slot->bytes, bytes, length) == 0) return slot->bytes;
+    at = (at + 1) & (table->capacity - 1);
+  }
+  unsigned char *copy = malloc(length == 0 ? 1 : length);
+  if (copy == NULL) qa_range_error("out of memory");
+  if (length != 0) memcpy(copy, bytes, length);
+  table->slots[at] = (emit_blob){hash, length, copy};
+  table->count++;
+  return copy;
+}
+static void emit_intern_free(struct qa_q1_emit_intern *table) {
+  if (table == NULL) return;
+  for (size_t i = 0; i < table->capacity; i++) free(table->slots[i].bytes);
+  free(table->slots);
+  free(table);
+}
+static const char *intern_text(qa_q1_services *game, const char *text) {
+  return text == NULL ? NULL : intern_blob(game, text, strlen(text) + 1);
+}
+/* Zeroed scratch so struct padding hashes deterministically. */
+static const qa_q1_msg_arg *intern_args(qa_q1_services *game, const qa_q1_msg_arg *args, size_t count) {
+  if (args == NULL || count == 0) return args == NULL ? NULL : intern_blob(game, "", 0);
+  qa_q1_msg_arg *scratch = calloc(count, sizeof *scratch);
+  if (scratch == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < count; i++) {
+    scratch[i].is_number = args[i].is_number;
+    scratch[i].number = args[i].number;
+    scratch[i].text = intern_text(game, args[i].text);
+  }
+  const qa_q1_msg_arg *interned = intern_blob(game, scratch, count * sizeof *scratch);
+  free(scratch);
+  return interned;
+}
+static const qa_q1_message_part *intern_parts(qa_q1_services *game, const qa_q1_message_part *parts, size_t count) {
+  if (parts == NULL || count == 0) return parts == NULL ? NULL : intern_blob(game, "", 0);
+  qa_q1_message_part *scratch = calloc(count, sizeof *scratch);
+  if (scratch == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < count; i++) {
+    scratch[i].text = intern_text(game, parts[i].text);
+    scratch[i].args = intern_args(game, parts[i].args, parts[i].arg_count);
+    scratch[i].arg_count = parts[i].arg_count;
+  }
+  const qa_q1_message_part *interned = intern_blob(game, scratch, count * sizeof *scratch);
+  free(scratch);
+  return interned;
 }
 void qa_q1_emit(qa_q1_services *game, qa_q1_event event) {
-  if (game->host.emit != NULL) game->host.emit(game->host.ctx, event);
+  event.kind = intern_text(game, event.kind);
+  event.sound_channel = intern_text(game, event.sound_channel);
+  event.path = intern_text(game, event.path);
+  event.text = intern_text(game, event.text);
+  event.effect = intern_text(game, event.effect);
+  event.view_model = intern_text(game, event.view_model);
+  event.pattern = intern_text(game, event.pattern);
+  event.map = intern_text(game, event.map);
+  event.id = intern_text(game, event.id);
+  event.args = intern_args(game, event.args, event.arg_count);
+  event.parts = intern_parts(game, event.parts, event.part_count);
+  event.beam_style = intern_text(game, event.beam_style);
+  event.weapon = intern_text(game, event.weapon);
+  event.powerup = intern_text(game, event.powerup);
+  event.attack.kind = intern_text(game, event.attack.kind);
+  game->host.emit(game->host.ctx, event);
 }
 
 /* --- registration family --- */
@@ -233,12 +297,13 @@ bool qa_q1_source_path_touch(qa_q1_services *game, qa_q1_actor *corner,
 }
 void qa_q1_register_weapon_rules(qa_q1_services *game,
                                  const qa_q1_weapon_rules *rules) {
-  for (size_t i = 0; i < game->weapon_rule_count; i++) {
+  /* TS checks the id over every rule before the consumption owner. */
+  for (size_t i = 0; i < game->weapon_rule_count; i++)
     if (same(game->weapon_rules[i]->id, rules->id))
       qa_range_error("Duplicate Q1 weapon rules: %s", rules->id);
+  for (size_t i = 0; i < game->weapon_rule_count; i++)
     if (rules->consume_ammo != NULL && game->weapon_rules[i]->consume_ammo != NULL)
       qa_range_error("Q1 source ammunition consumption already registered");
-  }
   grow((void **)&game->weapon_rules, &game->weapon_rule_count,
        &game->weapon_rule_capacity, sizeof *game->weapon_rules);
   game->weapon_rules[game->weapon_rule_count++] = rules;
@@ -250,7 +315,7 @@ bool qa_q1_consume_weapon_ammo(qa_q1_services *game,
     if (game->weapon_rules[i]->consume_ammo != NULL)
       return game->weapon_rules[i]->consume_ammo(game->weapon_rules[i]->ctx,
                                                  game, player, item, amount);
-  return qa_q1_inventory_consume(game, player->actor, item, amount);
+  return qa_shared_inventory_table_consume(game->host.inventory, player->actor, item, amount);
 }
 void qa_q1_weapon_before_fire(qa_q1_services *game, qa_q1_player_state *player) {
   for (size_t i = 0; i < game->weapon_rule_count; i++)
@@ -376,9 +441,16 @@ qa_item_id qa_q1_services_weapon_ammo(qa_q1_services *game, qa_q1_weapon weapon)
 }
 bool qa_q1_weapon_available(qa_q1_services *game, qa_q1_player_state *player,
                             qa_q1_weapon weapon, const char *purpose) {
+  return qa_q1_weapon_available_counted(game, player, weapon, purpose, NULL, NULL);
+}
+/* TS weaponAvailable(player, weapon, purpose, ammoCount); count NULL is the
+ * TS default `item => host.inventory.count(player.actor.id, item)`. */
+bool qa_q1_weapon_available_counted(qa_q1_services *game, qa_q1_player_state *player,
+                                    qa_q1_weapon weapon, const char *purpose,
+                                    qa_q1_ammo_count_fn count, void *count_ctx) {
   bool best = purpose == NULL || strcmp(purpose, "best") == 0;
-  if (qa_q1_inventory_count(game, player->actor.id,
-                            qa_q1_services_weapon_item(game, weapon)) == 0)
+  if (qa_shared_inventory_table_count(game->host.inventory, player->actor.id,
+                                      qa_q1_services_weapon_item(game, weapon)) == 0)
     return false;
   const qa_q1_weapon_definition *extension = registered(game, weapon);
   if (!qa_q1_is_base_weapon(weapon) && extension == NULL) return false;
@@ -397,8 +469,10 @@ bool qa_q1_weapon_available(qa_q1_services *game, qa_q1_player_state *player,
                       same(weapon, "supershotgun"))
                  ? 2
                  : 1);
-  return ammo == NULL ||
-         qa_q1_inventory_count(game, player->actor.id, ammo) >= needed;
+  if (ammo == NULL) return true;
+  const double have = count != NULL ? count(count_ctx, ammo)
+                                    : qa_shared_inventory_table_count(game->host.inventory, player->actor.id, ammo);
+  return have >= needed;
 }
 bool qa_q1_fire_registered_weapon(qa_q1_services *game,
                                   qa_q1_player_state *player) {
@@ -428,139 +502,186 @@ void qa_q1_register_state_extension(qa_q1_services *game,
   game->state_extensions[game->state_extension_count++] = extension;
 }
 void qa_q1_register_spawn(qa_q1_services *game, const char *classname,
-                          qa_q1_spawn_fn handler) {
+                          qa_q1_spawn_fn handler, void *ctx) {
   for (size_t i = 0; i < game->spawner_count; i++)
-    if (same(game->spawners[i].classname, classname))
+    if (same(game->spawners[i].classname, classname)) {
+      if (game->keeping_owned_spawns) return;
       qa_range_error("Q1 spawn handler already registered: %s", classname);
+    }
   grow((void **)&game->spawners, &game->spawner_count, &game->spawner_capacity,
        sizeof *game->spawners);
   game->spawners[game->spawner_count].classname = dup_string(classname);
   game->spawners[game->spawner_count].fn = handler;
+  game->spawners[game->spawner_count].ctx = ctx;
   game->spawner_count++;
 }
+typedef struct keeping_restore { qa_q1_services *game; bool previous; } keeping_restore;
+static void restore_keeping(void *arg) {
+  const keeping_restore *restore = arg;
+  restore->game->keeping_owned_spawns = restore->previous;
+}
+void qa_q1_adjoin(qa_q1_services *game, void (*register_fn)(void *ctx, qa_q1_services *game), void *ctx) {
+  keeping_restore restore = {game, game->keeping_owned_spawns};
+  qa_cleanup cleanup; /* TS finally: a raise out of register_fn restores the flag */
+  qa_cleanup_push(&cleanup, restore_keeping, &restore);
+  game->keeping_owned_spawns = true;
+  register_fn(ctx, game);
+  qa_cleanup_pop(&cleanup);
+  game->keeping_owned_spawns = restore.previous;
+}
+void qa_q1_add_world_precache(qa_q1_services *game, void (*fn)(void *ctx, qa_q1_services *game), void *ctx) {
+  grow((void **)&game->world_precaches, &game->world_precache_count, &game->world_precache_capacity,
+       sizeof *game->world_precaches);
+  game->world_precaches[game->world_precache_count].fn = fn;
+  game->world_precaches[game->world_precache_count].ctx = ctx;
+  game->world_precache_count++;
+}
+bool qa_q1_has_spawn(const qa_q1_services *game, const char *classname) {
+  for (size_t i = 0; i < game->spawner_count; i++)
+    if (same(game->spawners[i].classname, classname)) return true;
+  return false;
+}
+void qa_q1_set_state_extension_restore_absent(qa_q1_services *game, const qa_q1_state_extension *extension,
+                                              void (*restore_absent)(void *ctx)) {
+  for (size_t i = 0; i < game->restore_absent_count; i++)
+    if (game->restore_absents[i].extension == extension) {
+      game->restore_absents[i].restore_absent = restore_absent;
+      return;
+    }
+  grow((void **)&game->restore_absents, &game->restore_absent_count, &game->restore_absent_capacity,
+       sizeof *game->restore_absents);
+  game->restore_absents[game->restore_absent_count].extension = extension;
+  game->restore_absents[game->restore_absent_count].restore_absent = restore_absent;
+  game->restore_absent_count++;
+}
+void (*qa_q1_state_extension_restore_absent(const qa_q1_services *game, const qa_q1_state_extension *extension))(void *ctx) {
+  for (size_t i = 0; i < game->restore_absent_count; i++)
+    if (game->restore_absents[i].extension == extension) return game->restore_absents[i].restore_absent;
+  return NULL;
+}
+bool qa_q1_source_world_word_get(const qa_q1_services *game, const char *name, double *out) {
+  for (size_t i = 0; i < game->source_world_word_count; i++)
+    if (same(game->source_world_words[i].name, name)) {
+      *out = game->source_world_words[i].value;
+      return true;
+    }
+  return false;
+}
+void qa_q1_source_world_word_set(qa_q1_services *game, const char *name, double value) {
+  for (size_t i = 0; i < game->source_world_word_count; i++)
+    if (same(game->source_world_words[i].name, name)) {
+      game->source_world_words[i].value = value; /* Map.set keeps the position */
+      return;
+    }
+  grow((void **)&game->source_world_words, &game->source_world_word_count, &game->source_world_word_capacity,
+       sizeof *game->source_world_words);
+  game->source_world_words[game->source_world_word_count].name = dup_string(name);
+  game->source_world_words[game->source_world_word_count].value = value;
+  game->source_world_word_count++;
+}
+void qa_q1_source_world_words_clear(qa_q1_services *game) {
+  for (size_t i = 0; i < game->source_world_word_count; i++) free(game->source_world_words[i].name);
+  game->source_world_word_count = 0;
+}
 void qa_q1_replace_spawn(qa_q1_services *game, const char *classname,
-                         qa_q1_spawn_fn handler) {
+                         qa_q1_spawn_fn handler, void *ctx) {
   for (size_t i = 0; i < game->spawner_count; i++)
     if (same(game->spawners[i].classname, classname)) {
       game->spawners[i].fn = handler;
+      game->spawners[i].ctx = ctx;
       return;
     }
   qa_range_error("No registered Q1 spawn to replace: %s", classname);
 }
 
-/* --- inventory (host table or the services fallback rows) --- */
-static size_t inventory_index(qa_q1_services *game, qa_actor_id actor,
-                              qa_item_id item, bool create) {
-  for (size_t i = 0; i < game->inventory_count; i++)
-    if (qa_same_actor(game->inventory[i].actor, actor) &&
-        same(game->inventory[i].item, item))
-      return i;
-  if (!create) return SIZE_MAX;
-  grow((void **)&game->inventory, &game->inventory_count,
-       &game->inventory_capacity, sizeof *game->inventory);
-  size_t at = game->inventory_count++;
-  game->inventory[at].actor = actor;
-  game->inventory[at].item = dup_string(item);
-  game->inventory[at].count = 0;
-  game->inventory[at].capacity = 0;
-  game->inventory[at].has_capacity = false;
-  return at;
-}
-double qa_q1_inventory_count(qa_q1_services *game, qa_actor_id actor,
-                             qa_item_id item) {
-  if (game->host.inventory_count != NULL)
-    return game->host.inventory_count(game->host.ctx, actor, item);
-  size_t at = inventory_index(game, actor, item, false);
-  return at == SIZE_MAX ? 0 : game->inventory[at].count;
-}
-double qa_q1_inventory_give(qa_q1_services *game, qa_owned_actor actor,
-                            qa_item_id item, double count) {
-  if (game->host.inventory_give != NULL)
-    return game->host.inventory_give(game->host.ctx, actor, item, count);
-  size_t at = inventory_index(game, actor.id, item, true);
-  double given = count;
-  if (game->inventory[at].has_capacity) {
-    double room = game->inventory[at].capacity - game->inventory[at].count;
-    if (given > room) given = room > 0 ? room : 0;
-  }
-  game->inventory[at].count += given;
-  return given;
-}
-bool qa_q1_inventory_consume(qa_q1_services *game, qa_owned_actor actor,
-                             qa_item_id item, double count) {
-  if (game->host.inventory_consume != NULL)
-    return game->host.inventory_consume(game->host.ctx, actor, item, count);
-  size_t at = inventory_index(game, actor.id, item, false);
-  if (at == SIZE_MAX || game->inventory[at].count < count) return false;
-  game->inventory[at].count -= count;
-  return true;
-}
-static void inventory_configure(qa_q1_services *game, qa_owned_actor actor,
-                                qa_item_id item, double count, double capacity) {
-  if (game->host.inventory_configure != NULL) {
-    game->host.inventory_configure(game->host.ctx, actor, item, count, capacity);
-    return;
-  }
-  size_t at = inventory_index(game, actor.id, item, true);
-  game->inventory[at].count = count;
-  game->inventory[at].capacity = capacity;
-  game->inventory[at].has_capacity = true;
-}
+/* --- inventory --- */
 void qa_q1_initialize_weapon_inventory(qa_q1_services *game,
                                        qa_owned_actor actor) {
-  /* TS: create(entries) when no inventory exists, else configure
-   * each entry; the mirror host has no create, so configure serves
-   * both (and seeds the fallback rows when no host table is set). */
-  for (size_t i = 0; i < 8; i++)
-    inventory_configure(game, actor, qa_q1_weapon_item(QA_Q1_WEAPONS[i]),
-                        same(QA_Q1_WEAPONS[i], "axe") ||
-                                same(QA_Q1_WEAPONS[i], "shotgun")
-                            ? 1
-                            : 0,
-                        1);
-  inventory_configure(game, actor, "q1:ammo/shells", 25, 100);
-  inventory_configure(game, actor, "q1:ammo/nails", 0, 200);
-  inventory_configure(game, actor, "q1:ammo/rockets", 0, 100);
-  inventory_configure(game, actor, "q1:ammo/cells", 0, 100);
+  qa_inventory_entry entries[12];
+  memset(entries, 0, sizeof entries);
+  for (size_t i = 0; i < 8; i++) {
+    entries[i].item = qa_q1_weapon_item(QA_Q1_WEAPONS[i]);
+    entries[i].count = same(QA_Q1_WEAPONS[i], "axe") || same(QA_Q1_WEAPONS[i], "shotgun") ? 1 : 0;
+    entries[i].capacity = 1;
+  }
+  static const struct { const char *item; double count, capacity; } ammo[4] = {
+      {"q1:ammo/shells", 25, 100}, {"q1:ammo/nails", 0, 200},
+      {"q1:ammo/rockets", 0, 100}, {"q1:ammo/cells", 0, 100}};
+  for (size_t i = 0; i < 4; i++) {
+    entries[8 + i].item = ammo[i].item;
+    entries[8 + i].count = ammo[i].count;
+    entries[8 + i].capacity = ammo[i].capacity;
+  }
+  if (!qa_shared_inventory_table_has(game->host.inventory, actor.id))
+    qa_shared_inventory_table_create_entries(game->host.inventory, actor, entries, 12);
+  else
+    for (size_t i = 0; i < 12; i++)
+      qa_shared_inventory_table_configure(game->host.inventory, actor, entries[i], NULL, NULL);
 }
 
 /* --- attach --- */
+static qa_damage_adjustment_result foreign_shambler_adjust(void *ctx, qa_damage_request request) {
+  const qa_q1_actor *entity = ctx;
+  qa_damage_adjustment_result result;
+  memset(&result, 0, sizeof result);
+  result.has_value = qa_q1_foreign_shambler_damage(entity->monster != NULL ? entity->monster->species : NULL, &request,
+                                                   &result.value.amount, &result.value.knockback);
+  return result;
+}
+/* TS admitEntity. A failed admission frees the unadmitted entity first
+ * (TS drops the unreferenced object), then throws. */
+static qa_q1_actor *admit_entity(qa_q1_services *game, qa_q1_actor *entity) {
+  qa_session_actor_registry_assert_owned(game->host.actors, entity->actor);
+  const char *failure = NULL;
+  if (entity_of(game, entity->actor) != NULL) failure = "Q1 actor already attached";
+  else if (!qa_shared_body_table_read(game->host.bodies, entity->actor.id).has_value ||
+           !qa_gameplay_authority_read(game->host.combat, entity->actor.id).has_value)
+    failure = "Attach Q1 behavior after shared body and combat admission";
+  if (failure != NULL) {
+    qa_q1_actor_free(entity);
+    free(entity);
+    qa_range_error("%s", failure);
+  }
+  grow((void **)&game->entities, &game->entity_count, &game->entity_capacity,
+       sizeof *game->entities);
+  game->entities[game->entity_count++] = entity;
+  qa_gameplay_authority_bind_damage_adjustment(game->host.combat, entity->actor, foreign_shambler_adjust, entity);
+  qa_q1_bind_actor_callbacks(game, entity);
+  if (game->host.register_entity != NULL) game->host.register_entity(game->host.ctx, entity, game);
+  return entity;
+}
 qa_q1_actor *qa_q1_attach_existing(qa_q1_services *game, qa_owned_actor actor,
                                    const char *classname,
                                    const qa_q1_entity *source,
                                    const double *source_ordinal) {
   qa_q1_actor *entity = xmalloc(sizeof *entity);
-  if (!qa_q1_actor_init(entity, actor, classname, source_ordinal, source))
+  if (!qa_q1_actor_init(entity, actor, classname, source_ordinal, game->host.combat, source))
     qa_range_error("Out of memory");
-  /* TS admitEntity: assertOwned + duplicate + shared body/combat
-   * checks; the mirror's actor-local body/health always exist.
-   * Damage-adjustment/callback binding and host.registerEntity
-   * have no mirror slots yet. */
-  if (entity_any(game, actor.id) != NULL) {
-    qa_q1_actor_free(entity);
-    free(entity);
-    qa_range_error("Q1 actor already attached");
-  }
-  grow((void **)&game->entities, &game->entity_count, &game->entity_capacity,
-       sizeof *game->entities);
-  game->entities[game->entity_count++] = entity;
-  return entity;
+  return admit_entity(game, entity);
 }
 qa_q1_player_state *qa_q1_attach_player(qa_q1_services *game,
                                         qa_owned_actor actor, qa_q1_weapon weapon,
                                         bool initialize_inventory,
                                         const double *max_health) {
-  qa_q1_player_state *existing = player_owned(game, actor);
+  qa_session_actor_registry_assert_owned(game->host.actors, actor);
+  qa_q1_player_state *existing = player_of(game, actor);
   if (existing != NULL) return existing;
   if (initialize_inventory) {
     qa_q1_initialize_weapon_inventory(game, actor);
-    inventory_configure(game, actor, "q1:key/silver", 0, 1);
-    inventory_configure(game, actor, "q1:key/gold", 0, 1);
+    static const char *const keys[2] = {"q1:key/silver", "q1:key/gold"};
+    for (size_t i = 0; i < 2; i++) {
+      qa_inventory_entry entry;
+      memset(&entry, 0, sizeof entry);
+      entry.item = keys[i];
+      entry.count = 0;
+      entry.capacity = 1;
+      qa_shared_inventory_table_configure(game->host.inventory, actor, entry, NULL, NULL);
+    }
   }
   qa_q1_player_state *state = xmalloc(sizeof *state);
   memset(state, 0, sizeof *state);
   state->actor = actor;
-  state->weapon = weapon;
+  state->weapon = weapon != NULL ? weapon : "shotgun";
   state->weapon_animation_at = -1;
   state->weapon_animation_base = 1;
   state->nail_side = 1;
@@ -568,12 +689,12 @@ qa_q1_player_state *qa_q1_attach_player(qa_q1_services *game,
       max_health != NULL
           ? *max_health
           : (same(game->options.edition, "rerelease") &&
-                     game->options.skill == 3 && game->options.deathmatch == 0
+                     qa_q1_option_skill(game) == 3 && game->options.deathmatch == 0
                  ? 50
                  : 100);
   state->mega_rot_at = -1;
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor.id);
-  state->view_angles = entity != NULL ? entity->body.angles : QA_Q1_ZERO;
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor.id);
+  state->view_angles = body.has_value ? body.value.angles : QA_Q1_ZERO;
   state->air_finished = game->time + 12;
   state->drown_damage = 2;
   state->auto_switch = "always";
@@ -599,16 +720,11 @@ qa_q1_player_state *qa_q1_attach_player(qa_q1_services *game,
 
 /* --- body / health / lifecycle --- */
 bool qa_q1_live(qa_q1_services *game, const qa_q1_actor *entity) {
-  (void)game;
-  return entity != NULL && entity->live;
+  return qa_session_actor_registry_is_live(game->host.actors, entity->actor.id);
 }
 double qa_q1_health(qa_q1_services *game, qa_actor_id actor) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  return entity == NULL ? 0 : entity->health;
-}
-void qa_q1_set_health(qa_q1_services *game, qa_owned_actor actor, double health) {
-  qa_q1_actor *entity = entity_any(game, actor.id);
-  if (entity != NULL) entity->health = health;
+  const qa_combat_state_result state = qa_gameplay_authority_read(game->host.combat, actor);
+  return state.has_value ? state.value.health : 0;
 }
 void qa_q1_set_body_patch(qa_q1_services *game, qa_q1_actor *entity,
                           const qa_q1_body *patch, bool origin, bool angles,
@@ -622,7 +738,19 @@ void qa_q1_set_body_patch(qa_q1_services *game, qa_q1_actor *entity,
     body.has_ground = patch->has_ground;
     body.ground = patch->ground;
   }
-  entity->body = body;
+  qa_shared_body_table_write(game->host.bodies, entity->actor, qa_q1_body_to_state(&body));
+}
+void qa_q1_set_body(qa_q1_services *game, qa_q1_actor *entity, const qa_q1_body_patch *patch) {
+  qa_q1_body body;
+  memset(&body, 0, sizeof body);
+  body.origin = patch->origin;
+  body.angles = patch->angles;
+  body.velocity = patch->velocity;
+  body.bounds = patch->bounds;
+  body.has_ground = patch->has_ground && patch->ground != NULL;
+  if (body.has_ground) body.ground = *patch->ground;
+  qa_q1_set_body_patch(game, entity, &body, patch->has_origin, patch->has_angles,
+                       patch->has_velocity, patch->has_bounds, patch->has_ground);
 }
 void qa_q1_launch_projectile_behavior(qa_q1_services *game, qa_q1_actor *entity,
     qa_actor_id shooter, qa_q1_weapon weapon, const char *role) {
@@ -657,7 +785,7 @@ void qa_q1_launch_projectile_behavior(qa_q1_services *game, qa_q1_actor *entity,
  * the optional chain does not evaluate body() when the port is absent. */
 static void apply_projectile_behavior(qa_q1_services *game, qa_owned_actor actor,
                                       double seconds) {
-  qa_q1_actor *entity = entity_any(game, actor.id);
+  qa_q1_actor *entity = entity_of(game, actor);
   if (entity == NULL || !qa_q1_live(game, entity)) return;
   const qa_weapon_behavior_projectile_port *port = game->host.weapon_behavior;
   if (port == NULL || port->step == NULL) return;
@@ -689,11 +817,13 @@ static void projectile_physics(qa_q1_services *game, qa_q1_actor *entity, double
                                     : game->options.edition;
   if (gib && !same(physics_edition, "rerelease"))
     qa_range_error("Gib movement requires the rerelease physics profile");
-  double gravity = game->options.gravity;
+  double gravity;
   if (gib) {
     double scale = qa_q1_actor_number(entity, "gravity");
     if (scale == 0 || scale != scale) scale = 1; /* TS || 1 (0/NaN falsy) */
-    gravity = scale * game->options.gravity;
+    gravity = scale * qa_q1_option_gravity(game);
+  } else {
+    gravity = qa_q1_option_gravity(game);
   }
   qa_q1_body body = qa_q1_get_body(game, entity);
   if (body.has_ground) return;
@@ -756,18 +886,21 @@ static void projectile_physics(qa_q1_services *game, qa_q1_actor *entity, double
   qa_q1_set_body_patch(game, entity, &patch, false, false, true, false, true);
   qa_q1_check_water_transition(game, entity);
 }
-void qa_q1_physics_entity(qa_q1_services *game, qa_owned_actor actor, double seconds,
+/* TS public applyProjectileBehavior (actor-execution calls it directly). */
+void qa_q1_apply_projectile_behavior(qa_q1_services *game, qa_owned_actor actor, double seconds) {
+  apply_projectile_behavior(game, actor, seconds);
+}
+void qa_q1_services_physics_entity(qa_q1_services *game, qa_owned_actor actor, double seconds,
                           double elapsed_seconds) {
   qa_q1_services_set_time(game, seconds);
   game->frame_seconds = elapsed_seconds;
-  qa_q1_actor *entity = entity_any(game, actor.id);
+  qa_q1_actor *entity = entity_of(game, actor);
   if (entity == NULL || !qa_q1_live(game, entity)) return;
   apply_projectile_behavior(game, actor, seconds);
   if (same(entity->movement, "push")) {
-    /* TS stepQ1Pusher({actor, elapsedSeconds, "translate"},
-     * host.pusherServices(this)); the mirror host seam is pusher_step. */
-    if (game->host.pusher_step != NULL)
-      (void)game->host.pusher_step(game->host.ctx, game, entity, elapsed_seconds);
+    const qa_q1_pusher_input input = {actor.id, elapsed_seconds, "translate"};
+    qa_q1_pusher_result result = qa_step_q1_pusher(input, game->host.pusher_services(game->host.ctx, game));
+    free(result.moved);
   } else if (same(entity->movement, "toss") || same(entity->movement, "bounce") ||
              same(entity->movement, "gib") || same(entity->movement, "fly") ||
              same(entity->movement, "flymissile")) {
@@ -783,7 +916,7 @@ void qa_q1_physics_step(qa_q1_services *game, double seconds, double elapsed_sec
     memcpy(snapshot, game->entities, count * sizeof *snapshot);
   }
   for (size_t i = 0; i < count; i++)
-    if (snapshot[i] != NULL) qa_q1_physics_entity(game, snapshot[i]->actor, seconds, elapsed_seconds);
+    if (snapshot[i] != NULL) qa_q1_services_physics_entity(game, snapshot[i]->actor, seconds, elapsed_seconds);
   free(snapshot);
   for (size_t i = 0; i < game->player_count; i++) {
     qa_q1_player_state *player = game->players[i];
@@ -794,10 +927,7 @@ void qa_q1_physics_step(qa_q1_services *game, double seconds, double elapsed_sec
   }
 }
 void qa_q1_link(qa_q1_services *game, qa_q1_actor *entity) {
-  /* TS host.bodies.link recomputes shared-table links; the
-   * actor-local mirror body needs none. */
-  (void)game;
-  (void)entity;
+  qa_shared_body_table_link(game->host.bodies, entity->actor, NULL);
 }
 void qa_q1_set_origin(qa_q1_services *game, qa_q1_actor *entity, qa_vec3 origin) {
   qa_q1_body patch;
@@ -821,31 +951,32 @@ static void splice_actor(void **array, size_t *count, size_t element_size,
   (*count)--;
 }
 void qa_q1_remove(qa_q1_services *game, qa_q1_actor *entity) {
-  if (!qa_q1_live(game, entity)) return;
-  entity->live = false;
-  /* TS host.actors.release -> onRelease deletes the entity/player/
-   * mission maps and cancels the think. */
+  if (qa_q1_live(game, entity)) qa_session_actor_registry_release(game->host.actors, entity->actor);
+}
+/* TS host.actors.onRelease listener installed by the constructor. */
+static void on_release(void *ctx, qa_owned_actor actor) {
+  qa_q1_services *game = ctx;
   for (size_t i = 0; i < game->entity_count; i++)
-    if (game->entities[i] == entity) {
-      splice_actor((void **)&game->entities, &game->entity_count,
-                   sizeof *game->entities, i);
+    if (qa_same_owned_actor(game->entities[i]->actor, actor)) {
+      qa_q1_actor *entity = game->entities[i];
+      splice_actor((void **)&game->entities, &game->entity_count, sizeof *game->entities, i);
+      grow((void **)&game->released_entities, &game->released_entity_count,
+           &game->released_entity_capacity, sizeof *game->released_entities);
+      game->released_entities[game->released_entity_count++] = entity;
       break;
     }
+  qa_q1_set_authored_target(game, actor.id, NULL);
+  qa_q1_set_mission(game, actor.id, NULL);
   for (size_t i = 0; i < game->player_count; i++)
-    if (game->players[i] != NULL &&
-        qa_same_actor(game->players[i]->actor.id, entity->actor.id)) {
-      splice_actor((void **)&game->players, &game->player_count,
-                   sizeof *game->players, i);
+    if (qa_same_owned_actor(game->players[i]->actor, actor)) {
+      qa_q1_player_state *player = game->players[i];
+      splice_actor((void **)&game->players, &game->player_count, sizeof *game->players, i);
+      grow((void **)&game->released_players, &game->released_player_count,
+           &game->released_player_capacity, sizeof *game->released_players);
+      game->released_players[game->released_player_count++] = player;
       break;
     }
-  for (size_t i = 0; i < game->mission_count; i++)
-    if (qa_same_actor(game->missions[i].actor, entity->actor.id)) {
-      splice_actor((void **)&game->missions, &game->mission_count,
-                   sizeof *game->missions, i);
-      break;
-    }
-  if (game->host.cancel_think != NULL)
-    game->host.cancel_think(game->host.ctx, entity->actor);
+  game->host.cancel_think(game->host.ctx, actor);
 }
 void qa_q1_schedule(qa_q1_services *game, qa_q1_actor *entity, double delay,
                     qa_q1_bound_action callback) {
@@ -856,22 +987,164 @@ void qa_q1_schedule_at(qa_q1_services *game, qa_q1_actor *entity,
   entity->next_think = (float)due_seconds; /* TS Math.fround */
   entity->think = callback;
   if (same(entity->movement, "push")) {
-    if (game->host.cancel_think != NULL)
-      game->host.cancel_think(game->host.ctx, entity->actor);
+    game->host.cancel_think(game->host.ctx, entity->actor);
     return;
   }
-  if (game->host.schedule_think != NULL)
-    game->host.schedule_think(game->host.ctx, entity->actor, entity->next_think);
+  game->host.schedule_think(game->host.ctx, entity->actor, entity->next_think);
 }
 void qa_q1_cancel(qa_q1_services *game, qa_q1_actor *entity) {
   entity->next_think = -1;
   memset(&entity->think, 0, sizeof entity->think);
-  if (game->host.cancel_think != NULL)
-    game->host.cancel_think(game->host.ctx, entity->actor);
+  game->host.cancel_think(game->host.ctx, entity->actor);
+}
+void qa_q1_register_damage_source_effects(qa_q1_services *game, const char *id, qa_q1_damage_source_effects effects) {
+  for (size_t i = 0; i < game->source_damage_effect_count; i++)
+    if (same(game->source_damage_effects[i].id, id))
+      qa_range_error("Duplicate Q1 damage source effects: %s", id);
+  grow((void **)&game->source_damage_effects, &game->source_damage_effect_count,
+       &game->source_damage_effect_capacity, sizeof *game->source_damage_effects);
+  const size_t length = strlen(id) + 1;
+  char *copy = xmalloc(length);
+  memcpy(copy, id, length);
+  game->source_damage_effects[game->source_damage_effect_count].id = copy;
+  game->source_damage_effects[game->source_damage_effect_count].effects = effects;
+  game->source_damage_effect_count++;
+}
+/* TS prepareSourceDamage. */
+static bool prepare_source_damage(qa_q1_services *game, bool after_quad, qa_damage_request request, double initial,
+                                  qa_combat_state target, const qa_combat_state *attacker, qa_damage_preparation *out) {
+  double amount = initial;
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) {
+    const qa_q1_damage_source_effects *effects = &game->source_damage_effects[i].effects;
+    bool (*phase)(void *, qa_damage_request, double, qa_combat_state, const qa_combat_state *, qa_damage_preparation *) =
+        after_quad ? effects->after_quad : effects->before_quad;
+    qa_damage_preparation result;
+    if (phase == NULL || !phase(effects->ctx, request, amount, target, attacker, &result)) continue;
+    if (!result.is_continue) { *out = result; return true; }
+    amount = result.amount;
+  }
+  out->is_continue = true;
+  out->amount = amount;
+  return true;
+}
+static bool effects_before_quad(void *ctx, qa_damage_request request, double damage, qa_combat_state target,
+                                const qa_combat_state *attacker, qa_damage_preparation *out) {
+  return prepare_source_damage(ctx, false, request, damage, target, attacker, out);
+}
+static bool effects_after_quad(void *ctx, qa_damage_request request, double damage, qa_combat_state target,
+                               const qa_combat_state *attacker, qa_damage_preparation *out) {
+  return prepare_source_damage(ctx, true, request, damage, target, attacker, out);
+}
+static bool effects_armor_allowed(void *ctx, qa_damage_request request, double damage, qa_combat_state target,
+                                  const qa_combat_state *attacker) {
+  qa_q1_services *game = ctx;
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) {
+    const qa_q1_damage_source_effects *effects = &game->source_damage_effects[i].effects;
+    if (effects->armor_allowed != NULL && !effects->armor_allowed(effects->ctx, request, damage, target, attacker)) return false;
+  }
+  return true;
+}
+static bool effects_protection_applies(void *ctx, qa_damage_request request, qa_combat_state target,
+                                       const qa_combat_state *attacker) {
+  qa_q1_services *game = ctx;
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) {
+    const qa_q1_damage_source_effects *effects = &game->source_damage_effects[i].effects;
+    if (effects->protection_applies != NULL && !effects->protection_applies(effects->ctx, request, target, attacker)) return false;
+  }
+  return true;
+}
+static bool effects_before_health(void *ctx, qa_damage_request request, double damage, qa_combat_state target,
+                                  const qa_combat_state *attacker) {
+  qa_q1_services *game = ctx;
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) {
+    const qa_q1_damage_source_effects *effects = &game->source_damage_effects[i].effects;
+    if (effects->before_health != NULL && !effects->before_health(effects->ctx, request, damage, target, attacker)) return false;
+  }
+  return true;
+}
+static double effects_after_armor(void *ctx, qa_damage_request request, double take, qa_combat_state target,
+                                  const qa_combat_state *attacker) {
+  qa_q1_services *game = ctx;
+  double amount = take;
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) {
+    const qa_q1_damage_source_effects *effects = &game->source_damage_effects[i].effects;
+    if (effects->after_armor != NULL) amount = effects->after_armor(effects->ctx, request, amount, target, attacker);
+  }
+  return amount;
+}
+static qa_q1_lethal_health effects_lethal_health(void *ctx, qa_damage_request request, double proposed, qa_combat_state target,
+                                                 const qa_combat_state *attacker) {
+  qa_q1_services *game = ctx;
+  qa_q1_lethal_health result = {true, proposed, "death"};
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) {
+    const qa_q1_damage_source_effects *effects = &game->source_damage_effects[i].effects;
+    if (effects->lethal_health != NULL) {
+      const qa_q1_lethal_health next = effects->lethal_health(effects->ctx, request, result.health, target, attacker);
+      if (next.has_value) result = next;
+    }
+    if (same(result.reaction, "none")) break;
+  }
+  return result;
+}
+qa_q1_damage_source_effects qa_q1_damage_source_effects_of(qa_q1_services *game) {
+  const qa_q1_damage_source_effects effects = {game, effects_before_quad, effects_after_quad, effects_armor_allowed,
+      effects_protection_applies, effects_before_health, effects_after_armor, effects_lethal_health};
+  return effects;
+}
+typedef struct actor_binding { qa_q1_services *game; qa_q1_actor *entity; } actor_binding;
+static double seconds_of(qa_source_time time) {
+  return time.kind == QA_SOURCE_TIME_SECONDS ? time.value : time.value / 1000;
+}
+static void binding_think(void *ctx, qa_owned_actor self, qa_frame_context frame) {
+  (void)self;
+  actor_binding *binding = ctx;
+  qa_q1_services_set_time(binding->game, seconds_of(frame.time));
+  binding->game->frame_seconds = seconds_of(frame.elapsed);
+  qa_q1_run_think(binding->game, binding->entity);
+}
+static void binding_touch(void *ctx, qa_touch_contact contact) {
+  actor_binding *binding = ctx;
+  const qa_q1_bound_touch touch = binding->entity->touch;
+  if (touch.fn != NULL)
+    touch.fn(touch.ctx, binding->game, binding->entity, contact.other,
+             contact.plane != NULL ? &contact.plane->normal : NULL, contact.surface);
+}
+static void binding_use(void *ctx, qa_owned_actor self, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)self;
+  actor_binding *binding = ctx;
+  const qa_q1_bound_use use = binding->entity->use;
+  if (use.fn != NULL) use.fn(use.ctx, binding->game, binding->entity, other, activator);
+}
+static void binding_pain(void *ctx, qa_pain_reaction reaction) {
+  actor_binding *binding = ctx;
+  const qa_q1_bound_pain pain = binding->entity->pain;
+  if (pain.fn != NULL) pain.fn(pain.ctx, binding->game, binding->entity, reaction.attacker, reaction.damage);
+}
+static void binding_die(void *ctx, qa_death_reaction reaction) {
+  actor_binding *binding = ctx;
+  qa_q1_services *game = binding->game;
+  qa_q1_actor *entity = binding->entity;
+  /* Killed runs in the victim source even when another game supplied the attack policy. */
+  if (qa_q1_health(game, entity->actor.id) < -99) qa_gameplay_authority_set_health(game->host.combat, entity->actor, -99);
+  if (entity->monster != NULL && !same(entity->movement, "push") && !same(entity->movement, "none")) {
+    entity->monster->has_enemy = reaction.pain.attacker != NULL;
+    if (reaction.pain.attacker != NULL) entity->monster->enemy = *reaction.pain.attacker;
+  }
+  const qa_q1_bound_die die = entity->die;
+  if (die.fn != NULL) die.fn(die.ctx, game, entity, reaction.pain.attacker);
+}
+void qa_q1_bind_actor_callbacks(qa_q1_services *game, qa_q1_actor *entity) {
+  actor_binding *binding = xmalloc(sizeof *binding);
+  binding->game = game;
+  binding->entity = entity;
+  grow((void **)&game->actor_bindings, &game->actor_binding_count, &game->actor_binding_capacity,
+       sizeof *game->actor_bindings);
+  game->actor_bindings[game->actor_binding_count++] = binding;
+  const qa_actor_callbacks callbacks = {binding, binding_think, binding_touch, binding_use, binding_pain, binding_die};
+  qa_actor_callback_table_bind(game->host.callbacks, entity->actor, callbacks);
 }
 void qa_q1_run_think(qa_q1_services *game, qa_q1_actor *entity) {
-  /* TS bindActorCallbacks think dispatch (frame time is applied by
-   * the host before this runs in the C mirror). */
+  /* TS bindActorCallbacks think dispatch. */
   qa_q1_bound_action callback = entity->think;
   memset(&entity->think, 0, sizeof entity->think);
   entity->next_think = -1;
@@ -880,9 +1153,7 @@ void qa_q1_run_think(qa_q1_services *game, qa_q1_actor *entity) {
 void qa_q1_resume_thinks(qa_q1_services *game) {
   for (size_t i = 0; i < game->entity_count; i++) {
     qa_q1_actor *entity = game->entities[i];
-    if (entity != NULL && !same(entity->movement, "push") &&
-        entity->think.fn != NULL && entity->next_think >= 0 &&
-        game->host.schedule_think != NULL)
+    if (!same(entity->movement, "push") && entity->think.fn != NULL && entity->next_think >= 0)
       game->host.schedule_think(game->host.ctx, entity->actor,
                                 entity->next_think);
   }
@@ -891,9 +1162,9 @@ void qa_q1_resume_thinks(qa_q1_services *game) {
 /* --- events --- */
 void qa_q1_sound(qa_q1_services *game, qa_actor_id actor, const char *path,
                  qa_q1_sound_channel channel, double attenuation, double volume) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity == NULL) qa_range_error("Missing Q1 sound emitter body");
-  qa_q1_body body = entity->body;
+  const qa_body_state_result read = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!read.has_value) qa_range_error("Missing Q1 sound emitter body"); /* TS Error throw */
+  const qa_body_state body = read.value;
   qa_vec3 origin = qa_q1_vadd(
       body.origin, qa_q1_vscale(qa_q1_vadd(body.bounds.min, body.bounds.max), 0.5));
   qa_q1_event event;
@@ -951,19 +1222,31 @@ size_t qa_q1_find(qa_q1_services *game, const char *targetname,
   size_t found = 0;
   for (size_t i = 0; i < game->entity_count; i++) {
     qa_q1_actor *entity = game->entities[i];
-    if (entity != NULL && same(entity->targetname, targetname)) {
+    if (same(entity->targetname, targetname)) {
       if (out != NULL && found < capacity) out[found] = entity;
       found++;
     }
   }
   return found;
 }
+bool qa_q1_path_goal(qa_q1_services *game, const char *name, qa_actor_id *out) {
+  if (name[0] != '\0') {
+    qa_q1_actor *first = NULL;
+    if (qa_q1_find(game, name, &first, 1) == 0) return false;
+    *out = first->actor.id;
+    return true;
+  }
+  size_t count = 0;
+  const qa_actor_id *players = game->host.players(game->host.ctx, &count);
+  if (count == 0) return false;
+  *out = players[0];
+  return true;
+}
 size_t qa_q1_presentations(qa_q1_services *game, qa_q1_presentation *out,
                            size_t capacity) {
   size_t found = 0;
   for (size_t i = 0; i < game->entity_count; i++) {
     qa_q1_actor *entity = game->entities[i];
-    if (entity == NULL || !entity->live) continue;
     if (out != NULL && found < capacity) {
       qa_q1_presentation *p = &out[found];
       memset(p, 0, sizeof *p);
@@ -1004,21 +1287,21 @@ qa_q1_monster_target_result qa_q1_monster_target(qa_q1_services *game,
   result.has_value = true;
   result.value.view_height = player == NULL ? 25 : 22;
   result.value.notarget =
-      entity != NULL && ((int64_t)entity->movement_flags & 128) != 0;
+      (qa_js_to_int32(entity != NULL ? entity->movement_flags : 0) & 128) != 0;
   result.value.invisible =
-      player != NULL &&
-      qa_q1_player_powerup_get(player, "invisibility") > game->time;
-  result.value.light_level = NULL;
-  result.value.hostile_until = player == NULL ? NULL : &player->hostile_until;
+      (player != NULL ? qa_q1_player_powerup_get(player, "invisibility") : 0) > game->time;
+  result.value.has_light_level = false;
+  result.value.has_hostile_until = player != NULL;
+  result.value.hostile_until = player != NULL ? player->hostile_until : 0;
   return result;
 }
 bool qa_q1_can_damage(qa_q1_services *game, qa_actor_id target,
                       qa_actor_id inflictor) {
-  qa_q1_actor *target_entity = qa_q1_get_entity(game, &target);
-  qa_q1_actor *source_entity = qa_q1_get_entity(game, &inflictor);
-  if (target_entity == NULL || source_entity == NULL) return false;
-  qa_q1_body target_body = target_entity->body;
-  qa_q1_body source = source_entity->body;
+  const qa_body_state_result target_read = qa_shared_body_table_read(game->host.bodies, target);
+  const qa_body_state_result source_read = qa_shared_body_table_read(game->host.bodies, inflictor);
+  if (!target_read.has_value || !source_read.has_value) return false;
+  const qa_body_state target_body = target_read.value;
+  const qa_body_state source = source_read.value;
   bool push = qa_q1_get_source_target(game, target).push;
   qa_vec3 destination =
       push ? qa_q1_vadd(target_body.origin,
@@ -1077,8 +1360,7 @@ void qa_q1_give_powerup(qa_q1_services *game, qa_q1_player_state *player,
                         qa_q1_powerup powerup, double duration) {
   double expires = (float)(game->time + duration); /* TS Math.fround */
   qa_q1_player_powerup_set(player, powerup, expires);
-  if (game->host.powerup != NULL)
-    game->host.powerup(game->host.ctx, player->actor, powerup, expires);
+  game->host.powerup(game->host.ctx, player->actor, powerup, expires);
   qa_q1_event event;
   memset(&event, 0, sizeof event);
   event.kind = "powerup";
@@ -1088,7 +1370,7 @@ void qa_q1_give_powerup(qa_q1_services *game, qa_q1_player_state *player,
   event.expires = expires;
   qa_q1_emit(game, event);
 }
-const qa_q1_monster_mission *qa_q1_mission(qa_q1_services *game,
+const qa_monster_mission *qa_q1_mission(qa_q1_services *game,
                                            qa_actor_id actor) {
   for (size_t i = 0; i < game->mission_count; i++)
     if (qa_same_actor(game->missions[i].actor, actor))
@@ -1096,7 +1378,7 @@ const qa_q1_monster_mission *qa_q1_mission(qa_q1_services *game,
   return NULL;
 }
 void qa_q1_set_mission(qa_q1_services *game, qa_actor_id actor,
-                       const qa_q1_monster_mission *mission) {
+                       const qa_monster_mission *mission) {
   for (size_t i = 0; i < game->mission_count; i++)
     if (qa_same_actor(game->missions[i].actor, actor)) {
       if (mission == NULL) {
@@ -1114,6 +1396,28 @@ void qa_q1_set_mission(qa_q1_services *game, qa_actor_id actor,
   game->missions[game->mission_count].mission = mission;
   game->mission_count++;
 }
+qa_authored_target *qa_q1_authored_target(qa_q1_services *game, qa_actor_id actor) {
+  for (size_t i = 0; i < game->authored_target_count; i++)
+    if (qa_same_actor(game->authored_targets[i].actor, actor)) return game->authored_targets[i].target;
+  return NULL;
+}
+void qa_q1_set_authored_target(qa_q1_services *game, qa_actor_id actor, qa_authored_target *target) {
+  for (size_t i = 0; i < game->authored_target_count; i++)
+    if (qa_same_actor(game->authored_targets[i].actor, actor)) {
+      if (target == NULL)
+        splice_actor((void **)&game->authored_targets, &game->authored_target_count,
+                     sizeof *game->authored_targets, i);
+      else
+        game->authored_targets[i].target = target;
+      return;
+    }
+  if (target == NULL) return;
+  grow((void **)&game->authored_targets, &game->authored_target_count,
+       &game->authored_target_capacity, sizeof *game->authored_targets);
+  game->authored_targets[game->authored_target_count].actor = actor;
+  game->authored_targets[game->authored_target_count].target = target;
+  game->authored_target_count++;
+}
 
 /* --- frame / travel / selection --- */
 qa_q1_basis qa_q1_make_vectors(qa_q1_services *game, qa_vec3 angles) {
@@ -1125,9 +1429,9 @@ void qa_q1_begin_frame(qa_q1_services *game, double seconds,
   qa_q1_services_set_time(game, seconds);
   game->frame_seconds = elapsed_seconds;
 }
-void qa_q1_player_input(qa_q1_services *game, qa_owned_actor actor, bool attack,
+void qa_q1_services_player_input(qa_q1_services *game, qa_owned_actor actor, bool attack,
                         bool jump, const double *teleport_until) {
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL) return;
   player->attack_held = attack;
   player->jump_held = jump;
@@ -1135,14 +1439,20 @@ void qa_q1_player_input(qa_q1_services *game, qa_owned_actor actor, bool attack,
 }
 void qa_q1_travel(qa_q1_services *game, const char *map,
                   const qa_actor_id *cause) {
-  if (game->host.transition == NULL) return;
-  /* TS transition intent map is `q1:${map}`; the mirror host
-   * transition takes that map string plus the cause. */
   size_t length = strlen(map) + 4;
   char *named = xmalloc(length);
   memcpy(named, "q1:", 3);
   memcpy(named + 3, map, strlen(map) + 1);
-  game->host.transition(game->host.ctx, named, cause);
+  qa_transition_intent intent;
+  memset(&intent, 0, sizeof intent);
+  intent.kind = "campaign-level";
+  intent.campaign = game->options.campaign;
+  intent.map = named;
+  intent.spawn_point = "";
+  intent.gates = NULL;
+  intent.gate_count = 0;
+  intent.cause = cause;
+  game->host.transition(game->host.ctx, intent);
   free(named);
 }
 void qa_q1_begin_intermission(qa_q1_services *game, const char *map,
@@ -1186,14 +1496,17 @@ void qa_q1_begin_intermission(qa_q1_services *game, const char *map,
   game->has_intermission_cause = cause != NULL;
   if (cause != NULL) game->intermission_cause = *cause;
   game->intermission_exit_after = exit_after;
+  if (game->source_fog_push.fn != NULL && game->world != NULL) {
+    size_t count = 0;
+    const qa_actor_id *players = game->host.players(game->host.ctx, &count);
+    for (size_t i = 0; i < count; i++) (void)game->source_fog_push.fn(game->source_fog_push.ctx, players[i], game->world);
+  }
   qa_q1_event event;
   memset(&event, 0, sizeof event);
   event.kind = "intermission";
   event.has_origin = true;
   event.origin = body.origin;
-  event.angles = same(selected->classname, "info_intermission")
-                     ? qa_q1_actor_vector(selected, "mangle")
-                     : body.angles;
+  event.angles = qa_q1_actor_vector(selected, "mangle");
   event.map = map;
   event.exit_after = exit_after;
   event.track = 3;
@@ -1216,10 +1529,10 @@ bool qa_q1_request_intermission_exit(qa_q1_services *game, double seconds,
 }
 bool qa_q1_select_weapon(qa_q1_services *game, qa_owned_actor actor,
                          qa_q1_weapon weapon) {
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL ||
-      qa_q1_inventory_count(game, actor.id,
-                            qa_q1_services_weapon_item(game, weapon)) == 0)
+      qa_shared_inventory_table_count(game->host.inventory, actor.id,
+                                      qa_q1_services_weapon_item(game, weapon)) == 0)
     return false;
   if (!qa_q1_is_base_weapon(weapon) && registered(game, weapon) == NULL)
     return false;
@@ -1246,10 +1559,14 @@ bool qa_q1_select_weapon(qa_q1_services *game, qa_owned_actor actor,
 qa_q1_weapon qa_q1_choose_best(qa_q1_services *game, qa_owned_actor actor) {
   return qa_q1_best_weapon(game, actor);
 }
+qa_q1_weapon qa_q1_choose_best_counted(qa_q1_services *game, qa_owned_actor actor,
+                                       qa_q1_ammo_count_fn count, void *count_ctx) {
+  return qa_q1_best_weapon_counted(game, actor, count, count_ctx);
+}
 void qa_q1_weapon_frame(qa_q1_services *game, qa_owned_actor actor,
                         double seconds) {
   qa_q1_services_set_time(game, seconds);
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL) return;
   const qa_q1_weapon_definition *extension = registered(game, player->weapon);
   if (extension != NULL && extension->animate != NULL)
@@ -1280,17 +1597,79 @@ void qa_q1_weapon_frame(qa_q1_services *game, qa_owned_actor actor,
 void qa_q1_player_after_physics(qa_q1_services *game, qa_owned_actor actor,
                                 double seconds) {
   qa_q1_services_set_time(game, seconds);
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL) return;
   for (size_t i = 0; i < game->player_extension_count; i++)
     if (game->player_extensions[i]->after_physics != NULL)
       game->player_extensions[i]->after_physics(
           game->player_extensions[i]->ctx, game, player, seconds);
 }
+/* TS powerupCues WeakMap<player, Map<powerup, cue>> rows. */
+static size_t powerup_cue(qa_q1_services *game, const qa_q1_player_state *player, qa_q1_powerup powerup,
+                          bool create) {
+  for (size_t i = 0; i < game->powerup_cue_count; i++)
+    if (game->powerup_cues[i].player == player && same(game->powerup_cues[i].powerup, powerup)) return i;
+  if (!create) return SIZE_MAX;
+  grow((void **)&game->powerup_cues, &game->powerup_cue_count, &game->powerup_cue_capacity,
+       sizeof *game->powerup_cues);
+  const size_t at = game->powerup_cue_count++;
+  game->powerup_cues[at].player = player;
+  game->powerup_cues[at].powerup = powerup;
+  game->powerup_cues[at].warned = false;
+  game->powerup_cues[at].flash_at = 0;
+  game->powerup_cues[at].hum = 0;
+  return at;
+}
+/* TS private powerupWarnings. */
+static void powerup_warnings(qa_q1_services *game, qa_owned_actor actor, qa_q1_player_state *player,
+                             double seconds) {
+  static const struct { const char *powerup, *message, *sound; } WARNINGS[4] = {
+      {"invisibility", "$qc_ring_fade", "items/inv2.wav"},
+      {"invulnerability", "$qc_protection_fade", "items/protect2.wav"},
+      {"quad", "$qc_quad_fade", "items/damage2.wav"},
+      {"suit", "$qc_biosuit_fade", "items/suit2.wav"}};
+  for (size_t p = 0; p < player->powerup_count; p++) {
+    const qa_q1_powerup powerup = player->powerups[p].kind;
+    const double expires = player->powerups[p].expires;
+    size_t w = 0;
+    while (w < 4 && !same(WARNINGS[w].powerup, powerup)) w++;
+    if (w == 4 || expires <= seconds) continue;
+    const size_t cue = powerup_cue(game, player, powerup, true);
+    if (same(powerup, "invisibility") && game->powerup_cues[cue].hum < seconds) {
+      qa_q1_sound(game, actor.id, "items/inv3.wav", "auto", 3, 0.5);
+      game->powerup_cues[cue].hum = seconds + (qa_q1_host_random(game) * 3 + 1);
+    }
+    if (expires >= seconds + 3) { game->powerup_cues[cue].warned = false; continue; }
+    const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor.id);
+    if (!game->powerup_cues[cue].warned) {
+      game->powerup_cues[cue].warned = true;
+      game->powerup_cues[cue].flash_at = seconds + 1;
+      qa_q1_message(game, &actor.id, WARNINGS[w].message, false, NULL, 0);
+      qa_q1_sound(game, actor.id, WARNINGS[w].sound, "auto", 1, 1);
+      if (body.has_value) qa_q1_effect(game, "pickup", body.value.origin, &actor.id, 1);
+    } else if (game->powerup_cues[cue].flash_at < seconds) {
+      game->powerup_cues[cue].flash_at = seconds + 1;
+      if (body.has_value) qa_q1_effect(game, "pickup", body.value.origin, &actor.id, 1);
+    }
+  }
+}
+static bool waterborne_delete(qa_q1_services *game, const qa_q1_player_state *player) {
+  for (size_t i = 0; i < game->waterborne_count; i++)
+    if (game->waterborne[i] == player) {
+      splice_actor((void **)&game->waterborne, &game->waterborne_count, sizeof *game->waterborne, i);
+      return true;
+    }
+  return false;
+}
+static bool waterborne_has(const qa_q1_services *game, const qa_q1_player_state *player) {
+  for (size_t i = 0; i < game->waterborne_count; i++)
+    if (game->waterborne[i] == player) return true;
+  return false;
+}
 void qa_q1_player_frame(qa_q1_services *game, qa_owned_actor actor, double seconds,
                         const double *water_level) {
   qa_q1_services_set_time(game, seconds);
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL) return;
   if (water_level != NULL) player->water_level = *water_level;
   for (size_t i = 0; i < game->player_extension_count; i++)
@@ -1301,12 +1680,13 @@ void qa_q1_player_frame(qa_q1_services *game, qa_owned_actor actor, double secon
   if (player->mega_rot_at >= 0 && player->mega_rot_at <= seconds) {
     double health = qa_q1_health(game, actor.id);
     if (health > player->max_health) {
-      qa_q1_set_health(game, actor, health - 1);
+      qa_gameplay_authority_set_health(game->host.combat, actor, health - 1);
       player->mega_rot_at = seconds + 1;
     } else {
       player->mega_rot_at = -1;
     }
   }
+  powerup_warnings(game, actor, player, seconds);
   /* Copy kinds first: delete splices the array TS iterates as a Map. */
   qa_q1_powerup kinds[16];
   double expiries[16];
@@ -1318,17 +1698,20 @@ void qa_q1_player_frame(qa_q1_services *game, qa_owned_actor actor, double secon
   for (size_t i = 0; i < kind_count; i++) {
     if (expiries[i] > seconds) continue;
     qa_q1_player_powerup_delete(player, kinds[i]);
-    if (game->host.powerup != NULL)
-      game->host.powerup(game->host.ctx, actor, kinds[i], 0);
+    game->host.powerup(game->host.ctx, actor, kinds[i], 0);
+    const size_t cue = powerup_cue(game, player, kinds[i], false);
+    if (cue != SIZE_MAX)
+      splice_actor((void **)&game->powerup_cues, &game->powerup_cue_count, sizeof *game->powerup_cues, cue);
     if (same(kinds[i], "q3:flight") && game->host.set_gravity != NULL)
       qa_q1_set_gravity(game, actor.id, 1);
   }
+  /* Foreign Q3 powerups granted by Q3-authored items on this primary. */
   if (qa_q1_player_powerup_get(player, "q3:regen") > seconds &&
       game->frame_seconds > 0) {
     double health = qa_q1_health(game, actor.id);
     if (health > 0 && health < 200) {
       double healed = health + 5 * game->frame_seconds;
-      qa_q1_set_health(game, actor, healed < 200 ? healed : 200);
+      qa_gameplay_authority_set_health(game->host.combat, actor, healed < 200 ? healed : 200);
     }
   }
   if (qa_q1_player_powerup_get(player, "q3:haste") > seconds &&
@@ -1339,6 +1722,10 @@ void qa_q1_player_frame(qa_q1_services *game, qa_owned_actor actor, double secon
   if (game->has_intermission || qa_q1_health(game, actor.id) < 0) return;
   bool suit = qa_q1_player_powerup_get(player, "suit") > seconds;
   bool lava_suit = qa_q1_player_powerup_get(player, "mg3:lavasuit") > seconds;
+  if (player->water_level != 3) {
+    if (player->air_finished < seconds) qa_q1_sound(game, actor.id, "player/gasp2.wav", "voice", 1, 1);
+    else if (player->air_finished < seconds + 9) qa_q1_sound(game, actor.id, "player/gasp1.wav", "voice", 1, 1);
+  }
   qa_actor_id world_id = game->world != NULL ? game->world->actor.id : actor.id;
   const qa_actor_id *world_attacker = game->world != NULL ? &world_id : NULL;
   if (player->water_level != 3 || suit || lava_suit) {
@@ -1347,32 +1734,46 @@ void qa_q1_player_frame(qa_q1_services *game, qa_owned_actor actor, double secon
   } else if (player->air_finished < seconds && player->drown_at < seconds) {
     player->drown_damage += 2;
     if (player->drown_damage > 15) player->drown_damage = 10;
-    qa_q1_damage(game, actor.id, world_id, world_attacker, player->drown_damage,
-                 NULL, "direct", "drown");
+    (void)qa_q1_damage(game, actor.id, world_id, world_attacker, player->drown_damage,
+                       NULL, "direct", "drown", NULL);
     player->drown_at = seconds + 1;
   }
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor.id);
-  if (entity != NULL && player->water_level > 0 && player->hazard_at < seconds &&
-      game->host.contents != NULL) {
-    qa_q1_body body = entity->body;
-    qa_vec3 point = body.origin;
-    point.z += body.bounds.min.z + 1;
-    const char *contents = game->host.contents(game->host.ctx, point);
+  if (player->water_level == 0) {
+    if (waterborne_delete(game, player)) qa_q1_sound(game, actor.id, "misc/outwater.wav", "body", 1, 1);
+    return;
+  }
+  const qa_body_state_result read = qa_shared_body_table_read(game->host.bodies, actor.id);
+  if (!read.has_value) return;
+  qa_vec3 point = read.value.origin;
+  point.z += read.value.bounds.min.z + 1;
+  const char *contents = game->host.contents(game->host.ctx, point);
+  if (player->hazard_at < seconds) {
     if (same(contents, "lava") && !lava_suit) {
       player->hazard_at = seconds + (suit ? 1 : 0.2);
-      qa_q1_damage(game, actor.id, world_id, world_attacker,
-                   10 * player->water_level, NULL, "direct", "lava");
+      (void)qa_q1_damage(game, actor.id, world_id, world_attacker,
+                         10 * player->water_level, NULL, "direct", "lava", NULL);
     } else if (same(contents, "slime") && !suit && !lava_suit) {
       player->hazard_at = seconds + 1;
-      qa_q1_damage(game, actor.id, world_id, world_attacker,
-                   4 * player->water_level, NULL, "direct", "slime");
+      (void)qa_q1_damage(game, actor.id, world_id, world_attacker,
+                         4 * player->water_level, NULL, "direct", "slime", NULL);
     }
+  }
+  if (!waterborne_has(game, player)) {
+    grow((void **)&game->waterborne, &game->waterborne_count, &game->waterborne_capacity,
+         sizeof *game->waterborne);
+    game->waterborne[game->waterborne_count++] = player;
+    const char *entry = same(contents, "lava") ? "player/inlava.wav"
+                        : same(contents, "water") ? "player/inh2o.wav"
+                        : same(contents, "slime") ? "player/slimbrn2.wav" : NULL;
+    if (entry != NULL) qa_q1_sound(game, actor.id, entry, "body", 1, 1);
+    /* The first contact tick is followed by another on the next frame. */
+    player->hazard_at = 0;
   }
 }
 bool qa_q1_attack(qa_q1_services *game, qa_owned_actor actor, qa_vec3 view_angles,
                   double seconds, double water_level) {
   qa_q1_services_set_time(game, seconds);
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL) qa_range_error("Player has no Q1 weapon state");
   player->view_angles = view_angles;
   player->water_level = water_level;
@@ -1380,7 +1781,7 @@ bool qa_q1_attack(qa_q1_services *game, qa_owned_actor actor, qa_vec3 view_angle
 }
 bool qa_q1_weapon_input(qa_q1_services *game, qa_owned_actor actor, bool pressed,
                         qa_vec3 view_angles, double seconds, double water_level) {
-  qa_q1_player_state *player = player_owned(game, actor);
+  qa_q1_player_state *player = player_of(game, actor);
   if (player == NULL) qa_range_error("Player has no Q1 weapon state");
   qa_q1_services_set_time(game, seconds);
   player->view_angles = view_angles;
@@ -1406,6 +1807,18 @@ const char *qa_q1_services_precache_sound(qa_q1_services *game, const char *path
 }
 static void sub_remove(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
+  qa_q1_remove(game, entity);
+}
+/* TS constructor's "base:explosion_frame" action (BecomeExplosion's s_explode frames). */
+static void explosion_frame(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->frame++;
+  if (entity->frame >= 6) qa_q1_remove(game, entity);
+  else qa_q1_schedule(game, entity, 0.1, qa_q1_callback_registry_action(game->named, entity, "base:explosion_frame"));
+}
+static void sub_remove_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                             const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)other; (void)normal; (void)surface;
   qa_q1_remove(game, entity);
 }
 static void sub_null(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
@@ -1439,7 +1852,11 @@ bool qa_q1_services_init(qa_q1_services *game, qa_q1_host host,
   qa_q1_callback_handlers handlers;
   memset(&handlers, 0, sizeof handlers);
   handlers.action = sub_remove;
+  handlers.touch = sub_remove_touch;
   qa_q1_callback_registry_register(game->named, "SUB_Remove", handlers);
+  memset(&handlers, 0, sizeof handlers);
+  handlers.action = explosion_frame;
+  qa_q1_callback_registry_register(game->named, "base:explosion_frame", handlers);
   memset(&handlers, 0, sizeof handlers);
   handlers.action = sub_null;
   qa_q1_callback_registry_register(game->named, "SUB_Null", handlers);
@@ -1450,13 +1867,48 @@ bool qa_q1_services_init(qa_q1_services *game, qa_q1_host host,
   qa_q1_register_spawn_callbacks(game);
   qa_q1_register_pickup_callbacks(game);
   qa_q1_register_weapon_callbacks(game);
-  qa_q1_foundation_register_monster_callbacks(game);
-  /* TS also installs host.actors.onRelease cleanup; the mirror
-   * host has no release hook, so qa_q1_remove performs it. */
+  game->release_subscription = qa_session_actor_registry_on_release(game->host.actors, on_release, game);
   return true;
+}
+void qa_q1_legacy_animations_set(qa_q1_services *game, qa_owned_actor owner, qa_q1_legacy_animation animation) {
+  for (size_t i = 0; i < game->legacy_animation_count; i++) {
+    if (qa_same_owned_actor(game->legacy_animations[i].owner, owner)) {
+      game->legacy_animations[i].animation = animation;
+      return;
+    }
+  }
+  if (game->legacy_animation_count == game->legacy_animation_capacity) {
+    const size_t capacity = game->legacy_animation_capacity ? game->legacy_animation_capacity * 2 : 8;
+    void *grown = realloc(game->legacy_animations, capacity * sizeof *game->legacy_animations);
+    if (grown == NULL) qa_range_error("out of memory");
+    game->legacy_animations = grown;
+    game->legacy_animation_capacity = capacity;
+  }
+  game->legacy_animations[game->legacy_animation_count].owner = owner;
+  game->legacy_animations[game->legacy_animation_count].animation = animation;
+  game->legacy_animation_count++;
 }
 void qa_q1_services_free(qa_q1_services *game) {
   if (game == NULL) return;
+  if (game->named != NULL)
+    qa_session_actor_registry_off_release(game->host.actors, game->release_subscription);
+  /* Entities and players are owned here (TS GC). */
+  for (size_t i = 0; i < game->entity_count; i++) { qa_q1_actor_free(game->entities[i]); free(game->entities[i]); }
+  for (size_t i = 0; i < game->released_entity_count; i++) {
+    qa_q1_actor_free(game->released_entities[i]);
+    free(game->released_entities[i]);
+  }
+  free(game->released_entities);
+  for (size_t i = 0; i < game->player_count; i++) free(game->players[i]);
+  for (size_t i = 0; i < game->released_player_count; i++) free(game->released_players[i]);
+  free(game->released_players);
+  free(game->protect_sounds);
+  free(game->quad_sounds);
+  free(game->wind_fly_sounds);
+  free(game->waterborne);
+  free(game->powerup_cues);
+  free(game->authored_targets);
+  free(game->world_precaches);
   qa_q1_callback_registry_destroy(game->named);
   qa_q1_precache_registry_destroy(game->precaches);
   free(game->entities);
@@ -1468,15 +1920,37 @@ void qa_q1_services_free(qa_q1_services *game) {
   free(game->weapon_rules);
   free(game->state_extensions);
   free(game->weapon_order_owner);
+  for (size_t i = 0; i < game->source_damage_effect_count; i++) free(game->source_damage_effects[i].id);
+  free(game->source_damage_effects);
+  for (size_t i = 0; i < game->actor_binding_count; i++) free(game->actor_bindings[i]);
+  free(game->actor_bindings);
   for (size_t i = 0; i < game->path_touch_count; i++) free(game->path_touches[i].id);
   free(game->path_touches);
   for (size_t i = 0; i < game->spawner_count; i++) free(game->spawners[i].classname);
   free(game->spawners);
+  qa_q1_source_world_words_clear(game);
+  free(game->source_world_words);
+  free(game->restore_absents);
   free(game->missions);
-  for (size_t i = 0; i < game->inventory_count; i++) free(game->inventory[i].item);
-  free(game->inventory);
-  free(game->inventory_owners);
+  free(game->legacy_animations);
+  emit_intern_free(game->emit_intern);
   memset(game, 0, sizeof *game);
+}
+/* `q1:${classname}`: the registry borrows definition strings for the
+ * actor's lifetime and may outlive these services, so they are interned
+ * process-wide (reachable, one per classname). */
+static const char *actor_definition(const char *classname) {
+  static char **interned = NULL;
+  static size_t count = 0, capacity = 0;
+  for (size_t i = 0; i < count; i++)
+    if (!strcmp(interned[i] + 3, classname)) return interned[i];
+  grow((void **)&interned, &count, &capacity, sizeof *interned);
+  const size_t length = strlen(classname) + 4;
+  char *definition = xmalloc(length);
+  memcpy(definition, "q1:", 3);
+  memcpy(definition + 3, classname, length - 3);
+  interned[count++] = definition;
+  return definition;
 }
 qa_q1_actor *qa_q1_create(qa_q1_services *game, const char *classname,
                           const qa_q1_entity *source,
@@ -1485,48 +1959,63 @@ qa_q1_actor *qa_q1_create(qa_q1_services *game, const char *classname,
   double slot = source_ordinal == NULL
                     ? game->next_dynamic_slot++
                     : *source_ordinal == 0 ? 0 : *source_ordinal + max_clients;
-  /* TS host.actors.allocateAtSource(provider, slot, `q1:${classname}`)
-   * mints the OwnedActor; the mirror host has no allocator, so the
-   * owned actor is synthesized with a NULL identity token (it can
-   * never qa_same_actor-match a registry-minted actor) and
-   * generation 0. Bodies/combat creation is the actor-local body
-   * below plus health = maxHealth, as in TS create(). */
-  qa_owned_actor owner;
-  memset(&owner, 0, sizeof owner);
-  owner.id.slot = (int64_t)slot;
-  owner.id.generation = 0;
-  owner.owner = qa_q1_services_provider(game);
+  qa_session_actor_registry * registry = game->host.actors;
+  qa_provider_id owner2 = qa_q1_services_provider(game);
+  const char * definition = actor_definition(classname);
+  const qa_owned_actor owner = qa_session_actor_registry_allocate_at_source(
+      registry, owner2, (int64_t)slot, definition);
   qa_q1_actor *entity = xmalloc(sizeof *entity);
-  if (!qa_q1_actor_init(entity, owner, classname, source_ordinal, source))
+  if (!qa_q1_actor_init(entity, owner, classname, source_ordinal, game->host.combat, source))
     qa_range_error("Out of memory");
-  entity->body.origin =
-      source == NULL ? QA_Q1_ZERO : qa_q1_actor_vector(entity, "origin");
-  entity->body.angles =
-      source == NULL ? QA_Q1_ZERO : qa_q1_source_angles(source);
-  entity->body.velocity = QA_Q1_ZERO;
-  entity->body.bounds = QA_Q1_POINT;
-  entity->body.has_ground = false;
-  entity->health = entity->max_health;
-  if (entity_any(game, owner.id) != NULL) {
-    qa_q1_actor_free(entity);
-    free(entity);
-    qa_range_error("Q1 actor already attached");
-  }
-  grow((void **)&game->entities, &game->entity_count, &game->entity_capacity,
-       sizeof *game->entities);
-  game->entities[game->entity_count++] = entity;
-  return entity;
+  qa_body_state body;
+  memset(&body, 0, sizeof body);
+  body.origin = source == NULL ? QA_Q1_ZERO : qa_q1_actor_vector(entity, "origin");
+  body.angles = source == NULL ? QA_Q1_ZERO : qa_q1_source_angles(source);
+  body.velocity = QA_Q1_ZERO;
+  body.bounds = QA_Q1_POINT;
+  body.ground = NULL;
+  qa_shared_body_table_create_body(game->host.bodies, owner, body);
+  qa_combat_state combat;
+  memset(&combat, 0, sizeof combat);
+  combat.health = entity->max_health;
+  combat.armor.regular.kind = QA_REGULAR_ARMOR_NONE;
+  combat.armor.powered.kind = "none";
+  combat.mass = 100;
+  combat.can_take_damage = false;
+  combat.invulnerable = false;
+  combat.team = NULL;
+  qa_gameplay_authority_create_state(game->host.combat, owner, combat, NULL, NULL);
+  return admit_entity(game, entity);
 }
 void qa_q1_spawn_entity(qa_q1_services *game, qa_q1_actor *entity) {
   qa_q1_spawn_fn extension = NULL;
+  void *extension_ctx = NULL;
   for (size_t i = 0; i < game->spawner_count; i++)
-    if (same(game->spawners[i].classname, entity->classname))
+    if (same(game->spawners[i].classname, entity->classname)) {
       extension = game->spawners[i].fn;
+      extension_ctx = game->spawners[i].ctx;
+    }
   if (extension == NULL)
     qa_q1_spawn_map_actor(game, entity);
   else
-    extension(game, entity);
+    extension(extension_ctx, game, entity);
   if (qa_q1_live(game, entity)) qa_q1_link(game, entity);
+}
+typedef struct deathmatch_restore { qa_q1_services *game; double previous; } deathmatch_restore;
+static void restore_deathmatch(void *arg) {
+  const deathmatch_restore *restore = arg;
+  restore->game->options.deathmatch = restore->previous;
+}
+void qa_q1_spawn_entity_context(qa_q1_services *game, qa_q1_actor *entity, const double *deathmatch) {
+  /* TS spawnOptions = { ...this.options, deathmatch } for the spawn, restored
+   * in finally: the cleanup node restores it when a spawn raises. */
+  deathmatch_restore restore = {game, game->options.deathmatch};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, restore_deathmatch, &restore);
+  if (deathmatch != NULL) game->options.deathmatch = *deathmatch;
+  qa_q1_spawn_entity(game, entity);
+  qa_cleanup_pop(&cleanup);
+  game->options.deathmatch = restore.previous;
 }
 static qa_q1_bound_action named_action(qa_q1_services *game,
                                        qa_q1_actor *entity, const char *name) {
@@ -1550,31 +2039,51 @@ void qa_q1_calc_move(qa_q1_services *game, qa_q1_actor *entity,
   patch.velocity =
       travel < 0.1 ? QA_Q1_ZERO : qa_q1_vscale(delta, (float)(1 / travel));
   qa_q1_set_body_patch(game, entity, &patch, false, false, true, false, false);
-  double wait = travel > 0.1 ? travel : 0.1;
+  const double wait = qa_js_max(0.1, travel); /* Math.max keeps NaN */
+  double due_seconds = (float)(qa_q1_actor_number(entity, "ltime") + wait);
+  qa_q1_bound_action callback = named_action(game, entity, "SUB_CalcMoveDone");
   qa_q1_schedule_at(game, entity,
-                    (float)(qa_q1_actor_number(entity, "ltime") + wait),
-                    named_action(game, entity, "SUB_CalcMoveDone"));
+                    due_seconds, callback);
 }
-static size_t target_actors(qa_q1_services *game, const char *name,
-                            qa_q1_actor **out) {
+typedef struct target_row { qa_owned_actor actor; double slot; } target_row;
+static double source_slot(qa_q1_services *game, qa_actor_id actor) {
+  const qa_actor_source_result source = qa_session_actor_registry_source_of(game->host.actors, actor);
+  return source.has_value ? (double)source.slot : (double)actor.slot;
+}
+/* TS targetActors: Q1 entities then authored targets with this targetname,
+ * live, stably sorted by source slot. *out is malloc'd; caller frees. */
+static size_t target_actors(qa_q1_services *game, const char *name, target_row **out) {
+  *out = NULL;
   if (name == NULL || name[0] == '\0') return 0;
-  size_t count = 0;
+  size_t count = 0, capacity = 0;
   for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q1_actor *entity = game->entities[i];
-    if (entity != NULL && entity->live && same(entity->targetname, name))
-      out[count++] = entity;
+    const qa_q1_actor *entity = game->entities[i];
+    if (!same(entity->targetname, name) ||
+        !qa_session_actor_registry_is_live(game->host.actors, entity->actor.id))
+      continue;
+    grow((void **)out, &count, &capacity, sizeof **out);
+    (*out)[count].actor = entity->actor;
+    (*out)[count].slot = source_slot(game, entity->actor.id);
+    count++;
   }
-  /* TS sorts by source slot (host sourceOf ?? id.slot); mirror
-   * created actors carry their source slot in id.slot. Authored
-   * targets have no services array in the mirror struct. */
-  for (size_t i = 1; i < count; i++) {
-    qa_q1_actor *held = out[i];
+  for (size_t i = 0; i < game->authored_target_count; i++) {
+    const qa_authored_target *target = game->authored_targets[i].target;
+    if (!same(target->targetname, name) ||
+        !qa_session_actor_registry_is_live(game->host.actors, target->actor.id))
+      continue;
+    grow((void **)out, &count, &capacity, sizeof **out);
+    (*out)[count].actor = target->actor;
+    (*out)[count].slot = source_slot(game, target->actor.id);
+    count++;
+  }
+  for (size_t i = 1; i < count; i++) { /* stable insertion sort (JS sort is stable) */
+    const target_row held = (*out)[i];
     size_t k = i;
-    while (k > 0 && out[k - 1]->actor.id.slot > held->actor.id.slot) {
-      out[k] = out[k - 1];
+    while (k > 0 && (*out)[k - 1].slot > held.slot) {
+      (*out)[k] = (*out)[k - 1];
       k--;
     }
-    out[k] = held;
+    (*out)[k] = held;
   }
   return count;
 }
@@ -1591,28 +2100,86 @@ void qa_q1_use_targets(qa_q1_services *game, qa_q1_actor *entity,
     set_owned_text(&delayed->message, entity->message);
     delayed->has_activator = activator != NULL;
     if (activator != NULL) delayed->activator = *activator;
+    delayed->spawnflags = (double)(qa_js_to_int32(entity->spawnflags) & 8388608);
     qa_q1_schedule(game, delayed, entity->delay,
                    named_action(game, delayed, "DelayThink"));
     return;
   }
-  qa_q1_message(game, activator, entity->message != NULL ? entity->message : "",
-                true, NULL, 0);
-  qa_q1_actor **targets =
-      xmalloc((game->entity_count != 0 ? game->entity_count : 1) *
-              sizeof *targets);
-  size_t count = target_actors(game, entity->killtarget, targets);
-  for (size_t i = 0; i < count; i++)
-    if (targets[i]->live) qa_q1_remove(game, targets[i]);
-  /* Each use executes synchronously; targets removed by a nested
-   * call are not invoked afterward (fresh scan, live re-check). */
-  count = target_actors(game, entity->target, targets);
-  for (size_t i = 0; i < count; i++) {
-    if (!targets[i]->live) continue;
-    /* TS host.callbacks.use(target.actor, entity.actor.id, activator);
-     * the mirror dispatches the target's bound use slot. */
-    qa_actor_id other = entity->actor.id;
-    qa_q1_call_use(game, targets[i], targets[i]->use, &other, activator);
+  const char *message = entity->message != NULL ? entity->message : "";
+  const bool everyone = game->source_message_all_players &&
+                        (qa_js_to_int32(entity->spawnflags) & 8388608) != 0 && message[0] != '\0';
+  if (everyone) {
+    size_t count = 0;
+    const qa_actor_id *players = game->host.players(game->host.ctx, &count);
+    for (size_t i = 0; i < count; i++) qa_q1_message(game, &players[i], message, true, NULL, 0);
+  } else {
+    qa_q1_message(game, activator, message, true, NULL, 0);
   }
+  if (message[0] != '\0' && activator != NULL && qa_q1_is_player(game, activator) &&
+      qa_q1_actor_text(entity, "noise")[0] == '\0') {
+    qa_owned_actor owner;
+    if (qa_session_actor_registry_resolve_owned(game->host.actors, *activator, &owner))
+      qa_q1_sound(game, owner.id, "misc/talk.wav", "voice", 1, 1);
+  }
+  target_row *victims = NULL;
+  size_t count = target_actors(game, entity->killtarget, &victims);
+  for (size_t i = 0; i < count; i++)
+    if (qa_session_actor_registry_is_live(game->host.actors, victims[i].actor.id))
+      qa_session_actor_registry_release(game->host.actors, victims[i].actor);
+  free(victims);
+  /* Each use executes synchronously; targets removed by a nested call
+   * are not invoked afterward. */
+  target_row *targets = NULL;
+  count = target_actors(game, entity->target, &targets);
+  const qa_actor_id other = entity->actor.id;
+  qa_cleanup targets_cleanup; /* a use callback can raise */
+  qa_cleanup_push(&targets_cleanup, free, targets);
+  for (size_t i = 0; i < count; i++)
+    if (qa_session_actor_registry_is_live(game->host.actors, targets[i].actor.id))
+      (void)qa_actor_callback_table_use(game->host.callbacks, targets[i].actor, &other, activator);
+  qa_cleanup_pop(&targets_cleanup);
+  free(targets);
+}
+/* TS useTargets(entity: AuthoredTarget, activator) for an authored target
+ * that is not a Q1Actor (selected monster entries): the instanceof Q1Actor
+ * branches see spawnflags 0 and no "noise" field. */
+void qa_q1_use_authored_targets(qa_q1_services *game, const qa_authored_target *entity,
+                                const qa_actor_id *activator) {
+  const char *target = entity->target != NULL ? entity->target : "";
+  const char *killtarget = entity->killtarget != NULL ? entity->killtarget : "";
+  const char *message = entity->message != NULL ? entity->message : "";
+  if (entity->delay != 0) {
+    qa_q1_actor *delayed = qa_q1_create(game, "DelayedUse", NULL, NULL);
+    set_owned_text(&delayed->target, target);
+    set_owned_text(&delayed->killtarget, killtarget);
+    set_owned_text(&delayed->message, message);
+    delayed->has_activator = activator != NULL;
+    if (activator != NULL) delayed->activator = *activator;
+    delayed->spawnflags = 0;
+    qa_q1_schedule(game, delayed, entity->delay, named_action(game, delayed, "DelayThink"));
+    return;
+  }
+  qa_q1_message(game, activator, message, true, NULL, 0);
+  if (message[0] != '\0' && activator != NULL && qa_q1_is_player(game, activator)) {
+    qa_owned_actor owner;
+    if (qa_session_actor_registry_resolve_owned(game->host.actors, *activator, &owner))
+      qa_q1_sound(game, owner.id, "misc/talk.wav", "voice", 1, 1);
+  }
+  target_row *victims = NULL;
+  size_t count = target_actors(game, killtarget, &victims);
+  for (size_t i = 0; i < count; i++)
+    if (qa_session_actor_registry_is_live(game->host.actors, victims[i].actor.id))
+      qa_session_actor_registry_release(game->host.actors, victims[i].actor);
+  free(victims);
+  target_row *targets = NULL;
+  count = target_actors(game, target, &targets);
+  const qa_actor_id other = entity->actor.id;
+  qa_cleanup targets_cleanup; /* a use callback can raise */
+  qa_cleanup_push(&targets_cleanup, free, targets);
+  for (size_t i = 0; i < count; i++)
+    if (qa_session_actor_registry_is_live(game->host.actors, targets[i].actor.id))
+      (void)qa_actor_callback_table_use(game->host.callbacks, targets[i].actor, &other, activator);
+  qa_cleanup_pop(&targets_cleanup);
   free(targets);
 }
 void qa_q1_drop_shells(qa_q1_services *game, qa_vec3 origin) {
@@ -1626,7 +2193,6 @@ void qa_q1_drop_shells(qa_q1_services *game, qa_vec3 origin) {
   qa_q1_schedule(game, backpack, 120, named_action(game, backpack, "SUB_Remove"));
 }
 void qa_q1_check_water_transition(qa_q1_services *game, qa_q1_actor *entity) {
-  if (game->host.contents == NULL) return;
   const char *contents =
       game->host.contents(game->host.ctx, qa_q1_get_body(game, entity).origin);
   double value = same(contents, "solid")    ? -2
@@ -1643,62 +2209,161 @@ void qa_q1_check_water_transition(qa_q1_services *game, qa_q1_actor *entity) {
   entity->water_level = transition.water_level;
 }
 
-/* --- damage (combat-lite mirror; see types.h) --- */
-double qa_q1_damage(qa_q1_services *game, qa_actor_id target,
-                    qa_actor_id inflictor, const qa_actor_id *attacker,
-                    double amount, qa_q1_weapon weapon, const char *delivery,
-                    const char *death_type) {
-  /* TS scales with staged fround and builds a DamageRequest whose
-   * geometry/attack provenance the mirror host does not carry;
-   * the sequence still advances exactly as in TS. */
+/* --- damage --- */
+static bool actor_is_live(void *ctx, qa_actor_id actor) {
+  const qa_q1_services *game = ctx;
+  return qa_session_actor_registry_is_live(game->host.actors, actor);
+}
+double qa_q1_option_skill(const qa_q1_services *game) { return qa_q1_options_skill(&game->options); }
+double qa_q1_option_teamplay(const qa_q1_services *game) { return qa_q1_options_teamplay(&game->options); }
+double qa_q1_option_gravity(const qa_q1_services *game) { return qa_q1_options_gravity(&game->options); }
+double qa_q1_player_timer_get(const qa_q1_player_timer *table, size_t count, const qa_q1_player_state *player) {
+  for (size_t i = 0; i < count; i++)
+    if (table[i].player == player) return table[i].at;
+  return 0;
+}
+void qa_q1_player_timer_set(qa_q1_player_timer **table, size_t *count, size_t *capacity,
+                            const qa_q1_player_state *player, double at) {
+  for (size_t i = 0; i < *count; i++)
+    if ((*table)[i].player == player) { (*table)[i].at = at; return; }
+  grow((void **)table, count, capacity, sizeof **table);
+  (*table)[*count].player = player;
+  (*table)[*count].at = at;
+  (*count)++;
+}
+static double protect_sound_at(const qa_q1_services *game, const qa_q1_player_state *player) {
+  for (size_t i = 0; i < game->protect_sound_count; i++)
+    if (game->protect_sounds[i].player == player) return game->protect_sounds[i].at;
+  return 0; /* TS ?? 0 */
+}
+static void set_protect_sound(qa_q1_services *game, const qa_q1_player_state *player, double at) {
+  for (size_t i = 0; i < game->protect_sound_count; i++)
+    if (game->protect_sounds[i].player == player) { game->protect_sounds[i].at = at; return; }
+  grow((void **)&game->protect_sounds, &game->protect_sound_count, &game->protect_sound_capacity,
+       sizeof *game->protect_sounds);
+  game->protect_sounds[game->protect_sound_count].player = player;
+  game->protect_sounds[game->protect_sound_count].at = at;
+  game->protect_sound_count++;
+}
+qa_damage_outcome qa_q1_damage(qa_q1_services *game, qa_actor_id target, qa_actor_id inflictor,
+                               const qa_actor_id *attacker, double amount, qa_q1_weapon weapon,
+                               const char *delivery, const char *death_type, const char *armor_effect) {
+  const qa_body_state_result target_body = qa_shared_body_table_read(game->host.bodies, target);
+  const qa_body_state_result source = qa_shared_body_table_read(game->host.bodies, inflictor);
+  qa_q1_player_state *protected_player = qa_q1_player(game, target);
+  if (protected_player != NULL &&
+      qa_q1_player_powerup_get(protected_player, "invulnerability") >= game->time &&
+      protect_sound_at(game, protected_player) < game->time) {
+    set_protect_sound(game, protected_player, game->time + 2);
+    qa_q1_sound(game, protected_player->actor.id, "items/protect3.wav", "item", 1, 1);
+  }
+  const qa_vec3 point = target_body.has_value ? target_body.value.origin : QA_Q1_ZERO;
+  const qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(point, source.has_value ? source.value.origin : point));
   double multiplier = 1;
   if (attacker != NULL && game->host.source_damage_multiplier != NULL)
     multiplier = game->host.source_damage_multiplier(game->host.ctx, *attacker);
-  else if (attacker == NULL)
-    multiplier = 1;
-  double scaled = (float)((float)amount * (float)multiplier);
-  game->sequence++;
-  if (game->host.apply_damage != NULL)
-    return game->host.apply_damage(game->host.ctx, target, inflictor, attacker,
-                                   scaled, weapon,
-                                   delivery != NULL ? delivery : "direct",
-                                   death_type != NULL ? death_type : "");
-  /* Direct health adjust fallback (types.h): no armor stages or
-   * pain/die reactions without the combat authority. */
-  qa_q1_actor *entity = qa_q1_get_entity(game, &target);
-  if (entity == NULL) return 0;
-  entity->health -= scaled;
-  return scaled;
+  const double scaled = (float)((double)(float)amount * (double)(float)multiplier);
+  const qa_actor_id inflictor_id = inflictor;
+  qa_damage_request request;
+  memset(&request, 0, sizeof request);
+  request.target = target;
+  request.amount = scaled;
+  request.knockback = scaled;
+  request.direction = direction;
+  request.point = point;
+  request.normal = QA_Q1_ZERO;
+  request.delivery = delivery != NULL ? delivery : "direct";
+  request.attack.sequence = game->sequence++;
+  request.attack.time.kind = QA_SOURCE_TIME_SECONDS;
+  request.attack.time.value = game->time;
+  request.attack.attacker = attacker;
+  request.attack.inflictor = &inflictor_id;
+  request.attack.has_damage_powerup_owner = game->host.source_damage_powerup_owner != NULL;
+  request.attack.damage_powerup_owner = game->host.source_damage_powerup_owner;
+  request.attack.weapon = weapon == NULL ? NULL : qa_q1_services_weapon_item(game, weapon);
+  request.attack.weapon_provider = qa_q1_services_provider(game);
+  request.attack.combat_provider = game->options.combat_provider;
+  request.attack.inventory_provider = game->options.inventory_provider;
+  request.attack.movement_provider = game->options.movement_provider;
+  request.attack.cause.kind = QA_ATTACK_CAUSE_Q1;
+  request.attack.cause.death_type = death_type != NULL ? death_type : "";
+  request.attack.cause.armor_effect = armor_effect;
+  qa_damage_request modified =
+      qa_apply_source_damage_modifier(request, game->host.source_damage_modifier, actor_is_live, game);
+  modified.knockback = modified.amount;
+  return qa_gameplay_authority_apply(game->host.combat, modified, NULL, NULL);
+}
+qa_q1_combat_context qa_q1_combat_context_for(qa_q1_services *game, qa_damage_request request) {
+  qa_body_state_result projectile;
+  memset(&projectile, 0, sizeof projectile);
+  if (request.attack.has_originating_projectile)
+    projectile = qa_shared_body_table_read(game->host.bodies, request.attack.originating_projectile);
+  qa_linked_body_result inflictor;
+  memset(&inflictor, 0, sizeof inflictor);
+  if (request.attack.inflictor != NULL &&
+      !(game->world != NULL && qa_same_actor(game->world->actor.id, *request.attack.inflictor)))
+    inflictor = qa_shared_body_table_linked(game->host.bodies, *request.attack.inflictor);
+  /* A source may report world as the damage inflictor while retaining the actual projectile. */
+  bool has_origin = true;
+  qa_vec3 origin = QA_Q1_ZERO;
+  if (projectile.has_value)
+    origin = qa_q1_vadd(projectile.value.origin,
+                        qa_q1_vscale(qa_q1_vadd(projectile.value.bounds.min, projectile.value.bounds.max), 0.5));
+  else if (inflictor.has_value)
+    origin = qa_q1_vscale(qa_q1_vadd(inflictor.value.absolute_bounds.min, inflictor.value.absolute_bounds.max), 0.5);
+  else
+    has_origin = false;
+  const qa_body_state_result target = qa_shared_body_table_read(game->host.bodies, request.target);
+  qa_q1_combat_context context;
+  memset(&context, 0, sizeof context);
+  context.arithmetic = "binary32";
+  context.quad = !request.attack.has_damage_powerup_owner && request.attack.attacker != NULL &&
+                 qa_q1_powerup_expires(game, *request.attack.attacker, "quad") > game->time;
+  context.teamplay = qa_q1_option_teamplay(game);
+  context.has_base_team_health = true;
+  context.base_team_health = game->base_team_health;
+  context.walk = qa_q1_is_player(game, &request.target);
+  context.has_momentum_direction = target.has_value && has_origin;
+  if (context.has_momentum_direction)
+    context.momentum_direction = qa_q1_normalize(qa_q1_vsub(target.value.origin, origin));
+  return context;
 }
 void qa_q1_radius_damage(qa_q1_services *game, qa_actor_id inflictor,
                          const qa_actor_id *attacker, double amount,
                          const qa_actor_id *ignore, qa_q1_weapon weapon,
                          const char *death_type) {
-  qa_q1_actor *source_entity = qa_q1_get_entity(game, &inflictor);
-  if (source_entity == NULL) return;
-  qa_q1_body source = source_entity->body;
-  /* TS iterates host actor observations; the mirror iterates the
-   * attached entities (combat canTakeDamage is damageable). */
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q1_actor *entity = game->entities[i];
-    if (entity == NULL || !entity->live || !entity->damageable) continue;
-    qa_actor_id target = entity->actor.id;
+  const qa_body_state_result source_read = qa_shared_body_table_read(game->host.bodies, inflictor);
+  if (!source_read.has_value) return;
+  const qa_vec3 source_origin = source_read.value.origin;
+  /* findradius prepends to its chain, so the highest edict is damaged
+   * first, and it skips SOLID_NOT (a downed zombie). TS spreads the
+   * observations before reversing them. */
+  size_t count = 0;
+  const qa_actor_observation *live = qa_session_actor_registry_observations(game->host.actors, &count);
+  qa_actor_id *targets = xmalloc((count != 0 ? count : 1) * sizeof *targets);
+  for (size_t i = 0; i < count; i++) targets[i] = live[count - 1 - i].id;
+  qa_cleanup targets_cleanup; /* damage reactions can raise */
+  qa_cleanup_push(&targets_cleanup, free, targets);
+  for (size_t i = 0; i < count; i++) {
+    const qa_actor_id target = targets[i];
+    const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, target);
+    const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, target);
+    if (!combat.has_value || !combat.value.can_take_damage || !body.has_value) continue;
     if (ignore != NULL && qa_same_actor(*ignore, target)) continue;
-    qa_q1_body body = entity->body;
-    qa_vec3 center = qa_q1_vadd(
-        body.origin, qa_q1_vscale(qa_q1_vadd(body.bounds.min, body.bounds.max), 0.5));
-    double distance = qa_q1_length(qa_q1_vsub(center, source.origin));
+    const qa_q1_actor *entity = qa_q1_get_entity(game, &target);
+    if (entity != NULL && same(entity->solid, "none")) continue;
+    const qa_vec3 center = qa_q1_vadd(
+        body.value.origin, qa_q1_vscale(qa_q1_vadd(body.value.bounds.min, body.value.bounds.max), 0.5));
+    const double distance = qa_q1_length(qa_q1_vsub(center, source_origin));
     if (distance > amount + 40) continue;
     double points = (float)(amount - 0.5 * distance);
     if (attacker != NULL && qa_same_actor(target, *attacker)) points *= 0.5;
-    const char *classname = game->host.classname != NULL
-                                ? game->host.classname(game->host.ctx, target)
-                                : entity->classname;
-    if (same(classname, "monster_shambler")) points *= 0.5;
+    if (same(game->host.classname(game->host.ctx, target), "monster_shambler")) points *= 0.5;
     if (points > 0 && qa_q1_can_damage(game, target, inflictor))
-      qa_q1_damage(game, target, inflictor, attacker, points, weapon, "radius",
-                   death_type);
+      (void)qa_q1_damage(game, target, inflictor, attacker, points, weapon, "radius", death_type, NULL);
   }
+  qa_cleanup_pop(&targets_cleanup);
+  free(targets);
 }
 
 /* --- clone --- */
@@ -1747,6 +2412,7 @@ static void apply_source_state(qa_q1_actor *target,
   target->attack_state = state.attack_state;
 }
 qa_q1_actor *qa_q1_clone_entity(qa_q1_services *game, qa_q1_actor *source) {
+  qa_session_actor_registry_assert_owned(game->host.actors, source->actor);
   const char *think_name = qa_q1_action_name(source->think);
   const char *use_name = qa_q1_use_name(source->use);
   const char *touch_name = qa_q1_touch_name(source->touch);
@@ -1788,28 +2454,26 @@ qa_q1_actor *qa_q1_clone_entity(qa_q1_services *game, qa_q1_actor *source) {
         source->monster->path != NULL ? dup_string(source->monster->path) : NULL;
     target->monster = monster;
   }
-  target->body = qa_q1_get_body(game, source);
-  /* TS copies combat health/armor/traits; the mirror combat state
-   * is the actor-local health. A clone of a released source has no
-   * body above (qa_q1_get_body aborts, like the TS combat read). */
-  target->health = source->health;
-  bool source_has_inventory =
-      game->host.inventory_has != NULL
-          ? game->host.inventory_has(game->host.ctx, source->actor.id)
-          : false;
-  if (game->host.inventory_has == NULL) {
-    /* Fallback rows are the only inventory the mirror can copy. */
-    size_t rows = game->inventory_count;
-    for (size_t i = 0; i < rows; i++)
-      if (qa_same_actor(game->inventory[i].actor, source->actor.id)) {
-        size_t at =
-            inventory_index(game, target->actor.id, game->inventory[i].item, true);
-        game->inventory[at].count = game->inventory[i].count;
-        game->inventory[at].capacity = game->inventory[i].capacity;
-        game->inventory[at].has_capacity = game->inventory[i].has_capacity;
-      }
+  const qa_q1_body body = qa_q1_get_body(game, source);
+  qa_shared_body_table_write(game->host.bodies, target->actor, qa_q1_body_to_state(&body));
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, source->actor.id);
+  if (!combat.has_value) qa_range_error("Source clone has no combat state"); /* TS Error throw */
+  qa_gameplay_authority_set_health(game->host.combat, target->actor, combat.value.health);
+  qa_gameplay_authority_set_armor(game->host.combat, target->actor, combat.value.armor);
+  qa_combat_trait_changes traits;
+  memset(&traits, 0, sizeof traits);
+  traits.has_can_take_damage = true; traits.can_take_damage = combat.value.can_take_damage;
+  traits.has_mass = true; traits.mass = combat.value.mass;
+  traits.has_invulnerable = true; traits.invulnerable = combat.value.invulnerable;
+  traits.has_team = true; traits.team = combat.value.team;
+  traits.has_no_knockback = combat.value.has_no_knockback; traits.no_knockback = combat.value.no_knockback;
+  qa_gameplay_authority_set_traits(game->host.combat, target->actor, traits);
+  if (qa_shared_inventory_table_has(game->host.inventory, source->actor.id)) {
+    size_t entry_count = 0;
+    const qa_inventory_entry *entries =
+        qa_shared_inventory_table_entries(game->host.inventory, source->actor.id, &entry_count);
+    qa_shared_inventory_table_create_entries(game->host.inventory, target->actor, entries, entry_count);
   }
-  (void)source_has_inventory;
   if (game->named != NULL) {
     if (think_name != NULL)
       target->think = qa_q1_callback_registry_action(game->named, target, think_name);
@@ -1839,7 +2503,7 @@ qa_q1_actor *qa_q1_clone_entity(qa_q1_services *game, qa_q1_actor *source) {
       game->state_extensions[i]->clone(game->state_extensions[i]->ctx, source,
                                         target);
   if (!same(target->movement, "push") && target->think.fn != NULL &&
-      target->next_think >= 0 && game->host.schedule_think != NULL)
+      target->next_think >= 0)
     game->host.schedule_think(game->host.ctx, target->actor, target->next_think);
   return target;
 }

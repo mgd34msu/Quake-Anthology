@@ -36,5 +36,17 @@ void qa_load_server_localization_resources(const char *language,
                                            void *read_ctx,
                                            qa_loc_profile profile,
                                            qa_localization_table *out);
+/* The same with the TS optional `log` (merge options {log}); NULL is
+ * undefined. The functions above pass NULL. */
+void qa_load_localization_resources_logged(qa_seat_id seat, const char *language,
+                                           qa_localization_read_fn read, void *read_ctx,
+                                           qa_loc_profile profile, const qa_lib_log *log,
+                                           qa_localization_catalog *out);
+void qa_load_server_localization_resources_logged(const char *language,
+                                                  qa_localization_read_fn read,
+                                                  void *read_ctx,
+                                                  qa_loc_profile profile,
+                                                  const qa_lib_log *log,
+                                                  qa_localization_table *out);
 
 #endif

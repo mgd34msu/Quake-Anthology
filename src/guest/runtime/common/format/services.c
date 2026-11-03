@@ -35,6 +35,7 @@ typedef struct windows_format_state {
   qa_guest_core_address errno_address;
   char *library; /* owned */
 } windows_format_state;
+static void free_windows_state(void *resource) { windows_format_state *state = resource; free(state->library); free(state); }
 
 static qa_call_result vsscanf_impl(void *ctx, const qa_guest_core_call_context *context,
                                    const qa_call_value *args, size_t count) {
@@ -51,7 +52,7 @@ static qa_call_result vsscanf_impl(void *ctx, const qa_guest_core_call_context *
   options.memory = state->host->memory;
   options.memory_ext = state->host->memory_ext;
   options.input = qa_guest_required_pointer(args, count, 1);
-  options.capacity = qa_guest_integer(args, count, 2);
+  options.capacity = qa_guest_integer_u64(args, count, 2);
   options.format = qa_guest_required_pointer(args, count, 3);
   options.has_arguments = has_arguments;
   options.arguments = arguments;
@@ -101,16 +102,21 @@ void qa_install_windows_format(qa_windows_service_host *host, qa_guest_core_addr
   qa_abi_storage parameters[] = {QA_STORAGE_UINT64, QA_STORAGE_POINTER, QA_STORAGE_POINTER,
                                  QA_STORAGE_POINTER, QA_STORAGE_POINTER, QA_STORAGE_POINTER};
   parameters[2] = host->pointer_storage;
+  /* TS registers the three scanf services, then the three printf services. */
   for (size_t i = 0; i < 3; i++) {
     windows_format_state *scan_state = xmalloc(sizeof *scan_state);
     scan_state->host = host; scan_state->errno_address = errno_address;
     scan_state->library = xstrdup(libraries[i]);
+    qa_windows_own(host, scan_state, free_windows_state);
     qa_windows_import_implementation scan_impl = {scan_state, vsscanf_impl};
     qa_windows_service(host, libraries[i], "__stdio_common_vsscanf", parameters, 6,
                        false, QA_STORAGE_INT32, scan_impl);
+  }
+  for (size_t i = 0; i < 3; i++) {
     windows_format_state *printf_state = xmalloc(sizeof *printf_state);
     printf_state->host = host; printf_state->errno_address = errno_address;
     printf_state->library = xstrdup(libraries[i]);
+    qa_windows_own(host, printf_state, free_windows_state);
     qa_windows_import_implementation printf_impl = {printf_state, vsprintf_impl};
     qa_windows_service(host, libraries[i], "__stdio_common_vsprintf", parameters, 6,
                        false, QA_STORAGE_INT32, printf_impl);

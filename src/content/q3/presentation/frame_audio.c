@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/frame-audio.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/frame_audio.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include "qa/content/q3/base/shared/player_state.h"
@@ -22,7 +23,7 @@ void qa_q3_pres_client_frame_audio_add_buffered_sound(qa_q3_pres_client_frame_au
   double in = buffer_slot(state->sound_buffer_in);
   if (in >= 0 && in < QA_Q3_PRES_SOUND_BUFFER_COUNT) state->sound_buffer[(size_t)in] = sound;
   state->sound_buffer_in = fmod(state->sound_buffer_in + 1, 20);
-  if (state->sound_buffer_in == state->sound_buffer_out) state->sound_buffer_out++;
+  if (state->sound_buffer_in == state->sound_buffer_out) state->sound_buffer_out = fmod(state->sound_buffer_out + 1, 20);
 }
 void qa_q3_pres_client_frame_audio_play_buffered_sounds(qa_q3_pres_client_frame_audio *audio) {
   qa_q3_pres_client_game_state *state = audio->state;
@@ -30,7 +31,7 @@ void qa_q3_pres_client_frame_audio_play_buffered_sounds(qa_q3_pres_client_frame_
   double out = state->sound_buffer_out;
   if (out != trunc(out) || out < 0 || out >= QA_Q3_PRES_SOUND_BUFFER_COUNT) {
     char message[128];
-    snprintf(message, sizeof message, "CG_PlayBufferedSounds: sound buffer index %g outside 0..19", out);
+    snprintf(message, sizeof message, "CG_PlayBufferedSounds: sound buffer index %s outside 0..19", QA_JS_NUMBER(out));
     qa_range_error("%s", message);
   }
   qa_pcm_sound *sound = state->sound_buffer[(size_t)out];

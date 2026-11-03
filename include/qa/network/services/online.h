@@ -25,6 +25,9 @@ typedef struct qa_authorization_provider {
 typedef struct qa_local_authorization qa_local_authorization;
 void qa_local_authorization_init(qa_local_authorization *a);
 void qa_local_authorization_destroy(qa_local_authorization *a);
+/* Heap forms (the structs are private to online.c): NULL only on OOM; free destroys. */
+qa_local_authorization *qa_local_authorization_create(void);
+void qa_local_authorization_free(qa_local_authorization *a);
 void qa_local_authorization_register(qa_local_authorization *a, const char *name, const char *password, qa_online_account *out);
 void qa_local_authorization_authorize(qa_local_authorization *a, const char *name, const char *credential, qa_authorization *out);
 int qa_local_authorization_get_account(qa_local_authorization *a, const char *token, qa_online_account *out);
@@ -83,6 +86,8 @@ void qa_local_ranking_service_destroy(qa_local_ranking_service *s);
 bool qa_local_ranking_service_submit(qa_local_ranking_service *s, const qa_online_ranking_report *report);
 qa_ranking_entry *qa_local_ranking_service_standings(qa_local_ranking_service *s, qa_provider_id rules, size_t *out_count);
 char *qa_local_ranking_service_save(qa_local_ranking_service *s);
+qa_local_ranking_service *qa_local_ranking_service_create(void);
+void qa_local_ranking_service_free(qa_local_ranking_service *s);
 void qa_local_ranking_service_restore(qa_local_ranking_service *s, const char *text);
 
 typedef struct qa_addon_catalog_entry {

@@ -91,6 +91,8 @@ static void field_move(qa_edit_field *field, int64_t destination, int64_t start,
   memmove(field->buffer + destination, field->buffer + start, (size_t)(end - start));
 }
 
+static void paste_depth_release(void *raw) { ((qa_edit_field *)raw)->paste_depth--; }
+
 static void field_paste(qa_edit_field *field, const qa_field_controls *controls) {
   if (controls->clipboard.kind == QA_FIELD_CLIPBOARD_NATIVE_UNIX_UNAVAILABLE) return;
   if (field->paste_depth >= 32)
@@ -100,15 +102,17 @@ static void field_paste(qa_edit_field *field, const qa_field_controls *controls)
   if (!controls->clipboard.read(controls->clipboard.ctx, &bytes, &length)) return;
   if (field->paste_depth == 0) field->paste_work = 0;
   field->paste_depth++;
+  /* TS try { ... } finally { pasteDepth-- }: a raise from any nested paste
+   * unwinds every level's depth. */
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, paste_depth_release, field);
   for (size_t i = 0; i < length; i++) {
     uint8_t byte = bytes[i];
     if (byte == 0) break;
-    if (++field->paste_work > 65536) {
-      field->paste_depth--;
-      qa_range_error("Field paste exceeded 65536 byte operations");
-    }
+    if (++field->paste_work > 65536) qa_range_error("Field paste exceeded 65536 byte operations");
     qa_edit_field_char_event(field, byte < 128 ? byte : (int)byte - 256, controls);
   }
+  qa_cleanup_pop(&cleanup);
   field->paste_depth--;
 }
 

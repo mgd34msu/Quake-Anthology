@@ -1,9 +1,11 @@
 /* Port of src/network/q2/server-messages.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/server_messages.h"
+#include "qa/network/common/js_number.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
+#include <math.h>
 
 #include "qa/foundation/support.h"
 #include "qa/network/q2/codecs/zpacket.h"
@@ -11,7 +13,7 @@
 
 noreturn void qa_q2_throw_unbound_server_message(double opcode,
                                                  qa_q2_protocol_identity protocol) {
-  qa_q2_throw_error("Q2 service opcode %g has no binding for %s", opcode,
+  qa_q2_throw_error("Q2 service opcode %s has no binding for %s", QA_JS_NUMBER(opcode),
                     protocol.kind != NULL ? protocol.kind : "");
 }
 
@@ -118,8 +120,9 @@ bool qa_q2_server_message_reader_init(qa_q2_server_message_reader *reader,
   if (!qa_q2_wire_codec_init(&reader->wire, protocol)) return false;
   double max_cs = options.max_config_strings;
   double slots = options.inventory_slots;
-  if (max_cs != (double)(int64_t)max_cs || max_cs < 1 || max_cs > 65535 ||
-      slots != (double)(int64_t)slots || slots < 1 || slots > 32768) {
+  /* Number.isInteger on the number: the int64 cast was undefined for NaN and huge values. */
+  if (!(max_cs == trunc(max_cs)) || max_cs < 1 || max_cs > 65535 ||
+      !(slots == trunc(slots)) || slots < 1 || slots > 32768) {
     qa_range_error("Invalid Q2 message layout limits");
   }
   return true;
@@ -228,7 +231,19 @@ bool qa_q2_server_message_reader_latest_frames(qa_q2_server_message_reader *read
 typedef struct record_list {
   qa_q2_server_record *records;
   size_t count, capacity;
+  /* The event being decoded, released with the list when a decode raises. Points into the
+   * live frame of parse_internal/text_event and is cleared before that frame ends. */
+  qa_q2_server_event *current;
 } record_list;
+
+static void release_records(void *arg) {
+  record_list *list = (record_list *)arg;
+  if (list->current != NULL) qa_q2_server_event_clear(list->current);
+  list->current = NULL;
+  qa_q2_server_records_free(list->records, list->count);
+  list->records = NULL;
+  list->count = list->capacity = 0;
+}
 
 static bool record_push(record_list *list, qa_q2_server_record record) {
   if (list->count == list->capacity) {
@@ -309,12 +324,14 @@ static bool read_config(qa_q2_server_message_reader *reader, qa_q2_server_event 
   return true;
 }
 
-static bool read_baseline(qa_q2_server_message_reader *reader,
+/* In a signon stream entity 0 terminates the list; as svc_spawnbaseline it is an ordinary
+ * record, as in cl_parse.c. */
+static bool read_baseline(qa_q2_server_message_reader *reader, bool terminated,
                           qa_q2_server_event *event, bool *is_null) {
   qa_q2_protocol_codec *codec = reader->wire.selected_codec;
   qa_q2_entity_bits header;
   codec->read_entity_bits(codec, &header);
-  if (header.number == 0) {
+  if (terminated && header.number == 0) {
     *is_null = true;
     return true;
   }
@@ -377,51 +394,8 @@ static void read_sound(qa_q2_server_message_reader *reader, qa_q2_sound_message 
   }
 }
 
-/* Raw-inflate helper mirroring inflateRawSync use in downloads. */
-static uint8_t *inflate_download(const uint8_t *bytes, size_t length, int flush,
-                                 size_t *out_length) {
-  size_t capacity = length * 4 + 4096;
-  uint8_t *out = (uint8_t *)malloc(capacity);
-  if (out == NULL) return NULL;
-  z_stream stream;
-  memset(&stream, 0, sizeof stream);
-  if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
-    free(out);
-    qa_q2_throw_error("Q2 download inflation failed");
-  }
-  stream.next_in = (Bytef *)bytes;
-  stream.avail_in = (uInt)length;
-  size_t produced = 0;
-  for (;;) {
-    if (produced == capacity) {
-      size_t next = capacity * 2;
-      uint8_t *grown = (uint8_t *)realloc(out, next);
-      if (grown == NULL) {
-        inflateEnd(&stream);
-        free(out);
-        return NULL;
-      }
-      out = grown;
-      capacity = next;
-    }
-    stream.next_out = out + produced;
-    stream.avail_out = (uInt)(capacity - produced);
-    uLong before = stream.total_out;
-    int status = inflate(&stream, flush);
-    produced += (size_t)(stream.total_out - before);
-    if (status == Z_STREAM_END) break;
-    if (status != Z_OK && status != Z_BUF_ERROR) {
-      inflateEnd(&stream);
-      free(out);
-      qa_q2_throw_error("Q2 download inflation failed");
-    }
-    if (stream.avail_in == 0 && stream.avail_out != 0) break;
-    if (status == Z_BUF_ERROR && stream.avail_out != 0) break;
-  }
-  inflateEnd(&stream);
-  *out_length = produced;
-  return out;
-}
+#define MAX_STREAM_DOWNLOAD_BYTES (64u * 1024u * 1024u)
+static void free_arg(void *arg) { free(arg); }
 
 typedef enum download_mode { DL_NONE, DL_BLOCK, DL_STREAM } download_mode;
 
@@ -460,7 +434,12 @@ static bool read_download(qa_q2_server_message_reader *reader, download_mode mod
   }
   if (mode == DL_BLOCK) {
     size_t inflated_len = 0;
-    uint8_t *inflated = inflate_download(block, block_len, Z_FINISH, &inflated_len);
+    qa_cleanup node;
+    qa_cleanup_push(&node, free_arg, block);
+    uint8_t *inflated = qa_q2_inflate_sync(block, block_len, true,
+                                           expected != 0 ? (size_t)expected : 1, Z_FINISH,
+                                           &inflated_len);
+    qa_cleanup_pop(&node);
     free(block);
     if (inflated == NULL) return false;
     if ((int64_t)inflated_len != (int64_t)expected) {
@@ -471,6 +450,11 @@ static bool read_download(qa_q2_server_message_reader *reader, download_mode mod
     event->bytes = inflated;
     event->bytes_length = inflated_len;
     return true;
+  }
+  /* Q2rePRO keeps a single raw deflate stream across download packets. */
+  if (reader->compressed_download_length + block_len > MAX_STREAM_DOWNLOAD_BYTES) {
+    free(block);
+    qa_q2_throw_error("Q2 compressed download stream exceeds its limit");
   }
   size_t joined_len = reader->compressed_download_length + block_len;
   uint8_t *joined = (uint8_t *)malloc(joined_len > 0 ? joined_len : 1);
@@ -487,9 +471,9 @@ static bool read_download(qa_q2_server_message_reader *reader, download_mode mod
   reader->compressed_download = joined;
   reader->compressed_download_length = joined_len;
   size_t inflated_len = 0;
-  uint8_t *inflated = inflate_download(joined, joined_len,
-                                       percent == 100 ? Z_FINISH : Z_SYNC_FLUSH,
-                                       &inflated_len);
+  uint8_t *inflated = qa_q2_inflate_sync(joined, joined_len, true, MAX_STREAM_DOWNLOAD_BYTES,
+                                         percent == 100 ? Z_FINISH : Z_SYNC_FLUSH,
+                                         &inflated_len);
   if (inflated == NULL) return false;
   size_t prior = reader->inflated_download_bytes;
   size_t delta_len = inflated_len > prior ? inflated_len - prior : 0;
@@ -540,14 +524,14 @@ static bool text_event(qa_q2_server_message_reader *reader, record_list *list,
                        int32_t opcode, int64_t start, qa_q2_server_event_kind kind) {
   qa_q2_server_event event;
   memset(&event, 0, sizeof event);
+  qa_q2_server_event *outer = list->current;
+  list->current = &event;
   event.kind = kind;
   event.text = read_string_owned(&reader->wire.message);
-  if (event.text == NULL) return false;
-  if (!push_record(reader, list, (double)opcode, start, &event)) {
-    qa_q2_server_event_clear(&event);
-    return false;
-  }
-  return true;
+  bool ok = event.text != NULL && push_record(reader, list, (double)opcode, start, &event);
+  if (!ok) qa_q2_server_event_clear(&event);
+  list->current = outer;
+  return ok;
 }
 
 static bool simple_event(qa_q2_server_message_reader *reader, record_list *list,
@@ -572,15 +556,16 @@ static bool parse_internal(qa_q2_server_message_reader *reader, record_list *lis
       qa_q2_server_stream mode = reader->stream;
       qa_q2_server_event event;
       memset(&event, 0, sizeof event);
+      list->current = &event;
       bool is_null = false;
       bool ok = mode == QA_Q2_STREAM_BASELINE
-                    ? read_baseline(reader, &event, &is_null)
+                    ? read_baseline(reader, true, &event, &is_null)
                     : read_config(reader, &event, &is_null);
+      if (ok && !is_null)
+        ok = simple_event(reader, list, mode == QA_Q2_STREAM_BASELINE ? 39 : 38, start, &event);
+      list->current = NULL;
       if (!ok) return false;
-      if (!is_null) {
-        if (!simple_event(reader, list, mode == QA_Q2_STREAM_BASELINE ? 39 : 38, start,
-                          &event)) return false;
-      } else {
+      if (is_null) {
         reader->stream = mode == QA_Q2_STREAM_GAMESTATE_CONFIG ? QA_Q2_STREAM_BASELINE
                                                                 : QA_Q2_STREAM_NONE;
       }
@@ -594,9 +579,12 @@ static bool parse_internal(qa_q2_server_message_reader *reader, record_list *lis
       }
       qa_q2_server_event event;
       memset(&event, 0, sizeof event);
+      list->current = &event;
       reader->options.private_message(reader->options.private_ctx, (double)opcode, m,
                                       reader->wire.selected_protocol, &event);
-      if (!simple_event(reader, list, opcode, start, &event)) return false;
+      bool ok = simple_event(reader, list, opcode, start, &event);
+      list->current = NULL;
+      if (!ok) return false;
       continue;
     }
     if ((opcode == 21 && (kind_is(&reader->wire.selected_protocol, "q2-r1q2") ||
@@ -606,14 +594,18 @@ static bool parse_internal(qa_q2_server_message_reader *reader, record_list *lis
       uint8_t *payload = qa_q2_read_zpacket_payload(m, &payload_len);
       if (payload == NULL) return false;
       nested_ctx nc = {reader, list, true};
+      qa_cleanup payload_node;
+      qa_cleanup_push(&payload_node, free_arg, payload);
       bool ok = qa_q2_wire_codec_nested(&reader->wire, payload, payload_len, nested_read,
                                         &nc);
+      qa_cleanup_pop(&payload_node);
       free(payload);
       if (!ok || !nc.ok) return false;
       continue;
     }
     qa_q2_server_event event;
     memset(&event, 0, sizeof event);
+    list->current = &event;
     bool pushed = false;
     switch (opcode) {
       case 6: event.kind = QA_Q2_SERVER_NOP; break;
@@ -665,8 +657,8 @@ static bool parse_internal(qa_q2_server_message_reader *reader, record_list *lis
       }
       case 14: {
         bool is_null = false;
-        if (!read_baseline(reader, &event, &is_null)) return false;
-        if (is_null) qa_q2_throw_error("Q2 zero spawn baseline");
+        if (!read_baseline(reader, false, &event, &is_null)) return false;
+        if (is_null) qa_q2_throw_error("Q2 spawn baseline missing");
         break;
       }
       case 20: {
@@ -888,9 +880,9 @@ static bool parse_internal(qa_q2_server_message_reader *reader, record_list *lis
         break;
       }
     }
-    if (!pushed) {
-      if (!simple_event(reader, list, opcode, start, &event)) return false;
-    }
+    bool ok = pushed || simple_event(reader, list, opcode, start, &event);
+    list->current = NULL;
+    if (!ok) return false;
   }
   return true;
 }
@@ -899,12 +891,17 @@ bool qa_q2_server_message_reader_read(qa_q2_server_message_reader *reader,
                                       const uint8_t *bytes, size_t length,
                                       qa_q2_server_record **out, size_t *out_count) {
   if (!qa_q2_wire_codec_begin(&reader->wire, bytes, length)) return false;
-  record_list list = {NULL, 0, 0};
+  record_list list = {NULL, 0, 0, NULL};
+  /* A raise abandons the records parsed so far, as TS drops its local array. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, release_records, &list);
   if (!parse_internal(reader, &list)) {
+    qa_cleanup_pop(&node);
     qa_q2_server_records_free(list.records, list.count);
     return false;
   }
   qa_q2_wire_codec_finish(&reader->wire);
+  qa_cleanup_pop(&node);
   *out = list.records;
   *out_count = list.count;
   return true;

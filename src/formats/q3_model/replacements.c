@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-model/replacements.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_model/replacements.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -108,7 +109,12 @@ char *qa_q1_md5_skin_path(const char *shader, double group, double frame) {
   }
   size_t length = strlen(shader) + 64;
   char *result = xmalloc(length);
-  snprintf(result, length, "progs/%s_%02d_%02d", shader, (int)group, (int)frame);
+  /* String(n).padStart(2, "0"): a C %02d of a value past int range is undefined. */
+  char group_text[40], frame_text[40];
+  qa_net_js_number(group, group_text, sizeof group_text);
+  qa_net_js_number(frame, frame_text, sizeof frame_text);
+  snprintf(result, length, "progs/%s_%s%s_%s%s", shader, group_text[1] == '\0' ? "0" : "", group_text,
+           frame_text[1] == '\0' ? "0" : "", frame_text);
   return result;
 }
 

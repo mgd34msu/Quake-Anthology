@@ -90,8 +90,9 @@ static uint64_t random_offset(qa_q2_rerelease_random *random, uint64_t range, in
   }
   uint64_t threshold = range_wide ? 0 : (uint64_t)(0 - range) % range;
   for (;;) {
-    uint64_t sample = ((uint64_t)qa_q2_rerelease_random_next_uint32(random) << 32) |
-                      qa_q2_rerelease_random_next_uint32(random);
+    /* TS: sample = next << 32n | next; the high word is drawn first. */
+    uint64_t high_word = qa_q2_rerelease_random_next_uint32(random);
+    uint64_t sample = (high_word << 32) | qa_q2_rerelease_random_next_uint32(random);
     if (range_wide) return sample;
     uint64_t high, low;
     mul_u64_u128(sample, range, &high, &low);

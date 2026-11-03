@@ -6,6 +6,8 @@
 #include <string.h>
 #include "qa/core/common_parse.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 typedef struct { char *key, *value; } field;
 typedef struct { field *fields; size_t count; } info;
 typedef struct { info *rows; size_t count, cap; } infos;
@@ -62,7 +64,11 @@ static bool valid_map_name(const char *name) {
     if (!isalnum((unsigned char)*p) && *p != '_' && *p != '/' && *p != '-') return false;
   return true;
 }
-static int parse_int10(const char *text) { return text ? (int)strtol(text, NULL, 10) : 0; }
+/* Number.parseInt(text ?? "0", 10) || 0 */
+static double parse_int10(const char *text) {
+  double value = qa_js_parse_int(text ? text : "0", 10);
+  return isnan(value) || value == 0 ? 0 : value;
+}
 static qa_app_base_arena_catalog catalog_from_infos(infos *all) {
   /* singles: type includes "single" and a usable map name. */
   size_t regular = 0;
@@ -83,7 +89,7 @@ static qa_app_base_arena_catalog catalog_from_infos(infos *all) {
     special = special ? special : "";
     const char *name = get(row, "map");
     double number = special[0] ? special_number++ : single++;
-    int frag = parse_int10(get(row, "fraglimit")), time = parse_int10(get(row, "timelimit"));
+    double frag = parse_int10(get(row, "fraglimit")), time = parse_int10(get(row, "timelimit"));
     qa_app_base_arena arena = {0};
     arena.number = number;
     char map[1024]; snprintf(map, sizeof map, "maps/%s.bsp", name);
@@ -146,9 +152,12 @@ void qa_app_base_arena_catalog_destroy(qa_app_base_arena_catalog *catalog) {
 }
 const qa_app_base_arena *qa_app_base_arena_for_map(const qa_app_base_arena_catalog *catalog, const char *map) {
   char path[1024], wanted[1100];
-  size_t len = strlen(map), out = 0;
-  for (size_t i = 0; i < len && out < sizeof path - 1; i++) path[out++] = (char)tolower((unsigned char)map[i]);
-  path[out] = '\0';
+  /* TS map.toLowerCase(): Unicode lowering (U+212A KELVIN SIGN becomes 'k'). Catalog
+   * maps are ASCII (arenaInfos keeps /^[a-z0-9_/-]+$/i names only). */
+  char *lowered = qa_js_to_lower_case(map);
+  if (lowered == NULL) qa_range_error("Out of memory");
+  snprintf(path, sizeof path, "%s", lowered);
+  free(lowered);
   const char *stem = strncmp(path, "maps/", 5) == 0 ? path + 5 : path;
   char stem_buf[1024]; snprintf(stem_buf, sizeof stem_buf, "%s", stem);
   size_t slen = strlen(stem_buf);

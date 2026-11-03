@@ -1,6 +1,7 @@
 /* Port of src/audio/mixer.ts. See include/qa/audio/mixer.h.
  * GPL-2.0-or-later. */
 #include "qa/audio/mixer.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -12,6 +13,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 #define SOUND_FULLVOLUME 80
 #define RAW_CAPACITY QA_AUDIO_MIXER_RAW_CAPACITY
@@ -27,8 +29,7 @@ static noreturn void plain_error(const char *format, ...) {
   va_start(args, format);
   vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static void *xmalloc(size_t size) {
@@ -50,23 +51,7 @@ static void *xrealloc(void *ptr, size_t size) {
 /* JS String(number) for the values these messages interpolate:
  * integral values print as plain integers, others shortest-roundtrip. */
 static void fmt_num(char *out, size_t size, double value) {
-  if (isnan(value)) {
-    snprintf(out, size, "NaN");
-    return;
-  }
-  if (isinf(value)) {
-    snprintf(out, size, value < 0 ? "-Infinity" : "Infinity");
-    return;
-  }
-  if (value == trunc(value) && fabs(value) < 1e21) {
-    snprintf(out, size, "%.0f", value);
-    return;
-  }
-  for (int precision = 1; precision <= 17; precision++) {
-    snprintf(out, size, "%.*g", precision, value);
-    if (strtod(out, NULL) == value) return;
-  }
-  snprintf(out, size, "%.17g", value);
+  qa_net_js_number(value, out, size);
 }
 
 static bool is_integer(double value) {
@@ -112,10 +97,8 @@ static void require_gain(double gain, const char *name) {
 typedef struct prepared_sound {
   int refs;
   const qa_pcm_sound *sound;
-  bool has_memory;
-  qa_mixer_sound_memory memory;
   double step256;
-  double output_frames; /* when !has_memory */
+  double output_frames;
   double *doppler_sums;
   size_t doppler_sums_length;
 } prepared_sound;
@@ -138,9 +121,6 @@ static void prepared_release(prepared_sound *prepared) {
   }
 }
 static double prepared_frames(const prepared_sound *prepared) {
-  if (prepared->has_memory)
-    return prepared->memory.frame_count(prepared->memory.ctx,
-                                        prepared->sound);
   return prepared->output_frames;
 }
 
@@ -230,7 +210,6 @@ struct qa_audio_mixer {
   qa_audio_milliseconds_fn milliseconds;
   void *milliseconds_ctx;
   double effects_volume; /* binary32 value */
-  double music_volume;
   bool doppler_enabled;
   bool enabled;
   double next_voice;
@@ -268,8 +247,6 @@ struct qa_audio_mixer {
   qa_cvar_registry *sound_cvars; /* borrowed */
   qa_mixer_print_fn console_print;
   void *console_ctx;
-  bool has_sound_memory;
-  qa_mixer_sound_memory sound_memory;
 };
 
 static double allocate_voice_id(qa_audio_mixer *mixer) {
@@ -363,6 +340,43 @@ static size_t take_channel(qa_audio_mixer *mixer, bool *had_free) {
   return index;
 }
 
+/* Source MAX_CHANNELS (TS MAXIMUM_VOICES). */
+#define MAXIMUM_VOICES 128
+
+/* TS acquireChannel: a free slot, a new slot below the voice limit, or the
+ * oldest ordinary effect (the listener's own sounds only for the listener),
+ * stopped as "replaced". False refuses the new sound. */
+static bool acquire_channel(qa_audio_mixer *mixer, double entity,
+                            size_t *out_index, bool *out_reused) {
+  bool had_free = false;
+  if (mixer->free_count > 0 ||
+      (double)mixer->voice_count <
+          (mixer->capacity > MAXIMUM_VOICES ? (double)mixer->capacity : MAXIMUM_VOICES)) {
+    *out_index = take_channel(mixer, &had_free);
+    *out_reused = had_free;
+    return true;
+  }
+  int64_t victim = -1;
+  double oldest = INFINITY;
+  for (size_t i = 0; i < mixer->voice_count; i++) {
+    const one_shot_voice *voice = &mixer->voices[i];
+    if (!voice->occupied ||
+        (voice->entity == mixer->listener_entity && entity != mixer->listener_entity))
+      continue;
+    if (voice->has_policy && voice->policy.role != ROLE_EFFECT) continue;
+    if ((double)voice->allocated_at < oldest) {
+      oldest = (double)voice->allocated_at;
+      victim = (int64_t)i;
+    }
+  }
+  if (victim < 0) return false;
+  free_channel_reason(mixer, (size_t)victim, QA_AUDIO_VOICE_STOP_REPLACED);
+  mixer->free_count--; /* TS freeChannels.pop() of the slot just freed */
+  *out_index = (size_t)victim;
+  *out_reused = true;
+  return true;
+}
+
 static void raw_debug_print(qa_audio_mixer *mixer, const char *text) {
   if (mixer->sound_cvars == NULL) return;
   qa_cvar_snapshot snapshot;
@@ -427,13 +441,6 @@ static void validate_sound(const qa_pcm_sound *sound, bool allow_stereo) {
 static prepared_sound *prepare_sound(qa_audio_mixer *mixer,
                                      const qa_pcm_sound *sound) {
   prepared_sound *prepared = prepared_new(sound);
-  if (mixer->has_sound_memory) {
-    prepared->has_memory = true;
-    prepared->memory = mixer->sound_memory;
-    (void)prepared->memory.frame_count(prepared->memory.ctx, sound);
-    prepared->step256 = 256;
-    return prepared;
-  }
   double scale = fround_((double)sound->sample_rate / (double)mixer->output_rate);
   double frames = trunc(fround_(fround_((double)sound->frame_count) / scale));
   if (!is_safe_integer(frames) || frames < 0)
@@ -456,12 +463,12 @@ qa_mixer_stereo_volume qa_spatialize_sound_origin(qa_vec3 position,
   if (distance_beyond < 0) distance_beyond = 0;
   double distance_loss = fround_(distance_beyond * fround_(sound_attenuate));
   double right_scale =
-      channels == 1 ? 1 : fmax(0, fround_(0.5 * (1 + pan)));
-  double left_scale = channels == 1 ? 1 : fmax(0, fround_(0.5 * (1 - pan)));
+      channels == 1 ? 1 : qa_js_max(0, fround_(0.5 * (1 + pan)));
+  double left_scale = channels == 1 ? 1 : qa_js_max(0, fround_(0.5 * (1 - pan)));
   double right =
-      fmax(0, trunc(fround_(volume * fround_((1 - distance_loss) * right_scale))));
+      qa_js_max(0, trunc(fround_(volume * fround_((1 - distance_loss) * right_scale))));
   double left =
-      fmax(0, trunc(fround_(volume * fround_((1 - distance_loss) * left_scale))));
+      qa_js_max(0, trunc(fround_(volume * fround_((1 - distance_loss) * left_scale))));
   qa_mixer_stereo_volume result = {left, right};
   return result;
 }
@@ -572,8 +579,8 @@ static qa_mixer_stereo_volume policy_spatialize(qa_audio_mixer *mixer,
   bool mono = mixer->output_channels == 1 ||
               (policy->unattenuated_mono && policy->attenuation == 0);
   qa_mixer_stereo_volume volume;
-  volume.left = fmax(0, trunc(gain * (mono ? 1 : policy->stereo_scale * (1 - pan))));
-  volume.right = fmax(0, trunc(gain * (mono ? 1 : policy->stereo_scale * (1 + pan))));
+  volume.left = qa_js_max(0, trunc(gain * (mono ? 1 : policy->stereo_scale * (1 - pan))));
+  volume.right = qa_js_max(0, trunc(gain * (mono ? 1 : policy->stereo_scale * (1 + pan))));
   return policy->attenuation == 0 ? volume : transmit(mixer, position, volume);
 }
 
@@ -626,7 +633,6 @@ qa_audio_mixer *qa_audio_mixer_create(double output_rate,
   mixer->milliseconds = milliseconds;
   mixer->milliseconds_ctx = milliseconds_ctx;
   mixer->effects_volume = (double)0.8f;
-  mixer->music_volume = 0.25;
   mixer->doppler_enabled = true;
   mixer->enabled = true;
   mixer->listener_origin = qa_math_vec3(0, 0, 0);
@@ -693,9 +699,6 @@ void qa_audio_mixer_set_playback_enabled(qa_audio_mixer *mixer, bool enabled) {
 int64_t qa_audio_mixer_raw_end(const qa_audio_mixer *mixer) {
   return mixer->raw_end_time;
 }
-int32_t *qa_audio_mixer_raw_sample_pointer(qa_audio_mixer *mixer) {
-  return mixer->raw_samples;
-}
 void qa_audio_mixer_bind_sound_cvars(qa_audio_mixer *mixer,
                                      qa_cvar_registry *cvars) {
   mixer->sound_cvars = cvars;
@@ -704,11 +707,6 @@ void qa_audio_mixer_bind_console_output(qa_audio_mixer *mixer,
                                         qa_mixer_print_fn print, void *ctx) {
   mixer->console_print = print;
   mixer->console_ctx = ctx;
-}
-void qa_audio_mixer_bind_sound_memory(qa_audio_mixer *mixer,
-                                      qa_mixer_sound_memory memory) {
-  mixer->sound_memory = memory;
-  mixer->has_sound_memory = true;
 }
 void qa_audio_mixer_set_voice_observer(qa_audio_mixer *mixer,
                                        qa_mixer_voice_observer_fn observer,
@@ -801,8 +799,6 @@ static int compare_loop_indices(const void *left, const void *right,
 
 static void collect_loop_mixes(qa_audio_mixer *mixer) {
   clear_loop_channels(mixer);
-  bool have_time = mixer->has_sound_memory;
-  int64_t time = have_time ? allocation_time(mixer) : 0;
   size_t active_count = 0;
   for (size_t i = 0; i < mixer->loop_count; i++)
     if (mixer->loops[i].active) active_count++;
@@ -828,9 +824,6 @@ static void collect_loop_mixes(qa_audio_mixer *mixer) {
     qa_mixer_stereo_volume volume =
         spatialize_origin(mixer, position_for_entity(mixer, loop->entity),
                           loop->volume);
-    if (have_time)
-      mixer->sound_memory.touch(mixer->sound_memory.ctx,
-                                loop->prepared->sound, (double)time);
     double left = volume.left, right = volume.right;
     for (size_t j = i + 1; j < active_count; j++) {
       loop_voice *candidate = &mixer->loops[sorted[j]];
@@ -841,9 +834,6 @@ static void collect_loop_mixes(qa_audio_mixer *mixer) {
       qa_mixer_stereo_volume candidate_volume = spatialize_origin(
           mixer, position_for_entity(mixer, candidate->entity),
           candidate->volume);
-      if (have_time)
-        mixer->sound_memory.touch(mixer->sound_memory.ctx,
-                                  candidate->prepared->sound, (double)time);
       left += candidate_volume.left;
       right += candidate_volume.right;
     }
@@ -858,8 +848,8 @@ static void collect_loop_mixes(qa_audio_mixer *mixer) {
     }
     loop_mix *mix = &mixer->loop_channels[mixer->loop_channel_count++];
     mix->prepared = prepared_retain(loop->prepared);
-    mix->left_volume = fmin(255, left);
-    mix->right_volume = fmin(255, right);
+    mix->left_volume = qa_js_min(255, left);
+    mix->right_volume = qa_js_min(255, right);
     mix->doppler = loop->doppler;
     mix->doppler_scale = loop->doppler_scale;
     mix->old_doppler_scale = loop->old_doppler_scale;
@@ -890,6 +880,15 @@ void qa_audio_mixer_set_listener(qa_audio_mixer *mixer, double entity,
   collect_loop_mixes(mixer);
 }
 
+/* TS entityActive: an active loop keyed by the entity, or any live voice. */
+bool qa_audio_mixer_entity_active(const qa_audio_mixer *mixer, double entity) {
+  for (size_t i = 0; i < mixer->loop_count; i++)
+    if (mixer->loops[i].entity == entity && mixer->loops[i].active) return true;
+  for (size_t i = 0; i < mixer->voice_count; i++)
+    if (mixer->voices[i].occupied && mixer->voices[i].entity == entity) return true;
+  return false;
+}
+
 void qa_audio_mixer_update_entity_position(qa_audio_mixer *mixer, double entity,
                                            qa_vec3 origin) {
   require_entity(entity, (double)mixer->entity_capacity);
@@ -906,8 +905,8 @@ void qa_audio_mixer_set_effects_volume(qa_audio_mixer *mixer, double volume) {
 }
 
 void qa_audio_mixer_set_music_volume(qa_audio_mixer *mixer, double volume) {
+  (void)mixer; /* TS keeps only the validation now that queueMusic is gone. */
   require_gain(volume, "music volume");
-  mixer->music_volume = volume;
 }
 
 void qa_audio_mixer_set_doppler_enabled(qa_audio_mixer *mixer, bool enabled) {
@@ -921,7 +920,7 @@ bool qa_audio_mixer_start_shared_sound(qa_audio_mixer *mixer,
                                        const char *source_name,
                                        const qa_sound_asset *asset) {
   if (!mixer->enabled) return false;
-  if (!mixer->has_sound_memory) validate_sound(sound, false);
+  validate_sound(sound, false);
   if (options.origin.kind == QA_VOICE_ORIGIN_FIXED) {
     if (!is_integer(options.entity) || !int32_is(options.entity))
       qa_range_error("fixed-origin entity must be a signed 32-bit integer");
@@ -963,13 +962,15 @@ bool qa_audio_mixer_start_shared_sound(qa_audio_mixer *mixer,
     prepared_release(prepared);
     return false;
   }
-  if (mixer->has_sound_memory)
-    mixer->sound_memory.touch(mixer->sound_memory.ctx, sound, (double)time);
   replace_channel(mixer, options.entity, command, false,
                   QA_AUDIO_VOICE_STOP_REPLACED);
-  bool had_free = mixer->free_count > 0;
-  size_t index = take_channel(mixer, &had_free);
-  int64_t allocated_at = had_free ? allocation_time(mixer) : time;
+  size_t index = 0;
+  bool reused = false;
+  if (!acquire_channel(mixer, options.entity, &index, &reused)) {
+    prepared_release(prepared);
+    return false;
+  }
+  int64_t allocated_at = reused ? allocation_time(mixer) : time;
   one_shot_voice *voice = &mixer->voices[index];
   memset(voice, 0, sizeof *voice);
   voice->occupied = true;
@@ -1070,7 +1071,7 @@ static bool admit_source_sound(qa_audio_mixer *mixer, const qa_pcm_sound *sound,
             "Sound random source must return a nonnegative integer");
       double span = trunc(0.1 * (double)mixer->output_rate);
       if (span < 1) span = 1;
-      offset = fmin(prepared->output_frames - 1, fmod(value, span));
+      offset = qa_js_min(prepared->output_frames - 1, fmod(value, span));
     }
   }
   one_shot_voice voice = {0};
@@ -1109,8 +1110,12 @@ static bool admit_source_sound(qa_audio_mixer *mixer, const qa_pcm_sound *sound,
   }
   if (scheduled == NULL)
     replace_channel(mixer, entity, command, false, QA_AUDIO_VOICE_STOP_REPLACED);
-  bool had_free = false;
-  size_t index = take_channel(mixer, &had_free);
+  size_t index = 0;
+  bool reused = false;
+  if (!acquire_channel(mixer, voice.entity, &index, &reused)) {
+    prepared_release(prepared);
+    return false;
+  }
   mixer->voices[index] = voice;
   voice_started(mixer, &mixer->voices[index]);
   return true;
@@ -1259,9 +1264,9 @@ void qa_audio_mixer_update_ambient(qa_audio_mixer *mixer,
     one_shot_voice *voice = &mixer->voices[index];
     double target = level * amount < 8 ? 0 : level * amount;
     double current = voice->stereo.left;
-    double step = fmax(0, elapsed_seconds * fade);
-    double gain = current < target ? fmin(target, current + step)
-                                   : fmax(target, current - step);
+    double step = qa_js_max(0, elapsed_seconds * fade);
+    double gain = current < target ? qa_js_min(target, current + step)
+                                   : qa_js_max(target, current - step);
     voice->stereo.left = gain;
     voice->stereo.right = gain;
   }
@@ -1335,7 +1340,7 @@ void qa_audio_mixer_update_looping_sound(
     qa_audio_mixer *mixer, const qa_pcm_sound *sound,
     qa_frame_looping_sound_options options) {
   if (!mixer->enabled) return;
-  if (!mixer->has_sound_memory) validate_sound(sound, false);
+  validate_sound(sound, false);
   require_entity(options.entity, (double)mixer->entity_capacity);
   require_frame_number(options.frame_number);
   double volume = options.has_volume ? options.volume : 127;
@@ -1389,7 +1394,7 @@ void qa_audio_mixer_update_real_looping_sound(
     qa_audio_mixer *mixer, const qa_pcm_sound *sound,
     qa_real_looping_sound_options options) {
   if (!mixer->enabled) return;
-  if (!mixer->has_sound_memory) validate_sound(sound, false);
+  validate_sound(sound, false);
   require_entity(options.entity, (double)mixer->entity_capacity);
   double volume = options.has_volume ? options.volume : 90;
   require_channel_volume(volume);
@@ -1589,60 +1594,6 @@ void qa_audio_mixer_queue_raw(qa_audio_mixer *mixer, const qa_pcm_sound *sound,
   raw_overflow_check(mixer);
 }
 
-static double raw_byte_sample(const uint8_t *data, size_t data_length,
-                              double width, double channels, int64_t index) {
-  if (width == 2) {
-    int64_t offset = index * 2;
-    if (index < 0 || offset < 0 || offset + 2 > (int64_t)data_length)
-      qa_range_error("Offset is outside the bounds of the DataView");
-    return (int16_t)(data[offset] | (uint16_t)data[offset + 1] << 8);
-  }
-  if (index < 0 || index >= (int64_t)data_length)
-    qa_range_error("Offset is outside the bounds of the DataView");
-  return channels == 2 ? (int8_t)data[index] : (double)data[index] - 128;
-}
-
-void qa_audio_mixer_queue_raw_bytes(qa_audio_mixer *mixer, double samples,
-                                    double rate, double width, double channels,
-                                    const uint8_t *data, size_t data_length,
-                                    double volume) {
-  if (!mixer->enabled) return;
-  if (!is_integer(samples) || !int32_is(samples) || !is_integer(rate) ||
-      rate <= 0)
-    qa_range_error(
-        "Raw sample count and rate require source signed integers and a "
-        "positive rate");
-  int32_t integer_volume = raw_integer_volume(volume);
-  begin_raw_write(mixer);
-  if ((channels == 1 || channels == 2) && (width == 1 || width == 2)) {
-    double scale = fround_(rate / (double)mixer->output_rate);
-    if (width == 1) integer_volume = imul32(integer_volume, 256);
-    for (int64_t index = 0;; index++) {
-      double source = channels == 2 && width == 2 && scale == 1
-                          ? (double)index
-                          : trunc(fround_((double)index * scale));
-      if (source >= samples) break;
-      int64_t destination = mixer->raw_end_time & (RAW_CAPACITY - 1);
-      mixer->raw_end_time++;
-      int64_t source_index = (int64_t)(source * channels);
-      mixer->raw_samples[destination * 2] =
-          imul32(raw_byte_sample(data, data_length, width, channels,
-                                 source_index),
-                 integer_volume);
-      mixer->raw_samples[destination * 2 + 1] =
-          imul32(raw_byte_sample(data, data_length, width, channels,
-                                 source_index + (int64_t)channels - 1),
-                 integer_volume);
-    }
-  }
-  raw_overflow_check(mixer);
-}
-
-void qa_audio_mixer_queue_music(qa_audio_mixer *mixer,
-                                const qa_pcm_sound *sound) {
-  qa_audio_mixer_queue_raw(mixer, sound, mixer->music_volume);
-}
-
 /* ---- Painting ---- */
 
 static double checked_paint(const double *paint, size_t length, int64_t index) {
@@ -1673,9 +1624,6 @@ static double checked_raw(qa_audio_mixer *mixer, int64_t index) {
 }
 
 static double effect_sample(prepared_sound *prepared, int64_t output_frame) {
-  if (prepared->has_memory)
-    return prepared->memory.sample(prepared->memory.ctx, prepared->sound,
-                                   (double)output_frame);
   int64_t source_frame =
       (int64_t)trunc((double)output_frame * prepared->step256 / 256);
   return checked_sample(prepared->sound, source_frame);
@@ -1694,9 +1642,6 @@ static double doppler_sample(prepared_sound *prepared, int64_t chunk,
                              int64_t sample_offset) {
   int64_t output_frame =
       chunk * SND_CHUNK_SIZE + (sample_offset & (SND_CHUNK_SIZE - 1));
-  if (prepared->has_memory)
-    return prepared->memory.sample(prepared->memory.ctx, prepared->sound,
-                                   (double)output_frame);
   if ((double)output_frame >= prepared_frames(prepared)) return 0;
   return effect_sample(prepared, output_frame);
 }
@@ -1977,8 +1922,8 @@ static void mix_internal(qa_audio_mixer *mixer, bool direct,
           left += candidate->stereo.left;
           right += candidate->stereo.right;
         }
-        stereo.left = fmin(limit, left);
-        stereo.right = fmin(limit, right);
+        stereo.left = qa_js_min(limit, left);
+        stereo.right = qa_js_min(limit, right);
       }
       if (stereo.left == 0 && stereo.right == 0) continue;
       int64_t first_offset = mixer->painted_time - voice->start_sample;
@@ -1999,11 +1944,6 @@ static void mix_internal(qa_audio_mixer *mixer, bool direct,
     free(merged);
     for (size_t i = 0; i < mixer->loop_channel_count; i++) {
       const loop_mix *loop = &mixer->loop_channels[i];
-      if (mixer->has_sound_memory &&
-          (!mixer->sound_memory.has_data(mixer->sound_memory.ctx,
-                                         loop->prepared->sound) ||
-           prepared_frames(loop->prepared) == 0))
-        continue;
       paint_loop(mixer, paint, paint_length, count, loop, effects_gain);
     }
     if (diagnostic_setting(mixer, "s_testsound") != 0) {

@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "qa/audio/streams.h"
+#include "qa/foundation/support.h"
 #include "qa/audio/types.h"
 
 typedef struct qa_music_controls {
@@ -53,6 +54,10 @@ typedef struct qa_music_player {
   /* Borrowed chunk handed to RawAudioStream refill (nextChunk). */
   qa_pcm_sound pending_chunk;
   bool has_pending_chunk;
+  /* TS onFault: receives a decoder failure; the damaged track is stopped
+     instead of ending the session. NULL is the TS null. */
+  void (*on_fault)(void *ctx, const qa_caught_error *error);
+  void *on_fault_ctx;
 } qa_music_player;
 
 /* controls NULL creates an owned MusicControls (TS default). */

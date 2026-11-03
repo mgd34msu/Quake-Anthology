@@ -9,13 +9,13 @@
 
 void qa_q2mpm_rogue_heal_effects(qa_q2m_context *context);
 void qa_q2mpm_cleanup_rogue_heal_target(qa_q2m_monsters *monsters, qa_q2mpm_monster_state *source,
-                                        qa_q2f_entity *entity, qa_q2f_game *game);
+                                        qa_q2_entity *entity, qa_q2_game_services *game);
 /* The returned hooks borrow a malloc'd bundle owned by the process
  * (TS closure); services is copied into it. */
-qa_q2m_source_combat_hooks qa_q2mpm_create_rogue_combat_hooks(qa_q2m_monsters *monsters,
+qa_q2m_source_combat_hooks qa_q2mpm_create_rogue_combat_hooks(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters,
                                                               qa_q2mpm_monster_state *source,
                                                               qa_q2mpm_services services);
-void qa_q2mpm_rogue_target_anger(qa_q2m_monsters *monsters, qa_q2mpm_monster_state *source, qa_q2f_entity *entity,
-                                 qa_q2f_entity *target, qa_q2f_game *game);
+void qa_q2mpm_rogue_target_anger(qa_q2m_monsters *monsters, qa_q2mpm_monster_state *source, qa_q2_entity *entity,
+                                 qa_q2_entity *target, qa_q2_game_services *game);
 
 #endif

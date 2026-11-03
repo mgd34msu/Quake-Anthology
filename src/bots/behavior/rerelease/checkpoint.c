@@ -162,6 +162,7 @@ static bool read_path(const qa_save_reader *parent, qa_nav_path *out) {
 }
 static bool read_memory(const qa_save_reader *r, qa_bot_brain_checkpoint_memory *m) {
   memset(m, 0, sizeof *m);
+  m->layout = QA_BOT_BRAIN_LAYOUT_READ; /* the memory() object order */
   m->trigger_weapon = fin_field(r, "triggerWeapon");
   m->trigger_held_since = fin_field(r, "triggerHeldSince");
   m->trigger_ready_at = fin_field(r, "triggerReadyAt");
@@ -196,6 +197,11 @@ static bool read_memory(const qa_save_reader *r, qa_bot_brain_checkpoint_memory 
   m->coop_regroup_until = fin_field(r, "coopRegroupUntil");
   m->level_started = bool_field(r, "levelStarted");
   m->check_six_until = fin_field(r, "checkSixUntil");
+  {
+    qa_save_reader yaw = field(r, "checkSixYaw"); /* absent in older saves: 0 */
+    m->check_six_yaw = qa_save_reader_is_undefined(&yaw) ? 0 : qa_save_reader_finite(&yaw);
+    qa_save_reader_destroy(&yaw);
+  }
   m->check_six_next_at = fin_field(r, "checkSixNextAt");
   m->has_roam_point = nullable_vector_field(r, "roamPoint", &m->roam_point);
   m->roam_until = fin_field(r, "roamUntil");

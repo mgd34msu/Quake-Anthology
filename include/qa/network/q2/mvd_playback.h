@@ -70,7 +70,7 @@ const qa_q2_server_data_result *qa_q2_mvd_playback_get_header(
     const qa_q2_mvd_playback *playback);
 double qa_q2_mvd_playback_get_selected_player(
     const qa_q2_mvd_playback *playback);
-/* TS selectPlayer; invalid selections abort like the TS RangeError. */
+/* TS selectPlayer; invalid selections raise the TS RangeError. */
 void qa_q2_mvd_playback_select_player(qa_q2_mvd_playback *playback,
                                       double number);
 /* Player Map access (NULL when absent). */
@@ -79,7 +79,17 @@ const qa_q2_wire_player *qa_q2_mvd_playback_player(
 size_t qa_q2_mvd_playback_player_count(const qa_q2_mvd_playback *playback);
 const char *qa_q2_mvd_playback_config_string(
     const qa_q2_mvd_playback *playback, double index);
-/* TS read(bytes) / readRecords collected. False only on OOM. */
+/* TS readRecords(bytes) generator: records reach `sink` (which takes ownership of each)
+ * at the TS yield points, the serverdata batch before its first frame is built and the
+ * rest once the message is complete, so a sink may call select_player in between as a
+ * generator consumer can. Malformed input raises the TS errors; records not yet handed to
+ * the sink are released then. False only on OOM. */
+typedef void (*qa_q2_mvd_record_sink)(void *ctx, qa_q2_server_record *record);
+bool qa_q2_mvd_playback_read_records(qa_q2_mvd_playback *playback,
+                                     const uint8_t *bytes, size_t length,
+                                     qa_q2_mvd_record_sink sink, void *ctx);
+/* TS read(bytes): readRecords collected; nothing is returned when it raises. False only
+ * on OOM. */
 bool qa_q2_mvd_playback_read(qa_q2_mvd_playback *playback, const uint8_t *bytes,
                              size_t length, qa_q2_server_record **out,
                              size_t *out_count);

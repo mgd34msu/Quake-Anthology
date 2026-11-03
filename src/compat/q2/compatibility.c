@@ -7,9 +7,10 @@
 #include "qa/compat/q2/native_primary_profiles.h"
 #include "qa/content/mounts/paths.h"
 #include "qa/persistence/shared.h"
+#include "qa/foundation/js_case.h"
 typedef qa_save_reader R;
 static const R *F(const R *r,const char *n,R *o){qa_save_reader_field(r,n,o);return o;}
-static bool ieq(const char *a,const char *b){ while(*a&&*b){ if(tolower((unsigned char)*a)!=tolower((unsigned char)*b)) return false; a++;b++; } return *a==*b; }
+static bool ieq(const char *a,const char *b){ return qa_js_equals_ignore_case(a,b); } /* TS toLowerCase() === */
 bool qa_compat_q2_parse_native_compatibility(const qa_save_value *value, const qa_resolved_execution_module *execution, qa_compat_q2_world_readers worlds, qa_compat_q2_native_compatibility_result *out) {
   memset(out,0,sizeof *out);
   R root; if(!qa_save_reader_init(&root,value,"native-compatibility.json")) return false;

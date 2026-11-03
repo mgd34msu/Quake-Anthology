@@ -7,8 +7,12 @@
 #include "qa/contracts/session.h"
 
 typedef struct qa_q2rr_eye_state { qa_vec3 neutral_angles, eye_position; double vision_cone; } qa_q2rr_eye_state;
-typedef struct qa_q2rr_camera_state { double remaining, distance, speed; qa_vec3 angles; } qa_q2rr_camera_state;
-typedef struct qa_q2rr_dummy_state { double fade_remaining, fade_duration; bool fading; } qa_q2rr_dummy_state;
+/* reader_order (TS key order only): live states are built { speed, distance,
+ * remaining, angles } / { fading, fadeDuration, fadeRemaining }; a state
+ * restored from a decoded save keeps the reader's { remaining, distance,
+ * speed, angles } / { fadeRemaining, fadeDuration, fading }. */
+typedef struct qa_q2rr_camera_state { double remaining, distance, speed; qa_vec3 angles; bool reader_order; } qa_q2rr_camera_state;
+typedef struct qa_q2rr_dummy_state { double fade_remaining, fade_duration; bool fading; bool reader_order; } qa_q2rr_dummy_state;
 typedef struct qa_q2rr_eye_entry { qa_saved_actor_id actor; qa_q2rr_eye_state state; } qa_q2rr_eye_entry;
 typedef struct qa_q2rr_camera_entry { qa_saved_actor_id actor; qa_q2rr_camera_state state; } qa_q2rr_camera_entry;
 typedef struct qa_q2rr_dummy_entry { qa_saved_actor_id actor; qa_q2rr_dummy_state state; } qa_q2rr_dummy_entry;

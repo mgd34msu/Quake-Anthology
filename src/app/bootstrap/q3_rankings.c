@@ -8,6 +8,8 @@
 #include "qa/content/q3/base/shared/entity_shared.h"
 #include "qa/foundation/event_ring.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/network/services/rank_codec.h"
 typedef struct weapon_track { bool present; double weapon, since; } weapon_track;
 struct qa_app_q3_rankings {
   qa_q3_entity_pool *pool;
@@ -20,6 +22,7 @@ struct qa_app_q3_rankings {
   weapon_track *weapons;
   size_t slots;
   bool closed;
+  char *game_key; /* TS gameKey, "" until begin */
   bool ended;
 };
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
@@ -27,8 +30,28 @@ static void status_changed(void *ctx, double slot, qa_ranking_player_state state
   qa_app_q3_rankings *rankings = ctx;
   rankings->host.status(rankings->host.ctx, slot, state);
 }
+static void ignore_print(void *ctx, const char *text) { (void)ctx; (void)text; }
+/* SV_RankBegin passes the encoded game ID and key to clients (sv_rankings.c CS_GRANK); the GPL
+   release has no CS_GRANK slot, so they ride in serverinfo. */
+static void publish_game(qa_app_q3_rankings *rankings, qa_ranking_service_state state) {
+  char id[13] = "";
+  bool active = is(state.kind, "active");
+  if (active) {
+    uint8_t text[12] = {0};
+    qa_rank_encode_game_id(state.game_id, text, sizeof text, ignore_print, NULL);
+    /* text.subarray(0, text.indexOf(0)): no NUL is indexOf -1, which keeps the first 11 bytes. */
+    size_t end = 11;
+    for (size_t i = 0; i < sizeof text; i++) if (text[i] == 0) { end = i; break; }
+    memcpy(id, text, end);
+    id[end] = '\0';
+  }
+  rankings->host.set_cvar(rankings->host.ctx, "sv_rankingsGameKey",
+      active && rankings->game_key != NULL ? rankings->game_key : "");
+  rankings->host.set_cvar(rankings->host.ctx, "sv_rankingsGameID", id);
+}
 static void service_changed(void *ctx, qa_ranking_service_state state) {
   qa_app_q3_rankings *rankings = ctx;
+  publish_game(rankings, state);
   if (rankings->host.service_status != NULL) rankings->host.service_status(rankings->host.ctx, state);
 }
 static void report_sink(void *ctx, qa_q3_ranking_report report) {
@@ -87,6 +110,10 @@ static void flush_reports(qa_app_q3_rankings *rankings) {
 }
 void qa_app_q3_rankings_begin(qa_app_q3_rankings *rankings, bool enabled, bool single_player, const char *game_key) {
   assert_open(rankings);
+  char *key = strdup(game_key != NULL ? game_key : "");
+  if (key == NULL) qa_range_error("Out of memory");
+  free(rankings->game_key);
+  rankings->game_key = key;
   qa_ranking_lifecycle_begin(rankings->lifecycle, enabled, single_player, game_key);
   qa_app_q3_rankings_frame(rankings);
 }
@@ -161,7 +188,7 @@ void qa_app_q3_rankings_frame(qa_app_q3_rankings *rankings) {
     size_t index = (size_t)slot;
     if (!rankings->host.entity_inuse(rankings->host.ctx, slot)
         || rankings->pool->clients[index] == NULL) continue;
-    if ((((int64_t)rankings->host.entity_sv_flags(rankings->host.ctx, slot)) & QA_Q3_BASE_SVF_BOT) != 0) {
+    if (((qa_js_to_int32(rankings->host.entity_sv_flags(rankings->host.ctx, slot))) & QA_Q3_BASE_SVF_BOT) != 0) {
       rankings->host.drop_bot(rankings->host.ctx, slot);
       continue;
     }
@@ -196,7 +223,7 @@ void qa_app_q3_rankings_frame(qa_app_q3_rankings *rankings) {
           size_t other_index = (size_t)other;
           if (!rankings->host.entity_inuse(rankings->host.ctx, other)
               || rankings->pool->clients[other_index] == NULL
-              || (((int64_t)rankings->host.entity_sv_flags(rankings->host.ctx, other)) & QA_Q3_BASE_SVF_BOT) != 0)
+              || ((qa_js_to_int32(rankings->host.entity_sv_flags(rankings->host.ctx, other))) & QA_Q3_BASE_SVF_BOT) != 0)
             continue;
           if (other != slot && is(qa_ranking_lifecycle_player(rankings->lifecycle, other).kind, "active"))
             qa_ranking_lifecycle_report_int(rankings->lifecycle, slot, other, 1210000002, 1, false);
@@ -205,8 +232,8 @@ void qa_app_q3_rankings_frame(qa_app_q3_rankings *rankings) {
       }
     }
   }
-  double fraglimit = strtod(rankings->host.cvar(rankings->host.ctx, "fraglimit"), NULL);
-  double timelimit = strtod(rankings->host.cvar(rankings->host.ctx, "timelimit"), NULL);
+  double fraglimit = qa_js_string_to_number(rankings->host.cvar(rankings->host.ctx, "fraglimit"));
+  double timelimit = qa_js_string_to_number(rankings->host.cvar(rankings->host.ctx, "timelimit"));
   if ((fraglimit == 0 || fraglimit > 100) && (timelimit == 0 || timelimit > 1000))
     rankings->host.set_cvar(rankings->host.ctx, "timelimit", "1000");
 }
@@ -225,7 +252,7 @@ void qa_app_q3_rankings_game_over(qa_app_q3_rankings *rankings) {
     qa_ranking_lifecycle_report_string(rankings->lifecycle, -1, -1, strings[i].key,
         rankings->host.cvar(rankings->host.ctx, strings[i].name));
   for (size_t i = 0; i < sizeof integers / sizeof integers[0]; i++) {
-    double value = trunc(strtod(rankings->host.cvar(rankings->host.ctx, integers[i].name), NULL));
+    double value = trunc(qa_js_string_to_number(rankings->host.cvar(rankings->host.ctx, integers[i].name)));
     if (value == 0 || value != value) value = 0; /* TS `|| 0` also maps NaN */
     qa_ranking_lifecycle_report_int(rankings->lifecycle, -1, -1, integers[i].key, value, false);
   }
@@ -239,6 +266,6 @@ void qa_app_q3_rankings_close(qa_app_q3_rankings *rankings) {
   rankings->host.destroy_lifecycle(rankings->host.ctx, rankings->lifecycle);
   qa_event_ring_close_cursor(&rankings->reports, &rankings->cursor);
   qa_event_ring_destroy(&rankings->reports);
-  free(rankings->observed); free(rankings->observed_present); free(rankings->weapons);
+  free(rankings->observed); free(rankings->observed_present); free(rankings->weapons); free(rankings->game_key);
   free(rankings);
 }

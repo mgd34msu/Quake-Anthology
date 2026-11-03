@@ -2,11 +2,15 @@
 #include "qa/formats/q12_model/animation.h"
 
 #include <math.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/formats/q12_model/common.h"
+#include "qa/formats/q12_model/pose_lru.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 #define FR(value) ((double)(float)(value))
 
@@ -65,6 +69,68 @@ qa_model_vertex *qa_interpolate_alias_frames(const qa_model_frame *current, cons
   }
   *out_count = current->vertex_count;
   return result;
+}
+
+typedef struct cached_pose {
+  qa_model_vertex *vertices;
+  size_t count;
+} cached_pose;
+
+static void release_cached_pose(void *raw) {
+  cached_pose *pose = raw;
+  free(pose->vertices);
+  free(pose);
+}
+
+/* Q1 and Q2 light the current pose's normal while interpolating vertex
+ * positions; the pose is pure in its inputs, so shared poses repeat. */
+static qa_pose_lru alias_interpolation_cache;
+static bool alias_interpolation_ready;
+
+static qa_pose_lru *interpolation_cache(void) {
+  if (!alias_interpolation_ready) {
+    qa_pose_lru_init(&alias_interpolation_cache, 256, release_cached_pose);
+    alias_interpolation_ready = true;
+  }
+  return &alias_interpolation_cache;
+}
+
+const qa_model_vertex *qa_interpolate_alias_frames_cached(const qa_model_frame *current,
+                                                          const qa_model_frame *previous, double back_lerp,
+                                                          qa_vec3 previous_origin_delta, size_t *out_count) {
+  if (!isfinite(back_lerp) || back_lerp < 0 || back_lerp > 1) qa_range_error("backLerp must be in 0..1");
+  if (current->vertex_count != previous->vertex_count)
+    qa_range_error("Alias poses have different vertex counts");
+  char suffix[200];
+  snprintf(suffix, sizeof suffix, "%s|%s|%s|%s", QA_JS_NUMBER(back_lerp), QA_JS_NUMBER(previous_origin_delta.x),
+           QA_JS_NUMBER(previous_origin_delta.y), QA_JS_NUMBER(previous_origin_delta.z));
+  qa_pose_lru *cache = interpolation_cache();
+  const void *owners[2] = {current, previous};
+  char *key = qa_pose_lru_key(cache, owners, 2, suffix);
+  cached_pose *cached = qa_pose_lru_get(cache, key);
+  if (cached == NULL) {
+    cached = malloc(sizeof *cached);
+    if (cached == NULL) qa_range_error("Out of memory");
+    cached->vertices = qa_interpolate_alias_frames(current, previous, back_lerp, previous_origin_delta, &cached->count);
+    qa_pose_lru_set(cache, key, cached);
+  }
+  free(key);
+  *out_count = cached->count;
+  return cached->vertices;
+}
+
+void qa_alias_interpolation_forget(const qa_model_frame *frame) {
+  if (alias_interpolation_ready) qa_pose_lru_forget(&alias_interpolation_cache, frame);
+}
+
+size_t qa_alias_interpolation_cache_size(void) {
+  return alias_interpolation_ready ? qa_pose_lru_size(&alias_interpolation_cache) : 0;
+}
+
+void qa_alias_interpolation_cache_clear(void) {
+  if (!alias_interpolation_ready) return;
+  qa_pose_lru_destroy(&alias_interpolation_cache);
+  alias_interpolation_ready = false;
 }
 
 void qa_build_mdl_geometry(const qa_q1_alias_model *model, const qa_model_vertex *pose,

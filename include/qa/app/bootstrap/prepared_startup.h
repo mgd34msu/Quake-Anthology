@@ -151,6 +151,7 @@ void qa_app_prepared_startup_adopt_seat(qa_app_prepared_startup *startup, qa_sea
  * borrowed); caller frees the array only. */
 qa_input_binding *qa_app_prepared_startup_preview_bindings(qa_app_prepared_startup *startup,
     qa_seat_id id, const qa_input_binding *defaults, size_t default_count, size_t *out_count);
+/* TS bindings(): deep copies (dispose each with qa_input_binding_dispose, then free the array). */
 qa_input_binding *qa_app_prepared_startup_bindings(qa_app_prepared_startup *startup,
     qa_seat_id id, const qa_input_binding *defaults, size_t default_count, size_t *out_count);
 void qa_app_prepared_startup_adopt_binding_defaults(qa_app_prepared_startup *startup,
@@ -163,6 +164,19 @@ bool qa_app_prepared_startup_seat_choices(const qa_app_prepared_startup *startup
     bool *all_bindings_chosen, char *const **overridden_keys, size_t *overridden_count,
     bool *has_selected, const qa_input_binding **selected, size_t *selected_count,
     const qa_input_binding **authored, size_t *authored_count);
+/* TS PreparedSeat field publication (configuration.ts publishChoices
+ * writes allBindingsChosen/selectedBindings/authoredBindings and adds
+ * overriddenKeys on the published seat). False when the seat is
+ * absent (the TS silently returns). has_selected false mirrors an
+ * undefined selectedBindings; has_authored false mirrors a null
+ * authoredBindings. Binding rows are shallow-copied, as elsewhere. */
+/* TS seat.overriddenKeys.clear() (input.ts publishClientSeats). False
+ * when the seat is absent. */
+bool qa_app_prepared_startup_clear_overridden_keys(qa_app_prepared_startup *startup, qa_seat_id id);
+bool qa_app_prepared_startup_publish_seat_choices(qa_app_prepared_startup *startup, qa_seat_id id,
+    bool all_bindings_chosen, bool has_selected, const qa_input_binding *selected, size_t selected_count,
+    bool has_authored, const qa_input_binding *authored, size_t authored_count,
+    const char *const *overridden_keys, size_t overridden_count);
 /* TS execute()/advanceFrame() options (run() argument). */
 typedef struct qa_app_prepared_execute_options {
   qa_app_prepared_scoped_read_fn read; void *read_ctx;

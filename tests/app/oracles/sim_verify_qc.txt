@@ -1,0 +1,2088 @@
+admitted 1:0 view-height 22
+players 1
+== frame 0
+source quakec
+time 1
+frame-context 0 seconds:1 seconds:0 frame-entry
+actors 163
+actor-kind q1:official quakec:authored 154
+actor-kind q1:official quakec:dynamic 7
+actor-kind q1:official quakec:reserved-client 1
+actor-kind q1:official quakec:worldspawn 1
+actor quakec:authored -104 2352 40
+actor quakec:authored -112 704 56
+actor quakec:authored -136 1912 -200
+actor quakec:authored -16 1888 -184
+actor quakec:authored -16 2064 -208
+actor quakec:authored -200 1992 -200
+actor quakec:authored -208 2736 192
+actor quakec:authored -272 2928 -56
+actor quakec:authored -32 1800 -29
+actor quakec:authored -344 2656 -104
+actor quakec:authored -360 2912 -80
+actor quakec:authored -376 1704 -224
+actor quakec:authored -4.371989017560099e-14 -238 0
+actor quakec:authored -472 2064 -88
+actor quakec:authored -544 2584 56
+actor quakec:authored -560 2352 40
+actor quakec:authored -72 2896 -56
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -150
+actor quakec:authored 0 0 -400
+actor quakec:authored 0 0 -64
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 576 24
+actor quakec:authored 112 2352 16
+actor quakec:authored 1176 936 -432
+actor quakec:authored 1184 992 -272
+actor quakec:authored 1224 2464 -304
+actor quakec:authored 1232 2048 -232
+actor quakec:authored 1232 2088 -216
+actor quakec:authored 1232 2448 -280
+actor quakec:authored 1256 1704 -432
+actor quakec:authored 1256 1760 -408
+actor quakec:authored 1280 2000 -152
+actor quakec:authored 1280 2496 -216
+actor quakec:authored 1312 1048 -432
+actor quakec:authored 1312 880 -248
+actor quakec:authored 1312 936 -248
+actor quakec:authored 1314 450 -200
+actor quakec:authored 1336 1784 -408
+actor quakec:authored 1376 1024 -272
+actor quakec:authored 1376 1936 64
+actor quakec:authored 1376 808 -432
+actor quakec:authored 1376 856 -272
+actor quakec:authored 1392 928 -248
+actor quakec:authored 1424 904 -432
+actor quakec:authored 176 1744 -152
+actor quakec:authored 240 2664 104
+actor quakec:authored 248 1912 -200
+actor quakec:authored 248 1992 -200
+actor quakec:authored 248 2392 40
+actor quakec:authored 250 194 72
+actor quakec:authored 272 2352 64
+actor quakec:authored 296 2136 -192
+actor quakec:authored 32 2312 200
+actor quakec:authored 32 2352 88
+actor quakec:authored 32 2392 200
+actor quakec:authored 328 848 -224
+actor quakec:authored 344 2216 -88
+actor quakec:authored 344 920 -224
+actor quakec:authored 368 2696 -72
+actor quakec:authored 368 2936 -72
+actor quakec:authored 416 1968 -112
+actor quakec:authored 416 2064 -112
+actor quakec:authored 424 2672 -56
+actor quakec:authored 424 2832 -56
+actor quakec:authored 432 -296 72
+actor quakec:authored 432 2120 -168
+actor quakec:authored 432 2920 -56
+actor quakec:authored 466 2226 -104
+actor quakec:authored 480 -240 72
+actor quakec:authored 480 -352 88
+actor quakec:authored 480 2696 -72
+actor quakec:authored 480 2936 -72
+actor quakec:authored 480 48 24
+actor quakec:authored 528 -296 72
+actor quakec:authored 528 1888 -168
+actor quakec:authored 528 720 80
+actor quakec:authored 544 2480 -88
+actor quakec:authored 56 2352 200
+actor quakec:authored 592 544 88
+actor quakec:authored 600 2200 -128
+actor quakec:authored 626 2058 -104
+actor quakec:authored 672 -40 48
+actor quakec:authored 688 192 80
+actor quakec:authored 688 480 80
+actor quakec:authored 712 2040 -408
+actor quakec:authored 714 194 72
+actor quakec:authored 72 2056 -208.96875
+actor quakec:authored 752 2000 -88
+actor quakec:authored 784 2496 -280
+actor quakec:authored 8 1520 -200
+actor quakec:authored 8 2352 200
+actor quakec:authored 80 1744 -152
+actor quakec:authored 80 2024 -184
+actor quakec:authored 824 1784 -408
+actor quakec:authored 832 2048 -152
+actor quakec:authored 832 2072 -408
+actor quakec:authored 832 2416 -104
+actor quakec:authored 832 2464 -344
+actor quakec:authored 832 2712 -88
+actor quakec:authored 848 2584 -72
+actor quakec:authored 88 1520 -200
+actor quakec:authored 880 2048 -168
+actor quakec:authored 916 2416 -136
+actor quakec:authored 944 1008 -272
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 480 -352 89
+actor quakec:reserved-client 480 -352 89
+actor quakec:worldspawn 0 0 0
+bodies 163
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 480 -352 89 v 0 0 0 a 0 90 0 g -
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 7:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 8:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 11:3 o 688 480 80 v 0 0 0 a 0 0 0 g -
+body 12:8 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 14:15 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 15:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 16:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 17:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 18:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 19:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 20:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 21:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 22:7 o 0 0 -150 v 0 0 0 a 0 0 0 g -
+body 23:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 24:12 o -4.371989017560099e-14 -238 0 v 0 0 0 a 0 0 0 g -
+body 25:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 26:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 27:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 28:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 29:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 30:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 31:0 o 112 2352 16 v 0 0 0 a 0 0 0 g -
+body 32:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 33:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 34:1 o 248 2392 40 v 0 0 0 a 0 180 0 g -
+body 35:0 o 272 2352 64 v 0 0 0 a 0 0 0 g -
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 38:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 39:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 40:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 41:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 43:3 o 0 0 -64 v 0 0 0 a 0 0 0 g -
+body 44:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o 544 2480 -88 v 0 0 0 a 0 0 0 g -
+body 48:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 51:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 52:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 53:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:9 o 944 1008 -272 v 0 0 0 a 0 0 0 g -
+body 56:3 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 57:2 o 296 2136 -192 v 0 0 0 a 0 0 0 g -
+body 58:0 o 1424 904 -432 v 0 0 0 a 0 0 0 g -
+body 59:0 o 1376 808 -432 v 0 0 0 a 0 0 0 g -
+body 60:0 o 1176 936 -432 v 0 0 0 a 0 0 0 g -
+body 61:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 66:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 69:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 70:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 71:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 72:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 73:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 74:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 75:0 o 1376 1024 -272 v 0 0 0 a 0 0 0 g -
+body 76:0 o 1184 992 -272 v 0 0 0 a 0 0 0 g -
+body 77:0 o 1376 856 -272 v 0 0 0 a 0 0 0 g -
+body 78:0 o 1256 1704 -432 v 0 0 0 a 0 0 0 g -
+body 79:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 80:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 81:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 82:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 83:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 84:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 85:2 o 328 848 -224 v 0 0 0 a 0 0 0 g -
+body 86:0 o 344 920 -224 v 0 0 0 a 0 0 0 g -
+body 87:0 o -16 2064 -208 v 0 0 0 a 0 0 0 g -
+body 88:4 o 0 576 24 v 0 0 0 a 0 0 0 g -
+body 89:0 o 8 1520 -200 v 0 0 0 a 0 270 0 g -
+body 90:0 o 88 1520 -200 v 0 0 0 a 0 270 0 g -
+body 91:3 o 712 2040 -408 v 0 0 0 a 0 90 0 g -
+body 92:2 o 916 2416 -136 v 0 0 0 a 0 0 0 g -
+body 93:0 o 1312 936 -248 v 0 0 0 a 0 90 0 g -
+body 94:0 o 1336 1784 -408 v 0 0 0 a 0 180 0 g -
+body 95:0 o 1392 928 -248 v 0 0 0 a 0 90 0 g -
+body 96:2 o 1256 1760 -408 v 0 0 0 a 0 180 0 g -
+body 97:0 o 824 1784 -408 v 0 0 0 a 0 90 0 g -
+body 98:1 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 99:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 100:0 o 1232 2088 -216 v 0 0 0 a 0 0 0 g -
+body 101:0 o 1232 2448 -280 v 0 0 0 a 0 270 0 g -
+body 102:0 o 832 2464 -344 v 0 0 0 a 0 0 0 g -
+body 103:0 o 832 2072 -408 v 0 0 0 a 0 90 0 g -
+body 104:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 105:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 106:0 o -360 2912 -80 v 0 0 0 a 0 0 0 g -
+body 107:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 108:2 o 528 720 80 v 0 0 0 a 0 0 0 g -
+body 109:1 o 432 2120 -168 v 0 0 0 a 0 180 0 g -
+body 110:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 111:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 112:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 113:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 114:0 o 80 2024 -184 v 0 0 0 a 0 0 0 g -
+body 115:0 o -16 1888 -184 v 0 0 0 a 0 0 0 g -
+body 116:1 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 118:1 o -544 2584 56 v 0 0 0 a 0 0 0 g -
+body 119:0 o -344 2656 -104 v 0 0 0 a 0 270 0 g -
+body 120:0 o -72 2896 -56 v 0 0 0 a 0 225 0 g -
+body 121:0 o 432 2920 -56 v 0 0 0 a 0 0 0 g -
+body 122:0 o 424 2832 -56 v 0 0 0 a 0 180 0 g -
+body 123:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 124:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 125:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 126:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 127:0 o 424 2672 -56 v 0 0 0 a 0 0 0 g -
+body 128:2 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 129:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 130:0 o 848 2584 -72 v 0 0 0 a 0 0 0 g -
+body 131:1 o -376 1704 -224 v 0 0 0 a 0 0 0 g -
+body 132:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 672 -40 48 v 0 0 0 a 0 0 0 g -
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:1 o 600 2200 -128 v 0 0 0 a 0 0 0 g -
+body 141:1 o 72 2056 -208.96875 v 0 0 0 a 0 0 0 g 0
+body 142:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 145:0 o 1224 2464 -304 v 0 0 0 a 0 0 0 g -
+body 146:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 147:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 148:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 149:0 o 1312 1048 -432 v 0 0 0 a 0 0 0 g -
+body 150:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 151:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 152:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 153:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 154:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 155:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 156:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 157:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 158:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 159:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 160:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 161:2 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 162:0 o 480 -352 89 v 0 0 0 a 0 0 0 g -
+inventory 1 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=25/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100
+combat 0 0 none none -
+combat 1 100 none none 1
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 0 none none -
+combat 28 0 none none -
+combat 29 0 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 30 none none -
+combat 35 0 none none -
+combat 36 0 none none -
+combat 37 0 none none -
+combat 38 0 none none -
+combat 39 0 none none -
+combat 40 0 none none -
+combat 41 10000 none none -
+combat 42 10000 none none -
+combat 43 0 none none -
+combat 44 1 none none -
+combat 45 0 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 0 none none -
+combat 49 0 none none -
+combat 50 10000 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 0 none none -
+combat 84 0 none none -
+combat 85 0 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 30 none none -
+combat 90 25 none none -
+combat 91 0 none none -
+combat 92 0 none none -
+combat 93 30 none none -
+combat 94 25 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 0 none none -
+combat 99 0 none none -
+combat 100 30 none none -
+combat 101 30 none none -
+combat 102 30 none none -
+combat 103 30 none none -
+combat 104 1 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 25 none none -
+combat 110 0 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 0 none none -
+combat 114 30 none none -
+combat 115 30 none none -
+combat 116 0 none none -
+combat 117 0 none none -
+combat 118 25 none none -
+combat 119 30 none none -
+combat 120 25 none none -
+combat 121 30 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 0 none none -
+combat 126 0 none none -
+combat 127 30 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 30 none none -
+combat 131 0 none none -
+combat 132 10000 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 0 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 20 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 0 none none -
+combat 160 0 none none -
+combat 161 0 none none -
+combat 162 0 none none -
+player body o 480 -352 89 v 0 0 0 a 0 90 0 min -16 -16 -24 max 16 16 32
+player view o 480 -352 89 a 0 90 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=25 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0
+checkpoint world:actors world:source-slots 1 34e8595b113ab270 canonical 4e005151b9129930
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:simulation 11 e718eb531dce48ac canonical 82ec5acb7891fdf8
+checkpoint-image e802ea3ff7243aa4 canonical e02af44d349b838c b93f0009a8e5cb50
+== frame 1
+source quakec
+time 1.1
+frame-context 1 seconds:1.1 seconds:0.1 frame-exit
+actors 165
+actor-kind q1:official quakec:authored 154
+actor-kind q1:official quakec:dynamic 9
+actor-kind q1:official quakec:reserved-client 1
+actor-kind q1:official quakec:worldspawn 1
+actor quakec:authored -104 2352 40
+actor quakec:authored -112 704 56
+actor quakec:authored -136 1912 -200
+actor quakec:authored -14.007610321044922 1888.17431640625 -183.96875
+actor quakec:authored -16 2064 -208
+actor quakec:authored -200 1992 -200
+actor quakec:authored -208 2736 192
+actor quakec:authored -272 2928 -56
+actor quakec:authored -32 1800 -29
+actor quakec:authored -344 2656 -103.96875
+actor quakec:authored -360 2912 -80
+actor quakec:authored -376 1704 -224
+actor quakec:authored -4.371989017560099e-14 -238 0
+actor quakec:authored -472 2064 -88
+actor quakec:authored -544 2584 56.03125
+actor quakec:authored -560 2352 40
+actor quakec:authored -72 2896 -55.96875
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -150
+actor quakec:authored 0 0 -400
+actor quakec:authored 0 0 -64
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 576 24.03125
+actor quakec:authored 112 2352 16
+actor quakec:authored 1176 936 -432
+actor quakec:authored 1184 992 -272
+actor quakec:authored 1224 2464 -304
+actor quakec:authored 1232 2048 -232
+actor quakec:authored 1232 2088 -215.96875
+actor quakec:authored 1232 2448 -279.96875
+actor quakec:authored 1256 1704 -432
+actor quakec:authored 1256 1760 -407.96875
+actor quakec:authored 1280 2000 -152
+actor quakec:authored 1280 2496 -216
+actor quakec:authored 1312 1048 -432
+actor quakec:authored 1312 880 -248
+actor quakec:authored 1312 936 -255.96875
+actor quakec:authored 1314 450 -200
+actor quakec:authored 1336 1784 -407.96875
+actor quakec:authored 1376 1024 -272
+actor quakec:authored 1376 1936 64
+actor quakec:authored 1376 808 -432
+actor quakec:authored 1376 856 -272
+actor quakec:authored 1392 928 -255.96875
+actor quakec:authored 1424 904 -432
+actor quakec:authored 176 1744 -152
+actor quakec:authored 240 2664 104
+actor quakec:authored 248 1912 -200
+actor quakec:authored 248 1992 -200
+actor quakec:authored 248 2392 40.03125
+actor quakec:authored 250 194 72
+actor quakec:authored 272 2352 64
+actor quakec:authored 296 2136 -192
+actor quakec:authored 32 2312 200
+actor quakec:authored 32 2352 88
+actor quakec:authored 32 2392 200
+actor quakec:authored 328 848 -224
+actor quakec:authored 344 2216 -88
+actor quakec:authored 344 920 -224
+actor quakec:authored 368 2696 -72
+actor quakec:authored 368 2936 -72
+actor quakec:authored 416 1968 -112
+actor quakec:authored 416 2064 -112
+actor quakec:authored 424 2832 -55.96875
+actor quakec:authored 425.4141845703125 2673.4140625 -55.96875
+actor quakec:authored 430.5858154296875 2921.4140625 -55.96875
+actor quakec:authored 432 -296 72
+actor quakec:authored 432 2120 -167.96875
+actor quakec:authored 466 2226 -104
+actor quakec:authored 480 -240 72
+actor quakec:authored 480 -352 88
+actor quakec:authored 480 2696 -72
+actor quakec:authored 480 2936 -72
+actor quakec:authored 480 48 24
+actor quakec:authored 528 -296 72
+actor quakec:authored 528 1888 -168
+actor quakec:authored 528 720 80
+actor quakec:authored 544 2480 -88
+actor quakec:authored 56 2352 200
+actor quakec:authored 592 544 88
+actor quakec:authored 600 2200 -128
+actor quakec:authored 626 2058 -104
+actor quakec:authored 672 -40 48
+actor quakec:authored 688 192 80
+actor quakec:authored 688 480 80
+actor quakec:authored 712 2040 -408
+actor quakec:authored 714 194 72
+actor quakec:authored 72 2056 -208.96875
+actor quakec:authored 752 2000 -88
+actor quakec:authored 784 2496 -280
+actor quakec:authored 8 1520 -199.96875
+actor quakec:authored 8 2352 200
+actor quakec:authored 80 1744 -152
+actor quakec:authored 80 2024 -183.96875
+actor quakec:authored 824 1784 -407.96875
+actor quakec:authored 832 2048 -152
+actor quakec:authored 832 2072 -407.96875
+actor quakec:authored 832 2416 -104
+actor quakec:authored 832 2464 -343.96875
+actor quakec:authored 832 2712 -88
+actor quakec:authored 847.1710205078125 2585.699462890625 -71.96875
+actor quakec:authored 88 1520 -199.96875
+actor quakec:authored 880 2048 -168
+actor quakec:authored 916 2416 -136
+actor quakec:authored 944 1008 -272
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 480 -352 89
+actor quakec:reserved-client 482.9773864746094 -352.36749267578125 88.03125
+actor quakec:worldspawn 0 0 0
+bodies 165
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 482.9773864746094 -352.36749267578125 88.03125 v 29.774065017700195 -3.674915075302124 0 a 0 7 0 g 0
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 7:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 8:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 11:3 o 688 480 80 v 0 0 0 a 0 0 0 g -
+body 12:8 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 14:15 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 15:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 16:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 17:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 18:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 19:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 20:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 21:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 22:7 o 0 0 -150 v 0 0 0 a 0 0 0 g -
+body 23:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 24:12 o -4.371989017560099e-14 -238 0 v 0 0 0 a 0 0 0 g -
+body 25:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 26:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 27:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 28:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 29:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 30:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 31:0 o 112 2352 16 v 0 0 0 a 0 0 0 g -
+body 32:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 33:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 34:1 o 248 2392 40.03125 v 0 0 0 a 0 180 0 g 0
+body 35:0 o 272 2352 64 v 0 0 0 a 0 0 0 g -
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 38:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 39:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 40:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 41:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 43:3 o 0 0 -64 v 0 0 0 a 0 0 0 g -
+body 44:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o 544 2480 -88 v 0 0 0 a 0 0 0 g -
+body 48:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 51:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 52:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 53:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:9 o 944 1008 -272 v 0 0 0 a 0 0 0 g -
+body 56:3 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 57:2 o 296 2136 -192 v 0 0 0 a 0 0 0 g -
+body 58:0 o 1424 904 -432 v 0 0 0 a 0 0 0 g -
+body 59:0 o 1376 808 -432 v 0 0 0 a 0 0 0 g -
+body 60:0 o 1176 936 -432 v 0 0 0 a 0 0 0 g -
+body 61:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 66:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 69:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 70:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 71:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 72:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 73:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 74:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 75:0 o 1376 1024 -272 v 0 0 0 a 0 0 0 g -
+body 76:0 o 1184 992 -272 v 0 0 0 a 0 0 0 g -
+body 77:0 o 1376 856 -272 v 0 0 0 a 0 0 0 g -
+body 78:0 o 1256 1704 -432 v 0 0 0 a 0 0 0 g -
+body 79:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 80:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 81:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 82:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 83:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 84:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 85:2 o 328 848 -224 v 0 0 0 a 0 0 0 g -
+body 86:0 o 344 920 -224 v 0 0 0 a 0 0 0 g -
+body 87:0 o -16 2064 -208 v 0 0 0 a 0 0 0 g -
+body 88:4 o 0 576 24.03125 v 0 0 0 a 0 0 0 g 12
+body 89:0 o 8 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 90:0 o 88 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 91:3 o 712 2040 -408 v 0 0 0 a 0 90 0 g -
+body 92:2 o 916 2416 -136 v 0 0 0 a 0 0 0 g -
+body 93:0 o 1312 936 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 94:0 o 1336 1784 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 95:0 o 1392 928 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 96:2 o 1256 1760 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 97:0 o 824 1784 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 98:1 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 99:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 100:0 o 1232 2088 -215.96875 v 0 0 0 a 0 320.0042724609375 0 g 0
+body 101:0 o 1232 2448 -279.96875 v 0 0 0 a 0 270 0 g 0
+body 102:0 o 832 2464 -343.96875 v 0 0 0 a 0 0 0 g 0
+body 103:0 o 832 2072 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 104:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 105:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 106:0 o -360 2912 -80 v 0 0 0 a 0 0 0 g -
+body 107:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 108:2 o 528 720 80 v 0 0 0 a 0 0 0 g -
+body 109:1 o 432 2120 -167.96875 v 0 0 0 a 0 180 0 g 0
+body 110:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 111:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 112:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 113:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 114:0 o 80 2024 -183.96875 v 0 0 0 a 0 320.0042724609375 0 g 0
+body 115:0 o -14.007610321044922 1888.17431640625 -183.96875 v 0 0 0 a 0 4.998779296875 0 g 0
+body 116:1 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 118:1 o -544 2584 56.03125 v 0 0 0 a 0 0 0 g 0
+body 119:0 o -344 2656 -103.96875 v 0 0 0 a 0 270 0 g 0
+body 120:0 o -72 2896 -55.96875 v 0 0 0 a 0 225 0 g 0
+body 121:0 o 430.5858154296875 2921.4140625 -55.96875 v 0 0 0 a 0 39.990234375 0 g 0
+body 122:0 o 424 2832 -55.96875 v 0 0 0 a 0 180 0 g 0
+body 123:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 124:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 125:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 126:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 127:0 o 425.4141845703125 2673.4140625 -55.96875 v 0 0 0 a 0 39.990234375 0 g 0
+body 128:2 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 129:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 130:0 o 847.1710205078125 2585.699462890625 -71.96875 v 0 0 0 a 0 39.990234375 0 g 0
+body 131:1 o -376 1704 -224 v 0 0 0 a 0 0 0 g -
+body 132:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 672 -40 48 v 0 0 0 a 0 0 0 g -
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:1 o 600 2200 -128 v 0 0 0 a 0 0 0 g -
+body 141:1 o 72 2056 -208.96875 v 0 0 0 a 0 0 0 g 0
+body 142:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 145:0 o 1224 2464 -304 v 0 0 0 a 0 0 0 g -
+body 146:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 147:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 148:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 149:0 o 1312 1048 -432 v 0 0 0 a 0 0 0 g -
+body 150:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 151:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 152:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 153:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 154:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 155:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 156:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 157:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 158:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 159:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 160:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 161:2 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 162:0 o 480 -352 89 v 0 0 0 a 0 0 0 g -
+body 163:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 164:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+inventory 1 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=25/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100
+combat 0 0 none none -
+combat 1 100 none none 1
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 0 none none -
+combat 28 0 none none -
+combat 29 0 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 30 none none -
+combat 35 0 none none -
+combat 36 0 none none -
+combat 37 0 none none -
+combat 38 0 none none -
+combat 39 0 none none -
+combat 40 0 none none -
+combat 41 10000 none none -
+combat 42 10000 none none -
+combat 43 0 none none -
+combat 44 1 none none -
+combat 45 0 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 0 none none -
+combat 49 0 none none -
+combat 50 10000 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 0 none none -
+combat 84 0 none none -
+combat 85 0 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 30 none none -
+combat 90 25 none none -
+combat 91 0 none none -
+combat 92 0 none none -
+combat 93 30 none none -
+combat 94 25 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 0 none none -
+combat 99 0 none none -
+combat 100 30 none none -
+combat 101 30 none none -
+combat 102 30 none none -
+combat 103 30 none none -
+combat 104 1 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 25 none none -
+combat 110 0 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 0 none none -
+combat 114 30 none none -
+combat 115 30 none none -
+combat 116 0 none none -
+combat 117 0 none none -
+combat 118 25 none none -
+combat 119 30 none none -
+combat 120 25 none none -
+combat 121 30 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 0 none none -
+combat 126 0 none none -
+combat 127 30 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 30 none none -
+combat 131 0 none none -
+combat 132 10000 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 0 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 20 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 0 none none -
+combat 160 0 none none -
+combat 161 0 none none -
+combat 162 0 none none -
+combat 163 0 none none -
+combat 164 0 none none -
+player body o 482.9773864746094 -352.36749267578125 88.03125 v 29.774065017700195 -3.674915075302124 0 a 0 7 0 min -16 -16 -24 max 16 16 32
+player view o 482.9773864746094 -352.36749267578125 88.03125 a 0 7 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=25 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0
+event message:print 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:110:sound%2Fambience%2Fhum1.wav:sha256:fe588142678ccf1a87c5b2455748e7c0e7c2890d76e67825df086c87aa99b87f:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:118:sound%2Fambience%2Ffl_hum1.wav:sha256:48fc01e24f7636aca87b342fb11ca05f903fe4c3bd0a8021ad160144884a0db6:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 6
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:119:sound%2Fambience%2Fbuzz1.wav:sha256:363061f3c61966a71357a65dcae2505c24b826c88c5258dc14d74ba2e8c300b8:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 2
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:122:sound%2Fambience%2Fdrone6.wav:sha256:dccccac054680ac00f16dd87a2f303bd9653578736ba18a56311fe55256c1176:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:124:sound%2Fambience%2Fcomp1.wav:sha256:023903bd93bebc49b2a9c66b17f1f32e533d14fe111d93ea36b362f2e0437b22:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:157:sound%2Fsoldier%2Fidle.wav:sha256:4322ccc365d063f163aea969ed662a0271eadc8e665d0cc31c6d98a59ea4ca70:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 3
+presentation q1 39
+presentation view-reset 1
+console "[message] Player 1"
+console "[message] Player 1"
+console "[message]  entered the game\n"
+console "[message]  entered the game\n"
+checkpoint world:actors world:source-slots 1 f92289b5fe359803 canonical ff866d8a1c034ccc
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:simulation 11 a757538b5fae32a6 canonical 15eb6d2b31466610
+checkpoint-image ccfe31cea3e20cc7 canonical e02af44d349b838c 068b2ad3a6cadbc2
+== frame 10
+source quakec
+time 2.000000000000001
+frame-context 10 seconds:2.000000000000001 seconds:0.1 frame-exit
+actors 164
+actor-kind q1:official quakec:authored 154
+actor-kind q1:official quakec:dynamic 8
+actor-kind q1:official quakec:reserved-client 1
+actor-kind q1:official quakec:worldspawn 1
+actor quakec:authored -104 2352 40
+actor quakec:authored -112 704 56
+actor quakec:authored -136 1912 -200
+actor quakec:authored -16 2064 -207.96875
+actor quakec:authored -2.0532732009887695 1889.22021484375 -183.96875
+actor quakec:authored -200 1992 -200
+actor quakec:authored -208 2736 192
+actor quakec:authored -272 2928 -56
+actor quakec:authored -32 1800 -29
+actor quakec:authored -344 2656 -103.96875
+actor quakec:authored -360 2912 -79.96875
+actor quakec:authored -376 1704 -223.96875
+actor quakec:authored -4.371989017560099e-14 -238 0
+actor quakec:authored -472 2064 -88
+actor quakec:authored -544 2584 56.03125
+actor quakec:authored -560 2352 40
+actor quakec:authored -72 2896 -55.96875
+actor quakec:authored -94 1.1511680043723663e-14 0
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -150
+actor quakec:authored 0 0 -400
+actor quakec:authored 0 0 -64
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 576 24.03125
+actor quakec:authored 112 2352 16.03125
+actor quakec:authored 1176 936 -431.96875
+actor quakec:authored 1184 992 -279.96875
+actor quakec:authored 1224 2464 -303.96875
+actor quakec:authored 1232 2048 -232
+actor quakec:authored 1232 2072 -215.96875
+actor quakec:authored 1232 2448 -279.96875
+actor quakec:authored 1256 1704 -431.96875
+actor quakec:authored 1256 1760 -407.96875
+actor quakec:authored 1280 2000 -152
+actor quakec:authored 1280 2496 -216
+actor quakec:authored 1312 1048 -431.96875
+actor quakec:authored 1312 880 -248
+actor quakec:authored 1312 936 -255.96875
+actor quakec:authored 1314 450 -200
+actor quakec:authored 1336 1784 -407.96875
+actor quakec:authored 1376 1024 -279.96875
+actor quakec:authored 1376 1936 64
+actor quakec:authored 1376 808 -431.96875
+actor quakec:authored 1376 856 -279.96875
+actor quakec:authored 1392 928 -255.96875
+actor quakec:authored 1424 904 -431.96875
+actor quakec:authored 176 1744 -152
+actor quakec:authored 240 2664 104
+actor quakec:authored 248 1912 -200
+actor quakec:authored 248 1992 -200
+actor quakec:authored 248 2392 40.03125
+actor quakec:authored 250 194 72
+actor quakec:authored 272 2352 64.03125
+actor quakec:authored 296 2136 -191.96875
+actor quakec:authored 32 2312 200
+actor quakec:authored 32 2352 88
+actor quakec:authored 32 2392 200
+actor quakec:authored 328 848 -223.96875
+actor quakec:authored 344 2216 -88
+actor quakec:authored 344 920 -223.96875
+actor quakec:authored 368 2696 -72
+actor quakec:authored 368 2936 -72
+actor quakec:authored 416 1968 -112
+actor quakec:authored 416 2064 -112
+actor quakec:authored 424 2832 -55.96875
+actor quakec:authored 424.92901611328125 2927.07080078125 -55.96875
+actor quakec:authored 432 -296 72
+actor quakec:authored 432 2120 -167.96875
+actor quakec:authored 438.1420593261719 2686.141845703125 -55.96875
+actor quakec:authored 466 2226 -104
+actor quakec:authored 480 -240 72
+actor quakec:authored 480 -352 88
+actor quakec:authored 480 2696 -72
+actor quakec:authored 480 2936 -72
+actor quakec:authored 480 48 24
+actor quakec:authored 528 -296 72
+actor quakec:authored 528 1888 -168
+actor quakec:authored 528 720 80.03125
+actor quakec:authored 544 2480 -87.96875
+actor quakec:authored 56 2352 200
+actor quakec:authored 592 544 88
+actor quakec:authored 600 2200 -127.96875
+actor quakec:authored 626 2058 -104
+actor quakec:authored 672 -40 48.03125
+actor quakec:authored 688 192 80
+actor quakec:authored 688 480 80.03125
+actor quakec:authored 712 2040 -407.96875
+actor quakec:authored 714 194 72
+actor quakec:authored 72 2056 -208.96875
+actor quakec:authored 72.62762451171875 2018.837890625 -183.96875
+actor quakec:authored 752 2000 -88
+actor quakec:authored 784 2496 -280
+actor quakec:authored 8 1520 -199.96875
+actor quakec:authored 8 2352 200
+actor quakec:authored 80 1744 -152
+actor quakec:authored 824 1784 -407.96875
+actor quakec:authored 832 2048 -152
+actor quakec:authored 832 2072 -407.96875
+actor quakec:authored 832 2416 -104
+actor quakec:authored 832 2464 -343.96875
+actor quakec:authored 832 2712 -88
+actor quakec:authored 841.5142211914062 2591.356201171875 -71.96875
+actor quakec:authored 88 1520 -199.96875
+actor quakec:authored 880 2048 -168
+actor quakec:authored 916 2416 -135.96875
+actor quakec:authored 92 0 0
+actor quakec:authored 944 1008 -271.96875
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:reserved-client 540.235107421875 -256.2863464355469 72.03125
+actor quakec:worldspawn 0 0 0
+bodies 164
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 540.235107421875 -256.2863464355469 72.03125 v 21.30823516845703 205.03466796875 0 a 0 70 -2.9826841354370117 g 0
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 7:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 8:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 11:3 o 688 480 80.03125 v 0 0 0 a 0 0 0 g 0
+body 12:8 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 14:15 o -94 1.1511680043723663e-14 0 v 0 0 0 a 0 0 0 g -
+body 15:0 o 92 0 0 v 0 0 0 a 0 0 0 g -
+body 16:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 17:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 18:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 19:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 20:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 21:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 22:7 o 0 0 -150 v 0 0 0 a 0 0 0 g -
+body 23:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 24:12 o -4.371989017560099e-14 -238 0 v 0 0 0 a 0 0 0 g -
+body 25:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 26:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 27:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 28:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 29:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 30:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 31:0 o 112 2352 16.03125 v 0 0 0 a 0 0 0 g 0
+body 32:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 33:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 34:1 o 248 2392 40.03125 v 0 0 0 a 0 180 0 g 0
+body 35:0 o 272 2352 64.03125 v 0 0 0 a 0 0 0 g 0
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 38:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 39:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 40:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 41:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 43:3 o 0 0 -64 v 0 0 0 a 0 0 0 g -
+body 44:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o 544 2480 -87.96875 v 0 0 0 a 0 0 0 g 0
+body 48:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 51:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 52:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 53:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:9 o 944 1008 -271.96875 v 0 0 0 a 0 0 0 g 0
+body 56:3 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 57:2 o 296 2136 -191.96875 v 0 0 0 a 0 0 0 g 0
+body 58:0 o 1424 904 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 59:0 o 1376 808 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 60:0 o 1176 936 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 61:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 66:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 69:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 70:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 71:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 72:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 73:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 74:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 75:0 o 1376 1024 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 76:0 o 1184 992 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 77:0 o 1376 856 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 78:0 o 1256 1704 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 79:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 80:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 81:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 82:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 83:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 84:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 85:2 o 328 848 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 86:0 o 344 920 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 87:0 o -16 2064 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 88:4 o 0 576 24.03125 v 0 0 0 a 0 0 0 g 12
+body 89:0 o 8 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 90:0 o 88 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 91:3 o 712 2040 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 92:2 o 916 2416 -135.96875 v 0 0 0 a 0 0 0 g 0
+body 93:0 o 1312 936 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 94:0 o 1336 1784 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 95:0 o 1392 928 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 96:2 o 1256 1760 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 97:0 o 824 1784 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 98:1 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 99:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 100:0 o 1232 2072 -215.96875 v 0 0 0 a 0 270 0 g 0
+body 101:0 o 1232 2448 -279.96875 v 0 0 0 a 0 270 0 g 0
+body 102:0 o 832 2464 -343.96875 v 0 0 0 a 0 0 0 g 0
+body 103:0 o 832 2072 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 104:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 105:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 106:0 o -360 2912 -79.96875 v 0 0 0 a 0 0 0 g 0
+body 107:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 108:2 o 528 720 80.03125 v 0 0 0 a 0 0 0 g 0
+body 109:1 o 432 2120 -167.96875 v 0 0 0 a 0 180 0 g 0
+body 110:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 111:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 112:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 113:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 114:0 o 72.62762451171875 2018.837890625 -183.96875 v 0 0 0 a 0 214.9969482421875 0 g 0
+body 115:0 o -2.0532732009887695 1889.22021484375 -183.96875 v 0 0 0 a 0 4.998779296875 0 g 0
+body 116:1 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 118:1 o -544 2584 56.03125 v 0 0 0 a 0 0 0 g 0
+body 119:0 o -344 2656 -103.96875 v 0 0 0 a 0 270 0 g 0
+body 120:0 o -72 2896 -55.96875 v 0 0 0 a 0 225 0 g 0
+body 121:0 o 424.92901611328125 2927.07080078125 -55.96875 v 0 0 0 a 0 135 0 g 0
+body 122:0 o 424 2832 -55.96875 v 0 0 0 a 0 180 0 g 0
+body 123:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 124:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 125:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 126:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 127:0 o 438.1420593261719 2686.141845703125 -55.96875 v 0 0 0 a 0 45 0 g 0
+body 128:2 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 129:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 130:0 o 841.5142211914062 2591.356201171875 -71.96875 v 0 0 0 a 0 135 0 g 0
+body 131:1 o -376 1704 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 132:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 672 -40 48.03125 v 0 0 0 a 0 0 0 g 0
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:1 o 600 2200 -127.96875 v 0 0 0 a 0 0 0 g 0
+body 141:1 o 72 2056 -208.96875 v 0 0 0 a 0 0 0 g 0
+body 142:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 145:0 o 1224 2464 -303.96875 v 0 0 0 a 0 0 0 g 0
+body 146:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 147:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 148:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 149:0 o 1312 1048 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 150:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 151:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 152:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 153:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 154:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 155:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 156:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 157:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 158:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 159:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 160:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 161:2 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 163:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 164:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+inventory 1 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=25/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100
+combat 0 0 none none -
+combat 1 100 none none 1
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 0 none none -
+combat 28 0 none none -
+combat 29 0 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 30 none none -
+combat 35 0 none none -
+combat 36 0 none none -
+combat 37 0 none none -
+combat 38 0 none none -
+combat 39 0 none none -
+combat 40 0 none none -
+combat 41 10000 none none -
+combat 42 10000 none none -
+combat 43 0 none none -
+combat 44 1 none none -
+combat 45 0 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 0 none none -
+combat 49 0 none none -
+combat 50 10000 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 0 none none -
+combat 84 0 none none -
+combat 85 0 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 30 none none -
+combat 90 25 none none -
+combat 91 0 none none -
+combat 92 0 none none -
+combat 93 30 none none -
+combat 94 25 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 0 none none -
+combat 99 0 none none -
+combat 100 30 none none -
+combat 101 30 none none -
+combat 102 30 none none -
+combat 103 30 none none -
+combat 104 1 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 25 none none -
+combat 110 0 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 0 none none -
+combat 114 30 none none -
+combat 115 30 none none -
+combat 116 0 none none -
+combat 117 0 none none -
+combat 118 25 none none -
+combat 119 30 none none -
+combat 120 25 none none -
+combat 121 30 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 0 none none -
+combat 126 0 none none -
+combat 127 30 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 30 none none -
+combat 131 0 none none -
+combat 132 10000 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 0 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 20 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 0 none none -
+combat 160 0 none none -
+combat 161 0 none none -
+combat 163 0 none none -
+combat 164 0 none none -
+player body o 540.235107421875 -256.2863464355469 72.03125 v 21.30823516845703 205.03466796875 0 a 0 70 -2.9826841354370117 min -16 -16 -24 max 16 16 32
+player view o 540.235107421875 -256.2863464355469 72.03125 a 0 70 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=25 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0
+event message:print 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:110:sound%2Fambience%2Fhum1.wav:sha256:fe588142678ccf1a87c5b2455748e7c0e7c2890d76e67825df086c87aa99b87f:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:118:sound%2Fambience%2Ffl_hum1.wav:sha256:48fc01e24f7636aca87b342fb11ca05f903fe4c3bd0a8021ad160144884a0db6:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 6
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:119:sound%2Fambience%2Fbuzz1.wav:sha256:363061f3c61966a71357a65dcae2505c24b826c88c5258dc14d74ba2e8c300b8:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 2
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:122:sound%2Fambience%2Fdrone6.wav:sha256:dccccac054680ac00f16dd87a2f303bd9653578736ba18a56311fe55256c1176:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:124:sound%2Fambience%2Fcomp1.wav:sha256:023903bd93bebc49b2a9c66b17f1f32e533d14fe111d93ea36b362f2e0437b22:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:157:sound%2Fsoldier%2Fidle.wav:sha256:4322ccc365d063f163aea969ed662a0271eadc8e665d0cc31c6d98a59ea4ca70:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 3
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:89:sound%2Fmisc%2Fnull.wav:sha256:5271b9aa2961809f47fadecb693be2eebde2dbed62fbc4f5f4889fcd8c4a65f8:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 2
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:92:sound%2Fdoors%2Fhydro1.wav:sha256:e9c0eaebcccb3fcbd39c43f82a302929e6ef45770ae82917dd90342fff4d9445:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:93:sound%2Fdoors%2Fhydro2.wav:sha256:0c8c615088a653dbd94fdd66dfca92850aeef8c51666390e4d770aac8127d63d:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+presentation q1 43
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 f190063c49aa0235 canonical 0d7ebba51cc62e3d
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:simulation 11 084f442a4f4b660d canonical b70acbfb90cd3bfb
+checkpoint-image 30472824f28aa12c canonical e02af44d349b838c 0217b9281b284dc0
+== frame 100
+source quakec
+time 10.999999999999979
+frame-context 100 seconds:10.999999999999979 seconds:0.1 frame-exit
+actors 164
+actor-kind q1:official quakec:authored 154
+actor-kind q1:official quakec:dynamic 8
+actor-kind q1:official quakec:reserved-client 1
+actor-kind q1:official quakec:worldspawn 1
+actor quakec:authored -104 2352 40
+actor quakec:authored -112 704 56
+actor quakec:authored -136 1912 -200
+actor quakec:authored -16 2064 -207.96875
+actor quakec:authored -200 1992 -200
+actor quakec:authored -208 2736 192
+actor quakec:authored -272 2928 -56
+actor quakec:authored -32 1800 -29
+actor quakec:authored -344 2656 -103.96875
+actor quakec:authored -360 2912 -79.96875
+actor quakec:authored -376 1704 -223.96875
+actor quakec:authored -4.371989017560099e-14 -238 0
+actor quakec:authored -472 2064 -88
+actor quakec:authored -544 2584 56.03125
+actor quakec:authored -560 2352 40
+actor quakec:authored -72 2896 -55.96875
+actor quakec:authored -85.58525085449219 2000.4835205078125 -167.96875
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -14
+actor quakec:authored 0 0 -150
+actor quakec:authored 0 0 -400
+actor quakec:authored 0 0 -64
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 0 0
+actor quakec:authored 0 576 24.03125
+actor quakec:authored 1076.064453125 2055.9404296875 -190.5709686279297
+actor quakec:authored 112 2352 16.03125
+actor quakec:authored 1176 936 -431.96875
+actor quakec:authored 1184 992 -279.96875
+actor quakec:authored 1224 2464 -303.96875
+actor quakec:authored 1232 2048 -232
+actor quakec:authored 1232 2448 -279.96875
+actor quakec:authored 1256 1704 -431.96875
+actor quakec:authored 1256 1760 -407.96875
+actor quakec:authored 1280 2000 -152
+actor quakec:authored 1280 2496 -216
+actor quakec:authored 1312 1048 -431.96875
+actor quakec:authored 1312 880 -248
+actor quakec:authored 1312 936 -255.96875
+actor quakec:authored 1314 450 -200
+actor quakec:authored 1336 1784 -407.96875
+actor quakec:authored 1376 1024 -279.96875
+actor quakec:authored 1376 1936 64
+actor quakec:authored 1376 808 -431.96875
+actor quakec:authored 1376 856 -279.96875
+actor quakec:authored 1392 928 -255.96875
+actor quakec:authored 1424 904 -431.96875
+actor quakec:authored 156.3665313720703 1903.0040283203125 -183.96875
+actor quakec:authored 176 1744 -152
+actor quakec:authored 240 2664 104
+actor quakec:authored 248 1912 -200
+actor quakec:authored 248 1992 -200
+actor quakec:authored 248 2392 40.03125
+actor quakec:authored 250 194 72
+actor quakec:authored 272 2352 64.03125
+actor quakec:authored 296 2136 -191.96875
+actor quakec:authored 32 2312 200
+actor quakec:authored 32 2352 88
+actor quakec:authored 32 2392 200
+actor quakec:authored 328 848 -223.96875
+actor quakec:authored 344 2216 -88
+actor quakec:authored 344 920 -223.96875
+actor quakec:authored 368 2696 -72
+actor quakec:authored 368 2936 -72
+actor quakec:authored 377.3946838378906 2807.845947265625 -55.96875
+actor quakec:authored 416 1968 -112
+actor quakec:authored 416 2064 -112
+actor quakec:authored 424 2832 -55.96875
+actor quakec:authored 432 -296 72
+actor quakec:authored 432 2120 -167.96875
+actor quakec:authored 466 2226 -104
+actor quakec:authored 470.6183776855469 2822.9580078125 -55.96875
+actor quakec:authored 480 -240 72
+actor quakec:authored 480 -352 88
+actor quakec:authored 480 2696 -72
+actor quakec:authored 480 2936 -72
+actor quakec:authored 480 48 24
+actor quakec:authored 528 -296 72
+actor quakec:authored 528 1888 -168
+actor quakec:authored 528 720 80.03125
+actor quakec:authored 544 2480 -87.96875
+actor quakec:authored 56 2352 200
+actor quakec:authored 592 544 88
+actor quakec:authored 600 2200 -127.96875
+actor quakec:authored 626 2058 -104
+actor quakec:authored 672 -40 48.03125
+actor quakec:authored 688 192 80
+actor quakec:authored 688 480 80.03125
+actor quakec:authored 712 2040 -407.96875
+actor quakec:authored 714 194 72
+actor quakec:authored 72 2056 -208.96875
+actor quakec:authored 752 2000 -88
+actor quakec:authored 784 2496 -280
+actor quakec:authored 8 1520 -199.96875
+actor quakec:authored 8 2352 200
+actor quakec:authored 80 1744 -152
+actor quakec:authored 824 1784 -407.96875
+actor quakec:authored 832 2048 -152
+actor quakec:authored 832 2072 -407.96875
+actor quakec:authored 832 2416 -104
+actor quakec:authored 832 2464 -343.96875
+actor quakec:authored 832 2712 -88
+actor quakec:authored 835.8573608398438 2620.012939453125 -71.96875
+actor quakec:authored 88 1520 -199.96875
+actor quakec:authored 880 2048 -168
+actor quakec:authored 916 2416 -135.96875
+actor quakec:authored 944 1008 -271.96875
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:dynamic 0 0 0
+actor quakec:reserved-client 553.6420288085938 -399.96875 88.03125
+actor quakec:worldspawn 0 0 0
+bodies 164
+body 0:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 1:0 o 553.6420288085938 -399.96875 88.03125 v 207.86532592773438 0 0 a 0.3333333432674408 340 -3.570694923400879 g 0
+body 2:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 3:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 4:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 5:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 6:0 o 480 -352 88 v 0 0 0 a 0 90 0 g -
+body 7:5 o 688 192 80 v 0 0 0 a 0 0 0 g -
+body 8:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 9:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 10:0 o 592 544 88 v 0 0 0 a 0 0 0 g -
+body 11:3 o 688 480 80.03125 v 0 0 0 a 0 0 0 g 0
+body 12:8 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 13:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 14:15 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 15:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 16:0 o 176 1744 -152 v 0 0 0 a 0 0 0 g -
+body 17:0 o 80 1744 -152 v 0 0 0 a 0 0 0 g -
+body 18:4 o 416 2064 -112 v 0 0 0 a 0 0 0 g -
+body 19:0 o 416 1968 -112 v 0 0 0 a 0 0 0 g -
+body 20:2 o 344 2216 -88 v 0 0 0 a 0 0 0 g -
+body 21:3 o -472 2064 -88 v 0 0 0 a 0 0 0 g -
+body 22:7 o 0 0 -150 v 0 0 0 a 0 0 0 g -
+body 23:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 24:12 o -4.371989017560099e-14 -238 0 v 0 0 0 a 0 0 0 g -
+body 25:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 26:2 o 8 2352 200 v 0 0 0 a 0 0 0 g -
+body 27:0 o 32 2392 200 v 0 0 0 a 0 0 0 g -
+body 28:0 o 56 2352 200 v 0 0 0 a 0 0 0 g -
+body 29:0 o 32 2312 200 v 0 0 0 a 0 0 0 g -
+body 30:0 o 32 2352 88 v 0 0 0 a 0 0 0 g -
+body 31:0 o 112 2352 16.03125 v 0 0 0 a 0 0 0 g 0
+body 32:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 33:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 34:1 o 248 2392 40.03125 v 0 0 0 a 0 180 0 g 0
+body 35:0 o 272 2352 64.03125 v 0 0 0 a 0 0 0 g 0
+body 36:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 37:3 o 752 2000 -88 v 0 0 0 a 0 0 0 g -
+body 38:0 o 1280 2000 -152 v 0 0 0 a 0 0 0 g -
+body 39:0 o 1280 2496 -216 v 0 0 0 a 0 0 0 g -
+body 40:0 o 784 2496 -280 v 0 0 0 a 0 0 0 g -
+body 41:22 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 42:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 43:3 o 0 0 -64 v 0 0 0 a 0 0 0 g -
+body 44:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 45:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 46:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 47:0 o 544 2480 -87.96875 v 0 0 0 a 0 0 0 g 0
+body 48:6 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 49:29 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 50:7 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 51:1 o 0 0 -400 v 0 0 0 a 0 0 0 g -
+body 52:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 53:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 54:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 55:9 o 944 1008 -271.96875 v 0 0 0 a 0 0 0 g 0
+body 56:3 o -32 1800 -29 v 0 0 0 a 0 0 0 g -
+body 57:2 o 296 2136 -191.96875 v 0 0 0 a 0 0 0 g 0
+body 58:0 o 1424 904 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 59:0 o 1376 808 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 60:0 o 1176 936 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 61:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 62:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 63:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 64:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 65:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 66:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 67:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 68:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 69:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 70:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 71:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 72:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 73:0 o 0 0 -14 v 0 0 0 a 0 0 0 g -
+body 74:0 o 1312 880 -248 v 0 0 0 a 0 90 0 g -
+body 75:0 o 1376 1024 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 76:0 o 1184 992 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 77:0 o 1376 856 -279.96875 v 0 0 0 a 0 0 0 g 0
+body 78:0 o 1256 1704 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 79:0 o 480 48 24 v 0 0 0 a 0 90 0 g -
+body 80:0 o 528 1888 -168 v 0 0 0 a 0 180 0 g -
+body 81:0 o -272 2928 -56 v 0 0 0 a 0 0 0 g -
+body 82:0 o 832 2048 -152 v 0 0 0 a 0 0 0 g -
+body 83:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 84:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 85:2 o 328 848 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 86:0 o 344 920 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 87:0 o -16 2064 -207.96875 v 0 0 0 a 0 0 0 g 0
+body 88:4 o 0 576 24.03125 v 0 0 0 a 0 0 0 g 12
+body 89:0 o 8 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 90:0 o 88 1520 -199.96875 v 0 0 0 a 0 270 0 g 0
+body 91:3 o 712 2040 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 92:2 o 916 2416 -135.96875 v 0 0 0 a 0 0 0 g 0
+body 93:0 o 1312 936 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 94:0 o 1336 1784 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 95:0 o 1392 928 -255.96875 v 0 0 -80 a 0 90 0 g 0
+body 96:2 o 1256 1760 -407.96875 v 0 0 0 a 0 180 0 g 0
+body 97:0 o 824 1784 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 98:1 o 880 2048 -168 v 0 0 0 a 0 0 0 g -
+body 99:0 o 1232 2048 -232 v 0 0 0 a 0 0 0 g -
+body 100:0 o 1076.064453125 2055.9404296875 -190.5709686279297 v 0 0 0 a 0 180 0 g 0
+body 101:0 o 1232 2448 -279.96875 v 0 0 0 a 0 270 0 g 0
+body 102:0 o 832 2464 -343.96875 v 0 0 0 a 0 0 0 g 0
+body 103:0 o 832 2072 -407.96875 v 0 0 0 a 0 90 0 g 0
+body 104:1 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 105:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 106:0 o -360 2912 -79.96875 v 0 0 0 a 0 0 0 g 0
+body 107:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 108:2 o 528 720 80.03125 v 0 0 0 a 0 0 0 g 0
+body 109:1 o 432 2120 -167.96875 v 0 0 0 a 0 180 0 g 0
+body 110:0 o 248 1992 -200 v 0 0 0 a 0 0 0 g -
+body 111:0 o -200 1992 -200 v 0 0 0 a 0 0 0 g -
+body 112:0 o -136 1912 -200 v 0 0 0 a 0 0 0 g -
+body 113:0 o 248 1912 -200 v 0 0 0 a 0 0 0 g -
+body 114:0 o -85.58525085449219 2000.4835205078125 -167.96875 v 0 0 0 a 0 180 0 g 0
+body 115:0 o 156.3665313720703 1903.0040283203125 -183.96875 v 0 0 0 a 0 0 0 g 0
+body 116:1 o -560 2352 40 v 0 0 0 a 0 0 0 g -
+body 117:0 o -104 2352 40 v 0 0 0 a 0 0 0 g -
+body 118:1 o -544 2584 56.03125 v 0 0 0 a 0 0 0 g 0
+body 119:0 o -344 2656 -103.96875 v 0 0 0 a 0 270 0 g 0
+body 120:0 o -72 2896 -55.96875 v 0 0 0 a 0 225 0 g 0
+body 121:0 o 377.3946838378906 2807.845947265625 -55.96875 v 0 0 0 a 0 270 0 g 0
+body 122:0 o 424 2832 -55.96875 v 0 0 0 a 0 180 0 g 0
+body 123:0 o 368 2936 -72 v 0 0 0 a 0 0 0 g -
+body 124:0 o 368 2696 -72 v 0 0 0 a 0 0 0 g -
+body 125:0 o 480 2696 -72 v 0 0 0 a 0 0 0 g -
+body 126:0 o 480 2936 -72 v 0 0 0 a 0 0 0 g -
+body 127:0 o 470.6183776855469 2822.9580078125 -55.96875 v 0 0 0 a 0 90 0 g 0
+body 128:2 o 832 2712 -88 v 0 0 0 a 0 0 0 g -
+body 129:0 o 832 2416 -104 v 0 0 0 a 0 0 0 g -
+body 130:0 o 835.8573608398438 2620.012939453125 -71.96875 v 0 0 0 a 0 270 0 g 0
+body 131:1 o -376 1704 -223.96875 v 0 0 0 a 0 0 0 g 0
+body 132:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 133:0 o 672 -40 48.03125 v 0 0 0 a 0 0 0 g 0
+body 134:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 135:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 136:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 137:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 138:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 139:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 140:1 o 600 2200 -127.96875 v 0 0 0 a 0 0 0 g 0
+body 141:1 o 72 2056 -208.96875 v 0 0 0 a 0 0 0 g 0
+body 142:16 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 143:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 144:5 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 145:0 o 1224 2464 -303.96875 v 0 0 0 a 0 0 0 g 0
+body 146:4 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 147:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 148:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 149:0 o 1312 1048 -431.96875 v 0 0 0 a 0 0 0 g 0
+body 150:0 o 250 194 72 v 0 0 0 a 0 0 0 g -
+body 151:0 o 714 194 72 v 0 0 0 a 0 0 0 g -
+body 152:0 o 626 2058 -104 v 0 0 0 a 0 0 0 g -
+body 153:0 o 466 2226 -104 v 0 0 0 a 0 0 0 g -
+body 154:0 o -112 704 56 v 0 0 0 a 0 0 0 g -
+body 155:0 o -208 2736 192 v 0 0 0 a 0 0 0 g -
+body 156:0 o 240 2664 104 v 0 0 0 a 0 0 0 g -
+body 157:0 o 1376 1936 64 v 0 0 0 a 0 0 0 g -
+body 158:0 o 528 -296 72 v 0 0 0 a 0 90 0 g -
+body 159:0 o 432 -296 72 v 0 0 0 a 0 90 0 g -
+body 160:0 o 480 -240 72 v 0 0 0 a 0 90 0 g -
+body 161:2 o 1314 450 -200 v 0 0 0 a 0 0 0 g -
+body 163:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+body 164:0 o 0 0 0 v 0 0 0 a 0 0 0 g -
+inventory 1 q1:weapon/axe=1/1 q1:weapon/shotgun=1/1 q1:weapon/supershotgun=0/1 q1:weapon/nailgun=0/1 q1:weapon/supernailgun=0/1 q1:weapon/grenadelauncher=0/1 q1:weapon/rocketlauncher=0/1 q1:weapon/lightning=0/1 q1:ammo/shells=21/100 q1:ammo/nails=0/200 q1:ammo/rockets=0/100 q1:ammo/cells=0/100
+combat 0 0 none none -
+combat 1 100 none none 1
+combat 2 0 none none -
+combat 3 0 none none -
+combat 4 0 none none -
+combat 5 0 none none -
+combat 6 0 none none -
+combat 7 0 none none -
+combat 8 0 none none -
+combat 9 0 none none -
+combat 10 0 none none -
+combat 11 0 none none -
+combat 12 0 none none -
+combat 13 0 none none -
+combat 14 0 none none -
+combat 15 0 none none -
+combat 16 0 none none -
+combat 17 0 none none -
+combat 18 0 none none -
+combat 19 0 none none -
+combat 20 0 none none -
+combat 21 0 none none -
+combat 22 0 none none -
+combat 23 0 none none -
+combat 24 0 none none -
+combat 25 0 none none -
+combat 26 0 none none -
+combat 27 0 none none -
+combat 28 0 none none -
+combat 29 0 none none -
+combat 30 0 none none -
+combat 31 0 none none -
+combat 32 0 none none -
+combat 33 0 none none -
+combat 34 30 none none -
+combat 35 0 none none -
+combat 36 0 none none -
+combat 37 0 none none -
+combat 38 0 none none -
+combat 39 0 none none -
+combat 40 0 none none -
+combat 41 10000 none none -
+combat 42 10000 none none -
+combat 43 0 none none -
+combat 44 1 none none -
+combat 45 0 none none -
+combat 46 0 none none -
+combat 47 0 none none -
+combat 48 0 none none -
+combat 49 0 none none -
+combat 50 10000 none none -
+combat 51 0 none none -
+combat 52 0 none none -
+combat 53 0 none none -
+combat 54 0 none none -
+combat 55 0 none none -
+combat 56 0 none none -
+combat 57 0 none none -
+combat 58 0 none none -
+combat 59 0 none none -
+combat 60 0 none none -
+combat 61 0 none none -
+combat 62 0 none none -
+combat 63 0 none none -
+combat 64 0 none none -
+combat 65 0 none none -
+combat 66 0 none none -
+combat 67 0 none none -
+combat 68 0 none none -
+combat 69 0 none none -
+combat 70 0 none none -
+combat 71 0 none none -
+combat 72 0 none none -
+combat 73 0 none none -
+combat 74 0 none none -
+combat 75 0 none none -
+combat 76 0 none none -
+combat 77 0 none none -
+combat 78 0 none none -
+combat 79 0 none none -
+combat 80 0 none none -
+combat 81 0 none none -
+combat 82 0 none none -
+combat 83 0 none none -
+combat 84 0 none none -
+combat 85 0 none none -
+combat 86 0 none none -
+combat 87 0 none none -
+combat 88 30 none none -
+combat 89 30 none none -
+combat 90 25 none none -
+combat 91 0 none none -
+combat 92 0 none none -
+combat 93 30 none none -
+combat 94 25 none none -
+combat 95 30 none none -
+combat 96 30 none none -
+combat 97 30 none none -
+combat 98 0 none none -
+combat 99 0 none none -
+combat 100 30 none none -
+combat 101 30 none none -
+combat 102 30 none none -
+combat 103 30 none none -
+combat 104 1 none none -
+combat 105 0 none none -
+combat 106 0 none none -
+combat 107 0 none none -
+combat 108 0 none none -
+combat 109 25 none none -
+combat 110 0 none none -
+combat 111 0 none none -
+combat 112 0 none none -
+combat 113 0 none none -
+combat 114 30 none none -
+combat 115 30 none none -
+combat 116 0 none none -
+combat 117 0 none none -
+combat 118 25 none none -
+combat 119 30 none none -
+combat 120 25 none none -
+combat 121 30 none none -
+combat 122 30 none none -
+combat 123 0 none none -
+combat 124 0 none none -
+combat 125 0 none none -
+combat 126 0 none none -
+combat 127 30 none none -
+combat 128 0 none none -
+combat 129 0 none none -
+combat 130 30 none none -
+combat 131 0 none none -
+combat 132 10000 none none -
+combat 133 0 none none -
+combat 134 0 none none -
+combat 135 0 none none -
+combat 136 0 none none -
+combat 137 0 none none -
+combat 138 0 none none -
+combat 139 0 none none -
+combat 140 0 none none -
+combat 141 20 none none -
+combat 142 0 none none -
+combat 143 0 none none -
+combat 144 0 none none -
+combat 145 0 none none -
+combat 146 0 none none -
+combat 147 0 none none -
+combat 148 0 none none -
+combat 149 0 none none -
+combat 150 0 none none -
+combat 151 0 none none -
+combat 152 0 none none -
+combat 153 0 none none -
+combat 154 0 none none -
+combat 155 0 none none -
+combat 156 0 none none -
+combat 157 0 none none -
+combat 158 0 none none -
+combat 159 0 none none -
+combat 160 0 none none -
+combat 161 0 none none -
+combat 163 0 none none -
+combat 164 0 none none -
+player body o 553.6420288085938 -399.96875 88.03125 v 207.86532592773438 0 0 a 0.3333333432674408 340 -3.570694923400879 min -16 -16 -24 max 16 16 32
+player view o 553.6420288085938 -399.96875 88.03125 a 0 340 0 h 22
+player combat 100 none none
+player inventory q1:weapon/axe=1 q1:weapon/shotgun=1 q1:weapon/supershotgun=0 q1:weapon/nailgun=0 q1:weapon/supernailgun=0 q1:weapon/grenadelauncher=0 q1:weapon/rocketlauncher=0 q1:weapon/lightning=0 q1:ammo/shells=21 q1:ammo/nails=0 q1:ammo/rockets=0 q1:ammo/cells=0
+event message:print 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:110:sound%2Fambience%2Fhum1.wav:sha256:fe588142678ccf1a87c5b2455748e7c0e7c2890d76e67825df086c87aa99b87f:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:118:sound%2Fambience%2Ffl_hum1.wav:sha256:48fc01e24f7636aca87b342fb11ca05f903fe4c3bd0a8021ad160144884a0db6:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 6
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:119:sound%2Fambience%2Fbuzz1.wav:sha256:363061f3c61966a71357a65dcae2505c24b826c88c5258dc14d74ba2e8c300b8:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 2
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:122:sound%2Fambience%2Fdrone6.wav:sha256:dccccac054680ac00f16dd87a2f303bd9653578736ba18a56311fe55256c1176:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 1
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:124:sound%2Fambience%2Fcomp1.wav:sha256:023903bd93bebc49b2a9c66b17f1f32e533d14fe111d93ea36b362f2e0437b22:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:157:sound%2Fsoldier%2Fidle.wav:sha256:4322ccc365d063f163aea969ed662a0271eadc8e665d0cc31c6d98a59ea4ca70:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 6
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:19:sound%2Fweapons%2Fguncock.wav:sha256:98be8279e573f0f119bba682a13a904fe8f605283a9e8e7d6f7d5c783840f02d:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:89:sound%2Fmisc%2Fnull.wav:sha256:5271b9aa2961809f47fadecb693be2eebde2dbed62fbc4f5f4889fcd8c4a65f8:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 4
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:92:sound%2Fdoors%2Fhydro1.wav:sha256:e9c0eaebcccb3fcbd39c43f82a302929e6ef45770ae82917dd90342fff4d9445:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 2
+event sound:resource:q1:classic:id1:installed:mount:q1-classic-id1:5175616b652f4964312f50414b302e50414b:0:%2Fhome%2Fbuzzkill%2Fqfiles%2FQuake%2FId1%2FPAK0.PAK:sha256:35a9c55e5e5a284a159ad2a62e0e8def23d829561fe2f54eb402dbc0a9a946af:93:sound%2Fdoors%2Fhydro2.wav:sha256:0c8c615088a653dbd94fdd66dfca92850aeef8c51666390e4d770aac8127d63d:mount-plan:launch:7265636970653a6d697865643a71312d636c61737369632d6964312d71312d71312d706c61796572:default:2 2
+presentation q1 78
+presentation view-reset 1
+checkpoint world:actors world:source-slots 1 f190063c49aa0235 canonical 0d7ebba51cc62e3d
+checkpoint world:gameplay world:primary-protection 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint world:gameplay world:source-items 1 4f53cda18c2baa0c canonical 4f53cda18c2baa0c
+checkpoint q1:official world:simulation 11 f98c62230d2a5e88 canonical 2c84a73e32ac4426
+checkpoint-image 58a6373e88650645 canonical e02af44d349b838c 29acc0d1826bbac2

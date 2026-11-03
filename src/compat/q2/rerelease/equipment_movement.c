@@ -5,6 +5,7 @@
 #include <string.h>
 #include "qa/compat/q2/rerelease/api.h"
 #include "qa/foundation/cleanup.h"
+#include "qa/foundation/js.h"
 
 static qa_compat_q2_rerelease_guest_module *active_module = NULL;
 static void *active_scope = NULL;
@@ -20,7 +21,7 @@ void qa_compat_q2_prepare_rerelease_equipment_movement(qa_compat_q2_rerelease_gu
   size_t flags = (size_t)qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_pmove_layout, "s.pm_flags");
   size_t gravity = (size_t)qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_pmove_layout, "s.gravity");
   if (equipment->velocity) set_vector(state, "s.velocity", *equipment->velocity);
-  qa_compat_q2_view_set_i16(state, gravity, (int32_t)trunc(qa_compat_q2_view_i16(state, gravity) * equipment->gravity_scale));
+  qa_compat_q2_view_set_i16(state, gravity, qa_js_to_int32(trunc(qa_compat_q2_view_i16(state, gravity) * equipment->gravity_scale)));
   qa_compat_q2_view_set_u16(state, flags, equipment->prediction_suppressed ? qa_compat_q2_view_u16(state, flags) | 64 : qa_compat_q2_view_u16(state, flags) & ~64u);
 }
 typedef struct load_ctx { qa_compat_q2_rerelease_guest_module *module; void *scope; double multiplier, reg; } load_ctx_t;
@@ -76,7 +77,7 @@ void qa_compat_q2_with_rerelease_equipment_movement(qa_compat_q2_rerelease_guest
   execute(execute_ctx);
   if (pose) {
     size_t height = (size_t)qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_pmove_layout, "s.viewheight");
-    state[height] = (uint8_t)pose->view_height;
+    state[height] = qa_js_to_uint8(pose->view_height); /* setInt8: low 8 bits */
     set_vector(state, "mins", pose->bounds.min); set_vector(state, "maxs", pose->bounds.max);
     qa_compat_q2_view_set_u16(state, flags, pose->crouched ? qa_compat_q2_view_u16(state, flags) | 1 : qa_compat_q2_view_u16(state, flags) & ~1u);
   }

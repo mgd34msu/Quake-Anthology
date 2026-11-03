@@ -40,6 +40,17 @@ static char *builder_finish(text_builder *builder) {
   return builder->data;
 }
 
+/* TS string length: UTF-16 code units of the UTF-8 text (a four-byte
+ * sequence is two units; other lead bytes and stray bytes are one). */
+static size_t utf16_length(const char *text) {
+  size_t units = 0;
+  for (const unsigned char *p = (const unsigned char *)text; *p != 0; p++) {
+    if ((*p & 0xc0) == 0x80) continue;
+    units += (*p & 0xf8) == 0xf0 ? 2 : 1;
+  }
+  return units;
+}
+
 static void print_to(qa_llm_commands_registration *reg, const char *text,
                      const qa_command_context *source) {
   reg->print(reg->print_ctx, text, source);
@@ -209,7 +220,7 @@ static void run_request(qa_llm_commands_registration *reg, const llm_definition 
     free(prompt);
     return;
   }
-  if (strlen(prompt) > 4096) {
+  if (utf16_length(prompt) > 4096) {
     print_to(reg, "LLM prompt exceeds 4096 characters. Ask a shorter question.\n", &source);
     free(prompt);
     return;
@@ -358,24 +369,6 @@ static void exec_handler(void *ctx, qa_command_invocation *invocation) {
   if (--reg->refs == 0) free(reg);
 }
 
-void qa_prime_llm_console_session(qa_command_buffer *commands,
-                                  const qa_llm_command_requester *requester,
-                                  const qa_command_context *source) {
-  if (requester == NULL || requester->prime == NULL) return;
-  qa_command_context fallback;
-  const qa_command_context *context = source;
-  if (context == NULL) {
-    fallback = qa_command_buffer_context(commands);
-    context = &fallback;
-  }
-  char *error = NULL;
-  char *instructions = qa_llm_session_instructions(commands, context, &error);
-  free(error);
-  if (instructions == NULL) return;
-  requester->prime(requester->ctx, instructions);
-  free(instructions);
-}
-
 qa_llm_commands_registration *qa_register_llm_commands(
     qa_command_buffer *commands, qa_command_print_source_fn print, void *print_ctx,
     const qa_llm_command_requester *requester) {
@@ -410,8 +403,8 @@ qa_llm_commands_registration *qa_register_llm_commands(
                                           &doc))
       reg->names[reg->name_count++] = definitions[i]->name;
   }
-  if (requester != NULL && reg->name_count != 0)
-    qa_prime_llm_console_session(commands, requester, NULL);
+  /* TS registerLlmCommands sends nothing at registration; the first
+   * request carries the live catalog. */
   return reg;
 }
 

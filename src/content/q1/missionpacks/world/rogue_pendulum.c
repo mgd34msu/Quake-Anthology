@@ -1,88 +1,99 @@
-/* Port of src/content/q1/missionpacks/world/rogue-pendulum.ts.
- * GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/rogue-pendulum.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/rogue_pendulum.h"
 #include "../missionpacks_internal.h"
 #include "qa/content/q1/missionpacks/world/common.h"
-#include "qa/foundation/support.h"
-#include <stdio.h>
-#include <stdlib.h>
 
-static const double SWINGS[][8] = {
-  {0,-176,-120,48,128,0.17,1,0},{1,-172,-112,12,88,0.15,0,0},{2,-160,-96,-22,50,0.13,0,0},
-  {3,-138,-70,-51,17,0.11,0,1},{4,-110,-38,-72,-8,0.09,0,0},{5,-76,0,-83,-23,0.07,0,0},
-  {6,-40,40,-88,-32,0.05,0,0},{7,0,76,-83,-23,0.07,0,0},{8,38,100,-72,-8,0.09,0,0},
-  {9,70,138,-51,17,0.11,0,0},{10,96,160,-22,50,0.13,0,0},{11,112,172,12,88,0.15,0,0},
-  {12,120,176,48,128,0.17,0,0},{12,120,176,48,128,0.17,0,0},{11,112,172,12,88,0.15,-1,0},
-  {10,96,160,-22,50,0.13,0,0},{9,70,138,-51,17,0.11,0,1},{8,38,100,-72,-8,0.09,0,0},
-  {7,0,76,-83,-23,0.07,0,0},{6,-40,40,-88,-32,0.05,0,0},{5,-76,0,-83,-23,0.07,0,0},
-  {4,-110,-28,-72,-8,0.09,0,0},{3,-172,-70,-51,17,0.11,0,0},{2,-160,-96,-22,50,0.13,0,0},
-  {1,-172,-112,12,88,0.15,0,0},{0,-176,-120,48,128,0.17,0,0},
+/* frame, min, max, low, high, delay, impact, sound */
+static const double SWINGS[26][8] = {
+  {0, -176, -120, 48, 128, 0.17, 1, 0}, {1, -172, -112, 12, 88, 0.15, 0, 0}, {2, -160, -96, -22, 50, 0.13, 0, 0},
+  {3, -138, -70, -51, 17, 0.11, 0, 1}, {4, -110, -38, -72, -8, 0.09, 0, 0}, {5, -76, 0, -83, -23, 0.07, 0, 0},
+  {6, -40, 40, -88, -32, 0.05, 0, 0}, {7, 0, 76, -83, -23, 0.07, 0, 0}, {8, 38, 100, -72, -8, 0.09, 0, 0},
+  {9, 70, 138, -51, 17, 0.11, 0, 0}, {10, 96, 160, -22, 50, 0.13, 0, 0}, {11, 112, 172, 12, 88, 0.15, 0, 0},
+  {12, 120, 176, 48, 128, 0.17, 0, 0}, {12, 120, 176, 48, 128, 0.17, 0, 0}, {11, 112, 172, 12, 88, 0.15, -1, 0},
+  {10, 96, 160, -22, 50, 0.13, 0, 0}, {9, 70, 138, -51, 17, 0.11, 0, 1}, {8, 38, 100, -72, -8, 0.09, 0, 0},
+  {7, 0, 76, -83, -23, 0.07, 0, 0}, {6, -40, 40, -88, -32, 0.05, 0, 0}, {5, -76, 0, -83, -23, 0.07, 0, 0},
+  {4, -110, -28, -72, -8, 0.09, 0, 0}, {3, -172, -70, -51, 17, 0.11, 0, 0}, {2, -160, -96, -22, 50, 0.13, 0, 0},
+  {1, -172, -112, 12, 88, 0.15, 0, 0}, {0, -176, -120, 48, 128, 0.17, 0, 0},
 };
-#define SWING_COUNT 26
-typedef struct pend_ctx { qa_q1mp_game *game; int index; } pend_ctx;
-static pend_ctx swing_ctxs[SWING_COUNT];
-static void swing_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  pend_ctx *c = vctx; int index = c->index;
-  const double *s = SWINGS[index];
-  e->frame = s[0];
+#define SWING_COUNT (sizeof SWINGS / sizeof SWINGS[0])
+static const char *const SWING_NAMES[SWING_COUNT] = {
+  "rogue:pend_swing1", "rogue:pend_swing2", "rogue:pend_swing3", "rogue:pend_swing4", "rogue:pend_swing5",
+  "rogue:pend_swing6", "rogue:pend_swing7", "rogue:pend_swing8", "rogue:pend_swing9", "rogue:pend_swing10",
+  "rogue:pend_swing11", "rogue:pend_swing12", "rogue:pend_swing13", "rogue:pend_swing14", "rogue:pend_swing15",
+  "rogue:pend_swing16", "rogue:pend_swing17", "rogue:pend_swing18", "rogue:pend_swing19", "rogue:pend_swing20",
+  "rogue:pend_swing21", "rogue:pend_swing22", "rogue:pend_swing23", "rogue:pend_swing24", "rogue:pend_swing25",
+  "rogue:pend_swing26",
+};
+
+static void swing(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const size_t index = (size_t)((const double *)ctx - &SWINGS[0][0]) / 8;
+  const double *row = SWINGS[index];
+  entity->frame = row[0];
   if (index != 13) {
-    qa_bounds b = (e->spawnflags & 2) != 0
-      ? (qa_bounds){{-8, s[1], s[3]}, {8, s[2], s[4]}}
-      : (qa_bounds){{s[1], -8, s[3]}, {s[2], 8, s[4]}};
-    g->set_bounds(g, e, b);
+    const qa_bounds bounds = (qa_js_to_int32(entity->spawnflags) & 2) != 0
+        ? (qa_bounds){{-8, row[1], row[3]}, {8, row[2], row[4]}}
+        : (qa_bounds){{row[1], -8, row[3]}, {row[2], 8, row[4]}};
+    qa_q1_set_bounds(game, entity, bounds);
   }
-  if (s[6] != 0 && g->world) qa_q1mp_world_number(g->world, "rogue:impactVelocity", s[6]);
-  if (s[7] != 0 && c->game->emit_sound_event) c->game->emit_sound_event(c->game->ctx, e->actor.id, "pendulum/swing.wav", QA_Q1MP_CH("auto"), 0.5, 1);
-  char name[48]; (void)snprintf(name, sizeof name, "rogue:pend_swing%d", (index + 1) % SWING_COUNT + 1);
-  qa_q1mp_world_later(c->game, e, s[5], name);
-}
-static void pend_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; qa_q1mp_game *game = ((pend_ctx *)vctx)->game;
-  if (g->health(g, other) < 1 || !qa_q1mp_can_damage_actor(game, other)) return;
-  if (e->attack_finished < g->time) { qa_q1mp_sound_ch(game, e, "pendulum/hit.wav", "voice"); e->attack_finished = g->time + 1; }
-  qa_q1b_game_damage(g, other, e->actor.id, QA_Q1MP_SOME(e->actor.id), qa_q1mp_number(e, "currentammo"));
-  qa_q1b_body body; qa_owned_actor owner;
-  if (!qa_q1mp_body_read(game, other, &body) || !g->host->actors_resolve_owned(g->host->ctx, other, &owner)) return;
-  double impact = g->world ? qa_q1mp_number(g->world, "rogue:impactVelocity") : 0;
-  if ((e->spawnflags & 2) != 0) { body.velocity.y = impact * -250; body.velocity.z = 200; }
-  else { body.velocity.x = impact * 250; body.velocity.z = 200; }
-  g->host->bodies_write(g->host->ctx, owner, &body);
-  qa_q1mp_effect_a(game, "meat-spray", body.origin, QA_Q1MP_SOME(other), 0);
-}
-static void pend_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) {
-  (void)g; (void)o; (void)a; qa_q1mp_world_later(((pend_ctx *)vctx)->game, e, e->delay, "rogue:pend_swing1");
-}
-static void pendulum_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  pend_ctx *c = vctx;
-  qa_q1mp_set_model(e, "progs/pendulum.mdl");
-  if (e->spawnflags == 0) e->spawnflags = 2;
-  if ((e->spawnflags & 3) == 0) qa_range_error("Unimplemented Pendulum Type (pendulum.qc)");
-  bool across = (e->spawnflags & 2) != 0;
-  qa_q1b_body_patch p = {0};
-  p.has_angles = true; p.angles = across ? QA_Q1MP_ZERO : QA_Q1MP_V3(0,270,0);
-  p.has_bounds = true; p.bounds = across ? (qa_bounds){{-8,-24,-100},{8,24,100}} : (qa_bounds){{-24,-8,-100},{24,8,100}};
-  qa_q1mp_patch(c->game, e, &p);
-  if (qa_q1mp_number(e, "currentammo") == 0) qa_q1mp_world_number(e, "currentammo", 5);
-  if (e->delay == 0) e->delay = 1;
-  e->solid = "trigger"; qa_q1b_actor_set_damageable(g, e, false);
-  e->touch = g->named.touch(g->named.ctx, e, "rogue:pend_touch");
-  if (g->world) qa_q1mp_world_number(g->world, "rogue:impactVelocity", 0);
-  if ((e->spawnflags & 8) != 0) e->use = g->named.use(g->named.ctx, e, "rogue:pend_use");
-  else qa_q1mp_world_later(c->game, e, e->delay, "rogue:pend_swing1");
-}
-void qa_q1mp_register_rogue_pendulum(qa_q1mp_game *game) {
-  qa_q1b_game *g = game->base;
-  for (int i = 0; i < SWING_COUNT; i++) {
-    swing_ctxs[i].game = game; swing_ctxs[i].index = i;
-    char name[48]; (void)snprintf(name, sizeof name, "rogue:pend_swing%d", i + 1);
-    char *stored = malloc(48); (void)snprintf(stored, 48, "%s", name);
-    qa_q1b_handlers h = {0}; h.ctx = &swing_ctxs[i]; h.action = swing_cb;
-    g->named.register_named(g->named.ctx, stored, &h);
+  if (row[6] != 0 && game->world != NULL) qa_q1mp_world_number(game->world, "rogue:impactVelocity", row[6]);
+  if (row[7] != 0) {
+    qa_q1_event event = {0};
+    event.kind = "sound"; event.has_actor = true; event.actor = entity->actor.id; event.path = "pendulum/swing.wav";
+    event.sound_channel = "auto"; event.volume = 0.5; event.attenuation = 1;
+    qa_q1_emit(game, event);
   }
-  pend_ctx *shared = malloc(sizeof *shared); shared->game = game; shared->index = 0;
-  qa_q1b_handlers ht = {0}; ht.ctx = shared; ht.touch = pend_touch;
-  g->named.register_named(g->named.ctx, "rogue:pend_touch", &ht);
-  qa_q1b_handlers hu = {0}; hu.ctx = shared; hu.use = pend_use;
-  g->named.register_named(g->named.ctx, "rogue:pend_use", &hu);
-  g->register_spawn(g, "pendulum", pendulum_spawn, shared);
+  qa_q1mp_world_later(game, entity, row[5], SWING_NAMES[(index + 1) % SWING_COUNT]);
+}
+static void pend_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                       const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  if (qa_q1_health(game, other) < 1) return;
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, other);
+  if (!combat.has_value || !combat.value.can_take_damage) return;
+  if (entity->attack_finished < game->time) {
+    qa_q1_sound(game, entity->actor.id, "pendulum/hit.wav", "voice", 1, 1);
+    entity->attack_finished = game->time + 1;
+  }
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, qa_q1_actor_number(entity, "currentammo"), NULL, NULL, NULL, NULL);
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, other);
+  qa_owned_actor owner;
+  const bool resolved = qa_session_actor_registry_resolve_owned(game->host.actors, other, &owner);
+  if (!body.has_value || !resolved) return;
+  const double impact = game->world != NULL ? qa_q1_actor_number(game->world, "rogue:impactVelocity") : 0;
+  qa_body_state next = body.value;
+  if ((qa_js_to_int32(entity->spawnflags) & 2) != 0) { next.velocity.y = impact * -250; next.velocity.z = 200; }
+  else { next.velocity.x = impact * 250; next.velocity.z = 200; }
+  qa_shared_body_table_write(game->host.bodies, owner, next);
+  qa_q1_effect(game, "meat-spray", body.value.origin, &other, 1);
+}
+static void pend_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)other; (void)activator;
+  qa_q1mp_world_later(game, entity, entity->delay, "rogue:pend_swing1");
+}
+static void pendulum_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_set_string(&entity->model, "progs/pendulum.mdl");
+  if (entity->spawnflags == 0 || isnan(entity->spawnflags)) entity->spawnflags = 2; /* TS ||= */
+  if ((qa_js_to_int32(entity->spawnflags) & 3) == 0) qa_range_error("Unimplemented Pendulum Type (pendulum.qc)");
+  const bool sideways = (qa_js_to_int32(entity->spawnflags) & 2) != 0;
+  qa_q1_body_patch patch = {0};
+  patch.has_angles = true; patch.angles = sideways ? QA_Q1_ZERO : QA_Q1MP_V3(0, 270, 0);
+  patch.has_bounds = true;
+  patch.bounds = sideways ? (qa_bounds){{-8, -24, -100}, {8, 24, 100}} : (qa_bounds){{-24, -8, -100}, {24, 8, 100}};
+  qa_q1_set_body(game, entity, &patch);
+  if (qa_q1_actor_number(entity, "currentammo") == 0) qa_q1mp_world_number(entity, "currentammo", 5);
+  if (entity->delay == 0 || isnan(entity->delay)) entity->delay = 1;
+  entity->solid = "trigger"; qa_q1_actor_set_damageable(entity, false);
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:pend_touch");
+  if (game->world != NULL) qa_q1mp_world_number(game->world, "rogue:impactVelocity", 0);
+  if ((qa_js_to_int32(entity->spawnflags) & 8) != 0) entity->use = qa_q1_callback_registry_use(game->named, entity, "rogue:pend_use");
+  else qa_q1mp_world_later(game, entity, entity->delay, "rogue:pend_swing1");
+}
+void qa_q1mp_register_rogue_pendulum(qa_q1_services *game) {
+  for (size_t i = 0; i < SWING_COUNT; i++)
+    qa_q1_callback_registry_register(game->named, SWING_NAMES[i],
+                                     (qa_q1_callback_handlers){.ctx = (void *)SWINGS[i], .action = swing});
+  qa_q1_callback_registry_register(game->named, "rogue:pend_touch", (qa_q1_callback_handlers){.touch = pend_touch});
+  qa_q1_callback_registry_register(game->named, "rogue:pend_use", (qa_q1_callback_handlers){.use = pend_use});
+  qa_q1_register_spawn(game, "pendulum", pendulum_spawn, NULL);
 }

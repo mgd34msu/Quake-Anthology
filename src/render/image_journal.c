@@ -5,7 +5,7 @@
 #include <string.h>
 typedef struct update { double level; qa_image_resource_operation op; uint8_t *owned_bytes; float *owned_floats; qa_image_level lvl; qa_depth_image_level dlvl; } update;
 typedef struct resident { double ordinal; bool before_texture_mode; qa_image_resource_operation creation;
-  qa_image_level *levels; qa_depth_image_level *dlevels; uint8_t **owned; float **fowned; uint8_t *palette_colors; uint8_t *translation;
+  qa_image_level *levels; qa_depth_image_level *dlevels; uint8_t **owned; float **fowned; uint8_t *palette_colors; uint8_t *translation; qa_byte_view *translation_view; qa_fullbright_range *fullbright;
   update *updates; size_t update_count, update_cap; } resident;
 typedef struct jimpl { resident *items; size_t count, cap; bool has_texture_mode; qa_image_resource_operation texture_mode; } jimpl;
 static jimpl *J(qa_render_image_journal *j){ return (jimpl*)j->impl; }
@@ -14,14 +14,17 @@ static resident *find_res(jimpl *p,double ord){ for(size_t i=0;i<p->count;i++)if
 static void free_resident(resident *r){
   if(r->owned){ for(size_t i=0;i<r->creation.content.level_count;i++)free(r->owned[i]); free(r->owned); }
   if(r->fowned){ for(size_t i=0;i<r->creation.content.depth_level_count;i++)free(r->fowned[i]); free(r->fowned); }
-  free(r->levels);free(r->dlevels);free(r->palette_colors);free(r->translation);
+  free(r->levels);free(r->dlevels);free(r->palette_colors);free(r->translation);free(r->translation_view);free(r->fullbright);
   for(size_t i=0;i<r->update_count;i++){ free(r->updates[i].owned_bytes);free(r->updates[i].owned_floats); }
   free(r->updates); memset(r,0,sizeof *r);
 }
 bool qa_render_image_journal_init(qa_render_image_journal *j){ j->impl=calloc(1,sizeof(jimpl)); return j->impl!=NULL; }
 void qa_render_image_journal_destroy(qa_render_image_journal *j){ if(!j->impl)return; qa_render_image_journal_clear(j); free(J(j)->items); free(j->impl); j->impl=NULL; }
 void qa_render_image_journal_clear(qa_render_image_journal *j){ jimpl *p=J(j); for(size_t i=0;i<p->count;i++)free_resident(&p->items[i]); p->count=0; p->has_texture_mode=false; }
-static void upload_res(qa_journal_backend b,resident *r){ b.apply_image_resource(b.ctx,r->creation); for(size_t i=0;i<r->update_count;i++)b.apply_image_resource(b.ctx,r->updates[i].op); }
+static void upload_res(qa_journal_backend b,resident *r){ b.apply_image_resource(b.ctx,r->creation); for(size_t i=0;i<r->update_count;i++){ update *u=&r->updates[i];
+    /* The update array moves when it grows; rebase the self references. */
+    if(u->op.update_depth_level)u->op.update_depth_level=&u->dlvl; else if(u->op.update_level)u->op.update_level=&u->lvl;
+    b.apply_image_resource(b.ctx,u->op); } }
 void qa_render_image_journal_replay(qa_render_image_journal *j,qa_journal_backend b){ jimpl *p=J(j);
   for(size_t i=0;i<p->count;i++)if(p->items[i].before_texture_mode)upload_res(b,&p->items[i]);
   if(p->has_texture_mode)b.apply_image_resource(b.ctx,p->texture_mode);
@@ -55,9 +58,12 @@ void qa_render_image_journal_record(qa_render_image_journal *j,qa_image_resource
       if(content->kind==QA_RENDER_IMAGE_INDEXED8){
         r->palette_colors=dup_bytes(content->palette.colors.bytes,content->palette.colors.length);
         content->palette.colors.bytes=r->palette_colors;
-        if(content->translation){ r->translation=dup_bytes(content->translation->bytes,content->translation->length);
-          /* Borrowed view struct is shared with the caller in C; the
-           * journal copy is kept in r->translation (TS clones it). */ }
+        /* Separately allocated: resident records move when the journal grows. */
+        if(content->translation){ r->translation_view=(qa_byte_view*)malloc(sizeof *r->translation_view); if(!r->translation_view)qa_range_error("image journal allocation failed");
+          r->translation=dup_bytes(content->translation->bytes,content->translation->length);
+          r->translation_view->bytes=r->translation; r->translation_view->length=content->translation->length; content->translation=r->translation_view; }
+        if(content->fullbright){ r->fullbright=(qa_fullbright_range*)malloc(sizeof *r->fullbright); if(!r->fullbright)qa_range_error("image journal allocation failed");
+          *r->fullbright=*content->fullbright; content->fullbright=r->fullbright; }
       }
     }
     return; }

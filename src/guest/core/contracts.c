@@ -39,6 +39,7 @@ const char *qa_guest_memory_fault_reason_name(qa_guest_memory_fault_reason reaso
     case QA_FAULT_UNMAPPED: return "unmapped";
     case QA_FAULT_PERMISSION: return "permission";
     case QA_FAULT_OVERLAP: return "overlap";
+    case QA_FAULT_QUOTA: return "quota";
     default: return "noncontiguous-borrow";
   }
 }

@@ -87,7 +87,11 @@ static bool str_eq(const char *a, const char *b) {
   return strcmp(a, b) == 0;
 }
 
-static bool num_eq(double a, double b) { return a == b || (isnan(a) && isnan(b)); }
+/* TS isDeepStrictEqual on numbers: Object.is (NaN equals NaN, -0 differs from 0). */
+static bool num_eq(double a, double b) {
+  if (isnan(a) || isnan(b)) return isnan(a) && isnan(b);
+  return a == b && signbit(a) == signbit(b);
+}
 
 static bool vec_eq(qa_vec3 a, qa_vec3 b) {
   return num_eq(a.x, b.x) && num_eq(a.y, b.y) && num_eq(a.z, b.z);
@@ -652,6 +656,18 @@ typedef struct run_ctx {
   void *execute_ctx;
 } run_ctx;
 
+typedef struct frame_pop {
+  qa_qvm_mod_actors *actors;
+  damage_frame *frame;
+} frame_pop;
+
+/* TS finally { this.damageFrames.pop(); }. */
+static void pop_frame(void *ctx) {
+  frame_pop *pop = ctx;
+  if (pop->actors->damage_frame_count > 0) pop->actors->damage_frame_count--;
+  free(pop->frame);
+}
+
 static qa_source_damage_result run_execute(void *ctx, qa_source_damage_observer observer,
                                            qa_damage_request request) {
   run_ctx *run = ctx;
@@ -673,12 +689,14 @@ static qa_source_damage_result run_execute(void *ctx, qa_source_damage_observer 
   frame->result.applied_damage = 0;
   frame->result.reaction = "none";
   push_frame(actors, frame);
+  frame_pop pop = {actors, frame};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, pop_frame, &pop);
   run->execute(run->execute_ctx, frame->request);
   flush_frame(actors, frame);
   qa_source_damage_result result = frame->result;
-  /* TS finally pops the stack top. */
-  if (actors->damage_frame_count > 0) actors->damage_frame_count--;
-  free(frame);
+  qa_cleanup_pop(&guard);
+  pop_frame(&pop);
   return result;
 }
 
@@ -697,14 +715,21 @@ static double *damage_words(qa_qvm_mod_actors *actors, qa_damage_request request
                             int64_t address, double original_flags, size_t *out_count) {
   write_vector(actors, address, request.direction);
   write_vector(actors, address + 12, request.point);
+  qa_qvm_combat_role_value value = {"target", pointer_for(actors, &request.target)};
+  qa_qvm_combat_role_value value2 = {"inflictor", pointer_for(actors, request.attack.inflictor)};
+  qa_qvm_combat_role_value value3 = {"attacker", pointer_for(actors, request.attack.attacker)};
+  qa_qvm_combat_role_value value4 = {"direction", (double)address};
+  qa_qvm_combat_role_value value5 = {"point", (double)(address + 12)};
+  qa_qvm_combat_role_value value6 = {"amount", trunc(request.amount)};
+  qa_qvm_combat_role_value value7 = {"flags", qa_qvm_source_damage_flags(actors->flags, request, original_flags)};
   qa_qvm_combat_role_value values[8] = {
-      {"target", pointer_for(actors, &request.target)},
-      {"inflictor", pointer_for(actors, request.attack.inflictor)},
-      {"attacker", pointer_for(actors, request.attack.attacker)},
-      {"direction", (double)address},
-      {"point", (double)(address + 12)},
-      {"amount", trunc(request.amount)},
-      {"flags", qa_qvm_source_damage_flags(actors->flags, request, original_flags)},
+      value,
+      value2,
+      value3,
+      value4,
+      value5,
+      value6,
+      value7,
       {"method", request.attack.cause.kind == QA_ATTACK_CAUSE_Q3
                      ? request.attack.cause.means_of_death
                      : 0}};
@@ -740,14 +765,30 @@ typedef struct word_edit {
   int32_t word;
 } word_edit;
 
-static int32_t proceed_call(qa_qvmy_function_call *call) {
+static int32_t proceed_call(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                      : call->proceed_async(call->call_ctx);
 }
 
+typedef struct edit_restore {
+  uint8_t *words;
+  word_edit *saved; /* owned */
+  size_t count;
+} edit_restore;
+
+/* TS finally: restore every edited word. */
+static void restore_edits(void *ctx) {
+  edit_restore *restore = ctx;
+  for (size_t i = 0; i < restore->count; i++)
+    bytes_set_i32(restore->words, (size_t)restore->saved[i].index * 4, restore->saved[i].word);
+  free(restore->saved);
+  restore->saved = NULL;
+  restore->count = 0;
+}
+
 /* The TS DataView over call words is mutable; the mirror keeps the
  * pointer const, so edits cast it back for the save/restore window. */
-static int32_t proceed_with_edits(qa_qvmy_function_call *call, const word_edit *edits,
+static int32_t proceed_with_edits(qa_qvm_module_function_call *call, const word_edit *edits,
                                   size_t edit_count) {
   uint8_t *words = (uint8_t *)call->words;
   word_edit *saved = xmalloc((edit_count == 0 ? 1 : edit_count) * sizeof *saved);
@@ -757,18 +798,20 @@ static int32_t proceed_with_edits(qa_qvmy_function_call *call, const word_edit *
   }
   for (size_t i = 0; i < edit_count; i++)
     bytes_set_i32(words, (size_t)edits[i].index * 4, edits[i].word);
+  edit_restore restore = {words, saved, edit_count};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, restore_edits, &restore);
   int32_t result = proceed_call(call);
-  for (size_t i = 0; i < edit_count; i++)
-    bytes_set_i32(words, (size_t)saved[i].index * 4, saved[i].word);
-  free(saved);
+  qa_cleanup_pop(&guard);
+  restore_edits(&restore);
   return result;
 }
 
-static int32_t call_word(qa_qvmy_function_call *call, int64_t index) {
+static int32_t call_word(qa_qvm_module_function_call *call, int64_t index) {
   return bytes_i32(call->words, (size_t)index * 4);
 }
 
-static bool call_actor_at(qa_qvm_mod_actors *actors, qa_qvmy_function_call *call, int64_t index,
+static bool call_actor_at(qa_qvm_mod_actors *actors, qa_qvm_module_function_call *call, int64_t index,
                           qa_actor_id *out) {
   return actors->options.actor(actors->options.ctx, call_word(call, index), out);
 }
@@ -796,7 +839,7 @@ static bool callback_match(qa_qvm_mod_actors *actors, int64_t entry, const uint8
 
 typedef struct use_ctx {
   qa_qvm_mod_actors *actors;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_owned_actor owner;
   bool has_other;
   qa_actor_id other;
@@ -814,20 +857,21 @@ static void use_execute(void *ctx, qa_owned_actor self, const qa_actor_id *other
   bool same_activator =
       (activator == NULL && !use->has_activator) ||
       (activator != NULL && use->has_activator && qa_same_actor(*activator, use->activator));
-  word_edit edits[3] = {
-      {use->role_target,
+  word_edit value = {use->role_target,
        same_owned(self, use->owner) ? call_word(use->call, use->role_target)
-                                    : pointer_for(actors, &self.id)},
-      {use->role_other, same_other ? call_word(use->call, use->role_other)
-                                   : pointer_for(actors, other)},
-      {use->role_activator, same_activator ? call_word(use->call, use->role_activator)
-                                           : pointer_for(actors, activator)}};
+                                    : pointer_for(actors, &self.id)};
+  word_edit value2 = {use->role_other, same_other ? call_word(use->call, use->role_other)
+                                   : pointer_for(actors, other)};
+  word_edit value3 = {use->role_activator, same_activator ? call_word(use->call, use->role_activator)
+                                           : pointer_for(actors, activator)};
+  word_edit edits[3] = {
+      value, value2, value3};
   proceed_with_edits(use->call, edits, 3);
 }
 
 typedef struct touch_ctx {
   qa_qvm_mod_actors *actors;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_owned_actor owner;
   qa_actor_id other;
   const qa_plane *plane;
@@ -839,21 +883,22 @@ static void touch_execute(void *ctx, qa_touch_contact effective) {
   touch_ctx *touch = ctx;
   if (effective.plane != touch->plane || effective.surface != touch->surface)
     qa_range_error("QVM source trace changes require callback replacement");
-  word_edit edits[2] = {
-      {touch->role_target,
+  word_edit value = {touch->role_target,
        same_owned(effective.self, touch->owner)
            ? call_word(touch->call, touch->role_target)
-           : pointer_for(touch->actors, &effective.self.id)},
-      {touch->role_other,
+           : pointer_for(touch->actors, &effective.self.id)};
+  word_edit value2 = {touch->role_other,
        qa_same_actor(effective.other, touch->other)
            ? call_word(touch->call, touch->role_other)
-           : pointer_for(touch->actors, &effective.other)}};
+           : pointer_for(touch->actors, &effective.other)};
+  word_edit edits[2] = {
+      value, value2};
   proceed_with_edits(touch->call, edits, 2);
 }
 
 typedef struct pain_ctx {
   qa_qvm_mod_actors *actors;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_owned_actor owner;
   bool has_attacker;
   qa_actor_id attacker;
@@ -866,19 +911,22 @@ static void pain_execute(void *ctx, qa_pain_reaction effective) {
       (effective.attacker == NULL && !pain->has_attacker) ||
       (effective.attacker != NULL && pain->has_attacker &&
        qa_same_actor(*effective.attacker, pain->attacker));
-  word_edit edits[3] = {
-      {pain->role_target,
+  word_edit value = {pain->role_target,
        same_owned(effective.self, pain->owner) ? call_word(pain->call, pain->role_target)
-                                               : pointer_for(pain->actors, &effective.self.id)},
-      {pain->role_attacker, same_attacker ? call_word(pain->call, pain->role_attacker)
-                                          : pointer_for(pain->actors, effective.attacker)},
-      {pain->role_amount, (int32_t)trunc(effective.damage)}};
+                                               : pointer_for(pain->actors, &effective.self.id)};
+  word_edit value2 = {pain->role_attacker, same_attacker ? call_word(pain->call, pain->role_attacker)
+                                          : pointer_for(pain->actors, effective.attacker)};
+  word_edit value3 = {pain->role_amount, qa_int32(effective.damage)};
+  word_edit edits[3] = {
+      value,
+      value2,
+      value3}; /* Math.trunc, stored with setInt32 */
   proceed_with_edits(pain->call, edits, 3);
 }
 
 typedef struct die_ctx {
   qa_qvm_mod_actors *actors;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_owned_actor owner;
   bool has_attacker;
   qa_actor_id attacker;
@@ -897,20 +945,24 @@ static void die_execute(void *ctx, qa_death_reaction effective) {
       (effective.inflictor == NULL && !die->has_inflictor) ||
       (effective.inflictor != NULL && die->has_inflictor &&
        qa_same_actor(*effective.inflictor, die->inflictor));
-  word_edit edits[4] = {
-      {die->role_target,
+  word_edit value = {die->role_target,
        same_owned(effective.pain.self, die->owner) ? call_word(die->call, die->role_target)
-                                                    : pointer_for(die->actors, &effective.pain.self.id)},
-      {die->role_inflictor, same_inflictor ? call_word(die->call, die->role_inflictor)
-                                           : pointer_for(die->actors, effective.inflictor)},
-      {die->role_attacker, same_attacker ? call_word(die->call, die->role_attacker)
-                                         : pointer_for(die->actors, effective.pain.attacker)},
-      {die->role_amount, (int32_t)trunc(effective.pain.damage)}};
+                                                    : pointer_for(die->actors, &effective.pain.self.id)};
+  word_edit value2 = {die->role_inflictor, same_inflictor ? call_word(die->call, die->role_inflictor)
+                                           : pointer_for(die->actors, effective.inflictor)};
+  word_edit value3 = {die->role_attacker, same_attacker ? call_word(die->call, die->role_attacker)
+                                         : pointer_for(die->actors, effective.pain.attacker)};
+  word_edit value4 = {die->role_amount, qa_int32(effective.pain.damage)};
+  word_edit edits[4] = {
+      value,
+      value2,
+      value3,
+      value4}; /* Math.trunc, stored with setInt32 */
   proceed_with_edits(die->call, edits, 4);
 }
 
 static int32_t source_callback(qa_qvm_mod_actors *actors, int64_t entry,
-                               qa_qvmy_function_call *call) {
+                               qa_qvm_module_function_call *call) {
   qa_owned_actor owner;
   reaction_kind kind;
   if (!callback_match(actors, entry, call->words, call->words_length, &owner, &kind))
@@ -1028,13 +1080,13 @@ static int32_t source_callback(qa_qvm_mod_actors *actors, int64_t entry,
   return 0;
 }
 
-static int32_t resolved_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t resolved_hook(void *ctx, qa_qvm_module_function_call *call) {
   return source_callback((qa_qvm_mod_actors *)ctx, call->instruction_index, call);
 }
 
 static bool resolve_callback(void *ctx, int64_t instruction_index, int32_t first_argument,
                              const uint8_t *words, size_t words_length,
-                             qa_qvmy_function_hook_fn *out_hook, void **out_hook_ctx) {
+                             qa_qvm_function_hook_fn *out_hook, void **out_hook_ctx) {
   (void)first_argument;
   qa_qvm_mod_actors *actors = ctx;
   qa_owned_actor owner;
@@ -1046,7 +1098,7 @@ static bool resolve_callback(void *ctx, int64_t instruction_index, int32_t first
   return true;
 }
 
-static void source_request(qa_qvm_mod_actors *actors, qa_qvmy_function_call *call,
+static void source_request(qa_qvm_mod_actors *actors, qa_qvm_module_function_call *call,
                            request_box *out) {
   require_arguments(actors->call_bytes_damage, call->words_length);
   qa_qvm_combat_call roles = actors->calls.damage;
@@ -1097,7 +1149,7 @@ static void source_request(qa_qvm_mod_actors *actors, qa_qvmy_function_call *cal
 
 typedef struct replay_ctx {
   qa_qvm_mod_actors *actors;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   const request_box *original;
   qa_damage_request effective;
 } replay_ctx;
@@ -1153,7 +1205,7 @@ static int32_t replay_execute(void *ctx, qa_damage_request effective) {
 
 typedef struct hook_ctx {
   qa_qvm_mod_actors *actors;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   const request_box *original;
 } hook_ctx;
 
@@ -1167,7 +1219,7 @@ static qa_damage_outcome hook_source_damage(void *ctx, qa_damage_request compose
   return damage_run(hook->actors, composed, replay_execute, &replay);
 }
 
-static int32_t combat_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t combat_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_mod_actors *actors = ctx;
   request_box box;
   source_request(actors, call, &box);
@@ -1205,9 +1257,11 @@ static int32_t touch_at(void *ctx, int32_t address) {
   qa_qvm_writable_view view;
   qa_qvm_memory_view(memory_of(actors), address, QA_QVM_TRACE_BYTES, 0, &view);
   qa_qvm_write_trace_view(&view, &record);
+  qa_qvm_combat_role_value value2 = {"target", pointer_for(actors, &contact->self.id)};
+  qa_qvm_combat_role_value value3 = {"other", pointer_for(actors, &contact->other)};
   qa_qvm_combat_role_value values[3] = {
-      {"target", pointer_for(actors, &contact->self.id)},
-      {"other", pointer_for(actors, &contact->other)},
+      value2,
+      value3,
       {"trace", address}};
   size_t count = 0;
   double *words = combat_words(actors->calls.touch, values, 3, &count);
@@ -1225,9 +1279,10 @@ static void actor_touch(void *ctx, qa_touch_contact contact) {
 static void actor_use(void *ctx, qa_owned_actor self, const qa_actor_id *other,
                       const qa_actor_id *activator) {
   qa_qvm_mod_actors *actors = ctx;
-  qa_qvm_combat_role_value values[3] = {{"target", pointer_for(actors, &self.id)},
-                                        {"other", pointer_for(actors, other)},
-                                        {"activator", pointer_for(actors, activator)}};
+  qa_qvm_combat_role_value value = {"target", pointer_for(actors, &self.id)};
+  qa_qvm_combat_role_value value2 = {"other", pointer_for(actors, other)};
+  qa_qvm_combat_role_value value3 = {"activator", pointer_for(actors, activator)};
+  qa_qvm_combat_role_value values[3] = {value, value2, value3};
   size_t count = 0;
   double *words = combat_words(actors->calls.use, values, 3, &count);
   call_actor(actors, self, REACTION_USE, words, count);
@@ -1236,10 +1291,11 @@ static void actor_use(void *ctx, qa_owned_actor self, const qa_actor_id *other,
 
 static void actor_pain(void *ctx, qa_pain_reaction reaction) {
   qa_qvm_mod_actors *actors = ctx;
+  qa_qvm_combat_role_value value = {"target", pointer_for(actors, &reaction.self.id)};
+  qa_qvm_combat_role_value value2 = {"attacker", pointer_for(actors, reaction.attacker)};
+  qa_qvm_combat_role_value value3 = {"amount", trunc(reaction.damage)};
   qa_qvm_combat_role_value values[3] = {
-      {"target", pointer_for(actors, &reaction.self.id)},
-      {"attacker", pointer_for(actors, reaction.attacker)},
-      {"amount", trunc(reaction.damage)}};
+      value, value2, value3};
   size_t count = 0;
   double *words = combat_words(actors->calls.pain, values, 3, &count);
   call_actor(actors, reaction.self, REACTION_PAIN, words, count);
@@ -1248,11 +1304,15 @@ static void actor_pain(void *ctx, qa_pain_reaction reaction) {
 
 static void actor_die(void *ctx, qa_death_reaction reaction) {
   qa_qvm_mod_actors *actors = ctx;
+  qa_qvm_combat_role_value value = {"target", pointer_for(actors, &reaction.pain.self.id)};
+  qa_qvm_combat_role_value value2 = {"inflictor", pointer_for(actors, reaction.inflictor)};
+  qa_qvm_combat_role_value value3 = {"attacker", pointer_for(actors, reaction.pain.attacker)};
+  qa_qvm_combat_role_value value4 = {"amount", trunc(reaction.pain.damage)};
   qa_qvm_combat_role_value values[5] = {
-      {"target", pointer_for(actors, &reaction.pain.self.id)},
-      {"inflictor", pointer_for(actors, reaction.inflictor)},
-      {"attacker", pointer_for(actors, reaction.pain.attacker)},
-      {"amount", trunc(reaction.pain.damage)},
+      value,
+      value2,
+      value3,
+      value4,
       {"method", reaction.pain.attack != NULL &&
                          reaction.pain.attack->cause.kind == QA_ATTACK_CAUSE_Q3
                      ? reaction.pain.attack->cause.means_of_death

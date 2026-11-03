@@ -1,11 +1,16 @@
 /* Port of src/network/q3/transport.ts. GPL-2.0-or-later. */
 #include "qa/network/q3/transport.h"
+#include "qa/foundation/support.h"
 #include <string.h>
+static void release_address(void *arg) { qa_q3_mirror_address_destroy(arg); }
 static void delivery_send(void *ctx, const uint8_t *packet, size_t len) {
   qa_q3_channel_delivery_storage *s = ctx;
   qa_q3_address remote; memset(&remote, 0, sizeof remote);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, release_address, &remote);
   s->remote(s->remote_ctx, &remote);
   s->transport_send(s->transport_ctx, &remote, packet, len);
+  qa_cleanup_pop(&guard);
   qa_q3_mirror_address_destroy(&remote);
 }
 static void delivery_trace(void *ctx, const char *text) {

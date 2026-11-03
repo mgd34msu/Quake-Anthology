@@ -4,10 +4,15 @@
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static double f32(double v){ return (double)(float)v; }
 const bool QA_CPU_LITTLE_ENDIAN = true; /* x86-64 target; TS probes at runtime. */
-double qa_cpu_clamp01(double v){ return fmax(0, fmin(1, v)); }
-double qa_cpu_byte(double v){ return round(qa_cpu_clamp01(v)*255); }
+/* Math.max(0, Math.min(1, v)). */
+double qa_cpu_clamp01(double v){ return isnan(v)?v:v<=0?0:v>=1?1:v; }
+/* TS byte(NaN) is NaN, and every TS consumer coerces it to integer 0: `|` in
+ * colorWord, or a Uint8Array store of blend(). C casts of NaN are undefined, so
+ * the coercion happens here. Math.round and round agree: the value is >= 0. */
+double qa_cpu_byte(double v){ double c=qa_cpu_clamp01(v); return isnan(c)?0:qa_js_round(c*255); }
 uint32_t qa_cpu_color_word(double r,double g,double b,double a){
   uint32_t R=(uint32_t)qa_cpu_byte(r),G=(uint32_t)qa_cpu_byte(g),B=(uint32_t)qa_cpu_byte(b),A=(uint32_t)qa_cpu_byte(a);
   return R|(G<<8)|(B<<16)|(A<<24);
@@ -23,7 +28,7 @@ static double factor(const char *kind,double s,double d,double sa,double da,bool
   if (!strcmp(kind,"one-minus-src-alpha"))return 1-sa;
   if (!strcmp(kind,"dst-alpha")) return da;
   if (!strcmp(kind,"one-minus-dst-alpha"))return 1-da;
-  return ac?1:fmin(sa,1-da);
+  return ac?1:qa_js_min(sa,1-da);
 }
 double qa_cpu_blend(double s,double d,double sa,double da,qa_blend_state bl,bool ac){
   return qa_cpu_byte(s*factor(bl.source,s,d,sa,da,ac)+d*factor(bl.destination,s,d,sa,da,ac));
@@ -46,26 +51,29 @@ static void trim_span(span *sp,double slope,double row,double constant,bool incl
   if(slope==0){ double v=row+constant; if(v<0||(v==0&&!inclusive))sp->max=sp->min-1; return; }
   double crossing=-(row+constant)/slope-0.5;
   if(slope>0){
-    double mn=fmax(sp->min,fmin(sp->max+1,floor(crossing)));
+    double mn=qa_js_max(sp->min,qa_js_min(sp->max+1,floor(crossing)));
     while(mn>sp->min){ double v=slope*(mn-0.5)+row+constant; if(!(v>0||(v==0&&inclusive)))break; mn--; }
     while(mn<=sp->max){ double v=slope*(mn+0.5)+row+constant; if(v>0||(v==0&&inclusive))break; mn++; }
     sp->min=mn;
   } else {
-    double mx=fmax(sp->min-1,fmin(sp->max,ceil(crossing)));
+    double mx=qa_js_max(sp->min-1,qa_js_min(sp->max,ceil(crossing)));
     while(mx<sp->max){ double v=slope*(mx+1.5)+row+constant; if(!(v>0||(v==0&&inclusive)))break; mx++; }
     while(mx>=sp->min){ double v=slope*(mx+0.5)+row+constant; if(v>0||(v==0&&inclusive))break; mx--; }
     sp->max=mx;
   }
 }
-static double px(const qa_texture_storage *t,double off){ long o=(long)off; return (o>=0&&(size_t)o<t->pixel_length)?t->pixels[o]:0; }
+/* data[offset] ?? 0: a NaN offset (non-finite coordinate) reads undefined. */
+static double px(const qa_texture_storage *t,double off){ return (off>=0&&off<(double)t->pixel_length)?t->pixels[(size_t)off]:0; }
+/* `index &= mask` applies ToInt32, which maps NaN to 0. */
+static double mask_texel(double index,long mask){ return isnan(index)?0:(double)((long)index&mask); }
 static double wrap_texel(double index,double size){ return index<0?index+size:index>=size?index-size:index; }
 static void sample_repeat(const qa_texture_storage *t,double u,double v,bool linear,qa_cpu_sample *o){
   double w=t->width,h=t->height,mx=t->component_maximum; u-=floor(u); v-=floor(v);
-  if(!linear){ double x=fmin(w-1,floor(u*w)),y=fmin(h-1,floor(v*h)),off=(y*w+x)*4;
+  if(!linear){ double x=qa_js_min(w-1,floor(u*w)),y=qa_js_min(h-1,floor(v*h)),off=(y*w+x)*4;
     o->r=px(t,off)/mx;o->g=px(t,off+1)/mx;o->b=px(t,off+2)/mx;o->a=px(t,off+3)/mx;return; }
   double x=u*w-0.5,y=v*h-0.5,x0=floor(x),y0=floor(y),fx=x-x0,fy=y-y0,x1=x0+1,y1=y0+1;
   long wi=(long)w,hi=(long)h;
-  if((wi&(wi-1))==0&&(hi&(hi-1))==0){ x0=(long)x0&(wi-1);x1=(long)x1&(wi-1);y0=(long)y0&(hi-1);y1=(long)y1&(hi-1); }
+  if((wi&(wi-1))==0&&(hi&(hi-1))==0){ x0=mask_texel(x0,wi-1);x1=mask_texel(x1,wi-1);y0=mask_texel(y0,hi-1);y1=mask_texel(y1,hi-1); }
   else { x0=wrap_texel(x0,w);x1=wrap_texel(x1,w);y0=wrap_texel(y0,h);y1=wrap_texel(y1,h); }
   double w00=(1-fx)*(1-fy)/mx,w10=fx*(1-fy)/mx,w01=(1-fx)*fy/mx,w11=fx*fy/mx;
   double p00=(y0*w+x0)*4,p10=(y0*w+x1)*4,p01=(y1*w+x0)*4,p11=(y1*w+x1)*4;
@@ -77,7 +85,7 @@ static void sample_repeat(const qa_texture_storage *t,double u,double v,bool lin
 static void sample_level(const qa_texture_storage *t,qa_vec4 border,double u,double v,const char *wrap,bool linear,qa_cpu_sample *o){
   if(!strcmp(wrap,"repeat")){sample_repeat(t,u,v,linear,o);return;}
   double w=t->width,h=t->height,mx=t->component_maximum; u=qa_cpu_clamp01(u); v=qa_cpu_clamp01(v);
-  if(!linear){ double x=fmin(w-1,floor(u*w)),y=fmin(h-1,floor(v*h)),off=(y*w+x)*4;
+  if(!linear){ double x=qa_js_min(w-1,floor(u*w)),y=qa_js_min(h-1,floor(v*h)),off=(y*w+x)*4;
     o->r=px(t,off)/mx;o->g=px(t,off+1)/mx;o->b=px(t,off+2)/mx;o->a=px(t,off+3)/mx;return; }
   double x=u*w-0.5,y=v*h-0.5,x0=floor(x),y0=floor(y),fx=x-x0,fy=y-y0,x1=x0+1,y1=y0+1;
   double w00=(1-fx)*(1-fy)/mx,w10=fx*(1-fy)/mx,w01=(1-fx)*fy/mx,w11=fx*fy/mx;
@@ -101,16 +109,16 @@ static void sample_level(const qa_texture_storage *t,qa_vec4 border,double u,dou
 static double dlen(double x,double y){ if(x==0)return fabs(y); if(y==0)return fabs(x); return hypot(x,y); }
 static void sample_components(const qa_bound_texture *t,double u,double v,bool has_rho,double rho,qa_cpu_sample *o,double xU,double xV,double yU,double yV){
   if(t->kind==QA_BOUND_TEXTURE_CONSTANT){*o=t->sample;return;}
-  if(!has_rho) rho=fmax(dlen(xU,xV),dlen(yU,yV));
+  if(!has_rho) rho=qa_js_max(dlen(xU,xV),dlen(yU,yV));
   if(rho<=t->magnification_limit){ sample_level(&t->levels[0],t->border_color,u,v,t->wrap,t->magnify_linear,o); return; }
   if(!strcmp(t->mipmapping,"none")){ sample_level(&t->levels[0],t->border_color,u,v,t->wrap,t->minify_linear,o); return; }
-  double last=(double)t->level_count-1; double lambda=fmin(last,log2(rho));
+  double last=(double)t->level_count-1; double lambda=qa_js_min(last,log2(rho));
   bool between=!strcmp(t->mipmapping,"linear");
-  double sel=between?floor(lambda):fmax(0,ceil(lambda+0.5)-1);
-  if(sel<0||sel>=t->level_count) qa_range_error("Texture LOD is outside its complete mip chain");
+  double sel=between?floor(lambda):qa_js_max(0,ceil(lambda+0.5)-1);
+  if(!(sel>=0&&sel<(double)t->level_count)) qa_range_error("Texture LOD is outside its complete mip chain");
   sample_level(&t->levels[(size_t)sel],t->border_color,u,v,t->wrap,t->minify_linear,o);
   double fr=lambda-sel; if(!between||fr==0)return;
-  if(sel+1>=t->level_count) qa_range_error("Texture LOD blend is outside its complete mip chain");
+  if(sel+1>=(double)t->level_count) qa_range_error("Texture LOD blend is outside its complete mip chain");
   qa_cpu_sample first=*o; sample_level(&t->levels[(size_t)sel+1],t->border_color,u,v,t->wrap,t->minify_linear,o);
   o->r=first.r*(1-fr)+o->r*fr;o->g=first.g*(1-fr)+o->g*fr;o->b=first.b*(1-fr)+o->b*fr;o->a=first.a*(1-fr)+o->a*fr;
 }
@@ -134,7 +142,8 @@ bool qa_cpu_stencil_fragment(uint32_t *stencil,size_t count,double index,bool pa
   uint32_t prev=stencil[i];
   if(!strcmp(fn,"nonzero")&&(prev&(uint32_t)cm)==0) return false;
   const char *op=passed?dp:df;
-  uint32_t next=!strcmp(op,"increment")?(uint32_t)fmin(mx,prev+1):!strcmp(op,"decrement")?(uint32_t)fmax(0,(double)prev-1):prev;
+  /* previous + 1 is a JS number: 2^32 does not wrap to 0 at 32 stencil bits. */
+  uint32_t next=!strcmp(op,"increment")?(uint32_t)qa_js_min(mx,(double)prev+1):!strcmp(op,"decrement")?(uint32_t)qa_js_max(0,(double)prev-1):prev;
   stencil[i]=(prev&~(uint32_t)wm)|(next&(uint32_t)wm); return passed;
 }
 static void write_fragment(qa_cpu_framebuffer *fb,double ab,double pixel,double r,double g,double b,double a,qa_blend_state bl,const char *mode){
@@ -154,7 +163,7 @@ static bool run_internal(const qa_triangle_setup *s,qa_cpu_framebuffer *fb,qa_cp
   bool lum=s->texture_effect&&!strcmp(s->texture_effect,"luminance-alpha");
   const qa_cpu_triangle_lighting *lighting=s->lighting;
   bool frag_lit=s->texture_consumed&&lighting&&strcmp(lighting->base.parameters.kind,"vertex");
-  for(double y=fmax(s->min_y,firstY);y<=fmin(s->max_y,lastY);y++){
+  for(double y=qa_js_max(s->min_y,firstY);y<=qa_js_min(s->max_y,lastY);y++){
     double sy=y+0.5,rA=s->edge_ay*sy,rB=s->edge_by*sy,rC=s->edge_cy*sy;
     double aA=s->attribute_ay*sy,aB=s->attribute_by*sy,aC=s->attribute_cy*sy;
     double rowOff=(y-fb->origin_y)*fb->stride-fb->origin_x;

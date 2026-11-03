@@ -1,12 +1,8 @@
 /*
  * Port of src/content/q1/foundation/checkpoint.ts. GPL-2.0-or-later.
  * Capture storage is an arena owned by the checkpoint (TS retains
- * immutable strings/arrays by reference-copy). The host actor
- * registry (sourceOf/resolveSaved/referenceSaved) has no
- * qa_q1_services mirror: sourceSlot mirrors the actor slot for
- * source-spawned entities, and restore rebuilds actor ids from
- * slot/generation with a zero session token, which is consistent
- * for lookups among the restored entities themselves.
+ * immutable strings/arrays by reference-copy). Saved actor ids resolve
+ * through the shared actor registry (sourceOf/resolveSaved/referenceSaved).
  */
 #include "qa/content/q1/foundation/checkpoint.h"
 
@@ -14,6 +10,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 typedef struct arena {
   void **ptrs;
@@ -131,11 +128,12 @@ static qa_saved_actor_id saved_owned(qa_owned_actor actor) {
   return saved;
 }
 
-static bool save_entity(arena *a, qa_q1_actor *entity, qa_q1_saved_entity *out) {
+static bool save_entity(qa_q1_services *game, arena *a, qa_q1_actor *entity, qa_q1_saved_entity *out) {
   memset(out, 0, sizeof *out);
+  const qa_actor_source_result source = qa_session_actor_registry_source_of(game->host.actors, entity->actor.id);
   out->actor = saved_owned(entity->actor);
-  out->has_source_slot = entity->has_source_ordinal;
-  out->source_slot = (double)entity->actor.id.slot;
+  out->has_source_slot = source.has_value;
+  out->source_slot = source.has_value ? (double)source.slot : 0;
   out->actor_provider = entity->actor.owner;
   out->classname = arena_dup(a, entity->classname);
   out->has_source_ordinal = entity->has_source_ordinal;
@@ -183,15 +181,6 @@ static bool save_entity(arena *a, qa_q1_actor *entity, qa_q1_saved_entity *out) 
     const qa_q1_monster *monster = entity->monster;
     saved->species = arena_dup(a, monster->species);
     saved->mode = monster->mode;
-    saved->frame_index = monster->frame_index;
-    saved->first_frame = monster->first_frame;
-    if (monster->sequence_count > 0) {
-      double *sequence = arena_alloc(a, monster->sequence_count * sizeof *sequence);
-      if (!sequence) return false;
-      memcpy(sequence, monster->sequence, monster->sequence_count * sizeof *sequence);
-      saved->sequence = sequence;
-      saved->sequence_count = monster->sequence_count;
-    }
     saved->has_enemy = monster->has_enemy && qa_q1_save_actor(&monster->enemy, &saved->enemy);
     saved->has_old_enemy = monster->has_old_enemy && qa_q1_save_actor(&monster->old_enemy, &saved->old_enemy);
     saved->path = arena_dup(a, monster->path);
@@ -199,7 +188,6 @@ static bool save_entity(arena *a, qa_q1_actor *entity, qa_q1_saved_entity *out) 
     saved->attack_finished = monster->attack_finished;
     saved->pain_finished = monster->pain_finished;
     saved->search_until = monster->search_until;
-    saved->death_drop = monster->death_drop;
     saved->refired = monster->refired;
     out->monster = saved;
   }
@@ -220,15 +208,19 @@ static bool save_entity(arena *a, qa_q1_actor *entity, qa_q1_saved_entity *out) 
   return true;
 }
 
+static void free_checkpoint_arg(void *checkpoint) { qa_q1_checkpoint_free(checkpoint); }
 bool qa_q1_capture_foundation(qa_q1_services *game, double sequence, double next_dynamic_slot,
                               qa_q1_foundation_checkpoint *out) {
   memset(out, 0, sizeof *out);
   arena *a = calloc(1, sizeof *a);
   if (!a) return false;
   out->storage = a;
+  /* An unnamed callback or extension capture raises out of the save. */
+  qa_cleanup storage_cleanup;
+  qa_cleanup_push(&storage_cleanup, free_checkpoint_arg, out);
   out->format = "q1-foundation";
   out->provider = qa_q1_services_provider(game);
-  out->version = 5;
+  out->version = 6;
   size_t model_count = 0, sound_count = 0;
   const char *const *models = qa_q1_precache_models(game->precaches, &model_count);
   const char *const *sounds = qa_q1_precache_sounds(game->precaches, &sound_count);
@@ -278,7 +270,7 @@ bool qa_q1_capture_foundation(qa_q1_services *game, double sequence, double next
     size_t index = 0;
     for (size_t i = 0; i < game->entity_count; i++) {
       if (game->entities[i] == NULL) continue;
-      if (!save_entity(a, game->entities[i], &entities[index])) goto oom;
+      if (!save_entity(game, a, game->entities[i], &entities[index])) goto oom;
       index++;
     }
     out->entities = entities;
@@ -358,8 +350,10 @@ bool qa_q1_capture_foundation(qa_q1_services *game, double sequence, double next
       out->extension_count++;
     }
   }
+  qa_cleanup_pop(&storage_cleanup);
   return true;
 oom:
+  qa_cleanup_pop(&storage_cleanup);
   qa_q1_checkpoint_free(out);
   return false;
 }
@@ -370,32 +364,23 @@ void qa_q1_checkpoint_free(qa_q1_foundation_checkpoint *checkpoint) {
   memset(checkpoint, 0, sizeof *checkpoint);
 }
 
-static qa_actor_id reference_id(qa_saved_actor_id saved) {
-  qa_actor_id id;
-  memset(&id, 0, sizeof id);
-  id.slot = (int64_t)saved.slot;
-  id.generation = (int64_t)saved.generation;
-  return id;
+/* TS game.host.actors.referenceSaved(saved). */
+static qa_actor_id reference_id(qa_q1_services *game, qa_saved_actor_id saved) {
+  return qa_session_actor_registry_reference_saved(game->host.actors, saved, NULL);
 }
-static qa_owned_actor owned_of(qa_saved_actor_id saved, qa_provider_id owner) {
+/* TS owned(saved): resolveSaved, null throws. */
+static qa_owned_actor owned_of(qa_q1_services *game, qa_saved_actor_id saved) {
   qa_owned_actor owned;
-  memset(&owned, 0, sizeof owned);
-  owned.id = reference_id(saved);
-  owned.owner = owner;
+  if (!qa_session_actor_registry_resolve_saved(game->host.actors, saved, &owned))
+    qa_range_error("Missing restored Q1 actor %s/%s", QA_JS_NUMBER(saved.slot), QA_JS_NUMBER(saved.generation));
   return owned;
 }
-static qa_q1_actor *find_restored(qa_q1_services *game, qa_saved_actor_id saved) {
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q1_actor *entity = game->entities[i];
-    if (entity != NULL && (double)entity->actor.id.slot == saved.slot &&
-        (double)entity->actor.id.generation == saved.generation)
-      return entity;
-  }
-  return NULL;
-}
+/* TS sourceEntity(saved): entities.get(owned(saved)). */
 static qa_q1_actor *source_entity(qa_q1_services *game, qa_saved_actor_id saved) {
-  qa_q1_actor *entity = find_restored(game, saved);
-  if (entity == NULL) qa_range_error("Saved Q1 source reference points outside source entities");
+  const qa_owned_actor owned = owned_of(game, saved);
+  qa_q1_actor *entity = qa_q1_get_entity(game, &owned.id);
+  if (entity == NULL || !qa_same_owned_actor(entity->actor, owned))
+    qa_range_error("Saved Q1 source reference points outside source entities");
   return entity;
 }
 
@@ -451,21 +436,30 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
                            (checkpoint->provider != NULL && qa_q1_services_provider(game) != NULL &&
                             !strcmp(checkpoint->provider, qa_q1_services_provider(game)));
   if (checkpoint->format == NULL || strcmp(checkpoint->format, "q1-foundation") != 0 ||
-      checkpoint->version != 5 || !edition_ok || !provider_ok)
+      (checkpoint->version != 5 && checkpoint->version != 6) || !edition_ok || !provider_ok)
     qa_range_error("Incompatible Q1 source checkpoint");
   if (game->entity_count != 0 || game->player_count != 0)
     qa_range_error("Restore Q1 source state into a fresh provider");
   qa_q1_precache_restore(game->precaches, checkpoint->precaches);
   for (size_t i = 0; i < checkpoint->entity_count; i++) {
     const qa_q1_saved_entity *saved = &checkpoint->entities[i];
-    if (find_restored(game, saved->actor) != NULL) qa_range_error("Q1 restored source-slot mismatch");
-    /* TS additionally validates host source slots and that shared
-     * body/combat stores were restored first; neither exists in the
-     * actor-local mirror (see file note). */
-    qa_q1_actor *entity = qa_q1_attach_existing(game, owned_of(saved->actor, saved->actor_provider),
-                                                saved->classname, NULL,
+    const qa_owned_actor actor = owned_of(game, saved->actor);
+    const qa_actor_source_result source = qa_session_actor_registry_source_of(game->host.actors, actor.id);
+    const bool provider_same = actor.owner != NULL && saved->actor_provider != NULL &&
+                               !strcmp(actor.owner, saved->actor_provider);
+    const bool slot_same = source.has_value == saved->has_source_slot &&
+                           (!source.has_value || (double)source.slot == saved->source_slot);
+    const bool source_provider_same = !source.has_value ||
+                                      (source.provider != NULL && actor.owner != NULL && !strcmp(source.provider, actor.owner));
+    qa_q1_actor *attached = qa_q1_get_entity(game, &actor.id);
+    if (!provider_same || !slot_same || !source_provider_same ||
+        (attached != NULL && qa_same_owned_actor(attached->actor, actor)))
+      qa_range_error("Q1 restored source-slot mismatch");
+    if (!qa_shared_body_table_read(game->host.bodies, actor.id).has_value ||
+        !qa_gameplay_authority_read(game->host.combat, actor.id).has_value)
+      qa_range_error("Restore shared Q1 body and combat stores before source state");
+    qa_q1_actor *entity = qa_q1_attach_existing(game, actor, saved->classname, NULL,
                                                 saved->has_source_ordinal ? &saved->source_ordinal : NULL);
-    if (entity == NULL) qa_range_error("Q1 restored source-slot mismatch");
     apply_source_state(entity, &saved->state);
     for (size_t f = 0; f < saved->field_count; f++)
       (void)qa_q1_actor_field_set(entity, saved->fields[f].key, saved->fields[f].value);
@@ -478,24 +472,28 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
       qa_actor_id ref;
       const qa_actor_id *ref_ptr = NULL;
       if (saved->references[r].has_actor) {
-        ref = reference_id(saved->references[r].actor);
+        ref = reference_id(game, saved->references[r].actor);
         ref_ptr = &ref;
       }
       (void)qa_q1_actor_reference_set(entity, saved->references[r].key, ref_ptr);
     }
     entity->has_owner = saved->has_owner;
-    if (saved->has_owner) entity->owner = reference_id(saved->owner);
+    if (saved->has_owner) entity->owner = reference_id(game, saved->owner);
     entity->has_activator = saved->has_activator;
-    if (saved->has_activator) entity->activator = reference_id(saved->activator);
+    if (saved->has_activator) entity->activator = reference_id(game, saved->activator);
     free(entity->door_group);
     entity->door_group = NULL;
     entity->door_group_count = 0;
     if (saved->door_group_count > 0) {
       qa_q1_actor **group = malloc(saved->door_group_count * sizeof *group);
       if (group != NULL) {
-        for (size_t d = 0; d < saved->door_group_count; d++) group[d] = source_entity(game, saved->door_group[d]);
+        /* The entity owns the array before source_entity can raise, so a
+         * bad saved reference does not leak it. */
         entity->door_group = group;
-        entity->door_group_count = saved->door_group_count;
+        for (size_t d = 0; d < saved->door_group_count; d++) {
+          group[d] = source_entity(game, saved->door_group[d]);
+          entity->door_group_count = d + 1;
+        }
       }
     }
     if (entity->monster != NULL) {
@@ -508,24 +506,19 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
       if (monster != NULL) {
         monster->species = saved->monster->species;
         monster->mode = saved->monster->mode;
-        monster->frame_index = saved->monster->frame_index;
-        monster->first_frame = saved->monster->first_frame;
-        const size_t count = saved->monster->sequence_count < 32 ? saved->monster->sequence_count : 32;
-        if (saved->monster->sequence != NULL)
-          memcpy(monster->sequence, saved->monster->sequence, count * sizeof *monster->sequence);
-        monster->sequence_count = count;
         monster->has_enemy = saved->monster->has_enemy;
-        if (saved->monster->has_enemy) monster->enemy = reference_id(saved->monster->enemy);
+        if (saved->monster->has_enemy) monster->enemy = reference_id(game, saved->monster->enemy);
         monster->has_old_enemy = saved->monster->has_old_enemy;
-        if (saved->monster->has_old_enemy) monster->old_enemy = reference_id(saved->monster->old_enemy);
+        if (saved->monster->has_old_enemy) monster->old_enemy = reference_id(game, saved->monster->old_enemy);
         set_string(&monster->path, saved->monster->path ? saved->monster->path : "");
         monster->pause_until = saved->monster->pause_until;
         monster->attack_finished = saved->monster->attack_finished;
         monster->pain_finished = saved->monster->pain_finished;
         monster->search_until = saved->monster->search_until;
-        monster->death_drop = saved->monster->death_drop;
         monster->refired = saved->monster->refired;
         entity->monster = monster;
+        if (saved->monster->has_legacy_animation)
+          qa_q1_legacy_animations_set(game, entity->actor, saved->monster->legacy_animation);
       }
     }
     entity->has_move = saved->has_move;
@@ -550,13 +543,15 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
   }
   for (size_t i = 0; i < checkpoint->player_count; i++) {
     const qa_q1_saved_player *saved = &checkpoint->players[i];
+    const qa_owned_actor actor = owned_of(game, saved->actor);
+    if (actor.owner == NULL || saved->actor_provider == NULL || strcmp(actor.owner, saved->actor_provider) != 0)
+      qa_range_error("Q1 restored player owner mismatch");
     for (size_t p = 0; p < game->player_count; p++)
-      if (game->players[p] != NULL && (double)game->players[p]->actor.id.slot == saved->actor.slot &&
-          (double)game->players[p]->actor.id.generation == saved->actor.generation)
+      if (qa_same_owned_actor(game->players[p]->actor, actor))
         qa_range_error("Duplicate saved Q1 player");
     qa_q1_player_state *player = calloc(1, sizeof *player);
     if (player == NULL) continue;
-    player->actor = owned_of(saved->actor, saved->actor_provider);
+    player->actor = actor;
     const qa_q1_saved_player_state *state = &saved->state;
     player->weapon = state->weapon;
     player->primary_holstered = state->primary_holstered;
@@ -598,7 +593,7 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
     }
     game->players[game->player_count++] = player;
   }
-  game->time = checkpoint->time;
+  qa_q1_services_set_time(game, checkpoint->time); /* TS setter: Math.fround */
   game->frame_seconds = checkpoint->frame_seconds;
   game->force_retouch = checkpoint->force_retouch;
   game->basis = checkpoint->basis;
@@ -611,9 +606,8 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
   game->world = checkpoint->has_world ? source_entity(game, checkpoint->world) : NULL;
   game->sight_entity = NULL;
   if (checkpoint->has_sight_entity) {
-    const qa_actor_id sight = reference_id(checkpoint->sight_entity);
+    const qa_actor_id sight = reference_id(game, checkpoint->sight_entity);
     game->sight_entity = qa_q1_get_entity(game, &sight);
-    if (game->sight_entity == NULL) game->sight_entity = find_restored(game, checkpoint->sight_entity);
   }
   game->sight_time = checkpoint->sight_time;
   game->has_intermission = checkpoint->has_intermission;
@@ -622,10 +616,13 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
   if (checkpoint->has_intermission && checkpoint->intermission_map != NULL)
     set_string(&game->intermission_map, checkpoint->intermission_map);
   game->has_intermission_cause = checkpoint->has_intermission && checkpoint->has_intermission_cause;
-  if (game->has_intermission_cause) game->intermission_cause = reference_id(checkpoint->intermission_cause);
+  if (game->has_intermission_cause) game->intermission_cause = reference_id(game, checkpoint->intermission_cause);
   game->intermission_exit_after = checkpoint->intermission_exit_after;
   {
     bool *restored = calloc(game->state_extension_count ? game->state_extension_count : 1, sizeof *restored);
+    /* An extension restore that raises on bad saved bytes unwinds through here. */
+    qa_cleanup restored_cleanup;
+    qa_cleanup_push(&restored_cleanup, free, restored);
     for (size_t i = 0; i < checkpoint->extension_count; i++) {
       const char *id = checkpoint->extensions[i].id;
       const qa_q1_state_extension *extension = NULL;
@@ -636,20 +633,25 @@ void qa_q1_restore_foundation(qa_q1_services *game, const qa_q1_foundation_check
           extension = game->state_extensions[e];
           index = e;
         }
-      if (extension == NULL || (restored != NULL && restored[index])) {
-        free(restored);
+      if (extension == NULL || (restored != NULL && restored[index]))
         qa_range_error("Unknown or duplicate Q1 saved extension: %s", id ? id : "");
-      }
       if (extension->restore)
         extension->restore(extension->ctx, checkpoint->extensions[i].bytes, checkpoint->extensions[i].len);
       if (restored != NULL) restored[index] = true;
     }
     for (size_t e = 0; e < game->state_extension_count; e++)
       if (restored != NULL && !restored[e]) {
-        const char *id = game->state_extensions[e] ? game->state_extensions[e]->id : NULL;
-        free(restored);
+        const qa_q1_state_extension *extension = game->state_extensions[e];
+        void (*restore_absent)(void *ctx) =
+            extension != NULL ? qa_q1_state_extension_restore_absent(game, extension) : NULL;
+        if (restore_absent != NULL) {
+          restore_absent(extension->ctx);
+          continue;
+        }
+        const char *id = extension ? extension->id : NULL;
         qa_range_error("Missing Q1 saved extension: %s", id ? id : "");
       }
+    qa_cleanup_pop(&restored_cleanup);
     free(restored);
   }
 }

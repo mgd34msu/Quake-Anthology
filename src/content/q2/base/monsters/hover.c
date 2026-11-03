@@ -56,36 +56,33 @@ static void fire_blaster_fn(void *ctx, qa_q2m_context *c) {
                                 false, false, 0);
   qa_q2bm_muzzle(c, 62, aim.direction, aim.start);
 }
-/* TS hover_dead think closure captures the deadline. */
-typedef struct dead_think { double deadline; } dead_think;
-static void dead_think_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *services) {
-  dead_think *state = ctx;
-  if (services->body(services->ctx, self->actor).ground == NULL && q2bm_now(services) < state->deadline) {
-    qa_q2f_think think = {state, dead_think_fn};
+/* TS hoverDeadThink (source callback "q2:base/hover_deadthink"); the deadline is entity.timestamp. */
+static void dead_think_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *services) {
+  (void)ctx;
+  if (services->body(services->ctx, self->actor).ground == NULL && q2bm_now(services) < self->timestamp) {
+    qa_q2_think think = {NULL, dead_think_fn};
     services->schedule(services->ctx, self, 0.1, think);
     return;
   }
   q2bm_emit_effect(services, "q2:explosion1", services->body(services->ctx, self->actor).origin, q2bm_zero(), 1, 0);
   services->remove(services->ctx, self);
-  free(state);
 }
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   c->state->corpse = true;
-  qa_q2f_body_changes changes;
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_bounds = true;
   changes.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, -8}};
   q2bm_move_body(game, entity, changes, false, false);
-  game->motion(game->ctx, entity, QA_Q2F_MOTION_TOSS);
-  dead_think *state = malloc(sizeof *state);
-  if (!state) qa_q2f_error("Hover death think allocation failed");
-  state->deadline = q2bm_now(game) + 15;
-  qa_q2f_think think = {state, dead_think_fn};
+  game->motion(game->ctx, entity, "toss");
+  entity->timestamp = q2bm_now(game) + 15;
+  qa_q2_think think = {NULL, dead_think_fn};
   game->schedule(game->ctx, entity, 0.1, think);
 }
+static const qa_q2_named_think hover_thinks[] = {{"q2:base/hover_deadthink", {NULL, dead_think_fn}}};
 #define CB(name, fn) {name, {NULL, fn}}
 static const qa_q2m_named_handler hover_callbacks[] = {
   CB("hover_run", run_fn),
@@ -93,6 +90,7 @@ static const qa_q2m_named_handler hover_callbacks[] = {
   CB("hover_reattack", reattack_fn), CB("hover_fire_blaster", fire_blaster_fn), CB("hover_dead", dead_fn),
 };
 const qa_q2m_definition qa_q2bm_hover_definition = {
+  .has_source_callbacks = true, .source_callbacks = {.think = hover_thinks, .think_count = 1},
   .classname = "monster_hover", .kind = "hover", .model = "models/monsters/hover/tris.md2",
   .health = 240, .gib_health = -100, .mass = 150, .bounds = {{-24, -24, -24}, {24, 24, 32}}, .scale = 1,
   .has_locomotion = true, .locomotion = QA_Q2M_LOCO_FLY,

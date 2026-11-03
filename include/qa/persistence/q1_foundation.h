@@ -83,20 +83,24 @@ typedef struct qa_persist_q1_saved_reference {
 
 /* Mirrored TS Q1Monster with saved-actor enemy fields (entity.ts +
  * checkpoint.ts). */
+/* Version 5 monsters carried the grunt and dog sequence cursor; version 6
+ * keeps that animation state in the base controller. A version 5 cursor
+ * reads into legacy_animation (TS legacyAnimation, absent in version 6). */
 typedef struct qa_persist_q1_saved_monster {
   const char *species; /* Q1_MONSTER_SPECIES spelling */
-  const char *mode;    /* stand|walk|run|attack|leap|pain|death */
-  double frame_index;
-  double *sequence; /* owned array */
-  size_t sequence_count;
-  double first_frame;
+  const char *mode;    /* stand|walk|run */
   bool has_enemy;
   qa_saved_actor_id enemy;
   bool has_old_enemy;
   qa_saved_actor_id old_enemy;
   const char *path;
   double pause_until, attack_finished, pain_finished, search_until;
-  bool death_drop, refired;
+  bool refired;
+  bool has_legacy_animation;
+  struct {
+    const char *mode; /* stand|walk|run|attack|leap|pain|death */
+    double first_frame, frame_index;
+  } legacy_animation;
 } qa_persist_q1_saved_monster;
 
 typedef struct qa_q1_saved_move {
@@ -226,5 +230,21 @@ uint8_t *qa_encode_q1_foundation_checkpoint(
 bool qa_decode_q1_foundation_checkpoint(const uint8_t *bytes, size_t length,
                                         qa_persist_q1_foundation_checkpoint *out);
 void qa_q1_foundation_checkpoint_free(qa_persist_q1_foundation_checkpoint *checkpoint);
+/* The checkpoint as a checkpoint-value tree (what encode serializes);
+ * NULL only on OOM. */
+qa_save_value *qa_q1_foundation_checkpoint_value(const qa_persist_q1_foundation_checkpoint *checkpoint);
+
+/* TS has one Q1FoundationCheckpoint type; C keeps the content capture
+ * shape (content/q1/foundation/checkpoint.h) beside this reader shape.
+ * Both copies borrow every string and byte buffer from `in`, which must
+ * outlive them. from_content's arrays are released by
+ * qa_q1_foundation_checkpoint_free (root stays NULL); to_content's by
+ * qa_persist_q1_foundation_content_free (not qa_q1_checkpoint_free). */
+struct qa_q1_foundation_checkpoint;
+void qa_persist_q1_foundation_from_content(const struct qa_q1_foundation_checkpoint *in,
+                                           qa_persist_q1_foundation_checkpoint *out);
+void qa_persist_q1_foundation_to_content(const qa_persist_q1_foundation_checkpoint *in,
+                                         struct qa_q1_foundation_checkpoint *out);
+void qa_persist_q1_foundation_content_free(struct qa_q1_foundation_checkpoint *checkpoint);
 
 #endif

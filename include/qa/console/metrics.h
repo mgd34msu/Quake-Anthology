@@ -5,11 +5,8 @@
  *    libm (round agrees with JS for the positive values here).
  *  - consoleGlyphMetrics' character is a UTF-8 byte string; its
  *    first decoded code point is the TS codePointAt(0). The TS
- *    /[\p{L}\p{N}\p{M}]/u test becomes a range table over the
- *    blocks that are predominantly letters/numbers/marks; it
- *    can differ from full Unicode categories for symbols inside
- *    those blocks and for rare scripts (noted per PORTING.md's
- *    string rules).
+ *    /[\p{L}\p{N}\p{M}]/u test is the full range table bun reports
+ *    for that class (src/console/metrics_letters.inc).
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONSOLE_METRICS_H

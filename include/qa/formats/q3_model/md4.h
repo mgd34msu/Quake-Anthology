@@ -11,8 +11,6 @@
 typedef struct qa_decoded_md4_model {
   qa_md4_model model;
   char *source;    /* owned */
-  uint8_t *bytes;  /* owned copy up to ofsEnd */
-  size_t bytes_length;
   char **bone_names; /* owned, NULL is TS null */
   size_t bone_name_count;
 } qa_decoded_md4_model;

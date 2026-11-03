@@ -1,5 +1,6 @@
 /* Port of src/content/q1/quakec/id1-pickups.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/quakec/id1_pickups.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -101,6 +102,12 @@ static pickup_frame *push_frame(qa_q1_id1_pickup_binding *binding) {
 }
 static pickup_frame *top_frame(qa_q1_id1_pickup_binding *binding) {
   return binding->active_count == 0 ? NULL : &binding->active[binding->active_count - 1];
+}
+/* TS `finally { this.active.pop(); }`: also runs when execute raises (a
+ * cancelled caller unwinds through QcFunctionCancellation). */
+static void pop_frame(void *arg) {
+  qa_q1_id1_pickup_binding *binding = arg;
+  binding->active_count--;
 }
 void qa_q1_id1_pickup_binding_validate(qa_q1_id1_pickup_binding *binding) {
   for (size_t i = 0; i < binding->active_count; i++) {
@@ -264,10 +271,17 @@ static void *admission_execute(void *ctx, qa_source_pickup_selection selection,
   frame->lifetime = lifetime;
   frame->new_weapon = admission->new_weapon;
   frame->source_effect = admission->source_effect;
+  qa_cleanup node;
+  qa_cleanup_push(&node, pop_frame, binding);
   qa_q1qc_execution_run(&admission->execute);
-  /* TS pops in a finally. */
-  binding->active_count--;
+  qa_cleanup_pop(&node);
+  pop_frame(binding);
   return NULL;
+}
+static void free_cargo(void *arg) {
+  qa_pickup_cargo_entry **cargo = arg;
+  free(*cargo);
+  *cargo = NULL;
 }
 static void function_composed_run(void *ctx, qa_q1qc_call_site call,
                                   qa_q1qc_function_execution execute) {
@@ -291,7 +305,7 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
       qa_q1_id1_pickup_binding_validate(binding);
       qa_q1qc_machine *vm = pickup_vm(binding);
       qa_item_id item = NULL;
-      for (size_t i = 0; i < stage->selection_weapon_count; i++)
+      for (size_t i = 0; i < stage->selection_weapon_count && item == NULL; i++) /* TS find() */
         if (qa_q1qc_words_float(&vm->globals, stage->selection_weapons[i].word) ==
             qa_q1qc_machine_arg_float(vm, 1)) item = stage->selection_weapons[i].item;
       if (!frame->accepted ||
@@ -314,7 +328,7 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
     return;
   }
   const qa_q1qc_pickup_stage *stage = NULL;
-  for (size_t i = 0; i < binding->stage_count; i++)
+  for (size_t i = 0; i < binding->stage_count && stage == NULL; i++) /* TS find() */
     if (binding->stages[i]->function_index == call.function_index) stage = binding->stages[i];
   if (stage == NULL) {
     composed->inner.run(composed->inner.ctx, call, execute);
@@ -344,13 +358,13 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
     qa_q1qc_machine_string(
         vm, qa_q1qc_words_int(&words, qa_q1qc_machine_field_offset(vm, stage->descriptor_field)),
         value, sizeof value);
-    for (size_t i = 0; i < stage->value_count; i++)
+    for (size_t i = 0; i < stage->value_count && descriptor == NULL; i++) /* TS find() */
       if (stage->values[i].value_is_string && strcmp(stage->values[i].value_string, value) == 0)
         descriptor = &stage->values[i];
   } else {
     double value = qa_q1qc_words_float(
         &words, qa_q1qc_machine_field_offset(vm, stage->descriptor_field));
-    for (size_t i = 0; i < stage->value_count; i++)
+    for (size_t i = 0; i < stage->value_count && descriptor == NULL; i++) /* TS find() */
       if (!stage->values[i].value_is_string && stage->values[i].value_number == value)
         descriptor = &stage->values[i];
   }
@@ -365,8 +379,11 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
     }
     pickup_frame *frame = push_frame(binding);
     frame->is_null = true;
+    qa_cleanup node;
+    qa_cleanup_push(&node, pop_frame, binding);
     qa_q1qc_execution_run(&execute);
-    binding->active_count--;
+    qa_cleanup_pop(&node);
+    pop_frame(binding);
     return;
   }
   bool source_effect = stage->has_source_effect &&
@@ -375,6 +392,10 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
   qa_pickup_cargo_entry *cargo = NULL;
   size_t cargo_count = 0;
   bool new_weapon = false;
+  /* The cargo list is owned across the admission call, which unwinds on a
+   * cancelled caller; the cleanup frees it there (TS GC). */
+  qa_cleanup cargo_node;
+  qa_cleanup_push(&cargo_node, free_cargo, &cargo);
   if (is_cargo && !source_effect) {
     cargo = xmalloc((stage->counter_count + 1) * sizeof *cargo);
     for (size_t i = 0; i < stage->counter_count; i++) {
@@ -385,17 +406,17 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
     double bits = qa_q1qc_words_float(&words, qa_q1qc_machine_field_offset(vm, "items"));
     if (bits != 0) {
       const qa_q1qc_pickup_word_item *weapon = NULL;
-      for (size_t i = 0; i < stage->cargo_weapon_count; i++)
+      for (size_t i = 0; i < stage->cargo_weapon_count && weapon == NULL; i++) /* TS find() */
         if (qa_q1qc_words_float(&vm->globals, stage->cargo_weapons[i].word) == bits)
           weapon = &stage->cargo_weapons[i];
-      if (weapon == NULL) { free(cargo); pickup_error("Original backpack carried weapon is not qualified"); }
+      if (weapon == NULL) pickup_error("Original backpack carried weapon is not qualified");
       cargo[cargo_count++] = (qa_pickup_cargo_entry){"weapon", weapon->item, 1};
       if (binding->owns_weapon == NULL) {
         qa_q1qc_words recipient_words;
         qa_q1qc_entities_at(binding->source.entities, recipient.slot, &recipient_words);
-        int32_t held = (int32_t)trunc(
+        int32_t held = qa_js_to_int32(
             qa_q1qc_words_float(&recipient_words, qa_q1qc_machine_field_offset(vm, "items")));
-        new_weapon = (held & (int32_t)bits) == 0;
+        new_weapon = (held & qa_js_to_int32(bits)) == 0;
       } else {
         new_weapon = !binding->owns_weapon(binding->owns_ctx, recipient.actor, weapon->item);
       }
@@ -426,7 +447,8 @@ static void function_composed_run(void *ctx, qa_q1qc_call_site call,
                              new_weapon, source_effect};
   /* TS rejects a Promise result; the C admission is synchronous. */
   (void)binding->admission.run_source(binding->admission.ctx, offer, admission_execute, &admission);
-  free(cargo);
+  qa_cleanup_pop(&cargo_node);
+  free_cargo(&cargo);
 }
 void qa_q1_id1_pickup_compose_functions(qa_q1_id1_pickup_function_composed *composed,
                                         qa_q1_id1_pickup_binding *binding,
@@ -477,6 +499,17 @@ typedef struct counter_original_ctx {
   const qa_q1qc_pickup_operation *operation;
   source_actor recipient;
 } counter_original_ctx;
+typedef struct counter_restore {
+  qa_q1_id1_pickup_binding *binding;
+  qa_q1qc_words fields;
+  int64_t word;
+  int32_t saved;
+} counter_restore;
+static void restore_counter(void *arg) {
+  counter_restore *restore = arg;
+  qa_q1qc_words_set_int(&restore->fields, restore->word, restore->saved);
+  restore->binding->current_projection.active = false;
+}
 static bool counter_original(void *ctx, double count, double *out) {
   counter_original_ctx *original = ctx;
   qa_q1_id1_pickup_binding *binding = original->binding;
@@ -491,16 +524,24 @@ static bool counter_original(void *ctx, double count, double *out) {
       true, original->region,
       qa_q1qc_entities_reference(binding->source.entities, original->recipient.slot), word,
       false, 0};
+  /* TS `finally { fields.setInt(word, saved); this.projection = null; }`. */
+  counter_restore restore = {binding, fields, word, saved};
+  qa_cleanup node;
+  qa_cleanup_push(&node, restore_counter, &restore);
   qa_q1qc_words_set_float(&fields, word, count);
   (void)original->vm->execute_region(original->vm->ctx, original->region, 0);
-  /* TS restores in a finally. */
-  qa_q1qc_words_set_int(&fields, word, saved);
   bool has = binding->current_projection.has_value;
   double value = binding->current_projection.value;
-  binding->current_projection.active = false;
+  qa_cleanup_pop(&node);
+  restore_counter(&restore);
   qa_q1_id1_pickup_binding_validate(binding);
   if (has) *out = value;
   return has;
+}
+typedef struct consuming_scope { qa_q1_id1_pickup_binding *binding; size_t index; } consuming_scope;
+static void leave_consuming(void *arg) {
+  consuming_scope *scope = arg;
+  scope->binding->active[scope->index].consuming = false;
 }
 static void region_composed_run(void *ctx, qa_q1qc_inline_region region,
                                 qa_q1qc_inline_continuation execute) {
@@ -552,10 +593,15 @@ static void region_composed_run(void *ctx, qa_q1qc_inline_region region,
       pickup_error("Original source effect did not reach its grant");
     frame->consuming = true;
     consume_remove_ctx remove = {execute};
+    /* TS `finally { frame.consuming = false; }`, by stack index. */
+    consuming_scope scope = {binding, (size_t)(frame - binding->active)};
+    qa_cleanup consume_node;
+    qa_cleanup_push(&consume_node, leave_consuming, &scope);
     frame->lifetime.consume_pickup(frame->lifetime.ctx, consume_remove, &remove);
     frame = top_frame(binding);
     frame->consumed = true;
-    frame->consuming = false;
+    qa_cleanup_pop(&consume_node);
+    leave_consuming(&scope);
     qa_q1_id1_pickup_binding_validate(binding);
     return;
   }
@@ -609,8 +655,10 @@ static void region_composed_run(void *ctx, qa_q1qc_inline_region region,
     double value = 0;
     if (frame->stage->has_source_selection && current != NULL)
       for (size_t i = 0; i < frame->stage->selection_weapon_count; i++)
-        if (strcmp(frame->stage->selection_weapons[i].item, current) == 0)
+        if (strcmp(frame->stage->selection_weapons[i].item, current) == 0) { /* TS find() */
           value = qa_q1qc_words_float(&vm->globals, frame->stage->selection_weapons[i].word);
+          break;
+        }
     qa_q1qc_words_set_float(&vm->globals, entry->operation.word, value);
   }
   execute.skip_to_join(execute.ctx);

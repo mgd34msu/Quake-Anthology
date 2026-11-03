@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 /* See include/qa/llm/settings.h. GPL-2.0-or-later. */
 #include "qa/llm/settings.h"
+#include "qa/foundation/js.h"
 
 #include "qa/llm/api.h"
 #include "qa/llm/codex.h"
@@ -144,7 +145,7 @@ static bool settings_provider(const qa_llm_json *value, qa_llm_provider *out, qa
 }
 
 static bool settings_model_text(const char *value, char **out, qa_llm_error *error) {
-  bool bad = value == NULL || strlen(value) > 256;
+  bool bad = value == NULL || qa_llm_utf16_length(value) > 256; /* JS length: UTF-16 units */
   if (!bad) {
     for (const uint8_t *p = (const uint8_t *)value; *p != '\0'; p++) {
       if (*p <= 0x1f || *p == 0x7f) bad = true;
@@ -168,10 +169,11 @@ static bool settings_model(const qa_llm_json *value, char **out, qa_llm_error *e
 
 static bool settings_api_key_text(const char *value, char **out, qa_llm_error *error) {
   char *trimmed = value != NULL ? qa_llm_trim_dup(value) : NULL;
-  bool bad = value == NULL || trimmed[0] == '\0' || strlen(value) > 16384;
+  bool bad = value == NULL || trimmed[0] == '\0' || qa_llm_utf16_length(value) > 16384;
   if (!bad) {
-    for (const uint8_t *p = (const uint8_t *)trimmed; *p != '\0'; p++) {
-      if (isspace(*p)) bad = true;
+    /* /\s/.test(value.trim()): any JS WhiteSpace or LineTerminator code point. */
+    for (const char *p = trimmed; *p != '\0'; p++) {
+      if (qa_js_white_space_length(p) != 0) bad = true;
     }
   }
   if (bad) {
@@ -365,7 +367,8 @@ static bool parse_json_text(const char *text, qa_llm_json **out, qa_llm_error *e
 }
 
 static const char *trim_start_ptr(const char *text) {
-  while (*text == ' ' || *text == '\t' || *text == '\n' || *text == '\r' || *text == '\v' || *text == '\f') text++;
+  size_t length; /* String.prototype.trimStart */
+  while ((length = qa_js_white_space_length(text)) != 0) text += length;
   return text;
 }
 
@@ -565,7 +568,6 @@ static bool service_load(qa_llm_settings_service *service, const char *name, cha
     qa_llm_error_setf(error, "Could not read %s.", name);
     return false;
   }
-  free(path);
   qa_llm_bytes bytes;
   qa_llm_bytes_init(&bytes);
   uint8_t chunk[8192];
@@ -575,14 +577,41 @@ static bool service_load(qa_llm_settings_service *service, const char *name, cha
   if (ferror(file)) read_ok = false;
   fclose(file);
   if (!read_ok) {
+    free(path);
     qa_llm_bytes_free(&bytes);
     qa_llm_error_setf(error, "Could not read %s.", name);
     return false;
   }
+  /* Credentials copied in by older versions may be group- or world-readable. */
+  (void)chmod(path, 0600);
+  free(path);
   /* readFile utf8: invalid sequences become U+FFFD in Node; settings
    * files are ASCII JSON here, so bytes pass through as-is. */
   qa_llm_bytes_append(&bytes, "", 1);
   *out_text = (char *)bytes.data;
+  return true;
+}
+
+/* editablePreferences(): a load failure propagates; a malformed llm.json is
+ * replaced by the defaults for explicit preference changes. */
+static bool editable_preferences(qa_llm_settings_service *service, preferences *out, qa_llm_error *error) {
+  char *text = NULL;
+  if (!service_load(service, "llm.json", &text, error)) return false;
+  qa_llm_error ignored;
+  bool parsed = parse_preferences(text, out, &ignored);
+  free(text);
+  if (!parsed) parse_preferences(NULL, out, &ignored);
+  return true;
+}
+
+/* editableCredentials(): as editable_preferences, for chatgpt.key. */
+static bool editable_credentials(qa_llm_settings_service *service, chatgpt_credentials *out, qa_llm_error *error) {
+  char *text = NULL;
+  if (!service_load(service, "chatgpt.key", &text, error)) return false;
+  qa_llm_error ignored;
+  bool parsed = parse_chatgpt(text, out, &ignored);
+  free(text);
+  if (!parsed) parse_chatgpt(NULL, out, &ignored);
   return true;
 }
 
@@ -820,12 +849,9 @@ static bool model_metadata(qa_llm_settings_service *service, qa_llm_provider sel
 bool qa_llm_settings_select_provider(qa_llm_settings_service *service, qa_llm_provider selected, qa_llm_error *error) {
   if (selected != QA_LLM_PROVIDER_SUBSCRIPTION) qa_llm_settings_cancel_sign_in(service);
   if (!check_mutable(service, error)) return false;
-  char *text = NULL;
-  if (!service_load(service, "llm.json", &text, error)) return false;
   preferences current;
-  bool ok = parse_preferences(text, &current, error);
-  free(text);
-  if (!ok) return false;
+  if (!editable_preferences(service, &current, error)) return false;
+  bool ok;
   qa_llm_provider previous = current.provider;
   current.provider = selected;
   char *line = json_line(preferences_to_json(&current));
@@ -847,10 +873,7 @@ bool qa_llm_settings_set_model(qa_llm_settings_service *service, qa_llm_provider
   preferences current;
   memset(&current, 0, sizeof current);
   char *text = NULL;
-  if (!service_load(service, "llm.json", &text, error)) goto done;
-  ok = parse_preferences(text, &current, error);
-  free(text);
-  text = NULL;
+  ok = editable_preferences(service, &current, error);
   if (!ok) goto done;
   if (service->catalogs[selected].status == QA_LLM_CATALOG_READY) {
     bool listed = false;
@@ -940,10 +963,7 @@ bool qa_llm_settings_set_reasoning_effort(qa_llm_settings_service *service, qa_l
   preferences current;
   memset(&current, 0, sizeof current);
   char *text = NULL;
-  if (!service_load(service, "llm.json", &text, error)) goto done;
-  ok = parse_preferences(text, &current, error);
-  free(text);
-  text = NULL;
+  ok = editable_preferences(service, &current, error);
   if (!ok) goto done;
   if (effort != NULL) {
     const char *name = selected == QA_LLM_PROVIDER_OTHER_API ? service->other.model
@@ -1012,12 +1032,8 @@ bool qa_llm_settings_save_other_service(qa_llm_settings_service *service, const 
   service->other = next;
   if (connection_changed) invalidate_catalog(service, QA_LLM_PROVIDER_OTHER_API);
   if (connection_changed || model_changed) {
-    char *text = NULL;
-    if (!service_load(service, "llm.json", &text, error)) return false;
     preferences current;
-    ok = parse_preferences(text, &current, error);
-    free(text);
-    if (!ok) return false;
+    if (!editable_preferences(service, &current, error)) return false;
     qa_llm_model metadata;
     bool has_metadata = model_metadata(service, QA_LLM_PROVIDER_OTHER_API, service->other.model, &metadata);
     const char *previous_effort = current.efforts[QA_LLM_PROVIDER_OTHER_API];
@@ -1101,12 +1117,10 @@ bool qa_llm_settings_remove_credential(qa_llm_settings_service *service, qa_llm_
     errors_delete(service, "other.key");
     ok = true;
   } else {
-    char *text = NULL;
-    if (service_load(service, "chatgpt.key", &text, error)) {
-      chatgpt_credentials current;
-      ok = parse_chatgpt(text, &current, error);
-      free(text);
-      if (ok) {
+    chatgpt_credentials current;
+    if (editable_credentials(service, &current, error)) {
+      ok = true;
+      {
         if (selected == QA_LLM_PROVIDER_CHATGPT_API) {
           free(current.api_key);
           current.api_key = NULL;
@@ -1198,9 +1212,12 @@ static bool load_subscription(qa_llm_settings_service *service, qa_llm_subscript
   return true;
 }
 
-static bool fresh_subscription(qa_llm_settings_service *service, qa_llm_abort_signal *signal,
+static bool refresh_exchange(qa_llm_settings_service *service, qa_llm_abort_signal *signal,
+                             const char *rejected_access_token, qa_llm_subscription_credential *out, qa_llm_error *error);
+
+static bool fresh_subscription(qa_llm_settings_service *service, qa_llm_abort_signal *caller,
                                const char *rejected_access_token, qa_llm_subscription_credential *out, qa_llm_error *error) {
-  if (!qa_llm_check_request_abort(signal, error)) return false;
+  if (!qa_llm_check_request_abort(caller, error)) return false;
   qa_llm_subscription_credential credential;
   if (!load_subscription(service, &credential, error)) return false;
   double now = (double)qa_llm_now_ms();
@@ -1210,8 +1227,40 @@ static bool fresh_subscription(qa_llm_settings_service *service, qa_llm_abort_si
     return true;
   }
   qa_llm_subscription_credential_free(&credential);
-  /* The shared refresh Promise: with synchronous callers the re-check
-   * below is what makes concurrent turns share one refresh. */
+  /* The token exchange outlives caller cancellation: the provider may already
+   * have rotated the refresh token, so the result must be saved. It runs on its
+   * own controller (close() aborts it) with the request timeout; the caller
+   * only stops waiting (withRequestAbort). */
+  qa_llm_abort_signal controller;
+  qa_llm_signal_init(&controller);
+  qa_llm_signal_set_timeout(&controller, service->request_options.has_timeout
+                                             ? service->request_options.timeout_ms
+                                             : 120000);
+  bool registered = service->request_controller_count < 16;
+  if (registered) service->request_controllers[service->request_controller_count++] = &controller;
+  qa_llm_subscription_credential result;
+  qa_llm_error exchange_error;
+  memset(&exchange_error, 0, sizeof exchange_error);
+  bool ok = refresh_exchange(service, &controller, rejected_access_token, &result, &exchange_error);
+  if (registered) run_request_end(service, &controller);
+  if (qa_llm_signal_is_aborted(caller)) {
+    if (ok) qa_llm_subscription_credential_free(&result);
+    qa_llm_error_set(error, "LLM request cancelled.");
+    return false;
+  }
+  if (!ok) {
+    *error = exchange_error;
+    return false;
+  }
+  *out = result;
+  return true;
+}
+
+/* The shared refresh promise body: with synchronous callers the re-check
+ * below is what makes concurrent turns share one refresh. */
+static bool refresh_exchange(qa_llm_settings_service *service, qa_llm_abort_signal *signal,
+                             const char *rejected_access_token, qa_llm_subscription_credential *out, qa_llm_error *error) {
+  double now;
   qa_llm_subscription_credential before;
   if (!load_subscription(service, &before, error)) return false;
   if (!qa_llm_check_request_abort(signal, error)) { qa_llm_subscription_credential_free(&before); return false; }
@@ -1426,12 +1475,9 @@ bool qa_llm_settings_refresh_models(qa_llm_settings_service *service, qa_llm_pro
       if (check_mutable(service, error) &&
           service->has_catalog_generation[selected] && service->catalog_generations[selected] == generation &&
           qa_llm_check_request_abort(&controller, error)) {
-        char *text = NULL;
-        if (service_load(service, "llm.json", &text, error)) {
-          preferences current;
-          bool parsed_ok = parse_preferences(text, &current, error);
-          free(text);
-          if (parsed_ok) {
+        preferences current;
+        if (editable_preferences(service, &current, error)) {
+          {
             const char *name = selected == QA_LLM_PROVIDER_OTHER_API ? service->other.model
                 : current.models[selected == QA_LLM_PROVIDER_SUBSCRIPTION ? 0 : 1];
             const qa_llm_model *selected_model = NULL;
@@ -1486,7 +1532,7 @@ bool qa_llm_settings_refresh_models(qa_llm_settings_service *service, qa_llm_pro
               if (!persisted) ok = false;
             }
             preferences_clear(&current);
-          } else ok = false;
+          }
         } else ok = false;
       }
     }

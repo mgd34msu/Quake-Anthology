@@ -29,6 +29,7 @@ typedef struct attack_frame {
 } attack_frame;
 struct qa_q1_id1_sync_attacks {
   qa_q1qc_source source;
+  qa_q1qc_foreign_source foreign;
   qa_q1qc_machine_fn machine;
   void *machine_ctx;
   const qa_q1_id1_program_binding *binding;
@@ -37,9 +38,16 @@ struct qa_q1_id1_sync_attacks {
 qa_q1_id1_sync_attacks *qa_q1_id1_sync_attacks_create(qa_q1qc_source source,
                                                       qa_q1qc_machine_fn machine,
                                                       void *machine_ctx) {
+  return qa_q1_id1_sync_attacks_create_foreign(source, NULL, machine, machine_ctx);
+}
+qa_q1_id1_sync_attacks *qa_q1_id1_sync_attacks_create_foreign(qa_q1qc_source source,
+                                                              const qa_q1qc_foreign_source *foreign,
+                                                              qa_q1qc_machine_fn machine,
+                                                              void *machine_ctx) {
   qa_q1_id1_sync_attacks *attacks = xmalloc(sizeof *attacks);
   memset(attacks, 0, sizeof *attacks);
   attacks->source = source;
+  if (foreign != NULL) attacks->foreign = *foreign;
   attacks->machine = machine;
   attacks->machine_ctx = machine_ctx;
   attacks->binding = qa_q1_id1_program_binding_get(source.program, NULL);
@@ -74,6 +82,25 @@ static bool slot_actor(qa_q1_id1_sync_attacks *attacks, int64_t reference, qa_ow
   int64_t slot = qa_q1qc_entities_slot(attacks->source.entities, reference);
   return qa_source_actor_slots_at(attacks->source.slots, slot, out);
 }
+/* TS `slots.at(slot) ?? foreignActor?.(slot) ?? null`. */
+static bool slot_or_foreign_actor(qa_q1_id1_sync_attacks *attacks, int64_t reference, qa_owned_actor *out) {
+  int64_t slot = qa_q1qc_entities_slot(attacks->source.entities, reference);
+  if (qa_source_actor_slots_at(attacks->source.slots, slot, out)) return true;
+  return attacks->foreign.foreign_actor != NULL && attacks->foreign.foreign_actor(attacks->foreign.ctx, slot, out);
+}
+static int64_t foreign_reference(qa_q1_id1_sync_attacks *attacks, qa_actor_id actor) {
+  if (attacks->foreign.foreign_reference == NULL)
+    attacks_error("id1 damage references an actor without a source projection");
+  return attacks->foreign.foreign_reference(attacks->foreign.ctx, actor);
+}
+static void pop_attack(void *arg) {
+  qa_q1_id1_sync_attacks *attacks = arg;
+  attacks->active_count--;
+  free(attacks->active[attacks->active_count].traces);
+  attacks->active[attacks->active_count].traces = NULL;
+  attacks->active[attacks->active_count].trace_count = 0;
+  attacks->active[attacks->active_count].trace_capacity = 0;
+}
 static void composed_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_execution execute) {
   qa_q1_id1_sync_composed *composed = ctx;
   qa_q1_id1_sync_attacks *attacks = composed->owner;
@@ -87,7 +114,7 @@ static void composed_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_exe
     if (attacks->active_count != 0 && call.caller == layout->trace_attack) {
       attack_frame *attack = &attacks->active[attacks->active_count - 1];
       qa_owned_actor target;
-      if (slot_actor(attacks, qa_q1qc_machine_arg_int(vm, 0), &target)) {
+      if (slot_or_foreign_actor(attacks, qa_q1qc_machine_arg_int(vm, 0), &target)) {
         qa_vec3 point, normal;
         read_trace(vm, &point, &normal);
         trace_pair *existing = NULL;
@@ -132,13 +159,12 @@ static void composed_run(void *ctx, qa_q1qc_call_site call, qa_q1qc_function_exe
                           qa_q1qc_words_float(&vm->globals,
                                               qa_q1qc_machine_global_offset(vm, "time")),
                           NULL, 0, 0};
+  /* TS pops in a finally, which also runs when execute throws. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, pop_attack, attacks);
   qa_q1qc_execution_run(&execute);
-  /* TS pops in a finally. */
-  attacks->active_count--;
-  free(attacks->active[attacks->active_count].traces);
-  attacks->active[attacks->active_count].traces = NULL;
-  attacks->active[attacks->active_count].trace_count = 0;
-  attacks->active[attacks->active_count].trace_capacity = 0;
+  qa_cleanup_pop(&node);
+  pop_attack(attacks);
 }
 void qa_q1_id1_sync_attacks_compose(qa_q1_id1_sync_composed *composed,
                                     qa_q1_id1_sync_attacks *attacks,
@@ -195,11 +221,13 @@ bool qa_q1_id1_sync_attacks_resolve(qa_q1_id1_sync_attacks *attacks,
           attacks->binding->damage_index ||
       axe != (strcmp(attack->weapon, "q1:weapon/axe") == 0))
     attacks_error("Unmatched id1 synchronous damage scope");
-  qa_actor_source_result target =
+  qa_actor_source_result owned =
       qa_session_actor_registry_source_of(attacks->source.actors, call.target);
-  if (!target.has_value || target.provider == NULL ||
-      strcmp(target.provider, attacks->source.provider) != 0)
-    attacks_error("id1 attack target has no source projection");
+  /* Foreign targets are visible to QC only through their borrowed rows. */
+  const int64_t target_reference =
+      owned.has_value && owned.provider != NULL && strcmp(owned.provider, attacks->source.provider) == 0
+          ? qa_q1qc_entities_reference(attacks->source.entities, owned.slot)
+          : foreign_reference(attacks, call.target);
   qa_vec3 point, normal;
   if (axe) {
     read_trace(vm, &point, &normal);
@@ -214,7 +242,7 @@ bool qa_q1_id1_sync_attacks_resolve(qa_q1_id1_sync_attacks *attacks,
   qa_numeric_operations *n = &vm->numeric;
   qa_q1qc_words owner, victim;
   qa_q1qc_entities_from_reference(attacks->source.entities, attack->reference, &owner);
-  qa_q1qc_entities_at(attacks->source.entities, target.slot, &victim);
+  qa_q1qc_entities_from_reference(attacks->source.entities, target_reference, &victim);
   qa_vec3 min = qa_q1qc_words_vector(&owner, attacks_field(attacks, "absmin"));
   qa_vec3 max = qa_q1qc_words_vector(&owner, attacks_field(attacks, "absmax"));
   qa_vec3 origin = qa_q1qc_words_vector(&victim, attacks_field(attacks, "origin"));

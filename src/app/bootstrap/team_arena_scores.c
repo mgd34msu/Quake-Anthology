@@ -7,6 +7,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js.h"
 static double arg_at(const char *const *args, size_t count, size_t index) {
   const char *s = index < count ? args[index] : "";
   /* TS: split("\0",1)[0].slice(0,1023) - C string already NUL-cut. */
@@ -29,7 +30,7 @@ qa_app_team_arena_score_result qa_app_calculate_team_arena_score(qa_app_team_are
   /* Math.fround staging: fround(fround(fround(end)-fround(start))/1000) */
   float diff = (float)((float)input.stats.end_time - (float)input.match_start_time);
   double time = qa_qvm_float_to_int((float)(diff / 1000.0f));
-  double time_bonus = time < input.time_to_beat ? (double)((int32_t)(input.time_to_beat - time) * 10) : 0;
+  double time_bonus = time < input.time_to_beat ? (double)(qa_js_to_int32(input.time_to_beat - time) * 10) : 0;
   bool won = input.stats.red_score > input.stats.blue_score;
   double shutout = won && input.stats.blue_score <= 0 ? 100 : 0;
   double sb = qa_qvm_float_to_int(input.skill);
@@ -42,7 +43,7 @@ qa_app_team_arena_score_result qa_app_calculate_team_arena_score(qa_app_team_are
   s.red_score = input.stats.red_score; s.blue_score = input.stats.blue_score;
   s.captures = input.stats.captures;
   s.time = time; s.time_bonus = time_bonus; s.shutout_bonus = shutout; s.skill_bonus = skill_bonus;
-  s.score = (double)((int32_t)(s.base_score + shutout + time_bonus) * (int32_t)skill_bonus);
+  s.score = (double)(qa_js_to_int32(s.base_score + shutout + time_bonus) * qa_js_to_int32(skill_bonus));
   qa_app_team_arena_score_result r = {s, previous, won && s.score > previous.score, time < previous.time, won};
   return r;
 }

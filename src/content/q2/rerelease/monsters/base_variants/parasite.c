@@ -22,13 +22,13 @@ static void jump_impl(qa_q2m_context *c, bool up) {
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   qa_vec3 velocity = qa_add3_double(body.velocity,
       qa_add3_double(qa_scale3_double(axes.forward, up ? 200 : 100), qa_scale3_double(axes.up, up ? 450 : 300)));
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true; change.velocity = velocity;
   q2rm_move_body(c->game, c->entity, change, false, false);
 }
 static void retract(qa_q2rm_proboscis *proboscis, qa_q2m_context *c) {
-  qa_q2f_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
+  qa_q2_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
   if (tip && tip->style != 2) qa_q2rm_proboscis_retract(proboscis, tip, c->game);
 }
 static void run_fn(void *ctx, qa_q2m_context *c) {
@@ -53,14 +53,14 @@ static void charge_ai_fn(void *ctx, qa_q2m_context *c, double distance) {
   double frame = c->entity->frame;
   bool breaking = frame >= qa_q2rm_parasite_frames_value.break01 && frame <= qa_q2rm_parasite_frames_value.break32;
   qa_q2m_run_ai(c, breaking ? QA_Q2M_AI_MOVE : QA_Q2M_AI_CHARGE, distance);
-  qa_q2f_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
-  qa_q2f_entity *segment = tip ? c->game->entity(c->game->ctx, tip->has_proboscus ? &tip->proboscus : NULL) : NULL;
+  qa_q2_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
+  qa_q2_entity *segment = tip ? c->game->entity(c->game->ctx, tip->has_proboscus ? &tip->proboscus : NULL) : NULL;
   if (segment) proboscis->draw.fn(proboscis->draw.ctx, segment, c->game);
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)reaction;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   entity->skin = qa_q2m_health(game, &entity->actor.id) < entity->max_health / 2 ? 1 : 0;
   if (q2rm_now(game) < state->pain_time) return;
@@ -71,11 +71,11 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   qa_q2rm_proboscis *proboscis = ctx;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
-  qa_q2f_entity *tip = game->entity(game->ctx, entity->has_proboscus ? &entity->proboscus : NULL);
+  qa_q2_entity *tip = game->entity(game->ctx, entity->has_proboscus ? &entity->proboscus : NULL);
   if (tip && tip->style != 2) proboscis->reset.fn(proboscis->reset.ctx, tip, game);
   if (qa_q2rm_check_gib(c)) {
     q2rm_snd(c, "misc/udeath.wav", 2);
@@ -129,7 +129,7 @@ static void wait_fn(void *ctx, qa_q2m_context *c) {
       ? qa_q2rm_parasite_frames_value.drain05 : qa_q2rm_parasite_frames_value.drain04;
 }
 static void pull_wait_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
+  qa_q2_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
   if (!tip || tip->style == 3) c->state->next_frame = qa_q2rm_parasite_frames_value.drain14;
   else {
     c->state->next_frame = c->entity->frame == qa_q2rm_parasite_frames_value.drain12
@@ -142,7 +142,7 @@ static void break_noise_fn(void *ctx, qa_q2m_context *c) {
   q2rm_snd(c, "parasite/parsrch1.wav", 2);
 }
 static void break_retract_fn(void *ctx, qa_q2m_context *c) {
-  qa_q2f_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
+  qa_q2_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
   if (tip) qa_q2rm_proboscis_retract(ctx, tip, c->game);
 }
 static void break_sound_fn(void *ctx, qa_q2m_context *c) {
@@ -152,7 +152,7 @@ static void break_sound_fn(void *ctx, qa_q2m_context *c) {
 }
 static void break_wait_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
+  qa_q2_entity *tip = c->game->entity(c->game->ctx, c->entity->has_proboscus ? &c->entity->proboscus : NULL);
   if (tip && tip->style != 3) c->state->next_frame = qa_q2rm_parasite_frames_value.break19;
   else if (qa_q2_rerelease_random_integer_max(qa_q2rm_rerelease_random(c), 2) != 0) {
     q2rm_snd(c, "parasite/paratck4.wav", 1);
@@ -171,14 +171,14 @@ static void shrink_fn(void *ctx, qa_q2m_context *c) {
   qa_bounds bounds = q2rm_body(c->game, c->entity).bounds;
   c->entity->server_flags = q2rm_or(c->entity->server_flags, 2);
   bounds.max.z = 0;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true; change.bounds = bounds;
   q2rm_move_body(c->game, c->entity, change, false, false);
 }
 static void dead_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_bounds = true;
   change.bounds.min = q2rm_v3(-16, -16, -24);
@@ -187,10 +187,10 @@ static void dead_fn(void *ctx, qa_q2m_context *c) {
   qa_q2m_corpse(c);
 }
 
-qa_q2m_definition qa_q2rm_create_rerelease_parasite_definition(qa_q2m_monsters *monsters) {
-  qa_q2rm_proboscis *proboscis = malloc(sizeof *proboscis);
-  qa_q2m_named_ai *ai = malloc(sizeof *ai);
-  if (!proboscis || !ai) qa_q2f_error("Out of memory creating rerelease parasite definition");
+qa_q2m_definition qa_q2rm_create_rerelease_parasite_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters) {
+  qa_q2rm_proboscis *proboscis = qa_q2mpm_arena_alloc(arena, sizeof *proboscis);
+  qa_q2m_named_ai *ai = qa_q2mpm_arena_alloc(arena, sizeof *ai);
+  if (!proboscis || !ai) qa_raise("Error", 0, 0, "Out of memory creating rerelease parasite definition");
   qa_q2rm_create_proboscis(proboscis, monsters);
   ai[0] = (qa_q2m_named_ai){"parasite_charge_proboscis", proboscis, charge_ai_fn};
   const qa_q2m_named_handler extra[] = {
@@ -227,7 +227,7 @@ qa_q2m_definition qa_q2rm_create_rerelease_parasite_definition(qa_q2m_monsters *
   definition.reactions.die = die_fn;
   definition.blocked_ctx = NULL;
   definition.blocked = blocked_fn;
-  definition.callbacks = qa_q2rm_merge_callbacks(definition.callbacks, definition.callback_count,
+  definition.callbacks = qa_q2rm_merge_callbacks(arena, definition.callbacks, definition.callback_count,
                                                  extra, sizeof extra / sizeof extra[0], &definition.callback_count);
   return definition;
 }

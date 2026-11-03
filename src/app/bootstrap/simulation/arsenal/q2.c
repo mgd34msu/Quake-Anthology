@@ -8,6 +8,7 @@
 #include "qa/content/q2/foundation/weapons/definitions.h"
 #include "qa/content/q2/missionpacks/items.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct turn_entry { qa_actor_id actor; qa_app_q2_selected_weapon_turn_state turn; } turn_entry;
 struct qa_app_q2_selected_arsenal {
@@ -115,7 +116,7 @@ qa_app_q2_selected_arsenal *qa_app_q2_selected_arsenal_create(qa_app_q2_selected
       for (size_t j = 0; j < count; j++)
         if (item_eq(definitions[j]->item, options.loadout_inventory[i].item)
             || (definitions[j]->ammo && item_eq(definitions[j]->ammo, options.loadout_inventory[i].item))) known = true;
-      if (amount != (double)(long long)amount || amount < 0 || !known)
+      if (!(isfinite(amount) && amount == trunc(amount)) || amount < 0 || !known)
         qa_range_error("Selected Q2 starter inventory is invalid");
     }
   }
@@ -312,10 +313,8 @@ qa_weapon_step_result qa_app_q2_selected_arsenal_step(qa_app_q2_selected_arsenal
     qa_weapon_step_input input, const qa_arsenal_intent *intent) {
   if (intent && (!intent->provider || !arsenal->options.provider || strcmp(intent->provider, arsenal->options.provider) != 0))
     qa_range_error("Arsenal intent belongs to another provider");
-  if (intent && intent->weapon) {
-    if (!find_definition(arsenal, intent->weapon)) qa_range_error("Weapon does not belong to selected Q2 arsenal");
-    qa_app_q2_selected_arsenal_select(arsenal, input.actor.id, intent->weapon);
-  }
+  /* Peers choose this string; a weapon outside the arsenal is no request. */
+  if (intent && intent->weapon && find_definition(arsenal, intent->weapon)) qa_app_q2_selected_arsenal_select(arsenal, input.actor.id, intent->weapon);
   qa_arsenal_state before = qa_app_q2_selected_arsenal_read(arsenal, input.actor.id);
   qa_q2w_owner owner; qa_q2w_input observed;
   observe(arsenal, input.actor.id, &owner, &observed);
@@ -325,7 +324,7 @@ qa_weapon_step_result qa_app_q2_selected_arsenal_step(qa_app_q2_selected_arsenal
       : input.command.kind == QA_USER_COMMAND_Q2 ? input.command.as.q2.buttons
       : input.command.kind == QA_USER_COMMAND_Q2_RERELEASE ? input.command.as.q2_rerelease.buttons
       : input.command.as.q3.buttons;
-  qa_q2w_latch_buttons(&turn->turn, (double)((((long long)buttons) & ~1) | (observed.attack ? 1 : 0)));
+  qa_q2w_latch_buttons(&turn->turn, (double)(((qa_js_to_int32(buttons)) & ~1) | (observed.attack ? 1 : 0)));
   if (!observed.spectator) {
     tick_ctx ctx = {arsenal, owner, observed, turn};
     qa_q2w_turn_tick tick = {&ctx, tick_cb};

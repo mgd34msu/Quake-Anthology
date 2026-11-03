@@ -33,8 +33,16 @@ bool qa_app_startup_config_restrict_shared_configuration(const qa_app_startup_co
 char *qa_app_startup_config_read_script(qa_app_startup_config *c, const char *name, qa_command_context source);
 /* TS onScriptComplete property (bind via qa_command_buffer_bind_script_completion). */
 void qa_app_startup_config_on_script_complete(qa_app_startup_config *c, const qa_script_completion *event);
+/* TS Pick<CommandBuffer, "append">: the append executeFrame queues `exec <script>` through.
+ * fn NULL is the buffer's own append (PreparedStartup passes its CommandBuffer); the profile
+ * configuration passes an appendPreparation adapter, as TS does. */
+typedef struct qa_app_startup_config_append {
+  void (*fn)(void *ctx, qa_command_buffer *commands, const char *text, const qa_command_context *context);
+  void *ctx;
+} qa_app_startup_config_append;
 /* False means a native wait left work for another frame. */
 bool qa_app_startup_config_execute_frame(qa_app_startup_config *c, qa_command_buffer *commands,
+                                         qa_app_startup_config_append append,
                                          qa_after_dispatch_fn after_dispatch, void *after_ctx,
                                          qa_should_continue_fn should_continue, void *continue_ctx);
 typedef struct qa_app_startup_script_reader_options {

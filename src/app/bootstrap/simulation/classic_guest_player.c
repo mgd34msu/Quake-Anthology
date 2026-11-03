@@ -6,6 +6,7 @@
 #include "qa/content/q2/foundation/weapons/definitions.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q2/state.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
 static double stat_at(qa_q2_player_state s, int64_t i) { return qa_q2_read_element_f64(s.view.stats.values, s.view.stats.count, i); }
 qa_app_sim_player_view qa_app_sim_classic_guest_player_view(qa_q2_player_state state) {
@@ -73,8 +74,8 @@ qa_q2_user_command qa_app_sim_classic_guest_local_command(const char *source_kin
   if (command.kind != QA_USER_COMMAND_Q2) qa_range_error("An API 3 native player requires classic Quake II movement commands");
   qa_q2_user_command out = command.as.q2;
   for (int i = 0; i < 3; i++) {
-    long a = (long)out.angle_shorts.values[i], d = (long)state.movement.delta_angle_shorts.values[i];
-    out.angle_shorts.values[i] = (double)((a - d) & 65535);
+    /* (angle - delta) & 65535: ToInt32 of the number difference */
+    out.angle_shorts.values[i] = (double)(qa_js_to_int32(out.angle_shorts.values[i] - state.movement.delta_angle_shorts.values[i]) & 65535);
   }
   return out;
 }

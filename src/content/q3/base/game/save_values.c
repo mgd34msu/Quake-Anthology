@@ -58,18 +58,25 @@ void qa_q3_restore_client_values(qa_q3_game_client *t, qa_q3_client_values s) {
   t->air_out_time = s.air_out_time; t->last_kill_time = s.last_kill_time; t->fire_held = s.fire_held;
   t->switch_team_time = s.switch_team_time; t->time_residual = s.time_residual; t->portal_id = s.portal_id; t->invulnerability_time = s.invulnerability_time;
 }
-qa_q3_player_values qa_q3_capture_player_values(qa_q3_game_player_state_mirror *s) {
+qa_q3_player_values qa_q3_capture_player_values(qa_q3_base_player_state *s) {
   qa_q3_player_values v; memset(&v, 0, sizeof v);
-  v.pm_type = s->pm_type; v.pm_flags = s->pm_flags; v.pm_time = s->pm_time; v.legs_anim = s->legs_anim; v.torso_anim = s->torso_anim;
-  v.grapple_point = s->grapple_point; v.e_flags = s->e_flags; v.external_event = s->external_event; v.external_event_parm = s->external_event_parm;
-  v.client_num = s->client_num; v.weapon_state = s->weapon_state; v.viewangles = s->viewangles; v.viewheight = s->viewheight;
-  v.loop_sound = s->loop_sound; v.delta_angles = s->delta_angles; return v;
+  v.command_time = s->command_time; v.pm_type = s->pm_type; v.bob_cycle = s->bob_cycle; v.pm_flags = s->pm_flags; v.pm_time = s->pm_time; v.weapon_time = s->weapon_time;
+  v.gravity = s->gravity; v.speed = s->speed; v.delta_angles = s->delta_angles; v.ground_entity_num = s->ground_entity_num; v.legs_timer = s->legs_timer; v.legs_anim = s->legs_anim;
+  v.torso_timer = s->torso_timer; v.torso_anim = s->torso_anim; v.movement_dir = s->movement_dir; v.grapple_point = s->grapple_point; v.e_flags = s->e_flags; v.event_sequence = s->event_sequence;
+  v.external_event = s->external_event; v.external_event_parm = s->external_event_parm; v.external_event_time = s->external_event_time; v.client_num = s->client_num; v.weapon = s->weapon; v.weapon_state = s->weapon_state;
+  v.viewangles = s->viewangles; v.viewheight = s->viewheight; v.damage_event = s->damage_event; v.damage_yaw = s->damage_yaw; v.damage_pitch = s->damage_pitch; v.damage_count = s->damage_count;
+  v.generic1 = s->generic1; v.loop_sound = s->loop_sound; v.jumppad_ent = s->jumppad_ent; v.ping = s->ping; v.pmove_framecount = s->pmove_framecount; v.jumppad_frame = s->jumppad_frame;
+  v.entity_event_sequence = s->entity_event_sequence;
+  return v;
 }
-void qa_q3_restore_player_values(qa_q3_game_player_state_mirror *t, qa_q3_player_values s) {
-  t->pm_type = s.pm_type; t->pm_flags = s.pm_flags; t->pm_time = s.pm_time; t->legs_anim = s.legs_anim; t->torso_anim = s.torso_anim;
-  t->grapple_point = s.grapple_point; t->e_flags = s.e_flags; t->external_event = s.external_event; t->external_event_parm = s.external_event_parm;
-  t->client_num = s.client_num; t->weapon_state = s.weapon_state; t->viewangles = s.viewangles; t->viewheight = s.viewheight;
-  t->loop_sound = s.loop_sound; t->delta_angles = s.delta_angles;
+void qa_q3_restore_player_values(qa_q3_base_player_state *t, qa_q3_player_values s) {
+  t->command_time = s.command_time; t->pm_type = s.pm_type; t->bob_cycle = s.bob_cycle; t->pm_flags = s.pm_flags; t->pm_time = s.pm_time; t->weapon_time = s.weapon_time;
+  t->gravity = s.gravity; t->speed = s.speed; t->delta_angles = s.delta_angles; t->ground_entity_num = s.ground_entity_num; t->legs_timer = s.legs_timer; t->legs_anim = s.legs_anim;
+  t->torso_timer = s.torso_timer; t->torso_anim = s.torso_anim; t->movement_dir = s.movement_dir; t->grapple_point = s.grapple_point; t->e_flags = s.e_flags; t->event_sequence = s.event_sequence;
+  t->external_event = s.external_event; t->external_event_parm = s.external_event_parm; t->external_event_time = s.external_event_time; t->client_num = s.client_num; t->weapon = s.weapon; t->weapon_state = s.weapon_state;
+  t->viewangles = s.viewangles; t->viewheight = s.viewheight; t->damage_event = s.damage_event; t->damage_yaw = s.damage_yaw; t->damage_pitch = s.damage_pitch; t->damage_count = s.damage_count;
+  t->generic1 = s.generic1; t->loop_sound = s.loop_sound; t->jumppad_ent = s.jumppad_ent; t->ping = s.ping; t->pmove_framecount = s.pmove_framecount; t->jumppad_frame = s.jumppad_frame;
+  t->entity_event_sequence = s.entity_event_sequence;
 }
 qa_q3_persistant_values qa_q3_capture_persistant_values(qa_q3_client_persistant *s) {
   qa_q3_persistant_values v = {s->connected, s->local_client, s->initial_spawn, s->predict_item_pickup, s->pmove_fixed,
@@ -85,21 +92,23 @@ qa_q3_team_values qa_q3_capture_team_values(qa_q3_player_team_state *s) { return
 void qa_q3_restore_team_values(qa_q3_player_team_state *t, qa_q3_team_values s) { *t = s; }
 qa_q3_session_values qa_q3_capture_session_values(qa_q3_client_session *s) { return *s; }
 void qa_q3_restore_session_values(qa_q3_client_session *t, qa_q3_session_values s) { *t = s; }
-qa_q3_network_values qa_q3_capture_network_values(qa_q3_game_entity_state_mirror *s) {
+qa_q3_network_values qa_q3_capture_network_values(qa_q3_entity_state_record *s) {
   qa_q3_network_values v; memset(&v, 0, sizeof v);
   v.number = s->number; v.e_type = s->e_type; v.e_flags = s->e_flags; v.time = s->time; v.time2 = s->time2;
   v.origin = s->origin; v.origin2 = s->origin2; v.angles = s->angles; v.angles2 = s->angles2;
-  v.other_entity_num = s->other_entity_num; v.ground_entity_num = s->ground_entity_num; v.constant_light = s->constant_light;
+  v.other_entity_num = s->other_entity_num; v.other_entity_num2 = s->other_entity_num2; v.ground_entity_num = s->ground_entity_num; v.constant_light = s->constant_light;
   v.loop_sound = s->loop_sound; v.modelindex = s->modelindex; v.modelindex2 = s->modelindex2; v.client_num = s->client_num;
   v.frame = s->frame; v.solid = s->solid; v.event = s->event; v.event_parm = s->event_parm; v.powerups = s->powerups; v.weapon = s->weapon;
+  v.legs_anim = s->legs_anim; v.torso_anim = s->torso_anim; v.generic1 = s->generic1;
   return v;
 }
-void qa_q3_restore_network_values(qa_q3_game_entity_state_mirror *t, qa_q3_network_values s) {
+void qa_q3_restore_network_values(qa_q3_entity_state_record *t, qa_q3_network_values s) {
   t->number = s.number; t->e_type = s.e_type; t->e_flags = s.e_flags; t->time = s.time; t->time2 = s.time2;
   t->origin = s.origin; t->origin2 = s.origin2; t->angles = s.angles; t->angles2 = s.angles2;
-  t->other_entity_num = s.other_entity_num; t->ground_entity_num = s.ground_entity_num; t->constant_light = s.constant_light;
+  t->other_entity_num = s.other_entity_num; t->other_entity_num2 = s.other_entity_num2; t->ground_entity_num = s.ground_entity_num; t->constant_light = s.constant_light;
   t->loop_sound = s.loop_sound; t->modelindex = s.modelindex; t->modelindex2 = s.modelindex2; t->client_num = s.client_num;
   t->frame = s.frame; t->solid = s.solid; t->event = s.event; t->event_parm = s.event_parm; t->powerups = s.powerups; t->weapon = s.weapon;
+  t->legs_anim = s.legs_anim; t->torso_anim = s.torso_anim; t->generic1 = s.generic1;
 }
 qa_q3_level_values qa_q3_capture_level_values(qa_q3_game_level *s) {
   qa_q3_level_values v; v.time = s->base.time; v.start_time = s->base.start_time; v.warmup_time = s->base.warmup_time;
@@ -162,7 +171,7 @@ qa_q3_player_values qa_q3_read_player_values(const qa_save_reader *r) {
   qa_q3_player_values v; memset(&v, 0, sizeof v);
   v.command_time = rf_num(r, "commandTime"); v.pm_type = rf_num(r, "pmType"); v.bob_cycle = rf_num(r, "bobCycle");
   v.pm_flags = rf_num(r, "pmFlags"); v.pm_time = rf_num(r, "pmTime"); v.weapon_time = rf_num(r, "weaponTime"); v.gravity = rf_num(r, "gravity");
-  v.speed = rf_num(r, "speed"); v.ground_entity_num = rf_num(r, "groundEntityNum"); v.legs_timer = rf_num(r, "legsTimer");
+  v.speed = rf_num(r, "speed"); v.delta_angles = rf_vec(r, "deltaAngles"); v.ground_entity_num = rf_num(r, "groundEntityNum"); v.legs_timer = rf_num(r, "legsTimer");
   v.legs_anim = rf_num(r, "legsAnim"); v.torso_timer = rf_num(r, "torsoTimer"); v.torso_anim = rf_num(r, "torsoAnim");
   v.movement_dir = rf_num(r, "movementDir"); v.grapple_point = rf_vec(r, "grapplePoint"); v.e_flags = rf_num(r, "eFlags");
   v.event_sequence = rf_num(r, "eventSequence"); v.external_event = rf_num(r, "externalEvent"); v.external_event_parm = rf_num(r, "externalEventParm");

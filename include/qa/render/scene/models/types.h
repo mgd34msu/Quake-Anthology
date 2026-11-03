@@ -24,6 +24,7 @@
 #include "qa/contracts/scene.h"
 #include "qa/materials/geometry.h"
 #include "qa/render/scene/models/replacements.h"
+#include "qa/render/scene/submissions.h"
 
 /* Mirrored ShadowSphere (TS owner: src/render/scene/shadows.ts). */
 typedef struct qa_render_scene_shadow_sphere {
@@ -36,10 +37,11 @@ typedef struct qa_render_scene_shadow_sphere {
  * only the fields this slice sets/reads are carried. batches owned. */
 typedef struct qa_scene_model_group {
   const char *kind; /* "compiled" | "source" | "sequence" */
-  const void *material; /* TS CompiledMaterial/RegisteredSceneMaterial */
+  const qa_compiled_material *material;         /* compiled: TS CompiledMaterial */
+  qa_registered_scene_material source_material; /* source: TS RegisteredSceneMaterial */
   const char *sequence; /* sequenceDrawGroup name */
-  const void *source_view;   /* mirrored SourceSceneOrder */
-  const void *source_entity; /* mirrored SourceEntityOrder refentity */
+  qa_source_scene_order *source_view;   /* source: TS SourceSceneOrder (borrowed) */
+  qa_source_entity_order source_entity; /* source: TS SourceEntityOrder refentity */
   double surface, fog, dlight;
   qa_draw_batch *batches; /* owned */
   size_t batch_count;
@@ -73,9 +75,10 @@ typedef struct qa_model_custom_skin_entry {
 
 /* TS ModelSourceOptions. */
 typedef struct qa_model_source_options {
+  /* TS source: { view: SourceSceneOrder, entity: refentity SourceEntityOrder }. */
   bool has_source;
-  const void *source_view;
-  const void *source_entity;
+  qa_source_scene_order *source_view; /* borrowed */
+  qa_source_entity_order source_entity;
   bool has_indexed_skin;
   qa_indexed_model_skin indexed_skin;
   bool has_model_beam;

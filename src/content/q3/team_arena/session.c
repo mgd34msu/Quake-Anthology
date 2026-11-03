@@ -1,5 +1,6 @@
 /* Port of src/content/q3/team-arena/session.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/session.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -46,9 +47,9 @@ static integer_scan scan_integer(const char *buffer, size_t offset) {
 
 static qa_q3_game_client *client_at(const qa_q3_ta_session_world_state *world, double client_num) {
   if (client_num != trunc(client_num) || client_num < 0 || client_num >= world->max_clients)
-    qa_range_error("session client %g outside configured clients", client_num);
+    qa_range_error("session client %s outside configured clients", QA_JS_NUMBER(client_num));
   qa_q3_game_client *client = (size_t)client_num < world->client_count ? world->clients[(size_t)client_num] : NULL;
-  if (client == NULL) qa_range_error("session client %g has no backing state", client_num);
+  if (client == NULL) qa_range_error("session client %s has no backing state", QA_JS_NUMBER(client_num));
   return client;
 }
 
@@ -68,8 +69,10 @@ qa_q3_base_team qa_q3_ta_pick_team(const qa_q3_ta_session_world_state *world, do
   double red_count = qa_q3_ta_team_count(world, ignore_client_num, QA_Q3_BASE_TEAM_RED);
   if (blue_count > red_count) return QA_Q3_BASE_TEAM_RED;
   if (red_count > blue_count) return QA_Q3_BASE_TEAM_BLUE;
-  if (qa_q3_game_slots_get_mirror(world->team_scores, QA_Q3_BASE_TEAM_BLUE) >
-      qa_q3_game_slots_get_mirror(world->team_scores, QA_Q3_BASE_TEAM_RED)) return QA_Q3_BASE_TEAM_RED;
+  double left = qa_q3_base_player_state_slots_get(world->team_scores, QA_Q3_BASE_TEAM_BLUE);
+  double right = qa_q3_base_player_state_slots_get(world->team_scores, QA_Q3_BASE_TEAM_RED);
+  if (left >
+      right) return QA_Q3_BASE_TEAM_RED;
   return QA_Q3_BASE_TEAM_BLUE;
 }
 

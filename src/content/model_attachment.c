@@ -1,6 +1,7 @@
 /* Port of src/content/model-attachment.ts. GPL-2.0-or-later. */
 #include "qa/content/model_attachment.h"
 
+#include "qa/foundation/support.h"
 #include <math.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
@@ -11,8 +12,7 @@
 #include "qa/core/math.h"
 
 static noreturn void plain_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static char *copy_text(const char *text) {
   size_t length = strlen(text) + 1;

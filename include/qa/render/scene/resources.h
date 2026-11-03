@@ -52,4 +52,8 @@ typedef void (*qa_scene_collect_fn)(void *ctx, qa_image_resource_operation *oper
 void qa_scene_image_registry_isolate(qa_scene_image_registry *r, qa_scene_isolated_fn operation, void *ctx, qa_scene_collect_fn collect, void *collect_ctx);
 void qa_scene_image_registry_close(qa_scene_image_registry *r);
 qa_render_image qa_scene_rgba_image(qa_image_level level, qa_image_level *level_storage);
+/* TS backendEpoch: changes whenever the backend was replaced and image contents were rebuilt
+ * from the creation journal alone. */
+double qa_scene_image_registry_backend_epoch(const qa_scene_image_registry *r);
+void qa_scene_image_registry_invalidate_backend(qa_scene_image_registry *r);
 #endif

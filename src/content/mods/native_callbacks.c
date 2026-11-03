@@ -1,5 +1,6 @@
 /* Port of src/content/mods/native-callbacks.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/native_callbacks.h"
+#include "qa/content/mods/declaration.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -85,7 +86,7 @@ static const char *fns_nullable(const qa_save_reader *r, const char *name) {
   return v;
 }
 static void *xalloc(const qa_save_reader *r, size_t count, size_t size) {
-  void *p = count > 0 ? calloc(count, size) : NULL;
+  void *p = count > 0 ? qa_mod_declaration_calloc(count, size) : NULL;
   if (count > 0 && p == NULL) qa_save_reader_fail(r, "out of memory");
   return p;
 }
@@ -114,7 +115,7 @@ static double nullable_int(const qa_save_reader *r, const char *name, bool *has)
  * RangeError message. */
 static char *normalize_resource_path(const char *path) {
   size_t n = strlen(path);
-  char *out = (char *)malloc(n + 1);
+  char *out = (char *)qa_mod_declaration_malloc(n + 1);
   if (out == NULL) qa_range_error("out of memory");
   for (size_t i = 0; i <= n; i++) out[i] = path[i] == '\\' ? '/' : path[i];
   bool bad = n == 0;
@@ -472,7 +473,7 @@ static qa_native_mod_source_call read_source_call(const qa_save_reader *r) {
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    call.skips = rows;
+    call.skips = qa_mod_declaration_present(rows);
     call.skip_count = count;
   }
   return call;
@@ -856,7 +857,7 @@ static qa_native_mod_protection_definition read_protection(const qa_save_reader 
     prot.absorb_q2.flags = fchoice(&absorb, "flags", q2_flags, 2);
     if (fpresent(&absorb, "globals"))
       prot.absorb_q2.globals =
-          read_globals(&absorb, "globals", &prot.absorb_q2.global_count);
+          qa_mod_declaration_present(read_globals(&absorb, "globals", &prot.absorb_q2.global_count));
     if (regular) {
       if (strcmp(abi, "q2-check-armor") != 0)
         qa_save_reader_fail(&absorb,
@@ -1184,7 +1185,7 @@ static qa_native_mod_items *read_native_items(const qa_save_reader *r) {
     }
     if (fpresent(&weapons, "committedInput"))
       w->committed_input =
-          read_test_rows(&weapons, "committedInput", &w->committed_input_row_count);
+          qa_mod_declaration_present(read_test_rows(&weapons, "committedInput", &w->committed_input_row_count));
     w->continuations =
         read_test_rows(&weapons, "continuations", &w->continuation_row_count);
     w->settled = read_test_rows(&weapons, "settled", &w->settled_row_count);
@@ -1283,7 +1284,7 @@ static qa_native_mod_client_input_field *read_input_fields(
   return rows;
 }
 
-qa_native_mod_declaration *qa_read_native_mod_declaration(
+static qa_native_mod_declaration *read_native_mod_declaration(
     const qa_save_reader *reader) {
   static const char *const target_kinds[] = {"q2-classic-game", "q2-rerelease-game"};
   static const char *const hud_choices[] = {"none", "layout-overlay", "replace-status"};
@@ -1291,7 +1292,7 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
   static const char *const accepts[] = {"always", "nonzero"};
   static const char *const base_kinds[] = {"entities", "clients", "address"};
   qa_native_mod_declaration *decl =
-      (qa_native_mod_declaration *)calloc(1, sizeof *decl);
+      (qa_native_mod_declaration *)qa_mod_declaration_calloc(1, sizeof *decl);
   if (decl == NULL) return NULL;
   {
     qa_save_reader target = field(reader, "target");
@@ -1392,7 +1393,7 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
         qa_save_reader_destroy(&entry);
       }
       qa_save_reader_destroy(&list);
-      decl->protection = rows;
+      decl->protection = qa_mod_declaration_present(rows);
       decl->protection_count = count;
     } else if (has_legacy) {
       qa_native_mod_protection_definition *rows =
@@ -1417,7 +1418,7 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->pickups = rows;
+    decl->pickups = qa_mod_declaration_present(rows);
     decl->pickup_count = count;
   }
   if (fpresent(reader, "clients")) {
@@ -1463,18 +1464,20 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
           &f, read_source_call_adapter, NULL, sizeof(qa_native_mod_source_call),
           read_input_output_adapter, NULL, sizeof(qa_native_mod_input_output),
           &rows->input_count);
+      rows->input = qa_mod_declaration_present(rows->input);
       qa_save_reader_destroy(&f);
     }
     if (fpresent(&clients, "frame"))
-      rows->frame = read_source_calls(&clients, "frame", &rows->frame_count);
+      rows->frame = qa_mod_declaration_present(read_source_calls(&clients, "frame", &rows->frame_count));
     if (fpresent(&clients, "endFrame"))
-      rows->end_frame = read_source_calls(&clients, "endFrame", &rows->end_frame_count);
+      rows->end_frame = qa_mod_declaration_present(read_source_calls(&clients, "endFrame", &rows->end_frame_count));
     if (fpresent(&clients, "outputs")) {
       qa_save_reader f = field(&clients, "outputs");
       rows->outputs = qa_read_client_output_declarations(
           &f, read_armor_field_adapter, NULL, sizeof(qa_native_mod_armor_field),
           read_record_offset_adapter, NULL, sizeof(qa_native_mod_record_offset),
           &rows->output_count);
+      rows->outputs = qa_mod_declaration_present(rows->outputs);
       qa_save_reader_destroy(&f);
     }
     if (fpresent(&clients, "pose")) {
@@ -1490,7 +1493,7 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
       rows->pose = p;
     }
     if (fpresent(&clients, "inputFields"))
-      rows->input_fields = read_input_fields(&clients, &rows->input_field_count);
+      rows->input_fields = qa_mod_declaration_present(read_input_fields(&clients, &rows->input_field_count));
     qa_save_reader_destroy(&clients);
     decl->clients = rows;
   }
@@ -1518,6 +1521,7 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
         sizeof(qa_native_mod_objective_scalar), read_address_adapter, NULL,
         sizeof(qa_native_mod_address), read_source_call_adapter, NULL,
         sizeof(qa_native_mod_source_call), &decl->objective_count);
+    decl->objectives = qa_mod_declaration_present(decl->objectives);
     qa_save_reader_destroy(&f);
   }
   {
@@ -1575,14 +1579,34 @@ qa_native_mod_declaration *qa_read_native_mod_declaration(
   return decl;
 }
 
+/* Every block the reader allocates joins one owner (content/mods/declaration.h). */
+qa_native_mod_declaration *qa_read_native_mod_declaration(
+    const qa_save_reader *reader) {
+  qa_mod_declaration_scope scope;
+  qa_mod_declaration_scope_begin(&scope);
+  qa_native_mod_declaration *decl = read_native_mod_declaration(reader);
+  qa_mod_declaration_owner *owner = qa_mod_declaration_scope_end(&scope);
+  if (decl == NULL) { qa_mod_declaration_owner_free(owner); return NULL; }
+  decl->owner = owner;
+  return decl;
+}
+
 qa_native_mod_declaration *qa_read_native_mod_callbacks(const uint8_t *bytes,
-                                                        size_t length) {
+    size_t length) {
   qa_save_value *value = qa_parse_json_value(bytes, length, false);
   if (value == NULL) return NULL;
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, qa_mod_declaration_free_parsed_value, value);
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, NULL)) return NULL;
-  qa_native_mod_declaration *decl = qa_read_native_mod_declaration(&reader);
-  qa_save_reader_destroy(&reader);
+  qa_native_mod_declaration *decl = NULL;
+  if (qa_save_reader_init(&reader, value, NULL)) {
+    decl = qa_read_native_mod_declaration(&reader);
+    qa_save_reader_destroy(&reader);
+  }
+  qa_cleanup_pop(&cleanup);
+  /* The declaration's strings borrow the parsed tree; its owner keeps it. */
+  if (decl != NULL) qa_mod_declaration_owner_adopt_value(decl->owner, value);
+  else qa_save_value_free(value);
   return decl;
 }
 

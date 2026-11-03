@@ -9,6 +9,8 @@
 #include "qa/content/q2/foundation/monsters/ai.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_stalker.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
+#include "qa/foundation/js.h"
 
 typedef struct stalker_bundle {
   qa_q2m_monsters *monsters;
@@ -18,14 +20,14 @@ typedef struct stalker_bundle {
 } stalker_bundle;
 static bool on_ceiling(qa_q2m_context *c) { return c->entity->gravity_vector.z > 0; }
 static bool trace_solid(qa_trace_result trace) {
-  return strcmp(trace.kind, "q1") != 0 && ((uint32_t)trace.contents & 1u) != 0;
+  return strcmp(trace.kind, "q1") != 0 && (qa_js_to_uint32(trace.contents) & 1u) != 0;
 }
 static bool trace_world(qa_trace_result trace, qa_q2m_context *c) {
   return qa_q2mpm_source_trace_world(c->game, trace);
 }
 bool qa_q2mpm_stalker_transition_ok(qa_q2m_context *context, bool spawned_by_widow) {
-  qa_q2f_entity *entity = context->entity;
-  qa_q2f_game *game = context->game;
+  qa_q2_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
   qa_body_state body = q2mpm_body(game, entity);
   bool ceiling = on_ceiling(context);
   double margin = ceiling ? body.bounds.min.z - 8 : body.bounds.max.z + 8;
@@ -59,7 +61,7 @@ void qa_q2mpm_stalker_jump_angles(qa_vec3 start, qa_vec3 end, double velocity, d
   double vertical = fabs(delta.z);
   double distance = hypot(horizontal, vertical);
   double angle = vertical == 0 ? 0 : atan(vertical / horizontal) * (delta.z > 0 ? -1 : 1);
-  double first = asin(distance * 800 * pow(cos(angle), 2) / pow(velocity, 2) - sin(angle));
+  double first = asin(distance * 800 * qa_js_pow(cos(angle), 2) / qa_js_pow(velocity, 2) - sin(angle));
   out[0] = (first - angle) / 2;
   out[1] = (acos(-1.0) - first - angle) / 2;
 }
@@ -75,22 +77,22 @@ static void run_move(qa_q2m_context *c) {
 }
 static void run_fn(void *ctx, qa_q2m_context *c) { (void)ctx; run_move(c); }
 static void detach(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   qa_body_state body = q2mpm_body(c->game, entity);
   double roll = body.angles.z + 180;
   entity->gravity_vector.z = -1;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_angles = true;
   change.angles = body.angles;
   change.angles.z = roll > 360 ? roll - 360 : roll;
   change.has_ground = true;
-  change.ground = NULL;
+  change.ground_null = true;
   q2mpm_move_body(c->game, entity, change, false, false);
 }
 static void jump_straight_up(qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state body = q2mpm_body(game, entity);
   if (c->state->dead) return;
   if (on_ceiling(c)) {
@@ -98,11 +100,13 @@ static void jump_straight_up(qa_q2m_context *c) {
     return;
   }
   if (body.ground == NULL) return;
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true;
-  change.velocity = q2mpm_v3(body.velocity.x + q2mpm_rnd(game) * 10 - 5,
-                             body.velocity.y + q2mpm_rnd(game) * 10 - 5,
+  double x2 = body.velocity.x + q2mpm_rnd(game) * 10 - 5;
+  double y2 = body.velocity.y + q2mpm_rnd(game) * 10 - 5;
+  change.velocity = q2mpm_v3(x2,
+                             y2,
                              body.velocity.z - 400 * entity->gravity_vector.z);
   q2mpm_move_body(game, entity, change, false, false);
   if (transition_ok(c)) {
@@ -112,18 +116,18 @@ static void jump_straight_up(qa_q2m_context *c) {
     change.angles = body.angles;
     change.angles.z = 180;
     change.has_ground = true;
-    change.ground = NULL;
+    change.ground_null = true;
     q2mpm_move_body(game, entity, change, false, false);
   }
 }
 static bool pounce(stalker_bundle *bundle, qa_q2m_context *c, qa_vec3 destination) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy)) return false;
   qa_body_state body = q2mpm_body(game, entity);
   if (on_ceiling(c) || !entity->has_enemy || enemy.ground == NULL
-      || ((uint32_t)game->host->point_contents(game->host->ctx, destination) & 56u) != 0) return false;
+      || (qa_js_to_uint32(game->host->point_contents(game->host->ctx, destination)) & 56u) != 0) return false;
   qa_q2m_context *enemy_context = qa_q2m_monsters_context(bundle->monsters, entity->enemy);
   bool wet;
   if (enemy_context) {
@@ -131,7 +135,7 @@ static bool pounce(stalker_bundle *bundle, qa_q2m_context *c, qa_vec3 destinatio
   } else {
     qa_vec3 probe = enemy.origin;
     probe.z += enemy.bounds.min.z + 1;
-    wet = ((uint32_t)game->host->point_contents(game->host->ctx, probe) & 56u) != 0;
+    wet = (qa_js_to_uint32(game->host->point_contents(game->host->ctx, probe)) & 56u) != 0;
   }
   if (wet) return false;
   const qa_vec3 corners[4] = {
@@ -140,7 +144,7 @@ static bool pounce(stalker_bundle *bundle, qa_q2m_context *c, qa_vec3 destinatio
   };
   for (int i = 0; i < 4; i++) {
     qa_vec3 probe = {corners[i].x, corners[i].y, enemy.bounds.min.z - 0.25};
-    if (((uint32_t)game->host->point_contents(game->host->ctx, probe) & 3u) == 0) return false;
+    if ((qa_js_to_uint32(game->host->point_contents(game->host->ctx, probe)) & 3u) == 0) return false;
   }
   qa_vec3 delta = qa_sub3_double(destination, body.origin);
   qa_vec3 angles = qa_vector_to_angles_with_rule(delta, QA_VECTOR_TO_ANGLES_NATIVE_AI);
@@ -166,7 +170,7 @@ static bool pounce(stalker_bundle *bundle, qa_q2m_context *c, qa_vec3 destinatio
   if (isnan(chosen)) return false;
   qa_vec3 forward = qa_normalize3_double_hypot(
       qa_math_angle_vectors_rule(q2mpm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true;
   change.velocity = qa_scale3_double(forward, velocity * cos(chosen));
@@ -176,8 +180,8 @@ static bool pounce(stalker_bundle *bundle, qa_q2m_context *c, qa_vec3 destinatio
 }
 static void shoot(stalker_bundle *bundle, qa_q2m_context *c) {
   if (!qa_q2bm_alive_enemy(c)) return;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   if (!qa_q2m_enemy_body(c, &enemy) || !entity->has_enemy) return;
   if (q2mpm_body(game, entity).ground != NULL && q2mpm_rnd(game) < 0.33) {
@@ -195,7 +199,7 @@ static void shoot(stalker_bundle *bundle, qa_q2m_context *c) {
   qa_trace_result trace = q2mpm_trace(game, start, end, NULL, &entity->actor.id, qa_q2m_attack_trace_mask(game));
   if (trace_world(trace, c) || (trace.hit.kind == QA_TRACE_HIT_ACTOR && qa_same_actor(trace.hit.actor, entity->enemy))) {
     (void)bundle->weapons.fire_blaster2(bundle->weapons.ctx, entity, game, start, direction, 15, 800, 8);
-    qa_q2mpm_monster_flash(c, 144, start, direction);
+    qa_q2rm_monster_flash(c, 144, start, direction);
   }
 }
 static void reactivate(qa_q2m_context *c) {
@@ -206,7 +210,7 @@ static void jump_impulse(qa_q2m_context *c, double forward_speed, double up_spee
   qa_body_state body = q2mpm_body(c->game, c->entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   c->entity->timestamp = q2mpm_now(c->game);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true;
   change.velocity = qa_add3_double(qa_add3_double(body.velocity, qa_scale3_double(axes.forward, forward_speed)),
@@ -215,9 +219,9 @@ static void jump_impulse(qa_q2m_context *c, double forward_speed, double up_spee
 }
 static void init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  if (((uint32_t)c->entity->spawnflags & 8u) != 0) {
+  if ((qa_js_to_uint32(c->entity->spawnflags) & 8u) != 0) {
     c->entity->gravity_vector.z = 1;
-    qa_q2f_body_changes change;
+    qa_q2_body_changes change;
     memset(&change, 0, sizeof change);
     change.has_angles = true;
     change.angles = q2mpm_body(c->game, c->entity).angles;
@@ -248,8 +252,8 @@ static void melee_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (state->dead) return;
   qa_q2bm_damaged_skin(c);
@@ -262,7 +266,7 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   if (hp > 0 && hp < entity->max_health / 4 && q2mpm_rnd(game) < 0.2 * game->options.skill
       && (!on_ceiling(c) || transition_ok(c))) {
     entity->gravity_vector = q2mpm_v3(0, 0, -1);
-    qa_q2f_body_changes change;
+    qa_q2_body_changes change;
     memset(&change, 0, sizeof change);
     change.has_angles = true;
     change.angles = q2mpm_body(game, entity).angles;
@@ -282,8 +286,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  c->game->motion(c->game->ctx, c->entity, QA_Q2F_MOTION_TOSS);
-  qa_q2f_body_changes change;
+  c->game->motion(c->game->ctx, c->entity, "toss");
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_angles = true;
   change.angles = q2mpm_body(c->game, c->entity).angles;
@@ -310,19 +314,26 @@ static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   stalker_bundle *bundle = ctx;
   qa_body_state enemy;
   if (!qa_q2bm_alive_enemy(c) || !qa_q2m_enemy_body(c, &enemy)) return false;
-  if (qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)) return true;
+  const bool rerelease = c->game->options.edition == QA_Q2_EDITION_RERELEASE;
+  if (!rerelease && qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)) return true;
   if (on_ceiling(c)) {
     if (!transition_ok(c)) return false;
     detach(c);
     return true;
   }
-  if (qa_q2m_visible_enemy(c)) { (void)pounce(bundle, c, enemy.origin); return true; }
-  if (qa_q2mpm_blocked_check_jump_default(c, distance, 256, 68) != QA_Q2MPM_JUMP_NONE) {
+  if (!rerelease && qa_q2m_visible_enemy(c)) { (void)pounce(bundle, c, enemy.origin); return true; }
+  if (qa_q2rm_blocked_check_jump_default(c, distance, 256, 68) != QA_Q2RM_JUMP_NONE) {
     q2mpm_set_move(c, enemy.origin.z >= q2mpm_body(c->game, c->entity).origin.z ? "stalker_move_jump_up"
                                                                                   : "stalker_move_jump_down");
     return true;
   }
-  return qa_q2mpm_blocked_check_platform(c, distance);
+  if (qa_q2rm_blocked_check_platform(c, distance)) return true;
+  /* m_rogue_stalker.cpp rerelease pounces on a blocked step only one time in ten. */
+  if (rerelease && qa_q2m_visible_enemy(c) && q2mpm_rnd(c->game) < 0.1) {
+    (void)pounce(bundle, c, enemy.origin);
+    return true;
+  }
+  return false;
 }
 static void idle_noise_fn(void *ctx, qa_q2m_context *c) { (void)ctx; q2mpm_snd4(c, "stalker/idle.wav", 1, 0.5, 2); }
 static void heal_fn(void *ctx, qa_q2m_context *c) {
@@ -330,7 +341,7 @@ static void heal_fn(void *ctx, qa_q2m_context *c) {
   double skill = c->game->options.skill;
   double hp = qa_q2m_health(c->game, &c->entity->actor.id) + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
   if (hp > c->entity->max_health / 2) c->entity->skin = 0;
-  c->game->host->combat.set_health(c->game->host->combat.ctx, c->entity->actor, fmin(hp, c->entity->max_health));
+  qa_gameplay_authority_set_health(c->game->host->combat, c->entity->actor, qa_js_min(hp, c->entity->max_health));
   if (hp >= c->entity->max_health) reactivate(c);
 }
 static void shoot_fn(void *ctx, qa_q2m_context *c) { shoot(ctx, c); }
@@ -347,8 +358,8 @@ static void swing_fn(void *ctx, qa_q2m_context *c) {
 static void jump_up_fn(void *ctx, qa_q2m_context *c) { (void)ctx; jump_straight_up(c); }
 static void jump_wait_fn(void *ctx, qa_q2m_context *c) {
   stalker_bundle *bundle = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (q2mpm_rnd(game) < 0.3 + 0.1 * game->options.skill && q2mpm_now(game) >= state->attack_finished) {
     state->attack_finished = q2mpm_now(game) + 0.3;
@@ -357,7 +368,7 @@ static void jump_wait_fn(void *ctx, qa_q2m_context *c) {
   if (q2mpm_body(game, entity).ground == NULL) {
     entity->gravity = 1.3;
     state->next_frame = entity->frame;
-    if (qa_q2mpm_monster_jump_finished(c)) {
+    if (qa_q2rm_monster_jump_finished(c)) {
       entity->gravity = 1;
       state->next_frame = entity->frame + 1;
     }
@@ -374,16 +385,16 @@ static void dead_fn(void *ctx, qa_q2m_context *c) {
   qa_bounds bounds = {{-28, -28, -18}, {28, 28, -4}};
   qa_q2bm_finish_corpse_bounds(c, bounds);
 }
-qa_q2m_definition qa_q2mpm_create_stalker_definition(qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
+qa_q2m_definition qa_q2mpm_create_stalker_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters, qa_q2mpm_weapons weapons,
                                                      qa_q2mpm_monster_state *source, qa_q2mpm_gravity_fn gravity) {
-  stalker_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating stalker definition");
+  stalker_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating stalker definition");
   bundle->monsters = monsters;
   bundle->weapons = weapons;
   bundle->source = source;
   bundle->gravity = gravity;
-  qa_q2m_named_handler *callbacks = malloc(15 * sizeof *callbacks);
-  if (!callbacks) qa_q2f_error("Out of memory creating stalker definition");
+  qa_q2m_named_handler *callbacks = qa_q2mpm_arena_alloc(arena, 15 * sizeof *callbacks);
+  if (!callbacks) qa_raise("Error", 0, 0, "Out of memory creating stalker definition");
   size_t n = 0;
   callbacks[n++] = (qa_q2m_named_handler){"stalker_stand", {NULL, stand_fn}};
   callbacks[n++] = (qa_q2m_named_handler){"stalker_walk", {(void *)"stalker_move_walk", qa_q2bm_move_handler_fn}};

@@ -6,8 +6,8 @@
 
 #include "qa/content/q1/missionpacks/monsters/types.h"
 
-extern const qa_q1mpm_frame_table qa_q1mpm_tables_hipdecoy_frames;
-extern const qa_q1mpm_frame_entry qa_q1mpm_tables_hipdecoy_entries[];
+extern const qa_q1_monster_frame_table qa_q1mpm_tables_hipdecoy_frames;
+extern const qa_q1_monster_frame_entry qa_q1mpm_tables_hipdecoy_entries[];
 #define QA_Q1MPM_TABLES_HIPDECOY_COUNT 2
 
 #endif

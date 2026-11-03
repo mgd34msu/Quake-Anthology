@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-model/md5.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_model/md5.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -11,11 +12,13 @@
 #include "qa/formats/q3_model/quaternion.h"
 #include "qa/formats/q3_model/text.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 #define FR(value) ((double)(float)(value))
 
+/* Zeroed, so a caught ModelTextError can release a partly parsed file. */
 static void *xmalloc(size_t size) {
-  void *p = malloc(size == 0 ? 1 : size);
+  void *p = calloc(size == 0 ? 1 : size, 1);
   if (p == NULL) qa_range_error("Out of memory");
   return p;
 }
@@ -88,7 +91,7 @@ static void compute_normals(qa_md5_mesh *mesh, const qa_skeleton_joint_pose *bin
     qa_vec3 normal = vector_normal(qa_math_vec3(d1.y * d2.z - d1.z * d2.y, d1.z * d2.x - d1.x * d2.z,
                                                 d1.x * d2.y - d1.y * d2.x));
     double dot = d1.x * d2.x + d1.y * d2.y + d1.z * d2.z;
-    double angle = acos(fmax(-1, fmin(1, dot)));
+    double angle = acos(qa_js_max(-1, qa_js_min(1, dot)));
     qa_vec3 weighted = qa_scale3(normal, angle);
     qa_vec3 corners[3] = {a, b, c};
     for (int k = 0; k < 3; k++) {
@@ -177,7 +180,7 @@ static void read_weight_record(void *ctx, void *out_element) {
   weight->bias = qa_model_tokens_float(mesh->tokens);
   if (weight->bias < 0 || weight->bias > 1) {
     char message[128];
-    snprintf(message, sizeof message, "weight bias %g outside 0..1", weight->bias);
+    snprintf(message, sizeof message, "weight bias %s outside 0..1", QA_JS_NUMBER(weight->bias));
     qa_model_tokens_fail(mesh->tokens, message);
   }
   weight->position = qa_model_tokens_vector(mesh->tokens);
@@ -200,6 +203,8 @@ static void read_mesh(qa_model_tokens *tokens, const qa_skeleton_joint_pose *bin
   double triangle_count = qa_model_tokens_integer(tokens, 0, 65535);
   triangle_record *triangles = qa_q3_indexed_records(tokens, (size_t)triangle_count, "tri",
                                                      sizeof(triangle_record), read_triangle_record, &ctx);
+  qa_cleanup triangles_node;
+  qa_cleanup_push(&triangles_node, free, triangles);
   qa_model_tokens_expect(tokens, "numweights");
   double weight_count = qa_model_tokens_integer(tokens, 0, 1048576);
   out->weights = qa_q3_indexed_records(tokens, (size_t)weight_count, "weight", sizeof(qa_md5_mesh_weight),
@@ -213,14 +218,20 @@ static void read_mesh(qa_model_tokens *tokens, const qa_skeleton_joint_pose *bin
   double *indices = xmalloc((size_t)triangle_count * 3 * sizeof *indices);
   for (size_t i = 0; i < (size_t)triangle_count; i++)
     for (int j = 0; j < 3; j++) indices[i * 3 + (size_t)j] = triangles[i].indices[j];
+  qa_cleanup_pop(&triangles_node);
   free(triangles);
   out->indices.values = indices;
   out->indices.count = (size_t)triangle_count * 3;
   compute_normals(out, bind_pose, joint_count);
 }
 
+static void mesh_release(void *raw) { qa_md5_mesh_file_destroy(raw); }
+
 void qa_parse_md5_mesh(const char *text, const char *source, qa_md5_mesh_file *out) {
   memset(out, 0, sizeof *out);
+  /* A caught ModelTextError releases the partial mesh file (TS GC). */
+  qa_cleanup node;
+  qa_cleanup_push(&node, mesh_release, out);
   const char *name = source != NULL ? source : "<md5mesh>";
   out->source = xstrdup(name);
   qa_model_tokens tokens;
@@ -249,6 +260,7 @@ void qa_parse_md5_mesh(const char *text, const char *source, qa_md5_mesh_file *o
   out->mesh_count = (size_t)mesh_count;
   for (size_t i = 0; i < out->mesh_count; i++) read_mesh(&tokens, out->bind_pose, out->joint_count, &out->meshes[i]);
   qa_model_tokens_end(&tokens);
+  qa_cleanup_pop(&node);
 }
 
 void qa_md5_mesh_file_destroy(qa_md5_mesh_file *file) {
@@ -279,59 +291,90 @@ static void json_ws(json *j) {
   while (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r') j->p++;
 }
 
+static void json_put(char **result, size_t *length, size_t *capacity, unsigned char byte) {
+  if (*length + 2 > *capacity) {
+    *capacity *= 2;
+    *result = xrealloc(*result, *capacity);
+  }
+  (*result)[(*length)++] = (char)byte;
+  (*result)[*length] = '\0';
+}
+
+static bool json_hex4(json *j, unsigned *out) {
+  unsigned value = 0;
+  for (int i = 0; i < 4; i++) {
+    char c = j->p[i];
+    value *= 16;
+    if (c >= '0' && c <= '9') value += (unsigned)(c - '0');
+    else if (c >= 'a' && c <= 'f') value += (unsigned)(c - 'a' + 10);
+    else if (c >= 'A' && c <= 'F') value += (unsigned)(c - 'A' + 10);
+    else return false;
+  }
+  j->p += 4;
+  *out = value;
+  return true;
+}
+
+/* JSON.parse string: raw bytes (the text's UTF-8) are kept as-is so keys
+ * compare with the md5anim joint names; \u escapes become UTF-8 (a surrogate
+ * pair one code point); raw control characters make the text invalid. */
 static char *json_string(json *j) {
   if (*j->p != '"') { j->ok = false; return NULL; }
   j->p++;
-  char *result = xmalloc(1);
-  size_t length = 0, capacity = 1;
-  result[0] = '\0';
-  while (*j->p != '"' && *j->p != '\0') {
-    unsigned code = (unsigned char)*j->p;
-    if (code == '\\') {
+  size_t length = 0, capacity = 16;
+  char *result = xmalloc(capacity);
+  while (*j->p != '"') {
+    unsigned char raw = (unsigned char)*j->p;
+    if (raw == '\0' || raw < 0x20) { j->ok = false; free(result); return NULL; }
+    if (raw != '\\') {
+      json_put(&result, &length, &capacity, raw);
       j->p++;
-      switch (*j->p) {
-        case 'n': code = '\n'; break;
-        case 't': code = '\t'; break;
-        case 'r': code = '\r'; break;
-        case 'b': code = '\b'; break;
-        case 'f': code = '\f'; break;
-        case 'u': {
-          unsigned value = 0;
-          for (int i = 0; i < 4; i++) {
-            j->p++;
-            value *= 16;
-            if (*j->p >= '0' && *j->p <= '9') value += (unsigned)(*j->p - '0');
-            else if (*j->p >= 'a' && *j->p <= 'f') value += (unsigned)(*j->p - 'a' + 10);
-            else if (*j->p >= 'A' && *j->p <= 'F') value += (unsigned)(*j->p - 'A' + 10);
-            else { j->ok = false; free(result); return NULL; }
+      continue;
+    }
+    j->p++;
+    unsigned code;
+    switch (*j->p) {
+      case 'n': code = '\n'; j->p++; break;
+      case 't': code = '\t'; j->p++; break;
+      case 'r': code = '\r'; j->p++; break;
+      case 'b': code = '\b'; j->p++; break;
+      case 'f': code = '\f'; j->p++; break;
+      case '"': case '\\': case '/': code = (unsigned char)*j->p; j->p++; break;
+      case 'u': {
+        j->p++;
+        if (!json_hex4(j, &code)) { j->ok = false; free(result); return NULL; }
+        if (code >= 0xd800 && code <= 0xdbff && j->p[0] == '\\' && j->p[1] == 'u') {
+          const char *mark = j->p;
+          unsigned low = 0;
+          j->p += 2;
+          if (json_hex4(j, &low) && low >= 0xdc00 && low <= 0xdfff) {
+            code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00);
+          } else {
+            j->p = mark;
           }
-          code = value;
-          break;
         }
-        case '"': case '\\': case '/': code = (unsigned char)*j->p; break;
-        default: j->ok = false; free(result); return NULL;
+        break;
       }
-      j->p++;
-    } else {
-      j->p++;
+      default: j->ok = false; free(result); return NULL;
     }
     if (code < 0x80) {
-      if (length + 1 >= capacity) { capacity *= 2; result = xrealloc(result, capacity); }
-      result[length++] = (char)code;
+      json_put(&result, &length, &capacity, (unsigned char)code);
     } else if (code < 0x800) {
-      if (length + 2 >= capacity) { capacity *= 2; result = xrealloc(result, capacity); }
-      result[length++] = (char)(0xc0 | (code >> 6));
-      result[length++] = (char)(0x80 | (code & 0x3f));
+      json_put(&result, &length, &capacity, (unsigned char)(0xc0 | (code >> 6)));
+      json_put(&result, &length, &capacity, (unsigned char)(0x80 | (code & 0x3f)));
+    } else if (code < 0x10000) {
+      json_put(&result, &length, &capacity, (unsigned char)(0xe0 | (code >> 12)));
+      json_put(&result, &length, &capacity, (unsigned char)(0x80 | ((code >> 6) & 0x3f)));
+      json_put(&result, &length, &capacity, (unsigned char)(0x80 | (code & 0x3f)));
     } else {
-      if (length + 3 >= capacity) { capacity *= 2; result = xrealloc(result, capacity); }
-      result[length++] = (char)(0xe0 | (code >> 12));
-      result[length++] = (char)(0x80 | ((code >> 6) & 0x3f));
-      result[length++] = (char)(0x80 | (code & 0x3f));
+      json_put(&result, &length, &capacity, (unsigned char)(0xf0 | (code >> 18)));
+      json_put(&result, &length, &capacity, (unsigned char)(0x80 | ((code >> 12) & 0x3f)));
+      json_put(&result, &length, &capacity, (unsigned char)(0x80 | ((code >> 6) & 0x3f)));
+      json_put(&result, &length, &capacity, (unsigned char)(0x80 | (code & 0x3f)));
     }
-    result[length] = '\0';
   }
-  if (*j->p != '"') { j->ok = false; free(result); return NULL; }
   j->p++;
+  result[length] = '\0';
   return result;
 }
 
@@ -383,10 +426,26 @@ static json_kind json_skip_value(json *j, double *out_number) {
   if (strncmp(j->p, "true", 4) == 0) { j->p += 4; return JSON_TRUE; }
   if (strncmp(j->p, "false", 5) == 0) { j->p += 5; return JSON_OTHER; }
   if (strncmp(j->p, "null", 4) == 0) { j->p += 4; return JSON_OTHER; }
-  char *end = NULL;
-  double value = strtod(j->p, &end);
-  if (end == j->p) { j->ok = false; return JSON_OTHER; }
-  j->p = end;
+  /* JSON.parse number grammar: -?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?. strtod also took
+   * inf, nan, hex, "+1", ".5" and "01", which make JSON.parse throw. */
+  const char *at = j->p;
+  if (*at == '-') at++;
+  if (*at == '0') at++;
+  else if (*at >= '1' && *at <= '9') while (*at >= '0' && *at <= '9') at++;
+  else { j->ok = false; return JSON_OTHER; }
+  if (*at == '.') {
+    at++;
+    if (!(*at >= '0' && *at <= '9')) { j->ok = false; return JSON_OTHER; }
+    while (*at >= '0' && *at <= '9') at++;
+  }
+  if (*at == 'e' || *at == 'E') {
+    at++;
+    if (*at == '+' || *at == '-') at++;
+    if (!(*at >= '0' && *at <= '9')) { j->ok = false; return JSON_OTHER; }
+    while (*at >= '0' && *at <= '9') at++;
+  }
+  double value = strtod(j->p, NULL); /* exact over the validated JSON number */
+  j->p = at;
   *out_number = value;
   return JSON_NUMBER;
 }
@@ -397,6 +456,88 @@ typedef struct {
   uint8_t *scale_positions;
 } scale_result;
 
+/* One own property of a parsed JSON object: the key and where its value starts. */
+typedef struct {
+  char *key;
+  const char *value;
+  size_t order;
+} json_entry;
+
+/* Canonical array-index key ("0", or [1-9][0-9]* up to 2^32 - 2). */
+static bool array_index_key(const char *key, double *out) {
+  if (key[0] == '\0' || (key[0] == '0' && key[1] != '\0')) return false;
+  double value = 0;
+  for (const char *p = key; *p != '\0'; p++) {
+    if (*p < '0' || *p > '9') return false;
+    value = value * 10 + (*p - '0');
+    if (value > 4294967294.0) return false;
+  }
+  *out = value;
+  return true;
+}
+
+static int compare_json_entries(const void *left, const void *right, void *ctx) {
+  (void)ctx;
+  const json_entry *a = left, *b = right;
+  double ai = 0, bi = 0;
+  bool a_index = array_index_key(a->key, &ai), b_index = array_index_key(b->key, &bi);
+  if (a_index && b_index) return (ai > bi) - (ai < bi);
+  if (a_index != b_index) return a_index ? -1 : 1;
+  return (a->order > b->order) - (a->order < b->order);
+}
+
+/* Object.entries(JSON.parse(text)) over an object already validated: a
+ * duplicate key keeps its first position and its last value; integer-index
+ * keys come first in ascending order, then the rest in insertion order. */
+static json_entry *json_object_entries(const char *at, size_t *out_count) {
+  json j = {at, true};
+  json_entry *entries = NULL;
+  size_t count = 0;
+  json_ws(&j);
+  j.p++;
+  json_ws(&j);
+  if (*j.p != '}') {
+    for (;;) {
+      json_ws(&j);
+      char *key = json_string(&j);
+      json_ws(&j);
+      j.p++; /* ':' */
+      json_ws(&j);
+      const char *value = j.p;
+      double ignored = 0;
+      json_skip_value(&j, &ignored);
+      size_t found = count;
+      for (size_t i = 0; i < count; i++) {
+        if (strcmp(entries[i].key, key) == 0) { found = i; break; }
+      }
+      if (found < count) {
+        free(key);
+        entries[found].value = value;
+      } else {
+        entries = xrealloc(entries, (count + 1) * sizeof *entries);
+        entries[count].key = key;
+        entries[count].value = value;
+        entries[count].order = count;
+        count++;
+      }
+      json_ws(&j);
+      if (*j.p == ',') { j.p++; continue; }
+      break;
+    }
+  }
+  qa_js_stable_sort(entries, count, sizeof *entries, compare_json_entries, NULL);
+  *out_count = count;
+  return entries;
+}
+
+static void json_entries_free(json_entry *entries, size_t count) {
+  for (size_t i = 0; i < count; i++) free(entries[i].key);
+  free(entries);
+}
+
+static bool json_value_is_object(const char *value) { return *value == '{'; }
+
+/* Optional scale failures are diagnostics, matching q2repro's fallback to unit scales. */
 static void parse_scales(const qa_md5_scale_source *source, qa_md5_hierarchy_joint *hierarchy,
                          size_t joint_count, double frame_count, scale_result *out,
                          qa_md5_string_list *diagnostics) {
@@ -404,107 +545,72 @@ static void parse_scales(const qa_md5_scale_source *source, qa_md5_hierarchy_joi
   out->scales = xmalloc(total * sizeof *out->scales);
   out->scale_set = xmalloc(total);
   out->scale_positions = xmalloc(joint_count);
-  memset(out->scale_set, 0, total);
-  memset(out->scale_positions, 0, joint_count);
   if (source == NULL) return;
+  /* JSON.parse first: any invalid text, or a root that is not an object
+   * (arrays included), is one diagnostic. */
   json j = {source->text, true};
   json_ws(&j);
   bool root_object = *j.p == '{';
-  if (!root_object) {
-    double ignored = 0;
-    json_skip_value(&j, &ignored);
-    json_ws(&j);
-    if (!j.ok || *j.p != '\0') root_object = false;
-  }
-  if (!root_object) {
+  double ignored = 0;
+  json_skip_value(&j, &ignored);
+  json_ws(&j);
+  if (!j.ok || *j.p != '\0' || !root_object) {
     char message[1024];
     snprintf(message, sizeof message, "%s: Invalid JSON scale object", source->source);
     list_push(diagnostics, xstrdup(message));
     return;
   }
-  j.p++;
-  json_ws(&j);
-  bool stop = false;
-  if (*j.p == '}') {
-    j.p++;
-  } else {
-    while (!stop) {
-      char *name = json_string(&j);
-      if (!j.ok) { free(name); break; }
-      json_ws(&j);
-      if (*j.p != ':') { j.ok = false; free(name); break; }
-      j.p++;
-      json_ws(&j);
-      bool entry_object = *j.p == '{';
-      int joint = -1;
-      for (size_t i = 0; i < joint_count; i++) {
-        if (strcmp(hierarchy[i].joint.name, name) == 0) { joint = (int)i; break; }
-      }
-      if (!entry_object) {
-        double ignored = 0;
-        json_skip_value(&j, &ignored);
-        char message[1024];
-        snprintf(message, sizeof message, "%s: Invalid scale entry for %s", source->source, name);
-        list_push(diagnostics, xstrdup(message));
-        free(name);
-        break;
-      }
-      if (joint < 0) {
-        char message[1024];
-        snprintf(message, sizeof message, "%s: No such joint %s", source->source, name);
-        list_push(diagnostics, xstrdup(message));
-      }
-      j.p++;
-      json_ws(&j);
-      if (*j.p == '}') {
-        j.p++;
-      } else {
-        for (;;) {
-          char *key = json_string(&j);
-          if (!j.ok) { free(key); stop = true; break; }
-          json_ws(&j);
-          if (*j.p != ':') { j.ok = false; free(key); stop = true; break; }
-          j.p++;
-          double number = 0;
-          json_kind kind = json_skip_value(&j, &number);
-          if (!j.ok) { free(key); stop = true; break; }
-          if (joint >= 0) {
-            if (strcmp(key, "scale_positions") == 0) {
-              if (kind == JSON_TRUE) out->scale_positions[joint] = 1;
-            } else {
-              char *end = NULL;
-              double frame = strtod(key, &end);
-              bool frame_valid = key[0] != '\0' && end != key && *end == '\0' && frame == trunc(frame) &&
-                                 frame >= 0 && frame < frame_count;
-              if (frame_valid && kind == JSON_NUMBER && isfinite(FR(number))) {
-                size_t at = (size_t)frame * joint_count + (size_t)joint;
-                out->scales[at] = FR(number);
-                out->scale_set[at] = 1;
-              } else {
-                char message[1024];
-                snprintf(message, sizeof message, "%s: Invalid frame scale %s/%s", source->source, name, key);
-                list_push(diagnostics, xstrdup(message));
-              }
-            }
-          }
-          free(key);
-          json_ws(&j);
-          if (*j.p == ',') { j.p++; json_ws(&j); continue; }
-          if (*j.p == '}') { j.p++; break; }
-          j.ok = false;
-          stop = true;
-          break;
-        }
-      }
-      free(name);
-      if (stop || !j.ok) break;
-      json_ws(&j);
-      if (*j.p == ',') { j.p++; json_ws(&j); continue; }
-      if (*j.p == '}') { j.p++; break; }
+  size_t entry_count = 0;
+  json_entry *entries = json_object_entries(source->text, &entry_count);
+  for (size_t e = 0; e < entry_count; e++) {
+    const char *name = entries[e].key;
+    int joint = -1;
+    for (size_t i = 0; i < joint_count; i++) {
+      if (strcmp(hierarchy[i].joint.name, name) == 0) { joint = (int)i; break; }
+    }
+    if (!json_value_is_object(entries[e].value)) {
+      char message[1024];
+      snprintf(message, sizeof message, "%s: Invalid scale entry for %s", source->source, name);
+      list_push(diagnostics, xstrdup(message));
       break;
     }
+    if (joint < 0) {
+      char message[1024];
+      snprintf(message, sizeof message, "%s: No such joint %s", source->source, name);
+      list_push(diagnostics, xstrdup(message));
+      continue;
+    }
+    size_t value_count = 0;
+    json_entry *values = json_object_entries(entries[e].value, &value_count);
+    for (size_t v = 0; v < value_count; v++) {
+      const char *key = values[v].key;
+      json value_reader = {values[v].value, true};
+      double number = 0;
+      json_kind kind = json_skip_value(&value_reader, &number);
+      if (strcmp(key, "scale_positions") == 0) {
+        if (kind == JSON_TRUE) out->scale_positions[joint] = 1;
+        continue;
+      }
+      double frame = qa_js_string_to_number(key); /* Number(key), then Number.isInteger */
+      bool frame_valid = key[0] != '\0' && isfinite(frame) && frame == trunc(frame) && frame >= 0 &&
+                         frame < frame_count;
+      if (frame_valid && kind == JSON_NUMBER && isfinite(FR(number))) {
+        size_t at = (size_t)frame * joint_count + (size_t)joint;
+        out->scales[at] = FR(number);
+        out->scale_set[at] = 1;
+      } else {
+        char message[1024];
+        snprintf(message, sizeof message, "%s: Invalid frame scale %s/%s", source->source, name, key);
+        list_push(diagnostics, xstrdup(message));
+      }
+    }
+    json_entries_free(values, value_count);
   }
-  for (size_t i = 0; i < joint_count; i++) hierarchy[i].joint.scale_positions = out->scale_positions[i] != 0;
+  json_entries_free(entries, entry_count);
+}
+
+static void apply_scale_positions(qa_md5_hierarchy_joint *hierarchy, size_t joint_count, const scale_result *scales) {
+  for (size_t i = 0; i < joint_count; i++) hierarchy[i].joint.scale_positions = scales->scale_positions[i] != 0;
 }
 
 /* --- animation --- */
@@ -512,25 +618,62 @@ static void parse_scales(const qa_md5_scale_source *source, qa_md5_hierarchy_joi
 typedef struct {
   qa_model_tokens *tokens;
   size_t component_count;
+  double *pool; /* frame_count * component_count, filled in read order */
+  size_t next;
 } anim_ctx;
 
 typedef struct {
-  double *components;
+  double *components; /* borrowed slice of anim_ctx.pool */
 } raw_frame;
 
 static void read_raw_frame(void *ctx, void *out_element) {
   anim_ctx *anim = ctx;
   raw_frame *frame = out_element;
   qa_model_tokens_expect(anim->tokens, "{");
-  frame->components = xmalloc(anim->component_count * sizeof *frame->components);
+  frame->components = anim->pool + anim->next * anim->component_count;
+  anim->next++;
   for (size_t i = 0; i < anim->component_count; i++)
     frame->components[i] = qa_model_tokens_float(anim->tokens);
   qa_model_tokens_expect(anim->tokens, "}");
 }
 
+/* Everything parseMd5Anim holds while it can still raise. */
+typedef struct anim_scratch {
+  qa_md5_animation *out;
+  qa_bounds *bounds;
+  double *pool;
+  raw_frame *raw_frames;
+  scale_result scales;
+} anim_scratch;
+
+static void anim_scratch_free(anim_scratch *scratch) {
+  free(scratch->bounds);
+  free(scratch->pool);
+  free(scratch->raw_frames);
+  free(scratch->scales.scales);
+  free(scratch->scales.scale_set);
+  free(scratch->scales.scale_positions);
+  scratch->bounds = NULL;
+  scratch->pool = NULL;
+  scratch->raw_frames = NULL;
+  memset(&scratch->scales, 0, sizeof scratch->scales);
+}
+
+static void anim_release(void *raw) {
+  anim_scratch *scratch = raw;
+  anim_scratch_free(scratch);
+  qa_md5_animation_destroy(scratch->out);
+}
+
 void qa_parse_md5_anim(const char *text, const char *source, const qa_md5_scale_source *scale_source,
                        qa_md5_animation *out) {
   memset(out, 0, sizeof *out);
+  anim_scratch scratch;
+  memset(&scratch, 0, sizeof scratch);
+  scratch.out = out;
+  /* A caught ModelTextError releases the partial animation (TS GC). */
+  qa_cleanup node;
+  qa_cleanup_push(&node, anim_release, &scratch);
   const char *name = source != NULL ? source : "<md5anim>";
   out->source = xstrdup(name);
   out->scale_source = scale_source != NULL ? xstrdup(scale_source->source) : NULL;
@@ -545,6 +688,12 @@ void qa_parse_md5_anim(const char *text, const char *source, const qa_md5_scale_
   out->frame_rate = qa_model_tokens_integer(&tokens, 1, 1000);
   qa_model_tokens_expect(&tokens, "numAnimatedComponents");
   double component_count = qa_model_tokens_integer(&tokens, 0, joint_count * 6);
+  /* Each frame expands into per-joint pose objects, so bound the expansion by
+   * the input and by an absolute budget (text.length counts UTF-16 units in
+   * TS; C counts bytes). */
+  double text_length = (double)strlen(text);
+  if (frame_count * joint_count > qa_js_min(500000, qa_js_max(4096, text_length)))
+    qa_model_tokens_fail(&tokens, "animation expands far beyond its data");
   qa_model_tokens_expect(&tokens, "hierarchy");
   qa_model_tokens_expect(&tokens, "{");
   out->hierarchy = xmalloc((size_t)joint_count * sizeof *out->hierarchy);
@@ -565,10 +714,10 @@ void qa_parse_md5_anim(const char *text, const char *source, const qa_md5_scale_
   qa_model_tokens_expect(&tokens, "}");
   qa_model_tokens_expect(&tokens, "bounds");
   qa_model_tokens_expect(&tokens, "{");
-  qa_bounds *bounds = xmalloc((size_t)frame_count * sizeof *bounds);
+  scratch.bounds = xmalloc((size_t)frame_count * sizeof *scratch.bounds);
   for (size_t i = 0; i < (size_t)frame_count; i++) {
-    bounds[i].min = qa_model_tokens_vector(&tokens);
-    bounds[i].max = qa_model_tokens_vector(&tokens);
+    scratch.bounds[i].min = qa_model_tokens_vector(&tokens);
+    scratch.bounds[i].max = qa_model_tokens_vector(&tokens);
   }
   qa_model_tokens_expect(&tokens, "}");
   qa_model_tokens_expect(&tokens, "baseframe");
@@ -581,18 +730,22 @@ void qa_parse_md5_anim(const char *text, const char *source, const qa_md5_scale_
     out->base_frame[i].scale = 1;
   }
   qa_model_tokens_expect(&tokens, "}");
-  scale_result scales;
-  parse_scales(scale_source, out->hierarchy, out->hierarchy_count, frame_count, &scales, &out->diagnostics);
-  anim_ctx ctx = {&tokens, (size_t)component_count};
-  raw_frame *raw_frames = qa_q3_indexed_records(&tokens, (size_t)frame_count, "frame", sizeof(raw_frame),
-                                                read_raw_frame, &ctx);
+  parse_scales(scale_source, out->hierarchy, out->hierarchy_count, frame_count, &scratch.scales, &out->diagnostics);
+  apply_scale_positions(out->hierarchy, out->hierarchy_count, &scratch.scales);
+  scratch.pool = xmalloc((size_t)frame_count * (size_t)component_count * sizeof *scratch.pool);
+  anim_ctx ctx = {&tokens, (size_t)component_count, scratch.pool, 0};
+  scratch.raw_frames = qa_q3_indexed_records(&tokens, (size_t)frame_count, "frame", sizeof(raw_frame),
+                                             read_raw_frame, &ctx);
   qa_model_tokens_end(&tokens);
   out->frames = xmalloc((size_t)frame_count * sizeof *out->frames);
   out->frame_count = (size_t)frame_count;
   for (size_t frame = 0; frame < out->frame_count; frame++) {
     qa_md5_animation_frame *entry = &out->frames[frame];
-    entry->bounds = bounds[qa_q3_model_at((double)frame, (size_t)frame_count, "frame bounds")];
-    entry->components = raw_frames[frame].components;
+    entry->bounds = scratch.bounds[qa_q3_model_at((double)frame, (size_t)frame_count, "frame bounds")];
+    entry->components = xmalloc((size_t)component_count * sizeof *entry->components);
+    if (component_count > 0)
+      memcpy(entry->components, scratch.raw_frames[frame].components,
+             (size_t)component_count * sizeof *entry->components);
     entry->component_count = (size_t)component_count;
     entry->local_joints = xmalloc(out->hierarchy_count * sizeof *entry->local_joints);
     entry->local_joint_count = out->hierarchy_count;
@@ -612,7 +765,7 @@ void qa_parse_md5_anim(const char *text, const char *source, const qa_md5_scale_
       qa_vec3 position = qa_math_vec3(px, py, pz);
       qa_vec4 orientation = qa_md5_quaternion(qa_math_vec3(ox, oy, oz));
       size_t scale_at = frame * out->hierarchy_count + i;
-      double scale = scales.scale_set[scale_at] ? scales.scales[scale_at] : 1;
+      double scale = scratch.scales.scale_set[scale_at] ? scratch.scales.scales[scale_at] : 1;
       entry->local_joints[i].position = position;
       entry->local_joints[i].orientation = orientation;
       entry->local_joints[i].scale = scale;
@@ -632,11 +785,8 @@ void qa_parse_md5_anim(const char *text, const char *source, const qa_md5_scale_
       }
     }
   }
-  free(raw_frames);
-  free(bounds);
-  free(scales.scales);
-  free(scales.scale_set);
-  free(scales.scale_positions);
+  qa_cleanup_pop(&node);
+  anim_scratch_free(&scratch);
 }
 
 void qa_md5_animation_destroy(qa_md5_animation *animation) {
@@ -704,7 +854,7 @@ const qa_skeleton_joint_pose *qa_sample_md5_pose(const qa_md5_model *model, doub
       !isfinite(back_lerp)) {
     qa_range_error("Invalid MD5 frame selection");
   }
-  if (model->frame_count == 0) qa_range_error("Missing MD5 frame %g", NAN);
+  if (model->frame_count == 0) qa_range_error("Missing MD5 frame %s", QA_JS_NUMBER(NAN));
   double current_index = fmod(frame, (double)model->frame_count);
   const qa_md5_model_frame *current_frame =
       &model->frames[qa_q3_model_at(current_index, model->frame_count, "MD5 frame")];

@@ -1,6 +1,7 @@
 /* Port of src/content/q2/multiplayer/lmctf/presentation.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/multiplayer/lmctf/presentation.h"
 #include "../multiplayer_internal.h"
+#include "qa/foundation/js.h"
 
 static int row_cmp(const void *a, const void *b) {
   const qa_lmctf_score_row *ra = a, *rb = b;
@@ -14,13 +15,13 @@ void qa_lmctf_scoreboard(qa_lmctf_context *context, qa_actor_id actor) {
   for (size_t i = 0; i < context->state_count; i++) {
     qa_actor_id id = context->states[i].actor;
     qa_lmctf_player_state *state = &context->states[i].state;
-    qa_q2mp_player_state *player = context->hooks.player(context->hooks.ctx, id);
+    qa_q2_base_player_state *player = context->hooks.player(context->hooks.ctx, id);
     if (player != NULL && player->connected) {
       rows[count++] = (qa_lmctf_score_row){id, player->slot, player->name, state->team,
           qa_lmctf_player_state_stat(state, "score", 0), player->ping < 999 ? player->ping : 999};
     }
   }
-  qsort(rows, count, sizeof *rows, row_cmp);
+  qa_js_sort(rows, count, sizeof *rows, row_cmp);
   char layout[2048];
   snprintf(layout, sizeof layout, "xv 0 yv 32 string2 \"Scr Png Name        \" xv 0 yv 40 string2 \"------------------- \" xv 160 yv 32 string2 \"Scr Png Name        \" xv 160 yv 40 string2 \"------------------- \" ");
   for (int team = 1; team <= 2; team++) {
@@ -51,7 +52,7 @@ void qa_lmctf_menu(qa_lmctf_context *context, qa_actor_id actor) {
       {"Join Red Team", "team red"}, {"Join Blue Team", "team blue"}, {"Become Observer", "observe"},
       {"Voting Menu", "lmctf-vote"}};
   size_t count = 3;
-  if (((int64_t)context->rules->ctf_flags & 32768) == 0) count = 4;
+  if ((qa_js_to_int32(context->rules->ctf_flags) & 32768) == 0) count = 4;
   qa_lmctf_event event = {0};
   event.kind = "menu";
   event.actor = actor;

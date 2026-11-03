@@ -1,5 +1,7 @@
 /* Port of src/formats/images/gif.ts. GPL-2.0-or-later. */
 #include "qa/formats/images/gif.h"
+#include "qa/formats/images/limits.h"
+#include "qa/foundation/support.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -131,7 +133,7 @@ static int gif_frame(qa_binary_reader *reader, const char *name, int64_t width,
                      size_t global_palette_length, uint8_t *canvas,
                      size_t canvas_length, int64_t transparent_index,
                      int64_t delay, int64_t disposal, qa_gif_frame **frames,
-                     size_t *frame_count, size_t *frame_capacity) {
+                     size_t *frame_count, size_t *frame_capacity, double *retained_bytes) {
   int64_t x = qa_binary_reader_u16(reader), y = qa_binary_reader_u16(reader);
   int64_t frame_width = qa_binary_reader_u16(reader);
   int64_t frame_height = qa_binary_reader_u16(reader);
@@ -213,6 +215,14 @@ static int gif_frame(qa_binary_reader *reader, const char *name, int64_t width,
   }
   free(rows);
   free(decoded);
+  *retained_bytes += (double)canvas_length;
+  if (*frame_count >= QA_MAX_ANIMATION_FRAMES || *retained_bytes > QA_MAX_ANIMATION_BYTES) {
+    free(indices);
+    free(previous);
+    free(local_palette);
+    qa_binary_error(name, (int64_t)qa_binary_reader_offset(reader),
+                    "GIF exceeds the frame or decoded size limit");
+  }
   if (*frame_count == *frame_capacity) {
     size_t capacity = *frame_capacity == 0 ? 4 : *frame_capacity * 2;
     qa_gif_frame *grown =
@@ -268,14 +278,42 @@ static int gif_frame(qa_binary_reader *reader, const char *name, int64_t width,
   return 1;
 }
 
+typedef struct gif_guard {
+  qa_binary_reader *reader;
+  uint8_t **global_palette;
+  uint8_t **canvas;
+  qa_gif_frame **frames;
+  size_t *frame_count;
+} gif_guard;
+
+static void gif_guard_release(void *raw) {
+  gif_guard *guard = (gif_guard *)raw;
+  qa_gif_image partial;
+  memset(&partial, 0, sizeof partial);
+  partial.frames = *guard->frames;
+  partial.frame_count = *guard->frame_count;
+  partial.global_palette = *guard->global_palette;
+  qa_gif_image_destroy(&partial);
+  free(*guard->canvas);
+  qa_binary_reader_destroy(guard->reader);
+}
+
 int qa_decode_gif(const uint8_t *bytes, size_t length, const char *source,
                   qa_gif_image *out) {
   const char *name = source != NULL ? source : "<gif>";
   qa_binary_reader reader;
   if (!qa_binary_reader_init(&reader, (uint8_t *)bytes, length, name)) return 0;
   memset(out, 0, sizeof *out);
+  /* A BinaryError caught by the caller must not leak the decode state. */
+  uint8_t *global_palette = NULL;
+  uint8_t *canvas = NULL;
+  qa_gif_frame *frames = NULL;
+  size_t frame_count = 0, frame_capacity = 0;
+  gif_guard guard_state = {&reader, &global_palette, &canvas, &frames, &frame_count};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, gif_guard_release, &guard_state);
   char *signature = qa_binary_reader_fixed_byte_string(&reader, 6);
-  if (signature == NULL) { qa_binary_reader_destroy(&reader); return 0; }
+  if (signature == NULL) { qa_binary_reader_destroy(&reader); qa_cleanup_pop(&guard); return 0; }
   int signature_ok = strcmp(signature, "GIF87a") == 0 || strcmp(signature, "GIF89a") == 0;
   free(signature);
   if (!signature_ok) qa_binary_error(name, 0, "Invalid GIF signature");
@@ -284,26 +322,23 @@ int qa_decode_gif(const uint8_t *bytes, size_t length, const char *source,
   int64_t packed = qa_binary_reader_u8(&reader);
   int64_t background_index = qa_binary_reader_u8(&reader);
   qa_binary_reader_skip(&reader, 1);
-  if (width == 0 || height == 0 ||
-      (double)width * (double)height * 4.0 > 2147483647.0) {
+  if (!qa_image_size_allowed((double)width, (double)height)) {
     qa_binary_error(name, 6, "Invalid GIF dimensions");
   }
-  uint8_t *global_palette = NULL;
   size_t global_palette_length = 0;
   if ((packed & 128) != 0) {
     global_palette_length = (size_t)(2 << (packed & 7)) * 3;
     global_palette = qa_binary_reader_bytes(&reader, (int64_t)global_palette_length);
-    if (global_palette == NULL) { qa_binary_reader_destroy(&reader); return 0; }
+    if (global_palette == NULL) { qa_binary_reader_destroy(&reader); qa_cleanup_pop(&guard); return 0; }
   }
   size_t canvas_length = (size_t)(width * height * 4);
-  uint8_t *canvas = (uint8_t *)calloc(canvas_length, 1);
+  canvas = (uint8_t *)calloc(canvas_length, 1);
   if (canvas == NULL) {
     free(global_palette);
     qa_binary_reader_destroy(&reader);
-    return 0;
+    qa_cleanup_pop(&guard); return 0;
   }
-  qa_gif_frame *frames = NULL;
-  size_t frame_count = 0, frame_capacity = 0;
+  double retained_bytes = 0;
   int64_t transparent_index = -1, delay = 0, disposal = 0, loop_count = -1;
   int oom = 0;
   for (int block = qa_binary_reader_u8(&reader); block != 59 && !oom;
@@ -358,13 +393,14 @@ int qa_decode_gif(const uint8_t *bytes, size_t length, const char *source,
     oom = !gif_frame(&reader, name, width, height, global_palette,
                      global_palette_length, canvas, canvas_length,
                      transparent_index, delay, disposal, &frames, &frame_count,
-                     &frame_capacity);
+                     &frame_capacity, &retained_bytes);
     transparent_index = -1;
     delay = 0;
     disposal = 0;
     if (oom) break;
   }
   free(canvas);
+  canvas = NULL;
   if (oom) {
     out->frames = frames;
     out->frame_count = frame_count;
@@ -372,12 +408,13 @@ int qa_decode_gif(const uint8_t *bytes, size_t length, const char *source,
     out->global_palette_length = global_palette_length;
     qa_gif_image_destroy(out);
     qa_binary_reader_destroy(&reader);
-    return 0;
+    qa_cleanup_pop(&guard); return 0;
   }
   if (frame_count == 0) {
     qa_binary_error(name, (int64_t)qa_binary_reader_offset(&reader),
                     "GIF has no image frames");
   }
+  qa_cleanup_pop(&guard);
   qa_binary_reader_destroy(&reader);
   out->width = width;
   out->height = height;

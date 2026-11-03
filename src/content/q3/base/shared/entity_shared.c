@@ -12,9 +12,16 @@ bool qa_q3_base_entity_shared_linked(const qa_q3_base_entity_shared *r) {
   qa_linked_body out;
   return r->body.linked(r->body.ctx, &out);
 }
+static void retain_previous_link(qa_q3_base_entity_shared *r, qa_linked_body linked) {
+  r->previous_link = linked;
+  if (linked.state.ground != NULL) {
+    r->previous_link_ground = *linked.state.ground;
+    r->previous_link.state.ground = &r->previous_link_ground;
+  }
+}
 void qa_q3_base_entity_shared_capture_link(qa_q3_base_entity_shared *r) {
   qa_linked_body linked;
-  if (r->body.linked(r->body.ctx, &linked)) { r->previous_link = linked; r->has_previous_link = true; }
+  if (r->body.linked(r->body.ctx, &linked)) { retain_previous_link(r, linked); r->has_previous_link = true; }
 }
 double qa_q3_base_entity_shared_linkcount(const qa_q3_base_entity_shared *r) {
   qa_linked_body linked;
@@ -77,7 +84,8 @@ qa_q3_base_entity_shared_private_state qa_q3_base_entity_shared_capture_private_
 void qa_q3_base_entity_shared_restore_private_state(qa_q3_base_entity_shared *r,
     qa_q3_base_entity_shared_private_state state) {
   if (r->has_current_origin_view) qa_range_error("Cannot restore inside a Q3 temporary origin view");
-  r->has_previous_link = state.has_previous_link; r->previous_link = state.previous_link;
+  r->has_previous_link = state.has_previous_link;
+  if (state.has_previous_link) retain_previous_link(r, state.previous_link);
   r->has_abs_min_override = state.has_abs_min_override;
   if (state.has_abs_min_override)
     r->abs_min_override = (qa_vec3){state.abs_min_override.x, state.abs_min_override.y, state.abs_min_override.z};

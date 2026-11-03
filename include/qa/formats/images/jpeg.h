@@ -5,9 +5,11 @@
  * becomes fn ptr + ctx (NULL means the TS default no-op; warning text
  * is valid only during the call and includes its trailing newline).
  * JpegImage is qa_image_level (pixels owned, free with
- * qa_image_level_destroy). JpegSourceError -> qa_jpeg_source_error,
- * BinaryError -> qa_binary_error, RangeError -> qa_range_error, plain
- * Error aborts as "Error:". Returns 0 only on allocation failure.
+ * qa_image_level_destroy). JpegSourceError -> qa_jpeg_source_error, a
+ * catchable raise named "JpegSourceError" with code
+ * QA_JPEG_SOURCE_ERROR_CODE (the TS subclass of BinaryError), BinaryError -> qa_binary_error, RangeError -> qa_range_error,
+ * plain Error raises "Error". A caught raise releases the decoder state.
+ * Returns 0 only on allocation failure.
  * GPL-2.0-or-later.
  */
 #ifndef QA_FORMATS_IMAGES_JPEG_H
@@ -22,6 +24,9 @@
 typedef qa_image_level qa_jpeg_image;
 
 typedef void (*qa_jpeg_print)(void *ctx, const char *text);
+
+/* qa_caught_error.code of a JpegSourceError (name "JpegSourceError"). */
+#define QA_JPEG_SOURCE_ERROR_CODE 1
 
 /* `format` is the IJG source message (without the "JPEG: " prefix). */
 noreturn void qa_jpeg_source_error(const char *source, int64_t offset,

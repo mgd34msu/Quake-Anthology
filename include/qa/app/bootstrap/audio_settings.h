@@ -11,7 +11,8 @@ typedef struct qa_app_audio_preferences {
   bool has_music_shuffle, music_shuffle;
   bool has_menu_track; char *menu_track;
   char *device_name; /* NULL = TS null */
-  qa_audio_output_format output_format;
+  qa_audio_output_format output_format; /* the default when has_output_format is false */
+  bool has_output_format;                /* TS outputFormat !== undefined */
   double effects_volume, music_volume;
 } qa_app_audio_preferences;
 /* TS saveAudioSettings audio argument. has_music_preferences false
@@ -25,5 +26,9 @@ typedef struct qa_app_audio_settings_input {
 } qa_app_audio_settings_input;
 /* False = TS {} (absent or non-JSON document). */
 bool qa_app_load_audio_settings(const qa_config_store *store, qa_app_audio_preferences *out);
+/* TS loadAudioSettings(store, warn): an invalid document warns
+ * "Ignoring audio.json: <message>\n" and loads as {}. NULL warn is the no-op default. */
+bool qa_app_load_audio_settings_warn(const qa_config_store *store, qa_app_audio_preferences *out,
+    void (*warn)(void *ctx, const char *text), void *warn_ctx);
 void qa_app_save_audio_settings(const qa_config_store *store, qa_app_audio_settings_input audio);
 #endif

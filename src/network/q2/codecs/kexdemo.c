@@ -1,11 +1,14 @@
 /* Port of src/network/q2/codecs/kexdemo.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/codecs/kexdemo.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <zlib.h>
 
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
+#include "qa/network/q2/codecs/zpacket.h"
 #include "qa/network/q2/codecs/kex_usercmd.h"
 #include "qa/network/q2/constants.h"
 
@@ -17,6 +20,40 @@
 #define PS_TEAM_KD (1 << 17)
 #define COORD_SHORT_SCALE_KD 0.125
 
+/* The kexDemoEdictNonzeroSolid Map (see the header). */
+static bool solid_in_table(double number) { return number == trunc(number) && number >= 0 && number < QA_Q2_MAX_EDICTS; }
+static void solid_clear(qa_q2_kex_context *ctx) {
+  memset(ctx->solid_table, 0, sizeof ctx->solid_table);
+  ctx->solid_other_count = 0;
+}
+static void solid_set(qa_q2_kex_context *ctx, double number, bool nonzero) {
+  if (solid_in_table(number)) {
+    ctx->solid_table[(size_t)number] = nonzero ? 2 : 1;
+    return;
+  }
+  for (size_t i = 0; i < ctx->solid_other_count; i++)
+    if (ctx->solid_other[i].number == number || (isnan(ctx->solid_other[i].number) && isnan(number))) { ctx->solid_other[i].nonzero = nonzero; return; }
+  if (ctx->solid_other_count == ctx->solid_other_cap) {
+    size_t cap = ctx->solid_other_cap ? ctx->solid_other_cap * 2 : 8;
+    void *grown = realloc(ctx->solid_other, cap * sizeof *ctx->solid_other);
+    if (grown == NULL) qa_range_error("Out of memory");
+    ctx->solid_other = grown; ctx->solid_other_cap = cap;
+  }
+  ctx->solid_other[ctx->solid_other_count].number = number;
+  ctx->solid_other[ctx->solid_other_count].nonzero = nonzero;
+  ctx->solid_other_count++;
+}
+static bool solid_get(const qa_q2_kex_context *ctx, double number) {
+  if (solid_in_table(number))
+    return ctx->solid_table[(size_t)number] == 2;
+  for (size_t i = 0; i < ctx->solid_other_count; i++)
+    if (ctx->solid_other[i].number == number || (isnan(ctx->solid_other[i].number) && isnan(number))) return ctx->solid_other[i].nonzero;
+  return false;
+}
+void qa_q2_kex_context_destroy(qa_q2_kex_context *ctx) {
+  free(ctx->solid_other); ctx->solid_other = NULL;
+  ctx->solid_other_count = ctx->solid_other_cap = 0;
+}
 static qa_q2_kex_context *ctx_of(qa_q2_protocol_codec *self) {
   /* The writer binding is the context's first member (see header). */
   return (qa_q2_kex_context *)self->ctx;
@@ -36,8 +73,7 @@ static void read_server_data(qa_q2_protocol_codec *self,
                              qa_q2_server_data_result *out) {
   qa_q2_kex_context *ctx = ctx_of(self);
   qa_q2_sizebuf *m = self->net_message;
-  memset(ctx->edict_solid_known, 0, sizeof ctx->edict_solid_known);
-  memset(ctx->edict_solid, 0, sizeof ctx->edict_solid);
+  solid_clear(ctx);
   memset(out, 0, sizeof *out);
   out->servercount = (double)qa_q2_msg_read_long(m);
   out->attractloop = qa_q2_msg_read_byte(m) != 0;
@@ -77,7 +113,9 @@ static void read_delta_entity(qa_q2_protocol_codec *self,
   qa_q2_kex_context *ctx = ctx_of(self);
   qa_q2_sizebuf *m = self->net_message;
   uint32_t bits = (uint32_t)bits64;
-  double bits_d = (double)bits64;
+  /* TS combineBits(lo, hi) = (lo >>> 0) + hi * 2^32, where a truncated hi byte
+   * reads -1; bits_u64 carries hi as its high 32 bits. */
+  double bits_d = (double)bits + (double)(int32_t)(uint32_t)(bits64 >> 32) * 4294967296.0;
   *to = *from;
   to->number = number;
   bool model16 = (bits & U_MODEL16_KD) != 0;
@@ -114,18 +152,12 @@ static void read_delta_entity(qa_q2_protocol_codec *self,
   else if (bits & (uint32_t)QA_Q2_U_RENDERFX16) to->renderfx = (double)qa_q2_msg_read_word(m);
   else if (bits & (uint32_t)QA_Q2_U_RENDERFX8) to->renderfx = (double)qa_q2_msg_read_byte(m);
   bool nonzero_solid;
-  int ent = (int)number;
   if ((bits & (uint32_t)QA_Q2_U_SOLID) != 0) {
     to->solid = (double)(uint32_t)qa_q2_msg_read_long(m);
     nonzero_solid = to->solid != 0;
-    if (ent >= 0 && ent < QA_Q2_MAX_EDICTS) {
-      ctx->edict_solid_known[ent] = true;
-      ctx->edict_solid[ent] = nonzero_solid;
-    }
+    solid_set(ctx, number, nonzero_solid);
   } else {
-    nonzero_solid = ent >= 0 && ent < QA_Q2_MAX_EDICTS && ctx->edict_solid_known[ent]
-                        ? ctx->edict_solid[ent]
-                        : false;
+    nonzero_solid = solid_get(ctx, number); /* ?? false */
   }
   bool high_precision = ctx->protocol != QA_Q2_KEX_PROTOCOL_DEMOS || nonzero_solid;
   uint32_t obits[3] = {(uint32_t)QA_Q2_U_ORIGIN1, (uint32_t)QA_Q2_U_ORIGIN2, (uint32_t)QA_Q2_U_ORIGIN3};
@@ -160,14 +192,26 @@ static void read_delta_entity(qa_q2_protocol_codec *self,
   if (qa_q2repro_bits_has_hi(bits_d, QA_Q2_KEX_HI_OLDFRAME)) to->old_frame = (double)qa_q2_msg_read_word(m);
 }
 
-static int32_t read_kex_flags(qa_q2_sizebuf *m) {
-  int32_t flags = qa_q2_msg_read_word(m);
-  if ((flags & PS_MOREBITS_KD) != 0) flags |= qa_q2_msg_read_word(m) << 16;
-  return flags;
+static uint32_t read_kex_flags(qa_q2_sizebuf *m) {
+  uint32_t flags = (uint32_t)qa_q2_msg_read_word(m);
+  if ((flags & PS_MOREBITS_KD) != 0) {
+    uint32_t more_flags = (uint32_t)qa_q2_msg_read_word(m);
+    flags |= more_flags << 16;
+  }
+  return flags; /* TS flags >>> 0 */
+}
+
+/* TS pmFloatToShort stored into an Int32Array: a NaN read stores 0. */
+static int32_t kex_pm_float_to_short(double f) {
+  return isnan(f) ? 0 : qa_q2repro_pm_float_to_short(f);
+}
+/* TS ANGLE2SHORT(x) = Math.trunc(x * 65536 / 360) & 65535, stored into an Int16Array. */
+static int16_t kex_angle2short(double x) {
+  return qa_js_to_int16((double)(qa_js_to_int32(trunc((x * 65536.0) / 360.0)) & 65535));
 }
 
 static void read_player_fields(qa_q2_sizebuf *m, const qa_q2_wire_player *from,
-                               qa_q2_wire_player *to, int32_t flags) {
+                               qa_q2_wire_player *to, uint32_t flags) {
   to->pmove.pm_type = from->pmove.pm_type;
   memcpy(to->pmove.origin, from->pmove.origin, sizeof to->pmove.origin);
   memcpy(to->pmove.velocity, from->pmove.velocity, sizeof to->pmove.velocity);
@@ -203,9 +247,9 @@ static void read_player_fields(qa_q2_sizebuf *m, const qa_q2_wire_player *from,
     to->pmove.origin_f[0] = (float)x;
     to->pmove.origin_f[1] = (float)y;
     to->pmove.origin_f[2] = (float)z;
-    to->pmove.origin[0] = qa_q2repro_pm_float_to_short(x);
-    to->pmove.origin[1] = qa_q2repro_pm_float_to_short(y);
-    to->pmove.origin[2] = qa_q2repro_pm_float_to_short(z);
+    to->pmove.origin[0] = kex_pm_float_to_short(x);
+    to->pmove.origin[1] = kex_pm_float_to_short(y);
+    to->pmove.origin[2] = kex_pm_float_to_short(z);
   }
   if (flags & QA_Q2_PS_M_VELOCITY) {
     double x = qa_q2_msg_read_float(m);
@@ -214,9 +258,9 @@ static void read_player_fields(qa_q2_sizebuf *m, const qa_q2_wire_player *from,
     to->pmove.velocity_f[0] = (float)x;
     to->pmove.velocity_f[1] = (float)y;
     to->pmove.velocity_f[2] = (float)z;
-    to->pmove.velocity[0] = qa_q2repro_pm_float_to_short(x);
-    to->pmove.velocity[1] = qa_q2repro_pm_float_to_short(y);
-    to->pmove.velocity[2] = qa_q2repro_pm_float_to_short(z);
+    to->pmove.velocity[0] = kex_pm_float_to_short(x);
+    to->pmove.velocity[1] = kex_pm_float_to_short(y);
+    to->pmove.velocity[2] = kex_pm_float_to_short(z);
   }
   if (flags & QA_Q2_PS_M_TIME) to->pmove.pm_time = (double)qa_q2_msg_read_word(m);
   if (flags & QA_Q2_PS_M_FLAGS) to->pmove.pm_flags = (double)qa_q2_msg_read_word(m);
@@ -225,7 +269,7 @@ static void read_player_fields(qa_q2_sizebuf *m, const qa_q2_wire_player *from,
     to->pmove.delta_angle_float = true;
     for (int i = 0; i < 3; i++) {
       to->pmove.delta_angles_f[i] = (float)qa_q2_msg_read_float(m);
-      to->pmove.delta_angles[i] = (int16_t)qa_q2_angle2short((double)to->pmove.delta_angles_f[i]);
+      to->pmove.delta_angles[i] = kex_angle2short((double)to->pmove.delta_angles_f[i]);
     }
   }
   if (flags & QA_Q2_PS_VIEWOFFSET) {
@@ -291,7 +335,7 @@ static void read_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *m
                                     const qa_q2_wire_player *from,
                                     qa_q2_wire_player *to) {
   (void)msg; /* TS reads from the bound net_message. */
-  int32_t flags = read_kex_flags(self->net_message);
+  uint32_t flags = read_kex_flags(self->net_message);
   read_player_fields(self->net_message, from, to, flags);
 }
 
@@ -316,7 +360,7 @@ static void read_frame_playerstate(qa_q2_protocol_codec *self,
   if (cmd != QA_Q2_SVC_PLAYERINFO) {
     qa_q2_com_error_throw(QA_Q2_ERR_DROP, "kexdemo: CL_ParseFrame: not playerinfo (got %d)", (int)cmd);
   }
-  int32_t flags = read_kex_flags(m);
+  uint32_t flags = read_kex_flags(m);
   read_player_fields(m, from, to, flags);
 }
 
@@ -350,6 +394,9 @@ bool qa_q2_kex_read_damage(qa_q2_kex_context *ctx,
   qa_q2_kex_damage_indicator *result =
       (qa_q2_kex_damage_indicator *)calloc(kept > 0 ? kept : 1, sizeof *result);
   if (result == NULL) return false;
+  /* MSG_ReadDir raises on a bad direction byte; the partial list is released. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, result);
   for (int32_t i = 0; i < count; i++) {
     int32_t encoded = qa_q2_msg_read_byte(m);
     float direction[3];
@@ -361,6 +408,7 @@ bool qa_q2_kex_read_damage(qa_q2_kex_context *ctx,
     result[i].shield = (encoded & 0x80) != 0;
     memcpy(result[i].direction, direction, sizeof direction);
   }
+  qa_cleanup_pop(&node);
   *out = result;
   *out_count = kept;
   return true;
@@ -449,59 +497,48 @@ void qa_q2_kex_read_sound(qa_q2_kex_context *ctx, qa_q2_kex_sound *out) {
   }
 }
 
-/* TS inflateInternal: zlib-wrapped inflate; ComError on failure. */
+typedef struct kex_inflate_scope {
+  const uint8_t *compressed;
+  size_t compressed_length, max_output;
+  uint8_t *bytes;
+  size_t length;
+} kex_inflate_scope;
+static void kex_inflate_body(void *arg) {
+  kex_inflate_scope *scope = (kex_inflate_scope *)arg;
+  scope->bytes = qa_q2_inflate_sync(scope->compressed, scope->compressed_length, false,
+                                    scope->max_output, Z_FINISH, &scope->length);
+}
+/* TS inflateInternal: zlib inflate bounded by max(1, uncompressedLen); any failure becomes
+ * ComError(ERR_DROP). NULL only on OOM. */
 static uint8_t *inflate_internal(qa_q2_sizebuf *m, int32_t compressed_len,
-                                 size_t *out_length) {
+                                 int32_t uncompressed_len, size_t *out_length) {
+  /* TS new Uint8Array(compressedLen): a truncated length word reads -1. */
+  if (compressed_len < 0) qa_range_error("length cannot be negative");
   uint8_t *compressed =
       (uint8_t *)malloc(compressed_len > 0 ? (size_t)compressed_len : 1);
   if (compressed == NULL) return NULL;
   qa_q2_msg_read_data(m, compressed, compressed_len > 0 ? (size_t)compressed_len : 0,
                       compressed_len);
-  size_t capacity = 4096;
-  size_t length = 0;
-  uint8_t *out = (uint8_t *)malloc(capacity);
-  if (out == NULL) {
-    free(compressed);
-    return NULL;
-  }
-  z_stream stream;
-  memset(&stream, 0, sizeof stream);
-  if (inflateInit(&stream) != Z_OK) {
-    const char *z = stream.msg != NULL ? stream.msg : "zlib error";
-    free(compressed);
-    free(out);
-    qa_q2_com_error_throw(QA_Q2_ERR_DROP, "kexdemo: zlib inflate failed: %s", z);
-  }
-  stream.next_in = compressed;
-  stream.avail_in = compressed_len > 0 ? (uInt)compressed_len : 0;
-  int status = Z_OK;
-  while (status == Z_OK) {
-    if (length == capacity) {
-      capacity *= 2;
-      uint8_t *grown = (uint8_t *)realloc(out, capacity);
-      if (grown == NULL) {
-        inflateEnd(&stream);
-        free(compressed);
-        free(out);
-        return NULL;
-      }
-      out = grown;
-    }
-    stream.next_out = out + length;
-    stream.avail_out = (uInt)(capacity - length);
-    status = inflate(&stream, Z_NO_FLUSH);
-    length = stream.total_out;
-  }
-  const char *zmsg = stream.msg;
-  inflateEnd(&stream);
+  kex_inflate_scope scope = {compressed, compressed_len > 0 ? (size_t)compressed_len : 0,
+                             uncompressed_len > 1 ? (size_t)uncompressed_len : 1, NULL, 0};
+  qa_caught_error caught;
+  bool ok = qa_try(kex_inflate_body, &scope, &caught);
   free(compressed);
-  if (status != Z_STREAM_END) {
-    const char *z = zmsg != NULL ? zmsg : "zlib error";
-    free(out);
-    qa_q2_com_error_throw(QA_Q2_ERR_DROP, "kexdemo: zlib inflate failed: %s", z);
-  }
-  *out_length = length;
-  return out;
+  if (!ok) qa_q2_com_error_throw(QA_Q2_ERR_DROP, "kexdemo: zlib inflate failed: %s", caught.message);
+  if (scope.bytes == NULL) return NULL;
+  *out_length = scope.length;
+  return scope.bytes;
+}
+
+typedef struct configblast_list {
+  qa_q2_kex_configstring_record *records;
+  size_t count;
+  uint8_t *inflated;
+} configblast_list;
+static void configblast_release(void *arg) {
+  configblast_list *list = (configblast_list *)arg;
+  qa_q2_kex_configblast_free(list->records, list->count);
+  free(list->inflated);
 }
 
 bool qa_q2_kex_read_configblast(qa_q2_kex_context *ctx,
@@ -509,9 +546,9 @@ bool qa_q2_kex_read_configblast(qa_q2_kex_context *ctx,
                                 size_t *out_count) {
   qa_q2_sizebuf *m = ctx->net_message;
   int32_t compressed_len = qa_q2_msg_read_word(m);
-  (void)qa_q2_msg_read_word(m);
+  int32_t uncompressed_len = qa_q2_msg_read_word(m);
   size_t inflated_len = 0;
-  uint8_t *inflated = inflate_internal(m, compressed_len, &inflated_len);
+  uint8_t *inflated = inflate_internal(m, compressed_len, uncompressed_len, &inflated_len);
   if (inflated == NULL) return false;
   qa_q2_sizebuf buf;
   qa_q2_sizebuf_init_empty(&buf);
@@ -519,43 +556,42 @@ bool qa_q2_kex_read_configblast(qa_q2_kex_context *ctx,
   buf.cursize = (int64_t)inflated_len;
   qa_q2_msg_begin_reading(&buf);
   size_t capacity = 16;
-  size_t count = 0;
-  qa_q2_kex_configstring_record *records =
-      (qa_q2_kex_configstring_record *)calloc(capacity, sizeof *records);
-  if (records == NULL) {
+  configblast_list list = {NULL, 0, inflated};
+  list.records = (qa_q2_kex_configstring_record *)calloc(capacity, sizeof *list.records);
+  if (list.records == NULL) {
     free(inflated);
     return false;
   }
+  qa_cleanup node;
+  qa_cleanup_push(&node, configblast_release, &list);
+  bool ok = true;
   while (buf.readcount < buf.cursize) {
-    if (count == capacity) {
+    if (list.count == capacity) {
       capacity *= 2;
       qa_q2_kex_configstring_record *grown = (qa_q2_kex_configstring_record *)realloc(
-          records, capacity * sizeof *records);
-      if (grown == NULL) {
-        qa_q2_kex_configblast_free(records, count);
-        free(inflated);
-        return false;
-      }
-      records = grown;
+          list.records, capacity * sizeof *list.records);
+      if (grown == NULL) { ok = false; break; }
+      list.records = grown;
     }
     double index = (double)qa_q2_msg_read_word(&buf);
     char value[2048];
     qa_q2_msg_read_string(&buf, value, sizeof value);
     size_t vlen = strlen(value);
     char *owned = (char *)malloc(vlen + 1);
-    if (owned == NULL) {
-      qa_q2_kex_configblast_free(records, count);
-      free(inflated);
-      return false;
-    }
+    if (owned == NULL) { ok = false; break; }
     memcpy(owned, value, vlen + 1);
-    records[count].index = index;
-    records[count].value = owned;
-    count++;
+    list.records[list.count].index = index;
+    list.records[list.count].value = owned;
+    list.count++;
   }
+  qa_cleanup_pop(&node);
   free(inflated);
-  *out = records;
-  *out_count = count;
+  if (!ok) {
+    qa_q2_kex_configblast_free(list.records, list.count);
+    return false;
+  }
+  *out = list.records;
+  *out_count = list.count;
   return true;
 }
 
@@ -567,14 +603,50 @@ void qa_q2_kex_configblast_free(qa_q2_kex_configstring_record *records,
   }
 }
 
+typedef struct baselineblast_scope {
+  qa_q2_kex_context *ctx;
+  qa_q2_kex_baseline_entry *results;
+  size_t count, capacity;
+  bool ok;
+} baselineblast_scope;
+static void baselineblast_body(void *arg) {
+  baselineblast_scope *scope = (baselineblast_scope *)arg;
+  qa_q2_kex_context *ctx = scope->ctx;
+  qa_q2_sizebuf *m = ctx->net_message;
+  while (m->readcount < m->cursize) {
+    if (scope->count == scope->capacity) {
+      size_t next = scope->capacity * 2;
+      qa_q2_kex_baseline_entry *grown =
+          (qa_q2_kex_baseline_entry *)realloc(scope->results, next * sizeof *grown);
+      if (grown == NULL) {
+        scope->ok = false;
+        return;
+      }
+      scope->results = grown;
+      scope->capacity = next;
+    }
+    qa_q2_entity_bits eb;
+    qa_q2repro_read_entity_bits_wide(&ctx->rerelease, &eb);
+    qa_q2_wire_entity empty;
+    qa_q2_wire_entity_init(&empty);
+    qa_q2_wire_entity state;
+    qa_q2_wire_entity_init(&state);
+    read_delta_entity(&ctx->codec, &empty, &state, eb.number, eb.bits_u64);
+    state.number = eb.number;
+    scope->results[scope->count].entnum = eb.number;
+    scope->results[scope->count].state = state;
+    scope->count++;
+  }
+}
+
 bool qa_q2_kex_read_spawnbaselineblast(qa_q2_kex_context *ctx,
                                        qa_q2_kex_baseline_entry **out,
                                        size_t *out_count) {
   qa_q2_sizebuf *m = ctx->net_message;
   int32_t compressed_len = qa_q2_msg_read_word(m);
-  (void)qa_q2_msg_read_word(m);
+  int32_t uncompressed_len = qa_q2_msg_read_word(m);
   size_t inflated_len = 0;
-  uint8_t *inflated = inflate_internal(m, compressed_len, &inflated_len);
+  uint8_t *inflated = inflate_internal(m, compressed_len, uncompressed_len, &inflated_len);
   if (inflated == NULL) return false;
   /* Swap the bound message over the inflated stream like TS. */
   uint8_t *saved_data = m->data;
@@ -590,34 +662,13 @@ bool qa_q2_kex_read_spawnbaselineblast(qa_q2_kex_context *ctx,
   m->maxsize = (int64_t)inflated_len;
   m->owns_data = false;
   ctx->rerelease.net_message = m;
-  size_t capacity = 16;
-  size_t count = 0;
-  qa_q2_kex_baseline_entry *results =
-      (qa_q2_kex_baseline_entry *)calloc(capacity, sizeof *results);
-  bool ok = results != NULL;
-  while (ok && m->readcount < m->cursize) {
-    if (count == capacity) {
-      capacity *= 2;
-      qa_q2_kex_baseline_entry *grown =
-          (qa_q2_kex_baseline_entry *)realloc(results, capacity * sizeof *results);
-      if (grown == NULL) {
-        ok = false;
-        break;
-      }
-      results = grown;
-    }
-    qa_q2_entity_bits eb;
-    qa_q2repro_read_entity_bits_wide(&ctx->rerelease, &eb);
-    qa_q2_wire_entity empty;
-    qa_q2_wire_entity_init(&empty);
-    qa_q2_wire_entity state;
-    qa_q2_wire_entity_init(&state);
-    read_delta_entity(&ctx->codec, &empty, &state, eb.number, eb.bits_u64);
-    state.number = eb.number;
-    results[count].entnum = eb.number;
-    results[count].state = state;
-    count++;
-  }
+  baselineblast_scope scope = {ctx, NULL, 0, 16, true};
+  scope.results = (qa_q2_kex_baseline_entry *)calloc(scope.capacity, sizeof *scope.results);
+  qa_caught_error caught;
+  bool raised = false;
+  if (scope.results == NULL) scope.ok = false;
+  else raised = !qa_try(baselineblast_body, &scope, &caught);
+  /* TS finally: the bound message returns to the containing packet on every path. */
   m->data = saved_data;
   m->data_length = saved_len;
   m->cursize = saved_cursize;
@@ -625,12 +676,13 @@ bool qa_q2_kex_read_spawnbaselineblast(qa_q2_kex_context *ctx,
   m->maxsize = saved_maxsize;
   m->owns_data = saved_owns;
   free(inflated);
-  if (!ok) {
-    free(results);
+  if (raised || !scope.ok) {
+    free(scope.results);
+    if (raised) qa_rethrow(&caught);
     return false;
   }
-  *out = results;
-  *out_count = count;
+  *out = scope.results;
+  *out_count = scope.count;
   return true;
 }
 

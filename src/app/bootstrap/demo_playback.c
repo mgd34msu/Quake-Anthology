@@ -6,6 +6,8 @@
 #include <string.h>
 #include "qa/content/mounts/paths.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 static bool ends_ci(const char *text, const char *suffix) {
   size_t t = strlen(text), s = strlen(suffix);
   if (t < s) return false;
@@ -51,24 +53,24 @@ qa_app_demo_resource qa_app_open_demo_resource(qa_app_demo_request request, qa_a
   }
   const char *filename = strncmp(name, "demos/", 6) == 0 ? name + 6 : name;
   /* suffix .dm_(\d+) */
-  long requested = -1;
+  double requested = -1; /* Number(suffix[1]); -1 for no suffix */
   size_t stem_len = strlen(filename);
   const char *dot = strrchr(filename, '.');
   if (dot && (dot[1] == 'd' || dot[1] == 'D') && (dot[2] == 'm' || dot[2] == 'M') && dot[3] == '_' && isdigit((unsigned char)dot[4])) {
     bool digits = true;
     for (const char *p = dot + 4; *p; p++) if (!isdigit((unsigned char)*p)) digits = false;
-    if (digits) { requested = strtol(dot + 4, NULL, 10); stem_len = (size_t)(dot - filename); }
+    if (digits) { requested = qa_js_string_to_number(dot + 4); stem_len = (size_t)(dot - filename); }
   }
   bool supported = requested == 66 || requested == 67 || requested == 68;
   char stem[1024]; snprintf(stem, sizeof stem, "%.*s", (int)stem_len, filename);
   if (requested >= 0 && !supported) {
-    char msg[128]; snprintf(msg, sizeof msg, "Protocol %ld not supported for demos\n", requested);
+    char msg[128]; snprintf(msg, sizeof msg, "Protocol %s not supported for demos\n", QA_JS_NUMBER(requested));
     reader.print(reader.ctx, msg);
   }
   static const long natives[] = {66, 67, 68};
   size_t candidate_count = supported ? 1 : 3;
   for (size_t i = 0; i < candidate_count; i++) {
-    long protocol = supported ? requested : natives[i];
+    long protocol = supported ? (long)requested : natives[i];
     char *path;
     if (supported) { path = join2("demos/", filename); }
     else { char buf[1200]; snprintf(buf, sizeof buf, "demos/%s.dm_%ld", stem, protocol); path = join2(buf, ""); }

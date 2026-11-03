@@ -1,137 +1,139 @@
 /* Port of src/content/q1/missionpacks/monsters/wrath.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/monsters/wrath.h"
 
-#include <stdio.h>
+#include <string.h>
 
 #include "qa/content/q1/missionpacks/monsters/helpers.h"
 #include "qa/content/q1/missionpacks/monsters/tables/wrath.h"
 #include "monsters_internal.h"
 
 void qa_q1mpm_wrath_missile(qa_q1mpm_mission_monster *monster, double attack) {
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   qa_vec3 target;
-  if (!qa_q1mpm_monster_target(monster, &target)) return;
-  qa_vec3 origin0 = qa_q1mpm_monster_origin(monster);
-  qa_vec3 direction = qa_q1mpm_normalize(qa_q1mpm_vsub(qa_q1mpm_vadd(target, QA_Q1MPM_V3(0, 0, 10)), origin0));
-  qa_q1mpm_basis basis = game->make_vectors(game, game->body(game, entity).angles);
-  entity->effects |= 2;
+  if (!qa_q1_base_monster_target(&monster->base, &target)) return;
+  qa_vec3 origin0 = qa_q1_base_monster_origin(&monster->base);
+  qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(qa_q1_vadd(target, (qa_vec3){0, 0, 10}), origin0));
+  qa_q1_basis basis = qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles);
+  entity->effects = qa_js_bit_or(entity->effects, 2);
   double forward = attack == 1 || attack == 4 ? 20 : attack == 2 ? 18 : 12;
   double up = attack == 4 ? 16 : attack == 2 ? 10 : 12;
-  qa_vec3 origin = qa_q1mpm_vadd(qa_q1mpm_vadd(qa_q1mpm_vadd(origin0, qa_q1mpm_vscale(basis.forward, forward)),
-                                              qa_q1mpm_vscale(basis.up, up)),
-                                 qa_q1mpm_vscale(basis.right, attack == 3 ? 20 : 0));
-  qa_q1mpm_actor *shot = qa_q1mpm_missile(game, entity->actor.id, "wrath_missile", "progs/w_ball.mdl",
-                                          origin, qa_q1mpm_vscale(direction, 400), "rogue:WrathMissileTouch", 5);
-  qa_q1mpm_references_set(shot, "enemy", monster->state.enemy);
-  shot->angular_velocity = QA_Q1MPM_V3(300, 300, 300);
-  game->schedule(game, shot, 0.1, game->named.action(game->named.ctx, shot, "rogue:WrathHome"));
-  monster->state.attack_finished = game->time + 2;
+  qa_vec3 origin = qa_q1_vadd(qa_q1_vadd(qa_q1_vadd(origin0, qa_q1_vscale(basis.forward, forward)),
+                                              qa_q1_vscale(basis.up, up)),
+                                 qa_q1_vscale(basis.right, attack == 3 ? 20 : 0));
+  qa_q1_actor *shot = qa_q1mpm_missile(game, entity->actor.id, "wrath_missile", "progs/w_ball.mdl",
+                                          origin, qa_q1_vscale(direction, 400), "rogue:WrathMissileTouch", 5);
+  (void)qa_q1_actor_reference_set(shot, "enemy", qa_q1_base_monster_enemy(&monster->base));
+  shot->angular_velocity = (qa_vec3){300, 300, 300};
+  qa_q1_schedule(game, shot, 0.1, qa_q1_callback_registry_action(game->named, shot, "rogue:WrathHome"));
+  monster->base.state->attack_finished = game->time + 2;
 }
-static void wrath_home(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity) {
+static void wrath_home(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
-  qa_q1mpm_opt_actor enemy = qa_q1mpm_references_get(entity, "enemy");
-  if (!enemy.has || game->health(game, enemy.id) < 1) { game->remove(game, entity); return; }
+  qa_actor_id enemy;
+  if (!qa_q1_actor_reference_get(entity, "enemy", &enemy) || qa_q1_health(game, enemy) < 1) { qa_q1_remove(game, entity); return; }
   qa_vec3 target;
-  if (qa_q1mpm_eye(game, enemy.id, &target)) {
-    qa_q1mpm_body_patch patch = {0};
+  if (qa_q1mpm_eye(game, enemy, &target)) {
+    qa_q1_body_patch patch = {0};
     patch.has_velocity = true;
-    patch.velocity = qa_q1mpm_vscale(
-        qa_q1mpm_normalize(qa_q1mpm_vsub(target, game->body(game, entity).origin)),
-        game->options.skill == 3 ? 550 : 400);
-    game->set_body(game, entity, &patch);
+    patch.velocity = qa_q1_vscale(
+        qa_q1_normalize(qa_q1_vsub(target, qa_q1_get_body(game, entity).origin)),
+        qa_q1_option_skill(game) == 3 ? 550 : 400);
+    qa_q1_set_body(game, entity, &patch);
   }
-  game->schedule(game, entity, 0.1, game->named.action(game->named.ctx, entity, "rogue:WrathHome"));
+  qa_q1_schedule(game, entity, 0.1, qa_q1_callback_registry_action(game->named, entity, "rogue:WrathHome"));
 }
-static void wrath_missile_touch(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity, qa_actor_id other,
-                                 bool has_normal, qa_vec3 normal, const void *surface) {
-  (void)ctx; (void)has_normal; (void)normal; (void)surface;
-  const char *classname = game->host->classname(game->host->ctx, other);
-  if (qa_q1mpm_id_eq_opt(other, entity->owner) || qa_q1mpm_str_eq(classname, "monster_wrath") ||
-      qa_q1mpm_str_eq(classname, "monster_super_wrath")) {
-    game->remove(game, entity);
+static void wrath_missile_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  const char *classname = game->host.classname(game->host.ctx, other);
+  if ((entity->has_owner && qa_same_actor(other, entity->owner)) || q1mpm_str_eq(classname, "monster_wrath") ||
+      q1mpm_str_eq(classname, "monster_super_wrath")) {
+    qa_q1_remove(game, entity);
     return;
   }
-  if (qa_q1mpm_str_eq(classname, "monster_zombie"))
-    qa_q1mpm_game_damage(game, other, entity->actor.id, QA_Q1MPM_SOME(entity->actor.id), 110);
-  qa_q1mpm_opt_actor ignore = game->world == NULL ? QA_Q1MPM_NONE : QA_Q1MPM_SOME(game->world->actor.id);
-  game->radius_damage(game, entity->actor.id, entity->owner, 20, ignore, NULL, "");
-  game->sound(game, entity, "weapons/r_exp3.wav", QA_Q1MPM_CH("weapon"), 1, 1);
-  qa_q1mpm_opt_actor none = QA_Q1MPM_NONE;
-  game->effect(game, "explosion", game->body(game, entity).origin, none, 1);
-  qa_q1mpm_body_patch patch = {0};
+  if (q1mpm_str_eq(classname, "monster_zombie"))
+    (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, 110, NULL, NULL, NULL, NULL);
+  qa_q1_radius_damage(game, entity->actor.id, entity->has_owner ? &entity->owner : NULL, 20,
+                      game->world == NULL ? NULL : &game->world->actor.id, NULL, NULL);
+  qa_q1_sound(game, entity->actor.id, "weapons/r_exp3.wav", "weapon", 1, 1);
+  qa_q1_effect(game, "explosion", qa_q1_get_body(game, entity).origin, NULL, 1);
+  qa_q1_body_patch patch = {0};
   patch.has_velocity = true;
-  patch.velocity = QA_Q1MPM_ZERO;
-  game->set_body(game, entity, &patch);
-  entity->touch = (qa_q1mpm_callback){NULL, NULL, QA_Q1MPM_CB_TOUCH};
-  snprintf(entity->model, sizeof(entity->model), "%s", "progs/s_explod.spr");
+  patch.velocity = QA_Q1_ZERO;
+  qa_q1_set_body(game, entity, &patch);
+  entity->touch = (qa_q1_bound_touch){0};
+  q1mpm_set_text(&entity->model, "progs/s_explod.spr");
   entity->solid = "none";
   entity->frame = 0;
-  game->link(game, entity);
-  game->schedule(game, entity, 0.1, game->named.action(game->named.ctx, entity, "rogue:wrath_explode"));
+  qa_q1_link(game, entity);
+  qa_q1_schedule(game, entity, 0.1, qa_q1_callback_registry_action(game->named, entity, "rogue:wrath_explode"));
 }
-static void wrath_explode(void *ctx, qa_q1mpm_game *game, qa_q1mpm_actor *entity) {
+static void wrath_explode(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   entity->frame++;
-  if (entity->frame > 5) game->remove(game, entity);
-  else game->schedule(game, entity, 0.1, game->named.action(game->named.ctx, entity, "rogue:wrath_explode"));
+  if (entity->frame > 5) qa_q1_remove(game, entity);
+  else qa_q1_schedule(game, entity, 0.1, qa_q1_callback_registry_action(game->named, entity, "rogue:wrath_explode"));
 }
 const qa_q1mpm_named_handlers qa_q1mpm_wrath_callbacks[] = {
-    {"WrathHome", {NULL, wrath_home, NULL, NULL, NULL, NULL}},
-    {"WrathMissileTouch", {NULL, NULL, wrath_missile_touch, NULL, NULL, NULL}},
-    {"wrath_explode", {NULL, wrath_explode, NULL, NULL, NULL, NULL}},
+    {"WrathHome", {.action = wrath_home}},
+    {"WrathMissileTouch", {.touch = wrath_missile_touch}},
+    {"wrath_explode", {.action = wrath_explode}},
 };
 const size_t qa_q1mpm_wrath_callback_count = sizeof(qa_q1mpm_wrath_callbacks) / sizeof(qa_q1mpm_wrath_callbacks[0]);
 
 static void wrath_attack(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  double r = monster->game->host->random(monster->game->host->ctx);
-  qa_q1mpm_monster_play(monster, r < 0.25 ? "wrath_at_a01" : r < 0.65 ? "wrath_at_b01" : "wrath_at_c01");
-  qa_q1mpm_game_sound(monster->game, monster->entity, "wrath/watt.wav");
+  double r = qa_q1_host_random(monster->base.game);
+  qa_q1_base_monster_play(&monster->base, r < 0.25 ? "wrath_at_a01" : r < 0.65 ? "wrath_at_b01" : "wrath_at_c01");
+  qa_q1_sound_defaults(monster->base.game, monster->base.entity->actor.id, "wrath/watt.wav");
 }
 static void missile1(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; qa_q1mpm_wrath_missile(monster, 1); }
 static void missile2(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; qa_q1mpm_wrath_missile(monster, 2); }
 static void missile3(void *ctx, qa_q1mpm_mission_monster *monster) { (void)ctx; qa_q1mpm_wrath_missile(monster, 3); }
 static void die15(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_game *game = monster->game;
-  qa_q1mpm_actor *entity = monster->entity;
-  qa_vec3 origin = qa_q1mpm_monster_origin(monster);
+  qa_q1_services *game = monster->base.game;
+  qa_q1_actor *entity = monster->base.entity;
   static const char *const models[] = {"wrthgib1", "wrthgib2", "wrthgib3"};
-  for (size_t i = 0; i < 3; i++)
-    qa_q1mpm_ext_throw_gib(game, origin, models[i], game->health(game, entity->actor.id));
-  qa_q1mpm_opt_actor ignore = game->world == NULL ? QA_Q1MPM_NONE : QA_Q1MPM_SOME(game->world->actor.id);
-  game->radius_damage(game, entity->actor.id, QA_Q1MPM_SOME(entity->actor.id), 80, ignore, NULL, "");
-  qa_q1mpm_body_patch patch = {0};
+  for (size_t i = 0; i < 3; i++) {
+    const qa_vec3 origin = qa_q1_base_monster_origin(&monster->base);
+    (void)qa_q1_throw_gib(game, origin, models[i], qa_q1_health(game, entity->actor.id));
+  }
+  qa_q1_radius_damage(game, entity->actor.id, &entity->actor.id, 80, game->world == NULL ? NULL : &game->world->actor.id,
+                      NULL, NULL);
+  qa_q1_body_patch patch = {0};
   patch.has_origin = true;
-  patch.origin = qa_q1mpm_vadd(origin, QA_Q1MPM_V3(0, 0, 24));
-  game->set_body(game, entity, &patch);
-  qa_q1mpm_event event = {0};
+  patch.origin = qa_q1_vadd(qa_q1_base_monster_origin(&monster->base), (qa_vec3){0, 0, 24});
+  qa_q1_set_body(game, entity, &patch);
+  /* TS emits at monster.origin read after the setBody above. */
+  qa_q1_event event;
+  memset(&event, 0, sizeof event);
   event.kind = "colored-explosion";
   event.has_origin = true;
-  event.origin = origin;
+  event.origin = qa_q1_base_monster_origin(&monster->base);
   event.color_start = 0;
   event.color_length = 4;
-  game->host->emit(game->host->ctx, &event);
-  game->remove(game, entity);
+  qa_q1_emit(game, event);
+  qa_q1_remove(game, entity);
 }
 static void spawn(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_fields_set(monster->entity, "yaw_speed", "35");
+  (void)qa_q1_actor_field_set(monster->base.entity, "yaw_speed", "35");
   qa_q1mpm_monster_spawn_default(monster);
 }
-static void pain(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker, double damage) {
+static void pain(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker, double damage) {
   (void)ctx; (void)attacker; (void)damage;
-  if (monster->state.pain_finished > monster->game->time) return;
-  double r = monster->game->host->random(monster->game->host->ctx);
-  if (r > 0.1) { monster->state.pain_finished = monster->game->time + 0.5; return; }
-  qa_q1mpm_monster_play(monster, r < 0.07 ? "wrath_pn_a01" : "wrath_pn_b01");
-  monster->state.pain_finished = monster->game->time + 3;
-  qa_q1mpm_game_sound(monster->game, monster->entity, "wrath/wpain.wav");
+  if (monster->base.state->pain_finished > monster->base.game->time) return;
+  double r = qa_q1_host_random(monster->base.game);
+  if (r > 0.1) { monster->base.state->pain_finished = monster->base.game->time + 0.5; return; }
+  qa_q1_base_monster_play(&monster->base, r < 0.07 ? "wrath_pn_a01" : "wrath_pn_b01");
+  monster->base.state->pain_finished = monster->base.game->time + 3;
+  qa_q1_sound_defaults(monster->base.game, monster->base.entity->actor.id, "wrath/wpain.wav");
 }
-static void die(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker) {
+static void die(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker) {
   (void)ctx; (void)attacker;
-  qa_q1mpm_monster_play(monster, "wrath_die02");
+  qa_q1_base_monster_play(&monster->base, "wrath_die02");
 }
 static const char *const classnames[] = {"monster_wrath"};
 static const char *const spec_gibs[] = {"wrthgib1", "wrthgib2", "wrthgib3"};

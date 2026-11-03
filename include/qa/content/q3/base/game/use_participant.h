@@ -10,6 +10,6 @@ typedef struct qa_q3_use_participant_services {
 } qa_q3_use_participant_services;
 qa_actor_id qa_q3_use_actor(qa_q3_use_participant participant);
 qa_q3_use_participant qa_q3_require_use_participant(const qa_q3_use_participant *participant);
-/* services NULL mirrors TS undefined. */
-qa_q3_game_entity *qa_q3_use_client(qa_q3_use_participant participant, const qa_q3_use_participant_services *services);
+/* participant NULL mirrors TS null (returns NULL); services NULL mirrors TS undefined. */
+qa_q3_game_entity *qa_q3_use_client(const qa_q3_use_participant *participant, const qa_q3_use_participant_services *services);
 #endif

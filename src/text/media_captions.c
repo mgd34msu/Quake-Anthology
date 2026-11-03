@@ -1,8 +1,11 @@
 /* Port of src/text/media-captions.ts. GPL-2.0-or-later. */
 #include "qa/text/media_captions.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "qa/foundation/support.h"
 
 static const struct {
   const char *language;
@@ -134,6 +137,40 @@ void qa_seat_media_captions_init(qa_seat_media_captions *captions,
   }
 }
 
+void qa_seat_media_captions_set_warn(qa_seat_media_captions *captions,
+                                     void (*warn)(void *ctx, const char *text), void *ctx) {
+  captions->warn = warn;
+  captions->warn_ctx = ctx;
+}
+
+static void skipped_warn(void *raw, const char *reason) {
+  qa_seat_media_captions *captions = (qa_seat_media_captions *)raw;
+  size_t length = strlen(reason);
+  char *text = (char *)malloc(length + 2);
+  if (text == NULL) qa_range_error("Out of memory");
+  memcpy(text, reason, length);
+  text[length] = '\n';
+  text[length + 1] = '\0';
+  captions->warn(captions->warn_ctx, text);
+  free(text);
+}
+
+/* Owned locals of prepare, freed when a raise unwinds through it. */
+typedef struct prepare_locals {
+  char *key;
+  char **paths;
+  size_t path_count;
+  uint8_t *bytes;
+} prepare_locals;
+
+static void prepare_locals_free(void *raw) {
+  prepare_locals *locals = (prepare_locals *)raw;
+  free(locals->key);
+  qa_subtitle_paths_free(locals->paths, locals->path_count);
+  free(locals->bytes);
+  memset(locals, 0, sizeof *locals);
+}
+
 void qa_seat_media_captions_destroy(qa_seat_media_captions *captions) {
   qa_caption_timeline_destroy(&captions->timeline);
   if (captions->owned_catalog != NULL) {
@@ -148,34 +185,34 @@ void qa_seat_media_captions_destroy(qa_seat_media_captions *captions) {
 bool qa_seat_media_captions_prepare(qa_seat_media_captions *captions,
                                     const char *source,
                                     const char *language) {
-  char *key = key_of(source, language);
-  if (key == NULL) return false;
-  if (captions->prepared != NULL && strcmp(key, captions->prepared) == 0) {
-    free(key);
+  prepare_locals locals = {NULL, NULL, 0, NULL};
+  locals.key = key_of(source, language);
+  if (locals.key == NULL) return false;
+  if (captions->prepared != NULL && strcmp(locals.key, captions->prepared) == 0) {
+    free(locals.key);
     return true;
   }
   captions->request++;
   free(captions->prepared);
   captions->prepared = dup_range("", 0);
   qa_caption_timeline_clear(&captions->timeline);
-  char **paths = NULL;
-  size_t path_count = 0;
-  if (!qa_subtitle_paths(source, language, &paths, &path_count)) {
-    free(key);
+  if (!qa_subtitle_paths(source, language, &locals.paths, &locals.path_count)) {
+    free(locals.key);
     return false;
   }
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, prepare_locals_free, &locals);
   bool result = true;
   bool done = false;
-  for (size_t i = 0; i < path_count && !done; i++) {
+  for (size_t i = 0; i < locals.path_count && !done; i++) {
     size_t length = 0;
-    uint8_t *bytes = captions->read(captions->read_ctx, paths[i], &length);
-    if (bytes == NULL) continue;
+    locals.bytes = captions->read(captions->read_ctx, locals.paths[i], &length);
+    if (locals.bytes == NULL) continue;
     qa_localization_catalog *catalog = captions->supplied;
     bool owned = false;
     if (catalog == NULL) {
       catalog = (qa_localization_catalog *)calloc(1, sizeof *catalog);
       if (catalog == NULL) {
-        free(bytes);
         result = false;
         break;
       }
@@ -187,10 +224,19 @@ bool qa_seat_media_captions_prepare(qa_seat_media_captions *captions,
     install_timeline(captions, catalog, owned);
     qa_caption_cue *cues = NULL;
     size_t cue_count = 0;
-    /* TextDecoder output as bytes; the subtitle grammar is ASCII. */
-    bool parsed = qa_parse_subtitle_text((const char *)bytes, length, paths[i],
-                                         &cues, &cue_count);
-    free(bytes);
+    /* new TextDecoder().decode(bytes) drops one leading BOM before the
+     * parser drops another; other bytes pass through (ASCII grammar). */
+    const char *text = (const char *)locals.bytes;
+    if (length >= 3 && locals.bytes[0] == 0xef && locals.bytes[1] == 0xbb &&
+        locals.bytes[2] == 0xbf) {
+      text += 3;
+      length -= 3;
+    }
+    bool parsed = qa_parse_subtitle_text(
+        text, length, locals.paths[i], captions->warn == NULL ? NULL : skipped_warn,
+        captions, &cues, &cue_count);
+    free(locals.bytes);
+    locals.bytes = NULL;
     if (!parsed) {
       result = false;
       break;
@@ -205,18 +251,30 @@ bool qa_seat_media_captions_prepare(qa_seat_media_captions *captions,
       break;
     }
     free(captions->prepared);
-    captions->prepared = key;
-    key = NULL;
+    captions->prepared = locals.key;
+    locals.key = NULL;
     done = true;
   }
-  qa_subtitle_paths_free(paths, path_count);
   if (!done && result) {
     free(captions->prepared);
-    captions->prepared = key;
-    key = NULL;
+    captions->prepared = locals.key;
+    locals.key = NULL;
   }
-  free(key);
+  qa_cleanup_pop(&cleanup);
+  prepare_locals_free(&locals);
   return result;
+}
+
+typedef struct live_prepare_job {
+  qa_seat_media_captions *captions;
+  const char *source;
+  const char *language;
+  bool result;
+} live_prepare_job;
+
+static void live_prepare_run(void *raw) {
+  live_prepare_job *job = (live_prepare_job *)raw;
+  job->result = qa_seat_media_captions_prepare(job->captions, job->source, job->language);
 }
 
 bool qa_seat_media_captions_active(qa_seat_media_captions *captions,
@@ -237,10 +295,16 @@ bool qa_seat_media_captions_active(qa_seat_media_captions *captions,
           strcmp(key, captions->live_request) != 0) {
         free(captions->live_request);
         captions->live_request = key;
-        /* Synchronous form of prepare().catch(failed): load errors
-         * abort, so failed is never invoked (see header). */
-        if (!qa_seat_media_captions_prepare(captions, state.source,
-                                            language)) {
+        /* Synchronous form of prepare().catch(failed). */
+        live_prepare_job job = {captions, state.source, language, true};
+        qa_caught_error caught;
+        if (!qa_try(live_prepare_run, &job, &caught)) {
+          if (captions->live_language.failed != NULL) {
+            char text[QA_CAUGHT_MESSAGE_CAPACITY + 64];
+            snprintf(text, sizeof text, "%s: %s", caught.name, caught.message);
+            captions->live_language.failed(captions->live_language.ctx, text);
+          }
+        } else if (!job.result) {
           return false;
         }
       } else {

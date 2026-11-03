@@ -10,6 +10,7 @@
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/demo.h"
 #include "qa/network/q2/message.h"
+#include "qa/foundation/js.h"
 
 static char *dup_str(const char *s) {
   size_t n = strlen(s);
@@ -57,51 +58,79 @@ static const char *config_get(const qa_q2_server_demo_state *state, double index
   return NULL;
 }
 
+typedef struct signon_scope {
+  qa_q2_sizebuf message;
+  qa_q2_server_demo_config *sorted;
+} signon_scope;
+static void signon_release(void *arg) {
+  signon_scope *scope = (signon_scope *)arg;
+  free(scope->sorted);
+  scope->sorted = NULL;
+  qa_q2_message_destroy(&scope->message);
+}
+
 uint8_t *qa_q2_encode_server_demo_signon(const qa_q2_server_demo_state *state,
                                          size_t *out_length) {
-  qa_q2_sizebuf message;
-  if (!qa_q2_message_create(&message, 32768)) return NULL;
-  qa_q2_msg_write_byte(&message, 12);
-  qa_q2_msg_write_long(&message, 34);
-  qa_q2_msg_write_long(&message, state->servercount);
-  qa_q2_msg_write_byte(&message, 2);
-  qa_q2_msg_write_string(&message, state->gamedir);
-  qa_q2_msg_write_short(&message, -1);
-  const char *level = config_get(state, 0);
-  qa_q2_msg_write_string(&message, level != NULL ? level : "");
+  signon_scope scope;
+  memset(&scope, 0, sizeof scope);
+  if (!qa_q2_message_create(&scope.message, 32768)) return NULL;
   size_t count = state->config_count;
-  qa_q2_server_demo_config *sorted = (qa_q2_server_demo_config *)malloc(
-      count > 0 ? count * sizeof *sorted : sizeof *sorted);
-  if (sorted == NULL) {
-    qa_q2_message_destroy(&message);
+  scope.sorted = (qa_q2_server_demo_config *)malloc(count > 0 ? count * sizeof *scope.sorted
+                                                              : sizeof *scope.sorted);
+  if (scope.sorted == NULL) {
+    qa_q2_message_destroy(&scope.message);
     return NULL;
   }
-  if (count > 0) memcpy(sorted, state->config_strings, count * sizeof *sorted);
-  qsort(sorted, count, sizeof *sorted, config_compare);
+  /* SZ_GetSpace overflow and the range check raise mid-encode. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, signon_release, &scope);
+  qa_q2_sizebuf *message = &scope.message;
+  qa_q2_msg_write_byte(message, 12);
+  qa_q2_msg_write_long(message, 34);
+  qa_q2_msg_write_long(message, state->servercount);
+  qa_q2_msg_write_byte(message, 2);
+  qa_q2_msg_write_string(message, state->gamedir);
+  qa_q2_msg_write_short(message, -1);
+  const char *level = config_get(state, 0);
+  qa_q2_msg_write_string(message, level != NULL ? level : "");
+  if (count > 0) memcpy(scope.sorted, state->config_strings, count * sizeof *scope.sorted);
+  qa_js_sort(scope.sorted, count, sizeof *scope.sorted, config_compare); /* stable, as Array.sort */
   for (size_t i = 0; i < count; i++) {
-    double index = sorted[i].index;
-    if (index != trunc(index) || index < 0 || index >= 2080) {
-      free(sorted);
-      qa_q2_message_destroy(&message);
+    double index = scope.sorted[i].index;
+    if (!isfinite(index) || index != trunc(index) || index < 0 || index >= 2080) {
       qa_range_error("Classic server demo configstring outside range");
     }
-    if (sorted[i].value == NULL || sorted[i].value[0] == '\0') continue;
-    qa_q2_msg_write_byte(&message, 13);
-    qa_q2_msg_write_short(&message, index);
-    qa_q2_msg_write_string(&message, sorted[i].value);
+    if (scope.sorted[i].value == NULL || scope.sorted[i].value[0] == '\0') continue;
+    qa_q2_msg_write_byte(message, 13);
+    qa_q2_msg_write_short(message, index);
+    qa_q2_msg_write_string(message, scope.sorted[i].value);
   }
-  free(sorted);
-  uint8_t *out = qa_q2_message_bytes(&message, out_length);
-  qa_q2_message_destroy(&message);
+  qa_cleanup_pop(&node);
+  uint8_t *out = qa_q2_message_bytes(message, out_length);
+  signon_release(&scope);
   return out;
 }
+
+typedef struct frame_scope {
+  qa_q2_wire_codec wire;
+  bool has_wire;
+  qa_q2_sizebuf message;
+} frame_scope;
+static void frame_release(void *arg) {
+  frame_scope *scope = (frame_scope *)arg;
+  qa_q2_message_destroy(&scope->message);
+  if (scope->has_wire) qa_q2_wire_codec_destroy(&scope->wire);
+  scope->has_wire = false;
+}
+/* TS truthiness of a number field: 0 and NaN are false. */
+static bool truthy(double value) { return value != 0 && !isnan(value); }
 
 uint8_t *qa_q2_encode_server_demo_frame(double server_frame,
                                         const qa_q2_wire_entity *entities,
                                         size_t entity_count,
                                         const qa_q2_byte_span *multicasts,
                                         size_t multicast_count, size_t *out_length) {
-  if (server_frame != trunc(server_frame) || server_frame < 0 ||
+  if (!isfinite(server_frame) || server_frame != trunc(server_frame) || server_frame < 0 ||
       server_frame > 0x7fffffff) {
     qa_range_error("Invalid server demo frame");
   }
@@ -109,42 +138,193 @@ uint8_t *qa_q2_encode_server_demo_frame(double server_frame,
   memset(&classic, 0, sizeof classic);
   classic.kind = "q2-classic";
   classic.version = 34;
-  qa_q2_wire_codec wire;
-  if (!qa_q2_wire_codec_init(&wire, classic)) return NULL;
-  qa_q2_sizebuf message;
-  if (!qa_q2_message_create(&message, 32768)) {
-    qa_q2_wire_codec_destroy(&wire);
+  frame_scope scope;
+  memset(&scope, 0, sizeof scope);
+  qa_q2_sizebuf_init_empty(&scope.message);
+  if (!qa_q2_wire_codec_init(&scope.wire, classic)) return NULL;
+  scope.has_wire = true;
+  if (!qa_q2_message_create(&scope.message, 32768)) {
+    frame_release(&scope);
     return NULL;
   }
+  qa_cleanup node;
+  qa_cleanup_push(&node, frame_release, &scope);
+  qa_q2_sizebuf *message = &scope.message;
+  qa_q2_protocol_codec *codec = scope.wire.selected_codec;
   qa_q2_wire_entity zero;
   qa_q2_wire_entity_init(&zero);
-  qa_q2_msg_write_byte(&message, 20);
-  qa_q2_msg_write_long(&message, server_frame);
-  wire.selected_codec->write_packet_entities_begin(wire.selected_codec, &message);
+  qa_q2_msg_write_byte(message, 20);
+  qa_q2_msg_write_long(message, server_frame);
+  codec->write_packet_entities_begin(codec, message);
   double previous = 0;
   for (size_t i = 0; i < entity_count; i++) {
     const qa_q2_wire_entity *entity = &entities[i];
     if (entity->number <= previous || entity->number >= 1024) {
-      qa_q2_message_destroy(&message);
-      qa_q2_wire_codec_destroy(&wire);
       qa_range_error("Classic server demo entities must be ordered and unique");
     }
     previous = entity->number;
-    if (entity->modelindex != 0 || entity->effects != 0 || entity->sound != 0 ||
-        entity->event != 0) {
-      wire.selected_codec->write_delta_entity(wire.selected_codec, &message, &zero,
-                                              entity, false, true);
+    if (truthy(entity->modelindex) || truthy(entity->effects) || truthy(entity->sound) ||
+        truthy(entity->event)) {
+      codec->write_delta_entity(codec, message, &zero, entity, false, true);
     }
   }
-  wire.selected_codec->write_packet_entities_end(wire.selected_codec, &message);
+  codec->write_packet_entities_end(codec, message);
   for (size_t i = 0; i < multicast_count; i++) {
-    qa_q2_sz_write(&message, multicasts[i].bytes, multicasts[i].length,
+    qa_q2_sz_write(message, multicasts[i].bytes, multicasts[i].length,
                    (int64_t)multicasts[i].length);
   }
-  uint8_t *out = qa_q2_message_bytes(&message, out_length);
-  qa_q2_message_destroy(&message);
-  qa_q2_wire_codec_destroy(&wire);
+  qa_cleanup_pop(&node);
+  uint8_t *out = qa_q2_message_bytes(message, out_length);
+  frame_release(&scope);
   return out;
+}
+
+/* Everything readQ2ServerDemo holds while it decodes; a raise anywhere releases it. */
+typedef struct demo_read_scope {
+  qa_q2_wire_codec wire;
+  bool has_wire;
+  qa_q2_server_message_reader multicast;
+  bool has_multicast;
+  qa_q2_demo_record *demo_records;
+  size_t demo_count;
+  qa_q2_server_demo_record *results;
+  size_t count, capacity;
+  qa_q2_server_demo_record record; /* the record being decoded */
+} demo_read_scope;
+static void demo_read_release(void *arg) {
+  demo_read_scope *scope = (demo_read_scope *)arg;
+  record_dispose(&scope->record);
+  qa_q2_server_demo_records_free(scope->results, scope->count);
+  scope->results = NULL;
+  scope->count = 0;
+  qa_q2_demo_records_free(scope->demo_records, scope->demo_count);
+  scope->demo_records = NULL;
+  scope->demo_count = 0;
+  if (scope->has_multicast) qa_q2_server_message_reader_destroy(&scope->multicast);
+  scope->has_multicast = false;
+  if (scope->has_wire) qa_q2_wire_codec_destroy(&scope->wire);
+  scope->has_wire = false;
+}
+
+/* Appends one configStrings entry (TS Map.set: an existing index keeps its slot). */
+static bool config_set(qa_q2_server_demo_state *state, size_t *capacity, double index,
+                       const char *value) {
+  char *owned = dup_str(value);
+  if (owned == NULL) return false;
+  for (size_t i = 0; i < state->config_count; i++) {
+    if (state->config_strings[i].index == index) {
+      free(state->config_values[i]);
+      state->config_values[i] = owned;
+      state->config_strings[i].value = owned;
+      return true;
+    }
+  }
+  if (state->config_count == *capacity) {
+    size_t next = *capacity > 0 ? *capacity * 2 : 16;
+    qa_q2_server_demo_config *grown =
+        (qa_q2_server_demo_config *)realloc(state->config_strings, next * sizeof *grown);
+    if (grown == NULL) {
+      free(owned);
+      return false;
+    }
+    state->config_strings = grown;
+    char **grown_values = (char **)realloc(state->config_values, next * sizeof *grown_values);
+    if (grown_values == NULL) {
+      free(owned);
+      return false;
+    }
+    state->config_values = grown_values;
+    *capacity = next;
+  }
+  state->config_strings[state->config_count].index = index;
+  state->config_strings[state->config_count].value = owned;
+  state->config_values[state->config_count] = owned;
+  state->config_count++;
+  return true;
+}
+
+/* Decodes one demo record into scope->record; false only on OOM. */
+static bool read_one(demo_read_scope *scope, const qa_q2_demo_record *source, bool *signon) {
+  qa_q2_wire_codec *wire = &scope->wire;
+  qa_q2_server_demo_record *record = &scope->record;
+  if (!qa_q2_wire_codec_begin(wire, source->bytes, source->bytes_length)) return false;
+  qa_q2_sizebuf *message = &wire->message;
+  int32_t opcode = qa_q2_msg_read_byte(message);
+  if (opcode == 12) {
+    if (qa_q2_msg_read_long(message) != 34) {
+      qa_q2_throw_error("Server demo requires classic protocol34");
+    }
+    double servercount = (double)qa_q2_msg_read_long(message);
+    if (qa_q2_msg_read_byte(message) != 2) qa_q2_throw_error("Not a native server demo");
+    char gamedir[2048];
+    (void)qa_q2_msg_read_string(message, gamedir, sizeof gamedir);
+    if (qa_q2_msg_read_short(message) != -1) {
+      qa_q2_throw_error("Server demo cannot contain a player view");
+    }
+    char ignored[2048];
+    (void)qa_q2_msg_read_string(message, ignored, sizeof ignored);
+    record->kind = QA_Q2_SERVER_DEMO_SIGNON;
+    record->state.servercount = servercount;
+    record->state.gamedir = dup_str(gamedir);
+    if (record->state.gamedir == NULL) return false;
+    size_t capacity = 0;
+    while (message->readcount < message->cursize) {
+      if (qa_q2_msg_read_byte(message) != 13) {
+        qa_q2_throw_error("Invalid server demo signon opcode");
+      }
+      int32_t index = qa_q2_msg_read_short(message);
+      if (index < 0 || index >= 2080) qa_q2_throw_error("Invalid server demo configstring");
+      char value[2048];
+      (void)qa_q2_msg_read_string(message, value, sizeof value);
+      if (!config_set(&record->state, &capacity, (double)index, value)) return false;
+      qa_q2_message_check_read(message);
+    }
+    qa_q2_wire_codec_finish(wire);
+    *signon = true;
+    return true;
+  }
+  if (opcode == 20 && *signon) {
+    qa_q2_protocol_codec *codec = wire->selected_codec;
+    double server_frame = (double)qa_q2_msg_read_long(message);
+    record->kind = QA_Q2_SERVER_DEMO_FRAME;
+    record->server_frame = server_frame;
+    if (server_frame < 0) qa_q2_throw_error("Invalid server demo frame");
+    codec->read_packet_entities_begin(codec);
+    size_t capacity = 0;
+    double previous = 0;
+    for (;;) {
+      qa_q2_entity_bits header;
+      codec->read_entity_bits(codec, &header);
+      qa_q2_message_check_read(message);
+      if (header.number == 0) break;
+      if (header.number <= previous || header.number >= 1024 ||
+          (header.bits_u64 & (uint64_t)QA_Q2_U_REMOVE) != 0) {
+        qa_q2_throw_error("Invalid full server demo entity");
+      }
+      previous = header.number;
+      qa_q2_wire_entity empty;
+      qa_q2_wire_entity_init(&empty);
+      qa_q2_wire_entity entity;
+      qa_q2_wire_entity_init(&entity);
+      codec->read_delta_entity(codec, &empty, &entity, header.number, header.bits_u64);
+      qa_q2_message_check_read(message);
+      if (record->entity_count == capacity) {
+        size_t next = capacity > 0 ? capacity * 2 : 16;
+        qa_q2_wire_entity *grown =
+            (qa_q2_wire_entity *)realloc(record->entities, next * sizeof *grown);
+        if (grown == NULL) return false;
+        record->entities = grown;
+        capacity = next;
+      }
+      record->entities[record->entity_count++] = entity;
+    }
+    /* checkMessageRead above keeps readcount within the record. */
+    size_t at = (size_t)message->readcount;
+    return qa_q2_server_message_reader_read(&scope->multicast, source->bytes + at,
+                                            source->bytes_length - at, &record->multicasts,
+                                            &record->multicast_count);
+  }
+  qa_q2_throw_error("Server demo requires signon followed by entity frames");
 }
 
 bool qa_q2_read_server_demo(const uint8_t *bytes, size_t length,
@@ -153,264 +333,48 @@ bool qa_q2_read_server_demo(const uint8_t *bytes, size_t length,
   memset(&classic, 0, sizeof classic);
   classic.kind = "q2-classic";
   classic.version = 34;
-  qa_q2_wire_codec wire;
-  if (!qa_q2_wire_codec_init(&wire, classic)) return false;
-  qa_q2_server_message_options options;
-  memset(&options, 0, sizeof options);
-  options.max_config_strings = 2080;
-  options.inventory_slots = 256;
-  qa_q2_server_message_reader multicast;
-  if (!qa_q2_server_message_reader_init(&multicast, wire.selected_protocol, options)) {
-    qa_q2_wire_codec_destroy(&wire);
-    return false;
+  demo_read_scope scope;
+  memset(&scope, 0, sizeof scope);
+  qa_cleanup node;
+  qa_cleanup_push(&node, demo_read_release, &scope);
+  bool ok = qa_q2_wire_codec_init(&scope.wire, classic);
+  scope.has_wire = ok;
+  if (ok) {
+    qa_q2_server_message_options options;
+    memset(&options, 0, sizeof options);
+    options.max_config_strings = 2080;
+    options.inventory_slots = 256;
+    ok = qa_q2_server_message_reader_init(&scope.multicast, scope.wire.selected_protocol,
+                                          options);
+    scope.has_multicast = ok;
   }
-  qa_q2_demo_record *demo_records = NULL;
-  size_t demo_count = 0;
-  if (!qa_q2_read_demo(bytes, length, &demo_records, &demo_count)) {
-    qa_q2_server_message_reader_destroy(&multicast);
-    qa_q2_wire_codec_destroy(&wire);
-    return false;
-  }
-  size_t capacity = 8;
-  size_t count = 0;
-  qa_q2_server_demo_record *results =
-      (qa_q2_server_demo_record *)calloc(capacity, sizeof *results);
-  if (results == NULL) {
-    qa_q2_demo_records_free(demo_records, demo_count);
-    qa_q2_server_message_reader_destroy(&multicast);
-    qa_q2_wire_codec_destroy(&wire);
-    return false;
-  }
+  if (ok) ok = qa_q2_read_demo(bytes, length, &scope.demo_records, &scope.demo_count);
   bool signon = false;
-  bool oom = false;
-  for (size_t r = 0; r < demo_count && !oom; r++) {
-    if (!qa_q2_wire_codec_begin(&wire, demo_records[r].bytes, demo_records[r].bytes_length)) {
-      oom = true;
-      break;
-    }
-    qa_q2_sizebuf *message = &wire.message;
-    int32_t opcode = qa_q2_msg_read_byte(message);
-    /* Multi-record loops free the growable array on failure below. */
-    qa_q2_server_demo_record record;
-    memset(&record, 0, sizeof record);
-    if (opcode == 12) {
-      if (qa_q2_msg_read_long(message) != 34) {
-        qa_q2_server_demo_records_free(results, count);
-        qa_q2_demo_records_free(demo_records, demo_count);
-        qa_q2_server_message_reader_destroy(&multicast);
-        qa_q2_wire_codec_destroy(&wire);
-        qa_q2_throw_error("Server demo requires classic protocol34");
-      }
-      double servercount = (double)qa_q2_msg_read_long(message);
-      if (qa_q2_msg_read_byte(message) != 2) {
-        qa_q2_server_demo_records_free(results, count);
-        qa_q2_demo_records_free(demo_records, demo_count);
-        qa_q2_server_message_reader_destroy(&multicast);
-        qa_q2_wire_codec_destroy(&wire);
-        qa_q2_throw_error("Not a native server demo");
-      }
-      char gamedir[2048];
-      (void)qa_q2_msg_read_string(message, gamedir, sizeof gamedir);
-      if (qa_q2_msg_read_short(message) != -1) {
-        qa_q2_server_demo_records_free(results, count);
-        qa_q2_demo_records_free(demo_records, demo_count);
-        qa_q2_server_message_reader_destroy(&multicast);
-        qa_q2_wire_codec_destroy(&wire);
-        qa_q2_throw_error("Server demo cannot contain a player view");
-      }
-      char ignored[2048];
-      (void)qa_q2_msg_read_string(message, ignored, sizeof ignored);
-      record.kind = QA_Q2_SERVER_DEMO_SIGNON;
-      record.state.servercount = servercount;
-      record.state.gamedir = dup_str(gamedir);
-      size_t cfg_cap = 16;
-      size_t cfg_count = 0;
-      qa_q2_server_demo_config *configs =
-          (qa_q2_server_demo_config *)calloc(cfg_cap, sizeof *configs);
-      char **values = (char **)calloc(cfg_cap, sizeof(char *));
-      if (record.state.gamedir == NULL || configs == NULL || values == NULL) {
-        free(configs);
-        free(values);
-        state_free(&record.state);
-        oom = true;
-        break;
-      }
-      while (message->readcount < message->cursize && !oom) {
-        if (qa_q2_msg_read_byte(message) != 13) {
-          free(configs);
-          for (size_t i = 0; i < cfg_count; i++) free(values[i]);
-          free(values);
-          state_free(&record.state);
-          qa_q2_server_demo_records_free(results, count);
-          qa_q2_demo_records_free(demo_records, demo_count);
-          qa_q2_server_message_reader_destroy(&multicast);
-          qa_q2_wire_codec_destroy(&wire);
-          qa_q2_throw_error("Invalid server demo signon opcode");
-        }
-        int32_t index = qa_q2_msg_read_short(message);
-        if (index < 0 || index >= 2080) {
-          free(configs);
-          for (size_t i = 0; i < cfg_count; i++) free(values[i]);
-          free(values);
-          state_free(&record.state);
-          qa_q2_server_demo_records_free(results, count);
-          qa_q2_demo_records_free(demo_records, demo_count);
-          qa_q2_server_message_reader_destroy(&multicast);
-          qa_q2_wire_codec_destroy(&wire);
-          qa_q2_throw_error("Invalid server demo configstring");
-        }
-        char value[2048];
-        (void)qa_q2_msg_read_string(message, value, sizeof value);
-        qa_q2_message_check_read(message);
-        /* Map.set: replace existing index. */
-        long at = -1;
-        for (size_t i = 0; i < cfg_count; i++) {
-          if (configs[i].index == (double)index) at = (long)i;
-        }
-        char *owned = dup_str(value);
-        if (owned == NULL) { oom = true; break; }
-        if (at >= 0) {
-          free(values[at]);
-          values[at] = owned;
-          configs[at].value = owned;
-        } else {
-          if (cfg_count == cfg_cap) {
-            cfg_cap *= 2;
-            qa_q2_server_demo_config *grown =
-                (qa_q2_server_demo_config *)realloc(configs, cfg_cap * sizeof *grown);
-            if (grown == NULL) {
-              free(owned);
-              oom = true;
-              break;
-            }
-            configs = grown;
-            char **grown_v = (char **)realloc(values, cfg_cap * sizeof(char *));
-            if (grown_v == NULL) {
-              free(owned);
-              oom = true;
-              break;
-            }
-            values = grown_v;
-          }
-          configs[cfg_count].index = (double)index;
-          configs[cfg_count].value = owned;
-          values[cfg_count] = owned;
-          cfg_count++;
-        }
-      }
-      if (oom) {
-        for (size_t i = 0; i < cfg_count; i++) free(values[i]);
-        free(values);
-        free(configs);
-        state_free(&record.state);
-        break;
-      }
-      record.state.config_strings = configs;
-      record.state.config_values = values;
-      record.state.config_count = cfg_count;
-      qa_q2_wire_codec_finish(&wire);
-      signon = true;
-    } else if (opcode == 20 && signon) {
-      double server_frame = (double)qa_q2_msg_read_long(message);
-      record.kind = QA_Q2_SERVER_DEMO_FRAME;
-      record.server_frame = server_frame;
-      if (server_frame < 0) {
-        qa_q2_server_demo_records_free(results, count);
-        qa_q2_demo_records_free(demo_records, demo_count);
-        qa_q2_server_message_reader_destroy(&multicast);
-        qa_q2_wire_codec_destroy(&wire);
-        qa_q2_throw_error("Invalid server demo frame");
-      }
-      wire.selected_codec->read_packet_entities_begin(wire.selected_codec);
-      size_t ent_cap = 16;
-      size_t ent_count = 0;
-      qa_q2_wire_entity *entities =
-          (qa_q2_wire_entity *)calloc(ent_cap, sizeof *entities);
-      if (entities == NULL) { oom = true; break; }
-      double previous = 0;
-      bool failed = false;
-      for (;;) {
-        qa_q2_entity_bits header;
-        wire.selected_codec->read_entity_bits(wire.selected_codec, &header);
-        qa_q2_message_check_read(message);
-        if (header.number == 0) break;
-        if (header.number <= previous || header.number >= 1024 ||
-            (header.bits_u64 & QA_Q2_U_REMOVE) != 0) {
-          free(entities);
-          qa_q2_server_demo_records_free(results, count);
-          qa_q2_demo_records_free(demo_records, demo_count);
-          qa_q2_server_message_reader_destroy(&multicast);
-          qa_q2_wire_codec_destroy(&wire);
-          qa_q2_throw_error("Invalid full server demo entity");
-        }
-        previous = header.number;
-        qa_q2_wire_entity empty;
-        qa_q2_wire_entity_init(&empty);
-        qa_q2_wire_entity entity;
-        qa_q2_wire_entity_init(&entity);
-        wire.selected_codec->read_delta_entity(wire.selected_codec, &empty, &entity,
-                                               header.number, header.bits_u64);
-        qa_q2_message_check_read(message);
-        if (ent_count == ent_cap) {
-          ent_cap *= 2;
-          qa_q2_wire_entity *grown =
-              (qa_q2_wire_entity *)realloc(entities, ent_cap * sizeof *grown);
-          if (grown == NULL) { failed = true; break; }
-          entities = grown;
-        }
-        entities[ent_count++] = entity;
-      }
-      if (failed) {
-        free(entities);
-        oom = true;
-        break;
-      }
-      record.entities = entities;
-      record.entity_count = ent_count;
-      int64_t at = message->readcount;
-      size_t tail_len = demo_records[r].bytes_length > (size_t)(at > 0 ? at : 0)
-                            ? demo_records[r].bytes_length - (size_t)at
-                            : 0;
-      const uint8_t *tail = demo_records[r].bytes + (at > 0 ? (size_t)at : 0);
-      if (!qa_q2_server_message_reader_read(&multicast, tail, tail_len,
-                                            &record.multicasts,
-                                            &record.multicast_count)) {
-        record_dispose(&record);
-        oom = true;
-        break;
-      }
-    } else {
-      qa_q2_server_demo_records_free(results, count);
-      qa_q2_demo_records_free(demo_records, demo_count);
-      qa_q2_server_message_reader_destroy(&multicast);
-      qa_q2_wire_codec_destroy(&wire);
-      qa_q2_throw_error("Server demo requires signon followed by entity frames");
-    }
-    if (count == capacity) {
-      capacity *= 2;
+  for (size_t r = 0; ok && r < scope.demo_count; r++) {
+    ok = read_one(&scope, &scope.demo_records[r], &signon);
+    if (!ok) break;
+    if (scope.count == scope.capacity) {
+      size_t next = scope.capacity > 0 ? scope.capacity * 2 : 8;
       qa_q2_server_demo_record *grown =
-          (qa_q2_server_demo_record *)realloc(results, capacity * sizeof *grown);
+          (qa_q2_server_demo_record *)realloc(scope.results, next * sizeof *grown);
       if (grown == NULL) {
-        record_dispose(&record);
-        oom = true;
+        ok = false;
         break;
       }
-      results = grown;
+      scope.results = grown;
+      scope.capacity = next;
     }
-    results[count++] = record;
+    scope.results[scope.count++] = scope.record;
+    memset(&scope.record, 0, sizeof scope.record);
   }
-  qa_q2_demo_records_free(demo_records, demo_count);
-  qa_q2_server_message_reader_destroy(&multicast);
-  qa_q2_wire_codec_destroy(&wire);
-  if (oom) {
-    qa_q2_server_demo_records_free(results, count);
-    return false;
+  if (ok && !signon) qa_q2_throw_error("Server demo has no signon");
+  qa_cleanup_pop(&node);
+  if (ok) {
+    *out = scope.results;
+    *out_count = scope.count;
+    scope.results = NULL;
+    scope.count = 0;
   }
-  if (!signon) {
-    qa_q2_server_demo_records_free(results, count);
-    qa_q2_throw_error("Server demo has no signon");
-  }
-  *out = results;
-  *out_count = count;
-  return true;
+  demo_read_release(&scope);
+  return ok;
 }

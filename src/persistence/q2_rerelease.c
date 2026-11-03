@@ -1,5 +1,6 @@
 /* Port of src/persistence/q2-rerelease.ts. GPL-2.0-or-later. */
 #include "qa/persistence/q2_rerelease.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +8,7 @@
 #include <string.h>
 
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 static qa_save_json *shallow_copy(const qa_save_json *object) {
   qa_save_json *copy = qa_save_json_object();
@@ -113,12 +115,12 @@ bool qa_decode_q2_rerelease_level(const char *text, qa_q2_rerelease_level_save *
   if (records->entry_count > 0 && values == NULL) { qa_save_json_free(root); return false; }
   for (size_t i = 0; i < records->entry_count; i++) {
     const char *key = records->entries[i].key;
-    double slot = strtod(key, NULL);
+    double slot = qa_js_string_to_number(key); /* Number(key) */
     char canonical[64];
     if (slot == trunc(slot) && fabs(slot) <= 9007199254740991.0)
       (void)snprintf(canonical, sizeof canonical, "%lld", (long long)slot);
     else
-      (void)snprintf(canonical, sizeof canonical, "%.17g", slot);
+      (void)snprintf(canonical, sizeof canonical, "%s", QA_JS_NUMBER(slot));
     char path[128];
     (void)snprintf(path, sizeof path, "entities.%s", key);
     if (!(slot == trunc(slot) && fabs(slot) <= 9007199254740991.0) || slot < 0 ||
@@ -145,7 +147,7 @@ char *qa_encode_q2_rerelease_level(const qa_q2_rerelease_level_save *save) {
     if (slot == trunc(slot) && fabs(slot) <= 9007199254740991.0)
       (void)snprintf(key, sizeof key, "%lld", (long long)slot);
     else
-      (void)snprintf(key, sizeof key, "%.17g", slot);
+      (void)snprintf(key, sizeof key, "%s", QA_JS_NUMBER(slot));
     /* Borrow the record node under a fresh owned key. */
     qa_save_json_entry *entries = (qa_save_json_entry *)realloc(
         entities->entries, (entities->entry_count + 1) * sizeof *entries);

@@ -1,62 +1,66 @@
-/* Port of src/app/bootstrap/simulation/q3/presentation.ts over landed
- * entity pool/game mirrors. SimulationPresentation mirrors
- * simulation/types.ts (sibling slice) with the fields set here.
- * Result arrays are caller buffers. GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/simulation/q3/presentation.ts.
+ * Q3SourcePresentationState is the TS interface: rows hold copies of the
+ * source EntityState (entity.s.copy()), PlayerState (client.ps.copy()) and
+ * configstring text, taken from the real EntityPool and ConfigStringStore.
+ * The state owns its arrays, player-state copies and strings; release it
+ * with qa_app_q3_source_presentation_state_destroy. Model presentations
+ * are written into a caller buffer; their paths are item/configstring
+ * strings or process-lifetime "*N" inline-model names. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_Q3_PRESENTATION_H
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_PRESENTATION_H
-#include "qa/app/bootstrap/simulation/q3/types.h"
+#include <stdbool.h>
+#include <stddef.h>
 #include "qa/app/bootstrap/simulation/types.h"
 #include "qa/content/q3/base/game/entities.h"
+#include "qa/content/q3/base/game/utilities.h"
 #include "qa/content/q3/base/shared/definitions.h"
+#include "qa/content/q3/base/shared/entity_state.h"
+#include "qa/content/q3/base/shared/player_state.h"
+#include "qa/contracts/identity.h"
+#include "qa/contracts/math.h"
 
-typedef struct qa_app_q3_presentation_entity {
+/* TS Q3SourcePresentationState["entities"][number]. */
+typedef struct qa_app_q3_source_presentation_entity {
   qa_actor_id actor;
-  qa_q3_game_entity_state_mirror state;
+  qa_q3_base_entity_state state;
   qa_vec3 origin;
   bool linked;
   double server_flags, single_client;
-} qa_app_q3_presentation_entity;
-typedef struct qa_app_q3_presentation_client {
+} qa_app_q3_source_presentation_entity;
+/* TS Q3SourcePresentationState["clients"][number]; state is an owned copy. */
+typedef struct qa_app_q3_source_presentation_client {
   qa_actor_id actor;
   double slot;
-  qa_q3_game_player_state_mirror state;
-} qa_app_q3_presentation_client;
-typedef struct qa_app_q3_presentation_configstring { double index; const char *value; } qa_app_q3_presentation_configstring;
+  qa_q3_base_player_state state;
+} qa_app_q3_source_presentation_client;
+/* TS Q3SourcePresentationState["configstrings"][number]; value is owned. */
+typedef struct qa_app_q3_source_presentation_configstring {
+  double index;
+  char *value;
+} qa_app_q3_source_presentation_configstring;
+/* TS Q3SourcePresentationState. */
 typedef struct qa_app_q3_source_presentation_state {
-  const char *product;
+  qa_q3_base_product product;
   double time;
-  qa_app_q3_presentation_entity *entities;
-  size_t entity_capacity, entity_count;
-  qa_app_q3_presentation_client *clients;
-  size_t client_capacity, client_count;
-  qa_app_q3_presentation_configstring *configstrings;
-  size_t configstring_capacity, configstring_count;
-  char (*configstring_storage)[256];
+  qa_app_q3_source_presentation_entity *entities;
+  size_t entity_count;
+  qa_app_q3_source_presentation_client *clients;
+  size_t client_count;
+  qa_app_q3_source_presentation_configstring *configstrings;
+  size_t configstring_count;
 } qa_app_q3_source_presentation_state;
+void qa_app_q3_source_presentation_state_destroy(qa_app_q3_source_presentation_state *state);
 
-typedef struct qa_app_configstring_getter {
-  void *ctx;
-  const char *(*get)(void *ctx, double index);
-} qa_app_configstring_getter;
+struct qa_app_q3_source_runtime;
+/* TS q3SourcePresentationState(runtime). NULL only on OOM. */
+qa_app_q3_source_presentation_state *qa_app_q3_source_presentation_state_of(struct qa_app_q3_source_runtime *runtime);
+/* TS q3PoolPresentationState(pool, product, time, strings). NULL only on OOM. */
+qa_app_q3_source_presentation_state *qa_app_q3_pool_presentation_state(qa_q3_entity_pool *pool,
+    qa_q3_base_product product, double time, qa_q3_config_string_store strings);
 
-/* TS Q3SourceRuntime surface read by the runtime helpers. */
-typedef struct qa_app_q3_source_runtime_view {
-  qa_q3_entity_pool *pool;
-  const char *product;
-  double (*now)(void *ctx);
-  double level_time;
-  const char *content;
-  void *ctx;
-  qa_app_configstring_getter configstrings;
-} qa_app_q3_source_runtime_view;
-
-qa_app_q3_source_presentation_state qa_app_q3_build_source_presentation_state(qa_app_q3_source_runtime_view runtime,
-    qa_app_q3_source_presentation_state out);
-qa_app_q3_source_presentation_state qa_app_q3_pool_presentation_state(qa_q3_entity_pool *pool, const char *product,
-    double time, qa_app_configstring_getter strings, qa_app_q3_source_presentation_state out);
-
-/* qa_app_simulation_presentation: landed simulation/types.h. */
-size_t qa_app_q3_source_models(qa_app_q3_source_runtime_view runtime, qa_app_simulation_presentation *out, size_t capacity);
-size_t qa_app_q3_pool_models(qa_q3_entity_pool *pool, const char *product, double time, const char *content,
-    qa_app_configstring_getter strings, qa_app_simulation_presentation *out, size_t capacity);
+/* TS q3SourceModels(runtime) / q3PoolModels(...). Returns the number of
+ * presentations TS produces; rows beyond capacity are not written. */
+size_t qa_app_q3_source_models(struct qa_app_q3_source_runtime *runtime, qa_app_simulation_presentation *out, size_t capacity);
+size_t qa_app_q3_pool_models(qa_q3_entity_pool *pool, qa_q3_base_product product, double time, qa_content_id content,
+    qa_q3_config_string_store strings, qa_app_simulation_presentation *out, size_t capacity);
 #endif

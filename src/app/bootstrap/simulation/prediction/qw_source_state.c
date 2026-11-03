@@ -4,6 +4,8 @@
 #include <string.h>
 #include "qa/app/bootstrap/simulation/prediction/step.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include <math.h>
 
 qa_movement_profile qa_app_qw_prediction_profile(qa_movement_profile base, qa_app_qw_move_variables variables) {
   qa_movement_profile profile = base;
@@ -22,7 +24,7 @@ qa_app_movement_prediction_snapshot qa_app_qw_prediction_snapshot(qa_app_movemen
   if (base.state.kind != QA_MOVEMENT_STATE_QW) qa_range_error("QW prediction requires a QW snapshot");
   qa_qw_movement_state continuation = acknowledged && acknowledged->state.kind == QA_MOVEMENT_STATE_QW
       ? acknowledged->state.as.qw : base.state.as.qw;
-  double view_height = (((long long)player.flags) & 1024) != 0 ? 8 : (((long long)player.flags) & 512) != 0 ? -16 : 22;
+  double view_height = ((qa_js_to_int32(player.flags)) & 1024) != 0 ? 8 : ((qa_js_to_int32(player.flags)) & 512) != 0 ? -16 : 22;
   qa_app_movement_prediction_snapshot next = base;
   next.sequence = sequence; next.command_time_milliseconds = command_time_milliseconds;
   next.state.kind = QA_MOVEMENT_STATE_QW;
@@ -141,7 +143,7 @@ void qa_app_quakeworld_prediction_sent(qa_app_quakeworld_prediction *prediction,
 }
 void qa_app_quakeworld_prediction_acknowledged(qa_app_quakeworld_prediction *prediction, double sequence, double now) {
   (void)now;
-  if (sequence != (double)(long long)sequence) qa_range_error("QW acknowledgement needs an integer channel sequence");
+  if (!(isfinite(sequence) && sequence == trunc(sequence))) qa_range_error("QW acknowledgement needs an integer channel sequence");
   if (sequence > prediction->acknowledged_sequence) prediction->acknowledged_sequence = sequence;
 }
 void qa_app_quakeworld_prediction_receive(qa_app_quakeworld_prediction *prediction,

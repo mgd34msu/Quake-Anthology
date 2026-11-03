@@ -60,8 +60,16 @@ struct qa_save_value {
   size_t item_count;
   qa_save_entry *entries; /* owned */
   size_t entry_count;
+  /* Not data: a live handle a decoder attached to this node (TS trees hold objects such
+   * as session-scoped identities). Owned; never encoded, and no reader or comparison
+   * sees it. */
+  void *attachment;
+  size_t attachment_length;
 };
 
+/* Copies `length` bytes as the node's attachment, replacing any; false on allocation failure. */
+bool qa_save_value_attach(qa_save_value *value, const void *data, size_t length);
+const void *qa_save_value_attachment(const qa_save_value *value, size_t length);
 /* Constructors; NULL only on allocation failure. */
 qa_save_value *qa_save_value_undefined(void);
 qa_save_value *qa_save_value_null(void);
@@ -95,7 +103,9 @@ qa_save_value *qa_parse_json_value(const uint8_t *bytes, size_t length, bool qui
 
 typedef struct qa_save_reader {
   const qa_save_value *value; /* borrowed; NULL means TS undefined */
-  char *path; /* owned */
+  /* Held inline so a reader abandoned by a thrown decode error owns nothing. Only error
+   * text reads it; a path beyond the capacity shortens that text. */
+  char path[256];
 } qa_save_reader;
 
 /* `path` NULL means "save". Returns false only on OOM. */

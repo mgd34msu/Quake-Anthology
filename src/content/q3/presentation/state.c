@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/state.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/state.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -122,7 +123,7 @@ qa_q3_pres_client_entity *qa_q3_pres_client_game_state_entity_at(qa_q3_pres_clie
     if (number == floor(number) && number >= -9007199254740991.0 && number <= 9007199254740991.0) {
       qa_range_error("Invalid cgame entity number %lld", (long long)number);
     }
-    qa_range_error("Invalid cgame entity number %g", number);
+    qa_range_error("Invalid cgame entity number %s", QA_JS_NUMBER(number));
   }
   return &state->entities[(size_t)number];
 }

@@ -1,0 +1,58 @@
+q1.styles 264.000 256.000 308.000 256.000 3.000 3.500 3.000 style0=12.000
+q1.supplemental count=9
+q1.supplemental 0 group=sequence/opaque ops=1
+q1.supplemental 0.0 kind=draw batches=2
+q1.supplemental 0.0.0 v=4 i=6 p=-7191.095 c=16.000 t=5.250 depthWrite=true pair=false
+q1.supplemental 0.0.1 v=4 i=6 p=-7191.095 c=16.000 t=5.250 depthWrite=false pair=false
+q1.supplemental 1 group=sequence/opaque ops=1
+q1.supplemental 1.0 kind=draw batches=3
+q1.supplemental 1.0.0 v=4 i=6 p=-7432.008 c=16.000 t=14.156 depthWrite=true pair=false
+q1.supplemental 1.0.1 v=4 i=6 p=-7432.008 c=16.000 t=3.656 depthWrite=false pair=false
+q1.supplemental 1.0.2 v=4 i=6 p=-7432.008 c=16.000 t=14.156 depthWrite=false pair=false
+q1.supplemental 2 group=sequence/opaque ops=1
+q1.supplemental 2.0 kind=draw batches=3
+q1.supplemental 2.0.0 v=4 i=6 p=-7597.426 c=16.000 t=40.656 depthWrite=true pair=false
+q1.supplemental 2.0.1 v=4 i=6 p=-7597.426 c=16.000 t=3.813 depthWrite=false pair=false
+q1.supplemental 2.0.2 v=4 i=6 p=-7597.426 c=16.000 t=40.656 depthWrite=false pair=false
+q1.supplemental 3 group=sequence/opaque ops=1
+q1.supplemental 3.0 kind=draw batches=3
+q1.supplemental 3.0.0 v=4 i=6 p=-7444.850 c=16.000 t=14.567 depthWrite=true pair=false
+q1.supplemental 3.0.1 v=4 i=6 p=-7444.850 c=16.000 t=3.634 depthWrite=false pair=false
+q1.supplemental 3.0.2 v=4 i=6 p=-7444.850 c=16.000 t=14.567 depthWrite=false pair=false
+q1.supplemental 4 group=sequence/opaque ops=1
+q1.supplemental 4.0 kind=draw batches=3
+q1.supplemental 4.0.0 v=4 i=6 p=-7694.442 c=16.000 t=15.969 depthWrite=true pair=false
+q1.supplemental 4.0.1 v=4 i=6 p=-7694.442 c=16.000 t=3.550 depthWrite=false pair=false
+q1.supplemental 4.0.2 v=4 i=6 p=-7694.442 c=16.000 t=15.969 depthWrite=false pair=false
+q1.supplemental 5 group=sequence/translucent ops=1
+q1.supplemental 5.0 kind=object-opacity opacity=0.371 batches=2
+q1.supplemental 5.0.0 v=984 i=984 p=216313.019 c=4249.163 t=987.824 depthWrite=true pair=false
+q1.supplemental 5.0.1 v=984 i=984 p=216313.019 c=3936.000 t=987.824 depthWrite=false pair=false
+q1.supplemental 6 group=sequence/opaque ops=1
+q1.supplemental 6.0 kind=draw batches=1
+q1.supplemental 6.0.0 v=4 i=6 p=306.776 c=16.000 t=4.000 depthWrite=true pair=false
+q1.supplemental 7 group=sequence/opaque ops=1
+q1.supplemental 7.0 kind=draw batches=2
+q1.supplemental 7.0.0 v=384 i=384 p=-274.147 c=719.448 t=397.151 depthWrite=true pair=false
+q1.supplemental 7.0.1 v=384 i=384 p=-274.147 c=1536.000 t=397.151 depthWrite=false pair=false
+q1.supplemental 8 group=sequence/opaque ops=1
+q1.supplemental 8.0 kind=draw batches=2
+q1.supplemental 8.0.0 v=1224 i=1224 p=359573.403 c=5289.439 t=1193.875 depthWrite=true pair=false
+q1.supplemental 8.0.1 v=1224 i=1224 p=359573.403 c=4896.000 t=1193.875 depthWrite=false pair=false
+q1.view.objects count=1
+q1.view.objects 0 group=sequence/translucent ops=1
+q1.view.objects 0.0 kind=object-opacity opacity=0.371 batches=2
+q1.view.objects 0.0.0 v=984 i=984 p=216313.019 c=4142.690 t=987.824 depthWrite=true pair=false
+q1.view.objects 0.0.1 v=984 i=984 p=216313.019 c=3936.000 t=987.824 depthWrite=false pair=false
+q1.held path=progs/player.mdl kind=q1-mdl triangles=72 frame=12 opacity=1
+q1.held transform 1.310 3.882 -12.483 0.719 -0.608 0.336 0.636 0.771 0.036 -0.281 0.188 0.941
+q3.supplemental count=3
+q3.supplemental 0 group=compiled/compiled ops=1
+q3.supplemental 0.0 kind=draw batches=1
+q3.supplemental 0.0.0 v=6 i=24 p=-48.029 c=24.000 t=6.422 depthWrite=false pair=false
+q3.supplemental 1 group=compiled/compiled ops=1
+q3.supplemental 1.0 kind=draw batches=1
+q3.supplemental 1.0.0 v=618 i=1650 p=-20016.909 c=850.659 t=541.039 depthWrite=true pair=false
+q3.supplemental 2 group=compiled/compiled ops=1
+q3.supplemental 2.0 kind=draw batches=1
+q3.supplemental 2.0.0 v=19 i=72 p=-54.059 c=76.000 t=19.002 depthWrite=false pair=false

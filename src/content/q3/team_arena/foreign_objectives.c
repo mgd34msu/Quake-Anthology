@@ -1,5 +1,6 @@
 /* Port of src/content/q3/team-arena/foreign-objectives.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/foreign_objectives.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,8 +11,7 @@
 static void *xmalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("out of memory"); return p; }
 static char *xstrdup(const char *s) { size_t n = strlen(s) + 1; char *p = xmalloc(n); memcpy(p, s, n); return p; }
 static void num_str(double v, char *buf, size_t cap) {
-  if (v == trunc(v) && fabs(v) < 1e21) snprintf(buf, cap, "%.0f", v);
-  else snprintf(buf, cap, "%g", v);
+  qa_net_js_number(v, buf, cap);
 }
 typedef struct ent_list { qa_q1_entity *values; size_t count, cap; } ent_list;
 static qa_q1_entity clone_entity(const qa_q1_entity *e) {

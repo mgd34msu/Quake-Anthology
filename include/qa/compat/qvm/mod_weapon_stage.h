@@ -35,16 +35,16 @@ typedef struct qa_qvm_posture {
 typedef struct qa_qvm_weapon_dispatcher_ops {
   qa_qvm_module *module;
   void *ctx;
-  bool (*actor)(void *ctx, const qa_qvm_weapon_actor *source, qa_qvmy_function_call *call, qa_actor_id *out);
+  bool (*actor)(void *ctx, const qa_qvm_weapon_actor *source, qa_qvm_module_function_call *call, qa_actor_id *out);
   int64_t (*pointer)(void *ctx, qa_actor_id actor, const char *record);
   bool (*live)(void *ctx, qa_actor_id actor);
   bool (*selected)(void *ctx, qa_actor_id actor);
-  qa_qvm_cancellation_scope (*cancellation)(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call);
+  qa_qvm_cancellation_scope (*cancellation)(void *ctx, qa_actor_id actor, qa_qvm_module_function_call *call);
   void (*attempted)(void *ctx, qa_actor_id actor, int32_t value);
   void (*accepted)(void *ctx, qa_actor_id actor, int32_t value);
   void (*completed)(void *ctx, qa_actor_id actor, bool reached_attack_decision);
   /* Optional; returns an optional cleanup through the out params. */
-  void (*prepare)(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call,
+  void (*prepare)(void *ctx, qa_actor_id actor, qa_qvm_module_function_call *call,
                   void (**cleanup)(void *cleanup_ctx), void **cleanup_ctx);
 } qa_qvm_weapon_dispatcher_ops;
 

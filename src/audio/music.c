@@ -169,6 +169,17 @@ static bool next_chunk(void *ctx, qa_stream_pcm *out) {
   return true;
 }
 
+typedef struct music_mix_job {
+  qa_music_player *player;
+  int64_t frames;
+  double *output;
+} music_mix_job;
+static void music_mix_run(void *ctx) {
+  music_mix_job *job = ctx;
+  qa_raw_audio_stream_mix(&job->player->pcm, job->frames, qa_music_player_volume(job->player),
+                          next_chunk, job->player, job->output);
+}
+
 void qa_music_player_mix(qa_music_player *player, int64_t frames,
                          double *output) {
   if (!player->controls->enabled || player->paused ||
@@ -176,11 +187,19 @@ void qa_music_player_mix(qa_music_player *player, int64_t frames,
     for (int64_t i = 0; i < frames * 2; i++) output[i] = 0;
     return;
   }
-  qa_raw_audio_stream_mix(&player->pcm, frames, qa_music_player_volume(player),
-                          next_chunk, player, output);
+  /* A decoder failure stops the damaged track instead of ending the session
+     (TS try/catch -> stop(); onFault?.(error); silence). */
+  music_mix_job job = {player, frames, output};
+  qa_caught_error caught;
+  const bool mixed = qa_try(music_mix_run, &job, &caught);
   if (player->has_pending_chunk) {
     qa_pcm_sound_dispose(&player->pending_chunk);
     player->has_pending_chunk = false;
+  }
+  if (!mixed) {
+    qa_music_player_stop(player);
+    if (player->on_fault != NULL) player->on_fault(player->on_fault_ctx, &caught);
+    for (int64_t i = 0; i < frames * 2; i++) output[i] = 0;
   }
 }
 

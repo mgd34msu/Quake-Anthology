@@ -181,17 +181,6 @@ typedef struct qa_ui_owner_draw_paint_request {
   double text_style;
 } qa_ui_owner_draw_paint_request;
 
-/** TS UiRuntimeBindings. String results are malloc'd (caller
- * frees); NULL only on OOM. */
-typedef struct qa_ui_runtime_bindings {
-  void *ctx;
-  char *(*key_name)(void *ctx, double key);
-  char *(*get_binding)(void *ctx, double key);
-  void (*set_binding)(void *ctx, double key, const char *command);
-  bool (*get_overstrike)(void *ctx);
-  void (*set_overstrike)(void *ctx, bool enabled);
-} qa_ui_runtime_bindings;
-
 /** TS UiRuntimeFeederItem. has_text false with text NULL is the
  * TS null text; the item fn returning false is TS undefined. */
 typedef struct qa_ui_runtime_feeder_item {
@@ -265,21 +254,6 @@ typedef struct qa_ui_external_script_host {
               qa_ui_external_script_context context);
 } qa_ui_external_script_host;
 
-/** TS UiRuntimeContext. */
-typedef enum qa_ui_runtime_context_kind {
-  QA_UI_RUNTIME_CONTEXT_UI,    /* "ui" */
-  QA_UI_RUNTIME_CONTEXT_CGAME  /* "cgame" */
-} qa_ui_runtime_context_kind;
-
-typedef void (*qa_ui_runtime_pause_fn)(void *ctx, bool paused);
-
-typedef struct qa_ui_runtime_context {
-  qa_ui_runtime_context_kind kind;
-  qa_ui_runtime_bindings bindings; /* ui */
-  qa_ui_runtime_pause_fn pause;    /* ui */
-  void *pause_ctx;
-} qa_ui_runtime_context;
-
 /** TS UiRuntimeOptions print / cvarValue callbacks. */
 typedef void (*qa_ui_runtime_print_fn)(void *ctx, const char *text);
 typedef double (*qa_ui_runtime_cvar_value_fn)(void *ctx, const char *name);
@@ -296,8 +270,6 @@ typedef struct qa_ui_runtime_options {
   qa_ui_runtime_cvar_value_fn cvar_value;
   void *cvar_value_ctx;
   qa_cvar_registry *cvars;
-  qa_command_buffer *commands;
-  qa_command_context command_context;
   qa_ui_runtime_resources resources;
   qa_q3_font_set fonts;
   qa_ui_widget_assets widget_assets;
@@ -306,7 +278,6 @@ typedef struct qa_ui_runtime_options {
   qa_ui_runtime_cinematics cinematics;
   qa_ui_paint_model_fn paint_model;
   void *paint_model_ctx;
-  qa_ui_runtime_context context;
   qa_ui_runtime_feeder feeder;
   qa_ui_runtime_owner_draw owner_draw;
   qa_ui_external_script_host external_script;
@@ -407,6 +378,12 @@ void qa_ui_runtime_assert_menu_memory(
     qa_ui_runtime *runtime, qa_ui_menu_memory_ownership next_memory);
 void qa_ui_runtime_reload_definitions(
     qa_ui_runtime *runtime, const qa_ui_menu_definitions *definitions);
+/* TS reads options.fonts and options.widgetAssets through live getters;
+ * options here are copied, so owners publish changes with these. */
+void qa_ui_runtime_set_fonts(qa_ui_runtime *runtime,
+                             const qa_q3_font_set *fonts);
+void qa_ui_runtime_set_widget_assets(qa_ui_runtime *runtime,
+                                     const qa_ui_widget_assets *assets);
 
 /** TS activate(name | null | (() => string)). has_name false with
  * name NULL is TS null; fn form calls the getter per menu. */
@@ -473,10 +450,6 @@ void qa_ui_runtime_scroll_feeder(qa_ui_runtime *runtime, double feeder,
 void qa_ui_runtime_scroll_captured_feeder(qa_ui_runtime *runtime,
                                           qa_ui_captured_menu *handle,
                                           double feeder, bool down);
-bool qa_ui_runtime_binding_pending(qa_ui_runtime *runtime);
-void qa_ui_runtime_reload_bindings(qa_ui_runtime *runtime);
-void qa_ui_runtime_reset_bindings(qa_ui_runtime *runtime);
-void qa_ui_runtime_apply_bindings(qa_ui_runtime *runtime);
 
 /** TS cursorType result. */
 typedef enum qa_ui_cursor_type {

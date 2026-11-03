@@ -329,41 +329,21 @@ static void test_particles_and_effects(void) {
   CHECK(q2_count == 0);
   free(q1);
   free(q2);
-  CHECK_ABORTS(qa_app_source_particles_q1_color_explosion(particles, (qa_vec3){0, 0, 0}, 1, 0, 0));
+  /* TS drift (2026-11-01 audit): a zero-length colour range is dropped, not thrown. */
+  qa_app_source_particles_sample(particles, 1, 0, &q1, &q1_count, &q2, &q2_count);
+  size_t before = q1_count;
+  free(q1);
+  free(q2);
+  qa_app_source_particles_q1_color_explosion(particles, (qa_vec3){0, 0, 0}, 1, 0, 0);
+  qa_app_source_particles_sample(particles, 1, 0, &q1, &q1_count, &q2, &q2_count);
+  CHECK(q1_count == before);
+  free(q1);
+  free(q2);
+  CHECK_ABORTS(qa_app_source_particles_q1_color_explosion(particles, (qa_vec3){0, 0, 0}, 1, 0, 256));
   qa_app_source_particles_destroy(particles);
   qa_app_sim_source_random_destroy(random);
 }
-typedef struct effects_probe { int spawns, puffs, gibs; } effects_probe;
-static void fx_spawn(void *ctx, qa_vec3 origin) { (void)origin; ((effects_probe *)ctx)->spawns++; }
-static void fx_puff(void *ctx, qa_vec3 o, qa_vec3 v, double r, qa_vec4 c, double d, double s, double f, double fl, const char *sh) {
-  (void)o; (void)v; (void)r; (void)c; (void)d; (void)s; (void)f; (void)fl; (void)sh;
-  ((effects_probe *)ctx)->puffs++;
-}
-static void fx_gib(void *ctx, qa_vec3 origin) { (void)origin; ((effects_probe *)ctx)->gibs++; }
-static void fx_noop_prepare(void *ctx, double a, double b) { (void)ctx; (void)a; (void)b; }
-static void fx_noop_frame(void *ctx, qa_scene_camera cam, const void *src, bool hv, qa_actor_id v,
-                          bool hf, qa_scene_fog fog, const void **adm, const void **ops, size_t *oc,
-                          const void **lights, size_t *lc) {
-  (void)ctx; (void)cam; (void)src; (void)hv; (void)v; (void)hf; (void)fog;
-  *adm = NULL; *ops = NULL; *oc = 0; *lights = NULL; *lc = 0;
-}
-static void fx_void(void *ctx) { (void)ctx; }
-static void test_effects_routing(void) {
-  effects_probe probe = {0, 0, 0};
-  qa_app_q3_effects_host host = {&probe, fx_spawn, fx_puff, fx_gib, fx_noop_prepare, fx_noop_frame, fx_void, fx_void, fx_void};
-  qa_app_q3_application_effects *effects = qa_app_q3_application_effects_create(host, "q3:base", "baseq3");
-  /* EV_PLAYER_TELEPORT_IN = 42, EV_JUMP_PAD = 13, EV_GIB_PLAYER = 64,
-   * EV_FOOTSTEP = 1 (movement/q3/constants). */
-  CHECK(qa_app_q3_application_effects_event(effects, (qa_app_q3_character_presentation_event){42, 100}, (qa_vec3){0, 0, 0}));
-  CHECK(probe.spawns == 1 && qa_app_q3_application_effects_time(effects) == 100);
-  CHECK(qa_app_q3_application_effects_event(effects, (qa_app_q3_character_presentation_event){13 + 0x100, 200}, (qa_vec3){0, 0, 0}));
-  CHECK(probe.puffs == 1);
-  CHECK(qa_app_q3_application_effects_event(effects, (qa_app_q3_character_presentation_event){64, 300}, (qa_vec3){0, 0, 0}));
-  CHECK(probe.gibs == 1);
-  CHECK(qa_app_q3_application_effects_event(effects, (qa_app_q3_character_presentation_event){1, 400}, (qa_vec3){0, 0, 0}));
-  CHECK(!qa_app_q3_application_effects_event(effects, (qa_app_q3_character_presentation_event){999, 500}, (qa_vec3){0, 0, 0}));
-  qa_app_q3_application_effects_destroy(effects);
-}
+/* Q3 effect event routing moved to tests/app/test_top_effects.c (real Q3ApplicationEffects). */
 static void test_q2_effect_views(void) {
   qa_app_q2_effect_views *views = qa_app_q2_effect_views_create();
   qa_actor_id actor;
@@ -394,7 +374,6 @@ int main(void) {
   test_client_cvars_and_status();
   test_view();
   test_particles_and_effects();
-  test_effects_routing();
   test_q2_effect_views();
   printf("%d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;

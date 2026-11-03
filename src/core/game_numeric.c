@@ -24,10 +24,8 @@ static void number_input_init(number_input *input, const char *text,
 }
 
 static int number_input_byte(const number_input *input) {
-  if (input->offset > input->length) {
-    qa_range_error("Game number scan reads beyond its backing string");
-  }
-  if (input->offset == input->length) return 0;
+  /* TS byte(): 0 at or past the end (take() can step one past it). */
+  if (input->offset >= input->length) return 0;
   int byte = (unsigned char)input->text[input->offset];
   return byte < 128 ? byte : byte - 256;
 }
@@ -109,7 +107,8 @@ int32_t qa_game_atoi(const char *text) {
 
 qa_game_float_scan qa_scan_game_float(const char *text, size_t offset) {
   number_input input;
-  number_input_init(&input, text, offset);
+  size_t length = strlen(text);
+  number_input_init(&input, text, offset < length ? offset : length); /* Math.min(offset, text.length) */
   qa_game_float_scan result;
   result.value = read_float(&input, MODE_SCAN);
   result.next_offset = input.offset;

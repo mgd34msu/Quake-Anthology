@@ -11,6 +11,9 @@
 typedef struct qa_qvm_allocation {
   const uint8_t *bytes;
   size_t length;
+  /* Optional: rejects a released allocation (the TS `bytes` getter). */
+  void (*assert_live)(void *ctx);
+  void *live_ctx;
 } qa_qvm_allocation;
 
 typedef struct qa_qvm_allocation_request {

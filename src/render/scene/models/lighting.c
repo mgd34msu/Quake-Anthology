@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 
 static double fr(double value) { return (double)(float)value; }
 static bool bit(double flags, int32_t mask) {
@@ -34,16 +35,16 @@ qa_vec3 qa_q2_alias_light(double flags, qa_vec3 sampled, double time_seconds,
                   : bit(flags, 8) ? (qa_vec3){1, 1, 1}
                                   : sampled;
   if (!has_shell && !bit(flags, 8) && monochrome) {
-    double value = fmax(light.x, fmax(light.y, light.z));
+    double value = qa_js_max(light.x, qa_js_max(light.y, light.z));
     light = (qa_vec3){value, value, value};
   }
   if (bit(flags, 1) && light.x <= 0.1 && light.y <= 0.1 && light.z <= 0.1)
     light = (qa_vec3){0.1, 0.1, 0.1};
   if (bit(flags, 512)) {
     double pulse = 0.1 * sin(time_seconds * 7);
-    light = (qa_vec3){fmax(light.x * 0.8, light.x + pulse),
-                      fmax(light.y * 0.8, light.y + pulse),
-                      fmax(light.z * 0.8, light.z + pulse)};
+    light = (qa_vec3){qa_js_max(light.x * 0.8, light.x + pulse),
+                      qa_js_max(light.y * 0.8, light.y + pulse),
+                      qa_js_max(light.z * 0.8, light.z + pulse)};
   }
   return (infrared && bit(flags, 32768)) ? (qa_vec3){1, 0, 0} : light;
 }
@@ -74,7 +75,7 @@ qa_vec3 qa_q1_alias_shadow_direction(double yaw) {
 
 static double share_of(double contribution, double channel) {
   return (channel > 0 && contribution > 0)
-             ? fmin(1, contribution / channel)
+             ? qa_js_min(1, contribution / channel)
              : 0;
 }
 
@@ -90,11 +91,11 @@ qa_q2_model_shadow_light *qa_alias_shadow_light_fractions(
     double dx = origin.x - light->origin.x, dy = origin.y - light->origin.y,
            dz = origin.z - light->origin.z;
     double amount =
-        (light->radius - sqrt(dx * dx + dy * dy + dz * dz)) / 256 * modulate;
+        (light->radius - qa_js_hypot3(dx, dy, dz)) / 256 * modulate;
     if (amount <= 0) continue;
     double r = amount * light->color.x, g = amount * light->color.y,
            b = amount * light->color.z;
-    if (monochrome) r = g = b = fmax(r, fmax(g, b));
+    if (monochrome) r = g = b = qa_js_max(r, qa_js_max(g, b));
     qa_vec3 fraction = {fr(share_of(r, shade.x)), fr(share_of(g, shade.y)),
                         fr(share_of(b, shade.z))};
     if (fraction.x <= 0 && fraction.y <= 0 && fraction.z <= 0) continue;
@@ -111,5 +112,5 @@ qa_q2_model_shadow_light *qa_alias_shadow_light_fractions(
 }
 
 double qa_alias_shade_divisor(qa_vec3 shade) {
-  return fmax(1, fmax(shade.x, fmax(shade.y, shade.z)) * 2);
+  return qa_js_max(1, qa_js_max(shade.x, qa_js_max(shade.y, shade.z)) * 2);
 }

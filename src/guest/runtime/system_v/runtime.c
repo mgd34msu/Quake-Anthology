@@ -274,6 +274,37 @@ static void host_free(void *ctx, bool has_address, qa_guest_core_address address
   }
   plain_error("System V free of a non-live allocation");
 }
+qa_native_heap_block *qa_system_v_guest_runtime_heap_state(const qa_system_v_guest_runtime *rt, size_t *count) {
+  qa_native_heap_block *blocks = malloc((rt->heap_count == 0 ? 1 : rt->heap_count) * sizeof *blocks);
+  if (blocks == NULL) qa_range_error("System V heap state out of memory");
+  for (size_t i = 0; i < rt->heap_count; i++) {
+    blocks[i].base = (int64_t)HEAP(rt)[i].address.byte_offset;
+    blocks[i].size = (double)HEAP(rt)[i].size;
+    blocks[i].heap = 0;
+  }
+  *count = rt->heap_count;
+  return blocks;
+}
+void qa_system_v_guest_runtime_restore_heap_state(qa_system_v_guest_runtime *rt, const qa_native_heap_block *blocks,
+                                                  size_t count) {
+  rt->heap_count = 0;
+  for (size_t i = 0; i < count; i++) {
+    qa_guest_core_address address = {0};
+    if (!qa_memory_pointer(rt->options.memory, (uint64_t)blocks[i].base, &address))
+      qa_raise("Error", 0, 0, "Saved System V heap address is null");
+    qa_memory_check(rt->options.memory, address, 1, QA_ACCESS_READ);
+    /* TS Map#set: a repeated base replaces the earlier entry in place. */
+    size_t at = rt->heap_count;
+    for (size_t j = 0; j < rt->heap_count; j++)
+      if (HEAP(rt)[j].address.byte_offset == (uint64_t)blocks[i].base) { at = j; break; }
+    if (at == rt->heap_count) {
+      grow(&rt->heap, &rt->heap_cap, rt->heap_count, sizeof(heap_entry));
+      rt->heap_count++;
+    }
+    HEAP(rt)[at].address = address;
+    HEAP(rt)[at].size = (size_t)blocks[i].size;
+  }
+}
 static bool host_allocation_size(void *ctx, qa_guest_core_address address, size_t *out) {
   qa_system_v_guest_runtime *rt = ctx;
   (void)qa_memory_offset(rt->options.memory, address, 0);

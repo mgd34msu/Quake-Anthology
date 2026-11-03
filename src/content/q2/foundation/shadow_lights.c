@@ -1,5 +1,6 @@
 /* Port of src/content/q2/foundation/shadow-lights.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/shadow_lights.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <string.h>
@@ -9,8 +10,8 @@
 
 void qa_q2_dynamic_light_use_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *o, const qa_actor_id *a) {
   (void)c; (void)o; (void)a;
-  e->server_flags = (double)((int64_t)e->server_flags ^ 1);
-  e->visible = ((int64_t)e->server_flags & 1) == 0;
+  e->server_flags = (double)(qa_js_to_int32(e->server_flags) ^ 1);
+  e->visible = (qa_js_to_int32(e->server_flags) & 1) == 0;
   qa_q2_emit_shadow_light(e, g);
 }
 const qa_q2_use QA_Q2_DYNAMIC_LIGHT_USE = {NULL, qa_q2_dynamic_light_use_fn};
@@ -24,8 +25,8 @@ void qa_q2_spawn_shadow_light(qa_q2_entity *e, qa_q2_game_services *g) {
     g->link(g->ctx, e);
   }
   if (e->targetname[0] != '\0') e->use = QA_Q2_DYNAMIC_LIGHT_USE;
-  if (((int64_t)e->spawnflags & 1) != 0) e->server_flags = (double)((int64_t)e->server_flags ^ 1);
-  e->visible = ((int64_t)e->server_flags & 1) == 0;
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) e->server_flags = (double)(qa_js_to_int32(e->server_flags) ^ 1);
+  e->visible = (qa_js_to_int32(e->server_flags) & 1) == 0;
 }
 
 void qa_q2_emit_shadow_light(qa_q2_entity *e, qa_q2_game_services *g) {
@@ -40,13 +41,13 @@ void qa_q2_emit_shadow_light(qa_q2_entity *e, qa_q2_game_services *g) {
     for (size_t i = 0; i < n; i++) if (strcmp(entities[i]->targetname, style_target) == 0) { style_ent = entities[i]; break; }
   }
   qa_vec3 origin = qa_q2_game_body(g, e).origin;
-  uint32_t packed = (uint32_t)e->skin;
+  uint32_t packed = qa_js_to_uint32(e->skin); /* TS skin >>> n */
   qa_q2_presentation_event ev = {0};
   ev.kind = "dynamic-light";
   ev.has_actor = true; ev.actor = e->actor.id; ev.origin = origin;
   ev.light_color = packed == 0 ? (qa_vec3){1, 1, 1}
-      : (qa_vec3){((packed >> 24) & 255) / 255.0, ((packed >> 16) & 255) / 255.0, ((packed >> 8) & 255) / 255.0};
-  ev.visible = ((int64_t)e->server_flags & 1) == 0;
+      : (qa_vec3){(qa_js_to_int32((packed >> 24) & 255)) / 255.0, (qa_js_to_int32((packed >> 16) & 255)) / 255.0, (qa_js_to_int32((packed >> 8) & 255)) / 255.0};
+  ev.visible = (qa_js_to_int32(e->server_flags) & 1) == 0;
   ev.radius = qa_q2_number_field(&e->spawn, "shadowlightradius", 0);
   ev.intensity = qa_q2_number_field(&e->spawn, "shadowlightintensity", 1);
   ev.resolution = qa_q2_integer_field(&e->spawn, "shadowlightresolution", 0);

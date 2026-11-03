@@ -2,6 +2,8 @@
 #include "qa/bots/navigation/aas.h"
 #include "qa/core/binary/index.h"
 #include "qa/foundation/support.h"
+#include "qa/core/math.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,8 +30,10 @@ void qa_aas_asset_destroy(qa_aas_asset *a) {
   memset(a, 0, sizeof *a);
 }
 static qa_vec3 vec(qa_binary_reader *r) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(r), qa_binary_reader_finite_f32(r),
-               qa_binary_reader_finite_f32(r)};
+  double x = qa_binary_reader_finite_f32(r);
+  double y = qa_binary_reader_finite_f32(r);
+  double z = qa_binary_reader_finite_f32(r);
+  qa_vec3 v = {x, y, z};
   return v;
 }
 static qa_bounds bnd(qa_binary_reader *r) {
@@ -314,15 +318,50 @@ bool qa_parse_aas(qa_aas_asset *out, uint8_t *bytes, size_t length, const char *
         (int64_t)out->reachability_count, "reachability");
   for (size_t i = 0; i < out->reachability_count; i++)
     idx(out->reachability[i].area, (int64_t)out->area_count, "reachable area");
+  if (out->node_count < 2)
+    qa_binary_error(src, 0, "AAS has no BSP root node");
+  /* A tree gives each node one parent and never re-enters the root; a DAG would make area queries exponential. */
+  uint8_t *marks = calloc(out->node_count > out->reachability_count ? out->node_count : out->reachability_count + 1, 1);
+  if (marks == NULL)
+    return false;
   for (size_t i = 1; i < out->node_count; i++) {
     idx(out->nodes[i].plane, (int64_t)out->plane_count, "node plane");
     for (int k = 0; k < 2; k++) {
       int64_t c = out->nodes[i].children[k];
       idx(c < 0 ? -c : c, c > 0 ? (int64_t)out->node_count : (int64_t)out->area_count,
           "node child");
+      if (c <= 0)
+        continue;
+      if (c == 1 || marks[c] == 1) {
+        free(marks);
+        qa_binary_error(src, 0, "AAS BSP node has more than one parent");
+      }
+      marks[c] = 1;
     }
   }
+  memset(marks, 0, out->node_count > out->reachability_count ? out->node_count : out->reachability_count + 1);
+  for (size_t i = 0; i < out->setting_count; i++)
+    for (int64_t reach = out->settings[i].first_reach;
+         reach < out->settings[i].first_reach + out->settings[i].reach_count; reach++) {
+      if (marks[reach] == 1) {
+        free(marks);
+        qa_binary_error(src, 0, "AAS area reachability ranges overlap");
+      }
+      marks[reach] = 1;
+    }
+  free(marks);
+  for (size_t i = 1; i < out->setting_count; i++) {
+    const qa_aas_setting_rec *setting = &out->settings[i];
+    if (setting->cluster > 0) {
+      idx(setting->cluster, (int64_t)out->cluster_count, "area cluster");
+      if (setting->cluster_area < 0)
+        qa_binary_error(src, 0, "AAS cluster area is negative");
+    } else if (setting->cluster < 0)
+      idx(-setting->cluster, (int64_t)out->portal_count, "area portal");
+  }
   for (size_t i = 0; i < out->portal_count; i++) {
+    if (out->portals[i].cluster_areas[0] < 0 || out->portals[i].cluster_areas[1] < 0)
+      qa_binary_error(src, 0, "AAS portal cluster area is negative");
     idx(out->portals[i].area, (int64_t)out->area_count, "portal area");
     idx(out->portals[i].front_cluster, (int64_t)out->cluster_count, "front cluster");
     idx(out->portals[i].back_cluster, (int64_t)out->cluster_count, "back cluster");
@@ -484,4 +523,77 @@ int64_t *qa_aas_bbox_areas(const qa_aas_asset *a, qa_bounds b, int64_t maximum, 
   if (*out_count > (size_t)maximum)
     *out_count = (size_t)maximum;
   return found;
+}
+
+/* ---- aasTraceClientBBox ---- */
+static const qa_aas_setting_rec *trace_setting(const qa_aas_asset *a, int64_t index) {
+  if (index < 0 || index >= (int64_t)a->setting_count) qa_range_error("Missing AAS trace record %lld", (long long)index);
+  return &a->settings[index];
+}
+static const qa_aas_plane_rec *trace_plane(const qa_aas_asset *a, int64_t index) {
+  if (index < 0 || index >= (int64_t)a->plane_count) qa_range_error("Missing AAS trace record %lld", (long long)index);
+  return &a->planes[index];
+}
+static const qa_aas_node_rec *trace_node(const qa_aas_asset *a, int64_t index) {
+  if (index < 0 || index >= (int64_t)a->node_count) qa_range_error("Missing AAS trace record %lld", (long long)index);
+  return &a->nodes[index];
+}
+static bool trace_same(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+static qa_vec3 trace_advance(qa_vec3 start, double amount, qa_vec3 direction) {
+  return qa_add3(start, qa_scale3(direction, amount));
+}
+typedef struct trace_piece { qa_vec3 start, end; int64_t node, plane; } trace_piece;
+qa_aas_trace qa_aas_trace_client_bbox(const qa_aas_asset *asset, qa_vec3 start, qa_vec3 end, int64_t presence,
+                                      void (*print)(void *ctx, const char *text), void *print_ctx) {
+  if (!isfinite(start.x) || !isfinite(start.y) || !isfinite(start.z) || !isfinite(end.x) || !isfinite(end.y) ||
+      !isfinite(end.z))
+    qa_range_error("Non-finite AAS trace point");
+  /* TS stops pushing at 127 entries, so 128 slots always suffice. */
+  trace_piece stack[128];
+  size_t count = 0;
+  stack[count++] = (trace_piece){start, end, 1, 0};
+  int64_t last_area = 0;
+  while (count > 0) {
+    trace_piece piece = stack[--count];
+    if (piece.node <= 0) {
+      if (piece.node == 0 || (trace_setting(asset, -piece.node)->presence & presence) == 0) {
+        bool start_solid = trace_same(piece.start, start);
+        qa_vec3 direction = start_solid ? (qa_vec3){0, 0, 0} : qa_normalize3(qa_sub3(end, start));
+        double fraction = start_solid ? 0 : fr(qa_length3(qa_sub3(piece.start, start)) / qa_length3(qa_sub3(end, start)));
+        qa_vec3 hit_end = start_solid ? piece.start : trace_advance(piece.start, -0.125, direction);
+        int64_t plane = qa_dot3(direction, trace_plane(asset, piece.plane)->normal) > 0 ? piece.plane ^ 1 : piece.plane;
+        return (qa_aas_trace){start_solid, fraction, hit_end, 0, last_area, piece.node == 0 ? 0 : -piece.node, plane};
+      }
+      last_area = -piece.node;
+      continue;
+    }
+    const qa_aas_node_rec *node = trace_node(asset, piece.node);
+    const qa_aas_plane_rec *plane = trace_plane(asset, node->plane);
+    float front = fr(qa_dot3(piece.start, plane->normal) - plane->distance);
+    float back = fr(qa_dot3(piece.end, plane->normal) - plane->distance);
+    trace_piece pushes[2];
+    size_t push_count = 0;
+    if (front >= 0 && back >= 0) {
+      pushes[push_count++] = (trace_piece){piece.start, piece.end, node->children[0], piece.plane};
+    } else if (front < 0 && back < 0) {
+      pushes[push_count++] = (trace_piece){piece.start, piece.end, node->children[1], piece.plane};
+    } else {
+      if (front == back) front = fr((double)front - (double)fr(0.001));
+      float fraction = fr((front < 0 ? (double)front + 0.125 : (double)front - 0.125) / (double)fr((double)front - (double)back));
+      if (fraction < 0) fraction = fr(0.001);
+      else if (fraction > 1) fraction = fr(0.999);
+      qa_vec3 middle = trace_advance(piece.start, fraction, qa_sub3(piece.end, piece.start));
+      int side = front < 0 ? 1 : 0;
+      pushes[push_count++] = (trace_piece){middle, piece.end, node->children[side == 0 ? 1 : 0], node->plane};
+      pushes[push_count++] = (trace_piece){piece.start, middle, node->children[side], piece.plane};
+    }
+    for (size_t i = 0; i < push_count; i++) {
+      stack[count++] = pushes[i];
+      if (count >= 127) {
+        if (print != NULL) print(print_ctx, "AAS_TraceBoundingBox: stack overflow\n");
+        return (qa_aas_trace){false, 0, {0, 0, 0}, 0, last_area, 0, 0};
+      }
+    }
+  }
+  return (qa_aas_trace){false, 1, end, 0, last_area, 0, 0};
 }

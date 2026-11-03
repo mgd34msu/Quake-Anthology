@@ -3,18 +3,19 @@
 
 #include <stdarg.h>
 #include <stdnoreturn.h>
+#include "qa/foundation/support.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -30,6 +31,19 @@ struct source_entry {
   qa_provider_id owner;
   qa_mod_match_resolve_fn resolve;
   void *ctx;
+  uint64_t serial; /* TS closure identity */
+};
+/* TS objective binding object identity: each bind is a distinct binding. */
+struct channel_entry {
+  qa_source_objective_binding binding;
+  uint64_t serial;
+};
+/* An unbind closure (TS () => { if (map.get(key) === value) map.delete(key) }).
+ * Owned by the state until destroy: the holder may call it again or late. */
+struct unbind_record {
+  qa_mod_match_state *state;
+  bool objective;
+  uint64_t serial;
 };
 struct qa_mod_match_state {
   qa_session_actor_registry *actors;
@@ -38,9 +52,12 @@ struct qa_mod_match_state {
   struct source_entry *sources;
   size_t source_count;
   size_t source_capacity;
-  qa_source_objective_binding *channels;
+  struct channel_entry *channels;
   size_t channel_count;
   size_t channel_capacity;
+  uint64_t next_serial;
+  struct unbind_record **unbinds;
+  size_t unbind_count, unbind_capacity;
   bool closed;
   /* Scratch for read() actor copies and listings. */
   qa_actor_id scratch_carrier;
@@ -68,6 +85,8 @@ void qa_mod_match_state_destroy(qa_mod_match_state *state) {
   qa_mod_match_state_close(state);
   free(state->sources);
   free(state->channels);
+  for (size_t i = 0; i < state->unbind_count; i++) free(state->unbinds[i]);
+  free(state->unbinds);
   free(state->scratch_listings);
   free(state->scratch_gates);
   free(state->scratch_actors);
@@ -100,25 +119,41 @@ qa_source_match_player_result qa_mod_match_state_player(
   return player;
 }
 
-struct unbind_source {
-  qa_mod_match_state *state;
-  qa_provider_id owner;
-  qa_mod_match_resolve_fn resolve;
-  void *ctx;
-};
-static void unbind_source(void *ctx) {
-  struct unbind_source *unbind = ctx;
+static void run_unbind(void *ctx) {
+  struct unbind_record *unbind = ctx;
   qa_mod_match_state *state = unbind->state;
-  for (size_t i = 0; i < state->source_count; i++)
-    if (str_eq(state->sources[i].owner, unbind->owner) &&
-        state->sources[i].resolve == unbind->resolve &&
-        state->sources[i].ctx == unbind->ctx) {
-      memmove(&state->sources[i], &state->sources[i + 1],
-              (state->source_count - i - 1) * sizeof *state->sources);
-      state->source_count--;
-      break;
+  if (!unbind->objective) {
+    for (size_t i = 0; i < state->source_count; i++)
+      if (state->sources[i].serial == unbind->serial) {
+        memmove(&state->sources[i], &state->sources[i + 1],
+                (state->source_count - i - 1) * sizeof *state->sources);
+        state->source_count--;
+        return;
+      }
+    return;
+  }
+  for (size_t i = 0; i < state->channel_count; i++)
+    if (state->channels[i].serial == unbind->serial) {
+      memmove(&state->channels[i], &state->channels[i + 1],
+              (state->channel_count - i - 1) * sizeof *state->channels);
+      state->channel_count--;
+      return;
     }
-  free(unbind);
+}
+static qa_source_match_unbind make_unbind(qa_mod_match_state *state, bool objective,
+                                          uint64_t serial) {
+  struct unbind_record *unbind = malloc(sizeof *unbind);
+  if (unbind == NULL) abort();
+  unbind->state = state;
+  unbind->objective = objective;
+  unbind->serial = serial;
+  if (state->unbind_count == state->unbind_capacity) {
+    state->unbind_capacity = state->unbind_capacity != 0 ? state->unbind_capacity * 2 : 8;
+    state->unbinds = xrealloc(state->unbinds, state->unbind_capacity * sizeof *state->unbinds);
+  }
+  state->unbinds[state->unbind_count++] = unbind;
+  qa_source_match_unbind result = {unbind, run_unbind};
+  return result;
 }
 qa_source_match_unbind qa_mod_match_state_bind_source(
     qa_mod_match_state *state, qa_provider_id owner,
@@ -137,76 +172,53 @@ qa_source_match_unbind qa_mod_match_state_bind_source(
   state->sources[state->source_count].owner = owner;
   state->sources[state->source_count].resolve = resolve;
   state->sources[state->source_count].ctx = resolve_ctx;
+  uint64_t serial = ++state->next_serial;
+  state->sources[state->source_count].serial = serial;
   state->source_count++;
-  struct unbind_source *unbind = malloc(sizeof *unbind);
-  if (unbind == NULL) abort();
-  unbind->state = state;
-  unbind->owner = owner;
-  unbind->resolve = resolve;
-  unbind->ctx = resolve_ctx;
-  qa_source_match_unbind result = {unbind, unbind_source};
-  return result;
+  return make_unbind(state, false, serial);
 }
 
-struct unbind_objective {
-  qa_mod_match_state *state;
-  qa_source_objective_binding binding;
-};
-static bool same_binding(qa_source_objective_binding a,
-                         qa_source_objective_binding b) {
-  return a.ctx == b.ctx && a.read == b.read && a.change == b.change &&
-         str_eq(a.id, b.id);
-}
-static void unbind_objective(void *ctx) {
-  struct unbind_objective *unbind = ctx;
-  qa_mod_match_state *state = unbind->state;
-  for (size_t i = 0; i < state->channel_count; i++)
-    if (same_binding(state->channels[i], unbind->binding)) {
-      memmove(&state->channels[i], &state->channels[i + 1],
-              (state->channel_count - i - 1) * sizeof *state->channels);
-      state->channel_count--;
-      break;
-    }
-  free(unbind);
-}
 qa_source_match_unbind qa_mod_match_state_bind_objective(
     qa_mod_match_state *state, qa_source_objective_binding binding) {
   if (state->closed) qa_errorf("Match objective owner is closed");
   for (size_t i = 0; i < state->channel_count; i++)
-    if (str_eq(state->channels[i].id, binding.id))
+    if (str_eq(state->channels[i].binding.id, binding.id))
       qa_errorf("Objective %s is owned by %s; %s cannot claim it",
-                binding.id, state->channels[i].owner, binding.owner);
+                binding.id, state->channels[i].binding.owner, binding.owner);
   if (state->channel_count == state->channel_capacity) {
     state->channel_capacity =
         state->channel_capacity != 0 ? state->channel_capacity * 2 : 8;
     state->channels = xrealloc(
         state->channels, state->channel_capacity * sizeof *state->channels);
   }
-  state->channels[state->channel_count++] = binding;
-  struct unbind_objective *unbind = malloc(sizeof *unbind);
-  if (unbind == NULL) abort();
-  unbind->state = state;
-  unbind->binding = binding;
-  qa_source_match_unbind result = {unbind, unbind_objective};
-  return result;
+  uint64_t serial = ++state->next_serial;
+  state->channels[state->channel_count].binding = binding;
+  state->channels[state->channel_count].serial = serial;
+  state->channel_count++;
+  return make_unbind(state, true, serial);
 }
 
-static qa_source_objective_binding *find_binding(qa_mod_match_state *state,
-                                                 qa_objective_id id) {
+static struct channel_entry *find_binding(qa_mod_match_state *state,
+                                          qa_objective_id id) {
   for (size_t i = 0; i < state->channel_count; i++)
-    if (str_eq(state->channels[i].id, id)) return &state->channels[i];
+    if (str_eq(state->channels[i].binding.id, id)) return &state->channels[i];
   return NULL;
 }
-
+/* TS this.channels.get(binding.id) === binding */
+static bool still_bound(qa_mod_match_state *state, struct channel_entry entry) {
+  struct channel_entry *current = find_binding(state, entry.binding.id);
+  return current != NULL && current->serial == entry.serial;
+}
 /* TS read(): a detached state with retired actors nulled. Carrier
- * and target point at per-call scratch (or listing scratch). */
+ * and target point at per-call scratch (or listing scratch). The entry is
+ * a copy: binding.read() may bind or unbind and move the channel array. */
 static qa_source_objective_state_result read_binding_into(
-    qa_mod_match_state *state, qa_source_objective_binding *binding,
+    qa_mod_match_state *state, struct channel_entry entry,
     qa_actor_id *carrier_scratch, qa_actor_id *target_scratch) {
   qa_source_objective_state_result result;
   memset(&result, 0, sizeof result);
-  qa_source_objective_state value = binding->read(binding->ctx);
-  if (state->closed || find_binding(state, binding->id) != binding)
+  qa_source_objective_state value = entry.binding.read(entry.binding.ctx);
+  if (state->closed || !still_bound(state, entry))
     return result;
   result.has_value = true;
   result.value = value;
@@ -227,35 +239,34 @@ static qa_source_objective_state_result read_binding_into(
   return result;
 }
 static qa_source_objective_state_result read_binding(
-    qa_mod_match_state *state, qa_source_objective_binding *binding) {
-  return read_binding_into(state, binding, &state->scratch_carrier,
+    qa_mod_match_state *state, struct channel_entry entry) {
+  return read_binding_into(state, entry, &state->scratch_carrier,
                            &state->scratch_target);
 }
-
 qa_source_objective_state_result qa_mod_match_state_objective(
     qa_mod_match_state *state, qa_objective_id id) {
-  qa_source_objective_binding *binding = find_binding(state, id);
+  struct channel_entry *binding = find_binding(state, id);
   qa_source_objective_state_result none;
   memset(&none, 0, sizeof none);
-  return binding == NULL ? none : read_binding(state, binding);
+  return binding == NULL ? none : read_binding(state, *binding);
 }
 
 qa_source_objective_state_result qa_mod_match_state_change_objective(
     qa_mod_match_state *state, qa_objective_id id,
     qa_source_objective_change request) {
-  qa_source_objective_binding *binding = find_binding(state, id);
-  if (binding == NULL)
+  struct channel_entry *found = find_binding(state, id);
+  if (found == NULL)
     qa_errorf("Objective %s has no admitted source owner", id);
+  struct channel_entry binding = *found;
   const qa_actor_id *actors[2] = {request.carrier, request.target};
   for (size_t i = 0; i < 2; i++)
     if (actors[i] != NULL &&
         !qa_session_actor_registry_is_live(state->actors, *actors[i]))
       qa_errorf("Objective change references a retired actor");
-  binding->change(binding->ctx, request);
+  binding.binding.change(binding.binding.ctx, request);
   qa_source_objective_state_result none;
   memset(&none, 0, sizeof none);
-  return find_binding(state, id) == binding ? read_binding(state, binding)
-                                            : none;
+  return still_bound(state, binding) ? read_binding(state, binding) : none;
 }
 
 const qa_source_objective_listing *qa_mod_match_state_objectives(
@@ -272,18 +283,30 @@ const qa_source_objective_listing *qa_mod_match_state_objectives(
         xrealloc(state->scratch_actors, state->scratch_actors_capacity *
                                             sizeof *state->scratch_actors);
   }
+  /* [...this.channels.values()]: a snapshot, as reads may (un)bind. The
+   * scratch arrays are sized for it; a read that binds more grows nothing. */
+  size_t total = state->channel_count;
+  struct channel_entry *snapshot = NULL;
+  if (total != 0) {
+    snapshot = malloc(total * sizeof *snapshot);
+    if (snapshot == NULL) abort();
+    memcpy(snapshot, state->channels, total * sizeof *snapshot);
+  }
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, snapshot);
   size_t count = 0;
-  for (size_t i = 0; i < state->channel_count; i++) {
-    qa_source_objective_binding *binding = &state->channels[i];
+  for (size_t i = 0; i < total; i++) {
     qa_source_objective_state_result read = read_binding_into(
-        state, binding, &state->scratch_actors[count * 2],
+        state, snapshot[i], &state->scratch_actors[count * 2],
         &state->scratch_actors[count * 2 + 1]);
     if (!read.has_value) continue;
-    state->scratch_listings[count].id = binding->id;
+    state->scratch_listings[count].id = snapshot[i].binding.id;
     state->scratch_listings[count].state = read.value;
-    state->scratch_listings[count].bot_goal = binding->bot_goal;
+    state->scratch_listings[count].bot_goal = snapshot[i].binding.bot_goal;
     count++;
   }
+  qa_cleanup_pop(&node);
+  free(snapshot);
   *out_count = count;
   return state->scratch_listings;
 }
@@ -296,16 +319,26 @@ const qa_mission_gate *qa_mod_match_state_gates(qa_mod_match_state *state,
         state->scratch_gates,
         state->scratch_gates_capacity * sizeof *state->scratch_gates);
   }
+  size_t total = state->channel_count;
+  struct channel_entry *snapshot = NULL;
+  if (total != 0) {
+    snapshot = malloc(total * sizeof *snapshot);
+    if (snapshot == NULL) abort();
+    memcpy(snapshot, state->channels, total * sizeof *snapshot);
+  }
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, snapshot);
   size_t count = 0;
-  for (size_t i = 0; i < state->channel_count; i++) {
-    qa_source_objective_binding *binding = &state->channels[i];
-    if (!binding->campaign_gate) continue;
-    qa_source_objective_state_result read = read_binding(state, binding);
+  for (size_t i = 0; i < total; i++) {
+    if (!snapshot[i].binding.campaign_gate) continue;
+    qa_source_objective_state_result read = read_binding(state, snapshot[i]);
     if (!read.has_value) continue;
-    state->scratch_gates[count].objective = binding->id;
+    state->scratch_gates[count].objective = snapshot[i].binding.id;
     state->scratch_gates[count].satisfied = read.value.complete;
     count++;
   }
+  qa_cleanup_pop(&node);
+  free(snapshot);
   *out_count = count;
   return state->scratch_gates;
 }

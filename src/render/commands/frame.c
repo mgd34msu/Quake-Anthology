@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 typedef struct bimpl { qa_render_command *commands; size_t count, cap; double sequence; bool active; } bimpl;
 static bimpl *B(qa_scene_frame_builder *b){ return (bimpl*)b->impl; }
 static void push(qa_scene_frame_builder *b,qa_render_command c){ bimpl *p=B(b);
@@ -31,8 +32,8 @@ void qa_scene_frame_builder_world(qa_scene_frame_builder *b,qa_render_prepared_w
   qa_scene_frame_builder_view(b,prepared.view); }
 bool qa_clip_picture(qa_rect rect,qa_texture_rect uv,qa_rect clip,qa_clipped_picture *out){
   if(rect.width==0||rect.height==0)return false;
-  double left=fmax(fmin(rect.x,rect.x+rect.width),clip.x),right=fmin(fmax(rect.x,rect.x+rect.width),clip.x+clip.width);
-  double top=fmax(fmin(rect.y,rect.y+rect.height),clip.y),bottom=fmin(fmax(rect.y,rect.y+rect.height),clip.y+clip.height);
+  double left=qa_js_max(qa_js_min(rect.x,rect.x+rect.width),clip.x),right=qa_js_min(qa_js_max(rect.x,rect.x+rect.width),clip.x+clip.width);
+  double top=qa_js_max(qa_js_min(rect.y,rect.y+rect.height),clip.y),bottom=qa_js_min(qa_js_max(rect.y,rect.y+rect.height),clip.y+clip.height);
   if(left>=right||top>=bottom)return false;
   out->rect.x=left;out->rect.y=top;out->rect.width=right-left;out->rect.height=bottom-top;
   out->uv.s1=uv.s1+(uv.s2-uv.s1)*(left-rect.x)/rect.width; out->uv.s2=uv.s1+(uv.s2-uv.s1)*(right-rect.x)/rect.width;

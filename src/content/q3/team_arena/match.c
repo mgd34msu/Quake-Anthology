@@ -14,11 +14,12 @@
 #include "qa/content/q3/team_arena/session.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
-static double s32(double v) { return (int32_t)v; }
-static double imul(double a, double b) { return (int32_t)((int32_t)a * (int32_t)b); }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
-static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
+static double s32(double v) { return qa_js_to_int32(v); }
+static double imul(double a, double b) { return (int32_t)(qa_js_to_int32(a) * qa_js_to_int32(b)); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
+static void slot_set(qa_q3_base_player_state_slots *s, double i, double v) { qa_q3_base_player_state_slots_set(s, (size_t)i, v); }
 static char *dup_or_empty(const char *v) {
   if (!v) v = "";
   size_t n = strlen(v) + 1;
@@ -101,8 +102,8 @@ static void rs_sort(rank_sort *s, double start, double length) {
     }
     if (!swapped) { rs_insertion(s, start, length); return; }
     double end = start + length;
-    double range = fmin(a - start, b - a); rs_swap_range(s, start, b - range, range);
-    range = fmin(d - c, end - d - 1); rs_swap_range(s, b, end - range, range);
+    double range = qa_js_min(a - start, b - a); rs_swap_range(s, start, b - range, range);
+    range = qa_js_min(d - c, end - d - 1); rs_swap_range(s, b, end - range, range);
     if (b - a > 1) rs_sort(s, start, b - a);
     range = d - c;
     if (range <= 1) return;
@@ -186,6 +187,8 @@ void qa_q3_ta_match_runtime_adjust_tournament_scores(qa_q3_ta_match_runtime *r) 
     second->sess.losses = s32(second->sess.losses + 1); r->host.client_userinfo_changed(r->host.ctx, loser); }
 }
 double qa_q3_ta_match_runtime_sort_ranks(qa_q3_ta_match_runtime *r, double first, double second) {
+  double left;
+  double right;
   qa_q3_game_client *a = qa_q3_entity_pool_client_at(r->host.pool, first);
   qa_q3_game_client *b = qa_q3_entity_pool_client_at(r->host.pool, second);
   if (a->sess.spectator_state == QA_Q3_SPEC_SCOREBOARD || a->sess.spectator_client < 0) return 1;
@@ -196,7 +199,9 @@ double qa_q3_ta_match_runtime_sort_ranks(qa_q3_ta_match_runtime *r, double first
     return a->sess.spectator_time < b->sess.spectator_time ? -1 : a->sess.spectator_time > b->sess.spectator_time ? 1 : 0;
   if (a->sess.session_team == QA_Q3_BASE_TEAM_SPECTATOR) return 1;
   if (b->sess.session_team == QA_Q3_BASE_TEAM_SPECTATOR) return -1;
-  return score_of(r, first) > score_of(r, second) ? -1 : score_of(r, first) < score_of(r, second) ? 1 : 0;
+  double left2 = score_of(r, first);
+  double right2 = score_of(r, second);
+  return left2 > right2 ? -1 : (left = score_of(r, first), right = score_of(r, second), left < right) ? 1 : 0;
 }
 
 void qa_q3_ta_match_runtime_calculate_ranks(qa_q3_ta_match_runtime *r) {
@@ -214,7 +219,7 @@ void qa_q3_ta_match_runtime_calculate_ranks(qa_q3_ta_match_runtime *r) {
     lv->num_non_spectator_clients++;
     if (client->pers.connected != QA_Q3_CONN_CONNECTED) continue;
     lv->num_playing_clients++;
-    if (((int32_t)qa_q3_entity_pool_at(pool, index)->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0) {
+    if ((qa_js_to_int32(qa_q3_entity_pool_at(pool, index)->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0) {
       lv->num_voting_clients++;
       if (client->sess.session_team == QA_Q3_BASE_TEAM_RED) lv->num_team_voting_clients[0]++;
       else if (client->sess.session_team == QA_Q3_BASE_TEAM_BLUE) lv->num_team_voting_clients[1]++;
@@ -237,12 +242,12 @@ void qa_q3_ta_match_runtime_calculate_ranks(qa_q3_ta_match_runtime *r) {
       if (index == 0 || new_score != score) { rank = index; slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_RANK, rank); }
       else {
         slot_set(&qa_q3_entity_pool_client_at(pool, sorted_at(r, index - 1))->ps.persistant,
-            QA_Q3_BASE_PERS_RANK, (double)((int32_t)rank | 0x4000));
-        slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_RANK, (double)((int32_t)rank | 0x4000));
+            QA_Q3_BASE_PERS_RANK, (double)(qa_js_to_int32(rank) | 0x4000));
+        slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_RANK, (double)(qa_js_to_int32(rank) | 0x4000));
       }
       score = new_score;
       if (game_type == QA_Q3_BASE_GT_SINGLE_PLAYER && lv->num_playing_clients == 1)
-        slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_RANK, (double)((int32_t)rank | 0x4000));
+        slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_RANK, (double)(qa_js_to_int32(rank) | 0x4000));
     }
   }
   if (game_type >= QA_Q3_BASE_GT_TEAM) {
@@ -265,7 +270,7 @@ void qa_q3_ta_match_runtime_move_client_to_intermission(qa_q3_ta_match_runtime *
   if (client->sess.spectator_state == QA_Q3_SPEC_FOLLOW) r->host.stop_following(r->host.ctx, entity);
   client = owned_client(r, entity);
   entity->s.origin = level(r)->intermission_origin;
-  client->ps.origin = level(r)->intermission_origin;
+  qa_q3_base_player_state_record_set_origin(&client->ps, level(r)->intermission_origin);
   client->ps.viewangles = level(r)->intermission_angle;
   client->ps.pm_type = QA_Q3_PM_INTERMISSION;
   for (size_t index = 0; index < client->ps.powerups.length; index++) slot_set(&client->ps.powerups, (double)index, 0);
@@ -357,29 +362,32 @@ void qa_q3_ta_match_runtime_log_exit(qa_q3_ta_match_runtime *r, const char *reas
   level(r)->intermission_queued = level(r)->time;
   r->host.set_configstring(r->host.ctx, 22, "1");
   if (settings.game_type >= QA_Q3_BASE_GT_TEAM) {
-    qa_q3_game_format_arg a[] = {qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED)),
-        qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE))};
+    qa_q3_game_format_arg value = qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED));
+    qa_q3_game_format_arg value2 = qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE));
+    qa_q3_game_format_arg a[] = {value, value2};
     t = fmt("red:%i  blue:%i\n", a, 2, 1024);
     r->host.log(r->host.ctx, t); free(t);
   }
-  double limit = fmin(level(r)->num_connected_clients, 32);
+  double limit = qa_js_min(level(r)->num_connected_clients, 32);
   for (double index = 0; index < limit; index++) {
     double number = sorted_at(r, index);
     qa_q3_game_client *client = qa_q3_entity_pool_client_at(r->host.pool, number);
     if (client->sess.session_team == QA_Q3_BASE_TEAM_SPECTATOR || client->pers.connected == QA_Q3_CONN_CONNECTING) continue;
     qa_q3_game_format_arg a[] = {qa_q3_game_format_number(score_of(r, number)),
-        qa_q3_game_format_number(fmin(0, 999)), /* TS ps.ping: no mirror field */
+        qa_q3_game_format_number(qa_js_min(client->ps.ping, 999)),
         qa_q3_game_format_number(number), qa_q3_game_format_string(client->pers.netname)};
     t = fmt("score: %i  ping: %i  client: %i %s\n", a, 4, 1024);
     r->host.log(r->host.ctx, t); free(t);
     if (r->host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && r->host.single_player(r->host.ctx) &&
         settings.game_type == QA_Q3_BASE_GT_TOURNAMENT &&
-        ((int32_t)qa_q3_entity_pool_at(r->host.pool, number)->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0 &&
+        (qa_js_to_int32(qa_q3_entity_pool_at(r->host.pool, number)->r.sv_flags) & QA_Q3_BASE_SVF_BOT) != 0 &&
         slot_get(&client->ps.persistant, QA_Q3_BASE_PERS_RANK) == 0) won = false;
   }
   if (r->host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && r->host.single_player(r->host.ctx)) {
+    double left;
+    double right;
     if (settings.game_type >= QA_Q3_BASE_GT_CTF)
-      won = slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED) > slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE);
+      won = (left = slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED), right = slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE), left > right);
     r->host.append_console_command(r->host.ctx, won ? "spWin\n" : "spLose\n");
   }
 }
@@ -391,8 +399,8 @@ void qa_q3_ta_match_runtime_check_intermission_exit(qa_q3_ta_match_runtime *r) {
   for (double index = 0; index < r->host.pool->max_clients; index++) {
     qa_q3_game_client *client = qa_q3_entity_pool_client_at(r->host.pool, index);
     if (client->pers.connected != QA_Q3_CONN_CONNECTED ||
-        ((int32_t)qa_q3_entity_pool_at(r->host.pool, client->ps.client_num)->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0) continue;
-    if (client->ready_to_exit) { ready++; if (index < 16) mask = (double)((int32_t)mask | (1 << (int)index)); }
+        (qa_js_to_int32(qa_q3_entity_pool_at(r->host.pool, client->ps.client_num)->r.sv_flags) & QA_Q3_BASE_SVF_BOT) != 0) continue;
+    if (client->ready_to_exit) { ready++; if (index < 16) mask = (double)(qa_js_to_int32(mask) | (1 << qa_js_to_int32(index))); }
     else not_ready++;
   }
   for (double index = 0; index < r->host.pool->max_clients; index++) {
@@ -406,10 +414,14 @@ void qa_q3_ta_match_runtime_check_intermission_exit(qa_q3_ta_match_runtime *r) {
   if (level(r)->time >= s32(level(r)->exit_time + 10000)) qa_q3_ta_match_runtime_exit_level(r);
 }
 bool qa_q3_ta_match_runtime_score_is_tied(qa_q3_ta_match_runtime *r) {
+  double left2;
+  double right2;
+  double left;
+  double right;
   if (level(r)->num_playing_clients < 2) return false;
   return r->host.settings(r->host.ctx).game_type >= QA_Q3_BASE_GT_TEAM
-      ? slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED) == slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE)
-      : score_of(r, sorted_at(r, 0)) == score_of(r, sorted_at(r, 1));
+      ? (left2 = slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED), right2 = slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE), left2 == right2)
+      : (left = score_of(r, sorted_at(r, 0)), right = score_of(r, sorted_at(r, 1)), left == right);
 }
 void qa_q3_ta_match_runtime_check_exit_rules(qa_q3_ta_match_runtime *r) {
   if (level(r)->intermission_time != 0) { qa_q3_ta_match_runtime_check_intermission_exit(r); return; }
@@ -564,7 +576,7 @@ void qa_q3_ta_match_runtime_check_team_leader(qa_q3_ta_match_runtime *r, qa_q3_b
   for (double index = 0; index < r->host.pool->max_clients; index++) {
     qa_q3_game_client *client = qa_q3_entity_pool_client_at(r->host.pool, index);
     if (client->sess.session_team == team &&
-        ((int32_t)qa_q3_entity_pool_at(r->host.pool, index)->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0) {
+        (qa_js_to_int32(qa_q3_entity_pool_at(r->host.pool, index)->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0) {
       client->sess.team_leader = 1; break; }
   }
   for (double index = 0; index < r->host.pool->max_clients; index++) {

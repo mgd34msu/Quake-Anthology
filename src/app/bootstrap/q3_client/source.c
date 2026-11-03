@@ -1,12 +1,15 @@
 /* Port of src/app/bootstrap/q3-client/source.ts. GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/app/bootstrap/q3_client/source.h"
+#include "qa/app/bootstrap/simulation/q3/host.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/commands/text.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef struct snapshot_entry { double number; qa_q3_wire_snapshot snapshot; } snapshot_entry;
 typedef struct command_entry { double sequence; char **argv; size_t argc; } command_entry;
 typedef struct actor_entry { double number; qa_actor_id actor; } actor_entry;
@@ -75,7 +78,7 @@ static void push_command(qa_app_application_q3_source *s, const char *const *arg
     }
   }
 }
-static void apply_configstrings(qa_app_application_q3_source *s, const qa_app_q3_source_presentation_state_mirror *state) {
+static void apply_configstrings(qa_app_application_q3_source *s, const qa_app_q3_source_presentation_state *state) {
   char *fresh[1024];
   for (size_t i = 0; i < 1024; i++) fresh[i] = xstrdup("");
   for (size_t i = 0; i < state->configstring_count; i++) {
@@ -95,47 +98,47 @@ static void apply_configstrings(qa_app_application_q3_source *s, const qa_app_q3
 static void transport_player(const qa_q3_base_player_state_record *source, qa_q3_player_state_record *out) {
   qa_q3_product product = source->state_product == QA_Q3_BASE_PRODUCT_MISSIONPACK
     ? QA_Q3_PRODUCT_MISSIONPACK : QA_Q3_PRODUCT_BASEQ3;
-  qa_q3_player_state_record_init(out, product, (int32_t)source->pm_type,
-                                 (int32_t)source->weapon, (int32_t)source->weapon_state);
-  out->command_time = (int32_t)source->command_time;
-  out->pm_type = (int32_t)source->pm_type;
-  out->bob_cycle = (int32_t)source->bob_cycle;
-  out->pm_flags = (int32_t)source->pm_flags;
-  out->pm_time = (int32_t)source->pm_time;
+  qa_q3_player_state_record_init(out, product, qa_js_to_int32(source->pm_type),
+                                 qa_js_to_int32(source->weapon), qa_js_to_int32(source->weapon_state));
+  out->command_time = qa_js_to_int32(source->command_time);
+  out->pm_type = qa_js_to_int32(source->pm_type);
+  out->bob_cycle = qa_js_to_int32(source->bob_cycle);
+  out->pm_flags = qa_js_to_int32(source->pm_flags);
+  out->pm_time = qa_js_to_int32(source->pm_time);
   out->origin = qa_q3_base_player_state_record_origin(source);
   out->velocity = qa_q3_base_player_state_record_velocity(source);
-  out->weapon_time = (int32_t)source->weapon_time;
-  out->gravity = (int32_t)source->gravity;
-  out->speed = (int32_t)source->speed;
+  out->weapon_time = qa_js_to_int32(source->weapon_time);
+  out->gravity = qa_js_to_int32(source->gravity);
+  out->speed = qa_js_to_int32(source->speed);
   out->delta_angles = source->delta_angles;
-  out->ground_entity_num = (int32_t)source->ground_entity_num;
-  out->legs_timer = (int32_t)source->legs_timer;
-  out->legs_anim = (int32_t)source->legs_anim;
-  out->torso_timer = (int32_t)source->torso_timer;
-  out->torso_anim = (int32_t)source->torso_anim;
-  out->movement_dir = (int32_t)source->movement_dir;
+  out->ground_entity_num = qa_js_to_int32(source->ground_entity_num);
+  out->legs_timer = qa_js_to_int32(source->legs_timer);
+  out->legs_anim = qa_js_to_int32(source->legs_anim);
+  out->torso_timer = qa_js_to_int32(source->torso_timer);
+  out->torso_anim = qa_js_to_int32(source->torso_anim);
+  out->movement_dir = qa_js_to_int32(source->movement_dir);
   out->grapple_point = source->grapple_point;
-  out->e_flags = (int32_t)source->e_flags;
-  out->event_sequence = (int32_t)source->event_sequence;
-  out->external_event = (int32_t)source->external_event;
-  out->external_event_parm = (int32_t)source->external_event_parm;
-  out->external_event_time = (int32_t)source->external_event_time;
-  out->client_num = (int32_t)source->client_num;
-  out->weapon = (int32_t)source->weapon;
-  out->weapon_state = (int32_t)source->weapon_state;
+  out->e_flags = qa_js_to_int32(source->e_flags);
+  out->event_sequence = qa_js_to_int32(source->event_sequence);
+  out->external_event = qa_js_to_int32(source->external_event);
+  out->external_event_parm = qa_js_to_int32(source->external_event_parm);
+  out->external_event_time = qa_js_to_int32(source->external_event_time);
+  out->client_num = qa_js_to_int32(source->client_num);
+  out->weapon = qa_js_to_int32(source->weapon);
+  out->weapon_state = qa_js_to_int32(source->weapon_state);
   out->viewangles = source->viewangles;
-  out->viewheight = (int32_t)source->viewheight;
-  out->damage_event = (int32_t)source->damage_event;
-  out->damage_yaw = (int32_t)source->damage_yaw;
-  out->damage_pitch = (int32_t)source->damage_pitch;
-  out->damage_count = (int32_t)source->damage_count;
-  out->generic1 = (int32_t)source->generic1;
-  out->loop_sound = (int32_t)source->loop_sound;
-  out->jumppad_ent = (int32_t)source->jumppad_ent;
-  out->ping = (int32_t)source->ping;
-  out->pmove_framecount = (int32_t)source->pmove_framecount;
-  out->jumppad_frame = (int32_t)source->jumppad_frame;
-  out->entity_event_sequence = (int32_t)source->entity_event_sequence;
+  out->viewheight = qa_js_to_int32(source->viewheight);
+  out->damage_event = qa_js_to_int32(source->damage_event);
+  out->damage_yaw = qa_js_to_int32(source->damage_yaw);
+  out->damage_pitch = qa_js_to_int32(source->damage_pitch);
+  out->damage_count = qa_js_to_int32(source->damage_count);
+  out->generic1 = qa_js_to_int32(source->generic1);
+  out->loop_sound = qa_js_to_int32(source->loop_sound);
+  out->jumppad_ent = qa_js_to_int32(source->jumppad_ent);
+  out->ping = qa_js_to_int32(source->ping);
+  out->pmove_framecount = qa_js_to_int32(source->pmove_framecount);
+  out->jumppad_frame = qa_js_to_int32(source->jumppad_frame);
+  out->entity_event_sequence = qa_js_to_int32(source->entity_event_sequence);
   struct { const qa_q3_base_player_state_slots *in; int32_t *out; size_t count; } slots[6] = {
     {&source->events, out->events, 2}, {&source->event_parms, out->event_parms, 2},
     {&source->stats, out->stats, 16}, {&source->persistant, out->persistant, 16},
@@ -149,7 +152,7 @@ static void transport_player(const qa_q3_base_player_state_record *source, qa_q3
   }
 }
 qa_app_application_q3_source *qa_app_application_q3_source_create(
-    qa_actor_id current_actor, const qa_app_q3_source_presentation_state_mirror *initial,
+    qa_actor_id current_actor, const qa_app_q3_source_presentation_state *initial,
     qa_app_q3_source_callbacks callbacks) {
   qa_app_application_q3_source *s = calloc(1, sizeof *s);
   if (s == NULL) qa_range_error("Out of memory");
@@ -160,7 +163,7 @@ qa_app_application_q3_source *qa_app_application_q3_source_create(
   s->command_sequence = -1;
   s->level_shot_sequence = -1;
   for (size_t i = 0; i < 1024; i++) { s->strings[i] = xstrdup(""); s->applied_strings[i] = xstrdup(""); }
-  const qa_app_q3_source_client_row *client = NULL;
+  const qa_app_q3_source_presentation_client *client = NULL;
   for (size_t i = 0; i < initial->client_count; i++)
     if (qa_same_actor(initial->clients[i].actor, current_actor)) client = &initial->clients[i];
   if (client == NULL) qa_range_error("Q3 presentation seat has no source player");
@@ -195,7 +198,7 @@ void qa_app_application_q3_source_assert_can_restart_round(qa_app_application_q3
   if (source->has_pending_round_time) qa_range_error("Local Q3 round restart is already pending");
 }
 void qa_app_application_q3_source_begin_round_restart(qa_app_application_q3_source *source, double bit,
-    const qa_app_q3_source_presentation_state_mirror *state) {
+    const qa_app_q3_source_presentation_state *state) {
   qa_app_application_q3_source_assert_can_restart_round(source);
   if (bit == source->snapshot_server_bit || state->product != source->product || state->time < source->time)
     qa_range_error("Invalid local Q3 restart epoch");
@@ -208,7 +211,7 @@ void qa_app_application_q3_source_begin_round_restart(qa_app_application_q3_sour
   source->actor_count = 0;
 }
 void qa_app_application_q3_source_validate_round_actor(qa_app_application_q3_source *source, qa_actor_id actor,
-    const qa_app_q3_source_presentation_state_mirror *state) {
+    const qa_app_q3_source_presentation_state *state) {
   bool listed = false;
   for (size_t i = 0; i < state->client_count; i++)
     if (state->clients[i].slot == source->client_number && qa_same_actor(state->clients[i].actor, actor)) listed = true;
@@ -219,7 +222,7 @@ void qa_app_application_q3_source_validate_round_actor(qa_app_application_q3_sou
     qa_range_error("Invalid local Q3 round actor binding");
 }
 void qa_app_application_q3_source_rebind_round(qa_app_application_q3_source *source, qa_actor_id actor,
-    const qa_app_q3_source_presentation_state_mirror *state) {
+    const qa_app_q3_source_presentation_state *state) {
   qa_app_application_q3_source_validate_round_actor(source, actor, state);
   source->current_actor = actor;
   source->has_pending_round_time = false;
@@ -250,7 +253,7 @@ bool qa_app_application_q3_source_get_server_command(qa_app_application_q3_sourc
     if (source->callbacks.level_shot != NULL) source->callbacks.level_shot(source->callbacks.ctx);
   }
   if (command->argc > 0 && strcmp(command->argv[0], "cs") == 0) {
-    double index = command->argc > 1 ? strtod(command->argv[1], NULL) : NAN;
+    double index = command->argc > 1 ? qa_js_string_to_number(command->argv[1]) : NAN; /* Number(command[1]) */
     const char *value = command->argc > 2 ? command->argv[2] : NULL;
     if (index != trunc(index) || index < 0 || index >= 1024 || value == NULL)
       qa_range_error("Invalid local source configstring command");
@@ -265,7 +268,7 @@ qa_actor_id qa_app_application_q3_source_actor_at(qa_app_application_q3_source *
   qa_actor_id actor;
   if (actor_get(source, number, &actor)) return actor;
   if (source->callbacks.source_actor(source->callbacks.ctx, number, &actor)) return actor;
-  qa_range_error("Q3 sound entity %g has no source actor", number);
+  qa_range_error("Q3 sound entity %s has no source actor", QA_JS_NUMBER(number));
 }
 bool qa_app_application_q3_source_sound_actor(qa_app_application_q3_source *source, double number, qa_actor_id *out) {
   if (source->has_pending_round_time) return false;
@@ -273,16 +276,17 @@ bool qa_app_application_q3_source_sound_actor(qa_app_application_q3_source *sour
   return source->callbacks.source_actor(source->callbacks.ctx, number, out);
 }
 void qa_app_application_q3_source_receive_events(qa_app_application_q3_source *source,
-    const qa_app_q3_source_presentation_event *events, size_t event_count) {
+    const qa_app_sim_presentation_event *events, size_t event_count) {
   for (size_t i = 0; i < event_count; i++) {
-    const qa_app_q3_source_presentation_event *event = &events[i];
+    const qa_app_sim_presentation_event *event = &events[i];
     if (event->sequence <= source->sequence) continue;
     source->sequence = event->sequence;
-    if (event->kind == NULL || strcmp(event->kind, "q3-source") != 0) continue;
-    if (event->event_kind != NULL && strcmp(event->event_kind, "server-command") == 0
-        && (event->client < 0 || event->client == source->client_number)) {
+    if (event->kind == NULL || strcmp(event->kind, "q3-source") != 0 || event->q3_source == NULL) continue;
+    const qa_app_q3_source_event *command = event->q3_source;
+    if (command->kind == QA_APP_Q3_EVENT_SERVER_COMMAND
+        && (command->client < 0 || command->client == source->client_number)) {
       qa_command_tokens tokens;
-      if (qa_tokenize_command(event->text, QA_COMMAND_DIALECT_Q3, QA_COMMAND_TEXT_SOURCE, &tokens)) {
+      if (qa_tokenize_command(command->text, QA_COMMAND_DIALECT_Q3, QA_COMMAND_TEXT_SOURCE, &tokens)) {
         push_command(source, (const char *const *)tokens.argv, tokens.argc);
         qa_command_tokens_destroy(&tokens);
       }
@@ -290,19 +294,19 @@ void qa_app_application_q3_source_receive_events(qa_app_application_q3_source *s
   }
 }
 void qa_app_application_q3_source_receive(qa_app_application_q3_source *source,
-    const qa_app_q3_source_presentation_state_mirror *state,
-    const qa_app_q3_source_presentation_event *events, size_t event_count,
+    const qa_app_q3_source_presentation_state *state,
+    const qa_app_sim_presentation_event *events, size_t event_count,
     const qa_actor_command *commands, size_t command_count) {
   if (source->has_pending_round_time)
     qa_range_error("Local Q3 restart requires actor rebinding before publication");
   if (state->time < source->time) qa_range_error("Q3 presentation world time rewound");
-  const qa_app_q3_source_client_row *player = NULL;
+  const qa_app_q3_source_presentation_client *player = NULL;
   for (size_t i = 0; i < state->client_count; i++)
     if (qa_same_actor(state->clients[i].actor, source->current_actor)) player = &state->clients[i];
   if (player == NULL || player->slot != source->client_number)
     qa_range_error("Q3 presentation seat changed source player");
   for (size_t i = 0; i < state->entity_count; i++)
-    actor_set(source, state->entities[i].state->number, state->entities[i].actor);
+    actor_set(source, state->entities[i].state.number, state->entities[i].actor);
   for (size_t i = 0; i < state->client_count; i++)
     actor_set(source, state->clients[i].slot, state->clients[i].actor);
   apply_configstrings(source, state);
@@ -327,7 +331,7 @@ void qa_app_application_q3_source_receive(qa_app_application_q3_source *source,
   if (source->number > 0 && state->time == source->time) return;
   source->time = state->time;
   qa_q3_player_state_record player_state;
-  transport_player(player->state, &player_state);
+  transport_player(&player->state, &player_state);
   qa_q3_visible_entities visible;
   memset(&visible, 0, sizeof visible);
   source->callbacks.select(source->callbacks.ctx, &player_state, state, &visible);

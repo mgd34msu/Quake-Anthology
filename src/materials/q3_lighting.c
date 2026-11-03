@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 #include "qa/core/math.h"
 #include "qa/core/renderer_math.h"
@@ -48,19 +49,18 @@ static double grid_float(const char *token, size_t length) {
                                          : p[0] == '0' && p[1] == 'x');
   double result;
   if (!hex) {
-    result = fr(strtod(p, NULL));
+    result = fr(qa_js_parse_float(p)); /* parseFloat of the lowercased token: "inf" and "infinity" are NaN */
   } else {
     bool negative = p[0] == '-';
     char *mantissa = p + ((p[0] == '+' || p[0] == '-') ? 3 : 2);
     char *exp_at = strchr(mantissa, 'p');
-    long exponent = exp_at != NULL ? strtol(exp_at + 1, NULL, 10) : 0;
+    double exponent = exp_at != NULL ? qa_js_parse_int(exp_at + 1, 10) : 0;
     if (exp_at != NULL) *exp_at = '\0';
     char *dot = strchr(mantissa, '.');
-    long fractional = dot != NULL ? (long)strlen(dot + 1) : 0;
+    double fractional = dot != NULL ? (double)strlen(dot + 1) : 0;
     if (dot != NULL) memmove(dot, dot + 1, strlen(dot + 1) + 1);
-    double digits = (double)strtoull(mantissa, NULL, 16);
-    result = fr((negative ? -1.0 : 1.0) * digits *
-                pow(2.0, (double)(exponent - fractional * 4)));
+    double digits = qa_js_parse_int(mantissa, 16); /* strtoull saturated past 2^64 */
+    result = fr((negative ? -1.0 : 1.0) * digits * qa_js_pow(2.0, exponent - fractional * 4));
   }
   free(copy);
   return result;
@@ -263,9 +263,14 @@ bool qa_light_for_point(const qa_light_grid *grid, qa_vec3 point,
     ambient = qa_add3(ambient, qa_scale3(data.ambient, factor));
     directed = qa_add3(directed, qa_scale3(data.directed, factor));
     double latitude = data.lat_long.y * 4, longitude = data.lat_long.x * 4;
-    qa_vec3 normal = {qa_renderer_sine(latitude + 256) * qa_renderer_sine(longitude),
-                      qa_renderer_sine(latitude) * qa_renderer_sine(longitude),
-                      qa_renderer_sine(longitude + 256)};
+    float left = qa_renderer_sine(latitude + 256);
+    float right = qa_renderer_sine(longitude);
+    double x2 = left * right;
+    float left2 = qa_renderer_sine(latitude);
+    float right2 = qa_renderer_sine(longitude);
+    double y2 = left2 * right2;
+    double z2 = qa_renderer_sine(longitude + 256);
+    qa_vec3 normal = {x2, y2, z2};
     direction = qa_add3(direction, qa_scale3(normal, factor));
   }
   if (total_factor > 0 && total_factor < 0.99) {

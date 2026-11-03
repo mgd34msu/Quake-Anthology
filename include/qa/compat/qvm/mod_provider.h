@@ -12,16 +12,11 @@
  *    memory (module.h accommodation); async initialize/readScript
  *    are synchronous. readScript decodes through the caller mounts
  *    synchronously when an open result is already materialized.
- *  - Engine scene/physics/events are opaque in the landed
- *    ModHostServices shape (world/session/mods.h): Q3GuestWorld
- *    portals, physics bindSource/setCollision, scene trace/contact/
- *    contents/portal queries and Q3SourceEvent emission cannot be
- *    constructed here. Their TS "service missing" errors are
- *    reproduced when the service is absent; when present-but-opaque
- *    the same paths remain unresolved (see the .c notes).
- *  - presentations() fills the landed qa_session_simulation_
- *    presentation (actor/viewWeapon only); the TS payload fields
- *    have no landed representation and stay unresolved.
+ *  - Engine scene/physics/events are read through their typed views
+ *    in world/session/mod_engine.h.
+ *  - presentations() fills qa_app_simulation_presentation with
+ *    actor/viewWeapon and points opaque at the full
+ *    qa_app_simulation_presentation.
  *  - close() aggregates TS cleanup errors; C cleanup failures abort
  *    at their source, so the AggregateError path is unreachable. */
 #ifndef QA_COMPAT_QVM_MOD_PROVIDER_H
@@ -29,6 +24,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qa/app/bootstrap/simulation/q3/guest_world.h"
 #include "qa/compat/qvm/entity_tokens.h"
 #include "qa/compat/qvm/file_syscalls.h"
 #include "qa/compat/qvm/mod_actor_frame.h"
@@ -37,6 +33,7 @@
 #include "qa/compat/qvm/mod_input.h"
 #include "qa/compat/qvm/mod_items.h"
 #include "qa/compat/qvm/mod_pickups.h"
+#include "qa/compat/qvm/mod_presentation.h"
 #include "qa/compat/qvm/mod_player_events.h"
 #include "qa/compat/qvm/mod_protection.h"
 #include "qa/compat/qvm/module.h"
@@ -52,19 +49,6 @@
 #include "qa/world/session/mod_objectives.h"
 #include "qa/world/session/mod_presentations.h"
 #include "qa/world/session/mods.h"
-
-/* Provider presentation context returned through the opaque
- * qa_session_qvm_presentation_context slot of
- * qa_mod_qvm_presentation_source (TS QvmPresentationContext minus
- * frameTimeMilliseconds/viewOrigin). */
-typedef struct qa_qvm_mod_provider_presentation_context {
-  int64_t client_number;
-  bool weapon_presented;
-  const qa_q3_source_game_state_record *game_state;
-  int64_t game_state_revision;
-  int64_t server_time;
-  qa_q3_player_state player_state;
-} qa_qvm_mod_provider_presentation_context;
 
 /* TS validateQvmMod. Aborts with the TS Error message on failure. */
 void qa_qvm_validate_mod(const qa_resolved_qvm_artifact *artifact,
@@ -149,7 +133,8 @@ struct qa_qvm_mod_provider {
   qa_qvm_scene_command *scene_baseline_commands;
   size_t scene_baseline_client_capacity, scene_baseline_entity_capacity,
       scene_baseline_command_capacity;
-  struct qa_qvm_mod_provider_presentation_context *presentation_context;
+  /* presentationSource.context() result (owned; reused per call). */
+  qa_qvm_presentation_context *presentation_context;
   bool scene_dirty;
   int64_t scene_revision, scene_command_sequence;
   /* BoundedQueue(64) of owned scene command cells (element size is
@@ -177,12 +162,20 @@ struct qa_qvm_mod_provider {
   size_t reservation_count, reservation_capacity;
   void *pickup_bindings; /* opaque inventory pickup binding cells */
   size_t pickup_binding_count, pickup_binding_capacity;
+  /* TS physics Map: per-actor unbind handles and closure cells. */
+  struct qa_qvm_mod_physics_cell **physics;
+  size_t physics_count, physics_capacity;
+  qa_app_q3_guest_world *portals; /* NULL = TS null */
   qa_mod_qvm_presentation_source presentation_source;
   qa_qvm_presentation_binding *bindings_scratch;
   size_t bindings_scratch_capacity;
-  qa_session_simulation_presentation *presentations_scratch;
-  size_t presentations_scratch_capacity;
+  qa_app_simulation_presentation *presentation_payloads; /* presentations() result */
+  size_t presentation_payload_capacity;
+  char (*presentation_paths)[32];
   char *objective_location; /* scratch, compared by value */
+  /* Operation tables and input outputs handed to the runtimes at init (C-only
+   * ownership: TS objects live as long as the provider). Freed by destroy. */
+  void **owned_tables; size_t owned_table_count, owned_table_capacity;
   char *configstring_scratch;
   qa_qvm_host_state host_state;
   qa_guest_checkpoint checkpoint_storage;
@@ -204,7 +197,7 @@ bool qa_qvm_mod_provider_init(qa_qvm_mod_provider *p,
                               void *assert_current_ctx, qa_content_id content,
                               qa_content_mounted *mounts,
                               qa_user_file_store *writable,
-                              qa_qvmy_interpreter_runtime *interpreter,
+                              qa_qvm_interpreter_runtime *interpreter,
                               const qa_guest_memory *guest_memory);
 void qa_qvm_mod_provider_destroy(qa_qvm_mod_provider *p);
 
@@ -228,7 +221,7 @@ void qa_qvm_mod_provider_activate_protection(qa_qvm_mod_provider *p);
 /* TS advance(): returns undefined. */
 void qa_qvm_mod_provider_advance(qa_qvm_mod_provider *p, qa_frame_context frame);
 /* Borrowed scratch (see header note on the landed shape). */
-const qa_session_simulation_presentation *qa_qvm_mod_provider_presentations(
+const qa_app_simulation_presentation *qa_qvm_mod_provider_presentations(
     qa_qvm_mod_provider *p, size_t *out_count);
 /* TS checkpoint()/restore(). The returned checkpoint borrows
  * provider storage until the next checkpoint/destroy. */

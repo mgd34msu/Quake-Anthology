@@ -12,7 +12,7 @@ static void plain_error(const char *message) { qa_range_error("%s", message); }
 
 void qa_capture_abi_processor_state(qa_abi_processor_snapshot *out, qa_guest_processor_state *state) {
   out->architecture = state->architecture;
-  out->registers_len = qa_integer_register_file_checkpoint(&state->registers, out->registers, sizeof out->registers);
+  out->registers_len = qa_integer_register_file_checkpoint(&state->registers, out->registers, qa_register_file_size(state->architecture));
   out->instruction_pointer = state->instruction_pointer;
   out->flags = qa_processor_flags_value(&state->flags);
   memcpy(out->segments, state->segments, sizeof out->segments);
@@ -33,6 +33,8 @@ void qa_restore_abi_processor_state(qa_guest_processor_state *state, const qa_ab
 typedef struct active_call {
   qa_guest_core_call_context context;
   int64_t remaining;
+  /* Context of this frame's host callback in progress, for unwind. */
+  const qa_guest_core_call_context *dispatch_context;
   struct active_call *next; /* enclosing call */
 } active_call;
 
@@ -68,6 +70,9 @@ struct qa_guest_call_runner {
   bool loading;
   struct timespec slice_start;
   bool slice_timing;
+  /* TS #entryState: the processor at the outermost call's entry. */
+  bool has_entry_state;
+  qa_abi_processor_snapshot entry_state;
 };
 
 bool qa_guest_call_runner_init(qa_guest_call_runner *runner, qa_guest_call_runner_options options) {
@@ -116,7 +121,15 @@ static void stamp_now(struct timespec *ts) { timespec_get(ts, TIME_UTC); }
 static void stopped(qa_guest_call_runner *runner, qa_guest_execution_stop stop) {
   runner->last_stop = stop;
   runner->has_last_stop = true;
-  qa_range_error("Guest call stopped: %s", qa_guest_execution_stop_kind_name(stop.kind));
+  qa_raise("GuestCallStopped", 0, 0, "Guest call stopped: %s", qa_guest_execution_stop_kind_name(stop.kind));
+}
+/* invokeSteps' `finally { this.#active.pop(); }` when a raise leaves the call. */
+typedef struct active_pop { qa_guest_call_runner *runner; active_call *active, *enclosing; } active_pop;
+static void pop_active(void *arg) {
+  active_pop *pop = arg;
+  if (pop->runner->top != pop->active) return;
+  pop->runner->top = pop->enclosing; pop->runner->depth--;
+  free(pop->active);
 }
 
 static inline_region *find_region(qa_guest_call_runner *runner, uint64_t entry) {
@@ -223,8 +236,10 @@ static void run_steps(qa_guest_call_runner *runner, active_call *active,
     }
     const qa_guest_core_call_context *previous = runner->callback_context;
     runner->callback_context = &callback_context;
+    active->dispatch_context = &callback_context;
     qa_call_result result = qa_guest_callback_table_invoke(callbacks, stop.address, &callback_context,
                                               arguments_, argument_count);
+    active->dispatch_context = NULL;
     runner->callback_context = previous;
     for (size_t i = 0; i < argument_count; i++) qa_call_value_free(&arguments_[i]);
     free(arguments_);
@@ -251,6 +266,7 @@ static qa_call_result invoke_steps(qa_guest_call_runner *runner, const qa_guest_
   if (enclosing != NULL) active->context.parent = qa_guest_call_runner_current_context(runner);
   active->remaining = enclosing == NULL ? request->instruction_budget
       : (request->instruction_budget < enclosing->remaining ? request->instruction_budget : enclosing->remaining);
+  active->dispatch_context = NULL;
   active->next = enclosing;
   uint64_t caller_instruction = cpu->state->instruction_pointer;
   bool have_saved = enclosing != NULL;
@@ -260,6 +276,7 @@ static qa_call_result invoke_steps(qa_guest_call_runner *runner, const qa_guest_
   qa_x86_abi_adapter_init(&adapter, request->signature.abi);
   int width = cpu->memory->pointer_bytes == 4 ? 32 : 64;
   uint64_t caller_stack = qa_integer_register_file_read(&cpu->state->registers, QA_REG_RSP, width, false);
+  if (enclosing == NULL) { qa_capture_abi_processor_state(&runner->entry_state, cpu->state); runner->has_entry_state = true; }
   qa_x86_abi_adapter_enter(&adapter, cpu, request->target, &request->signature,
                            request->arguments, request->argument_count, return_address);
   uint64_t entry_stack = qa_integer_register_file_read(&cpu->state->registers, QA_REG_RSP, width, false);
@@ -279,7 +296,10 @@ static qa_call_result invoke_steps(qa_guest_call_runner *runner, const qa_guest_
     qa_range_error("ABI argument allocation failed");
   free(layouts_storage);
   runner->top = active; runner->depth++;
+  active_pop pop = {runner, active, enclosing};
+  qa_cleanup pop_node; qa_cleanup_push(&pop_node, pop_active, &pop);
   run_steps(runner, active, return_address, slice);
+  qa_cleanup_pop(&pop_node);
   uint64_t final_stack = qa_integer_register_file_read(&cpu->state->registers, QA_REG_RSP, width, false);
   if (final_stack != entry_stack + (uint64_t)(cpu->memory->pointer_bytes + plan.callee_pop_bytes)) {
     qa_abi_call_plan_free(&plan);
@@ -293,6 +313,7 @@ static qa_call_result invoke_steps(qa_guest_call_runner *runner, const qa_guest_
   else {
     qa_integer_register_file_write(&cpu->state->registers, QA_REG_RSP, width, caller_stack, false);
     cpu->state->instruction_pointer = caller_instruction;
+    runner->has_entry_state = false;
   }
   runner->top = enclosing; runner->depth--;
   free(active);
@@ -304,6 +325,11 @@ qa_call_result qa_guest_call_runner_invoke(qa_guest_call_runner *runner, const q
   return invoke_steps(runner, request, QA_MAX_SAFE_INTEGER);
 }
 
+/* invokeLoading's `finally`: a raised loading call leaves the runner idle. */
+static void end_loading(void *arg) {
+  qa_guest_call_runner *runner = arg;
+  runner->loading = false; runner->next_frame = NULL; runner->slice_timing = false; runner->loading_suspended = false;
+}
 qa_call_result qa_guest_call_runner_invoke_loading(qa_guest_call_runner *runner,
                                                    const qa_guest_call_request *request,
                                                    void (*next_frame)(void *ctx), void *next_frame_ctx) {
@@ -312,7 +338,9 @@ qa_call_result qa_guest_call_runner_invoke_loading(qa_guest_call_runner *runner,
   runner->next_frame = next_frame; runner->next_frame_ctx = next_frame_ctx;
   runner->slice_timing = true;
   stamp_now(&runner->slice_start);
+  qa_cleanup loading_node; qa_cleanup_push(&loading_node, end_loading, runner);
   qa_call_result result = invoke_steps(runner, request, 16384);
+  qa_cleanup_pop(&loading_node);
   double elapsed = now_ms() - ((double)runner->slice_start.tv_sec * 1000.0
                                + (double)runner->slice_start.tv_nsec / 1000000.0);
   if (elapsed > runner->maximum_loading_slice_ms) runner->maximum_loading_slice_ms = elapsed;
@@ -395,6 +423,40 @@ void qa_guest_inline_region_unbind(qa_guest_inline_region_handle *handle) {
   handle->region = NULL;
 }
 void qa_guest_inline_region_handle_free(qa_guest_inline_region_handle *handle) { free(handle); }
+
+size_t qa_guest_call_runner_size(void) { return sizeof(qa_guest_call_runner); }
+
+/* TS invokeSteps/runSteps/interceptRegion `finally` blocks for frames a
+ * host-side unwind abandoned: pop calls deeper than depth (TS
+ * #active.pop), drop their inline-region executing entries
+ * (executing.pop) and restore the callback context the surviving
+ * frame's dispatch installed (#callbackContext = previousContext). */
+void qa_guest_call_runner_recover(qa_guest_call_runner *runner) {
+  if (runner->depth != 0 || !runner->has_entry_state) return;
+  qa_restore_abi_processor_state(runner->options.cpu->state, &runner->entry_state);
+  runner->has_entry_state = false;
+}
+/* TS chargeBytes: host services that touch many bytes pay one budget unit per
+ * 64 of them, so a loop of bulk calls cannot outlast its budget. */
+void qa_guest_call_runner_charge_bytes(qa_guest_call_runner *runner, size_t byte_length) {
+  const int64_t units = (int64_t)(byte_length / 64u);
+  if (units <= 0) return;
+  for (active_call *frame = runner->top; frame != NULL; frame = frame->next)
+    frame->remaining = frame->remaining - units < 0 ? 0 : frame->remaining - units;
+}
+void qa_guest_call_runner_unwind(qa_guest_call_runner *runner, int64_t depth) {
+  if (depth < 0) depth = 0;
+  while ((int64_t)runner->depth > depth && runner->top != NULL) {
+    active_call *popped = runner->top;
+    for (inline_region *region = runner->regions; region != NULL; region = region->next)
+      while (region->executing_count > 0 && region->executing[region->executing_count - 1].call == popped)
+        region->executing_count--;
+    runner->top = popped->next; runner->depth--;
+    free(popped);
+  }
+  runner->callback_context = runner->top != NULL ? runner->top->dispatch_context : NULL;
+  if (runner->depth == 0) { runner->loading_suspended = false; }
+}
 
 typedef struct continuation_state {
   qa_guest_call_runner *runner;

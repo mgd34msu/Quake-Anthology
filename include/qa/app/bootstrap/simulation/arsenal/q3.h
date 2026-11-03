@@ -50,6 +50,10 @@ typedef struct qa_app_q3_selected_arsenal_checkpoint {
   bool has_last_fire_milliseconds;
   double last_fire_milliseconds;
   qa_item_id pending_use; /* nullable */
+  /* C-only key order of arsenal: false is the q3SpawnLoadout literal { provider, activeWeapon, state, ammo }; true is
+   * readQ3SelectedArsenalCheckpoint's { provider, activeWeapon, ammo, state }, which a restored player keeps (read()
+   * and the step results spread it). */
+  bool arsenal_read_order;
 } qa_app_q3_selected_arsenal_checkpoint;
 
 typedef struct qa_app_q3_selected_arsenal qa_app_q3_selected_arsenal;
@@ -61,6 +65,8 @@ bool qa_app_q3_selected_arsenal_has(qa_app_q3_selected_arsenal *arsenal, qa_acto
 qa_arsenal_state qa_app_q3_selected_arsenal_admit(qa_app_q3_selected_arsenal *arsenal, qa_owned_actor actor,
     double max_health, bool team_deathmatch);
 qa_arsenal_state qa_app_q3_selected_arsenal_read(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor);
+/* TS setSpawnWeapon(actor, weapon): raises when weapon is not a Q3 weapon. */
+void qa_app_q3_selected_arsenal_set_spawn_weapon(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor, double weapon);
 bool qa_app_q3_selected_arsenal_select(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor, qa_item_id item);
 bool qa_app_q3_selected_arsenal_owns_holdable_input(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor);
 void qa_app_q3_selected_arsenal_observe_holdable_input(qa_app_q3_selected_arsenal *arsenal, qa_actor_id actor,

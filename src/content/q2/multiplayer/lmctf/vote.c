@@ -1,6 +1,7 @@
 /* Port of src/content/q2/multiplayer/lmctf/vote.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/multiplayer/lmctf/vote.h"
 #include "../multiplayer_internal.h"
+#include "qa/foundation/js.h"
 
 struct qa_lmctf_vote {
   qa_lmctf_context *context;
@@ -22,7 +23,7 @@ bool qa_lmctf_vote_started_at(qa_lmctf_vote *v, double *out) {
 
 static bool vote_player(qa_lmctf_vote *v, qa_q2_game_services *g, size_t i) {
   qa_actor_id actor = v->context->states[i].actor;
-  qa_q2mp_player_state *player = v->context->hooks.player(v->context->hooks.ctx, actor);
+  qa_q2_base_player_state *player = v->context->hooks.player(v->context->hooks.ctx, actor);
   qa_q2_entity *entity = qa_q2_game_entity_of(g, &actor);
   return player != NULL && player->connected && entity != NULL && strcmp(entity->classname, "player") == 0;
 }
@@ -42,8 +43,8 @@ void qa_lmctf_vote_menu(qa_lmctf_vote *v, qa_actor_id actor) {
     event.entries = idle_entries;
     event.entry_count = 2;
   } else {
-    active_entries[3].label = ((int64_t)ballot & 64) != 0 ? "You have voted YES"
-                              : ((int64_t)ballot & 128) != 0 ? "You have voted NO" : "You have not voted";
+    active_entries[3].label = (qa_js_to_int32(ballot) & 64) != 0 ? "You have voted YES"
+                              : (qa_js_to_int32(ballot) & 128) != 0 ? "You have voted NO" : "You have not voted";
     event.entries = active_entries;
     event.entry_count = 4;
   }
@@ -55,8 +56,9 @@ void qa_lmctf_vote_start(qa_lmctf_vote *v, qa_actor_id actor, qa_q2_game_service
   for (size_t i = 0; i < v->context->state_count; i++)
     if (vote_player(v, g, i)) {
       count++;
+      if (v->has_started) continue;
       qa_lmctf_player_state *state = &v->context->states[i].state;
-      state->extra_flags = (double)((int64_t)state->extra_flags & ~192);
+      state->extra_flags = (double)(qa_js_to_int32(state->extra_flags) & ~192);
     }
   if (count < 4) {
     qa_lmctf_print(g, &actor, "You need at least four players on the server to initiate a vote\n");
@@ -66,7 +68,7 @@ void qa_lmctf_vote_start(qa_lmctf_vote *v, qa_actor_id actor, qa_q2_game_service
     v->has_started = true;
     v->started_at = qa_q2mp_now(g);
     qa_lmctf_player_state *starter = qa_lmctf_player(v->context, actor);
-    starter->extra_flags = (double)((int64_t)starter->extra_flags | 64);
+    starter->extra_flags = (double)(qa_js_to_int32(starter->extra_flags) | 64);
     qa_lmctf_print(g, NULL, "%s started vote to skip level.\n", qa_lmctf_name(v->context, actor));
     qa_q2_entity *entity = qa_q2_game_entity_of(g, &actor);
     if (entity != NULL) g->sound(g->ctx, entity->actor, "misc/secret.wav", 3, 1, 0);
@@ -80,7 +82,7 @@ void qa_lmctf_vote_ballot(qa_lmctf_vote *v, qa_actor_id actor, qa_q2_game_servic
     return;
   }
   qa_lmctf_player_state *player = qa_lmctf_player(v->context, actor);
-  player->extra_flags = (double)(((int64_t)player->extra_flags & ~192) | (yes ? 64 : 128));
+  player->extra_flags = (double)((qa_js_to_int32(player->extra_flags) & ~192) | (yes ? 64 : 128));
   qa_lmctf_print(g, &actor, "You have voted %s\n", yes ? "YES" : "NO");
   qa_lmctf_vote_menu(v, actor);
 }
@@ -92,7 +94,7 @@ void qa_lmctf_vote_frame(qa_lmctf_vote *v, qa_q2_game_services *g) {
   double yes = 0, no = 0, abstained = 0;
   for (size_t i = 0; i < v->context->state_count; i++) {
     if (!vote_player(v, g, i)) continue;
-    int64_t flags = (int64_t)v->context->states[i].state.extra_flags;
+    int32_t flags = qa_js_to_int32(v->context->states[i].state.extra_flags); /* TS flags & x: ToInt32 */
     if ((flags & 64) != 0) yes++;
     else if ((flags & 128) != 0) no++;
     else abstained++;
@@ -108,7 +110,7 @@ void qa_lmctf_vote_frame(qa_lmctf_vote *v, qa_q2_game_services *g) {
     return;
   }
   double percentage = trunc(yes * 100 / total);
-  if (fmod(yes * 100, total) > (double)((int64_t)total >> 1)) percentage++;
+  if (fmod(yes * 100, total) > qa_js_shr(total, 1)) percentage++;
   if (percentage < 75) {
     char pct[32];
     qa_q2mp_format_number(pct, sizeof pct, 100 - percentage);
@@ -128,7 +130,7 @@ bool qa_lmctf_vote_capture(qa_lmctf_vote *v, double *out_started_at) {
 
 void qa_lmctf_vote_restore(qa_lmctf_vote *v, const qa_save_reader *reader) {
   qa_save_reader field;
-  if (!qa_save_reader_field(reader, "startedAt", &field)) qa_q2f_error("Out of memory");
+  if (!qa_save_reader_field(reader, "startedAt", &field)) qa_raise("Error", 0, 0, "Out of memory");
   v->has_started = !qa_save_reader_is_null(&field);
   if (v->has_started) v->started_at = qa_save_reader_finite(&field);
   qa_save_reader_destroy(&field);

@@ -5,6 +5,7 @@
 #include "qa/content/q3/presentation/client_info.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 enum { LAG_SAMPLES = 128, MAX_LAGOMETER_PING = 900, MAX_LAGOMETER_RANGE = 300 };
 static float f32(double v) { return (float)v; }
 static const qa_vec4 YELLOW_C = {1, 1, 0, 1}, BLUE_C = {0, 0, 1, 1}, GREEN_C = {0, 1, 0, 1}, RED_C = {1, 0, 0, 1};
@@ -153,7 +154,7 @@ bool qa_q3_pres_client_draw_status_draw_lagometer(qa_q3_pres_client_draw_status 
   int color = -1;
   double range = f32(adjusted.height / 3), mid = f32(adjusted.y + range), scale = f32(range / MAX_LAGOMETER_RANGE);
   for (double a = 0; a < adjusted.width; a++) {
-    int index = (int)(status->frame_count - 1 - (int32_t)a) & (LAG_SAMPLES - 1);
+    int index = (int)(status->frame_count - 1 - qa_js_to_int32(a)) & (LAG_SAMPLES - 1);
     double value = f32(f32(status->frame_samples[index]) * scale);
     if (value > 0) {
       if (color != 1) { color = 1; qa_draw2d_set_color(&status->tools->draw, &YELLOW_C); }
@@ -171,7 +172,7 @@ bool qa_q3_pres_client_draw_status_draw_lagometer(qa_q3_pres_client_draw_status 
   range = f32(adjusted.height / 2);
   scale = f32(range / MAX_LAGOMETER_PING);
   for (double a = 0; a < adjusted.width; a++) {
-    int index = (int)(status->snapshot_count - 1 - (int32_t)a) & (LAG_SAMPLES - 1);
+    int index = (int)(status->snapshot_count - 1 - qa_js_to_int32(a)) & (LAG_SAMPLES - 1);
     double value = f32(status->snapshot_samples[index]);
     if (value > 0) {
       if ((status->snapshot_flags[index] & 1) != 0) {

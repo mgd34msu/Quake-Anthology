@@ -10,6 +10,7 @@
 #include "qa/llm/errors.h"
 #include "qa/llm/models.h"
 #include "qa/llm/request.h"
+#include "qa/ui/common/controls.h"
 #include "qa/ui/common/layout.h"
 
 typedef struct llm_state llm_state;
@@ -387,19 +388,6 @@ static qa_ui_control field(llm_state *s, size_t slot, const char *id,
   return control;
 }
 
-/* /.{1,54}(?:\s|$)|.{1,54}/g over bytes. */
-static size_t wrap54(const char *text, char *out) {
-  size_t length = strlen(text);
-  if (length == 0) { out[0] = '\0'; return 0; }
-  size_t best = 0;
-  for (size_t i = 1; i <= 54 && i < length; i++)
-    if (qa_input_js_space((unsigned char)text[i])) best = i + 1;
-  size_t take = length <= 54 ? length : best > 0 ? best : 54;
-  memcpy(out, text, take);
-  out[take] = '\0';
-  return take;
-}
-
 static void menu_open(void *v, qa_seat_id seat) {
   (void)seat;
   llm_state *s = v;
@@ -559,20 +547,24 @@ static qa_ui_menu factory(void *v) {
     controls[at].rect = qa_ui_menu_row(8, refresh_opts);
   }
   at++;
-  const char *rest = message_buffer;
-  for (int line = 0; line < 2 && rest[0] != '\0' && at < 19; line++) {
-    char buffer[64];
-    size_t used = wrap54(rest, buffer);
-    char *trimmed = qa_input_js_trim(buffer);
+  /* TS wrapWords(message, 54).slice(0, 2), each line trimmed. */
+  size_t line_count = 0;
+  char **lines = qa_ui_wrap_words(message_buffer, 54, &line_count);
+  for (int line = 0; line < 2 && (size_t)line < line_count && at < 19; line++) {
+    char *trimmed = qa_input_js_trim(lines[line]);
     if (trimmed == NULL) qa_range_error("Out of memory");
     char id[48];
     snprintf(id, sizeof id, "ui:llm:message:%d", line);
-    controls[at] = button(s, at, own(s, id), own(s, trimmed), 9 + line,
+    llm_state * s2 = s;
+    size_t slot = at;
+    const char * id2 = own(s, id);
+    const char * label2 = own(s, trimmed);
+    controls[at] = button(s2, slot, id2, label2, 9 + line,
                           L_NONE, false);
     free(trimmed);
     at++;
-    rest += used;
   }
+  qa_ui_wrapped_lines_free(lines, line_count);
   controls[at] = button(s, at, "ui:llm:back", "Back", 11, L_BACK, true);
   at++;
   qa_llm_settings_snapshot_free(&snap);

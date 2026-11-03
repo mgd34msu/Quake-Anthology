@@ -1,5 +1,7 @@
 /* Port of src/network/q2/codecs/q2repro.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/codecs/q2repro.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_truthy.h"
 
 #include <math.h>
 #include <string.h>
@@ -21,39 +23,39 @@ static qa_q2repro_binding *bind_of(qa_q2_protocol_codec *self) {
 }
 
 double qa_q2repro_combine_bits(double lo, double hi) {
-  return (double)(uint32_t)(int32_t)lo + hi * 4294967296.0;
+  return (double)qa_js_to_uint32(lo) + hi * 4294967296.0; /* (lo >>> 0) + hi * 2^32 */
 }
 bool qa_q2repro_bits_has_hi(double bits, double hi_flag) {
-  return ((int32_t)floor(bits / 4294967296.0) & (int32_t)hi_flag) != 0;
+  return (qa_js_to_int32(floor(bits / 4294967296.0)) & qa_js_to_int32(hi_flag)) != 0;
 }
-int32_t qa_q2repro_encode_alpha(double x) {
+double qa_q2repro_encode_alpha(double x) {
   if (x == 0) return 0;
-  int32_t v = (int32_t)trunc(x * 255.0);
+  double v = trunc(x * 255.0); /* a TS number: NaN stays NaN, huge values clamp */
   if (v < 1) v = 1;
   if (v > 255) v = 255;
   return v;
 }
 double qa_q2repro_decode_alpha(double b) { return b == 0 ? 0 : b / 255.0; }
-int32_t qa_q2repro_encode_scale(double x) {
+double qa_q2repro_encode_scale(double x) {
   if (x == 0) return 0;
-  int32_t v = (int32_t)trunc(x * 16.0);
+  double v = trunc(x * 16.0); /* a TS number: NaN stays NaN, huge values clamp */
   if (v < 1) v = 1;
   if (v > 255) v = 255;
   return v;
 }
 double qa_q2repro_decode_scale(double b) { return b == 0 ? 0 : b / 16.0; }
-int32_t qa_q2repro_encode_loop_volume(double x) {
+double qa_q2repro_encode_loop_volume(double x) {
   if (x == 0) return 0;
-  int32_t v = (int32_t)trunc(x * 255.0);
+  double v = trunc(x * 255.0);
   if (v < 0) v = 0;
   if (v > 255) v = 255;
   if (v == 255) v = 0;
   return v;
 }
 double qa_q2repro_decode_loop_volume(double b) { return b == 0 ? 0 : b / 255.0; }
-int32_t qa_q2repro_encode_loop_attenuation(double x) {
+double qa_q2repro_encode_loop_attenuation(double x) {
   if (x == -1) return 192;
-  int32_t v = (int32_t)trunc(x * 64.0);
+  double v = trunc(x * 64.0);
   if (v < 0) v = 0;
   if (v > 255) v = 255;
   if (v == 192) v = 0;
@@ -63,19 +65,28 @@ double qa_q2repro_decode_loop_attenuation(double b) {
   return b == 192 ? -1 : b / 64.0;
 }
 static int32_t clamp_i16(double x) {
+  /* TS clampInt16 passes NaN (a peer's MSG_ReadFloat) through; every result is
+   * stored into an Int32Array/Int16Array, where NaN becomes 0. */
+  if (isnan(x)) return 0;
   if (x < -32768) return -32768;
   if (x > 32767) return 32767;
   return (int32_t)x;
 }
-static int32_t encode_fixed16(double x, double scale) {
-  return clamp_i16(trunc(x * scale));
+/* TS encodeFixed16 = clampInt16(Math.trunc(x * scale)) kept as a number: the
+ * plain-array copies compare NaN as changed (NaN !== NaN) and the short write
+ * stores ToInt32(NaN) = 0. */
+static double encode_fixed16(double x, double scale) {
+  double v = trunc(x * scale);
+  if (v < -32768) return -32768;
+  if (v > 32767) return 32767;
+  return v;
 }
 int32_t qa_q2repro_pm_float_to_short(double f) {
   /* Math.round rounds half up (toward +inf on .5). */
-  return clamp_i16(floor(f * 8.0 + 0.5));
+  return clamp_i16(qa_js_round(f * 8.0));
 }
 static int width_of(double value, bool uint16_safe) {
-  uint32_t v = (uint32_t)(int32_t)value;
+  uint32_t v = qa_js_to_uint32(value); /* value >>> 0 */
   uint32_t mask32 = uint16_safe ? 0xffff0000u : 0xffff8000u;
   if ((v & mask32) != 0) return 2;
   if ((v & 0xff00u) != 0) return 1;
@@ -103,9 +114,9 @@ void qa_q2repro_read_entity_bits_wide(qa_q2repro_context *ctx,
                                       qa_q2_entity_bits *out) {
   qa_q2_sizebuf *m = ctx->net_message;
   int32_t lo = qa_q2_msg_read_byte(m);
-  if (lo & QA_Q2_U_MOREBITS1) lo |= qa_q2_msg_read_byte(m) << 8;
-  if (lo & QA_Q2_U_MOREBITS2) lo |= qa_q2_msg_read_byte(m) << 16;
-  if (lo & QA_Q2_U_MOREBITS3) lo |= qa_q2_msg_read_byte(m) << 24;
+  if (lo & QA_Q2_U_MOREBITS1) lo |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 8);
+  if (lo & QA_Q2_U_MOREBITS2) lo |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 16);
+  if (lo & QA_Q2_U_MOREBITS3) lo |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 24);
   int32_t hi = 0;
   if ((lo & (int32_t)U_MOREBITS4_RR) != 0) hi = qa_q2_msg_read_byte(m);
   out->number = (lo & QA_Q2_U_NUMBER16) != 0 ? (double)qa_q2_msg_read_word(m)
@@ -124,7 +135,7 @@ static void write_server_data_as(qa_q2_sizebuf *msg, double protocol,
   qa_q2_msg_write_short(msg, params->clientnum);
   qa_q2_msg_write_string(msg, params->levelname);
   qa_q2_msg_write_short(msg, params->has_protocol_revision ? params->protocol_revision : 1024);
-  qa_q2_msg_write_byte(msg, (double)((int32_t)params->server_state & 0xff));
+  qa_q2_msg_write_byte(msg, (double)(qa_js_to_int32(params->server_state) & 0xff));
   qa_q2_msg_write_short(msg, params->has_wire_flags ? params->wire_flags : 0);
   qa_q2_msg_write_byte(msg, params->has_server_fps ? params->server_fps : 10);
 }
@@ -182,7 +193,7 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
                  : w == 1 ? (uint32_t)QA_Q2_U_RENDERFX16 : (uint32_t)QA_Q2_U_RENDERFX8;
   }
   if (to->solid != from->solid) lo |= (uint32_t)QA_Q2_U_SOLID;
-  if (to->event != 0) lo |= (uint32_t)QA_Q2_U_EVENT;
+  if (qa_js_truthy(to->event)) lo |= (uint32_t)QA_Q2_U_EVENT;
   if (to->modelindex != from->modelindex) lo |= (uint32_t)QA_Q2_U_MODEL;
   if (to->modelindex2 != from->modelindex2) lo |= (uint32_t)QA_Q2_U_MODEL2;
   if (to->modelindex3 != from->modelindex3) lo |= (uint32_t)QA_Q2_U_MODEL3;
@@ -194,7 +205,7 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   if (to->sound != from->sound) lo |= (uint32_t)QA_Q2_U_SOUND;
   bool vol_changed = to->loop_volume != from->loop_volume;
   bool attn_changed = to->loop_attenuation != from->loop_attenuation;
-  if (newentity || ((int32_t)to->renderfx & QA_Q2_RF_BEAM) != 0) lo |= (uint32_t)QA_Q2_U_OLDORIGIN;
+  if (newentity || (qa_js_to_int32(to->renderfx) & QA_Q2_RF_BEAM) != 0) lo |= (uint32_t)QA_Q2_U_OLDORIGIN;
   if (to->alpha != from->alpha) lo |= U_ALPHA_RR;
   if (to->scale != from->scale) hi |= QA_Q2REPRO_HI_SCALE;
   if (lo == 0 && hi == 0 && !force) return;
@@ -231,37 +242,37 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
     qa_q2_msg_write_float(msg, (double)to->old_origin[2]);
   }
   if (lo & (uint32_t)QA_Q2_U_SOUND) {
-    int32_t word = (int32_t)to->sound & 0x3fff;
+    int32_t word = qa_js_to_int32(to->sound) & 0x3fff;
     if (attn_changed) word |= QA_Q2REPRO_SOUND_FLAG_ATTENUATION;
     if (vol_changed) word |= QA_Q2REPRO_SOUND_FLAG_VOLUME;
     qa_q2_msg_write_short(msg, (double)word);
-    if (word & QA_Q2REPRO_SOUND_FLAG_VOLUME) qa_q2_msg_write_byte(msg, (double)qa_q2repro_encode_loop_volume(to->loop_volume));
-    if (word & QA_Q2REPRO_SOUND_FLAG_ATTENUATION) qa_q2_msg_write_byte(msg, (double)qa_q2repro_encode_loop_attenuation(to->loop_attenuation));
+    if (word & QA_Q2REPRO_SOUND_FLAG_VOLUME) qa_q2_msg_write_byte(msg, qa_q2repro_encode_loop_volume(to->loop_volume));
+    if (word & QA_Q2REPRO_SOUND_FLAG_ATTENUATION) qa_q2_msg_write_byte(msg, qa_q2repro_encode_loop_attenuation(to->loop_attenuation));
   }
   if (lo & (uint32_t)QA_Q2_U_EVENT) qa_q2_msg_write_byte(msg, to->event);
   if (lo & (uint32_t)QA_Q2_U_SOLID) qa_q2_msg_write_long(msg, to->solid);
   if ((hi & QA_Q2REPRO_HI_MOREFX16) != 0 && (lo & U_MOREFX8_RR) != 0) qa_q2_msg_write_long(msg, to->morefx);
   else if ((hi & QA_Q2REPRO_HI_MOREFX16) != 0) qa_q2_msg_write_short(msg, to->morefx);
   else if ((lo & U_MOREFX8_RR) != 0) qa_q2_msg_write_byte(msg, to->morefx);
-  if (lo & U_ALPHA_RR) qa_q2_msg_write_byte(msg, (double)qa_q2repro_encode_alpha(to->alpha));
-  if (hi & QA_Q2REPRO_HI_SCALE) qa_q2_msg_write_byte(msg, (double)qa_q2repro_encode_scale(to->scale));
+  if (lo & U_ALPHA_RR) qa_q2_msg_write_byte(msg, qa_q2repro_encode_alpha(to->alpha));
+  if (hi & QA_Q2REPRO_HI_SCALE) qa_q2_msg_write_byte(msg, qa_q2repro_encode_scale(to->scale));
 }
 
 typedef struct rr_enc {
   int32_t flags;
   int32_t extraflags;
-  int32_t to_viewoffset[3];
+  double to_viewoffset[3];
   int32_t to_viewangle[3];
-  int32_t to_kick[3];
-  int32_t to_gunoffset[3];
-  int32_t to_gunangles[3];
+  double to_kick[3];
+  double to_gunoffset[3];
+  double to_gunangles[3];
   int32_t blend_bits;
   int32_t damage_blend_bits;
   uint64_t statbits;
   const qa_q2_wire_player *to;
 } rr_enc;
 
-static int32_t byte_color(float x) { return (int32_t)trunc((double)x * 255.0) & 0xff; }
+static int32_t byte_color(float x) { return qa_js_to_int32(trunc((double)x * 255.0)) & 0xff; }
 
 static rr_enc encode_player(const qa_q2_wire_player *from, const qa_q2_wire_player *to) {
   rr_enc e;
@@ -297,8 +308,8 @@ static rr_enc encode_player(const qa_q2_wire_player *from, const qa_q2_wire_play
   }
   if (kick_changed) e.flags |= QA_Q2_PS_KICKANGLES;
   for (int i = 0; i < 4; i++) {
-    if (byte_color(to->blend[i]) != byte_color(from->blend[i])) e.blend_bits |= 1 << i;
-    if (byte_color(to->damage_blend[i]) != byte_color(from->damage_blend[i])) e.damage_blend_bits |= 1 << i;
+    if (byte_color(to->blend[i]) != byte_color(from->blend[i])) e.blend_bits |= (int32_t)(1u << i);
+    if (byte_color(to->damage_blend[i]) != byte_color(from->damage_blend[i])) e.damage_blend_bits |= (int32_t)(1u << i);
   }
   if (e.blend_bits != 0 || e.damage_blend_bits != 0) e.flags |= QA_Q2_PS_BLEND;
   if (to->fov != from->fov) e.flags |= QA_Q2_PS_FOV;
@@ -362,8 +373,8 @@ static void write_player_body(const rr_enc *e, qa_q2_sizebuf *msg) {
     qa_q2_msg_write_short(msg, (double)e->to_kick[2]);
   }
   if (flags & QA_Q2_PS_WEAPONINDEX) {
-    int32_t gun = ((int32_t)to->gunindex & 0xffff) |
-                  (((int32_t)to->gunskin << QA_Q2REPRO_GUNINDEX_BITS) & 0xffff);
+    int32_t gun = (qa_js_to_int32(to->gunindex) & 0xffff) |
+                  ((int32_t)((uint32_t)qa_js_to_int32(to->gunskin) << QA_Q2REPRO_GUNINDEX_BITS) & 0xffff);
     qa_q2_msg_write_short(msg, (double)gun);
   }
   if (flags & QA_Q2_PS_WEAPONFRAME) qa_q2_msg_write_short(msg, to->gunframe);
@@ -380,10 +391,10 @@ static void write_player_body(const rr_enc *e, qa_q2_sizebuf *msg) {
   if (flags & QA_Q2_PS_BLEND) {
     qa_q2_msg_write_byte(msg, (double)((e->blend_bits & 0xf) | ((e->damage_blend_bits & 0xf) << 4)));
     for (int i = 0; i < 4; i++) {
-      if (e->blend_bits & (1 << i)) qa_q2_msg_write_byte(msg, (double)byte_color(to->blend[i]));
+      if (e->blend_bits & ((int32_t)(1u << i))) qa_q2_msg_write_byte(msg, (double)byte_color(to->blend[i]));
     }
     for (int i = 0; i < 4; i++) {
-      if (e->damage_blend_bits & (1 << i)) qa_q2_msg_write_byte(msg, (double)byte_color(to->damage_blend[i]));
+      if (e->damage_blend_bits & ((int32_t)(1u << i))) qa_q2_msg_write_byte(msg, (double)byte_color(to->damage_blend[i]));
     }
   }
   if (flags & QA_Q2_PS_FOV) qa_q2_msg_write_byte(msg, to->fov);
@@ -475,7 +486,7 @@ static void decode_batch_cmd(void *vctx, qa_q2_bit_reader *br,
 
 static int32_t clamp512(double v) {
   double c = v < -512 ? -512 : v > 511 ? 511 : v;
-  return (int32_t)c;
+  return qa_js_to_int32(c); /* Math.max(-512, Math.min(511, NaN)) is NaN; writeSigned stores 0 */
 }
 
 static void encode_batch_cmd(void *vctx, qa_q2_bit_writer *bw,
@@ -507,8 +518,8 @@ static void encode_batch_cmd(void *vctx, qa_q2_bit_writer *bw,
   if (bits & QA_Q2_CM_FORWARD) qa_q2_bit_writer_write_signed(bw, clamp512(cmd->forwardmove), 10);
   if (bits & QA_Q2_CM_SIDE) qa_q2_bit_writer_write_signed(bw, clamp512(cmd->sidemove), 10);
   if (bits & QA_Q2_CM_UP) qa_q2_bit_writer_write_signed(bw, clamp512(trunc(cmd->upmove)), 10);
-  if (bits & QA_Q2_CM_BUTTONS) qa_q2_bit_writer_write_unsigned(bw, (int32_t)cmd->buttons, 8);
-  qa_q2_bit_writer_write_unsigned(bw, (int32_t)cmd->msec, 8);
+  if (bits & QA_Q2_CM_BUTTONS) qa_q2_bit_writer_write_unsigned(bw, qa_js_to_int32(cmd->buttons), 8);
+  qa_q2_bit_writer_write_unsigned(bw, qa_js_to_int32(cmd->msec), 8);
 }
 
 static void write_batch_move_impl(qa_q2_sizebuf *msg, bool has_lastframe, double lastframe,
@@ -522,7 +533,7 @@ static void write_batch_move_impl(qa_q2_sizebuf *msg, bool has_lastframe, double
       for (size_t j = 0; j < frames[i].cmd_count; j++) lightlevel = frames[i].cmds[j].lightlevel;
     }
   }
-  qa_q2_msg_write_byte(msg, (double)((int32_t)lightlevel & 0xff));
+  qa_q2_msg_write_byte(msg, (double)(qa_js_to_int32(lightlevel) & 0xff));
   batch_ctx bc = {classic};
   qa_q2_bit_writer bw;
   qa_q2_bit_writer_init(&bw, msg);
@@ -800,7 +811,7 @@ static void read_player_fields(qa_q2_sizebuf *msg, const qa_q2_wire_player *from
   if (flags & QA_Q2_PS_BLEND) {
     int32_t bbits = qa_q2_msg_read_byte(msg);
     for (int i = 0; i < 4; i++) {
-      if (bbits & (1 << i)) to->blend[i] = (float)((double)qa_q2_msg_read_byte(msg) / 255.0);
+      if (bbits & ((int32_t)(1u << i))) to->blend[i] = (float)((double)qa_q2_msg_read_byte(msg) / 255.0);
     }
     for (int i = 0; i < 4; i++) {
       if (bbits & (1 << (i + 4))) to->damage_blend[i] = (float)((double)qa_q2_msg_read_byte(msg) / 255.0);
@@ -841,8 +852,8 @@ static void write_frame(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   (void)self;
   qa_q2_msg_write_byte(msg, QA_Q2_SVC_FRAME);
   double deltaframe = params->lastframe;
-  int32_t offset = deltaframe == -1 ? 31 : (int32_t)(params->framenum - deltaframe);
-  int32_t encoded = ((int32_t)params->framenum & 0x07ffffff) | (offset << 27);
+  int32_t offset = deltaframe == -1 ? 31 : qa_js_to_int32(params->framenum - deltaframe);
+  int32_t encoded = (qa_js_to_int32(params->framenum) & 0x07ffffff) | (int32_t)((uint32_t)offset << 27);
   qa_q2_msg_write_long(msg, (double)encoded);
   qa_q2_msg_write_byte(msg, params->surpress_count != 0 ? 1 : 0);
   qa_q2_wire_player empty;
@@ -888,7 +899,7 @@ static void read_frame_playerstate(qa_q2_protocol_codec *self,
 void qa_q2repro_read_fog(qa_q2repro_context *ctx, qa_q2_svc_fog_data *out) {
   qa_q2_sizebuf *m = ctx->net_message;
   int32_t bits = qa_q2_msg_read_byte(m);
-  if ((bits & QA_Q2_SVC_FOG_BIT_MORE_BITS) != 0) bits |= qa_q2_msg_read_byte(m) << 8;
+  if ((bits & QA_Q2_SVC_FOG_BIT_MORE_BITS) != 0) bits |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 8);
   qa_q2_svc_fog_data_init(out);
   out->bits = (double)bits;
   if (bits & QA_Q2_SVC_FOG_BIT_DENSITY) {

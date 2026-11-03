@@ -31,6 +31,10 @@ void qa_collision_winding_library_init(qa_collision_winding_library *lib, const 
 /* Heap windings; free with library free (also frees struct). */
 qa_collision_winding *qa_winding_alloc(qa_collision_winding_library *lib, double points);
 void qa_winding_free(qa_collision_winding_library *lib, qa_collision_winding *w);
+/* A winding TS drops without FreeWinding (left to the GC on a throw, or kept live
+ * on purpose): releases the C memory only. Counters keep counting it active and a
+ * zone allocation stays allocated, as in TS. */
+void qa_winding_abandon(qa_collision_winding_library *lib, qa_collision_winding *w);
 typedef void (*qa_winding_print_fn)(void *ctx, const char *text);
 void qa_winding_pw(qa_collision_winding_library *lib, qa_collision_winding *w, qa_winding_print_fn print, void *ctx);
 qa_collision_winding *qa_winding_copy(qa_collision_winding_library *lib, qa_collision_winding *w);

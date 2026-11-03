@@ -45,12 +45,6 @@ typedef struct qa_scheduler_options {
                                       qa_callback_id callback);
 } qa_scheduler_options;
 
-/** TS ProviderFrame. */
-typedef struct qa_provider_frame {
-  qa_provider_id provider;
-  qa_frame_context frame;
-} qa_provider_frame;
-
 /* TS ThinkResult: kind "not-run"(reason) | "ran"(invocations, alive). */
 typedef struct qa_think_result {
   bool ran;
@@ -59,10 +53,6 @@ typedef struct qa_think_result {
   bool alive;
 } qa_think_result;
 
-typedef struct qa_think_advance_result {
-  qa_actor_id actor;
-  qa_think_result result;
-} qa_think_advance_result;
 
 /* source_slot may be NULL (TS default actor.slot): the fn returns the
  * slot for an actor. */
@@ -86,12 +76,6 @@ qa_scheduled_think_result qa_frame_scheduler_pending(qa_frame_scheduler *schedul
                                                      qa_actor_id actor);
 qa_think_result qa_frame_scheduler_run(qa_frame_scheduler *scheduler, qa_actor_id actor,
                                        qa_frame_context frame, qa_think_boundary boundary);
-/* Results are scheduler-owned scratch. */
-const qa_think_advance_result *qa_frame_scheduler_advance(qa_frame_scheduler *scheduler,
-                                                          const qa_provider_frame *frames,
-                                                          size_t frame_count,
-                                                          qa_think_boundary boundary,
-                                                          size_t *out_count);
 void qa_frame_scheduler_close(qa_frame_scheduler *scheduler);
 qa_actor_schedule qa_frame_scheduler_as_contract(qa_frame_scheduler *scheduler);
 

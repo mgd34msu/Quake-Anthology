@@ -2,6 +2,7 @@
  * Port of src/movement/q3/slide-move.ts. GPL-2.0-or-later.
  * Math.fround staging: double compute, cast to float at TS points.
  */
+#include "qa/foundation/js.h"
 #include "qa/movement/q3/slide_move.h"
 
 #include "qa/core/math.h"
@@ -71,7 +72,7 @@ static void ad_write_end(void *ctx, qa_vec3 v) { ((slide_adapter *)ctx)->end_vel
 static qa_vec3 ad_normalize(void *ctx, qa_vec3 d) { (void)ctx; return qa_normalize3(d); }
 static void ad_impact_speed(void *ctx, double speed) {
   slide_adapter *a = ctx;
-  if (speed > a->context->impact_speed) a->context->impact_speed = speed;
+  a->context->impact_speed = qa_js_max(a->context->impact_speed, speed); /* Math.max: NaN propagates */
 }
 static qa_vec3 m_advance(void *ctx, qa_vec3 origin, double time, qa_vec3 velocity) {
   (void)ctx; return qa_add3(origin, qa_scale3(velocity, time));

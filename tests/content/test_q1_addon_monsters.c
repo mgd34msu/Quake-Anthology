@@ -1,10 +1,12 @@
 /*
- * Port of key cases from tests/gameplay/q1-addons/monsters/heavy/
- * source.test.ts and tests/gameplay/q1-addons/common.test.ts (the TS
- * originals are retail-asset integration tests; the cases here keep
- * the same observable counts/values against a stub host), plus
- * direct checks of the ported frame tables, MG3 AI helpers,
- * navigation, startup, path targets and registries.
+ * Checks for src/content/q1/addons/monsters over the real Q1 game: the
+ * world fixture (tests/content/q1_world_fixture.h), Q1Base and a
+ * Q1AddonContext (tests/content/q1_addon_fixture.h). Key cases follow
+ * tests/gameplay/q1-addons/monsters/heavy/source.test.ts and
+ * tests/gameplay/q1-addons/common.test.ts (retail-asset integration tests
+ * in TS; the cases here keep the same observable counts/values), plus
+ * direct checks of the frame tables, MG3 AI helpers, navigation, startup,
+ * path targets and registries. Every host double checks its ctx.
  * GPL-2.0-or-later.
  */
 #include <math.h>
@@ -19,7 +21,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "q1_addon_fixture.h"
+#include "qa/bots/navigation/runtime.h"
 #include "qa/content/q1/addons/monsters.h"
+#include "qa/content/q1/missionpacks/types.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -34,6 +39,8 @@ static int checks = 0;
 #define CHECK_ABORTS(...)                                               \
   do {                                                                  \
     checks++;                                                           \
+    fflush(stdout);                                                     \
+    fflush(stderr);                                                     \
     pid_t pid = fork();                                                 \
     if (pid == 0) {                                                     \
       (void)prctl(PR_SET_DUMPABLE, 0);                                  \
@@ -50,574 +57,240 @@ static int checks = 0;
     }                                                                   \
   } while (0)
 
-/* ---- stub host ---- */
-#define MAX_ACTORS 512
-#define MAX_HANDLERS 256
-static const int token_cell = 0;
-typedef struct stub {
-  qa_q1am_game game;
-  qa_q1am_base base;
-  qa_q1am_context context;
-  qa_q1am_actor actors[MAX_ACTORS];
-  bool alive[MAX_ACTORS];
-  qa_q1am_body bodies[MAX_ACTORS];
-  double health[MAX_ACTORS];
-  bool can_damage[MAX_ACTORS];
-  qa_q1am_player player_states[8];
-  qa_actor_id player_ids[8];
-  size_t player_count;
-  size_t next_slot;
-  double random_queue[64];
-  size_t random_head, random_tail;
-  double random_fallback;
-  qa_q1am_trace trace_result;
-  struct { char name[160]; qa_q1am_handlers handlers; } named[MAX_HANDLERS];
-  size_t named_count;
-  struct {
-    char classname[96];
-    void (*fn)(void *, qa_q1am_game *, qa_q1am_actor *);
-    void *ctx;
-  } spawns[64];
-  size_t spawn_count;
-  int sound_count, damage_count, emit_count, services_emit_count, create_count;
-  char last_sound[128];
-  double last_damage;
-  qa_actor_id last_damage_target;
-  double campaign_flags;
-  int walk_move_result;
-  char played[64][80];
-  size_t played_count;
-} stub;
-static stub S;
-static qa_q1am_actor *world_actor;
-static qa_actor_id make_id(int64_t slot) {
-  qa_actor_id id = {{ "test", &token_cell}, slot, 0, &token_cell};
-  return id;
+/* ---- host doubles layered over the world fixture (ctx = the fixture) ---- */
+static q1_addon_fixture AF;
+static int host_ctx_errors;
+static void *grunt_callbacks; /* qa_q1_register_monster_callbacks closure of the "test" source */
+#define HOST_CTX(ctx) do { if ((ctx) != &AF.fx) host_ctx_errors++; } while (0)
+static double random_queue[64];
+static size_t random_head, random_tail;
+static qa_q1_trace trace_result;
+static bool walk_move_result = true;
+static int damage_count;
+static double last_damage;
+static qa_actor_id last_damage_target;
+
+static double t_random(void *ctx) {
+  HOST_CTX(ctx);
+  if (random_head < random_tail) return random_queue[random_head++];
+  return AF.fx.random_value;
 }
-static qa_owned_actor make_owned(int64_t slot) {
-  qa_owned_actor owned = {make_id(slot), "q1:official", &token_cell};
-  return owned;
+static qa_q1_trace t_trace(void *ctx, qa_q1_trace_request request) {
+  HOST_CTX(ctx);
+  qa_q1_trace trace = trace_result;
+  if (trace.fraction == 1 && !trace.has_actor) trace.end = request.end;
+  return trace;
 }
-static qa_q1am_actor *stub_create(void *ctx, const char *classname) {
-  (void)ctx;
-  size_t slot = S.next_slot++;
-  qa_q1am_actor *actor = &S.actors[slot];
-  qa_q1am_actor_init(actor, make_owned((int64_t)slot), classname);
-  S.alive[slot] = true;
-  S.bodies[slot] = (qa_q1am_body){0};
-  S.create_count++;
-  return actor;
+static bool t_walk_move(void *ctx, qa_owned_actor actor, double yaw, double distance) {
+  (void)actor; (void)yaw; (void)distance;
+  HOST_CTX(ctx);
+  return walk_move_result;
 }
-static size_t stub_entity_count(void *ctx) { (void)ctx; return S.next_slot; }
-static qa_q1am_actor *stub_entity_at(void *ctx, size_t index) {
-  (void)ctx;
-  return S.alive[index] ? &S.actors[index] : NULL;
-}
-static const qa_monster_mission *stub_mission(void *ctx, qa_actor_id actor) {
-  (void)ctx; (void)actor; return NULL;
-}
-static qa_q1am_handlers *find_handlers(const char *name) {
-  for (size_t i = 0; i < S.named_count; i++)
-    if (strcmp(S.named[i].name, name) == 0) return &S.named[i].handlers;
-  return NULL;
-}
-static void stub_named_register(void *ctx, const char *name, qa_q1am_handlers handlers) {
-  (void)ctx;
-  (void)snprintf(S.named[S.named_count].name, 160, "%s", name);
-  S.named[S.named_count].handlers = handlers;
-  S.named_count++;
-}
-static qa_q1am_callback named_of(const char *name) {
-  qa_q1am_callback callback = {true, ""};
-  (void)snprintf(callback.name, sizeof callback.name, "%s", name);
-  return callback;
-}
-static qa_q1am_callback stub_named_action(void *c, qa_q1am_actor *e, const char *n) { (void)c; (void)e; return named_of(n); }
-static qa_q1am_callback stub_named_use(void *c, qa_q1am_actor *e, const char *n) { (void)c; (void)e; return named_of(n); }
-static qa_q1am_callback stub_named_touch(void *c, qa_q1am_actor *e, const char *n) { (void)c; (void)e; return named_of(n); }
-static qa_q1am_callback stub_named_pain(void *c, qa_q1am_actor *e, const char *n) { (void)c; (void)e; return named_of(n); }
-static qa_q1am_callback stub_named_die(void *c, qa_q1am_actor *e, const char *n) { (void)c; (void)e; return named_of(n); }
-static void stub_call_action(void *ctx, qa_q1am_actor *entity, qa_q1am_callback callback) {
-  (void)ctx;
-  qa_q1am_handlers *h = find_handlers(callback.name);
-  if (h && h->action) h->action(h->ctx, &S.game, entity);
-}
-static const char *stub_callback_name(void *ctx, bool present, const qa_q1am_callback *callback) {
-  (void)ctx;
-  return present ? callback->name : NULL;
-}
-static void stub_register_spawn(void *ctx, const char *classname,
-                                void (*fn)(void *, qa_q1am_game *, qa_q1am_actor *), void *fn_ctx) {
-  (void)ctx;
-  (void)snprintf(S.spawns[S.spawn_count].classname, 96, "%s", classname);
-  S.spawns[S.spawn_count].fn = fn;
-  S.spawns[S.spawn_count].ctx = fn_ctx;
-  S.spawn_count++;
-}
-static void stub_noop_ext(void *ctx, qa_q1am_state_extension ext) { (void)ctx; (void)ext; }
-static void stub_noop_effects(void *ctx, const char *id, qa_q1am_damage_effects e) { (void)ctx; (void)id; (void)e; }
-static void stub_spawn_entity(void *ctx, qa_q1am_actor *entity) {
-  (void)ctx;
-  for (size_t i = 0; i < S.spawn_count; i++)
-    if (strcmp(S.spawns[i].classname, entity->classname) == 0)
-      S.spawns[i].fn(S.spawns[i].ctx, &S.game, entity);
-}
-static void stub_remove(void *ctx, qa_q1am_actor *entity) { (void)ctx; S.alive[entity->actor.id.slot] = false; }
-static bool stub_live(void *ctx, qa_q1am_actor *entity) { (void)ctx; return S.alive[entity->actor.id.slot]; }
-static qa_q1am_actor *stub_entity(void *ctx, bool has, qa_actor_id actor) {
-  (void)ctx;
-  if (!has || actor.slot < 0 || actor.slot >= MAX_ACTORS || !S.alive[actor.slot]) return NULL;
-  return &S.actors[actor.slot];
-}
-static bool stub_is_player(void *ctx, bool has, qa_actor_id actor) {
-  (void)ctx;
-  if (!has) return false;
-  for (size_t i = 0; i < S.player_count; i++)
-    if (qa_same_actor(S.player_ids[i], actor)) return true;
-  return false;
-}
-static double stub_health(void *ctx, qa_actor_id actor) { (void)ctx; return S.health[actor.slot]; }
-static qa_q1am_body stub_body(void *ctx, qa_q1am_actor *entity) { (void)ctx; return S.bodies[entity->actor.id.slot]; }
-static void stub_set_body(void *ctx, qa_q1am_actor *entity, const qa_q1am_body_patch *patch) {
-  (void)ctx;
-  qa_q1am_body *body = &S.bodies[entity->actor.id.slot];
-  if (patch->has_origin) body->origin = patch->origin;
-  if (patch->has_angles) body->angles = patch->angles;
-  if (patch->has_velocity) body->velocity = patch->velocity;
-  if (patch->has_bounds) body->bounds = patch->bounds;
-  if (patch->has_ground) {
-    body->has_ground = !patch->ground_null;
-    body->ground = patch->ground;
-  }
-}
-static void stub_set_origin(void *ctx, qa_q1am_actor *entity, qa_vec3 origin) {
-  (void)ctx; S.bodies[entity->actor.id.slot].origin = origin;
-}
-static void stub_set_bounds(void *ctx, qa_q1am_actor *entity, qa_bounds bounds) {
-  (void)ctx; S.bodies[entity->actor.id.slot].bounds = bounds;
-}
-static void stub_link(void *ctx, qa_q1am_actor *entity) { (void)ctx; (void)entity; }
-static void stub_schedule(void *ctx, qa_q1am_actor *entity, double delay, qa_q1am_callback cb) {
-  (void)ctx;
-  entity->think = cb;
-  entity->next_think = S.game.time + delay;
-}
-static void stub_sound(void *ctx, qa_q1am_actor *entity, const char *path, const char *channel, double att) {
-  (void)ctx; (void)entity; (void)channel; (void)att;
-  S.sound_count++;
-  (void)snprintf(S.last_sound, sizeof S.last_sound, "%s", path);
-}
-static void stub_effect(void *ctx, const char *e, qa_vec3 o, bool h, qa_actor_id a, double amt) {
-  (void)ctx; (void)e; (void)o; (void)h; (void)a; (void)amt;
-}
-static qa_q1am_actor **stub_find(void *ctx, const char *targetname, size_t *out_count) {
-  (void)ctx;
-  qa_q1am_actor **out = calloc(MAX_ACTORS, sizeof *out);
-  size_t n = 0;
-  if (targetname[0] != '\0')
-    for (size_t i = 0; i < S.next_slot; i++)
-      if (S.alive[i] && strcmp(S.actors[i].targetname, targetname) == 0) out[n++] = &S.actors[i];
-  *out_count = n;
-  return out;
-}
-static void stub_use_targets(void *ctx, qa_q1am_actor *e, bool h, qa_actor_id a) { (void)ctx; (void)e; (void)h; (void)a; }
-static void stub_damage(void *ctx, qa_actor_id target, qa_actor_id inf, bool h, qa_actor_id att, double amount) {
-  (void)ctx; (void)inf; (void)h; (void)att;
-  S.damage_count++;
-  S.last_damage = amount;
-  S.last_damage_target = target;
-  S.health[target.slot] -= amount;
-}
-static bool stub_can_damage(void *ctx, qa_actor_id t, qa_actor_id i) { (void)ctx; (void)t; (void)i; return true; }
-static void stub_radius_damage(void *ctx, qa_actor_id i, bool h, qa_actor_id a, double amt, bool hi, qa_actor_id ig, const char *w) {
-  (void)ctx; (void)i; (void)h; (void)a; (void)amt; (void)hi; (void)ig; (void)w;
-}
-static qa_q1am_basis stub_make_vectors(void *ctx, qa_vec3 angles) {
-  (void)ctx;
-  double pitch = angles.x * M_PI / 180, yaw = angles.y * M_PI / 180;
-  qa_q1am_basis basis;
-  basis.forward = (qa_vec3){cos(pitch) * cos(yaw), cos(pitch) * sin(yaw), -sin(pitch)};
-  basis.right = qa_q1am_normalize(qa_cross3_double(basis.forward, (qa_vec3){0, 0, 1}));
-  if (qa_length3(basis.right) == 0) basis.right = (qa_vec3){0, -1, 0};
-  basis.up = qa_cross3_double(basis.right, basis.forward);
-  return basis;
-}
-static qa_q1am_player *stub_player(void *ctx, qa_actor_id actor) {
-  (void)ctx;
-  for (size_t i = 0; i < S.player_count; i++)
-    if (qa_same_actor(S.player_ids[i], actor)) return &S.player_states[i];
-  return NULL;
-}
-static bool stub_monster_target(void *ctx, qa_actor_id actor, qa_monster_target_observation *out) {
-  (void)ctx; (void)actor;
-  *out = (qa_monster_target_observation){25, false, false, false, 0, false, 0};
+static bool t_damage_allowed(void *ctx, qa_damage_request request) {
+  if (ctx != &AF) host_ctx_errors++;
+  damage_count++;
+  last_damage = request.amount;
+  last_damage_target = request.target;
   return true;
 }
-static const qa_q1am_frame stub_base_frames[] = {
-  {"zombie_paine1", 174, "zombie_paine2", NULL, 0},
-  {"ogre_stand5", 4, "ogre_stand6", NULL, 0},
-  {"ogre_walk3", 20, "ogre_walk4", NULL, 0},
-  {"ogre_run1", 40, "ogre_run2", NULL, 0},
-  {"ogre_nail1", 50, "ogre_nail2", NULL, 0},
-  {"ogre_nail4", 53, "ogre_nail5", NULL, 0},
-  {"ogre_nail5", 54, "ogre_nail6", NULL, 0},
-  {"ogre_die3", 60, "ogre_die4", NULL, 0},
-  {"ogre_bdie3", 70, "ogre_bdie4", NULL, 0},
-};
-static const qa_q1am_frame *stub_base_frame(void *ctx, const char *name) {
-  (void)ctx;
-  for (size_t i = 0; i < sizeof stub_base_frames / sizeof stub_base_frames[0]; i++)
-    if (strcmp(stub_base_frames[i].name, name) == 0) return &stub_base_frames[i];
-  return NULL;
+static void queue_random(double value) { random_queue[random_tail++] = value; }
+
+static void open_world(void) {
+  q1af_open(&AF, QA_Q1AD_MG3);
+  qa_q1_services *game = AF.fx.game;
+  game->host.random = t_random;
+  game->host.trace = t_trace;
+  game->host.walk_move = t_walk_move;
+  AF.fx.damage_allowed = t_damage_allowed;
+  AF.fx.damage_allowed_ctx = &AF;
+  random_head = random_tail = 0;
+  memset(&trace_result, 0, sizeof trace_result);
+  trace_result.fraction = 1;
+  walk_move_result = true;
+  damage_count = 0;
+  last_damage = 0;
+  game->world = q1af_create(&AF, "worldspawn");
 }
-static double stub_random(void *ctx) {
-  (void)ctx;
-  if (S.random_head < S.random_tail) return S.random_queue[S.random_head++];
-  return S.random_fallback;
+static void close_world(void) {
+  CHECK(AF.fx.ctx_errors == 0);
+  CHECK(q1af_ctx_errors == 0);
+  CHECK(host_ctx_errors == 0);
+  qa_q1am_release_addon_monsters(AF.fx.game);
+  q1af_close(&AF);
+  free(grunt_callbacks);
+  grunt_callbacks = NULL;
 }
-static qa_q1am_trace stub_trace(void *ctx, const qa_q1am_trace_request *request) {
-  (void)ctx; (void)request; return S.trace_result;
+static qa_q1_services *game_of(void) { return AF.fx.game; }
+static void set_player_origin(qa_actor_id player, qa_vec3 origin) {
+  qa_owned_actor owned;
+  if (!qa_session_actor_registry_resolve_owned(AF.fx.actors, player, &owned)) return;
+  qa_body_state body = qa_shared_body_table_read(AF.fx.bodies, player).value;
+  body.origin = origin;
+  qa_shared_body_table_write(AF.fx.bodies, owned, body);
 }
-static const char *stub_contents(void *ctx, qa_vec3 p) { (void)ctx; (void)p; return "empty"; }
-static const char *stub_classname(void *ctx, qa_actor_id actor) {
-  (void)ctx;
-  qa_q1am_actor *entity = stub_entity(NULL, true, actor);
-  return entity ? entity->classname : "player";
+static void set_health(qa_owned_actor actor, double health) {
+  qa_gameplay_authority_set_health(AF.fx.combat, actor, health);
 }
-static bool stub_walk_move(void *ctx, qa_owned_actor a, double y, double d) {
-  (void)ctx; (void)a; (void)y; (void)d; return S.walk_move_result != 0;
+static qa_q1_actor *create_monster_entity(const char *classname) {
+  qa_q1_actor *entity = q1af_create(&AF, classname);
+  qa_q1_actor_set_damageable(entity, true);
+  return entity;
 }
-static void stub_change_yaw(void *ctx, qa_owned_actor a) { (void)ctx; (void)a; }
-static void stub_move_to_goal(void *ctx, qa_owned_actor a, qa_actor_id g, double d) { (void)ctx; (void)a; (void)g; (void)d; }
-static bool stub_check_bottom(void *ctx, qa_actor_id a) { (void)ctx; (void)a; return true; }
-static bool stub_check_client(void *ctx, qa_owned_actor o, qa_actor_id *out) { (void)ctx; (void)o; (void)out; return false; }
-static qa_actor_id *stub_players(void *ctx, size_t *out_count) {
-  (void)ctx;
-  qa_actor_id *out = calloc(S.player_count ? S.player_count : 1, sizeof *out);
-  memcpy(out, S.player_ids, S.player_count * sizeof *out);
-  *out_count = S.player_count;
-  return out;
+/* The path of the newest "sound" event (TS game.sound). */
+static const char *last_sound(void) {
+  for (size_t i = AF.fx.event_count; i-- > 0;)
+    if (strcmp(AF.fx.events[i].kind, "sound") == 0) return AF.fx.events[i].path;
+  return "";
 }
-static void stub_emit(void *ctx, const qa_q1am_event *e) { (void)ctx; (void)e; S.emit_count++; }
-static bool stub_body_read(void *ctx, qa_actor_id actor, qa_q1am_body *out) {
-  (void)ctx;
-  if (actor.slot < 0 || actor.slot >= MAX_ACTORS || !S.alive[actor.slot]) return false;
-  *out = S.bodies[actor.slot];
-  return true;
-}
-static void stub_body_write(void *ctx, qa_owned_actor actor, const qa_q1am_body *body) {
-  (void)ctx; S.bodies[actor.id.slot] = *body;
-}
-static void stub_body_link(void *ctx, qa_owned_actor a) { (void)ctx; (void)a; }
-static void stub_on_release_reg(void *ctx, void (*fn)(void *, qa_owned_actor), void *fn_ctx) {
-  (void)ctx; (void)fn; (void)fn_ctx;
-}
-static bool stub_resolve_owned(void *ctx, qa_actor_id actor, qa_owned_actor *out) {
-  (void)ctx;
-  if (actor.slot < 0 || actor.slot >= MAX_ACTORS || !S.alive[actor.slot]) return false;
-  *out = S.actors[actor.slot].actor;
-  return true;
-}
-static bool stub_resolve_saved(void *ctx, int64_t slot, int64_t generation, qa_owned_actor *out) {
-  (void)ctx; (void)generation;
-  if (slot < 0 || slot >= MAX_ACTORS || !S.alive[slot]) return false;
-  *out = S.actors[slot].actor;
-  return true;
-}
-static qa_actor_id *stub_observations(void *ctx, size_t *out_count) {
-  (void)ctx;
-  qa_actor_id *out = calloc(MAX_ACTORS, sizeof *out);
-  size_t n = 0;
-  for (size_t i = 0; i < S.next_slot; i++)
-    if (S.alive[i]) out[n++] = S.actors[i].actor.id;
-  *out_count = n;
-  return out;
-}
-static void stub_set_health(void *ctx, qa_owned_actor a, double h) { (void)ctx; S.health[a.id.slot] = h; }
-static void stub_set_team(void *ctx, qa_owned_actor a, const char *t) { (void)ctx; (void)a; (void)t; }
-static void stub_set_can_damage(void *ctx, qa_owned_actor a, bool v) { (void)ctx; S.can_damage[a.id.slot] = v; }
-static bool stub_can_take_damage(void *ctx, qa_actor_id a) { (void)ctx; return S.can_damage[a.slot]; }
-static void stub_armor_none(void *ctx, qa_owned_actor a) { (void)ctx; (void)a; }
-static size_t stub_inv_count(void *ctx, qa_actor_id a) { (void)ctx; (void)a; return 0; }
-static const char *stub_inv_item(void *ctx, qa_actor_id a, size_t i) { (void)ctx; (void)a; (void)i; return ""; }
-static void stub_inv_set(void *ctx, qa_owned_actor a, size_t i, double c) { (void)ctx; (void)a; (void)i; (void)c; }
-static qa_q1am_actor *stub_launch_spike(void *ctx, qa_q1am_game *g, bool has, qa_actor_id owner, qa_vec3 origin, qa_vec3 velocity) {
-  (void)ctx; (void)g;
-  qa_q1am_actor *shot = stub_create(NULL, "spike");
-  shot->has_owner = has;
-  shot->owner = owner;
-  S.bodies[shot->actor.id.slot].origin = origin;
-  S.bodies[shot->actor.id.slot].velocity = velocity;
-  return shot;
-}
-static qa_q1am_actor *stub_throw_gib(void *ctx, qa_q1am_game *g, qa_vec3 o, const char *m, double d) {
-  (void)ctx; (void)g; (void)o; (void)m; (void)d; return stub_create(NULL, "gib");
-}
-static void stub_throw_head(void *ctx, qa_q1am_game *g, qa_q1am_actor *e, const char *m, bool h, double d) {
-  (void)ctx; (void)g; (void)e; (void)m; (void)h; (void)d;
-}
-static qa_q1am_actor *stub_meat(void *ctx, qa_q1am_game *g, qa_q1am_actor *o, qa_vec3 a, qa_vec3 b) {
-  (void)ctx; (void)g; (void)o; (void)a; (void)b; return stub_create(NULL, "meat");
-}
-static qa_q1am_actor *stub_create_missile(void *ctx, qa_q1am_game *g, bool h, qa_actor_id o, const char *c, const char *m, qa_vec3 a, qa_vec3 b) {
-  (void)ctx; (void)g; (void)h; (void)o; (void)m; (void)a; (void)b; return stub_create(NULL, c);
-}
-static void stub_sprite_explosion(void *ctx, qa_q1am_game *g, qa_q1am_actor *m) { (void)ctx; (void)g; (void)m; }
-static qa_q1am_actor *stub_fog(void *ctx, qa_q1am_game *g, qa_vec3 o) { (void)ctx; (void)g; (void)o; return stub_create(NULL, "fog"); }
-static qa_q1am_actor *stub_bubble(void *ctx, qa_q1am_game *g, qa_vec3 o) { (void)ctx; (void)g; (void)o; return stub_create(NULL, "bubble"); }
-static void stub_fire_bullets(void *ctx, qa_q1am_game *g, qa_owned_actor s, qa_vec3 d, qa_vec3 v, double c, double x, double y, const char *w) {
-  (void)ctx; (void)g; (void)s; (void)d; (void)v; (void)c; (void)x; (void)y; (void)w;
-}
-static void stub_register_monster_callbacks(void *ctx, qa_q1am_game *g, const char *p, qa_q1am_monster_lookup l) {
-  (void)ctx; (void)g; (void)p; (void)l;
-}
-/* BaseMonster mirror ops: play executes source frame operations. */
-static void base_play(qa_q1am_monster *m, const char *name) {
-  if (S.played_count < 64) (void)snprintf(S.played[S.played_count++], 80, "%s", name);
-  const qa_q1am_frame *frame = m->source ? qa_q1am_frame_table_get(m->source->frames, name) : NULL;
-  if (frame == NULL) frame = stub_base_frame(NULL, name);
-  qa_q1am_monster_set_frame(m->current_frame, sizeof m->current_frame, name);
-  if (frame == NULL) return;
-  qa_q1am_monster_set_frame(m->next_frame, sizeof m->next_frame, frame->next);
-  m->entity->frame = frame->frame;
-  for (size_t i = 0; i < frame->operation_count; i++) {
-    const qa_q1am_operation *op = &frame->operations[i];
-    if (op->kind == QA_Q1AM_OP_AI) m->ops.ai(m, op->ai_mode, op->distance);
-    else if (op->kind == QA_Q1AM_OP_ACTION && m->source) {
-      for (size_t a = 0; a < m->source->action_count; a++)
-        if (strcmp(m->source->actions[a].name, op->name) == 0)
-          m->source->actions[a].fn(m->source->actions[a].ctx, m);
-    } else if (op->kind == QA_Q1AM_OP_SOUND) {
-      S.game.sound(S.game.ctx, m->entity, op->path, op->channel, op->attenuation);
-    } else if (op->kind == QA_Q1AM_OP_SOLID) {
-      m->entity->solid = op->name;
-    }
-  }
-}
-static void base_noop_m(qa_q1am_monster *m) { (void)m; }
-static void base_use(qa_q1am_monster *m, bool h, qa_actor_id a) { (void)m; (void)h; (void)a; }
-static void base_pain(qa_q1am_monster *m, bool h, qa_actor_id a, double d) { (void)m; (void)h; (void)a; (void)d; }
-static void base_die(qa_q1am_monster *m, bool h, qa_actor_id a) { (void)m; (void)h; (void)a; }
-static void base_ai(qa_q1am_monster *m, qa_q1am_ai mode, double d) {
-  (void)d;
-  if (mode == QA_Q1AM_AI_RUN) m->ops.run_ai(m, d);
-}
-static void base_run(qa_q1am_monster *m, double d) { (void)m; (void)d; }
-static void base_found(qa_q1am_monster *m, qa_actor_id target) {
-  m->state->has_enemy = true;
-  m->state->enemy = target;
-}
-static bool base_false_m(qa_q1am_monster *m) { (void)m; return false; }
-static void base_attack_finished(qa_q1am_monster *m, double seconds) {
-  m->state->attack_finished = S.game.time + seconds;
-}
-static qa_q1am_basis base_make_vectors(qa_q1am_monster *m) {
-  return qa_q1am_game_make_vectors(&S.game, S.bodies[m->entity->actor.id.slot].angles);
-}
-static bool base_count_kill(void *ctx, qa_q1am_monster *m) { (void)ctx; (void)m; return true; }
-static const char *base_next_melee(void *ctx) { (void)ctx; return "hknight_slice1"; }
-static void base_finale(void *ctx, qa_q1am_monster *m) { (void)ctx; (void)m; }
-static double base_read_flags(void *ctx) { (void)ctx; return S.campaign_flags; }
-static void base_write_flags(void *ctx, double flags) { (void)ctx; S.campaign_flags = flags; }
-static void base_level_begin(void *ctx, const char *map, bool h, qa_actor_id c) { (void)ctx; (void)map; (void)h; (void)c; }
-static qa_q1am_monster *base_monsters_get(void *ctx, qa_owned_actor a) { (void)ctx; (void)a; return NULL; }
-static void base_kill_rule(void *ctx, const char *id, bool (*fn)(void *, qa_q1am_monster *), void *fn_ctx) {
-  (void)ctx; (void)id; (void)fn; (void)fn_ctx;
-}
-static void ctx_set_number(void *ctx, qa_q1am_actor *entity, const char *name, double value) {
-  (void)ctx;
-  qa_q1am_actor_set_field_number(entity, name, value);
-}
-static void ctx_set_vector(void *ctx, qa_q1am_actor *entity, const char *name, qa_vec3 value) {
-  (void)ctx;
-  char text[128];
-  char x[32], y[32], z[32];
-  qa_q1am_format_fround(x, sizeof x, value.x);
-  qa_q1am_format_fround(y, sizeof y, value.y);
-  qa_q1am_format_fround(z, sizeof z, value.z);
-  (void)snprintf(text, sizeof text, "%s %s %s", x, y, z);
-  qa_q1am_actor_set_field(entity, name, text);
-}
-static void ctx_set_player_number(void *ctx, qa_actor_id a, const char *n, double v) { (void)ctx; (void)a; (void)n; (void)v; }
-static bool ctx_removed(void *ctx, qa_q1am_actor *e) { (void)ctx; (void)e; return false; }
-static void ctx_services_emit(void *ctx, const qa_q1am_event *e) { (void)ctx; (void)e; S.services_emit_count++; }
-static double ctx_cvar(void *ctx, const char *name) { (void)ctx; return strcmp(name, "skill") == 0 ? 1 : 0; }
-static void stub_reset(void) {
-  for (size_t i = 0; i < MAX_ACTORS; i++) qa_q1am_actor_destroy(&S.actors[i]);
-  memset(&S, 0, sizeof S);
-  S.random_fallback = 0.4;
-  S.walk_move_result = 1;
-  S.game.ctx = &S;
-  S.game.options.skill = 1;
-  S.game.options.edition = "rerelease";
-  S.game.entity_count = stub_entity_count;
-  S.game.entity_at = stub_entity_at;
-  S.game.mission = stub_mission;
-  S.game.named_register = stub_named_register;
-  S.game.named_action = stub_named_action;
-  S.game.named_use = stub_named_use;
-  S.game.named_touch = stub_named_touch;
-  S.game.named_pain = stub_named_pain;
-  S.game.named_die = stub_named_die;
-  S.game.call_action = stub_call_action;
-  S.game.callback_name = stub_callback_name;
-  S.game.register_spawn = stub_register_spawn;
-  S.game.replace_spawn = stub_register_spawn;
-  S.game.register_state_extension = stub_noop_ext;
-  S.game.register_damage_source_effects = stub_noop_effects;
-  S.game.create = stub_create;
-  S.game.spawn_entity = stub_spawn_entity;
-  S.game.remove = stub_remove;
-  S.game.live = stub_live;
-  S.game.entity = stub_entity;
-  S.game.is_player = stub_is_player;
-  S.game.health = stub_health;
-  S.game.body = stub_body;
-  S.game.set_body = stub_set_body;
-  S.game.set_origin = stub_set_origin;
-  S.game.set_bounds = stub_set_bounds;
-  S.game.link = stub_link;
-  S.game.schedule = stub_schedule;
-  S.game.sound = stub_sound;
-  S.game.effect = stub_effect;
-  S.game.find = stub_find;
-  S.game.use_targets = stub_use_targets;
-  S.game.damage = stub_damage;
-  S.game.can_damage = stub_can_damage;
-  S.game.radius_damage = stub_radius_damage;
-  S.game.make_vectors_raw = stub_make_vectors;
-  S.game.player = stub_player;
-  S.game.monster_target = stub_monster_target;
-  S.game.base_frame = stub_base_frame;
-  S.game.random = stub_random;
-  S.game.trace = stub_trace;
-  S.game.contents = stub_contents;
-  S.game.classname_of = stub_classname;
-  S.game.walk_move = stub_walk_move;
-  S.game.change_yaw = stub_change_yaw;
-  S.game.move_to_goal = stub_move_to_goal;
-  S.game.check_bottom = stub_check_bottom;
-  S.game.check_client = stub_check_client;
-  S.game.players = stub_players;
-  S.game.emit = stub_emit;
-  S.game.body_read = stub_body_read;
-  S.game.body_write = stub_body_write;
-  S.game.body_link = stub_body_link;
-  S.game.actors_on_release = stub_on_release_reg;
-  S.game.actors_resolve_owned = stub_resolve_owned;
-  S.game.actors_resolve_saved = stub_resolve_saved;
-  S.game.observations = stub_observations;
-  S.game.combat_set_health = stub_set_health;
-  S.game.combat_set_team = stub_set_team;
-  S.game.combat_set_can_take_damage = stub_set_can_damage;
-  S.game.can_take_damage = stub_can_take_damage;
-  S.game.combat_set_armor_none = stub_armor_none;
-  S.game.inventory_count = stub_inv_count;
-  S.game.inventory_item = stub_inv_item;
-  S.game.inventory_set_count = stub_inv_set;
-  S.game.launch_spike = stub_launch_spike;
-  S.game.throw_gib = stub_throw_gib;
-  S.game.throw_head = stub_throw_head;
-  S.game.spawn_meat_spray = stub_meat;
-  S.game.create_missile = stub_create_missile;
-  S.game.sprite_explosion = stub_sprite_explosion;
-  S.game.spawn_teleport_fog = stub_fog;
-  S.game.spawn_bubble = stub_bubble;
-  S.game.fire_bullets = stub_fire_bullets;
-  S.game.register_monster_callbacks = stub_register_monster_callbacks;
-  S.base.ctx = &S;
-  S.base.game = &S.game;
-  S.base.base_ops.play = base_play;
-  S.base.base_ops.spawn = base_noop_m;
-  S.base.base_ops.start = base_noop_m;
-  S.base.base_ops.use = base_use;
-  S.base.base_ops.pain = base_pain;
-  S.base.base_ops.die = base_die;
-  S.base.base_ops.awake = base_use;
-  S.base.base_ops.ai = base_ai;
-  S.base.base_ops.run_ai = base_run;
-  S.base.base_ops.found = base_found;
-  S.base.base_ops.find_target = base_false_m;
-  S.base.base_ops.try_attack = base_false_m;
-  S.base.base_ops.melee_attack = base_noop_m;
-  S.base.base_ops.attack_finished = base_attack_finished;
-  S.base.base_ops.sight_sound = base_noop_m;
-  S.base.base_ops.make_vectors = base_make_vectors;
-  S.base.base_ops.update_run_knowledge = base_noop_m;
-  S.base.base_ops.check_attack = base_false_m;
-  S.base.count_monster_kill = base_count_kill;
-  S.base.next_hell_knight_melee = base_next_melee;
-  S.base.finale = base_finale;
-  S.base.finish_finale = base_finale;
-  S.base.campaign_read_flags = base_read_flags;
-  S.base.campaign_write_flags = base_write_flags;
-  S.base.level_begin = base_level_begin;
-  S.base.monsters_get = base_monsters_get;
-  S.base.register_kill_count_rule = base_kill_rule;
-  S.context.ctx = &S;
-  S.context.base = &S.base;
-  S.context.game = &S.game;
-  S.context.program = "mg3";
-  S.context.services_ctx = &S;
-  S.context.services_emit = ctx_services_emit;
-  S.context.services_cvar = ctx_cvar;
-  S.context.set_number = ctx_set_number;
-  S.context.set_vector = ctx_set_vector;
-  S.context.set_player_number = ctx_set_player_number;
-  S.context.removed_for_runes = ctx_removed;
-  S.context.removed_outside_coop = ctx_removed;
-  world_actor = stub_create(NULL, "worldspawn");
-  S.game.world = world_actor;
-  S.trace_result.fraction = 1;
-}
-static qa_q1am_actor *add_player(qa_vec3 origin) {
-  qa_q1am_actor *player = stub_create(NULL, "player");
-  qa_actor_id id = player->actor.id;
-  S.player_ids[S.player_count] = id;
-  S.player_states[S.player_count].actor = player->actor;
-  (void)snprintf(S.player_states[S.player_count].weapon, 64, "%s", "shotgun");
-  S.player_count++;
-  S.bodies[id.slot].origin = origin;
-  S.bodies[id.slot].bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
-  S.health[id.slot] = 100;
-  S.can_damage[id.slot] = true;
-  return player;
-}
-static void queue_random(double value) { S.random_queue[S.random_tail++] = value; }
 static size_t count_classname(const char *classname) {
   size_t n = 0;
-  for (size_t i = 0; i < S.next_slot; i++)
-    if (S.alive[i] && strcmp(S.actors[i].classname, classname) == 0) n++;
+  qa_q1_services *game = game_of();
+  for (size_t i = 0; i < game->entity_count; i++)
+    if (strcmp(game->entities[i]->classname, classname) == 0) n++;
   return n;
 }
-
-/* ---- navigation stub ---- */
-static qa_q1am_nav_edge nav_edges[] = {{1, "walk"}, {2, "teleport"}};
-static bool nav_node_exists(void *ctx, double id) { (void)ctx; return id == 1 || id == 2; }
-static bool nav_route(void *ctx, const qa_q1am_nav_query *query, qa_q1am_nav_route *out) {
-  (void)ctx;
-  CHECK(query->edge_filter(query->filter_ctx, &nav_edges[0]));
-  CHECK(!query->edge_filter(query->filter_ctx, &nav_edges[1]));
-  memset(out, 0, sizeof *out);
-  out->map_digest = "map-digest";
-  out->nodes = calloc(2, sizeof *out->nodes);
-  out->nodes[0] = 1;
-  out->nodes[1] = 2;
-  out->node_count = 2;
-  out->edges = calloc(1, sizeof *out->edges);
-  out->edges[0] = &nav_edges[0];
-  out->edge_count = 1;
-  out->points = calloc(1, sizeof *out->points);
-  out->points[0] = query->goal;
-  out->point_count = 1;
-  return true;
+/* game.named.register of an existing name throws (Duplicate Q1 callback). */
+static void register_again(const char *name) {
+  qa_q1_callback_handlers handlers;
+  memset(&handlers, 0, sizeof handlers);
+  qa_q1_callback_registry_register(game_of()->named, name, handlers);
 }
-static bool nav_still_valid(void *ctx, const qa_q1am_nav_route *route) { (void)ctx; (void)route; return true; }
-static qa_q1am_nav_runtime nav_runtime;
-static qa_q1am_nav_runtime *nav_for_actor(void *ctx, qa_owned_actor actor) {
-  (void)ctx;
-  nav_runtime.pass_actor = actor.id;
+
+/* ---- navigation: a real NavigationRuntime over a constructed graph ---- */
+static int nav_world_sentinel, nav_host_sentinel;
+static int nav_ctx_errors;
+static qa_traversal_admission nav_admit(qa_traversal_request request) {
+  qa_traversal_admission a;
+  memset(&a, 0, sizeof a);
+  a.admitted = true;
+  a.seconds = 1;
+  a.trajectory = malloc(2 * sizeof *a.trajectory); /* TS trajectory: [from, ...waypoints, to] */
+  a.trajectory[0] = request.from;
+  a.trajectory[1] = request.to;
+  a.trajectory_count = 2;
+  return a;
+}
+static qa_traversal_admission nav_world_admit(void *ctx, qa_traversal_request request, qa_navigation_profile profile) {
+  (void)profile;
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  return nav_admit(request);
+}
+static qa_traversal_admission nav_route_admit(void *ctx, qa_traversal_request request) {
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  return nav_admit(request);
+}
+static qa_navigation_route_prediction nav_begin_route(void *ctx, qa_navigation_profile profile) {
+  (void)profile;
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  return (qa_navigation_route_prediction){&nav_world_sentinel, nav_route_admit};
+}
+static bool nav_entity(void *ctx, qa_navigation_entity_binding binding, qa_navigation_entity_state *out) {
+  (void)binding; (void)out;
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  return false;
+}
+static bool nav_hazard(void *ctx, qa_bounds bounds) {
+  (void)bounds;
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  return false;
+}
+static qa_trace_result nav_scene_trace(void *ctx, qa_trace_query query) {
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  qa_trace_result r;
+  memset(&r, 0, sizeof r);
+  r.kind = "q1";
+  r.fraction = 1;
+  r.end = query.end;
+  return r;
+}
+static qa_point_contents_result nav_scene_contents(void *ctx, qa_point_contents_query query) {
+  (void)query;
+  if (ctx != &nav_world_sentinel) nav_ctx_errors++;
+  return (qa_point_contents_result){"q1", 0, 0, 0};
+}
+static qa_navigation_node nav_nodes[3];
+static qa_navigation_edge nav_edges[2];
+static int64_t nav_cluster_ids[3] = {1, 2, 3};
+static qa_navigation_cluster_list nav_cluster;
+static qa_navigation_graph nav_graph;
+static qa_navigation_world nav_world;
+static qa_navigation_runtime nav_runtime;
+static qa_actor_id nav_pass_actor;
+static qa_navigation_runtime *nav_for_actor(void *ctx, qa_owned_actor actor) {
+  if (ctx != &nav_host_sentinel) nav_ctx_errors++;
+  nav_pass_actor = actor.id;
   return &nav_runtime;
+}
+static void nav_open(void) {
+  static const qa_vec3 origins[3] = {{0, 0, 0}, {100, 0, 0}, {300, 0, 0}};
+  for (int64_t i = 0; i < 3; i++) {
+    qa_navigation_node *node = &nav_nodes[i];
+    memset(node, 0, sizeof *node);
+    node->id = i + 1;
+    node->origin = origins[i];
+    node->bounds = (qa_bounds){qa_sub3(origins[i], (qa_vec3){40, 40, 40}), qa_add3(origins[i], (qa_vec3){40, 40, 40})};
+    node->radius = 40;
+    node->source.kind = QA_NS_CONSTRUCTED;
+  }
+  /* 1 -> 2 walks; 1 -> 3 only teleports, which walkpathtogoal's edge filter rejects. */
+  memset(nav_edges, 0, sizeof nav_edges);
+  nav_edges[0].id = 1; nav_edges[0].from = 1; nav_edges[0].to = 2; nav_edges[0].mode = QA_TM_WALK;
+  nav_edges[0].start = origins[0]; nav_edges[0].end = origins[1]; nav_edges[0].travel_seconds = 1;
+  nav_edges[0].source.kind = QA_NS_CONSTRUCTED;
+  nav_edges[1].id = 2; nav_edges[1].from = 1; nav_edges[1].to = 3; nav_edges[1].mode = QA_TM_TELEPORT;
+  nav_edges[1].start = origins[0]; nav_edges[1].end = origins[2]; nav_edges[1].travel_seconds = 1;
+  nav_edges[1].source.kind = QA_NS_CONSTRUCTED;
+  memset(&nav_cluster, 0, sizeof nav_cluster);
+  nav_cluster.nodes = nav_cluster_ids;
+  nav_cluster.count = 3;
+  memset(&nav_graph, 0, sizeof nav_graph);
+  nav_graph.map.name = "nav";
+  nav_graph.map.digest = "sha256:map-digest";
+  nav_graph.profile.monster = true;
+  nav_graph.profile.shape.kind = "box";
+  nav_graph.profile.shape.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 32}};
+  nav_graph.profile.capabilities = (1u << QA_TM_WALK) | (1u << QA_TM_TELEPORT);
+  nav_graph.profile.maximum_step = 18;
+  nav_graph.profile.minimum_floor_normal = 0.7;
+  nav_graph.profile.maximum_drop = 256;
+  nav_graph.profile.team = -1;
+  nav_graph.nodes = nav_nodes;
+  nav_graph.node_count = 3;
+  nav_graph.edges = nav_edges;
+  nav_graph.edge_count = 2;
+  nav_graph.clusters = &nav_cluster;
+  nav_graph.cluster_count = 1;
+  memset(&nav_world, 0, sizeof nav_world);
+  nav_world.scene.ctx = &nav_world_sentinel;
+  nav_world.scene.trace = nav_scene_trace;
+  nav_world.scene.point_contents = nav_scene_contents;
+  nav_world.pass_actor = &nav_pass_actor;
+  nav_world.ctx = &nav_world_sentinel;
+  nav_world.admit = nav_world_admit;
+  nav_world.begin_route = nav_begin_route;
+  nav_world.get_entity = nav_entity;
+  nav_world.hazard = nav_hazard;
+  CHECK(qa_navigation_runtime_init(&nav_runtime, &nav_graph, &nav_world));
+}
+
+/* A plain Mg3Monster over the ordinary MG3 source tables (army frames). */
+static qa_q1am_mg3_monster grunt;
+static int grunt_lookup_sentinel;
+static qa_q1_base_monster *grunt_lookup(void *ctx, qa_q1_actor *entity) {
+  if (ctx != &grunt_lookup_sentinel) host_ctx_errors++;
+  (void)entity;
+  return &grunt.base;
+}
+static void grunt_init(qa_q1_actor *entity) {
+  /* TS registerMonsterCallbacks(game, "test", ...): the source's monster_frame continuations. */
+  free(grunt_callbacks);
+  grunt_callbacks = qa_q1_register_monster_callbacks(game_of(), "test", grunt_lookup, &grunt_lookup_sentinel);
+  qa_q1_base_monster_source source;
+  memset(&source, 0, sizeof source);
+  source.callback_prefix = "test";
+  source.frames = &qa_q1am_ordinary_mg3_frames;
+  CHECK(qa_q1am_mg3_monster_init(&grunt, game_of(), entity, &qa_q1am_army_species,
+                                 qa_q1_base_as_monster_services(AF.base), &source, NULL, NULL));
 }
 
 int main(void) {
@@ -634,28 +307,28 @@ int main(void) {
   CHECK(qa_q1am_szombie_frames.count == 193);
   CHECK(qa_q1am_demodog_frames.count == 86);
   CHECK(qa_q1am_infected_frames.count == 113);
-  const qa_q1am_frame *first = &qa_q1am_final_boss_frames.frames[0];
-  CHECK(strcmp(first->name, "boss_final_rise1") == 0 && first->frame == 0 &&
-        strcmp(first->next, "boss_final_rise2") == 0 && first->operation_count == 1 &&
-        first->operations[0].kind == QA_Q1AM_OP_ACTION);
-  const qa_q1am_frame *dog = qa_q1am_frame_table_get(&qa_q1am_demodog_frames, "demodog_atta4");
+  const qa_q1_monster_frame_entry *first = &qa_q1am_final_boss_frames.entries[0];
+  CHECK(strcmp(first->name, "boss_final_rise1") == 0 && first->frame.frame == 0 &&
+        strcmp(first->frame.next, "boss_final_rise2") == 0 && first->frame.operation_count == 1 &&
+        first->frame.operations[0].kind == QA_Q1_OP_ACTION);
+  const qa_q1_monster_frame *dog = qa_q1_monster_frame_table_get(&qa_q1am_demodog_frames, "demodog_atta4");
   CHECK(dog != NULL && dog->frame == 3 && dog->operation_count == 2 &&
-        dog->operations[0].kind == QA_Q1AM_OP_SOUND &&
+        dog->operations[0].kind == QA_Q1_OP_SOUND &&
         strcmp(dog->operations[1].name, "demodog_bite") == 0);
-  const qa_q1am_frame *corpse = qa_q1am_frame_table_get(&qa_q1am_infected_frames, "hknight_corpse2");
-  CHECK(corpse != NULL && corpse->frame == 62 && corpse->operations[0].kind == QA_Q1AM_OP_SOLID);
+  const qa_q1_monster_frame *corpse = qa_q1_monster_frame_table_get(&qa_q1am_infected_frames, "hknight_corpse2");
+  CHECK(corpse != NULL && corpse->frame == 62 && corpse->operations[0].kind == QA_Q1_OP_SOLID);
   /* Heavy tables: every next resolves and every action has a handler. */
   const qa_q1am_heavy_definition *defs[2] = {&qa_q1am_super_shambler_definition, &qa_q1am_rune_knight_definition};
   for (int d = 0; d < 2; d++) {
     const qa_q1am_heavy_definition *def = defs[d];
     for (size_t i = 0; i < def->frames->count; i++) {
-      const qa_q1am_frame *frame = &def->frames->frames[i];
-      bool next_ok = qa_q1am_frame_table_get(def->frames, frame->next) != NULL;
+      const qa_q1_monster_frame *frame = &def->frames->entries[i].frame;
+      bool next_ok = qa_q1_monster_frame_table_has(def->frames, frame->next);
       for (size_t a = 0; a < def->action_count && !next_ok; a++)
         next_ok = strcmp(def->actions[a].name, frame->next) == 0;
       CHECK(next_ok);
       for (size_t o = 0; o < frame->operation_count; o++) {
-        if (frame->operations[o].kind != QA_Q1AM_OP_ACTION) continue;
+        if (frame->operations[o].kind != QA_Q1_OP_ACTION) continue;
         bool found = false;
         for (size_t a = 0; a < def->action_count; a++)
           found = found || strcmp(def->actions[a].name, frame->operations[o].name) == 0;
@@ -670,212 +343,215 @@ int main(void) {
   CHECK(p99.x == 0.297 && p99.y == -0.098 && p99.z == -0.95);
   CHECK_ABORTS(qa_q1am_sphere_point(100));
   CHECK_ABORTS(qa_q1am_sphere_point(-1));
-  /* Vector helpers. */
-  CHECK(qa_q1am_yaw_for((qa_vec3){0, -1, 0}) == 270);
-  qa_vec3 va = qa_q1am_velocity_angles((qa_vec3){0, 0, 5});
+  /* Vector helpers (foundation yawFor/normalize, mission-pack velocityAngles). */
+  CHECK(qa_q1_yaw_for((qa_vec3){0, -1, 0}) == 270);
+  qa_vec3 va = qa_q1mp_velocity_angles((qa_vec3){0, 0, 5});
   CHECK(va.x == 90 && va.y == 0 && va.z == 0);
-  qa_vec3 n = qa_q1am_normalize((qa_vec3){0, 0, 0});
+  qa_vec3 n = qa_q1_normalize((qa_vec3){0, 0, 0});
   CHECK(n.x == 0 && n.y == 0 && n.z == 0);
 
-  stub_reset();
-  /* Actor field helpers. */
-  qa_q1am_actor *probe = stub_create(NULL, "probe");
-  qa_q1am_actor_set_field_number(probe, "hp", 0.1);
-  CHECK(qa_q1am_actor_number(probe, "hp") == (double)(float)0.1);
-  qa_q1am_actor_set_field(probe, "v", "1.5 -2 3");
-  qa_vec3 parsed = qa_q1am_actor_vector(probe, "v");
+  open_world();
+  qa_q1_services *game = game_of();
+  /* Actor field helpers (context.setNumber writes String(Math.fround(value))). */
+  qa_q1_actor *probe = q1af_create(&AF, "probe");
+  qa_q1ad_set_number(AF.context, probe, "hp", 0.1);
+  CHECK(qa_q1_actor_number(probe, "hp") == (double)(float)0.1);
+  (void)qa_q1_actor_field_set(probe, "v", "1.5 -2 3");
+  qa_vec3 parsed = qa_q1_actor_vector(probe, "v");
   CHECK(parsed.x == 1.5 && parsed.y == -2 && parsed.z == 3);
-  CHECK(qa_q1am_actor_number_or(probe, "missing", 7) == 7);
+  CHECK(qa_q1_actor_number_or(probe, "missing", 7) == 7);
 
   /* MG3 AI: attackFinished fround staging and range categories. */
-  qa_q1am_actor *player = add_player((qa_vec3){300, 0, 0});
-  qa_q1am_actor *grunt_entity = stub_create(NULL, "monster_army");
-  static const qa_q1am_source grunt_source = {"test", NULL, NULL, 0};
-  qa_q1am_monster grunt;
-  qa_q1am_monster_init(&grunt, &S.game, grunt_entity, &qa_q1am_army_species, &S.base, &grunt_source);
-  qa_q1am_mg3_install(&grunt);
-  S.game.time = 1.23456789;
-  grunt.ops.attack_finished(&grunt, 0.5);
-  CHECK(grunt.state->attack_finished == (double)(float)(1.23456789 + 0.5));
-  CHECK(!grunt.state->refired);
-  grunt.state->has_enemy = true;
-  grunt.state->enemy = player->actor.id;
+  qa_owned_actor player = q1_world_fixture_admit_player(&AF.fx, (qa_vec3){300, 0, 0}, 100);
+  qa_q1_actor *grunt_entity = create_monster_entity("monster_army");
+  grunt_init(grunt_entity);
+  qa_q1_base_monster *m = &grunt.base;
+  game->time = 1.23456789;
+  qa_q1_base_monster_attack_finished(m, 0.5);
+  CHECK(m->state->attack_finished == (double)(float)(1.23456789 + 0.5));
+  CHECK(!m->state->refired);
+  qa_q1_base_monster_set_enemy(m, &player.id);
   /* eye distance: origins 300 apart, same view offset. */
-  CHECK(qa_q1am_mg3_range_category(&grunt, false, (qa_actor_id){0}) == 1);
-  S.bodies[player->actor.id.slot].origin.x = 50;
-  CHECK(qa_q1am_mg3_range_category(&grunt, false, (qa_actor_id){0}) == 0);
-  S.bodies[player->actor.id.slot].origin.x = 2000;
-  CHECK(qa_q1am_mg3_range_category(&grunt, false, (qa_actor_id){0}) == 3);
+  CHECK(qa_q1am_mg3_range_category(m, NULL) == 1);
+  set_player_origin(player.id, (qa_vec3){50, 0, 0});
+  CHECK(qa_q1am_mg3_range_category(m, NULL) == 0);
+  set_player_origin(player.id, (qa_vec3){2000, 0, 0});
+  CHECK(qa_q1am_mg3_range_category(m, NULL) == 3);
   /* Sight sound: enforcer random selection (choice 0 -> sight3). */
-  (void)snprintf(grunt_entity->classname, sizeof grunt_entity->classname, "%s", "monster_enforcer");
+  qa_q1ad_set_text(&grunt_entity->classname, "monster_enforcer");
   queue_random(0);
-  grunt.ops.sight_sound(&grunt);
-  CHECK(strcmp(S.last_sound, "enforcer/sight3.wav") == 0);
+  qa_q1am_mg3_sight_sound(m);
+  CHECK(strcmp(last_sound(), "enforcer/sight3.wav") == 0);
   /* Contents damage: lava zombie takes 120 and reports death check. */
-  (void)snprintf(grunt_entity->classname, sizeof grunt_entity->classname, "%s", "monster_zombie");
+  qa_q1ad_set_text(&grunt_entity->classname, "monster_zombie");
   grunt_entity->water_level = 2;
   grunt_entity->water_type = -5;
-  S.health[grunt_entity->actor.id.slot] = 1000;
-  int before_damage = S.damage_count;
-  CHECK(qa_q1am_mg3_check_contents_damage(&grunt) == true);
-  CHECK(S.damage_count == before_damage + 1 && S.last_damage == 120);
+  set_health(grunt_entity->actor, 1000);
+  int before_damage = damage_count;
+  CHECK(qa_q1am_mg3_check_contents_damage(m) == true);
+  CHECK(damage_count == before_damage + 1 && last_damage == 120);
   /* Second call inside dmgtime window does nothing. */
-  CHECK(qa_q1am_mg3_check_contents_damage(&grunt) == false);
-  CHECK(S.damage_count == before_damage + 1);
+  CHECK(qa_q1am_mg3_check_contents_damage(m) == false);
+  CHECK(damage_count == before_damage + 1);
+  close_world();
 
-  /* Army attack and pain against the stub trace. */
-  stub_reset();
-  player = add_player((qa_vec3){100, 0, 0});
-  grunt_entity = stub_create(NULL, "monster_army");
-  qa_q1am_monster_init(&grunt, &S.game, grunt_entity, &qa_q1am_army_species, &S.base, &grunt_source);
-  qa_q1am_mg3_install(&grunt);
-  grunt.state->has_enemy = true;
-  grunt.state->enemy = player->actor.id;
-  S.trace_result.has_actor = true;
-  S.trace_result.actor = player->actor.id;
+  /* Army attack and pain against the host trace. */
+  open_world();
+  game = game_of();
+  player = q1_world_fixture_admit_player(&AF.fx, (qa_vec3){100, 0, 0}, 100);
+  grunt_entity = create_monster_entity("monster_army");
+  grunt_init(grunt_entity);
+  m = &grunt.base;
+  qa_q1_base_monster_set_enemy(m, &player.id);
+  qa_q1ad_set_number(AF.context, game->world, "enemy_range", 0);
+  trace_result.has_actor = true;
+  trace_result.actor = player.id;
   queue_random(0.1); /* under 0.9 chance */
   queue_random(0.5); /* attackFinished delay */
   queue_random(0.9); /* no lefty flip */
-  CHECK(qa_q1am_army_attack(&grunt) == true);
-  CHECK(S.played_count > 0 && strcmp(S.played[S.played_count - 1], "army_atk1") == 0);
+  CHECK(qa_q1am_army_attack(m) == true);
+  CHECK(strcmp(m->current_frame, "army_atk1") == 0);
   queue_random(0.1);
-  qa_q1am_army_pain(&grunt, true, player->actor.id, 10, false);
-  CHECK(strcmp(S.played[S.played_count - 1], "army_pain1") == 0);
-  CHECK(strcmp(S.last_sound, "soldier/pain1.wav") == 0);
+  qa_q1am_army_pain(m, &player.id, 10, false);
+  CHECK(strcmp(m->current_frame, "army_pain1") == 0);
+  CHECK(strcmp(last_sound(), "soldier/pain1.wav") == 0);
 
   /* Infected species resolution. */
-  qa_q1am_actor *inf = stub_create(NULL, "monster_army_infected");
-  qa_q1am_actor_set_field(inf, "infected.kind", "army");
-  qa_q1am_species spec = qa_q1am_infected_species(inf);
+  qa_q1_actor *inf = q1af_create(&AF, "monster_army_infected");
+  (void)qa_q1_actor_field_set(inf, "infected.kind", "army");
+  qa_q1_base_monster_species spec;
+  qa_q1am_infected_species(inf, &spec);
   CHECK(strcmp(spec.species, "army") == 0 && spec.health == 30);
-  qa_q1am_actor_set_field_number(inf, "infected.transformed", 1);
-  spec = qa_q1am_infected_species(inf);
+  qa_q1ad_set_number(AF.context, inf, "infected.transformed", 1);
+  qa_q1am_infected_species(inf, &spec);
   CHECK(strcmp(spec.species, "zombie") == 0 && spec.missile == NULL && spec.melee);
-  qa_q1am_actor_set_field(inf, "infected.kind", "hellknight");
-  qa_q1am_actor_set_field_number(inf, "infected.transformed", 0);
+  (void)qa_q1_actor_field_set(inf, "infected.kind", "hellknight");
+  qa_q1ad_set_number(AF.context, inf, "infected.transformed", 0);
   inf->spawnflags = 65536;
-  spec = qa_q1am_infected_species(inf);
+  qa_q1am_infected_species(inf, &spec);
   CHECK(strcmp(spec.stand, "hknight_corpse1") == 0 && strcmp(spec.run, "hknight_corpse1_rise0") == 0);
-  qa_q1am_actor_set_field(inf, "infected.kind", "bogus");
+  (void)qa_q1_actor_field_set(inf, "infected.kind", "bogus");
   CHECK_ABORTS(qa_q1am_infected_kind(inf));
+  close_world();
 
   /* Heavy: Super Shambler blast counts (TS: 11 then 20 knightspikes). */
-  stub_reset();
-  player = add_player((qa_vec3){500, 0, 0});
-  qa_q1am_mg3_heavy heavy;
-  qa_q1am_register_mg3_heavy(&S.context, &heavy);
-  qa_q1am_actor *sham_entity = stub_create(NULL, "monster_super_shambler");
-  stub_spawn_entity(NULL, sham_entity);
-  qa_q1am_heavy_monster *sham = qa_q1am_mg3_heavy_require(&heavy, sham_entity);
-  sham->base.state->has_enemy = true;
-  sham->base.state->enemy = player->actor.id;
-  sham->base.ops.play(&sham->base, "supsham_smash10");
+  open_world();
+  game = game_of();
+  player = q1_world_fixture_admit_player(&AF.fx, (qa_vec3){500, 0, 0}, 100);
+  qa_q1am_mg3_heavy *heavy = qa_q1am_register_mg3_heavy(AF.context);
+  qa_q1_actor *sham_entity = q1af_spawn(&AF, "monster_super_shambler");
+  qa_q1am_heavy_monster *sham = qa_q1am_mg3_heavy_require(heavy, sham_entity);
+  qa_q1_base_monster_set_enemy(&sham->base.base, &player.id);
+  qa_q1_base_monster_play(&sham->base.base, "supsham_smash10");
   CHECK(count_classname("knightspike") == 11);
-  sham->base.ops.play(&sham->base, "supsham_swingl7");
+  qa_q1_base_monster_play(&sham->base.base, "supsham_swingl7");
   CHECK(count_classname("knightspike") == 20);
   /* Rune Knight burst counter setup frame. */
-  qa_q1am_actor *rk_entity = stub_create(NULL, "monster_ranged_knight");
-  stub_spawn_entity(NULL, rk_entity);
-  qa_q1am_heavy_monster *rk = qa_q1am_mg3_heavy_require(&heavy, rk_entity);
-  rk->base.state->has_enemy = true;
-  rk->base.state->enemy = player->actor.id;
-  rk->base.ops.play(&rk->base, "rknight_magicb6");
-  CHECK(qa_q1am_actor_number(rk_entity, "ammo_nails") == 3); /* floor(0.4*8+0.5) */
+  qa_q1_actor *rk_entity = q1af_spawn(&AF, "monster_ranged_knight");
+  qa_q1am_heavy_monster *rk = qa_q1am_mg3_heavy_require(heavy, rk_entity);
+  qa_q1_base_monster_set_enemy(&rk->base.base, &player.id);
+  qa_q1_base_monster_play(&rk->base.base, "rknight_magicb6");
+  CHECK(qa_q1_actor_number(rk_entity, "ammo_nails") == 3); /* floor(0.4*8+0.5) */
   /* Heavy checkpoint capture/restore through the state extension path. */
-  qa_save_value *captured = qa_q1am_monster_capture(&rk->base);
+  qa_save_value *captured = qa_q1_base_monster_capture(&rk->base.base);
   qa_save_reader reader;
   qa_save_reader_init(&reader, captured, "mg3:heavy");
-  qa_q1am_monster_restore(&rk->base, &reader);
+  qa_q1_base_monster_restore(&rk->base.base, &reader);
   qa_save_reader_destroy(&reader);
   qa_save_value_free(captured);
-  CHECK(strcmp(rk->base.current_frame, "rknight_magicb6") == 0);
+  CHECK(strcmp(rk->base.base.current_frame, "rknight_magicb6") == 0);
   /* Lava Man pain plays the shock sequence on first hit. */
-  qa_q1am_actor *lava_entity = stub_create(NULL, "monster_lava_man");
-  (void)snprintf(lava_entity->targetname, sizeof lava_entity->targetname, "%s", "lava1");
-  stub_spawn_entity(NULL, lava_entity);
-  qa_q1am_heavy_monster *lava = qa_q1am_mg3_heavy_require(&heavy, lava_entity);
-  lava->base.ops.pain(&lava->base, true, player->actor.id, 1);
+  const char *lava_fields[] = {"targetname", "lava1"};
+  qa_q1_actor *lava_entity = q1af_spawn_fields(&AF, "monster_lava_man", lava_fields, 1);
+  qa_q1am_heavy_monster *lava = qa_q1am_mg3_heavy_require(heavy, lava_entity);
+  qa_q1_base_monster_pain(&lava->base.base, &player.id, 1);
   CHECK(lava_entity->count == 1);
-  CHECK(strcmp(S.played[S.played_count - 1], "lavaman_shocka1") == 0);
+  CHECK(strcmp(lava->base.base.current_frame, "lavaman_shocka1") == 0);
   /* Heavy lightning damage hits a repeated trace actor only once. */
-  S.trace_result.has_actor = true;
-  S.trace_result.actor = player->actor.id;
-  S.trace_result.end = (qa_vec3){10, 0, 0};
-  int damages = S.damage_count;
-  qa_q1am_heavy_lightning_damage(&S.game, sham_entity->actor.id, QA_Q1AM_ZERO, (qa_vec3){10, 0, 0}, 10);
-  CHECK(S.damage_count == damages + 1 && S.last_damage == 10);
+  trace_result.has_actor = true;
+  trace_result.actor = player.id;
+  trace_result.end = (qa_vec3){10, 0, 0};
+  int damages = damage_count;
+  qa_q1am_heavy_lightning_damage(game, sham_entity->actor.id, QA_Q1_ZERO, (qa_vec3){10, 0, 0}, 10);
+  CHECK(damage_count == damages + 1 && last_damage == 10);
+  close_world();
 
   /* Navigation: in-progress walk, duplicate registration, missing host. */
-  stub_reset();
-  player = add_player((qa_vec3){100, 0, 0});
-  grunt_entity = stub_create(NULL, "monster_army");
-  qa_q1am_monster_init(&grunt, &S.game, grunt_entity, &qa_q1am_army_species, &S.base, &grunt_source);
-  CHECK_ABORTS(qa_q1am_walk_mg3_path_to_goal(&grunt, 5, (qa_vec3){100, 0, 0}));
-  memset(&nav_runtime, 0, sizeof nav_runtime);
-  nav_runtime.map_digest = "map-digest";
-  nav_runtime.profile_monster = true;
-  nav_runtime.has_pass_actor = true;
-  nav_runtime.graph_edges = nav_edges;
-  nav_runtime.graph_edge_count = 2;
-  nav_runtime.node_exists = nav_node_exists;
-  nav_runtime.route = nav_route;
-  nav_runtime.route_still_valid = nav_still_valid;
-  qa_q1am_nav_host nav_host = {NULL, nav_for_actor};
-  qa_q1am_register_mg3_monster_navigation(&S.game, nav_host);
-  CHECK(qa_q1am_walk_mg3_path_to_goal(&grunt, 5, (qa_vec3){100, 0, 0}) == QA_Q1AM_PATH_IN_PROGRESS);
-  CHECK(qa_q1am_walk_mg3_path_to_goal(&grunt, 5, (qa_vec3){0, 0, 0}) == QA_Q1AM_PATH_REACHED_GOAL);
-  CHECK_ABORTS(qa_q1am_register_mg3_monster_navigation(&S.game, nav_host));
+  open_world();
+  game = game_of();
+  player = q1_world_fixture_admit_player(&AF.fx, (qa_vec3){100, 0, 0}, 100);
+  grunt_entity = create_monster_entity("monster_army");
+  grunt_init(grunt_entity);
+  m = &grunt.base;
+  CHECK_ABORTS(qa_q1am_walk_mg3_path_to_goal(m, 5, (qa_vec3){100, 0, 0}));
+  nav_open();
+  qa_q1am_nav_host nav_host = {&nav_host_sentinel, nav_for_actor};
+  qa_q1am_register_mg3_monster_navigation(game, nav_host);
+  CHECK(qa_q1am_walk_mg3_path_to_goal(m, 5, (qa_vec3){100, 0, 0}) == QA_Q1AM_PATH_IN_PROGRESS);
+  /* The walk edge filter admits walk and rejects teleport: the 1 -> 3 goal has no walking route. */
+  CHECK(qa_q1am_walk_mg3_path_to_goal(m, 5, (qa_vec3){300, 0, 0}) == QA_Q1AM_PATH_ERROR);
+  CHECK(qa_q1am_walk_mg3_path_to_goal(m, 5, (qa_vec3){0, 0, 0}) == QA_Q1AM_PATH_REACHED_GOAL);
+  CHECK_ABORTS(qa_q1am_register_mg3_monster_navigation(game, nav_host));
+  CHECK(nav_ctx_errors == 0);
 
-  /* Startup: activator selection and waiting detection. */
+  /* Startup: activator selection. */
   qa_actor_id resolved;
-  CHECK(qa_q1am_mg3_monster_activator(&S.game, false, (qa_actor_id){0}, &resolved));
-  CHECK(qa_same_actor(resolved, player->actor.id));
-  S.health[player->actor.id.slot] = 0;
-  CHECK(!qa_q1am_mg3_monster_activator(&S.game, false, (qa_actor_id){0}, &resolved));
-  S.health[player->actor.id.slot] = 100;
+  CHECK(qa_q1am_mg3_monster_activator(game, NULL, &resolved));
+  CHECK(qa_same_actor(resolved, player.id));
+  set_health(player, 0);
+  CHECK(!qa_q1am_mg3_monster_activator(game, NULL, &resolved));
+  set_health(player, 100);
+  qa_q1am_release_mg3_monster_navigation(game);
+  qa_navigation_runtime_destroy(&nav_runtime);
+  close_world();
 
   /* Path targets: spawn validation errors. */
-  stub_reset();
-  qa_q1am_register_mg3_path_targets(&S.context);
-  qa_q1am_actor *corner = stub_create(NULL, "path_corner");
-  CHECK_ABORTS(stub_spawn_entity(NULL, corner));
-  (void)snprintf(corner->targetname, sizeof corner->targetname, "%s", "corner1");
-  stub_spawn_entity(NULL, corner);
+  open_world();
+  game = game_of();
+  qa_q1am_register_mg3_path_targets(AF.context);
+  qa_q1_actor *corner = q1af_create(&AF, "path_corner");
+  CHECK_ABORTS(qa_q1_spawn_entity(game, corner));
+  qa_q1ad_set_text(&corner->targetname, "corner1");
+  qa_q1_spawn_entity(game, corner);
   CHECK(strcmp(corner->solid, "trigger") == 0);
-  CHECK(S.bodies[corner->actor.id.slot].bounds.max.x == 8);
+  CHECK(qa_q1_get_body(game, corner).bounds.max.x == 8);
+  close_world();
 
-  /* Boss registry: missing controller aborts; ghost spawn initializes. */
-  stub_reset();
-  qa_q1am_register_ghost(&S.context);
-  qa_q1am_actor *ghost_entity = stub_create(NULL, "monster_ghost");
+  /* Boss registry: ghost spawn initializes. */
+  open_world();
+  game = game_of();
+  qa_q1am_register_ghost(AF.context);
   queue_random(0.0); /* death choice */
   queue_random(0.5); /* wander direction */
   queue_random(0.0); /* count */
-  stub_spawn_entity(NULL, ghost_entity);
-  CHECK(strcmp(qa_q1am_actor_text(ghost_entity, "ghost.death"), "ghost_diea1") == 0);
-  CHECK(S.health[ghost_entity->actor.id.slot] == 10);
+  qa_q1_actor *ghost_entity = q1af_spawn(&AF, "monster_ghost");
+  CHECK(strcmp(qa_q1_actor_text(ghost_entity, "ghost.death"), "ghost_diea1") == 0);
+  CHECK(qa_q1_health(game, ghost_entity->actor.id) == 10);
   CHECK(ghost_entity->wait == 128);
+  close_world();
 
-  /* Demodog leap attack distance window. */
-  stub_reset();
-  player = add_player((qa_vec3){100, 0, 0});
-  qa_q1am_register_mg3_demodog(&S.context);
-  qa_q1am_actor *dog_entity = stub_create(NULL, "monster_demodog");
-  stub_spawn_entity(NULL, dog_entity);
-  /* The demodog registry is private; reach it through the spawn state:
-   * classname was rewritten by spawn and pathfind fields set. */
+  /* Demodog spawn state. */
+  open_world();
+  game = game_of();
+  player = q1_world_fixture_admit_player(&AF.fx, (qa_vec3){100, 0, 0}, 100);
+  qa_q1am_demodog_registry *dogs = qa_q1am_register_mg3_demodog(AF.context);
+  qa_q1_actor *dog_entity = q1af_spawn(&AF, "monster_demodog");
   CHECK(strcmp(dog_entity->classname, "monster_dog") == 0);
-  CHECK(strcmp(qa_q1am_actor_text(dog_entity, "allowPathFind"), "1") == 0);
-  CHECK(S.health[dog_entity->actor.id.slot] == 25);
+  CHECK(strcmp(qa_q1_actor_text(dog_entity, "allowPathFind"), "1") == 0);
+  CHECK(qa_q1_health(game, dog_entity->actor.id) == 25);
+  CHECK(qa_q1am_demodog_registry_get(dogs, dog_entity->actor) != NULL);
+  close_world();
 
   /* Top-level registration installs ordinary + mg3 spawns once. */
-  stub_reset();
-  qa_q1am_mg3_heavy top_heavy;
-  qa_q1am_register_addon_monsters(&S.context, &top_heavy);
-  CHECK(S.spawn_count > 20);
-  CHECK(find_handlers("mg3:final:T_RockTouch2") != NULL);
-  CHECK(find_handlers("mg3:bosses:actual_sphere") != NULL);
-  CHECK(find_handlers("mg3:t_movetarget") != NULL);
+  open_world();
+  game = game_of();
+  const size_t spawners = game->spawner_count;
+  qa_q1am_register_addon_monsters(AF.context);
+  CHECK(game->spawner_count - spawners > 20);
+  CHECK_ABORTS(register_again("mg3:final:T_RockTouch2"));
+  CHECK_ABORTS(register_again("mg3:bosses:actual_sphere"));
+  CHECK_ABORTS(register_again("mg3:t_movetarget"));
+  close_world();
 
   printf("test_q1_addon_monsters: %d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;

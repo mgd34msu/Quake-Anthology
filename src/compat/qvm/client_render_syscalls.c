@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/content/q3/presentation/model_access.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 
@@ -27,14 +28,25 @@ static float float_at(const qa_qvm_host_call *call, size_t byte_offset) {
   return qa_qvm_host_call_word_f32(call, byte_offset);
 }
 
+static void out_of_memory(bool ok) {
+  if (!ok) qa_range_error("out of memory");
+}
+
 typedef struct picture_ctx {
-  qa_qvmx_renderer_resources *resources;
-  const void *shader;
+  qa_q3_pres_q3_renderer_resources *resources;
+  int32_t shader_word;
 } picture_ctx;
 
-static const void *picture_thunk(void *ctx) {
+/* TS () => resources.picture(resources.shaderForHandle(shaderWord)). */
+static qa_picture_asset picture_thunk(void *ctx) {
   picture_ctx *picture = ctx;
-  return picture->resources->picture(picture->resources->ctx, picture->shader);
+  qa_picture_asset asset;
+  memset(&asset, 0, sizeof asset);
+  asset.kind = QA_PICTURE_MATERIAL;
+  asset.material = qa_q3_pres_q3_renderer_resources_picture(
+      picture->resources,
+      qa_q3_pres_q3_renderer_resources_shader_for_handle(picture->resources, picture->shader_word));
+  return asset;
 }
 
 static void write_vector(qa_qvm_writable_view *view, qa_vec3 value) {
@@ -43,8 +55,8 @@ static void write_vector(qa_qvm_writable_view *view, qa_vec3 value) {
   qa_qvm_writable_view_set_float32(view, 8, value.z, true);
 }
 
-static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_resources *resources,
-                             qa_qvm_client_render_draw *draw, qa_qvm_host_result *out) {
+static bool resource_syscall(const qa_qvm_host_call *call, qa_q3_pres_q3_renderer_resources *resources,
+                             const qa_draw2d *commands, qa_qvm_host_result *out) {
   /* role "game" never reaches here: the caller rejects qagame. */
   int32_t trap = word_at(call, 0);
   const resource_traps *ids = strcmp(call->role, "ui") == 0 ? &ui_traps : &cgame_traps;
@@ -52,32 +64,35 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
   if (trap == ids->model) {
     int32_t name_word = word_at(call, 1);
     char *name = name_word == 0 ? NULL : read_string(memory, name_word);
-    const void *model = resources->register_model(resources->ctx, name == NULL ? "" : name);
+    qa_q3_pres_scene_model model;
+    out_of_memory(qa_q3_pres_q3_renderer_resources_register_model(resources, name == NULL ? "" : name, &model));
     free(name);
-    *out = qa_int32(resources->model_handle(resources->ctx, model));
+    *out = qa_int32(qa_q3_pres_q3_renderer_resources_model_handle(resources, &model));
     return true;
   }
   if (trap == ids->skin) {
     int32_t name_word = word_at(call, 1);
     char *name = name_word == 0 ? NULL : read_string(memory, name_word);
-    const void *skin = resources->register_skin(resources->ctx, name == NULL ? "" : name);
+    const qa_q3_pres_scene_skin *skin = NULL;
+    out_of_memory(qa_q3_pres_q3_renderer_resources_register_skin(resources, name == NULL ? "" : name, &skin));
     free(name);
-    *out = qa_int32(resources->skin_handle(resources->ctx, skin));
+    *out = qa_int32(qa_q3_pres_q3_renderer_resources_skin_handle(resources, skin));
     return true;
   }
   if ((ids->shader >= 0 && trap == ids->shader) || trap == ids->shader_no_mip) {
     char *name = read_string(memory, word_at(call, 1));
-    const void *shader = trap == ids->shader
-                             ? resources->register_shader(resources->ctx, name)
-                             : resources->register_shader_no_mip(resources->ctx, name);
+    const qa_q3_pres_scene_shader *shader = NULL;
+    out_of_memory(trap == ids->shader
+                      ? qa_q3_pres_q3_renderer_resources_register_shader(resources, name, &shader)
+                      : qa_q3_pres_q3_renderer_resources_register_shader_no_mip(resources, name, &shader));
     free(name);
-    *out = qa_int32(resources->shader_handle(resources->ctx, shader));
+    *out = qa_int32(qa_q3_pres_q3_renderer_resources_shader_handle(resources, shader));
     return true;
   }
   if (trap == ids->color) {
     int32_t word = word_at(call, 1);
     if (word == 0) {
-      draw->set_color(draw->ctx, NULL);
+      qa_draw2d_set_color(commands, NULL);
     } else {
       qa_qvm_writable_view color;
       qa_qvm_memory_view(memory, word, 16, 0, &color);
@@ -85,18 +100,16 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
                        qa_qvm_writable_view_get_float32(&color, 4, true),
                        qa_qvm_writable_view_get_float32(&color, 8, true),
                        qa_qvm_writable_view_get_float32(&color, 12, true)};
-      draw->set_color(draw->ctx, &value);
+      qa_draw2d_set_color(commands, &value);
     }
     *out = 0;
     return true;
   }
   if (trap == ids->picture) {
     qa_rect rect = {float_at(call, 4), float_at(call, 8), float_at(call, 12), float_at(call, 16)};
-    qa_qvm_render_uv_rect uv = {float_at(call, 20), float_at(call, 24), float_at(call, 28),
-                                float_at(call, 32)};
-    int32_t shader_word = word_at(call, 9);
-    picture_ctx picture = {resources, resources->shader_for_handle(resources->ctx, shader_word)};
-    draw->stretch_pixels(draw->ctx, rect, uv, picture_thunk, &picture);
+    qa_text_texture_rect uv = {float_at(call, 20), float_at(call, 24), float_at(call, 28), float_at(call, 32)};
+    picture_ctx picture = {resources, word_at(call, 9)};
+    qa_draw2d_stretch_pixels_lazy(commands, rect, uv, picture_thunk, &picture);
     *out = 0;
     return true;
   }
@@ -105,8 +118,8 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
     qa_qvm_writable_view min, max;
     qa_qvm_memory_view(memory, word_at(call, 2), 12, 0, &min);
     qa_qvm_memory_view(memory, word_at(call, 3), 12, 0, &max);
-    qa_bounds bounds =
-        resources->model_bounds(resources->ctx, resources->model_for_handle(resources->ctx, model_word));
+    qa_q3_pres_scene_model model = qa_q3_pres_q3_renderer_resources_model_for_handle(resources, model_word);
+    qa_bounds bounds = qa_q3_pres_model_bounds(&model);
     write_vector(&min, bounds.min);
     write_vector(&max, bounds.max);
     *out = 0;
@@ -120,15 +133,14 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
     int32_t end = word_at(call, 4);
     float fraction = float_at(call, 20);
     int32_t name_word = word_at(call, 6);
-    const void *model = resources->model_for_handle(resources->ctx, model_word);
-    qa_qvmx_model_tag_info info = resources->model_tag_info(resources->ctx, model);
+    qa_q3_pres_scene_model model = qa_q3_pres_q3_renderer_resources_model_for_handle(resources, model_word);
+    const qa_decoded_model *base = model.kind == QA_Q3_PRES_SCENE_MODEL_LOADED ? &model.model : NULL;
+    /* R_LerpTag/R_GetTag do not consume tagName when no tag storage exists. */
     bool has_tag = false;
-    qa_vec3 origin = {0, 0, 0};
-    qa_axis axes = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
-    if (info.is_model && info.is_md3 && info.tag_count != 0) {
+    qa_q3_pres_model_tag tag;
+    if (base != NULL && base->kind == QA_DECODED_MODEL_Q3_MESH && base->as.q3_mesh->tag_row_count != 0) {
       char *name = read_string(memory, name_word);
-      has_tag = resources->lerp_model_tag(resources->ctx, model, name, start, end, fraction,
-                                          &origin, &axes);
+      has_tag = qa_q3_pres_lerp_model_tag(&model, name, start, end, fraction, &tag);
       free(name);
     }
     if (!has_tag) {
@@ -136,8 +148,9 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
       qa_axis identity = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
       qa_qvm_write_orientation(&destination, zero, &identity);
     } else {
-      qa_qvm_write_orientation(&destination, origin, &axes);
+      qa_qvm_write_orientation(&destination, tag.origin, &tag.axes);
     }
+    /* UI's switch discards LerpTag's result; cgame returns it. */
     *out = strcmp(call->role, "ui") == 0 || !has_tag ? 0 : 1;
     return true;
   }
@@ -146,7 +159,7 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
     char *replacement = read_string(memory, word_at(call, 2));
     int32_t offset_word = word_at(call, 3);
     char *offset = offset_word == 0 ? NULL : read_string(memory, offset_word);
-    resources->remap_shader(resources->ctx, original, replacement, offset == NULL ? "" : offset);
+    qa_q3_pres_q3_renderer_resources_remap_shader(resources, original, replacement, offset == NULL ? "" : offset);
     free(original);
     free(replacement);
     free(offset);
@@ -154,6 +167,95 @@ static bool resource_syscall(const qa_qvm_host_call *call, qa_qvmx_renderer_reso
     return true;
   }
   return false;
+}
+
+/* The source record's shading fields with the resolved custom shader. */
+static qa_q3_pres_shading record_shading(const qa_q3_pres_source_ref_entity_record *source,
+                                         const qa_q3_pres_scene_shader *custom_shader) {
+  qa_q3_pres_shading shading;
+  shading.render_flags = source->render_flags;
+  shading.custom_shader = custom_shader;
+  shading.shader_rgba = source->shader_rgba;
+  shading.shader_tex_coord = source->shader_tex_coord;
+  shading.shader_time = source->shader_time;
+  return shading;
+}
+
+/* TS addRefEntity admission of one source record: poly records pass
+ * through; portal surfaces keep their handles unresolved; every other
+ * kind resolves customShader, and models also resolve model and
+ * customSkin ({ ...source, customShader, model, customSkin }). */
+static void add_source_ref_entity(qa_q3_pres_q3_renderer_resources *resources,
+                                  const qa_q3_pres_source_ref_entity_record *source) {
+  qa_q3_pres_admitted_ref_entity admitted;
+  memset(&admitted, 0, sizeof admitted);
+  if (source->kind == QA_Q3_PRES_REF_POLY) {
+    admitted.is_poly_record = true;
+    admitted.record = *source;
+    qa_q3_pres_q3_renderer_resources_add_ref_entity(resources, &admitted);
+    return;
+  }
+  admitted.entity.kind = source->kind;
+  if (source->kind == QA_Q3_PRES_REF_PORTAL) {
+    qa_q3_pres_ref_portal_entity *portal = &admitted.entity.as.portal;
+    portal->render_flags = source->render_flags;
+    portal->origin = source->origin;
+    portal->old_origin = source->old_origin;
+    portal->axis = source->axis;
+    portal->frame = source->frame;
+    portal->old_frame = source->old_frame;
+    portal->skin_num = source->skin_num;
+    qa_q3_pres_q3_renderer_resources_add_ref_entity(resources, &admitted);
+    return;
+  }
+  const qa_q3_pres_scene_shader *custom_shader =
+      qa_q3_pres_q3_renderer_resources_shader_for_handle(resources, source->custom_shader.handle);
+  qa_q3_pres_shading shading = record_shading(source, custom_shader);
+  switch (source->kind) {
+    case QA_Q3_PRES_REF_MODEL: {
+      qa_q3_pres_ref_model_entity *model = &admitted.entity.as.model;
+      model->shading = shading;
+      model->model = qa_q3_pres_q3_renderer_resources_model_for_handle(resources, source->model.handle);
+      model->origin = source->origin;
+      model->old_origin = source->old_origin;
+      model->axis = source->axis;
+      model->non_normalized_axes = source->non_normalized_axes;
+      model->lighting_origin = source->lighting_origin;
+      model->shadow_plane = source->shadow_plane;
+      model->frame = source->frame;
+      model->old_frame = source->old_frame;
+      model->back_lerp = source->back_lerp;
+      model->skin_num = source->skin_num;
+      model->custom_skin = qa_q3_pres_q3_renderer_resources_skin_for_handle(resources, source->custom_skin.handle);
+      break;
+    }
+    case QA_Q3_PRES_REF_SPRITE: {
+      qa_q3_pres_ref_sprite_entity *sprite = &admitted.entity.as.sprite;
+      sprite->shading = shading;
+      sprite->origin = source->origin;
+      sprite->radius = source->radius;
+      sprite->rotation = source->rotation;
+      break;
+    }
+    case QA_Q3_PRES_REF_BEAM: {
+      qa_q3_pres_ref_beam_entity *beam = &admitted.entity.as.beam;
+      beam->shading = shading;
+      beam->origin = source->origin;
+      beam->old_origin = source->old_origin;
+      beam->axis = source->axis;
+      beam->radius = source->radius;
+      break;
+    }
+    default: { /* rail-core, rail-rings, lightning */
+      qa_q3_pres_ref_rail_entity *rail = &admitted.entity.as.rail;
+      rail->shading = shading;
+      rail->origin = source->origin;
+      rail->old_origin = source->old_origin;
+      rail->radius = source->radius;
+      break;
+    }
+  }
+  qa_q3_pres_q3_renderer_resources_add_ref_entity(resources, &admitted);
 }
 
 typedef struct token_ctx {
@@ -181,55 +283,44 @@ static qa_vec3 pvs_point(const qa_qvm_host_call *call, size_t word_index) {
 static qa_vec3 pvs_first(void *ctx) { return pvs_point(((pvs_ctx *)ctx)->call, 1); }
 static qa_vec3 pvs_second(void *ctx) { return pvs_point(((pvs_ctx *)ctx)->call, 2); }
 
+/* Guest rendering shares the native client's resource identities and scene publication. */
 bool qa_qvm_client_render_syscall(const qa_qvm_host_call *call,
-                                  qa_qvmx_renderer_resources resources,
-                                  qa_qvm_client_render_draw draw, qa_qvm_host_result *out) {
+                                  qa_q3_pres_q3_renderer_resources *resources,
+                                  const qa_draw2d *draw, qa_qvm_host_result *out) {
   if (strcmp(call->kind, "engine") != 0 || strcmp(call->role, "qagame") == 0) return false;
-  if (resource_syscall(call, &resources, &draw, out)) return true;
+  if (resource_syscall(call, resources, draw, out)) return true;
   int32_t trap = call->code;
   bool ui = strcmp(call->role, "ui") == 0;
   qa_qvm_memory *guest = call->guest;
   if (!ui && trap == 36) {
     char *name = read_string(guest, word_at(call, 1));
-    resources.load_world(resources.ctx, name);
+    qa_q3_pres_world_scene world;
+    out_of_memory(qa_q3_pres_q3_renderer_resources_load_world(resources, name, &world));
     free(name);
     *out = 0;
     return true;
   }
   if (!ui && trap == 86) {
     token_ctx token = {call};
-    *out = resources.get_entity_token(resources.ctx, write_token, &token) ? 1 : 0;
+    *out = qa_q3_pres_q3_renderer_resources_get_entity_token(resources, write_token, &token) ? 1 : 0;
     return true;
   }
   if (!ui && trap == 88) {
     pvs_ctx pvs = {call};
-    *out = resources.in_pvs(resources.ctx, pvs_first, pvs_second, &pvs) ? 1 : 0;
+    *out = qa_q3_pres_q3_renderer_resources_in_pvs(resources, pvs_first, pvs_second, &pvs) ? 1 : 0;
     return true;
   }
   if (trap == (ui ? 21 : 40)) {
-    resources.clear_scene(resources.ctx);
+    qa_q3_pres_q3_renderer_resources_clear_scene(resources);
     *out = 0;
     return true;
   }
   if (trap == (ui ? 22 : 41)) {
     qa_qvm_writable_view view;
     qa_qvm_memory_view(guest, word_at(call, 1), QA_QVM_REF_ENTITY_BYTES, 0, &view);
-    qa_qvm_source_ref_entity_record source;
+    qa_q3_pres_source_ref_entity_record source;
     qa_qvm_read_ref_entity(&view, &source);
-    qa_qvm_render_ref_entity entity;
-    memset(&entity, 0, sizeof entity);
-    entity.source = source;
-    if (strcmp(source.kind, "poly") == 0 || strcmp(source.kind, "portal-surface") == 0) {
-      resources.add_ref_entity(resources.ctx, entity);
-      *out = 0;
-      return true;
-    }
-    entity.custom_shader = resources.shader_for_handle(resources.ctx, source.custom_shader);
-    if (strcmp(source.kind, "model") == 0) {
-      entity.model = resources.model_for_handle(resources.ctx, source.model);
-      entity.custom_skin = resources.skin_for_handle(resources.ctx, source.custom_skin);
-    }
-    resources.add_ref_entity(resources.ctx, entity);
+    add_source_ref_entity(resources, &source);
     *out = 0;
     return true;
   }
@@ -242,17 +333,18 @@ bool qa_qvm_client_render_syscall(const qa_qvm_host_call *call,
       *out = 0;
       return true;
     }
-    const void *shader = resources.shader_for_handle(resources.ctx, shader_handle);
+    const qa_q3_pres_scene_shader *shader =
+        qa_q3_pres_q3_renderer_resources_shader_for_handle(resources, shader_handle);
     int64_t stride = (int64_t)count * QA_QVM_POLY_VERTEX_BYTES;
-    (void)qa_qvm_memory_get_span(guest, pointer, stride * polys, 0);
-    qa_qvm_ref_poly_vertex *vertices = malloc(sizeof *vertices * (size_t)count);
+    (void)qa_qvm_memory_get_span(guest, pointer, stride * polys, 0); /* TS guest.span extent check */
+    qa_q3_pres_ref_poly_vertex *vertices = malloc(sizeof *vertices * (size_t)count);
     if (vertices == NULL) qa_range_error("out of memory");
     for (int32_t index = 0; index < polys; index++) {
       qa_qvm_writable_view view;
       qa_qvm_memory_view(guest, pointer, stride, index * stride, &view);
       qa_qvm_read_poly_vertices(&view, count, vertices);
-      qa_qvm_render_poly poly = {shader, vertices, (size_t)count};
-      resources.add_poly(resources.ctx, poly);
+      qa_q3_pres_ref_poly poly = {shader, vertices, (size_t)count};
+      qa_q3_pres_q3_renderer_resources_add_poly(resources, &poly);
     }
     free(vertices);
     *out = 0;
@@ -266,23 +358,23 @@ bool qa_qvm_client_render_syscall(const qa_qvm_host_call *call,
     }
     qa_qvm_writable_view origin_view;
     qa_qvm_memory_view(guest, word_at(call, 1), 12, 0, &origin_view);
-    qa_qvm_render_light light;
+    qa_q3_pres_dynamic_light light;
     light.origin = (qa_vec3){qa_qvm_writable_view_get_float32(&origin_view, 0, true),
                               qa_qvm_writable_view_get_float32(&origin_view, 4, true),
                               qa_qvm_writable_view_get_float32(&origin_view, 8, true)};
     light.radius = radius;
     light.color = (qa_vec3){float_at(call, 12), float_at(call, 16), float_at(call, 20)};
     light.additive = trap == 85;
-    resources.add_light(resources.ctx, light);
+    qa_q3_pres_q3_renderer_resources_add_light(resources, light);
     *out = 0;
     return true;
   }
   if (trap == (ui ? 25 : 44)) {
     qa_qvm_writable_view view;
     qa_qvm_memory_view(guest, word_at(call, 1), QA_QVM_REFDEF_BYTES, 0, &view);
-    qa_qvm_refdef refdef;
+    qa_q3_pres_refdef refdef;
     qa_qvm_read_refdef(&view, &refdef);
-    resources.render_scene(resources.ctx, refdef);
+    qa_q3_pres_q3_renderer_resources_render_scene(resources, &refdef);
     *out = 0;
     return true;
   }

@@ -42,17 +42,19 @@ bool qa_compat_q2_rerelease_debug_shape_imports_invoke(qa_compat_q2_rerelease_de
   else if (strcmp(call.name, "Draw_Arrow") == 0) {
     shape.kind = QA_DEBUG_SHAPE_ARROW; shape.start = VEC(0); shape.end = VEC(1); shape.size = shape_float(args, count, 2);
     qa_guest_address cap = qa_compat_q2_guest_required_pointer(args, count, 4);
-    shape.cap_color = (qa_vec4){qa_compat_q2_mem_read_u8(memory, cap) / 255.0,
-      qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, cap, 1)) / 255.0,
-      qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, cap, 2)) / 255.0,
-      qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, cap, 3)) / 255.0};
+    double x2 = qa_compat_q2_mem_read_u8(memory, cap) / 255.0;
+    double y2 = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, cap, 1)) / 255.0;
+    double z2 = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, cap, 2)) / 255.0;
+    double w2 = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, cap, 3)) / 255.0;
+    shape.cap_color = (qa_vec4){x2, y2, z2, w2};
     color_index = 3; lifetime_index = 5; }
   else return false;
   qa_guest_address color_addr = qa_compat_q2_guest_required_pointer(args, count, color_index);
-  qa_vec4 color = {qa_compat_q2_mem_read_u8(memory, color_addr) / 255.0,
-    qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 1)) / 255.0,
-    qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 2)) / 255.0,
-    qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 3)) / 255.0};
+  double x = qa_compat_q2_mem_read_u8(memory, color_addr) / 255.0;
+  double y = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 1)) / 255.0;
+  double z = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 2)) / 255.0;
+  double w = qa_compat_q2_mem_read_u8(memory, qa_compat_q2_mem_offset(memory, color_addr, 3)) / 255.0;
+  qa_vec4 color = {x, y, z, w};
   double lifetime = shape_float(args, count, lifetime_index);
   bool depth = qa_compat_q2_guest_integer(args, count, lifetime_index + 1) != 0;
   size_t needed = qa_debug_shape_lines(shape, color, depth, NULL, 0);

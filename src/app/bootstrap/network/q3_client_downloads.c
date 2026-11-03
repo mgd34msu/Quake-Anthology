@@ -9,9 +9,12 @@
 #include <unistd.h>
 #include "qa/content/archive.h"
 #include "qa/foundation/event_ring.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q3/pure.h"
 #include "qa/network/services/downloads.h"
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/js.h"
 static char *copy_text(const char *s) {
   size_t n = strlen(s) + 1; char *out = malloc(n);
   if (out) memcpy(out, s, n);
@@ -82,10 +85,13 @@ char *qa_app_q3_download_path(const char *path, const qa_app_q3_download_mounts 
   const char *separator = strchr(path, '/');
   if (separator == NULL) { free(write_dir); free(base_dir); return copy_text(path); }
   size_t dir_length = (size_t)(separator - path);
-  char *directory = malloc(dir_length + 1);
+  char *head = malloc(dir_length + 1);
+  if (!head) { free(write_dir); free(base_dir); return NULL; }
+  memcpy(head, path, dir_length);
+  head[dir_length] = '\0';
+  char *directory = qa_js_to_lower_case(head); /* TS toLowerCase (Unicode) */
+  free(head);
   if (!directory) { free(write_dir); free(base_dir); return NULL; }
-  for (size_t i = 0; i < dir_length; i++) directory[i] = tolower((unsigned char)path[i]);
-  directory[dir_length] = '\0';
   const char *physical = strcmp(directory, owner->selection_directory) == 0 ? basename_of(write_dir)
       : strcmp(directory, "baseq3") == 0 ? basename_of(base_dir) : NULL;
   free(directory);
@@ -208,14 +214,19 @@ static bool binding_open_temporary(void *ctx, const char *path, qa_q3_download_w
   return true;
 }
 typedef struct inspect_ctx { double checksum; } inspect_ctx;
+static void archive_cleanup(void *archive) { qa_archive_destroy(archive); }
 static void inspect_staged(void *ctx, const char *path) {
   inspect_ctx *inspect = ctx;
   qa_archive_handle *archive = qa_open_archive(path, true, QA_ARCHIVE_FORMAT_PK3);
+  /* try { checksum } finally { archive.close() }: the staged file came from the server. */
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, archive_cleanup, archive);
   int64_t checksum = 0, pure = 0;
   qa_q3_archive_checksums(archive, 0, &checksum, &pure);
+  qa_cleanup_pop(&guard);
   qa_archive_destroy(archive);
-  if ((uint32_t)checksum != (uint32_t)inspect->checksum)
-    qa_range_error("Downloaded Q3 package checksum differs from server references");
+  if ((uint32_t)checksum != qa_js_to_uint32(inspect->checksum))
+    qa_raise("Error", 0, 0, "Downloaded Q3 package checksum differs from server references");
 }
 static void binding_publish_temporary(void *ctx, const char *temporary, const char *dest) {
   qa_app_q3_client_downloads *d = ctx;
@@ -383,12 +394,12 @@ bool qa_app_q3_client_downloads_begin(qa_app_q3_client_downloads *downloads,
     const double *loaded_checksums, size_t loaded_count,
     bool (*exists)(void *ctx, const char *path), void *exists_ctx_param) {
   downloads->bindings.assert_current(downloads->bindings.ctx);
-  if (downloads->receiving) qa_range_error("Cannot replace Q3 downloads during block processing");
+  if (downloads->receiving) qa_raise("Error", 0, 0, "Cannot replace Q3 downloads during block processing");
   if (!permitted(downloads)) { downloads_close(downloads); return false; }
   downloads_close(downloads);
   int64_t *loaded = malloc((loaded_count ? loaded_count : 1) * sizeof *loaded);
   if (!loaded) qa_range_error("out of memory");
-  for (size_t i = 0; i < loaded_count; i++) loaded[i] = (int64_t)(uint32_t)loaded_checksums[i];
+  for (size_t i = 0; i < loaded_count; i++) loaded[i] = (int64_t)qa_uint32(loaded_checksums[i]);
   exists_ctx e = {downloads, exists, exists_ctx_param};
   char *list = qa_q3_compare_packages(referenced, referenced_count, loaded, loaded_count,
       package_exists, &e, true, 1024);
@@ -399,40 +410,44 @@ bool qa_app_q3_client_downloads_begin(qa_app_q3_client_downloads *downloads,
   for (const char *p = list; *p; p++) if (*p == '@') fields++;
   char **parts = malloc(fields * sizeof *parts);
   if (!parts) { free(list); qa_range_error("out of memory"); }
+  /* The server names these packages: a name check raising below must not leak the list. */
+  qa_cleanup list_guard, parts_guard;
+  qa_cleanup_push(&list_guard, free, list);
+  qa_cleanup_push(&parts_guard, free, parts);
   size_t part_count = 0;
   parts[part_count++] = list;
   for (char *p = list; *p; p++) if (*p == '@') { *p = '\0'; parts[part_count++] = p + 1; }
-  if (parts[0][0] != '\0' || fields % 2 != 1) {
-    free(parts); free(list); qa_range_error("Incomplete Q3 package download list");
-  }
+  if (parts[0][0] != '\0' || fields % 2 != 1) qa_raise("Error", 0, 0, "Incomplete Q3 package download list");
   for (size_t index = 1; index < fields; index += 2) {
     const char *remote = parts[index], *local = parts[index + 1];
     qa_q3_check_download_name(remote);
     qa_q3_check_download_name(local);
-    if (strlen(remote) >= 64) { free(parts); free(list); qa_range_error("Q3 download name exceeds source server MAX_QPATH"); }
+    if (strlen(remote) >= 64) qa_range_error("Q3 download name exceeds source server MAX_QPATH");
     const qa_q3_server_pak *pack = NULL; bool conflict = false;
     for (size_t i = 0; i < referenced_count; i++) {
       const qa_q3_server_pak *value = &referenced[i];
       if (!value->name) continue;
       size_t n = strlen(value->name) + 5;
       char *candidate = malloc(n);
-      if (!candidate) { free(parts); free(list); qa_range_error("out of memory"); }
+      if (!candidate) qa_range_error("out of memory");
       snprintf(candidate, n, "%s.pk3", value->name);
       bool name_match = strcmp(candidate, remote) == 0;
       free(candidate);
       if (!name_match) continue;
       bool is_loaded = false;
       for (size_t j = 0; j < loaded_count; j++)
-        if ((uint32_t)value->checksum == (uint32_t)loaded_checksums[j]) is_loaded = true;
+        if ((uint32_t)value->checksum == qa_uint32(loaded_checksums[j])) is_loaded = true;
       if (is_loaded) continue;
       if (!pack) pack = value;
       else if ((uint32_t)value->checksum != (uint32_t)pack->checksum) conflict = true;
     }
-    if (!pack) { free(parts); free(list); qa_range_error("Q3 download pair has no server reference"); }
-    if (conflict) { free(parts); free(list); qa_range_error("Q3 server references conflicting checksums for one download name"); }
+    if (!pack) qa_raise("Error", 0, 0, "Q3 download pair has no server reference");
+    if (conflict) qa_raise("Error", 0, 0, "Q3 server references conflicting checksums for one download name");
     package_request request = {copy_text(remote), copy_text(local), (double)pack->checksum};
     qa_event_ring_admit(&downloads->queue, &request);
   }
+  qa_cleanup_pop(&parts_guard);
+  qa_cleanup_pop(&list_guard);
   free(parts);
   free(list);
   return start_next(downloads);
@@ -444,14 +459,32 @@ double qa_app_q3_client_downloads_publish_size(qa_app_q3_client_downloads *downl
   downloads->size = size;
   return (double)qa_q3_client_download_publish_size(downloads->source, (int64_t)size);
 }
+typedef struct receive_scope { qa_app_q3_client_downloads *d; const qa_q3_download_block *download; } receive_scope;
+static void receive_body(void *ctx) {
+  receive_scope *scope = ctx;
+  qa_q3_client_download_receive(scope->d->source, scope->download);
+}
+typedef struct close_scope { qa_app_q3_client_downloads *d; } close_scope;
+static void close_body(void *ctx) { downloads_close(((close_scope *)ctx)->d); }
 void qa_app_q3_client_downloads_receive(qa_app_q3_client_downloads *downloads,
     const qa_q3_download_block *download) {
   if (downloads->receiving) qa_range_error("Q3 download block processing is already active");
   if (!permitted(downloads)) { qa_app_q3_client_downloads_cancel(downloads); return; }
   downloads->receiving = true;
-  /* TS catches receive errors (close + rethrow, or swallow when a
-   * cancel retired the generation); landed receive errors abort. */
-  qa_q3_client_download_receive(downloads->source, download);
+  double generation = downloads->generation;
+  /* try { source.receive } catch { swallow when a pause retired this generation;
+   * otherwise close and rethrow } finally { receiving = false } */
+  receive_scope scope = { downloads, download };
+  qa_caught_error caught;
+  bool ok = qa_try(receive_body, &scope, &caught);
+  if (!ok && !(downloads->has_paused && generation != downloads->generation)) {
+    close_scope closing = { downloads };
+    qa_caught_error close_caught;
+    bool closed = qa_try(close_body, &closing, &close_caught);
+    downloads->receiving = false;
+    if (!closed) qa_rethrow(&close_caught);
+    qa_rethrow(&caught);
+  }
   downloads->receiving = false;
 }
 void qa_app_q3_client_downloads_close(qa_app_q3_client_downloads *downloads) {

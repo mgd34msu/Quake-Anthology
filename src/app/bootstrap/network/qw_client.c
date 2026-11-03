@@ -1,6 +1,8 @@
 /* Port of src/app/bootstrap/network/qw-client.ts.
  * GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/qw_client.h"
+#include "qa/app/bootstrap/network/qw_downloads.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +16,7 @@
 #include "qa/network/q1/quakeworld.h"
 #include "qa/network/q1/qw_recording.h"
 #include "qa/network/q1/session.h"
+#include "qa/foundation/js.h"
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -34,8 +37,8 @@ typedef struct download_queue {
 struct qa_app_qw_client_network {
   qa_app_qw_client_network_options options;
   /* Landed recording state is caller-storage with unpublished size. */
-  _Alignas(16) unsigned char recording_state[2048];
-  bool recording; qa_app_qw_recording_sink recording_sink;
+  qa_quakeworld_recording_state *recording_state;
+  bool recording; qa_app_qw_recording_sink recording_sink; void *recording_token;
   bool recording_waiting;
   qa_qw_connect_client handshake; bool handshake_init;
   char *userinfo;
@@ -55,7 +58,7 @@ struct qa_app_qw_client_network {
   command_entry *commands; size_t command_count, command_cap;
 };
 static qa_quakeworld_recording_state *recording_state(qa_app_qw_client_network *n) {
-  return (qa_quakeworld_recording_state *)n->recording_state;
+  return n->recording_state;
 }
 static void names_clear(char ***names, size_t *count) {
   for (size_t i = 0; i < *count; i++) free((*names)[i]);
@@ -70,7 +73,7 @@ static void names_push(char ***names, size_t *count, size_t *cap, const char *va
   (*names)[(*count)++] = copy_text(value);
 }
 void qa_app_qw_client_network_command(qa_app_qw_client_network *n, const char *text) {
-  if (!n->connected) qa_range_error("QuakeWorld client is not connected");
+  if (!n->connected) qa_raise("Error", 0, 0, "QuakeWorld client is not connected");
   qa_size_buf buffer;
   if (!qa_size_buf_init(&buffer, 1450, false)) qa_range_error("out of memory");
   qa_write_client_string_command(&buffer, text);
@@ -99,14 +102,14 @@ void qa_app_qw_client_network_resume_downloads(qa_app_qw_client_network *n) {
   queue_free(queue);
   char line[160];
   if (category == QA_APP_QW_DL_SOUND) {
-    snprintf(line, sizeof line, "modellist %.17g 0", n->data.server_count);
+    snprintf(line, sizeof line, "modellist %s 0", QA_JS_NUMBER(n->data.server_count));
     qa_app_qw_client_network_command(n, line);
   } else if (category == QA_APP_QW_DL_MODEL) {
     double checksum = n->options.host.game_state(n->options.host.ctx, &n->data,
         (const char *const *)n->models, n->model_count,
         (const char *const *)n->sounds, n->sound_count);
-    snprintf(line, sizeof line, "prespawn %.17g 0 %lld", n->data.server_count,
-        (long long)(int32_t)checksum);
+    snprintf(line, sizeof line, "prespawn %s 0 %lld", QA_JS_NUMBER(n->data.server_count),
+        (long long)qa_js_to_int32(checksum));
     qa_app_qw_client_network_command(n, line);
   } else {
     if (n->skin_pass_pending) {
@@ -118,7 +121,7 @@ void qa_app_qw_client_network_resume_downloads(qa_app_qw_client_network *n) {
       n->options.host.skins.prepare(n->options.host.skins.ctx);
     }
     if (!n->begun && n->state != QA_APP_PHASE_ACTIVE) {
-      snprintf(line, sizeof line, "begin %.17g", n->data.server_count);
+      snprintf(line, sizeof line, "begin %s", QA_JS_NUMBER(n->data.server_count));
       qa_app_qw_client_network_command(n, line);
       n->begun = true;
     }
@@ -146,7 +149,7 @@ typedef struct collect_ctx { qa_app_qw_client_network *n; } collect_ctx;
 static void sync_userinfo(qa_app_qw_client_network *n) {
   const char *text = n->options.userinfo(n->options.userinfo_ctx);
   for (const char *p = text; *p; p++)
-    if (*p == '"' || *p == '\n' || *p == '\r') qa_range_error("Invalid QW userinfo");
+    if (*p == '"' || *p == '\n' || *p == '\r') qa_raise("Error", 0, 0, "Invalid QW userinfo");
   if (strcmp(text, n->userinfo) == 0) return;
   if (n->connected) {
     qa_qw_info previous, current;
@@ -154,22 +157,20 @@ static void sync_userinfo(qa_app_qw_client_network *n) {
     qa_qw_info_init(&current);
     qa_quakeworld_info_parse(n->userinfo, &previous);
     qa_quakeworld_info_parse(text, &current);
-    for (size_t i = 0; i < current.count; i++) {
-      const char *key = current.entries[i].key;
-      const char *value = current.entries[i].value;
-      const char *old = qa_qw_info_get(&previous, key);
-      if (!old || strcmp(old, value) != 0) {
-        char *line = xmalloc(strlen(key) + strlen(value) + 16);
-        snprintf(line, strlen(key) + strlen(value) + 16, "setinfo \"%s\" \"%s\"", key, value);
-        qa_app_qw_client_network_command(n, line);
-        free(line);
-      }
-    }
-    for (size_t i = 0; i < previous.count; i++) {
-      const char *key = previous.entries[i].key;
-      if (!qa_qw_info_get(&current, key)) {
-        char *line = xmalloc(strlen(key) + 16);
-        snprintf(line, strlen(key) + 16, "setinfo \"%s\" \"%s\"", key, "");
+    /* new Set([...previous.keys(), ...current.keys()]): previous order, then new keys;
+     * a key is sent when previous.get(key) !== (current.get(key) ?? ''). */
+    for (size_t pass = 0; pass < 2; pass++) {
+      const qa_qw_info *source = pass == 0 ? &previous : &current;
+      for (size_t i = 0; i < source->count; i++) {
+        const char *key = source->entries[i].key;
+        if (pass == 1 && qa_qw_info_get(&previous, key)) continue;
+        const char *value = qa_qw_info_get(&current, key);
+        if (!value) value = "";
+        const char *old = qa_qw_info_get(&previous, key);
+        if (old && strcmp(old, value) == 0) continue;
+        size_t size = strlen(key) + strlen(value) + 16;
+        char *line = xmalloc(size);
+        snprintf(line, size, "setinfo \"%s\" \"%s\"", key, value);
         qa_app_qw_client_network_command(n, line);
         free(line);
       }
@@ -202,7 +203,7 @@ static bool records(qa_app_qw_client_network *n, qa_quakeworld_message *messages
     if (strcmp(kind, "server-data") == 0) {
       qa_quakeworld_profile profile = message->protocol;
       if (!profile.kind || strcmp(profile.kind, "q1-quakeworld") != 0 || message->player_slot >= 32)
-        qa_range_error("Remote QW requires native protocol 28 and a valid player slot");
+        qa_raise("Error", 0, 0, "Remote QW requires native protocol 28 and a valid player slot");
       qa_remote_content_selection selection;
       if (!qa_remote_content_selection_make("q1-quakeworld",
               message->game_directory ? message->game_directory : "", &selection))
@@ -228,21 +229,21 @@ static bool records(qa_app_qw_client_network *n, qa_quakeworld_message *messages
       queue_free(&n->queue);
       n->has_queue = false;
       char line[96];
-      snprintf(line, sizeof line, "soundlist %.17g 0", n->data.server_count);
+      snprintf(line, sizeof line, "soundlist %s 0", QA_JS_NUMBER(n->data.server_count));
       qa_app_qw_client_network_command(n, line);
     } else if (strcmp(kind, "sound-list") == 0 || strcmp(kind, "model-list") == 0) {
-      if (!n->has_data) qa_range_error("QW list before serverdata");
+      if (!n->has_data) qa_raise("Error", 0, 0, "QW list before serverdata");
       bool sound = strcmp(kind, "sound-list") == 0;
       char ***list = sound ? &n->sounds : &n->models;
       size_t *list_count = sound ? &n->sound_count : &n->model_count;
       size_t *list_cap = sound ? &n->sound_cap : &n->model_cap;
-      if (message->first != (double)*list_count) qa_range_error("Non-contiguous QW precache list");
+      if (message->first != (double)*list_count) qa_raise("Error", 0, 0, "Non-contiguous QW precache list");
       for (size_t j = 0; j < message->name_count; j++)
         names_push(list, list_count, list_cap, message->names[j]);
       if (message->next != 0) {
         char line[96];
-        snprintf(line, sizeof line, "%s %.17g %.17g", sound ? "soundlist" : "modellist",
-            n->data.server_count, message->next);
+        snprintf(line, sizeof line, "%s %s %s", sound ? "soundlist" : "modellist",
+            QA_JS_NUMBER(n->data.server_count), QA_JS_NUMBER(message->next));
         qa_app_qw_client_network_command(n, line);
       } else {
         queue_free(&n->queue);
@@ -260,9 +261,12 @@ static bool records(qa_app_qw_client_network *n, qa_quakeworld_message *messages
         qa_app_qw_client_network_resume_downloads(n);
       }
     } else if (strcmp(kind, "download") == 0) {
-      if (!n->options.host.has_downloads) qa_range_error("Unsolicited QW download");
+      if (!n->options.host.has_downloads) qa_raise("Error", 0, 0, "Unsolicited QW download");
+      /* TS downloads.receive(message.result) */
+      qa_app_qw_download_result block = {message->download_missing, message->download_percent, message->download_bytes,
+          message->download_length};
       qa_app_qw_download_receive_result result = n->options.host.downloads.receive(
-          n->options.host.downloads.ctx, message);
+          n->options.host.downloads.ctx, &block);
       if (result != QA_APP_QW_DL_RX_WAITING) qa_app_qw_client_network_resume_downloads(n);
     } else if (strcmp(kind, "stufftext") == 0) {
       char *text = copy_text(message->text ? message->text : "");
@@ -344,10 +348,12 @@ qa_app_qw_client_network *qa_app_qw_client_network_create(qa_app_qw_client_netwo
   n->userinfo = copy_text("");
   n->state = QA_APP_PHASE_CONNECTING;
   n->last_sent = -1.0 / 0.0;
-  qa_quakeworld_recording_state_init(recording_state(n));
+  n->recording_state = qa_quakeworld_recording_state_create();
+  if (!n->recording_state) qa_range_error("out of memory");
   if (!qa_qw_connect_client_init(&n->handshake, options.qport, "")) { free(n->userinfo); free(n); return NULL; }
   n->handshake_init = true;
-  if (!qa_quakeworld_channel_init(&n->channel, true, options.qport, 0, 0)) {
+  /* TS new QuakeWorldChannel('client', qport): 1450-byte messages at 2500 bytes per second. */
+  if (!qa_quakeworld_channel_init(&n->channel, true, options.qport, 1450, 2500)) {
     qa_qw_connect_client_destroy(&n->handshake);
     free(n->userinfo);
     free(n);
@@ -358,7 +364,7 @@ qa_app_qw_client_network *qa_app_qw_client_network_create(qa_app_qw_client_netwo
 }
 void qa_app_qw_client_network_destroy(qa_app_qw_client_network *network) {
   if (!network) return;
-  qa_quakeworld_recording_state_destroy(recording_state(network));
+  qa_quakeworld_recording_state_free(network->recording_state);
   if (network->handshake_init) qa_qw_connect_client_destroy(&network->handshake);
   qa_quakeworld_channel_destroy(&network->channel);
   qa_quakeworld_decoder_destroy(&network->decoder);
@@ -369,11 +375,24 @@ void qa_app_qw_client_network_destroy(qa_app_qw_client_network *network) {
   free(network->sounds);
   queue_free(&network->queue);
   free(network->commands);
+  free(network->recording_token);
   free(network->userinfo);
   free(network);
 }
 qa_app_network_phase qa_app_qw_client_network_phase(const qa_app_qw_client_network *n) {
   return n->state;
+}
+/* A throw from decode or the host abandons the datagram; TS leaves it to the collector. */
+typedef struct datagram_scope {
+  qa_receive_event *packet; qa_quakeworld_delivery delivery;
+  qa_quakeworld_message *messages; size_t count;
+} datagram_scope;
+static void datagram_scope_free(void *arg) {
+  datagram_scope *scope = arg;
+  for (size_t i = 0; i < scope->count; i++) qa_quakeworld_message_destroy(&scope->messages[i]);
+  free(scope->messages); free(scope->delivery.payload);
+  qa_receive_event_destroy(scope->packet);
+  memset(scope, 0, sizeof *scope);
 }
 const void *const *qa_app_qw_client_network_poll(qa_app_qw_client_network *n,
     double now, size_t *out_count) {
@@ -423,10 +442,16 @@ const void *const *qa_app_qw_client_network_poll(qa_app_qw_client_network *n,
       continue;
     }
     if (oob) { qa_receive_event_destroy(&packet); continue; }
+    datagram_scope scope;
+    memset(&scope, 0, sizeof scope);
+    scope.packet = &packet;
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, datagram_scope_free, &scope);
     qa_quakeworld_delivery delivery = {0};
     int received = qa_quakeworld_channel_receive(&n->channel, packet.payload,
         packet.length, now, &delivery);
-    if (!received) { qa_receive_event_destroy(&packet); continue; }
+    scope.delivery = delivery;
+    if (!received) { qa_cleanup_pop(&guard); qa_receive_event_destroy(&packet); continue; }
     n->last_received = now;
     n->has_last_received = true;
     if (n->options.host.prediction_acknowledged)
@@ -434,6 +459,7 @@ const void *const *qa_app_qw_client_network_poll(qa_app_qw_client_network *n,
     size_t count = 0;
     qa_quakeworld_message *messages = qa_quakeworld_decoder_decode(&n->decoder,
         delivery.payload, delivery.length, delivery.sequence, &count);
+    scope.messages = messages; scope.count = count;
     qa_quakeworld_recording_state_observe(recording_state(n), messages, count);
     bool closed = records(n, messages, count, now);
     for (size_t i = 0; i < count; i++)
@@ -448,10 +474,8 @@ const void *const *qa_app_qw_client_network_poll(qa_app_qw_client_network *n,
       record.length = packet.length;
       n->recording_sink.append(n->recording_sink.ctx, &record);
     }
-    for (size_t i = 0; i < count; i++) qa_quakeworld_message_destroy(&messages[i]);
-    free(messages);
-    free(delivery.payload);
-    qa_receive_event_destroy(&packet);
+    qa_cleanup_pop(&guard);
+    datagram_scope_free(&scope);
     if (closed) return NULL;
   }
   double timeout = n->options.has_timeout_milliseconds ? n->options.timeout_milliseconds : 120000;
@@ -473,7 +497,7 @@ static const qa_qw_user_command *command_at(qa_app_qw_client_network *n, double 
 void qa_app_qw_client_network_submit(qa_app_qw_client_network *n,
     const void *const *commands, size_t count, double now) {
   if (n->state != QA_APP_PHASE_ACTIVE) return;
-  if (count > 1) qa_range_error("A QW connection carries one player");
+  if (count > 1) qa_raise("Error", 0, 0, "A QW connection carries one player");
   for (size_t i = 0; i < count; i++) {
     qa_qw_user_command command = n->options.host.command(n->options.host.ctx, commands[i]);
     double sequence = qa_quakeworld_channel_outgoing_sequence(&n->channel);
@@ -510,7 +534,7 @@ void qa_app_qw_client_network_submit(qa_app_qw_client_network *n,
         && sequence - n->last_delta < 63;
     if (has_delta) {
       qa_msg_write_byte(&buffer, 5);
-      qa_msg_write_byte(&buffer, (double)((int64_t)n->last_delta & 255));
+      qa_msg_write_byte(&buffer, (double)(qa_js_to_int32(n->last_delta) & 255));
     }
     qa_quakeworld_decoder_record_delta_request(&n->decoder, sequence,
         has_delta, has_delta ? n->last_delta : 0);
@@ -535,7 +559,7 @@ void qa_app_qw_client_network_submit(qa_app_qw_client_network *n,
 void qa_app_qw_client_network_publish(qa_app_qw_client_network *n,
     const void *output, const void *const *events, size_t count, double now) {
   (void)n; (void)output; (void)events; (void)count; (void)now;
-  qa_range_error("Remote client cannot publish authoritative state");
+  qa_raise("Error", 0, 0, "Remote client cannot publish authoritative state");
 }
 void qa_app_qw_client_network_close(qa_app_qw_client_network *n) {
   if (n->options.transport->is_closed(n->options.transport->ctx)) return;
@@ -550,7 +574,7 @@ void qa_app_qw_client_network_close(qa_app_qw_client_network *n) {
 qa_quakeworld_demo_record *qa_app_qw_client_network_recording_seed(
     qa_app_qw_client_network *n, size_t *out_count) {
   if (n->state != QA_APP_PHASE_ACTIVE || !n->has_data)
-    qa_range_error("Recording requires an active QuakeWorld connection");
+    qa_raise("Error", 0, 0, "Recording requires an active QuakeWorld connection");
   return qa_quakeworld_recording_state_seed(recording_state(n), &n->data,
       (const char *const *)n->models, n->model_count,
       (const char *const *)n->sounds, n->sound_count,
@@ -561,23 +585,30 @@ qa_quakeworld_demo_record *qa_app_qw_client_network_recording_seed(
 void *qa_app_qw_client_network_recording_attach(qa_app_qw_client_network *n,
     qa_app_qw_recording_sink sink) {
   if (n->recording || n->state == QA_APP_PHASE_CLOSED || n->state == QA_APP_PHASE_REJECTED)
-    qa_range_error("QuakeWorld recording cannot attach");
+    qa_raise("Error", 0, 0, "QuakeWorld recording cannot attach");
   n->recording_waiting = n->state == QA_APP_PHASE_ACTIVE;
   n->has_last_delta = false;
   n->recording_sink = sink;
   n->recording = true;
-  return xmalloc(1);
+  n->recording_token = xmalloc(1);
+  return n->recording_token;
 }
+/* TS detach closure: only the attachment that is still current is removed. */
 void qa_app_qw_client_network_recording_detach(qa_app_qw_client_network *n, void *token) {
-  (void)token;
+  if (!n->recording || n->recording_token != token) return;
   n->recording = false;
+  free(n->recording_token);
+  n->recording_token = NULL;
 }
 static qa_app_network_phase net_phase(void *ctx) { return qa_app_qw_client_network_phase(ctx); }
-static const void *net_wire(void *ctx) {
+/* TS readonly wire = { kind: "source", protocol: { kind: "q1-quakeworld", version: 28 } } */
+static qa_wire_selection net_wire(void *ctx) {
   (void)ctx;
-  static qa_quakeworld_profile profile;
-  profile = qw_profile();
-  return &profile;
+  qa_wire_selection wire;
+  memset(&wire, 0, sizeof wire);
+  wire.protocol.kind = "q1-quakeworld";
+  wire.protocol.version = 28;
+  return wire;
 }
 static const void *const *net_poll(void *ctx, double now, size_t *out_count) {
   return qa_app_qw_client_network_poll(ctx, now, out_count);

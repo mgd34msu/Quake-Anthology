@@ -1,0 +1,1295 @@
+init print 35 arenas parsed\n
+init print 32 bots parsed\n
+init model 1 models/powerups/armor/armor_yel.md3 model
+init model 2 models/weapons2/shells/m_shell.md3 model
+init model 3 models/weapons2/shells/s_shell.md3 model
+init model 4 models/gibs/abdomen.md3 model
+init model 5 models/gibs/arm.md3 model
+init model 6 models/gibs/chest.md3 model
+init model 7 models/gibs/fist.md3 model
+init model 8 models/gibs/foot.md3 model
+init model 9 models/gibs/forearm.md3 model
+init model 10 models/gibs/intestine.md3 model
+init model 11 models/gibs/leg.md3 model
+init model 12 models/gibs/skull.md3 model
+init model 13 models/gibs/brain.md3 model
+init model 14 models/weaphits/bullet.md3 model
+init model 15 models/weaphits/ring02.md3 model
+init model 16 models/weaphits/boom01.md3 model
+init model 17 models/misc/telep.md3 model
+init model 18 maps/q3dm1.bsp inline
+init model 19 models/players/sarge/lower.md3 model
+init model 20 models/players/sarge/upper.md3 model
+init model 21 models/players/sarge/head.md3 model
+init skin 1 models/players/sarge/lower_default.skin 1
+init skin 2 models/players/sarge/upper_default.skin 2
+init skin 3 models/players/sarge/head_default.skin 2
+frame1 commands=353
+frame1.0 draw-buffer back clear=false
+frame1.1 image-resource create-image 0:1x1:*white
+frame1.2 image-resource create-image 1:16x16:*default
+frame1.3 image-resource create-image 2:64x64:gfx/misc/flare.jpg
+frame1.4 image-resource create-image 3:64x64:gfx/misc/sun.jpg
+frame1.5 image-resource create-image 4:128x128:*q3-lightmap-0
+frame1.6 image-resource create-image 5:128x128:*q3-lightmap-1
+frame1.7 image-resource create-image 6:128x128:*q3-lightmap-2
+frame1.8 image-resource create-image 7:128x128:*q3-lightmap-3
+frame1.9 image-resource create-image 8:128x128:*q3-lightmap-4
+frame1.10 image-resource create-image 9:128x128:*q3-lightmap-5
+frame1.11 image-resource create-image 10:128x128:*q3-lightmap-6
+frame1.12 image-resource create-image 11:128x128:*q3-lightmap-7
+frame1.13 image-resource create-image 12:128x128:*q3-lightmap-8
+frame1.14 image-resource create-image 13:256x256:textures/gothic_trim/pitted_rust3.jpg
+frame1.15 image-resource create-image 14:128x128:textures/skin/tongue.jpg
+frame1.16 image-resource create-image 15:256x256:textures/gothic_door/skullarch_c.tga
+frame1.17 image-resource create-image 16:256x256:textures/gothic_door/skull_door_b.tga
+frame1.18 image-resource create-image 17:128x128:textures/gothic_trim/skullsvertgray02b.jpg
+frame1.19 image-resource create-image 18:256x256:textures/gothic_door/km_arena1archfinald_bot.jpg
+frame1.20 image-resource create-image 19:256x256:textures/gothic_door/xian_tourneyarch_inside2.jpg
+frame1.21 image-resource create-image 20:256x256:textures/gothic_block/blocks18c.jpg
+frame1.22 image-resource create-image 21:66x640:textures/gothic_door/km_arena1columna2R.jpg
+frame1.23 image-resource create-image 22:256x256:textures/skin/surface8.jpg
+frame1.24 image-resource create-image 23:256x256:textures/skin/chapthroat.jpg
+frame1.25 image-resource create-image 24:128x128:textures/liquids/proto_gruel3.jpg
+frame1.26 image-resource create-image 25:256x256:textures/skin/chapthroatooz.tga
+frame1.27 image-resource create-image 26:256x256:textures/skin/chapthroat2.jpg
+frame1.28 image-resource create-image 27:64x64:textures/gothic_trim/km_arena1tower_short.tga
+frame1.29 image-resource create-image 28:256x256:textures/gothic_block/killblock.jpg
+frame1.30 image-resource create-image 29:256x256:textures/gothic_block/killblock_i.jpg
+frame1.31 image-resource create-image 30:256x256:textures/gothic_block/blocks15.jpg
+frame1.32 image-resource create-image 31:256x256:textures/gothic_trim/pitted_rust2.jpg
+frame1.33 image-resource create-image 32:256x128:textures/gothic_trim/baseboard09_o3.jpg
+frame1.34 image-resource create-image 33:256x256:textures/gothic_wall/slateroofc.jpg
+frame1.35 image-resource create-image 34:256x256:textures/gothic_trim/pitted_rust2.jpg
+frame1.36 image-resource create-image 35:256x256:textures/gothic_floor/blocks17floor2.jpg
+frame1.37 image-resource create-image 36:256x128:textures/gothic_trim/baseboard09_e.jpg
+frame1.38 image-resource create-image 37:256x256:textures/gothic_ceiling/woodceiling1b_dark.jpg
+frame1.39 image-resource create-image 38:256x128:textures/gothic_trim/baseboard09_c3.jpg
+frame1.40 image-resource create-image 39:256x256:textures/gothic_door/km_arena1archfinald_mid.jpg
+frame1.41 image-resource create-image 40:256x64:textures/gothic_door/km_arena1archfinalc_top.jpg
+frame1.42 image-resource create-image 41:64x128:textures/gothic_door/skull_door_f.tga
+frame1.43 image-resource create-image 42:64x128:textures/gothic_door/skull_door_d.tga
+frame1.44 image-resource create-image 43:256x128:textures/gothic_door/skull_door_e.tga
+frame1.45 image-resource create-image 44:64x256:textures/gothic_door/skull_door_c.tga
+frame1.46 image-resource create-image 45:64x256:textures/gothic_door/skull_door_a.tga
+frame1.47 image-resource create-image 46:512x512:textures/gothic_floor/largerblock3b.jpg
+frame1.48 image-resource create-image 47:256x256:textures/gothic_trim/metaldemonkillblock.jpg
+frame1.49 image-resource create-image 48:256x256:textures/skies/killsky_1.jpg
+frame1.50 image-resource create-image 49:256x256:textures/skies/killsky_2.jpg
+frame1.51 image-resource create-image 50:128x256:textures/sfx/flame1.jpg
+frame1.52 image-resource create-image 51:128x256:textures/sfx/flame2.jpg
+frame1.53 image-resource create-image 52:128x256:textures/sfx/flame3.jpg
+frame1.54 image-resource create-image 53:128x256:textures/sfx/flame4.jpg
+frame1.55 image-resource create-image 54:128x256:textures/sfx/flame5.jpg
+frame1.56 image-resource create-image 55:128x256:textures/sfx/flame6.jpg
+frame1.57 image-resource create-image 56:128x256:textures/sfx/flame7.jpg
+frame1.58 image-resource create-image 57:128x256:textures/sfx/flame8.jpg
+frame1.59 image-resource create-image 58:128x256:textures/sfx/flameball.jpg
+frame1.60 image-resource create-image 59:256x256:textures/gothic_floor/metalbridge06.jpg
+frame1.61 image-resource create-image 60:256x256:textures/gothic_floor/metalbridge06broke.jpg
+frame1.62 image-resource create-image 61:256x256:textures/gothic_trim/metalsupport4b.jpg
+frame1.63 image-resource create-image 62:128x128:textures/sfx/firegorre.tga
+frame1.64 image-resource create-image 63:256x256:textures/gothic_door/skullarch_b.tga
+frame1.65 image-resource create-image 64:256x64:textures/gothic_door/skullarch_a.tga
+frame1.66 image-resource create-image 65:64x256:textures/gothic_wall/supportborder_blue_c.jpg
+frame1.67 image-resource create-image 66:64x256:textures/gothic_wall/supportborder_blue_b.jpg
+frame1.68 image-resource create-image 67:128x128:textures/gothic_trim/metalsupsolid.jpg
+frame1.69 image-resource create-image 68:256x16:textures/gothic_floor/xstepborder3.jpg
+frame1.70 image-resource create-image 69:256x32:textures/gothic_floor/xstairtop4.jpg
+frame1.71 image-resource create-image 70:256x256:textures/gothic_wall/iron01_e.jpg
+frame1.72 image-resource create-image 71:128x256:textures/gothic_wall/iron01_ntech3.jpg
+frame1.73 image-resource create-image 72:256x256:textures/gothic_block/blocks18c_3.jpg
+frame1.74 image-resource create-image 73:256x256:textures/gothic_block/blocks18b.jpg
+frame1.75 image-resource create-image 74:128x128:textures/organics/dirt2.jpg
+frame1.76 image-resource create-image 75:256x256:textures/skin/skin6.jpg
+frame1.77 image-resource create-image 76:64x256:textures/gothic_trim/km_arena1tower4.jpg
+frame1.78 image-resource create-image 77:256x64:textures/gothic_trim/km_arena1tower4_a.jpg
+frame1.79 image-resource create-image 78:256x256:textures/gothic_wall/skull4.jpg
+frame1.80 image-resource create-image 79:128x64:textures/gothic_trim/baseboard09_e2.jpg
+frame1.81 image-resource create-image 80:256x256:textures/gothic_block/killblock_i4.jpg
+frame1.82 image-resource create-image 81:128x32:textures/gothic_trim/baseboard04.jpg
+frame1.83 image-resource create-image 82:256x256:textures/gothic_trim/pitted_rust.jpg
+frame1.84 image-resource create-image 83:64x64:textures/gothic_light/pentagram_light1.jpg
+frame1.85 image-resource create-image 84:64x64:textures/gothic_light/pentagram_light1_blend.jpg
+frame1.86 image-resource create-image 85:256x256:textures/gothic_block/demon_block15fx.tga
+frame1.87 image-resource create-image 86:256x128:textures/gothic_trim/baseboard09_l2.jpg
+frame1.88 image-resource create-image 87:256x256:textures/gothic_ceiling/woodceiling1a.jpg
+frame1.89 image-resource create-image 88:256x256:textures/sfx/computer_blocks17.jpg
+frame1.90 image-resource create-image 89:64x64:textures/sfx/compscreen/letters1.tga
+frame1.91 image-resource create-image 90:64x64:textures/sfx/compscreen/letters2.tga
+frame1.92 image-resource create-image 91:64x64:textures/sfx/compscreen/letters3.tga
+frame1.93 image-resource create-image 92:8x8:textures/sfx/compscreen/letters5.jpg
+frame1.94 image-resource create-image 93:64x64:textures/sfx/compscreen/letters4.tga
+frame1.95 image-resource create-image 94:256x256:textures/gothic_block/blocks17.jpg
+frame1.96 image-resource create-image 95:256x256:textures/gothic_block/blocks11b.jpg
+frame1.97 image-resource create-image 96:256x16:textures/gothic_floor/xstepborder3brn.jpg
+frame1.98 image-resource create-image 97:256x32:textures/gothic_floor/xstairtop4bbrn.jpg
+frame1.99 image-resource create-image 98:256x256:textures/gothic_floor/largerblock3b_ow.tga
+frame1.100 image-resource create-image 99:256x256:textures/gothic_block/blocks18cgeomtrn2.tga
+frame1.101 image-resource create-image 100:256x256:textures/gothic_block/killblockgeomtrn.tga
+frame1.102 image-resource create-image 101:128x128:textures/sfx/fireswirl2.jpg
+frame1.103 image-resource create-image 102:256x256:textures/gothic_floor/center2trn.tga
+frame1.104 image-resource create-image 103:128x128:textures/liquids/proto_grueldark2.jpg
+frame1.105 image-resource create-image 104:128x128:textures/effects/tinfx3.jpg
+frame1.106 image-resource create-image 105:256x256:textures/gothic_block/largerblock3blood.tga
+frame1.107 image-resource create-image 106:256x256:models/mapobjects/visor_st.jpg
+frame1.108 image-resource create-image 107:256x256:models/mapobjects/major_st.jpg
+frame1.109 image-resource create-image 108:128x64:models/mapobjects/major_h_st.jpg
+frame1.110 image-resource create-image 109:32x64:models/mapobjects/gratelamp/gratetorch2.jpg
+frame1.111 image-resource create-image 110:32x64:models/mapobjects/gratelamp/gratetorch2b.tga
+frame1.112 image-resource create-image 111:128x128:models/mapobjects/wallhead/wallhead02.jpg
+frame1.113 image-resource create-image 112:128x256:models/mapobjects/storch/storch_tall.jpg
+frame1.114 image-resource create-image 113:128x256:models/mapobjects/wallhead/lion.jpg
+frame1.115 image-resource create-image 114:64x64:models/mapobjects/wallhead/lion_m.tga
+frame1.116 image-resource create-image 115:128x128:textures/sfx/firewalla.tga
+frame1.117 image-resource create-image 116:128x128:textures/liquids/lavahell.jpg
+frame1.118 image-resource create-image 117:128x256:textures/base_wall/protobanner.tga
+frame1.119 image-resource create-image 118:256x32:*fog
+frame1.120 image-resource create-image 119:16x16:*dlight
+frame1.121 image-resource create-image 120:256x256:gfx/2d/bigchars.tga
+frame1.122 image-resource create-image 121:256x256:menu/art/font1_prop.tga
+frame1.123 image-resource create-image 122:256x256:menu/art/font1_prop_glo.tga
+frame1.124 image-resource create-image 123:256x256:menu/art/font2_prop.tga
+frame1.125 image-resource create-image 124:32x32:menu/art/3_cursor2.tga
+frame1.126 image-resource create-image 125:16x16:menu/art/switch_on.tga
+frame1.127 image-resource create-image 126:16x16:menu/art/switch_off.tga
+frame1.128 image-resource create-image 127:512x512:textures/sfx/logo512.jpg
+frame1.129 image-resource create-image 128:8x8:gfx/colors/black.jpg
+frame1.130 image-resource create-image 129:128x16:menu/art/slider2.tga
+frame1.131 image-resource create-image 130:16x32:menu/art/sliderbutt_0.tga
+frame1.132 image-resource create-image 131:16x32:menu/art/sliderbutt_1.tga
+frame1.133 image-resource create-image 132:32x32:gfx/2d/numbers/zero_32b.tga
+frame1.134 image-resource create-image 133:32x32:gfx/2d/numbers/one_32b.tga
+frame1.135 image-resource create-image 134:32x32:gfx/2d/numbers/two_32b.tga
+frame1.136 image-resource create-image 135:32x32:gfx/2d/numbers/three_32b.tga
+frame1.137 image-resource create-image 136:32x32:gfx/2d/numbers/four_32b.tga
+frame1.138 image-resource create-image 137:32x32:gfx/2d/numbers/five_32b.tga
+frame1.139 image-resource create-image 138:32x32:gfx/2d/numbers/six_32b.tga
+frame1.140 image-resource create-image 139:32x32:gfx/2d/numbers/seven_32b.tga
+frame1.141 image-resource create-image 140:32x32:gfx/2d/numbers/eight_32b.tga
+frame1.142 image-resource create-image 141:32x32:gfx/2d/numbers/nine_32b.tga
+frame1.143 image-resource create-image 142:32x32:gfx/2d/numbers/minus_32b.tga
+frame1.144 image-resource create-image 143:32x32:menu/art/skill1.tga
+frame1.145 image-resource create-image 144:32x32:menu/art/skill2.tga
+frame1.146 image-resource create-image 145:32x32:menu/art/skill3.tga
+frame1.147 image-resource create-image 146:32x32:menu/art/skill4.tga
+frame1.148 image-resource create-image 147:32x32:menu/art/skill5.tga
+frame1.149 image-resource create-image 148:64x64:gfx/damage/blood_screen.tga
+frame1.150 image-resource create-image 149:32x32:gfx/2d/defer.tga
+frame1.151 image-resource create-image 150:128x32:menu/tab/name.tga
+frame1.152 image-resource create-image 151:128x32:menu/tab/ping.tga
+frame1.153 image-resource create-image 152:128x32:menu/tab/score.tga
+frame1.154 image-resource create-image 153:128x32:menu/tab/time.tga
+frame1.155 image-resource create-image 154:128x128:gfx/misc/smokepuff3.tga
+frame1.156 image-resource create-image 155:128x128:gfx/misc/smokepuffragepro.tga
+frame1.157 image-resource create-image 156:128x128:gfx/misc/smokepuff2b.tga
+frame1.158 image-resource create-image 157:64x64:sprites/plasmaa.jpg
+frame1.159 image-resource create-image 158:64x64:gfx/damage/blood_spurt.tga
+frame1.160 image-resource create-image 159:32x32:gfx/2d/lag.jpg
+frame1.161 image-resource create-image 160:32x32:gfx/2d/net.jpg
+frame1.162 image-resource create-image 161:32x32:sprites/bubble.tga
+frame1.163 image-resource create-image 162:16x16:gfx/misc/tracer2.jpg
+frame1.164 image-resource create-image 163:32x32:gfx/2d/select.tga
+frame1.165 image-resource create-image 164:32x32:gfx/2d/crosshaira.tga
+frame1.166 image-resource create-image 165:32x32:gfx/2d/crosshairb.tga
+frame1.167 image-resource create-image 166:32x32:gfx/2d/crosshairc.tga
+frame1.168 image-resource create-image 167:32x32:gfx/2d/crosshaird.tga
+frame1.169 image-resource create-image 168:32x32:gfx/2d/crosshaire.tga
+frame1.170 image-resource create-image 169:32x32:gfx/2d/crosshairf.tga
+frame1.171 image-resource create-image 170:32x32:gfx/2d/crosshairg.tga
+frame1.172 image-resource create-image 171:32x32:gfx/2d/crosshairh.tga
+frame1.173 image-resource create-image 172:32x32:gfx/2d/crosshairi.tga
+frame1.174 image-resource create-image 173:32x32:gfx/2d/crosshairj.tga
+frame1.175 image-resource create-image 174:64x64:gfx/2d/backtile.jpg
+frame1.176 image-resource create-image 175:32x32:icons/noammo.tga
+frame1.177 image-resource create-image 176:64x64:textures/effects/quadmap2.jpg
+frame1.178 image-resource create-image 177:64x64:textures/effects/envmapgold2.jpg
+frame1.179 image-resource create-image 178:64x64:textures/effects/invismap.jpg
+frame1.180 image-resource create-image 179:64x64:textures/effects/regenmap2.jpg
+frame1.181 image-resource create-image 180:32x32:icons/iconr_yellow.tga
+frame1.182 image-resource create-image 181:64x64:sprites/balloon4.tga
+frame1.183 image-resource create-image 182:64x64:models/weaphits/blood201.tga
+frame1.184 image-resource create-image 183:64x64:models/weaphits/blood202.tga
+frame1.185 image-resource create-image 184:64x64:models/weaphits/blood203.tga
+frame1.186 image-resource create-image 185:64x64:models/weaphits/blood204.tga
+frame1.187 image-resource create-image 186:64x64:models/weaphits/blood205.tga
+frame1.188 image-resource create-image 187:256x256:gfx/misc/teleportEffect2.jpg
+frame1.189 image-resource create-image 188:64x64:menu/medals/medal_impressive.tga
+frame1.190 image-resource create-image 189:64x64:menu/medals/medal_excellent.tga
+frame1.191 image-resource create-image 190:64x64:menu/medals/medal_gauntlet.tga
+frame1.192 image-resource create-image 191:64x64:menu/medals/medal_defend.tga
+frame1.193 image-resource create-image 192:64x64:menu/medals/medal_assist.tga
+frame1.194 image-resource create-image 193:64x64:menu/medals/medal_capture.tga
+frame1.195 image-resource create-image 194:16x16:gfx/damage/bullet_mrk.jpg
+frame1.196 image-resource create-image 195:64x64:gfx/damage/burn_med_mrk.jpg
+frame1.197 image-resource create-image 196:64x64:gfx/damage/hole_lg_mrk.jpg
+frame1.198 image-resource create-image 197:64x64:gfx/damage/plasma_mrk.tga
+frame1.199 image-resource create-image 198:32x32:gfx/damage/shadow.tga
+frame1.200 image-resource create-image 199:64x64:sprites/splash.jpg
+frame1.201 image-resource create-image 200:64x64:gfx/damage/blood_stain.tga
+frame1.202 image-resource create-image 201:128x128:*q3-lightmap-0
+frame1.203 image-resource create-image 202:128x128:*q3-lightmap-1
+frame1.204 image-resource create-image 203:128x128:*q3-lightmap-2
+frame1.205 image-resource create-image 204:128x128:*q3-lightmap-3
+frame1.206 image-resource create-image 205:128x128:*q3-lightmap-4
+frame1.207 image-resource create-image 206:128x128:*q3-lightmap-5
+frame1.208 image-resource create-image 207:128x128:*q3-lightmap-6
+frame1.209 image-resource create-image 208:128x128:*q3-lightmap-7
+frame1.210 image-resource create-image 209:128x128:*q3-lightmap-8
+frame1.211 image-resource create-image 210:256x32:*fog
+frame1.212 image-resource create-image 211:16x16:*dlight
+frame1.213 image-resource create-image 212:64x64:sprites/explode1/fs2-0000.jpg
+frame1.214 image-resource create-image 213:64x64:sprites/explode1/fs2-0001.jpg
+frame1.215 image-resource create-image 214:64x64:sprites/explode1/fs2-0002.jpg
+frame1.216 image-resource create-image 215:64x64:sprites/explode1/fs2-0003.jpg
+frame1.217 image-resource create-image 216:64x64:sprites/explode1/fs2-0004.jpg
+frame1.218 image-resource create-image 217:64x64:sprites/explode1/fs2-0005.jpg
+frame1.219 image-resource create-image 218:64x64:sprites/explode1/fs2-0006.jpg
+frame1.220 image-resource create-image 219:64x64:sprites/explode1/fs2-0007.jpg
+frame1.221 image-resource create-image 220:64x64:sprites/explode1/fs2-0008.jpg
+frame1.222 image-resource create-image 221:64x64:sprites/explode1/fs2-0009.jpg
+frame1.223 image-resource create-image 222:64x64:sprites/explode1/fs2-0010.jpg
+frame1.224 image-resource create-image 223:64x64:sprites/explode1/fs2-0011.jpg
+frame1.225 image-resource create-image 224:64x64:sprites/explode1/fs2-0012.jpg
+frame1.226 image-resource create-image 225:64x64:sprites/explode1/fs2-0013.jpg
+frame1.227 image-resource create-image 226:64x64:sprites/explode1/fs2-0014.jpg
+frame1.228 image-resource create-image 227:64x64:sprites/explode1/fs2-0015.jpg
+frame1.229 image-resource create-image 228:64x64:sprites/explode1/fs2-0016.jpg
+frame1.230 image-resource create-image 229:64x64:sprites/explode1/fs2-0017.jpg
+frame1.231 image-resource create-image 230:64x64:sprites/explode1/fs2-0018.jpg
+frame1.232 image-resource create-image 231:64x64:sprites/explode1/fs2-0019.jpg
+frame1.233 image-resource create-image 232:64x64:sprites/explode1/fs2-0020.jpg
+frame1.234 image-resource create-image 233:64x64:sprites/explode1/fs2-0021.jpg
+frame1.235 image-resource create-image 234:64x64:sprites/explode1/fs2-0022.jpg
+frame1.236 image-resource create-image 235:64x64:models/players/sarge/icon_default.tga
+frame1.237 image-resource create-image 236:128x128:levelshots/q3dm1.jpg
+frame1.238 image-resource create-image 237:256x256:textures/sfx/detail.jpg
+frame1.239 set-color 1.000 1.000 1.000 1.000
+frame1.240 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.240.0 draw batches=1
+frame1.240.0.0 v=4 i=6 p=4.000 c=16.000 t=4.000 depthWrite=false
+frame1.241 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.241.0 draw batches=1
+frame1.241.0.0 v=4 i=6 p=4.000 c=16.000 t=9.000 depthWrite=false
+frame1.242 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.242.0 draw batches=1
+frame1.242.0.0 v=4 i=6 p=-0.667 c=16.000 t=4.000 depthWrite=false
+frame1.243 set-color 0.000 0.000 0.000 1.000
+frame1.244 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.244.0 draw batches=1
+frame1.244.0.0 v=4 i=6 p=4.657 c=4.000 t=0.492 depthWrite=false
+frame1.245 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.245.0 draw batches=1
+frame1.245.0.0 v=4 i=6 p=4.906 c=4.000 t=3.859 depthWrite=false
+frame1.246 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.246.0 draw batches=1
+frame1.246.0.0 v=4 i=6 p=5.154 c=4.000 t=0.492 depthWrite=false
+frame1.247 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.247.0 draw batches=1
+frame1.247.0.0 v=4 i=6 p=5.304 c=4.000 t=2.898 depthWrite=false
+frame1.248 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.248.0 draw batches=1
+frame1.248.0.0 v=4 i=6 p=5.435 c=4.000 t=2.883 depthWrite=false
+frame1.249 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.249.0 draw batches=1
+frame1.249.0.0 v=4 i=6 p=5.567 c=4.000 t=2.898 depthWrite=false
+frame1.250 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.250.0 draw batches=1
+frame1.250.0.0 v=4 i=6 p=5.717 c=4.000 t=0.977 depthWrite=false
+frame1.251 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.251.0 draw batches=1
+frame1.251.0.0 v=4 i=6 p=5.914 c=4.000 t=2.305 depthWrite=false
+frame1.252 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.252.0 draw batches=1
+frame1.252.0.0 v=4 i=6 p=6.214 c=4.000 t=2.602 depthWrite=false
+frame1.253 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.253.0 draw batches=1
+frame1.253.0.0 v=4 i=6 p=6.410 c=4.000 t=0.977 depthWrite=false
+frame1.254 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.254.0 draw batches=1
+frame1.254.0.0 v=4 i=6 p=6.607 c=4.000 t=0.492 depthWrite=false
+frame1.255 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.255.0 draw batches=1
+frame1.255.0.0 v=4 i=6 p=6.804 c=4.000 t=1.633 depthWrite=false
+frame1.256 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.256.0 draw batches=1
+frame1.256.0.0 v=4 i=6 p=7.001 c=4.000 t=2.602 depthWrite=false
+frame1.257 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.257.0 draw batches=1
+frame1.257.0.0 v=4 i=6 p=7.193 c=4.000 t=2.641 depthWrite=false
+frame1.258 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.258.0 draw batches=1
+frame1.258.0.0 v=4 i=6 p=7.385 c=4.000 t=1.305 depthWrite=false
+frame1.259 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.259.0 draw batches=1
+frame1.259.0.0 v=4 i=6 p=7.564 c=4.000 t=2.883 depthWrite=false
+frame1.260 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.260.0 draw batches=1
+frame1.260.0.0 v=4 i=6 p=7.685 c=4.000 t=4.805 depthWrite=false
+frame1.261 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.261.0 draw batches=1
+frame1.261.0.0 v=4 i=6 p=7.770 c=4.000 t=4.805 depthWrite=false
+frame1.262 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.262.0 draw batches=1
+frame1.262.0.0 v=4 i=6 p=7.854 c=4.000 t=4.805 depthWrite=false
+frame1.263 set-color 1.000 1.000 1.000 1.000
+frame1.264 set-color 1.000 1.000 1.000 1.000
+frame1.265 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.265.0 draw batches=1
+frame1.265.0.0 v=4 i=6 p=4.666 c=16.000 t=0.492 depthWrite=false
+frame1.266 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.266.0 draw batches=1
+frame1.266.0.0 v=4 i=6 p=4.914 c=16.000 t=3.859 depthWrite=false
+frame1.267 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.267.0 draw batches=1
+frame1.267.0.0 v=4 i=6 p=5.162 c=16.000 t=0.492 depthWrite=false
+frame1.268 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.268.0 draw batches=1
+frame1.268.0.0 v=4 i=6 p=5.312 c=16.000 t=2.898 depthWrite=false
+frame1.269 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.269.0 draw batches=1
+frame1.269.0.0 v=4 i=6 p=5.444 c=16.000 t=2.883 depthWrite=false
+frame1.270 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.270.0 draw batches=1
+frame1.270.0.0 v=4 i=6 p=5.575 c=16.000 t=2.898 depthWrite=false
+frame1.271 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.271.0 draw batches=1
+frame1.271.0.0 v=4 i=6 p=5.725 c=16.000 t=0.977 depthWrite=false
+frame1.272 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.272.0 draw batches=1
+frame1.272.0.0 v=4 i=6 p=5.922 c=16.000 t=2.305 depthWrite=false
+frame1.273 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.273.0 draw batches=1
+frame1.273.0.0 v=4 i=6 p=6.222 c=16.000 t=2.602 depthWrite=false
+frame1.274 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.274.0 draw batches=1
+frame1.274.0.0 v=4 i=6 p=6.419 c=16.000 t=0.977 depthWrite=false
+frame1.275 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.275.0 draw batches=1
+frame1.275.0.0 v=4 i=6 p=6.616 c=16.000 t=0.492 depthWrite=false
+frame1.276 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.276.0 draw batches=1
+frame1.276.0.0 v=4 i=6 p=6.813 c=16.000 t=1.633 depthWrite=false
+frame1.277 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.277.0 draw batches=1
+frame1.277.0.0 v=4 i=6 p=7.009 c=16.000 t=2.602 depthWrite=false
+frame1.278 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.278.0 draw batches=1
+frame1.278.0.0 v=4 i=6 p=7.202 c=16.000 t=2.641 depthWrite=false
+frame1.279 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.279.0 draw batches=1
+frame1.279.0.0 v=4 i=6 p=7.394 c=16.000 t=1.305 depthWrite=false
+frame1.280 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.280.0 draw batches=1
+frame1.280.0.0 v=4 i=6 p=7.572 c=16.000 t=2.883 depthWrite=false
+frame1.281 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.281.0 draw batches=1
+frame1.281.0.0 v=4 i=6 p=7.694 c=16.000 t=4.805 depthWrite=false
+frame1.282 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.282.0 draw batches=1
+frame1.282.0.0 v=4 i=6 p=7.778 c=16.000 t=4.805 depthWrite=false
+frame1.283 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.283.0 draw batches=1
+frame1.283.0.0 v=4 i=6 p=7.863 c=16.000 t=4.805 depthWrite=false
+frame1.284 set-color 1.000 1.000 1.000 1.000
+frame1.285 set-color 0.000 0.000 0.000 1.000
+frame1.286 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.286.0 draw batches=1
+frame1.286.0.0 v=4 i=6 p=4.867 c=4.000 t=2.031 depthWrite=false
+frame1.287 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.287.0 draw batches=1
+frame1.287.0.0 v=4 i=6 p=4.994 c=4.000 t=2.898 depthWrite=false
+frame1.288 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.288.0 draw batches=1
+frame1.288.0.0 v=4 i=6 p=5.144 c=4.000 t=4.242 depthWrite=false
+frame1.289 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.289.0 draw batches=1
+frame1.289.0.0 v=4 i=6 p=5.322 c=4.000 t=2.883 depthWrite=false
+frame1.290 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.290.0 draw batches=1
+frame1.290.0.0 v=4 i=6 p=5.500 c=4.000 t=3.164 depthWrite=false
+frame1.291 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.291.0 draw batches=1
+frame1.291.0.0 v=4 i=6 p=5.692 c=4.000 t=2.281 depthWrite=false
+frame1.292 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.292.0 draw batches=1
+frame1.292.0.0 v=4 i=6 p=5.861 c=4.000 t=1.781 depthWrite=false
+frame1.293 set-color 1.000 1.000 1.000 1.000
+frame1.294 set-color 1.000 1.000 1.000 1.000
+frame1.295 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.295.0 draw batches=1
+frame1.295.0.0 v=4 i=6 p=4.876 c=16.000 t=2.031 depthWrite=false
+frame1.296 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.296.0 draw batches=1
+frame1.296.0.0 v=4 i=6 p=5.002 c=16.000 t=2.898 depthWrite=false
+frame1.297 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.297.0 draw batches=1
+frame1.297.0.0 v=4 i=6 p=5.152 c=16.000 t=4.242 depthWrite=false
+frame1.298 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.298.0 draw batches=1
+frame1.298.0.0 v=4 i=6 p=5.330 c=16.000 t=2.883 depthWrite=false
+frame1.299 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.299.0 draw batches=1
+frame1.299.0.0 v=4 i=6 p=5.508 c=16.000 t=3.164 depthWrite=false
+frame1.300 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.300.0 draw batches=1
+frame1.300.0.0 v=4 i=6 p=5.701 c=16.000 t=2.281 depthWrite=false
+frame1.301 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.301.0 draw batches=1
+frame1.301.0.0 v=4 i=6 p=5.869 c=16.000 t=1.781 depthWrite=false
+frame1.302 set-color 1.000 1.000 1.000 1.000
+frame1.303 set-color 0.000 0.000 0.000 1.000
+frame1.304 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.304.0 draw batches=1
+frame1.304.0.0 v=4 i=6 p=3.888 c=4.000 t=2.031 depthWrite=false
+frame1.305 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.305.0 draw batches=1
+frame1.305.0.0 v=4 i=6 p=4.057 c=4.000 t=2.281 depthWrite=false
+frame1.306 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.306.0 draw batches=1
+frame1.306.0.0 v=4 i=6 p=4.226 c=4.000 t=1.781 depthWrite=false
+frame1.307 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.307.0 draw batches=1
+frame1.307.0.0 v=4 i=6 p=4.376 c=4.000 t=1.781 depthWrite=false
+frame1.308 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.308.0 draw batches=1
+frame1.308.0.0 v=4 i=6 p=4.629 c=4.000 t=2.031 depthWrite=false
+frame1.309 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.309.0 draw batches=1
+frame1.309.0.0 v=4 i=6 p=4.802 c=4.000 t=1.305 depthWrite=false
+frame1.310 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.310.0 draw batches=1
+frame1.310.0.0 v=4 i=6 p=4.994 c=4.000 t=2.281 depthWrite=false
+frame1.311 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.311.0 draw batches=1
+frame1.311.0.0 v=4 i=6 p=5.290 c=4.000 t=0.492 depthWrite=false
+frame1.312 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.312.0 draw batches=1
+frame1.312.0.0 v=4 i=6 p=5.458 c=4.000 t=3.742 depthWrite=false
+frame1.313 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.313.0 draw batches=1
+frame1.313.0.0 v=4 i=6 p=5.599 c=4.000 t=3.742 depthWrite=false
+frame1.314 set-color 1.000 1.000 1.000 1.000
+frame1.315 set-color 1.000 1.000 1.000 1.000
+frame1.316 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.316.0 draw batches=1
+frame1.316.0.0 v=4 i=6 p=3.896 c=16.000 t=2.031 depthWrite=false
+frame1.317 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.317.0 draw batches=1
+frame1.317.0.0 v=4 i=6 p=4.065 c=16.000 t=2.281 depthWrite=false
+frame1.318 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.318.0 draw batches=1
+frame1.318.0.0 v=4 i=6 p=4.234 c=16.000 t=1.781 depthWrite=false
+frame1.319 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.319.0 draw batches=1
+frame1.319.0.0 v=4 i=6 p=4.384 c=16.000 t=1.781 depthWrite=false
+frame1.320 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.320.0 draw batches=1
+frame1.320.0.0 v=4 i=6 p=4.637 c=16.000 t=2.031 depthWrite=false
+frame1.321 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.321.0 draw batches=1
+frame1.321.0.0 v=4 i=6 p=4.810 c=16.000 t=1.305 depthWrite=false
+frame1.322 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.322.0 draw batches=1
+frame1.322.0.0 v=4 i=6 p=5.003 c=16.000 t=2.281 depthWrite=false
+frame1.323 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.323.0 draw batches=1
+frame1.323.0.0 v=4 i=6 p=5.298 c=16.000 t=0.492 depthWrite=false
+frame1.324 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.324.0 draw batches=1
+frame1.324.0.0 v=4 i=6 p=5.467 c=16.000 t=3.742 depthWrite=false
+frame1.325 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.325.0 draw batches=1
+frame1.325.0.0 v=4 i=6 p=5.607 c=16.000 t=3.742 depthWrite=false
+frame1.326 set-color 1.000 1.000 1.000 1.000
+frame1.327 set-color 0.000 0.000 0.000 1.000
+frame1.328 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.328.0 draw batches=1
+frame1.328.0.0 v=4 i=6 p=3.388 c=4.000 t=2.031 depthWrite=false
+frame1.329 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.329.0 draw batches=1
+frame1.329.0.0 v=4 i=6 p=3.557 c=4.000 t=2.281 depthWrite=false
+frame1.330 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.330.0 draw batches=1
+frame1.330.0.0 v=4 i=6 p=3.749 c=4.000 t=0.492 depthWrite=false
+frame1.331 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.331.0 draw batches=1
+frame1.331.0.0 v=4 i=6 p=3.946 c=4.000 t=2.305 depthWrite=false
+frame1.332 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.332.0 draw batches=1
+frame1.332.0.0 v=4 i=6 p=4.115 c=4.000 t=3.742 depthWrite=false
+frame1.333 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.333.0 draw batches=1
+frame1.333.0.0 v=4 i=6 p=4.236 c=4.000 t=2.898 depthWrite=false
+frame1.334 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.334.0 draw batches=1
+frame1.334.0.0 v=4 i=6 p=4.410 c=4.000 t=4.047 depthWrite=false
+frame1.335 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.335.0 draw batches=1
+frame1.335.0.0 v=4 i=6 p=4.583 c=4.000 t=2.898 depthWrite=false
+frame1.336 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.336.0 draw batches=1
+frame1.336.0.0 v=4 i=6 p=4.715 c=4.000 t=2.883 depthWrite=false
+frame1.337 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.337.0 draw batches=1
+frame1.337.0.0 v=4 i=6 p=4.991 c=4.000 t=2.250 depthWrite=false
+frame1.338 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.338.0 draw batches=1
+frame1.338.0.0 v=4 i=6 p=5.179 c=4.000 t=1.688 depthWrite=false
+frame1.339 set-color 1.000 1.000 1.000 1.000
+frame1.340 set-color 1.000 1.000 1.000 1.000
+frame1.341 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.341.0 draw batches=1
+frame1.341.0.0 v=4 i=6 p=3.396 c=16.000 t=2.031 depthWrite=false
+frame1.342 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.342.0 draw batches=1
+frame1.342.0.0 v=4 i=6 p=3.565 c=16.000 t=2.281 depthWrite=false
+frame1.343 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.343.0 draw batches=1
+frame1.343.0.0 v=4 i=6 p=3.757 c=16.000 t=0.492 depthWrite=false
+frame1.344 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.344.0 draw batches=1
+frame1.344.0.0 v=4 i=6 p=3.954 c=16.000 t=2.305 depthWrite=false
+frame1.345 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.345.0 draw batches=1
+frame1.345.0.0 v=4 i=6 p=4.123 c=16.000 t=3.742 depthWrite=false
+frame1.346 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.346.0 draw batches=1
+frame1.346.0.0 v=4 i=6 p=4.245 c=16.000 t=2.898 depthWrite=false
+frame1.347 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.347.0 draw batches=1
+frame1.347.0.0 v=4 i=6 p=4.418 c=16.000 t=4.047 depthWrite=false
+frame1.348 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.348.0 draw batches=1
+frame1.348.0.0 v=4 i=6 p=4.592 c=16.000 t=2.898 depthWrite=false
+frame1.349 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.349.0 draw batches=1
+frame1.349.0.0 v=4 i=6 p=4.723 c=16.000 t=2.883 depthWrite=false
+frame1.350 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.350.0 draw batches=1
+frame1.350.0.0 v=4 i=6 p=4.999 c=16.000 t=2.250 depthWrite=false
+frame1.351 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame1.351.0 draw batches=1
+frame1.351.0.0 v=4 i=6 p=5.187 c=16.000 t=1.688 depthWrite=false
+frame1.352 set-color 1.000 1.000 1.000 1.000
+frame2 commands=87
+frame2.0 draw-buffer back clear=false
+frame2.1 image-resource create-image 238:32x32:icons/iconw_machinegun.tga
+frame2.2 image-resource create-image 239:64x64:models/weaphits/bullet1.jpg
+frame2.3 image-resource create-image 240:64x64:models/weaphits/bullet2.jpg
+frame2.4 image-resource create-image 241:64x64:models/weaphits/bullet3.jpg
+frame2.5 image-resource create-image 242:8x8:gfx/colors/black.jpg
+frame2.6 image-resource create-image 243:32x32:icons/iconw_gauntlet.tga
+frame2.7 image-resource create-image 244:256x256:models/players/sarge/band.tga
+frame2.8 image-resource create-image 245:16x8:models/players/sarge/cigar.tga
+frame2.9 image-resource create-image 246:16x8:models/players/sarge/cigar.glow.tga
+frame2.10 image-resource create-image 247:256x256:models/weapons2/machinegun/machinegun.jpg
+frame2.11 image-resource create-image 248:128x128:textures/effects/tinfx2d.jpg
+frame2.12 image-resource create-image 249:128x128:models/powerups/ammo/machammo.tga
+frame2.13 image-resource create-image 250:64x64:models/powerups/ammo/machammo2.tga
+frame2.14 view 0.000 0.000 640.000 480.000 clear=color ops=7
+frame2.14.0 depth-range batches=0
+frame2.14.1 draw batches=2
+frame2.14.1.0 v=30 i=96 p=121645.777 c=120.000 t=171.543 depthWrite=true
+frame2.14.1.1 v=30 i=96 p=121645.777 c=120.000 t=212.092 depthWrite=false
+frame2.14.2 depth-range batches=0
+frame2.14.3 depth-range batches=0
+frame2.14.4 draw batches=2
+frame2.14.4.0 v=48 i=162 p=204779.558 c=192.000 t=301.060 depthWrite=true
+frame2.14.4.1 v=48 i=162 p=204779.558 c=192.000 t=370.576 depthWrite=false
+frame2.14.5 depth-range batches=0
+frame2.14.6 draw batches=43
+frame2.14.6.0 v=356 i=1392 p=880614.128 c=1424.000 t=2556.392 depthWrite=true
+frame2.14.6.1 v=80 i=216 p=168581.543 c=320.000 t=336.781 depthWrite=true
+frame2.14.6.2 v=264 i=600 p=745214.952 c=1056.000 t=346.261 depthWrite=true
+frame2.14.6.3 v=12 i=18 p=33781.642 c=48.000 t=27.906 depthWrite=true
+frame2.14.6.4 v=12 i=18 p=31185.629 c=48.000 t=14.049 depthWrite=true
+frame2.14.6.5 v=9 i=15 p=26248.436 c=36.000 t=5.574 depthWrite=true
+frame2.14.6.6 v=24 i=42 p=86299.776 c=96.000 t=41.141 depthWrite=true
+frame2.14.6.7 v=33 i=72 p=89940.596 c=132.000 t=64.066 depthWrite=true
+frame2.14.6.8 v=68 i=141 p=151957.707 c=272.000 t=419.070 depthWrite=true
+frame2.14.6.9 v=14 i=30 p=45164.133 c=56.000 t=64.266 depthWrite=true
+frame2.14.6.10 v=9 i=15 p=28114.970 c=36.000 t=18.625 depthWrite=true
+frame2.14.6.11 v=20 i=30 p=54974.719 c=80.000 t=44.875 depthWrite=true
+frame2.14.6.12 v=11 i=21 p=32902.574 c=44.000 t=28.375 depthWrite=true
+frame2.14.6.13 v=12 i=18 p=33109.642 c=48.000 t=23.781 depthWrite=true
+frame2.14.6.14 v=8 i=12 p=21155.751 c=32.000 t=19.250 depthWrite=true
+frame2.14.6.15 v=347 i=570 p=1166903.219 c=1388.000 t=574.340 depthWrite=true
+frame2.14.6.16 v=58 i=102 p=233072.577 c=232.000 t=80.641 depthWrite=true
+frame2.14.6.17 v=25 i=45 p=93979.587 c=100.000 t=34.973 depthWrite=true
+frame2.14.6.18 v=20 i=30 p=62183.334 c=80.000 t=21.531 depthWrite=true
+frame2.14.6.19 v=28 i=42 p=84708.222 c=112.000 t=29.531 depthWrite=true
+frame2.14.6.20 v=4 i=6 p=11463.232 c=16.000 t=16.384 depthWrite=true
+frame2.14.6.21 v=4 i=6 p=11463.232 c=16.000 t=4.000 depthWrite=false
+frame2.14.6.22 v=4 i=6 p=11463.232 c=16.000 t=3.852 depthWrite=false
+frame2.14.6.23 v=4 i=6 p=14022.426 c=16.000 t=9.401 depthWrite=true
+frame2.14.6.24 v=8 i=12 p=28044.853 c=32.000 t=8.163 depthWrite=false
+frame2.14.6.25 v=4 i=6 p=14022.426 c=16.000 t=4.109 depthWrite=false
+frame2.14.6.26 v=4 i=6 p=14022.426 c=16.000 t=4.389 depthWrite=false
+frame2.14.6.27 v=106 i=288 p=287920.816 c=278.176 t=87.692 depthWrite=true
+frame2.14.6.28 v=693 i=1920 p=1953488.633 c=1754.796 t=690.898 depthWrite=true
+frame2.14.6.29 v=159 i=540 p=457567.352 c=456.169 t=168.101 depthWrite=true
+frame2.14.6.30 v=4 i=6 p=15465.348 c=13.220 t=6.635 depthWrite=true
+frame2.14.6.31 v=4 i=6 p=15465.348 c=16.000 t=1.430 depthWrite=false
+frame2.14.6.32 v=4 i=6 p=15333.977 c=13.169 t=8.635 depthWrite=true
+frame2.14.6.33 v=4 i=6 p=15333.977 c=16.000 t=1.461 depthWrite=false
+frame2.14.6.34 v=4 i=6 p=14702.982 c=13.122 t=7.397 depthWrite=true
+frame2.14.6.35 v=4 i=6 p=14702.982 c=16.000 t=2.047 depthWrite=false
+frame2.14.6.36 v=4 i=6 p=14830.685 c=13.169 t=5.397 depthWrite=true
+frame2.14.6.37 v=4 i=6 p=14830.685 c=16.000 t=0.703 depthWrite=false
+frame2.14.6.38 v=4 i=6 p=15128.693 c=13.420 t=4.112 depthWrite=true
+frame2.14.6.39 v=4 i=6 p=15128.693 c=16.000 t=3.559 depthWrite=false
+frame2.14.6.40 v=4 i=6 p=14987.992 c=13.337 t=6.112 depthWrite=true
+frame2.14.6.41 v=4 i=6 p=14987.992 c=16.000 t=1.996 depthWrite=false
+frame2.14.6.42 v=317 i=729 p=-2975.715 c=436.341 t=280.404 depthWrite=true
+frame2.15 view 100.000 432.000 48.000 48.000 clear=depth ops=2
+frame2.15.0 draw batches=2
+frame2.15.0.0 v=64 i=222 p=8763.686 c=256.000 t=60.097 depthWrite=true
+frame2.15.0.1 v=64 i=222 p=8763.686 c=225.529 t=53.382 depthWrite=false
+frame2.15.1 draw batches=1
+frame2.15.1.0 v=12 i=18 p=1731.702 c=48.000 t=12.000 depthWrite=true
+frame2.16 view 285.000 420.000 60.000 60.000 clear=depth ops=2
+frame2.16.0 draw batches=1
+frame2.16.0.0 v=93 i=282 p=2814.843 c=312.624 t=104.971 depthWrite=true
+frame2.16.1 draw batches=2
+frame2.16.1.0 v=15 i=69 p=220.456 c=51.753 t=15.352 depthWrite=true
+frame2.16.1.1 v=15 i=69 p=220.456 c=60.000 t=15.352 depthWrite=false
+frame2.17 set-color 1.000 0.690 0.000 1.000
+frame2.18 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.18.0 draw batches=1
+frame2.18.0.0 v=4 i=6 p=-3.375 c=10.745 t=4.000 depthWrite=false
+frame2.19 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.19.0 draw batches=1
+frame2.19.0.0 v=4 i=6 p=-2.975 c=10.745 t=4.000 depthWrite=false
+frame2.20 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.20.0 draw batches=1
+frame2.20.0.0 v=4 i=6 p=-2.575 c=10.745 t=4.000 depthWrite=false
+frame2.21 set-color 1.000 1.000 1.000 1.000
+frame2.22 set-color 1.000 0.690 0.000 1.000
+frame2.23 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.23.0 draw batches=1
+frame2.23.0.0 v=4 i=6 p=-1.063 c=10.745 t=4.000 depthWrite=false
+frame2.24 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.24.0 draw batches=1
+frame2.24.0.0 v=4 i=6 p=-0.663 c=10.745 t=4.000 depthWrite=false
+frame2.25 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.25.0 draw batches=1
+frame2.25.0.0 v=4 i=6 p=-0.263 c=10.745 t=4.000 depthWrite=false
+frame2.26 set-color 1.000 1.000 1.000 1.000
+frame2.27 set-color 1.000 1.000 1.000 1.000
+frame2.28 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.28.0 draw batches=1
+frame2.28.0.0 v=4 i=6 p=4.000 c=16.000 t=4.000 depthWrite=false
+frame2.29 set-color 1.000 1.000 1.000 1.000
+frame2.30 set-color 1.000 1.000 1.000 1.000
+frame2.31 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.31.0 draw batches=1
+frame2.31.0.0 v=4 i=6 p=1.100 c=16.000 t=4.000 depthWrite=false
+frame2.32 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.32.0 draw batches=1
+frame2.32.0.0 v=4 i=6 p=1.100 c=16.000 t=4.000 depthWrite=false
+frame2.33 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.33.0 draw batches=1
+frame2.33.0.0 v=4 i=6 p=1.600 c=16.000 t=4.000 depthWrite=false
+frame2.34 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.34.0 draw batches=1
+frame2.34.0.0 v=4 i=6 p=1.600 c=16.000 t=4.000 depthWrite=false
+frame2.35 set-color 0.000 0.000 0.000 1.000
+frame2.36 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.36.0 draw batches=1
+frame2.36.0.0 v=4 i=6 p=0.992 c=4.000 t=4.500 depthWrite=false
+frame2.37 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.37.0 draw batches=1
+frame2.37.0.0 v=4 i=6 p=1.192 c=4.000 t=2.000 depthWrite=false
+frame2.38 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.38.0 draw batches=1
+frame2.38.0.0 v=4 i=6 p=1.392 c=4.000 t=2.500 depthWrite=false
+frame2.39 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.39.0 draw batches=1
+frame2.39.0.0 v=4 i=6 p=1.592 c=4.000 t=3.750 depthWrite=false
+frame2.40 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.40.0 draw batches=1
+frame2.40.0.0 v=4 i=6 p=1.792 c=4.000 t=4.000 depthWrite=false
+frame2.41 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.41.0 draw batches=1
+frame2.41.0.0 v=4 i=6 p=1.992 c=4.000 t=5.250 depthWrite=false
+frame2.42 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.42.0 draw batches=1
+frame2.42.0.0 v=4 i=6 p=2.192 c=4.000 t=3.000 depthWrite=false
+frame2.43 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.43.0 draw batches=1
+frame2.43.0.0 v=4 i=6 p=2.392 c=4.000 t=3.500 depthWrite=false
+frame2.44 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.44.0 draw batches=1
+frame2.44.0.0 v=4 i=6 p=2.592 c=4.000 t=3.250 depthWrite=false
+frame2.45 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.45.0 draw batches=1
+frame2.45.0.0 v=4 i=6 p=2.792 c=4.000 t=5.250 depthWrite=false
+frame2.46 set-color 1.000 1.000 1.000 1.000
+frame2.47 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.47.0 draw batches=1
+frame2.47.0.0 v=4 i=6 p=1.000 c=16.000 t=4.500 depthWrite=false
+frame2.48 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.48.0 draw batches=1
+frame2.48.0.0 v=4 i=6 p=1.200 c=16.000 t=2.000 depthWrite=false
+frame2.49 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.49.0 draw batches=1
+frame2.49.0.0 v=4 i=6 p=1.400 c=16.000 t=2.500 depthWrite=false
+frame2.50 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.50.0 draw batches=1
+frame2.50.0.0 v=4 i=6 p=1.600 c=16.000 t=3.750 depthWrite=false
+frame2.51 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.51.0 draw batches=1
+frame2.51.0.0 v=4 i=6 p=1.800 c=16.000 t=4.000 depthWrite=false
+frame2.52 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.52.0 draw batches=1
+frame2.52.0.0 v=4 i=6 p=2.000 c=16.000 t=5.250 depthWrite=false
+frame2.53 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.53.0 draw batches=1
+frame2.53.0.0 v=4 i=6 p=2.200 c=16.000 t=3.000 depthWrite=false
+frame2.54 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.54.0 draw batches=1
+frame2.54.0.0 v=4 i=6 p=2.400 c=16.000 t=3.500 depthWrite=false
+frame2.55 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.55.0 draw batches=1
+frame2.55.0.0 v=4 i=6 p=2.600 c=16.000 t=3.250 depthWrite=false
+frame2.56 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.56.0 draw batches=1
+frame2.56.0.0 v=4 i=6 p=2.800 c=16.000 t=5.250 depthWrite=false
+frame2.57 set-color 1.000 1.000 1.000 1.000
+frame2.58 set-color 1.000 1.000 1.000 1.000
+frame2.59 set-color 1.000 1.000 1.000 1.000
+frame2.60 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.60.0 draw batches=1
+frame2.60.0.0 v=4 i=6 p=4.100 c=16.000 t=4.000 depthWrite=false
+frame2.61 set-color 1.000 1.000 1.000 1.000
+frame2.62 set-color 0.500 0.500 0.500 0.330
+frame2.63 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.63.0 draw batches=1
+frame2.63.0.0 v=4 i=6 p=4.817 c=7.294 t=0.000 depthWrite=false
+frame2.64 set-color 1.000 1.000 1.000 1.000
+frame2.65 set-color 0.000 0.000 0.000 1.000
+frame2.66 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.66.0 draw batches=1
+frame2.66.0.0 v=4 i=6 p=4.908 c=4.000 t=1.000 depthWrite=false
+frame2.67 set-color 1.000 1.000 1.000 1.000
+frame2.68 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.68.0 draw batches=1
+frame2.68.0.0 v=4 i=6 p=4.917 c=16.000 t=1.000 depthWrite=false
+frame2.69 set-color 1.000 1.000 1.000 1.000
+frame2.70 set-color 0.000 0.000 1.000 0.330
+frame2.71 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.71.0 draw batches=1
+frame2.71.0.0 v=4 i=6 p=4.317 c=5.318 t=0.000 depthWrite=false
+frame2.72 set-color 1.000 1.000 1.000 1.000
+frame2.73 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.73.0 draw batches=1
+frame2.73.0.0 v=4 i=6 p=4.317 c=16.000 t=4.000 depthWrite=false
+frame2.74 set-color 0.000 0.000 0.000 1.000
+frame2.75 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.75.0 draw batches=1
+frame2.75.0.0 v=4 i=6 p=4.408 c=4.000 t=1.000 depthWrite=false
+frame2.76 set-color 1.000 1.000 1.000 1.000
+frame2.77 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.77.0 draw batches=1
+frame2.77.0.0 v=4 i=6 p=4.417 c=16.000 t=1.000 depthWrite=false
+frame2.78 set-color 1.000 1.000 1.000 1.000
+frame2.79 set-color 0.000 0.000 0.000 1.000
+frame2.80 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.80.0 draw batches=1
+frame2.80.0.0 v=4 i=6 p=3.708 c=4.000 t=1.500 depthWrite=false
+frame2.81 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.81.0 draw batches=1
+frame2.81.0.0 v=4 i=6 p=3.908 c=4.000 t=1.000 depthWrite=false
+frame2.82 set-color 1.000 1.000 1.000 1.000
+frame2.83 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.83.0 draw batches=1
+frame2.83.0.0 v=4 i=6 p=3.717 c=16.000 t=1.500 depthWrite=false
+frame2.84 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame2.84.0 draw batches=1
+frame2.84.0.0 v=4 i=6 p=3.917 c=16.000 t=1.000 depthWrite=false
+frame2.85 set-color 1.000 1.000 1.000 1.000
+frame2.86 set-color 1.000 1.000 1.000 1.000
+frame3 commands=74
+frame3.0 draw-buffer back clear=false
+frame3.1 view 0.000 0.000 640.000 480.000 clear=color ops=7
+frame3.1.0 depth-range batches=0
+frame3.1.1 draw batches=2
+frame3.1.1.0 v=30 i=96 p=121645.777 c=120.000 t=171.993 depthWrite=true
+frame3.1.1.1 v=30 i=96 p=121645.777 c=120.000 t=212.497 depthWrite=false
+frame3.1.2 depth-range batches=0
+frame3.1.3 depth-range batches=0
+frame3.1.4 draw batches=2
+frame3.1.4.0 v=48 i=162 p=204779.558 c=192.000 t=301.780 depthWrite=true
+frame3.1.4.1 v=48 i=162 p=204779.558 c=192.000 t=371.224 depthWrite=false
+frame3.1.5 depth-range batches=0
+frame3.1.6 draw batches=43
+frame3.1.6.0 v=356 i=1392 p=880614.128 c=1424.000 t=2556.392 depthWrite=true
+frame3.1.6.1 v=80 i=216 p=168581.543 c=320.000 t=336.781 depthWrite=true
+frame3.1.6.2 v=264 i=600 p=745214.952 c=1056.000 t=346.261 depthWrite=true
+frame3.1.6.3 v=12 i=18 p=33781.642 c=48.000 t=27.906 depthWrite=true
+frame3.1.6.4 v=12 i=18 p=31185.629 c=48.000 t=14.049 depthWrite=true
+frame3.1.6.5 v=9 i=15 p=26248.436 c=36.000 t=5.574 depthWrite=true
+frame3.1.6.6 v=24 i=42 p=86299.776 c=96.000 t=41.141 depthWrite=true
+frame3.1.6.7 v=33 i=72 p=89940.596 c=132.000 t=64.066 depthWrite=true
+frame3.1.6.8 v=68 i=141 p=151957.707 c=272.000 t=419.070 depthWrite=true
+frame3.1.6.9 v=14 i=30 p=45164.133 c=56.000 t=64.266 depthWrite=true
+frame3.1.6.10 v=9 i=15 p=28114.970 c=36.000 t=18.625 depthWrite=true
+frame3.1.6.11 v=20 i=30 p=54974.719 c=80.000 t=44.875 depthWrite=true
+frame3.1.6.12 v=11 i=21 p=32902.574 c=44.000 t=28.375 depthWrite=true
+frame3.1.6.13 v=12 i=18 p=33109.642 c=48.000 t=23.781 depthWrite=true
+frame3.1.6.14 v=8 i=12 p=21155.751 c=32.000 t=19.250 depthWrite=true
+frame3.1.6.15 v=347 i=570 p=1166903.219 c=1388.000 t=574.340 depthWrite=true
+frame3.1.6.16 v=58 i=102 p=233072.577 c=232.000 t=80.641 depthWrite=true
+frame3.1.6.17 v=25 i=45 p=93979.587 c=100.000 t=34.973 depthWrite=true
+frame3.1.6.18 v=20 i=30 p=62183.334 c=80.000 t=21.531 depthWrite=true
+frame3.1.6.19 v=28 i=42 p=84708.222 c=112.000 t=29.531 depthWrite=true
+frame3.1.6.20 v=4 i=6 p=11463.232 c=16.000 t=16.013 depthWrite=true
+frame3.1.6.21 v=4 i=6 p=11463.232 c=16.000 t=4.000 depthWrite=false
+frame3.1.6.22 v=4 i=6 p=11463.232 c=16.000 t=3.852 depthWrite=false
+frame3.1.6.23 v=4 i=6 p=14022.426 c=16.000 t=9.943 depthWrite=true
+frame3.1.6.24 v=8 i=12 p=28044.853 c=32.000 t=8.158 depthWrite=false
+frame3.1.6.25 v=4 i=6 p=14022.426 c=16.000 t=4.109 depthWrite=false
+frame3.1.6.26 v=4 i=6 p=14022.426 c=16.000 t=4.389 depthWrite=false
+frame3.1.6.27 v=106 i=288 p=287920.816 c=278.176 t=87.692 depthWrite=true
+frame3.1.6.28 v=693 i=1920 p=1953488.633 c=1754.796 t=690.898 depthWrite=true
+frame3.1.6.29 v=159 i=540 p=457567.352 c=456.169 t=168.101 depthWrite=true
+frame3.1.6.30 v=4 i=6 p=15466.937 c=13.220 t=6.635 depthWrite=true
+frame3.1.6.31 v=4 i=6 p=15466.937 c=16.000 t=1.430 depthWrite=false
+frame3.1.6.32 v=4 i=6 p=15336.165 c=13.169 t=8.635 depthWrite=true
+frame3.1.6.33 v=4 i=6 p=15336.165 c=16.000 t=1.461 depthWrite=false
+frame3.1.6.34 v=4 i=6 p=14701.571 c=13.122 t=7.397 depthWrite=true
+frame3.1.6.35 v=4 i=6 p=14701.571 c=16.000 t=2.047 depthWrite=false
+frame3.1.6.36 v=4 i=6 p=14830.498 c=13.169 t=5.397 depthWrite=true
+frame3.1.6.37 v=4 i=6 p=14830.498 c=16.000 t=0.703 depthWrite=false
+frame3.1.6.38 v=4 i=6 p=15129.435 c=13.420 t=4.112 depthWrite=true
+frame3.1.6.39 v=4 i=6 p=15129.435 c=16.000 t=3.559 depthWrite=false
+frame3.1.6.40 v=4 i=6 p=14986.637 c=13.337 t=6.112 depthWrite=true
+frame3.1.6.41 v=4 i=6 p=14986.637 c=16.000 t=1.996 depthWrite=false
+frame3.1.6.42 v=317 i=729 p=-2977.020 c=436.341 t=280.404 depthWrite=true
+frame3.2 view 100.000 432.000 48.000 48.000 clear=depth ops=2
+frame3.2.0 draw batches=2
+frame3.2.0.0 v=64 i=222 p=8763.736 c=256.000 t=60.115 depthWrite=true
+frame3.2.0.1 v=64 i=222 p=8763.736 c=225.518 t=53.382 depthWrite=false
+frame3.2.1 draw batches=1
+frame3.2.1.0 v=12 i=18 p=1731.712 c=48.000 t=12.000 depthWrite=true
+frame3.3 view 285.000 420.000 60.000 60.000 clear=depth ops=2
+frame3.3.0 draw batches=1
+frame3.3.0.0 v=93 i=282 p=2824.548 c=312.812 t=104.971 depthWrite=true
+frame3.3.1 draw batches=2
+frame3.3.1.0 v=15 i=69 p=232.478 c=51.776 t=15.352 depthWrite=true
+frame3.3.1.1 v=15 i=69 p=232.478 c=60.000 t=15.352 depthWrite=false
+frame3.4 set-color 1.000 0.690 0.000 1.000
+frame3.5 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.5.0 draw batches=1
+frame3.5.0.0 v=4 i=6 p=-3.375 c=10.745 t=4.000 depthWrite=false
+frame3.6 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.6.0 draw batches=1
+frame3.6.0.0 v=4 i=6 p=-2.975 c=10.745 t=4.000 depthWrite=false
+frame3.7 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.7.0 draw batches=1
+frame3.7.0.0 v=4 i=6 p=-2.575 c=10.745 t=4.000 depthWrite=false
+frame3.8 set-color 1.000 1.000 1.000 1.000
+frame3.9 set-color 1.000 0.690 0.000 1.000
+frame3.10 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.10.0 draw batches=1
+frame3.10.0.0 v=4 i=6 p=-1.063 c=10.745 t=4.000 depthWrite=false
+frame3.11 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.11.0 draw batches=1
+frame3.11.0.0 v=4 i=6 p=-0.663 c=10.745 t=4.000 depthWrite=false
+frame3.12 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.12.0 draw batches=1
+frame3.12.0.0 v=4 i=6 p=-0.263 c=10.745 t=4.000 depthWrite=false
+frame3.13 set-color 1.000 1.000 1.000 1.000
+frame3.14 set-color 1.000 1.000 1.000 1.000
+frame3.15 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.15.0 draw batches=1
+frame3.15.0.0 v=4 i=6 p=4.000 c=16.000 t=4.000 depthWrite=false
+frame3.16 set-color 1.000 1.000 1.000 1.000
+frame3.17 set-color 1.000 1.000 1.000 1.000
+frame3.18 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.18.0 draw batches=1
+frame3.18.0.0 v=4 i=6 p=1.100 c=16.000 t=4.000 depthWrite=false
+frame3.19 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.19.0 draw batches=1
+frame3.19.0.0 v=4 i=6 p=1.100 c=16.000 t=4.000 depthWrite=false
+frame3.20 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.20.0 draw batches=1
+frame3.20.0.0 v=4 i=6 p=1.600 c=16.000 t=4.000 depthWrite=false
+frame3.21 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.21.0 draw batches=1
+frame3.21.0.0 v=4 i=6 p=1.600 c=16.000 t=4.000 depthWrite=false
+frame3.22 set-color 0.000 0.000 0.000 1.000
+frame3.23 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.23.0 draw batches=1
+frame3.23.0.0 v=4 i=6 p=0.992 c=4.000 t=4.500 depthWrite=false
+frame3.24 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.24.0 draw batches=1
+frame3.24.0.0 v=4 i=6 p=1.192 c=4.000 t=2.000 depthWrite=false
+frame3.25 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.25.0 draw batches=1
+frame3.25.0.0 v=4 i=6 p=1.392 c=4.000 t=2.500 depthWrite=false
+frame3.26 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.26.0 draw batches=1
+frame3.26.0.0 v=4 i=6 p=1.592 c=4.000 t=3.750 depthWrite=false
+frame3.27 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.27.0 draw batches=1
+frame3.27.0.0 v=4 i=6 p=1.792 c=4.000 t=4.000 depthWrite=false
+frame3.28 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.28.0 draw batches=1
+frame3.28.0.0 v=4 i=6 p=1.992 c=4.000 t=5.250 depthWrite=false
+frame3.29 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.29.0 draw batches=1
+frame3.29.0.0 v=4 i=6 p=2.192 c=4.000 t=3.000 depthWrite=false
+frame3.30 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.30.0 draw batches=1
+frame3.30.0.0 v=4 i=6 p=2.392 c=4.000 t=3.500 depthWrite=false
+frame3.31 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.31.0 draw batches=1
+frame3.31.0.0 v=4 i=6 p=2.592 c=4.000 t=3.250 depthWrite=false
+frame3.32 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.32.0 draw batches=1
+frame3.32.0.0 v=4 i=6 p=2.792 c=4.000 t=5.250 depthWrite=false
+frame3.33 set-color 1.000 1.000 1.000 1.000
+frame3.34 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.34.0 draw batches=1
+frame3.34.0.0 v=4 i=6 p=1.000 c=16.000 t=4.500 depthWrite=false
+frame3.35 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.35.0 draw batches=1
+frame3.35.0.0 v=4 i=6 p=1.200 c=16.000 t=2.000 depthWrite=false
+frame3.36 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.36.0 draw batches=1
+frame3.36.0.0 v=4 i=6 p=1.400 c=16.000 t=2.500 depthWrite=false
+frame3.37 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.37.0 draw batches=1
+frame3.37.0.0 v=4 i=6 p=1.600 c=16.000 t=3.750 depthWrite=false
+frame3.38 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.38.0 draw batches=1
+frame3.38.0.0 v=4 i=6 p=1.800 c=16.000 t=4.000 depthWrite=false
+frame3.39 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.39.0 draw batches=1
+frame3.39.0.0 v=4 i=6 p=2.000 c=16.000 t=5.250 depthWrite=false
+frame3.40 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.40.0 draw batches=1
+frame3.40.0.0 v=4 i=6 p=2.200 c=16.000 t=3.000 depthWrite=false
+frame3.41 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.41.0 draw batches=1
+frame3.41.0.0 v=4 i=6 p=2.400 c=16.000 t=3.500 depthWrite=false
+frame3.42 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.42.0 draw batches=1
+frame3.42.0.0 v=4 i=6 p=2.600 c=16.000 t=3.250 depthWrite=false
+frame3.43 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.43.0 draw batches=1
+frame3.43.0.0 v=4 i=6 p=2.800 c=16.000 t=5.250 depthWrite=false
+frame3.44 set-color 1.000 1.000 1.000 1.000
+frame3.45 set-color 1.000 1.000 1.000 1.000
+frame3.46 set-color 1.000 1.000 1.000 1.000
+frame3.47 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.47.0 draw batches=1
+frame3.47.0.0 v=4 i=6 p=4.100 c=16.000 t=4.000 depthWrite=false
+frame3.48 set-color 1.000 1.000 1.000 1.000
+frame3.49 set-color 0.500 0.500 0.500 0.330
+frame3.50 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.50.0 draw batches=1
+frame3.50.0.0 v=4 i=6 p=4.817 c=7.294 t=0.000 depthWrite=false
+frame3.51 set-color 1.000 1.000 1.000 1.000
+frame3.52 set-color 0.000 0.000 0.000 1.000
+frame3.53 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.53.0 draw batches=1
+frame3.53.0.0 v=4 i=6 p=4.908 c=4.000 t=1.000 depthWrite=false
+frame3.54 set-color 1.000 1.000 1.000 1.000
+frame3.55 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.55.0 draw batches=1
+frame3.55.0.0 v=4 i=6 p=4.917 c=16.000 t=1.000 depthWrite=false
+frame3.56 set-color 1.000 1.000 1.000 1.000
+frame3.57 set-color 0.000 0.000 1.000 0.330
+frame3.58 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.58.0 draw batches=1
+frame3.58.0.0 v=4 i=6 p=4.317 c=5.318 t=0.000 depthWrite=false
+frame3.59 set-color 1.000 1.000 1.000 1.000
+frame3.60 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.60.0 draw batches=1
+frame3.60.0.0 v=4 i=6 p=4.317 c=16.000 t=4.000 depthWrite=false
+frame3.61 set-color 0.000 0.000 0.000 1.000
+frame3.62 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.62.0 draw batches=1
+frame3.62.0.0 v=4 i=6 p=4.408 c=4.000 t=1.000 depthWrite=false
+frame3.63 set-color 1.000 1.000 1.000 1.000
+frame3.64 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.64.0 draw batches=1
+frame3.64.0.0 v=4 i=6 p=4.417 c=16.000 t=1.000 depthWrite=false
+frame3.65 set-color 1.000 1.000 1.000 1.000
+frame3.66 set-color 0.000 0.000 0.000 1.000
+frame3.67 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.67.0 draw batches=1
+frame3.67.0.0 v=4 i=6 p=3.708 c=4.000 t=1.500 depthWrite=false
+frame3.68 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.68.0 draw batches=1
+frame3.68.0.0 v=4 i=6 p=3.908 c=4.000 t=1.000 depthWrite=false
+frame3.69 set-color 1.000 1.000 1.000 1.000
+frame3.70 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.70.0 draw batches=1
+frame3.70.0.0 v=4 i=6 p=3.717 c=16.000 t=1.500 depthWrite=false
+frame3.71 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame3.71.0 draw batches=1
+frame3.71.0.0 v=4 i=6 p=3.917 c=16.000 t=1.000 depthWrite=false
+frame3.72 set-color 1.000 1.000 1.000 1.000
+frame3.73 set-color 1.000 1.000 1.000 1.000
+frame4 commands=74
+frame4.0 draw-buffer back clear=false
+frame4.1 view 0.000 0.000 640.000 480.000 clear=color ops=7
+frame4.1.0 depth-range batches=0
+frame4.1.1 draw batches=2
+frame4.1.1.0 v=30 i=96 p=121645.777 c=120.000 t=172.443 depthWrite=true
+frame4.1.1.1 v=30 i=96 p=121645.777 c=120.000 t=212.902 depthWrite=false
+frame4.1.2 depth-range batches=0
+frame4.1.3 depth-range batches=0
+frame4.1.4 draw batches=2
+frame4.1.4.0 v=48 i=162 p=204779.558 c=192.000 t=302.500 depthWrite=true
+frame4.1.4.1 v=48 i=162 p=204779.558 c=192.000 t=371.872 depthWrite=false
+frame4.1.5 depth-range batches=0
+frame4.1.6 draw batches=43
+frame4.1.6.0 v=356 i=1392 p=880614.128 c=1424.000 t=2556.392 depthWrite=true
+frame4.1.6.1 v=80 i=216 p=168581.543 c=320.000 t=336.781 depthWrite=true
+frame4.1.6.2 v=264 i=600 p=745214.952 c=1056.000 t=346.261 depthWrite=true
+frame4.1.6.3 v=12 i=18 p=33781.642 c=48.000 t=27.906 depthWrite=true
+frame4.1.6.4 v=12 i=18 p=31185.629 c=48.000 t=14.049 depthWrite=true
+frame4.1.6.5 v=9 i=15 p=26248.436 c=36.000 t=5.574 depthWrite=true
+frame4.1.6.6 v=24 i=42 p=86299.776 c=96.000 t=41.141 depthWrite=true
+frame4.1.6.7 v=33 i=72 p=89940.596 c=132.000 t=64.066 depthWrite=true
+frame4.1.6.8 v=68 i=141 p=151957.707 c=272.000 t=419.070 depthWrite=true
+frame4.1.6.9 v=14 i=30 p=45164.133 c=56.000 t=64.266 depthWrite=true
+frame4.1.6.10 v=9 i=15 p=28114.970 c=36.000 t=18.625 depthWrite=true
+frame4.1.6.11 v=20 i=30 p=54974.719 c=80.000 t=44.875 depthWrite=true
+frame4.1.6.12 v=11 i=21 p=32902.574 c=44.000 t=28.375 depthWrite=true
+frame4.1.6.13 v=12 i=18 p=33109.642 c=48.000 t=23.781 depthWrite=true
+frame4.1.6.14 v=8 i=12 p=21155.751 c=32.000 t=19.250 depthWrite=true
+frame4.1.6.15 v=347 i=570 p=1166903.219 c=1388.000 t=574.340 depthWrite=true
+frame4.1.6.16 v=58 i=102 p=233072.577 c=232.000 t=80.641 depthWrite=true
+frame4.1.6.17 v=25 i=45 p=93979.587 c=100.000 t=34.973 depthWrite=true
+frame4.1.6.18 v=20 i=30 p=62183.334 c=80.000 t=21.531 depthWrite=true
+frame4.1.6.19 v=28 i=42 p=84708.222 c=112.000 t=29.531 depthWrite=true
+frame4.1.6.20 v=4 i=6 p=11463.232 c=16.000 t=16.037 depthWrite=true
+frame4.1.6.21 v=4 i=6 p=11463.232 c=16.000 t=4.000 depthWrite=false
+frame4.1.6.22 v=4 i=6 p=11463.232 c=16.000 t=3.852 depthWrite=false
+frame4.1.6.23 v=4 i=6 p=14022.426 c=16.000 t=10.267 depthWrite=true
+frame4.1.6.24 v=8 i=12 p=28044.853 c=32.000 t=8.153 depthWrite=false
+frame4.1.6.25 v=4 i=6 p=14022.426 c=16.000 t=4.109 depthWrite=false
+frame4.1.6.26 v=4 i=6 p=14022.426 c=16.000 t=4.389 depthWrite=false
+frame4.1.6.27 v=106 i=288 p=287920.816 c=278.176 t=87.692 depthWrite=true
+frame4.1.6.28 v=693 i=1920 p=1953488.633 c=1754.796 t=690.898 depthWrite=true
+frame4.1.6.29 v=159 i=540 p=457567.352 c=456.169 t=168.101 depthWrite=true
+frame4.1.6.30 v=4 i=6 p=15468.663 c=13.220 t=6.635 depthWrite=true
+frame4.1.6.31 v=4 i=6 p=15468.663 c=16.000 t=1.430 depthWrite=false
+frame4.1.6.32 v=4 i=6 p=15338.020 c=13.169 t=8.635 depthWrite=true
+frame4.1.6.33 v=4 i=6 p=15338.020 c=16.000 t=1.461 depthWrite=false
+frame4.1.6.34 v=4 i=6 p=14700.276 c=13.122 t=7.397 depthWrite=true
+frame4.1.6.35 v=4 i=6 p=14700.276 c=16.000 t=2.047 depthWrite=false
+frame4.1.6.36 v=4 i=6 p=14830.269 c=13.169 t=5.397 depthWrite=true
+frame4.1.6.37 v=4 i=6 p=14830.269 c=16.000 t=0.703 depthWrite=false
+frame4.1.6.38 v=4 i=6 p=15130.098 c=13.420 t=4.112 depthWrite=true
+frame4.1.6.39 v=4 i=6 p=15130.098 c=16.000 t=3.559 depthWrite=false
+frame4.1.6.40 v=4 i=6 p=14985.506 c=13.337 t=6.112 depthWrite=true
+frame4.1.6.41 v=4 i=6 p=14985.506 c=16.000 t=1.996 depthWrite=false
+frame4.1.6.42 v=317 i=729 p=-2978.009 c=436.341 t=280.404 depthWrite=true
+frame4.2 view 100.000 432.000 48.000 48.000 clear=depth ops=2
+frame4.2.0 draw batches=2
+frame4.2.0.0 v=64 i=222 p=8763.777 c=256.000 t=60.132 depthWrite=true
+frame4.2.0.1 v=64 i=222 p=8763.777 c=225.494 t=53.382 depthWrite=false
+frame4.2.1 draw batches=1
+frame4.2.1.0 v=12 i=18 p=1731.719 c=48.000 t=12.000 depthWrite=true
+frame4.3 view 285.000 420.000 60.000 60.000 clear=depth ops=2
+frame4.3.0 draw batches=1
+frame4.3.0.0 v=93 i=282 p=2827.993 c=312.929 t=104.971 depthWrite=true
+frame4.3.1 draw batches=2
+frame4.3.1.0 v=15 i=69 p=236.722 c=51.788 t=15.352 depthWrite=true
+frame4.3.1.1 v=15 i=69 p=236.722 c=60.000 t=15.352 depthWrite=false
+frame4.4 set-color 1.000 0.690 0.000 1.000
+frame4.5 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.5.0 draw batches=1
+frame4.5.0.0 v=4 i=6 p=-3.375 c=10.745 t=4.000 depthWrite=false
+frame4.6 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.6.0 draw batches=1
+frame4.6.0.0 v=4 i=6 p=-2.975 c=10.745 t=4.000 depthWrite=false
+frame4.7 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.7.0 draw batches=1
+frame4.7.0.0 v=4 i=6 p=-2.575 c=10.745 t=4.000 depthWrite=false
+frame4.8 set-color 1.000 1.000 1.000 1.000
+frame4.9 set-color 1.000 0.690 0.000 1.000
+frame4.10 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.10.0 draw batches=1
+frame4.10.0.0 v=4 i=6 p=-1.063 c=10.745 t=4.000 depthWrite=false
+frame4.11 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.11.0 draw batches=1
+frame4.11.0.0 v=4 i=6 p=-0.663 c=10.745 t=4.000 depthWrite=false
+frame4.12 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.12.0 draw batches=1
+frame4.12.0.0 v=4 i=6 p=-0.263 c=10.745 t=4.000 depthWrite=false
+frame4.13 set-color 1.000 1.000 1.000 1.000
+frame4.14 set-color 1.000 1.000 1.000 1.000
+frame4.15 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.15.0 draw batches=1
+frame4.15.0.0 v=4 i=6 p=4.000 c=16.000 t=4.000 depthWrite=false
+frame4.16 set-color 1.000 1.000 1.000 1.000
+frame4.17 set-color 1.000 1.000 1.000 1.000
+frame4.18 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.18.0 draw batches=1
+frame4.18.0.0 v=4 i=6 p=1.100 c=16.000 t=4.000 depthWrite=false
+frame4.19 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.19.0 draw batches=1
+frame4.19.0.0 v=4 i=6 p=1.100 c=16.000 t=4.000 depthWrite=false
+frame4.20 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.20.0 draw batches=1
+frame4.20.0.0 v=4 i=6 p=1.600 c=16.000 t=4.000 depthWrite=false
+frame4.21 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.21.0 draw batches=1
+frame4.21.0.0 v=4 i=6 p=1.600 c=16.000 t=4.000 depthWrite=false
+frame4.22 set-color 0.000 0.000 0.000 1.000
+frame4.23 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.23.0 draw batches=1
+frame4.23.0.0 v=4 i=6 p=0.992 c=4.000 t=4.500 depthWrite=false
+frame4.24 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.24.0 draw batches=1
+frame4.24.0.0 v=4 i=6 p=1.192 c=4.000 t=2.000 depthWrite=false
+frame4.25 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.25.0 draw batches=1
+frame4.25.0.0 v=4 i=6 p=1.392 c=4.000 t=2.500 depthWrite=false
+frame4.26 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.26.0 draw batches=1
+frame4.26.0.0 v=4 i=6 p=1.592 c=4.000 t=3.750 depthWrite=false
+frame4.27 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.27.0 draw batches=1
+frame4.27.0.0 v=4 i=6 p=1.792 c=4.000 t=4.000 depthWrite=false
+frame4.28 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.28.0 draw batches=1
+frame4.28.0.0 v=4 i=6 p=1.992 c=4.000 t=5.250 depthWrite=false
+frame4.29 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.29.0 draw batches=1
+frame4.29.0.0 v=4 i=6 p=2.192 c=4.000 t=3.000 depthWrite=false
+frame4.30 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.30.0 draw batches=1
+frame4.30.0.0 v=4 i=6 p=2.392 c=4.000 t=3.500 depthWrite=false
+frame4.31 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.31.0 draw batches=1
+frame4.31.0.0 v=4 i=6 p=2.592 c=4.000 t=3.250 depthWrite=false
+frame4.32 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.32.0 draw batches=1
+frame4.32.0.0 v=4 i=6 p=2.792 c=4.000 t=5.250 depthWrite=false
+frame4.33 set-color 1.000 1.000 1.000 1.000
+frame4.34 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.34.0 draw batches=1
+frame4.34.0.0 v=4 i=6 p=1.000 c=16.000 t=4.500 depthWrite=false
+frame4.35 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.35.0 draw batches=1
+frame4.35.0.0 v=4 i=6 p=1.200 c=16.000 t=2.000 depthWrite=false
+frame4.36 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.36.0 draw batches=1
+frame4.36.0.0 v=4 i=6 p=1.400 c=16.000 t=2.500 depthWrite=false
+frame4.37 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.37.0 draw batches=1
+frame4.37.0.0 v=4 i=6 p=1.600 c=16.000 t=3.750 depthWrite=false
+frame4.38 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.38.0 draw batches=1
+frame4.38.0.0 v=4 i=6 p=1.800 c=16.000 t=4.000 depthWrite=false
+frame4.39 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.39.0 draw batches=1
+frame4.39.0.0 v=4 i=6 p=2.000 c=16.000 t=5.250 depthWrite=false
+frame4.40 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.40.0 draw batches=1
+frame4.40.0.0 v=4 i=6 p=2.200 c=16.000 t=3.000 depthWrite=false
+frame4.41 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.41.0 draw batches=1
+frame4.41.0.0 v=4 i=6 p=2.400 c=16.000 t=3.500 depthWrite=false
+frame4.42 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.42.0 draw batches=1
+frame4.42.0.0 v=4 i=6 p=2.600 c=16.000 t=3.250 depthWrite=false
+frame4.43 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.43.0 draw batches=1
+frame4.43.0.0 v=4 i=6 p=2.800 c=16.000 t=5.250 depthWrite=false
+frame4.44 set-color 1.000 1.000 1.000 1.000
+frame4.45 set-color 1.000 1.000 1.000 1.000
+frame4.46 set-color 1.000 1.000 1.000 1.000
+frame4.47 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.47.0 draw batches=1
+frame4.47.0.0 v=4 i=6 p=4.100 c=16.000 t=4.000 depthWrite=false
+frame4.48 set-color 1.000 1.000 1.000 1.000
+frame4.49 set-color 0.500 0.500 0.500 0.330
+frame4.50 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.50.0 draw batches=1
+frame4.50.0.0 v=4 i=6 p=4.817 c=7.294 t=0.000 depthWrite=false
+frame4.51 set-color 1.000 1.000 1.000 1.000
+frame4.52 set-color 0.000 0.000 0.000 1.000
+frame4.53 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.53.0 draw batches=1
+frame4.53.0.0 v=4 i=6 p=4.908 c=4.000 t=1.000 depthWrite=false
+frame4.54 set-color 1.000 1.000 1.000 1.000
+frame4.55 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.55.0 draw batches=1
+frame4.55.0.0 v=4 i=6 p=4.917 c=16.000 t=1.000 depthWrite=false
+frame4.56 set-color 1.000 1.000 1.000 1.000
+frame4.57 set-color 0.000 0.000 1.000 0.330
+frame4.58 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.58.0 draw batches=1
+frame4.58.0.0 v=4 i=6 p=4.317 c=5.318 t=0.000 depthWrite=false
+frame4.59 set-color 1.000 1.000 1.000 1.000
+frame4.60 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.60.0 draw batches=1
+frame4.60.0.0 v=4 i=6 p=4.317 c=16.000 t=4.000 depthWrite=false
+frame4.61 set-color 0.000 0.000 0.000 1.000
+frame4.62 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.62.0 draw batches=1
+frame4.62.0.0 v=4 i=6 p=4.408 c=4.000 t=1.000 depthWrite=false
+frame4.63 set-color 1.000 1.000 1.000 1.000
+frame4.64 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.64.0 draw batches=1
+frame4.64.0.0 v=4 i=6 p=4.417 c=16.000 t=1.000 depthWrite=false
+frame4.65 set-color 1.000 1.000 1.000 1.000
+frame4.66 set-color 0.000 0.000 0.000 1.000
+frame4.67 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.67.0 draw batches=1
+frame4.67.0.0 v=4 i=6 p=3.708 c=4.000 t=1.500 depthWrite=false
+frame4.68 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.68.0 draw batches=1
+frame4.68.0.0 v=4 i=6 p=3.908 c=4.000 t=1.000 depthWrite=false
+frame4.69 set-color 1.000 1.000 1.000 1.000
+frame4.70 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.70.0 draw batches=1
+frame4.70.0.0 v=4 i=6 p=3.717 c=16.000 t=1.500 depthWrite=false
+frame4.71 view 0.000 0.000 640.000 480.000 clear=null ops=1
+frame4.71.0 draw batches=1
+frame4.71.0.0 v=4 i=6 p=3.917 c=16.000 t=1.000 depthWrite=false
+frame4.72 set-color 1.000 1.000 1.000 1.000
+frame4.73 set-color 1.000 1.000 1.000 1.000
+final model 1 models/powerups/armor/armor_yel.md3 model
+final model 2 models/weapons2/shells/m_shell.md3 model
+final model 3 models/weapons2/shells/s_shell.md3 model
+final model 4 models/gibs/abdomen.md3 model
+final model 5 models/gibs/arm.md3 model
+final model 6 models/gibs/chest.md3 model
+final model 7 models/gibs/fist.md3 model
+final model 8 models/gibs/foot.md3 model
+final model 9 models/gibs/forearm.md3 model
+final model 10 models/gibs/intestine.md3 model
+final model 11 models/gibs/leg.md3 model
+final model 12 models/gibs/skull.md3 model
+final model 13 models/gibs/brain.md3 model
+final model 14 models/weaphits/bullet.md3 model
+final model 15 models/weaphits/ring02.md3 model
+final model 16 models/weaphits/boom01.md3 model
+final model 17 models/misc/telep.md3 model
+final model 18 maps/q3dm1.bsp inline
+final model 19 models/players/sarge/lower.md3 model
+final model 20 models/players/sarge/upper.md3 model
+final model 21 models/players/sarge/head.md3 model
+final model 22 models/weapons2/machinegun/machinegun.md3 model
+final model 23 models/powerups/ammo/machinegunam.md3 model
+final model 24 models/weapons2/machinegun/machinegun_flash.md3 model
+final model 25 models/weapons2/machinegun/machinegun_barrel.md3 model
+final model 26 models/weapons2/machinegun/machinegun_hand.md3 model
+final model 27 models/weapons2/gauntlet/gauntlet.md3 model
+final model 28 models/weapons2/gauntlet/gauntlet_flash.md3 model
+final model 29 models/weapons2/gauntlet/gauntlet_barrel.md3 model
+final model 30 models/weapons2/gauntlet/gauntlet_hand.md3 model
+final skin 1 models/players/sarge/lower_default.skin 1
+final skin 2 models/players/sarge/upper_default.skin 2
+final skin 3 models/players/sarge/head_default.skin 2

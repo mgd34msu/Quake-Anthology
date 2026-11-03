@@ -15,9 +15,10 @@ int64_t qa_ipx_game_transport_max_datagram_bytes(qa_ipx_game_transport *t) {
 bool qa_ipx_game_transport_send(qa_ipx_game_transport *t, const qa_net_address *to, const uint8_t *payload, size_t length) {
   if (!t->is_quake1) return t->socket.send(t->socket.ctx, to, payload, length);
   uint8_t *packet = malloc(length + 4);
+  if (!packet) qa_range_error("Out of memory");
   uint32_t seq = t->sequence++;
   packet[0] = (uint8_t)seq; packet[1] = (uint8_t)(seq >> 8); packet[2] = (uint8_t)(seq >> 16); packet[3] = (uint8_t)(seq >> 24);
-  memcpy(packet + 4, payload, length);
+  if (length) memcpy(packet + 4, payload, length);
   bool result = t->socket.send(t->socket.ctx, to, packet, length + 4);
   free(packet); return result;
 }
@@ -53,7 +54,8 @@ qa_datagram_transport qa_ipx_game_transport_as_transport(qa_ipx_game_transport *
   v.subscribe = vt_sub; v.unsubscribe = vt_unsub; v.close = vt_close; return v;
 }
 void qa_bind_ipx_transport(const qa_ipx_host *host, const char *game, double port, qa_ipx_game_transport *out) {
-  (void)qa_net_port_number((int64_t)port, true);
+  /* portNumber(port, true): Number.isInteger before the range. */
+  if (!(port >= 0 && port <= 65535) || port != (double)(int64_t)port) qa_range_error("Invalid network port");
   double packet_type = strcmp(game, "quake1") == 0 ? 4 : 0;
   if (host->is_dosbox) {
     qa_dosbox_ipx_socket *socket = qa_dosbox_ipx_network_bind(host->network, port, packet_type);
@@ -64,6 +66,6 @@ void qa_bind_ipx_transport(const qa_ipx_host *host, const char *game, double por
     qa_unsupported_transport_error("ipx-native", host->capability.reason);
   qa_datagram_transport inner;
   if (!host->capability.bind(host->capability.ctx, port, packet_type, &inner))
-    qa_range_error("IPX socket is already bound or reserved");
+    qa_range_error("Out of memory"); /* bind raises its own error; 0 is allocation failure */
   qa_ipx_game_transport_init(out, inner, game);
 }

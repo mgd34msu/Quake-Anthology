@@ -81,27 +81,67 @@ static qa_q1_id1_program_binding QW_BINDING = {
   .statements = QW_STMTS, .statement_count = sizeof QW_STMTS / sizeof *QW_STMTS,
   .attacks = &QW_ATTACKS, .environment = QW_ENV, .environment_count = sizeof QW_ENV / sizeof *QW_ENV};
 
-/* TS derivedBindings WeakMap. */
+/* TS derivedBindings WeakMap<QcProgram, ...>. Several C mirrors of one TS
+ * QcProgram exist (combat validation, the source host, items, protection), and
+ * each borrows the compat program's initial_globals, so that pointer is the
+ * program's identity; a mirror without it is keyed by its own address. The
+ * digest and table sizes are compared too, so storage reused by a later
+ * program cannot return a stale binding. Unbounded like the WeakMap; entries
+ * live for the process (they were never released before either). */
 typedef struct cache_entry {
-  const qa_q1qc_program *program;
+  const void *identity;
+  char *digest;
+  size_t statement_count, function_count, global_count;
   qa_q1_id1_program_binding *binding;
 } cache_entry;
-static cache_entry CACHE[64];
-static size_t CACHE_COUNT;
+static cache_entry *CACHE;
+static size_t CACHE_COUNT, CACHE_CAPACITY;
+static const void *program_identity(const qa_q1qc_program *program) {
+  return program->initial_globals != NULL ? (const void *)program->initial_globals : (const void *)program;
+}
+static bool cache_matches(const cache_entry *entry, const qa_q1qc_program *program) {
+  if (entry->identity != program_identity(program) || entry->statement_count != program->statement_count ||
+      entry->function_count != program->function_count || entry->global_count != program->global_count)
+    return false;
+  if (entry->digest == NULL || program->digest == NULL) return entry->digest == NULL && program->digest == NULL;
+  return strcmp(entry->digest, program->digest) == 0;
+}
+static char *copy_text(const char *text) {
+  if (text == NULL) return NULL;
+  size_t length = strlen(text);
+  char *copy = malloc(length + 1);
+  if (copy == NULL) qa_range_error("out of memory");
+  memcpy(copy, text, length + 1);
+  return copy;
+}
 static qa_q1_id1_program_binding *cache_get(const qa_q1qc_program *program) {
   for (size_t i = 0; i < CACHE_COUNT; i++)
-    if (CACHE[i].program == program) return CACHE[i].binding;
+    if (cache_matches(&CACHE[i], program)) return CACHE[i].binding;
   return NULL;
 }
 static void cache_put(const qa_q1qc_program *program, qa_q1_id1_program_binding *binding) {
   for (size_t i = 0; i < CACHE_COUNT; i++) {
-    if (CACHE[i].program == program) { CACHE[i].binding = binding; return; }
+    if (cache_matches(&CACHE[i], program)) { CACHE[i].binding = binding; return; }
   }
-  if (CACHE_COUNT < 64) {
-    CACHE[CACHE_COUNT].program = program;
-    CACHE[CACHE_COUNT].binding = binding;
-    CACHE_COUNT++;
+  /* Storage reused by another program replaces the stale entry in place. */
+  for (size_t i = 0; i < CACHE_COUNT; i++) {
+    if (CACHE[i].identity == program_identity(program)) {
+      free(CACHE[i].digest);
+      CACHE[i] = (cache_entry){program_identity(program), copy_text(program->digest), program->statement_count,
+                               program->function_count, program->global_count, binding};
+      return;
+    }
   }
+  if (CACHE_COUNT == CACHE_CAPACITY) {
+    size_t capacity = CACHE_CAPACITY == 0 ? 16 : CACHE_CAPACITY * 2;
+    cache_entry *grown = realloc(CACHE, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("out of memory");
+    CACHE = grown;
+    CACHE_CAPACITY = capacity;
+  }
+  CACHE[CACHE_COUNT++] = (cache_entry){program_identity(program), copy_text(program->digest),
+                                       program->statement_count, program->function_count,
+                                       program->global_count, binding};
 }
 static void ensure_pinned_calls(void) {
   if (NQ_BINDING.damage_call == NULL)
@@ -134,8 +174,8 @@ static double armor_mask(const qa_q1qc_program *program, const char *name,
     reject_reason(program, reason);
   }
   double mask = (double)qa_q1qc_initial_float32(program, definition->offset);
-  int64_t bits = (int64_t)mask;
-  if (mask != floor(mask) || mask < 1 || mask > 2147483648.0 || (bits & (bits - 1)) != 0) {
+  /* Converted only once validated integral in 1..2^31 (a NaN cast is undefined). */
+  if (mask != floor(mask) || mask < 1 || mask > 2147483648.0 || (((int64_t)mask) & ((int64_t)mask - 1)) != 0) {
     (void)snprintf(reason, sizeof reason, "armor inventory bit %s", name);
     reject_reason(program, reason);
   }
@@ -147,10 +187,14 @@ static const qa_q1_id1_program_binding *derive_native_binding(
       declared_damage == NULL ? NULL : qa_q1qc_damage_call_layout_create(program, declared_damage);
   qa_q1_id1_program_binding *cached = cache_get(program);
   if (cached != NULL && (declared_damage == NULL ||
-                         qa_q1qc_source_call_equal(cached->damage_call->declaration, declared_damage)))
+                         qa_q1qc_source_call_equal(cached->damage_call->declaration, declared_damage))) {
+    qa_q1qc_damage_call_layout_destroy(declared_call); /* validated only (TS GC) */
     return cached;
-  if (cached != NULL && cached->damage_call->has_declaration)
-    qa_q1qc_program_error(program, "QC program already has a different qualified combat call");
+  }
+  if (cached != NULL && cached->damage_call->has_declaration) {
+    qa_q1qc_damage_call_layout_destroy(declared_call);
+    qa_q1qc_error("progs.dat", "QC program already has a different qualified combat call");
+  }
   qa_q1qc_damage_call_layout *call =
       declared_call != NULL ? declared_call : qa_q1qc_damage_call_layout_create(program, NULL);
   const qa_q1qc_function *damage = qa_q1qc_function_at(program, call->function_index);
@@ -294,8 +338,9 @@ static const qa_q1_id1_program_binding *derive_native_binding(
   memset(binding, 0, sizeof *binding);
   binding->kind = strcmp(program->api_kind, "q1-quakeworld") == 0 ? "quakeworld" : "netquake";
   binding->attribution = "native";
-  binding->digest = program->digest;
-  binding->armor_field = armor_field;
+  /* Owned copies: the cached binding outlives the program mirror it was read from. */
+  binding->digest = copy_text(program->digest);
+  binding->armor_field = copy_text(armor_field);
   binding->armor_masks[0] = masks[0];
   binding->armor_masks[1] = masks[1];
   binding->armor_masks[2] = masks[2];
@@ -324,12 +369,12 @@ const qa_q1_id1_program_binding *qa_q1_id1_program_binding_get(
     qa_q1qc_damage_call_layout *call = qa_q1qc_damage_call_layout_create(program, declared_damage);
     if (call->function_index != pinned->damage_index ||
         !qa_q1qc_damage_roles_equal(call, pinned->damage_call))
-      qa_q1qc_program_error(program, "Pinned QC damage declaration differs from its original ABI");
+      qa_q1qc_error("progs.dat", "Pinned QC damage declaration differs from its original ABI");
     qa_q1_id1_program_binding *cached = cache_get(program);
     const qa_mod_source_call *cached_declaration =
         cached != NULL && cached->damage_call->has_declaration ? cached->damage_call->declaration : NULL;
     if (cached_declaration != NULL && !qa_q1qc_source_call_equal(cached_declaration, declared_damage))
-      qa_q1qc_program_error(program, "QC program already has a different qualified combat call");
+      qa_q1qc_error("progs.dat", "QC program already has a different qualified combat call");
     qa_q1_id1_program_binding *copy = malloc(sizeof *copy);
     if (copy == NULL) qa_range_error("out of memory");
     *copy = *pinned;
@@ -339,7 +384,7 @@ const qa_q1_id1_program_binding *qa_q1_id1_program_binding_get(
   bool program_qw = strcmp(program->api_kind, "q1-quakeworld") == 0;
   bool binding_qw = strcmp(pinned->kind, "quakeworld") == 0;
   if (program_qw != binding_qw)
-    qa_q1qc_program_error(program, "QuakeC source requires a verified classic id1 or native QuakeWorld artifact");
+    qa_q1qc_error("progs.dat", "QuakeC source requires a verified classic id1 or native QuakeWorld artifact");
   qa_q1_id1_program_binding *cached = cache_get(program);
   return cached != NULL ? cached : pinned;
 }

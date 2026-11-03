@@ -6,6 +6,7 @@
 #include "qa/compat/q2/rerelease/public_state.h"
 #include "qa/compat/q2/rerelease/semantics.h"
 #include "qa/compat/q2/rerelease/source_state.h"
+#include "qa/foundation/js.h"
 
 typedef struct bind_ctx bind_ctx_t;
 struct qa_compat_q2_rerelease_combat_bindings {
@@ -149,12 +150,13 @@ static void write_armor(bind_ctx_t *x, qa_armor_state state) {
         regular.item && current.item && strcmp(regular.item, current.item) == 0 &&
         (!item || !current.item || strcmp(item, current.item) != 0)) continue;
     qa_guest_address address = item_address(x, value, item);
-    int32_t points = (regular.kind == QA_REGULAR_ARMOR_Q2 && regular.item && item && strcmp(regular.item, item) == 0)
-                         ? (int32_t)regular.points : 0;
-    if (qa_compat_q2_mem_read_i32(memory, address) != points) qa_compat_q2_mem_write_i32(memory, address, points);
+    double points = (regular.kind == QA_REGULAR_ARMOR_Q2 && regular.item && item && strcmp(regular.item, item) == 0)
+                         ? regular.points : 0;
+    /* readInt32 !== points compares numbers; writeInt32 applies ToInt32. */
+    if ((double)qa_compat_q2_mem_read_i32(memory, address) != points) qa_compat_q2_mem_write_i32(memory, address, qa_js_to_int32(points));
   }
   if (!state.powered.kind || strcmp(state.powered.kind, "none") != 0)
-    qa_compat_q2_mem_write_i32(memory, item_address(x, value, world->armor.cells), (int32_t)state.powered.cells);
+    qa_compat_q2_mem_write_i32(memory, item_address(x, value, world->armor.cells), qa_js_to_int32(state.powered.cells));
   qa_compat_q2_rerelease_source_client_destroy(value);
 }
 static void write_armor_cb(void *v, qa_armor_state state) { write_armor(v, state); }
@@ -234,8 +236,9 @@ bool qa_compat_q2_rerelease_combat_bindings_notarget(qa_compat_q2_rerelease_comb
   if (!world) return false;
   qa_compat_q2_rerelease_source_edict *source = qa_compat_q2_rerelease_source_edict_create(view, module);
   if (!source) qa_range_error("Q2 rerelease combat binding out of memory");
-  uint64_t flags = qa_compat_q2_mem_read_u64(qa_compat_q2_rerelease_guest_module_get_memory(module),
-                                             qa_compat_q2_rerelease_source_edict_at(source, "flags"));
+  const qa_compat_q2_memory * m = qa_compat_q2_rerelease_guest_module_get_memory(module);
+  qa_guest_address a = qa_compat_q2_rerelease_source_edict_at(source, "flags");
+  uint64_t flags = qa_compat_q2_mem_read_u64(m, a);
   qa_compat_q2_rerelease_source_edict_destroy(source);
   *out = (flags & (uint64_t)world->flags.notarget) != 0;
   return true;

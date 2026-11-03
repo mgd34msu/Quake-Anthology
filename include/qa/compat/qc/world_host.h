@@ -17,6 +17,9 @@ typedef struct qa_compat_qc_world_host_options {
   bool (*foreign_actor)(void *ctx, int64_t slot, qa_owned_actor *out); /* nullable */
   int64_t (*foreign_reference)(void *ctx, qa_actor_id actor);
   void (*admit)(void *ctx, qa_owned_actor actor, int64_t slot); /* nullable */
+  /* nullable: replaces world.actor(slot) for hosts whose edicts project
+   * actors the source slots do not own (TS QcModProvider world pick). */
+  qa_owned_actor (*actor_at)(void *ctx, int64_t slot);
 } qa_compat_qc_world_host_options;
 typedef struct qa_compat_qc_world_host {
   qa_compat_qc_world_host_options options;
@@ -31,6 +34,8 @@ bool qa_compat_qc_world_host_init(qa_compat_qc_world_host *h, qa_compat_qc_world
 void qa_compat_qc_world_host_destroy(qa_compat_qc_world_host *h);
 bool qa_compat_qc_world_host_is_free_entity(qa_compat_qc_world_host *h, int64_t slot);
 int64_t qa_compat_qc_world_host_reference(qa_compat_qc_world_host *h, qa_actor_id actor);
+/* TS prepareEntities: findradius walks QC rows, so foreign actors need their borrowed rows before it runs. */
+void qa_compat_qc_world_host_prepare_entities(qa_compat_qc_world_host *h);
 qa_owned_actor qa_compat_qc_world_host_actor(qa_compat_qc_world_host *h, int64_t slot);
 void qa_compat_qc_world_host_link(qa_compat_qc_world_host *h, int64_t slot);
 #endif

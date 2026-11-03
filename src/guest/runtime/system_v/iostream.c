@@ -18,6 +18,11 @@ static char *xstrdup(const char *text) {
   strcpy(copy, text);
   return copy;
 }
+/* TS String.prototype.endsWith: a name shorter than the suffix does not match. */
+static bool name_ends_with(const char *name, const char *suffix) {
+  size_t n = strlen(name), m = strlen(suffix);
+  return n >= m && strcmp(name + n - m, suffix) == 0;
+}
 static void plain_error(const char *message) { qa_range_error("%s", message); }
 static void type_error(const char *message) { qa_range_error("%s", message); }
 static qa_guest_core_address slot(qa_system_v_iostreams *s, qa_guest_core_address a, int64_t o) {
@@ -170,20 +175,20 @@ static void initialize(qa_system_v_iostreams *streams) {
     for (size_t i = 0; i < streams->stream_count; i++) {
       const qa_system_v_standard_stream *stream = &streams->streams[i];
       if (stream->wide != wide) continue;
-      bool is_cout = strcmp(stream->name + strlen(stream->name) - 4, "cout") == 0;
+      bool is_cout = name_ends_with(stream->name, "cout");
       construct(streams, stream,
                 stream->input ? input_buffer : is_cout ? output_buffer : error_buffer, locale);
     }
     const qa_system_v_standard_stream *output = NULL;
     for (size_t i = 0; i < streams->stream_count; i++)
       if (streams->streams[i].wide == wide &&
-          strcmp(streams->streams[i].name + strlen(streams->streams[i].name) - 4, "cout") == 0)
+          name_ends_with(streams->streams[i].name, "cout"))
         output = &streams->streams[i];
     if (output == NULL) plain_error("Missing standard output stream");
     for (size_t i = 0; i < streams->stream_count; i++) {
       const qa_system_v_standard_stream *stream = &streams->streams[i];
       if (stream->wide != wide) continue;
-      bool is_cerr = strcmp(stream->name + strlen(stream->name) - 4, "cerr") == 0;
+      bool is_cerr = name_ends_with(stream->name, "cerr");
       if (!stream->input && !is_cerr) continue;
       qa_system_v_ios_layout layout = qa_system_v_ios_layout_for(m->pointer_bytes, wide);
       write_ptr(streams, slot(streams, stream->ios, layout.tie), true, output->address);
@@ -232,24 +237,32 @@ static void construct(qa_system_v_iostreams *streams, const qa_system_v_standard
     write_ptr(streams, slot(streams, table, 2 * p), true, type);
     char *unsupported_name = xmalloc(strlen(name) + 32);
     (void)snprintf(unsupported_name, strlen(name) + 32, "__guest_%s_destructor", name);
-    write_ptr(streams, slot(streams, table, 3 * p), true,
-              qa_cxx_abi_unsupported(abi, unsupported_name));
+    qa_system_v_iostreams * s6 = streams;
+    qa_guest_core_address a5 = slot(streams, table, 3 * p);
+    qa_guest_core_address v5 = qa_cxx_abi_unsupported(abi, unsupported_name);
+    write_ptr(s6, a5, true, v5);
     char *deleting_name = xmalloc(strlen(name) + 40);
     (void)snprintf(deleting_name, strlen(name) + 40, "__guest_%s_deleting_destructor", name);
-    write_ptr(streams, slot(streams, table, 4 * p), true,
-              qa_cxx_abi_unsupported(abi, deleting_name));
+    qa_system_v_iostreams * s5 = streams;
+    qa_guest_core_address a4 = slot(streams, table, 4 * p);
+    qa_guest_core_address v4 = qa_cxx_abi_unsupported(abi, deleting_name);
+    write_ptr(s5, a4, true, v4);
     qa_write_unsigned(m, slot(streams, table, 5 * p), p, (uint64_t)(-(int64_t)prefix));
     qa_write_unsigned(m, slot(streams, table, 6 * p), p, (uint64_t)(-(int64_t)prefix));
     write_ptr(streams, slot(streams, table, 7 * p), true, type);
     char *virtual_name = xmalloc(strlen(name) + 40);
     (void)snprintf(virtual_name, strlen(name) + 40, "__guest_%s_virtual_destructor", name);
-    write_ptr(streams, slot(streams, table, 8 * p), true,
-              qa_cxx_abi_unsupported(abi, virtual_name));
+    qa_system_v_iostreams * s4 = streams;
+    qa_guest_core_address a3 = slot(streams, table, 8 * p);
+    qa_guest_core_address v3 = qa_cxx_abi_unsupported(abi, virtual_name);
+    write_ptr(s4, a3, true, v3);
     char *virtual_deleting = xmalloc(strlen(name) + 48);
     (void)snprintf(virtual_deleting, strlen(name) + 48,
                    "__guest_%s_virtual_deleting_destructor", name);
-    write_ptr(streams, slot(streams, table, 9 * p), true,
-              qa_cxx_abi_unsupported(abi, virtual_deleting));
+    qa_system_v_iostreams * s3 = streams;
+    qa_guest_core_address a2 = slot(streams, table, 9 * p);
+    qa_guest_core_address v2 = qa_cxx_abi_unsupported(abi, virtual_deleting);
+    write_ptr(s3, a2, true, v2);
   }
   free(table_name);
   write_ptr(streams, stream->address, true, slot(streams, table, 3 * p));
@@ -259,8 +272,10 @@ static void construct(qa_system_v_iostreams *streams, const qa_system_v_standard
   qa_gmem_write_i32(m, slot(streams, ios, layout.word_size), 8);
   write_ptr(streams, slot(streams, ios, layout.words), true,
             slot(streams, ios, layout.local_words));
-  write_ptr(streams, slot(streams, ios, layout.locale), true,
-            qa_system_v_classic_locale_retain(locale));
+  qa_system_v_iostreams * s2 = streams;
+  qa_guest_core_address a = slot(streams, ios, layout.locale);
+  qa_guest_core_address v = qa_system_v_classic_locale_retain(locale);
+  write_ptr(s2, a, true, v);
   write_ptr(streams, slot(streams, ios, layout.buffer), true, buffer);
   int index = stream->wide ? 1 : 0;
   write_ptr(streams, slot(streams, ios, layout.ctype), true, locale->ctype[index]);
@@ -463,8 +478,10 @@ static qa_guest_core_address make_buffer(qa_system_v_iostreams *streams, qa_gues
   }
   free(table_name);
   write_ptr(streams, address, true, slot(streams, table, 2 * p));
-  write_ptr(streams, slot(streams, address, 7 * p), true,
-            qa_system_v_classic_locale_retain(locale));
+  qa_system_v_iostreams * s2 = streams;
+  qa_guest_core_address a = slot(streams, address, 7 * p);
+  qa_guest_core_address v = qa_system_v_classic_locale_retain(locale);
+  write_ptr(s2, a, true, v);
   write_ptr(streams, slot(streams, address, 8 * p), true, file);
   qa_gmem_write_i32(m, slot(streams, address, 9 * p), -1);
   return address;

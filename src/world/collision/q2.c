@@ -1,5 +1,6 @@
 /* Port of src/world/collision/q2.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/q2.h"
+#include "qa/network/common/js_number.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/stamp.h"
 #include "qa/foundation/support.h"
@@ -7,6 +8,12 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+/* StampSet.mark(index) on a Uint32Array: a negative, fractional or NaN index
+ * stores nothing and reports a first mark; a C cast of it is undefined. */
+static bool mark_number(qa_stamp_set*set,double index){
+  return !(index>=0&&index==floor(index)&&index<9007199254740992.0)||qa_stamp_set_mark(set,(size_t)index);
+}
 #define EPS 0.03125
 static const qa_bsp_plane NO_PLANE = {{{0,0,0},0},0,0};
 static qa_stamp_set *ms(qa_q2_collision*c){return (qa_stamp_set*)c->media_stamps;}
@@ -41,14 +48,14 @@ static double expandp(qa_bsp_plane plane,qa_trace_shape shape,N*n){
     qa_vec3 center={NMUL(n,NADD(n,b.min.x,b.max.x),0.5),NMUL(n,NADD(n,b.min.y,b.max.y),0.5),NMUL(n,NADD(n,b.min.z,b.max.z),0.5)};
     double hh=NMUL(n,NSUB(n,b.max.z,b.min.z),0.5);
     double rx=NMUL(n,NSUB(n,b.max.x,b.min.x),0.5);
-    double radius=rx<hh?rx:hh;
+    double radius=qa_js_min(rx,hh); /* Math.min: NaN propagates */
     return NSUB(n,NADD(n,radius,NMUL(n,fabs(normal.z),NSUB(n,hh,radius))),dotn(center,normal,n));
   }
   qa_vec3 corner={normal.x<0?b.max.x:b.min.x,normal.y<0?b.max.y:b.min.y,normal.z<0?b.max.z:b.min.z};
   return -dotn(corner,normal,n);
 }
 static const qa_q2_world_model *model_at(const qa_q2_world_geometry*g,double i){
-  if(i<0||(size_t)i>=g->model_count)qa_range_error("Q2 collision index %g",i);
+  if(!(i>=0&&i<(double)g->model_count&&i==floor(i)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(i));
   return &g->models[(size_t)i];
 }
 static void flood_areas(qa_q2_collision*c){
@@ -64,13 +71,13 @@ static void flood_areas(qa_q2_collision*c){
     while(sp>0){
       double cur=stack[--sp];
       size_t ci=(size_t)cur;
-      if(ci>=g->area_count)qa_range_error("Q2 collision index %g",cur);
+      if(ci>=g->area_count)qa_range_error("Q2 collision index %s",QA_JS_NUMBER(cur));
       if(c->flood[ci]!=0)continue;
       c->flood[ci]=floodn;
       qa_index_range portals=g->areas[ci].portals;
       for(double i=0;i<portals.count;i++){
         double pi=portals.first+i;
-        if(pi<0||(size_t)pi>=g->area_portal_count)qa_range_error("Q2 collision index %g",pi);
+        if(!(pi>=0&&pi<(double)g->area_portal_count&&pi==floor(pi)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(pi));
         const qa_q2_area_portal*portal=&g->area_portals[(size_t)pi];
         int open=0;
         for(size_t k=0;k<c->open_count;k++)if(c->open_portals[k]==portal->portal)open=1;
@@ -102,9 +109,9 @@ static double point_leaf(qa_q2_collision*c,qa_vec3 point,double headnode,N*n){
   const qa_q2_world_geometry*g=c->geometry;
   qa_bsp_child child; child.is_node=headnode>=0; child.index=headnode<0?-1-headnode:headnode;
   while(child.is_node){
-    if(child.index<0||(size_t)child.index>=g->node_count)qa_range_error("Q2 collision index %g",child.index);
+    if(!(child.index>=0&&child.index<(double)g->node_count&&child.index==floor(child.index)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(child.index));
     const qa_bsp_node*node=&g->nodes[(size_t)child.index];
-    if(node->plane<0||(size_t)node->plane>=g->plane_count)qa_range_error("Q2 collision index %g",node->plane);
+    if(!(node->plane>=0&&node->plane<(double)g->plane_count&&node->plane==floor(node->plane)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(node->plane));
     qa_bsp_plane plane=g->planes[(size_t)node->plane];
     double d=n==NULL?(point.x*plane.plane.normal.x+point.y*plane.plane.normal.y+point.z*plane.plane.normal.z-plane.plane.distance):plane_dist(point,plane,n);
     child=node->children[d<0?1:0];
@@ -113,11 +120,11 @@ static double point_leaf(qa_q2_collision*c,qa_vec3 point,double headnode,N*n){
 }
 double qa_q2_collision_point_leaf(qa_q2_collision*c,qa_vec3 p,double model){return point_leaf(c,p,model_at(c->geometry,model)->headnode,NULL);}
 double qa_q2_collision_leaf_cluster(qa_q2_collision*c,double i){
-  if(i<0||(size_t)i>=c->geometry->leaf_count)qa_range_error("Q2 collision index %g",i);
+  if(!(i>=0&&i<(double)c->geometry->leaf_count&&i==floor(i)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(i));
   return c->geometry->leaves[(size_t)i].cluster;
 }
 double qa_q2_collision_leaf_area(qa_q2_collision*c,double i){
-  if(i<0||(size_t)i>=c->geometry->leaf_count)qa_range_error("Q2 collision index %g",i);
+  if(!(i>=0&&i<(double)c->geometry->leaf_count&&i==floor(i)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(i));
   return c->geometry->leaves[(size_t)i].area;
 }
 qa_point_contents_result qa_q2_collision_point_contents(qa_q2_collision*c,qa_point_contents_query query){
@@ -129,7 +136,7 @@ qa_point_contents_result qa_q2_collision_point_contents(qa_q2_collision*c,qa_poi
     point=rotatep(subn(point,query.target.origin,n),ax,n);
   }
   double li=point_leaf(c,point,model_at(c->geometry,model)->headnode,n);
-  if(li<0||(size_t)li>=c->geometry->leaf_count)qa_range_error("Q2 collision index %g",li);
+  if(!(li>=0&&li<(double)c->geometry->leaf_count&&li==floor(li)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(li));
   const qa_q2_leaf*leaf=&c->geometry->leaves[(size_t)li];
   qa_point_contents_result r={"q2",0,leaf->contents,leaf->merged_contents}; return r;
 }
@@ -149,7 +156,7 @@ qa_leaf_query_result qa_q2_collision_box_leaves(qa_q2_collision*c,qa_bounds boun
       else{if(n==cap){cap*=2;leaves=realloc(leaves,cap*sizeof*leaves);if(!leaves)abort();}leaves[n++]=child.index;}
       continue;
     }
-    if(child.index<0||(size_t)child.index>=g->node_count)qa_range_error("Q2 collision index %g",child.index);
+    if(!(child.index>=0&&child.index<(double)g->node_count&&child.index==floor(child.index)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(child.index));
     const qa_bsp_node*node=&g->nodes[(size_t)child.index];
     qa_bsp_plane plane=g->planes[(size_t)node->plane]; qa_vec3 normal=plane.plane.normal;
     double far=(normal.x<0?bounds.min.x:bounds.max.x)*normal.x+(normal.y<0?bounds.min.y:bounds.max.y)*normal.y+(normal.z<0?bounds.min.z:bounds.max.z)*normal.z;
@@ -181,8 +188,8 @@ qa_trace_media qa_q2_collision_trace_media(qa_q2_collision*c,qa_trace_query quer
   qa_vec3 end=has_rot?rotatep(subn(query.end,query.target.origin,n),ax,n):query.end;
   qa_bounds sb=shape_bounds(query.shape);
   qa_vec3 reached=lerpn(start,end,fraction,n);
-  qa_bounds env={{fmin(start.x,reached.x)+sb.min.x-1,fmin(start.y,reached.y)+sb.min.y-1,fmin(start.z,reached.z)+sb.min.z-1},
-    {fmax(start.x,reached.x)+sb.max.x+1,fmax(start.y,reached.y)+sb.max.y+1,fmax(start.z,reached.z)+sb.max.z+1}};
+  qa_bounds env={{qa_js_min(start.x,reached.x)+sb.min.x-1,qa_js_min(start.y,reached.y)+sb.min.y-1,qa_js_min(start.z,reached.z)+sb.min.z-1},
+    {qa_js_max(start.x,reached.x)+sb.max.x+1,qa_js_max(start.y,reached.y)+sb.max.y+1,qa_js_max(start.z,reached.z)+sb.max.z+1}};
   qa_leaf_query_result leaves=qa_q2_collision_box_leaves(c,env,(double)g->leaf_count,model_at(g,model)->headnode);
   qa_stamp_set*seen=ms(c); qa_stamp_set_begin(seen);
   size_t cap=16,bn=0; qa_medium_brush*brushes=malloc(cap*sizeof*brushes); if(!brushes)abort();
@@ -192,9 +199,9 @@ qa_trace_media qa_q2_collision_trace_media(qa_q2_collision*c,qa_trace_query quer
     const qa_q2_leaf*leaf=&g->leaves[(size_t)leaf_index];
     for(double i=0;i<leaf->brushes.count;i++){
       double fi=leaf->brushes.first+i;
-      if(fi<0||(size_t)fi>=g->leaf_brushes.count)qa_range_error("Q2 collision index %g",fi);
+      if(!(fi>=0&&fi<(double)g->leaf_brushes.count&&fi==floor(fi)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(fi));
       double bi=g->leaf_brushes.values[(size_t)fi];
-      if(!qa_stamp_set_mark(seen,(size_t)bi))continue;
+      if(!mark_number(seen,bi))continue;
       const qa_q2_brush*brush=&g->brushes[(size_t)bi];
       if(qa_convert_contents(brush->contents,"q2","q1")==-1)continue;
       size_t sc=(size_t)brush->sides.count;
@@ -218,17 +225,17 @@ typedef struct{
   qa_q2_collision*c; N*n; qa_trace_query q; qa_vec3 start,end,extents;
   int stationary,merged; int32_t mask;
   double fraction,contents; int start_solid,all_solid;
-  qa_bsp_plane plane; const qa_q2_surface_info*surface;
+  qa_bsp_plane plane; uintptr_t plane_identity; const qa_q2_surface_info*surface;
   int has_secondary; qa_bsp_plane secondary_plane; const qa_q2_surface_info*secondary_surface;
 } Work;
 static void brush_trace(Work*w,double index){
   const qa_q2_world_geometry*g=w->c->geometry; N*n=w->n;
-  if(!qa_stamp_set_mark(ts(w->c),(size_t)index))return;
-  if(index<0||(size_t)index>=g->brush_count)qa_range_error("Q2 collision index %g",index);
+  if(!mark_number(ts(w->c),index))return;
+  if(!(index>=0&&index<(double)g->brush_count&&index==floor(index)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(index));
   const qa_q2_brush*brush=&g->brushes[(size_t)index];
-  if((((int32_t)brush->contents)&w->mask)==0||brush->sides.count==0)return;
+  if(((qa_js_to_int32(brush->contents))&w->mask)==0||brush->sides.count==0)return;
   double enter=-1,enter2=-1,leave=1; int start_out=0,get_out=0,have_lead=0,have_second=0;
-  qa_bsp_plane lead_plane=NO_PLANE,second_plane=NO_PLANE; const qa_q2_surface_info*lead_surf=NULL;
+  qa_bsp_plane lead_plane=NO_PLANE,second_plane=NO_PLANE; const qa_q2_surface_info*lead_surf=NULL; uintptr_t lead_identity=0;
   for(double i=0;i<brush->sides.count;i++){
     double si=brush->sides.first+i;
     const qa_q2_brush_side*side=&g->brush_sides[(size_t)si];
@@ -242,11 +249,13 @@ static void brush_trace(Work*w,double index){
     if(d1>0&&(d2>=EPS||d2>=d1))return;
     if(d1<=0&&d2<=0)continue;
     if(d1>d2){
-      double f=NDIV(n,NSUB(n,d1,EPS),NSUB(n,d1,d2)); if(f<0)f=0;
-      if(f>enter){enter=f;lead_plane=plane;lead_surf=side->texture_info<0?NULL:((size_t)side->texture_info<g->texture_info_count?&g->texture_info[(size_t)side->texture_info].surface:(qa_range_error("Q2 collision index %g",side->texture_info),(const qa_q2_surface_info*)NULL));have_lead=1;}
+      /* cmodel.c compares the raw fraction and clamps once a side is chosen; q2repro clamps first. */
+      double raw=NDIV(n,NSUB(n,d1,EPS),NSUB(n,d1,d2));
+      double f=w->merged?qa_js_max(0,raw):raw;
+      if(f>enter){enter=f;lead_plane=plane;lead_identity=(uintptr_t)&g->planes[(size_t)side->plane];lead_surf=side->texture_info<0?NULL:((size_t)side->texture_info<g->texture_info_count?&g->texture_info[(size_t)side->texture_info].surface:(qa_range_error("Q2 collision index %s",QA_JS_NUMBER(side->texture_info)),(const qa_q2_surface_info*)NULL));have_lead=1;}
       else if(f>enter2){enter2=f;second_plane=plane;have_second=1;}
     }else{
-      double f=NDIV(n,NADD(n,d1,EPS),NSUB(n,d1,d2)); if(f>1)f=1; if(f<leave)leave=f;
+      leave=qa_js_min(leave,qa_js_min(1,NDIV(n,NADD(n,d1,EPS),NSUB(n,d1,d2))));
     }
   }
   if(!start_out){
@@ -258,16 +267,16 @@ static void brush_trace(Work*w,double index){
     return;
   }
   if(enter<leave&&enter>-1&&enter<w->fraction&&have_lead){
-    w->fraction=enter;w->plane=lead_plane;w->surface=lead_surf;w->contents=brush->contents;
+    w->fraction=qa_js_max(0,enter);w->plane=lead_plane;w->plane_identity=lead_identity;w->surface=lead_surf;w->contents=brush->contents;
     if(have_second){w->has_secondary=1;w->secondary_plane=second_plane;w->secondary_surface=lead_surf;}
   }
 }
 static void leaf_trace(Work*w,double index){
   const qa_q2_world_geometry*g=w->c->geometry;
-  if(index<0||(size_t)index>=g->leaf_count)qa_range_error("Q2 collision index %g",index);
+  if(!(index>=0&&index<(double)g->leaf_count&&index==floor(index)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(index));
   const qa_q2_leaf*leaf=&g->leaves[(size_t)index];
   double lc=w->merged?leaf->merged_contents:leaf->contents;
-  if((((int32_t)lc)&w->mask)==0)return;
+  if(((qa_js_to_int32(lc))&w->mask)==0)return;
   for(double i=0;i<leaf->brushes.count;i++){
     double fi=leaf->brushes.first+i;
     brush_trace(w,g->leaf_brushes.values[(size_t)fi]);
@@ -316,9 +325,9 @@ qa_trace_result qa_q2_collision_trace(qa_q2_collision*c,qa_trace_query query){
   double maskd=qa_geometry_mask(query.policy,"q2");
   qa_bounds sb=shape_bounds(query.shape);
   Work w; memset(&w,0,sizeof w);
-  w.c=c;w.n=n;w.q=query;w.start=start;w.end=end;w.stationary=stationary;w.merged=merged;w.mask=(int32_t)maskd;
-  w.fraction=1;w.plane=NO_PLANE;
-  w.extents=(qa_vec3){fmax(-sb.min.x,sb.max.x),fmax(-sb.min.y,sb.max.y),fmax(-sb.min.z,sb.max.z)};
+  w.c=c;w.n=n;w.q=query;w.start=start;w.end=end;w.stationary=stationary;w.merged=merged;w.mask=qa_js_to_int32(maskd);
+  w.fraction=1;w.plane=NO_PLANE;w.plane_identity=(uintptr_t)&NO_PLANE;
+  w.extents=(qa_vec3){qa_js_max(-sb.min.x,sb.max.x),qa_js_max(-sb.min.y,sb.max.y),qa_js_max(-sb.min.z,sb.max.z)};
   qa_stamp_set_begin(ts(c));
   if(stationary){
     qa_bounds env={{start.x+sb.min.x-1,start.y+sb.min.y-1,start.z+sb.min.z-1},{start.x+sb.max.x+1,start.y+sb.max.y+1,start.z+sb.max.z+1}};
@@ -333,21 +342,22 @@ qa_trace_result qa_q2_collision_trace(qa_q2_collision*c,qa_trace_query query){
     qa_vec3 inv_ax[3];
     axis_of((qa_vec3){-query.target.angles.x,-query.target.angles.y,-query.target.angles.z},n,inv_ax);
     plane.plane.normal=rotatep(plane.plane.normal,inv_ax,n);
+    w.plane_identity=0;
   }
   qa_trace_result r; memset(&r,0,sizeof r);
   r.kind="q2";r.fraction=w.fraction;r.end=lerpn(query.start,query.end,w.fraction,n);
   r.start_solid=w.start_solid!=0;r.all_solid=w.all_solid!=0;
   r.contact=(qa_trace_contact){w.fraction<1&&!w.all_solid,plane.plane};
   r.hit.kind=(w.fraction<1||w.start_solid)?QA_TRACE_HIT_WORLD:QA_TRACE_HIT_NONE; r.hit.model=model;
-  r.contents=w.contents;r.surface=w.surface;r.source_plane=plane;
+  r.contents=w.contents;r.surface=w.surface?w.surface:&qa_q2_null_surface;r.source_plane=plane;r.plane_identity=w.plane_identity;
   r.has_secondary=w.has_secondary!=0;r.secondary_plane=w.secondary_plane;r.secondary_surface=w.secondary_surface;
   return r;
 }
 void qa_q2_collision_set_area_portal_state(qa_q2_collision*c,double portal,bool open){
   const qa_q2_world_geometry*g=c->geometry;
-  int found=0;
-  for(size_t i=0;i<g->area_portal_count;i++)if(g->area_portals[i].portal==portal)found=1;
-  if(!found)qa_range_error("Unknown Q2 area portal %g",portal);
+  /* Retail maps toggle portal numbers that have no lump entry; cmodel.c rejects only a number above the lump count. */
+  if(!(portal==trunc(portal)&&fabs(portal)<=9007199254740991.0)||portal<0||portal>(double)g->area_portal_count)
+    qa_range_error("Q2 area portal %s is outside the map's %zu portals",QA_JS_NUMBER(portal),g->area_portal_count);
   if(open){
     for(size_t i=0;i<c->open_count;i++)if(c->open_portals[i]==portal){flood_areas(c);return;}
     if(c->open_count==c->open_cap){c->open_cap=c->open_cap?c->open_cap*2:8;c->open_portals=realloc(c->open_portals,c->open_cap*sizeof*c->open_portals);if(!c->open_portals)abort();}
@@ -369,7 +379,7 @@ void qa_q2_collision_restore_portal_state(qa_q2_collision*c,const double*open,si
   flood_areas(c);
 }
 bool qa_q2_collision_areas_connected(qa_q2_collision*c,double a,double b){
-  if(a<0||(size_t)a>=c->geometry->area_count||b<0||(size_t)b>=c->geometry->area_count)qa_range_error("Q2 collision index %g",a<0||(size_t)a>=c->geometry->area_count?a:b);
+  if(!(a>=0&&a<(double)c->geometry->area_count&&a==floor(a))||!(b>=0&&b<(double)c->geometry->area_count&&b==floor(b)))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(!(a>=0&&a<(double)c->geometry->area_count&&a==floor(a))?a:b));
   return c->flood[(size_t)a]==c->flood[(size_t)b];
 }
 const uint8_t *qa_q2_collision_area_bits(qa_q2_collision*c,double area,size_t*out){
@@ -385,16 +395,20 @@ bool qa_q2_collision_cluster_visible(qa_q2_collision*c,double from,double to,con
   if(to<0)return false;
   const qa_q2_visibility*vis=c->geometry->visibility;
   if(!vis)return true;
-  if(from<0||(size_t)from>=vis->cluster_count||(size_t)to>=vis->cluster_count)return false;
+  if(from<0||from>=(double)vis->cluster_count||to>=(double)vis->cluster_count)return false;
+  /* at(vis.clusters, from): an in-range fraction or NaN names no record. */
+  if(from!=floor(from))qa_range_error("Q2 collision index %s",QA_JS_NUMBER(from));
   const qa_q2_visibility_cluster*row=&vis->clusters[(size_t)from];
   double offset=(kind&&strcmp(kind,"phs")==0)?row->phs_offset:row->pvs_offset;
   if(offset<0)return true;
-  size_t input=(size_t)offset,output=0,wanted=(size_t)to>>3;
+  /* to >> 3 and to & 7 apply ToInt32; `to` is in [0, clusters) or NaN (which reads as 0). */
+  const int32_t to_word=qa_js_to_int32(to);
+  size_t input=(size_t)offset,output=0,wanted=(size_t)(to_word>>3);
   while(output<=wanted){
     if(input>=vis->compressed.length)qa_range_error("Q2 visibility read outside lump");
     uint8_t byte=vis->compressed.bytes[input++];
     if(byte!=0){
-      if(output==wanted)return (byte&(1u<<((size_t)to&7)))!=0;
+      if(output==wanted)return (byte&(1u<<(to_word&7)))!=0;
       output++;
     }else{
       if(input>=vis->compressed.length)qa_range_error("Invalid Q2 visibility zero run");

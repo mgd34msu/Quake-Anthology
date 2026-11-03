@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 typedef struct { int64_t node; double seconds; } cost_t;
 typedef struct { cost_t *v; size_t n, cap; } cost_queue;
@@ -136,10 +137,12 @@ qa_navigation_estimate_result qa_navigation_estimates_estimate(qa_navigation_est
                                                                qa_navigation_estimate_query query) {
   qa_navigation_estimate_result out; memset(&out, 0, sizeof out);
   int64_t start_i = node_index(e, query.start_node), goal_i = node_index(e, query.goal_node);
+  /* AAS_AreaRouteToGoalArea answers equal areas before it range-tests them. */
+  if (e->aas && query.start_node == query.goal_node && start_i < 0) { out.is_estimate = true; out.travel_time = 1; return out; }
   if (start_i < 0 || goal_i < 0) return out;
   if (query.has_travel_flags && (query.travel_flags < -0x80000000LL || query.travel_flags > 0xffffffffLL))
     qa_range_error("Estimate travel flags must be a 32-bit mask");
-  if (query.has_origin && (!isfinite((float)query.origin.x) || !isfinite((float)query.origin.y)
+  if (!e->aas && query.has_origin && (!isfinite((float)query.origin.x) || !isfinite((float)query.origin.y)
                            || !isfinite((float)query.origin.z)))
     qa_range_error("Estimate origin must contain finite float32 coordinates");
   if (e->aas) return qa_aas_navigation_estimates_estimate(e->aas, query);
@@ -152,7 +155,7 @@ qa_navigation_estimate_result qa_navigation_estimates_estimate(qa_navigation_est
   if (query.has_origin && tail.first_edge) {
     qa_vec3 start = tail.first_edge->start, origin = query.origin;
     double heuristic = e->graph->kex_asset ? e->graph->kex_asset->heuristic : 1;
-    seconds += hypot(hypot(start.x - origin.x, start.y - origin.y), start.z - origin.z) * heuristic / 320;
+    seconds += qa_js_hypot3(start.x - origin.x, start.y - origin.y, start.z - origin.z) * heuristic / 320;
   }
   double hundredths = trunc((float)(seconds * 100));
   out.is_estimate = true;

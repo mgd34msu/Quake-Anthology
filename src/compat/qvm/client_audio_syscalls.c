@@ -19,11 +19,18 @@ static qa_vec3 read_vector(const qa_qvm_host_call *call, int32_t word) {
   return v;
 }
 
-static qa_qvmx_sound_result pcm(const qa_qvm_client_audio_services *services, double index) {
-  qa_qvmx_sound_result result =
-      services->sound.bank.sound_for_index(services->sound.bank.ctx, index);
-  if (result.kind == QA_QVMX_SOUND_UNDEFINED) services->print(services->ctx, "^3");
-  return result;
+/* TS pcm(index): false is TS undefined (invalid handle); *out NULL is a
+ * null PcmSound. */
+static bool pcm(const qa_qvm_client_audio_services *services, double index, qa_pcm_sound **out) {
+  bool has = false;
+  qa_q3_pres_presentation_sound_bank_sound_for_index(services->sound.bank, index, out, &has);
+  /* snd_dma.c supplies only S_COLOR_YELLOW as the printf format on invalid handles. */
+  if (!has) services->print(services->ctx, "^3");
+  return has;
+}
+
+static void out_of_memory(bool ok) {
+  if (!ok) qa_range_error("out of memory");
 }
 
 static bool modern(const qa_qvm_host_call *call) {
@@ -33,7 +40,7 @@ static bool modern(const qa_qvm_host_call *call) {
 bool qa_qvm_client_audio_syscall(const qa_qvm_host_call *call,
                                  qa_qvm_client_audio_services services, qa_qvm_host_result *out) {
   if (strcmp(call->kind, "engine") != 0 || strcmp(call->role, services.role) != 0) return false;
-  qa_qvmx_client_sound *sound = &services.sound;
+  const qa_q3_pres_client_sound *sound = &services.sound;
   bool ui = strcmp(services.role, "ui") == 0;
   if (call->code == (ui ? QA_QVM_UI_IMPORT_UI_S_REGISTERSOUND
                         : QA_QVM_CGAME_IMPORT_CG_S_REGISTERSOUND)) {
@@ -44,16 +51,17 @@ bool qa_qvm_client_audio_syscall(const qa_qvm_host_call *call,
       path = qa_qvm_memory_read_string(call->guest, name);
       if (path == NULL) qa_range_error("out of memory");
     }
-    const qa_pcm_sound *value = sound->bank.register_sound(sound->bank.ctx, path, compressed);
+    qa_pcm_sound *value = NULL;
+    out_of_memory(qa_q3_pres_presentation_sound_bank_register_sound(sound->bank, path, compressed, &value));
     free(path);
-    *out = qa_int32(sound->bank.index_for_sound(sound->bank.ctx, value));
+    *out = qa_int32(qa_q3_pres_presentation_sound_bank_index_for_sound(sound->bank, value));
     return true;
   }
   if (call->code == (ui ? QA_QVM_UI_IMPORT_UI_S_STARTLOCALSOUND
                         : QA_QVM_CGAME_IMPORT_CG_S_STARTLOCALSOUND)) {
-    qa_qvmx_sound_result value = pcm(&services, qa_qvm_host_call_word(call, 1));
-    if (value.kind != QA_QVMX_SOUND_UNDEFINED)
-      sound->start_local_sound(sound->ctx, value.pcm, qa_qvm_host_call_word(call, 2));
+    qa_pcm_sound *value = NULL;
+    if (pcm(&services, qa_qvm_host_call_word(call, 1), &value))
+      sound->start_local_sound(sound->ctx, value, qa_qvm_host_call_word(call, 2));
     *out = 0;
     return true;
   }
@@ -65,7 +73,7 @@ bool qa_qvm_client_audio_syscall(const qa_qvm_host_call *call,
     char *loop = loop_word == 0 ? NULL : qa_qvm_memory_read_string(call->guest, loop_word);
     if ((intro_word != 0 && intro == NULL) || (loop_word != 0 && loop == NULL))
       qa_range_error("out of memory");
-    sound->start_background_track(sound->ctx, intro == NULL ? "" : intro, loop == NULL ? "" : loop);
+    out_of_memory(sound->start_background_track(sound->ctx, intro == NULL ? "" : intro, loop == NULL ? "" : loop));
     free(intro);
     free(loop);
     *out = 0;
@@ -73,7 +81,7 @@ bool qa_qvm_client_audio_syscall(const qa_qvm_host_call *call,
   }
   if (call->code == (ui ? QA_QVM_UI_IMPORT_UI_S_STOPBACKGROUNDTRACK
                         : QA_QVM_CGAME_IMPORT_CG_S_STOPBACKGROUNDTRACK)) {
-    sound->start_background_track(sound->ctx, "", "");
+    out_of_memory(sound->start_background_track(sound->ctx, "", ""));
     *out = 0;
     return true;
   }
@@ -88,11 +96,11 @@ bool qa_qvm_client_audio_syscall(const qa_qvm_host_call *call,
         snprintf(message, sizeof message, "S_StartSound: bad entitynum %d", (int)entity);
         qa_common_error(QA_COMMON_ERROR_DROP, message);
       }
-      qa_qvmx_sound_result value = pcm(&services, qa_qvm_host_call_word(call, 4));
-      if (value.kind != QA_QVMX_SOUND_UNDEFINED) {
+      qa_pcm_sound *value = NULL;
+      if (pcm(&services, qa_qvm_host_call_word(call, 4), &value)) {
         qa_vec3 origin_vector = {0, 0, 0};
         if (origin != 0) origin_vector = read_vector(call, origin);
-        sound->start_sound(sound->ctx, origin != 0, origin_vector, entity, channel, value.pcm);
+        sound->start_sound(sound->ctx, origin == 0 ? NULL : &origin_vector, entity, channel, value);
       }
       *out = 0;
       return true;
@@ -103,12 +111,13 @@ bool qa_qvm_client_audio_syscall(const qa_qvm_host_call *call,
       return true;
     case QA_QVM_CGAME_IMPORT_CG_S_ADDLOOPINGSOUND:
     case QA_QVM_CGAME_IMPORT_CG_S_ADDREALLOOPINGSOUND: {
-      qa_qvmx_sound_result value = pcm(&services, qa_qvm_host_call_word(call, 4));
-      if (value.kind != QA_QVMX_SOUND_UNDEFINED)
-        sound->add_loop_sound(sound->ctx, qa_qvm_host_call_word(call, 1),
-                              read_vector(call, qa_qvm_host_call_word(call, 2)),
-                              read_vector(call, qa_qvm_host_call_word(call, 3)), value.pcm,
+      qa_pcm_sound *value = NULL;
+      if (pcm(&services, qa_qvm_host_call_word(call, 4), &value)) {
+        qa_vec3 origin = read_vector(call, qa_qvm_host_call_word(call, 2));
+        qa_vec3 velocity = read_vector(call, qa_qvm_host_call_word(call, 3));
+        sound->add_loop_sound(sound->ctx, qa_qvm_host_call_word(call, 1), origin, velocity, value,
                               call->code == QA_QVM_CGAME_IMPORT_CG_S_ADDREALLOOPINGSOUND);
+      }
       *out = 0;
       return true;
     }

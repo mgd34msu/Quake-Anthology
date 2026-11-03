@@ -10,8 +10,7 @@
 #include "qa/foundation/support.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static bool row_reserve(qa_console_row *row, size_t needed) {
@@ -390,9 +389,13 @@ void qa_console_buffer_clear_notify(qa_console_buffer *buffer) {
 void qa_console_buffer_scroll(qa_console_buffer *buffer, double lines) {
   int64_t max_back =
       buffer->row_count == 0 ? 0 : (int64_t)buffer->row_count - 1;
-  int64_t value = buffer->backscroll + (int64_t)trunc(lines);
-  if (value < 0) value = 0;
-  if (value > max_back) value = max_back;
+  /* Math.max(0, Math.min(rows - 1, backscroll + Math.trunc(lines))) in doubles, so an
+   * infinite delta clamps instead of a C cast of infinity. Divergence: a NaN delta
+   * makes the TS backscroll NaN; the int64 field cannot hold it, so it is ignored. */
+  double sum = (double)buffer->backscroll + (isnan(lines) ? 0 : trunc(lines));
+  if (sum > (double)max_back) sum = (double)max_back;
+  if (sum < 0) sum = 0;
+  int64_t value = (int64_t)sum;
   buffer->backscroll = value;
 }
 

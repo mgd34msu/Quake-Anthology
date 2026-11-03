@@ -1,5 +1,6 @@
 /* Port of src/formats/images/jpeg.ts. GPL-2.0-or-later. */
 #include "qa/formats/images/jpeg.h"
+#include "qa/formats/images/limits.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -10,21 +11,24 @@
 #include "qa/core/binary/index.h"
 #include "qa/foundation/support.h"
 
+/* TS JpegSourceError extends BinaryError and sets name "JpegSourceError",
+ * which String(error), worker error transport and diagnostics print. No TS
+ * `instanceof BinaryError` catch wraps decodeJpeg, so the raise carries the
+ * subclass name; the code also marks it. */
 noreturn void qa_jpeg_source_error(const char *source, int64_t offset,
                                    const char *format, ...) {
+  char text[1024];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "JpegSourceError: %s:%lld: JPEG: ", source, (long long)offset);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("JpegSourceError", QA_JPEG_SOURCE_ERROR_CODE, offset, "%s:%lld: JPEG: %s", source,
+           (long long)offset, text);
 }
 
 /* TS plain `throw new Error(msg)`. */
 static noreturn void jpeg_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static const uint8_t natural_order[64] = {
@@ -83,6 +87,8 @@ struct input {
   size_t offset;
   int unread_marker;
   int64_t discarded_bytes;
+  double fabricated_bytes;
+  int64_t scans;
 };
 
 static noreturn void input_fail(const struct input *input, const char *message) {
@@ -95,7 +101,8 @@ static int input_byte(struct input *input) {
 }
 
 static int input_word(struct input *input) {
-  return input_byte(input) * 256 + input_byte(input);
+  int high = input_byte(input); /* big-endian: TS reads the high byte first */
+  return high * 256 + input_byte(input);
 }
 
 static void input_next_marker(struct input *input) {
@@ -174,6 +181,12 @@ static void entropy_fill(struct entropy *entropy, int required) {
     int next = 0;
     if (entropy->input->unread_marker != 0) {
       if (entropy->remaining >= required) break;
+      /* Past the end of entropy data the decoder synthesizes zero bits
+       * without consuming input; bound that. */
+      double limit = (double)entropy->input->length * 16;
+      if (++entropy->input->fabricated_bytes > (limit > 65536 ? limit : 65536)) {
+        input_fail(entropy->input, "entropy data ends far short of the declared image");
+      }
       if (!entropy->printed_end) {
         warnings_emit(entropy->input->warnings,
                       "Corrupt JPEG data: premature end of data segment");
@@ -330,6 +343,8 @@ static int read_frame(struct input *input, int progressive, int arithmetic,
   struct descriptor *descriptors =
       (struct descriptor *)malloc((size_t)count * sizeof *descriptors);
   if (descriptors == NULL) return 0;
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, descriptors);
   for (int i = 0; i < count; i++) {
     descriptors[i].id = input_byte(input);
     int sampling = input_byte(input);
@@ -337,6 +352,7 @@ static int read_frame(struct input *input, int progressive, int arithmetic,
     descriptors[i].v = sampling & 15;
     descriptors[i].quantizer = input_byte(input);
   }
+  qa_cleanup_pop(&node);
   out->progressive = progressive;
   out->arithmetic = arithmetic;
   out->precision = precision;
@@ -356,6 +372,11 @@ static struct frame *prepare_frame(struct input *input,
   if (width > 65500 || height > 65500) {
     qa_jpeg_source_error(input->source, (int64_t)input->offset,
                          "Maximum supported image dimension is 65500 pixels");
+  }
+  if (!qa_image_size_allowed((double)width, (double)height)) {
+    qa_jpeg_source_error(input->source, (int64_t)input->offset,
+                         "JPEG dimensions %lldx%lld exceed the decoder limit", (long long)width,
+                         (long long)height);
   }
   if (header->precision != 8) {
     qa_jpeg_source_error(input->source, (int64_t)input->offset,
@@ -507,7 +528,10 @@ static int read_huffman(struct input *input, struct huff_table *tables[256]) {
     }
     uint8_t *values = total == 0 ? NULL : (uint8_t *)malloc((size_t)total);
     if (total != 0 && values == NULL) return 0;
+    qa_cleanup node;
+    qa_cleanup_push(&node, free, values);
     for (int i = 0; i < total; i++) values[i] = (uint8_t)input_byte(input);
+    qa_cleanup_pop(&node);
     remaining -= total;
     int table_index = (selector & 16) != 0 ? selector - 16 : selector;
     if (table_index >= 4) {
@@ -1040,6 +1064,18 @@ static const uint16_t *require_quantizer(struct input *input,
   return tables[id];
 }
 
+struct scan_scratch {
+  struct one_pass *strip;
+  struct scan_component *scans;
+  size_t count;
+};
+
+static void scan_scratch_release(void *raw) {
+  struct scan_scratch *scratch = raw;
+  free_one_pass(scratch->strip);
+  for (size_t j = 0; j < scratch->count; j++) free(scratch->scans[j].owned_multipliers);
+}
+
 static int read_scan(struct input *input, const struct scan_header *header,
                      struct frame *frame, uint16_t quantizers[4][64],
                      const int quantizers_present[4],
@@ -1048,6 +1084,9 @@ static int read_scan(struct input *input, const struct scan_header *header,
   size_t count = header->member_count;
   struct scan_component scans[4];
   memset(scans, 0, sizeof scans);
+  struct scan_scratch scratch = {NULL, scans, count};
+  qa_cleanup scratch_node;
+  qa_cleanup_push(&scratch_node, scan_scratch_release, &scratch);
   int64_t block_sum = 0;
   for (size_t i = 0; i < count; i++) {
     scans[i].component = find_component(input, frame, header->members[i].id);
@@ -1074,7 +1113,8 @@ static int read_scan(struct input *input, const struct scan_header *header,
     } else {
       float *multipliers = (float *)malloc(64 * sizeof(float));
       if (multipliers == NULL) {
-        for (size_t j = 0; j < count; j++) free(scans[j].owned_multipliers);
+        qa_cleanup_pop(&scratch_node);
+        scan_scratch_release(&scratch);
         return 0;
       }
       float_multipliers(quantizer, multipliers);
@@ -1101,7 +1141,8 @@ static int read_scan(struct input *input, const struct scan_header *header,
     if (oom) break;
   }
   if (oom) {
-    for (size_t j = 0; j < count; j++) free(scans[j].owned_multipliers);
+    qa_cleanup_pop(&scratch_node);
+    scan_scratch_release(&scratch);
     return 0;
   }
   int single = count == 1;
@@ -1116,10 +1157,12 @@ static int read_scan(struct input *input, const struct scan_header *header,
   if (!buffered) {
     strip = make_one_pass(input, frame, colorspace);
     if (strip == NULL) {
-      for (size_t j = 0; j < count; j++) free(scans[j].owned_multipliers);
+      qa_cleanup_pop(&scratch_node);
+      scan_scratch_release(&scratch);
       return 0;
     }
   }
+  scratch.strip = strip;
   int restart = 0;
   for (int64_t mcu = 0; mcu < columns * rows; mcu++) {
     if (restart_interval != 0 && mcu > 0 && mcu % restart_interval == 0) {
@@ -1167,8 +1210,8 @@ static int read_scan(struct input *input, const struct scan_header *header,
     }
   }
   entropy.remaining = 0;
-  free_one_pass(strip);
-  for (size_t j = 0; j < count; j++) free(scans[j].owned_multipliers);
+  qa_cleanup_pop(&scratch_node);
+  scan_scratch_release(&scratch);
   return 1;
 }
 
@@ -1199,7 +1242,7 @@ static void progressive_ac_first(struct entropy *entropy, const int16_t *table,
       if (at < 0 || (uint64_t)at >= (uint64_t)coefficient_count) {
         qa_range_error("JPEG internal index %lld", (long long)at);
       }
-      coefficients[at] = (int16_t)(entropy_signed(entropy, size) << low);
+      coefficients[at] = (int16_t)(entropy_signed(entropy, size) * (1 << low));
     }
   }
 }
@@ -1632,6 +1675,20 @@ static void free_huffman_tables(struct huff_table *tables[256]) {
   }
 }
 
+struct decode_state {
+  struct frame *frame;
+  struct frame_header header;
+  struct huff_table *huffman[256];
+};
+
+static void decode_state_release(void *raw) {
+  struct decode_state *state = raw;
+  free_frame(state->frame);
+  free(state->header.components);
+  free_huffman_tables(state->huffman);
+  memset(state, 0, sizeof *state);
+}
+
 int qa_decode_jpeg(const uint8_t *bytes, size_t length, const char *source,
                    qa_jpeg_print print, void *print_ctx, qa_jpeg_image *out) {
   const char *name = source != NULL ? source : "<jpeg>";
@@ -1653,12 +1710,15 @@ int qa_decode_jpeg(const uint8_t *bytes, size_t length, const char *source,
   }
   uint16_t quantizers[4][64];
   int quantizers_present[4] = {0, 0, 0, 0};
-  struct huff_table *huffman[256];
-  memset(huffman, 0, sizeof huffman);
+  /* A caught BinaryError releases the decoder state (TS GC). */
+  struct decode_state owned;
+  memset(&owned, 0, sizeof owned);
+  qa_cleanup owned_node;
+  qa_cleanup_push(&owned_node, decode_state_release, &owned);
+  struct huff_table **huffman = owned.huffman;
   enum { STATE_NONE, STATE_HEADER, STATE_READY } state = STATE_NONE;
-  struct frame_header header;
-  memset(&header, 0, sizeof header);
-  struct frame *frame = NULL;
+#define header owned.header
+#define frame owned.frame
   color_space colorspace = CS_UNKNOWN;
   int multiple_scans = 0;
   int restart_interval = 0;
@@ -1677,9 +1737,8 @@ int qa_decode_jpeg(const uint8_t *bytes, size_t length, const char *source,
       }
       if (multiple_scans) finish_buffered(&input, frame);
       int result = render_image(&input, frame, colorspace, out);
-      free_frame(frame);
-      free(header.components);
-      free_huffman_tables(huffman);
+      qa_cleanup_pop(&owned_node);
+      decode_state_release(&owned);
       return result;
     }
     if (marker == 216) {
@@ -1732,6 +1791,9 @@ int qa_decode_jpeg(const uint8_t *bytes, size_t length, const char *source,
       if (state == STATE_NONE) {
         qa_jpeg_source_error(name, (int64_t)input.offset,
                              "Invalid JPEG file structure: SOS before SOF");
+      }
+      if (++input.scans > 256) {
+        qa_jpeg_source_error(name, (int64_t)input.offset, "Too many scans");
       }
       struct scan_header scan_header;
       memset(&scan_header, 0, sizeof scan_header);
@@ -1790,8 +1852,9 @@ int qa_decode_jpeg(const uint8_t *bytes, size_t length, const char *source,
     }
   }
   (void)oom;
-  free_frame(frame);
-  free(header.components);
-  free_huffman_tables(huffman);
+  qa_cleanup_pop(&owned_node);
+  decode_state_release(&owned);
   return 0;
+#undef header
+#undef frame
 }

@@ -1,134 +1,152 @@
-/* Port of src/content/q1/missionpacks/world/shooters.ts.
- * launchDragonFireball (TS owner: missionpacks/monsters/dragon.ts,
- * landed on qa_q1mpm_* mirror) is the ext below. Projectiles via
- * landed qa/content/q1/base/projectiles.h. GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/shooters.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/shooters.h"
+
 #include "../missionpacks_internal.h"
 #include "qa/content/q1/base/projectiles.h"
+#include "qa/content/q1/missionpacks/monsters/dragon.h"
 #include "qa/content/q1/missionpacks/rogue_weapons.h"
 #include "qa/content/q1/missionpacks/world/common.h"
-#include <stdlib.h>
 
-qa_q1mp_actor *qa_q1mp_ext_launch_dragon_fireball(qa_q1mp_game *game, qa_actor_id owner, qa_vec3 origin, qa_vec3 direction);
-typedef struct sh_ctx { qa_q1mp_game *game; qa_q1mp_pack pack; } sh_ctx;
-static void replace_spawn(qa_q1mp_game *game, const char *classname, qa_q1b_spawn_fn fn, void *ctx) {
-  if (game->replace_spawn) game->replace_spawn(game->ctx, classname, fn, ctx);
-  else game->base->register_spawn(game->base, classname, fn, ctx);
+/* The TS closures capture the pack; ctx is the pack's static record. */
+typedef struct shooter_pack { const char *pack; } shooter_pack;
+static shooter_pack HIPNOTIC = {"hipnotic"}, ROGUE = {"rogue"};
+static bool is_rogue(void *ctx) { return qa_q1mp_streq(((const shooter_pack *)ctx)->pack, "rogue"); }
+static bool flag(double spawnflags, double bit) { return qa_js_bit_and(spawnflags, bit) != 0; }
+static bool falsy(double value) { return value == 0 || isnan(value); } /* JS `||=` on a number */
+
+static void laser_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                        const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  if (entity->has_owner && qa_same_actor(other, entity->owner)) return;
+  const qa_q1_body body = qa_q1_get_body(game, entity);
+  if (qa_q1mp_streq(game->host.contents(game->host.ctx, body.origin), "sky")) { qa_q1_remove(game, entity); return; }
+  if (!flag(entity->spawnflags, 16)) qa_q1_sound(game, entity->actor.id, "enforcer/enfstop.wav", "weapon", 3, 1);
+  const qa_vec3 origin = qa_q1_vsub(body.origin, qa_q1_vscale(qa_q1_normalize(body.velocity), 8));
+  if (qa_q1_health(game, other) != 0) {
+    qa_q1_effect(game, "blood", origin, &other, 15);
+    (void)qa_q1_damage(game, other, entity->actor.id, entity->has_owner ? &entity->owner : NULL, 15, NULL, "direct", "", NULL);
+  } else qa_q1_effect(game, "gunshot", origin, NULL, 1);
+  qa_q1_remove(game, entity);
 }
-static void laser_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; qa_q1mp_game *game = ((sh_ctx *)vctx)->game;
-  if (e->owner.has && qa_same_actor(e->owner.id, other)) return;
-  qa_q1b_body body = g->body(g, e);
-  if (qa_q1mp_streq(g->host->contents(g->host->ctx, body.origin), "sky")) { g->remove(g, e); return; }
-  if ((e->spawnflags & 16) == 0) g->sound(g, e, "enforcer/enfstop.wav", QA_Q1MP_CH("weapon"), 3, 1);
-  qa_vec3 origin = qa_q1mp_vsub(body.origin, qa_q1mp_vscale(qa_q1mp_normalize(body.velocity), 8));
-  if (g->health(g, other) != 0) { qa_q1mp_effect_a(game, "blood", origin, QA_Q1MP_SOME(other), 15); qa_q1b_game_damage(g, other, e->actor.id, e->owner, 15); }
-  else qa_q1mp_effect_a(game, "gunshot", origin, QA_Q1MP_NONE, 0);
-  g->remove(g, e);
-}
-static void fire(sh_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  qa_q1mp_game *game = c->game; qa_vec3 origin = g->body(g, e).origin;
-  if (qa_q1mp_streq(c->pack, "rogue")) {
-    if ((e->spawnflags & 1) != 0 || e->spawnflags == 0) {
-      g->sound(g, e, "weapons/spike2.wav", QA_Q1MP_CH("voice"), 1, 1);
-      (void)qa_q1_launch_spike(g, QA_Q1MP_SOME(e->actor.id), origin, qa_q1mp_vscale(e->movedir, 500), (e->spawnflags & 1) != 0 ? "superspike" : "spike");
-    } else if ((e->spawnflags & 2) != 0) {
-      g->sound(g, e, "enforcer/enfire.wav", QA_Q1MP_CH("voice"), 1, 1);
-      (void)qa_q1_launch_laser(g, QA_Q1MP_SOME(e->actor.id), origin, e->movedir);
-    } else if ((e->spawnflags & 32) != 0) (void)qa_q1mp_ext_launch_dragon_fireball(game, e->actor.id, origin, e->movedir);
+static void fire(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const qa_vec3 origin = qa_q1_get_body(game, entity).origin;
+  const qa_actor_id self = entity->actor.id;
+  if (is_rogue(ctx)) {
+    if (flag(entity->spawnflags, 1) || entity->spawnflags == 0) {
+      qa_q1_sound(game, self, "weapons/spike2.wav", "voice", 1, 1);
+      (void)qa_q1_launch_spike(game, &self, origin, qa_q1_vscale(entity->movedir, 500), flag(entity->spawnflags, 1) ? "superspike" : "spike");
+    } else if (flag(entity->spawnflags, 2)) {
+      qa_q1_sound(game, self, "enforcer/enfire.wav", "voice", 1, 1);
+      (void)qa_q1_launch_laser(game, &self, origin, entity->movedir);
+    } else if (flag(entity->spawnflags, 32)) (void)qa_q1mpm_launch_dragon_fireball(game, self, origin, entity->movedir);
     else {
-      g->sound(g, e, "weapons/spike2.wav", QA_Q1MP_CH("voice"), 1, 1);
-      qa_q1mp_actor *spike = qa_q1mp_launch_rogue_lava_spike(game, e->actor.id, origin, e->movedir, (e->spawnflags & 8) != 0 || ((e->spawnflags & 16) != 0 && g->options.skill > 1));
-      qa_q1mp_set_velocity(game, spike, qa_q1mp_vscale(e->movedir, 500));
+      qa_q1_sound(game, self, "weapons/spike2.wav", "voice", 1, 1);
+      qa_q1_actor *spike = qa_q1mp_launch_rogue_lava_spike(game, self, origin, entity->movedir,
+          flag(entity->spawnflags, 8) || (flag(entity->spawnflags, 16) && qa_q1_option_skill(game) > 1));
+      qa_q1_body_patch patch = {0}; patch.has_velocity = true; patch.velocity = qa_q1_vscale(entity->movedir, 500);
+      qa_q1_set_body(game, spike, &patch);
     }
     return;
   }
-  bool audible = (e->spawnflags & 16) == 0;
-  if ((e->spawnflags & 2) != 0) {
-    if (audible) g->sound(g, e, "enforcer/enfire.wav", QA_Q1MP_CH("voice"), 1, 1);
-    qa_q1mp_actor *laser = qa_q1_launch_laser(g, QA_Q1MP_SOME(e->actor.id), origin, e->movedir);
-    laser->movement = "fly"; laser->spawnflags = e->spawnflags;
-    laser->touch = g->named.touch(g->named.ctx, laser, "hip:shooter_laser_touch");
-  } else if ((e->spawnflags & 4) != 0) {
-    if (audible) g->sound(g, e, "misc/spike.wav", QA_Q1MP_CH("voice"), 1, 1);
-    qa_q1mp_actor *ball = qa_q1_create_missile(g, QA_Q1MP_SOME(e->actor.id), "lavaball", "lavarock", origin, qa_q1mp_vscale(e->movedir, 300));
-    ball->projectile = "rocket"; ball->touch = g->named.touch(g->named.ctx, ball, "projectile_touch");
-    ball->angular_velocity = QA_Q1MP_V3(0,0,400); g->set_bounds(g, ball, (qa_bounds){{-4,-4,-4},{4,4,4}});
-  } else if ((e->spawnflags & 8) != 0) {
-    if (audible) g->sound(g, e, "weapons/sgun1.wav", QA_Q1MP_CH("voice"), 1, 1);
-    g->sound(g, e, "weapons/sgun1.wav", QA_Q1MP_CH("weapon"), 1, 1);
-    qa_q1mp_actor *rocket = qa_q1_create_missile(g, QA_Q1MP_SOME(e->actor.id), "missile", "missile", qa_q1mp_vadd(origin, qa_q1mp_vscale(e->movedir, 8)), qa_q1mp_vscale(e->movedir, 1000));
-    rocket->projectile = "rocket"; rocket->touch = g->named.touch(g->named.ctx, rocket, "projectile_touch");
+  const bool audible = !flag(entity->spawnflags, 16);
+  if (flag(entity->spawnflags, 2)) {
+    if (audible) qa_q1_sound(game, self, "enforcer/enfire.wav", "voice", 1, 1);
+    qa_q1_actor *laser = qa_q1_launch_laser(game, &self, origin, entity->movedir);
+    laser->movement = "fly"; laser->spawnflags = entity->spawnflags;
+    laser->touch = qa_q1_callback_registry_touch(game->named, laser, "hip:shooter_laser_touch");
+  } else if (flag(entity->spawnflags, 4)) {
+    if (audible) qa_q1_sound(game, self, "misc/spike.wav", "voice", 1, 1);
+    qa_q1_actor *ball = qa_q1_create_missile(game, &self, "lavaball", "lavarock", origin, qa_q1_vscale(entity->movedir, 300));
+    ball->projectile = "rocket"; ball->touch = qa_q1_callback_registry_touch(game->named, ball, "projectile_touch");
+    ball->angular_velocity = QA_Q1MP_V3(0, 0, 400);
+    qa_q1_set_bounds(game, ball, (qa_bounds){{-4, -4, -4}, {4, 4, 4}});
+  } else if (flag(entity->spawnflags, 8)) {
+    if (audible) qa_q1_sound(game, self, "weapons/sgun1.wav", "voice", 1, 1);
+    qa_q1_sound(game, self, "weapons/sgun1.wav", "weapon", 1, 1);
+    qa_q1_actor *rocket = qa_q1_create_missile(game, &self, "missile", "missile", qa_q1_vadd(origin, qa_q1_vscale(entity->movedir, 8)),
+                                               qa_q1_vscale(entity->movedir, 1000));
+    rocket->projectile = "rocket"; rocket->touch = qa_q1_callback_registry_touch(game->named, rocket, "projectile_touch");
   } else {
-    if (audible) g->sound(g, e, "weapons/spike2.wav", QA_Q1MP_CH("voice"), 1, 1);
-    (void)qa_q1_launch_spike(g, QA_Q1MP_SOME(e->actor.id), origin, qa_q1mp_vscale(e->movedir, 500), (e->spawnflags & 1) != 0 ? "superspike" : "spike");
+    if (audible) qa_q1_sound(game, self, "weapons/spike2.wav", "voice", 1, 1);
+    (void)qa_q1_launch_spike(game, &self, origin, qa_q1_vscale(entity->movedir, 500), flag(entity->spawnflags, 1) ? "superspike" : "spike");
   }
 }
-static void fire_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)o; (void)a; fire(vctx, g, e); }
-static void think_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  sh_ctx *c = vctx;
-  if (qa_q1mp_streq(c->pack,"rogue") || qa_q1mp_number(e, "shooter_state") != 0) fire(c, g, e);
-  qa_q1mp_world_later(c->game, e, e->wait, "mission:shooter_think");
+static void fire_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)other; (void)activator; fire(ctx, game, entity);
 }
-static void switch_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)vctx; (void)g; (void)o; (void)a; qa_q1mp_world_number(e, "shooter_state", 1 - qa_q1mp_number(e, "shooter_state")); }
-static void shooter_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  sh_ctx *c = vctx;
-  e->movedir = qa_q1b_move_direction(g, g->body(g, e).angles);
-  qa_q1b_body_patch p = {0}; p.has_angles = true; p.angles = QA_Q1MP_ZERO; g->set_body(g, e, &p);
-  e->use = g->named.use(g->named.ctx, e, "mission:shooter_fire");
-  if (qa_q1mp_streq(e->classname, "trap_spikeshooter")) return;
-  if (e->wait == 0) e->wait = 1;
-  qa_q1mp_world_number(e, "shooter_state", qa_q1mp_streq(e->classname,"trap_shooter") ? 1 : qa_q1mp_number(e, "state"));
-  if (qa_q1mp_streq(e->classname, "trap_switched_shooter")) e->use = g->named.use(g->named.ctx, e, "mission:shooter_switch");
-  qa_q1mp_world_later(c->game, e, qa_q1mp_number(e, "nextthink") + e->wait + qa_q1mp_number(e, "ltime") - g->time, "mission:shooter_think");
+static void shooter_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  if (is_rogue(ctx) || qa_q1_actor_number(entity, "shooter_state") != 0) fire(ctx, game, entity);
+  qa_q1mp_world_later(game, entity, entity->wait, "mission:shooter_think");
 }
-static void push_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)vctx; (void)g; (void)o; (void)a; e->spawnflags ^= 4; }
-static void push_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; qa_q1mp_game *game = ((sh_ctx *)vctx)->game;
-  if ((e->spawnflags & 4) == 0) return;
-  const char *cn = g->host->classname(g->host->ctx, other);
-  bool grenade = qa_q1mp_streq(cn,"grenade")||qa_q1mp_streq(cn,"MiniGrenade")||qa_q1mp_streq(cn,"MultiGrenade");
-  if (grenade || g->health(g, other) > 0) {
-    qa_owned_actor owner; qa_q1b_body body;
-    bool has_o = g->host->actors_resolve_owned(g->host->ctx, other, &owner), has_b = qa_q1mp_body_read(game, other, &body);
-    if (has_o && has_b) { body.velocity = qa_q1mp_vscale(e->movedir, e->speed * 10); g->host->bodies_write(g->host->ctx, owner, &body); }
-    if (!grenade && g->is_player(g, QA_Q1MP_SOME(other))) {
-      qa_q1mp_actor *ents[256]; size_t total = g->entities(g, ents, 256);
-      for (size_t i = 0; i < total; i++) if (qa_q1mp_streq(ents[i]->classname,"rogue_team_state") && ents[i]->owner.has && qa_same_actor(ents[i]->owner.id, other)) {
-        if (qa_q1mp_number(ents[i], "fly_sound") < g->time && has_o) {
-          qa_q1mp_world_number(ents[i], "fly_sound", g->time + 1.5);
-          g->sound_owned(g, owner, "ambience/windfly.wav", QA_Q1MP_CH("auto"), 1, 1);
-        }
-        break;
+static void shooter_switch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)game; (void)other; (void)activator;
+  qa_q1mp_world_number(entity, "shooter_state", 1 - qa_q1_actor_number(entity, "shooter_state"));
+}
+static void shooter_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->movedir = qa_q1_move_direction(qa_q1_get_body(game, entity).angles, game);
+  qa_q1_body_patch patch = {0}; patch.has_angles = true; patch.angles = QA_Q1_ZERO; qa_q1_set_body(game, entity, &patch);
+  entity->use = qa_q1_callback_registry_use(game->named, entity, "mission:shooter_fire");
+  if (qa_q1mp_streq(entity->classname, "trap_spikeshooter")) return;
+  if (falsy(entity->wait)) entity->wait = 1;
+  qa_q1mp_world_number(entity, "shooter_state", qa_q1mp_streq(entity->classname, "trap_shooter") ? 1 : qa_q1_actor_number(entity, "state"));
+  if (qa_q1mp_streq(entity->classname, "trap_switched_shooter")) entity->use = qa_q1_callback_registry_use(game->named, entity, "mission:shooter_switch");
+  double left = qa_q1_actor_number(entity, "nextthink") + entity->wait;
+  double right = qa_q1_actor_number(entity, "ltime");
+  qa_q1mp_world_later(game, entity, left + right - game->time,
+                      "mission:shooter_think");
+}
+static void push_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)game; (void)other; (void)activator;
+  entity->spawnflags = qa_js_bit_xor(entity->spawnflags, 4);
+}
+static void push_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                       const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  if (!flag(entity->spawnflags, 4)) return;
+  const char *classname = game->host.classname(game->host.ctx, other);
+  const bool grenade = qa_q1mp_streq(classname, "grenade") || qa_q1mp_streq(classname, "MiniGrenade") || qa_q1mp_streq(classname, "MultiGrenade");
+  if (grenade || qa_q1_health(game, other) > 0) {
+    qa_owned_actor owner;
+    const bool has_owner = qa_session_actor_registry_resolve_owned(game->host.actors, other, &owner);
+    qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, other);
+    if (has_owner && body.has_value) {
+      body.value.velocity = qa_q1_vscale(entity->movedir, entity->speed * 10);
+      qa_shared_body_table_write(game->host.bodies, owner, body.value);
+    }
+    if (!grenade && qa_q1_is_player(game, &other)) {
+      qa_q1_actor *state = NULL;
+      for (size_t i = 0; i < game->entity_count && state == NULL; i++) {
+        qa_q1_actor *candidate = game->entities[i];
+        if (qa_q1mp_streq(candidate->classname, "rogue_team_state") && candidate->has_owner && qa_same_actor(candidate->owner, other)) state = candidate;
+      }
+      if (state != NULL && qa_q1_actor_number(state, "fly_sound") < game->time && has_owner) {
+        qa_q1mp_world_number(state, "fly_sound", game->time + 1.5);
+        qa_q1_sound(game, owner.id, "ambience/windfly.wav", "voice", 1, 1);
       }
     }
   }
-  if ((e->spawnflags & 1) != 0) g->remove(g, e);
+  if (flag(entity->spawnflags, 1)) qa_q1_remove(game, entity);
 }
-static void push_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  sh_ctx *c = vctx;
-  if ((e->spawnflags & 2) != 0) e->use = g->named.use(g->named.ctx, e, "rogue:push");
-  else e->spawnflags += 4;
-  e->touch = g->named.touch(g->named.ctx, e, "rogue:push");
-  if (e->speed == 0) e->speed = 1000;
-  qa_q1mp_world_trigger(c->game, e);
+static void push_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (flag(entity->spawnflags, 2)) entity->use = qa_q1_callback_registry_use(game->named, entity, "rogue:push");
+  else entity->spawnflags += 4;
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:push");
+  if (falsy(entity->speed)) entity->speed = 1000;
+  qa_q1mp_world_trigger(game, entity);
 }
-void qa_q1mp_register_mission_shooters(qa_q1mp_game *game, qa_q1mp_pack pack) {
-  sh_ctx *c = malloc(sizeof *c); c->game = game; c->pack = pack; qa_q1b_game *g = game->base;
-  qa_q1b_handlers h = {0}; h.ctx = c; h.touch = laser_touch;
-  g->named.register_named(g->named.ctx, "hip:shooter_laser_touch", &h);
-  qa_q1b_handlers hf = {0}; hf.ctx = c; hf.use = fire_use;
-  g->named.register_named(g->named.ctx, "mission:shooter_fire", &hf);
-  qa_q1b_handlers ht = {0}; ht.ctx = c; ht.action = think_cb;
-  g->named.register_named(g->named.ctx, "mission:shooter_think", &ht);
-  qa_q1b_handlers hs = {0}; hs.ctx = c; hs.use = switch_use;
-  g->named.register_named(g->named.ctx, "mission:shooter_switch", &hs);
-  replace_spawn(game, "trap_spikeshooter", shooter_spawn, c);
-  replace_spawn(game, "trap_shooter", shooter_spawn, c);
-  if (qa_q1mp_streq(pack, "hipnotic")) g->register_spawn(g, "trap_switched_shooter", shooter_spawn, c);
+void qa_q1mp_register_mission_shooters(qa_q1_services *game, qa_q1mp_pack pack) {
+  shooter_pack *ctx = qa_q1mp_streq(pack, "rogue") ? &ROGUE : &HIPNOTIC;
+  qa_q1_callback_registry_register(game->named, "hip:shooter_laser_touch", (qa_q1_callback_handlers){.ctx = ctx, .touch = laser_touch});
+  qa_q1_callback_registry_register(game->named, "mission:shooter_fire", (qa_q1_callback_handlers){.ctx = ctx, .use = fire_use});
+  qa_q1_callback_registry_register(game->named, "mission:shooter_think", (qa_q1_callback_handlers){.ctx = ctx, .action = shooter_think});
+  qa_q1_callback_registry_register(game->named, "mission:shooter_switch", (qa_q1_callback_handlers){.ctx = ctx, .use = shooter_switch});
+  qa_q1_replace_spawn(game, "trap_spikeshooter", shooter_spawn, ctx);
+  qa_q1_replace_spawn(game, "trap_shooter", shooter_spawn, ctx);
+  if (qa_q1mp_streq(pack, "hipnotic")) qa_q1_register_spawn(game, "trap_switched_shooter", shooter_spawn, ctx);
   if (qa_q1mp_streq(pack, "rogue")) {
-    qa_q1b_handlers hp = {0}; hp.ctx = c; hp.use = push_use; hp.touch = push_touch;
-    g->named.register_named(g->named.ctx, "rogue:push", &hp);
-    g->register_spawn(g, "trigger_push", push_spawn, c);
+    qa_q1_callback_registry_register(game->named, "rogue:push", (qa_q1_callback_handlers){.ctx = ctx, .use = push_use, .touch = push_touch});
+    qa_q1_register_spawn(game, "trigger_push", push_spawn, ctx);
   }
 }

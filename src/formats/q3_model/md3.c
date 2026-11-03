@@ -1,5 +1,6 @@
 /* Port of src/formats/q3-model/md3.ts. GPL-2.0-or-later. */
 #include "qa/formats/q3_model/md3.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -10,14 +11,16 @@
 #include "qa/core/math.h"
 #include "qa/core/renderer_math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js_case.h"
 
 #define FR(value) ((double)(float)(value))
 #define MD3_IDENT 0x33504449u
 #define HEADER_SIZE 108
 #define XYZ_SCALE (1.0 / 64.0)
 
+/* Zeroed, so a caught BinaryError can release a partly parsed model. */
 static void *xmalloc(size_t size) {
-  void *p = malloc(size == 0 ? 1 : size);
+  void *p = calloc(size == 0 ? 1 : size, 1);
   if (p == NULL) qa_range_error("Out of memory");
   return p;
 }
@@ -48,15 +51,17 @@ static char *c_string(qa_binary_reader *reader, int64_t length) {
 }
 
 static qa_vec3 read_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static double check_count(double value, double maximum, const char *source, int64_t offset,
                           const char *name) {
   if (value < 0 || value > maximum) {
-    qa_binary_error(source, offset, "%s count %g outside 0..%g", name, value, maximum);
+    qa_binary_error(source, offset, "%s count %s outside 0..%s", name, QA_JS_NUMBER(value), QA_JS_NUMBER(maximum));
   }
   return value;
 }
@@ -73,26 +78,28 @@ static double byte_length(double record_count, double stride, const char *source
 static void check_range(double offset, double length, double start, double end, const char *source,
                         int64_t field_offset, const char *name) {
   if (offset < start || length < 0 || offset > end - length) {
-    qa_binary_error(source, field_offset, "%s range %g+%g exceeds %g..%g", name, offset, length, start, end);
+    qa_binary_error(source, field_offset, "%s range %s+%s exceeds %s..%s", name, QA_JS_NUMBER(offset), QA_JS_NUMBER(length), QA_JS_NUMBER(start), QA_JS_NUMBER(end));
   }
 }
 
 qa_vec3 qa_decode_md3_normal(double packed) {
   if (packed != trunc(packed) || packed < 0 || packed > 0xffff) {
-    qa_range_error("packed MD3 normal %g outside uint16", packed);
+    qa_range_error("packed MD3 normal %s outside uint16", QA_JS_NUMBER(packed));
   }
   unsigned value = (unsigned)packed;
   double latitude = ((value >> 8) & 0xff) * (1024 / 256);
   double longitude = (value & 0xff) * (1024 / 256);
-  qa_vec3 normal = {FR((double)qa_renderer_sine(latitude + 1024 / 4) * (double)qa_renderer_sine(longitude)),
-                    FR((double)qa_renderer_sine(latitude) * (double)qa_renderer_sine(longitude)),
-                    (double)qa_renderer_sine(longitude + 1024 / 4)};
+  double x = FR((double)qa_renderer_sine(latitude + 1024 / 4) * (double)qa_renderer_sine(longitude));
+  double y = FR((double)qa_renderer_sine(latitude) * (double)qa_renderer_sine(longitude));
+  double z = (double)qa_renderer_sine(longitude + 1024 / 4);
+  qa_vec3 normal = {x, y, z};
   return normal;
 }
 
 static char *surface_name(char *name) {
   size_t length = strlen(name);
-  for (size_t i = 0; i < length; i++) name[i] = (char)tolower((unsigned char)name[i]);
+  /* TS name.toLowerCase() over a byte (Latin-1) string. */
+  for (size_t i = 0; i < length; i++) name[i] = (char)qa_js_latin1_lower((unsigned char)name[i]);
   if (length > 2 && name[length - 2] == '_') name[length - 2] = '\0';
   return name;
 }
@@ -121,12 +128,12 @@ static double parse_surface(qa_binary_reader *reader, const char *source, double
   double vertices_offset = qa_binary_reader_i32(reader);
   double surface_length = qa_binary_reader_i32(reader);
   if (frame_count != model_frame_count) {
-    qa_binary_error(source, (int64_t)surface_offset + 72, "surface has %g frames, model has %g", frame_count,
-                    model_frame_count);
+    qa_binary_error(source, (int64_t)surface_offset + 72, "surface has %s frames, model has %s", QA_JS_NUMBER(frame_count),
+                    QA_JS_NUMBER(model_frame_count));
   }
   if (surface_length < HEADER_SIZE || surface_offset > model_end - surface_length) {
-    qa_binary_error(source, (int64_t)surface_offset + 104, "surface end %g exceeds model end %g",
-                    surface_length, model_end);
+    qa_binary_error(source, (int64_t)surface_offset + 104, "surface end %s exceeds model end %s",
+                    QA_JS_NUMBER(surface_length), QA_JS_NUMBER(model_end));
   }
   double shader_bytes = byte_length(shader_count, 68, source, (int64_t)surface_offset + 76, "shaders");
   double triangle_bytes = byte_length(triangle_count, 12, source, (int64_t)surface_offset + 84, "triangles");
@@ -158,8 +165,8 @@ static double parse_surface(qa_binary_reader *reader, const char *source, double
     for (int j = 0; j < 3; j++) {
       double vertex = qa_binary_reader_i32(reader);
       if (vertex < 0 || vertex >= vertex_count) {
-        qa_binary_error(source, (int64_t)triangle_offset, "triangle vertex %g outside 0..%g", vertex,
-                        vertex_count - 1);
+        qa_binary_error(source, (int64_t)triangle_offset, "triangle vertex %s outside 0..%s", QA_JS_NUMBER(vertex),
+                        QA_JS_NUMBER(vertex_count - 1));
       }
       out->triangles[i].indices[j] = vertex;
     }
@@ -189,11 +196,27 @@ static double parse_surface(qa_binary_reader *reader, const char *source, double
   return surface_offset + surface_length;
 }
 
+typedef struct md3_parse_state {
+  qa_binary_reader reader;
+  qa_decoded_md3_model *out;
+} md3_parse_state;
+
+static void md3_parse_release(void *raw) {
+  md3_parse_state *state = raw;
+  qa_binary_reader_destroy(&state->reader);
+  qa_decoded_md3_model_destroy(state->out);
+}
+
 void qa_parse_md3(const uint8_t *data, size_t data_length, const char *source, qa_decoded_md3_model *out) {
   memset(out, 0, sizeof *out);
   const char *name = source != NULL ? source : "<md3>";
-  qa_binary_reader reader;
-  if (!qa_binary_reader_init(&reader, (uint8_t *)data, data_length, name)) qa_range_error("Out of memory");
+  md3_parse_state state;
+  state.out = out;
+  if (!qa_binary_reader_init(&state.reader, (uint8_t *)data, data_length, name)) qa_range_error("Out of memory");
+  /* parseMd3 callers (loadMd3Lods, model loaders) catch BinaryError. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, md3_parse_release, &state);
+  qa_binary_reader reader = state.reader;
   if (qa_binary_reader_u32(&reader) != MD3_IDENT) qa_binary_error(name, 0, "expected IDP3 magic");
   if (qa_binary_reader_i32(&reader) != 15) qa_binary_error(name, 4, "expected MD3 version 15");
   qa_md3_model *model = &out->model;
@@ -208,10 +231,10 @@ void qa_parse_md3(const uint8_t *data, size_t data_length, const char *source, q
   double surfaces_offset = qa_binary_reader_i32(&reader);
   double model_end = qa_binary_reader_i32(&reader);
   if (frame_count < 1) qa_binary_error(name, 76, "MD3 has no frames");
-  if (skin_count < 0) qa_binary_error(name, 88, "negative skin count %g", skin_count);
+  if (skin_count < 0) qa_binary_error(name, 88, "negative skin count %s", QA_JS_NUMBER(skin_count));
   model->skin_count = skin_count;
   if (model_end < HEADER_SIZE || model_end > (double)data_length) {
-    qa_binary_error(name, 104, "model end %g outside %d..%zu", model_end, HEADER_SIZE, data_length);
+    qa_binary_error(name, 104, "model end %s outside %d..%zu", QA_JS_NUMBER(model_end), HEADER_SIZE, data_length);
   }
   double frame_bytes = byte_length(frame_count, 56, name, 76, "frames");
   double tag_records = byte_length(frame_count, tag_count, name, 80, "tags");
@@ -235,6 +258,8 @@ void qa_parse_md3(const uint8_t *data, size_t data_length, const char *source, q
   model->tag_row_count = (size_t)frame_count;
   for (size_t frame = 0; frame < model->tag_row_count; frame++) {
     qa_md3_tag *tags = xmalloc((size_t)tag_count * sizeof *tags);
+    model->tag_rows[frame] = tags;
+    model->tag_row_counts[frame] = (size_t)tag_count;
     for (size_t i = 0; i < (size_t)tag_count; i++) {
       tags[i].name = c_string(&reader, 64);
       tags[i].origin = read_vec3(&reader);
@@ -251,14 +276,13 @@ void qa_parse_md3(const uint8_t *data, size_t data_length, const char *source, q
                                    &model->surfaces[i]);
   }
   if (surface_offset != model_end) {
-    qa_binary_error(name, (int64_t)surface_offset, "surface chain ends at %g, model ends at %g",
-                    surface_offset, model_end);
+    qa_binary_error(name, (int64_t)surface_offset, "surface chain ends at %s, model ends at %s",
+                    QA_JS_NUMBER(surface_offset), QA_JS_NUMBER(model_end));
   }
   out->source = xstrdup(name);
-  out->byte_length = (size_t)model_end;
-  out->bytes = xmalloc(out->byte_length);
-  memcpy(out->bytes, data, out->byte_length);
-  qa_binary_reader_destroy(&reader);
+  out->byte_length = (size_t)model_end; /* TS no longer keeps a byte copy. */
+  qa_cleanup_pop(&node);
+  qa_binary_reader_destroy(&state.reader);
 }
 
 void qa_md3_model_destroy(qa_md3_model *model) {
@@ -291,14 +315,13 @@ void qa_decoded_md3_model_destroy(qa_decoded_md3_model *model) {
   if (model == NULL) return;
   qa_md3_model_destroy(&model->model);
   free(model->source);
-  free(model->bytes);
   memset(model, 0, sizeof *model);
 }
 
 static const qa_model_vertex *frame_at(const qa_md3_surface *surface, double index, const char *name,
                                        size_t *out_count) {
   if (index != trunc(index) || index < 0 || index >= (double)surface->frame_count) {
-    qa_range_error("%s MD3 frame %g outside 0..%g", name, index, (double)surface->frame_count - 1);
+    qa_range_error("%s MD3 frame %s outside 0..%s", name, QA_JS_NUMBER(index), QA_JS_NUMBER((double)surface->frame_count - 1));
   }
   *out_count = surface->frame_vertex_counts[(size_t)index];
   return surface->frame_vertices[(size_t)index];
@@ -353,7 +376,7 @@ qa_model_vertex *qa_md3_interpolate_frames(const qa_model_vertex *current, const
 }
 
 static const qa_md3_tag *tag_at(const qa_md3_model *model, double frame, const char *name) {
-  if (frame != trunc(frame) || frame < 0) qa_range_error("MD3 tag frame %g must be non-negative", frame);
+  if (frame != trunc(frame) || frame < 0) qa_range_error("MD3 tag frame %s must be non-negative", QA_JS_NUMBER(frame));
   if (model->tag_row_count == 0) return NULL;
   double clamped = frame;
   if (clamped > (double)model->frame_count - 1) clamped = (double)model->frame_count - 1;
@@ -413,10 +436,12 @@ static char *skin_next_token(qa_md3_skin_iterator *iterator) {
     if (iterator->offset + 1 < iterator->length && iterator->text[iterator->offset] == '/' &&
         iterator->text[iterator->offset + 1] == '*') {
       iterator->offset += 2;
-      while (iterator->offset + 1 < iterator->length &&
-             !(iterator->text[iterator->offset] == '*' && iterator->text[iterator->offset + 1] == '/'))
+      /* An unterminated comment runs to the end of the text (TS startsWith). */
+      while (iterator->offset < iterator->length &&
+             !(iterator->offset + 1 < iterator->length && iterator->text[iterator->offset] == '*' &&
+               iterator->text[iterator->offset + 1] == '/'))
         iterator->offset++;
-      if (iterator->offset + 1 < iterator->length) iterator->offset += 2;
+      if (iterator->offset < iterator->length) iterator->offset += 2;
       continue;
     }
     break;

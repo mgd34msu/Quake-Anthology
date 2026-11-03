@@ -7,6 +7,7 @@
 #include "qa/core/math.h"
 #include "qa/formats/q1_map/entities.h"
 #include "qa/materials/legacy_fog.h"
+#include "qa/foundation/js.h"
 
 static double clamp01(double value) {
   return value < 0 ? 0 : value > 1 ? 1 : value;
@@ -55,14 +56,11 @@ qa_q1_fog qa_q1_fog_state_sample(const qa_q1_fog_state *state, double time) {
 /* JS Number(token) via strtod over a trimmed token; empty token is 0 in
  * JS but split of a trimmed string yields "" only for empty input. */
 static double js_number(const char *start, size_t length) {
-  if (length == 0) return 0;
   char *copy = malloc(length + 1);
   if (copy == NULL) return NAN;
   memcpy(copy, start, length);
   copy[length] = '\0';
-  char *end = NULL;
-  double value = strtod(copy, &end);
-  if (end == copy || *end != '\0') value = NAN;
+  double value = qa_js_string_to_number(copy);
   free(copy);
   return value;
 }
@@ -110,7 +108,7 @@ double qa_height_fog_fraction(double world_z, double start, double end) {
   return clamp01((world_z - start - start) / (end - start));
 }
 double qa_height_fog_dir_z(double direction_z) {
-  double sign = direction_z > 0 ? 1 : direction_z < 0 ? -1 : 0;
+  double sign = qa_js_sign(direction_z);
   return direction_z + 0.00001 * (1 - sign * sign);
 }
 double qa_height_fog_extinction(double view_z, double world_z, double start,
@@ -126,7 +124,7 @@ double qa_height_fog_amount(double density, double depth, double extinction) {
 qa_vec3 qa_q2_fog_color(qa_vec3 color, qa_scene_fog fog, qa_vec3 point,
                         qa_vec3 view, double depth, bool sky) {
   qa_vec3 result = mix3(color, fog.color, qa_global_fog_amount(fog.density / 64, depth));
-  if (fog.height.density > 0) {
+  if (fog.height.density > 0 && fog.height.falloff > 0) {
     qa_vec3 delta = {point.x - view.x, point.y - view.y, point.z - view.z};
     double distance = qa_hypot3(delta);
     double direction_z = qa_height_fog_dir_z(

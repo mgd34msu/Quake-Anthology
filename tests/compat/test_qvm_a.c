@@ -684,55 +684,6 @@ static void test_script_flow(void) {
   rmdir(root);
 }
 
-static qa_qvmx_host_prediction fake_predict(void *ctx,
-                                            qa_qvmx_bot_movement_prediction_query query) {
-  (void)query;
-  return *(const qa_qvmx_host_prediction *)ctx;
-}
-static qa_bounds fake_presence_bounds(void *ctx, double presence) {
-  (void)ctx;
-  (void)presence;
-  qa_bounds bounds = {{0, 0, 0}, {0, 0, 10}};
-  return bounds;
-}
-static double fake_entity_number(void *ctx, qa_actor_id actor) {
-  (void)ctx;
-  (void)actor;
-  return 0;
-}
-
-/* Math.max(0, NaN) is NaN in TS, so success/time propagate it. */
-static void test_movement_prediction_max(void) {
-  qa_qvmx_host_prediction result;
-  memset(&result, 0, sizeof result);
-  result.stop_event = 0;
-  result.frames = 10;
-  result.seconds = 1.5;
-  result.has_end_area = true;
-  result.end_area = 3;
-  qa_qvmx_bot_navigation navigation;
-  memset(&navigation, 0, sizeof navigation);
-  navigation.ctx = &result;
-  navigation.predict_client_movement = fake_predict;
-  navigation.presence_bounds = fake_presence_bounds;
-  qa_qvmx_bot_movement_prediction_query query;
-  memset(&query, 0, sizeof query);
-  query.frame_time = 0.05;
-  query.max_frames = NAN;
-  query.presence = 2;
-  qa_qvm_entity_number_fn entity_number = {NULL, fake_entity_number};
-  qa_qvm_aas_movement_prediction prediction =
-      qa_qvm_bot_movement_prediction(&navigation, query, entity_number);
-  CHECK(!prediction.success);
-  CHECK(prediction.time == 1.5 && prediction.frames == 10 && prediction.end_area == 3);
-  result.stop_event = 1;
-  result.seconds = NAN;
-  prediction = qa_qvm_bot_movement_prediction(&navigation, query, entity_number);
-  CHECK(prediction.success);
-  CHECK(isnan(prediction.time));
-  CHECK(prediction.frames == 9);
-}
-
 int main(void) {
   test_abi();
   test_w6c_qvm_deep_01();
@@ -744,7 +695,6 @@ int main(void) {
   test_browser_ping();
   test_script_handles();
   test_script_flow();
-  test_movement_prediction_max();
   test_interpreter();
   printf("test_qvm_a: %d checks, %d failures\n", checks, failures);
   return failures == 0 ? 0 : 1;

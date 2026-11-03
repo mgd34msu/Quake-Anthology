@@ -11,6 +11,7 @@
 #include "qa/core/game_numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/foundation/js.h"
 
 enum {
   STAT_HEALTH_BARS = 52,
@@ -132,7 +133,7 @@ static void table_set_columns(qa_native_q2_hud_table *table,
 
 static char *client_name(const qa_native_q2_hud_frame *frame, double slot) {
   if (slot < 0 || slot >= 256)
-    qa_range_error("Q2 HUD client is outside clientinfo");
+    qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD client is outside clientinfo");
   qa_ui_hud_q2_app_layout config =
       qa_ui_hud_q2_application_layout_for(frame->protocol);
   const char *info =
@@ -157,8 +158,10 @@ static char *localized_text(const qa_native_q2_hud_frame *frame,
     if (cursor[0] == '#' && cursor[1] == '#' && cursor[2] == 'P' &&
         cursor[3] >= '0' && cursor[3] <= '9') {
       const char *digits = cursor + 3;
-      char *end = NULL;
-      double slot = strtod(digits, &end);
+      /* /##P([0-9]+)/ then Number(slot): strtod also read "12.5" and "1e3". */
+      const char *end = digits;
+      while (*end >= '0' && *end <= '9') end++;
+      double slot = qa_js_parse_int(digits, 10);
       char *name = client_name(frame, slot);
       size_t name_length = strlen(name);
       if (length + name_length + 1 > capacity) {
@@ -274,12 +277,12 @@ static void rr_field(rr_state *s, double value, double digits, bool alternate) {
 static const char *rr_config_stat(rr_state *s, double index) {
   double value = rr_stat(s, index);
   if (value < 0 || value >= s->config.max_config_strings)
-    qa_range_error("Q2 HUD stat string is outside configstrings");
+    qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD stat string is outside configstrings");
   return qa_native_q2_config_string_at(s->frame, value);
 }
 static int32_t rr_count(int32_t value, int32_t maximum) {
   if (value < 0 || value > maximum)
-    qa_range_error("Q2 HUD argument count exceeds source limits");
+    qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD argument count exceeds source limits");
   return value;
 }
 static void rr_fill(rr_state *s, double x, double y, double width,
@@ -330,6 +333,22 @@ static char *split_field(const char *text, char separator, size_t wanted) {
   }
 }
 
+typedef struct rr_layout_unwind {
+  qa_tokenizer *parser;
+  qa_native_q2_hud_table *scratch; /* NULL when the environment's table is used */
+  bool **conditions;
+  char **command;
+} rr_layout_unwind;
+static void rr_layout_unwind_run(void *ctx) {
+  rr_layout_unwind *unwind = ctx;
+  qa_tokenizer_destroy(unwind->parser);
+  if (unwind->scratch != NULL) qa_native_q2_hud_table_destroy(unwind->scratch);
+  free(*unwind->conditions);
+  *unwind->conditions = NULL;
+  free(*unwind->command);
+  *unwind->command = NULL;
+}
+
 bool qa_q2_rerelease_layout_into(const char *source,
                                  const qa_native_q2_hud_frame *frame,
                                  double width, double height,
@@ -365,8 +384,14 @@ bool qa_q2_rerelease_layout_into(const char *source,
   size_t condition_count = 0, condition_capacity = 0;
   bool flash = fmod(frame->time_milliseconds, 1000) < 500;
   qa_text_token token;
+  char *command = NULL;
+  /* A layout or parse error is caught by the HUD (NativeQ2HudLayoutError); this
+   * frame's storage is released when it unwinds. */
+  rr_layout_unwind unwind = { &parser, scratch_used ? &scratch : NULL, &conditions, &command };
+  qa_cleanup unwind_cleanup;
+  qa_cleanup_push(&unwind_cleanup, rr_layout_unwind_run, &unwind);
   while (qa_tokenizer_next(&parser, true, &token)) {
-    char *command = token.value;
+    command = token.value;
     bool draw = condition_count == 0 ? true : conditions[condition_count - 1];
 /* Local token helpers as macros to keep the case order readable. */
 #define NEXT_STR()                                                        \
@@ -403,7 +428,7 @@ bool qa_q2_rerelease_layout_into(const char *source,
       conditions[condition_count++] = draw && frame->server_frame >= value;
     } else if (strcmp(command, "endif") == 0) {
       if (condition_count == 0)
-        qa_range_error("Q2 HUD endif without matching if");
+        qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD endif without matching if");
       condition_count--;
     } else if (strcmp(command, "xl") == 0 || strcmp(command, "xr") == 0 ||
                strcmp(command, "xv") == 0) {
@@ -443,7 +468,7 @@ bool qa_q2_rerelease_layout_into(const char *source,
         } else {
           double value = rr_stat(&s, index);
           if (value < 0 || value >= s.config.max_images)
-            qa_range_error("Q2 HUD image is outside configstrings");
+            qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD image is outside configstrings");
           rr_picture(&s,
                      qa_native_q2_config_string_at(frame, s.config.images + value),
                      s.x, s.y);
@@ -728,7 +753,7 @@ bool qa_q2_rerelease_layout_into(const char *source,
       }
       if (draw) {
         if (s.table->row_count >= 11)
-          qa_range_error("Q2 HUD table exceeds source dimensions");
+          qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD table exceeds source dimensions");
         size_t cell_count = (size_t)size > s.table->column_count
                                 ? (size_t)size
                                 : s.table->column_count;
@@ -887,13 +912,15 @@ bool qa_q2_rerelease_layout_into(const char *source,
 #undef NEXT_STR
 #undef NEXT_INT
     free(command);
+    command = NULL;
     if (!s.ok) break;
   }
+  qa_cleanup_pop(&unwind_cleanup);
   free(conditions);
   qa_tokenizer_destroy(&parser);
   if (scratch_used) qa_native_q2_hud_table_destroy(&scratch);
   if (condition_count != 0)
-    qa_range_error("Q2 HUD if without matching endif");
+    qa_raise("NativeQ2HudLayoutError", 0, 0, "Q2 HUD if without matching endif");
   return s.ok;
 }
 

@@ -1,7 +1,6 @@
 /* Port of src/content/q1/addons/ctf/types.ts. CtfTeam/CtfRune keep
- * exact TS strings. Mirrored Threewave grapple/weapon ops stand in for
- * src/content/q1/equipment/threewave-{grapple,weapon}.ts until they
- * land. GPL-2.0-or-later. */
+ * exact TS strings ("red"|"blue", NULL = TS null team). Q1CtfServices is
+ * the TS host interface (fn + ctx; every member required). GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q1_ADDONS_CTF_TYPES_H
 #define QA_CONTENT_Q1_ADDONS_CTF_TYPES_H
 #include "qa/content/q1/addons/context.h"
@@ -48,7 +47,7 @@ typedef struct qa_q1ad_ctf_services {
   void (*consume_impulse)(void *ctx, qa_actor_id actor);
   bool (*observer)(void *ctx, qa_actor_id actor);
   void (*set_observer)(void *ctx, qa_actor_id actor, bool observer);
-  void (*respawn)(void *ctx, qa_actor_id actor, qa_q1ad_actor *spot);
+  void (*respawn)(void *ctx, qa_actor_id actor, qa_q1_actor *spot); /* spot NULL = TS null */
   void (*disconnect)(void *ctx, qa_actor_id actor);
   void (*colors)(void *ctx, qa_actor_id actor, double shirt, double pants);
   bool (*prompt_supported)(void *ctx, qa_actor_id actor);
@@ -57,44 +56,12 @@ typedef struct qa_q1ad_ctf_services {
   void (*clear_prompt)(void *ctx, qa_actor_id actor);
   void (*teleport)(void *ctx, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles, qa_vec3 velocity, double until);
   void (*select_grapple)(void *ctx, qa_actor_id actor);
-  const char *(*selected_weapon)(void *ctx, qa_actor_id actor);
-  const char *(*selected_ammo)(void *ctx, qa_actor_id actor);
-  void (*weapon_changed)(void *ctx, qa_actor_id actor, const char *acquired);
+  qa_item_id (*selected_weapon)(void *ctx, qa_actor_id actor); /* NULL = TS null */
+  qa_item_id (*selected_ammo)(void *ctx, qa_actor_id actor);
+  void (*weapon_changed)(void *ctx, qa_actor_id actor, qa_item_id acquired);
   void (*haste)(void *ctx, qa_actor_id actor, bool enabled);
   void (*status)(void *ctx, qa_actor_id actor, qa_q1ad_ctf_status status);
   void (*log)(void *ctx, qa_actor_id actor, const char *action);
 } qa_q1ad_ctf_services;
 
-/* Mirrored ThreewaveGrappleState fields read/written by this slice. */
-typedef struct qa_q1ad_grapple_pose {
-  double weapon_frame, attack_finished;
-  bool axe_pose, has_frame;
-  double frame;
-} qa_q1ad_grapple_pose;
-
-typedef struct qa_q1ad_threewave_grapple {
-  void *ctx;
-  bool present;
-  bool (*state)(void *ctx, qa_actor_id actor, qa_q1ad_grapple_pose *out);
-  void (*set_weapon_frame)(void *ctx, qa_actor_id actor, double frame);
-  bool (*pulling)(void *ctx, qa_actor_id actor);
-  qa_q1ad_actor *(*hook)(void *ctx, qa_actor_id actor);
-  void (*release)(void *ctx, qa_actor_id actor);
-  bool (*fire)(void *ctx, qa_actor_id actor);
-  void (*touch)(void *ctx, qa_q1ad_actor *hook, qa_actor_id other);
-  void (*trail)(void *ctx, qa_actor_id actor);
-  bool (*character_pose)(void *ctx, qa_actor_id actor, qa_q1ad_grapple_pose *out);
-} qa_q1ad_threewave_grapple;
-
-typedef struct qa_q1ad_threewave_weapon {
-  void *ctx;
-  bool present;
-  bool (*attack)(void *ctx, qa_actor_id actor);
-  void (*animate)(void *ctx, qa_actor_id actor);
-} qa_q1ad_threewave_weapon;
-
-typedef struct qa_q1ad_ctf_state qa_q1ad_ctf_state;
-/* Factories standing in for the unported equipment constructors. */
-typedef qa_q1ad_threewave_grapple (*qa_q1ad_grapple_factory)(void *ctx, qa_q1ad_ctf_state *state);
-typedef qa_q1ad_threewave_weapon (*qa_q1ad_weapon_factory)(void *ctx, qa_q1ad_ctf_state *state);
 #endif

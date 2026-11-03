@@ -538,30 +538,12 @@ static void hook_noise(void *c, qa_actor_id a, qa_vec3 o) { (void)c; (void)a; (v
 static qa_q2w_input hook_input(void *c, qa_actor_id a) { (void)c; (void)a; qa_q2w_input in = {0}; return in; }
 static bool hook_banned(void *c, const char *ip) { (void)c; return ip && strcmp(ip, "10.0.0.9") == 0; }
 
-/* mirror weapons fake: one actor's blaster state */
-typedef struct weapon_fake { bool bound; const char *weapon; } weapon_fake;
-static weapon_fake WF;
-static qa_q2_base_weapon_definition WDEFS[] = {{"blaster", "q2:weapon_blaster", "weapon_blaster", NULL}};
-static bool wf_has(void *c, qa_actor_id a) { (void)c; (void)a; return WF.bound; }
-static const char *wf_weapon(void *c, qa_actor_id a) { (void)c; (void)a; return WF.bound ? WF.weapon : NULL; }
-static const char *wf_last(void *c, qa_actor_id a) { (void)c; (void)a; return NULL; }
-static const char *wf_loop(void *c, qa_actor_id a) { (void)c; (void)a; return NULL; }
-static void wf_bind(void *c, qa_q2_entity *e, qa_q2_game_services *g) { (void)c; (void)e; (void)g; WF.bound = true; WF.weapon = "blaster"; }
-static const char *wf_request(void *c, qa_q2_entity *e, qa_q2_game_services *g, const char *n) { (void)c; (void)e; (void)g; WF.weapon = n; return "selected"; }
-static bool wf_can_drop(void *c, qa_q2_entity *e, qa_q2_game_services *g, const char *n) { (void)c; (void)e; (void)g; (void)n; return true; }
-static void wf_tick(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_q2w_input in) { (void)c; (void)e; (void)g; (void)in; }
-static bool wf_definition(void *c, const char *n, qa_q2_base_weapon_definition *out) {
-  (void)c;
-  if (n && strcmp(n, "blaster") == 0) { *out = WDEFS[0]; return true; }
-  return false;
-}
-static const qa_q2_base_weapon_definition *wf_registered(void *c, size_t *n) { (void)c; *n = 1; return WDEFS; }
-static void wf_silencer(void *c, qa_actor_id a) { (void)c; (void)a; }
-static void wf_set(void *c, qa_actor_id a, const char *n) { (void)c; (void)a; WF.weapon = n; }
-static void wf_reset(void *c, qa_actor_id a, const char *n) { (void)c; (void)a; WF.weapon = n; }
-static void wf_recoil(void *c, qa_actor_id a, qa_q2_edition e, double now, qa_vec3 *ko, qa_vec3 *ka) {
-  (void)c; (void)a; (void)e; (void)now; *ko = QA_Q2_ZERO; *ka = QA_Q2_ZERO;
-}
+/* The real TS Q2Weapons (base arsenal registered by its constructor). */
+static void wh_emit(void *c, qa_q2w_event e) { (void)c; (void)e; }
+static void wh_noise(void *c, qa_actor_id a, qa_vec3 o, bool s) { (void)c; (void)a; (void)o; (void)s; }
+static void wh_dodge(void *c, qa_actor_id m, qa_actor_id a, double eta, qa_trace_result t) { (void)c; (void)m; (void)a; (void)eta; (void)t; }
+static void wh_ammo(void *c, qa_actor_id a, qa_item_id i) { (void)c; (void)a; (void)i; }
+static bool wh_can_target(void *c, const qa_actor_id *a, qa_actor_id t) { (void)c; (void)a; (void)t; return true; }
 static void item_hook_noop(void *c, qa_actor_id a, qa_item_id i, bool f) { (void)c; (void)a; (void)i; (void)f; }
 static void item_hook_silencer(void *c, qa_actor_id a, double n) { (void)c; (void)a; (void)n; }
 static void item_hook_armor(void *c, qa_actor_id a, const char *k) { (void)c; (void)a; (void)k; }
@@ -569,25 +551,23 @@ static void item_hook_armor(void *c, qa_actor_id a, const char *k) { (void)c; (v
 static void test_players(void) {
   fake_setup(QA_Q2_MODE_DEATHMATCH);
   HS = (hook_state){0};
-  WF = (weapon_fake){0};
   qa_q2_item_hooks item_hooks = {0};
   item_hooks.weapon_picked = item_hook_noop;
   item_hooks.silencer = item_hook_silencer;
   item_hooks.power_armor = item_hook_armor;
   qa_q2_item_module *items = qa_q2_item_module_create(item_hooks);
   CHECK(items != NULL);
-  qa_q2_base_weapons weapons = {0};
-  weapons.has_state = wf_has; weapons.weapon = wf_weapon; weapons.last_weapon = wf_last;
-  weapons.loop_sound = wf_loop; weapons.bind = wf_bind; weapons.request_weapon = wf_request;
-  weapons.can_drop = wf_can_drop; weapons.tick = wf_tick; weapons.definition = wf_definition;
-  weapons.registered_definitions = wf_registered; weapons.reset_silencer = wf_silencer;
-  weapons.set_weapon = wf_set; weapons.reset_state = wf_reset; weapons.recoil = wf_recoil;
+  qa_q2w_hooks weapon_hooks = {0};
+  weapon_hooks.emit = wh_emit; weapon_hooks.noise = wh_noise; weapon_hooks.dodge = wh_dodge;
+  weapon_hooks.ammo_changed = wh_ammo; weapon_hooks.can_target = wh_can_target;
+  qa_q2w_weapons weapons;
+  CHECK(qa_q2w_weapons_init(&weapons, weapon_hooks));
   qa_q2_player_hooks hooks = {0};
   hooks.movement = hook_movement; hooks.set_movement = hook_set_movement; hooks.emit = hook_emit;
   hooks.noise = hook_noise; hooks.weapon_input = hook_input; hooks.banned = hook_banned;
   qa_q2_base_player_rules changes = {0};
   changes.password = "secret";
-  qa_q2_players *players = qa_q2_players_create(items, weapons, hooks, &changes, QA_Q2_RULE_PASSWORD);
+  qa_q2_players *players = qa_q2_players_create(items, &weapons, hooks, &changes, QA_Q2_RULE_PASSWORD);
   CHECK(players != NULL);
   CHECK(qa_q2_players_need_password(players) == 1);
 
@@ -617,9 +597,22 @@ static void test_players(void) {
   CHECK(state->fov == 160 && strcmp(state->hand, "left") == 0);
   CHECK(strcmp(state->gender, "neutral") == 0);
   CHECK(HS.userinfos == 1);
-  CHECK(WF.bound);
+  CHECK(qa_q2_players_weapon_state(players, entity->actor.id) != NULL);
   qa_combat_state_result combat = qa_gameplay_authority_read(FG->combat, entity->actor.id);
   CHECK(combat.has_value && combat.value.health == 100);
+
+  /* recordDamage keeps the attack object for entity.lastAttack: the stored
+   * provenance survives the caller's storage and later admissions. */
+  {
+    qa_actor_id attacker = start->actor.id;
+    qa_damage_decision decision = {0};
+    decision.request.attack.attacker = &attacker;
+    decision.reaction = "pain";
+    qa_q2_players_record_damage(players, entity, &FG->game, decision);
+    attacker.slot += 100;
+    CHECK(entity->last_attack != NULL && entity->last_attack->attacker != &attacker);
+    CHECK(entity->last_attack->attacker && qa_same_actor(*entity->last_attack->attacker, start->actor.id));
+  }
 
   /* invalid userinfo falls back to badinfo */
   qa_q2_players_userinfo_changed(players, entity, &FG->game, "\\name\\bad\"name");
@@ -629,7 +622,7 @@ static void test_players(void) {
   qa_q2_players_put_in_server(players, entity, &FG->game, true, NULL);
   qa_body_state body = qa_q2_game_body(&FG->game, entity);
   CHECK(near(body.origin.z, 10));
-  CHECK(strcmp(WF.weapon, "blaster") == 0);
+  CHECK(strcmp(qa_q2_players_weapon_state(players, entity->actor.id)->weapon, "blaster") == 0);
   CHECK(strcmp(HS.last_change.kind, "spawn") == 0);
 
   /* chat flood protection: 4 messages in 4s then locked */
@@ -672,8 +665,10 @@ static void test_players(void) {
 
   qa_q2_players_destroy(players);
   qa_q2_item_module_destroy(items);
-  /* entities are owned by the fake; release actors before teardown */
+  /* entities are owned by the fake; release actors before teardown (the
+   * weapons' release subscription stays live until then) */
   while (FG->entity_count > 0) fake_remove(NULL, FG->entities[0]);
+  qa_q2w_weapons_destroy(&weapons);
   fake_teardown();
 }
 

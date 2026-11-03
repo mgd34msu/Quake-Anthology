@@ -1,8 +1,6 @@
 /* Port of src/compat/q2/classic/host.ts. GPL-2.0-or-later.
  * Async *Loading variants are synchronous with a next-frame
- * callback (PORTING). NativePrimaryPickups (compat/q2/native-
- * pickups.ts, landed reduced) is held by value; its touch/grant
- * hooks need a live runner and stay with the landed module. */
+ * callback (PORTING). NativePrimaryPickups is held by value. */
 #ifndef QA_COMPAT_Q2_CLASSIC_HOST_H
 #define QA_COMPAT_Q2_CLASSIC_HOST_H
 #include <stdbool.h>
@@ -32,6 +30,10 @@ typedef struct qa_compat_q2_classic_engine_services {
   const qa_original_pickup_admission *pickups; /* optional */
   const qa_compat_q2_classic_damage_provenance *damage_provenance; /* optional */
   const qa_compat_q2_classic_actor_projection *projection; /* optional */
+  /* TS standInActor: the shared actor behind a stand-in edict (a selected monster), so guest T_Damage on it reaches
+   * shared combat; NULL is TS undefined, a false return TS null. */
+  bool (*stand_in_actor)(void *ctx, qa_raw_entity_view record, qa_actor_id *out);
+  void *stand_in_ctx;
   qa_q2_foundation_host *engine;
   qa_cvar_registry *cvars;
   void *bind_ctx; void (*bind_entity)(void *ctx, qa_raw_entity_view record, qa_owned_actor actor);
@@ -77,10 +79,15 @@ qa_compat_q2_classic_cvars *qa_compat_q2_classic_guest_host_get_cvars(const qa_c
 qa_guest_address qa_compat_q2_classic_guest_host_get_imports(const qa_compat_q2_classic_guest_host *h);
 int64_t qa_compat_q2_classic_guest_host_spawn_instructions(const qa_compat_q2_classic_guest_host *h);
 qa_compat_q2_classic_edicts *qa_compat_q2_classic_guest_host_get_edicts(qa_compat_q2_classic_guest_host *h);
-/* Pickup supply mirrors the landed reduced NativePrimaryPickups. */
+/* TS #exports (edicts.exports): aborts before GetGameAPI returned. */
+qa_guest_address qa_compat_q2_classic_guest_host_get_exports(const qa_compat_q2_classic_guest_host *h);
 void qa_compat_q2_classic_guest_host_bind_pickups(qa_compat_q2_classic_guest_host *h, qa_guest_address image,
                                                   const qa_compat_q2_native_pickup_profile *declared);
 void qa_compat_q2_classic_guest_host_bind_pickup_supply(qa_compat_q2_classic_guest_host *h, qa_compat_q2_native_pickup_supply owner);
+/* TS bindPickupSupply's returned remover. */
+void qa_compat_q2_classic_guest_host_unbind_pickup_supply(qa_compat_q2_classic_guest_host *h, qa_compat_q2_native_pickup_supply owner);
+/* TS pickupSupply: valid while the held source grant settles. */
+qa_compat_q2_native_pickup_supply_evaluation qa_compat_q2_classic_guest_host_pickup_supply(qa_compat_q2_classic_guest_host *h, const qa_original_pickup_offer *offer);
 bool qa_compat_q2_classic_guest_host_pickup_supply_owns(qa_compat_q2_classic_guest_host *h, qa_actor_id actor, qa_item_id item, qa_actor_id pickup);
 /* bindInputMovement: returns an unbind handle (0 = none). */
 typedef void (*qa_compat_q2_classic_input_boundary_fn)(void *ctx, qa_guest_address address, void *run_ctx, void (*run)(void *, const qa_movement_body_shape *));
@@ -126,4 +133,12 @@ qa_guest_call_result qa_compat_q2_classic_guest_host_import_call(qa_compat_q2_cl
 /* Writes 56 trace bytes into out. */
 void qa_compat_q2_classic_guest_host_trace_bytes(qa_compat_q2_classic_guest_host *h, qa_trace_result trace, uint8_t out[56]);
 void qa_compat_q2_classic_guest_host_link_entity(qa_compat_q2_classic_guest_host *h, qa_guest_address address);
+/* TS observeReload: called when the guest's edict table is replaced (level spawn, saved-game load, world rebind);
+ * stand-in edicts it held are gone. Returns a handle for qa_compat_q2_classic_guest_host_unobserve_reload. */
+size_t qa_compat_q2_classic_guest_host_observe_reload(qa_compat_q2_classic_guest_host *h, void (*observer)(void *ctx), void *ctx);
+void qa_compat_q2_classic_guest_host_unobserve_reload(qa_compat_q2_classic_guest_host *h, size_t handle);
+/* TS fitClassicUserinfo: SV_ConnectionlessPacket strncpy, peers supply userinfo, so oversized text is cut to the guest
+ * buffer (capacity bytes with the terminator) rather than refused. Malloc'd. */
+char *qa_compat_q2_fit_classic_userinfo(const char *text, size_t capacity);
+
 #endif

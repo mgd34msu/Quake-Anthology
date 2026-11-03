@@ -3,6 +3,7 @@
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 qa_bot_path_state qa_new_path_state(void) {
   qa_bot_path_state s; memset(&s, 0, sizeof s);
@@ -154,7 +155,7 @@ qa_bot_move_output qa_follow_path(qa_bot_path_state *state, qa_bot_follow_input 
   double upmove = 0;
   if (swimming) {
     double dx = target.x - input.origin.x, dy = target.y - input.origin.y, dz = target.z - input.origin.z;
-    double len = hypot(hypot(dx, dy), dz);
+    double len = qa_js_hypot3(dx, dy, dz);
     dir = len > 0 ? (qa_bot_vec3){dx / len, dy / len, dz / len} : qa_bvec(0, 0, 0);
     upmove = qa_bot_clamp(dir.z * speed, -speed, speed);
     if (input.has_air_seconds && input.air_seconds < QA_SWIM_AIR_RESERVE && input.has_air_above && input.air_above && dir.z > -0.5) {

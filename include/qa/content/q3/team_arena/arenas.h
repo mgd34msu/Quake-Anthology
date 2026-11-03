@@ -1,6 +1,4 @@
-/* Port of src/content/q3/team-arena/arenas.ts. GPL-2.0-or-later.
- * s.legsAnim/torsoAnim have no landed entity-state mirror fields; the
- * animation stores are skipped (think/event side effects kept). */
+/* Port of src/content/q3/team-arena/arenas.ts. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_ARENAS_H
 #define QA_CONTENT_Q3_TEAM_ARENA_ARENAS_H
 #include <stdbool.h>

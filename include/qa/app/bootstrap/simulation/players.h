@@ -32,11 +32,22 @@ typedef struct qa_app_sim_netquake_client_binding {
   void (*after_physics)(void *ctx, qa_frame_context frame);
 } qa_app_sim_netquake_client_binding;
 
+/* Which TS literal built a ClientMovementOptions, i.e. its key order
+ * (encodeCheckpointValue keeps it): ClientThink's moveClient options,
+ * the spectator moveClient options (client-policy.ts), or the
+ * nativeQ3RuntimeReader record of a restored save. */
+typedef enum qa_app_sim_client_movement_order {
+  QA_APP_SIM_MOVEMENT_ORDER_THINK, QA_APP_SIM_MOVEMENT_ORDER_SPECTATOR, QA_APP_SIM_MOVEMENT_ORDER_SAVED
+} qa_app_sim_client_movement_order;
 /* TS ClientMovementOptions view (q3/types sibling slice). */
 typedef struct qa_app_sim_client_movement_options {
   bool has_trace_mask; double trace_mask;
   bool has_fixed_msec; double fixed_msec;
   bool no_footsteps;
+  bool gauntlet_hit; /* TS ClientMovementOptions.gauntletHit */
+  double debug_level; /* TS debugLevel */
+  bool ladders;       /* TS ladders?: written by ClientThink (order THINK); undefined for spectator and saved options */
+  qa_app_sim_client_movement_order order;
 } qa_app_sim_client_movement_options;
 typedef struct qa_app_sim_q2_movement_config { double air_accelerate; bool n64_physics; } qa_app_sim_q2_movement_config;
 
@@ -114,7 +125,10 @@ struct qa_app_sim_movement_player {
   double gravity_multiplier;
   bool flight;
   double world_gravity;
-  double buttons, previous_buttons, last_sequence;
+  double buttons;
+  /* Vertical move axis of the latest command; Q2 spectators read it as a chase-cycle jump press (TS upMove = 0). */
+  double up_move;
+  double previous_buttons, last_sequence;
   bool has_netquake_command; qa_q1_user_command netquake_command;
   double last_weapon_seconds;
   bool has_arsenal_intent; qa_arsenal_intent arsenal_intent;
@@ -126,6 +140,15 @@ struct qa_app_sim_movement_player {
   bool has_netquake_slice_command; qa_q1_user_command netquake_slice_command;
   qa_q3_movement_provider_options q3_provider_options;
   qa_app_sim_q3_weapon_wrap q3_weapon_wrap;
+  /* The contact and effect arrays of the last movement result this player
+   * returned (TS garbage once the next move begins): freed when the next
+   * move starts and when the player is destroyed. */
+  const qa_movement_contact *owned_contacts;
+  const qa_ordered_movement_effect *owned_effects;
+  /* The effects of the last weapon step (qa_app_shared_sim_weapon_step). */
+  const qa_movement_effect *owned_weapon_effects;
+  /* The ammo array of the last Q3 arsenal step (stepQ3Arsenal's fresh state, GC-owned in TS); freed by the next step or destroy. */
+  const void *owned_arsenal_ammo;
 };
 /* character_definition/appearance NULL use recipe.character. */
 qa_app_sim_movement_player *qa_app_sim_movement_player_create(qa_owned_actor actor, qa_client_id client,
@@ -148,5 +171,10 @@ void qa_app_sim_movement_player_prepare_netquake(qa_app_sim_movement_player *pla
 void qa_app_sim_movement_player_finish_netquake_input(qa_app_sim_movement_player *player, bool failed);
 qa_movement_result qa_app_sim_movement_player_physics_netquake(qa_app_sim_movement_player *player, qa_frame_context frame);
 qa_movement_result qa_app_sim_movement_player_move(qa_app_sim_movement_player *player, qa_actor_command input, qa_frame_context frame, const qa_qw_user_command *source_command);
+/* TS withInputCommand(command, frame, operation, () => undefined, arsenal): arsenal NULL is the TS default
+ * (this.arsenalIntent). The arsenal operation receives is valid for the call. */
+void qa_app_sim_movement_player_with_input_command(qa_app_sim_movement_player *player, qa_user_command command, qa_frame_context frame,
+    void (*operation)(void *ctx, qa_user_command command, const qa_arsenal_intent *arsenal), void *operation_ctx,
+    const qa_arsenal_intent *arsenal);
 qa_movement_result qa_app_sim_movement_player_move_command(qa_app_sim_movement_player *player, qa_actor_command input, qa_frame_context frame, const qa_qw_user_command *source_command);
 #endif

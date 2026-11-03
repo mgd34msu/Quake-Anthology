@@ -121,7 +121,14 @@ void qa_qvm_read_weapon_profile(const qa_save_value *value, const qa_resolved_qv
   definition->id = out->owned_id;
   definition->module = artifact->module;
   qa_save_reader title = field(&reader, "title");
-  definition->title = qa_save_reader_string(&title);
+  /* The declaration tree may be gone before the profile is (validate frees it). */
+  {
+    const char *text = qa_save_reader_string(&title);
+    size_t length = strlen(text);
+    out->owned_title = xmalloc(length + 1);
+    memcpy(out->owned_title, text, length + 1);
+    definition->title = out->owned_title;
+  }
   qa_save_reader_destroy(&title);
   qa_save_reader role = field(&reader, "role");
   static const char *const roles[] = {"rocket", "grenade", "nail", "bolt", "plasma", "energy", "grapple"};
@@ -201,5 +208,6 @@ void qa_qvm_validate_weapon_profile(const qa_qvm_weapon_profile *profile,
 
 void qa_qvm_weapon_profile_free(qa_qvm_weapon_profile *profile) {
   free(profile->owned_id);
+  free(profile->owned_title);
   memset(profile, 0, sizeof *profile);
 }

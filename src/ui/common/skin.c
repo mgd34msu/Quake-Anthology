@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static qa_vec4 v4(double x, double y, double z, double w) {
   qa_vec4 out = { x, y, z, w };
@@ -60,8 +61,8 @@ size_t qa_ui_nine_slice(const qa_ui_image_slice *slice, qa_rect rect,
       || top + bottom > slice->height)
     qa_range_error("Invalid UI nine-slice image");
   double border_scale = slice->has_border_scale ? slice->border_scale : 1;
-  double sx = fmin(border_scale, rect.width / fmax(1, left + right));
-  double sy = fmin(border_scale, rect.height / fmax(1, top + bottom));
+  double sx = qa_js_min(border_scale, rect.width / qa_js_max(1, left + right));
+  double sy = qa_js_min(border_scale, rect.height / qa_js_max(1, top + bottom));
   double xs[4] = { rect.x, rect.x + left * sx,
                    rect.x + rect.width - right * sx, rect.x + rect.width };
   double ys[4] = { rect.y, rect.y + top * sy,

@@ -4,21 +4,23 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
+#include "qa/foundation/support.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/core/commands/text.h"
 #include "qa/foundation/event_ring.h"
+#include "qa/foundation/js_case.h"
 
+/* TS `throw new Error(...)`: a catchable raise (aborts only uncaught). */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[2048];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -26,13 +28,7 @@ static bool str_eq(const char *a, const char *b) {
 }
 static bool str_ieq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
-  while (*a != '\0' && *b != '\0') {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
-      return false;
-    a++;
-    b++;
-  }
-  return *a == *b;
+  return qa_js_equals_ignore_case(a, b); /* TS toLowerCase() === toLowerCase() */
 }
 static bool same_session(qa_session_id a, qa_session_id b) {
   return a.token == b.token;
@@ -77,6 +73,11 @@ struct qa_mod_commands {
   qa_mod_command_port **entries;
   size_t entry_count;
   size_t entry_capacity;
+  /* Every port bound here, open or closed. TS leaves a closed port to the GC; in C the commands free their ports when
+   * destroyed (the mod scope that owns a port only closes it, and closes before the commands go). */
+  qa_mod_command_port **ports;
+  size_t port_count;
+  size_t port_capacity;
   qa_event_ring pending;
   qa_event_cursor pending_cursor;
 };
@@ -167,10 +168,18 @@ static void free_pending_text(const void *record, int64_t id, void *ctx) {
   const struct pending_command *pending = record;
   free(pending->text);
 }
+static void free_port(qa_mod_command_port *port) {
+  free(port->buffers);
+  free(port->key);
+  free(port->instance);
+  free(port);
+}
 void qa_mod_commands_destroy(qa_mod_commands *commands) {
   if (commands == NULL) return;
   qa_event_ring_for_each_live(&commands->pending, free_pending_text, NULL);
   qa_event_ring_destroy(&commands->pending);
+  for (size_t i = 0; i < commands->port_count; i++) free_port(commands->ports[i]);
+  free(commands->ports);
   free(commands->entries);
   free(commands);
 }
@@ -184,11 +193,19 @@ bool qa_read_mod_command(const char *raw, qa_mod_selection *out_selection,
     return false;
   const char *selected = tokens.argc > 1 ? tokens.argv[1] : NULL;
   char *text = qa_command_text_tail(raw, QA_COMMAND_DIALECT_Q3, 2);
-  if (selected == NULL || text == NULL || text[0] == '\0')
-    qa_errorf("Usage: modcmd PRODUCT/COMPONENT_ID <command>");
-  char *copy = xstrdup(selected);
+  char *copy = selected != NULL ? xstrdup(selected) : NULL;
   qa_command_tokens_destroy(&tokens);
+  if (copy == NULL || text == NULL || text[0] == '\0') {
+    free(copy);
+    free(text);
+    qa_errorf("Usage: modcmd PRODUCT/COMPONENT_ID <command>");
+  }
+  qa_cleanup copy_node, text_node; /* readModSelection throws on bad input */
+  qa_cleanup_push(&text_node, free, text);
+  qa_cleanup_push(&copy_node, free, copy);
   bool ok = qa_read_mod_selection(copy, out_selection);
+  qa_cleanup_pop(&copy_node);
+  qa_cleanup_pop(&text_node);
   free(copy);
   if (!ok) {
     free(text);
@@ -358,10 +375,14 @@ void qa_mod_command_port_close(qa_mod_command_port *port) {
 void qa_mod_command_port_destroy(qa_mod_command_port *port) {
   if (port == NULL) return;
   qa_mod_command_port_close(port);
-  free(port->buffers);
-  free(port->key);
-  free(port->instance);
-  free(port);
+  qa_mod_commands *commands = port->commands;
+  for (size_t i = 0; i < commands->port_count; i++)
+    if (commands->ports[i] == port) {
+      memmove(&commands->ports[i], &commands->ports[i + 1], (commands->port_count - i - 1) * sizeof *commands->ports);
+      commands->port_count--;
+      break;
+    }
+  free_port(port);
 }
 static void port_close_ctx(void *ctx) {
   qa_mod_command_port_close((qa_mod_command_port *)ctx);
@@ -408,6 +429,11 @@ qa_mod_command_port *qa_mod_commands_bind(
         commands->entries, commands->entry_capacity * sizeof *commands->entries);
   }
   commands->entries[commands->entry_count++] = port;
+  if (commands->port_count == commands->port_capacity) {
+    commands->port_capacity = commands->port_capacity != 0 ? commands->port_capacity * 2 : 8;
+    commands->ports = xrealloc(commands->ports, commands->port_capacity * sizeof *commands->ports);
+  }
+  commands->ports[commands->port_count++] = port;
   qa_resource_scope_own(resources, qa_mod_command_port_as_resource(port));
   return port;
 }
@@ -474,7 +500,12 @@ double qa_mod_commands_execute(qa_mod_commands *commands,
   char *key = qa_mod_selection_key(selection);
   if (key == NULL) abort();
   qa_mod_command_port *entry = find_selection(commands, key);
-  if (entry == NULL) qa_errorf("Mod commands are unavailable: %s", key);
+  if (entry == NULL) {
+    char message[2048];
+    (void)snprintf(message, sizeof message, "Mod commands are unavailable: %s", key);
+    free(key);
+    qa_errorf("%s", message);
+  }
   free(key);
   return qa_mod_command_port_execute_now(entry, text, &caller);
 }

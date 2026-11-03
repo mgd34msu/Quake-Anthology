@@ -227,8 +227,10 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_core_call_context *co
         if (index1 >= qa_memory_read_u32(m, slot(locale, table, 4))) continue;
         uint32_t lookup1 = qa_memory_read_u32(m, slot(locale, table, 20 + (int64_t)index1 * 4));
         if (lookup1 == 0) continue;
-        uint32_t index2 = (value >> qa_memory_read_u32(m, slot(locale, table, 8))) &
-                          qa_memory_read_u32(m, slot(locale, table, 12));
+        uint32_t left = (value >> qa_memory_read_u32(m, slot(locale, table, 8)));
+        uint32_t right = qa_memory_read_u32(m, slot(locale, table, 12));
+        uint32_t index2 = left &
+                          right;
         uint32_t lookup2 = qa_memory_read_u32(m, slot(locale, table, lookup1 + (int64_t)index2 * 4));
         if (lookup2 == 0) continue;
         uint32_t index3 = (value >> 5) & qa_memory_read_u32(m, slot(locale, table, 16));
@@ -247,9 +249,10 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_core_call_context *co
       qa_guest_core_address current = qa_guest_required_pointer(args, count, 1);
       qa_guest_core_address end = qa_guest_required_pointer(args, count, 2);
       while (current.byte_offset < end.byte_offset) {
+        qa_guest_core_address object3 = qa_guest_required_pointer(args, count, 0);
+        int c = (int)ctype_read(state, current);
         ctype_write(state, current,
-                    (uint32_t)ctype_convert(state, qa_guest_required_pointer(args, count, 0),
-                                            (int)ctype_read(state, current)));
+                    (uint32_t)ctype_convert(state, object3, c));
         current = slot(locale, current, width);
       }
       return qa_call_pointer(true, end);
@@ -265,9 +268,10 @@ static qa_call_result ctype_impl(void *ctx, const qa_guest_core_call_context *co
       qa_guest_core_address target = qa_guest_required_pointer(args, count, 3);
       qa_guest_core_address end = qa_guest_required_pointer(args, count, 2);
       while (source.byte_offset < end.byte_offset) {
+        qa_guest_core_address object2 = qa_guest_required_pointer(args, count, 0);
+        int value2 = qa_memory_read_u8(m, source);
         ctype_write(state, target,
-                    ctype_widen_value(state, qa_guest_required_pointer(args, count, 0),
-                                      qa_memory_read_u8(m, source)));
+                    ctype_widen_value(state, object2, value2));
         source = slot(locale, source, 1);
         target = slot(locale, target, width);
       }
@@ -451,12 +455,16 @@ static built_facets construct_facets(qa_system_v_classic_locale *locale, bool wi
       write_ptr(locale, slot(locale, caches, (int64_t)id * p), cache_address);
       if (index == 10) {
         write_ptr(locale, slot(locale, facet_address, 3 * p), locale->c_locale);
-        write_ptr(locale, slot(locale, facet_address, 4 * p), qa_cxx_abi_bytes(abi, "C"));
+        qa_guest_core_address a = slot(locale, facet_address, 4 * p);
+        qa_guest_core_address v = qa_cxx_abi_bytes(abi, "C");
+        write_ptr(locale, a, v);
       }
     } else if (index == 1 || index == 5 || index == 13) {
+      qa_guest_core_address a2;
+      qa_guest_core_address v2;
       write_ptr(locale, slot(locale, facet_address, 2 * p), locale->c_locale);
       if (index == 13)
-        write_ptr(locale, slot(locale, facet_address, 3 * p), qa_cxx_abi_bytes(abi, "C"));
+        (a2 = slot(locale, facet_address, 3 * p), v2 = qa_cxx_abi_bytes(abi, "C"), write_ptr(locale, a2, v2));
     }
   }
   built_facets result = {built[0], built[3], built[4]};

@@ -41,9 +41,8 @@ static int64_t width_of(int64_t bits, qa_q3_message_mode mode) {
   return width;
 }
 static int64_t angle_integer(double value, double scale) {
-  float scaled = (float)((float)((float)value * (float)scale) / 360.0f);
-  /* TS: fround(fround(fround(value)*scale)/360); scale exact in float. */
-  scaled = (float)((double)(float)((float)value * (float)scale) / 360.0);
+  /* TS: fround(fround(fround(value)*scale)/360); scale is a power of two, exact in float. */
+  float scaled = (float)((double)(float)((double)(float)value * scale) / 360.0);
   if (!isfinite(scaled) || scaled < -2147483648.0f || scaled >= 2147483648.0f)
     qa_range_error("Undefined native message angle float-to-int conversion");
   return (int64_t)trunc((double)scaled);
@@ -243,22 +242,31 @@ double qa_q3_message_reader_read_float(qa_q3_message_reader *r) {
   if (r->count > (int64_t)r->len) return -1;
   return qa_bits_to_float32((uint32_t)v);
 }
+/* A truncated read raises BinaryError mid-loop; the cleanup node frees the
+ * partial buffer when a qa_try catches it, as the TS array is collected. */
 bool qa_q3_message_reader_read_data(qa_q3_message_reader *r, int64_t length, uint8_t **out) {
   if (length < 0 || length > QA_Q3_MAX_MESSAGE_LENGTH) qa_range_error("Invalid message data length");
-  *out = malloc((size_t)(length ? length : 1));
-  if (!*out) return false;
-  for (int64_t i = 0; i < length; i++) (*out)[i] = (uint8_t)qa_q3_message_reader_read_byte(r);
+  uint8_t *data = malloc((size_t)(length ? length : 1));
+  if (!data) return false;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, data);
+  for (int64_t i = 0; i < length; i++) data[i] = (uint8_t)qa_q3_message_reader_read_byte(r);
+  qa_cleanup_pop(&guard);
+  *out = data;
   return true;
 }
 static bool read_text(qa_q3_message_reader *r, int64_t limit, bool newline, bool ascii, char **out) {
   char *buf = malloc((size_t)limit);
   if (!buf) return false;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, buf);
   size_t n = 0;
   for (int64_t i = 0; i < limit - 1; i++) {
     int64_t c = qa_q3_message_reader_read_byte(r);
     if (c == -1 || c == 0 || (newline && c == 10)) break;
     buf[n++] = (char)(c == 37 || (ascii && c > 127) ? 46 : c);
   }
+  qa_cleanup_pop(&guard);
   buf[n] = 0; *out = buf; return true;
 }
 bool qa_q3_message_reader_read_string(qa_q3_message_reader *r, char **out) { return read_text(r, 1024, false, true, out); }

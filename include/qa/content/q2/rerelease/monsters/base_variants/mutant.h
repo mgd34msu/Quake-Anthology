@@ -11,7 +11,7 @@ typedef struct qa_q2rm_mutant_definition {
   qa_q2m_definition definition;
   qa_q2m_named_handler callbacks[24];
   qa_q2m_named_ai ai[2];
-  qa_q2f_named_touch touch_defs[1];
+  qa_q2_named_touch touch_defs[1];
 } qa_q2rm_mutant_definition;
 void qa_q2rm_create_rerelease_mutant_definition(qa_q2rm_mutant_definition *out, qa_q2m_monsters *monsters);
 #endif

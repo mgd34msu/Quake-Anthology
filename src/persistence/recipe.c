@@ -46,10 +46,61 @@ static int64_t field_integer_min(const qa_save_reader *reader, const char *name,
   qa_save_reader_destroy(&f);
   return (int64_t)value;
 }
+/* Allocation arena: everything the readers below allocate is tracked while a
+ * public reader runs, so a raise (a malformed save) frees the partly built
+ * value instead of leaking it. A nested public reader hands its allocations to
+ * the enclosing one when it returns; the outermost one keeps them, owned by the
+ * caller (qa_executable_recipe_free / qa_resolved_resource_release). */
+typedef struct recipe_arena { void **items; size_t count, cap; struct recipe_arena *outer; } recipe_arena;
+static _Thread_local recipe_arena *active_arena;
+static void arena_track(const qa_save_reader *reader, void *memory) {
+  recipe_arena *arena = active_arena;
+  if (arena == NULL || memory == NULL) return;
+  if (arena->count == arena->cap) {
+    size_t cap = arena->cap ? arena->cap * 2 : 32;
+    void **grown = realloc(arena->items, cap * sizeof *grown);
+    if (grown == NULL) { free(memory); qa_save_reader_fail(reader, "out of memory"); }
+    arena->items = grown; arena->cap = cap;
+  }
+  arena->items[arena->count++] = memory;
+}
+/* Frees a tracked allocation the readers no longer need. */
+static void arena_release(void *memory) {
+  recipe_arena *arena = active_arena;
+  if (arena != NULL)
+    for (size_t i = arena->count; i-- > 0;)
+      if (arena->items[i] == memory) { arena->items[i] = arena->items[--arena->count]; break; }
+  free(memory);
+}
+static void arena_unwind(void *arg) {
+  recipe_arena *arena = arg;
+  for (size_t i = 0; i < arena->count; i++) free(arena->items[i]);
+  free(arena->items);
+  active_arena = arena->outer;
+}
+static void arena_enter(recipe_arena *arena, qa_cleanup *node) {
+  memset(arena, 0, sizeof *arena);
+  arena->outer = active_arena;
+  active_arena = arena;
+  qa_cleanup_push(node, arena_unwind, arena);
+}
+static void arena_leave(recipe_arena *arena, qa_cleanup *node, const qa_save_reader *reader) {
+  qa_cleanup_pop(node);
+  active_arena = arena->outer;
+  for (size_t i = 0; i < arena->count; i++) arena_track(reader, arena->items[i]);
+  free(arena->items);
+}
 static void *xmalloc(const qa_save_reader *reader, size_t size) {
   void *memory = malloc(size);
   if (memory == NULL) qa_save_reader_fail(reader, "out of memory");
+  arena_track(reader, memory);
   return memory;
+}
+/* Tracks an identity string built by qa_create_*; NULL is OOM. */
+static char *tracked_id(const qa_save_reader *reader, char *id) {
+  if (id == NULL) qa_save_reader_fail(reader, "out of memory");
+  arena_track(reader, id);
+  return id;
 }
 static char *dup_range(const qa_save_reader *reader, const char *start,
                        size_t length) {
@@ -57,6 +108,12 @@ static char *dup_range(const qa_save_reader *reader, const char *start,
   memcpy(out, start, length);
   out[length] = '\0';
   return out;
+}
+
+/* A tracked copy of a string borrowed from the save tree: resource
+ * references own every string (qa_resolved_resource_release frees them). */
+static const char *owned_text(const qa_save_reader *reader, const char *text) {
+  return text == NULL ? NULL : dup_range(reader, text, strlen(text));
 }
 
 /* TS identityParts: split(":") must yield exactly [prefix, a, b]. */
@@ -80,17 +137,15 @@ static qa_mount_id read_mount_id(const qa_save_reader *reader) {
   char *name_space = NULL, *name = NULL;
   identity_parts(reader, "mount", &name_space, &name);
   char *id = qa_create_mount_id(name_space, name);
-  free(name_space); free(name);
-  if (id == NULL) qa_save_reader_fail(reader, "out of memory");
-  return id;
+  arena_release(name_space); arena_release(name);
+  return tracked_id(reader, id);
 }
 static qa_mount_plan_id read_mount_plan_id(const qa_save_reader *reader) {
   char *name = NULL, *revision = NULL;
   identity_parts(reader, "mount-plan", &name, &revision);
   char *id = qa_create_mount_plan_id(name, revision);
-  free(name); free(revision);
-  if (id == NULL) qa_save_reader_fail(reader, "out of memory");
-  return id;
+  arena_release(name); arena_release(revision);
+  return tracked_id(reader, id);
 }
 
 qa_content_id qa_read_content_id(const qa_save_reader *reader) {
@@ -156,11 +211,14 @@ static qa_resource_provenance read_provenance(const qa_save_reader *reader) {
   static const char *const kinds[] = {"archive", "loose"};
   qa_resource_provenance provenance;
   memset(&provenance, 0, sizeof provenance);
-  provenance.member_path = field_string(reader, "memberPath");
+  provenance.member_path = owned_text(reader, field_string(reader, "memberPath"));
   if (strcmp(field_choice(reader, "kind", kinds, 2), "archive") == 0) {
     qa_save_reader mount = field(reader, "mount");
     qa_archive_mount *archive = xmalloc(reader, sizeof *archive);
     *archive = read_archive(&mount);
+    archive->identity.content = owned_text(&mount, archive->identity.content);
+    archive->archive_path = owned_text(&mount, archive->archive_path);
+    archive->archive_digest = owned_text(&mount, archive->archive_digest);
     qa_save_reader_destroy(&mount);
     provenance.kind = QA_CONTENT_MOUNT_ARCHIVE;
     provenance.archive_mount = archive;
@@ -174,6 +232,8 @@ static qa_resource_provenance read_provenance(const qa_save_reader *reader) {
     qa_save_reader_fail(reader, "expected a loose mount");
   qa_loose_mount *loose = xmalloc(reader, sizeof *loose);
   *loose = mount.as.loose;
+  loose->identity.content = owned_text(reader, loose->identity.content);
+  loose->root_path = owned_text(reader, loose->root_path);
   provenance.kind = QA_CONTENT_MOUNT_LOOSE;
   provenance.loose_mount = loose;
   return provenance;
@@ -192,37 +252,44 @@ static qa_resource_resolution read_resolution(const qa_save_reader *reader) {
   } else if (strcmp(kind, "prefix-order") == 0) {
     resolution.kind = QA_RESOURCE_RESOLUTION_PREFIX_ORDER;
     resolution.rank = field_integer_min(reader, "rank", 0);
-    resolution.prefix = field_string(reader, "prefix");
+    resolution.prefix = owned_text(reader, field_string(reader, "prefix"));
   } else {
     resolution.kind = QA_RESOURCE_RESOLUTION_LINK;
-    resolution.source_prefix = field_string(reader, "sourcePrefix");
-    resolution.target_path = field_string(reader, "targetPath");
+    resolution.source_prefix = owned_text(reader, field_string(reader, "sourcePrefix"));
+    resolution.target_path = owned_text(reader, field_string(reader, "targetPath"));
   }
   return resolution;
 }
 
-qa_resolved_resource_reference qa_read_resource(const qa_save_reader *reader) {
+static qa_resolved_resource_reference read_resource(const qa_save_reader *reader) {
   qa_resolved_resource_reference resource;
   memset(&resource, 0, sizeof resource);
-  resource.requested_path = field_string(reader, "requestedPath");
+  resource.requested_path = owned_text(reader, field_string(reader, "requestedPath"));
   qa_save_reader provenance = field(reader, "provenance");
   resource.provenance = read_provenance(&provenance);
   qa_save_reader_destroy(&provenance);
   qa_save_reader digest = field(reader, "digest");
-  resource.digest = qa_read_digest(&digest);
+  resource.digest = owned_text(&digest, qa_read_digest(&digest));
   qa_save_reader_destroy(&digest);
   resource.byte_length = field_integer_min(reader, "byteLength", 0);
   qa_save_reader resolution = field(reader, "resolution");
   resource.resolution = read_resolution(&resolution);
   qa_save_reader_destroy(&resolution);
-  char *id = qa_create_resource_id(&resource);
-  if (id == NULL) qa_save_reader_fail(reader, "out of memory");
+  char *id = tracked_id(reader, qa_create_resource_id(&resource));
   resource.id = id;
+  resource.parsed_order = true; /* readResource: `{ id, ...resource }` */
   if (strcmp(field_string(reader, "id"), id) != 0)
     qa_save_reader_fail(reader, "resource identity differs from its provenance");
   return resource;
 }
 
+qa_resolved_resource_reference qa_read_resource(const qa_save_reader *reader) {
+  recipe_arena arena; qa_cleanup node;
+  arena_enter(&arena, &node);
+  qa_resolved_resource_reference resource = read_resource(reader);
+  arena_leave(&arena, &node, reader);
+  return resource;
+}
 qa_character_selection qa_read_character(const qa_save_reader *reader) {
   qa_character_selection character;
   qa_save_reader definition = field(reader, "definition");
@@ -261,6 +328,7 @@ static qa_grapple_selection read_grapple(const qa_save_reader *reader) {
     grapple.profile = qa_read_qvm_grapple_definition(&profile);
     qa_save_reader_destroy(&profile);
     if (grapple.profile == NULL) qa_save_reader_fail(reader, "out of memory");
+    arena_track(reader, (void *)grapple.profile);
   }
   return grapple;
 }
@@ -285,7 +353,7 @@ static qa_hand_grenade_selection read_hand_grenades(
   return grenades;
 }
 
-qa_equipment_selection qa_read_equipment(const qa_save_reader *reader) {
+static qa_equipment_selection read_equipment(const qa_save_reader *reader) {
   qa_equipment_selection equipment;
   qa_save_reader grapple = field(reader, "grapple");
   equipment.grapple = read_grapple(&grapple);
@@ -293,6 +361,13 @@ qa_equipment_selection qa_read_equipment(const qa_save_reader *reader) {
   qa_save_reader grenades = field(reader, "handGrenades");
   equipment.hand_grenades = read_hand_grenades(&grenades);
   qa_save_reader_destroy(&grenades);
+  return equipment;
+}
+qa_equipment_selection qa_read_equipment(const qa_save_reader *reader) {
+  recipe_arena arena; qa_cleanup node;
+  arena_enter(&arena, &node);
+  qa_equipment_selection equipment = read_equipment(reader);
+  arena_leave(&arena, &node, reader);
   return equipment;
 }
 
@@ -313,9 +388,8 @@ static qa_recipe_id read_recipe_id(const qa_save_reader *reader) {
   char *name = NULL, *revision = NULL;
   identity_parts(reader, "recipe", &name, &revision);
   char *id = qa_create_recipe_id(name, revision);
-  free(name); free(revision);
-  if (id == NULL) qa_save_reader_fail(reader, "out of memory");
-  return id;
+  arena_release(name); arena_release(revision);
+  return tracked_id(reader, id);
 }
 static qa_provider_reference field_provider(const qa_save_reader *reader,
                                             const char *name) {
@@ -557,7 +631,7 @@ static qa_resolved_execution_module read_execution(
   qa_save_reader artifact_reader = field(reader, "artifact");
   qa_resolved_resource_reference *artifact =
       xmalloc(reader, sizeof *artifact);
-  *artifact = qa_read_resource(&artifact_reader);
+  *artifact = read_resource(&artifact_reader);
   qa_save_reader_destroy(&artifact_reader);
   module.artifact = artifact;
   if (strcmp(kind, "quakec") == 0) {
@@ -689,7 +763,7 @@ static qa_resolved_weapon_behavior_selection read_weapon_behavior(
   qa_save_reader_destroy(&activate);
   behavior.source = field_provider(reader, "source");
   qa_save_reader artifact_reader = field(reader, "artifact");
-  behavior.artifact = qa_read_resource(&artifact_reader);
+  behavior.artifact = read_resource(&artifact_reader);
   qa_save_reader_destroy(&artifact_reader);
   if (strcmp(behavior.source.provider, module.id) != 0 ||
       strcmp(behavior.artifact.digest, module.digest) != 0 ||
@@ -789,7 +863,7 @@ static qa_resolved_weapon_behavior_selection read_weapon_behavior(
         "weapon behavior callbacks and component declaration do not match");
   return behavior;
 }
-qa_executable_recipe qa_read_recipe(const qa_save_reader *reader) {
+static qa_executable_recipe read_recipe(const qa_save_reader *reader) {
   qa_executable_recipe recipe;
   memset(&recipe, 0, sizeof recipe);
   qa_save_reader mods = field(reader, "mods");
@@ -835,7 +909,7 @@ qa_executable_recipe qa_read_recipe(const qa_save_reader *reader) {
     qa_save_reader map = field(reader, "map");
     recipe.map.geometry_content = field_content(&map, "geometryContent");
     qa_save_reader geometry = field(&map, "geometry");
-    recipe.map.geometry = qa_read_resource(&geometry);
+    recipe.map.geometry = read_resource(&geometry);
     qa_save_reader_destroy(&geometry);
     recipe.map.entities = field_provider(&map, "entities");
     qa_save_reader_destroy(&map);
@@ -867,7 +941,7 @@ qa_executable_recipe qa_read_recipe(const qa_save_reader *reader) {
   }
   {
     qa_save_reader equipment = field(reader, "equipment");
-    recipe.equipment = qa_read_equipment(&equipment);
+    recipe.equipment = read_equipment(&equipment);
     qa_save_reader_destroy(&equipment);
   }
   {
@@ -911,7 +985,7 @@ qa_executable_recipe qa_read_recipe(const qa_save_reader *reader) {
         count > 0 ? xmalloc(&resources, count * sizeof *values) : NULL;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&resources, i);
-      values[i] = qa_read_resource(&entry);
+      values[i] = read_resource(&entry);
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&resources);
@@ -943,7 +1017,59 @@ qa_executable_recipe qa_read_recipe(const qa_save_reader *reader) {
   {
     qa_save_reader ordering = field(reader, "ordering");
     recipe.ordering = qa_read_ordering(&ordering);
+    arena_track(&ordering, (void *)recipe.ordering.providers);
     qa_save_reader_destroy(&ordering);
   }
   return recipe;
+}
+qa_executable_recipe qa_read_recipe(const qa_save_reader *reader) {
+  recipe_arena arena; qa_cleanup node;
+  arena_enter(&arena, &node);
+  qa_executable_recipe recipe = read_recipe(reader);
+  arena_leave(&arena, &node, reader);
+  return recipe;
+}
+static void mount_release(const qa_content_mount *mount) {
+  free((void *)(mount->kind == QA_CONTENT_MOUNT_ARCHIVE ? mount->as.archive.identity.id : mount->as.loose.identity.id));
+}
+void qa_executable_recipe_free(qa_executable_recipe *recipe) {
+  for (size_t i = 0; i < recipe->mod_count; i++) free((void *)recipe->mods[i]);
+  free((void *)recipe->mods);
+  for (size_t i = 0; i < recipe->weapon_behavior_count; i++) {
+    qa_resolved_weapon_behavior_selection *behavior = (qa_resolved_weapon_behavior_selection *)&recipe->weapon_behaviors[i];
+    free((void *)behavior->definition);
+    qa_resolved_resource_release(&behavior->artifact);
+    free((void *)behavior->component_declaration);
+    free((void *)behavior->component_layout);
+  }
+  free((void *)recipe->weapon_behaviors);
+  free((void *)recipe->id);
+  free((void *)recipe->preset);
+  qa_resolved_resource_release((qa_resolved_resource_reference *)&recipe->map.geometry);
+  free((void *)recipe->weapons.values);
+  free((void *)recipe->equipment.grapple.profile);
+  free((void *)recipe->enemies.by_classname);
+  for (size_t i = 0; i < recipe->execution_count; i++) {
+    qa_resolved_resource_reference *artifact = (qa_resolved_resource_reference *)recipe->execution[i].artifact;
+    if (artifact != NULL) qa_resolved_resource_release(artifact);
+    free(artifact);
+  }
+  free((void *)recipe->execution);
+  free((void *)recipe->mounts.id);
+  for (size_t i = 0; i < recipe->mounts.mount_count; i++) mount_release(&recipe->mounts.mounts[i]);
+  free((void *)recipe->mounts.mounts);
+  for (size_t i = 0; i < recipe->mounts.default_order_count; i++) free((void *)recipe->mounts.default_order[i]);
+  free((void *)recipe->mounts.default_order);
+  for (size_t i = 0; i < recipe->mounts.prefix_order_count; i++) {
+    for (size_t j = 0; j < recipe->mounts.prefix_orders[i].mount_count; j++)
+      free((void *)recipe->mounts.prefix_orders[i].mounts[j]);
+    free((void *)recipe->mounts.prefix_orders[i].mounts);
+  }
+  free((void *)recipe->mounts.prefix_orders);
+  for (size_t i = 0; i < recipe->resource_count; i++)
+    qa_resolved_resource_release((qa_resolved_resource_reference *)&recipe->resources[i]);
+  free((void *)recipe->resources);
+  free((void *)recipe->timing);
+  free((void *)recipe->ordering.providers);
+  memset(recipe, 0, sizeof *recipe);
 }

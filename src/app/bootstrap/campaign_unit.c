@@ -156,7 +156,7 @@ qa_app_campaign_unit_visit *qa_app_campaign_unit_stage(qa_app_campaign_unit *uni
   if (departure && unit->has_current) {
     qa_app_resource_request from = location_of(departure);
     if (!keys_equal(from.content, from.path, unit->current_content, unit->current_path))
-      qa_range_error("Campaign departure does not match the active map");
+      qa_raise("Error", 0, 0, "Campaign departure does not match the active map");
   }
   bool reset = new_unit || (unit->has_current && strcmp(unit->current_content, destination.content) != 0);
   worlds_t worlds = reset ? (worlds_t){0} : worlds_copy(&unit->worlds);
@@ -244,7 +244,7 @@ qa_provider_checkpoint qa_app_campaign_unit_attach(qa_app_campaign_unit *unit, c
   qa_app_resource_request current = location_of(image);
   validate_world_only(image);
   if (unit->has_current && !keys_equal(unit->current_content, unit->current_path, current.content, current.path))
-    qa_range_error("Campaign save does not match the active map");
+    qa_raise("Error", 0, 0, "Campaign save does not match the active map");
   return qa_app_campaign_unit_checkpoint(unit, true, current, out_bytes, out_length);
 }
 void qa_app_campaign_unit_restore(qa_app_campaign_unit *unit, const qa_save_image *image) {

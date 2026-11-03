@@ -4,23 +4,24 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/core/cvars/numbers.h"
 #include "qa/core/numeric.h"
-#include "qa/foundation/event_ring.h"
+#include "qa/core/commands/deque.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 static char *dup_text(const char *text) {
   size_t length = strlen(text);
@@ -74,11 +75,37 @@ static void origin_chain_free(qa_command_origin *origin) {
     origin = caller;
   }
 }
+/* A stored context owns its producer record and the record's strings: TS keeps
+ * the producer object alive for as long as any context references it. */
+static void producer_free(const qa_command_producer *producer) {
+  if (producer == NULL) return;
+  free((void *)producer->kind);
+  free((void *)producer->module.id);
+  free((void *)producer->module.artifact_path);
+  free((void *)producer->module.digest);
+  free((void *)producer->module.revision);
+  free((void *)producer);
+}
+static char *dup_or_null(const char *text) { return text == NULL ? NULL : dup_text(text); }
+static const qa_command_producer *producer_copy(const qa_command_producer *producer) {
+  if (producer == NULL) return NULL;
+  qa_command_producer *copy = (qa_command_producer *)calloc(1, sizeof *copy);
+  if (copy == NULL) qa_range_error("Out of memory");
+  copy->instance = producer->instance;
+  copy->kind = dup_or_null(producer->kind);
+  copy->module.id = dup_or_null(producer->module.id);
+  copy->module.artifact_path = dup_or_null(producer->module.artifact_path);
+  copy->module.digest = dup_or_null(producer->module.digest);
+  copy->module.revision = dup_or_null(producer->module.revision);
+  return copy;
+}
 static void context_origin_free(qa_command_context *context) {
   free((void *)context->origin.name);
   context->origin.name = NULL;
   origin_chain_free((qa_command_origin *)context->origin.caller);
   context->origin.caller = NULL;
+  producer_free(context->producer);
+  context->producer = NULL;
 }
 static qa_command_origin *origin_chain_copy(const qa_command_origin *origin,
                                             qa_session_id session) {
@@ -113,12 +140,39 @@ static qa_command_context copy_context(qa_command_context context,
   qa_command_context result;
   memset(&result, 0, sizeof result);
   result.session = context.session;
-  result.producer = context.producer;
+  result.producer = producer_copy(context.producer);
   if (copied != NULL) {
     result.origin = *copied;
     free(copied);
   }
   return result;
+}
+/* Public deep copy (no session validation: the source context was validated
+ * when it was admitted). */
+static qa_command_origin *origin_chain_clone(const qa_command_origin *origin) {
+  if (origin == NULL) return NULL;
+  qa_command_origin *copy = (qa_command_origin *)calloc(1, sizeof *copy);
+  if (copy == NULL) qa_range_error("Out of memory");
+  *copy = *origin;
+  copy->name = origin->name == NULL ? NULL : dup_text(origin->name);
+  copy->caller = origin->kind == QA_COMMAND_ORIGIN_SCRIPT ? origin_chain_clone(origin->caller) : NULL;
+  return copy;
+}
+qa_command_context qa_command_context_copy(const qa_command_context *context) {
+  qa_command_context result;
+  memset(&result, 0, sizeof result);
+  if (context == NULL) return result;
+  result.session = context->session;
+  result.origin = context->origin;
+  result.origin.name = context->origin.name == NULL ? NULL : dup_text(context->origin.name);
+  result.origin.caller = context->origin.kind == QA_COMMAND_ORIGIN_SCRIPT
+      ? origin_chain_clone(context->origin.caller) : NULL;
+  result.producer = producer_copy(context->producer);
+  return result;
+}
+void qa_command_context_release(qa_command_context *context) {
+  if (context == NULL) return;
+  context_origin_free(context);
 }
 static bool same_origin(const qa_command_origin *left, const qa_command_origin *right) {
   if (left->kind != right->kind) return false;
@@ -160,6 +214,10 @@ typedef struct command_chunk {
   qa_command_text_mode text_mode;
   char *text; /* text chunks */
   qa_command_context source; /* owned origin chain */
+  /* C-only: the TS identity of `source` (the CommandContext object). Equal
+     identities mark chunks whose source is one object, which TS insertText
+     compares with ===. */
+  uint64_t identity;
   bool direct;
   /* completion chunks */
   char *event_name;
@@ -182,6 +240,7 @@ static bool chunk_clone(const command_chunk *source, command_chunk *dest) {
   dest->dialect = source->dialect;
   dest->text_mode = source->text_mode;
   dest->direct = source->direct;
+  dest->identity = source->identity;
   dest->event_result = source->event_result;
   dest->text = source->text != NULL ? dup_text(source->text) : NULL;
   dest->event_name = source->event_name != NULL ? dup_text(source->event_name) : NULL;
@@ -192,41 +251,40 @@ static bool chunk_clone(const command_chunk *source, command_chunk *dest) {
          (source->event_name == NULL || dest->event_name != NULL);
 }
 
-#define CHUNK_RING_CAPACITY 32768
-typedef struct chunk_ring { qa_event_ring ring; } chunk_ring;
+/* TS Deque<CommandChunk> (core/commands/deque.ts; it replaced the bounded
+   EventRing). */
+typedef struct chunk_ring { qa_deque ring; } chunk_ring;
 static bool ring_init(chunk_ring *ring) {
-  return qa_event_ring_init(&ring->ring, CHUNK_RING_CAPACITY, sizeof(command_chunk));
+  qa_deque_init(&ring->ring, sizeof(command_chunk));
+  return true;
 }
 static void ring_destroy_contents(chunk_ring *ring) {
   size_t count = 0;
-  command_chunk *chunks = (command_chunk *)qa_event_ring_drain_all(&ring->ring, &count);
+  command_chunk *chunks = (command_chunk *)qa_deque_snapshot(&ring->ring, &count);
   for (size_t i = 0; i < count; i++) chunk_free_contents(&chunks[i]);
   free(chunks);
-  qa_event_ring_destroy(&ring->ring);
+  qa_deque_destroy(&ring->ring);
 }
-static int64_t ring_live(chunk_ring *ring) { return qa_event_ring_live(&ring->ring); }
+static int64_t ring_live(chunk_ring *ring) { return (int64_t)qa_deque_live(&ring->ring); }
 static void ring_admit(chunk_ring *ring, command_chunk *chunk) {
-  (void)qa_event_ring_admit(&ring->ring, chunk);
+  qa_deque_admit(&ring->ring, chunk);
 }
 static void ring_prepend(chunk_ring *ring, command_chunk *chunks, size_t count) {
   if (count == 0) return;
-  qa_event_ring_prepend(&ring->ring, chunks, count);
+  qa_deque_prepend(&ring->ring, chunks, count);
 }
 static const command_chunk *ring_head(chunk_ring *ring) {
-  return (const command_chunk *)qa_event_ring_head(&ring->ring);
+  return (const command_chunk *)qa_deque_head(&ring->ring);
 }
 static bool ring_shift(chunk_ring *ring, command_chunk *out) {
-  return qa_event_ring_shift(&ring->ring, out);
-}
-static const command_chunk *ring_at(chunk_ring *ring, int64_t id) {
-  return (const command_chunk *)qa_event_ring_at(&ring->ring, id);
+  return qa_deque_shift(&ring->ring, out);
 }
 static const command_chunk *ring_at_offset(chunk_ring *ring, int64_t index) {
-  return (const command_chunk *)qa_event_ring_at_offset(&ring->ring, index);
+  return (const command_chunk *)qa_deque_at(&ring->ring, index);
 }
 static void ring_clone_into(chunk_ring *source, chunk_ring *dest) {
   size_t count = 0;
-  command_chunk *snapshot = (command_chunk *)qa_event_ring_snapshot(&source->ring, &count);
+  command_chunk *snapshot = (command_chunk *)qa_deque_snapshot(&source->ring, &count);
   for (size_t i = 0; i < count; i++) {
     command_chunk clone;
     if (chunk_clone(&snapshot[i], &clone)) ring_admit(dest, &clone);
@@ -242,8 +300,8 @@ static qa_command_context chunk_source(const command_chunk *chunk) {
 }
 static void ring_filter(chunk_ring *ring, bool (*retired)(void *, qa_command_context), void *ctx) {
   size_t count = 0;
-  command_chunk *snapshot = (command_chunk *)qa_event_ring_snapshot(&ring->ring, &count);
-  qa_event_ring_reset(&ring->ring);
+  command_chunk *snapshot = (command_chunk *)qa_deque_snapshot(&ring->ring, &count);
+  qa_deque_clear(&ring->ring);
   for (size_t i = 0; i < count; i++) {
     if (!retired(ctx, chunk_source(&snapshot[i]))) ring_admit(ring, &snapshot[i]);
     else chunk_free_contents(&snapshot[i]);
@@ -256,8 +314,7 @@ typedef struct visit_ctx {
   bool found;
   bool (*pred)(void *ctx, const command_chunk *chunk);
 } visit_ctx;
-static void visit_trampoline(const void *record, int64_t id, void *ctx) {
-  (void)id;
+static void visit_trampoline(const void *record, void *ctx) {
   visit_ctx *visit = (visit_ctx *)ctx;
   const command_chunk *chunk = (const command_chunk *)record;
   if (visit->visit != NULL) visit->visit(visit->ctx, chunk);
@@ -265,11 +322,13 @@ static void visit_trampoline(const void *record, int64_t id, void *ctx) {
 }
 static void ring_for_each(chunk_ring *ring, void (*visit)(void *, const command_chunk *), void *ctx) {
   visit_ctx trampoline = {visit, ctx, false, NULL};
-  qa_event_ring_for_each_live(&ring->ring, visit_trampoline, &trampoline);
+  for (size_t i = 0; i < qa_deque_live(&ring->ring); i++)
+    visit_trampoline(qa_deque_at(&ring->ring, (int64_t)i), &trampoline);
 }
 static bool ring_some(chunk_ring *ring, bool (*pred)(void *, const command_chunk *), void *ctx) {
   visit_ctx trampoline = {NULL, ctx, false, pred};
-  qa_event_ring_for_each_live(&ring->ring, visit_trampoline, &trampoline);
+  for (size_t i = 0; i < qa_deque_live(&ring->ring); i++)
+    visit_trampoline(qa_deque_at(&ring->ring, (int64_t)i), &trampoline);
   return trampoline.found;
 }
 
@@ -358,6 +417,7 @@ typedef struct alias_entry {
 typedef struct execution_frame {
   qa_command_dialect dialect;
   qa_command_context source; /* shallow: origin borrowed */
+  uint64_t identity;         /* C-only: identity of `source` (see command_chunk) */
   bool direct;
   qa_command_text_mode text_mode;
   struct execution_frame *parent;
@@ -384,7 +444,29 @@ typedef struct builtin_entry {
   void *handler_ctx;
 } builtin_entry;
 
+typedef struct retired_set {
+  size_t references;
+  const void **producers;
+  size_t producer_count;
+  size_t producer_capacity;
+  qa_client_id *clients;
+  size_t client_count;
+  size_t client_capacity;
+} retired_set;
+static retired_set *retired_set_create(void) {
+  retired_set *set = (retired_set *)calloc(1, sizeof *set);
+  if (set != NULL) set->references = 1;
+  return set;
+}
+static void retired_set_release(retired_set *set) {
+  if (set == NULL || --set->references > 0) return;
+  free(set->producers);
+  free(set->clients);
+  free(set);
+}
+
 struct qa_command_buffer {
+  uint64_t identity_counter; /* C-only: next fresh source identity */
   qa_command_buffer_options options;
   qa_command_context context; /* owned origin */
   qa_command_dialect current_dialect;
@@ -397,15 +479,12 @@ struct qa_command_buffer {
   qa_command_dialect wait_dialect;
   bool has_wait_source;
   qa_command_context wait_source;
-  const void **retired_producers;
-  size_t retired_producer_count;
-  size_t retired_producer_capacity;
+  /* TS copyProgramState shares retiredProducers/retiredClients by reference between the
+     authority and its prepared or replacement buffers. */
+  retired_set *retired;
   producer_entry *producers;
   size_t producer_count;
   size_t producer_capacity;
-  qa_client_id *retired_clients;
-  size_t retired_client_count;
-  size_t retired_client_capacity;
   qa_cvar_registry *fallback_cvars;
   builtin_entry *builtin_handlers;
   size_t builtin_count;
@@ -458,7 +537,7 @@ static void buffer_print_format(qa_command_buffer *b, const qa_command_context *
                                 const char *format, ...);
 static double dispatch(qa_command_buffer *b, const char *raw, qa_command_context source,
                        bool direct, qa_command_text_mode text_mode,
-                       qa_command_dialect dialect, bool macro_expansion);
+                       qa_command_dialect dialect, bool macro_expansion, uint64_t identity);
 static script_read *script_read_clone(script_read *read);
 static bool producer_services(qa_command_buffer *b, qa_command_context source,
                               qa_command_producer_services *out);
@@ -467,9 +546,16 @@ static qa_cvar_registry *cvar_owner(qa_command_buffer *b, const char *name,
 typedef struct visible_list { qa_cvar_registry **items; size_t count; } visible_list;
 static visible_list visible_cvars(qa_command_buffer *b, qa_command_context source);
 static void append_for(qa_command_buffer *b, const char *input, qa_command_context source,
-                       int direct, int text_mode, int dialect, bool preparation);
+                       int direct, int text_mode, int dialect, bool preparation, uint64_t identity);
 static void insert_for(qa_command_buffer *b, const char *input, qa_command_context source,
-                       int direct, command_chunk *completion, int text_mode, int dialect);
+                       int direct, command_chunk *completion, int text_mode, int dialect,
+                       uint64_t identity);
+/* C-only source identities (TS CommandContext object identity). */
+#define DEFAULT_SOURCE_IDENTITY 1u
+static uint64_t fresh_identity(qa_command_buffer *b) {
+  if (b->identity_counter <= DEFAULT_SOURCE_IDENTITY) b->identity_counter = DEFAULT_SOURCE_IDENTITY;
+  return ++b->identity_counter;
+}
 static void fallback_command(qa_command_buffer *b, qa_command_invocation *command);
 static void execute_script_command(qa_command_buffer *b, qa_command_invocation *command);
 static void discard_producer_internal(qa_command_buffer *b, const void *instance);
@@ -512,6 +598,13 @@ qa_command_buffer *qa_command_buffer_create(const qa_command_buffer_options *opt
   b->startup_command_text = options->startup_command_text != NULL
       ? dup_text(options->startup_command_text) : NULL;
   b->context = copy_context(options->context, NULL);
+  b->retired = retired_set_create();
+  if (b->retired == NULL) {
+    context_origin_free(&b->context);
+    free(b->startup_command_text);
+    free(b);
+    return NULL;
+  }
   (void)ring_init(&b->chunks);
   (void)ring_init(&b->deferred);
   b->next_binding_id = 1;
@@ -548,9 +641,8 @@ void qa_command_buffer_destroy(qa_command_buffer *b) {
     free(b->aliases[i].value);
   }
   free(b->aliases);
-  free(b->retired_producers);
+  retired_set_release(b->retired);
   free(b->producers);
-  free(b->retired_clients);
   for (size_t i = 0; i < b->builtin_count; i++) free(b->builtin_handlers[i].name);
   free(b->builtin_handlers);
   free(b->output_bindings);
@@ -756,16 +848,16 @@ static bool source_client_of(qa_command_context source, qa_client_id *out) {
   return false;
 }
 static bool retired_client(qa_command_buffer *b, qa_command_context source) {
-  if (b->retired_client_count == 0) return false;
+  if (b->retired->client_count == 0) return false;
   qa_client_id client;
   if (!source_client_of(source, &client)) return false;
-  for (size_t i = 0; i < b->retired_client_count; i++)
-    if (qa_same_client(b->retired_clients[i], client)) return true;
+  for (size_t i = 0; i < b->retired->client_count; i++)
+    if (qa_same_client(b->retired->clients[i], client)) return true;
   return false;
 }
 static bool producer_retired(qa_command_buffer *b, const void *instance) {
-  for (size_t i = 0; i < b->retired_producer_count; i++)
-    if (b->retired_producers[i] == instance) return true;
+  for (size_t i = 0; i < b->retired->producer_count; i++)
+    if (b->retired->producers[i] == instance) return true;
   return false;
 }
 /* Always returns an owned deep copy; free with context_origin_free. */
@@ -781,6 +873,42 @@ static qa_command_context input_context(qa_command_buffer *b,
   if (instance != NULL && producer_retired(b, instance))
     qa_error("Command producer is closed");
   return copy_context(resolved, NULL);
+}
+/* C-only stand-in for TS object identity of a CommandContext: two contexts
+   are one source when every field matches (the C port copies contexts by
+   value, so the TS `===` cannot be observed directly). */
+static bool origin_same(const qa_command_origin *a, const qa_command_origin *b) {
+  if (a == b) return true;
+  if (a == NULL || b == NULL || a->kind != b->kind) return false;
+  switch (a->kind) {
+    case QA_COMMAND_ORIGIN_LOCAL_SEAT:
+      return qa_same_seat(a->seat, b->seat) && qa_same_client(a->client, b->client);
+    case QA_COMMAND_ORIGIN_REMOTE_CLIENT:
+      return qa_same_client(a->client, b->client);
+    case QA_COMMAND_ORIGIN_SCRIPT:
+      return ((a->name == NULL) == (b->name == NULL)) &&
+             (a->name == NULL || strcmp(a->name, b->name) == 0) && origin_same(a->caller, b->caller);
+    default:
+      return true;
+  }
+}
+static bool context_same(const qa_command_context *a, const qa_command_context *b) {
+  if (!same_session_id(a->session, b->session) || !origin_same(&a->origin, &b->origin)) return false;
+  if (a->producer == b->producer) return true;
+  if (a->producer == NULL || b->producer == NULL) return false;
+  return a->producer->instance == b->producer->instance &&
+         strcmp(a->producer->kind != NULL ? a->producer->kind : "", b->producer->kind != NULL ? b->producer->kind : "") == 0;
+}
+/* The identity input text gets: TS `source ?? this.frame?.source ?? this.context`. */
+static uint64_t source_identity(qa_command_buffer *b, const qa_command_context *source) {
+  if (source == NULL) return b->frame != NULL ? b->frame->identity : DEFAULT_SOURCE_IDENTITY;
+  if (b->frame != NULL && context_same(source, &b->frame->source)) return b->frame->identity;
+  if (context_same(source, &b->context)) return DEFAULT_SOURCE_IDENTITY;
+  return fresh_identity(b);
+}
+/* Text a running command adds under its own source (command.source). */
+static uint64_t frame_identity(qa_command_buffer *b) {
+  return b->frame != NULL ? b->frame->identity : fresh_identity(b);
 }
 static qa_command_text_mode input_text_mode(qa_command_buffer *b,
                                             qa_command_context source, bool direct) {
@@ -1175,7 +1303,8 @@ char **qa_command_buffer_alias_names(qa_command_buffer *b, size_t *out_count) {
 
 /* --- Text admission --- */
 static void append_for(qa_command_buffer *b, const char *input, qa_command_context source,
-                       int direct_in, int text_mode_in, int dialect_in, bool preparation) {
+                       int direct_in, int text_mode_in, int dialect_in, bool preparation,
+                       uint64_t identity) {
   qa_command_dialect dialect = dialect_in >= 0 ? (qa_command_dialect)dialect_in
                                                : execution_dialect(b);
   bool direct = direct_in >= 0 ? direct_in != 0 : default_direct(b, source);
@@ -1203,6 +1332,7 @@ static void append_for(qa_command_buffer *b, const char *input, qa_command_conte
     chunk.text_mode = text_mode;
     chunk.text = text;
     chunk.source = copy_context(source, NULL);
+    chunk.identity = identity;
     chunk.direct = direct;
     ring_admit(target, &chunk);
     b->program_revision++;
@@ -1212,7 +1342,7 @@ static void append_for(qa_command_buffer *b, const char *input, qa_command_conte
 }
 static void insert_for(qa_command_buffer *b, const char *input, qa_command_context source,
                        int direct_in, command_chunk *completion, int text_mode_in,
-                       int dialect_in) {
+                       int dialect_in, uint64_t identity) {
   qa_command_dialect dialect = dialect_in >= 0 ? (qa_command_dialect)dialect_in
                                                : execution_dialect(b);
   bool direct = direct_in >= 0 ? direct_in != 0 : default_direct(b, source);
@@ -1252,43 +1382,66 @@ static void insert_for(qa_command_buffer *b, const char *input, qa_command_conte
       return;
     }
     if ((double)(pending_length + strlen(text)) > limit) {
+      buffer_print(b, "Cbuf_InsertText overflowed\n", NULL);
       free(text);
       if (completion != NULL) chunk_free_contents(completion);
-      qa_range_error("Cbuf_InsertText overflows source sizebuf");
+      return;
     }
   }
   if (completion != NULL || text[0] != '\0') b->program_revision++;
   if (completion != NULL) ring_prepend(&b->chunks, completion, 1);
-  if (text[0] != '\0') {
-    command_chunk chunk;
-    memset(&chunk, 0, sizeof chunk);
-    chunk.dialect = dialect;
-    chunk.text_mode = text_mode;
-    chunk.text = text;
-    chunk.source = copy_context(source, NULL);
-    chunk.direct = direct;
-    ring_prepend(&b->chunks, &chunk, 1);
-  } else {
+  if (text[0] == '\0') {
     free(text);
+    return;
   }
+  /* Adjacent inserts from one source read as a single buffer, so a
+     self-expanding alias stays one chunk. */
+  const command_chunk *head = ring_head(&b->chunks);
+  if (completion == NULL && head != NULL && !head->is_completion &&
+      head->identity == identity && head->direct == direct &&
+      head->text_mode == text_mode && head->dialect == dialect) {
+    command_chunk replacement = *head;
+    const size_t text_length = strlen(text), head_length = strlen(head->text != NULL ? head->text : "");
+    char *merged = (char *)malloc(text_length + head_length + 1);
+    if (merged == NULL) qa_range_error("Out of memory");
+    memcpy(merged, text, text_length);
+    memcpy(merged + text_length, head->text != NULL ? head->text : "", head_length + 1);
+    free(text);
+    free(replacement.text);
+    replacement.text = merged;
+    qa_deque_replace_at_offset(&b->chunks.ring, 0, &replacement);
+    return;
+  }
+  command_chunk chunk;
+  memset(&chunk, 0, sizeof chunk);
+  chunk.dialect = dialect;
+  chunk.text_mode = text_mode;
+  chunk.text = text;
+  chunk.source = copy_context(source, NULL);
+  chunk.identity = identity;
+  chunk.direct = direct;
+  ring_prepend(&b->chunks, &chunk, 1);
 }
 void qa_command_buffer_append(qa_command_buffer *b, const char *text,
                               const qa_command_context *source, int dialect) {
+  const uint64_t identity = source_identity(b, source);
   qa_command_context context = input_context(b, source, true);
-  append_for(b, text, context, -1, -1, dialect, false);
+  append_for(b, text, context, -1, -1, dialect, false, identity);
   context_origin_free(&context);
 }
 void qa_command_buffer_append_preparation(qa_command_buffer *b, const char *text,
                                           const qa_command_context *source, int dialect) {
   if (b->preparation_tail == NULL) qa_error("Command program has no preparation prefix");
+  const uint64_t identity = source_identity(b, source);
   qa_command_context context = input_context(b, source, true);
-  append_for(b, text, context, -1, -1, dialect, true);
+  append_for(b, text, context, -1, -1, dialect, true, identity);
   context_origin_free(&context);
 }
 void qa_command_buffer_insert(qa_command_buffer *b, const char *text,
                               const qa_command_context *source, int dialect) {
+  const uint64_t identity = source_identity(b, source);
   qa_command_context context = input_context(b, source, true);
-  insert_for(b, text, context, -1, NULL, -1, dialect);
+  insert_for(b, text, context, -1, NULL, -1, dialect, identity);
   context_origin_free(&context);
 }
 void qa_command_buffer_copy_to_defer(qa_command_buffer *b) {
@@ -1308,14 +1461,17 @@ void qa_command_buffer_insert_from_defer(qa_command_buffer *b) {
                            strlen(deferred != NULL ? deferred : "")) > b->maximum_buffer;
   free(pending);
   free(deferred);
-  if (overflow) qa_range_error("Deferred commands overflow source sizebuf");
+  if (overflow) {
+    buffer_print(b, "Cbuf_InsertText overflowed\n", NULL);
+    return;
+  }
   b->program_revision++;
   size_t count = 0;
   command_chunk *snapshot =
-      (command_chunk *)qa_event_ring_snapshot(&b->deferred.ring, &count);
+      (command_chunk *)qa_deque_snapshot(&b->deferred.ring, &count);
   if (count > 0) ring_prepend(&b->chunks, snapshot, count);
   free(snapshot);
-  qa_event_ring_destroy(&b->deferred.ring);
+  qa_deque_destroy(&b->deferred.ring);
   (void)ring_init(&b->deferred);
 }
 
@@ -1367,16 +1523,16 @@ static void discard_sources(qa_command_buffer *b, discard_pred *pred) {
 }
 static void discard_producer_internal(qa_command_buffer *b, const void *instance) {
   if (!producer_retired(b, instance)) {
-    if (b->retired_producer_count == b->retired_producer_capacity) {
-      size_t cap = b->retired_producer_capacity == 0 ? 4 : b->retired_producer_capacity * 2;
-      const void **items = (const void **)realloc(b->retired_producers, cap * sizeof *items);
+    if (b->retired->producer_count == b->retired->producer_capacity) {
+      size_t cap = b->retired->producer_capacity == 0 ? 4 : b->retired->producer_capacity * 2;
+      const void **items = (const void **)realloc(b->retired->producers, cap * sizeof *items);
       if (items != NULL) {
-        b->retired_producers = items;
-        b->retired_producer_capacity = cap;
+        b->retired->producers = items;
+        b->retired->producer_capacity = cap;
       }
     }
-    if (b->retired_producer_count < b->retired_producer_capacity)
-      b->retired_producers[b->retired_producer_count++] = instance;
+    if (b->retired->producer_count < b->retired->producer_capacity)
+      b->retired->producers[b->retired->producer_count++] = instance;
   }
   discard_pred pred = {b, instance, true, {{NULL, NULL}, 0, 0, NULL}};
   discard_sources(b, &pred);
@@ -1392,19 +1548,19 @@ static void discard_producer_internal(qa_command_buffer *b, const void *instance
 }
 static void discard_client_internal(qa_command_buffer *b, qa_client_id client) {
   bool present = false;
-  for (size_t i = 0; i < b->retired_client_count; i++)
-    if (qa_same_client(b->retired_clients[i], client)) present = true;
+  for (size_t i = 0; i < b->retired->client_count; i++)
+    if (qa_same_client(b->retired->clients[i], client)) present = true;
   if (!present) {
-    if (b->retired_client_count == b->retired_client_capacity) {
-      size_t cap = b->retired_client_capacity == 0 ? 4 : b->retired_client_capacity * 2;
-      qa_client_id *items = (qa_client_id *)realloc(b->retired_clients, cap * sizeof *items);
+    if (b->retired->client_count == b->retired->client_capacity) {
+      size_t cap = b->retired->client_capacity == 0 ? 4 : b->retired->client_capacity * 2;
+      qa_client_id *items = (qa_client_id *)realloc(b->retired->clients, cap * sizeof *items);
       if (items != NULL) {
-        b->retired_clients = items;
-        b->retired_client_capacity = cap;
+        b->retired->clients = items;
+        b->retired->client_capacity = cap;
       }
     }
-    if (b->retired_client_count < b->retired_client_capacity)
-      b->retired_clients[b->retired_client_count++] = client;
+    if (b->retired->client_count < b->retired->client_capacity)
+      b->retired->clients[b->retired->client_count++] = client;
   }
   discard_pred pred = {b, NULL, false, client};
   discard_sources(b, &pred);
@@ -1580,14 +1736,6 @@ static void free_program_state(qa_command_buffer *b) {
   b->alias_capacity = 0;
   free(b->startup_command_text);
   b->startup_command_text = NULL;
-  free(b->retired_producers);
-  b->retired_producers = NULL;
-  b->retired_producer_count = 0;
-  b->retired_producer_capacity = 0;
-  free(b->retired_clients);
-  b->retired_clients = NULL;
-  b->retired_client_count = 0;
-  b->retired_client_capacity = 0;
 }
 static void copy_program_state(qa_command_buffer *dest, qa_command_buffer *src) {
   free_program_state(dest);
@@ -1601,25 +1749,10 @@ static void copy_program_state(qa_command_buffer *dest, qa_command_buffer *src) 
   dest->wait_dialect = src->wait_dialect;
   dest->has_wait_source = src->has_wait_source;
   if (src->has_wait_source) dest->wait_source = copy_context(src->wait_source, NULL);
-  if (src->retired_producer_count > 0) {
-    dest->retired_producers = (const void **)malloc(
-        src->retired_producer_count * sizeof *dest->retired_producers);
-    if (dest->retired_producers != NULL) {
-      memcpy(dest->retired_producers, src->retired_producers,
-             src->retired_producer_count * sizeof *dest->retired_producers);
-      dest->retired_producer_count = src->retired_producer_count;
-      dest->retired_producer_capacity = src->retired_producer_count;
-    }
-  }
-  if (src->retired_client_count > 0) {
-    dest->retired_clients =
-        (qa_client_id *)malloc(src->retired_client_count * sizeof *dest->retired_clients);
-    if (dest->retired_clients != NULL) {
-      memcpy(dest->retired_clients, src->retired_clients,
-             src->retired_client_count * sizeof *dest->retired_clients);
-      dest->retired_client_count = src->retired_client_count;
-      dest->retired_client_capacity = src->retired_client_count;
-    }
+  if (dest->retired != src->retired) {
+    retired_set_release(dest->retired);
+    dest->retired = src->retired;
+    dest->retired->references++;
   }
   dest->alias_count_dispatch = src->alias_count_dispatch;
   if (src->tokens_valid) {
@@ -1734,6 +1867,17 @@ static void prepared_validate(prepared_state *state) {
       state->commands->batch_active)
     qa_error("Prepared command program is still executing");
 }
+typedef struct prefix_run_job {
+  qa_command_buffer *commands;
+  qa_prepare_prefix_run_fn run;
+  void *run_ctx;
+  bool complete;
+} prefix_run_job;
+static void prefix_run(void *raw) {
+  prefix_run_job *job = (prefix_run_job *)raw;
+  job->complete = job->run(job->run_ctx);
+  if (job->complete) qa_command_buffer_finish_preparation(job->commands);
+}
 static bool prepared_prepare_prefix(void *ctx, qa_prepare_prefix_run_fn run, void *run_ctx) {
   prepared_state *state = (prepared_state *)ctx;
   prepared_validate(state);
@@ -1774,11 +1918,18 @@ static bool prepared_prepare_prefix(void *ctx, qa_prepare_prefix_run_fn run, voi
   commands->startup_command_text = state->options.startup_command_text != NULL
       ? dup_text(state->options.startup_command_text) : NULL;
   commands->inherited_async_drain = false;
-  bool complete = run(run_ctx);
-  if (complete) qa_command_buffer_finish_preparation(commands);
+  prefix_run_job job = {commands, run, run_ctx, false};
+  qa_caught_error caught;
+  if (!qa_try(prefix_run, &job, &caught)) {
+    /* TS catch: restoreTail(pending); phase = "failed"; throw. finally: inheritedAsyncDrain. */
+    if (commands->preparation_tail == pending) restore_tail(commands, pending);
+    state->phase = PREPARED_FAILED;
+    commands->inherited_async_drain = inherited;
+    qa_rethrow(&caught);
+  }
   state->phase = PREPARED_READY;
   commands->inherited_async_drain = inherited;
-  return complete;
+  return job.complete;
 }
 static void prepared_validate_publication(void *ctx) {
   prepared_validate((prepared_state *)ctx);
@@ -1875,7 +2026,7 @@ static void insert_script(qa_command_buffer *b, const char *filename, bool has_f
                         dialect, text_mode);
   qa_command_context script_source = completion.event_source;
   insert_for(b, built.data != NULL ? built.data : "", script_source, 0, &completion,
-             (int)text_mode, (int)dialect);
+             (int)text_mode, (int)dialect, fresh_identity(b));
   free(built.data);
 }
 static void execute_script_command(qa_command_buffer *b, qa_command_invocation *command) {
@@ -1887,7 +2038,8 @@ static void execute_script_command(qa_command_buffer *b, qa_command_invocation *
     text_buffer retry = {NULL, 0, 0};
     (void)text_add(&retry, command->raw != NULL ? command->raw : "");
     (void)text_add(&retry, "\n");
-    insert_for(b, retry.data != NULL ? retry.data : "", command->source, -1, NULL, -1, -1);
+    insert_for(b, retry.data != NULL ? retry.data : "", command->source, -1, NULL, -1, -1,
+               frame_identity(b));
     free(retry.data);
     return;
   }
@@ -1961,11 +2113,13 @@ void qa_command_invocation_assert_active(qa_command_invocation *command) {
 }
 void qa_command_invocation_append(qa_command_invocation *command, const char *text) {
   require_active(command);
-  append_for(command->buffer, text, command->source, -1, -1, -1, false);
+  append_for(command->buffer, text, command->source, -1, -1, -1, false,
+             frame_identity(command->buffer));
 }
 void qa_command_invocation_insert(qa_command_invocation *command, const char *text) {
   require_active(command);
-  insert_for(command->buffer, text, command->source, -1, NULL, -1, -1);
+  insert_for(command->buffer, text, command->source, -1, NULL, -1, -1,
+             frame_identity(command->buffer));
 }
 double qa_command_invocation_execute_now(qa_command_invocation *command, const char *text) {
   require_active(command);
@@ -2103,35 +2257,156 @@ static bool builtin_handler_for(qa_command_buffer *b, const char *name,
   }
   return false;
 }
+typedef struct dispatch_tokens_job {
+  qa_command_buffer *buffer;
+  const char *raw;
+  qa_command_context source;
+  qa_command_text_mode text_mode;
+  qa_command_dialect dialect;
+  bool macro_expansion;
+  char *expanded_owned;
+  bool expanded_undefined;
+  bool tokenized;
+  qa_command_tokens tokens;
+} dispatch_tokens_job;
+static void dispatch_tokens_run(void *raw) {
+  dispatch_tokens_job *job = (dispatch_tokens_job *)raw;
+  const char *expanded = job->raw;
+  if (qa_command_dialect_is_q2(job->dialect) && job->macro_expansion) {
+    macro_ctx macro = {job->buffer, job->source, NULL};
+    char *out = NULL;
+    bool ok = qa_expand_command_macros(job->raw, macro_variable, &macro, macro_print, job->buffer,
+                                       job->text_mode, &out);
+    free(macro.scratch);
+    if (!ok) {
+      job->expanded_undefined = true;
+      return;
+    }
+    job->expanded_owned = out;
+    expanded = out != NULL ? out : "";
+  }
+  job->tokenized = qa_tokenize_command(expanded, job->dialect, job->text_mode, &job->tokens);
+}
+
+typedef struct dispatch_body_job {
+  qa_command_buffer *buffer;
+  const char *name;
+  const char *raw;
+  qa_command_context source;
+  qa_command_invocation *command;
+} dispatch_body_job;
+/* The TS dispatch try block: allowCommand, producer and source routing, the registered handler,
+   aliases and the fallback. */
+static void dispatch_body_run(void *raw_job) {
+  dispatch_body_job *job = (dispatch_body_job *)raw_job;
+  qa_command_buffer *b = job->buffer;
+  const char *name = job->name;
+  const char *raw = job->raw;
+  qa_command_context source = job->source;
+  qa_command_invocation *command = job->command;
+  if (b->options.allow_command != NULL &&
+      !b->options.allow_command(b->options.allow_command_ctx, command))
+    return;
+  qa_command_handler_fn builtin_fn = NULL;
+  void *builtin_ctx = NULL;
+  bool has_builtin = builtin_handler_for(b, name, &builtin_fn, &builtin_ctx);
+  registered_entry *selected = b->handlers;
+  while (selected != NULL && !folded_equal(selected->name, name)) selected = selected->next;
+  bool selected_is_builtin = has_builtin && selected != NULL &&
+      selected->handler == builtin_fn && selected->handler_ctx == builtin_ctx;
+  qa_command_producer_services services;
+  bool has_producer = producer_services(b, source, &services);
+  if (has_producer && selected != NULL && selected->ownership != QA_COMMAND_ENGINE &&
+      !selected_is_builtin &&
+      !(services.engine_command != NULL && services.engine_command(services.ctx, name))) {
+    if (services.command != NULL) services.command(services.ctx, command);
+    return;
+  }
+  if ((selected == NULL || selected->ownership != QA_COMMAND_ENGINE) &&
+      !selected_is_builtin && b->options.source_command != NULL &&
+      b->options.source_command(b->options.source_command_ctx, command,
+                                selected != NULL) == 1)
+    return;
+  for (registered_entry *entry = b->handlers; entry != NULL; entry = entry->next) {
+    if (!folded_equal(entry->name, name)) continue;
+    if (execution_dialect(b) == QA_COMMAND_DIALECT_Q3) touch_entry(b, entry);
+    if (entry->handler != NULL) {
+      entry->handler(entry->handler_ctx, command);
+    } else if (qa_command_dialect_is_q2(execution_dialect(b))) {
+      text_buffer nested = {NULL, 0, 0};
+      (void)text_add(&nested, "cmd ");
+      (void)text_add(&nested, raw);
+      qa_cleanup nested_node;
+      qa_cleanup_push(&nested_node, free, nested.data);
+      (void)dispatch(b, nested.data != NULL ? nested.data : "", source, false,
+                     input_text_mode(b, source, false), execution_dialect(b), true,
+                     frame_identity(b));
+      qa_cleanup_pop(&nested_node);
+      free(nested.data);
+    } else if (execution_dialect(b) == QA_COMMAND_DIALECT_Q3) {
+      fallback_command(b, command);
+    } else {
+      qa_error("Quake I command registration has a null callback");
+    }
+    return;
+  }
+  if (execution_dialect(b) != QA_COMMAND_DIALECT_Q3) {
+    const void *instance = frame_instance(b);
+    for (size_t i = 0; i < b->alias_count; i++) {
+      if (b->aliases[i].instance != instance || !folded_equal(b->aliases[i].name, name))
+        continue;
+      if (qa_command_dialect_is_q2(execution_dialect(b)) &&
+          ++b->alias_count_dispatch == 16) {
+        buffer_print(b, "ALIAS_LOOP_COUNT\n", NULL);
+        return;
+      }
+      char *value = dup_text(b->aliases[i].value);
+      qa_command_text_mode alias_mode = b->aliases[i].text_mode;
+      qa_command_dialect alias_dialect = b->aliases[i].dialect;
+      qa_cleanup value_node;
+      qa_cleanup_push(&value_node, free, value);
+      insert_for(b, value != NULL ? value : "", source, 0, NULL, (int)alias_mode,
+                 (int)alias_dialect, frame_identity(b));
+      qa_cleanup_pop(&value_node);
+      free(value);
+      return;
+    }
+  }
+  fallback_command(b, command);
+}
+
 static double dispatch(qa_command_buffer *b, const char *raw, qa_command_context source,
                        bool direct, qa_command_text_mode text_mode,
-                       qa_command_dialect dialect, bool macro_expansion) {
+                       qa_command_dialect dialect, bool macro_expansion, uint64_t identity) {
   b->program_revision++;
   if (b->batch_active && b->batch_aborted != NULL && b->batch_aborted(b->batch_signal_ctx))
     qa_error("Command batch cancelled; remaining batch discarded.");
   if (b->batch_active && --b->batch_remaining < 0)
     qa_error("Command batch exceeded 128 dispatched commands; remaining batch discarded.");
-  char *expanded_owned = NULL;
-  const char *expanded = raw;
-  if (qa_command_dialect_is_q2(dialect) && macro_expansion) {
-    macro_ctx macro = {b, source, NULL};
-    char *out = NULL;
-    bool ok = qa_expand_command_macros(raw, macro_variable, &macro, macro_print, b,
-                                       text_mode, &out);
-    free(macro.scratch);
-    if (!ok) {
-      set_buffer_tokens(b, NULL);
-      return 0;
-    }
-    expanded_owned = out;
-    expanded = out != NULL ? out : "";
+  /* TS: an oversized token (RangeError from macro expansion or tokenizing) ends only its own line. */
+  dispatch_tokens_job tokens_job;
+  memset(&tokens_job, 0, sizeof tokens_job);
+  tokens_job.buffer = b;
+  tokens_job.raw = raw;
+  tokens_job.source = source;
+  tokens_job.text_mode = text_mode;
+  tokens_job.dialect = dialect;
+  tokens_job.macro_expansion = macro_expansion;
+  qa_caught_error caught;
+  if (!qa_try(dispatch_tokens_run, &tokens_job, &caught)) {
+    free(tokens_job.expanded_owned);
+    if (strcmp(caught.name, "RangeError") != 0) qa_rethrow(&caught);
+    buffer_print_format(b, NULL, "%s; command ignored\n", caught.message);
+    set_buffer_tokens(b, NULL);
+    return 0;
   }
-  qa_command_tokens tokens;
-  memset(&tokens, 0, sizeof tokens);
-  if (!qa_tokenize_command(expanded, dialect, text_mode, &tokens)) {
+  char *expanded_owned = tokens_job.expanded_owned;
+  if (tokens_job.expanded_undefined || !tokens_job.tokenized) {
+    set_buffer_tokens(b, NULL);
     free(expanded_owned);
     return 0;
   }
+  qa_command_tokens tokens = tokens_job.tokens;
   set_buffer_tokens(b, &tokens);
   if (tokens.argc == 0) {
     qa_command_tokens_destroy(&tokens);
@@ -2143,6 +2418,7 @@ static double dispatch(qa_command_buffer *b, const char *raw, qa_command_context
   memset(&frame, 0, sizeof frame);
   frame.dialect = dialect;
   frame.source = source;
+  frame.identity = identity;
   frame.direct = direct && (source.origin.kind == QA_COMMAND_ORIGIN_LOCAL_CONSOLE ||
                              source.origin.kind == QA_COMMAND_ORIGIN_LOCAL_SEAT);
   frame.text_mode = text_mode;
@@ -2161,85 +2437,19 @@ static double dispatch(qa_command_buffer *b, const char *raw, qa_command_context
   command.raw = raw;
   command.buffer = b;
   command.frame = &frame;
-  double result = 1;
-  bool handled = false;
-  if (b->options.allow_command != NULL &&
-      !b->options.allow_command(b->options.allow_command_ctx, &command)) {
-    handled = true;
-  }
-  if (!handled) {
-    qa_command_handler_fn builtin_fn = NULL;
-    void *builtin_ctx = NULL;
-    bool has_builtin = builtin_handler_for(b, name, &builtin_fn, &builtin_ctx);
-    registered_entry *selected = b->handlers;
-    while (selected != NULL && !folded_equal(selected->name, name)) selected = selected->next;
-    bool selected_is_builtin = has_builtin && selected != NULL &&
-        selected->handler == builtin_fn && selected->handler_ctx == builtin_ctx;
-    qa_command_producer_services services;
-    bool has_producer = producer_services(b, source, &services);
-    if (has_producer && selected != NULL && selected->ownership != QA_COMMAND_ENGINE &&
-        !selected_is_builtin &&
-        !(services.engine_command != NULL && services.engine_command(services.ctx, name))) {
-      if (services.command != NULL) services.command(services.ctx, &command);
-      handled = true;
-    }
-    if (!handled && (selected == NULL || selected->ownership != QA_COMMAND_ENGINE) &&
-        !selected_is_builtin && b->options.source_command != NULL &&
-        b->options.source_command(b->options.source_command_ctx, &command,
-                                  selected != NULL) == 1) {
-      handled = true;
-    }
-    if (!handled) {
-      for (registered_entry *entry = b->handlers; entry != NULL; entry = entry->next) {
-        if (!folded_equal(entry->name, name)) continue;
-        if (execution_dialect(b) == QA_COMMAND_DIALECT_Q3) touch_entry(b, entry);
-        if (entry->handler != NULL) {
-          entry->handler(entry->handler_ctx, &command);
-        } else if (qa_command_dialect_is_q2(execution_dialect(b))) {
-          text_buffer nested = {NULL, 0, 0};
-          (void)text_add(&nested, "cmd ");
-          (void)text_add(&nested, raw);
-          (void)dispatch(b, nested.data != NULL ? nested.data : "", source, false,
-                         input_text_mode(b, source, false), execution_dialect(b), true);
-          free(nested.data);
-        } else if (execution_dialect(b) == QA_COMMAND_DIALECT_Q3) {
-          fallback_command(b, &command);
-        } else {
-          qa_error("Quake I command registration has a null callback");
-        }
-        handled = true;
-        break;
-      }
-    }
-    if (!handled && execution_dialect(b) != QA_COMMAND_DIALECT_Q3) {
-      const void *instance = frame_instance(b);
-      for (size_t i = 0; i < b->alias_count; i++) {
-        if (b->aliases[i].instance != instance || !folded_equal(b->aliases[i].name, name))
-          continue;
-        if (qa_command_dialect_is_q2(execution_dialect(b)) &&
-            ++b->alias_count_dispatch == 16) {
-          buffer_print(b, "ALIAS_LOOP_COUNT\n", NULL);
-          handled = true;
-          break;
-        }
-        char *value = dup_text(b->aliases[i].value);
-        qa_command_text_mode alias_mode = b->aliases[i].text_mode;
-        qa_command_dialect alias_dialect = b->aliases[i].dialect;
-        insert_for(b, value != NULL ? value : "", source, 0, NULL, (int)alias_mode,
-                   (int)alias_dialect);
-        free(value);
-        handled = true;
-        break;
-      }
-    }
-    if (!handled) fallback_command(b, &command);
-  }
+  dispatch_body_job body = {b, name, raw, source, &command};
+  bool completed = qa_try(dispatch_body_run, &body, &caught);
+  bool usage = !completed && strcmp(caught.name, QA_COMMAND_USAGE_ERROR) == 0;
+  /* TS catch (inside the frame): a CommandUsageError prints its message and counts as dispatched. */
+  if (usage) buffer_print_format(b, NULL, "%s\n", caught.message);
+  /* TS finally. */
   frame.active = false;
   b->frame = frame.parent;
   select_builtins(b, execution_dialect(b));
   qa_command_tokens_destroy(&tokens);
   free(expanded_owned);
-  return result;
+  if (!completed && !usage) qa_rethrow(&caught);
+  return 1;
 }
 
 /* --- Drain --- */
@@ -2247,9 +2457,8 @@ static char *command_text(qa_command_buffer *b, const command_chunk *first) {
   text_buffer text = {NULL, 0, 0};
   const qa_command_origin *origin = &first->source.origin;
   bool resumed_caller = false;
-  int64_t first_id = qa_event_ring_stats_of(&b->chunks.ring).first;
-  for (int64_t id = first_id;; id++) {
-    const command_chunk *chunk = ring_at(&b->chunks, id);
+  for (int64_t id = 0;; id++) {
+    const command_chunk *chunk = ring_at_offset(&b->chunks, id);
     if (chunk == NULL) break;
     if (chunk->dialect != first->dialect || chunk->text_mode != first->text_mode) break;
     if (!same_producer(first->source, chunk_source(chunk))) break;
@@ -2286,19 +2495,37 @@ static void consume_chunks(qa_command_buffer *b, size_t count) {
       command_chunk replacement = *chunk;
       replacement.text = dup_text(chunk->text + count);
       free(chunk->text);
-      qa_event_ring_replace_at_offset(&b->chunks.ring, index, &replacement);
+      qa_deque_replace_at_offset(&b->chunks.ring, index, &replacement);
       return;
     }
     command_chunk removed = *chunk;
-    qa_event_ring_remove_at_offset(&b->chunks.ring, index);
+    qa_deque_remove_at_offset(&b->chunks.ring, index);
     chunk_free_contents(&removed);
     count -= length;
   }
+}
+/* TS drain's completion branch: finally { frame.active = false; this.frame = frame.parent;
+   this.selectBuiltins(this.executionDialect) } when a listener throws. */
+typedef struct completion_unwind {
+  qa_command_buffer *buffer;
+  execution_frame *frame;
+  qa_script_completion *event;
+  command_chunk *chunk;
+} completion_unwind;
+static void completion_release(void *raw) {
+  completion_unwind *unwind = (completion_unwind *)raw;
+  unwind->frame->active = false;
+  unwind->buffer->frame = unwind->frame->parent;
+  select_builtins(unwind->buffer, execution_dialect(unwind->buffer));
+  qa_script_completion_free(unwind->event);
+  chunk_free_contents(unwind->chunk);
 }
 static double drain_loop(qa_command_buffer *b, bool reset_aliases,
                          qa_should_continue_fn should_continue, void *continue_ctx,
                          qa_after_dispatch_fn after, void *after_ctx) {
   if (reset_aliases) b->alias_count_dispatch = 0;
+  /* A self-expanding alias or vstr never empties the buffer; no real script dispatches this many lines in one drain. */
+  int budget = 65536;
   double executed = 0;
   while ((ring_live(&b->chunks) > 0 || b->script_read != NULL) &&
          (should_continue == NULL || should_continue(continue_ctx))) {
@@ -2351,47 +2578,55 @@ static double drain_loop(qa_command_buffer *b, bool reset_aliases,
       memset(&frame, 0, sizeof frame);
       frame.dialect = chunk.dialect;
       frame.source = event.source;
+      frame.identity = fresh_identity(b);
       frame.direct = false;
       frame.text_mode = chunk.text_mode;
       frame.parent = b->frame;
       frame.active = true;
       b->frame = &frame;
+      completion_unwind unwind = {b, &frame, &event, &chunk};
+      qa_cleanup unwind_node;
+      qa_cleanup_push(&unwind_node, completion_release, &unwind);
       select_builtins(b, chunk.dialect);
       if (b->options.on_script_complete != NULL)
         b->options.on_script_complete(b->options.on_script_complete_ctx, &event);
       for (size_t i = 0; i < b->listener_count; i++)
         if (b->script_listeners[i].listener != NULL)
           b->script_listeners[i].listener(b->script_listeners[i].ctx, &event);
-      frame.active = false;
-      b->frame = frame.parent;
-      select_builtins(b, execution_dialect(b));
-      qa_script_completion_free(&event);
-      chunk_free_contents(&chunk);
+      qa_cleanup_pop(&unwind_node);
+      completion_release(&unwind);
       continue;
     }
     qa_command_dialect dialect = first->dialect;
     qa_command_text_mode text_mode = first->text_mode;
     bool direct = first->direct;
+    const uint64_t identity = first->identity;
     qa_command_context source = copy_context(first->source, NULL);
     char *buffer = command_text(b, first);
     size_t offset = qa_command_separator_offset(buffer != NULL ? buffer : "", dialect);
+    size_t buffer_length = strlen(buffer != NULL ? buffer : "");
     if ((double)offset >= b->maximum_command) {
       if (dialect != QA_COMMAND_DIALECT_Q3) {
         free(buffer);
         context_origin_free(&source);
-        qa_range_error("Command line overflows source line buffer");
+        buffer_print(b, "Command line overflows the line buffer; line discarded\n", NULL);
+        consume_chunks(b, offset == buffer_length ? offset : offset + 1);
+        continue;
       }
       offset = (size_t)b->maximum_command - 1;
     }
-    size_t buffer_length = strlen(buffer != NULL ? buffer : "");
     char *line = dup_range(buffer != NULL ? buffer : "", offset);
     size_t consumed = offset == buffer_length ? offset : offset + 1;
     free(buffer);
     consume_chunks(b, consumed);
     double count = dispatch(b, line != NULL ? line : "", source, direct, text_mode,
-                            dialect, true);
+                            dialect, true, identity);
     free(line);
     context_origin_free(&source);
+    if (--budget <= 0) {
+      buffer_print(b, "Command buffer exceeded its dispatch budget; pending commands discarded\n", NULL);
+      consume_chunks(b, SIZE_MAX);
+    }
     if (count != 0) {
       executed += count;
       if (after != NULL) {
@@ -2425,12 +2660,20 @@ static bool drain_can_continue(void *ctx) {
   return cont->buffer->preparation_tail == cont->prefix &&
          (cont->should == NULL || cont->should(cont->ctx));
 }
+/* TS drainAsync finally { asyncDraining = false } and the afterDispatch finally. */
+static void drain_async_release(void *raw) {
+  qa_command_buffer *b = (qa_command_buffer *)raw;
+  b->async_draining = false;
+  b->after_dispatch = false;
+}
 static double drain_async(qa_command_buffer *b, qa_after_dispatch_fn after, void *after_ctx,
                           bool await_scripts, qa_should_continue_fn should_continue,
                           void *continue_ctx) {
   if (b->async_draining || b->inherited_async_drain || b->frame != NULL)
     qa_error("Command buffer is already executing");
   b->async_draining = true;
+  qa_cleanup draining_node;
+  qa_cleanup_push(&draining_node, drain_async_release, b);
   drain_continue cont = {b, b->preparation_tail, should_continue, continue_ctx};
   double executed = 0;
   bool first_drain = true;
@@ -2455,6 +2698,7 @@ static double drain_async(qa_command_buffer *b, qa_after_dispatch_fn after, void
     if (!settled) break;
     first_drain = false;
   }
+  qa_cleanup_pop(&draining_node);
   b->async_draining = false;
   return executed;
 }
@@ -2490,12 +2734,13 @@ double qa_command_buffer_execute_now(qa_command_buffer *b, const char *text,
     free(value);
     return qa_command_buffer_execute(b);
   }
+  const uint64_t identity = source_identity(b, source);
   qa_command_context context = input_context(b, source, true);
   bool direct = b->frame == NULL;
   qa_command_dialect use_dialect = dialect >= 0 ? (qa_command_dialect)dialect
                                                 : execution_dialect(b);
   double result = dispatch(b, value, context, direct,
-                           input_text_mode(b, context, direct), use_dialect, true);
+                           input_text_mode(b, context, direct), use_dialect, true, identity);
   context_origin_free(&context);
   free(value);
   return result;
@@ -2576,7 +2821,7 @@ static void begin_batch(qa_command_buffer *b, const char *text, qa_command_conte
   b->batch_remaining = 128;
   b->batch_aborted = aborted;
   b->batch_signal_ctx = signal_ctx;
-  if (append) append_for(b, value, context, 0, -1, -1, true);
+  if (append) append_for(b, value, context, 0, -1, -1, true, source_identity(b, &source));
   free(value);
   context_origin_free(&context);
 }
@@ -2602,6 +2847,15 @@ static void restore_batch(qa_command_buffer *b, batch_saved *saved) {
   b->script_read = saved->script_read;
   discard_retired_work(b);
 }
+static void context_release(void *raw) { context_origin_free((qa_command_context *)raw); }
+typedef struct batch_unwind {
+  qa_command_buffer *buffer;
+  batch_saved *saved;
+} batch_unwind;
+static void batch_release(void *raw) {
+  batch_unwind *unwind = (batch_unwind *)raw;
+  restore_batch(unwind->buffer, unwind->saved);
+}
 static void complete_batch(qa_command_buffer *b) {
   if (ring_live(&b->chunks) > 0 || ring_live(&b->deferred) > 0 ||
       b->script_read != NULL || b->wait_frames != 0)
@@ -2613,8 +2867,12 @@ double qa_command_buffer_execute_batch(qa_command_buffer *b, const char *text,
                                        qa_abort_signal_fn aborted, void *signal_ctx) {
   batch_saved saved;
   begin_batch(b, text, source, aborted, signal_ctx, true, &saved);
+  batch_unwind unwind = {b, &saved};
+  qa_cleanup node;
+  qa_cleanup_push(&node, batch_release, &unwind);
   double count = qa_command_buffer_execute(b);
   complete_batch(b);
+  qa_cleanup_pop(&node);
   restore_batch(b, &saved);
   return count;
 }
@@ -2625,9 +2883,13 @@ double qa_command_buffer_execute_batch_async(qa_command_buffer *b, const char *t
                                              void *signal_ctx) {
   batch_saved saved;
   begin_batch(b, text, source, aborted, signal_ctx, true, &saved);
+  batch_unwind unwind = {b, &saved};
+  qa_cleanup node;
+  qa_cleanup_push(&node, batch_release, &unwind);
   double count = qa_command_buffer_execute_scripts_async(b, after_dispatch, after_ctx,
                                                          NULL, NULL);
   complete_batch(b);
+  qa_cleanup_pop(&node);
   restore_batch(b, &saved);
   return count;
 }
@@ -2640,13 +2902,21 @@ double qa_command_buffer_execute_command_async(qa_command_buffer *b, const char 
     qa_range_error("Command line exceeds the engine line limit.");
   batch_saved saved;
   begin_batch(b, text, source, aborted, signal_ctx, false, &saved);
+  batch_unwind unwind = {b, &saved};
+  qa_cleanup node;
+  qa_cleanup_push(&node, batch_release, &unwind);
+  const uint64_t identity = source_identity(b, &source);
   qa_command_context context = input_context(b, &source, true);
+  qa_cleanup context_node;
+  qa_cleanup_push(&context_node, context_release, &context);
   double count = dispatch(b, text, context, false, input_text_mode(b, context, false),
-                          execution_dialect(b), macro_expansion);
+                          execution_dialect(b), macro_expansion, identity);
+  qa_cleanup_pop(&context_node);
   context_origin_free(&context);
   if (after_dispatch != NULL) after_dispatch(after_ctx);
   count += qa_command_buffer_execute_scripts_async(b, after_dispatch, after_ctx, NULL, NULL);
   complete_batch(b);
+  qa_cleanup_pop(&node);
   restore_batch(b, &saved);
   return count;
 }
@@ -2908,8 +3178,8 @@ static void builtin_inc_dec(void *ctx, qa_command_invocation *command) {
   } else if (!isfinite(value)) {
     text = dup_text(isnan(value) ? "nan" : (value < 0 ? "-inf" : "inf"));
   } else if ((float)((double)value - floor((double)value)) < (float)1e-6) {
-    char fixed[64];
-    (void)snprintf(fixed, sizeof fixed, "%.0f", (double)value);
+    char fixed[QA_JS_TO_FIXED_CAPACITY]; /* value.toFixed(0): -0 is "0", "%.0f" printed "-0" */
+    qa_js_to_fixed((double)value, 0, fixed, sizeof fixed);
     text = dup_text(fixed);
   } else {
     text = qa_cvar_value_text(value, false);
@@ -3064,6 +3334,75 @@ static void builtin_cvar_restart(void *ctx, qa_command_invocation *command) {
   free(visible.items);
   context_origin_free(&context);
 }
+/* TS serverinfo/localinfo builtins (QuakeWorld). ctx is the command name.
+ * Lengths and padEnd count bytes, which match the TS UTF-16 units for ASCII. */
+static void print_info_entry(qa_command_buffer *b, const char *key, size_t key_length,
+                             const char *value, size_t value_length) {
+  buffer_print_format(b, NULL, "%-20.*s%.*s\n", (int)key_length, key, (int)value_length, value);
+}
+static void builtin_info(void *ctx, qa_command_invocation *command) {
+  const char *name = (const char *)ctx;
+  bool local = strcmp(name, "localinfo") == 0;
+  qa_command_buffer *b = command->buffer;
+  qa_cvar_registry *cvars = cvar_owner(b, command->argc > 1 ? command->argv[1] : name, command->source);
+  if (cvars == NULL) return;
+  if (command->argc == 1) {
+    if (local) {
+      const char *key, *value;
+      for (size_t i = 0; qa_cvar_registry_local_info_entry(cvars, i, &key, &value); i++)
+        print_info_entry(b, key, strlen(key), value, strlen(value));
+      return;
+    }
+    char *info = qa_cvar_registry_info_string(cvars, QA_CVAR_FLAG_SERVER_INFO, -1);
+    if (info == NULL) return;
+    /* split("\\").slice(1), then [part, next ?? ""] for each even index. */
+    const char *cursor = strchr(info, '\\');
+    while (cursor != NULL) {
+      const char *key = cursor + 1, *key_end = strchr(key, '\\');
+      size_t key_length = key_end == NULL ? strlen(key) : (size_t)(key_end - key);
+      const char *value = "", *next = NULL;
+      size_t value_length = 0;
+      if (key_end != NULL) {
+        value = key_end + 1;
+        next = strchr(value, '\\');
+        value_length = next == NULL ? strlen(value) : (size_t)(next - value);
+      }
+      print_info_entry(b, key, key_length, value, value_length);
+      cursor = next;
+    }
+    free(info);
+    return;
+  }
+  const char *key = command->argv[1];
+  if (command->argc != 3) {
+    buffer_print_format(b, NULL, "usage: %s [ <key> <value> ]\n", name);
+    return;
+  }
+  const char *value = command->argv[2];
+  if (key[0] == '*') {
+    buffer_print(b, "Can't set * keys\n", NULL);
+    return;
+  }
+  if (strpbrk(key, "\\\"\n\r;") != NULL || strpbrk(value, "\\\"\n\r") != NULL ||
+      strlen(key) > 63 || strlen(value) > 63) {
+    buffer_print(b, "Invalid info key or value\n", NULL);
+    return;
+  }
+  if (local) {
+    if (value[0] == '\0') qa_cvar_registry_local_info_delete(cvars, key);
+    else qa_cvar_registry_local_info_set(cvars, key, value);
+    return;
+  }
+  qa_cvar_registry_set_command_flags(cvars, key, value, QA_CVAR_COMMAND_FLAG_SERVERINFO);
+}
+static const char *const serverinfo_examples[] = {"serverinfo dq 1"};
+static const char *const localinfo_examples[] = {"localinfo dq 1"};
+static const qa_command_documentation serverinfo_doc = {
+    "Show or set a QuakeWorld server info key.", "serverinfo [<key> <value>]",
+    serverinfo_examples, 1, NULL, 0};
+static const qa_command_documentation localinfo_doc = {
+    "Show or set a QuakeWorld local info key.", "localinfo [<key> <value>]",
+    localinfo_examples, 1, NULL, 0};
 static const char *const echo_examples[] = {"echo hello"};
 static const char *const set_examples[] = {"set name \"Player\""};
 static const char *const cmdlist_examples[] = {"cmdlist"};
@@ -3137,9 +3476,12 @@ static void register_builtins(qa_command_buffer *b, qa_command_dialect dialect) 
       {"toggle", builtin_toggle, NULL, NULL},
       {"reset", builtin_reset, NULL, NULL},
       {"cvar_restart", builtin_cvar_restart, NULL, NULL},
+      {"serverinfo", builtin_info, (void *)"serverinfo", &serverinfo_doc},
+      {"localinfo", builtin_info, (void *)"localinfo", &localinfo_doc},
   };
   static const char *const order_nq[] = {"stuffcmds", "exec", "echo", "alias", "cmd", "wait"};
-  static const char *const order_qw[] = {"stuffcmds", "exec", "echo", "alias", "wait", "cmd"};
+  static const char *const order_qw[] = {"stuffcmds", "exec", "echo", "alias", "wait", "cmd",
+                                         "serverinfo", "localinfo"};
   static const char *const order_q2[] = {"cmdlist", "exec", "echo", "alias",
                                          "wait", "set", "cvarlist", "cmd"};
   static const char *const order_q3[] = {"toggle", "set", "sets", "setu", "seta", "reset",

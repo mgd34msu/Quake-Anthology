@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/simulation/rerelease-weapon-checkpoint.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/rerelease_weapon_checkpoint.h"
+#include "qa/app/bootstrap/simulation/native_q2_rerelease_save.h"
 #include <stdlib.h>
 #include <string.h>
 #include "qa/compat/q2/rerelease/native_weapon_declaration.h"
@@ -40,9 +41,8 @@ qa_app_sim_rerelease_weapon_behavior_checkpoint qa_app_sim_read_rerelease_weapon
   qa_save_reader_destroy(&map);
   f = fld(reader, "time"); out.time = qa_save_reader_finite(&f); qa_save_reader_destroy(&f);
   f = fld(reader, "cvars"); out.cvars = qa_save_reader_bytes(&f, &out.cvars_length); qa_save_reader_destroy(&f);
-  /* game/level RereleaseSourceSave trees stay borrowed in the reader's
-   * tree through the opaque pointers (sibling native save slice). */
-  out.game = NULL; out.level = NULL;
+  f = fld(reader, "game"); out.game = qa_app_sim_read_rerelease_source_save(&f); qa_save_reader_destroy(&f);
+  f = fld(reader, "level"); out.level = qa_app_sim_read_rerelease_source_save(&f); qa_save_reader_destroy(&f);
   f = fld(reader, "configstrings");
   out.configstring_count = qa_save_reader_list_count(&f);
   out.configstrings = out.configstring_count ? malloc(out.configstring_count * sizeof *out.configstrings) : NULL;

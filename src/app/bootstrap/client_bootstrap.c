@@ -78,3 +78,7 @@ const char *qa_app_client_source_retire(const qa_app_client_source_lifetime *lif
 const char *qa_app_client_source_capture_map(const qa_app_client_source_lifetime *lifetime) {
   return lifetime && lifetime->capture_map ? lifetime->capture_map : "menu";
 }
+/* TS client.output.current = engine. */
+void qa_app_client_bootstrap_publish_output(qa_app_client_bootstrap *client, struct qa_unified_audio *engine) {
+  client->output_current = engine;
+}

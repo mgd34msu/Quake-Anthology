@@ -9,6 +9,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include "qa/content/mounts/paths.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 struct qa_app_demo_library { char *root; qa_app_demo_library_mounts mounts; };
 static char *dup(const char *s) { size_t n = strlen(s) + 1; char *p = malloc(n); if (p) memcpy(p, s, n); return p; }
 qa_app_demo_library *qa_app_demo_library_create(const char *root, qa_app_demo_library_mounts mounts) {
@@ -41,17 +43,10 @@ static bool demo_extension(const char *path) {
 static void add_name(name_set *set, const char *path) {
   if (!demo_extension(path)) return;
   char *normalized = qa_normalize_resource_path(path);
-  size_t len = strlen(normalized);
-  char *lower = malloc(len + 1);
-  for (size_t i = 0; i <= len; i++) lower[i] = (char)tolower((unsigned char)normalized[i]);
+  /* TS names.set(normalized.toLowerCase(), normalized): Unicode case-insensitive key. */
   for (size_t i = 0; i < set->count; i++) {
-    bool same = true;
-    const char *a = set->names[i];
-    if (strlen(a) != len) continue;
-    for (size_t j = 0; j < len; j++) if (tolower((unsigned char)a[j]) != lower[j]) { same = false; break; }
-    if (same) { free(set->names[i]); set->names[i] = normalized; free(lower); return; }
+    if (qa_js_equals_ignore_case(set->names[i], normalized)) { free(set->names[i]); set->names[i] = normalized; return; }
   }
-  free(lower);
   if (set->count == set->cap) { set->cap = set->cap ? set->cap * 2 : 16; set->names = realloc(set->names, set->cap * sizeof *set->names); }
   set->names[set->count++] = normalized;
 }
@@ -75,7 +70,7 @@ static const char *scan(qa_app_demo_library *library, const char *directory, nam
   closedir(dir);
   return NULL;
 }
-static int by_name(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+static int by_name(const void *a, const void *b) { return qa_js_locale_compare(*(char *const *)a, *(char *const *)b); }
 qa_app_demo_library_entry *qa_app_demo_library_list(qa_app_demo_library *library, size_t *out_count, const char **out_error) {
   *out_count = 0;
   *out_error = NULL;
@@ -100,7 +95,7 @@ qa_app_demo_library_entry *qa_app_demo_library_list(qa_app_demo_library *library
     *out_error = error;
     return NULL;
   }
-  qsort(set.names, set.count, sizeof *set.names, by_name); /* localeCompare ~ byte order for ASCII names */
+  qa_js_sort(set.names, set.count, sizeof *set.names, by_name); /* localeCompare ~ byte order for ASCII names */
   qa_app_demo_library_entry *entries = calloc(set.count ? set.count : 1, sizeof *entries);
   for (size_t i = 0; i < set.count; i++) {
     entries[i].id = set.names[i];

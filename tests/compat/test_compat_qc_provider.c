@@ -69,6 +69,15 @@ static qa_compat_qc_definition FIELDS[] = {
     {"float", 3, false, 7, (char *)"armorvalue"},
     {"vector", 2, false, 8, (char *)"angles"},
     {"vector", 2, false, 11, (char *)"view_ofs"},
+    /* createQcSourceSlotStorage (entity-host.ts) requires these. */
+    {"string", 1, false, 14, (char *)"model"},
+    {"float", 3, false, 15, (char *)"takedamage"},
+    {"float", 3, false, 16, (char *)"modelindex"},
+    {"float", 3, false, 17, (char *)"colormap"},
+    {"float", 3, false, 18, (char *)"skin"},
+    {"float", 3, false, 19, (char *)"frame"},
+    {"float", 3, false, 20, (char *)"solid"},
+    {"float", 3, false, 21, (char *)"nextthink"},
 };
 static qa_compat_qc_definition GLOBALS[] = {
     {"entity", 6, false, 40, (char *)"self"},
@@ -92,11 +101,11 @@ static qa_compat_qc_program program = {
     {QA_QUAKEC_API_Q1_NETQUAKE, 6, 5927},
     STATEMENTS, 2,
     GLOBALS, 3,
-    FIELDS, 8,
+    FIELDS, 16,
     FUNCTIONS, 2,
     STRINGS, 1,
     INITIAL_GLOBALS, 256,
-    16, 0, (char *)DIGEST,
+    22, 0, (char *)DIGEST,
 };
 
 static qa_mod_callback_declaration base_declaration(void) {

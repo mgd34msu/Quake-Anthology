@@ -126,6 +126,7 @@ void qa_app_startup_config_on_script_complete(qa_app_startup_config *c, const qa
   if (direct) c->has_active = false;
 }
 bool qa_app_startup_config_execute_frame(qa_app_startup_config *c, qa_command_buffer *commands,
+                                         qa_app_startup_config_append append,
                                          qa_after_dispatch_fn after_dispatch, void *after_ctx,
                                          qa_should_continue_fn should_continue, void *continue_ctx) {
   if (c->failure != NULL) qa_range_error("%s", c->failure);
@@ -153,7 +154,8 @@ bool qa_app_startup_config_execute_frame(qa_app_startup_config *c, qa_command_bu
       c->active = s; c->has_active = true;
       char text[512];
       snprintf(text, sizeof text, "exec %s\n", s.name);
-      qa_command_buffer_append(commands, text, &c->options.context, -1);
+      if (append.fn != NULL) append.fn(append.ctx, commands, text, &c->options.context);
+      else qa_command_buffer_append(commands, text, &c->options.context, -1);
     }
     qa_command_buffer_execute_scripts_async(commands, after_dispatch, after_ctx, should_continue, continue_ctx);
     if (c->has_active || (should_continue != NULL && !should_continue(continue_ctx))) return false;

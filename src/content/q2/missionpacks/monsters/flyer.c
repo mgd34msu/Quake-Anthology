@@ -21,14 +21,14 @@ static void run_move(qa_q2m_context *c) {
 }
 static void run_fn(void *ctx, qa_q2m_context *c) { (void)ctx; run_move(c); }
 static void return_slot(flyer_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *commander = c->state->has_commander ? c->game->entity(c->game->ctx, &c->state->commander) : NULL;
+  qa_q2_entity *commander = c->state->has_commander ? c->game->entity(c->game->ctx, &c->state->commander) : NULL;
   qa_q2m_context *commander_context = commander ? qa_q2m_monsters_context(bundle->monsters, commander->actor.id) : NULL;
   if (commander && strcmp(commander->classname, "monster_carrier") == 0 && commander_context)
     commander_context->state->monster_slots++;
 }
 static void kamikaze_explode(flyer_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   return_slot(bundle, c);
   qa_body_state enemy;
   if (entity->has_enemy && qa_q2m_enemy_body(c, &enemy)) {
@@ -39,7 +39,7 @@ static void kamikaze_explode(flyer_bundle *bundle, qa_q2m_context *c) {
   qa_q2bm_explode(c, "flyer/flydeth1.wav");
 }
 static void kamikaze_check(flyer_bundle *bundle, qa_q2m_context *c) {
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   if (!q2mpm_live(c->game, entity->actor.id)) return;
   if (!entity->has_enemy || !q2mpm_live(c->game, entity->enemy)) { kamikaze_explode(bundle, c); return; }
   entity->has_goal = true;
@@ -82,7 +82,8 @@ static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   flyer_bundle *bundle = ctx;
   (void)distance;
   if (qa_q2mpm_monster_mass(c) != 100)
-    return qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source);
+    return c->game->options.edition == QA_Q2_EDITION_RERELEASE ? false
+           : qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source);
   kamikaze_check(bundle, c);
   if (q2mpm_live(c->game, c->entity->actor.id)) {
     return_slot(bundle, c);
@@ -105,19 +106,19 @@ static void nextmove_fn(void *ctx, qa_q2m_context *c) {
 static void kamikaze_init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   c->entity->effects = q2mpm_or(c->entity->effects, 16);
-  qa_q2f_presentation_event e;
+  qa_q2_presentation_event e;
   memset(&e, 0, sizeof e);
-  e.kind = QA_Q2F_EVENT_SOUND;
-  e.actor = &c->entity->actor.id;
+  e.kind = "sound";
+  e.has_actor = true; e.actor = c->entity->actor.id;
   e.origin = q2mpm_body(c->game, c->entity).origin;
   e.path = "flyer/flyidle1.wav";
   e.channel = 0; e.volume = 1; e.attenuation = 1; e.reliable = false; e.loop = "start";
   c->game->host->emit(c->game->host->ctx, e);
 }
-size_t qa_q2mpm_create_rogue_flyer_definitions(qa_q2m_definition *out, qa_q2m_monsters *monsters,
+size_t qa_q2mpm_create_rogue_flyer_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2m_monsters *monsters,
                                                qa_q2mpm_monster_state *source) {
-  flyer_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue flyer definitions");
+  flyer_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue flyer definitions");
   bundle->monsters = monsters;
   bundle->source = source;
   qa_q2m_definition definition = qa_q2bm_flyer_definition;
@@ -141,7 +142,7 @@ size_t qa_q2mpm_create_rogue_flyer_definitions(qa_q2m_definition *out, qa_q2m_mo
     {"flyer_setstart", {bundle, setstart_fn}},
     {"flyer_nextmove", {bundle, nextmove_fn}},
   };
-  definition.callbacks = qa_q2mpm_merge_callbacks(definition.callbacks, definition.callback_count, extra, 5,
+  definition.callbacks = qa_q2mpm_merge_callbacks(arena, definition.callbacks, definition.callback_count, extra, 5,
                                                   &definition.callback_count);
   out[0] = definition;
   out[1] = definition;

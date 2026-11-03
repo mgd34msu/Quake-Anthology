@@ -7,14 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "qa/content/composition/q3_q2_supply.h"
 #include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
+#include "qa/content/q2/foundation/infinite_ammo.h"
 #include "qa/content/q2/foundation/start_items.h"
 #include "qa/foundation/support.h"
 #include "qa/world/gameplay/pickups.h"
 
-#include "items_q3_data.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/js_case.h"
 
 typedef qa_q2_item_definition item;
 
@@ -24,7 +25,7 @@ static const item AMMUNITION[] = {
   {.kind = "ammo", .classname = "ammo_cells", .model = "models/items/ammo/cells/medium/tris.md2", .icon = "a_cells", .name = "Cells", .sound = "misc/am_pkup.wav", .respawn = 30, .quantity = 50, .capacity = 200},
   {.kind = "ammo", .classname = "ammo_rockets", .model = "models/items/ammo/rockets/medium/tris.md2", .icon = "a_rockets", .name = "Rockets", .sound = "misc/am_pkup.wav", .respawn = 30, .quantity = 5, .capacity = 50},
   {.kind = "ammo", .classname = "ammo_slugs", .model = "models/items/ammo/slugs/medium/tris.md2", .icon = "a_slugs", .name = "Slugs", .sound = "misc/am_pkup.wav", .respawn = 30, .quantity = 10, .capacity = 50},
-  {.kind = "ammo", .classname = "ammo_grenades", .model = "models/items/ammo/grenades/medium/tris.md2", .icon = "a_grenades", .name = "Grenades", .sound = "misc/am_pkup.wav", .rotate = true, .respawn = 30, .quantity = 5, .capacity = 50, .weapon_ammo = true},
+  {.kind = "ammo", .classname = "ammo_grenades", .model = "models/items/ammo/grenades/medium/tris.md2", .icon = "a_grenades", .name = "Grenades", .sound = "misc/am_pkup.wav", .respawn = 30, .quantity = 5, .capacity = 50, .weapon_ammo = true},
 };
 static const item KEYS[] = {
   {.kind = "key", .classname = "key_data_cd", .model = "models/items/keys/data_cd/tris.md2", .icon = "k_datacd", .name = "Data CD", .sound = "items/pkup.wav", .rotate = true},
@@ -89,7 +90,7 @@ static const char *retained_id(const char *classname) {
 }
 #define ID(it) retained_id((it)->classname)
 
-static bool is_dropped(const qa_q2_entity *e) { return ((int64_t)e->spawnflags & 0x30000) != 0; }
+static bool is_dropped(const qa_q2_entity *e) { return (qa_js_to_int32(e->spawnflags) & 0x30000) != 0; }
 static bool stays_coop(const item *it) {
   if (strcmp(it->kind, "key") == 0) return true;
   if (strcmp(it->kind, "weapon") == 0) return it->has_coop_stay ? it->coop_stay : true;
@@ -99,13 +100,13 @@ static bool stays_coop(const item *it) {
 
 typedef struct pickup_state { qa_q2_entity *e; const item *it; bool targets_used, retained; bool has_expires; double expires_at; } pickup_state;
 typedef struct power_state { qa_actor_id id; qa_q2_player_powerups v; } power_state;
-typedef struct foreign_ctx { struct qa_q2_item_module *m; const q3_foreign_row *row; } foreign_ctx;
 
 struct qa_q2_item_module {
   qa_q2_item_hooks hooks;
   item *catalog; size_t catalog_count, catalog_cap;
   const char **foreign; size_t foreign_count, foreign_cap;
-  foreign_ctx *foreign_ctxs; size_t foreign_ctx_count, foreign_ctx_cap;
+  qa_q2_foreign_item_services foreign_services;
+  qa_q2_foreign_item_list foreign_list;
   pickup_state *pickups; size_t pickup_count, pickup_cap;
   power_state *powers; size_t power_count, power_cap;
   qa_actor_id *bindings; size_t binding_count, binding_cap;
@@ -135,6 +136,12 @@ static void catalog_set(qa_q2_item_module *m, item it) {
   for (size_t i = 0; i < m->catalog_count; i++) if (strcmp(m->catalog[i].classname, it.classname) == 0) { m->catalog[i] = it; return; }
   if (m->catalog_count == m->catalog_cap) { m->catalog_cap = m->catalog_cap ? m->catalog_cap * 2 : 64; m->catalog = xrealloc(m->catalog, m->catalog_cap * sizeof *m->catalog); }
   m->catalog[m->catalog_count++] = it;
+}
+/* TS applyRereleaseRows: game_x64.dll body armor sound and shard icon. */
+static void apply_rerelease_rows(qa_q2_item_module *m) {
+  const item *body = catalog_get(m, "item_armor_body"), *shard = catalog_get(m, "item_armor_shard");
+  if (body != NULL) { item changed = *body; changed.sound = "misc/ar3_pkup.wav"; catalog_set(m, changed); }
+  if (shard != NULL) { item changed = *shard; changed.icon = "i_armor_shard"; catalog_set(m, changed); }
 }
 static bool is_foreign(qa_q2_item_module *m, const char *classname) {
   for (size_t i = 0; i < m->foreign_count; i++) if (strcmp(m->foreign[i], classname) == 0) return true;
@@ -199,208 +206,44 @@ static void temp_touch_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_touc
 static void use_item_fn(void *, qa_q2_entity *, qa_q2_game_services *, const qa_actor_id *, const qa_actor_id *);
 static void remove_powerups_fn(void *, qa_q2_entity *, qa_q2_game_services *, const qa_actor_id *, const qa_actor_id *);
 
-/* foreign custom pickups */
-static bool foreign_ammo_pickup(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_owned_actor player) {
-  foreign_ctx *fc = ctx;
-  qa_q2_item_module *m = fc->m;
-  qa_item_id source = fc->row->weapon_ammo;
-  if (!source) return false;
-  qa_item_id destination = NULL;
-  for (size_t i = 0; i < QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.ammo_count; i++)
-    if (strcmp(QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.ammo[i].source, source) == 0 && QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.ammo[i].destination_count > 0) { destination = QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.ammo[i].destinations[0]; break; }
-  if (!destination) return false;
-  const item *native = strncmp(destination, "q2:", 3) == 0 ? catalog_get(m, destination + 3) : NULL;
-  ensure_entry(m, player, g, destination, (native && strcmp(native->kind, "ammo") == 0) ? native->capacity : 200);
-  return qa_shared_inventory_table_give(g->host->inventory, player, destination, e->count != 0 ? e->count : fc->row->quantity) != 0;
+/* TS Q2ForeignItemServices bound to this module. */
+static const qa_q2_item_definition *foreign_item_fn(void *ctx, const char *classname) { return catalog_get(ctx, classname); }
+static qa_item_id foreign_item_id_fn(void *ctx, const qa_q2_item_definition *it) { (void)ctx; return ID(it); }
+static const qa_q2_item_definition *foreign_ammunition_fn(void *ctx, size_t *out_count) {
+  (void)ctx;
+  *out_count = sizeof AMMUNITION / sizeof AMMUNITION[0];
+  return AMMUNITION;
 }
-static bool foreign_weapon_pickup(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_owned_actor player) {
-  foreign_ctx *fc = ctx;
-  qa_q2_item_module *m = fc->m;
-  qa_item_id source = fc->row->weapon_item;
-  if (!source) return false;
-  qa_item_id destination = NULL;
-  for (size_t i = 0; i < QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.weapon_count; i++)
-    if (strcmp(QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.weapons[i].source, source) == 0 && QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.weapons[i].destination_count > 0) { destination = QA_COMPOSITION_Q3_Q2_SUPPLY_PROFILE.weapons[i].destinations[0]; break; }
-  if (!destination) return false;
-  const item *native = strncmp(destination, "q2:", 3) == 0 ? catalog_get(m, destination + 3) : NULL;
-  if (!native || strcmp(native->kind, "weapon") != 0) return false;
-  double previous = weapon_owned(m, g, player.id, native);
-  ensure_entry(m, player, g, destination, 32767);
-  qa_shared_inventory_table_give(g->host->inventory, player, destination, 1);
-  double ammo_given = 0;
-  qa_pickup_ammo_grant grants[1];
-  size_t gn = weapon_ammo(m, e, g, native, grants);
-  for (size_t i = 0; i < gn; i++) {
-    const item *ammo = strncmp(grants[i].item, "q2:", 3) == 0 ? catalog_get(m, grants[i].item + 3) : NULL;
-    if (!ammo || strcmp(ammo->kind, "ammo") != 0) continue;
-    ensure_entry(m, player, g, grants[i].item, ammo->capacity);
-    ammo_given += qa_shared_inventory_table_give(g->host->inventory, player, grants[i].item, e->count != 0 ? e->count : grants[i].amount);
-  }
-  if (previous == 0) m->hooks.weapon_picked(m->hooks.ctx, player.id, destination, true);
-  return previous == 0 || ammo_given > 0;
+static void foreign_ensure_fn(void *ctx, qa_owned_actor actor, qa_q2_game_services *g, qa_item_id it, double capacity) {
+  ensure_entry(ctx, actor, g, it, capacity);
 }
-static bool foreign_powerup_pickup(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_owned_actor player) {
-  (void)e;
-  foreign_ctx *fc = ctx;
-  qa_q2_item_module *m = fc->m;
-  int tag = fc->row->tag;
-  bool persistent = fc->row->type == 7;
-  double now = g->host->now(g->host->ctx);
-  qa_q2_player_powerups *st = powers_for(m, player.id);
-  double duration = persistent ? 3600 : 30;
-  switch (tag) {
-    case 1: case 12: st->quad_until = fmax(st->quad_until, now) + duration; return true;
-    case 2: st->enviro_until = fmax(st->enviro_until, now) + duration; return true;
-    case 14: {
-      st->invulnerability_until = fmax(st->invulnerability_until, now) + duration;
-      qa_combat_trait_changes tc = {0}; tc.has_invulnerable = true; tc.invulnerable = true;
-      qa_gameplay_authority_set_traits(g->host->combat, player, tc);
-      return true;
-    }
-    case 3: case 10: st->haste_until = fmax(st->haste_until, now) + duration; return true;
-    case 4: st->invis_until = fmax(st->invis_until, now) + duration; return true;
-    case 6: st->flight_until = fmax(st->flight_until, now) + duration; return true;
-    case 5: case 11: {
-      st->regen_until = fmax(st->regen_until, now) + duration;
-      if (tag == 11) {
-        qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, player.id);
-        if ((cs.has_value ? cs.value.health : 0) < 100) qa_gameplay_authority_set_health(g->host->combat, player, 100);
-      }
-      qa_q2_entity *timer = g->create(g->ctx, "regen_timer", NULL, 0);
-      timer->has_owner = true; timer->owner = player.id;
-      g->schedule(g->ctx, timer, 1, (qa_q2_think){m, regen_fn});
-      return true;
-    }
-    case 13: {
-      for (size_t i = 0; i < sizeof AMMUNITION / sizeof AMMUNITION[0]; i++) {
-        ensure_entry(m, player, g, ID(&AMMUNITION[i]), AMMUNITION[i].capacity);
-        qa_shared_inventory_table_give(g->host->inventory, player, ID(&AMMUNITION[i]), 999);
-      }
-      return true;
-    }
-    default: return false;
-  }
+static double foreign_weapon_owned_fn(void *ctx, qa_q2_game_services *g, qa_actor_id player, const qa_q2_item_definition *it) {
+  return weapon_owned(ctx, g, player, it);
 }
-static bool foreign_holdable_pickup(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_owned_actor player) {
-  (void)e;
-  foreign_ctx *fc = ctx;
-  qa_q2_item_module *m = fc->m;
-  qa_q2_entity *pe = g->entity(g->ctx, &player.id);
-  switch (fc->row->tag) {
-    case 2: {
-      qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, player.id);
-      double health = cs.has_value ? cs.value.health : 0;
-      double maximum = pe && pe->max_health != 0 ? pe->max_health : 100;
-      if (health < 1 || health >= maximum) return false;
-      qa_gameplay_authority_set_health(g->host->combat, player, maximum);
-      return true;
-    }
-    case 5: {
-      double now = g->host->now(g->host->ctx);
-      qa_q2_player_powerups *st = powers_for(m, player.id);
-      st->invulnerability_until = fmax(st->invulnerability_until, now) + 30;
-      qa_combat_trait_changes tc = {0}; tc.has_invulnerable = true; tc.invulnerable = true;
-      qa_gameplay_authority_set_traits(g->host->combat, player, tc);
-      return true;
-    }
-    case 3: {
-      if (!pe) return false;
-      g->radius_damage(g->ctx, pe, &player.id, 300, NULL, 300, 27, 0, NULL);
-      qa_body_state body = qa_q2_game_body(g, pe);
-      g->damage(g->ctx, player.id, pe, pe->actor.id, &player.id, 10000, 0, QA_Q2_ZERO, body.origin, QA_Q2_ZERO, 0, 0, NULL);
-      return true;
-    }
-    case 1: case 4: {
-      size_t n = 0, sn = 0;
-      qa_q2_entity *const *entities = g->entities(g->ctx, &n);
-      for (size_t i = 0; i < n; i++) if (strcmp(entities[i]->classname, "info_player_deathmatch") == 0 || strcmp(entities[i]->classname, "info_player_start") == 0) sn++;
-      if (sn == 0) return false;
-      size_t idx = (size_t)floor(g->host->random(g->host->ctx) * (double)sn);
-      qa_q2_entity *spot = NULL;
-      for (size_t i = 0; i < n; i++) {
-        if (strcmp(entities[i]->classname, "info_player_deathmatch") != 0 && strcmp(entities[i]->classname, "info_player_start") != 0) continue;
-        if (idx == 0) { spot = entities[i]; break; }
-        idx--;
-      }
-      qa_body_state_result body = qa_shared_body_table_read(g->host->bodies, player.id);
-      if (!spot || !body.has_value) return false;
-      qa_shared_body_table_unlink(g->host->bodies, player);
-      qa_body_state nb = body.value;
-      nb.origin = qa_q2_game_body(g, spot).origin; nb.velocity = QA_Q2_ZERO; nb.ground = NULL;
-      qa_shared_body_table_write(g->host->bodies, player, nb);
-      qa_shared_body_table_link(g->host->bodies, player, NULL);
-      return true;
-    }
-    default: return false;
-  }
+static size_t foreign_weapon_ammo_fn(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, const qa_q2_item_definition *it, qa_pickup_ammo_grant *out) {
+  return weapon_ammo(ctx, e, g, it, out);
 }
-static bool foreign_team_pickup(void *ctx, qa_q2_entity *e, qa_q2_game_services *g, qa_owned_actor player) {
-  (void)ctx; (void)e; (void)g; (void)player;
-  return false;
+static void foreign_weapon_picked_fn(void *ctx, qa_actor_id player, qa_item_id it, bool first) {
+  qa_q2_item_module *m = ctx;
+  m->hooks.weapon_picked(m->hooks.ctx, player, it, first);
 }
+static qa_q2_player_powerups *foreign_powers_fn(void *ctx, qa_actor_id player) { return powers_for(ctx, player); }
 
-static foreign_ctx *new_foreign_ctx(qa_q2_item_module *m, const q3_foreign_row *row) {
-  if (m->foreign_ctx_count == m->foreign_ctx_cap) { m->foreign_ctx_cap = m->foreign_ctx_cap ? m->foreign_ctx_cap * 2 : 32; m->foreign_ctxs = xrealloc(m->foreign_ctxs, m->foreign_ctx_cap * sizeof *m->foreign_ctxs); }
-  m->foreign_ctxs[m->foreign_ctx_count] = (foreign_ctx){m, row};
-  return &m->foreign_ctxs[m->foreign_ctx_count++];
-}
-
-static void register_foreign(qa_q2_item_module *m) {
-  for (size_t i = 0; i < Q3_FOREIGN_COUNT; i++) {
-    const q3_foreign_row *row = &Q3_FOREIGN[i];
-    if (catalog_get(m, row->classname)) continue;
+/* TS registerForeignItems: composition-supplied items whose classnames Q2 does
+ * not already own; a collision keeps the native definition. */
+static void register_foreign_items(qa_q2_item_module *m) {
+  if (m->hooks.foreign_items == NULL) return;
+  m->foreign_services = (qa_q2_foreign_item_services){
+    .ctx = m, .item = foreign_item_fn, .item_id = foreign_item_id_fn, .ammunition = foreign_ammunition_fn,
+    .ensure = foreign_ensure_fn, .weapon_owned = foreign_weapon_owned_fn, .weapon_ammo = foreign_weapon_ammo_fn,
+    .weapon_picked = foreign_weapon_picked_fn, .powers = foreign_powers_fn, .regen_think = {m, regen_fn}};
+  m->foreign_list = m->hooks.foreign_items(m->hooks.foreign_items_ctx, &m->foreign_services);
+  for (size_t i = 0; i < m->foreign_list.count; i++) {
+    const item *definition = &m->foreign_list.items[i];
+    if (catalog_get(m, definition->classname)) continue;
     if (m->foreign_count == m->foreign_cap) { m->foreign_cap = m->foreign_cap ? m->foreign_cap * 2 : 32; m->foreign = xrealloc(m->foreign, m->foreign_cap * sizeof *m->foreign); }
-    m->foreign[m->foreign_count++] = row->classname;
-    item visual = {0};
-    visual.classname = row->classname; visual.model = row->model; visual.icon = "i_fixme";
-    visual.name = row->name; visual.sound = row->sound; visual.rotate = true;
-    double q = row->quantity;
-    switch (row->type) {
-      case 4:
-        visual.kind = "health"; visual.respawn = 35; visual.amount = q;
-        visual.ignore_maximum = strcmp(row->classname, "item_health_mega") == 0 || strcmp(row->classname, "item_health_small") == 0;
-        visual.timed = strcmp(row->classname, "item_health_mega") == 0;
-        catalog_set(m, visual);
-        break;
-      case 3:
-        if (strcmp(row->classname, "item_armor_shard") == 0) { visual.kind = "shard"; visual.respawn = 25; }
-        else { visual.kind = "armor"; visual.respawn = 25; visual.points = q; visual.maximum = 200; visual.normal = q >= 100 ? 0.8 : 0.6; visual.energy = 0.3; }
-        catalog_set(m, visual);
-        break;
-      case 2: {
-        if (!row->weapon_item || !row->weapon_ammo) break;
-        visual.kind = "custom"; visual.respawn = 40; visual.capacity = 200; visual.quantity = q;
-        visual.custom_ctx = new_foreign_ctx(m, row); visual.pickup = foreign_ammo_pickup;
-        catalog_set(m, visual);
-        break;
-      }
-      case 1: {
-        if (!row->weapon_item) break;
-        visual.kind = "custom"; visual.respawn = 30; visual.capacity = 32767; visual.quantity = q; visual.coop_stay = true; visual.has_coop_stay = true;
-        visual.custom_ctx = new_foreign_ctx(m, row); visual.pickup = foreign_weapon_pickup;
-        catalog_set(m, visual);
-        break;
-      }
-      case 5: case 7: {
-        visual.kind = "custom"; visual.respawn = row->type == 7 ? 0 : 120; visual.capacity = 32767; visual.quantity = 1;
-        visual.custom_ctx = new_foreign_ctx(m, row); visual.pickup = foreign_powerup_pickup;
-        catalog_set(m, visual);
-        break;
-      }
-      case 6: {
-        visual.kind = "custom"; visual.respawn = 60; visual.capacity = 32767; visual.quantity = 1;
-        visual.custom_ctx = new_foreign_ctx(m, row); visual.pickup = foreign_holdable_pickup;
-        catalog_set(m, visual);
-        break;
-      }
-      case 8: {
-        visual.kind = "custom"; visual.respawn = 0; visual.capacity = 32767; visual.quantity = 1;
-        visual.custom_ctx = new_foreign_ctx(m, row); visual.pickup = foreign_team_pickup;
-        catalog_set(m, visual);
-        break;
-      }
-      default: break;
-    }
+    m->foreign[m->foreign_count++] = definition->classname;
+    catalog_set(m, *definition);
   }
 }
 
@@ -475,7 +318,7 @@ static void regen_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, owner.id);
   double health = cs.has_value ? cs.value.health : 0;
   if (!st || st->regen_until <= g->host->now(g->host->ctx) || health < 1) { g->remove(g->ctx, e); return; }
-  if (health < 200) qa_gameplay_authority_set_health(g->host->combat, owner, fmin(200, health + 5));
+  if (health < 200) qa_gameplay_authority_set_health(g->host->combat, owner, qa_js_min(200, health + 5));
   g->schedule(g->ctx, e, 1, (qa_q2_think){m, regen_fn});
 }
 static void remove_powerups_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *o, const qa_actor_id *a) {
@@ -594,8 +437,7 @@ const qa_q2_inventory_item *qa_q2_item_module_list(qa_q2_item_module *m, size_t 
   return m->list_scratch;
 }
 static bool ieq2(const char *a, const char *b) {
-  while (*a && *b) { if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false; a++; b++; }
-  return *a == *b;
+  return qa_js_equals_ignore_case(a, b); /* TS toLowerCase() === key */
 }
 bool qa_q2_item_module_lookup(qa_q2_item_module *m, const char *value, qa_q2_inventory_item *out) {
   size_t n = 0;
@@ -666,7 +508,7 @@ void qa_q2_item_module_give_start_items(qa_q2_item_module *m, qa_owned_actor pla
     }
     qa_q2_entity *temporary = g->create(g->ctx, it->classname, NULL, 0);
     temporary->count = cnt;
-    temporary->spawnflags = (double)((int64_t)temporary->spawnflags | 0x10000);
+    temporary->spawnflags = (double)(qa_js_to_int32(temporary->spawnflags) | 0x10000);
     set_pickup(m, temporary, (pickup_state){temporary, it, false, false, false, 0});
     if (grant(m, temporary, g, player, it)) finish_grant(m, temporary, g, player, it);
     if (qa_session_actor_registry_is_live(g->host->actors, temporary->actor.id)) g->remove(g->ctx, temporary);
@@ -694,7 +536,7 @@ void qa_q2_item_module_give_ammo_count(qa_q2_item_module *m, qa_owned_actor play
     if (mapped && !has) qa_range_error("Console ammo destination was not admitted");
     double next = count ? *count : (has ? entry.count : 0) + found.quantity;
     if (mapped && has) {
-      entry.count = (entry.has_count_policy && strcmp(entry.count_policy.kind, "source-counter") == 0) ? next : fmax(0, next);
+      entry.count = (entry.has_count_policy && strcmp(entry.count_policy.kind, "source-counter") == 0) ? next : qa_js_max(0, next);
       qa_shared_inventory_table_configure(g->host->inventory, player, entry, NULL, NULL);
     } else {
       qa_inventory_entry ne = {.item = dests[i], .count = next, .capacity = has ? entry.capacity : found.capacity,
@@ -753,10 +595,14 @@ qa_q2_entity *qa_q2_item_module_drop(qa_q2_item_module *m, qa_q2_entity *self, q
   const item *it = strncmp(item_id, "q2:", 3) == 0 ? catalog_get(m, item_id + 3) : NULL;
   qa_q2_inventory_item descriptor;
   bool has = qa_q2_item_module_lookup(m, item_id, &descriptor);
+  if (g->options.instagib && it != NULL && strcmp(it->kind, "weapon") == 0) return NULL;
+  if (it != NULL && strcmp(it->kind, "ammo") == 0 && g->options.edition == QA_Q2_EDITION_RERELEASE &&
+      (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 8192) != 0 && !qa_q2_no_infinite_ammo(&g->options, ID(it)))
+    return NULL;
   if (!it || !has || !descriptor.droppable ||
       (g->options.mode == QA_Q2_MODE_COOP && !instanced_coop(m, g) && descriptor.stay_coop)) return NULL;
   double count = qa_shared_inventory_table_count(g->host->inventory, self->actor.id, item_id);
-  return drop_source(m, self->actor, g, it, options, strcmp(it->kind, "ammo") == 0 ? fmin(count, it->quantity) : 0);
+  return drop_source(m, self->actor, g, it, options, strcmp(it->kind, "ammo") == 0 ? qa_js_min(count, it->quantity) : 0);
 }
 qa_q2_entity *qa_q2_item_module_drop_monster(qa_q2_item_module *m, qa_owned_actor actor, qa_q2_game_services *g, const char *classname) {
   qa_q2_inventory_item descriptor;
@@ -817,7 +663,16 @@ void qa_q2_item_module_configure_player(qa_q2_item_module *m, qa_owned_actor act
     for (size_t j = 0; j < wn; j++) if (strcmp(weapons[j].item, ID(it)) == 0) { capacity = weapons[j].capacity; break; }
     ensure_entry(m, actor, g, ID(it), capacity);
   }
-  if (give_blaster && qa_shared_inventory_table_count(g->host->inventory, actor.id, "q2:weapon_blaster") == 0)
+  if (g->options.instagib) {
+    if (give_blaster && qa_shared_inventory_table_count(g->host->inventory, actor.id, "q2:weapon_railgun") == 0)
+      qa_shared_inventory_table_give(g->host->inventory, actor, "q2:weapon_railgun", 1);
+    qa_inventory_entry slugs;
+    if (give_blaster && entry_of(g, actor.id, "q2:ammo_slugs", &slugs) != NULL && slugs.count < 99) {
+      slugs.count = 99;
+      slugs.capacity = qa_js_max(slugs.capacity, 99);
+      qa_shared_inventory_table_configure(g->host->inventory, actor, slugs, NULL, NULL);
+    }
+  } else if (give_blaster && qa_shared_inventory_table_count(g->host->inventory, actor.id, "q2:weapon_blaster") == 0)
     qa_shared_inventory_table_give(g->host->inventory, actor, "q2:weapon_blaster", 1);
   bind_power_armor(m, actor, g);
 }
@@ -825,22 +680,34 @@ void qa_q2_item_module_configure_player(qa_q2_item_module *m, qa_owned_actor act
 bool qa_q2_item_module_spawn_item(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g, const char *descriptor) {
   const item *it = catalog_get(m, descriptor);
   if (!it) return false;
-  int64_t flags = (int64_t)g->options.deathmatch_flags;
+  int32_t flags = qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)); /* TS dmflags & x: ToInt32 */
+  if (g->options.mode == QA_Q2_MODE_DEATHMATCH && g->options.edition == QA_Q2_EDITION_RERELEASE && (flags & 8192) != 0 &&
+      strcmp(it->classname, "weapon_bfg") == 0 && catalog_get(m, "weapon_disintegrator") != NULL) {
+    e->classname = "weapon_disintegrator";
+    return qa_q2_item_module_spawn_item(m, e, g, "weapon_disintegrator");
+  }
+  if (g->options.instagib && strcmp(it->kind, "key") != 0 && strcmp(it->kind, "custom") != 0) {
+    g->remove(g->ctx, e);
+    return true;
+  }
   if (g->options.mode == QA_Q2_MODE_DEATHMATCH && (
       ((flags & 1) && (strcmp(it->kind, "health") == 0 || strcmp(it->kind, "maximum-health") == 0)) ||
       ((flags & 2) && strcmp(it->kind, "power") == 0) ||
       ((flags & 2048) && (strcmp(it->kind, "armor") == 0 || strcmp(it->kind, "shard") == 0 || strcmp(it->kind, "power-armor") == 0)) ||
-      ((flags & 8192) && ((strcmp(it->kind, "ammo") == 0 && !it->weapon_ammo) || strcmp(it->classname, "weapon_bfg") == 0)))) {
+      ((flags & 8192) && ((strcmp(it->kind, "ammo") == 0 && !it->weapon_ammo && !qa_q2_no_infinite_ammo(&g->options, ID(it))) ||
+                           strcmp(it->classname, "weapon_bfg") == 0)))) {
     g->remove(g->ctx, e);
     return true;
   }
   set_pickup(m, e, (pickup_state){e, it, false, false, false, 0});
   if (g->options.mode == QA_Q2_MODE_COOP && (strcmp(it->classname, "key_power_cube") == 0 || (g->options.edition == QA_Q2_EDITION_RERELEASE && strcmp(it->classname, "key_explosive_charges") == 0)))
-    e->spawnflags = (double)((int64_t)e->spawnflags | (1 << (8 + (int)m->power_cube_count++)));
+    /* spawnflags |= 1 << (8 + powerCubeCount++): JS masks the shift count to 5 bits, so
+     * the 25th cube wraps to bit 1; a C int shift by 32 or more is undefined. */
+    e->spawnflags = qa_js_bit_or(e->spawnflags, qa_js_shl(1, 8 + m->power_cube_count++));
   if (e->model[0] == '\0') e->model = it->model;
-  if (it->rotate) e->effects = (double)((int64_t)e->effects | 1);
-  e->render_flags = (double)((int64_t)e->render_flags | 512);
-  if (strcmp(it->classname, "key_commander_head") == 0) e->effects = (double)((int64_t)e->effects | 2);
+  if (it->rotate) e->effects = (double)(qa_js_to_int32(e->effects) | 1);
+  e->render_flags = (double)(qa_js_to_int32(e->render_flags) | 512);
+  if (strcmp(it->classname, "key_commander_head") == 0) e->effects = (double)(qa_js_to_int32(e->effects) | 2);
   g->schedule(g->ctx, e, 2 * g->host->frame_seconds(g->host->ctx), (qa_q2_think){m, drop_floor_fn});
   return true;
 }
@@ -857,15 +724,20 @@ const qa_q2_item_definition *qa_q2_item_module_item_definition(qa_q2_item_module
 }
 
 static double ammo_quantity(qa_q2_entity *e, qa_q2_game_services *g, const item *it) {
-  if (it->weapon_ammo && !it->infinite_ammo_is_null && ((int64_t)g->options.deathmatch_flags & 8192) != 0)
+  if (it->weapon_ammo && !it->infinite_ammo_is_null && (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 8192) != 0 &&
+      !qa_q2_no_infinite_ammo(&g->options, ID(it)))
     return it->has_infinite_ammo_quantity ? it->infinite_ammo_quantity : 1000;
   return e->count != 0 ? e->count : it->quantity;
 }
 static size_t weapon_ammo(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g, const item *it, qa_pickup_ammo_grant *out) {
-  if (((int64_t)e->spawnflags & 0x10000) != 0 || !it->ammo) return 0;
+  if ((qa_js_to_int32(e->spawnflags) & 0x10000) != 0 || !it->ammo) return 0;
   const item *ammo = strncmp(it->ammo, "q2:", 3) == 0 ? catalog_get(m, it->ammo + 3) : NULL;
   if (!ammo || strcmp(ammo->kind, "ammo") != 0) return 0;
-  out[0] = (qa_pickup_ammo_grant){ID(ammo), ((int64_t)g->options.deathmatch_flags & 8192) != 0 ? 1000 : ammo->quantity};
+  /* TS { item: id(ammo), amount: ... }: the id before the dmflags getter. */
+  qa_item_id ammo_id = ID(ammo);
+  double amount = (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 8192) != 0 &&
+                  !qa_q2_no_infinite_ammo(&g->options, ammo_id) ? 1000 : ammo->quantity;
+  out[0] = (qa_pickup_ammo_grant){ammo_id, amount};
   return 1;
 }
 static double weapon_owned(qa_q2_item_module *m, qa_q2_game_services *g, qa_actor_id player, const item *it) {
@@ -876,7 +748,7 @@ static double weapon_owned(qa_q2_item_module *m, qa_q2_game_services *g, qa_acto
 static bool weapon_eligible(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g, const item *it, double previous) {
   if (m->admission && m->admission->maps(m->admission->ctx, "weapons", ID(it)) && strcmp(ID(it), "q2:weapon_blaster") == 0) return false;
   bool stays = g->options.mode == QA_Q2_MODE_COOP ? !instanced_coop(m, g)
-      : (g->options.mode == QA_Q2_MODE_DEATHMATCH && ((int64_t)g->options.deathmatch_flags & 4) != 0);
+      : (g->options.mode == QA_Q2_MODE_DEATHMATCH && (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 4) != 0);
   return !stays || previous <= 0 || is_dropped(e);
 }
 static bool owner_can_touch(qa_q2_entity *e, qa_actor_id player) {
@@ -891,7 +763,9 @@ bool qa_q2_item_module_observe_supply(qa_q2_item_module *m, qa_q2_game_services 
   qa_pickup_supply_offer offer = {0};
   static _Thread_local qa_pickup_ammo_grant grants[1];
   if (strcmp(it->kind, "ammo") == 0) {
-    offer.grant = (qa_pickup_ammo_grant){ID(it), ammo_quantity(e, g, it)};
+    const char * item2 = ID(it);
+    double amount = ammo_quantity(e, g, it);
+    offer.grant = (qa_pickup_ammo_grant){item2, amount};
     if (it->weapon_ammo) { offer.kind = QA_PICKUP_SUPPLY_AMMO_WEAPON; offer.weapon = ID(it); }
     else offer.kind = QA_PICKUP_SUPPLY_AMMO;
   } else if (strcmp(it->kind, "weapon") == 0) {
@@ -1043,7 +917,7 @@ static void drop_floor_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   g->solid(g->ctx, e, "trigger");
   g->motion(g->ctx, e, "toss");
   if (qa_q2_spawn_has(&e->spawn, "team")) {
-    e->flags = (double)((int64_t)e->flags & ~0x400);
+    e->flags = (double)(qa_js_to_int32(e->flags) & ~0x400);
     e->has_chain = e->has_team_chain; e->chain = e->team_chain;
     e->has_team_chain = false;
     e->visible = false;
@@ -1051,13 +925,13 @@ static void drop_floor_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
     if (e->has_team_master && qa_same_actor(e->team_master, e->actor.id))
       g->schedule(g->ctx, e, g->host->frame_seconds(g->host->ctx), (qa_q2_think){m, respawn_fn});
   }
-  if (((int64_t)e->spawnflags & 2) != 0) {
+  if ((qa_js_to_int32(e->spawnflags) & 2) != 0) {
     e->touch = (qa_q2_touch){0};
-    e->effects = (double)((int64_t)e->effects & ~1);
-    e->render_flags = (double)((int64_t)e->render_flags & ~512);
+    e->effects = (double)(qa_js_to_int32(e->effects) & ~1);
+    e->render_flags = (double)(qa_js_to_int32(e->render_flags) & ~512);
     g->solid(g->ctx, e, "box");
   }
-  if (((int64_t)e->spawnflags & 1) != 0) {
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) {
     e->visible = false;
     g->solid(g->ctx, e, "none");
     e->use = (qa_q2_use){m, use_item_fn};
@@ -1098,6 +972,13 @@ static void touch_complete(void *c, bool taken) {
     qa_q2_presentation_event ev = {0};
     ev.kind = "pickup"; ev.player = t->player; ev.item = ID(t->it); ev.icon = t->it->icon; ev.name = t->it->name;
     g->host->emit(g->host->ctx, ev);
+    if (!touch_live(t)) return;
+    if (m->hooks.picked_up != NULL) {
+      qa_q2_inventory_item looked;
+      bool usable = qa_q2_item_module_lookup(m, t->it->classname, &looked) && looked.usable &&
+                    qa_shared_inventory_table_count(g->host->inventory, t->player, ID(t->it)) != 0;
+      m->hooks.picked_up(m->hooks.ctx, t->player, ID(t->it), usable);
+    }
     if (!touch_live(t)) return;
     qa_body_state_result body = qa_shared_body_table_read(g->host->bodies, t->player);
     if (body.has_value) {
@@ -1146,9 +1027,15 @@ void qa_q2_item_module_touch(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_s
   if (strcmp(it->kind, "armor") == 0 || strcmp(it->kind, "shard") == 0) { resource.kind = QA_PICKUP_RESOURCE_PROTECTION; resource.channel = QA_PROTECTION_REGULAR; default_resource = &resource; }
   else if (strcmp(it->kind, "power-armor") == 0) { resource.kind = QA_PICKUP_RESOURCE_PROTECTION; resource.channel = QA_PROTECTION_POWERED; default_resource = &resource; }
   else if (strcmp(it->kind, "ammo") == 0 || strcmp(it->kind, "weapon") == 0 || strcmp(it->kind, "key") == 0) { resource.kind = QA_PICKUP_RESOURCE_INVENTORY; resource.item = ID(it); default_resource = &resource; }
-  qa_original_pickup_offer offer = {.recipient = player, .pickup = e->actor.id, .source = e->actor.owner, .item = ID(it),
-    .default_resource = default_resource, .count = {.is_override = e->count != 0, .amount = e->count},
-    .dropped = is_dropped(e), .time = {QA_SOURCE_TIME_SECONDS, g->host->now(g->host->ctx)}};
+  qa_actor_id value2 = e->actor.id;
+  qa_provider_id value3 = e->actor.owner;
+  const char * value4 = ID(it);
+  qa_pickup_count value5 = {.is_override = e->count != 0, .amount = e->count};
+  bool value6 = is_dropped(e);
+  qa_source_time value7 = {QA_SOURCE_TIME_SECONDS, g->host->now(g->host->ctx)};
+  qa_original_pickup_offer offer = {.recipient = player, .pickup = value2, .source = value3, .item = value4,
+    .default_resource = default_resource, .count = value5,
+    .dropped = value6, .time = value7};
   qa_original_pickup_continuation cont = {.ctx = &t, .eligible = touch_eligible, .original = touch_original, .complete = touch_complete};
   g->host->original_pickups->touch(g->host->original_pickups->ctx, offer, cont);
 }
@@ -1156,8 +1043,13 @@ void qa_q2_item_module_touch(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_s
 static void finish_grant(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g, qa_owned_actor player, const item *it) {
   if (strcmp(it->kind, "key") == 0) return;
   if (strcmp(it->kind, "weapon") == 0 && !is_dropped(e) &&
-      (g->options.mode == QA_Q2_MODE_COOP || (g->options.mode == QA_Q2_MODE_DEATHMATCH && ((int64_t)g->options.deathmatch_flags & 4) != 0))) {
+      (g->options.mode == QA_Q2_MODE_COOP || (g->options.mode == QA_Q2_MODE_DEATHMATCH && (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 4) != 0))) {
     pickup_of(m, e)->retained = true;
+    /* g_items.cpp SetRespawn with hide_self false: the weapon stays, and DoRespawn still runs after the delay. */
+    if (g->options.edition == QA_Q2_EDITION_RERELEASE && g->options.mode == QA_Q2_MODE_DEATHMATCH &&
+        qa_session_actor_registry_is_live(g->host->actors, e->actor.id))
+      g->schedule(g->ctx, e, m->hooks.has_weapon_respawn_seconds ? m->hooks.weapon_respawn_seconds(m->hooks.ctx) : it->respawn,
+                  (qa_q2_think){m, respawn_fn});
     return;
   }
   if (strcmp(it->kind, "health") == 0 && it->timed) {
@@ -1188,12 +1080,12 @@ static bool pickup_armor(const item *it, qa_regular_armor_state old, qa_regular_
   }
   if (it->normal > old.normal_protection) {
     *out = (qa_regular_armor_state){.kind = QA_REGULAR_ARMOR_Q2, .item = ID(it),
-      .points = fmin(it->maximum, it->points + trunc(old.points * old.normal_protection / it->normal)),
+      .points = qa_js_min(it->maximum, it->points + trunc(old.points * old.normal_protection / it->normal)),
       .normal_protection = it->normal, .energy_protection = it->energy};
     return true;
   }
   double maximum = old.item && strcmp(old.item, "q2:item_armor_jacket") == 0 ? 50 : old.item && strcmp(old.item, "q2:item_armor_combat") == 0 ? 100 : 200;
-  double points = fmin(maximum, old.points + trunc(it->points * it->normal / old.normal_protection));
+  double points = qa_js_min(maximum, old.points + trunc(it->points * it->normal / old.normal_protection));
   if (points <= old.points) return false;
   *out = old; out->points = points;
   return true;
@@ -1215,9 +1107,9 @@ static bool grant(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g,
     if (g->options.mode == QA_Q2_MODE_COOP) {
       if (strcmp(it->classname, "key_power_cube") == 0 || (g->options.edition == QA_Q2_EDITION_RERELEASE && strcmp(it->classname, "key_explosive_charges") == 0)) {
         if (!pe) qa_range_error("Q2 cooperative key pickup requires admitted source player fields");
-        int64_t cubes = (int64_t)(((uint64_t)e->spawnflags & 0xff00) >> 8);
-        if (((int64_t)pe->power_cubes & cubes) != 0) return false;
-        pe->power_cubes = (double)((int64_t)pe->power_cubes | cubes);
+        int32_t cubes = (qa_js_to_int32(e->spawnflags) & 0xff00) >> 8; /* TS (spawnflags & 0xff00) >> 8 */
+        if ((qa_js_to_int32(pe->power_cubes) & cubes) != 0) return false;
+        pe->power_cubes = (double)(qa_js_to_int32(pe->power_cubes) | cubes);
       } else if (qa_shared_inventory_table_count(g->host->inventory, player.id, ID(it)) != 0) return false;
     }
     qa_shared_inventory_table_give(g->host->inventory, player, ID(it), 1);
@@ -1232,7 +1124,7 @@ static bool grant(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g,
       ensure_entry(m, player, g, ID(ammo), ammo->capacity);
       qa_inventory_entry entry;
       if (!entry_of(g, player.id, ID(ammo), &entry)) qa_range_error("Q2 ammo pack has no admitted ammo inventory");
-      entry.capacity = fmax(entry.capacity, capacity);
+      entry.capacity = qa_js_max(entry.capacity, capacity);
       qa_shared_inventory_table_configure(g->host->inventory, player, entry, NULL, NULL);
       if (it->full || strcmp(ammo->classname, "ammo_bullets") == 0 || strcmp(ammo->classname, "ammo_shells") == 0)
         qa_shared_inventory_table_give(g->host->inventory, player, ID(ammo), ammo->quantity);
@@ -1283,7 +1175,7 @@ static bool grant(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g,
   if (strcmp(kind, "health") == 0) {
     if (!it->ignore_maximum && current.value.health >= maximum) return false;
     double amount = e->count != 0 ? e->count : it->amount;
-    qa_gameplay_authority_set_health(g->host->combat, player, it->ignore_maximum ? current.value.health + amount : fmin(maximum, current.value.health + amount));
+    qa_gameplay_authority_set_health(g->host->combat, player, it->ignore_maximum ? current.value.health + amount : qa_js_min(maximum, current.value.health + amount));
     return true;
   }
   if (strcmp(kind, "armor") == 0 || strcmp(kind, "shard") == 0) {
@@ -1305,9 +1197,9 @@ static bool grant(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g,
         (g->options.skill == 1 && quantity >= 2) || (g->options.skill >= 2 && quantity >= 1) ||
         (g->options.mode == QA_Q2_MODE_COOP && !instanced_coop(m, g) && it->coop_stay && quantity > 0)) return false;
     qa_shared_inventory_table_give(g->host->inventory, player, ID(it), 1);
-    if (g->options.mode == QA_Q2_MODE_DEATHMATCH && (((int64_t)g->options.deathmatch_flags & 16) != 0 || (strcmp(it->classname, "item_quad") == 0 && ((int64_t)e->spawnflags & 0x20000) != 0))) {
+    if (g->options.mode == QA_Q2_MODE_DEATHMATCH && ((qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & 16) != 0 || (strcmp(it->classname, "item_quad") == 0 && (qa_js_to_int32(e->spawnflags) & 0x20000) != 0))) {
       pickup_state *ps = pickup_of(m, e);
-      double duration = ps->has_expires ? fmax(0, ps->expires_at - g->host->now(g->host->ctx)) : 30;
+      double duration = ps->has_expires ? qa_js_max(0, ps->expires_at - g->host->now(g->host->ctx)) : 30;
       qa_q2_item_module_use(m, player, ID(it), g, duration);
     }
     return true;
@@ -1317,6 +1209,7 @@ static bool grant(qa_q2_item_module *m, qa_q2_entity *e, qa_q2_game_services *g,
     double old = qa_shared_inventory_table_count(g->host->inventory, player.id, ID(it));
     qa_shared_inventory_table_give(g->host->inventory, player, ID(it), 1);
     if (g->options.mode == QA_Q2_MODE_DEATHMATCH && old == 0) qa_q2_item_module_use(m, player, ID(it), g, 30);
+    else qa_q2_item_module_sync_power_armor(m, player, g, NULL);
     return true;
   }
   return true;
@@ -1338,6 +1231,25 @@ static void mega_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   else g->remove(g->ctx, e);
 }
 
+static void set_power_armor(qa_q2_item_module *m, qa_owned_actor player, qa_q2_game_services *g, const char *kind) {
+  qa_powered_protection_state powered = {.kind = kind,
+    .cells = strcmp(kind, "none") == 0 ? 0 : qa_shared_inventory_table_count(g->host->inventory, player.id, "q2:ammo_cells")};
+  qa_gameplay_authority_set_powered_protection(g->host->combat, player, powered);
+  m->hooks.power_armor(m->hooks.ctx, player.id, kind);
+}
+/* TS syncPowerArmor: PowerArmorType derives the active kind from the inventory,
+ * shield first, and the armor stops once neither is held. requested NULL is TS null. */
+void qa_q2_item_module_sync_power_armor(qa_q2_item_module *m, qa_owned_actor player, qa_q2_game_services *g, const char *requested) {
+  qa_combat_state_result armor = qa_gameplay_authority_read(g->host->combat, player.id);
+  if (requested == NULL && (!armor.has_value || strcmp(armor.value.armor.powered.kind, "none") == 0)) return;
+  const char *held = qa_shared_inventory_table_count(g->host->inventory, player.id, "q2:item_power_shield") > 0 ? "shield"
+                     : qa_shared_inventory_table_count(g->host->inventory, player.id, "q2:item_power_screen") > 0 ? "screen"
+                     : NULL;
+  const char *kind = held != NULL ? held : requested == NULL ? "none" : requested;
+  if (armor.has_value && strcmp(armor.value.armor.powered.kind, kind) == 0) return;
+  set_power_armor(m, player, g, kind);
+}
+
 bool qa_q2_item_module_use(qa_q2_item_module *m, qa_owned_actor player, qa_item_id item_id, qa_q2_game_services *g, double duration) {
   const item *it = strncmp(item_id, "q2:", 3) == 0 ? catalog_get(m, item_id + 3) : NULL;
   if (!it || qa_shared_inventory_table_count(g->host->inventory, player.id, item_id) == 0) return false;
@@ -1345,22 +1257,28 @@ bool qa_q2_item_module_use(qa_q2_item_module *m, qa_owned_actor player, qa_item_
   if (strcmp(it->kind, "power-armor") == 0) {
     qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, player.id);
     bool active = cs.has_value && strcmp(cs.value.armor.powered.kind, "none") != 0;
-    if (!active && qa_shared_inventory_table_count(g->host->inventory, player.id, "q2:ammo_cells") == 0) return false;
-    const char *kind = active ? "none" : it->armor;
-    qa_powered_protection_state powered = {.kind = kind, .cells = strcmp(kind, "none") == 0 ? 0 : qa_shared_inventory_table_count(g->host->inventory, player.id, "q2:ammo_cells")};
-    qa_gameplay_authority_set_powered_protection(g->host->combat, player, powered);
-    m->hooks.power_armor(m->hooks.ctx, player.id, active ? "none" : it->armor);
+    if (!active && qa_shared_inventory_table_count(g->host->inventory, player.id, "q2:ammo_cells") == 0) {
+      qa_q2_presentation_event ev = {0};
+      ev.kind = "print"; ev.has_actor = true; ev.actor = player.id; ev.level = "high"; ev.text = "No cells for power armor.\n";
+      g->host->emit(g->host->ctx, ev);
+      return false;
+    }
+    g->sound(g->ctx, player, active ? "misc/power2.wav" : "misc/power1.wav", 0, 1, 1);
+    if (active) set_power_armor(m, player, g, "none");
+    else qa_q2_item_module_sync_power_armor(m, player, g, it->armor);
     return true;
   }
   if (strcmp(it->kind, "power") != 0 || !qa_shared_inventory_table_consume(g->host->inventory, player, item_id, 1)) return false;
+  if (strcmp(it->classname, "item_quad") == 0) g->sound(g->ctx, player, "items/damage.wav", 3, 1, 1);
+  else if (strcmp(it->classname, "item_invulnerability") == 0) g->sound(g->ctx, player, "items/protect.wav", 3, 1, 1);
   qa_q2_player_powerups *st = powers_for(m, player.id);
   double now = g->host->now(g->host->ctx);
-  if (strcmp(it->classname, "item_quad") == 0) st->quad_until = fmax(st->quad_until, now) + duration;
+  if (strcmp(it->classname, "item_quad") == 0) st->quad_until = qa_js_max(st->quad_until, now) + duration;
   else if (strcmp(it->classname, "item_silencer") == 0) m->hooks.silencer(m->hooks.ctx, player.id, 30);
-  else if (strcmp(it->classname, "item_breather") == 0) st->breather_until = fmax(st->breather_until, now) + 30;
-  else if (strcmp(it->classname, "item_enviro") == 0) st->enviro_until = fmax(st->enviro_until, now) + 30;
+  else if (strcmp(it->classname, "item_breather") == 0) st->breather_until = qa_js_max(st->breather_until, now) + 30;
+  else if (strcmp(it->classname, "item_enviro") == 0) st->enviro_until = qa_js_max(st->enviro_until, now) + 30;
   else if (strcmp(it->classname, "item_invulnerability") == 0) {
-    st->invulnerability_until = fmax(st->invulnerability_until, now) + 30;
+    st->invulnerability_until = qa_js_max(st->invulnerability_until, now) + 30;
     qa_combat_trait_changes tc = {0}; tc.has_invulnerable = true; tc.invulnerable = true;
     qa_gameplay_authority_set_traits(g->host->combat, player, tc);
     qa_q2_entity *timer = g->create(g->ctx, "invulnerability_expiry", NULL, 0);
@@ -1380,21 +1298,23 @@ static void use_item_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g, const 
   (void)c; (void)o; (void)a;
   e->visible = true;
   e->use = (qa_q2_use){0};
-  g->solid(g->ctx, e, ((int64_t)e->spawnflags & 2) != 0 ? "box" : "trigger");
+  g->solid(g->ctx, e, (qa_js_to_int32(e->spawnflags) & 2) != 0 ? "box" : "trigger");
   g->show(g->ctx, e);
 }
 static void make_touchable_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_item_module *m = c;
   e->touch = (qa_q2_touch){m, touch_pickup_fn};
   pickup_state *ps = pickup_of(m, e);
-  if (ps->has_expires) g->schedule(g->ctx, e, fmax(0, ps->expires_at - g->host->now(g->host->ctx)), QA_Q2_FREE_ENTITY);
+  if (ps->has_expires) g->schedule(g->ctx, e, qa_js_max(0, ps->expires_at - g->host->now(g->host->ctx)), QA_Q2_FREE_ENTITY);
   else if (g->options.mode == QA_Q2_MODE_DEATHMATCH) g->schedule(g->ctx, e, 29, QA_Q2_FREE_ENTITY);
 }
 static void invuln_expiry_fn(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
+  double left;
+  double right;
   qa_q2_item_module *m = c;
   qa_owned_actor player;
   if (e->has_owner && qa_session_actor_registry_resolve_owned(g->host->actors, e->owner, &player) &&
-      g->host->now(g->host->ctx) >= qa_q2_item_module_player_powerups(m, player.id).invulnerability_until) {
+      (left = g->host->now(g->host->ctx), right = qa_q2_item_module_player_powerups(m, player.id).invulnerability_until, left >= right)) {
     qa_combat_trait_changes tc = {0}; tc.has_invulnerable = true; tc.invulnerable = false;
     qa_gameplay_authority_set_traits(g->host->combat, player, tc);
   }
@@ -1406,7 +1326,8 @@ qa_q2_item_module *qa_q2_item_module_create(qa_q2_item_hooks hooks) {
   if (!m) return NULL;
   m->hooks = hooks;
   build_base_catalog(m);
-  register_foreign(m);
+  register_foreign_items(m);
+  if (hooks.edition == QA_Q2_EDITION_RERELEASE) apply_rerelease_rows(m);
   m->thinks[0] = (qa_q2_named_think){"q2_items_respawn", {m, respawn_fn}};
   m->thinks[1] = (qa_q2_named_think){"q2_items_drop_to_floor", {m, drop_floor_fn}};
   m->thinks[2] = (qa_q2_named_think){"q2_items_make_touchable", {m, make_touchable_fn}};
@@ -1423,7 +1344,7 @@ qa_q2_item_module *qa_q2_item_module_create(qa_q2_item_hooks hooks) {
 qa_q2_item_module *qa_q2_create_item_module(qa_q2_item_hooks hooks) { return qa_q2_item_module_create(hooks); }
 void qa_q2_item_module_destroy(qa_q2_item_module *m) {
   if (!m) return;
-  free(m->catalog); free(m->foreign); free(m->foreign_ctxs); free(m->pickups); free(m->powers);
+  free(m->catalog); free(m->foreign); free(m->foreign_list.items); free(m->foreign_list.storage); free(m->pickups); free(m->powers);
   free(m->bindings); free(m->list_scratch); free(m->winv_scratch);
   if (m->path_bufs) for (size_t i = 0; i < m->path_cap; i++) free(m->path_bufs[i]);
   free(m->path_scratch); free(m->path_bufs);

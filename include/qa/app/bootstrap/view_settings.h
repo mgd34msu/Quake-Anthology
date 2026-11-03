@@ -17,5 +17,9 @@ void qa_app_view_settings_unbind_cvars(qa_app_view_settings *s);
 void qa_app_view_settings_set_field_of_view(qa_app_view_settings *s, double value);
 qa_ui_setting_binding qa_app_view_settings_binding(qa_app_view_settings *s);
 void qa_app_view_settings_load(qa_app_view_settings *s, const qa_config_store *store);
+/* TS load(store, warn): invalid parsed preferences warn "Ignoring view.json: <message>\n"
+ * and keep the defaults; non-JSON text keeps them silently. NULL warn is the no-op default. */
+void qa_app_view_settings_load_warn(qa_app_view_settings *s, const qa_config_store *store,
+    void (*warn)(void *ctx, const char *text), void *warn_ctx);
 void qa_app_view_settings_save(qa_app_view_settings *s, const qa_config_store *store);
 #endif

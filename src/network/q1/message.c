@@ -6,9 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 noreturn void qa_q1_packet_error(const char *message, long long offset) {
-  fprintf(stderr, "PacketError: %s at byte %lld\n", message, offset);
-  abort();
+  qa_raise("PacketError", 0, offset, "%s at byte %lld", message, offset);
 }
 static int is_safe_ll(double v) { return isfinite(v) && v == trunc(v) && v >= -9007199254740991.0 && v <= 9007199254740991.0; }
 int qa_size_buf_init(qa_size_buf *sb, long long maxsize, bool allow_overflow) {
@@ -118,7 +118,7 @@ char *qa_message_reader_string(qa_message_reader *r, long long limit, bool quake
     if (c == -1 || c == 0) break;
     if (quakeworld && c == 10) continue;
     if (len + 1 >= cap) { cap *= 2; s = realloc(s, cap); }
-    s[len++] = (char)((int32_t)c & 255);
+    s[len++] = (char)(qa_js_to_int32(c) & 255);
   }
   s[len] = '\0'; if (out_len) *out_len = len; return s;
 }
@@ -127,7 +127,10 @@ double qa_message_reader_angle(qa_message_reader *r) { return qa_message_reader_
 double qa_message_reader_coord_flags(qa_message_reader *r, int64_t flags) {
   if (flags & QA_Q1_PRFL_FLOATCOORD) return qa_message_reader_float(r);
   if (flags & QA_Q1_PRFL_INT32COORD) return qa_message_reader_long(r) / 16;
-  if (flags & QA_Q1_PRFL_24BITCOORD) return qa_message_reader_short(r) + qa_message_reader_byte(r) / 255;
+  if (flags & QA_Q1_PRFL_24BITCOORD) {
+    double whole = qa_message_reader_short(r);
+    return whole + qa_message_reader_byte(r) / 255;
+  }
   return qa_message_reader_coord(r);
 }
 double qa_message_reader_angle_flags(qa_message_reader *r, int64_t flags) {

@@ -16,6 +16,8 @@ typedef struct qa_compat_qc_mod_input {
   const qa_compat_qc_mod_input_field *fields; size_t field_count;
   void *ctx; int64_t (*reference)(void *ctx, qa_actor_id actor); bool (*live)(void *ctx, qa_actor_id actor);
   qa_mod_client_application **frames; size_t frame_count, frame_capacity;
+  void **frame_cells; /* parallel to frames: TS frame object identity */
+  void **retired_cells; size_t retired_count, retired_capacity; /* closed scopes; a repeat close stays a no-op */
   struct qa_compat_qc_mod_input_capture *captures; size_t capture_count, capture_capacity;
 } qa_compat_qc_mod_input;
 void qa_compat_qc_mod_input_init(qa_compat_qc_mod_input *in, qa_compat_qc_machine *machine, const qa_compat_qc_mod_input_field *fields, size_t field_count, void *ctx, int64_t (*reference)(void *, qa_actor_id), bool (*live)(void *, qa_actor_id));

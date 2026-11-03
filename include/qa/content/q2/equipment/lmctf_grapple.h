@@ -21,4 +21,10 @@ qa_q2_callback_definitions qa_lmctf_grapple_callbacks(qa_lmctf_grapple_equipment
 void qa_lmctf_grapple_abort(qa_lmctf_grapple_equipment *e, qa_actor_id player, qa_q2_game_services *g);
 void qa_lmctf_grapple_fire(qa_lmctf_grapple_equipment *e, qa_actor_id player, qa_q2_game_services *g);
 double qa_lmctf_grapple_gravity_scale(qa_lmctf_grapple_equipment *e, qa_actor_id a);
+/* TS readonly states Map: get (NULL is undefined), ordered iteration and clear.
+ * Map.set is the creating state() accessor followed by assignment. */
+qa_lmctf_grapple_state *qa_lmctf_grapple_find_state(qa_lmctf_grapple_equipment *e, qa_actor_id a);
+size_t qa_lmctf_grapple_state_count(const qa_lmctf_grapple_equipment *e);
+qa_lmctf_grapple_state *qa_lmctf_grapple_state_at(qa_lmctf_grapple_equipment *e, size_t index, qa_actor_id *out_actor);
+void qa_lmctf_grapple_clear_states(qa_lmctf_grapple_equipment *e);
 #endif

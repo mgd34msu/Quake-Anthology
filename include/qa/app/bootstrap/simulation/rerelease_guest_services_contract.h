@@ -1,76 +1,55 @@
 /* Port of src/app/bootstrap/simulation/rerelease-guest-services-contract.ts.
- * ClassicGuestServicesOptions/MapServices/Message are the sibling
- * slice's opaque options (classic_guest_services.h); the rerelease
- * additions are carried explicitly. GPL-2.0-or-later. */
+ * Types only: the TS RereleaseGuestServicesPort interface is implemented
+ * by RereleaseGuestServices alone, so its methods are the
+ * qa_app_sim_rerelease_guest_services_* functions (rerelease_guest_services.h).
+ * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_RERELEASE_GUEST_SERVICES_CONTRACT_H
 #define QA_APP_BOOTSTRAP_SIMULATION_RERELEASE_GUEST_SERVICES_CONTRACT_H
 #include <stdbool.h>
 #include <stddef.h>
 #include "qa/app/bootstrap/simulation/classic_guest_services.h"
-#include "qa/contracts/identity.h"
-#include "qa/contracts/original_pickups.h"
-#include "qa/contracts/protocol.h"
-typedef struct qa_app_sim_rerelease_clipboard {
-  const char *kind; /* "dedicated"|"client" */
-  void *ctx; void (*write)(void *ctx, const char *text);
-} qa_app_sim_rerelease_clipboard;
+#include "qa/compat/q2/rerelease/debug_shapes.h"
+#include "qa/compat/q2/rerelease/foreign_actors.h"
+#include "qa/compat/q2/rerelease/host.h"
+#include "qa/compat/q2/rerelease/navigation.h"
+#include "qa/compat/q2/rerelease/world_text.h"
+
+/* TS clipboard: { kind: "dedicated" } | { kind: "client", write(text) }. */
+typedef struct qa_app_sim_rerelease_clipboard { bool client; void *ctx; void (*write)(void *ctx, const char *text); } qa_app_sim_rerelease_clipboard;
+/* TS localize(key, arguments): malloc'd result, freed by the caller. */
+typedef struct qa_app_sim_rerelease_localize { void *ctx; char *(*localize)(void *ctx, const char *key, const char *const *arguments, size_t count); } qa_app_sim_rerelease_localize;
+typedef struct qa_app_sim_rerelease_debug_shapes { void *ctx; void (*debug_shapes)(void *ctx, qa_compat_q2_rerelease_debug_shapes_event event); } qa_app_sim_rerelease_debug_shapes;
+typedef struct qa_app_sim_rerelease_world_text { void *ctx; void (*world_text)(void *ctx, qa_compat_q2_rerelease_world_text_event event); } qa_app_sim_rerelease_world_text;
+
+/* TS RereleaseGuestServicesOptions extends ClassicGuestServicesOptions. engine adds Q2FoundationHost.worldActor. */
 typedef struct qa_app_sim_rerelease_guest_services_options {
-  qa_app_sim_classic_guest_services_options classic;
+  qa_app_sim_classic_guest_services_options base;
   double frame_milliseconds;
-  const void *engine; /* classic engine + Q2FoundationHost.worldActor */
-  void *localize_ctx; char *(*localize)(void *ctx, const char *key, const char *const *args, size_t arg_count);
+  qa_app_sim_rerelease_localize localize;
   qa_app_sim_rerelease_clipboard clipboard;
-  void *shapes_ctx; void (*debug_shapes)(void *ctx, const void *event);
-  void *text_ctx; void (*world_text)(void *ctx, const void *event);
-  const void *navigation;          /* RereleaseNavigationServices */
-  const void *semantic_bindings;   /* optional */
-  const void *foreign_damage;      /* optional */
+  qa_app_sim_rerelease_debug_shapes debug_shapes;
+  qa_app_sim_rerelease_world_text world_text;
+  qa_compat_q2_rerelease_navigation_services navigation;
+  const qa_compat_q2_rerelease_semantic_bindings *semantic_bindings;      /* optional */
+  const qa_compat_q2_rerelease_foreign_damage_services *foreign_damage;   /* optional */
 } qa_app_sim_rerelease_guest_services_options;
+/* TS RereleaseGuestMapServices = Omit<ClassicGuestMapServices,"engine"> & Pick<options, engine|localize|debugShapes|worldText|navigation|foreignDamage>. */
 typedef struct qa_app_sim_rerelease_guest_map_services {
-  qa_app_sim_classic_guest_services_options classic_map; /* minus engine */
-  const void *engine;
-  void *localize_ctx; char *(*localize)(void *ctx, const char *key, const char *const *args, size_t arg_count);
-  void *shapes_ctx; void (*debug_shapes)(void *ctx, const void *event);
-  void *text_ctx; void (*world_text)(void *ctx, const void *event);
-  const void *navigation;
-  const void *foreign_damage;
+  qa_app_sim_classic_guest_map_services base;
+  qa_app_sim_rerelease_localize localize;
+  qa_app_sim_rerelease_debug_shapes debug_shapes;
+  qa_app_sim_rerelease_world_text world_text;
+  qa_compat_q2_rerelease_navigation_services navigation;
+  const qa_compat_q2_rerelease_foreign_damage_services *foreign_damage;
 } qa_app_sim_rerelease_guest_map_services;
-typedef struct qa_app_sim_rerelease_guest_message {
-  const void *classic; /* ClassicGuestMessage (sibling opaque) */
-  const char *source_dialect; /* "q2-multicast-float" */
-  double dupe_key;
-} qa_app_sim_rerelease_guest_message;
-typedef struct qa_app_sim_rerelease_model_appearance {
-  const char *path; double skin; const char *skin_path;
-  const char *const *attached_models; size_t attached_model_count;
-} qa_app_sim_rerelease_model_appearance;
+/* The Pick<> of the services options (TS hands the options object itself; rerelease_guest_services.c). */
+void qa_app_sim_rerelease_guest_map_services_of(const qa_app_sim_rerelease_guest_services_options *options, qa_app_sim_rerelease_guest_map_services *out);
+/* TS RereleaseGuestMessage: ClassicGuestMessage with sourceDialect "q2-multicast-float" and dupeKey (both carried by the shared message type). */
+typedef qa_app_sim_classic_guest_message qa_app_sim_rerelease_guest_message;
+/* TS entityInfo result (port shape). clusters_null true is TS null. */
 typedef struct qa_app_sim_rerelease_entity_info {
-  bool has_actor; qa_actor_id actor; bool active; double server_flags;
-  double areas[2]; const double *clusters; size_t cluster_count; bool has_clusters;
-  double first_cluster, headnode; bool has_owner_slot; double owner_slot;
+  bool has_actor; qa_actor_id actor; bool active; double server_flags; double areas[2];
+  bool clusters_null; const double *clusters; size_t cluster_count; double first_cluster, headnode;
+  bool has_owner_slot; double owner_slot;
 } qa_app_sim_rerelease_entity_info;
-typedef struct qa_app_sim_rerelease_configstring { double index; const char *value; } qa_app_sim_rerelease_configstring;
-typedef struct qa_app_sim_rerelease_guest_services_port {
-  void *ctx;
-  qa_app_sim_rerelease_guest_services_options options;
-  const void *host_options; /* Pick<RereleaseQ2HostOptions,...> + pickups */
-  const qa_original_pickup_admission *pickups; /* optional */
-  const void *(*bind_memory)(void *ctx, const void *memory);
-  void (*bind_host)(void *ctx, const void *host);
-  void (*complete_spawn)(void *ctx);
-  void (*validate_map)(void *ctx, qa_app_sim_rerelease_guest_map_services binding);
-  void (*publish_entities)(void *ctx);
-  double (*player_ping)(void *ctx, double slot);
-  void (*set_player_ping)(void *ctx, double slot, double ping);
-  void (*begin_frame)(void *ctx, double frame);
-  void (*rebind_world)(void *ctx, qa_app_sim_rerelease_guest_map_services binding);
-  qa_q2_rerelease_entity_state (*entity_state)(void *ctx, double slot);
-  qa_q2_rerelease_player_state (*player_state)(void *ctx, double slot);
-  qa_app_sim_rerelease_model_appearance (*model_appearance)(void *ctx, double slot);
-  qa_app_sim_rerelease_entity_info (*entity_info)(void *ctx, double slot);
-  const qa_app_sim_rerelease_guest_message *(*drain_messages)(void *ctx, size_t *out_count);
-  const qa_app_sim_rerelease_configstring *(*configstrings)(void *ctx, size_t *out_count);
-  void (*set_configstring)(void *ctx, double index, const char *value);
-  void (*restore_configstrings)(void *ctx, const qa_app_sim_rerelease_configstring *values, size_t count);
-} qa_app_sim_rerelease_guest_services_port;
 #endif

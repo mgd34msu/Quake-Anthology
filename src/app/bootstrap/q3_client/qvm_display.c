@@ -6,6 +6,7 @@
 #include "qa/compat/qvm/abi.h"
 #include "qa/compat/qvm/memory.h"
 #include "qa/render/q3_hardware.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
 static int32_t word_i32(const qa_qvm_host_call *call, size_t offset) {
   int32_t v;
@@ -15,13 +16,12 @@ static int32_t word_i32(const qa_qvm_host_call *call, size_t offset) {
 static void record_set_i32(qa_qvm_memory *guest, int64_t pointer, int64_t offset, int32_t value) {
   qa_qvm_writable_view view;
   qa_qvm_memory_view(guest, pointer + offset, 4, 0, &view);
-  memcpy(view.bytes, &value, sizeof value);
+  qa_qvm_writable_view_set_int32(&view, 0, value, true);
 }
 static void record_set_f32(qa_qvm_memory *guest, int64_t pointer, int64_t offset, double value) {
-  float f = (float)value;
   qa_qvm_writable_view view;
   qa_qvm_memory_view(guest, pointer + offset, 4, 0, &view);
-  memcpy(view.bytes, &f, sizeof f);
+  qa_qvm_writable_view_set_float32(&view, 0, value, true); /* DataView.setFloat32 */
 }
 typedef struct font_destination_ctx {
   qa_app_qvm_display_options *options;
@@ -61,15 +61,15 @@ bool qa_app_qvm_display_syscall(const qa_qvm_host_call *call, qa_app_qvm_display
     qa_qvm_memory_write_string(guest, pointer, driver != NULL && driver->renderer != NULL ? driver->renderer : "Quake Anthology software renderer", 1024);
     qa_qvm_memory_write_string(guest, pointer + 1024, driver != NULL && driver->vendor != NULL ? driver->vendor : "Quake Anthology", 1024);
     qa_qvm_memory_write_string(guest, pointer + 2048, driver != NULL && driver->version != NULL ? driver->version : "software", 1024);
-    record_set_i32(guest, pointer, 11264 - shift, gl != NULL ? (int32_t)gl->max_texture_size : 0);
-    record_set_i32(guest, pointer, 11268 - shift, gl != NULL ? (int32_t)gl->texture_units : 0);
-    record_set_i32(guest, pointer, 11272 - shift, gl != NULL ? (int32_t)gl->color_bits : 24);
-    record_set_i32(guest, pointer, 11276 - shift, gl != NULL ? (int32_t)gl->depth_bits : 64);
-    record_set_i32(guest, pointer, 11280 - shift, (int32_t)options.backend_stencil_bits);
+    record_set_i32(guest, pointer, 11264 - shift, gl != NULL ? qa_js_to_int32(gl->max_texture_size) : 0);
+    record_set_i32(guest, pointer, 11268 - shift, gl != NULL ? qa_js_to_int32(gl->texture_units) : 0);
+    record_set_i32(guest, pointer, 11272 - shift, gl != NULL ? qa_js_to_int32(gl->color_bits) : 24);
+    record_set_i32(guest, pointer, 11276 - shift, gl != NULL ? qa_js_to_int32(gl->depth_bits) : 64);
+    record_set_i32(guest, pointer, 11280 - shift, qa_js_to_int32(options.backend_stencil_bits));
     record_set_i32(guest, pointer, 11288 - shift,
-                   (int32_t)qa_q3_hardware_number(qa_q3_hardware_classify(driver != NULL && driver->renderer != NULL ? driver->renderer : "")));
-    record_set_i32(guest, pointer, 11304 - shift, (int32_t)width);
-    record_set_i32(guest, pointer, 11308 - shift, (int32_t)height);
+                   qa_js_to_int32(qa_q3_hardware_number(qa_q3_hardware_classify(driver != NULL && driver->renderer != NULL ? driver->renderer : ""))));
+    record_set_i32(guest, pointer, 11304 - shift, qa_js_to_int32(width));
+    record_set_i32(guest, pointer, 11308 - shift, qa_js_to_int32(height));
     record_set_f32(guest, pointer, 11312 - shift, width / height);
     record_set_i32(guest, pointer, 11324 - shift, gl != NULL && gl->stereo_enabled ? 1 : 0);
     *out = 0;
@@ -96,8 +96,7 @@ bool qa_app_qvm_display_syscall(const qa_qvm_host_call *call, qa_app_qvm_display
       double handle = qa_q3_pres_q3_renderer_resources_shader_handle(options.resources, shader);
       qa_qvm_writable_view view;
       qa_qvm_memory_view(guest, pointer + index * 80 + 44, 4, 0, &view);
-      int32_t value = (int32_t)handle;
-      memcpy(view.bytes, &value, sizeof value);
+      qa_qvm_writable_view_set_int32(&view, 0, qa_js_to_int32(handle), true);
       free(path);
     }
     *out = 0;

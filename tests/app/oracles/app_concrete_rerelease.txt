@@ -1,0 +1,31 @@
+language english russian english
+visible false true true
+first print 1 chat "Ranger exited the level.\n" seq 4 recipient - entity -
+first print 1 medium "Private exited the level.\n" seq 5 recipient - entity -
+first print 2 medium " покидает уровень.\n" seq 5 recipient - entity -
+story0 active true
+story0 draw "Single Player" max 104 at 108 56 scale 1
+story1 active true
+story1 draw "Один игрок" max 80 at 120 56 scale 1
+wrong active true
+wrong error Story font belongs to another seat
+view0 fog 0.5 0.24901960790157318 0.5 0 sky 90 false 1 env/unit1_rt.tga:256x256 env/unit1_lf.tga:256x256 env/unit1_bk.tga:256x256 env/unit1_ft.tga:256x256 env/unit1_up.tga:256x256 env/unit1_dn.tga:256x256
+view1 fog - sky 90 false 1 env/unit1_rt.tga:256x256 env/unit1_lf.tga:256x256 env/unit1_bk.tga:256x256 env/unit1_ft.tga:256x256 env/unit1_up.tga:256x256 env/unit1_dn.tga:256x256
+second print 1 chat "Private text" seq 11 recipient 1 entity 17
+story0b active false
+view0b fog 1 0.49803921580314636 1 0 sky 90 false 1 env/unit1_rt.tga:256x256 env/unit1_lf.tga:256x256 env/unit1_bk.tga:256x256 env/unit1_ft.tga:256x256 env/unit1_up.tga:256x256 env/unit1_dn.tga:256x256
+view1b fog - sky 45 true 1 env/space1rt.tga:256x256 env/space1lf.tga:256x256 env/space1bk.tga:256x256 env/space1ft.tga:256x256 env/space1up.tga:256x256 env/space1dn.tga:256x256
+localize " покидает уровень.\n"
+source "Single Player" "plain"
+unknown Unknown localization seat
+binding ui:language:selection Language english english/English,french/French,german/German,italian/Italian,russian/Russian,spanish/Spanish
+written french french "Single Player"
+relocalize "Solo"
+write Language is not installed: klingon
+failures 0
+story1c active true
+story1c draw "Один игрок" max 80 at 120 56 scale 1
+refresh0 fog 1 0.49803921580314636 1 0 sky 90 false 1 env/unit1_rt.tga:256x256 env/unit1_lf.tga:256x256 env/unit1_bk.tga:256x256 env/unit1_ft.tga:256x256 env/unit1_up.tga:256x256 env/unit1_dn.tga:256x256
+refresh1 fog - sky 45 true 1 env/space1rt.tga:256x256 env/space1lf.tga:256x256 env/space1bk.tga:256x256 env/space1ft.tga:256x256 env/space1up.tga:256x256 env/space1dn.tga:256x256
+published false true russian english
+published1 fog - sky 45 true 1 env/space1rt.tga:256x256 env/space1lf.tga:256x256 env/space1bk.tga:256x256 env/space1ft.tga:256x256 env/space1up.tga:256x256 env/space1dn.tga:256x256

@@ -21,4 +21,6 @@ void qa_app_selected_movement_prediction_submit(qa_app_selected_movement_predict
 qa_app_movement_prediction_result qa_app_selected_movement_prediction_replay(
     qa_app_selected_movement_prediction *prediction,
     void (*observe)(void *ctx, qa_app_movement_prediction_snapshot snapshot), void *observe_ctx);
+/* runtime.ts shortAngle: (word << 16 >> 16) * 360 / 65536, the shift in int32. */
+double qa_app_prediction_short_angle(double word);
 #endif

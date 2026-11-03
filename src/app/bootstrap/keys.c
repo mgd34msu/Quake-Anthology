@@ -188,7 +188,8 @@ void qa_app_keys_publish(qa_app_keys *keys, qa_app_key_profile *profile, qa_cvar
   if (profile != NULL) profile->cvars = cvars;
   qa_q3_client_authorization_destroy(keys->authorization);
   keys->authorization = NULL; keys->authorization_profile = NULL;
-  qa_app_key_profile_destroy(keys->current);
+  /* Publishing the current profile again keeps it (TS keeps the object the map holds). */
+  if (keys->current != profile) qa_app_key_profile_destroy(keys->current);
   keys->current = profile;
 }
 void qa_app_keys_save(qa_app_keys *keys) {

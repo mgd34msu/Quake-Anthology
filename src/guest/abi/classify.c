@@ -163,7 +163,6 @@ static qa_abi_argument assign(builder *b, qa_abi_value_layout layout, bool is_hi
       return argument_new(layout, false, &location, 1, b);
     }
   }
-  (void)is_hidden;
   return stack_assign(b, layout, false);
 }
 

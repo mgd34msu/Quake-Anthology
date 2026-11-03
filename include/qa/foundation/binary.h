@@ -26,9 +26,13 @@ uint16_t qa_load_u16_le(const uint8_t *data, size_t data_length, size_t offset);
 uint32_t qa_load_u32_le(const uint8_t *data, size_t data_length, size_t offset);
 int32_t qa_load_i32_le(const uint8_t *data, size_t data_length, size_t offset);
 float qa_load_f32_le(const uint8_t *data, size_t data_length, size_t offset);
+/* loadF64LE: little-endian binary64. */
+double qa_load_f64_le(const uint8_t *data, size_t data_length, size_t offset);
 
 void qa_store_u16_le(uint8_t *data, size_t data_length, size_t offset, uint16_t value);
 void qa_store_u32_le(uint8_t *data, size_t data_length, size_t offset, uint32_t value);
 void qa_store_f32_le(uint8_t *data, size_t data_length, size_t offset, double value);
+/* storeF64LE: little-endian binary64 (low word first). */
+void qa_store_f64_le(uint8_t *data, size_t data_length, size_t offset, double value);
 
 #endif

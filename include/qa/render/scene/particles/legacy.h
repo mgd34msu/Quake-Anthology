@@ -50,8 +50,9 @@ typedef struct qa_legacy_particle_image {
   uint8_t *pixels; /* owned */
 } qa_legacy_particle_image;
 void qa_legacy_particle_image_destroy(qa_legacy_particle_image *image);
-/* profile NULL is the TS default "q2". */
-qa_legacy_particle_image qa_legacy_particle_image_make(const char *profile);
+/* profile NULL is the TS default "q2". Fills *out in place, since
+ * out->image.levels points at out->level. */
+void qa_legacy_particle_image_make(qa_legacy_particle_image *out, const char *profile);
 
 /* TS Q1ParticleType (exact strings) and Q1ParticleState. */
 typedef struct qa_q1_particle_state {

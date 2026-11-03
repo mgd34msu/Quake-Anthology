@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/guest/core/cpuid.h"
 #include "qa/guest/floating_point/sse.h" /* qa_execute_numeric_instruction */
 #include "qa/guest/x86/arithmetic.h"
 
@@ -165,6 +166,10 @@ static qa_x86_operand mem_operand(uint64_t offset, qa_guest_segment_index segmen
   return operand;
 }
 static void do_string(qa_i386_cpu *cpu, qa_x86_decoder *d) {
+  uint64_t left2;
+  uint64_t right2;
+  uint64_t left;
+  uint64_t right;
   int op = d->opcode;
   int width = (op & 1) == 0 ? 8 : d->operand_bits;
   bool repeated = d->repeat != QA_X86_REPEAT_NONE;
@@ -177,13 +182,13 @@ static void do_string(qa_i386_cpu *cpu, qa_x86_decoder *d) {
   int category = op & 0xfe;
   if (category == 0xa4) qa_x86_decoder_write(d, &destination, width, qa_x86_decoder_read(d, &source, width));
   else if (category == 0xa6)
-    (void)qa_x86_alu(QA_ALU_CMP, width, qa_x86_decoder_read(d, &source, width),
-                     qa_x86_decoder_read(d, &destination, width), &cpu->state->flags);
+    (void)(left2 = qa_x86_decoder_read(d, &source, width), right2 = qa_x86_decoder_read(d, &destination, width), qa_x86_alu(QA_ALU_CMP, width, left2,
+                     right2, &cpu->state->flags));
   else if (category == 0xaa) qa_x86_decoder_write(d, &destination, width, reg_read(cpu, QA_REG_RAX, width, false));
   else if (category == 0xac) reg_write(cpu, QA_REG_RAX, width, qa_x86_decoder_read(d, &source, width), false);
   else
-    (void)qa_x86_alu(QA_ALU_CMP, width, reg_read(cpu, QA_REG_RAX, width, false),
-                     qa_x86_decoder_read(d, &destination, width), &cpu->state->flags);
+    (void)(left = reg_read(cpu, QA_REG_RAX, width, false), right = qa_x86_decoder_read(d, &destination, width), qa_x86_alu(QA_ALU_CMP, width, left,
+                     right, &cpu->state->flags));
   if (category == 0xa4 || category == 0xa6 || category == 0xac)
     reg_write(cpu, QA_REG_RSI, d->address_bits, source.offset + (uint64_t)increment, false);
   if (category != 0xac)
@@ -393,6 +398,14 @@ static void do_extended(qa_i386_cpu *cpu, qa_x86_decoder *d) {
   }
   switch (op) {
     case 0x0b: pfault(cpu, 6, "UD2 invalid opcode");
+    case 0xa2: {
+      const qa_cpuid_result id = qa_virtual_cpuid(reg_read(cpu, QA_REG_RAX, 32, false), true);
+      reg_write(cpu, QA_REG_RAX, 32, id.eax, false);
+      reg_write(cpu, QA_REG_RBX, 32, id.ebx, false);
+      reg_write(cpu, QA_REG_RCX, 32, id.ecx, false);
+      reg_write(cpu, QA_REG_RDX, 32, id.edx, false);
+      return;
+    }
     case 0x1f: {
       qa_x86_modrm decoded = qa_x86_decoder_modrm(d, width);
       if (decoded.group != 0) pfault(cpu, 6, "Invalid multi-byte NOP selector");
@@ -403,10 +416,12 @@ static void do_extended(qa_i386_cpu *cpu, qa_x86_decoder *d) {
     case 0xa8: push_value(cpu, d, width, cpu->state->segments[QA_SEG_GS].selector); return;
     case 0xa9: pop_segment(cpu, d, QA_SEG_GS); return;
     case 0xaf: {
+      uint64_t left;
+      uint64_t right;
       qa_x86_modrm decoded = qa_x86_decoder_modrm(d, width);
       qa_x86_decoder_write(d, &decoded.register_operand, width,
-                           qa_x86_signed_multiply(width, qa_x86_decoder_read(d, &decoded.register_operand, width),
-                                                  qa_x86_decoder_read(d, &decoded.operand, width), &cpu->state->flags));
+                           (left = qa_x86_decoder_read(d, &decoded.register_operand, width), right = qa_x86_decoder_read(d, &decoded.operand, width), qa_x86_signed_multiply(width, left,
+                                                  right, &cpu->state->flags)));
       return;
     }
     case 0xb6: case 0xb7: case 0xbe: case 0xbf: {
@@ -815,6 +830,7 @@ typedef struct run_state {
   uint64_t flags;
   qa_x86_decoder decoder;
   bool has_decoder;
+  bool checkpointed; /* TS checkpointed: registers saved after the host-call hook */
   qa_guest_core_address address;
   qa_guest_execution_stop stop;
   bool have_stop;
@@ -845,9 +861,9 @@ qa_guest_execution_stop qa_i386_cpu_run(qa_i386_cpu *cpu, int64_t instruction_bu
   cpu->memory->throw_ctx = tc;
   while (rs->instructions < instruction_budget) {
     rs->original_ip = cpu->state->instruction_pointer;
-    (void)qa_integer_register_file_checkpoint(&cpu->state->registers, rs->registers, sizeof rs->registers);
     rs->flags = qa_processor_flags_value(&cpu->state->flags);
     rs->has_decoder = false;
+    rs->checkpointed = false;
     if (setjmp(buf) == 0) {
       rs->address = qa_x86_guest_address(cpu->memory,
           as_uint_n(32, cpu->state->segments[QA_SEG_CS].base + rs->original_ip), QA_ACCESS_EXECUTE, 1);
@@ -863,6 +879,9 @@ qa_guest_execution_stop qa_i386_cpu_run(qa_i386_cpu *cpu, int64_t instruction_bu
         rs->have_stop = true;
         break;
       }
+      /* Taken after the host-call hook, which can run nested guest calls through this same CPU. */
+      (void)qa_integer_register_file_checkpoint(&cpu->state->registers, rs->registers, sizeof rs->registers);
+      rs->checkpointed = true;
       qa_x86_decoder_init(&rs->decoder, cpu->state, cpu->memory);
       rs->has_decoder = true;
       bool halt = execute(cpu, &rs->decoder);
@@ -875,7 +894,7 @@ qa_guest_execution_stop qa_i386_cpu_run(qa_i386_cpu *cpu, int64_t instruction_bu
         break;
       }
     } else {
-      qa_integer_register_file_restore(&cpu->state->registers, rs->registers, sizeof rs->registers);
+      if (rs->checkpointed) qa_integer_register_file_restore(&cpu->state->registers, rs->registers, sizeof rs->registers);
       qa_processor_flags_set_value(&cpu->state->flags, rs->flags);
       cpu->state->instruction_pointer = rs->original_ip;
       uint64_t instruction_offset = as_uint_n(32, cpu->state->segments[QA_SEG_CS].base + rs->original_ip);

@@ -142,6 +142,82 @@ static qa_binary_reader lump_reader(const qa_q1_map *map, int index) {
   return make_reader(map->lumps[index].data, map->lumps[index].data_length, source);
 }
 
+typedef struct acyclic_item {
+  double node;
+  bool leaving;
+} acyclic_item;
+
+typedef struct acyclic_state {
+  acyclic_item *pending;
+  uint8_t *marks; /* 0 unseen, 1 active, 2 complete */
+} acyclic_state;
+
+static void acyclic_release(void *raw) {
+  acyclic_state *state = raw;
+  free(state->pending);
+  free(state->marks);
+}
+
+/* Hull walks recurse to the node count at most, so a cycle must fail at load
+ * rather than in a trace (TS requireAcyclic). Every root and child index was
+ * range-checked above; an out-of-range node has no successors as in TS. */
+static void require_acyclic(const qa_q1_world_geometry *world, bool drawing, const double *roots,
+                            size_t root_count, const char *source) {
+  size_t node_count = drawing ? world->node_count : world->clipnode_count;
+  acyclic_state state;
+  size_t capacity = 2 * node_count + 2 * root_count + 4, count = 0;
+  state.pending = xmalloc(capacity * sizeof *state.pending);
+  state.marks = xmalloc(node_count + 1);
+  memset(state.marks, 0, node_count + 1);
+  qa_cleanup node;
+  qa_cleanup_push(&node, acyclic_release, &state);
+  for (size_t r = 0; r < root_count; r++) {
+    count = 0;
+    state.pending[count++] = (acyclic_item){roots[r], false};
+    while (count > 0) {
+      acyclic_item item = state.pending[--count];
+      bool known = item.node >= 0 && item.node < (double)node_count && item.node == trunc(item.node);
+      uint8_t *mark = known ? &state.marks[(size_t)item.node] : NULL;
+      if (item.leaving) {
+        if (mark != NULL) *mark = 2;
+        continue;
+      }
+      if (mark != NULL && *mark == 1) qa_binary_error(source, 0, "cycle in BSP nodes");
+      if (mark != NULL && *mark == 2) continue;
+      if (mark != NULL) *mark = 1;
+      if (count + 3 > capacity) {
+        capacity *= 2;
+        acyclic_item *grown = realloc(state.pending, capacity * sizeof *grown);
+        if (grown == NULL) qa_range_error("Out of memory");
+        state.pending = grown;
+      }
+      state.pending[count++] = (acyclic_item){item.node, true};
+      if (!known) continue;
+      for (int j = 0; j < 2; j++) {
+        if (drawing) {
+          const qa_bsp_child *child = &world->nodes[(size_t)item.node].children[j];
+          if (child->is_node) state.pending[count++] = (acyclic_item){child->index, false};
+        } else {
+          const qa_q1_clip_child *child = &world->clipnodes[(size_t)item.node].children[j];
+          if (child->is_clipnode) state.pending[count++] = (acyclic_item){child->value, false};
+        }
+      }
+    }
+  }
+  qa_cleanup_pop(&node);
+  acyclic_release(&state);
+}
+
+typedef struct roots_scratch {
+  double *drawing, *clip;
+} roots_scratch;
+
+static void roots_release(void *raw) {
+  roots_scratch *roots = raw;
+  free(roots->drawing);
+  free(roots->clip);
+}
+
 static void validate_references(const qa_q1_map *map) {
   const qa_q1_world_geometry *world = &map->world;
   char source[1024];
@@ -212,6 +288,38 @@ static void validate_references(const qa_q1_map *map) {
     }
   }
 #undef SRC
+  size_t drawing_count = 0, clip_count = 0;
+  roots_scratch roots = {xmalloc(world->model_count * 4 * sizeof(double)),
+                         xmalloc(world->model_count * 4 * sizeof(double))};
+  qa_cleanup roots_node;
+  qa_cleanup_push(&roots_node, roots_release, &roots);
+  double *drawing_roots = roots.drawing, *clip_roots = roots.clip;
+  for (size_t i = 0; i < world->model_count; i++) {
+    const qa_q1_world_model *model = &world->models[i];
+    for (size_t hull = 0; hull < model->headnodes.count; hull++) {
+      double headnode = model->headnodes.values[hull];
+      if (headnode < 0 || hull > 2) continue;
+      if (hull == 0) drawing_roots[drawing_count++] = headnode;
+      else if (world->clipnode_count > 0) clip_roots[clip_count++] = headnode;
+    }
+  }
+  snprintf(source, sizeof source, "%s:drawing nodes", map->source);
+  require_acyclic(world, true, drawing_roots, drawing_count, source);
+  snprintf(source, sizeof source, "%s:clipnodes", map->source);
+  require_acyclic(world, false, clip_roots, clip_count, source);
+  qa_cleanup_pop(&roots_node);
+  roots_release(&roots);
+}
+
+typedef struct bsp_readers {
+  qa_binary_reader reader, lump, directory;
+} bsp_readers;
+
+static void bsp_readers_release(void *raw) {
+  bsp_readers *readers = raw;
+  qa_binary_reader_destroy(&readers->reader);
+  qa_binary_reader_destroy(&readers->lump);
+  qa_binary_reader_destroy(&readers->directory);
 }
 
 void qa_q1_read_bsp(const uint8_t *data, size_t data_length, const qa_q1_map_options *options_in,
@@ -222,12 +330,19 @@ void qa_q1_read_bsp(const uint8_t *data, size_t data_length, const qa_q1_map_opt
   memset(out, 0, sizeof *out);
   const char *source = options->source != NULL ? options->source : "<Quake BSP>";
   out->source = xstrdup(source);
-  qa_binary_reader reader = make_reader(data, data_length, source);
+  /* A caught BinaryError releases the readers; the caller destroys `out`. */
+  bsp_readers readers;
+  memset(&readers, 0, sizeof readers);
+  readers.reader = make_reader(data, data_length, source);
+  qa_cleanup readers_node;
+  qa_cleanup_push(&readers_node, bsp_readers_release, &readers);
+#define reader readers.reader
+#define lump readers.lump
   uint32_t version = qa_binary_reader_u32(&reader);
   qa_q1_bsp_format format = format_for(version, source);
   qa_q1_bsp_format layout = format == QA_Q1_FORMAT_QUAKE64 ? QA_Q1_FORMAT_BSP29 : format;
   out->version = version;
-  qa_binary_reader directory;
+#define directory readers.directory
   section_or_die(&reader, 4, 120, &directory);
   out->lumps = xmalloc(15 * sizeof *out->lumps);
   out->lump_count = 15;
@@ -248,7 +363,6 @@ void qa_q1_read_bsp(const uint8_t *data, size_t data_length, const qa_q1_map_opt
   out->bspx = qa_q1_read_bspx(&reader, out->lumps, 15, &out->bspx_count);
   qa_q1_world_geometry *world = &out->world;
   world->format = qa_q1_bsp_format_name(format);
-  qa_binary_reader lump;
   lump = lump_reader(out, 1);
   world->planes = qa_q1_read_planes(&lump, &world->plane_count);
   qa_binary_reader_destroy(&lump);
@@ -299,23 +413,6 @@ void qa_q1_read_bsp(const uint8_t *data, size_t data_length, const qa_q1_map_opt
   }
   world->entities = entities;
   out->entity_list = qa_q1_parse_entities(entities, &out->entity_count);
-  lump = lump_reader(out, 8);
-  size_t stored_length = qa_binary_reader_remaining(&lump);
-  uint8_t *stored_lighting = qa_binary_reader_bytes(&lump, (int64_t)stored_length);
-  qa_binary_reader_destroy(&lump);
-  bool quake64 = format == QA_Q1_FORMAT_QUAKE64;
-  if (quake64) {
-    out->monochrome_lighting.bytes = NULL;
-    out->monochrome_lighting.length = 0;
-  } else {
-    uint8_t *mono = xmalloc(stored_length);
-    if (stored_length > 0) memcpy(mono, stored_lighting, stored_length);
-    out->monochrome_lighting.bytes = mono;
-    out->monochrome_lighting.length = stored_length;
-  }
-  world->lighting = select_lighting(out->monochrome_lighting.bytes, out->monochrome_lighting.length,
-                                    &out->bspx_metadata, options, quake64, stored_lighting, stored_length);
-  free(stored_lighting);
   lump = lump_reader(out, 6);
   world->texture_info = qa_q1_read_texture_info(&lump, &world->texture_info_count);
   qa_binary_reader_destroy(&lump);
@@ -348,6 +445,23 @@ void qa_q1_read_bsp(const uint8_t *data, size_t data_length, const qa_q1_map_opt
   world->visibility.bytes = qa_binary_reader_bytes(&lump, (int64_t)visibility_length);
   world->visibility.length = visibility_length;
   qa_binary_reader_destroy(&lump);
+  lump = lump_reader(out, 8);
+  size_t stored_length = qa_binary_reader_remaining(&lump);
+  uint8_t *stored_lighting = qa_binary_reader_bytes(&lump, (int64_t)stored_length);
+  qa_binary_reader_destroy(&lump);
+  bool quake64 = format == QA_Q1_FORMAT_QUAKE64;
+  if (quake64) {
+    out->monochrome_lighting.bytes = NULL;
+    out->monochrome_lighting.length = 0;
+  } else {
+    uint8_t *mono = xmalloc(stored_length);
+    if (stored_length > 0) memcpy(mono, stored_lighting, stored_length);
+    out->monochrome_lighting.bytes = mono;
+    out->monochrome_lighting.length = stored_length;
+  }
+  world->lighting = select_lighting(out->monochrome_lighting.bytes, out->monochrome_lighting.length,
+                                    &out->bspx_metadata, options, quake64, stored_lighting, stored_length);
+  free(stored_lighting);
   const uint8_t *bspx_data = NULL;
   size_t bspx_length = 0;
   bool has = qa_q1_bspx_data(out->bspx, out->bspx_count, "DECOUPLED_LM", &bspx_data, &bspx_length);
@@ -374,7 +488,11 @@ void qa_q1_read_bsp(const uint8_t *data, size_t data_length, const qa_q1_map_opt
   }
   world->extensions = extensions;
   world->extension_count = out->bspx_count;
-  qa_binary_reader_destroy(&reader);
+  qa_cleanup_pop(&readers_node);
+  bsp_readers_release(&readers);
+#undef reader
+#undef lump
+#undef directory
   validate_references(out);
 }
 

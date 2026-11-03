@@ -17,6 +17,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qa/compat/qvm/game_memory.h"
 #include "qa/compat/qvm/memory_writes.h"
 
 /* Re-exported by memory.ts from memory-writes.ts. */
@@ -62,5 +63,13 @@ void qa_qvm_memory_view(qa_qvm_memory *memory, int64_t word, int64_t length, int
 char *qa_qvm_memory_read_string(const qa_qvm_memory *memory, int64_t word);
 void qa_qvm_memory_write_string(qa_qvm_memory *memory, int64_t word, const char *text, int64_t capacity);
 void qa_qvm_memory_write_bounded_string(qa_qvm_memory *memory, int64_t word, const char *text, int64_t capacity);
+
+/* TS `QvmMemory implements Q3GameMemory`: address/pointerWord/viewAt and the
+ * region operations over this allocation. The result borrows memory. */
+qa_qvm_game_memory qa_qvm_memory_game_memory(qa_qvm_memory *memory);
+/* TS address(word): the allocation offset a nonnull pointer names. */
+bool qa_qvm_memory_address(const qa_qvm_memory *memory, int64_t word, int64_t *out);
+/* TS pointerWord: offset zero is the word that names the allocation size, which masks to zero. */
+int64_t qa_qvm_memory_pointer_word(const qa_qvm_memory *memory, bool has_address, int64_t address);
 
 #endif

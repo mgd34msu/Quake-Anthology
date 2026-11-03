@@ -1,5 +1,6 @@
 /* Port of src/content/q3/team-arena/client-spawn.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/client_spawn.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -20,18 +21,18 @@ enum { CONTENTS_BODY = 0x2000000, EF_DEAD = 1, EF_TELEPORT_BIT = 4, EF_KAMIKAZE 
   EF_VOTED = 0x4000, EF_TEAMVOTED = 0x80000 };
 #define CONTENTS_CORPSE 0x4000000
 #define CONTENTS_NODROP_BITS (-2147483647 - 1) /* 0x80000000 as int32 bits */
-static double s32(double v) { return (int32_t)v; }
-static double imul(double a, double b) { return (int32_t)((int32_t)a * (int32_t)b); }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
-static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
+static double s32(double v) { return qa_js_to_int32(v); }
+static double imul(double a, double b) { return (int32_t)(qa_js_to_int32(a) * qa_js_to_int32(b)); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
+static void slot_set(qa_q3_base_player_state_slots *s, double i, double v) { qa_q3_base_player_state_slots_set(s, (size_t)i, v); }
 static qa_vec3 player_mins(void) { return qa_math_vec3(-15, -15, -24); }
 static qa_vec3 player_maxs(void) { return qa_math_vec3(15, 15, 32); }
 
 void qa_q3_ta_spawn_deathmatch_point(qa_q3_game_entity *entity, const qa_q3_spawn_variables *variables) {
   if (qa_q3_spawn_variables_int(variables, "nobots", "0").value)
-    entity->flags = (double)((int32_t)entity->flags | QA_Q3_GAME_FLAG_NO_BOTS);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) | QA_Q3_GAME_FLAG_NO_BOTS);
   if (qa_q3_spawn_variables_int(variables, "nohumans", "0").value)
-    entity->flags = (double)((int32_t)entity->flags | QA_Q3_GAME_FLAG_NO_HUMANS);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) | QA_Q3_GAME_FLAG_NO_HUMANS);
 }
 void qa_q3_ta_spawn_player_start(qa_q3_game_entity *entity, const qa_q3_spawn_variables *variables) {
   qa_q3_game_entity_set_classname(entity, "info_player_deathmatch");
@@ -44,12 +45,12 @@ static qa_q3_game_client *client_of(qa_q3_game_entity *entity) {
 void qa_q3_ta_set_client_view_angle(qa_q3_game_entity *entity, qa_vec3 angles) {
   qa_q3_game_client *client = client_of(entity);
   double cmd[3] = {client->pers.cmd.angles.x, client->pers.cmd.angles.y, client->pers.cmd.angles.z};
-  double src[3] = {angles.x, angles.y, angles.z};
+  double src[3] = {angles.x, angles.y, angles.z}, delta[3];
   for (int i = 0; i < 3; i++) {
     double scaled = (float)((double)(float)(src[i] * 65536) / 360);
-    double delta = s32((double)(qa_qvm_float_to_int(scaled) & 65535) - cmd[i]);
-    slot_set(&client->ps.delta_angles, i, delta);
+    delta[i] = s32((double)(qa_qvm_float_to_int(scaled) & 65535) - cmd[i]);
   }
+  client->ps.delta_angles = qa_math_vec3(delta[0], delta[1], delta[2]);
   entity->s.angles = qa_math_vec3(angles.x, angles.y, angles.z);
   client->ps.viewangles = entity->s.angles;
 }
@@ -179,7 +180,7 @@ qa_q3_ta_spawn_point qa_q3_ta_client_spawn_runtime_select_spawn_point(qa_q3_ta_c
 qa_q3_ta_spawn_point qa_q3_ta_client_spawn_runtime_select_initial(qa_q3_ta_client_spawn_runtime *r) {
   qa_q3_game_entity *spot = NULL;
   while ((spot = qa_q3_find_entity(r->host.pool, spot, QA_Q3_FIELD_CLASSNAME, "info_player_deathmatch")) != NULL) {
-    if (((int32_t)spot->spawnflags & 1) != 0) break;
+    if ((qa_js_to_int32(spot->spawnflags) & 1) != 0) break;
   }
   return (spot == NULL || qa_q3_ta_client_spawn_runtime_spot_would_telefrag(r, spot))
       ? qa_q3_ta_client_spawn_runtime_select_spawn_point(r, qa_math_vec3(0, 0, 0)) : pose(spot);
@@ -233,18 +234,18 @@ qa_q3_game_entity *qa_q3_ta_client_spawn_runtime_copy_to_body_queue(qa_q3_ta_cli
   qa_q3_game_client *client = owned_client(r, entity);
   double time = r->host.frame(r->host.ctx).time;
   r->host.world->unlink(r->host.world->ctx, entity->slot);
-  if (((int32_t)r->host.world->point_contents(r->host.world->ctx, entity->s.origin, -1) & CONTENTS_NODROP_BITS) != 0) return NULL;
+  if ((qa_js_to_int32(r->host.world->point_contents(r->host.world->ctx, entity->s.origin, -1)) & CONTENTS_NODROP_BITS) != 0) return NULL;
   if (!r->state->has_body_queue) qa_range_error("Body queue must be initialized before copying a corpse");
   qa_q3_game_entity *body = (r->state->body_queue_index >= 0 && r->state->body_queue_index < QA_Q3_TA_BODY_QUEUE_SIZE)
       ? r->state->body_queue_entities[(size_t)r->state->body_queue_index] : NULL;
   if (body == NULL) qa_range_error("Body queue index invariant");
-  r->state->body_queue_index = (double)(((int32_t)r->state->body_queue_index + 1) % QA_Q3_TA_BODY_QUEUE_SIZE);
+  r->state->body_queue_index = (double)((qa_js_to_int32(r->state->body_queue_index) + 1) % QA_Q3_TA_BODY_QUEUE_SIZE);
   r->host.world->unlink(r->host.world->ctx, body->slot);
   body->s = entity->s;
-  qa_q3_write_ground(body, entity->binding.body.has_ground ? &entity->binding.body.ground : NULL, r->host.pool);
+  qa_q3_write_ground(body, entity->binding.body.read(entity->binding.body.ctx).ground, r->host.pool);
   body->s.e_flags = EF_DEAD;
-  if (client->ps.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && ((int32_t)entity->s.e_flags & EF_KAMIKAZE) != 0) {
-    body->s.e_flags = (double)((int32_t)body->s.e_flags | EF_KAMIKAZE);
+  if (client->ps.state_product == QA_Q3_BASE_PRODUCT_MISSIONPACK && (qa_js_to_int32(entity->s.e_flags) & EF_KAMIKAZE) != 0) {
+    body->s.e_flags = (double)(qa_js_to_int32(body->s.e_flags) | EF_KAMIKAZE);
     for (int index = 0; index < QA_Q3_MAX_GENTITIES; index++) {
       qa_q3_game_entity *timer = qa_q3_entity_pool_at(r->host.pool, index);
       const char *cn = qa_q3_game_entity_classname(timer);
@@ -258,16 +259,19 @@ qa_q3_game_entity *qa_q3_ta_client_spawn_runtime_copy_to_body_queue(qa_q3_ta_cli
   body->timestamp = time;
   body->physics_object = true;
   body->physics_bounce = 0;
-  if (!body->binding.body.has_ground) {
-    body->s.pos.type = QA_Q3_TR_GRAVITY;
+  if (body->binding.body.read(body->binding.body.ctx).ground == NULL) {
+    body->s.pos.type = QA_Q3_BASE_TR_GRAVITY;
     body->s.pos.time = time;
-    body->s.pos.delta = client->ps.velocity;
-  } else body->s.pos.type = QA_Q3_TR_STATIONARY;
+    body->s.pos.delta = qa_q3_base_player_state_record_velocity(&client->ps);
+  } else body->s.pos.type = QA_Q3_BASE_TR_STATIONARY;
   body->s.event = 0;
-  /* TS legsAnim/torsoAnim copy onto s: no mirror entity-state fields. */
+  int32_t animation = qa_js_to_int32(body->s.legs_anim) & ~128;
+  body->s.torso_anim = body->s.legs_anim = animation == QA_Q3_ANIM_BOTH_DEATH1 || animation == QA_Q3_ANIM_BOTH_DEAD1
+      ? QA_Q3_ANIM_BOTH_DEAD1 : animation == QA_Q3_ANIM_BOTH_DEATH2 || animation == QA_Q3_ANIM_BOTH_DEAD2
+      ? QA_Q3_ANIM_BOTH_DEAD2 : QA_Q3_ANIM_BOTH_DEAD3;
   body->r.sv_flags = entity->r.sv_flags;
-  body->r.mins = entity->r.mins;
-  body->r.maxs = entity->r.maxs;
+  qa_q3_base_entity_shared_set_mins(&body->r, qa_q3_base_entity_shared_mins(&entity->r));
+  qa_q3_base_entity_shared_set_maxs(&body->r, qa_q3_base_entity_shared_maxs(&entity->r));
   body->clipmask = 1 | 0x10000;
   body->r.contents = CONTENTS_CORPSE;
   body->r.owner_num = entity->s.number;
@@ -275,41 +279,42 @@ qa_q3_game_entity *qa_q3_ta_client_spawn_runtime_copy_to_body_queue(qa_q3_ta_cli
   body->think = qa_q3_callback_family_resolve(&r->host.pool->callbacks.think, "q3.team-arena.client-spawn.copyToBodyQueue.think");
   body->die = qa_q3_callback_family_resolve(&r->host.pool->callbacks.die, "q3.death.body");
   qa_q3_game_entity_set_takedamage(body, qa_q3_game_entity_health(entity) > QA_Q3_BASE_GIB_HEALTH);
-  body->r.current_origin = body->s.pos.base;
+  qa_q3_base_entity_shared_set_current_origin(&body->r, body->s.pos.base);
   r->host.world->link(r->host.world->ctx, body);
   return body;
 }
 
-static void slots_reset(qa_q3_game_player_slots_mirror *s, size_t length) {
-  memset(s->values, 0, sizeof s->values); s->length = length;
-}
-/* TS fresh-GameClient assign in clientSpawn, preserving pers/sess/ps
- * identity plus accuracy and (by caller) persistant/eventSequence. */
-static void fresh_client(qa_q3_game_client *client) {
+/* TS clientSpawn: Object.assign(client, new GameClient(ps.product), {pers,
+ * sess, ps, accuracyHits, accuracyShots}) then ps.copyFrom(fresh.ps, stores),
+ * restoring ping, persistant and eventSequence. The fresh ammoTimes replace
+ * the old ones, so they carry no ammoTimerStored hook, as in TS. */
+static void fresh_client(qa_q3_game_client *client, qa_q3_base_copy_stores stores) {
   qa_q3_client_persistant pers = client->pers;
   qa_q3_client_session sess = client->sess;
-  qa_q3_game_product product = client->ps.product;
+  qa_q3_base_player_state ps = client->ps;
   double hits = client->accuracy_hits, shots = client->accuracy_shots;
-  double persistant[QA_Q3_GAME_SLOTS_CAP];
-  size_t persistant_length = client->ps.persistant.length;
-  memcpy(persistant, client->ps.persistant.values, sizeof persistant);
-  double event_sequence = client->ps.generic;
+  double ping = ps.ping, event_sequence = ps.event_sequence;
+  int32_t *persistant = qa_q3_base_player_state_slots_copy(&ps.persistant);
+  if (persistant == NULL) qa_range_error("out of memory");
+  qa_q3_base_player_state_slots fresh_ammo_times;
+  if (!qa_q3_base_player_state_slots_init(&fresh_ammo_times, qa_q3_base_weapon_count(ps.state_product), NULL, 0, false,
+      NULL, NULL, NULL)) qa_range_error("out of memory");
+  qa_q3_base_player_state_slots_destroy(&client->ammo_times);
   free(client->areabits);
   memset(client, 0, sizeof *client);
   client->pers = pers;
   client->sess = sess;
+  client->ps = ps;
   client->accuracy_hits = hits;
   client->accuracy_shots = shots;
-  client->ps.product = product;
-  slots_reset(&client->ps.stats, 16); slots_reset(&client->ps.persistant, 16);
-  slots_reset(&client->ps.powerups, 16); slots_reset(&client->ps.ammo, 16);
-  slots_reset(&client->ps.events, 2); slots_reset(&client->ps.event_parms, 2);
-  slots_reset(&client->ps.delta_angles, 3);
-  slots_reset(&client->ammo_times, product == QA_Q3_GAME_PRODUCT_BASEQ3 ? 11 : 14);
-  /* restored below to mirror the TS statement order */
-  memcpy(client->ps.persistant.values, persistant, sizeof persistant);
-  client->ps.persistant.length = persistant_length;
-  client->ps.generic = event_sequence;
+  client->ammo_times = fresh_ammo_times;
+  qa_q3_game_player_state_reset(&client->ps, stores);
+  client->ps.ping = ping;
+  client->last_killed_client = -1;
+  for (double index = 0; index < client->ps.persistant.length; index++)
+    qa_q3_base_player_state_slots_set(&client->ps.persistant, index, persistant[(size_t)index]);
+  free(persistant);
+  client->ps.event_sequence = event_sequence;
 }
 
 void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r, qa_q3_game_entity *entity) {
@@ -334,19 +339,18 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
       if (!client->pers.initial_spawn && client->pers.local_client) {
         client->pers.initial_spawn = true;
         selected = qa_q3_ta_client_spawn_runtime_select_initial(r);
-      } else selected = qa_q3_ta_client_spawn_runtime_select_spawn_point(r, client->ps.origin);
-      bool bot = ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0;
-      if (((int32_t)selected.entity->flags & (bot ? QA_Q3_GAME_FLAG_NO_BOTS : QA_Q3_GAME_FLAG_NO_HUMANS)) != 0) continue;
+      } else selected = qa_q3_ta_client_spawn_runtime_select_spawn_point(r, qa_q3_base_player_state_record_origin(&client->ps));
+      bool bot = (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) != 0;
+      if ((qa_js_to_int32(selected.entity->flags) & (bot ? QA_Q3_GAME_FLAG_NO_BOTS : QA_Q3_GAME_FLAG_NO_HUMANS)) != 0) continue;
       spawn.origin = selected.origin; spawn.angles = selected.angles; spawn_entity = selected.entity;
       break;
     }
   }
   client->pers.team_state.state = QA_Q3_TEAM_STATE_ACTIVE;
-  entity->s.e_flags = (double)((int32_t)entity->s.e_flags & ~EF_KAMIKAZE);
-  double flags = (double)(((int32_t)client->ps.e_flags & (EF_TELEPORT_BIT | EF_VOTED | EF_TEAMVOTED)) ^ EF_TELEPORT_BIT);
-  fresh_client(client);
-  client->last_killed_client = -1;
-  qa_q3_game_player_state_mirror *ps = &client->ps;
+  entity->s.e_flags = (double)(qa_js_to_int32(entity->s.e_flags) & ~EF_KAMIKAZE);
+  double flags = (double)((qa_js_to_int32(client->ps.e_flags) & (EF_TELEPORT_BIT | EF_VOTED | EF_TEAMVOTED)) ^ EF_TELEPORT_BIT);
+  fresh_client(client, r->host.selected_player == NULL ? QA_Q3_BASE_REPLACE_AUTHORITY : QA_Q3_BASE_PRESERVE_AUTHORITY);
+  qa_q3_base_player_state *ps = &client->ps;
   slot_set(&ps->persistant, QA_Q3_BASE_PERS_SPAWN_COUNT,
       s32(slot_get(&ps->persistant, QA_Q3_BASE_PERS_SPAWN_COUNT) + 1));
   slot_set(&ps->persistant, QA_Q3_BASE_PERS_TEAM, client->sess.session_team);
@@ -354,7 +358,7 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
   client->pers.max_health = qa_game_atoi(r->host.handicap(r->host.ctx, entity->slot));
   if (client->pers.max_health < 1 || client->pers.max_health > 100) client->pers.max_health = 100;
   const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(
-      ps->product == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
+      ps->state_product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3);
   slot_set(&ps->stats, schema->max_health, client->pers.max_health);
   ps->e_flags = flags;
   qa_q3_write_ground(entity, NULL, r->host.pool);
@@ -368,7 +372,7 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
   entity->watertype = 0;
   entity->flags = 0;
   bool has_selected = r->host.selected_player != NULL;
-  if (!has_selected) { entity->r.mins = player_mins(); entity->r.maxs = player_maxs(); }
+  if (!has_selected) { qa_q3_base_entity_shared_set_mins(&entity->r, player_mins()); qa_q3_base_entity_shared_set_maxs(&entity->r, player_maxs()); }
   ps->client_num = entity->slot;
   slot_set(&ps->ammo, QA_Q3_WP_GAUNTLET, -1);
   slot_set(&ps->ammo, QA_Q3_WP_GRAPPLING_HOOK, -1);
@@ -377,11 +381,11 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
     slot_set(&ps->ammo, QA_Q3_WP_MACHINEGUN, frame.game_type == QA_Q3_BASE_GT_TEAM ? 50 : 100);
     double health = s32(client->pers.max_health + 25);
     qa_q3_game_entity_set_health(entity, health);
-    ps->health = health;
+    qa_q3_base_player_state_record_set_health(ps, health);
   } else r->host.selected_player(r->host.ctx, entity, spawn);
   qa_q3_set_origin(entity, spawn.origin);
-  ps->origin = spawn.origin;
-  ps->pm_flags = (double)((int32_t)ps->pm_flags | QA_Q3_FLAG_RESPAWNED);
+  qa_q3_base_player_state_record_set_origin(ps, spawn.origin);
+  ps->pm_flags = (double)(qa_js_to_int32(ps->pm_flags) | QA_Q3_FLAG_RESPAWNED);
   qa_q3_base_user_command command = r->host.user_command(r->host.ctx, entity->slot);
   client->pers.cmd.server_time = command.server_time;
   client->pers.cmd.angles = command.angles;
@@ -394,10 +398,10 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
   if (client->sess.session_team != QA_Q3_BASE_TEAM_SPECTATOR) {
     r->host.kill_box(r->host.ctx, entity);
     r->host.world->link(r->host.world->ctx, entity);
-    if (!has_selected) entity->s.weapon = QA_Q3_WP_MACHINEGUN; /* TS ps.weapon */
+    if (!has_selected) ps->weapon = QA_Q3_WP_MACHINEGUN;
     ps->weapon_state = QA_Q3_WEAPON_READY;
   }
-  ps->pm_flags = (double)((int32_t)ps->pm_flags | QA_Q3_FLAG_TIME_KNOCKBACK);
+  ps->pm_flags = (double)(qa_js_to_int32(ps->pm_flags) | QA_Q3_FLAG_TIME_KNOCKBACK);
   ps->pm_time = 100;
   client->respawn_time = frame.time;
   client->inactivity_time = s32(frame.time + imul(frame.inactivity_seconds, 1000));
@@ -415,28 +419,29 @@ void qa_q3_ta_client_spawn_runtime_client_spawn(qa_q3_ta_client_spawn_runtime *r
       double weapon = QA_Q3_WP_GAUNTLET;
       double count = qa_q3_base_weapon_count(schema->product);
       for (double w = count - 1; w > 0; w--) {
-        if (((int32_t)slot_get(&ps->stats, schema->weapons) & (1 << (int)w)) != 0) { weapon = w; break; }
+        if ((qa_js_to_int32(slot_get(&ps->stats, schema->weapons)) & (1 << qa_js_to_int32(w))) != 0) { weapon = w; break; }
       }
-      entity->s.weapon = weapon; /* TS ps.weapon */
+      ps->weapon = weapon;
     }
+    else if (r->host.selected_weapon_after_targets) r->host.selected_weapon_after_targets(r->host.ctx, entity);
   }
-  /* TS ps.commandTime = frame.time - 100: no mirror field. */
+  ps->command_time = s32(frame.time - 100);
   client->pers.cmd.server_time = frame.time;
   r->host.client_think(r->host.ctx, entity->slot, r->host.user_command(r->host.ctx, entity->slot));
   if (client->sess.session_team != QA_Q3_BASE_TEAM_SPECTATOR) {
-    r->host.snapshot(r->host.ctx, client, entity);
-    entity->r.current_origin = client->ps.origin;
+    qa_q3_game_player_state_to_entity_state(ps, &entity->s, true, false, 0);
+    qa_q3_base_entity_shared_set_current_origin(&entity->r, qa_q3_base_player_state_record_origin(&client->ps));
     r->host.world->link(r->host.world->ctx, entity);
   }
   qa_q3_ta_client_effects_context effects = r->host.effects(r->host.ctx);
   qa_q3_ta_client_end_frame(&effects, entity);
-  r->host.snapshot(r->host.ctx, client, entity);
+  qa_q3_game_player_state_to_entity_state(ps, &entity->s, true, false, 0);
 }
 
 void qa_q3_ta_client_spawn_runtime_respawn(qa_q3_ta_client_spawn_runtime *r, qa_q3_game_entity *entity) {
   (void)qa_q3_ta_client_spawn_runtime_copy_to_body_queue(r, entity);
   qa_q3_ta_client_spawn_runtime_client_spawn(r, entity);
-  qa_q3_game_entity *temporary = qa_q3_entity_pool_temp_entity(r->host.pool, client_of(entity)->ps.origin, QA_Q3_EV_PLAYER_TELEPORT_IN);
+  qa_q3_game_entity *temporary = qa_q3_entity_pool_temp_entity(r->host.pool, qa_q3_base_player_state_record_origin(&client_of(entity)->ps), QA_Q3_EV_PLAYER_TELEPORT_IN);
   temporary->s.client_num = entity->s.client_num;
 }
 

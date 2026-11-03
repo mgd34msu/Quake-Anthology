@@ -1,14 +1,14 @@
 /* Port of src/console/commands.ts. GPL-2.0-or-later. */
 #include "qa/console/commands.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static char *dup_text(const char *text) {

@@ -3,6 +3,7 @@
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static double f32(double v){ return (double)(float)v; }
 double qa_eye_depth_from_window_depth(qa_mat4 p,double wd,const double dr[2]){
   double n=(wd-dr[0])/(dr[1]-dr[0])*2-1;
@@ -12,17 +13,24 @@ double qa_eye_depth_from_window_depth_default(qa_mat4 p,double wd){ const double
 void qa_apply_q1_depth_fog(qa_cpu_framebuffer *frame,qa_rect vp,qa_mat4 proj,qa_q1_fog fog,double sky_fraction,const char *output,double clear_depth){
   if(!strcmp(output,"classic-indexed")||fog.density<=0)return;
   if(proj.values[2]!=0||proj.values[6]!=0||proj.values[3]!=0||proj.values[7]!=0) qa_range_error("Q1 fog requires a projection whose depth is independent of eye X/Y");
-  double sky=qa_cpu_clamp01(sky_fraction);
-  for(double y=fmax(0,vp.y);y<fmin(frame->height,vp.y+vp.height);y++)
-   for(double x=fmax(0,vp.x);x<fmin(frame->width,vp.x+vp.width);x++){
-    double index=(y-frame->origin_y)*frame->stride+x-frame->origin_x; long ii=(long)index;
-    if(ii<0||(size_t)ii>=frame->storage_count) qa_range_error("Q1 fog rectangle lies outside its framebuffer storage");
+  double sky=qa_cpu_clamp01(sky_fraction),scaled_density=fog.density/64;
+  double fog_red=fog.color.x,fog_green=fog.color.y,fog_blue=fog.color.z;
+  /* Neighbouring pixels usually share a depth, so the exp and depth inversion run once per run of equal values. */
+  double last_depth=NAN,last_amount=0;
+  for(double y=qa_js_max(0,vp.y);y<qa_js_min(frame->height,vp.y+vp.height);y++)
+   for(double x=qa_js_max(0,vp.x);x<qa_js_min(frame->width,vp.x+vp.width);x++){
+    double index=(y-frame->origin_y)*frame->stride+x-frame->origin_x;
+    /* A typed-array read at a fractional, NaN or out-of-range index is undefined: TS throws. */
+    if(!(index>=0&&index<(double)frame->storage_count&&index==floor(index))) qa_range_error("Q1 fog rectangle lies outside its framebuffer storage");
+    size_t ii=(size_t)index;
     double depth=frame->depth[ii]; size_t off=(size_t)ii*4;
-    qa_vec3 color; color.x=frame->pixels[off]/255.0;color.y=frame->pixels[off+1]/255.0;color.z=frame->pixels[off+2]/255.0;
-    qa_vec3 result;
-    if(depth==clear_depth){ result.x=color.x+(fog.color.x-color.x)*sky;result.y=color.y+(fog.color.y-color.y)*sky;result.z=color.z+(fog.color.z-color.z)*sky; }
-    else result=qa_q1_fog_color(color,fog,qa_eye_depth_from_window_depth_default(proj,depth));
-    frame->pixels[off]=(uint8_t)qa_cpu_byte(result.x);frame->pixels[off+1]=(uint8_t)qa_cpu_byte(result.y);frame->pixels[off+2]=(uint8_t)qa_cpu_byte(result.z);
+    double amount=sky;
+    if(depth!=clear_depth){
+      if(depth!=last_depth){ last_amount=qa_global_fog_amount(scaled_density,qa_eye_depth_from_window_depth_default(proj,depth)); last_depth=depth; }
+      amount=last_amount;
+    }
+    double r=frame->pixels[off]/255.0,g=frame->pixels[off+1]/255.0,b=frame->pixels[off+2]/255.0;
+    frame->pixels[off]=(uint8_t)qa_cpu_byte(r+(fog_red-r)*amount);frame->pixels[off+1]=(uint8_t)qa_cpu_byte(g+(fog_green-g)*amount);frame->pixels[off+2]=(uint8_t)qa_cpu_byte(b+(fog_blue-b)*amount);
    }
 }
 static void blend_fog(qa_cpu_framebuffer *frame,double offset_d,double r,double g,double b,double amount,double alpha_bits){
@@ -43,11 +51,12 @@ void qa_apply_q2_depth_fog(qa_cpu_framebuffer *frame,qa_q2_fog_operation op,doub
   qa_vec3 fwd=camera.axis.vectors[0],left=camera.axis.vectors[1],up=camera.axis.vectors[2],origin=camera.origin;
   double a=f32(-pr[10]),b=f32(-pr[14]),tanX=f32(1/pr[0]),tanY=f32(1/pr[5]);
   double density=f32(fog.density/64),threshold=f32(op.far_depth);
-  for(double y=fmax(0,vp.y);y<fmin(frame->height,vp.y+vp.height);y++){
+  for(double y=qa_js_max(0,vp.y);y<qa_js_min(frame->height,vp.y+vp.height);y++){
     double ndcY=1-(y+0.5-vp.y)*2/vp.height;
-    for(double x=fmax(0,vp.x);x<fmin(frame->width,vp.x+vp.width);x++){
-      double index=(y-frame->origin_y)*frame->stride+x-frame->origin_x; long ii=(long)index;
-      if(ii<0||(size_t)ii>=frame->storage_count) qa_range_error("Q2 fog rectangle lies outside its depth storage");
+    for(double x=qa_js_max(0,vp.x);x<qa_js_min(frame->width,vp.x+vp.width);x++){
+      double index=(y-frame->origin_y)*frame->stride+x-frame->origin_x;
+      if(!(index>=0&&index<(double)frame->storage_count&&index==floor(index))) qa_range_error("Q2 fog rectangle lies outside its depth storage");
+      size_t ii=(size_t)index;
       double depth=f32(frame->depth[ii]); double off=index*4;
       if(depth>=threshold){ if(sky)blend_fog(frame,off,fog.color.x,fog.color.y,fog.color.z,fog.sky_factor,alpha_bits); continue; }
       double eyeW=b/(a-(2*depth-1)),frag=depth*eyeW;
@@ -56,7 +65,7 @@ void qa_apply_q2_depth_fog(qa_cpu_framebuffer *frame,qa_q2_fog_operation op,doub
         double ndcX=(x+0.5-vp.x)*2/vp.width-1;
         double rx=fwd.x-left.x*ndcX*tanX+up.x*ndcY*tanY, ry=fwd.y-left.y*ndcX*tanX+up.y*ndcY*tanY, rz=fwd.z-left.z*ndcX*tanX+up.z*ndcY*tanY;
         double wx=origin.x+rx*eyeW,wy=origin.y+ry*eyeW,wz=origin.z+rz*eyeW;
-        double dist=sqrt((wx-origin.x)*(wx-origin.x)+(wy-origin.y)*(wy-origin.y)+(wz-origin.z)*(wz-origin.z));
+        double dist=qa_js_hypot3(wx-origin.x,wy-origin.y,wz-origin.z); /* Math.hypot, not sqrt of a sum */
         double dirz=qa_height_fog_dir_z(dist==0?0:(wz-origin.z)/dist);
         qa_q2_height_fog hf=fog.height;
         double ext=qa_height_fog_extinction(origin.z,wz,hf.start.distance,hf.falloff,dirz);

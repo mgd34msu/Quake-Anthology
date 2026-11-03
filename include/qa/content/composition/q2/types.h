@@ -1,187 +1,134 @@
 /*
- * Port of src/content/composition/q2/types.ts (types only).
- * Mirrored types from unported modules (opaque or partial,
- * collision-proof qa_comp_q2_* names; TS owners noted inline).
- * GPL-2.0-or-later.
+ * Port of src/content/composition/q2/types.ts. The composition options
+ * reference the real Q2 types: Q2FoundationHost (qa_q2_foundation_host),
+ * Q2GameOptions (qa_q2_game_options), Q2Weapons (qa_q2w_weapons),
+ * Q2ItemHooks, Q2PlayerHooks / Q2PlayerRules (base/player/types.h),
+ * Q2BaseEntityHooks, Q2RereleaseHooks / Q2RereleaseOptions /
+ * Q2RereleaseCampaignState, and the CTF / LMCTF / mission-pack event
+ * types. GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_COMPOSITION_Q2_TYPES_H
 #define QA_CONTENT_COMPOSITION_Q2_TYPES_H
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
+#include "qa/content/q2/base/entities/types.h"
+#include "qa/content/q2/base/player/types.h"
+#include "qa/content/q2/foundation/host.h"
+#include "qa/content/q2/foundation/items.h"
+#include "qa/content/q2/foundation/weapons/player.h"
+#include "qa/content/q2/missionpacks/entities/types.h"
+#include "qa/content/q2/missionpacks/random_items.h"
+#include "qa/content/q2/missionpacks/types.h"
+#include "qa/content/q2/multiplayer/ctf/types.h"
+#include "qa/content/q2/multiplayer/lmctf/types.h"
+#include "qa/content/q2/rerelease/campaign.h"
+#include "qa/content/q2/rerelease/types.h"
 #include "qa/contracts/equipment.h"
-#include "qa/contracts/gameplay.h"
 #include "qa/contracts/identity.h"
-#include "qa/contracts/math.h"
 #include "qa/core/cvars/index.h"
 
-/* Q2ClassicProgram | "mg2" | "n64" (Q2RereleaseProgram), one enum. */
-typedef enum qa_comp_q2_program {
-  QA_COMP_Q2_BASEQ2, QA_COMP_Q2_XATRIX, QA_COMP_Q2_ROGUE, QA_COMP_Q2_MG2, QA_COMP_Q2_N64
-} qa_comp_q2_program;
-const char *qa_comp_q2_program_name(qa_comp_q2_program program);
+/* TS Q2ClassicProgram ("baseq2"|"xatrix"|"rogue") and
+ * Q2RereleaseProgram (adds "mg2"|"n64"), in that order. */
+typedef enum qa_q2_program {
+  QA_Q2_PROGRAM_BASEQ2, QA_Q2_PROGRAM_XATRIX, QA_Q2_PROGRAM_ROGUE, QA_Q2_PROGRAM_MG2, QA_Q2_PROGRAM_N64
+} qa_q2_program;
+const char *qa_q2_program_name(qa_q2_program program);
 
-/* LmctfTravel (src/content/q2/multiplayer/lmctf/types.ts): only its
- * rules pointer is forwarded by composition. */
-typedef struct qa_comp_lmctf_travel {
-  const void *rules;
-  const void *rest; /* remaining travel payload, forwarded whole */
-} qa_comp_lmctf_travel;
+/* TS Q2MatchSelection kinds. */
+typedef enum qa_q2_match_kind {
+  QA_Q2_MATCH_CTF, QA_Q2_MATCH_LMCTF, QA_Q2_MATCH_STANDARD, QA_Q2_MATCH_TAG, QA_Q2_MATCH_HORDE,
+  QA_Q2_MATCH_DEATHBALL
+} qa_q2_match_kind;
+const char *qa_q2_match_kind_name(qa_q2_match_kind kind);
 
-/* TS Q2MatchSelection. DeathBall skins/goal limit are live cvar reads
- * when cvars is set (match-selection.ts getters); otherwise the stored
- * values apply. Access through the qa_comp_q2_match_selection_* fns. */
-typedef enum qa_comp_q2_match_kind {
-  QA_COMP_Q2_MATCH_CTF, QA_COMP_Q2_MATCH_LMCTF, QA_COMP_Q2_MATCH_STANDARD,
-  QA_COMP_Q2_MATCH_TAG, QA_COMP_Q2_MATCH_HORDE, QA_COMP_Q2_MATCH_DEATHBALL
-} qa_comp_q2_match_kind;
-const char *qa_comp_q2_match_kind_name(qa_comp_q2_match_kind kind);
-typedef struct qa_comp_q2_match_selection {
-  qa_comp_q2_match_kind kind;
-  bool has_travel;
-  const qa_comp_lmctf_travel *travel;
-  qa_cvar_registry *cvars; /* deathball live getters; NULL = stored values */
-  const char *team1_skin;
-  const char *team2_skin;
+/** TS Q2MatchSelection. lmctf: travel NULL = TS undefined (borrowed).
+ * deathball: when cvars is set the three fields are the live getters of
+ * sourceQ2MatchSelection (dball_team1_skin, dball_team2_skin, goallimit);
+ * otherwise the stored values. Read them through the accessors below. */
+typedef struct qa_q2_match_selection {
+  qa_q2_match_kind kind;
+  const qa_lmctf_travel *travel;
+  qa_cvar_registry *cvars;
+  const char *team1_skin, *team2_skin;
   double goal_limit;
-} qa_comp_q2_match_selection;
-/* Malloc'd for the cvar-backed form, borrowed otherwise; see _skin_free. */
-const char *qa_comp_q2_match_selection_team1_skin(const qa_comp_q2_match_selection *selection, bool *owned);
-const char *qa_comp_q2_match_selection_team2_skin(const qa_comp_q2_match_selection *selection, bool *owned);
-double qa_comp_q2_match_selection_goal_limit(const qa_comp_q2_match_selection *selection);
+} qa_q2_match_selection;
+/* The returned skin is malloc'd (free it). */
+char *qa_q2_match_selection_team1_skin(const qa_q2_match_selection *selection);
+char *qa_q2_match_selection_team2_skin(const qa_q2_match_selection *selection);
+double qa_q2_match_selection_goal_limit(const qa_q2_match_selection *selection);
 
-/* Opaque event payloads (TS owners: q2/multiplayer/ctf/types.ts,
- * q2/multiplayer/lmctf/types.ts, q2/missionpacks/types.ts,
- * q2/missionpacks/entities/types.ts). */
-typedef struct qa_comp_q2_ctf_event qa_comp_q2_ctf_event;
-typedef struct qa_comp_lmctf_event qa_comp_lmctf_event;
-typedef struct qa_comp_q2_missionpack_player_effect qa_comp_q2_missionpack_player_effect;
-typedef struct qa_comp_q2_missionpack_entity_event qa_comp_q2_missionpack_entity_event;
+/** TS Q2CompositionEvent union on kind. Only the member of `kind` applies;
+ * event payloads are borrowed for the emit call. */
+typedef enum qa_q2_composition_event_kind {
+  QA_Q2_COMPOSITION_EVENT_CTF, QA_Q2_COMPOSITION_EVENT_LMCTF, QA_Q2_COMPOSITION_EVENT_GRAPPLE_PREDICTION,
+  QA_Q2_COMPOSITION_EVENT_KICK, QA_Q2_COMPOSITION_EVENT_MISSIONPACK_PLAYER, QA_Q2_COMPOSITION_EVENT_MISSIONPACK_ENTITY
+} qa_q2_composition_event_kind;
+typedef struct qa_q2_composition_event {
+  qa_q2_composition_event_kind kind;
+  const qa_q2_ctf_event *ctf;
+  const qa_lmctf_event *lmctf;
+  qa_actor_id actor;     /* grapple-prediction, kick */
+  bool suppressed;       /* grapple-prediction */
+  const qa_q2mp_player_effect *player_effect;
+  const qa_q2mp_entity_event *entity_event;
+} qa_q2_composition_event;
 
-typedef enum qa_comp_q2_event_kind {
-  QA_COMP_Q2_EVENT_CTF, QA_COMP_Q2_EVENT_LMCTF, QA_COMP_Q2_EVENT_GRAPPLE_PREDICTION,
-  QA_COMP_Q2_EVENT_KICK, QA_COMP_Q2_EVENT_MISSIONPACK_PLAYER, QA_COMP_Q2_EVENT_MISSIONPACK_ENTITY
-} qa_comp_q2_event_kind;
-typedef struct qa_comp_q2_event {
-  qa_comp_q2_event_kind kind;
-  const qa_comp_q2_ctf_event *ctf_event;
-  const qa_comp_lmctf_event *lmctf_event;
-  const qa_comp_q2_missionpack_player_effect *player_effect;
-  const qa_comp_q2_missionpack_entity_event *entity_event;
-  qa_actor_id actor;
-  bool suppressed;
-} qa_comp_q2_event;
+/** foreignPowerups() result. */
+typedef struct qa_q2_composition_powerups {
+  double quad_until, double_until, invulnerability_until;
+} qa_q2_composition_powerups;
 
-typedef struct qa_comp_q2_powerups {
-  double quad_until;
-  double double_until;
-  double invulnerability_until;
-} qa_comp_q2_powerups;
-
-/** TS Q2CompositionServices as fn+ctx. Optional members are NULL-able. */
-typedef struct qa_comp_q2_services {
+/** TS Q2CompositionServices. Optional TS members are NULL-able function
+ * pointers; deathmatch_flags_read/write together are TS deathmatchFlags. */
+typedef struct qa_q2_composition_services {
   void *ctx;
-  bool has_deathmatch_flags;
-  double (*flags_read)(void *ctx);
-  void (*flags_write)(void *ctx, double flags);
-  const qa_shared_grapple_control *shared_grapple;
-  /* Q2RandomItemSettings (q2/missionpacks/random-items.ts), opaque. */
-  const void *(*random_items)(void *ctx);
-  bool (*drop_quad_fire)(void *ctx);
+  double (*deathmatch_flags_read)(void *ctx);
+  void (*deathmatch_flags_write)(void *ctx, double flags);
+  qa_shared_grapple_control *shared_grapple; /* optional, borrowed */
+  qa_q2mp_random_item_settings (*random_items)(void *ctx); /* optional */
+  bool (*drop_quad_fire)(void *ctx);                        /* optional */
   double (*gravity)(void *ctx);
-  void (*emit)(void *ctx, const qa_comp_q2_event *event);
+  void (*emit)(void *ctx, qa_q2_composition_event event);
   bool hunter_camera;
   bool strong_mines;
-  qa_comp_q2_powerups (*foreign_powerups)(void *ctx, qa_actor_id actor);
-} qa_comp_q2_services;
+  qa_q2_composition_powerups (*foreign_powerups)(void *ctx, qa_actor_id actor);
+} qa_q2_composition_services;
 
-/* Q2FoundationHost / Q2GameOptions minus edition (q2/foundation/host.ts):
- * only the fields composition reads are mirrored. */
-typedef struct qa_comp_q2_game_options {
-  const char *mode; /* "deathmatch" | ... */
-  double deathmatch_flags;
-  qa_provider_id provider;
-} qa_comp_q2_game_options;
-
-/* Player movement commands (playerHooks.setMovement argument). */
-typedef struct qa_comp_q2_movement_command {
-  const char *kind; /* "noclip" | "teleport" */
-  bool enabled;     /* noclip */
-  qa_vec3 origin, angles, velocity, command_angles; /* teleport */
-  double hold_milliseconds;
-  bool spectator;
-} qa_comp_q2_movement_command;
-
-/* Q2WeaponInput (q2/foundation/weapons): only haste is adjusted here;
- * the remaining fields ride in `rest` untouched. */
-typedef struct qa_comp_q2_weapon_input {
-  bool haste;
-  const void *rest;
-} qa_comp_q2_weapon_input;
-
-struct qa_comp_q2_entity;
-struct qa_comp_q2_game_services;
-/* Q2PlayerHooks surface used by composition (q2/base/player). Optional
- * members are NULL-able. score's recipient/change/means follow TS. */
-typedef struct qa_comp_q2_player_hooks {
+/** TS Pick<Q2BaseEntityHooks, "playerPush" | "setActorGravity" | "localTime">. */
+typedef struct qa_q2_composition_entity_hooks {
   void *ctx;
-  void (*set_movement)(void *ctx, qa_actor_id actor, qa_comp_q2_movement_command command);
-  qa_vec3 (*movement_command_angles)(void *ctx, qa_actor_id actor);
-  qa_comp_q2_weapon_input (*weapon_input)(void *ctx, qa_actor_id actor);
-  void (*diagnostic)(void *ctx, const char *text); /* host.diagnostic */
-  void (*score)(void *ctx, struct qa_comp_q2_entity *victim, struct qa_comp_q2_entity *attacker,
-                struct qa_comp_q2_game_services *game, double change, double means,
-                struct qa_comp_q2_entity *recipient);
-  void (*player_spawned)(void *ctx, struct qa_comp_q2_entity *entity, struct qa_comp_q2_game_services *game);
-  struct qa_comp_q2_entity *(*select_spawn)(void *ctx, struct qa_comp_q2_entity *entity,
-                                            struct qa_comp_q2_game_services *game);
-  bool (*command)(void *ctx, struct qa_comp_q2_entity *entity, struct qa_comp_q2_game_services *game,
-                  const char *name, const char *const *args, size_t arg_count);
-  void (*before_death_inventory)(void *ctx, struct qa_comp_q2_entity *entity,
-                                 struct qa_comp_q2_game_services *game, const qa_attack_provenance *attack);
-  void (*death)(void *ctx, struct qa_comp_q2_entity *entity, struct qa_comp_q2_game_services *game,
-                const qa_attack_provenance *attack);
-  void (*disconnect)(void *ctx, struct qa_comp_q2_entity *entity, struct qa_comp_q2_game_services *game);
-  double (*quad_fire_drop_until_base)(void *ctx, qa_actor_id actor); /* forwarded, unused here */
-} qa_comp_q2_player_hooks;
+  void (*player_push)(void *ctx, qa_actor_id player, qa_vec3 velocity);
+  void (*set_actor_gravity)(void *ctx, qa_actor_id actor, double gravity);
+  qa_q2_base_local_time (*local_time)(void *ctx);
+} qa_q2_composition_entity_hooks;
 
-/* Q2ItemHooks surface used here (q2/foundation/items.ts); `rest` is
- * forwarded to the item-module constructor unchanged. */
-typedef struct qa_comp_q2_item_hooks {
-  void *ctx;
-  const void *rest;
-  bool (*weapon_picked)(void *ctx, qa_actor_id actor, qa_item_id item, bool first);
-  void (*ammo_pack)(void *ctx, qa_actor_id actor, struct qa_comp_q2_game_services *game, bool full);
-} qa_comp_q2_item_hooks;
-
-/* Q2RereleaseHooks surface used here (q2/rerelease/types.ts). */
-typedef struct qa_comp_q2_rerelease_hooks {
-  void *ctx;
-  const void *rest;
-  bool (*monster_holds_health_bar)(void *ctx, qa_actor_id actor);
-  void (*clear_expansion_powerups)(void *ctx, qa_actor_id actor);
-} qa_comp_q2_rerelease_hooks;
-
-/* TS Q2CompositionOptions flattened: edition is "classic" | "rerelease";
- * rerelease-only members are ignored for classic. host/weapons and the
- * rules/options/campaign payloads stay opaque forwards. */
-typedef struct qa_comp_q2_options {
-  const char *edition;
-  qa_comp_q2_program program;
-  void *host;
-  qa_comp_q2_game_options options;
-  void *weapons;
-  qa_comp_q2_item_hooks item_hooks;
-  qa_comp_q2_player_hooks player_hooks;
-  const void *player_rules;    /* Partial<Q2PlayerRules>, optional */
-  bool has_match;
-  qa_comp_q2_match_selection match;
-  const void *entity_hooks;    /* Pick<Q2BaseEntityHooks, ...> */
-  qa_comp_q2_services services;
-  qa_comp_q2_rerelease_hooks rerelease_hooks;
-  const void *rerelease_options; /* Partial<Q2RereleaseOptions>, optional */
-  const void *campaign;          /* Q2RereleaseCampaignState, optional */
-} qa_comp_q2_options;
+/** TS Q2CompositionOptions (Q2CompositionCommon & the edition union).
+ * options.edition is ignored (TS Omit<Q2GameOptions, "edition">); edition
+ * selects the union member. player_rules_mask 0 = TS undefined playerRules
+ * (QA_Q2_RULE_* bits, base/player/types.h). match NULL = TS undefined.
+ * The rerelease_* members and campaign apply to the rerelease edition only;
+ * rerelease_options NULL and campaign NULL are TS undefined. host, weapons,
+ * match, rerelease_options and campaign are borrowed and must outlive the
+ * runtime. */
+typedef struct qa_q2_composition_options {
+  qa_q2_edition edition;
+  qa_q2_program program;
+  qa_q2_foundation_host *host;
+  qa_q2_game_options options;
+  qa_q2w_weapons *weapons;
+  qa_q2_item_hooks item_hooks;
+  qa_q2_player_hooks player_hooks;
+  qa_q2_base_player_rules player_rules;
+  uint32_t player_rules_mask;
+  const qa_q2_match_selection *match;
+  qa_q2_composition_entity_hooks entity_hooks;
+  qa_q2_composition_services services;
+  qa_q2_rerelease_hooks rerelease_hooks;
+  const qa_q2_rerelease_options_changes *rerelease_options;
+  qa_q2_rerelease_campaign_state *campaign;
+} qa_q2_composition_options;
 
 #endif

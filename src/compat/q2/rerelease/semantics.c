@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static int compare_rows(const void *a, const void *b) {
   double d = ((const qa_compat_q2_rerelease_inventory_item *)a)->source_index - ((const qa_compat_q2_rerelease_inventory_item *)b)->source_index;
@@ -45,7 +46,7 @@ const qa_compat_q2_rerelease_inventory_item *qa_compat_q2_rerelease_inventory_it
   for (size_t i = 0; i < count; i++) if (strcmp(items[i].item, profile->armor.cells) == 0) cells_ok = items[i].source_index == profile->armor.cells_index;
   if ((double)count != profile->client.inventory_count || !cells_ok)
     qa_range_error("Native inventory roster differs from the declared source storage");
-  qsort(items, count, sizeof *items, compare_rows);
+  qa_js_sort(items, count, sizeof *items, compare_rows);
   free(indices);
   if (out_count) *out_count = count;
   return items;

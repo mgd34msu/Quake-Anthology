@@ -75,8 +75,10 @@ void qa_qvm_write_script_token_memory(qa_qvm_writable_view *view,
                                       qa_ui_source_token_memory *value) {
   char text[QA_UI_SOURCE_TOKEN_STRING_BYTES];
   qa_ui_source_token_string(value, text);
-  write_token(view, text, strlen(text), qa_ui_source_token_type(value),
-              qa_ui_source_token_subtype(value),
-              qa_ui_source_token_integer_value(value),
-              qa_ui_source_token_float_value(value));
+  size_t extent = strlen(text);
+  int32_t type = qa_ui_source_token_type(value);
+  int64_t subtype = qa_ui_source_token_subtype(value);
+  uint32_t integer_value = qa_ui_source_token_integer_value(value);
+  double float_value = qa_ui_source_token_float_value(value);
+  write_token(view, text, extent, type, subtype, integer_value, float_value);
 }

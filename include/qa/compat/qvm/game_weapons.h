@@ -130,7 +130,7 @@ void qa_qvm_primary_weapons_set_score(qa_qvm_primary_weapons *weapons, qa_actor_
                                       double score);
 /* kind keeps its exact strings ("client-command" | "movement-slice"). */
 int32_t qa_qvm_primary_weapons_equipment_movement(qa_qvm_primary_weapons *weapons,
-                                                  qa_qvmy_function_call *call, const char *kind,
+                                                  qa_qvm_module_function_call *call, const char *kind,
                                                   qa_qvm_primary_weapon_run_fn run, void *run_ctx);
 bool qa_qvm_primary_weapons_settled(qa_qvm_primary_weapons *weapons, qa_actor_id actor);
 /* Returns the item or NULL (TS null). */

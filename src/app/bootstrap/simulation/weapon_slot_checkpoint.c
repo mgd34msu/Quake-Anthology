@@ -54,8 +54,11 @@ qa_grapple_weapon_state qa_app_sim_read_grapple_weapon_state(const qa_save_reade
   static const char *const phases[] = {"activating", "ready", "firing", "dropping"};
   qa_save_reader state = fld(reader, "animation");
   qa_grapple_weapon_state out; memset(&out, 0, sizeof out);
-  out.handoff = fchoice(reader, "handoff", handoffs, 3);
-  out.animation.phase = fchoice(&state, "phase", phases, 4);
+  /* The choice lists follow the qa_q2w_handoff / qa_q2w_phase enum order. */
+  const char *handoff = fchoice(reader, "handoff", handoffs, 3);
+  for (int i = 0; i < 3; i++) if (strcmp(handoff, handoffs[i]) == 0) out.handoff = (qa_q2w_handoff)i;
+  const char *phase = fchoice(&state, "phase", phases, 4);
+  for (int i = 0; i < 4; i++) if (strcmp(phase, phases[i]) == 0) out.animation.phase = (qa_q2w_phase)i;
   out.animation.frame = fintmin(&state, "frame", 0);
   out.animation.latched_attack = fbool(&state, "latchedAttack");
   out.animation.source_firing = fbool(&state, "sourceFiring");

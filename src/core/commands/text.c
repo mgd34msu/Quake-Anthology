@@ -117,6 +117,17 @@ static parsed_token parse_token(const char *text, size_t length, size_t start,
   return result;
 }
 
+typedef struct macro_unwind {
+  char **text;
+  char **token;
+} macro_unwind;
+static void macro_release(void *raw) {
+  macro_unwind *unwind = (macro_unwind *)raw;
+  free(*unwind->text);
+  *unwind->text = NULL;
+  free(*unwind->token);
+  *unwind->token = NULL;
+}
 bool qa_expand_command_macros(const char *input, qa_command_variable_fn variable,
                               void *variable_ctx, qa_command_print_fn print,
                               void *print_ctx, qa_command_text_mode mode, char **out) {
@@ -129,6 +140,12 @@ bool qa_expand_command_macros(const char *input, qa_command_variable_fn variable
     free(text);
     return false;
   }
+  /* parse_token raises a catchable RangeError on a long quoted name, and the variable callback may raise. */
+  char *token_value = NULL;
+  macro_unwind unwind = {&text, &token_value};
+  qa_cleanup node;
+  qa_cleanup_push(&node, macro_release, &unwind);
+  bool result = true;
   int quoted = 0, count = 0;
   for (size_t offset = 0; text[offset] != '\0'; offset++) {
     if (text[offset] == '"') quoted = !quoted;
@@ -136,40 +153,46 @@ bool qa_expand_command_macros(const char *input, qa_command_variable_fn variable
     parsed_token token = parse_token(text, strlen(text), offset + 1,
                                      QA_COMMAND_DIALECT_Q2_CLASSIC, mode);
     if (!token.has_token) continue;
-    if (token.value == NULL) { free(text); return true; } /* OOM only */
-    const char *value = variable(variable_ctx, token.value);
+    token_value = token.value;
+    if (token_value == NULL) goto discard; /* OOM only: result stays true with *out NULL */
+    const char *value = variable(variable_ctx, token_value);
     size_t value_length = strlen(value);
     budget_length += value_length;
     if (budget_length >= 1024) {
       print(print_ctx, "Expanded line exceeded 1024 chars, discarded.\n");
-      free(token.value);
-      free(text);
-      return false;
+      result = false;
+      goto discard;
     }
     size_t tail_start = token.end;
     size_t new_length = offset + value_length + strlen(text + tail_start);
     char *replaced = (char *)malloc(new_length + 1);
-    if (replaced == NULL) { free(token.value); free(text); return true; }
+    if (replaced == NULL) goto discard; /* OOM only */
     memcpy(replaced, text, offset);
     memcpy(replaced + offset, value, value_length);
     strcpy(replaced + offset + value_length, text + tail_start);
-    free(token.value);
+    free(token_value);
+    token_value = NULL;
     free(text);
     text = replaced;
     offset--; /* size_t underflow at 0 wraps, then offset++ restores 0 */
     if (++count == 100) {
       print(print_ctx, "Macro expansion loop, discarded.\n");
-      free(text);
-      return false;
+      result = false;
+      goto discard;
     }
   }
   if (quoted) {
     print(print_ctx, "Line has unmatched quote, discarded.\n");
-    free(text);
-    return false;
+    result = false;
+    goto discard;
   }
+  qa_cleanup_pop(&node);
   *out = text;
   return true;
+discard:
+  qa_cleanup_pop(&node);
+  macro_release(&unwind);
+  return result;
 }
 
 char *qa_command_text_tail(const char *input, qa_command_dialect dialect, int64_t count) {
@@ -209,6 +232,18 @@ void qa_command_tokens_destroy(qa_command_tokens *tokens) {
   tokens->args_text = NULL;
 }
 
+/* A token overflow raises a catchable RangeError (dispatch prints it and ignores the line): the
+   tokens read so far and the argument text are released by this node. */
+typedef struct tokenize_unwind {
+  qa_command_tokens *out;
+  char **args_text;
+} tokenize_unwind;
+static void tokenize_release(void *raw) {
+  tokenize_unwind *unwind = (tokenize_unwind *)raw;
+  free(*unwind->args_text);
+  *unwind->args_text = NULL;
+  qa_command_tokens_destroy(unwind->out);
+}
 bool qa_tokenize_command(const char *input, qa_command_dialect dialect,
                          qa_command_text_mode mode, qa_command_tokens *out) {
   out->argv = NULL;
@@ -219,6 +254,10 @@ bool qa_tokenize_command(const char *input, qa_command_dialect dialect,
   size_t capacity = 0, offset = 0, stored_bytes = 0;
   char *args_text = copy_range("", 0, 0);
   if (args_text == NULL) return false;
+  tokenize_unwind unwind = {out, &args_text};
+  qa_cleanup node;
+  qa_cleanup_push(&node, tokenize_release, &unwind);
+  bool ok = true;
   while (offset < length) {
     while (offset < length && is_whitespace(input, offset, mode) &&
            (dialect == QA_COMMAND_DIALECT_Q3 || input[offset] != '\n')) offset++;
@@ -232,18 +271,16 @@ bool qa_tokenize_command(const char *input, qa_command_dialect dialect,
       } else {
         args_text = copy_range(input, offset, length);
       }
-      if (args_text == NULL) { qa_command_tokens_destroy(out); return false; }
+      if (args_text == NULL) { ok = false; break; }
     }
     parsed_token token = parse_token(input, length, offset, dialect, mode);
     if (!token.has_token) break;
-    if (token.value == NULL) { free(args_text); qa_command_tokens_destroy(out); return false; }
+    if (token.value == NULL) { ok = false; break; }
     offset = token.end;
     if (out->argc < maximum_tokens) {
       stored_bytes += strlen(token.value) + 1;
       if (dialect == QA_COMMAND_DIALECT_Q3 && stored_bytes > 9216) {
         free(token.value);
-        free(args_text);
-        qa_command_tokens_destroy(out);
         qa_range_error("Command tokens overflow source cmd_tokenized");
       }
       if (out->argc == capacity) {
@@ -251,9 +288,8 @@ bool qa_tokenize_command(const char *input, qa_command_dialect dialect,
         char **grown = (char **)realloc(out->argv, grown_capacity * sizeof *grown);
         if (grown == NULL) {
           free(token.value);
-          free(args_text);
-          qa_command_tokens_destroy(out);
-          return false;
+          ok = false;
+          break;
         }
         out->argv = grown;
         capacity = grown_capacity;
@@ -263,6 +299,11 @@ bool qa_tokenize_command(const char *input, qa_command_dialect dialect,
       free(token.value);
     }
     if (dialect == QA_COMMAND_DIALECT_Q3 && out->argc == maximum_tokens) break;
+  }
+  qa_cleanup_pop(&node);
+  if (!ok) {
+    tokenize_release(&unwind);
+    return false;
   }
   if (dialect == QA_COMMAND_DIALECT_Q3) {
     free(args_text);

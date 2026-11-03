@@ -10,6 +10,7 @@
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
 #include "qa/settings/server/profile.h"
+#include "qa/ui/common/controls.h"
 #include "qa/ui/common/layout.h"
 
 typedef struct server_state server_state;
@@ -32,6 +33,7 @@ struct server_state {
   char scratch[64];
   /* Detail-menu settingControl binding (one live control). */
   qa_ui_setting_binding detail_binding;
+  qa_ui_setting_control_storage detail_storage;
   const qa_ui_choice *detail_choices;
   size_t detail_choice_count;
   char *detail_default;
@@ -76,45 +78,16 @@ static const qa_bound_server_setting *find_binding(server_state *s,
   return NULL;
 }
 
-/* TS lines(): greedy word wrap at 60 (byte lengths here; TS counts
- * UTF-16 units). Stores at most max_lines pooled lines. */
+/* TS lines(): wrapWords(text, 60). Stores at most max_lines pooled lines. */
 static size_t wrap_lines(server_state *s, const char *text, size_t first_slot,
                          size_t max_lines) {
-  size_t made = 0;
-  char line[1024];
-  size_t line_len = 0;
-  line[0] = '\0';
-  const char *p = text;
-  while (*p != '\0') {
-    while (qa_input_js_space((unsigned char)*p)) p++;
-    if (*p == '\0') break;
-    const char *start = p;
-    while (*p != '\0' && !qa_input_js_space((unsigned char)*p)) p++;
-    size_t word_len = (size_t)(p - start);
-    if (line_len + word_len > 60 && line_len > 0) {
-      if (made < max_lines && first_slot + made < 16)
-        pool(&s->labels[first_slot + made], line);
-      made++;
-      line_len = 0;
-      line[0] = '\0';
-    }
-    if (line_len > 0 && line_len + 1 < sizeof line) {
-      line[line_len++] = ' ';
-      line[line_len] = '\0';
-    }
-    size_t take = word_len;
-    if (line_len + take >= sizeof line) take = sizeof line - 1 - line_len;
-    memcpy(line + line_len, start, take);
-    line_len += take;
-    line[line_len] = '\0';
-    if (made >= max_lines) continue;
-  }
-  if (line_len > 0) {
-    if (made < max_lines && first_slot + made < 16)
-      pool(&s->labels[first_slot + made], line);
-    made++;
-  }
-  return made < max_lines ? made : max_lines;
+  size_t count = 0;
+  char **lines = qa_ui_wrap_words(text, 60, &count);
+  size_t made = count < max_lines ? count : max_lines;
+  for (size_t i = 0; i < made; i++)
+    if (first_slot + i < 16) pool(&s->labels[first_slot + i], lines[i]);
+  qa_ui_wrapped_lines_free(lines, count);
+  return made;
 }
 
 /* parseServerSetting's RangeError messages, checked non-fatally so
@@ -387,8 +360,12 @@ static qa_ui_menu root_factory(void *v) {
     snprintf(id, sizeof id, "ui:server:%s", def->id);
     qa_server_setting_status_free(&status);
     pool(&s->targets[at], def->id);
-    s->controls[at] = button(s, at, pool(&s->ids[at], id),
-                             pool(&s->labels[at], label),
+    server_state * s2 = s;
+    size_t slot = at;
+    const char * id2 = pool(&s->ids[at], id);
+    const char * label2 = pool(&s->labels[at], label);
+    s->controls[at] = button(s2, slot, id2,
+                             label2,
                              (double)(i - first), S_ITEM, true);
     at++;
   }
@@ -447,7 +424,7 @@ static qa_ui_menu detail_factory(void *v) {
       b->choices = detail_choices;
       s->controls[at++] = qa_ui_setting_control(
           b, qa_ui_menu_row_default(0),
-          qa_native_ui_controller_get_seat(s->controller), NULL, 0);
+          qa_native_ui_controller_get_seat(s->controller), &s->detail_storage);
     } else {
       qa_ui_control entry;
       memset(&entry, 0, sizeof entry);
@@ -473,13 +450,21 @@ static qa_ui_menu detail_factory(void *v) {
     snprintf(text, sizeof text, "Desired: %s   Effective: %s",
              status.desired != NULL ? status.desired : "",
              status.effective != NULL ? status.effective : "");
-    s->controls[at] = info(s, at, pool(&s->ids[at], "ui:server:info-desired"),
-                           pool(&s->labels[at], text), 1);
+    server_state * s5 = s;
+    size_t slot5 = at;
+    char * id5 = pool(&s->ids[at], "ui:server:info-desired");
+    const char * label5 = pool(&s->labels[at], text);
+    s->controls[at] = info(s5, slot5, id5,
+                           label5, 1);
     at++;
     snprintf(text, sizeof text, "Default: %s",
              def->default_value != NULL ? def->default_value : "");
-    s->controls[at] = info(s, at, pool(&s->ids[at], "ui:server:info-default"),
-                           pool(&s->labels[at], text), 2);
+    server_state * s4 = s;
+    size_t slot4 = at;
+    char * id4 = pool(&s->ids[at], "ui:server:info-default");
+    const char * label4 = pool(&s->labels[at], text);
+    s->controls[at] = info(s4, slot4, id4,
+                           label4, 2);
     at++;
     if (status.pending)
       snprintf(text, sizeof text, "Pending: applies on %s",
@@ -489,8 +474,12 @@ static qa_ui_menu detail_factory(void *v) {
     else
       snprintf(text, sizeof text, "Changes apply on %s",
                apply_when(status.apply_at));
-    s->controls[at] = info(s, at, pool(&s->ids[at], "ui:server:info-timing"),
-                           pool(&s->labels[at], text), 3);
+    server_state * s3 = s;
+    size_t slot3 = at;
+    char * id3 = pool(&s->ids[at], "ui:server:info-timing");
+    const char * label3 = pool(&s->labels[at], text);
+    s->controls[at] = info(s3, slot3, id3,
+                           label3, 3);
     at++;
     qa_server_setting_status_free(&status);
     size_t base = at;
@@ -515,8 +504,12 @@ static qa_ui_menu detail_factory(void *v) {
                def->integer ? "Whole numbers" : "Numbers", low, high);
       free(low);
       free(high);
-      s->controls[at] = info(s, at, pool(&s->ids[at], "ui:server:info-range"),
-                             pool(&s->labels[at], text), 6);
+      server_state * s2 = s;
+      size_t slot2 = at;
+      char * id2 = pool(&s->ids[at], "ui:server:info-range");
+      const char * label2 = pool(&s->labels[at], text);
+      s->controls[at] = info(s2, slot2, id2,
+                             label2, 6);
       at++;
     }
     s->controls[at] = button(s, at, "ui:server:apply", "Apply", 7, S_APPLY,

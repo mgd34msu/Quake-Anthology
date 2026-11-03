@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/monsters/medic.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/monsters/medic.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 
@@ -13,15 +14,15 @@ static const qa_vec3 cable_offsets[10] = {
   {45, -9.2, 15.5}, {48.4, -9.7, 15.2}, {47.8, -9.8, 15.8}, {47.3, -9.3, 14.3}, {45.4, -10.1, 13.1},
   {41.9, -12.7, 12}, {37.8, -15.8, 11.2}, {34.3, -18.4, 10.7}, {32.7, -19.7, 10.4}, {32.7, -19.7, 10.4}};
 
-static qa_q2f_entity *patient(qa_q2m_monsters *monsters, qa_q2m_context *c) {
-  qa_q2f_entity *best = NULL;
+static qa_q2_entity *patient(qa_q2m_monsters *monsters, qa_q2m_context *c) {
+  qa_q2_entity *best = NULL;
   size_t count = 0;
   const qa_actor_id *actors = c->game->host->nearby(c->game->host->ctx, q2bm_body(c->game, c->entity).origin, 1024, &count);
   for (size_t i = 0; i < count; i++) {
     qa_actor_id actor = actors[i];
-    qa_q2f_entity *entity = c->game->entity(c->game->ctx, &actor);
+    qa_q2_entity *entity = c->game->entity(c->game->ctx, &actor);
     qa_q2m_context *candidate = qa_q2m_monsters_context(monsters, actor);
-    if (entity == NULL || entity == c->entity || ((uint32_t)entity->server_flags & 4u) == 0
+    if (entity == NULL || entity == c->entity || (qa_js_to_uint32(entity->server_flags) & 4u) == 0
         || (candidate && candidate->state->good_guy) || entity->has_owner
         || qa_q2m_health(c->game, &actor) > 0 || entity->has_next_think || !qa_q2m_visible(c, &actor))
       continue;
@@ -30,7 +31,7 @@ static qa_q2f_entity *patient(qa_q2m_monsters *monsters, qa_q2m_context *c) {
   return best;
 }
 static bool acquire(qa_q2m_monsters *monsters, qa_q2m_context *c, bool preserve_enemy) {
-  qa_q2f_entity *target = patient(monsters, c);
+  qa_q2_entity *target = patient(monsters, c);
   if (target == NULL) return false;
   if (preserve_enemy) {
     c->state->has_old_enemy = c->entity->has_enemy;
@@ -78,7 +79,7 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *target = c->game->entity(c->game->ctx, c->entity->has_enemy ? &c->entity->enemy : NULL);
+  qa_q2_entity *target = c->game->entity(c->game->ctx, c->entity->has_enemy ? &c->entity->enemy : NULL);
   if (target && target->has_owner && qa_same_actor(target->owner, c->entity->actor.id))
     target->has_owner = false;
   qa_q2bm_begin_death_default(c, reaction, "medic/meddeth1.wav", "medic_move_death");
@@ -125,9 +126,9 @@ static void fire_blaster_fn(void *ctx, qa_q2m_context *c) {
 }
 static void cable_attack_fn(void *ctx, qa_q2m_context *c) {
   qa_q2m_monsters *monsters = ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *target = game->entity(game->ctx, entity->has_enemy ? &entity->enemy : NULL);
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *target = game->entity(game->ctx, entity->has_enemy ? &entity->enemy : NULL);
   if (target == NULL) return;
   qa_vec3 start = qa_q2m_project_flash_default(
       c, cable_offsets[qa_q2m_record_at(10, entity->frame - qa_q2bm_medic_frames_value.attack42)]);
@@ -141,9 +142,9 @@ static void cable_attack_fn(void *ctx, qa_q2m_context *c) {
   if (trace.fraction != 1 && (trace.hit.kind != QA_TRACE_HIT_ACTOR || !qa_same_actor(trace.hit.actor, target->actor.id)))
     return;
   if (entity->frame == qa_q2bm_medic_frames_value.attack43) {
-    qa_q2f_presentation_event e;
+    qa_q2_presentation_event e;
     memset(&e, 0, sizeof e);
-    e.kind = QA_Q2F_EVENT_SOUND; e.actor = &target->actor.id; e.origin = body.origin;
+    e.kind = "sound"; e.has_actor = true; e.actor = target->actor.id; e.origin = body.origin;
     e.path = "medic/medatck3.wav"; e.channel = 0; e.volume = 1; e.attenuation = 1;
     e.reliable = false; e.loop = "once";
     game->host->emit(game->host->ctx, e);
@@ -157,7 +158,7 @@ static void cable_attack_fn(void *ctx, qa_q2m_context *c) {
     target->has_owner = false;
     if (target->think.fn != NULL) {
       target->has_next_think = true; target->next_think = q2bm_now(game);
-      qa_q2f_think think = target->think;
+      qa_q2_think think = target->think;
       think.fn(think.ctx, target, game);
     }
     revived->state->resurrecting = true;
@@ -172,12 +173,12 @@ static void cable_attack_fn(void *ctx, qa_q2m_context *c) {
   qa_vec3 end = current.origin;
   end.z = current.origin.z + (current.bounds.min.z + current.bounds.max.z) / 2;
   qa_vec3 forward = qa_math_angle_vectors_rule(q2bm_body(game, entity).angles, QA_ANGLE_RULE_NATIVE).forward;
-  qa_q2bm_extended_event beam;
+  qa_q2_presentation_event beam;
   memset(&beam, 0, sizeof beam);
-  beam.kind = "monster-beam"; beam.effect = "medic"; beam.actor = entity->actor.id;
+  beam.kind = "monster-beam"; beam.effect = "medic"; beam.has_actor = true; beam.actor = entity->actor.id;
   beam.start = qa_add3_double(start, qa_scale3_double(forward, 8));
   beam.end = end;
-  qa_q2bm_emit_extended(beam);
+  game->host->emit(game->host->ctx, beam);
 }
 void qa_q2bm_create_medic_definition(qa_q2bm_medic_definition *out, qa_q2m_monsters *monsters) {
   qa_q2m_named_handler callbacks[11] = {

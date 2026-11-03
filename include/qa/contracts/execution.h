@@ -73,23 +73,6 @@ typedef struct qa_module_identity {
   const char *revision;
 } qa_module_identity;
 
-/* TS SourceGameLifecycle union on kind: "quakec" (startFrame),
- * "q2-classic" (runFrame), "q2-rerelease" (runFrame+prepFrame), "q3"
- * (runFrame(levelTimeMilliseconds)). Callbacks become fn ptr + ctx. */
-typedef enum qa_source_game_lifecycle_kind {
-  QA_LIFECYCLE_QUAKEC, QA_LIFECYCLE_Q2_CLASSIC, QA_LIFECYCLE_Q2_RERELEASE, QA_LIFECYCLE_Q3
-} qa_source_game_lifecycle_kind;
-typedef struct qa_source_game_lifecycle {
-  qa_source_game_lifecycle_kind kind;
-  qa_module_identity module;
-  qa_game_api_identity api;
-  void *ctx;
-  void (*start_frame)(void *ctx);
-  void (*run_frame)(void *ctx, double level_time_milliseconds);
-  void (*run_frame_main_loop)(void *ctx, bool main_loop);
-  void (*prep_frame)(void *ctx);
-} qa_source_game_lifecycle;
-
 /* TS NativeAbi union. image: "pe32"|"pe32+"|"elf32"|"elf64";
  * call: "cdecl"|"microsoft-x64"|"system-v-i386"|"system-v-x86-64",
  * plus NativeCallAbi's extra windows-i386 calls "stdcall"|"thiscall"|
@@ -207,6 +190,7 @@ typedef struct qa_raw_entity_table {
   qa_guest_layout layout;
   qa_raw_entity_view (*at_slot)(void *ctx, double slot);
   qa_raw_entity_view (*from_pointer)(void *ctx, qa_guest_address address);
+  double (*live_count)(void *ctx); /* TS `get count()`; NULL where only `count` is kept */
 } qa_raw_entity_table;
 
 /* TS GuestCallbackReference union on kind. */
@@ -302,13 +286,82 @@ typedef struct qa_guest_executor {
   void (*restore)(void *ctx, const qa_guest_checkpoint *checkpoint);
 } qa_guest_executor;
 
-/* TS GuestMemoryRegion permissions:
- * "read"|"read-write"|"read-execute"|"read-write-execute". */
+/* TS GuestRegionPermissions: "none"|"read"|"read-write"|"read-execute"|
+ * "read-write-execute"|"execute" (exact strings). */
+typedef const char *qa_guest_region_permissions;
+/* TS GuestMemoryRegion. */
 typedef struct qa_guest_memory_region {
   int64_t base; /* TS bigint */
-  const char *permissions;
+  qa_guest_region_permissions permissions;
   qa_byte_view bytes;
 } qa_guest_memory_region;
+/* TS GuestMappingRecord. */
+typedef struct qa_guest_mapping_record {
+  int64_t base; /* TS bigint */
+  double byte_length;
+  qa_guest_region_permissions permissions;
+  const char *label;
+} qa_guest_mapping_record;
+/* TS GuestAllocatorImage: the allocation cursor and the pooled-page
+ * bookkeeping of a guest address space. */
+typedef struct qa_guest_allocator_hint {
+  int64_t alignment, base; /* TS bigint */
+  double byte_length;
+} qa_guest_allocator_hint;
+typedef struct qa_guest_allocator_slab {
+  int64_t base; /* TS bigint */
+  qa_byte_view used;
+  double next;
+} qa_guest_allocator_slab;
+typedef struct qa_guest_allocator_image {
+  const qa_guest_allocator_hint *hints;
+  size_t hint_count;
+  const qa_guest_allocator_slab *slabs;
+  size_t slab_count;
+  const double *free_pages;
+  size_t free_page_count;
+} qa_guest_allocator_image;
+/* TS NativeHeapBlock: a live block of the runtime's own heap table. heap is
+ * the owning Windows heap handle; zero for the System V heap. */
+typedef struct qa_native_heap_block {
+  int64_t base; /* TS bigint */
+  double size;
+  int64_t heap; /* TS bigint */
+} qa_native_heap_block;
+/* TS WindowsHeapTables. has_* false = TS null. */
+typedef struct qa_windows_reservation {
+  int64_t base; /* TS bigint */
+  double size;
+} qa_windows_reservation;
+typedef struct qa_windows_fls_slot {
+  double index;
+  bool has_callback;
+  int64_t callback; /* TS bigint | null */
+  bool has_value;
+  int64_t value; /* TS bigint | null */
+} qa_windows_fls_slot;
+typedef struct qa_windows_heap_tables {
+  const int64_t *heaps; /* TS bigint[] */
+  size_t heap_count;
+  const qa_windows_reservation *reservations;
+  size_t reservation_count;
+  const double *tls;
+  size_t tls_count;
+  /* Images saved before fiber-local storage was recorded read as none. */
+  const qa_windows_fls_slot *fls;
+  size_t fls_count;
+  double last_error;
+} qa_windows_heap_tables;
+/* TS NativeGuestHeapImage: the part of a native process game code can change
+ * after startup. Version 1 images carry none of it (TS null heap). */
+typedef struct qa_native_guest_heap_image {
+  const qa_guest_mapping_record *layout;
+  size_t layout_count;
+  qa_guest_allocator_image allocator;
+  const qa_native_heap_block *blocks;
+  size_t block_count;
+  const qa_windows_heap_tables *windows; /* NULL = TS null */
+} qa_native_guest_heap_image;
 
 typedef struct qa_quakec_stack_frame {
   double statement;
@@ -345,7 +398,10 @@ struct qa_guest_checkpoint {
   qa_byte_view data;
   double instruction_index, program_stack;
   qa_double_view operand_stack;
-  /* native-guest */
+  /* native-guest. native_version is the TS literal 2 (saves written before
+   * the heap image read as version 2 with a NULL heap). */
+  double native_version;
+  const qa_native_guest_heap_image *heap; /* NULL = TS null */
   qa_native_abi abi;
   const qa_guest_memory_region *regions;
   size_t region_count;

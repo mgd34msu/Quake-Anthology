@@ -6,8 +6,8 @@
 
 #include "qa/content/q1/missionpacks/monsters/types.h"
 
-extern const qa_q1mpm_frame_table qa_q1mpm_tables_mummy_frames;
-extern const qa_q1mpm_frame_entry qa_q1mpm_tables_mummy_entries[];
+extern const qa_q1_monster_frame_table qa_q1mpm_tables_mummy_frames;
+extern const qa_q1_monster_frame_entry qa_q1mpm_tables_mummy_entries[];
 #define QA_Q1MPM_TABLES_MUMMY_COUNT 193
 
 #endif

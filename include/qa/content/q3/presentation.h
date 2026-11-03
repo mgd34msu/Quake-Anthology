@@ -1,5 +1,6 @@
-/* Umbrella for src/content/q3/presentation/index.ts. GPL-2.0-or-later.
- * All presentation modules are ported and included below. */
+/* Umbrella of the content/q3/presentation headers. GPL-2.0-or-later.
+ * TS removed the presentation/index.ts barrel (2026-11-01 audit); this header
+ * has no TS counterpart and stays only as an include convenience for tests. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_H
 #define QA_CONTENT_Q3_PRESENTATION_H
 #include "qa/content/q3/presentation/cgame_body_profile.h"

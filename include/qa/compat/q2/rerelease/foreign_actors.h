@@ -40,6 +40,8 @@ qa_source_armor_stage qa_compat_q2_rerelease_foreign_actors_armor_stage(qa_compa
                                                                         void *armor_ctx, qa_armor_state (*armor)(void *ctx),
                                                                         qa_protection_channel channel);
 void qa_compat_q2_rerelease_foreign_actors_released(qa_compat_q2_rerelease_foreign_actors *f, qa_owned_actor actor);
+/* TS engaged: the slot's actor is owned by a projection, or a restore is rebinding slots. */
+bool qa_compat_q2_rerelease_foreign_actors_engaged(qa_compat_q2_rerelease_foreign_actors *f, double slot);
 qa_compat_q2_rerelease_lookup qa_compat_q2_rerelease_foreign_actors_lookup(qa_compat_q2_rerelease_foreign_actors *f, qa_raw_entity_view view,
                                                                            qa_owned_actor *out);
 qa_guest_address qa_compat_q2_rerelease_foreign_actors_address(qa_compat_q2_rerelease_foreign_actors *f, qa_actor_id actor);

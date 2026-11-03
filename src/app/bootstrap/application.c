@@ -6,6 +6,9 @@
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/world/session/session.h"
+#include "qa/app/bootstrap/simulation/quakec_source.h"
+#include "qa/content/mounts.h"
+#include "qa/formats/q1_map.h"
 
 typedef struct {
   char *name;
@@ -25,11 +28,15 @@ struct qa_app_application {
   qa_seat_id *ranking_requests; size_t ranking_count, ranking_cap;
   /* Owned-path composition (TS openSource owned branch). */
   qa_app_loaded_content *content;
+  qa_app_application_world world; /* borrowed view of content's world */
   qa_identity_owner identity; bool has_identity;
   char *identity_name;
   qa_engine_session *session;
   qa_session_actor_registry *actors; bool owns_actors;
   qa_app_sim_shared_simulation *simulation;
+  /* TS guestOptions input: prepared QuakeC artifact handed to
+   * loadSimulation (owned program; freed after the simulation). */
+  qa_app_sim_prepared_quakec_source prepared_quakec; bool has_prepared_quakec;
   double max_clients;
   size_t local_seats;
   qa_simulation_output last_output; bool has_last_output;
@@ -112,6 +119,19 @@ static double resolve_max_clients(qa_app_application *a,
   return capacity;
 }
 
+/* TS prepareQuakeCSource mounts.read(artifact) over the loaded
+ * content mounts (the concrete builder prepares precache resources
+ * from the same mounts). */
+static bool compose_read_quakec_artifact(void *ctx, const qa_resolved_resource_reference *artifact,
+                                         uint8_t **out, size_t *out_length) {
+  qa_content_mounted *mounts = ctx;
+  if (!mounts || !artifact) return false;
+  *out = qa_content_mounted_read_reference(mounts, artifact, out_length);
+  if (!*out && artifact->requested_path)
+    *out = qa_content_mounted_read_path(mounts, artifact->requested_path, out_length);
+  return *out != NULL;
+}
+
 static void compose_world(qa_app_application *a, const qa_executable_recipe *recipe, bool has_recipe) {
   /* TS: identity = createIdentityOwner(`quake:${product}:${map}`);
    * session = new EngineSession(identity, dedicated ? headless : local). */
@@ -164,7 +184,39 @@ static void compose_world(qa_app_application *a, const qa_executable_recipe *rec
   sim_options.has_player_colors = true;
   sim_options.player_color_top = top < 0 ? 0 : top > 13 ? 13 : top;
   sim_options.player_color_bottom = bottom < 0 ? 0 : bottom > 13 ? 13 : bottom;
-  if (a->content) sim_options.mounts = qa_app_loaded_content_mounts(a->content);
+  if (a->content) {
+    /* TS loadSimulation({world: content.world, mounts: content.mounts}).
+     * The accessor returns by value, so the application retains the
+     * view; content outlives the simulation (closed after it). A
+     * {NULL, NULL} view means the content host decoded no world, and
+     * the concrete builder then decodes from mounts. */
+    a->world = qa_app_loaded_content_world(a->content);
+    sim_options.world = &a->world;
+    sim_options.mounts = qa_app_loaded_content_mounts(a->content);
+  }
+  if (has_recipe && recipe && sim_options.mounts) {
+    /* TS guestOptions + preparedQuakeC: a QuakeC server-game
+     * execution prepares its artifact (progs.dat) from the mounts
+     * and hands it to loadSimulation; the runtime constructs the
+     * QuakeCSource game from it and runs spawnMap. The TS q2Guest/
+     * q3Guest preparations have no concrete C content accessors
+     * (preparedQ2Game/preparedQ3Game) and stay unresolved: those
+     * recipes abort in the builder with the TS messages. */
+    for (size_t i = 0; i < recipe->execution_count; i++) {
+      const qa_execution_module *module = &recipe->execution[i];
+      if (module->kind != QA_EXECUTION_MODULE_QUAKEC) continue;
+      const char *entity_text = "";
+      if (a->content && a->world.kind && strcmp(a->world.kind, "q1-bsp") == 0 && a->world.value)
+        entity_text = ((const qa_q1_map *)a->world.value)->world.entities;
+      qa_app_sim_quakec_prepare_host prepare_host = {0};
+      prepare_host.ctx = (void *)sim_options.mounts;
+      prepare_host.read_artifact = compose_read_quakec_artifact;
+      a->prepared_quakec = qa_app_sim_prepare_quakec_source(*module, entity_text, prepare_host);
+      a->has_prepared_quakec = true;
+      sim_options.prepared_quakec = &a->prepared_quakec;
+      break;
+    }
+  }
   if (a->options.server_profile) sim_options.server_profile = a->options.server_profile;
   a->simulation = qa_app_sim_load_simulation(sim_options, a->host.simulation, a->actors,
                                              qa_engine_session_id(a->session), NULL, NULL);
@@ -436,6 +488,10 @@ const char *qa_app_application_close(qa_app_application *a) {
     qa_app_sim_shared_simulation_close(a->simulation);
     qa_app_sim_shared_simulation_destroy(a->simulation);
     a->simulation = NULL;
+  }
+  if (a->has_prepared_quakec) {
+    qa_compat_qc_program_destroy(&a->prepared_quakec.program);
+    a->has_prepared_quakec = false;
   }
   const char *error = a->host.close ? a->host.close(a->host.ctx, a) : NULL;
   if (a->session) {

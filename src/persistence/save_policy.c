@@ -325,3 +325,32 @@ bool qa_write_contained_save(const char *directory, const char *path,
   free(work);
   return ok;
 }
+
+/* TS assertLoadPathAllowed (added for startup.ts routeCommand). */
+static bool load_path_inside(const char *root_input, const char *full) {
+  char *root = path_resolve(root_input, NULL);
+  if (root == NULL) qa_range_error("Out of memory");
+  size_t root_length = strlen(root);
+  bool inside = strcmp(root, full) == 0 || (strncmp(full, root, root_length) == 0 &&
+      (root_length == 1 || full[root_length] == '/'));
+  free(root);
+  return inside;
+}
+void qa_assert_load_path_allowed(const char *directory, const char *path, const qa_command_context *source,
+                                 bool allow_any_path, const char *const *trusted_directories, size_t trusted_count) {
+  if (allow_any_path) return;
+  char *full = path_resolve(path, NULL);
+  if (full == NULL) qa_range_error("Out of memory");
+  bool inside = load_path_inside(directory, full);
+  for (size_t i = 0; !inside && i < trusted_count; i++) inside = load_path_inside(trusted_directories[i], full);
+  if (inside || source == NULL || (source->producer == NULL && (source->origin.kind == QA_COMMAND_ORIGIN_LOCAL_CONSOLE
+      || source->origin.kind == QA_COMMAND_ORIGIN_SERVER_CONSOLE || source->origin.kind == QA_COMMAND_ORIGIN_LOCAL_SEAT))) {
+    free(full);
+    return;
+  }
+  char message[4096];
+  snprintf(message, sizeof message, "%s", full);
+  free(full);
+  qa_range_error("load of a path outside the save directory is only accepted from the local console; start with "
+      "--allow-load-paths to allow it from scripts, game modules and remote clients: %s", message);
+}

@@ -1,6 +1,7 @@
 /* Port of src/app/bootstrap/simulation/physics.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/physics.h"
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/app/bootstrap/simulation/new_toss.h"
@@ -12,6 +13,7 @@
 #include "qa/persistence/save_image.h"
 #include "qa/persistence/shared.h"
 #include "qa/world/actors/triggers.h"
+#include "qa/foundation/js.h"
 #define MAX_ENTRIES 1024
 #define MAX_PUSHED 1024
 typedef struct solid_entry { qa_owned_actor actor; qa_app_sim_shared_solid solid; qa_actor_id owner_storage; bool owner_is_storage; } solid_entry;
@@ -113,18 +115,64 @@ static const char *family_of(qa_app_sim_shared_physics *p, qa_owned_actor actor)
   qa_app_sim_shared_solid solid;
   return solid_of(p, actor, &solid) && solid.family != NULL ? solid.family : "q2";
 }
+bool qa_app_sim_physics_flags_has(const qa_app_sim_shared_physics_flags *f, qa_app_sim_physics_flag_key key) {
+  switch (key) {
+  case QA_APP_SIM_FLAG_TEAM_SLAVE: return f->has_team_slave;
+  case QA_APP_SIM_FLAG_ALWAYS_TOUCH: return f->has_always_touch;
+  case QA_APP_SIM_FLAG_FLY: return f->has_fly;
+  case QA_APP_SIM_FLAG_SWIM: return f->has_swim;
+  case QA_APP_SIM_FLAG_PARTIAL_GROUND: return f->has_partial_ground;
+  case QA_APP_SIM_FLAG_DEAD: return f->has_dead;
+  case QA_APP_SIM_FLAG_PLAYER: return f->has_player;
+  case QA_APP_SIM_FLAG_WATER_LEVEL: return f->has_water_level;
+  case QA_APP_SIM_FLAG_WATER_TYPE: return f->has_water_type;
+  case QA_APP_SIM_FLAG_DELTA_YAW: return f->has_delta_yaw;
+  case QA_APP_SIM_FLAG_ENEMY: return f->has_enemy;
+  case QA_APP_SIM_FLAG_COUNT: break;
+  }
+  return false;
+}
+static bool flag_key_listed(const unsigned char *keys, size_t count, unsigned char key) {
+  for (size_t i = 0; i < count; i++) if (keys[i] == key) return true;
+  return false;
+}
+size_t qa_app_sim_physics_flags_keys(const qa_app_sim_shared_physics_flags *f, unsigned char out[QA_APP_SIM_FLAG_COUNT]) {
+  size_t count = 0;
+  for (size_t i = 0; i < f->key_count && i < QA_APP_SIM_FLAG_COUNT; i++)
+    if (qa_app_sim_physics_flags_has(f, (qa_app_sim_physics_flag_key)f->key_order[i]) && !flag_key_listed(out, count, f->key_order[i]))
+      out[count++] = f->key_order[i];
+  for (unsigned char k = 0; k < QA_APP_SIM_FLAG_COUNT; k++)
+    if (qa_app_sim_physics_flags_has(f, (qa_app_sim_physics_flag_key)k) && !flag_key_listed(out, count, k)) out[count++] = k;
+  return count;
+}
+void qa_app_sim_physics_flags_order(qa_app_sim_shared_physics_flags *f, const unsigned char *keys, size_t count) {
+  unsigned char order[QA_APP_SIM_FLAG_COUNT]; size_t n = 0;
+  for (size_t i = 0; i < count; i++)
+    if (keys[i] < QA_APP_SIM_FLAG_COUNT && qa_app_sim_physics_flags_has(f, (qa_app_sim_physics_flag_key)keys[i]) && !flag_key_listed(order, n, keys[i]))
+      order[n++] = keys[i];
+  for (unsigned char k = 0; k < QA_APP_SIM_FLAG_COUNT; k++)
+    if (qa_app_sim_physics_flags_has(f, (qa_app_sim_physics_flag_key)k) && !flag_key_listed(order, n, k)) order[n++] = k;
+  memcpy(f->key_order, order, n); f->key_count = (unsigned char)n;
+}
+void qa_app_sim_physics_flags_merge(qa_app_sim_shared_physics_flags *dst, const qa_app_sim_shared_physics_flags *src) {
+  unsigned char order[QA_APP_SIM_FLAG_COUNT], added[QA_APP_SIM_FLAG_COUNT];
+  size_t n = qa_app_sim_physics_flags_keys(dst, order), m = qa_app_sim_physics_flags_keys(src, added);
+  for (size_t i = 0; i < m; i++) if (!flag_key_listed(order, n, added[i])) order[n++] = added[i];
+  if (src->has_always_touch) { dst->has_always_touch = true; dst->always_touch = src->always_touch; }
+  if (src->has_fly) { dst->has_fly = true; dst->fly = src->fly; }
+  if (src->has_swim) { dst->has_swim = true; dst->swim = src->swim; }
+  if (src->has_partial_ground) { dst->has_partial_ground = true; dst->partial_ground = src->partial_ground; }
+  if (src->has_dead) { dst->has_dead = true; dst->dead = src->dead; }
+  if (src->has_player) { dst->has_player = true; dst->player = src->player; }
+  if (src->has_water_level) { dst->has_water_level = true; dst->water_level = src->water_level; }
+  if (src->has_water_type) { dst->has_water_type = true; dst->water_type = src->water_type; }
+  if (src->has_enemy) { dst->has_enemy = true; dst->enemy = src->enemy; }
+  if (src->has_delta_yaw) { dst->has_delta_yaw = true; dst->delta_yaw = src->delta_yaw; }
+  if (src->has_team_slave) { dst->has_team_slave = true; dst->team_slave = src->team_slave; }
+  memcpy(dst->key_order, order, n); dst->key_count = (unsigned char)n;
+}
 static void merge_flags(qa_app_sim_shared_physics_flags *dst, qa_app_sim_shared_physics_flags src) {
-  if (src.has_always_touch) { dst->has_always_touch = true; dst->always_touch = src.always_touch; }
-  if (src.has_fly) { dst->has_fly = true; dst->fly = src.fly; }
-  if (src.has_swim) { dst->has_swim = true; dst->swim = src.swim; }
-  if (src.has_partial_ground) { dst->has_partial_ground = true; dst->partial_ground = src.partial_ground; }
-  if (src.has_dead) { dst->has_dead = true; dst->dead = src.dead; }
-  if (src.has_player) { dst->has_player = true; dst->player = src.player; }
-  if (src.has_water_level) { dst->has_water_level = true; dst->water_level = src.water_level; }
-  if (src.has_water_type) { dst->has_water_type = true; dst->water_type = src.water_type; }
-  if (src.has_enemy) { dst->has_enemy = true; dst->enemy = src.enemy; }
-  if (src.has_delta_yaw) { dst->has_delta_yaw = true; dst->delta_yaw = src.delta_yaw; }
-  if (src.has_team_slave) { dst->has_team_slave = true; dst->team_slave = src.team_slave; }
+  qa_app_sim_physics_flags_merge(dst, &src);
 }
 static qa_app_sim_shared_physics_flags actor_flags(qa_app_sim_shared_physics *p, qa_owned_actor actor) {
   qa_app_sim_shared_physics_flags out; memset(&out, 0, sizeof out);
@@ -150,11 +198,17 @@ static void store_motion(qa_app_sim_shared_physics *p, qa_q2_motion motion) {
   if (p->motion_count >= MAX_ENTRIES) qa_range_error("Out of memory");
   p->motions[p->motion_count++] = (motion_entry){motion.actor, motion};
 }
+/* TS stores ActorId values: the owner is copied into the entry, never borrowed from the caller. */
 static void store_solid(qa_app_sim_shared_physics *p, qa_owned_actor actor, qa_app_sim_shared_solid solid) {
   solid_entry *e = solid_entry_of(p, actor);
-  if (e) { e->solid = solid; e->owner_is_storage = false; return; }
-  if (p->solid_count >= MAX_ENTRIES) qa_range_error("Out of memory");
-  p->solids[p->solid_count++] = (solid_entry){actor, solid, actor.id, false};
+  if (!e) {
+    if (p->solid_count >= MAX_ENTRIES) qa_range_error("Out of memory");
+    e = &p->solids[p->solid_count++];
+    e->actor = actor;
+  }
+  e->solid = solid;
+  e->owner_is_storage = solid.owner != NULL;
+  if (solid.owner != NULL) { e->owner_storage = *solid.owner; e->solid.owner = &e->owner_storage; }
 }
 static void emit_event(qa_app_sim_shared_physics *p, qa_app_sim_physics_event event) {
   if (p->options.event) { p->options.event(p->options.ctx, event); return; }
@@ -195,9 +249,9 @@ static qa_bounds absolute_bounds_of(qa_app_sim_shared_physics *p, qa_owned_actor
   qa_app_sim_shared_solid solid; bool has_solid = solid_of(p, actor, &solid);
   qa_bounds bounds = {vadd(p, state.origin, state.bounds.min), vadd(p, state.origin, state.bounds.max)};
   if (has_solid && is(solid.solid, "brush") && moving3(state.angles)) {
-    qa_vec3 extent = {fmax(fabs(state.bounds.min.x), fabs(state.bounds.max.x)),
-        fmax(fabs(state.bounds.min.y), fabs(state.bounds.max.y)),
-        fmax(fabs(state.bounds.min.z), fabs(state.bounds.max.z))};
+    qa_vec3 extent = {qa_js_max(fabs(state.bounds.min.x), fabs(state.bounds.max.x)),
+        qa_js_max(fabs(state.bounds.min.y), fabs(state.bounds.max.y)),
+        qa_js_max(fabs(state.bounds.min.z), fabs(state.bounds.max.z))};
     double radius = p->numeric.square_root(p->numeric.ctx, vdot(p, extent, extent));
     qa_vec3 offset = {radius, radius, radius};
     bounds.min = vsub(p, state.origin, offset);
@@ -249,19 +303,23 @@ static void on_body_unlink(void *ctx, qa_actor_id actor) {
 static void erase_actor(qa_app_sim_shared_physics *p, qa_owned_actor actor) {
   for (int i = 0; i < MAX_ENTRIES; i++)
     if (p->sources[i].used && same_owned(p->sources[i].actor, actor)) p->sources[i].used = false;
+  /* TS Map.delete keeps the remaining entries in insertion order (the checkpoint writes that order). */
   for (size_t i = 0; i < p->solid_count;) if (same_owned(p->solids[i].actor, actor)) {
-    p->solids[i] = p->solids[--p->solid_count];
-    if (p->solids[i].owner_is_storage) p->solids[i].solid.owner = &p->solids[i].owner_storage;
+    memmove(&p->solids[i], &p->solids[i + 1], (p->solid_count - i - 1) * sizeof *p->solids); p->solid_count--;
   } else i++;
+  for (size_t i = 0; i < p->solid_count; i++) if (p->solids[i].owner_is_storage) p->solids[i].solid.owner = &p->solids[i].owner_storage;
   for (size_t i = 0; i < p->collision_count;) if (same_owned(p->collisions[i].actor, actor)) {
-    p->collisions[i] = p->collisions[--p->collision_count];
+    memmove(&p->collisions[i], &p->collisions[i + 1], (p->collision_count - i - 1) * sizeof *p->collisions); p->collision_count--;
+  } else i++;
+  for (size_t i = 0; i < p->collision_count; i++)
     if (p->collisions[i].owner_is_storage) p->collisions[i].collision.owner = &p->collisions[i].owner_storage;
+  for (size_t i = 0; i < p->motion_count;) if (same_owned(p->motions[i].actor, actor)) {
+    memmove(&p->motions[i], &p->motions[i + 1], (p->motion_count - i - 1) * sizeof *p->motions); p->motion_count--;
   } else i++;
-  for (size_t i = 0; i < p->motion_count;) if (same_owned(p->motions[i].actor, actor)) p->motions[i] = p->motions[--p->motion_count]; else i++;
   for (size_t i = 0; i < p->flag_count;) if (same_owned(p->flags[i].actor, actor)) {
-    p->flags[i] = p->flags[--p->flag_count];
-    if (p->flags[i].enemy_is_storage) p->flags[i].flags.enemy = &p->flags[i].enemy_storage;
+    memmove(&p->flags[i], &p->flags[i + 1], (p->flag_count - i - 1) * sizeof *p->flags); p->flag_count--;
   } else i++;
+  for (size_t i = 0; i < p->flag_count; i++) if (p->flags[i].enemy_is_storage) p->flags[i].flags.enemy = &p->flags[i].enemy_storage;
 }
 static void on_actor_release(void *ctx, qa_owned_actor actor) { erase_actor(ctx, actor); }
 qa_app_sim_shared_physics *qa_app_sim_shared_physics_create(qa_app_sim_shared_physics_options options) {
@@ -324,11 +382,14 @@ void qa_app_sim_shared_physics_set_solid(qa_app_sim_shared_physics *physics, qa_
 void qa_app_sim_shared_physics_set_collision(qa_app_sim_shared_physics *physics, qa_owned_actor actor, qa_actor_collision collision) {
   qa_session_actor_registry_assert_owned(physics->options.actors, actor);
   collision_entry *e = collision_entry_of(physics, actor);
-  if (e) { e->collision = collision; e->owner_is_storage = false; }
-  else {
+  if (!e) {
     if (physics->collision_count >= MAX_ENTRIES) qa_range_error("Out of memory");
-    physics->collisions[physics->collision_count++] = (collision_entry){actor, collision, actor.id, false};
+    e = &physics->collisions[physics->collision_count++];
+    e->actor = actor;
   }
+  e->collision = collision;
+  e->owner_is_storage = collision.owner != NULL;
+  if (collision.owner != NULL) { e->owner_storage = *collision.owner; e->collision.owner = &e->owner_storage; }
   qa_app_sim_shared_solid solid; memset(&solid, 0, sizeof solid);
   solid.solid = is(collision.role, "trigger") ? "trigger" : is(collision.shape_kind, "model") ? "brush" : "box";
   solid.has_model = is(collision.shape_kind, "model");
@@ -381,10 +442,10 @@ const qa_app_sim_physics_event *qa_app_sim_shared_physics_drain_events(qa_app_si
   physics->event_count = 0;
   return physics->events;
 }
-static qa_trace_policy policy_of(const char *family, double mask, const char *move) {
+static qa_trace_policy policy_of(const qa_app_sim_shared_physics *physics, const char *family, double mask, const char *move) {
   qa_trace_policy policy; memset(&policy, 0, sizeof policy);
   if (is(family, "q1")) { policy.kind = "q1"; policy.move = move; policy.has_hull = false; }
-  else if (is(family, "q2")) { policy.kind = "q2"; policy.contents_mask = mask; policy.leaf_contents = "merged"; }
+  else if (is(family, "q2")) { policy.kind = "q2"; policy.contents_mask = mask; policy.leaf_contents = is(physics->options.q2_edition, "rerelease") ? "merged" : "stored"; }
   else { policy.kind = "q3"; policy.contents_mask = mask; policy.curves = true; policy.player_curve_clip = true; }
   return policy;
 }
@@ -394,7 +455,7 @@ qa_trace_result qa_app_sim_shared_physics_trace(qa_app_sim_shared_physics *physi
   if (request.bounds == NULL) query.shape.kind = "point";
   else { query.shape.kind = "box"; query.shape.bounds = *request.bounds; }
   query.target.is_model = false;
-  query.policy = policy_of(family != NULL ? family : "q2", request.mask, "normal");
+  query.policy = policy_of(physics, family != NULL ? family : "q2", request.mask, "normal");
   query.numeric = physics->options.numeric;
   query.pass_actor = request.ignore;
   return (request.exclude == NULL || request.exclude_count == 0)
@@ -416,7 +477,7 @@ static qa_trace_result body_trace(qa_app_sim_shared_physics *p, qa_owned_actor a
   query.shape.kind = "box"; query.shape.bounds = has_bounds ? bounds : body.bounds;
   query.target.is_model = false;
   double mask = exact_mask ? (has_motion ? motion.clip_mask : 0) : ((has_motion && motion.clip_mask != 0) ? motion.clip_mask : 3);
-  query.policy = policy_of(family, mask, move);
+  query.policy = policy_of(p, family, mask, move);
   query.numeric = p->options.numeric;
   query.pass_actor = &actor.id;
   return exclude_count == 0 ? qa_shared_trace(p->options.scene, query)
@@ -494,7 +555,7 @@ static void impact(qa_app_sim_shared_physics *p, qa_owned_actor actor, qa_trace_
     p->surface_scratch = (qa_touch_surface){trace.surface->name, trace.surface->flags, trace.surface->value};
     has_surface = true;
   } else if (is(trace.kind, "q1") && trace.has_surface_flags) {
-    p->surface_scratch = (qa_touch_surface){"", (double)((int)trace.surface_flags & 0x86), 0};
+    p->surface_scratch = (qa_touch_surface){"", (double)(qa_js_to_int32(trace.surface_flags) & 0x86), 0};
     has_surface = true;
   }
   qa_app_sim_shared_solid solid; bool has_solid = solid_of(p, actor, &solid);
@@ -543,8 +604,9 @@ static void impact(qa_app_sim_shared_physics *p, qa_owned_actor actor, qa_trace_
     }
   }
 }
+/* SV_PushEntity runs once per toss; `callbacks: false` is the sliding retry, which must not repeat touch and impact callbacks. */
 static qa_trace_result push_entity(qa_app_sim_shared_physics *p, qa_owned_actor actor, qa_vec3 displacement,
-    const qa_actor_id *exclude, size_t exclude_count) {
+    const qa_actor_id *exclude, size_t exclude_count, bool callbacks) {
   qa_body_state initial;
   if (!read_body(p, actor.id, &initial)) qa_range_error("Cannot push an actor without a body");
   qa_vec3 end = vadd(p, initial.origin, displacement);
@@ -555,10 +617,11 @@ static qa_trace_result push_entity(qa_app_sim_shared_physics *p, qa_owned_actor 
     write_live(p, actor, (body_changes){.origin = true, .origin_v = trace.end}, false);
     qa_shared_body_table_link(p->bodies, actor, NULL);
     bool q1 = is(family_of(p, actor), "q1");
-    if (q1 && live(p, actor)) qa_app_sim_shared_physics_touch_triggers(p, actor);
-    if (trace.fraction != 1) {
+    if (q1 && callbacks && live(p, actor)) qa_app_sim_shared_physics_touch_triggers(p, actor);
+    /* SV_PushEntity impacts on `trace.ent`, which is also set when the move starts inside a solid. */
+    if (trace.fraction != 1 || (q1 && trace.start_solid)) {
       qa_actor_id hit; bool has_hit = hit_actor(p, trace, &hit);
-      if (live(p, actor)) impact(p, actor, trace);
+      if (callbacks && live(p, actor)) impact(p, actor, trace);
       if (!q1 && has_hit && !qa_session_actor_registry_is_live(p->options.actors, hit) && live(p, actor)) {
         qa_body_state changed;
         if (read_body(p, actor.id, &changed)) {
@@ -568,7 +631,7 @@ static qa_trace_result push_entity(qa_app_sim_shared_physics *p, qa_owned_actor 
         }
       }
     }
-    if (!q1 && live(p, actor)) qa_app_sim_shared_physics_touch_triggers(p, actor);
+    if (!q1 && callbacks && live(p, actor)) qa_app_sim_shared_physics_touch_triggers(p, actor);
     return trace;
   }
 }
@@ -609,7 +672,7 @@ static const qa_owned_actor *candidates(qa_app_sim_shared_physics *p, size_t *ou
   for (size_t i = 0; i < count; i++) p->candidate_ids[i] = observations[i].id;
   if (p->options.source_order && count > 1) {
     candidate_sort_physics = p;
-    qsort(p->candidate_ids, count, sizeof p->candidate_ids[0], candidate_cmp);
+    qa_js_sort(p->candidate_ids, count, sizeof p->candidate_ids[0], candidate_cmp);
   }
   p->candidate_count = 0;
   for (size_t i = 0; i < count; i++) {
@@ -663,7 +726,7 @@ void qa_app_sim_shared_physics_write_q1_pusher(qa_app_sim_shared_physics *physic
   changes.angles = true; changes.angles_v = entity.state.angles;
   changes.bounds = true; changes.bounds_v = entity.bounds;
   changes.ground = true;
-  if (((int)entity.state.flags & 512) == 0) changes.has_ground = false;
+  if ((qa_js_to_int32(entity.state.flags) & 512) == 0) changes.has_ground = false;
   else if (entity.state.ground.kind == QA_TRACE_HIT_ACTOR) {
     changes.has_ground = true; changes.ground_v = entity.state.ground.actor;
   } else if (entity.state.ground.kind == QA_TRACE_HIT_WORLD && physics->options.world_actor) {
@@ -706,7 +769,7 @@ static qa_q1_push_result q1_services_push(void *ctx, qa_q1_physics_entity entity
   qa_app_sim_q1_pusher_env *env = ctx;
   env->write(env->projection_ctx, entity);
   qa_q1_push_result result; memset(&result, 0, sizeof result);
-  result.trace = push_entity(env->physics, entity.actor, displacement, NULL, 0);
+  result.trace = push_entity(env->physics, entity.actor, displacement, NULL, 0, true);
   result.has_entity = env->read(env->projection_ctx, entity.actor.id, &result.entity);
   return result;
 }
@@ -928,7 +991,7 @@ static qa_point_contents_result point_contents_at(qa_app_sim_shared_physics *p, 
   qa_point_contents_query query; memset(&query, 0, sizeof query);
   query.point = point;
   query.target.is_model = false;
-  query.policy = policy_of(family, mask, "normal");
+  query.policy = policy_of(p, family, mask, "normal");
   query.numeric = p->options.numeric;
   query.pass_actor = pass;
   return qa_shared_point_contents(p->options.scene, query);
@@ -948,7 +1011,7 @@ static bool check_bottom(qa_app_sim_shared_physics *p, qa_owned_actor actor, qa_
     query.shape.kind = "point";
     query.target.is_model = false;
     query.pass_actor = &actor.id;
-    query.policy = policy_of(family, DEFAULT_MASK, "no-monsters");
+    query.policy = policy_of(p, family, DEFAULT_MASK, "no-monsters");
     query.numeric = p->options.numeric;
     middle = qa_shared_trace(p->options.scene, query);
   }
@@ -961,7 +1024,7 @@ static bool check_bottom(qa_app_sim_shared_physics *p, qa_owned_actor actor, qa_
     query.shape.kind = "point";
     query.target.is_model = false;
     query.pass_actor = &actor.id;
-    query.policy = policy_of(family, DEFAULT_MASK, "no-monsters");
+    query.policy = policy_of(p, family, DEFAULT_MASK, "no-monsters");
     query.numeric = p->options.numeric;
     qa_trace_result corner = qa_shared_trace(p->options.scene, query);
     if (corner.fraction == 1 || (corner.end.z - middle.end.z) * direction.z > 18) return false;
@@ -991,7 +1054,7 @@ bool qa_app_sim_shared_physics_walk_move(qa_app_sim_shared_physics *physics, qa_
       qa_point_contents_result contents = point_contents_at(physics, trace.end, family, DEFAULT_MASK, &actor.id);
       bool water = is(contents.kind, "q1")
           ? (contents.contents <= -3 && contents.contents >= -5)
-          : (((int)(is(contents.kind, "q2") ? contents.merged : contents.contents) & 56) != 0);
+          : ((qa_js_to_int32(is(contents.kind, "q2") ? contents.merged : contents.contents) & 56) != 0);
       if (swim && !water) return false;
       write_live(physics, actor, (body_changes){.origin = true, .origin_v = trace.end}, true);
       qa_app_sim_shared_physics_touch_triggers(physics, actor);
@@ -1087,6 +1150,10 @@ static qa_vec3 sweep_normal(void *ctx, const qa_swept_body_trace *trace) {
   (void)ctx;
   return trace_normal(*(const qa_trace_result *)trace->native);
 }
+static uintptr_t sweep_plane_identity(void *ctx, const qa_swept_body_trace *trace) {
+  (void)ctx;
+  return ((const qa_trace_result *)trace->native)->plane_identity;
+}
 static bool sweep_same_plane(void *ctx, qa_vec3 first, qa_vec3 second, bool same_slot) {
   fly_env *env = ctx;
   return same_slot || (!is(family_of(env->physics, env->actor), "q1")
@@ -1161,6 +1228,7 @@ static void fly_move(qa_app_sim_shared_physics *p, qa_owned_actor actor, double 
   services.impact = sweep_impact;
   services.stop_when_still = false;
   services.same_plane = sweep_same_plane;
+  services.plane_identity = sweep_plane_identity;
   services.math.ctx = &env;
   services.math.advance = sweep_advance;
   services.math.remaining = sweep_remaining;
@@ -1176,10 +1244,10 @@ void qa_app_sim_shared_physics_water_transition(qa_app_sim_shared_physics *physi
   const char *family = family_of(physics, actor);
   qa_app_sim_shared_physics_flags before = actor_flags(physics, actor);
   qa_point_contents_result contents = point_contents_at(physics, body.origin, family, DEFAULT_MASK, &actor.id);
-  double value = is(contents.kind, "q2") ? contents.merged : contents.contents;
+  double value = is(contents.kind, "q2") ? (is(physics->options.q2_edition, "rerelease") ? contents.merged : contents.stored) : contents.contents;
   bool wet = is(family, "q1")
       ? ((value <= -3 && value >= -5) || (value <= -9 && value >= -14))
-      : (((int)value & 56) != 0);
+      : ((qa_js_to_int32(value) & 56) != 0);
   bool was_wet = (before.has_water_level ? before.water_level : 0) != 0;
   qa_app_sim_shared_physics_flags change; memset(&change, 0, sizeof change);
   change.has_water_level = true; change.water_level = wet ? 1 : 0;
@@ -1241,7 +1309,7 @@ static void toss_water_sound(void *ctx, qa_vec3 origin) {
   emit_event(e->physics, (qa_app_sim_physics_event){event_actor, "water-enter", origin});
 }
 static double clamp_velocity(double v, double maximum) {
-  return isfinite(v) ? fmax(-maximum, fmin(maximum, v)) : 0;
+  return isfinite(v) ? qa_js_max(-maximum, qa_js_min(maximum, v)) : 0;
 }
 const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, qa_owned_actor actor, double elapsed) {
   if (!isfinite(elapsed) || elapsed < 0) qa_range_error("Invalid physics interval");
@@ -1254,7 +1322,7 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
     if (is(motion.kind, "fly") || is(motion.kind, "fly-missile"))
       write_live(physics, actor, (body_changes){.angles = true,
           .angles_v = vadd(physics, state.angles, vscale(physics, motion.angular_velocity, elapsed))}, false);
-    (void)push_entity(physics, actor, ZERO3, NULL, 0);
+    (void)push_entity(physics, actor, ZERO3, NULL, 0, true);
     if (live(physics, actor)) qa_app_sim_shared_physics_water_transition(physics, actor, state.origin);
     return NULL;
   }
@@ -1292,8 +1360,16 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
     host.water_sound = toss_water_sound;
     return qa_app_sim_step_q2_new_toss(actor, elapsed, motion, host);
   }
-  if (state.ground != NULL && (!qa_session_actor_registry_is_live(physics->options.actors, *state.ground)
-      || (!is(family, "q1") && vdot(physics, state.velocity, motion.gravity_vector) < 0))) {
+  if (state.ground != NULL && !qa_session_actor_registry_is_live(physics->options.actors, *state.ground)) {
+    /* WinQuake leaves FL_ONGROUND set when the supporting edict is freed, so Q1 items and monsters stay put;
+     * the dangling reference is rebound to world rather than kept. */
+    body_changes rebind; memset(&rebind, 0, sizeof rebind);
+    rebind.ground = true;
+    rebind.has_ground = is(family, "q1") && physics->options.world_actor
+        && physics->options.world_actor(physics->options.ctx, &rebind.ground_v);
+    write_live(physics, actor, rebind, false);
+    has_state = read_body(physics, actor.id, &state);
+  } else if (state.ground != NULL && !is(family, "q1") && vdot(physics, state.velocity, motion.gravity_vector) < 0) {
     body_changes clear_ground; memset(&clear_ground, 0, sizeof clear_ground);
     clear_ground.ground = true; clear_ground.has_ground = false;
     write_live(physics, actor, clear_ground, false);
@@ -1327,10 +1403,14 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
           vadd(physics, state.origin, vscale(physics, motion.gravity_vector, 0.25)), NULL, 0, false, false, state.bounds);
       if (floor_trace.fraction < 1 && !floor_trace.start_solid
           && vdot(physics, trace_source_normal(floor_trace), motion.gravity_vector) <= -0.7) {
+        /* M_CheckGround snaps to the trace end point and stops vertical motion on landing. */
+        velocity = vec_of(physics, velocity.x, velocity.y, 0);
         qa_actor_id ground; bool has_ground = hit_actor(physics, floor_trace, &ground);
         body_changes change; memset(&change, 0, sizeof change);
         change.ground = true; change.has_ground = has_ground;
         if (has_ground) change.ground_v = ground;
+        change.origin = true; change.origin_v = floor_trace.end;
+        change.velocity = true; change.velocity_v = vec_of(physics, state.velocity.x, state.velocity.y, 0);
         write_live(physics, actor, change, false);
         qa_body_state refreshed;
         if (read_body(physics, actor.id, &refreshed)) state = refreshed;
@@ -1344,9 +1424,9 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
       double adjustment = elapsed * 600;
       qa_q2_motion updated = motion;
       updated.angular_velocity = vec_of(physics,
-          motion.angular_velocity.x > 0 ? fmax(0, motion.angular_velocity.x - adjustment) : fmin(0, motion.angular_velocity.x + adjustment),
-          motion.angular_velocity.y > 0 ? fmax(0, motion.angular_velocity.y - adjustment) : fmin(0, motion.angular_velocity.y + adjustment),
-          motion.angular_velocity.z > 0 ? fmax(0, motion.angular_velocity.z - adjustment) : fmin(0, motion.angular_velocity.z + adjustment));
+          motion.angular_velocity.x > 0 ? qa_js_max(0, motion.angular_velocity.x - adjustment) : qa_js_min(0, motion.angular_velocity.x + adjustment),
+          motion.angular_velocity.y > 0 ? qa_js_max(0, motion.angular_velocity.y - adjustment) : qa_js_min(0, motion.angular_velocity.y + adjustment),
+          motion.angular_velocity.z > 0 ? qa_js_max(0, motion.angular_velocity.z - adjustment) : qa_js_min(0, motion.angular_velocity.z + adjustment));
       store_motion(physics, updated);
       write_angular(physics, actor, updated.angular_velocity);
     }
@@ -1354,19 +1434,19 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
       velocity = vadd(physics, velocity, vscale(physics, motion.gravity_vector, motion.gravity * physics->world_gravity * elapsed));
     if (flag_fly && velocity.z != 0) {
       double speed = fabs(velocity.z);
-      double factor = fmax(0, speed - elapsed * fmax(speed, 100) * 2) / speed;
+      double factor = qa_js_max(0, speed - elapsed * qa_js_max(speed, 100) * 2) / speed;
       velocity = vec_of(physics, velocity.x, velocity.y, velocity.z * factor);
     }
     if (flag_swim && velocity.z != 0) {
       double speed = fabs(velocity.z);
-      double factor = fmax(0, speed - elapsed * fmax(speed, 100) * water_level) / speed;
+      double factor = qa_js_max(0, speed - elapsed * qa_js_max(speed, 100) * water_level) / speed;
       velocity = vec_of(physics, velocity.x, velocity.y, velocity.z * factor);
     }
     if (moving3(velocity)) {
       if (state.ground != NULL || flag_fly || flag_swim) {
         double speed = hypot(velocity.x, velocity.y);
         if (speed > 0 && (!flag_dead || check_bottom(physics, actor, state))) {
-          double fraction = fmax(0, speed - elapsed * fmax(speed, 100) * 6) / speed;
+          double fraction = qa_js_max(0, speed - elapsed * qa_js_max(speed, 100) * 6) / speed;
           velocity = vec_of(physics, velocity.x * fraction, velocity.y * fraction, velocity.z);
         }
       }
@@ -1394,7 +1474,7 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
     write_live(physics, actor, change, false);
   }
   qa_vec3 previous_origin = state.origin;
-  qa_trace_result trace = push_entity(physics, actor, vscale(physics, velocity, elapsed), NULL, 0);
+  qa_trace_result trace = push_entity(physics, actor, vscale(physics, velocity, elapsed), NULL, 0, true);
   if (!is(family, "q1")) qa_app_sim_shared_physics_water_transition(physics, actor, previous_origin);
   if (!read_body(physics, actor.id, &state) || trace.fraction == 1) return NULL;
   for (int bump = 0;; bump++) {
@@ -1419,7 +1499,7 @@ const char *qa_app_sim_shared_physics_step(qa_app_sim_shared_physics *physics, q
     }
     write_live(physics, actor, (body_changes){.velocity = true, .velocity_v = velocity}, false);
     if (trace.fraction > 0 || bump >= 3 || !live(physics, actor)) break;
-    trace = push_entity(physics, actor, vscale(physics, velocity, elapsed), NULL, 0);
+    trace = push_entity(physics, actor, vscale(physics, velocity, elapsed), NULL, 0, false);
     if (!read_body(physics, actor.id, &state) || trace.fraction == 1) break;
   }
   if (is(family, "q1") && live(physics, actor)) {
@@ -1706,6 +1786,7 @@ void qa_app_sim_shared_physics_restore_checkpoint(qa_app_sim_shared_physics *phy
       motion.clip_mask = qa_save_reader_number(&part);
       qa_save_reader_destroy(&part);
       motion.has_owner = reader_reference(physics, &value, "owner", &motion.owner);
+      motion.kind_first = true; /* the restored literal: actor, kind, velocity, ... */
       store_motion(physics, motion);
       qa_save_reader_destroy(&value);
     }

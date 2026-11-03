@@ -1,10 +1,13 @@
 /* Port of src/app/bootstrap/q1-service-presentation.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q1_service_presentation.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/materials/sky.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 typedef struct row_entry {
   qa_app_q1_client_row row;
   char *name, *social, *player_info;
@@ -14,6 +17,19 @@ struct qa_app_q1_client_table {
   qa_app_q1_client_row *view; /* rebuilt on read */
 };
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
+static char *format_text(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  int length = vsnprintf(NULL, 0, format, args);
+  va_end(args);
+  if (length < 0) qa_range_error("Out of memory");
+  char *out = malloc((size_t)length + 1);
+  if (out == NULL) qa_range_error("Out of memory");
+  va_start(args, format);
+  vsnprintf(out, (size_t)length + 1, format, args);
+  va_end(args);
+  return out;
+}
 static char *dup_text(const char *text) {
   if (text == NULL) return NULL;
   size_t len = strlen(text);
@@ -64,14 +80,14 @@ static qa_app_q1_client_table *clone_table(const qa_app_q1_client_table *source)
   }
   return table;
 }
-void qa_app_update_q1_client_metadata(qa_app_q1_client_table *table, qa_app_q1_client_metadata_event event) {
-  row_entry *row = row_for(table, event.slot);
-  if (is(event.kind, "name")) { free(row->name); row->name = dup_text(event.text_value); row->row.name = row->name; }
-  else if (is(event.kind, "colors")) row->row.colors = event.number_value;
-  else if (is(event.kind, "frags")) row->row.frags = event.number_value;
-  else if (is(event.kind, "ping")) { row->row.has_ping = true; row->row.ping = event.number_value; }
-  else if (is(event.kind, "social")) { free(row->social); row->social = dup_text(event.text_value); row->row.social = row->social; }
-  else if (is(event.kind, "player-info")) { free(row->player_info); row->player_info = dup_text(event.text_value); row->row.player_info = row->player_info; }
+void qa_app_update_q1_client_metadata(qa_app_q1_client_table *table, const qa_app_sim_q1_client_metadata_event *event) {
+  row_entry *row = row_for(table, event->slot);
+  if (is(event->kind, "name")) { free(row->name); row->name = dup_text(event->text); row->row.name = row->name; }
+  else if (is(event->kind, "colors")) row->row.colors = event->value;
+  else if (is(event->kind, "frags")) row->row.frags = event->value;
+  else if (is(event->kind, "ping")) { row->row.has_ping = true; row->row.ping = event->value; }
+  else if (is(event->kind, "social")) { free(row->social); row->social = dup_text(event->text); row->row.social = row->social; }
+  else if (is(event->kind, "player-info")) { free(row->player_info); row->player_info = dup_text(event->text); row->row.player_info = row->player_info; }
 }
 size_t qa_app_q1_client_table_rows(const qa_app_q1_client_table *table, const qa_app_q1_client_row **out) {
   qa_app_q1_client_table *mutable_table = (qa_app_q1_client_table *)table;
@@ -82,7 +98,10 @@ size_t qa_app_q1_client_table_rows(const qa_app_q1_client_table *table, const qa
   *out = mutable_table->view;
   return table->count;
 }
+/* TS SkySelection. serial is the object identity: a TS spread clone
+ * ({ ...sky }) is a new object, here a new serial. */
 typedef struct sky_selection {
+  double serial;
   char *content;
   char *name;
   bool ready;
@@ -97,21 +116,23 @@ typedef struct content_tables {
   qa_app_q1_client_table *shared;
   recipient_table *recipients; size_t recipient_count, recipient_capacity;
 } content_tables;
-typedef struct retained_entry { char *key; qa_app_q1_service_event event; char *sky_name; char *client_text; } retained_entry;
+typedef struct retained_entry { char *key; qa_app_sim_presentation_event event; /* owned copy */ } retained_entry;
 struct qa_app_q1_service_presentation {
   sky_selection *shared_sky;
   actor_sky *skies; size_t sky_count, sky_capacity;
   content_tables *tables; size_t table_count, table_capacity;
   retained_entry *retained; size_t retained_count, retained_capacity;
+  double next_serial;
   bool closed;
 };
 static void free_sky(sky_selection *sky) {
   if (sky == NULL) return;
   free(sky->content); free(sky->name); free(sky);
 }
-static sky_selection *new_sky(qa_content_id content, const char *name) {
+static sky_selection *new_sky(qa_app_q1_service_presentation *presentation, qa_content_id content, const char *name) {
   sky_selection *sky = calloc(1, sizeof *sky);
   if (sky == NULL) qa_range_error("Out of memory");
+  sky->serial = ++presentation->next_serial;
   sky->content = dup_text(content);
   sky->name = dup_text(name);
   return sky;
@@ -125,8 +146,7 @@ static void clear_state(qa_app_q1_service_presentation *presentation, bool retai
   if (retained) {
     for (size_t i = 0; i < presentation->retained_count; i++) {
       free(presentation->retained[i].key);
-      free(presentation->retained[i].sky_name);
-      free(presentation->retained[i].client_text);
+      qa_app_sim_presentation_event_release(&presentation->retained[i].event);
     }
     presentation->retained_count = 0;
   }
@@ -203,11 +223,11 @@ static qa_app_q1_client_table *recipient_table_for(content_tables *tables, qa_ac
   return entry->table;
 }
 static void apply_events(qa_app_q1_service_presentation *presentation,
-    const qa_app_q1_service_event *events, size_t count) {
+    const qa_app_sim_presentation_event *const *events, size_t count) {
   for (size_t i = 0; i < count; i++) {
-    const qa_app_q1_service_event *source = &events[i];
+    const qa_app_sim_presentation_event *source = events[i];
     if (is(source->kind, "q1-sky")) {
-      sky_selection *value = new_sky(source->content, source->sky_name);
+      sky_selection *value = new_sky(presentation, source->content, source->q1_sky.name);
       if (!source->has_recipient) {
         free_sky(presentation->shared_sky);
         presentation->shared_sky = value;
@@ -217,31 +237,29 @@ static void apply_events(qa_app_q1_service_presentation *presentation,
     } else if (is(source->kind, "q1-client")) {
       content_tables *tables = tables_for(presentation, source->content);
       if (!source->has_recipient) {
-        qa_app_update_q1_client_metadata(tables->shared, source->client);
+        qa_app_update_q1_client_metadata(tables->shared, &source->q1_client);
         for (size_t r = 0; r < tables->recipient_count; r++)
-          qa_app_update_q1_client_metadata(tables->recipients[r].table, source->client);
+          qa_app_update_q1_client_metadata(tables->recipients[r].table, &source->q1_client);
       } else {
         qa_app_q1_client_table *table = recipient_table_for(tables, source->recipient, true);
-        qa_app_update_q1_client_metadata(table, source->client);
+        qa_app_update_q1_client_metadata(table, &source->q1_client);
       }
     }
   }
 }
 static int compare_sequence(const void *a, const void *b) {
-  double left = ((const qa_app_q1_service_event *)a)->sequence;
-  double right = ((const qa_app_q1_service_event *)b)->sequence;
+  double left = (*(const qa_app_sim_presentation_event *const *)a)->sequence;
+  double right = (*(const qa_app_sim_presentation_event *const *)b)->sequence;
   return left < right ? -1 : left > right ? 1 : 0;
 }
-static void retain(qa_app_q1_service_presentation *presentation, const char *key, qa_app_q1_service_event event) {
+/* TS this.retained.set(key, source): a replaced key keeps its Map position. */
+static void retain(qa_app_q1_service_presentation *presentation, const char *key, const qa_app_sim_presentation_event *event) {
+  qa_app_sim_presentation_event copy;
+  if (!qa_app_sim_presentation_event_copy(&copy, event)) qa_range_error("Out of memory");
   for (size_t i = 0; i < presentation->retained_count; i++) {
     if (strcmp(presentation->retained[i].key, key) == 0) {
-      free(presentation->retained[i].sky_name);
-      free(presentation->retained[i].client_text);
-      presentation->retained[i].event = event;
-      presentation->retained[i].sky_name = dup_text(event.sky_name);
-      presentation->retained[i].client_text = dup_text(event.client.text_value);
-      presentation->retained[i].event.sky_name = presentation->retained[i].sky_name;
-      presentation->retained[i].event.client.text_value = presentation->retained[i].client_text;
+      qa_app_sim_presentation_event_release(&presentation->retained[i].event);
+      presentation->retained[i].event = copy;
       return;
     }
   }
@@ -253,36 +271,35 @@ static void retain(qa_app_q1_service_presentation *presentation, const char *key
   }
   retained_entry *entry = &presentation->retained[presentation->retained_count++];
   entry->key = dup_text(key);
-  entry->event = event;
-  entry->sky_name = dup_text(event.sky_name);
-  entry->client_text = dup_text(event.client.text_value);
-  entry->event.sky_name = entry->sky_name;
-  entry->event.client.text_value = entry->client_text;
+  entry->event = copy;
 }
 void qa_app_q1_service_presentation_receive(qa_app_q1_service_presentation *presentation,
-    const qa_app_q1_service_event *events, size_t event_count) {
+    const qa_app_sim_presentation_event *events, size_t event_count) {
   if (presentation->closed) qa_range_error("Q1 service presentation is closed");
   for (size_t i = 0; i < event_count; i++) {
-    const qa_app_q1_service_event *source = &events[i];
+    const qa_app_sim_presentation_event *source = &events[i];
     if (is(source->kind, "presentation-owner")) {
-      if (is(source->event_kind, "refreshed")) {
-        /* TS clones each selection object (identity refresh only). */
+      if (is(source->presentation_owner.kind, "refreshed")) {
+        /* TS replaces each selection with a spread clone: a new identity, so
+         * a refresh prepared before this no longer publishes to it. */
+        if (presentation->shared_sky != NULL) presentation->shared_sky->serial = ++presentation->next_serial;
+        for (size_t s = 0; s < presentation->sky_count; s++) presentation->skies[s].sky->serial = ++presentation->next_serial;
         continue;
       }
       size_t kept = 0;
       for (size_t r = 0; r < presentation->retained_count; r++) {
         retained_entry *entry = &presentation->retained[r];
-        bool same = entry->event.has_owner
-            && qa_same_presentation_owner(&entry->event.owner, source->owner);
-        if (same) { free(entry->key); free(entry->sky_name); free(entry->client_text); }
+        bool same = qa_same_presentation_owner(entry->event.has_owner ? &entry->event.owner : NULL,
+                                               source->presentation_owner.owner);
+        if (same) { free(entry->key); qa_app_sim_presentation_event_release(&entry->event); }
         else presentation->retained[kept++] = *entry;
       }
       presentation->retained_count = kept;
       clear_state(presentation, false);
-      qa_app_q1_service_event *sorted = calloc(kept == 0 ? 1 : kept, sizeof *sorted);
+      const qa_app_sim_presentation_event **sorted = calloc(kept == 0 ? 1 : kept, sizeof *sorted);
       if (sorted == NULL) qa_range_error("Out of memory");
-      for (size_t r = 0; r < kept; r++) sorted[r] = presentation->retained[r].event;
-      qsort(sorted, kept, sizeof *sorted, compare_sequence);
+      for (size_t r = 0; r < kept; r++) sorted[r] = &presentation->retained[r].event;
+      qa_js_sort(sorted, kept, sizeof *sorted, compare_sequence);
       apply_events(presentation, sorted, kept);
       free(sorted);
     } else if (is(source->kind, "q1-sky") || is(source->kind, "q1-client")) {
@@ -291,32 +308,41 @@ void qa_app_q1_service_presentation_receive(qa_app_q1_service_presentation *pres
         snprintf(recipient, sizeof recipient, "%lld:%lld", (long long)source->recipient.slot,
             (long long)source->recipient.generation);
       else snprintf(recipient, sizeof recipient, "world");
-      char key[1024];
-      if (is(source->kind, "q1-sky")) snprintf(key, sizeof key, "sky:%s", recipient);
-      else snprintf(key, sizeof key, "%s:%lld:%s:%s", source->content,
-          (long long)source->client.slot, source->client.kind, recipient);
-      retain(presentation, key, *source);
-      apply_events(presentation, source, 1);
+      char *key;
+      if (is(source->kind, "q1-sky")) key = format_text("sky:%s", recipient);
+      else key = format_text("%s:%s:%s:%s", source->content, QA_JS_NUMBER(source->q1_client.slot), source->q1_client.kind, recipient);
+      retain(presentation, key, source);
+      free(key);
+      apply_events(presentation, &source, 1);
     }
   }
 }
-static size_t collect_selections(qa_app_q1_service_presentation *presentation, sky_selection **out) {
+/* TS selections(): the shared sky then each actor sky. */
+static sky_selection **collect_selections(qa_app_q1_service_presentation *presentation, size_t *out_count) {
+  sky_selection **out = calloc(presentation->sky_count + 1, sizeof *out);
+  if (out == NULL) qa_range_error("Out of memory");
   size_t count = 0;
   if (presentation->shared_sky != NULL) out[count++] = presentation->shared_sky;
   for (size_t i = 0; i < presentation->sky_count; i++) out[count++] = presentation->skies[i].sky;
-  return count;
+  *out_count = count;
+  return out;
 }
-static bool selection_included(qa_app_q1_service_presentation *presentation, sky_selection *selection) {
-  if (presentation->shared_sky == selection) return true;
+/* The selection whose identity is serial, or NULL when TS
+ * selections().includes(selection) is false. */
+static sky_selection *current_selection(qa_app_q1_service_presentation *presentation, double serial) {
+  if (presentation->shared_sky != NULL && presentation->shared_sky->serial == serial) return presentation->shared_sky;
   for (size_t i = 0; i < presentation->sky_count; i++)
-    if (presentation->skies[i].sky == selection) return true;
-  return false;
+    if (presentation->skies[i].sky->serial == serial) return presentation->skies[i].sky;
+  return NULL;
 }
-static void publish_sky(qa_app_q1_service_presentation *presentation, sky_selection *selection,
-    bool has_value) {
-  if (presentation->closed || !selection_included(presentation, selection)) return;
-  selection->has_value = has_value;
-  if (has_value) {
+/* TS load result: Sky | null. */
+typedef struct loaded_sky { bool found; qa_renderer_image images[6]; } loaded_sky;
+static void publish_sky(qa_app_q1_service_presentation *presentation, double serial, const loaded_sky *sky) {
+  sky_selection *selection = current_selection(presentation, serial);
+  if (presentation->closed || selection == NULL) return;
+  selection->has_value = sky->found;
+  if (sky->found) {
+    memcpy(selection->images, sky->images, sizeof selection->images);
     selection->value.images = selection->images;
     selection->value.image_count = 6;
     selection->value.rotation = 0;
@@ -325,38 +351,47 @@ static void publish_sky(qa_app_q1_service_presentation *presentation, sky_select
   }
   selection->ready = true;
 }
-static bool load_sky(sky_selection *selection, const qa_app_q1_service_assets *assets) {
-  if (selection->name[0] == '\0') return false;
-  bool found = false;
+static loaded_sky load_sky(const sky_selection *selection, const qa_app_q1_service_assets *assets) {
+  loaded_sky sky;
+  memset(&sky, 0, sizeof sky);
+  if (selection->name[0] == '\0') return sky;
   for (size_t i = 0; i < 6; i++) {
-    char path[1024];
-    snprintf(path, sizeof path, "gfx/env/%s%s.tga", selection->name, qa_sky_face_suffixes[i]);
+    char *path = format_text("gfx/env/%s%s.tga", selection->name, qa_sky_face_suffixes[i]);
     qa_renderer_image image;
     bool loaded = assets->load_texture(assets->ctx, selection->content, path, &image);
+    free(path);
     if (!loaded) {
-      snprintf(path, sizeof path, "gfx/env/%s%s.png", selection->name, qa_sky_face_suffixes[i]);
+      path = format_text("gfx/env/%s%s.png", selection->name, qa_sky_face_suffixes[i]);
       loaded = assets->load_texture(assets->ctx, selection->content, path, &image);
+      free(path);
     }
-    if (loaded) found = true;
-    selection->images[i] = loaded ? image : assets->missing_image(assets->ctx, selection->content);
+    if (loaded) sky.found = true;
+    sky.images[i] = loaded ? image : assets->missing_image(assets->ctx, selection->content);
   }
-  return found;
+  return sky;
 }
 void qa_app_q1_service_presentation_prepare(qa_app_q1_service_presentation *presentation,
     const qa_app_q1_service_assets *assets) {
   if (presentation->closed) qa_range_error("Q1 service presentation is closed");
-  sky_selection *selections[64];
-  size_t count = collect_selections(presentation, selections);
-  for (size_t i = 0; i < count && i < 64; i++) {
-    if (selections[i]->ready) continue;
-    bool found = load_sky(selections[i], assets);
-    publish_sky(presentation, selections[i], found);
+  size_t count = 0;
+  sky_selection **selections = collect_selections(presentation, &count);
+  double *serials = calloc(count + 1, sizeof *serials);
+  if (serials == NULL) qa_range_error("Out of memory");
+  size_t pending = 0;
+  for (size_t i = 0; i < count; i++) if (!selections[i]->ready) serials[pending++] = selections[i]->serial;
+  free(selections);
+  for (size_t i = 0; i < pending; i++) {
+    sky_selection *selection = current_selection(presentation, serials[i]);
+    if (selection == NULL) continue;
+    loaded_sky sky = load_sky(selection, assets);
+    publish_sky(presentation, serials[i], &sky);
   }
+  free(serials);
 }
 struct qa_app_q1_sky_refresh {
   qa_app_q1_service_presentation *presentation;
-  sky_selection **selections;
-  bool *found;
+  double *serials;
+  loaded_sky *skies;
   size_t count;
 };
 qa_app_q1_sky_refresh *qa_app_q1_service_presentation_prepare_image_refresh(
@@ -365,26 +400,26 @@ qa_app_q1_sky_refresh *qa_app_q1_service_presentation_prepare_image_refresh(
   qa_app_q1_sky_refresh *refresh = calloc(1, sizeof *refresh);
   if (refresh == NULL) qa_range_error("Out of memory");
   refresh->presentation = presentation;
-  sky_selection *selections[64];
-  size_t count = collect_selections(presentation, selections);
-  if (count > 64) count = 64;
-  refresh->selections = calloc(count == 0 ? 1 : count, sizeof *refresh->selections);
-  refresh->found = calloc(count == 0 ? 1 : count, sizeof *refresh->found);
-  if (refresh->selections == NULL || refresh->found == NULL) qa_range_error("Out of memory");
+  size_t count = 0;
+  sky_selection **selections = collect_selections(presentation, &count);
+  refresh->serials = calloc(count + 1, sizeof *refresh->serials);
+  refresh->skies = calloc(count + 1, sizeof *refresh->skies);
+  if (refresh->serials == NULL || refresh->skies == NULL) qa_range_error("Out of memory");
   for (size_t i = 0; i < count; i++) {
-    refresh->selections[i] = selections[i];
-    refresh->found[i] = load_sky(selections[i], assets);
+    refresh->serials[i] = selections[i]->serial;
+    refresh->skies[i] = load_sky(selections[i], assets);
   }
+  free(selections);
   refresh->count = count;
   return refresh;
 }
 void qa_app_q1_sky_refresh_apply(qa_app_q1_sky_refresh *refresh) {
   for (size_t i = 0; i < refresh->count; i++)
-    publish_sky(refresh->presentation, refresh->selections[i], refresh->found[i]);
+    publish_sky(refresh->presentation, refresh->serials[i], &refresh->skies[i]);
 }
 void qa_app_q1_sky_refresh_destroy(qa_app_q1_sky_refresh *refresh) {
   if (refresh == NULL) return;
-  free(refresh->selections); free(refresh->found); free(refresh);
+  free(refresh->serials); free(refresh->skies); free(refresh);
 }
 const qa_q2_sky_view *qa_app_q1_service_presentation_view(qa_app_q1_service_presentation *presentation,
     qa_actor_id actor) {
@@ -410,7 +445,7 @@ size_t qa_app_q1_service_presentation_clients(qa_app_q1_service_presentation *pr
   size_t count = qa_app_q1_client_table_rows(table, &rows);
   size_t written = count < capacity ? count : capacity;
   memcpy(out, rows, written * sizeof *out);
-  qsort(out, written, sizeof *out, compare_rows);
+  qa_js_sort(out, written, sizeof *out, compare_rows);
   return written;
 }
 void qa_app_q1_service_presentation_retire(qa_app_q1_service_presentation *presentation, qa_actor_id actor) {
@@ -434,7 +469,7 @@ void qa_app_q1_service_presentation_retire(qa_app_q1_service_presentation *prese
   for (size_t i = 0; i < presentation->retained_count; i++) {
     retained_entry *entry = &presentation->retained[i];
     if (entry->event.has_recipient && qa_same_actor(entry->event.recipient, actor)) {
-      free(entry->key); free(entry->sky_name); free(entry->client_text);
+      free(entry->key); qa_app_sim_presentation_event_release(&entry->event);
     } else presentation->retained[kept_retained++] = *entry;
   }
   presentation->retained_count = kept_retained;

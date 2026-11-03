@@ -1,6 +1,7 @@
 /* Port of src/content/q1/quakec/weapon-stage.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/quakec/weapon_stage.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,8 +160,9 @@ static void derived_repeats(const qa_q1qc_program *program, stage_builder *build
     for (int64_t entry = owner->first_statement; entry < end; entry++) {
       const qa_q1qc_statement *first = &program->statements[entry];
       if (first->opcode != QA_Q1QC_OP_LOAD_F || !is_temporary(program, first->c, owner)) continue;
-      int64_t written[256];
-      size_t written_count = 0;
+      /* TS Set<number>, unbounded. */
+      size_t written_count = 0, written_capacity = 16;
+      int64_t *written = xmalloc(written_capacity * sizeof *written);
       written[written_count++] = first->c;
       int64_t exit = entry + 1;
       while (exit < end) {
@@ -168,15 +170,22 @@ static void derived_repeats(const qa_q1qc_program *program, stage_builder *build
         if (!is_pure(statement->opcode) || !is_temporary(program, statement->c, owner)) break;
         bool seen = false;
         for (size_t w = 0; w < written_count; w++) if (written[w] == statement->c) seen = true;
-        if (!seen && written_count < 256) written[written_count++] = statement->c;
+        if (!seen) {
+          if (written_count == written_capacity) {
+            written_capacity *= 2;
+            written = xrealloc(written, written_capacity * sizeof *written);
+          }
+          written[written_count++] = statement->c;
+        }
         exit++;
       }
-      if (exit <= entry || exit + 2 >= end) continue;
+      if (exit <= entry || exit + 2 >= end) { free(written); continue; }
       const qa_q1qc_statement *join = &program->statements[exit];
       const qa_q1qc_statement *release = &program->statements[exit + 1];
       const qa_q1qc_statement *returned = &program->statements[exit + 2];
       bool join_written = false;
       for (size_t w = 0; w < written_count; w++) if (written[w] == join->a) join_written = true;
+      free(written);
       if ((join->opcode != QA_Q1QC_OP_IF && join->opcode != QA_Q1QC_OP_IF_NOT) ||
           qa_q1qc_signed_branch(join->b) != 3 || !join_written ||
           !is_temporary(program, join->a, owner) || release->opcode != QA_Q1QC_OP_CALL0 ||
@@ -230,14 +239,39 @@ qa_q1qc_weapon_stage *qa_q1qc_derived_weapon_stage(const qa_q1qc_program *progra
     builder.stage.client.objectives_kind = "none";
   }
   derived_repeats(program, &builder);
-  return builder_finish(&builder);
+  qa_q1qc_weapon_stage *stage = builder_finish(&builder);
+  /* The synthesized one-input call points at its own arg_storage; the
+   * struct copies above moved it, so rebind to the stage's copy. */
+  if (has_spawn && has_select) {
+    if (spawn.call.arguments == spawn.arg_storage)
+      stage->client.spawn.call.arguments = stage->client.spawn.arg_storage;
+    if (select_spawn.call.arguments == select_spawn.arg_storage)
+      stage->client.select_spawn.call.arguments = stage->client.select_spawn.arg_storage;
+  }
+  return stage;
 }
 
+typedef struct declared_scratch {
+  stage_builder builder;
+  const qa_q1qc_function **resolved;
+  void *ranges;
+} declared_scratch;
+static void free_declared_scratch(void *arg) {
+  declared_scratch *scratch = arg;
+  free(scratch->builder.stage.continuations);
+  free(scratch->builder.stage.repeats);
+  free(scratch->resolved);
+  free(scratch->ranges);
+}
 qa_q1qc_weapon_stage *qa_q1qc_declared_weapon_stage(const qa_q1qc_program *program,
                                                     const qa_qc_weapon_stage_declaration *declared) {
-  /* TS fn(): plain Error throws (qa_range_error preserves the abort). */
-  stage_builder builder = {0};
-  const qa_q1qc_function **resolved =
+  /* TS fn(): plain Error throws (qa_range_error preserves the abort). A raise
+   * caught above frees the partial state, as GC does in TS. */
+  declared_scratch scratch;
+  memset(&scratch, 0, sizeof scratch);
+  qa_cleanup node;
+  qa_cleanup_push(&node, free_declared_scratch, &scratch);
+  const qa_q1qc_function **resolved = scratch.resolved =
       xmalloc((declared->continuations.count + 1) * sizeof *resolved);
   size_t resolved_count = 0;
   const qa_q1qc_function *dispatcher = NULL;
@@ -254,17 +288,17 @@ qa_q1qc_weapon_stage *qa_q1qc_declared_weapon_stage(const qa_q1qc_program *progr
     if (count != 0) qa_range_error("QC weapon stage function returns a source value");
     resolved[resolved_count++] = value;
     if (pass == 0) dispatcher = value;
-    else builder_continuation(&builder, value->index);
+    else builder_continuation(&scratch.builder, value->index);
   }
-  builder.stage.dispatcher = dispatcher->index;
-  if (builder.stage.continuation_count == 0 ||
-      builder.stage.continuation_count != declared->continuations.count ||
-      qa_q1qc_weapon_stage_has_continuation(&builder.stage, dispatcher->index)) {
-    free(resolved);
+  scratch.builder.stage.dispatcher = dispatcher->index;
+  if (scratch.builder.stage.continuation_count == 0 ||
+      scratch.builder.stage.continuation_count != declared->continuations.count ||
+      qa_q1qc_weapon_stage_has_continuation(&scratch.builder.stage, dispatcher->index)) {
     qa_range_error("QC weapon continuation declarations overlap or are empty");
   }
   typedef struct range { int64_t entry, exit; } range;
   range *ranges = xmalloc(declared->repeat_count * sizeof *ranges);
+  scratch.ranges = ranges;
   size_t range_count = 0;
   for (size_t i = 0; i < declared->repeat_count; i++) {
     const qa_qc_weapon_stage_repeat *source = &declared->repeats[i];
@@ -284,16 +318,20 @@ qa_q1qc_weapon_stage *qa_q1qc_declared_weapon_stage(const qa_q1qc_program *progr
       owner = value;
     }
     int64_t end = qa_q1qc_function_end(program, owner);
+    /* Number.isInteger before any int64 cast: a NaN or huge declared word is rejected
+     * below, and casting it first would be undefined. */
+    bool entry_ok = fabs(source->entry) <= 9007199254740991.0 && source->entry == trunc(source->entry);
+    bool exit_ok = fabs(source->exit) <= 9007199254740991.0 && source->exit == trunc(source->exit);
+    bool result_ok = fabs(source->result_word) <= 9007199254740991.0 && source->result_word == trunc(source->result_word);
     bool overlap = false;
-    for (size_t r = 0; r < range_count; r++)
+    for (size_t r = 0; entry_ok && exit_ok && r < range_count; r++)
       if ((int64_t)source->entry <= ranges[r].exit && (int64_t)source->exit >= ranges[r].entry)
         overlap = true;
-    if (!qa_q1qc_weapon_stage_has_continuation(&builder.stage, owner->index) || overlap ||
-        source->entry != (double)(int64_t)source->entry ||
-        source->exit != (double)(int64_t)source->exit ||
+    if (!qa_q1qc_weapon_stage_has_continuation(&scratch.builder.stage, owner->index) || overlap ||
+        !entry_ok || !exit_ok ||
         (int64_t)source->entry < owner->first_statement ||
         (int64_t)source->exit <= (int64_t)source->entry || (int64_t)source->exit + 2 >= end ||
-        source->result_word != (double)(int64_t)source->result_word ||
+        !result_ok ||
         !is_temporary(program, (int64_t)source->result_word, owner) ||
         (source->result_value != 0 && source->result_value != 1) ||
         (int64_t)source->statement_count != (int64_t)source->exit - (int64_t)source->entry + 1)
@@ -327,7 +365,9 @@ qa_q1qc_weapon_stage *qa_q1qc_declared_weapon_stage(const qa_q1qc_program *progr
     const qa_q1qc_function *callee =
         qa_q1qc_function_at(program, qa_q1qc_initial_int32(program, release->a));
     const qa_q1qc_function *callee_checked = qa_q1qc_function_named_or_null(program, callee->name);
-    if (callee_checked == NULL || callee_checked->index == 0 ||
+    /* TS fn(callee.name): functionNamed throws first. */
+    if (callee_checked == NULL) qa_q1qc_program_error(program, "missing function %s", callee->name);
+    if (callee_checked->index == 0 ||
         callee_checked->first_statement <= 0 || callee_checked->named_builtin ||
         callee_checked->parameter_size_count != 0)
       qa_range_error("QC weapon stage requires original parameterless source functions");
@@ -337,11 +377,13 @@ qa_q1qc_weapon_stage *qa_q1qc_declared_weapon_stage(const qa_q1qc_program *progr
     qa_q1qc_repeat_gate gate = {{owner->index, (int64_t)source->entry, (int64_t)source->exit,
                                  true, false, 0, NULL},
                                 (int64_t)source->result_word, source->result_value};
-    builder_repeat(&builder, gate);
+    builder_repeat(&scratch.builder, gate);
   }
+  qa_q1qc_weapon_stage *stage = builder_finish(&scratch.builder);
+  qa_cleanup_pop(&node);
   free(ranges);
   free(resolved);
-  return builder_finish(&builder);
+  return stage;
 }
 
 typedef struct pinned_ctx { const qa_q1qc_program *program; } pinned_ctx;
@@ -397,11 +439,15 @@ static qa_q1qc_client_stage_call declared_client(const qa_q1qc_program *program,
   return out;
 }
 
+static void destroy_stage(void *arg) { qa_q1qc_weapon_stage_destroy(arg); }
 qa_q1qc_weapon_stage *qa_q1qc_weapon_stage_create(
     const qa_q1qc_program *program,
     const qa_qc_primary_weapon_stage_declaration *declared) {
   if (declared != NULL) {
     qa_q1qc_weapon_stage *stage = qa_q1qc_declared_weapon_stage(program, &declared->stage);
+    /* A rejected client call releases the built stage (TS GC). */
+    qa_cleanup stage_node;
+    qa_cleanup_push(&stage_node, destroy_stage, stage);
     stage->has_client = true;
     stage->client.spawn = declared_client(program, &declared->client_spawn, "void");
     stage->client.select_spawn = declared_client(program, &declared->client_select_spawn, "entity");
@@ -418,6 +464,7 @@ qa_q1qc_weapon_stage *qa_q1qc_weapon_stage_create(
       }
       stage->client.objectives_call = declared_client(program, &objectives, "void");
     }
+    qa_cleanup_pop(&stage_node);
     return stage;
   }
   bool qw = program->digest != NULL &&
@@ -527,6 +574,16 @@ static double invoke_execute(void *ctx, int64_t argument_count) {
   invoke->machine->execute(invoke->machine->ctx, invoke->function_index, argument_count);
   return (double)qa_q1qc_words_int(&invoke->machine->globals, 1);
 }
+typedef struct client_restore {
+  qa_q1qc_machine *machine;
+  int64_t self_offset, other_offset;
+  int32_t self, other;
+} client_restore;
+static void restore_client_globals(void *arg) {
+  client_restore *restore = arg;
+  qa_q1qc_words_set_int(&restore->machine->globals, restore->self_offset, restore->self);
+  qa_q1qc_words_set_int(&restore->machine->globals, restore->other_offset, restore->other);
+}
 double qa_q1qc_invoke_client_stage(qa_q1qc_machine *machine,
                                    const qa_q1qc_client_stage_call *stage,
                                    qa_actor_id actor, double time,
@@ -539,6 +596,10 @@ double qa_q1qc_invoke_client_stage(qa_q1qc_machine *machine,
   qa_mod_runtime_value self_value = {"actor", 0, NULL, {0, 0, 0}, &actor_id};
   qa_mod_runtime_value time_value = {"float", time, NULL, {0, 0, 0}, NULL};
   qa_q1qc_source_input inputs[2] = {{"self", self_value}, {"time", time_value}};
+  /* TS try/finally: a raise caught above this frame restores self/other too. */
+  client_restore restore = {machine, self_offset, other_offset, self, other};
+  qa_cleanup node;
+  qa_cleanup_push(&node, restore_client_globals, &restore);
   qa_q1qc_words_set_int(&machine->globals, self_offset, reference(reference_ctx, &actor));
   qa_q1qc_words_set_int(&machine->globals, other_offset, reference(reference_ctx, NULL));
   qa_q1qc_words_set_float(&machine->globals,
@@ -546,9 +607,8 @@ double qa_q1qc_invoke_client_stage(qa_q1qc_machine *machine,
   invoke_ctx invoke = {machine, stage->function_index};
   double result = qa_q1qc_with_source_call(machine, &stage->call, inputs, 2,
                                            reference, reference_ctx, invoke_execute, &invoke);
-  /* TS restores self/other in a finally. */
-  qa_q1qc_words_set_int(&machine->globals, self_offset, self);
-  qa_q1qc_words_set_int(&machine->globals, other_offset, other);
+  qa_cleanup_pop(&node);
+  restore_client_globals(&restore);
   return result;
 }
 int64_t qa_q1qc_client_stage_self(qa_q1qc_machine *machine,
@@ -630,8 +690,10 @@ static void weapon_region_run(void *ctx, qa_q1qc_inline_region region,
   qa_q1qc_weapon_region_composed *composed = ctx;
   const qa_q1qc_repeat_gate *gate = NULL;
   for (size_t i = 0; i < composed->binding->stage->repeat_count; i++)
-    if (composed->binding->stage->repeats[i].region.entry == region.entry)
+    if (composed->binding->stage->repeats[i].region.entry == region.entry) {
       gate = &composed->binding->stage->repeats[i];
+      break; /* TS repeats.find: first match */
+    }
   if (gate == NULL) {
     composed->inner.run(composed->inner.ctx, region, execute);
     return;

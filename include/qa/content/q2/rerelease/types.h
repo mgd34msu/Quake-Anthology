@@ -7,8 +7,6 @@
  * short source strings) and a malloc'd helpPoints array. Plain TS
  * Errors abort via qa_q2rr_error ("Error: <msg>"); RangeErrors use
  * qa_range_error. Getters that would share a type name get _get_.
- * Q2PlayerState["hand"] is mirrored as qa_q2rr_hand (TS owner:
- * src/content/q2/base/player/types.ts, unported).
  */
 #ifndef QA_CONTENT_Q2_RERELEASE_TYPES_H
 #define QA_CONTENT_Q2_RERELEASE_TYPES_H
@@ -36,6 +34,10 @@ typedef struct qa_q2rr_height_fog {
   qa_vec3 start_color; double start_distance;
   qa_vec3 end_color; double end_distance;
   double falloff, density;
+  /* TS key order only: q2RereleaseFogFields builds { ..., density, falloff },
+   * createQ2Fog, interpolateQ2Fog and the save reader { ..., falloff,
+   * density }; the checkpoint encoder writes keys in that order. */
+  bool density_first;
 } qa_q2rr_height_fog;
 typedef struct qa_q2_fog_state { qa_q2_fog fog; qa_q2rr_height_fog height_fog; } qa_q2_fog_state;
 qa_q2_fog_state qa_q2_create_fog(void);
@@ -46,10 +48,6 @@ typedef enum qa_q2_coop_respawn_state {
   QA_Q2_COOP_BLOCKED, QA_Q2_COOP_WAITING, QA_Q2_COOP_NO_LIVES
 } qa_q2_coop_respawn_state;
 const char *qa_q2_coop_respawn_state_name(qa_q2_coop_respawn_state s);
-
-/* TS "right"|"left"|"center" (base/player/types.ts mirror). */
-typedef enum qa_q2rr_hand { QA_Q2RR_HAND_RIGHT, QA_Q2RR_HAND_LEFT, QA_Q2RR_HAND_CENTER } qa_q2rr_hand;
-const char *qa_q2rr_hand_name(qa_q2rr_hand h);
 
 /** TS Omit<Q2LandmarkCarry,"player">. name borrowed. */
 typedef struct qa_q2rr_pending_landmark {
@@ -127,13 +125,13 @@ typedef struct qa_q2_rerelease_event {
   bool visible;                            /* help-computer/healthbar/dynamic-light/item-visibility */
   const char *primary, *secondary; bool slow_time; /* help-computer */
   qa_q2_fog_state fog_value; double transition_milliseconds; /* fog */
-  bool enabled; qa_q2rr_hand hand;         /* flashlight */
+  bool enabled; const char *hand;          /* flashlight: Q2PlayerState hand */
   double key; qa_vec3 position; const char *image; double duration, color, flags; /* keyed-poi/poi */
   qa_vec3 direction; double damage; bool health, armor, shield; /* directional-damage */
   bool first;                              /* help-path (position/direction shared) */
   qa_q2_coop_respawn_state coop_state; double lives; /* coop-respawn */
   double alpha;                            /* alpha */
-  const void *levels; size_t level_count; double button_time; /* end-of-unit: qa_q2_rerelease_level_entry* */
+  const struct qa_q2_rerelease_level_entry *levels; size_t level_count; double button_time; /* end-of-unit */
   const char *value;                       /* player-dogtag */
   qa_vec3 origin; double radius; qa_vec3 light_color; /* dynamic-light */
   const char *map;                         /* restart-level */

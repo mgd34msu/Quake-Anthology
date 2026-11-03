@@ -9,15 +9,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static float fr(double v) { return (float)v; }
 static qa_vec3 v3f(double x, double y, double z) { return qa_math_vec3(x, y, z); }
 static qa_vec3 ma(qa_vec3 start, double amount, qa_vec3 direction) { return qa_add3(start, qa_scale3(direction, amount)); }
-static bool same_vec(qa_vec3 a, qa_vec3 b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
-static void finite_vector(qa_vec3 point) {
-  if (!isfinite(point.x) || !isfinite(point.y) || !isfinite(point.z))
-    qa_range_error("Non-finite AAS trace point");
-}
 static bool is_space_char(char c) { return c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r' || c == ' '; }
 static int64_t decimal_integer(const char *text) {
   size_t i = 0;
@@ -33,8 +29,9 @@ static int64_t decimal_integer(const char *text) {
     if (magnitude > (UINT64_MAX - digit) / 10) overflow = true;
     else magnitude = magnitude * 10 + digit;
   }
+  /* Map text is untrusted and atoi has no failure path; an oversized value saturates. */
   if (i > digits_start && (overflow || magnitude > (negative ? 2147483648ULL : 2147483647ULL)))
-    qa_range_error("AAS integer epair conversion exceeds the source-defined int32 range");
+    return negative ? INT32_MIN : INT32_MAX;
   return qa_native_atoi(text);
 }
 static bool is_digit_char(char c) { return c >= '0' && c <= '9'; }
@@ -239,9 +236,9 @@ void qa_aas_spatial_model_bounds(qa_aas_reachability_spatial *spatial, int64_t m
   }
   if (!found) qa_range_error("AAS reachability index %lld outside %zu", (long long)model, count);
   if (angles.x != 0 || angles.y != 0 || angles.z != 0) {
-    double radius = qa_length3(v3f(fmax(fabs(bounds.min.x), fabs(bounds.max.x)),
-                                   fmax(fabs(bounds.min.y), fabs(bounds.max.y)),
-                                   fmax(fabs(bounds.min.z), fabs(bounds.max.z))));
+    double radius = qa_length3(v3f(qa_js_max(fabs(bounds.min.x), fabs(bounds.max.x)),
+                                   qa_js_max(fabs(bounds.min.y), fabs(bounds.max.y)),
+                                   qa_js_max(fabs(bounds.min.z), fabs(bounds.max.z))));
     bounds = (qa_bounds){v3f(-radius, -radius, -radius), v3f(radius, radius, radius)};
   }
   *out_bounds = bounds;
@@ -251,7 +248,7 @@ qa_aas_client_move qa_aas_spatial_predict_client_movement(qa_aas_reachability_sp
   request.entity_num = spatial->options.prediction_client;
   qa_bot_travel_prediction_result result = spatial->options.predict_client_movement(spatial->options.predict_ctx, request);
   if (!result.has_end_area) qa_range_error("AAS generation prediction requires an AAS end area");
-  double frames = result.stop_event == 0 ? result.frames : fmax(0, result.frames - 1);
+  double frames = result.stop_event == 0 ? result.frames : qa_js_max(0, result.frames - 1);
   qa_aas_client_move move;
   move.end = result.end;
   move.velocity = result.velocity;
@@ -282,7 +279,7 @@ double qa_aas_spatial_rocket_jump_z_velocity(qa_aas_reachability_spatial *spatia
                       fr((double)fr(origin.z + 8) + (double)fr((double)fr((double)fr(forward.z * 8) + (double)fr(right.z * 8)) - 8)));
   qa_aas_host_trace trace = qa_aas_spatial_trace(spatial, start, ma(start, 500, forward), false, (qa_bounds){{0, 0, 0}, {0, 0, 0}}, 1, 1);
   double distance = qa_length3(qa_sub3(trace.end, v3f(origin.x, origin.y, origin.z + 4)));
-  double points = fr(fmax(0, (double)fr(120 - 0.5 * distance)) * 0.5);
+  double points = fr(qa_js_max(0, (double)fr(120 - 0.5 * distance)) * 0.5);
   qa_vec3 direction = qa_normalize3(qa_sub3(origin, trace.end));
   return fr((double)fr(direction.z * (1600 * points / 200)) + (double)spatial->settings->jump_velocity);
 }
@@ -290,75 +287,14 @@ qa_aas_area_crossing *qa_aas_spatial_trace_areas(qa_aas_reachability_spatial *sp
                                                  int64_t maximum, size_t *out_count) {
   return qa_aas_trace_areas(&spatial->world->asset, start, end, maximum, out_count);
 }
-typedef struct { qa_vec3 start, end; int64_t node, plane; } TracePiece;
+static void spatial_trace_print(void *ctx, const char *text) {
+  qa_aas_reachability_spatial *spatial = ctx;
+  if (spatial->options.print) spatial->options.print(spatial->options.print_ctx, 3, text);
+}
 qa_aas_trace qa_aas_spatial_trace_client_bbox(qa_aas_reachability_spatial *spatial, qa_vec3 start, qa_vec3 end,
                                               int64_t presence, int64_t pass_entity) {
   (void)pass_entity;
-  qa_aas_asset *world = &spatial->world->asset;
-  finite_vector(start); finite_vector(end);
-  TracePiece *stack = malloc(128 * sizeof *stack);
-  if (!stack) qa_range_error("Out of memory");
-  size_t stack_count = 0, stack_cap = 128;
-  stack[stack_count++] = (TracePiece){v3f(start.x, start.y, start.z), v3f(end.x, end.y, end.z), 1, 0};
-  int64_t last_area = 0;
-  qa_aas_trace result;
-  bool done = false;
-  memset(&result, 0, sizeof result);
-  while (stack_count > 0 && !done) {
-    TracePiece piece = stack[--stack_count];
-    if (piece.node <= 0) {
-      if (piece.node == 0 || (qa_aas_at_setting(world, -piece.node)->presence & presence) == 0) {
-        bool start_solid = same_vec(piece.start, start);
-        qa_vec3 direction = start_solid ? v3f(0, 0, 0) : qa_normalize3(qa_sub3(end, start));
-        double fraction = start_solid ? 0 : fr(qa_length3(qa_sub3(piece.start, start)) / qa_length3(qa_sub3(end, start)));
-        qa_vec3 hit_end = start_solid ? piece.start : ma(piece.start, -0.125, direction);
-        int64_t plane = qa_dot3(direction, qa_aas_at_plane(world, piece.plane)->normal) > 0 ? piece.plane ^ 1 : piece.plane;
-        result = (qa_aas_trace){start_solid, fraction, hit_end, 0, last_area, piece.node == 0 ? 0 : -piece.node, plane};
-        done = true;
-        break;
-      }
-      last_area = -piece.node;
-      continue;
-    }
-    const qa_aas_node_rec *node = qa_aas_at_node(world, piece.node);
-    const qa_aas_plane_rec *plane = qa_aas_at_plane(world, node->plane);
-    float front = fr(qa_dot3(piece.start, plane->normal) - plane->distance);
-    float back = fr(qa_dot3(piece.end, plane->normal) - plane->distance);
-    TracePiece pushes[2];
-    size_t push_count = 0;
-    if (front >= 0 && back >= 0) {
-      pushes[push_count++] = (TracePiece){piece.start, piece.end, node->children[0], piece.plane};
-    } else if (front < 0 && back < 0) {
-      pushes[push_count++] = (TracePiece){piece.start, piece.end, node->children[1], piece.plane};
-    } else {
-      if (front == back) front = fr((double)front - (double)fr(0.001));
-      float fraction = fr((front < 0 ? (double)front + 0.125 : (double)front - 0.125) / (double)fr((double)front - (double)back));
-      if (fraction < 0) fraction = fr(0.001);
-      else if (fraction > 1) fraction = fr(0.999);
-      qa_vec3 middle = ma(piece.start, fraction, qa_sub3(piece.end, piece.start));
-      int side = front < 0 ? 1 : 0;
-      pushes[push_count++] = (TracePiece){middle, piece.end, node->children[side == 0 ? 1 : 0], node->plane};
-      pushes[push_count++] = (TracePiece){piece.start, middle, node->children[side], piece.plane};
-    }
-    for (size_t i = 0; i < push_count; i++) {
-      if (stack_count == stack_cap) {
-        stack_cap *= 2;
-        TracePiece *p = realloc(stack, stack_cap * sizeof *p);
-        if (!p) { free(stack); qa_range_error("Out of memory"); }
-        stack = p;
-      }
-      stack[stack_count++] = pushes[i];
-      if (stack_count >= 127) {
-        if (spatial->options.print) spatial->options.print(spatial->options.print_ctx, 3, "AAS_TraceBoundingBox: stack overflow\n");
-        result = (qa_aas_trace){false, 0, v3f(0, 0, 0), 0, last_area, 0, 0};
-        done = true;
-        break;
-      }
-    }
-  }
-  free(stack);
-  if (!done) result = (qa_aas_trace){false, 1, end, 0, last_area, 0, 0};
-  return result;
+  return qa_aas_trace_client_bbox(&spatial->world->asset, start, end, presence, spatial_trace_print, spatial);
 }
 void qa_aas_area_link_free(qa_aas_area_link *head) {
   while (head) { qa_aas_area_link *next = head->next_area; free(head); head = next; }

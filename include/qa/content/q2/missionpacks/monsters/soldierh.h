@@ -9,6 +9,6 @@
 #include "qa/content/q2/missionpacks/monsters/types.h"
 
 /* Writes 3 definitions (ripper, hypergun, lasergun); returns 3. */
-size_t qa_q2mpm_create_soldier_heavy_definitions(qa_q2m_definition *out, qa_q2mpm_weapons weapons);
+size_t qa_q2mpm_create_soldier_heavy_definitions(qa_q2mpm_arena *arena, qa_q2m_definition *out, qa_q2mpm_weapons weapons);
 
 #endif

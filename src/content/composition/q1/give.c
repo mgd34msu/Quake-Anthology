@@ -8,6 +8,9 @@
 
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/content/q1/foundation/pickups.h"
+#include "qa/network/common/js_number.h"
 
 /* ASCII toLowerCase; TS lowercases UTF-16 (non-ASCII give args differ). */
 static char *lower_dup(const char *text) {
@@ -49,101 +52,117 @@ static size_t normalize(const char *name, char *out, size_t cap) {
 }
 
 typedef struct give_state {
-  const qa_comp_q1_give_source *source;
-  qa_comp_q1_game *game;
+  qa_q1_services *game;
   const qa_comp_q1_services *services;
-  qa_comp_q1_player_state *player;
+  qa_q1_player_state *player;
   qa_actor_id actor;
   const char **weapons; /* deduped WEAPONS + registered keys, borrowed */
   size_t weapon_count;
 } give_state;
 
+static void message(give_state *state, const char *text) {
+  qa_q1_message(state->game, &state->actor, text, false, NULL, 0);
+}
 static void configure(give_state *state, qa_item_id item, double count, double capacity) {
-  qa_comp_q1_game *game = state->game;
+  qa_q1_services *game = state->game;
   size_t entry_count = 0;
-  const qa_inventory_entry *entries = game->inventory_entries(game->ctx, state->actor, &entry_count);
+  const qa_inventory_entry *entries = qa_shared_inventory_table_entries(game->host.inventory, state->actor, &entry_count);
   double previous_capacity = 0;
   for (size_t i = 0; i < entry_count; i++)
     if (strcmp(entries[i].item, item) == 0) { previous_capacity = entries[i].capacity; break; }
-  double resolved = fmax(fmax(capacity, previous_capacity), count);
-  game->inventory_configure(game->ctx, state->player->actor,
-                            (qa_inventory_entry){item, fmax(0.0, count), resolved, false, {0}});
+  qa_inventory_entry entry;
+  memset(&entry, 0, sizeof entry);
+  entry.item = item;
+  entry.count = qa_js_max(0.0, count);
+  entry.capacity = qa_js_max(qa_js_max(capacity, previous_capacity), count);
+  qa_shared_inventory_table_configure(game->host.inventory, state->player->actor, entry, NULL, NULL);
 }
-
 static void ammo_count(give_state *state, qa_item_id item, double count) {
-  qa_comp_q1_game *game = state->game;
+  qa_q1_services *game = state->game;
   const qa_comp_q1_services *services = state->services;
   if (game->pickup_admission == NULL && services->give_selected_item != NULL) {
-    char count_text[32];
-    /* TS String(count) for an integer-valued count. */
-    (void)snprintf(count_text, sizeof count_text, "%lld", (long long)count);
+    char count_text[40];
+    qa_net_js_number(count, count_text, sizeof count_text); /* TS String(count) */
     const char *args[] = {item, count_text};
     if (services->give_selected_item(services->ctx, state->actor, args, 2)) return;
   }
   if (game->pickup_admission == NULL) { configure(state, item, count, count); return; }
   const qa_pickup_admission *admission = game->pickup_admission;
-  qa_pickup_supply_offer offer = {0};
+  qa_pickup_supply_offer offer;
+  memset(&offer, 0, sizeof offer);
   offer.kind = QA_PICKUP_SUPPLY_AMMO;
-  offer.grant = (qa_pickup_ammo_grant){item, fmax(1.0, count)};
-  qa_pickup_supply_preview mapped = admission->preview(admission->ctx, state->actor, offer);
+  offer.grant = (qa_pickup_ammo_grant){item, qa_js_max(1.0, count)};
+  const qa_pickup_supply_preview mapped = admission->preview(admission->ctx, state->actor, offer);
   for (size_t i = 0; i < mapped.ammo_count; i++) configure(state, mapped.ammo[i].item, count, count);
+}
+static bool ammo_seen_before(give_state *state, size_t i, qa_item_id ammo) {
+  for (size_t j = 0; j < i; j++) {
+    const qa_item_id other = qa_q1_services_weapon_ammo(state->game, state->weapons[j]);
+    if (other != NULL && strcmp(other, ammo) == 0) return true;
+  }
+  return false;
 }
 
 void qa_comp_give_q1(const qa_comp_q1_give_source *source, qa_actor_id actor,
                      const char *const *args, size_t arg_count) {
-  qa_comp_q1_game *game = source->game;
+  qa_q1_services *game = source->game;
   const qa_comp_q1_services *services = source->services;
-  void *ctx = game->ctx;
-  qa_comp_q1_player_state *player = game->player(ctx, actor);
+  qa_q1_player_state *player = qa_q1_player(game, actor);
   if (player == NULL) qa_range_error("Q1 give requires an admitted player");
-  if (arg_count == 0 || args[0] == NULL)
-    qa_range_error("Usage: give <all|weapons|ammo|health|armor|keys|item> [amount]");
+  if (arg_count == 0 || args[0] == NULL) {
+    qa_q1_message(game, &actor, "Usage: give <all|weapons|ammo|health|armor|keys|item> [amount]\n", false, NULL, 0);
+    return;
+  }
   char *input = lower_dup(args[0]);
   if (input == NULL) qa_range_error("Out of memory");
-  bool has_amount = arg_count > 1;
-  double amount = has_amount ? (double)qa_native_atoi(args[1]) : 0;
-  bool all = strcmp(input, "all") == 0;
-  size_t registered_count = 0;
-  const char *const *registered = game->registered_weapons(ctx, &registered_count);
-  const char **weapons = (const char **)malloc((QA_COMP_Q1_WEAPON_COUNT + registered_count) * sizeof *weapons);
+  const bool has_amount = arg_count > 1;
+  const double amount = has_amount ? (double)qa_native_atoi(args[1]) : 0;
+  const bool all = strcmp(input, "all") == 0;
+  const char **weapons = (const char **)malloc((8 + game->registered_weapon_count) * sizeof *weapons);
   if (weapons == NULL) qa_range_error("Out of memory");
   size_t weapon_count = 0;
-  for (int i = 0; i < QA_COMP_Q1_WEAPON_COUNT; i++) weapons[weapon_count++] = QA_COMP_Q1_WEAPONS[i];
-  for (size_t i = 0; i < registered_count; i++) {
+  for (size_t i = 0; i < 8; i++) weapons[weapon_count++] = QA_Q1_WEAPONS[i];
+  bool hipnotic = false;
+  for (size_t i = 0; i < game->registered_weapon_count; i++) {
+    const char *id = game->registered_weapons[i].def->id;
+    if (strcmp(id, "hipnotic:laser") == 0) hipnotic = true;
     bool seen = false;
-    for (size_t j = 0; j < weapon_count; j++) if (strcmp(weapons[j], registered[i]) == 0) { seen = true; break; }
-    if (!seen) weapons[weapon_count++] = registered[i];
+    for (size_t j = 0; j < weapon_count; j++) if (strcmp(weapons[j], id) == 0) { seen = true; break; }
+    if (!seen) weapons[weapon_count++] = id;
   }
-  give_state state = {source, game, services, player, actor, weapons, weapon_count};
+  give_state state = {game, services, player, actor, weapons, weapon_count};
 
   if (all || strcmp(input, "health") == 0 || strcmp(input, "h") == 0) {
-    game->set_health(ctx, player->actor, has_amount ? amount : strcmp(input, "h") == 0 ? 0 : player->max_health);
+    qa_gameplay_authority_set_health(game->host.combat, player->actor,
+                                     has_amount ? amount : strcmp(input, "h") == 0 ? 0 : player->max_health);
     if (!all) goto done;
   }
   if (all || strcmp(input, "armor") == 0 || strcmp(input, "a") == 0) {
-    double points = has_amount ? amount : strcmp(input, "a") == 0 ? 0 : 200;
-    game->set_armor(ctx, player->actor,
-                    points <= 0 ? (qa_comp_q1_armor){"none", 0, 0, NULL}
-                                : (qa_comp_q1_armor){"q1", points, points > 150 ? 0.8 : points > 100 ? 0.6 : 0.3,
-                                                     points > 150 ? "q1:item_armorInv" : points > 100 ? "q1:item_armor2" : "q1:item_armor1"});
+    const double points = has_amount ? amount : strcmp(input, "a") == 0 ? 0 : 200;
+    qa_regular_armor_state armor;
+    memset(&armor, 0, sizeof armor);
+    armor.kind = QA_REGULAR_ARMOR_NONE;
+    if (points > 0) {
+      armor.kind = QA_REGULAR_ARMOR_Q1;
+      armor.points = points;
+      armor.absorption = points > 150 ? 0.8 : points > 100 ? 0.6 : 0.3;
+      armor.item = points > 150 ? "q1:item_armorInv" : points > 100 ? "q1:item_armor2" : "q1:item_armor1";
+    }
+    qa_gameplay_authority_set_regular_armor(game->host.combat, player->actor, armor);
     if (!all) goto done;
   }
   if (all || strcmp(input, "weapons") == 0) {
     if (services->cheat_arsenal == NULL || !services->cheat_arsenal(services->ctx, actor, "weapons"))
-      for (size_t i = 0; i < weapon_count; i++) configure(&state, game->weapon_item(ctx, weapons[i]), 1, 1);
+      for (size_t i = 0; i < weapon_count; i++) configure(&state, qa_q1_services_weapon_item(game, weapons[i]), 1, 1);
     if (!all) goto done;
   }
   if (all || strcmp(input, "ammo") == 0) {
     if (services->cheat_arsenal == NULL || !services->cheat_arsenal(services->ctx, actor, "ammo"))
       for (size_t i = 0; i < weapon_count; i++) {
-        qa_item_id ammo = game->weapon_ammo(ctx, weapons[i]);
-        if (ammo == NULL) continue;
-        bool seen = false;
-        for (size_t j = 0; j < i; j++) {
-          qa_item_id other = game->weapon_ammo(ctx, weapons[j]);
-          if (other != NULL && strcmp(other, ammo) == 0) { seen = true; break; }
-        }
-        if (!seen) configure(&state, ammo, strstr(ammo, "nails") != NULL ? 200 : 100, strstr(ammo, "nails") != NULL ? 200 : 100);
+        const qa_item_id ammo = qa_q1_services_weapon_ammo(game, weapons[i]);
+        if (ammo == NULL || ammo_seen_before(&state, i, ammo)) continue;
+        const double count = strstr(ammo, "nails") != NULL ? 200 : 100;
+        configure(&state, ammo, count, count);
       }
     if (!all) goto done;
   }
@@ -165,18 +184,20 @@ void qa_comp_give_q1(const qa_comp_q1_give_source *source, qa_actor_id actor,
     if (shorthand != NULL) {
       bool available = false;
       for (size_t i = 0; i < weapon_count; i++) {
-        qa_item_id ammo = game->weapon_ammo(ctx, weapons[i]);
+        const qa_item_id ammo = qa_q1_services_weapon_ammo(game, weapons[i]);
         if (ammo != NULL && strcmp(ammo, shorthand) == 0) { available = true; break; }
       }
-      if (!available) qa_range_error("Ammo %s is unavailable in this arsenal", input);
-      ammo_count(&state, shorthand, has_amount ? amount : 0);
+      if (!available) {
+        char text[96];
+        (void)snprintf(text, sizeof text, "Ammo %s is unavailable in this arsenal\n", input);
+        message(&state, text);
+      } else {
+        ammo_count(&state, shorthand, has_amount ? amount : 0);
+      }
       goto done;
     }
   }
   {
-    bool hipnotic = false;
-    for (size_t i = 0; i < registered_count; i++)
-      if (strcmp(registered[i], "hipnotic:laser") == 0) { hipnotic = true; break; }
     size_t named_count = arg_count;
     if (arg_count > 1 && is_integer_text(args[arg_count - 1])) named_count = arg_count - 1;
     char *joined = join_args(args, named_count);
@@ -188,51 +209,45 @@ void qa_comp_give_q1(const qa_comp_q1_give_source *source, qa_actor_id actor,
     if (hipnotic && strcmp(input, "6a") == 0) numbered = "hipnotic:proximity";
     else if (hipnotic && strcmp(input, "9") == 0) numbered = "hipnotic:laser";
     else if (hipnotic && strcmp(input, "0") == 0) numbered = "hipnotic:mjolnir";
-    else if (strlen(input) == 1 && input[0] >= '2' && input[0] <= '8') numbered = QA_COMP_Q1_WEAPONS[input[0] - '1'];
+    else if (strlen(input) == 1 && input[0] >= '2' && input[0] <= '8') numbered = QA_Q1_WEAPONS[input[0] - '1'];
     char named_norm[512];
     normalize(named, named_norm, sizeof named_norm);
+    free(named);
     const char *weapon = NULL;
     for (size_t i = 0; i < weapon_count && weapon == NULL; i++) {
       char buffer[512];
       if (numbered != NULL && strcmp(weapons[i], numbered) == 0) { weapon = weapons[i]; break; }
       normalize(weapons[i], buffer, sizeof buffer);
       if (strcmp(buffer, named_norm) == 0) { weapon = weapons[i]; break; }
-      normalize(game->weapon_item(ctx, weapons[i]), buffer, sizeof buffer);
+      normalize(qa_q1_services_weapon_item(game, weapons[i]), buffer, sizeof buffer);
       if (strcmp(buffer, named_norm) == 0) { weapon = weapons[i]; break; }
       char prefixed[512];
       (void)snprintf(prefixed, sizeof prefixed, "weapon_%s", weapons[i]);
       normalize(prefixed, buffer, sizeof buffer);
       if (strcmp(buffer, named_norm) == 0) weapon = weapons[i];
     }
-    free(named);
     if (weapon != NULL) {
-      qa_item_id item = game->weapon_item(ctx, weapon);
+      const qa_item_id item = qa_q1_services_weapon_item(game, weapon);
       if (game->pickup_admission == NULL && services->give_selected_item != NULL) {
         const char *give_args[] = {item};
         if (services->give_selected_item(services->ctx, actor, give_args, 1)) goto done;
       }
       if (game->pickup_admission == NULL) { configure(&state, item, 1, 1); goto done; }
       const qa_pickup_admission *admission = game->pickup_admission;
-      admission->weapon(admission->ctx, player->actor, (qa_pickup_weapon_offer){item, NULL, 0},
-                        QA_PICKUP_SELECTION_NEVER);
+      (void)admission->weapon(admission->ctx, player->actor, (qa_pickup_weapon_offer){item, NULL, 0},
+                              QA_PICKUP_SELECTION_NEVER);
       goto done;
     }
     qa_item_id ammo = NULL;
     for (size_t i = 0; i < weapon_count && ammo == NULL; i++) {
-      qa_item_id candidate = game->weapon_ammo(ctx, weapons[i]);
-      if (candidate == NULL) continue;
-      bool seen = false;
-      for (size_t j = 0; j < i; j++) {
-        qa_item_id other = game->weapon_ammo(ctx, weapons[j]);
-        if (other != NULL && strcmp(other, candidate) == 0) { seen = true; break; }
-      }
-      if (seen) continue;
+      const qa_item_id candidate = qa_q1_services_weapon_ammo(game, weapons[i]);
+      if (candidate == NULL || ammo_seen_before(&state, i, candidate)) continue;
       const char *tail = strrchr(candidate, '/');
       tail = tail != NULL ? tail + 1 : candidate;
       if (strcmp(candidate, input) == 0 || strcmp(tail, input) == 0) ammo = candidate;
     }
     if (ammo != NULL) {
-      ammo_count(&state, ammo, has_amount ? amount : game->inventory_count(ctx, actor, ammo) + 20);
+      ammo_count(&state, ammo, has_amount ? amount : qa_shared_inventory_table_count(game->host.inventory, actor, ammo) + 20);
       goto done;
     }
     const char *classname = strcmp(input, "quad") == 0 ? "item_artifact_super_damage"
@@ -243,24 +258,30 @@ void qa_comp_give_q1(const qa_comp_q1_give_source *source, qa_actor_id actor,
       goto done;
     if (strncmp(classname, "item_", 5) != 0 && strncmp(classname, "weapon_", 7) != 0) {
       char *joined_args = join_args(args, arg_count);
-      qa_range_error("Unknown Q1 item: %s", joined_args != NULL ? joined_args : "");
+      char text[600];
+      (void)snprintf(text, sizeof text, "Unknown Q1 item: %s\n", joined_args != NULL ? joined_args : "");
+      free(joined_args);
+      message(&state, text);
+      goto done;
     }
-    qa_comp_q1_actor *item = game->create(ctx, classname);
-    bool finished = false;
-    if (source->give_pickup(source->give_ctx, game, item, actor)) finished = true;
-    if (!finished) {
-      game->spawn_entity(ctx, item);
-      if (!game->live(ctx, item) || !game->actor_has_touch(ctx, item)) {
-        char classname_copy[256];
-        (void)snprintf(classname_copy, sizeof classname_copy, "%s", classname);
-        if (game->live(ctx, item)) game->remove(ctx, item); /* TS finally */
-        qa_range_error("Item is not giveable: %s", classname_copy);
+    qa_q1_actor *item = qa_q1_create(game, classname, NULL, NULL);
+    if (!qa_q1_give_pickup(game, item, actor)) {
+      qa_q1_spawn_entity(game, item);
+      if (!qa_q1_live(game, item) || item->touch.fn == NULL) {
+        char text[300];
+        (void)snprintf(text, sizeof text, "Item is not giveable: %s\n", classname);
+        message(&state, text);
+      } else {
+        qa_q1_cancel(game, item);
+        item->solid = "trigger";
+        qa_touch_contact contact;
+        memset(&contact, 0, sizeof contact);
+        contact.self = item->actor;
+        contact.other = actor;
+        (void)qa_actor_callback_table_touch(game->host.callbacks, contact);
       }
-      game->cancel(ctx, item);
-      game->actor_set_solid(ctx, item, "trigger");
-      game->callbacks_touch(ctx, game->actor_owned(ctx, item), actor);
     }
-    if (game->live(ctx, item)) game->remove(ctx, item); /* TS finally */
+    if (qa_q1_live(game, item)) qa_q1_remove(game, item); /* TS finally */
   }
 done:
   free(weapons);

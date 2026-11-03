@@ -361,16 +361,6 @@ static const qa_q2m_frame f_tank_2[] = {
   {QA_Q2M_AI_WALK, NULL, 6, NULL, 0, -1},
   {QA_Q2M_AI_WALK, NULL, 6, a_tank_2_15, 1, -1},
 };
-static const qa_q2m_action a_tank_3_4[] = {
-  {false, "tank_footstep", 0, false},
-};
-static const qa_q2m_frame f_tank_3[] = {
-  {QA_Q2M_AI_WALK, NULL, 3, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 3, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 2, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 2, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 4, a_tank_3_4, 1, -1},
-};
 static const qa_q2m_action a_tank_4_3[] = {
   {false, "tank_footstep", 0, false},
 };
@@ -403,16 +393,6 @@ static const qa_q2m_frame f_tank_5[] = {
   {QA_Q2M_AI_RUN, NULL, 7, NULL, 0, -1},
   {QA_Q2M_AI_RUN, NULL, 6, NULL, 0, -1},
   {QA_Q2M_AI_RUN, NULL, 6, a_tank_5_15, 1, -1},
-};
-static const qa_q2m_action a_tank_6_4[] = {
-  {false, "tank_footstep", 0, false},
-};
-static const qa_q2m_frame f_tank_6[] = {
-  {QA_Q2M_AI_RUN, NULL, 3, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 3, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 2, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 2, NULL, 0, -1},
-  {QA_Q2M_AI_RUN, NULL, 4, a_tank_6_4, 1, -1},
 };
 static const qa_q2m_frame f_tank_7[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
@@ -767,10 +747,8 @@ const qa_q2m_move qa_q2rm_tank_moves[] = {
   {"tank_move_stand", 0, 29, NULL, 0, f_tank_0, 30},
   {"tank_move_start_walk", 30, 33, "tank_walk", 0, f_tank_1, 4},
   {"tank_move_walk", 34, 49, NULL, 0, f_tank_2, 16},
-  {"tank_move_stop_walk", 50, 54, "tank_stand", 0, f_tank_3, 5},
   {"tank_move_start_run", 30, 33, "tank_run", 0, f_tank_4, 4},
   {"tank_move_run", 34, 49, NULL, 0, f_tank_5, 16},
-  {"tank_move_stop_run", 50, 54, "tank_walk", 0, f_tank_6, 5},
   {"tank_move_pain1", 197, 200, "tank_run", 0, f_tank_7, 4},
   {"tank_move_pain2", 201, 205, "tank_run", 0, f_tank_8, 5},
   {"tank_move_pain3", 206, 221, "tank_run", 0, f_tank_9, 16},

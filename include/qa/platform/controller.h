@@ -160,6 +160,8 @@ qa_sdl_runtime qa_sdl_controllers_runtime(void);
 /* False only on OOM. Heap owner; close then free. */
 qa_sdl_controllers *qa_sdl_controllers_open(void);
 bool qa_sdl_controllers_closed(const qa_sdl_controllers *controllers);
+/* TS openFailures: controllers skipped because SDL could not open them. */
+int64_t qa_sdl_controllers_open_failures(const qa_sdl_controllers *controllers);
 /* Malloc'd; dispose with qa_controller_devices_free. NULL only on OOM. */
 qa_controller_device *qa_sdl_controllers_devices(qa_sdl_controllers *controllers,
                                                  size_t *out_count);

@@ -1,5 +1,5 @@
 /*
- * Port of the TypeScript cases covering core/diagnostics, core/math,
+ * Port of the TypeScript cases covering core/math,
  * core/numeric, core/renderer-math, core/commands/text, core/cvars/info
  * and core/random/q2-rerelease: tests/core/math.test.ts,
  * tests/core/q2-rerelease-random.test.ts, and the tokenizeCommand cases
@@ -24,7 +24,6 @@
 
 #include "qa/core/commands/text.h"
 #include "qa/core/cvars/info.h"
-#include "qa/core/diagnostics.h"
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/core/random/q2_rerelease.h"
@@ -427,36 +426,6 @@ static void test_info(void) {
   CHECK_ABORTS(free(qa_set_info_value("0123456789", "k", "v", &tiny)));
 }
 
-typedef struct diag_log {
-  qa_diagnostic last;
-  int count;
-} diag_log;
-
-static void diag_sink(void *ctx, const qa_diagnostic *diagnostic) {
-  diag_log *log = (diag_log *)ctx;
-  log->last = *diagnostic;
-  log->count++;
-}
-
-static void test_diagnostics(void) {
-  diag_log log = {{0}, 0};
-  qa_session_id session = {"session-name", &log};
-  qa_session_diagnostics diagnostics;
-  qa_diagnostic_sink sink = {&log, diag_sink};
-  qa_session_diagnostics_init(&diagnostics, session, sink);
-  qa_diagnostic_input input = {QA_DIAGNOSTIC_WARNING, "x", "m", false, NULL, false, {0, 0}};
-  qa_session_diagnostics_emit(&diagnostics, input);
-  CHECK(log.count == 1);
-  CHECK(log.last.severity == QA_DIAGNOSTIC_WARNING);
-  CHECK(text_is(log.last.code, "x") && text_is(log.last.message, "m"));
-  CHECK(log.last.session.token == session.token);
-  CHECK(!log.last.has_provider && !log.last.has_time);
-  qa_engine_error_kind kind;
-  CHECK(qa_engine_error_kind_parse("drop", &kind) && kind == QA_ENGINE_ERROR_DROP);
-  CHECK(text_is(qa_engine_error_kind_name(QA_ENGINE_ERROR_FATAL), "fatal"));
-  CHECK_ABORTS(qa_engine_error(QA_ENGINE_ERROR_FATAL, "boom"));
-}
-
 int main(void) {
   test_numeric();
   test_math();
@@ -464,7 +433,6 @@ int main(void) {
   test_q2_random();
   test_command_text();
   test_info();
-  test_diagnostics();
   if (failures != 0) {
     fprintf(stderr, "%d of %d checks failed\n", failures, checks);
     return 1;

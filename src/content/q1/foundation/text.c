@@ -1,6 +1,8 @@
 /* Port of src/content/q1/foundation/text.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/foundation/text.h"
+#include "qa/network/common/js_number.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,8 +12,8 @@
 #include "qa/content/q1/base/messages.h"
 #include "qa/content/q1/missionpacks/world/finale_text.h"
 
-/* TS classicQ1Messages, in source (Map insertion) order; the six
- * $qc_need_* entries are the gold/silver x key/runekey/keycard spread. */
+/* TS classicQ1Messages, in Map insertion order (generated from the TS map
+ * under bun; the $qc_need_* and $qc_<color>_<kind> rows are its spreads). */
 const qa_q1_message_entry QA_Q1_CLASSIC_MESSAGES[] = {
     {"$qc_found_secret", "You found a secret area!"},
     {"$qc_more_go", "There are more to go..."},
@@ -32,6 +34,8 @@ const qa_q1_message_entry QA_Q1_CLASSIC_MESSAGES[] = {
     {"$qc_rune_regeneration", "Edler Magic\n\nRegeneration"},
     {"$qc_color_games", "You were told you can't change teams.\nGo play color games somewhere else.\n"},
     {"$qc_cannot_change_teams", "You cannot change teams.\n"},
+    {"$qc_suicided_too_much", "You have suicided too much already.\n"},
+    {"$qc_out_lava_nails", "Out of Lava Nails\n"},
     {"$qc_ctf_disabled", "Capture the Flag is not enabled.\n"},
     {"$qc_flag_missing", "The flag is missing!\n"},
     {"$qc_flag_at_base", "The flag is at base!\n"},
@@ -52,6 +56,33 @@ const qa_q1_message_entry QA_Q1_CLASSIC_MESSAGES[] = {
     {"$qc_lost_token", "{0} lost the tag token!\n"},
     {"$qc_got_token", "{0} got the tag token!\n"},
     {"$qc_got_quad", "You got the Quad Damage\n"},
+    {"$qc_item_health", "You receive {0} health\n"},
+    {"$qc_item_armor", "You got armor\n"},
+    {"$qc_got_item", "You got {0}\n"},
+    {"$qc_double_shotgun", "the Double-barrelled Shotgun"},
+    {"$qc_nailgun", "the nailgun"},
+    {"$qc_super_nailgun", "the Super Nailgun"},
+    {"$qc_grenade_launcher", "the Grenade Launcher"},
+    {"$qc_rocket_launcher", "the Rocket Launcher"},
+    {"$qc_thunderbolt", "the Thunderbolt"},
+    {"$qc_shells", "the shells"},
+    {"$qc_nails", "the nails"},
+    {"$qc_rockets", "the rockets"},
+    {"$qc_cells", "the cells"},
+    {"$qc_silver_key", "the silver key"},
+    {"$qc_silver_runekey", "the silver runekey"},
+    {"$qc_silver_keycard", "the silver keycard"},
+    {"$qc_gold_key", "the gold key"},
+    {"$qc_gold_runekey", "the gold runekey"},
+    {"$qc_gold_keycard", "the gold keycard"},
+    {"$qc_ring_fade", "Ring of Shadows magic is fading\n"},
+    {"$qc_protection_fade", "Protection is almost burned out\n"},
+    {"$qc_quad_fade", "Quad Damage is wearing off\n"},
+    {"$qc_biosuit_fade", "Air supply in Biosuit expiring\n"},
+    {"$qc_pentagram_of_protection", "the Pentagram of Protection"},
+    {"$qc_ring_of_shadows", "the Ring of Shadows"},
+    {"$qc_biosuit", "the Biosuit"},
+    {"$qc_quad_damage", "the Quad Damage"},
 };
 const size_t QA_Q1_CLASSIC_MESSAGE_COUNT =
     sizeof QA_Q1_CLASSIC_MESSAGES / sizeof *QA_Q1_CLASSIC_MESSAGES;
@@ -66,17 +97,7 @@ const char *qa_q1_classic_message(const char *key) {
 
 /* JS String(number) for the values message args carry. */
 static void js_string_number(double value, char *out, size_t out_size) {
-  if (isnan(value)) { (void)snprintf(out, out_size, "NaN"); return; }
-  if (isinf(value)) { (void)snprintf(out, out_size, "%sInfinity", value < 0 ? "-" : ""); return; }
-  if (value == 0) { (void)snprintf(out, out_size, "0"); return; }
-  if (value == floor(value) && fabs(value) < 1e21) {
-    (void)snprintf(out, out_size, "%.0f", value);
-    return;
-  }
-  for (int precision = 15; precision <= 17; precision++) {
-    (void)snprintf(out, out_size, "%.*g", precision, value);
-    if (strtod(out, NULL) == value) return;
-  }
+  qa_net_js_number(value, out, out_size);
 }
 
 static void append(char *out, size_t out_size, size_t *length, const char *text, size_t count) {
@@ -124,7 +145,9 @@ char *qa_q1_classic_text(const char *text, const qa_q1_msg_arg *args, size_t arg
       bool digits = false;
       while (format[j] >= '0' && format[j] <= '9') {
         digits = true;
-        index = index * 10 + (unsigned long)(format[j] - '0');
+        /* Number(index) never wraps; saturate so a huge index stays out of range. */
+        if (index <= (ULONG_MAX - 9) / 10) index = index * 10 + (unsigned long)(format[j] - '0');
+        else index = ULONG_MAX;
         j++;
       }
       if (digits && format[j] == '}') {
@@ -159,7 +182,10 @@ char *qa_q1_entity_string(const char *value, char *out, size_t out_size) {
   size_t length = 0;
   for (size_t i = 0; value[i] != '\0';) {
     if (value[i] == '\\' && value[i + 1] != '\0') {
-      /* TS /\\(.)/gs over UTF-16 units; bytes agree for ASCII escapes. */
+      /* TS /\\(.)/gs over UTF-16 units. Entity text reaches TS through
+       * BinaryReader.fixedByteString (one char per byte) and C keeps those same
+       * bytes, so one byte here is one TS unit: a backslash before a byte of
+       * 0x80 or more consumes exactly that byte, as TS consumes its char. */
       const char escaped = value[i + 1] == 'n' ? '\n' : '\\';
       append(out, out_size, &length, &escaped, 1);
       i += 2;

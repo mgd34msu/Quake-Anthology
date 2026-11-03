@@ -16,4 +16,6 @@ typedef struct qa_scene_shadow_geometry {
 void qa_scene_shadow_geometry_destroy(qa_scene_shadow_geometry *g);
 /* has_geometry false is TS null. */
 void qa_shadow_material_geometry(const qa_compiled_material *shader, qa_material_geometry geometry, const qa_material_draw_context *context, qa_scene_shadow_geometry *out);
+/* TS shadowFinishQuad: RB_ShadowFinish draws this quad at eye-space z = -10 under the view projection. */
+void qa_shadow_finish_quad(const qa_scene_camera *camera, qa_vec4 out[4]);
 #endif

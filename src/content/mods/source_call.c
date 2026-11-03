@@ -1,5 +1,6 @@
 /* Port of src/content/mods/source-call.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/source_call.h"
+#include "qa/content/mods/declaration.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -68,7 +69,7 @@ qa_mod_source_call qa_read_mod_source_call(const qa_save_reader *reader) {
     qa_save_reader list = field(reader, "arguments");
     size_t count = qa_save_reader_list_count(&list);
     qa_mod_callback_value *values =
-        count > 0 ? (qa_mod_callback_value *)malloc(count * sizeof *values) : NULL;
+        count > 0 ? (qa_mod_callback_value *)qa_mod_declaration_malloc(count * sizeof *values) : NULL;
     if (count > 0 && values == NULL) qa_save_reader_fail(&list, "out of memory");
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&list, i);
@@ -83,7 +84,7 @@ qa_mod_source_call qa_read_mod_source_call(const qa_save_reader *reader) {
     qa_save_reader list = field(reader, "globals");
     size_t count = qa_save_reader_list_count(&list);
     qa_mod_named_value *values =
-        count > 0 ? (qa_mod_named_value *)malloc(count * sizeof *values) : NULL;
+        count > 0 ? (qa_mod_named_value *)qa_mod_declaration_malloc(count * sizeof *values) : NULL;
     if (count > 0 && values == NULL) qa_save_reader_fail(&list, "out of memory");
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&list, i);

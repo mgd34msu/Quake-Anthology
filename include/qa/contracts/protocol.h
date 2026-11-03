@@ -87,13 +87,6 @@ typedef struct qa_user_command {
   } as;
 } qa_user_command;
 
-typedef struct qa_seat_user_command {
-  qa_seat_id seat;
-  qa_client_id client;
-  double sequence;
-  qa_user_command command;
-} qa_seat_user_command;
-
 typedef struct qa_q1_entity_state {
   double number;
   qa_vec3 origin, angles;
@@ -326,21 +319,5 @@ typedef struct qa_network_event {
   double sequence;        /* q3-server-command */
   const char *reason;     /* disconnect */
 } qa_network_event;
-
-typedef struct qa_network_delivery {
-  qa_session_id session;
-  qa_client_id client;
-  qa_protocol_identity protocol;
-  double sequence;
-  const qa_network_event *events; size_t event_count;
-} qa_network_delivery;
-
-/* TS ProtocolSupport: {kind:"supported",protocol} |
- * {kind:"unsupported",protocol,reasons}. */
-typedef struct qa_protocol_support {
-  bool is_supported;
-  qa_protocol_identity protocol;
-  qa_string_view_list reasons;
-} qa_protocol_support;
 
 #endif

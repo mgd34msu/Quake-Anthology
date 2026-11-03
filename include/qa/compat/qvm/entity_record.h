@@ -53,6 +53,7 @@ typedef struct qa_qvm_entity_state {
   qa_qvm_abi_profile profile;
   bool source;
   uint8_t *owned_bytes; /* non-NULL after copy/read */
+  bool lenient; /* TS lenient: unrepresentable legacy values become none/general/absent */
 } qa_qvm_entity_state;
 
 double qa_qvm_entity_state_bytes_for(qa_qvm_abi_profile profile);
@@ -62,6 +63,9 @@ qa_qvm_entity_state qa_qvm_read_entity_state(qa_qvmx_view view);
 qa_qvm_entity_state qa_qvm_read_source_entity_state(qa_qvmx_view view, qa_qvm_abi_profile profile);
 void qa_qvm_write_source_entity_state(qa_qvmx_view view, const qa_qvm_entity_state_fields *state, qa_qvm_abi_profile profile);
 void qa_qvm_write_entity_state(qa_qvmx_view view, const qa_qvm_entity_state_fields *state, qa_qvm_abi_profile profile);
+/* TS writeQvmEntityState(view, state, profile, unmapped): ignore_unmapped is "ignore". */
+void qa_qvm_write_entity_state_unmapped(qa_qvmx_view view, const qa_qvm_entity_state_fields *state, qa_qvm_abi_profile profile,
+                                        bool ignore_unmapped);
 qa_qvm_entity_state qa_qvm_entity_state_copy(const qa_qvm_entity_state *state);
 void qa_qvm_entity_state_copy_from(qa_qvm_entity_state *state, const qa_qvm_entity_state_fields *source);
 void qa_qvm_entity_state_destroy(qa_qvm_entity_state *state);
@@ -128,6 +132,9 @@ void qa_qvm_entity_state_set_generic1(qa_qvm_entity_state *state, double value);
 int32_t qa_qvmx_event(double value, qa_qvm_abi_profile profile, bool reverse);
 int32_t qa_qvmx_entity_type(double value, qa_qvm_abi_profile profile, bool reverse);
 int32_t qa_qvmx_powerup_bits(double bits, qa_qvm_abi_profile profile);
+int32_t qa_qvmx_event_ex(double value, qa_qvm_abi_profile profile, bool reverse, bool lenient);
+int32_t qa_qvmx_entity_type_ex(double value, qa_qvm_abi_profile profile, bool reverse, bool lenient);
+int32_t qa_qvmx_powerup_bits_ex(double bits, qa_qvm_abi_profile profile, bool lenient);
 int32_t qa_qvmx_configstring(double index, qa_qvm_abi_profile profile);
 
 #endif

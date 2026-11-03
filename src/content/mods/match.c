@@ -1,5 +1,6 @@
 /* Port of src/content/mods/match.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/match.h"
+#include "qa/content/mods/declaration.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -32,7 +33,7 @@ qa_source_team_value *qa_read_source_team_values(const qa_save_reader *reader,
                                                  size_t *out_count) {
   size_t count = qa_save_reader_list_count(reader);
   qa_source_team_value *values =
-      count > 0 ? (qa_source_team_value *)malloc(count * sizeof *values) : NULL;
+      count > 0 ? (qa_source_team_value *)qa_mod_declaration_malloc(count * sizeof *values) : NULL;
   if (count > 0 && values == NULL) return NULL;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(reader, i);
@@ -65,7 +66,7 @@ qa_source_team_alias *qa_read_source_team_aliases(const qa_save_reader *reader,
                                                   size_t *out_count) {
   size_t count = qa_save_reader_list_count(reader);
   qa_source_team_alias *values =
-      count > 0 ? (qa_source_team_alias *)malloc(count * sizeof *values) : NULL;
+      count > 0 ? (qa_source_team_alias *)qa_mod_declaration_malloc(count * sizeof *values) : NULL;
   if (count > 0 && values == NULL) return NULL;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(reader, i);
@@ -97,7 +98,7 @@ qa_source_primary_match qa_read_source_primary_match(const qa_save_reader *reade
   qa_save_reader teams_reader = field(reader, "teams");
   size_t count = qa_save_reader_list_count(&teams_reader);
   qa_source_team_command_entry *teams = count > 0
-      ? (qa_source_team_command_entry *)calloc(count, sizeof *teams) : NULL;
+      ? (qa_source_team_command_entry *)qa_mod_declaration_calloc(count, sizeof *teams) : NULL;
   if (count > 0 && teams == NULL) qa_save_reader_fail(&teams_reader, "out of memory");
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(&teams_reader, i);
@@ -106,7 +107,7 @@ qa_source_primary_match qa_read_source_primary_match(const qa_save_reader *reade
     qa_save_reader args = field(&entry, "arguments");
     size_t acount = qa_save_reader_list_count(&args);
     const char **avals =
-        acount > 0 ? (const char **)malloc(acount * sizeof *avals) : NULL;
+        acount > 0 ? (const char **)qa_mod_declaration_malloc(acount * sizeof *avals) : NULL;
     if (acount > 0 && avals == NULL) qa_save_reader_fail(&args, "out of memory");
     for (size_t j = 0; j < acount; j++) {
       qa_save_reader arg = item(&args, j);
@@ -149,7 +150,7 @@ static void *read_nullable(const qa_save_reader *reader, const char *name,
     qa_save_reader_destroy(&f);
     return NULL;
   }
-  void *storage = malloc(size == 0 ? 1 : size);
+  void *storage = qa_mod_declaration_malloc(size == 0 ? 1 : size);
   if (storage == NULL) qa_save_reader_fail(&f, "out of memory");
   read(ctx, &f, storage);
   qa_save_reader_destroy(&f);
@@ -167,7 +168,7 @@ qa_source_objective_declaration *qa_read_source_objectives(
   static const char *const roles[] = {"owned", "borrowed"};
   size_t count = qa_save_reader_list_count(reader);
   qa_source_objective_declaration *decls = count > 0
-      ? (qa_source_objective_declaration *)calloc(count, sizeof *decls) : NULL;
+      ? (qa_source_objective_declaration *)qa_mod_declaration_calloc(count, sizeof *decls) : NULL;
   if (count > 0 && decls == NULL) return NULL;
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry = item(reader, i);
@@ -175,7 +176,7 @@ qa_source_objective_declaration *qa_read_source_objectives(
     qa_save_reader values_reader = field(&state, "values");
     size_t vcount = qa_save_reader_list_count(&values_reader);
     qa_source_objective_value *values = vcount > 0
-        ? (qa_source_objective_value *)malloc(vcount * sizeof *values) : NULL;
+        ? (qa_source_objective_value *)qa_mod_declaration_malloc(vcount * sizeof *values) : NULL;
     if (vcount > 0 && values == NULL) qa_save_reader_fail(&values_reader, "out of memory");
     for (size_t j = 0; j < vcount; j++) {
       qa_save_reader row = item(&values_reader, j);
@@ -206,7 +207,7 @@ qa_source_objective_declaration *qa_read_source_objectives(
     qa_save_reader_destroy(&id_reader);
     {
       qa_save_reader storage = field(&state, "storage");
-      void *scalar = malloc(scalar_size == 0 ? 1 : scalar_size);
+      void *scalar = qa_mod_declaration_malloc(scalar_size == 0 ? 1 : scalar_size);
       if (scalar == NULL) qa_save_reader_fail(&storage, "out of memory");
       read_scalar(scalar_ctx, &storage, scalar);
       qa_save_reader_destroy(&storage);

@@ -5,7 +5,7 @@
 #include <string.h>
 
 bool qa_q2_kill_rerelease_box(qa_q2_entity *e, qa_q2_game_services *g, qa_q2_rerelease_players *p, bool spawning, bool exact) {
-  qa_q2rr_player_state *self = qa_q2rr_players_get_state(p, e->actor.id);
+  qa_q2_base_player_state *self = qa_q2_players_get_state(p->base, e->actor.id);
   if (self && self->noclip) return true;
   qa_body_state body = rr_body_of(g, e);
   qa_vec3 mn = qa_q2_add(body.origin, body.bounds.min), mx = qa_q2_add(body.origin, body.bounds.max);

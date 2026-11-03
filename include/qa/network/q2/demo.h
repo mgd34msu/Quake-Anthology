@@ -24,9 +24,19 @@ typedef struct qa_q2_demo_record {
 
 void qa_q2_demo_records_free(qa_q2_demo_record *records, size_t count);
 
-/* TS readQ2Demo generator, collected. False only on OOM. */
+/* TS readQ2Demo generator, collected; framing errors raise the TS Error. False only on OOM. */
 bool qa_q2_read_demo(const uint8_t *bytes, size_t length, qa_q2_demo_record **out,
                      size_t *out_count);
+/* One step of the TS readQ2Demo generator over `bytes` from *offset (0 to start). Returns false
+ * when the generator is done (end of input or the -1 terminator, which also moves *offset past
+ * the terminator); raises the generator's errors at the record they occur. `out` borrows from
+ * `bytes`. */
+typedef struct qa_q2_demo_span {
+  double offset;
+  const uint8_t *bytes;
+  size_t length;
+} qa_q2_demo_span;
+bool qa_q2_demo_next(const uint8_t *bytes, size_t length, size_t *offset, qa_q2_demo_span *out);
 /* TS writeQ2DemoRecord / finishQ2Demo: malloc'd (NULL on OOM). */
 uint8_t *qa_q2_write_demo_record(const uint8_t *bytes, size_t length,
                                  size_t *out_length);
@@ -39,12 +49,15 @@ typedef struct qa_q2_demo_step {
 } qa_q2_demo_step;
 
 void qa_q2_demo_steps_free(qa_q2_demo_step *steps, size_t count);
-/* TS playQ2Demo generator, collected. False only on OOM. */
+/* TS playQ2Demo generator, collected: records are framed and read one at a time, so a
+ * damaged record raises after the reader consumed the earlier ones (nothing is returned
+ * then). False only on OOM. */
 bool qa_q2_play_demo(const uint8_t *bytes, size_t length,
                      qa_q2_server_message_reader *reader, qa_q2_demo_step **out,
                      size_t *out_count);
 
-/* TS Q2DemoHeader / readQ2DemoHeader. False only on OOM. */
+/* TS Q2DemoHeader / readQ2DemoHeader; malformed preambles raise the TS errors. False only on
+ * OOM. */
 typedef struct qa_q2_demo_header {
   double recorded_version;
   qa_q2_protocol_identity protocol;

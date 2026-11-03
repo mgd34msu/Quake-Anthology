@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/monsters/common.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/monsters/common.h"
+#include "qa/foundation/js.h"
 
 #include "base_internal.h"
 #include "qa/content/q2/foundation/monsters/ai.h"
@@ -7,13 +8,6 @@
 #include "qa/content/q2/foundation/monsters/muzzle.h"
 
 const qa_bounds qa_q2bm_humanoid_bounds = {{-16, -16, -24}, {16, 16, 32}};
-
-static qa_q2bm_event_sink event_sink;
-void qa_q2bm_set_event_sink(qa_q2bm_event_sink sink) { event_sink = sink; }
-void qa_q2bm_emit_extended(qa_q2bm_extended_event event) {
-  if (!event_sink.emit) qa_q2f_error("Q2 base monster %s event has no registered presentation sink", event.kind);
-  event_sink.emit(event_sink.ctx, event);
-}
 
 void qa_q2bm_move_handler_fn(void *ctx, qa_q2m_context *context) { q2bm_set_move(context, ctx); }
 qa_q2m_handler qa_q2bm_move_handler(const char *name) {
@@ -38,9 +32,9 @@ void qa_q2bm_damaged_skin(qa_q2m_context *context) {
     context->entity->skin = 1;
 }
 void qa_q2bm_muzzle(qa_q2m_context *context, double flash, qa_vec3 direction, qa_vec3 origin) {
-  qa_q2f_presentation_event e;
+  qa_q2_presentation_event e;
   memset(&e, 0, sizeof e);
-  e.kind = QA_Q2F_EVENT_MONSTER_MUZZLEFLASH; e.actor = &context->entity->actor.id;
+  e.kind = "monster-muzzleflash"; e.has_actor = true; e.actor = context->entity->actor.id;
   e.flash = flash; e.origin = origin; e.direction = direction;
   context->game->host->emit(context->game->host->ctx, e);
 }
@@ -65,8 +59,8 @@ qa_q2bm_shot_result qa_q2bm_forward_shot(qa_q2m_context *context, double flash) 
 bool qa_q2bm_standard_gib(qa_q2m_context *context, qa_death_reaction reaction, double bones, double meats,
                           const char *head, double attenuation) {
   qa_q2m_state *state = context->state;
-  qa_q2f_game *game = context->game;
-  qa_q2f_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
+  qa_q2_entity *entity = context->entity;
   if (qa_q2m_health(game, &entity->actor.id) > state->gib_health) return false;
   q2bm_sound(game, entity, "misc/udeath.wav", true, 2, true, 1, true, attenuation);
   qa_q2m_gib_options plain = {false, false, false, false};
@@ -82,8 +76,8 @@ bool qa_q2bm_standard_gib_default(qa_q2m_context *context, qa_death_reaction rea
   return qa_q2bm_standard_gib(context, reaction, 2, 4, "models/objects/gibs/head2/tris.md2", 1);
 }
 void qa_q2bm_explode(qa_q2m_context *context, const char *path) {
-  qa_q2f_entity *entity = context->entity;
-  qa_q2f_game *game = context->game;
+  qa_q2_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
   q2bm_sound(game, entity, path, true, 2, false, 0, false, 0);
   q2bm_emit_effect(game, "q2:explosion1", q2bm_body(game, entity).origin, q2bm_zero(), 1, 0);
   context->state->dead = true;
@@ -107,16 +101,16 @@ void qa_q2bm_begin_death_default(qa_q2m_context *context, qa_death_reaction reac
   qa_q2bm_begin_death(context, reaction, path, animation, 2, 4);
 }
 void qa_q2bm_finish_corpse_bounds(qa_q2m_context *context, qa_bounds bounds) {
-  qa_q2f_entity *entity = context->entity;
-  qa_q2f_game *game = context->game;
+  qa_q2_entity *entity = context->entity;
+  qa_q2_game_services *game = context->game;
   qa_q2m_state *state = context->state;
   state->corpse = true;
-  entity->server_flags = (double)((uint32_t)entity->server_flags | 2u);
-  qa_q2f_body_changes changes;
+  entity->server_flags = (double)(qa_js_to_int32(qa_js_to_uint32(entity->server_flags) | 2u));
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_bounds = true; changes.bounds = bounds;
   q2bm_move_body(game, entity, changes, false, false);
-  game->motion(game->ctx, entity, QA_Q2F_MOTION_TOSS);
+  game->motion(game->ctx, entity, "toss");
   game->cancel(game->ctx, entity);
 }
 void qa_q2bm_finish_corpse(qa_q2m_context *context) {

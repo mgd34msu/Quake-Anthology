@@ -259,30 +259,111 @@ void qa_qvm_source_item_catalog_init(qa_qvm_source_item_catalog *catalog, qa_qvm
   catalog->initialized_length = initialized_length;
 }
 
+void qa_qvm_source_item_catalog_init_observed(qa_qvm_source_item_catalog *catalog, qa_qvm_memory *memory,
+                                              qa_qvm_item_layout layout, const uint8_t *initialized,
+                                              size_t initialized_length) {
+  memset(catalog, 0, sizeof *catalog);
+  catalog->memory_view.bytes = memory->bytes;
+  catalog->memory_view.length = memory->length;
+  catalog->memory = &catalog->memory_view;
+  catalog->writes = &memory->writes;
+  catalog->layout = layout;
+  catalog->initialized = initialized;
+  catalog->initialized_length = initialized_length;
+}
+
+static qa_qvm_memory_writes *catalog_writes(const qa_qvm_source_item_catalog *catalog) {
+  return catalog->writes != NULL ? catalog->writes : qa_qvmx_writes_for(catalog->memory->bytes);
+}
+
+/* TS remove(): drop the watch over the previous records. */
+static void catalog_unwatch(qa_qvm_source_item_catalog *catalog) {
+  if (!catalog->watching) return;
+  qa_qvm_memory_writes *writes = catalog_writes(catalog);
+  if (writes != NULL) qa_qvm_memory_writes_unobserve(writes, catalog->watch_id);
+  catalog->watching = false;
+}
+
 void qa_qvm_source_item_catalog_destroy(qa_qvm_source_item_catalog *catalog) {
   if (catalog == NULL) return;
+  catalog_unwatch(catalog);
   qa_qvm_catalog_records_destroy(&catalog->records);
   catalog->has_records = false;
 }
 
 void qa_qvm_source_item_catalog_reset(qa_qvm_source_item_catalog *catalog) {
+  catalog_unwatch(catalog);
   qa_qvm_catalog_records_destroy(&catalog->records);
   catalog->has_records = false;
 }
 
+typedef struct catalog_ranges {
+  qa_qvm_write_range *ranges;
+  size_t count, capacity;
+} catalog_ranges;
+
+static void collect_range(void *ctx, double offset, double length) {
+  catalog_ranges *ranges = ctx;
+  if (ranges->count == ranges->capacity) {
+    size_t capacity = ranges->capacity == 0 ? 8 : ranges->capacity * 2;
+    qa_qvm_write_range *grown = realloc(ranges->ranges, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("QVM memory allocation failed");
+    ranges->ranges = grown;
+    ranges->capacity = capacity;
+  }
+  ranges->ranges[ranges->count++] = (qa_qvm_write_range){(int64_t)offset, (int64_t)length};
+}
+
+static void invalidate_records(void *ctx, const qa_qvm_committed_write *event) {
+  (void)event;
+  qa_qvm_source_item_catalog *catalog = ctx;
+  catalog->has_records = false;
+}
+
+typedef struct catalog_read {
+  qa_qvm_source_item_catalog *catalog;
+  bool live;
+  catalog_ranges *ranges;
+  bool ok;
+} catalog_read;
+
+static void catalog_read_body(void *ctx) {
+  catalog_read *job = ctx;
+  qa_qvm_source_item_catalog *catalog = job->catalog;
+  qa_qvm_item_range_fn range = {job->ranges, collect_range};
+  const uint8_t *data = job->live ? catalog->memory->bytes : catalog->initialized;
+  size_t length = job->live ? catalog->memory->length : catalog->initialized_length;
+  job->ok = qa_qvm_read_item_records(data, length, catalog->layout, NULL, 0, job->live ? &range : NULL,
+                                     &catalog->records);
+  if (!job->ok) return;
+  catalog->has_records = true;
+  qa_qvm_memory_writes *writes = catalog_writes(catalog);
+  if (job->ranges->count != 0 && writes != NULL) {
+    catalog->watch_id = qa_qvm_memory_writes_observe(writes, job->ranges->ranges, job->ranges->count,
+                                                     invalidate_records, catalog, NULL, NULL);
+    catalog->watching = true;
+  }
+}
+
 bool qa_qvm_source_item_catalog_records(qa_qvm_source_item_catalog *catalog,
                                         const qa_qvm_catalog_records **out) {
+  qa_qvm_memory_writes *writes = catalog_writes(catalog);
+  if (writes != NULL) qa_qvm_memory_writes_assert_live(writes);
   if (catalog->closed) qa_range_error("QVM item catalog owner is retired");
   if (catalog->has_records) {
     *out = &catalog->records;
     return true;
   }
+  catalog_unwatch(catalog);
+  qa_qvm_catalog_records_destroy(&catalog->records);
   bool live = catalog->layout.has_source && strcmp(catalog->layout.source, "live") == 0;
-  const uint8_t *data = live ? catalog->memory->bytes : catalog->initialized;
-  size_t length = live ? catalog->memory->length : catalog->initialized_length;
-  if (!qa_qvm_read_item_records(data, length, catalog->layout, NULL, 0, NULL, &catalog->records))
-    return false;
-  catalog->has_records = true;
+  catalog_ranges ranges = {NULL, 0, 0};
+  catalog_read job = {catalog, live, &ranges, false};
+  char message[512];
+  bool ok = qa_range_error_catch(catalog_read_body, &job, message, sizeof message);
+  free(ranges.ranges);
+  if (!ok) qa_range_error("%s", message);
+  if (!job.ok) return false;
   *out = &catalog->records;
   return true;
 }

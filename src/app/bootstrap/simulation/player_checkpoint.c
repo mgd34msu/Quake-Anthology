@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/simulation/player-checkpoint.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/player_checkpoint.h"
+#include "qa/app/bootstrap/simulation/checkpoint_values.h"
 #include <stdlib.h>
 #include <string.h>
 #include "qa/content/q1/foundation/types.h"
@@ -235,12 +236,13 @@ static qa_save_value *movement_value(qa_movement_state state) {
         qa_save_value_set(o, "origin", vec_value(s.origin)); qa_save_value_set(o, "velocity", vec_value(s.velocity));
         qa_save_value_set(o, "gravity", qa_save_value_number(s.gravity)); qa_save_value_set(o, "speed", qa_save_value_number(s.speed));
         qa_save_value_set(o, "deltaAngleWords", d);
+        if (s.ground_after_delta_angles) qa_save_value_set(o, "ground", hit_value_plain(s.ground));
         qa_save_value_set(o, "movementDirection", qa_save_value_number(s.movement_direction));
         qa_save_value_set(o, "grapplePoint", vec_value(s.grapple_point));
         qa_save_value_set(o, "flags", qa_save_value_number(s.flags));
         qa_save_value_set(o, "viewAngles", vec_value(s.view_angles));
         qa_save_value_set(o, "viewHeight", qa_save_value_number(s.view_height));
-        qa_save_value_set(o, "ground", hit_value_plain(s.ground));
+        if (!s.ground_after_delta_angles) qa_save_value_set(o, "ground", hit_value_plain(s.ground));
         qa_save_value_set(o, "predictableEventSequence", qa_save_value_number(s.predictable_event_sequence));
         qa_save_value_set(o, "jumpPad", s.jump_pad ? saved_actor_value(*s.jump_pad) : qa_save_value_null());
         qa_save_value_set(o, "movementFrame", qa_save_value_number(s.movement_frame));
@@ -292,49 +294,30 @@ qa_save_value *qa_app_sim_capture_movement_player(const qa_app_sim_movement_play
   qa_save_value_set(o, "actor", saved_actor_value(player->actor.id));
   qa_save_value_set(o, "clientSlot", qa_save_value_number((double)player->client.slot));
   qa_save_value_set(o, "state", movement_value(player->state));
-  /* arsenal/animation spreads: minimal trees read back by readArsenal/readActorAnimation. */
-  qa_save_value *arsenal = qa_save_value_object();
-  qa_save_value_set(arsenal, "provider", qa_save_value_string(player->arsenal.provider));
-  qa_save_value_set(arsenal, "activeWeapon", player->arsenal.active_weapon ? qa_save_value_string(player->arsenal.active_weapon) : qa_save_value_null());
-  qa_save_value *wstate = qa_save_value_object();
-  qa_save_value_set(wstate, "kind", qa_save_value_string(player->arsenal.state.kind ? player->arsenal.state.kind : "q1"));
-  qa_save_value_set(wstate, "frame", qa_save_value_number(player->arsenal.state.frame));
-  qa_save_value_set(wstate, "attackFinishedSeconds", qa_save_value_number(player->arsenal.state.attack_finished_seconds));
-  qa_save_value_set(wstate, "sourceWeapon", qa_save_value_number(player->arsenal.state.source_weapon));
-  qa_save_value_set(wstate, "gunFrame", qa_save_value_number(player->arsenal.state.gun_frame));
-  qa_save_value_set(wstate, "state", qa_save_value_number(player->arsenal.state.state));
-  qa_save_value_set(wstate, "pendingWeapon", player->arsenal.state.pending_weapon ? qa_save_value_string(player->arsenal.state.pending_weapon) : qa_save_value_null());
-  qa_save_value_set(wstate, "machinegunShots", qa_save_value_number(player->arsenal.state.machinegun_shots));
-  qa_save_value *gt = qa_save_value_object();
-  qa_save_value_set(gt, "kind", qa_save_value_string(player->arsenal.state.grenade_time.kind == QA_SOURCE_TIME_MILLISECONDS ? "milliseconds" : "seconds"));
-  qa_save_value_set(gt, "value", qa_save_value_number(player->arsenal.state.grenade_time.value));
-  qa_save_value_set(wstate, "grenadeTime", gt);
-  qa_save_value_set(wstate, "grenadeBlewUp", qa_save_value_boolean(player->arsenal.state.grenade_blew_up));
-  qa_save_value_set(wstate, "timeMilliseconds", qa_save_value_number(player->arsenal.state.time_milliseconds));
-  qa_save_value_set(arsenal, "state", wstate);
-  qa_save_value *ammo = qa_save_value_array();
-  for (size_t i = 0; i < player->arsenal.ammo_count; i++) {
-    qa_save_value *e = qa_save_value_object();
-    qa_save_value_set(e, "item", qa_save_value_string(player->arsenal.ammo[i].item));
-    qa_save_value_set(e, "count", qa_save_value_number(player->arsenal.ammo[i].count));
-    qa_save_value_push(ammo, e);
-  }
-  qa_save_value_set(arsenal, "ammo", ammo);
-  qa_save_value_set(o, "arsenal", arsenal);
+  /* arsenal: player.arsenal (the arsenal literal its owner built, in that key order). */
+  qa_save_value_set(o, "arsenal", qa_app_sim_arsenal_state_value(&player->arsenal));
+  /* animation spread: read back by readActorAnimation. */
   qa_save_value *anim = qa_save_value_object();
   qa_save_value_set(anim, "provider", qa_save_value_string(player->animation.provider));
   qa_save_value *astate = qa_save_value_object();
-  qa_save_value_set(astate, "kind", qa_save_value_string(player->animation.state.kind ? player->animation.state.kind : "q1"));
-  qa_save_value_set(astate, "frame", qa_save_value_number(player->animation.state.frame));
-  qa_save_value_set(astate, "nextFrameSeconds", qa_save_value_number(player->animation.state.next_frame_seconds));
-  qa_save_value_set(astate, "endFrame", qa_save_value_number(player->animation.state.end_frame));
-  qa_save_value_set(astate, "priority", qa_save_value_number(player->animation.state.priority));
-  qa_save_value_set(astate, "duck", qa_save_value_boolean(player->animation.state.duck));
-  qa_save_value_set(astate, "run", qa_save_value_boolean(player->animation.state.run));
-  qa_save_value_set(astate, "legs", qa_save_value_number(player->animation.state.legs));
-  qa_save_value_set(astate, "torso", qa_save_value_number(player->animation.state.torso));
-  qa_save_value_set(astate, "legsTimerMilliseconds", qa_save_value_number(player->animation.state.legs_timer_milliseconds));
-  qa_save_value_set(astate, "torsoTimerMilliseconds", qa_save_value_number(player->animation.state.torso_timer_milliseconds));
+  /* TS AnimationState is a union on kind: each kind carries only its own members. */
+  const char *animation_kind = player->animation.state.kind ? player->animation.state.kind : "q1";
+  qa_save_value_set(astate, "kind", qa_save_value_string(animation_kind));
+  if (is(animation_kind, "q1")) {
+    qa_save_value_set(astate, "frame", qa_save_value_number(player->animation.state.frame));
+    qa_save_value_set(astate, "nextFrameSeconds", qa_save_value_number(player->animation.state.next_frame_seconds));
+  } else if (is(animation_kind, "q2")) {
+    qa_save_value_set(astate, "frame", qa_save_value_number(player->animation.state.frame));
+    qa_save_value_set(astate, "endFrame", qa_save_value_number(player->animation.state.end_frame));
+    qa_save_value_set(astate, "priority", qa_save_value_number(player->animation.state.priority));
+    qa_save_value_set(astate, "duck", qa_save_value_boolean(player->animation.state.duck));
+    qa_save_value_set(astate, "run", qa_save_value_boolean(player->animation.state.run));
+  } else {
+    qa_save_value_set(astate, "legs", qa_save_value_number(player->animation.state.legs));
+    qa_save_value_set(astate, "torso", qa_save_value_number(player->animation.state.torso));
+    qa_save_value_set(astate, "legsTimerMilliseconds", qa_save_value_number(player->animation.state.legs_timer_milliseconds));
+    qa_save_value_set(astate, "torsoTimerMilliseconds", qa_save_value_number(player->animation.state.torso_timer_milliseconds));
+  }
   qa_save_value_set(anim, "state", astate);
   qa_save_value_set(o, "animation", anim);
   qa_save_value_set(o, "viewAngles", vec_value(player->view_angles));

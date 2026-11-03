@@ -17,18 +17,18 @@ typedef struct mvd_cursor { size_t offset; } mvd_cursor;
 static bool mvd_next(const uint8_t *bytes, size_t length, mvd_cursor *cursor,
     qa_q2_demo_record *out) {
   size_t offset = cursor->offset;
-  if (offset >= length) qa_range_error("MVD recording lacks its terminator");
-  if (offset + 2 > length) qa_range_error("Truncated MVD record header");
+  if (offset >= length) qa_raise("Error", 0, 0, "MVD recording lacks its terminator");
+  if (offset + 2 > length) qa_raise("Error", 0, 0, "Truncated MVD record header");
   size_t start = offset;
   size_t record_length = bytes[offset] | (bytes[offset + 1] << 8);
   offset += 2;
   if (record_length == 0) {
-    if (offset != length) qa_range_error("Data after MVD terminator");
+    if (offset != length) qa_raise("Error", 0, 0, "Data after MVD terminator");
     cursor->offset = offset;
     return false;
   }
   if (record_length > QA_Q2_MVD_MAX_MESSAGE || offset + record_length > length)
-    qa_range_error("Truncated or oversized MVD packet");
+    qa_raise("Error", 0, 0, "Truncated or oversized MVD packet");
   out->offset = (double)start;
   out->bytes = malloc(record_length);
   if (!out->bytes) qa_range_error("out of memory");
@@ -50,13 +50,14 @@ void qa_app_q2_read_playback_header(const uint8_t *bytes, size_t length,
   mvd_cursor cursor = {4};
   qa_q2_demo_record record;
   if (!mvd_next(bytes, length, &cursor, &record))
-    qa_range_error("MVD recording has no gamestate");
+    qa_raise("Error", 0, 0, "MVD recording has no gamestate");
   out->is_mvd = true;
-  if (!qa_q2_read_mvd_header(record.bytes, record.bytes_length, &out->profile)) {
-    free(record.bytes);
-    qa_range_error("out of memory");
-  }
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, record.bytes);
+  bool read = qa_q2_read_mvd_header(record.bytes, record.bytes_length, &out->profile);
+  qa_cleanup_pop(&node);
   free(record.bytes);
+  if (!read) qa_range_error("out of memory");
   out->protocol = out->profile.profile.protocol;
   out->data = out->profile.data;
 }
@@ -71,8 +72,10 @@ struct qa_app_q2_demo_playback {
   qa_q2_mvd_playback decoder; bool decoder_live;
   qa_q2_demo_record *records; size_t record_count, record_index;
   mvd_cursor cursor; bool records_done;
+  size_t dm2_offset; /* TS readQ2Demo generator position */
   double header_bytes;
   const char *terminal; bool closed, advancing;
+  qa_caught_error *failure; /* TS this.failure: the error a failed advance threw, rethrown after */
   double offset;
   double recorded_players[256]; size_t recorded_player_count;
   double selected_seat;
@@ -86,8 +89,11 @@ static bool next_record(qa_app_q2_demo_playback *p, qa_q2_demo_record *out) {
     if (!has) p->records_done = true;
     return has;
   }
-  if (p->record_index >= p->record_count) return false;
-  *out = p->records[p->record_index++];
+  qa_q2_demo_span span;
+  if (!qa_q2_demo_next(p->bytes, p->length, &p->dm2_offset, &span)) return false;
+  out->offset = span.offset;
+  out->bytes = (uint8_t *)span.bytes; /* borrowed from the playback input */
+  out->bytes_length = span.length;
   return true;
 }
 static bool view_filtered(qa_app_q2_demo_playback *p, const qa_q2_server_record *record) {
@@ -187,7 +193,7 @@ qa_app_q2_demo_playback *qa_app_q2_demo_playback_create(
     p->cursor.offset = 4;
     p->header_bytes = 2;
   } else {
-    if (!qa_q2_read_demo(bytes, length, &p->records, &p->record_count)) { free(p); return NULL; }
+    /* TS readQ2Demo is a generator: records are framed as playback reaches them. */
     p->header_bytes = 4;
   }
   qa_app_q2_client_host wrapped = host;
@@ -209,6 +215,7 @@ void qa_app_q2_demo_playback_destroy(qa_app_q2_demo_playback *playback) {
   qa_app_q2_client_receiver_destroy(playback->receiver);
   if (playback->decoder_live) qa_q2_mvd_playback_destroy(&playback->decoder);
   qa_q2_demo_records_free(playback->records, playback->record_count);
+  free(playback->failure);
   free(playback);
 }
 qa_app_q2_client_receiver *qa_app_q2_demo_playback_receiver(qa_app_q2_demo_playback *playback) {
@@ -232,15 +239,44 @@ bool qa_app_q2_demo_playback_recorded_time(qa_app_q2_demo_playback *playback, do
 double qa_app_q2_demo_playback_consumed_bytes(const qa_app_q2_demo_playback *playback) {
   return playback->offset;
 }
-static qa_app_q2_demo_advance read_until(qa_app_q2_demo_playback *p, const double *target_in) {
+typedef struct demo_sink { qa_app_q2_demo_playback *p; bool stopped; } demo_sink;
+static void record_release(void *arg) {
+  qa_q2_server_record *record = arg;
+  qa_q2_server_event_clear(&record->event);
+  free(record->raw);
+  record->raw = NULL;
+}
+static void demo_record(void *ctx, qa_q2_server_record *record) {
+  demo_sink *sink = ctx;
+  qa_app_q2_demo_playback *p = sink->p;
+  qa_cleanup node;
+  qa_cleanup_push(&node, record_release, record);
+  if (!sink->stopped) {
+    if (record->event.kind == QA_Q2_SERVER_FRAME && p->has_presentation)
+      p->presentation.select_view(p->presentation.ctx,
+          qa_q2_mvd_playback_get_selected_player(&p->decoder));
+    qa_app_q2_client_receiver_receive_records(p->receiver, record, 1, 0);
+    if (p->closed) sink->stopped = true;
+  }
+  qa_cleanup_pop(&node);
+  record_release(record);
+}
+typedef struct read_scope {
+  qa_app_q2_demo_playback *p;
+  bool has_target;
+  double target;
+  qa_app_q2_demo_advance result;
+  uint8_t *held_bytes;            /* MVD record bytes while decoding */
+  qa_q2_server_record *records;   /* decoded MVD records while delivering */
+  size_t count;
+} read_scope;
+static void read_body(void *arg) {
+  read_scope *scope = (read_scope *)arg;
+  qa_app_q2_demo_playback *p = scope->p;
   qa_app_q2_demo_advance result = {"eof", 0};
-  if (p->closed) { result.kind = "closed"; return result; }
-  if (p->terminal) { result.kind = p->terminal; return result; }
-  if (p->advancing) qa_range_error("Q2 demo advance already in progress");
-  p->advancing = true;
   bool delivered = false;
-  bool has_target = target_in != NULL;
-  double target = has_target ? *target_in : 0;
+  bool has_target = scope->has_target;
+  double target = scope->target;
   for (;;) {
     double time = 0;
     bool has_time = qa_app_q2_demo_playback_recorded_time(p, &time);
@@ -264,20 +300,16 @@ static qa_app_q2_demo_advance read_until(qa_app_q2_demo_playback *p, const doubl
           p->receiver, record.bytes, record.bytes_length, 0, &count);
       qa_q2_server_records_free(records, count);
     } else {
-      qa_q2_server_record *records = NULL; size_t count = 0;
-      if (!qa_q2_mvd_playback_read(&p->decoder, record.bytes, record.bytes_length,
-              &records, &count))
+      scope->held_bytes = record.bytes;
+      /* TS iterates readRecords: the view is selected between yielded records, and a close
+       * mid-message stops delivery (the rest are released). */
+      demo_sink sink = {p, false};
+      if (!qa_q2_mvd_playback_read_records(&p->decoder, record.bytes, record.bytes_length,
+              demo_record, &sink))
         qa_range_error("out of memory");
       free(record.bytes);
-      bool stop = false;
-      for (size_t i = 0; i < count; i++) {
-        if (records[i].event.kind == QA_Q2_SERVER_FRAME && p->has_presentation)
-          p->presentation.select_view(p->presentation.ctx,
-              qa_q2_mvd_playback_get_selected_player(&p->decoder));
-        qa_app_q2_client_receiver_receive_records(p->receiver, &records[i], 1, 0);
-        if (p->closed) { stop = true; break; }
-      }
-      qa_q2_server_records_free(records, count);
+      scope->held_bytes = NULL;
+      bool stop = sink.stopped;
       if (stop) { result.kind = "closed"; break; }
     }
     if (has_time && qa_app_q2_client_receiver_world_generation(p->receiver) != generation)
@@ -297,8 +329,29 @@ static qa_app_q2_demo_advance read_until(qa_app_q2_demo_playback *p, const doubl
       break;
     }
   }
+  scope->result = result;
+}
+static qa_app_q2_demo_advance read_until(qa_app_q2_demo_playback *p, const double *target_in) {
+  qa_app_q2_demo_advance result = {"eof", 0};
+  if (p->closed) { result.kind = "closed"; return result; }
+  if (p->failure) qa_rethrow(p->failure);
+  if (p->terminal) { result.kind = p->terminal; return result; }
+  if (p->advancing) qa_raise("Error", 0, 0, "Q2 demo advance already in progress");
+  p->advancing = true;
+  read_scope scope = {p, target_in != NULL, target_in ? *target_in : 0, {"eof", 0}, NULL, NULL, 0};
+  qa_caught_error caught;
+  bool ok = qa_try(read_body, &scope, &caught);
+  free(scope.held_bytes);
+  qa_q2_server_records_free(scope.records, scope.count);
   p->advancing = false;
-  return result;
+  if (!ok) {
+    /* TS catch (error) { this.failure = { error }; throw error; } */
+    p->failure = malloc(sizeof *p->failure);
+    if (!p->failure) qa_range_error("out of memory");
+    *p->failure = caught;
+    qa_rethrow(&caught);
+  }
+  return scope.result;
 }
 qa_app_q2_demo_advance qa_app_q2_demo_playback_advance(
     qa_app_q2_demo_playback *playback, double target_milliseconds) {

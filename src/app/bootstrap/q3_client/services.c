@@ -15,7 +15,7 @@ struct qa_app_application_q3_services {
   qa_app_q3_client_collision collision_state;
   qa_q3_pres_collision_world collision;
   qa_app_application_q3_cinematics *cinematics;
-  qa_q3_pres_scene_recorder_mirror recorder_mirror;
+  qa_q3_pres_scene_recorder_view recorder_mirror;
   void *remap_pair;
 };
 typedef struct remap_pair {
@@ -148,12 +148,13 @@ static void sound_set_listener(void *ctx, double client, qa_vec3 origin, qa_axis
   (void)client;
   s->options.output_listener(s->options.output_ctx, origin, axis);
 }
-static void sound_background(void *ctx, const char *intro, const char *loop) {
+static bool sound_background(void *ctx, const char *intro, const char *loop) {
   qa_app_application_q3_services *s = ctx;
   char buffer[2048];
   snprintf(buffer, sizeof buffer, "%s %s", intro, loop);
   s->options.audio.play_music(s->options.audio.ctx,
                               qa_app_application_q3_assets_content(s->options.media), buffer);
+  return true;
 }
 static void sink_emit(void *ctx, const qa_render_command *command) {
   qa_app_application_q3_services *s = ctx;
@@ -169,15 +170,12 @@ static qa_source_cluster_pvs cluster_pvs_bridge(void *ctx, double cluster) {
   qa_collision_world *world = ctx;
   return qa_collision_world_cluster_pvs(world, cluster);
 }
-static void cinematic_print(void *ctx, const char *text) {
-  qa_app_application_q3_assets_print(ctx, text);
-}
 qa_app_application_q3_services *qa_app_create_application_q3_services(qa_app_application_q3_service_options options) {
   qa_app_application_q3_services *s = calloc(1, sizeof *s);
   if (s == NULL) qa_range_error("Out of memory");
   s->options = options;
-  qa_q3_pres_scene_target target = {options.seat, options.viewport, 16384, 4,
-                                    s, target_fog, target_print, target_actor, target_publish};
+  qa_q3_pres_scene_target target = {options.seat, *options.viewport, 16384, 4,
+                                    s, target_fog, target_print, target_actor, target_publish, options.viewport};
   s->scene = qa_q3_pres_scene_recorder_create(target);
   if (s->scene == NULL) qa_range_error("Out of memory");
   s->recorder_mirror.ctx = s->scene;
@@ -221,13 +219,12 @@ qa_app_application_q3_services *qa_app_create_application_q3_services(qa_app_app
       qa_app_application_q3_assets_bank(options.media), s, audio_actor, audio_frame_number,
       audio_play, audio_loop, audio_update_actor, audio_stop_loop};
   qa_q3_pres_presentation_audio_init(&s->audio, audio_target);
-  qa_text_command_sink_init(&s->sink, options.seat, options.viewport, sink_emit, s, sink_text, s);
+  qa_text_command_sink_init(&s->sink, options.seat, *options.viewport, sink_emit, s, sink_text, s);
+  qa_text_command_sink_share_target(&s->sink, options.viewport);
   s->draw.commands = qa_text_command_sink_sink(&s->sink);
   s->draw.space = QA_COORD_STRETCH_640;
   s->collision = qa_app_q3_client_collision_init(&s->collision_state, options.queries, options.collision_settings);
-  const qa_app_q3_provider_scene_assets *provider = qa_app_application_q3_assets_provider(options.media);
-  s->cinematics = qa_app_application_q3_cinematics_create(provider->mounts, options.cinematics_host,
-      cinematic_print, options.media, options.audio.engine, options.seat,
+  s->cinematics = qa_app_application_q3_cinematics_create(options.media, options.audio.engine, options.seat,
       options.now, options.now_ctx, options.system_cinematics);
   return s;
 }
@@ -241,8 +238,8 @@ void qa_app_application_q3_services_destroy(qa_app_application_q3_services *serv
 }
 qa_q3_pres_scene_recorder *qa_app_application_q3_services_scene(qa_app_application_q3_services *services) { return services->scene; }
 qa_q3_pres_q3_renderer_resources *qa_app_application_q3_services_resources(qa_app_application_q3_services *services) { return services->resources; }
-qa_app_q3_client_sound qa_app_application_q3_services_sound(qa_app_application_q3_services *services) {
-  qa_app_q3_client_sound sound = {services, qa_app_application_q3_assets_bank(services->options.media),
+qa_q3_pres_client_sound qa_app_application_q3_services_sound(qa_app_application_q3_services *services) {
+  qa_q3_pres_client_sound sound = {qa_app_application_q3_assets_bank(services->options.media), services,
       sound_start_sound, sound_start_source, sound_start_local, sound_add_loop, sound_update_position,
       sound_stop_looping, sound_clear_loops, sound_set_listener, sound_background};
   return sound;

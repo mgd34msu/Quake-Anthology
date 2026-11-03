@@ -6,6 +6,7 @@
 #include "qa/foundation/support.h"
 #include "qa/network/q3/recording.h"
 #include "qa/network/q3/transport.h"
+#include "qa/network/common/transport.h"
 static void b_assert(void *ctx) {
   qa_app_q3_client_bindings_storage *s = ctx;
   s->lifecycle.assert_current(s->lifecycle.ctx);
@@ -54,7 +55,7 @@ static void b_map_restart(void *ctx) {
 }
 static void b_level_shot(void *ctx) {
   (void)ctx;
-  qa_range_error("Remote server cannot request a local levelshot");
+  qa_raise("Error", 0, 0, "Remote server cannot request a local levelshot");
 }
 static bool b_local_server(void *ctx) { (void)ctx; return false; }
 void qa_app_q3_application_client_bindings(qa_app_q3_client_bindings_storage *storage,
@@ -86,6 +87,10 @@ struct qa_app_q3_client_network {
   double last_received;
   char *last_userinfo;
   bool has_sink; qa_app_q3_recording_sink sink; void *sink_token;
+  /* Lifecycle contexts and replaced connections (TS drops them to GC; a host
+   * attached to an earlier connection may still hold it): freed at destroy. */
+  void **lifecycles; size_t lifecycle_count;
+  qa_q3_client_connection **replaced; size_t replaced_count;
 };
 static void host_print_thunk(void *ctx, const char *text) {
   qa_app_q3_client_network *n = ctx;
@@ -160,6 +165,10 @@ static double cvar_integer(qa_cvar_registry *cvars, const char *name, double fal
   qa_cvar_read_free(&snap);
   return value;
 }
+/* TS performance.now(); options.now replaces it when the owner supplies a clock. */
+static double client_now(qa_app_q3_client_network *n) {
+  return n->options.now != NULL ? n->options.now(n->options.now_ctx) : qa_net_default_now(NULL);
+}
 static void send_now(qa_app_q3_client_network *n, double now) {
   qa_q3_client_connection *connection = n->connection;
   if (!connection) return;
@@ -173,7 +182,7 @@ static void lc_assert(void *ctx) {
   lifecycle_ctx *lc = ctx;
   if (lc->n->connection != lc->connection || lc->n->state == QA_APP_PHASE_CLOSED
       || lc->n->state == QA_APP_PHASE_REJECTED)
-    qa_range_error("Q3 callback belongs to a retired connection");
+    qa_raise("Error", 0, 0, "Q3 callback belongs to a retired connection");
 }
 static void lc_cleared(void *ctx) {
   lifecycle_ctx *lc = ctx;
@@ -205,6 +214,10 @@ qa_app_q3_client_network *qa_app_q3_client_network_create(qa_app_q3_client_netwo
 void qa_app_q3_client_network_destroy(qa_app_q3_client_network *network) {
   if (!network) return;
   qa_q3_client_connection_destroy(network->connection);
+  for (size_t i = 0; i < network->replaced_count; i++) qa_q3_client_connection_destroy(network->replaced[i]);
+  free(network->replaced);
+  for (size_t i = 0; i < network->lifecycle_count; i++) free(network->lifecycles[i]);
+  free(network->lifecycles);
   qa_q3_client_admission_destroy(network->admission);
   if (network->peer_owned) qa_q3_mirror_address_destroy(&network->peer);
   free(network->last_userinfo);
@@ -222,13 +235,31 @@ qa_q3_client_connection *qa_app_q3_client_network_native(qa_app_q3_client_networ
 double qa_app_q3_client_network_connect_packet_count(const qa_app_q3_client_network *network) {
   return (double)qa_q3_client_admission_connect_packet_count(network->admission);
 }
+/* TS ClientReliableCommands.add throws ReliableOverflowError past 64 outstanding. */
+static void add_reliable(qa_q3_client_connection *connection, const char *text) {
+  if (!qa_q3_client_reliable_commands_add(qa_q3_client_connection_reliable(connection), text, NULL))
+    qa_raise("ReliableOverflowError", 0, 0, "Client command overflow");
+}
+static void event_cleanup(void *event) { qa_receive_event_destroy(event); }
+static void address_cleanup(void *address) { qa_q3_mirror_address_destroy(address); }
+static void admission_result_cleanup(void *result) { qa_q3_client_admission_result_destroy(result); }
+typedef struct sequenced_scope { qa_app_q3_client_network *n; const uint8_t *bytes; size_t length; double now; qa_q3_client_packet_result *result; } sequenced_scope;
+static void sequenced_body(void *ctx) {
+  sequenced_scope *scope = ctx;
+  qa_app_q3_client_network *n = scope->n;
+  qa_q3_client_connection_receive_datagram(n->connection, scope->bytes, scope->length, scope->now, scope->result);
+  if (scope->result->channel.kind == QA_Q3_CHANNEL_ACCEPTED && !qa_q3_client_connection_demo_waiting(n->connection)
+      && n->has_sink)
+    n->sink.append(n->sink.ctx, (double)scope->result->channel.sequence,
+        scope->result->plaintext, scope->result->plaintext_len);
+  n->last_received = scope->now;
+}
 void qa_app_q3_client_network_command(qa_app_q3_client_network *network, const char *text) {
-  if (!network->connection) qa_range_error("Q3 client has no connection");
-  qa_q3_client_reliable_commands_add(
-      qa_q3_client_connection_reliable(network->connection), text, NULL);
+  if (!network->connection) qa_raise("Error", 0, 0, "Q3 client has no connection");
+  add_reliable(network->connection, text);
 }
 void qa_app_q3_client_network_send_packet(qa_app_q3_client_network *network) {
-  send_now(network, network->options.now(network->options.now_ctx));
+  send_now(network, client_now(network));
 }
 typedef struct auth_ctx { qa_app_q3_client_network *n; qa_q3_address peer; } auth_ctx;
 static void auth_assert(void *ctx) {
@@ -239,7 +270,7 @@ static void auth_assert(void *ctx) {
   if (has) qa_q3_mirror_address_destroy(&address);
   if (auth->n->state == QA_APP_PHASE_CLOSED || auth->n->state == QA_APP_PHASE_REJECTED
       || qa_q3_client_admission_get_phase(auth->n->admission) != QA_Q3_PHASE_CONNECTING || !same)
-    qa_range_error("Q3 authorization belongs to a retired connection");
+    qa_raise("Error", 0, 0, "Q3 authorization belongs to a retired connection");
 }
 static void auth_send(void *ctx, const qa_q3_address *address,
     const uint8_t *payload, size_t length) {
@@ -259,7 +290,7 @@ void qa_app_q3_client_network_poll(qa_app_q3_client_network *n, double now) {
         if (!n->options.has_authorization) {
           qa_q3_mirror_address_destroy(&peer);
           qa_q3_outgoing_datagram_destroy(&request);
-          qa_range_error("Q3 WAN admission requires the client key authorization owner");
+          qa_raise("Error", 0, 0, "Q3 WAN admission requires the client key authorization owner");
         }
         auth_ctx auth = {n, peer};
         n->options.authorization.request(n->options.authorization.ctx,
@@ -281,15 +312,18 @@ void qa_app_q3_client_network_poll(qa_app_q3_client_network *n, double now) {
     }
     qa_q3_address from;
     if (!net_to_q3(&packet.from, &from)) { qa_receive_event_destroy(&packet); continue; }
+    /* Raises below propagate as in TS (the sequenced catch rethrows); these nodes
+     * free the event, address and admission result for the catching frame. */
+    qa_cleanup packet_guard, from_guard, result_guard;
+    qa_cleanup_push(&packet_guard, event_cleanup, &packet);
+    qa_cleanup_push(&from_guard, address_cleanup, &from);
     qa_q3_client_admission_result result;
+    memset(&result, 0, sizeof result);
     qa_q3_client_admission_receive(n->admission, &from, packet.payload, packet.length, now, &result);
+    qa_cleanup_push(&result_guard, admission_result_cleanup, &result);
     if (result.kind == QA_Q3_ADMIT_ADMITTED) {
-      if (result.address.kind == QA_Q3_ADDR_LOOPBACK) {
-        qa_q3_mirror_address_destroy(&from);
-        qa_q3_client_admission_result_destroy(&result);
-        qa_receive_event_destroy(&packet);
-        qa_range_error("Q3 remote application requires IPv4 or IPX");
-      }
+      if (result.address.kind == QA_Q3_ADDR_LOOPBACK)
+        qa_raise("Error", 0, 0, "Q3 remote application requires IPv4 or IPX");
       if (n->peer_owned) qa_q3_mirror_address_destroy(&n->peer);
       qa_q3_mirror_address_copy(&n->peer, &result.address);
       n->peer_owned = true;
@@ -310,52 +344,69 @@ void qa_app_q3_client_network_poll(qa_app_q3_client_network *n, double now) {
         qa_range_error("out of memory");
       }
       lc->connection = connection;
+      void **lifecycles = realloc(n->lifecycles, (n->lifecycle_count + 1) * sizeof *lifecycles);
+      qa_q3_client_connection **replaced = n->connection
+          ? realloc(n->replaced, (n->replaced_count + 1) * sizeof *replaced) : n->replaced;
+      if (!lifecycles || (n->connection && !replaced)) {
+        if (lifecycles) n->lifecycles = lifecycles;
+        free(lc); qa_q3_client_connection_destroy(connection);
+        qa_range_error("out of memory");
+      }
+      n->lifecycles = lifecycles; n->lifecycles[n->lifecycle_count++] = lc;
+      if (n->connection) { n->replaced = replaced; n->replaced[n->replaced_count++] = n->connection; }
       n->connection = connection;
       n->options.host.attach(n->options.host.ctx, connection);
-      /* lc intentionally retained for the connection lifetime. */
     } else if (result.kind == QA_Q3_ADMIT_SEQUENCED && n->connection) {
-      /* TS catch: state rejected + disconnected + rethrow. Landed
-       * receive errors abort inside the call. */
+      /* TS: catch (error) { state = 'rejected'; host.disconnected(error.message); throw error; } */
       qa_q3_client_packet_result packet_result;
-      qa_q3_client_connection_receive_datagram(n->connection, result.bytes,
-          result.byte_len, now, &packet_result);
-      /* Accepted packets are identified by plaintext presence in the
-       * landed result. */
-      if (packet_result.plaintext && !qa_q3_client_connection_demo_waiting(n->connection)
-          && n->has_sink) {
-        n->sink.append(n->sink.ctx,
-            (double)qa_q3_client_connection_server_message_sequence(n->connection),
-            packet_result.plaintext, packet_result.plaintext_len);
-      }
+      memset(&packet_result, 0, sizeof packet_result);
+      sequenced_scope scope = { n, result.bytes, result.byte_len, now, &packet_result };
+      qa_caught_error caught;
+      bool ok = qa_try(sequenced_body, &scope, &caught);
       qa_q3_client_packet_result_destroy(&packet_result);
-      n->last_received = now;
+      if (!ok) {
+        n->state = QA_APP_PHASE_REJECTED;
+        n->options.host.disconnected(n->options.host.ctx, caught.message);
+        qa_rethrow(&caught);
+      }
     } else if (result.kind == QA_Q3_ADMIT_CONNECTIONLESS) {
-      if (strcmp(result.packet.command, "print") == 0) {
+      if (strcmp(result.packet.command, "print") == 0 && qa_q3_mirror_same_address(&from, &n->peer, false)) {
         size_t length = result.packet.payload_len;
         uint8_t *text = malloc(length + 1);
         if (!text) qa_range_error("out of memory");
         memcpy(text, result.packet.payload, length);
         text[length] = 0;
         qa_q3_message_reader *reader = NULL;
-        if (!qa_q3_message_reader_init(&reader, text, length + 1, QA_Q3_MESSAGE_OOB, "oob"))
+        if (!qa_q3_message_reader_init(&reader, text, length + 1, QA_Q3_MESSAGE_OOB, "oob")) {
+          free(text);
           qa_range_error("out of memory");
+        }
         char *value = NULL;
         qa_q3_message_reader_read_string(reader, &value);
-        n->options.host.print(n->options.host.ctx, value ? value : "");
-        free(value);
         qa_q3_message_reader_destroy(reader);
         free(text);
+        qa_cleanup value_guard;
+        qa_cleanup_push(&value_guard, free, value);
+        n->options.host.print(n->options.host.ctx, value ? value : "");
+        qa_cleanup_pop(&value_guard);
+        free(value);
       } else if (strcmp(result.packet.command, "disconnect") == 0 && n->connection
           && qa_q3_mirror_same_address(&from, &n->peer, true)
           && now - n->last_received >= 3000) {
         n->state = QA_APP_PHASE_CLOSED;
-        n->options.host.disconnected(n->options.host.ctx, "Server disconnected");
+        qa_cleanup_pop(&result_guard);
+        qa_cleanup_pop(&from_guard);
+        qa_cleanup_pop(&packet_guard);
         qa_q3_mirror_address_destroy(&from);
         qa_q3_client_admission_result_destroy(&result);
         qa_receive_event_destroy(&packet);
+        n->options.host.disconnected(n->options.host.ctx, "Server disconnected");
         return;
       }
     }
+    qa_cleanup_pop(&result_guard);
+    qa_cleanup_pop(&from_guard);
+    qa_cleanup_pop(&packet_guard);
     qa_q3_mirror_address_destroy(&from);
     qa_q3_client_admission_result_destroy(&result);
     qa_receive_event_destroy(&packet);
@@ -368,8 +419,9 @@ void qa_app_q3_client_network_poll(qa_app_q3_client_network *n, double now) {
       char *command = malloc(length);
       if (!command) qa_range_error("out of memory");
       snprintf(command, length, "userinfo \"%s\"", userinfo);
-      qa_q3_client_reliable_commands_add(qa_q3_client_connection_reliable(connection), command, NULL);
+      bool added = qa_q3_client_reliable_commands_add(qa_q3_client_connection_reliable(connection), command, NULL);
       free(command);
+      if (!added) qa_raise("ReliableOverflowError", 0, 0, "Client command overflow");
       free(n->last_userinfo);
       n->last_userinfo = malloc(strlen(userinfo) + 1);
       if (!n->last_userinfo) qa_range_error("out of memory");
@@ -386,9 +438,15 @@ void qa_app_q3_client_network_poll(qa_app_q3_client_network *n, double now) {
       qa_q3_wire_command_history_append(qa_q3_client_connection_commands(connection), &entered);
       n->entered = true;
     }
-    qa_q3_client_send_readiness readiness = {now, n->state == QA_APP_PHASE_ACTIVE,
-        n->primed, false, n->options.host.downloading(n->options.host.ctx), false,
-        qa_q3_is_lan_address(&n->peer), cvar_integer(n->options.cvars, "cl_maxpackets", 30)};
+    double real_time = now;
+    bool active = n->state == QA_APP_PHASE_ACTIVE;
+    bool primed2 = n->primed;
+    bool downloading2 = n->options.host.downloading(n->options.host.ctx);
+    bool lan2 = qa_q3_is_lan_address(&n->peer);
+    double maximum_packets = cvar_integer(n->options.cvars, "cl_maxpackets", 30);
+    qa_q3_client_send_readiness readiness = {real_time, active,
+        primed2, false, downloading2, false,
+        lan2, maximum_packets};
     if (qa_q3_client_connection_ready_to_send(connection, &readiness)) send_now(n, now);
   }
 }
@@ -396,7 +454,7 @@ void qa_app_q3_client_network_submit(qa_app_q3_client_network *network,
     const void *const *commands, size_t count, double now) {
   (void)now;
   if (network->state != QA_APP_PHASE_ACTIVE || !network->connection) return;
-  if (count > 1) qa_range_error("A native Q3 connection carries one player");
+  if (count > 1) qa_raise("Error", 0, 0, "A native Q3 connection carries one player");
   for (size_t i = 0; i < count; i++) {
     qa_q3_wire_user_command command =
         network->options.host.command(network->options.host.ctx, commands[i]);
@@ -407,15 +465,17 @@ void qa_app_q3_client_network_submit(qa_app_q3_client_network *network,
 void qa_app_q3_client_network_publish(qa_app_q3_client_network *network,
     const void *output, const void *const *events, size_t count, double now) {
   (void)network; (void)output; (void)events; (void)count; (void)now;
-  qa_range_error("Remote client cannot publish authoritative state");
+  qa_raise("Error", 0, 0, "Remote client cannot publish authoritative state");
 }
 void qa_app_q3_client_network_close(qa_app_q3_client_network *network) {
   if (network->options.transport.is_closed(network->options.transport.ctx)) return;
   if (network->connection && network->state != QA_APP_PHASE_CLOSED
       && network->state != QA_APP_PHASE_REJECTED) {
+    double real_time = client_now(network);
+    double packet_dup = cvar_integer(network->options.cvars, "cl_packetdup", 1);
     qa_q3_client_send_options options = {
-        network->options.now(network->options.now_ctx),
-        cvar_integer(network->options.cvars, "cl_packetdup", 1), false};
+        real_time,
+        packet_dup, false};
     qa_q3_channel_delivery_storage storage;
     qa_q3_client_connection_disconnect_packets(network->connection, &options,
         make_delivery(network, network->connection, &storage));
@@ -427,7 +487,7 @@ void qa_app_q3_client_network_close(qa_app_q3_client_network *network) {
 void qa_app_q3_client_network_recording_seed(qa_app_q3_client_network *network,
     qa_app_q3_recording_seed *out) {
   if (!network->connection || network->state != QA_APP_PHASE_ACTIVE)
-    qa_range_error("Recording requires an active Q3 connection");
+    qa_raise("Error", 0, 0, "Recording requires an active Q3 connection");
   int64_t sequence = 0;
   if (!qa_q3_demo_gamestate(network->connection, &sequence, &out->message, &out->length))
     qa_range_error("out of memory");
@@ -435,9 +495,9 @@ void qa_app_q3_client_network_recording_seed(qa_app_q3_client_network *network,
 }
 void *qa_app_q3_client_network_recording_attach(qa_app_q3_client_network *network,
     qa_app_q3_recording_sink sink) {
-  if (network->has_sink) qa_range_error("Q3 recording is already attached");
+  if (network->has_sink) qa_raise("Error", 0, 0, "Q3 recording is already attached");
   if (!network->connection || network->state != QA_APP_PHASE_ACTIVE)
-    qa_range_error("Recording requires an active Q3 connection");
+    qa_raise("Error", 0, 0, "Recording requires an active Q3 connection");
   qa_q3_client_connection_set_demo_waiting(network->connection, true);
   network->sink = sink; network->has_sink = true;
   network->sink_token = malloc(1);
@@ -452,7 +512,15 @@ void qa_app_q3_client_network_recording_detach(qa_app_q3_client_network *network
 static qa_app_network_phase net_phase(void *ctx) {
   return qa_app_q3_client_network_phase(ctx);
 }
-static const void *net_wire(void *ctx) { (void)ctx; return "q3:68"; }
+/* TS readonly wire = { kind: "source", protocol: { kind: "q3", version: 68 } } */
+static qa_wire_selection net_wire(void *ctx) {
+  (void)ctx;
+  qa_wire_selection wire;
+  memset(&wire, 0, sizeof wire);
+  wire.protocol.kind = "q3";
+  wire.protocol.version = 68;
+  return wire;
+}
 static const void *const *net_poll(void *ctx, double now, size_t *out_count) {
   qa_app_q3_client_network_poll(ctx, now);
   *out_count = 0;

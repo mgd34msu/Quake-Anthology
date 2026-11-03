@@ -10,6 +10,7 @@
 #include "qa/settings/server/profile.h"
 #include "qa/settings/server/rotation.h"
 #include "qa/ui/common/layout.h"
+#include "qa/foundation/js.h"
 
 typedef struct rotation_state rotation_state;
 typedef struct rctx { rotation_state *state; int action; } rctx;
@@ -196,11 +197,10 @@ static void on_select_choice(void *v, qa_seat_id seat, const char *choice) {
   (void)seat;
   rctx *c = v;
   rotation_state *s = c->state;
-  char *end = NULL;
-  double index = strtod(choice, &end);
+  double index = qa_js_string_to_number(choice); /* Number(value) */
   size_t count = 0;
   char **maps = read_maps(s, &count);
-  if (end != choice && *end == '\0' && isfinite(index)
+  if (isfinite(index)
       && index == trunc(index) && index >= 0 && index < (double)count)
     s->selected = (long)index;
   free_maps(maps, count);

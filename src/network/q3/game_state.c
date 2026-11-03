@@ -11,7 +11,8 @@ struct qa_q3_client_game_state_storage {
   qa_q3_game_state_drop_fn drop; void *drop_ctx;
 };
 static void do_drop(const qa_q3_client_game_state_storage *s, const char *msg) {
-  if (s->drop) { s->drop(s->drop_ctx, msg); qa_range_error("%s", msg); }
+  /* TS drop is `(message) => never`; a returning host drop still ends the call. */
+  if (s->drop) s->drop(s->drop_ctx, msg);
   qa_common_error(QA_COMMON_ERROR_DROP, msg);
 }
 void qa_q3_source_game_state_record_destroy(qa_q3_source_game_state_record *r) { free(r->string_offsets); free(r->string_data); r->string_offsets = NULL; r->string_data = NULL; }
@@ -51,21 +52,34 @@ bool qa_q3_client_game_state_storage_get(const qa_q3_client_game_state_storage *
   }
   qa_range_error("Unterminated owned configstring");
 }
+typedef struct { char **strings; size_t count; } string_list;
+static void string_list_release(void *arg) {
+  string_list *list = arg;
+  for (size_t i = 0; i < list->count; i++) free(list->strings[i]);
+  free(list->strings);
+  list->strings = NULL; list->count = 0;
+}
 bool qa_q3_client_game_state_storage_copy_strings(const qa_q3_client_game_state_storage *s, char ***out, size_t *count) {
-  *out = calloc(1024, sizeof(char *));
-  if (!*out) return false;
-  *count = 1024;
-  for (int i = 0; i < 1024; i++) {
+  string_list list = { calloc(1024, sizeof(char *)), 0 };
+  if (!list.strings) return false;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, string_list_release, &list);
+  bool ok = true;
+  for (int i = 0; i < 1024 && ok; i++) {
     char *v = NULL;
-    if (!qa_q3_client_game_state_storage_get(s, i, &v)) return false;
-    if (!v) { v = malloc(1); if (!v) return false; v[0] = 0; }
-    (*out)[i] = v;
+    if (!qa_q3_client_game_state_storage_get(s, i, &v)) { ok = false; break; }
+    if (!v) { v = malloc(1); if (!v) { ok = false; break; } v[0] = 0; }
+    list.strings[list.count++] = v;
   }
+  qa_cleanup_pop(&guard);
+  if (!ok) { string_list_release(&list); return false; }
+  *out = list.strings; *count = list.count;
   return true;
 }
-static void validate(const qa_q3_client_game_state_storage *s, int64_t index, const char *value) {
+/* validate(index, value): C strings carry no NUL and only byte characters, so
+ * the TS RangeError on NUL/>255 has no C input that reaches it. */
+static void validate(const qa_q3_client_game_state_storage *s, int64_t index) {
   if (index < 0 || index >= 1024) do_drop(s, "configstring > MAX_CONFIGSTRINGS");
-  (void)value; /* C bytes are non-NUL source bytes within the string */
 }
 static void append_bytes(qa_q3_client_game_state_storage *s, int64_t index, const char *value) {
   size_t n = strlen(value);
@@ -76,25 +90,29 @@ static void append_bytes(qa_q3_client_game_state_storage *s, int64_t index, cons
   s->count += (int64_t)n + 1;
 }
 void qa_q3_client_game_state_storage_append(qa_q3_client_game_state_storage *s, int64_t index, const char *value) {
-  validate(s, index, value);
+  validate(s, index);
   append_bytes(s, index, value);
 }
 bool qa_q3_client_game_state_storage_modify(qa_q3_client_game_state_storage *s, int64_t index, const char *value) {
-  validate(s, index, value);
+  validate(s, index);
   char *current = NULL;
-  qa_q3_client_game_state_storage_get(s, index, &current);
+  if (!qa_q3_client_game_state_storage_get(s, index, &current)) qa_range_error("game state copy allocation failed");
   bool same = strcmp(current ? current : "", value) == 0;
   free(current);
   if (same) return false;
-  char **previous = NULL; size_t count = 0;
-  if (!qa_q3_client_game_state_storage_copy_strings(s, &previous, &count)) qa_range_error("game state copy allocation failed");
+  string_list previous = { NULL, 0 };
+  if (!qa_q3_client_game_state_storage_copy_strings(s, &previous.strings, &previous.count))
+    qa_range_error("game state copy allocation failed");
+  /* append_bytes drops (raises) on MAX_GAMESTATE_CHARS mid-rebuild. */
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, string_list_release, &previous);
   qa_q3_client_game_state_storage_clear(s);
   qa_q3_client_game_state_storage_begin_entries(s);
-  for (size_t slot = 0; slot < count; slot++) {
-    const char *text = (int64_t)slot == index ? value : previous[slot];
+  for (size_t slot = 0; slot < previous.count; slot++) {
+    const char *text = (int64_t)slot == index ? value : previous.strings[slot];
     if (text[0] != 0) append_bytes(s, (int64_t)slot, text);
   }
-  for (size_t i = 0; i < count; i++) free(previous[i]);
-  free(previous);
+  qa_cleanup_pop(&guard);
+  string_list_release(&previous);
   return true;
 }

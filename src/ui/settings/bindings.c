@@ -10,6 +10,7 @@
 #include "qa/input/bindings.h"
 #include "qa/input/support.h"
 #include "qa/ui/common/layout.h"
+#include "qa/foundation/js_case.h"
 
 static void oom(void) { qa_range_error("Out of memory"); }
 static char *xstrdup(const char *text) {
@@ -273,11 +274,12 @@ static void start_capture(bind_state *s, const brow *row) {
   qa_native_ui_controller_capture_binding(s->controller, capture_accept,
                                           capture_cancel, s);
 }
+/* TS toLowerCase (Unicode) into a bounded buffer. */
 static void lower_into(char *out, size_t size, const char *in) {
-  size_t i = 0;
-  for (; in[i] != '\0' && i + 1 < size; i++)
-    out[i] = (char)tolower((unsigned char)in[i]);
-  out[i] = '\0';
+  char *lowered = qa_js_to_lower_case(in);
+  if (lowered == NULL) qa_range_error("Out of memory");
+  snprintf(out, size, "%s", lowered);
+  free(lowered);
 }
 static bool terms_match(const char *searchable_lower, const char *query) {
   char lowered[512];

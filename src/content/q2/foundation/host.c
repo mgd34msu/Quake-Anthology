@@ -1,6 +1,8 @@
 /* Port of src/content/q2/foundation/host.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/host.h"
+#include "qa/content/q2/foundation/checkpoint.h"
 #include "qa/content/q2/foundation/fields.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -58,7 +60,8 @@ bool qa_q2_spawn_fields_clone(qa_q2_spawn_fields *out, const qa_q2_spawn_fields 
   for (size_t i = 0; i < in->value_count; i++)
     if (!qa_q2_spawn_set(out, in->values[i].key, in->values[i].value)) { qa_q2_spawn_fields_free(out); return false; }
   const char *cn = qa_q2_spawn_get(out, "classname");
-  out->classname = cn ? cn : (in->classname ? in->classname : "");
+  /* A created entity has no classname value; its name is interned. */
+  out->classname = cn ? cn : (in->classname ? qa_q2_intern(in->classname) : "");
   return true;
 }
 
@@ -102,22 +105,22 @@ void qa_q2_entity_init(qa_q2_entity *e, qa_owned_actor actor, qa_q2_spawn_fields
 void qa_q2_entity_destroy(qa_q2_entity *e) { qa_q2_spawn_fields_free(&e->spawn); }
 
 bool qa_q2_entity_flare(const qa_q2_entity *e, qa_scene_flare *out, qa_vec3 *rim) {
-  int64_t rf = (int64_t)e->render_flags;
+  int32_t rf = qa_js_to_int32(e->render_flags); /* TS renderFlags & x: ToInt32 */
   if ((rf & 0x200000) == 0) return false;
-  int64_t shell = rf & 0x1c00;
+  int32_t shell = rf & 0x1c00;
   const char *image = "misc/flare.tga";
   if ((rf & 256) != 0) {
     const char *v = qa_q2_spawn_get(&e->spawn, "image");
     if (v && v[0]) image = v;
   }
-  uint32_t skin = (uint32_t)e->skin;
+  uint32_t skin = qa_js_to_uint32(e->skin); /* TS skin >>> n: a negative skin is UB as a C cast */
   out->image = image;
   out->fade_start = trunc(qa_q2_number_field(&e->spawn, "fade_start_dist", 96));
   out->fade_end = trunc(qa_q2_number_field(&e->spawn, "fade_end_dist", 384));
   out->scale = e->scale != 0 ? e->scale : 1;
   out->lock_angle = (rf & 1) != 0;
   out->color = e->skin == 0 ? (qa_vec3){255, 255, 255}
-      : (qa_vec3){(double)(skin >> 24), (double)((skin >> 16) & 255), (double)((skin >> 8) & 255)};
+      : (qa_vec3){(double)(skin >> 24), (double)(qa_js_to_int32((skin >> 16) & 255)), (double)(qa_js_to_int32((skin >> 8) & 255))};
   if (shell == 0) out->rim_color = NULL;
   else {
     *rim = (qa_vec3){shell & 0x400 ? 255 : 0, shell & 0x800 ? 255 : 0, shell & 0x1000 ? 255 : 0};
@@ -138,4 +141,7 @@ void qa_q2_game_move(qa_q2_game_services *g, qa_q2_entity *e, qa_q2_body_changes
 qa_q2_entity *qa_q2_game_entity_of(qa_q2_game_services *g, const qa_actor_id *a) { return g->entity(g->ctx, a); }
 void qa_q2_game_use_targets_entity(qa_q2_game_services *g, qa_q2_entity *e, const qa_actor_id *a, bool ignore) {
   g->use_targets(g->ctx, qa_q2_entity_authored_target(e), a, ignore);
+}
+void qa_q2_game_mark_dodgeable(qa_q2_game_services *g, qa_q2_entity *e) {
+  if (g->mark_dodgeable != NULL) g->mark_dodgeable(g->ctx, e);
 }

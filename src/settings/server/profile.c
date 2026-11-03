@@ -10,15 +10,16 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_text(const char *text) {
@@ -34,67 +35,10 @@ static void *xalloc(void *pointer) {
 
 /* TS Number(string) / String(number) — see server/cvars.c for the
  * same Number helper (kept per-file, as elsewhere in the port). */
-static double js_number(const char *text) {
-  const char *start = text;
-  while (*start != '\0' && isspace((unsigned char)*start)) start++;
-  const char *end = start + strlen(start);
-  while (end > start && isspace((unsigned char)end[-1])) end--;
-  size_t length = (size_t)(end - start);
-  if (length == 0) return 0;
-  char *copy = (char *)malloc(length + 1);
-  if (copy == NULL) return NAN;
-  memcpy(copy, start, length);
-  copy[length] = '\0';
-  double result;
-  if (strcmp(copy, "Infinity") == 0 || strcmp(copy, "+Infinity") == 0) {
-    result = INFINITY;
-  } else if (strcmp(copy, "-Infinity") == 0) {
-    result = -INFINITY;
-  } else if (length > 2 && copy[0] == '0' &&
-             (copy[1] == 'x' || copy[1] == 'X' || copy[1] == 'b' || copy[1] == 'B' ||
-              copy[1] == 'o' || copy[1] == 'O')) {
-    int base = (copy[1] == 'x' || copy[1] == 'X') ? 16 : (copy[1] == 'b' || copy[1] == 'B') ? 2 : 8;
-    char *stop = NULL;
-    unsigned long long parsed = strtoull(copy + 2, &stop, base);
-    result = (stop != NULL && *stop == '\0') ? (double)parsed : NAN;
-  } else {
-    char *stop = NULL;
-    double parsed = strtod(copy, &stop);
-    result = (stop != NULL && *stop == '\0' && stop != copy) ? parsed : NAN;
-  }
-  free(copy);
-  return result;
-}
+/* TS Number(text). */
+static double js_number(const char *text) { return qa_js_string_to_number(text); }
 static void js_number_text(double value, char *out, size_t size) {
-  if (value == 0.0) {
-    snprintf(out, size, "0");
-    return;
-  }
-  double magnitude = fabs(value);
-  if (magnitude >= 1e-6 && magnitude < 1e21) {
-    for (int decimals = 0; decimals <= 17; decimals++) {
-      snprintf(out, size, "%.*f", decimals, value);
-      if (strtod(out, NULL) == value) return;
-    }
-  }
-  for (int precision = 1; precision <= 17; precision++) {
-    snprintf(out, size, "%.*e", precision - 1, value);
-    if (strtod(out, NULL) == value) break;
-  }
-  char *e = strchr(out, 'e');
-  if (e != NULL) {
-    if (strchr(out, '.') != NULL) {
-      char *tail = e - 1;
-      while (tail > out && *tail == '0') tail--;
-      if (*tail == '.') tail--;
-      memmove(tail + 1, e, strlen(e) + 1);
-      e = strchr(out, 'e');
-    }
-    char *digits = e + 1;
-    if (*digits == '+' || *digits == '-') digits++;
-    while (digits[0] == '0' && digits[1] != '\0')
-      memmove(digits, digits + 1, strlen(digits));
-  }
+  qa_net_js_number(value, out, size); /* String(value): NaN and Infinity included */
 }
 /* TS String(number): see js_number_text. */
 static char *js_string(double value) {

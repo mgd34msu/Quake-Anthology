@@ -23,7 +23,7 @@ typedef struct qa_scan_windows_buffer_options {
   qa_mapped_guest_memory *memory;
   qa_mapped_memory_ext *memory_ext;
   qa_guest_core_address input;
-  int64_t capacity;
+  uint64_t capacity; /* TS bigint: an unsigned size_t (SIZE_MAX for sscanf) */
   qa_guest_core_address format;
   bool has_arguments;
   qa_guest_core_address arguments;

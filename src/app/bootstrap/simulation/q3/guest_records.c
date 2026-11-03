@@ -26,6 +26,7 @@ struct qa_app_q3_guest_records {
   double input_motion[64]; size_t input_motion_count;
   slot_ctx slot_contexts[1024];
   qa_actor_id ground_storage[1024];
+  qa_actor_id collision_owners[1024]; /* per-slot storage behind the scene collision binding's owner */
   bool closed;
   int64_t release_subscription;
 };
@@ -139,8 +140,9 @@ static bool collision_cb(void *v, qa_actor_id actor, qa_actor_collision *out) {
   qa_app_q3_guest_records *records = (qa_app_q3_guest_records *)v;
   double slot;
   if (!qa_app_q3_guest_records_slot(records, actor, &slot) || slot >= qa_qvm_game_data_get_num_entities(records->data)) return false;
-  (void)out;
-  return false; /* scene collision binding result fills via records_collision in link path */
+  /* TS host.scene.bindActorCollision(actor => this.collision(slot)). */
+  *out = qa_app_q3_guest_records_collision(records, slot, &records->collision_owners[(size_t)slot]);
+  return true;
 }
 qa_app_q3_guest_records *qa_app_q3_guest_records_create(qa_qvm_game_data *data, qa_app_q3_guest_record_host host) {
   qa_app_q3_guest_records *records = calloc(1, sizeof *records);
@@ -446,7 +448,7 @@ void qa_app_q3_guest_records_restore_checkpoint(qa_app_q3_guest_records *records
   }
 }
 void qa_app_q3_guest_records_release_client(qa_app_q3_guest_records *records, double slot) {
-  if (slot != (double)(long long)slot || slot < 0 || slot >= qa_qvm_game_data_get_num_clients(records->data))
+  if (!(isfinite(slot) && slot == trunc(slot)) || slot < 0 || slot >= qa_qvm_game_data_get_num_clients(records->data))
     qa_range_error("Q3 client slot is outside configured game data");
   if (slot < qa_qvm_game_data_get_num_entities(records->data)) qa_app_q3_guest_records_unlink(records, slot);
   actor_entry *entry = find_actor(records, slot);

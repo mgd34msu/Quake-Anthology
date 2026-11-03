@@ -208,6 +208,13 @@ bool qa_sound_bank_register(qa_sound_bank *bank, const char *name,
                            : pcm_result == QA_PCM_TRY_INVALID;
     return invalid; /* true with *out NULL: the TS catch -> null */
   }
+  /* Source S_LoadSound rejects non-mono effects and skips them like a
+     missing file. */
+  if (pcm.channels != 1) {
+    qa_pcm_sound_dispose(&pcm);
+    free(path);
+    return true;
+  }
   asset_entry *entry = calloc(1, sizeof *entry);
   if (entry == NULL) {
     qa_pcm_sound_dispose(&pcm);

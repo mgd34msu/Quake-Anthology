@@ -7,61 +7,54 @@
 
 static void sword_pause(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  double delay = monster->entity->delay;
-  monster->entity->delay = 0;
-  qa_q1mpm_monster_set_next_frame(monster, "sword_run1");
-  qa_q1mpm_fields_set(monster->entity, "sword:awakened", "1");
-  qa_q1mpm_monster_delay(monster, delay);
+  double delay = monster->base.entity->delay;
+  monster->base.entity->delay = 0;
+  q1mpm_set_next_frame(&monster->base, "sword_run1");
+  (void)qa_q1_actor_field_set(monster->base.entity, "sword:awakened", "1");
+  qa_q1_base_monster_delay(&monster->base, delay);
 }
 static void sword_run1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->entity->effects = 8;
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_RUN, 14);
+  monster->base.entity->effects = 8;
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_RUN, 14);
 }
 static void sword_atk1(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  monster->game->sound(monster->game, monster->entity, "knight/sword1.wav", QA_Q1MPM_CH("auto"), 1, 1);
-  qa_q1mpm_monster_ai(monster, QA_Q1MPM_AI_CHARGE, 14);
+  qa_q1_sound(monster->base.game, monster->base.entity->actor.id, "knight/sword1.wav", "auto", 1, 1);
+  qa_q1_base_monster_ai(&monster->base, QA_Q1_AI_CHARGE, 14);
 }
 static void sword_die7(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_event event = {0};
-  event.kind = "sound";
-  event.actor = QA_Q1MPM_SOME(monster->entity->actor.id);
-  event.path = "player/axhit2.wav";
-  event.channel = QA_Q1MPM_CH("weapon");
-  event.volume = 0.5;
-  event.attenuation = 1;
-  monster->game->host->emit(monster->game->host->ctx, &event);
+  q1mpm_emit_sound(monster->base.game, monster->base.entity->actor.id, "player/axhit2.wav", "weapon", 0.5, 1);
 }
 static void spawn(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  if (monster->entity->delay == 0) monster->entity->delay = 10;
+  if (monster->base.entity->delay == 0) monster->base.entity->delay = 10;
   qa_q1mpm_monster_spawn_default(monster);
 }
 static void found(void *ctx, qa_q1mpm_mission_monster *monster, qa_actor_id target) {
   (void)ctx;
   qa_q1mpm_monster_found_default(monster, target);
-  if (qa_q1mpm_actor_number(monster->entity, "sword:awakened") == 0)
-    qa_q1mpm_monster_set_next_frame(monster, "sword_pause");
+  if (qa_q1_actor_number(monster->base.entity, "sword:awakened") == 0)
+    q1mpm_set_next_frame(&monster->base, "sword_pause");
 }
-static void pain(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker, double damage) {
+static void pain(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker, double damage) {
   (void)ctx; (void)attacker; (void)damage;
-  if (qa_q1mpm_actor_number(monster->entity, "sword:pain-disabled") != 0) return;
-  qa_q1mpm_fields_set(monster->entity, "sword:pain-disabled", "1");
-  qa_q1mpm_fields_set(monster->entity, "sword:awakened", "1");
-  monster->entity->delay = 0;
-  qa_q1mpm_monster_set_next_frame(monster, "sword_run1");
-  qa_q1mpm_monster_delay(monster, 0.1);
+  if (qa_q1_actor_number(monster->base.entity, "sword:pain-disabled") != 0) return;
+  (void)qa_q1_actor_field_set(monster->base.entity, "sword:pain-disabled", "1");
+  (void)qa_q1_actor_field_set(monster->base.entity, "sword:awakened", "1");
+  monster->base.entity->delay = 0;
+  q1mpm_set_next_frame(&monster->base, "sword_run1");
+  qa_q1_base_monster_delay(&monster->base, 0.1);
 }
 static void melee_action(void *ctx, qa_q1mpm_mission_monster *monster) {
   (void)ctx;
-  qa_q1mpm_monster_play(monster, "sword_atk1");
+  qa_q1_base_monster_play(&monster->base, "sword_atk1");
 }
-static void die(void *ctx, qa_q1mpm_mission_monster *monster, qa_q1mpm_opt_actor attacker) {
+static void die(void *ctx, qa_q1mpm_mission_monster *monster, const qa_actor_id *attacker) {
   (void)ctx; (void)attacker;
-  monster->entity->effects = 0;
-  qa_q1mpm_monster_play(monster, monster->game->host->random(monster->game->host->ctx) < 0.5
+  monster->base.entity->effects = 0;
+  qa_q1_base_monster_play(&monster->base, qa_q1_host_random(monster->base.game) < 0.5
                                      ? "sword_die1" : "sword_dieb1");
 }
 static const char *const classnames[] = {"monster_sword"};

@@ -1,10 +1,6 @@
 /*
  * Port of src/content/composition/q1/clients.ts: native client globals on
- * the same source actors as the selected character.
- * Mirrored surface from the unported Q1Foundation (TS owner:
- * src/content/q1/foundation/runtime.ts): qa_comp_q1_client_game carries
- * only what clients.ts reads (options, the actor registry hooks,
- * combat.setTraits team, and player autoSwitch assignment).
+ * the same source actors as the selected character, over the one Q1 game.
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONTENT_COMPOSITION_Q1_CLIENTS_H
@@ -15,24 +11,6 @@
 #include <stdint.h>
 
 #include "qa/content/composition/q1/types.h"
-
-typedef void (*qa_comp_q1_actor_release_fn)(void *ctx, qa_owned_actor actor);
-
-typedef struct qa_comp_q1_client_game {
-  void *ctx;
-  const char *edition; /* "classic" | "rerelease" */
-  bool coop;
-  bool has_max_clients;
-  double max_clients; /* TS options.maxClients ?? 1 */
-  bool (*resolve_owned)(void *ctx, qa_actor_id actor, qa_owned_actor *out);
-  void (*assert_owned)(void *ctx, qa_owned_actor actor);
-  bool (*resolve_saved)(void *ctx, int64_t slot, int64_t generation, qa_owned_actor *out);
-  /* Constructor-time actors.onRelease registration. */
-  void (*on_release)(void *ctx, qa_comp_q1_actor_release_fn callback, void *callback_ctx);
-  void (*set_traits_team)(void *ctx, qa_owned_actor actor, const char *team);
-  /* TS player(actor)?.autoSwitch = value, only when the player exists. */
-  void (*set_auto_switch)(void *ctx, qa_actor_id actor, const char *value);
-} qa_comp_q1_client_game;
 
 /* TS Q1SourceClient. userinfo strings are owned copies. */
 typedef struct qa_comp_q1_source_client {
@@ -60,7 +38,8 @@ qa_comp_q1_client_snapshot qa_comp_q1_source_client_snapshot(const qa_comp_q1_so
 
 /* TS Q1SourceClients. */
 typedef struct qa_comp_q1_source_clients {
-  qa_comp_q1_client_game game;
+  qa_q1_services *game;
+  int64_t release_listener; /* TS host.actors.onRelease registration */
   qa_comp_q1_program program;
   const qa_comp_q1_services *services;
   qa_comp_q1_source_client *records;
@@ -70,7 +49,7 @@ typedef struct qa_comp_q1_source_clients {
   double blue_captures;
 } qa_comp_q1_source_clients;
 
-void qa_comp_q1_source_clients_init(qa_comp_q1_source_clients *clients, qa_comp_q1_client_game game,
+void qa_comp_q1_source_clients_init(qa_comp_q1_source_clients *clients, qa_q1_services *game,
                                     qa_comp_q1_program program, const qa_comp_q1_services *services);
 void qa_comp_q1_source_clients_destroy(qa_comp_q1_source_clients *clients);
 qa_comp_q1_source_client *qa_comp_q1_source_clients_get(qa_comp_q1_source_clients *clients, qa_actor_id actor);

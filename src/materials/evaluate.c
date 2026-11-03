@@ -96,12 +96,15 @@ static qa_vec2 evaluate_tex_coords(qa_mat_shader_stage stage, qa_vec2 uv,
           (fr(position.x + position.z) / 1024 + now) * 1024);
       int32_t sy = qa_mat_shader_table_index(
           (position.y / 1024 + now) * 1024);
-      result = (qa_vec2){s + fr(qa_renderer_sine(sx) * mod.wave.amplitude),
-                         t + fr(qa_renderer_sine(sy) * mod.wave.amplitude)};
+      double x2 = s + fr(qa_renderer_sine(sx) * mod.wave.amplitude);
+      double y2 = t + fr(qa_renderer_sine(sy) * mod.wave.amplitude);
+      result = (qa_vec2){x2, y2};
     }
     result = (qa_vec2){fr(result.x), fr(result.y)};
   }
-  qa_vec2 done = {fr(result.x), fr(result.y)};
+  /* material.ts finiteOrZero: texture coordinates stay finite for upload. */
+  double done_x = fr(result.x), done_y = fr(result.y);
+  qa_vec2 done = {isfinite(done_x) ? done_x : 0, isfinite(done_y) ? done_y : 0};
   return done;
 }
 

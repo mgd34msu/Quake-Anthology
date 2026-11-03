@@ -1,1384 +1,692 @@
 /* Port of src/persistence/q2-rerelease-state.ts. GPL-2.0-or-later. */
 #include "qa/persistence/q2_rerelease_state.h"
 
-#include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
-static qa_save_reader field(const qa_save_reader *reader, const char *name) {
-  qa_save_reader out;
-  if (!qa_save_reader_field(reader, name, &out))
-    qa_save_reader_fail(reader, "out of memory");
+#include "q2_codec_internal.h"
+
+static void copy_text(char *dst, size_t cap, const char *src) { (void)snprintf(dst, cap, "%s", src != NULL ? src : ""); }
+static qa_save_value *number_array_value(const double *values, size_t count) {
+  qa_save_value *array = qa_save_value_array();
+  for (size_t i = 0; array != NULL && i < count; i++)
+    if (!q2c_push(array, qa_save_value_number(values[i]))) { qa_save_value_free(array); return NULL; }
+  return array;
+}
+
+/* ---- Q2FogState ---- */
+qa_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader) {
+  qa_q2_fog_state out;
+  memset(&out, 0, sizeof out);
+  qa_save_reader fog = q2c_field(reader, "fog"), height = q2c_field(reader, "heightFog");
+  out.fog.density = q2c_number(&fog, "density");
+  out.fog.color = q2c_vector(&fog, "color");
+  out.fog.sky_factor = q2c_number(&fog, "skyFactor");
+  out.height_fog.start_color = q2c_vector(&height, "startColor");
+  out.height_fog.start_distance = q2c_number(&height, "startDistance");
+  out.height_fog.end_color = q2c_vector(&height, "endColor");
+  out.height_fog.end_distance = q2c_number(&height, "endDistance");
+  out.height_fog.falloff = q2c_number(&height, "falloff");
+  out.height_fog.density = q2c_number(&height, "density");
+  out.height_fog.density_first = false; /* the reader builds { ..., falloff, density } */
+  qa_save_reader_destroy(&fog);
+  qa_save_reader_destroy(&height);
   return out;
 }
-static qa_save_reader item(const qa_save_reader *reader, size_t index) {
-  qa_save_reader out;
-  if (!qa_save_reader_item(reader, index, &out))
-    qa_save_reader_fail(reader, "out of memory");
+static qa_save_value *fog_value(const qa_q2_fog_state *in) {
+  q2c_object fog = q2c_object_new();
+  q2c_set(&fog, "density", qa_save_value_number(in->fog.density));
+  q2c_set(&fog, "color", q2c_vector_value(in->fog.color));
+  q2c_set(&fog, "skyFactor", qa_save_value_number(in->fog.sky_factor));
+  q2c_object height = q2c_object_new();
+  q2c_set(&height, "startColor", q2c_vector_value(in->height_fog.start_color));
+  q2c_set(&height, "startDistance", qa_save_value_number(in->height_fog.start_distance));
+  q2c_set(&height, "endColor", q2c_vector_value(in->height_fog.end_color));
+  q2c_set(&height, "endDistance", qa_save_value_number(in->height_fog.end_distance));
+  if (in->height_fog.density_first) {
+    q2c_set(&height, "density", qa_save_value_number(in->height_fog.density));
+    q2c_set(&height, "falloff", qa_save_value_number(in->height_fog.falloff));
+  } else {
+    q2c_set(&height, "falloff", qa_save_value_number(in->height_fog.falloff));
+    q2c_set(&height, "density", qa_save_value_number(in->height_fog.density));
+  }
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "fog", q2c_done(&fog));
+  q2c_set(&o, "heightFog", q2c_done(&height));
+  return q2c_done(&o);
+}
+
+/* ---- Q2RereleasePlayerState (class field order) ---- */
+static const char *const COOP_STATES[] = {"none", "in-combat", "bad-area", "blocked", "waiting", "no-lives"};
+static qa_q2rr_player_extra_state read_player(const qa_save_reader *reader, qa_persist_decoded *owner) {
+  static const char *const auto_switch[] = {"0", "1", "2", "3"};
+  (void)auto_switch;
+  qa_q2rr_player_extra_state out;
+  memset(&out, 0, sizeof out);
+  out.spawned = q2c_boolean(reader, "spawned");
+  out.game_help1_changed = q2c_number(reader, "gameHelp1Changed");
+  out.game_help2_changed = q2c_number(reader, "gameHelp2Changed");
+  out.help_changed = q2c_number(reader, "helpChanged");
+  out.help_time = q2c_number(reader, "helpTime");
+  out.seat = q2c_integer(reader, "seat", 0);
+  copy_text(out.social_id, sizeof out.social_id, q2c_string(reader, "socialId"));
+  /* field("autoSwitch").choice(0, 1, 2, 3) */
+  qa_save_reader sw = q2c_field(reader, "autoSwitch");
+  double value = qa_save_reader_number(&sw);
+  if (value != 0 && value != 1 && value != 2 && value != 3) qa_save_reader_fail(&sw, "expected 0 or 1 or 2 or 3");
+  qa_save_reader_destroy(&sw);
+  out.auto_switch = value;
+  out.auto_shield = q2c_number(reader, "autoShield");
+  copy_text(out.dogtag, sizeof out.dogtag, q2c_string(reader, "dogtag"));
+  out.slime_debounce = q2c_number(reader, "slimeDebounce");
+  out.wind_sound_time = q2c_number(reader, "windSoundTime");
+  out.animation_time = q2c_number(reader, "animationTime");
+  out.flash_time = q2c_number(reader, "flashTime");
+  out.flashes = q2c_number(reader, "flashes");
+  out.last_damage_until = q2c_number(reader, "lastDamageUntil");
+  out.last_firing_until = q2c_number(reader, "lastFiringUntil");
+  out.lives = q2c_number(reader, "lives");
+  qa_save_reader invisible = q2c_field(reader, "invisibilityUntil");
+  out.invisibility_until = qa_save_reader_finite(&invisible);
+  qa_save_reader_destroy(&invisible);
+  qa_save_reader fade = q2c_field(reader, "invisibilityFadeUntil");
+  out.invisibility_fade_until = qa_save_reader_finite(&fade);
+  qa_save_reader_destroy(&fade);
+  const char *coop = q2c_choice(reader, "coopRespawnState", COOP_STATES, 6);
+  for (int i = 0; i < 6; i++) if (coop == COOP_STATES[i]) out.coop_respawn_state = (qa_q2_coop_respawn_state)i;
+  out.flashlight = q2c_boolean(reader, "flashlight");
+  qa_save_reader fog = q2c_field(reader, "fog");
+  out.fog = qa_read_q2_fog_state(&fog);
+  qa_save_reader_destroy(&fog);
+  qa_save_reader wanted = q2c_field(reader, "wantedFog");
+  out.wanted_fog = qa_read_q2_fog_state(&wanted);
+  qa_save_reader_destroy(&wanted);
+  out.fog_transition = q2c_number(reader, "fogTransition");
+  out.bob_skip = q2c_boolean(reader, "bobSkip");
+  out.impact_delta = q2c_number(reader, "impactDelta");
+  out.on_ladder = q2c_boolean(reader, "onLadder");
+  out.grapple_released_until = q2c_number(reader, "grappleReleasedUntil");
+  out.grapple_attached = q2c_boolean(reader, "grappleAttached");
+  out.awaiting_respawn = q2c_boolean(reader, "awaitingRespawn");
+  out.respawn_timeout = q2c_number(reader, "respawnTimeout");
+  qa_save_reader landmark = q2c_field(reader, "pendingLandmark");
+  if (!qa_save_reader_is_null(&landmark)) {
+    out.pending_landmark.has = true;
+    out.pending_landmark.name = q2c_string(&landmark, "name");
+    out.pending_landmark.relative_origin = q2c_vector(&landmark, "relativeOrigin");
+    out.pending_landmark.relative_velocity = q2c_vector(&landmark, "relativeVelocity");
+    out.pending_landmark.relative_view_angles = q2c_vector(&landmark, "relativeViewAngles");
+  }
+  qa_save_reader_destroy(&landmark);
+  out.slow_view_angles = q2c_vector(reader, "slowViewAngles");
+  out.quake_time = q2c_number(reader, "quakeTime");
+  out.help_location = q2c_vector(reader, "helpLocation");
+  copy_text(out.help_image, sizeof out.help_image, q2c_string(reader, "helpImage"));
+  qa_save_reader points = q2c_field(reader, "helpPoints");
+  out.help_point_count = qa_save_reader_list_count(&points);
+  out.help_points = qa_persist_decoded_array(owner, out.help_point_count, sizeof *out.help_points);
+  out.help_point_cap = out.help_point_count;
+  for (size_t i = 0; i < out.help_point_count; i++) {
+    qa_save_reader it = q2c_item(&points, i);
+    out.help_points[i] = qa_read_vector(&it);
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&points);
+  out.help_index = q2c_number(reader, "helpIndex");
+  out.help_draw_time = q2c_number(reader, "helpDrawTime");
+  if (q2c_present(reader, "helpMarkerUntil")) {
+    qa_save_reader marker = q2c_field(reader, "helpMarkerUntil");
+    out.help_marker_until = qa_save_reader_finite(&marker);
+    qa_save_reader_destroy(&marker);
+  }
   return out;
 }
-/* TS readSavedActor (save-image.ts, not yet ported as a module):
- * {slot: integer(0), generation: integer(0)}. Local copy only. */
-static qa_saved_actor_id read_actor(const qa_save_reader *reader) {
-  qa_saved_actor_id actor;
-  qa_save_reader slot = field(reader, "slot");
-  actor.slot = qa_save_reader_integer_min(&slot, 0);
-  qa_save_reader_destroy(&slot);
-  qa_save_reader generation = field(reader, "generation");
-  actor.generation = qa_save_reader_integer_min(&generation, 0);
-  qa_save_reader_destroy(&generation);
-  return actor;
-}
-static bool set_own(qa_save_value *object, const char *key, qa_save_value *child) {
-  if (child == NULL) return false;
-  if (!qa_save_value_set(object, key, child)) { qa_save_value_free(child); return false; }
-  return true;
-}
-static bool push_own(qa_save_value *array, qa_save_value *child) {
-  if (child == NULL) return false;
-  if (!qa_save_value_push(array, child)) { qa_save_value_free(child); return false; }
-  return true;
-}
-__attribute__((unused)) static qa_save_value *str_value(const char *text) {
-  return qa_save_value_string(text != NULL ? text : "");
-}
-__attribute__((unused)) static qa_save_value *vec_value(const qa_vec3 *vector) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "x", qa_save_value_number(vector->x)) ||
-      !set_own(obj, "y", qa_save_value_number(vector->y)) ||
-      !set_own(obj, "z", qa_save_value_number(vector->z))) {
-    qa_save_value_free(obj);
-    return NULL;
+static qa_save_value *player_value(const qa_q2rr_player_extra_state *in) {
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "seat", qa_save_value_number(in->seat));
+  q2c_set(&o, "socialId", q2c_string_value(in->social_id));
+  q2c_set(&o, "spawned", qa_save_value_boolean(in->spawned));
+  q2c_set(&o, "gameHelp1Changed", qa_save_value_number(in->game_help1_changed));
+  q2c_set(&o, "gameHelp2Changed", qa_save_value_number(in->game_help2_changed));
+  q2c_set(&o, "helpChanged", qa_save_value_number(in->help_changed));
+  q2c_set(&o, "helpTime", qa_save_value_number(in->help_time));
+  q2c_set(&o, "invisibilityUntil", qa_save_value_number(in->invisibility_until));
+  q2c_set(&o, "invisibilityFadeUntil", qa_save_value_number(in->invisibility_fade_until));
+  q2c_set(&o, "slimeDebounce", qa_save_value_number(in->slime_debounce));
+  q2c_set(&o, "animationTime", qa_save_value_number(in->animation_time));
+  q2c_set(&o, "flashTime", qa_save_value_number(in->flash_time));
+  q2c_set(&o, "flashes", qa_save_value_number(in->flashes));
+  q2c_set(&o, "lastDamageUntil", qa_save_value_number(in->last_damage_until));
+  q2c_set(&o, "lastFiringUntil", qa_save_value_number(in->last_firing_until));
+  q2c_set(&o, "lives", qa_save_value_number(in->lives));
+  q2c_set(&o, "coopRespawnState", qa_save_value_string(qa_q2_coop_respawn_state_name(in->coop_respawn_state)));
+  q2c_set(&o, "flashlight", qa_save_value_boolean(in->flashlight));
+  q2c_set(&o, "fog", fog_value(&in->fog));
+  q2c_set(&o, "wantedFog", fog_value(&in->wanted_fog));
+  q2c_set(&o, "fogTransition", qa_save_value_number(in->fog_transition));
+  q2c_set(&o, "bobSkip", qa_save_value_boolean(in->bob_skip));
+  q2c_set(&o, "autoSwitch", qa_save_value_number(in->auto_switch));
+  q2c_set(&o, "autoShield", qa_save_value_number(in->auto_shield));
+  q2c_set(&o, "dogtag", q2c_string_value(in->dogtag));
+  q2c_set(&o, "impactDelta", qa_save_value_number(in->impact_delta));
+  q2c_set(&o, "onLadder", qa_save_value_boolean(in->on_ladder));
+  q2c_set(&o, "grappleReleasedUntil", qa_save_value_number(in->grapple_released_until));
+  q2c_set(&o, "grappleAttached", qa_save_value_boolean(in->grapple_attached));
+  q2c_set(&o, "slowViewAngles", q2c_vector_value(in->slow_view_angles));
+  q2c_set(&o, "quakeTime", qa_save_value_number(in->quake_time));
+  q2c_set(&o, "windSoundTime", qa_save_value_number(in->wind_sound_time));
+  q2c_set(&o, "awaitingRespawn", qa_save_value_boolean(in->awaiting_respawn));
+  q2c_set(&o, "respawnTimeout", qa_save_value_number(in->respawn_timeout));
+  qa_save_value *landmark = qa_save_value_null();
+  if (in->pending_landmark.has) {
+    q2c_object l = q2c_object_new();
+    q2c_set(&l, "name", q2c_string_value(in->pending_landmark.name));
+    q2c_set(&l, "relativeOrigin", q2c_vector_value(in->pending_landmark.relative_origin));
+    q2c_set(&l, "relativeVelocity", q2c_vector_value(in->pending_landmark.relative_velocity));
+    q2c_set(&l, "relativeViewAngles", q2c_vector_value(in->pending_landmark.relative_view_angles));
+    qa_save_value_free(landmark);
+    landmark = q2c_done(&l);
   }
-  return obj;
+  q2c_set(&o, "pendingLandmark", landmark);
+  q2c_set(&o, "helpLocation", q2c_vector_value(in->help_location));
+  q2c_set(&o, "helpImage", q2c_string_value(in->help_image));
+  qa_save_value *points = qa_save_value_array();
+  for (size_t i = 0; points != NULL && i < in->help_point_count; i++)
+    if (!q2c_push(points, q2c_vector_value(in->help_points[i]))) { qa_save_value_free(points); points = NULL; }
+  q2c_set(&o, "helpPoints", points);
+  q2c_set(&o, "helpIndex", qa_save_value_number(in->help_index));
+  q2c_set(&o, "helpDrawTime", qa_save_value_number(in->help_draw_time));
+  q2c_set(&o, "helpMarkerUntil", qa_save_value_number(in->help_marker_until));
+  return q2c_done(&o);
 }
-static qa_save_value *actor_value(const qa_saved_actor_id *actor) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "slot", qa_save_value_number(actor->slot)) ||
-      !set_own(obj, "generation", qa_save_value_number(actor->generation))) {
-    qa_save_value_free(obj);
-    return NULL;
+
+/* ---- Q2RereleasePlayersCheckpoint (captureRerelease literal order) ---- */
+qa_q2_rerelease_players_checkpoint qa_read_q2_rerelease_players_checkpoint(const qa_save_reader *reader,
+                                                                          qa_persist_decoded *owner) {
+  qa_q2_rerelease_players_checkpoint out;
+  memset(&out, 0, sizeof out);
+  qa_save_reader version = q2c_field(reader, "version");
+  out.version = qa_save_reader_literal_number(&version, 1);
+  qa_save_reader_destroy(&version);
+  qa_save_reader options = q2c_field(reader, "options");
+  out.options.coop_squad_respawn = q2c_boolean(&options, "coopSquadRespawn");
+  out.options.coop_instanced_items = q2c_boolean(&options, "coopInstancedItems");
+  out.options.coop_lives = q2c_boolean(&options, "coopLives");
+  out.options.coop_num_lives = q2c_number(&options, "coopNumLives");
+  out.options.deathmatch_force_respawn = q2c_boolean(&options, "deathmatchForceRespawn");
+  out.options.deathmatch_no_fall_damage = q2c_boolean(&options, "deathmatchNoFallDamage");
+  out.options.deathmatch_allow_exit = q2c_boolean(&options, "deathmatchAllowExit");
+  out.options.deathmatch_spawn_farthest = q2c_boolean(&options, "deathmatchSpawnFarthest");
+  out.options.deathmatch_force_respawn_time = q2c_number(&options, "deathmatchForceRespawnTime");
+  out.options.coop_player_collision = q2c_boolean(&options, "coopPlayerCollision");
+  out.options.auto_save_minimum_time = q2c_number(&options, "autoSaveMinimumTime");
+  qa_save_reader_destroy(&options);
+  out.coop_restart_time = q2c_number(reader, "coopRestartTime");
+  out.intermission_flags = q2c_number(reader, "intermissionFlags");
+  qa_save_reader fade = q2c_field(reader, "intermissionFadeUntil");
+  if (!qa_save_reader_is_null(&fade)) { out.has_intermission_fade_until = true; out.intermission_fade_until = qa_save_reader_number(&fade); }
+  qa_save_reader_destroy(&fade);
+  qa_save_reader camera = q2c_field(reader, "intermissionCamera");
+  if (!qa_save_reader_is_null(&camera)) {
+    out.has_intermission_camera = true;
+    out.camera_origin = q2c_vector(&camera, "origin");
+    out.camera_angles = q2c_vector(&camera, "angles");
   }
-  return obj;
-}
-__attribute__((unused)) static qa_save_value *time_value(const qa_source_time *time) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "kind", qa_save_value_string(
-          time->kind == QA_SOURCE_TIME_SECONDS ? "seconds" : "milliseconds")) ||
-      !set_own(obj, "value", qa_save_value_number(time->value))) {
-    qa_save_value_free(obj);
-    return NULL;
+  qa_save_reader_destroy(&camera);
+  out.intermission_camera_set = q2c_boolean(reader, "intermissionCameraSet");
+  out.deadly_kill_box = q2c_boolean(reader, "deadlyKillBox");
+  qa_save_reader players = q2c_field(reader, "players");
+  out.player_count = qa_save_reader_list_count(&players);
+  qa_q2rr_saved_player *saved = qa_persist_decoded_array(owner, out.player_count, sizeof *saved);
+  for (size_t i = 0; i < out.player_count; i++) {
+    qa_save_reader it = q2c_item(&players, i);
+    saved[i].actor = q2c_actor(&it, "actor");
+    qa_save_reader state = q2c_field(&it, "state");
+    saved[i].state = read_player(&state, owner);
+    qa_save_reader_destroy(&state);
+    qa_save_reader_destroy(&it);
   }
-  return obj;
-}
-/* Moves every entry of `child` into `object` (TS object spread). */
-__attribute__((unused)) static bool merge_into(qa_save_value *object, qa_save_value *child) {
-  for (size_t i = 0; i < child->entry_count; i++) {
-    qa_save_value *value = child->entries[i].value;
-    child->entries[i].value = NULL;
-    if (!qa_save_value_set(object, child->entries[i].key, value)) {
-      child->entries[i].value = value;
-      return false;
-    }
+  qa_save_reader_destroy(&players);
+  out.players = saved;
+  qa_save_reader squads = q2c_field(reader, "squadSpawns");
+  out.squad_count = qa_save_reader_list_count(&squads);
+  qa_q2rr_saved_placement *placements = qa_persist_decoded_array(owner, out.squad_count, sizeof *placements);
+  for (size_t i = 0; i < out.squad_count; i++) {
+    qa_save_reader it = q2c_item(&squads, i);
+    placements[i].actor = q2c_actor(&it, "actor");
+    placements[i].origin = q2c_vector(&it, "origin");
+    placements[i].angles = q2c_vector(&it, "angles");
+    qa_save_reader_destroy(&it);
   }
-  return true;
-}
-
-static void read_q2_fog(const qa_save_reader *reader, qa_q2_fog_settings *out);
-static qa_save_value *build_q2_fog(const qa_q2_fog_settings *in);
-static void read_q2_height_fog(const qa_save_reader *reader, qa_q2_height_fog_settings *out);
-static qa_save_value *build_q2_height_fog(const qa_q2_height_fog_settings *in);
-static void read_q2_fog_state(const qa_save_reader *reader, qa_persist_q2_fog_state *out);
-static qa_save_value *build_q2_fog_state(const qa_persist_q2_fog_state *in);
-static void read_q2_pending_landmark(const qa_save_reader *reader, qa_q2_pending_landmark *out);
-static qa_save_value *build_q2_pending_landmark(const qa_q2_pending_landmark *in);
-static void read_q2_rerelease_player_state(const qa_save_reader *reader, qa_q2_rerelease_saved_player *out);
-static qa_save_value *build_q2_rerelease_player_state(const qa_q2_rerelease_saved_player *in);
-static void read_q2_rerelease_options(const qa_save_reader *reader, qa_persist_q2_rerelease_options *out);
-static qa_save_value *build_q2_rerelease_options(const qa_persist_q2_rerelease_options *in);
-static void read_q2_intermission_camera(const qa_save_reader *reader, qa_q2_intermission_camera *out);
-static qa_save_value *build_q2_intermission_camera(const qa_q2_intermission_camera *in);
-static void read_q2_rerelease_player_entry(const qa_save_reader *reader, qa_q2_rerelease_player_entry *out);
-static qa_save_value *build_q2_rerelease_player_entry(const qa_q2_rerelease_player_entry *in);
-static void read_q2_squad_spawn(const qa_save_reader *reader, qa_q2_squad_spawn *out);
-static qa_save_value *build_q2_squad_spawn(const qa_q2_squad_spawn *in);
-static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_players_checkpoint *out);
-static qa_save_value *build_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *in);
-static void read_q2_rerelease_sky(const qa_save_reader *reader, qa_q2_rerelease_sky *out);
-static qa_save_value *build_q2_rerelease_sky(const qa_q2_rerelease_sky *in);
-static void read_q2_rerelease_poi(const qa_save_reader *reader, qa_q2_rerelease_poi *out);
-static qa_save_value *build_q2_rerelease_poi(const qa_q2_rerelease_poi *in);
-static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_persist_q2_rerelease_goals *out);
-static qa_save_value *build_q2_rerelease_goals(const qa_persist_q2_rerelease_goals *in);
-static void read_q2_campaign_mission(const qa_save_reader *reader, qa_q2_campaign_mission *out);
-static qa_save_value *build_q2_campaign_mission(const qa_q2_campaign_mission *in);
-static void read_q2_campaign_level(const qa_save_reader *reader, qa_q2_campaign_level *out);
-static qa_save_value *build_q2_campaign_level(const qa_q2_campaign_level *in);
-static void read_q2_campaign(const qa_save_reader *reader, qa_q2_campaign *out);
-static qa_save_value *build_q2_campaign(const qa_q2_campaign *in);
-static void read_q2_q64_eye_state(const qa_save_reader *reader, qa_q2_q64_eye_state *out);
-static qa_save_value *build_q2_q64_eye_state(const qa_q2_q64_eye_state *in);
-static void read_q2_q64_eye_entry(const qa_save_reader *reader, qa_q2_q64_eye_entry *out);
-static qa_save_value *build_q2_q64_eye_entry(const qa_q2_q64_eye_entry *in);
-static void read_q2_q64_camera_state(const qa_save_reader *reader, qa_q2_q64_camera_state *out);
-static qa_save_value *build_q2_q64_camera_state(const qa_q2_q64_camera_state *in);
-static void read_q2_q64_camera_entry(const qa_save_reader *reader, qa_q2_q64_camera_entry *out);
-static qa_save_value *build_q2_q64_camera_entry(const qa_q2_q64_camera_entry *in);
-static void read_q2_q64_dummy_state(const qa_save_reader *reader, qa_q2_q64_dummy_state *out);
-static qa_save_value *build_q2_q64_dummy_state(const qa_q2_q64_dummy_state *in);
-static void read_q2_q64_dummy_entry(const qa_save_reader *reader, qa_q2_q64_dummy_entry *out);
-static qa_save_value *build_q2_q64_dummy_entry(const qa_q2_q64_dummy_entry *in);
-static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_q64_checkpoint *out);
-static qa_save_value *build_q2_rerelease_q64_checkpoint(const qa_persist_q2_rerelease_q64_checkpoint *in);
-static void read_q2_light_entry(const qa_save_reader *reader, qa_q2_light_entry *out);
-static qa_save_value *build_q2_light_entry(const qa_q2_light_entry *in);
-static void read_q2_health_bar(const qa_save_reader *reader, qa_q2_health_bar *out);
-static qa_save_value *build_q2_health_bar(const qa_q2_health_bar *in);
-static void read_q2_health_target_entry(const qa_save_reader *reader, qa_q2_health_target_entry *out);
-static qa_save_value *build_q2_health_target_entry(const qa_q2_health_target_entry *in);
-static void read_q2_picked_up_by_entry(const qa_save_reader *reader, qa_q2_picked_up_by_entry *out);
-static qa_save_value *build_q2_picked_up_by_entry(const qa_q2_picked_up_by_entry *in);
-static void read_q2_trigger_sound_time(const qa_save_reader *reader, qa_q2_trigger_sound_time *out);
-static qa_save_value *build_q2_trigger_sound_time(const qa_q2_trigger_sound_time *in);
-static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_module_checkpoint *out);
-static qa_save_value *build_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *in);
-
-static void read_q2_fog(const qa_save_reader *reader, qa_q2_fog_settings *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "density");
-    (*out).density = qa_save_reader_number(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "color");
-    (*out).color = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "skyFactor");
-    (*out).sky_factor = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_fog(const qa_q2_fog_settings *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "density", qa_save_value_number((*in).density))) goto fail;
-  if (!set_own(obj, "color", vec_value(&(*in).color))) goto fail;
-  if (!set_own(obj, "skyFactor", qa_save_value_number((*in).sky_factor))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_height_fog(const qa_save_reader *reader, qa_q2_height_fog_settings *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "startColor");
-    (*out).start_color = qa_read_vector(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "startDistance");
-    (*out).start_distance = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "endColor");
-    (*out).end_color = qa_read_vector(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "endDistance");
-    (*out).end_distance = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "falloff");
-    (*out).falloff = qa_save_reader_number(&f4);
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "density");
-    (*out).density = qa_save_reader_number(&f5);
-    qa_save_reader_destroy(&f5); }
-}
-static qa_save_value *build_q2_height_fog(const qa_q2_height_fog_settings *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "startColor", vec_value(&(*in).start_color))) goto fail;
-  if (!set_own(obj, "startDistance", qa_save_value_number((*in).start_distance))) goto fail;
-  if (!set_own(obj, "endColor", vec_value(&(*in).end_color))) goto fail;
-  if (!set_own(obj, "endDistance", qa_save_value_number((*in).end_distance))) goto fail;
-  if (!set_own(obj, "falloff", qa_save_value_number((*in).falloff))) goto fail;
-  if (!set_own(obj, "density", qa_save_value_number((*in).density))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_fog_state(const qa_save_reader *reader, qa_persist_q2_fog_state *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "fog");
-    read_q2_fog(&f0, &(*out).fog);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "heightFog");
-    read_q2_height_fog(&f1, &(*out).height_fog);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_fog_state(const qa_persist_q2_fog_state *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "fog", build_q2_fog(&(*in).fog))) goto fail;
-  if (!set_own(obj, "heightFog", build_q2_height_fog(&(*in).height_fog))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_pending_landmark(const qa_save_reader *reader, qa_q2_pending_landmark *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "name");
-    (*out).name = qa_save_reader_string(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "relativeOrigin");
-    (*out).relative_origin = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "relativeVelocity");
-    (*out).relative_velocity = qa_read_vector(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "relativeViewAngles");
-    (*out).relative_view_angles = qa_read_vector(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_pending_landmark(const qa_q2_pending_landmark *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "name", str_value((*in).name))) goto fail;
-  if (!set_own(obj, "relativeOrigin", vec_value(&(*in).relative_origin))) goto fail;
-  if (!set_own(obj, "relativeVelocity", vec_value(&(*in).relative_velocity))) goto fail;
-  if (!set_own(obj, "relativeViewAngles", vec_value(&(*in).relative_view_angles))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_player_state(const qa_save_reader *reader, qa_q2_rerelease_saved_player *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "spawned");
-    (*out).spawned = qa_save_reader_boolean(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "gameHelp1Changed");
-    (*out).game_help1_changed = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "gameHelp2Changed");
-    (*out).game_help2_changed = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "helpChanged");
-    (*out).help_changed = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "helpTime");
-    (*out).help_time = qa_save_reader_number(&f4);
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "seat");
-    (*out).seat = qa_save_reader_integer_min(&f5, 0);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "socialId");
-    (*out).social_id = qa_save_reader_string(&f6);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "autoSwitch");
-    static const double ch1[] = {0, 1, 2, 3};
-    (*out).auto_switch = qa_save_reader_choice_number(&f7, ch1, 4);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "autoShield");
-    (*out).auto_shield = qa_save_reader_number(&f8);
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "dogtag");
-    (*out).dogtag = qa_save_reader_string(&f9);
-    qa_save_reader_destroy(&f9); }
-  { qa_save_reader f10 = field(reader, "slimeDebounce");
-    (*out).slime_debounce = qa_save_reader_number(&f10);
-    qa_save_reader_destroy(&f10); }
-  { qa_save_reader f11 = field(reader, "windSoundTime");
-    (*out).wind_sound_time = qa_save_reader_number(&f11);
-    qa_save_reader_destroy(&f11); }
-  { qa_save_reader f12 = field(reader, "animationTime");
-    (*out).animation_time = qa_save_reader_number(&f12);
-    qa_save_reader_destroy(&f12); }
-  { qa_save_reader f13 = field(reader, "flashTime");
-    (*out).flash_time = qa_save_reader_number(&f13);
-    qa_save_reader_destroy(&f13); }
-  { qa_save_reader f14 = field(reader, "flashes");
-    (*out).flashes = qa_save_reader_number(&f14);
-    qa_save_reader_destroy(&f14); }
-  { qa_save_reader f15 = field(reader, "lastDamageUntil");
-    (*out).last_damage_until = qa_save_reader_number(&f15);
-    qa_save_reader_destroy(&f15); }
-  { qa_save_reader f16 = field(reader, "lastFiringUntil");
-    (*out).last_firing_until = qa_save_reader_number(&f16);
-    qa_save_reader_destroy(&f16); }
-  { qa_save_reader f17 = field(reader, "lives");
-    (*out).lives = qa_save_reader_number(&f17);
-    qa_save_reader_destroy(&f17); }
-  { qa_save_reader f18 = field(reader, "invisibilityUntil");
-    (*out).invisibility_until = qa_save_reader_finite(&f18);
-    qa_save_reader_destroy(&f18); }
-  { qa_save_reader f19 = field(reader, "invisibilityFadeUntil");
-    (*out).invisibility_fade_until = qa_save_reader_finite(&f19);
-    qa_save_reader_destroy(&f19); }
-  { qa_save_reader f20 = field(reader, "coopRespawnState");
-    static const char *const ch2[] = {"none", "in-combat", "bad-area", "blocked", "waiting", "no-lives"};
-    (*out).coop_respawn_state = qa_save_reader_choice_string(&f20, ch2, 6);
-    qa_save_reader_destroy(&f20); }
-  { qa_save_reader f21 = field(reader, "flashlight");
-    (*out).flashlight = qa_save_reader_boolean(&f21);
-    qa_save_reader_destroy(&f21); }
-  { qa_save_reader f22 = field(reader, "fog");
-    read_q2_fog_state(&f22, &(*out).fog);
-    qa_save_reader_destroy(&f22); }
-  { qa_save_reader f23 = field(reader, "wantedFog");
-    read_q2_fog_state(&f23, &(*out).wanted_fog);
-    qa_save_reader_destroy(&f23); }
-  { qa_save_reader f24 = field(reader, "fogTransition");
-    (*out).fog_transition = qa_save_reader_number(&f24);
-    qa_save_reader_destroy(&f24); }
-  { qa_save_reader f25 = field(reader, "bobSkip");
-    (*out).bob_skip = qa_save_reader_boolean(&f25);
-    qa_save_reader_destroy(&f25); }
-  { qa_save_reader f26 = field(reader, "impactDelta");
-    (*out).impact_delta = qa_save_reader_number(&f26);
-    qa_save_reader_destroy(&f26); }
-  { qa_save_reader f27 = field(reader, "onLadder");
-    (*out).on_ladder = qa_save_reader_boolean(&f27);
-    qa_save_reader_destroy(&f27); }
-  { qa_save_reader f28 = field(reader, "grappleReleasedUntil");
-    (*out).grapple_released_until = qa_save_reader_number(&f28);
-    qa_save_reader_destroy(&f28); }
-  { qa_save_reader f29 = field(reader, "grappleAttached");
-    (*out).grapple_attached = qa_save_reader_boolean(&f29);
-    qa_save_reader_destroy(&f29); }
-  { qa_save_reader f30 = field(reader, "awaitingRespawn");
-    (*out).awaiting_respawn = qa_save_reader_boolean(&f30);
-    qa_save_reader_destroy(&f30); }
-  { qa_save_reader f31 = field(reader, "respawnTimeout");
-    (*out).respawn_timeout = qa_save_reader_number(&f31);
-    qa_save_reader_destroy(&f31); }
-  { qa_save_reader f32 = field(reader, "pendingLandmark");
-    if (!qa_save_reader_is_null(&f32)) { (*out).has_pending_landmark = true;
-      read_q2_pending_landmark(&f32, &(*out).pending_landmark);
-    }
-    qa_save_reader_destroy(&f32); }
-  { qa_save_reader f33 = field(reader, "slowViewAngles");
-    (*out).slow_view_angles = qa_read_vector(&f33);
-    qa_save_reader_destroy(&f33); }
-  { qa_save_reader f34 = field(reader, "quakeTime");
-    (*out).quake_time = qa_save_reader_number(&f34);
-    qa_save_reader_destroy(&f34); }
-  { qa_save_reader f35 = field(reader, "helpLocation");
-    (*out).help_location = qa_read_vector(&f35);
-    qa_save_reader_destroy(&f35); }
-  { qa_save_reader f36 = field(reader, "helpImage");
-    (*out).help_image = qa_save_reader_string(&f36);
-    qa_save_reader_destroy(&f36); }
-  { qa_save_reader f37 = field(reader, "helpPoints");
-    (*out).help_points_count = qa_save_reader_list_count(&f37);
-    (*out).help_points = (qa_vec3 *)calloc((*out).help_points_count != 0 ? (*out).help_points_count : 1, sizeof(qa_vec3));
-    if ((*out).help_points == NULL) qa_save_reader_fail(&f37, "out of memory");
-    for (size_t i3 = 0; i3 < (*out).help_points_count; i3++) {
-      qa_save_reader it4 = item(&f37, i3);
-      (*out).help_points[i3] = qa_read_vector(&it4);
-      qa_save_reader_destroy(&it4);
-    }
-    qa_save_reader_destroy(&f37); }
-  { qa_save_reader f38 = field(reader, "helpIndex");
-    (*out).help_index = qa_save_reader_number(&f38);
-    qa_save_reader_destroy(&f38); }
-  { qa_save_reader f39 = field(reader, "helpDrawTime");
-    (*out).help_draw_time = qa_save_reader_number(&f39);
-    qa_save_reader_destroy(&f39); }
-  { qa_save_reader f40 = field(reader, "helpMarkerUntil");
-    (*out).help_marker_until = qa_save_reader_is_undefined(&f40) ? 0 : qa_save_reader_finite(&f40);
-    qa_save_reader_destroy(&f40); }
-}
-static qa_save_value *build_q2_rerelease_player_state(const qa_q2_rerelease_saved_player *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "spawned", qa_save_value_boolean((*in).spawned))) goto fail;
-  if (!set_own(obj, "gameHelp1Changed", qa_save_value_number((*in).game_help1_changed))) goto fail;
-  if (!set_own(obj, "gameHelp2Changed", qa_save_value_number((*in).game_help2_changed))) goto fail;
-  if (!set_own(obj, "helpChanged", qa_save_value_number((*in).help_changed))) goto fail;
-  if (!set_own(obj, "helpTime", qa_save_value_number((*in).help_time))) goto fail;
-  if (!set_own(obj, "seat", qa_save_value_number((*in).seat))) goto fail;
-  if (!set_own(obj, "socialId", str_value((*in).social_id))) goto fail;
-  if (!set_own(obj, "autoSwitch", qa_save_value_number((*in).auto_switch))) goto fail;
-  if (!set_own(obj, "autoShield", qa_save_value_number((*in).auto_shield))) goto fail;
-  if (!set_own(obj, "dogtag", str_value((*in).dogtag))) goto fail;
-  if (!set_own(obj, "slimeDebounce", qa_save_value_number((*in).slime_debounce))) goto fail;
-  if (!set_own(obj, "windSoundTime", qa_save_value_number((*in).wind_sound_time))) goto fail;
-  if (!set_own(obj, "animationTime", qa_save_value_number((*in).animation_time))) goto fail;
-  if (!set_own(obj, "flashTime", qa_save_value_number((*in).flash_time))) goto fail;
-  if (!set_own(obj, "flashes", qa_save_value_number((*in).flashes))) goto fail;
-  if (!set_own(obj, "lastDamageUntil", qa_save_value_number((*in).last_damage_until))) goto fail;
-  if (!set_own(obj, "lastFiringUntil", qa_save_value_number((*in).last_firing_until))) goto fail;
-  if (!set_own(obj, "lives", qa_save_value_number((*in).lives))) goto fail;
-  if (!set_own(obj, "invisibilityUntil", qa_save_value_number((*in).invisibility_until))) goto fail;
-  if (!set_own(obj, "invisibilityFadeUntil", qa_save_value_number((*in).invisibility_fade_until))) goto fail;
-  if (!set_own(obj, "coopRespawnState", str_value((*in).coop_respawn_state))) goto fail;
-  if (!set_own(obj, "flashlight", qa_save_value_boolean((*in).flashlight))) goto fail;
-  if (!set_own(obj, "fog", build_q2_fog_state(&(*in).fog))) goto fail;
-  if (!set_own(obj, "wantedFog", build_q2_fog_state(&(*in).wanted_fog))) goto fail;
-  if (!set_own(obj, "fogTransition", qa_save_value_number((*in).fog_transition))) goto fail;
-  if (!set_own(obj, "bobSkip", qa_save_value_boolean((*in).bob_skip))) goto fail;
-  if (!set_own(obj, "impactDelta", qa_save_value_number((*in).impact_delta))) goto fail;
-  if (!set_own(obj, "onLadder", qa_save_value_boolean((*in).on_ladder))) goto fail;
-  if (!set_own(obj, "grappleReleasedUntil", qa_save_value_number((*in).grapple_released_until))) goto fail;
-  if (!set_own(obj, "grappleAttached", qa_save_value_boolean((*in).grapple_attached))) goto fail;
-  if (!set_own(obj, "awaitingRespawn", qa_save_value_boolean((*in).awaiting_respawn))) goto fail;
-  if (!set_own(obj, "respawnTimeout", qa_save_value_number((*in).respawn_timeout))) goto fail;
-  if (!set_own(obj, "pendingLandmark", (*in).has_pending_landmark ? build_q2_pending_landmark(&(*in).pending_landmark) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "slowViewAngles", vec_value(&(*in).slow_view_angles))) goto fail;
-  if (!set_own(obj, "quakeTime", qa_save_value_number((*in).quake_time))) goto fail;
-  if (!set_own(obj, "helpLocation", vec_value(&(*in).help_location))) goto fail;
-  if (!set_own(obj, "helpImage", str_value((*in).help_image))) goto fail;
-  { qa_save_value *arr5 = qa_save_value_array();
-    if (arr5 == NULL) goto fail;
-    for (size_t i6 = 0; i6 < (*in).help_points_count; i6++) {
-      if (!push_own(arr5, vec_value(&(*in).help_points[i6]))) { qa_save_value_free(arr5); goto fail; }
-    }
-    if (!set_own(obj, "helpPoints", arr5)) goto fail; }
-  if (!set_own(obj, "helpIndex", qa_save_value_number((*in).help_index))) goto fail;
-  if (!set_own(obj, "helpDrawTime", qa_save_value_number((*in).help_draw_time))) goto fail;
-  if (!set_own(obj, "helpMarkerUntil", qa_save_value_number((*in).help_marker_until))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_options(const qa_save_reader *reader, qa_persist_q2_rerelease_options *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "coopSquadRespawn");
-    (*out).coop_squad_respawn = qa_save_reader_boolean(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "coopInstancedItems");
-    (*out).coop_instanced_items = qa_save_reader_boolean(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "coopLives");
-    (*out).coop_lives = qa_save_reader_boolean(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "coopNumLives");
-    (*out).coop_num_lives = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "deathmatchForceRespawn");
-    (*out).deathmatch_force_respawn = qa_save_reader_boolean(&f4);
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "deathmatchNoFallDamage");
-    (*out).deathmatch_no_fall_damage = qa_save_reader_boolean(&f5);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "deathmatchAllowExit");
-    (*out).deathmatch_allow_exit = qa_save_reader_boolean(&f6);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "deathmatchSpawnFarthest");
-    (*out).deathmatch_spawn_farthest = qa_save_reader_boolean(&f7);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "deathmatchForceRespawnTime");
-    (*out).deathmatch_force_respawn_time = qa_save_reader_number(&f8);
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "coopPlayerCollision");
-    (*out).coop_player_collision = qa_save_reader_boolean(&f9);
-    qa_save_reader_destroy(&f9); }
-  { qa_save_reader f10 = field(reader, "autoSaveMinimumTime");
-    (*out).auto_save_minimum_time = qa_save_reader_number(&f10);
-    qa_save_reader_destroy(&f10); }
-}
-static qa_save_value *build_q2_rerelease_options(const qa_persist_q2_rerelease_options *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "coopSquadRespawn", qa_save_value_boolean((*in).coop_squad_respawn))) goto fail;
-  if (!set_own(obj, "coopInstancedItems", qa_save_value_boolean((*in).coop_instanced_items))) goto fail;
-  if (!set_own(obj, "coopLives", qa_save_value_boolean((*in).coop_lives))) goto fail;
-  if (!set_own(obj, "coopNumLives", qa_save_value_number((*in).coop_num_lives))) goto fail;
-  if (!set_own(obj, "deathmatchForceRespawn", qa_save_value_boolean((*in).deathmatch_force_respawn))) goto fail;
-  if (!set_own(obj, "deathmatchNoFallDamage", qa_save_value_boolean((*in).deathmatch_no_fall_damage))) goto fail;
-  if (!set_own(obj, "deathmatchAllowExit", qa_save_value_boolean((*in).deathmatch_allow_exit))) goto fail;
-  if (!set_own(obj, "deathmatchSpawnFarthest", qa_save_value_boolean((*in).deathmatch_spawn_farthest))) goto fail;
-  if (!set_own(obj, "deathmatchForceRespawnTime", qa_save_value_number((*in).deathmatch_force_respawn_time))) goto fail;
-  if (!set_own(obj, "coopPlayerCollision", qa_save_value_boolean((*in).coop_player_collision))) goto fail;
-  if (!set_own(obj, "autoSaveMinimumTime", qa_save_value_number((*in).auto_save_minimum_time))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_intermission_camera(const qa_save_reader *reader, qa_q2_intermission_camera *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "angles");
-    (*out).angles = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_intermission_camera(const qa_q2_intermission_camera *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  if (!set_own(obj, "angles", vec_value(&(*in).angles))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_player_entry(const qa_save_reader *reader, qa_q2_rerelease_player_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "state");
-    read_q2_rerelease_player_state(&f1, &(*out).state);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_rerelease_player_entry(const qa_q2_rerelease_player_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "state", build_q2_rerelease_player_state(&(*in).state))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_squad_spawn(const qa_save_reader *reader, qa_q2_squad_spawn *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "angles");
-    (*out).angles = qa_read_vector(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_squad_spawn(const qa_q2_squad_spawn *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  if (!set_own(obj, "angles", vec_value(&(*in).angles))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_players_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_players_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "version");
-    (*out).version = qa_save_reader_literal_number(&f0, 1);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "options");
-    read_q2_rerelease_options(&f1, &(*out).options);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "coopRestartTime");
-    (*out).coop_restart_time = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "intermissionFlags");
-    (*out).intermission_flags = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "intermissionFadeUntil");
-    if (!qa_save_reader_is_null(&f4)) { (*out).has_intermission_fade_until = true;
-      (*out).intermission_fade_until = qa_save_reader_number(&f4);
-    }
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "intermissionCamera");
-    if (!qa_save_reader_is_null(&f5)) { (*out).has_intermission_camera = true;
-      read_q2_intermission_camera(&f5, &(*out).intermission_camera);
-    }
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "intermissionCameraSet");
-    (*out).intermission_camera_set = qa_save_reader_boolean(&f6);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "deadlyKillBox");
-    (*out).deadly_kill_box = qa_save_reader_boolean(&f7);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "players");
-    (*out).players_count = qa_save_reader_list_count(&f8);
-    (*out).players = (qa_q2_rerelease_player_entry *)calloc((*out).players_count != 0 ? (*out).players_count : 1, sizeof(qa_q2_rerelease_player_entry));
-    if ((*out).players == NULL) qa_save_reader_fail(&f8, "out of memory");
-    for (size_t i7 = 0; i7 < (*out).players_count; i7++) {
-      qa_save_reader it8 = item(&f8, i7);
-      read_q2_rerelease_player_entry(&it8, &(*out).players[i7]);
-      qa_save_reader_destroy(&it8);
-    }
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "squadSpawns");
-    (*out).squad_spawns_count = qa_save_reader_list_count(&f9);
-    (*out).squad_spawns = (qa_q2_squad_spawn *)calloc((*out).squad_spawns_count != 0 ? (*out).squad_spawns_count : 1, sizeof(qa_q2_squad_spawn));
-    if ((*out).squad_spawns == NULL) qa_save_reader_fail(&f9, "out of memory");
-    for (size_t i9 = 0; i9 < (*out).squad_spawns_count; i9++) {
-      qa_save_reader it10 = item(&f9, i9);
-      read_q2_squad_spawn(&it10, &(*out).squad_spawns[i9]);
-      qa_save_reader_destroy(&it10);
-    }
-    qa_save_reader_destroy(&f9); }
-}
-static qa_save_value *build_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
-  if (!set_own(obj, "options", build_q2_rerelease_options(&(*in).options))) goto fail;
-  if (!set_own(obj, "coopRestartTime", qa_save_value_number((*in).coop_restart_time))) goto fail;
-  if (!set_own(obj, "intermissionFlags", qa_save_value_number((*in).intermission_flags))) goto fail;
-  if (!set_own(obj, "intermissionFadeUntil", (*in).has_intermission_fade_until ? qa_save_value_number((*in).intermission_fade_until) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "intermissionCamera", (*in).has_intermission_camera ? build_q2_intermission_camera(&(*in).intermission_camera) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "intermissionCameraSet", qa_save_value_boolean((*in).intermission_camera_set))) goto fail;
-  if (!set_own(obj, "deadlyKillBox", qa_save_value_boolean((*in).deadly_kill_box))) goto fail;
-  { qa_save_value *arr11 = qa_save_value_array();
-    if (arr11 == NULL) goto fail;
-    for (size_t i12 = 0; i12 < (*in).players_count; i12++) {
-      if (!push_own(arr11, build_q2_rerelease_player_entry(&(*in).players[i12]))) { qa_save_value_free(arr11); goto fail; }
-    }
-    if (!set_own(obj, "players", arr11)) goto fail; }
-  { qa_save_value *arr13 = qa_save_value_array();
-    if (arr13 == NULL) goto fail;
-    for (size_t i14 = 0; i14 < (*in).squad_spawns_count; i14++) {
-      if (!push_own(arr13, build_q2_squad_spawn(&(*in).squad_spawns[i14]))) { qa_save_value_free(arr13); goto fail; }
-    }
-    if (!set_own(obj, "squadSpawns", arr13)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_sky(const qa_save_reader *reader, qa_q2_rerelease_sky *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "name");
-    (*out).name = qa_save_reader_string(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "rotation");
-    (*out).rotation = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "autoRotate");
-    (*out).auto_rotate = qa_save_reader_boolean(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "axis");
-    (*out).axis = qa_read_vector(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_rerelease_sky(const qa_q2_rerelease_sky *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "name", str_value((*in).name))) goto fail;
-  if (!set_own(obj, "rotation", qa_save_value_number((*in).rotation))) goto fail;
-  if (!set_own(obj, "autoRotate", qa_save_value_boolean((*in).auto_rotate))) goto fail;
-  if (!set_own(obj, "axis", vec_value(&(*in).axis))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_poi(const qa_save_reader *reader, qa_q2_rerelease_poi *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "origin");
-    (*out).origin = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "image");
-    (*out).image = qa_save_reader_string(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "dynamic");
-    if (!qa_save_reader_is_null(&f3)) { (*out).has_dynamic = true;
-      (*out).dynamic = read_actor(&f3);
-    }
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_rerelease_poi(const qa_q2_rerelease_poi *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "origin", vec_value(&(*in).origin))) goto fail;
-  if (!set_own(obj, "image", str_value((*in).image))) goto fail;
-  if (!set_own(obj, "dynamic", (*in).has_dynamic ? actor_value(&(*in).dynamic) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_goals(const qa_save_reader *reader, qa_persist_q2_rerelease_goals *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "goals");
-    if (qa_save_reader_is_null(&f0)) (*out).goals = NULL; else {
-      (*out).goals = qa_save_reader_string(&f0);
-    }
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "goalNumber");
-    (*out).goal_number = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_rerelease_goals(const qa_persist_q2_rerelease_goals *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "goals", (*in).goals != NULL ? str_value((*in).goals) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "goalNumber", qa_save_value_number((*in).goal_number))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_campaign_mission(const qa_save_reader *reader, qa_q2_campaign_mission *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "primary");
-    (*out).primary = qa_save_reader_string(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "secondary");
-    (*out).secondary = qa_save_reader_string(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "primaryChanges");
-    (*out).primary_changes = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "secondaryChanges");
-    (*out).secondary_changes = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_campaign_mission(const qa_q2_campaign_mission *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "primary", str_value((*in).primary))) goto fail;
-  if (!set_own(obj, "secondary", str_value((*in).secondary))) goto fail;
-  if (!set_own(obj, "primaryChanges", qa_save_value_number((*in).primary_changes))) goto fail;
-  if (!set_own(obj, "secondaryChanges", qa_save_value_number((*in).secondary_changes))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_campaign_level(const qa_save_reader *reader, qa_q2_campaign_level *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "map");
-    (*out).map = qa_save_reader_string(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "name");
-    (*out).name = qa_save_reader_string(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "visitOrder");
-    (*out).visit_order = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "totalSecrets");
-    (*out).total_secrets = qa_save_reader_number(&f3);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "foundSecrets");
-    (*out).found_secrets = qa_save_reader_number(&f4);
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "totalMonsters");
-    (*out).total_monsters = qa_save_reader_number(&f5);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "killedMonsters");
-    (*out).killed_monsters = qa_save_reader_number(&f6);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "time");
-    (*out).time = qa_save_reader_number(&f7);
-    qa_save_reader_destroy(&f7); }
-}
-static qa_save_value *build_q2_campaign_level(const qa_q2_campaign_level *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "map", str_value((*in).map))) goto fail;
-  if (!set_own(obj, "name", str_value((*in).name))) goto fail;
-  if (!set_own(obj, "visitOrder", qa_save_value_number((*in).visit_order))) goto fail;
-  if (!set_own(obj, "totalSecrets", qa_save_value_number((*in).total_secrets))) goto fail;
-  if (!set_own(obj, "foundSecrets", qa_save_value_number((*in).found_secrets))) goto fail;
-  if (!set_own(obj, "totalMonsters", qa_save_value_number((*in).total_monsters))) goto fail;
-  if (!set_own(obj, "killedMonsters", qa_save_value_number((*in).killed_monsters))) goto fail;
-  if (!set_own(obj, "time", qa_save_value_number((*in).time))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_campaign(const qa_save_reader *reader, qa_q2_campaign *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "mission");
-    read_q2_campaign_mission(&f0, &(*out).mission);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "crossUnitFlags");
-    (*out).cross_unit_flags = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "visitedMaps");
-    (*out).visited_maps_count = qa_save_reader_list_count(&f2);
-    (*out).visited_maps = (const char * *)calloc((*out).visited_maps_count != 0 ? (*out).visited_maps_count : 1, sizeof(const char *));
-    if ((*out).visited_maps == NULL) qa_save_reader_fail(&f2, "out of memory");
-    for (size_t i16 = 0; i16 < (*out).visited_maps_count; i16++) {
-      qa_save_reader it17 = item(&f2, i16);
-      (*out).visited_maps[i16] = qa_save_reader_string(&it17);
-      qa_save_reader_destroy(&it17);
-    }
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "levels");
-    (*out).levels_count = qa_save_reader_list_count(&f3);
-    (*out).levels = (qa_q2_campaign_level *)calloc((*out).levels_count != 0 ? (*out).levels_count : 1, sizeof(qa_q2_campaign_level));
-    if ((*out).levels == NULL) qa_save_reader_fail(&f3, "out of memory");
-    for (size_t i18 = 0; i18 < (*out).levels_count; i18++) {
-      qa_save_reader it19 = item(&f3, i18);
-      read_q2_campaign_level(&it19, &(*out).levels[i18]);
-      qa_save_reader_destroy(&it19);
-    }
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_campaign(const qa_q2_campaign *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "mission", build_q2_campaign_mission(&(*in).mission))) goto fail;
-  if (!set_own(obj, "crossUnitFlags", qa_save_value_number((*in).cross_unit_flags))) goto fail;
-  { qa_save_value *arr20 = qa_save_value_array();
-    if (arr20 == NULL) goto fail;
-    for (size_t i21 = 0; i21 < (*in).visited_maps_count; i21++) {
-      if (!push_own(arr20, str_value((*in).visited_maps[i21]))) { qa_save_value_free(arr20); goto fail; }
-    }
-    if (!set_own(obj, "visitedMaps", arr20)) goto fail; }
-  { qa_save_value *arr22 = qa_save_value_array();
-    if (arr22 == NULL) goto fail;
-    for (size_t i23 = 0; i23 < (*in).levels_count; i23++) {
-      if (!push_own(arr22, build_q2_campaign_level(&(*in).levels[i23]))) { qa_save_value_free(arr22); goto fail; }
-    }
-    if (!set_own(obj, "levels", arr22)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_q64_eye_state(const qa_save_reader *reader, qa_q2_q64_eye_state *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "neutralAngles");
-    (*out).neutral_angles = qa_read_vector(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "eyePosition");
-    (*out).eye_position = qa_read_vector(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "visionCone");
-    (*out).vision_cone = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_q64_eye_state(const qa_q2_q64_eye_state *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "neutralAngles", vec_value(&(*in).neutral_angles))) goto fail;
-  if (!set_own(obj, "eyePosition", vec_value(&(*in).eye_position))) goto fail;
-  if (!set_own(obj, "visionCone", qa_save_value_number((*in).vision_cone))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_q64_eye_entry(const qa_save_reader *reader, qa_q2_q64_eye_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "state");
-    read_q2_q64_eye_state(&f1, &(*out).state);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_q64_eye_entry(const qa_q2_q64_eye_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "state", build_q2_q64_eye_state(&(*in).state))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_q64_camera_state(const qa_save_reader *reader, qa_q2_q64_camera_state *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "remaining");
-    (*out).remaining = qa_save_reader_number(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "distance");
-    (*out).distance = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "speed");
-    (*out).speed = qa_save_reader_number(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "angles");
-    (*out).angles = qa_read_vector(&f3);
-    qa_save_reader_destroy(&f3); }
-}
-static qa_save_value *build_q2_q64_camera_state(const qa_q2_q64_camera_state *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "remaining", qa_save_value_number((*in).remaining))) goto fail;
-  if (!set_own(obj, "distance", qa_save_value_number((*in).distance))) goto fail;
-  if (!set_own(obj, "speed", qa_save_value_number((*in).speed))) goto fail;
-  if (!set_own(obj, "angles", vec_value(&(*in).angles))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_q64_camera_entry(const qa_save_reader *reader, qa_q2_q64_camera_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "state");
-    read_q2_q64_camera_state(&f1, &(*out).state);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_q64_camera_entry(const qa_q2_q64_camera_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "state", build_q2_q64_camera_state(&(*in).state))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_q64_dummy_state(const qa_save_reader *reader, qa_q2_q64_dummy_state *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "fadeRemaining");
-    (*out).fade_remaining = qa_save_reader_number(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "fadeDuration");
-    (*out).fade_duration = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "fading");
-    (*out).fading = qa_save_reader_boolean(&f2);
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_q64_dummy_state(const qa_q2_q64_dummy_state *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "fadeRemaining", qa_save_value_number((*in).fade_remaining))) goto fail;
-  if (!set_own(obj, "fadeDuration", qa_save_value_number((*in).fade_duration))) goto fail;
-  if (!set_own(obj, "fading", qa_save_value_boolean((*in).fading))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_q64_dummy_entry(const qa_save_reader *reader, qa_q2_q64_dummy_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "state");
-    read_q2_q64_dummy_state(&f1, &(*out).state);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_q64_dummy_entry(const qa_q2_q64_dummy_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "state", build_q2_q64_dummy_state(&(*in).state))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_q64_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "eyes");
-    (*out).eyes_count = qa_save_reader_list_count(&f0);
-    (*out).eyes = (qa_q2_q64_eye_entry *)calloc((*out).eyes_count != 0 ? (*out).eyes_count : 1, sizeof(qa_q2_q64_eye_entry));
-    if ((*out).eyes == NULL) qa_save_reader_fail(&f0, "out of memory");
-    for (size_t i24 = 0; i24 < (*out).eyes_count; i24++) {
-      qa_save_reader it25 = item(&f0, i24);
-      read_q2_q64_eye_entry(&it25, &(*out).eyes[i24]);
-      qa_save_reader_destroy(&it25);
-    }
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "cameras");
-    (*out).cameras_count = qa_save_reader_list_count(&f1);
-    (*out).cameras = (qa_q2_q64_camera_entry *)calloc((*out).cameras_count != 0 ? (*out).cameras_count : 1, sizeof(qa_q2_q64_camera_entry));
-    if ((*out).cameras == NULL) qa_save_reader_fail(&f1, "out of memory");
-    for (size_t i26 = 0; i26 < (*out).cameras_count; i26++) {
-      qa_save_reader it27 = item(&f1, i26);
-      read_q2_q64_camera_entry(&it27, &(*out).cameras[i26]);
-      qa_save_reader_destroy(&it27);
-    }
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "dummies");
-    (*out).dummies_count = qa_save_reader_list_count(&f2);
-    (*out).dummies = (qa_q2_q64_dummy_entry *)calloc((*out).dummies_count != 0 ? (*out).dummies_count : 1, sizeof(qa_q2_q64_dummy_entry));
-    if ((*out).dummies == NULL) qa_save_reader_fail(&f2, "out of memory");
-    for (size_t i28 = 0; i28 < (*out).dummies_count; i28++) {
-      qa_save_reader it29 = item(&f2, i28);
-      read_q2_q64_dummy_entry(&it29, &(*out).dummies[i28]);
-      qa_save_reader_destroy(&it29);
-    }
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_rerelease_q64_checkpoint(const qa_persist_q2_rerelease_q64_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  { qa_save_value *arr30 = qa_save_value_array();
-    if (arr30 == NULL) goto fail;
-    for (size_t i31 = 0; i31 < (*in).eyes_count; i31++) {
-      if (!push_own(arr30, build_q2_q64_eye_entry(&(*in).eyes[i31]))) { qa_save_value_free(arr30); goto fail; }
-    }
-    if (!set_own(obj, "eyes", arr30)) goto fail; }
-  { qa_save_value *arr32 = qa_save_value_array();
-    if (arr32 == NULL) goto fail;
-    for (size_t i33 = 0; i33 < (*in).cameras_count; i33++) {
-      if (!push_own(arr32, build_q2_q64_camera_entry(&(*in).cameras[i33]))) { qa_save_value_free(arr32); goto fail; }
-    }
-    if (!set_own(obj, "cameras", arr32)) goto fail; }
-  { qa_save_value *arr34 = qa_save_value_array();
-    if (arr34 == NULL) goto fail;
-    for (size_t i35 = 0; i35 < (*in).dummies_count; i35++) {
-      if (!push_own(arr34, build_q2_q64_dummy_entry(&(*in).dummies[i35]))) { qa_save_value_free(arr34); goto fail; }
-    }
-    if (!set_own(obj, "dummies", arr34)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_light_entry(const qa_save_reader *reader, qa_q2_light_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "active");
-    (*out).active = qa_save_reader_boolean(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_light_entry(const qa_q2_light_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "active", qa_save_value_boolean((*in).active))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_health_bar(const qa_save_reader *reader, qa_q2_health_bar *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "controller");
-    (*out).controller = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "target");
-    (*out).target = read_actor(&f1);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "deadUntil");
-    if (!qa_save_reader_is_null(&f2)) { (*out).has_dead_until = true;
-      (*out).dead_until = qa_save_reader_number(&f2);
-    }
-    qa_save_reader_destroy(&f2); }
-}
-static qa_save_value *build_q2_health_bar(const qa_q2_health_bar *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "controller", actor_value(&(*in).controller))) goto fail;
-  if (!set_own(obj, "target", actor_value(&(*in).target))) goto fail;
-  if (!set_own(obj, "deadUntil", (*in).has_dead_until ? qa_save_value_number((*in).dead_until) : qa_save_value_null())) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_health_target_entry(const qa_save_reader *reader, qa_q2_health_target_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "controller");
-    (*out).controller = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "target");
-    (*out).target = read_actor(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_health_target_entry(const qa_q2_health_target_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "controller", actor_value(&(*in).controller))) goto fail;
-  if (!set_own(obj, "target", actor_value(&(*in).target))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_picked_up_by_entry(const qa_save_reader *reader, qa_q2_picked_up_by_entry *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "slots");
-    (*out).slots_count = qa_save_reader_list_count(&f1);
-    (*out).slots = (double *)calloc((*out).slots_count != 0 ? (*out).slots_count : 1, sizeof(double));
-    if ((*out).slots == NULL) qa_save_reader_fail(&f1, "out of memory");
-    for (size_t i36 = 0; i36 < (*out).slots_count; i36++) {
-      qa_save_reader it37 = item(&f1, i36);
-      (*out).slots[i36] = qa_save_reader_integer_min(&it37, 0);
-      qa_save_reader_destroy(&it37);
-    }
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_picked_up_by_entry(const qa_q2_picked_up_by_entry *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  { qa_save_value *arr38 = qa_save_value_array();
-    if (arr38 == NULL) goto fail;
-    for (size_t i39 = 0; i39 < (*in).slots_count; i39++) {
-      if (!push_own(arr38, qa_save_value_number((*in).slots[i39]))) { qa_save_value_free(arr38); goto fail; }
-    }
-    if (!set_own(obj, "slots", arr38)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_trigger_sound_time(const qa_save_reader *reader, qa_q2_trigger_sound_time *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "actor");
-    (*out).actor = read_actor(&f0);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "time");
-    (*out).time = qa_save_reader_number(&f1);
-    qa_save_reader_destroy(&f1); }
-}
-static qa_save_value *build_q2_trigger_sound_time(const qa_q2_trigger_sound_time *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "actor", actor_value(&(*in).actor))) goto fail;
-  if (!set_own(obj, "time", qa_save_value_number((*in).time))) goto fail;
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-static void read_q2_rerelease_module_checkpoint(const qa_save_reader *reader, qa_persist_q2_rerelease_module_checkpoint *out) {
-  memset(out, 0, sizeof *out);
-  { qa_save_reader f0 = field(reader, "version");
-    (*out).version = qa_save_reader_literal_number(&f0, 1);
-    qa_save_reader_destroy(&f0); }
-  { qa_save_reader f1 = field(reader, "worldFog");
-    read_q2_fog_state(&f1, &(*out).world_fog);
-    qa_save_reader_destroy(&f1); }
-  { qa_save_reader f2 = field(reader, "story");
-    (*out).story = qa_save_reader_string(&f2);
-    qa_save_reader_destroy(&f2); }
-  { qa_save_reader f3 = field(reader, "sky");
-    read_q2_rerelease_sky(&f3, &(*out).sky);
-    qa_save_reader_destroy(&f3); }
-  { qa_save_reader f4 = field(reader, "poi");
-    if (!qa_save_reader_is_null(&f4)) { (*out).has_poi = true;
-      read_q2_rerelease_poi(&f4, &(*out).poi);
-    }
-    qa_save_reader_destroy(&f4); }
-  { qa_save_reader f5 = field(reader, "poiStage");
-    (*out).poi_stage = qa_save_reader_number(&f5);
-    qa_save_reader_destroy(&f5); }
-  { qa_save_reader f6 = field(reader, "lastAutoSave");
-    (*out).last_auto_save = qa_save_reader_number(&f6);
-    qa_save_reader_destroy(&f6); }
-  { qa_save_reader f7 = field(reader, "goals");
-    read_q2_rerelease_goals(&f7, &(*out).goals);
-    qa_save_reader_destroy(&f7); }
-  { qa_save_reader f8 = field(reader, "campaign");
-    read_q2_campaign(&f8, &(*out).campaign);
-    qa_save_reader_destroy(&f8); }
-  { qa_save_reader f9 = field(reader, "q64");
-    read_q2_rerelease_q64_checkpoint(&f9, &(*out).q64);
-    qa_save_reader_destroy(&f9); }
-  { qa_save_reader f10 = field(reader, "lights");
-    (*out).lights_count = qa_save_reader_list_count(&f10);
-    (*out).lights = (qa_q2_light_entry *)calloc((*out).lights_count != 0 ? (*out).lights_count : 1, sizeof(qa_q2_light_entry));
-    if ((*out).lights == NULL) qa_save_reader_fail(&f10, "out of memory");
-    for (size_t i40 = 0; i40 < (*out).lights_count; i40++) {
-      qa_save_reader it41 = item(&f10, i40);
-      read_q2_light_entry(&it41, &(*out).lights[i40]);
-      qa_save_reader_destroy(&it41);
-    }
-    qa_save_reader_destroy(&f10); }
-  { qa_save_reader f11 = field(reader, "healthBars");
-    (*out).health_bars_count = qa_save_reader_list_count(&f11);
-    (*out).health_bars = (qa_q2_health_bar_opt *)calloc((*out).health_bars_count != 0 ? (*out).health_bars_count : 1, sizeof(qa_q2_health_bar_opt));
-    if ((*out).health_bars == NULL) qa_save_reader_fail(&f11, "out of memory");
-    for (size_t i42 = 0; i42 < (*out).health_bars_count; i42++) {
-      qa_save_reader it43 = item(&f11, i42);
-      if (!qa_save_reader_is_null(&it43)) { (*out).health_bars[i42].has = true;
-        read_q2_health_bar(&it43, &(*out).health_bars[i42].value);
-      }
-      qa_save_reader_destroy(&it43);
-    }
-    qa_save_reader_destroy(&f11); }
-  { qa_save_reader f12 = field(reader, "healthTargets");
-    (*out).health_targets_count = qa_save_reader_list_count(&f12);
-    (*out).health_targets = (qa_q2_health_target_entry *)calloc((*out).health_targets_count != 0 ? (*out).health_targets_count : 1, sizeof(qa_q2_health_target_entry));
-    if ((*out).health_targets == NULL) qa_save_reader_fail(&f12, "out of memory");
-    for (size_t i44 = 0; i44 < (*out).health_targets_count; i44++) {
-      qa_save_reader it45 = item(&f12, i44);
-      read_q2_health_target_entry(&it45, &(*out).health_targets[i44]);
-      qa_save_reader_destroy(&it45);
-    }
-    qa_save_reader_destroy(&f12); }
-  { qa_save_reader f13 = field(reader, "pickedUpBy");
-    (*out).picked_up_by_count = qa_save_reader_list_count(&f13);
-    (*out).picked_up_by = (qa_q2_picked_up_by_entry *)calloc((*out).picked_up_by_count != 0 ? (*out).picked_up_by_count : 1, sizeof(qa_q2_picked_up_by_entry));
-    if ((*out).picked_up_by == NULL) qa_save_reader_fail(&f13, "out of memory");
-    for (size_t i46 = 0; i46 < (*out).picked_up_by_count; i46++) {
-      qa_save_reader it47 = item(&f13, i46);
-      read_q2_picked_up_by_entry(&it47, &(*out).picked_up_by[i46]);
-      qa_save_reader_destroy(&it47);
-    }
-    qa_save_reader_destroy(&f13); }
-  { qa_save_reader f14 = field(reader, "triggerSoundTimes");
-    (*out).trigger_sound_times_count = qa_save_reader_list_count(&f14);
-    (*out).trigger_sound_times = (qa_q2_trigger_sound_time *)calloc((*out).trigger_sound_times_count != 0 ? (*out).trigger_sound_times_count : 1, sizeof(qa_q2_trigger_sound_time));
-    if ((*out).trigger_sound_times == NULL) qa_save_reader_fail(&f14, "out of memory");
-    for (size_t i48 = 0; i48 < (*out).trigger_sound_times_count; i48++) {
-      qa_save_reader it49 = item(&f14, i48);
-      read_q2_trigger_sound_time(&it49, &(*out).trigger_sound_times[i48]);
-      qa_save_reader_destroy(&it49);
-    }
-    qa_save_reader_destroy(&f14); }
-}
-static qa_save_value *build_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *in) {
-  qa_save_value *obj = qa_save_value_object();
-  if (obj == NULL) return NULL;
-  if (!set_own(obj, "version", qa_save_value_number((*in).version))) goto fail;
-  if (!set_own(obj, "worldFog", build_q2_fog_state(&(*in).world_fog))) goto fail;
-  if (!set_own(obj, "story", str_value((*in).story))) goto fail;
-  if (!set_own(obj, "sky", build_q2_rerelease_sky(&(*in).sky))) goto fail;
-  if (!set_own(obj, "poi", (*in).has_poi ? build_q2_rerelease_poi(&(*in).poi) : qa_save_value_null())) goto fail;
-  if (!set_own(obj, "poiStage", qa_save_value_number((*in).poi_stage))) goto fail;
-  if (!set_own(obj, "lastAutoSave", qa_save_value_number((*in).last_auto_save))) goto fail;
-  if (!set_own(obj, "goals", build_q2_rerelease_goals(&(*in).goals))) goto fail;
-  if (!set_own(obj, "campaign", build_q2_campaign(&(*in).campaign))) goto fail;
-  if (!set_own(obj, "q64", build_q2_rerelease_q64_checkpoint(&(*in).q64))) goto fail;
-  { qa_save_value *arr50 = qa_save_value_array();
-    if (arr50 == NULL) goto fail;
-    for (size_t i51 = 0; i51 < (*in).lights_count; i51++) {
-      if (!push_own(arr50, build_q2_light_entry(&(*in).lights[i51]))) { qa_save_value_free(arr50); goto fail; }
-    }
-    if (!set_own(obj, "lights", arr50)) goto fail; }
-  { qa_save_value *arr52 = qa_save_value_array();
-    if (arr52 == NULL) goto fail;
-    for (size_t i53 = 0; i53 < (*in).health_bars_count; i53++) {
-      if (!push_own(arr52, (*in).health_bars[i53].has ? build_q2_health_bar(&(*in).health_bars[i53].value) : qa_save_value_null())) { qa_save_value_free(arr52); goto fail; }
-    }
-    if (!set_own(obj, "healthBars", arr52)) goto fail; }
-  { qa_save_value *arr54 = qa_save_value_array();
-    if (arr54 == NULL) goto fail;
-    for (size_t i55 = 0; i55 < (*in).health_targets_count; i55++) {
-      if (!push_own(arr54, build_q2_health_target_entry(&(*in).health_targets[i55]))) { qa_save_value_free(arr54); goto fail; }
-    }
-    if (!set_own(obj, "healthTargets", arr54)) goto fail; }
-  { qa_save_value *arr56 = qa_save_value_array();
-    if (arr56 == NULL) goto fail;
-    for (size_t i57 = 0; i57 < (*in).picked_up_by_count; i57++) {
-      if (!push_own(arr56, build_q2_picked_up_by_entry(&(*in).picked_up_by[i57]))) { qa_save_value_free(arr56); goto fail; }
-    }
-    if (!set_own(obj, "pickedUpBy", arr56)) goto fail; }
-  { qa_save_value *arr58 = qa_save_value_array();
-    if (arr58 == NULL) goto fail;
-    for (size_t i59 = 0; i59 < (*in).trigger_sound_times_count; i59++) {
-      if (!push_own(arr58, build_q2_trigger_sound_time(&(*in).trigger_sound_times[i59]))) { qa_save_value_free(arr58); goto fail; }
-    }
-    if (!set_own(obj, "triggerSoundTimes", arr58)) goto fail; }
-  return obj;
-fail:
-  qa_save_value_free(obj);
-  return NULL;
-}
-
-
-
-qa_persist_q2_fog_state qa_read_q2_fog_state(const qa_save_reader *reader) {
-  qa_persist_q2_fog_state out;
-  read_q2_fog_state(reader, &out);
+  qa_save_reader_destroy(&squads);
+  out.squad_spawns = placements;
   return out;
 }
-
-
-
-
-
-
-
-qa_persist_q2_rerelease_players_checkpoint qa_read_q2_rerelease_players_checkpoint(const qa_save_reader *reader) {
-  qa_persist_q2_rerelease_players_checkpoint out;
-  read_q2_rerelease_players_checkpoint(reader, &out);
-  return out;
+static qa_save_value *rerelease_players_value(const qa_q2_rerelease_players_checkpoint *in) {
+  const qa_q2_rerelease_options *options = &in->options;
+  q2c_object opts = q2c_object_new();
+  q2c_set(&opts, "coopSquadRespawn", qa_save_value_boolean(options->coop_squad_respawn));
+  q2c_set(&opts, "coopInstancedItems", qa_save_value_boolean(options->coop_instanced_items));
+  q2c_set(&opts, "coopLives", qa_save_value_boolean(options->coop_lives));
+  q2c_set(&opts, "coopNumLives", qa_save_value_number(options->coop_num_lives));
+  q2c_set(&opts, "deathmatchForceRespawn", qa_save_value_boolean(options->deathmatch_force_respawn));
+  q2c_set(&opts, "deathmatchNoFallDamage", qa_save_value_boolean(options->deathmatch_no_fall_damage));
+  q2c_set(&opts, "deathmatchSpawnFarthest", qa_save_value_boolean(options->deathmatch_spawn_farthest));
+  q2c_set(&opts, "deathmatchForceRespawnTime", qa_save_value_number(options->deathmatch_force_respawn_time));
+  q2c_set(&opts, "deathmatchAllowExit", qa_save_value_boolean(options->deathmatch_allow_exit));
+  q2c_set(&opts, "coopPlayerCollision", qa_save_value_boolean(options->coop_player_collision));
+  q2c_set(&opts, "autoSaveMinimumTime", qa_save_value_number(options->auto_save_minimum_time));
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "version", qa_save_value_number(in->version));
+  q2c_set(&o, "options", q2c_done(&opts));
+  q2c_set(&o, "coopRestartTime", qa_save_value_number(in->coop_restart_time));
+  q2c_set(&o, "deadlyKillBox", qa_save_value_boolean(in->deadly_kill_box));
+  q2c_set(&o, "intermissionFlags", qa_save_value_number(in->intermission_flags));
+  q2c_set(&o, "intermissionFadeUntil", in->has_intermission_fade_until ? qa_save_value_number(in->intermission_fade_until) : qa_save_value_null());
+  qa_save_value *camera = qa_save_value_null();
+  if (in->has_intermission_camera) {
+    q2c_object c = q2c_object_new();
+    q2c_set(&c, "origin", q2c_vector_value(in->camera_origin));
+    q2c_set(&c, "angles", q2c_vector_value(in->camera_angles));
+    qa_save_value_free(camera);
+    camera = q2c_done(&c);
+  }
+  q2c_set(&o, "intermissionCamera", camera);
+  q2c_set(&o, "intermissionCameraSet", qa_save_value_boolean(in->intermission_camera_set));
+  qa_save_value *players = qa_save_value_array();
+  for (size_t i = 0; players != NULL && i < in->player_count; i++) {
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(in->players[i].actor));
+    q2c_set(&entry, "state", player_value(&in->players[i].state));
+    if (!q2c_push(players, q2c_done(&entry))) { qa_save_value_free(players); players = NULL; }
+  }
+  q2c_set(&o, "players", players);
+  qa_save_value *squads = qa_save_value_array();
+  for (size_t i = 0; squads != NULL && i < in->squad_count; i++) {
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(in->squad_spawns[i].actor));
+    q2c_set(&entry, "origin", q2c_vector_value(in->squad_spawns[i].origin));
+    q2c_set(&entry, "angles", q2c_vector_value(in->squad_spawns[i].angles));
+    if (!q2c_push(squads, q2c_done(&entry))) { qa_save_value_free(squads); squads = NULL; }
+  }
+  q2c_set(&o, "squadSpawns", squads);
+  return q2c_done(&o);
 }
-uint8_t *qa_encode_q2_rerelease_players_checkpoint(const qa_persist_q2_rerelease_players_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_rerelease_players_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
+uint8_t *qa_encode_q2_rerelease_players_checkpoint(const qa_q2_rerelease_players_checkpoint *checkpoint, size_t *out_length) {
+  return q2c_encode(rerelease_players_value(checkpoint), out_length);
 }
-bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_rerelease_players_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
+bool qa_decode_q2_rerelease_players_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rerelease_players_checkpoint *out,
+                                               qa_persist_decoded *owner) {
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-rerelease-players")) { qa_save_value_free(root); return false; }
-  read_q2_rerelease_players_checkpoint(&reader, out);
+  if (!q2c_open(bytes, length, "q2-rerelease-players", owner, &reader)) return false;
+  *out = qa_read_q2_rerelease_players_checkpoint(&reader, owner);
   qa_save_reader_destroy(&reader);
-  out->root = root;
   return true;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-qa_persist_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader) {
-  qa_persist_q2_rerelease_q64_checkpoint out;
-  read_q2_rerelease_q64_checkpoint(reader, &out);
+/* ---- Q2RereleaseQ64Checkpoint ---- */
+qa_q2_rerelease_q64_checkpoint qa_read_q2_rerelease_q64_checkpoint(const qa_save_reader *reader, qa_persist_decoded *owner) {
+  qa_q2_rerelease_q64_checkpoint out;
+  memset(&out, 0, sizeof out);
+  qa_save_reader eyes = q2c_field(reader, "eyes");
+  out.eye_count = qa_save_reader_list_count(&eyes);
+  qa_q2rr_eye_entry *eye = qa_persist_decoded_array(owner, out.eye_count, sizeof *eye);
+  for (size_t i = 0; i < out.eye_count; i++) {
+    qa_save_reader it = q2c_item(&eyes, i), state = q2c_field(&it, "state");
+    eye[i].actor = q2c_actor(&it, "actor");
+    eye[i].state.neutral_angles = q2c_vector(&state, "neutralAngles");
+    eye[i].state.eye_position = q2c_vector(&state, "eyePosition");
+    eye[i].state.vision_cone = q2c_number(&state, "visionCone");
+    qa_save_reader_destroy(&state);
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&eyes);
+  out.eyes = eye;
+  qa_save_reader cameras = q2c_field(reader, "cameras");
+  out.camera_count = qa_save_reader_list_count(&cameras);
+  qa_q2rr_camera_entry *camera = qa_persist_decoded_array(owner, out.camera_count, sizeof *camera);
+  for (size_t i = 0; i < out.camera_count; i++) {
+    qa_save_reader it = q2c_item(&cameras, i), state = q2c_field(&it, "state");
+    camera[i].actor = q2c_actor(&it, "actor");
+    camera[i].state.remaining = q2c_number(&state, "remaining");
+    camera[i].state.distance = q2c_number(&state, "distance");
+    camera[i].state.speed = q2c_number(&state, "speed");
+    camera[i].state.angles = q2c_vector(&state, "angles");
+    camera[i].state.reader_order = true;
+    qa_save_reader_destroy(&state);
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&cameras);
+  out.cameras = camera;
+  qa_save_reader dummies = q2c_field(reader, "dummies");
+  out.dummy_count = qa_save_reader_list_count(&dummies);
+  qa_q2rr_dummy_entry *dummy = qa_persist_decoded_array(owner, out.dummy_count, sizeof *dummy);
+  for (size_t i = 0; i < out.dummy_count; i++) {
+    qa_save_reader it = q2c_item(&dummies, i), state = q2c_field(&it, "state");
+    dummy[i].actor = q2c_actor(&it, "actor");
+    dummy[i].state.fade_remaining = q2c_number(&state, "fadeRemaining");
+    dummy[i].state.fade_duration = q2c_number(&state, "fadeDuration");
+    dummy[i].state.fading = q2c_boolean(&state, "fading");
+    dummy[i].state.reader_order = true;
+    qa_save_reader_destroy(&state);
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&dummies);
+  out.dummies = dummy;
   return out;
 }
+static qa_save_value *q64_value(const qa_q2_rerelease_q64_checkpoint *in) {
+  qa_save_value *eyes = qa_save_value_array();
+  for (size_t i = 0; eyes != NULL && i < in->eye_count; i++) {
+    q2c_object state = q2c_object_new();
+    q2c_set(&state, "neutralAngles", q2c_vector_value(in->eyes[i].state.neutral_angles));
+    q2c_set(&state, "eyePosition", q2c_vector_value(in->eyes[i].state.eye_position));
+    q2c_set(&state, "visionCone", qa_save_value_number(in->eyes[i].state.vision_cone));
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(in->eyes[i].actor));
+    q2c_set(&entry, "state", q2c_done(&state));
+    if (!q2c_push(eyes, q2c_done(&entry))) { qa_save_value_free(eyes); eyes = NULL; }
+  }
+  qa_save_value *cameras = qa_save_value_array();
+  for (size_t i = 0; cameras != NULL && i < in->camera_count; i++) {
+    const qa_q2rr_camera_state *s = &in->cameras[i].state;
+    q2c_object state = q2c_object_new();
+    if (s->reader_order) {
+      q2c_set(&state, "remaining", qa_save_value_number(s->remaining));
+      q2c_set(&state, "distance", qa_save_value_number(s->distance));
+      q2c_set(&state, "speed", qa_save_value_number(s->speed));
+    } else {
+      q2c_set(&state, "speed", qa_save_value_number(s->speed));
+      q2c_set(&state, "distance", qa_save_value_number(s->distance));
+      q2c_set(&state, "remaining", qa_save_value_number(s->remaining));
+    }
+    q2c_set(&state, "angles", q2c_vector_value(s->angles));
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(in->cameras[i].actor));
+    q2c_set(&entry, "state", q2c_done(&state));
+    if (!q2c_push(cameras, q2c_done(&entry))) { qa_save_value_free(cameras); cameras = NULL; }
+  }
+  qa_save_value *dummies = qa_save_value_array();
+  for (size_t i = 0; dummies != NULL && i < in->dummy_count; i++) {
+    const qa_q2rr_dummy_state *s = &in->dummies[i].state;
+    q2c_object state = q2c_object_new();
+    if (s->reader_order) {
+      q2c_set(&state, "fadeRemaining", qa_save_value_number(s->fade_remaining));
+      q2c_set(&state, "fadeDuration", qa_save_value_number(s->fade_duration));
+      q2c_set(&state, "fading", qa_save_value_boolean(s->fading));
+    } else {
+      q2c_set(&state, "fading", qa_save_value_boolean(s->fading));
+      q2c_set(&state, "fadeDuration", qa_save_value_number(s->fade_duration));
+      q2c_set(&state, "fadeRemaining", qa_save_value_number(s->fade_remaining));
+    }
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "actor", q2c_actor_value(in->dummies[i].actor));
+    q2c_set(&entry, "state", q2c_done(&state));
+    if (!q2c_push(dummies, q2c_done(&entry))) { qa_save_value_free(dummies); dummies = NULL; }
+  }
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "eyes", eyes);
+  q2c_set(&o, "cameras", cameras);
+  q2c_set(&o, "dummies", dummies);
+  return q2c_done(&o);
+}
 
-
-
-
-
-
-qa_persist_q2_rerelease_module_checkpoint qa_read_q2_rerelease_module_checkpoint(const qa_save_reader *reader) {
-  qa_persist_q2_rerelease_module_checkpoint out;
-  read_q2_rerelease_module_checkpoint(reader, &out);
+/* ---- Q2RereleaseModuleCheckpoint (Q2RereleaseModule.capture literal order) ---- */
+qa_q2_rerelease_module_checkpoint qa_read_q2_rerelease_module_checkpoint(const qa_save_reader *reader,
+                                                                        qa_persist_decoded *owner) {
+  qa_q2_rerelease_module_checkpoint out;
+  memset(&out, 0, sizeof out);
+  qa_save_reader version = q2c_field(reader, "version");
+  out.version = qa_save_reader_literal_number(&version, 1);
+  qa_save_reader_destroy(&version);
+  qa_save_reader fog = q2c_field(reader, "worldFog");
+  out.world_fog = qa_read_q2_fog_state(&fog);
+  qa_save_reader_destroy(&fog);
+  out.story = q2c_string(reader, "story");
+  qa_save_reader sky = q2c_field(reader, "sky");
+  out.sky.name = q2c_string(&sky, "name");
+  out.sky.rotation = q2c_number(&sky, "rotation");
+  out.sky.auto_rotate = q2c_boolean(&sky, "autoRotate");
+  out.sky.axis = q2c_vector(&sky, "axis");
+  qa_save_reader_destroy(&sky);
+  qa_save_reader poi = q2c_field(reader, "poi");
+  if (!qa_save_reader_is_null(&poi)) {
+    out.has_poi = true;
+    out.poi.actor = q2c_actor(&poi, "actor");
+    out.poi.origin = q2c_vector(&poi, "origin");
+    out.poi.image = q2c_string(&poi, "image");
+    out.poi.has_dynamic = q2c_nullable_actor(&poi, "dynamic", &out.poi.dynamic);
+  }
+  qa_save_reader_destroy(&poi);
+  out.poi_stage = q2c_number(reader, "poiStage");
+  out.last_auto_save = q2c_number(reader, "lastAutoSave");
+  qa_save_reader goals = q2c_field(reader, "goals");
+  out.goals.goals = q2c_is_null(&goals, "goals") ? NULL : q2c_string(&goals, "goals");
+  out.goals.goal_number = q2c_number(&goals, "goalNumber");
+  qa_save_reader_destroy(&goals);
+  qa_save_reader campaign = q2c_field(reader, "campaign"), mission = q2c_field(&campaign, "mission");
+  out.campaign.mission.primary = (char *)q2c_string(&mission, "primary");
+  out.campaign.mission.secondary = (char *)q2c_string(&mission, "secondary");
+  out.campaign.mission.primary_changes = q2c_number(&mission, "primaryChanges");
+  out.campaign.mission.secondary_changes = q2c_number(&mission, "secondaryChanges");
+  qa_save_reader_destroy(&mission);
+  out.campaign.cross_unit_flags = q2c_number(&campaign, "crossUnitFlags");
+  qa_save_reader visited = q2c_field(&campaign, "visitedMaps");
+  out.campaign.visited_count = qa_save_reader_list_count(&visited);
+  const char **maps = qa_persist_decoded_array(owner, out.campaign.visited_count, sizeof *maps);
+  for (size_t i = 0; i < out.campaign.visited_count; i++) {
+    qa_save_reader it = q2c_item(&visited, i);
+    maps[i] = qa_save_reader_string(&it);
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&visited);
+  out.campaign.visited_maps = maps;
+  qa_save_reader levels = q2c_field(&campaign, "levels");
+  out.campaign.level_count = qa_save_reader_list_count(&levels);
+  qa_q2_rerelease_level_entry *level = qa_persist_decoded_array(owner, out.campaign.level_count, sizeof *level);
+  for (size_t i = 0; i < out.campaign.level_count; i++) {
+    qa_save_reader it = q2c_item(&levels, i);
+    level[i].map = (char *)q2c_string(&it, "map");
+    level[i].name = (char *)q2c_string(&it, "name");
+    level[i].visit_order = q2c_number(&it, "visitOrder");
+    level[i].total_secrets = q2c_number(&it, "totalSecrets");
+    level[i].found_secrets = q2c_number(&it, "foundSecrets");
+    level[i].total_monsters = q2c_number(&it, "totalMonsters");
+    level[i].killed_monsters = q2c_number(&it, "killedMonsters");
+    level[i].time = q2c_number(&it, "time");
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&levels);
+  out.campaign.levels = level;
+  qa_save_reader_destroy(&campaign);
+  qa_save_reader q64 = q2c_field(reader, "q64");
+  out.q64 = qa_read_q2_rerelease_q64_checkpoint(&q64, owner);
+  qa_save_reader_destroy(&q64);
+  qa_save_reader lights = q2c_field(reader, "lights");
+  out.light_count = qa_save_reader_list_count(&lights);
+  qa_q2rr_saved_light *light = qa_persist_decoded_array(owner, out.light_count, sizeof *light);
+  for (size_t i = 0; i < out.light_count; i++) {
+    qa_save_reader it = q2c_item(&lights, i);
+    light[i].actor = q2c_actor(&it, "actor");
+    light[i].active = q2c_boolean(&it, "active");
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&lights);
+  out.lights = light;
+  qa_save_reader bars = q2c_field(reader, "healthBars");
+  out.health_bar_count = qa_save_reader_list_count(&bars);
+  qa_q2rr_saved_healthbar *bar = qa_persist_decoded_array(owner, out.health_bar_count, sizeof *bar);
+  for (size_t i = 0; i < out.health_bar_count; i++) {
+    qa_save_reader it = q2c_item(&bars, i);
+    if (!qa_save_reader_is_null(&it)) {
+      bar[i].has = true;
+      bar[i].controller = q2c_actor(&it, "controller");
+      bar[i].target = q2c_actor(&it, "target");
+      qa_save_reader dead = q2c_field(&it, "deadUntil");
+      if (!qa_save_reader_is_null(&dead)) { bar[i].has_dead_until = true; bar[i].dead_until = qa_save_reader_number(&dead); }
+      qa_save_reader_destroy(&dead);
+    }
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&bars);
+  out.health_bars = bar;
+  qa_save_reader targets = q2c_field(reader, "healthTargets");
+  out.health_target_count = qa_save_reader_list_count(&targets);
+  qa_q2rr_saved_pair *pair = qa_persist_decoded_array(owner, out.health_target_count, sizeof *pair);
+  for (size_t i = 0; i < out.health_target_count; i++) {
+    qa_save_reader it = q2c_item(&targets, i);
+    pair[i].controller = q2c_actor(&it, "controller");
+    pair[i].target = q2c_actor(&it, "target");
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&targets);
+  out.health_targets = pair;
+  qa_save_reader picked = q2c_field(reader, "pickedUpBy");
+  out.picked_count = qa_save_reader_list_count(&picked);
+  qa_q2rr_saved_slots *slots = qa_persist_decoded_array(owner, out.picked_count, sizeof *slots);
+  for (size_t i = 0; i < out.picked_count; i++) {
+    qa_save_reader it = q2c_item(&picked, i), list = q2c_field(&it, "slots");
+    slots[i].actor = q2c_actor(&it, "actor");
+    slots[i].slot_count = qa_save_reader_list_count(&list);
+    double *values = qa_persist_decoded_array(owner, slots[i].slot_count, sizeof *values);
+    for (size_t j = 0; j < slots[i].slot_count; j++) {
+      qa_save_reader slot = q2c_item(&list, j);
+      values[j] = qa_save_reader_integer_min(&slot, 0);
+      qa_save_reader_destroy(&slot);
+    }
+    slots[i].slots = values;
+    qa_save_reader_destroy(&list);
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&picked);
+  out.picked_up_by = slots;
+  qa_save_reader sounds = q2c_field(reader, "triggerSoundTimes");
+  out.trigger_sound_count = qa_save_reader_list_count(&sounds);
+  qa_q2rr_saved_time *time = qa_persist_decoded_array(owner, out.trigger_sound_count, sizeof *time);
+  for (size_t i = 0; i < out.trigger_sound_count; i++) {
+    qa_save_reader it = q2c_item(&sounds, i);
+    time[i].actor = q2c_actor(&it, "actor");
+    time[i].time = q2c_number(&it, "time");
+    qa_save_reader_destroy(&it);
+  }
+  qa_save_reader_destroy(&sounds);
+  out.trigger_sound_times = time;
   return out;
 }
-uint8_t *qa_encode_q2_rerelease_module_checkpoint(const qa_persist_q2_rerelease_module_checkpoint *checkpoint, size_t *out_length) {
-  qa_save_value *value = build_q2_rerelease_module_checkpoint(checkpoint);
-  if (value == NULL) return NULL;
-  uint8_t *bytes = qa_encode_checkpoint_value(value, out_length);
-  qa_save_value_free(value);
-  return bytes;
+static qa_save_value *module_value(const qa_q2_rerelease_module_checkpoint *in) {
+  q2c_object o = q2c_object_new();
+  q2c_set(&o, "version", qa_save_value_number(in->version));
+  q2c_set(&o, "worldFog", fog_value(&in->world_fog));
+  q2c_set(&o, "story", q2c_string_value(in->story));
+  q2c_object sky = q2c_object_new();
+  q2c_set(&sky, "name", q2c_string_value(in->sky.name));
+  q2c_set(&sky, "rotation", qa_save_value_number(in->sky.rotation));
+  q2c_set(&sky, "autoRotate", qa_save_value_boolean(in->sky.auto_rotate));
+  q2c_set(&sky, "axis", q2c_vector_value(in->sky.axis));
+  q2c_set(&o, "sky", q2c_done(&sky));
+  qa_save_value *poi = qa_save_value_null();
+  if (in->has_poi) {
+    q2c_object p = q2c_object_new();
+    q2c_set(&p, "actor", q2c_actor_value(in->poi.actor));
+    q2c_set(&p, "origin", q2c_vector_value(in->poi.origin));
+    q2c_set(&p, "image", q2c_string_value(in->poi.image));
+    q2c_set(&p, "dynamic", q2c_nullable_actor_value(in->poi.has_dynamic, in->poi.dynamic));
+    qa_save_value_free(poi);
+    poi = q2c_done(&p);
+  }
+  q2c_set(&o, "poi", poi);
+  q2c_set(&o, "poiStage", qa_save_value_number(in->poi_stage));
+  q2c_set(&o, "lastAutoSave", qa_save_value_number(in->last_auto_save));
+  q2c_object campaign = q2c_object_new();
+  q2c_set(&campaign, "crossUnitFlags", qa_save_value_number(in->campaign.cross_unit_flags));
+  qa_save_value *visited = qa_save_value_array();
+  for (size_t i = 0; visited != NULL && i < in->campaign.visited_count; i++)
+    if (!q2c_push(visited, q2c_string_value(in->campaign.visited_maps[i]))) { qa_save_value_free(visited); visited = NULL; }
+  q2c_set(&campaign, "visitedMaps", visited);
+  qa_save_value *levels = qa_save_value_array();
+  for (size_t i = 0; levels != NULL && i < in->campaign.level_count; i++) {
+    const qa_q2_rerelease_level_entry *level = &in->campaign.levels[i];
+    q2c_object entry = q2c_object_new();
+    q2c_set(&entry, "map", q2c_string_value(level->map));
+    q2c_set(&entry, "name", q2c_string_value(level->name));
+    q2c_set(&entry, "visitOrder", qa_save_value_number(level->visit_order));
+    q2c_set(&entry, "totalSecrets", qa_save_value_number(level->total_secrets));
+    q2c_set(&entry, "foundSecrets", qa_save_value_number(level->found_secrets));
+    q2c_set(&entry, "totalMonsters", qa_save_value_number(level->total_monsters));
+    q2c_set(&entry, "killedMonsters", qa_save_value_number(level->killed_monsters));
+    q2c_set(&entry, "time", qa_save_value_number(level->time));
+    if (!q2c_push(levels, q2c_done(&entry))) { qa_save_value_free(levels); levels = NULL; }
+  }
+  q2c_set(&campaign, "levels", levels);
+  q2c_object mission = q2c_object_new();
+  q2c_set(&mission, "primary", q2c_string_value(in->campaign.mission.primary));
+  q2c_set(&mission, "secondary", q2c_string_value(in->campaign.mission.secondary));
+  q2c_set(&mission, "primaryChanges", qa_save_value_number(in->campaign.mission.primary_changes));
+  q2c_set(&mission, "secondaryChanges", qa_save_value_number(in->campaign.mission.secondary_changes));
+  q2c_set(&campaign, "mission", q2c_done(&mission));
+  q2c_set(&o, "campaign", q2c_done(&campaign));
+  qa_save_value *bars = qa_save_value_array();
+  for (size_t i = 0; bars != NULL && i < in->health_bar_count; i++) {
+    const qa_q2rr_saved_healthbar *bar = &in->health_bars[i];
+    qa_save_value *value = qa_save_value_null();
+    if (bar->has) {
+      q2c_object b = q2c_object_new();
+      q2c_set(&b, "controller", q2c_actor_value(bar->controller));
+      q2c_set(&b, "target", q2c_actor_value(bar->target));
+      q2c_set(&b, "deadUntil", bar->has_dead_until ? qa_save_value_number(bar->dead_until) : qa_save_value_null());
+      qa_save_value_free(value);
+      value = q2c_done(&b);
+    }
+    if (!q2c_push(bars, value)) { qa_save_value_free(bars); bars = NULL; }
+  }
+  q2c_set(&o, "healthBars", bars);
+  qa_save_value *targets = qa_save_value_array();
+  for (size_t i = 0; targets != NULL && i < in->health_target_count; i++) {
+    q2c_object t = q2c_object_new();
+    q2c_set(&t, "controller", q2c_actor_value(in->health_targets[i].controller));
+    q2c_set(&t, "target", q2c_actor_value(in->health_targets[i].target));
+    if (!q2c_push(targets, q2c_done(&t))) { qa_save_value_free(targets); targets = NULL; }
+  }
+  q2c_set(&o, "healthTargets", targets);
+  qa_save_value *picked = qa_save_value_array();
+  for (size_t i = 0; picked != NULL && i < in->picked_count; i++) {
+    q2c_object p = q2c_object_new();
+    q2c_set(&p, "actor", q2c_actor_value(in->picked_up_by[i].actor));
+    q2c_set(&p, "slots", number_array_value(in->picked_up_by[i].slots, in->picked_up_by[i].slot_count));
+    if (!q2c_push(picked, q2c_done(&p))) { qa_save_value_free(picked); picked = NULL; }
+  }
+  q2c_set(&o, "pickedUpBy", picked);
+  qa_save_value *sounds = qa_save_value_array();
+  for (size_t i = 0; sounds != NULL && i < in->trigger_sound_count; i++) {
+    q2c_object t = q2c_object_new();
+    q2c_set(&t, "actor", q2c_actor_value(in->trigger_sound_times[i].actor));
+    q2c_set(&t, "time", qa_save_value_number(in->trigger_sound_times[i].time));
+    if (!q2c_push(sounds, q2c_done(&t))) { qa_save_value_free(sounds); sounds = NULL; }
+  }
+  q2c_set(&o, "triggerSoundTimes", sounds);
+  q2c_set(&o, "q64", q64_value(&in->q64));
+  qa_save_value *lights = qa_save_value_array();
+  for (size_t i = 0; lights != NULL && i < in->light_count; i++) {
+    q2c_object l = q2c_object_new();
+    q2c_set(&l, "actor", q2c_actor_value(in->lights[i].actor));
+    q2c_set(&l, "active", qa_save_value_boolean(in->lights[i].active));
+    if (!q2c_push(lights, q2c_done(&l))) { qa_save_value_free(lights); lights = NULL; }
+  }
+  q2c_set(&o, "lights", lights);
+  q2c_object goals = q2c_object_new();
+  q2c_set(&goals, "goals", in->goals.goals != NULL ? qa_save_value_string(in->goals.goals) : qa_save_value_null());
+  q2c_set(&goals, "goalNumber", qa_save_value_number(in->goals.goal_number));
+  q2c_set(&o, "goals", q2c_done(&goals));
+  return q2c_done(&o);
 }
-bool qa_decode_q2_rerelease_module_checkpoint(const uint8_t *bytes, size_t length, qa_persist_q2_rerelease_module_checkpoint *out) {
-  qa_save_value *root = qa_decode_checkpoint_value(bytes, length);
-  if (root == NULL) return false;
+uint8_t *qa_encode_q2_rerelease_module_checkpoint(const qa_q2_rerelease_module_checkpoint *checkpoint, size_t *out_length) {
+  return q2c_encode(module_value(checkpoint), out_length);
+}
+bool qa_decode_q2_rerelease_module_checkpoint(const uint8_t *bytes, size_t length, qa_q2_rerelease_module_checkpoint *out,
+                                              qa_persist_decoded *owner) {
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, root, "q2-rerelease-module")) { qa_save_value_free(root); return false; }
-  read_q2_rerelease_module_checkpoint(&reader, out);
+  if (!q2c_open(bytes, length, "q2-rerelease-module", owner, &reader)) return false;
+  *out = qa_read_q2_rerelease_module_checkpoint(&reader, owner);
   qa_save_reader_destroy(&reader);
-  out->root = root;
   return true;
 }
-

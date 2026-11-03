@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/support.h"
+
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/kex/packet.h"
 
@@ -15,6 +17,7 @@ static char *dup_str(const char *s) {
   if (out != NULL) memcpy(out, s, n + 1);
   return out;
 }
+static void free_arg(void *arg) { free(arg); }
 static bool is_integer(double v) { return v == trunc(v) && isfinite(v); }
 static bool now_is_negative_infinity(double v) { return isinf(v) && v < 0; }
 
@@ -306,10 +309,13 @@ static void lan_join(qa_kex_lan_transport *lan, qa_kex_lan_peer *peer,
   qa_kex_lobby_player *fresh =
       (qa_kex_lobby_player *)calloc(total > 0 ? total : 1, sizeof *fresh);
   if (fresh == NULL) return;
+  qa_cleanup node;
+  qa_cleanup_push(&node, free_arg, fresh);
   for (size_t i = 0; i < total; i++) {
     fresh[i].id = qa_kex_packet_reader_integer(&reader);
   }
   qa_kex_packet_reader_end(&reader);
+  qa_cleanup_pop(&node);
   players_clear(lan);
   free(lan->players);
   lan->players = fresh;
@@ -351,8 +357,11 @@ static void player_message(qa_kex_lan_transport *lan, qa_kex_lan_peer *peer,
     if (index < 0) return;
     char *attribute = qa_kex_packet_reader_string(&reader);
     if (attribute == NULL) return;
+    qa_cleanup node;
+    qa_cleanup_push(&node, free_arg, attribute);
     qa_kex_packet_reader_end(&reader);
     player_attribute(lan, (double)index, attribute);
+    qa_cleanup_pop(&node);
     qa_kex_packet_writer output;
     qa_kex_packet_writer_init(&output);
     (void)qa_kex_packet_writer_byte(&output, 0);
@@ -375,7 +384,10 @@ static void player_message(qa_kex_lan_transport *lan, qa_kex_lan_peer *peer,
   if (operation == 0) {
     char *attribute = qa_kex_packet_reader_string(&reader);
     if (attribute == NULL) return;
+    qa_cleanup node;
+    qa_cleanup_push(&node, free_arg, attribute);
     player_attribute(lan, (double)index, attribute);
+    qa_cleanup_pop(&node);
     free(attribute);
   } else if (operation == 1) {
     if (lan->player_count + (size_t)index > 255) {
@@ -507,7 +519,10 @@ static void lan_message(qa_kex_lan_transport *lan, qa_kex_lan_peer *peer, double
     qa_kex_packet_reader_init(&reader, bytes, length);
     char *reason = qa_kex_packet_reader_string(&reader);
     if (reason == NULL) return;
+    qa_cleanup node;
+    qa_cleanup_push(&node, free_arg, reason);
     qa_kex_packet_reader_end(&reader);
+    qa_cleanup_pop(&node);
     lan_remove(lan, peer);
     size_t needed = strlen("KEX LAN disconnected: ") + strlen(reason) + 1;
     char *message = (char *)malloc(needed);
@@ -555,6 +570,38 @@ static void on_readable(void *vctx) {
   lan_drain((qa_kex_lan_transport *)vctx);
 }
 
+typedef struct drain_scope {
+  qa_kex_lan_transport *lan;
+  const qa_receive_event *event;
+  qa_kex_message message;
+} drain_scope;
+static void drain_body(void *arg) {
+  drain_scope *scope = (drain_scope *)arg;
+  qa_kex_lan_transport *lan = scope->lan;
+  const qa_receive_event *event = scope->event;
+  if (!lan->options.role_host && !qa_net_same_address(&event->from, &lan->server, true)) return;
+  if (lan->options.role_host && lan->options.trusted_networks_only && !qa_net_is_private_network_address(&event->from)) return;
+  /* Unknown endpoints may only enter through an unsequenced lobby query/join. */
+  qa_kex_lan_peer *peer = peer_find(lan, &event->from);
+  if (peer == NULL) {
+    if (event->length < 3 || (event->payload[1] % 16) != 0 ||
+        (event->payload[2] != 128 && event->payload[2] != 129)) return;
+    if (lan->peer_count >= 256) return;
+    size_t same_host = 0;
+    for (size_t i = 0; i < lan->peer_count; i++)
+      if (qa_net_same_address(&lan->peers[i].address, &event->from, false)) same_host++;
+    if (same_host >= 8) return;
+    peer = peer_for(lan, &event->from);
+    if (peer == NULL) return;
+  }
+  /* Index, not pointer: the peer array can move while the message is handled. */
+  size_t peer_index = (size_t)(peer - lan->peers);
+  bool has = qa_kex_channel_receive(lan->peers[peer_index].channel, event->payload,
+                                    event->length, lan->clock, &scope->message);
+  if (has) lan_message(lan, &lan->peers[peer_index], scope->message.kind,
+                       scope->message.payload, scope->message.payload_length);
+}
+
 /* Drain without consuming a poll result; mirrors TS drain(). */
 static void lan_drain(qa_kex_lan_transport *lan) {
   if (lan->ended) return;
@@ -568,49 +615,14 @@ static void lan_drain(qa_kex_lan_transport *lan) {
       qa_packet_queue_push_event(&lan->queue, &moved);
       continue;
     }
-    bool skip = false;
-    if (!lan->options.role_host && !qa_net_same_address(&event.from, &lan->server, true)) {
-      skip = true;
-    }
-    if (!skip) {
-      qa_kex_lan_peer *peer = peer_find(lan, &event.from);
-      if (peer == NULL) {
-        if (event.length < 3 || (event.payload[1] % 16) != 0 ||
-            (event.payload[2] != 128 && event.payload[2] != 129)) {
-          skip = true;
-        } else if (lan->peer_count >= 256) {
-          skip = true;
-        } else {
-          peer = peer_for(lan, &event.from);
-          if (peer == NULL) skip = true;
-        }
-      }
-      /* Find the peer index so realloc during message handling is safe. */
-      if (!skip && peer != NULL) {
-        size_t peer_index = (size_t)(peer - lan->peers);
-        qa_kex_message message;
-        memset(&message, 0, sizeof message);
-        /* Malformed packets throw in TS and are caught; probe with a
-         * size/shape gate first (inner errors still abort). */
-        bool well_formed = event.length >= 3 && event.length <= QA_KEX_DATAGRAM_BYTES;
-        if (well_formed) {
-          /* header length check mirrors readKexPacket's gate */
-          uint16_t header = (uint16_t)(((uint32_t)event.payload[0] << 8) | event.payload[1]);
-          if ((size_t)(header >> 4) != event.length) well_formed = false;
-        }
-        if (well_formed) {
-          bool has = qa_kex_channel_receive(lan->peers[peer_index].channel, event.payload,
-                                            event.length, lan->clock, &message);
-          if (has) {
-            lan_message(lan, peer_find(lan, &event.from) != NULL
-                                 ? peer_find(lan, &event.from)
-                                 : &lan->peers[peer_index],
-                        message.kind, message.payload, message.payload_length);
-            qa_kex_message_free(&message);
-          }
-        }
-      }
-    }
+    /* Malformed network input does not enter the Q2 message stream (TS catch). */
+    drain_scope scope;
+    memset(&scope, 0, sizeof scope);
+    scope.lan = lan;
+    scope.event = &event;
+    qa_caught_error caught;
+    (void)qa_try(drain_body, &scope, &caught);
+    qa_kex_message_free(&scope.message);
     qa_receive_event_destroy(&event);
   }
 }
@@ -716,6 +728,16 @@ bool qa_kex_lan_admitted(const qa_kex_lan_transport *lan, const qa_net_address *
   return lan->joined && qa_net_same_address(address, &lan->server, true);
 }
 
+typedef struct tick_scope {
+  qa_kex_channel *channel;
+  double now;
+  bool alive;
+} tick_scope;
+static void tick_body(void *arg) {
+  tick_scope *scope = (tick_scope *)arg;
+  scope->alive = qa_kex_channel_tick(scope->channel, scope->now);
+}
+
 void qa_kex_lan_tick(qa_kex_lan_transport *lan, double now) {
   lan->clock = now;
   lan_drain(lan);
@@ -743,12 +765,14 @@ void qa_kex_lan_tick(qa_kex_lan_transport *lan, double now) {
       free(bytes);
     }
   }
-  /* TS catches tick errors per peer: remove it and queue an error. */
+  /* TS catches tick errors per peer: remove it and queue the error. */
   for (size_t i = 0; i < lan->peer_count;) {
-    qa_kex_lan_peer *peer = &lan->peers[i];
-    if (!qa_kex_channel_tick(peer->channel, now)) {
-      lan_remove(lan, peer);
-      qa_packet_queue_push_error(&lan->queue, "KEX LAN peer timed out");
+    tick_scope scope = {lan->peers[i].channel, now, true};
+    qa_caught_error caught;
+    bool ok = qa_try(tick_body, &scope, &caught);
+    if (!ok || !scope.alive) {
+      lan_remove(lan, &lan->peers[i]);
+      qa_packet_queue_push_error(&lan->queue, ok ? "KEX LAN peer timed out" : caught.message);
       continue; /* removal shifts the next peer into slot i */
     }
     i++;

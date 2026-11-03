@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static bool is_space(char ch) {
   return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\v'
@@ -169,8 +170,9 @@ bool qa_ui_get_caption_commands(const qa_active_caption *captions,
     free(list.items);
     return false;
   }
-  double max_lines = fmax(1, floor((area.height - padding * 2) / line_height));
-  size_t visible_count = list.count < (size_t)max_lines
+  double max_lines = qa_js_max(1, floor((area.height - padding * 2) / line_height));
+  /* lines.slice(-maxLines): NaN (slice(-NaN) is slice(0)) and Infinity keep every line. */
+  size_t visible_count = isnan(max_lines) || (double)list.count <= max_lines
     ? list.count : (size_t)max_lines;
   size_t first = list.count - visible_count;
   double height = (double)visible_count * line_height + padding * 2;

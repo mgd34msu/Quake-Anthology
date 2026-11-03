@@ -25,7 +25,28 @@ static const qa_compat_q2_native_pickup_profile xatrix = {
   0x54, 0x2e4, 0x38, 1,
   0xa310, CSIG(p2i, false), false, 0, 0x44, caps, 8, 4
 };
+/* 1998 retail Xatrix DLL (0b0d119e): Touch_Item 0xa3a0 (pickup call returns at 0xa3d8, G_UseTargets at 0xa4ce), Add_Ammo 0x9b60,
+ * 72-byte items. The regular grant is Pickup_Armor (0xa020), whose region starts at the ArmorIndex call and joins the respawn tail. */
+static const qa_compat_q2_native_pickup_grant grants1998[] = {
+  {0xa020, 0xa035, 0xa16b, "regular", NULL, 0, false, NULL, 0, NULL, 0, 0, 0, 0},
+  {0x9c30, 0x9c34, 0x9d08, "inventory", NULL, 0, true, "ammo", 0x9c6c, "rbx", 0, 0, 0, 0},
+  {0x34c10, 0x34c84, 0x34c97, "inventory", NULL, 0, true, "weapon", 0, NULL, 0x34ce1, 0x34cea, 0x34d4f, 0x34da1},
+  {0x91b0, 0x91bb, 0x92c2, "inventory", NULL, 0, false, NULL, 0, NULL, 0, 0, 0, 0},
+  {0x9310, 0x931b, 0x95e8, "inventory", NULL, 0, false, NULL, 0, NULL, 0, 0, 0, 0},
+};
+static const qa_compat_q2_native_pickup_profile xatrix1998 = {
+  "sha256:0b0d119ea9ed1abbce02f32fe1243bcb69457d10a34a49b775c473210bcb65a3", 0xa3a0, 0xa3d8, 0xa4ce,
+  CSIG(p4, true), CSIG(p2, false),
+  grants1998, 5,
+  0x497c8, 72, 48, 0, 4,
+  0x288, 0x214, 0x11c, 88, 4, false, 0,
+  0x73fe4, "float32-seconds",
+  0x54, 0x2e4, 0x38, 1,
+  0x9b60, CSIG(p2i, false), false, 0, 0x40, caps, 8, 4
+};
 const qa_compat_q2_native_pickup_profile *qa_compat_q2_classic_get_pickup_profile(qa_content_digest digest) {
   (void)qa_compat_q2_xatrix_combat_profile;
-  return digest && strcmp(digest, xatrix.digest) == 0 ? &xatrix : NULL;
+  if (digest && strcmp(digest, xatrix.digest) == 0) return &xatrix;
+  if (digest && strcmp(digest, qa_compat_q2_xatrix1998_combat_profile.digest) == 0) return &xatrix1998;
+  return NULL;
 }

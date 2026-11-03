@@ -78,7 +78,9 @@ static int fmt_decimal_exponent(const qa_binary_value *value) {
   if (qa_bigint_is_zero(&value->coefficient)) return 0;
   qa_bigint n; qa_bigint_init(&n); qa_bigint d; qa_bigint_init(&d);
   fmt_ratio(value, &n, &d);
-  int exponent = decimal_digit_count(&n) - decimal_digit_count(&d);
+  int left = decimal_digit_count(&n);
+  int right = decimal_digit_count(&d);
+  int exponent = left - right;
   bool decrease;
   if (exponent >= 0) {
     qa_bigint p; qa_bigint_init(&p); qa_bigint_pow_u32(&p, 10, (uint32_t)exponent);

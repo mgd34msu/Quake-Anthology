@@ -9,6 +9,7 @@
 
 #include "qa/audio/streams.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 const qa_audio_output_format qa_default_audio_output_format = {44100, 2, 16};
 const int64_t qa_audio_output_rates[4] = {11025, 22050, 44100, 48000};
@@ -28,13 +29,10 @@ qa_audio_output_format qa_audio_output_format_validated(int64_t sample_rate,
 
 bool qa_audio_khz_rate(const char *value, int64_t *out) {
   const char *trimmed = value;
-  while (isspace((unsigned char)*trimmed)) trimmed++;
-  const char *tail = trimmed + strlen(trimmed);
-  while (tail > trimmed && isspace((unsigned char)tail[-1])) tail--;
-  if (tail == trimmed) return false;
-  char *end = NULL;
-  double number = strtod(trimmed, &end);
-  if (end != tail) return false;
+  size_t space;
+  while ((space = qa_js_white_space_length(trimmed)) != 0) trimmed += space;
+  if (*trimmed == '\0') return false; /* value.trim() === "" */
+  double number = qa_js_string_to_number(value); /* Number(value): strtod missed "0b1011" */
   if (number == 11) { *out = 11025; return true; }
   if (number == 22) { *out = 22050; return true; }
   if (number == 44) { *out = 44100; return true; }
@@ -138,7 +136,7 @@ bool qa_resample_queued_pcm(const int16_t *samples, size_t sample_count,
     }
     /* Int16Array.from(Float64Array): truncating conversion. */
     for (int64_t i = 0; i < frames * 2; i++)
-      (*out)[i] = (int16_t)trunc(mixed[i]);
+      (*out)[i] = qa_js_to_int16(mixed[i]); /* ToInt16: wraps, NaN to 0 */
     *out_count = (size_t)frames * 2;
   }
   free(mixed);

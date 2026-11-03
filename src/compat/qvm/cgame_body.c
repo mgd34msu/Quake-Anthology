@@ -109,6 +109,9 @@ void qa_qvm_body_submissions_destroy(qa_qvm_body_submissions *submissions) {
   free(submissions->calls);
   free(submissions->ranges);
   free(submissions->meshes);
+  /* TS hook closures go to the GC; a caller that never closed still
+   * releases their contexts here. */
+  for (size_t i = 0; i < submissions->removal_count; i++) free(submissions->removals[i].ctx);
   free(submissions->removals);
   free(submissions);
 }
@@ -152,7 +155,7 @@ static void *grow_stack(void *array, size_t *capacity, size_t count, size_t size
   return grown;
 }
 
-static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset) {
+static int32_t call_word(const qa_qvm_module_function_call *call, int64_t byte_offset) {
   if (byte_offset < 0 || byte_offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
   const uint8_t *p = call->words + byte_offset;
@@ -166,12 +169,12 @@ typedef struct hook_ctx {
   size_t declaration_index;
 } hook_ctx;
 
-static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t body_hook(void *ctx, qa_qvm_module_function_call *call) {
   hook_ctx *hook = ctx;
   qa_qvm_body_submissions *submissions = hook->submissions;
   const qa_qvm_body_submission *declaration = &submissions->declarations[hook->declaration_index];
   if (declaration->has_when &&
-      call_word(call, (int64_t)declaration->when_argument * 4) != (int32_t)declaration->when_equals)
+      (double)call_word(call, (int64_t)declaration->when_argument * 4) != declaration->when_equals)
     return call->proceed_async(call->call_ctx);
   qa_qvm_writable_view entity_view;
   qa_qvm_memory_view(call->guest, call_word(call, (int64_t)declaration->actor_argument * 4), 4,
@@ -219,7 +222,7 @@ typedef struct mesh_hook_ctx {
   qa_qvm_scene_body_mesh mesh;
 } mesh_hook_ctx;
 
-static int32_t mesh_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t mesh_hook(void *ctx, qa_qvm_module_function_call *call) {
   mesh_hook_ctx *hook = ctx;
   qa_qvm_body_submissions *submissions = hook->submissions;
   qa_qvm_scene_body_mesh *mesh = &hook->mesh;
@@ -335,11 +338,11 @@ bool qa_qvm_body_submissions_suppress(qa_qvm_body_submissions *submissions,
     qa_qvm_writable_view view;
     qa_qvm_memory_view(call->guest, qa_qvm_host_call_word(call, 1), QA_QVM_REF_ENTITY_BYTES, 0,
                        &view);
-    qa_qvm_source_ref_entity_record source;
+    qa_q3_pres_source_ref_entity_record source;
     qa_qvm_read_ref_entity(&view, &source);
-    if (strcmp(source.kind, "model") == 0 &&
+    if (source.kind == QA_Q3_PRES_REF_MODEL &&
         submissions->capture.submit(submissions->capture.ctx, (double)range->entity, part->part,
-                                    &source, source.custom_shader == part->shader))
+                                    &source, source.custom_shader.handle == part->shader))
       return true;
   }
   return range->hidden;

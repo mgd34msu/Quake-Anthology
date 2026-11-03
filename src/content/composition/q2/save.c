@@ -6,343 +6,471 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/persistence/q2_base_entities.h"
+#include "qa/persistence/q2_foundation.h"
+#include "qa/persistence/q2_items.h"
+#include "qa/persistence/q2_missionpacks.h"
+#include "qa/persistence/q2_monsters.h"
+#include "qa/persistence/q2_movers.h"
+#include "qa/persistence/q2_players.h"
+#include "qa/persistence/q2_rerelease_state.h"
+#include "qa/persistence/q2_weapons.h"
+#include "qa/persistence/save_image.h"
+#include "qa/persistence/value.h"
 
-static bool provider_eq(qa_provider_id left, qa_provider_id right) {
-  if (left == NULL || right == NULL) return left == right;
-  return strcmp(left, right) == 0;
+static const char *pack_name(qa_q2mp_pack pack) { return pack == QA_Q2MP_PACK_XATRIX ? "xatrix" : "rogue"; }
+static void *xmalloc(size_t size) {
+  void *value = malloc(size != 0 ? size : 1);
+  if (value == NULL) qa_range_error("out of memory");
+  return value;
+}
+static char *copy_text(const char *text) {
+  char *copy = strdup(text);
+  if (copy == NULL) qa_range_error("out of memory");
+  return copy;
 }
 
-static bool add_record(qa_provider_checkpoint *out, size_t capacity, size_t *count, qa_provider_id provider,
-                       const char *schema, uint8_t *bytes, size_t length) {
-  if (bytes == NULL || *count >= capacity) return false;
-  out[*count] = (qa_provider_checkpoint){provider, schema, 1, {bytes, length}};
-  (*count)++;
-  return true;
+/* ---- value-tree helpers (TS encodeCheckpointValue of plain objects) ---- */
+static void put(qa_save_value *object, const char *key, qa_save_value *child) {
+  if (child == NULL || !qa_save_value_set(object, key, child)) qa_range_error("out of memory");
 }
-
-static bool set_str(qa_save_value *object, const char *key, const char *value) {
-  qa_save_value *child = qa_save_value_string(value);
-  return child != NULL && qa_save_value_set(object, key, child);
-}
-static bool set_num(qa_save_value *object, const char *key, double value) {
-  qa_save_value *child = qa_save_value_number(value);
-  return child != NULL && qa_save_value_set(object, key, child);
-}
-
-/* The match selection value: {kind, + deathball skins/goal, + lmctf travel
- * presence}. The TS encodes the selection object itself (getters read);
- * restore only reads kind and the deathball fields. */
-static qa_save_value *match_selection_value(const qa_comp_q2_match_selection *selection) {
+static qa_save_value *object_value(void) {
   qa_save_value *value = qa_save_value_object();
-  if (value == NULL) return NULL;
-  bool ok = set_str(value, "kind", qa_comp_q2_match_kind_name(selection->kind));
-  if (ok && selection->kind == QA_COMP_Q2_MATCH_DEATHBALL) {
-    bool owned1 = false, owned2 = false;
-    const char *skin1 = qa_comp_q2_match_selection_team1_skin(selection, &owned1);
-    const char *skin2 = qa_comp_q2_match_selection_team2_skin(selection, &owned2);
-    ok = set_str(value, "team1Skin", skin1 != NULL ? skin1 : "") && set_str(value, "team2Skin", skin2 != NULL ? skin2 : "") &&
-         set_num(value, "goalLimit", qa_comp_q2_match_selection_goal_limit(selection));
-    if (owned1) free((void *)skin1);
-    if (owned2) free((void *)skin2);
+  if (value == NULL) qa_range_error("out of memory");
+  return value;
+}
+static qa_save_value *saved_actor_value(qa_saved_actor_id actor) {
+  qa_save_value *value = object_value();
+  put(value, "slot", qa_save_value_number(actor.slot));
+  put(value, "generation", qa_save_value_number(actor.generation));
+  return value;
+}
+static qa_save_value *nullable_actor_value(bool has, qa_saved_actor_id actor) {
+  return has ? saved_actor_value(actor) : qa_save_value_null();
+}
+
+/* ---- records ---- */
+typedef struct records {
+  qa_provider_checkpoint *items;
+  size_t count, capacity;
+  qa_provider_id provider;
+} records;
+/* TS add(schema, bytes): takes the bytes and a copy of the schema. */
+static void add(records *out, const char *schema, uint8_t *bytes, size_t length) {
+  if (bytes == NULL) qa_range_error("out of memory");
+  if (out->count == out->capacity) {
+    out->capacity = out->capacity != 0 ? out->capacity * 2 : 16;
+    qa_provider_checkpoint *next = realloc(out->items, out->capacity * sizeof *next);
+    if (next == NULL) qa_range_error("out of memory");
+    out->items = next;
   }
-  if (!ok) { qa_save_value_free(value); return NULL; }
+  qa_provider_checkpoint record;
+  memset(&record, 0, sizeof record);
+  record.provider = out->provider;
+  record.schema = copy_text(schema);
+  record.version = 1;
+  record.bytes.bytes = bytes;
+  record.bytes.length = length;
+  out->items[out->count++] = record;
+}
+static void add_value(records *out, const char *schema, qa_save_value *value) {
+  size_t length = 0;
+  uint8_t *bytes = qa_encode_checkpoint_value(value, &length);
+  qa_save_value_free(value);
+  add(out, schema, bytes, length);
+}
+
+/* The match selection as TS encodes the selection object: its own keys
+ * (kind, and the DeathBall getters or LMCTF travel when present). */
+static qa_save_value *selection_value(const qa_q2_match_selection *selection) {
+  qa_save_value *value = object_value();
+  put(value, "kind", qa_save_value_string(qa_q2_match_kind_name(selection->kind)));
+  if (selection->kind == QA_Q2_MATCH_DEATHBALL) {
+    char *skin1 = qa_q2_match_selection_team1_skin(selection), *skin2 = qa_q2_match_selection_team2_skin(selection);
+    put(value, "team1Skin", qa_save_value_string(skin1));
+    put(value, "team2Skin", qa_save_value_string(skin2));
+    put(value, "goalLimit", qa_save_value_number(qa_q2_match_selection_goal_limit(selection)));
+    free(skin1);
+    free(skin2);
+  }
   return value;
 }
 
-size_t qa_comp_capture_q2_product(qa_comp_q2_product_runtime *source, const qa_comp_q2_save_hooks *hooks,
-                                  qa_provider_checkpoint *out, size_t capacity) {
-  size_t count = 0;
-  qa_provider_id provider = hooks->provider;
-  /* q2:composition */
-  qa_save_value *composition = qa_save_value_object();
-  qa_save_value *match = match_selection_value(&source->match.selection);
-  bool ok = composition != NULL && match != NULL;
-  if (ok) ok = set_str(composition, "edition", source->configuration.edition) &&
-               set_str(composition, "program", qa_comp_q2_program_name(source->configuration.program)) &&
-               qa_save_value_set(composition, "match", match) &&
-               set_num(composition, "deathmatchFlags", hooks->deathmatch_flags(hooks->ctx, source));
-  size_t length = 0;
-  uint8_t *bytes = ok ? qa_encode_checkpoint_value(composition, &length) : NULL;
-  if (!ok) qa_save_value_free(match);
-  qa_save_value_free(composition);
-  if (!add_record(out, capacity, &count, provider, "q2:composition", bytes, length)) goto oom;
-  static const struct { qa_comp_q2_save_module module; const char *schema; } BASE[] = {
-      {QA_COMP_Q2_SAVE_FOUNDATION, "q2:foundation"}, {QA_COMP_Q2_SAVE_ITEMS, "q2:items"},
-      {QA_COMP_Q2_SAVE_MOVERS, "q2:movers"}, {QA_COMP_Q2_SAVE_MONSTERS, "q2:monsters"},
-      {QA_COMP_Q2_SAVE_WEAPONS, "q2:weapons"}, {QA_COMP_Q2_SAVE_PLAYERS, "q2:players"},
-      {QA_COMP_Q2_SAVE_BASE_ENTITIES, "q2:base-entities"}};
-  for (size_t i = 0; i < sizeof BASE / sizeof *BASE; i++) {
-    bytes = hooks->capture_module(hooks->ctx, source, BASE[i].module, NULL, &length);
-    if (!add_record(out, capacity, &count, provider, BASE[i].schema, bytes, length)) goto oom;
+static qa_save_value *match_value(qa_q2_product_match *match) {
+  qa_save_value *value = NULL;
+  switch (match->source_kind) {
+    case QA_Q2_MATCH_TAG: {
+      qa_q2mp_tag_checkpoint tag = qa_q2mp_tag_capture(&match->tag);
+      value = object_value();
+      put(value, "token", nullable_actor_value(tag.has_token, tag.token));
+      put(value, "owner", nullable_actor_value(tag.has_owner, tag.owner));
+      put(value, "count", qa_save_value_number(tag.count));
+      break;
+    }
+    case QA_Q2_MATCH_DEATHBALL: {
+      qa_q2mp_deathball_checkpoint ball = qa_q2mp_deathball_capture(&match->ball);
+      value = object_value();
+      put(value, "ball", nullable_actor_value(ball.has_ball, ball.ball));
+      put(value, "starts", qa_save_value_number(ball.starts));
+      put(value, "team1Score", qa_save_value_number(ball.team1_score));
+      put(value, "team2Score", qa_save_value_number(ball.team2_score));
+      break;
+    }
+    case QA_Q2_MATCH_HORDE: {
+      qa_q2_horde_checkpoint horde;
+      if (!qa_q2_horde_capture(match->horde, &horde)) qa_range_error("out of memory");
+      value = object_value();
+      put(value, "wave", qa_save_value_number(horde.wave));
+      put(value, "spawned", qa_save_value_number(horde.spawned));
+      put(value, "intermission", qa_save_value_number(horde.intermission));
+      qa_save_value *monsters = qa_save_value_array();
+      if (monsters == NULL) qa_range_error("out of memory");
+      for (size_t i = 0; i < horde.monster_count; i++)
+        if (!qa_save_value_push(monsters, saved_actor_value(horde.monsters[i]))) qa_range_error("out of memory");
+      put(value, "monsters", monsters);
+      free(horde.monsters);
+      break;
+    }
+    case QA_Q2_MATCH_LMCTF:
+      value = qa_q2_lmctf_capture_value(match->lmctf);
+      if (value == NULL) qa_range_error("out of memory");
+      break;
+    case QA_Q2_MATCH_CTF: case QA_Q2_MATCH_STANDARD: break;
   }
+  return value;
+}
+
+qa_provider_checkpoint *qa_capture_q2_product(qa_q2_product_runtime *source, size_t *out_count) {
+  qa_q2_game_services *game = source->services;
+  records out;
+  memset(&out, 0, sizeof out);
+  out.provider = game->options.provider;
+  qa_save_value *composition = object_value();
+  put(composition, "edition", qa_save_value_string(source->configuration.edition == QA_Q2_EDITION_RERELEASE ? "rerelease"
+                                                                                                         : "classic"));
+  put(composition, "program", qa_save_value_string(qa_q2_program_name(source->configuration.program)));
+  put(composition, "match", selection_value(&source->match.selection));
+  put(composition, "deathmatchFlags", qa_save_value_number(qa_q2_options_deathmatch_flags(&game->options)));
+  add_value(&out, "q2:composition", composition);
+  size_t length = 0;
+  uint8_t *bytes;
+
+  qa_q2_foundation_checkpoint foundation = qa_q2_entity_services_capture(source->game);
+  bytes = qa_encode_q2_foundation_checkpoint(&foundation, &length);
+  add(&out, "q2:foundation", bytes, length);
+
+  /* Items, movers, foundation and rerelease-module captures are scratch the
+   * module owns until its next capture. */
+  qa_q2_items_checkpoint items = qa_q2_item_module_capture(source->items, game);
+  bytes = qa_encode_q2_items_checkpoint(&items, &length);
+  add(&out, "q2:items", bytes, length);
+
+  qa_q2_movers_checkpoint movers = qa_q2_mover_module_capture(source->movers, game);
+  bytes = qa_encode_q2_movers_checkpoint(&movers, &length);
+  add(&out, "q2:movers", bytes, length);
+
+  qa_q2m_monsters_checkpoint monsters;
+  if (!qa_q2m_monsters_capture(&source->monsters, &monsters)) qa_range_error("out of memory");
+  bytes = qa_encode_q2_monsters_checkpoint(&monsters, &length);
+  qa_q2m_monsters_checkpoint_free(&monsters);
+  add(&out, "q2:monsters", bytes, length);
+
+  qa_q2w_weapons_checkpoint weapons;
+  if (!qa_q2w_weapons_capture(source->weapons, game, &weapons)) qa_range_error("out of memory");
+  bytes = qa_encode_q2_weapons_checkpoint(&weapons, &length);
+  qa_q2w_weapons_checkpoint_free(&weapons);
+  add(&out, "q2:weapons", bytes, length);
+
+  qa_q2_base_players_checkpoint players = qa_q2_players_capture(source->players);
+  bytes = qa_encode_q2_players_checkpoint(&players, &length);
+  qa_q2_base_players_checkpoint_clear(&players);
+  add(&out, "q2:players", bytes, length);
+
+  qa_q2_base_entities_module_checkpoint base = qa_q2_base_entity_module_capture(source->base_entities, game);
+  bytes = qa_encode_q2_base_entities_checkpoint(&base, &length);
+  qa_q2_base_entities_module_checkpoint_free(&base);
+  add(&out, "q2:base-entities", bytes, length);
+
   if (source->armory != NULL) {
-    bytes = hooks->capture_module(hooks->ctx, source, QA_COMP_Q2_SAVE_MISSIONPACK_ITEMS, NULL, &length);
-    if (!add_record(out, capacity, &count, provider, "q2:missionpack-items", bytes, length)) goto oom;
+    qa_q2mp_items_checkpoint pack_items;
+    if (!qa_q2mp_items_capture(&source->armory->items, game, &pack_items)) qa_range_error("out of memory");
+    bytes = qa_encode_q2_mission_pack_items_checkpoint(&pack_items, &length);
+    qa_q2mp_items_checkpoint_free(&pack_items);
+    add(&out, "q2:missionpack-items", bytes, length);
   }
   for (size_t i = 0; i < source->expansion_count; i++) {
-    const char *pack = source->expansions[i].pack;
+    qa_q2_product_expansion *expansion = &source->expansions[i];
     char schema[64];
-    bytes = hooks->capture_module(hooks->ctx, source, QA_COMP_Q2_SAVE_PACK_MONSTERS, pack, &length);
-    (void)snprintf(schema, sizeof schema, "q2:%s-monsters", pack);
-    /* schema text must outlive the call: records borrow it like TS strings;
-     * duplicate it onto the heap via the bytes-owner convention below. */
-    char *schema_copy = (char *)malloc(strlen(schema) + 1);
-    if (schema_copy == NULL || bytes == NULL) { free(schema_copy); free(bytes); goto oom; }
-    strcpy(schema_copy, schema);
-    if (!add_record(out, capacity, &count, provider, schema_copy, bytes, length)) { free(schema_copy); goto oom; }
-    qa_save_value *entities = qa_save_value_object();
-    ok = entities != NULL &&
-         set_num(entities, "steamId",
-                 source->hooks->pack_entities_capture_steam_id(source->hooks->ctx, source->expansions[i].entities));
-    bytes = ok ? qa_encode_checkpoint_value(entities, &length) : NULL;
-    qa_save_value_free(entities);
-    (void)snprintf(schema, sizeof schema, "q2:%s-entities", pack);
-    schema_copy = (char *)malloc(strlen(schema) + 1);
-    if (schema_copy == NULL || bytes == NULL) { free(schema_copy); free(bytes); goto oom; }
-    strcpy(schema_copy, schema);
-    if (!add_record(out, capacity, &count, provider, schema_copy, bytes, length)) { free(schema_copy); goto oom; }
+    qa_q2mpm_monsters_checkpoint pack_monsters;
+    if (!qa_q2mpm_monsters_capture(&expansion->monsters, game, &pack_monsters)) qa_range_error("out of memory");
+    bytes = qa_encode_q2_mission_pack_monsters_checkpoint(&pack_monsters, &length);
+    qa_q2mpm_monsters_checkpoint_free(&pack_monsters);
+    snprintf(schema, sizeof schema, "q2:%s-monsters", pack_name(expansion->pack));
+    add(&out, schema, bytes, length);
+    qa_q2mp_rogue_entities_checkpoint entities = qa_q2mp_entities_capture(&expansion->entities);
+    qa_save_value *value = object_value();
+    put(value, "steamId", qa_save_value_number(entities.steam_id));
+    snprintf(schema, sizeof schema, "q2:%s-entities", pack_name(expansion->pack));
+    add_value(&out, schema, value);
   }
-  if (source->has_rerelease) {
-    bytes = hooks->capture_module(hooks->ctx, source, QA_COMP_Q2_SAVE_RERELEASE_PLAYERS, NULL, &length);
-    if (!add_record(out, capacity, &count, provider, "q2:rerelease-players", bytes, length)) goto oom;
-    bytes = hooks->capture_module(hooks->ctx, source, QA_COMP_Q2_SAVE_RERELEASE_ENTITIES, NULL, &length);
-    if (!add_record(out, capacity, &count, provider, "q2:rerelease-entities", bytes, length)) goto oom;
+  if (source->rerelease != NULL) {
+    qa_q2_rerelease_players_checkpoint rr_players = qa_q2_rerelease_players_capture(&source->rerelease->players);
+    bytes = qa_encode_q2_rerelease_players_checkpoint(&rr_players, &length);
+    qa_q2_rerelease_players_checkpoint_clear(&rr_players);
+    add(&out, "q2:rerelease-players", bytes, length);
+    qa_q2_rerelease_module_checkpoint rr_entities = qa_q2_rerelease_module_capture(&source->rerelease->entities);
+    bytes = qa_encode_q2_rerelease_module_checkpoint(&rr_entities, &length);
+    add(&out, "q2:rerelease-entities", bytes, length);
   }
-  if (source->match.source != NULL) {
-    qa_save_value *value = hooks->capture_match(hooks->ctx, source);
-    bytes = value != NULL ? qa_encode_checkpoint_value(value, &length) : NULL;
-    qa_save_value_free(value);
-    if (!add_record(out, capacity, &count, provider, "q2:match", bytes, length)) goto oom;
+  if (source->match.source_kind == QA_Q2_MATCH_CTF) {
+    qa_q2_ctf_checkpoint ctf;
+    qa_q2_ctf_capture(source->match.ctf, &ctf);
+    bytes = qa_encode_q2_ctf_checkpoint(&ctf, &length);
+    qa_q2_ctf_checkpoint_destroy(&ctf);
+    add(&out, "q2:match", bytes, length);
+  } else if (source->match.source_kind != QA_Q2_MATCH_STANDARD) {
+    add_value(&out, "q2:match", match_value(&source->match));
   }
-  return count;
-oom:
-  qa_comp_q2_save_free_records(out, count);
-  return 0;
+  *out_count = out.count;
+  return out.items;
 }
 
-void qa_comp_q2_save_free_records(qa_provider_checkpoint *records, size_t count) {
+void qa_q2_product_checkpoints_free(qa_provider_checkpoint *records, size_t count) {
   for (size_t i = 0; i < count; i++) {
+    free((void *)records[i].schema);
     free((void *)records[i].bytes.bytes);
-    /* Pack schemas were heap-copied above; static schemas are literals.
-     * Distinguish by the q2:<pack>- prefix forms we allocated. */
-    if (records[i].schema != NULL && strncmp(records[i].schema, "q2:", 3) == 0 &&
-        (strstr(records[i].schema, "-monsters") != NULL || strstr(records[i].schema, "-entities") != NULL) &&
-        strcmp(records[i].schema, "q2:monsters") != 0 && strcmp(records[i].schema, "q2:base-entities") != 0 &&
-        strcmp(records[i].schema, "q2:rerelease-entities") != 0)
-      free((void *)records[i].schema);
   }
+  free(records);
 }
 
-static const qa_provider_checkpoint *read_record(const qa_provider_checkpoint *checkpoints, size_t count,
-                                                 qa_provider_id provider, const char *schema) {
+/* TS read(schema): exactly one record for this provider and schema, at version 1. */
+typedef struct reading { const qa_provider_checkpoint *checkpoints; size_t count; qa_provider_id provider; } reading;
+static const qa_provider_checkpoint *read_record(const reading *in, const char *schema) {
   const qa_provider_checkpoint *found = NULL;
   size_t matches = 0;
-  for (size_t i = 0; i < count; i++)
-    if (provider_eq(checkpoints[i].provider, provider) && strcmp(checkpoints[i].schema, schema) == 0) {
-      found = &checkpoints[i];
+  for (size_t i = 0; i < in->count; i++) {
+    const qa_provider_checkpoint *record = &in->checkpoints[i];
+    if (strcmp(record->provider, in->provider) == 0 && strcmp(record->schema, schema) == 0) {
+      if (found == NULL) found = record;
       matches++;
     }
+  }
   if (found == NULL || matches != 1 || found->version != 1)
-    qa_range_error("Missing or incompatible Q2 source checkpoint %s", schema);
+    qa_raise("Error", 0, 0, "Missing or incompatible Q2 source checkpoint %s", schema);
   return found;
 }
 
-static void *decode(const qa_comp_q2_save_hooks *hooks, qa_comp_q2_save_module module, const char *pack,
-                    const qa_provider_checkpoint *record) {
-  return hooks->decode_module(hooks->ctx, module, pack, record->bytes.bytes, record->bytes.length);
+/* A decode returns false only for bytes that are not a checkpoint value
+ * (out of memory or a malformed encoding); TS decodeCheckpointValue throws. */
+static void decoded(bool ok) {
+  if (!ok) qa_raise("Error", 0, 0, "Malformed Q2 source checkpoint");
 }
-
-static const char *reader_choice(qa_save_reader *reader, const char *name, const char *const *choices, size_t count) {
-  qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_range_error("Out of memory");
-  const char *value = qa_save_reader_choice_string(&field, choices, count);
-  qa_save_reader_destroy(&field);
+/* A decoded value tree with its root reader. */
+typedef struct tree { qa_save_value *value; qa_save_reader reader; } tree;
+static void tree_open(tree *t, const qa_provider_checkpoint *record, const char *path) {
+  t->value = qa_decode_checkpoint_value(record->bytes.bytes, record->bytes.length);
+  if (t->value == NULL || !qa_save_reader_init(&t->reader, t->value, path)) qa_range_error("out of memory");
+}
+static void tree_close(tree *t) {
+  qa_save_reader_destroy(&t->reader);
+  qa_save_value_free(t->value);
+}
+static qa_save_reader field(const qa_save_reader *reader, const char *name) {
+  qa_save_reader out;
+  if (!qa_save_reader_field(reader, name, &out)) qa_range_error("out of memory");
+  return out;
+}
+static const char *field_choice(const qa_save_reader *reader, const char *name, const char *const *choices, size_t count) {
+  qa_save_reader f = field(reader, name);
+  const char *value = qa_save_reader_choice_string(&f, choices, count);
+  qa_save_reader_destroy(&f);
   return value;
 }
-static double reader_integer0(qa_save_reader *reader, const char *name) {
-  qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_range_error("Out of memory");
-  double value = qa_save_reader_integer_min(&field, 0);
-  qa_save_reader_destroy(&field);
+static double field_integer_min(const qa_save_reader *reader, const char *name, double minimum) {
+  qa_save_reader f = field(reader, name);
+  double value = qa_save_reader_integer_min(&f, minimum);
+  qa_save_reader_destroy(&f);
   return value;
 }
-static bool reader_nullable_actor(qa_save_reader *reader, const char *name, qa_saved_actor_id *out) {
-  qa_save_reader field;
-  if (!qa_save_reader_field(reader, name, &field)) qa_range_error("Out of memory");
-  bool present = !qa_save_reader_is_null(&field);
-  if (present) *out = qa_read_saved_actor(&field);
-  qa_save_reader_destroy(&field);
+static double field_integer(const qa_save_reader *reader, const char *name) {
+  qa_save_reader f = field(reader, name);
+  double value = qa_save_reader_integer(&f);
+  qa_save_reader_destroy(&f);
+  return value;
+}
+static double field_number(const qa_save_reader *reader, const char *name) {
+  qa_save_reader f = field(reader, name);
+  double value = qa_save_reader_number(&f);
+  qa_save_reader_destroy(&f);
+  return value;
+}
+static bool field_string_is(const qa_save_reader *reader, const char *name, const char *expected) {
+  qa_save_reader f = field(reader, name);
+  bool same = strcmp(qa_save_reader_string(&f), expected) == 0;
+  qa_save_reader_destroy(&f);
+  return same;
+}
+/* TS reader.field(name).nullable(readSavedActor). */
+static bool field_nullable_actor(const qa_save_reader *reader, const char *name, qa_saved_actor_id *out) {
+  qa_save_reader f = field(reader, name);
+  bool present = !qa_save_reader_is_null(&f);
+  if (present) *out = qa_read_saved_actor(&f);
+  qa_save_reader_destroy(&f);
   return present;
 }
 
-bool qa_comp_restore_q2_product(qa_comp_q2_product_runtime *source, const qa_comp_q2_save_hooks *hooks,
-                                const qa_provider_checkpoint *checkpoints, size_t checkpoint_count) {
-  qa_provider_id provider = hooks->provider;
-#define READ(schema) read_record(checkpoints, checkpoint_count, provider, schema)
-  const qa_provider_checkpoint *composition_record = READ("q2:composition");
-  qa_save_value *composition_value = qa_decode_checkpoint_value(composition_record->bytes.bytes, composition_record->bytes.length);
-  if (composition_value == NULL) return false;
-  qa_save_reader selection;
-  if (!qa_save_reader_init(&selection, composition_value, "q2-composition")) { qa_save_value_free(composition_value); return false; }
+void qa_restore_q2_product(qa_q2_product_runtime *source, const qa_provider_checkpoint *checkpoints, size_t count) {
+  qa_q2_game_services *game = source->services;
+  reading in = {checkpoints, count, game->options.provider};
   static const char *const EDITIONS[] = {"classic", "rerelease"};
   static const char *const PROGRAMS[] = {"baseq2", "xatrix", "rogue", "mg2", "n64"};
   static const char *const KINDS[] = {"standard", "tag", "deathball", "ctf", "lmctf", "horde"};
-  if (strcmp(reader_choice(&selection, "edition", EDITIONS, 2), source->configuration.edition) != 0 ||
-      strcmp(reader_choice(&selection, "program", PROGRAMS, 5), qa_comp_q2_program_name(source->configuration.program)) != 0)
-    qa_range_error("Q2 checkpoint belongs to a different source product");
-  qa_save_reader match_selection;
-  if (!qa_save_reader_field(&selection, "match", &match_selection)) qa_range_error("Out of memory");
-  if (strcmp(reader_choice(&match_selection, "kind", KINDS, 6), qa_comp_q2_match_kind_name(source->match.selection.kind)) != 0)
-    qa_range_error("Q2 checkpoint belongs to a different source match mode");
-  if (source->match.selection.kind == QA_COMP_Q2_MATCH_DEATHBALL) {
-    qa_save_reader field;
-    bool owned1 = false, owned2 = false;
-    const char *skin1 = qa_comp_q2_match_selection_team1_skin(&source->match.selection, &owned1);
-    const char *skin2 = qa_comp_q2_match_selection_team2_skin(&source->match.selection, &owned2);
-    bool differ = false;
-    double goal = 0;
-    const char *saved1 = NULL, *saved2 = NULL;
-    if (!qa_save_reader_field(&match_selection, "team1Skin", &field)) qa_range_error("Out of memory");
-    saved1 = qa_save_reader_string(&field);
-    qa_save_reader_destroy(&field);
-    if (!qa_save_reader_field(&match_selection, "team2Skin", &field)) qa_range_error("Out of memory");
-    saved2 = qa_save_reader_string(&field);
-    qa_save_reader_destroy(&field);
-    if (!qa_save_reader_field(&match_selection, "goalLimit", &field)) qa_range_error("Out of memory");
-    goal = qa_save_reader_number(&field);
-    qa_save_reader_destroy(&field);
-    differ = strcmp(saved1, skin1 != NULL ? skin1 : "") != 0 || strcmp(saved2, skin2 != NULL ? skin2 : "") != 0 ||
-             goal != qa_comp_q2_match_selection_goal_limit(&source->match.selection);
-    if (owned1) free((void *)skin1);
-    if (owned2) free((void *)skin2);
-    if (differ) qa_range_error("Q2 checkpoint belongs to different DeathBall rules");
+  tree selection;
+  tree_open(&selection, read_record(&in, "q2:composition"), "q2-composition");
+  const char *edition = field_choice(&selection.reader, "edition", EDITIONS, 2);
+  bool same_edition = strcmp(edition, source->configuration.edition == QA_Q2_EDITION_RERELEASE ? "rerelease" : "classic") == 0;
+  if (!same_edition ||
+      strcmp(field_choice(&selection.reader, "program", PROGRAMS, 5), qa_q2_program_name(source->configuration.program)) != 0)
+    qa_raise("Error", 0, 0, "Q2 checkpoint belongs to a different source product");
+  qa_save_reader match_selection = field(&selection.reader, "match");
+  const qa_q2_match_selection *own = &source->match.selection;
+  if (strcmp(field_choice(&match_selection, "kind", KINDS, 6), qa_q2_match_kind_name(own->kind)) != 0)
+    qa_raise("Error", 0, 0, "Q2 checkpoint belongs to a different source match mode");
+  if (own->kind == QA_Q2_MATCH_DEATHBALL) {
+    char *skin1 = qa_q2_match_selection_team1_skin(own), *skin2 = qa_q2_match_selection_team2_skin(own);
+    bool differ = !field_string_is(&match_selection, "team1Skin", skin1) ||
+                  !field_string_is(&match_selection, "team2Skin", skin2) ||
+                  field_number(&match_selection, "goalLimit") != qa_q2_match_selection_goal_limit(own);
+    free(skin1);
+    free(skin2);
+    if (differ) qa_raise("Error", 0, 0, "Q2 checkpoint belongs to different DeathBall rules");
   }
-  double deathmatch_flags = reader_integer0(&selection, "deathmatchFlags");
   qa_save_reader_destroy(&match_selection);
-  qa_save_reader_destroy(&selection);
-  qa_save_value_free(composition_value);
+  double deathmatch_flags = field_integer_min(&selection.reader, "deathmatchFlags", 0);
+  tree_close(&selection);
 
-  /* Phase 1: decode everything (TS order). */
-  void *foundation = decode(hooks, QA_COMP_Q2_SAVE_FOUNDATION, NULL, READ("q2:foundation"));
-  void *items = decode(hooks, QA_COMP_Q2_SAVE_ITEMS, NULL, READ("q2:items"));
-  void *movers = decode(hooks, QA_COMP_Q2_SAVE_MOVERS, NULL, READ("q2:movers"));
-  void *monsters = decode(hooks, QA_COMP_Q2_SAVE_MONSTERS, NULL, READ("q2:monsters"));
-  void *weapons = decode(hooks, QA_COMP_Q2_SAVE_WEAPONS, NULL, READ("q2:weapons"));
-  void *players = decode(hooks, QA_COMP_Q2_SAVE_PLAYERS, NULL, READ("q2:players"));
-  void *base_entities = decode(hooks, QA_COMP_Q2_SAVE_BASE_ENTITIES, NULL, READ("q2:base-entities"));
-  void *armory = source->armory == NULL ? NULL : decode(hooks, QA_COMP_Q2_SAVE_MISSIONPACK_ITEMS, NULL, READ("q2:missionpack-items"));
-  void *pack_monsters[QA_COMP_Q2_MAX_EXPANSIONS] = {NULL, NULL};
-  double steam_ids[QA_COMP_Q2_MAX_EXPANSIONS] = {0, 0};
+  /* Every decode precedes every restore, as in TS. Each decoded checkpoint
+   * borrows from its owner until the restores have copied what they keep. */
+  enum { OWN_FOUNDATION, OWN_ITEMS, OWN_MOVERS, OWN_MONSTERS, OWN_WEAPONS, OWN_PLAYERS, OWN_BASE, OWN_RR_PLAYERS,
+         OWN_RR_ENTITIES, OWN_COUNT };
+  qa_persist_decoded owners[OWN_COUNT];
+  memset(owners, 0, sizeof owners);
+  const qa_provider_checkpoint *record;
+  qa_q2_foundation_checkpoint foundation;
+  record = read_record(&in, "q2:foundation");
+  decoded(qa_decode_q2_foundation_checkpoint(record->bytes.bytes, record->bytes.length, &foundation, &owners[OWN_FOUNDATION]));
+  qa_q2_items_checkpoint items;
+  record = read_record(&in, "q2:items");
+  decoded(qa_decode_q2_items_checkpoint(record->bytes.bytes, record->bytes.length, &items, &owners[OWN_ITEMS]));
+  qa_q2_movers_checkpoint movers;
+  record = read_record(&in, "q2:movers");
+  decoded(qa_decode_q2_movers_checkpoint(record->bytes.bytes, record->bytes.length, &movers, &owners[OWN_MOVERS]));
+  qa_q2m_monsters_checkpoint monsters;
+  record = read_record(&in, "q2:monsters");
+  decoded(qa_decode_q2_monsters_checkpoint(record->bytes.bytes, record->bytes.length, &monsters, &owners[OWN_MONSTERS]));
+  qa_q2w_weapons_checkpoint weapons;
+  record = read_record(&in, "q2:weapons");
+  decoded(qa_decode_q2_weapons_checkpoint(record->bytes.bytes, record->bytes.length, &weapons, &owners[OWN_WEAPONS]));
+  qa_q2_base_players_checkpoint players;
+  record = read_record(&in, "q2:players");
+  decoded(qa_decode_q2_players_checkpoint(record->bytes.bytes, record->bytes.length, &players, &owners[OWN_PLAYERS]));
+  qa_q2_base_entities_module_checkpoint base;
+  record = read_record(&in, "q2:base-entities");
+  decoded(qa_decode_q2_base_entities_checkpoint(record->bytes.bytes, record->bytes.length, &base, &owners[OWN_BASE]));
+  qa_q2mp_items_checkpoint pack_items;
+  if (source->armory != NULL) {
+    record = read_record(&in, "q2:missionpack-items");
+    decoded(qa_decode_q2_mission_pack_items_checkpoint(record->bytes.bytes, record->bytes.length, &pack_items));
+  }
+  qa_q2mpm_monsters_checkpoint pack_monsters[QA_Q2_PRODUCT_MAX_EXPANSIONS];
+  qa_q2mp_rogue_entities_checkpoint pack_entities[QA_Q2_PRODUCT_MAX_EXPANSIONS];
   for (size_t i = 0; i < source->expansion_count; i++) {
     char schema[64];
-    (void)snprintf(schema, sizeof schema, "q2:%s-monsters", source->expansions[i].pack);
-    pack_monsters[i] = decode(hooks, QA_COMP_Q2_SAVE_PACK_MONSTERS, source->expansions[i].pack, READ(schema));
-    (void)snprintf(schema, sizeof schema, "q2:%s-entities", source->expansions[i].pack);
-    const qa_provider_checkpoint *record = READ(schema);
-    qa_save_value *value = qa_decode_checkpoint_value(record->bytes.bytes, record->bytes.length);
-    if (value == NULL) return false;
-    qa_save_reader reader, field;
-    if (!qa_save_reader_init(&reader, value, "q2-missionpack-entities") ||
-        !qa_save_reader_field(&reader, "steamId", &field))
-      qa_range_error("Out of memory");
-    steam_ids[i] = qa_save_reader_integer(&field);
-    qa_save_reader_destroy(&field);
-    qa_save_reader_destroy(&reader);
-    qa_save_value_free(value);
+    snprintf(schema, sizeof schema, "q2:%s-monsters", pack_name(source->expansions[i].pack));
+    record = read_record(&in, schema);
+    decoded(qa_decode_q2_mission_pack_monsters_checkpoint(record->bytes.bytes, record->bytes.length, &pack_monsters[i]));
+    snprintf(schema, sizeof schema, "q2:%s-entities", pack_name(source->expansions[i].pack));
+    tree entities;
+    tree_open(&entities, read_record(&in, schema), "q2-missionpack-entities");
+    pack_entities[i].steam_id = field_integer(&entities.reader, "steamId");
+    tree_close(&entities);
   }
-  void *rerelease_players = NULL, *rerelease_entities = NULL;
-  if (source->has_rerelease) {
-    rerelease_players = decode(hooks, QA_COMP_Q2_SAVE_RERELEASE_PLAYERS, NULL, READ("q2:rerelease-players"));
-    rerelease_entities = decode(hooks, QA_COMP_Q2_SAVE_RERELEASE_ENTITIES, NULL, READ("q2:rerelease-entities"));
+  qa_q2_rerelease_players_checkpoint rr_players;
+  qa_q2_rerelease_module_checkpoint rr_entities;
+  if (source->rerelease != NULL) {
+    record = read_record(&in, "q2:rerelease-players");
+    decoded(qa_decode_q2_rerelease_players_checkpoint(record->bytes.bytes, record->bytes.length, &rr_players,
+                                                      &owners[OWN_RR_PLAYERS]));
+    record = read_record(&in, "q2:rerelease-entities");
+    decoded(qa_decode_q2_rerelease_module_checkpoint(record->bytes.bytes, record->bytes.length, &rr_entities,
+                                                     &owners[OWN_RR_ENTITIES]));
   }
-  const qa_provider_checkpoint *match_record = source->match.source == NULL ? NULL : READ("q2:match");
-  qa_save_value *match_value = NULL;
-  qa_comp_q2_tag_state tag = {0};
-  qa_comp_q2_ball_state ball = {0};
-  qa_comp_q2_horde_state horde = {0};
-  qa_saved_actor_id *horde_monsters = NULL;
-  bool has_tag = false, has_ball = false, has_horde = false;
-  qa_save_reader match_reader;
-  bool has_match_reader = false;
-  if (match_record != NULL && source->match.source_kind != QA_COMP_Q2_MATCH_CTF) {
-    match_value = qa_decode_checkpoint_value(match_record->bytes.bytes, match_record->bytes.length);
-    if (match_value == NULL) return false;
-    if (!qa_save_reader_init(&match_reader, match_value, "q2-match")) { qa_save_value_free(match_value); return false; }
-    has_match_reader = true;
-    if (source->match.source_kind == QA_COMP_Q2_MATCH_TAG) {
-      has_tag = true;
-      tag.has_token = reader_nullable_actor(&match_reader, "token", &tag.token);
-      tag.has_owner = reader_nullable_actor(&match_reader, "owner", &tag.owner);
-      tag.count = reader_integer0(&match_reader, "count");
-    } else if (source->match.source_kind == QA_COMP_Q2_MATCH_DEATHBALL) {
-      has_ball = true;
-      ball.has_ball = reader_nullable_actor(&match_reader, "ball", &ball.ball);
-      ball.starts = reader_integer0(&match_reader, "starts");
-      qa_save_reader field;
-      if (!qa_save_reader_field(&match_reader, "team1Score", &field)) qa_range_error("Out of memory");
-      ball.team1_score = qa_save_reader_integer(&field);
-      qa_save_reader_destroy(&field);
-      if (!qa_save_reader_field(&match_reader, "team2Score", &field)) qa_range_error("Out of memory");
-      ball.team2_score = qa_save_reader_integer(&field);
-      qa_save_reader_destroy(&field);
-    } else if (source->match.source_kind == QA_COMP_Q2_MATCH_HORDE) {
-      has_horde = true;
-      horde.wave = reader_integer0(&match_reader, "wave");
-      horde.spawned = reader_integer0(&match_reader, "spawned");
-      horde.intermission = reader_integer0(&match_reader, "intermission");
-      qa_save_reader field;
-      if (!qa_save_reader_field(&match_reader, "monsters", &field)) qa_range_error("Out of memory");
-      size_t count = qa_save_reader_list_count(&field);
-      horde_monsters = (qa_saved_actor_id *)malloc((count > 0 ? count : 1) * sizeof *horde_monsters);
-      if (horde_monsters == NULL) { qa_save_reader_destroy(&field); return false; }
-      for (size_t i = 0; i < count; i++) {
-        qa_save_reader item;
-        if (!qa_save_reader_item(&field, i, &item)) qa_range_error("Out of memory");
-        horde_monsters[i] = qa_read_saved_actor(&item);
-        qa_save_reader_destroy(&item);
-      }
-      horde.monsters = horde_monsters;
-      horde.monster_count = count;
-      qa_save_reader_destroy(&field);
+  const qa_provider_checkpoint *match_record = source->match.source_kind == QA_Q2_MATCH_STANDARD ? NULL
+                                                                                                  : read_record(&in, "q2:match");
+  tree match;
+  bool has_match_tree = match_record != NULL;
+  if (has_match_tree) tree_open(&match, match_record, "q2-match");
+  qa_q2mp_tag_checkpoint tag;
+  qa_q2mp_deathball_checkpoint ball;
+  qa_q2_horde_checkpoint horde;
+  memset(&horde, 0, sizeof horde);
+  if (source->match.source_kind == QA_Q2_MATCH_TAG) {
+    tag.has_token = field_nullable_actor(&match.reader, "token", &tag.token);
+    tag.has_owner = field_nullable_actor(&match.reader, "owner", &tag.owner);
+    tag.count = field_integer_min(&match.reader, "count", 0);
+  } else if (source->match.source_kind == QA_Q2_MATCH_DEATHBALL) {
+    ball.has_ball = field_nullable_actor(&match.reader, "ball", &ball.ball);
+    ball.starts = field_integer_min(&match.reader, "starts", 0);
+    ball.team1_score = field_integer(&match.reader, "team1Score");
+    ball.team2_score = field_integer(&match.reader, "team2Score");
+  } else if (source->match.source_kind == QA_Q2_MATCH_HORDE) {
+    horde.wave = field_integer_min(&match.reader, "wave", 0);
+    horde.spawned = field_integer_min(&match.reader, "spawned", 0);
+    horde.intermission = field_integer_min(&match.reader, "intermission", 0);
+    qa_save_reader list = field(&match.reader, "monsters");
+    horde.monster_count = qa_save_reader_list_count(&list);
+    horde.monsters = xmalloc(horde.monster_count * sizeof *horde.monsters);
+    for (size_t i = 0; i < horde.monster_count; i++) {
+      qa_save_reader item;
+      if (!qa_save_reader_item(&list, i, &item)) qa_range_error("out of memory");
+      horde.monsters[i] = qa_read_saved_actor(&item);
+      qa_save_reader_destroy(&item);
     }
+    qa_save_reader_destroy(&list);
   }
-  if (foundation == NULL || items == NULL || movers == NULL || monsters == NULL || weapons == NULL ||
-      players == NULL || base_entities == NULL || (source->armory != NULL && armory == NULL))
-    return false;
 
-  /* Phase 2: restores, in TS order. */
-  qa_comp_q2_product_runtime_register_callbacks(source);
-  qa_comp_q2_product_runtime_set_deathmatch_flags(source, deathmatch_flags);
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_FOUNDATION, NULL, foundation);
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_ITEMS, NULL, items);
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_MOVERS, NULL, movers);
-  if (armory != NULL) hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_MISSIONPACK_ITEMS, NULL, armory);
+  qa_q2_product_runtime_register_callbacks(source);
+  qa_q2_product_runtime_set_deathmatch_flags(source, deathmatch_flags);
+  qa_q2_entity_services_restore(source->game, foundation);
+  qa_q2_item_module_restore(source->items, game, items);
+  qa_q2_mover_module_restore(source->movers, game, movers);
+  if (source->armory != NULL) qa_q2mp_items_restore(&source->armory->items, game, &pack_items);
   for (size_t i = 0; i < source->expansion_count; i++) {
-    source->hooks->pack_entities_restore(source->hooks->ctx, source->expansions[i].entities, steam_ids[i]);
-    hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_PACK_MONSTERS, source->expansions[i].pack, pack_monsters[i]);
+    qa_q2mp_entities_restore(&source->expansions[i].entities, pack_entities[i]);
+    qa_q2mpm_monsters_restore(&source->expansions[i].monsters, game, &pack_monsters[i]);
   }
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_WEAPONS, NULL, weapons);
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_MONSTERS, NULL, monsters);
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_BASE_ENTITIES, NULL, base_entities);
-  hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_PLAYERS, NULL, players);
-  if (source->has_rerelease) {
-    hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_RERELEASE_PLAYERS, NULL, rerelease_players);
-    hooks->restore_module(hooks->ctx, source, QA_COMP_Q2_SAVE_RERELEASE_ENTITIES, NULL, rerelease_entities);
+  qa_q2w_weapons_restore(source->weapons, game, &weapons);
+  qa_q2m_monsters_restore(&source->monsters, game, &monsters);
+  qa_q2_base_entity_module_restore(source->base_entities, game, base);
+  qa_q2_players_restore(source->players, game, players);
+  if (source->rerelease != NULL) {
+    qa_q2_rerelease_players_restore(&source->rerelease->players, game, &rr_players);
+    qa_q2_rerelease_module_restore(&source->rerelease->entities, game, rr_entities);
   }
-  if (match_record != NULL && source->match.source_kind == QA_COMP_Q2_MATCH_CTF)
-    hooks->restore_ctf(hooks->ctx, source, match_record->bytes.bytes, match_record->bytes.length);
-  if (has_match_reader && source->match.source_kind == QA_COMP_Q2_MATCH_LMCTF)
-    hooks->restore_lmctf(hooks->ctx, source, &match_reader);
-  if (has_tag) hooks->restore_tag(hooks->ctx, source, &tag);
-  if (has_ball) hooks->restore_ball(hooks->ctx, source, &ball);
-  if (has_horde) hooks->restore_horde(hooks->ctx, source, &horde);
-  void *decoded[] = {foundation, items, movers, monsters, weapons, players, base_entities, armory,
-                     pack_monsters[0], pack_monsters[1], rerelease_players, rerelease_entities};
-  for (size_t i = 0; i < sizeof decoded / sizeof *decoded; i++)
-    if (decoded[i] != NULL) hooks->free_decoded(hooks->ctx, decoded[i]);
-  if (has_match_reader) qa_save_reader_destroy(&match_reader);
-  qa_save_value_free(match_value);
-  free(horde_monsters);
-  return true;
-#undef READ
+  if (source->match.source_kind == QA_Q2_MATCH_CTF) {
+    qa_q2_ctf_checkpoint ctf;
+    qa_decode_q2_ctf_checkpoint(match_record->bytes.bytes, match_record->bytes.length, &ctf);
+    qa_q2_ctf_restore(source->match.ctf, &ctf, game);
+    qa_q2_ctf_checkpoint_destroy(&ctf);
+  }
+  if (source->match.source_kind == QA_Q2_MATCH_LMCTF) qa_q2_lmctf_restore(source->match.lmctf, &match.reader, game);
+  if (source->match.source_kind == QA_Q2_MATCH_TAG) qa_q2mp_tag_restore(&source->match.tag, game, tag);
+  if (source->match.source_kind == QA_Q2_MATCH_DEATHBALL) qa_q2mp_deathball_restore(&source->match.ball, game, ball);
+  if (source->match.source_kind == QA_Q2_MATCH_HORDE) qa_q2_horde_restore(source->match.horde, game, horde);
+  free(horde.monsters);
+  if (has_match_tree) tree_close(&match);
+  /* Release the decoded checkpoints (TS GC). */
+  for (size_t i = 0; i < OWN_COUNT; i++) qa_persist_decoded_free(&owners[i]);
+  if (source->armory != NULL) qa_q2mp_items_checkpoint_free(&pack_items);
+  for (size_t i = 0; i < source->expansion_count; i++) qa_q2mpm_monsters_checkpoint_free(&pack_monsters[i]);
 }

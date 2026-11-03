@@ -96,7 +96,7 @@ bool qa_q2_create_rerelease_module(qa_q2_rerelease_module *m, qa_q2_rerelease_mo
   o.players->has_extension = true;
   o.players->extension = (qa_q2_rerelease_player_extension){m, ext_admitted, ext_end_frame, ext_spawned,
       ext_before_change, ext_end_unit, ext_leave, ext_begin_frame, ext_help};
-  qa_q2_item_module *items = o.players->items;
+  qa_q2_item_module *items = qa_q2_players_items(o.players->base);
   qa_q2_item_module_set_pickup_policy(items, qa_q2_rerelease_module_as_pickup_policy(m));
   qa_q2_item_definition invis = {0};
   invis.kind = "power"; invis.classname = "item_invisibility"; invis.model = "models/items/cloaker/tris.md2";
@@ -128,6 +128,8 @@ static void free_capture_scratch(qa_q2_rerelease_module *m) {
   m->cp_sounds = NULL; m->cp_lights = NULL; m->cp_levels = NULL; m->cp_visited = NULL;
 }
 void qa_q2_rerelease_module_destroy(qa_q2_rerelease_module *m) {
+  if (m->release_bound) qa_session_actor_registry_off_release(m->release_registry, m->release_subscription);
+  m->release_bound = false;
   free_capture_scratch(m);
   for (size_t i = 0; i < m->picked_count; i++) free(m->picked_up_by[i].slots);
   free(m->picked_up_by);
@@ -166,10 +168,8 @@ bool qa_q2_rerelease_module_use_powerup(qa_q2_rerelease_module *m, qa_owned_acto
   }
   return false;
 }
-typedef struct { qa_q2_rerelease_module *m; } rel_mod_ctx;
-static rel_mod_ctx rel_mod_scratch[4]; static size_t rel_mod_next;
 static void module_on_release(void *c, qa_owned_actor actor) {
-  qa_q2_rerelease_module *m = ((rel_mod_ctx *)c)->m;
+  qa_q2_rerelease_module *m = c;
   picked_delete(m, actor.id); msg_delete(m, actor.id);
   qa_q2rr_health_target_delete(&m->base, actor.id);
   qa_q2rr_sound_time_delete(&m->triggers, actor.id);
@@ -181,8 +181,8 @@ static void module_on_release(void *c, qa_owned_actor actor) {
 bool qa_q2_rerelease_module_spawn(qa_q2_rerelease_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
   if (!m->release_bound) {
     m->release_bound = true;
-    rel_mod_ctx *rc = &rel_mod_scratch[rel_mod_next++ % 4]; rc->m = m;
-    qa_session_actor_registry_on_release(g->host->actors, module_on_release, rc);
+    m->release_registry = g->host->actors;
+    m->release_subscription = qa_session_actor_registry_on_release(g->host->actors, module_on_release, m);
   }
   const char *color = qa_q2_spawn_get(&e->spawn, "rgba");
   if (!color) color = qa_q2_spawn_get(&e->spawn, "_color");
@@ -191,7 +191,6 @@ bool qa_q2_rerelease_module_spawn(qa_q2_rerelease_module *m, qa_q2_entity *e, qa
          qa_q2_rerelease_goals_spawn(&m->goals, e, g) || qa_q2_rerelease_triggers_spawn(&m->triggers, e, g) ||
          qa_q2_rerelease_entities_spawn(&m->base, e, g);
 }
-static qa_q2_named_think mod_thinks[64]; static qa_q2_named_touch mod_touches[64]; static qa_q2_named_use mod_uses[64];
 qa_q2_callback_definitions qa_q2_rerelease_module_callbacks(qa_q2_rerelease_module *m) {
   qa_q2_callback_definitions parts[5] = {
     qa_q2_rerelease_entities_callbacks(&m->base),
@@ -202,14 +201,14 @@ qa_q2_callback_definitions qa_q2_rerelease_module_callbacks(qa_q2_rerelease_modu
   };
   size_t tn = 0, un = 0, cn = 0;
   for (int p = 0; p < 5; p++) {
-    for (size_t i = 0; i < parts[p].think_count && tn < 64; i++) mod_thinks[tn++] = parts[p].think[i];
-    for (size_t i = 0; i < parts[p].use_count && un < 64; i++) mod_uses[un++] = parts[p].use[i];
+    for (size_t i = 0; i < parts[p].think_count && tn < 64; i++) m->cb_thinks[tn++] = parts[p].think[i];
+    for (size_t i = 0; i < parts[p].use_count && un < 64; i++) m->cb_uses[un++] = parts[p].use[i];
   }
   /* touch: base + triggers only (TS merge) */
-  for (size_t i = 0; i < parts[0].touch_count && cn < 64; i++) mod_touches[cn++] = parts[0].touch[i];
-  for (size_t i = 0; i < parts[1].touch_count && cn < 64; i++) mod_touches[cn++] = parts[1].touch[i];
+  for (size_t i = 0; i < parts[0].touch_count && cn < 64; i++) m->cb_touches[cn++] = parts[0].touch[i];
+  for (size_t i = 0; i < parts[1].touch_count && cn < 64; i++) m->cb_touches[cn++] = parts[1].touch[i];
   qa_q2_callback_definitions d = {0};
-  d.think = mod_thinks; d.think_count = tn; d.touch = mod_touches; d.touch_count = cn; d.use = mod_uses; d.use_count = un;
+  d.think = m->cb_thinks; d.think_count = tn; d.touch = m->cb_touches; d.touch_count = cn; d.use = m->cb_uses; d.use_count = un;
   return d;
 }
 static qa_saved_actor_id saved_of(qa_actor_id a) { return (qa_saved_actor_id){(double)a.slot, (double)a.generation}; }
@@ -279,6 +278,9 @@ qa_q2_rerelease_module_checkpoint qa_q2_rerelease_module_capture(qa_q2_rerelease
   return cp;
 }
 void qa_q2_rerelease_module_restore(qa_q2_rerelease_module *m, qa_q2_game_services *g, qa_q2_rerelease_module_checkpoint cp) {
+  qa_q2_rerelease_entities * e2;
+  qa_actor_id k;
+  qa_actor_id v;
   m->base.world_fog = cp.world_fog;
   free(m->base.story); m->base.story = qa_q2rr_dup(cp.story ? cp.story : "");
   free(m->base.sky.name); m->base.sky.name = qa_q2rr_dup(cp.sky.name ? cp.sky.name : "");
@@ -329,8 +331,8 @@ void qa_q2_rerelease_module_restore(qa_q2_rerelease_module *m, qa_q2_game_servic
   for (size_t i = 0; i < m->msg_count; i++) free(m->pickup_messages[i].message);
   m->msg_count = 0;
   for (size_t i = 0; i < cp.health_target_count; i++)
-    qa_q2rr_health_target_set(&m->base, qa_q2_restore_actor(g, cp.health_targets[i].controller).id,
-                              qa_session_actor_registry_reference_saved(g->host->actors, cp.health_targets[i].target, "checkpoint"));
+    (e2 = &m->base, k = qa_q2_restore_actor(g, cp.health_targets[i].controller).id, v = qa_session_actor_registry_reference_saved(g->host->actors, cp.health_targets[i].target, "checkpoint"), qa_q2rr_health_target_set(e2, k,
+                              v));
   for (size_t i = 0; i < cp.picked_count; i++) {
     qa_q2rr_pickup_entry *e = picked_ensure(m, qa_q2_restore_actor(g, cp.picked_up_by[i].actor).id);
     if (e) for (size_t j = 0; j < cp.picked_up_by[i].slot_count; j++) slots_add(e, cp.picked_up_by[i].slots[j]);
@@ -344,9 +346,10 @@ void qa_q2_rerelease_module_restore(qa_q2_rerelease_module *m, qa_q2_game_servic
     qa_q2_rerelease_lights_set_active(&m->lights, qa_q2_restore_actor(g, cp.lights[i].actor).id, cp.lights[i].active);
   qa_q2_rerelease_goals_restore(&m->goals, cp.goals);
   m->goals.campaign = &m->base.campaign;
-  for (size_t i = 0; i < m->base.players->state_count; i++) {
-    qa_actor_id actor = m->base.players->states[i].actor;
-    double slot = m->base.players->states[i].state->slot;
+  for (size_t i = 0; i < qa_q2_players_state_count(m->base.players->base); i++) {
+    qa_actor_id actor; qa_q2_base_player_state *state;
+    if (!qa_q2_players_state_at(m->base.players->base, i, &actor, &state)) break;
+    double slot = state->slot;
     if (!(g->options.mode == QA_Q2_MODE_COOP && qa_q2_uses_instanced_items(m->base.players->rerelease_options))) continue;
     for (size_t j = 0; j < m->picked_count; j++) if (slots_has(&m->picked_up_by[j], slot)) {
       qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);
@@ -380,7 +383,7 @@ static bool module_instanced(qa_q2_rerelease_module *m, qa_q2_game_services *g) 
 }
 void qa_q2_rerelease_module_admitted(qa_q2_rerelease_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_enter_rerelease_level(g, m->base.players, &m->base.campaign);
-  qa_q2rr_player_state *st = qa_q2_rerelease_players_context(m->base.players, e, g).state;
+  qa_q2_base_player_state *st = qa_q2_players_context(m->base.players->base, e, g).state;
   qa_q2rr_player_extra_state *extra = qa_q2_rerelease_players_get_extra(m->base.players, e->actor.id);
   if (module_instanced(m, g))
     for (size_t i = 0; i < m->picked_count; i++) if (slots_has(&m->picked_up_by[i], st->slot)) {
@@ -400,7 +403,7 @@ void qa_q2_rerelease_module_admitted(qa_q2_rerelease_module *m, qa_q2_entity *e,
     size_t pn = 0; const qa_actor_id *pls = g->host->players(g->host->ctx, &pn);
     for (size_t i = 0; i < pn; i++) {
       if (qa_same_actor(pls[i], e->actor.id)) continue;
-      qa_q2rr_player_state *other = qa_q2rr_players_get_state(m->base.players, pls[i]);
+      qa_q2_base_player_state *other = qa_q2_players_get_state(m->base.players->base, pls[i]);
       qa_q2_entity *source = rr_ent(g, &pls[i]);
       if (!other || !source || other->spectator || other->noclip) continue;
       size_t n = 0; const qa_inventory_entry *entries = qa_shared_inventory_table_entries(g->host->inventory, pls[i], &n);
@@ -415,10 +418,12 @@ void qa_q2_rerelease_module_admitted(qa_q2_rerelease_module *m, qa_q2_entity *e,
 }
 void qa_q2_rerelease_module_after_player_frames(qa_q2_rerelease_module *m, qa_q2_game_services *g) {
   qa_q2_rerelease_level_entry *entry = qa_q2_rerelease_campaign_get_level(&m->base.campaign, g->options.map_name);
-  qa_q2rr_player_state *host = NULL;
-  for (size_t i = 0; i < m->base.players->state_count; i++)
-    if (m->base.players->states[i].state->slot == 0) { host = m->base.players->states[i].state; break; }
-  if (entry && m->base.players->intermission.playing && host && host->connected) entry->time += rr_frame(g);
+  qa_q2_base_player_state *host = NULL;
+  for (size_t i = 0; i < qa_q2_players_state_count(m->base.players->base); i++) {
+    qa_actor_id actor; qa_q2_base_player_state *state;
+    if (qa_q2_players_state_at(m->base.players->base, i, &actor, &state) && state->slot == 0) { host = state; break; }
+  }
+  if (entry && strcmp(qa_q2_players_intermission(m->base.players->base).kind, "playing") == 0 && host && host->connected) entry->time += rr_frame(g);
 }
 void qa_q2_rerelease_module_before_level_change(qa_q2_rerelease_module *m, qa_q2_game_services *g) {
   qa_q2_update_rerelease_level(g, &m->base.campaign);
@@ -442,7 +447,7 @@ void qa_q2_rerelease_module_end_of_unit(qa_q2_rerelease_module *m, qa_q2_game_se
 }
 bool qa_q2_rerelease_module_instanced_coop(qa_q2_rerelease_module *m, qa_q2_game_services *g) { return module_instanced(m, g); }
 bool qa_q2_rerelease_module_can_pickup(qa_q2_rerelease_module *m, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id player) {
-  qa_q2rr_player_state *st = qa_q2rr_players_get_state(m->base.players, player);
+  qa_q2_base_player_state *st = qa_q2_players_get_state(m->base.players->base, player);
   if (!st) return false;
   return !module_instanced(m, g) || !slots_has(picked_get(m, e->actor.id), st->slot);
 }
@@ -466,11 +471,11 @@ void qa_q2_rerelease_module_after_pickup(qa_q2_rerelease_module *m, qa_q2_entity
   }
 }
 void qa_q2_rerelease_module_before_targets(qa_q2_rerelease_module *m, qa_q2_entity *e, qa_q2_game_services *g, qa_actor_id player, bool taken) {
-  qa_q2rr_player_state *st = qa_q2rr_players_get_state(m->base.players, player);
+  qa_q2_base_player_state *st = qa_q2_players_get_state(m->base.players->base, player);
   if (!st || !taken) return;
   st->bonus_alpha = 0.25;
   qa_q2_inventory_item desc;
-  if (qa_q2_item_module_lookup(m->base.players->items, e->classname ? e->classname : "", &desc) && desc.usable &&
+  if (qa_q2_item_module_lookup(qa_q2_players_items(m->base.players->base), e->classname ? e->classname : "", &desc) && desc.usable &&
       qa_shared_inventory_table_count(g->host->inventory, player, desc.id) != 0)
     st->selected_item = desc.id;
   if (module_instanced(m, g)) {
@@ -514,7 +519,7 @@ void qa_q2_rerelease_module_resume_presentation(qa_q2_rerelease_module *m, qa_q2
     qa_actor_id actor = m->base.players->rerelease_states[i].actor;
     qa_q2rr_player_extra_state *extra = m->base.players->rerelease_states[i].state;
     if (only && !qa_same_actor(actor, *only)) continue;
-    qa_q2rr_player_state *st = qa_q2rr_players_get_state(m->base.players, actor);
+    qa_q2_base_player_state *st = qa_q2_players_get_state(m->base.players->base, actor);
     if (!st || !st->connected) continue;
     qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);
     ev.kind = "help-computer"; ev.has_actor = true; ev.actor = actor; ev.visible = st->show_help;
@@ -536,12 +541,13 @@ void qa_q2_rerelease_module_resume_presentation(qa_q2_rerelease_module *m, qa_q2
       }
     }
   }
-  if (!m->base.players->intermission.playing && strchr(m->base.players->intermission.map, '*') &&
+  qa_q2_intermission intermission = qa_q2_players_intermission(m->base.players->base);
+  if (strcmp(intermission.kind, "playing") != 0 && intermission.map && strchr(intermission.map, '*') &&
       rr_band(m->base.players->intermission_flags, 16) == 0) {
     size_t n = 0; qa_q2_rerelease_level_entry *levels = qa_q2_rerelease_unit_report(&m->base.campaign, &n);
     qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);
     ev.kind = "end-of-unit"; ev.levels = levels; ev.level_count = n;
-    ev.button_time = m->base.players->intermission.started + 5;
+    ev.button_time = intermission.started + 5;
     rr_emit_rr(&m->base.hooks, ev);
     qa_q2_rerelease_unit_report_free(levels, n);
   }
@@ -576,7 +582,8 @@ void qa_q2_rerelease_module_use_compass(qa_q2_rerelease_module *m, qa_actor_id a
     size_t index = 0;
     while (index + 1 < pn && qa_q2_length(qa_q2_subtract(points[index], body.origin)) <= 192) index++;
     qa_vec3 first = pn ? points[index] : poi->origin;
-    qa_vec3 forward = qa_q2_movedir(m->base.players->hooks.movement(m->base.players->hooks.ctx, a).view_angles);
+    qa_q2_player_hooks *hooks = qa_q2_players_hooks(m->base.players->base);
+    qa_vec3 forward = qa_q2_movedir(hooks->movement(hooks->ctx, a).view_angles);
     if (qa_q2_dot(qa_q2_normalize(qa_q2_subtract(first, body.origin)), forward) < 0.3) {
       qa_q2_entity *ent = rr_ent(g, &a);
       double height = ent ? ent->view_height : 22;
@@ -634,6 +641,6 @@ void qa_q2_rerelease_module_help(qa_q2_rerelease_module *m, qa_q2_entity *e, qa_
 }
 void qa_q2_rerelease_module_end_player_frame(qa_q2_rerelease_module *m, qa_q2_entity *e, qa_q2_game_services *g) {
   qa_q2_rerelease_entities_end_player_frame(&m->base, e, g);
-  if (m->base.players->intermission.playing) qa_q2_rerelease_goals_end_player_frame(&m->goals, e, g);
+  if (strcmp(qa_q2_players_intermission(m->base.players->base).kind, "playing") == 0) qa_q2_rerelease_goals_end_player_frame(&m->goals, e, g);
   qa_q2_rerelease_module_compass_update(m, e->actor.id, g, false);
 }

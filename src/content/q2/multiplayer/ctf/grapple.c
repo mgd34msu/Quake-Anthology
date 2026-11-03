@@ -40,9 +40,8 @@ static bool can_damage(void *ctx, qa_actor_id owner, qa_actor_id target) {
 static qa_ctf_grapple_settings settings_fn(void *ctx, qa_actor_id actor, qa_q2_game_services *game) {
   (void)game;
   qa_q2_ctf_grapple *g = ctx;
-  qa_q2mp_weapon_input input;
-  bool has = g->context->hooks.weapons->get_input(g->context->hooks.weapons->ctx, actor, &input);
-  qa_ctf_grapple_settings settings = {650, 650, 10, !(has && input.has_players_collide && !input.players_collide)};
+  const qa_q2w_input *input = qa_q2w_ballistics_input(&g->context->hooks.weapons->base, actor);
+  qa_ctf_grapple_settings settings = {650, 650, 10, !(input != NULL && !input->players_collide)};
   return settings;
 }
 
@@ -164,103 +163,103 @@ bool qa_q2_ctf_grapple_module_fire_grapple_default(qa_q2_ctf_grapple *g, qa_q2_e
 }
 
 void qa_q2_ctf_grapple_module_player_frame(qa_q2_ctf_grapple *g, qa_q2_entity *player, qa_q2_game_services *game, const char *binding) {
-  qa_q2mp_weapons_port *weapons = g->context->hooks.weapons;
-  qa_q2mp_weapon_state *weapon = weapons->get_state(weapons->ctx, player->actor.id);
+  qa_q2w_ballistics *weapons = &g->context->hooks.weapons->base;
+  qa_q2w_state *weapon = qa_q2w_ballistics_state(weapons, player->actor.id);
   if (weapon != NULL) {
-    qa_q2mp_weapon_input input;
-    bool has_input = weapons->get_input(weapons->ctx, player->actor.id, &input);
-    bool holster = game->options.edition == QA_Q2_EDITION_RERELEASE && has_input && input.holster;
-    bool change = weapon->pending != NULL || (weapon->primary_handoff != NULL && strcmp(weapon->primary_handoff, "holstering") == 0) || holster;
+    const qa_q2w_input *input = qa_q2w_ballistics_input(weapons, player->actor.id);
+    bool holster = game->options.edition == QA_Q2_EDITION_RERELEASE && input != NULL && input->holster;
+    bool change = weapon->pending != NULL || weapon->primary_handoff == QA_Q2W_HANDOFF_HOLSTERING || holster;
     bool selected = strcmp(binding, "weapon-slot") == 0 && weapon->weapon != NULL && strcmp(weapon->weapon, "grapple") == 0;
-    if (qa_ctf_grapple_weapon_should_reset(&weapon->animation, selected, change)) {
-      if (game->options.edition == QA_Q2_EDITION_RERELEASE && weapon->primary_handoff != NULL &&
-          strcmp(weapon->primary_handoff, "active") == 0)
+    if (qa_ctf_grapple_weapon_should_reset(weapon, selected, change)) {
+      if (game->options.edition == QA_Q2_EDITION_RERELEASE && weapon->primary_handoff == QA_Q2W_HANDOFF_ACTIVE)
         weapon->pending = weapon->weapon;
       qa_q2_ctf_grapple_module_reset(g, player->actor, game);
       return;
     }
   }
-  if (g->equipment != NULL) qa_q2_ctf_grapple_player_frame(g->equipment, player->actor.id, game, false);
+  /* TS equipment.playerFrame(actor, game) with its default damagePulse = true. */
+  if (g->equipment != NULL) qa_q2_ctf_grapple_player_frame(g->equipment, player->actor.id, game, true);
 }
 
 static bool grapple_use(void *ctx, qa_owned_actor actor, qa_q2_game_services *game) {
   qa_q2_ctf_grapple *g = ctx;
   qa_q2_entity *entity = qa_q2_game_entity_of(game, &actor.id);
   if (!qa_q2_ctf_grapple_module_native_enabled(g) || entity == NULL) return false;
-  const char *result = g->context->hooks.weapons->request_weapon(g->context->hooks.weapons->ctx, entity, game, "grapple");
-  return result != NULL && strcmp(result, "selected") == 0;
+  qa_q2w_owner self = {entity->actor, entity->view_height};
+  return qa_q2w_weapons_request_weapon(g->context->hooks.weapons, self, game, "grapple", false) == QA_Q2W_SEL_SELECTED;
 }
 static bool grapple_pickup(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game, qa_owned_actor player) {
   (void)ctx; (void)entity; (void)game; (void)player;
   return false;
 }
 
-static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons) {
-  (void)weapons;
+static void extension_fire(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons) {
+  (void)weapons; /* TS fire: context => this.fire(context) */
   qa_q2_ctf_grapple_module_fire(ctx, context);
 }
 
 struct frame_ctx {
   qa_q2_ctf_grapple *g;
-  qa_q2mp_weapon_context *context;
-  qa_q2mp_weapons_port *weapons;
+  qa_q2w_context *context;
+  qa_q2w_weapons *weapons;
 };
 static void step_reset(void *ctx) {
   struct frame_ctx *f = ctx;
-  qa_q2_ctf_grapple_module_reset(f->g, f->context->actor, f->context->game);
+  qa_q2_ctf_grapple_module_reset(f->g, f->context->self.actor, f->context->game);
 }
 static void step_prepare_drop(void *ctx) {
   struct frame_ctx *f = ctx;
-  qa_q2mp_weapon_state *state = f->context->state;
-  if (f->context->game->options.edition == QA_Q2_EDITION_RERELEASE && state->primary_handoff != NULL &&
-      strcmp(state->primary_handoff, "active") == 0 && state->pending == NULL)
+  qa_q2w_state *state = f->context->state;
+  if (f->context->game->options.edition == QA_Q2_EDITION_RERELEASE && state->primary_handoff == QA_Q2W_HANDOFF_ACTIVE &&
+      state->pending == NULL)
     state->pending = state->weapon;
 }
 static void step_generic(void *ctx) {
   struct frame_ctx *f = ctx;
   if (f->context->game->options.edition == QA_Q2_EDITION_RERELEASE)
-    f->weapons->generic_rerelease(f->weapons->ctx, f->context);
+    qa_q2w_weapons_generic_rerelease(f->weapons, f->context);
   else
-    f->weapons->generic_classic(f->weapons->ctx, f->context);
+    qa_q2w_weapons_generic_classic(f->weapons, f->context);
 }
 
-static void extension_think(void *ctx, qa_q2mp_weapon_context *original, qa_q2mp_weapons_port *weapons) {
+static void extension_think(void *ctx, qa_q2w_context *original, qa_q2w_weapons *ignored) {
+  (void)ignored; /* TS weaponFrame reads this.context.hooks.weapons. */
   qa_q2_ctf_grapple *g = ctx;
   if (g->equipment == NULL) return;
-  qa_q2mp_weapon_context context = *original;
+  qa_q2w_context context = *original;
   qa_q2_edition edition = original->game->options.edition;
   context.rerelease = edition == QA_Q2_EDITION_RERELEASE;
   context.definition = edition == QA_Q2_EDITION_RERELEASE ? &QA_Q2_RERELEASE_CTF_GRAPPLE : &QA_Q2_CTF_GRAPPLE;
-  qa_q2mp_weapon_state *state = context.state;
+  qa_q2w_state *state = context.state;
   qa_grapple_weapon_input input = {0};
   input.attack = context.input.attack;
-  input.change_requested = state->pending != NULL || (state->primary_handoff != NULL && strcmp(state->primary_handoff, "holstering") == 0);
+  input.change_requested = state->pending != NULL || state->primary_handoff == QA_Q2W_HANDOFF_HOLSTERING;
   input.holster = context.input.holster;
   input.latched_holster = false;
-  struct frame_ctx frame = {g, &context, weapons};
+  struct frame_ctx frame = {g, &context, g->context->hooks.weapons};
   qa_grapple_step_hooks hooks = {0};
   hooks.ctx = &frame;
   hooks.reset = step_reset;
   hooks.prepare_drop = step_prepare_drop;
   hooks.generic = step_generic;
-  qa_step_ctf_grapple_weapon(&state->animation, qa_q2_ctf_grapple_state(g->equipment, context.actor.id), input, edition == QA_Q2_EDITION_RERELEASE ? QA_Q2_EDITION_RERELEASE : QA_Q2_EDITION_CLASSIC, hooks);
+  qa_step_ctf_grapple_weapon(state, qa_q2_ctf_grapple_state(g->equipment, context.self.actor.id), input, edition, hooks);
 }
 
 void qa_q2_ctf_grapple_module_register(qa_q2_ctf_grapple *g) {
-  qa_q2mp_weapons_port *weapons = g->context->hooks.weapons;
+  qa_q2w_weapons *weapons = g->context->hooks.weapons;
   qa_q2_item_module *items = g->context->hooks.items;
   if (qa_q2_ctf_grapple_module_native_enabled(g)) {
-    const qa_q2f_weapon_definition *definition =
+    const qa_q2w_definition *definition =
         g->shared != NULL && g->shared->selection.is_enabled && g->shared->selection.edition != NULL &&
                 strcmp(g->shared->selection.edition, "rerelease") == 0
             ? &QA_Q2_RERELEASE_CTF_GRAPPLE
             : &QA_Q2_CTF_GRAPPLE;
-    qa_q2mp_weapon_extension extension = {0};
+    qa_q2w_extension extension = {0};
     extension.definition = definition;
     extension.ctx = g;
     extension.fire = extension_fire;
     extension.think = extension_think;
-    weapons->register_weapon(weapons->ctx, extension);
+    qa_q2w_weapons_register(weapons, extension);
   }
   qa_q2_item_definition def = {0};
   def.kind = "custom";
@@ -285,30 +284,21 @@ void qa_q2_ctf_grapple_module_register(qa_q2_ctf_grapple *g) {
 
 struct kick_ctx {
   qa_q2_ctf_grapple *g;
-  qa_q2mp_weapon_context *context;
+  qa_q2w_context *context;
 };
 static void kick_fn(void *ctx, qa_vec3 origin, double pitch) {
   struct kick_ctx *k = ctx;
-  /* TS q2WeaponRecoil operates on Q2WeaponState; the landed mirror
-   * takes qa_q2w_state, so project the recoil fields across. */
-  qa_q2w_state projected = {0};
-  qa_q2mp_weapon_state *state = k->context->state;
-  projected.kick_origin = state->kick_origin;
-  projected.kick_angles = state->kick_angles;
-  projected.kick_time = state->kick_time;
-  projected.kick_until = state->kick_until;
-  projected.kick_duration = state->kick_duration;
-  qa_vec3 angles = qa_q2w_weapon_recoil(&projected, k->context->game->options.edition == QA_Q2_EDITION_RERELEASE ? QA_Q2F_RERELEASE : QA_Q2F_CLASSIC, k->context->now).kick_angles;
+  qa_vec3 angles = qa_q2w_weapon_recoil(k->context->state, k->context->game->options.edition, k->context->now).kick_angles;
   angles.x = pitch;
-  k->g->context->hooks.weapons->kick(k->g->context->hooks.weapons->ctx, k->context, origin, angles);
+  qa_q2w_weapons_kick_default(k->g->context->hooks.weapons, k->context, origin, angles);
 }
 
-void qa_q2_ctf_grapple_module_fire(qa_q2_ctf_grapple *g, qa_q2mp_weapon_context *context) {
+void qa_q2_ctf_grapple_module_fire(qa_q2_ctf_grapple *g, qa_q2w_context *context) {
   if (g->equipment == NULL) return;
   struct kick_ctx kick = {g, context};
   qa_grapple_weapon_presentation presentation = {0};
   presentation.ctx = &kick;
   presentation.kick = kick_fn;
-  qa_fire_ctf_grapple_weapon(context->actor.id, context->game, g->equipment, &context->state->animation,
+  qa_fire_ctf_grapple_weapon(context->self.actor.id, context->game, g->equipment, context->state,
                              context->game->options.edition, presentation);
 }

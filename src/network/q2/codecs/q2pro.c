@@ -1,7 +1,10 @@
 /* Port of src/network/q2/codecs/q2pro.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/codecs/q2pro.h"
 
+#include <math.h>
 #include <string.h>
+
+#include "qa/foundation/js.h"
 
 #include "qa/network/q2/codecs/clc_batch_move.h"
 #include "qa/network/q2/constants.h"
@@ -32,7 +35,7 @@ static void write_server_data(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   if (ctx->features.revision >= 1024) {
     qa_q2_msg_write_short(msg, ctx->features.flags);
   } else {
-    int32_t f = (int32_t)ctx->features.flags;
+    int32_t f = qa_js_to_int32(ctx->features.flags);
     qa_q2_msg_write_byte(msg, (f & 1) != 0 ? 1 : 0);
     qa_q2_msg_write_byte(msg, (f & 2) != 0 ? 1 : 0);
     qa_q2_msg_write_byte(msg, (f & 4) != 0 ? 1 : 0);
@@ -193,7 +196,8 @@ static void write_player_body(qa_q2pro_context *ctx, const pro_enc *e, qa_q2_siz
   }
   if (flags & QA_Q2_PS_WEAPONINDEX) {
     if (e->extended) {
-      int32_t gun = (int32_t)ps->gunindex | ((int32_t)ps->gunskin << 13);
+      int32_t gun = qa_js_to_int32(ps->gunindex) |
+                    (int32_t)((uint32_t)qa_js_to_int32(ps->gunskin) << 13);
       qa_q2_msg_write_short(msg, (double)gun);
     } else {
       if (ps->gunindex > 255 || ps->gunskin != 0) {
@@ -265,10 +269,11 @@ static void write_frame(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   int32_t extrabits = (e.extraflags & 0x70) << 1;
   qa_q2_msg_write_byte(msg, (double)(QA_Q2_SVC_FRAME | extrabits));
   double deltaframe = params->lastframe;
-  int32_t offset = deltaframe == -1 ? 31 : (int32_t)(params->framenum - deltaframe);
-  int32_t encoded = ((int32_t)params->framenum & 0x07ffffff) | (offset << 27);
+  double offset = deltaframe == -1 ? 31 : params->framenum - deltaframe;
+  int32_t encoded = (qa_js_to_int32(params->framenum) & 0x07ffffff) |
+                    (int32_t)((uint32_t)qa_js_to_int32(offset) << 27);
   qa_q2_msg_write_long(msg, (double)encoded);
-  int32_t suppress = ((int32_t)params->surpress_count & 0x0f) | ((e.extraflags & 0x0f) << 4);
+  int32_t suppress = (qa_js_to_int32(params->surpress_count) & 0x0f) | ((e.extraflags & 0x0f) << 4);
   qa_q2_msg_write_byte(msg, (double)suppress);
   qa_q2_msg_write_byte(msg, params->areabytes);
   qa_q2_sz_write(msg, params->areabits, params->areabits_length,
@@ -311,6 +316,12 @@ static void decode_batch_cmd(void *vctx, qa_q2_bit_reader *br,
   else out->msec = prev != NULL ? prev->msec : 0;
 }
 
+/* TS Math.max(-512, Math.min(511, value)); NaN stays NaN. */
+static double clamp_move(double value) {
+  if (isnan(value)) return value;
+  return value > 511 ? 511 : value < -512 ? -512 : value;
+}
+
 static void encode_batch_cmd(void *vctx, qa_q2_bit_writer *bw,
                              const qa_q2_wire_usercmd *cmd,
                              const qa_q2_wire_usercmd *prev) {
@@ -341,14 +352,14 @@ static void encode_batch_cmd(void *vctx, qa_q2_bit_writer *bw,
     }
   }
   if (bits & QA_Q2_CM_ANGLE3) qa_q2_bit_writer_write_signed(bw, cmd->angles[2], 16);
-  if (bits & QA_Q2_CM_FORWARD) qa_q2_bit_writer_write_signed(bw, (int32_t)cmd->forwardmove, 10);
-  if (bits & QA_Q2_CM_SIDE) qa_q2_bit_writer_write_signed(bw, (int32_t)cmd->sidemove, 10);
-  if (bits & QA_Q2_CM_UP) qa_q2_bit_writer_write_signed(bw, (int32_t)cmd->upmove, 10);
+  if (bits & QA_Q2_CM_FORWARD) qa_q2_bit_writer_write_signed(bw, qa_js_to_int32(clamp_move(cmd->forwardmove)), 10);
+  if (bits & QA_Q2_CM_SIDE) qa_q2_bit_writer_write_signed(bw, qa_js_to_int32(clamp_move(cmd->sidemove)), 10);
+  if (bits & QA_Q2_CM_UP) qa_q2_bit_writer_write_signed(bw, qa_js_to_int32(clamp_move(cmd->upmove)), 10);
   if (bits & QA_Q2_CM_BUTTONS) {
-    int32_t b = (int32_t)cmd->buttons;
+    int32_t b = qa_js_to_int32(cmd->buttons);
     qa_q2_bit_writer_write_unsigned(bw, (b & 3) | ((b >> 5) & 4), 3);
   }
-  if (bits & QA_Q2_CM_IMPULSE) qa_q2_bit_writer_write_unsigned(bw, (int32_t)cmd->msec, 8);
+  if (bits & QA_Q2_CM_IMPULSE) qa_q2_bit_writer_write_unsigned(bw, qa_js_to_int32(cmd->msec), 8);
 }
 
 static void write_batch_move(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
@@ -392,7 +403,9 @@ static bool read_batch_move(qa_q2_protocol_codec *self, qa_q2_sizebuf *msg,
   qa_q2_bit_reader_init(&br, msg);
   out->lastframe = lastframe;
   out->num_dups = num_dups;
-  return qa_q2_read_batch_move_frames(&br, (int32_t)num_dups, decode_batch_cmd, NULL,
+  /* TS loops i <= numDups: floor(numDups) + 1 frames, none when NaN or below 0. */
+  int32_t dups = isnan(num_dups) || num_dups < 0 ? -1 : (int32_t)floor(num_dups);
+  return qa_q2_read_batch_move_frames(&br, dups, decode_batch_cmd, NULL,
                                       &out->frames, &out->frame_count);
 }
 
@@ -430,7 +443,7 @@ static void read_server_data(qa_q2_protocol_codec *self,
     int32_t c = qa_q2_msg_read_byte(m);
     ctx->features.flags = (double)((a != 0 ? 1 : 0) | (b != 0 ? 2 : 0) | (c != 0 ? 4 : 0));
   }
-  int32_t f = (int32_t)ctx->features.flags;
+  int32_t f = qa_js_to_int32(ctx->features.flags);
   out->has_q2pro_version = true;
   out->q2pro_version = ctx->features.revision;
   out->has_wire_flags = true;
@@ -575,7 +588,7 @@ static void read_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *m
   qa_q2pro_context *ctx = ctx_of(self);
   int32_t flags = qa_q2_msg_read_word(msg);
   if (ctx->features.revision >= 1026 && (flags & 0x8000) != 0) {
-    flags |= qa_q2_msg_read_byte(msg) << 16;
+    flags |= (int32_t)((uint32_t)qa_q2_msg_read_byte(msg) << 16);
   }
   int32_t extraflags = qa_q2_msg_read_byte(msg);
   read_player_body(ctx, msg, from, to, flags, extraflags);
@@ -611,7 +624,7 @@ static void read_frame_playerstate(qa_q2_protocol_codec *self,
   qa_q2_sizebuf *m = self->net_message;
   int32_t flags = qa_q2_msg_read_word(m);
   if (ctx->features.revision >= 1026 && (flags & 0x8000) != 0) {
-    flags |= qa_q2_msg_read_byte(m) << 16;
+    flags |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 16);
   }
   read_player_body(ctx, m, from, to, flags, ctx->pending_frame_extraflags);
 }

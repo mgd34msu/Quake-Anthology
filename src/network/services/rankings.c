@@ -1,6 +1,7 @@
 /* Port of src/network/services/rankings.ts. GPL-2.0-or-later. */
 #include "qa/network/services/rankings.h"
 #include "qa/foundation/support.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 struct player_entry { double slot; qa_ranking_player_state state; char *reason; };
@@ -21,6 +22,14 @@ void qa_ranking_lifecycle_init(qa_ranking_lifecycle *l, const qa_ranking_provide
   l->service_changed = service_changed; l->service_ctx = service_ctx;
   l->current.kind = "disabled";
 }
+qa_ranking_lifecycle *qa_ranking_lifecycle_create(const qa_ranking_provider *provider,
+                                                  qa_ranking_changed_fn changed, void *changed_ctx,
+                                                  qa_ranking_service_changed_fn service_changed, void *service_ctx) {
+  qa_ranking_lifecycle *l = malloc(sizeof *l);
+  if (l) qa_ranking_lifecycle_init(l, provider, changed, changed_ctx, service_changed, service_ctx);
+  return l;
+}
+void qa_ranking_lifecycle_free(qa_ranking_lifecycle *l) { if (l) { qa_ranking_lifecycle_destroy(l); free(l); } }
 void qa_ranking_lifecycle_destroy(qa_ranking_lifecycle *l) {
   for (size_t i = 0; i < l->count; i++) free(l->players[i].reason);
   free(l->players); free(l->reason); memset(l, 0, sizeof *l);
@@ -54,10 +63,14 @@ static qa_ranking_player_state player_state(const char *kind, const char *reason
   qa_ranking_player_state s; memset(&s, 0, sizeof s); s.kind = kind; s.reason = reason; return s;
 }
 /* TS enqueue().catch: failures mark service unavailable, then re-abort. */
-static void fail(qa_ranking_lifecycle *l, const char *message) {
-  set_state(l, "unavailable", message ? message : "Ranking service failed", 0);
-  qa_range_error("%s", message ? message : "Ranking service failed");
+static void fail_named(qa_ranking_lifecycle *l, const char *name, const char *message) {
+  const char *text = message ? message : "Ranking service failed";
+  char copy[QA_CAUGHT_MESSAGE_CAPACITY];
+  snprintf(copy, sizeof copy, "%s", text); /* the provider's borrowed text may not outlive set_state */
+  set_state(l, "unavailable", copy, 0);
+  qa_raise(name, 0, 0, "%s", copy);
 }
+static void fail(qa_ranking_lifecycle *l, const char *message) { fail_named(l, "Error", message); }
 void qa_ranking_lifecycle_begin(qa_ranking_lifecycle *l, bool enabled, bool single_player, const char *game_key) {
   if (l->has_match) fail(l, "Ranking match is already active");
   if (!enabled || single_player) { set_state(l, "disabled", NULL, 0); return; }
@@ -175,5 +188,5 @@ void qa_ranking_lifecycle_end(qa_ranking_lifecycle *l) {
   for (size_t i = 0; i < l->count; i++) free(l->players[i].reason);
   l->count = 0;
   set_state(l, "disabled", NULL, 0);
-  if (any_failure) fail(l, "Ranking report submission or cleanup failed");
+  if (any_failure) fail_named(l, "AggregateError", "Ranking report submission or cleanup failed");
 }

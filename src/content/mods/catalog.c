@@ -2,19 +2,20 @@
 #include "qa/content/mods/catalog.h"
 
 #include <ctype.h>
+#include <stddef.h>
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "qa/content/mods/declaration.h"
+#include "qa/content/mounts/paths.h"
 #include "qa/foundation/support.h"
 #include "qa/persistence/value.h"
 
 /* TS throws plain Error for duplicate components. */
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static qa_save_reader field(const qa_save_reader *reader, const char *name) {
@@ -34,31 +35,6 @@ static const char *fstr(const qa_save_reader *r, const char *name) {
   const char *v = qa_save_reader_string(&f);
   qa_save_reader_destroy(&f);
   return v;
-}
-
-/* Mirror of normalizeResourcePath (TS owner:
- * src/content/mounts/paths.ts). See callbacks.c. */
-static char *normalize_resource_path(const char *path) {
-  size_t n = strlen(path);
-  char *out = (char *)malloc(n + 1);
-  if (out == NULL) qa_range_error("out of memory");
-  for (size_t i = 0; i <= n; i++) out[i] = path[i] == '\\' ? '/' : path[i];
-  bool bad = n == 0;
-  if (n >= 2 && out[1] == ':' &&
-      ((out[0] >= 'a' && out[0] <= 'z') || (out[0] >= 'A' && out[0] <= 'Z')))
-    bad = true;
-  size_t start = 0;
-  for (size_t i = 0; i <= n && !bad; i++) {
-    if (out[i] == '/' || out[i] == '\0') {
-      size_t len = i - start;
-      if (len == 0) bad = true;
-      if (len == 1 && out[start] == '.') bad = true;
-      if (len == 2 && out[start] == '.' && out[start + 1] == '.') bad = true;
-      start = i + 1;
-    }
-  }
-  if (bad) qa_range_error("Invalid relative resource path: %s", path);
-  return out;
 }
 
 static char *format_string(const char *format, const char *a) {
@@ -98,6 +74,69 @@ static const qa_mod_program *declaration_program(qa_mod_declaration declaration)
       return declaration.as.native != NULL ? &declaration.as.native->program : NULL;
   }
   return NULL;
+}
+
+static void free_selections(qa_mod_selection *rows, size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    free((char *)rows[i].product);
+    free((char *)rows[i].id);
+  }
+  free(rows);
+}
+
+/* The returned array sits in a block that also owns what its entries share:
+ * the parsed gameplay-mods.json their titles and ids borrow, the source
+ * title and the provider. */
+typedef struct discovery_block {
+  qa_save_value *value;
+  char *source_title;
+  char *provider;
+  qa_discovered_gameplay_mod items[];
+} discovery_block;
+
+void qa_discovered_gameplay_mods_free(qa_discovered_gameplay_mod *mods, size_t count) {
+  if (mods == NULL) return;
+  discovery_block *block = (discovery_block *)(void *)((char *)mods - offsetof(discovery_block, items));
+  for (size_t i = 0; i < count; i++) {
+    qa_discovered_gameplay_mod *mod = &mods[i];
+    free((char *)mod->description.unavailable_reason);
+    free_selections((qa_mod_selection *)mod->description.requires, mod->description.requires_count);
+    free_selections((qa_mod_selection *)mod->description.conflicts, mod->description.conflicts_count);
+    if (mod->is_available) qa_mod_declaration_free(&mod->mod.declaration);
+  }
+  qa_save_value_free(block->value);
+  free(block->source_title);
+  free(block->provider);
+  free(block);
+}
+
+/* Body of the TS per-component try block. Owned results are published to
+ * the attempt as they are made, so the catch side frees what a throw left. */
+typedef struct component_attempt {
+  const qa_save_reader *reader;
+  const qa_mod_mounted_content *mounted;
+  char *path;
+  qa_mod_selection *requires, *conflicts;
+  size_t requires_count, conflicts_count;
+  qa_mod_catalog_file file;
+  qa_mod_declaration declaration;
+} component_attempt;
+
+static void component_body(void *ctx) {
+  component_attempt *attempt = (component_attempt *)ctx;
+  attempt->path = qa_normalize_resource_path(fstr(attempt->reader, "callbacks"));
+  if (attempt->path == NULL) qa_error("out of memory");
+  attempt->requires = read_selections(attempt->reader, "requires", &attempt->requires_count);
+  attempt->conflicts = read_selections(attempt->reader, "conflicts", &attempt->conflicts_count);
+  if (!attempt->mounted->open(attempt->mounted->ctx, attempt->path, NULL, &attempt->file))
+    qa_raise("Error", 0, 0, "Missing callback declaration %s", attempt->path);
+  attempt->declaration = qa_parse_gameplay_mod_declaration(attempt->file.bytes, attempt->file.length);
+  const qa_mod_program *program = declaration_program(attempt->declaration);
+  qa_mod_catalog_file program_file;
+  bool program_opened = program != NULL &&
+      attempt->mounted->open(attempt->mounted->ctx, program->path, NULL, &program_file);
+  if (!program_opened || strcmp(program_file.digest, program->digest) != 0)
+    qa_raise("Error", 0, 0, "Executable differs from its callback declaration");
 }
 
 qa_discovered_gameplay_mod *qa_discover_gameplay_mods(
@@ -187,40 +226,29 @@ qa_discovered_gameplay_mod *qa_discover_gameplay_mods(
     qa_discovered_gameplay_mod *slot = &result[result_count++];
     memset(slot, 0, sizeof *slot);
 
-    char *path = normalize_resource_path(fstr(&declared[i].reader, "callbacks"));
-    size_t requires_count = 0;
-    qa_mod_selection *requires =
-        read_selections(&declared[i].reader, "requires", &requires_count);
-    size_t conflicts_count = 0;
-    qa_mod_selection *conflicts =
-        read_selections(&declared[i].reader, "conflicts", &conflicts_count);
-    qa_mod_catalog_file file;
-    bool opened = mounted->open(mounted->ctx, path, NULL, &file);
-    const char *reason = NULL;
-    qa_mod_declaration declaration;
-    memset(&declaration, 0, sizeof declaration);
-    if (!opened) {
+    /* TS try { ... } catch (error) { unavailable(error.message) }: every
+     * throw inside, including malformed declarations, settles this
+     * component as unavailable instead of failing discovery. */
+    component_attempt attempt;
+    memset(&attempt, 0, sizeof attempt);
+    attempt.reader = &declared[i].reader;
+    attempt.mounted = mounted;
+    qa_caught_error caught;
+    if (!qa_try(component_body, &attempt, &caught)) {
+      free(attempt.path);
+      free_selections(attempt.requires, attempt.requires_count);
+      free_selections(attempt.conflicts, attempt.conflicts_count);
+      qa_mod_declaration_free(&attempt.declaration);
       slot->description = description;
       slot->description.is_available = false;
-      slot->description.unavailable_reason =
-          format_string("Missing callback declaration %s", path);
-      free(path);
+      slot->description.unavailable_reason = format_string("%s", caught.message);
       continue;
     }
-    declaration = qa_parse_gameplay_mod_declaration(file.bytes, file.length);
-    const qa_mod_program *program = declaration_program(declaration);
-    qa_mod_catalog_file program_file;
-    bool program_opened = program != NULL &&
-        mounted->open(mounted->ctx, program->path, NULL, &program_file);
-    if (!program_opened || strcmp(program_file.digest, program->digest) != 0)
-      reason = "Executable differs from its callback declaration";
-    free(path);
-    if (reason != NULL) {
-      slot->description = description;
-      slot->description.is_available = false;
-      slot->description.unavailable_reason = reason;
-      continue;
-    }
+    qa_mod_selection *requires = attempt.requires, *conflicts = attempt.conflicts;
+    size_t requires_count = attempt.requires_count, conflicts_count = attempt.conflicts_count;
+    qa_mod_declaration declaration = attempt.declaration;
+    qa_mod_catalog_file file = attempt.file;
+    free(attempt.path);
     slot->is_available = true;
     slot->description = description;
     slot->description.is_available = true;
@@ -247,5 +275,19 @@ qa_discovered_gameplay_mod *qa_discover_gameplay_mods(
   qa_save_reader_destroy(&components);
   qa_save_reader_destroy(&reader);
   *out_count = result_count;
-  return result;
+  if (result_count == 0) {
+    free(result);
+    qa_save_value_free(value);
+    free(source_title);
+    free(provider);
+    return NULL;
+  }
+  discovery_block *block = malloc(sizeof *block + result_count * sizeof *result);
+  if (block == NULL) qa_error("out of memory");
+  block->value = value;
+  block->source_title = source_title;
+  block->provider = provider;
+  memcpy(block->items, result, result_count * sizeof *result);
+  free(result);
+  return block->items;
 }

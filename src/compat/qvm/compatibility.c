@@ -7,16 +7,16 @@
 
 #include "qa/content/mounts/paths.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js_case.h"
 
 static void reader_field(const qa_save_reader *reader, const char *name, qa_save_reader *out) {
   if (!qa_save_reader_field(reader, name, out)) qa_range_error("out of memory");
 }
 
+/* TS path.toLowerCase(): Unicode lowering of UTF-8 paths. */
 static char *lower_copy(const char *text) {
-  char *copy = malloc(strlen(text) + 1);
+  char *copy = qa_js_to_lower_case(text);
   if (copy == NULL) qa_range_error("out of memory");
-  for (size_t i = 0; text[i] != '\0'; i++) copy[i] = (char)tolower((unsigned char)text[i]);
-  copy[strlen(text)] = '\0';
   return copy;
 }
 

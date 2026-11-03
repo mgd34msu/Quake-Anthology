@@ -11,13 +11,12 @@
 #include "qa/foundation/support.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_range(const char *text, size_t length) {
@@ -255,55 +254,45 @@ static bool is_space(char c) {
 }
 static bool is_digit(char c) { return c >= '0' && c <= '9'; }
 
-static double timestamp_value(const char *value) {
-  /* /^(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})$/ over value.trim(). */
+/* TS timestamp(value): /^(?:(\d+):)?(\d{2}):(\d{2})[.,](\d{3})$/ over
+ * value.trim(). The optional hours group is tried first, as the regex does. */
+static bool timestamp_tail(const char *cursor, const char *end, double *minutes,
+                           double *seconds, double *milliseconds) {
+  if (end - cursor != 9) return false;
+  if (!is_digit(cursor[0]) || !is_digit(cursor[1]) || cursor[2] != ':' ||
+      !is_digit(cursor[3]) || !is_digit(cursor[4]) ||
+      (cursor[5] != '.' && cursor[5] != ',') || !is_digit(cursor[6]) ||
+      !is_digit(cursor[7]) || !is_digit(cursor[8])) {
+    return false;
+  }
+  *minutes = (cursor[0] - '0') * 10 + (cursor[1] - '0');
+  *seconds = (cursor[3] - '0') * 10 + (cursor[4] - '0');
+  *milliseconds = (cursor[6] - '0') * 100 + (cursor[7] - '0') * 10 + (cursor[8] - '0');
+  return true;
+}
+
+static double timestamp_value(const char *value, size_t value_length) {
   const char *p = value;
-  while (is_space(*p)) p++;
-  size_t length = strlen(p);
-  while (length > 0 && is_space(p[length - 1])) length--;
-  const char *end = p + length;
+  const char *end = value + value_length;
+  while (p < end && is_space(*p)) p++;
+  while (end > p && is_space(end[-1])) end--;
   double hours = 0, minutes = 0, seconds = 0, milliseconds = 0;
-  const char *cursor = p;
-  /* Try the optional hours group: digits followed by ':'. */
-  const char *scan = cursor;
+  const char *scan = p;
   double scanned = 0;
   while (scan < end && is_digit(*scan)) {
     scanned = scanned * 10 + (*scan - '0');
     scan++;
   }
-  bool has_hours = scan > cursor && scan < end && *scan == ':' &&
-                   (scan - cursor) != 2;
-  /* With exactly two digits before ':', the regex prefers minutes when
-   * the rest also parses that way; both readings give the same tail
-   * shape, so fall through to the minutes parse and retry with hours
-   * only when that fails (handled below by trying both). */
   bool ok = false;
-  for (int attempt = 0; attempt < 2 && !ok; attempt++) {
-    cursor = p;
-    hours = 0;
-    if (attempt == 0 && has_hours) {
-      hours = scanned;
-      cursor = scan + 1;
-    } else if (attempt == 1) {
-      if (!(scan > cursor && scan < end && *scan == ':')) break;
-      hours = scanned;
-      cursor = scan + 1;
-    }
-    if (end - cursor < 9) continue;
-    if (!is_digit(cursor[0]) || !is_digit(cursor[1]) || cursor[2] != ':' ||
-        !is_digit(cursor[3]) || !is_digit(cursor[4]) ||
-        (cursor[5] != '.' && cursor[5] != ',') || !is_digit(cursor[6]) ||
-        !is_digit(cursor[7]) || !is_digit(cursor[8]) || cursor + 9 != end) {
-      continue;
-    }
-    minutes = (cursor[0] - '0') * 10 + (cursor[1] - '0');
-    seconds = (cursor[3] - '0') * 10 + (cursor[4] - '0');
-    milliseconds =
-        (cursor[6] - '0') * 100 + (cursor[7] - '0') * 10 + (cursor[8] - '0');
+  if (scan > p && scan < end && *scan == ':' &&
+      timestamp_tail(scan + 1, end, &minutes, &seconds, &milliseconds)) {
+    hours = scanned;
+    ok = true;
+  } else if (timestamp_tail(p, end, &minutes, &seconds, &milliseconds)) {
     ok = true;
   }
   if (!ok || minutes >= 60 || seconds >= 60) {
-    qa_error("Invalid subtitle timestamp %s", value);
+    qa_error("Invalid subtitle timestamp %.*s", (int)value_length, value);
   }
   return ((hours * 60 + minutes) * 60 + seconds) * 1000 + milliseconds;
 }
@@ -328,35 +317,163 @@ static bool buffer_add(text_buffer *buffer, const char *text, size_t length) {
   return true;
 }
 
-bool qa_parse_subtitle_text(const char *text, size_t length,
-                            const char *name_space, qa_caption_cue **out,
-                            size_t *out_count) {
+/* TS parseBlock. Every throw happens before anything is allocated, so a
+ * raise abandons no memory. Returns false on OOM; *out has no id when the
+ * block has no timing line (TS null). */
+typedef struct parse_block_job {
+  const char *source;
+  size_t block_begin;
+  size_t block_end;
+  const char *name_space;
+  size_t index;
+  qa_caption_cue *out;
+  bool ok;
+} parse_block_job;
+
+static void parse_block(void *raw) {
+  parse_block_job *job = (parse_block_job *)raw;
+  const char *source = job->source;
+  size_t block_begin = job->block_begin, block_end = job->block_end;
+  memset(job->out, 0, sizeof *job->out);
+  job->ok = true;
+  /* lines.findIndex(line => line.includes("-->")) */
+  size_t timing_begin = 0, timing_end = 0, text_begin = 0;
+  bool has_timing = false;
+  size_t line_begin = block_begin;
+  for (;;) {
+    size_t line_end = line_begin;
+    while (line_end < block_end && source[line_end] != '\n') line_end++;
+    for (size_t i = line_begin; i + 3 <= line_end; i++) {
+      if (memcmp(source + i, "-->", 3) == 0) {
+        has_timing = true;
+        timing_begin = line_begin;
+        timing_end = line_end;
+        text_begin = line_end < block_end ? line_end + 1 : block_end;
+        break;
+      }
+    }
+    if (has_timing || line_end >= block_end) break;
+    line_begin = line_end + 1;
+  }
+  if (!has_timing) return;
+  /* /^\s*(\S+)\s+-->\s+(\S+)/ on the timing line. */
+  const char *line = source + timing_begin;
+  size_t line_length = timing_end - timing_begin;
+  size_t i = 0;
+  while (i < line_length && is_space(line[i])) i++;
+  size_t first_begin = i;
+  while (i < line_length && !is_space(line[i])) i++;
+  size_t first_end = i;
+  size_t gap = i;
+  while (i < line_length && is_space(line[i])) i++;
+  bool matched = first_end > first_begin && i > gap && i + 3 <= line_length &&
+                 memcmp(line + i, "-->", 3) == 0;
+  size_t second_begin = 0, second_end = 0;
+  if (matched) {
+    i += 3;
+    gap = i;
+    while (i < line_length && is_space(line[i])) i++;
+    second_begin = i;
+    while (i < line_length && !is_space(line[i])) i++;
+    second_end = i;
+    matched = i > gap && second_end > second_begin;
+  }
+  if (!matched) qa_error("Invalid subtitle cue timing");
+  double start_ms = timestamp_value(line + first_begin, first_end - first_begin);
+  double end_ms = timestamp_value(line + second_begin, second_end - second_begin);
+  /* validateCue: the id `${namespace}:${index}` is never empty. */
+  qa_caption_cue probe;
+  memset(&probe, 0, sizeof probe);
+  probe.id = (char *)":";
+  probe.start_milliseconds = start_ms;
+  probe.duration_milliseconds = end_ms - start_ms;
+  validate_cue(&probe);
+  /* Cue text: remaining lines joined with \n, then trimEnd. */
+  size_t text_end = block_end;
+  while (text_end > text_begin && is_space(source[text_end - 1])) text_end--;
+  char *cue_text = dup_range(source + text_begin, text_end - text_begin);
+  if (cue_text == NULL) {
+    job->ok = false;
+    return;
+  }
+  /* Voice form /^<v\s+([^>]+)>([\s\S]*?)(?:<\/v>)?$/. */
+  char *cue_speaker = NULL;
+  if (cue_text[0] == '<' && cue_text[1] == 'v' && is_space(cue_text[2])) {
+    const char *spaces = cue_text + 2;
+    const char *speaker_begin = spaces;
+    while (is_space(*speaker_begin)) speaker_begin++;
+    const char *close = strchr(speaker_begin, '>');
+    /* \s+ backtracks one whitespace into ([^>]+) when nothing else is left. */
+    if (close != NULL && close == speaker_begin && speaker_begin - spaces >= 2) speaker_begin--;
+    if (close != NULL && close > speaker_begin) {
+      cue_speaker = dup_range(speaker_begin, (size_t)(close - speaker_begin));
+      const char *rest = close + 1;
+      size_t rest_length = strlen(rest);
+      if (rest_length >= 4 && strcmp(rest + rest_length - 4, "</v>") == 0) rest_length -= 4;
+      char *body = dup_range(rest, rest_length);
+      if (cue_speaker == NULL || body == NULL) {
+        free(cue_speaker);
+        free(body);
+        free(cue_text);
+        job->ok = false;
+        return;
+      }
+      free(cue_text);
+      cue_text = body;
+    }
+  }
+  char id[512];
+  snprintf(id, sizeof id, "%s:%zu", job->name_space, job->index);
+  qa_caption_cue *cue = job->out;
+  cue->id = dup_text(id);
+  cue->kind_caption = false;
+  cue->start_milliseconds = start_ms;
+  cue->duration_milliseconds = end_ms - start_ms;
+  cue->text = cue_text;
+  cue->speaker = cue_speaker;
+  if (cue->id == NULL) {
+    qa_caption_cue_clear(cue);
+    job->ok = false;
+  }
+}
+
+typedef struct parse_state {
+  text_buffer normalized;
+  qa_caption_cue *cues;
+  size_t cue_count;
+} parse_state;
+
+static void parse_state_free(parse_state *state) {
+  qa_caption_cues_free(state->cues, state->cue_count);
+  free(state->normalized.data);
+  memset(state, 0, sizeof *state);
+}
+
+bool qa_parse_subtitle_text(const char *text, size_t length, const char *name_space,
+                            qa_subtitle_skipped_fn skipped, void *skipped_ctx,
+                            qa_caption_cue **out, size_t *out_count) {
   *out = NULL;
   *out_count = 0;
-  /* Strip a leading BOM (EF BB BF in the UTF-8 byte form) and
-   * normalize CR LF / CR to LF. */
+  /* text.replace(/^﻿/, "") (one BOM, in its UTF-8 form) and
+   * /\r\n?/g -> "\n". */
   const unsigned char *bytes = (const unsigned char *)text;
   size_t start = 0;
-  if (length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf) {
-    start = 3;
-  }
-  text_buffer normalized = {NULL, 0, 0};
+  if (length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf) start = 3;
+  parse_state state;
+  memset(&state, 0, sizeof state);
+  size_t cue_capacity = 0;
   for (size_t i = start; i < length; i++) {
     char c = (char)bytes[i];
     if (c == '\r') {
-      if (!buffer_add(&normalized, "\n", 1)) goto oom;
+      if (!buffer_add(&state.normalized, "\n", 1)) goto oom;
       if (i + 1 < length && bytes[i + 1] == '\n') i++;
-    } else {
-      if (!buffer_add(&normalized, &c, 1)) goto oom;
+    } else if (!buffer_add(&state.normalized, &c, 1)) {
+      goto oom;
     }
   }
-  if (normalized.data == NULL && !buffer_add(&normalized, "", 0)) goto oom;
-
-  qa_caption_cue *cues = NULL;
-  size_t cue_count = 0;
-  size_t cue_capacity = 0;
-  const char *source = normalized.data;
-  size_t source_length = normalized.length;
+  if (state.normalized.data == NULL && !buffer_add(&state.normalized, "", 0)) goto oom;
+  const char *source = state.normalized.data;
+  size_t source_length = state.normalized.length;
   size_t block_begin = 0;
   for (;;) {
     /* Split on /\n[ \t]*\n/: find the next block end. */
@@ -374,140 +491,42 @@ bool qa_parse_subtitle_text(const char *text, size_t length,
         break;
       }
     }
-    /* Lines of this block: [block_begin, block_end) split on \n. */
-    size_t timing_begin = 0, timing_end = 0, text_begin = 0;
-    bool has_timing = false;
-    size_t line_begin = block_begin;
-    while (line_begin <= block_end) {
-      size_t line_end = line_begin;
-      while (line_end < block_end && source[line_end] != '\n') line_end++;
-      for (size_t i = line_begin; i + 3 <= line_end; i++) {
-        if (memcmp(source + i, "-->", 3) == 0) {
-          has_timing = true;
-          timing_begin = line_begin;
-          timing_end = line_end;
-          text_begin = line_end < block_end ? line_end + 1 : block_end;
-          break;
-        }
-      }
-      if (has_timing || line_end >= block_end) break;
-      line_begin = line_end + 1;
+    if (state.cue_count == cue_capacity) {
+      size_t grown = cue_capacity == 0 ? 8 : cue_capacity * 2;
+      qa_caption_cue *next = (qa_caption_cue *)realloc(state.cues, grown * sizeof *next);
+      if (next == NULL) goto oom;
+      state.cues = next;
+      cue_capacity = grown;
     }
-    if (has_timing) {
-      /* /^\s*(\S+)\s+-->\s+(\S+)/ on the timing line. */
-      const char *line = source + timing_begin;
-      size_t line_length = timing_end - timing_begin;
-      size_t i = 0;
-      while (i < line_length && is_space(line[i])) i++;
-      size_t first_begin = i;
-      while (i < line_length && !is_space(line[i])) i++;
-      size_t first_end = i;
-      size_t gap = i;
-      while (i < line_length && is_space(line[i])) i++;
-      bool matched = first_end > first_begin && i > gap &&
-                     i + 3 <= line_length && memcmp(line + i, "-->", 3) == 0;
-      size_t second_begin = 0, second_end = 0;
-      if (matched) {
-        i += 3;
-        gap = i;
-        while (i < line_length && is_space(line[i])) i++;
-        second_begin = i;
-        while (i < line_length && !is_space(line[i])) i++;
-        second_end = i;
-        matched = i > gap && second_end > second_begin;
+    parse_block_job job = {source, block_begin, block_end, name_space, state.cue_count,
+                           &state.cues[state.cue_count], true};
+    qa_caught_error caught;
+    if (!qa_try(parse_block, &job, &caught)) {
+      /* TS: rethrow unless a skipped callback is present (every raise here
+       * is an Error). */
+      if (skipped == NULL) {
+        parse_state_free(&state);
+        qa_rethrow(&caught);
       }
-      if (!matched) qa_error("Invalid subtitle cue timing");
-      char *first = dup_range(line + first_begin, first_end - first_begin);
-      char *second = dup_range(line + second_begin, second_end - second_begin);
-      if (first == NULL || second == NULL) {
-        free(first);
-        free(second);
-        qa_caption_cues_free(cues, cue_count);
-        free(normalized.data);
-        return false;
-      }
-      double start_ms = timestamp_value(first);
-      double end_ms = timestamp_value(second);
-      free(first);
-      free(second);
-      /* Cue text: remaining lines joined with \n, then trimEnd. */
-      size_t text_end = block_end;
-      while (text_end > text_begin && is_space(source[text_end - 1])) {
-        text_end--;
-      }
-      char *cue_text = dup_range(source + text_begin, text_end - text_begin);
-      if (cue_text == NULL) {
-        qa_caption_cues_free(cues, cue_count);
-        free(normalized.data);
-        return false;
-      }
-      /* Voice form /^<v\s+([^>]+)>([\s\S]*?)(?:<\/v>)?$/. */
-      char *cue_speaker = NULL;
-      char *body = cue_text;
-      if (cue_text[0] == '<' && cue_text[1] == 'v' && is_space(cue_text[2])) {
-        const char *speaker_begin = cue_text + 2;
-        while (is_space(*speaker_begin)) speaker_begin++;
-        const char *close = strchr(speaker_begin, '>');
-        if (close != NULL && close > speaker_begin) {
-          cue_speaker = dup_range(speaker_begin, (size_t)(close - speaker_begin));
-          const char *rest = close + 1;
-          size_t rest_length = strlen(rest);
-          if (rest_length >= 4 && strcmp(rest + rest_length - 4, "</v>") == 0) {
-            rest_length -= 4;
-          }
-          body = dup_range(rest, rest_length);
-          if (cue_speaker == NULL || body == NULL) {
-            free(cue_speaker);
-            free(cue_text);
-            qa_caption_cues_free(cues, cue_count);
-            free(normalized.data);
-            return false;
-          }
-          free(cue_text);
-          cue_text = body;
-        }
-      }
-      char id[512];
-      snprintf(id, sizeof id, "%s:%zu", name_space, cue_count);
-      if (cue_count == cue_capacity) {
-        size_t grown = cue_capacity == 0 ? 8 : cue_capacity * 2;
-        qa_caption_cue *next =
-            (qa_caption_cue *)realloc(cues, grown * sizeof *next);
-        if (next == NULL) {
-          free(cue_speaker);
-          free(cue_text);
-          qa_caption_cues_free(cues, cue_count);
-          free(normalized.data);
-          return false;
-        }
-        cues = next;
-        cue_capacity = grown;
-      }
-      qa_caption_cue *cue = &cues[cue_count];
-      memset(cue, 0, sizeof *cue);
-      cue->id = dup_text(id);
-      cue->kind_caption = false;
-      cue->start_milliseconds = start_ms;
-      cue->duration_milliseconds = end_ms - start_ms;
-      cue->text = cue_text;
-      cue->speaker = cue_speaker;
-      if (cue->id == NULL) {
-        qa_caption_cue_clear(cue);
-        qa_caption_cues_free(cues, cue_count);
-        free(normalized.data);
-        return false;
-      }
-      validate_cue(cue);
-      cue_count++;
+      size_t need = strlen(name_space) + strlen(caught.message) + 64;
+      char *reason = (char *)malloc(need);
+      if (reason == NULL) goto oom;
+      snprintf(reason, need, "%s: skipped invalid subtitle cue (%s)", name_space, caught.message);
+      skipped(skipped_ctx, reason);
+      free(reason);
+    } else if (!job.ok) {
+      goto oom;
+    } else if (job.out->id != NULL) {
+      state.cue_count++;
     }
     if (last) break;
     block_begin = next_begin;
   }
-  free(normalized.data);
-  *out = cues;
-  *out_count = cue_count;
+  free(state.normalized.data);
+  *out = state.cues;
+  *out_count = state.cue_count;
   return true;
 oom:
-  free(normalized.data);
+  parse_state_free(&state);
   return false;
 }

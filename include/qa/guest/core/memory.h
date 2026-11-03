@@ -4,9 +4,7 @@
  * C accommodations: the class becomes qa_sparse_guest_memory embedding
  * the registers.h qa_mapped_guest_memory vtable as `base` (CPUs and the
  * numeric leaves consume &mem->base). TS closures become small structs
- * (fetch sequence, executable guards, write-observer handles). The
- * TS recent/working-set mapping caches are dropped (locality only;
- * every access runs the full checked chunk walk). GuestAddress has no
+ * (fetch sequence, executable guards, write-observer handles). GuestAddress has no
  * addressSpace token in C, so foreign-address-space faults cannot be
  * detected (registers.h precedent). Observer callbacks cannot throw:
  * the TS AggregateError aggregation has no counterpart; a callback
@@ -47,6 +45,8 @@ typedef struct qa_sparse_write_observer qa_sparse_write_observer;
 typedef uint64_t qa_guest_write_observer_handle; /* 0 = none */
 typedef void (*qa_guest_write_observer_fn)(void *ctx, const qa_guest_written_range *ranges, size_t range_count);
 
+#define QA_SPARSE_WORKING_SET 8u /* power of two */
+
 typedef struct qa_sparse_guest_memory {
   qa_mapped_guest_memory base;
   qa_guest_module_ref module;
@@ -66,6 +66,20 @@ typedef struct qa_sparse_guest_memory {
   uint64_t generation;
   struct qa_sparse_hint { uint64_t alignment, base; size_t byte_length; } *hints;
   size_t hint_count, hint_cap;
+  /* TS #slabs / #freePages: pooled pages, 64 per slab. */
+  struct qa_sparse_slab { uint64_t base; uint8_t used[64]; size_t next; } *slabs;
+  size_t slab_count, slab_cap;
+  size_t *free_pages;
+  size_t free_page_count, free_page_cap;
+  /* TS #recentMappings (read, write, execute, any) and #workingSet. */
+  qa_sparse_mapping *recent_mappings[4];
+  qa_sparse_mapping *working_set[QA_SPARSE_WORKING_SET];
+  size_t next_working_mapping;
+  /* TS #maximumMappedBytes / #mappedTotal: bytes mapped at once (aliases included). */
+  uint64_t maximum_mapped_bytes;
+  uint64_t mapped_total;
+  /* TS #writeDeliveries: stores that reached at least one observer. */
+  uint64_t write_deliveries;
   uint8_t dummy;
 } qa_sparse_guest_memory;
 
@@ -74,6 +88,8 @@ typedef struct qa_sparse_guest_memory_options {
   int pointer_bytes; /* 4 | 8 */
   uint64_t allocation_base;
   bool has_allocation_base; /* false = TS undefined (0x10000) */
+  /* TS maximumMappedBytes; 0 = TS undefined (0x40000000). */
+  uint64_t maximum_mapped_bytes;
 } qa_sparse_guest_memory_options;
 
 void qa_sparse_guest_memory_init(qa_sparse_guest_memory *mem, const qa_sparse_guest_memory_options *options);
@@ -81,6 +97,8 @@ void qa_sparse_guest_memory_init_managed(qa_sparse_guest_memory *mem, const qa_s
 void qa_sparse_guest_memory_destroy(qa_sparse_guest_memory *mem);
 bool qa_sparse_guest_memory_managed(const qa_sparse_guest_memory *mem);
 bool qa_sparse_has_write_observers(const qa_sparse_guest_memory *mem);
+/* TS writeDeliveries: counts stores that reached at least one observer. */
+uint64_t qa_sparse_write_deliveries(const qa_sparse_guest_memory *mem);
 
 bool qa_sparse_pointer(qa_sparse_guest_memory *mem, uint64_t raw_value, qa_guest_core_address *out);
 qa_guest_core_address qa_sparse_offset(qa_sparse_guest_memory *mem, qa_guest_core_address address, int64_t displacement);
@@ -134,6 +152,20 @@ void qa_sparse_write_u64_words(qa_sparse_guest_memory *mem, qa_guest_core_addres
 void qa_sparse_write_f32(qa_sparse_guest_memory *mem, qa_guest_core_address address, double value);
 void qa_sparse_write_f64(qa_sparse_guest_memory *mem, qa_guest_core_address address, double value);
 void qa_sparse_write_pointer(qa_sparse_guest_memory *mem, qa_guest_core_address address, bool has_value, qa_guest_core_address value);
+
+/* TS scalarRead: number-addressed read for interpreters; -1 when the access is
+ * not inside a recently used readable mapping (nothing changes on a miss). */
+int64_t qa_sparse_scalar_read(qa_sparse_guest_memory *mem, uint64_t address, int byte_length);
+/* TS scalarWrite: false means nothing was written and the checked path must run. */
+bool qa_sparse_scalar_write(qa_sparse_guest_memory *mem, uint64_t address, int byte_length, uint32_t value);
+
+/* TS allocatorImage: contracts/execution.h qa_guest_allocator_image with
+ * malloc'd arrays; release with qa_guest_allocator_image_free. */
+void qa_sparse_allocator_image(const qa_sparse_guest_memory *mem, qa_guest_allocator_image *out);
+void qa_guest_allocator_image_free(qa_guest_allocator_image *image);
+/* TS restoreAllocator: replaces the allocation cursor and pool state; the
+ * mappings they describe must already exist. Invalid images raise RangeError. */
+void qa_sparse_restore_allocator(qa_sparse_guest_memory *mem, const qa_guest_allocator_image *image);
 
 /* TS fetchSequence closure. */
 typedef struct qa_guest_fetch_sequence {

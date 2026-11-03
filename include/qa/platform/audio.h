@@ -70,6 +70,8 @@ void qa_sdl_audio_clear(qa_sdl_audio_device *device);
 void qa_sdl_audio_pause(qa_sdl_audio_device *device);
 void qa_sdl_audio_resume(qa_sdl_audio_device *device);
 void qa_sdl_audio_start(qa_sdl_audio_device *device);
+/* TS SdlAudioDevice.removed: a named output no longer enumerated. */
+bool qa_sdl_audio_removed(qa_sdl_audio_device *device);
 qa_sdl_audio_state qa_sdl_audio_state_of(const qa_sdl_audio_device *device);
 void qa_sdl_audio_close(qa_sdl_audio_device *device);
 

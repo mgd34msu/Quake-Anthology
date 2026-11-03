@@ -78,6 +78,12 @@ void qa_bot_memory_free(qa_bot_memory *m, qa_bot_memory_allocation *a) {
   a->bytes = NULL;
   a->length = 0;
 }
+uint8_t *qa_bot_memory_allocation_bytes(const qa_bot_memory_allocation *a) {
+  const rec *r = a->record;
+  if (r == NULL || !r->live)
+    qa_range_error("Bot memory allocation has been freed");
+  return r->backing + 4;
+}
 void qa_bot_memory_reset_hunk(qa_bot_memory *m) {
   for (rec *r = m->records; r; r = r->next)
     if (r->kind == QA_BOT_MEMORY_HUNK)
@@ -110,25 +116,11 @@ void qa_bot_memory_print_used_memory_size(qa_bot_memory *m) {
   snprintf(buf, sizeof buf, "total memory blocks: %zu\n", m->live_count);
   m->debug_print(m->debug_ctx, "message", buf);
 }
-void qa_bot_memory_print_memory_labels(qa_bot_memory *m) {
-  if (!m->has_debug)
-    return;
-  qa_bot_memory_print_used_memory_size(m);
-  if (m->write_log)
-    m->write_log(m->log_ctx, "============= Botlib memory log ==============\r\n\r\n");
-}
 int64_t qa_bot_memory_memory_byte_size(qa_bot_memory *m, qa_bot_memory_allocation *a) {
   if (!m->has_debug)
     qa_range_error("MemoryByteSize requires the bot memory manager profile");
   rec *r = a ? a->record : NULL;
   return (!r || !r->live) ? 0 : (int64_t)r->size + 4;
-}
-void qa_bot_memory_dump_memory(qa_bot_memory *m) {
-  if (!m->has_debug)
-    qa_range_error("DumpMemory requires the bot memory manager profile");
-  for (rec *r = m->records; r; r = r->next)
-    if (r->live && r->kind == QA_BOT_MEMORY_HEAP)
-      release_rec(m, r);
 }
 
 /* Records are prepended; the TS live Map iterates allocation order. */

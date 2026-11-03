@@ -50,12 +50,12 @@ static bool actor_id_equal(qa_actor_id a, qa_actor_id b) {
          a.session.token == b.session.token;
 }
 
-static int32_t proceed(qa_qvmy_function_call *call) {
+static int32_t proceed(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                       : call->proceed_async(call->call_ctx);
 }
 
-static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset) {
+static int32_t call_word(const qa_qvm_module_function_call *call, int64_t byte_offset) {
   if (byte_offset < 0 || byte_offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
   const uint8_t *p = call->words + byte_offset;
@@ -123,7 +123,13 @@ static void spawn_finish_perform(void *ctx) {
     b->services.spawned(b->services.ctx, identity);
 }
 
-static int32_t spawn_hook(void *ctx, qa_qvmy_function_call *call) {
+/* TS catch around proceed: spawning.pop(). */
+static void spawn_unwind(void *ctx) {
+  qa_qvm_input_binding *b = ctx;
+  b->spawning_count--;
+}
+
+static int32_t spawn_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_input_binding *b = ctx;
   if (!qa_mod_client_applications_active(b->services.applications) &&
       b->services.spawned == NULL)
@@ -131,14 +137,23 @@ static int32_t spawn_hook(void *ctx, qa_qvmy_function_call *call) {
   double slot = qa_qvm_game_data_number_from_pointer(&b->source.game->data, (double)call_word(call, 0));
   b->spawning = grow(b->spawning, &b->spawning_capacity, b->spawning_count, sizeof *b->spawning);
   b->spawning[b->spawning_count++] = slot;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, spawn_unwind, b);
   int32_t result = proceed(call);
+  qa_cleanup_pop(&guard);
   spawn_finish_ctx finish = {b, slot};
   call->effect(call->call_ctx, spawn_finish_perform, &finish);
   b->spawning_count--;
   return result;
 }
 
-static int32_t envelope(qa_qvm_input_binding *b, qa_qvmy_function_call *call, double slot) {
+/* TS catch around proceed: clients.pop(). */
+static void envelope_unwind(void *ctx) {
+  qa_qvm_input_binding *b = ctx;
+  b->client_count--;
+}
+
+static int32_t envelope(qa_qvm_input_binding *b, qa_qvm_module_function_call *call, double slot) {
   if (b->source.retired(b->source.ctx, slot)) return 0;
   if (!qa_mod_client_applications_active(b->services.applications) || spawning_includes(b, slot))
     return proceed(call);
@@ -151,16 +166,19 @@ static int32_t envelope(qa_qvm_input_binding *b, qa_qvmy_function_call *call, do
                         call->cancellation_scope(call->call_ctx)};
   b->clients = grow(b->clients, &b->client_capacity, b->client_count, sizeof *b->clients);
   b->clients[b->client_count++] = scope;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, envelope_unwind, b);
   int32_t result = proceed(call);
+  qa_cleanup_pop(&guard);
   b->client_count--;
   return result;
 }
 
-static int32_t think_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t think_hook(void *ctx, qa_qvm_module_function_call *call) {
   return envelope(ctx, call, (double)call_word(call, 0));
 }
 
-static int32_t run_client_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t run_client_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_input_binding *b = ctx;
   return envelope(b, call,
                   qa_qvm_game_data_number_from_pointer(&b->source.game->data,
@@ -175,13 +193,12 @@ static qa_qvm_cancellation_scope cancellation_of(qa_qvm_input_binding *b,
   return scope->cancellation;
 }
 
-static int32_t check_live(qa_qvm_input_binding *b, qa_qvmy_function_call *call,
+static int32_t check_live(qa_qvm_input_binding *b, qa_qvm_module_function_call *call,
                           const client_scope *scope) {
   if (b->services.live(b->services.ctx, scope->identity)) return 0;
   b->source.retiring(b->source.ctx, scope->slot, scope->identity);
   (void)b->source.disconnect(b->source.ctx, scope->slot, scope->identity, call);
-  call->cancel_function(call->call_ctx, cancellation_of(b, scope));
-  return 0;
+  { call->cancel_function(call->call_ctx, cancellation_of(b, scope)); qa_range_error("QVM function scope cancelled"); }
 }
 
 typedef struct encode_aim_ctx {
@@ -208,7 +225,7 @@ static qa_user_command encode_aim(void *ctx, qa_vec3 aim, qa_user_command effect
 
 typedef struct apply_ctx {
   qa_qvm_input_binding *binding;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   client_scope scope;
   int64_t movement;
   const char *kind;
@@ -226,10 +243,55 @@ static void finish_effect_perform(void *ctx) {
   *effect->application = NULL;
 }
 
+typedef struct apply_state {
+  qa_qvm_input_binding *binding;
+  client_scope scope;
+  qa_mod_client_application *previous, *application, *application_owned;
+  command_frame frame_entry;
+  int64_t address;
+  uint8_t *suspended;
+  size_t suspended_length;
+  bool failed, finished;
+  bool has_projected_type;
+  int32_t projected_before, projected_value;
+} apply_state;
+
+/* TS finish(): runs once, on completion or when the scope is cancelled. */
+static void apply_finish(void *ctx) {
+  apply_state *state = ctx;
+  if (state->finished) return;
+  state->finished = true;
+  qa_qvm_input_binding *b = state->binding;
+  qa_qvm_memory *memory = b->source.game->module.memory;
+  qa_mod_client_applications_finish(b->services.applications, state->application, state->failed);
+  if (state->has_projected_type && b->services.live(b->services.ctx, state->scope.identity)) {
+    qa_qvm_writable_view type_view;
+    qa_qvm_memory_view(memory, (int64_t)client_pointer(b, state->scope.slot) + 4, 4, 0, &type_view);
+    if (qa_qvm_writable_view_get_int32(&type_view, 0, true) == state->projected_value)
+      qa_qvm_writable_view_set_int32(&type_view, 0, state->projected_before, true);
+  }
+  b->current = state->previous;
+  for (size_t i = b->command_frame_count; i-- > 0;) {
+    if (b->command_frames[i].scope_sequence == state->frame_entry.scope_sequence &&
+        b->command_frames[i].address == state->frame_entry.address) {
+      memmove(&b->command_frames[i], &b->command_frames[i + 1],
+              (b->command_frame_count - i - 1) * sizeof *b->command_frames);
+      b->command_frame_count--;
+      break;
+    }
+  }
+  if (state->suspended != NULL) {
+    qa_qvm_memory_write_bytes(memory, state->address, state->suspended, state->suspended_length);
+    free(state->suspended);
+    state->suspended = NULL;
+  }
+  if (state->application_owned != NULL) qa_mod_client_application_dispose(state->application_owned);
+}
+
 static int32_t apply_run(void *ctx) {
   apply_ctx *apply = ctx;
   qa_qvm_input_binding *b = apply->binding;
-  qa_qvmy_function_call *call = apply->call;
+  qa_qvm_module_function_call *call = apply->call;
   client_scope scope = apply->scope;
   qa_qvm_game *game = b->source.game;
   const qa_qvm_input_definition *definition = &b->source.definition;
@@ -287,12 +349,19 @@ static int32_t apply_run(void *ctx) {
     if (milliseconds > 200) milliseconds = 200;
     if (milliseconds < 1) milliseconds = 1;
   }
-  qa_mod_client_application *previous = b->current;
-  qa_mod_client_application *application = NULL;
-  qa_mod_client_application *application_owned = NULL;
-  bool failed = true, finished = false;
-  bool has_projected_type = false;
-  int32_t projected_before = 0, projected_value = 0;
+  apply_state run;
+  memset(&run, 0, sizeof run);
+  run.binding = b;
+  run.scope = scope;
+  run.previous = b->current;
+  run.frame_entry = frame_entry;
+  run.address = address;
+  run.suspended = suspended;
+  run.suspended_length = suspended_length;
+  run.failed = true;
+  qa_mod_client_application *previous = run.previous;
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, apply_finish, &run);
 
   qa_vec3 command_angles = {command.angles[0], command.angles[1], command.angles[2]};
   qa_vec3 delta_angles = {state.delta_angle_words.values[0], state.delta_angle_words.values[1],
@@ -323,10 +392,10 @@ static int32_t apply_run(void *ctx) {
   begin_input.has_parent_invocation = previous != NULL;
   begin_input.parent_invocation = previous != NULL ? previous->invocation : 0;
   encode_aim_ctx encode = {b, scope.slot};
-  application = qa_mod_client_applications_begin(b->services.applications, begin_input, encode_aim,
-                                                 &encode);
-  application_owned = application;
-  b->current = application;
+  run.application = qa_mod_client_applications_begin(b->services.applications, begin_input, encode_aim,
+                                                     &encode);
+  run.application_owned = run.application;
+  b->current = run.application;
 
   (void)check_live(b, call, &scope);
   {
@@ -341,15 +410,15 @@ static int32_t apply_run(void *ctx) {
                                                                     : definition->movement_mode_freeze;
       qa_qvm_writable_view type_view;
       qa_qvm_memory_view(memory, (int64_t)client_pointer(b, scope.slot) + 4, 4, 0, &type_view);
-      has_projected_type = true;
-      projected_before = qa_qvm_writable_view_get_int32(&type_view, 0, true);
-      projected_value = qa_int32(value);
-      qa_qvm_writable_view_set_int32(&type_view, 0, projected_value, true);
+      run.has_projected_type = true;
+      run.projected_before = qa_qvm_writable_view_get_int32(&type_view, 0, true);
+      run.projected_value = qa_int32(value);
+      qa_qvm_writable_view_set_int32(&type_view, 0, run.projected_value, true);
     }
-    qa_user_command base = application != NULL ? application->command : input;
+    qa_user_command base = run.application != NULL ? run.application->command : input;
     bool has_stance = has_output && output.has_stance;
     qa_user_command effective = qa_client_stance_command(base, has_stance, has_stance && output.stance);
-    bool unchanged = application == NULL && !has_stance;
+    bool unchanged = run.application == NULL && !has_stance;
     if (!unchanged) {
       if (effective.kind != QA_USER_COMMAND_Q3)
         qa_range_error("QVM input output changed the source command dialect");
@@ -369,42 +438,18 @@ static int32_t apply_run(void *ctx) {
     }
   }
   int32_t result = proceed(call);
-  failed = false;
+  run.failed = false;
   {
-    finish_effect_ctx effect = {b, &application};
+    finish_effect_ctx effect = {b, &run.application};
     call->effect(call->call_ctx, finish_effect_perform, &effect);
   }
   (void)check_live(b, call, &scope);
-
-  if (!finished) {
-    finished = true;
-    qa_mod_client_applications_finish(b->services.applications, application, failed);
-    if (has_projected_type && b->services.live(b->services.ctx, scope.identity)) {
-      qa_qvm_writable_view type_view;
-      qa_qvm_memory_view(memory, (int64_t)client_pointer(b, scope.slot) + 4, 4, 0, &type_view);
-      if (qa_qvm_writable_view_get_int32(&type_view, 0, true) == projected_value)
-        qa_qvm_writable_view_set_int32(&type_view, 0, projected_before, true);
-    }
-    b->current = previous;
-    for (size_t i = b->command_frame_count; i-- > 0;) {
-      if (b->command_frames[i].scope_sequence == frame_entry.scope_sequence &&
-          b->command_frames[i].address == frame_entry.address) {
-        memmove(&b->command_frames[i], &b->command_frames[i + 1],
-                (b->command_frame_count - i - 1) * sizeof *b->command_frames);
-        b->command_frame_count--;
-        break;
-      }
-    }
-    if (suspended != NULL) {
-      qa_qvm_memory_write_bytes(memory, address, suspended, suspended_length);
-      free(suspended);
-    }
-    if (application_owned != NULL) qa_mod_client_application_dispose(application_owned);
-  }
+  qa_cleanup_pop(&guard);
+  apply_finish(&run);
   return result;
 }
 
-static int32_t movement_hook(qa_qvm_input_binding *b, qa_qvmy_function_call *call, const char *kind) {
+static int32_t movement_hook(qa_qvm_input_binding *b, qa_qvm_module_function_call *call, const char *kind) {
   if (!qa_mod_client_applications_active(b->services.applications) || b->client_count == 0)
     return proceed(call);
   qa_qvm_game *game = b->source.game;
@@ -426,7 +471,7 @@ static int32_t movement_hook(qa_qvm_input_binding *b, qa_qvmy_function_call *cal
 
 typedef struct movement_run_ctx {
   qa_qvm_input_binding *binding;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   const char *kind;
 } movement_run_ctx;
 
@@ -435,17 +480,17 @@ static int32_t movement_run(void *ctx) {
   return movement_hook(run->binding, run->call, run->kind);
 }
 
-static int32_t run_movement(qa_qvm_input_binding *b, qa_qvmy_function_call *call, const char *kind) {
+static int32_t run_movement(qa_qvm_input_binding *b, qa_qvm_module_function_call *call, const char *kind) {
   if (b->services.movement == NULL) return movement_hook(b, call, kind);
   movement_run_ctx run = {b, call, kind};
   return b->services.movement(b->services.ctx, call, kind, movement_run, &run);
 }
 
-static int32_t move_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t move_hook(void *ctx, qa_qvm_module_function_call *call) {
   return run_movement(ctx, call, "client-command");
 }
 
-static int32_t slice_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t slice_hook(void *ctx, qa_qvm_module_function_call *call) {
   return run_movement(ctx, call, "movement-slice");
 }
 
@@ -456,7 +501,7 @@ static void release_listener(void *ctx, qa_actor_id actor) {
       b->source.retiring(b->source.ctx, b->clients[i].slot, b->clients[i].identity);
 }
 
-static size_t bind_entry(qa_qvm_input_binding *b, double entry, qa_qvmy_function_hook_fn hook) {
+static size_t bind_entry(qa_qvm_input_binding *b, double entry, qa_qvm_function_hook_fn hook) {
   qa_guest_callback_reference reference;
   memset(&reference, 0, sizeof reference);
   reference.kind = QA_GUEST_CALLBACK_QVM;

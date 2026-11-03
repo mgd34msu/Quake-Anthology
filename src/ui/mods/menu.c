@@ -9,6 +9,8 @@
 
 #include "qa/foundation/support.h"
 #include "qa/input/support.h"
+#include "qa/ui/common/controls.h"
+#include "qa/foundation/js_case.h"
 
 typedef struct mods_state mods_state;
 typedef struct xctx {
@@ -78,11 +80,10 @@ static void clear_pool(mods_state *s) {
   for (size_t i = 0; i < s->pool_count; i++) free(s->pool[i]);
   s->pool_count = 0;
 }
+/* TS text.toLowerCase() (Unicode). */
 static char *lower_dup(const char *text) {
-  char *copy = qa_input_dup(text);
+  char *copy = qa_js_to_lower_case(text);
   if (copy == NULL) qa_range_error("Out of memory");
-  for (char *p = copy; *p != '\0'; p++)
-    *p = (char)tolower((unsigned char)*p);
   return copy;
 }
 
@@ -161,39 +162,6 @@ static void add_button(mods_state *s, size_t *at, const char *suffix,
   control->rect = (qa_rect){ x, y, width, 28 };
   control->enabled = enabled;
   control->activate_seat = on_activate;
-}
-
-/* One /.{1,42}(?:\s+|$)|\S{1,42}/gu match at *cursor (ASCII view),
- * returned pooled; NULL at end. Advances *cursor past the match. */
-static char *next_wrap_line(mods_state *s, const char **cursor) {
-  const char *text = *cursor;
-  if (text[0] == '\0') return NULL;
-  size_t length = strlen(text);
-  size_t take = 0;
-  if (length <= 42) {
-    take = length;
-  } else {
-    long found = -1;
-    for (size_t k = 42; k >= 1; k--)
-      if (isspace((unsigned char)text[k])) {
-        found = (long)k;
-        break;
-      }
-    if (found >= 0) {
-      take = (size_t)found;
-      while (take < length && isspace((unsigned char)text[take])) take++;
-    } else {
-      take = 0;
-      while (take < length && take < 42 &&
-             !isspace((unsigned char)text[take]))
-        take++;
-      if (take == 0) take = 1; /* leading space run: .{1,42}\s+ */
-    }
-  }
-  char *line = qa_input_dup_range(text, take);
-  if (line == NULL) qa_range_error("Out of memory");
-  *cursor = text + take;
-  return pool_own(s, line);
 }
 
 static qa_ui_menu factory(void *v) {
@@ -294,26 +262,22 @@ static qa_ui_menu factory(void *v) {
   if (current != NULL && current->unavailable != NULL)
     messages[message_count++] = current->unavailable;
   messages[message_count++] = status_text;
+  /* messages.flatMap(message => wrapWords(message, 42)); lines are pooled. */
   size_t line_count = 0;
-  for (size_t m = 0; m < message_count; m++) {
-    const char *cursor = messages[m];
-    char *line;
-    while ((line = next_wrap_line(s, &cursor)) != NULL) {
-      (void)line;
-      line_count++;
-    }
-  }
-  /* Lines were pooled by next_wrap_line in order; the detail
-   * controls reference the last line_count pool entries created
-   * for wrapping, but pool also holds control ids added later, so
-   * snapshot them now. */
-  size_t wrap_pool_start = s->pool_count - line_count;
   char **lines = NULL;
-  if (line_count > 0) {
-    lines = malloc(line_count * sizeof *lines);
-    if (lines == NULL) qa_range_error("Out of memory");
-    for (size_t i = 0; i < line_count; i++)
-      lines[i] = s->pool[wrap_pool_start + i];
+  for (size_t m = 0; m < message_count; m++) {
+    size_t count = 0;
+    char **wrapped = qa_ui_wrap_words(messages[m], 42, &count);
+    if (count > 0) {
+      char **grown = realloc(lines, (line_count + count) * sizeof *grown);
+      if (grown == NULL) qa_range_error("Out of memory");
+      lines = grown;
+      for (size_t i = 0; i < count; i++) {
+        lines[line_count++] = pool_own(s, wrapped[i]);
+        wrapped[i] = NULL;
+      }
+    }
+    free(wrapped);
   }
   size_t row_total = filtered > 0 ? filtered : 1;
   if (row_total > s->row_capacity) {

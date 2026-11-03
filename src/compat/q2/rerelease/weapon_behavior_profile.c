@@ -10,6 +10,8 @@
 #include "qa/compat/q2/rerelease/native_weapon_declaration.h"
 #include "qa/compat/q2/rerelease/q2eaks_weapon_profile.h"
 #include "qa/formats/q1_map/entities.h"
+#include "qa/foundation/js.h"
+#include "qa/foundation/support.h"
 
 static bool read_declaration(const qa_native_weapon_behavior_declaration *declaration, const qa_module_identity *module,
                              qa_native_weapon_behavior_declaration *out) {
@@ -141,33 +143,43 @@ static bool independent_equal(const qa_save_value *left, const qa_save_value *ri
     li++; ri++;
   }
 }
+typedef struct provisioning_scope {
+  qa_cvar_registry *cvars;
+  qa_save_value *saved;
+  void *ctx;
+  void (*refresh)(void *ctx);
+} provisioning_scope;
+/* The TS `finally`: restore the captured cvars and refresh, on return and on throw. */
+static void provisioning_finally(void *arg) {
+  provisioning_scope *scope = arg;
+  qa_cvar_registry_restore_save_state(scope->cvars, scope->saved);
+  qa_save_value *saved = scope->saved;
+  scope->saved = NULL;
+  scope->refresh(scope->ctx);
+  qa_save_value_free(saved);
+}
 void *qa_compat_q2_with_rerelease_weapon_provisioning(const qa_native_weapon_cvar *provisioning_cvars, size_t count,
                                                       qa_cvar_registry *cvars, void *ctx, void (*refresh)(void *ctx),
                                                       void *(*run)(void *ctx)) {
-  qa_save_value *saved = qa_cvar_registry_capture_world_transfer_state(cvars);
-  void *result = NULL;
-  bool changed = false;
+  provisioning_scope scope = {cvars, qa_cvar_registry_capture_world_transfer_state(cvars), ctx, refresh};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, provisioning_finally, &scope);
   for (size_t i = 0; i < count; i++) {
     qa_cvar_snapshot snap; memset(&snap, 0, sizeof snap);
-    if (!qa_cvar_registry_get(cvars, provisioning_cvars[i].name, &snap)) {
-      qa_cvar_registry_restore_save_state(cvars, saved); refresh(ctx); qa_save_value_free(saved);
-      qa_range_error("Native source has not registered its provisioning capability");
-    }
+    if (!qa_cvar_registry_get(cvars, provisioning_cvars[i].name, &snap))
+      qa_raise("Error", 0, 0, "Native source has not registered its provisioning capability");
     qa_cvar_read_free(&snap);
     memset(&snap, 0, sizeof snap);
     if (qa_cvar_registry_set(cvars, provisioning_cvars[i].name, provisioning_cvars[i].value, true, &snap)) qa_cvar_read_free(&snap);
   }
   refresh(ctx);
-  result = run(ctx);
-  {
-    qa_save_value *current = qa_cvar_registry_capture_world_transfer_state(cvars);
-    changed = !independent_equal(current, saved, provisioning_cvars, count);
-    qa_save_value_free(current);
-  }
-  qa_cvar_registry_restore_save_state(cvars, saved);
-  refresh(ctx);
-  qa_save_value_free(saved);
-  if (changed) qa_range_error("Native provisioning changed an undeclared source cvar");
+  void *result = run(ctx);
+  qa_save_value *current = qa_cvar_registry_capture_world_transfer_state(cvars);
+  bool changed = !independent_equal(current, scope.saved, provisioning_cvars, count);
+  qa_save_value_free(current);
+  if (changed) qa_raise("Error", 0, 0, "Native provisioning changed an undeclared source cvar");
+  qa_cleanup_pop(&cleanup);
+  provisioning_finally(&scope);
   return result;
 }
 typedef struct bind_ctx {
@@ -191,8 +203,10 @@ static qa_guest_address at(bind_ctx_t *b, qa_raw_entity_view record, double offs
 }
 static qa_vec3 read_vector(bind_ctx_t *b, qa_guest_address address) {
   qa_compat_q2_memory *m = bmem(b);
-  return (qa_vec3){qa_compat_q2_mem_read_f32(m, address), qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 4)),
-                   qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 8))};
+  double x = qa_compat_q2_mem_read_f32(m, address);
+  double y = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 4));
+  double z = qa_compat_q2_mem_read_f32(m, qa_compat_q2_mem_offset(m, address, 8));
+  return (qa_vec3){x, y, z};
 }
 static void write_vector(bind_ctx_t *b, qa_guest_address address, qa_vec3 value) {
   qa_compat_q2_memory *m = bmem(b);
@@ -223,7 +237,9 @@ static void p_equip(void *v, qa_raw_entity_view record) {
   bind_ctx_t *b = v;
   for (size_t i = 0; i < b->equip_count; i++) invoke_record(b, b->equip[i], record);
   qa_guest_address weapon;
-  if (!qa_compat_q2_mem_read_pointer(bmem(b), client_field(b, record, b->profile.client.weapon), &weapon))
+  const qa_compat_q2_memory * m = bmem(b);
+  qa_guest_address a = client_field(b, record, b->profile.client.weapon);
+  if (!qa_compat_q2_mem_read_pointer(m, a, &weapon))
     qa_range_error("Native source did not equip the artifact-qualified weapon");
   bmem(b)->check(bmem(b)->ctx, weapon, b->profile.equipped_weapon.byte_length, "read");
   qa_guest_address callback;
@@ -249,7 +265,7 @@ static void p_project_shooter(void *v, qa_raw_entity_view record, qa_compat_q2_r
   double pitch = shooter.view_angles.x * M_PI / 180, yaw = shooter.view_angles.y * M_PI / 180;
   write_vector(b, client_field(b, record, b->profile.client.forward),
                (qa_vec3){cos(pitch) * cos(yaw), cos(pitch) * sin(yaw), -sin(pitch)});
-  qa_compat_q2_mem_write_i32(bmem(b), at(b, record, b->profile.entity.view_height), (int32_t)shooter.view_height);
+  qa_compat_q2_mem_write_i32(bmem(b), at(b, record, b->profile.entity.view_height), qa_js_to_int32(shooter.view_height));
 }
 static void p_project(void *v, qa_raw_entity_view record, qa_body_state body) { do_project(v, record, body); }
 static qa_weapon_trajectory_update p_trajectory(void *v, qa_raw_entity_view record) {
@@ -295,7 +311,9 @@ static qa_raw_entity_view p_allocate(void *v) {
 static void p_free_record(void *v, qa_raw_entity_view record) {
   bind_ctx_t *b = v;
   qa_compat_q2_rerelease_layouts_ensure();
-  if (qa_compat_q2_mem_read_u8(bmem(b), at(b, record, qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_edict_layout, "inuse"))))
+  const qa_compat_q2_memory * m = bmem(b);
+  qa_guest_address a = at(b, record, qa_compat_q2_rerelease_field_offset(&qa_compat_q2_rerelease_edict_layout, "inuse"));
+  if (qa_compat_q2_mem_read_u8(m, a))
     invoke_record(b, b->freed, record);
 }
 static qa_guest_address resolve_entry(bind_ctx_t *b, qa_guest_address image_base, qa_native_weapon_entry value) {

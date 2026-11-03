@@ -9,6 +9,9 @@
 #include "qa/core/common_error.h"
 #include "qa/foundation/support.h"
 
+/* Q3 MAX_GENTITIES: area queries return entity slots, each below it. */
+#define AREA_ENTITY_SLOTS 1024
+
 /* Landed QvmGameImport values (TS abi.ts). */
 enum {
   G_DROP_CLIENT = QA_QVM_GAME_IMPORT_G_DROP_CLIENT,
@@ -37,7 +40,7 @@ enum {
 
 static qa_vec3 vector(const qa_qvm_host_call *call, int32_t pointer) {
   qa_qvm_writable_view view;
-  qa_qvm_memory_view(call->guest, pointer, 12, 0, &view);
+  qa_qvm_game_memory_view(QA_SHARED_GUEST(call), pointer, 12, 0, &view);
   qa_vec3 result = {(double)qa_qvm_writable_view_get_float32(&view, 0, true),
                     (double)qa_qvm_writable_view_get_float32(&view, 4, true),
                     (double)qa_qvm_writable_view_get_float32(&view, 8, true)};
@@ -84,7 +87,7 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
     case G_SET_BRUSH_MODEL: {
       if (qa_qvm_host_call_word(call, 2) == 0)
         qa_common_error(QA_COMMON_ERROR_DROP, "SV_SetBrushModel: NULL");
-      char *name = qa_qvm_memory_read_string(call->guest, qa_qvm_host_call_word(call, 2));
+      char *name = qa_qvm_game_memory_read_string(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 2));
       if (name[0] != '*') {
         char message[1200];
         snprintf(message, sizeof message, "SV_SetBrushModel: %s isn't a brush model", name);
@@ -109,7 +112,7 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
       query.mask = qa_qvm_host_call_word(call, 7);
       qa_qvm_trace_record result = spatial->trace(spatial->ctx, &query);
       qa_qvm_writable_view view;
-      qa_qvm_memory_view(call->guest, qa_qvm_host_call_word(call, 1), QA_QVM_TRACE_BYTES, 0, &view);
+      qa_qvm_game_memory_view(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 1), QA_QVM_TRACE_BYTES, 0, &view);
       qa_qvm_write_trace_view(&view, &result);
       *out = 0;
       return true;
@@ -119,11 +122,12 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
                                      qa_qvm_host_call_word(call, 2));
       return true;
     case G_IN_PVS:
-    case G_IN_PVS_IGNORE_PORTALS:
-      *out = spatial->in_pvs(spatial->ctx, vector(call, qa_qvm_host_call_word(call, 1)),
-                             vector(call, qa_qvm_host_call_word(call, 2)),
-                             call->code == G_IN_PVS_IGNORE_PORTALS) ? 1 : 0;
+    case G_IN_PVS_IGNORE_PORTALS: {
+      qa_vec3 first = vector(call, qa_qvm_host_call_word(call, 1));
+      qa_vec3 second = vector(call, qa_qvm_host_call_word(call, 2));
+      *out = spatial->in_pvs(spatial->ctx, first, second, call->code == G_IN_PVS_IGNORE_PORTALS) ? 1 : 0;
       return true;
+    }
     case G_ADJUST_AREA_PORTAL_STATE:
       spatial->adjust_area_portal_state(spatial->ctx, slot(call, services, 1),
                                         qa_qvm_host_call_word(call, 2) != 0);
@@ -142,10 +146,20 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
       *out = 0;
       return true;
     case G_ENTITIES_IN_BOX: {
-      qa_bounds input = {vector(call, qa_qvm_host_call_word(call, 1)),
-                         vector(call, qa_qvm_host_call_word(call, 2))};
+      qa_bounds input;
+      input.min = vector(call, qa_qvm_host_call_word(call, 1));
+      input.max = vector(call, qa_qvm_host_call_word(call, 2));
       int32_t maximum = qa_qvm_host_call_word(call, 4);
-      size_t capacity = maximum > 0 ? (size_t)maximum : 0;
+      /* TS queries once. A negative maximum returns the whole list, so size the
+       * buffer for every entity slot (no more fit the guest's entity table) and
+       * never past the guest output span (a longer list fails at its view). */
+      size_t capacity = maximum >= 0 ? (size_t)maximum : AREA_ENTITY_SLOTS;
+      if (maximum < 0) {
+        qa_qvm_game_region span;
+        if (qa_qvm_game_memory_pointer(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 3), &span) &&
+            span.length / 4 < capacity)
+          capacity = span.length / 4;
+      }
       int32_t *result = malloc((capacity == 0 ? 1 : capacity) * sizeof *result);
       if (result == NULL) qa_range_error("QVM memory allocation failed");
       size_t length = spatial->area_entities(spatial->ctx, input, maximum, result, capacity);
@@ -153,9 +167,15 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
         free(result);
         qa_range_error("Area entity owner exceeded output capacity");
       }
-      /* TS returns the full list for a negative maximum; the fill
-       * callback only wrote capacity entries, so re-query into a
-       * buffer sized to its full count. */
+      /* Only a list longer than the entity table or the guest span gets here;
+       * the view below rejects the latter as TS does. */
+      if (maximum < 0 && length > capacity) {
+        qa_cleanup cleanup;
+        qa_cleanup_push(&cleanup, free, result);
+        qa_qvm_writable_view output;
+        qa_qvm_game_memory_view(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 3), (int64_t)(length * 4), 0, &output);
+        qa_cleanup_pop(&cleanup);
+      }
       while (length > capacity) {
         capacity = length;
         int32_t *grown = realloc(result, capacity * sizeof *grown);
@@ -168,7 +188,7 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
       }
       if (length > 0) {
         qa_qvm_writable_view output;
-        qa_qvm_memory_view(call->guest, qa_qvm_host_call_word(call, 3), (int64_t)(length * 4), 0, &output);
+        qa_qvm_game_memory_view(QA_SHARED_GUEST(call), qa_qvm_host_call_word(call, 3), (int64_t)(length * 4), 0, &output);
         for (size_t i = 0; i < length; i++)
           qa_qvm_writable_view_set_int32(&output, (int64_t)(i * 4), result[i], true);
       }
@@ -178,8 +198,9 @@ bool qa_qvm_server_game_syscall(const qa_qvm_host_call *call,
     }
     case G_ENTITY_CONTACT:
     case G_ENTITY_CONTACTCAPSULE: {
-      qa_bounds input = {vector(call, qa_qvm_host_call_word(call, 1)),
-                         vector(call, qa_qvm_host_call_word(call, 2))};
+      qa_bounds input;
+      input.min = vector(call, qa_qvm_host_call_word(call, 1));
+      input.max = vector(call, qa_qvm_host_call_word(call, 2));
       *out = spatial->entity_contact(spatial->ctx, input, slot(call, services, 3),
                                      call->code == G_ENTITY_CONTACTCAPSULE) ? 1 : 0;
       return true;

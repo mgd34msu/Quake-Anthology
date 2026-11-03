@@ -1,5 +1,6 @@
 /* Port of src/content/q2/missionpacks/damage.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/damage.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <string.h>
@@ -16,9 +17,9 @@ static bool valid_classic(const char *game, double id) {
 bool qa_q2mp_canonical_cause_from_native(qa_q2_native_cause native, double *out) {
   if (is_game(native.edition, "classic")) {
     if (!safe_integer(native.value) || native.value < 0 || native.value > friendly_fire + 55) return false;
-    int64_t bits = (int64_t)native.value;
-    bool friendly = (bits & (int64_t)friendly_fire) != 0;
-    double id = (double)(bits & ~(int64_t)friendly_fire);
+    int32_t bits = qa_js_to_int32(native.value); /* validated 0..2^27+58: ToInt32 is the value */
+    bool friendly = (bits & qa_js_to_int32(friendly_fire)) != 0;
+    double id = (double)(bits & ~qa_js_to_int32(friendly_fire));
     if (!valid_classic(native.game, id)) return false;
     *out = (is_game(native.game, "ctf") && id == 34 ? QA_Q2MP_CAUSE_GRAPPLE : id) + (friendly ? friendly_fire : 0);
     return true;
@@ -34,9 +35,9 @@ bool qa_q2mp_canonical_cause_from_native(qa_q2_native_cause native, double *out)
 bool qa_q2mp_native_cause_from_canonical(qa_q2mp_native_cause_profile profile, double canonical,
                                          qa_q2_native_cause *out) {
   if (!safe_integer(canonical) || canonical < 0 || canonical > friendly_fire + 58) return false;
-  int64_t bits = (int64_t)canonical;
-  bool friendly = (bits & (int64_t)friendly_fire) != 0;
-  double id = (double)(bits & ~(int64_t)friendly_fire);
+  int32_t bits = qa_js_to_int32(canonical); /* validated 0..2^27+58: ToInt32 is the value */
+  bool friendly = (bits & qa_js_to_int32(friendly_fire)) != 0;
+  double id = (double)(bits & ~qa_js_to_int32(friendly_fire));
   memset(out, 0, sizeof *out);
   if (!profile.rerelease) {
     double raw = is_game(profile.game, "ctf") && id == QA_Q2MP_CAUSE_GRAPPLE ? 34 : id;

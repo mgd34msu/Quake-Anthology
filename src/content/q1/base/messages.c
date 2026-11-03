@@ -2,6 +2,7 @@
 #include "qa/content/q1/base/messages.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <string.h>
 
 typedef struct entry { const char *key; const char *text; } entry;
@@ -37,6 +38,10 @@ static const entry OBITUARIES[] = {
   {"$qc_death_lava2", "{0} turned into hot slag\n"},
   {"$qc_death_lava3", "{0} visits the Volcano God\n"},
   {"$qc_death_squish", "{0} was squished\n"},
+  {"$qc_death_hook1", "{0} was hooked by {1}\n"},
+  {"$qc_death_hook2", "{0} was hooked by {1}\n"},
+  {"$qc_ks_changed_teams", "{0} changed teams\n"},
+  {"$qc_ks_tried_change_teams", "{0} tried to change teams\n"},
   {"$qc_death_fall", "{0} fell to his death\n"},
   {"$qc_death_died", "{0} died\n"},
 };
@@ -75,7 +80,11 @@ char *qa_q1_classic_obituary_text(const char *key, const char *const *args, size
   for (const char *p = pattern; *p != '\0'; p++) {
     if (p[0] == '{') {
       const char *q = p + 1; long index = 0; int digits = 0;
-      while (*q >= '0' && *q <= '9') { index = index * 10 + (*q - '0'); q++; digits++; }
+      while (*q >= '0' && *q <= '9') {
+        /* Number(index) never wraps (and signed overflow is undefined): saturate out of range. */
+        index = index <= (LONG_MAX - 9) / 10 ? index * 10 + (*q - '0') : LONG_MAX;
+        q++; digits++;
+      }
       if (digits > 0 && *q == '}') {
         const char *arg = index >= 0 && (size_t)index < arg_count && args[index] != NULL ? args[index] : "";
         if (used < out_size) used += (size_t)snprintf(out + used, out_size - used, "%s", arg);

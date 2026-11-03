@@ -14,13 +14,12 @@
 #include "qa/foundation/support.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 #define Q2_NO_ARCHIVE                                                        \
@@ -98,6 +97,7 @@ typedef struct alias_handle {
   char *name;
 } alias_handle;
 
+typedef struct local_info_entry { char *key; char *value; } local_info_entry;
 struct qa_cvar_registry {
   qa_cvar_registry_options options;
   cvar_state **indexes; /* NULL holes */
@@ -135,6 +135,9 @@ struct qa_cvar_registry {
   size_t output_capacity;
   int64_t next_binding_id;
   double mutation_revision;
+  local_info_entry *local_info; /* TS localInfo Map, insertion order */
+  size_t local_info_count;
+  size_t local_info_capacity;
 };
 
 static void state_free(cvar_state *state) {
@@ -323,7 +326,60 @@ void qa_cvar_registry_destroy(qa_cvar_registry *r) {
   for (size_t i = 0; i < r->alias_handle_count; i++) free(r->alias_handles[i].name);
   free(r->alias_handles);
   free(r->output_bindings);
+  for (size_t i = 0; i < r->local_info_count; i++) {
+    free(r->local_info[i].key);
+    free(r->local_info[i].value);
+  }
+  free(r->local_info);
   free(r);
+}
+
+const char *qa_cvar_registry_local_info_get(const qa_cvar_registry *r, const char *key) {
+  for (size_t i = 0; i < r->local_info_count; i++)
+    if (strcmp(r->local_info[i].key, key) == 0) return r->local_info[i].value;
+  return NULL;
+}
+void qa_cvar_registry_local_info_set(qa_cvar_registry *r, const char *key, const char *value) {
+  char *copy = dup_text(value);
+  if (copy == NULL) qa_error("out of memory");
+  for (size_t i = 0; i < r->local_info_count; i++)
+    if (strcmp(r->local_info[i].key, key) == 0) {
+      free(r->local_info[i].value);
+      r->local_info[i].value = copy;
+      return;
+    }
+  if (r->local_info_count == r->local_info_capacity) {
+    size_t cap = r->local_info_capacity == 0 ? 8 : r->local_info_capacity * 2;
+    local_info_entry *items = (local_info_entry *)realloc(r->local_info, cap * sizeof *items);
+    if (items == NULL) qa_error("out of memory");
+    r->local_info = items;
+    r->local_info_capacity = cap;
+  }
+  char *key_copy = dup_text(key);
+  if (key_copy == NULL) qa_error("out of memory");
+  r->local_info[r->local_info_count].key = key_copy;
+  r->local_info[r->local_info_count].value = copy;
+  r->local_info_count++;
+}
+bool qa_cvar_registry_local_info_delete(qa_cvar_registry *r, const char *key) {
+  for (size_t i = 0; i < r->local_info_count; i++)
+    if (strcmp(r->local_info[i].key, key) == 0) {
+      free(r->local_info[i].key);
+      free(r->local_info[i].value);
+      memmove(&r->local_info[i], &r->local_info[i + 1],
+              (r->local_info_count - i - 1) * sizeof *r->local_info);
+      r->local_info_count--;
+      return true;
+    }
+  return false;
+}
+size_t qa_cvar_registry_local_info_count(const qa_cvar_registry *r) { return r->local_info_count; }
+bool qa_cvar_registry_local_info_entry(const qa_cvar_registry *r, size_t index,
+                                       const char **key, const char **value) {
+  if (index >= r->local_info_count) return false;
+  *key = r->local_info[index].key;
+  *value = r->local_info[index].value;
+  return true;
 }
 qa_command_dialect qa_cvar_registry_dialect(const qa_cvar_registry *r) {
   return r->options.dialect;
@@ -537,18 +593,39 @@ void qa_cvar_registry_register_alias(qa_cvar_registry *r, qa_cvar_alias alias) {
   r->mutation_revision++;
   char *key = registry_key(r, alias.name);
   char *target_key = registry_key(r, alias.target);
-  if (key == NULL || target_key == NULL) qa_error("out of memory");
-  if (strcmp(key, target_key) == 0 || find_alias_by_key(r, target_key) != NULL)
+  /* The keys are freed before each TS throw so a caught raise leaks nothing. */
+  if (key == NULL || target_key == NULL) {
+    free(key);
+    free(target_key);
+    qa_error("out of memory");
+  }
+  if (strcmp(key, target_key) == 0 || find_alias_by_key(r, target_key) != NULL) {
+    free(key);
+    free(target_key);
     qa_error("Cvar alias %s must target a canonical variable, not an alias or itself",
              alias.name);
+  }
   if (find_state_by_key(r, key) != NULL || find_alias_by_key(r, key) != NULL ||
       (r->options.command_exists != NULL &&
-       r->options.command_exists(r->options.command_exists_ctx, alias.name)))
+       r->options.command_exists(r->options.command_exists_ctx, alias.name))) {
+    free(key);
+    free(target_key);
     qa_error("Cvar alias %s is already declared", alias.name);
+  }
   cvar_state *target_state = find_state_by_key(r, target_key);
-  if (target_state == NULL)
+  if (target_state == NULL) {
+    free(key);
+    free(target_key);
     qa_error("Cvar alias %s target %s is not registered", alias.name, alias.target);
-  reject_alias_info_flags(r, alias.name, target_state->flags);
+  }
+  {
+    qa_cleanup key_node, target_node;
+    qa_cleanup_push(&key_node, free, key);
+    qa_cleanup_push(&target_node, free, target_key);
+    reject_alias_info_flags(r, alias.name, target_state->flags);
+    qa_cleanup_pop(&target_node);
+    qa_cleanup_pop(&key_node);
+  }
   if (r->alias_count == r->alias_capacity) {
     size_t cap = r->alias_capacity == 0 ? 8 : r->alias_capacity * 2;
     alias_entry *items = (alias_entry *)realloc(r->aliases, cap * sizeof *items);
@@ -1550,11 +1627,30 @@ char **qa_cvar_registry_archive_commands(qa_cvar_registry *r,
               console_has(r, state->key) ||
               (q2 && (state->flags & QA_Q2_CVAR_FLAG_CUSTOM) != 0)
           ? "seta " : q2 ? "set " : "";
+      /* This file runs as a script at the next launch and servers can force
+         values, so nothing may end the quoted token or line: names matching
+         /[\s";]/ are skipped (ASCII whitespace; names are byte strings) and
+         ", CR and LF are dropped from the value. */
+      if (strpbrk(state->name, " \t\n\v\f\r\";") != NULL) {
+        index = next;
+        continue;
+      }
       text_buffer command = {NULL, 0, 0};
       (void)text_add(&command, prefix);
       (void)text_add(&command, state->name);
       (void)text_add(&command, " \"");
-      (void)text_add(&command, archive_value(r, state));
+      {
+        const char *value = archive_value(r, state);
+        char *clean = dup_text(value != NULL ? value : "");
+        if (clean != NULL) {
+          size_t o = 0;
+          for (size_t c = 0; clean[c] != '\0'; c++)
+            if (clean[c] != '"' && clean[c] != '\r' && clean[c] != '\n') clean[o++] = clean[c];
+          clean[o] = '\0';
+          (void)text_add(&command, clean);
+          free(clean);
+        }
+      }
       (void)text_add(&command, "\"");
       if (count == capacity) {
         size_t cap = capacity == 0 ? 8 : capacity * 2;
@@ -2447,6 +2543,10 @@ qa_cvar_transfer *qa_cvar_registry_prepare_candidate(qa_cvar_registry *r,
   if (has_print) {
     options.print = print;
     options.print_ctx = print_ctx;
+  } else {
+    /* TS prepareCandidate(print = this.options.print). */
+    options.print = r->options.print;
+    options.print_ctx = r->options.print_ctx;
   }
   options.command_exists = r->options.command_exists;
   options.command_exists_ctx = r->options.command_exists_ctx;

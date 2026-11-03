@@ -22,4 +22,14 @@ void qa_app_mounted_image_reader_destroy(qa_app_mounted_image_reader *reader);
 /* False = TS null. Bytes owned by caller. */
 bool qa_app_mounted_image_reader_read(qa_app_mounted_image_reader *reader, const char *path, qa_app_scene_asset_bytes *out);
 bool qa_app_mounted_image_reader_read_original(qa_app_mounted_image_reader *reader, const char *path, qa_app_scene_asset_bytes *out);
+/* TS mountedImageReader(catalog, mounts) as the SceneAssetReader it returns: the
+ * host above implemented over the catalog's user-content facts and the mounts.
+ * catalog and mounts are borrowed and must outlive the reader. */
+#include "qa/content/catalog/index.h"
+#include "qa/content/mounts.h"
+#include "qa/render/scene/textures.h"
+typedef struct qa_app_scene_image_reader qa_app_scene_image_reader;
+qa_app_scene_image_reader *qa_app_scene_image_reader_open(const qa_content_catalog *catalog, qa_content_mounted *mounts);
+qa_scene_asset_reader qa_app_scene_image_reader_reader(qa_app_scene_image_reader *reader);
+void qa_app_scene_image_reader_destroy(qa_app_scene_image_reader *reader);
 #endif

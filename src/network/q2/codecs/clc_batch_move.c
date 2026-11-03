@@ -2,17 +2,17 @@
 #include "qa/network/q2/codecs/clc_batch_move.h"
 
 #include <stdarg.h>
+#include "qa/foundation/support.h"
 #include <stdio.h>
 #include <stdlib.h>
 
 noreturn void qa_q2_batch_move_error(const char *format, ...) {
   va_list args;
+  char text[1536];
   va_start(args, format);
-  fputs("ClcBatchMoveError: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("ClcBatchMoveError", 0, 0, "%s", text);
 }
 
 void qa_q2_bit_reader_init(qa_q2_bit_reader *reader, qa_q2_sizebuf *msg) {
@@ -74,14 +74,27 @@ void qa_q2_batch_move_seed_from_prev(const qa_q2_wire_usercmd *prev_or_null,
   }
 }
 
+typedef struct frames_held {
+  qa_q2_clc_batch_move_frame *frames;
+  size_t filled;
+} frames_held;
+static void frames_release(void *arg) {
+  frames_held *held = (frames_held *)arg;
+  for (size_t k = 0; k < held->filled; k++) free(held->frames[k].cmds);
+  free(held->frames);
+}
+
 bool qa_q2_read_batch_move_frames(qa_q2_bit_reader *br, int32_t num_dups,
                                   qa_q2_batch_decode_cmd_fn decode_cmd, void *ctx,
                                   qa_q2_clc_batch_move_frame **out_frames,
                                   size_t *out_count) {
   size_t count = num_dups >= 0 ? (size_t)num_dups + 1 : 0;
-  qa_q2_clc_batch_move_frame *frames =
-      (qa_q2_clc_batch_move_frame *)calloc(count > 0 ? count : 1, sizeof *frames);
-  if (frames == NULL) return false;
+  frames_held held = {NULL, 0};
+  held.frames = (qa_q2_clc_batch_move_frame *)calloc(count > 0 ? count : 1, sizeof *held.frames);
+  if (held.frames == NULL) return false;
+  /* A truncated message raises mid-frame; the frames read so far are released. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, frames_release, &held);
   qa_q2_wire_usercmd prev_storage;
   const qa_q2_wire_usercmd *prev = NULL;
   for (size_t i = 0; i < count; i++) {
@@ -89,19 +102,21 @@ bool qa_q2_read_batch_move_frames(qa_q2_bit_reader *br, int32_t num_dups,
     qa_q2_wire_usercmd *cmds = (qa_q2_wire_usercmd *)calloc(
         num_cmds > 0 ? (size_t)num_cmds : 1, sizeof *cmds);
     if (cmds == NULL) {
-      for (size_t k = 0; k < i; k++) free(frames[k].cmds);
-      free(frames);
+      qa_cleanup_pop(&node);
+      frames_release(&held);
       return false;
     }
-    frames[i].cmds = cmds;
-    frames[i].cmd_count = num_cmds > 0 ? (size_t)num_cmds : 0;
+    held.frames[i].cmds = cmds;
+    held.frames[i].cmd_count = num_cmds > 0 ? (size_t)num_cmds : 0;
+    held.filled = i + 1;
     for (int32_t j = 0; j < num_cmds; j++) {
       decode_cmd(ctx, br, prev, &cmds[j]);
       prev_storage = cmds[j];
       prev = &prev_storage;
     }
   }
-  *out_frames = frames;
+  qa_cleanup_pop(&node);
+  *out_frames = held.frames;
   *out_count = count;
   return true;
 }

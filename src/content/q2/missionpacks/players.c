@@ -8,9 +8,9 @@
 
 void qa_q2mp_rogue_player_spawns_init(qa_q2mp_rogue_player_spawns *spawns) { spawns->unused = 0; }
 
-bool qa_q2mp_rogue_player_spawns_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2f_entity *entity, qa_q2f_game *game) {
+bool qa_q2mp_rogue_player_spawns_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2_entity *entity, qa_q2_game_services *game) {
   (void)s;
-  if (game->options.edition != QA_Q2F_CLASSIC || strcmp(entity->classname, "info_player_coop_lava") != 0) return false;
+  if (game->options.edition != QA_Q2_EDITION_CLASSIC || strcmp(entity->classname, "info_player_coop_lava") != 0) return false;
   if (!q2mp_coop(game)) game->remove(game->ctx, entity);
   return true;
 }
@@ -20,16 +20,16 @@ static bool map_is(const char *map_name, const char *name) {
     if (tolower((unsigned char)map_name[i]) != name[i]) return false;
   return map_name[i] == '\0' && name[i] == '\0';
 }
-bool qa_q2mp_rogue_player_spawns_select_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2f_game *game,
+bool qa_q2mp_rogue_player_spawns_select_spawn(qa_q2mp_rogue_player_spawns *s, qa_q2_game_services *game,
                                               qa_q2mp_spawn_point *out) {
   (void)s;
   const char *map_name = game->options.map_name != NULL ? game->options.map_name : "";
-  if (game->options.edition != QA_Q2F_CLASSIC || !q2mp_coop(game) || (!map_is(map_name, "rmine2") && !map_is(map_name, "rmine2p")))
+  if (game->options.edition != QA_Q2_EDITION_CLASSIC || !q2mp_coop(game) || (!map_is(map_name, "rmine2") && !map_is(map_name, "rmine2p")))
     return false;
   double lava_top = -99999;
-  qa_q2f_entity *highest_lava = NULL;
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q2f_entity *lava = game->entities[i];
+  qa_q2_entity *highest_lava = NULL;
+  for (size_t i = 0; i < qa_q2_game_entity_count(game); i++) {
+    qa_q2_entity *lava = qa_q2_game_entity_at(game, i);
     if (strcmp(lava->classname, "func_door") != 0 || ((q2mp_u32(lava->spawnflags) & 2u) == 0)) continue;
     qa_body_state body = q2mp_body(game, lava);
     qa_vec3 center = q2mp_add(body.origin, q2mp_scale(q2mp_add(body.bounds.min, body.bounds.max), 0.5));
@@ -42,9 +42,9 @@ bool qa_q2mp_rogue_player_spawns_select_spawn(qa_q2mp_rogue_player_spawns *s, qa
   if (highest_lava == NULL) return false;
   lava_top += 64;
   double count = 0, lowest = 999999;
-  qa_q2f_entity *selected = NULL;
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_q2f_entity *point = game->entities[i];
+  qa_q2_entity *selected = NULL;
+  for (size_t i = 0; i < qa_q2_game_entity_count(game); i++) {
+    qa_q2_entity *point = qa_q2_game_entity_at(game, i);
     if (strcmp(point->classname, "info_player_coop_lava") != 0) continue;
     if (++count > 64) break;
     qa_vec3 origin = q2mp_body(game, point).origin;

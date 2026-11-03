@@ -6,7 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/core/commands/index.h"
 #include "qa/core/commands/text.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 #include "qa/input/impulse.h"
 #include "qa/input/key_codes.h"
@@ -102,6 +104,7 @@ struct qa_seat_input {
   size_t button_count;
   size_t button_capacity;
   qa_vec2 mouse;
+  double wheel_remainder;
   double pending_impulse;
   qa_seat_ui_binding *ui_binding;
   qa_seat_ui_binding **ui_nodes;
@@ -365,13 +368,14 @@ void qa_seat_input_remap_controller_bindings(qa_seat_input *input, double device
 }
 
 static void run_binding(qa_seat_input *input, const held_binding *binding, bool down,
-                        double now, qa_command_buffer *commands);
+                        double now, qa_command_buffer *commands,
+                        const qa_command_append_target *target);
 
-void qa_seat_input_release(qa_seat_input *input, double time,
-                           qa_command_buffer *commands) {
+static void release_impl(qa_seat_input *input, double time, qa_command_buffer *commands,
+                         const qa_command_append_target *target) {
   if (commands == NULL) commands = input->options.commands;
   for (size_t i = 0; i < input->held_count; i++) {
-    run_binding(input, &input->held[i], false, time, commands);
+    run_binding(input, &input->held[i], false, time, commands, target);
   }
   for (size_t i = 0; i < input->held_count; i++) {
     free((void *)input->held[i].input.axis);
@@ -388,6 +392,16 @@ void qa_seat_input_release(qa_seat_input *input, double time,
   input->mouse.x = 0;
   input->mouse.y = 0;
   input->pending_impulse = 0;
+}
+
+void qa_seat_input_release(qa_seat_input *input, double time,
+                           qa_command_buffer *commands) {
+  release_impl(input, time, commands, NULL);
+}
+
+void qa_seat_input_release_to(qa_seat_input *input, double time,
+                              const qa_command_append_target *commands) {
+  release_impl(input, time, NULL, commands);
 }
 
 void qa_seat_input_set_focus(qa_seat_input *input, qa_seat_input_focus focus,
@@ -516,8 +530,17 @@ void qa_seat_input_command_button(qa_seat_input *input, qa_source_action action,
   else qa_input_button_up(button, key, time_milliseconds, 10);
 }
 
+/* TS commands.append(line, source): a release target replaces the buffer
+ * (TS Pick<CommandBuffer, "append">). */
+static void append_line(qa_command_buffer *commands, const qa_command_append_target *target,
+                        const char *line, const qa_command_context *source) {
+  if (target != NULL) target->append(target->ctx, line, source);
+  else qa_command_buffer_append(commands, line, source, -1);
+}
+
 static void run_binding(qa_seat_input *input, const held_binding *binding, bool down,
-                        double now, qa_command_buffer *commands) {
+                        double now, qa_command_buffer *commands,
+                        const qa_command_append_target *sink) {
   if (!binding->has_target) return;
   const qa_input_binding_target *target = &binding->target;
   if (target->is_action) {
@@ -560,7 +583,7 @@ static void run_binding(qa_seat_input *input, const held_binding *binding, bool 
       if (line != NULL) {
         snprintf(line, length, "%c%s %s %s\n", down ? '+' : '-', segment + 1,
                  key_text != NULL ? key_text : "", now_text != NULL ? now_text : "");
-        qa_command_buffer_append(commands, line, &source, -1);
+        append_line(commands, sink, line, &source);
         free(line);
       }
       had_button = true;
@@ -569,7 +592,7 @@ static void run_binding(qa_seat_input *input, const held_binding *binding, bool 
       char *line = (char *)malloc(length);
       if (line != NULL) {
         snprintf(line, length, "%s\n", segment);
-        qa_command_buffer_append(commands, line, &source, -1);
+        append_line(commands, sink, line, &source);
         free(line);
       }
     }
@@ -638,9 +661,9 @@ static void digital(qa_seat_input *input, const qa_physical_input *physical,
     input->held_keys[input->held_count] = key;
     input->held_count++;
     run_binding(input, &input->held[input->held_count - 1], true, time,
-                input->options.commands);
+                input->options.commands, NULL);
   } else if (index != input->held_count) {
-    run_binding(input, &input->held[index], false, time, input->options.commands);
+    run_binding(input, &input->held[index], false, time, input->options.commands, NULL);
     held_dispose(&input->held[index]);
     free(input->held_keys[index]);
     memmove(&input->held[index], &input->held[index + 1],
@@ -715,9 +738,17 @@ bool qa_seat_input_input(qa_seat_input *input, const qa_seat_input_event *event)
       input->mouse.y += event->delta.y;
     }
   } else if (strcmp(kind, "mouse-wheel") == 0) {
-    double code = event->delta.y > 0 ? QA_KEY_MOUSE_WHEEL_UP
-                                     : QA_KEY_MOUSE_WHEEL_DOWN;
-    for (double index = 0; index < fabs(event->delta.y); index++) {
+    /* High-resolution wheels report fractions of a notch; one press is emitted
+       per whole accumulated notch. */
+    if (event->delta.y != 0 &&
+        qa_js_sign(event->delta.y) != qa_js_sign(input->wheel_remainder)) {
+      input->wheel_remainder = 0;
+    }
+    double total = input->wheel_remainder + event->delta.y;
+    double notches = trunc(fabs(total));
+    input->wheel_remainder = total - qa_js_sign(total) * notches;
+    double code = total > 0 ? QA_KEY_MOUSE_WHEEL_UP : QA_KEY_MOUSE_WHEEL_DOWN;
+    for (double index = 0; index < notches; index++) {
       qa_physical_input physical;
       memset(&physical, 0, sizeof physical);
       physical.kind = QA_PHYSICAL_INPUT_KEY;
@@ -737,6 +768,10 @@ void qa_seat_input_gyro(qa_seat_input *input, qa_vec3 sample,
   }
 }
 
+/* TS seat.input.gamepad.tuning = tuning (remote-application.ts publishConfiguration). */
+void qa_seat_input_set_gamepad_tuning(qa_seat_input *input, const qa_gamepad_tuning *tuning) {
+  input->gamepad.tuning = *tuning;
+}
 void qa_seat_input_release_device(qa_seat_input *input, double device, double time) {
   size_t i = 0;
   while (i < input->held_count) {
@@ -744,7 +779,7 @@ void qa_seat_input_release_device(qa_seat_input *input, double device, double ti
     if ((physical->kind == QA_PHYSICAL_INPUT_CONTROLLER_AXIS ||
          physical->kind == QA_PHYSICAL_INPUT_CONTROLLER_BUTTON) &&
         physical->device == device) {
-      run_binding(input, &input->held[i], false, time, input->options.commands);
+      run_binding(input, &input->held[i], false, time, input->options.commands, NULL);
       held_dispose(&input->held[i]);
       free(input->held_keys[i]);
       memmove(&input->held[i], &input->held[i + 1],
@@ -755,6 +790,21 @@ void qa_seat_input_release_device(qa_seat_input *input, double device, double ti
     } else {
       i++;
     }
+  }
+  /* A stick held while the device vanished would otherwise keep repeating in
+     the menu until it closes. */
+  static const char *const menu_axes[2] = {"left-x", "left-y"};
+  for (int axis = 0; axis < 2; axis++) {
+    qa_seat_input_event release;
+    memset(&release, 0, sizeof release);
+    release.kind = "controller-axis";
+    release.seat = input->options.seat;
+    release.time_milliseconds = time;
+    release.device = device;
+    release.axis = menu_axes[axis];
+    release.value = 0;
+    (void)input->ui_binding->callback(input->ui_binding->callback_ctx, &release,
+                                      focus_of(input));
   }
   qa_gamepad_input_clear(&input->gamepad);
   qa_gamepad_input_reset_gyro_calibration(&input->gamepad);
@@ -845,15 +895,15 @@ static void action_handler(void *ctx, qa_command_invocation *command) {
   qa_input_commands_registration *registration = handler->registration;
   if (handler->impulse) {
     const qa_command_origin *origin = root_origin(&command->source);
-    if (origin->kind == QA_COMMAND_ORIGIN_LOCAL_SEAT) {
-      qa_seat_input *seat = registration->lookup(registration->lookup_ctx,
-                                                 origin->seat);
-      if (seat != NULL) {
-        const char *argument = command->argc > 1 ? command->argv[1] : "";
-        qa_seat_input_set_impulse(seat,
-                                  qa_parse_impulse(argument, command->dialect));
-      }
+    if (origin->kind != QA_COMMAND_ORIGIN_LOCAL_SEAT) return;
+    const char *argument = command->argc > 1 ? command->argv[1] : "";
+    double impulse = qa_parse_impulse(argument, command->dialect);
+    if (impulse != trunc(impulse) || !isfinite(impulse) || impulse < 0 ||
+        impulse > 255) {
+      qa_raise(QA_COMMAND_USAGE_ERROR, 0, 0, "Input impulse must fit a byte");
     }
+    qa_seat_input *seat = registration->lookup(registration->lookup_ctx, origin->seat);
+    if (seat != NULL) qa_seat_input_set_impulse(seat, impulse);
     return;
   }
   if (strcmp(handler->name, "scores") == 0 && registration->client_scores != NULL &&
@@ -866,7 +916,9 @@ static void action_handler(void *ctx, qa_command_invocation *command) {
   if (seat == NULL) return;
   double time = qa_input_js_parse_number(command->argc > 2 ? command->argv[2] : "0");
   const char *key = command->argc > 1 ? command->argv[1] : "console";
-  if (!isfinite(time)) qa_range_error("Invalid button command timestamp");
+  if (!isfinite(time)) {
+    qa_raise(QA_COMMAND_USAGE_ERROR, 0, 0, "Invalid button command timestamp");
+  }
   if (!handler->down && command->argc <= 1) {
     qa_input_button *button = qa_seat_input_button(seat, handler->action);
     if (button != NULL) qa_input_button_release(button, time);

@@ -4,6 +4,6 @@
 
 #include "qa/content/q1/missionpacks/monsters/types.h"
 
-void qa_q1mpm_register_dormant_spikemine(qa_q1mpm_game *game);
+void qa_q1mpm_register_dormant_spikemine(qa_q1_services *game);
 
 #endif

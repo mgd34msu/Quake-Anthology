@@ -202,7 +202,7 @@ qa_qvm_grapple_profile *qa_qvm_read_grapple_profile(const qa_save_value *value,
   for (size_t i = 0; i < fire_count; i++) {
     qa_save_reader item;
     if (!qa_save_reader_item(&fire, i, &item)) goto oom;
-    fire_values[i] = qa_save_reader_integer_min(&item, -9007199254740991.0);
+    fire_values[i] = qa_save_reader_integer(&item);
     qa_save_reader_destroy(&item);
   }
   qa_save_reader_destroy(&fire);
@@ -222,7 +222,12 @@ qa_qvm_grapple_profile *qa_qvm_read_grapple_profile(const qa_save_value *value,
       qa_save_reader item;
       if (!qa_save_reader_item(&words, i, &item)) goto oom;
       movement_words[i].offset = nested_integer(&item, "offset", 4);
-      movement_words[i].value = nested_integer(&item, "value", -2147483648.0);
+      {
+        qa_save_reader value_reader;
+        reader_field(&item, "value", &value_reader);
+        movement_words[i].value = qa_save_reader_integer(&value_reader);
+        qa_save_reader_destroy(&value_reader);
+      }
       double byte_length = nested_integer(&movement, "byteLength", 4);
       if ((int64_t)movement_words[i].offset % 4 != 0 || movement_words[i].offset + 4 > byte_length)
         qa_save_reader_fail(&item, "Movement field is outside the declared source record");
@@ -333,27 +338,163 @@ void qa_qvm_grapple_profile_free(qa_qvm_grapple_profile *profile) {
   free(profile);
 }
 
+/* Declaration builder: a failed allocation latches and yields NULL at the end. */
+typedef struct declaration_builder { bool failed; } declaration_builder;
+
+static void put(declaration_builder *b, qa_save_value *object, const char *key, qa_save_value *child) {
+  if (child == NULL || object == NULL) {
+    b->failed = true;
+    qa_save_value_free(child);
+    return;
+  }
+  if (!qa_save_value_set(object, key, child)) {
+    b->failed = true;
+    qa_save_value_free(child);
+  }
+}
+static void put_number(declaration_builder *b, qa_save_value *object, const char *key, double value) {
+  put(b, object, key, qa_save_value_number(value));
+}
+static void put_string(declaration_builder *b, qa_save_value *object, const char *key, const char *value) {
+  put(b, object, key, value == NULL ? qa_save_value_null() : qa_save_value_string(value));
+}
+static void put_nullable_number(declaration_builder *b, qa_save_value *object, const char *key, bool has,
+                                double value) {
+  put(b, object, key, has ? qa_save_value_number(value) : qa_save_value_null());
+}
+static void push(declaration_builder *b, qa_save_value *array, qa_save_value *child) {
+  if (child == NULL || array == NULL) {
+    b->failed = true;
+    qa_save_value_free(child);
+    return;
+  }
+  if (!qa_save_value_push(array, child)) {
+    b->failed = true;
+    qa_save_value_free(child);
+  }
+}
+
+/* TS { ...profile, version: 1, artifactDigest, artifactPath }, in that key order. */
 qa_save_value *qa_qvm_grapple_profile_declaration(const qa_qvm_grapple_profile *profile) {
+  declaration_builder b = {false};
   qa_save_value *object = qa_save_value_object();
-  if (object == NULL) return NULL;
-  qa_save_value *version = qa_save_value_number(1);
-  qa_save_value *digest = qa_save_value_string(profile->module.digest);
-  qa_save_value *path = qa_save_value_string(profile->module.artifact_path);
-  qa_save_value *id = qa_save_value_string(profile->id);
-  qa_save_value *title = qa_save_value_string(profile->title);
-  qa_save_value *abi = qa_save_value_string(profile->abi_profile);
-  if (version == NULL || digest == NULL || path == NULL || id == NULL || title == NULL ||
-      abi == NULL || !qa_save_value_set(object, "version", version) ||
-      !qa_save_value_set(object, "artifactDigest", digest) ||
-      !qa_save_value_set(object, "artifactPath", path) || !qa_save_value_set(object, "id", id) ||
-      !qa_save_value_set(object, "title", title) || !qa_save_value_set(object, "abiProfile", abi)) {
+  put_string(&b, object, "id", profile->id);
+  put_string(&b, object, "title", profile->title);
+  qa_save_value *module = qa_save_value_object();
+  put_string(&b, module, "id", profile->module.id);
+  put_string(&b, module, "artifactPath", profile->module.artifact_path);
+  put_string(&b, module, "digest", profile->module.digest);
+  put_string(&b, module, "revision", profile->module.revision);
+  put(&b, object, "module", module);
+  put_string(&b, object, "abiProfile", profile->abi_profile);
+  put_number(&b, object, "entityStride", profile->entity_stride);
+  put_number(&b, object, "clientStride", profile->client_stride);
+  qa_save_value *fields = qa_save_value_object();
+  put_number(&b, fields, "inuse", profile->fields.inuse);
+  put_number(&b, fields, "client", profile->fields.client);
+  put_number(&b, fields, "parent", profile->fields.parent);
+  put_number(&b, fields, "target", profile->fields.target);
+  put_nullable_number(&b, fields, "mover", profile->fields.has_mover, profile->fields.mover);
+  put_number(&b, fields, "health", profile->fields.health);
+  put_number(&b, fields, "takedamage", profile->fields.takedamage);
+  put_number(&b, fields, "eventTime", profile->fields.event_time);
+  put_number(&b, fields, "freeAfterEvent", profile->fields.free_after_event);
+  put_number(&b, fields, "hook", profile->fields.hook);
+  put(&b, object, "fields", fields);
+  qa_save_value *globals = qa_save_value_object();
+  put_number(&b, globals, "time", profile->globals.time);
+  put_number(&b, globals, "frame", profile->globals.frame);
+  put_number(&b, globals, "movement", profile->globals.movement);
+  put_number(&b, globals, "forward", profile->globals.forward);
+  put_number(&b, globals, "groundPlane", profile->globals.ground_plane);
+  put(&b, object, "globals", globals);
+  qa_save_value *callbacks = qa_save_value_object();
+  put_number(&b, callbacks, "allocate", profile->callbacks.allocate);
+  put_number(&b, callbacks, "free", profile->callbacks.free);
+  put_number(&b, callbacks, "fire", profile->callbacks.fire);
+  put_number(&b, callbacks, "release", profile->callbacks.release);
+  put_number(&b, callbacks, "forceRelease", profile->callbacks.force_release);
+  put_number(&b, callbacks, "missile", profile->callbacks.missile);
+  put_nullable_number(&b, callbacks, "follow", profile->callbacks.has_follow, profile->callbacks.follow);
+  put_number(&b, callbacks, "think", profile->callbacks.think);
+  put_number(&b, callbacks, "pull", profile->callbacks.pull);
+  put_nullable_number(&b, callbacks, "moveMoverHooks", profile->callbacks.has_move_mover_hooks,
+                      profile->callbacks.move_mover_hooks);
+  put_number(&b, callbacks, "damage", profile->callbacks.damage);
+  put_number(&b, callbacks, "sameTeam", profile->callbacks.same_team);
+  put_number(&b, callbacks, "playerMove", profile->callbacks.player_move);
+  put(&b, object, "callbacks", callbacks);
+  put_number(&b, object, "pullingFlag", profile->pulling_flag);
+  qa_save_value *fire = qa_save_value_array();
+  for (size_t i = 0; i < profile->fire_arguments.count; i++)
+    push(&b, fire, qa_save_value_number(profile->fire_arguments.values[i]));
+  put(&b, object, "fireArguments", fire);
+  qa_save_value *movement = qa_save_value_object();
+  put_number(&b, movement, "byteLength", profile->movement.byte_length);
+  qa_save_value *words = qa_save_value_array();
+  for (size_t i = 0; i < profile->movement.word_count; i++) {
+    qa_save_value *word = qa_save_value_object();
+    put_number(&b, word, "offset", profile->movement.words[i].offset);
+    put_number(&b, word, "value", profile->movement.words[i].value);
+    push(&b, words, word);
+  }
+  put(&b, movement, "words", words);
+  put(&b, object, "movement", movement);
+  qa_save_value *cvars = qa_save_value_object();
+  for (size_t i = 0; i < profile->initial_cvar_count; i++)
+    put_string(&b, cvars, profile->initial_cvars[i].name, profile->initial_cvars[i].value);
+  put(&b, object, "initialCvars", cvars);
+  put_number(&b, object, "eventLifetimeMilliseconds", profile->event_lifetime_milliseconds);
+  put_number(&b, object, "grappleDamageMethod", profile->grapple_damage_method);
+  qa_save_value *presentation = qa_save_value_object();
+  put_string(&b, presentation, "projectileModel", profile->presentation.projectile_model);
+  put_string(&b, presentation, "viewModel", profile->presentation.view_model);
+  put_number(&b, presentation, "weaponIndex", profile->presentation.weapon_index);
+  qa_save_value *anchor = qa_save_value_object();
+  put_string(&b, anchor, "path", profile->presentation.view_anchor.path);
+  put_string(&b, anchor, "tag", profile->presentation.view_anchor.tag);
+  qa_save_value *offset = qa_save_value_object();
+  put_number(&b, offset, "x", profile->presentation.view_anchor.offset.x);
+  put_number(&b, offset, "y", profile->presentation.view_anchor.offset.y);
+  put_number(&b, offset, "z", profile->presentation.view_anchor.offset.z);
+  put(&b, anchor, "offset", offset);
+  qa_save_value *fov = qa_save_value_object();
+  put_number(&b, fov, "above", profile->presentation.view_anchor.fov_offset_above);
+  put_number(&b, fov, "scale", profile->presentation.view_anchor.fov_offset_scale);
+  put(&b, anchor, "fovOffset", fov);
+  put(&b, presentation, "viewAnchor", anchor);
+  qa_save_value *attachments = qa_save_value_array();
+  for (size_t i = 0; i < profile->presentation.view_attachment_count; i++) {
+    qa_save_value *attachment = qa_save_value_object();
+    put_string(&b, attachment, "path", profile->presentation.view_attachments[i].path);
+    put_string(&b, attachment, "tag", profile->presentation.view_attachments[i].tag);
+    push(&b, attachments, attachment);
+  }
+  put(&b, presentation, "viewAttachments", attachments);
+  qa_save_value *cable = qa_save_value_object();
+  if (profile->presentation.cable.is_shader) {
+    put_string(&b, cable, "kind", "shader");
+    put_string(&b, cable, "path", profile->presentation.cable.path);
+    put_number(&b, cable, "width", profile->presentation.cable.width);
+  } else {
+    put_string(&b, cable, "kind", "model");
+    put_string(&b, cable, "flight", profile->presentation.cable.flight);
+    put_string(&b, cable, "pull", profile->presentation.cable.pull);
+    put_string(&b, cable, "hold", profile->presentation.cable.hold);
+    put_number(&b, cable, "segmentLength", profile->presentation.cable.segment_length);
+  }
+  put(&b, presentation, "cable", cable);
+  put_string(&b, presentation, "fireSound", profile->presentation.fire_sound);
+  put_string(&b, presentation, "attachSound", profile->presentation.attach_sound);
+  put_string(&b, presentation, "releaseSound", profile->presentation.release_sound);
+  put_string(&b, presentation, "pullSound", profile->presentation.pull_sound);
+  put_string(&b, presentation, "hangSound", profile->presentation.hang_sound);
+  put(&b, object, "presentation", presentation);
+  put_number(&b, object, "version", 1);
+  put_string(&b, object, "artifactDigest", profile->module.digest);
+  put_string(&b, object, "artifactPath", profile->module.artifact_path);
+  if (b.failed) {
     qa_save_value_free(object);
-    qa_save_value_free(version);
-    qa_save_value_free(digest);
-    qa_save_value_free(path);
-    qa_save_value_free(id);
-    qa_save_value_free(title);
-    qa_save_value_free(abi);
     return NULL;
   }
   return object;

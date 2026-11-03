@@ -38,17 +38,27 @@ bool qa_q3_server_authorization_get_address(const qa_q3_server_authorization *a,
   if (!a->has_resolved) return false;
   *out = a->resolved; return true;
 }
+typedef struct resolve_scope { qa_q3_server_authorization *a; qa_q3_mirror_ipv4_address *addr; char *err; size_t err_len; bool ok; } resolve_scope;
+static void resolve_body(void *ctx) {
+  resolve_scope *scope = ctx;
+  scope->ok = scope->a->options.resolve
+    ? scope->a->options.resolve(scope->a->options.ctx, scope->addr, scope->err, scope->err_len)
+    : default_resolve(scope->addr, scope->err, scope->err_len);
+}
 static bool resolve_cached(qa_q3_server_authorization *a, qa_q3_mirror_ipv4_address *out) {
   if (!a->lookup_done) {
     a->lookup_done = true;
-    char err[256] = "";
+    char err[QA_CAUGHT_MESSAGE_CAPACITY] = "";
     qa_q3_mirror_ipv4_address addr; memset(&addr, 0, sizeof addr);
-    bool ok = a->options.resolve
-      ? a->options.resolve(a->options.ctx, &addr, err, sizeof err)
-      : default_resolve(&addr, err, sizeof err);
+    /* TS catches any resolver error and prints its message. */
+    resolve_scope scope = { a, &addr, err, sizeof err, false };
+    qa_caught_error caught;
+    bool ok = qa_try(resolve_body, &scope, &caught);
+    if (!ok) snprintf(err, sizeof err, "%s", caught.message);
+    else ok = scope.ok;
     if (!ok) {
       if (a->options.print) {
-        char buf[512]; snprintf(buf, sizeof buf, "Couldn't resolve Q3 authorization server: %s\n", err);
+        char buf[QA_CAUGHT_MESSAGE_CAPACITY + 64]; snprintf(buf, sizeof buf, "Couldn't resolve Q3 authorization server: %s\n", err);
         a->options.print(a->options.print_ctx, buf);
       }
       return false;

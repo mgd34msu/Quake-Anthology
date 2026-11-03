@@ -1,5 +1,6 @@
 /* Port of src/network/q2/mvd-broadcast.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/mvd_broadcast.h"
+#include "qa/foundation/js.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "qa/foundation/support.h"
@@ -39,6 +41,11 @@ static bool send_all(int fd, const uint8_t *bytes, size_t length) {
   return true;
 }
 static void retire(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer);
+static double monotonic_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec * 1000 + (double)ts.tv_nsec / 1000000;
+}
 
 static void viewer_send(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
                         const uint8_t *bytes, size_t length) {
@@ -48,10 +55,14 @@ static void viewer_send(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
     qa_q2_throw_error("GTV viewer retired");
   }
 }
+static void free_arg(void *arg) { free(arg); }
 static void viewer_send_owned(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
                               uint8_t *bytes, size_t length) {
   if (bytes == NULL) qa_range_error("out of memory");
+  qa_cleanup node;
+  qa_cleanup_push(&node, free_arg, bytes);
   viewer_send(b, viewer, bytes, length);
+  qa_cleanup_pop(&node);
   free(bytes);
 }
 static void viewer_send_message(qa_q2_mvd_broadcast *b,
@@ -148,6 +159,16 @@ static qa_q2_mvd_capture latest_capture(const qa_q2_mvd_broadcast *b) {
   return capture;
 }
 /* Fresh-encoder gamestate packets for a capture with messages []. */
+typedef struct gamestate_owned {
+  qa_q2_mvd_encoder *encoder;
+  qa_q2_mvd_byte_block *blocks;
+  size_t count;
+} gamestate_owned;
+static void gamestate_release(void *arg) {
+  gamestate_owned *held = (gamestate_owned *)arg;
+  qa_q2_mvd_byte_blocks_free(held->blocks, held->count);
+  qa_q2_mvd_encoder_destroy(held->encoder);
+}
 static void send_gamestate(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
                            const qa_q2_mvd_capture *capture) {
   qa_q2_mvd_capture clean = *capture;
@@ -161,10 +182,14 @@ static void send_gamestate(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
     qa_q2_mvd_encoder_destroy(&encoder);
     qa_range_error("out of memory");
   }
+  gamestate_owned held = {&encoder, blocks, count};
+  qa_cleanup node;
+  qa_cleanup_push(&node, gamestate_release, &held);
   for (size_t i = 0; i < count; i++) {
     viewer_send_message(b, viewer, QA_Q2_GTS_STREAM_DATA, blocks[i].bytes,
                         blocks[i].length);
   }
+  qa_cleanup_pop(&node);
   qa_q2_mvd_byte_blocks_free(blocks, count);
   qa_q2_mvd_encoder_destroy(&encoder);
 }
@@ -184,6 +209,30 @@ void qa_q2_mvd_broadcast_init(qa_q2_mvd_broadcast *b,
     qa_q2_mvd_recording_init(&b->recording, options.record, options.ctx);
   }
   b->listener_fd = -1;
+}
+
+typedef struct observe_scope {
+  qa_q2_mvd_broadcast *b;
+  qa_q2_mvd_viewer *viewer;
+  const qa_q2_mvd_capture *capture;
+  const qa_q2_mvd_byte_block *packets;
+  size_t packet_count;
+  double sequence;
+} observe_scope;
+static void observe_body(void *arg) {
+  observe_scope *scope = (observe_scope *)arg;
+  qa_q2_mvd_viewer *viewer = scope->viewer;
+  if (!viewer->active || scope->sequence <= viewer->sequence) return;
+  if (viewer->needs_gamestate || viewer->sequence + 1 != scope->sequence) {
+    send_gamestate(scope->b, viewer, scope->capture);
+  } else {
+    for (size_t i = 0; i < scope->packet_count; i++) {
+      viewer_send_message(scope->b, viewer, QA_Q2_GTS_STREAM_DATA, scope->packets[i].bytes,
+                          scope->packets[i].length);
+    }
+  }
+  viewer->needs_gamestate = false;
+  viewer->sequence = scope->sequence;
 }
 
 void qa_q2_mvd_broadcast_observe(qa_q2_mvd_broadcast *b,
@@ -215,18 +264,10 @@ void qa_q2_mvd_broadcast_observe(qa_q2_mvd_broadcast *b,
       retire(b, viewer);
       continue;
     }
-    if (viewer->active && sequence > viewer->sequence) {
-      if (viewer->needs_gamestate || viewer->sequence + 1 != sequence) {
-        send_gamestate(b, viewer, capture);
-      } else {
-        for (size_t i = 0; i < packet_count; i++) {
-          viewer_send_message(b, viewer, QA_Q2_GTS_STREAM_DATA,
-                              packets[i].bytes, packets[i].length);
-        }
-      }
-      viewer->needs_gamestate = false;
-      viewer->sequence = sequence;
-    }
+    /* TS enqueue(): a failing action retires only this viewer. */
+    observe_scope scope = {b, viewer, capture, packets, packet_count, sequence};
+    qa_caught_error caught;
+    if (!qa_try(observe_body, &scope, &caught)) retire(b, viewer);
     viewer->queued_bytes -= total_length;
   }
   qa_q2_mvd_byte_blocks_free(packets, packet_count);
@@ -335,6 +376,25 @@ static void attach(qa_q2_mvd_broadcast *b, int fd) {
   qa_q2_gtv_server_stream_init(&viewer->stream);
   qa_q2_mvd_framer_init(&viewer->frames, true, 256);
   viewer->needs_gamestate = true;
+  viewer->deadline_ms = monotonic_ms() + 10000;
+  struct sockaddr_storage peer;
+  socklen_t peer_length = sizeof peer;
+  if (getpeername(fd, (struct sockaddr *)&peer, &peer_length) == 0) {
+    if (peer.ss_family == AF_INET) {
+      (void)inet_ntop(AF_INET, &((struct sockaddr_in *)&peer)->sin_addr, viewer->remote_address,
+                      sizeof viewer->remote_address);
+    } else if (peer.ss_family == AF_INET6) {
+      (void)inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&peer)->sin6_addr,
+                      viewer->remote_address, sizeof viewer->remote_address);
+    }
+  }
+  /* An unauthenticated connection holds a viewer slot, so it gets a short deadline and a
+   * per-address cap. */
+  size_t same_host = 0;
+  for (size_t i = 0; i < b->viewer_count; i++)
+    if (!b->viewers[i].closed &&
+        strcmp(b->viewers[i].remote_address, viewer->remote_address) == 0) same_host++;
+  if (same_host > 4) retire(b, viewer);
 }
 
 typedef struct request_ctx {
@@ -359,7 +419,7 @@ static void handle_request(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
       return;
     }
     viewer->flags =
-        (double)((int32_t)request.hello.flags & (b->options.command != NULL ? 3 : 1));
+        (double)(qa_js_to_int32(request.hello.flags) & (b->options.command != NULL ? 3 : 1));
     size_t hello_length = 0;
     uint8_t *hello = qa_q2_gtv_server_stream_hello(&viewer->stream, viewer->flags,
                                                    &hello_length);
@@ -389,10 +449,21 @@ static void handle_request(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
     viewer->active = false;
     viewer_send_message(b, viewer, QA_Q2_GTS_STREAM_STOP, NULL, 0);
   } else if (request.kind == QA_Q2_GTV_REQUEST_COMMAND) {
-    if (((int32_t)viewer->flags & 2) != 0 && b->options.command != NULL) {
+    if ((qa_js_to_int32(viewer->flags) & 2) != 0 && b->options.command != NULL) {
       b->options.command(b->options.ctx, request.text);
     }
   }
+}
+typedef struct request_scope {
+  qa_q2_mvd_broadcast *b;
+  qa_q2_mvd_viewer *viewer;
+  const uint8_t *payload;
+  size_t length;
+} request_scope;
+static void request_body(void *arg) {
+  request_scope *scope = (request_scope *)arg;
+  if (scope->viewer->closed) return;
+  handle_request(scope->b, scope->viewer, scope->payload, scope->length);
 }
 static bool request_message(void *vctx, const uint8_t *payload, size_t length) {
   request_ctx *c = (request_ctx *)vctx;
@@ -411,22 +482,45 @@ static bool request_message(void *vctx, const uint8_t *payload, size_t length) {
   if (!viewer->identified && qa_q2_mvd_framer_identified(&viewer->frames)) {
     viewer->identified = true;
     size_t magic_length = 0;
-    viewer_send_owned(c->broadcast, viewer, qa_q2_mvd_magic(&magic_length),
-                      magic_length);
+    uint8_t *magic = qa_q2_mvd_magic(&magic_length);
+    viewer_send_owned(c->broadcast, viewer, magic, magic_length);
   }
-  handle_request(c->broadcast, viewer, payload, length);
+  /* TS enqueue(...).catch(() => retire(viewer)) */
+  request_scope scope = {c->broadcast, viewer, payload, length};
+  qa_caught_error caught;
+  if (!qa_try(request_body, &scope, &caught)) retire(c->broadcast, viewer);
   viewer->queued_bytes -= (double)length;
   return true;
 }
+typedef struct data_scope {
+  qa_q2_mvd_broadcast *b;
+  qa_q2_mvd_viewer *viewer;
+  const uint8_t *bytes;
+  size_t length;
+} data_scope;
+static void viewer_data_body(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
+                             const uint8_t *bytes, size_t length);
+static void data_body(void *arg) {
+  data_scope *scope = (data_scope *)arg;
+  viewer_data_body(scope->b, scope->viewer, scope->bytes, scope->length);
+}
+/* TS socket 'data': try { frames.push(...) ... } catch { retire(viewer) } */
 static void viewer_data(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
                         const uint8_t *bytes, size_t length) {
+  data_scope scope = {b, viewer, bytes, length};
+  qa_caught_error caught;
+  if (!qa_try(data_body, &scope, &caught)) retire(b, viewer);
+}
+static void viewer_data_body(qa_q2_mvd_broadcast *b, qa_q2_mvd_viewer *viewer,
+                             const uint8_t *bytes, size_t length) {
   request_ctx ctx = {b, viewer};
   qa_q2_mvd_framer_push(&viewer->frames, bytes, length, request_message, &ctx);
   if (viewer->closed) return;
   if (!viewer->identified && qa_q2_mvd_framer_identified(&viewer->frames)) {
     viewer->identified = true;
     size_t magic_length = 0;
-    viewer_send_owned(b, viewer, qa_q2_mvd_magic(&magic_length), magic_length);
+    uint8_t *magic = qa_q2_mvd_magic(&magic_length);
+    viewer_send_owned(b, viewer, magic, magic_length);
   }
   if (qa_q2_mvd_framer_finished(&viewer->frames)) retire(b, viewer);
 }
@@ -436,6 +530,11 @@ size_t qa_q2_mvd_broadcast_poll(qa_q2_mvd_broadcast *b,
   if (b->closed) return 0;
   sweep_closed(b);
   size_t slots = b->viewer_count + (b->listener_fd >= 0 ? 1 : 0);
+  double now = monotonic_ms();
+  for (size_t i = 0; i < b->viewer_count; i++)
+    if (!b->viewers[i].authorized && now >= b->viewers[i].deadline_ms) retire(b, &b->viewers[i]);
+  sweep_closed(b);
+  slots = b->viewer_count + (b->listener_fd >= 0 ? 1 : 0);
   if (slots == 0) return 0;
   struct pollfd *items = (struct pollfd *)calloc(slots, sizeof *items);
   if (items == NULL) return 0;
@@ -449,7 +548,8 @@ size_t qa_q2_mvd_broadcast_poll(qa_q2_mvd_broadcast *b,
     items[base + i].fd = b->viewers[i].socket_fd;
     items[base + i].events = POLLIN;
   }
-  int wait = wait_milliseconds < 0 ? 0 : (int)wait_milliseconds;
+  /* poll() needs an int: NaN and negatives wait 0, huge waits saturate. */
+  int wait = !(wait_milliseconds > 0) ? 0 : wait_milliseconds >= 2147483647.0 ? 2147483647 : (int)wait_milliseconds;
   int ready = poll(items, (nfds_t)slots, wait);
   size_t serviced = 0;
   if (ready > 0) {

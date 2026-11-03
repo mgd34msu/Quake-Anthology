@@ -127,7 +127,7 @@ int32_t qa_q3_huffman_tree_decode_prefix(qa_q3_huffman_tree *t, qa_q3_huffman_ge
   int node = t->root;
   while (N(t,node)->symbol == INTERNAL) {
     int next = get(get_ctx) == 0 ? N(t,node)->left : N(t,node)->right;
-    if (next < 0) qa_range_error("Invalid Huffman tree");
+    if (next < 0) qa_raise("Error", 0, 0, "Invalid Huffman tree");
     node = next;
   }
   return N(t,node)->symbol;
@@ -192,6 +192,7 @@ bool qa_q3_compress_adaptive(const uint8_t *data, size_t len, uint8_t **out, siz
   *out_len = (w.position >> 3) + 1;
   *out = output; return true;
 }
+static void tree_cleanup(void *tree) { qa_q3_huffman_tree_destroy(tree); }
 typedef struct { const uint8_t *buf; size_t len; size_t position; } bitr_t;
 static int bit_get(void *ctx) {
   bitr_t *r = ctx;
@@ -210,11 +211,18 @@ bool qa_q3_decompress_adaptive(const uint8_t *data, size_t len, int64_t max_leng
   bitr_t r = { data, len, 16 };
   qa_q3_huffman_tree *tree = NULL;
   if (!qa_q3_huffman_tree_init(&tree)) { free(output); return false; }
+  /* "Truncated Huffman symbol" raises from remote connect payloads; a catching
+   * qa_try frees the tree and partial output, as GC does in TS. */
+  qa_cleanup output_guard, tree_guard;
+  qa_cleanup_push(&output_guard, free, output);
+  qa_cleanup_push(&tree_guard, tree_cleanup, tree);
   for (size_t i = 0; i < length; i++) {
     int32_t sym = qa_q3_huffman_tree_decode_symbol(tree, bit_get, &r);
     output[i] = (uint8_t)sym;
     qa_q3_huffman_tree_add_reference(tree, sym);
   }
+  qa_cleanup_pop(&tree_guard);
+  qa_cleanup_pop(&output_guard);
   qa_q3_huffman_tree_destroy(tree);
   *out = output; *out_len = length; return true;
 }

@@ -2,6 +2,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
@@ -18,23 +19,26 @@ double qa_q1_light_style(const char *map, double time, int interpolation) {
   if (length == 0) return 256;
   double phase = time * 10;
   double frame = floor(phase);
-  int64_t f = (int64_t)frame;
-  int64_t n = (int64_t)length;
-  size_t index = (size_t)(((f % n) + n) % n);
+  /* ((frame % n) + n) % n on doubles; charCodeAt(NaN) reads index 0 (a NaN or
+   * infinite time), so no C cast of NaN or a huge frame. */
+  double n = (double)length;
+  double position = fmod(fmod(frame, n) + n, n);
+  double following = fmod(position + 1, n);
+  size_t index = isnan(position) ? 0 : (size_t)position;
   int current = (unsigned char)map[index] - 97;
-  int next = (unsigned char)map[(index + 1) % length] - 97;
+  int next = (unsigned char)map[isnan(following) ? 0 : (size_t)following] - 97;
   if (interpolation < 2 && abs(next - current) >= 6) next = current;
   return trunc(current * 22 + (next - current) * 22 *
                (interpolation == 0 ? 0 : phase - frame));
 }
 
 qa_q2_light_style qa_q2_light_style_value(const char *map, double milliseconds) {
-  int64_t frame = (int64_t)trunc(milliseconds / 100);
+  double frame = trunc(milliseconds / 100);
   size_t length = strlen(map);
   double value = 1;
   if (length != 0) {
-    int64_t n = (int64_t)length;
-    size_t index = (size_t)(((frame % n) + n) % n);
+    double n = (double)length, position = fmod(fmod(frame, n) + n, n);
+    size_t index = isnan(position) ? 0 : (size_t)position; /* charCodeAt(NaN) is index 0 */
     value = ((unsigned char)map[index] - 97) / 12.0;
   }
   float component = fr(value);
@@ -92,6 +96,13 @@ static double sample(qa_lightmap_face face, int64_t style, int64_t pixel,
                  index);
 }
 
+bool qa_dynamic_light_reaches_face(const qa_lightmap_face *face,
+                                   const qa_surface_dynamic_light *light) {
+  double distance = fr(qa_dot3(light->origin, face->plane.normal) -
+                       face->plane.distance);
+  return fr(light->radius - fabs(distance)) >= light->minimum;
+}
+
 /* One body for the Uint32 (Q1) and Float32 (Q2) accumulators; stores
  * reproduce typed-array conversion on assignment. */
 static void add_dynamic(void *block, bool is_u32, qa_lightmap_face face,
@@ -117,11 +128,13 @@ static void add_dynamic(void *block, bool is_u32, qa_lightmap_face face,
     int64_t w = (int64_t)face.width, h = (int64_t)face.height;
     for (int64_t y = 0; y < h; y++) {
       for (int64_t x = 0; x < w; x++) {
-        int64_t sd = llabs((int64_t)trunc((uv.x - (double)x) * step_s));
-        int64_t td = llabs((int64_t)trunc((uv.y - (double)y) * step_t));
-        int64_t separation = sd > td ? sd + (td >> 1) : td + (sd >> 1);
-        if ((double)separation >= threshold) continue;
-        double value = (radius - (double)separation) * scale;
+        /* JS numbers: a degenerate axis makes step infinite, so sd/td can be
+         * Infinity or NaN; `>> 1` applies ToInt32 (0 for both). */
+        double sd = fabs(trunc((uv.x - (double)x) * step_s));
+        double td = fabs(trunc((uv.y - (double)y) * step_t));
+        double separation = sd > td ? sd + qa_js_shr(td, 1) : td + qa_js_shr(sd, 1);
+        if (separation >= threshold) continue;
+        double value = (radius - separation) * scale;
         int64_t offset = (y * w + x) * 3;
         double add[3] = {value * light.color.x, value * light.color.y,
                          value * light.color.z};
@@ -278,6 +291,9 @@ bool qa_sample_lightmap(qa_image_level image, qa_vec2 uv,
   if (uv.x < 0 || uv.y < 0 || uv.x > image.width - 1 ||
       uv.y > image.height - 1)
     return false;
+  /* A NaN coordinate passes the range test; TS then reads pixels[NaN] and throws. */
+  if (isnan(uv.x) || isnan(uv.y))
+    qa_range_error("Lightmap sample NaN is outside %zu values", image.pixels.length);
   int64_t x = (int64_t)floor(uv.x), y = (int64_t)floor(uv.y);
   int64_t w = (int64_t)image.width;
   double comps[4];

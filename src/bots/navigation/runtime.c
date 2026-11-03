@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 static char *dups(const char *s) { size_t n = strlen(s); char *p = malloc(n + 1); if (p) memcpy(p, s, n + 1); return p; }
 static const char *format_name(qa_decoded_world_kind k) {
@@ -66,8 +67,12 @@ static bool admission_set(qa_navigation_runtime *rt, int64_t id, double v) {
   return true;
 }
 static void invalidate(qa_navigation_runtime *rt) { rt->generation++; rt->admission_count = 0; }
+static double world_revision(const qa_navigation_world *world) {
+  return world->revision_of != NULL ? world->revision_of(world->ctx) : (double)world->revision;
+}
 static void refresh(qa_navigation_runtime *rt) {
-  if (rt->world_revision != rt->world->revision) { rt->world_revision = rt->world->revision; invalidate(rt); }
+  double revision = world_revision(rt->world);
+  if (rt->world_revision != revision) { rt->world_revision = revision; invalidate(rt); }
 }
 static bool disabled_has(const qa_navigation_route_query *q, int64_t id) {
   if (!q) return false;
@@ -95,8 +100,11 @@ static bool static_edge_allowed(qa_navigation_runtime *rt, const qa_navigation_e
   if (query && query->has_travel_flags && (qa_navigation_edge_travel_flag(edge) & query->travel_flags) == 0) return false;
   const qa_navigation_node *target = qa_navigation_runtime_node(rt, edge->to);
   const qa_navigation_node *source = qa_navigation_runtime_node(rt, edge->from);
-  if (!source || !target || !static_node_allowed(rt, source, query) || !static_node_allowed(rt, target, query)) return false;
-  if (edge->mode == QA_TM_DROP && edge->start.z - edge->end.z > profile->maximum_drop) return false;
+  if (!source || !target || !static_node_allowed(rt, target, query)) return false;
+  /* AAS routing tests only the area entered (be_aas_route.c:1347), so a bot may leave a disabled area; its falls
+     are priced by the stored travel time, not limited. */
+  if (edge->source.kind == QA_NS_AAS ? disabled_has(query, source->id) : !static_node_allowed(rt, source, query)) return false;
+  if (edge->mode == QA_TM_DROP && edge->source.kind != QA_NS_AAS && edge->start.z - edge->end.z > profile->maximum_drop) return false;
   if (edge->source.kind == QA_NS_AAS) {
     if (query && query->has_travel_flags && (qa_aas_travel_flag(edge->source_travel_type) & query->travel_flags) == 0) return false;
     if ((profile->team == 0 && (edge->source_travel_type & 0x01000000) != 0) ||
@@ -125,7 +133,7 @@ static bool estimate_allowed(void *ctx, const qa_navigation_edge *edge, bool has
 bool qa_navigation_runtime_init(qa_navigation_runtime *rt, const qa_navigation_graph *graph,
                                 const qa_navigation_world *world) {
   memset(rt, 0, sizeof *rt);
-  rt->graph = graph; rt->world = world; rt->world_revision = world->revision;
+  rt->graph = graph; rt->world = world; rt->world_revision = world_revision(world);
   for (size_t i = 0; i < graph->node_count; i++)
     for (size_t j = i + 1; j < graph->node_count; j++)
       if (graph->nodes[i].id == graph->nodes[j].id)
@@ -203,7 +211,7 @@ bool qa_navigation_runtime_make_checkpoint(qa_navigation_runtime *rt, qa_navigat
     if (!out->admission_seconds) goto oom;
     memcpy(out->admission_seconds, rt->admission_seconds, out->admission_count * sizeof *out->admission_seconds);
   }
-  out->world_revision = (double)rt->world_revision;
+  out->world_revision = rt->world_revision;
   out->generation = rt->generation;
   return true;
 oom:
@@ -305,7 +313,7 @@ void qa_navigation_runtime_restore_checkpoint(qa_navigation_runtime *rt, const q
   for (size_t i = 0; i < rt->blocked_count; i++) free(rt->blocked[i].reason);
   free(rt->blocked); rt->blocked = blocked; rt->blocked_count = bl_n; rt->blocked_cap = bl_cap;
   free(rt->admission_seconds); rt->admission_seconds = admissions; rt->admission_count = ad_n; rt->admission_cap = ad_cap;
-  rt->world_revision = (int64_t)revision; rt->generation = generation;
+  rt->world_revision = revision; rt->generation = generation;
   qa_navigation_estimates_invalidate(&rt->estimates);
 }
 int64_t qa_navigation_runtime_generation(qa_navigation_runtime *rt) { refresh(rt); return rt->generation; }
@@ -315,7 +323,7 @@ bool qa_navigation_runtime_boarding_elevator(qa_navigation_runtime *rt, int64_t 
   for (size_t i = 0; i < n; i++) {
     const qa_navigation_edge *edge = edges[i];
     if ((edge->source.kind != QA_NS_NAV3 && edge->source.kind != QA_NS_NAV2) || edge->mode != QA_TM_MOVER ||
-        edge->source_travel_type != 6 || !edge->has_entity) continue;
+        edge->source_travel_type != QA_KEX_TRAVEL_ELEVATOR || !edge->has_entity) continue;
     qa_navigation_entity_state state;
     if (!rt->world->get_entity(rt->world->ctx, edge->entity, &state)) continue;
     if (state.has_elevator && state.enabled && !state.locked) {
@@ -562,11 +570,12 @@ qa_navigation_area_crossing *qa_navigation_runtime_trace_areas(qa_navigation_run
       double delta = e[axis] - s[axis];
       if (delta == 0) { if (s[axis] < mn[axis] || s[axis] > mx[axis]) leave = -1; continue; }
       double first = (mn[axis] - s[axis]) / delta, second = (mx[axis] - s[axis]) / delta;
-      enter = fmax(enter, fmin(first, second)); leave = fmin(leave, fmax(first, second));
+      enter = qa_js_max(enter, qa_js_min(first, second)); leave = qa_js_min(leave, qa_js_max(first, second));
     }
     if (enter <= leave) {
       if (cn == ccap) { ccap = ccap ? ccap * 2 : 16; crossed = realloc(crossed, ccap * sizeof *crossed); if (!crossed) return NULL; }
-      crossed[cn++] = (Cross){node->id,
+      Cross * ref = &crossed[cn++];
+      *ref = (Cross){node->id,
                               {start.x + (end.x - start.x) * enter, start.y + (end.y - start.y) * enter,
                                start.z + (end.z - start.z) * enter},
                               enter, cn};
@@ -732,7 +741,7 @@ static bool traverse_edge(qa_navigation_runtime *rt, const qa_navigation_edge *e
   }
   qa_navigation_entity_state mover;
   bool has_mover = edge->mode == QA_TM_MOVER && (edge->source.kind == QA_NS_NAV3 || edge->source.kind == QA_NS_NAV2) &&
-                   edge->source_travel_type == 6 && edge->has_entity &&
+                   edge->source_travel_type == QA_KEX_TRAVEL_ELEVATOR && edge->has_entity &&
                    rt->world->get_entity(rt->world->ctx, edge->entity, &mover) && mover.has_elevator;
   if (has_mover && mover.enabled && !mover.locked) {
     if (mover.elevator_top.z <= mover.elevator_bottom.z || mover.elevator_top.x != mover.elevator_bottom.x ||
@@ -740,7 +749,7 @@ static bool traverse_edge(qa_navigation_runtime *rt, const qa_navigation_edge *e
     qa_vec3 staging = edge->has_hint ? edge->hint.funnel : edge->start;
     const qa_navigation_node *from_node = qa_navigation_runtime_node(rt, edge->from);
     double radius = from_node ? from_node->radius : 0;
-    double limit = fmax(rt->graph->profile.maximum_step, radius);
+    double limit = qa_js_max(rt->graph->profile.maximum_step, radius);
     if (qa_nav_distance(state->cursor, edge->start) > limit && qa_nav_distance(state->cursor, staging) > 1) {
       qa_traversal_admission a = traversal_admit(state, make_request(state->cursor, staging, QA_TM_WALK, false, (qa_traversal_hint){0}, false, (qa_navigation_entity_binding){0}));
       bool ok = a.admitted; qa_traversal_admission_destroy(&a);
@@ -900,4 +909,26 @@ qa_navigation_debug_line *qa_navigation_runtime_debug_lines(qa_navigation_runtim
   }
   *out_count = rt->graph->edge_count;
   return out;
+}
+
+/* TS edgeSelectable: the static eligibility test without movement simulation or
+ * live world reads; has_flags false is the TS undefined travelFlags. */
+bool qa_navigation_runtime_edge_selectable(qa_navigation_runtime *rt, const qa_navigation_edge *edge,
+                                           bool has_flags, int64_t travel_flags) {
+  return estimate_allowed(rt, edge, has_flags, travel_flags);
+}
+/* TS edge(id): NULL is TS null. */
+const qa_navigation_edge *qa_navigation_runtime_edge(const qa_navigation_runtime *rt, int64_t id) {
+  for (size_t i = 0; i < rt->graph->edge_count; i++)
+    if (rt->graph->edges[i].id == id) return &rt->graph->edges[i];
+  return NULL;
+}
+/* TS moverEdge(model): the first mover edge bound to the brush model, in graph order. */
+const qa_navigation_edge *qa_navigation_runtime_mover_edge(const qa_navigation_runtime *rt, int64_t model) {
+  for (size_t i = 0; i < rt->graph->edge_count; i++) {
+    const qa_navigation_edge *edge = &rt->graph->edges[i];
+    if (edge->mode == QA_TM_MOVER && edge->has_entity && edge->entity.has_model && edge->entity.model == model)
+      return edge;
+  }
+  return NULL;
 }

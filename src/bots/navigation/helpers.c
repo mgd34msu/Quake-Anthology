@@ -3,6 +3,7 @@
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 const qa_navigation_node *qa_nav_at_node(const qa_navigation_node *values, size_t count, int64_t index) {
   if (index < 0 || index >= (int64_t)count) qa_range_error("Navigation record %lld exceeds %lld", (long long)index, (long long)count);
@@ -12,7 +13,7 @@ const qa_navigation_edge *qa_nav_at_edge(const qa_navigation_edge *values, size_
   if (index < 0 || index >= (int64_t)count) qa_range_error("Navigation record %lld exceeds %lld", (long long)index, (long long)count);
   return &values[index];
 }
-double qa_nav_distance(qa_vec3 a, qa_vec3 b) { return hypot(hypot(a.x - b.x, a.y - b.y), a.z - b.z); }
+double qa_nav_distance(qa_vec3 a, qa_vec3 b) { return qa_js_hypot3(a.x - b.x, a.y - b.y, a.z - b.z); }
 qa_vec3 qa_nav_midpoint(qa_vec3 a, qa_vec3 b) { return (qa_vec3){(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2}; }
 qa_bounds qa_nav_translated(qa_vec3 point, qa_bounds bounds) {
   return (qa_bounds){{point.x + bounds.min.x, point.y + bounds.min.y, point.z + bounds.min.z},

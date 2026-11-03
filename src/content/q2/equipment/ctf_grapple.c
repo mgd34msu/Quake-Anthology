@@ -1,6 +1,7 @@
 /* Port of src/content/q2/equipment/ctf-grapple.ts. GPL-2.0-or-later.
  * Mirrored projection helpers (TS owner: foundation/weapons/projection.ts). */
 #include "qa/content/q2/equipment/ctf_grapple.h"
+#include "qa/foundation/js.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,9 +34,9 @@ static shot project_actor(qa_actor_id actor, qa_q2_game_services *g, const char 
   qa_vec3 eye = qa_q2_add(origin, (qa_vec3){0, 0, view_height});
   qa_vec3 start = qa_q2_add(qa_q2_add(qa_q2_add(eye, qa_q2_scale(axes.forward, offset.x)), qa_q2_scale(axes.right, side)), qa_q2_scale(axes.up, offset.z));
   qa_q2_trace_request tr = {.start = eye, .end = qa_q2_add(eye, qa_q2_scale(axes.forward, 8192)), .ignore = &actor,
-    .mask = (double)((int64_t)shot_mask(g, players_collide) & ~0x4000000)};
+    .mask = (double)(qa_js_to_int32(shot_mask(g, players_collide)) & ~0x4000000)};
   qa_trace_result trace = g->host->trace(g->host->ctx, tr);
-  bool close = strcmp(trace.kind, "q1") != 0 && (((int64_t)trace.contents & (0x2000000 | PLAYER_CONTENTS)) != 0) && trace.fraction * 8192 < 128;
+  bool close = strcmp(trace.kind, "q1") != 0 && ((qa_js_to_int32(trace.contents) & (0x2000000 | PLAYER_CONTENTS)) != 0) && trace.fraction * 8192 < 128;
   return (shot){start, (trace.start_solid || close) ? axes.forward : qa_q2_normalize(qa_q2_subtract(trace.end, start))};
 }
 
@@ -47,7 +48,7 @@ struct qa_q2_ctf_grapple_equipment {
   qa_ctf_grapple_settings (*settings)(void *, qa_actor_id, qa_q2_game_services *);
   void *settings_ctx;
   state_entry *states; size_t count, cap;
-  qa_q2_game_services **bound; size_t bound_count, bound_cap;
+  struct release_ctx **bound; size_t bound_count, bound_cap; /* one owned binding per bound game */
   qa_q2_named_touch touches[1];
   qa_q2_named_die dies[1];
   qa_q2_callback_definitions defs;
@@ -106,9 +107,8 @@ static void loop_hook(qa_q2_entity *hook, qa_q2_game_services *g, const char *pa
   }
 }
 
-typedef struct release_ctx { qa_q2_ctf_grapple_equipment *e; qa_q2_game_services *g; } release_ctx;
-static release_ctx *release_ctxs;
-static size_t release_ctx_count, release_ctx_cap;
+/* TS game.host.actors.onRelease(...) per bound game; C unsubscribes on destroy. */
+typedef struct release_ctx { qa_q2_ctf_grapple_equipment *e; qa_q2_game_services *g; qa_session_actor_registry *actors; int64_t subscription; } release_ctx;
 static void on_release(void *c, qa_owned_actor actor) {
   release_ctx *rc = c;
   qa_q2_ctf_grapple_equipment *e = rc->e;
@@ -132,12 +132,13 @@ static void on_release(void *c, qa_owned_actor actor) {
 }
 
 void qa_q2_ctf_grapple_bind(qa_q2_ctf_grapple_equipment *e, qa_q2_game_services *g) {
-  for (size_t i = 0; i < e->bound_count; i++) if (e->bound[i] == g) return;
+  for (size_t i = 0; i < e->bound_count; i++) if (e->bound[i]->g == g) return;
   if (e->bound_count == e->bound_cap) { e->bound_cap = e->bound_cap ? e->bound_cap * 2 : 4; e->bound = realloc(e->bound, e->bound_cap * sizeof *e->bound); if (!e->bound) qa_range_error("out of memory"); }
-  e->bound[e->bound_count++] = g;
-  if (release_ctx_count == release_ctx_cap) { release_ctx_cap = release_ctx_cap ? release_ctx_cap * 2 : 8; release_ctxs = realloc(release_ctxs, release_ctx_cap * sizeof *release_ctxs); if (!release_ctxs) qa_range_error("out of memory"); }
-  release_ctxs[release_ctx_count] = (release_ctx){e, g};
-  qa_session_actor_registry_on_release(g->host->actors, on_release, &release_ctxs[release_ctx_count++]);
+  release_ctx *binding = malloc(sizeof *binding);
+  if (!binding) qa_range_error("out of memory");
+  *binding = (release_ctx){e, g, g->host->actors, 0};
+  e->bound[e->bound_count++] = binding;
+  binding->subscription = qa_session_actor_registry_on_release(g->host->actors, on_release, binding);
 }
 
 void qa_q2_ctf_grapple_sound(qa_q2_ctf_grapple_equipment *e, qa_actor_id entity, qa_actor_id owner, qa_q2_game_services *g, const char *file, bool reliable) {
@@ -200,7 +201,7 @@ void qa_q2_ctf_grapple_touch(qa_q2_ctf_grapple_equipment *e, qa_q2_entity *hook,
   qa_actor_id owner = hook->owner;
   qa_ctf_grapple_state *source = qa_q2_ctf_grapple_state(e, owner);
   if (qa_same_actor(contact.other, owner) || strcmp(source->grapple_state, "fly") != 0) return;
-  if (contact.surface && (((int64_t)contact.surface->native_flags & 4) != 0)) { reset_hook(e, hook, g); return; }
+  if (contact.surface && ((qa_js_to_int32(contact.surface->native_flags) & 4) != 0)) { reset_hook(e, hook, g); return; }
   qa_q2_body_changes ch = {0}; ch.has_velocity = true; ch.velocity = QA_Q2_ZERO;
   g->move(g->ctx, hook, ch, true);
   e->hooks.noise(e->hooks.ctx, owner, g, qa_q2_game_body(g, hook).origin, "impact");
@@ -260,7 +261,7 @@ bool qa_q2_ctf_grapple_fire(qa_q2_ctf_grapple_equipment *e, qa_actor_id owner, q
   qa_vec3 normalized = qa_q2_normalize(direction);
   hook->clip_mask = shot_mask(g, settings_of(e, owner, g).players_collide);
   if (g->options.edition == QA_Q2_EDITION_RERELEASE) {
-    hook->flags = (double)((int64_t)hook->flags | 0x800 | 0x100000);
+    hook->flags = (double)(qa_js_to_int32(hook->flags) | 0x800 | 0x100000);
     hook->die = (qa_q2_die){e, source_die_fn};
     qa_combat_state st = {0};
     st.can_take_damage = true; st.has_no_knockback = true; st.no_knockback = true;
@@ -283,8 +284,12 @@ bool qa_q2_ctf_grapple_fire(qa_q2_ctf_grapple_equipment *e, qa_actor_id owner, q
   qa_weapon_trajectory_update_result trajectory = {0};
   if (g->host->is_player(g->host->ctx, owner) && g->host->weapon_behavior) {
     const qa_weapon_behavior_projectile_port *port = g->host->weapon_behavior;
-    qa_weapon_behavior_launch launch = {.projectile = hook->actor, .shooter = owner, .weapon = "q2:weapon_grapple",
-      .role = "grapple", .time_seconds = g->host->now(g->host->ctx), .body = qa_q2_game_body(g, hook)};
+    qa_owned_actor value2 = hook->actor;
+    qa_actor_id value3 = owner;
+    double value4 = g->host->now(g->host->ctx);
+    qa_body_state value5 = qa_q2_game_body(g, hook);
+    qa_weapon_behavior_launch launch = {.projectile = value2, .shooter = value3, .weapon = "q2:weapon_grapple",
+      .role = "grapple", .time_seconds = value4, .body = value5};
     trajectory = port->launch(port->ctx, launch);
   }
   if (trajectory.has_value) g->project_trajectory(g->ctx, hook, trajectory.value);
@@ -337,6 +342,8 @@ static void cable(qa_q2_ctf_grapple_equipment *e, qa_q2_entity *hook, qa_actor_i
 }
 
 void qa_q2_ctf_grapple_pull(qa_q2_ctf_grapple_equipment *e, qa_q2_entity *hook, qa_q2_game_services *g, bool damage_pulse) {
+  double left;
+  double right;
   if (!hook->has_owner || !live(g, hook->owner) || !qa_shared_body_table_read(g->host->bodies, hook->owner).has_value) { reset_hook(e, hook, g); return; }
   qa_actor_id owner = hook->owner;
   qa_grapple_pose pose = e->hooks.pose(e->hooks.ctx, owner, g);
@@ -353,7 +360,12 @@ void qa_q2_ctf_grapple_pull(qa_q2_ctf_grapple_equipment *e, qa_q2_entity *hook, 
     qa_combat_state_result cs = qa_gameplay_authority_read(g->host->combat, hook->enemy);
     if (g->options.edition == QA_Q2_EDITION_CLASSIC && damage_pulse && cs.has_value && cs.value.can_take_damage && can_damage_of(e, owner, hook->enemy)) {
       qa_actor_id enemy = hook->enemy;
-      g->damage(g->ctx, enemy, hook, hook->actor.id, &owner, 1, 1, qa_q2_game_body(g, hook).velocity, qa_q2_game_body(g, hook).origin, QA_Q2_ZERO, MOD_GRAPPLE, 0, "q2:weapon_grapple");
+      void * value2 = g->ctx;
+      qa_actor_id value5 = hook->actor.id;
+      const qa_actor_id * value6 = &owner;
+      qa_vec3 value7 = qa_q2_game_body(g, hook).velocity;
+      qa_vec3 value8 = qa_q2_game_body(g, hook).origin;
+      g->damage(value2, enemy, hook, value5, value6, 1, 1, value7, value8, QA_Q2_ZERO, MOD_GRAPPLE, 0, "q2:weapon_grapple");
       if (!live(g, hook->actor.id) || !live(g, owner)) return;
       qa_q2_ctf_grapple_sound(e, hook->actor.id, owner, g, "grhurt", false);
     }
@@ -384,7 +396,7 @@ void qa_q2_ctf_grapple_pull(qa_q2_ctf_grapple_equipment *e, qa_q2_entity *hook, 
     }
   }
   qa_vec3 velocity = qa_q2_scale(qa_q2_normalize(direction), g->options.edition == QA_Q2_EDITION_CLASSIC ? 650 : settings_of(e, owner, g).pull_speed);
-  qa_grapple_velocity(owner, g, qa_q2_add(velocity, qa_q2_scale(pose.gravity_vector, pose.gravity * e->hooks.gravity(e->hooks.ctx) * g->host->frame_seconds(g->host->ctx))));
+  qa_grapple_velocity(owner, g, qa_q2_add(velocity, qa_q2_scale(pose.gravity_vector, (left = pose.gravity * e->hooks.gravity(e->hooks.ctx), right = g->host->frame_seconds(g->host->ctx), left * right))));
 }
 
 void qa_q2_ctf_grapple_player_frame(qa_q2_ctf_grapple_equipment *e, qa_actor_id player, qa_q2_game_services *g, bool damage_pulse) {
@@ -406,8 +418,19 @@ qa_q2_ctf_grapple_equipment *qa_q2_ctf_grapple_create(qa_grapple_hooks hooks,
 }
 void qa_q2_ctf_grapple_destroy(qa_q2_ctf_grapple_equipment *e) {
   if (!e) return;
+  for (size_t i = 0; i < e->bound_count; i++) {
+    qa_session_actor_registry_off_release(e->bound[i]->actors, e->bound[i]->subscription);
+    free(e->bound[i]);
+  }
   free(e->states); free(e->bound); free(e->buf);
   free(e);
 }
 qa_grapple_hooks qa_q2_ctf_grapple_hooks(qa_q2_ctf_grapple_equipment *e) { return e->hooks; }
 qa_q2_callback_definitions qa_q2_ctf_grapple_callbacks(qa_q2_ctf_grapple_equipment *e) { return e->defs; }
+qa_ctf_grapple_state *qa_q2_ctf_grapple_find_state(qa_q2_ctf_grapple_equipment *e, qa_actor_id a) { return find_state(e, a); }
+size_t qa_q2_ctf_grapple_state_count(const qa_q2_ctf_grapple_equipment *e) { return e->count; }
+qa_ctf_grapple_state *qa_q2_ctf_grapple_state_at(qa_q2_ctf_grapple_equipment *e, size_t index, qa_actor_id *out_actor) {
+  *out_actor = e->states[index].id;
+  return &e->states[index].v;
+}
+void qa_q2_ctf_grapple_clear_states(qa_q2_ctf_grapple_equipment *e) { e->count = 0; }

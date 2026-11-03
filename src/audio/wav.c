@@ -80,7 +80,7 @@ static int64_t pcm_sample(qa_binary_reader *reader, int64_t data_offset,
                         data_offset + index * (bytes_per_sample == 2 ? 2 : 1));
   return bytes_per_sample == 2
              ? qa_binary_reader_i16(reader)
-             : (int64_t)((qa_binary_reader_u8(reader) - 128) << 8);
+             : ((int64_t)qa_binary_reader_u8(reader) - 128) * 256; /* TS (u8 - 128) << 8 without shifting a negative */
 }
 
 static bool pcm_samples(qa_binary_reader *reader, int64_t data_offset,

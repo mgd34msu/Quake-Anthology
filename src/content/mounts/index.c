@@ -2,6 +2,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _FILE_OFFSET_BITS 64
 #include "qa/content/mounts.h"
+#include "qa/network/common/js_number.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -23,11 +24,11 @@
 #include "qa/network/q3/pure.h"
 #include "qa/persistence/value.h"
 
+/* TS `throw new Error(...)`: raised through qa_raise so a TS catch (mod
+ * discovery, preparation fallbacks) recovers it with qa_try; uncaught it
+ * prints "Error: ..." and aborts as before. */
 static noreturn void plain_error(const char *format, const char *argument) {
-  fprintf(stderr, "Error: ");
-  fprintf(stderr, format, argument);
-  fputc('\n', stderr);
-  abort();
+  qa_raise("Error", 0, 0, format, argument);
 }
 static noreturn void oom_error(void) { qa_range_error("out of memory"); }
 static char *copy_text(const char *text) {
@@ -336,6 +337,20 @@ static void save_disk_digests(void) {
       digest_store(&disk_digests, &disk_count, &capacity,
                    verified_digests[i].path, copy);
   }
+  /* Entries for archives that were deleted or moved would otherwise
+   * accumulate forever. */
+  size_t kept = 0;
+  for (size_t i = 0; i < disk_count; i++) {
+    struct stat info;
+    if (digest_lookup(verified_digests, verified_count, disk_digests[i].path) == NULL &&
+        stat(disk_digests[i].path, &info) != 0) {
+      free(disk_digests[i].path);
+      free(disk_digests[i].value.digest);
+      continue;
+    }
+    disk_digests[kept++] = disk_digests[i];
+  }
+  disk_count = kept;
   char *file = digest_cache_file();
   if (file == NULL) return;
   char *directory = copy_text(file);
@@ -345,8 +360,25 @@ static void save_disk_digests(void) {
     mkdir_parents(directory);
     free(directory);
   }
-  char temporary[PATH_MAX];
-  (void)snprintf(temporary, sizeof temporary, "%s.tmp", file);
+  /* TS `${file}.${pid}.${randomUUID()}.tmp`, removed in a finally. */
+  char temporary[PATH_MAX + 128];
+  uint8_t random_bytes[16];
+  FILE *urandom = fopen("/dev/urandom", "rb");
+  bool have_random = urandom != NULL && fread(random_bytes, 1, sizeof random_bytes, urandom) == sizeof random_bytes;
+  if (urandom != NULL) (void)fclose(urandom);
+  if (!have_random)
+    for (size_t i = 0; i < sizeof random_bytes; i++) random_bytes[i] = (uint8_t)(rand() & 0xff);
+  random_bytes[6] = (uint8_t)((random_bytes[6] & 0x0f) | 0x40);
+  random_bytes[8] = (uint8_t)((random_bytes[8] & 0x3f) | 0x80);
+  char uuid[37];
+  static const char hex_digits[] = "0123456789abcdef";
+  for (size_t i = 0, at = 0; i < 16; i++) {
+    if (i == 4 || i == 6 || i == 8 || i == 10) uuid[at++] = '-';
+    uuid[at++] = hex_digits[random_bytes[i] >> 4];
+    uuid[at++] = hex_digits[random_bytes[i] & 0x0f];
+  }
+  uuid[36] = '\0';
+  (void)snprintf(temporary, sizeof temporary, "%s.%ld.%s.tmp", file, (long)getpid(), uuid);
   FILE *handle = fopen(temporary, "wb");
   if (handle == NULL) { free(file); return; }
   fputc('{', handle);
@@ -355,14 +387,16 @@ static void save_disk_digests(void) {
     json_escape_into(handle, disk_digests[i].path);
     const digest_fingerprint *value = &disk_digests[i].value;
     fprintf(handle,
-            ":{\"size\":%.17g,\"mtimeMs\":%.17g,\"ctimeMs\":%.17g,\"ino\":%.17g,\"digest\":",
-            value->size, value->mtime_ms, value->ctime_ms, value->ino);
+            ":{\"size\":%s,\"mtimeMs\":%s,\"ctimeMs\":%s,\"ino\":%s,\"digest\":",
+            QA_JS_NUMBER(value->size), QA_JS_NUMBER(value->mtime_ms), QA_JS_NUMBER(value->ctime_ms), QA_JS_NUMBER(value->ino));
     json_escape_into(handle, value->digest);
     fputc('}', handle);
   }
   fputc('}', handle);
-  bool ok = fclose(handle) == 0;
+  bool ok = !ferror(handle);
+  ok = fclose(handle) == 0 && ok;
   if (ok) (void)rename(temporary, file);
+  (void)unlink(temporary);
   free(file);
 }
 
@@ -438,17 +472,19 @@ typedef struct mounted_source {
   qa_archive_handle *archive; /* NULL for loose */
 } mounted_source;
 
+/* One opened resource: an owned reference value (qa_resolved_resource_copy),
+ * so it does not depend on the caller's resource or on a source read. Each
+ * record is its own allocation: the pointer open() hands out stays put while
+ * later opens grow the set. Reopening the same key replaces the value in
+ * place, as TS openedResources.set replaces the map entry. */
 typedef struct opened_record {
   int64_t key;
-  qa_resolved_resource_reference reference; /* strings owned, below */
-  char *requested_path;
-  char *member_path;
-  char *digest;
-  char *id;
-  char *prefix;
-  char *source_prefix;
-  char *target_path;
+  qa_resolved_resource_reference reference;
 } opened_record;
+typedef struct opened_records {
+  opened_record **items;
+  size_t count, capacity;
+} opened_records;
 
 typedef struct listing_entry {
   char *name; /* owned */
@@ -476,12 +512,11 @@ struct qa_content_mounted {
   size_t user_mount_count, user_mount_capacity;
   qa_archive_mount *referenced; /* by value */
   size_t referenced_count, referenced_capacity;
-  opened_record *opened;
-  size_t opened_count, opened_capacity;
+  opened_records opened;
   qa_resolved_resource_reference *opened_view; /* scratch for the getter */
   /* Opened-key map: (mount id, requested path) -> key. */
   struct opened_key_entry {
-    qa_mount_id mount;
+    char *mount; /* owned */
     char *path; /* owned */
     int64_t key;
   } *opened_keys;
@@ -713,15 +748,54 @@ static qa_content_mounted *mounted_create_plan(
   resolve_mount_plan_into(mounted, plan, options);
   return mounted;
 }
-static void free_opened_record(opened_record *record) {
-  free(record->requested_path);
-  free(record->member_path);
-  free(record->digest);
-  free(record->id);
-  free(record->prefix);
-  free(record->source_prefix);
-  free(record->target_path);
-  memset(record, 0, sizeof *record);
+static void records_clear(opened_records *records) {
+  for (size_t i = 0; i < records->count; i++) {
+    qa_resolved_resource_release(&records->items[i]->reference);
+    free(records->items[i]);
+  }
+  records->count = 0;
+}
+static void records_free(opened_records *records) {
+  records_clear(records);
+  free(records->items);
+  memset(records, 0, sizeof *records);
+}
+/* Stores an owned copy of `reference` under `key`. An equal value already
+ * stored is kept (its strings stay valid for earlier callers); otherwise the
+ * copy is taken before the old value is released, so `reference` may be a
+ * value this set owns. */
+static opened_record *records_put(opened_records *records, int64_t key,
+                                  const qa_resolved_resource_reference *reference) {
+  for (size_t i = 0; i < records->count; i++) {
+    opened_record *record = records->items[i];
+    if (record->key != key) continue;
+    /* The id spells content, mount, provenance, digest and resolution; the
+     * key fixes the requested path. */
+    if (text_equal(record->reference.id, reference->id) &&
+        record->reference.byte_length == reference->byte_length)
+      return record;
+    qa_resolved_resource_reference copy;
+    if (!qa_resolved_resource_copy(reference, &copy)) oom_error();
+    qa_resolved_resource_release(&record->reference);
+    record->reference = copy;
+    return record;
+  }
+  qa_resolved_resource_reference copy;
+  if (!qa_resolved_resource_copy(reference, &copy)) oom_error();
+  if (records->count == records->capacity) {
+    size_t next = records->capacity == 0 ? 8 : records->capacity * 2;
+    opened_record **grown =
+        (opened_record **)realloc(records->items, next * sizeof *grown);
+    if (grown == NULL) oom_error();
+    records->items = grown;
+    records->capacity = next;
+  }
+  opened_record *record = (opened_record *)malloc(sizeof *record);
+  if (record == NULL) oom_error();
+  record->key = key;
+  record->reference = copy;
+  records->items[records->count++] = record;
+  return record;
 }
 static void clear_listings(qa_content_mounted *mounted) {
   for (size_t i = 0; i < mounted->listing_count; i++) {
@@ -748,12 +822,12 @@ const qa_resolved_resource_reference *qa_content_mounted_opened_resources(
   qa_content_mounted *mutable = (qa_content_mounted *)(const void *)mounted;
   free(mutable->opened_view);
   mutable->opened_view = (qa_resolved_resource_reference *)malloc(
-      (mounted->opened_count ? mounted->opened_count : 1) *
+      (mounted->opened.count ? mounted->opened.count : 1) *
       sizeof *mutable->opened_view);
   if (mutable->opened_view == NULL) oom_error();
-  for (size_t i = 0; i < mounted->opened_count; i++)
-    mutable->opened_view[i] = mounted->opened[i].reference;
-  if (out_count != NULL) *out_count = mounted->opened_count;
+  for (size_t i = 0; i < mounted->opened.count; i++)
+    mutable->opened_view[i] = mounted->opened.items[i]->reference;
+  if (out_count != NULL) *out_count = mounted->opened.count;
   return mutable->opened_view;
 }
 const qa_archive_mount *qa_content_mounted_referenced_archives(
@@ -873,8 +947,19 @@ static bool read_source(qa_content_mounted *mounted, mounted_source *source,
                             loose_comparison_of(mounted), &found_path))
     return false;
   struct stat info;
-  bool is_file = stat(found_path, &info) == 0 && S_ISREG(info.st_mode);
-  if (!is_file) {
+  if (stat(found_path, &info) != 0) {
+    /* TS isMissingFile (ENOENT, ENOTDIR) is a miss; other stat errors throw. */
+    int code = errno;
+    if (code != ENOENT && code != ENOTDIR) {
+      char text[PATH_MAX + 64];
+      snprintf(text, sizeof text, "%s", found_path);
+      free(found_path);
+      qa_raise("Error", 0, 0, "%s, stat '%s'", strerror(code), text);
+    }
+    free(found_path);
+    return false;
+  }
+  if (!S_ISREG(info.st_mode)) {
     free(found_path);
     return false;
   }
@@ -912,7 +997,7 @@ static int64_t opened_key(qa_content_mounted *mounted, qa_mount_id mount,
     mounted->opened_key_capacity = next;
   }
   int64_t key = mounted->next_opened_key++;
-  mounted->opened_keys[mounted->opened_key_count].mount = mount;
+  mounted->opened_keys[mounted->opened_key_count].mount = copy_text_or_oom(mount);
   mounted->opened_keys[mounted->opened_key_count].path =
       copy_text_or_oom(requested_path);
   mounted->opened_keys[mounted->opened_key_count].key = key;
@@ -921,11 +1006,11 @@ static int64_t opened_key(qa_content_mounted *mounted, qa_mount_id mount,
 }
 
 static opened_record *store_opened(qa_content_mounted *mounted,
-                                   opened_record **records_ptr, size_t *count,
-                                   size_t *capacity, const char *requested_path,
+                                   opened_records *records,
+                                   const char *requested_path,
                                    source_read *read,
                                    qa_resource_resolution resolution) {
-  opened_record *records = *records_ptr;
+  /* A borrowed view over the read; records_put stores an owned copy. */
   qa_resolved_resource_reference reference;
   memset(&reference, 0, sizeof reference);
   reference.requested_path = requested_path;
@@ -958,48 +1043,16 @@ static opened_record *store_opened(qa_content_mounted *mounted,
   }
   char *id = qa_create_resource_id(&reference);
   if (id == NULL) oom_error();
+  reference.id = id;
   qa_mount_id mount_id = read->provenance.kind == QA_CONTENT_MOUNT_ARCHIVE
                              ? read->provenance.archive_mount->identity.id
                              : read->provenance.loose_mount->identity.id;
   int64_t key = opened_key(mounted, mount_id, requested_path);
-  opened_record *record = NULL;
-  for (size_t i = 0; i < *count; i++)
-    if (records[i].key == key) record = &records[i];
-  if (record == NULL) {
-    if (*count == *capacity) {
-      size_t next = *capacity == 0 ? 8 : *capacity * 2;
-      opened_record *grown =
-          (opened_record *)realloc(records, next * sizeof *grown);
-      if (grown == NULL) oom_error();
-      records = grown;
-      *records_ptr = grown;
-      *capacity = next;
-    }
-    record = &records[*count];
-    memset(record, 0, sizeof *record);
-    record->key = key;
-    (*count)++;
-  } else {
-    int64_t keep_key = record->key;
-    free_opened_record(record);
-    record->key = keep_key;
-  }
-  record->requested_path = copy_text_or_oom(requested_path);
-  record->member_path = read->member_path;
+  opened_record *record = records_put(records, key, &reference);
+  free(digest);
+  free(id);
+  free(read->member_path);
   read->member_path = NULL;
-  record->digest = digest;
-  record->id = id;
-  record->prefix = copy_text(resolution.prefix);
-  record->source_prefix = copy_text(resolution.source_prefix);
-  record->target_path = copy_text(resolution.target_path);
-  reference.id = record->id;
-  reference.requested_path = record->requested_path;
-  reference.digest = record->digest;
-  reference.provenance.member_path = record->member_path;
-  reference.resolution.prefix = record->prefix;
-  reference.resolution.source_prefix = record->source_prefix;
-  reference.resolution.target_path = record->target_path;
-  record->reference = reference;
   return record;
 }
 
@@ -1015,14 +1068,30 @@ static const qa_prefix_mount_order *find_prefix(
   return NULL;
 }
 
+typedef struct normalize_job {
+  const char *path;
+  char *normalized;
+} normalize_job;
+static void normalize_run(void *raw) {
+  normalize_job *job = raw;
+  job->normalized = qa_normalize_resource_path(job->path);
+}
+
 static bool mounted_open_impl(qa_content_mounted *mounted,
                               const qa_resolved_mount_plan *plan,
                               const char *path, qa_mount_accept_fn accept,
-                              void *accept_ctx, opened_record **records,
-                              size_t *count, size_t *capacity,
+                              void *accept_ctx, opened_records *records,
                               qa_content_opened_resource *out) {
   qa_content_mounted_assert_open(mounted);
-  char *requested_path = qa_normalize_resource_path(path);
+  /* Servers, maps and mods supply these names, so one that can't name a
+   * resource is a miss rather than a fault (TS catches the RangeError). */
+  normalize_job job = {path, NULL};
+  qa_caught_error caught;
+  if (!qa_try(normalize_run, &job, &caught)) {
+    if (strcmp(caught.name, "RangeError") == 0) return false;
+    qa_rethrow(&caught);
+  }
+  char *requested_path = job.normalized;
   if (requested_path == NULL) oom_error();
   if (mounted->user_mount_count != 0) {
     for (size_t rank = 0; rank < plan->default_order_count; rank++) {
@@ -1040,8 +1109,8 @@ static bool mounted_open_impl(qa_content_mounted *mounted,
         resolution.kind = QA_RESOURCE_RESOLUTION_DEFAULT_ORDER;
         resolution.plan = plan->id;
         resolution.rank = (int64_t)rank;
-        opened_record *record = store_opened(mounted, records, count, capacity,
-                                             requested_path, &read, resolution);
+        opened_record *record = store_opened(mounted, records, requested_path,
+                                             &read, resolution);
         out->reference = &record->reference;
         out->bytes = read.bytes;
         out->byte_length = read.byte_length;
@@ -1084,8 +1153,8 @@ static bool mounted_open_impl(qa_content_mounted *mounted,
     resolution.plan = plan->id;
     resolution.source_prefix = link->source_prefix;
     resolution.target_path = target_path;
-    opened_record *record = store_opened(mounted, records, count, capacity,
-                                         requested_path, &read, resolution);
+    opened_record *record = store_opened(mounted, records, requested_path,
+                                         &read, resolution);
     free(target_path);
     out->reference = &record->reference;
     out->bytes = read.bytes;
@@ -1115,8 +1184,8 @@ static bool mounted_open_impl(qa_content_mounted *mounted,
       resolution.plan = plan->id;
       resolution.rank = (int64_t)rank;
       resolution.prefix = prefix != NULL ? prefix->prefix : NULL;
-      opened_record *record = store_opened(mounted, records, count, capacity,
-                                           requested_path, &read, resolution);
+      opened_record *record = store_opened(mounted, records, requested_path,
+                                           &read, resolution);
       out->reference = &record->reference;
       out->bytes = read.bytes;
       out->byte_length = read.byte_length;
@@ -1132,8 +1201,7 @@ bool qa_content_mounted_open(qa_content_mounted *mounted, const char *path,
                              qa_mount_accept_fn accept, void *accept_ctx,
                              qa_content_opened_resource *out) {
   return mounted_open_impl(mounted, &mounted->plan, path, accept, accept_ctx,
-                           &mounted->opened, &mounted->opened_count,
-                           &mounted->opened_capacity, out);
+                           &mounted->opened, out);
 }
 bool qa_content_mounted_resolve(qa_content_mounted *mounted, const char *path,
                                 const qa_resolved_resource_reference **out) {
@@ -1151,85 +1219,46 @@ bool qa_content_mounted_resolve(qa_content_mounted *mounted, const char *path,
 static uint8_t *mounted_read_impl(qa_content_mounted *mounted,
                                   const qa_resolved_resource_reference *resource,
                                   const char *path, size_t *out_length,
-                                  opened_record **records, size_t *count,
-                                  size_t *capacity,
+                                  opened_records *records,
                                   const qa_resolved_mount_plan *open_plan);
 
 uint8_t *qa_content_mounted_read_path(qa_content_mounted *mounted,
                                       const char *path, size_t *out_length) {
   return mounted_read_impl(mounted, NULL, path, out_length, &mounted->opened,
-                           &mounted->opened_count, &mounted->opened_capacity,
                            &mounted->plan);
 }
 uint8_t *qa_content_mounted_read_reference(
     qa_content_mounted *mounted, const qa_resolved_resource_reference *resource,
     size_t *out_length) {
   return mounted_read_impl(mounted, resource, NULL, out_length,
-                           &mounted->opened, &mounted->opened_count,
-                           &mounted->opened_capacity, &mounted->plan);
+                           &mounted->opened, &mounted->plan);
 }
 
+/* TS openedResources.set(key, resource): the set keeps its own copy of the
+ * caller's value, so a reference handed back (one this set owns, or a copy
+ * the caller later releases) never dangles here. */
 static void store_reference_direct(qa_content_mounted *mounted,
-                                   opened_record **records_ptr, size_t *count,
-                                   size_t *capacity,
+                                   opened_records *records,
                                    const qa_resolved_resource_reference *resource) {
   qa_mount_id mount_id =
       resource->provenance.kind == QA_CONTENT_MOUNT_ARCHIVE
           ? resource->provenance.archive_mount->identity.id
           : resource->provenance.loose_mount->identity.id;
   int64_t key = opened_key(mounted, mount_id, resource->requested_path);
-  opened_record *records = *records_ptr;
-  opened_record *record = NULL;
-  for (size_t i = 0; i < *count; i++)
-    if (records[i].key == key) record = &records[i];
-  if (record == NULL) {
-    if (*count == *capacity) {
-      size_t next = *capacity == 0 ? 8 : *capacity * 2;
-      opened_record *grown =
-          (opened_record *)realloc(records, next * sizeof *grown);
-      if (grown == NULL) oom_error();
-      records = grown;
-      *records_ptr = grown;
-      *capacity = next;
-    }
-    record = &records[*count];
-    memset(record, 0, sizeof *record);
-    record->key = key;
-    (*count)++;
-  } else {
-    int64_t keep_key = record->key;
-    free_opened_record(record);
-    record->key = keep_key;
-  }
-  record->requested_path = copy_text_or_oom(resource->requested_path);
-  record->member_path = copy_text_or_oom(resource->provenance.member_path);
-  record->digest = copy_text_or_oom(resource->digest);
-  record->id = copy_text_or_oom(resource->id);
-  record->prefix = copy_text(resource->resolution.prefix);
-  record->source_prefix = copy_text(resource->resolution.source_prefix);
-  record->target_path = copy_text(resource->resolution.target_path);
-  record->reference = *resource;
-  record->reference.id = record->id;
-  record->reference.requested_path = record->requested_path;
-  record->reference.digest = record->digest;
-  record->reference.provenance.member_path = record->member_path;
-  record->reference.resolution.prefix = record->prefix;
-  record->reference.resolution.source_prefix = record->source_prefix;
-  record->reference.resolution.target_path = record->target_path;
+  (void)records_put(records, key, resource);
 }
 
 static uint8_t *mounted_read_impl(qa_content_mounted *mounted,
                                   const qa_resolved_resource_reference *resource,
                                   const char *path, size_t *out_length,
-                                  opened_record **records, size_t *count,
-                                  size_t *capacity,
+                                  opened_records *records,
                                   const qa_resolved_mount_plan *open_plan) {
   qa_content_mounted_assert_open(mounted);
   if (path != NULL) {
     qa_content_opened_resource opened;
     memset(&opened, 0, sizeof opened);
-    if (!mounted_open_impl(mounted, open_plan, path, NULL, NULL, records, count,
-                           capacity, &opened))
+    if (!mounted_open_impl(mounted, open_plan, path, NULL, NULL, records,
+                           &opened))
       plain_error("Resource not found: %s", path);
     if (out_length != NULL) *out_length = opened.byte_length;
     return opened.bytes;
@@ -1309,7 +1338,7 @@ static uint8_t *mounted_read_impl(qa_content_mounted *mounted,
     plain_error("Resource bytes changed since resolution: %s",
                 resource->requested_path);
   }
-  store_reference_direct(mounted, records, count, capacity, resource);
+  store_reference_direct(mounted, records, resource);
   if (out_length != NULL) *out_length = length;
   return bytes;
 }
@@ -1467,8 +1496,14 @@ static bool probe_loose(qa_content_mounted *mounted, const char *root_path,
                                     loose_comparison_of(mounted), &found) &&
                found != NULL;
       if (result) {
+        /* TS (await stat(found)).isFile(): a failing stat throws. */
         struct stat info;
-        result = stat(found, &info) == 0 && S_ISREG(info.st_mode);
+        if (stat(found, &info) != 0) {
+          int error = errno;
+          free(found); free(current); free(normalized);
+          plain_error("%s", strerror(error));
+        }
+        result = S_ISREG(info.st_mode);
       }
       free(found);
       break;
@@ -1741,6 +1776,11 @@ char **qa_content_mounted_list_files(qa_content_mounted *mounted,
   qa_content_mounted_assert_open(mounted);
   qa_content_free_string_list(seen, seen_count);
   free(directory);
+  /* NULL only on OOM (mounts.h): an empty listing is an empty array. */
+  if (names == NULL) {
+    names = (char **)malloc(sizeof *names);
+    if (names == NULL) oom_error();
+  }
   if (out_count != NULL) *out_count = count;
   return names;
 }
@@ -1748,9 +1788,7 @@ char **qa_content_mounted_list_files(qa_content_mounted *mounted,
 void qa_content_mounted_close(qa_content_mounted *mounted) {
   if (mounted == NULL || mounted->closed) return;
   mounted->closed = true;
-  for (size_t i = 0; i < mounted->opened_count; i++)
-    free_opened_record(&mounted->opened[i]);
-  mounted->opened_count = 0;
+  records_clear(&mounted->opened);
   clear_listings(mounted);
   if (mounted->owner_kind == 0 /* OWNER_NONE: owned */) {
     for (size_t i = 0; i < mounted->source_count; i++)
@@ -1768,12 +1806,12 @@ void qa_content_mounted_destroy(qa_content_mounted *mounted) {
       qa_archive_destroy(mounted->sources[i].archive);
   }
   free(mounted->sources);
-  for (size_t i = 0; i < mounted->opened_count; i++)
-    free_opened_record(&mounted->opened[i]);
-  free(mounted->opened);
+  records_free(&mounted->opened);
   free(mounted->opened_view);
-  for (size_t i = 0; i < mounted->opened_key_count; i++)
+  for (size_t i = 0; i < mounted->opened_key_count; i++) {
+    free(mounted->opened_keys[i].mount);
     free(mounted->opened_keys[i].path);
+  }
   free(mounted->opened_keys);
   free(mounted->referenced);
   free(mounted->user_mounts);
@@ -1963,8 +2001,7 @@ struct qa_mounted_content_reader {
   qa_mount_id *default_order;       /* owned */
   qa_prefix_mount_order *prefixes;  /* owned */
   qa_mount_id **prefix_mounts;      /* owned */
-  opened_record *opened;
-  size_t opened_count, opened_capacity;
+  opened_records opened;
 };
 
 qa_mounted_content_reader *qa_content_mounted_borrow_ordered_reader(
@@ -2027,8 +2064,7 @@ bool qa_mounted_content_reader_open(qa_mounted_content_reader *reader,
                                     qa_mount_accept_fn accept, void *accept_ctx,
                                     qa_content_opened_resource *out) {
   return mounted_open_impl(reader->owner, &reader->plan, path, accept,
-                           accept_ctx, &reader->opened, &reader->opened_count,
-                           &reader->opened_capacity, out);
+                           accept_ctx, &reader->opened, out);
 }
 bool qa_mounted_content_reader_resolve(
     qa_mounted_content_reader *reader, const char *path,
@@ -2047,21 +2083,17 @@ uint8_t *qa_mounted_content_reader_read_path(qa_mounted_content_reader *reader,
                                              const char *path,
                                              size_t *out_length) {
   return mounted_read_impl(reader->owner, NULL, path, out_length,
-                           &reader->opened, &reader->opened_count,
-                           &reader->opened_capacity, &reader->plan);
+                           &reader->opened, &reader->plan);
 }
 uint8_t *qa_mounted_content_reader_read_reference(
     qa_mounted_content_reader *reader,
     const qa_resolved_resource_reference *resource, size_t *out_length) {
   return mounted_read_impl(reader->owner, resource, NULL, out_length,
-                           &reader->opened, &reader->opened_count,
-                           &reader->opened_capacity, &reader->plan);
+                           &reader->opened, &reader->plan);
 }
 void qa_mounted_content_reader_destroy(qa_mounted_content_reader *reader) {
   if (reader == NULL) return;
-  for (size_t i = 0; i < reader->opened_count; i++)
-    free_opened_record(&reader->opened[i]);
-  free(reader->opened);
+  records_free(&reader->opened);
   free(reader->default_order);
   for (size_t i = 0; i < reader->plan.prefix_order_count; i++)
     free(reader->prefix_mounts[i]);
@@ -2104,6 +2136,19 @@ static void close_sources(mounted_source *sources, size_t count) {
   free(sources);
 }
 
+/* TS openMountPlan's catch: close every archive opened so far, then
+ * rethrow. Runs when a raise inside the loop is caught by a qa_try. */
+typedef struct open_plan_unwind {
+  qa_content_mounted *mounted;
+  mounted_source *sources;
+  size_t built;
+} open_plan_unwind;
+static void open_plan_cleanup(void *arg) {
+  open_plan_unwind *unwind = (open_plan_unwind *)arg;
+  close_sources(unwind->sources, unwind->built);
+  qa_content_mounted_destroy(unwind->mounted);
+}
+
 qa_content_mounted *qa_open_mount_plan(const qa_resolved_mount_plan *plan,
                                        const qa_open_mount_options *options) {
   qa_content_mounted *mounted = mounted_create_plan(plan, options);
@@ -2111,38 +2156,36 @@ qa_content_mounted *qa_open_mount_plan(const qa_resolved_mount_plan *plan,
   mounted_source *sources = (mounted_source *)calloc(
       plan->mount_count ? plan->mount_count : 1, sizeof *sources);
   if (sources == NULL) oom_error();
-  size_t built = 0;
-  /* TS aborts on failure after closing built archives; C aborts
-   * leak the shell, matching the crash-handler behavior. */
+  open_plan_unwind unwind = {mounted, sources, 0};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, open_plan_cleanup, &unwind);
   for (size_t i = 0; i < plan->mount_count; i++) {
     const qa_content_mount *mount = &plan->mounts[i];
-    sources[built].mount = *mount;
-    sources[built].archive = NULL;
+    sources[unwind.built].mount = *mount;
+    sources[unwind.built].archive = NULL;
     if (mount->kind == QA_CONTENT_MOUNT_ARCHIVE) {
       char *digest = qa_digest_file(mount->as.archive.archive_path);
       bool matches =
           digest != NULL &&
           text_equal(digest, mount->as.archive.archive_digest);
       free(digest);
-      if (!matches) {
-        close_sources(sources, built);
-        qa_content_mounted_destroy(mounted);
+      if (!matches)
         plain_error("Archive bytes changed before mount: %s",
                     mount->as.archive.archive_path);
-      }
       qa_archive_handle *archive = qa_open_archive(
           mount->as.archive.archive_path, true, mount->as.archive.format);
       if (archive == NULL) oom_error();
-      sources[built].archive = archive;
-      built++;
+      sources[unwind.built].archive = archive;
+      unwind.built++;
       if (mounted->options.q3_restriction_demo)
         check_demo_archive(archive, &mount->as.archive, false);
     } else {
-      built++;
+      unwind.built++;
     }
   }
+  qa_cleanup_pop(&cleanup);
   mounted->sources = sources;
-  mounted->source_count = built;
+  mounted->source_count = unwind.built;
   return mounted;
 }
 
@@ -2158,11 +2201,16 @@ bool qa_can_download_resource(const qa_resolved_resource_reference *resource) {
 
 /* ---- preparation scope ------------------------------------------- */
 
+/* TS archives Map<key, Promise<ArchiveHandle>>: the entry is stored before
+ * verification, and a failed verification stays cached as its error, so a
+ * later request for the same key rethrows it without reopening. */
 typedef struct scope_archive {
   char *path;     /* owned */
   char *digest;   /* owned */
   qa_archive_format format;
-  qa_archive_handle *archive;
+  qa_archive_handle *archive; /* NULL when failed */
+  bool failed;
+  qa_caught_error error;
 } scope_archive;
 struct qa_mount_preparation_scope {
   scope_archive *archives;
@@ -2179,28 +2227,52 @@ void qa_mount_preparation_scope_assert_open(
     const qa_mount_preparation_scope *scope) {
   if (scope->closed) plain_error("%s", "Mount preparation scope is closed");
 }
+
+typedef struct open_verified_attempt {
+  qa_mount_preparation_scope *scope;
+  const qa_archive_mount *mount;
+  qa_archive_source storage;
+  bool storage_open;
+  qa_archive_handle *archive;
+} open_verified_attempt;
+static void open_verified_cleanup(void *arg) {
+  open_verified_attempt *attempt = (open_verified_attempt *)arg;
+  if (attempt->storage_open) qa_archive_source_destroy(&attempt->storage);
+  attempt->storage_open = false;
+}
+/* TS openVerified: FileSource first, then the digest check and scope check;
+ * the catch closes the source before rethrowing. */
+static void open_verified(void *ctx) {
+  open_verified_attempt *attempt = (open_verified_attempt *)ctx;
+  if (!qa_file_source_init(&attempt->storage, attempt->mount->archive_path)) oom_error();
+  attempt->storage_open = true;
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, open_verified_cleanup, attempt);
+  char *digest = qa_digest_file(attempt->mount->archive_path);
+  bool matches = digest != NULL && text_equal(digest, attempt->mount->archive_digest);
+  free(digest);
+  if (!matches)
+    plain_error("Archive bytes changed before mount: %s", attempt->mount->archive_path);
+  qa_mount_preparation_scope_assert_open(attempt->scope);
+  /* openArchiveSource takes ownership of the source, including on failure. */
+  attempt->storage_open = false;
+  qa_cleanup_pop(&cleanup);
+  attempt->archive = qa_open_archive_source(&attempt->storage, true, attempt->mount->format);
+  if (attempt->archive == NULL) oom_error();
+}
+
 static qa_archive_handle *scope_archive_for(
     qa_mount_preparation_scope *scope, const qa_archive_mount *mount) {
   qa_mount_preparation_scope_assert_open(scope);
-  for (size_t i = 0; i < scope->count; i++)
-    if (text_equal(scope->archives[i].path, mount->archive_path) &&
-        text_equal(scope->archives[i].digest, mount->archive_digest) &&
-        scope->archives[i].format == mount->format)
-      return scope->archives[i].archive;
-  qa_archive_source storage;
-  if (!qa_file_source_init(&storage, mount->archive_path)) oom_error();
-  char *digest = qa_digest_file(mount->archive_path);
-  bool matches =
-      digest != NULL && text_equal(digest, mount->archive_digest);
-  free(digest);
-  if (!matches) {
-    qa_archive_source_destroy(&storage);
-    plain_error("Archive bytes changed before mount: %s", mount->archive_path);
+  for (size_t i = 0; i < scope->count; i++) {
+    scope_archive *entry = &scope->archives[i];
+    if (!text_equal(entry->path, mount->archive_path) ||
+        !text_equal(entry->digest, mount->archive_digest) ||
+        entry->format != mount->format)
+      continue;
+    if (entry->failed) qa_rethrow(&entry->error);
+    return entry->archive;
   }
-  qa_mount_preparation_scope_assert_open(scope);
-  qa_archive_handle *archive =
-      qa_open_archive_source(&storage, true, mount->format);
-  if (archive == NULL) oom_error();
   if (scope->count == scope->capacity) {
     size_t next = scope->capacity == 0 ? 4 : scope->capacity * 2;
     scope_archive *grown =
@@ -2209,13 +2281,23 @@ static qa_archive_handle *scope_archive_for(
     scope->archives = grown;
     scope->capacity = next;
   }
-  scope->archives[scope->count].path = copy_text_or_oom(mount->archive_path);
-  scope->archives[scope->count].digest =
-      copy_text_or_oom(mount->archive_digest);
-  scope->archives[scope->count].format = mount->format;
-  scope->archives[scope->count].archive = archive;
-  scope->count++;
-  return archive;
+  size_t index = scope->count++;
+  memset(&scope->archives[index], 0, sizeof scope->archives[index]);
+  scope->archives[index].path = copy_text_or_oom(mount->archive_path);
+  scope->archives[index].digest = copy_text_or_oom(mount->archive_digest);
+  scope->archives[index].format = mount->format;
+  open_verified_attempt attempt;
+  memset(&attempt, 0, sizeof attempt);
+  attempt.scope = scope;
+  attempt.mount = mount;
+  qa_caught_error caught;
+  if (!qa_try(open_verified, &attempt, &caught)) {
+    scope->archives[index].failed = true;
+    scope->archives[index].error = caught;
+    qa_rethrow(&scope->archives[index].error);
+  }
+  scope->archives[index].archive = attempt.archive;
+  return attempt.archive;
 }
 qa_content_mounted *qa_mount_preparation_scope_open(
     qa_mount_preparation_scope *scope, const qa_resolved_mount_plan *plan,
@@ -2226,6 +2308,11 @@ qa_content_mounted *qa_mount_preparation_scope_open(
   mounted_source *sources = (mounted_source *)calloc(
       plan->mount_count ? plan->mount_count : 1, sizeof *sources);
   if (sources == NULL) oom_error();
+  /* A raise below drops the unfinished view; its archives stay with the
+   * scope, which owns them. */
+  open_plan_unwind unwind = {mounted, sources, 0};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, open_plan_cleanup, &unwind);
   for (size_t i = 0; i < plan->mount_count; i++) {
     const qa_content_mount *mount = &plan->mounts[i];
     sources[i].mount = *mount;
@@ -2240,6 +2327,7 @@ qa_content_mounted *qa_mount_preparation_scope_open(
     }
   }
   qa_mount_preparation_scope_assert_open(scope);
+  qa_cleanup_pop(&cleanup);
   mounted->sources = sources;
   mounted->source_count = plan->mount_count;
   mounted->owner_kind = 2; /* OWNER_SCOPE */

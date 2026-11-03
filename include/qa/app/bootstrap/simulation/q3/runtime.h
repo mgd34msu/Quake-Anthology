@@ -1,9 +1,9 @@
 /* Port of src/app/bootstrap/simulation/q3/runtime.ts (Q3SourceRuntime).
- * The ~25 landed content/q3 subsystems are constructed by the wiring
- * layer and reached through the subsystem table below; level clock,
- * lifecycle, event publication, native checkpoint framing and the
- * load/frame/client flow live here. Entity views are host snapshots.
- * GPL-2.0-or-later. */
+ * qa_app_q3_source_runtime_new(options, host, mode) is the TS constructor: it
+ * builds every content/q3 subsystem from the Q3SourceHost (the subsystems
+ * owner below) and the runtime methods run on those subsystems directly.
+ * The owner and its table stay public for unit fixtures that build the
+ * subsystems from partial hosts. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_Q3_RUNTIME_H
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_RUNTIME_H
 #include "qa/app/bootstrap/simulation/q3/presentation.h"
@@ -23,7 +23,7 @@ typedef struct qa_app_q3_world_variable { const char *key, *value; } qa_app_q3_w
 typedef struct qa_app_q3_spawn_report {
   qa_app_q3_world_variable *world_variables; /* malloc'd strings owned */
   size_t world_variable_count;
-  qa_app_q3_spawn_outcome *outcomes; /* malloc'd; strings borrowed from host storage */
+  qa_app_q3_spawn_outcome *outcomes; /* malloc'd; classname owned, other strings static */
   size_t outcome_count;
 } qa_app_q3_spawn_report;
 void qa_app_q3_spawn_report_destroy(qa_app_q3_spawn_report *report);
@@ -111,6 +111,10 @@ typedef struct qa_app_q3_source_subsystems {
   /* presentation pool view */
   qa_q3_entity_pool *(*pool)(void *ctx);
   const char *content;
+  /* TS Q3SourceRuntime.records / .admission (network-q3 reads them). NULL when
+   * a table does not provide them. */
+  struct qa_q3_base_entity_records *(*records)(void *ctx);
+  struct qa_q3_ta_client_admission_runtime *(*admission)(void *ctx);
 } qa_app_q3_source_subsystems;
 
 typedef struct qa_app_q3_source_runtime_mode {
@@ -119,9 +123,33 @@ typedef struct qa_app_q3_source_runtime_mode {
 } qa_app_q3_source_runtime_mode;
 
 typedef struct qa_app_q3_source_runtime qa_app_q3_source_runtime;
-/* Validation errors abort; NULL only on OOM. */
-qa_app_q3_source_runtime *qa_app_q3_source_runtime_create(qa_app_q3_source_options options,
-    qa_app_q3_source_host host, qa_app_q3_source_subsystems subsystems, qa_app_q3_source_runtime_mode mode);
+typedef struct qa_app_q3_source_subsystems_owner qa_app_q3_source_subsystems_owner;
+/* new Q3SourceRuntime(options, host, mode). options and host are copied; the
+ * strings, owners and session carry they point to are borrowed and must outlive
+ * the runtime. mode.state is borrowed until finish_native_restore. Validation
+ * errors abort; NULL only on OOM. */
+qa_app_q3_source_runtime *qa_app_q3_source_runtime_new(qa_app_q3_source_options options,
+    qa_app_q3_source_host host, qa_app_q3_source_runtime_mode mode);
+/* The subsystems the constructor built (borrowed; valid until destroy). */
+qa_app_q3_source_subsystems_owner *qa_app_q3_source_runtime_owner(qa_app_q3_source_runtime *runtime);
+/* TS Q3SourceRuntime members SharedSimulation reads: spawns.respawn(entity),
+ * level.frameNum, level.intermissionTime, commands.cheatsOk(entity), bridge. */
+void qa_app_q3_source_runtime_respawn(qa_app_q3_source_runtime *runtime, qa_q3_game_entity *entity);
+double qa_app_q3_source_runtime_frame_num(const qa_app_q3_source_runtime *runtime);
+double qa_app_q3_source_runtime_intermission_time(const qa_app_q3_source_runtime *runtime);
+bool qa_app_q3_source_runtime_cheats_ok(qa_app_q3_source_runtime *runtime, qa_q3_game_entity *entity);
+struct qa_q3_base_combat_bridge *qa_app_q3_source_runtime_bridge(qa_app_q3_source_runtime *runtime);
+/* level.intermissionQueued, team and world: the members SharedSimulation.createSelectedQ3Arsenal reads. */
+double qa_app_q3_source_runtime_intermission_queued(const qa_app_q3_source_runtime *runtime);
+struct qa_q3_ta_team_runtime *qa_app_q3_source_runtime_team(qa_app_q3_source_runtime *runtime);
+qa_q3_base_server_world qa_app_q3_source_runtime_world(qa_app_q3_source_runtime *runtime);
+/* spawns.selectSpawnPoint(origin) and drops.dropItem(entity, item, angle). */
+qa_q3_ta_spawn_pose qa_app_q3_source_runtime_select_spawn_point(qa_app_q3_source_runtime *runtime, qa_vec3 origin);
+qa_q3_game_entity *qa_app_q3_source_runtime_drop_item(qa_app_q3_source_runtime *runtime, qa_q3_game_entity *entity,
+    const qa_q3_base_item_definition *item, double angle);
+/* TS observeSupply: false is TS null. */
+bool qa_app_q3_source_runtime_observe_supply_value(qa_app_q3_source_runtime *runtime, qa_actor_id pickup,
+    qa_actor_id recipient, qa_q3_supply_observation *out);
 void qa_app_q3_source_runtime_destroy(qa_app_q3_source_runtime *runtime);
 const qa_app_q3_source_options *qa_app_q3_source_runtime_options(const qa_app_q3_source_runtime *runtime);
 qa_app_q3_source_host *qa_app_q3_source_runtime_host(qa_app_q3_source_runtime *runtime);
@@ -131,8 +159,10 @@ qa_save_value *qa_app_q3_source_runtime_capture_native_state(qa_app_q3_source_ru
 uint8_t *qa_app_q3_source_runtime_capture_native_bytes(qa_app_q3_source_runtime *runtime, size_t *out_length);
 void qa_app_q3_source_runtime_finish_native_restore(qa_app_q3_source_runtime *runtime);
 double qa_app_q3_source_runtime_game_type(qa_app_q3_source_runtime *runtime);
-qa_app_q3_source_presentation_state qa_app_q3_source_runtime_source_state(qa_app_q3_source_runtime *runtime,
-    qa_app_q3_source_presentation_state out);
+/* TS Q3SourceRuntime.pool (the subsystem table's entity pool). */
+qa_q3_entity_pool *qa_app_q3_source_runtime_pool(qa_app_q3_source_runtime *runtime);
+/* TS sourceState(): owned state, NULL only on OOM. */
+qa_app_q3_source_presentation_state *qa_app_q3_source_runtime_source_state(qa_app_q3_source_runtime *runtime);
 size_t qa_app_q3_source_runtime_presentations(qa_app_q3_source_runtime *runtime, qa_app_simulation_presentation *out, size_t capacity);
 const qa_app_q3_spawn_report *qa_app_q3_source_runtime_spawn_report(qa_app_q3_source_runtime *runtime);
 double qa_app_q3_source_runtime_observe_supply(qa_app_q3_source_runtime *runtime, qa_actor_id pickup, qa_actor_id recipient);
@@ -148,9 +178,20 @@ void qa_app_q3_source_runtime_run_actor(qa_app_q3_source_runtime *runtime, qa_ow
 void qa_app_q3_source_runtime_end_frame(qa_app_q3_source_runtime *runtime);
 qa_app_q3_runtime_entity_view qa_app_q3_source_runtime_prepare_client(qa_app_q3_source_runtime *runtime,
     qa_owned_actor actor, double client);
-/* Denial aborts with the TS Q3ClientAdmissionDenied message. */
+/* Denial raises QA_APP_Q3_CLIENT_ADMISSION_DENIED (TS Q3ClientAdmissionDenied)
+ * with the admission's rejection text, which callers catch with qa_try. */
+#define QA_APP_Q3_CLIENT_ADMISSION_DENIED "Q3ClientAdmissionDenied"
 qa_app_q3_runtime_entity_view qa_app_q3_source_runtime_admit_player(qa_app_q3_source_runtime *runtime,
     qa_owned_actor actor, double client);
+/* TS Q3SourceRuntime members network-q3.ts reads besides the pool:
+ * records.byActor (NULL is TS null) and admission.userinfoChanged. They abort
+ * when the subsystem table provides no such owner. */
+qa_q3_game_entity *qa_app_q3_source_runtime_record_by_actor(qa_app_q3_source_runtime *runtime, qa_actor_id actor);
+/* TS Q3SourceRuntime.records (records.nativeByActor and friends); aborts like record_by_actor. */
+struct qa_q3_base_entity_records *qa_app_q3_source_runtime_records(qa_app_q3_source_runtime *runtime);
+/* TS Q3SourceRuntime.settings.string(name) (= settings.snapshot(name).value). */
+const char *qa_app_q3_source_runtime_setting_string(qa_app_q3_source_runtime *runtime, const char *name);
+void qa_app_q3_source_runtime_userinfo_changed(qa_app_q3_source_runtime *runtime, double client);
 typedef struct qa_app_q3_captured_session {
   qa_app_q3_source_session_carry carry;
   qa_app_q3_source_session_carry_client *clients; /* owned strings */
@@ -203,12 +244,11 @@ typedef struct qa_app_q3_item_lifecycle_host {
   qa_app_q3_item_lifecycle_services services;
   char *handicap; /* owned scratch for handicapForClient */
 } qa_app_q3_item_lifecycle_host;
-/* items/item_count are the itemList(product) mirror rows for
- * ItemRegistry(product). Registers q3.item.touch/q3.item.respawn pool
- * callbacks and calls qa_q3_bind_item_save_callbacks. */
+/* ItemRegistry(product) over itemList(product). Registers
+ * q3.item.touch/q3.item.respawn pool callbacks and calls
+ * qa_q3_bind_item_save_callbacks. */
 void qa_app_q3_item_lifecycle_host_init(qa_app_q3_item_lifecycle_host *host,
-    qa_q3_entity_pool *entities, qa_q3_game_product product,
-    const qa_q3_game_item_definition_mirror *items, size_t item_count,
+    qa_q3_entity_pool *entities, qa_q3_base_product product,
     qa_app_q3_item_lifecycle_services services);
 void qa_app_q3_item_lifecycle_host_destroy(qa_app_q3_item_lifecycle_host *host);
 /* Refreshes the settings-derived fields, then returns the context. */
@@ -230,7 +270,7 @@ void qa_app_q3_wire_spawn_item(qa_q3_spawn_context *spawn, qa_app_q3_spawn_item_
 typedef struct qa_app_q3_game_command_host_parts {
   qa_q3_entity_pool *pool;
   qa_q3_ta_match_state *state;
-  qa_q3_game_player_slots_mirror *team_scores;
+  qa_q3_base_player_state_slots *team_scores;
   const qa_q3_ta_command_settings *settings;
   qa_q3_ta_game_command_imports imports;
   qa_q3_ta_team_runtime *team;
@@ -248,4 +288,123 @@ typedef struct qa_app_q3_game_command_host_parts {
 /* The result's spawn_item field stays NULL: TS GameCommandHost has none
  * (commands.ts calls spawnItem directly through host.items). */
 qa_q3_ta_game_command_host qa_app_q3_build_game_command_host(qa_app_q3_game_command_host_parts parts);
+
+/* ---- Subsystems aggregate (TS Q3SourceRuntime constructor fields,
+ * runtime.ts 73-231 + create* helpers). The owner constructs every
+ * landed content/q3 subsystem in TS order and cross-wires the internal
+ * pointers/getters between them; parts carry only the external leaf
+ * services (session tables, engine imports, item table, spawn text).
+ * Snapshot-valued host fields (TS live getters flattened to values in
+ * the landed hosts) are refreshed by the table trampolines. Settings
+ * reads before settings_register/settings_restore return 0: TS only
+ * evaluates those getters after register(), while several C hosts
+ * sample them eagerly at construction. ------------------------------- */
+#include "qa/content/q3/base/combat_bridge.h"
+#include "qa/content/q3/base/game/death.h"
+#include "qa/content/q3/base/game/item_motion.h"
+#include "qa/content/q3/base/game/level.h"
+#include "qa/content/q3/base/game/memory.h"
+#include "qa/content/q3/base/game/missile.h"
+#include "qa/content/q3/base/game/mover.h"
+#include "qa/content/q3/base/game/mover_spawn.h"
+#include "qa/content/q3/base/game/numeric.h"
+#include "qa/content/q3/base/game/personal_portal.h"
+#include "qa/content/q3/base/game/shader_remaps.h"
+#include "qa/content/q3/base/game/spawn.h"
+#include "qa/content/q3/base/game/targets.h"
+#include "qa/content/q3/base/game/utilities.h"
+#include "qa/content/q3/base/game/weapon.h"
+#include "qa/content/q3/base/map_spawns.h"
+#include "qa/content/q3/base/records.h"
+#include "qa/content/q3/base/settings.h"
+#include "qa/content/q3/base/world_adapter.h"
+#include "qa/content/q3/team_arena/arenas.h"
+#include "qa/content/q3/team_arena/client_admission.h"
+#include "qa/content/q3/team_arena/client_spawn.h"
+#include "qa/content/q3/team_arena/client_think.h"
+#include "qa/content/q3/team_arena/match.h"
+#include "qa/content/q3/team_arena/server_commands.h"
+#include "qa/content/q3/team_arena/session.h"
+#include "qa/content/q3/team_arena/team.h"
+
+typedef struct qa_app_q3_source_subsystems_parts {
+  /* The Q3SourceHost the TS constructor closes over (borrowed). When set, every
+   * leaf service below that is NULL is filled from it and from the owned
+   * subsystems exactly as runtime.ts wires them; NULL keeps the unit-fixture
+   * behavior (unset leaves stay unset). */
+  const qa_app_q3_source_host *host;
+  bool foreign_world; /* options.foreignWorld: adjustAreaPortalState is a no-op */
+  qa_q3_base_product product;
+  double max_clients;
+  qa_provider_id map_provider; /* options.recipe.map.entities.provider */
+  qa_q3_base_settings_host settings_host;       /* remap_teams overwritten */
+  qa_q3_base_record_host records_host;          /* damage_call/admit_damage overwritten */
+  qa_q3_base_world_adapter_host world_host;     /* curves/player_curve_clip overwritten when cvars set */
+  qa_q3_entity_pool_options pool_options;       /* records/product/time/link/unlink overwritten */
+  qa_q3_config_string_store config_store;       /* host.configstrings */
+  double (*memory_debug_integer)(void *ctx);    /* NULL: settings g_debugAlloc */
+  void *memory_ctx;
+  qa_app_q3_item_lifecycle_services item_services; /* trace/team/use/sound/random/settings overwritten */
+  qa_q3_base_combat_bridge_host bridge_host;    /* internal pointers + TS closures overwritten */
+  qa_q3_missile_host missile_host;
+  qa_q3_weapon_host weapon_host;                /* combat/world/random/unlink overwritten */
+  qa_q3_ta_team_host team_host;                 /* internal pointers + score/ranks/respawn overwritten */
+  qa_q3_death_host death_host;                  /* internal pointers + frame/drops/team overwritten */
+  qa_q3_ta_client_think_host think_host;        /* pool/world/effects/frame/settings overwritten */
+  qa_q3_ta_client_spawn_host client_spawn_host; /* pool/world/random/die/match overwritten */
+  qa_q3_ta_session_services session_services;   /* broadcast_team_change overwritten */
+  qa_q3_ta_match_host match_host;               /* internal pointers + TS closures overwritten */
+  qa_q3_mover_host mover_host;
+  qa_q3_mover_spawn_host mover_spawn_host;      /* movers/pool/world/gravity/sound/time overwritten */
+  qa_q3_personal_portal_host portal_host;       /* missionpack only */
+  qa_q3_ta_client_admission_host admission_host; /* internal pointers + TS closures overwritten */
+  qa_app_q3_game_command_host_parts command_parts; /* internal pointers overwritten */
+  qa_q3_ta_game_server_command_host server_command_host; /* set_team/memory/podium overwritten */
+  qa_q3_kill_box_host kill_box;                 /* spawns.killBox + portal/triggers */
+  qa_q3_misc_spawn_host misc_spawn_host;        /* spawnHandlers() misc */
+  qa_q3_trigger_host trigger_host;              /* spawnHandlers() triggers; shared fields overwritten */
+  qa_q3_target_runtime target_runtime;          /* spawnHandlers() targets; shared fields overwritten */
+  const char *spawn_text;                       /* options.entities */
+  qa_q3_worldspawn_context worldspawn;          /* pool/start_time overwritten; motd/cvars fns external */
+  const char *content;                          /* subsystems.content for presentation */
+} qa_app_q3_source_subsystems_parts;
+
+/* Heap owner: game memory alone embeds the 256K pool. Storage must not
+ * move after create (subsystem hosts borrow owner addresses). */
+/* NULL only on OOM (settings/records creation); invalid pool options abort. */
+qa_app_q3_source_subsystems_owner *qa_app_q3_source_subsystems_owner_create(
+    qa_app_q3_source_subsystems_parts parts);
+void qa_app_q3_source_subsystems_owner_destroy(qa_app_q3_source_subsystems_owner *owner);
+/* The qa_app_q3_source_subsystems table bound to the owned subsystems.
+ * Entries with no landed owner API stay NULL (see runtime.c note). */
+qa_app_q3_source_subsystems qa_app_q3_source_subsystems_owner_table(
+    qa_app_q3_source_subsystems_owner *owner);
+/* Refresh the flattened snapshot fields from level + settings (the TS
+ * live getters). Table trampolines call this; exposed for hosts that
+ * read owner subsystems directly. */
+void qa_app_q3_source_subsystems_owner_refresh(qa_app_q3_source_subsystems_owner *owner);
+/* Owned subsystem accessors (borrowed; valid until destroy). */
+qa_q3_game_level *qa_app_q3_source_subsystems_owner_level(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_entity_pool *qa_app_q3_source_subsystems_owner_pool(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_base_entity_records *qa_app_q3_source_subsystems_owner_records(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_base_world_adapter *qa_app_q3_source_subsystems_owner_world(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_base_game_settings *qa_app_q3_source_subsystems_owner_settings(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_game_combat_context *qa_app_q3_source_subsystems_owner_combat(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_ta_game_command_runtime *qa_app_q3_source_subsystems_owner_commands(qa_app_q3_source_subsystems_owner *owner);
+/* TS Q3SourceRuntime.serverCommands and .spawns (application.ts reads them). */
+struct qa_q3_ta_game_server_command_runtime *qa_app_q3_source_subsystems_owner_server_commands(qa_app_q3_source_subsystems_owner *owner);
+struct qa_q3_ta_client_spawn_runtime *qa_app_q3_source_subsystems_owner_spawns(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_ta_client_admission_runtime *qa_app_q3_source_subsystems_owner_admission(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_ta_team_runtime *qa_app_q3_source_subsystems_owner_team(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_ta_match_runtime *qa_app_q3_source_subsystems_owner_match(qa_app_q3_source_subsystems_owner *owner);
+qa_app_q3_item_lifecycle_host *qa_app_q3_source_subsystems_owner_items(qa_app_q3_source_subsystems_owner *owner);
+/* TS Q3SourceRuntime fields read by q3BotGame (bots/behavior/q3/source-game.ts). */
+qa_q3_base_product qa_app_q3_source_subsystems_owner_product(qa_app_q3_source_subsystems_owner *owner);
+/* TS gameType getter: settings g_gametype (0 before settings register/restore). */
+double qa_app_q3_source_subsystems_owner_game_type(qa_app_q3_source_subsystems_owner *owner);
+qa_game_random *qa_app_q3_source_subsystems_owner_random(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_game_memory *qa_app_q3_source_subsystems_owner_memory(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_config_string_registry *qa_app_q3_source_subsystems_owner_config(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_missile_runtime *qa_app_q3_source_subsystems_owner_missiles(qa_app_q3_source_subsystems_owner *owner);
+qa_q3_ta_arena_runtime *qa_app_q3_source_subsystems_owner_arenas(qa_app_q3_source_subsystems_owner *owner);
 #endif

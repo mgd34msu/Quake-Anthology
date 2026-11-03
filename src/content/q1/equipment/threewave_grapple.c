@@ -1,13 +1,13 @@
 /*
  * Port of src/content/q1/equipment/threewave-grapple.ts.
- * GPL-2.0-or-later. Shared body/combat/actor-registry reads use the
- * actor-local mirrors of foundation/types.h (resolveOwned/isLive
- * via the services entity and player lists); body attach/detach go
- * through the optional host mirrors in the header. The checkpoint
- * state extension uses the persistence checkpoint-value envelope,
- * resolving saved owners by slot/generation among live entities.
+ * GPL-2.0-or-later. Bodies, combat, attachments and actor liveness are
+ * the shared world tables of game->host. The checkpoint state extension
+ * uses the persistence checkpoint-value envelope and resolves saved
+ * owners through the actor registry (resolveSaved/referenceSaved).
  */
 #include "qa/content/q1/equipment/threewave_grapple.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -22,26 +22,26 @@ static qa_vec3 v3(double x, double y, double z) {
   const qa_vec3 result = {x, y, z};
   return result;
 }
+/* TS game.host.bodies.read(actor); false = null. */
 static bool body_of(qa_q1_services *game, qa_actor_id actor, qa_q1_body *out) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity == NULL) return false;
-  *out = entity->body;
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!body.has_value) return false;
+  *out = qa_q1_body_from_state(body.value);
   return true;
 }
+/* TS game.host.actors.isLive(actor). */
 static bool is_live(qa_q1_services *game, qa_actor_id actor) {
-  return qa_q1_get_entity(game, &actor) != NULL || qa_q1_is_player(game, &actor);
+  return qa_session_actor_registry_is_live(game->host.actors, actor);
 }
+/* TS game.host.combat.read(actor)?.canTakeDamage. */
 static bool can_take_damage(qa_q1_services *game, qa_actor_id actor) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity != NULL) return entity->damageable;
-  return qa_q1_is_player(game, &actor);
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, actor);
+  return combat.has_value && combat.value.can_take_damage;
 }
 static qa_owned_actor owner_of(qa_q1_threewave_grapple *grapple, qa_actor_id actor) {
-  qa_q1_actor *entity = qa_q1_get_entity(grapple->game, &actor);
-  if (entity != NULL) return entity->actor;
-  qa_q1_player_state *player = qa_q1_player(grapple->game, actor);
-  if (player != NULL) return player->actor;
-  qa_range_error("Grapple owner is no longer admitted");
+  qa_owned_actor owner;
+  if (qa_session_actor_registry_resolve_owned(grapple->game->host.actors, actor, &owner)) return owner;
+  qa_range_error("Grapple owner is no longer admitted"); /* TS Error throw */
 }
 static qa_q1_body body_required(qa_q1_threewave_grapple *grapple, qa_actor_id actor) {
   qa_q1_body body;
@@ -119,7 +119,7 @@ void qa_q1_threewave_release(qa_q1_threewave_grapple *grapple, qa_actor_id actor
   if (hook == NULL) return;
   if (edition_classic(grapple) && is_live(game, actor))
     sound_weapon(grapple, owner_of(grapple, actor).id, "weapons/bounce2.wav");
-  if (grapple->host.detach) grapple->host.detach(grapple->host.ctx, hook->actor);
+  qa_shared_body_table_detach(game->host.bodies, hook->actor);
   for (size_t i = 0; i < game->entity_count; i++) {
     qa_q1_actor *link = game->entities[i];
     if (link != NULL && link->classname != NULL && !strcmp(link->classname, "ctf_hook_link") &&
@@ -160,13 +160,15 @@ static void pull(qa_q1_threewave_grapple *grapple, qa_q1_actor *hook) {
       return;
     }
     sound_weapon(grapple, hook->actor.id, "blob/land1.wav");
-    (void)qa_q1_damage(game, enemy, hook->actor.id, &owner, 1, NULL, "direct", "ctf:grapple");
+    (void)qa_q1_damage(game, enemy, hook->actor.id, &owner, 1, NULL, "direct", "ctf:grapple", NULL);
     if (!qa_q1_live(game, hook) || !is_live(game, owner) || !is_live(game, enemy)) {
       vanish(grapple, hook);
       return;
     }
-    const qa_vec3 spray = v3(100 * (qa_q1_host_random(game) * 2 - 1), 100 * (qa_q1_host_random(game) * 2 - 1),
-                             100 * (qa_q1_host_random(game) * 2 - 1) + 50);
+    double x2 = 100 * (qa_q1_host_random(game) * 2 - 1);
+    double y2 = 100 * (qa_q1_host_random(game) * 2 - 1);
+    double z2 = 100 * (qa_q1_host_random(game) * 2 - 1) + 50;
+    const qa_vec3 spray = v3(x2, y2, z2);
     emit_particles(grapple, qa_q1_get_body(game, hook).origin, qa_q1_vscale(spray, 0.1), 40);
   }
   {
@@ -199,17 +201,15 @@ static void pull(qa_q1_threewave_grapple *grapple, qa_q1_actor *hook) {
     (void)qa_q1_actor_field_set(hook, "style", "3");
   }
   {
-    qa_q1_actor *owner_entity = qa_q1_get_entity(game, &owner);
-    if (owner_entity != NULL) {
-      qa_q1_body patch = body;
-      patch.velocity = velocity;
-      qa_q1_set_body_patch(game, owner_entity, &patch, false, false, true, false, false);
-      qa_q1_link(game, owner_entity);
-    }
+    const qa_owned_actor actor = owner_of(grapple, owner);
+    qa_q1_body patch = body;
+    patch.velocity = velocity;
+    qa_shared_body_table_write(game->host.bodies, actor, qa_q1_body_to_state(&patch));
+    qa_shared_body_table_link(game->host.bodies, actor, NULL);
   }
   {
     char text[96];
-    (void)snprintf(text, sizeof text, "%.9g %.9g %.9g", fr(body.origin.x), fr(body.origin.y), fr(body.origin.z));
+    (void)snprintf(text, sizeof text, "%s %s %s", QA_JS_NUMBER(fr(body.origin.x)), QA_JS_NUMBER(fr(body.origin.y)), QA_JS_NUMBER(fr(body.origin.z)));
     (void)qa_q1_actor_field_set(hook, "ctf.lastOrigin", text);
   }
   qa_q1_link(game, hook);
@@ -225,9 +225,8 @@ void qa_q1_threewave_touch(qa_q1_threewave_grapple *grapple, qa_q1_actor *hook, 
   }
   const qa_actor_id owner = hook->owner;
   if (qa_same_actor(owner, other)) return;
-  if ((surface != NULL && ((long)surface->native_flags & 4) != 0) ||
-      (game->host.contents != NULL &&
-       !strcmp(game->host.contents(game->host.ctx, qa_q1_get_body(game, hook).origin), "sky"))) {
+  if ((surface != NULL && (qa_js_to_int32(surface->native_flags) & 4) != 0) ||
+      !strcmp(game->host.contents(game->host.ctx, qa_q1_get_body(game, hook).origin), "sky")) {
     vanish(grapple, hook);
     return;
   }
@@ -235,13 +234,15 @@ void qa_q1_threewave_touch(qa_q1_threewave_grapple *grapple, qa_q1_actor *hook, 
   const qa_q1_threewave_anchor target = grapple->host.anchor(grapple->host.ctx, other);
   if (can_take_damage(game, other)) {
     if (!target.player) sound_weapon(grapple, hook->actor.id, "player/axhit2.wav");
-    (void)qa_q1_damage(game, other, hook->actor.id, &owner, 10, "ctf:grapple", "direct", "ctf:grapple");
+    (void)qa_q1_damage(game, other, hook->actor.id, &owner, 10, "ctf:grapple", "direct", "ctf:grapple", NULL);
     if (!qa_q1_live(game, hook) || !is_live(game, owner) || !is_live(game, other)) {
       vanish(grapple, hook);
       return;
     }
-    emit_particles(grapple, qa_q1_get_body(game, hook).origin,
-                     qa_q1_vscale(qa_q1_get_body(game, hook).velocity, 0.1), 20);
+    qa_vec3 origin2 = qa_q1_get_body(game, hook).origin;
+    qa_vec3 direction = qa_q1_vscale(qa_q1_get_body(game, hook).velocity, 0.1);
+    emit_particles(grapple, origin2,
+                     direction, 20);
   } else {
     sound_weapon(grapple, hook->actor.id, "player/axhit2.wav");
     hook->angular_velocity = QA_Q1_ZERO;
@@ -262,9 +263,13 @@ void qa_q1_threewave_touch(qa_q1_threewave_grapple *grapple, qa_q1_actor *hook, 
       qa_q1_set_body_patch(game, hook, &patch, false, false, true, false, false);
     }
   }
-  if (grapple->host.attach) {
-    const qa_vec3 offset = qa_q1_vsub(qa_q1_get_body(game, hook).origin, body.origin);
-    grapple->host.attach(grapple->host.ctx, hook->actor, other, target.centered, offset);
+  {
+    qa_body_attachment attachment;
+    memset(&attachment, 0, sizeof attachment);
+    attachment.anchor = other;
+    attachment.follow_kind = target.centered ? QA_BODY_FOLLOW_CENTER : QA_BODY_FOLLOW_TRANSLATION;
+    if (!target.centered) attachment.follow_offset = qa_q1_vsub(qa_q1_get_body(game, hook).origin, body.origin);
+    qa_shared_body_table_attach(game->host.bodies, hook->actor, attachment);
   }
   if (edition_classic(grapple)) sound_weapon(grapple, owner_of(grapple, owner).id, "weapons/chain2.wav");
   (void)qa_q1_actor_reference_set(hook, "ctf.enemy", &other);
@@ -320,7 +325,7 @@ bool qa_q1_threewave_fire(qa_q1_threewave_grapple *grapple, qa_actor_id actor) {
   hook->touch = qa_q1_callback_registry_touch(game->named, hook, "ctf:hook_touch");
   {
     char text[40];
-    (void)snprintf(text, sizeof text, "%.9g", fr(game->time));
+    (void)snprintf(text, sizeof text, "%s", QA_JS_NUMBER(fr(game->time)));
     (void)qa_q1_actor_field_set(hook, "ctf.fired", text);
   }
   const double yaw = atan2(direction.y, direction.x) * 180 / 3.141592653589793;
@@ -356,7 +361,7 @@ bool qa_q1_threewave_fire(qa_q1_threewave_grapple *grapple, qa_actor_id actor) {
       (void)qa_q1_actor_reference_set(link, "ctf.tail", &actor);
       {
         char text[40];
-        (void)snprintf(text, sizeof text, "%.9g", number / 4.0);
+        (void)snprintf(text, sizeof text, "%s", QA_JS_NUMBER(number / 4.0));
         (void)qa_q1_actor_field_set(link, "weapon", text);
       }
       link->angular_velocity = v3(310, 410, 510);
@@ -478,14 +483,18 @@ static bool capture_extension(void *ctx, uint8_t **out, size_t *out_len) {
   return *out != NULL;
 }
 
+static void q1_free_decoded_save(void *value) { qa_save_value_free(value); }
 static void restore_extension(void *ctx, const uint8_t *bytes, size_t len) {
   qa_q1_threewave_grapple *grapple = ctx;
   qa_q1_services *game = grapple->game;
   grapple->state_count = 0;
   qa_save_value *tree = qa_decode_checkpoint_value(bytes, len);
   if (!tree) return;
+  qa_cleanup decoded_cleanup; /* a malformed save raises from the readers */
+  qa_cleanup_push(&decoded_cleanup, q1_free_decoded_save, tree);
   qa_save_reader reader;
   if (!qa_save_reader_init(&reader, tree, "threewave-grapple")) {
+    qa_cleanup_pop(&decoded_cleanup);
     qa_save_value_free(tree);
     return;
   }
@@ -508,20 +517,11 @@ static void restore_extension(void *ctx, const uint8_t *bytes, size_t len) {
       qa_save_reader_destroy(&generation_reader);
     }
     qa_save_reader_destroy(&actor_reader);
-    qa_q1_actor *found = NULL;
-    for (size_t e = 0; e < game->entity_count; e++)
-      if (game->entities[e] != NULL && game->entities[e]->live &&
-          (double)game->entities[e]->actor.id.slot == slot &&
-          (double)game->entities[e]->actor.id.generation == generation)
-        found = game->entities[e];
-    qa_q1_player_state *player = NULL;
-    if (found == NULL)
-      for (size_t p = 0; p < game->player_count; p++)
-        if (game->players[p] != NULL && (double)game->players[p]->actor.id.slot == slot &&
-            (double)game->players[p]->actor.id.generation == generation)
-          player = game->players[p];
-    if (found == NULL && player == NULL) qa_save_reader_fail(&item, "missing grapple owner");
-    const qa_actor_id actor_id = found ? found->actor.id : player->actor.id;
+    const qa_saved_actor_id saved = {slot, generation};
+    qa_owned_actor owner;
+    if (!qa_session_actor_registry_resolve_saved(game->host.actors, saved, &owner))
+      qa_save_reader_fail(&item, "missing grapple owner");
+    const qa_actor_id actor_id = owner.id;
     if (grapple->state_count == grapple->state_capacity) {
       const size_t grown = grapple->state_capacity ? grapple->state_capacity * 2 : 8;
       void *next = realloc(grapple->states, grown * sizeof *grapple->states);
@@ -564,21 +564,16 @@ static void restore_extension(void *ctx, const uint8_t *bytes, size_t len) {
           a_gen = qa_save_reader_integer_min(&gen_r, 0);
           qa_save_reader_destroy(&gen_r);
         }
+        const qa_saved_actor_id animation = {a_slot, a_gen};
         state->has_animation = true;
-        memset(&state->animation, 0, sizeof state->animation);
-        state->animation.slot = (int64_t)a_slot;
-        state->animation.generation = (int64_t)a_gen;
-        /* Keep the live token when the animation actor is present. */
-        for (size_t e = 0; e < game->entity_count; e++)
-          if (game->entities[e] != NULL && (double)game->entities[e]->actor.id.slot == a_slot &&
-              (double)game->entities[e]->actor.id.generation == a_gen)
-            state->animation = game->entities[e]->actor.id;
+        state->animation = qa_session_actor_registry_reference_saved(game->host.actors, animation, NULL);
       }
       qa_save_reader_destroy(&field);
     }
     qa_save_reader_destroy(&item);
   }
   qa_save_reader_destroy(&reader);
+  qa_cleanup_pop(&decoded_cleanup);
   qa_save_value_free(tree);
 }
 

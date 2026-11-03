@@ -3,12 +3,8 @@
  * id Software Quake / rerelease QuakeC. GPL-2.0-or-later.
  * C accommodations: string unions stay exact const char * values
  * (Q1SoundChannel numerics use "-1"/"5"/"6"/"7"); TS Maps become
- * insertion-ordered arrays; Q1FoundationHost's world tables
- * (SessionActorRegistry/SharedBodyTable/GameplayAuthority/
- * SharedInventoryTable, TS world tables) are mirrored as a fn+ctx
- * table qa_q1_host (collision-proof; rebind to landed world
- * concrete tables at integration). Entity bodies/health therefore
- * live on qa_q1_actor until that rebinding.
+ * insertion-ordered arrays. qa_q1_host is TS Q1FoundationHost: the
+ * shared world tables are borrowed pointers, its methods fn + ctx.
  */
 #ifndef QA_CONTENT_Q1_FOUNDATION_TYPES_H
 #define QA_CONTENT_Q1_FOUNDATION_TYPES_H
@@ -21,9 +17,17 @@
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
 #include "qa/contracts/numeric.h"
+#include "qa/contracts/original_pickups.h"
 #include "qa/contracts/weapon_behavior.h"
 #include "qa/contracts/world.h"
+#include "qa/content/monsters/target.h"
 #include "qa/core/math.h"
+#include "qa/movement/q1/types.h"
+#include "qa/world/actors/body.h"
+#include "qa/world/actors/callbacks.h"
+#include "qa/world/actors/registry.h"
+#include "qa/world/gameplay/authority.h"
+#include "qa/world/gameplay/inventory.h"
 
 typedef struct qa_q1_actor qa_q1_actor;
 typedef struct qa_q1_services qa_q1_services;
@@ -56,6 +60,8 @@ double qa_q1_dot(qa_vec3 a, qa_vec3 b);
 double qa_q1_length(qa_vec3 a);
 qa_vec3 qa_q1_normalize(qa_vec3 a);
 bool qa_q1_overlaps(qa_bounds a, qa_bounds b);
+/** The time a monster at the end of its path stays put: pausetime = time + 999999 in single precision. */
+double qa_q1_path_end_time(double time);
 double qa_q1_yaw_for(qa_vec3 direction);
 
 typedef struct qa_q1_basis { qa_vec3 forward, right, up; } qa_q1_basis;
@@ -109,18 +115,18 @@ typedef struct qa_q1_precache_tables {
   const char *const *sounds; size_t sound_count;
 } qa_q1_precache_tables;
 
-/* Mirrored monster target observation (TS src/content/monsters/target.ts). */
-typedef struct qa_q1_monster_target_obs {
-  double view_height; bool notarget, invisible;
-  const double *light_level; const double *hostile_until;
-} qa_q1_monster_target_obs;
-typedef struct qa_q1_monster_target_result { bool has_value; qa_q1_monster_target_obs value; } qa_q1_monster_target_result;
+/* TS MonsterTargetObservation | null (src/content/monsters/target.ts). */
+typedef struct qa_q1_monster_target_result { bool has_value; qa_monster_target_observation value; } qa_q1_monster_target_result;
 typedef struct qa_q1_source_target { bool aimed_damage, push, player, slidebox; } qa_q1_source_target;
 
-/* Mirrored Q1FoundationHost (see header note). NULL fn = TS optional absent;
- * required fns may be NULL only for pure-logic tests (services then use
- * actor-local body/health/inventory-lite fallbacks documented in .c). */
+/* TS Q1FoundationHost. NULL fn = TS optional member absent. */
 typedef struct qa_q1_host {
+  /* TS Q1FoundationHost world tables (borrowed, real shared tables). */
+  qa_session_actor_registry *actors;
+  qa_shared_body_table *bodies;
+  qa_actor_callback_table *callbacks;
+  qa_gameplay_authority *combat;
+  qa_shared_inventory_table *inventory;
   void *ctx;
   double (*random)(void *ctx);
   qa_q1_trace (*trace)(void *ctx, qa_q1_trace_request request);
@@ -132,9 +138,9 @@ typedef struct qa_q1_host {
   void (*schedule_think)(void *ctx, qa_owned_actor actor, double due_seconds);
   void (*cancel_think)(void *ctx, qa_owned_actor actor);
   void (*emit)(void *ctx, qa_q1_event event);
-  void (*transition)(void *ctx, const char *map, const qa_actor_id *cause);
+  void (*transition)(void *ctx, qa_transition_intent intent);
   const qa_actor_id *(*players)(void *ctx, size_t *out_count);
-  qa_q1_monster_target_result (*check_client)(void *ctx, qa_owned_actor observer, qa_actor_id *out);
+  bool (*check_client)(void *ctx, qa_owned_actor observer, qa_actor_id *out); /* false = TS null */
   const char *(*classname)(void *ctx, qa_actor_id actor);
   void (*powerup)(void *ctx, qa_owned_actor actor, qa_q1_powerup powerup, double expires_seconds);
   /* Optional */
@@ -147,22 +153,18 @@ typedef struct qa_q1_host {
   bool (*source_target)(void *ctx, qa_actor_id actor, qa_q1_source_target *out);
   double (*powerup_expires)(void *ctx, qa_actor_id actor, qa_q1_powerup powerup);
   double (*source_damage_multiplier)(void *ctx, qa_actor_id attacker);
-  bool (*pusher_step)(void *ctx, qa_q1_services *game, qa_q1_actor *entity, double elapsed);
-  /* Inventory-lite mirror of SharedInventoryTable subset used here. */
-  double (*inventory_count)(void *ctx, qa_actor_id actor, qa_item_id item);
-  double (*inventory_give)(void *ctx, qa_owned_actor actor, qa_item_id item, double count);
-  bool (*inventory_consume)(void *ctx, qa_owned_actor actor, qa_item_id item, double count);
-  bool (*inventory_has)(void *ctx, qa_actor_id actor);
-  void (*inventory_configure)(void *ctx, qa_owned_actor actor, qa_item_id item, double count, double capacity);
-  /* Combat-lite mirror: damage application; NULL = direct health adjust. */
-  double (*apply_damage)(void *ctx, qa_actor_id target, qa_actor_id inflictor,
-                         const qa_actor_id *attacker, double amount,
-                         qa_q1_weapon weapon, const char *delivery, const char *death_type);
+  /* TS pusherServices(game): the Q1PusherServices stepQ1Pusher runs over. */
+  qa_q1_pusher_services (*pusher_services)(void *ctx, qa_q1_services *game);
   const qa_source_damage_modifier *source_damage_modifier;
   qa_provider_id source_damage_powerup_owner; /* NULL = absent */
   bool has_punch_angles;
   qa_vec3 (*punch_read)(void *ctx, qa_actor_id actor);
   void (*punch_write)(void *ctx, qa_actor_id actor, qa_vec3 angles);
+  /* TS host.originalPickups, optional. The continuation's ctx lives for the
+   * touch call only: the admission settles synchronously, as in TS. */
+  const qa_original_pickup_admission *original_pickups;
+  /* TS registerEntity?; optional. */
+  void (*register_entity)(void *ctx, qa_q1_actor *entity, qa_q1_services *services);
 } qa_q1_host;
 
 typedef struct qa_q1_options {
@@ -179,7 +181,23 @@ typedef struct qa_q1_options {
   double no_exit; bool has_no_exit;
   double teamplay; bool has_teamplay;
   double aim_threshold; bool has_aim_threshold;
+  /* TS getter-backed members: createQ1SourceComposition passes `get skill()`,
+   * `get teamplay()` and `get gravity()` reading cvars on every access. A NULL
+   * fn reads the stored value above. Read through qa_q1_options_skill /
+   * _teamplay / _gravity, never the stored fields directly. */
+  struct {
+    void *ctx;
+    double (*skill)(void *ctx);
+    double (*teamplay)(void *ctx);
+    double (*gravity)(void *ctx);
+  } live;
 } qa_q1_options;
+
+/* TS options.skill / options.teamplay ?? 0 / options.gravity, live when a
+ * getter is installed. */
+double qa_q1_options_skill(const qa_q1_options *options);
+double qa_q1_options_teamplay(const qa_q1_options *options);
+double qa_q1_options_gravity(const qa_q1_options *options);
 
 typedef struct qa_q1_presentation {
   qa_actor_id actor;

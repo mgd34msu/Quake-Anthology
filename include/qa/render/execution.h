@@ -28,4 +28,7 @@ void qa_render_executor_init(qa_render_executor *executor, qa_renderer_backend b
 void qa_render_executor_replace_backend(qa_render_executor *executor, qa_renderer_backend backend);
 void qa_render_executor_image(qa_render_executor *executor, qa_image_resource_operation operation);
 void qa_render_executor_execute(qa_render_executor *executor, qa_execution_command command);
+/* One leaf of TS execute(): lets the worker runtime decode operations and batches
+ * only when reached, as the TS Iterable leaves do. */
+void qa_render_executor_draw(qa_render_executor *executor, qa_draw_batch batch);
 #endif

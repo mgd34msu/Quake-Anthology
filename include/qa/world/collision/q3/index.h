@@ -6,9 +6,7 @@
 #include "qa/contracts/math.h"
 #include "qa/contracts/scene.h"
 #include "qa/world/collision/media.h"
-#include "qa/world/collision/q3/checksum.h"
 #include "qa/world/collision/q3/clip_models.h"
-#include "qa/world/collision/q3/map_loader.h"
 #include "qa/world/collision/q3/map_resource.h"
 #include "qa/world/collision/q3/model.h"
 #include "qa/world/collision/q3/patch.h"
@@ -24,7 +22,6 @@ void qa_q3_collision_init_geometry(qa_q3_collision *c, const qa_q3_world_geometr
 void qa_q3_collision_init_world(qa_q3_collision *c, qa_collision_world *world);
 void qa_q3_collision_destroy(qa_q3_collision *c);
 qa_q3_collision *qa_create_q3_collision(const qa_q3_world_geometry *geometry);
-qa_q3_collision *qa_create_source_q3_collision(const uint8_t *bytes, size_t byte_length, const char *source);
 double qa_q3_collision_point_leaf(qa_q3_collision *c, qa_vec3 point);
 double qa_q3_collision_leaf_area(qa_q3_collision *c, double index);
 double qa_q3_collision_leaf_cluster(qa_q3_collision *c, double index);

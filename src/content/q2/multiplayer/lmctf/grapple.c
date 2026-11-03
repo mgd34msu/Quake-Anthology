@@ -6,6 +6,7 @@
 #include "qa/content/q2/equipment/grapple_weapon.h"
 #include "qa/content/q2/foundation/weapons/presentation.h"
 #include "qa/content/q2/multiplayer/ctf/native_grapple_hooks.h"
+#include "qa/foundation/js.h"
 
 struct inactive_entry { qa_actor_id actor; qa_lmctf_grapple_state state; };
 struct qa_lmctf_grapple {
@@ -44,7 +45,7 @@ static bool can_attach(void *ctx, qa_actor_id owner, qa_actor_id target, qa_q2_g
 }
 static bool can_damage(void *ctx, qa_actor_id target) {
   qa_lmctf_grapple *g = ctx;
-  return ((int64_t)g->context->rules->ctf_flags & 64) == 0 || g->context->hooks.player(g->context->hooks.ctx, target) == NULL;
+  return (qa_js_to_int32(g->context->rules->ctf_flags) & 64) == 0 || g->context->hooks.player(g->context->hooks.ctx, target) == NULL;
 }
 static bool player_hit(void *ctx, qa_actor_id target, qa_q2_game_services *game) {
   qa_lmctf_grapple *g = ctx;
@@ -52,9 +53,9 @@ static bool player_hit(void *ctx, qa_actor_id target, qa_q2_game_services *game)
 }
 static void released(void *ctx, qa_actor_id actor) {
   qa_lmctf_grapple *g = ctx;
-  qa_q2mp_weapon_state *weapon = g->context->hooks.weapons->get_state(g->context->hooks.weapons->ctx, actor);
+  qa_q2w_state *weapon = qa_q2w_ballistics_state(&g->context->hooks.weapons->base, actor);
   if (weapon != NULL && weapon->weapon != NULL && strcmp(weapon->weapon, "lmctf:hook") == 0)
-    qa_release_lmctf_grapple_weapon(&weapon->animation);
+    qa_release_lmctf_grapple_weapon(weapon);
 }
 
 static bool shared_native(qa_shared_grapple_control *shared) {
@@ -63,8 +64,8 @@ static bool shared_native(qa_shared_grapple_control *shared) {
          strcmp(shared->selection.mechanic, "q2-lmctf") == 0 && shared->native_slot(shared->ctx, "q2-lmctf");
 }
 
-static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons);
-static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons);
+static void extension_fire(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons);
+static void extension_think(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons);
 
 qa_lmctf_grapple *qa_lmctf_grapple_module_create(qa_lmctf_context *context, qa_shared_grapple_control *shared) {
   qa_lmctf_grapple *g = calloc(1, sizeof *g);
@@ -139,36 +140,36 @@ qa_lmctf_grapple *qa_lmctf_grapple_module_create(qa_lmctf_context *context, qa_s
   def.has_coop_stay = true;
   def.coop_stay = true;
   qa_q2_item_module_register(context->hooks.items, def);
-  qa_q2mp_weapon_extension extension = {0};
+  qa_q2w_extension extension = {0};
   extension.definition = &QA_LMCTF_GRAPPLE;
   extension.ctx = g;
   extension.fire = extension_fire;
   extension.think = extension_think;
-  context->hooks.weapons->register_weapon(context->hooks.weapons->ctx, extension);
+  qa_q2w_weapons_register(context->hooks.weapons, extension);
   return g;
 }
 
-static void extension_fire(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons) {
-  (void)weapons;
+static void extension_fire(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons) {
+  (void)weapons; /* TS fire: current => this.fire(current.self, current.game) */
   qa_lmctf_grapple *g = ctx;
-  qa_lmctf_grapple_module_fire(g, context->actor, context->game);
+  qa_lmctf_grapple_module_fire(g, context->self.actor, context->game);
 }
 
-struct step_ctx { qa_lmctf_grapple *g; qa_q2mp_weapon_context *context; qa_q2mp_weapons_port *weapons; };
+struct step_ctx { qa_lmctf_grapple *g; qa_q2w_context *context; qa_q2w_weapons *weapons; };
 static void step_abort(void *ctx) {
   struct step_ctx *s = ctx;
-  qa_lmctf_grapple_module_abort(s->g, s->context->actor, s->context->game);
+  qa_lmctf_grapple_module_abort(s->g, s->context->self.actor, s->context->game);
 }
 static void step_generic(void *ctx) {
   struct step_ctx *s = ctx;
-  s->weapons->generic_classic(s->weapons->ctx, s->context);
+  qa_q2w_weapons_generic_classic(s->weapons, s->context);
 }
-static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_weapons_port *weapons) {
+static void extension_think(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons) {
   qa_lmctf_grapple *g = ctx;
-  qa_q2mp_weapon_state *state = context->state;
+  qa_q2w_state *state = context->state;
   qa_grapple_weapon_input input = {0};
   input.attack = context->input.attack;
-  input.change_requested = state->pending != NULL || (state->primary_handoff != NULL && strcmp(state->primary_handoff, "holstering") == 0);
+  input.change_requested = state->pending != NULL || state->primary_handoff == QA_Q2W_HANDOFF_HOLSTERING;
   input.holster = context->input.holster;
   input.latched_holster = false;
   struct step_ctx step = {g, context, weapons};
@@ -176,7 +177,7 @@ static void extension_think(void *ctx, qa_q2mp_weapon_context *context, qa_q2mp_
   hooks.ctx = &step;
   hooks.abort = step_abort;
   hooks.generic = step_generic;
-  qa_step_lmctf_grapple_weapon(&state->animation, qa_lmctf_grapple_module_state_ref(g, context->actor.id), input, hooks);
+  qa_step_lmctf_grapple_weapon(state, qa_lmctf_grapple_module_state_ref(g, context->self.actor.id), input, hooks);
 }
 
 void qa_lmctf_grapple_module_destroy(qa_lmctf_grapple *g) {
@@ -241,39 +242,27 @@ void qa_lmctf_grapple_module_abort(qa_lmctf_grapple *g, qa_owned_actor player, q
   else if (g->shared != NULL) g->shared->release(g->shared->ctx, player.id);
 }
 
-struct kick_ctx { qa_lmctf_grapple *g; qa_q2mp_weapon_state *weapon; qa_q2_game_services *game; };
+struct kick_ctx { qa_q2w_state *weapon; qa_q2_game_services *game; };
 static void kick_fn(void *ctx, qa_vec3 origin, double pitch) {
   struct kick_ctx *k = ctx;
-  qa_q2w_state projected = {0};
-  projected.kick_origin = k->weapon->kick_origin;
-  projected.kick_angles = k->weapon->kick_angles;
-  projected.kick_time = k->weapon->kick_time;
-  projected.kick_until = k->weapon->kick_until;
-  projected.kick_duration = k->weapon->kick_duration;
-  qa_q2f_edition edition = k->game->options.edition == QA_Q2_EDITION_RERELEASE ? QA_Q2F_RERELEASE : QA_Q2F_CLASSIC;
-  double now = qa_q2mp_now(k->game);
-  qa_vec3 angles = qa_q2w_weapon_recoil(&projected, edition, now).kick_angles;
+  qa_q2_edition edition = k->game->options.edition;
+  qa_vec3 angles = qa_q2w_weapon_recoil(k->weapon, edition, qa_q2mp_now(k->game)).kick_angles;
   angles.x = pitch;
-  qa_q2w_set_recoil_default(&projected, edition, now, origin, angles);
-  k->weapon->kick_origin = projected.kick_origin;
-  k->weapon->kick_angles = projected.kick_angles;
-  k->weapon->kick_time = projected.kick_time;
-  k->weapon->kick_until = projected.kick_until;
-  k->weapon->kick_duration = projected.kick_duration;
+  qa_q2w_set_recoil_default(k->weapon, edition, qa_q2mp_now(k->game), origin, angles);
 }
 
 void qa_lmctf_grapple_module_fire(qa_lmctf_grapple *g, qa_owned_actor player, qa_q2_game_services *game) {
   if (g->equipment == NULL) return;
-  qa_q2mp_weapon_state *weapon = g->context->hooks.weapons->get_state(g->context->hooks.weapons->ctx, player.id);
+  qa_q2w_state *weapon = qa_q2w_ballistics_state(&g->context->hooks.weapons->base, player.id);
   if (weapon == NULL) {
     qa_lmctf_grapple_fire(g->equipment, player.id, game);
     return;
   }
-  struct kick_ctx kick = {g, weapon, game};
+  struct kick_ctx kick = {weapon, game};
   qa_grapple_weapon_presentation presentation = {0};
   presentation.ctx = &kick;
   presentation.kick = kick_fn;
-  qa_fire_lmctf_grapple_weapon(player.id, game, g->equipment, &weapon->animation, presentation);
+  qa_fire_lmctf_grapple_weapon(player.id, game, g->equipment, weapon, presentation);
 }
 
 void qa_lmctf_grapple_module_command(qa_lmctf_grapple *g, qa_q2_entity *player, qa_q2_game_services *game, bool pressed) {
@@ -284,13 +273,13 @@ void qa_lmctf_grapple_module_command(qa_lmctf_grapple *g, qa_q2_entity *player, 
     return;
   }
   qa_lmctf_grapple_state *state = qa_lmctf_grapple_module_state_ref(g, player->actor.id);
-  qa_q2mp_player_state *common = g->context->hooks.player(g->context->hooks.ctx, player->actor.id);
-  qa_q2mp_weapon_state *weapon = g->context->hooks.weapons->get_state(g->context->hooks.weapons->ctx, player->actor.id);
+  qa_q2_base_player_state *common = g->context->hooks.player(g->context->hooks.ctx, player->actor.id);
+  qa_q2w_state *weapon = qa_q2w_ballistics_state(&g->context->hooks.weapons->base, player->actor.id);
   if (common == NULL || common->noclip || common->spectator) return;
-  if (((int64_t)g->context->rules->ctf_flags & 16) != 0) {
+  if ((qa_js_to_int32(g->context->rules->ctf_flags) & 16) != 0) {
     if (weapon != NULL && weapon->weapon != NULL && strcmp(weapon->weapon, "lmctf:hook") == 0) {
       state->hook_held = pressed;
-      if (pressed) weapon->animation.latched_attack = true;
+      if (pressed) weapon->latched_attack = true;
       else qa_lmctf_grapple_module_abort(g, player->actor, game);
       return;
     }
@@ -303,11 +292,13 @@ void qa_lmctf_grapple_module_command(qa_lmctf_grapple *g, qa_q2_entity *player, 
       qa_lmctf_print(game, &player->actor.id, "You have no hook.\n");
       return;
     }
-    qa_q2mp_weapon_input input;
-    bool has_input = g->context->hooks.weapons->get_input(g->context->hooks.weapons->ctx, player->actor.id, &input);
-    if ((has_input ? input.quad_until : 0) > qa_q2mp_now(game)) game->sound(game->ctx, player->actor, "items/damage3.wav", 3, 1, 1);
+    const qa_q2w_input *input = qa_q2w_ballistics_input(&g->context->hooks.weapons->base, player->actor.id);
+    if ((input != NULL ? input->quad_until : 0) > qa_q2mp_now(game)) game->sound(game->ctx, player->actor, "items/damage3.wav", 3, 1, 1);
     qa_lmctf_grapple_module_fire(g, player->actor, game);
     return;
   }
-  if (pressed) g->context->hooks.weapons->request_weapon(g->context->hooks.weapons->ctx, player, game, "lmctf:hook");
+  if (pressed) {
+    qa_q2w_owner self = {player->actor, player->view_height};
+    (void)qa_q2w_weapons_request_weapon(g->context->hooks.weapons, self, game, "lmctf:hook", false);
+  }
 }

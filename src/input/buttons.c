@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/input/support.h"
+#include "qa/foundation/js.h"
 
 void qa_input_button_init(qa_input_button *button) {
   memset(button, 0, sizeof *button);
@@ -64,7 +65,7 @@ void qa_input_button_up(qa_input_button *button, const char *source,
   if (qa_input_button_active(button)) return;
   button->milliseconds += time_milliseconds == 0
                                ? missing_time_milliseconds
-                               : fmax(0, time_milliseconds - button->down_time);
+                               : qa_js_max(0, time_milliseconds - button->down_time);
   button->impulse_up = true;
 }
 
@@ -88,14 +89,14 @@ double qa_input_button_sample(qa_input_button *button, qa_button_timing timing,
     if (qa_input_button_active(button)) {
       button->milliseconds += button->down_time == 0
                                    ? now_milliseconds
-                                   : fmax(0, now_milliseconds - button->down_time);
+                                   : qa_js_max(0, now_milliseconds - button->down_time);
       button->down_time = now_milliseconds;
     }
     double value = timing == QA_BUTTON_TIMING_Q3
                        ? (double)(float)((double)(float)button->milliseconds /
                                          (double)(float)frame_milliseconds)
                        : button->milliseconds / frame_milliseconds;
-    result = fmax(0, fmin(1, value));
+    result = qa_js_max(0, qa_js_min(1, value));
   }
   button->milliseconds = 0;
   button->impulse_down = false;

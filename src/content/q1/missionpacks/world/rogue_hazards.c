@@ -1,221 +1,265 @@
-/* Port of src/content/q1/missionpacks/world/rogue-hazards.ts.
- * GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/rogue-hazards.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/rogue_hazards.h"
 #include "../missionpacks_internal.h"
 #include "qa/content/q1/missionpacks/world/common.h"
-#include "qa/foundation/support.h"
-#include <stdlib.h>
 
-typedef struct rh_ctx { qa_q1mp_game *game; } rh_ctx;
-void qa_q1mp_rogue_earthquake(qa_q1mp_game *game, qa_actor_id actor, double intensity) {
-  qa_owned_actor owner; qa_q1b_body body;
-  if (!game->base->host->actors_resolve_owned(game->base->host->ctx, actor, &owner) || !qa_q1mp_body_read(game, actor, &body) || !body.ground.has) return;
-  body.velocity = qa_q1mp_vadd(body.velocity, QA_Q1MP_V3(
-    qa_q1mp_random(game)*intensity*2-intensity, qa_q1mp_random(game)*intensity*2-intensity, qa_q1mp_random(game)*intensity*2-intensity));
-  game->base->host->bodies_write(game->base->host->ctx, owner, &body);
+static bool falsy(double value) { return value == 0 || isnan(value); } /* TS `x || y` / `x ||= y` */
+static int32_t bits(double value) { return qa_js_to_int32(value); }
+static double random_of(qa_q1_services *game) { return game->host.random(game->host.ctx); }
+static const qa_actor_id *activator_of(const qa_q1_actor *entity) { return entity->has_activator ? &entity->activator : NULL; }
+static qa_q1_actor *reference_entity(qa_q1_services *game, const qa_q1_actor *entity, const char *key) {
+  qa_actor_id actor;
+  return qa_q1_actor_reference_get(entity, key, &actor) ? qa_q1_get_entity(game, &actor) : NULL;
 }
-static void quake_stop(rh_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  if (g->world) qa_q1mp_world_number(g->world, "rogue:earthquake_active", 0);
-  qa_q1mp_world_later(c->game, e, (e->spawnflags & 1) != 0 ? qa_q1mp_random(c->game) * e->wait : e->wait, "rogue:quake_start");
+static void emit_sound(qa_q1_services *game, qa_actor_id actor, const char *path, qa_q1_sound_channel channel,
+                       double volume, double attenuation) {
+  qa_q1_event event = {0};
+  event.kind = "sound"; event.has_actor = true; event.actor = actor; event.path = path;
+  event.sound_channel = channel; event.volume = volume; event.attenuation = attenuation;
+  qa_q1_emit(game, event);
 }
-static void quake_rumble(rh_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  if (e->attack_finished < g->time) { quake_stop(c, g, e); return; }
-  g->sound(g, e, "equake/rumble.wav", QA_Q1MP_CH("voice"), 0, 1);
-  qa_q1mp_world_later(c->game, e, 1, "rogue:quake_rumble");
+
+void qa_q1mp_rogue_earthquake(qa_q1_services *game, qa_actor_id actor, double intensity) {
+  qa_owned_actor owner;
+  const bool resolved = qa_session_actor_registry_resolve_owned(game->host.actors, actor, &owner);
+  qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!resolved || !body.has_value || body.value.ground == NULL) return;
+  qa_vec3 shake;
+  shake.x = random_of(game) * intensity * 2 - intensity;
+  shake.y = random_of(game) * intensity * 2 - intensity;
+  shake.z = random_of(game) * intensity * 2 - intensity;
+  qa_body_state next = body.value;
+  next.velocity = qa_q1_vadd(body.value.velocity, shake);
+  qa_shared_body_table_write(game->host.bodies, owner, next);
 }
-static void quake_stop_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { quake_stop(vctx, g, e); }
-static void quake_rumble_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { quake_rumble(vctx, g, e); }
-static void quake_start_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rh_ctx *c = vctx;
-  if (g->world) qa_q1mp_world_number(g->world, "rogue:earthquake_active", 1);
-  e->attack_finished = g->time + ((e->spawnflags & 1) != 0 ? qa_q1mp_random(c->game) * e->delay : e->delay);
-  quake_rumble(c, g, e);
+static void quake_stop(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (game->world != NULL) qa_q1mp_world_number(game->world, "rogue:earthquake_active", 0);
+  const double delay = (bits(entity->spawnflags) & 1) != 0 ? random_of(game) * entity->wait : entity->wait;
+  qa_q1mp_world_later(game, entity, delay, "rogue:quake_start");
 }
-static void earthquake_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rh_ctx *c = vctx;
-  if (e->delay == 0) e->delay = 20;
-  if (e->wait == 0) e->wait = 60;
-  if (qa_q1mp_number(e, "weapon") == 0) qa_q1mp_world_number(e, "weapon", 40);
-  if (g->world) { qa_q1mp_world_number(g->world, "rogue:earthquake_active", 0); qa_q1mp_world_number(g->world, "rogue:earthquake_intensity", qa_q1mp_number(e,"weapon") * 0.5); }
-  g->set_bounds(g, e, QA_Q1MP_POINT);
-  qa_q1mp_world_later(c->game, e, 1, "rogue:quake_stop");
+static void quake_rumble(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  if (entity->attack_finished < game->time) { quake_stop(ctx, game, entity); return; }
+  qa_q1_sound(game, entity->actor.id, "equake/rumble.wav", "voice", 0, 1);
+  qa_q1mp_world_later(game, entity, 1, "rogue:quake_rumble");
 }
-static void eq_field_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)vctx; (void)g; (void)o; (void)a; e->delay = e->delay == 0 ? 1 : 0; }
-static void eq_field_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; rh_ctx *c = vctx;
-  if (e->delay == 0) return;
-  if (e->attack_finished < g->time) { g->sound(g, e, "equake/rumble.wav", QA_Q1MP_CH("voice"), 1, 1); e->attack_finished = g->time + 1; }
-  if (g->is_player(g, QA_Q1MP_SOME(other))) qa_q1mp_rogue_earthquake(c->game, other, qa_q1mp_number(e, "weapon"));
+static void quake_start(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  if (game->world != NULL) qa_q1mp_world_number(game->world, "rogue:earthquake_active", 1);
+  entity->attack_finished = game->time + ((bits(entity->spawnflags) & 1) != 0 ? random_of(game) * entity->delay : entity->delay);
+  quake_rumble(ctx, game, entity);
 }
-static void trigger_eq_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rh_ctx *c = vctx;
-  double w = qa_q1mp_number(e, "weapon"); qa_q1mp_world_number(e, "weapon", (w != 0 ? w : 40) * 0.5);
-  e->delay = e->targetname[0] == '\0' ? 1 : 0;
-  e->touch = g->named.touch(g->named.ctx, e, "rogue:earthquake_field");
-  if (e->targetname[0]) e->use = g->named.use(g->named.ctx, e, "rogue:earthquake_field");
-  qa_q1mp_world_trigger(c->game, e);
+static void saw_start(qa_q1_services *game, qa_q1_actor *entity) {
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:saw_touch");
+  entity->use = (qa_q1_bound_use){0};
+  qa_q1_actor *found = qa_q1mp_find_first(game, entity->target);
+  const qa_actor_id *target = found != NULL ? &found->actor.id : NULL;
+  if (!qa_q1_actor_reference_set(entity, "goalentity", target) || !qa_q1_actor_reference_set(entity, "movetarget", target))
+    qa_range_error("Out of memory");
+  qa_q1mp_world_later(game, entity, 0.1, entity->target[0] == '\0' ? "rogue:saw_stand" : "rogue:saw_fly");
 }
-static void eq_kill_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)vctx; (void)e; (void)hn; (void)n; (void)s;
-  if (!g->is_player(g, QA_Q1MP_SOME(other))) return;
-  qa_q1mp_actor *ents[256]; size_t total = g->entities(g, ents, 256);
-  for (size_t i = 0; i < total; i++) if (qa_q1mp_streq(ents[i]->classname, "earthquake")) {
-    if (g->world) qa_q1mp_world_number(g->world, "rogue:earthquake_active", 0);
-    g->remove(g, ents[i]); break;
-  }
+static void saw_start_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) { (void)ctx; saw_start(game, entity); }
+static void saw_start_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)other; (void)activator; saw_start(game, entity);
 }
-static void eq_kill_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rh_ctx *c = vctx; e->touch = g->named.touch(g->named.ctx, e, "rogue:earthquake_kill");
-  qa_q1mp_world_trigger(c->game, e);
-}
-typedef struct saw_ctx { rh_ctx base; bool flying; } saw_ctx;
-static saw_ctx saw_ctxs[2];
-static void saw_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  saw_ctx *c = vctx; bool flying = c->flying; qa_q1mp_game *game = c->base.game;
-  e->frame = flying ? 1 : 0;
-  if (qa_q1mp_number(e, "pain_finished") < g->time) {
-    if (game->emit_sound_event) game->emit_sound_event(game->ctx, e->actor.id, "buzz/buzz1.wav", QA_Q1MP_CH("voice"), 0.2, 1);
-    qa_q1mp_world_number(e, "pain_finished", g->time + 1);
-  }
-  qa_q1b_body body = g->body(g, e);
-  if (flying) {
-    qa_q1mp_opt_actor goal_ref = qa_q1b_references_get(e, "goalentity");
-    qa_q1mp_actor *goal = goal_ref.has ? g->entity(g, goal_ref) : NULL;
-    if (!goal) goal = g->world;
-    if (!goal) qa_range_error("Buzzsaw requires worldspawn");
-    g->set_origin(g, e, qa_q1mp_vadd(body.origin, qa_q1mp_vscale(qa_q1mp_normalize(qa_q1mp_vsub(g->body(g, goal).origin, body.origin)), e->speed)));
-  }
-  qa_vec3 angles = body.angles; angles.x = body.angles.x - 60; qa_q1mp_set_angles_b(game, e, angles);
-  e->angular_velocity.x = 60;
-  qa_q1mp_world_later(game, e, 0.1, flying ? "rogue:saw_fly" : "rogue:saw_stand");
-}
-static void saw_start_impl(rh_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  e->touch = g->named.touch(g->named.ctx, e, "rogue:saw_touch"); e->use.has = false;
-  qa_q1mp_actor *target = qa_q1mp_find0(c->game, e->target);
-  qa_q1mp_opt_actor t = target ? QA_Q1MP_SOME(target->actor.id) : QA_Q1MP_NONE;
-  qa_q1b_references_set(e, "goalentity", t); qa_q1b_references_set(e, "movetarget", t);
-  qa_q1mp_world_later(c->game, e, 0.1, e->target[0] == '\0' ? "rogue:saw_stand" : "rogue:saw_fly");
-}
-static void saw_start_action(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { saw_start_impl(vctx, g, e); }
-static void saw_start_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) { (void)o; (void)a; saw_start_impl(vctx, g, e); }
-static void saw_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)hn; (void)n; (void)s; rh_ctx *c = vctx;
-  qa_q1mp_actor *oe = g->entity(g, QA_Q1MP_SOME(other));
-  if (!g->is_player(g, QA_Q1MP_SOME(other)) && !(oe && (oe->movement_flags & 32) != 0)) return;
-  if (e->attack_finished < g->time) { qa_q1mp_sound_ch(c->game, e, "buzz/buzz.wav", "weapon"); e->attack_finished = g->time + 2; }
-  qa_q1b_game_damage(g, other, e->actor.id, QA_Q1MP_SOME(e->actor.id), qa_q1mp_number(e, "currentammo"));
-  qa_q1mp_opt_actor goal_ref = qa_q1b_references_get(e, "goalentity");
-  qa_q1mp_actor *goal = goal_ref.has ? g->entity(g, goal_ref) : NULL;
-  if (!goal) goal = g->world;
-  qa_q1b_body body; qa_owned_actor owner;
-  bool has_b = qa_q1mp_body_read(c->game, other, &body), has_o = g->host->actors_resolve_owned(g->host->ctx, other, &owner);
-  if (!goal || !has_b || !has_o) return;
-  qa_vec3 direction = qa_q1mp_vscale(qa_q1mp_normalize(qa_q1mp_vsub(g->body(g, goal).origin, g->body(g, e).origin)), 200);
-  qa_q1mp_effect_a(c->game, "meat-spray", g->body(g, e).origin, QA_Q1MP_SOME(other), 0);
-  direction.z = 200; body.velocity = direction; g->host->bodies_write(g->host->ctx, owner, &body);
-}
-static void buzzsaw_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rh_ctx *c = vctx;
-  qa_q1mp_set_model(e, "progs/buzzsaw.mdl"); qa_q1b_actor_set_damageable(g, e, false);
-  e->solid = "trigger"; e->movement = "fly";
-  double yaw = g->body(g, e).angles.y;
-  if (yaw == 0 || yaw == 180) g->set_bounds(g, e, (qa_bounds){{-18,0,-18},{18,0,18}});
-  else if (yaw == 90 || yaw == 270) g->set_bounds(g, e, (qa_bounds){{0,-18,-18},{0,18,18}});
-  else qa_range_error("Buzzsaw: Not at 90 degree angle!");
-  if (e->speed == 0) e->speed = 10;
-  if (qa_q1mp_number(e, "currentammo") == 0) qa_q1mp_world_number(e, "currentammo", 10);
-  qa_q1mp_world_number(e, "pain_finished", g->time + qa_q1mp_random(c->game) * 2);
-  if (e->targetname[0] == '\0') { qa_q1mp_world_later(c->game, e, 0.2, "rogue:saw_start"); return; }
-  e->use = g->named.use(g->named.ctx, e, "rogue:saw_start");
-}
-static void trail_fire(rh_ctx *c, qa_q1b_game *g, qa_q1b_actor *e) {
-  qa_q1mp_game *game = c->game;
-  if (!qa_q1mp_streq(e->classname, "ltrail_end")) {
-    qa_q1mp_sound_ch(game, e, "weapons/lhit.wav", "voice");
-    qa_q1mp_actor *target = qa_q1mp_find0(game, e->target);
-    if (!target) target = g->world;
-    if (!target) qa_range_error("Lightning trail requires worldspawn");
-    qa_vec3 start = g->body(g, e).origin, end = g->body(g, target).origin;
-    if (game->emit_beam) game->emit_beam(game->ctx, "lightning2", e->actor.id, start, end);
-    qa_vec3 side = {-(end.y-start.y)*16, -(end.y-start.y)*16, 0};
-    qa_vec3 offsets[3] = {QA_Q1MP_ZERO, side, qa_q1mp_vscale(side,-1)}; qa_actor_id hit[8]; size_t hits = 0;
-    for (int i = 0; i < 3; i++) {
-      qa_q1b_trace trace = qa_q1mp_trace(game, qa_q1mp_vadd(start,offsets[i]), qa_q1mp_vadd(end,offsets[i]), QA_Q1MP_SOME(e->actor.id), true, false);
-      if (!trace.actor.has) continue;
+static void trail_fire(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (!qa_q1mp_streq(entity->classname, "ltrail_end")) {
+    qa_q1_sound(game, entity->actor.id, "weapons/lhit.wav", "voice", 1, 1);
+    qa_q1_actor *target = qa_q1mp_find_first(game, entity->target);
+    if (target == NULL) target = game->world;
+    if (target == NULL) qa_range_error("Lightning trail requires worldspawn");
+    const qa_vec3 start = qa_q1_get_body(game, entity).origin, end = qa_q1_get_body(game, target).origin;
+    qa_q1_event beam = {0};
+    beam.kind = "beam"; beam.beam_style = "lightning2"; beam.has_actor = true; beam.actor = entity->actor.id;
+    beam.start = start; beam.end = end;
+    game->host.emit(game->host.ctx, beam);
+    const qa_vec3 side = {-(end.y - start.y) * 16, -(end.y - start.y) * 16, 0};
+    const qa_vec3 offsets[3] = {QA_Q1_ZERO, side, qa_q1_vscale(side, -1)};
+    qa_actor_id hit[3]; size_t hit_count = 0;
+    for (size_t i = 0; i < 3; i++) {
+      const qa_q1_trace trace = qa_q1mp_trace(game, qa_q1_vadd(start, offsets[i]), qa_q1_vadd(end, offsets[i]), &entity->actor.id, true);
+      if (!trace.has_actor) continue;
       bool seen = false;
-      for (size_t j = 0; j < hits; j++) if (qa_same_actor(hit[j], trace.actor.id)) seen = true;
+      for (size_t h = 0; h < hit_count; h++) if (qa_same_actor(hit[h], trace.actor)) seen = true;
       if (seen) continue;
-      if (hits < 8) hit[hits++] = trace.actor.id;
-      if (qa_q1mp_can_damage_actor(game, trace.actor.id)) {
-        if (game->emit_particles) game->emit_particles(game->ctx, trace.end, QA_Q1MP_V3(0,0,100), 225, qa_q1mp_number(e,"currentammo") * 4);
-        qa_q1b_game_damage(g, trace.actor.id, e->actor.id, QA_Q1MP_SOME(e->actor.id), qa_q1mp_number(e,"currentammo"));
+      hit[hit_count++] = trace.actor;
+      const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, trace.actor);
+      if (combat.has_value && combat.value.can_take_damage) {
+        qa_q1_event particles = {0};
+        particles.kind = "particles"; particles.has_origin = true; particles.origin = trace.end;
+        particles.direction = QA_Q1MP_V3(0, 0, 100); particles.color = 225;
+        particles.count = qa_q1_actor_number(entity, "currentammo") * 4;
+        game->host.emit(game->host.ctx, particles);
+        (void)qa_q1_damage(game, trace.actor, entity->actor.id, &entity->actor.id, qa_q1_actor_number(entity, "currentammo"), NULL, NULL, NULL, NULL);
       }
     }
   }
-  if (qa_q1mp_number(e, "items") < g->time) qa_q1mp_world_later(game, e, qa_q1mp_number(e,"frags"), "rogue:ltrail_chain");
-  else qa_q1mp_world_later(game, e, 0.05, "rogue:ltrail_fire");
+  if (qa_q1_actor_number(entity, "items") < game->time) qa_q1mp_world_later(game, entity, qa_q1_actor_number(entity, "frags"), "rogue:ltrail_chain");
+  else qa_q1mp_world_later(game, entity, 0.05, "rogue:ltrail_fire");
 }
-static void trail_fire_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) { trail_fire(vctx, g, e); }
-static void ltrail_chain_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  (void)vctx; g->use_targets(g, e, e->activator);
-  e->think = g->named.action(g->named.ctx, e, "SUB_Null");
-}
-static void ltrail_use_cb(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor other, qa_q1mp_opt_actor a) {
-  rh_ctx *c = vctx; e->activator = a;
-  if ((e->spawnflags & 1) != 0) {
-    qa_q1mp_actor *oe = other.has ? g->entity(g, other) : NULL;
-    if (!(oe && qa_q1mp_streq(oe->classname, "ltrail_end"))) {
-      if ((e->spawnflags & 2) != 0) { e->spawnflags -= 2; return; }
-      e->spawnflags += 2;
-    } else if ((e->spawnflags & 2) == 0) return;
+static void earthquake_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  if (falsy(entity->delay)) entity->delay = 20;
+  if (falsy(entity->wait)) entity->wait = 60;
+  if (qa_q1_actor_number(entity, "weapon") == 0) qa_q1mp_world_number(entity, "weapon", 40);
+  if (game->world != NULL) {
+    qa_q1mp_world_number(game->world, "rogue:earthquake_active", 0);
+    qa_q1mp_world_number(game->world, "rogue:earthquake_intensity", qa_q1_actor_number(entity, "weapon") * 0.5);
   }
-  if (qa_q1mp_streq(e->classname, "ltrail_end")) { qa_q1mp_world_later(c->game, e, qa_q1mp_number(e,"frags"), "rogue:ltrail_chain"); return; }
-  qa_q1mp_world_number(e, "items", g->time + qa_q1mp_number(e,"weapon"));
-  trail_fire(c, g, e);
-  if (qa_q1mp_streq(e->classname, "ltrail_start")) qa_q1mp_world_number(e, "ltrailLastUsed", g->time);
+  qa_q1_set_bounds(game, entity, QA_Q1_POINT);
+  qa_q1mp_world_later(game, entity, 1, "rogue:quake_stop");
 }
-static void ltrail_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rh_ctx *c = vctx;
-  e->movement = "none"; e->solid = "bbox"; e->use = g->named.use(g->named.ctx, e, "rogue:ltrail_use");
-  if (qa_q1mp_number(e,"currentammo") == 0) qa_q1mp_world_number(e, "currentammo", 25);
-  if (qa_q1mp_number(e,"weapon") == 0) qa_q1mp_world_number(e, "weapon", 0.3);
-  if (qa_q1mp_number(e,"frags") == 0) qa_q1mp_world_number(e, "frags", 0.3);
-  if (qa_q1mp_streq(e->classname, "ltrail_start")) {
-    qa_q1mp_world_number(e, "ltrailLastUsed", g->time);
-    if ((e->spawnflags & 2) != 0) { qa_q1mp_world_number(e, "items", g->time + 99999999); qa_q1mp_world_later(c->game, e, 0.1, "rogue:ltrail_fire"); }
+static void field_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)game; (void)other; (void)activator;
+  entity->delay = entity->delay == 0 ? 1 : 0;
+}
+static void field_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                        const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  if (entity->delay == 0) return;
+  if (entity->attack_finished < game->time) {
+    qa_q1_sound(game, entity->actor.id, "equake/rumble.wav", "voice", 1, 1);
+    entity->attack_finished = game->time + 1;
+  }
+  if (qa_q1_is_player(game, &other)) qa_q1mp_rogue_earthquake(game, other, qa_q1_actor_number(entity, "weapon"));
+}
+static void trigger_earthquake_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  const double weapon = qa_q1_actor_number(entity, "weapon");
+  qa_q1mp_world_number(entity, "weapon", (falsy(weapon) ? 40 : weapon) * 0.5);
+  entity->delay = entity->targetname[0] == '\0' ? 1 : 0;
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:earthquake_field");
+  if (entity->targetname[0] != '\0') entity->use = qa_q1_callback_registry_use(game->named, entity, "rogue:earthquake_field");
+  qa_q1mp_world_trigger(game, entity);
+}
+static void earthquake_kill(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                            const qa_touch_surface *surface) {
+  (void)ctx; (void)entity; (void)normal; (void)surface;
+  if (!qa_q1_is_player(game, &other)) return;
+  qa_q1_actor *quake = NULL;
+  for (size_t i = 0; i < game->entity_count && quake == NULL; i++)
+    if (qa_q1mp_streq(game->entities[i]->classname, "earthquake")) quake = game->entities[i];
+  if (quake != NULL) {
+    if (game->world != NULL) qa_q1mp_world_number(game->world, "rogue:earthquake_active", 0);
+    qa_q1_remove(game, quake);
   }
 }
-void qa_q1mp_register_rogue_hazards(qa_q1mp_game *game) {
-  rh_ctx *c = malloc(sizeof *c); c->game = game; qa_q1b_game *g = game->base;
-  qa_q1b_handlers h = {0}; h.ctx = c; h.action = quake_stop_cb;
-  g->named.register_named(g->named.ctx, "rogue:quake_stop", &h);
-  qa_q1b_handlers hr = {0}; hr.ctx = c; hr.action = quake_rumble_cb;
-  g->named.register_named(g->named.ctx, "rogue:quake_rumble", &hr);
-  qa_q1b_handlers hs = {0}; hs.ctx = c; hs.action = quake_start_cb;
-  g->named.register_named(g->named.ctx, "rogue:quake_start", &hs);
-  g->register_spawn(g, "earthquake", earthquake_spawn, c);
-  qa_q1b_handlers he = {0}; he.ctx = c; he.use = eq_field_use; he.touch = eq_field_touch;
-  g->named.register_named(g->named.ctx, "rogue:earthquake_field", &he);
-  g->register_spawn(g, "trigger_earthquake", trigger_eq_spawn, c);
-  qa_q1b_handlers hk = {0}; hk.ctx = c; hk.touch = eq_kill_touch;
-  g->named.register_named(g->named.ctx, "rogue:earthquake_kill", &hk);
-  g->register_spawn(g, "trigger_earthquake_kill", eq_kill_spawn, c);
-  for (int i = 0; i < 2; i++) {
-    saw_ctxs[i].base.game = game; saw_ctxs[i].flying = i != 0;
-    qa_q1b_handlers hw = {0}; hw.ctx = &saw_ctxs[i]; hw.action = saw_cb;
-    g->named.register_named(g->named.ctx, i ? "rogue:saw_fly" : "rogue:saw_stand", &hw);
+static void earthquake_kill_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, "rogue:earthquake_kill");
+  qa_q1mp_world_trigger(game, entity);
+}
+static void saw_move(qa_q1_services *game, qa_q1_actor *entity, bool flying) {
+  entity->frame = flying ? 1 : 0;
+  if (qa_q1_actor_number(entity, "pain_finished") < game->time) {
+    emit_sound(game, entity->actor.id, "buzz/buzz1.wav", "voice", 0.2, 1);
+    qa_q1mp_world_number(entity, "pain_finished", game->time + 1);
   }
-  qa_q1b_handlers hss = {0}; hss.ctx = c; hss.action = saw_start_action; hss.use = saw_start_use;
-  g->named.register_named(g->named.ctx, "rogue:saw_start", &hss);
-  qa_q1b_handlers hst = {0}; hst.ctx = c; hst.touch = saw_touch;
-  g->named.register_named(g->named.ctx, "rogue:saw_touch", &hst);
-  g->register_spawn(g, "buzzsaw", buzzsaw_spawn, c);
-  qa_q1b_handlers hc = {0}; hc.ctx = c; hc.action = ltrail_chain_cb;
-  g->named.register_named(g->named.ctx, "rogue:ltrail_chain", &hc);
-  qa_q1b_handlers hf2 = {0}; hf2.ctx = c; hf2.action = trail_fire_cb;
-  g->named.register_named(g->named.ctx, "rogue:ltrail_fire", &hf2);
-  qa_q1b_handlers hu = {0}; hu.ctx = c; hu.use = ltrail_use_cb;
-  g->named.register_named(g->named.ctx, "rogue:ltrail_use", &hu);
-  static const char *const trails[] = {"ltrail_start","ltrail_relay","ltrail_end"};
-  for (size_t i = 0; i < 3; i++) g->register_spawn(g, trails[i], ltrail_spawn, c);
+  const qa_q1_body body = qa_q1_get_body(game, entity);
+  if (flying) {
+    qa_q1_actor *goal = reference_entity(game, entity, "goalentity");
+    if (goal == NULL) goal = game->world;
+    if (goal == NULL) qa_range_error("Buzzsaw requires worldspawn");
+    qa_q1_set_origin(game, entity, qa_q1_vadd(body.origin, qa_q1_vscale(qa_q1_normalize(qa_q1_vsub(qa_q1_get_body(game, goal).origin, body.origin)), entity->speed)));
+  }
+  qa_q1_body_patch patch = {0};
+  patch.has_angles = true; patch.angles = body.angles; patch.angles.x = body.angles.x - 60;
+  qa_q1_set_body(game, entity, &patch);
+  entity->angular_velocity.x = 60;
+  qa_q1mp_world_later(game, entity, 0.1, flying ? "rogue:saw_fly" : "rogue:saw_stand");
+}
+static void saw_fly(void *ctx, qa_q1_services *game, qa_q1_actor *entity) { (void)ctx; saw_move(game, entity, true); }
+static void saw_stand(void *ctx, qa_q1_services *game, qa_q1_actor *entity) { (void)ctx; saw_move(game, entity, false); }
+static void saw_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                      const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  qa_q1_actor *target = qa_q1_get_entity(game, &other);
+  if (!qa_q1_is_player(game, &other) && (bits(target != NULL ? target->movement_flags : 0) & 32) == 0) return;
+  if (entity->attack_finished < game->time) {
+    qa_q1_sound(game, entity->actor.id, "buzz/buzz.wav", "weapon", 1, 1);
+    entity->attack_finished = game->time + 2;
+  }
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, qa_q1_actor_number(entity, "currentammo"), NULL, NULL, NULL, NULL);
+  qa_q1_actor *goal = reference_entity(game, entity, "goalentity");
+  if (goal == NULL) goal = game->world;
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, other);
+  qa_owned_actor owner;
+  const bool resolved = qa_session_actor_registry_resolve_owned(game->host.actors, other, &owner);
+  if (goal == NULL || !body.has_value || !resolved) return;
+  qa_vec3 a = qa_q1_get_body(game, goal).origin;
+  qa_vec3 b = qa_q1_get_body(game, entity).origin;
+  const qa_vec3 direction = qa_q1_vscale(qa_q1_normalize(qa_q1_vsub(a, b)), 200);
+  qa_q1_effect(game, "meat-spray", qa_q1_get_body(game, entity).origin, &other, 1);
+  qa_body_state next = body.value;
+  next.velocity = QA_Q1MP_V3(direction.x, direction.y, 200);
+  qa_shared_body_table_write(game->host.bodies, owner, next);
+}
+static void buzzsaw_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_set_string(&entity->model, "progs/buzzsaw.mdl");
+  qa_q1_actor_set_damageable(entity, false); entity->solid = "trigger"; entity->movement = "fly";
+  const double yaw = qa_q1_get_body(game, entity).angles.y;
+  if (yaw == 0 || yaw == 180) qa_q1_set_bounds(game, entity, (qa_bounds){{-18, 0, -18}, {18, 0, 18}});
+  else if (yaw == 90 || yaw == 270) qa_q1_set_bounds(game, entity, (qa_bounds){{0, -18, -18}, {0, 18, 18}});
+  else qa_range_error("Buzzsaw: Not at 90 degree angle!");
+  if (falsy(entity->speed)) entity->speed = 10;
+  if (qa_q1_actor_number(entity, "currentammo") == 0) qa_q1mp_world_number(entity, "currentammo", 10);
+  qa_q1mp_world_number(entity, "pain_finished", game->time + random_of(game) * 2);
+  if (entity->targetname[0] == '\0') { qa_q1mp_world_later(game, entity, 0.2, "rogue:saw_start"); return; }
+  entity->use = qa_q1_callback_registry_use(game->named, entity, "rogue:saw_start");
+}
+static void ltrail_chain(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1_use_targets(game, entity, activator_of(entity));
+  entity->think = qa_q1_callback_registry_action(game->named, entity, "SUB_Null");
+}
+static void ltrail_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other, const qa_actor_id *activator) {
+  entity->has_activator = activator != NULL;
+  if (activator != NULL) entity->activator = *activator;
+  if ((bits(entity->spawnflags) & 1) != 0) {
+    qa_q1_actor *source = qa_q1_get_entity(game, other);
+    if (source == NULL || !qa_q1mp_streq(source->classname, "ltrail_end")) {
+      if ((bits(entity->spawnflags) & 2) != 0) { entity->spawnflags -= 2; return; }
+      entity->spawnflags += 2;
+    } else if ((bits(entity->spawnflags) & 2) == 0) return;
+  }
+  if (qa_q1mp_streq(entity->classname, "ltrail_end")) { qa_q1mp_world_later(game, entity, qa_q1_actor_number(entity, "frags"), "rogue:ltrail_chain"); return; }
+  qa_q1mp_world_number(entity, "items", game->time + qa_q1_actor_number(entity, "weapon"));
+  trail_fire(ctx, game, entity);
+  if (qa_q1mp_streq(entity->classname, "ltrail_start")) qa_q1mp_world_number(entity, "ltrailLastUsed", game->time);
+}
+static void ltrail_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const char *classname = ctx;
+  entity->movement = "none"; entity->solid = "bbox";
+  entity->use = qa_q1_callback_registry_use(game->named, entity, "rogue:ltrail_use");
+  if (qa_q1_actor_number(entity, "currentammo") == 0) qa_q1mp_world_number(entity, "currentammo", 25);
+  if (qa_q1_actor_number(entity, "weapon") == 0) qa_q1mp_world_number(entity, "weapon", 0.3);
+  if (qa_q1_actor_number(entity, "frags") == 0) qa_q1mp_world_number(entity, "frags", 0.3);
+  if (qa_q1mp_streq(classname, "ltrail_start")) {
+    qa_q1mp_world_number(entity, "ltrailLastUsed", game->time);
+    if ((bits(entity->spawnflags) & 2) != 0) {
+      qa_q1mp_world_number(entity, "items", game->time + 99999999);
+      qa_q1mp_world_later(game, entity, 0.1, "rogue:ltrail_fire");
+    }
+  }
+}
+void qa_q1mp_register_rogue_hazards(qa_q1_services *game) {
+  qa_q1_callback_registry_register(game->named, "rogue:quake_stop", (qa_q1_callback_handlers){.action = quake_stop});
+  qa_q1_callback_registry_register(game->named, "rogue:quake_rumble", (qa_q1_callback_handlers){.action = quake_rumble});
+  qa_q1_callback_registry_register(game->named, "rogue:quake_start", (qa_q1_callback_handlers){.action = quake_start});
+  qa_q1_register_spawn(game, "earthquake", earthquake_spawn, NULL);
+  qa_q1_callback_registry_register(game->named, "rogue:earthquake_field", (qa_q1_callback_handlers){.use = field_use, .touch = field_touch});
+  qa_q1_register_spawn(game, "trigger_earthquake", trigger_earthquake_spawn, NULL);
+  qa_q1_callback_registry_register(game->named, "rogue:earthquake_kill", (qa_q1_callback_handlers){.touch = earthquake_kill});
+  qa_q1_register_spawn(game, "trigger_earthquake_kill", earthquake_kill_spawn, NULL);
+  qa_q1_callback_registry_register(game->named, "rogue:saw_stand", (qa_q1_callback_handlers){.action = saw_stand});
+  qa_q1_callback_registry_register(game->named, "rogue:saw_fly", (qa_q1_callback_handlers){.action = saw_fly});
+  qa_q1_callback_registry_register(game->named, "rogue:saw_start", (qa_q1_callback_handlers){.action = saw_start_action, .use = saw_start_use});
+  qa_q1_callback_registry_register(game->named, "rogue:saw_touch", (qa_q1_callback_handlers){.touch = saw_touch});
+  qa_q1_register_spawn(game, "buzzsaw", buzzsaw_spawn, NULL);
+  qa_q1_callback_registry_register(game->named, "rogue:ltrail_chain", (qa_q1_callback_handlers){.action = ltrail_chain});
+  qa_q1_callback_registry_register(game->named, "rogue:ltrail_fire", (qa_q1_callback_handlers){.action = trail_fire});
+  qa_q1_callback_registry_register(game->named, "rogue:ltrail_use", (qa_q1_callback_handlers){.use = ltrail_use});
+  static const char *const TRAILS[] = {"ltrail_start", "ltrail_relay", "ltrail_end"};
+  for (size_t i = 0; i < 3; i++) qa_q1_register_spawn(game, TRAILS[i], ltrail_spawn, (void *)TRAILS[i]);
 }

@@ -6,6 +6,7 @@
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/network/q2/solid.h"
+#include "qa/foundation/js.h"
 qa_app_q2_layout qa_app_q2_mvd_layout(qa_q2_mvd_profile profile) {
   if (!profile.extended || profile.rerelease) return qa_app_q2_application_layout(profile.protocol);
   qa_app_q2_layout layout = {62, 8254, 10302, 12350, 12606, 12862, 8192, 2048, 2048, 13630, 61, 60, 59, false, 0};
@@ -149,15 +150,15 @@ static size_t vis_entities(void *ctx, qa_q2_wire_entity *entities, size_t count,
   size_t kept = 0;
   for (size_t e = 0; e < count; e++) {
     qa_q2_wire_entity entity = entities[e];
-    bool shadow = ((int64_t)entity.renderfx & 16384) != 0;
-    bool beam = ((int64_t)entity.renderfx & 128) != 0;
+    bool shadow = (qa_js_to_int32(entity.renderfx) & 16384) != 0;
+    bool beam = (qa_js_to_int32(entity.renderfx) & 128) != 0;
     if (entity.number == 0 || (entity.modelindex == 0 && entity.effects == 0
         && entity.sound == 0 && entity.event == 0 && !shadow)) continue;
     qa_bounds bounds = entity_bounds(s, &entity);
     if (entity.solid == 31 && (entity.angles[0] != 0 || entity.angles[1] != 0 || entity.angles[2] != 0)) {
-      double radius = fmax(fabs(bounds.min.x), fmax(fabs(bounds.min.y),
-          fmax(fabs(bounds.min.z), fmax(fabs(bounds.max.x),
-          fmax(fabs(bounds.max.y), fabs(bounds.max.z))))));
+      double radius = qa_js_max(fabs(bounds.min.x), qa_js_max(fabs(bounds.min.y),
+          qa_js_max(fabs(bounds.min.z), qa_js_max(fabs(bounds.max.x),
+          qa_js_max(fabs(bounds.max.y), fabs(bounds.max.z))))));
       bounds.min.x = bounds.min.y = bounds.min.z = -radius;
       bounds.max.x = bounds.max.y = bounds.max.z = radius;
     }
@@ -185,8 +186,7 @@ static size_t vis_entities(void *ctx, qa_q2_wire_entity *entities, size_t count,
     mask_ctx m = {scene, geometry, linked, clusters, cluster_count, fat_clusters, fat_count, cluster,
         beam || entity.sound != 0 || shadow};
     if (!in_mask(&m)) continue;
-    double distance = sqrt((point.x - x) * (point.x - x) + (point.y - y) * (point.y - y)
-        + (point.z - z) * (point.z - z));
+    double distance = qa_js_hypot3(point.x - x, point.y - y, point.z - z);
     if (entity.sound != 0) {
       double attenuation = entity.loop_attenuation;
       double multiplier = attenuation == -1 ? 0 : attenuation > 0 && attenuation != 3

@@ -109,7 +109,7 @@ bool qa_q1_monster_move_step(qa_q1_monster_movement *movement, qa_owned_actor ac
   if (qa_q1_flag_test(state.flags, QA_Q1_FLAG_SWIM | QA_Q1_FLAG_FLY)) {
     for (int attempt = 0; attempt < 2; attempt++) {
       destination = qa_q1_math_add(m, state.origin, move);
-      qa_q1_monster_target enemy;
+      qa_q1_monster_move_target enemy;
       const bool has_enemy = state.has_enemy && movement->services.read_target(movement->services.ctx, state.enemy, &enemy);
       if (attempt == 0 && has_enemy) {
         const double dz = qa_q1_n_subtract(n, state.origin.z, enemy.origin.z);
@@ -211,7 +211,7 @@ bool qa_q1_monster_walk_move(qa_q1_monster_movement *movement, qa_owned_actor ac
 
 bool qa_q1_monster_close_enough(qa_q1_monster_movement *movement, qa_actor_id actor, qa_actor_id goal, double distance) {
   qa_q1_monster_move_state self;
-  qa_q1_monster_target target;
+  qa_q1_monster_move_target target;
   if (!movement->services.read(movement->services.ctx, actor, &self) ||
       !movement->services.read_target(movement->services.ctx, goal, &target))
     return false;
@@ -235,7 +235,7 @@ static double next_integer(qa_q1_monster_movement *movement) {
 void qa_q1_monster_new_chase_direction(qa_q1_monster_movement *movement, qa_owned_actor actor, qa_actor_id goal,
                                        double distance) {
   qa_q1_monster_move_state state;
-  qa_q1_monster_target enemy;
+  qa_q1_monster_move_target enemy;
   if (!movement->services.read(movement->services.ctx, actor.id, &state) ||
       !movement->services.read_target(movement->services.ctx, goal, &enemy))
     return;

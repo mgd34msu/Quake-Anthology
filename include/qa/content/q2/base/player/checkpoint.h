@@ -20,7 +20,7 @@ typedef struct qa_q2_base_player_state_checkpoint {
   double slot, entered_at;
   bool use_q2_weapons, use_q2_inventory;
   qa_inventory_entry *spawn_inventory; size_t spawn_inventory_count;
-  char userinfo[512], name[16], skin[512];
+  char userinfo[2048], name[32], skin[2048];
   const char *gender;
   double fov;
   const char *hand;
@@ -31,6 +31,7 @@ typedef struct qa_q2_base_player_state_checkpoint {
   qa_vec3 damage_from, damage_blend;
   double damage_alpha, bonus_alpha, damage_pitch, damage_roll, damage_time;
   double power_armor_time, fall_time, fall_value;
+  double help_changed, game_help_changed;
   bool landmark_free_fall;
   double landmark_noise_time;
   qa_vec3 old_velocity, old_view_angles;
@@ -42,6 +43,7 @@ typedef struct qa_q2_base_player_state_checkpoint {
   bool animation_duck, animation_run;
   const char *loop_sound;
   qa_item_id selected_item;
+  bool jump_held;
   bool show_scores, show_inventory, show_help;
   bool has_chase_target; qa_saved_actor_id chase_target;
   bool has_coop_respawn; qa_q2_base_player_carry coop_respawn;
@@ -49,6 +51,13 @@ typedef struct qa_q2_base_player_state_checkpoint {
   double flood_lock_until;
 } qa_q2_base_player_state_checkpoint;
 
+/* A restored string kept for the life of the process (TS strings are
+ * values; a decoded checkpoint's strings die with its qa_persist_decoded
+ * owner). Equal texts share one copy, so the set stays as small as the
+ * distinct spellings saves contain. NULL stays NULL. */
+const char *qa_q2_checkpoint_keep_string(const char *text);
+/* Restore copies every string and array it keeps (see keep_string), so a
+ * decoded checkpoint can be released once restore returns. */
 void qa_q2_base_player_state_checkpoint_capture(const qa_q2_base_player_state *state, qa_q2_base_player_state_checkpoint *out);
 void qa_q2_base_player_state_checkpoint_clear(qa_q2_base_player_state_checkpoint *checkpoint);
 /* Restores every field except chase/coop arrays' ownership transfer:
@@ -69,6 +78,7 @@ typedef struct qa_q2_base_player_intermission_checkpoint {
   const char *kind; /* "playing"|"intermission" */
   const char *map; double started; bool exit;
   bool has_landmark; qa_q2_base_player_saved_landmark landmark;
+  bool landmark_first; /* TS key order; see qa_q2_intermission */
 } qa_q2_base_player_intermission_checkpoint;
 
 typedef struct qa_q2_base_player_checkpoint_entry {

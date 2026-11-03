@@ -1,8 +1,4 @@
-/* Port of src/content/q3/base/world-adapter.ts. GPL-2.0-or-later.
- * The landed game/state entity-shared mirror has no bounds-override
- * or collision-model index storage: link() skips clearBoundsOverrides
- * and passes model 0 for inline shapes; captureLink folds the linked
- * bounds into the mirror absmin/absmax/linkcount fields. */
+/* Port of src/content/q3/base/world-adapter.ts. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q3_BASE_WORLD_ADAPTER_H
 #define QA_CONTENT_Q3_BASE_WORLD_ADAPTER_H
 #include <stdbool.h>

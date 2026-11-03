@@ -8,10 +8,10 @@
 
 #include "qa/foundation/support.h"
 #include "qa/persistence/value.h"
+#include "qa/foundation/js.h"
 
 static noreturn void plain_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static char *dup_string(const char *text) {
@@ -307,14 +307,14 @@ void qa_environment_reverb_update(qa_environment_reverb *reverb,
     reverb->to = qa_reverb_preset(selected);
     reverb->lerp_start = milliseconds;
     reverb->lerp_end =
-        milliseconds + fmax(0, reverb->lerp_seconds) * 1000;
+        milliseconds + qa_js_max(0, reverb->lerp_seconds) * 1000;
   }
   if (milliseconds >= reverb->lerp_end) {
     reverb->active = reverb->to;
   } else {
     double t = (milliseconds - reverb->lerp_start) /
                (reverb->lerp_end - reverb->lerp_start);
-    double f = 1 - pow(1 - t, 3);
+    double f = 1 - qa_js_pow(1 - t, 3);
     if (f < 0) f = 0;
     if (f > 1) f = 1;
     reverb->active = interpolate(&reverb->from, &reverb->to, f);

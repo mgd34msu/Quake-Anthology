@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/world/gameplay/q1_aim.h"
+#include "qa/foundation/js.h"
 static qa_q1_visibility_client client_at(void *ctx, int64_t slot) {
   qa_compat_qc_client_host *h = ctx; qa_compat_qc_world_host *w = h->world;
   qa_compat_qc_words *words = qa_compat_qc_entity_memory_at(w->options.entities, slot);
@@ -12,7 +13,7 @@ static qa_q1_visibility_client client_at(void *ctx, int64_t slot) {
   r.has_actor = has; if (has) r.actor = actor.id;
   r.free = qa_compat_qc_world_host_is_free_entity(w, slot) || !has || !qa_session_actor_registry_is_live(w->options.actors, actor.id);
   r.health = qa_compat_qc_words_float(words, h->health);
-  r.notarget = ((int64_t)trunc(qa_compat_qc_words_float(words, h->flags)) & 128) != 0;
+  r.notarget = (qa_js_to_int32(qa_compat_qc_words_float(words, h->flags)) & 128) != 0;
   r.origin = qa_compat_qc_words_vector(words, h->origin);
   r.view_offset = qa_compat_qc_words_vector(words, h->view_ofs);
   return r;
@@ -48,12 +49,14 @@ typedef struct { qa_compat_qc_aim_state *s; qa_compat_qc_machine *m; int64_t ref
 static bool actor_eq(qa_actor_id a, qa_actor_id b) { return qa_same_actor(a, b); }
 static qa_body_state_result aim_body(void *ctx, qa_actor_id a) { return qa_shared_body_table_read(((AimCtx *)ctx)->s->world->options.bodies, a); }
 static bool aim_eligible(void *ctx, qa_actor_id target) {
+  double left;
+  double right;
   AimCtx *c = ctx; const qa_compat_qc_aim_target_ref *projected = NULL;
-  for (size_t i = 0; i < c->count; i++) if (c->targets[i].actor.slot == target.slot) { projected = &c->targets[i]; break; }
+  for (size_t i = c->count; i-- > 0;) if (c->targets[i].actor.slot == target.slot) { projected = &c->targets[i]; break; } /* TS Map: last row per slot wins */
   if (!projected || !actor_eq(projected->actor, target) || actor_eq(target, c->self)) return false;
   if (qa_compat_qc_machine_entity_float(c->m, projected->reference, "takedamage") != 2) return false;
   return c->s->teamplay(c->s->ctx) == 0 || qa_compat_qc_machine_entity_float(c->m, c->reference, "team") <= 0
-      || qa_compat_qc_machine_entity_float(c->m, c->reference, "team") != qa_compat_qc_machine_entity_float(c->m, projected->reference, "team");
+      || (left = qa_compat_qc_machine_entity_float(c->m, c->reference, "team"), right = qa_compat_qc_machine_entity_float(c->m, projected->reference, "team"), left != right);
 }
 static bool aim_trace(void *ctx, qa_vec3 start, qa_vec3 end, qa_actor_id *out) {
   AimCtx *c = ctx; qa_compat_qc_world_host *w = c->s->world;

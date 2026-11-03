@@ -1,0 +1,257 @@
+configstring 289 "sound/player/fry.wav"
+configstring 20 "baseq3-1"
+configstring 21 "100"
+configstring 2 "music\\sonic5.wav"
+configstring 3 "Arena Gate"
+configstring 4 ""
+configstring 5 ""
+configstring 290 "sound/world/fire1.wav"
+configstring 291 "sound/world/ambient/x_ominous.wav"
+print "12 items registered\n"
+configstring 27 "010101101110100100110100000000000000"
+configstring 0 "\\protocol\\68\\sv_allowDownload\\0\\sv_maxRate\\0\\sv_maxclients\\8\\mapname\\q3dm1\\sv_mapname\\q3dm1\\sv_privateClients\\0\\sv_minPing\\0\\sv_maxPing\\0\\sv_floodProtect\\1\\g_gametype\\0\\g_maxGameClients\\0\\dmflags\\0\\fraglimit\\20\\timelimit\\0\\capturelimit\\8\\g_needpass\\0\\gamename\\baseq3"
+log "------------------------------------------------------------\n"
+log "InitGame: \\protocol\\68\\sv_allowDownload\\0\\sv_maxRate\\0\\sv_maxclients\\8\\mapname\\q3dm1\\sv_mapname\\q3dm1\\sv_privateClients\\0\\sv_minPing\\0\\sv_maxPing\\0\\sv_floodProtect\\1\\g_gametype\\0\\g_maxGameClients\\0\\dmflags\\0\\fraglimit\\20\\timelimit\\0\\capturelimit\\8\\g_needpass\\0\\gamename\\baseq3\n"
+outcome 0 dispatched 72 "target_location"
+outcome 1 dispatched 73 "misc_model"
+outcome 2 dispatched 73 "misc_model"
+outcome 3 dispatched 73 "light"
+outcome 4 dispatched 73 "target_position"
+outcome 5 dispatched 74 "info_player_intermission"
+outcome 6 dispatched 75 "ammo_bullets"
+outcome 7 dispatched 76 "ammo_shells"
+outcome 8 dispatched 77 "item_health"
+outcome 9 dispatched 78 "info_player_deathmatch"
+outcome 10 dispatched 79 "info_player_deathmatch"
+outcome 11 dispatched 80 "item_armor_shard"
+outcome 12 dispatched 81 "item_health_large"
+outcome 13 dispatched 82 "item_health"
+outcome 14 dispatched 83 "item_armor_body"
+outcome 15 dispatched 84 "weapon_plasmagun"
+outcome 16 dispatched 85 "weapon_rocketlauncher"
+outcome 17 dispatched 86 "weapon_shotgun"
+outcome 18 dispatched 87 "target_position"
+outcome 19 dispatched 88 "light"
+outcome 20 dispatched 88 "light"
+outcome 21 dispatched 88 "light"
+outcome 22 dispatched 88 "light"
+outcome 23 dispatched 88 "light"
+outcome 24 dispatched 88 "light"
+outcome 25 dispatched 88 "light"
+outcome 26 dispatched 88 "target_position"
+outcome 27 dispatched 89 "light"
+outcome 28 dispatched 89 "light"
+outcome 29 dispatched 89 "light"
+outcome 30 dispatched 89 "light"
+outcome 31 dispatched 89 "light"
+outcome 32 dispatched 89 "misc_model"
+outcome 33 dispatched 89 "misc_model"
+outcome 34 dispatched 89 "target_position"
+outcome 35 dispatched 90 "light"
+outcome 36 dispatched 90 "info_player_deathmatch"
+outcome 37 dispatched 91 "target_speaker"
+outcome 38 dispatched 92 "target_speaker"
+outcome 39 dispatched 93 "target_position"
+outcome 40 dispatched 94 "light"
+outcome 41 dispatched 94 "target_position"
+outcome 42 dispatched 95 "light"
+outcome 43 dispatched 95 "misc_model"
+outcome 44 dispatched 95 "light"
+outcome 45 dispatched 95 "light"
+outcome 46 dispatched 95 "light"
+outcome 47 dispatched 95 "light"
+outcome 48 dispatched 95 "light"
+outcome 49 dispatched 95 "light"
+outcome 50 dispatched 95 "light"
+outcome 51 dispatched 95 "light"
+outcome 52 dispatched 95 "light"
+outcome 53 dispatched 95 "light"
+outcome 54 dispatched 95 "light"
+outcome 55 dispatched 95 "light"
+outcome 56 dispatched 95 "light"
+outcome 57 dispatched 95 "light"
+outcome 58 dispatched 95 "light"
+outcome 59 dispatched 95 "light"
+outcome 60 dispatched 95 "light"
+outcome 61 dispatched 95 "light"
+outcome 62 dispatched 95 "light"
+outcome 63 dispatched 95 "light"
+outcome 64 dispatched 95 "light"
+outcome 65 dispatched 95 "light"
+outcome 66 dispatched 95 "light"
+outcome 67 dispatched 95 "light"
+outcome 68 dispatched 95 "light"
+outcome 69 dispatched 95 "light"
+outcome 70 dispatched 95 "light"
+outcome 71 dispatched 95 "light"
+outcome 72 dispatched 95 "light"
+outcome 73 dispatched 95 "light"
+outcome 74 dispatched 95 "target_position"
+outcome 75 dispatched 96 "light"
+outcome 76 dispatched 96 "target_position"
+outcome 77 dispatched 97 "light"
+outcome 78 dispatched 97 "light"
+outcome 79 dispatched 97 "light"
+outcome 80 dispatched 97 "target_position"
+outcome 81 dispatched 98 "light"
+outcome 82 dispatched 98 "target_position"
+outcome 83 dispatched 99 "light"
+outcome 84 dispatched 99 "light"
+outcome 85 dispatched 99 "light"
+outcome 86 dispatched 99 "target_position"
+outcome 87 dispatched 100 "light"
+outcome 88 dispatched 100 "misc_model"
+outcome 89 dispatched 100 "light"
+outcome 90 dispatched 100 "misc_model"
+outcome 91 dispatched 100 "light"
+outcome 92 dispatched 100 "light"
+outcome 93 dispatched 100 "misc_model"
+outcome 94 dispatched 100 "light"
+outcome 95 dispatched 100 "misc_model"
+outcome 96 dispatched 100 "light"
+outcome 97 dispatched 100 "light"
+outcome 98 dispatched 100 "item_health"
+outcome 99 dispatched 101 "ammo_cells"
+outcome 100 dispatched 102 "item_armor_shard"
+outcome 101 dispatched 103 "info_player_deathmatch"
+outcome 102 dispatched 104 "item_health"
+outcome 103 dispatched 105 "item_armor_shard"
+outcome 104 dispatched 106 "item_armor_shard"
+outcome 105 dispatched 107 "item_armor_shard"
+outcome 106 dispatched 108 "item_armor_shard"
+outcome 107 dispatched 109 "light"
+outcome 108 dispatched 109 "misc_model"
+outcome 109 dispatched 109 "light"
+outcome 110 dispatched 109 "misc_model"
+outcome 111 dispatched 109 "light"
+outcome 112 dispatched 109 "misc_model"
+outcome 113 dispatched 109 "light"
+outcome 114 dispatched 109 "misc_model"
+outcome 115 dispatched 109 "light"
+outcome 116 dispatched 109 "light"
+outcome 117 dispatched 109 "light"
+outcome 118 dispatched 109 "light"
+outcome 119 dispatched 109 "light"
+outcome 120 dispatched 109 "light"
+outcome 121 dispatched 109 "light"
+outcome 122 dispatched 109 "light"
+outcome 123 dispatched 109 "light"
+outcome 124 dispatched 109 "light"
+outcome 125 dispatched 109 "light"
+outcome 126 dispatched 109 "light"
+outcome 127 dispatched 109 "misc_model"
+outcome 128 dispatched 109 "misc_model"
+outcome 129 dispatched 109 "light"
+outcome 130 dispatched 109 "light"
+outcome 131 dispatched 109 "light"
+outcome 132 dispatched 109 "light"
+outcome 133 dispatched 109 "light"
+outcome 134 dispatched 109 "light"
+outcome 135 dispatched 109 "target_speaker"
+outcome 136 dispatched 110 "target_speaker"
+outcome 137 dispatched 111 "target_speaker"
+outcome 138 dispatched 112 "target_speaker"
+outcome 139 dispatched 113 "target_speaker"
+outcome 140 dispatched 114 "target_speaker"
+outcome 141 dispatched 115 "light"
+outcome 142 dispatched 115 "light"
+outcome 143 dispatched 115 "light"
+outcome 144 dispatched 115 "light"
+outcome 145 dispatched 115 "target_location"
+outcome 146 dispatched 116 "target_location"
+outcome 147 dispatched 117 "target_location"
+outcome 148 dispatched 118 "target_location"
+outcome 149 dispatched 119 "target_location"
+outcome 150 dispatched 120 "target_location"
+outcome 151 dispatched 121 "target_location"
+outcome 152 dispatched 122 "target_location"
+outcome 153 dispatched 123 "target_location"
+outcome 154 dispatched 124 "target_location"
+outcome 155 dispatched 125 "target_location"
+outcome 156 dispatched 126 "func_timer"
+outcome 157 dispatched 127 "target_speaker"
+outcome 158 dispatched 128 "info_player_deathmatch"
+outcome 159 dispatched 129 "info_player_deathmatch"
+world "message" "Arena Gate"
+world "music" "music\\sonic5.wav"
+world "classname" "worldspawn"
+world "_color" "1.000000 0.776471 0.776471"
+world "ambient" "5"
+entity 64 "bodyque" 0 0 0 0 0 0 0
+entity 65 "bodyque" 0 0 0 0 0 0 0
+entity 66 "bodyque" 0 0 0 0 0 0 0
+entity 67 "bodyque" 0 0 0 0 0 0 0
+entity 68 "bodyque" 0 0 0 0 0 0 0
+entity 69 "bodyque" 0 0 0 0 0 0 0
+entity 70 "bodyque" 0 0 0 0 0 0 0
+entity 71 "bodyque" 0 0 0 0 0 0 0
+entity 72 "target_location" 656 1792 72 0 0 0 0
+entity 73 "target_position" 668 2140 100 0 0 0 0
+entity 74 "info_player_intermission" 668 2304 128 0 0 0 0
+entity 75 "ammo_bullets" 932 1348 16 0 0 0 0
+entity 76 "ammo_shells" 272 512 -16 0 0 0 0
+entity 77 "item_health" 1120 2316 48 0 0 0 0
+entity 78 "info_player_deathmatch" 216 1328 24 0 0 0 0
+entity 79 "info_player_deathmatch" 212 2360 56 0 0 0 0
+entity 80 "item_armor_shard" 212 2132 16 0 0 0 0
+entity 81 "item_health_large" 672 1288 16 0 0 0 0
+entity 82 "item_health" 1120 512 -24 0 0 0 0
+entity 83 "item_armor_body" 668 -80 64 0 0 0 0
+entity 84 "weapon_plasmagun" 670 728 -32 0 0 0 0
+entity 85 "weapon_rocketlauncher" 668 2096 16 0 0 0 0
+entity 86 "weapon_shotgun" 384 1472 16 0 0 0 0
+entity 87 "target_position" 758 1458 334 0 0 0 0
+entity 88 "target_position" 758 1586 334 0 0 0 0
+entity 89 "target_position" 586 1590 334 0 0 0 0
+entity 90 "info_player_deathmatch" 1052 1432 24 0 0 0 0
+entity 91 "target_speaker" 864 1612 92 7 0 0 0
+entity 92 "target_speaker" 476 1620 92 7 0 0 0
+entity 93 "target_position" 758 1282 334 0 0 0 0
+entity 94 "target_position" 586 1286 334 0 0 0 0
+entity 95 "target_position" 586 1462 334 0 0 0 0
+entity 96 "target_position" 228 1364 84 0 0 0 0
+entity 97 "target_position" 180 1316 86 0 0 0 0
+entity 98 "target_position" 1116 1364 84 0 0 0 0
+entity 99 "target_position" 1164 1316 84 0 0 0 0
+entity 100 "item_health" 1056 512 -24 0 0 0 0
+entity 101 "ammo_cells" 1120 1896 16 0 0 0 0
+entity 102 "item_armor_shard" 212 2096 16 0 0 0 0
+entity 103 "info_player_deathmatch" 416 824 -16 0 0 0 0
+entity 104 "item_health" 1084 2364 48 0 0 0 0
+entity 105 "item_armor_shard" 212 2060 16 0 0 0 0
+entity 106 "item_armor_shard" 1120 2128 16 0 0 0 0
+entity 107 "item_armor_shard" 1120 2092 16 0 0 0 0
+entity 108 "item_armor_shard" 1120 2056 16 0 0 0 0
+entity 109 "target_speaker" 528 856 64 7 0 0 0
+entity 110 "target_speaker" 812 856 64 7 0 0 0
+entity 111 "target_speaker" 1136 1020 104 7 0 0 0
+entity 112 "target_speaker" 196 1020 108 7 0 0 0
+entity 113 "target_speaker" 160 520 64 7 0 0 0
+entity 114 "target_speaker" 1160 536 64 7 0 0 0
+entity 115 "target_location" 960 1792 72 0 0 0 0
+entity 116 "target_location" 376 1792 72 0 0 0 0
+entity 117 "target_location" 384 1520 72 0 0 0 0
+entity 118 "target_location" 672 1496 72 0 0 0 0
+entity 119 "target_location" 928 1520 72 0 0 0 0
+entity 120 "target_location" 1024 1296 72 0 0 0 0
+entity 121 "target_location" 1088 1040 72 0 0 0 0
+entity 122 "target_location" 400 1304 72 0 0 0 0
+entity 123 "target_location" 272 1008 72 0 0 0 0
+entity 124 "target_location" 256 720 72 0 0 0 0
+entity 125 "target_location" 1088 760 72 0 0 0 0
+entity 126 "func_timer" 552 2232 40 0 0 0 0
+entity 127 "target_speaker" 520 2200 40 7 0 0 0
+entity 128 "info_player_deathmatch" 1024 1000 24 0 0 0 0
+entity 129 "info_player_deathmatch" 936 824 -16 0 0 0 0
+cvar g_gametype "0"
+cvar sv_maxclients "8"
+cvar timelimit "0"
+cvar fraglimit "20"
+cvar g_motd ""
+cvar dmflags "0"
+cvar g_speed "320"
+cvar g_gravity "800"
+cvar session ""
+cvar g_restarted "0"
+cvar mapname "q3dm1"
+numEntities 130

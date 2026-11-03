@@ -1,14 +1,14 @@
 /* Port of src/world/gameplay/transitions.ts. GPL-2.0-or-later. */
 #include "qa/world/gameplay/transitions.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -152,6 +152,9 @@ static bool decision_equal(qa_transition_decision a, qa_transition_decision b) {
          str_eq(a.campaign, b.campaign);
 }
 
+static void end_committing(void *arg) {
+  ((qa_shared_transition_coordinator *)arg)->committing = false;
+}
 void qa_shared_transition_coordinator_commit(qa_shared_transition_coordinator *coordinator,
                                              int64_t decision_id,
                                              qa_transition_decision decision) {
@@ -168,7 +171,11 @@ void qa_shared_transition_coordinator_commit(qa_shared_transition_coordinator *c
           (coordinator->pending_count - at - 1) * sizeof *coordinator->pending);
   coordinator->pending_count--;
   coordinator->committing = true;
+  /* try { apply } finally { committing = false } */
+  qa_cleanup node;
+  qa_cleanup_push(&node, end_committing, coordinator);
   coordinator->apply(coordinator->ctx, stored);
+  qa_cleanup_pop(&node);
   coordinator->committing = false;
 }
 

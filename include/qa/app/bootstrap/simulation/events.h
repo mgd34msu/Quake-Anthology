@@ -11,7 +11,11 @@
 #include <stddef.h>
 #include "qa/app/bootstrap/simulation/types.h"
 #include "qa/content/q1/foundation/types.h"
+#include "qa/content/composition/q2/types.h"
 #include "qa/content/q2/foundation/host.h"
+#include "qa/content/q2/foundation/weapons/types.h"
+#include "qa/content/q2/multiplayer/ctf/types.h"
+#include "qa/content/q2/multiplayer/lmctf/types.h"
 #include "qa/contracts/presentation.h"
 #include "qa/contracts/protocol.h"
 #include "qa/contracts/session.h"
@@ -19,21 +23,9 @@
 #include "qa/world/actors/body.h"
 /* Undrained authoritative events retained between publications. */
 #define QA_APP_SIM_SIMULATION_EVENT_CAPACITY 16384
-/* The fields of TS SourcePresentationEvent discriminants that the
- * emitOwned override reads. kind: "q1"|"q2"|"q2-weapon"|
- * "q2-composition" (anything else passes through to super only). */
-typedef struct qa_app_sim_source_event_input {
-  const char *kind;
-  const qa_q1_event *q1;                        /* kind "q1" */
-  const qa_q2_presentation_event *q2;           /* kind "q2" */
-  const char *weapon_kind;                      /* kind "q2-weapon": TS event.kind */
-  qa_actor_id weapon_actor; double weapon_flash;
-  const char *composition_kind;                 /* kind "q2-composition": "ctf"|"lmctf"|... */
-  const char *composition_event_kind;           /* nested event.kind */
-  bool composition_has_actor; qa_actor_id composition_actor;
-  bool composition_has_layout; const char *composition_layout;
-  const char *composition_text;                 /* nested match-status text */
-} qa_app_sim_source_event_input;
+/* emitOwned's TS argument type, SourcePresentationEvent (types.h); borrowed
+ * for the call. */
+typedef qa_app_sim_source_presentation_event qa_app_sim_source_event_input;
 typedef struct qa_app_sim_simulation_events_options {
   void *ctx;
   qa_shared_body_table *bodies;
@@ -43,11 +35,16 @@ typedef struct qa_app_sim_simulation_events_options {
   /* PresentationState.resourceFor: false is the TS undefined. */
   bool (*resource_for)(void *ctx, qa_content_id content, const char *path, qa_resource_id *out);
   /* PresentationState.emitOwned (super). Fills the returned
-   * presentation event, notably its sequence. */
+   * presentation event (a view borrowing source's payload), notably its
+   * sequence. */
   void (*emit_super)(void *ctx, bool has_owner, qa_presentation_owner owner, qa_content_id content,
       qa_app_sim_source_event_input source, qa_source_time time, bool has_recipient, qa_actor_id recipient,
       qa_app_sim_presentation_event *out);
   void (*assert_super_output_consumed)(void *ctx); /* may be NULL */
+  /* PresentationState.registerResource / lightStyle (super); may be NULL
+   * when the host composes no presentation resources or styles. */
+  void (*register_resource_super)(void *ctx, qa_content_id content, const char *path, qa_resolved_resource_reference resource);
+  const char *(*light_style_super)(void *ctx, double style);
 } qa_app_sim_simulation_events_options;
 typedef struct qa_app_sim_simulation_events qa_app_sim_simulation_events;
 qa_app_sim_simulation_events *qa_app_sim_simulation_events_create(qa_app_sim_simulation_events_options options);
@@ -57,6 +54,14 @@ double qa_app_sim_simulation_events_next_sequence(const qa_app_sim_simulation_ev
 qa_app_sim_presentation_event qa_app_sim_simulation_events_emit_owned(qa_app_sim_simulation_events *events,
     bool has_owner, qa_presentation_owner owner, qa_content_id content, qa_app_sim_source_event_input source,
     bool has_time, qa_source_time time, bool has_recipient, qa_actor_id recipient);
+/* TS PresentationState.emit: emitOwned with no owner. */
+void qa_app_sim_simulation_events_emit(qa_app_sim_simulation_events *events, qa_content_id content,
+    qa_app_sim_source_event_input source, bool has_time, qa_source_time time, bool has_recipient, qa_actor_id recipient);
+/* TS PresentationState.registerResource. */
+void qa_app_sim_simulation_events_register_resource(qa_app_sim_simulation_events *events, qa_content_id content,
+    const char *path, qa_resolved_resource_reference resource);
+/* TS PresentationState.lightStyle: "" when unset. */
+const char *qa_app_sim_simulation_events_light_style(qa_app_sim_simulation_events *events, double style);
 /* TS append: has_actor false is the TS null (world audience). */
 void qa_app_sim_simulation_events_append(qa_app_sim_simulation_events *events,
     qa_simulation_event_payload payload, bool has_actor, qa_actor_id actor);

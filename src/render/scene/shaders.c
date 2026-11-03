@@ -1,5 +1,6 @@
 /* Port of src/render/scene/shaders.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/shaders.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -321,13 +322,15 @@ static qa_registered_scene_material register_material(qa_scene_shader_registry *
   else { logical.kind = QA_BINDING_WORLD; logical.world = binding.world; logical.base_texture_name = base_texture ? base_texture->name : NULL; }
   char *provider_key = qa_provider_shader_registrations_key(r->registrations, logical);
   char cache_key[4096];
-  snprintf(cache_key, sizeof cache_key, "%s|%g|%g", provider_key,
-           lightmap ? lightmap->ordinal : -1.0, base_texture ? base_texture->image.ordinal : -1.0);
+  snprintf(cache_key, sizeof cache_key, "%s|%s|%s", provider_key,
+           QA_JS_NUMBER(lightmap ? lightmap->ordinal : -1.0), QA_JS_NUMBER(base_texture ? base_texture->image.ordinal : -1.0));
   free(provider_key);
   for (size_t i = 0; i < o->ncomp; i++) if (!strcmp(o->compiled[i].key, cache_key)) return o->compiled[i].material;
   if (!binding.is_world) {
+    char * key2;
+    char * name2;
     if (o->nreq == o->creq) { o->creq = o->creq ? o->creq * 2 : 8; o->img_reqs = xg(o->img_reqs, o->creq * sizeof *o->img_reqs); }
-    o->img_reqs[o->nreq++] = (img_req){ xdup(cache_key), xdup(name), binding };
+    o->img_reqs[o->nreq++] = (key2 = xdup(cache_key), name2 = xdup(name), (img_req){ key2, name2, binding });
   }
   qa_shader_registration *registration = reserve_with(r, logical);
   prepared_material current = compile_default_effects(r, name, lightmap, lightmap_index, base_texture, mipmap);
@@ -429,9 +432,12 @@ void qa_scene_shader_registry_initialize_source_materials(qa_scene_shader_regist
     double request = o->source_request++;
     char *nk = key_of(names[k]); scratch_add(o, nk);
     qa_shader_logical_key logical = { nk, QA_BINDING_SOURCE, 0, request, NULL, NULL };
-    qa_registered_scene_material material = publish_with(r, reserve_with(r, logical), compile_internal(r, k));
+    qa_shader_registration * registration = reserve_with(r, logical);
+    const qa_compiled_material * compiled = compile_internal(r, k);
+    qa_registered_scene_material material = publish_with(r, registration, compiled);
     src_record rec; memset(&rec, 0, sizeof rec);
-    rec.logical = logical; rec.logical_name = nk; rec.order = (double)o->nrec; rec.name = xdup(names[k]); rec.kind = k;
+    /* The record owns its logical name (destroy frees it); nk stays in scratch for the registration. */
+    rec.logical = logical; rec.logical_name = xdup(nk); rec.logical.name = rec.logical_name; rec.order = (double)o->nrec; rec.name = xdup(names[k]); rec.kind = k;
     rec.binding = unlit_binding(-1, true); rec.material = material; rec.defaulted = 0;
     record_push(o, rec);
     published[k] = material;
@@ -444,27 +450,43 @@ void qa_scene_shader_registry_initialize_source_materials(qa_scene_shader_regist
   o->source_materials = (qa_source_scene_materials){ published[0], published[1], projection, flare, sun };
   o->has_source = 1;
 }
+static void register_script_entry(rimpl *o, qa_shader_catalog_entry *entry) {
+  char *key = key_of(entry->name);
+  int present = 0; for (size_t k = 0; k < o->nprog; k++) if (!strcmp(o->programs[k].key, key)) present = 1;
+  if (present) { free(key); return; }
+  if (o->nprog == o->cprog) { o->cprog = o->cprog ? o->cprog * 2 : 8; o->programs = xg(o->programs, o->cprog * sizeof *o->programs); }
+  int cinematic = 0;
+  for (size_t s = 0; s < entry->definition.stage_count; s++)
+    if (entry->definition.stages[s].stage.map.kind && !strcmp(entry->definition.stages[s].stage.map.kind, "video")) cinematic = 1;
+  o->programs[o->nprog++] = (program_entry){ key, &entry->program, cinematic };
+}
 void qa_scene_shader_registry_add_script(qa_scene_shader_registry *r, const char *text, const char *source) {
+  qa_scene_shader_registry_add_script_files(r, &text, &source, 1);
+}
+/* TS addScriptFiles: files arrive in FS_ListFilteredFiles order. id (tr_shader.c
+ * ScanAndLoadShaderFiles) hashes the first shader of every file but the last-listed ahead of the
+ * concatenation, which is built in reverse; the first hashed name wins. */
+void qa_scene_shader_registry_add_script_files(qa_scene_shader_registry *r, const char *const *texts, const char *const *sources, size_t count) {
   rimpl *o = ri(r);
-  /* Unlexable scripts contribute no shaders in TS (try/catch). The C
-   * inspector captures per-entry errors instead of throwing for bad
-   * entries, matching the observable program set. */
-  if (o->ninsp == o->cinsp) { o->cinsp = o->cinsp ? o->cinsp * 2 : 4; o->inspections = xg(o->inspections, o->cinsp * sizeof *o->inspections); }
-  qa_shader_script_inspection *insp = &o->inspections[o->ninsp];
-  memset(insp, 0, sizeof *insp);
-  qa_inspect_shader_script(text, source ? source : "<shader>", NULL, insp);
-  o->ninsp++;
-  for (size_t i = 0; i < insp->count; i++) {
-    qa_shader_catalog_entry *entry = &insp->entries[i];
-    char *key = key_of(entry->name);
-    int present = 0; for (size_t k = 0; k < o->nprog; k++) if (!strcmp(o->programs[k].key, key)) present = 1;
-    if (!present) {
-      if (o->nprog == o->cprog) { o->cprog = o->cprog ? o->cprog * 2 : 8; o->programs = xg(o->programs, o->cprog * sizeof *o->programs); }
-      int cinematic = 0;
-      for (size_t s = 0; s < entry->definition.stage_count; s++)
-        if (entry->definition.stages[s].stage.map.kind && !strcmp(entry->definition.stages[s].stage.map.kind, "video")) cinematic = 1;
-      o->programs[o->nprog++] = (program_entry){ key, &entry->program, cinematic };
-    } else free(key);
+  /* Unlexable scripts contribute no shaders in TS (try/catch). The C inspector captures
+   * per-entry errors instead of throwing for bad entries, matching the observable program set.
+   * Inspections stay owned by the registry: programs point into them. */
+  size_t first = o->ninsp;
+  for (size_t f = 0; f < count; f++) {
+    if (o->ninsp == o->cinsp) { o->cinsp = o->cinsp ? o->cinsp * 2 : 4; o->inspections = xg(o->inspections, o->cinsp * sizeof *o->inspections); }
+    qa_shader_script_inspection *insp = &o->inspections[o->ninsp];
+    memset(insp, 0, sizeof *insp);
+    const char *source = sources != NULL && sources[f] != NULL ? sources[f] : "<shader>";
+    qa_inspect_shader_script(texts[f], source, NULL, insp);
+    o->ninsp++;
+  }
+  for (size_t f = 0; f + 1 < count; f++) {
+    qa_shader_script_inspection *insp = &o->inspections[first + f];
+    if (insp->count > 0) register_script_entry(o, &insp->entries[0]);
+  }
+  for (size_t f = count; f-- > 0;) {
+    qa_shader_script_inspection *insp = &o->inspections[first + f];
+    for (size_t i = 0; i < insp->count; i++) register_script_entry(o, &insp->entries[i]);
   }
 }
 bool qa_scene_shader_registry_has_authored(qa_scene_shader_registry *r, const char *name) {
@@ -645,7 +667,7 @@ void qa_scene_shader_registry_commit_replacement(qa_scene_shader_registry *r, qa
   for (size_t i = 0; i < ro->ncomp; i++) { if (o->ncomp == o->ccomp) { o->ccomp = o->ccomp ? o->ccomp * 2 : 8; o->compiled = xg(o->compiled, o->ccomp * sizeof *o->compiled); } o->compiled[o->ncomp++] = (compiled_entry){ xdup(ro->compiled[i].key), ro->compiled[i].material, ro->compiled[i].defaulted }; }
   for (size_t i = 0; i < o->nreq; i++) { free(o->img_reqs[i].key); free(o->img_reqs[i].name); }
   o->nreq = 0;
-  for (size_t i = 0; i < ro->nreq; i++) { if (o->nreq == o->creq) { o->creq = o->creq ? o->creq * 2 : 8; o->img_reqs = xg(o->img_reqs, o->creq * sizeof *o->img_reqs); } o->img_reqs[o->nreq++] = (img_req){ xdup(ro->img_reqs[i].key), xdup(ro->img_reqs[i].name), ro->img_reqs[i].binding }; }
+  for (size_t i = 0; i < ro->nreq; i++) { char * key2; char * name2; if (o->nreq == o->creq) { o->creq = o->creq ? o->creq * 2 : 8; o->img_reqs = xg(o->img_reqs, o->creq * sizeof *o->img_reqs); } o->img_reqs[o->nreq++] = (key2 = xdup(ro->img_reqs[i].key), name2 = xdup(ro->img_reqs[i].name), (img_req){ key2, name2, ro->img_reqs[i].binding }); }
   r->sun_value = replacement->sun_value; r->has_sun = replacement->has_sun;
   o->nbind = 0;
   for (size_t i = 0; i < ro->nbind; i++) {
@@ -676,6 +698,7 @@ static qa_picture_asset picture_of(qa_scene_shader_registry *r, const char *name
   qa_picture_asset asset; memset(&asset, 0, sizeof asset);
   asset.kind = QA_PICTURE_MATERIAL; asset.material.name = name; asset.material.order = order;
   asset.material.compiled = compiled.handle ? (const void *)compiled.handle : (const void *)compiled.compiled;
+  asset.material.compiled_is_handle = compiled.handle != NULL;
   return asset;
 }
 qa_picture_asset qa_scene_shader_registry_register_picture(qa_scene_shader_registry *r, const char *name, bool mipmap) {

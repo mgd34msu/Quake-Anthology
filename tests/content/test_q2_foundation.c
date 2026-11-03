@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "qa/content/composition/q2_q3_items.h"
 #include "qa/content/q2/equipment/grapple_services.h"
 #include "qa/content/q2/equipment/grapple_weapon.h"
 #include "qa/content/q2/foundation.h"
@@ -233,8 +234,23 @@ static void test_items_catalog(void) {
   CHECK(found.quantity == 10 && found.capacity == 100);
   CHECK(!qa_q2_item_module_lookup(m, "nope", &found));
   CHECK(strcmp(qa_q2_item_module_item_name(m, "key_blue_key"), "Blue Key") == 0);
-  /* foreign registration landed in the catalog */
-  CHECK(qa_q2_item_module_item_name(m, "weapon_nailgun") != NULL);
+  /* TS foreignItems is supplied by composition: none without the hook */
+  CHECK(qa_q2_item_module_item_name(m, "weapon_nailgun") == NULL);
+  {
+    qa_q2_item_hooks foreign_hooks = hooks;
+    foreign_hooks.foreign_items = qa_composition_q3_foreign_item_definitions;
+    qa_q2_item_module *with_foreign = qa_q2_item_module_create(foreign_hooks);
+    /* foreign registration landed in the catalog; colliding names keep the Q2 rows */
+    CHECK(strcmp(qa_q2_item_module_item_name(with_foreign, "weapon_nailgun"), "Nailgun") == 0);
+    CHECK(strcmp(qa_q2_item_module_item_name(with_foreign, "weapon_railgun"), "Railgun") == 0);
+    size_t foreign_n = 0;
+    const qa_q2_inventory_item *foreign_list = qa_q2_item_module_list(with_foreign, &foreign_n);
+    bool listed = false;
+    for (size_t i = 0; i < foreign_n; i++)
+      if (strcmp(foreign_list[i].classname, "weapon_nailgun") == 0) listed = true;
+    CHECK(!listed && foreign_n == n);
+    qa_q2_item_module_destroy(with_foreign);
+  }
   size_t wn = 0;
   (void)qa_q2_item_module_weapon_inventory(m, &wn);
   CHECK(wn >= 16);
@@ -263,11 +279,11 @@ static void test_unrotate_and_grapple(void) {
   CHECK(lm.hook_state == 0 && !lm.hook_held);
 
   qa_grapple_weapon_state ws = qa_create_grapple_weapon_state();
-  CHECK(strcmp(ws.handoff, "holstered") == 0);
-  CHECK(strcmp(ws.animation.phase, "activating") == 0);
-  ws.animation.phase = "firing";
+  CHECK(ws.handoff == QA_Q2W_HANDOFF_HOLSTERED);
+  CHECK(ws.animation.phase == QA_Q2W_ACTIVATING);
+  ws.animation.phase = QA_Q2W_FIRING;
   qa_release_lmctf_grapple_weapon(&ws.animation);
-  CHECK(strcmp(ws.animation.phase, "ready") == 0);
+  CHECK(ws.animation.phase == QA_Q2W_READY);
   CHECK(qa_ctf_grapple_weapon_should_reset(&ws.animation, true, false));
   CHECK(!qa_ctf_grapple_weapon_should_reset(&ws.animation, false, false));
   CHECK(strcmp(QA_Q2_CTF_GRAPPLE.name, "grapple") == 0 && QA_Q2_CTF_GRAPPLE.fire_last == 9);

@@ -1,5 +1,6 @@
 /* Port of src/movement/q1/netquake.ts. GPL-2.0-or-later. */
 #include "qa/movement/q1/netquake.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -141,6 +142,10 @@ static void sweep_impact(void *data, const qa_swept_body_trace *trace, qa_vec3 n
   }
   move_impact(move, *native);
 }
+static uintptr_t sweep_plane_identity(void *data, const qa_swept_body_trace *trace) {
+  (void)data;
+  return ((const qa_trace_result *)trace->native)->plane_identity;
+}
 static bool sweep_same_plane(void *data, qa_vec3 first, qa_vec3 second, bool same_slot) {
   (void)data;
   (void)first;
@@ -175,6 +180,7 @@ static fly_result fly_move(netquake_move *move, double time) {
   services.impact = sweep_impact;
   services.stop_when_still = true;
   services.same_plane = sweep_same_plane;
+  services.plane_identity = sweep_plane_identity;
   services.math.ctx = &move->context.math;
   services.math.advance = sweep_advance;
   services.math.remaining = sweep_remaining;
@@ -521,6 +527,8 @@ static void client_think(netquake_move *move) {
     s->velocity = qa_q1_math_vec(m, s->water_jump_direction.x, s->water_jump_direction.y, s->velocity.z);
     return;
   }
+  if (c->options.source_water_drag && s->water_level > 0 && s->move_type != QA_Q1_MOVE_NOCLIP)
+    s->velocity = qa_q1_math_ma(m, s->velocity, -qa_q1_n_multiply(n, qa_q1_n_multiply(n, 0.8, s->water_level), move->frame_seconds), s->velocity);
   move->ladder = s->move_type == QA_Q1_MOVE_WALK && s->water_level < 2 &&
                  qa_q1_context_ladder_ahead(c, s->origin, qa_q1_math_angles(m, s->view_angles).forward);
   if (s->move_type == QA_Q1_MOVE_NOCLIP && move->input.profile.no_clip_angle_hack) alternate_noclip(move);
@@ -579,7 +587,8 @@ static void ideal_pitch(netquake_move *move) {
   double direction = 0, previous = heights[0];
   int steps = 0;
   for (int i = 1; i < 6; i++) {
-    const double step = qa_q1_n_subtract(n, heights[i], previous);
+    /* sv_user.c declares step and dir as int, so each probe difference truncates toward zero. */
+    const double step = trunc(qa_q1_n_subtract(n, heights[i], previous));
     previous = heights[i];
     if (step > -0.1 && step < 0.1) continue;
     if (direction != 0 && fabs(qa_q1_n_subtract(n, step, direction)) > 0.1) return;
@@ -719,7 +728,7 @@ qa_movement_result qa_physics_netquake(qa_q1_movement_input input, qa_movement_s
       }
       if (!c->removed) water_transition(&move);
     } else {
-      qa_range_error("Unsupported NetQuake player movetype %g", s->move_type);
+      qa_range_error("Unsupported NetQuake player movetype %s", QA_JS_NUMBER(s->move_type));
     }
   }
   if (!c->removed) {

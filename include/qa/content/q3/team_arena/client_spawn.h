@@ -1,8 +1,4 @@
-/* Port of src/content/q3/team-arena/client-spawn.ts. GPL-2.0-or-later.
- * Mirror gaps: ps.ping/ps.weapon/ps.commandTime and s.legsAnim/torsoAnim
- * have no landed fields (weapon uses s.weapon; the rest are skipped);
- * ps.eventSequence is the mirror generic counter; the TS
- * playerStateToEntityState calls are the host snapshot callback. */
+/* Port of src/content/q3/team-arena/client-spawn.ts. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_CLIENT_SPAWN_H
 #define QA_CONTENT_Q3_TEAM_ARENA_CLIENT_SPAWN_H
 #include <stdbool.h>
@@ -48,10 +44,11 @@ typedef struct qa_q3_ta_client_spawn_host {
   void (*move_to_intermission)(void *ctx, qa_q3_game_entity *entity);
   void (*kill_box)(void *ctx, qa_q3_game_entity *entity);
   void (*selected_player)(void *ctx, qa_q3_game_entity *entity, qa_q3_ta_spawn_pose pose);
+  /* TS selectedWeaponAfterTargets? (NULL = undefined); runs only with selected_player. */
+  void (*selected_weapon_after_targets)(void *ctx, qa_q3_game_entity *entity);
   void (*client_think)(void *ctx, double client_num, qa_q3_base_user_command command);
   qa_q3_ta_client_effects_context (*effects)(void *ctx);
   qa_q3_target_use_context (*targets)(void *ctx);
-  void (*snapshot)(void *ctx, qa_q3_game_client *client, qa_q3_game_entity *entity);
 } qa_q3_ta_client_spawn_host;
 
 void qa_q3_ta_spawn_deathmatch_point(qa_q3_game_entity *entity, const qa_q3_spawn_variables *variables);

@@ -1,57 +1,11 @@
-/* Port of src/content/q1/missionpacks/obituaries.ts. Classic text via
- * landed qa/content/q1/base/messages.h. GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/obituaries.ts over the base
+ * q1Obituary (qa_q1_obituary_compute) and classic texts
+ * (qa/content/q1/base/messages.h). GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/obituaries.h"
+
 #include "missionpacks_internal.h"
 #include "qa/content/q1/base/messages.h"
-#include "qa/content/q1/base/rules.h"
-
-/* TS q1Obituary (src/content/q1/base/rules.ts) via the landed
- * qa_q1_obituary_compute. The mission person mirror carries no
- * health/quad/invulnerable/killString, so those read 0/"". */
-static qa_q1_obituary_actor obituary_actor(const qa_q1mp_obituary_person *person) {
-  qa_q1_obituary_actor actor = {0};
-  actor.actor = person->actor;
-  actor.name = person->name != NULL ? person->name : "";
-  actor.classname = person->classname != NULL ? person->classname : "";
-  actor.is_player = person->is_player;
-  actor.is_monster = person->is_monster;
-  actor.team = person->team;
-  actor.water_type = person->water_type != NULL ? person->water_type : "";
-  actor.water_level = person->water_level;
-  actor.weapon = person->weapon;
-  actor.brush = person->brush;
-  actor.kill_string = "";
-  return actor;
-}
-qa_q1mp_obituary qa_q1mp_ext_q1_obituary(const qa_q1mp_obituary_input *input,
-                                         bool has_attacker_override, bool attacker_null) {
-  bool has_attacker = has_attacker_override ? !attacker_null : input->has_attacker;
-  qa_q1_obituary_actor victim = obituary_actor(&input->victim);
-  qa_q1_obituary_actor attacker = obituary_actor(&input->attacker);
-  qa_q1_obituary_actor telefrag_owner = obituary_actor(&input->telefrag_owner);
-  qa_q1_obituary_input base = {0};
-  base.edition = input->edition;
-  base.victim = victim;
-  base.attacker = has_attacker ? &attacker : NULL;
-  base.telefrag_owner = input->has_telefrag_owner ? &telefrag_owner : NULL;
-  base.teamplay = input->teamplay;
-  base.death_type = input->death_type;
-  base.random_ctx = input->random_ctx;
-  base.random = input->random;
-  qa_q1_obituary result = qa_q1_obituary_compute(&base);
-  qa_q1mp_obituary out = {0};
-  out.has_message = result.has_message;
-  (void)snprintf(out.text, sizeof out.text, "%s", result.text);
-  for (size_t i = 0; i < result.argument_count && i < 4; i++) out.args[i] = result.arguments[i];
-  out.arg_count = result.argument_count < 4 ? result.argument_count : 4;
-  out.has_score = result.has_score;
-  out.score_actor = result.score_actor;
-  out.score_delta = result.score_delta;
-  out.achievement = result.has_achievement ? result.achievement_id : NULL;
-  return out;
-}
-#include <stdio.h>
-#include <string.h>
+#include "qa/foundation/js.h"
 
 static const struct { const char *key; const char *value; } CLASSIC[] = {
   {"$qc_death_empathy1","{0} shares {1}'s pain\n"},{"$qc_death_empathy2","{0} feels {1}'s pain\n"},
@@ -85,9 +39,12 @@ static void classic_text(const char *key, const char *const *args, size_t nargs,
   size_t o = 0;
   for (size_t i = 0; tpl[i] && o + 1 < size; i++) {
     if (tpl[i] == '{') {
-      char *end = NULL; long idx = strtol(tpl + i + 1, &end, 10);
-      if (end && *end == '}') {
-        const char *a = (idx >= 0 && (size_t)idx < nargs && args[idx]) ? args[idx] : "";
+      /* /\{([0-9]+)\}/u: one or more digits only; strtol also took "{}", a sign and white space. */
+      const char *end = tpl + i + 1;
+      while (*end >= '0' && *end <= '9') end++;
+      double idx = qa_js_parse_int(tpl + i + 1, 10); /* Number(index) of the digit run */
+      if (end != tpl + i + 1 && *end == '}') {
+        const char *a = (idx < (double)nargs && args[(size_t)idx]) ? args[(size_t)idx] : "";
         size_t len = strlen(a); if (len > size - o - 1) len = size - o - 1;
         memcpy(out + o, a, len); o += len; i = (size_t)(end - tpl); continue;
       }
@@ -96,94 +53,120 @@ static void classic_text(const char *key, const char *const *args, size_t nargs,
   }
   out[o] = '\0';
 }
-#include <stdlib.h>
-typedef struct fb { const qa_q1mp_obituary_input *input; double first; bool replay; } fb;
-/* The ext fallback replays firstRoll through a wrapped input. */
-static double fb_random(void *ctx) { fb *s = ctx; if (s->replay) { s->replay = false; return s->first; } return s->input->random(s->input->random_ctx); }
-static qa_q1mp_obituary fallback(const qa_q1mp_obituary_input *input, double first, bool attacker_null) {
-  qa_q1mp_obituary_input copy = *input; fb state = {input, first, true};
-  copy.random_ctx = &state; copy.random = fb_random;
-  if (attacker_null) copy.has_attacker = false;
-  return qa_q1mp_ext_q1_obituary(&copy, attacker_null, attacker_null);
+/* The fallback replays firstRoll through a wrapped random. */
+typedef struct replay_random { const qa_q1_obituary_input *input; double first; bool replay; } replay_random;
+static double replayed(void *ctx) {
+  replay_random *state = ctx;
+  if (state->replay) { state->replay = false; return state->first; }
+  return state->input->random(state->input->random_ctx);
 }
-static qa_q1mp_obituary make_result(const qa_q1mp_obituary_input *input, const char *key, bool has_actor, qa_actor_id actor, double delta, const char *const *args, size_t nargs, const char *classic_override) {
-  qa_q1mp_obituary out = {0};
-  if (key && key[0]) {
+/* TS fallback(override): attacker_null applies { attacker: null }. replay is
+ * shared by every fallback of one call, as the TS closure variable is. */
+static qa_q1_obituary fallback(const qa_q1_obituary_input *input, replay_random *replay, bool attacker_null) {
+  qa_q1_obituary_input copy = *input;
+  if (attacker_null) copy.attacker = NULL;
+  copy.random_ctx = replay; copy.random = replayed;
+  return qa_q1_obituary_compute(&copy);
+}
+static qa_q1_obituary result(const qa_q1_obituary_input *input, const char *key, const qa_actor_id *actor, double delta,
+                             const char *const *args, size_t arg_count, const char *classic_override) {
+  qa_q1_obituary out;
+  memset(&out, 0, sizeof out);
+  if (key[0] != '\0') {
     out.has_message = true;
     if (qa_q1mp_streq(input->edition, "rerelease")) {
       (void)snprintf(out.text, sizeof out.text, "%s", key);
-      for (size_t i = 0; i < nargs && i < 4; i++) out.args[i] = args[i];
-      out.arg_count = nargs < 4 ? nargs : 4;
-    } else if (classic_override) (void)snprintf(out.text, sizeof out.text, "%s", classic_override);
-    else classic_text(key, args, nargs, out.text, sizeof out.text);
+      for (size_t i = 0; i < arg_count; i++) out.arguments[i] = args[i];
+      out.argument_count = arg_count;
+    } else if (classic_override != NULL) (void)snprintf(out.text, sizeof out.text, "%s", classic_override);
+    else classic_text(key, args, arg_count, out.text, sizeof out.text);
   }
-  out.has_score = has_actor; out.score_actor = actor; out.score_delta = delta; out.achievement = NULL;
+  if (actor != NULL) { out.has_score = true; out.score_actor = *actor; out.score_delta = delta; }
   return out;
 }
-qa_q1mp_obituary qa_q1mp_mission_pack_obituary(const qa_q1mp_obituary_input *input, const qa_q1mp_obituary_context *context) {
-  const qa_q1mp_obituary_person *victim = &input->victim;
-  const qa_q1mp_obituary_person *attacker = input->has_attacker ? &input->attacker : NULL;
-  double first = input->random(input->random_ctx);
-  const char *vargs[] = {victim->name};
-  if (!victim->is_player || (attacker && (qa_q1mp_streq(attacker->classname,"teledeath")||qa_q1mp_streq(attacker->classname,"teledeath2")))) return fallback(input, first, false);
-  if (attacker && attacker->is_player) {
+qa_q1_obituary qa_q1mp_mission_pack_obituary(const qa_q1_obituary_input *input, const qa_q1mp_obituary_context *context) {
+  const qa_q1_obituary_actor *victim = &input->victim, *attacker = input->attacker;
+  replay_random replay = {input, input->random(input->random_ctx), true};
+  const double first_roll = replay.first;
+  const char *const victim_args[1] = {victim->name};
+  const bool hipnotic = qa_q1mp_streq(context->pack, "hipnotic"), rogue = qa_q1mp_streq(context->pack, "rogue");
+  if (!victim->is_player || (attacker != NULL && (qa_q1mp_streq(attacker->classname, "teledeath") || qa_q1mp_streq(attacker->classname, "teledeath2"))))
+    return fallback(input, &replay, false);
+  if (attacker != NULL && attacker->is_player) {
     if (qa_same_actor(victim->actor, attacker->actor)) {
-      if ((qa_q1mp_streq(victim->weapon,"lightning") && victim->water_level > 1) || qa_q1mp_streq(victim->weapon,"grenadelauncher")) return fallback(input, first, false);
-      if (qa_q1mp_streq(context->pack, "hipnotic"))
-        return make_result(input, qa_q1mp_streq(input->edition,"classic") ? (first > 0.4 ? "$qc_suicide_bored" : "$qc_suicide_loaded") : (first != 0 ? "$qc_suicide_bored" : "$qc_suicide_loaded"), true, victim->actor, -1, vargs, 1, NULL);
-      if (qa_q1mp_streq(input->edition, "rerelease") && first < 0.5) return make_result(input, "$qc_suicide_bored", true, victim->actor, -1, vargs, 1, NULL);
+      if ((qa_q1mp_streq(victim->weapon, "lightning") && victim->water_level > 1) || qa_q1mp_streq(victim->weapon, "grenadelauncher"))
+        return fallback(input, &replay, false);
+      if (hipnotic)
+        return result(input, qa_q1mp_streq(input->edition, "classic") ? (first_roll > 0.4 ? "$qc_suicide_bored" : "$qc_suicide_loaded")
+                                                                      : (first_roll != 0 ? "$qc_suicide_bored" : "$qc_suicide_loaded"),
+                      &victim->actor, -1, victim_args, 1, NULL);
+      if (qa_q1mp_streq(input->edition, "rerelease") && first_roll < 0.5) return result(input, "$qc_suicide_bored", &victim->actor, -1, victim_args, 1, NULL);
       if (input->teamplay != 0 && victim->team != context->victim_saved_team)
-        return make_result(input, ((int)context->gamecfg & 16) != 0 ? "$qc_changed_teams" : "$qc_tried_change_teams", true, victim->actor, -1, vargs, 1, NULL);
-      return make_result(input, qa_q1mp_streq(input->edition,"classic") ? "$qc_suicide_bored" : "$qc_suicide_loaded", true, victim->actor, -1, vargs, 1, NULL);
+        return result(input, (qa_js_to_int32(context->gamecfg) & 16) != 0 ? "$qc_changed_teams" : "$qc_tried_change_teams",
+                      &victim->actor, -1, victim_args, 1, NULL);
+      return result(input, qa_q1mp_streq(input->edition, "classic") ? "$qc_suicide_bored" : "$qc_suicide_loaded", &victim->actor, -1, victim_args, 1, NULL);
     }
-    if (input->teamplay == 2 && victim->team > 0 && victim->team == attacker->team) return fallback(input, first, false);
-    double points = (qa_q1mp_streq(context->pack,"rogue") && input->teamplay == 3) ? (context->tag_score ? context->tag_score(context->tag_ctx) : 1) : 1;
-    const char *aargs[] = {victim->name, attacker->name};
-    if (qa_q1mp_streq(context->pack, "hipnotic")) {
-      if (qa_q1mp_streq(input->death_type, "hipnotic:empathy")) return make_result(input, input->random(input->random_ctx) < 0.5 ? "$qc_death_empathy1" : "$qc_death_empathy2", true, attacker->actor, points, aargs, 2, NULL);
-      if (qa_q1mp_streq(context->inflictor_classname, "proximity_grenade")) return make_result(input, input->random(input->random_ctx) < 0.5 ? "$qc_death_bomb1" : "$qc_death_bomb2", true, attacker->actor, points, aargs, 2, NULL);
-      if (qa_q1mp_streq(attacker->weapon, "hipnotic:laser")) return make_result(input, input->random(input->random_ctx) < 0.5 ? "$qc_death_laser1" : "$qc_death_laser2", true, attacker->actor, points, aargs, 2, NULL);
-      if (qa_q1mp_streq(attacker->weapon, "hipnotic:mjolnir")) return make_result(input, "$qc_death_hammer", true, attacker->actor, points, aargs, 2, NULL);
+    if (input->teamplay == 2 && victim->team > 0 && victim->team == attacker->team) return fallback(input, &replay, false);
+    const double points = rogue && input->teamplay == 3 ? (context->tag_score != NULL ? context->tag_score(context->tag_ctx) : 1) : 1;
+    const char *const pair[2] = {victim->name, attacker->name};
+    if (hipnotic) {
+      if (qa_q1mp_streq(input->death_type, "hipnotic:empathy"))
+        return result(input, input->random(input->random_ctx) < 0.5 ? "$qc_death_empathy1" : "$qc_death_empathy2", &attacker->actor, points, pair, 2, NULL);
+      if (qa_q1mp_streq(context->inflictor_classname, "proximity_grenade"))
+        return result(input, input->random(input->random_ctx) < 0.5 ? "$qc_death_bomb1" : "$qc_death_bomb2", &attacker->actor, points, pair, 2, NULL);
+      if (qa_q1mp_streq(attacker->weapon, "hipnotic:laser"))
+        return result(input, input->random(input->random_ctx) < 0.5 ? "$qc_death_laser1" : "$qc_death_laser2", &attacker->actor, points, pair, 2, NULL);
+      if (qa_q1mp_streq(attacker->weapon, "hipnotic:mjolnir")) return result(input, "$qc_death_hammer", &attacker->actor, points, pair, 2, NULL);
     } else {
-      if (qa_q1mp_streq(attacker->weapon, "rogue:grapple")) return make_result(input, "$qc_death_grappled", true, attacker->actor, points, aargs, 2, NULL);
-      if (qa_q1mp_streq(attacker->weapon,"rogue:lava-nailgun")||qa_q1mp_streq(attacker->weapon,"rogue:lava-supernailgun")) return make_result(input, "$qc_death_burned", true, attacker->actor, points, aargs, 2, NULL);
-      if (qa_q1mp_streq(attacker->weapon, "rogue:plasma")) return make_result(input, "$qc_death_fused", true, attacker->actor, points, aargs, 2, NULL);
-      if (qa_q1mp_streq(attacker->weapon,"rogue:multi-grenade")||qa_q1mp_streq(attacker->weapon,"rogue:multi-rocket")) return make_result(input, "$qc_death_blasted", true, attacker->actor, points, aargs, 2, NULL);
+      if (qa_q1mp_streq(attacker->weapon, "rogue:grapple")) return result(input, "$qc_death_grappled", &attacker->actor, points, pair, 2, NULL);
+      if (qa_q1mp_streq(attacker->weapon, "rogue:lava-nailgun") || qa_q1mp_streq(attacker->weapon, "rogue:lava-supernailgun"))
+        return result(input, "$qc_death_burned", &attacker->actor, points, pair, 2, NULL);
+      if (qa_q1mp_streq(attacker->weapon, "rogue:plasma")) return result(input, "$qc_death_fused", &attacker->actor, points, pair, 2, NULL);
+      if (qa_q1mp_streq(attacker->weapon, "rogue:multi-grenade") || qa_q1mp_streq(attacker->weapon, "rogue:multi-rocket"))
+        return result(input, "$qc_death_blasted", &attacker->actor, points, pair, 2, NULL);
     }
-    qa_q1mp_obituary base = fallback(input, first, false);
-    base.has_score = true; base.score_actor = attacker->actor; base.score_delta = points; return base;
+    qa_q1_obituary base = fallback(input, &replay, false);
+    base.has_score = true; base.score_actor = attacker->actor; base.score_delta = points;
+    return base;
   }
-  if (qa_q1mp_streq(context->pack, "hipnotic")) {
-    if (context->attacker_death_type && context->attacker_death_type[0]) {
-      char over[512]; (void)snprintf(over, sizeof over, "%s %s\n", victim->name, context->attacker_death_type);
-      return make_result(input, context->attacker_death_type, true, victim->actor, -1, vargs, 1, over);
+  if (hipnotic) {
+    if (context->attacker_death_type[0] != '\0') {
+      char text[512];
+      (void)snprintf(text, sizeof text, "%s %s\n", victim->name, context->attacker_death_type);
+      return result(input, context->attacker_death_type, &victim->actor, -1, victim_args, 1, text);
     }
-    if (!qa_q1mp_streq(victim->water_type, "empty")) return fallback(input, first, true);
+    if (!qa_q1mp_streq(victim->water_type, "empty")) return fallback(input, &replay, true);
   }
-  if (attacker && attacker->is_monster) {
-    const char *key = (qa_q1mp_streq(context->pack,"rogue") && qa_q1mp_streq(attacker->classname,"monster_dragon")) ? "$qc_ks_dragon1" : lookup(MONSTERS, sizeof MONSTERS / sizeof MONSTERS[0], attacker->classname);
-    if (!key) key = "";
+  if (attacker != NULL && attacker->is_monster) {
+    const char *mapped = lookup(MONSTERS, sizeof MONSTERS / sizeof MONSTERS[0], attacker->classname);
+    const char *key = rogue && qa_q1mp_streq(attacker->classname, "monster_dragon") ? "$qc_ks_dragon1" : mapped != NULL ? mapped : "";
     const char *old = qa_q1_classic_monster_obituary(attacker->classname);
-    char over[512]; const char *override_p = NULL;
-    if (!lookup(CLASSIC, sizeof CLASSIC / sizeof CLASSIC[0], key) && old) { (void)snprintf(over, sizeof over, "%s%s", victim->name, old); override_p = over; }
-    return make_result(input, key, true, victim->actor, -1, vargs, 1, override_p);
+    char text[512];
+    const char *classic_override = NULL;
+    if (lookup(CLASSIC, sizeof CLASSIC / sizeof CLASSIC[0], key) == NULL && old != NULL) {
+      (void)snprintf(text, sizeof text, "%s%s", victim->name, old);
+      classic_override = text;
+    }
+    return result(input, key, &victim->actor, -1, victim_args, 1, classic_override);
   }
-  if (attacker && qa_q1mp_streq(attacker->classname, "explo_box")) return make_result(input, "$qc_ks_blew_up", true, victim->actor, -1, vargs, 1, NULL);
-  if (attacker && attacker->brush && !qa_q1mp_streq(attacker->classname, "worldspawn")) return make_result(input, "$qc_death_squish", true, victim->actor, -1, vargs, 1, NULL);
-  if (qa_q1mp_streq(context->pack,"hipnotic") && qa_q1mp_streq(input->death_type,"falling")) return make_result(input, "$qc_death_fall", true, victim->actor, -1, vargs, 1, NULL);
-  const char *trap = attacker ? attacker->classname : NULL;
-  if (qa_q1mp_streq(trap,"trap_shooter")||qa_q1mp_streq(trap,"trap_spikeshooter")) return make_result(input, "$qc_ks_spiked", true, victim->actor, -1, vargs, 1, NULL);
-  if (qa_q1mp_streq(trap,"fireball")) return make_result(input, "$qc_ks_lavaball", true, victim->actor, -1, vargs, 1, NULL);
-  if (qa_q1mp_streq(trap,"trigger_changelevel")) return make_result(input, "$qc_ks_tried_leave", true, victim->actor, -1, vargs, 1, NULL);
-  if (qa_q1mp_streq(context->pack, "rogue")) {
-    if (qa_q1mp_streq(trap,"ltrail_start")||qa_q1mp_streq(trap,"ltrail_relay")) return make_result(input, "$qc_ks_rode_lightning", true, victim->actor, -1, vargs, 1, NULL);
-    if (qa_q1mp_streq(trap,"pendulum")||qa_q1mp_streq(trap,"buzzsaw")||qa_q1mp_streq(trap,"plasma"))
-      return make_result(input, qa_q1mp_streq(trap,"pendulum")?"$qc_ks_cleaved":qa_q1mp_streq(trap,"buzzsaw")?"$qc_ks_sliced":"$qc_ks_plasma", true, victim->actor, -1, vargs, 1, NULL);
-    if (qa_q1mp_streq(trap,"Vengeance")) return make_result(input, "$qc_death_vengeance", false, victim->actor, 0, vargs, 1, NULL);
-    if (qa_q1mp_streq(trap,"power_shield") && input->has_telefrag_owner) {
-      const char *targs[] = {victim->name, input->telefrag_owner.name};
-      return make_result(input, "$qc_death_smashed", true, input->telefrag_owner.actor, 1, targs, 2, NULL);
+  if (attacker != NULL && qa_q1mp_streq(attacker->classname, "explo_box")) return result(input, "$qc_ks_blew_up", &victim->actor, -1, victim_args, 1, NULL);
+  if (attacker != NULL && attacker->brush && !qa_q1mp_streq(attacker->classname, "worldspawn"))
+    return result(input, "$qc_death_squish", &victim->actor, -1, victim_args, 1, NULL);
+  if (hipnotic && qa_q1mp_streq(input->death_type, "falling")) return result(input, "$qc_death_fall", &victim->actor, -1, victim_args, 1, NULL);
+  const char *trap = attacker != NULL ? attacker->classname : NULL;
+  if (qa_q1mp_streq(trap, "trap_shooter") || qa_q1mp_streq(trap, "trap_spikeshooter")) return result(input, "$qc_ks_spiked", &victim->actor, -1, victim_args, 1, NULL);
+  if (qa_q1mp_streq(trap, "fireball")) return result(input, "$qc_ks_lavaball", &victim->actor, -1, victim_args, 1, NULL);
+  if (qa_q1mp_streq(trap, "trigger_changelevel")) return result(input, "$qc_ks_tried_leave", &victim->actor, -1, victim_args, 1, NULL);
+  if (rogue) {
+    if (qa_q1mp_streq(trap, "ltrail_start") || qa_q1mp_streq(trap, "ltrail_relay")) return result(input, "$qc_ks_rode_lightning", &victim->actor, -1, victim_args, 1, NULL);
+    if (qa_q1mp_streq(trap, "pendulum") || qa_q1mp_streq(trap, "buzzsaw") || qa_q1mp_streq(trap, "plasma"))
+      return result(input, qa_q1mp_streq(trap, "pendulum") ? "$qc_ks_cleaved" : qa_q1mp_streq(trap, "buzzsaw") ? "$qc_ks_sliced" : "$qc_ks_plasma",
+                    &victim->actor, -1, victim_args, 1, NULL);
+    if (qa_q1mp_streq(trap, "Vengeance")) return result(input, "$qc_death_vengeance", NULL, 0, victim_args, 1, NULL);
+    if (qa_q1mp_streq(trap, "power_shield") && input->telefrag_owner != NULL) {
+      const char *const smashed[2] = {victim->name, input->telefrag_owner->name};
+      return result(input, "$qc_death_smashed", &input->telefrag_owner->actor, 1, smashed, 2, NULL);
     }
   }
-  return fallback(input, first, false);
+  return fallback(input, &replay, false);
 }

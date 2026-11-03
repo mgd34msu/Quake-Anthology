@@ -8,7 +8,6 @@
 
 void qa_compat_q2_write_rerelease_movement_state(uint8_t *view, qa_q2_rerelease_movement_state value);
 qa_q2_rerelease_movement_state qa_compat_q2_read_rerelease_movement_state(const uint8_t *view);
-void qa_compat_q2_write_rerelease_player_state(const qa_compat_q2_memory *memory, qa_guest_address address, const qa_q2_rerelease_player_state *value);
 qa_q2_rerelease_player_state qa_compat_q2_read_rerelease_player_state(const qa_compat_q2_memory *memory, qa_guest_address address);
 void qa_compat_q2_write_rerelease_user_command(uint8_t *view, qa_q2_rerelease_user_command value);
 qa_q2_rerelease_user_command qa_compat_q2_read_rerelease_user_command(const uint8_t *view);

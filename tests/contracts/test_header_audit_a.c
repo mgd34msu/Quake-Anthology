@@ -19,16 +19,16 @@
 #include "qa/content/q1/foundation/callbacks.h"
 #include "qa/content/q1/foundation/checkpoint.h"
 #include "qa/content/q1/foundation/held_weapons.h"
-#include "qa/content/q1/foundation/monsters.h"
+#include "qa/content/q1/foundation/types.h"
 #include "qa/content/q1/foundation/precache.h"
 #include "qa/content/q1/foundation/shambler_damage.h"
 #include "qa/content/q1/foundation/spawns.h"
 #include "qa/content/q1/foundation/text.h"
 #include "qa/content/q1/foundation/weapon_names.h"
 #include "qa/content/q1/foundation/weapons.h"
-#include "qa/content/q1/base/foundation_types.h"
-#include "qa/content/q1/missionpacks/obituaries.h"
-#include "qa/content/q1/missionpacks/travel.h"
+#include "qa/content/q1/base/rules.h"
+#include "qa/content/q1/base/travel.h"
+#include "../content/q1_world_fixture.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_jumpers.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_variants.h"
 
@@ -195,7 +195,7 @@ static void test_text(void) {
   CHECK(streq(qa_q1_classic_message("$qc_need_gold_keycard"), "You need the gold keycard"));
   CHECK(streq(qa_q1_classic_message("$qc_need_silver_runekey"), "You need the silver runekey"));
   CHECK(qa_q1_classic_message("$qc_nope") == NULL);
-  CHECK(QA_Q1_CLASSIC_MESSAGE_COUNT == 39);
+  CHECK(QA_Q1_CLASSIC_MESSAGE_COUNT == 68); /* TS classicQ1Messages.size under bun */
   char out[512];
   const qa_q1_msg_arg name_arg = {false, 0, "Bob"};
   CHECK(streq(qa_q1_classic_text("$qc_has_token", &name_arg, 1, out, sizeof out), "Bob has the tag token!\n"));
@@ -259,43 +259,43 @@ static void test_weapons_and_monsters(void) {
 }
 
 static void test_services_integration(void) {
-  qa_q1_services game;
-  qa_q1_host host;
-  memset(&host, 0, sizeof host);
+  q1_world_fixture fx;
   qa_q1_options options;
   memset(&options, 0, sizeof options);
   options.edition = "classic";
   options.precache_id1 = true;
-  CHECK(qa_q1_services_init(&game, host, options));
+  options.combat_provider = "q1:combat";
+  CHECK(q1_world_fixture_create(&fx, options));
+  qa_q1_services *game = fx.game;
   const double ordinal0 = 0, ordinal1 = 1, ordinal2 = 2, ordinal3 = 3;
-  qa_q1_actor *world = qa_q1_create(&game, "worldspawn", NULL, &ordinal0);
-  qa_q1_spawn_entity(&game, world);
-  CHECK(game.world == world);
+  qa_q1_actor *world = qa_q1_create(game, "worldspawn", NULL, &ordinal0);
+  qa_q1_spawn_entity(game, world);
+  CHECK(game->world == world);
   size_t sound_count = 0, model_count = 0;
-  (void)qa_q1_precache_sounds(game.precaches, &sound_count);
-  (void)qa_q1_precache_models(game.precaches, &model_count);
+  (void)qa_q1_precache_sounds(game->precaches, &sound_count);
+  (void)qa_q1_precache_models(game->precaches, &model_count);
   CHECK(sound_count == 64); /* slot 0 + 63 worldspawn sounds */
   CHECK(model_count == 27); /* slot 0 + 26 worldspawn models */
-  qa_q1_actor *shells = qa_q1_create(&game, "item_shells", NULL, &ordinal1);
-  qa_q1_spawn_entity(&game, shells);
+  qa_q1_actor *shells = qa_q1_create(game, "item_shells", NULL, &ordinal1);
+  qa_q1_spawn_entity(game, shells);
   CHECK(streq(shells->model, "maps/b_shell0.bsp"));
   CHECK(streq(shells->solid, "none"));
   CHECK(shells->touch.fn != NULL && streq(shells->touch.name, "item_touch"));
   CHECK(streq(shells->think.name, "PlaceItem"));
-  qa_q1_actor *army = qa_q1_create(&game, "monster_army", NULL, &ordinal2);
-  qa_q1_spawn_entity(&game, army);
-  CHECK(game.total_monsters == 1);
-  CHECK(army->monster != NULL && streq(army->monster->species, "army"));
-  CHECK(streq(army->model, "progs/soldier.mdl") && army->max_health == 30);
-  CHECK(qa_q1_spawn_known(&game, "worldspawn", NULL));
-  CHECK(qa_q1_spawn_known(&game, "item_shells", NULL));
-  CHECK(!qa_q1_spawn_known(&game, "monster_ogre", NULL));
-  CHECK(!qa_q1_spawn_known(&game, "weapon_axe", NULL));
-  CHECK_ABORTS(qa_q1_spawn_entity(&game, qa_q1_create(&game, "monster_ogre", NULL, &ordinal3)));
+  /* Current TS: the grunt is registered by the base/ordinary monster modules,
+   * not by the bare foundation (foundation/monsters.ts was removed). */
+  CHECK(!qa_q1_spawn_known(game, "monster_army", NULL));
+  CHECK_ABORTS(qa_q1_spawn_entity(game, qa_q1_create(game, "monster_army", NULL, &ordinal2)));
+  CHECK(game->total_monsters == 0);
+  CHECK(qa_q1_spawn_known(game, "worldspawn", NULL));
+  CHECK(qa_q1_spawn_known(game, "item_shells", NULL));
+  CHECK(!qa_q1_spawn_known(game, "monster_ogre", NULL));
+  CHECK(!qa_q1_spawn_known(game, "weapon_axe", NULL));
+  CHECK_ABORTS(qa_q1_spawn_entity(game, qa_q1_create(game, "monster_ogre", NULL, &ordinal3)));
   qa_q1_foundation_checkpoint checkpoint;
-  CHECK(qa_q1_services_capture(&game, &checkpoint));
-  CHECK(streq(checkpoint.format, "q1-foundation") && checkpoint.version == 5);
-  CHECK(checkpoint.entity_count == 3);
+  CHECK(qa_q1_services_capture(game, &checkpoint));
+  CHECK(streq(checkpoint.format, "q1-foundation") && checkpoint.version == 6);
+  CHECK(checkpoint.entity_count == 2);
   bool saw_shells = false;
   for (size_t i = 0; i < checkpoint.entity_count; i++)
     if (streq(checkpoint.entities[i].classname, "item_shells")) {
@@ -305,7 +305,8 @@ static void test_services_integration(void) {
     }
   CHECK(saw_shells);
   qa_q1_checkpoint_free(&checkpoint);
-  qa_q1_services_free(&game);
+  CHECK(fx.ctx_errors == 0);
+  q1_world_fixture_destroy(&fx);
 }
 
 static qa_weapon_trajectory_update_result fake_launch(void *ctx, qa_weapon_behavior_launch input) {
@@ -333,36 +334,31 @@ static void test_launch_projectile_behavior(void) {
   memset(&port, 0, sizeof port);
   port.ctx = &seen;
   port.launch = fake_launch;
-  qa_q1_services game;
-  qa_q1_host host;
-  memset(&host, 0, sizeof host);
-  host.weapon_behavior = &port;
-  qa_q1_options options;
-  memset(&options, 0, sizeof options);
+  q1_world_fixture fx;
+  qa_q1_options options = q1_world_fixture_options();
   options.edition = "classic";
-  CHECK(qa_q1_services_init(&game, host, options));
+  CHECK(q1_world_fixture_create(&fx, options));
+  qa_q1_services *game = fx.game;
+  game->host.weapon_behavior = &port;
   const double ordinal = 5;
-  qa_q1_actor *rocket = qa_q1_create(&game, "rocket", NULL, &ordinal);
-  qa_actor_id shooter;
-  memset(&shooter, 0, sizeof shooter);
-  shooter.slot = 42;
+  qa_q1_actor *rocket = qa_q1_create(game, "rocket", NULL, &ordinal);
+  /* A shooter of another provider, not yet a Q1 player. */
+  const qa_owned_actor owner = qa_session_actor_registry_allocate_at_source(fx.actors, "q3:character", 1, "q3:sarge");
+  const qa_actor_id shooter = owner.id;
   /* Non-player shooter: port never consulted (TS isPlayer gate). */
-  qa_q1_launch_projectile_behavior(&game, rocket, shooter, "rocketlauncher", "rocket");
+  qa_q1_launch_projectile_behavior(game, rocket, shooter, "rocketlauncher", "rocket");
   CHECK(seen.weapon == NULL);
-  qa_owned_actor owner;
-  memset(&owner, 0, sizeof owner);
-  owner.id = shooter;
-  owner.owner = QA_Q1_PROVIDER;
-  CHECK(qa_q1_attach_player(&game, owner, "rocketlauncher", false, NULL) != NULL);
-  qa_q1_launch_projectile_behavior(&game, rocket, shooter, "rocketlauncher", "rocket");
+  CHECK(qa_q1_attach_player(game, owner, "rocketlauncher", false, NULL) != NULL);
+  qa_q1_launch_projectile_behavior(game, rocket, shooter, "rocketlauncher", "rocket");
   CHECK(seen.weapon != NULL && streq(seen.weapon, "q1:weapon/rocketlauncher"));
   CHECK(seen.role != NULL && streq(seen.role, "rocket"));
-  CHECK(rocket->body.origin.x == 1 && rocket->body.velocity.z == 6 && rocket->body.angles.y == 8);
+  qa_q1_body body = qa_q1_get_body(game, rocket);
+  CHECK(body.origin.x == 1 && body.velocity.z == 6 && body.angles.y == 8);
   port.launch = fake_launch_none;
-  rocket->body.origin.x = 99;
-  qa_q1_launch_projectile_behavior(&game, rocket, shooter, "rocketlauncher", "rocket");
-  CHECK(rocket->body.origin.x == 99); /* null update leaves body alone */
-  qa_q1_services_free(&game);
+  qa_q1_set_origin(game, rocket, (qa_vec3){99, body.origin.y, body.origin.z});
+  qa_q1_launch_projectile_behavior(game, rocket, shooter, "rocketlauncher", "rocket");
+  CHECK(qa_q1_get_body(game, rocket).origin.x == 99); /* null update leaves body alone */
+  q1_world_fixture_destroy(&fx);
 }
 
 /* --- undef-q1-q2-content slice: services attack/frame/physics --- */
@@ -386,11 +382,44 @@ static qa_q1_contents frame_contents_fn(void *ctx, qa_vec3 point) {
   (void)ctx; (void)point;
   return frame_contents;
 }
-static bool frame_pusher(void *ctx, qa_q1_services *game, qa_q1_actor *entity, double elapsed) {
-  (void)ctx; (void)game; (void)entity;
-  frame_pusher_calls++;
-  frame_pusher_elapsed = elapsed;
+/* TS pusherServices(game): the pusher is read with no velocity and its
+ * think far away, so stepQ1Pusher only advances its local time by the
+ * elapsed interval, which the write records. */
+static qa_q1_services *frame_pusher_game;
+static bool frame_pusher_read(void *ctx, qa_actor_id actor, qa_q1_physics_entity *out) {
+  (void)ctx;
+  qa_q1_actor *entity = qa_q1_get_entity(frame_pusher_game, &actor);
+  if (entity == NULL) return false;
+  memset(out, 0, sizeof *out);
+  out->actor = entity->actor;
+  out->solid = "bsp";
+  out->local_time_seconds = 0;
+  out->next_think_seconds = 1000;
   return true;
+}
+static void frame_pusher_write(void *ctx, qa_q1_physics_entity entity) {
+  (void)ctx;
+  frame_pusher_elapsed = entity.local_time_seconds;
+}
+static double frame_n_store(void *ctx, double value) { (void)ctx; return (float)value; }
+static double frame_n_add(void *ctx, double a, double b) { (void)ctx; return (float)(a + b); }
+static double frame_n_subtract(void *ctx, double a, double b) { (void)ctx; return (float)(a - b); }
+static double frame_n_multiply(void *ctx, double a, double b) { (void)ctx; return (float)(a * b); }
+static double frame_n_divide(void *ctx, double a, double b) { (void)ctx; return (float)(a / b); }
+static qa_q1_pusher_services frame_pusher(void *ctx, qa_q1_services *game) {
+  (void)q1_world_fixture_of(ctx);
+  frame_pusher_calls++;
+  frame_pusher_game = game;
+  qa_q1_pusher_services services;
+  memset(&services, 0, sizeof services);
+  services.numeric.store = frame_n_store;
+  services.numeric.add = frame_n_add;
+  services.numeric.subtract = frame_n_subtract;
+  services.numeric.multiply = frame_n_multiply;
+  services.numeric.divide = frame_n_divide;
+  services.read = frame_pusher_read;
+  services.write = frame_pusher_write;
+  return services;
 }
 static void frame_powerup(void *ctx, qa_owned_actor actor, qa_q1_powerup powerup, double expires) {
   (void)ctx; (void)actor;
@@ -418,40 +447,40 @@ static void test_services_frame_physics(void) {
   qa_weapon_behavior_projectile_port port;
   memset(&port, 0, sizeof port);
   port.step = frame_step;
-  qa_q1_services game;
-  qa_q1_host host;
-  memset(&host, 0, sizeof host);
-  host.trace = frame_trace;
-  host.contents = frame_contents_fn;
-  host.pusher_step = frame_pusher;
-  host.powerup = frame_powerup;
-  host.set_gravity = frame_gravity;
-  host.random = frame_random;
-  host.weapon_behavior = &port;
-  qa_q1_options options;
-  memset(&options, 0, sizeof options);
+  q1_world_fixture fx;
+  qa_q1_options options = q1_world_fixture_options();
   options.edition = "classic";
   options.gravity = 800;
-  CHECK(qa_q1_services_init(&game, host, options));
+  options.has_max_clients = false;
+  options.max_clients = 0;
+  CHECK(q1_world_fixture_create(&fx, options));
+  qa_q1_services *game = fx.game;
+  game->host.contents = frame_contents_fn;
+  game->host.pusher_services = frame_pusher;
+  game->host.powerup = frame_powerup;
+  game->host.set_gravity = frame_gravity;
+  game->host.random = frame_random;
+  game->host.trace = frame_trace;
+  game->host.weapon_behavior = &port;
   const double o0 = 0, o1 = 1, o2 = 2, o3 = 3, o4 = 4;
-  qa_q1_actor *world = qa_q1_create(&game, "worldspawn", NULL, &o0);
-  game.world = world;
-  qa_q1_actor *body_ent = qa_q1_create(&game, "player", NULL, &o1);
-  body_ent->health = 100;
-  body_ent->body.bounds.min = (qa_vec3){-16, -16, -24};
-  body_ent->body.bounds.max = (qa_vec3){16, 16, 32};
-  qa_q1_player_state *player = qa_q1_attach_player(&game, body_ent->actor, "axe", true, NULL);
+  qa_q1_actor *world = qa_q1_create(game, "worldspawn", NULL, &o0);
+  game->world = world;
+  qa_q1_actor *body_ent = qa_q1_create(game, "player", NULL, &o1);
+  qa_gameplay_authority_set_health(fx.combat, body_ent->actor, 100);
+  qa_q1_actor_set_damageable(body_ent, true);
+  qa_q1_set_bounds(game, body_ent, (qa_bounds){{-16, -16, -24}, {16, 16, 32}});
+  qa_q1_player_state *player = qa_q1_attach_player(game, body_ent->actor, "axe", true, NULL);
   CHECK(player != NULL);
-  game.next_dynamic_slot = 100; /* map ordinals occupy the low slots */
+  game->next_dynamic_slot = 100; /* map ordinals occupy the low slots */
   qa_owned_actor bogus;
   memset(&bogus, 0, sizeof bogus);
   bogus.id.slot = 99;
   qa_vec3 zero3 = {0, 0, 0};
-  CHECK_ABORTS((void)qa_q1_attack(&game, bogus, zero3, 1, 0));
-  CHECK_ABORTS((void)qa_q1_weapon_input(&game, bogus, true, zero3, 1, 0));
+  CHECK_ABORTS((void)qa_q1_attack(game, bogus, zero3, 1, 0));
+  CHECK_ABORTS((void)qa_q1_weapon_input(game, bogus, true, zero3, 1, 0));
   /* attack: axe fire advances attack/hostile timers from TS time. */
-  CHECK(qa_q1_attack(&game, body_ent->actor, (qa_vec3){0, 90, 0}, 10, 0));
-  CHECK(game.time == 10);
+  CHECK(qa_q1_attack(game, body_ent->actor, (qa_vec3){0, 90, 0}, 10, 0));
+  CHECK(game->time == 10);
   CHECK(player->view_angles.y == 90);
   CHECK(player->attack_finished == (double)(float)(10 + 0.5));
   CHECK(player->hostile_until == 11);
@@ -459,16 +488,16 @@ static void test_services_frame_physics(void) {
   player->continuous_firing = true;
   player->weapon_frame = 7;
   player->weapon_animation_at = 3;
-  CHECK(!qa_q1_weapon_input(&game, body_ent->actor, false, (qa_vec3){1, 2, 3}, 11, 1));
+  CHECK(!qa_q1_weapon_input(game, body_ent->actor, false, (qa_vec3){1, 2, 3}, 11, 1));
   CHECK(!player->continuous_firing && player->weapon_frame == 0 && player->weapon_animation_at == -1);
-  CHECK(!player->attack_held && player->water_level == 1 && game.time == 11);
+  CHECK(!player->attack_held && player->water_level == 1 && game->time == 11);
   /* player_frame mega rot: -1 health/sec above max, stops at max. */
-  body_ent->health = 150;
+  qa_gameplay_authority_set_health(fx.combat, body_ent->actor, 150);
   player->mega_rot_at = 12;
-  qa_q1_player_frame(&game, body_ent->actor, 12, NULL);
-  CHECK(body_ent->health == 149 && player->mega_rot_at == 13);
-  body_ent->health = 100;
-  qa_q1_player_frame(&game, body_ent->actor, 13, NULL);
+  qa_q1_player_frame(game, body_ent->actor, 12, NULL);
+  CHECK(qa_q1_health(game, body_ent->actor.id) == 149 && player->mega_rot_at == 13);
+  qa_gameplay_authority_set_health(fx.combat, body_ent->actor, 100);
+  qa_q1_player_frame(game, body_ent->actor, 13, NULL);
   CHECK(player->mega_rot_at == -1);
   /* powerup expiry deletes + notifies host; q3:flight restores gravity. */
   qa_q1_player_powerup_set(player, "quad", 13);
@@ -476,7 +505,7 @@ static void test_services_frame_physics(void) {
   qa_q1_player_powerup_set(player, "suit", 999);
   frame_powerup_calls = 0;
   frame_gravity_calls = 0;
-  qa_q1_player_frame(&game, body_ent->actor, 14, NULL);
+  qa_q1_player_frame(game, body_ent->actor, 14, NULL);
   CHECK(qa_q1_player_powerup_get(player, "quad") == 0);
   CHECK(qa_q1_player_powerup_get(player, "suit") == 999);
   CHECK(frame_powerup_calls == 2 && frame_last_powerup_expires == 0);
@@ -484,221 +513,174 @@ static void test_services_frame_physics(void) {
   /* q3:regen heals 5 * frameSeconds. */
   qa_q1_player_powerup_delete(player, "suit");
   qa_q1_player_powerup_set(player, "q3:regen", 999);
-  game.frame_seconds = 1;
-  qa_q1_player_frame(&game, body_ent->actor, 15, NULL);
-  CHECK(body_ent->health == 105);
+  game->frame_seconds = 1;
+  qa_q1_player_frame(game, body_ent->actor, 15, NULL);
+  CHECK(qa_q1_health(game, body_ent->actor.id) == 105);
   /* Drowning at waterLevel 3 once air runs out. */
   qa_q1_player_powerup_delete(player, "q3:regen");
   player->air_finished = 10;
   player->drown_at = 0;
   player->drown_damage = 2;
   const double three = 3;
-  qa_q1_player_frame(&game, body_ent->actor, 20, &three);
-  CHECK(player->drown_damage == 4 && body_ent->health == 101 && player->drown_at == 21);
+  qa_q1_player_frame(game, body_ent->actor, 20, &three);
+  CHECK(player->drown_damage == 4 && qa_q1_health(game, body_ent->actor.id) == 101 && player->drown_at == 21);
   /* Lava hazard: 10 * waterLevel, 0.2s re-arm without suit. */
   frame_contents = "lava";
   player->hazard_at = 0;
   const double two = 2;
-  qa_q1_player_frame(&game, body_ent->actor, 22, &two);
-  CHECK(body_ent->health == 81);
+  qa_q1_player_frame(game, body_ent->actor, 22, &two);
+  CHECK(qa_q1_health(game, body_ent->actor.id) == 81);
   CHECK(fabs(player->hazard_at - 22.2) < 1e-9);
   frame_contents = "empty";
   /* Toss physics: gravity fround staging, open trace keeps flying. */
-  qa_q1_actor *toss = qa_q1_create(&game, "grenade", NULL, &o2);
+  qa_q1_actor *toss = qa_q1_create(game, "grenade", NULL, &o2);
   toss->movement = "toss";
-  toss->body.velocity = (qa_vec3){100, 0, 100};
-  qa_q1_physics_entity(&game, toss->actor, 30, 0.5);
-  CHECK(toss->body.velocity.z == -300);
-  CHECK(toss->body.origin.x == 50 && toss->body.origin.z == -150);
-  /* Push physics goes through the host pusher seam. */
-  qa_q1_actor *push = qa_q1_create(&game, "func_door", NULL, &o3);
+  qa_q1_body velocity_patch;
+  memset(&velocity_patch, 0, sizeof velocity_patch);
+  velocity_patch.velocity = (qa_vec3){100, 0, 100};
+  qa_q1_set_body_patch(game, toss, &velocity_patch, false, false, true, false, false);
+  qa_q1_services_physics_entity(game, toss->actor, 30, 0.5);
+  CHECK(qa_q1_get_body(game, toss).velocity.z == -300);
+  CHECK(qa_q1_get_body(game, toss).origin.x == 50 && qa_q1_get_body(game, toss).origin.z == -150);
+  /* Push physics runs stepQ1Pusher over host.pusherServices(game). */
+  qa_q1_actor *push = qa_q1_create(game, "func_door", NULL, &o3);
   push->movement = "push";
   frame_pusher_calls = 0;
-  qa_q1_physics_entity(&game, push->actor, 31, 0.25);
+  qa_q1_services_physics_entity(game, push->actor, 31, 0.25);
   CHECK(frame_pusher_calls == 1 && frame_pusher_elapsed == 0.25);
   /* Gib physics aborts outside the rerelease profile. */
-  qa_q1_actor *gib = qa_q1_create(&game, "gib", NULL, &o4);
+  qa_q1_actor *gib = qa_q1_create(game, "gib", NULL, &o4);
   gib->movement = "gib";
-  CHECK_ABORTS(qa_q1_physics_entity(&game, gib->actor, 32, 0.1));
+  CHECK_ABORTS(qa_q1_services_physics_entity(game, gib->actor, 32, 0.1));
   gib->movement = "none"; /* keep the physics_step below off the gib path */
   /* Weapon-behavior step update is applied before movement dispatch. */
   const double o5 = 5;
-  qa_q1_actor *behaved = qa_q1_create(&game, "rocket", NULL, &o5);
+  qa_q1_actor *behaved = qa_q1_create(game, "rocket", NULL, &o5);
   frame_step_enabled = true;
-  qa_q1_physics_entity(&game, behaved->actor, 33, 0.1);
+  qa_q1_services_physics_entity(game, behaved->actor, 33, 0.1);
   frame_step_enabled = false;
-  CHECK(behaved->body.origin.x == 9 && behaved->body.origin.z == 9);
+  CHECK(qa_q1_get_body(game, behaved).origin.x == 9 && qa_q1_get_body(game, behaved).origin.z == 9);
   /* physics_step steps entities then frames players. */
   frame_pusher_calls = 0;
-  qa_q1_physics_step(&game, 40, 0.1);
-  CHECK(game.time == 40 && frame_pusher_calls == 1);
-  qa_q1_services_free(&game);
+  qa_q1_physics_step(game, 40, 0.1);
+  CHECK(game->time == 40 && frame_pusher_calls == 1);
+  CHECK(fx.ctx_errors == 0);
+  q1_world_fixture_destroy(&fx);
 }
 
-static void test_q1b_helpers(void) {
-  qa_actor_id id;
-  memset(&id, 0, sizeof id);
-  id.slot = 7;
-  id.generation = 3;
-  qa_q1b_opt_actor some = qa_q1b_some_actor(id);
-  CHECK(some.has && some.id.slot == 7 && some.id.generation == 3);
-  qa_q1b_channel named = qa_q1b_channel_named("weapon");
-  CHECK(streq(named.name, "weapon") && named.numeric == 0);
-  qa_q1b_channel numeric = qa_q1b_channel_numeric(7);
-  CHECK(numeric.name == NULL && numeric.numeric == 7);
-}
-
-/* --- undef slice: mission-pack travel/obituary adapters --- */
-static qa_q1b_player_state travel_player;
-static qa_inventory_entry travel_entries[4];
-static double travel_set_health = -1;
-static size_t travel_configured;
-static const char *travel_selected;
-static bool travel_combat_read(void *ctx, qa_actor_id actor, qa_combat_state *out) {
-  (void)ctx; (void)actor;
-  memset(out, 0, sizeof *out);
-  out->health = 80;
-  return true;
-}
-static void travel_set_health_fn(void *ctx, qa_owned_actor actor, double health) {
-  (void)ctx; (void)actor;
-  travel_set_health = health;
-}
-static void travel_set_armor(void *ctx, qa_owned_actor actor, qa_armor_state armor) {
-  (void)ctx; (void)actor; (void)armor;
-}
-static size_t travel_inventory_entries(void *ctx, qa_actor_id actor, qa_inventory_entry *out, size_t capacity) {
-  (void)ctx; (void)actor; (void)capacity;
-  out[0] = travel_entries[0];
-  out[1] = travel_entries[1];
-  return 2;
-}
-static bool travel_inventory_has(void *ctx, qa_actor_id actor) { (void)ctx; (void)actor; return true; }
-static void travel_inventory_configure(void *ctx, qa_owned_actor actor, const qa_inventory_entry *entry) {
-  (void)ctx; (void)actor; (void)entry;
-  travel_configured++;
-}
-static void travel_host_powerup(void *ctx, qa_owned_actor actor, const char *powerup, double expires) {
-  (void)ctx; (void)actor; (void)powerup; (void)expires;
-}
-static qa_q1b_player_state *travel_player_fn(qa_q1b_game *game, qa_actor_id actor) {
-  (void)game; (void)actor;
-  return &travel_player;
-}
-static size_t travel_player_extensions(qa_q1b_game *game, const qa_q1b_player_extension **out, size_t capacity) {
-  (void)game; (void)out; (void)capacity;
-  return 0;
-}
-static bool travel_select(qa_q1b_game *game, qa_owned_actor actor, const char *weapon) {
-  (void)game; (void)actor;
-  travel_selected = weapon;
-  return true;
-}
+/* --- undef slice: mission-pack travel/obituary (now the base functions the
+ * mission packs call directly: qa_q1_new_travel, qa_q1_capture_travel,
+ * qa_q1_admit_travel, qa_q1_obituary_compute) over the real game --- */
 static double obituary_roll;
-static double obituary_random(void *ctx) { (void)ctx; return obituary_roll; }
+static int obituary_sentinel;
+static double obituary_random(void *ctx) { CHECK(ctx == &obituary_sentinel); return obituary_roll; }
+static void travel_configure(q1_world_fixture *fx, qa_owned_actor actor, qa_item_id item, double count, double capacity) {
+  qa_inventory_entry entry;
+  memset(&entry, 0, sizeof entry);
+  entry.item = item; entry.count = count; entry.capacity = capacity;
+  qa_shared_inventory_table_configure(fx->inventory, actor, entry, NULL, NULL);
+}
 
 static void test_travel_obituary_adapters(void) {
-  qa_q1b_host host;
-  memset(&host, 0, sizeof host);
-  host.combat_read = travel_combat_read;
-  host.combat_set_health = travel_set_health_fn;
-  host.combat_set_armor = travel_set_armor;
-  host.inventory_entries = travel_inventory_entries;
-  host.inventory_has = travel_inventory_has;
-  host.inventory_configure = travel_inventory_configure;
-  host.powerup = travel_host_powerup;
-  qa_q1b_game base;
-  memset(&base, 0, sizeof base);
-  base.host = &host;
-  base.options.edition = "rerelease";
-  base.options.skill = 3;
-  base.player = travel_player_fn;
-  base.player_extensions = travel_player_extensions;
-  base.select_weapon = travel_select;
-  qa_q1mp_game game;
-  memset(&game, 0, sizeof game);
-  game.base = &base;
-  memset(&travel_player, 0, sizeof travel_player);
-  travel_player.weapon = "nailgun";
-  travel_player.max_health = 100;
-  travel_player.actor.id.slot = 1;
-  qa_owned_actor actor = travel_player.actor;
+  q1_world_fixture fx;
+  qa_q1_options options = q1_world_fixture_options();
+  options.edition = "rerelease";
+  options.skill = 3;
+  CHECK(q1_world_fixture_create(&fx, options));
+  qa_q1_services *game = fx.game;
   /* newQ1Travel: rerelease skill 3 non-deathmatch health is 50. */
-  qa_q1mp_travel_state fresh = qa_q1mp_ext_new_q1_travel(&base.options);
+  qa_q1_travel_state fresh = qa_q1_new_travel(&game->options);
   CHECK(fresh.health == 50 && fresh.max_health == 50);
   CHECK(streq(fresh.weapon, "shotgun"));
   CHECK(fresh.inventory_count == 14);
   CHECK(streq(fresh.inventory[1].item, "q1:weapon/shotgun") && fresh.inventory[1].count == 1);
   CHECK(streq(fresh.inventory[8].item, "q1:ammo/shells") && fresh.inventory[8].count == 25);
   /* captureQ1Travel: floors shells at 25, zeroes temporary keys. */
-  memset(travel_entries, 0, sizeof travel_entries);
-  travel_entries[0].item = "q1:ammo/shells"; travel_entries[0].count = 3; travel_entries[0].capacity = 100;
-  travel_entries[1].item = "q1:key/gold"; travel_entries[1].count = 1; travel_entries[1].capacity = 1;
-  qa_q1mp_travel_state captured = qa_q1mp_ext_capture_q1_travel(&game, actor, "nailgun", 100, true);
+  const qa_owned_actor actor = q1_world_fixture_admit_player(&fx, (qa_vec3){0, 0, 0}, 80);
+  qa_q1_player_state *player = qa_q1_attach_player(game, actor, "nailgun", false, NULL);
+  player->max_health = 100;
+  travel_configure(&fx, actor, "q1:ammo/shells", 3, 100);
+  travel_configure(&fx, actor, "q1:key/gold", 1, 1);
+  const double max_health = 100;
+  const qa_q1_travel_policy policy = {true, true};
+  qa_q1_travel_state captured = qa_q1_capture_travel(game, actor, "nailgun", &max_health, policy);
   CHECK(captured.health == 80 && captured.max_health == 100);
   CHECK(captured.inventory_count == 2);
   CHECK(captured.inventory[0].count == 25 && captured.inventory[1].count == 0);
   /* admitQ1Travel: sets health, configures entries, selects weapon. */
-  travel_set_health = -1;
-  travel_configured = 0;
-  travel_selected = NULL;
-  qa_q1mp_ext_admit_q1_travel(&game, actor, &captured);
-  CHECK(travel_set_health == 80 && travel_configured == 2);
-  CHECK(streq(travel_selected, "nailgun"));
+  qa_gameplay_authority_set_health(fx.combat, actor, 1);
+  travel_configure(&fx, actor, qa_q1_weapon_item("nailgun"), 1, 1);
+  travel_configure(&fx, actor, "q1:ammo/nails", 10, 200);
+  qa_q1_admit_travel(game, actor, &captured);
+  CHECK(qa_gameplay_authority_read(fx.combat, actor.id).value.health == 80);
+  CHECK(qa_shared_inventory_table_count(fx.inventory, actor.id, "q1:ammo/shells") == 25);
+  CHECK(qa_shared_inventory_table_count(fx.inventory, actor.id, "q1:key/gold") == 0);
+  CHECK(streq(player->weapon, "nailgun"));
+  qa_q1_travel_state_destroy(&fresh);
+  qa_q1_travel_state_destroy(&captured);
+  CHECK(fx.ctx_errors == 0);
+  q1_world_fixture_destroy(&fx);
   /* q1Obituary: shotgun kill credits the attacker (rerelease key). */
-  qa_q1mp_obituary_input input;
+  qa_q1_obituary_input input;
   memset(&input, 0, sizeof input);
   input.edition = "rerelease";
   input.death_type = "";
   input.random = obituary_random;
+  input.random_ctx = &obituary_sentinel;
   obituary_roll = 0.5;
   input.victim.actor.slot = 1;
   input.victim.name = "Victim";
   input.victim.classname = "player";
   input.victim.is_player = true;
   input.victim.water_type = "empty";
-  input.has_attacker = true;
-  input.attacker.actor.slot = 2;
-  input.attacker.name = "Killer";
-  input.attacker.classname = "player";
-  input.attacker.is_player = true;
-  input.attacker.water_type = "empty";
-  input.attacker.weapon = "shotgun";
-  qa_q1mp_obituary out = qa_q1mp_ext_q1_obituary(&input, false, false);
+  input.victim.kill_string = "";
+  qa_q1_obituary_actor attacker;
+  memset(&attacker, 0, sizeof attacker);
+  attacker.actor.slot = 2;
+  attacker.name = "Killer";
+  attacker.classname = "player";
+  attacker.is_player = true;
+  attacker.water_type = "empty";
+  attacker.weapon = "shotgun";
+  attacker.kill_string = "";
+  input.attacker = &attacker;
+  qa_q1_obituary out = qa_q1_obituary_compute(&input);
   CHECK(out.has_message && streq(out.text, "$qc_death_sg"));
   CHECK(out.has_score && out.score_delta == 1 && out.score_actor.slot == 2);
-  /* attacker-null override falls through to the environment death. */
-  out = qa_q1mp_ext_q1_obituary(&input, true, true);
+  /* attacker null falls through to the environment death. */
+  input.attacker = NULL;
+  out = qa_q1_obituary_compute(&input);
   CHECK(out.has_message && streq(out.text, "$qc_death_died"));
   CHECK(out.has_score && out.score_delta == -1 && out.score_actor.slot == 1);
   /* Self lightning discharge in water (classic text path has message). */
-  input.attacker.actor.slot = 1;
+  input.attacker = &attacker;
+  attacker.actor.slot = 1;
   input.victim.weapon = "lightning";
   input.victim.water_level = 2;
   input.victim.water_type = "water";
-  out = qa_q1mp_ext_q1_obituary(&input, false, false);
+  out = qa_q1_obituary_compute(&input);
   CHECK(out.has_message && streq(out.text, "$qc_discharge_water"));
 }
 
 /* --- undef slice: rogue monster base definitions --- */
 static void test_rogue_base_definitions(void) {
-  qa_q2m_definition jorg = qa_q2mpm_base_create_jorg_definition(NULL);
+  qa_q2m_definition jorg = qa_q2mpm_base_create_jorg_definition(NULL, NULL);
   CHECK(streq(jorg.classname, "monster_jorg") && streq(jorg.kind, "jorg"));
   CHECK(jorg.health == 3000 && jorg.mass == 1000);
   CHECK(streq(jorg.initial_move, "jorg_move_stand"));
   CHECK(jorg.callback_count == 12 && streq(jorg.callbacks[8].name, "MakronToss"));
-  qa_q2m_definition mutant = qa_q2mpm_base_create_mutant_definition(NULL, "rogue");
+  qa_q2m_definition mutant = qa_q2mpm_base_create_mutant_definition(NULL, NULL, "rogue");
   CHECK(streq(mutant.classname, "monster_mutant") && mutant.health == 300);
   CHECK(mutant.has_source_callbacks && mutant.source_callbacks.touch_count == 1);
   CHECK(streq(mutant.source_callbacks.touch[0].name, "rogue_mutant_jump_touch"));
-  qa_q2m_definition classic = qa_q2mpm_base_create_mutant_definition(NULL, NULL);
+  qa_q2m_definition classic = qa_q2mpm_base_create_mutant_definition(NULL, NULL, NULL);
   CHECK(streq(classic.source_callbacks.touch[0].name, "classic_mutant_jump_touch"));
   /* withMakronSpawnCallbacks appends the two think callbacks. */
   qa_q2m_definition makron = qa_q2mpm_base_makron_definition;
   CHECK(streq(makron.classname, "monster_makron") && makron.health == 3000);
   size_t thinks = makron.has_source_callbacks ? makron.source_callbacks.think_count : 0;
-  qa_q2f_named_think think_storage[8];
-  qa_q2f_named_use use_storage[8];
+  qa_q2_named_think think_storage[8];
+  qa_q2_named_use use_storage[8];
   qa_q2m_definition wrapped;
   qa_q2mpm_with_makron_spawn_callbacks(&wrapped, &makron, NULL, think_storage, use_storage);
   CHECK(wrapped.has_source_callbacks && wrapped.source_callbacks.think_count == thinks + 2);
@@ -717,7 +699,6 @@ int main(void) {
   test_services_integration();
   test_launch_projectile_behavior();
   test_services_frame_physics();
-  test_q1b_helpers();
   test_travel_obituary_adapters();
   test_rogue_base_definitions();
   if (failures != 0) {

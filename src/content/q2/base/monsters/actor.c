@@ -1,5 +1,7 @@
 /* Port of src/content/q2/base/monsters/actor.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/monsters/actor.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -11,21 +13,20 @@
 #include "qa/content/q2/foundation/monsters/muzzle.h"
 #include "qa/core/numeric.h"
 
-static qa_q2m_monsters *actor_use_monsters;
 static const char *const actor_names[8] = {"Hellrot", "Tokay", "Killme", "Disruptor",
                                            "Adrianator", "Rambear", "Titus", "Bitterman"};
-const char *qa_q2bm_actor_name(qa_q2f_entity *entity, qa_q2f_game *game) {
-  qa_q2f_saved_result source = game->host->actors.source_of(game->host->actors.ctx, entity->actor.id);
-  double slot = source.has_value ? source.value.slot : (double)entity->actor.id.slot;
+const char *qa_q2bm_actor_name(qa_q2_entity *entity, qa_q2_game_services *game) {
+  qa_actor_source_result source = qa_session_actor_registry_source_of(game->host->actors, entity->actor.id);
+  double slot = source.has_value ? source.slot : (double)entity->actor.id.slot;
   return actor_names[qa_q2m_record_at(8, fmod(slot, 8))];
 }
 /* fields.ts integerField over the qa_q2f spawn mirror (nativeAtoi). */
-static double integer_field(const qa_q2f_spawn_fields *fields, const char *key) {
-  const char *value = qa_q2f_spawn_value(fields, key);
+static double integer_field(const qa_q2_spawn_fields *fields, const char *key) {
+  const char *value = qa_q2_spawn_get(fields, key);
   return value ? (double)qa_native_atoi(value) : 0;
 }
 static void json_origin(char *buf, size_t size, qa_vec3 origin) {
-  snprintf(buf, size, "{\"x\":%g,\"y\":%g,\"z\":%g}", origin.x, origin.y, origin.z);
+  snprintf(buf, size, "{\"x\":%s,\"y\":%s,\"z\":%s}", QA_JS_NUMBER(origin.x), QA_JS_NUMBER(origin.y), QA_JS_NUMBER(origin.z));
 }
 static void stand_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -45,16 +46,16 @@ static void run_fn(void *ctx, qa_q2m_context *c) {
   if (c->state->stand_ground) stand_fn(NULL, c);
   else q2bm_set_move(c, "actor_move_run");
 }
-static void actor_use_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game,
-                         const qa_actor_id *other, const qa_actor_id *activator);
-static qa_q2f_use resolve_actor_use(void) {
-  if (!actor_use_monsters) qa_q2f_error("Q2 restore cannot resolve source callback actor_use");
-  return (qa_q2f_use){actor_use_monsters, actor_use_fn};
+/* TS game.sourceCallbacks.use.resolve("actor_use"): the registered
+ * target module's callback for this game (throws when absent). */
+static qa_q2_use resolve_actor_use(qa_q2_game_services *game) {
+  bool has = false;
+  return qa_q2_use_resolve(game->source_callbacks, "actor_use", &has);
 }
 static void initialize_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   if (strcmp(entity->targetname ? entity->targetname : "", "") == 0
       || strcmp(entity->target ? entity->target : "", "") == 0) {
     char origin[96], message[256];
@@ -67,13 +68,15 @@ static void initialize_fn(void *ctx, qa_q2m_context *c) {
   c->state->good_guy = true;
   double health = integer_field(&entity->spawn, "health");
   entity->max_health = health != 0 ? health : 100;
-  game->host->combat.set_health(game->host->combat.ctx, entity->actor, entity->max_health);
-  entity->use = resolve_actor_use();
+  qa_gameplay_authority_set_health(game->host->combat, entity->actor, entity->max_health);
+  entity->use = resolve_actor_use(game);
 }
 static void attack_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   q2bm_set_move(c, "actor_move_attack");
-  c->state->pause_time = q2bm_now(c->game) + (floor(q2bm_rnd(c->game) * 16) + 10) * 0.1;
+  double left = q2bm_now(c->game);
+  double right = (floor(q2bm_rnd(c->game) * 16) + 10) * 0.1;
+  c->state->pause_time = left + right;
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx;
@@ -82,7 +85,7 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   c->state->pain_time = q2bm_now(c->game) + 3;
   if (reaction.attacker != NULL && c->game->host->is_player(c->game->host->ctx, *reaction.attacker)
       && q2bm_rnd(c->game) < 0.4) {
-    qa_body_state_result other = c->game->host->bodies.read(c->game->host->bodies.ctx, *reaction.attacker);
+    qa_body_state_result other = qa_shared_body_table_read(c->game->host->bodies, *reaction.attacker);
     if (other.has_value)
       c->state->ideal_yaw = qa_vector_to_angles_with_rule(
           qa_sub3_double(other.value.origin, q2bm_body(c->game, c->entity).origin),
@@ -90,12 +93,13 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
     q2bm_set_move(c, q2bm_rnd(c->game) < 0.5 ? "actor_move_flipoff" : "actor_move_taunt");
     static const char *const messages[4] = {"Watch it", "#$@*&", "Idiot", "Check your targets"};
     char text[256];
-    snprintf(text, sizeof text, "%s: %s!\n", qa_q2bm_actor_name(c->entity, c->game),
-             messages[qa_q2m_record_at(4, floor(q2bm_rnd(c->game) * 3))]);
-    qa_q2bm_extended_event event;
+    const char * value2 = qa_q2bm_actor_name(c->entity, c->game);
+    const char * value3 = messages[qa_q2m_record_at(4, floor(q2bm_rnd(c->game) * 3))];
+    snprintf(text, sizeof text, "%s: %s!\n", value2, value3);
+    qa_q2_presentation_event event;
     memset(&event, 0, sizeof event);
-    event.kind = "print"; event.actor = *reaction.attacker; event.level = "chat"; event.text = text;
-    qa_q2bm_emit_extended(event);
+    event.kind = "print"; event.has_actor = true; event.actor = *reaction.attacker; event.level = "chat"; event.text = text;
+    c->game->host->emit(c->game->host->ctx, event);
     return;
   }
   double n = floor(q2bm_rnd(c->game) * 3);
@@ -103,8 +107,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2m_health(game, &entity->actor.id) <= -80) {
@@ -122,8 +126,8 @@ static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
 }
 static void fire_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_body_state enemy;
   bool has_enemy_body = qa_q2m_enemy_body(c, &enemy);
   qa_vec3 start = qa_q2m_project_flash_default(c, qa_q2m_muzzle_offset(game->options.edition, 63));
@@ -131,7 +135,7 @@ static void fire_fn(void *ctx, qa_q2m_context *c) {
   if (has_enemy_body) {
     qa_vec3 target;
     if (qa_q2m_health(game, entity->has_enemy ? &entity->enemy : NULL) > 0) {
-      qa_q2f_entity *enemy_entity = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
+      qa_q2_entity *enemy_entity = entity->has_enemy ? game->entity(game->ctx, &entity->enemy) : NULL;
       target = qa_add3_double(qa_add3_double(enemy.origin, qa_scale3_double(enemy.velocity, -0.2)),
                               q2bm_v3(0, 0, enemy_entity ? enemy_entity->view_height : 22));
     } else {
@@ -161,13 +165,13 @@ const qa_q2m_definition qa_q2bm_actor_definition = {
   .reactions = {NULL, pain_fn, die_fn},
 };
 
-static void actor_use_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game,
+static void actor_use_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game,
                          const qa_actor_id *other, const qa_actor_id *activator) {
   (void)other; (void)activator;
   qa_q2m_context *context = qa_q2m_monsters_context(ctx, entity->actor.id);
-  if (context == NULL) qa_q2f_error("Actor use without restored monster state");
+  if (context == NULL) qa_raise("Error", 0, 0, "Actor use without restored monster state");
   qa_q2m_state *state = context->state;
-  qa_q2f_entity *target = game->pick_target(game->ctx, entity->target ? entity->target : "");
+  qa_q2_entity *target = game->pick_target(game->ctx, entity->target ? entity->target : "");
   if (target) {
     entity->has_goal = true; entity->goal = target->actor.id;
     state->has_move_target = true; state->move_target = target->actor.id;
@@ -183,21 +187,25 @@ static void actor_use_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game,
     stand_fn(NULL, context);
     return;
   }
+  qa_vec3 a = q2bm_body(game, target).origin;
+  qa_vec3 b = q2bm_body(game, entity).origin;
   state->ideal_yaw = qa_vector_to_angles_with_rule(
-      qa_sub3_double(q2bm_body(game, target).origin, q2bm_body(game, entity).origin),
+      qa_sub3_double(a, b),
       QA_VECTOR_TO_ANGLES_NATIVE_AI).y;
   qa_vec3 angles = q2bm_body(game, entity).angles;
   angles.y = state->ideal_yaw;
-  qa_q2f_body_changes changes;
+  qa_q2_body_changes changes;
   memset(&changes, 0, sizeof changes);
   changes.has_angles = true; changes.angles = angles;
-  game->move(game->ctx, entity, changes, false, false);
+  game->move(game->ctx, entity, changes, true);
   context->walk(context->impl_ctx, context);
   entity->target = "";
 }
-static void target_actor_touch_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *services,
+static void target_actor_touch_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *services,
                                   qa_touch_contact contact) {
-  qa_q2f_entity *actor = services->entity(services->ctx, &contact.other);
+  qa_vec3 a;
+  qa_vec3 b;
+  qa_q2_entity *actor = services->entity(services->ctx, &contact.other);
   qa_q2m_context *context = qa_q2m_monsters_context(ctx, contact.other);
   if (actor == NULL || context == NULL || !context->state->has_move_target
       || !qa_same_actor(context->state->move_target, self->actor.id) || actor->has_enemy)
@@ -210,29 +218,29 @@ static void target_actor_touch_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *s
     for (size_t i = 0; i < count; i++) {
       char text[512];
       snprintf(text, sizeof text, "%s: %s\n", qa_q2bm_actor_name(actor, services), self->message);
-      qa_q2bm_extended_event event;
+      qa_q2_presentation_event event;
       memset(&event, 0, sizeof event);
-      event.kind = "print"; event.actor = players[i]; event.level = "chat"; event.text = text;
-      qa_q2bm_emit_extended(event);
+      event.kind = "print"; event.has_actor = true; event.actor = players[i]; event.level = "chat"; event.text = text;
+      services->host->emit(services->host->ctx, event);
     }
   }
-  uint32_t flags = (uint32_t)self->spawnflags;
+  uint32_t flags = qa_js_to_uint32(self->spawnflags);
   if ((flags & 1u) != 0) {
     qa_body_state body = services->body(services->ctx, actor->actor);
     qa_vec3 velocity = {self->movedir.x * self->speed, self->movedir.y * self->speed,
                         body.ground != NULL ? self->movedir.z : body.velocity.z};
-    qa_q2f_body_changes changes;
+    qa_q2_body_changes changes;
     memset(&changes, 0, sizeof changes);
     changes.has_velocity = true; changes.velocity = velocity;
-    changes.has_ground = true; changes.ground = NULL;
-    services->move(services->ctx, actor, changes, false, false);
+    changes.has_ground = true; changes.ground_null = true;
+    services->move(services->ctx, actor, changes, true);
     if (body.ground != NULL)
-      services->sound(services->ctx, actor->actor, "player/male/jump1.wav", true, 2, false, 0, false, 0);
+      services->sound(services->ctx, actor->actor, "player/male/jump1.wav", 2, 1, 1);
   }
-  const char *path_target = qa_q2f_spawn_value(&self->spawn, "pathtarget");
+  const char *path_target = qa_q2_spawn_get(&self->spawn, "pathtarget");
   if (!path_target) path_target = "";
   if ((flags & 2u) == 0 && (flags & 4u) != 0) {
-    qa_q2f_entity *picked = services->pick_target(services->ctx, path_target);
+    qa_q2_entity *picked = services->pick_target(services->ctx, path_target);
     if (picked) { actor->has_enemy = true; actor->enemy = picked->actor.id; }
     else actor->has_enemy = false;
     if (actor->has_enemy) {
@@ -245,10 +253,10 @@ static void target_actor_touch_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *s
   if ((flags & 6u) == 0 && strcmp(path_target, "") != 0) {
     const char *original = self->target;
     self->target = path_target;
-    services->use_targets(services->ctx, self, &actor->actor.id, false, false);
+    qa_q2_game_use_targets_entity(services, self, &actor->actor.id, false);
     self->target = original;
   }
-  qa_q2f_entity *next = services->pick_target(services->ctx, self->target ? self->target : "");
+  qa_q2_entity *next = services->pick_target(services->ctx, self->target ? self->target : "");
   if (next) { context->state->has_move_target = true; context->state->move_target = next->actor.id; }
   else context->state->has_move_target = false;
   if (!actor->has_goal && context->state->has_move_target) {
@@ -259,12 +267,12 @@ static void target_actor_touch_fn(void *ctx, qa_q2f_entity *self, qa_q2f_game *s
     stand_fn(NULL, context);
     return;
   }
-  qa_q2f_entity *goal = context->state->has_move_target
+  qa_q2_entity *goal = context->state->has_move_target
       ? services->entity(services->ctx, &context->state->move_target) : NULL;
   if (goal != NULL && actor->has_goal && qa_same_actor(actor->goal, goal->actor.id))
     context->state->ideal_yaw = qa_vector_to_angles_with_rule(
-        qa_sub3_double(services->body(services->ctx, goal->actor).origin,
-                       services->body(services->ctx, actor->actor).origin),
+        (a = services->body(services->ctx, goal->actor).origin, b = services->body(services->ctx, actor->actor).origin, qa_sub3_double(a,
+                       b)),
         QA_VECTOR_TO_ANGLES_NATIVE_AI).y;
 }
 static qa_vec3 movedir_of(qa_vec3 angles) {
@@ -272,7 +280,7 @@ static qa_vec3 movedir_of(qa_vec3 angles) {
   if (angles.x == 0 && angles.y == -2 && angles.z == 0) return q2bm_v3(0, 0, -1);
   return qa_math_angle_vectors_rule(q2bm_v3(angles.x, angles.y, 0), QA_ANGLE_RULE_NATIVE).forward;
 }
-static bool actor_target_spawn_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game *game) {
+static bool actor_target_spawn_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *game) {
   if (strcmp(entity->classname ? entity->classname : "", "target_actor") != 0) return false;
   if (strcmp(entity->targetname ? entity->targetname : "", "") == 0) {
     char origin[96], message[256];
@@ -282,30 +290,30 @@ static bool actor_target_spawn_fn(void *ctx, qa_q2f_entity *entity, qa_q2f_game 
   }
   entity->server_flags = 1;
   entity->visible = false;
-  qa_q2f_body_changes bounds_change;
+  qa_q2_body_changes bounds_change;
   memset(&bounds_change, 0, sizeof bounds_change);
   bounds_change.has_bounds = true;
   bounds_change.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
-  game->move(game->ctx, entity, bounds_change, false, false);
-  if (((uint32_t)entity->spawnflags & 1u) != 0) {
+  game->move(game->ctx, entity, bounds_change, true);
+  if ((qa_js_to_uint32(entity->spawnflags) & 1u) != 0) {
     if (entity->speed == 0) entity->speed = 200;
     qa_vec3 angles = q2bm_body(game, entity).angles;
     angles.y = angles.y != 0 ? angles.y : 360;
-    double height = qa_q2f_number_field(&entity->spawn, "height", 0);
+    double height = qa_q2_number_field(&entity->spawn, "height", 0);
     entity->movedir = movedir_of(angles);
     entity->movedir.z = height != 0 ? height : 200;
-    qa_q2f_body_changes zero_angles;
+    qa_q2_body_changes zero_angles;
     memset(&zero_angles, 0, sizeof zero_angles);
     zero_angles.has_angles = true; zero_angles.angles = q2bm_zero();
-    game->move(game->ctx, entity, zero_angles, false, false);
+    game->move(game->ctx, entity, zero_angles, true);
   }
-  game->solid(game->ctx, entity, QA_Q2F_SOLID_TRIGGER);
-  entity->touch = (qa_q2f_touch){((qa_q2bm_actor_target_module *)ctx)->monsters, target_actor_touch_fn};
+  game->solid(game->ctx, entity, "trigger");
+  entity->touch = (qa_q2_touch){((qa_q2bm_actor_target_module *)ctx)->monsters, target_actor_touch_fn};
   return true;
 }
-static qa_q2f_callback_definitions actor_target_callbacks_fn(void *ctx) {
+static qa_q2_callback_definitions actor_target_callbacks_fn(void *ctx) {
   qa_q2bm_actor_target_module *module = ctx;
-  qa_q2f_callback_definitions defs;
+  qa_q2_callback_definitions defs;
   memset(&defs, 0, sizeof defs);
   defs.use = module->use_defs; defs.use_count = 1;
   defs.touch = module->touch_defs; defs.touch_count = 1;
@@ -315,14 +323,12 @@ void qa_q2bm_create_actor_target_module(qa_q2bm_actor_target_module *out, qa_q2m
   memset(out, 0, sizeof *out);
   out->monsters = monsters;
   out->use_defs[0].name = "actor_use";
-  out->use_defs[0].cb = (qa_q2f_use){monsters, actor_use_fn};
+  out->use_defs[0].cb = (qa_q2_use){monsters, actor_use_fn};
   out->touch_defs[0].name = "target_actor_touch";
-  out->touch_defs[0].cb = (qa_q2f_touch){monsters, target_actor_touch_fn};
-  actor_use_monsters = monsters;
+  out->touch_defs[0].cb = (qa_q2_touch){monsters, target_actor_touch_fn};
 }
-qa_q2bm_spawn_module qa_q2bm_actor_target_as_spawn(qa_q2bm_actor_target_module *module) {
-  qa_q2bm_spawn_module spawn = {module->monsters, NULL, actor_target_spawn_fn};
-  spawn.callbacks = actor_target_callbacks_fn;
-  spawn.ctx = module;
+qa_q2_spawn_module qa_q2bm_actor_target_as_spawn(qa_q2bm_actor_target_module *module) {
+  module->spawn_callbacks = actor_target_callbacks_fn(module);
+  qa_q2_spawn_module spawn = {module, &module->spawn_callbacks, NULL, actor_target_spawn_fn};
   return spawn;
 }

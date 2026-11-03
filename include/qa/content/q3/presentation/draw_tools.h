@@ -18,7 +18,6 @@ double qa_q3_pres_draw_strlen(const char *text);
 /* TS re-exports from text/q3-font.ts. */
 double qa_q3_pres_proportional_string_width(const char *text);
 double qa_q3_pres_banner_string_width(const char *text);
-double qa_q3_pres_proportional_size_scale(double style);
 /* TS fadeColor: false is TS null. */
 bool qa_q3_pres_fade_color(double time, double start_msec, double total_msec, qa_vec4 *out);
 qa_vec4 qa_q3_pres_team_color(double team);

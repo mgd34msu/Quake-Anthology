@@ -4,6 +4,7 @@
 #include <string.h>
 #include "qa/content/mods/callbacks.h"
 #include "qa/content/mods/match.h"
+#include "qa/foundation/support.h"
 typedef qa_save_reader R;
 static const R *F(const R *r, const char *n, R *o) { qa_save_reader_field(r, n, o); return o; }
 static const char *read_dialect(const R *field) {
@@ -12,14 +13,18 @@ static const char *read_dialect(const R *field) {
   return strcmp(v, "quake-1-re-ts-private") == 0 ? "q1-rerelease-private" : v;
 }
 void qa_compat_qc_quakec_compatibility_destroy(qa_compat_qc_quakec_compatibility *c) {
-  free(c->teams); free(c->combat); free(c->pickup_callers); memset(c, 0, sizeof *c);
+  free(c->teams); free(c->combat); free(c->pickup_callers); qa_save_value_free(c->tree); memset(c, 0, sizeof *c);
 }
+static void compatibility_cleanup(void *arg) { qa_compat_qc_quakec_compatibility_destroy(arg); }
 bool qa_compat_qc_read_quakec_compatibility(const uint8_t *bytes, size_t length, const char *digest, qa_compat_qc_quakec_compatibility *out) {
   memset(out, 0, sizeof *out); out->message_dialect = "known-retail";
   if (!bytes) return true;
   qa_save_value *value = qa_parse_json_value(bytes, length, false);
   if (!value) return false;
-  R reader; if (!qa_save_reader_init(&reader, value, "quakec-compatibility.json")) return false;
+  out->tree = value;
+  /* A throw abandons the result, which TS leaves to the GC. */
+  qa_cleanup scope; qa_cleanup_push(&scope, compatibility_cleanup, out);
+  R reader; if (!qa_save_reader_init(&reader, value, "quakec-compatibility.json")) { qa_cleanup_pop(&scope); qa_compat_qc_quakec_compatibility_destroy(out); return false; }
   { R v; qa_save_reader_literal_number(F(&reader, "version", &v), 1); qa_save_reader_destroy(&v); }
   { R v; qa_save_reader_literal_string(F(&reader, "artifactDigest", &v), digest); qa_save_reader_destroy(&v); }
   { R v; F(&reader, "teams", &v); if (!qa_save_reader_is_undefined(&v)) { out->has_teams = true; out->teams = qa_read_source_team_aliases(&v, &out->team_count); if (!out->teams && out->team_count) { qa_save_reader_destroy(&v); goto oom; } } qa_save_reader_destroy(&v); }
@@ -35,6 +40,7 @@ bool qa_compat_qc_read_quakec_compatibility(const uint8_t *bytes, size_t length,
     }
     qa_save_reader_destroy(&v); }
   qa_save_reader_destroy(&reader);
+  qa_cleanup_pop(&scope);
   return true;
-oom: qa_save_reader_destroy(&reader); qa_compat_qc_quakec_compatibility_destroy(out); return false;
+oom: qa_cleanup_pop(&scope); qa_save_reader_destroy(&reader); qa_compat_qc_quakec_compatibility_destroy(out); return false;
 }

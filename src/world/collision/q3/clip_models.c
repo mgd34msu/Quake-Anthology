@@ -1,5 +1,7 @@
 /* Port of src/world/collision/q3/clip-models.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/q3/clip_models.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 #include "qa/core/common_error.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
@@ -12,12 +14,12 @@ static int is_int_d(double v){return isfinite(v)&&v==floor(v);}
 typedef struct{int is_inline;double index;qa_temporary_collision_model*model;} Resolved;
 static Resolved resolve_(qa_source_clip_models*m,double handle){
   char msg[192];
-  if(!is_int_d(handle))qa_range_error("CM_ClipHandleToModel: bad handle %g",handle);
-  if(handle<0){snprintf(msg,sizeof msg,"CM_ClipHandleToModel: bad handle %g",handle);qa_common_error(QA_COMMON_ERROR_DROP,msg);}
+  if(!is_int_d(handle))qa_range_error("CM_ClipHandleToModel: bad handle %s",QA_JS_NUMBER(handle));
+  if(handle<0){snprintf(msg,sizeof msg,"CM_ClipHandleToModel: bad handle %s",QA_JS_NUMBER(handle));qa_common_error(QA_COMMON_ERROR_DROP,msg);}
   if(handle<qa_collision_world_model_count(m->world)){Resolved r={1,handle,NULL};return r;}
   if(handle==255){Resolved r={0,0,m->box};return r;}
-  if(handle<256){snprintf(msg,sizeof msg,"CM_ClipHandleToModel: bad handle %g < %g < 256",qa_collision_world_model_count(m->world),handle);qa_common_error(QA_COMMON_ERROR_DROP,msg);}
-  snprintf(msg,sizeof msg,"CM_ClipHandleToModel: bad handle %d",(int32_t)(handle+256));qa_common_error(QA_COMMON_ERROR_DROP,msg);
+  if(handle<256){snprintf(msg,sizeof msg,"CM_ClipHandleToModel: bad handle %s < %s < 256",QA_JS_NUMBER(qa_collision_world_model_count(m->world)),QA_JS_NUMBER(handle));qa_common_error(QA_COMMON_ERROR_DROP,msg);}
+  snprintf(msg,sizeof msg,"CM_ClipHandleToModel: bad handle %d",(int)qa_js_to_int32(handle+256));qa_common_error(QA_COMMON_ERROR_DROP,msg);
   Resolved r={0,0,NULL}; return r;
 }
 qa_source_clip_models *qa_source_clip_models_create(qa_collision_world*world,const char*temporary_storage){

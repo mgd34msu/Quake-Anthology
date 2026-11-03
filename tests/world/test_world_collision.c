@@ -25,7 +25,6 @@
 #include "qa/world/collision/media.h"
 #include "qa/world/collision/q1/hull.h"
 #include "qa/world/collision/q1/index.h"
-#include "qa/world/collision/q3/checksum.h"
 #include "qa/world/collision/q3/counters.h"
 #include "qa/world/geometry/q1_solid/polyhedron.h"
 #include "qa/world/geometry/q1_solid/sweep.h"
@@ -99,7 +98,7 @@ static qa_trace_query cube_query(qa_vec3 s, qa_vec3 e) {
   qa_trace_query q;
   memset(&q, 0, sizeof q);
   q.start = s; q.end = e; q.shape.kind = "point";
-  q.policy.kind = "q1"; q.policy.move = "normal"; q.policy.has_hull = false;
+  q.policy.kind = "q1"; q.policy.move = "normal"; q.policy.has_hull = false; q.policy.derived = true; /* TS query() */
   q.numeric = qa_q1_donor_profile;
   return q;
 }
@@ -192,13 +191,6 @@ static void test_sweep_checksum_media(void) {
   counters.c_traces = 3;
   qa_collision_counters_reset(&counters);
   CHECK(counters.c_traces == 0 && counters.c_brush_traces == 0);
-
-  uint8_t bytes[64];
-  for (int i = 0; i < 64; i++) bytes[i] = (uint8_t)i;
-  qa_collision_checksum_lump lump = {0, 64};
-  double sum = qa_collision_lump_checksum(bytes, sizeof bytes, lump);
-  CHECK(sum == (double)(int32_t)sum);
-  CHECK_ABORTS((void)qa_collision_lump_checksum(bytes, sizeof bytes, (qa_collision_checksum_lump){60, 8}));
 }
 static double media_plane_distance(void *ctx, qa_bsp_plane plane, int endpoint) {
   (void)ctx;

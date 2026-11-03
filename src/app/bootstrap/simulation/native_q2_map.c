@@ -22,6 +22,7 @@ char *qa_app_sim_prepare_native_q2_map(qa_app_sim_native_q2_map_geometry world, 
     for (size_t a = 0; a < 6; a++) if (strcmp(cn, alias_from[a]) == 0) {
       for (size_t p = 0; p < parsed[i].property_count; p++)
         if (strcmp(parsed[i].properties[p].key, "classname") == 0) { free(parsed[i].properties[p].value); parsed[i].properties[p].value = dup(alias_to[a]); }
+      break; /* cn pointed at the value just freed; aliases are mutually exclusive. */
     }
   }
   const char *wanted = is(mode, "deathmatch") ? "info_player_deathmatch" : "info_player_start";

@@ -27,8 +27,10 @@ static void receive_event(void *ctx, const qa_q2_gtv_event *event) {
   if (event->kind != QA_Q2_GTV_EVENT_DATA) return;
   if (s->has_pending) qa_range_error("GTV DATA dispatch overlapped its consumer");
   if (!s->has_header) {
-    if (!qa_q2_read_mvd_header(event->bytes, event->bytes_length, &s->header))
+    qa_q2_mvd_header header;
+    if (!qa_q2_read_mvd_header(event->bytes, event->bytes_length, &header))
       qa_range_error("out of memory");
+    s->header = header;
     s->has_header = true;
     s->ready_settled = true;
   }
@@ -38,9 +40,33 @@ static void receive_event(void *ctx, const qa_q2_gtv_event *event) {
   s->pending_length = event->bytes_length;
   s->has_pending = true;
 }
+typedef struct prepare_scope {
+  qa_app_gtv_remote_source *s;
+  qa_q2_gtv_connection_options connect;
+  bool ok;
+} prepare_scope;
+static void prepare_body(void *arg) {
+  prepare_scope *scope = (prepare_scope *)arg;
+  qa_app_gtv_remote_source *s = scope->s;
+  /* A connect that raises has released its own sockets; the client it initialized is
+   * destroyed with the source. */
+  s->connection_live = true;
+  if (!qa_q2_gtv_connection_connect(&s->connection, scope->connect)) { scope->ok = false; return; }
+  if (s->ended) {
+    qa_q2_gtv_connection_close(&s->connection);
+    qa_raise("Error", 0, 0, "GTV source retired during admission");
+  }
+  qa_q2_gtv_connection_start(&s->connection, -1);
+  /* TS awaits the ready promise: pump until the first DATA header. */
+  while (!s->ready_settled && !s->ended)
+    qa_q2_gtv_connection_poll(&s->connection, 100);
+  if (!s->has_header)
+    qa_raise("Error", 0, 0, "%s", s->failure ? s->failure : "GTV source closed before admission");
+}
 qa_app_gtv_remote_source *qa_app_gtv_remote_source_prepare(qa_app_gtv_source_options options) {
   qa_app_gtv_remote_source *s = calloc(1, sizeof *s);
   if (!s) return NULL;
+  s->connection.socket_fd = -1; /* no socket until connect opens one */
   qa_q2_gtv_connection_options connect = {0};
   connect.host = options.host;
   connect.port = options.port;
@@ -49,25 +75,15 @@ qa_app_gtv_remote_source *qa_app_gtv_remote_source_prepare(qa_app_gtv_source_opt
   connect.timeout_milliseconds = -1;
   connect.event = receive_event;
   connect.event_ctx = s;
-  if (!qa_q2_gtv_connection_connect(&s->connection, connect)) { free(s); return NULL; }
-  s->connection_live = true;
-  if (s->ended) {
-    qa_q2_gtv_connection_close(&s->connection);
-    qa_app_gtv_remote_source_destroy(s);
-    qa_range_error("GTV source retired during admission");
-  }
-  qa_q2_gtv_connection_start(&s->connection, -1);
-  /* TS awaits the ready promise: pump until the first DATA header. */
-  while (!s->ready_settled && !s->ended)
-    qa_q2_gtv_connection_poll(&s->connection, 100);
-  if (!s->has_header) {
-    const char *message = s->failure ? s->failure : "GTV source closed before admission";
-    char *copy = strdup(message);
-    source_close(s);
-    qa_app_gtv_remote_source_destroy(s);
-    qa_range_error("%s", copy);
-  }
-  return s;
+  /* TS try { await Promise.all([connect, source.ready]) } catch (error) { source.close(); throw error; } */
+  prepare_scope scope = {s, connect, true};
+  qa_caught_error caught;
+  bool ok = qa_try(prepare_body, &scope, &caught);
+  if (ok && scope.ok) return s;
+  source_close(s);
+  qa_app_gtv_remote_source_destroy(s);
+  if (!ok) qa_rethrow(&caught);
+  return NULL;
 }
 void qa_app_gtv_remote_source_destroy(qa_app_gtv_remote_source *source) {
   if (!source) return;
@@ -103,8 +119,42 @@ void qa_app_gtv_remote_source_bind(qa_app_gtv_remote_source *source,
   source->decoder_live = true;
   source->presentation = presentation;
 }
+typedef struct poll_scope {
+  qa_app_gtv_remote_source *source;
+  const uint8_t *bytes;
+  size_t length;
+  qa_q2_server_record *records;
+  size_t count;
+} poll_scope;
+static void record_release(void *arg) {
+  qa_q2_server_record *record = arg;
+  qa_q2_server_event_clear(&record->event);
+  free(record->raw);
+  record->raw = NULL;
+}
+static void gtv_record(void *ctx, qa_q2_server_record *record) {
+  qa_app_gtv_remote_source *source = ctx;
+  qa_cleanup node;
+  qa_cleanup_push(&node, record_release, record);
+  if (!source->ended) {
+    if (record->event.kind == QA_Q2_SERVER_FRAME)
+      source->presentation.select_view(source->presentation.ctx,
+          qa_q2_mvd_playback_get_selected_player(&source->decoder));
+    qa_app_q2_client_receiver_receive_records(source->receiver, record, 1, 0);
+  }
+  qa_cleanup_pop(&node);
+  record_release(record);
+}
+static void poll_body(void *arg) {
+  poll_scope *scope = (poll_scope *)arg;
+  qa_app_gtv_remote_source *source = scope->source;
+  /* TS iterates readRecords, selecting the view between yielded records. */
+  if (!qa_q2_mvd_playback_read_records(&source->decoder, scope->bytes, scope->length,
+          gtv_record, source))
+    qa_range_error("out of memory");
+}
 void qa_app_gtv_remote_source_poll(qa_app_gtv_remote_source *source) {
-  if (source->failure) qa_range_error("%s", source->failure);
+  if (source->failure) qa_raise("Error", 0, 0, "%s", source->failure);
   if (source->ended) return;
   if (source->connection_live && !source->has_pending)
     qa_q2_gtv_connection_poll(&source->connection, 0);
@@ -113,23 +163,21 @@ void qa_app_gtv_remote_source_poll(qa_app_gtv_remote_source *source) {
   if (!source->receiver) qa_range_error("GTV source has no presentation owner");
   uint8_t *pending = source->pending;
   size_t length = source->pending_length;
+  /* The poll owns the bytes now; close() must not free them under the decoder. */
+  source->pending = NULL;
   source->polling = true;
-  qa_q2_server_record *records = NULL; size_t count = 0;
-  if (!qa_q2_mvd_playback_read(&source->decoder, pending, length, &records, &count)) {
-    source->has_pending = false; free(pending); source->polling = false;
-    qa_range_error("out of memory");
-  }
-  for (size_t i = 0; i < count; i++) {
-    if (records[i].event.kind == QA_Q2_SERVER_FRAME)
-      source->presentation.select_view(source->presentation.ctx,
-          qa_q2_mvd_playback_get_selected_player(&source->decoder));
-    qa_app_q2_client_receiver_receive_records(source->receiver, &records[i], 1, 0);
-    if (source->ended) break;
-  }
-  qa_q2_server_records_free(records, count);
-  if (source->pending == pending) { source->has_pending = false; source->pending = NULL; }
+  poll_scope scope = {source, pending, length, NULL, 0};
+  qa_caught_error caught;
+  bool ok = qa_try(poll_body, &scope, &caught);
+  qa_q2_server_records_free(scope.records, scope.count);
+  /* TS finally: the DATA message is released whether or not delivery failed. */
+  source->has_pending = false;
   free(pending);
   source->polling = false;
+  if (!ok) {
+    source_close(source);
+    qa_rethrow(&caught);
+  }
 }
 void qa_app_gtv_remote_source_select_player(qa_app_gtv_remote_source *source, double clientnum) {
   if (!source->receiver || source->ended) qa_range_error("GTV source has no active viewer");

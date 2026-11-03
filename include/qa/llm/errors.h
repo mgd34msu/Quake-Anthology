@@ -72,6 +72,15 @@ bool qa_llm_starts_with(const char *text, const char *prefix);
 bool qa_llm_ends_with(const char *text, const char *suffix);
 /* Removes every trailing '/' (TS replace(/\/+$/, "")). */
 char *qa_llm_strip_trailing_slashes(const char *text);
+/* True when `tail` (starting at an invalid position reported by
+ * qa_llm_utf8_valid) is a proper prefix of a valid UTF-8 sequence, the only case
+ * a streaming fatal TextDecoder waits on instead of throwing (WHATWG bounds). */
+bool qa_llm_utf8_incomplete_tail(const uint8_t *tail, size_t length);
+/* JS string .length (UTF-16 code units) of UTF-8 text. */
+size_t qa_llm_utf16_length(const char *text);
+/* Buffer.toString("utf8") / non-fatal TextDecoder: invalid subparts become
+ * U+FFFD (WHATWG replacement); appends the decoded bytes to out. */
+void qa_llm_utf8_decode_lossy(const uint8_t *data, size_t length, qa_llm_bytes *out);
 bool qa_llm_utf8_valid(const uint8_t *data, size_t length, size_t *valid_up_to);
 
 /* Date.now() and a monotonic clock for deadlines, both milliseconds. */

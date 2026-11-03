@@ -1,5 +1,6 @@
 /* Port of src/formats/q1-map/queries.ts. GPL-2.0-or-later. */
 #include "qa/formats/q1_map/queries.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -19,9 +20,11 @@ static void *xmalloc(size_t size) {
 }
 
 static noreturn void plain_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
+
+static void free_buffer(void *raw) { free(raw); }
+static void destroy_reader(void *raw) { qa_binary_reader_destroy(raw); }
 
 uint8_t *qa_q1_decompress_pvs(const uint8_t *data, size_t data_length, bool has_offset,
                               double offset, double visible_leaves, size_t *out_length) {
@@ -40,6 +43,10 @@ uint8_t *qa_q1_decompress_pvs(const uint8_t *data, size_t data_length, bool has_
   qa_binary_reader reader;
   if (!qa_binary_reader_init(&reader, (uint8_t *)data, data_length, "Quake PVS"))
     qa_range_error("Out of memory");
+  /* A caught BinaryError (q1LeafPvs) releases what TS leaves to the GC. */
+  qa_cleanup output_node, reader_node;
+  qa_cleanup_push(&output_node, free_buffer, output);
+  qa_cleanup_push(&reader_node, destroy_reader, &reader);
   qa_binary_reader_seek(&reader, (int64_t)offset);
   size_t position = 0;
   while (position < length) {
@@ -51,8 +58,24 @@ uint8_t *qa_q1_decompress_pvs(const uint8_t *data, size_t data_length, bool has_
     }
     position += count;
   }
+  qa_cleanup_pop(&reader_node);
+  qa_cleanup_pop(&output_node);
   qa_binary_reader_destroy(&reader);
   return output;
+}
+
+typedef struct leaf_pvs_job {
+  const qa_q1_world_geometry *map;
+  bool has_offset;
+  double offset, count;
+  uint8_t *result;
+  size_t length;
+} leaf_pvs_job;
+
+static void leaf_pvs_run(void *raw) {
+  leaf_pvs_job *job = raw;
+  job->result = qa_q1_decompress_pvs(job->map->visibility.bytes, job->map->visibility.length,
+                                     job->has_offset, job->offset, job->count, &job->length);
 }
 
 uint8_t *qa_q1_leaf_pvs(const qa_q1_world_geometry *map, double leaf_index, size_t *out_length) {
@@ -60,9 +83,19 @@ uint8_t *qa_q1_leaf_pvs(const qa_q1_world_geometry *map, double leaf_index, size
   const qa_q1_leaf *leaf = &map->leaves[(size_t)leaf_index];
   double count = map->model_count > 0 ? map->models[0].visible_leaves
                                        : (double)map->leaf_count - 1 > 0 ? (double)map->leaf_count - 1 : 0;
-  bool has_offset = leaf_index != 0 && leaf->has_visibility_offset;
-  return qa_q1_decompress_pvs(map->visibility.bytes, map->visibility.length, has_offset,
-                              leaf->visibility_offset, count, out_length);
+  leaf_pvs_job job = {map, leaf_index != 0 && leaf->has_visibility_offset, leaf->visibility_offset, count, NULL, 0};
+  qa_caught_error caught;
+  if (!qa_try(leaf_pvs_run, &job, &caught)) {
+    /* A corrupt or truncated row degrades to "everything visible" (TS catch). */
+    if (strcmp(caught.name, "BinaryError") != 0) qa_rethrow(&caught);
+    size_t length = (size_t)ceil(count / 8);
+    uint8_t *output = xmalloc(length);
+    memset(output, 255, length);
+    *out_length = length;
+    return output;
+  }
+  *out_length = job.length;
+  return job.result;
 }
 
 double qa_q1_find_leaf(const qa_q1_world_geometry *map, qa_vec3 point, double model_index) {
@@ -77,10 +110,10 @@ double qa_q1_find_leaf(const qa_q1_world_geometry *map, qa_vec3 point, double mo
       return leaf;
     }
     if (next != trunc(next) || next >= (double)map->node_count)
-      qa_range_error("Missing Quake node %g", next);
+      qa_range_error("Missing Quake node %s", QA_JS_NUMBER(next));
     const qa_bsp_node *node = &map->nodes[(size_t)next];
     if (node->plane != trunc(node->plane) || node->plane < 0 || node->plane >= (double)map->plane_count)
-      qa_range_error("Missing Quake plane %g", node->plane);
+      qa_range_error("Missing Quake plane %s", QA_JS_NUMBER(node->plane));
     const qa_bsp_plane *plane = &map->planes[(size_t)node->plane];
     /* Contract BspPlane nests Plane + type/signbits, mirroring TS fields. */
     double distance = point.x * plane->plane.normal.x + point.y * plane->plane.normal.y +

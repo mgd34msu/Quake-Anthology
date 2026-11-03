@@ -1,6 +1,7 @@
 /* Port of src/content/q2/multiplayer/lmctf/runes.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/multiplayer/lmctf/runes.h"
 #include "../multiplayer_internal.h"
+#include "qa/foundation/js.h"
 
 static const qa_bounds RUNE_BOUNDS = {{-15, -15, -15}, {15, 15, 15}};
 
@@ -21,7 +22,7 @@ static const qa_lmctf_rune_definition *definition_of(const char *classname) {
 }
 static const qa_lmctf_rune_definition *definition_or_fail(qa_q2_entity *entity) {
   const qa_lmctf_rune_definition *def = definition_of(entity->classname);
-  if (def == NULL) qa_q2f_error("Unknown LMCTF rune %s", entity->classname);
+  if (def == NULL) qa_raise("Error", 0, 0, "Unknown LMCTF rune %s", entity->classname);
   return def;
 }
 
@@ -139,7 +140,9 @@ static qa_q2_entity *farthest_spot(qa_lmctf_runes *r, qa_q2_game_services *g) {
     for (int d = 0; d < QA_LMCTF_RUNE_COUNT; d++) {
       for (size_t j = i + 1; j < n; j++)
         if (strcmp(all[j]->classname, QA_LMCTF_RUNES[d].classname) == 0) {
-          double current = qa_q2_length(qa_q2_subtract(qa_q2_game_body(g, all[i]).origin, qa_q2_game_body(g, all[j]).origin));
+          qa_vec3 a = qa_q2_game_body(g, all[i]).origin;
+          qa_vec3 b = qa_q2_game_body(g, all[j]).origin;
+          double current = qa_q2_length(qa_q2_subtract(a, b));
           if (current < nearest) nearest = current;
           break;
         }
@@ -155,7 +158,7 @@ static qa_q2_entity *farthest_spot(qa_lmctf_runes *r, qa_q2_game_services *g) {
 static void visible(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_game_services *g) {
   (void)r;
   entity->visible = true;
-  entity->server_flags = (double)((int64_t)entity->server_flags & ~1);
+  entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) & ~1);
   entity->spawnflags = 0x10000;
   entity->model = definition_or_fail(entity)->model;
   g->motion(g->ctx, entity, "toss");
@@ -171,9 +174,10 @@ static void toss_rune(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_game_servic
   bool has_owner = entity->has_owner;
   qa_actor_id owner = entity->owner;
   entity->has_owner = false;
-  qa_vec3 velocity = {-2000 + g->host->random(g->host->ctx) * 4000,
-                      -2000 + g->host->random(g->host->ctx) * 4000,
-                      800 + g->host->random(g->host->ctx) * 200};
+  double x = -2000 + g->host->random(g->host->ctx) * 4000;
+  double y = -2000 + g->host->random(g->host->ctx) * 4000;
+  double z = 800 + g->host->random(g->host->ctx) * 200;
+  qa_vec3 velocity = {x, y, z};
   qa_bounds bounds = RUNE_BOUNDS;
   qa_trace_result trace = qa_q2mp_trace(g, origin, destination, &bounds, has_owner ? &owner : NULL, 3);
   qa_q2_body_changes move = {0};
@@ -194,8 +198,8 @@ bool qa_lmctf_runes_spawn(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_game_se
   entity->model = def->model;
   entity->count = def->bit;
   if (strcmp(def->kind, "vampire") == 0) {
-    entity->effects = (double)((int64_t)entity->effects | 0x400);
-    entity->render_flags = (double)((int64_t)entity->render_flags | 1024);
+    entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x400);
+    entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 1024);
   }
   qa_q2_source_callbacks_register(g->source_callbacks, r->callbacks);
   toss_rune(r, entity, g);
@@ -205,7 +209,7 @@ bool qa_lmctf_runes_spawn(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_game_se
 void qa_lmctf_runes_post_spawn(qa_lmctf_runes *r, qa_q2_game_services *g) {
   for (int i = 0; i < QA_LMCTF_RUNE_COUNT; i++) {
     const qa_lmctf_rune_definition *def = &QA_LMCTF_RUNES[i];
-    if (((int64_t)r->context->rules->runes & (int64_t)def->bit) == 0) continue;
+    if ((qa_js_to_int32(r->context->rules->runes) & qa_js_to_int32(def->bit)) == 0) continue;
     qa_q2_entity *spot = farthest_spot(r, g);
     if (spot == NULL) spot = r->red_flag(r->red_flag_ctx, g);
     if (spot == NULL) continue;
@@ -254,7 +258,7 @@ static void think_fn(void *ctx, qa_q2_entity *entity, qa_q2_game_services *g) {
 static bool pickup_impl(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_game_services *g, qa_actor_id actor) {
   qa_lmctf_player_state *state = qa_lmctf_context_get(r->context, actor);
   qa_q2_entity *player = qa_q2_game_entity_of(g, &actor);
-  qa_q2mp_player_state *common = r->context->hooks.player(r->context->hooks.ctx, actor);
+  qa_q2_base_player_state *common = r->context->hooks.player(r->context->hooks.ctx, actor);
   if (state == NULL || player == NULL || common == NULL || common->spectator ||
       qa_q2mp_health_or(g, actor, 0) <= 0 || strcmp(entity->solid, "trigger") != 0) return false;
   if (state->has_rune) {
@@ -280,7 +284,7 @@ static bool pickup_impl(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_game_serv
   entity->has_owner = true;
   entity->owner = actor;
   entity->visible = false;
-  entity->server_flags = (double)((int64_t)entity->server_flags | 1);
+  entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) | 1);
   g->cancel(g->ctx, entity);
   g->solid(g->ctx, entity, "none");
   g->motion(g->ctx, entity, "stationary");
@@ -353,7 +357,7 @@ void qa_lmctf_runes_after_health(qa_lmctf_runes *r, qa_actor_id target, const qa
   int shift = g->host->is_player(g->host->ctx, target) ? 1
               : victim != NULL && strcmp(victim->classname, "bodyque") == 0 ? 2 : 0;
   if (shift == 0) return;
-  double health = combat.value.health + (double)(((int32_t)take) >> shift);
+  double health = combat.value.health + (double)((qa_js_to_int32(take)) >> shift);
   qa_gameplay_authority_set_health(g->host->combat, source->actor, health > 250 ? 250 : health);
   g->sound(g->ctx, source->actor, "brain/brnatck3.wav", 3, 1, 1);
 }
@@ -367,7 +371,7 @@ void qa_lmctf_runes_player_frame(qa_lmctf_runes *r, qa_q2_entity *entity, qa_q2_
   double heart_rate = trunc(combat.value.health / 5);
   if (heart_rate < 5) heart_rate = 5;
   if (heart_rate > 25) heart_rate = 25;
-  double frame = round(qa_q2mp_now(g) * 10);
+  double frame = qa_js_round(qa_q2mp_now(g) * 10);
   if (frame < state->regen_frame + heart_rate) return;
   state->regen_frame = frame;
   bool sound = false;
@@ -400,8 +404,8 @@ void qa_lmctf_runes_weapon_frame(qa_lmctf_runes *r, qa_owned_actor entity, qa_q2
   const char *rune = qa_lmctf_runes_held(r, entity.id, g);
   if (rune != NULL && strcmp(rune, "haste") == 0) {
     if (firing) g->sound(g->ctx, entity, "player/lava1.wav", 3, 1, 1);
-    qa_q2mp_weapon_state *weapon = r->context->hooks.weapons->get_state(r->context->hooks.weapons->ctx, entity.id);
-    double frame = weapon == NULL ? 0 : weapon->animation.frame;
+    qa_q2w_state *weapon = qa_q2w_ballistics_state(&r->context->hooks.weapons->base, entity.id);
+    double frame = weapon == NULL ? 0 : weapon->frame;
     if (frame != 0) repeat(repeat_ctx);
   } else if (rune != NULL && strcmp(rune, "damage") == 0 && firing) {
     g->sound(g->ctx, entity, "ctf/strength.wav", 3, 1, 1);

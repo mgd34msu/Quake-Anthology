@@ -1,8 +1,7 @@
 /* Port of src/network/common/endpoint.ts. Addresses are value structs;
  * ipv6 host / loopback id strings are owned copies (destroy frees).
  * resolveAddress: TS async DNS -> synchronous getaddrinfo (PORTING async
- * rule). ipAddress IPv6 canonicalization uses inet_ntop in place of the
- * TS URL canonicalizer. RangeError -> qa_range_error. GPL-2.0-or-later. */
+ * rule). ipAddress IPv6 canonicalization reproduces the WHATWG URL serializer. RangeError -> qa_range_error. GPL-2.0-or-later. */
 #ifndef QA_NETWORK_COMMON_ENDPOINT_H
 #define QA_NETWORK_COMMON_ENDPOINT_H
 #include <stdbool.h>
@@ -22,6 +21,10 @@ typedef qa_net_address qa_ipv4_address_net;
 typedef qa_net_address qa_ipx_address_net;
 
 int64_t qa_net_port_number(int64_t port, bool allow_zero);
+/* TS isPrivateHost: loopback, RFC 1918, link-local, unique-local and similar non-global hosts. */
+bool qa_net_is_private_host(const char *hostname);
+/* TS isPrivateNetworkAddress: loopback and IPX (a link-layer network) count as trusted. */
+bool qa_net_is_private_network_address(const qa_net_address *address);
 /* All makers return 0 only on OOM; invalid input aborts. */
 int qa_net_make_ipv4(qa_net_address *out, const int64_t host[4], int64_t port, bool allow_zero);
 int qa_net_make_ip(qa_net_address *out, const char *host, int64_t port, bool allow_zero);
@@ -38,5 +41,9 @@ bool qa_net_same_address(const qa_net_address *a, const qa_net_address *b, bool 
 int qa_net_parse_address(qa_net_address *out, const char *kind, const char *host_text,
                          const double *numbers, size_t number_count,
                          int64_t network, bool has_network, double port, bool has_port);
+/* TS parseNetworkAddress over a parsed JSON value (saved favorites and configured
+ * endpoints). Raises the TS RangeErrors; *out is untouched heap on raise. */
+typedef struct qa_save_value qa_save_value;
+void qa_net_parse_address_value(const qa_save_value *value, qa_net_address *out);
 int qa_net_resolve_address(qa_net_address *out, const char *text, int64_t default_port, int family);
 #endif

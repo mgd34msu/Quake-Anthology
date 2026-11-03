@@ -4,6 +4,7 @@
 #include "catalog_internal.h"
 #include "qa/contracts/qvm_grapple.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 
 const qa_equipment_provider_set qa_equipment_provider_ids = {
     "q1:equipment/threewave-grapple", "q2:equipment/ctf-grapple",
@@ -102,7 +103,7 @@ qa_grapple_style *qa_grapple_styles(const qa_content_catalog *catalog,
   }
   style_preferred_edition = preferred->expectation.edition;
   if (source_count > 1)
-    qsort(sources, source_count, sizeof *sources, compare_style_sources);
+    qa_js_sort(sources, source_count, sizeof *sources, compare_style_sources);
   qa_grapple_style *styles = NULL;
   size_t count = 0, capacity = 0;
   for (size_t i = 0; i < source_count; i++) {

@@ -22,7 +22,10 @@ bool qa_toggle_channel_has_pending_reliable(const qa_toggle_channel *c) { return
 void qa_toggle_channel_queue(qa_toggle_channel *c, const uint8_t *payload, size_t length) {
   if ((long long)(c->pending_len + length) > c->capacity) qa_range_error("Reliable message overflow");
   uint8_t *j = realloc(c->pending, c->pending_len + length ? c->pending_len + length : 1);
-  c->pending = j; memcpy(c->pending + c->pending_len, payload, length); c->pending_len += length;
+  if (!j) qa_range_error("Out of memory");
+  c->pending = j;
+  if (length) memcpy(c->pending + c->pending_len, payload, length);
+  c->pending_len += length;
 }
 void qa_toggle_channel_transmit(qa_toggle_channel *c, const uint8_t *unreliable, size_t length,
                                 long long payload_capacity, qa_toggle_packet *out) {
@@ -67,7 +70,7 @@ int qa_stop_and_wait_init(qa_stop_and_wait *c, long long mm, long long fb, doubl
 void qa_stop_and_wait_destroy(qa_stop_and_wait *c) { free(c->sending); free(c->received); memset(c, 0, sizeof *c); }
 bool qa_stop_and_wait_can_send(const qa_stop_and_wait *c) { return !c->has_sending; }
 void qa_stop_and_wait_begin(qa_stop_and_wait *c, const uint8_t *bytes, size_t length) {
-  if (c->has_sending) qa_range_error("Reliable message remains unacknowledged");
+  if (c->has_sending) qa_raise("Error", 0, 0, "Reliable message remains unacknowledged");
   if ((long long)length > c->max_message_bytes) qa_range_error("Reliable message exceeds capacity");
   c->sending = dupbytes(bytes, length); c->sending_len = length; c->offset = 0; c->sent = false; c->has_sending = true;
 }
@@ -91,7 +94,8 @@ qa_reliable_fragment_result qa_stop_and_wait_receive(qa_stop_and_wait *c, const 
   qa_reliable_fragment_result out; memset(&out, 0, sizeof out); out.acknowledge = f->sequence;
   if (f->sequence != c->incoming) { out.kind = "duplicate"; return out; }
   if ((long long)(c->received_len + f->length) > c->max_message_bytes) qa_range_error("Reliable receive overflow");
-  memcpy(c->received + c->received_len, f->payload, f->length); c->received_len += f->length;
+  if (f->length) memcpy(c->received + c->received_len, f->payload, f->length);
+  c->received_len += f->length;
   c->incoming = c->incoming + 1u;
   if (!f->final) { out.kind = "fragment"; return out; }
   out.kind = "message"; out.payload = dupbytes(c->received, c->received_len); out.length = c->received_len;

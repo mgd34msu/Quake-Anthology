@@ -5,6 +5,7 @@
 #include <string.h>
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 enum { BIG_BUFFER_BYTES = 32000, LADJUST = 0x04, ZEROPAD = 0x80 };
 qa_q3_game_format_arg qa_q3_game_format_number(double v) { qa_q3_game_format_arg a = {QA_Q3_FMT_NUMBER, v, NULL}; return a; }
 qa_q3_game_format_arg qa_q3_game_format_string(const char *v) { qa_q3_game_format_arg a = {QA_Q3_FMT_STRING, 0, v}; return a; }
@@ -38,7 +39,7 @@ static double float_argument(qa_q3_game_format_arg v, size_t index) {
 }
 static int reversed_bytes(double value, int *bytes) {
   double remaining = value < 0 ? qa_int32(-value) : value; int n = 0;
-  do { bytes[n++] = 48 + (int)fmod(remaining, 10); remaining = trunc(remaining / 10); } while (remaining != 0);
+  do { bytes[n++] = 48 + qa_js_to_int32(fmod(remaining, 10)); remaining = trunc(remaining / 10); } while (remaining != 0);
   if (value < 0) bytes[n++] = 45;
   return n;
 }
@@ -51,7 +52,7 @@ static void add_int(out_t *o, double value, double width, int flags) {
 static void add_float(out_t *o, double value, double width, double precision) {
   double remaining = value < 0 ? (float)(-value) : value; double integer = trunc(remaining);
   int bytes[16]; int n = 0; double r = integer;
-  do { bytes[n++] = 48 + (int)fmod(r, 10); r = trunc(r / 10); } while (r != 0);
+  do { bytes[n++] = 48 + qa_js_to_int32(fmod(r, 10)); r = trunc(r / 10); } while (r != 0);
   if (value < 0) bytes[n++] = 45;
   append_rep(o, 32, width > n ? width - n : 0);
   for (int i = n - 1; i >= 0; i--) append_byte(o, bytes[i]);
@@ -59,7 +60,7 @@ static void add_float(out_t *o, double value, double width, double precision) {
   if (digits > 32) qa_range_error("float precision would overflow AddFloat's 32-byte digit buffer");
   if (digits == 0) return;
   append_byte(o, 46);
-  for (int i = 0; i < digits; i++) { remaining = (float)(remaining - trunc(remaining)); remaining = (float)(remaining * 10); append_byte(o, 48 + (int)fmod(trunc(remaining), 10)); }
+  for (int i = 0; i < digits; i++) { remaining = (float)(remaining - trunc(remaining)); remaining = (float)(remaining * 10); append_byte(o, 48 + qa_js_to_int32(fmod(trunc(remaining), 10))); }
 }
 static void add_string(out_t *o, const char *value, int is_null, double width, double precision) {
   const char *text = is_null ? "(null)" : value; double eff = is_null ? -1 : precision;
@@ -90,7 +91,7 @@ char *qa_q3_game_format(const char *format, const qa_q3_game_format_arg *args, s
       if (sb == 100 || sb == 105) add_int(&o, integer_argument(argument, arg_index, (char)sb), width, flags);
       else if (sb == 102) add_float(&o, float_argument(argument, arg_index), width, precision);
       else if (sb == 115) { if (argument.kind == QA_Q3_FMT_NUMBER) qa_range_error("argument %zu for %%s must be a string or null", arg_index); add_string(&o, argument.string, argument.kind == QA_Q3_FMT_NULL, width, precision); }
-      else append_byte(&o, (int)integer_argument(argument, arg_index, (char)sb));
+      else append_byte(&o, qa_js_to_int32(integer_argument(argument, arg_index, (char)sb)));
       arg_index++; break;
     }
   }

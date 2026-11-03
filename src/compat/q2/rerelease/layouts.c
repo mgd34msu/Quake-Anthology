@@ -60,7 +60,7 @@ qa_guest_layout qa_compat_q2_rerelease_vec2_layout, qa_compat_q2_rerelease_vec3_
   qa_compat_q2_rerelease_client_layout, qa_compat_q2_rerelease_height_fog_layout, qa_compat_q2_rerelease_persistent_client_layout,
   qa_compat_q2_rerelease_private_client_prefix_layout, qa_compat_q2_rerelease_respawn_client_layout,
   qa_compat_q2_rerelease_private_client_layout, qa_compat_q2_rerelease_server_entity_layout, qa_compat_q2_rerelease_edict_layout,
-  qa_compat_q2_rerelease_private_edict_prefix_layout, qa_compat_q2_rerelease_rectangle_layout, qa_compat_q2_rerelease_cgame_server_data_layout;
+  qa_compat_q2_rerelease_private_edict_prefix_layout, qa_compat_q2_rerelease_rectangle_layout;
 static qa_guest_layout damage_indicator_layout, kick_layout, armor_info_layout, save_function_layout;
 static bool built = false;
 /* Helper to append repeated-name members (TS [...names].map). */
@@ -238,8 +238,6 @@ void qa_compat_q2_rerelease_layouts_ensure(void) {
     qa_compat_q2_rerelease_private_edict_prefix_layout = build("edict_t_private_prefix", list.items, list.count); free(list.items); }
   { const member_t m[] = {M("x", "int32"), M("y", "int32"), M("width", "int32"), M("height", "int32")};
     qa_compat_q2_rerelease_rectangle_layout = build("vrect_t", m, 4); }
-  { const member_t m[] = {MC("layout", "uint8", 1024), MC("inventory", "int16", 256)};
-    qa_compat_q2_rerelease_cgame_server_data_layout = build("cg_server_data_t", m, 2); }
 }
 qa_guest_layout qa_compat_q2_rerelease_import_table_layout(const char *kind, const char *const *names, size_t count) {
   members_t list = {0};

@@ -15,17 +15,20 @@
 #include "qa/core/cvars/info.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 enum { EF_VOTED = 0x4000, EF_TEAMVOTED = 0x80000, MAX_VOTE_COUNT = 3,
   MAX_STRING_CHARS = 1024, MAX_SAY_TEXT = 150, MOD_GAUNTLET = 2, MOD_SUICIDE = 20 };
+/* TS GameCommandError: dispatch reports it to the player instead of failing. */
+#define game_command_error(message) qa_raise("GameCommandError", 0, 0, "%s", message)
 static const char *const orders[] = {"hold your position", "hold this position", "come here", "cover me",
     "guard location", "search and destroy", "report"};
 static const char *const game_names[] = {"Free For All", "Tournament", "Single Player", "Team Deathmatch",
     "Capture the Flag", "One Flag CTF", "Overload", "Harvester"};
-static double s32(double v) { return (int32_t)v; }
-static double imul(double a, double b) { return (int32_t)((int32_t)a * (int32_t)b); }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
-static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
+static double s32(double v) { return qa_js_to_int32(v); }
+static double imul(double a, double b) { return (int32_t)(qa_js_to_int32(a) * qa_js_to_int32(b)); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
+static void slot_set(qa_q3_base_player_state_slots *s, double i, double v) { qa_q3_base_player_state_slots_set(s, (size_t)i, v); }
 
 /* TS bounded(): C strings already end at first NUL and hold bytes. */
 static char *bounded_dup(const char *text, size_t capacity) {
@@ -45,7 +48,7 @@ static char *lower_dup(const char *text) { char *out = bounded_dup(text, strlen(
 /* TS Arguments: bounded copies of argv. */
 typedef struct arguments { char **values; size_t length; } arguments;
 static void arguments_init(arguments *args, const char *const *argv, size_t argc) {
-  if (argc > 1024) qa_range_error("Command exceeds MAX_STRING_TOKENS");
+  if (argc > 1024) game_command_error("Command exceeds MAX_STRING_TOKENS");
   args->values = calloc(argc ? argc : 1, sizeof(char *));
   if (!args->values) qa_range_error("out of memory");
   args->length = argc;
@@ -80,7 +83,7 @@ static char *arguments_concat(const arguments *args, size_t start) {
 }
 char *qa_q3_ta_concat_command_args(const char *const *argv, size_t argc, double start) {
   if (start != trunc(start) || start < 0)
-    qa_range_error("ConcatArgs start must be a nonnegative integer");
+    game_command_error("ConcatArgs start must be a nonnegative integer");
   arguments args;
   arguments_init(&args, argv, argc);
   char *out = arguments_concat(&args, (size_t)start);
@@ -96,7 +99,8 @@ static char *sanitize(const char *text) {
   for (size_t i = 0; i < length; i++) {
     unsigned code = (unsigned char)input[i];
     if (code == 27) {
-      if (i + 1 == length) { free(input); free(result); qa_range_error("SanitizeString ESC pair crosses the terminating NUL"); }
+      /* C steps over the terminating NUL here. A peer controls this text, so a trailing ESC just ends the string. */
+      if (i + 1 == length) break;
       i++;
     } else if (code >= 32 && code < 128) result[out++] = (char)tolower((int)code);
   }
@@ -121,7 +125,7 @@ static char *clean_name(const char *text) {
   return result;
 }
 static qa_q3_game_client *client_of(qa_q3_game_entity *entity) {
-  if (entity->client == NULL) qa_range_error("Player command requires a client entity");
+  if (entity->client == NULL) game_command_error("Player command requires a client entity");
   return entity->client;
 }
 static void print_to(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, const char *text) {
@@ -136,13 +140,13 @@ static void print_fmt_to(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *en
   print_to(r, entity, t);
   free(t);
 }
-static qa_q3_base_product base_product(qa_q3_game_product p) {
-  return p == QA_Q3_GAME_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
+static qa_q3_base_product base_product(qa_q3_base_product p) {
+  return p == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
 }
 
 void qa_q3_ta_game_command_runtime_init(qa_q3_ta_game_command_runtime *r, qa_q3_ta_game_command_host host) {
   if (host.team_scores->length != 4)
-    qa_range_error("Commands require the shared four-slot team score table");
+    game_command_error("Commands require the shared four-slot team score table");
   r->host = host;
 }
 
@@ -154,28 +158,34 @@ void qa_q3_ta_game_command_runtime_scoreboard(qa_q3_ta_game_command_runtime *r, 
   double count;
   for (count = 0; count < state->num_connected_clients; count++) {
     if (count < 0 || count >= QA_Q3_MAX_CLIENTS)
-      qa_range_error("Scoreboard sorted-client prefix exceeds its backing storage");
+      game_command_error("Scoreboard sorted-client prefix exceeds its backing storage");
     double slot = state->sorted_clients[(size_t)count];
     qa_q3_game_client *client = qa_q3_entity_pool_client_at(pool, slot);
-    qa_q3_game_player_slots_mirror *persistent = &client->ps.persistant;
-    double ping = client->pers.connected == QA_Q3_CONN_CONNECTING ? -1 : fmin(0, 999); /* TS ps.ping */
+    qa_q3_base_player_state_slots *persistent = &client->ps.persistant;
+    double ping = client->pers.connected == QA_Q3_CONN_CONNECTING ? -1 : qa_js_min(client->ps.ping, 999);
     double accuracy = client->accuracy_shots == 0 ? 0
         : s32(trunc(imul(client->accuracy_hits, 100) / client->accuracy_shots));
     double perfect = (slot_get(persistent, QA_Q3_BASE_PERS_RANK) == 0 &&
         slot_get(persistent, QA_Q3_BASE_PERS_KILLED) == 0) ? 1 : 0;
+    qa_q3_game_format_arg value5 = qa_q3_game_format_number(slot);
+    qa_q3_game_format_arg value6 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_SCORE));
+    qa_q3_game_format_arg value7 = qa_q3_game_format_number(ping);
+    qa_q3_game_format_arg value8 = qa_q3_game_format_number(trunc(s32(state->time - client->pers.enter_time) / 60000));
+    qa_q3_game_format_arg value9 = qa_q3_game_format_number(0);
+    qa_q3_game_format_arg value10 = qa_q3_game_format_number(qa_q3_entity_pool_at(pool, slot)->s.powerups);
+    qa_q3_game_format_arg value11 = qa_q3_game_format_number(accuracy);
+    qa_q3_game_format_arg value12 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT));
+    qa_q3_game_format_arg value13 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_EXCELLENT_COUNT));
+    qa_q3_game_format_arg value14 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_GAUNTLET_FRAG_COUNT));
+    qa_q3_game_format_arg value15 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_DEFEND_COUNT));
+    qa_q3_game_format_arg value16 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_ASSIST_COUNT));
+    qa_q3_game_format_arg value17 = qa_q3_game_format_number(perfect);
+    qa_q3_game_format_arg value18 = qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_CAPTURES));
     qa_q3_game_format_arg a[] = {
-      qa_q3_game_format_number(slot), qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_SCORE)),
-      qa_q3_game_format_number(ping),
-      qa_q3_game_format_number(trunc(s32(state->time - client->pers.enter_time) / 60000)),
-      qa_q3_game_format_number(0), qa_q3_game_format_number(qa_q3_entity_pool_at(pool, slot)->s.powerups),
-      qa_q3_game_format_number(accuracy),
-      qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT)),
-      qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_EXCELLENT_COUNT)),
-      qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_GAUNTLET_FRAG_COUNT)),
-      qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_DEFEND_COUNT)),
-      qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_ASSIST_COUNT)),
-      qa_q3_game_format_number(perfect),
-      qa_q3_game_format_number(slot_get(persistent, QA_Q3_BASE_PERS_CAPTURES))};
+      value5, value6,
+      value7,
+      value8,
+      value9, value10, value11, value12, value13, value14, value15, value16, value17, value18};
     char *entry = qa_q3_game_format(" %i %i %i %i %i %i %i %i %i %i %i %i %i %i", a, 14, 1024);
     size_t entry_length = strlen(entry);
     if (length + entry_length > 1024) { free(entry); break; }
@@ -183,10 +193,11 @@ void qa_q3_ta_game_command_runtime_scoreboard(qa_q3_ta_game_command_runtime *r, 
     length += entry_length;
     free(entry);
   }
-  qa_q3_game_format_arg a[] = {qa_q3_game_format_number(count),
-      qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED)),
-      qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE)),
-      qa_q3_game_format_string(text)};
+  qa_q3_game_format_arg value = qa_q3_game_format_number(count);
+  qa_q3_game_format_arg value2 = qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_RED));
+  qa_q3_game_format_arg value3 = qa_q3_game_format_number(slot_get(r->host.team_scores, QA_Q3_BASE_TEAM_BLUE));
+  qa_q3_game_format_arg value4 = qa_q3_game_format_string(text);
+  qa_q3_game_format_arg a[] = {value, value2, value3, value4};
   char *t = qa_q3_game_format("scores %i %i %i%s", a, 4, 32000);
   r->host.imports.send_server_command(r->host.imports.ctx, entity->slot, t);
   free(t);
@@ -249,7 +260,7 @@ static void give(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, ar
   char *key = lower_dup(name);
   bool all = strcmp(key, "all") == 0;
   qa_q3_game_client *client = client_of(entity);
-  const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(base_product(client->ps.product));
+  const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(base_product(client->ps.state_product));
   qa_actor_id actor = qa_q3_game_entity_actor(entity).id;
   bool done = false;
   if (all || strcmp(key, "health") == 0) {
@@ -259,7 +270,7 @@ static void give(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, ar
   if (!done && (all || strcmp(key, "weapons") == 0)) {
     if (!(r->host.grant_selected_arsenal && r->host.grant_selected_arsenal(r->host.ctx, actor, "weapons")))
       slot_set(&client->ps.stats, schema->weapons,
-          (double)(int32_t)((1 << (int)qa_q3_base_weapon_count(base_product(client->ps.product))) - 1 -
+          (double)(int32_t)((1 << qa_js_to_int32(qa_q3_base_weapon_count(base_product(client->ps.state_product)))) - 1 -
               (1 << QA_Q3_WP_GRAPPLING_HOOK) - (1 << QA_Q3_WP_NONE)));
     if (!all) done = true;
   }
@@ -288,7 +299,7 @@ static void give(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, ar
   }
   if (!done && !all) {
     const qa_q3_base_item_definition *item =
-        qa_q3_base_find_item(base_product(client->ps.product), name);
+        qa_q3_base_find_item(base_product(client->ps.state_product), name);
     if (item == NULL) {
       if (r->host.give_selected_item) {
         size_t count = args->length > 1 ? args->length - 1 : 0;
@@ -297,23 +308,14 @@ static void give(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, ar
       }
     } else {
       qa_q3_game_entity *temporary = qa_q3_entity_pool_spawn(r->host.pool);
-      temporary->s.origin = entity->r.current_origin;
+      temporary->s.origin = qa_q3_base_entity_shared_current_origin(&entity->r);
       qa_q3_game_entity_set_classname(temporary, item->class_name);
       char cvar_name[300];
       (void)snprintf(cvar_name, sizeof cvar_name, "disable_%s", item->class_name ? item->class_name : "");
-      /* TS calls spawnItem directly with host.items; the mirror row is
-       * index-aligned with the shared item list findItem searched. */
-      size_t base_count = 0;
-      const qa_q3_base_item_definition *base_list =
-          qa_q3_base_item_list(base_product(client->ps.product), &base_count);
-      size_t item_index = (size_t)(item - base_list);
-      const qa_q3_game_item_definition_mirror *mirror_item =
-          r->host.items.registry.items != NULL && item_index < r->host.items.registry.count
-              ? &r->host.items.registry.items[item_index] : NULL;
       qa_q3_spawn_variables give_vars;
       qa_q3_spawn_variables_init(&give_vars, NULL, 0);
       give_disabled give_check = {r, cvar_name};
-      qa_q3_spawn_item(temporary, mirror_item, &give_vars, give_is_disabled, &give_check,
+      qa_q3_spawn_item(temporary, item, &give_vars, give_is_disabled, &give_check,
                        r->host.items);
       qa_q3_spawn_variables_destroy(&give_vars);
       qa_q3_finish_spawning_item(temporary, r->host.items);
@@ -337,8 +339,8 @@ static void toggle(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, 
   if (strcmp(command, "noclip") == 0) { client->noclip = !client->noclip; enabled = client->noclip; }
   else {
     double flag = strcmp(command, "god") == 0 ? QA_Q3_GAME_FLAG_GODMODE : QA_Q3_GAME_FLAG_NOTARGET;
-    entity->flags = (double)((int32_t)entity->flags ^ (int32_t)flag);
-    enabled = ((int32_t)entity->flags & (int32_t)flag) != 0;
+    entity->flags = (double)(qa_js_to_int32(entity->flags) ^ qa_js_to_int32(flag));
+    enabled = (qa_js_to_int32(entity->flags) & qa_js_to_int32(flag)) != 0;
   }
   char buffer[64];
   (void)snprintf(buffer, sizeof buffer, "%s %s\n",
@@ -353,9 +355,9 @@ static void player_die_call(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity 
 static void kill_self(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity) {
   qa_q3_game_client *client = client_of(entity);
   if (client->sess.session_team == QA_Q3_BASE_TEAM_SPECTATOR || qa_q3_game_entity_health(entity) <= 0) return;
-  entity->flags = (double)((int32_t)entity->flags & ~QA_Q3_GAME_FLAG_GODMODE);
+  entity->flags = (double)(qa_js_to_int32(entity->flags) & ~QA_Q3_GAME_FLAG_GODMODE);
   qa_q3_game_entity_set_health(entity, -999);
-  slot_set(&client->ps.stats, qa_q3_base_stat_schema_for(base_product(client->ps.product))->health, -999);
+  slot_set(&client->ps.stats, qa_q3_base_stat_schema_for(base_product(client->ps.state_product))->health, -999);
   player_die_call(r, entity);
 }
 static void level_shot(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity) {
@@ -450,12 +452,12 @@ void qa_q3_ta_game_command_runtime_set_team(qa_q3_ta_game_command_runtime *r,
     team = QA_Q3_BASE_TEAM_SPECTATOR;
   double old_team = client->sess.session_team;
   if (team == old_team && team != QA_Q3_BASE_TEAM_SPECTATOR) return;
-  const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(base_product(client->ps.product));
+  const qa_q3_base_stat_schema *schema = qa_q3_base_stat_schema_for(base_product(client->ps.state_product));
   if (slot_get(&client->ps.stats, schema->health) <= 0)
     (void)qa_q3_ta_client_spawn_runtime_copy_to_body_queue(r->host.spawn, entity);
   client->pers.team_state.state = QA_Q3_TEAM_STATE_BEGIN;
   if (old_team != QA_Q3_BASE_TEAM_SPECTATOR) {
-    entity->flags = (double)((int32_t)entity->flags & ~QA_Q3_GAME_FLAG_GODMODE);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) & ~QA_Q3_GAME_FLAG_GODMODE);
     qa_q3_game_entity_set_health(entity, 0);
     slot_set(&client->ps.stats, schema->health, 0);
     player_die_call(r, entity);
@@ -473,8 +475,8 @@ void qa_q3_ta_game_command_runtime_set_team(qa_q3_ta_game_command_runtime *r,
           candidate->sess.session_team == team && candidate->sess.team_leader != 0) {
         leader = qa_q3_entity_pool_at(r->host.pool, slot); break; }
     }
-    if (leader == NULL || (((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0 &&
-        ((int32_t)leader->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0))
+    if (leader == NULL || ((qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0 &&
+        (qa_js_to_int32(leader->r.sv_flags) & QA_Q3_BASE_SVF_BOT) != 0))
       qa_q3_ta_match_runtime_set_leader(r->host.match, (qa_q3_base_team)team, entity->slot);
   }
   if (old_team == QA_Q3_BASE_TEAM_RED || old_team == QA_Q3_BASE_TEAM_BLUE)
@@ -490,8 +492,8 @@ void qa_q3_ta_game_command_runtime_stop_following(qa_q3_ta_game_command_runtime 
   slot_set(&client->ps.persistant, QA_Q3_BASE_PERS_TEAM, QA_Q3_BASE_TEAM_SPECTATOR);
   client->sess.session_team = QA_Q3_BASE_TEAM_SPECTATOR;
   client->sess.spectator_state = QA_Q3_SPEC_FREE;
-  client->ps.pm_flags = (double)((int32_t)client->ps.pm_flags & ~QA_Q3_FLAG_FOLLOW);
-  entity->r.sv_flags = (double)((int32_t)entity->r.sv_flags & ~QA_Q3_BASE_SVF_BOT);
+  client->ps.pm_flags = (double)(qa_js_to_int32(client->ps.pm_flags) & ~QA_Q3_FLAG_FOLLOW);
+  entity->r.sv_flags = (double)(qa_js_to_int32(entity->r.sv_flags) & ~QA_Q3_BASE_SVF_BOT);
   client->ps.client_num = entity->slot;
 }
 
@@ -556,7 +558,7 @@ void qa_q3_ta_game_command_runtime_follow_cycle(qa_q3_ta_game_command_runtime *r
     }
     if (slot == original) return;
   }
-  qa_range_error("Cmd_FollowCycle_f cannot terminate from an automatic-follow sentinel without an active player");
+  /* C spins forever from the -1 automatic-follow sentinel when nobody is playing; the command has no target. */
 }
 static void say_to(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, qa_q3_game_entity *target,
     qa_q3_ta_say_mode mode, double color, const char *name, const char *text) {
@@ -610,8 +612,8 @@ void qa_q3_ta_game_command_runtime_say(qa_q3_ta_game_command_runtime *r, qa_q3_g
   } else {
     char *location = NULL;
     bool is_null = true;
-    if (target != NULL && game_type >= QA_Q3_BASE_GT_TEAM &&
-        client_of(target)->sess.session_team == client->sess.session_team)
+    if (target != NULL && target->client != NULL && game_type >= QA_Q3_BASE_GT_TEAM &&
+        target->client->sess.session_team == client->sess.session_team)
       location = qa_q3_ta_team_runtime_get_location_message(r->host.team, entity, 64, &is_null);
     if (is_null) {
       qa_q3_game_format_arg b = qa_q3_game_format_string(client->pers.netname);
@@ -662,7 +664,7 @@ static void tell(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity, ar
   r->host.imports.log(r->host.imports.ctx, t);
   free(t);
   qa_q3_ta_game_command_runtime_say(r, entity, target, QA_Q3_TA_SAY_TELL, text);
-  if (entity != target && ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0)
+  if (entity != target && (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0)
     qa_q3_ta_game_command_runtime_say(r, entity, entity, QA_Q3_TA_SAY_TELL, text);
   free(text);
 }
@@ -716,15 +718,15 @@ static void voice_tell(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *enti
   r->host.imports.log(r->host.imports.ctx, t);
   free(t);
   qa_q3_ta_game_command_runtime_voice(r, entity, target, QA_Q3_TA_SAY_TELL, id, voice_only);
-  if (entity != target && ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0)
+  if (entity != target && (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0)
     qa_q3_ta_game_command_runtime_voice(r, entity, entity, QA_Q3_TA_SAY_TELL, id, voice_only);
   free(id);
 }
 static void voice_pair(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity,
     qa_q3_game_entity *target, const char *id) {
-  if (((int32_t)target->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0)
+  if ((qa_js_to_int32(target->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0)
     qa_q3_ta_game_command_runtime_voice(r, entity, target, QA_Q3_TA_SAY_TELL, id, false);
-  if (((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0)
+  if ((qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0)
     qa_q3_ta_game_command_runtime_voice(r, entity, entity, QA_Q3_TA_SAY_TELL, id, false);
 }
 static void voice_taunt(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entity) {
@@ -761,8 +763,7 @@ static void game_command(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *en
   char *arg2 = arguments_at(args, 2, MAX_STRING_CHARS);
   double slot = qa_game_atoi(arg1), order = qa_game_atoi(arg2);
   free(arg1); free(arg2);
-  if (slot < 0 || slot >= QA_Q3_MAX_CLIENTS || order < 0 || order > 7) return;
-  if (order >= 7) qa_range_error("Cmd_GameCommand_f order 7 reads beyond the source order table");
+  if (slot < 0 || slot >= QA_Q3_MAX_CLIENTS || order < 0 || order >= 7) return;
   const char *text = orders[(size_t)order];
   qa_q3_ta_game_command_runtime_say(r, entity, qa_q3_entity_pool_at(r->host.pool, slot), QA_Q3_TA_SAY_TELL, text);
   qa_q3_ta_game_command_runtime_say(r, entity, entity, QA_Q3_TA_SAY_TELL, text);
@@ -787,7 +788,7 @@ static void call_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entit
   char *command = arguments_at(args, 1, MAX_STRING_CHARS);
   char *parameter = arguments_at(args, 2, MAX_STRING_CHARS);
   char *key = lower_dup(command);
-  if (strchr(command, ';') || strchr(parameter, ';')) {
+  if (strpbrk(command, ";\r\n\"") || strpbrk(parameter, ";\r\n\"")) {
     print_to(r, entity, "Invalid vote string.\n"); free(command); free(parameter); free(key); return; }
   static const char *const valid[] = {"map_restart", "nextmap", "map", "g_gametype", "kick",
       "clientkick", "g_dowarmup", "timelimit", "fraglimit"};
@@ -809,7 +810,7 @@ static void call_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entit
     double type = qa_game_atoi(parameter);
     if (type == QA_Q3_BASE_GT_SINGLE_PLAYER || type < QA_Q3_BASE_GT_FFA || type >= QA_Q3_BASE_GT_MAX_GAME_TYPE) {
       print_to(r, entity, "Invalid gametype.\n"); free(command); free(parameter); free(key); return; }
-    if (type < 0 || type >= 8) { free(command); free(parameter); free(key); qa_range_error("Vote gametype has no source display name"); }
+    if (type < 0 || type >= 8) { free(command); free(parameter); free(key); game_command_error("Vote gametype has no source display name"); }
     qa_q3_game_format_arg a[] = {qa_q3_game_format_string(command), qa_q3_game_format_number(type)};
     set_owned(&vote->string, qa_q3_game_format("%s %d", a, 2, MAX_STRING_CHARS));
     qa_q3_game_format_arg b[] = {qa_q3_game_format_string(command), qa_q3_game_format_string(game_names[(size_t)type])};
@@ -846,9 +847,9 @@ static void call_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entit
   vote->time = state->time; vote->yes = 1; vote->no = 0;
   for (double slot = 0; slot < r->host.pool->max_clients; slot++) {
     qa_q3_game_client *c = qa_q3_entity_pool_client_at(r->host.pool, slot);
-    c->ps.e_flags = (double)((int32_t)c->ps.e_flags & ~EF_VOTED);
+    c->ps.e_flags = (double)(qa_js_to_int32(c->ps.e_flags) & ~EF_VOTED);
   }
-  client->ps.e_flags = (double)((int32_t)client->ps.e_flags | EF_VOTED);
+  client->ps.e_flags = (double)(qa_js_to_int32(client->ps.e_flags) | EF_VOTED);
   set_config_number(r, 8, vote->time);
   r->host.imports.set_configstring(r->host.imports.ctx, 9, vote->display_string);
   set_config_number(r, 10, vote->yes);
@@ -858,10 +859,10 @@ static void cast_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *entit
   qa_q3_game_client *client = client_of(entity);
   qa_q3_ta_vote_state *vote = &r->host.state->vote;
   if (vote->time == 0) { print_to(r, entity, "No vote in progress.\n"); return; }
-  if (((int32_t)client->ps.e_flags & EF_VOTED) != 0) { print_to(r, entity, "Vote already cast.\n"); return; }
+  if ((qa_js_to_int32(client->ps.e_flags) & EF_VOTED) != 0) { print_to(r, entity, "Vote already cast.\n"); return; }
   if (client->sess.session_team == QA_Q3_BASE_TEAM_SPECTATOR) { print_to(r, entity, "Not allowed to vote as spectator.\n"); return; }
   print_to(r, entity, "Vote cast.\n");
-  client->ps.e_flags = (double)((int32_t)client->ps.e_flags | EF_VOTED);
+  client->ps.e_flags = (double)(qa_js_to_int32(client->ps.e_flags) | EF_VOTED);
   char *text = arguments_at(args, 1, 64);
   if (text[0] == 'y' || text[1] == 'Y' || text[1] == '1') {
     vote->yes = s32(vote->yes + 1);
@@ -888,7 +889,7 @@ static void call_team_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *
   for (size_t index = 2; index < args->length; index++) {
     if (parameter_length >= MAX_STRING_CHARS) {
       free(command); free(parameter);
-      qa_range_error("Team vote arguments overflow the source string buffer"); }
+      game_command_error("Team vote arguments overflow the source string buffer"); }
     char *piece = arguments_at(args, index, MAX_STRING_CHARS - parameter_length);
     size_t piece_length = strlen(piece);
     size_t extra = index > 2 ? 1 : 0;
@@ -959,9 +960,9 @@ static void call_team_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *
   for (double slot = 0; slot < r->host.pool->max_clients; slot++) {
     qa_q3_game_client *candidate = qa_q3_entity_pool_client_at(r->host.pool, slot);
     if (candidate->sess.session_team == team)
-      candidate->ps.e_flags = (double)((int32_t)candidate->ps.e_flags & ~EF_TEAMVOTED);
+      candidate->ps.e_flags = (double)(qa_js_to_int32(candidate->ps.e_flags) & ~EF_TEAMVOTED);
   }
-  client->ps.e_flags = (double)((int32_t)client->ps.e_flags | EF_TEAMVOTED);
+  client->ps.e_flags = (double)(qa_js_to_int32(client->ps.e_flags) | EF_TEAMVOTED);
   set_config_number(r, 12 + offset, vote->time);
   r->host.imports.set_configstring(r->host.imports.ctx, 14 + offset, vote->string);
   set_config_number(r, 16 + offset, vote->yes);
@@ -974,9 +975,9 @@ static void cast_team_vote(qa_q3_ta_game_command_runtime *r, qa_q3_game_entity *
   int offset = team == QA_Q3_BASE_TEAM_RED ? 0 : 1;
   qa_q3_ta_team_vote_state *vote = &r->host.state->team_votes[offset];
   if (vote->time == 0) { print_to(r, entity, "No team vote in progress.\n"); return; }
-  if (((int32_t)client->ps.e_flags & EF_TEAMVOTED) != 0) { print_to(r, entity, "Team vote already cast.\n"); return; }
+  if ((qa_js_to_int32(client->ps.e_flags) & EF_TEAMVOTED) != 0) { print_to(r, entity, "Team vote already cast.\n"); return; }
   print_to(r, entity, "Team vote cast.\n");
-  client->ps.e_flags = (double)((int32_t)client->ps.e_flags | EF_TEAMVOTED);
+  client->ps.e_flags = (double)(qa_js_to_int32(client->ps.e_flags) | EF_TEAMVOTED);
   char *text = arguments_at(args, 1, 64);
   if (text[0] == 'y' || text[1] == 'Y' || text[1] == '1') {
     vote->yes = s32(vote->yes + 1);
@@ -1000,14 +1001,36 @@ static void set_view_position(qa_q3_ta_game_command_runtime *r, qa_q3_game_entit
   qa_q3_teleport_player(r->host.teleport, entity, origin, angles);
 }
 
+typedef struct dispatch_job {
+  qa_q3_ta_game_command_runtime *r; qa_q3_game_entity *entity; const char *const *argv; size_t argc;
+} dispatch_job;
+static void dispatch_command(void *ctx);
+static void free_arguments_cleanup(void *arg) { arguments_destroy(arg); }
 void qa_q3_ta_game_command_runtime_dispatch(qa_q3_ta_game_command_runtime *r,
     double client_num, const char *const *argv, size_t argc) {
   qa_q3_game_entity *entity = qa_q3_entity_pool_at(r->host.pool, client_num);
   if (entity->client == NULL) return;
-  arguments args;
-  arguments_init(&args, argv, argc);
+  dispatch_job job = {r, entity, argv, argc};
+  qa_caught_error caught;
+  if (qa_try(dispatch_command, &job, &caught)) return;
+  if (strcmp(caught.name, "GameCommandError") != 0) qa_rethrow(&caught);
+  qa_q3_game_format_arg a = qa_q3_game_format_string(caught.message);
+  char *text = qa_q3_game_format("%s\n", &a, 1, 32000);
+  print_to(r, entity, text);
+  free(text);
+}
+static void dispatch_command(void *ctx) {
+  dispatch_job *job = ctx;
+  qa_q3_ta_game_command_runtime *r = job->r;
+  qa_q3_game_entity *entity = job->entity;
+  arguments args = {NULL, 0};
+  qa_cleanup args_node, command_node, key_node;
+  qa_cleanup_push(&args_node, free_arguments_cleanup, &args);
+  arguments_init(&args, job->argv, job->argc);
   char *command = arguments_at(&args, 0, MAX_STRING_CHARS);
+  qa_cleanup_push(&command_node, free, command);
   char *key = lower_dup(command);
+  qa_cleanup_push(&key_node, free, key);
   if (strcmp(key, "say") == 0) say_command(r, entity, &args, QA_Q3_TA_SAY_ALL, false);
   else if (strcmp(key, "say_team") == 0) say_command(r, entity, &args, QA_Q3_TA_SAY_TEAM, false);
   else if (strcmp(key, "tell") == 0) tell(r, entity, &args);
@@ -1045,6 +1068,9 @@ void qa_q3_ta_game_command_runtime_dispatch(qa_q3_ta_game_command_runtime *r,
     qa_q3_game_format_arg a = qa_q3_game_format_string(command);
     print_fmt_to(r, entity, "unknown cmd %s\n", &a, 1);
   }
+  qa_cleanup_pop(&key_node);
+  qa_cleanup_pop(&command_node);
+  qa_cleanup_pop(&args_node);
   free(key);
   free(command);
   arguments_destroy(&args);

@@ -1,7 +1,7 @@
 /*
  * Port of tests/media/cinematic.test.ts (the corpus-free cases:
  * RoQ stereo/hold, CIN boundaries and prefetch order, fullscreen
- * pause/transition, material upload acknowledgement, timeline
+ * pause and completion, material upload acknowledgement, timeline
  * freezing, Ogg demux, and the CIN checkpoint continuation).
  * Retail-corpus and renderer-execution cases stay with the
  * TypeScript oracle. GPL-2.0-or-later.
@@ -18,7 +18,22 @@
 #include <unistd.h>
 
 #include "qa/core/binary/index.h"
-#include "qa/media.h"
+#include "qa/media/audio.h"
+#include "qa/media/cin.h"
+#include "qa/media/cin_playback.h"
+#include "qa/media/material.h"
+#include "qa/media/ogg.h"
+#include "qa/media/ogv_playback.h"
+#include "qa/media/playback.h"
+#include "qa/media/presentation.h"
+#include "qa/media/roq.h"
+#include "qa/media/roq_audio.h"
+#include "qa/media/roq_codebook.h"
+#include "qa/media/roq_playback.h"
+#include "qa/media/roq_stream.h"
+#include "qa/media/source.h"
+#include "qa/media/still.h"
+#include "qa/media/types.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -347,31 +362,6 @@ static qa_renderer_image make_image(qa_identity_owner *owner, double ordinal,
   return image;
 }
 
-typedef struct transition_log {
-  qa_seat_id seat;
-  char commands[2][64];
-  int command_count;
-  int leave_count;
-} transition_log;
-
-static void host_send(void *ctx, qa_seat_id seat, const char *command) {
-  transition_log *log = (transition_log *)ctx;
-  CHECK(qa_same_seat(seat, log->seat));
-  snprintf(log->commands[log->command_count], 64, "%s", command);
-  log->command_count++;
-}
-static void host_append(void *ctx, qa_seat_id seat, const char *command) {
-  (void)ctx;
-  (void)seat;
-  (void)command;
-  CHECK(false);
-}
-static void host_leave(void *ctx, qa_seat_id seat) {
-  transition_log *log = (transition_log *)ctx;
-  CHECK(qa_same_seat(seat, log->seat));
-  log->leave_count++;
-}
-
 static void test_fullscreen(void) {
   qa_identity_owner identity;
   CHECK(qa_identity_owner_create(&identity, "media-smoke"));
@@ -379,24 +369,7 @@ static void test_fullscreen(void) {
   test_clock clock = {0};
   playback_events events;
   memset(&events, 0, sizeof events);
-  transition_log tlog;
-  memset(&tlog, 0, sizeof tlog);
-  tlog.seat = seat;
-  qa_cinematic_transition transition;
-  memset(&transition, 0, sizeof transition);
-  transition.kind = QA_CINEMATIC_TRANSITION_Q2_NEXTSERVER;
-  transition.server_count = 7;
-  qa_cinematic_transition_host host;
-  memset(&host, 0, sizeof host);
-  host.ctx = &tlog;
-  host.send_client_command = host_send;
-  host.append_command = host_append;
-  host.leave_cinematic = host_leave;
-  qa_cinematic_transition_binding binding =
-      qa_cinematic_transition_make(seat, transition, host);
-
   qa_cinematic_options options = seat_options(&clock, seat, &events);
-  /* Route completions through the transition, as the TS test does. */
   options.on_complete = events_complete;
   size_t length = 0;
   uint8_t *bytes = short_cin(&length);
@@ -436,16 +409,9 @@ static void test_fullscreen(void) {
   CHECK(qa_cinematic_playback_time_milliseconds(&playback) == 150);
   qa_cinematic_playback_skip(&playback);
   qa_cinematic_playback_skip(&playback);
-  if (events.completed_count > 0) {
-    qa_cinematic_transition_fire(&binding, events.completed[0]);
-    qa_cinematic_transition_fire(&binding, events.completed[0]);
-  }
   CHECK(events.paused_count == 2 && events.paused[0] && !events.paused[1]);
   CHECK(events.completed_count == 1 &&
         events.completed[0] == QA_CINEMATIC_END_SKIPPED);
-  CHECK(tlog.command_count == 1 &&
-        strcmp(tlog.commands[0], "nextserver 7\n") == 0);
-  CHECK(tlog.leave_count == 1);
   qa_image_resource_operation release;
   CHECK(qa_fullscreen_cinematic_close(&fullscreen, &release));
   CHECK(release.kind == QA_IMAGE_OP_RELEASE);

@@ -20,11 +20,11 @@ typedef struct qa_q3_ta_session_userinfo {
   const char *(*value_for_key)(void *ctx, const char *key);
 } qa_q3_ta_session_userinfo;
 /* TS SessionWorldState. clients are borrowed pointers (NULL = TS undefined);
- * team_scores is the landed game/state slots mirror. */
+ * team_scores is TS PlayerStateSlots(4). */
 typedef struct qa_q3_ta_session_world_state {
   qa_q3_game_client **clients; size_t client_count;
   double max_clients;
-  qa_q3_game_player_slots_mirror *team_scores;
+  qa_q3_base_player_state_slots *team_scores;
   double game_type;
   bool team_auto_join;
   double max_game_clients, time, num_non_spectator_clients;

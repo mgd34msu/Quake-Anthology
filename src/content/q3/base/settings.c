@@ -6,6 +6,7 @@
 #include "qa/content/q3/base/game/format.h"
 #include "qa/core/commands/text.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static const qa_q3_base_cvar_definition BASE_DEFINITIONS[] = {
   {"sv_cheats","",0,false,false},
@@ -50,9 +51,12 @@ static const qa_q3_base_cvar_definition BASE_DEFINITIONS[] = {
   {"g_smoothClients","1",0,false,false},
   {"pmove_fixed","0",8,false,false},
   {"pmove_msec","8",8,false,false},
+  {"pmove_ladders","1",8,false,false},
   {"g_rankings","0",0,false,false},
   {"sv_enableRankings","0",0,false,false},
   {"sv_rankingsActive","0",64,false,false},
+  {"sv_rankingsGameKey","",68,false,false},
+  {"sv_rankingsGameID","",68,false,false},
 };
 static const qa_q3_base_cvar_definition MISSIONPACK_DEFINITIONS[] = {
   {"sv_cheats","",0,false,false},
@@ -108,9 +112,12 @@ static const qa_q3_base_cvar_definition MISSIONPACK_DEFINITIONS[] = {
   {"g_smoothClients","1",0,false,false},
   {"pmove_fixed","0",8,false,false},
   {"pmove_msec","8",8,false,false},
+  {"pmove_ladders","1",8,false,false},
   {"g_rankings","0",0,false,false},
   {"sv_enableRankings","0",0,false,false},
   {"sv_rankingsActive","0",64,false,false},
+  {"sv_rankingsGameKey","",68,false,false},
+  {"sv_rankingsGameID","",68,false,false},
 };
 enum { BASE_COUNT = sizeof BASE_DEFINITIONS / sizeof BASE_DEFINITIONS[0],
        MISSIONPACK_COUNT = sizeof MISSIONPACK_DEFINITIONS / sizeof MISSIONPACK_DEFINITIONS[0] };
@@ -169,9 +176,7 @@ qa_q3_module_cvar_capture *qa_q3_base_game_settings_capture_save_state(qa_q3_bas
   if (!out) return NULL;
   for (size_t i = 0; i < s->snapshot_count; i++) {
     qa_cvar_snapshot *snap = &s->snapshots[i].snapshot;
-    qa_q3_cvar_snapshot_mirror mirror = {snap->name, snap->value, snap->reset_value, snap->latched_value,
-      snap->flags, snap->modified, snap->modification_count, snap->numeric_value, snap->integer_value};
-    out[i] = qa_q3_capture_module_cvar(mirror);
+    out[i] = qa_q3_capture_module_cvar(snap);
   }
   *out_count = s->snapshot_count;
   return out;
@@ -180,7 +185,7 @@ void qa_q3_base_game_settings_restore_save_state(qa_q3_base_game_settings *s, co
   qa_save_reader reader;
   if (!qa_save_reader_init(&reader, value, "q3.settings")) qa_range_error("out of memory");
   size_t count = qa_save_reader_list_count(&reader);
-  qa_q3_cvar_snapshot_mirror *snapshots = xmalloc((count ? count : 1) * sizeof *snapshots);
+  qa_cvar_snapshot *snapshots = xmalloc((count ? count : 1) * sizeof *snapshots);
   for (size_t i = 0; i < count; i++) {
     qa_save_reader item;
     if (!qa_save_reader_item(&reader, i, &item)) qa_range_error("out of memory");
@@ -188,7 +193,7 @@ void qa_q3_base_game_settings_restore_save_state(qa_q3_base_game_settings *s, co
     qa_save_reader_destroy(&item);
   }
   /* definitions map asciiFold(name) -> canonical name (last wins, JS Map). */
-  typedef struct restored_entry { const char *name; qa_q3_cvar_snapshot_mirror *snapshot; } restored_entry;
+  typedef struct restored_entry { const char *name; qa_cvar_snapshot *snapshot; } restored_entry;
   restored_entry *restored = xmalloc((count ? count : 1) * sizeof *restored);
   size_t restored_count = 0;
   for (size_t i = 0; i < count; i++) {
@@ -213,15 +218,11 @@ void qa_q3_base_game_settings_restore_save_state(qa_q3_base_game_settings *s, co
   if (restored_count != s->definition_count) qa_save_reader_fail(&reader, "invalid settings snapshot names");
   clear_snapshots(s);
   for (size_t i = 0; i < restored_count; i++) {
-    qa_q3_cvar_snapshot_mirror *m = restored[i].snapshot;
-    qa_cvar_snapshot snap;
-    snap.name = m->name; snap.value = m->value; snap.reset_value = m->reset_value; snap.latched_value = m->latched_value;
-    snap.flags = (int32_t)m->flags; snap.modified = m->modified;
-    snap.modification_count = m->modification_count; snap.numeric_value = m->numeric_value; snap.integer_value = m->integer_value;
-    m->name = NULL; m->value = NULL; m->reset_value = NULL; m->latched_value = NULL;
+    qa_cvar_snapshot *m = restored[i].snapshot, snap = *m;
+    m->name = NULL; m->value = NULL; m->reset_value = NULL; m->latched_value = NULL; /* ownership moves */
     set_snapshot(s, restored[i].name, snap);
   }
-  for (size_t i = 0; i < count; i++) qa_q3_cvar_snapshot_mirror_destroy(&snapshots[i]);
+  for (size_t i = 0; i < count; i++) qa_cvar_read_free(&snapshots[i]);
   free(snapshots); free(restored);
   qa_save_reader_destroy(&reader);
 }

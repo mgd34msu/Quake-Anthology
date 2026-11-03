@@ -4,7 +4,8 @@
 
 #include "qa/content/q1/missionpacks/monsters/runtime.h"
 
-qa_q1mpm_opt_actor qa_q1mpm_charmer(qa_q1mpm_mission_monster *monster);
+/* TS charmer(monster): false = TS null. */
+bool qa_q1mpm_charmer(qa_q1mpm_mission_monster *monster, qa_actor_id *out);
 void qa_q1mpm_hunt_charmer(qa_q1mpm_mission_monster *monster, bool flee);
 /* TS boolean | null: *out_null set when TS returns null. */
 bool qa_q1mpm_find_charmed_target(qa_q1mpm_mission_monster *monster, bool *out_null);

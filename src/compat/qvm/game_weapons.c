@@ -7,6 +7,7 @@
 
 #include "qa/compat/qvm/interpreter.h"
 #include "qa/foundation/support.h"
+#include "qa/core/numeric.h"
 
 typedef enum effect_kind {
   EFFECT_DAMAGE_FACTOR,
@@ -15,6 +16,7 @@ typedef enum effect_kind {
 } effect_kind;
 
 typedef struct evaluation_frame {
+  struct evaluation_frame *previous; /* frames live on effect()'s stack */
   qa_actor_id actor;
   effect_kind kind;
   bool entered;
@@ -35,9 +37,7 @@ struct qa_qvm_primary_weapons {
   size_t removal_ids[4];
   size_t removal_count;
   bool has_equipment_removal;
-  evaluation_frame *evaluations;
-  size_t evaluation_count;
-  size_t evaluation_capacity;
+  evaluation_frame *evaluations; /* innermost frame */
   void *eval_hooks[2]; /* owned eval_ctx allocations */
 };
 
@@ -63,7 +63,7 @@ static float mem_f32(qa_qvm_primary_weapons *w, int64_t address) {
   return qa_qvm_writable_view_get_float32(&view, 0, true);
 }
 
-static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset) {
+static int32_t call_word(const qa_qvm_module_function_call *call, int64_t byte_offset) {
   if (byte_offset < 0 || byte_offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
   const uint8_t *p = call->words + byte_offset;
@@ -71,7 +71,7 @@ static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset)
                   ((uint32_t)p[3] << 24);
   return (int32_t)bits;
 }
-static int32_t proceed(qa_qvmy_function_call *call) {
+static int32_t proceed(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "asynchronous") == 0 ? call->proceed_async(call->call_ctx)
                                                       : call->proceed(call->call_ctx);
 }
@@ -103,7 +103,7 @@ static int64_t pointer_of(qa_qvm_primary_weapons *w, qa_actor_id actor) {
 }
 
 static bool actor_of(qa_qvm_primary_weapons *w, const qa_qvm_weapon_actor *source,
-                     qa_qvmy_function_call *call, qa_actor_id *out) {
+                     qa_qvm_module_function_call *call, qa_actor_id *out) {
   if (w->closed) return false;
   const qa_qvm_mod_input_pointer *reference = &source->pointer;
   int64_t pointer;
@@ -152,7 +152,7 @@ void qa_qvm_primary_weapons_set_score(qa_qvm_primary_weapons *weapons, qa_actor_
 }
 
 int32_t qa_qvm_primary_weapons_equipment_movement(qa_qvm_primary_weapons *weapons,
-                                                  qa_qvmy_function_call *call, const char *kind,
+                                                  qa_qvm_module_function_call *call, const char *kind,
                                                   qa_qvm_primary_weapon_run_fn run, void *run_ctx) {
   return weapons->equipment == NULL
              ? run(run_ctx)
@@ -163,7 +163,7 @@ int32_t qa_qvm_primary_weapons_equipment_movement(qa_qvm_primary_weapons *weapon
 typedef struct drop_saved { int64_t address; int32_t value; } drop_saved;
 typedef struct drop_ctx {
   qa_qvm_primary_weapons *weapons;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_actor_id actor;
   int32_t entity;
   drop_saved *saved;
@@ -198,6 +198,7 @@ static void drop_restore(drop_ctx *d) {
     for (size_t i = 0; i < count; i++) drop_view_set(d, previous[i].address, previous[i].value);
   free(previous);
 }
+static void drop_unwind(void *ctx) { drop_restore(ctx); }
 static const char *drop_region_run(void *ctx, void *control_ctx) {
   (void)control_ctx;
   drop_ctx *d = ctx;
@@ -222,7 +223,7 @@ static const char *drop_region_run(void *ctx, void *control_ctx) {
     if (profile->ammo_is_inventory) {
       for (size_t i = 0; i < extra; i++) {
         writes[1 + i].address = (int64_t)projection.ammo_words[i].address;
-        writes[1 + i].value = (int32_t)projection.ammo_words[i].value;
+        writes[1 + i].value = qa_int32(projection.ammo_words[i].value); /* setInt32: ToInt32 */
       }
     } else {
       writes[1].address = pointer_of(w, d->actor) + (int64_t)profile->ammo +
@@ -246,7 +247,7 @@ static void drop_region_completed(void *ctx, void *control_ctx) {
   drop_restore(ctx);
 }
 
-static int32_t drop_call(void *ctx, qa_qvmy_function_call *call) {
+static int32_t drop_call(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_primary_weapons *w = ctx;
   const qa_qvm_primary_weapon_drop *profile = &w->profile.drop;
   int32_t entity = call_word(call, (int64_t)profile->argument * 4);
@@ -255,13 +256,16 @@ static int32_t drop_call(void *ctx, qa_qvmy_function_call *call) {
       w->services.ctx, qa_qvm_game_data_number_from_pointer(&w->game->data, entity), &actor);
   if (!has_actor || !live(w, actor)) return proceed(call);
   drop_ctx d = {w, call, actor, entity, NULL, 0};
-  qa_qvmy_region_binding binding = {(int64_t)profile->region.entry,
+  qa_qvm_module_region_binding binding = {(int64_t)profile->region.entry,
                                     (int64_t)profile->region.join, &d, drop_region_run,
                                     drop_region_completed};
   call->regions(call->call_ctx, &binding, 1);
   /* TS awaits async results through finally + call.effect(restore);
    * C proceeds synchronously, so restoring here is equivalent. */
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, drop_unwind, &d);
   int32_t result = proceed(call);
+  qa_cleanup_pop(&guard);
   drop_restore(&d);
   return result;
 }
@@ -273,7 +277,7 @@ typedef struct give_branch_ctx {
   const char *category;
 } give_branch_ctx;
 static bool give_decide(void *ctx, bool original_taken, void *call_ctx,
-                        qa_qvmy_cancel_fn cancel) {
+                        qa_qvm_cancel_fn cancel) {
   (void)call_ctx;
   (void)cancel;
   give_branch_ctx *g = ctx;
@@ -306,7 +310,7 @@ static void give_region_completed(void *ctx, void *control_ctx) {
     }
   }
 }
-static int32_t give_call(void *ctx, qa_qvmy_function_call *call) {
+static int32_t give_call(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_primary_weapons *w = ctx;
   const qa_qvm_primary_weapon_give *profile = &w->profile.give;
   int32_t pointer = call_word(call, (int64_t)profile->argument * 4);
@@ -316,12 +320,12 @@ static int32_t give_call(void *ctx, qa_qvmy_function_call *call) {
   (void)pointer_of(w, actor);
   give_branch_ctx weapons_ctx = {w, actor, "weapons"};
   give_branch_ctx ammo_ctx = {w, actor, "ammo"};
-  qa_qvmy_branch_binding branches[2] = {
+  qa_qvm_module_branch_binding branches[2] = {
       {(int64_t)profile->weapons, &weapons_ctx, give_decide},
       {(int64_t)profile->ammo, &ammo_ctx, give_decide}};
   call->branches(call->call_ctx, branches, 2);
   give_region_ctx region = {w, actor, call->guest, call->cancellation_scope(call->call_ctx)};
-  qa_qvmy_region_binding binding = {(int64_t)profile->named.entry, (int64_t)profile->named.join,
+  qa_qvm_module_region_binding binding = {(int64_t)profile->named.entry, (int64_t)profile->named.join,
                                     &region, give_region_run, give_region_completed};
   call->regions(call->call_ctx, &binding, 1);
   return proceed(call);
@@ -345,11 +349,11 @@ static const char *damage_stop_run(void *ctx, void *control_ctx) {
    * cancel either longjmps or the run result is unused. */
   return "skip";
 }
-static int32_t evaluate_call(void *ctx, qa_qvmy_function_call *call) {
+static int32_t evaluate_call(void *ctx, qa_qvm_module_function_call *call) {
   eval_ctx *e = ctx;
   qa_qvm_primary_weapons *w = e->weapons;
-  if (w->evaluation_count == 0) return proceed(call);
-  evaluation_frame *frame = &w->evaluations[w->evaluation_count - 1];
+  evaluation_frame *frame = w->evaluations;
+  if (frame == NULL) return proceed(call);
   if ((frame->kind != e->kind && !(e->kind == EFFECT_TELEPORT && frame->kind == EFFECT_OBJECTIVES)) ||
       frame->entered)
     return proceed(call);
@@ -366,11 +370,21 @@ static int32_t evaluate_call(void *ctx, qa_qvmy_function_call *call) {
                                  NULL, 0);
   e->frame = frame;
   e->cancellation = call->cancellation_scope(call->call_ctx);
-  qa_qvmy_region_binding binding = {(int64_t)w->profile.damage_factor.stop.entry,
+  qa_qvm_module_region_binding binding = {(int64_t)w->profile.damage_factor.stop.entry,
                                     (int64_t)w->profile.damage_factor.stop.join, e,
                                     damage_stop_run, NULL};
   call->regions(call->call_ctx, &binding, 1);
   return call->proceed(call->call_ctx);
+}
+
+typedef struct effect_unwind_ctx {
+  qa_qvm_primary_weapons *weapons;
+  evaluation_frame *frame;
+} effect_unwind_ctx;
+/* TS finally { this.evaluations.pop(); }. */
+static void effect_unwind(void *ctx) {
+  effect_unwind_ctx *unwind = ctx;
+  unwind->weapons->evaluations = unwind->frame->previous;
 }
 
 static bool effect(qa_qvm_primary_weapons *w, qa_actor_id actor, effect_kind kind,
@@ -379,27 +393,21 @@ static bool effect(qa_qvm_primary_weapons *w, qa_actor_id actor, effect_kind kin
   if (!w->services.slot(w->services.ctx, actor, &slot) || !live(w, actor))
     qa_range_error("Primary QVM source effect requires its original actor");
   (void)pointer_of(w, actor);
-  if (w->evaluation_count == w->evaluation_capacity) {
-    size_t capacity = w->evaluation_capacity == 0 ? 4 : w->evaluation_capacity * 2;
-    evaluation_frame *grown = realloc(w->evaluations, capacity * sizeof *grown);
-    if (grown == NULL) qa_range_error("QVM memory allocation failed");
-    w->evaluations = grown;
-    w->evaluation_capacity = capacity;
-  }
-  evaluation_frame *frame = &w->evaluations[w->evaluation_count++];
-  frame->actor = actor;
-  frame->kind = kind;
-  frame->entered = false;
-  frame->has_result = false;
-  frame->result = 0;
+  evaluation_frame frame_storage = {w->evaluations, actor, kind, false, false, 0};
+  evaluation_frame *frame = &frame_storage;
+  w->evaluations = frame;
+  effect_unwind_ctx unwind = {w, frame};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, effect_unwind, &unwind);
   double entry = kind == EFFECT_DAMAGE_FACTOR ? w->profile.damage_factor.entry
                                               : w->profile.teleport.entry;
   qa_qvm_game_data_state located = qa_qvm_game_data_checkpoint(&w->game->data);
   int32_t argument = (int32_t)(located.entities_word + slot * located.entity_stride);
   (void)qa_qvm_module_call(&w->game->module, &argument, 1, (int64_t)entry);
+  qa_cleanup_pop(&guard);
   bool has = frame->has_result;
   if (has) *out = frame->result;
-  w->evaluation_count--;
+  w->evaluations = frame->previous;
   return has;
 }
 
@@ -531,7 +539,7 @@ double qa_qvm_primary_weapons_equipment_delay(qa_qvm_primary_weapons *weapons, q
   int64_t pointer = pointer_of(weapons, actor);
   int64_t address = pointer + (int64_t)selection->field.offset;
   int32_t previous = mem_i32(weapons, address);
-  mem_set_i32(weapons, address, (int32_t)value->value);
+  mem_set_i32(weapons, address, qa_int32(value->value)); /* setInt32: ToInt32 */
   double result = qa_qvm_primary_weapons_weapon_delay(weapons, actor, milliseconds);
   if (live(weapons, actor) && pointer_of(weapons, actor) == pointer)
     mem_set_i32(weapons, address, previous);
@@ -569,13 +577,15 @@ void qa_qvm_primary_weapons_attack_animation(qa_qvm_primary_weapons *weapons, qa
 }
 
 double qa_qvm_primary_weapons_water_level(qa_qvm_primary_weapons *weapons, qa_actor_id actor) {
+  int32_t left;
+  int32_t right;
   double slot = 0;
   if (!weapons->services.slot(weapons->services.ctx, actor, &slot) || !live(weapons, actor))
     qa_range_error("Original QVM water state lost its actor");
   int32_t movement = mem_i32(weapons, (int64_t)weapons->profile.delay_player.movement_global);
   if (movement > 0 &&
-      mem_i32(weapons, movement + (int64_t)weapons->profile.delay_player.player_offset) ==
-          (int32_t)pointer_of(weapons, actor))
+      (left = mem_i32(weapons, movement + (int64_t)weapons->profile.delay_player.player_offset), right = (int32_t)pointer_of(weapons, actor), left ==
+          right))
     return mem_i32(weapons, movement + (int64_t)weapons->profile.water_level.movement_offset);
   qa_qvm_writable_view bytes;
   qa_qvm_game_data_entity_bytes(&weapons->game->data, slot, &bytes);
@@ -599,7 +609,8 @@ bool qa_qvm_primary_weapons_available(qa_qvm_primary_weapons *weapons, qa_actor_
   int64_t pointer = pointer_of(weapons, actor);
   const qa_qvm_primary_weapon_availability *policy = &weapons->profile.availability;
   if (mem_i32(weapons, pointer + (int64_t)policy->health) <= 0) return false;
-  if (mem_i32(weapons, pointer + (int64_t)policy->team) == (int32_t)policy->spectator_team)
+  /* spectatorTeam is any integer; TS compares the int32 word with the number. */
+  if ((double)mem_i32(weapons, pointer + (int64_t)policy->team) == policy->spectator_team)
     return false;
   int32_t movement_type = mem_i32(weapons, pointer + (int64_t)policy->movement_type);
   for (size_t i = 0; i < policy->excluded_count; i++)
@@ -618,7 +629,7 @@ double qa_qvm_primary_weapons_powerup_until(qa_qvm_primary_weapons *weapons, qa_
 }
 
 /* --- dispatcher operations --- */
-static bool ops_actor(void *ctx, const qa_qvm_weapon_actor *source, qa_qvmy_function_call *call,
+static bool ops_actor(void *ctx, const qa_qvm_weapon_actor *source, qa_qvm_module_function_call *call,
                       qa_actor_id *out) {
   return actor_of(ctx, source, call, out);
 }
@@ -633,7 +644,7 @@ static bool ops_selected(void *ctx, qa_actor_id actor) {
   return w->services.selected(w->services.ctx, actor);
 }
 static qa_qvm_cancellation_scope ops_cancellation(void *ctx, qa_actor_id actor,
-                                                   qa_qvmy_function_call *call) {
+                                                   qa_qvm_module_function_call *call) {
   (void)ctx;
   (void)actor;
   return call->cancellation_scope(call->call_ctx);
@@ -655,7 +666,7 @@ static void prepare_cleanup(void *cleanup_ctx) {
   qa_qvm_equipment_weapon_restore_call(restore);
   free(restore);
 }
-static void ops_prepare(void *ctx, qa_actor_id actor, qa_qvmy_function_call *call,
+static void ops_prepare(void *ctx, qa_actor_id actor, qa_qvm_module_function_call *call,
                         void (**cleanup)(void *cleanup_ctx), void **cleanup_ctx) {
   *cleanup = NULL;
   *cleanup_ctx = NULL;
@@ -696,7 +707,7 @@ static qa_qvm_instruction *region_instructions(const qa_qvm_image *image) {
 }
 
 static size_t bind(qa_qvm_primary_weapons *w, qa_module_identity identity, double entry,
-                   qa_qvmy_function_hook_fn hook, void *hook_ctx) {
+                   qa_qvm_function_hook_fn hook, void *hook_ctx) {
   qa_guest_callback_reference reference;
   memset(&reference, 0, sizeof reference);
   reference.kind = QA_GUEST_CALLBACK_QVM;
@@ -835,6 +846,5 @@ void qa_qvm_primary_weapons_destroy(qa_qvm_primary_weapons *weapons) {
   qa_qvm_equipment_movement_destroy(weapons->equipment);
   free(weapons->eval_hooks[0]);
   free(weapons->eval_hooks[1]);
-  free(weapons->evaluations);
   free(weapons);
 }

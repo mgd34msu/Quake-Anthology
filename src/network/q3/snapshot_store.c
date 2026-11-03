@@ -65,10 +65,11 @@ qa_q3_server_frame *qa_q3_server_snapshot_history_capture(qa_q3_server_snapshot_
   if (area_mask_len > 32 || entity_count > 256) qa_range_error("Q3 snapshot exceeds source area/entity capacities");
   qa_q3_server_frame *frame = qa_q3_server_snapshot_history_frame(h, sequence);
   frame->player_state = *player;
+  uint8_t *mask = malloc(area_mask_len ? area_mask_len : 1);
+  if (!mask) qa_range_error("snapshot frame allocation failed");
   free(frame->area_mask);
-  frame->area_mask = malloc(area_mask_len ? area_mask_len : 1);
-  if (!frame->area_mask) qa_range_error("snapshot frame allocation failed");
-  memcpy(frame->area_mask, area_mask, area_mask_len);
+  frame->area_mask = mask;
+  if (area_mask_len) memcpy(frame->area_mask, area_mask, area_mask_len);
   frame->area_mask_len = area_mask_len;
   frame->first_entity = h->entities->next; frame->num_entities = 0;
   for (size_t i = 0; i < entity_count; i++) { qa_q3_snapshot_entities_append(h->entities, &entities[i]); frame->num_entities++; }
@@ -121,7 +122,7 @@ bool qa_q3_server_snapshot_history_copy(qa_q3_server_snapshot_history *h, int64_
   out->message_number = sequence; out->delta_number = delta_number; out->server_time = server_time;
   out->flags = flags; out->server_command_number = server_command_number;
   out->parse_entities_number = frame->first_entity;
-  memcpy(out->area_mask, frame->area_mask, frame->area_mask_len);
+  if (frame->area_mask_len) memcpy(out->area_mask, frame->area_mask, frame->area_mask_len);
   out->area_mask_len = frame->area_mask_len;
   out->player_state = frame->player_state;
   return true;

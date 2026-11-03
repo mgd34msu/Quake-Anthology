@@ -1,5 +1,6 @@
 /* Port of src/content/mods/item-actions.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/item_actions.h"
+#include "qa/content/mods/declaration.h"
 
 #include <stdlib.h>
 
@@ -24,13 +25,13 @@ qa_source_item_action_calls qa_read_item_actions(
   }
   qa_source_item_action_calls calls = {NULL, NULL};
   if (has_use) {
-    void *storage = malloc(call_elem_size);
+    void *storage = qa_mod_declaration_malloc(call_elem_size);
     if (storage == NULL) qa_save_reader_fail(&use, "out of memory");
     read_call(read_ctx, &use, storage);
     calls.use_call = storage;
   }
   if (has_drop) {
-    void *storage = malloc(call_elem_size);
+    void *storage = qa_mod_declaration_malloc(call_elem_size);
     if (storage == NULL) qa_save_reader_fail(&drop, "out of memory");
     read_call(read_ctx, &drop, storage);
     calls.drop_call = storage;

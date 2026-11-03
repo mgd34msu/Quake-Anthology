@@ -11,11 +11,11 @@
 
 #include "qa/foundation/bounded_queue.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 /* Plain TS `Error` throws: same message form, then abort. */
 static noreturn void throw_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 struct active_timer {
@@ -179,11 +179,17 @@ void qa_omni_timer_pop(qa_omni_timer *timer) {
   free(item.name);
 }
 
+static void measure_pop(void *raw) { qa_omni_timer_pop((qa_omni_timer *)raw); }
+
 void *qa_omni_timer_measure(qa_omni_timer *timer, const char *name,
                             qa_timer_operation_fn operation, void *ctx) {
   if (!timer->active) return operation(ctx);
   qa_omni_timer_push(timer, name);
+  /* TS try { return operation(); } finally { this.pop(); } */
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, measure_pop, timer);
   void *result = operation(ctx);
+  qa_cleanup_pop(&cleanup);
   qa_omni_timer_pop(timer);
   return result;
 }
@@ -268,17 +274,12 @@ char *qa_omni_timer_format(const qa_omni_timer *timer) {
   const char *header = "name\tcalls\ttotal_ms\tself_ms\tmax_ms\n";
   size_t capacity = strlen(header) + 1 + 1;
   for (size_t i = 0; i < count; i++) {
-    /* %.3f stands in for toFixed(3); they differ only on exact decimal
-     * ties the binary value cannot represent half-way for long. */
-    int needed = snprintf(NULL, 0, "%s\t%lld\t%.3f\t%.3f\t%.3f", rows[i].name,
-                          (long long)rows[i].calls, rows[i].total_milliseconds,
-                          rows[i].self_milliseconds,
-                          rows[i].maximum_milliseconds);
+    int needed = snprintf(NULL, 0, "%s\t%lld\t", rows[i].name, (long long)rows[i].calls);
     if (needed < 0) {
       free(rows);
       return NULL;
     }
-    capacity += (size_t)needed + 1;
+    capacity += (size_t)needed + 3 * QA_JS_TO_FIXED_CAPACITY + 1;
   }
   char *out = (char *)malloc(capacity);
   if (out == NULL) {
@@ -289,12 +290,13 @@ char *qa_omni_timer_format(const qa_omni_timer *timer) {
   size_t used = strlen(out);
   for (size_t i = 0; i < count; i++) {
     if (i > 0) out[used++] = '\n';
-    used += (size_t)snprintf(out + used, capacity - used,
-                             "%s\t%lld\t%.3f\t%.3f\t%.3f", rows[i].name,
-                             (long long)rows[i].calls,
-                             rows[i].total_milliseconds,
-                             rows[i].self_milliseconds,
-                             rows[i].maximum_milliseconds);
+    /* toFixed(3) rounds exact ties up (0.0625 -> "0.063"); "%.3f" rounded them to even. */
+    char total[QA_JS_TO_FIXED_CAPACITY], self[QA_JS_TO_FIXED_CAPACITY], maximum[QA_JS_TO_FIXED_CAPACITY];
+    qa_js_to_fixed(rows[i].total_milliseconds, 3, total, sizeof total);
+    qa_js_to_fixed(rows[i].self_milliseconds, 3, self, sizeof self);
+    qa_js_to_fixed(rows[i].maximum_milliseconds, 3, maximum, sizeof maximum);
+    used += (size_t)snprintf(out + used, capacity - used, "%s\t%lld\t%s\t%s\t%s", rows[i].name,
+                             (long long)rows[i].calls, total, self, maximum);
   }
   out[used++] = '\n';
   out[used] = '\0';

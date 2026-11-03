@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/world-adapter.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/world_adapter.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -164,35 +165,27 @@ bool qa_q3_base_world_adapter_link_state(qa_q3_base_world_adapter *adapter, doub
   return true;
 }
 
-/* Mirror captureLink: fold the current link into the r fields. */
-static void capture_link(qa_q3_base_world_adapter *adapter, qa_q3_game_entity *entity) {
-  qa_linked_body_result linked = qa_shared_body_table_linked(adapter->host.bodies,
-      qa_q3_game_entity_actor(entity).id);
-  if (!linked.has_value) return;
-  entity->r.linked = true;
-  entity->r.linkcount = linked.value.link_count;
-  entity->r.absmin = linked.value.absolute_bounds.min;
-  entity->r.absmax = linked.value.absolute_bounds.max;
-}
-
 static double solid_byte(double value) {
   double truncated = trunc(value);
   return truncated < 1 ? 1 : truncated > 255 ? 255 : truncated;
 }
 void qa_q3_base_world_adapter_link(qa_q3_base_world_adapter *adapter, qa_q3_game_entity *entity) {
-  bool inline_model = entity->r.model_kind == 0; /* shared MODEL_INLINE */
+  qa_q3_base_entity_shared_clear_bounds_overrides(&entity->r);
+  bool inline_model = entity->r.model.kind == QA_Q3_BASE_MODEL_INLINE;
   if (inline_model) entity->s.solid = 0xffffff;
-  else if (((int32_t)entity->r.contents & (1 | 0x2000000)) == 0) entity->s.solid = 0;
+  else if ((qa_js_to_int32(entity->r.contents) & (1 | 0x2000000)) == 0) entity->s.solid = 0;
   else {
-    int32_t packed = ((int32_t)solid_byte((float)(entity->r.maxs.z + 32)) << 16) |
-        ((int32_t)solid_byte(-entity->r.mins.z) << 8) | (int32_t)solid_byte(entity->r.maxs.x);
+    int32_t left = (qa_js_to_int32(solid_byte((float)(qa_q3_base_entity_shared_maxs(&entity->r).z + 32))) << 16);
+    int32_t right = (qa_js_to_int32(solid_byte(-qa_q3_base_entity_shared_mins(&entity->r).z)) << 8);
+    int32_t packed = left |
+        right | qa_js_to_int32(solid_byte(qa_q3_base_entity_shared_maxs(&entity->r).x));
     entity->s.solid = packed;
   }
   qa_actor_collision collision;
   memset(&collision, 0, sizeof collision);
   collision.family = "q3";
-  collision.shape_kind = inline_model ? "model" : entity->r.model_kind == 2 ? "capsule" : "box";
-  collision.shape_model = 0; /* mirror has no collision-model index */
+  collision.shape_kind = inline_model ? "model" : entity->r.model.kind == QA_Q3_BASE_MODEL_CAPSULE ? "capsule" : "box";
+  collision.shape_model = inline_model ? entity->r.model.index : 0;
   collision.contents = entity->r.contents;
   qa_actor_id owner;
   bool has_owner = actor_for_number(adapter, entity->r.owner_num, &owner);
@@ -200,14 +193,15 @@ void qa_q3_base_world_adapter_link(qa_q3_base_world_adapter *adapter, qa_q3_game
   collision.role = entity->r.contents == 0x40000000 ? "trigger" : "solid";
   qa_owned_actor actor = qa_q3_game_entity_actor(entity);
   adapter->host.collision(adapter->host.ctx, actor, collision);
-  qa_shared_body_table_link(adapter->host.bodies, actor, &entity->r.current_origin);
-  capture_link(adapter, entity);
+  qa_vec3 origin = qa_q3_base_entity_shared_current_origin(&entity->r);
+  qa_shared_body_table_link(adapter->host.bodies, actor, &origin);
+  qa_q3_base_entity_shared_capture_link(&entity->r);
 }
 
 void qa_q3_base_world_adapter_unlink(qa_q3_base_world_adapter *adapter, double number) {
   qa_q3_game_entity *entity = qa_q3_base_entity_records_get(adapter->records, number);
   if (entity != NULL && qa_q3_game_entity_inuse(entity)) {
-    capture_link(adapter, entity);
+    qa_q3_base_entity_shared_capture_link(&entity->r);
     qa_shared_body_table_unlink(adapter->host.bodies, qa_q3_game_entity_actor(entity));
   }
 }
@@ -224,7 +218,7 @@ qa_q3_base_relink_closure *qa_q3_base_world_adapter_unlink_actor(qa_q3_base_worl
   if (!qa_session_actor_registry_resolve_owned(host->actors, actor, &owner)) return NULL;
   if (!qa_shared_body_table_linked(adapter->host.bodies, actor).has_value) return NULL;
   qa_q3_game_entity *native = qa_q3_base_entity_records_native_by_actor(adapter->records, true, actor);
-  if (native != NULL) capture_link(adapter, native);
+  if (native != NULL) qa_q3_base_entity_shared_capture_link(&native->r);
   qa_shared_body_table_unlink(adapter->host.bodies, owner);
   qa_q3_base_relink_closure *closure = malloc(sizeof *closure);
   if (!closure) qa_range_error("out of memory");

@@ -5,6 +5,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q2/types.h"
 #include "qa/network/q2/adapters.h"
+#include "qa/foundation/js.h"
 double qa_app_q2_remote_view_height(const qa_app_q2_remote_player *player) {
   return player->rerelease ? player->modern.movement.view_height
                            : player->classic.view.view_offset.z;
@@ -21,7 +22,7 @@ qa_bounds qa_app_q2_remote_body_bounds(const qa_app_q2_remote_player *player) {
   bool gib = type == (player->rerelease ? QA_Q2_KEX_PM_GIB : QA_Q2_PM_GIB);
   bool dead = type == (player->rerelease ? QA_Q2_KEX_PM_DEAD : QA_Q2_PM_DEAD);
   qa_bounds bounds = {{-16, -16, gib ? 0 : -24},
-      {16, 16, gib ? 16 : dead || ((int64_t)flags & QA_Q2_PMF_DUCKED) != 0 ? 4 : 32}};
+      {16, 16, gib ? 16 : dead || (qa_js_to_int32(flags) & QA_Q2_PMF_DUCKED) != 0 ? 4 : 32}};
   return bounds;
 }
 qa_q2_wire_usercmd qa_app_q2_remote_command(bool command_rerelease,
@@ -39,11 +40,12 @@ qa_q2_wire_usercmd qa_app_q2_remote_command(bool command_rerelease,
     return wire;
   }
   if (command_rerelease || player->rerelease)
-    qa_range_error("Q2 command and server movement editions differ");
+    qa_raise("Error", 0, 0, "Q2 command and server movement editions differ");
   qa_q2_from_command_classic(classic, &wire);
   for (int i = 0; i < 3; i++)
-    wire.angles[i] = (int16_t)(((int)wire.angles[i]
-        - (int)player->classic.movement.delta_angle_shorts.values[i]) & 65535);
+    /* (readElement(angles) - readElement(deltaAngleShorts)) & 65535, stored into the Int16Array. */
+    wire.angles[i] = qa_js_to_int16(qa_js_bit_and((double)wire.angles[i]
+        - (double)player->classic.movement.delta_angle_shorts.values[i], 65535));
   return wire;
 }
 void qa_app_q2_rerelease_view_height_init(qa_app_q2_rerelease_view_height *state) {
@@ -61,15 +63,15 @@ double qa_app_q2_rerelease_view_height_sample(qa_app_q2_rerelease_view_height *s
     state->previous = state->current; state->current = height;
     state->changed_at = time_milliseconds;
   }
-  double elapsed = fmax(0, fmin(time_milliseconds - state->changed_at, 100));
+  double elapsed = qa_js_max(0, qa_js_min(time_milliseconds - state->changed_at, 100));
   return state->current + (state->previous - state->current) * (100 - elapsed) * 0.01;
 }
 bool qa_app_q2_rerelease_view_continuous(const qa_q2_rerelease_player_state *previous,
     const qa_q2_rerelease_player_state *current, double previous_frame,
     double current_frame, double event) {
   qa_vec3 before = previous->movement.origin, after = current->movement.origin;
-  double furthest = fmax(fabs(before.x - after.x),
-      fmax(fabs(before.y - after.y), fabs(before.z - after.z)));
+  double furthest = qa_js_max(fabs(before.x - after.x),
+      qa_js_max(fabs(before.y - after.y), fabs(before.z - after.z)));
   return current_frame == previous_frame + 1 && event != 6 && event != 7 && furthest <= 256
-      && (((int64_t)previous->view.render_flags ^ (int64_t)current->view.render_flags) & 16) == 0;
+      && ((qa_js_to_int32(previous->view.render_flags) ^ qa_js_to_int32(current->view.render_flags)) & 16) == 0;
 }

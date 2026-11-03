@@ -20,8 +20,9 @@ int64_t qa_aas_estimate_area_time(int64_t presence, int64_t flags, qa_vec3 start
   float sum = (float)((float)((double)xx + yy) + (double)zz);
   float distance = (float)sqrt((double)sum);
   float factor = (presence & 2) == 0 ? (float)1.3 : (flags & 4) != 0 ? 1.0f : (float)0.33;
-  double value = trunc((double)(float)((double)distance * factor));
-  if (!isfinite(value) || value > 0x7fffffff) qa_range_error("AAS estimate distance exceeds source int range");
+  double converted = trunc((double)(float)((double)distance * factor));
+  /* The C float-to-int conversion yields INT_MIN for NaN and out-of-range values, which the later clamp turns into 1. */
+  double value = isfinite(converted) && converted <= 0x7fffffff ? converted : -2147483648.0;
   int64_t v = (int64_t)value;
   if (v < 1) v = 1;
   return v & 0xffff;

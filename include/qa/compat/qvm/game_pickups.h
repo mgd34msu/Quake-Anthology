@@ -15,7 +15,7 @@
 #include "qa/contracts/pickups.h"
 
 typedef struct qa_qvm_pickup_eligibility {
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_qvm_writable_view item;
   qa_qvm_writable_view player;
 } qa_qvm_pickup_eligibility;
@@ -99,9 +99,9 @@ qa_qvm_primary_pickups *qa_qvm_primary_pickups_create(qa_qvm_primary_pickups_opt
 void qa_qvm_primary_pickups_destroy(qa_qvm_primary_pickups *pickups);
 void qa_qvm_primary_pickups_close(qa_qvm_primary_pickups *pickups);
 void qa_qvm_primary_pickups_assert_idle(const qa_qvm_primary_pickups *pickups);
-/* The cancel target is a function call (qa_qvmy_function_call). */
+/* The cancel target is a function call (qa_qvm_module_function_call). */
 void qa_qvm_primary_pickups_after_free(qa_qvm_primary_pickups *pickups, double pointer,
-                                       qa_qvmy_function_call *control);
+                                       qa_qvm_module_function_call *control);
 
 /* TS supply() result; quantity is absent when has_quantity is false. */
 typedef struct qa_qvm_pickup_supply {
@@ -112,8 +112,9 @@ typedef struct qa_qvm_pickup_supply {
   uint64_t frame_sequence;         /* internal */
 } qa_qvm_pickup_supply;
 
-qa_qvm_pickup_supply qa_qvm_primary_pickups_supply(qa_qvm_primary_pickups *pickups,
-                                                   qa_original_pickup_offer offer);
+/* Fills *supply in place, since supply->offer.ammo points at supply->ammo_grant. */
+void qa_qvm_primary_pickups_supply(qa_qvm_pickup_supply *supply, qa_qvm_primary_pickups *pickups,
+                                   qa_original_pickup_offer offer);
 double qa_qvm_pickup_supply_quantity(qa_qvm_pickup_supply *supply, double count);
 
 #endif

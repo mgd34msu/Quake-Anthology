@@ -1,5 +1,6 @@
 /* Port of src/content/q2/base/player/landmarks.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/base/player/landmarks.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -98,7 +99,7 @@ bool qa_q2_place_landmark(qa_q2_entity *entity, qa_q2_game_services *game, qa_q2
   qa_body_state reference = qa_q2_game_body(game, landmark);
   qa_vec3 origin = qa_q2_add(qa_q2_rotate_landmark(carry.relative_origin, reference.angles), reference.origin);
   /* This is source bit 0, also authored by the shipped rerelease BSPs. */
-  if (((int64_t)landmark->spawnflags & 1) != 0) origin.z = qa_q2_game_body(game, spawn).origin.z;
+  if ((qa_js_to_int32(landmark->spawnflags) & 1) != 0) origin.z = qa_q2_game_body(game, spawn).origin.z;
   qa_vec3 clear;
   if (!qa_q2_fix_stuck_player(entity, game, origin, bounds, &clear)) return false;
   out->origin = clear;

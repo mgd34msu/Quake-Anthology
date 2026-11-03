@@ -2,6 +2,7 @@
 #include "qa/bots/navigation/aas_reachability_types.h"
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 void qa_aas_movement_settings_init(qa_aas_movement_settings *s) { memset(s, 0, sizeof *s); }
 void qa_init_aas_movement_settings(qa_aas_movement_settings *s, void *ctx, qa_aas_lib_var_value value) {
@@ -25,7 +26,7 @@ void qa_init_aas_movement_settings(qa_aas_movement_settings *s, void *ctx, qa_aa
 #undef READ
 }
 static double number_value(void *ctx, const char *name, const char *initial) {
-  (void)ctx; (void)name; return strtod(initial, NULL);
+  (void)ctx; (void)name; return qa_js_string_to_number(initial); /* Number(initial) */
 }
 void qa_aas_default_movement_settings(qa_aas_movement_settings *s) {
   qa_aas_movement_settings_init(s);

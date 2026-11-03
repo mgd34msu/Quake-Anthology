@@ -96,20 +96,6 @@ bool qa_layout_text(const qa_text_layout_options *options,
 void qa_draw_text_layout(const qa_draw2d *draw, const qa_text_layout *layout,
                          qa_vec2 origin, double shadow_offset);
 
-/* TS SeatTextScale / seatTextScale. */
-typedef struct qa_seat_text_scale {
-  double console;
-  double console_width;
-  double console_height;
-  double status_bar;
-  double crosshair;
-} qa_seat_text_scale;
-
-qa_seat_text_scale qa_seat_text_scale_of(qa_rect viewport,
-                                         double console_scale,
-                                         double status_bar_scale,
-                                         double crosshair_scale);
-
 /* TS SeatTextPresentation. font is public, as in the TS. */
 typedef struct qa_seat_text_presentation {
   qa_seat_id seat;

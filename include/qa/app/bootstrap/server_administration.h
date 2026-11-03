@@ -57,6 +57,9 @@ typedef struct qa_app_source_administration_options {
 } qa_app_source_administration_options;
 const char *const *qa_app_source_administration_command_names(qa_command_dialect dialect, size_t *out_count);
 void qa_app_register_source_administration_cvars(qa_cvar_registry *cvars);
-/* Returned vtable ctx is a malloc'd options copy (leaked with owner). */
+/* TS sourceServerAdministration. The returned vtable's ctx holds the options copy and the
+ * strings and masters it last returned (rcon_password / masters results stay valid until
+ * the next call of the same member); release it with qa_app_source_server_administration_destroy. */
 qa_server_administration qa_app_source_server_administration(const qa_app_source_administration_options *options);
+void qa_app_source_server_administration_destroy(qa_server_administration *administration);
 #endif

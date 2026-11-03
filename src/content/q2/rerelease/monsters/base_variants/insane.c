@@ -17,7 +17,7 @@ static bool crawling(double frame) {
 }
 static void run_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_entity *entity = c->entity;
   const qa_q2rm_insane_frames *f = &qa_q2rm_insane_frames_value;
   if (q2rm_has(entity->spawnflags, 16) && entity->frame == f->cr_pain10) {
     q2rm_set_move(c, "insane_move_down");
@@ -38,8 +38,8 @@ static void dead_impl(qa_q2m_context *c) {
 }
 static void dead_fn(void *ctx, qa_q2m_context *c) { (void)ctx; dead_impl(c); }
 static void vocalize(qa_q2m_context *c, bool scream) {
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   if (q2rm_has(entity->spawnflags, 64) || state->attack_finished >= q2rm_now(game)) return;
   static const double samples[8] = {1, 2, 3, 4, 6, 8, 9, 10};
@@ -47,7 +47,9 @@ static void vocalize(qa_q2m_context *c, bool scream) {
   char path[32];
   (void)snprintf(path, sizeof path, "insane/insane%d.wav", (int)sample);
   q2rm_snd4(c, path, 2, 1, 2);
-  state->attack_finished = q2rm_now(game) + 1 + q2rm_rnd(game) * 2;
+  double left = q2rm_now(game) + 1;
+  double right = q2rm_rnd(game) * 2;
+  state->attack_finished = left + right;
 }
 static void init_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -64,8 +66,8 @@ static void after_spawn_fn(void *ctx, qa_q2m_context *c) {
 }
 static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   (void)ctx; (void)reaction;
-  qa_q2f_game *game = c->game;
-  qa_q2f_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
+  qa_q2_entity *entity = c->entity;
   qa_q2m_state *state = c->state;
   const qa_q2rm_insane_frames *f = &qa_q2rm_insane_frames_value;
   if (q2rm_now(game) < state->pain_time) return;
@@ -82,8 +84,8 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
 }
 static void die_fn(void *ctx, qa_q2m_context *c, qa_death_reaction reaction) {
   (void)ctx;
-  qa_q2f_entity *entity = c->entity;
-  qa_q2f_game *game = c->game;
+  qa_q2_entity *entity = c->entity;
+  qa_q2_game_services *game = c->game;
   qa_q2m_state *state = c->state;
   double damage = reaction.pain.damage;
   if (qa_q2rm_check_gib(c)) {
@@ -131,7 +133,7 @@ const qa_q2m_definition *qa_q2rm_get_rerelease_insane_definition(void) {
   insane_definition.after_spawn = (qa_q2m_handler){NULL, after_spawn_fn};
   insane_definition.reactions.pain = pain_fn;
   insane_definition.reactions.die = die_fn;
-  insane_definition.callbacks = qa_q2rm_merge_callbacks(
+  insane_definition.callbacks = qa_q2rm_merge_callbacks(NULL, 
       insane_definition.callbacks, insane_definition.callback_count,
       extra_callbacks, sizeof extra_callbacks / sizeof extra_callbacks[0], &insane_definition.callback_count);
   insane_ready = true;

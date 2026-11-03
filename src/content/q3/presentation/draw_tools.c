@@ -17,9 +17,6 @@ double qa_q3_pres_draw_strlen(const char *text) {
 }
 double qa_q3_pres_proportional_string_width(const char *text) { return (double)qa_q3_proportional_string_width(text); }
 double qa_q3_pres_banner_string_width(const char *text) { return (double)qa_q3_banner_string_width(text); }
-double qa_q3_pres_proportional_size_scale(double style) {
-  return (qa_int32(style) & QA_UI_SMALLFONT) != 0 ? 0.75 : 1;
-}
 bool qa_q3_pres_fade_color(double time, double start_msec, double total_msec, qa_vec4 *out) {
   int32_t start = qa_int32(start_msec), total = qa_int32(total_msec);
   int32_t elapsed = qa_int32((double)qa_int32(time) - start);

@@ -165,9 +165,11 @@ qa_renderer_image qa_q2_animated_texture(const qa_render_material *material,
   int64_t count = (int64_t)material->frame_count;
   if (count <= 0)
     qa_range_error("Broken Q2 animation cycle in %s", material->name);
-  int64_t frame_i = (int64_t)trunc(frame);
-  int64_t index = ((frame_i % count) + count) % count;
-  return material->frames[index];
+  /* ((Math.trunc(frame) % n) + n) % n on doubles; frames[NaN] is undefined. */
+  double index = fmod(fmod(trunc(frame), (double)count) + (double)count, (double)count);
+  if (!(index >= 0 && index < (double)count))
+    qa_range_error("Broken Q2 animation cycle in %s", material->name);
+  return material->frames[(size_t)index];
 }
 
 qa_vec2 qa_liquid_tex_coords(qa_vec2 uv, double time,
@@ -477,7 +479,7 @@ qa_split_sky_texture qa_split_q64_sky_texture(qa_render_image image) {
   if (image.kind != QA_RENDER_IMAGE_INDEXED8)
     qa_range_error("Quake64 sky requires an indexed source image");
   if (image.level_count == 0 || image.levels[0].height < 2 ||
-      (int64_t)image.levels[0].height % 2 != 0)
+      fmod(image.levels[0].height, 2) != 0) /* height % 2 on a double */
     qa_range_error("Quake64 sky requires two vertically stacked layers");
   qa_image_level level = image.levels[0];
   double width = level.width, height = level.height / 2;

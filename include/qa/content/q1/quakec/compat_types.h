@@ -191,6 +191,16 @@ typedef struct qa_q1qc_source {
   void *slot_free_ctx;
   bool (*slot_free)(void *ctx, int64_t slot);
 } qa_q1qc_source;
+/* TS Partial<Pick<QcWorldHostOptions, "foreignActor" | "foreignReference">>,
+ * the optional half of the id1 attack/environment/projectile sources
+ * (foreign actors borrowing QC rows). Passed beside qa_q1qc_source; a NULL
+ * table or NULL member is the TS absent member. Signatures match
+ * qa_compat_qc_world_host_options. */
+typedef struct qa_q1qc_foreign_source {
+  void *ctx;
+  bool (*foreign_actor)(void *ctx, int64_t slot, qa_owned_actor *out); /* false = TS null */
+  int64_t (*foreign_reference)(void *ctx, qa_actor_id actor);
+} qa_q1qc_foreign_source;
 
 /* src/compat/qc/source-call.ts mirrors. */
 const char *qa_q1qc_source_value_type(const qa_mod_callback_value *value);

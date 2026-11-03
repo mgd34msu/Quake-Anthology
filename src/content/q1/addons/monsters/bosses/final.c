@@ -1,828 +1,913 @@
-/* Port of src/content/q1/addons/monsters/bosses/final.ts. GPL-2.0-or-later. */
+/* Port of src/content/q1/addons/monsters/bosses/final.ts.
+ * quakec_mg3/monsters/boss_final.qc. Copyright (C) 1996-2026 id Software LLC. GPL-2.0-or-later. */
 #include "qa/content/q1/addons/monsters/bosses/final.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/content/q1/addons/campaign.h"
 #include "qa/content/q1/addons/monsters/bosses/effects.h"
 #include "qa/content/q1/addons/monsters/bosses/frames/final.h"
 #include "qa/content/q1/addons/monsters/bosses/oldnew.h"
 #include "qa/content/q1/addons/monsters/bosses/registry.h"
 #include "qa/content/q1/addons/monsters/bosses/sphere_points.h"
-#include "qa/foundation/support.h"
+#include "qa/content/q1/addons/monsters/startup.h"
+#include "qa/content/q1/base/projectiles.h"
+#include "qa/content/q1/base/provider.h"
+#include "qa/content/q1/base/rules.h"
+#include "qa/content/q1/foundation/spawns.h"
+#include "qa/content/q1/missionpacks/types.h"
+#include "../support.h"
 
-#define FR(x) ((double)(float)(x))
-#define FLAGS(x) ((int32_t)(x))
+#define PREFIX "mg3:final"
+#define FR QA_Q1AM_FR
+#define FLAGS QA_Q1AM_FLAGS
 
 static const char *const final_classnames[] = {"monster_boss_final"};
-static const qa_q1am_species final_spec = {
-  "boss", NULL, "boss", NULL, "boss_final_idle1", "boss_final_idle1", "boss_final_missile1",
-  "", "boss_final_missile1", "boss", final_classnames, 1, NULL, 0,
-  12000, -INFINITY, {{-128, -128, -24}, {128, 128, 256}}, false,
+static const qa_q1_base_monster_species final_spec = {
+  .species = "boss", .classnames = final_classnames, .classname_count = 1, .model = "boss", .head = NULL,
+  .health = 12000, .gib_health = -INFINITY, .gibs = NULL, .gib_count = 0,
+  .bounds = {{-128, -128, -24}, {128, 128, 256}}, .stand = "boss_final_idle1", .walk = "boss_final_idle1",
+  .run = "boss_final_missile1", .sight = "", .missile = "boss_final_missile1", .melee = false, .movement = "boss",
 };
-static qa_q1am_final_boss *as_final(qa_q1am_monster *m) { return m->owner; }
-static void final_dispatch(qa_q1am_monster *monster, const char *name) {
-  qa_q1am_final_boss_action(monster->owner, name);
+
+static void final_spawn(qa_q1_base_monster *monster);
+static void final_use(qa_q1_base_monster *monster, const qa_actor_id *activator);
+static void final_awake(qa_q1_base_monster *monster, const qa_actor_id *activator);
+static void final_play(qa_q1_base_monster *monster, const char *name);
+static void final_pain(qa_q1_base_monster *monster, const qa_actor_id *attacker, double damage);
+static void final_die(qa_q1_base_monster *monster, const qa_actor_id *attacker);
+static void final_destroy(qa_q1_base_monster *monster) { free(monster); }
+static const qa_q1_base_monster_ops final_ops = {
+  .spawn = final_spawn, .use = final_use, .awake = final_awake, .play = final_play, .pain = final_pain,
+  .die = final_die, .destroy = final_destroy,
+};
+bool qa_q1am_is_final_boss(const qa_q1_base_monster *monster) { return monster->ops == &final_ops; }
+static qa_q1am_final_boss *final_of(qa_q1_base_monster *monster) { return (qa_q1am_final_boss *)monster; }
+
+static void final_frame_action(void *ctx, qa_q1_base_monster *monster) {
+  if (!qa_q1am_is_final_boss(monster)) qa_range_error("Final boss callback received another source controller");
+  qa_q1am_final_boss_action(final_of(monster), ctx);
 }
-static void decide_action(void *ctx, qa_q1am_monster *monster) {
+static void final_decide(void *ctx, qa_q1_base_monster *monster) {
   (void)ctx;
-  if (monster->kind != QA_Q1AM_KIND_FINAL)
-    qa_range_error("Final boss decision received another source controller");
-  monster->ops.play(monster, "boss_final_decide");
+  if (!qa_q1am_is_final_boss(monster)) qa_range_error("Final boss decision received another source controller");
+  qa_q1_base_monster_play(monster, "boss_final_decide");
 }
-static const qa_q1am_source *final_source(void) {
-  static const qa_q1am_source *source;
-  if (source == NULL) {
-    static const qa_q1am_action_entry extra[] = {{"boss_final_decide", NULL, decide_action}};
-    source = qa_q1am_boss_build_source("mg3:final", &qa_q1am_final_boss_frames, QA_Q1AM_KIND_FINAL,
-                                       "Final boss callback received another source controller",
-                                       final_dispatch, extra, 1);
+/* TS actions: the frame actions, then actions.set("boss_final_decide", ...). */
+static const qa_q1_monster_action_entry *final_actions(size_t *count) {
+  static qa_q1_monster_action_entry *entries;
+  static size_t entry_count;
+  if (entries == NULL) {
+    size_t frame_count = 0;
+    const qa_q1_monster_action_entry *frame = qa_q1am_frame_actions(&qa_q1am_final_boss_frames, final_frame_action, &frame_count);
+    entries = malloc((frame_count + 1) * sizeof *entries);
+    if (entries == NULL) qa_range_error("out of memory");
+    memcpy(entries, frame, frame_count * sizeof *entries);
+    entry_count = frame_count;
+    size_t slot = entry_count;
+    for (size_t i = 0; i < frame_count; i++)
+      if (strcmp(entries[i].name, "boss_final_decide") == 0) slot = i;
+    entries[slot] = (qa_q1_monster_action_entry){"boss_final_decide", final_decide, NULL};
+    if (slot == entry_count) entry_count++;
   }
-  return source;
+  *count = entry_count;
+  return entries;
 }
-static void later(qa_q1am_context *context, qa_q1am_actor *entity, const char *name, double delay) {
-  char full[200];
-  (void)snprintf(full, sizeof full, "mg3:final:%s", name);
-  context->game->schedule(context->game->ctx, entity, delay,
-                          context->game->named_action(context->game->ctx, entity, full));
+
+static void later(qa_q1ad_context *context, qa_q1_actor *entity, const char *name, double delay) {
+  char full[96];
+  (void)snprintf(full, sizeof full, PREFIX ":%s", name);
+  qa_q1_schedule(context->game, entity, delay, qa_q1_callback_registry_action(context->game->named, entity, full));
 }
-static double random_signed(qa_q1am_context *context) {
-  return FR(2 * context->game->random(context->game->ctx) - 1);
+static double random_signed(qa_q1ad_context *context) { return FR(2 * qa_q1am_random(context->game) - 1); }
+static void spin(qa_q1ad_context *context, qa_q1_actor *shot) {
+  qa_vec3 angular;
+  angular.x = 300 * random_signed(context);
+  angular.y = 300 * random_signed(context);
+  angular.z = 300 * random_signed(context);
+  shot->angular_velocity = angular;
 }
-static void spin(qa_q1am_context *context, qa_q1am_actor *shot) {
-  shot->angular_velocity = (qa_vec3){300 * random_signed(context), 300 * random_signed(context),
-                                     300 * random_signed(context)};
-}
-static qa_q1am_actor *rock(qa_q1am_context *context, bool has_owner, qa_actor_id owner,
-                           qa_vec3 origin, qa_vec3 direction, const char *model) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_actor *shot = game->launch_spike(game->ctx, game, has_owner, owner, origin, direction);
-  (void)snprintf(shot->classname, sizeof shot->classname, "%s", "rock");
-  (void)snprintf(shot->model, sizeof shot->model, "progs/rogue/%s.mdl", model);
-  shot->touch = game->named_touch(game->ctx, shot, "mg3:final:T_RockTouch2");
-  game->set_bounds(game->ctx, shot, QA_Q1AM_POINT);
+static qa_q1_actor *rock(qa_q1ad_context *context, const qa_actor_id *owner, qa_vec3 origin, qa_vec3 direction,
+                         const char *model) {
+  qa_q1_services *game = context->game;
+  qa_q1_actor *shot = qa_q1_launch_spike(game, owner, origin, direction, "spike");
+  qa_q1ad_set_text(&shot->classname, "rock");
+  char path[64];
+  (void)snprintf(path, sizeof path, "progs/rogue/%s.mdl", model);
+  qa_q1ad_set_text(&shot->model, path);
+  shot->touch = qa_q1_callback_registry_touch(game->named, shot, PREFIX ":T_RockTouch2");
+  qa_q1_set_bounds(game, shot, QA_Q1_POINT);
   return shot;
 }
-static void final_spawn(qa_q1am_monster *m) {
-  qa_q1am_final_boss *self = as_final(m);
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = self->context;
-  if (game->options.deathmatch != 0) {
-    game->remove(game->ctx, entity);
-    return;
-  }
-  (void)snprintf(entity->classname, sizeof entity->classname, "%s", "monster_boss");
-  context->set_number(context->ctx, entity, "boss_immune", 1);
-  entity->movement_flags = 32;
-  game->combat_set_team(game->ctx, entity->actor, "q1:monsters");
-  game->total_monsters++;
-  qa_q1am_event event = {0};
-  event.kind = "monster-count";
-  event.count = game->total_monsters;
-  context->services_emit(context->services_ctx, &event);
-  context->set_number(context->ctx, entity, "frags", 0);
-  entity->use = game->named_use(game->ctx, entity, "mg3:final:boss_awake");
+static double enemy_health(qa_q1_base_monster *monster) {
+  return monster->state->has_enemy ? qa_q1_health(monster->game, monster->state->enemy) : 0;
 }
-static void final_awake(qa_q1am_monster *m, bool has, qa_actor_id activator) {
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
+static qa_vec3 target_or_zero(qa_q1_base_monster *monster) {
+  qa_vec3 target = QA_Q1_ZERO;
+  (void)qa_q1_base_monster_target(monster, &target);
+  return target;
+}
+
+static void final_spawn(qa_q1_base_monster *monster) {
+  qa_q1ad_context *context = final_of(monster)->context;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  if (game->options.deathmatch != 0) { qa_q1_remove(game, entity); return; }
+  qa_q1ad_set_text(&entity->classname, "monster_boss");
+  qa_q1ad_set_number(context, entity, "boss_immune", 1);
+  entity->movement_flags = 32;
+  qa_combat_trait_changes traits;
+  memset(&traits, 0, sizeof traits);
+  traits.has_team = true;
+  traits.team = "q1:monsters";
+  qa_gameplay_authority_set_traits(game->host.combat, entity->actor, traits);
+  game->total_monsters++;
+  qa_q1ad_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q1AD_EVENT_MONSTER_COUNT;
+  event.count = game->total_monsters;
+  context->services.emit(context->services.ctx, &event);
+  qa_q1ad_set_number(context, entity, "frags", 0);
+  entity->use = qa_q1_callback_registry_use(game->named, entity, PREFIX ":boss_awake");
+}
+static void final_use(qa_q1_base_monster *monster, const qa_actor_id *activator) {
+  qa_actor_id resolved;
+  const bool has = qa_q1am_mg3_monster_activator(monster->game, activator, &resolved);
+  qa_q1_base_monster_use_super(monster, has ? &resolved : NULL);
+}
+static void final_awake(qa_q1_base_monster *monster, const qa_actor_id *activator) {
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
   entity->solid = "slidebox";
   entity->movement = "step";
-  qa_q1am_actor_set_damageable(game, entity, true);
+  qa_q1_actor_set_damageable(entity, true);
   entity->aimed_damage = true;
-  (void)snprintf(entity->model, sizeof entity->model, "%s", "progs/boss.mdl");
-  m->state->attack_finished = game->time + 3;
-  game->set_bounds(game->ctx, entity, final_spec.bounds);
-  m->state->has_enemy = has;
-  m->state->enemy = activator;
-  entity->die = game->named_die(game->ctx, entity, "mg3:final:monster_die");
-  entity->pain = game->named_pain(game->ctx, entity, "mg3:final:monster_pain");
-  game->combat_set_health(game->ctx, entity->actor, 12000);
+  qa_q1ad_set_text(&entity->model, "progs/boss.mdl");
+  monster->state->attack_finished = game->time + 3;
+  qa_q1_set_bounds(game, entity, final_spec.bounds);
+  qa_q1_base_monster_set_enemy(monster, activator);
+  entity->die = qa_q1_callback_registry_die(game->named, entity, PREFIX ":monster_die");
+  entity->pain = qa_q1_callback_registry_pain(game->named, entity, PREFIX ":monster_pain");
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 12000);
   entity->max_health = 12000;
-  entity->use = game->named_use(game->ctx, entity, "mg3:final:monster_use");
+  entity->use = qa_q1_callback_registry_use(game->named, entity, PREFIX ":monster_use");
   entity->yaw_speed = 20;
-  game->effect(game->ctx, "lava-splash", qa_q1am_monster_origin(m), false, (qa_actor_id){0}, 1);
-  m->ops.play(m, "boss_final_rise1");
+  qa_q1_effect(game, "lava-splash", qa_q1_base_monster_origin(monster), NULL, 1);
+  qa_q1_base_monster_play(monster, "boss_final_rise1");
 }
-static void final_play(qa_q1am_monster *m, const char *name) {
-  qa_q1am_final_boss *self = as_final(m);
+static void final_play(qa_q1_base_monster *monster, const char *name) {
   if (strcmp(name, "boss_final_decide") == 0) {
-    self->super_ops.play(m, m->entity->wait > 0 && m->game->random(m->game->ctx) < 0.3
-                                ? "boss_final_mg1" : "boss_final_missile1");
+    qa_q1_base_monster_play_super(monster, monster->entity->wait > 0 && qa_q1am_random(monster->game) < 0.3
+                                               ? "boss_final_mg1" : "boss_final_missile1");
     return;
   }
-  self->super_ops.play(m, name);
+  qa_q1_base_monster_play_super(monster, name);
 }
-static int compare_slots(const void *a, const void *b) {
-  int64_t left = ((const qa_actor_id *)a)->slot, right = ((const qa_actor_id *)b)->slot;
+static int compare_slots(const void *a, const void *b, void *ctx) {
+  (void)ctx;
+  const int64_t left = ((const qa_actor_id *)a)->slot, right = ((const qa_actor_id *)b)->slot;
   return left < right ? -1 : left > right ? 1 : 0;
 }
 void qa_q1am_final_boss_face(qa_q1am_final_boss *boss) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  if ((m->state->has_enemy ? game->health(game->ctx, m->state->enemy) : 0) <= 0 ||
-      game->random(game->ctx) < 0.02) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  if (enemy_health(monster) <= 0 || qa_q1am_random(game) < 0.02) {
     size_t count = 0;
-    qa_actor_id *players = game->players(game->ctx, &count);
-    qsort(players, count, sizeof *players, compare_slots);
-    int64_t after = m->state->has_enemy ? m->state->enemy.slot : 0;
-    bool found = false;
-    qa_actor_id chosen = {0};
-    for (size_t i = 0; i < count && !found; i++)
-      if (players[i].slot > after) {
-        chosen = players[i];
-        found = true;
-      }
-    if (!found && count > 0) {
-      chosen = players[0];
-      found = true;
-    }
-    m->state->has_enemy = found;
-    m->state->enemy = chosen;
+    const qa_actor_id *host_players = game->host.players(game->host.ctx, &count);
+    qa_actor_id *players = count == 0 ? NULL : malloc(count * sizeof *players);
+    if (count != 0 && players == NULL) qa_range_error("out of memory");
+    if (count != 0) memcpy(players, host_players, count * sizeof *players);
+    qa_js_stable_sort(players, count, sizeof *players, compare_slots, NULL);
+    const int64_t after = monster->state->has_enemy ? monster->state->enemy.slot : 0;
+    const qa_actor_id *chosen = NULL;
+    for (size_t i = 0; i < count && chosen == NULL; i++)
+      if (players[i].slot > after) chosen = &players[i];
+    if (chosen == NULL && count > 0) chosen = &players[0];
+    qa_q1_base_monster_set_enemy(monster, chosen);
     free(players);
   }
-  if ((m->state->has_enemy ? game->health(game->ctx, m->state->enemy) : 0) > 0)
-    qa_q1am_monster_face(m);
+  if (enemy_health(monster) > 0) qa_q1_base_monster_face(monster);
 }
-static void final_pain(qa_q1am_monster *m, bool has, qa_actor_id attacker, double damage) {
-  (void)has; (void)attacker; (void)damage;
-  qa_q1am_final_boss *self = as_final(m);
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = self->context;
-  if (m->state->attack_finished > game->time || m->state->pain_finished > game->time ||
-      qa_q1am_actor_number(entity, "boss_immune") != 0)
+static void final_pain(qa_q1_base_monster *monster, const qa_actor_id *attacker, double damage) {
+  (void)damage; /* TS pain(attacker, _damage) */
+  qa_q1_base_monster_retaliate(monster, attacker);
+  qa_q1ad_context *context = final_of(monster)->context;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  if (monster->state->attack_finished > game->time || monster->state->pain_finished > game->time ||
+      qa_q1_actor_number(entity, "boss_immune") != 0)
     return;
   const char *event = "";
-  double frags = qa_q1am_actor_number(entity, "frags");
-  if (frags == 0) {
-    event = "boss_final_shocka1";
-    frags = 1;
-  }
+  double frags = qa_q1_actor_number(entity, "frags");
+  if (frags == 0) { event = "boss_final_shocka1"; frags = 1; }
   static const struct { double step, fraction; const char *frame; } steps[] = {
     {1, 0.83, "boss_final_shocka1"}, {2, 0.66, "boss_final_shocka1"}, {3, 0.5, "boss_final_shockb1"},
     {4, 0.33, "boss_final_shocka1"}, {5, 0.16, "boss_final_shockb1"},
   };
   for (size_t i = 0; i < sizeof steps / sizeof steps[0]; i++)
-    if (frags == steps[i].step &&
-        game->health(game->ctx, entity->actor.id) < FR(entity->max_health * FR(steps[i].fraction))) {
+    if (frags == steps[i].step && qa_q1_health(game, entity->actor.id) < FR(entity->max_health * FR(steps[i].fraction))) {
       event = steps[i].frame;
       frags++;
     }
-  context->set_number(context->ctx, entity, "frags", frags);
+  qa_q1ad_set_number(context, entity, "frags", frags);
   if (event[0] == '\0') return;
-  context->set_number(context->ctx, entity, "boss_immune", 1);
-  game->sound(game->ctx, entity, "boss1/pain.wav", "weapon", 1);
-  m->state->pain_finished = game->time + 3;
-  m->ops.play(m, event);
+  qa_q1ad_set_number(context, entity, "boss_immune", 1);
+  qa_q1_sound(game, entity->actor.id, "boss1/pain.wav", "weapon", 1, 1);
+  monster->state->pain_finished = game->time + 3;
+  qa_q1_base_monster_play(monster, event);
 }
-static void final_die(qa_q1am_monster *m, bool has, qa_actor_id attacker) {
-  m->state->has_enemy = has;
-  m->state->enemy = attacker;
-  qa_q1am_actor_set_damageable(m->game, m->entity, false);
-  m->entity->touch.present = false;
-  m->entity->movement_flags = (double)(FLAGS(m->entity->movement_flags) & ~3);
-  m->game->use_targets(m->game->ctx, m->entity, m->state->has_enemy, m->state->enemy);
-  m->ops.play(m, "boss_final_death1");
+static void final_die(qa_q1_base_monster *monster, const qa_actor_id *attacker) {
+  qa_q1_actor *entity = monster->entity;
+  qa_q1_base_monster_set_enemy(monster, attacker);
+  qa_q1_actor_set_damageable(entity, false);
+  memset(&entity->touch, 0, sizeof entity->touch);
+  entity->movement_flags = FLAGS(entity->movement_flags) & ~3;
+  const qa_actor_id *enemy = qa_q1_base_monster_enemy(monster);
+  qa_actor_id copy;
+  if (enemy != NULL) { copy = *enemy; enemy = &copy; }
+  qa_q1_use_targets(monster->game, entity, enemy);
+  qa_q1_base_monster_play(monster, "boss_final_death1");
 }
-static qa_vec3 muzzle(qa_q1am_final_boss *boss, qa_vec3 offset, qa_vec3 angles) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_basis basis = qa_q1am_game_make_vectors(m->game, angles);
-  return qa_add3(qa_add3(qa_add3(qa_q1am_monster_origin(m), qa_scale3(basis.forward, offset.x)),
-                         qa_scale3(basis.right, offset.y)),
-                 (qa_vec3){0, 0, offset.z});
+static bool ends_with(const char *text, const char *suffix) {
+  const size_t length = strlen(text), size = strlen(suffix);
+  return length >= size && strcmp(text + length - size, suffix) == 0;
 }
-static void boss_radius_damage(qa_q1am_context *context, qa_q1am_actor *source, double damage);
-static void final_line(qa_q1am_final_boss *boss, qa_vec3 offset);
-static void final_missile(qa_q1am_final_boss *boss, qa_vec3 offset) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  if ((FLAGS(entity->spawnflags) & 2) != 0) {
-    game->random(game->ctx);
-    final_line(boss, offset);
-    return;
-  }
-  qa_vec3 target;
-  qa_vec3 target_point = qa_q1am_monster_target(m, &target) ? target : QA_Q1AM_ZERO;
-  qa_vec3 origin = muzzle(boss, offset, qa_q1am_velocity_angles(qa_sub3(target_point, qa_q1am_monster_origin(m))));
-  qa_vec3 direction = qa_q1am_normalize(qa_sub3(target_point, origin));
-  qa_q1am_actor *shot = game->launch_spike(game->ctx, game, true, entity->actor.id, origin, direction);
-  (void)snprintf(shot->model, sizeof shot->model, "%s", "progs/lavaball.mdl");
-  shot->projectile = "rocket";
-  shot->touch = game->named_touch(game->ctx, shot, "projectile_touch");
-  shot->angular_velocity = (qa_vec3){200, 100, 300};
-  qa_q1am_body_patch patch = {0};
-  patch.has_bounds = true;
-  patch.bounds = QA_Q1AM_POINT;
-  patch.has_velocity = true;
-  patch.velocity = qa_scale3(direction, 300);
-  game->set_body(game->ctx, shot, &patch);
-  game->sound(game->ctx, entity, "boss1/throw.wav", "weapon", 1);
-  if ((m->state->has_enemy ? game->health(game->ctx, m->state->enemy) : 0) <= 0)
-    m->ops.play(m, "boss_final_idle1");
+static void set_next(qa_q1_base_monster *monster, const char *frame) {
+  qa_q1am_copy_name(monster->next_frame, sizeof monster->next_frame, frame);
 }
-void qa_q1am_final_boss_melee_check(qa_q1am_final_boss *boss) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = boss->context;
-  if (qa_q1am_monster_distance(m) > 300 || !m->state->has_enemy ||
-      !game->can_damage(game->ctx, m->state->enemy, entity->actor.id))
-    return;
-  game->damage(game->ctx, m->state->enemy, entity->actor.id, true, entity->actor.id,
-               (game->random(game->ctx) + game->random(game->ctx) + game->random(game->ctx)) * 40);
-  game->sound(game->ctx, entity, "shambler/smack.wav", "voice", 1);
-  for (int i = 0; i < 2; i++)
-    game->spawn_meat_spray(game->ctx, game, entity,
-                           qa_add3(qa_q1am_monster_origin(m), qa_scale3(game->basis.forward, 100)),
-                           qa_scale3(game->basis.right, random_signed(context) * 100));
-}
-static void missile_spawner(qa_q1am_final_boss *boss, qa_vec3 offset) {
-  (void)offset;
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_vec3 target;
-  qa_vec3 target_point = qa_q1am_monster_target(m, &target) ? target : QA_Q1AM_ZERO;
-  qa_vec3 origin = muzzle(boss, offset, qa_q1am_velocity_angles(qa_sub3(target_point, qa_q1am_monster_origin(m))));
-  qa_q1am_actor *shot = game->launch_spike(game->ctx, game, true, entity->actor.id, origin, QA_Q1AM_ZERO);
-  (void)snprintf(shot->model, sizeof shot->model, "%s", "progs/lavaball.mdl");
-  shot->projectile = "rocket";
-  shot->touch = game->named_touch(game->ctx, shot, "projectile_touch");
-  shot->angular_velocity = (qa_vec3){200, 100, 300};
-  qa_q1am_body_patch patch = {0};
-  patch.has_bounds = true;
-  patch.bounds = QA_Q1AM_POINT;
-  patch.has_velocity = true;
-  patch.velocity = QA_Q1AM_ZERO;
-  game->set_body(game->ctx, shot, &patch);
-  game->sound(game->ctx, entity, "boss1/throw.wav", "weapon", 1);
-  if (!m->state->has_enemy || game->health(game->ctx, m->state->enemy) <= 0)
-    m->ops.play(m, "boss_final_idle1");
-}
-static void blast(qa_q1am_final_boss *boss, qa_vec3 offset, double spread, bool effect) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = boss->context;
-  double speed = game->options.skill > 2 ? 500 : game->options.skill > 0 ? 450 : 400;
-  double width = FR(0.15 + FR(0.2 * fabs(spread)));
-  double count = floor(game->random(game->ctx) * 6 + 0.5);
-  qa_vec3 target;
-  qa_vec3 target_point = qa_q1am_monster_target(m, &target) ? target : QA_Q1AM_ZERO;
-  qa_vec3 angles = qa_q1am_velocity_angles(qa_sub3(target_point, qa_q1am_monster_origin(m)));
-  qa_vec3 origin = muzzle(boss, offset, angles);
-  qa_q1am_basis basis = qa_q1am_game_make_vectors(game, angles);
-  double time = FR(qa_length3(qa_sub3(target_point, origin)) / speed);
-  qa_q1am_body enemy_body;
-  qa_vec3 velocity = m->state->has_enemy && game->body_read(game->ctx, m->state->enemy, &enemy_body)
-                         ? enemy_body.velocity : QA_Q1AM_ZERO;
-  velocity.z = 0;
-  qa_vec3 direction = qa_q1am_normalize(
-      qa_sub3(qa_add3(target_point, qa_scale3(velocity, time / 4)), origin));
-  if (effect) game->effect(game->ctx, "explosion", origin, false, (qa_actor_id){0}, 1);
-  for (double remaining = count; remaining > 0; remaining--) {
-    qa_vec3 aim = qa_q1am_normalize(qa_add3(
-        qa_add3(direction, qa_scale3(basis.right, random_signed(context) * width)),
-        qa_scale3(basis.up, random_signed(context) * width)));
-    qa_q1am_actor *shot = rock(context, true, entity->actor.id, qa_add3(origin, qa_scale3(aim, 8)), aim, "sphere");
-    qa_q1am_body_patch patch = {0};
-    patch.has_velocity = true;
-    patch.velocity = qa_scale3(aim, speed + random_signed(context) * 100);
-    game->set_body(game->ctx, shot, &patch);
-    spin(context, shot);
-    if ((int)remaining % 2 == 0) shot->effects = (double)((int32_t)shot->effects | 64);
-  }
-}
-static void final_line(qa_q1am_final_boss *boss, qa_vec3 offset) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = boss->context;
-  double count = game->options.skill == 0 ? 4 : game->options.skill == 1 ? 8
-                 : game->options.skill == 3 ? 15 : 11;
-  qa_vec3 angles = game->body(game->ctx, entity).angles;
-  qa_vec3 origin = muzzle(boss, offset, angles);
-  qa_q1am_basis basis = qa_q1am_game_make_vectors(game, angles);
-  qa_vec3 target;
-  qa_vec3 delta = qa_sub3(qa_q1am_monster_target(m, &target) ? target : QA_Q1AM_ZERO, origin);
-  delta.z = 0;
-  qa_vec3 direction = qa_q1am_normalize(delta);
-  game->effect(game->ctx, "explosion", origin, false, (qa_actor_id){0}, 1);
-  double start = 4 / count * (offset.y < 0 ? 1 : -1);
-  double increment = 2 / count * (offset.y < 0 ? -1 : 1);
-  for (int i = 0; i < (int)count; i++) {
-    boss_radius_damage(context, entity, 10 * game->random(game->ctx) + 10);
-    qa_vec3 aim = qa_q1am_normalize(qa_add3(qa_add3(direction, qa_scale3(basis.right, start)),
-                                            qa_scale3(qa_scale3(basis.right, increment), i)));
-    aim.z = 0;
-    aim = qa_q1am_normalize(aim);
-    qa_q1am_actor *shot = rock(context, true, entity->actor.id, qa_add3(origin, qa_scale3(aim, 8)), aim, "sphere");
-    qa_vec3 velocity = qa_scale3(aim, 300 + random_signed(context) * 100);
-    if (game->random(game->ctx) > 0.5) velocity.z = (game->random(game->ctx) + 1) * 8;
-    qa_q1am_body_patch patch = {0};
-    patch.has_velocity = true;
-    patch.velocity = velocity;
-    game->set_body(game->ctx, shot, &patch);
-    spin(context, shot);
-    if (i % 2 == 0) {
-      context->set_number(context->ctx, shot, "frags", 1);
-      shot->effects = (double)((int32_t)shot->effects | 64);
-    }
-  }
-}
-void qa_q1am_final_boss_upgrade(qa_q1am_final_boss *boss) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = boss->context;
-  entity->wait++;
-  context->set_number(context->ctx, entity, "boss_immune", 0);
-  const char *target = entity->wait == 2 ? qa_q1am_actor_text(entity, "wave1")
-                       : entity->wait == 3 ? qa_q1am_actor_text(entity, "tele_target")
-                       : entity->wait == 4 ? qa_q1am_actor_text(entity, "wave2")
-                       : entity->wait == 5 ? qa_q1am_actor_text(entity, "wave3") : NULL;
-  if (entity->wait == 3) {
-    entity->frame = 0;
-    game->schedule(game->ctx, entity, 0, game->named_action(game->ctx, entity, "SUB_Null"));
-    context->set_number(context->ctx, entity, "boss_immune", 1);
-  }
-  if (target != NULL) {
-    char original[128], wanted[128];
-    (void)snprintf(original, sizeof original, "%s", entity->target);
-    (void)snprintf(wanted, sizeof wanted, "%s", target);
-    (void)snprintf(entity->target, sizeof entity->target, "%s", wanted);
-    game->use_targets(game->ctx, entity, entity->has_activator, entity->activator);
-    (void)snprintf(entity->target, sizeof entity->target, "%s", original);
-  }
-  if (entity->wait == 3) qa_q1am_boss_teleport(context, false);
-  if (entity->wait == 5) {
-    qa_q1am_actor *spiral = game->create(game->ctx, "spiral");
-    spiral->classname[0] = '\0';
-    spiral->has_owner = true;
-    spiral->owner = entity->actor.id;
-    qa_vec3 target_point;
-    qa_vec3 delta = qa_sub3(qa_q1am_monster_target(m, &target_point) ? target_point : QA_Q1AM_ZERO,
-                            qa_q1am_monster_origin(m));
-    delta.z = 0;
-    qa_q1am_body_patch patch = {0};
-    patch.has_origin = true;
-    patch.origin = qa_add3(qa_q1am_monster_origin(m), (qa_vec3){0, 0, 60});
-    patch.has_angles = true;
-    patch.angles = qa_q1am_velocity_angles(qa_q1am_normalize(delta));
-    game->set_body(game->ctx, spiral, &patch);
-    spiral->delay = game->options.skill <= 2 ? 0.2 : 0.15;
-    spiral->count = 50;
-    later(context, spiral, "spiral_single", spiral->delay);
-  }
+static qa_actor_id *activator_copy(const qa_q1_actor *entity, qa_actor_id *storage) {
+  if (!entity->has_activator) return NULL;
+  *storage = entity->activator;
+  return storage;
 }
 void qa_q1am_final_boss_action(qa_q1am_final_boss *boss, const char *name) {
-  qa_q1am_monster *m = &boss->base;
-  qa_q1am_game *game = m->game;
-  qa_q1am_actor *entity = m->entity;
-  qa_q1am_context *context = boss->context;
-  size_t length = strlen(name);
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  qa_q1ad_context *context = boss->context;
   if (strncmp(name, "boss_final_idle", 15) == 0) {
     qa_q1am_final_boss_face(boss);
     if (strcmp(name, "boss_final_idle31") == 0)
-      m->ops.play(m, m->state->has_enemy ? "boss_final_missile1" : "boss_final_idle1");
+      qa_q1_base_monster_play(monster, monster->state->has_enemy ? "boss_final_missile1" : "boss_final_idle1");
     return;
   }
   if (strncmp(name, "boss_final_shock", 16) == 0) {
-    if (length >= 2 && strcmp(name + length - 2, "10") == 0) qa_q1am_final_boss_upgrade(boss);
+    if (ends_with(name, "10")) qa_q1am_final_boss_upgrade(boss);
     else qa_q1am_pain_lightning(context, entity, (qa_vec3){0, 0, 100});
     return;
   }
   if (strcmp(name, "boss_final_rise1") == 0) {
-    game->sound(game->ctx, entity, "boss1/out1.wav", "weapon", 1);
+    qa_q1_sound(game, entity->actor.id, "boss1/out1.wav", "weapon", 1, 1);
   } else if (strcmp(name, "boss_final_rise2") == 0) {
-    game->sound(game->ctx, entity, "boss1/sight1.wav", "voice", 1);
+    qa_q1_sound(game, entity->actor.id, "boss1/sight1.wav", "voice", 1, 1);
   } else if (strcmp(name, "boss_final_mg7") == 0) {
-    double shells = FR(FR((game->options.skill + 3) / 6) * 30) + floor(random_signed(context) * 10 + 0.5);
-    context->set_number(context->ctx, entity, "ammo_shells", shells);
-    context->set_number(context->ctx, entity, "ammo_nails", shells);
-    if (game->options.skill > 0) m->state->attack_finished = game->time + 5;
+    const double shells = FR(FR((qa_q1_option_skill(game) + 3) / 6) * 30) + floor(random_signed(context) * 10 + 0.5);
+    qa_q1ad_set_number(context, entity, "ammo_shells", shells);
+    qa_q1ad_set_number(context, entity, "ammo_nails", shells);
+    if (qa_q1_option_skill(game) > 0) monster->state->attack_finished = game->time + 5;
     qa_q1am_final_boss_face(boss);
   } else if (strcmp(name, "boss_final_mg8") == 0) {
-    double nails = qa_q1am_actor_number(entity, "ammo_nails");
-    bool wide = fmod(nails, 2) == 0;
-    double spread = FR(1 - FR(nails / qa_q1am_actor_number(entity, "ammo_shells")));
+    const double nails = qa_q1_actor_number(entity, "ammo_nails");
+    const bool wide = fmod(nails, 2) == 0;
+    double spread = FR(1 - FR(nails / qa_q1_actor_number(entity, "ammo_shells")));
     spread = FR(spread * spread);
-    blast(boss, (qa_vec3){270, 60, 210}, wide ? spread : spread * 0.5, wide);
-    if (nails != 0) qa_q1am_monster_set_frame(m->next_frame, sizeof m->next_frame, "boss_final_mg8");
-    context->set_number(context->ctx, entity, "ammo_nails", nails - 1);
+    qa_q1am_final_boss_blast(boss, (qa_vec3){270, 60, 210}, wide ? spread : spread * 0.5, wide);
+    if (nails != 0) set_next(monster, "boss_final_mg8");
+    qa_q1ad_set_number(context, entity, "ammo_nails", nails - 1);
     qa_q1am_final_boss_face(boss);
   } else if (strcmp(name, "boss_final_missile1") == 0) {
-    context->set_number(context->ctx, entity, "boss_immune", 0);
+    qa_q1ad_set_number(context, entity, "boss_immune", 0);
     qa_q1am_final_boss_face(boss);
   } else if (strcmp(name, "boss_final_missile10") == 0) {
-    final_missile(boss, (qa_vec3){200, 100, 60});
+    qa_q1am_final_boss_missile(boss, (qa_vec3){200, 100, 60});
   } else if (strcmp(name, "boss_final_missile21") == 0) {
-    final_missile(boss, (qa_vec3){200, -100, 60});
+    qa_q1am_final_boss_missile(boss, (qa_vec3){200, -100, 60});
   } else if (strcmp(name, "boss_final_death1") == 0) {
-    game->sound(game->ctx, entity, "boss1/death.wav", "voice", 1);
-    const double delays[] = {1, 3, 5};
-    for (int i = 0; i < 3; i++) {
-      qa_q1am_actor *timer = game->create(game->ctx, "circle_thinker");
-      timer->classname[0] = '\0';
-      game->set_origin(game->ctx, timer, qa_add3(qa_q1am_monster_origin(m), (qa_vec3){0, 0, 60}));
+    qa_q1_sound(game, entity->actor.id, "boss1/death.wav", "voice", 1, 1);
+    static const double delays[] = {1, 3, 5};
+    for (size_t i = 0; i < 3; i++) {
+      qa_q1_actor *timer = qa_q1_create(game, "circle_thinker", NULL, NULL);
+      qa_q1ad_set_text(&timer->classname, "");
+      qa_q1_set_origin(game, timer, qa_add3(qa_q1_base_monster_origin(monster), (qa_vec3){0, 0, 60}));
       later(context, timer, "circle_think", delays[i]);
     }
   } else if (strcmp(name, "boss_final_death9") == 0) {
-    game->sound(game->ctx, entity, "boss1/out1.wav", "body", 1);
-    game->effect(game->ctx, "lava-splash", qa_q1am_monster_origin(m), false, (qa_actor_id){0}, 1);
+    qa_q1_sound(game, entity->actor.id, "boss1/out1.wav", "body", 1, 1);
+    qa_q1_effect(game, "lava-splash", qa_q1_base_monster_origin(monster), NULL, 1);
   } else if (strcmp(name, "boss_final_death10") == 0) {
     game->killed_monsters++;
-    qa_q1am_event event = {0};
+    qa_q1_event event;
+    memset(&event, 0, sizeof event);
     event.kind = "monster-killed";
     event.has_actor = true;
     event.actor = entity->actor.id;
     event.total = game->total_monsters;
     event.found = game->killed_monsters;
-    game->emit(game->ctx, &event);
-    context->set_number(context->ctx, entity, "frags", qa_q1am_actor_number(entity, "frags") + 1);
-    while (qa_q1am_actor_number(entity, "frags") < 5) {
-      game->use_targets(game->ctx, entity, entity->has_activator, entity->activator);
-      context->set_number(context->ctx, entity, "frags", qa_q1am_actor_number(entity, "frags") + 1);
+    qa_q1_emit(game, event);
+    qa_q1ad_set_number(context, entity, "frags", qa_q1_actor_number(entity, "frags") + 1);
+    while (qa_q1_actor_number(entity, "frags") < 5) {
+      qa_actor_id storage;
+      qa_q1_use_targets(game, entity, activator_copy(entity, &storage));
+      qa_q1ad_set_number(context, entity, "frags", qa_q1_actor_number(entity, "frags") + 1);
     }
-    game->sound(game->ctx, entity, "boss2/pop2.wav", "voice", 1);
+    qa_q1_sound(game, entity->actor.id, "boss2/pop2.wav", "voice", 1, 1);
     for (int i = 0; i < 100; i++) {
-      qa_vec3 point = qa_q1am_sphere_point(i);
+      const qa_vec3 point = qa_q1am_sphere_point(i);
       if (point.z > 0)
-        qa_q1am_throw_gib_vector(context,
-                                 qa_add3(qa_add3(qa_q1am_monster_origin(m), qa_scale3(point, 64)), (qa_vec3){0, 0, 48}),
-                                 point);
+        (void)qa_q1am_throw_gib_vector(context, qa_add3(qa_add3(qa_q1_base_monster_origin(monster), qa_scale3(point, 64)),
+                                                        (qa_vec3){0, 0, 48}), point);
     }
-    qa_q1am_actor *timer = game->create(game->ctx, "boss_end_timer");
-    timer->classname[0] = '\0';
-    game->schedule(game->ctx, timer, 8, game->named_action(game->ctx, timer, "mg3:bosses:boss_end"));
-    game->remove(game->ctx, entity);
+    qa_q1_actor *timer = qa_q1_create(game, "boss_end_timer", NULL, NULL);
+    qa_q1ad_set_text(&timer->classname, "");
+    qa_q1_schedule(game, timer, 8, qa_q1_callback_registry_action(game->named, timer, "mg3:bosses:boss_end"));
+    qa_q1_remove(game, entity);
   } else if (strncmp(name, "boss_final_missile", 18) == 0 || strncmp(name, "boss_final_mg", 13) == 0) {
     qa_q1am_final_boss_face(boss);
   } else {
     qa_range_error("Unknown final boss action %s", name);
   }
-  (void)missile_spawner;
 }
-static void boss_radius_damage(qa_q1am_context *context, qa_q1am_actor *source, double damage) {
-  qa_q1am_game *game = context->game;
-  qa_vec3 origin = game->body(game->ctx, source).origin;
-  size_t count = 0;
-  qa_actor_id *observations = game->observations(game->ctx, &count);
-  for (size_t i = count; i-- > 0;) {
-    qa_actor_id target = observations[i];
-    qa_q1am_body body;
-    bool has_body = game->body_read(game->ctx, target, &body);
-    if (qa_same_actor(target, source->actor.id) ||
-        strcmp(game->classname_of(game->ctx, target), "monster_lava_man") == 0 ||
-        !game->can_take_damage(game->ctx, target) || !has_body)
-      continue;
-    double distance = qa_length3(qa_sub3(
-        origin, qa_add3(body.origin, qa_scale3(qa_add3(body.bounds.min, body.bounds.max), 0.5))));
-    if (distance > damage + 40) continue;
-    double points = damage - 0.5 * distance;
-    if (points > 0 && game->can_damage(game->ctx, target, source->actor.id))
-      game->damage(game->ctx, target, source->actor.id, true, source->actor.id, points);
+void qa_q1am_final_boss_upgrade(qa_q1am_final_boss *boss) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  qa_q1ad_context *context = boss->context;
+  entity->wait++;
+  qa_q1ad_set_number(context, entity, "boss_immune", 0);
+  const char *target = entity->wait == 2 ? qa_q1_actor_text(entity, "wave1")
+                     : entity->wait == 3 ? qa_q1_actor_text(entity, "tele_target")
+                     : entity->wait == 4 ? qa_q1_actor_text(entity, "wave2")
+                     : entity->wait == 5 ? qa_q1_actor_text(entity, "wave3") : NULL;
+  if (entity->wait == 3) {
+    entity->frame = 0;
+    qa_q1_schedule(game, entity, 0, qa_q1_callback_registry_action(game->named, entity, "SUB_Null"));
+    qa_q1ad_set_number(context, entity, "boss_immune", 1);
   }
-  free(observations);
+  if (target != NULL) {
+    char *original = entity->target;
+    entity->target = NULL;
+    qa_q1ad_set_text(&entity->target, target);
+    if (entity->target == NULL) qa_range_error("out of memory");
+    qa_actor_id storage;
+    qa_q1_use_targets(game, entity, activator_copy(entity, &storage));
+    free(entity->target);
+    entity->target = original;
+  }
+  if (entity->wait == 3) qa_q1am_boss_teleport(context, false);
+  if (entity->wait == 5) {
+    qa_q1_actor *spiral = qa_q1_create(game, "spiral", NULL, NULL);
+    qa_q1ad_set_text(&spiral->classname, "");
+    spiral->has_owner = true;
+    spiral->owner = entity->actor.id;
+    qa_vec3 a = target_or_zero(monster);
+    qa_vec3 b = qa_q1_base_monster_origin(monster);
+    qa_vec3 delta = qa_sub3(a, b);
+    delta.z = 0;
+    qa_q1_body_patch patch;
+    memset(&patch, 0, sizeof patch);
+    patch.has_origin = true;
+    patch.origin = qa_add3(qa_q1_base_monster_origin(monster), (qa_vec3){0, 0, 60});
+    patch.has_angles = true;
+    patch.angles = qa_q1mp_velocity_angles(qa_q1_normalize(delta));
+    qa_q1_set_body(game, spiral, &patch);
+    spiral->delay = qa_q1_option_skill(game) <= 2 ? 0.2 : 0.15;
+    spiral->count = 50;
+    later(context, spiral, "spiral_single", spiral->delay);
+  }
 }
-void qa_q1am_boss_teleport(qa_q1am_context *context, bool variant) {
-  qa_q1am_game *game = context->game;
-  size_t total = game->entity_count(game->ctx);
-  if (variant) {
-    qa_q1am_actor *boss = NULL, *point = NULL;
-    for (size_t i = 0; i < total; i++) {
-      qa_q1am_actor *entity = game->entity_at(game->ctx, i);
-      if (!entity) continue;
-      if (boss == NULL && strcmp(entity->classname, "monster_boss") == 0) boss = entity;
-      if (point == NULL && strcmp(entity->classname, "info_boss_teleport_boss") == 0) point = entity;
+qa_vec3 qa_q1am_final_boss_muzzle(qa_q1am_final_boss *boss, qa_vec3 offset, qa_vec3 angles) {
+  qa_q1_base_monster *monster = &boss->base;
+  const qa_q1_basis basis = qa_q1_make_vectors(monster->game, angles);
+  return qa_add3(qa_add3(qa_add3(qa_q1_base_monster_origin(monster), qa_scale3(basis.forward, offset.x)),
+                         qa_scale3(basis.right, offset.y)),
+                 (qa_vec3){0, 0, offset.z});
+}
+static void lavaball(qa_q1_services *game, qa_q1_actor *shot, qa_vec3 velocity) {
+  qa_q1ad_set_text(&shot->model, "progs/lavaball.mdl");
+  shot->projectile = "rocket";
+  shot->touch = qa_q1_callback_registry_touch(game->named, shot, "projectile_touch");
+  shot->angular_velocity = (qa_vec3){200, 100, 300};
+  qa_q1_body_patch patch;
+  memset(&patch, 0, sizeof patch);
+  patch.has_bounds = true;
+  patch.bounds = QA_Q1_POINT;
+  patch.has_velocity = true;
+  patch.velocity = velocity;
+  qa_q1_set_body(game, shot, &patch);
+}
+void qa_q1am_final_boss_missile(qa_q1am_final_boss *boss, qa_vec3 offset) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  if ((FLAGS(entity->spawnflags) & 2) != 0) {
+    (void)qa_q1am_random(game);
+    qa_q1am_final_boss_line(boss, offset);
+    return;
+  }
+  const qa_vec3 target = target_or_zero(monster);
+  const qa_vec3 origin = qa_q1am_final_boss_muzzle(boss, offset, qa_q1mp_velocity_angles(qa_sub3(target, qa_q1_base_monster_origin(monster))));
+  const qa_vec3 direction = qa_q1_normalize(qa_sub3(target, origin));
+  qa_q1_actor *shot = qa_q1_launch_spike(game, &entity->actor.id, origin, direction, "spike");
+  lavaball(game, shot, qa_scale3(direction, 300));
+  qa_q1_sound(game, entity->actor.id, "boss1/throw.wav", "weapon", 1, 1);
+  if (enemy_health(monster) <= 0) qa_q1_base_monster_play(monster, "boss_final_idle1");
+}
+void qa_q1am_final_boss_melee_check(qa_q1am_final_boss *boss) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  if (qa_q1_base_monster_distance(monster) > 300 || !monster->state->has_enemy ||
+      !qa_q1_can_damage(game, monster->state->enemy, entity->actor.id))
+    return;
+  const double first = qa_q1am_random(game), second = qa_q1am_random(game), third = qa_q1am_random(game);
+  const qa_actor_id self = entity->actor.id;
+  (void)qa_q1_damage(game, monster->state->enemy, self, &self, (first + second + third) * 40, NULL, NULL, NULL, NULL);
+  qa_q1_sound(game, self, "shambler/smack.wav", "voice", 1, 1);
+  for (int i = 0; i < 2; i++) {
+    const qa_vec3 origin = qa_add3(qa_q1_base_monster_origin(monster), qa_scale3(game->basis.forward, 100));
+    (void)qa_q1_spawn_meat_spray(game, entity, origin, qa_scale3(game->basis.right, random_signed(boss->context) * 100));
+  }
+}
+void qa_q1am_final_boss_missile_spawner(qa_q1am_final_boss *boss, qa_vec3 offset) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  qa_vec3 a = target_or_zero(monster);
+  qa_vec3 b = qa_q1_base_monster_origin(monster);
+  const qa_vec3 origin = qa_q1am_final_boss_muzzle(
+      boss, offset, qa_q1mp_velocity_angles(qa_sub3(a, b)));
+  qa_q1_actor *shot = qa_q1_launch_spike(game, &entity->actor.id, origin, QA_Q1_ZERO, "spike");
+  lavaball(game, shot, QA_Q1_ZERO);
+  qa_q1_sound(game, entity->actor.id, "boss1/throw.wav", "weapon", 1, 1);
+  if (!monster->state->has_enemy || qa_q1_health(game, monster->state->enemy) <= 0)
+    qa_q1_base_monster_play(monster, "boss_final_idle1");
+}
+void qa_q1am_final_boss_blast(qa_q1am_final_boss *boss, qa_vec3 offset, double spread, bool effect) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  qa_q1ad_context *context = boss->context;
+  const double speed = qa_q1_option_skill(game) > 2 ? 500 : qa_q1_option_skill(game) > 0 ? 450 : 400;
+  const double width = FR(0.15 + FR(0.2 * fabs(spread)));
+  const double count = floor(qa_q1am_random(game) * 6 + 0.5);
+  const qa_vec3 target = target_or_zero(monster);
+  const qa_vec3 angles = qa_q1mp_velocity_angles(qa_sub3(target, qa_q1_base_monster_origin(monster)));
+  const qa_vec3 origin = qa_q1am_final_boss_muzzle(boss, offset, angles);
+  const qa_q1_basis basis = qa_q1_make_vectors(game, angles);
+  const double time = FR(qa_length3(qa_sub3(target, origin)) / speed);
+  qa_vec3 velocity = QA_Q1_ZERO;
+  qa_q1_body enemy_body;
+  if (monster->state->has_enemy && qa_q1am_read_body(game, monster->state->enemy, &enemy_body)) velocity = enemy_body.velocity;
+  velocity.z = 0;
+  const qa_vec3 direction = qa_q1_normalize(qa_sub3(qa_add3(target, qa_scale3(velocity, time / 4)), origin));
+  if (effect) qa_q1_effect(game, "explosion", origin, NULL, 1);
+  for (double remaining = count; remaining > 0; remaining--) {
+    const double right = random_signed(context) * width; /* TS evaluates right, then up */
+    const double up = random_signed(context) * width;
+    const qa_vec3 aim = qa_q1_normalize(qa_add3(qa_add3(direction, qa_scale3(basis.right, right)), qa_scale3(basis.up, up)));
+    qa_q1_actor *shot = rock(context, &entity->actor.id, qa_add3(origin, qa_scale3(aim, 8)), aim, "sphere");
+    qa_q1am_set_velocity_body(game, shot, qa_scale3(aim, speed + random_signed(context) * 100));
+    spin(context, shot);
+    if (fmod(remaining, 2) == 0) shot->effects = FLAGS(shot->effects) | 64;
+  }
+}
+static void boss_radius_damage(qa_q1ad_context *context, qa_q1_actor *source, double damage);
+void qa_q1am_final_boss_line(qa_q1am_final_boss *boss, qa_vec3 offset) {
+  qa_q1_base_monster *monster = &boss->base;
+  qa_q1_services *game = monster->game;
+  qa_q1_actor *entity = monster->entity;
+  qa_q1ad_context *context = boss->context;
+  const double count = qa_q1_option_skill(game) == 0 ? 4 : qa_q1_option_skill(game) == 1 ? 8 : qa_q1_option_skill(game) == 3 ? 15 : 11;
+  const qa_vec3 angles = qa_q1_get_body(game, entity).angles;
+  const qa_vec3 origin = qa_q1am_final_boss_muzzle(boss, offset, angles);
+  const qa_q1_basis basis = qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles);
+  qa_vec3 delta = qa_sub3(target_or_zero(monster), origin);
+  delta.z = 0;
+  const qa_vec3 direction = qa_q1_normalize(delta);
+  qa_q1_effect(game, "explosion", origin, NULL, 1);
+  const double start = 4 / count * (offset.y < 0 ? 1 : -1), increment = 2 / count * (offset.y < 0 ? -1 : 1);
+  for (double i = 0; i < count; i++) {
+    boss_radius_damage(context, entity, 10 * qa_q1am_random(game) + 10);
+    qa_vec3 aim = qa_q1_normalize(qa_add3(qa_add3(direction, qa_scale3(basis.right, start)),
+                                          qa_scale3(qa_scale3(basis.right, increment), i)));
+    aim.z = 0;
+    aim = qa_q1_normalize(aim);
+    qa_q1_actor *shot = rock(context, &entity->actor.id, qa_add3(origin, qa_scale3(aim, 8)), aim, "sphere");
+    qa_vec3 velocity = qa_scale3(aim, 300 + random_signed(context) * 100);
+    if (qa_q1am_random(game) > 0.5) velocity.z = (qa_q1am_random(game) + 1) * 8;
+    qa_q1am_set_velocity_body(game, shot, velocity);
+    spin(context, shot);
+    if (fmod(i, 2) == 0) {
+      qa_q1ad_set_number(context, shot, "frags", 1);
+      shot->effects = FLAGS(shot->effects) | 64;
     }
-    if (boss && point) {
-      game->set_origin(game->ctx, boss, game->body(game->ctx, point).origin);
-      game->effect(game->ctx, "lava-splash", game->body(game->ctx, boss).origin, false, (qa_actor_id){0}, 1);
+  }
+}
+static void boss_radius_damage(qa_q1ad_context *context, qa_q1_actor *source, double damage) {
+  qa_q1_services *game = context->game;
+  const qa_vec3 origin = qa_q1_get_body(game, source).origin;
+  size_t count = 0;
+  const qa_actor_observation *live = qa_session_actor_registry_observations(game->host.actors, &count);
+  qa_actor_id *targets = count == 0 ? NULL : malloc(count * sizeof *targets);
+  if (count != 0 && targets == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < count; i++) targets[i] = live[i].id; /* snapshot: damage may release actors */
+  const qa_actor_id self = source->actor.id;
+  for (size_t i = count; i-- > 0;) {
+    const qa_actor_id target = targets[i];
+    qa_q1_body body;
+    const bool has_body = qa_q1am_read_body(game, target, &body);
+    if (qa_same_actor(target, self) || strcmp(game->host.classname(game->host.ctx, target), "monster_lava_man") == 0 ||
+        !qa_q1am_can_take_damage(game, target) || !has_body)
+      continue;
+    const double distance = qa_length3(qa_sub3(origin, qa_add3(body.origin, qa_scale3(qa_add3(body.bounds.min, body.bounds.max), 0.5))));
+    if (distance > damage + 40) continue;
+    const double points = damage - 0.5 * distance;
+    if (points > 0 && qa_q1_can_damage(game, target, self))
+      (void)qa_q1_damage(game, target, self, &self, points, NULL, NULL, NULL, NULL);
+  }
+  free(targets);
+}
+static qa_q1_actor *first_with_classname(qa_q1_services *game, const char *classname) {
+  for (size_t i = 0; i < game->entity_count; i++)
+    if (strcmp(game->entities[i]->classname, classname) == 0) return game->entities[i];
+  return NULL;
+}
+void qa_q1am_boss_teleport(qa_q1ad_context *context, bool variant) {
+  qa_q1_services *game = context->game;
+  if (variant) {
+    qa_q1_actor *boss = first_with_classname(game, "monster_boss");
+    qa_q1_actor *point = first_with_classname(game, "info_boss_teleport_boss");
+    if (boss != NULL && point != NULL) {
+      qa_q1_set_origin(game, boss, qa_q1_get_body(game, point).origin);
+      qa_q1_effect(game, "lava-splash", qa_q1_get_body(game, boss).origin, NULL, 1);
       later(context, boss, "boss_final_rise1", 0.1);
     }
   }
   const char *wanted = variant ? "info_boss_teleport_second" : "info_boss_teleport_first";
-  for (size_t i = 0; i < total; i++) {
-    qa_q1am_actor *entity = game->entity_at(game->ctx, i);
-    if (entity && strcmp(entity->classname, wanted) == 0) entity->wait = 0;
-  }
-  size_t count = 0;
-  qa_actor_id *players = game->players(game->ctx, &count);
-  for (size_t p = 0; p < count; p++) {
-    qa_actor_id player = players[p];
-    qa_q1am_actor *point = NULL;
-    for (size_t i = 0; i < total && point == NULL; i++) {
-      qa_q1am_actor *entity = game->entity_at(game->ctx, i);
-      if (entity && strcmp(entity->classname, wanted) == 0 && entity->wait == 0) point = entity;
-    }
+  size_t point_count = 0;
+  qa_q1_actor **points = game->entity_count == 0 ? NULL : malloc(game->entity_count * sizeof *points);
+  if (game->entity_count != 0 && points == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < game->entity_count; i++)
+    if (strcmp(game->entities[i]->classname, wanted) == 0) points[point_count++] = game->entities[i];
+  for (size_t i = 0; i < point_count; i++) points[i]->wait = 0;
+  size_t player_count = 0;
+  const qa_actor_id *host_players = game->host.players(game->host.ctx, &player_count);
+  qa_actor_id *players = player_count == 0 ? NULL : malloc(player_count * sizeof *players);
+  if (player_count != 0 && players == NULL) qa_range_error("out of memory");
+  if (player_count != 0) memcpy(players, host_players, player_count * sizeof *players);
+  for (size_t p = 0; p < player_count; p++) {
+    const qa_actor_id player = players[p];
+    qa_q1_actor *point = NULL;
+    for (size_t i = 0; i < point_count && point == NULL; i++)
+      if (points[i]->wait == 0) point = points[i];
     if (point == NULL) {
-      qa_q1am_event event = {0};
-      event.kind = "developer-message";
+      qa_q1ad_event event;
+      memset(&event, 0, sizeof event);
+      event.kind = QA_Q1AD_EVENT_DEVELOPER_MESSAGE;
       event.text = "ERROR: Could not find valid teleport destination!\n";
-      context->services_emit(context->services_ctx, &event);
+      context->services.emit(context->services.ctx, &event);
       break;
     }
     point->wait = 1;
-    qa_vec3 origin = game->body(game->ctx, point).origin;
-    qa_vec3 angles = qa_q1am_actor_vector(point, "mangle");
-    qa_q1am_actor *entity = game->entity(game->ctx, true, player);
-    qa_q1am_player *state = game->player(game->ctx, player);
-    if (entity) entity->movement_flags = (double)(FLAGS(entity->movement_flags) & ~1);
-    if (state) state->view_angles = angles;
+    const qa_vec3 origin = qa_q1_get_body(game, point).origin, angles = qa_q1_actor_vector(point, "mangle");
+    qa_q1_actor *entity = qa_q1_get_entity(game, &player);
+    qa_q1_player_state *state = qa_q1_player(game, player);
+    if (entity != NULL) entity->movement_flags = FLAGS(entity->movement_flags) & ~512;
+    if (state != NULL) state->view_angles = angles;
     qa_owned_actor owned;
-    qa_q1am_body body;
-    if (game->actors_resolve_owned(game->ctx, player, &owned) &&
-        game->body_read(game->ctx, player, &body)) {
-      body.origin = origin;
-      body.angles = angles;
-      body.has_ground = false;
-      body.velocity = (qa_vec3){0, 0, 300};
-      game->body_write(game->ctx, owned, &body);
-      game->body_link(game->ctx, owned);
+    const bool has_owned = qa_session_actor_registry_resolve_owned(game->host.actors, player, &owned);
+    const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, player);
+    if (has_owned && body.has_value) {
+      qa_body_state next = body.value;
+      next.origin = origin;
+      next.angles = angles;
+      next.ground = NULL;
+      next.velocity = (qa_vec3){0, 0, 300};
+      qa_shared_body_table_write(game->host.bodies, owned, next);
+      qa_shared_body_table_link(game->host.bodies, owned, NULL);
     }
-    qa_q1am_event event = {0};
+    qa_q1_event event;
+    memset(&event, 0, sizeof event);
     event.kind = "camera";
     event.has_player = true;
     event.player = player;
+    event.has_origin = true;
     event.origin = origin;
     event.angles = angles;
-    game->emit(game->ctx, &event);
-    game->spawn_teleport_fog(game->ctx, game,
-                             qa_add3(origin, qa_scale3(qa_q1am_game_make_vectors(game, angles).forward, 32)));
+    qa_q1_emit(game, event);
+    (void)qa_q1_spawn_teleport_fog(game, qa_add3(origin, qa_scale3(qa_q1_make_vectors(game, angles).forward, 32)));
   }
   free(players);
+  free(points);
 }
-static void boss_end(qa_q1am_context *context) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_base *base = context->base;
-  size_t count = 0;
-  qa_actor_id *players = game->players(game->ctx, &count);
-  bool has_first = count > 0;
-  qa_actor_id first = has_first ? players[0] : (qa_actor_id){0};
-  if (!game->options.coop && (!has_first || game->health(game->ctx, first) <= 0)) {
-    free(players);
-    return;
-  }
-  for (size_t p = 0; p < count; p++) {
-    qa_q1am_player *player = game->player(game->ctx, players[p]);
-    if (player == NULL) continue;
-    size_t entries = game->inventory_count(game->ctx, players[p]);
-    for (size_t i = 0; i < entries; i++) {
-      const char *item = game->inventory_item(game->ctx, players[p], i);
-      if (strcmp(item, "q1:ammo/shells") == 0 || strcmp(item, "q1:ammo/nails") == 0 ||
-          strcmp(item, "q1:ammo/cells") == 0 || strcmp(item, "q1:ammo/rockets") == 0)
-        game->inventory_set_count(game->ctx, player->actor, i,
-                                  strcmp(item, "q1:ammo/shells") == 0 ? 25 : 0);
-    }
-    game->combat_set_armor_none(game->ctx, player->actor);
-    (void)snprintf(player->weapon, sizeof player->weapon, "%s", "shotgun");
-  }
-  double flags = base->campaign_read_flags(base->ctx);
-  const char *map = "start";
-  if (((int64_t)flags & QA_Q1AM_BLOODY_NIGHTMARE_ACTIVE) != 0) {
-    if (((int64_t)flags & QA_Q1AM_BLOODY_NIGHTMARE_NEWGAME) != 0) {
-      map = "boss2";
-    } else {
-      map = "map1";
-      base->campaign_write_flags(base->ctx, QA_Q1AM_BLOODY_NIGHTMARE_ACTIVE |
-                                                QA_Q1AM_BLOODY_NIGHTMARE_DISCOVERED |
-                                                QA_Q1AM_BLOODY_NIGHTMARE_NEWGAME);
-      if (game->world) qa_q1am_actor_set_field(game->world, "mg3.finalNewGameTravel", "1");
-      static const char *const parms[] = {"parm10", "parm11", "parm12", "parm13", "parm14"};
-      for (size_t p = 0; p < count; p++)
-        for (int i = 0; i < 5; i++) context->set_player_number(context->ctx, players[p], parms[i], 0);
-    }
-  }
-  free(players);
-  if (game->world) qa_q1am_actor_set_field(game->world, "addon.intermissiontext", "$mg3_qc_boss_finale");
-  base->level_begin(base->ctx, map, false, (qa_actor_id){0});
-}
-void qa_q1am_final_boss_init(qa_q1am_final_boss *boss, qa_q1am_context *context, qa_q1am_actor *entity) {
+bool qa_q1am_final_boss_init(qa_q1am_final_boss *boss, qa_q1ad_context *context, qa_q1_actor *entity) {
   memset(boss, 0, sizeof *boss);
   boss->context = context;
-  qa_q1am_monster_init(&boss->base, context->game, entity, &final_spec, context->base, final_source());
-  boss->base.owner = boss;
-  boss->base.kind = QA_Q1AM_KIND_FINAL;
-  boss->super_ops = boss->base.ops;
-  boss->base.ops.spawn = final_spawn;
-  boss->base.ops.awake = final_awake;
-  boss->base.ops.play = final_play;
-  boss->base.ops.pain = final_pain;
-  boss->base.ops.die = final_die;
+  qa_q1_base_monster_source source;
+  memset(&source, 0, sizeof source);
+  source.callback_prefix = PREFIX;
+  source.frames = &qa_q1am_final_boss_frames;
+  source.actions = final_actions(&source.action_count);
+  if (!qa_q1_base_monster_init(&boss->base, context->game, entity, &final_spec,
+                               qa_q1_base_as_monster_services(context->base), &source))
+    return false;
+  boss->base.ops = &final_ops;
+  return true;
 }
-static qa_q1am_monster *create_final(void *ctx, qa_q1am_actor *entity) {
+static qa_q1_base_monster *create_final(void *ctx, qa_q1_actor *entity) {
   qa_q1am_final_boss *boss = malloc(sizeof *boss);
-  if (!boss) qa_range_error("Final boss allocation failed");
-  qa_q1am_final_boss_init(boss, ctx, entity);
+  if (boss == NULL) return NULL;
+  if (!qa_q1am_final_boss_init(boss, ctx, entity)) { free(boss); return NULL; }
   return &boss->base;
 }
-static void destroy_final(void *ctx, qa_q1am_monster *monster) {
-  (void)ctx;
-  free(monster->owner);
-}
-typedef struct final_effects_ctx {
-  qa_q1am_context *context;
+
+/* The TS registerFinalBoss closure environment (context, bosses, and the
+ * classname each teleport-point spawn closure captures). */
+typedef struct final_registration {
+  qa_q1ad_context *context;
   qa_q1am_boss_registry *bosses;
-} final_effects_ctx;
-static bool final_before_health(void *ctx, const qa_q1am_damage_request *request) {
-  final_effects_ctx *state = ctx;
-  qa_q1am_game *game = state->context->game;
-  qa_q1am_actor *entity = game->entity(game->ctx, true, request->target);
-  return entity == NULL || !qa_q1am_boss_registry_has(state->bosses, entity->actor) ||
-         (FLAGS(entity->spawnflags) & 2) == 0 ||
-         (qa_q1am_actor_number(entity, "boss_immune") != 1 &&
-          (!request->has_attacker ||
-           strcmp(game->classname_of(game->ctx, request->attacker), "monster_lava_man") != 0));
+  struct teleport_spawn { struct final_registration *owner; const char *classname; } teleports[3];
+  struct final_registration *next;
+} final_registration;
+static final_registration *all_registrations;
+
+static bool final_boss_entity(final_registration *state, qa_actor_id target, qa_q1_actor **out) {
+  qa_q1_actor *entity = qa_q1_get_entity(state->context->game, &target);
+  *out = entity;
+  return entity != NULL && qa_q1am_boss_registry_get(state->bosses, entity->actor) != NULL;
 }
-static double final_after_armor(void *ctx, const qa_q1am_damage_request *request, double take) {
-  final_effects_ctx *state = ctx;
-  qa_q1am_game *game = state->context->game;
-  qa_q1am_actor *entity = game->entity(game->ctx, true, request->target);
-  qa_q1am_player *player = request->has_attacker ? game->player(game->ctx, request->attacker) : NULL;
-  const char *weapon = player ? player->weapon : NULL;
-  return entity != NULL && qa_q1am_boss_registry_has(state->bosses, entity->actor) &&
-                 (FLAGS(entity->spawnflags) & 2) != 0 &&
-                 !(weapon && strcmp(weapon, "lightning") == 0) &&
-                 !(weapon && strcmp(weapon, "mg3:laser") == 0)
+static bool before_health(void *ctx, qa_damage_request request, double damage, qa_combat_state target,
+                          const qa_combat_state *attacker) {
+  (void)damage; (void)target; (void)attacker; /* TS beforeHealth(request) */
+  final_registration *state = ctx;
+  qa_q1_services *game = state->context->game;
+  qa_q1_actor *entity;
+  return !final_boss_entity(state, request.target, &entity) || (FLAGS(entity->spawnflags) & 2) == 0 ||
+         (qa_q1_actor_number(entity, "boss_immune") != 1 &&
+          (request.attack.attacker == NULL ||
+           strcmp(game->host.classname(game->host.ctx, *request.attack.attacker), "monster_lava_man") != 0));
+}
+static double after_armor(void *ctx, qa_damage_request request, double take, qa_combat_state target,
+                          const qa_combat_state *attacker) {
+  (void)target; (void)attacker; /* TS afterArmor(request, take) */
+  final_registration *state = ctx;
+  qa_q1_services *game = state->context->game;
+  qa_q1_actor *entity;
+  const bool boss = final_boss_entity(state, request.target, &entity);
+  const qa_q1_player_state *player = request.attack.attacker == NULL ? NULL : qa_q1_player(game, *request.attack.attacker);
+  const char *weapon = player == NULL ? NULL : player->weapon;
+  return boss && (FLAGS(entity->spawnflags) & 2) != 0 && !(weapon != NULL && strcmp(weapon, "lightning") == 0) &&
+                 !(weapon != NULL && strcmp(weapon, "mg3:laser") == 0)
              ? FR(take * FR(0.8)) : take;
 }
-static void melee_check_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
-  qa_q1am_final_boss_melee_check(qa_q1am_require_boss(ctx, entity)->owner);
+static void melee_check(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* TS (_game, entity) */
+  final_registration *state = ctx;
+  qa_q1am_final_boss_melee_check(final_of(qa_q1am_require_boss(state->bosses, entity)));
 }
-static void rise_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
-  qa_q1am_monster *boss = qa_q1am_require_boss(ctx, entity);
-  boss->ops.play(boss, "boss_final_rise1");
+static void rise(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* TS (_game, entity) */
+  final_registration *state = ctx;
+  qa_q1_base_monster_play(qa_q1am_require_boss(state->bosses, entity), "boss_final_rise1");
 }
-typedef struct teleport_spawn_ctx { qa_q1am_context *context; char classname[48]; } teleport_spawn_ctx;
-static void teleport_spawn(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  teleport_spawn_ctx *state = ctx;
-  state->context->set_vector(state->context->ctx, entity, "mangle", game->body(game->ctx, entity).angles);
-  entity->model[0] = '\0';
-  qa_q1am_body_patch patch = {0};
+static void teleport_point_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const struct teleport_spawn *spawn = ctx;
+  qa_q1ad_set_vector(spawn->owner->context, entity, "mangle", qa_q1_get_body(game, entity).angles);
+  qa_q1ad_set_text(&entity->model, "");
+  qa_q1_body_patch patch;
+  memset(&patch, 0, sizeof patch);
   patch.has_angles = true;
-  patch.angles = QA_Q1AM_ZERO;
+  patch.angles = QA_Q1_ZERO;
   patch.has_origin = true;
-  patch.origin = qa_add3(game->body(game->ctx, entity).origin,
-                         (qa_vec3){0, 0, strcmp(state->classname, "info_boss_teleport_boss") == 0 ? 0 : 27});
-  game->set_body(game->ctx, entity, &patch);
+  qa_vec3 a = qa_q1_get_body(game, entity).origin;
+  qa_vec3 b = (qa_vec3){0, 0, strcmp(spawn->classname, "info_boss_teleport_boss") == 0 ? 0 : 27};
+  patch.origin = qa_add3(a, b);
+  qa_q1_set_body(game, entity, &patch);
 }
-static void teleport_use(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, bool has_other,
-                         qa_actor_id other, bool has_activator, qa_actor_id activator) {
-  (void)game; (void)has_other; (void)other; (void)has_activator; (void)activator;
-  qa_q1am_boss_teleport(ctx, (FLAGS(entity->spawnflags) & 1) != 0);
+static void teleport_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *other,
+                         const qa_actor_id *activator) {
+  (void)game; (void)other; (void)activator; /* TS (_game, entity) */
+  final_registration *state = ctx;
+  qa_q1am_boss_teleport(state->context, (FLAGS(entity->spawnflags) & 1) != 0);
 }
-static void trigger_teleport_spawn(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)ctx;
-  entity->use = game->named_use(game->ctx, entity, "mg3:final:trigger_boss_teleport_use");
+static void trigger_teleport_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx; /* the TS closure reads only the game */
+  entity->use = qa_q1_callback_registry_use(game->named, entity, PREFIX ":trigger_boss_teleport_use");
 }
-static void rock_touch_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, qa_actor_id other,
-                               bool has_normal, qa_vec3 normal) {
-  (void)ctx; (void)has_normal;
+static void rock_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                       const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)surface; /* TS (_game, entity, other, normal) */
   if (entity->has_owner && qa_same_actor(entity->owner, other)) return;
-  qa_q1am_actor *target = game->entity(game->ctx, true, other);
-  const char *classname = game->classname_of(game->ctx, other);
+  const qa_q1_actor *target = qa_q1_get_entity(game, &other);
+  const char *classname = game->host.classname(game->host.ctx, other);
   if (strcmp(classname, "monster_orb") == 0 || strcmp(classname, "monster_lava_man") == 0) {
-    game->remove(game->ctx, entity);
+    qa_q1_remove(game, entity);
     return;
   }
-  if (strcmp(classname, entity->classname) == 0 || (target && strcmp(target->solid, "trigger") == 0)) return;
-  if (strcmp(game->contents(game->ctx, game->body(game->ctx, entity).origin), "sky") == 0) {
-    game->remove(game->ctx, entity);
+  if (strcmp(classname, entity->classname) == 0 || (target != NULL && strcmp(target->solid, "trigger") == 0)) return;
+  if (strcmp(game->host.contents(game->host.ctx, qa_q1_get_body(game, entity).origin), "sky") == 0) {
+    qa_q1_remove(game, entity);
     return;
   }
-  if (game->can_take_damage(game->ctx, other)) {
-    qa_vec3 direction = qa_q1am_normalize(qa_add3(
-        qa_add3(qa_q1am_normalize(game->body(game->ctx, entity).velocity),
-                qa_scale3(game->basis.up, game->random(game->ctx) - 0.5)),
-        qa_scale3(game->basis.right, game->random(game->ctx) - 0.5)));
-    qa_vec3 spray = qa_scale3(qa_scale3(qa_add3(direction, qa_scale3(has_normal ? normal : QA_Q1AM_ZERO, 2)), 200), 0.2);
-    qa_q1am_event event = {0};
+  if (qa_q1am_can_take_damage(game, other)) {
+    const qa_vec3 velocity = qa_q1_normalize(qa_q1_get_body(game, entity).velocity);
+    const double up = qa_q1am_random(game) - 0.5; /* TS evaluates up, then right */
+    const double right = qa_q1am_random(game) - 0.5;
+    const qa_vec3 direction = qa_q1_normalize(qa_add3(qa_add3(velocity, qa_scale3(game->basis.up, up)),
+                                                      qa_scale3(game->basis.right, right)));
+    const qa_vec3 spray = qa_scale3(qa_scale3(qa_add3(direction, qa_scale3(normal != NULL ? *normal : QA_Q1_ZERO, 2)), 200), 0.2);
+    qa_q1_event event;
+    memset(&event, 0, sizeof event);
     event.kind = "particles";
-    event.origin = qa_add3(game->body(game->ctx, entity).origin, qa_scale3(spray, 0.01));
+    event.has_origin = true;
+    event.origin = qa_add3(qa_q1_get_body(game, entity).origin, qa_scale3(spray, 0.01));
     event.direction = qa_scale3(spray, 0.1);
     event.color = 73;
     event.count = 36;
-    game->emit(game->ctx, &event);
-    game->damage(game->ctx, other, entity->actor.id, entity->has_owner, entity->owner, 18);
-  } else if (qa_q1am_actor_number(entity, "frags") != 0) {
-    game->effect(game->ctx, "knight-spike", game->body(game->ctx, entity).origin, false, (qa_actor_id){0}, 1);
+    qa_q1_emit(game, event);
+    (void)qa_q1_damage(game, other, entity->actor.id, qa_q1am_opt(entity->has_owner, &entity->owner), 18,
+                       NULL, NULL, NULL, NULL);
+  } else if (qa_q1_actor_number(entity, "frags") != 0) {
+    qa_q1_effect(game, "knight-spike", qa_q1_get_body(game, entity).origin, NULL, 1);
   }
-  game->remove(game->ctx, entity);
+  qa_q1_remove(game, entity);
 }
-static void rock_death_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  size_t total = game->entity_count(game->ctx);
-  for (size_t i = 0; i < total; i++) {
-    qa_q1am_actor *other = game->entity_at(game->ctx, i);
-    if (other && strcmp(other->classname, "rock") == 0 &&
-        qa_length3(qa_sub3(game->body(game->ctx, other).origin, game->body(game->ctx, entity).origin)) <= 96)
-      later(context, other, "Rock_Death", 0.1);
+static void rock_death(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  final_registration *state = ctx;
+  for (size_t i = 0; i < game->entity_count; i++) {
+    qa_vec3 a;
+    qa_vec3 b;
+    qa_q1_actor *other = game->entities[i];
+    if (strcmp(other->classname, "rock") == 0 &&
+        qa_length3((a = qa_q1_get_body(game, other).origin, b = qa_q1_get_body(game, entity).origin, qa_sub3(a, b))) <= 96)
+      later(state->context, other, "Rock_Death", 0.1);
   }
-  game->effect(game->ctx, "explosion", game->body(game->ctx, entity).origin, false, (qa_actor_id){0}, 1);
-  game->remove(game->ctx, entity);
+  qa_q1_effect(game, "explosion", qa_q1_get_body(game, entity).origin, NULL, 1);
+  qa_q1_remove(game, entity);
 }
-static void spiral_single_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  qa_q1am_body_patch patch = {0};
+static void spiral_single(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  final_registration *state = ctx;
+  qa_q1ad_context *context = state->context;
+  qa_q1_body_patch patch;
+  memset(&patch, 0, sizeof patch);
   patch.has_angles = true;
-  patch.angles = qa_add3(game->body(game->ctx, entity).angles, (qa_vec3){0, 5, 0});
-  game->set_body(game->ctx, entity, &patch);
-  qa_q1am_game_make_vectors(game, game->body(game->ctx, entity).angles);
-  if (game->options.skill < 2 && fmod(entity->count, 10) < 5) {
+  patch.angles = qa_add3(qa_q1_get_body(game, entity).angles, (qa_vec3){0, 5, 0});
+  qa_q1_set_body(game, entity, &patch);
+  (void)qa_q1_make_vectors(game, qa_q1_get_body(game, entity).angles);
+  if (qa_q1_option_skill(game) < 2 && fmod(entity->count, 10) < 5) {
     later(context, entity, "spiral_single", entity->delay);
     entity->count--;
     return;
   }
   for (int i = 3; i >= 0; i--) {
-    qa_vec3 direction = qa_q1am_game_make_vectors(
-        game, qa_add3(game->body(game->ctx, entity).angles, (qa_vec3){0, 90.0 * i, 0})).forward;
-    qa_q1am_actor *shot = rock(context, entity->has_owner, entity->owner,
-                               qa_add3(game->body(game->ctx, entity).origin, qa_scale3(direction, 100)),
-                               direction, "plasma");
-    memset(&patch, 0, sizeof patch);
-    patch.has_velocity = true;
-    patch.velocity = qa_scale3(direction, 100);
-    game->set_body(game->ctx, shot, &patch);
+    const qa_vec3 direction = qa_q1_make_vectors(game, qa_add3(qa_q1_get_body(game, entity).angles, (qa_vec3){0, 90.0 * i, 0})).forward;
+    qa_q1_actor *shot = rock(context, qa_q1am_opt(entity->has_owner, &entity->owner),
+                             qa_add3(qa_q1_get_body(game, entity).origin, qa_scale3(direction, 100)), direction, "plasma");
+    qa_q1am_set_velocity_body(game, shot, qa_scale3(direction, 100));
     spin(context, shot);
-    game->schedule(game->ctx, shot, 30, game->named_action(game->ctx, shot, "SUB_Remove"));
+    qa_q1_schedule(game, shot, 30, qa_q1_callback_registry_action(game->named, shot, "SUB_Remove"));
   }
   entity->count--;
-  if (!entity->has_owner || game->health(game->ctx, entity->owner) <= 0) {
-    game->remove(game->ctx, entity);
+  if (!entity->has_owner || qa_q1_health(game, entity->owner) <= 0) {
+    qa_q1_remove(game, entity);
     return;
   }
   later(context, entity, "spiral_single", entity->delay);
 }
-static void circle_think_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
+static void circle_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  final_registration *state = ctx;
+  qa_q1ad_context *context = state->context;
   for (int remaining = 72; remaining > 0; remaining--) {
-    qa_vec3 direction = qa_q1am_game_make_vectors(game, (qa_vec3){0, (72 - remaining) * 5.0, 0}).forward;
-    qa_q1am_actor *shot = rock(context, true, entity->actor.id, game->body(game->ctx, entity).origin,
-                               direction, "sphere");
-    qa_q1am_body_patch patch = {0};
-    patch.has_velocity = true;
-    patch.velocity = qa_scale3(direction, 250 + random_signed(context) * 100);
-    game->set_body(game->ctx, shot, &patch);
+    const qa_vec3 direction = qa_q1_make_vectors(game, (qa_vec3){0, (72 - remaining) * 5.0, 0}).forward;
+    qa_q1_actor *shot = rock(context, &entity->actor.id, qa_q1_get_body(game, entity).origin, direction, "sphere");
+    qa_q1am_set_velocity_body(game, shot, qa_scale3(direction, 250 + random_signed(context) * 100));
     spin(context, shot);
-    game->schedule(game->ctx, shot, 20, game->named_action(game->ctx, shot, "SUB_Remove"));
-    if (remaining % 4 == 0) shot->effects = (double)((int32_t)shot->effects | 8);
+    qa_q1_schedule(game, shot, 20, qa_q1_callback_registry_action(game->named, shot, "SUB_Remove"));
+    if (remaining % 4 == 0) shot->effects = FLAGS(shot->effects) | 8;
   }
-  game->remove(game->ctx, entity);
+  qa_q1_remove(game, entity);
 }
-static void boss_end_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game; (void)entity;
-  boss_end(ctx);
-}
-void qa_q1am_register_final_boss(qa_q1am_context *context) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_boss_create create = {context, create_final, destroy_final};
-  qa_q1am_boss_registry *bosses =
-      qa_q1am_register_boss_controllers(context, "mg3:final", "monster_boss_final", create);
-  final_effects_ctx *effects_ctx = malloc(sizeof *effects_ctx);
-  if (!effects_ctx) qa_range_error("Final boss allocation failed");
-  effects_ctx->context = context;
-  effects_ctx->bosses = bosses;
-  qa_q1am_damage_effects effects = {effects_ctx, final_before_health, final_after_armor};
-  game->register_damage_source_effects(game->ctx, "mg3:final", effects);
-  qa_q1am_handlers handlers = {0};
-  handlers.ctx = bosses;
-  handlers.action = melee_check_handler;
-  game->named_register(game->ctx, "mg3:final:boss_final_melee_check", handlers);
-  handlers.action = rise_handler;
-  game->named_register(game->ctx, "mg3:final:boss_final_rise1", handlers);
-  static const char *const teleport_classnames[] = {
-    "info_boss_teleport_first", "info_boss_teleport_second", "info_boss_teleport_boss",
-  };
-  for (int i = 0; i < 3; i++) {
-    teleport_spawn_ctx *state = malloc(sizeof *state);
-    if (!state) qa_range_error("Final boss allocation failed");
-    state->context = context;
-    (void)snprintf(state->classname, sizeof state->classname, "%s", teleport_classnames[i]);
-    game->register_spawn(game->ctx, teleport_classnames[i], teleport_spawn, state);
+static void boss_end(qa_q1ad_context *context) {
+  qa_q1_services *game = context->game;
+  qa_q1_base *base = context->base;
+  size_t count = 0;
+  const qa_actor_id *host_players = game->host.players(game->host.ctx, &count);
+  if (!game->options.coop && (count == 0 || qa_q1_health(game, host_players[0]) <= 0)) return;
+  qa_actor_id *players = count == 0 ? NULL : malloc(count * sizeof *players);
+  if (count != 0 && players == NULL) qa_range_error("out of memory");
+  if (count != 0) memcpy(players, host_players, count * sizeof *players);
+  for (size_t p = 0; p < count; p++) {
+    qa_q1_player_state *player = qa_q1_player(game, players[p]);
+    if (player == NULL) continue;
+    size_t entry_count = 0;
+    const qa_inventory_entry *live = qa_shared_inventory_table_entries(game->host.inventory, players[p], &entry_count);
+    qa_inventory_entry *entries = entry_count == 0 ? NULL : malloc(entry_count * sizeof *entries);
+    if (entry_count != 0 && entries == NULL) qa_range_error("out of memory");
+    if (entry_count != 0) memcpy(entries, live, entry_count * sizeof *entries);
+    for (size_t i = 0; i < entry_count; i++) {
+      const char *item = entries[i].item;
+      if (strcmp(item, "q1:ammo/shells") == 0 || strcmp(item, "q1:ammo/nails") == 0 ||
+          strcmp(item, "q1:ammo/cells") == 0 || strcmp(item, "q1:ammo/rockets") == 0) {
+        qa_inventory_entry entry = entries[i];
+        entry.count = strcmp(item, "q1:ammo/shells") == 0 ? 25 : 0;
+        qa_shared_inventory_table_configure(game->host.inventory, player->actor, entry, NULL, NULL);
+      }
+    }
+    free(entries);
+    qa_armor_state armor;
+    memset(&armor, 0, sizeof armor);
+    armor.regular.kind = QA_REGULAR_ARMOR_NONE;
+    armor.powered.kind = "none";
+    qa_gameplay_authority_set_armor(game->host.combat, player->actor, armor);
+    player->weapon = "shotgun";
   }
-  handlers.ctx = context;
-  handlers.action = NULL;
+  const qa_q1_campaign_binding campaign = qa_q1_base_campaign(base);
+  const int32_t flags = qa_js_to_int32(campaign.read_flags(campaign.ctx));
+  const char *map = "start";
+  if ((flags & QA_Q1AD_BLOODY_NIGHTMARE_ACTIVE) != 0) {
+    if ((flags & QA_Q1AD_BLOODY_NIGHTMARE_NEWGAME) != 0) {
+      map = "boss2";
+    } else {
+      map = "map1";
+      campaign.write_flags(campaign.ctx, QA_Q1AD_BLOODY_NIGHTMARE_ACTIVE | QA_Q1AD_BLOODY_NIGHTMARE_DISCOVERED |
+                                             QA_Q1AD_BLOODY_NIGHTMARE_NEWGAME);
+      if (game->world != NULL) qa_q1am_field_text(game->world, "mg3.finalNewGameTravel", "1");
+      static const char *const parms[] = {"parm10", "parm11", "parm12", "parm13", "parm14"};
+      size_t now = 0;
+      const qa_actor_id *current = game->host.players(game->host.ctx, &now);
+      for (size_t p = 0; p < now; p++)
+        for (size_t i = 0; i < 5; i++) qa_q1ad_set_player_number(context, current[p], parms[i], 0);
+    }
+  }
+  free(players);
+  if (game->world != NULL) qa_q1am_field_text(game->world, "addon.intermissiontext", "$mg3_qc_boss_finale");
+  qa_q1_level_rules_begin(qa_q1_base_level_rules(base), map, NULL);
+}
+static void boss_end_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; (void)entity; /* TS action: () => bossEnd(context) */
+  final_registration *state = ctx;
+  boss_end(state->context);
+}
+static void register_named(qa_q1_services *game, const char *name, qa_q1_callback_handlers handlers) {
+  qa_q1_callback_registry_register(game->named, name, handlers);
+}
+void qa_q1am_register_final_boss(qa_q1ad_context *context) {
+  qa_q1_services *game = context->game;
+  final_registration *state = calloc(1, sizeof *state);
+  if (state == NULL) qa_range_error("out of memory");
+  state->context = context;
+  state->bosses = qa_q1am_register_boss_controllers(context, PREFIX, "monster_boss_final", create_final, context);
+  state->next = all_registrations;
+  all_registrations = state;
+  qa_q1_damage_source_effects effects;
+  memset(&effects, 0, sizeof effects);
+  effects.ctx = state;
+  effects.before_health = before_health;
+  effects.after_armor = after_armor;
+  qa_q1_register_damage_source_effects(game, "mg3:final", effects);
+  qa_q1_callback_handlers handlers;
+  memset(&handlers, 0, sizeof handlers);
+  handlers.ctx = state;
+  handlers.action = melee_check;
+  register_named(game, PREFIX ":boss_final_melee_check", handlers);
+  handlers.action = rise;
+  register_named(game, PREFIX ":boss_final_rise1", handlers);
+  static const char *const teleport_classnames[3] = {"info_boss_teleport_first", "info_boss_teleport_second",
+                                                     "info_boss_teleport_boss"};
+  for (size_t i = 0; i < 3; i++) {
+    state->teleports[i].owner = state;
+    state->teleports[i].classname = teleport_classnames[i];
+    qa_q1_register_spawn(game, teleport_classnames[i], teleport_point_spawn, &state->teleports[i]);
+  }
+  memset(&handlers, 0, sizeof handlers);
+  handlers.ctx = state;
   handlers.use = teleport_use;
-  game->named_register(game->ctx, "mg3:final:trigger_boss_teleport_use", handlers);
-  game->register_spawn(game->ctx, "trigger_boss_teleport", trigger_teleport_spawn, NULL);
-  handlers.use = NULL;
-  handlers.touch = rock_touch_handler;
-  game->named_register(game->ctx, "mg3:final:T_RockTouch2", handlers);
-  handlers.touch = NULL;
-  handlers.action = rock_death_handler;
-  game->named_register(game->ctx, "mg3:final:Rock_Death", handlers);
-  handlers.action = spiral_single_handler;
-  game->named_register(game->ctx, "mg3:final:spiral_single", handlers);
-  handlers.action = circle_think_handler;
-  game->named_register(game->ctx, "mg3:final:circle_think", handlers);
-  handlers.action = boss_end_handler;
-  game->named_register(game->ctx, "mg3:bosses:boss_end", handlers);
+  register_named(game, PREFIX ":trigger_boss_teleport_use", handlers);
+  qa_q1_register_spawn(game, "trigger_boss_teleport", trigger_teleport_spawn, state);
+  memset(&handlers, 0, sizeof handlers);
+  handlers.ctx = state;
+  handlers.touch = rock_touch;
+  register_named(game, PREFIX ":T_RockTouch2", handlers);
+  memset(&handlers, 0, sizeof handlers);
+  handlers.ctx = state;
+  handlers.action = rock_death;
+  register_named(game, PREFIX ":Rock_Death", handlers);
+  handlers.action = spiral_single;
+  register_named(game, PREFIX ":spiral_single", handlers);
+  handlers.action = circle_think;
+  register_named(game, PREFIX ":circle_think", handlers);
+  handlers.action = boss_end_action;
+  register_named(game, "mg3:bosses:boss_end", handlers);
+}
+void qa_q1am_release_final_boss(qa_q1_services *game) {
+  for (final_registration **link = &all_registrations; *link != NULL;) {
+    final_registration *state = *link;
+    if (state->context->game != game) { link = &state->next; continue; }
+    *link = state->next;
+    free(state);
+  }
 }

@@ -9,9 +9,10 @@ typedef struct qa_q2rm_actor_module {
   qa_q2m_monsters *monsters;
   qa_q2m_definition definition;
   qa_q2m_named_handler callbacks[16];
-  qa_q2f_named_use use_defs[1];
-  qa_q2f_named_touch touch_defs[1];
+  qa_q2_named_use use_defs[1];
+  qa_q2_named_touch touch_defs[1];
+  qa_q2_callback_definitions spawn_callbacks; /* TS callbacks getter, read by Q2EntityServices */
 } qa_q2rm_actor_module;
 void qa_q2rm_create_rerelease_actor_module(qa_q2rm_actor_module *out, qa_q2m_monsters *monsters);
-qa_q2bm_spawn_module qa_q2rm_actor_targets_as_spawn(qa_q2rm_actor_module *module);
+qa_q2_spawn_module qa_q2rm_actor_targets_as_spawn(qa_q2rm_actor_module *module);
 #endif

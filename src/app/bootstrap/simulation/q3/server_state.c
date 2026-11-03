@@ -2,9 +2,12 @@
 #include "qa/app/bootstrap/simulation/q3/server_state.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include "qa/contracts/common.h"
 #include "qa/foundation/support.h"
+#include <math.h>
+#include "qa/network/common/js_number.h"
 
 struct qa_app_q3_server_state {
   qa_app_q3_server_state_options options;
@@ -15,7 +18,23 @@ struct qa_app_q3_server_state {
   char *userinfo[64];
   qa_app_q3_wire_user_command commands[64];
   bool has_commands[64];
+  /* TS Map insertion order of values / userinfo / commands (captures
+   * list the slots in this order). */
+  uint16_t value_order[1024]; size_t value_order_count;
+  uint8_t userinfo_order[64]; size_t userinfo_order_count;
+  uint8_t command_order[64]; size_t command_order_count;
 };
+/* Map.set on a new key appends it; Map.delete removes it from the order. */
+static void order_add16(uint16_t *order, size_t *count, size_t slot) { order[(*count)++] = (uint16_t)slot; }
+static void order_add8(uint8_t *order, size_t *count, size_t slot) { order[(*count)++] = (uint8_t)slot; }
+static void order_remove8(uint8_t *order, size_t *count, size_t slot) {
+  for (size_t i = 0; i < *count; i++) {
+    if (order[i] != slot) continue;
+    memmove(&order[i], &order[i + 1], (*count - i - 1) * sizeof *order);
+    (*count)--;
+    return;
+  }
+}
 
 static char *dup_str(const char *value) {
   size_t length = strlen(value) + 1;
@@ -30,6 +49,7 @@ static void print_cb(void *v, const char *text) {
 }
 static void set_cvar(qa_app_q3_server_state *state, const char *name, const char *value) {
   qa_cvar_snapshot result; qa_cvar_registry_set(state->cvars, name, value, true, &result);
+  qa_cvar_read_free(&result);
 }
 
 qa_app_q3_server_state *qa_app_q3_server_state_create(qa_app_q3_server_state_options options) {
@@ -56,7 +76,7 @@ qa_app_q3_server_state *qa_app_q3_server_state_create(qa_app_q3_server_state_opt
   if (!settings->source_registry)
     qa_cvar_registry_apply_archive(state->cvars, settings->source_archive, settings->source_archive_count);
   char max_clients[32];
-  snprintf(max_clients, sizeof max_clients, "%lld", (long long)settings->max_clients);
+  snprintf(max_clients, sizeof max_clients, "%s", QA_JS_NUMBER(settings->max_clients));
   set_cvar(state, "sv_maxclients", max_clients);
   set_cvar(state, "sv_mapname", settings->map_name);
   set_cvar(state, "mapname", settings->map_name);
@@ -80,11 +100,12 @@ const char *qa_app_q3_server_state_refresh_server_info(qa_app_q3_server_state *s
   if (state->has_values[0] && value && strcmp(state->values[0], value) == 0) { free(value); return NULL; }
   free(state->values[0]);
   state->values[0] = value;
+  if (!state->has_values[0]) order_add16(state->value_order, &state->value_order_count, 0);
   state->has_values[0] = true;
   return state->values[0];
 }
 static void config_index(double index) {
-  if (index != (double)(long long)index || index < 0 || index >= 1024)
+  if (!(isfinite(index) && index == trunc(index)) || index < 0 || index >= 1024)
     qa_range_error("Q3 configstring outside source range");
 }
 const char *qa_app_q3_server_state_configstring_get(qa_app_q3_server_state *state, double index) {
@@ -95,6 +116,7 @@ void qa_app_q3_server_state_configstring_set(qa_app_q3_server_state *state, doub
   config_index(index);
   free(state->values[(size_t)index]);
   state->values[(size_t)index] = dup_str(value);
+  if (!state->has_values[(size_t)index]) order_add16(state->value_order, &state->value_order_count, (size_t)index);
   state->has_values[(size_t)index] = true;
 }
 bool qa_app_q3_server_state_has_configstring(qa_app_q3_server_state *state, double index) {
@@ -105,29 +127,33 @@ void qa_app_q3_server_state_print(qa_app_q3_server_state *state, const char *tex
   state->options.print(state->options.ctx, text);
 }
 const char *qa_app_q3_server_state_get_userinfo(qa_app_q3_server_state *state, double slot) {
-  if (slot < 0 || slot >= 64 || slot != (double)(long long)slot) return NULL;
+  if (slot < 0 || slot >= 64 || !(isfinite(slot) && slot == trunc(slot))) return NULL;
   return state->userinfo[(size_t)slot];
 }
 void qa_app_q3_server_state_set_userinfo(qa_app_q3_server_state *state, double slot, const char *value) {
-  if (slot < 0 || slot >= 64 || slot != (double)(long long)slot) return;
+  if (slot < 0 || slot >= 64 || !(isfinite(slot) && slot == trunc(slot))) return;
+  if (state->userinfo[(size_t)slot] == NULL) order_add8(state->userinfo_order, &state->userinfo_order_count, (size_t)slot);
   free(state->userinfo[(size_t)slot]);
   state->userinfo[(size_t)slot] = dup_str(value);
 }
 bool qa_app_q3_server_state_get_user_command(qa_app_q3_server_state *state, double slot, qa_app_q3_wire_user_command *out) {
-  if (slot < 0 || slot >= 64 || slot != (double)(long long)slot || !state->has_commands[(size_t)slot]) return false;
+  if (slot < 0 || slot >= 64 || !(isfinite(slot) && slot == trunc(slot)) || !state->has_commands[(size_t)slot]) return false;
   *out = state->commands[(size_t)slot];
   return true;
 }
 void qa_app_q3_server_state_set_user_command(qa_app_q3_server_state *state, double slot, qa_app_q3_wire_user_command value) {
-  if (slot < 0 || slot >= 64 || slot != (double)(long long)slot) return;
+  if (slot < 0 || slot >= 64 || !(isfinite(slot) && slot == trunc(slot))) return;
   qa_app_q3_wire_user_command filtered = state->options.filter_user_command
       ? state->options.filter_user_command(state->options.ctx, slot, value) : value;
   state->commands[(size_t)slot] = filtered;
+  if (!state->has_commands[(size_t)slot]) order_add8(state->command_order, &state->command_order_count, (size_t)slot);
   state->has_commands[(size_t)slot] = true;
 }
 void qa_app_q3_server_state_clear_client(qa_app_q3_server_state *state, double slot) {
-  if (slot < 0 || slot >= 64 || slot != (double)(long long)slot) return;
+  if (slot < 0 || slot >= 64 || !(isfinite(slot) && slot == trunc(slot))) return;
+  if (state->userinfo[(size_t)slot] != NULL) order_remove8(state->userinfo_order, &state->userinfo_order_count, (size_t)slot);
   free(state->userinfo[(size_t)slot]); state->userinfo[(size_t)slot] = NULL;
+  if (state->has_commands[(size_t)slot]) order_remove8(state->command_order, &state->command_order_count, (size_t)slot);
   state->has_commands[(size_t)slot] = false;
 }
 
@@ -143,10 +169,16 @@ qa_save_value *qa_app_q3_server_state_capture_save_state(qa_app_q3_server_state 
   qa_save_value *cvars = qa_cvar_registry_capture_save_state(state->cvars);
   qa_save_value *configstrings = qa_save_value_array(), *userinfo = qa_save_value_array(), *commands = qa_save_value_array();
   bool ok = root && cvars && configstrings && userinfo && commands && qa_save_value_set(root, "cvars", cvars);
-  for (size_t i = 0; ok && i < 1024; i++) if (state->has_values[i]) ok = qa_save_value_push(configstrings, slot_string((double)i, state->values[i]));
-  for (size_t i = 0; ok && i < 64; i++) if (state->userinfo[i]) ok = qa_save_value_push(userinfo, slot_string((double)i, state->userinfo[i]));
-  for (size_t i = 0; ok && i < 64; i++) {
-    if (!state->has_commands[i]) continue;
+  for (size_t n = 0; ok && n < state->value_order_count; n++) {
+    const size_t i = state->value_order[n];
+    ok = qa_save_value_push(configstrings, slot_string((double)i, state->values[i]));
+  }
+  for (size_t n = 0; ok && n < state->userinfo_order_count; n++) {
+    const size_t i = state->userinfo_order[n];
+    ok = qa_save_value_push(userinfo, slot_string((double)i, state->userinfo[i]));
+  }
+  for (size_t n = 0; ok && n < state->command_order_count; n++) {
+    const size_t i = state->command_order[n];
     qa_app_q3_wire_user_command command = state->commands[i];
     qa_save_value *entry = qa_save_value_object(), *value = qa_save_value_object(), *angles = qa_save_value_array();
     ok = entry && value && angles
@@ -236,15 +268,23 @@ void qa_app_q3_server_state_restore_save_state(qa_app_q3_server_state *state, co
   qa_cvar_registry_restore_save_state(state->cvars, cvars.value);
   qa_save_reader_destroy(&cvars);
   for (size_t i = 0; i < 1024; i++) { free(state->values[i]); state->values[i] = NULL; state->has_values[i] = false; }
+  state->value_order_count = 0;
   for (size_t i = 0; i < config_count; i++) {
     state->values[(size_t)config[i].slot] = dup_str(config[i].text);
     state->has_values[(size_t)config[i].slot] = true;
+    order_add16(state->value_order, &state->value_order_count, (size_t)config[i].slot);
   }
   for (size_t i = 0; i < 64; i++) { free(state->userinfo[i]); state->userinfo[i] = NULL; state->has_commands[i] = false; }
-  for (size_t i = 0; i < info_count; i++) state->userinfo[(size_t)info[i].slot] = dup_str(info[i].text);
+  state->userinfo_order_count = 0;
+  state->command_order_count = 0;
+  for (size_t i = 0; i < info_count; i++) {
+    state->userinfo[(size_t)info[i].slot] = dup_str(info[i].text);
+    order_add8(state->userinfo_order, &state->userinfo_order_count, (size_t)info[i].slot);
+  }
   for (size_t i = 0; i < cmd_count; i++) {
     state->commands[(size_t)cmds[i].slot] = cmds[i].command;
     state->has_commands[(size_t)cmds[i].slot] = true;
+    order_add8(state->command_order, &state->command_order_count, (size_t)cmds[i].slot);
   }
   qa_save_reader_destroy(&reader);
 }

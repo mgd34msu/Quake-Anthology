@@ -18,6 +18,7 @@ static noreturn void env_error(const char *message) { qa_q1qc_error("progs.dat",
 
 struct qa_q1_id1_environment {
   qa_q1qc_source source;
+  qa_q1qc_foreign_source foreign;
   qa_q1qc_machine_fn machine;
   void *machine_ctx;
   const qa_q1_id1_program_binding *binding;
@@ -25,9 +26,16 @@ struct qa_q1_id1_environment {
 qa_q1_id1_environment *qa_q1_id1_environment_create(qa_q1qc_source source,
                                                     qa_q1qc_machine_fn machine,
                                                     void *machine_ctx) {
+  return qa_q1_id1_environment_create_foreign(source, NULL, machine, machine_ctx);
+}
+qa_q1_id1_environment *qa_q1_id1_environment_create_foreign(qa_q1qc_source source,
+                                                            const qa_q1qc_foreign_source *foreign,
+                                                            qa_q1qc_machine_fn machine,
+                                                            void *machine_ctx) {
   qa_q1_id1_environment *environment = xmalloc(sizeof *environment);
   memset(environment, 0, sizeof *environment);
   environment->source = source;
+  if (foreign != NULL) environment->foreign = *foreign;
   environment->machine = machine;
   environment->machine_ctx = machine_ctx;
   environment->binding = qa_q1_id1_program_binding_get(source.program, NULL);
@@ -58,11 +66,13 @@ static int64_t env_field(qa_q1_id1_environment *environment, const char *name) {
 static int64_t env_reference(qa_q1_id1_environment *environment, qa_actor_id actor) {
   qa_actor_source_result owned =
       qa_session_actor_registry_source_of(environment->source.actors, actor);
-  if (!qa_session_actor_registry_is_live(environment->source.actors, actor) ||
-      !owned.has_value || owned.provider == NULL ||
-      strcmp(owned.provider, environment->source.provider) != 0)
-    env_error("id1 environment references a foreign or stale actor");
-  return qa_q1qc_entities_reference(environment->source.entities, owned.slot);
+  if (!qa_session_actor_registry_is_live(environment->source.actors, actor))
+    env_error("id1 environment references a stale actor");
+  if (owned.has_value && owned.provider != NULL && strcmp(owned.provider, environment->source.provider) == 0)
+    return qa_q1qc_entities_reference(environment->source.entities, owned.slot);
+  if (environment->foreign.foreign_reference == NULL)
+    env_error("id1 damage references an actor without a source projection");
+  return environment->foreign.foreign_reference(environment->foreign.ctx, actor);
 }
 static void entity_text(qa_q1_id1_environment *environment, qa_q1qc_machine *vm, int64_t entity,
                         const char *name, char *buf, size_t size) {
@@ -77,8 +87,10 @@ bool qa_q1_id1_environment_resolve(qa_q1_id1_environment *environment,
   const qa_q1_environmental_site *site = NULL;
   for (size_t i = 0; i < environment->binding->environment_count; i++) {
     const qa_q1_environmental_site *candidate = &environment->binding->environment[i];
-    if (candidate->caller == call.call.caller && candidate->statement == call.call.statement)
-      site = candidate;
+    if (candidate->caller == call.call.caller && candidate->statement == call.call.statement) {
+      site = candidate; /* TS find(): the first match */
+      break;
+    }
   }
   if (site == NULL) return false;
   qa_q1qc_machine *vm = environment->machine(environment->machine_ctx);
@@ -92,11 +104,13 @@ bool qa_q1_id1_environment_resolve(qa_q1_id1_environment *environment,
   int64_t attacker = env_reference(environment, call.attacker);
   int64_t self = qa_q1qc_words_int(&vm->globals, qa_q1qc_machine_global_offset(vm, "self"));
   int64_t other = qa_q1qc_words_int(&vm->globals, qa_q1qc_machine_global_offset(vm, "other"));
-  qa_q1qc_words inflictor_words;
-  qa_q1qc_entities_from_reference(environment->source.entities, inflictor, &inflictor_words);
-  int64_t expected_attacker =
-      site->attacker != NULL && strcmp(site->attacker, "goalentity") == 0
-          ? qa_q1qc_words_int(&inflictor_words, env_field(environment, "goalentity")) : inflictor;
+  /* TS reads the inflictor row only for a goalentity attacker. */
+  int64_t expected_attacker = inflictor;
+  if (site->attacker != NULL && strcmp(site->attacker, "goalentity") == 0) {
+    qa_q1qc_words inflictor_words;
+    qa_q1qc_entities_from_reference(environment->source.entities, inflictor, &inflictor_words);
+    expected_attacker = qa_q1qc_words_int(&inflictor_words, env_field(environment, "goalentity"));
+  }
   memset(out, 0, sizeof *out);
   out->cause.kind = QA_ATTACK_CAUSE_ENVIRONMENT;
   out->cause.hazard = site->hazard;

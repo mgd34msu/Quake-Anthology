@@ -10,6 +10,7 @@
 #include "qa/core/info_string.h"
 #include "qa/world/actors/body.h"
 #include "qa/world/gameplay/authority.h"
+#include "qa/foundation/js.h"
 
 static qa_guest_call_value decode_value(qa_guest_value_layout layout, const uint8_t *bytes, size_t len, const qa_compat_q2_memory *memory) {
   qa_guest_call_value v; memset(&v, 0, sizeof v);
@@ -66,7 +67,17 @@ struct qa_compat_q2_classic_combat_bindings {
   bool removed; qa_damage_request removed_request;
   qa_compat_q2_guest_call_signature damage_sig, regular_sig, power_sig;
   qa_guest_value_layout sig_storage[3][16];
+  /* Per-actor binding and armor-stage contexts (the TS closures), owned until destroy. */
+  void **owned; size_t owned_count, owned_cap; struct bctx **contexts; size_t context_count, context_cap;
+  /* TS damageProxies: one inuse stand-in edict per foreign damage source, kept for the actor's life so hits do not
+   * consume G_Spawn slots (insertion order). */
+  struct { qa_actor_id actor; qa_raw_entity_view view; } *proxies; size_t proxy_count, proxy_cap;
+  size_t reload_handle; /* TS reloadObserver */
 };
+static void own_block(void ***items, size_t *count, size_t *cap, void *block) {
+  if (*count == *cap) { *cap = *cap ? *cap * 2 : 16; void **grown = realloc(*items, *cap * sizeof *grown); if (!grown) qa_range_error("Out of memory"); *items = grown; }
+  (*items)[(*count)++] = block;
+}
 static qa_compat_q2_memory *mem_of(qa_compat_q2_classic_combat_bindings *b) { return qa_compat_q2_classic_guest_host_get_memory(b->host); }
 static qa_guest_address at_view(qa_compat_q2_classic_combat_bindings *b, qa_raw_entity_view view, double off) { return qa_compat_q2_mem_offset(mem_of(b), view.address, (int64_t)off); }
 static qa_guest_address entry_of(qa_compat_q2_classic_combat_bindings *b, double off) { return qa_compat_q2_mem_offset(mem_of(b), b->image, (int64_t)off); }
@@ -86,8 +97,9 @@ static armor_def_t armor_definition(qa_compat_q2_classic_combat_bindings *b, dou
   bool hi = qa_compat_q2_mem_read_pointer(memory, qa_compat_q2_mem_offset(memory, record, (int64_t)b->profile.item_fields.armor_info), &info);
   if (name[0] == 0 || !hi) { free(name); qa_range_error("Original native armor item lacks its name or protection information"); }
   size_t need = strlen(name) + 4; char *item = malloc(need); snprintf(item, need, "q2:%s", name); free(name);
-  return (armor_def_t){item, qa_compat_q2_mem_read_f32(memory, qa_compat_q2_mem_offset(memory, info, (int64_t)b->profile.armor_info.normal_protection)),
-                       qa_compat_q2_mem_read_f32(memory, qa_compat_q2_mem_offset(memory, info, (int64_t)b->profile.armor_info.energy_protection))};
+  double normal_protection2 = qa_compat_q2_mem_read_f32(memory, qa_compat_q2_mem_offset(memory, info, (int64_t)b->profile.armor_info.normal_protection));
+  double energy_protection2 = qa_compat_q2_mem_read_f32(memory, qa_compat_q2_mem_offset(memory, info, (int64_t)b->profile.armor_info.energy_protection));
+  return (armor_def_t){item, normal_protection2, energy_protection2};
 }
 static qa_armor_state armor_of(qa_compat_q2_classic_combat_bindings *b, qa_raw_entity_view view) {
   qa_armor_state none; memset(&none, 0, sizeof none); none.regular.kind = QA_REGULAR_ARMOR_NONE; none.powered.kind = "none";
@@ -95,7 +107,7 @@ static qa_armor_state armor_of(qa_compat_q2_classic_combat_bindings *b, qa_raw_e
   if (!client_of(b, view, &client)) return none;
   double index = -1;
   for (size_t i = 0; i < b->profile.armor.regular_count; i++) if (count_of(b, client, b->profile.armor.regular[i]) > 0) { index = b->profile.armor.regular[i]; break; }
-  bool powered = (qa_compat_q2_mem_read_i32(mem_of(b), at_view(b, view, b->profile.fields.flags)) & (int32_t)b->profile.flags.power_armor) != 0;
+  bool powered = (qa_compat_q2_mem_read_i32(mem_of(b), at_view(b, view, b->profile.fields.flags)) & qa_js_to_int32(b->profile.flags.power_armor)) != 0;
   const char *power = !powered ? NULL : count_of(b, client, b->profile.items.shield) > 0 ? "shield" : count_of(b, client, b->profile.items.screen) > 0 ? "screen" : NULL;
   if (index < 0 && !power) return none;
   qa_armor_state state = none;
@@ -146,6 +158,8 @@ static void validate_armor(bctx_t *c, qa_armor_state armor) {
     qa_range_error("Native power activation requires its original source equipment operation");
 }
 static qa_combat_state bind_read(void *vctx) {
+  double left;
+  double right;
   bctx_t *c = vctx; qa_compat_q2_classic_combat_bindings *b = c->b; qa_compat_q2_memory *memory = mem_of(b);
   qa_guest_address client; bool has_client = client_of(b, c->view, &client);
   int32_t flags = qa_compat_q2_mem_read_i32(memory, at_view(b, c->view, b->profile.fields.flags));
@@ -156,13 +170,17 @@ static qa_combat_state bind_read(void *vctx) {
     char *userinfo = qa_compat_q2_read_classic_string(memory, true, qa_compat_q2_mem_offset(memory, client, (int64_t)b->profile.client.userinfo), b->profile.client.userinfo_bytes);
     skin = qa_info_value_for_key_bounded(userinfo, "skin", (int64_t)b->profile.client.userinfo_bytes);
     free(userinfo);
-    int32_t rules = (int32_t)qa_cvar_registry_variable_value(cvars, "dmflags");
+    int32_t rules = qa_js_to_int32(qa_cvar_registry_variable_value(cvars, "dmflags")); /* rules & mask: ToInt32 */
     if (qa_cvar_registry_variable_value(cvars, "coop") != 0) c->team = strdup("q2:coop");
-    else if ((rules & (int32_t)b->profile.teams.model) != 0) {
+    else if ((rules & qa_js_to_int32(b->profile.teams.model)) != 0) {
       const char *slash = strchr(skin, '/'); size_t n = slash ? (size_t)(slash - skin) : strlen(skin);
       c->team = malloc(n + 10); snprintf(c->team, n + 10, "q2:model:%.*s", (int)n, skin);
-    } else if ((rules & (int32_t)b->profile.teams.skin) != 0) {
-      const char *slash = strchr(skin, '/'); const char *part = slash ? slash + 1 : "";
+    } else if ((rules & qa_js_to_int32(b->profile.teams.skin)) != 0) {
+      /* skin.split("/")[1] ?? skin */
+      const char *slash = strchr(skin, '/'); const char *part = skin;
+      if (slash) { const char *next = strchr(slash + 1, '/'); static char piece[512];
+        size_t n = next ? (size_t)(next - slash - 1) : strlen(slash + 1); if (n >= sizeof piece) n = sizeof piece - 1;
+        memcpy(piece, slash + 1, n); piece[n] = '\0'; part = piece; }
       c->team = malloc(strlen(part) + 10); snprintf(c->team, strlen(part) + 10, "q2:skin:%s", part);
     }
   }
@@ -171,15 +189,15 @@ static qa_combat_state bind_read(void *vctx) {
   state.can_take_damage = qa_compat_q2_mem_read_i32(memory, at_view(b, c->view, b->profile.fields.damageable)) != 0;
   state.mass = qa_compat_q2_mem_read_i32(memory, at_view(b, c->view, b->profile.fields.mass));
   state.armor = armor_of(b, c->view); state.team = c->team;
-  state.has_no_knockback = true; state.no_knockback = (flags & (int32_t)b->profile.flags.no_knockback) != 0;
-  state.invulnerable = (flags & (int32_t)b->profile.flags.invulnerable) != 0 ||
-    (has_client && qa_compat_q2_mem_read_f32(memory, qa_compat_q2_mem_offset(memory, client, (int64_t)b->profile.client.invincible_frame)) >
-                   qa_compat_q2_mem_read_i32(memory, entry_of(b, b->profile.globals.level_frame)));
+  state.has_no_knockback = true; state.no_knockback = (flags & qa_js_to_int32(b->profile.flags.no_knockback)) != 0;
+  state.invulnerable = (flags & qa_js_to_int32(b->profile.flags.invulnerable)) != 0 ||
+    (has_client && (left = qa_compat_q2_mem_read_f32(memory, qa_compat_q2_mem_offset(memory, client, (int64_t)b->profile.client.invincible_frame)), right = qa_compat_q2_mem_read_i32(memory, entry_of(b, b->profile.globals.level_frame)), left >
+                   right));
   free(skin);
   return state;
 }
 static void bind_write_health(void *vctx, double health) {
-  bctx_t *c = vctx; qa_compat_q2_mem_write_i32(mem_of(c->b), at_view(c->b, c->view, c->b->profile.fields.health), (int32_t)health);
+  bctx_t *c = vctx; qa_compat_q2_mem_write_i32(mem_of(c->b), at_view(c->b, c->view, c->b->profile.fields.health), qa_js_to_int32(health));
 }
 static void bind_write_armor(void *vctx, qa_armor_state armor) {
   bctx_t *c = vctx; qa_compat_q2_classic_combat_bindings *b = c->b; qa_compat_q2_memory *memory = mem_of(b);
@@ -198,12 +216,12 @@ static void bind_write_armor(void *vctx, qa_armor_state armor) {
     if (!skip) {
       qa_guest_address address = qa_compat_q2_mem_offset(memory, client, (int64_t)(b->profile.client.inventory + index * 4));
       double points = (armor.regular.kind == QA_REGULAR_ARMOR_Q2 && armor.regular.item && strcmp(armor.regular.item, def.item) == 0) ? armor.regular.points : 0;
-      if (qa_compat_q2_mem_read_i32(memory, address) != (int32_t)points) qa_compat_q2_mem_write_i32(memory, address, (int32_t)points);
+      if ((double)qa_compat_q2_mem_read_i32(memory, address) != points) qa_compat_q2_mem_write_i32(memory, address, qa_js_to_int32(points));
     }
     free(def.item);
   }
   if (strcmp(armor.powered.kind, "none") != 0)
-    qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, client, (int64_t)(b->profile.client.inventory + b->profile.items.cells * 4)), (int32_t)armor.powered.cells);
+    qa_compat_q2_mem_write_i32(memory, qa_compat_q2_mem_offset(memory, client, (int64_t)(b->profile.client.inventory + b->profile.items.cells * 4)), qa_js_to_int32(armor.powered.cells));
 }
 static qa_regular_armor_state bind_empty(void *vctx, double points) { return empty_regular(vctx, points); }
 static void bind_validate(void *vctx, qa_armor_state armor) { validate_armor(vctx, armor); }
@@ -249,13 +267,15 @@ static qa_armor_stage_removal stage_bind(void *vctx, qa_armor_stage_intercept_fn
   return (qa_armor_stage_removal){r, stage_remove};
 }
 static qa_source_armor_stage armor_stage(qa_compat_q2_classic_combat_bindings *b, qa_owned_actor actor, qa_protection_channel channel) {
-  stage_ctx_t *s = malloc(sizeof *s); *s = (stage_ctx_t){b, actor, channel};
+  stage_ctx_t *s = malloc(sizeof *s); if (!s) qa_range_error("Out of memory"); *s = (stage_ctx_t){b, actor, channel};
+  own_block(&b->owned, &b->owned_count, &b->owned_cap, s);
   return (qa_source_armor_stage){s, stage_bind};
 }
 void qa_compat_q2_classic_combat_bindings_bind(qa_compat_q2_classic_combat_bindings *b, qa_raw_entity_view view, qa_owned_actor actor) {
   const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(b->host);
   if ((int64_t)view.stride_bytes != (int64_t)b->profile.entity_bytes) qa_range_error("Native combat declaration differs from the source edict stride");
-  bctx_t *c = calloc(1, sizeof *c); c->b = b; c->view = view; c->actor = actor;
+  bctx_t *c = calloc(1, sizeof *c); if (!c) qa_range_error("Out of memory"); c->b = b; c->view = view; c->actor = actor;
+  own_block((void ***)&b->contexts, &b->context_count, &b->context_cap, c);
   qa_combat_state_binding binding; memset(&binding, 0, sizeof binding);
   binding.ctx = c; binding.validate_armor = bind_validate; binding.empty_regular_armor = bind_empty;
   binding.normalize_legacy_armor = bind_normalize; binding.source_damage = bind_source_damage;
@@ -295,9 +315,9 @@ void qa_compat_q2_classic_combat_bindings_sync_proxy_edict(qa_compat_q2_classic_
   qa_compat_q2_write_classic_vector(memory, qa_compat_q2_mem_offset(memory, view.address, 188), body.bounds.min);
   qa_compat_q2_write_classic_vector(memory, qa_compat_q2_mem_offset(memory, view.address, 200), body.bounds.max);
   qa_compat_q2_write_classic_vector(memory, at_view(b, view, b->profile.fields.velocity), body.velocity);
-  qa_compat_q2_mem_write_i32(memory, at_view(b, view, b->profile.fields.health), combat ? (int32_t)combat->health : 0);
+  qa_compat_q2_mem_write_i32(memory, at_view(b, view, b->profile.fields.health), combat ? qa_js_to_int32(combat->health) : 0);
   qa_compat_q2_mem_write_i32(memory, at_view(b, view, b->profile.fields.damageable), combat && combat->can_take_damage ? 1 : 0);
-  qa_compat_q2_mem_write_i32(memory, at_view(b, view, b->profile.fields.mass), combat ? (int32_t)combat->mass : 100);
+  qa_compat_q2_mem_write_i32(memory, at_view(b, view, b->profile.fields.mass), combat ? qa_js_to_int32(combat->mass) : 100);
 }
 double qa_compat_q2_classic_combat_bindings_proxy_health(qa_compat_q2_classic_combat_bindings *b, qa_raw_entity_view view) {
   return qa_compat_q2_mem_read_i32(mem_of(b), at_view(b, view, b->profile.fields.health));
@@ -329,11 +349,24 @@ static qa_guest_call_result damage_invoke(void *vctx, const qa_guest_call_contex
   incoming_damage(b, args, count);
   return qa_compat_q2_call_void();
 }
+/* TS standIn(call, signature): the shared actor behind the call's target edict, when it is a stand-in. */
+static bool stand_in_at_entry(qa_compat_q2_classic_combat_bindings *b, const qa_compat_q2_native_combat_call *call,
+                              qa_compat_q2_guest_call_signature signature) {
+  const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(b->host);
+  if (!opts->services.stand_in_actor) return false;
+  qa_guest_call_value field = opts->runner->read_combat_field(opts->runner->ctx, call, signature, "target");
+  qa_guest_address a;
+  if (!qa_compat_q2_classic_pointer(&field, 1, 0, &a)) return false;
+  qa_actor_id actor;
+  return opts->services.stand_in_actor(opts->services.stand_in_ctx,
+      qa_compat_q2_classic_edicts_from_pointer(qa_compat_q2_classic_guest_host_get_edicts(b->host), a), &actor);
+}
 static bool damage_accepts(void *vctx) {
   qa_compat_q2_classic_combat_bindings *b = vctx;
   const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(b->host);
   if (b->closed) return false;
   if (b->frame_count && b->frames[b->frame_count - 1].has_stack && b->frames[b->frame_count - 1].stack == rsp_of(b)) return false;
+  if (stand_in_at_entry(b, &b->profile.calls.damage, b->damage_sig)) return true;
   bool composed = qa_mod_operation_active(qa_gameplay_authority_damage_operation(opts->services.engine->combat));
   if (!composed && b->armor_count == 0) return false;
   qa_owned_actor actor;
@@ -417,7 +450,17 @@ static void incoming_damage(qa_compat_q2_classic_combat_bindings *b, const qa_gu
   const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(b->host);
   if (!opts->services.damage_provenance) qa_range_error("Classic source damage requires captured provenance");
   qa_actor_id ids[3];
+  bool stand_in = false;
   for (int i = 0; i < 3; i++) {
+    if (opts->services.stand_in_actor) {
+      qa_actor_id standing;
+      if (opts->services.stand_in_actor(opts->services.stand_in_ctx, qa_compat_q2_classic_edicts_from_pointer(
+              qa_compat_q2_classic_guest_host_get_edicts(b->host), qa_compat_q2_classic_required_pointer(args, n, (size_t)i)), &standing)) {
+        ids[i] = standing;
+        if (i == 0) stand_in = true;
+        continue;
+      }
+    }
     qa_owned_actor owned;
     if (!qa_compat_q2_classic_edicts_observe(qa_compat_q2_classic_guest_host_get_edicts(b->host),
             qa_compat_q2_classic_required_pointer(args, n, (size_t)i), &owned))
@@ -439,7 +482,7 @@ static void incoming_damage(qa_compat_q2_classic_combat_bindings *b, const qa_gu
   req.direction = qa_compat_q2_read_classic_vector(mem_of(b), qa_compat_q2_classic_required_pointer(args, n, 3));
   req.point = qa_compat_q2_read_classic_vector(mem_of(b), qa_compat_q2_classic_required_pointer(args, n, 4));
   req.normal = qa_compat_q2_read_classic_vector(mem_of(b), qa_compat_q2_classic_required_pointer(args, n, 5));
-  req.delivery = ((int64_t)flags & 1) != 0 ? "radius" : "direct"; req.attack = prov;
+  req.delivery = (qa_js_to_int32(flags) & 1) != 0 ? "radius" : "direct"; req.attack = prov;
   qa_raw_entity_view view = qa_compat_q2_classic_edicts_from_pointer(qa_compat_q2_classic_guest_host_get_edicts(b->host),
       qa_compat_q2_classic_required_pointer(args, n, 0));
   typedef struct { qa_compat_q2_classic_combat_bindings *b; qa_raw_entity_view view; const qa_guest_call_value *a; size_t n; } sd_t;
@@ -447,12 +490,30 @@ static void incoming_damage(qa_compat_q2_classic_combat_bindings *b, const qa_gu
   qa_damage_outcome (*sd_fn)(void *, qa_damage_request) = NULL; (void)sd_fn;
   /* apply with sourceDamage closure -> do_damage via a file-local thunk */
   extern qa_damage_outcome qa_compat_q2_classic_sd_thunk(void *, qa_damage_request);
-  (void)qa_gameplay_authority_apply(opts->services.engine->combat, req, qa_compat_q2_classic_sd_thunk, &sd);
+  /* A stand-in's health belongs to the shared monster: shared combat applies the hit and the guest's own T_Damage does not run on it. */
+  (void)qa_gameplay_authority_apply(opts->services.engine->combat, req, stand_in ? NULL : qa_compat_q2_classic_sd_thunk, stand_in ? NULL : &sd);
 }
 /* Thunk storage for incoming_damage's sourceDamage closure. */
 qa_damage_outcome qa_compat_q2_classic_sd_thunk(void *ctx, qa_damage_request request) {
   typedef struct { qa_compat_q2_classic_combat_bindings *b; qa_raw_entity_view view; const qa_guest_call_value *a; size_t n; } sd_t;
   sd_t *sd = ctx; return do_damage(sd->b, request, sd->view, sd->a, sd->n);
+}
+/* TS releaseRetiredProxies: stand-ins of actors that are no longer live are freed, if the guest still holds them. */
+static void release_retired_proxies(qa_compat_q2_classic_combat_bindings *b) {
+  const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(b->host);
+  qa_compat_q2_memory *memory = mem_of(b);
+  static const qa_guest_value_layout pp[] = {{false,"pointer",{0}}};
+  for (size_t i = 0; i < b->proxy_count;) {
+    if (qa_session_actor_registry_is_live(opts->services.engine->actors, b->proxies[i].actor)) { i++; continue; }
+    const qa_raw_entity_view view = b->proxies[i].view;
+    memmove(&b->proxies[i], &b->proxies[i + 1], (b->proxy_count - i - 1) * sizeof *b->proxies);
+    b->proxy_count--;
+    if (qa_compat_q2_mem_read_i32(memory, qa_compat_q2_mem_offset(memory, view.address, 88)) != 0) {
+      qa_guest_call_value v = qa_compat_q2_call_pointer(true, view.address);
+      (void)qa_compat_q2_classic_guest_host_invoke(b->host, entry_of(b, b->profile.entries.free),
+          qa_compat_q2_classic_signature(pp, 1, true, qa_compat_q2_q2_int, false), &v, 1, NULL, opts->instruction_budget);
+    }
+  }
 }
 typedef struct exec_ctx {
   qa_compat_q2_classic_combat_bindings *b; qa_raw_entity_view view; const qa_guest_call_value *source_args; size_t source_count;
@@ -469,6 +530,7 @@ static qa_source_damage_result damage_execute(void *vctx, qa_source_damage_obser
   ex->armor = armor_of(b, view);
   ex->velocity = qa_compat_q2_read_classic_vector(memory, at_view(b, view, b->profile.fields.velocity));
   ex->result = (qa_source_damage_result){0, "none"}; ex->reacting = false;
+  release_retired_proxies(b);
   /* Write observers when the memory mirror supports them. */
   uint64_t handles[4]; size_t handle_count = 0;
   typedef struct obs { exec_ctx_t *ex; qa_source_damage_observer observer; int kind; } obs_t;
@@ -499,7 +561,6 @@ static qa_source_damage_result damage_execute(void *vctx, qa_source_damage_obser
     reaction_handles[reaction_count++] = opts->runner->observe_entry(opts->runner->ctx, callback, &robs[r], qa_compat_q2_classic_reaction_observe);
   }
   qa_guest_address vectors = memory->allocate(memory->ctx, 36, true, 4, "Q2 classic damage arguments");
-  qa_guest_address temporary[8]; size_t temporary_count = 0;
   /* address(actor) helper inline */
   qa_guest_address attacker_addr, inflictor_addr;
   {
@@ -514,12 +575,24 @@ static qa_source_damage_result damage_execute(void *vctx, qa_source_damage_obser
       }
       qa_body_state_result body = qa_shared_body_table_read(engine->bodies, *actor);
       if (!body.has_value) qa_range_error("Foreign damage actor has no body to project");
-      static const qa_guest_value_layout pp0[] = {{false,"pointer",{0}}}; (void)pp0;
-      qa_guest_call_result allocated = qa_compat_q2_classic_guest_host_invoke(b->host, entry_of(b, b->profile.entries.spawn),
-          qa_compat_q2_classic_signature(NULL, 0, false, qa_compat_q2_q2_pointer, false), NULL, 0, NULL, opts->instruction_budget);
-      if (allocated.kind != QA_GUEST_VALUE_POINTER || !allocated.pointer_value.has_value) qa_range_error("Source G_Spawn returned no damage projection");
-      qa_guest_address value = allocated.pointer_value.value;
-      if (temporary_count < 8) temporary[temporary_count++] = value;
+      size_t at = b->proxy_count;
+      for (size_t k = 0; k < b->proxy_count; k++) if (qa_same_actor(b->proxies[k].actor, *actor)) { at = k; break; }
+      if (at == b->proxy_count || qa_compat_q2_mem_read_i32(memory, qa_compat_q2_mem_offset(memory, b->proxies[at].view.address, 88)) == 0) {
+        qa_guest_call_result allocated = qa_compat_q2_classic_guest_host_invoke(b->host, entry_of(b, b->profile.entries.spawn),
+            qa_compat_q2_classic_signature(NULL, 0, false, qa_compat_q2_q2_pointer, false), NULL, 0, NULL, opts->instruction_budget);
+        if (allocated.kind != QA_GUEST_VALUE_POINTER || !allocated.pointer_value.has_value) qa_range_error("Source G_Spawn returned no damage projection");
+        if (at == b->proxy_count) {
+          if (b->proxy_count == b->proxy_cap) {
+            b->proxy_cap = b->proxy_cap ? b->proxy_cap * 2 : 8;
+            b->proxies = realloc(b->proxies, b->proxy_cap * sizeof *b->proxies);
+            if (!b->proxies) qa_range_error("Out of memory");
+          }
+          b->proxy_count++;
+          b->proxies[at].actor = *actor;
+        }
+        b->proxies[at].view = qa_compat_q2_classic_edicts_from_pointer(qa_compat_q2_classic_guest_host_get_edicts(b->host), allocated.pointer_value.value);
+      }
+      qa_guest_address value = b->proxies[at].view.address;
       qa_compat_q2_write_classic_vector(memory, qa_compat_q2_mem_offset(memory, value, 4), body.value.origin);
       qa_compat_q2_write_classic_vector(memory, qa_compat_q2_mem_offset(memory, value, 16), body.value.angles);
       qa_compat_q2_write_classic_vector(memory, qa_compat_q2_mem_offset(memory, value, 188), body.value.bounds.min);
@@ -563,12 +636,6 @@ static qa_source_damage_result damage_execute(void *vctx, qa_source_damage_obser
   for (size_t i = 0; i < handle_count; i++) memory->unobserve_writes(memory->ctx, handles[i]);
   for (size_t i = 0; i < reaction_count; i++) opts->runner->remove_entry(opts->runner->ctx, reaction_handles[i]);
   free(obs); free(robs);
-  static const qa_guest_value_layout pp[] = {{false,"pointer",{0}}};
-  for (size_t i = 0; i < temporary_count; i++) {
-    qa_guest_call_value v = qa_compat_q2_call_pointer(true, temporary[i]);
-    (void)qa_compat_q2_classic_guest_host_invoke(b->host, entry_of(b, b->profile.entries.free),
-        qa_compat_q2_classic_signature(pp, 1, true, qa_compat_q2_q2_int, false), &v, 1, NULL, opts->instruction_budget);
-  }
   memory->unmap(memory->ctx, vectors, 36);
   b->frame_count--;
   qa_compat_q2_classic_edicts_reconcile(qa_compat_q2_classic_guest_host_get_edicts(b->host));
@@ -626,6 +693,7 @@ static qa_damage_outcome do_damage(qa_compat_q2_classic_combat_bindings *b, qa_d
   exec_ctx_t ex; memset(&ex, 0, sizeof ex); ex.b = b; ex.view = view; ex.source_args = source_args; ex.source_count = source_count;
   return qa_gameplay_authority_run_source_damage(opts->services.engine->combat, input, damage_execute, &ex);
 }
+static void proxies_reloaded(void *ctx) { ((qa_compat_q2_classic_combat_bindings *)ctx)->proxy_count = 0; }
 qa_compat_q2_classic_combat_bindings *qa_compat_q2_classic_combat_bindings_create(
     qa_compat_q2_classic_guest_host *host, qa_guest_address image,
     const qa_compat_q2_classic_combat_profile *declared, bool has_declared) {
@@ -643,12 +711,15 @@ qa_compat_q2_classic_combat_bindings *qa_compat_q2_classic_combat_bindings_creat
   b->regular_sig = qa_compat_q2_native_combat_signature(&b->profile.calls.regular_armor, QA_Q2CO_REGULAR_ARMOR, qa_compat_q2_classic_abi, b->sig_storage[1]);
   b->power_sig = qa_compat_q2_native_combat_signature(&b->profile.calls.power_armor, QA_Q2CO_POWER_ARMOR, qa_compat_q2_classic_abi, b->sig_storage[2]);
   const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(host);
+  b->reload_handle = qa_compat_q2_classic_guest_host_observe_reload(host, proxies_reloaded, b);
   if (opts->services.damage_provenance) install_damage_hooks(b);
   return b;
 }
 void qa_compat_q2_classic_combat_bindings_close(qa_compat_q2_classic_combat_bindings *b) {
   if (!b || b->closed) return;
   b->closed = true;
+  qa_compat_q2_classic_guest_host_unobserve_reload(b->host, b->reload_handle);
+  b->proxy_count = 0;
   const qa_compat_q2_classic_guest_host_options *opts = qa_compat_q2_classic_guest_host_get_options(b->host);
   for (size_t i = 0; i < b->damage_hook_count; i++) opts->runner->remove_entry(opts->runner->ctx, b->damage_hooks[i]);
   for (size_t i = 0; i < b->hook_count; i++) opts->runner->remove_entry(opts->runner->ctx, b->hooks[i]);
@@ -656,5 +727,8 @@ void qa_compat_q2_classic_combat_bindings_close(qa_compat_q2_classic_combat_bind
 }
 void qa_compat_q2_classic_combat_bindings_destroy(qa_compat_q2_classic_combat_bindings *b) {
   if (!b) return;
-  qa_compat_q2_classic_combat_bindings_close(b); free(b);
+  qa_compat_q2_classic_combat_bindings_close(b);
+  for (size_t i = 0; i < b->context_count; i++) { free(b->contexts[i]->team); free(b->contexts[i]); }
+  for (size_t i = 0; i < b->owned_count; i++) free(b->owned[i]);
+  free(b->contexts); free(b->owned); free(b->proxies); free(b);
 }

@@ -14,7 +14,7 @@
 #include "qa/content/q3/base/game/projectile.h"
 #include "qa/content/q3/base/game/state.h"
 #include "qa/core/game_numeric.h"
-double qa_q3_weapon_damage_factor(qa_q3_game_client *client, double quad_factor, qa_q3_game_product product);
+double qa_q3_weapon_damage_factor(qa_q3_game_client *client, double quad_factor, qa_q3_base_product product);
 typedef struct qa_q3_sphere_intersections { qa_vec3 points[2]; size_t count; } qa_q3_sphere_intersections;
 qa_q3_sphere_intersections qa_q3_ray_sphere_intersections(qa_vec3 origin, double radius, qa_vec3 point, qa_q3_missile_direction *direction);
 typedef enum qa_q3_invuln_impact_kind { QA_Q3_WEAPON_INVULN_MISS, QA_Q3_WEAPON_INVULN_HIT } qa_q3_invuln_impact_kind;
@@ -26,12 +26,12 @@ typedef qa_q3_game_entity *(*qa_q3_weapon_fire_nail_fn)(void *ctx, qa_q3_game_en
     qa_q3_missile_direction direction, qa_vec3 right, qa_vec3 up);
 typedef struct qa_q3_weapon_host {
   void *ctx; double quad_factor;
-  qa_q3_game_combat_context *combat; qa_q3_server_world_mirror world;
+  qa_q3_game_combat_context *combat; qa_q3_base_server_world world;
   qa_game_random *random;
   bool has_damage_factor; double (*damage_factor)(void *ctx, qa_q3_game_entity *entity);
   qa_q3_weapon_fire_fn fire_grenade, fire_rocket, fire_plasma, fire_bfg, fire_grapple, fire_prox;
   qa_q3_weapon_fire_nail_fn fire_nail;
-  qa_q3_actor_trace_result_mirror (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
+  qa_q3_base_actor_trace_result (*trace)(void *ctx, qa_vec3 start, qa_vec3 end, const qa_actor_id *pass);
   bool (*authority_read)(void *ctx, qa_actor_id actor, double *out_health, bool *out_can_take_damage, const char **out_team);
   qa_q3_damage_participant (*participant)(void *ctx, qa_actor_id actor);
   qa_q3_game_entity *(*native_by_actor)(void *ctx, qa_actor_id actor);

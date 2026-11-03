@@ -1,14 +1,17 @@
 /*
  * Port of src/world/session/session.ts: world lifetimes, session
- * clients/seats/connections, and the EngineSession. TS plain Error
- * throws abort identically; RangeError throws use qa_range_error.
- * Cleanup failure aggregation (AggregateError) degenerates to the
- * first fatal failure. stepAsync is synchronous; its progress
- * callback runs inline per completed output.
+ * clients/seats/connections, and the EngineSession. TS Error throws
+ * raise (qa_raise); RangeError throws use qa_range_error. Every TS
+ * closeAll site closes each resource in its own try and raises one
+ * AggregateError with that site's message. stepAsync is synchronous;
+ * its progress callback runs inline per completed output.
  * Clients, seats, connections, and worlds are heap objects created
- * and owned by the session (or client); retired bundles returned as
- * qa_session_resource destroy their contents on close. Prepared
- * clients/seats the session still holds at destroy are freed there.
+ * and owned by the session (or client). A retired bundle returned as
+ * qa_session_resource closes its contents and then frees them; its ctx
+ * is a closure handle, so closing it again is a no-op (as in TS).
+ * Clients and seats that leave the session without a bundle (closed
+ * by close(), closed while prepared, or a closed slot occupant that a
+ * new one replaced) stay allocated until destroy.
  * GPL-2.0-or-later.
  */
 #ifndef QA_WORLD_SESSION_SESSION_H
@@ -35,8 +38,6 @@ qa_world_lifetime *qa_world_lifetime_create(qa_simulation simulation);
 void qa_world_lifetime_destroy(qa_world_lifetime *world);
 qa_simulation qa_world_lifetime_simulation(const qa_world_lifetime *world);
 qa_resource_scope *qa_world_lifetime_resources(qa_world_lifetime *world);
-qa_provider_runtime_state *qa_world_lifetime_providers(
-    qa_world_lifetime *world);
 bool qa_world_lifetime_is_closed(const qa_world_lifetime *world);
 void qa_world_lifetime_close(qa_world_lifetime *world);
 qa_session_resource qa_world_lifetime_as_resource(qa_world_lifetime *world);

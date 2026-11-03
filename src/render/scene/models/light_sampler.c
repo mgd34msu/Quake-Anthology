@@ -1,5 +1,6 @@
 /* Port of src/render/scene/models/light-sampler.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/models/light_sampler.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@
 #include "qa/formats/q3_map/entities.h"
 #include "qa/foundation/support.h"
 #include "qa/materials/q2_lightgrid.h"
+#include "qa/foundation/js.h"
 
 static const qa_vec3 BLACK = {0, 0, 0}, WHITE = {1, 1, 1};
 static bool bit(double flags, int32_t mask) { return (qa_int32(flags) & mask) != 0; }
@@ -24,6 +26,7 @@ typedef struct legacy_map {
   const qa_bsp_node *nodes; size_t node_count;
   const qa_bsp_face *faces; size_t face_count;
   qa_bsp_lighting lighting;
+  const qa_bsp_lighting *lighting_source; /* the world map's own lighting (outlives this view) */
   const qa_decoupled_lightmap *decoupled; size_t decoupled_count;
   /* texture info projections, normalized */
   const qa_q1_texture_info *q1_info; size_t q1_info_count;
@@ -43,6 +46,7 @@ static bool legacy_map_of(qa_decoded_world world, legacy_map *out) {
     out->nodes = m->nodes; out->node_count = m->node_count;
     out->faces = m->faces; out->face_count = m->face_count;
     out->lighting = m->lighting;
+    out->lighting_source = &m->lighting;
     out->decoupled = m->decoupled_lightmaps;
     out->decoupled_count = m->decoupled_lightmap_count;
     out->q1_info = m->texture_info; out->q1_info_count = m->texture_info_count;
@@ -57,6 +61,7 @@ static bool legacy_map_of(qa_decoded_world world, legacy_map *out) {
     out->nodes = m->nodes; out->node_count = m->node_count;
     out->faces = m->faces; out->face_count = m->face_count;
     out->lighting = m->lighting;
+    out->lighting_source = &m->lighting;
     out->decoupled = m->decoupled_lightmaps;
     out->decoupled_count = m->decoupled_lightmap_count;
     out->q2_info = m->texture_info; out->q2_info_count = m->texture_info_count;
@@ -71,7 +76,7 @@ static const void *brush_at(const void *values, size_t count, size_t size,
                             double index) {
   if (values == NULL || !(index >= 0) || trunc(index) != index ||
       index >= (double)count)
-    qa_range_error("Brush surface index %g outside %zu", index, count);
+    qa_range_error("Brush surface index %s outside %zu", QA_JS_NUMBER(index), count);
   return (const char *)values + (size_t)index * size;
 }
 
@@ -108,13 +113,13 @@ static qa_lightmap_face prepare_brush_face(const legacy_map *map,
                                     sizeof(qa_vec3), vertex_index);
     double s = qa_dot3(*point, (qa_vec3){projection.s.x, projection.s.y, projection.s.z}) + projection.s.w;
     double t = qa_dot3(*point, (qa_vec3){projection.t.x, projection.t.y, projection.t.z}) + projection.t.w;
-    min_s = fmin(min_s, s); min_t = fmin(min_t, t);
-    max_s = fmax(max_s, s); max_t = fmax(max_t, t);
+    min_s = qa_js_min(min_s, s); min_t = qa_js_min(min_t, t);
+    max_s = qa_js_max(max_s, s); max_t = qa_js_max(max_t, t);
   }
   qa_vec2 mins = {floor(min_s / 16) * 16, floor(min_t / 16) * 16};
   const qa_decoupled_lightmap *mapping = NULL;
   if (map->decoupled != NULL && face_index >= 0 &&
-      trunc(face_index) == face_index && (size_t)face_index < map->decoupled_count)
+      trunc(face_index) == face_index && face_index < (double)map->decoupled_count)
     mapping = &map->decoupled[(size_t)face_index];
   qa_lightmap_face out = {0};
   out.plane = plane;
@@ -140,7 +145,8 @@ static qa_lightmap_face prepare_brush_face(const legacy_map *map,
     out.offset = 0;
   } else {
     out.offset = sample_offset * ((map->is_q1 && map->lighting.is_rgb8) ? 3 : 1);
-    out.lighting = &map->lighting;
+    /* TS map.lighting: the world's object, retained by the sampler's faces. */
+    out.lighting = map->lighting_source;
   }
   out.styles = face->styles.values;
   out.style_count = face->styles.count;
@@ -148,7 +154,7 @@ static qa_lightmap_face prepare_brush_face(const legacy_map *map,
 }
 
 bool qa_model_light_sampler_init(qa_model_light_sampler *sampler,
-                                 const qa_render_scene_world *world) {
+                                 const qa_world_scene *world) {
   memset(sampler, 0, sizeof *sampler);
   sampler->world = world;
   qa_decoded_world map = world->map;
@@ -184,7 +190,7 @@ bool qa_model_light_sampler_init(qa_model_light_sampler *sampler,
                                     records, entity_count};
     qa_prepare_light_grid_result prepared = qa_prepare_light_grid(
         lighting_map,
-        world->has_q3_lightmap_overbright ? world->q3_lightmap_overbright : 2, 0);
+        world->options.has_q3_lightmap_overbright ? world->options.q3_lightmap_overbright : 2, 0);
     sampler->has_grid = prepared.has_grid;
     sampler->grid = prepared.grid;
     free(bounds); free(records); free(pairs);
@@ -195,16 +201,17 @@ bool qa_model_light_sampler_init(qa_model_light_sampler *sampler,
   if (!legacy_map_of(map, &legacy)) return true;
   size_t capacity = 0;
   for (size_t si = 0; si < world->surface_count; si++) {
-    const qa_render_scene_world_surface *surface = &world->surfaces[si];
-    if (!surface->is_legacy || surface->has_lightmap_face) continue;
-    bool ordinary = surface->material_is_q1
-                        ? (surface->material_surface != NULL &&
-                           (strcmp(surface->material_surface, "ordinary") == 0 ||
-                            strcmp(surface->material_surface, "fence") == 0))
-                        : ((qa_int32(surface->material_surface_flags) & (4 | 8)) == 0);
+    const qa_world_surface *surface = &world->surfaces[si];
+    if (surface->is_q3 || surface->legacy_lightmap != NULL) continue;
+    bool material_is_q1 = surface->material.kind != NULL && strcmp(surface->material.kind, "q1") == 0;
+    bool ordinary = material_is_q1
+                        ? (surface->material.surface != NULL &&
+                           (strcmp(surface->material.surface, "ordinary") == 0 ||
+                            strcmp(surface->material.surface, "fence") == 0))
+                        : ((qa_int32(surface->material.surface_flags) & (4 | 8)) == 0);
     double index = surface->index;
     if (!ordinary || !(index >= 0) || trunc(index) != index ||
-        (size_t)index >= legacy.face_count)
+        index >= (double)legacy.face_count)
       continue;
     if (sampler->unlit_count == capacity) {
       capacity = capacity ? capacity * 2 : 8;
@@ -231,9 +238,8 @@ void qa_model_light_sampler_destroy(qa_model_light_sampler *sampler) {
 }
 
 static qa_vec3 add_dynamic(qa_vec3 color, qa_vec3 point,
-                           const qa_render_scene_world_view_input *input) {
-  qa_vec3 result = color;
-  if (!input->has_lights) return result;
+                           const qa_world_view_input *input) {
+  qa_vec3 result = color; /* TS input.lights ?? [] */
   for (size_t i = 0; i < input->light_count; i++) {
     const qa_surface_dynamic_light *light = &input->lights[i];
     double amount = (light->radius - qa_length3(qa_sub3(point, light->origin))) / 256;
@@ -245,7 +251,7 @@ static qa_vec3 add_dynamic(qa_vec3 color, qa_vec3 point,
 typedef struct trace_ctx {
   qa_model_light_sampler *sampler;
   const legacy_map *map;
-  const qa_render_scene_world_view_input *input;
+  const qa_world_view_input *input;
 } trace_ctx;
 
 static const qa_lightmap_face *unlit_face(qa_model_light_sampler *sampler,
@@ -260,12 +266,12 @@ static bool trace_light(trace_ctx *ctx, qa_bsp_child child, qa_vec3 start,
   if (!child.is_node) return false;
   const legacy_map *map = ctx->map;
   if (!(child.index >= 0) || trunc(child.index) != child.index ||
-      (size_t)child.index >= map->node_count)
-    qa_range_error("Missing light-trace BSP node %g", child.index);
+      child.index >= (double)map->node_count)
+    qa_range_error("Missing light-trace BSP node %s", QA_JS_NUMBER(child.index));
   const qa_bsp_node *node = &map->nodes[(size_t)child.index];
   if (!(node->plane >= 0) || trunc(node->plane) != node->plane ||
-      (size_t)node->plane >= map->plane_count)
-    qa_range_error("Missing light-trace BSP plane %g", node->plane);
+      node->plane >= (double)map->plane_count)
+    qa_range_error("Missing light-trace BSP plane %s", QA_JS_NUMBER(node->plane));
   qa_plane plane = map->planes[(size_t)node->plane].plane;
   double front = qa_dot3(start, plane.normal) - plane.distance;
   double back = qa_dot3(end, plane.normal) - plane.distance;
@@ -277,15 +283,14 @@ static bool trace_light(trace_ctx *ctx, qa_bsp_child child, qa_vec3 start,
   if (trace_light(ctx, node->children[side], start, middle, out)) return true;
   for (double i = 0; i < node->faces.count; i++) {
     double surface_index = node->faces.first + i;
-    const qa_render_scene_world *world = ctx->sampler->world;
+    const qa_world_scene *world = ctx->sampler->world;
     if (!(surface_index >= 0) || trunc(surface_index) != surface_index ||
-        (size_t)surface_index >= world->surface_count)
+        surface_index >= (double)world->surface_count)
       continue;
-    const qa_render_scene_world_surface *surface =
-        &world->surfaces[(size_t)surface_index];
-    if (!surface->is_legacy) continue;
-    const qa_lightmap_face *face = surface->has_lightmap_face
-                                       ? &surface->lightmap_face
+    const qa_world_surface *surface = &world->surfaces[(size_t)surface_index];
+    if (surface->is_q3) continue;
+    const qa_lightmap_face *face = surface->legacy_lightmap != NULL
+                                       ? &surface->legacy_lightmap->face
                                        : unlit_face(ctx->sampler, surface->index);
     if (face == NULL) continue;
     qa_vec2 coordinates = qa_lightmap_coordinates(middle, face->projection);
@@ -318,26 +323,26 @@ static bool trace_light(trace_ctx *ctx, qa_bsp_child child, qa_vec3 start,
                       ((double)layer * face->width * face->height + pixel) * channels;
       double red = 0, green = 0, blue = 0;
       if (offset >= 0 && trunc(offset) == offset &&
-          (size_t)offset < lighting->samples.length)
+          offset < (double)lighting->samples.length)
         red = lighting->samples.bytes[(size_t)offset];
       double go = offset + (channels == 3 ? 1 : 0);
       double bo = offset + (channels == 3 ? 2 : 0);
-      if (go >= 0 && trunc(go) == go && (size_t)go < lighting->samples.length)
+      if (go >= 0 && trunc(go) == go && go < (double)lighting->samples.length)
         green = lighting->samples.bytes[(size_t)go];
-      if (bo >= 0 && trunc(bo) == bo && (size_t)bo < lighting->samples.length)
+      if (bo >= 0 && trunc(bo) == bo && bo < (double)lighting->samples.length)
         blue = lighting->samples.bytes[(size_t)bo];
       if (map->is_q1) {
         double value = 256;
-        const qa_render_scene_world_view_input *input = ctx->input;
+        const qa_world_view_input *input = ctx->input;
         if (input->q1_styles != NULL && style >= 0 && trunc(style) == style &&
-            (size_t)style < input->q1_style_count)
+            style < (double)input->q1_style_count)
           value = input->q1_styles[(size_t)style];
         r += red * value; g += green * value; b += blue * value;
       } else {
         qa_vec3 value = WHITE;
-        const qa_render_scene_world_view_input *input = ctx->input;
+        const qa_world_view_input *input = ctx->input;
         if (input->q2_styles != NULL && style >= 0 && trunc(style) == style &&
-            (size_t)style < input->q2_style_count)
+            style < (double)input->q2_style_count)
           value = input->q2_styles[(size_t)style].rgb;
         r += red * value.x; g += green * value.y; b += blue * value.z;
       }
@@ -354,7 +359,7 @@ static bool trace_light(trace_ctx *ctx, qa_bsp_child child, qa_vec3 start,
 
 qa_model_light_sample qa_model_light_sampler_sample(
     qa_model_light_sampler *sampler, qa_vec3 point,
-    const qa_render_scene_world_view_input *input, bool include_dynamic) {
+    const qa_world_view_input *input, bool include_dynamic) {
   qa_model_light_sample out = {0};
   qa_decoded_world map = sampler->world->map;
   if (map.kind == QA_DECODED_WORLD_Q3) {
@@ -397,8 +402,8 @@ qa_model_light_sample qa_model_light_sampler_sample(
   }
   if (!has_raw) raw = has_hit ? hit.color : BLACK;
   qa_vec3 color = !legacy.is_q1
-                      ? qa_scale3(raw, sampler->world->has_q2_light_modulate
-                                           ? sampler->world->q2_light_modulate
+                      ? qa_scale3(raw, sampler->world->options.has_q2_light_modulate
+                                           ? sampler->world->options.q2_light_modulate
                                            : 1)
                       : raw;
   out.color = include_dynamic ? add_dynamic(color, point, input) : color;
@@ -412,7 +417,7 @@ qa_model_light_sample qa_model_light_sampler_sample(
 
 qa_entity_lighting qa_model_light_sampler_entity_lighting(
     qa_model_light_sampler *sampler, const qa_scene_entity *entity,
-    const qa_render_scene_world_view_input *input, bool no_world_model) {
+    const qa_world_view_input *input, bool no_world_model) {
   double identity_light = input->has_identity_light ? input->identity_light : 1;
   qa_axis axis;
   double scales[3] = {entity->transform.scale.x, entity->transform.scale.y,
@@ -433,11 +438,13 @@ qa_entity_lighting qa_model_light_sampler_entity_lighting(
     state.no_world_model = no_world_model;
     state.identity_light = identity_light;
     state.identity_light_byte = trunc(identity_light * 255);
-    state.sun_direction = sampler->world->has_sun
-                              ? sampler->world->sun_direction
+    /* TS this.world.shaders.sun?.direction ?? ...; input.q3Lights ?? []. */
+    const qa_scene_shader_registry *shaders = sampler->world->shaders;
+    state.sun_direction = shaders != NULL && shaders->has_sun
+                              ? shaders->sun_value.direction
                               : qa_normalize3((qa_vec3){0.45, 0.3, 0.9});
-    state.dynamic_lights = input->q3_lights;
-    state.dynamic_light_count = input->q3_light_count;
+    state.dynamic_lights = input->visibility.q3_lights;
+    state.dynamic_light_count = input->visibility.q3_light_count;
     qa_entity_lighting out;
     return qa_setup_entity_lighting(lighting_entity, state, &out, NULL);
   }
@@ -447,9 +454,9 @@ qa_entity_lighting qa_model_light_sampler_entity_lighting(
                       ? entity->lighting_origin
                       : entity->transform.origin;
   qa_vec3 color = qa_model_light_sampler_sample(sampler, point, input, true).color;
-  qa_vec3 ambient = {fmin(identity_light * 255, color.x * 255 + identity_light * 32),
-                     fmin(identity_light * 255, color.y * 255 + identity_light * 32),
-                     fmin(identity_light * 255, color.z * 255 + identity_light * 32)};
+  qa_vec3 ambient = {qa_js_min(identity_light * 255, color.x * 255 + identity_light * 32),
+                     qa_js_min(identity_light * 255, color.y * 255 + identity_light * 32),
+                     qa_js_min(identity_light * 255, color.z * 255 + identity_light * 32)};
   qa_entity_lighting out = {0};
   out.ambient_light = ambient;
   out.directed_light = BLACK;

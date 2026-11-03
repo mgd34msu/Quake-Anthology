@@ -7,6 +7,7 @@
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef struct stored {
   double time; const qa_q3_pres_scene_shader *shader; bool alpha_fade; qa_vec4 color;
   qa_q3_pres_ref_poly_vertex *vertices; size_t vertex_count;
@@ -27,7 +28,8 @@ static double unit_color(double v) {
   if (r < 0 || r > 1) qa_range_error("mark colors must be in [0, 1]");
   return r;
 }
-static double byte_of(double v) { return trunc((float)v) < 0 ? (double)((int64_t)trunc((float)v) & 255) : (double)((uint64_t)trunc((float)v) & 255); }
+/* TS Math.trunc(Math.fround(value)) & 255: ToInt32, defined for NaN and any magnitude. */
+static double byte_of(double v) { return (double)(qa_js_to_int32(trunc((float)v)) & 255); }
 static double now_of(qa_q3_pres_impact_mark_system *s) {
   double t = s->options.clock(s->options.ctx);
   if (t != trunc(t) || t < -2147483648.0 || t > 2147483647.0)
@@ -107,7 +109,7 @@ bool qa_q3_pres_impact_mark_system_impact_mark(qa_q3_pres_impact_mark_system *s,
   size_t temp_count = 0, temp_cap = 0;
   for (size_t fi = 0; fi < fragments.fragment_count; fi++) {
     qa_q3_pres_mark_fragment frag = fragments.fragments[fi];
-    size_t n = (size_t)fmin(frag.point_count, QA_Q3_PRES_MAX_MARK_POLY_VERTICES);
+    size_t n = (size_t)qa_js_min(frag.point_count, QA_Q3_PRES_MAX_MARK_POLY_VERTICES);
     qa_q3_pres_ref_poly_vertex verts[QA_Q3_PRES_MAX_MARK_POLY_VERTICES];
     for (size_t k = 0; k < n; k++) {
       qa_vec3 point = fragments.points[(size_t)frag.first_point + k];
@@ -191,14 +193,14 @@ bool qa_q3_pres_impact_mark_system_add_marks(qa_q3_pres_impact_mark_system *s,
       double age = (float)qa_int32(now - mark->time);
       double fade = trunc((float)(450 - (float)(450 * (float)(age / 3000))));
       if (fade < 255 && mark->vertex_count && mark->vertices[0].color.x != 0)
-        fade_rgb(mark, fmax(0, fade));
+        fade_rgb(mark, qa_js_max(0, fade));
     }
     double remaining = (double)qa_int32(expires - now);
     if (remaining < QA_Q3_PRES_MARK_FADE_TIME) {
-      double fade = trunc((double)((int32_t)(255 * (int32_t)remaining)) / QA_Q3_PRES_MARK_FADE_TIME);
+      double fade = trunc((double)((int32_t)(255 * qa_js_to_int32(remaining))) / QA_Q3_PRES_MARK_FADE_TIME);
       if (mark->alpha_fade) {
         for (size_t k = 0; k < mark->vertex_count; k++)
-          mark->vertices[k].color.w = (double)((int64_t)fade & 255);
+          mark->vertices[k].color.w = (double)(qa_js_to_int32(fade) & 255);
       } else fade_rgb(mark, fade);
     }
     if (!grow_polys(&output, &cap, count + 1) || !make_poly(mark->shader, mark->vertices, mark->vertex_count, &output[count])) {

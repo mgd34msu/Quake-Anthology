@@ -195,6 +195,11 @@ void qa_qvm_write_source_player_state(qa_qvm_writable_view *view, const qa_q3_pl
 
 void qa_qvm_write_player_state(qa_qvm_writable_view *view, const qa_q3_player_state *state,
                                qa_qvm_abi_profile profile, const char *persistent_write) {
+  qa_qvm_write_player_state_unmapped(view, state, profile, persistent_write, false);
+}
+void qa_qvm_write_player_state_unmapped(qa_qvm_writable_view *view, const qa_q3_player_state *state,
+                                        qa_qvm_abi_profile profile, const char *persistent_write, bool ignore_unmapped) {
+  const bool lenient = ignore_unmapped;
   if (profile == NULL) profile = "q3-modern";
   if (persistent_write == NULL) persistent_write = "initialize";
   check_record(view, profile);
@@ -218,9 +223,15 @@ void qa_qvm_write_player_state(qa_qvm_writable_view *view, const qa_q3_player_st
   qa_q3_player_state translated = *state;
   translated.persistent.values = persistent;
   translated.persistent.count = 16;
-  translated.events[0] = qa_qvm_legacy_event((int32_t)state->events[0], profile, true);
-  translated.events[1] = qa_qvm_legacy_event((int32_t)state->events[1], profile, true);
-  translated.external_event = qa_qvm_legacy_event((int32_t)state->external_event, profile, true);
-  (void)qa_qvm_legacy_powerups(state->powerups.values, state->powerups.count, profile);
+  translated.events[0] = qa_qvm_legacy_event_ex((int32_t)state->events[0], profile, true, lenient);
+  translated.events[1] = qa_qvm_legacy_event_ex((int32_t)state->events[1], profile, true, lenient);
+  translated.external_event = qa_qvm_legacy_event_ex((int32_t)state->external_event, profile, true, lenient);
+  double powerups[16];
+  if (lenient) {
+    qa_qvm_legacy_powerups_lenient(state->powerups.values, state->powerups.count, profile, powerups);
+    translated.powerups.values = powerups;
+  } else {
+    (void)qa_qvm_legacy_powerups(state->powerups.values, state->powerups.count, profile);
+  }
   qa_qvm_write_source_player_state(view, &translated, profile);
 }

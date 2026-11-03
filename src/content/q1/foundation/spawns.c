@@ -1,21 +1,22 @@
 /*
  * Port of src/content/q1/foundation/spawns.ts. GPL-2.0-or-later.
- * UnknownQ1SpawnError becomes the qa_range_error abort with the exact
- * TS message; qa_q1_spawn_known is the side-effect-free pre-check the
- * runtime uses on foreign worlds instead of catching. The optional
- * authoredPathFollower seam has no qa_q1_services mirror yet.
+ * UnknownQ1SpawnError is qa_raise with that name and the exact TS
+ * message; the foreign-world map load catches it as TS does.
+ * qa_q1_spawn_known is a side-effect-free classname check for callers
+ * that only ask whether the foundation itself spawns a class.
  */
 #include "qa/content/q1/foundation/spawns.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "qa/content/q1/foundation/monsters.h"
 #include "qa/content/q1/foundation/pickups.h"
 #include "qa/content/q1/foundation/precache_world.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static char last_unknown_spawn[128];
 const char *qa_q1_last_unknown_spawn(void) {
@@ -36,17 +37,19 @@ static void set_string(char **slot, const char *value) {
   free(*slot);
   *slot = copy;
 }
-static long flags_of(const qa_q1_actor *entity) { return (long)entity->spawnflags; }
+/* TS `spawnflags & x` applies ToInt32: the int32 view of the number. */
+static int32_t flags_of(const qa_q1_actor *entity) { return qa_js_to_int32(entity->spawnflags); }
+/* TS game.host.bodies.read(actor); false = null. */
 static bool body_of(qa_q1_services *game, qa_actor_id actor, qa_q1_body *out) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity == NULL) return false;
-  *out = entity->body;
+  const qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, actor);
+  if (!body.has_value) return false;
+  *out = qa_q1_body_from_state(body.value);
   return true;
 }
+/* TS game.host.combat.read(actor)?.canTakeDamage. */
 static bool can_take_damage(qa_q1_services *game, qa_actor_id actor) {
-  qa_q1_actor *entity = qa_q1_get_entity(game, &actor);
-  if (entity != NULL) return entity->damageable;
-  return qa_q1_is_player(game, &actor);
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, actor);
+  return combat.has_value && combat.value.can_take_damage;
 }
 static void set_activator(qa_q1_actor *entity, const qa_actor_id *activator) {
   entity->has_activator = activator != NULL;
@@ -113,7 +116,7 @@ static void spawn_multi(qa_q1_services *game, qa_q1_actor *entity) {
   entity->use = qa_q1_callback_registry_use(game->named, entity, "multi_use");
   if (entity->max_health > 0) {
     if ((flags_of(entity) & 1) != 0) qa_range_error("health and notouch do not make sense");
-    entity->damageable = true;
+    qa_q1_actor_set_damageable(entity, true);
     entity->solid = "bbox";
     entity->die = qa_q1_callback_registry_die(game->named, entity, "multi_killed");
   } else if ((flags_of(entity) & 1) == 0) {
@@ -141,6 +144,8 @@ static void spawn_teleport(qa_q1_services *game, qa_q1_actor *entity) {
 }
 
 static void spawn_light(qa_q1_services *game, qa_q1_actor *entity) {
+  qa_vec3 origin2;
+  const char * path;
   if (!strcmp(entity->classname, "light") && (!entity->targetname || !strcmp(entity->targetname, ""))) {
     qa_q1_remove(game, entity);
     return;
@@ -153,8 +158,8 @@ static void spawn_light(qa_q1_services *game, qa_q1_actor *entity) {
   if (!strcmp(entity->classname, "light_fluoro")) precache_sound(game, "ambience/fl_hum1.wav");
   if (!strcmp(entity->classname, "light_fluorospark")) precache_sound(game, "ambience/buzz1.wav");
   if (!strcmp(entity->classname, "light_fluoro") || !strcmp(entity->classname, "light_fluorospark"))
-    emit_ambient(game, qa_q1_get_body(game, entity).origin,
-                 !strcmp(entity->classname, "light_fluoro") ? "ambience/fl_hum1.wav" : "ambience/buzz1.wav", 0.5);
+    (origin2 = qa_q1_get_body(game, entity).origin, path = !strcmp(entity->classname, "light_fluoro") ? "ambience/fl_hum1.wav" : "ambience/buzz1.wav", emit_ambient(game, origin2,
+                 path, 0.5));
 }
 
 static void spawn_barrel(qa_q1_services *game, qa_q1_actor *entity) {
@@ -164,9 +169,9 @@ static void spawn_barrel(qa_q1_services *game, qa_q1_actor *entity) {
   if (qa_q1_services_uses_id1(game)) (void)qa_q1_services_precache_sound(game, "weapons/r_exp3.wav");
   entity->solid = "bbox";
   entity->movement = "none";
-  entity->damageable = true;
+  qa_q1_actor_set_damageable(entity, true);
   entity->aimed_damage = true;
-  qa_q1_set_health(game, entity->actor, 20);
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 20);
   const qa_bounds bounds = {QA_Q1_ZERO, v3(32, 32, box2 ? 32 : 64)};
   qa_q1_set_bounds(game, entity, bounds);
   entity->die = qa_q1_callback_registry_die(game->named, entity, "barrel_die");
@@ -184,14 +189,14 @@ static void spawn_barrel(qa_q1_services *game, qa_q1_actor *entity) {
     patch.has_ground = trace.has_actor;
     if (trace.has_actor) patch.ground = trace.actor;
     qa_q1_set_body_patch(game, entity, &patch, true, false, false, false, true);
-    entity->movement_flags = (double)((long)entity->movement_flags | 512);
+    entity->movement_flags = (double)(qa_js_to_int32(entity->movement_flags) | 512);
     if (start.z - trace.end.z > 250) qa_q1_remove(game, entity);
   }
 }
 
 static double timer_interval(qa_q1_services *game, qa_q1_actor *entity) {
   const double random = qa_q1_actor_number(entity, "random");
-  return fmax(0.05, entity->wait + (random > 0 ? qa_q1_host_random(game) * random : 0));
+  return qa_js_max(0.05, entity->wait + (random > 0 ? qa_q1_host_random(game) * random : 0));
 }
 
 static bool is_pickup_classname(const char *name, const qa_q1_actor *entity) {
@@ -221,7 +226,7 @@ static const char *const KNOWN_SPAWNS[] = {
     "info_player_intermission", "info_player_team1", "info_player_team2", "info_player_single",
     "info_spectator", "info_camp", "info_podium", "misc_model", "path_corner", "light",
     "light_fluoro", "light_fluorospark", "ambient_comp_hum", "ambient_drone", "misc_explobox",
-    "misc_explobox2", "monster_army", "monster_dog"};
+    "misc_explobox2"};
 
 bool qa_q1_spawn_known(qa_q1_services *game, const char *classname, qa_q1_actor *entity) {
   (void)game;
@@ -240,6 +245,8 @@ void qa_q1_spawn_map_actor(qa_q1_services *game, qa_q1_actor *entity) {
     game->world_type = qa_q1_actor_number(entity, "worldtype");
     entity->solid = "bsp";
     if (qa_q1_services_uses_id1(game)) qa_q1_precache_world(game);
+    for (size_t i = 0; i < game->world_precache_count; i++)
+      game->world_precaches[i].fn(game->world_precaches[i].ctx, game);
     static const char *const STYLES[12] = {
         "m", "mmnmmommommnonmmonqnmmo", "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",
         "mmmmmaaaaammmmmaaaaaabcdefgabcdefg", "mamamamamama", "jklmnopqrstuvwxyzyxwvutsrqponmlkj",
@@ -303,9 +310,11 @@ void qa_q1_spawn_map_actor(qa_q1_services *game, qa_q1_actor *entity) {
     return;
   }
   if (!strcmp(name, "target_speaker")) {
+    qa_vec3 origin2;
+    const char * path;
     entity->use = qa_q1_callback_registry_use(game->named, entity, "speaker_use");
     if ((flags_of(entity) & 1) != 0 && strcmp(qa_q1_actor_text(entity, "noise"), "") != 0)
-      emit_ambient(game, qa_q1_get_body(game, entity).origin, qa_q1_actor_text(entity, "noise"), 1);
+      (origin2 = qa_q1_get_body(game, entity).origin, path = qa_q1_actor_text(entity, "noise"), emit_ambient(game, origin2, path, 1));
     return;
   }
   if (!strcmp(name, "target_delay")) {
@@ -320,7 +329,10 @@ void qa_q1_spawn_map_actor(qa_q1_services *game, qa_q1_actor *entity) {
     if (!entity->wait) entity->wait = 1;
     entity->activated = true;
     entity->use = qa_q1_callback_registry_use(game->named, entity, "timer_use");
-    qa_q1_schedule(game, entity, timer_interval(game, entity), named_action(game, entity, "timer_fire"));
+    qa_q1_actor * entity2 = entity;
+    double delay2 = timer_interval(game, entity);
+    qa_q1_bound_action callback = named_action(game, entity, "timer_fire");
+    qa_q1_schedule(game, entity2, delay2, callback);
     return;
   }
   if (!strcmp(name, "trigger_always")) {
@@ -345,7 +357,7 @@ void qa_q1_spawn_map_actor(qa_q1_services *game, qa_q1_actor *entity) {
     entity->pos1 = body.origin;
     const double height = qa_q1_actor_number(entity, "height") ? qa_q1_actor_number(entity, "height") : 32;
     entity->pos2 = qa_q1_vadd(body.origin, qa_q1_vscale(entity->movedir, height));
-    entity->speed = 2 * height / fmax(qa_q1_actor_number(entity, "speed") ? qa_q1_actor_number(entity, "speed") : 4, 0.1);
+    entity->speed = 2 * height / qa_js_max(qa_q1_actor_number(entity, "speed") ? qa_q1_actor_number(entity, "speed") : 4, 0.1);
     entity->state = "up";
     qa_q1_calc_move(game, entity, entity->pos2, entity->speed, named_action(game, entity, "bob_top"));
     return;
@@ -391,12 +403,14 @@ void qa_q1_spawn_map_actor(qa_q1_services *game, qa_q1_actor *entity) {
     return;
   }
   if (!strcmp(name, "misc_explobox") || !strcmp(name, "misc_explobox2")) { spawn_barrel(game, entity); return; }
-  if (!strcmp(name, "monster_army") || !strcmp(name, "monster_dog")) { qa_q1_spawn_monster(game, entity); return; }
   (void)snprintf(last_unknown_spawn, sizeof last_unknown_spawn, "%s", name);
   char ordinal[32];
-  if (entity->has_source_ordinal) (void)snprintf(ordinal, sizeof ordinal, "%g", entity->source_ordinal);
+  if (entity->has_source_ordinal) (void)snprintf(ordinal, sizeof ordinal, "%s", QA_JS_NUMBER(entity->source_ordinal));
   else (void)snprintf(ordinal, sizeof ordinal, "null");
-  qa_range_error("Q1 official spawn not yet implemented: %s at source entity %s", name, ordinal);
+  /* TS throw new UnknownQ1SpawnError: a distinct class the foreign-world map
+   * load catches by name (qa_q1_last_unknown_spawn is error.classname). */
+  qa_raise("UnknownQ1SpawnError", 0, 0, "Q1 official spawn not yet implemented: %s at source entity %s", name,
+           ordinal);
 }
 
 qa_q1_actor *qa_q1_spawn_teleport_fog(qa_q1_services *game, qa_vec3 origin) {
@@ -457,10 +471,20 @@ static void multi_fire(qa_q1_services *game, qa_q1_actor *entity, const qa_actor
     }
   }
   set_activator(entity, activator);
-  entity->damageable = false;
+  qa_q1_actor_set_damageable(entity, false);
   if (strcmp(sound, "") != 0) qa_q1_sound_defaults(game, entity->actor.id, sound);
   qa_q1_use_targets(game, entity, activator);
   if (!qa_q1_live(game, entity)) return;
+  if (game->options.edition != NULL && !strcmp(game->options.edition, "rerelease") &&
+      qa_q1_is_player(game, activator) && game->map_name != NULL && !strcmp(game->map_name, "e2m3") &&
+      entity->message != NULL && !strcmp(entity->message, "$map_dopefish") && activator != NULL) {
+    qa_q1_event achievement = {0};
+    achievement.kind = "achievement";
+    achievement.has_player = true;
+    achievement.player = *activator;
+    achievement.id = "ACH_FIND_DOPEFISH";
+    qa_q1_emit(game, achievement);
+  }
   if (entity->wait > 0) {
     qa_q1_schedule(game, entity, entity->wait, named_action(game, entity, "multi_wait"));
     return;
@@ -472,18 +496,22 @@ static void multi_fire(qa_q1_services *game, qa_q1_actor *entity, const qa_actor
 static void teleport_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
                            const qa_vec3 *normal, const qa_touch_surface *surface) {
   (void)ctx; (void)normal; (void)surface;
-  if (entity->targetname && strcmp(entity->targetname, "") != 0 && entity->next_think < game->time) return;
+  if (entity->targetname && strcmp(entity->targetname, "") != 0 && entity->next_think < game->time &&
+      qa_q1_actor_field_get(entity, "teleport.ignoreTargetname") == NULL)
+    return;
   const bool player = qa_q1_is_player(game, &other);
   if ((flags_of(entity) & 1) != 0 && !player) return;
   if (qa_q1_health(game, other) <= 0 || (!player && !qa_q1_get_source_target(game, other).slidebox)) return;
   qa_q1_actor *target = NULL;
   if (entity->target == NULL || qa_q1_find(game, entity->target, &target, 1) == 0 || target == NULL)
     qa_range_error("could not find teleport target");
-  qa_q1_actor *mover = qa_q1_get_entity(game, &other);
+  qa_owned_actor mover;
   qa_q1_body body;
-  if (mover == NULL || !body_of(game, other, &body)) return;
+  if (!qa_session_actor_registry_resolve_owned(game->host.actors, other, &mover) || !body_of(game, other, &body)) return;
   qa_q1_use_targets(game, entity, &other);
   (void)qa_q1_spawn_teleport_fog(game, body.origin);
+  if (player && !game->options.coop && game->options.deathmatch == 0 && game->source_fog_push.fn != NULL)
+    (void)game->source_fog_push.fn(game->source_fog_push.ctx, other, target);
   const qa_vec3 destination = qa_q1_get_body(game, target).origin;
   const qa_vec3 forward = qa_q1_make_vectors(game, target->mangle).forward;
   (void)qa_q1_spawn_teleport_fog(game, qa_q1_vadd(destination, qa_q1_vscale(forward, 32)));
@@ -493,8 +521,8 @@ static void teleport_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity,
   patch.angles = target->mangle;
   patch.velocity = player ? qa_q1_vscale(forward, 300) : body.velocity;
   patch.has_ground = false;
-  qa_q1_set_body_patch(game, mover, &patch, true, true, true, false, true);
-  qa_q1_link(game, mover);
+  qa_shared_body_table_write(game->host.bodies, mover, qa_q1_body_to_state(&patch));
+  qa_shared_body_table_link(game->host.bodies, mover, NULL);
   if (player) {
     qa_q1_player_state *state = qa_q1_player(game, other);
     if (state != NULL) state->teleport_until = game->time + 0.7;
@@ -515,7 +543,7 @@ static void changelevel_touch(void *ctx, qa_q1_services *game, qa_q1_actor *enti
   if (!qa_q1_is_player(game, &other)) return;
   const double no_exit = game->options.has_no_exit ? game->options.no_exit : 0;
   if (no_exit == 1 || (no_exit == 2 && (game->map_name == NULL || strcmp(game->map_name, "start") != 0))) {
-    (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, 50000, NULL, "direct", "exit");
+    (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, 50000, NULL, "direct", "exit", NULL);
     return;
   }
   qa_q1_use_targets(game, entity, &other);
@@ -530,14 +558,15 @@ static void changelevel_touch(void *ctx, qa_q1_services *game, qa_q1_actor *enti
 
 typedef struct next_path {
   const char *name;
-  qa_q1_actor *target;
+  bool has_target;
+  qa_actor_id target;
   double pause_until;
 } next_path;
 static next_path next_path_target(qa_q1_services *game, qa_q1_actor *corner) {
-  qa_q1_actor *target = NULL;
-  if (corner->target == NULL || qa_q1_find(game, corner->target, &target, 1) == 0) target = NULL;
-  const next_path result = {target == NULL ? "" : corner->target, target,
-                            target == NULL ? qa_q1_path_end_time(game->time) : 0};
+  next_path result;
+  result.has_target = qa_q1_path_goal(game, corner->target != NULL ? corner->target : "", &result.target);
+  result.name = result.has_target ? corner->target : "";
+  result.pause_until = result.has_target ? 0 : qa_q1_path_end_time(game->time);
   return result;
 }
 
@@ -546,7 +575,16 @@ static void path_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_
   (void)ctx; (void)normal; (void)surface;
   qa_q1_actor *actor = qa_q1_get_entity(game, &other);
   if (actor != NULL && qa_q1_source_path_touch(game, entity, actor)) return;
-  /* authoredPathFollower has no C services mirror yet. */
+  qa_q1_authored_path_follower follower;
+  if (game->authored_path_follower.fn != NULL &&
+      game->authored_path_follower.fn(game->authored_path_follower.ctx, other, &follower)) {
+    if (follower.targetname == NULL || entity->targetname == NULL ||
+        strcmp(follower.targetname, entity->targetname) != 0 || follower.has_enemy)
+      return;
+    const next_path next = next_path_target(game, entity);
+    follower.advance(follower.ctx, next.name, next.has_target ? &next.target : NULL, next.pause_until);
+    return;
+  }
   if (actor == NULL || actor->monster == NULL) return;
   qa_q1_monster *monster = actor->monster;
   if (monster->path == NULL || entity->targetname == NULL || strcmp(monster->path, entity->targetname) != 0 ||
@@ -554,12 +592,14 @@ static void path_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_
     return;
   const next_path next = next_path_target(game, entity);
   set_string(&monster->path, next.name);
-  if (next.target == NULL) {
+  if (!next.has_target) {
     monster->pause_until = next.pause_until;
     qa_q1_call_action(game, actor, actor->path_end);
   } else {
-    actor->ideal_yaw = qa_q1_yaw_for(qa_q1_vsub(qa_q1_get_body(game, next.target).origin,
-                                                qa_q1_get_body(game, actor).origin));
+    qa_q1_body target_body;
+    qa_vec3 a = body_of(game, next.target, &target_body) ? target_body.origin : QA_Q1_ZERO;
+    qa_vec3 b = qa_q1_get_body(game, actor).origin;
+    actor->ideal_yaw = qa_q1_yaw_for(qa_q1_vsub(a, b));
   }
 }
 
@@ -582,24 +622,28 @@ static void speaker_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, co
   if (strcmp(noise, "") != 0) qa_q1_sound_defaults(game, entity->actor.id, noise);
 }
 static void timer_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *o, const qa_actor_id *a) {
+  double delay;
+  qa_q1_bound_action callback;
   (void)ctx; (void)o; (void)a;
   entity->activated = !entity->activated;
   if (entity->activated)
-    qa_q1_schedule(game, entity, timer_interval(game, entity), named_action(game, entity, "timer_fire"));
+    (delay = timer_interval(game, entity), callback = named_action(game, entity, "timer_fire"), qa_q1_schedule(game, entity, delay, callback));
   else
     qa_q1_cancel(game, entity);
 }
 static void timer_fire(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  double delay;
+  qa_q1_bound_action callback;
   (void)ctx;
   if (!entity->activated) return;
   qa_q1_use_targets(game, entity, &entity->actor.id);
   if (qa_q1_live(game, entity) && entity->activated)
-    qa_q1_schedule(game, entity, timer_interval(game, entity), named_action(game, entity, "timer_fire"));
+    (delay = timer_interval(game, entity), callback = named_action(game, entity, "timer_fire"), qa_q1_schedule(game, entity, delay, callback));
 }
 static void delay_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *o, const qa_actor_id *a) {
   (void)ctx; (void)o;
   set_activator(entity, a);
-  qa_q1_schedule(game, entity, fmax(0, entity->wait), named_action(game, entity, "delay_fire"));
+  qa_q1_schedule(game, entity, qa_js_max(0, entity->wait), named_action(game, entity, "delay_fire"));
 }
 static void delay_fire(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
@@ -666,8 +710,9 @@ static void q3_push_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, 
   if (qa_q1_health(game, other) <= 0 &&
       (other_entity == NULL || other_entity->classname == NULL || strcmp(other_entity->classname, "grenade") != 0))
     return;
+  qa_owned_actor actor;
   qa_q1_body body;
-  if (other_entity == NULL || !body_of(game, other, &body)) return;
+  if (!qa_session_actor_registry_resolve_owned(game->host.actors, other, &actor) || !body_of(game, other, &body)) return;
   if (!entity->activated) {
     qa_q1_actor *target = NULL;
     if (entity->target == NULL || qa_q1_find(game, entity->target, &target, 1) == 0 || target == NULL) return;
@@ -675,18 +720,18 @@ static void q3_push_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, 
     const qa_vec3 center = qa_q1_vscale(
         qa_q1_vadd(qa_q1_vadd(source.origin, source.bounds.min), qa_q1_vadd(source.origin, source.bounds.max)), 0.5);
     const qa_vec3 dest = qa_q1_get_body(game, target).origin;
-    const double height = dest.z - center.z, gravity = game->options.gravity;
+    const double height = dest.z - center.z, gravity = qa_q1_option_gravity(game);
     if (height <= 0 || gravity <= 0) return;
     const double time = sqrt(height / (0.5 * gravity));
-    const double dx = dest.x - center.x, dy = dest.y - center.y, distance = hypot(dx, dy);
+    const double dx = dest.x - center.x, dy = dest.y - center.y, distance = qa_js_hypot2(dx, dy);
     entity->pos1 = v3(distance == 0 ? 0 : dx / time, distance == 0 ? 0 : dy / time, time * gravity);
     entity->activated = true;
   }
   qa_q1_body patch = body;
   patch.velocity = entity->pos1;
   patch.has_ground = false;
-  qa_q1_set_body_patch(game, other_entity, &patch, false, false, true, false, true);
-  qa_q1_link(game, other_entity);
+  qa_shared_body_table_write(game->host.bodies, actor, qa_q1_body_to_state(&patch));
+  qa_shared_body_table_link(game->host.bodies, actor, NULL);
 }
 static void coop_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *o, const qa_actor_id *a) {
   (void)ctx; (void)o;
@@ -717,8 +762,8 @@ static void multi_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa
 static void multi_wait(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
   if (entity->max_health > 0) {
-    qa_q1_set_health(game, entity->actor, entity->max_health);
-    entity->damageable = true;
+    qa_gameplay_authority_set_health(game->host.combat, entity->actor, entity->max_health);
+    qa_q1_actor_set_damageable(entity, true);
     entity->solid = "bbox";
   }
 }
@@ -745,7 +790,7 @@ static void teleport_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, c
 }
 static void play_teleport(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
-  const double index = fmin(4, floor(fr(qa_q1_host_random(game) * 5)));
+  const double index = qa_js_min(4, floor(fr(qa_q1_host_random(game) * 5)));
   char path[32];
   (void)snprintf(path, sizeof path, "misc/r_tele%d.wav", (int)index + 1);
   qa_q1_sound_defaults(game, entity->actor.id, path);
@@ -761,22 +806,24 @@ static void tdeath_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, q
     if (player != NULL && qa_q1_player_powerup_get(player, "invulnerability") > game->time)
       set_string(&entity->classname, "teledeath2");
     if (!qa_q1_is_player(game, &owner)) {
-      (void)qa_q1_damage(game, owner, entity->actor.id, &entity->actor.id, 50000, NULL, "direct", entity->classname);
+      (void)qa_q1_damage(game, owner, entity->actor.id, &entity->actor.id, 50000, NULL, "direct", entity->classname, NULL);
       return;
     }
   }
   if (qa_q1_health(game, victim) != 0)
-    (void)qa_q1_damage(game, victim, entity->actor.id, &entity->actor.id, 50000, NULL, "direct", entity->classname);
+    (void)qa_q1_damage(game, victim, entity->actor.id, &entity->actor.id, 50000, NULL, "direct", entity->classname, NULL);
 }
 static void light_use(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *o, const qa_actor_id *a) {
   (void)ctx; (void)o; (void)a;
-  entity->spawnflags = (double)((long)entity->spawnflags ^ 1);
-  emit_lightstyle(game, qa_q1_actor_number(entity, "style"), (flags_of(entity) & 1) != 0 ? "a" : "m");
+  entity->spawnflags = (double)(qa_js_to_int32(entity->spawnflags) ^ 1);
+  double style2 = qa_q1_actor_number(entity, "style");
+  const char * pattern = (flags_of(entity) & 1) != 0 ? "a" : "m";
+  emit_lightstyle(game, style2, pattern);
 }
 static void barrel_die(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
   (void)ctx;
   set_string(&entity->classname, "explo_box");
-  entity->damageable = false;
+  qa_q1_actor_set_damageable(entity, false);
   set_activator(entity, attacker);
   qa_q1_schedule(game, entity, 0.3, named_action(game, entity, "barrel_explode"));
 }
@@ -804,7 +851,7 @@ static void hurt_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_
   (void)ctx; (void)n; (void)s;
   if (entity->solid == NULL || strcmp(entity->solid, "trigger") != 0 || !can_take_damage(game, other)) return;
   entity->solid = "none";
-  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "trigger");
+  (void)qa_q1_damage(game, other, entity->actor.id, &entity->actor.id, entity->damage, NULL, "direct", "trigger", NULL);
   qa_q1_schedule(game, entity, 1, named_action(game, entity, "hurt_on"));
 }
 static void hurt_on(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
@@ -815,15 +862,27 @@ static void hurt_on(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
 static void push_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
                        const qa_vec3 *n, const qa_touch_surface *s) {
   (void)ctx; (void)n; (void)s;
-  qa_q1_actor *other_entity = qa_q1_get_entity(game, &other);
-  if (qa_q1_health(game, other) <= 0 &&
-      (other_entity == NULL || other_entity->classname == NULL || strcmp(other_entity->classname, "grenade") != 0))
-    return;
+  qa_owned_actor actor;
   qa_q1_body body;
-  if (other_entity == NULL || !body_of(game, other, &body)) return;
-  qa_q1_body patch = body;
-  patch.velocity = qa_q1_vscale(entity->movedir, entity->speed * 10);
-  qa_q1_set_body_patch(game, other_entity, &patch, false, false, true, false, false);
+  const bool owned = qa_session_actor_registry_resolve_owned(game->host.actors, other, &actor);
+  const bool bodied = body_of(game, other, &body);
+  if (owned && bodied) {
+    const qa_q1_actor *other_entity = qa_q1_get_entity(game, &other);
+    if (qa_q1_health(game, other) > 0 ||
+        (other_entity != NULL && other_entity->classname != NULL && !strcmp(other_entity->classname, "grenade"))) {
+      qa_q1_body patch = body;
+      patch.velocity = qa_q1_vscale(entity->movedir, entity->speed * 10);
+      qa_shared_body_table_write(game->host.bodies, actor, qa_q1_body_to_state(&patch));
+      /* push_touch's per-player fly_sound limiter (not saved). */
+      qa_q1_player_state *player = qa_q1_player(game, other);
+      if (player != NULL &&
+          qa_q1_player_timer_get(game->wind_fly_sounds, game->wind_fly_sound_count, player) < game->time) {
+        qa_q1_player_timer_set(&game->wind_fly_sounds, &game->wind_fly_sound_count, &game->wind_fly_sound_capacity,
+                               player, game->time + 1.5);
+        qa_q1_sound_defaults(game, actor.id, "ambience/windfly.wav");
+      }
+    }
+  }
   if ((flags_of(entity) & 1) != 0) qa_q1_remove(game, entity);
 }
 

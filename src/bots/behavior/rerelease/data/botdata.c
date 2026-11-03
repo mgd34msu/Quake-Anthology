@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 typedef struct { char **v; size_t n, cap; } Errs;
 static void errf(Errs *e, const char *fmt, const char *a, int64_t line) { char buf[1024]; if (a) snprintf(buf, sizeof buf, fmt, (long long)line, a); else snprintf(buf, sizeof buf, fmt, (long long)line);
   if (e->n == e->cap) { e->cap = e->cap ? e->cap * 2 : 8; e->v = realloc(e->v, e->cap * sizeof *e->v); } size_t l = strlen(buf); e->v[e->n] = malloc(l + 1); memcpy(e->v[e->n], buf, l + 1); e->n++; }
@@ -52,9 +53,8 @@ bool qa_parse_items(qa_items_result *out, const char *text) { BEGIN(qa_items_res
     for (size_t j = 0; j < bl->field_count; j++) { const qa_block_field *f = &bl->fields[j]; const char *s; double n;
       if (!strcmp(f->key, "name")) { if (exp_str(&errs, f, &s)) en->name = s; } else if (!strcmp(f->key, "sight_dist")) { if (exp_num(&errs, f, &n)) en->sight_dist = n; }
       else if (!strcmp(f->key, "flags")) { free((void *)en->flags); en->flags = qa_field_flag_list((const char *const *)f->values, f->value_count, &en->flag_count); }
-      else if (!strcmp(f->key, "spawnflags")) { if (f->value_count == 3 && !strcmp(f->values[1], "=")) { double bit = strtod(f->values[0], NULL); char *e = NULL; bit = strtod(f->values[0], &e);
-          if (e && *e) bit = NAN;
-          if (bit != trunc(bit) || isnan(bit)) errf(&errs, "line %lld: \"spawnflags\" bit \"%s\" is not an integer", f->values[0], f->line);
+      else if (!strcmp(f->key, "spawnflags")) { if (f->value_count == 3 && !strcmp(f->values[1], "=")) { double bit = qa_js_string_to_number(f->values[0]); /* Number(); strtod took "inf" as an integer */
+          if (!isfinite(bit) || bit != trunc(bit)) errf(&errs, "line %lld: \"spawnflags\" bit \"%s\" is not an integer", f->values[0], f->line);
           else { en->spawnflags = realloc(en->spawnflags, (en->spawnflag_count + 1) * sizeof *en->spawnflags); en->spawnflags[en->spawnflag_count++] = (qa_item_spawnflag){bit, f->values[2]}; } }
         else errf(&errs, "line %lld: \"spawnflags\" expects \"BIT = name\"", NULL, f->line); }
       else if (!strcmp(f->key, "team")) { if (exp_num(&errs, f, &n)) { en->team = n; en->has_team = true; } } else unknown(&errs, &en->base, f); } } END(); }
@@ -74,7 +74,7 @@ bool qa_parse_interactables(qa_interactables_result *out, const char *text) { BE
       else if (!strcmp(f->key, "health")) { if (exp_bool(&errs, f, &b)) { en->health = b; en->has_health = true; } }
       else if (!strcmp(f->key, "targetname")) { if (exp_bool(&errs, f, &b)) { en->targetname = b; en->has_targetname = true; } }
       else if (!strcmp(f->key, "bounds")) { bool ok = f->value_count == 10 && !strcmp(f->values[0], "{") && !strcmp(f->values[4], "}") && !strcmp(f->values[5], "{") && !strcmp(f->values[9], "}");
-        double vs[6] = {0}; if (ok) { const char *idx[6] = {f->values[1], f->values[2], f->values[3], f->values[6], f->values[7], f->values[8]}; for (int k = 0; k < 6; k++) { char *e = NULL; vs[k] = strtod(idx[k], &e); if (!e || *e || !isfinite(vs[k])) ok = false; } }
+        double vs[6] = {0}; if (ok) { const char *idx[6] = {f->values[1], f->values[2], f->values[3], f->values[6], f->values[7], f->values[8]}; for (int k = 0; k < 6; k++) { vs[k] = qa_js_string_to_number(idx[k]); if (!isfinite(vs[k])) ok = false; } }
         if (!ok) errf(&errs, "line %lld: \"bounds\" expects { x y z } { x y z }", NULL, f->line);
         else { en->has_bounds = true; memcpy(en->bounds.mins, vs, 3 * sizeof(double)); memcpy(en->bounds.maxs, vs + 3, 3 * sizeof(double)); } }
       else if (!strcmp(f->key, "logic_op")) { if (exp_str(&errs, f, &s)) en->logic_op = s; } else unknown(&errs, &en->base, f); } } END(); }

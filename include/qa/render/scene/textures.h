@@ -1,7 +1,6 @@
 /* Port of src/render/scene/textures.ts. GPL-2.0-or-later.
  * async reads are synchronous fn+ctx (PORTING.md). SceneTexture boxes are
- * loader-owned; free on loader destroy. The mirrored qa_render_scene_texture
- * (models/renderer.h) is a distinct consumer snapshot type. */
+ * loader-owned; free on loader destroy. */
 #ifndef QA_RENDER_SCENE_TEXTURES_H
 #define QA_RENDER_SCENE_TEXTURES_H
 #include <stdbool.h>

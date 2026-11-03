@@ -1,78 +1,83 @@
-/* Port of src/app/bootstrap/simulation/q3/guest-bots.ts. BotLibrary
- * is the host table below over landed bots/behavior; pointer/bytes
- * helpers are host seams. User-command syscall runs synchronously
- * (TS returns a Promise). Navigation memoization identity uses the
- * selected library pointer. GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/simulation/q3/guest-bots.ts. Q3GuestBots owns the
+ * engine-side botlib for a QVM qagame: it constructs the BotLibrary, the
+ * AasBspEntities and the SourceBotNavigation, and answers the bot imports through
+ * qvmBotLibrarySyscall and qvmBotNavigationSyscall over them.
+ * C accommodations: the BotUserCommand import runs synchronously (TS may return a
+ * Promise); the clients' console_message returns a malloc'd string the syscall
+ * frees; destroy releases what close leaves (TS GC). GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_SIMULATION_Q3_GUEST_BOTS_H
 #define QA_APP_BOOTSTRAP_SIMULATION_Q3_GUEST_BOTS_H
+#include <stdbool.h>
 #include <stdint.h>
+#include "qa/app/bootstrap/simulation/bots.h"
 #include "qa/app/bootstrap/simulation/q3/guest_records.h"
 #include "qa/app/bootstrap/simulation/q3/guest_spatial.h"
+#include "qa/bots/behavior/director.h"
+#include "qa/bots/behavior/library/bsp_entities.h"
+#include "qa/bots/behavior/library/log.h"
+#include "qa/bots/behavior/q3/library.h"
 #include "qa/bots/behavior/q3/navigation.h"
-#include "qa/compat/qvm/abi.h"
-#include "qa/compat/qvm/bot_navigation_records.h"
+#include "qa/compat/qvm/bot_library_syscalls.h"
+#include "qa/compat/qvm/bot_navigation_syscalls.h"
 #include "qa/compat/qvm/syscalls.h"
 #include "qa/persistence/value.h"
 
-typedef struct qa_app_q3_bot_entity_snapshot {
-  qa_qvm_bot_entity_update state;
-  double slot;
-  double other_entity, frame, time;
-} qa_app_q3_bot_entity_snapshot;
-
-typedef struct qa_app_q3_bot_library {
+/* TS Omit<SourceBotLibraryOptions, "clientCommand"> (Q3GuestBotPreparation.library).
+ * files: the BotSourceFiles (files.files.read with files.files.ctx; provenance NULL is
+ * the absent member). random keeps its own ctx. The other callbacks receive ctx;
+ * resume_log NULL is the absent member. Borrowed for the bots' lifetime. */
+typedef struct qa_app_q3_guest_bot_library {
+  qa_source_bot_files files;
+  qa_bot_random random;
+  bool debug;
   void *ctx;
-  bool (*is_initialized)(void *ctx);
-  double (*setup)(void *ctx);
-  double (*shutdown)(void *ctx);
-  void (*close)(void *ctx);
-  double (*start_frame)(void *ctx, float time);
-  double (*load_map)(void *ctx, const char *name);
-  void (*update_entity)(void *ctx, double entity, qa_app_q3_bot_entity_snapshot state);
-  const char *(*client_command)(void *ctx, double client, const char *text); /* NULL = TS undefined */
-  double (*predict_time)(void *ctx, qa_vec3 start, qa_vec3 end, double client, double travel_flags);
-  double (*visible_enemies)(void *ctx);
-  double (*next_obituary)(void *ctx, double attacker, double victim, double mod);
-  void *(*library_handle)(void *ctx); /* memoization identity */
-  qa_source_bot_navigation_bots_a *(*source_navigation)(void *ctx); /* borrowed */
-  bool (*aas_value)(void *ctx, const char *entities, int32_t *epair, const char *key, char *out, size_t out_size);
-  bool (*aas_vector)(void *ctx, const char *entities, int32_t *epair, const char *key, qa_vec3 *out);
-  qa_save_value *(*capture)(void *ctx);
-  void (*restore)(void *ctx, const qa_save_value *value);
-} qa_app_q3_bot_library;
+  double (*milliseconds)(void *ctx);
+  void (*print)(void *ctx, int severity, const char *text);
+  qa_bot_log_open_result (*open_log)(void *ctx, const char *filename);
+  qa_bot_log_open_result (*resume_log)(void *ctx, const char *filename, int64_t position);
+} qa_app_q3_guest_bot_library;
 
-typedef struct qa_app_q3_bot_clients {
+/* TS Q3GuestBotOptions["clients"] (Pick of QvmBotLibraryServices). Every member
+ * receives ctx. console_message returns a malloc'd string (NULL is TS null). */
+typedef struct qa_app_q3_guest_bot_clients {
   void *ctx;
   double (*allocate_client)(void *ctx);
-  void (*free_client)(void *ctx, double slot);
-  double (*snapshot_entity)(void *ctx, double slot, double sequence);
-  const char *(*console_message)(void *ctx, double slot); /* NULL = TS null */
-  void (*user_command)(void *ctx, double slot, qa_q3_base_user_command command);
-} qa_app_q3_bot_clients;
+  void (*free_client)(void *ctx, double client);
+  double (*snapshot_entity)(void *ctx, double client, double sequence);
+  char *(*console_message)(void *ctx, double client);
+  void (*user_command)(void *ctx, double client, qa_qvmx_wire_user_command command);
+} qa_app_q3_guest_bot_clients;
 
+/* TS Q3GuestBotOptions. library.clientCommand is client_command with command_ctx.
+ * selected is the ApplicationBotNavigation (checkpoint/restore_checkpoint required);
+ * selected, records and spatial are borrowed; entities and map_name are copied. */
 typedef struct qa_app_q3_guest_bot_options {
-  qa_app_q3_bot_library library;
-  void *selected; /* borrowed SelectedBotLibrary handle */
+  qa_app_q3_guest_bot_library library;
+  void *command_ctx;
+  void (*client_command)(void *ctx, int64_t client, const char *command);
+  const qa_app_sim_bot_navigation *selected;
   qa_app_q3_guest_records *records;
   qa_app_q3_guest_spatial *spatial;
   const char *entities;
   const char *map_name;
-  qa_app_q3_bot_clients clients;
-  void *host_ctx;
-  /* memory helpers over the live QVM call */
-  void (*output_struct)(void *ctx, const qa_qvm_host_call *call, double index, double bytes, const void *value, const char *what);
-  void (*output_string)(void *ctx, const qa_qvm_host_call *call, double index, const char *value);
-  void (*structure)(void *ctx, const qa_qvm_host_call *call, double index, double bytes, void *value, const char *what);
-  const char *(*required_string)(void *ctx, const qa_qvm_host_call *call, double index, const char *what);
-  double (*word_float)(void *ctx, const qa_qvm_host_call *call, double index);
+  qa_app_q3_guest_bot_clients clients;
 } qa_app_q3_guest_bot_options;
 
 typedef struct qa_app_q3_guest_bots qa_app_q3_guest_bots;
-qa_app_q3_guest_bots *qa_app_q3_guest_bots_create(qa_app_q3_guest_bot_options options);
+/* TS new Q3GuestBots(options). NULL only on OOM. */
+qa_app_q3_guest_bots *qa_app_q3_guest_bots_create(const qa_app_q3_guest_bot_options *options);
+/* C-only: frees the bots (after close, or instead of it when never set up). */
 void qa_app_q3_guest_bots_destroy(qa_app_q3_guest_bots *bots);
-/* false return + result untouched = TS null (another owner). */
+/* TS readonly library / navigation / bspEntities. */
+qa_bot_library_bots_a *qa_app_q3_guest_bots_library(qa_app_q3_guest_bots *bots);
+qa_source_bot_navigation_bots_a *qa_app_q3_guest_bots_navigation(qa_app_q3_guest_bots *bots);
+qa_aas_bsp_entities *qa_app_q3_guest_bots_bsp_entities(qa_app_q3_guest_bots *bots);
+/* TS syscall(call): false is TS null (another owner); true stores the result. */
 bool qa_app_q3_guest_bots_syscall(qa_app_q3_guest_bots *bots, const qa_qvm_host_call *call, qa_qvm_host_result *out);
+/* TS checkpoint(): owned tree. Raises when the files carry no provenance. */
 qa_save_value *qa_app_q3_guest_bots_checkpoint(qa_app_q3_guest_bots *bots);
+/* TS restore(value). Malformed input raises SaveFormatError; mismatches raise Error. */
 void qa_app_q3_guest_bots_restore(qa_app_q3_guest_bots *bots, const qa_save_value *value);
+/* TS close(): services.shutdown(). */
 void qa_app_q3_guest_bots_close(qa_app_q3_guest_bots *bots);
 #endif

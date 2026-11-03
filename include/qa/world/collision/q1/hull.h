@@ -15,6 +15,10 @@ extern const qa_bounds qa_q1_hull_bounds[3];
 typedef struct qa_q1_hull_trace {
   double fraction; qa_vec3 end; bool start_solid; bool all_solid;
   bool in_open; bool in_water; qa_plane plane; double contents;
+  /* Which object TS trace.plane is: >= 0 the hull plane of that index
+   * (front side, shared), -1 the negated back-side copy (fresh), -2 the
+   * initial zero plane of hull.ts. */
+  int plane_index;
 } qa_q1_hull_trace;
 typedef struct qa_q1_hulls { qa_q1_hull hulls[3]; qa_q1_clip_node *drawing; size_t drawing_count; } qa_q1_hulls;
 bool qa_create_q1_hulls(const qa_q1_world_geometry *map, double model_index, qa_q1_hulls *out);

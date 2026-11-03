@@ -2,6 +2,7 @@
 #include "qa/compat/qvm/game_pickups.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -19,7 +20,7 @@ typedef struct watch_ctx {
 
 struct pickup_frame {
   uint64_t sequence;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_original_pickup_offer offer;
   bool has_supply;
   qa_pickup_supply_offer supply_offer;
@@ -33,6 +34,7 @@ struct pickup_frame {
   const qa_qvm_pickup_grant *grant;
   qa_source_pickup_selection selection;
   bool invalid, granted, cancelled;
+  char cancelled_error[QA_CAUGHT_MESSAGE_CAPACITY]; /* TS frame.cancelled.error */
   bool has_watch;
   size_t watch_id;
   watch_ctx *watch;
@@ -83,12 +85,12 @@ static bool item_id_equal(qa_item_id a, qa_item_id b) {
   return strcmp(a, b) == 0;
 }
 
-static int32_t proceed(qa_qvmy_function_call *call) {
+static int32_t proceed(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "asynchronous") == 0 ? call->proceed_async(call->call_ctx)
                                                       : call->proceed(call->call_ctx);
 }
 
-static int32_t call_word(const qa_qvmy_function_call *call, int64_t byte_offset) {
+static int32_t call_word(const qa_qvm_module_function_call *call, int64_t byte_offset) {
   if (byte_offset < 0 || byte_offset > (int64_t)call->words_length - 4)
     qa_range_error("Offset is outside the bounds of the DataView");
   const uint8_t *p = call->words + byte_offset;
@@ -170,26 +172,43 @@ static bool frame_live(qa_qvm_primary_pickups *p, pickup_frame *frame) {
           frame->selection.current(frame->selection.ctx));
 }
 
-/* TS cancel(): the C cancel_function longjmps (or aborts), so frame
- * cleanup runs first, matching the TS catch/finally outcome of 0. */
-static void cancel_call(qa_qvm_primary_pickups *p, pickup_frame *frame, qa_qvmy_function_call *call) {
-  qa_qvm_cancellation_scope scope = frame->cancellation;
-  frame->cancelled = true;
-  remove_frame(p, frame->sequence);
-  call->cancel_function(call->call_ctx, scope);
-  qa_range_error("QVM function scope cancelled");
+typedef struct cancel_job {
+  void (*cancel_function)(void *ctx, qa_qvm_cancellation_scope scope);
+  void *ctx;
+  qa_qvm_cancellation_scope scope;
+} cancel_job;
+
+static void cancel_body(void *ctx) {
+  cancel_job *job = ctx;
+  job->cancel_function(job->ctx, job->scope);
 }
 
-static void cancel_control(qa_qvm_primary_pickups *p, pickup_frame *frame,
-                           qa_qvm_region_control *control) {
-  qa_qvm_cancellation_scope scope = {frame->cancellation.token};
+/* TS cancel(): try { return call.cancelFunction(frame.cancellation); }
+ * catch (error) { frame.cancelled = { error }; throw error; } */
+static _Noreturn void cancel_with(pickup_frame *frame,
+                                  void (*cancel_function)(void *ctx, qa_qvm_cancellation_scope scope),
+                                  void *ctx) {
+  cancel_job job = {cancel_function, ctx, frame->cancellation};
+  qa_caught_error caught;
+  if (qa_try(cancel_body, &job, &caught)) qa_range_error("QVM function scope cancelled");
   frame->cancelled = true;
-  remove_frame(p, frame->sequence);
-  control->cancel_function(control->ctx, scope);
-  qa_range_error("QVM function scope cancelled");
+  snprintf(frame->cancelled_error, sizeof frame->cancelled_error, "%s", caught.message);
+  qa_rethrow(&caught);
 }
 
-static bool from_sites(qa_qvm_primary_pickups *p, qa_qvmy_function_call *call, const double *sites,
+static _Noreturn void cancel_call(qa_qvm_primary_pickups *p, pickup_frame *frame,
+                                  qa_qvm_module_function_call *call) {
+  (void)p;
+  cancel_with(frame, call->cancel_function, call->call_ctx);
+}
+
+static _Noreturn void cancel_control(qa_qvm_primary_pickups *p, pickup_frame *frame,
+                                     qa_qvm_region_control *control) {
+  (void)p;
+  cancel_with(frame, control->cancel_function, control->ctx);
+}
+
+static bool from_sites(qa_qvm_primary_pickups *p, qa_qvm_module_function_call *call, const double *sites,
                        size_t count) {
   int64_t offset = call->words_offset - 8;
   if (offset < 0) return false;
@@ -256,18 +275,21 @@ static void project_restore(projection *proj) {
   proj->before = NULL;
 }
 
-static void take(qa_qvm_primary_pickups *p, pickup_frame *frame, qa_qvmy_function_call *call) {
+static void take(qa_qvm_primary_pickups *p, pickup_frame *frame, qa_qvm_module_function_call *call) {
   if (frame->granted) qa_range_error("Original pickup source caller attempted a second grant");
   frame->granted = true;
-  if (frame->selection.kind != QA_SOURCE_PICKUP_REPLACEMENT ||
-      frame->selection.grant(frame->selection.ctx) != QA_ORIGINAL_PICKUP_OUTCOME_ACCEPTED ||
-      !frame_live(p, frame))
-    cancel_call(p, frame, call);
+  uint64_t sequence = frame->sequence;
+  bool accepted = frame->selection.kind == QA_SOURCE_PICKUP_REPLACEMENT &&
+                  frame->selection.grant(frame->selection.ctx) == QA_ORIGINAL_PICKUP_OUTCOME_ACCEPTED;
+  frame = frame_by_sequence(p, sequence); /* the grant may have nested another touch */
+  if (!accepted || !frame_live(p, frame)) cancel_call(p, frame, call);
 }
+
+static void restore_unwind(void *ctx) { project_restore(ctx); }
 
 typedef struct region_run_ctx {
   qa_qvm_primary_pickups *pickups;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   uint64_t frame_sequence;
   const qa_qvm_pickup_grant *grant;
   projection *restore;
@@ -275,17 +297,14 @@ typedef struct region_run_ctx {
 
 static const char *grant_region_run(void *ctx, void *control_ctx) {
   region_run_ctx *run = ctx;
-  /* control_ctx is the interpreter's qa_qvm_region_control (module.h
-   * leaves it opaque; see the slice report). */
+  /* The module binding's control_ctx is the interpreter's region control. */
   qa_qvm_region_control *control = control_ctx;
   qa_qvm_primary_pickups *p = run->pickups;
   pickup_frame *frame = frame_by_sequence(p, run->frame_sequence);
   const qa_qvm_pickup_grant *grant = run->grant;
   project_restore(run->restore);
-  if (frame == NULL || !frame_live(p, frame)) {
-    if (frame != NULL) cancel_control(p, frame, control);
-    qa_range_error("QVM function scope cancelled");
-  }
+  if (frame == NULL) qa_range_error("QVM function scope cancelled");
+  if (!frame_live(p, frame)) cancel_control(p, frame, control);
   if (p->options.has_supply) {
     qa_item_id ammo = NULL;
     bool has_ammo = p->options.supply_ammo(p->options.supply_ctx, frame->item_record, &ammo);
@@ -324,7 +343,7 @@ typedef struct grant_ctx {
   size_t grant_index;
 } grant_ctx;
 
-static int32_t grant_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t grant_hook(void *ctx, qa_qvm_module_function_call *call) {
   grant_ctx *gc = ctx;
   qa_qvm_primary_pickups *p = gc->pickups;
   const qa_qvm_pickup_grant *grant = gc->grant;
@@ -376,17 +395,20 @@ static int32_t grant_hook(void *ctx, qa_qvmy_function_call *call) {
   project_begin(p, writes.entries, writes.count, &restore);
   if (has_writes) qa_qvm_inventory_words_destroy(&writes);
   region_run_ctx run = {p, call, frame->sequence, grant, &restore};
-  qa_qvmy_region_binding binding = {(int64_t)grant->region_entry, (int64_t)grant->region_join, &run,
+  qa_qvm_module_region_binding binding = {(int64_t)grant->region_entry, (int64_t)grant->region_join, &run,
                                     grant_region_run, NULL};
   call->regions(call->call_ctx, &binding, 1);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, restore_unwind, &restore);
   int32_t result = proceed(call);
+  qa_cleanup_pop(&guard);
   project_restore(&restore);
   return result;
 }
 
 typedef struct live_effect_ctx {
   qa_qvm_primary_pickups *pickups;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   uint64_t frame_sequence;
 } live_effect_ctx;
 
@@ -398,7 +420,7 @@ static void live_effect_perform(void *ctx) {
   }
 }
 
-static int32_t gate_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t gate_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_primary_pickups *p = ctx;
   const qa_qvm_pickup_profile *profile = &p->options.profile;
   pickup_frame *frame = top_frame(p);
@@ -414,13 +436,14 @@ static int32_t gate_hook(void *ctx, qa_qvmy_function_call *call) {
   entity_view(p, frame->item_slot, &context.item);
   qa_qvm_memory_data_view(p->options.game->module.memory, frame->player_pointer,
                           (int64_t)profile->client_stride, &context.player);
+  uint64_t sequence = frame->sequence;
   bool value = frame->grant->eligible(frame->grant->eligible_ctx, context);
-  live_effect_ctx effect = {p, call, frame->sequence};
+  live_effect_ctx effect = {p, call, sequence};
   call->effect(call->call_ctx, live_effect_perform, &effect);
   return value ? 1 : 0;
 }
 
-static int32_t targets_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t targets_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_primary_pickups *p = ctx;
   pickup_frame *frame = top_frame(p);
   if (frame == NULL ||
@@ -435,7 +458,7 @@ static int32_t targets_hook(void *ctx, qa_qvmy_function_call *call) {
 }
 
 void qa_qvm_primary_pickups_after_free(qa_qvm_primary_pickups *p, double pointer,
-                                       qa_qvmy_function_call *control) {
+                                       qa_qvm_module_function_call *control) {
   (void)qa_qvm_game_data_number_from_pointer(&p->options.game->data, pointer);
   qa_qvm_writable_view view;
   qa_qvm_memory_data_view(p->options.game->module.memory,
@@ -450,7 +473,7 @@ void qa_qvm_primary_pickups_after_free(qa_qvm_primary_pickups *p, double pointer
   }
 }
 
-static int32_t free_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t free_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_primary_pickups *p = ctx;
   int32_t pointer = call_word(call, 0);
   double slot = qa_qvm_game_data_number_from_pointer(&p->options.game->data, (double)pointer);
@@ -477,7 +500,7 @@ static void watch_publish(void *ctx, const qa_qvm_committed_write *event) {
 
 typedef struct execute_ctx {
   qa_qvm_primary_pickups *pickups;
-  qa_qvmy_function_call *call;
+  qa_qvm_module_function_call *call;
   qa_original_pickup_offer offer;
   qa_qvm_cancellation_scope cancellation;
   qa_owned_actor item, recipient;
@@ -485,6 +508,16 @@ typedef struct execute_ctx {
   int32_t item_pointer, player_pointer, recipient_pointer;
   const qa_qvm_catalog_record *item_record;
 } execute_ctx;
+
+typedef struct proceed_job {
+  qa_qvm_module_function_call *call;
+  int32_t result;
+} proceed_job;
+
+static void proceed_body(void *ctx) {
+  proceed_job *job = ctx;
+  job->result = proceed(job->call);
+}
 
 static int32_t execute_run(void *ctx, qa_source_pickup_selection selection) {
   execute_ctx *execute = ctx;
@@ -529,12 +562,22 @@ static int32_t execute_run(void *ctx, qa_source_pickup_selection selection) {
   pickup_frame *stored = frame_by_sequence(p, frame.sequence);
   stored->has_watch = true;
   stored->watch_id = watch_id;
-  int32_t result = proceed(execute->call);
+  /* TS try { proceed } catch (error) { finish(); if (frame.cancelled?.error !== error) throw error; return 0; } */
+  proceed_job job = {execute->call, 0};
+  qa_caught_error caught;
+  bool completed = qa_try(proceed_body, &job, &caught);
+  if (completed) {
+    remove_frame(p, frame.sequence);
+    return job.result;
+  }
+  pickup_frame *failed = frame_by_sequence(p, frame.sequence);
+  bool own = failed != NULL && failed->cancelled && strcmp(caught.message, failed->cancelled_error) == 0;
   remove_frame(p, frame.sequence);
-  return result;
+  if (!own) qa_rethrow(&caught);
+  return 0;
 }
 
-static int32_t touch_hook(void *ctx, qa_qvmy_function_call *call) {
+static int32_t touch_hook(void *ctx, qa_qvm_module_function_call *call) {
   qa_qvm_primary_pickups *p = ctx;
   if (p->closed) return proceed(call);
   qa_qvm_game *game = p->options.game;
@@ -586,22 +629,32 @@ static int32_t touch_hook(void *ctx, qa_qvmy_function_call *call) {
   return p->options.run_source(p->options.ctx, offer, execute_run, &execute);
 }
 
-qa_qvm_pickup_supply qa_qvm_primary_pickups_supply(qa_qvm_primary_pickups *p,
-                                                   qa_original_pickup_offer offer) {
+void qa_qvm_primary_pickups_supply(qa_qvm_pickup_supply *supply, qa_qvm_primary_pickups *p,
+                                   qa_original_pickup_offer offer) {
   pickup_frame *frame = top_frame(p);
   if (frame == NULL || !frame->granted || !frame->has_supply ||
       !item_id_equal(frame->offer.item, offer.item) || !actor_id_equal(frame->item.id, offer.pickup) ||
       !actor_id_equal(frame->recipient.id, offer.recipient) || !frame_live(p, frame))
     qa_range_error("Selected QVM supply requires its held original grant");
-  qa_qvm_pickup_supply supply;
-  memset(&supply, 0, sizeof supply);
-  supply.offer = frame->supply_offer;
-  supply.ammo_grant = frame->supply_ammo;
-  if (supply.offer.ammo_count > 0) supply.offer.ammo = &supply.ammo_grant;
-  supply.has_quantity = frame->supply_has_quantity;
-  supply.pickups = p;
-  supply.frame_sequence = frame->sequence;
-  return supply;
+  memset(supply, 0, sizeof *supply);
+  supply->offer = frame->supply_offer;
+  supply->ammo_grant = frame->supply_ammo;
+  if (supply->offer.ammo_count > 0) supply->offer.ammo = &supply->ammo_grant;
+  supply->has_quantity = frame->supply_has_quantity;
+  supply->pickups = p;
+  supply->frame_sequence = frame->sequence;
+}
+
+typedef struct quantity_unwind_ctx {
+  qa_qvm_primary_pickups *pickups;
+  projection *restore;
+} quantity_unwind_ctx;
+
+/* TS finally { restore(); evaluating.pop(); }. */
+static void quantity_unwind(void *ctx) {
+  quantity_unwind_ctx *unwind = ctx;
+  project_restore(unwind->restore);
+  unwind->pickups->evaluating_count--;
 }
 
 double qa_qvm_pickup_supply_quantity(qa_qvm_pickup_supply *supply, double count) {
@@ -644,7 +697,11 @@ double qa_qvm_pickup_supply_quantity(qa_qvm_pickup_supply *supply, double count)
   p->evaluating_stack[p->evaluating_count++] =
       (evaluating){frame->sequence, grant->weapon_quantity, false};
   int32_t words[2] = {frame->item_pointer, frame->recipient_pointer};
+  quantity_unwind_ctx unwind = {p, &restore};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, quantity_unwind, &unwind);
   int32_t result = qa_qvm_module_call(&p->options.game->module, words, 2, (int64_t)grant->entry);
+  qa_cleanup_pop(&guard);
   project_restore(&restore);
   p->evaluating_count--;
   return (double)result;
@@ -696,7 +753,7 @@ static qa_qvm_instruction *region_instructions(const qa_qvm_image *image) {
   return list;
 }
 
-static size_t bind_hook(qa_qvm_primary_pickups *p, double index, qa_qvmy_function_hook_fn hook,
+static size_t bind_hook(qa_qvm_primary_pickups *p, double index, qa_qvm_function_hook_fn hook,
                         void *hook_ctx) {
   qa_guest_callback_reference reference;
   memset(&reference, 0, sizeof reference);

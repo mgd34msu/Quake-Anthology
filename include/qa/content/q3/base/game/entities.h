@@ -14,14 +14,15 @@ typedef struct qa_q3_entity_records {
   void (*release)(void *ctx, qa_q3_game_entity *entity);
   void (*deactivate_client)(void *ctx, double slot);
 } qa_q3_entity_records;
+/* event_debug NULL is TS eventDebug undefined; borrowed, set on every client ps. */
 typedef struct qa_q3_entity_pool_options {
-  qa_q3_entity_records records; qa_q3_game_product product; double max_clients, map_start_time;
+  qa_q3_base_predictable_event_debug *event_debug;
+  qa_q3_entity_records records; qa_q3_base_product product; double max_clients, map_start_time;
   void *ctx; double (*time)(void *ctx); void (*print)(void *ctx, const char *message);
   void (*link)(void *ctx, qa_q3_game_entity *entity); void (*unlink)(void *ctx, qa_q3_game_entity *entity);
 } qa_q3_entity_pool_options;
 typedef enum qa_q3_entity_event_status { QA_Q3_EVENT_INACTIVE, QA_Q3_EVENT_ACTIVE, QA_Q3_EVENT_WAITING, QA_Q3_EVENT_FREED } qa_q3_entity_event_status;
 const char *qa_q3_entity_event_status_name(qa_q3_entity_event_status status);
-typedef struct qa_q3_predictable_event_mirror { double sequence, event, parameter; } qa_q3_predictable_event_mirror;
 struct qa_q3_game_utility_scratch;
 typedef struct qa_q3_entity_pool {
   qa_q3_entity_pool_options options; qa_q3_ranking_reports rankings; qa_q3_callback_catalog callbacks;
@@ -49,7 +50,7 @@ bool qa_q3_entity_pool_entities_free(qa_q3_entity_pool *pool);
 void qa_q3_entity_pool_free(qa_q3_entity_pool *pool, qa_q3_game_entity *entity);
 qa_q3_game_entity *qa_q3_entity_pool_temp_entity(qa_q3_entity_pool *pool, qa_vec3 origin, double event);
 /* Returns false for TS null. */
-bool qa_q3_entity_pool_add_predictable_event(qa_q3_entity_pool *pool, qa_q3_game_entity *entity, double event, double parameter, qa_q3_predictable_event_mirror *out);
+bool qa_q3_entity_pool_add_predictable_event(qa_q3_entity_pool *pool, qa_q3_game_entity *entity, double event, double parameter, qa_q3_base_predictable_event *out);
 void qa_q3_entity_pool_add_event(qa_q3_entity_pool *pool, qa_q3_game_entity *entity, double event, double parameter);
 qa_q3_entity_event_status qa_q3_entity_pool_expire_events(qa_q3_entity_pool *pool, qa_q3_game_entity *entity);
 #endif

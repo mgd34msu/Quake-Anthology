@@ -1,6 +1,7 @@
 /* Port of src/content/q3/base/game/utilities.ts. GPL-2.0-or-later. */
 #ifndef QA_CONTENT_Q3_BASE_GAME_UTILITIES_H
 #define QA_CONTENT_Q3_BASE_GAME_UTILITIES_H
+#include "qa/content/q3/base/bot_debug.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include "qa/content/q3/base/game/entities.h"
@@ -16,11 +17,7 @@ void qa_q3_game_utility_scratch_init(qa_q3_game_utility_scratch *s, void *ctx, v
 qa_q3_temporary_vector *qa_q3_game_utility_scratch_tv(qa_q3_game_utility_scratch *s, double x, double y, double z);
 /* Returns ring buffer (32 bytes) holding vtos string. */
 uint8_t *qa_q3_game_utility_scratch_vtos(qa_q3_game_utility_scratch *s, qa_vec3 vector);
-/* Mirror of ../bot-debug.ts BotDebugPolygons.create (TS owner unported). */
-typedef struct qa_q3_bot_debug_polygons_mirror {
-  void *ctx; double (*create)(void *ctx, double color, double count, const qa_vec3 *points);
-} qa_q3_bot_debug_polygons_mirror;
-double qa_q3_debug_line(qa_vec3 start, qa_vec3 end, double color, qa_q3_bot_debug_polygons_mirror polygons);
+double qa_q3_debug_line(qa_vec3 start, qa_vec3 end, double color, qa_q3_base_bot_debug_polygons polygons);
 typedef struct qa_q3_config_string_store {
   void *ctx; const char *(*get)(void *ctx, double index); void (*set)(void *ctx, double index, const char *value);
 } qa_q3_config_string_store;

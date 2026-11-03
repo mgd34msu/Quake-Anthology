@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 struct qa_app_splash_screen { qa_app_splash_host host; bool closed; };
 static double clampd(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
 uint8_t *qa_app_scale_cover(const qa_png_image *image, double width, double height, size_t *out_length) {
@@ -14,16 +15,16 @@ uint8_t *qa_app_scale_cover(const qa_png_image *image, double width, double heig
   size_t out_len = (size_t)(width * height * 4);
   uint8_t *out = calloc(out_len ? out_len : 1, 1);
   if (!out) qa_range_error("Out of memory");
-  double scale = fmax(width / iw, height / ih);
+  double scale = qa_js_max(width / iw, height / ih);
   double source_width = width / scale;
   double origin_x = (iw - source_width) / 2, origin_y = 0;
   for (double y = 0; y < height; y++) {
     double source_y = origin_y + (y + 0.5) / scale - 0.5;
-    double y0 = clampd(floor(source_y), 0, ih - 1), y1 = fmin(ih - 1, y0 + 1);
+    double y0 = clampd(floor(source_y), 0, ih - 1), y1 = qa_js_min(ih - 1, y0 + 1);
     double fy = clampd(source_y - y0, 0, 1);
     for (double x = 0; x < width; x++) {
       double source_x = origin_x + (x + 0.5) / scale - 0.5;
-      double x0 = clampd(floor(source_x), 0, iw - 1), x1 = fmin(iw - 1, x0 + 1);
+      double x0 = clampd(floor(source_x), 0, iw - 1), x1 = qa_js_min(iw - 1, x0 + 1);
       double fx = clampd(source_x - x0, 0, 1);
       size_t target = (size_t)((y * width + x) * 4);
       for (int channel = 0; channel < 4; channel++) {
@@ -35,9 +36,9 @@ uint8_t *qa_app_scale_cover(const qa_png_image *image, double width, double heig
         double p10 = i10 < plen ? pixels[i10] : 0, p11 = i11 < plen ? pixels[i11] : 0;
         double top = p00 * (1 - fx) + p01 * fx;
         double bottom = p10 * (1 - fx) + p11 * fx;
-        double v = round(top * (1 - fy) + bottom * fy);
+        double v = qa_js_round(top * (1 - fy) + bottom * fy);
         /* Uint8Array store wraps/clamps via ToIntegerOrInfinity then mod 256. */
-        out[target + (size_t)channel] = (uint8_t)v;
+        out[target + (size_t)channel] = qa_js_to_uint8(v);
       }
       out[target + 3] = 255;
     }

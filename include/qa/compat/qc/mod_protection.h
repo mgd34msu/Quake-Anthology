@@ -34,6 +34,8 @@ void qa_compat_qc_mod_protection_reserve(qa_compat_qc_mod_protection *p, qa_acto
 void qa_compat_qc_mod_protection_activate(qa_compat_qc_mod_protection *p, qa_actor_id actor);
 void qa_compat_qc_mod_protection_observe(qa_compat_qc_mod_protection *p, qa_compat_qc_entity_store_observation store);
 double qa_compat_qc_mod_protection_watch(qa_compat_qc_mod_protection *p, qa_actor_id actor, qa_protection_observer observer, void *ctx, double (*run)(void *ctx));
+/* TS watch<T> with T = OriginalPickupDecision, the observer being the execution. */
+qa_original_pickup_decision qa_compat_qc_mod_protection_watch_pickup(qa_compat_qc_mod_protection *p, qa_actor_id actor, qa_original_pickup_execution execution, void *ctx, qa_original_pickup_decision (*run)(void *ctx));
 void qa_compat_qc_mod_protection_release(qa_compat_qc_mod_protection *p, qa_actor_id actor);
 void qa_compat_qc_mod_protection_close(qa_compat_qc_mod_protection *p);
 void qa_compat_qc_mod_protection_assert_idle(qa_compat_qc_mod_protection *p);

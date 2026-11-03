@@ -20,14 +20,10 @@ static void zero_snapshot(qa_q3_product product, qa_q3_wire_snapshot *out) {
 static void copy_into(qa_q3_wire_snapshot *dst, const qa_q3_wire_snapshot *src) {
   qa_q3_wire_snapshot_destroy(dst);
   if (!qa_q3_wire_snapshot_copy(dst, src)) qa_range_error("snapshot copy allocation failed");
-  /* TS: areaMask.fill(0) then set(source) over retained 32-byte buffer. */
-  size_t n = dst->area_mask_len;
-  memset(dst->area_mask, 0, 32);
-  memcpy(dst->area_mask, src->area_mask, n);
-  dst->area_mask_len = 32; /* retained record keeps 32-byte mask */
-  /* Preserve source logical length by keeping copy length: TS retained mask is
-   * 32 bytes, but consumers read snapshot.areaMask as the retained buffer. */
-  (void)n;
+  /* TS areaMask.fill(0) then set(source.areaMask) over the retained 32-byte buffer. */
+  memset(dst->area_mask, 0, sizeof dst->area_mask);
+  memcpy(dst->area_mask, src->area_mask, src->area_mask_len);
+  dst->area_mask_len = sizeof dst->area_mask;
 }
 static void check_message_number(int64_t n) {
   if (n < -((int64_t)0x80000000) || n > 0x7fffffff) qa_range_error("Snapshot message number must be an int32 sequence");

@@ -1,21 +1,30 @@
 /* Port of src/compat/qc/mod-environment.ts. GPL-2.0-or-later. */
 #include "qa/compat/qc/mod_environment.h"
+#include "qa/network/common/js_number.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
 typedef qa_compat_qc_mod_environment E;
 static bool actor_eq(qa_actor_id a, qa_actor_id b){return qa_same_actor(a, b);}
-static void env_print(void *ctx, const char *text) { E *e = ctx; if (e->services->engine && e->services->engine->print) e->services->engine->print(e->services->engine->ctx, text); (void)e; }
-/* print fn signature check: qa_command_print_fn */
+static void env_print(void *ctx, const char *text) { E *e = ctx; if (e->services->engine && e->services->engine->print) e->services->engine->print(e->services->engine->ctx, text); }
+/* TS String(number): shortest round-trip digits, integers without fraction. */
+static void js_number_string(char *out, size_t size, double value) {
+  qa_net_js_number(value, out, size);
+}
 static void b_cvar(void *ctx, qa_compat_qc_machine *m) { E *e=ctx; qa_compat_qc_machine_return_float(m, qa_cvar_registry_variable_value(e->cvars, qa_compat_qc_machine_arg_string(m,0))); }
 static void b_cvar_set(void *ctx, qa_compat_qc_machine *m) {
-  E *e=ctx; const char *n=qa_compat_qc_machine_arg_string(m,0); char name[256]; snprintf(name,sizeof name,"%s",n);
+  E *e=ctx; const char *n=qa_compat_qc_machine_arg_string(m,0); size_t name_length=strlen(n)+1; char *name=malloc(name_length);
+  if(!name) qa_compat_qc_machine_fail(m,"cvar name allocation failed");
+  memcpy(name,n,name_length); /* arg_string's buffer is reused by the next read */
   qa_cvar_snapshot snapshot; memset(&snapshot, 0, sizeof snapshot);
   if (qa_cvar_registry_set(e->cvars, name, qa_compat_qc_machine_arg_string(m,1), false, &snapshot)) qa_cvar_read_free(&snapshot);
+  free(name);
 }
 static void b_dprint(void *ctx, qa_compat_qc_machine *m) {
-  E *e=ctx; if (qa_cvar_registry_variable_value(e->cvars, "developer") != 0 && e->services->engine && e->services->engine->print) {
+  /* QuakeWorld prints unconditionally; only the NetQuake family gates on developer. */
+  E *e=ctx; if ((e->quakeworld || qa_cvar_registry_variable_value(e->cvars, "developer") != 0) && e->services->engine && e->services->engine->print) {
     char *t = qa_compat_qc_machine_var_string(m, 0); e->services->engine->print(e->services->engine->ctx, t ? t : ""); free(t);
   }
 }
@@ -24,13 +33,19 @@ static void b_checkclient(void *ctx, qa_compat_qc_machine *m) {
   if (!e->visibility) { qa_compat_qc_machine_fail(m, "Mod checkclient requires destination client visibility"); }
   int64_t self = qa_compat_qc_words_int(&m->globals, qa_compat_qc_machine_global_offset(m, "self"));
   qa_actor_id actor;
-  bool has = qa_q1_client_visibility_check(e->visibility, (qa_q1_client_eye){qa_compat_qc_machine_entity_vector(m,self,"origin"), qa_compat_qc_machine_entity_vector(m,self,"view_ofs")},
-    qa_compat_qc_words_float(&m->globals, qa_compat_qc_machine_global_offset(m, "time")), *m->numeric, &actor);
+  qa_q1_client_visibility * visibility2 = e->visibility;
+  qa_vec3 origin2 = qa_compat_qc_machine_entity_vector(m,self,"origin");
+  qa_vec3 view_offset = qa_compat_qc_machine_entity_vector(m,self,"view_ofs");
+  qa_q1_client_eye observer = (qa_q1_client_eye){origin2, view_offset};
+  double time_seconds = qa_compat_qc_words_float(&m->globals, qa_compat_qc_machine_global_offset(m, "time"));
+  bool has = qa_q1_client_visibility_check(visibility2, observer,
+    time_seconds, *m->numeric, &actor);
   qa_compat_qc_machine_return_int(m, (double)e->reference(e->reference_ctx, has ? &actor : NULL));
 }
 static qa_q1_visibility_client vis_client(void *ctx, int64_t slot) { E *e = ctx; return e->clients->at(e->clients->ctx, slot); }
 bool qa_compat_qc_mod_environment_init(E *e, qa_mod_host_services *services, qa_compat_qc_program *program, qa_mod_callback_declaration declaration, void *ref_ctx, int64_t (*reference)(void *, const qa_actor_id *), const qa_compat_qc_mod_environment_clients *clients) {
   memset(e, 0, sizeof *e); e->services = services; e->reference_ctx = ref_ctx; e->reference = reference; e->has_reference = reference != NULL; e->clients = clients; e->self_ref = e;
+  e->quakeworld = program->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD;
   const qa_session_mod_engine_services *engine = services->engine;
   bool has_env = engine && engine->has_environment;
   qa_cvar_registry_options opts; memset(&opts, 0, sizeof opts);
@@ -40,14 +55,12 @@ bool qa_compat_qc_mod_environment_init(E *e, qa_mod_host_services *services, qa_
   opts.print = (qa_command_print_fn)env_print; opts.print_ctx = e;
   e->cvars = qa_cvar_registry_create(&opts);
   if (!e->cvars) return false;
-  char buf[64];
   typedef struct { const char *name; const char *value; } Def; Def defaults[15];
   int di = 0;
   char skill[32], maxc[32], grav[32];
-  snprintf(skill,sizeof skill,"%g", has_env ? engine->environment_skill : 1);
-  /* TS String(number): integers print without fraction; %g matches for these magnitudes */
-  snprintf(maxc,sizeof maxc,"%g", declaration.clients ? declaration.clients->maximum : has_env ? engine->environment_max_clients : 1);
-  snprintf(grav,sizeof grav,"%g", has_env && engine->environment_gravity ? engine->environment_gravity : 800);
+  js_number_string(skill, sizeof skill, has_env ? engine->environment_skill : 1);
+  js_number_string(maxc, sizeof maxc, declaration.clients ? declaration.clients->maximum : has_env ? engine->environment_max_clients : 1);
+  js_number_string(grav, sizeof grav, has_env ? engine->environment_gravity : 800); /* TS ??: a zero gravity is kept */
   const char *mode = has_env ? engine->environment_mode : NULL;
   defaults[di++] = (Def){"skill", skill};
   defaults[di++] = (Def){"maxclients", maxc};
@@ -64,7 +77,6 @@ bool qa_compat_qc_mod_environment_init(E *e, qa_mod_host_services *services, qa_
   defaults[di++] = (Def){"timelimit", "0"};
   defaults[di++] = (Def){"fraglimit", "0"};
   defaults[di++] = (Def){"gamecfg", "0"};
-  (void)buf;
   /* qa_cvar_registry_register/set/find require a non-NULL out snapshot. */
   for (int i = 0; i < di; i++) { qa_cvar_snapshot snapshot; memset(&snapshot, 0, sizeof snapshot); if (qa_cvar_registry_register(e->cvars, defaults[i].name, defaults[i].value, 0, &snapshot)) qa_cvar_read_free(&snapshot); }
   if (program->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD) { qa_cvar_snapshot snapshot; memset(&snapshot, 0, sizeof snapshot); if (qa_cvar_registry_register(e->cvars, "sv_phs", "1", 0, &snapshot)) qa_cvar_read_free(&snapshot); }

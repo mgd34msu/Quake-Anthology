@@ -16,6 +16,19 @@ typedef struct qa_world_visibility_cache {
   const void *map_key; qa_stamp_set stamps; bool stamps_init;
   struct qa_scene_pvs_entry { double key; uint8_t *bytes; size_t length; } *q1_entries, *q2_entries;
   size_t q1_count, q1_capacity, q2_count, q2_capacity;
+  /* TS ancestorIndex: parent links, built once per map. */
+  bool ancestor_built, ancestor_unsafe;
+  int32_t *node_parents, *leaf_parents;
+  /* TS AncestorIndex.caches: most recently used first, at most 4. */
+  struct qa_scene_ancestor_marks {
+    const uint8_t *pvs; size_t pvs_length; double from_cluster;
+    bool has_areas; double *areas; size_t area_count;
+    uint8_t *marks;
+  } ancestor_marks[4];
+  size_t ancestor_mark_count;
+  /* TS mergedPvs: one buffer per cluster pair (bytes NULL: TS null), cleared at 64. */
+  struct qa_scene_merged_pvs { double first, second; uint8_t *bytes; size_t length; } *merged;
+  size_t merged_count, merged_capacity;
 } qa_world_visibility_cache;
 void qa_world_visibility_cache_init(qa_world_visibility_cache *cache);
 void qa_world_visibility_cache_destroy(qa_world_visibility_cache *cache);

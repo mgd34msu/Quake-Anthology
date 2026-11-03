@@ -2,6 +2,7 @@
 #include "qa/app/bootstrap/q2_damage_blend.h"
 #include <math.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static float fr(double v) { return (float)v; }
 static double component(double before, double after, double fraction) {
   return fr(before + fr(fr(after - before) * fraction));
@@ -12,7 +13,7 @@ qa_vec4 qa_app_interpolate_q2_damage_blend(const qa_vec4 *previous, qa_vec4 curr
                  component(previous->z, current.z, fraction), component(previous->w, current.w, fraction)};
   return out;
 }
-static double byte_of(double value) { return (double)(((int)trunc(fr(value * 255))) & 255) / 255.0; }
+static double byte_of(double value) { return (double)(qa_js_to_int32(trunc(fr(value * 255))) & 255) / 255.0; } /* Math.trunc(...) & 255 */
 static qa_render_vertex vertex(double x, double y, double width, double height, qa_vec4 color) {
   qa_render_vertex v;
   memset(&v, 0, sizeof v);
@@ -34,7 +35,7 @@ size_t qa_app_prepare_q2_damage_blend(qa_vec4 blend, qa_rect viewport, qa_render
   static const double base_idx[6] = {0, 1, 2, 0, 2, 3};
   memcpy(indices, base_idx, sizeof base_idx);
   if (fraction > 0) {
-    double distance = trunc(fr(fmin(width, height) * fr(fmin(fraction, 0.5))));
+    double distance = trunc(fr(qa_js_min(width, height) * fr(qa_js_min(fraction, 0.5))));
     vertices[4] = vertex(distance, distance, width, height, inner);
     vertices[5] = vertex(width - distance, distance, width, height, inner);
     vertices[6] = vertex(width - distance, height - distance, width, height, inner);

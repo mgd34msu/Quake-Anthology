@@ -1,11 +1,15 @@
 /* Port of src/guest/x64/cpu.ts. GPL-2.0-or-later. */
 #include "qa/guest/x64/cpu.h"
 
+#include <setjmp.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/guest/core/cpuid.h"
 #include "qa/guest/floating_point/raw_sse.h"
 #include "qa/guest/floating_point/sse.h"
 #include "qa/guest/x86/arithmetic.h"
@@ -209,7 +213,9 @@ static qa_x64_flow execute_plan(qa_x64_cpu *cpu, const qa_x64_semantic_plan *pla
                  ? branch_to(cpu, plan->next_ip + (uint64_t)op->displacement) : qa_x64_advance;
     case QA_X64_PLAN_JUMP: case QA_X64_PLAN_CALL: {
       lock_check(cpu, plan->lock, NULL, false, false);
-      uint64_t target = qa_x64_canonical_address(throw_of(cpu), source_value(cpu, &op->source, plan->next_ip));
+      qa_guest_throw * throw_ctx = throw_of(cpu);
+      uint64_t value2 = source_value(cpu, &op->source, plan->next_ip);
+      uint64_t target = qa_x64_canonical_address(throw_ctx, value2);
       if (op->kind == QA_X64_PLAN_CALL) {
         uint64_t stack = reg_read(cpu, QA_REG_RSP, 64, false) - 8ull;
         qa_sparse_write_u64(memory, qa_x64_guest_address(memory, stack, QA_ACCESS_WRITE), plan->next_ip);
@@ -428,6 +434,8 @@ static qa_x64_flow do_unary(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor) {
 }
 
 static qa_x64_flow do_string(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor) {
+  uint64_t left;
+  uint64_t right;
   lock_check(cpu, cursor->lock, NULL, false, false);
   int op = qa_x64_cursor_opcode(cursor);
   int width = (op & 1) == 0 ? 8 : qa_x64_cursor_width(cursor);
@@ -458,9 +466,9 @@ static qa_x64_flow do_string(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor) {
   else if (op == 0xac || op == 0xad)
     reg_write(cpu, QA_REG_RAX, width, source, false);
   else
-    (void)qa_x86_alu(QA_ALU_CMP, width, reg_read(cpu, QA_REG_RAX, width, false),
-                     qa_x64_read_memory(cpu->memory, qa_x64_guest_address(cpu->memory, destination_offset, QA_ACCESS_READ), width),
-                     &cpu->state->flags);
+    (void)(left = reg_read(cpu, QA_REG_RAX, width, false), right = qa_x64_read_memory(cpu->memory, qa_x64_guest_address(cpu->memory, destination_offset, QA_ACCESS_READ), width), qa_x86_alu(QA_ALU_CMP, width, left,
+                     right,
+                     &cpu->state->flags));
   if (reads_source) reg_write(cpu, QA_REG_RSI, address_bits, source_offset + (uint64_t)delta, false);
   if (uses_destination) reg_write(cpu, QA_REG_RDI, address_bits, destination_offset + (uint64_t)delta, false);
   if (!repeated) return qa_x64_advance;
@@ -524,7 +532,7 @@ static qa_x64_flow do_double_shift(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor
 
 static void do_numeric(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor, int secondary_opcode, bool has_secondary) {
   lock_check(cpu, cursor->lock, NULL, false, false);
-  bool has_decoded = qa_x64_cursor_opcode(cursor) != 0x9b;
+  bool has_decoded = qa_x64_cursor_opcode(cursor) != 0x9b && !(has_secondary && secondary_opcode == 0x77);
   qa_x64_modrm decoded;
   memset(&decoded, 0, sizeof decoded);
   if (has_decoded) decoded = qa_x64_cursor_decode_modrm(cursor, qa_x64_cursor_width(cursor));
@@ -626,20 +634,11 @@ static qa_x64_flow do_extended(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor) {
     case 0x0b: pfault(cpu, 6, "UD2 invalid opcode");
     case 0xa2: {
       lock_check(cpu, cursor->lock, NULL, false, false);
-      uint64_t leaf = reg_read(cpu, QA_REG_RAX, 32, false);
-      uint64_t eax = 0, ebx = 0, ecx = 0, edx = 0;
-      if (leaf == 0) {
-        eax = 7;
-        ebx = 0x6b617551ull; edx = 0x67535465ull; ecx = 0x74736575ull;
-      } else if (leaf == 1) {
-        eax = 0x600; ebx = 0x10000;
-        edx = 0x06008101ull;
-      } else if (leaf == 0x80000000ull) eax = 0x80000001ull;
-      else if (leaf == 0x80000001ull) { ecx = 1; edx = 0x20000000ull; }
-      reg_write(cpu, QA_REG_RAX, 32, eax, false);
-      reg_write(cpu, QA_REG_RBX, 32, ebx, false);
-      reg_write(cpu, QA_REG_RCX, 32, ecx, false);
-      reg_write(cpu, QA_REG_RDX, 32, edx, false);
+      const qa_cpuid_result id = qa_virtual_cpuid(reg_read(cpu, QA_REG_RAX, 32, false), false);
+      reg_write(cpu, QA_REG_RAX, 32, id.eax, false);
+      reg_write(cpu, QA_REG_RBX, 32, id.ebx, false);
+      reg_write(cpu, QA_REG_RCX, 32, id.ecx, false);
+      reg_write(cpu, QA_REG_RDX, 32, id.edx, false);
       return qa_x64_advance;
     }
     case 0x1e: {
@@ -980,8 +979,10 @@ static qa_x64_flow execute_tail(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor, i
     case 0xc9: {
       lock_check(cpu, cursor->lock, NULL, false, false);
       reg_write(cpu, QA_REG_RSP, 64, reg_read(cpu, QA_REG_RBP, 64, false), false);
-      reg_write(cpu, QA_REG_RBP, qa_x64_cursor_stack_width(cursor),
-                pop_value(cpu, qa_x64_cursor_stack_width(cursor)), false);
+      int width2 = qa_x64_cursor_stack_width(cursor);
+      uint64_t value2 = pop_value(cpu, qa_x64_cursor_stack_width(cursor));
+      reg_write(cpu, QA_REG_RBP, width2,
+                value2, false);
       return qa_x64_advance;
     }
     case 0xcc: {
@@ -1037,6 +1038,123 @@ static qa_x64_flow execute_tail(qa_x64_cpu *cpu, qa_x64_decode_cursor *cursor, i
   }
 }
 
+/* --- cached decode, semantic blocks and managed integer blocks --- */
+
+#define X64_INSTRUCTION_BUCKETS 8192u
+/* Sized for the retail x64 gamex64 image (about 2.8 MB of code); exhaustion is counted in decode_cache_clears. */
+#define X64_INSTRUCTION_LIMIT 262144u
+#define X64_BLOCK_LENGTH 16u
+
+typedef struct x64_cached_instruction x64_cached_instruction;
+
+/* TS SemanticBlock. `generation` stands in for GC: a block survives only while
+ * no instruction it may name has been replaced. */
+typedef struct x64_semantic_block {
+  uint64_t revision;
+  uint64_t generation;
+  size_t count;
+  x64_cached_instruction *instructions[X64_BLOCK_LENGTH];
+} x64_semantic_block;
+
+/* TS ManagedBlock. */
+typedef struct x64_managed_block {
+  uint64_t revision;
+  uint64_t generation;
+  size_t step_count;
+  qa_x64_integer_step steps[X64_BLOCK_LENGTH];
+  qa_guest_executable_guard code;
+  struct x64_managed_block *retired_next;
+} x64_managed_block;
+
+/* TS CachedInstruction. */
+struct x64_cached_instruction {
+  uint64_t start;
+  qa_x64_decoded_instruction decoded;
+  qa_x64_semantic_plan plan;
+  bool has_plan;
+  qa_x64_integer_plan integer;
+  bool has_integer;
+  x64_semantic_block block;
+  bool has_block;
+  x64_managed_block *managed_block;
+  bool has_unhooked_revision;
+  uint64_t unhooked_revision;
+  x64_cached_instruction *next;
+  x64_cached_instruction *retired_next;
+};
+
+/* Removed entries wait on the retired lists: a TS nested run or an active loop
+ * can still hold them, so they are freed only when no run is active. */
+struct qa_x64_instruction_cache {
+  x64_cached_instruction *buckets[X64_INSTRUCTION_BUCKETS];
+  size_t size;
+  uint64_t generation;
+  x64_cached_instruction *retired;
+  x64_managed_block *retired_blocks;
+  int run_depth;
+};
+
+static size_t cache_bucket(uint64_t start) {
+  uint64_t mixed = start * 0x9e3779b97f4a7c15ull;
+  return (size_t)(mixed >> 40) & (X64_INSTRUCTION_BUCKETS - 1u);
+}
+static x64_cached_instruction *cache_get(const qa_x64_instruction_cache *cache, uint64_t start) {
+  for (x64_cached_instruction *entry = cache->buckets[cache_bucket(start)]; entry != NULL; entry = entry->next)
+    if (entry->start == start) return entry;
+  return NULL;
+}
+static void cache_retire(qa_x64_instruction_cache *cache, x64_cached_instruction *entry) {
+  entry->retired_next = cache->retired;
+  cache->retired = entry;
+  cache->generation++;
+}
+static void cache_delete(qa_x64_instruction_cache *cache, uint64_t start) {
+  x64_cached_instruction **link = &cache->buckets[cache_bucket(start)];
+  for (; *link != NULL; link = &(*link)->next) {
+    x64_cached_instruction *entry = *link;
+    if (entry->start != start) continue;
+    *link = entry->next;
+    cache->size--;
+    cache_retire(cache, entry);
+    return;
+  }
+}
+static void cache_clear(qa_x64_instruction_cache *cache) {
+  for (size_t bucket = 0; bucket < X64_INSTRUCTION_BUCKETS; bucket++) {
+    x64_cached_instruction *entry = cache->buckets[bucket];
+    cache->buckets[bucket] = NULL;
+    while (entry != NULL) {
+      x64_cached_instruction *next = entry->next;
+      cache_retire(cache, entry);
+      entry = next;
+    }
+  }
+  cache->size = 0;
+}
+static void retire_managed_block(qa_x64_instruction_cache *cache, x64_managed_block *block) {
+  if (block == NULL) return;
+  block->retired_next = cache->retired_blocks;
+  cache->retired_blocks = block;
+}
+static void free_managed_block(x64_managed_block *block) {
+  qa_guest_executable_guard_free(&block->code);
+  free(block);
+}
+static void cache_free_retired(qa_x64_instruction_cache *cache) {
+  while (cache->retired != NULL) {
+    x64_cached_instruction *entry = cache->retired;
+    cache->retired = entry->retired_next;
+    if (entry->managed_block != NULL) free_managed_block(entry->managed_block);
+    qa_guest_executable_guard_free(&entry->decoded.guard);
+    free(entry);
+  }
+  while (cache->retired_blocks != NULL) {
+    x64_managed_block *block = cache->retired_blocks;
+    cache->retired_blocks = block->retired_next;
+    free_managed_block(block);
+  }
+}
+
 void qa_x64_cpu_init(qa_x64_cpu *cpu, qa_guest_processor_state *state, qa_sparse_guest_memory *memory,
                      bool (*is_host_call)(void *ctx, qa_guest_core_address address), void *is_host_call_ctx,
                      qa_guest_callback_table *callbacks) {
@@ -1044,22 +1162,49 @@ void qa_x64_cpu_init(qa_x64_cpu *cpu, qa_guest_processor_state *state, qa_sparse
     qa_range_error("X64Cpu requires x86-64 processor state and 64-bit guest memory");
   if (callbacks != NULL && (callbacks->memory != memory || is_host_call != NULL))
     qa_range_error("X64Cpu callback table must exclusively own this memory's instruction entries");
+  memset(cpu, 0, sizeof *cpu);
   cpu->state = state;
   cpu->memory = memory;
   cpu->is_host_call = is_host_call;
   cpu->is_host_call_ctx = is_host_call_ctx;
   cpu->callbacks = callbacks;
+  cpu->blocks_allowed = is_host_call == NULL;
+  cpu->managed = qa_managed_guest_processor(state) && qa_sparse_guest_memory_managed(memory) && is_host_call == NULL &&
+                 (callbacks == NULL || qa_guest_callback_table_managed(callbacks));
+  cpu->cache = (qa_x64_instruction_cache *)calloc(1, sizeof *cpu->cache);
+  if (cpu->cache == NULL) qa_range_error("Out of memory");
+}
+
+void qa_x64_cpu_destroy(qa_x64_cpu *cpu) {
+  if (cpu->cache == NULL) return;
+  cache_clear(cpu->cache);
+  cache_free_retired(cpu->cache);
+  free(cpu->cache);
+  cpu->cache = NULL;
 }
 
 typedef struct x64_run_state {
   int64_t instructions;
+  int64_t budget;
+  bool has_return;
+  uint64_t return_offset;
   uint64_t start;
   uint8_t registers[128];
-  uint64_t flags;
-  qa_x64_decode_cursor cursor;
+  uint32_t low_flags, high_flags;
+  x64_semantic_block *block;
+  size_t block_index;
+  x64_semantic_block scratch_block;
+  x64_cached_instruction *retained;
+  x64_cached_instruction *prepared_instruction;
   bool has_cursor;
+  bool cursor_ready;
+  uint64_t revision;
   qa_guest_execution_stop stop;
   bool have_stop;
+  qa_x64_integer_kernel kernel;
+  qa_guest_throw *tc;
+  qa_guest_throw *previous_throw;
+  qa_x64_decode_cursor cursor; /* last: large, initialized on first use */
 } x64_run_state;
 
 static qa_guest_execution_stop make_stop(qa_guest_execution_stop_kind kind, int64_t instructions) {
@@ -1074,110 +1219,394 @@ static qa_guest_core_address evidence_address(uint64_t byte_offset) {
   return address;
 }
 
+/* TS #entryUnhooked. */
+static bool entry_unhooked(qa_x64_cpu *cpu, x64_cached_instruction *instruction, uint64_t revision) {
+  if (!cpu->blocks_allowed) return false;
+  if (instruction->has_unhooked_revision && instruction->unhooked_revision == revision) return true;
+  if (cpu->callbacks != NULL && !qa_guest_callback_table_instruction_unhooked(cpu->callbacks, instruction->start))
+    return false;
+  instruction->has_unhooked_revision = true;
+  instruction->unhooked_revision = revision;
+  return true;
+}
+
+/* TS #block. An incomplete block lives only in the run's scratch slot. */
+static x64_semantic_block *semantic_block(qa_x64_cpu *cpu, x64_run_state *rs, x64_cached_instruction *first,
+                                          uint64_t revision) {
+  qa_x64_instruction_cache *cache = cpu->cache;
+  if (first->has_block && first->block.revision == revision && first->block.generation == cache->generation)
+    return &first->block;
+  x64_semantic_block *scratch = &rs->scratch_block;
+  scratch->revision = revision;
+  scratch->generation = cache->generation;
+  scratch->count = 0;
+  x64_cached_instruction *current = first;
+  bool complete = true;
+  while (current != NULL && current->has_plan) {
+    if (!entry_unhooked(cpu, current, revision)) break;
+    scratch->instructions[scratch->count++] = current;
+    if (current->plan.ends_block || scratch->count == X64_BLOCK_LENGTH) break;
+    current = cache_get(cache, current->plan.next_ip);
+    if (current == NULL) complete = false;
+  }
+  if (scratch->count == 0) return NULL;
+  if (!complete) return scratch;
+  first->block = *scratch;
+  first->has_block = true;
+  return &first->block;
+}
+
+/* TS #managedBlock. A block that is not complete stays with the caller. */
+static x64_managed_block *managed_block(qa_x64_cpu *cpu, x64_cached_instruction *first, uint64_t revision,
+                                        bool *owned_by_first) {
+  qa_x64_instruction_cache *cache = cpu->cache;
+  *owned_by_first = true;
+  if (first->managed_block != NULL && first->managed_block->revision == revision &&
+      first->managed_block->generation == cache->generation)
+    return first->managed_block;
+  if (!first->has_integer) return NULL;
+  x64_managed_block *block = (x64_managed_block *)malloc(sizeof *block);
+  if (block == NULL) qa_range_error("Out of memory");
+  memset(block, 0, sizeof *block);
+  uint8_t bytes[X64_BLOCK_LENGTH * 15u];
+  size_t byte_count = 0;
+  x64_cached_instruction *current = first;
+  bool complete = true;
+  while (current != NULL && current->has_integer) {
+    if (!entry_unhooked(cpu, current, revision)) break;
+    qa_x64_integer_step *step = &block->steps[block->step_count++];
+    step->start = current->start;
+    step->integer = &current->integer;
+    step->safe = qa_x64_integer_block_safe(&current->integer);
+    memcpy(bytes + byte_count, current->decoded.bytes, current->decoded.byte_count);
+    byte_count += current->decoded.byte_count;
+    qa_x64_kernel_op_kind kind = current->integer.operation.kind;
+    if (kind == QA_KERNEL_OP_BRANCH || kind == QA_KERNEL_OP_JUMP || kind == QA_KERNEL_OP_CALL ||
+        kind == QA_KERNEL_OP_RETURN || block->step_count == X64_BLOCK_LENGTH)
+      break;
+    current = cache_get(cache, current->integer.original->next_ip);
+    if (current == NULL) complete = false;
+  }
+  if (block->step_count == 0 ||
+      !qa_sparse_retain_executable_block(cpu->memory, first->start, bytes, byte_count, &block->code)) {
+    free(block);
+    return NULL;
+  }
+  block->revision = revision;
+  block->generation = cache->generation;
+  if (!complete) {
+    *owned_by_first = false;
+    return block;
+  }
+  retire_managed_block(cache, first->managed_block);
+  first->managed_block = block;
+  return block;
+}
+
+static bool is_host(qa_x64_cpu *cpu, qa_guest_core_address address) {
+  return cpu->callbacks != NULL ? qa_guest_callback_table_enter(cpu->callbacks, address)
+                                : cpu->is_host_call != NULL && cpu->is_host_call(cpu->is_host_call_ctx, address);
+}
+
+static qa_x64_flow kernel_plan_executor(void *ctx, const qa_x64_semantic_plan *plan) {
+  return execute_plan((qa_x64_cpu *)ctx, plan);
+}
+static bool managed_after_store(void *ctx) {
+  return qa_guest_executable_block_after_store((const qa_guest_executable_guard *)ctx);
+}
+
+static void memory_stop(qa_x64_cpu *cpu, x64_run_state *rs, const qa_guest_throw *fault) {
+  rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions);
+  rs->stop.exception.kind = QA_EXCEPTION_MEMORY;
+  rs->stop.exception.access = fault->memory.access == QA_FAULT_ACCESS_EXECUTE ? QA_ACCESS_EXECUTE
+                              : fault->memory.access == QA_FAULT_ACCESS_WRITE ? QA_ACCESS_WRITE : QA_ACCESS_READ;
+  rs->stop.exception.address = evidence_address(fault->memory.address);
+  rs->stop.exception.byte_length = (int64_t)fault->memory.byte_length;
+  (void)snprintf(cpu->stop_detail, sizeof cpu->stop_detail, "%.511s", fault->memory.message);
+  rs->stop.exception.detail = cpu->stop_detail;
+}
+static void processor_stop(qa_x64_cpu *cpu, x64_run_state *rs, const qa_guest_throw *fault, uint64_t instruction) {
+  rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions);
+  rs->stop.exception.kind = QA_EXCEPTION_PROCESSOR;
+  rs->stop.exception.vector = fault->vector;
+  rs->stop.exception.has_error_code = fault->vector == 13;
+  rs->stop.exception.error_code = 0;
+  rs->stop.exception.instruction = evidence_address(instruction);
+  (void)snprintf(cpu->stop_detail, sizeof cpu->stop_detail, "%s", fault->detail);
+  rs->stop.exception.detail = cpu->stop_detail;
+}
+static void unsupported_stop(qa_x64_cpu *cpu, x64_run_state *rs, const qa_guest_throw *fault, uint64_t instruction,
+                             const qa_x64_decode_cursor *cursor, const x64_cached_instruction *cached) {
+  rs->stop = make_stop(QA_STOP_UNSUPPORTED, rs->instructions);
+  rs->stop.instruction_address = evidence_address(instruction);
+  if (cursor != NULL) {
+    rs->stop.instruction_bytes_len = qa_x64_cursor_bytes(cursor, cpu->stop_bytes);
+    rs->stop.instruction_bytes = cpu->stop_bytes;
+    (void)snprintf(cpu->stop_mnemonic, sizeof cpu->stop_mnemonic, "opcode %x", qa_x64_cursor_opcode(cursor));
+  } else if (cached != NULL) {
+    rs->stop.instruction_bytes_len = cached->decoded.byte_count;
+    memcpy(cpu->stop_bytes, cached->decoded.bytes, cached->decoded.byte_count);
+    rs->stop.instruction_bytes = cpu->stop_bytes;
+    (void)snprintf(cpu->stop_mnemonic, sizeof cpu->stop_mnemonic, "opcode %x", cached->decoded.opcode);
+  } else {
+    (void)snprintf(cpu->stop_mnemonic, sizeof cpu->stop_mnemonic, "opcode unknown");
+  }
+  rs->stop.mnemonic = cpu->stop_mnemonic;
+  (void)snprintf(cpu->stop_detail, sizeof cpu->stop_detail, "%s", fault->detail);
+  rs->stop.detail = cpu->stop_detail;
+}
+
+/* TS catch arm shared by #runGeneric and #runManaged. */
+static void caught_stop(qa_x64_cpu *cpu, x64_run_state *rs) {
+  qa_guest_throw *tc = rs->tc;
+  qa_integer_register_file_restore(&cpu->state->registers, rs->registers, sizeof rs->registers);
+  qa_processor_flags_restore_words(&cpu->state->flags, rs->low_flags, rs->high_flags);
+  cpu->state->instruction_pointer = rs->start;
+  if (tc->kind == QA_GUEST_THROW_MEMORY) memory_stop(cpu, rs, tc);
+  else if (tc->kind == QA_GUEST_THROW_PROCESSOR) processor_stop(cpu, rs, tc, rs->start);
+  else if (tc->kind == QA_GUEST_THROW_UNSUPPORTED)
+    unsupported_stop(cpu, rs, tc, rs->start, rs->has_cursor ? &rs->cursor : NULL, rs->prepared_instruction);
+  else {
+    cpu->memory->throw_ctx = rs->previous_throw;
+    qa_range_error("Guest throw channel is inconsistent");
+  }
+  rs->have_stop = true;
+}
+
+/* The per-instruction body after #entryUnhooked's host-call check; both TS run
+ * loops repeat it verbatim. */
+static void execute_cached_or_decode(qa_x64_cpu *cpu, x64_run_state *rs) {
+  qa_x64_instruction_cache *cache = cpu->cache;
+  qa_guest_processor_state *state = cpu->state;
+  uint64_t start = rs->start;
+  x64_cached_instruction *retained = rs->retained;
+  bool unchanged = state->instruction_pointer == start && retained != NULL &&
+                   qa_x64_decoded_unchanged(&retained->decoded);
+  if (!unchanged && rs->block != NULL) {
+    x64_cached_instruction *owner = rs->block->instructions[0];
+    if (rs->block == &owner->block) owner->has_block = false;
+    rs->block = NULL;
+  }
+  qa_x64_flow flow;
+  uint64_t next_ip;
+  if (unchanged && retained->has_plan && state->instruction_pointer == start) {
+    rs->prepared_instruction = retained;
+    flow = retained->has_integer ? qa_x64_integer_kernel_execute(&rs->kernel, &retained->integer)
+                                 : execute_plan(cpu, &retained->plan);
+    next_ip = retained->plan.next_ip;
+  } else {
+    rs->block = NULL;
+    qa_x64_decoded_instruction *decoded = unchanged ? &retained->decoded : NULL;
+    if (!rs->cursor_ready) {
+      qa_x64_decode_cursor_init(&rs->cursor, cpu->memory, state, decoded);
+      rs->cursor_ready = true;
+    } else {
+      qa_x64_decode_cursor_reset(&rs->cursor, decoded);
+    }
+    rs->has_cursor = true;
+    flow = execute_instruction(cpu, &rs->cursor);
+    next_ip = qa_x64_cursor_next_ip(&rs->cursor);
+    if (decoded == NULL) {
+      x64_cached_instruction *entry = (x64_cached_instruction *)calloc(1, sizeof *entry);
+      if (entry == NULL) qa_range_error("Out of memory");
+      bool prepared = qa_x64_cursor_cache(&rs->cursor, &entry->decoded);
+      if (cache->size >= X64_INSTRUCTION_LIMIT) {
+        cache_clear(cache);
+        cpu->decode_cache_clears++;
+      }
+      cache_delete(cache, start);
+      if (!prepared || qa_x64_cursor_start(&rs->cursor) != start) {
+        if (prepared) qa_guest_executable_guard_free(&entry->decoded.guard);
+        free(entry);
+      } else {
+        entry->start = start;
+        entry->has_plan = rs->cursor.has_plan;
+        if (entry->has_plan) {
+          entry->plan = rs->cursor.plan;
+          entry->has_integer = qa_prepare_x64_integer_plan(&entry->integer, &entry->plan);
+        }
+        size_t bucket = cache_bucket(start);
+        entry->next = cache->buckets[bucket];
+        cache->buckets[bucket] = entry;
+        cache->size++;
+      }
+    }
+  }
+  state->instruction_pointer = flow.kind == QA_X64_BRANCH ? flow.target : next_ip;
+  if (rs->block != NULL) {
+    rs->block_index++;
+    if ((rs->prepared_instruction != NULL && rs->prepared_instruction->plan.ends_block) ||
+        rs->block_index >= rs->block->count)
+      rs->block = NULL;
+  }
+  if (flow.kind == QA_X64_HALT) {
+    rs->stop = make_stop(QA_STOP_HALT, rs->instructions + 1);
+    rs->stop.address = evidence_address(start);
+    rs->have_stop = true;
+  } else if (flow.kind == QA_X64_TRAP) {
+    rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions + 1);
+    rs->stop.exception.kind = QA_EXCEPTION_PROCESSOR;
+    rs->stop.exception.vector = flow.vector;
+    rs->stop.exception.has_error_code = false;
+    rs->stop.exception.instruction = evidence_address(start);
+    rs->stop.exception.detail = "Software breakpoint";
+    rs->have_stop = true;
+  }
+}
+
+/* TS `block?.instructions[blockIndex] ?? #instructions.get(start)`. */
+static x64_cached_instruction *select_retained(qa_x64_cpu *cpu, x64_run_state *rs, uint64_t start, uint64_t revision) {
+  if (rs->block != NULL &&
+      (rs->block->revision != revision || rs->block_index >= rs->block->count ||
+       rs->block->instructions[rs->block_index]->start != start))
+    rs->block = NULL;
+  return rs->block != NULL ? rs->block->instructions[rs->block_index] : cache_get(cpu->cache, start);
+}
+
+/* TS #entryUnhooked gate; true when the entry stopped at a host call. */
+static bool enter_instruction(qa_x64_cpu *cpu, x64_run_state *rs, uint64_t revision, bool blocks_gate) {
+  if (blocks_gate && rs->block == NULL && rs->retained != NULL && rs->retained->has_plan) {
+    rs->block = semantic_block(cpu, rs, rs->retained, revision);
+    rs->block_index = 0;
+  }
+  if (rs->block == NULL && (rs->retained == NULL || !entry_unhooked(cpu, rs->retained, revision))) {
+    qa_guest_core_address address = evidence_address(rs->start);
+    if (is_host(cpu, address)) {
+      rs->stop = make_stop(QA_STOP_HOST_CALL, rs->instructions);
+      rs->stop.address = address;
+      rs->have_stop = true;
+      return true;
+    }
+    /* Entry observers can run nested guest calls and replace cached code. */
+    rs->retained = cache_get(cpu->cache, rs->start);
+  }
+  return false;
+}
+
+static void run_generic(qa_x64_cpu *cpu, x64_run_state *rs, jmp_buf *buf) {
+  qa_guest_processor_state *state = cpu->state;
+  for (; rs->instructions < rs->budget; rs->instructions++) {
+    rs->start = state->instruction_pointer;
+    if (rs->has_return && rs->return_offset == rs->start) {
+      rs->stop = make_stop(QA_STOP_RETURN, rs->instructions);
+      rs->stop.address = evidence_address(rs->start);
+      rs->have_stop = true;
+      return;
+    }
+    (void)qa_integer_register_file_checkpoint(&state->registers, rs->registers, sizeof rs->registers);
+    rs->low_flags = state->flags.low;
+    rs->high_flags = state->flags.high;
+    rs->has_cursor = false;
+    rs->prepared_instruction = NULL;
+    if (setjmp(*buf) == 0) {
+      (void)qa_x64_canonical_address(rs->tc, rs->start);
+      uint64_t revision = cpu->callbacks != NULL ? qa_guest_callback_table_entry_revision(cpu->callbacks) : 0;
+      rs->retained = select_retained(cpu, rs, rs->start, revision);
+      if (enter_instruction(cpu, rs, revision, cpu->blocks_allowed)) return;
+      execute_cached_or_decode(cpu, rs);
+      if (rs->have_stop) return;
+    } else {
+      caught_stop(cpu, rs);
+      return;
+    }
+  }
+}
+
+static void run_managed(qa_x64_cpu *cpu, x64_run_state *rs, jmp_buf *buf) {
+  qa_guest_processor_state *state = cpu->state;
+  qa_x64_instruction_cache *cache = cpu->cache;
+  for (; rs->instructions < rs->budget; rs->instructions++) {
+    rs->start = state->instruction_pointer;
+    if (rs->has_return && rs->return_offset == rs->start) {
+      rs->stop = make_stop(QA_STOP_RETURN, rs->instructions);
+      rs->stop.address = evidence_address(rs->start);
+      rs->have_stop = true;
+      return;
+    }
+    uint64_t revision = cpu->callbacks != NULL ? qa_guest_callback_table_entry_revision(cpu->callbacks) : 0;
+    rs->retained = select_retained(cpu, rs, rs->start, revision);
+    x64_cached_instruction *first = rs->retained;
+    bool owned_by_first = true;
+    x64_managed_block *prepared = first == NULL || !first->has_integer ? NULL
+                                  : managed_block(cpu, first, revision, &owned_by_first);
+    if (prepared != NULL && !qa_guest_executable_guard_unchanged(&prepared->code)) {
+      /* TS `first.managedBlock = null`, whichever block was prepared. */
+      if (!owned_by_first) retire_managed_block(cache, prepared);
+      retire_managed_block(cache, first->managed_block);
+      first->managed_block = NULL;
+    } else if (prepared != NULL && qa_integer_register_file_attached(&state->registers)) {
+      qa_x64_integer_block_result result = qa_x64_integer_kernel_execute_block(
+          &rs->kernel, prepared->steps, prepared->step_count, rs->budget - rs->instructions, rs->has_return,
+          rs->return_offset, managed_after_store, &prepared->code);
+      if (!owned_by_first) retire_managed_block(cache, prepared);
+      rs->instructions += result.instructions;
+      rs->block = NULL;
+      if (result.kind == QA_KERNEL_BLOCK_RETURN) {
+        rs->stop = make_stop(QA_STOP_RETURN, rs->instructions);
+        rs->stop.address = evidence_address(state->instruction_pointer);
+        rs->have_stop = true;
+        return;
+      }
+      if (result.kind == QA_KERNEL_BLOCK_FAULT) {
+        const qa_guest_throw *fault = &result.fault;
+        uint64_t at = state->instruction_pointer;
+        if (fault->kind == QA_GUEST_THROW_MEMORY) memory_stop(cpu, rs, fault);
+        else if (fault->kind == QA_GUEST_THROW_PROCESSOR) processor_stop(cpu, rs, fault, at);
+        else if (fault->kind == QA_GUEST_THROW_UNSUPPORTED)
+          unsupported_stop(cpu, rs, fault, at, NULL, cache_get(cache, at));
+        else qa_range_error("Guest throw channel is inconsistent");
+        rs->have_stop = true;
+        return;
+      }
+      rs->instructions--;
+      continue;
+    } else if (prepared != NULL && !owned_by_first) {
+      retire_managed_block(cache, prepared);
+    }
+    (void)qa_integer_register_file_checkpoint(&state->registers, rs->registers, sizeof rs->registers);
+    rs->low_flags = state->flags.low;
+    rs->high_flags = state->flags.high;
+    rs->has_cursor = false;
+    rs->prepared_instruction = NULL;
+    rs->revision = revision;
+    if (setjmp(*buf) == 0) {
+      (void)qa_x64_canonical_address(rs->tc, rs->start);
+      if (enter_instruction(cpu, rs, rs->revision, true)) return;
+      execute_cached_or_decode(cpu, rs);
+      if (rs->have_stop) return;
+    } else {
+      caught_stop(cpu, rs);
+      return;
+    }
+  }
+}
+
 qa_guest_execution_stop qa_x64_cpu_run(qa_x64_cpu *cpu, int64_t instruction_budget,
                                        bool has_return_address, qa_guest_core_address return_address) {
   if (instruction_budget < 0 || instruction_budget > QA_MAX_SAFE_INTEGER)
     qa_range_error("Instruction budget must be a nonnegative safe integer");
   x64_run_state state;
   x64_run_state *rs = &state;
-  memset(rs, 0, sizeof *rs);
+  memset(rs, 0, offsetof(x64_run_state, cursor));
+  rs->budget = instruction_budget;
+  rs->has_return = has_return_address;
+  rs->return_offset = return_address.byte_offset;
   jmp_buf buf;
   qa_guest_throw throw_ctx;
-  qa_guest_throw *tc = &throw_ctx;
-  qa_guest_throw_init(tc, &buf);
+  qa_guest_throw_init(&throw_ctx, &buf);
+  rs->tc = &throw_ctx;
   qa_guest_throw *previous = cpu->memory->throw_ctx;
-  cpu->memory->throw_ctx = tc;
-  for (; rs->instructions < instruction_budget; rs->instructions++) {
-    rs->start = cpu->state->instruction_pointer;
-    if (has_return_address && return_address.byte_offset == rs->start) {
-      rs->stop = make_stop(QA_STOP_RETURN, rs->instructions);
-      rs->stop.address = evidence_address(rs->start);
-      rs->have_stop = true;
-      break;
-    }
-    (void)qa_integer_register_file_checkpoint(&cpu->state->registers, rs->registers, sizeof rs->registers);
-    rs->flags = qa_processor_flags_value(&cpu->state->flags);
-    rs->has_cursor = false;
-    if (setjmp(buf) == 0) {
-      (void)qa_x64_canonical_address(tc, rs->start);
-      qa_guest_core_address address = evidence_address(rs->start);
-      bool host = cpu->callbacks != NULL
-                      ? qa_guest_callback_table_enter(cpu->callbacks, address)
-                      : cpu->is_host_call != NULL && cpu->is_host_call(cpu->is_host_call_ctx, address);
-      if (host) {
-        rs->stop = make_stop(QA_STOP_HOST_CALL, rs->instructions);
-        rs->stop.address = address;
-        rs->have_stop = true;
-        break;
-      }
-      /* Entry observers may have redirected IP: decode from the live IP
-       * (TS cursor reset likewise re-reads state.instructionPointer). */
-      qa_x64_decode_cursor_init(&rs->cursor, cpu->memory, cpu->state, NULL);
-      rs->has_cursor = true;
-      qa_x64_flow flow = execute_instruction(cpu, &rs->cursor);
-      uint64_t next_ip = qa_x64_cursor_next_ip(&rs->cursor);
-      cpu->state->instruction_pointer = flow.kind == QA_X64_BRANCH ? flow.target : next_ip;
-      if (flow.kind == QA_X64_HALT) {
-        rs->stop = make_stop(QA_STOP_HALT, rs->instructions + 1);
-        rs->stop.address = address;
-        rs->have_stop = true;
-        break;
-      }
-      if (flow.kind == QA_X64_TRAP) {
-        rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions + 1);
-        rs->stop.exception.kind = QA_EXCEPTION_PROCESSOR;
-        rs->stop.exception.vector = flow.vector;
-        rs->stop.exception.has_error_code = false;
-        rs->stop.exception.instruction = address;
-        rs->stop.exception.detail = "Software breakpoint";
-        rs->have_stop = true;
-        break;
-      }
-    } else {
-      qa_integer_register_file_restore(&cpu->state->registers, rs->registers, sizeof rs->registers);
-      qa_processor_flags_set_value(&cpu->state->flags, rs->flags);
-      cpu->state->instruction_pointer = rs->start;
-      qa_guest_core_address address = evidence_address(rs->start);
-      if (tc->kind == QA_GUEST_THROW_MEMORY) {
-        rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions);
-        rs->stop.exception.kind = QA_EXCEPTION_MEMORY;
-        rs->stop.exception.access = tc->memory.access == QA_FAULT_ACCESS_EXECUTE ? QA_ACCESS_EXECUTE
-                                    : tc->memory.access == QA_FAULT_ACCESS_WRITE ? QA_ACCESS_WRITE : QA_ACCESS_READ;
-        rs->stop.exception.address = evidence_address(tc->memory.address);
-        rs->stop.exception.byte_length = (int64_t)tc->memory.byte_length;
-        (void)snprintf(cpu->stop_detail, sizeof cpu->stop_detail, "%.511s", tc->memory.message);
-        rs->stop.exception.detail = cpu->stop_detail;
-      } else if (tc->kind == QA_GUEST_THROW_PROCESSOR) {
-        rs->stop = make_stop(QA_STOP_EXCEPTION, rs->instructions);
-        rs->stop.exception.kind = QA_EXCEPTION_PROCESSOR;
-        rs->stop.exception.vector = tc->vector;
-        rs->stop.exception.has_error_code = tc->vector == 13;
-        rs->stop.exception.error_code = 0;
-        rs->stop.exception.instruction = address;
-        (void)snprintf(cpu->stop_detail, sizeof cpu->stop_detail, "%s", tc->detail);
-        rs->stop.exception.detail = cpu->stop_detail;
-      } else if (tc->kind == QA_GUEST_THROW_UNSUPPORTED) {
-        rs->stop = make_stop(QA_STOP_UNSUPPORTED, rs->instructions);
-        rs->stop.instruction_address = address;
-        if (rs->has_cursor) {
-          rs->stop.instruction_bytes_len = qa_x64_cursor_bytes(&rs->cursor, cpu->stop_bytes);
-          rs->stop.instruction_bytes = cpu->stop_bytes;
-          (void)snprintf(cpu->stop_mnemonic, sizeof cpu->stop_mnemonic,
-                         "opcode %x", qa_x64_cursor_opcode(&rs->cursor));
-        } else {
-          (void)snprintf(cpu->stop_mnemonic, sizeof cpu->stop_mnemonic, "opcode unknown");
-        }
-        rs->stop.mnemonic = cpu->stop_mnemonic;
-        (void)snprintf(cpu->stop_detail, sizeof cpu->stop_detail, "%s", tc->detail);
-        rs->stop.detail = cpu->stop_detail;
-      } else {
-        cpu->memory->throw_ctx = previous;
-        qa_range_error("Guest throw channel is inconsistent");
-      }
-      rs->have_stop = true;
-      break;
-    }
-  }
+  rs->previous_throw = previous;
+  cpu->memory->throw_ctx = &throw_ctx;
+  if (!qa_x64_integer_kernel_init(&rs->kernel, cpu->state, cpu->memory))
+    qa_range_error("X64Cpu requires x86-64 processor state and 64-bit guest memory");
+  rs->kernel.execute_plan = kernel_plan_executor;
+  rs->kernel.execute_plan_ctx = cpu;
+  if (cpu->cache->run_depth == 0) cache_free_retired(cpu->cache);
+  cpu->cache->run_depth++;
+  if (cpu->managed) run_managed(cpu, rs, &buf);
+  else run_generic(cpu, rs, &buf);
+  cpu->cache->run_depth--;
   cpu->memory->throw_ctx = previous;
   if (rs->have_stop) return rs->stop;
   if (has_return_address && return_address.byte_offset == cpu->state->instruction_pointer) {
@@ -1187,4 +1616,3 @@ qa_guest_execution_stop qa_x64_cpu_run(qa_x64_cpu *cpu, int64_t instruction_budg
   }
   return make_stop(QA_STOP_BUDGET, instruction_budget);
 }
-

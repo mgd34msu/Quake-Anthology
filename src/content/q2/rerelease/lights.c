@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 
 double qa_q2_rerelease_color(const char *value) {
   if (!value || !strchr(value, ' ')) return (double)qa_native_atoi(value ? value : "");
@@ -19,10 +20,11 @@ double qa_q2_rerelease_color(const char *value) {
     comp[idx++] = qa_native_atof(tok);
   bool any = false; for (int i = 0; i < 4; i++) if (comp[i] > 1) any = true;
   double mult = any ? 1 : 255;
-  long ch0 = (long)trunc(comp[0] * mult), ch1 = (long)trunc(comp[1] * mult);
-  long ch2 = (long)trunc(comp[2] * mult), ch3 = (long)trunc(comp[3] * mult);
-  int32_t r = (int32_t)(ch3 | (ch2 << 8) | (ch1 << 16) | (ch0 << 24));
-  return (double)r;
+  /* channel(3) | channel(2) << 8 | channel(1) << 16 | channel(0) << 24: each channel
+   * is any number (map text), so ToInt32 and the 32-bit shifts apply. */
+  double ch0 = trunc(comp[0] * mult), ch1 = trunc(comp[1] * mult);
+  double ch2 = trunc(comp[2] * mult), ch3 = trunc(comp[3] * mult);
+  return qa_js_bit_or(qa_js_bit_or(qa_js_bit_or(ch3, qa_js_shl(ch2, 8)), qa_js_shl(ch1, 16)), qa_js_shl(ch0, 24));
 }
 
 bool qa_q2_rerelease_lights_get_active(qa_q2_rerelease_lights *l, qa_actor_id a, bool *out) {
@@ -44,17 +46,18 @@ void qa_q2_rerelease_lights_clear(qa_q2_rerelease_lights *l) { l->count = 0; }
 
 static void show_light(qa_q2_rerelease_lights *l, qa_q2_entity *e, qa_q2_game_services *g) {
   e->visible = rr_band(e->server_flags, 1) == 0;
-  uint32_t skin = (uint32_t)(int32_t)e->skin;
+  uint32_t skin = qa_js_to_uint32(e->skin); /* TS skin >>> n */
   qa_q2_rerelease_event ev; memset(&ev, 0, sizeof ev);
   ev.kind = "dynamic-light"; ev.has_actor = true; ev.actor = e->actor.id;
   ev.origin = rr_body_of(g, e).origin; ev.radius = e->frame;
-  ev.light_color = rr_v3((double)((skin >> 24) & 255) / 255, (double)((skin >> 16) & 255) / 255, (double)((skin >> 8) & 255) / 255);
+  ev.light_color = rr_v3((double)(qa_js_to_int32((skin >> 24) & 255)) / 255, (double)(qa_js_to_int32((skin >> 16) & 255)) / 255, (double)(qa_js_to_int32((skin >> 8) & 255)) / 255);
   ev.visible = e->visible;
   rr_emit_rr(&l->hooks, ev);
 }
 static void light_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *o, const qa_actor_id *a);
 static void light_flicker(void *c, qa_q2_entity *e, qa_q2_game_services *g);
 static void light_think(void *c, qa_q2_entity *e, qa_q2_game_services *g);
+static double style_code_at(const char *style, size_t length, double index);
 static void light_use(void *c, qa_q2_entity *e, qa_q2_game_services *g, const qa_actor_id *o, const qa_actor_id *a) {
   (void)o; (void)a; qa_q2_rerelease_lights *l = c;
   bool cur = false; qa_q2_rerelease_lights_get_active(l, e->actor.id, &cur);
@@ -79,17 +82,24 @@ static void light_think(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   if (!target) qa_q2rr_error("target_light lost its source color target");
   e->delay += e->speed;
   size_t slen = strlen(style);
-  long index = (long)trunc(e->delay) % (long)slen; if (index < 0) index += (long)slen;
-  double current = ((unsigned char)style[index] - 97) / 25.0;
-  double fraction = e->delay - trunc(e->delay); /* TS % 1 (sign of dividend; delay grows +) */
-  double next = ((unsigned char)style[(index + 1) % (long)slen] - 97) / 25.0;
+  /* Math.trunc(delay) % length and charCodeAt: a negative index (negative speed) reads NaN
+   * and a NaN index reads character 0, where a C long cast would be undefined. */
+  double index = fmod(trunc(e->delay), (double)slen);
+  double current = (style_code_at(style, slen, index) - 97) / 25.0;
+  double fraction = fmod(e->delay, 1);
+  double next = (style_code_at(style, slen, fmod(index + 1, (double)slen)) - 97) / 25.0;
   double lerp = rr_band(e->spawnflags, 2) != 0 ? current : next * fraction + current * (1 - fraction);
-  uint32_t tskin = (uint32_t)(int32_t)target->skin, cskin = (uint32_t)(int32_t)e->count;
-  long ch8 = (long)trunc((double)((tskin >> 8) & 255) * lerp + (double)((cskin >> 8) & 255) * (1 - lerp));
-  long ch16 = (long)trunc((double)((tskin >> 16) & 255) * lerp + (double)((cskin >> 16) & 255) * (1 - lerp));
-  long ch24 = (long)trunc((double)((tskin >> 24) & 255) * lerp + (double)((cskin >> 24) & 255) * (1 - lerp));
-  e->skin = (double)(int32_t)((ch8 << 8) | (ch16 << 16) | (ch24 << 24));
+  uint32_t tskin = qa_js_to_uint32(target->skin), cskin = qa_js_to_uint32(e->count); /* TS >>> */
+  double ch8 = trunc((double)(qa_js_to_int32((tskin >> 8) & 255)) * lerp + (double)(qa_js_to_int32((cskin >> 8) & 255)) * (1 - lerp));
+  double ch16 = trunc((double)(qa_js_to_int32((tskin >> 16) & 255)) * lerp + (double)(qa_js_to_int32((cskin >> 16) & 255)) * (1 - lerp));
+  double ch24 = trunc((double)(qa_js_to_int32((tskin >> 24) & 255)) * lerp + (double)(qa_js_to_int32((cskin >> 24) & 255)) * (1 - lerp));
+  e->skin = qa_js_bit_or(qa_js_bit_or(qa_js_shl(ch8, 8), qa_js_shl(ch16, 16)), qa_js_shl(ch24, 24)); /* JS << and | on int32 */
   show_light(l, e, g); g->schedule(g->ctx, e, 0.1, l->think);
+}
+/* String.prototype.charCodeAt over an ASCII style string. */
+static double style_code_at(const char *style, size_t length, double index) {
+  double at = isnan(index) ? 0 : trunc(index);
+  return at >= 0 && at < (double)length ? (double)(unsigned char)style[(size_t)at] : NAN;
 }
 void qa_q2_rerelease_lights_init(qa_q2_rerelease_lights *l, qa_q2_rerelease_hooks hooks) {
   memset(l, 0, sizeof *l); l->hooks = hooks;

@@ -9,6 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 #define CS_LOCATIONS 608
 #define MASK_TARGET_LASER (0x1 | 0x2000000 | 0x4000000)
 static float f32(double v) { return (float)v; }
@@ -46,9 +47,10 @@ static void dispatch(RT *r, qa_q3_game_entity *e, const qa_q3_use_participant *a
   uc.pool = r->entities; uc.time = game_time(r); uc.ctx = r->ctx; uc.remap_shader = r->remap_shader; uc.warn = r->warn;
   qa_q3_use_targets(uc, e, activator);
 }
+/* TS useClient(requireActivator(runtime, a)): a path_corner fires its targets with no activator; the QVM read a
+   null client from low memory and carried on, so a NULL activator yields no client. */
 static qa_q3_game_entity *use_client_of(RT *r, const qa_q3_use_participant *a) {
-  qa_q3_use_participant req = qa_q3_require_use_participant(a);
-  return qa_q3_use_client(req, r->has_participants ? &r->participants : NULL);
+  return qa_q3_use_client(a, r->has_participants ? &r->participants : NULL);
 }
 static qa_q3_game_entity *pick(RT *r, const char *name) {
   qa_q3_target_selection_context s; memset(&s, 0, sizeof s);
@@ -74,11 +76,11 @@ static void use_give(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participan
 static void use_remove_powerups(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)e; (void)o; RT *r = ctx; qa_q3_game_entity *act = use_client_of(r, a);
   if (!act || !act->client) return;
-  qa_q3_game_player_slots_mirror *p = &act->client->ps.powerups;
-  if (qa_q3_game_slots_get_mirror(p, QA_Q3_PW_REDFLAG) != 0) r->return_flag(r->ctx, 1);
-  else if (qa_q3_game_slots_get_mirror(p, QA_Q3_PW_BLUEFLAG) != 0) r->return_flag(r->ctx, 2);
-  else if (qa_q3_game_slots_get_mirror(p, QA_Q3_PW_NEUTRALFLAG) != 0) r->return_flag(r->ctx, 0);
-  for (size_t i = 0; i < p->length; i++) qa_q3_game_slots_set_mirror(p, i, 0);
+  qa_q3_base_player_state_slots *p = &act->client->ps.powerups;
+  if (qa_q3_base_player_state_slots_get(p, QA_Q3_PW_REDFLAG) != 0) r->return_flag(r->ctx, 1);
+  else if (qa_q3_base_player_state_slots_get(p, QA_Q3_PW_BLUEFLAG) != 0) r->return_flag(r->ctx, 2);
+  else if (qa_q3_base_player_state_slots_get(p, QA_Q3_PW_NEUTRALFLAG) != 0) r->return_flag(r->ctx, 0);
+  for (size_t i = 0; i < p->length; i++) qa_q3_base_player_state_slots_set(p, i, 0);
 }
 static double target_crandom(RT *r) {
   double v = r->crandom(r->ctx);
@@ -96,59 +98,66 @@ static void use_delay(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participa
 }
 static void use_score(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)o; RT *r = ctx; qa_q3_game_entity *p = use_client_of(r, a);
-  if (p) r->add_score(r->ctx, p, e->r.current_origin, e->count);
+  if (p) r->add_score(r->ctx, p, qa_q3_base_entity_shared_current_origin(&e->r), e->count);
 }
 static void use_print(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
-  (void)o; RT *r = ctx; qa_q3_use_participant req = qa_q3_require_use_participant(a);
-  qa_q3_game_entity *player = qa_q3_use_client(req, r->has_participants ? &r->participants : NULL);
+  (void)o; RT *r = ctx;
+  qa_q3_game_entity *player = use_client_of(r, a);
   qa_q3_game_format_arg arg = e->message ? qa_q3_game_format_string(e->message) : qa_q3_game_format_null();
   char *command = qa_q3_game_format("cp \"%s\"", &arg, 1, 32000);
-  if (player && ((int)e->spawnflags & 4) != 0) { r->send_server_command(r->ctx, player->slot, command); free(command); return; }
-  if (((int)e->spawnflags & 3) != 0) {
+  if (player && (qa_js_to_int32(e->spawnflags) & 4) != 0) { r->send_server_command(r->ctx, player->slot, command); free(command); return; }
+  if ((qa_js_to_int32(e->spawnflags) & 3) != 0) {
     /* teamCommand send: bounce through file-scope-free adapter via runtime fields. */
-    if (((int)e->spawnflags & 1) != 0) qa_q3_team_command(r->entities, 1, command, (qa_q3_team_command_send_fn)r->send_server_command, r->ctx);
-    if (((int)e->spawnflags & 2) != 0) qa_q3_team_command(r->entities, 2, command, (qa_q3_team_command_send_fn)r->send_server_command, r->ctx);
+    if ((qa_js_to_int32(e->spawnflags) & 1) != 0) qa_q3_team_command(r->entities, 1, command, (qa_q3_team_command_send_fn)r->send_server_command, r->ctx);
+    if ((qa_js_to_int32(e->spawnflags) & 2) != 0) qa_q3_team_command(r->entities, 2, command, (qa_q3_team_command_send_fn)r->send_server_command, r->ctx);
     free(command); return;
   }
   r->send_server_command(r->ctx, -1, command); free(command);
 }
 static void use_speaker(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)o; RT *r = ctx;
-  if (((int)e->spawnflags & 3) != 0) { e->s.loop_sound = e->s.loop_sound != 0 ? 0 : e->noise_index; return; }
-  if (((int)e->spawnflags & 8) != 0) {
-    qa_q3_use_participant req = qa_q3_require_use_participant(a);
+  if ((qa_js_to_int32(e->spawnflags) & 3) != 0) { e->s.loop_sound = e->s.loop_sound != 0 ? 0 : e->noise_index; return; }
+  if ((qa_js_to_int32(e->spawnflags) & 8) != 0) {
+    if (!a) return;
+    qa_q3_use_participant req = *a;
     if (req.entity) qa_q3_entity_pool_add_event(r->entities, req.entity, QA_Q3_EV_GENERAL_SOUND, e->noise_index);
     else {
       if (!r->has_participants) qa_range_error("Shared target sound requires actor events");
       r->participants.event(r->participants.ctx, qa_q3_use_actor(req), QA_Q3_EV_GENERAL_SOUND, e->noise_index);
     }
-  } else if (((int)e->spawnflags & 4) != 0) qa_q3_entity_pool_add_event(r->entities, e, QA_Q3_EV_GLOBAL_SOUND, e->noise_index);
+  } else if ((qa_js_to_int32(e->spawnflags) & 4) != 0) qa_q3_entity_pool_add_event(r->entities, e, QA_Q3_EV_GLOBAL_SOUND, e->noise_index);
   else qa_q3_entity_pool_add_event(r->entities, e, QA_Q3_EV_GENERAL_SOUND, e->noise_index);
 }
 static void use_push(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)o; RT *r = ctx; qa_q3_game_entity *act = use_client_of(r, a);
   if (!act || !act->client) return;
   qa_q3_game_client *c = act->client;
-  if ((int)c->ps.pm_type != QA_Q3_PM_NORMAL || qa_q3_game_slots_get_mirror(&c->ps.powerups, QA_Q3_PW_FLIGHT) != 0) return;
-  c->ps.velocity = e->s.origin2;
+  if (qa_js_to_int32(c->ps.pm_type) != QA_Q3_PM_NORMAL || qa_q3_base_player_state_slots_get(&c->ps.powerups, QA_Q3_PW_FLIGHT) != 0) return;
+  qa_q3_base_player_state_record_set_velocity(&c->ps, e->s.origin2);
   double t = game_time(r);
   if (act->fly_sound_debounce_time < t) {
     act->fly_sound_debounce_time = qa_int32(t + 1500);
-    qa_q3_game_entity *s = qa_q3_entity_pool_temp_entity(r->entities, act->r.current_origin, QA_Q3_EV_GENERAL_SOUND);
+    qa_q3_game_entity *s = qa_q3_entity_pool_temp_entity(r->entities, qa_q3_base_entity_shared_current_origin(&act->r), QA_Q3_EV_GENERAL_SOUND);
     s->s.event_parm = e->noise_index;
   }
 }
 static void laser_think(RT *r, qa_q3_game_entity *e) {
   if (e->enemy) {
     qa_q3_game_entity *en = e->enemy;
-    qa_vec3 point = qa_add3(qa_add3(en->s.origin, qa_scale3(en->r.mins, 0.5)), qa_scale3(en->r.maxs, 0.5));
+    qa_vec3 a = qa_add3(en->s.origin, qa_scale3(qa_q3_base_entity_shared_mins(&en->r), 0.5));
+    qa_vec3 b = qa_scale3(qa_q3_base_entity_shared_maxs(&en->r), 0.5);
+    qa_vec3 point = qa_add3(a, b);
     e->movedir = qa_normalize3(qa_sub3(point, e->s.origin));
   }
   qa_vec3 end = qa_add3(e->s.origin, qa_scale3(e->movedir, 2048));
   qa_q3_game_combat_context *c = combat_ctx(r);
-  qa_q3_target_laser_trace tr = r->laser_trace(r->ctx, e->s.origin, end, qa_q3_game_entity_actor(e).id, MASK_TARGET_LASER);
-  if (tr.hit_kind == 1) {
-    qa_q3_damage_participant target = r->participant(r->ctx, tr.hit_actor);
+  qa_q3_base_actor_trace_query query; memset(&query, 0, sizeof query);
+  qa_actor_id pass = qa_q3_game_entity_actor(e).id;
+  query.start = e->s.origin; query.end = end; query.shape.kind = QA_Q3_BASE_SHAPE_POINT;
+  query.pass_actor = &pass; query.mask = MASK_TARGET_LASER;
+  qa_q3_base_actor_trace_result tr = c->spatial.trace_actor(c->spatial.ctx, query);
+  if (tr.hit_kind == QA_Q3_BASE_HIT_ACTOR) {
+    qa_q3_damage_participant target = c->participant(c->services_ctx, tr.hit_actor);
     if (!target.entity || target.entity->slot != 0) {
       qa_q3_damage_participant self = qa_q3_participant_entity(e);
       qa_vec3 dir = e->movedir;
@@ -173,8 +182,11 @@ static void start_laser(RT *r, qa_q3_game_entity *e) {
   if (e->target) {
     qa_q3_game_entity *t = qa_q3_find_entity(r->entities, NULL, QA_Q3_FIELD_TARGETNAME, e->target);
     if (!t) {
-      qa_q3_game_format_arg args[3] = {qa_q3_game_format_string(qa_q3_game_entity_classname(e)),
-        qa_q3_game_format_string(vtos_of(r, e->s.origin)), qa_q3_game_format_string(e->target)};
+      qa_q3_game_format_arg value = qa_q3_game_format_string(qa_q3_game_entity_classname(e));
+      qa_q3_game_format_arg value2 = qa_q3_game_format_string(vtos_of(r, e->s.origin));
+      qa_q3_game_format_arg value3 = qa_q3_game_format_string(e->target);
+      qa_q3_game_format_arg args[3] = {value,
+        value2, value3};
       warn_fmt(r, "%s at %s: %s is a bad target\n", args, 3);
     }
     e->enemy = t;
@@ -182,7 +194,7 @@ static void start_laser(RT *r, qa_q3_game_entity *e) {
   e->use = qa_q3_callback_family_resolve(&r->entities->callbacks.use, "q3.base.game.targets.startTargetLaser.use");
   e->think = qa_q3_callback_family_resolve(&r->entities->callbacks.think, "q3.base.game.targets.startTargetLaser.think");
   if (e->damage == 0) e->damage = 1;
-  if (((int)e->spawnflags & 1) != 0) laser_on(r, e); else laser_off(r, e);
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) laser_on(r, e); else laser_off(r, e);
 }
 static void cb_start_laser(void *ctx, qa_q3_game_entity *e) { start_laser(ctx, e); }
 static void teleport_to(RT *r, qa_q3_game_entity *player, qa_vec3 origin, qa_vec3 angles) {
@@ -197,7 +209,9 @@ static void use_teleporter(void *ctx, qa_q3_game_entity *e, const qa_q3_use_part
   teleport_to(r, act, dest->s.origin, dest->s.angles);
 }
 static void use_kill(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
-  (void)e; (void)o; RT *r = ctx; qa_q3_use_participant req = qa_q3_require_use_participant(a);
+  (void)e; (void)o; RT *r = ctx;
+  if (!a) return;
+  qa_q3_use_participant req = *a;
   qa_q3_combat_damage(combat_ctx(r), req, NULL, NULL, NULL, NULL, 100000, QA_Q3_DAMAGE_NO_PROTECTION, 18);
 }
 static void link_locations(RT *r) {
@@ -219,11 +233,10 @@ static void link_locations(RT *r) {
 static void cb_location(void *ctx, qa_q3_game_entity *e) { (void)e; link_locations(ctx); }
 static void use_relay(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participant *o, const qa_q3_use_participant *a) {
   (void)o; RT *r = ctx;
-  if (((int)e->spawnflags & 3) != 0 && !a) qa_range_error("Team-filtered target_relay requires an activator");
-  qa_q3_game_entity *player = a ? use_client_of(r, a) : NULL;
-  if (((int)e->spawnflags & 1) != 0 && player && player->client && player->client->sess.session_team != 1) return;
-  if (((int)e->spawnflags & 2) != 0 && player && player->client && player->client->sess.session_team != 2) return;
-  if (((int)e->spawnflags & 4) != 0) {
+  qa_q3_game_entity *player = use_client_of(r, a);
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0 && player && player->client && player->client->sess.session_team != 1) return;
+  if ((qa_js_to_int32(e->spawnflags) & 2) != 0 && player && player->client && player->client->sess.session_team != 2) return;
+  if ((qa_js_to_int32(e->spawnflags) & 4) != 0) {
     qa_q3_game_entity *sel = pick(r, e->target);
     if (sel && sel->use.fn) {
       qa_q3_entity_use_fn fn; memcpy(&fn, &sel->use.fn, sizeof fn);
@@ -236,7 +249,7 @@ static void use_relay(void *ctx, qa_q3_game_entity *e, const qa_q3_use_participa
 static void cb_push_think(void *ctx, qa_q3_game_entity *e) {
   RT *r = ctx; qa_q3_aim_at_target_context ac; ac.selection.pool = r->entities; ac.selection.ctx = r->ctx;
   ac.selection.random_int = r->rand_value; ac.selection.warn = r->warn; ac.gravity_ctx = r->ctx; ac.gravity = r->gravity;
-  qa_q3_aim_at_target(ac, e, qa_scale3(qa_add3(e->r.absmin, e->r.absmax), 0.5));
+  qa_q3_aim_at_target(ac, e, qa_scale3(qa_add3(qa_q3_base_entity_shared_absmin(&e->r), qa_q3_base_entity_shared_absmax(&e->r)), 0.5));
 }
 void qa_q3_bind_target_save_callbacks(RT *r) {
   qa_q3_callback_catalog *c = &r->entities->callbacks;
@@ -283,16 +296,16 @@ static void h_speaker(void *c, qa_q3_game_entity *e, const qa_q3_spawn_variables
     char *m = qa_q3_game_format("target_speaker without a noise key at %s", &arg, 1, 32000);
     qa_range_error("%s", m);
   }
-  if (noise.value[0] == '*') e->spawnflags = (int)e->spawnflags | 8;
+  if (noise.value[0] == '*') e->spawnflags = qa_js_to_int32(e->spawnflags) | 8;
   qa_q3_game_format_arg arg = qa_q3_game_format_string(noise.value);
   char *path = qa_q3_game_format(strstr(noise.value, ".wav") ? "%s" : "%s.wav", &arg, 1, 64);
   e->noise_index = r->sound_index(r->ctx, path); free(path);
   e->s.e_type = 7; /* ET_SPEAKER */ e->s.event_parm = e->noise_index;
   e->s.frame = qa_qvm_float_to_int(f32(e->wait * 10));
   e->s.client_num = qa_qvm_float_to_int(f32(e->random * 10));
-  if (((int)e->spawnflags & 1) != 0) e->s.loop_sound = e->noise_index;
+  if ((qa_js_to_int32(e->spawnflags) & 1) != 0) e->s.loop_sound = e->noise_index;
   set_use(r, e, "q3.base.game.targets.spawnTargetSpeaker.use");
-  if (((int)e->spawnflags & 4) != 0) e->r.sv_flags = (int)e->r.sv_flags | 32; /* BROADCAST */
+  if ((qa_js_to_int32(e->spawnflags) & 4) != 0) e->r.sv_flags = qa_js_to_int32(e->r.sv_flags) | 32; /* BROADCAST */
   e->s.pos.base = e->s.origin; pool_link(r, e);
 }
 static void h_laser(void *c, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
@@ -303,7 +316,9 @@ static void h_laser(void *c, qa_q3_game_entity *e, const qa_q3_spawn_variables *
 static void h_teleporter(void *c, qa_q3_game_entity *e, const qa_q3_spawn_variables *v) {
   (void)v; RT *r = c; qa_q3_bind_target_save_callbacks(r); owned(r, e);
   if (!e->targetname) {
-    qa_q3_game_format_arg args[2] = {qa_q3_game_format_string(qa_q3_game_entity_classname(e)), qa_q3_game_format_string(vtos_of(r, e->s.origin))};
+    qa_q3_game_format_arg value = qa_q3_game_format_string(qa_q3_game_entity_classname(e));
+    qa_q3_game_format_arg value2 = qa_q3_game_format_string(vtos_of(r, e->s.origin));
+    qa_q3_game_format_arg args[2] = {value, value2};
     warn_fmt(r, "untargeted %s at %s\n", args, 2);
   }
   set_use(r, e, "q3.base.game.targets.spawnTargetTeleporter.use");
@@ -315,9 +330,9 @@ static void h_push(void *c, qa_q3_game_entity *e, const qa_q3_spawn_variables *v
   if (e->speed == 0) e->speed = 1000;
   qa_q3_move_direction_result m = qa_q3_move_direction(e->s.angles); e->s.angles = m.angles;
   e->s.origin2 = qa_scale3(m.direction, e->speed);
-  e->noise_index = r->sound_index(r->ctx, ((int)e->spawnflags & 1) != 0 ? "sound/world/jumppad.wav" : "sound/misc/windfly.wav");
+  e->noise_index = r->sound_index(r->ctx, (qa_js_to_int32(e->spawnflags) & 1) != 0 ? "sound/world/jumppad.wav" : "sound/misc/windfly.wav");
   if (e->target) {
-    e->r.absmin = e->s.origin; e->r.absmax = e->s.origin;
+    qa_q3_base_entity_shared_set_absmin(&e->r, e->s.origin); qa_q3_base_entity_shared_set_absmax(&e->r, e->s.origin);
     qa_q3_game_entity_set_nextthink(e, qa_int32(game_time(r) + 100));
     e->think = qa_q3_callback_family_resolve(&r->entities->callbacks.think, "q3.base.game.targets.spawnTargetPush.think");
   }

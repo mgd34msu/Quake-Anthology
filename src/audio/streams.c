@@ -18,8 +18,7 @@ static noreturn void plain_error(const char *format, ...) {
   va_start(args, format);
   vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 qa_pcm_stream *qa_pcm_stream_create(void *state, const qa_pcm_stream_ops *ops) {
@@ -281,12 +280,12 @@ static qa_pcm_stream *vorbis_from_bytes_impl(const uint8_t *bytes,
     if (!wrote) plain_error("could not write temporary audio file");
     vorbis_fail(&error);
   }
-  state->temporary_directory = malloc(strlen(directory) + 1);
-  if (state->temporary_directory == NULL) {
-    vorbis_close(state);
-    return NULL;
-  }
-  strcpy(state->temporary_directory, directory);
+  /* The open descriptor keeps the data alive on POSIX, so the temporary
+     file and directory go now and an abnormal exit leaves nothing behind
+     (TS: rmSync(directory) except on win32). */
+  remove(path);
+  rmdir(directory);
+  state->temporary_directory = NULL;
   state->quiet = keep_quiet;
   qa_pcm_stream *stream = vorbis_wrap(state);
   if (stream != NULL) *result = QA_PCM_TRY_OK;
@@ -552,7 +551,7 @@ bool qa_raw_audio_stream_queue(qa_raw_audio_stream *stream,
              chunk->sample_count * sizeof *samples);
     } else {
       for (size_t i = 0; i < chunk->sample_count; i++)
-        samples[i] = (int16_t)((chunk->samples_u8[i] - 128) << 8);
+        samples[i] = (int16_t)((chunk->samples_u8[i] - 128) * 256); /* JS `<< 8` on int32; a C shift of a negative value is undefined */
     }
   }
   int64_t end =
@@ -655,14 +654,21 @@ qa_save_value *qa_raw_audio_stream_capture_checkpoint(
       return NULL;
     }
   }
+  qa_save_value * value = qa_save_value_number((double)stream->output_rate);
+  qa_save_value * value2 = qa_save_value_number((double)stream->input_rate);
+  qa_save_value * value3 = qa_save_value_number((double)stream->channels);
+  qa_save_value * value4 = qa_save_value_number(stream->origin);
+  qa_save_value * value5 = qa_save_value_number((double)stream->output_frames);
+  qa_save_value * value6 = qa_save_value_number((double)stream->end);
+  qa_save_value * value7 = qa_save_value_boolean(stream->paused);
   qa_save_value *values[7] = {
-      qa_save_value_number((double)stream->output_rate),
-      qa_save_value_number((double)stream->input_rate),
-      qa_save_value_number((double)stream->channels),
-      qa_save_value_number(stream->origin),
-      qa_save_value_number((double)stream->output_frames),
-      qa_save_value_number((double)stream->end),
-      qa_save_value_boolean(stream->paused),
+      value,
+      value2,
+      value3,
+      value4,
+      value5,
+      value6,
+      value7,
   };
   static const char *const keys[7] = {"outputRate", "inputRate", "channels",
                                       "origin", "outputFrames", "end",

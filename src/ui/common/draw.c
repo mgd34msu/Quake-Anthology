@@ -70,6 +70,7 @@ qa_text_draw_sink qa_ui_draw_sink_sink(qa_ui_draw_sink *sink) {
   view.ctx = sink;
   view.seat = sink->seat;
   view.target = sink->target;
+  view.target_ref = NULL;
   view.set_color = sink_set_color;
   view.stretch_pixels = sink_stretch;
   return view;

@@ -8,8 +8,9 @@
 
 #include "qa/content/q2/foundation/fields.h"
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 
-static double clampd(double value, double minimum, double maximum) { return fmax(minimum, fmin(maximum, value)); }
+static double clampd(double value, double minimum, double maximum) { return qa_js_max(minimum, qa_js_min(maximum, value)); }
 
 qa_vec4 qa_q2_add_blend(qa_vec4 blend, qa_vec3 color, double alpha) {
   if (alpha <= 0) return blend;
@@ -51,7 +52,7 @@ qa_q2_damage_feedback_result qa_q2_damage_feedback(qa_q2_character_context *cont
     entity->frame = frames.first;
     state->animation_end = frames.last;
   }
-  double count = fmax(total, 10), health = health_of(context);
+  double count = qa_js_max(total, 10), health = health_of(context);
   if (now > state->pain_debounce && !state->god && powers.invulnerability_until <= now) {
     double severity = health < 25 ? 25 : health < 50 ? 50 : health < 75 ? 75 : 100;
     char path[64];
@@ -59,12 +60,12 @@ qa_q2_damage_feedback_result qa_q2_damage_feedback(qa_q2_character_context *cont
     game->sound(game->ctx, entity, path, 2, 1, 1);
     state->pain_debounce = now + 0.7;
   }
-  state->damage_alpha = clampd(fmax(state->damage_alpha, 0) + count * 0.01, 0.2, 0.6);
+  state->damage_alpha = clampd(qa_js_max(state->damage_alpha, 0) + count * 0.01, 0.2, 0.6);
   state->damage_blend = (qa_vec3){(state->damage_armor + state->damage_blood) / total,
                                   (state->damage_power_armor + state->damage_armor) / total,
                                   state->damage_armor / total};
   if (state->damage_knockback != 0 && health > 0) {
-    double kick = clampd(fabs(state->damage_knockback) * 100 / health, count * 0.5, 50);
+    double kick = qa_js_min(50, qa_js_max(count * 0.5, fabs(state->damage_knockback) * 100 / health));
     qa_body_state body = game->body(game->ctx, entity->actor);
     qa_vec3 direction = qa_q2_normalize(qa_q2_subtract(state->damage_from, body.origin));
     qa_angle_vectors vectors = qa_math_angle_vectors_rule(context->movement.view_angles, QA_ANGLE_RULE_NATIVE);
@@ -104,44 +105,44 @@ qa_q2_base_player_view qa_q2_build_view(qa_q2_character_context *context, double
   qa_vec3 kicks = weapon ? weapon->kick_angles : QA_Q2_ZERO;
   if (state->dead) { angles = (qa_vec3){-15, state->killer_yaw, 40}; kicks = QA_Q2_ZERO; }
   else {
-    double damage_ratio = fmax(0, (state->damage_time - now) / 0.5);
-    double fall_ratio = fmax(0, (state->fall_time - now) / 0.3);
+    double damage_ratio = qa_js_max(0, (state->damage_time - now) / 0.5);
+    double fall_ratio = qa_js_max(0, (state->fall_time - now) / 0.3);
     if (damage_ratio == 0) { state->damage_pitch = 0; state->damage_roll = 0; }
     double duck = movement->ducked ? 6 : 1;
     kicks = (qa_vec3){
         kicks.x + damage_ratio * state->damage_pitch + fall_ratio * state->fall_value + qa_q2_dot(body.velocity, vectors.forward) * rules->run_pitch + bob * rules->bob_pitch * speed * duck,
         kicks.y,
-        kicks.z + damage_ratio * state->damage_roll + qa_q2_dot(body.velocity, vectors.right) * rules->run_roll + bob * rules->bob_roll * speed * duck * (((int64_t)bob_cycle & 1) != 0 ? -1 : 1)};
+        kicks.z + damage_ratio * state->damage_roll + qa_q2_dot(body.velocity, vectors.right) * rules->run_roll + bob * rules->bob_roll * speed * duck * ((qa_js_to_int32(bob_cycle) & 1) != 0 ? -1 : 1)};
   }
   qa_vec3 recoil = weapon ? weapon->kick_origin : QA_Q2_ZERO;
   qa_vec3 offset = {clampd(recoil.x, -14, 14), clampd(recoil.y, -14, 14),
-      clampd(entity->view_height - fmax(0, (state->fall_time - now) / 0.3) * state->fall_value * 0.4 + fmin(bob * speed * rules->bob_up, 6) + recoil.z, -22, 30)};
+      clampd(entity->view_height - qa_js_max(0, (state->fall_time - now) / 0.3) * state->fall_value * 0.4 + qa_js_min(bob * speed * rules->bob_up, 6) + recoil.z, -22, 30)};
   double yaw_delta = angle_difference(state->old_view_angles.y, angles.y);
   qa_vec3 gun_angles = {speed * bob * 0.005 + angle_difference(state->old_view_angles.x, angles.x) * 0.2,
-      speed * bob * 0.01 * (((int64_t)bob_cycle & 1) != 0 ? -1 : 1) + yaw_delta * 0.2,
-      speed * bob * 0.005 * (((int64_t)bob_cycle & 1) != 0 ? -1 : 1) + angle_difference(state->old_view_angles.z, angles.z) * 0.2 + yaw_delta * 0.1};
+      speed * bob * 0.01 * ((qa_js_to_int32(bob_cycle) & 1) != 0 ? -1 : 1) + yaw_delta * 0.2,
+      speed * bob * 0.005 * ((qa_js_to_int32(bob_cycle) & 1) != 0 ? -1 : 1) + angle_difference(state->old_view_angles.z, angles.z) * 0.2 + yaw_delta * 0.1};
   qa_vec3 gun_offset = qa_q2_add(qa_q2_add(qa_q2_scale(vectors.forward, rules->gun_offset.y),
                                            qa_q2_scale(vectors.right, rules->gun_offset.x)),
                                  qa_q2_scale(vectors.up, -rules->gun_offset.z));
   double contents = game->point_contents(game->host_ctx, qa_q2_add(body.origin, offset));
   qa_vec4 blend = {0, 0, 0, 0};
-  if (((int64_t)contents & 9) != 0) blend = qa_q2_add_blend(blend, (qa_vec3){1, 0.3, 0}, 0.6);
-  else if (((int64_t)contents & 16) != 0) blend = qa_q2_add_blend(blend, (qa_vec3){0, 0.1, 0.05}, 0.6);
-  else if (((int64_t)contents & 32) != 0) blend = qa_q2_add_blend(blend, (qa_vec3){0.5, 0.3, 0.2}, 0.4);
+  if ((qa_js_to_int32(contents) & 9) != 0) blend = qa_q2_add_blend(blend, (qa_vec3){1, 0.3, 0}, 0.6);
+  else if ((qa_js_to_int32(contents) & 16) != 0) blend = qa_q2_add_blend(blend, (qa_vec3){0, 0.1, 0.05}, 0.6);
+  else if ((qa_js_to_int32(contents) & 32) != 0) blend = qa_q2_add_blend(blend, (qa_vec3){0.5, 0.3, 0.2}, 0.4);
   const char *power_item = NULL; double power_until = 0; const char *power_sound = NULL; qa_vec3 power_color = QA_Q2_ZERO; double power_alpha = 0;
   if (powers.quad_until > now) { power_item = "q2:item_quad"; power_until = powers.quad_until; power_sound = "items/damage2.wav"; power_color = (qa_vec3){0, 0, 1}; power_alpha = 0.08; }
   else if (powers.invulnerability_until > now) { power_item = "q2:item_invulnerability"; power_until = powers.invulnerability_until; power_sound = "items/protect2.wav"; power_color = (qa_vec3){1, 1, 0}; power_alpha = 0.08; }
   else if (powers.enviro_until > now) { power_item = "q2:item_enviro"; power_until = powers.enviro_until; power_sound = "items/airout.wav"; power_color = (qa_vec3){0, 1, 0}; power_alpha = 0.08; }
   else if (powers.breather_until > now) { power_item = "q2:item_breather"; power_until = powers.breather_until; power_sound = "items/airout.wav"; power_color = (qa_vec3){0.4, 1, 0.4}; power_alpha = 0.04; }
   if (power_item) {
-    int64_t remaining = llround((power_until - now) * 10);
+    int64_t remaining = (int64_t)qa_js_round((power_until - now) * 10);
     if (remaining == 30) game->sound(game->ctx, entity, power_sound, 3, 1, 1);
-    if (remaining > 30 || (remaining & 4) != 0) blend = qa_q2_add_blend(blend, power_color, power_alpha);
+    if (remaining > 30 || (qa_js_to_int32((double)remaining) & 4) != 0) blend = qa_q2_add_blend(blend, power_color, power_alpha);
   }
   blend = qa_q2_add_blend(blend, state->damage_blend, state->damage_alpha);
   blend = qa_q2_add_blend(blend, (qa_vec3){0.85, 0.7, 0.3}, state->bonus_alpha);
-  state->damage_alpha = fmax(0, state->damage_alpha - 0.06);
-  state->bonus_alpha = fmax(0, state->bonus_alpha - 0.1);
+  state->damage_alpha = qa_js_max(0, state->damage_alpha - 0.06);
+  state->bonus_alpha = qa_js_max(0, state->bonus_alpha - 0.1);
   qa_combat_state_result combat = qa_gameplay_authority_read(game->combat, entity->actor.id);
   double armor_points = !combat.has_value || combat.value.armor.regular.kind == QA_REGULAR_ARMOR_NONE ? 0 : combat.value.armor.regular.points;
   const char *active_weapon = weapon ? weapon->q2_name : NULL;
@@ -159,17 +160,19 @@ qa_q2_base_player_view qa_q2_build_view(qa_q2_character_context *context, double
   view.gun_offset = gun_offset;
   view.blend = intermission ? (qa_vec4){0, 0, 0, 0} : blend;
   view.fov = intermission ? 90 : state->fov;
-  view.underwater = !intermission && ((int64_t)contents & 56) != 0;
+  view.underwater = !intermission && (qa_js_to_int32(contents) & 56) != 0;
   view.flashes = flashes;
   view.health = health;
   view.armor = combat.has_value && strcmp(combat.value.armor.powered.kind, "none") != 0 &&
-          (armor_points == 0 || (llround(now * 10) & 8) != 0) ? combat.value.armor.powered.cells : armor_points;
+          (armor_points == 0 || (qa_js_to_int32(qa_js_round(now * 10)) & 8) != 0) ? combat.value.armor.powered.cells : armor_points;
   view.ammo = ammo == NULL ? 0 : qa_shared_inventory_table_count(game->inventory, entity->actor.id, ammo);
   view.score = state->score;
   view.selected_item = state->selected_item;
   view.has_timer = has_timer; view.timer_item = timer_item; view.timer_seconds = timer_seconds;
   view.spectator = state->spectator;
-  view.layouts = (double)((state->show_scores || state->show_help || health <= 0 || intermission ? 1 : 0) |
+  bool layout = game->mode == QA_Q2_MODE_DEATHMATCH ? state->show_scores || health <= 0 || intermission
+                                                   : state->show_scores || state->show_help;
+  view.layouts = (double)((layout ? 1 : 0) |
                            (state->show_inventory && health > 0 ? 2 : 0));
   return view;
 }
@@ -212,26 +215,26 @@ void qa_q2_client_effects(qa_q2_character_context *context) {
   entity->render_flags = game->edition == QA_Q2_EDITION_RERELEASE ? 32768 : 0;
   if ((combat.has_value ? combat.value.health : 0) > 0) {
     if (state->power_armor_time > now && combat.has_value && strcmp(combat.value.armor.powered.kind, "none") != 0) {
-      if (strcmp(combat.value.armor.powered.kind, "screen") == 0) entity->effects = (double)((int64_t)entity->effects | 0x200LL);
+      if (strcmp(combat.value.armor.powered.kind, "screen") == 0) entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x200);
       else if (strcmp(combat.value.armor.powered.kind, "shield") == 0) {
-        entity->effects = (double)((int64_t)entity->effects | 0x100LL);
-        entity->render_flags = (double)((int64_t)entity->render_flags | 0x800LL);
+        entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x100);
+        entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 0x800);
       }
     }
-    if (powers.quad_until > now && (powers.quad_until - now > 3 || (llround((powers.quad_until - now) * 10) & 4) != 0))
-      entity->effects = (double)((int64_t)entity->effects | 0x8000LL);
-    if (powers.invulnerability_until > now && (powers.invulnerability_until - now > 3 || (llround((powers.invulnerability_until - now) * 10) & 4) != 0))
-      entity->effects = (double)((int64_t)entity->effects | 0x10000LL);
-    if (powers.invis_until > now) entity->render_flags = (double)((int64_t)entity->render_flags | 32LL);
+    if (powers.quad_until > now && (powers.quad_until - now > 3 || (qa_js_to_int32(qa_js_round((powers.quad_until - now) * 10)) & 4) != 0))
+      entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x8000);
+    if (powers.invulnerability_until > now && (powers.invulnerability_until - now > 3 || (qa_js_to_int32(qa_js_round((powers.invulnerability_until - now) * 10)) & 4) != 0))
+      entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x10000);
+    if (powers.invis_until > now) entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 32);
     if (state->god) {
-      entity->effects = (double)((int64_t)entity->effects | 0x100LL);
-      entity->render_flags = (double)((int64_t)entity->render_flags | 0x1c00LL);
+      entity->effects = (double)(qa_js_to_int32(entity->effects) | 0x100);
+      entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 0x1c00);
     }
   }
   qa_q2_character_weapon weapon_value = {0};
   bool has_weapon = context->weapon_state(context->cb_ctx, &weapon_value);
   const qa_q2_character_weapon *weapon = has_weapon ? &weapon_value : NULL;
-  const char *loop = context->movement.water_level != 0 && ((int64_t)context->movement.water_type & 24) != 0 ? "player/fry.wav"
+  const char *loop = context->movement.water_level != 0 && (qa_js_to_int32(context->movement.water_type) & 24) != 0 ? "player/fry.wav"
       : weapon && weapon->q2_name && strcmp(weapon->q2_name, "railgun") == 0 ? "weapons/rg_hum.wav"
       : weapon && weapon->q2_name && strcmp(weapon->q2_name, "bfg") == 0 ? "weapons/bfg_hum.wav"
       : weapon && weapon->loop_sound ? weapon->loop_sound : "";

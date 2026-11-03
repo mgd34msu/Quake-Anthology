@@ -56,7 +56,13 @@ char **qa_addon_tags(const char *const *tags, size_t tag_count,
                      const char *name, size_t *out_count);
 void qa_addon_tags_free(char **values, size_t count);
 
-/* TS parseAddonCatalog. False only on OOM. */
+/* TS parseAddonCatalog. False only on OOM. A malformed row is skipped
+ * and its error message passed to `skipped` (NULL ignores it); a value that
+ * is not an array raises. */
+typedef void (*qa_addon_skip_fn)(void *ctx, const char *reason);
+bool qa_parse_addon_catalog_reporting(const qa_save_value *value,
+                                      qa_addon_skip_fn skipped, void *skipped_ctx,
+                                      qa_addon_package_list *out);
 bool qa_parse_addon_catalog(const qa_save_value *value,
                             qa_addon_package_list *out);
 
@@ -90,8 +96,8 @@ bool qa_parse_nightdive_addons(const qa_save_value *value,
                                qa_nightdive_addon_list *out);
 /* TS readNightdiveAddons (synchronous; any failure = empty). */
 bool qa_read_nightdive_addons(const char *root, qa_nightdive_addon_list *out);
-/* TS managedAddonTitle: malloc'd title or NULL. File/JSON errors
- * abort as the TS awaited read throws. */
+/* TS managedAddonTitle: malloc'd title or NULL (also NULL when the file
+ * cannot be read or is not JSON). */
 char *qa_managed_addon_title(const char *root, const char *content_directory);
 
 #endif

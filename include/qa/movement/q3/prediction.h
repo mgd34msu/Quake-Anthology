@@ -88,5 +88,7 @@ typedef struct qa_q3_prediction_runtime {
 } qa_q3_prediction_runtime;
 void qa_q3_prediction_runtime_init(qa_q3_prediction_runtime *runtime, qa_q3_prediction_host host);
 qa_q3_prediction_output qa_q3_prediction_predict(qa_q3_prediction_runtime *runtime, qa_q3_prediction_frame frame);
+/* The pmove_fixed command time: Math.imul(Math.trunc(((serverTime + msec - 1) | 0) / msec), msec). */
+double qa_q3_fixed_server_time(double server_time_milliseconds, double movement_milliseconds);
 qa_q3_movement_state qa_q3_update_prediction_view(qa_q3_movement_state state, double health, qa_q3_user_command command);
 #endif

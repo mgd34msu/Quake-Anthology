@@ -21,7 +21,7 @@ typedef qa_q3_pres_client_media_host host_t;
 
 bool qa_q3_pres_client_media_init(media_t *media, qa_q3_base_product product,
     qa_q3_pres_client_game_static_state *static_state, qa_q3_pres_renderer_resources resources,
-    qa_q3_pres_client_sound_bank sound_bank, qa_q3_pres_client_weapon_media_registry_mirror weapon_registry) {
+    qa_q3_pres_client_sound_bank sound_bank, qa_q3_pres_client_weapon_media_registry_view weapon_registry) {
   if (product != static_state->product) qa_range_error("Client media product differs from cgs");
   memset(media, 0, sizeof *media);
   media->product = product;
@@ -218,9 +218,9 @@ qa_q3_pres_packet_entity_media qa_q3_pres_client_media_packet(media_t *media) {
   }
   return packet;
 }
-qa_q3_pres_effect_media_mirror qa_q3_pres_client_media_effects(media_t *media) {
+qa_q3_pres_effect_media qa_q3_pres_client_media_effects(media_t *media) {
   const qa_q3_pres_client_media_graphics *g = &media->graphics;
-  qa_q3_pres_effect_media_mirror effects;
+  qa_q3_pres_effect_media effects;
   memset(&effects, 0, sizeof effects);
   effects.water_bubble_shader = g->water_bubble_shader;
   effects.smoke_puff_rage_pro_shader = g->smoke_puff_rage_pro_shader;
@@ -284,10 +284,10 @@ qa_q3_base_product qa_q3_pres_client_media_local_entities(media_t *media,
   }
   return media->product;
 }
-qa_q3_pres_weapon_presentation_media_mirror qa_q3_pres_client_media_weapons(media_t *media) {
+qa_q3_pres_weapon_presentation_media qa_q3_pres_client_media_weapons(media_t *media) {
   const qa_q3_pres_client_media_graphics *g = &media->graphics;
   const qa_q3_pres_client_media_sounds *s = &media->sounds;
-  qa_q3_pres_weapon_presentation_media_mirror weapons;
+  qa_q3_pres_weapon_presentation_media weapons;
   memset(&weapons, 0, sizeof weapons);
   weapons.models.machinegun_brass = g->machinegun_brass_model;
   weapons.models.shotgun_brass = g->shotgun_brass_model;

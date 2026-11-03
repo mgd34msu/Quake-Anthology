@@ -1,595 +1,701 @@
-/* Port of src/compat/qvm/bot-library-syscalls.ts. GPL-2.0-or-later. */
+/* Port of src/compat/qvm/bot-library-syscalls.ts over the real BotLibrary.
+ * GPL-2.0-or-later. */
 #include "qa/compat/qvm/bot_library_syscalls.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/bots/behavior/library/chat.h"
 #include "qa/compat/qvm/abi.h"
 #include "qa/compat/qvm/legacy_bot_syscalls.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 
 double qa_qvm_string_contains(const char *text, const char *part, bool case_sensitive) {
-  if (text == NULL || part == NULL) return -1;
-  size_t text_length = strlen(text), part_length = strlen(part);
-  if (part_length == 0) return 0;
-  for (size_t i = 0; i + part_length <= text_length; i++) {
-    bool match = true;
-    for (size_t j = 0; j < part_length; j++) {
-      char a = text[i + j], b = part[j];
-      if (!case_sensitive) {
-        if (a >= 'a' && a <= 'z') a = (char)(a - 32);
-        if (b >= 'a' && b <= 'z') b = (char)(b - 32);
-      }
-      match = match && a == b;
-    }
-    if (match) return (double)i;
-  }
-  return -1;
+  return (double)qa_string_contains_bots_a(text, part, case_sensitive);
 }
 
-static bool chat_white_space(uint8_t byte) {
-  if ((byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122) || (byte >= 48 && byte <= 57))
-    return false;
-  return strchr("()?:'/,.[]-_+=", byte) == NULL;
+static qa_bot_goal goal_from_record(qa_qvmx_bot_goal record) {
+  qa_bot_goal goal;
+  memset(&goal, 0, sizeof goal);
+  goal.origin = record.origin;
+  goal.area = (int64_t)record.area;
+  goal.mins = record.mins;
+  goal.maxs = record.maxs;
+  goal.entity = (int64_t)record.entity;
+  goal.number = (int64_t)record.number;
+  goal.flags = (int64_t)record.flags;
+  goal.item_info = (int64_t)record.item_info;
+  return goal;
 }
-
-static int64_t chat_byte(bool has_bytes, qa_qvm_memory_span bytes, qa_qvm_memory *memory,
-                         int64_t offset) {
-  if (!has_bytes) qa_range_error("bot chat buffer requires a nonnull pointer");
-  if (offset < 0 || offset + 1 > bytes.byte_length)
-    qa_range_error("bot chat buffer exceeds allocation");
-  return memory->bytes[bytes.byte_offset + offset];
-}
-
-void qa_qvm_unify_white_spaces_in_place(qa_qvm_memory *memory, bool has_bytes,
-                                        qa_qvm_memory_span bytes,
-                                        qa_qvmx_chat_buffer_writes writes) {
-  int64_t pointer = 0, old = 0;
-  while (chat_byte(has_bytes, bytes, memory, pointer) != 0) {
-    while (chat_byte(has_bytes, bytes, memory, pointer) != 0 &&
-           chat_white_space((uint8_t)chat_byte(has_bytes, bytes, memory, pointer)))
-      pointer++;
-    if (pointer > old) {
-      if (old > 0 && chat_byte(has_bytes, bytes, memory, pointer) != 0) {
-        qa_qvmx_chat_span destination = {bytes.byte_offset + old, 1};
-        old++;
-        qa_qvm_writable_view view = writes.view(writes.ctx, destination);
-        qa_qvm_writable_view_set_uint8(&view, 0, 32);
-      }
-      if (pointer > old) {
-        int64_t end = pointer;
-        while (chat_byte(has_bytes, bytes, memory, end) != 0) end++;
-        qa_qvmx_chat_span destination = {bytes.byte_offset + old, end + 1 - pointer};
-        qa_qvmx_chat_span source = {bytes.byte_offset + pointer, end + 1 - pointer};
-        writes.copy(writes.ctx, destination, source);
-      }
-    }
-    while (chat_byte(has_bytes, bytes, memory, pointer) != 0 &&
-           !chat_white_space((uint8_t)chat_byte(has_bytes, bytes, memory, pointer)))
-      pointer++;
-    old = pointer;
-  }
+static qa_qvmx_bot_goal goal_to_record(const qa_bot_goal *goal) {
+  qa_qvmx_bot_goal record;
+  memset(&record, 0, sizeof record);
+  record.origin = goal->origin;
+  record.area = (double)goal->area;
+  record.mins = goal->mins;
+  record.maxs = goal->maxs;
+  record.entity = (double)goal->entity;
+  record.number = (double)goal->number;
+  record.flags = (double)goal->flags;
+  record.item_info = (double)goal->item_info;
+  return record;
 }
 
 bool qa_qvm_touching_goal(qa_vec3 origin, qa_qvmx_bot_goal goal) {
-  qa_vec3 min = {goal.mins.x - 15 + goal.origin.x, goal.mins.y - 15 + goal.origin.y,
-                 goal.mins.z - 32 + goal.origin.z};
-  qa_vec3 max = {goal.maxs.x + 15 + goal.origin.x, goal.maxs.y + 15 + goal.origin.y,
-                 goal.maxs.z + 24 + goal.origin.z};
-  if (origin.x < min.x || origin.x > max.x) return false;
-  if (origin.y < min.y || origin.y > max.y) return false;
-  if (origin.z < min.z || origin.z > max.z) return false;
-  return true;
-}
-
-typedef struct writes_ctx { qa_qvm_memory *guest; } writes_ctx;
-
-static qa_qvm_writable_view writes_view(void *ctx, qa_qvmx_chat_span span) {
-  writes_ctx *writes = ctx;
-  qa_qvm_writable_view view;
-  qa_qvm_memory_data_view(writes->guest, span.byte_offset, span.byte_length, &view);
-  return view;
-}
-static void writes_copy(void *ctx, qa_qvmx_chat_span destination, qa_qvmx_chat_span source) {
-  writes_ctx *writes = ctx;
-  /* source bytes are the live guest range (chatSpan of guest spans). */
-  memmove(writes->guest->bytes + destination.byte_offset,
-          writes->guest->bytes + source.byte_offset, (size_t)source.byte_length);
-}
-static void writes_clear(void *ctx, qa_qvmx_chat_span destination, int64_t start) {
-  writes_ctx *writes = ctx;
-  qa_qvm_memory_fill_bytes(writes->guest, destination.byte_offset + start,
-                           destination.byte_length - start, 0);
+  return qa_touching_goal(origin, goal_from_record(goal));
 }
 
 typedef struct dispatch {
   const qa_qvm_host_call *call;
-  qa_qvm_bot_library_services *services;
-  qa_qvmx_bot_library *library;
+  const qa_qvm_game_memory *guest;
 } dispatch;
 
-static int32_t wint(dispatch *d, size_t index) { return qa_qvm_host_call_word(d->call, index); }
-static float wfloat(dispatch *d, size_t index) {
-  return qa_qvm_host_call_word_f32(d->call, index * 4);
-}
-static char *wtext(dispatch *d, size_t index) {
-  char *text = qa_qvm_memory_read_string(d->call->guest, wint(d, index));
-  if (text == NULL) qa_range_error("out of memory");
+static int32_t wint(const dispatch *d, size_t index) { return qa_qvm_host_call_word(d->call, index); }
+static float wfloat(const dispatch *d, size_t index) { return qa_qvm_host_call_word_f32(d->call, index * 4); }
+/* TS text(index): guest.readString(int(index)). Malloc'd; caller frees. */
+static char *wtext(const dispatch *d, size_t index) {
+  char *text = qa_qvm_game_memory_read_string(d->guest, wint(d, index));
+  if (text == NULL) qa_range_error("Out of memory");
   return text;
 }
-static qa_vec3 wvector(dispatch *d, size_t index) {
+/* TS nullableText(index): NULL when the word is 0. */
+static char *wnullable(const dispatch *d, size_t index) { return wint(d, index) == 0 ? NULL : wtext(d, index); }
+static qa_vec3 wvector(const dispatch *d, size_t index) {
   qa_qvm_writable_view view;
-  qa_qvm_memory_view(d->call->guest, wint(d, index), 12, 0, &view);
-  qa_vec3 v = {qa_qvm_writable_view_get_float32(&view, 0, true),
-               qa_qvm_writable_view_get_float32(&view, 4, true),
-               qa_qvm_writable_view_get_float32(&view, 8, true)};
+  qa_qvm_game_memory_view(d->guest, wint(d, index), 12, 0, &view);
+  qa_vec3 v;
+  v.x = qa_qvm_writable_view_get_float32(&view, 0, true);
+  v.y = qa_qvm_writable_view_get_float32(&view, 4, true);
+  v.z = qa_qvm_writable_view_get_float32(&view, 8, true);
   return v;
 }
+/* TS goal(index): readQvmBotGoal(guest.view(int(index), QVM_BOT_GOAL_BYTES)). */
+static qa_qvmx_view goal_view(const dispatch *d, size_t index) {
+  qa_qvm_writable_view storage;
+  qa_qvm_game_memory_view(d->guest, wint(d, index), QA_QVM_BOT_GOAL_BYTES, 0, &storage);
+  qa_qvmx_view view = {storage.bytes + storage.start, (size_t)storage.length};
+  return view;
+}
+static qa_bot_goal wgoal(const dispatch *d, size_t index) { return goal_from_record(qa_qvm_read_bot_goal(goal_view(d, index))); }
+static qa_chat_text_source source_text(const char *text) {
+  qa_chat_text_source source = {text, NULL, NULL};
+  return source;
+}
 
-typedef struct inventory_ctx { dispatch *d; size_t index; } inventory_ctx;
-static double inventory_get(void *ctx, double item) {
+/* TS chatWrites(guest): region writes through the guest memory (write observers see them). */
+static void writes_set_byte(void *ctx, uint8_t *destination, size_t length, size_t index, uint8_t value) {
+  const qa_qvm_game_memory *guest = ctx;
+  const qa_qvm_game_region region = {destination, length, false};
+  qa_qvm_writable_view view;
+  qa_qvm_game_memory_region_view(guest, &region, 0, -1, &view);
+  qa_qvm_writable_view_set_uint8(&view, (int64_t)index, value);
+}
+static void writes_copy(void *ctx, uint8_t *destination, const uint8_t *source, size_t length) {
+  const qa_qvm_game_memory *guest = ctx;
+  const qa_qvm_game_region region = {destination, length, false};
+  qa_qvm_game_memory_region_write(guest, &region, source, length);
+}
+static void writes_clear(void *ctx, uint8_t *destination, size_t length, size_t start) {
+  const qa_qvm_game_memory *guest = ctx;
+  const qa_qvm_game_region region = {destination, length, false};
+  qa_qvm_game_memory_region_fill(guest, &region, (int64_t)start, (int64_t)length - (int64_t)start, 0);
+}
+static qa_chat_buffer_writes chat_writes(const qa_qvm_game_memory *guest) {
+  qa_chat_buffer_writes writes;
+  writes.set_byte = writes_set_byte;
+  writes.copy = writes_copy;
+  writes.clear = writes_clear;
+  writes.ctx = (void *)guest;
+  return writes;
+}
+
+/* TS inventory(index)(item): guest.view(int(index), 4, item * 4).getInt32. */
+typedef struct inventory_ctx { const dispatch *d; size_t index; } inventory_ctx;
+static double inventory_read(void *ctx, int64_t item) {
   inventory_ctx *inventory = ctx;
   qa_qvm_writable_view view;
-  qa_qvm_memory_view(inventory->d->call->guest, wint(inventory->d, inventory->index), 4,
-                     (int64_t)item * 4, &view);
+  qa_qvm_game_memory_view(inventory->d->guest, wint(inventory->d, inventory->index), 4, item * 4, &view);
   return qa_qvm_writable_view_get_int32(&view, 0, true);
 }
+static qa_weight_inventory inventory_of(inventory_ctx *ctx) {
+  qa_weight_inventory inventory;
+  memset(&inventory, 0, sizeof inventory);
+  inventory.read = inventory_read;
+  inventory.ctx = ctx;
+  return inventory;
+}
 
-typedef struct span_ctx { dispatch *d; size_t index; } span_ctx;
-static qa_qvm_memory_span span_get(void *ctx) {
-  span_ctx *span = ctx;
-  return qa_qvm_memory_get_span(span->d->call->guest, wint(span->d, span->index),
-                                QA_QVM_BOT_GOAL_BYTES, 0);
+/* TS () => guest.pointer(int(index)) for replaceSynonymsInPlace. */
+typedef struct pointer_ctx { const dispatch *d; size_t index; } pointer_ctx;
+static uint8_t *pointer_bytes(void *ctx, size_t *out_length) {
+  pointer_ctx *pointer = ctx;
+  qa_qvm_game_region region;
+  if (!qa_qvm_game_memory_pointer(pointer->d->guest, wint(pointer->d, pointer->index), &region)) {
+    *out_length = 0;
+    return NULL;
+  }
+  *out_length = region.length;
+  return region.bytes;
 }
-static qa_qvm_memory_span pointer_get(void *ctx) {
-  span_ctx *span = ctx;
-  qa_qvm_memory_span result;
-  if (!qa_qvm_memory_pointer(span->d->call->guest, wint(span->d, span->index), &result))
-    qa_range_error("bot chat buffer requires a nonnull pointer");
-  return result;
+/* TS () => guest.span(int(index), QVM_BOT_GOAL_BYTES) for pushGoal. */
+static const uint8_t *push_goal_bytes(void *ctx, qa_bot_goal *goal, size_t *out_length) {
+  (void)goal; /* the produced record is bytes, so the goal form stays unused (TS Uint8Array branch) */
+  pointer_ctx *pointer = ctx;
+  const qa_qvm_game_region region = qa_qvm_game_memory_span(pointer->d->guest, wint(pointer->d, pointer->index), QA_QVM_BOT_GOAL_BYTES, 0);
+  *out_length = region.length;
+  return region.bytes;
 }
-typedef struct text_ctx { dispatch *d; size_t index; char *text; } text_ctx;
-static const char *text_get(void *ctx) {
+/* TS () => text(index), read once per call. */
+typedef struct text_ctx { const dispatch *d; size_t index; char *text; } text_ctx;
+static const char *text_read(void *ctx) {
   text_ctx *text = ctx;
-  if (text->text == NULL) text->text = wtext(text->d, text->index);
+  free(text->text);
+  text->text = wtext(text->d, text->index);
   return text->text;
 }
 
-typedef struct chat_write_ctx { dispatch *d; } chat_write_ctx;
+/* TS message => guest.writeString(int(2), message, int(3)). */
 static void chat_message_write(void *ctx, const char *message) {
-  chat_write_ctx *write = ctx;
-  qa_qvm_memory_write_string(write->d->call->guest, wint(write->d, 2), message, wint(write->d, 3));
+  const dispatch *d = ctx;
+  qa_qvm_game_memory_write_string(d->guest, wint(d, 2), message, wint(d, 3));
 }
 
-typedef struct genetic_ctx { dispatch *d; } genetic_ctx;
-static float genetic_rank(void *ctx, double index) {
-  genetic_ctx *genetic = ctx;
-  qa_qvm_writable_view view;
-  qa_qvm_memory_view(genetic->d->call->guest, wint(genetic->d, 2), 4, (int64_t)index * 4, &view);
-  return qa_qvm_writable_view_get_float32(&view, 0, true);
-}
-static void genetic_write(void *ctx, const char *target, double value) {
-  genetic_ctx *genetic = ctx;
+/* geneticSelection's request: ranks read through guest.view(int(2), 4, index * 4). */
+static void genetic_write(void *ctx, const char *target, int64_t value) {
+  const dispatch *d = ctx;
   size_t index = strcmp(target, "parent1") == 0 ? 3 : strcmp(target, "parent2") == 0 ? 4 : 5;
   qa_qvm_writable_view view;
-  qa_qvm_memory_view(genetic->d->call->guest, wint(genetic->d, index), 4, 0, &view);
-  qa_qvm_writable_view_set_int32(&view, 0, qa_int32(value), true);
+  qa_qvm_game_memory_view(d->guest, wint(d, index), 4, 0, &view);
+  qa_qvm_writable_view_set_int32(&view, 0, qa_js_to_int32((double)value), true);
 }
 
-typedef struct capture_ctx { qa_qvm_writable_view *view; } capture_ctx;
-static void match_capture(void *ctx, double index, double *out_offset, double *out_length) {
-  capture_ctx *capture = ctx;
-  *out_offset = qa_qvm_writable_view_get_int8(capture->view, 264 + (int64_t)index * 8);
-  *out_length = qa_qvm_writable_view_get_int32(capture->view, 268 + (int64_t)index * 8, true);
+/* BOTLIB_AI_MATCH_VARIABLE closures over view = guest.view(int(1), 328). */
+typedef struct match_ctx { const dispatch *d; qa_qvm_writable_view view; } match_ctx;
+static qa_chat_match_variable match_at(void *ctx, int64_t index) {
+  match_ctx *match = ctx;
+  qa_chat_match_variable variable;
+  variable.offset = qa_qvm_writable_view_get_int8(&match->view, 264 + index * 8);
+  variable.length = qa_qvm_writable_view_get_int32(&match->view, 268 + index * 8, true);
+  return variable;
 }
-typedef struct match_write_ctx { dispatch *d; } match_write_ctx;
-static void match_write(void *ctx, double offset, double capacity) {
-  match_write_ctx *write = ctx;
-  char *text = qa_qvm_memory_read_string(write->d->call->guest, wint(write->d, 1) + (int32_t)offset);
-  if (text == NULL) qa_range_error("out of memory");
-  qa_qvm_memory_write_string(write->d->call->guest, wint(write->d, 3), text, (int64_t)capacity);
+static void match_write(void *ctx, int64_t offset, int64_t capacity) {
+  match_ctx *match = ctx;
+  char *text = qa_qvm_game_memory_read_string(match->d->guest, (int64_t)wint(match->d, 1) + offset);
+  if (text == NULL) qa_range_error("Out of memory");
+  qa_qvm_game_memory_write_string(match->d->guest, wint(match->d, 3), text, capacity);
   free(text);
 }
 static void match_clear(void *ctx) {
-  match_write_ctx *write = ctx;
+  match_ctx *match = ctx;
   qa_qvm_writable_view view;
-  qa_qvm_memory_view(write->d->call->guest, wint(write->d, 3), 1, 0, &view);
+  qa_qvm_game_memory_view(match->d->guest, wint(match->d, 3), 1, 0, &view);
   qa_qvm_writable_view_set_uint8(&view, 0, 0);
 }
 
-static qa_qvmx_view goal_view(dispatch *d, size_t index, qa_qvm_writable_view *storage) {
-  qa_qvm_memory_view(d->call->guest, wint(d, index), QA_QVM_BOT_GOAL_BYTES, 0, storage);
-  qa_qvmx_view view = {storage->bytes + storage->start, (size_t)storage->length};
-  return view;
-}
+static qa_qvm_host_result word(double value) { return qa_qvm_host_word(value); }
 
 bool qa_qvm_bot_library_syscall(const qa_qvm_host_call *call, qa_qvm_bot_library_services *services,
                                 qa_qvm_host_result *out) {
-  int32_t legacy_out = 0;
-  if (qa_qvm_legacy_bot_library_syscall(call, services, &legacy_out)) {
-    *out = legacy_out;
+  int32_t legacy = 0;
+  if (qa_qvm_legacy_bot_library_syscall(call, services, &legacy)) {
+    *out = legacy;
     return true;
   }
   if (strcmp(call->kind, "engine") != 0 || strcmp(call->role, "qagame") != 0) return false;
-  dispatch d = {call, services, &services->library};
-  qa_qvmx_bot_library *library = d.library;
-  void *lib = library->ctx;
-  qa_qvm_memory *guest = call->guest;
-  writes_ctx wctx = {guest};
-  qa_qvmx_chat_buffer_writes writes = {&wctx, writes_view, writes_copy, writes_clear};
+  const qa_qvm_game_memory guest_memory = qa_qvm_host_call_game_memory(call);
+  const qa_qvm_game_memory *guest = &guest_memory;
+  dispatch storage = {call, guest};
+  const dispatch *d = &storage;
+  qa_bot_library_bots_a *library = services->library;
+  qa_chat_buffer_writes writes = chat_writes(guest);
   char *text = NULL, *text2 = NULL;
-  const char *variables[8];
-  char *variable_texts[8];
+  *out = 0;
   switch (call->code) {
     case QA_QVM_GAME_IMPORT_G_BOT_ALLOCATE_CLIENT:
-      *out = (qa_qvm_host_result)services->allocate_client(services->ctx); return true;
+      *out = word(services->allocate_client(services->ctx));
+      return true;
     case QA_QVM_GAME_IMPORT_G_BOT_FREE_CLIENT:
-      services->free_client(services->ctx, wint(&d, 1)); *out = 0; return true;
+      services->free_client(services->ctx, wint(d, 1));
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_SETUP:
-      *out = (qa_qvm_host_result)services->setup(services->ctx); return true;
+      *out = word(services->setup(services->ctx));
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_SHUTDOWN:
-      *out = (qa_qvm_host_result)services->shutdown(services->ctx); return true;
+      *out = word(services->shutdown(services->ctx));
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_LIBVAR_SET:
-      text = wtext(&d, 1); text2 = wtext(&d, 2);
-      library->variables_set(lib, text, text2); free(text); free(text2); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_LIBVAR_GET:
-      text = wtext(&d, 1);
-      qa_qvm_memory_write_string(guest, wint(&d, 2), library->variables_get_string(lib, text), wint(&d, 3));
-      free(text); *out = 0; return true;
+      text = wtext(d, 1);
+      text2 = wtext(d, 2);
+      qa_bot_lib_vars_set(&library->variables, text, text2);
+      break;
+    case QA_QVM_GAME_IMPORT_BOTLIB_LIBVAR_GET: {
+      int32_t target = wint(d, 2);
+      text = wtext(d, 1);
+      const char *value = qa_bot_lib_vars_get_string(&library->variables, text);
+      qa_qvm_game_memory_write_string(guest, target, value, wint(d, 3));
+      break;
+    }
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_ADD_GLOBAL_DEFINE:
-      text = wtext(&d, 1); *out = library->globals_add(lib, text) ? 1 : 0; free(text); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_START_FRAME:
-      *out = (qa_qvm_host_result)library->start_frame(lib, wfloat(&d, 1)); return true;
+      text = wtext(d, 1);
+      *out = qa_ui_script_global_defines_add(library->globals, text) ? 1 : 0;
+      break;
+    case QA_QVM_GAME_IMPORT_BOTLIB_START_FRAME: {
+      int64_t result = qa_bot_library_start_frame_bots_a(library, wfloat(d, 1));
+      if (services->started_frame != NULL) services->started_frame(services->ctx);
+      *out = word((double)result);
+      return true;
+    }
     case QA_QVM_GAME_IMPORT_BOTLIB_LOAD_MAP:
-      text = wtext(&d, 1); *out = (qa_qvm_host_result)services->load_map(services->ctx, text);
-      free(text); return true;
+      text = wtext(d, 1);
+      *out = word(services->load_map(services->ctx, text));
+      break;
     case QA_QVM_GAME_IMPORT_BOTLIB_UPDATENTITY:
-      *out = (qa_qvm_host_result)services->update_entity(services->ctx, wint(&d, 1), call, wint(&d, 2));
+      *out = word(services->update_entity(services->ctx, wint(d, 1), call, wint(d, 2)));
       return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_GET_SNAPSHOT_ENTITY:
-      *out = (qa_qvm_host_result)services->snapshot_entity(services->ctx, wint(&d, 1), wint(&d, 2));
+      *out = word(services->snapshot_entity(services->ctx, wint(d, 1), wint(d, 2)));
       return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_GET_CONSOLE_MESSAGE: {
-      const char *message = services->console_message(services->ctx, wint(&d, 1));
-      if (message == NULL) { *out = 0; return true; }
-      qa_qvm_memory_write_string(guest, wint(&d, 2), message, wint(&d, 3)); *out = 1; return true;
-    }
-    case QA_QVM_GAME_IMPORT_BOTLIB_USER_COMMAND: {
-      qa_qvm_writable_view storage;
-      qa_qvm_memory_view(guest, wint(&d, 2), QA_QVM_USER_COMMAND_BYTES, 0, &storage);
-      qa_qvmx_view view = {storage.bytes + storage.start, (size_t)storage.length};
-      services->user_command(services->ctx, wint(&d, 1),
-                             qa_qvm_read_user_command(view, call->has_abi_profile ? call->abi_profile : "q3-modern"));
-      *out = 0; return true;
-    }
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_SAY:
-      text = wtext(&d, 2); library->actions_say(lib, wint(&d, 1), text); free(text); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_SAY_TEAM:
-      text = wtext(&d, 2); library->actions_say_team(lib, wint(&d, 1), text); free(text); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_COMMAND:
-      text = wtext(&d, 2); library->actions_command(lib, wint(&d, 1), text); free(text); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_ACTION:
-      library->actions_action(lib, wint(&d, 1), wint(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_GESTURE: library->actions_gesture(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_TALK: library->actions_talk(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_ATTACK: library->actions_attack(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_USE: library->actions_use(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_RESPAWN: library->actions_respawn(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_CROUCH: library->actions_crouch(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_UP: library->actions_move_up(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_DOWN: library->actions_move_down(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_FORWARD: library->actions_move_forward(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_BACK: library->actions_move_back(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_LEFT: library->actions_move_left(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_RIGHT: library->actions_move_right(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_SELECT_WEAPON:
-      library->actions_select_weapon(lib, wint(&d, 1), wint(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_JUMP: library->actions_jump(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_DELAYED_JUMP: library->actions_delayed_jump(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE:
-      library->actions_move(lib, wint(&d, 1), wvector(&d, 2), wfloat(&d, 3)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_VIEW:
-      library->actions_view(lib, wint(&d, 1), wvector(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_END_REGULAR:
-      library->actions_end_regular(lib, wint(&d, 1), wfloat(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_GET_INPUT: {
-      qa_qvm_memory_span span = qa_qvm_memory_get_span(guest, wint(&d, 3), 40, 0);
-      uint8_t input_bytes[40];
-      library->actions_get_input_bytes(lib, wint(&d, 1), wfloat(&d, 2), input_bytes);
-      qa_qvm_memory_write_bytes(guest, span.byte_offset, input_bytes, 40); *out = 0; return true;
-    }
-    case QA_QVM_GAME_IMPORT_BOTLIB_EA_RESET_INPUT:
-      library->actions_reset_input(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_CHARACTER:
-      text = wtext(&d, 1); *out = (qa_qvm_host_result)library->characters_load(lib, text, wfloat(&d, 2));
-      free(text); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_CHARACTER:
-      library->characters_free(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_FLOAT:
-      *out = (int32_t)qa_float32_to_bits(library->characters_float(lib, wint(&d, 1), wint(&d, 2))); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_BFLOAT:
-      *out = (int32_t)qa_float32_to_bits(library->characters_bounded_float(lib, wint(&d, 1), wint(&d, 2), wfloat(&d, 3), wfloat(&d, 4))); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_INTEGER:
-      *out = (qa_qvm_host_result)library->characters_integer(lib, wint(&d, 1), wint(&d, 2)); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_BINTEGER:
-      *out = (qa_qvm_host_result)library->characters_bounded_integer(lib, wint(&d, 1), wint(&d, 2), wint(&d, 3), wint(&d, 4)); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_STRING:
-      qa_qvm_memory_write_string(guest, wint(&d, 3), library->characters_string(lib, wint(&d, 1), wint(&d, 2)), wint(&d, 4));
-      *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_ALLOC_CHAT_STATE:
-      *out = (qa_qvm_host_result)library->chat_allocate(lib); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_CHAT_STATE:
-      library->chat_free(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_QUEUE_CONSOLE_MESSAGE:
-      text = wtext(&d, 3); library->chat_queue_console_message(lib, wint(&d, 1), wint(&d, 2), text);
-      free(text); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_REMOVE_CONSOLE_MESSAGE:
-      library->chat_remove_console_message(lib, wint(&d, 1), wint(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_NUM_CONSOLE_MESSAGE:
-      *out = (qa_qvm_host_result)library->chat_num_console_messages(lib, wint(&d, 1)); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_NEXT_CONSOLE_MESSAGE: {
-      qa_qvmx_console_chat_message message;
-      if (!library->chat_next_console_message(lib, wint(&d, 1), &message)) { *out = 0; return true; }
-      qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, wint(&d, 2), 276, 0, &view);
-      qa_qvm_writable_view_set_int32(&view, 0, qa_int32(message.handle), true);
-      qa_qvm_writable_view_set_float32(&view, 4, qa_float32(message.time), true);
-      qa_qvm_writable_view_set_int32(&view, 8, qa_int32(message.type), true);
-      qa_qvm_memory_write_string(guest, wint(&d, 2) + 12, message.message, 256);
-      qa_qvm_writable_view_set_int32(&view, 268, 0, true);
-      qa_qvm_writable_view_set_int32(&view, 272, 0, true);
-      *out = qa_int32(message.handle); return true;
-    }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_INITIAL_CHAT: {
-      for (int i = 0; i < 8; i++) {
-        variable_texts[i] = wint(&d, 4 + i) == 0 ? NULL : wtext(&d, 4 + i);
-        variables[i] = variable_texts[i];
-      }
-      text = wint(&d, 2) == 0 ? NULL : wtext(&d, 2);
-      library->chat_initial_chat(lib, wint(&d, 1), text, wint(&d, 3), variables);
-      free(text); for (int i = 0; i < 8; i++) free(variable_texts[i]);
-      *out = 0; return true;
-    }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_REPLY_CHAT: {
-      for (int i = 0; i < 8; i++) {
-        variable_texts[i] = wint(&d, 5 + i) == 0 ? NULL : wtext(&d, 5 + i);
-        variables[i] = variable_texts[i];
-      }
-      text = wtext(&d, 2);
-      *out = library->chat_reply_chat(lib, wint(&d, 1), text, wint(&d, 3), wint(&d, 4), variables) ? 1 : 0;
-      free(text); for (int i = 0; i < 8; i++) free(variable_texts[i]);
+      char *message = services->console_message(services->ctx, wint(d, 1));
+      if (message == NULL) return true;
+      qa_cleanup cleanup;
+      qa_cleanup_push(&cleanup, free, message);
+      qa_qvm_game_memory_write_string(guest, wint(d, 2), message, wint(d, 3));
+      qa_cleanup_pop(&cleanup);
+      free(message);
+      *out = 1;
       return true;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_NUM_INITIAL_CHATS:
-      text = wint(&d, 2) == 0 ? NULL : wtext(&d, 2);
-      *out = (qa_qvm_host_result)library->chat_num_initial_chats(lib, wint(&d, 1), text);
-      free(text); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHAT_LENGTH:
-      *out = (qa_qvm_host_result)library->chat_chat_length(lib, wint(&d, 1)); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_ENTER_CHAT:
-      library->chat_enter_chat(lib, wint(&d, 1), wint(&d, 2), wint(&d, 3)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_CHAT_MESSAGE: {
-      chat_write_ctx write = {&d};
-      library->chat_write_chat_message(lib, wint(&d, 1), chat_message_write, &write);
-      *out = 0; return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_USER_COMMAND: {
+      int32_t client = wint(d, 1);
+      qa_qvm_writable_view view;
+      qa_qvm_game_memory_view(guest, wint(d, 2), QA_QVM_USER_COMMAND_BYTES, 0, &view);
+      qa_qvmx_view record = {view.bytes + view.start, (size_t)view.length};
+      services->user_command(services->ctx, client,
+                             qa_qvm_read_user_command(record, call->has_abi_profile ? call->abi_profile : "q3-modern"));
+      return true;
     }
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_SAY:
+      text = wtext(d, 2);
+      qa_bot_action_say(&library->actions, wint(d, 1), text);
+      break;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_SAY_TEAM:
+      text = wtext(d, 2);
+      qa_bot_action_say_team(&library->actions, wint(d, 1), text);
+      break;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_COMMAND:
+      text = wtext(d, 2);
+      qa_bot_action_command(&library->actions, wint(d, 1), text);
+      break;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_ACTION: qa_bot_action_action(&library->actions, wint(d, 1), wint(d, 2)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_GESTURE: qa_bot_action_gesture(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_TALK: qa_bot_action_talk(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_ATTACK: qa_bot_action_attack(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_USE: qa_bot_action_use(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_RESPAWN: qa_bot_action_respawn(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_CROUCH: qa_bot_action_crouch(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_UP: qa_bot_action_move_up(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_DOWN: qa_bot_action_move_down(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_FORWARD: qa_bot_action_move_forward(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_BACK: qa_bot_action_move_back(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_LEFT: qa_bot_action_move_left(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE_RIGHT: qa_bot_action_move_right(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_SELECT_WEAPON:
+      qa_bot_action_select_weapon(&library->actions, wint(d, 1), wint(d, 2));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_JUMP: qa_bot_action_jump(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_DELAYED_JUMP: qa_bot_action_delayed_jump(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_MOVE: {
+      int32_t client = wint(d, 1);
+      qa_vec3 direction = wvector(d, 2);
+      qa_bot_action_move(&library->actions, client, direction, wfloat(d, 3));
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_VIEW: {
+      int32_t client = wint(d, 1);
+      qa_bot_action_view(&library->actions, client, wvector(d, 2));
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_END_REGULAR:
+      qa_bot_action_end_regular(&library->actions, wint(d, 1), wfloat(d, 2));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_GET_INPUT: {
+      const qa_qvm_game_region span = qa_qvm_game_memory_span(guest, wint(d, 3), 40, 0);
+      const uint8_t *bytes = qa_bot_action_get_input_bytes(&library->actions, wint(d, 1), wfloat(d, 2));
+      qa_qvm_game_memory_region_write(guest, &span, bytes, 40);
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_EA_RESET_INPUT: qa_bot_action_reset_input(&library->actions, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_CHARACTER:
+      text = wtext(d, 1);
+      *out = word((double)qa_bot_character_load(&library->characters, text, wfloat(d, 2)));
+      break;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_CHARACTER: qa_bot_character_free(&library->characters, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_FLOAT:
+      *out = (int32_t)qa_float32_to_bits(qa_bot_character_float(&library->characters, wint(d, 1), wint(d, 2)));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_BFLOAT:
+      *out = (int32_t)qa_float32_to_bits(
+          qa_bot_character_bounded_float(&library->characters, wint(d, 1), wint(d, 2), wfloat(d, 3), wfloat(d, 4)));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_INTEGER:
+      *out = qa_bot_character_integer(&library->characters, wint(d, 1), wint(d, 2));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_BINTEGER:
+      *out = qa_bot_character_bounded_integer(&library->characters, wint(d, 1), wint(d, 2), wint(d, 3), wint(d, 4));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHARACTERISTIC_STRING: {
+      int32_t target = wint(d, 3);
+      const char *value = qa_bot_character_string(&library->characters, wint(d, 1), wint(d, 2));
+      qa_qvm_game_memory_write_string(guest, target, value, wint(d, 4));
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_ALLOC_CHAT_STATE:
+      *out = word((double)qa_bot_chat_library_allocate(&library->chat));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_CHAT_STATE: qa_bot_chat_library_free(&library->chat, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_QUEUE_CONSOLE_MESSAGE: {
+      int32_t handle = wint(d, 1), type = wint(d, 2);
+      text = wtext(d, 3);
+      qa_bot_chat_library_queue_console_message(&library->chat, handle, type, source_text(text));
+      break;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_REMOVE_CONSOLE_MESSAGE:
+      qa_bot_chat_library_remove_console_message(&library->chat, wint(d, 1), wint(d, 2));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_NUM_CONSOLE_MESSAGE:
+      *out = word((double)qa_bot_chat_library_num_console_messages(&library->chat, wint(d, 1)));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_NEXT_CONSOLE_MESSAGE: {
+      qa_console_chat_message message;
+      if (!qa_bot_chat_library_next_console_message(&library->chat, wint(d, 1), &message)) return true;
+      qa_qvm_writable_view view;
+      qa_qvm_game_memory_view(guest, wint(d, 2), 276, 0, &view);
+      qa_qvm_writable_view_set_int32(&view, 0, message.handle, true);
+      qa_qvm_writable_view_set_float32(&view, 4, message.time, true);
+      qa_qvm_writable_view_set_int32(&view, 8, message.type, true);
+      qa_qvm_game_memory_write_string(guest, (int64_t)wint(d, 2) + 12, message.message, 256);
+      qa_qvm_writable_view_set_int32(&view, 268, 0, true);
+      qa_qvm_writable_view_set_int32(&view, 272, 0, true);
+      *out = message.handle;
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_INITIAL_CHAT:
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_REPLY_CHAT: {
+      bool reply = call->code == QA_QVM_GAME_IMPORT_BOTLIB_AI_REPLY_CHAT;
+      int32_t handle = wint(d, 1);
+      text = reply ? wtext(d, 2) : wnullable(d, 2);
+      int32_t first = wint(d, 3), second = reply ? wint(d, 4) : 0;
+      size_t start = reply ? 5 : 4;
+      char *texts[8];
+      qa_chat_text_source variables[8];
+      for (size_t i = 0; i < 8; i++) {
+        texts[i] = wnullable(d, start + i);
+        variables[i] = source_text(texts[i]);
+      }
+      qa_chat_text_source name = source_text(text);
+      if (reply) *out = qa_bot_chat_library_reply_chat(&library->chat, handle, name, first, second, variables) ? 1 : 0;
+      else qa_bot_chat_library_initial_chat(&library->chat, handle, name, first, variables);
+      for (size_t i = 0; i < 8; i++) free(texts[i]);
+      break;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_NUM_INITIAL_CHATS: {
+      int32_t handle = wint(d, 1);
+      text = wnullable(d, 2);
+      *out = word((double)qa_bot_chat_library_num_initial_chats(&library->chat, handle, source_text(text)));
+      break;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHAT_LENGTH:
+      *out = word((double)qa_bot_chat_library_chat_length(&library->chat, wint(d, 1)));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_ENTER_CHAT:
+      qa_bot_chat_library_enter_chat(&library->chat, wint(d, 1), wint(d, 2), wint(d, 3), false, 0);
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_CHAT_MESSAGE:
+      qa_bot_chat_library_write_chat_message(&library->chat, wint(d, 1), chat_message_write, (void *)d);
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_STRING_CONTAINS:
-      text = wint(&d, 1) == 0 ? NULL : wtext(&d, 1);
-      text2 = wint(&d, 2) == 0 ? NULL : wtext(&d, 2);
-      *out = qa_int32(qa_qvm_string_contains(text, text2, wint(&d, 3) != 0));
-      free(text); free(text2); return true;
+      text = wnullable(d, 1);
+      text2 = wnullable(d, 2);
+      *out = word(qa_qvm_string_contains(text, text2, wint(d, 3) != 0));
+      break;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_UNIFY_WHITE_SPACES: {
-      qa_qvm_memory_span span;
-      bool has = qa_qvm_memory_pointer(guest, wint(&d, 1), &span);
-      qa_qvm_unify_white_spaces_in_place(guest, has, span, writes); *out = 0; return true;
+      qa_qvm_game_region span;
+      bool present = qa_qvm_game_memory_pointer(guest, wint(d, 1), &span);
+      qa_unify_white_spaces_in_place_bots_a(present ? span.bytes : NULL, present ? span.length : 0, &writes);
+      return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_REPLACE_SYNONYMS: {
-      span_ctx span = {&d, 1};
-      qa_qvm_bot_span_fn source = {&span, pointer_get};
-      library->chat_replace_synonyms_in_place(lib, source, wint(&d, 2), writes);
-      *out = 0; return true;
+      pointer_ctx pointer = {d, 1};
+      qa_bot_chat_library_replace_synonyms_in_place(&library->chat, pointer_bytes, &pointer, wint(d, 2), &writes);
+      return true;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_CHAT_FILE:
-      text = wtext(&d, 2); text2 = wtext(&d, 3);
-      *out = library->chat_load_chat_file(lib, wint(&d, 1), text, text2) ? 0 : 8;
-      free(text); free(text2); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_CHAT_FILE: {
+      int32_t handle = wint(d, 1);
+      text = wtext(d, 2);
+      text2 = wtext(d, 3);
+      *out = qa_bot_chat_library_load_chat_file(&library->chat, handle, source_text(text), source_text(text2)) ? 0 : 8;
+      break;
+    }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_SET_CHAT_GENDER:
-      library->chat_set_gender(lib, wint(&d, 1), wint(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_SET_CHAT_NAME:
-      text = wtext(&d, 2); library->chat_set_name(lib, wint(&d, 1), text, wint(&d, 3));
-      free(text); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_ALLOC_GOAL_STATE:
-      *out = (qa_qvm_host_result)library->goals_alloc_goal_state(lib, wint(&d, 1)); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_GOAL_STATE:
-      library->goals_free_goal_state(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_RESET_GOAL_STATE:
-      library->goals_reset_goal_state(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_RESET_AVOID_GOALS:
-      library->goals_reset_avoid_goals(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_PUSH_GOAL: {
-      span_ctx span = {&d, 2};
-      qa_qvm_bot_span_fn goal = {&span, span_get};
-      library->goals_push_goal(lib, wint(&d, 1), goal); *out = 0; return true;
+      qa_bot_chat_library_set_gender(&library->chat, wint(d, 1), wint(d, 2));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_SET_CHAT_NAME: {
+      int32_t handle = wint(d, 1);
+      text = wtext(d, 2);
+      qa_bot_chat_library_set_name(&library->chat, handle, source_text(text), true, wint(d, 3));
+      break;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_POP_GOAL:
-      library->goals_pop_goal(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_EMPTY_GOAL_STACK:
-      library->goals_empty_goal_stack(lib, wint(&d, 1)); *out = 0; return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_ALLOC_GOAL_STATE:
+      *out = word((double)qa_bot_goal_alloc_goal_state(&library->goals, wint(d, 1)));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_GOAL_STATE: qa_bot_goal_free_goal_state(&library->goals, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_RESET_GOAL_STATE: qa_bot_goal_reset_goal_state(&library->goals, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_RESET_AVOID_GOALS: qa_bot_goal_reset_avoid_goals(&library->goals, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_PUSH_GOAL: {
+      pointer_ctx pointer = {d, 2};
+      qa_bot_goal_push_goal_fn(&library->goals, wint(d, 1), push_goal_bytes, &pointer);
+      return true;
+    }
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_POP_GOAL: qa_bot_goal_pop_goal(&library->goals, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_EMPTY_GOAL_STACK: qa_bot_goal_empty_goal_stack(&library->goals, wint(d, 1)); return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_TOP_GOAL:
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_SECOND_GOAL: {
-      uint8_t goal_bytes[QA_QVM_BOT_GOAL_BYTES];
-      bool found = call->code == QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_TOP_GOAL
-                       ? library->goals_get_top_goal_bytes(lib, wint(&d, 1), goal_bytes)
-                       : library->goals_get_second_goal_bytes(lib, wint(&d, 1), goal_bytes);
-      if (!found) { *out = 0; return true; }
-      qa_qvm_memory_span span = qa_qvm_memory_get_span(guest, wint(&d, 2), QA_QVM_BOT_GOAL_BYTES, 0);
-      qa_qvm_memory_write_bytes(guest, span.byte_offset, goal_bytes, QA_QVM_BOT_GOAL_BYTES);
-      *out = 1; return true;
+      const uint8_t *result = call->code == QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_TOP_GOAL
+                                  ? qa_bot_goal_get_top_goal_bytes(&library->goals, wint(d, 1))
+                                  : qa_bot_goal_get_second_goal_bytes(&library->goals, wint(d, 1));
+      if (result == NULL) return true;
+      const qa_qvm_game_region span = qa_qvm_game_memory_span(guest, wint(d, 2), QA_QVM_BOT_GOAL_BYTES, 0);
+      qa_qvm_game_memory_region_write(guest, &span, result, QA_QVM_BOT_GOAL_BYTES);
+      *out = 1;
+      return true;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_GOAL_NAME:
-      qa_qvm_memory_write_string(guest, wint(&d, 2), library->goals_goal_name(lib, wint(&d, 1)), wint(&d, 3));
-      *out = 0; return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_GOAL_NAME: {
+      int32_t target = wint(d, 2);
+      const char *name = qa_bot_goal_goal_name(&library->goals, wint(d, 1));
+      qa_qvm_game_memory_write_string(guest, target, name, wint(d, 3));
+      return true;
+    }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_AVOID_GOAL_TIME:
-      *out = (int32_t)qa_float32_to_bits(library->goals_avoid_goal_time(lib, wint(&d, 1), wint(&d, 2))); return true;
+      *out = (int32_t)qa_float32_to_bits(qa_bot_goal_avoid_goal_time(&library->goals, wint(d, 1), wint(d, 2)));
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_SET_AVOID_GOAL_TIME:
-      library->goals_set_avoid_goal_time(lib, wint(&d, 1), wint(&d, 2), wfloat(&d, 3)); *out = 0; return true;
+      qa_bot_goal_set_avoid_goal_time(&library->goals, wint(d, 1), wint(d, 2), wfloat(d, 3));
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_REMOVE_FROM_AVOID_GOALS:
-      library->goals_remove_from_avoid_goals(lib, wint(&d, 1), wint(&d, 2)); *out = 0; return true;
+      qa_bot_goal_remove_from_avoid_goals(&library->goals, wint(d, 1), wint(d, 2));
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_ITEM_WEIGHTS: {
-      text_ctx filename = {&d, 2, NULL};
-      qa_qvm_bot_text_fn fn = {&filename, text_get};
-      *out = (qa_qvm_host_result)library->goals_load_item_weights(lib, wint(&d, 1), fn);
-      free(filename.text); return true;
+      text_ctx filename = {d, 2, NULL};
+      int64_t result = qa_bot_goal_load_item_weights_fn(&library->goals, wint(d, 1), text_read, &filename);
+      free(filename.text);
+      *out = word((double)result);
+      return true;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_ITEM_WEIGHTS:
-      library->goals_free_item_weights(lib, wint(&d, 1)); *out = 0; return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_ITEM_WEIGHTS: qa_bot_goal_free_item_weights(&library->goals, wint(d, 1)); return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHOOSE_LTG_ITEM: {
-      inventory_ctx inventory = {&d, 3};
-      qa_qvm_bot_inventory_fn fn = {&inventory, inventory_get};
-      *out = library->goals_choose_ltg_item(lib, wint(&d, 1), wvector(&d, 2), fn, wint(&d, 4)) ? 1 : 0;
+      inventory_ctx inventory = {d, 3};
+      int32_t handle = wint(d, 1);
+      qa_vec3 origin = wvector(d, 2);
+      *out = qa_bot_goal_choose_ltg_item(&library->goals, handle, origin, inventory_of(&inventory), wint(d, 4)) ? 1 : 0;
       return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHOOSE_NBG_ITEM: {
-      inventory_ctx inventory = {&d, 3};
-      qa_qvm_bot_inventory_fn fn = {&inventory, inventory_get};
-      qa_qvmx_bot_goal ltg;
-      const qa_qvmx_bot_goal *ltg_pointer = NULL;
-      if (wint(&d, 5) != 0) {
-        qa_qvm_writable_view storage;
-        ltg = qa_qvm_read_bot_goal(goal_view(&d, 5, &storage));
-        ltg_pointer = &ltg;
-      }
-      *out = library->goals_choose_nbg_item(lib, wint(&d, 1), wvector(&d, 2), fn, wint(&d, 4), ltg_pointer, wfloat(&d, 6)) ? 1 : 0;
+      inventory_ctx inventory = {d, 3};
+      int32_t handle = wint(d, 1);
+      qa_vec3 origin = wvector(d, 2);
+      int32_t travel_flags = wint(d, 4);
+      qa_bot_goal long_term;
+      bool has_long_term = wint(d, 5) != 0;
+      if (has_long_term) long_term = wgoal(d, 5);
+      *out = qa_bot_goal_choose_nbg_item(&library->goals, handle, origin, inventory_of(&inventory), travel_flags,
+                                         has_long_term ? &long_term : NULL, wfloat(d, 6))
+                 ? 1
+                 : 0;
       return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_TOUCHING_GOAL: {
-      qa_qvm_writable_view storage;
-      *out = qa_qvm_touching_goal(wvector(&d, 1), qa_qvm_read_bot_goal(goal_view(&d, 2, &storage))) ? 1 : 0;
+      qa_vec3 origin = wvector(d, 1);
+      *out = qa_touching_goal(origin, wgoal(d, 2)) ? 1 : 0;
       return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_ITEM_GOAL_IN_VIS_BUT_NOT_VISIBLE: {
-      qa_qvm_writable_view storage;
-      *out = library->goals_item_goal_in_vis_but_not_visible(lib, wint(&d, 1), wvector(&d, 2), wvector(&d, 3), qa_qvm_read_bot_goal(goal_view(&d, 4, &storage))) ? 1 : 0;
+      int32_t viewer = wint(d, 1);
+      qa_vec3 eye = wvector(d, 2), angles = wvector(d, 3);
+      qa_bot_goal goal = wgoal(d, 4);
+      *out = qa_bot_goal_item_goal_in_vis_but_not_visible(&library->goals, viewer, eye, angles, &goal) ? 1 : 0;
       return true;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_INIT_LEVEL_ITEMS:
-      library->goals_init_level_items(lib); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_UPDATE_ENTITY_ITEMS:
-      library->goals_update_entity_items(lib); *out = 0; return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_INIT_LEVEL_ITEMS: qa_bot_goal_init_level_items(&library->goals, NULL); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_UPDATE_ENTITY_ITEMS: qa_bot_goal_update_entity_items(&library->goals); return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_ALLOC_WEAPON_STATE:
-      *out = (qa_qvm_host_result)library->weapons_allocate_state(lib); return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_WEAPON_STATE:
-      library->weapons_free_state(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_RESET_WEAPON_STATE:
-      library->weapons_reset_state(lib, wint(&d, 1)); *out = 0; return true;
+      *out = word((double)qa_weapon_ai_allocate_state(&library->weapons));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_FREE_WEAPON_STATE: qa_weapon_ai_free_state(&library->weapons, wint(d, 1)); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_RESET_WEAPON_STATE: qa_weapon_ai_reset_state(&library->weapons, wint(d, 1)); return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_LOAD_WEAPON_WEIGHTS: {
-      text_ctx filename = {&d, 2, NULL};
-      qa_qvm_bot_text_fn fn = {&filename, text_get};
-      *out = (qa_qvm_host_result)library->weapons_load_weights(lib, wint(&d, 1), fn);
-      free(filename.text); return true;
+      text_ctx filename = {d, 2, NULL};
+      qa_weapon_load_result result = qa_weapon_ai_load_weights_fn(&library->weapons, wint(d, 1), text_read, &filename);
+      free(filename.text);
+      *out = (int32_t)result;
+      return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_CHOOSE_BEST_FIGHT_WEAPON: {
-      inventory_ctx inventory = {&d, 2};
-      qa_qvm_bot_inventory_fn fn = {&inventory, inventory_get};
-      *out = (qa_qvm_host_result)library->weapons_choose_best_fight_weapon(lib, wint(&d, 1), fn);
+      inventory_ctx inventory = {d, 2};
+      *out = word((double)qa_weapon_ai_choose_best_fight_weapon(&library->weapons, wint(d, 1), inventory_of(&inventory)));
       return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_WEAPON_INFO: {
-      const uint8_t *bytes = NULL; size_t length = 0;
-      if (library->weapons_weapon_info_bytes(lib, wint(&d, 1), wint(&d, 2), &bytes, &length)) {
-        qa_qvm_memory_span span = qa_qvm_memory_get_span(guest, wint(&d, 3), (int64_t)length, 0);
-        qa_qvm_memory_write_bytes(guest, span.byte_offset, bytes, length);
+      size_t length = 0;
+      const uint8_t *bytes = qa_weapon_ai_weapon_info_bytes(&library->weapons, wint(d, 1), wint(d, 2), &length);
+      if (bytes != NULL) {
+        const qa_qvm_game_region span = qa_qvm_game_memory_span(guest, wint(d, 3), (int64_t)length, 0);
+        qa_qvm_game_memory_region_write(guest, &span, bytes, length);
       }
-      *out = 0; return true;
+      return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_LEVEL_ITEM_GOAL:
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_MAP_LOCATION_GOAL: {
       bool location = call->code == QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_MAP_LOCATION_GOAL;
       size_t output = location ? 2 : 3;
-      qa_qvm_writable_view storage;
-      qa_qvmx_view view = goal_view(&d, output, &storage);
-      qa_qvmx_bot_goal current = qa_qvm_read_bot_goal(view);
-      qa_qvmx_bot_goal result = current;
+      qa_bot_goal result;
       bool found;
       if (location) {
-        text = wtext(&d, 1);
-        found = library->goals_get_map_location_goal(lib, text, &result); free(text);
+        text = wtext(d, 1);
+        qa_bot_goal prior = wgoal(d, output);
+        found = qa_bot_goal_get_map_location_goal(&library->goals, qa_goal_name_text(text), &prior, &result);
       } else {
-        text = wtext(&d, 2);
-        found = library->goals_get_level_item_goal(lib, wint(&d, 1), text, &result); free(text);
+        int32_t index = wint(d, 1);
+        text = wtext(d, 2);
+        qa_bot_goal prior = wgoal(d, output);
+        found = qa_bot_goal_get_level_item_goal(&library->goals, index, qa_goal_name_text(text), &prior, &result);
       }
-      if (!found) { *out = 0; return true; }
-      qa_qvm_write_bot_goal(view, &result, location ? "location" : "level-item");
-      *out = location ? 1 : qa_int32(result.number); return true;
+      if (!found) {
+        *out = location ? 0 : -1;
+        break;
+      }
+      qa_qvmx_bot_goal record = goal_to_record(&result);
+      qa_qvm_write_bot_goal(goal_view(d, output), &record, location ? "location" : "level-item");
+      *out = location ? 1 : word((double)result.number);
+      break;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GET_NEXT_CAMP_SPOT_GOAL: {
-      qa_qvm_writable_view storage;
-      qa_qvmx_view view = goal_view(&d, 2, &storage);
-      qa_qvmx_bot_goal result = qa_qvm_read_bot_goal(view);
-      double next = 0;
-      if (!library->goals_get_next_camp_spot_goal(lib, wint(&d, 1), &result, &next)) { *out = 0; return true; }
-      qa_qvm_write_bot_goal(view, &result, NULL); *out = qa_int32(next); return true;
+      int32_t index = wint(d, 1);
+      qa_bot_goal prior = wgoal(d, 2), result;
+      int64_t next = 0;
+      if (!qa_bot_goal_get_next_camp_spot_goal(&library->goals, index, &prior, &next, &result)) return true;
+      qa_qvmx_bot_goal record = goal_to_record(&result);
+      qa_qvm_write_bot_goal(goal_view(d, 2), &record, NULL);
+      *out = word((double)next);
+      return true;
     }
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_DUMP_AVOID_GOALS:
-      library->goals_dump_avoid_goals(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_DUMP_GOAL_STACK:
-      library->goals_dump_goal_stack(lib, wint(&d, 1)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_INTERBREED_GOAL_FUZZY_LOGIC:
-      library->goals_interbreed_goal_fuzzy_logic(lib, wint(&d, 1), wint(&d, 2), wint(&d, 3)); *out = 0; return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_DUMP_AVOID_GOALS: (void)qa_bot_goal_dump_avoid_goals(&library->goals, wint(d, 1), NULL, 0); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_DUMP_GOAL_STACK: (void)qa_bot_goal_dump_goal_stack(&library->goals, wint(d, 1), NULL, 0); return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_INTERBREED_GOAL_FUZZY_LOGIC: {
+      qa_string_list warnings = qa_bot_goal_interbreed_goal_fuzzy_logic(&library->goals, wint(d, 1), wint(d, 2), wint(d, 3));
+      qa_string_list_destroy(&warnings);
+      return true;
+    }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_MUTATE_GOAL_FUZZY_LOGIC:
-      library->goals_mutate_goal_fuzzy_logic(lib, wint(&d, 1), wfloat(&d, 2)); *out = 0; return true;
-    case QA_QVM_GAME_IMPORT_BOTLIB_AI_SAVE_GOAL_FUZZY_LOGIC:
-      text = wtext(&d, 2); library->goals_save_goal_fuzzy_logic(lib, wint(&d, 1), text);
-      free(text); *out = 0; return true;
+      qa_bot_goal_mutate_goal_fuzzy_logic(&library->goals, wint(d, 1), wfloat(d, 2));
+      return true;
+    case QA_QVM_GAME_IMPORT_BOTLIB_AI_SAVE_GOAL_FUZZY_LOGIC: {
+      int32_t handle = wint(d, 1);
+      text = wtext(d, 2);
+      qa_bot_goal_save_goal_fuzzy_logic(&library->goals, handle, text);
+      break;
+    }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_GENETIC_PARENTS_AND_CHILD_SELECTION: {
-      genetic_ctx genetic = {&d};
-      qa_qvmx_genetic_selection selection = {(double)wint(&d, 1), &genetic, genetic_rank, genetic_write};
-      *out = library->genetic_selection(lib, selection) ? 1 : 0; return true;
+      /* TS reads ranks through the request lazily; the C selection takes them up front. A count
+       * above 256 or below 0 never reads a rank in TS, so only 0..256 ranks are read here. */
+      int32_t count = wint(d, 1);
+      double ranks[256];
+      size_t read = count < 0 ? 0 : count > 256 ? 0 : (size_t)count;
+      for (size_t i = 0; i < read; i++) {
+        qa_qvm_writable_view view;
+        qa_qvm_game_memory_view(guest, wint(d, 2), 4, (int64_t)i * 4, &view);
+        ranks[i] = qa_qvm_writable_view_get_float32(&view, 0, true);
+      }
+      qa_genetic_selection_result result = qa_bot_library_genetic_selection_bots_a(
+          library, read == 0 ? NULL : ranks, count < 0 ? 0 : (size_t)count, genetic_write, (void *)d);
+      *out = result.kind == QA_GENETIC_SELECTED ? 1 : 0;
+      return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_FIND_MATCH: {
       qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, wint(&d, 2), 328, 0, &view);
-      qa_qvm_memory_span string_span = qa_qvm_memory_get_span(guest, wint(&d, 2), 256, 0);
-      qa_qvmx_chat_match_buffer buffer;
-      buffer.view = view;
-      buffer.string.byte_offset = string_span.byte_offset;
-      buffer.string.byte_length = string_span.byte_length;
-      buffer.writes = writes;
-      text = wtext(&d, 1);
-      *out = library->chat_find_match_into(lib, text, wint(&d, 3), &buffer) ? 1 : 0;
-      free(text); return true;
+      qa_qvm_game_memory_view(guest, wint(d, 2), 328, 0, &view);
+      const qa_qvm_game_region string = qa_qvm_game_memory_span(guest, wint(d, 2), 256, 0);
+      qa_chat_match_buffer buffer;
+      memset(&buffer, 0, sizeof buffer);
+      buffer.bytes = string.bytes;
+      buffer.length = string.length;
+      buffer.writes = &writes;
+      /* The TS buffer's type, subtype and variables are accessors over the record; C
+       * stages them and stores the ones the library wrote back through the view. */
+      buffer.type = qa_qvm_writable_view_get_int32(&view, 256, true);
+      buffer.subtype = qa_qvm_writable_view_get_int32(&view, 260, true);
+      qa_chat_match_buffer before;
+      for (int i = 0; i < 8; i++) {
+        buffer.variables[i].offset = qa_qvm_writable_view_get_int8(&view, 264 + i * 8);
+        buffer.variables[i].length = qa_qvm_writable_view_get_int32(&view, 268 + i * 8, true);
+      }
+      before = buffer;
+      text = wtext(d, 1);
+      int32_t context = wint(d, 3);
+      bool found = qa_bot_chat_library_find_match_into(&library->chat, source_text(text), context, &buffer);
+      if (buffer.type != before.type) qa_qvm_writable_view_set_int32(&view, 256, buffer.type, true);
+      if (buffer.subtype != before.subtype) qa_qvm_writable_view_set_int32(&view, 260, buffer.subtype, true);
+      for (int i = 0; i < 8; i++) {
+        if (buffer.variables[i].offset != before.variables[i].offset)
+          qa_qvm_writable_view_set_int8(&view, 264 + i * 8, qa_js_to_int32((double)buffer.variables[i].offset));
+        if (buffer.variables[i].length != before.variables[i].length)
+          qa_qvm_writable_view_set_int32(&view, 268 + i * 8, qa_js_to_int32((double)buffer.variables[i].length), true);
+      }
+      *out = found ? 1 : 0;
+      break;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_AI_MATCH_VARIABLE: {
-      qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, wint(&d, 1), 328, 0, &view);
-      capture_ctx capture = {&view};
-      match_write_ctx write = {&d};
-      library->chat_write_match_variable(lib, match_capture, &capture, wint(&d, 2), wint(&d, 4),
-                                         match_write, &write, match_clear, &write);
-      *out = 0; return true;
+      match_ctx match;
+      match.d = d;
+      qa_qvm_game_memory_view(guest, wint(d, 1), 328, 0, &match.view);
+      qa_bot_chat_library_write_match_variable(&library->chat, match_at, wint(d, 2), wint(d, 4), match_write, match_clear, &match);
+      return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_LOAD_SOURCE:
-      text = wtext(&d, 1); *out = (qa_qvm_host_result)library->sources_load_source_handle(lib, text);
-      free(text); return true;
+      text = wtext(d, 1);
+      *out = word((double)qa_bot_script_sources_load(&library->sources, text));
+      break;
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_FREE_SOURCE:
-      *out = library->sources_free_source_handle(lib, wint(&d, 1)) ? 1 : 0; return true;
+      *out = qa_bot_script_sources_free(&library->sources, wint(d, 1)) ? 1 : 0;
+      return true;
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_READ_TOKEN: {
-      qa_ui_source_token_memory *token = NULL; bool was_read = false;
-      if (!library->sources_read_token(lib, wint(&d, 1), &token, &was_read)) { *out = 0; return true; }
+      qa_ui_source_token_memory *token = NULL;
+      bool was_read = false;
+      if (!qa_bot_script_sources_read_token_result(&library->sources, wint(d, 1), &token, &was_read)) return true;
       qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, wint(&d, 2), QA_QVM_SCRIPT_TOKEN_BYTES, 0, &view);
-      qa_qvm_write_script_token_memory(&view, token); *out = was_read ? 1 : 0; return true;
+      qa_qvm_game_memory_view(guest, wint(d, 2), QA_QVM_SCRIPT_TOKEN_BYTES, 0, &view);
+      qa_qvm_write_script_token_memory(&view, token);
+      *out = was_read ? 1 : 0;
+      return true;
     }
     case QA_QVM_GAME_IMPORT_BOTLIB_PC_SOURCE_FILE_AND_LINE: {
-      const char *filename = NULL; double line = 0;
-      if (!library->sources_source_file_and_line(lib, wint(&d, 1), &filename, &line)) { *out = 0; return true; }
-      qa_qvm_memory_write_string(guest, wint(&d, 2), filename, 128);
+      char filename[QA_BOT_MAX_SOURCE_PATH + 1];
+      int64_t line = 0;
+      if (!qa_bot_script_sources_file_and_line(&library->sources, wint(d, 1), filename, &line)) return true;
+      qa_qvm_game_memory_write_string(guest, wint(d, 2), filename, 128);
       qa_qvm_writable_view view;
-      qa_qvm_memory_view(guest, wint(&d, 3), 4, 0, &view);
-      qa_qvm_writable_view_set_int32(&view, 0, qa_int32(line), true);
-      *out = 1; return true;
+      qa_qvm_game_memory_view(guest, wint(d, 3), 4, 0, &view);
+      qa_qvm_writable_view_set_int32(&view, 0, qa_js_to_int32((double)line), true);
+      *out = 1;
+      return true;
     }
-    default: return false;
+    default:
+      return false;
   }
+  free(text);
+  free(text2);
+  return true;
 }

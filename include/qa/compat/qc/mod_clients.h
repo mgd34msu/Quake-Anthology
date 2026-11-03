@@ -5,6 +5,7 @@
 #define QA_COMPAT_QC_MOD_CLIENTS_H
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "qa/contracts/mod_callbacks.h"
 #include "qa/world/session/mod_clients.h"
 typedef struct qa_compat_qc_mod_client_slot { qa_actor_id actor; int64_t slot; bool admitted; } qa_compat_qc_mod_client_slot;
@@ -26,11 +27,12 @@ typedef struct qa_compat_qc_mod_client_operations {
   void (*admitted)(void *ctx, qa_actor_id actor); /* nullable */
   const qa_compat_qc_mod_client_input_ops *input; /* nullable */
 } qa_compat_qc_mod_client_operations;
-typedef struct qa_compat_qc_mod_client_entry { qa_actor_id actor; bool has_client; qa_client_id client; int64_t slot; bool admitted; } qa_compat_qc_mod_client_entry;
+typedef struct qa_compat_qc_mod_client_entry { qa_actor_id actor; bool has_client; qa_client_id client; int64_t slot; bool admitted; uint64_t generation; } qa_compat_qc_mod_client_entry;
 typedef struct qa_compat_qc_mod_client_bindings {
   qa_compat_qc_mod_client_operations operations;
   qa_compat_qc_mod_client_entry *entries; size_t entry_count, entry_capacity;
   qa_mod_client_unsubscribe unsubscribe, unsubscribe_input; bool has_unsubscribe, has_unsubscribe_input;
+  uint64_t next_generation;
 } qa_compat_qc_mod_client_bindings;
 void qa_compat_qc_mod_client_bindings_init(qa_compat_qc_mod_client_bindings *b, qa_compat_qc_mod_client_operations operations);
 void qa_compat_qc_mod_client_bindings_destroy(qa_compat_qc_mod_client_bindings *b);

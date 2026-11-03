@@ -18,10 +18,14 @@ typedef float qa_q2_wire_vec3[3];
 #define QA_Q2_MAX_EDICTS 1024
 
 /* TS PmTypeT. */
+/* movement/q2/types.h spells the same TS PmTypeT values; one shared definition. */
+#ifndef QA_Q2_PM_TYPE_DEFINED
+#define QA_Q2_PM_TYPE_DEFINED
 typedef enum qa_q2_pm_type {
   QA_Q2_PM_NORMAL, QA_Q2_PM_SPECTATOR, QA_Q2_PM_DEAD, QA_Q2_PM_GIB,
   QA_Q2_PM_FREEZE, QA_Q2_PM_GRAPPLE = 5, QA_Q2_PM_NOCLIP = 6
 } qa_q2_pm_type;
+#endif
 
 /* TS PmoveStateT. delta_angle_float is TS deltaAngleEncoding=="float". */
 typedef struct qa_q2_wire_pmove {

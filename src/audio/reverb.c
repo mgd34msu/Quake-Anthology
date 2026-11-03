@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static double clampd(double v, double lo, double hi) {
   return v < lo ? lo : v > hi ? hi : v;
@@ -67,11 +68,11 @@ static bool network_init(qa_reverb_network *network, int64_t rate,
   memset(network, 0, sizeof *network);
   for (int i = 0; i < 8; i++)
     if (!comb_init(&network->combs[i],
-                   (int64_t)llround((comb_tunings[i] + spread) * (double)rate / 44100)))
+                   (int64_t)qa_js_round((comb_tunings[i] + spread) * (double)rate / 44100)))
       return false;
   for (int i = 0; i < 4; i++)
     if (!allpass_init(&network->allpasses[i],
-                      (int64_t)llround((allpass_tunings[i] + spread) * (double)rate / 44100)))
+                      (int64_t)qa_js_round((allpass_tunings[i] + spread) * (double)rate / 44100)))
       return false;
   return true;
 }
@@ -97,8 +98,8 @@ static void network_configure(qa_reverb_network *network,
   /* TS: Math.min(0.99, Math.max(0, 1 - ratio) + (limit ? 0.05 : 0)). */
   for (int i = 0; i < 8; i++) {
     qa_reverb_comb *comb = &network->combs[i];
-    comb->feedback = fmin(0.98, pow(10, -3 * (double)comb->length /
-                                            (fmax(0.001, p->decay_time) * rate)));
+    comb->feedback = qa_js_min(0.98, qa_js_pow(10, -3 * (double)comb->length /
+                                            (qa_js_max(0.001, p->decay_time) * rate)));
     comb->damping = damping;
   }
   double diffusion = clampd(p->diffusion * 0.7 + p->density * 0.3, 0, 1);
@@ -141,13 +142,13 @@ void qa_stereo_reverb_process(qa_stereo_reverb *reverb, double *samples,
   if (sample_count % 2 != 0) qa_range_error("Reverb requires stereo frames");
   network_configure(&reverb->left, params, reverb->sample_rate);
   network_configure(&reverb->right, params, reverb->sample_rate);
-  int64_t delay = (int64_t)llround(params->late_reverb_delay * reverb->sample_rate);
+  int64_t delay = (int64_t)qa_js_round(params->late_reverb_delay * reverb->sample_rate);
   if (delay < 0) delay = 0;
   if (delay > (int64_t)reverb->delay_length - 1)
     delay = (int64_t)reverb->delay_length - 1;
   double shelf = 1 - exp(-2 * 3.141592653589793 *
-                         fmin(reverb->sample_rate * 0.45,
-                              fmax(20, params->hf_reference)) /
+                         qa_js_min(reverb->sample_rate * 0.45,
+                              qa_js_max(20, params->hf_reference)) /
                          reverb->sample_rate);
   double wet_gain = clampd(params->gain * (params->late_reverb_gain +
                                             0.25 * params->reflections_gain),
@@ -192,7 +193,7 @@ void qa_underwater_filter_process(qa_underwater_filter *filter,
                                   double high_frequency_gain) {
   double gain = clampd(high_frequency_gain, 0.001, 1);
   double w = 2 * 3.141592653589793 *
-             fmin(5000, filter->sample_rate * 0.45) / filter->sample_rate;
+             qa_js_min(5000, filter->sample_rate * 0.45) / filter->sample_rate;
   double c = cos(w), alpha = sin(w) / 2 * 1.4142135623730951;
   double k = 2 * sqrt(gain) * alpha;
   double a0 = gain + 1 - (gain - 1) * c + k;

@@ -32,8 +32,12 @@ typedef struct qa_fog_volume {
 typedef const char *qa_fog_adjustment_kind;
 typedef const char *qa_fog_pass;
 
+/* TS prepareFogVolume(map, index, parameters, identityLight = 1): tr_bsp.c
+ * scales the fog color by tr.identityLight, so fog volumes keep the
+ * brightness of lit surfaces when overbright shifts them. */
 qa_fog_volume qa_prepare_fog_volume(qa_fog_brush_map map, double index,
-                                    qa_q3_material_fog parameters);
+                                    qa_q3_material_fog parameters,
+                                    double identity_light);
 
 /* Closure state of TS fogCoordinates' returned function. */
 typedef struct qa_fog_coordinates_state {
@@ -51,12 +55,8 @@ double qa_fog_factor(double s, double t);
 /* pixels NULL allocates; non-NULL requires length 256*32*4. */
 qa_image_level qa_create_fog_texture(uint8_t *pixels, size_t length);
 
-qa_fog_adjustment_kind qa_fog_adjustment(qa_mat_shader_stage stage,
-                                         qa_mat_shader_stage first);
 qa_vec4 qa_attenuate_fog_color(qa_vec4 color, const char *adjustment,
                                qa_vec2 coordinates);
-double qa_shader_sort(const qa_mat_shader_definition *shader);
-qa_fog_pass qa_shader_fog_pass(const qa_mat_shader_definition *shader);
 /* pass must not be "none". */
 qa_render_state qa_fog_pass_state(const char *pass, const char *cull);
 

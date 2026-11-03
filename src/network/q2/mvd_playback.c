@@ -1,4 +1,5 @@
 /* Port of src/network/q2/mvd-playback.ts. GPL-2.0-or-later. */
+#include "qa/network/common/js_number.h"
 #include "qa/network/q2/mvd_playback.h"
 
 #include <math.h>
@@ -12,6 +13,7 @@
 #include "qa/network/q2/constants.h"
 #include "qa/network/q2/message.h"
 #include "qa/network/q2/mvd_recording.h"
+#include "qa/foundation/js.h"
 
 static char *dup_str(const char *s) {
   size_t n = strlen(s != NULL ? s : "");
@@ -165,7 +167,9 @@ static int entity_cmp(const void *a, const void *b) {
              ((const qa_q2_wire_entity *)b)->number;
   return d < 0 ? -1 : d > 0 ? 1 : 0;
 }
-/* TS frame(). False only on OOM. */
+static void frame_release(void *arg) { qa_q2_wire_frame_free((qa_q2_wire_frame *)arg); }
+/* TS frame(). False only on OOM. The visibility callbacks may raise (TS throws through
+ * frame()); the partly built frame is released by the cleanup then. */
 static bool build_frame(qa_q2_mvd_playback *p, qa_q2_wire_frame *out) {
   memset(out, 0, sizeof *out);
   out->server_frame = p->frame_number;
@@ -178,21 +182,22 @@ static bool build_frame(qa_q2_mvd_playback *p, qa_q2_wire_frame *out) {
       &area_length);
   if (out->area_bits == NULL && area_length > 0) return false;
   out->area_bits_length = area_length;
-  qa_q2_wire_entity *sorted = NULL;
+  qa_cleanup node;
+  qa_cleanup_push(&node, frame_release, out);
   if (p->entity_count > 0) {
-    sorted = (qa_q2_wire_entity *)malloc(p->entity_count * sizeof *sorted);
-    if (sorted == NULL) {
+    out->entities = (qa_q2_wire_entity *)malloc(p->entity_count * sizeof *out->entities);
+    if (out->entities == NULL) {
+      qa_cleanup_pop(&node);
       qa_q2_wire_frame_free(out);
       return false;
     }
-    memcpy(sorted, p->entities, p->entity_count * sizeof *sorted);
-    qsort(sorted, p->entity_count, sizeof *sorted, entity_cmp);
+    memcpy(out->entities, p->entities, p->entity_count * sizeof *out->entities);
+    qa_js_sort(out->entities, p->entity_count, sizeof *out->entities, entity_cmp);
   }
-  size_t kept = p->visibility.entities(p->visibility.ctx, sorted, p->entity_count,
-                                       &out->player, p->portal_bits,
-                                       p->portal_bits_length);
-  out->entities = sorted;
-  out->entity_count = kept;
+  size_t kept = p->visibility.entities(p->visibility.ctx, out->entities, p->entity_count,
+                                       &out->player, p->portal_bits, p->portal_bits_length);
+  qa_cleanup_pop(&node);
+  out->entity_count = kept <= p->entity_count ? kept : p->entity_count;
   return true;
 }
 
@@ -222,6 +227,12 @@ typedef struct entity_list {
   qa_q2_wire_entity *items;
   size_t count, capacity;
 } entity_list;
+static void entity_list_release(void *arg) {
+  entity_list *list = (entity_list *)arg;
+  free(list->items);
+  list->items = NULL;
+  list->count = list->capacity = 0;
+}
 static bool entity_list_set(entity_list *list, const qa_q2_wire_entity *entity) {
   for (size_t i = 0; i < list->count; i++) {
     if (list->items[i].number == entity->number) {
@@ -256,8 +267,16 @@ static void entity_list_delete(entity_list *list, double number) {
     }
   }
 }
+static void carry_old_origin(qa_q2_wire_entity *entity, const qa_q2_wire_entity *previous) {
+  const float *old_origin =
+      (qa_js_to_int32(previous->renderfx) & 128) ? previous->old_origin : previous->origin;
+  entity->old_origin[0] = old_origin[0];
+  entity->old_origin[1] = old_origin[1];
+  entity->old_origin[2] = old_origin[2];
+}
 
-/* TS readFrame(dummy). False only on OOM (TS throws abort). */
+/* TS readFrame(dummy). False only on OOM. Players and portal bits are committed as read,
+ * as in TS; the entity Map is replaced only when the frame completes. */
 static bool read_frame(qa_q2_mvd_playback *p, double dummy) {
   qa_q2_sizebuf *message = &p->wire.message;
   int32_t portal_length = qa_q2_msg_read_byte(message);
@@ -297,18 +316,17 @@ static bool read_frame(qa_q2_mvd_playback *p, double dummy) {
     }
   }
   entity_list next = {NULL, 0, 0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, entity_list_release, &next);
   for (size_t i = 0; i < p->entity_count; i++) {
     qa_q2_wire_entity previous = p->entities[i];
     qa_q2_wire_entity entity;
     qa_q2_wire_entity_init(&entity);
     read_entity(p, &previous, &entity, previous.number, 0);
-    const float *old_origin =
-        ((int32_t)previous.renderfx & 128) ? previous.old_origin : previous.origin;
-    entity.old_origin[0] = old_origin[0];
-    entity.old_origin[1] = old_origin[1];
-    entity.old_origin[2] = old_origin[2];
+    carry_old_origin(&entity, &previous);
     if (!entity_list_set(&next, &entity)) {
-      free(next.items);
+      qa_cleanup_pop(&node);
+      entity_list_release(&next);
       return false;
     }
   }
@@ -333,52 +351,49 @@ static bool read_frame(qa_q2_mvd_playback *p, double dummy) {
     }
     qa_q2_wire_entity previous;
     qa_q2_wire_entity_init(&previous);
-    const qa_q2_wire_entity *found = NULL;
     for (size_t i = 0; i < p->entity_count; i++) {
-      if (p->entities[i].number == number) found = &p->entities[i];
+      if (p->entities[i].number == number) {
+        previous = p->entities[i];
+        break;
+      }
     }
-    if (found != NULL) previous = *found;
     qa_q2_wire_entity entity;
     qa_q2_wire_entity_init(&entity);
     read_entity(p, &previous, &entity, number, bits);
-    if (!(bits & QA_Q2_U_OLDORIGIN)) {
-      const float *old_origin =
-          ((int32_t)previous.renderfx & 128) ? previous.old_origin : previous.origin;
-      entity.old_origin[0] = old_origin[0];
-      entity.old_origin[1] = old_origin[1];
-      entity.old_origin[2] = old_origin[2];
-    }
-    if (bits & QA_Q2_U_FRAME16) entity.frame = (double)((int32_t)entity.frame & 65535);
+    if (!(bits & QA_Q2_U_OLDORIGIN)) carry_old_origin(&entity, &previous);
+    if (bits & QA_Q2_U_FRAME16) entity.frame = (double)(qa_js_to_int32(entity.frame) & 65535);
     if ((bits & (QA_Q2_U_SKIN8 | QA_Q2_U_SKIN16)) == QA_Q2_U_SKIN16) {
-      entity.skinnum = (double)((int32_t)entity.skinnum & 65535);
+      entity.skinnum = (double)(qa_js_to_int32(entity.skinnum) & 65535);
     }
     if ((bits & (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) == QA_Q2_U_EFFECTS16) {
-      entity.effects = (double)((int32_t)entity.effects & 65535);
+      entity.effects = (double)(qa_js_to_int32(entity.effects) & 65535);
     }
     if ((bits & (QA_Q2_U_RENDERFX8 | QA_Q2_U_RENDERFX16)) == QA_Q2_U_RENDERFX16) {
-      entity.renderfx = (double)((int32_t)entity.renderfx & 65535);
+      entity.renderfx = (double)(qa_js_to_int32(entity.renderfx) & 65535);
     }
     if (!p->profile.extended && (bits & QA_Q2_U_SOLID)) {
-      entity.solid = (double)((int32_t)entity.solid & 65535);
+      entity.solid = (double)(qa_js_to_int32(entity.solid) & 65535);
     }
     if (!entity_list_set(&next, &entity)) {
-      free(next.items);
+      qa_cleanup_pop(&node);
+      entity_list_release(&next);
       return false;
     }
   }
+  qa_cleanup_pop(&node);
   for (size_t i = 0; i < p->player_count; i++) {
     double number = p->players[i].number;
-    qa_q2_wire_player player = p->players[i].player;
+    const qa_q2_wire_player *player = &p->players[i].player;
     qa_q2_wire_entity *entity = entity_list_get(&next, number + 1);
-    if (entity == NULL || number == dummy || player.pmove.pm_type != 0) continue;
+    if (entity == NULL || number == dummy || player->pmove.pm_type != 0) continue;
     for (int axis = 0; axis < 3; axis++) {
       entity->origin[axis] = (float)(p->profile.rerelease
-                                         ? (double)player.pmove.origin_f[axis]
-                                         : (double)player.pmove.origin[axis] / 8);
+                                         ? (double)player->pmove.origin_f[axis]
+                                         : (double)player->pmove.origin[axis] / 8);
     }
-    double pitch = (double)player.viewangles[0];
+    double pitch = (double)player->viewangles[0];
     entity->angles[0] = (float)((pitch > 180 ? pitch - 360 : pitch) / 3);
-    entity->angles[1] = player.viewangles[1];
+    entity->angles[1] = player->viewangles[1];
     entity->angles[2] = 0;
   }
   free(p->entities);
@@ -390,10 +405,17 @@ static bool read_frame(qa_q2_mvd_playback *p, double dummy) {
   return true;
 }
 
+/* The TS `records` array of one readRecords call; raised reads release it. */
 typedef struct record_list {
   qa_q2_server_record *items;
   size_t count, capacity;
 } record_list;
+static void record_list_release(void *arg) {
+  record_list *list = (record_list *)arg;
+  qa_q2_server_records_free(list->items, list->count);
+  list->items = NULL;
+  list->count = list->capacity = 0;
+}
 static bool records_push(record_list *list, qa_q2_server_record *record) {
   if (list->count == list->capacity) {
     size_t next = list->capacity > 0 ? list->capacity * 2 : 16;
@@ -407,10 +429,15 @@ static bool records_push(record_list *list, qa_q2_server_record *record) {
   memset(record, 0, sizeof *record);
   return true;
 }
-/* TS emit(): record with raw span [start, readcount). Takes event ownership. */
+static void event_release(void *arg) { qa_q2_server_event_clear((qa_q2_server_event *)arg); }
+/* TS emit(): record with raw span [start, readcount). Takes event ownership, also when
+ * checkMessageRead raises. */
 static bool emit_record(qa_q2_mvd_playback *p, record_list *list, double opcode,
                         int64_t start, qa_q2_server_event *event) {
+  qa_cleanup node;
+  qa_cleanup_push(&node, event_release, event);
   qa_q2_message_check_read(&p->wire.message);
+  qa_cleanup_pop(&node);
   qa_q2_server_record record;
   memset(&record, 0, sizeof record);
   record.seat = 0;
@@ -431,12 +458,37 @@ static bool emit_record(qa_q2_mvd_playback *p, record_list *list, double opcode,
   }
   return true;
 }
-static void number_text(double value, char *buffer, size_t capacity) {
-  if (value == (double)(int64_t)value) {
-    (void)snprintf(buffer, capacity, "%lld", (long long)(int64_t)value);
-  } else {
-    (void)snprintf(buffer, capacity, "%g", value);
+/* Owned text event (config-string, print, command-text). False only on OOM. */
+static bool emit_text(qa_q2_mvd_playback *p, record_list *list, double opcode, int64_t start,
+                      qa_q2_server_event *event, const char *text) {
+  event->text = dup_str(text);
+  if (event->text == NULL) return false;
+  return emit_record(p, list, opcode, start, event);
+}
+static bool emit_frame(qa_q2_mvd_playback *p, record_list *list, int64_t start) {
+  qa_q2_server_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q2_SERVER_FRAME;
+  if (!build_frame(p, &event.frame)) return false;
+  return emit_record(p, list, 20, start, &event);
+}
+/* TS `yield* records; records.length = 0`: ownership of each record passes to the sink. */
+static void flush_records(record_list *list, qa_q2_mvd_record_sink sink, void *ctx) {
+  size_t count = list->count;
+  qa_q2_server_record *items = list->items;
+  list->items = NULL;
+  list->count = list->capacity = 0;
+  /* Records not yet handed over when the sink raises stay owned here. */
+  record_list rest = {items, count, count};
+  qa_cleanup node;
+  qa_cleanup_push(&node, record_list_release, &rest);
+  for (size_t i = 0; i < count; i++) {
+    qa_q2_server_record record = items[i];
+    memset(&items[i], 0, sizeof items[i]);
+    sink(ctx, &record);
   }
+  qa_cleanup_pop(&node);
+  free(items);
 }
 static bool embedded_init(qa_q2_mvd_playback *p, qa_q2_protocol_identity protocol,
                           double max_config_strings) {
@@ -447,261 +499,274 @@ static bool embedded_init(qa_q2_mvd_playback *p, qa_q2_protocol_identity protoco
   options.inventory_slots = 256;
   return qa_q2_server_message_reader_init(&p->embedded, protocol, options);
 }
+static void header_release(void *arg) { qa_q2_mvd_header_free((qa_q2_mvd_header *)arg); }
+static void bytes_release(void *arg) {
+  uint8_t **bytes = (uint8_t **)arg;
+  free(*bytes);
+  *bytes = NULL;
+}
 
-bool qa_q2_mvd_playback_read(qa_q2_mvd_playback *p, const uint8_t *bytes,
-                             size_t length, qa_q2_server_record **out,
-                             size_t *out_count) {
-  *out = NULL;
-  *out_count = 0;
+/* TS mvd_serverdata case. False only on OOM. */
+static bool read_serverdata(qa_q2_mvd_playback *p, const uint8_t *bytes, size_t length,
+                            int64_t start, record_list *records,
+                            qa_q2_mvd_record_sink sink, void *ctx) {
+  qa_q2_mvd_header header;
+  if (!qa_q2_read_mvd_header(bytes + start, length - (size_t)start, &header)) return false;
+  qa_cleanup node;
+  qa_cleanup_push(&node, header_release, &header);
+  p->profile = header.profile;
+  p->wire.message.readcount = start + (int64_t)header.frame_offset;
+  bool ok = embedded_init(p, header.profile.protocol, header.profile.max_config_strings);
+  if (ok && strcmp(header.profile.protocol.kind, "q2-q2pro") == 0) {
+    qa_q2_wire_codec_accept_q2pro_features(
+        &p->embedded.wire, (double)header.profile.protocol.revision,
+        header.data.has_wire_flags ? header.data.wire_flags : 0);
+  }
+  if (ok) {
+    for (size_t i = 0; i < p->config_string_count; i++) free(p->config_strings[i].value);
+    p->config_string_count = 0;
+    p->player_count = 0;
+    p->entity_count = 0;
+    p->frame_number = 0;
+    for (size_t i = 0; i < header.config_string_count && ok; i++) {
+      ok = config_set(p, header.config_strings[i].index, header.config_strings[i].value);
+    }
+    p->max_clients = header.max_clients;
+    p->dummy = header.dummy;
+  }
+  qa_q2_server_data_result data = header.data;
+  qa_cleanup_pop(&node);
+  qa_q2_mvd_header_free(&header);
+  if (!ok || !read_frame(p, p->dummy)) return false;
+  selected_or_first(p);
+  data.clientnum = p->selected;
+  p->data = data;
+  p->has_data = true;
+  qa_q2_server_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q2_SERVER_DATA;
+  event.data = data;
+  if (!emit_record(p, records, 12, start, &event)) return false;
+  for (size_t i = 0; i < p->config_string_count; i++) {
+    memset(&event, 0, sizeof event);
+    event.kind = QA_Q2_SERVER_CONFIG_STRING;
+    event.index = p->config_strings[i].index;
+    if (!emit_text(p, records, 13, start, &event, p->config_strings[i].value)) return false;
+  }
+  /* Full state is ready before normal receiver precache and first frame publication. */
+  char count_text[64];
+  qa_net_js_number(data.servercount, count_text, sizeof count_text);
+  char text[96];
+  (void)snprintf(text, sizeof text, "precache %s\n", count_text);
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q2_SERVER_COMMAND_TEXT;
+  if (!emit_text(p, records, 11, start, &event, text)) return false;
+  flush_records(records, sink, ctx);
+  return emit_frame(p, records, start);
+}
+
+/* TS mvd_unicast/multicast cases. False only on OOM. */
+static bool read_routed(qa_q2_mvd_playback *p, int32_t op, double extrabits,
+                        record_list *records) {
+  qa_q2_sizebuf *message = &p->wire.message;
+  /* TS `MSG_ReadByte(message) | command.extrabits << 8`: an overread byte (-1) ORs to -1. */
+  int64_t payload_length =
+      (int64_t)(qa_q2_msg_read_byte(message) | (qa_js_to_int32(extrabits) << 8));
+  bool visible = true;
+  if (op == QA_Q2_MVD_UNICAST || op == QA_Q2_MVD_UNICAST_R) {
+    int32_t number = qa_q2_msg_read_byte(message);
+    if ((double)number >= p->max_clients) {
+      qa_q2_throw_error("Invalid MVD unicast player");
+    }
+    visible = (double)number == p->selected;
+  } else if (op != QA_Q2_MVD_MULTICAST_ALL && op != QA_Q2_MVD_MULTICAST_ALL_R) {
+    double leaf = (double)qa_q2_msg_read_word(message);
+    bool is_pvs = op == QA_Q2_MVD_MULTICAST_PVS || op == QA_Q2_MVD_MULTICAST_PVS_R;
+    qa_q2_wire_player player = current_player(p);
+    visible = p->visibility.visible(p->visibility.ctx, leaf, is_pvs, &player,
+                                    p->portal_bits, p->portal_bits_length);
+  }
+  int64_t end = message->readcount + payload_length;
+  if (end > message->cursize) {
+    qa_q2_throw_error("Truncated MVD embedded message");
+  }
+  /* data.slice(readcount, end): empty when end precedes readcount (negative length). */
+  size_t payload_len = end > message->readcount ? (size_t)(end - message->readcount) : 0;
+  uint8_t *copy = (uint8_t *)malloc(payload_len > 0 ? payload_len : 1);
+  if (copy == NULL) return false;
+  if (payload_len > 0) memcpy(copy, message->data + message->readcount, payload_len);
+  message->readcount = end;
+  bool ok = true;
+  if (visible) {
+    qa_cleanup node;
+    qa_cleanup_push(&node, bytes_release, &copy);
+    qa_q2_server_record *nested = NULL;
+    size_t nested_count = 0;
+    ok = qa_q2_server_message_reader_read(&p->embedded, copy, payload_len, &nested,
+                                          &nested_count);
+    qa_cleanup_pop(&node);
+    size_t i = 0;
+    for (; ok && i < nested_count; i++) ok = records_push(records, &nested[i]);
+    /* Pushed records were zeroed; the rest (after an OOM) are released here. */
+    qa_q2_server_records_free(nested, nested_count);
+  }
+  free(copy);
+  return ok;
+}
+
+/* TS mvd_sound case. False only on OOM. */
+static bool read_sound(qa_q2_mvd_playback *p, double extrabits, int64_t start,
+                       record_list *records) {
+  qa_q2_sizebuf *message = &p->wire.message;
+  int32_t flags = qa_q2_msg_read_byte(message);
+  double index = (flags & 32) ? (double)qa_q2_msg_read_word(message)
+                              : (double)qa_q2_msg_read_byte(message);
+  double volume = (flags & 1) ? (double)qa_q2_msg_read_byte(message) / 255 : 1;
+  double attenuation = (flags & 2) ? (double)qa_q2_msg_read_byte(message) / 64 : 1;
+  double delay = (flags & 16) ? (double)qa_q2_msg_read_byte(message) / 1000 : 0;
+  int32_t channel_word = qa_q2_msg_read_word(message);
+  double entity_number = (double)((uint32_t)channel_word >> 3);
+  if (entity_number >= p->profile.max_entities) {
+    qa_q2_throw_error("Invalid MVD sound entity");
+  }
+  const qa_q2_wire_entity *state = NULL;
+  for (size_t i = 0; i < p->entity_count; i++) {
+    if (p->entities[i].number == entity_number) state = &p->entities[i];
+  }
+  if (state == NULL) return true;
+  qa_q2_wire_entity state_copy = *state;
+  float position[3] = {0, 0, 0};
+  p->visibility.sound_origin(p->visibility.ctx, &state_copy, position);
+  qa_q2_wire_player player = current_player(p);
+  if ((qa_js_to_int32(extrabits) & 1) == 0 &&
+      !p->visibility.sound_audible(p->visibility.ctx, position, &player, p->portal_bits,
+                                   p->portal_bits_length)) {
+    return true;
+  }
+  qa_q2_server_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q2_SERVER_SOUND;
+  event.sound.flags = (double)(flags | 12);
+  event.sound.index = index;
+  event.sound.volume = volume;
+  event.sound.attenuation = attenuation;
+  event.sound.delay_seconds = delay;
+  event.sound.entity = entity_number;
+  event.sound.channel = (double)(channel_word & 7);
+  event.sound.has_position = true;
+  event.sound.position.x = (double)position[0];
+  event.sound.position.y = (double)position[1];
+  event.sound.position.z = (double)position[2];
+  return emit_record(p, records, 9, start, &event);
+}
+
+bool qa_q2_mvd_playback_read_records(qa_q2_mvd_playback *p, const uint8_t *bytes,
+                                     size_t length, qa_q2_mvd_record_sink sink,
+                                     void *ctx) {
   if (length < 1 || length > QA_Q2_MVD_MAX_MESSAGE) {
     qa_range_error("Invalid MVD message length");
   }
   if (!qa_q2_wire_codec_begin(&p->wire, bytes, length)) return false;
   qa_q2_sizebuf *message = &p->wire.message;
   record_list records = {NULL, 0, 0};
+  qa_cleanup node;
+  qa_cleanup_push(&node, record_list_release, &records);
   bool ok = true;
-  while (message->readcount < message->cursize && ok) {
+  while (ok && message->readcount < message->cursize) {
     int64_t start = message->readcount;
     qa_q2_mvd_cmd command;
     qa_q2_msg_read_mvd_cmd(message, &command);
     int32_t op = (int32_t)command.op;
-    if (op == QA_Q2_MVD_NOP) {
-      /* break */
-    } else if (op == QA_Q2_MVD_SERVERDATA) {
-      qa_q2_mvd_header header;
-      if (!qa_q2_read_mvd_header(bytes + start, length - (size_t)start, &header)) {
-        ok = false;
+    switch (op) {
+      case QA_Q2_MVD_NOP:
         break;
-      }
-      p->profile = header.profile;
-      message->readcount = start + (int64_t)header.frame_offset;
-      if (!embedded_init(p, header.profile.protocol,
-                         header.profile.max_config_strings)) {
-        qa_q2_mvd_header_free(&header);
-        ok = false;
+      case QA_Q2_MVD_SERVERDATA:
+        ok = read_serverdata(p, bytes, length, start, &records, sink, ctx);
         break;
-      }
-      if (strcmp(header.profile.protocol.kind, "q2-q2pro") == 0) {
-        qa_q2_wire_codec_accept_q2pro_features(
-            &p->embedded.wire, (double)header.profile.protocol.revision,
-            header.data.has_wire_flags ? header.data.wire_flags : 0);
-      }
-      for (size_t i = 0; i < p->config_string_count; i++) {
-        free(p->config_strings[i].value);
-      }
-      p->config_string_count = 0;
-      p->player_count = 0;
-      p->entity_count = 0;
-      p->frame_number = 0;
-      for (size_t i = 0; i < header.config_string_count && ok; i++) {
-        ok = config_set(p, header.config_strings[i].index,
-                        header.config_strings[i].value);
-      }
-      p->max_clients = header.max_clients;
-      p->dummy = header.dummy;
-      qa_q2_server_data_result data = header.data;
-      qa_q2_mvd_header_free(&header);
-      if (!ok) break;
-      if (!read_frame(p, p->dummy)) {
-        ok = false;
+      case QA_Q2_MVD_FRAME:
+        if (!p->has_data) qa_q2_throw_error("MVD frame before serverdata");
+        ok = read_frame(p, p->dummy) && emit_frame(p, &records, start);
         break;
-      }
-      selected_or_first(p);
-      data.clientnum = p->selected;
-      p->data = data;
-      p->has_data = true;
-      qa_q2_server_event event;
-      memset(&event, 0, sizeof event);
-      event.kind = QA_Q2_SERVER_DATA;
-      event.data = data;
-      ok = emit_record(p, &records, 12, start, &event);
-      for (size_t i = 0; i < p->config_string_count && ok; i++) {
-        memset(&event, 0, sizeof event);
-        event.kind = QA_Q2_SERVER_CONFIG_STRING;
-        event.index = p->config_strings[i].index;
-        event.text = dup_str(p->config_strings[i].value);
-        if (event.text == NULL) {
-          ok = false;
-          break;
+      case QA_Q2_MVD_CONFIGSTRING: {
+        double index = (double)qa_q2_msg_read_word(message);
+        char value[2048];
+        qa_q2_msg_read_string(message, value, sizeof value);
+        if (index >= p->profile.max_config_strings) {
+          qa_q2_throw_error("Invalid MVD configstring index");
         }
-        ok = emit_record(p, &records, 13, start, &event);
-      }
-      if (ok) {
-        char count_text[64];
-        number_text(data.servercount, count_text, sizeof count_text);
-        char text[96];
-        (void)snprintf(text, sizeof text, "precache %s\n", count_text);
-        memset(&event, 0, sizeof event);
-        event.kind = QA_Q2_SERVER_COMMAND_TEXT;
-        event.text = dup_str(text);
-        if (event.text == NULL) {
-          ok = false;
-          break;
-        }
-        ok = emit_record(p, &records, 11, start, &event);
-      }
-      if (ok) {
-        memset(&event, 0, sizeof event);
-        event.kind = QA_Q2_SERVER_FRAME;
-        if (!build_frame(p, &event.frame)) {
-          ok = false;
-          break;
-        }
-        ok = emit_record(p, &records, 20, start, &event);
-      }
-    } else if (op == QA_Q2_MVD_FRAME) {
-      if (!p->has_data) qa_q2_throw_error("MVD frame before serverdata");
-      if (!read_frame(p, p->dummy)) {
-        ok = false;
-        break;
-      }
-      qa_q2_server_event event;
-      memset(&event, 0, sizeof event);
-      event.kind = QA_Q2_SERVER_FRAME;
-      if (!build_frame(p, &event.frame)) {
-        ok = false;
-        break;
-      }
-      ok = emit_record(p, &records, 20, start, &event);
-    } else if (op == QA_Q2_MVD_CONFIGSTRING) {
-      double index = (double)qa_q2_msg_read_word(message);
-      char value[2048];
-      qa_q2_msg_read_string(message, value, sizeof value);
-      if (index >= p->profile.max_config_strings) {
-        qa_q2_throw_error("Invalid MVD configstring index");
-      }
-      if (!config_set(p, index, value)) {
-        ok = false;
-        break;
-      }
-      qa_q2_server_event event;
-      memset(&event, 0, sizeof event);
-      event.kind = QA_Q2_SERVER_CONFIG_STRING;
-      event.index = index;
-      event.text = dup_str(value);
-      if (event.text == NULL) {
-        ok = false;
-        break;
-      }
-      ok = emit_record(p, &records, 13, start, &event);
-    } else if (op == QA_Q2_MVD_PRINT) {
-      double level = (double)qa_q2_msg_read_byte(message);
-      char text[2048];
-      qa_q2_msg_read_string(message, text, sizeof text);
-      qa_q2_server_event event;
-      memset(&event, 0, sizeof event);
-      event.kind = QA_Q2_SERVER_PRINT;
-      event.level = level;
-      event.text = dup_str(text);
-      if (event.text == NULL) {
-        ok = false;
-        break;
-      }
-      ok = emit_record(p, &records, 10, start, &event);
-    } else if (op == QA_Q2_MVD_SOUND) {
-      int32_t flags = qa_q2_msg_read_byte(message);
-      double index = (flags & 32) ? (double)qa_q2_msg_read_word(message)
-                                  : (double)qa_q2_msg_read_byte(message);
-      double volume = (flags & 1) ? (double)qa_q2_msg_read_byte(message) / 255 : 1;
-      double attenuation =
-          (flags & 2) ? (double)qa_q2_msg_read_byte(message) / 64 : 1;
-      double delay =
-          (flags & 16) ? (double)qa_q2_msg_read_byte(message) / 1000 : 0;
-      int32_t channel_word = qa_q2_msg_read_word(message);
-      double entity_number = (double)((uint32_t)channel_word >> 3);
-      if (entity_number >= p->profile.max_entities) {
-        qa_q2_throw_error("Invalid MVD sound entity");
-      }
-      const qa_q2_wire_entity *state = NULL;
-      for (size_t i = 0; i < p->entity_count; i++) {
-        if (p->entities[i].number == entity_number) state = &p->entities[i];
-      }
-      if (state != NULL) {
-        qa_q2_wire_entity state_copy = *state;
-        float position[3] = {0, 0, 0};
-        p->visibility.sound_origin(p->visibility.ctx, &state_copy, position);
-        qa_q2_wire_player player = current_player(p);
-        if (((int32_t)command.extrabits & 1) != 0 ||
-            p->visibility.sound_audible(p->visibility.ctx, position, &player,
-                                        p->portal_bits, p->portal_bits_length)) {
+        ok = config_set(p, index, value);
+        if (ok) {
           qa_q2_server_event event;
           memset(&event, 0, sizeof event);
-          event.kind = QA_Q2_SERVER_SOUND;
-          event.sound.flags = (double)(flags | 12);
-          event.sound.index = index;
-          event.sound.volume = volume;
-          event.sound.attenuation = attenuation;
-          event.sound.delay_seconds = delay;
-          event.sound.entity = entity_number;
-          event.sound.channel = (double)(channel_word & 7);
-          event.sound.has_position = true;
-          event.sound.position.x = (double)position[0];
-          event.sound.position.y = (double)position[1];
-          event.sound.position.z = (double)position[2];
-          ok = emit_record(p, &records, 9, start, &event);
+          event.kind = QA_Q2_SERVER_CONFIG_STRING;
+          event.index = index;
+          ok = emit_text(p, &records, 13, start, &event, value);
         }
-      }
-    } else if (op == QA_Q2_MVD_UNICAST || op == QA_Q2_MVD_UNICAST_R ||
-               op == QA_Q2_MVD_MULTICAST_ALL || op == QA_Q2_MVD_MULTICAST_ALL_R ||
-               op == QA_Q2_MVD_MULTICAST_PVS || op == QA_Q2_MVD_MULTICAST_PVS_R ||
-               op == QA_Q2_MVD_MULTICAST_PHS || op == QA_Q2_MVD_MULTICAST_PHS_R) {
-      int64_t payload_length =
-          qa_q2_msg_read_byte(message) | ((int64_t)command.extrabits << 8);
-      bool visible = true;
-      if (op == QA_Q2_MVD_UNICAST || op == QA_Q2_MVD_UNICAST_R) {
-        int32_t number = qa_q2_msg_read_byte(message);
-        if ((double)number >= p->max_clients) {
-          qa_q2_throw_error("Invalid MVD unicast player");
-        }
-        visible = (double)number == p->selected;
-      } else if (op != QA_Q2_MVD_MULTICAST_ALL && op != QA_Q2_MVD_MULTICAST_ALL_R) {
-        double leaf = (double)qa_q2_msg_read_word(message);
-        bool is_pvs = op == QA_Q2_MVD_MULTICAST_PVS || op == QA_Q2_MVD_MULTICAST_PVS_R;
-        qa_q2_wire_player player = current_player(p);
-        visible = p->visibility.visible(p->visibility.ctx, leaf, is_pvs, &player,
-                                        p->portal_bits, p->portal_bits_length);
-      }
-      int64_t end = message->readcount + payload_length;
-      if (end > message->cursize) {
-        qa_q2_throw_error("Truncated MVD embedded message");
-      }
-      const uint8_t *payload = message->data + message->readcount;
-      size_t payload_len = (size_t)payload_length;
-      /* Copy: embedded read may not touch wire.message, but payload
-       * points into it; readcount advances before the nested read. */
-      uint8_t *copy = (uint8_t *)malloc(payload_len > 0 ? payload_len : 1);
-      if (copy == NULL) {
-        ok = false;
         break;
       }
-      if (payload_len > 0) memcpy(copy, payload, payload_len);
-      message->readcount = end;
-      if (visible) {
-        qa_q2_server_record *nested = NULL;
-        size_t nested_count = 0;
-        if (!qa_q2_server_message_reader_read(&p->embedded, copy, payload_len,
-                                              &nested, &nested_count)) {
-          free(copy);
-          ok = false;
-          break;
-        }
-        for (size_t i = 0; i < nested_count && ok; i++) {
-          ok = records_push(&records, &nested[i]);
-        }
-        free(nested);
+      case QA_Q2_MVD_PRINT: {
+        double level = (double)qa_q2_msg_read_byte(message);
+        char text[2048];
+        qa_q2_msg_read_string(message, text, sizeof text);
+        qa_q2_server_event event;
+        memset(&event, 0, sizeof event);
+        event.kind = QA_Q2_SERVER_PRINT;
+        event.level = level;
+        ok = emit_text(p, &records, 10, start, &event, text);
+        break;
       }
-      free(copy);
-    } else {
-      qa_q2_throw_error("Unsupported MVD command %g", command.op);
+      case QA_Q2_MVD_SOUND:
+        ok = read_sound(p, command.extrabits, start, &records);
+        break;
+      case QA_Q2_MVD_UNICAST: case QA_Q2_MVD_UNICAST_R:
+      case QA_Q2_MVD_MULTICAST_ALL: case QA_Q2_MVD_MULTICAST_ALL_R:
+      case QA_Q2_MVD_MULTICAST_PVS: case QA_Q2_MVD_MULTICAST_PVS_R:
+      case QA_Q2_MVD_MULTICAST_PHS: case QA_Q2_MVD_MULTICAST_PHS_R:
+        ok = read_routed(p, op, command.extrabits, &records);
+        break;
+      default:
+        qa_q2_throw_error("Unsupported MVD command %s", QA_JS_NUMBER(command.op));
     }
-    qa_q2_message_check_read(message);
+    if (ok) qa_q2_message_check_read(message);
   }
-  qa_q2_wire_codec_finish(&p->wire);
+  if (ok) qa_q2_wire_codec_finish(&p->wire);
+  qa_cleanup_pop(&node);
   if (!ok) {
-    qa_q2_server_records_free(records.items, records.count);
+    record_list_release(&records);
     return false;
   }
-  *out = records.items;
-  *out_count = records.count;
+  flush_records(&records, sink, ctx);
+  return true;
+}
+
+typedef struct collect_state {
+  record_list list; /* first: released by record_list_release */
+  bool oom;
+} collect_state;
+static void collect_record(void *ctx, qa_q2_server_record *record) {
+  collect_state *state = (collect_state *)ctx;
+  if (!records_push(&state->list, record)) {
+    qa_q2_server_event_clear(&record->event);
+    free(record->raw);
+    state->oom = true;
+  }
+}
+
+bool qa_q2_mvd_playback_read(qa_q2_mvd_playback *p, const uint8_t *bytes,
+                             size_t length, qa_q2_server_record **out,
+                             size_t *out_count) {
+  *out = NULL;
+  *out_count = 0;
+  collect_state collected = {{NULL, 0, 0}, false};
+  qa_cleanup node;
+  qa_cleanup_push(&node, record_list_release, &collected.list);
+  bool ok = qa_q2_mvd_playback_read_records(p, bytes, length, collect_record, &collected);
+  qa_cleanup_pop(&node);
+  if (!ok || collected.oom) {
+    record_list_release(&collected.list);
+    return false;
+  }
+  *out = collected.list.items;
+  *out_count = collected.list.count;
   return true;
 }

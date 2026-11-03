@@ -1,6 +1,7 @@
 /* Port of src/content/q2/missionpacks/monsters/rogue-infantry.ts.
  * GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/monsters/rogue_infantry.h"
+#include "qa/foundation/js.h"
 
 #include <stdlib.h>
 
@@ -10,6 +11,7 @@
 #include "qa/content/q2/foundation/monsters/infantry.h"
 #include "qa/content/q2/missionpacks/monsters/rogue_common.h"
 #include "qa/content/q2/missionpacks/monsters/tables/rogue_infantry.h"
+#include "qa/content/q2/rerelease/monsters/common.h"
 
 typedef struct infantry_bundle {
   qa_q2m_monsters *monsters;
@@ -54,14 +56,14 @@ static void machine_gun(qa_q2m_context *c) {
   qa_q2bm_shot_result aim;
   if (!qa_q2bm_shot(c, 26, -0.2, &aim)) return;
   c->weapons.fire_bullet(c->weapons.ctx, c->entity, c->game, aim.start, aim.direction, 3, 4, 300, 500, 0);
-  qa_q2mpm_monster_flash(c, 26, aim.start, aim.direction);
+  qa_q2rm_monster_flash(c, 26, aim.start, aim.direction);
 }
 static void machine_gun_fn(void *ctx, qa_q2m_context *c) { (void)ctx; machine_gun(c); }
 static void jump_now(qa_q2m_context *c, bool high) {
   qa_body_state body = q2mpm_body(c->game, c->entity);
   qa_angle_vectors axes = qa_math_angle_vectors_rule(body.angles, QA_ANGLE_RULE_NATIVE);
   c->entity->timestamp = q2mpm_now(c->game);
-  qa_q2f_body_changes change;
+  qa_q2_body_changes change;
   memset(&change, 0, sizeof change);
   change.has_velocity = true;
   change.velocity = qa_add3_double(body.velocity, qa_add3_double(qa_scale3_double(axes.forward, high ? 150 : 100),
@@ -86,7 +88,7 @@ static void pain_fn(void *ctx, qa_q2m_context *c, qa_pain_reaction reaction) {
   if (q2mpm_now(c->game) < c->state->pain_time) return;
   c->state->pain_time = q2mpm_now(c->game) + 3;
   if (c->game->options.skill == 3) return;
-  bool second = ((uint32_t)floor(q2mpm_rnd(c->game) * 0x8000) & 1u) != 0;
+  bool second = (qa_js_to_uint32(floor(q2mpm_rnd(c->game) * 0x8000)) & 1u) != 0;
   q2mpm_set_move(c, second ? "infantry_move_pain2" : "infantry_move_pain1");
   q2mpm_snd(c, second ? "infantry/infpain2.wav" : "infantry/infpain1.wav", 2);
   if (c->state->ducked) qa_q2mpm_rogue_duck_up(c);
@@ -103,7 +105,7 @@ static bool duck_field_fn(void *ctx, qa_q2m_context *c, double eta) { (void)ctx;
 static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
   infantry_bundle *bundle = ctx;
   if (qa_q2mpm_rogue_blocked_check_shot(c, 0.25 + 0.05 * c->game->options.skill, bundle->source)) return true;
-  if (qa_q2mpm_blocked_check_jump_default(c, distance, 192, 40) != QA_Q2MPM_JUMP_NONE) {
+  if (qa_q2rm_blocked_check_jump_default(c, distance, 192, 40) != QA_Q2RM_JUMP_NONE) {
     qa_body_state enemy;
     if (qa_q2m_enemy_body(c, &enemy)) {
       qa_q2m_finish_dodge(c);
@@ -112,13 +114,15 @@ static bool blocked_fn(void *ctx, qa_q2m_context *c, double distance) {
     }
     return true;
   }
-  return qa_q2mpm_blocked_check_platform(c, distance);
+  return qa_q2rm_blocked_check_platform(c, distance);
 }
 static void done_dodge_fn(void *ctx, qa_q2m_context *c) { (void)ctx; qa_q2m_finish_dodge(c); }
 static void cock_fn(void *ctx, qa_q2m_context *c) { (void)ctx; q2mpm_snd(c, "infantry/infatck3.wav", 1); }
 static void fire_prep_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
-  c->state->pause_time = q2mpm_now(c->game) + ((double)((uint32_t)floor(q2mpm_rnd(c->game) * 0x8000) & 15u) + 4) * 0.1;
+  double left = q2mpm_now(c->game);
+  double right = ((double)(qa_js_to_int32(qa_js_to_uint32(floor(q2mpm_rnd(c->game) * 0x8000)) & 15u)) + 4) * 0.1;
+  c->state->pause_time = left + right;
 }
 static void fire_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
@@ -130,12 +134,12 @@ static void jump2_fn(void *ctx, qa_q2m_context *c) { (void)ctx; jump_now(c, true
 static void jump_wait_fn(void *ctx, qa_q2m_context *c) {
   (void)ctx;
   c->state->next_frame = c->entity->frame
-      + (q2mpm_body(c->game, c->entity).ground != NULL || qa_q2mpm_monster_jump_finished(c) ? 1 : 0);
+      + (q2mpm_body(c->game, c->entity).ground != NULL || qa_q2rm_monster_jump_finished(c) ? 1 : 0);
 }
-qa_q2m_definition qa_q2mpm_create_rogue_infantry_definition(qa_q2m_monsters *monsters,
+qa_q2m_definition qa_q2mpm_create_rogue_infantry_definition(qa_q2mpm_arena *arena, qa_q2m_monsters *monsters,
                                                             qa_q2mpm_monster_state *source) {
-  infantry_bundle *bundle = malloc(sizeof *bundle);
-  if (!bundle) qa_q2f_error("Out of memory creating rogue infantry definition");
+  infantry_bundle *bundle = qa_q2mpm_arena_alloc(arena, sizeof *bundle);
+  if (!bundle) qa_raise("Error", 0, 0, "Out of memory creating rogue infantry definition");
   bundle->monsters = monsters;
   bundle->source = source;
   const qa_q2m_named_handler extra[] = {
@@ -165,7 +169,7 @@ qa_q2m_definition qa_q2mpm_create_rogue_infantry_definition(qa_q2m_monsters *mon
   definition.initial_move = "infantry_move_stand";
   definition.moves = qa_q2mpm_rogue_infantry_moves;
   definition.move_count = qa_q2mpm_rogue_infantry_move_count;
-  definition.callbacks = qa_q2mpm_merge_callbacks(qa_q2m_infantry_callbacks, qa_q2m_infantry_callback_count,
+  definition.callbacks = qa_q2mpm_merge_callbacks(arena, qa_q2m_infantry_callbacks, qa_q2m_infantry_callback_count,
                                                   extra, sizeof extra / sizeof extra[0], &definition.callback_count);
   definition.stand = (qa_q2m_handler){NULL, qa_q2m_infantry_stand_handler};
   definition.walk = (qa_q2m_handler){NULL, qa_q2m_infantry_walk_handler};

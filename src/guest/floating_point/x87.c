@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "qa/guest/floating_point/trigonometric.h"
+#include "qa/guest/floating_point/x87_extended.h"
 
 static int top_of(const qa_guest_x87_state *s) { return (int)((s->status_word >> 11) & 7u); }
 static int physical(const qa_guest_x87_state *s, int index) { return (top_of(s) + index) & 7; }
@@ -558,6 +559,87 @@ static void execute_inner(qa_numeric_context *ctx) {
       qa_binary_result result;
       qa_fp_round_integral(&result, &v, qa_fp_rounding_from_bits((int)(state->control_word >> 10)));
       qa_binary_value_free(&v);
+      commit_result(ctx, state, 0, &result, false);
+      qa_binary_value_free(&result.value);
+      return;
+    }
+    const qa_fp_rounding mode = qa_fp_rounding_from_bits((int)(state->control_word >> 10));
+    if (modrm == 0xf0) {
+      qa_binary_value v; read_register_ctx(ctx, &v, state, 0);
+      qa_binary_result result;
+      qa_x87_two_power_minus_one(&result, &v, mode);
+      qa_binary_value_free(&v);
+      commit_result(ctx, state, 0, &result, false);
+      qa_binary_value_free(&result.value);
+      return;
+    }
+    if (modrm == 0xf1 || modrm == 0xf9) {
+      qa_binary_value x; read_register_ctx(ctx, &x, state, 0);
+      qa_binary_value y; read_register_ctx(ctx, &y, state, 1);
+      qa_binary_result result;
+      if (modrm == 0xf1) qa_x87_log2(&result, &y, &x, mode);
+      else qa_x87_log2_plus_one(&result, &y, &x, mode);
+      qa_binary_value_free(&x); qa_binary_value_free(&y);
+      commit_result(ctx, state, 1, &result, false);
+      qa_binary_value_free(&result.value);
+      pop_x87(state);
+      return;
+    }
+    if (modrm == 0xf2 || modrm == 0xfb) {
+      qa_binary_value v; read_register_ctx(ctx, &v, state, 0);
+      qa_binary_result sine, cosine, tangent;
+      const bool has_pair = modrm == 0xfb && qa_x87_sine_cosine(&sine, &cosine, &v, mode);
+      const bool has_tangent = modrm == 0xf2 && qa_x87_tangent(&tangent, &v, mode);
+      qa_binary_value_free(&v);
+      if (!has_pair && !has_tangent) { state->status_word |= 0x400u; return; }
+      state->status_word &= ~0x400u;
+      if (has_pair) {
+        commit_result(ctx, state, 0, &sine, false);
+        qa_binary_value_free(&sine.value);
+        push_value_ctx(ctx, state, &cosine.value);
+        raise_flags(ctx, state, cosine.flags, cosine.rounded_up, false);
+        qa_binary_value_free(&cosine.value);
+      } else {
+        commit_result(ctx, state, 0, &tangent, false);
+        qa_binary_value_free(&tangent.value);
+        qa_binary_value one = qa_fp_from_i64(1);
+        push_value_ctx(ctx, state, &one);
+        qa_binary_value_free(&one);
+      }
+      return;
+    }
+    if (modrm == 0xf4) {
+      qa_binary_value v; read_register_ctx(ctx, &v, state, 0);
+      qa_x87_extract_result parts;
+      qa_x87_extract(&parts, &v);
+      qa_binary_value_free(&v);
+      raise_flags(ctx, state, parts.flags, false, false);
+      write_register(state, 0, &parts.exponent);
+      push_value_ctx(ctx, state, &parts.significand);
+      qa_binary_value_free(&parts.exponent);
+      qa_binary_value_free(&parts.significand);
+      return;
+    }
+    if (modrm == 0xf5 || modrm == 0xf8) {
+      qa_binary_value dividend; read_register_ctx(ctx, &dividend, state, 0);
+      qa_binary_value divisor; read_register_ctx(ctx, &divisor, state, 1);
+      qa_x87_remainder_result outcome;
+      qa_x87_remainder(&outcome, &dividend, &divisor, modrm == 0xf5, mode);
+      qa_binary_value_free(&dividend); qa_binary_value_free(&divisor);
+      commit_result(ctx, state, 0, &outcome.result, false);
+      qa_binary_value_free(&outcome.result.value);
+      /* C2 reports an incomplete reduction; otherwise C0, C3 and C1 carry quotient bits 2, 1 and 0. */
+      const int q = outcome.quotient;
+      state->status_word = (state->status_word & ~0x4700u) |
+          (outcome.complete ? ((q & 4) != 0 ? 0x100u : 0u) | ((q & 2) != 0 ? 0x4000u : 0u) | ((q & 1) != 0 ? 0x200u : 0u) : 0x400u);
+      return;
+    }
+    if (modrm == 0xfd) {
+      qa_binary_value v; read_register_ctx(ctx, &v, state, 0);
+      qa_binary_value e; read_register_ctx(ctx, &e, state, 1);
+      qa_binary_result result;
+      qa_x87_scale(&result, &v, &e, mode);
+      qa_binary_value_free(&v); qa_binary_value_free(&e);
       commit_result(ctx, state, 0, &result, false);
       qa_binary_value_free(&result.value);
       return;

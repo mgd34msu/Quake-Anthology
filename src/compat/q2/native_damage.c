@@ -2,8 +2,9 @@
 #include "qa/compat/q2/native_damage.h"
 #include <string.h>
 #include "qa/world/gameplay/armor.h"
+#include "qa/foundation/js.h"
 qa_armor_damage_flags qa_compat_q2_native_armor_flags(double flags) {
-  int64_t f = (int64_t)flags; qa_armor_damage_flags o; memset(&o, 0, sizeof o);
+  int32_t f = qa_js_to_int32(flags); /* flags & bit: ToInt32 */ qa_armor_damage_flags o; memset(&o, 0, sizeof o);
   o.no_armor = (f & 2) != 0; o.no_power_armor = (f & 0x100) != 0; o.no_regular_armor = (f & 0x80) != 0; o.energy = (f & 4) != 0; return o;
 }
 qa_compat_q2_native_damage_arguments_result qa_compat_q2_native_damage_arguments(qa_damage_request request, qa_q2mp_native_cause_profile profile) {

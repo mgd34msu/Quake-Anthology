@@ -5,6 +5,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/materials/compile.h"
+#include "qa/foundation/js_case.h"
 
 const qa_mat_finish_profile qa_default_shader_profile = {
     true, false, false, "generic", {false, true, true, "generic"}};
@@ -175,12 +176,11 @@ qa_surface_parameter_flags qa_shader_surface_flags(
   for (size_t i = 0; i < parameter_count; i++) {
     const char *parameter = parameters[i];
     size_t length = strlen(parameter);
-    char *key = malloc(length + 1);
+    /* TS parameter.toLowerCase(): Unicode lowering (U+212A KELVIN SIGN becomes the 'k'
+     * of "sky", "skip", "slick"). */
+    char *key = qa_js_to_lower_case(parameter);
     if (key == NULL) qa_range_error("compile allocation failed");
-    /* JS toLowerCase is Unicode-aware; flag names are ASCII. */
-    for (size_t k = 0; k < length; k++)
-      key[k] = (char)tolower((unsigned char)parameter[k]);
-    key[length] = '\0';
+    length = strlen(key);
     out.surface |= flag_value(surface_flags,
         sizeof surface_flags / sizeof surface_flags[0], key, length);
     out.contents |= flag_value(content_flags,

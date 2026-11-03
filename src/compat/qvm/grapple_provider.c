@@ -8,6 +8,7 @@
 
 #include "qa/compat/qvm/entity_record.h"
 #include "qa/foundation/support.h"
+#include "qa/network/common/js_number.h"
 
 struct qa_qvm_grapple_provider {
   qa_qvm_game *game; /* borrowed */
@@ -129,11 +130,8 @@ static bool projection_of(qa_qvm_grapple_provider *p, qa_actor_id actor,
   memset(out, 0, sizeof *out);
   out->hook = hook;
   out->origin = qa_qvm_shared_entity_get_current_origin(entity);
-  /* TS entity.s.pos.delta: trajectory at byte 12, delta at +24. */
-  qa_vec3 delta = {qa_qvm_writable_view_get_float32(&entity->view, 36, true),
-                   qa_qvm_writable_view_get_float32(&entity->view, 40, true),
-                   qa_qvm_writable_view_get_float32(&entity->view, 44, true)};
-  out->velocity = delta;
+  qa_qvm_entity_state state = qa_qvm_borrow_entity_state(entity->s.view, entity->profile);
+  out->velocity = qa_qvm_entity_state_get_pos(&state).delta;
   out->has_target =
       p->bridge.actor(p->bridge.ctx, word_at(p, hook, (int64_t)p->profile.fields.target),
                       &out->target);
@@ -153,6 +151,92 @@ static void publish(qa_qvm_grapple_provider *p, qa_actor_id actor) {
   p->bridge.publish(p->bridge.ctx, actor, has ? &projection : NULL);
   p->bridge.velocity(p->bridge.ctx, actor,
                      read_vector(p, (double)owner_of(p, actor).client + 32));
+}
+
+/* JSON.stringify over the declaration's value kinds. */
+typedef struct json_text {
+  char *bytes;
+  size_t length, capacity;
+} json_text;
+
+static void json_append(json_text *text, const char *bytes, size_t length) {
+  if (text->length + length + 1 > text->capacity) {
+    size_t capacity = text->capacity == 0 ? 256 : text->capacity;
+    while (text->length + length + 1 > capacity) capacity *= 2;
+    char *grown = realloc(text->bytes, capacity);
+    if (grown == NULL) qa_range_error("QVM memory allocation failed");
+    text->bytes = grown;
+    text->capacity = capacity;
+  }
+  memcpy(text->bytes + text->length, bytes, length);
+  text->length += length;
+  text->bytes[text->length] = '\0';
+}
+
+static void json_string(json_text *text, const char *value) {
+  json_append(text, "\"", 1);
+  for (const unsigned char *c = (const unsigned char *)value; *c != '\0'; c++) {
+    char escape[8];
+    switch (*c) {
+      case '"': json_append(text, "\\\"", 2); break;
+      case '\\': json_append(text, "\\\\", 2); break;
+      case '\b': json_append(text, "\\b", 2); break;
+      case '\f': json_append(text, "\\f", 2); break;
+      case '\n': json_append(text, "\\n", 2); break;
+      case '\r': json_append(text, "\\r", 2); break;
+      case '\t': json_append(text, "\\t", 2); break;
+      default:
+        if (*c < 0x20) {
+          int length = snprintf(escape, sizeof escape, "\\u%04x", *c);
+          json_append(text, escape, (size_t)length);
+        } else {
+          json_append(text, (const char *)c, 1);
+        }
+    }
+  }
+  json_append(text, "\"", 1);
+}
+
+static void json_value(json_text *text, const qa_save_value *value) {
+  switch (value->kind) {
+    case QA_SAVE_NULL: json_append(text, "null", 4); break;
+    case QA_SAVE_BOOLEAN:
+      if (value->boolean) json_append(text, "true", 4);
+      else json_append(text, "false", 5);
+      break;
+    case QA_SAVE_NUMBER: {
+      char number[40];
+      qa_net_json_number(value->number, number, sizeof number);
+      json_append(text, number, strlen(number));
+      break;
+    }
+    case QA_SAVE_STRING: json_string(text, value->text); break;
+    case QA_SAVE_ARRAY:
+      json_append(text, "[", 1);
+      for (size_t i = 0; i < value->item_count; i++) {
+        if (i != 0) json_append(text, ",", 1);
+        json_value(text, value->items[i]);
+      }
+      json_append(text, "]", 1);
+      break;
+    case QA_SAVE_OBJECT:
+      json_append(text, "{", 1);
+      for (size_t i = 0; i < value->entry_count; i++) {
+        if (i != 0) json_append(text, ",", 1);
+        json_string(text, value->entries[i].key);
+        json_append(text, ":", 1);
+        json_value(text, value->entries[i].value);
+      }
+      json_append(text, "}", 1);
+      break;
+    default: qa_range_error("Grapple declaration holds a value JSON cannot represent");
+  }
+}
+
+static char *stringify_declaration(const qa_save_value *declaration) {
+  json_text text = {NULL, 0, 0};
+  json_value(&text, declaration);
+  return text.bytes;
 }
 
 qa_qvm_grapple_provider *qa_qvm_grapple_provider_create(qa_qvm_game *game,
@@ -181,19 +265,25 @@ qa_qvm_grapple_provider *qa_qvm_grapple_provider_create(qa_qvm_game *game,
   qa_qvm_writable_view view;
   qa_qvm_memory_view(game->module.memory, (int64_t)bridge.scratch_word,
                      (int64_t)bridge.scratch_byte_length, 0, &view);
-  /* Declaration identity over the scalar fields (see header note). */
-  const char *fmt = "%s|%s|%s|%s|%s|%s";
-  int length = snprintf(NULL, 0, fmt, p->profile.id, p->profile.module.digest,
-                        p->profile.module.artifact_path, p->profile.module.revision,
-                        p->profile.title, p->profile.abi_profile);
-  p->declaration = malloc((size_t)length + 1);
+  /* TS: this.profile = readQvmGrappleProfile(declaration); declaration =
+   * JSON.stringify(...). The read revalidates every field; a rejected declaration
+   * aborts. Strings in the validated copy borrow from the tree, so the caller's
+   * profile, unchanged by the read, stays the stored one. */
+  qa_save_value *declared = qa_qvm_grapple_profile_declaration(&p->profile);
+  qa_qvm_grapple_profile *validated =
+      declared == NULL ? NULL : qa_qvm_read_grapple_profile(declared, artifact);
+  if (validated == NULL) {
+    qa_save_value_free(declared);
+    free(p);
+    return NULL;
+  }
+  qa_qvm_grapple_profile_free(validated);
+  p->declaration = stringify_declaration(declared);
+  qa_save_value_free(declared);
   if (p->declaration == NULL) {
     free(p);
     return NULL;
   }
-  (void)snprintf(p->declaration, (size_t)length + 1, fmt, p->profile.id,
-                 p->profile.module.digest, p->profile.module.artifact_path,
-                 p->profile.module.revision, p->profile.title, p->profile.abi_profile);
   return p;
 }
 
@@ -267,10 +357,8 @@ void qa_qvm_grapple_provider_step(qa_qvm_grapple_provider *provider) {
     if (hook_of(provider, actor, &hook)) {
       qa_qvm_shared_entity *entity =
           qa_qvm_game_data_entity_from_pointer(&provider->game->data, hook);
-      /* TS entity.s.eType (byte 4, legacy-mapped like entity_record). */
-      int32_t raw = qa_qvm_writable_view_get_int32(&entity->view, 4, true);
-      int32_t e_type = qa_qvmx_entity_type(raw, entity->profile, false);
-      if (e_type == 3) {
+      qa_qvm_entity_state state = qa_qvm_borrow_entity_state(entity->s.view, entity->profile);
+      if (qa_qvm_entity_state_get_e_type(&state) == 3) {
         (void)qa_qvm_module_call(&provider->game->module, &hook, 1,
                                  (int64_t)provider->profile.callbacks.missile);
       } else {

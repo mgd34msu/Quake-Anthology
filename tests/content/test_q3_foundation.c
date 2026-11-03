@@ -524,8 +524,6 @@ static void test_presenter(void) {
   view.source_flags = 0x80;
   (void)qa_q3_character_presenter_frame(&presenter, view, options, &count);
   CHECK(count == 0);
-  qa_axis identity = qa_q3_identity_axis();
-  CHECK(near(identity.vectors[0].x, 1) && near(identity.vectors[2].z, 1));
   qa_q3_character_presenter_destroy(&presenter);
   /* Movement hooks controls mapping. */
   qa_q3_hook_context hook_ctx = {0};

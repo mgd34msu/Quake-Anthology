@@ -6,12 +6,13 @@
 #include "qa/content/q3/presentation/refdef.h"
 #include "qa/foundation/support.h"
 #include "qa/render/commands/material2d.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
 static bool clipped_camera(qa_scene_camera camera, qa_rect clip, qa_scene_camera *out) {
   qa_rect area = camera.viewport;
-  double x = fmax(area.x, clip.x), y = fmax(area.y, clip.y);
-  double width = fmin(area.x + area.width, clip.x + clip.width) - x;
-  double height = fmin(area.y + area.height, clip.y + clip.height) - y;
+  double x = qa_js_max(area.x, clip.x), y = qa_js_max(area.y, clip.y);
+  double width = qa_js_min(area.x + area.width, clip.x + clip.width) - x;
+  double height = qa_js_min(area.y + area.height, clip.y + clip.height) - y;
   if (width <= 0 || height <= 0) return false;
   if (x == area.x && y == area.y && width == area.width && height == area.height) { *out = camera; return true; }
   double sx = area.width / width, sy = area.height / height;
@@ -78,7 +79,7 @@ void qa_app_draw_q3_overlay(qa_app_q3_overlay_options options) {
       free(batches);
     } else {
       const qa_q3_pres_presented_scene *scene = submission->scene;
-      if (((int64_t)scene->source.render_flags & QA_Q3_PRES_RDF_NOWORLDMODEL) == 0
+      if ((qa_js_to_int32(scene->source.render_flags) & QA_Q3_PRES_RDF_NOWORLDMODEL) == 0
           || !qa_same_seat(scene->seat, options.seat))
         qa_range_error("Source HUD cannot replace a world view or another seat");
       qa_scene_camera camera;

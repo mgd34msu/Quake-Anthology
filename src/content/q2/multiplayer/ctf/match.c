@@ -2,6 +2,9 @@
 #include "qa/content/q2/multiplayer/ctf/match.h"
 #include "../multiplayer_internal.h"
 #include <ctype.h>
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js_case.h"
 
 struct qa_q2_ctf_match {
   qa_q2_ctf_context *context;
@@ -22,13 +25,15 @@ static qa_q2_ctf_match_state *ms(qa_q2_ctf_match *m) { return &m->context->match
 void qa_q2_ctf_match_after_spawn(qa_q2_ctf_match *m, qa_q2_game_services *g) {
   if (m->context->rules.competition > 1) {
     ms(m)->phase = "setup";
-    ms(m)->match_time = qa_q2mp_now(g) + m->context->rules.setup_minutes * 60;
+    double * ref = &ms(m)->match_time;
+    *ref = qa_q2mp_now(g) + m->context->rules.setup_minutes * 60;
   }
 }
 
 void qa_q2_ctf_match_setup(qa_q2_ctf_match *m, qa_q2_game_services *g) {
   ms(m)->phase = "setup";
-  ms(m)->match_time = qa_q2mp_now(g) + m->context->rules.setup_minutes * 60;
+  double * ref = &ms(m)->match_time;
+  *ref = qa_q2mp_now(g) + m->context->rules.setup_minutes * 60;
   if (m->context->rules.competition < 3) m->context->rules.competition = 2;
   m->actions.reset_players(m->actions.ctx, g);
 }
@@ -60,7 +65,7 @@ void qa_q2_ctf_match_assign_ghost(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q
 
 void qa_q2_ctf_match_sync_ghost(qa_q2_ctf_match *m, qa_actor_id actor) {
   qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(m->context, actor);
-  qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, actor);
+  qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, actor);
   qa_q2_ctf_ghost *ghost = state != NULL && state->has_ghost_code ? qa_q2_ctf_match_state_ghost(ms(m), state->ghost_code) : NULL;
   if (ghost != NULL && player != NULL) {
     ghost->score = player->score;
@@ -72,7 +77,7 @@ void qa_q2_ctf_match_sync_ghost(qa_q2_ctf_match *m, qa_actor_id actor) {
 bool qa_q2_ctf_match_restore_ghost(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_services *g, double code) {
   qa_q2_ctf_player_state *state = qa_ctf_player(m->context, entity->actor.id);
   qa_q2_ctf_ghost *ghost = qa_q2_ctf_match_state_ghost(ms(m), code);
-  qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, entity->actor.id);
+  qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, entity->actor.id);
   if (state->team != 0 || strcmp(ms(m)->phase, "game") != 0 || ghost == NULL || player == NULL) return false;
   qa_q2_ctf_player_state *old = ghost->has_actor ? qa_q2_ctf_context_get(m->context, ghost->actor) : NULL;
   if (old != NULL) old->has_ghost_code = false;
@@ -98,7 +103,8 @@ bool qa_q2_ctf_match_ready(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_
   qa_ctf_print(g, NULL, NULL, "%s is %s.\n", qa_ctf_name(m->context, entity->actor.id), ready ? "ready" : "no longer ready");
   if (!ready && strcmp(phase, "pregame") == 0) {
     ms(m)->phase = "setup";
-    ms(m)->match_time = qa_q2mp_now(g) + m->context->rules.setup_minutes * 60;
+    double * ref2 = &ms(m)->match_time;
+    *ref2 = qa_q2mp_now(g) + m->context->rules.setup_minutes * 60;
     qa_ctf_print(g, NULL, "chat", "Match halted.\n");
   }
   size_t pn = 0;
@@ -113,7 +119,8 @@ bool qa_q2_ctf_match_ready(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_
   }
   if (ready && all_ready && has_red && has_blue) {
     ms(m)->phase = "pregame";
-    ms(m)->match_time = qa_q2mp_now(g) + m->context->rules.start_seconds;
+    double * ref = &ms(m)->match_time;
+    *ref = qa_q2mp_now(g) + m->context->rules.start_seconds;
     qa_ctf_print(g, NULL, "chat", "All players are ready. Match starting.\n");
   }
   return true;
@@ -121,7 +128,8 @@ bool qa_q2_ctf_match_ready(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_
 
 void qa_q2_ctf_match_start(qa_q2_ctf_match *m, qa_q2_game_services *g) {
   ms(m)->phase = "game";
-  ms(m)->match_time = qa_q2mp_now(g) + m->context->rules.match_minutes * 60;
+  double * ref = &ms(m)->match_time;
+  *ref = qa_q2mp_now(g) + m->context->rules.match_minutes * 60;
   ms(m)->team1 = 0;
   ms(m)->team2 = 0;
   qa_q2_ctf_match_state_clear_ghosts(ms(m));
@@ -130,7 +138,7 @@ void qa_q2_ctf_match_start(qa_q2_ctf_match *m, qa_q2_game_services *g) {
   for (size_t i = 0; i < pn; i++) {
     qa_q2_ctf_player_state *state = qa_q2_ctf_context_get(m->context, players[i]);
     qa_q2_entity *entity = qa_q2_game_entity_of(g, &players[i]);
-    qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, players[i]);
+    qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, players[i]);
     if (state == NULL || entity == NULL || player == NULL) continue;
     player->score = 0;
     state->spawn_state = 0;
@@ -153,7 +161,9 @@ void qa_q2_ctf_match_start(qa_q2_ctf_match *m, qa_q2_game_services *g) {
     entity->visible = false;
     g->show(g->ctx, entity);
     state->has_match_respawn_at = true;
-    state->match_respawn_at = qa_q2mp_now(g) + 1 + floor(g->host->random(g->host->ctx) * 30) / 10;
+    double left = qa_q2mp_now(g) + 1;
+    double right = floor(g->host->random(g->host->ctx) * 30) / 10;
+    state->match_respawn_at = left + right;
     player->respawn_time = state->match_respawn_at;
   }
 }
@@ -164,7 +174,7 @@ void qa_q2_ctf_match_totals(qa_q2_ctf_match *m, qa_q2_game_services *g, double o
   const qa_actor_id *players = g->host->players(g->host->ctx, &pn);
   for (size_t i = 0; i < pn; i++) {
     qa_q2_ctf_player_state *member = qa_q2_ctf_context_get(m->context, players[i]);
-    qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, players[i]);
+    qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, players[i]);
     double score = player == NULL ? 0 : player->score;
     if (member != NULL && member->team == 1) one += score;
     else if (member != NULL && member->team == 2) two += score;
@@ -306,10 +316,16 @@ bool qa_q2_ctf_match_check_rules(qa_q2_ctf_match *m, qa_q2_game_services *g) {
 }
 
 char *qa_q2_ctf_match_status(qa_q2_ctf_match *m, qa_q2_game_services *g) {
-  double time = trunc(ms(m)->match_time - qa_q2mp_now(g));
-  if (time < 0) time = 0;
-  char clock[32];
-  snprintf(clock, sizeof clock, "%02.0f:%02.0f", floor(time / 60), fmod(time, 60));
+  /* Math.max(0, Math.trunc(...)): trunc(-0.3) is -0, which "%02.0f" printed as "-0". */
+  double left = ms(m)->match_time;
+  double right = qa_q2mp_now(g);
+  double time = qa_js_max(0, trunc(left - right));
+  char minutes[48], seconds[48], clock[100];
+  qa_net_js_number(floor(time / 60), minutes, sizeof minutes);
+  qa_net_js_number(fmod(time, 60), seconds, sizeof seconds);
+  /* String(...).padStart(2, "0") */
+  snprintf(clock, sizeof clock, "%s%s:%s%s", strlen(minutes) < 2 ? "0" : "", minutes,
+           strlen(seconds) < 2 ? "0" : "", seconds);
   char buffer[256];
   if (strcmp(ms(m)->phase, "setup") == 0) {
     size_t pn = 0;
@@ -373,7 +389,7 @@ bool qa_q2_ctf_match_configure(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_g
   rules->start_seconds = values.start_seconds;
   rules->instant_weapons = values.instant_weapons;
   rules->match_lock = values.match_lock;
-  int64_t flags = ((int64_t)g->options.deathmatch_flags & ~(4 | 16 | 16384)) |
+  int64_t flags = (qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)) & ~(4 | 16 | 16384)) |
                   (values.weapons_stay ? 4 : 0) | (values.instant_items ? 16 : 0) | (values.quad_drop ? 16384 : 0);
   m->context->hooks.set_deathmatch_flags(m->context->hooks.ctx, (double)flags);
   qa_ctf_print(g, NULL, NULL, "%s changed match settings.\n", qa_ctf_name(m->context, entity->actor.id));
@@ -383,7 +399,7 @@ bool qa_q2_ctf_match_configure(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_g
 void qa_q2_ctf_match_settings_menu(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_services *g) {
   if (!qa_ctf_player(m->context, entity->actor.id)->admin) return;
   qa_q2_ctf_rules *rules = &m->context->rules;
-  int64_t flags = (int64_t)g->options.deathmatch_flags;
+  int32_t flags = qa_js_to_int32(qa_q2_options_deathmatch_flags(&g->options)); /* TS dmflags & x: ToInt32 */
   qa_q2_ctf_event event = {0};
   event.kind = "admin-settings";
   event.actor = entity->actor.id;
@@ -393,11 +409,7 @@ void qa_q2_ctf_match_settings_menu(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_
 }
 
 static bool eq_ci(const char *a, const char *b) {
-  while (*a && *b) {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    a++; b++;
-  }
-  return *a == *b;
+  return qa_js_equals_ignore_case(a, b); /* TS toLowerCase() === toLowerCase() */
 }
 
 bool qa_q2_ctf_match_warp(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_services *g, const char *requested) {
@@ -426,11 +438,11 @@ bool qa_q2_ctf_match_boot(qa_q2_ctf_match *m, qa_q2_entity *entity, qa_q2_game_s
   if (number[0] == '\0') return false;
   for (const char *p = number; *p; p++)
     if (!isdigit((unsigned char)*p)) return false;
-  double slot = strtod(number, NULL) - 1;
+  double slot = qa_js_string_to_number(number) - 1;
   size_t pn = 0;
   const qa_actor_id *players = g->host->players(g->host->ctx, &pn);
   for (size_t i = 0; i < pn; i++) {
-    qa_q2mp_player_state *player = m->context->hooks.player(m->context->hooks.ctx, players[i]);
+    qa_q2_base_player_state *player = m->context->hooks.player(m->context->hooks.ctx, players[i]);
     if (player != NULL && player->slot == slot) {
       m->context->hooks.kick(m->context->hooks.ctx, players[i]);
       return true;

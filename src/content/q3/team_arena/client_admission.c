@@ -1,5 +1,7 @@
 /* Port of src/content/q3/team-arena/client-admission.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/client_admission.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -12,9 +14,9 @@
 #include "qa/foundation/support.h"
 
 enum { MAX_INFO_STRING = 1024, MAX_QPATH = 64, MAX_NETNAME = 36, CS_PLAYERS = 544 };
-static double s32(double v) { return (int32_t)v; }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
-static void slot_set(qa_q3_game_player_slots_mirror *s, double i, double v) { qa_q3_game_slots_set_mirror(s, (size_t)i, v); }
+static double s32(double v) { return qa_js_to_int32(v); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
+static void slot_set(qa_q3_base_player_state_slots *s, double i, double v) { qa_q3_base_player_state_slots_set(s, (size_t)i, v); }
 
 /* TS byteBuffer: C strings are byte strings ending at first NUL. */
 static void byte_buffer(char *out, const char *value, size_t capacity) {
@@ -108,24 +110,27 @@ char *qa_q3_ta_clean_client_name(const char *input) {
       out_len == 0 || colorless == 0 ? strlen("UnnamedPlayer") : out_len);
 }
 
-/* TS resetPlayerState: fresh mirror ps fields with source slot lengths. */
-static void slots_reset(qa_q3_game_player_slots_mirror *s, size_t length) {
-  memset(s->values, 0, sizeof s->values);
-  s->length = length;
+/* TS resetPlayerState: state.copyFrom(new GameClient(state.product).ps). */
+static void reset_player_state(qa_q3_base_player_state *ps) {
+  qa_q3_game_player_state_reset(ps, QA_Q3_BASE_PRESERVE_AUTHORITY);
 }
-static void reset_player_state(qa_q3_game_player_state_mirror *ps) {
-  qa_q3_game_product product = ps->product;
-  memset(ps, 0, sizeof *ps);
-  ps->product = product;
-  slots_reset(&ps->stats, 16); slots_reset(&ps->persistant, 16);
-  slots_reset(&ps->powerups, 16); slots_reset(&ps->ammo, 16);
-  slots_reset(&ps->events, 2); slots_reset(&ps->event_parms, 2);
-  slots_reset(&ps->delta_angles, 3);
-}
+/* TS resetClient: ClientConnect's memset keeping the ps/pers/sess/ammoTimes
+ * owners; clearSlots(ammoTimes) notifies the ammoTimerStored hook. product
+ * only shapes TS's discarded fresh ps and ammoTimes. */
 static void reset_client(qa_q3_game_client *client, qa_q3_base_product product) {
-  qa_q3_game_client_destroy(client);
-  qa_q3_game_client_init(client, product == QA_Q3_BASE_PRODUCT_MISSIONPACK
-      ? QA_Q3_GAME_PRODUCT_MISSIONPACK : QA_Q3_GAME_PRODUCT_BASEQ3);
+  (void)product;
+  qa_q3_base_player_state ps = client->ps;
+  qa_q3_client_persistant pers = client->pers;
+  qa_q3_client_session sess = client->sess;
+  qa_q3_base_player_state_slots ammo_times = client->ammo_times;
+  free(client->areabits);
+  memset(client, 0, sizeof *client);
+  client->ps = ps; client->pers = pers; client->sess = sess; client->ammo_times = ammo_times;
+  reset_player_state(&client->ps);
+  qa_q3_client_persistant_destroy(&client->pers); qa_q3_client_persistant_init(&client->pers);
+  qa_q3_client_session_init(&client->sess);
+  for (double index = 0; index < client->ammo_times.length; index++)
+    qa_q3_base_player_state_slots_set(&client->ammo_times, index, 0);
 }
 static char *info_value(const char *userinfo, const char *key) {
   return qa_q3_ta_client_info_value(userinfo, key);
@@ -186,7 +191,7 @@ void qa_q3_ta_client_admission_runtime_init(qa_q3_ta_client_admission_runtime *r
 }
 static qa_q3_game_entity *client_entity(qa_q3_ta_client_admission_runtime *r, double num) {
   if (num != trunc(num) || num < 0 || num >= r->host.pool->max_clients)
-    qa_range_error("client %g outside configured clients", num);
+    qa_range_error("client %s outside configured clients", QA_JS_NUMBER(num));
   return qa_q3_entity_pool_at(r->host.pool, num);
 }
 static void get_userinfo(qa_q3_ta_client_admission_runtime *r, double num, char *out) {
@@ -238,7 +243,7 @@ void qa_q3_ta_client_admission_runtime_userinfo_changed(qa_q3_ta_client_admissio
   qa_q3_ta_client_admission_settings settings = r->host.settings(r->host.ctx);
   double game_type = settings.game_type;
   double team = client->sess.session_team;
-  bool is_bot = ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0;
+  bool is_bot = (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) != 0;
   if (game_type >= QA_Q3_BASE_GT_TEAM && is_bot) {
     char *requested = info_value(userinfo, "team");
     if (case_insensitive_equal(requested, "red") || case_insensitive_equal(requested, "r")) team = QA_Q3_BASE_TEAM_RED;
@@ -284,7 +289,7 @@ const char *qa_q3_ta_client_admission_runtime_connect(qa_q3_ta_client_admission_
   char password[MAX_INFO_STRING];
   byte_buffer(password, r->host.settings(r->host.ctx).password, MAX_INFO_STRING);
   char *given = info_value(userinfo, "password");
-  bool rejected = ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0 &&
+  bool rejected = (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0 &&
       strcmp(address, "localhost") != 0 && password[0] != '\0' &&
       !case_insensitive_equal(password, "none") && strcmp(password, given) != 0;
   free(given);
@@ -302,7 +307,7 @@ const char *qa_q3_ta_client_admission_runtime_connect(qa_q3_ta_client_admission_
   free(team_value);
   qa_q3_ta_game_session_manager_read_client(r->host.session, client_num);
   if (is_bot) {
-    entity->r.sv_flags = (double)((int32_t)entity->r.sv_flags | QA_Q3_BASE_SVF_BOT);
+    entity->r.sv_flags = (double)(qa_js_to_int32(entity->r.sv_flags) | QA_Q3_BASE_SVF_BOT);
     (void)qa_q3_entity_pool_activate_client(r->host.pool, entity->slot);
     if (r->host.bots.kind == QA_Q3_TA_BOTS_UNAVAILABLE) return r->host.bots.reason;
     if (!r->host.bots.connect(r->host.bots.ctx, client_num, !first_time)) return "BotConnectfailed";
@@ -339,7 +344,7 @@ void qa_q3_ta_client_admission_runtime_begin(qa_q3_ta_client_admission_runtime *
   client->ps.e_flags = flags;
   r->host.client_spawn(r->host.ctx, entity);
   if (client->sess.session_team != QA_Q3_BASE_TEAM_SPECTATOR) {
-    qa_q3_game_entity *temporary = qa_q3_entity_pool_temp_entity(r->host.pool, client->ps.origin, QA_Q3_EV_PLAYER_TELEPORT_IN);
+    qa_q3_game_entity *temporary = qa_q3_entity_pool_temp_entity(r->host.pool, qa_q3_base_player_state_record_origin(&client->ps), QA_Q3_EV_PLAYER_TELEPORT_IN);
     temporary->s.client_num = entity->s.client_num;
     if (r->host.settings(r->host.ctx).game_type != QA_Q3_BASE_GT_TOURNAMENT) {
       qa_q3_game_format_arg a = qa_q3_game_format_string(client->pers.netname);
@@ -353,7 +358,7 @@ void qa_q3_ta_client_admission_runtime_begin(qa_q3_ta_client_admission_runtime *
 
 void qa_q3_ta_client_admission_runtime_disconnect(qa_q3_ta_client_admission_runtime *r, double client_num) {
   qa_q3_game_entity *entity = client_entity(r, client_num);
-  bool is_bot = ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) != 0;
+  bool is_bot = (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) != 0;
   if (r->host.bots.kind == QA_Q3_TA_BOTS_AVAILABLE) r->host.bots.remove_queued_begin(r->host.bots.ctx, client_num);
   else if (is_bot) qa_range_error("%s", r->host.bots.reason);
   if (entity->client == NULL) return;
@@ -365,7 +370,7 @@ void qa_q3_ta_client_admission_runtime_disconnect(qa_q3_ta_client_admission_runt
       r->host.stop_following(r->host.ctx, qa_q3_entity_pool_at(r->host.pool, index));
   }
   if (client->pers.connected == QA_Q3_CONN_CONNECTED && client->sess.session_team != QA_Q3_BASE_TEAM_SPECTATOR) {
-    qa_q3_game_entity *temporary = qa_q3_entity_pool_temp_entity(r->host.pool, client->ps.origin, QA_Q3_EV_PLAYER_TELEPORT_OUT);
+    qa_q3_game_entity *temporary = qa_q3_entity_pool_temp_entity(r->host.pool, qa_q3_base_player_state_record_origin(&client->ps), QA_Q3_EV_PLAYER_TELEPORT_OUT);
     temporary->s.client_num = entity->s.client_num;
     r->host.toss_client_items(r->host.ctx, entity);
     if (r->host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK) {

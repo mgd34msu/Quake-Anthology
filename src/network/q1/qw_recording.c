@@ -1,8 +1,10 @@
 /* Port of src/network/q1/qw-recording.ts. GPL-2.0-or-later. */
+#include "qa/foundation/support.h"
 #include "qa/network/q1/qw_recording.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 enum {
   F_BASELINE, F_LIGHT_STYLE, F_STAT, F_USERINFO, F_SET_INFO, F_SERVER_INFO,
   F_FRAGS, F_PING, F_ENTER_TIME, F_PACKET_LOSS, F_SET_ANGLE, F_SET_VIEW,
@@ -115,13 +117,18 @@ void qa_quakeworld_recording_state_observe(qa_quakeworld_recording_state *s,
       for (size_t j = 0; j < s->static_count; j++) qa_quakeworld_message_destroy(&s->statics[j]);
       s->static_count = 0;
     } else if (!strcmp(k, "static") || !strcmp(k, "static-sound")) {
+      if (s->static_count >= 4096) qa_raise("Error", 0, 0, "Too many static entities");
       if (s->static_count == s->static_cap) { size_t nc = s->static_cap ? s->static_cap * 2 : 16; s->statics = realloc(s->statics, nc * sizeof *s->statics); s->static_cap = nc; }
       copy_qw(m, &s->statics[s->static_count++]);
     } else if (!strcmp(k, "baseline")) set_field(s, F_BASELINE, m->state.base.number, m);
     else if (!strcmp(k, "light-style")) set_field(s, F_LIGHT_STYLE, m->index, m);
     else if (!strcmp(k, "stat")) set_field(s, F_STAT, m->index, m);
     else if (!strcmp(k, "userinfo")) { delete_set_info(s, m->slot); set_field(s, F_USERINFO, m->slot, m); }
-    else if (!strcmp(k, "set-info")) set_field(s, F_SET_INFO, pair_id(s, m->slot, m->key), m);
+    else if (!strcmp(k, "set-info")) {
+      if ((m->key ? strlen(m->key) : 0) > 63 || (m->str_value ? strlen(m->str_value) : 0) > 511 || s->pair_slot_count >= 4096)
+        qa_raise("Error", 0, 0, "QuakeWorld info exceeds its limits");
+      set_field(s, F_SET_INFO, pair_id(s, m->slot, m->key), m);
+    }
     else if (!strcmp(k, "server-info")) set_field(s, F_SERVER_INFO, intern_key(s, m->key), m);
     else if (!strcmp(k, "frags")) set_field(s, F_FRAGS, m->slot, m);
     else if (!strcmp(k, "ping")) set_field(s, F_PING, m->slot, m);
@@ -141,7 +148,21 @@ static void put_i32le(uint8_t *b, size_t o, int32_t v) {
   uint32_t u = (uint32_t)v;
   b[o]=(uint8_t)u; b[o+1]=(uint8_t)(u>>8); b[o+2]=(uint8_t)(u>>16); b[o+3]=(uint8_t)(u>>24);
 }
-static int32_t ji(double n) { double m = fmod(trunc(n), 4294967296.0); if (m < 0) m += 4294967296.0; return (int32_t)(uint32_t)m; }
+/* ToInt32 (NaN and infinities are 0; the fmod form cast NaN to uint32_t). */
+static int32_t ji(double n) { return qa_js_to_int32(n); }
+/* A message the wire cannot carry throws as in TS; the records built so far are dropped. */
+typedef struct qw_seed_scope {
+  const qa_quakeworld_message **order; qa_quakeworld_message *synthetic; size_t synth_used;
+  qa_quakeworld_demo_record *records; size_t record_count; qa_size_buf payload;
+} qw_seed_scope;
+static void qw_seed_scope_free(void *arg) {
+  qw_seed_scope *scope = arg;
+  qa_size_buf_destroy(&scope->payload);
+  for (size_t i = 0; i < scope->record_count; i++) free(scope->records[i].message);
+  free(scope->records);
+  for (size_t i = 0; i < scope->synth_used; i++) free(scope->synthetic[i].names);
+  free(scope->synthetic); free(scope->order);
+}
 qa_quakeworld_demo_record *qa_quakeworld_recording_state_seed(qa_quakeworld_recording_state *s,
                                                               const qa_quakeworld_message *data,
                                                               const char *const *models, size_t model_count,
@@ -178,11 +199,15 @@ qa_quakeworld_demo_record *qa_quakeworld_recording_state_seed(qa_quakeworld_reco
   for (size_t i = 0; i < s->static_count; i++) order[at++] = &s->statics[i];
   for (size_t i = 0; i < s->row_count; i++) if (s->rows[i].live) order[at++] = &s->rows[i].message;
   qa_quakeworld_demo_record *records = calloc(at + 1, sizeof *records);
+  qw_seed_scope scope = { order, synthetic, synth_used, records, at, {0} };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, qw_seed_scope_free, &scope);
   for (size_t i = 0; i < at; i++) {
-    qa_size_buf payload; qa_size_buf_init(&payload, 1442, false);
-    qa_write_quakeworld_message(&payload, data->protocol, order[i]);
-    size_t plen = 0; uint8_t *pbytes = qa_size_buf_bytes(&payload, &plen);
-    qa_size_buf_destroy(&payload);
+    qa_size_buf *payload = &scope.payload;
+    qa_size_buf_init(payload, 1442, false);
+    qa_write_quakeworld_message(payload, data->protocol, order[i]);
+    size_t plen = 0; uint8_t *pbytes = qa_size_buf_bytes(payload, &plen);
+    qa_size_buf_destroy(payload);
     size_t n = plen + 8;
     uint8_t *bytes = malloc(n);
     put_i32le(bytes, 0, (int32_t)i + 1);
@@ -191,10 +216,21 @@ qa_quakeworld_demo_record *qa_quakeworld_recording_state_seed(qa_quakeworld_reco
     records[i].kind = "packet"; records[i].seconds = seconds;
     records[i].message = bytes; records[i].length = n;
   }
+  qa_cleanup_pop(&guard);
   records[at].kind = "sequences"; records[at].seconds = seconds;
   records[at].outgoing = outgoing; records[at].incoming = incoming;
   for (size_t i = 0; i < synth_used; i++) free(synthetic[i].names);
   free(synthetic); free(order);
   *out_count = at + 1;
   return records;
+}
+qa_quakeworld_recording_state *qa_quakeworld_recording_state_create(void) {
+  qa_quakeworld_recording_state *s = malloc(sizeof *s);
+  if (s) qa_quakeworld_recording_state_init(s);
+  return s;
+}
+void qa_quakeworld_recording_state_free(qa_quakeworld_recording_state *s) {
+  if (!s) return;
+  qa_quakeworld_recording_state_destroy(s);
+  free(s);
 }

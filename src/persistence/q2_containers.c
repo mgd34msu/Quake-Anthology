@@ -118,6 +118,21 @@ oom:
   qa_q2_level_metadata_free(out);
   return false;
 }
+/* id's SetConfigstring spills a long string (the status bar) into the
+ * following slots, so a slot can hold exactly `width` bytes with no
+ * terminator. C strings carry no interior NUL. */
+static void write_configstring_slot(qa_binary_writer *writer, const char *value,
+                                    int64_t width) {
+  size_t length = strlen(value);
+  if ((int64_t)length == width) {
+    uint8_t *bytes = qa_text_bytes(value, length);
+    if (length > 0 && bytes == NULL) return;
+    qa_binary_writer_bytes(writer, bytes, length);
+    free(bytes);
+  } else {
+    qa_write_fixed(writer, value, length, width);
+  }
+}
 uint8_t *qa_encode_q2_classic_level_metadata(const qa_q2_level_metadata *save,
                                              int64_t configstring_count, int64_t width,
                                              size_t *out_length) {
@@ -129,7 +144,7 @@ uint8_t *qa_encode_q2_classic_level_metadata(const qa_q2_level_metadata *save,
     const char *value = "";
     for (size_t i = 0; i < save->configstring_count; i++)
       if (save->configstrings[i].index == index) value = save->configstrings[i].value;
-    qa_write_fixed(&writer, value, strlen(value), width);
+    write_configstring_slot(&writer, value, width);
   }
   qa_binary_writer_bytes(&writer, save->portal_bytes, save->portal_length);
   uint8_t *result = qa_binary_writer_finish(&writer, out_length);

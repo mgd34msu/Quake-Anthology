@@ -52,10 +52,6 @@ qa_entity_geometry qa_poly_geometry(const qa_poly_input_vertex *vertices,
                                     size_t vertex_count);
 qa_entity_geometry qa_sprite_geometry(qa_sprite_pose entity, qa_axis view_axis,
                                       bool mirror);
-/* Index of the first overlapping fog bounds; -1 when none. */
-double qa_sprite_fog(qa_vec3 origin, double radius, const qa_bounds *bounds,
-                     size_t bounds_count);
-
 /* DrawBatch-producing forms. project is fn+ctx. Result owns vertices
  * and indices (free with qa_particle_draw_batch_destroy). */
 typedef qa_vec4 (*qa_particle_project_fn)(void *ctx, qa_vec3 point);

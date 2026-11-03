@@ -1,6 +1,7 @@
 /* Port of src/guest/runtime/windows/crt.ts. GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/guest/runtime/windows/crt.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -15,6 +16,11 @@
 
 static void *xmalloc(size_t size) {
   void *p = malloc(size == 0 ? 1 : size);
+  if (p == NULL) qa_range_error("Guest runtime out of memory");
+  return p;
+}
+static void *xrealloc(void *old, size_t size) {
+  void *p = realloc(old, size == 0 ? 1 : size);
   if (p == NULL) qa_range_error("Guest runtime out of memory");
   return p;
 }
@@ -59,6 +65,7 @@ enum {
 };
 static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *context,
                                const qa_call_value *args, size_t count);
+static void free_state(void *resource) { crt_state *state = resource; free(state->name); free(state); }
 static void service(crt_ctx *crt, int kind, const char *family, const char *name,
                     const qa_abi_storage *parameters, size_t parameter_count,
                     bool result_is_void, qa_abi_storage result) {
@@ -69,6 +76,7 @@ static void service(crt_ctx *crt, int kind, const char *family, const char *name
   for (size_t i = 0; i < 3; i++) {
     crt_state *state = xmalloc(sizeof *state);
     state->crt = crt; state->kind = kind; state->name = xstrdup(name);
+    qa_windows_own(crt->host, state, free_state);
     qa_windows_import_implementation impl = {state, crt_impl};
     qa_windows_service(crt->host, libraries[i], name, parameters, parameter_count,
                        result_is_void, result, impl);
@@ -170,16 +178,91 @@ static void qsort_swap(qsort_ctx *q, size_t left, size_t right) {
   qa_memory_write(memory, qsort_at(q, right), value, q->size);
   free(value); free(other);
 }
-static void qsort_sift(qsort_ctx *q, size_t start, size_t end) {
-  size_t root = start;
-  while (root * 2 + 1 < end) {
-    size_t child = root * 2 + 1;
-    if (child + 1 < end && qsort_compare(q, child, child + 1) < 0) child++;
-    if (qsort_compare(q, root, child) >= 0) return;
-    qsort_swap(q, root, child);
-    root = child;
+/* TS ucrtQuickSort (misc/qsort.cpp): median-of-three quicksort that hands runs
+ * of at most eight elements to a selection sort, so the order of equal keys
+ * matches the original CRT. Positions are element indices. */
+void qa_ucrt_quick_sort(int64_t length, int (*compare)(void *ctx, int64_t left, int64_t right),
+                        void (*swap)(void *ctx, int64_t left, int64_t right), void *ctx) {
+  void *q = ctx;
+  if (length < 2) return;
+  int64_t *low_stack = NULL, *high_stack = NULL;
+  size_t stack_count = 0, stack_cap = 0;
+  int64_t low = 0, high = length - 1;
+  for (;;) {
+    const int64_t size = high - low + 1;
+    if (size <= 8) {
+      while (high > low) {
+        int64_t max = low;
+        for (int64_t position = low + 1; position <= high; position++)
+          if (compare(q, position, max) > 0) max = position;
+        swap(q, max, high);
+        high--;
+      }
+    } else {
+      int64_t mid = low + (size >> 1);
+      if (compare(q, low, mid) > 0) swap(q, low, mid);
+      if (compare(q, low, high) > 0) swap(q, low, high);
+      if (compare(q, mid, high) > 0) swap(q, mid, high);
+      int64_t loguy = low, higuy = high;
+      for (;;) {
+        if (mid > loguy) {
+          do loguy++;
+          while (loguy < mid && compare(q, loguy, mid) <= 0);
+        }
+        if (mid <= loguy) {
+          do loguy++;
+          while (loguy <= high && compare(q, loguy, mid) <= 0);
+        }
+        do higuy--;
+        while (higuy > mid && compare(q, higuy, mid) > 0);
+        if (higuy < loguy) break;
+        swap(q, loguy, higuy);
+        if (mid == higuy) mid = loguy;
+      }
+      higuy++;
+      if (mid < higuy) {
+        do higuy--;
+        while (higuy > mid && compare(q, higuy, mid) == 0);
+      }
+      if (mid >= higuy) {
+        do higuy--;
+        while (higuy > low && compare(q, higuy, mid) == 0);
+      }
+      bool pushed_continue = false;
+      if (higuy - low >= high - loguy) {
+        if (low < higuy) {
+          if (stack_count == stack_cap) {
+            stack_cap = stack_cap == 0 ? 16 : stack_cap * 2;
+            low_stack = xrealloc(low_stack, stack_cap * sizeof *low_stack);
+            high_stack = xrealloc(high_stack, stack_cap * sizeof *high_stack);
+          }
+          low_stack[stack_count] = low; high_stack[stack_count] = higuy; stack_count++;
+        }
+        if (loguy < high) { low = loguy; pushed_continue = true; }
+      } else {
+        if (loguy < high) {
+          if (stack_count == stack_cap) {
+            stack_cap = stack_cap == 0 ? 16 : stack_cap * 2;
+            low_stack = xrealloc(low_stack, stack_cap * sizeof *low_stack);
+            high_stack = xrealloc(high_stack, stack_cap * sizeof *high_stack);
+          }
+          low_stack[stack_count] = loguy; high_stack[stack_count] = high; stack_count++;
+        }
+        if (low < higuy) { high = higuy; pushed_continue = true; }
+      }
+      if (pushed_continue) continue;
+    }
+    if (stack_count == 0) break;
+    stack_count--;
+    low = low_stack[stack_count];
+    high = high_stack[stack_count];
   }
+  free(low_stack);
+  free(high_stack);
 }
+
+static int qsort_compare_at(void *ctx, int64_t left, int64_t right) { return qsort_compare(ctx, (size_t)left, (size_t)right); }
+static void qsort_swap_at(void *ctx, int64_t left, int64_t right) { qsort_swap(ctx, (size_t)left, (size_t)right); }
 
 static bool js_space(uint8_t c) {
   return c == ' ' || (c >= 9 && c <= 13) || c == 0xa0;
@@ -196,14 +279,17 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
     case C_XTIME:
       return qa_call_int64((int64_t)trunc(now_milliseconds(host)) * 10000);
     case C_MALLOC: {
+      const size_t size = qa_guest_count(args, count, 0);
+      qa_windows_charge_bytes(host, size);
       qa_guest_core_address out = {0};
-      bool has = qa_windows_allocate(host, qa_guest_count(args, count, 0), 0, &out);
+      bool has = qa_windows_allocate(host, size, 0, &out);
       return qa_call_pointer(has, out);
     }
     case C_CALLOC: {
       int64_t a = qa_guest_integer(args, count, 0);
       int64_t b = qa_guest_integer(args, count, 1);
       bool too_big = a > 0 && b > 0 && (a > 0x10000000 / b || a * b > 0x10000000);
+      qa_windows_charge_bytes(host, too_big ? 0x10000000u : (size_t)(a * b));
       if (too_big) return qa_call_pointer(false, none);
       qa_guest_core_address out = {0};
       bool has = qa_windows_allocate(host, (size_t)(a * b), 0, &out);
@@ -221,6 +307,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
       size_t size = qa_guest_count(args, count, 2);
       qa_guest_core_address destination = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
+      qa_windows_charge_bytes(host, size);
       if (size > 0)
         qa_move_bytes(memory, host->memory_ext, qa_guest_required_pointer(args, count, 0),
                       qa_guest_required_pointer(args, count, 1), size);
@@ -230,6 +317,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
       size_t size = qa_guest_count(args, count, 2);
       qa_guest_core_address destination = {0};
       bool has_destination = qa_guest_pointer_argument(args, count, 0, &destination);
+      qa_windows_charge_bytes(host, size);
       if (size > 0)
         qa_fill_bytes(memory, host->memory_ext, qa_guest_required_pointer(args, count, 0), size,
                       (int)(qa_guest_integer(args, count, 1) & 255));
@@ -237,6 +325,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
     }
     case C_MEMCMP: {
       size_t size = qa_guest_count(args, count, 2);
+      qa_windows_charge_bytes(host, size);
       if (size == 0) return qa_call_int32(0);
       uint8_t *left = xmalloc(size), *right = xmalloc(size);
       qa_memory_copy(memory, qa_guest_required_pointer(args, count, 0), left, size);
@@ -249,6 +338,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
     }
     case C_MEMCHR: {
       size_t size = qa_guest_count(args, count, 2);
+      qa_windows_charge_bytes(host, size);
       if (size == 0) return qa_call_pointer(false, none);
       qa_guest_core_address address = qa_guest_required_pointer(args, count, 0);
       uint8_t *bytes = xmalloc(size);
@@ -264,14 +354,30 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
     case C_STRLEN: {
       size_t value = qa_string_length(memory, host->memory_ext,
                                       qa_guest_required_pointer(args, count, 0), 1048576);
+      qa_windows_charge_bytes(host, value);
       return host->pointer_storage == QA_STORAGE_UINT64 ? qa_call_uint64(value)
                                                         : qa_call_uint32((uint32_t)value);
     }
     case C_STRCMP: {
       qa_guest_core_address left = qa_guest_required_pointer(args, count, 0);
       qa_guest_core_address right = qa_guest_required_pointer(args, count, 1);
-      size_t maximum = strcmp(state->name, "strcmp") == 0 ? 1048576
-                                                           : qa_guest_count(args, count, 2);
+      if (strcmp(state->name, "strcmp") == 0) {
+        /* Whole-string reads use the memory's own terminator search instead of one checked access per byte. */
+        const size_t first_length = qa_string_length(memory, host->memory_ext, left, 1048576);
+        const size_t second_length = qa_string_length(memory, host->memory_ext, right, 1048576);
+        const size_t shared = first_length < second_length ? first_length : second_length;
+        qa_windows_charge_bytes(host, shared);
+        /* The terminator is compared too, so one byte beyond the shorter string is read. */
+        uint8_t *first = xmalloc(shared + 1), *second = xmalloc(shared + 1);
+        qa_memory_copy(memory, left, first, shared + 1);
+        qa_memory_copy(memory, right, second, shared + 1);
+        int result = 0;
+        for (size_t i = 0; i <= shared; i++)
+          if (first[i] != second[i]) { result = (int)first[i] - (int)second[i]; break; }
+        free(first); free(second);
+        return qa_call_int32(result);
+      }
+      size_t maximum = qa_guest_count(args, count, 2);
       for (size_t i = 0; i < maximum; i++) {
         uint64_t a = qa_read_unsigned(memory, off(memory, left, (int64_t)i), 1);
         uint64_t b = qa_read_unsigned(memory, off(memory, right, (int64_t)i), 1);
@@ -370,12 +476,7 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
       q.comparator = qa_guest_required_pointer(args, count, 3);
       q.size = size;
       qa_memory_check(memory, q.base, length * size, QA_ACCESS_WRITE);
-      for (int64_t start = (int64_t)(length / 2) - 1; start >= 0; start--)
-        qsort_sift(&q, (size_t)start, length);
-      for (size_t end = length - 1; end > 0; end--) {
-        qsort_swap(&q, 0, end);
-        qsort_sift(&q, 0, end);
-      }
+      qa_ucrt_quick_sort((int64_t)length, qsort_compare_at, qsort_swap_at, &q);
       return qa_call_void();
     }
     case C_MATH1: {
@@ -397,7 +498,12 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
       double a = real(args, count, 0), b = real(args, count, 1);
       return qa_call_float32(strcmp(state->name, "atan2f") == 0 ? atan2(a, b) : fmod(a, b));
     }
-    case C_POW: return qa_call_float64(pow(real(args, count, 0), real(args, count, 1)));
+    case C_POW: {
+      /* Math.pow, not C pow: a NaN exponent and (+-1)**(+-Infinity) are NaN. */
+      double base = real(args, count, 0), exponent = real(args, count, 1);
+      if (exponent != exponent || (isinf(exponent) && fabs(base) == 1)) return qa_call_float64(NAN);
+      return qa_call_float64(qa_js_pow(base, exponent));
+    }
     case C_NEXTAFTERF: {
       double a = (float)real(args, count, 0);
       double b = (float)real(args, count, 1);
@@ -446,9 +552,6 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
       while (index < length && strchr(" \t\n\r\f\v", text[index]) != NULL) index++;
       bool negative = text[index] == '-';
       if (negative || text[index] == '+') index++;
-      const char *digit_of = text;
-      size_t digit_len = length;
-      (void)digit_of; (void)digit_len;
       /* digit(at): 99 when out of range or not alphanumeric. */
       if ((base == 0 || base == 16) && text[index] == '0' &&
           (text[index + 1] == 'x' || text[index + 1] == 'X')) {
@@ -489,17 +592,8 @@ static qa_call_result crt_impl(void *ctx, const qa_guest_core_call_context *cont
       if (strcmp(name, "atof") == 0) {
         size_t i = 0;
         while (js_space((uint8_t)text[i])) i++;
-        size_t sign_at = i;
-        bool neg = false;
-        if (text[i] == '+' || text[i] == '-') { neg = text[i] == '-'; i++; }
-        double value;
-        if (strncmp(text + i, "Infinity", 8) == 0) value = neg ? -(1.0 / 0.0) : 1.0 / 0.0;
-        else if (text[i] == '0' && (text[i + 1] == 'x' || text[i + 1] == 'X'))
-          value = neg ? -0.0 : 0.0;
-        else if (!((text[i] >= '0' && text[i] <= '9') ||
-                   (text[i] == '.' && text[i + 1] >= '0' && text[i + 1] <= '9')))
-          value = 0; /* parseFloat NaN, mapped to 0 by TS */
-        else value = strtod(text + sign_at, NULL);
+        /* Number.parseFloat(text) after the byte-string white space; NaN maps to 0. */
+        double value = qa_js_parse_float(text + i);
         free(text);
         return qa_call_float64(value != value ? 0 : value);
       }
@@ -569,12 +663,14 @@ void qa_install_crt(qa_windows_service_host *host) {
   crt_ctx *crt = xmalloc(sizeof *crt);
   memset(crt, 0, sizeof *crt);
   crt->host = host;
+  qa_windows_own(host, crt, free);
   qa_mapped_guest_memory *memory = host->memory;
   int width = memory->pointer_bytes;
   qa_abi_storage ptr = QA_STORAGE_POINTER, i32 = QA_STORAGE_INT32, i64 = QA_STORAGE_INT64,
                  f32 = QA_STORAGE_FLOAT32, f64 = QA_STORAGE_FLOAT64;
   crt_state *xtime = xmalloc(sizeof *xtime);
   xtime->crt = crt; xtime->kind = C_XTIME; xtime->name = xstrdup("_Xtime_get_ticks");
+  qa_windows_own(host, xtime, free_state);
   qa_windows_import_implementation xtime_impl = {xtime, crt_impl};
   qa_windows_service(host, "msvcp140.dll", "_Xtime_get_ticks", NULL, 0, false, i64, xtime_impl);
   qa_abi_storage size_param = host->pointer_storage;

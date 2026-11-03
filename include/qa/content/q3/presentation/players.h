@@ -4,8 +4,8 @@
  * control flow becomes status codes threaded through the load chain, so
  * reentrant host callbacks that bump a request/lifecycle still abandon
  * the stale load exactly where TS check() would throw.
- * Mirrored types (TS owners unported): the effects/marks picks reuse
- * local_entities.h's landed effects/marks types (effects.ts / marks.ts). */
+ * The effects/marks picks are local_entities.h's effects/marks types
+ * (effects.ts / marks.ts). */
 #ifndef QA_CONTENT_Q3_PRESENTATION_PLAYERS_H
 #define QA_CONTENT_Q3_PRESENTATION_PLAYERS_H
 #include <stdbool.h>
@@ -38,6 +38,8 @@ typedef struct qa_q3_pres_client_info_settings {
 typedef struct qa_q3_pres_client_info_host {
   qa_q3_pres_client_game_state *state;
   qa_q3_pres_asset_reader assets;
+  /* TS assets.readFileLength?: NULL is undefined; called with assets.ctx. */
+  double (*read_file_length)(void *assets_ctx, const char *path);
   void *resources_ctx;
   bool (*register_model)(void *ctx, const char *path, qa_q3_pres_scene_model *out);
   bool (*register_skin)(void *ctx, const char *path, const qa_q3_pres_scene_skin **out);
@@ -77,7 +79,6 @@ typedef struct qa_q3_pres_player_presentation_settings {
   bool enable_breath, enable_dust, debug_position, debug_animation;
 } qa_q3_pres_player_presentation_settings;
 /* TS Pick<ClientEffects,"smokePuff"> (effects.ts): landed view. */
-typedef qa_q3_pres_effects_smoke_view qa_q3_pres_player_effects_mirror;
 typedef struct qa_q3_pres_client_info_store qa_q3_pres_client_info_store;
 /* TS PlayerPresentationHost: mission_media non-NULL only for
  * missionpack. clients is Pick<ClientInfoStore,"clientInfo">.
@@ -94,7 +95,7 @@ typedef struct qa_q3_pres_player_presentation_host {
   void *clients_ctx;
   qa_q3_pres_client_info *(*client_info)(void *ctx, double index);
   qa_q3_pres_collision_world collision; /* trace / point_contents only */
-  qa_q3_pres_player_effects_mirror effects;
+  qa_q3_pres_effects_smoke_view effects;
   qa_q3_game_random *random;
   void *ctx;
   qa_q3_pres_player_presentation_settings (*settings)(void *ctx);
@@ -105,7 +106,7 @@ typedef struct qa_q3_pres_player_presentation_host {
   void (*add_light)(void *ctx, qa_q3_pres_dynamic_light light);
   void (*add_poly)(void *ctx, const qa_q3_pres_ref_poly *poly);
   qa_q3_pres_lighting_sample (*light_for_point)(void *ctx, qa_vec3 point);
-  qa_q3_pres_impact_mark_system_mirror marks;
+  qa_q3_pres_impact_mark_system_view marks;
   void (*add_looping_sound)(void *ctx, double entity_num, qa_vec3 origin, qa_vec3 velocity, qa_pcm_sound *sound);
   void (*add_player_weapon)(void *ctx, const qa_q3_pres_ref_model_entity *parent,
                             qa_q3_base_source_player_state *player_state,
@@ -135,6 +136,9 @@ void qa_q3_pres_player_presenter_player(qa_q3_pres_player_presenter *presenter,
 bool qa_q3_pres_client_info_store_init(qa_q3_pres_client_info_store **out, qa_q3_pres_client_info_host host,
     qa_q3_pres_client_info *const *slots, size_t slot_count);
 void qa_q3_pres_client_info_store_destroy(qa_q3_pres_client_info_store *store);
+/* TS entityReset field (null by default): CG_LoadClientInfo ends by resetting every player entity of that client. */
+void qa_q3_pres_client_info_store_set_entity_reset(qa_q3_pres_client_info_store *store,
+    void (*reset)(void *ctx, qa_q3_pres_client_entity *entity), void *ctx);
 qa_q3_pres_client_info *qa_q3_pres_client_info_store_client_info(qa_q3_pres_client_info_store *store,
     double index);
 /* Pick<view> adapter for PlayerPresentationHost clients / config. */

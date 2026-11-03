@@ -1,4 +1,4 @@
-/* Port of src/network/q3/index.ts (re-export barrel). GPL-2.0-or-later. */
+/* Umbrella header for src/network/q3 (TS removed its index.ts barrel; kept as a C convenience). GPL-2.0-or-later. */
 #ifndef QA_NETWORK_Q3_H
 #define QA_NETWORK_Q3_H
 #include "qa/network/q3/adapters.h"
@@ -19,7 +19,6 @@
 #include "qa/network/q3/pak_references.h"
 #include "qa/network/q3/parse_entities.h"
 #include "qa/network/q3/pure.h"
-#include "qa/network/q3/rcon.h"
 #include "qa/network/q3/recording.h"
 #include "qa/network/q3/reliable.h"
 #include "qa/network/q3/server_message.h"

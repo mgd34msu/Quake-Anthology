@@ -5,6 +5,7 @@
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/render/scene/source_sort.h"
+#include "qa/foundation/js.h"
 static void *xalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("Allocation failed"); return p; }
 static void *xg(void *p, size_t n) { void *q = realloc(p, n ? n : 1); if (!q) qa_range_error("Allocation failed"); return q; }
 static int is_int_num(double v) { return isfinite(v) && v == trunc(v); }
@@ -75,8 +76,9 @@ static void sc_set(void *ctx, size_t i, uint32_t s) { ((sctx *)ctx)->items[i].so
 static void sc_swap(void *ctx, size_t a, size_t b) { pending *items = ((sctx *)ctx)->items; pending t = items[a]; items[a] = items[b]; items[b] = t; }
 static int cmp_pending(const void *a, const void *b) {
   const pending *x = a, *y = b;
+  /* priority(a) - priority(b) || a.ordinal - b.ordinal: a NaN difference is falsy and falls through */
   double d = priority(x->group->order) - priority(y->group->order);
-  if (d != 0) return d < 0 ? -1 : 1;
+  if (d != 0 && !isnan(d)) return d < 0 ? -1 : 1;
   return x->ordinal < y->ordinal ? -1 : x->ordinal > y->ordinal ? 1 : 0;
 }
 bool qa_finish_scene_operations(const qa_scene_operation *input, size_t count, qa_finished_operations *out) {
@@ -99,7 +101,7 @@ bool qa_finish_scene_operations(const qa_scene_operation *input, size_t count, q
       else if (pend[i].group->order.kind == QA_GROUP_SOURCE) source[ns++] = pend[i];
       else sequence[nseq++] = pend[i];
     }
-    qsort(generic, ng, sizeof *generic, cmp_pending);
+    qa_js_sort(generic, ng, sizeof *generic, cmp_pending);
     if (ns) {
       qa_source_scene_order *view = source[0].group->order.source.view;
       size_t snap_n = 0;

@@ -29,16 +29,16 @@ bool qa_qvm_client_cinematic_syscall(const qa_qvm_host_call *call,
       services.developer_print(services.ctx, "UI_CIN_PlayCinematic\n");
     double result = cinematics->play_guest(cinematics->ctx, path, rect, bits);
     free(path);
-    *out = (qa_qvm_host_result)result;
+    *out = qa_qvm_host_word(result);
     return true;
   }
   int32_t handle = qa_qvm_host_call_word(call, 1);
   if (trap == play + 1) {
-    *out = (qa_qvm_host_result)cinematics->stop_guest(cinematics->ctx, handle);
+    *out = qa_qvm_host_word(cinematics->stop_guest(cinematics->ctx, handle));
     return true;
   }
   if (trap == play + 2) {
-    *out = (qa_qvm_host_result)cinematics->run_guest(cinematics->ctx, handle);
+    *out = qa_qvm_host_word(cinematics->run_guest(cinematics->ctx, handle));
     return true;
   }
   if (trap == play + 3) cinematics->draw_guest(cinematics->ctx, handle, services.draw);

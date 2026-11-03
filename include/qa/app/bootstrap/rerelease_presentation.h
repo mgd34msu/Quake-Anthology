@@ -1,15 +1,17 @@
-/* Port of src/app/bootstrap/rerelease-presentation.ts. Fog
- * (rerelease-presentation/fog.ts), ApplicationAssets providers
- * (assets.ts) and SimulationPresentationEvent (simulation/types.ts)
- * are sibling slices: mirrored as host fn+ctx / field mirrors here.
- * q2PlayerNameTokens and seat routing are real. Async -> synchronous.
+/* Port of src/app/bootstrap/rerelease-presentation.ts over the ApplicationAssets
+ * providers (assets.ts: family, mounts, textures) and per-seat
+ * NativeLanguageSettings catalogs (ui/settings/services.h) on the rerelease
+ * localization files. Async is synchronous: a TS rejection raises (qa_raise).
+ * drawStory takes the Draw2D/SeatTextPresentation calls it makes as fn+ctx.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_RERELEASE_PRESENTATION_H
 #define QA_APP_BOOTSTRAP_RERELEASE_PRESENTATION_H
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qa/app/bootstrap/assets.h"
 #include "qa/app/bootstrap/rerelease_presentation/fog.h"
+#include "qa/app/bootstrap/simulation/types.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
@@ -21,59 +23,41 @@ typedef struct qa_app_rerelease_seat {
   qa_seat_id seat; qa_actor_id actor; const char *language; /* NULL absent */
 } qa_app_rerelease_seat;
 typedef qa_q2_sky_view qa_app_rerelease_sky_view;
-/* Mirror: TS SimulationPresentationEvent fields read here. */
-typedef struct qa_app_rerelease_event {
-  const char *kind; const char *event_kind;
-  qa_content_id content; double seconds; double sequence;
-  bool has_recipient; qa_actor_id recipient;
-  qa_actor_id actor, item, target;
-  bool visible;
-  qa_q2_fog_state fog_value; double fog_transition_milliseconds;
-  const char *text, *name;
-  const char *const *args; size_t arg_count;
-  double sky_rotation; bool sky_auto_rotate; qa_vec3 sky_axis;
-  double slot; const char *userinfo_name;
-  bool has_actor; double level;
-  bool has_source_entity; double source_entity;
-} qa_app_rerelease_event;
-/* A localized q2-player print produced by prepare(). */
-typedef struct qa_app_rerelease_print {
-  qa_content_id content; double seconds, sequence;
-  bool has_recipient; qa_actor_id recipient;
-  qa_actor_id target; double level; const char *text; /* owned copy */
-} qa_app_rerelease_print;
-typedef struct qa_app_rerelease_host {
-  void *ctx;
-  /* NativeLanguageSettings catalog mirror. */
-  const void *(*catalog)(void *ctx, qa_seat_id seat, const char *language, qa_content_id content);
-  void (*catalogs_clear)(void *ctx, qa_seat_id seat);
-  char *(*localized_text)(void *ctx, const void *catalog, const char *text, const char *const *args, size_t arg_count);
-  bool (*language_binding)(void *ctx, const void *catalog, qa_ui_setting_binding *out);
-  /* ApplicationAssets provider mirror. */
-  const char *(*provider_family)(void *ctx, qa_content_id content);
-  bool (*load_sky_image)(void *ctx, qa_content_id content, const char *path, qa_renderer_image *out);
-  qa_renderer_image (*missing_image)(void *ctx, qa_content_id content);
-} qa_app_rerelease_host;
 typedef struct qa_app_rerelease_presentation qa_app_rerelease_presentation;
 char *qa_app_q2_player_name_tokens(const char *text, const double *slots, const char *const *names, size_t count);
-qa_app_rerelease_presentation *qa_app_rerelease_presentation_create(qa_app_rerelease_host host,
+/* TS new ApplicationRereleasePresentation(assets, seats, languageSettings = null): assets and language_settings
+ * (NULL is TS null) are borrowed for the presentation's life; seat languages are copied. */
+qa_app_rerelease_presentation *qa_app_rerelease_presentation_create(qa_app_application_assets *assets,
     const qa_app_rerelease_seat *seats, size_t seat_count, qa_cvar_registry *language_settings);
 void qa_app_rerelease_presentation_destroy(qa_app_rerelease_presentation *p);
 typedef struct qa_app_rerelease_refresh qa_app_rerelease_refresh;
-qa_app_rerelease_refresh *qa_app_rerelease_prepare_image_refresh(qa_app_rerelease_presentation *p);
+/* TS prepareImageRefresh(images): the skies load through the prepared images' providers. */
+qa_app_rerelease_refresh *qa_app_rerelease_prepare_image_refresh(qa_app_rerelease_presentation *p, qa_app_prepared_images *images);
 void qa_app_rerelease_refresh_publish(qa_app_rerelease_refresh *refresh);
+/* Frees an unpublished refresh (TS drops the unused sky closure). */
+void qa_app_rerelease_refresh_discard(qa_app_rerelease_refresh *refresh);
 void qa_app_rerelease_publish_seats(qa_app_rerelease_presentation *p, const qa_app_rerelease_seat *seats, size_t seat_count);
-void qa_app_rerelease_receive(qa_app_rerelease_presentation *p, const qa_app_rerelease_event *events, size_t count);
+/* Retains owned copies of the events prepare() consumes. */
+void qa_app_rerelease_receive(qa_app_rerelease_presentation *p, const qa_app_sim_presentation_event *events, size_t count);
 const char *qa_app_rerelease_selected_language(qa_app_rerelease_presentation *p, qa_seat_id id);
 bool qa_app_rerelease_item_visible(qa_app_rerelease_presentation *p, qa_actor_id actor, qa_actor_id item);
-/* TS sourceLocalizer returns a closure: localize via this call. Malloc'd. */
+/* TS sourceLocalizer(id, content): the returned localizer keeps the catalog current at the call (a later language
+ * change does not reach it), valid while the presentation lives. Its text is malloc'd. */
+typedef struct qa_app_rerelease_localizer qa_app_rerelease_localizer;
+qa_app_rerelease_localizer *qa_app_rerelease_source_localizer(qa_app_rerelease_presentation *p, qa_seat_id id, qa_content_id content);
+char *qa_app_rerelease_localizer_text(qa_app_rerelease_localizer *localizer, const char *text, const char *const *args, size_t arg_count);
+/* sourceLocalizer(id, content) applied once (a fresh closure per call). Malloc'd. */
 char *qa_app_rerelease_source_localize(qa_app_rerelease_presentation *p, qa_seat_id id, qa_content_id content, const char *text, const char *const *args, size_t arg_count);
 char *qa_app_rerelease_localize_message(qa_app_rerelease_presentation *p, qa_seat_id id, qa_content_id content, const char *text, const char *const *args, size_t arg_count);
-/* False = TS undefined (non-q1/q2 family). */
+/* False = TS undefined (non-q1/q2 family). The binding (read/write the seat language; write raises "Language is not
+ * installed" and reloads the catalog, reporting a load failure to failed as String(error), "<name>: <message>") stays
+ * valid while the presentation lives. */
 bool qa_app_rerelease_language_binding(qa_app_rerelease_presentation *p, qa_seat_id id, qa_content_id content,
                                        void (*failed)(void *ctx, const char *error), void *failed_ctx, qa_ui_setting_binding *out);
 void qa_app_rerelease_prepare(qa_app_rerelease_presentation *p);
-const qa_app_rerelease_print *qa_app_rerelease_drain_prints(qa_app_rerelease_presentation *p, size_t *out_count);
+/* TS drainPrints: owned q2-player print events, valid until the next
+ * drain or destroy. */
+const qa_app_sim_presentation_event *qa_app_rerelease_drain_prints(qa_app_rerelease_presentation *p, size_t *out_count);
 bool qa_app_rerelease_story_active(qa_app_rerelease_presentation *p, qa_actor_id actor);
 typedef struct qa_app_rerelease_view {
   bool has_fog; qa_q2_fog_operation fog;

@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include "qa/ui/common/art_manifest.h"
 #include "qa/ui/common/layout.h"
 
 const qa_resource_id qa_ui_menu_title_font = "resource:engine-menu:title";
@@ -41,7 +42,7 @@ qa_ui_skin qa_ui_menu_skin(qa_resource_id font) {
 
 qa_ui_draw_command qa_ui_menu_backdrop(qa_ui_draw_context context) {
   qa_rect viewport = context.binding.viewport;
-  double ratio = viewport.width / viewport.height, art_ratio = 1672.0 / 941;
+  double ratio = viewport.width / viewport.height, art_ratio = qa_ui_main_menu_background.width / qa_ui_main_menu_background.height;
   double crop_x = ratio < art_ratio ? (1 - ratio / art_ratio) / 2 : 0;
   double crop_y = ratio > art_ratio ? (1 - art_ratio / ratio) / 2 : 0;
   qa_ui_draw_command cmd;
@@ -55,15 +56,24 @@ qa_ui_draw_command qa_ui_menu_backdrop(qa_ui_draw_context context) {
   return cmd;
 }
 
-qa_ui_draw_command qa_ui_menu_panel_command(qa_ui_draw_context context,
-                                            bool narrow) {
+qa_ui_draw_command qa_ui_menu_panel_scaled(qa_ui_draw_context context,
+                                           bool narrow, double menu_scale) {
+  qa_rect area = context.binding.safe_area;
   qa_ui_draw_command cmd;
   memset(&cmd, 0, sizeof cmd);
   cmd.kind = QA_UI_DRAW_FILL;
+  if (area.width <= 0 || area.height <= 0) {
+    cmd.rect.x = area.x; cmd.rect.y = area.y; /* zero size, transparent */
+    return cmd;
+  }
   cmd.rect.x = 32; cmd.rect.y = 24;
   cmd.rect.width = narrow ? 272 : 576;
   cmd.rect.height = 432;
   cmd.color = v4(0.025, 0.035, 0.045, narrow ? 0.86 : 0.96);
-  qa_ui_transform one = qa_ui_fit(context.binding.safe_area, 1);
-  return qa_ui_transform_command(cmd, one);
+  return qa_ui_transform_command(cmd, qa_ui_fit(area, menu_scale));
+}
+
+qa_ui_draw_command qa_ui_menu_panel_command(qa_ui_draw_context context,
+                                            bool narrow) {
+  return qa_ui_menu_panel_scaled(context, narrow, 1);
 }

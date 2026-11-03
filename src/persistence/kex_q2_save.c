@@ -116,6 +116,10 @@ oom:
   return false;
 }
 
+/* Retail saves are a few MB; the bound stops a gzip bomb dropped into a
+ * scanned save directory (TS MAX_KEX_SAVE_BYTES, gunzipSync maxOutputLength). */
+#define MAX_KEX_SAVE_BYTES ((size_t)256 * 1024 * 1024)
+
 /* Synchronous replacement for the TS async file read + gunzipSync;
  * C has no async runtime (see docs/PORTING.md). */
 static uint8_t *read_file_gunzipped(const char *path, size_t *out_length) {
@@ -153,7 +157,15 @@ static uint8_t *read_file_gunzipped(const char *path, size_t *out_length) {
   if (out == NULL) { inflateEnd(&stream); free(compressed); return NULL; }
   for (;;) {
     if (produced == out_capacity) {
+      if (out_capacity >= MAX_KEX_SAVE_BYTES) {
+        inflateEnd(&stream);
+        free(compressed);
+        free(out);
+        qa_save_format_error("q2-kex", "cannot decompress save archive: %s",
+                             "Cannot create a Buffer larger than 268435456 bytes");
+      }
       out_capacity *= 2;
+      if (out_capacity > MAX_KEX_SAVE_BYTES) out_capacity = MAX_KEX_SAVE_BYTES;
       uint8_t *grown = (uint8_t *)realloc(out, out_capacity);
       if (grown == NULL) {
         inflateEnd(&stream);

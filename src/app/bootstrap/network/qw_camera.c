@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "qa/foundation/js.h"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -112,7 +113,7 @@ static bool flyby(qa_app_qw_spectator_camera *c, const qa_qw_player_state *self,
 }
 static void finish(qa_app_qw_spectator_camera *c, qa_qw_user_command command,
     const qa_app_qw_camera_frame *frame) {
-  int buttons = (int)command.buttons, old = (int)c->old_buttons;
+  int buttons = qa_js_to_int32(command.buttons), old = qa_js_to_int32(c->old_buttons); /* & 1, & 2 */
   if ((buttons & 1) != 0) {
     if ((old & 1) != 0) return;
     c->old_buttons = old | 1;
@@ -124,9 +125,9 @@ static void finish(qa_app_qw_spectator_camera *c, qa_qw_user_command command,
   }
   if (c->options.hightrack(c->options.ctx) != 0) { high_target(c, frame); return; }
   if (c->locked) {
-    if ((buttons & 2) != 0 && ((int)c->old_buttons & 2) != 0) return;
-    if ((buttons & 2) == 0) { c->old_buttons = (int)c->old_buttons & ~2; return; }
-    c->old_buttons = (int)c->old_buttons | 2;
+    if ((buttons & 2) != 0 && (qa_js_to_int32(c->old_buttons) & 2) != 0) return;
+    if ((buttons & 2) == 0) { c->old_buttons = qa_js_to_int32(c->old_buttons) & ~2; return; }
+    c->old_buttons = qa_js_to_int32(c->old_buttons) | 2;
   }
   int start = c->locked ? ((int)c->slot + 1) % 32 : (int)c->slot;
   for (int offset = 0; offset < 32; offset++) {

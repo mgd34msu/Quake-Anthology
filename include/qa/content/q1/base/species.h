@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "qa/content/q1/base/foundation_types.h"
+#include "qa/content/q1/foundation/entity_services.h"
 
 /* TS BaseSpecies is the species string subset; MonsterSpecies.species
  * is Q1Monster["species"] and stays a C string. */
@@ -27,6 +27,6 @@ typedef struct qa_q1_base_monster_species {
 extern const qa_q1_base_monster_species QA_Q1_BASE_SPECIES[];
 extern const size_t QA_Q1_BASE_SPECIES_COUNT;
 
-void qa_q1_precache_id1_monster(qa_q1b_game *game, const char *species);
+void qa_q1_precache_id1_monster(qa_q1_services *game, const char *species);
 
 #endif

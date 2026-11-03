@@ -1,6 +1,7 @@
 /* Port of src/settings/config.ts. GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/settings/config.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -20,13 +21,12 @@
 /* Plain TS Errors abort with the identical message (see
  * src/core/cvars/index.c for the same local helper). */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_text(const char *text) {
@@ -44,37 +44,7 @@ static void *xalloc(void *pointer) {
  * outside it. Finds the shortest round-tripping decimal in the
  * matching notation. */
 static void js_number_text(double value, char *out, size_t size) {
-  if (value == 0.0) { /* String(-0) is "0" */
-    snprintf(out, size, "0");
-    return;
-  }
-  double magnitude = fabs(value);
-  if (magnitude >= 1e-6 && magnitude < 1e21) {
-    for (int decimals = 0; decimals <= 17; decimals++) {
-      snprintf(out, size, "%.*f", decimals, value);
-      if (strtod(out, NULL) == value) return;
-    }
-  }
-  for (int precision = 1; precision <= 17; precision++) {
-    snprintf(out, size, "%.*e", precision - 1, value);
-    if (strtod(out, NULL) == value) break;
-  }
-  /* JS exponent form: trim mantissa zeros, drop the exponent's
-   * leading zero ("1e+21", "1.5e-7"). */
-  char *e = strchr(out, 'e');
-  if (e != NULL) {
-    if (strchr(out, '.') != NULL) {
-      char *tail = e - 1;
-      while (tail > out && *tail == '0') tail--;
-      if (*tail == '.') tail--;
-      memmove(tail + 1, e, strlen(e) + 1);
-      e = strchr(out, 'e');
-    }
-    char *digits = e + 1;
-    if (*digits == '+' || *digits == '-') digits++;
-    while (digits[0] == '0' && digits[1] != '\0')
-      memmove(digits, digits + 1, strlen(digits));
-  }
+  qa_net_js_number(value, out, size);
 }
 
 typedef struct text_buffer {
@@ -377,10 +347,14 @@ static bool version_is_one(const qa_save_value *value) {
 }
 
 void qa_seat_settings_free(qa_seat_settings *settings) {
-  for (size_t i = 0; i < settings->binding_count; i++)
-    free((void *)settings->bindings[i].target.text);
+  /* NULL-safe arrays: a parse that raised part way leaves counts ahead of
+   * the allocations. */
+  if (settings->bindings != NULL)
+    for (size_t i = 0; i < settings->binding_count; i++)
+      free((void *)settings->bindings[i].target.text);
   free(settings->bindings);
-  for (size_t i = 0; i < settings->history_count; i++) free(settings->history[i]);
+  if (settings->history != NULL)
+    for (size_t i = 0; i < settings->history_count; i++) free(settings->history[i]);
   free(settings->history);
   free(settings->controller.serial);
   memset(settings, 0, sizeof *settings);
@@ -609,8 +583,26 @@ bool qa_write_atomic(const char *path, const void *contents, size_t length) {
     }
     written += (size_t)chunk;
   }
+  if (ok && fsync(fd) != 0) ok = false; /* TS file.sync() */
   if (close(fd) != 0) ok = false;
   if (ok && rename(temporary, path) != 0) ok = false;
+  if (ok) {
+    /* TS: open(dirname(path), "r") and directory.sync(), so the rename is durable. */
+    char *directory = NULL;
+    if (slash == NULL) directory = dup_text(".");
+    else if (slash == path) directory = dup_text("/");
+    else {
+      directory = (char *)malloc((size_t)(slash - path) + 1);
+      if (directory != NULL) {
+        memcpy(directory, path, (size_t)(slash - path));
+        directory[slash - path] = '\0';
+      }
+    }
+    int directory_fd = directory != NULL ? open(directory, O_RDONLY) : -1;
+    if (directory_fd < 0 || fsync(directory_fd) != 0) ok = false;
+    if (directory_fd >= 0 && close(directory_fd) != 0) ok = false;
+    free(directory);
+  }
   unlink(temporary); /* the TS rm(force) finally; ENOENT after rename */
   free(temporary);
   return ok;
@@ -804,25 +796,30 @@ static bool add_controller(text_buffer *b, const qa_settings_controller_selectio
   }
   return add_close(b, pretty, depth, "}");
 }
-static bool add_seat_json(text_buffer *b, const qa_seat_settings *settings) {
-  const bool pretty = true;
+static bool add_bindings_json(text_buffer *b, const qa_input_binding *bindings, size_t count, bool pretty, int depth) {
+  if (!text_add(b, "[")) return false;
+  for (size_t i = 0; i < count; i++) {
+    if (i > 0 && !text_add(b, ",")) return false;
+    if (!add_indent(b, pretty, depth)) return false;
+    if (!text_add(b, "{")) return false;
+    if (!add_key(b, "input", pretty, depth + 1, true)) return false;
+    if (!add_physical(b, &bindings[i].input, pretty, depth + 2)) return false;
+    if (!add_key(b, "target", pretty, depth + 1, false)) return false;
+    if (!add_binding_target(b, &bindings[i].target, pretty, depth + 2)) return false;
+    if (!add_close(b, pretty, depth + 1, "}")) return false;
+  }
+  if (count > 0 && !add_close(b, pretty, depth, "]")) return false;
+  if (count == 0 && !text_add(b, "]")) return false;
+  return true;
+}
+static bool add_seat_json_with(text_buffer *b, const qa_seat_settings *settings, bool pretty);
+static bool add_seat_json(text_buffer *b, const qa_seat_settings *settings) { return add_seat_json_with(b, settings, true); }
+static bool add_seat_json_with(text_buffer *b, const qa_seat_settings *settings, bool pretty) {
   if (!text_add(b, "{")) return false;
   if (!add_key(b, "version", pretty, 1, true)) return false;
   if (!text_add_number(b, settings->version)) return false;
   if (!add_key(b, "bindings", pretty, 1, false)) return false;
-  if (!text_add(b, "[")) return false;
-  for (size_t i = 0; i < settings->binding_count; i++) {
-    if (i > 0 && !text_add(b, ",")) return false;
-    if (!add_indent(b, pretty, 2)) return false;
-    if (!text_add(b, "{")) return false;
-    if (!add_key(b, "input", pretty, 3, true)) return false;
-    if (!add_physical(b, &settings->bindings[i].input, pretty, 4)) return false;
-    if (!add_key(b, "target", pretty, 3, false)) return false;
-    if (!add_binding_target(b, &settings->bindings[i].target, pretty, 4)) return false;
-    if (!add_close(b, pretty, 3, "}")) return false;
-  }
-  if (settings->binding_count > 0 && !add_close(b, pretty, 2, "]")) return false;
-  if (settings->binding_count == 0 && !text_add(b, "]")) return false;
+  if (!add_bindings_json(b, settings->bindings, settings->binding_count, pretty, 2)) return false;
   if (settings->has_always_run) {
     if (!add_key(b, "alwaysRun", pretty, 1, false)) return false;
     if (!add_bool(b, settings->always_run)) return false;
@@ -847,6 +844,22 @@ static bool add_seat_json(text_buffer *b, const qa_seat_settings *settings) {
   if (!add_key(b, "controller", pretty, 1, false)) return false;
   if (!add_controller(b, &settings->controller, pretty, 2)) return false;
   return add_close(b, pretty, 1, "}");
+}
+/* Compact JSON.stringify texts (key order follows the parsers). */
+char *qa_seat_settings_json(const qa_seat_settings *settings) {
+  text_buffer buffer = {NULL, 0, 0};
+  if (!add_seat_json_with(&buffer, settings, false)) { free(buffer.data); return NULL; }
+  return buffer.data;
+}
+char *qa_input_bindings_json(const qa_input_binding *bindings, size_t count) {
+  text_buffer buffer = {NULL, 0, 0};
+  if (!add_bindings_json(&buffer, bindings, count, false, 0)) { free(buffer.data); return NULL; }
+  return buffer.data;
+}
+char *qa_gamepad_tuning_json(const qa_gamepad_tuning *tuning) {
+  text_buffer buffer = {NULL, 0, 0};
+  if (!add_gamepad(&buffer, tuning, false, 0)) { free(buffer.data); return NULL; }
+  return buffer.data;
 }
 static bool add_global_json(text_buffer *b, const qa_global_input_tuning *tuning) {
   const bool pretty = true;
@@ -963,6 +976,85 @@ static qa_save_value *parsed_document(const char *text, size_t length) {
   return value;
 }
 
+/* TS ConfigStore.decoded: decode and validate one stored document. One that
+ * cannot be read is renamed to `.bad` so the next save does not erase it,
+ * and loads as absent (false). parse fills *out (zeroed first); free_out
+ * releases a partial *out when parse raises. Takes ownership of text. */
+typedef struct decode_job {
+  const qa_save_value *value;
+  void (*parse)(const qa_save_value *value, void *out);
+  void *out;
+  void (*free_out)(void *out);
+} decode_job;
+static void decode_run(void *ctx) {
+  decode_job *job = (decode_job *)ctx;
+  qa_cleanup node;
+  if (job->free_out != NULL) qa_cleanup_push(&node, job->free_out, job->out);
+  job->parse(job->value, job->out);
+  if (job->free_out != NULL) qa_cleanup_pop(&node);
+}
+static bool config_decoded(const qa_config_store *store, const char *name,
+                           char *text, size_t length,
+                           void (*parse)(const qa_save_value *, void *),
+                           void *out, size_t out_size,
+                           void (*free_out)(void *)) {
+  qa_save_value *value = parsed_document(text, length);
+  free(text);
+  if (value != NULL) {
+    memset(out, 0, out_size);
+    decode_job job = {value, parse, out, free_out};
+    qa_caught_error caught;
+    const bool parsed = qa_try(decode_run, &job, &caught);
+    qa_save_value_free(value);
+    if (parsed) return true;
+    /* quarantined below like a document that is not JSON */
+    memset(out, 0, out_size);
+  }
+  char *path = qa_settings_path(store->root, name);
+  if (path != NULL) {
+    size_t path_length = strlen(path);
+    char *bad = (char *)malloc(path_length + 5);
+    if (bad != NULL) {
+      memcpy(bad, path, path_length);
+      memcpy(bad + path_length, ".bad", 5);
+      /* the document may already be gone or read-only; defaults still apply */
+      (void)rename(path, bad);
+      free(bad);
+    }
+    free(path);
+  }
+  return false;
+}
+static void parse_gyro_job(const qa_save_value *value, void *out) {
+  qa_parse_gyro_profile(value, (qa_gyro_profile *)out);
+}
+static void free_gyro_job(void *out) { qa_gyro_profile_free((qa_gyro_profile *)out); }
+static void parse_seat_job(const qa_save_value *value, void *out) {
+  qa_parse_seat_settings(value, (qa_seat_settings *)out);
+}
+static void free_seat_job(void *out) { qa_seat_settings_free((qa_seat_settings *)out); }
+static void parse_tuning_job(const qa_save_value *value, void *out) {
+  qa_parse_global_input_tuning(value, (qa_global_input_tuning *)out);
+}
+typedef struct input_routing_result {
+  double seat;
+  bool has_seat;
+} input_routing_result;
+static void parse_input_routing_job(const qa_save_value *value, void *out) {
+  input_routing_result *result = (input_routing_result *)out;
+  const qa_save_value *data = settings_record(value);
+  if (!version_is_one(field(data, "version")))
+    qa_error("Unsupported input routing document");
+  const qa_save_value *seat = field(data, "keyboardSeat");
+  if (seat != NULL && seat->kind == QA_SAVE_NULL) {
+    result->has_seat = false;
+    result->seat = 0;
+  } else {
+    result->seat = settings_natural(seat);
+    result->has_seat = true;
+  }
+}
+
 bool qa_config_store_load_gyro(const qa_config_store *store, const char *name,
                                qa_gyro_profile *out) {
   size_t length = 0;
@@ -971,12 +1063,8 @@ bool qa_config_store_load_gyro(const qa_config_store *store, const char *name,
     free(text);
     return false;
   }
-  qa_save_value *value = parsed_document(text, length);
-  free(text);
-  if (value == NULL) return false;
-  qa_parse_gyro_profile(value, out);
-  qa_save_value_free(value);
-  return true;
+  return config_decoded(store, name, text, length, parse_gyro_job, out,
+                        sizeof *out, free_gyro_job);
 }
 
 bool qa_config_store_save_gyro(const qa_config_store *store, const char *name,
@@ -1032,23 +1120,12 @@ bool qa_config_store_load_input_routing(const qa_config_store *store,
   size_t length = 0;
   char *text = qa_config_store_load_text(store, name, &length);
   if (text == NULL) return false;
-  qa_save_value *value = parsed_document(text, length);
-  free(text);
-  if (value == NULL) return false;
-  const qa_save_value *data = settings_record(value);
-  if (!version_is_one(field(data, "version"))) {
-    qa_save_value_free(value);
-    qa_error("Unsupported input routing document");
-  }
-  const qa_save_value *seat = field(data, "keyboardSeat");
-  if (seat != NULL && seat->kind == QA_SAVE_NULL) {
-    *out_has_seat = false;
-    *out_seat = 0;
-  } else {
-    *out_seat = settings_natural(seat);
-    *out_has_seat = true;
-  }
-  qa_save_value_free(value);
+  input_routing_result result;
+  if (!config_decoded(store, name, text, length, parse_input_routing_job,
+                      &result, sizeof result, NULL))
+    return false;
+  *out_seat = result.seat;
+  *out_has_seat = result.has_seat;
   return true;
 }
 
@@ -1069,12 +1146,8 @@ bool qa_config_store_load_seat(const qa_config_store *store, const char *name,
   size_t length = 0;
   char *text = qa_config_store_load_text(store, name, &length);
   if (text == NULL) return false;
-  qa_save_value *value = parsed_document(text, length);
-  free(text);
-  if (value == NULL) return false;
-  qa_parse_seat_settings(value, out);
-  qa_save_value_free(value);
-  return true;
+  return config_decoded(store, name, text, length, parse_seat_job, out,
+                        sizeof *out, free_seat_job);
 }
 
 bool qa_config_store_load_global_tuning(const qa_config_store *store,
@@ -1083,12 +1156,8 @@ bool qa_config_store_load_global_tuning(const qa_config_store *store,
   size_t length = 0;
   char *text = qa_config_store_load_text(store, name, &length);
   if (text == NULL) return false;
-  qa_save_value *value = parsed_document(text, length);
-  free(text);
-  if (value == NULL) return false;
-  qa_parse_global_input_tuning(value, out);
-  qa_save_value_free(value);
-  return true;
+  return config_decoded(store, name, text, length, parse_tuning_job, out,
+                        sizeof *out, NULL);
 }
 
 bool qa_config_store_save_global_tuning(const qa_config_store *store,

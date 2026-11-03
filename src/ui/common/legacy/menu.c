@@ -14,6 +14,7 @@
 
 #include "qa/core/common_parse.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js_case.h"
 
 #define FR(x) ((double)(float)(x))
 
@@ -115,6 +116,7 @@ static qa_ui_resource_reference *resource_create(qa_ui_resource_kind kind,
   reference->kind = kind;
   reference->path = dupstr(path);
   reference->point_size = point_size;
+  reference->refs = 1;
   return reference;
 }
 
@@ -131,8 +133,13 @@ qa_ui_font_reference *qa_ui_font_reference_create(const char *path,
                                                   double point_size) {
   return resource_create(QA_UI_RESOURCE_FONT, path, point_size);
 }
+qa_ui_resource_reference *qa_ui_resource_reference_retain(
+    qa_ui_resource_reference *reference) {
+  if (reference != NULL) reference->refs++;
+  return reference;
+}
 void qa_ui_resource_reference_destroy(qa_ui_resource_reference *reference) {
-  if (reference == NULL) return;
+  if (reference == NULL || --reference->refs > 0) return;
   free(reference->path);
   free(reference);
 }
@@ -703,14 +710,6 @@ static qa_ui_menu_definition *menu_create(alloc_t *alloc,
 
 void qa_ui_menu_definition_destroy(qa_ui_menu_definition *menu) {
   if (menu == NULL) return;
-  /* Items are owned through the menu's item slots. */
-  int32_t count = qa_ui_memory_allocation_get_int32(menu->alloc, 188);
-  if (count > QA_MAX_UI_MENU_ITEMS) count = QA_MAX_UI_MENU_ITEMS;
-  for (int32_t i = 0; i < count; i++) {
-    qa_ui_item_definition *item =
-        qa_ui_memory_allocation_get_item(menu->alloc, 260 + i * 4);
-    qa_ui_item_definition_destroy(item);
-  }
   qa_ui_memory_allocation_destroy(menu->window.alloc);
   qa_ui_memory_allocation_destroy(menu->alloc);
   qa_ui_script_location_destroy(&menu->location);
@@ -825,10 +824,60 @@ static qa_ui_global_assets freeze_assets(const qa_ui_global_assets *assets) {
   return out;
 }
 
+/* Everything one parse created, whatever pool slots name it later: QVM-backed
+ * menu records are reused by each reload, so their item slots cannot identify
+ * the generation that owns an item. */
+typedef enum owned_kind {
+  OWNED_ITEM, OWNED_MENU, OWNED_SCRIPT, OWNED_REFERENCE, OWNED_ALLOCATION
+} owned_kind;
+typedef struct owned_entry {
+  owned_kind kind;
+  void *value;
+} owned_entry;
+struct qa_ui_menu_ownership {
+  owned_entry *entries;
+  size_t count, capacity;
+  qa_ui_team_arena_memory *storage; /* the parser's own unaccounted pool */
+};
+
+static void ownership_add(qa_ui_menu_ownership **slot, owned_kind kind,
+                          void *value) {
+  if (value == NULL) return;
+  if (*slot == NULL) *slot = calloc(1, sizeof **slot);
+  if (*slot == NULL) qa_range_error("UI memory allocation failed");
+  qa_ui_menu_ownership *ownership = *slot;
+  if (ownership->count == ownership->capacity) {
+    size_t capacity = ownership->capacity == 0 ? 64 : ownership->capacity * 2;
+    owned_entry *grown = realloc(ownership->entries, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("UI memory allocation failed");
+    ownership->entries = grown;
+    ownership->capacity = capacity;
+  }
+  ownership->entries[ownership->count].kind = kind;
+  ownership->entries[ownership->count].value = value;
+  ownership->count++;
+}
+
+static void ownership_destroy(qa_ui_menu_ownership *ownership) {
+  if (ownership == NULL) return;
+  for (size_t i = ownership->count; i-- > 0;) {
+    void *value = ownership->entries[i].value;
+    switch (ownership->entries[i].kind) {
+      case OWNED_ITEM: qa_ui_item_definition_destroy(value); break;
+      case OWNED_MENU: qa_ui_menu_definition_destroy(value); break;
+      case OWNED_SCRIPT: qa_ui_menu_script_destroy(value); break;
+      case OWNED_REFERENCE: qa_ui_resource_reference_destroy(value); break;
+      case OWNED_ALLOCATION: qa_ui_memory_allocation_destroy(value); break;
+    }
+  }
+  free(ownership->entries);
+  if (ownership->storage != NULL)
+    qa_ui_team_arena_memory_destroy(ownership->storage);
+  free(ownership);
+}
+
 void qa_ui_menu_definitions_destroy(qa_ui_menu_definitions *definitions) {
   if (definitions == NULL) return;
-  for (size_t i = 0; i < definitions->menu_count; i++)
-    qa_ui_menu_definition_destroy(definitions->menus[i]);
   free(definitions->menus);
   for (size_t i = 0; i < definitions->loaded_file_count; i++)
     free(definitions->loaded_files[i]);
@@ -840,18 +889,12 @@ void qa_ui_menu_definitions_destroy(qa_ui_menu_definitions *definitions) {
     qa_ui_script_location_destroy(
         &definitions->registration_events[i].location);
   free(definitions->registration_events);
+  ownership_destroy(definitions->ownership);
   memset(definitions, 0, sizeof *definitions);
 }
 
-static const char *const default_ui_paths[] = {"ui/menus.txt",
-                                               "ui/ingame.txt"};
-
-qa_ui_menu_load_plan qa_ui_default_menu_plan(void) {
-  qa_ui_menu_load_plan plan = {QA_UI_LOAD_PLAN_UI, default_ui_paths, 2, NULL};
-  return plan;
-}
 qa_ui_menu_load_plan qa_ui_default_hud_menu_plan(void) {
-  qa_ui_menu_load_plan plan = {QA_UI_LOAD_PLAN_HUD, NULL, 0, "ui/hud.txt"};
+  qa_ui_menu_load_plan plan = {"ui/hud.txt"};
   return plan;
 }
 
@@ -1024,6 +1067,9 @@ struct qa_ui_menu_source_parser {
   bool font_registered;
   qa_ui_script_fail_env fail_env;
   parser_catch *catch_top;
+  qa_ui_menu_ownership *ownership; /* moves to the definitions on load */
+  void **bridges; /* report bridges of opened text sources, freed with the parser */
+  size_t bridge_count, bridge_capacity;
 };
 
 typedef qa_ui_menu_source_parser parser_t;
@@ -1062,13 +1108,8 @@ static bool cursor_next_ptok(cursor_t *cursor, ptok *out) {
   return true;
 }
 
-static char *lower_dup(const char *text) {
-  char *out = dupstr(text);
-  if (out == NULL) return NULL;
-  for (size_t i = 0; out[i] != '\0'; i++)
-    out[i] = (char)tolower((unsigned char)out[i]);
-  return out;
-}
+/* TS text.toLowerCase() (Unicode). */
+static char *lower_dup(const char *text) { return qa_js_to_lower_case(text); }
 
 static bool starts_with(const char *text, const char *prefix) {
   return strncmp(text, prefix, strlen(prefix)) == 0;
@@ -1216,11 +1257,13 @@ static void register_event(parser_t *parser, qa_ui_resource_kind kind,
                            double *handle) {
   *has_handle = false;
   *handle = 0;
+  /* Every parsed reference is announced exactly once, here. */
+  ownership_add(&parser->ownership, OWNED_REFERENCE, reference);
   qa_ui_menu_registration_event event;
   event.kind = kind;
   event.reference = reference;
   event.location = loc_copy(at);
-  if (parser->parse_options.menu_sink == NULL) {
+  {
     if (parser->registration_count == parser->registration_capacity) {
       size_t capacity = parser->registration_capacity == 0
                             ? 16
@@ -1236,21 +1279,12 @@ static void register_event(parser_t *parser, qa_ui_resource_kind kind,
       parser->registrations[parser->registration_count++] = event;
     else
       qa_ui_script_location_destroy(&event.location);
-  } else {
-    qa_ui_script_location_destroy(&event.location);
-    event.location = loc_copy(at);
   }
   if (parser->parse_options.registration_sink != NULL) {
     qa_ui_menu_registration_event call = event;
-    if (parser->parse_options.menu_sink != NULL)
-      call.location = loc_copy(at);
     *has_handle = parser->parse_options.registration_sink(
         parser->parse_options.registration_sink_ctx, &call, handle);
-    if (parser->parse_options.menu_sink != NULL)
-      qa_ui_script_location_destroy(&call.location);
   }
-  if (parser->parse_options.menu_sink != NULL)
-    qa_ui_script_location_destroy(&event.location);
 }
 
 static void publish_asset(parser_t *parser,
@@ -1272,8 +1306,9 @@ static qa_ui_string_reference *allocate_string_reference(parser_t *parser,
                                                          const char *text) {
   if (parser->memory.kind == QA_UI_MENU_MEMORY_UNACCOUNTED)
     return qa_ui_string_reference_literal(text);
-  return qa_ui_team_arena_memory_string_alloc_reference(parser->storage,
-                                                        text);
+  /* The pool result is borrowed; retain so both paths are caller-released. */
+  return qa_ui_string_reference_retain(
+      qa_ui_team_arena_memory_string_alloc_reference(parser->storage, text));
 }
 
 /* Malloc'd; NULL is TS undefined. */
@@ -1485,6 +1520,7 @@ static qa_ui_menu_script *read_script(parser_t *parser, cursor_t *cursor,
       script->tokens = tokens;
       script->token_count = count;
       script->truncated = truncated;
+      ownership_add(&parser->ownership, OWNED_SCRIPT, script);
       return script;
     }
     size_t value_length = strlen(tok.value);
@@ -1553,6 +1589,7 @@ static void validate_type_data(parser_t *parser, qa_ui_item_definition *item) {
   if (kind == 0) return;
   alloc_t *allocated =
       parser_allocate(parser, kind == 1 ? 232 : kind == 3 ? 392 : 28);
+  ownership_add(&parser->ownership, OWNED_ALLOCATION, allocated);
   qa_ui_memory_allocation_set_allocation_pointer(item->alloc, 536, allocated);
   if (kind == 4 || kind == 1) {
     if (allocated == NULL)
@@ -1748,7 +1785,7 @@ static void publish_number_asset(parser_t *parser,
 }
 
 static void parse_assets(parser_t *parser, cursor_t *cursor,
-                         const qa_ui_script_location *start, bool hud) {
+                         const qa_ui_script_location *start) {
   expect_token(parser, cursor, "{", "expected { after assetGlobalDef", start);
   for (;;) {
     ptok field = expect_any(parser, cursor, "end of file inside assetGlobalDef",
@@ -1778,14 +1815,6 @@ static void parse_assets(parser_t *parser, cursor_t *cursor,
       else if (asset_field == QA_UI_ASSET_SMALL_FONT) parser->assets.small_font = reference;
       else parser->assets.big_font = reference;
       publish_resource_asset(parser, asset_field, reference);
-      if (asset_field == QA_UI_ASSET_TEXT_FONT && !hud) {
-        parser->font_registered = true;
-        qa_ui_menu_asset_publication publication;
-        memset(&publication, 0, sizeof publication);
-        publication.field = QA_UI_ASSET_FONT_REGISTERED;
-        publication.boolean = true;
-        publish_asset(parser, publication);
-      }
     } else if (strcmp(keyword, "gradientbar") == 0 ||
                strcmp(keyword, "menuentersound") == 0 ||
                strcmp(keyword, "menuexitsound") == 0 ||
@@ -2159,6 +2188,7 @@ static qa_ui_item_definition *parse_item(parser_t *parser, cursor_t *cursor,
   qa_ui_item_definition *volatile item = item_create(
       allocation, start, parser->memory.kind == QA_UI_MENU_MEMORY_QVM32,
       (double)qa_ui_memory_allocation_offset(allocation));
+  ownership_add(&parser->ownership, OWNED_ITEM, item);
   menu_set_item(menu, qa_ui_menu_item_count(menu), item);
   item_initialize(item);
   ptok opening;
@@ -2209,6 +2239,7 @@ static qa_ui_menu_definition *parse_menu(parser_t *parser, cursor_t *cursor,
                                          int64_t index) {
   qa_ui_menu_definition *menu = menu_create(
       qa_ui_team_arena_memory_menu_record(parser->storage, index), start);
+  ownership_add(&parser->ownership, OWNED_MENU, menu);
   menu_initialize(menu, &parser->assets);
   ptok opening;
   if (!cursor_next_ptok(cursor, &opening)) return NULL;
@@ -2428,7 +2459,16 @@ static cursor_t *open_source(parser_t *parser, const resolved_file *file) {
   if (parser->host.kind != QA_UI_PARSE_HOST_RESOLVED)
     type_error("Parsed text sources require a diagnostic menu resolver");
   qa_ui_script_preprocessor_options options = parser->preprocessor_options;
+  if (parser->bridge_count == parser->bridge_capacity) {
+    size_t capacity = parser->bridge_capacity == 0 ? 8 : parser->bridge_capacity * 2;
+    void **grown = realloc(parser->bridges, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("UI memory allocation failed");
+    parser->bridges = grown;
+    parser->bridge_capacity = capacity;
+  }
   report_bridge *bridge = malloc(sizeof *bridge);
+  if (bridge == NULL) qa_range_error("UI memory allocation failed");
+  parser->bridges[parser->bridge_count++] = bridge;
   bridge->parser = parser;
   bridge->report = options.report;
   bridge->report_ctx = options.report_ctx;
@@ -2461,32 +2501,28 @@ static void resolve_root(parser_t *parser, const char *path,
 }
 
 static void parse_with_cursor(parser_t *parser, cursor_t *cursor,
-                              const char *path, bool hud);
+                              const char *path);
 
-static void load_menu_file(parser_t *parser, const char *path, bool hud) {
+static void load_menu_file(parser_t *parser, const char *path) {
   resolved_file file;
   bool found = open_file(parser, path, &file);
-  if (!found && hud && strcmp(path, "ui/testhud.menu") != 0)
+  if (!found && strcmp(path, "ui/testhud.menu") != 0)
     found = open_file(parser, "ui/testhud.menu", &file);
   if (!found) return;
-  parse_with_cursor(parser, open_source(parser, &file), file.path, hud);
+  parse_with_cursor(parser, open_source(parser, &file), file.path);
 }
 
+/* TS parseSource. Its `finally { cursor.dispose() }` has no C counterpart on
+   the failure path: a parse failure reaches no catch in C (the fail env has
+   no catch frame), so it aborts like the uncaught TS ScriptLanguageError. */
 static void parse_with_cursor(parser_t *parser, cursor_t *cursor,
-                              const char *path, bool hud) {
-  (void)hud;
+                              const char *path) {
   if (path[0] == '\0') {
     qa_ui_script_location at = loc_make(path, 1, 1);
     parser_fail(parser, "menu file resolver returned an empty canonical path",
                 &at);
   }
-  if (parser->parse_options.menu_sink == NULL) {
-    push_loaded(parser, path);
-  } else {
-    for (size_t i = 0; i < parser->reported_count; i++)
-      qa_ui_script_diagnostic_destroy(&parser->reported[i]);
-    parser->reported_count = 0;
-  }
+  push_loaded(parser, path);
   for (;;) {
     ptok tok;
     if (!cursor_next_ptok(cursor, &tok)) break;
@@ -2502,7 +2538,7 @@ static void parse_with_cursor(parser_t *parser, cursor_t *cursor,
     if (strcmp(keyword, "assetglobaldef") == 0) {
       volatile bool failed = false;
       PARSER_TRY(parser, cursor, asset_catch) {
-        parse_assets(parser, cursor, &at, hud);
+        parse_assets(parser, cursor, &at);
         PARSER_TRY_END(parser, asset_catch);
       } PARSER_CATCH(parser, asset_catch) {
         failed = true;
@@ -2514,19 +2550,12 @@ static void parse_with_cursor(parser_t *parser, cursor_t *cursor,
       continue;
     }
     if (strcmp(keyword, "menudef") == 0) {
-      const qa_ui_menu_definition_sink *sink = parser->parse_options.menu_sink;
-      double index = sink == NULL ? (double)parser->menu_count
-                                  : sink->menu_count(sink->ctx);
+      double index = (double)parser->menu_count;
       if (index >= QA_MAX_UI_MENUS) {
-        if (sink == NULL) {
-          char message[48];
-          snprintf(message, sizeof message, "more than %d menus defined",
-                   QA_MAX_UI_MENUS);
-          parser_fail(parser, message, &at);
-        }
-        free(keyword);
-        qa_ui_script_location_destroy(&at);
-        continue;
+        char message[48];
+        snprintf(message, sizeof message, "more than %d menus defined",
+                 QA_MAX_UI_MENUS);
+        parser_fail(parser, message, &at);
       }
       qa_ui_menu_definition *menu =
           parse_menu(parser, cursor, &at, (int64_t)index);
@@ -2535,20 +2564,20 @@ static void parse_with_cursor(parser_t *parser, cursor_t *cursor,
         qa_ui_script_location_destroy(&at);
         continue;
       }
-      double published_index = sink == NULL ? (double)parser->menu_count
-                                            : sink->menu_count(sink->ctx);
+      /* Menu_New increments the current count after parsing its original
+         slot. A reentrant registration may already have advanced that
+         count. */
+      double published_index = (double)parser->menu_count;
       qa_ui_menu_definition *published = menu;
       if (published_index != index) {
         published = menu_create(qa_ui_team_arena_memory_menu_record(
                                     parser->storage, (int64_t)published_index),
                                 &at);
-        /* The TS re-view aliases the same record; discard the
-         * superseded wrapper struct without destroying the shared
-         * storage handles it views (leaked, like TS GC views). */
-        free(menu);
+        /* Items parsed above still name the superseded view as parent, so
+         * it stays alive with the rest of this parse's ownership. */
+        ownership_add(&parser->ownership, OWNED_MENU, published);
       }
-      if (sink == NULL) push_menu(parser, published);
-      else sink->publish(sink->ctx, published);
+      push_menu(parser, published);
     }
     free(keyword);
     qa_ui_script_location_destroy(&at);
@@ -2588,7 +2617,7 @@ static void load_hud_set(parser_t *parser,
         done = true;
         break;
       }
-      load_menu_file(parser, path, true);
+      load_menu_file(parser, path);
       free(path);
     }
     if (done) break;
@@ -2597,60 +2626,19 @@ static void load_hud_set(parser_t *parser,
   free(compressed);
 }
 
-static void load_set(parser_t *parser, const char *path, bool hud) {
-  if (hud && parser->host.kind != QA_UI_PARSE_HOST_RESOLVED)
+static void load_set(parser_t *parser, const char *path) {
+  if (parser->host.kind != QA_UI_PARSE_HOST_RESOLVED)
     type_error("HUD menu sets require a bounded COM text resolver");
   resolved_file file;
   resolve_root(parser, path, "menu set", &file);
   push_loaded(parser, file.path);
-  if (hud && !file.is_cursor) {
-    if (file.source.text_length > QA_MAX_HUD_MENU_SET_BYTES) {
-      qa_ui_script_location at = loc_make(file.source.path, 1, 1);
-      parser_fail_fmt(parser, "menu file too large: ", file.source.path, &at);
-    }
-    load_hud_set(parser, &file.source);
-    return;
+  if (file.is_cursor)
+    type_error("HUD menu sets require a bounded COM text resolver");
+  if (file.source.text_length > QA_MAX_HUD_MENU_SET_BYTES) {
+    qa_ui_script_location at = loc_make(file.source.path, 1, 1);
+    parser_fail_fmt(parser, "menu file too large: ", file.source.path, &at);
   }
-  cursor_t *cursor = open_source(parser, &file);
-  bool done = false;
-  while (!done) {
-    ptok tok;
-    if (!cursor_next_ptok(cursor, &tok)) break;
-    bool stop = tok.value[0] == '\0' || starts_with(tok.value, "}");
-    char *lower = lower_dup(tok.value);
-    bool is_load = lower != NULL && strcmp(lower, "loadmenu") == 0;
-    free(lower);
-    ptok_release(&tok);
-    if (stop) break;
-    if (!is_load) continue;
-    ptok opening;
-    if (!cursor_next_ptok(cursor, &opening)) break;
-    bool opened = starts_with(opening.value, "{");
-    ptok_release(&opening);
-    if (!opened) break;
-    for (;;) {
-      ptok file_tok;
-      if (!cursor_next_ptok(cursor, &file_tok)) {
-        done = true;
-        break;
-      }
-      char *value = dupstr(file_tok.value);
-      ptok_release(&file_tok);
-      if (value[0] == '\0') {
-        free(value);
-        done = true;
-        break;
-      }
-      if (starts_with(value, "}")) {
-        free(value);
-        break;
-      }
-      load_menu_file(parser, value, false);
-      free(value);
-    }
-  }
-  qa_ui_menu_token_cursor_dispose(cursor);
-  qa_ui_menu_token_cursor_destroy(cursor);
+  load_hud_set(parser, &file.source);
 }
 
 qa_ui_menu_source_parser *qa_ui_menu_source_parser_create(
@@ -2674,6 +2662,16 @@ qa_ui_menu_source_parser *qa_ui_menu_source_parser_create(
     parser->own_storage = true;
   }
   parser->assets = new_assets(parser->parse_options.initial_assets);
+  /* Inherited assets must outlive the generation that parsed them. */
+  qa_ui_resource_reference *const inherited[] = {
+      parser->assets.text_font, parser->assets.small_font,
+      parser->assets.big_font, parser->assets.cursor,
+      parser->assets.gradient_bar, parser->assets.menu_enter_sound,
+      parser->assets.menu_exit_sound, parser->assets.menu_buzz_sound,
+      parser->assets.item_focus_sound};
+  for (size_t i = 0; i < sizeof inherited / sizeof inherited[0]; i++)
+    ownership_add(&parser->ownership, OWNED_REFERENCE,
+                  qa_ui_resource_reference_retain(inherited[i]));
   parser->font_registered =
       parser->parse_options.has_initial_font_registered &&
       parser->parse_options.initial_font_registered;
@@ -2683,8 +2681,6 @@ qa_ui_menu_source_parser *qa_ui_menu_source_parser_create(
 
 void qa_ui_menu_source_parser_destroy(qa_ui_menu_source_parser *parser) {
   if (parser == NULL) return;
-  for (size_t i = 0; i < parser->menu_count; i++)
-    qa_ui_menu_definition_destroy(parser->menus[i]);
   free(parser->menus);
   for (size_t i = 0; i < parser->loaded_count; i++)
     free(parser->loaded_files[i]);
@@ -2695,6 +2691,9 @@ void qa_ui_menu_source_parser_destroy(qa_ui_menu_source_parser *parser) {
   for (size_t i = 0; i < parser->registration_count; i++)
     qa_ui_script_location_destroy(&parser->registrations[i].location);
   free(parser->registrations);
+  for (size_t i = 0; i < parser->bridge_count; i++) free(parser->bridges[i]);
+  free(parser->bridges);
+  ownership_destroy(parser->ownership);
   if (parser->own_storage) qa_ui_team_arena_memory_destroy(parser->storage);
   qa_ui_script_fail_env_destroy(&parser->fail_env);
   free(parser);
@@ -2703,12 +2702,7 @@ void qa_ui_menu_source_parser_destroy(qa_ui_menu_source_parser *parser) {
 void qa_ui_menu_source_parser_load(qa_ui_menu_source_parser *parser,
                                    const qa_ui_menu_load_plan *plan,
                                    qa_ui_menu_definitions *out) {
-  if (plan->kind == QA_UI_LOAD_PLAN_UI) {
-    for (size_t i = 0; i < plan->set_path_count; i++)
-      load_set(parser, plan->set_paths[i], false);
-  } else {
-    load_set(parser, plan->set_path, true);
-  }
+  load_set(parser, plan->set_path);
   memset(out, 0, sizeof *out);
   out->memory = parser->memory;
   out->menus = parser->menus;
@@ -2737,24 +2731,30 @@ void qa_ui_menu_source_parser_load(qa_ui_menu_source_parser *parser,
   parser->registration_count = 0;
   parser->registration_capacity = 0;
   out->font_registered = parser->font_registered;
+  if (parser->own_storage) {
+    /* Handles keep the pool's bytes alive; the definitions keep the pool. */
+    if (parser->ownership == NULL) parser->ownership = calloc(1, sizeof *parser->ownership);
+    if (parser->ownership == NULL) qa_range_error("UI memory allocation failed");
+    parser->ownership->storage = parser->storage;
+    parser->own_storage = false;
+  }
+  out->ownership = parser->ownership;
+  parser->ownership = NULL;
   for (size_t i = 0; i < out->menu_count; i++) menu_check_items(out->menus[i]);
 }
 
 void qa_ui_menu_source_parser_parse_source(
-    qa_ui_menu_source_parser *parser, const qa_ui_script_source *source,
-    bool hud) {
+    qa_ui_menu_source_parser *parser, const qa_ui_script_source *source) {
   resolved_file file;
   memset(&file, 0, sizeof file);
   file.source = *source;
   file.path = source->path;
-  parse_with_cursor(parser, open_source(parser, &file), file.path, hud);
+  parse_with_cursor(parser, open_source(parser, &file), file.path);
 }
 
 void qa_ui_menu_source_parser_parse_cursor(
-    qa_ui_menu_source_parser *parser, qa_ui_menu_token_cursor *cursor,
-    bool hud) {
-  parse_with_cursor(parser, cursor, qa_ui_menu_token_cursor_path(cursor),
-                    hud);
+    qa_ui_menu_source_parser *parser, qa_ui_menu_token_cursor *cursor) {
+  parse_with_cursor(parser, cursor, qa_ui_menu_token_cursor_path(cursor));
 }
 
 void qa_ui_load_menu_definitions(
@@ -2773,8 +2773,5 @@ void qa_ui_load_menu_definitions(
                                    : &empty_preprocessor,
       parse_options != NULL ? parse_options : &empty_parse);
   qa_ui_menu_source_parser_load(parser, plan, out);
-  /* The parser's own unaccounted storage must outlive the
-   * definitions (TS keeps it reachable through the allocations);
-   * leak the parser shell rather than destroy that storage. */
-  if (!parser->own_storage) qa_ui_menu_source_parser_destroy(parser);
+  qa_ui_menu_source_parser_destroy(parser);
 }

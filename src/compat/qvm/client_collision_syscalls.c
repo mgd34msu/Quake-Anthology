@@ -22,6 +22,46 @@ static qa_vec3 bounds_vector(qa_qvm_memory *memory, int32_t word) {
   return word == 0 ? zero : read_vector(memory, word);
 }
 
+static bool source_has_nodes(void *ctx) {
+  return qa_collision_world_has_nodes(((qa_source_clip_models *)ctx)->world);
+}
+static double source_model_count(void *ctx) { return qa_source_clip_model_count(ctx); }
+static double source_inline_model(void *ctx, double index) { return qa_source_clip_inline_model(ctx, index); }
+static double source_temp_box_model(void *ctx, qa_vec3 min, qa_vec3 max, bool capsule) {
+  return qa_source_clip_temp_box_model(ctx, min, max, capsule);
+}
+static double source_point_contents(void *ctx, qa_vec3 point, double handle) {
+  return qa_source_clip_point_contents(ctx, point, handle);
+}
+static double source_transformed_point_contents(void *ctx, qa_vec3 point, double handle, qa_vec3 origin,
+                                                qa_vec3 angles) {
+  return qa_source_clip_transformed_point_contents(ctx, point, handle, origin, angles);
+}
+static bool source_trace_without_nodes(void *ctx, double handle, qa_source_trace_result *out) {
+  return qa_source_clip_trace_without_nodes(ctx, handle, out);
+}
+static qa_source_trace_result source_trace(void *ctx, qa_temporary_trace_query query, double handle) {
+  return qa_source_clip_trace(ctx, query, handle);
+}
+static qa_source_trace_result source_transformed_trace(void *ctx, qa_temporary_trace_query query,
+                                                       double handle, qa_vec3 origin, qa_vec3 angles) {
+  return qa_source_clip_transformed_trace(ctx, query, handle, origin, angles);
+}
+
+qa_qvm_client_clip_models qa_qvm_source_client_clip_models(qa_source_clip_models *models) {
+  qa_qvm_client_clip_models out = {models,
+                                   source_has_nodes,
+                                   source_model_count,
+                                   source_inline_model,
+                                   source_temp_box_model,
+                                   source_point_contents,
+                                   source_transformed_point_contents,
+                                   source_trace_without_nodes,
+                                   source_trace,
+                                   source_transformed_trace};
+  return out;
+}
+
 bool qa_qvm_client_collision_syscall(const qa_qvm_host_call *call,
                                      qa_qvm_client_collision_services services,
                                      qa_qvm_host_result *out) {
@@ -40,23 +80,24 @@ bool qa_qvm_client_collision_syscall(const qa_qvm_host_call *call,
   bool listed = false;
   for (size_t i = 0; i < sizeof traps / sizeof traps[0]; i++) listed = listed || traps[i] == trap;
   if (!listed) return false;
-  qa_qvm_client_clip_models *models = services.models(services.ctx);
+  qa_qvm_client_clip_models models = services.models(services.ctx);
   switch (trap) {
-    case 19: *out = qa_int32(qa_source_clip_model_count(models)); return true;
+    case 19: *out = qa_int32(models.model_count(models.ctx)); return true;
     case 20:
-      *out = qa_int32(qa_source_clip_inline_model(models, qa_qvm_host_call_word(call, 1)));
+      *out = qa_int32(models.inline_model(models.ctx, qa_qvm_host_call_word(call, 1)));
       return true;
     case 22:
-    case 82:
-      *out = qa_int32(qa_source_clip_temp_box_model(
-          models, read_vector(memory, qa_qvm_host_call_word(call, 1)),
-          read_vector(memory, qa_qvm_host_call_word(call, 2)), trap == 82));
+    case 82: {
+      qa_vec3 mins = read_vector(memory, qa_qvm_host_call_word(call, 1));
+      qa_vec3 maxs = read_vector(memory, qa_qvm_host_call_word(call, 2));
+      *out = qa_int32(models.temp_box_model(models.ctx, mins, maxs, trap == 82));
       return true;
+    }
     case 23: {
       int32_t point = qa_qvm_host_call_word(call, 1);
       int32_t handle = qa_qvm_host_call_word(call, 2);
-      *out = qa_collision_world_has_nodes(models->world)
-                 ? qa_int32(qa_source_clip_point_contents(models, read_vector(memory, point), handle))
+      *out = models.has_nodes(models.ctx)
+                 ? qa_int32(models.point_contents(models.ctx, read_vector(memory, point), handle))
                  : 0;
       return true;
     }
@@ -66,9 +107,10 @@ bool qa_qvm_client_collision_syscall(const qa_qvm_host_call *call,
       int32_t origin = qa_qvm_host_call_word(call, 3);
       int32_t angles = qa_qvm_host_call_word(call, 4);
       qa_vec3 zero = {0, 0, 0};
-      *out = qa_int32(qa_source_clip_transformed_point_contents(
-          models, read_vector(memory, point), handle, read_vector(memory, origin),
-          handle == QA_SOURCE_BOX_MODEL_HANDLE ? zero : read_vector(memory, angles)));
+      qa_vec3 position = read_vector(memory, point);
+      qa_vec3 center = read_vector(memory, origin);
+      qa_vec3 rotation = handle == QA_SOURCE_BOX_MODEL_HANDLE ? zero : read_vector(memory, angles);
+      *out = qa_int32(models.transformed_point_contents(models.ctx, position, handle, center, rotation));
       return true;
     }
     case 25:
@@ -81,7 +123,7 @@ bool qa_qvm_client_collision_syscall(const qa_qvm_host_call *call,
       int32_t mask = qa_qvm_host_call_word(call, 7);
       if (trap == 25 || trap == 83) {
         qa_source_trace_result unloaded;
-        if (qa_source_clip_trace_without_nodes(models, handle, &unloaded)) {
+        if (models.trace_without_nodes(models.ctx, handle, &unloaded)) {
           qa_qvm_trace_record record = {unloaded, 0};
           qa_qvm_write_trace_view(&output, &record);
           *out = 0;
@@ -105,11 +147,11 @@ bool qa_qvm_client_collision_syscall(const qa_qvm_host_call *call,
         int32_t origin = qa_qvm_host_call_word(call, 8);
         int32_t angles = qa_qvm_host_call_word(call, 9);
         qa_vec3 zero = {0, 0, 0};
-        result = qa_source_clip_transformed_trace(
-            models, query, handle, read_vector(memory, origin),
-            handle == QA_SOURCE_BOX_MODEL_HANDLE ? zero : read_vector(memory, angles));
+        qa_vec3 center = read_vector(memory, origin);
+        qa_vec3 rotation = handle == QA_SOURCE_BOX_MODEL_HANDLE ? zero : read_vector(memory, angles);
+        result = models.transformed_trace(models.ctx, query, handle, center, rotation);
       } else {
-        result = qa_source_clip_trace(models, query, handle);
+        result = models.trace(models.ctx, query, handle);
       }
       qa_qvm_trace_record record = {result, 0};
       qa_qvm_write_trace_view(&output, &record);

@@ -10,6 +10,7 @@
 #include "qa/network/q3/message.h"
 #include "qa/network/q3/netchan.h"
 typedef void (*qa_q3_mirror_datagram_send_fn)(void *ctx, const qa_q3_address *to, const uint8_t *packet, size_t len);
+/* remote fills an owned (deep) copy; the delivery destroys it after sending. */
 typedef void (*qa_q3_remote_address_fn)(void *ctx, qa_q3_address *out);
 /* Storage for the produced ChannelDelivery; fill via qa_q3_channel_delivery_create. */
 typedef struct qa_q3_channel_delivery_storage {

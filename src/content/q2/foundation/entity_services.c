@@ -1,9 +1,12 @@
 /* Port of src/content/q2/foundation/entity-services.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/foundation/entity_services.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -22,10 +25,16 @@ struct qa_q2_entity_services {
   qa_q2_game_services game;
   qa_q2_counters counters;
   qa_q2_source_callbacks *callbacks;
+  int64_t release_subscription; /* TS host.actors.onRelease; dropped on destroy */
+  struct binding **bindings; /* callback-table ctx records, one per bound entity */
+  size_t binding_count, binding_cap;
   const qa_q2_spawn_module *modules;
   size_t module_count;
   qa_q2_entity **entities;
   size_t entity_count, entity_cap;
+  /* TS dodgeCandidates: a Set in insertion order. */
+  qa_q2_entity **dodge;
+  size_t dodge_count, dodge_cap;
   qa_authored_target **authored;
   size_t authored_count, authored_cap;
   slot_entry *slots;
@@ -83,6 +92,27 @@ static void remove_entity_ptr(qa_q2_entity_services *s, qa_q2_entity *e) {
   for (size_t i = 0; i < s->entity_count; i++)
     if (s->entities[i] == e) { memmove(&s->entities[i], &s->entities[i + 1], (s->entity_count - i - 1) * sizeof *s->entities); s->entity_count--; return; }
 }
+static void dodge_delete_at(qa_q2_entity_services *s, size_t i) {
+  memmove(&s->dodge[i], &s->dodge[i + 1], (s->dodge_count - i - 1) * sizeof *s->dodge);
+  s->dodge_count--;
+}
+static void dodge_add(qa_q2_entity_services *s, qa_q2_entity *e) {
+  for (size_t i = 0; i < s->dodge_count; i++) if (s->dodge[i] == e) return;
+  if (s->dodge_count == s->dodge_cap) { s->dodge_cap = s->dodge_cap ? s->dodge_cap * 2 : 16; s->dodge = xrealloc(s->dodge, s->dodge_cap * sizeof *s->dodge); }
+  s->dodge[s->dodge_count++] = e;
+}
+static void svc_mark_dodgeable(void *ctx, qa_q2_entity *e) { dodge_add(ctx, e); }
+/* Live projectiles monsters may dodge, without scanning every entity; stale members are dropped as they are found. */
+static qa_q2_entity *const *svc_dodgeables(void *ctx, size_t *n) {
+  qa_q2_entity_services *s = ctx;
+  for (size_t i = 0; i < s->dodge_count;) {
+    qa_q2_entity *e = s->dodge[i];
+    if (find_entity(s, e->actor.id) != e || !e->projectile || !e->dodgeable) dodge_delete_at(s, i);
+    else i++;
+  }
+  *n = s->dodge_count;
+  return s->dodge;
+}
 static bool slot_get(qa_q2_entity_services *s, qa_actor_id id, double *out) {
   for (size_t i = 0; i < s->slot_count; i++) if (same_id(s->slots[i].id, id)) { *out = s->slots[i].slot; return true; }
   return false;
@@ -101,6 +131,7 @@ static double source_slot_of(qa_q2_entity_services *s, qa_actor_id id) {
   return r.has_value ? (double)r.slot : (double)id.slot;
 }
 
+static void binding_drop(qa_q2_entity_services *s, const qa_q2_entity *e);
 static void on_release(void *ctx, qa_owned_actor actor) {
   qa_q2_entity_services *s = ctx;
   qa_q2_entity *e = find_entity(s, actor.id);
@@ -118,7 +149,11 @@ static void on_release(void *ctx, qa_owned_actor actor) {
     }
   }
   slot_delete(s, actor.id);
-  if (e) { remove_entity_ptr(s, e); qa_q2_entity_destroy(e); free(e); }
+  if (e) {
+    /* The released entity is freed here, so it leaves the dodge set now rather than at the next dodgeables() scan. */
+    for (size_t i = 0; i < s->dodge_count; i++) if (s->dodge[i] == e) { dodge_delete_at(s, i); break; }
+    binding_drop(s, e); remove_entity_ptr(s, e); qa_q2_entity_destroy(e); free(e);
+  }
   for (size_t i = 0; i < s->authored_count; i++)
     if (same_id(s->authored[i]->actor.id, actor.id)) { memmove(&s->authored[i], &s->authored[i + 1], (s->authored_count - i - 1) * sizeof *s->authored); s->authored_count--; break; }
 }
@@ -158,7 +193,19 @@ static binding *binding_new(qa_q2_entity_services *s, qa_q2_entity *e) {
   binding *b = malloc(sizeof *b);
   if (!b) qa_range_error("out of memory");
   b->s = s; b->e = e;
+  if (s->binding_count == s->binding_cap) {
+    s->binding_cap = s->binding_cap ? s->binding_cap * 2 : 16;
+    s->bindings = xrealloc(s->bindings, s->binding_cap * sizeof *s->bindings);
+  }
+  s->bindings[s->binding_count++] = b;
   return b;
+}
+static void binding_drop(qa_q2_entity_services *s, const qa_q2_entity *e) {
+  for (size_t i = s->binding_count; i-- > 0;) {
+    if (s->bindings[i]->e != e) continue;
+    free(s->bindings[i]);
+    s->bindings[i] = s->bindings[--s->binding_count];
+  }
 }
 static void b_think(void *ctx, qa_owned_actor self, qa_frame_context frame) {
   (void)self; (void)frame;
@@ -221,8 +268,8 @@ qa_q2_entity *qa_q2_entity_services_attach(qa_q2_entity_services *s, qa_owned_ac
   qa_q2_entity *e = calloc(1, sizeof *e);
   if (!e) qa_range_error("out of memory");
   qa_q2_entity_init(e, actor, f);
-  int64_t mask = s->game.options.edition == QA_Q2_EDITION_RERELEASE ? 0xff00 : 0x1f00;
-  e->spawnflags = (double)((int64_t)qa_q2_integer_field(&f, "spawnflags", 0) & ~mask);
+  int32_t mask = s->game.options.edition == QA_Q2_EDITION_RERELEASE ? 0xff00 : 0x1f00;
+  e->spawnflags = (double)(qa_js_to_int32(qa_q2_integer_field(&f, "spawnflags", 0)) & ~mask);
   e->delay = qa_q2_number_field(&f, "delay", 0);
   e->wait = qa_q2_number_field(&f, "wait", 0);
   e->speed = qa_q2_number_field(&f, "speed", 0);
@@ -255,7 +302,7 @@ qa_q2_entity *qa_q2_entity_services_spawn_entity(qa_q2_entity_services *s, qa_q2
     if (s->modules[i].spawn(s->modules[i].ctx, e, &s->game)) return e;
   if (s->unsupported_count == s->unsupported_cap) { s->unsupported_cap = s->unsupported_cap ? s->unsupported_cap * 2 : 16; s->unsupported = xrealloc(s->unsupported, s->unsupported_cap * sizeof *s->unsupported); }
   s->unsupported[s->unsupported_count++] = e;
-  s->game.host->diagnostic(s->game.host->ctx, fmt(&s->diag_buf, "Q2 spawn handler not yet imported: %s at authored entity %.17g", e->classname, e->spawn.ordinal));
+  s->game.host->diagnostic(s->game.host->ctx, fmt(&s->diag_buf, "Q2 spawn handler not yet imported: %s at authored entity %s", e->classname, QA_JS_NUMBER(e->spawn.ordinal)));
   return e;
 }
 
@@ -263,11 +310,11 @@ qa_q2_entity *qa_q2_entity_services_spawn(qa_q2_entity_services *s, qa_q2_spawn_
   return qa_q2_entity_services_spawn_entity(s, allocate(s, f));
 }
 
+/* A created entity's classname is not one of its spawn values (TS
+ * `{ classname, ordinal: -1, values }`); the interned name outlives it. */
 qa_q2_entity *qa_q2_entity_services_create_entity(qa_q2_entity_services *s, const char *classname, const qa_q2_field_pair *v, size_t n) {
-  qa_q2_spawn_fields f = {.ordinal = -1, .classname = classname};
-  if (!qa_q2_spawn_set(&f, "classname", classname)) qa_range_error("out of memory");
+  qa_q2_spawn_fields f = {.ordinal = -1, .classname = qa_q2_intern(classname)};
   for (size_t i = 0; i < n; i++) if (!qa_q2_spawn_set(&f, v[i].key, v[i].value)) qa_range_error("out of memory");
-  f.classname = qa_q2_spawn_get(&f, "classname");
   return allocate(s, f);
 }
 
@@ -276,7 +323,6 @@ qa_q2_entity *qa_q2_entity_services_attach_player(qa_q2_entity_services *s, qa_o
   qa_q2_entity *existing = find_entity(s, actor.id);
   if (existing) return existing;
   qa_q2_spawn_fields f = {.ordinal = -1, .classname = "player"};
-  if (!qa_q2_spawn_set(&f, "classname", "player")) qa_range_error("out of memory");
   qa_q2_entity *e = qa_q2_entity_services_attach(s, actor, f);
   e->max_health = 100;
   e->view_height = 22;
@@ -381,7 +427,7 @@ static void svc_solid(void *ctx, qa_q2_entity *e, const char *solid) {
   qa_q2_entity_services *s = ctx;
   e->solid = solid;
   bool has_model = e->model[0] == '*';
-  double model = has_model ? strtod(e->model + 1, NULL) : 0;
+  double model = has_model ? qa_js_string_to_number(e->model + 1) : 0; /* Number(model.slice(1)) */
   if (has_model) {
     qa_q2_body_changes c = {0};
     c.has_bounds = true;
@@ -399,6 +445,7 @@ static void svc_motion(void *ctx, qa_q2_entity *e, const char *kind) {
   m.actor = e->actor; m.kind = kind; m.velocity = svc_body(s, e->actor).velocity;
   m.angular_velocity = e->angular_velocity; m.gravity = e->gravity; m.gravity_vector = e->gravity_vector;
   m.clip_mask = e->clip_mask; m.has_owner = e->has_owner; m.owner = e->owner;
+  m.kind_first = true;
   s->game.host->set_motion(s->game.host->ctx, m);
 }
 
@@ -408,7 +455,7 @@ static void svc_schedule(void *ctx, qa_q2_entity *e, double delay, qa_q2_think t
   double now = s->game.host->now(s->game.host->ctx);
   e->has_next_think = true;
   e->next_think = s->game.options.edition == QA_Q2_EDITION_RERELEASE
-      ? (round(now * 1000) + round(delay * 1000)) / 1000 : now + delay;
+      ? (qa_js_round(now * 1000) + qa_js_round(delay * 1000)) / 1000 : now + delay;
   s->game.host->schedule(s->game.host->ctx, e->actor, &e->next_think);
 }
 
@@ -487,6 +534,22 @@ static size_t target_actors(qa_q2_entity_services *s, const char *name, target_v
   return count;
 }
 
+/* TS noiseIndex: the sound G_UseTargets plays for the message, the entity's
+ * noise_index, else talk1. A view of a Q2 entity is TS `instanceof Q2Entity`. */
+static const char *noise_index(qa_q2_entity_services *s, qa_authored_target entity) {
+  qa_q2_entity *source = find_entity(s, entity.actor.id);
+  if (source == NULL) return "misc/talk1.wav";
+  if (strcmp(source->classname, "target_secret") == 0 || strcmp(source->classname, "target_goal") == 0) {
+    const char *noise = qa_q2_spawn_get(&source->spawn, "noise");
+    return noise != NULL ? noise : "misc/secret.wav";
+  }
+  if (strcmp(source->classname, "trigger_once") == 0 || strcmp(source->classname, "trigger_multiple") == 0) {
+    double sounds = qa_q2_integer_field(&source->spawn, "sounds", 0);
+    return sounds == 1 ? "misc/secret.wav" : sounds == 2 ? "misc/talk.wav" : sounds == 3 ? "misc/trigger1.wav" : "misc/talk1.wav";
+  }
+  return "misc/talk1.wav";
+}
+
 static void svc_use_targets(void *ctx, qa_authored_target entity, const qa_actor_id *activator, bool ignore_delay) {
   qa_q2_entity_services *s = ctx;
   if (entity.delay != 0 && !ignore_delay) {
@@ -508,7 +571,7 @@ static void svc_use_targets(void *ctx, qa_authored_target entity, const qa_actor
     if (body.has_value) {
       qa_q2_presentation_event sev = {0};
       sev.kind = "sound"; sev.has_actor = true; sev.actor = *activator; sev.origin = body.value.origin;
-      sev.path = "misc/talk1.wav"; sev.channel = 0; sev.volume = 1; sev.attenuation = 1; sev.loop = "once";
+      sev.path = noise_index(s, entity); sev.channel = 0; sev.volume = 1; sev.attenuation = 1; sev.loop = "once";
       s->game.host->emit(s->game.host->ctx, sev);
     }
   }
@@ -554,7 +617,7 @@ static qa_q2_monster_target_result svc_monster_target(void *ctx, const qa_actor_
   if (!e) return out;
   out.has_value = true;
   out.value.view_height = e->view_height;
-  out.value.notarget = ((int64_t)e->flags & (32 | (s->game.options.edition == QA_Q2_EDITION_RERELEASE ? 0x1008000 : 0))) != 0;
+  out.value.notarget = (qa_js_to_int32(e->flags) & (32 | (s->game.options.edition == QA_Q2_EDITION_RERELEASE ? 0x1008000 : 0))) != 0;
   out.value.invisible = false;
   out.value.has_light_level = true; out.value.light_level = e->light_level;
   out.value.has_hostile_until = false;
@@ -665,7 +728,7 @@ static void svc_radius_damage(void *ctx, qa_q2_entity *inflictor, const qa_actor
     if (attacker && same_id(target, *attacker)) points *= 0.5;
     if (points <= 0 || !svc_can_damage(s, target, inflictor->actor)) continue;
     qa_damage_request req = {0};
-    req.attack = svc_attack(s, inflictor, inflictor->actor.id, attacker, mod, (double)((int64_t)damage_flags | 1), weapon);
+    req.attack = svc_attack(s, inflictor, inflictor->actor.id, attacker, mod, (double)(qa_js_to_int32(damage_flags) | 1), weapon);
     req.target = target; req.amount = trunc(points); req.knockback = trunc(points);
     req.direction = qa_q2_subtract(body.value.origin, origin); req.point = origin; req.normal = QA_Q2_ZERO; req.delivery = "radius";
     qa_gameplay_authority_apply(s->game.host->combat,
@@ -779,7 +842,10 @@ static bool link_ref(qa_q2_entity_services *s, qa_q2_saved_link link, qa_actor_i
 void qa_q2_entity_services_restore(qa_q2_entity_services *s, qa_q2_foundation_checkpoint cp) {
   if (s->game.has_current_actor) qa_range_error("Q2 source restore requires a completed callback boundary");
   for (size_t i = 0; i < s->entity_count; i++) { qa_q2_entity_destroy(s->entities[i]); free(s->entities[i]); }
+  for (size_t i = 0; i < s->binding_count; i++) free(s->bindings[i]);
+  s->binding_count = 0; /* restored entities rebind below, as TS bindCallbacks */
   s->entity_count = 0; s->slot_count = 0; s->freed_count = 0; s->unsupported_count = 0;
+  s->dodge_count = 0;
   s->next_source_slot = cp.next_source_slot; s->sequence = cp.sequence;
   s->counters = cp.counters;
   for (size_t i = 0; i < cp.freed_slot_count; i++) {
@@ -804,6 +870,13 @@ void qa_q2_entity_services_restore(qa_q2_entity_services *s, qa_q2_foundation_ch
     qa_owned_actor keep_actor = e->actor;
     *e = saved->values;
     e->spawn = keep_spawn; e->actor = keep_actor;
+    /* Keep the strings past the checkpoint (a decoded tree, or the entities
+     * this restore just destroyed). */
+    const char **strings[] = {&e->classname, &e->target, &e->targetname, &e->killtarget, &e->combat_target,
+                              &e->death_target, &e->health_target, &e->item_target, &e->message, &e->model,
+                              &e->model2, &e->model3, &e->model4, &e->noise, &e->sound, &e->map, &e->solid,
+                              &e->motion};
+    for (size_t k = 0; k < sizeof strings / sizeof *strings; k++) *strings[k] = qa_q2_intern(*strings[k]);
     e->has_activator = link_ref(s, saved->activator, &e->activator);
     e->has_enemy = link_ref(s, saved->enemy, &e->enemy);
     e->has_owner = link_ref(s, saved->owner, &e->owner);
@@ -835,6 +908,7 @@ void qa_q2_entity_services_restore(qa_q2_entity_services *s, qa_q2_foundation_ch
     e->die = qa_q2_die_resolve(s->callbacks, saved->die, &has);
     e->blocked = qa_q2_blocked_resolve(s->callbacks, saved->blocked, &has);
     push_entity(s, e);
+    if (e->projectile && e->dodgeable) dodge_add(s, e);
     if (saved->has_source_slot) slot_set(s, actor.id, saved->source_slot);
     bind_callbacks(s, e);
     if (s->game.host->register_entity) s->game.host->register_entity(s->game.host->ctx, e, s);
@@ -848,6 +922,12 @@ void qa_q2_entity_services_add_authored_target(qa_q2_entity_services *s, qa_auth
   if (s->authored_count == s->authored_cap) { s->authored_cap = s->authored_cap ? s->authored_cap * 2 : 8; s->authored = xrealloc(s->authored, s->authored_cap * sizeof *s->authored); }
   s->authored[s->authored_count++] = t;
 }
+/* TS authoredTargets.set(actor, target): an existing key keeps its position. */
+void qa_q2_entity_services_set_authored_target(qa_q2_entity_services *s, qa_authored_target *t) {
+  for (size_t i = 0; i < s->authored_count; i++)
+    if (same_id(s->authored[i]->actor.id, t->actor.id)) { s->authored[i] = t; return; }
+  qa_q2_entity_services_add_authored_target(s, t);
+}
 qa_q2_source_callbacks *qa_q2_entity_services_callbacks(qa_q2_entity_services *s) { return s->callbacks; }
 qa_q2_counters *qa_q2_entity_services_counters(qa_q2_entity_services *s) { return &s->counters; }
 double qa_q2_entity_services_source_slot(qa_q2_entity_services *s, qa_actor_id actor, bool *has) {
@@ -857,6 +937,12 @@ double qa_q2_entity_services_source_slot(qa_q2_entity_services *s, qa_actor_id a
 }
 qa_q2_entity *const *qa_q2_entity_services_unsupported(qa_q2_entity_services *s, size_t *n) { *n = s->unsupported_count; return s->unsupported; }
 qa_q2_game_services *qa_q2_entity_services_game(qa_q2_entity_services *s) { return &s->game; }
+qa_q2_entity_services *qa_q2_entity_services_of_game(qa_q2_game_services *game) {
+  return (qa_q2_entity_services *)(void *)((char *)game - offsetof(qa_q2_entity_services, game));
+}
+qa_q2_foundation_checkpoint qa_q2_game_services_capture(qa_q2_game_services *game) {
+  return qa_q2_entity_services_capture(qa_q2_entity_services_of_game(game));
+}
 
 qa_q2_entity_services *qa_q2_entity_services_create(qa_q2_foundation_host *host, qa_q2_game_options options, const qa_q2_spawn_module *modules, size_t module_count) {
   qa_q2_entity_services *s = calloc(1, sizeof *s);
@@ -867,7 +953,7 @@ qa_q2_entity_services *qa_q2_entity_services_create(qa_q2_foundation_host *host,
   s->next_source_slot = options.max_clients + 1;
   s->game = (qa_q2_game_services){
     .ctx = s, .host = host, .source_callbacks = s->callbacks, .options = options, .counters = &s->counters,
-    .entities = svc_entities, .spawn = svc_spawn, .create = svc_create, .remove = svc_remove,
+    .entities = svc_entities, .mark_dodgeable = svc_mark_dodgeable, .dodgeables = svc_dodgeables, .spawn = svc_spawn, .create = svc_create, .remove = svc_remove,
     .entity = svc_entity, .weapon_target = svc_weapon_target, .item_name = svc_item_name,
     .push_team = svc_push_team, .body = svc_body, .move = svc_move, .project_trajectory = svc_project_trajectory,
     .link = svc_link, .solid = svc_solid, .motion = svc_motion, .schedule = svc_schedule, .cancel = svc_cancel,
@@ -881,16 +967,19 @@ qa_q2_entity_services *qa_q2_entity_services_create(qa_q2_foundation_host *host,
   qa_q2_source_callbacks_register(s->callbacks, base);
   for (size_t i = 0; i < module_count; i++)
     if (modules[i].callbacks) qa_q2_source_callbacks_register(s->callbacks, *modules[i].callbacks);
-  qa_session_actor_registry_on_release(host->actors, on_release, s);
+  s->release_subscription = qa_session_actor_registry_on_release(host->actors, on_release, s);
   return s;
 }
 
 void qa_q2_entity_services_destroy(qa_q2_entity_services *s) {
   if (!s) return;
+  qa_session_actor_registry_off_release(s->game.host->actors, s->release_subscription);
+  for (size_t i = 0; i < s->binding_count; i++) free(s->bindings[i]);
+  free(s->bindings);
   for (size_t i = 0; i < s->entity_count; i++) { qa_q2_entity_destroy(s->entities[i]); free(s->entities[i]); }
   for (size_t i = 0; i < s->cp_count; i++) { qa_q2_spawn_fields_free(&s->cp_entities[i].spawn); qa_q2_entity_destroy(&s->cp_entities[i].values); }
   for (size_t i = 0; i < s->def_count; i++) free(s->def_strings[i]);
-  free(s->entities); free(s->authored); free(s->slots); free(s->freed); free(s->unsupported);
+  free(s->entities); free(s->dodge); free(s->authored); free(s->slots); free(s->freed); free(s->unsupported);
   free(s->team_scratch); free(s->target_scratch); free(s->cp_entities); free(s->cp_freed);
   free(s->attacks); free(s->attack_ids); free(s->def_strings);
   free(s->diag_buf); free(s->self_buf); free(s->count_buf);

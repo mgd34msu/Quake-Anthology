@@ -2,10 +2,13 @@
  * callback for accounting parity but stores records in owned arrays.
  * GPL-2.0-or-later. */
 #include "qa/world/collision/q3/patch.h"
+#include "qa/network/common/js_number.h"
 #include "qa/core/common_error.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
 #include <math.h>
+#include "qa/foundation/js.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 static float f32(double v){return (float)v;}
@@ -13,7 +16,7 @@ static void *xm(size_t n){void*p=malloc(n?n:1);if(!p)abort();return p;}
 static void *xr(void*q,size_t n){void*p=realloc(q,n?n:1);if(!p)abort();return p;}
 static qa_vec3 V(double x,double y,double z){return qa_math_vec3(x,y,z);}
 static const qa_patch_plane *pat(const qa_patch_collide*p,double idx){
-  if(idx<0||(size_t)idx>=p->plane_count)qa_range_error("patch index %g out of range",idx);
+  if(!(idx>=0&&idx<(double)p->plane_count&&idx==floor(idx)))qa_range_error("patch index %s out of range",QA_JS_NUMBER(idx));
   return &p->planes[(size_t)idx];
 }
 void qa_patch_collide_destroy(qa_patch_collide*p){
@@ -140,15 +143,28 @@ static void grid_subdivide(Grid*g){
 typedef struct{
   Grid*g; PlaneList*planes; qa_collision_debug_surface*debug; qa_collision_winding_library*windings;
   long*gp; size_t gw,gh; /* (width-1)x(height-1) x2 */
+  /* Owned while a CommonError/RangeError can unwind generation: TS leaves all
+   * of it to the GC; live windings are abandoned (counters unchanged). */
+  FacetList*facets; BorderList*borders; qa_vec3*wpts; qa_collision_winding*live,*copy;
 } Gen;
+static void gen_release(void*arg){
+  Gen*gen=arg;
+  if(gen->g){for(size_t i=0;i<gen->g->ncols;i++)free(gen->g->cols[i]);free(gen->g->cols);}
+  free(gen->gp); free(gen->planes->v);
+  if(gen->facets){for(size_t i=0;i<gen->facets->n;i++)free(gen->facets->v[i].borders);free(gen->facets->v);}
+  if(gen->borders)free(gen->borders->v);
+  free(gen->wpts);
+  qa_winding_abandon(gen->windings,gen->live); qa_winding_abandon(gen->windings,gen->copy);
+}
 static qa_vec3 gp_pt(Gen*gen,size_t x,size_t y){return gen->g->cols[x][y];}
 static long find_plane(Gen*gen,qa_vec3 a,qa_vec3 b,qa_vec3 c){
   qa_plane plane; if(!from_points(a,b,c,&plane))return -1;
   qa_vec3 pts[3]={a,b,c};
   for(size_t i=0;i<gen->planes->n;i++){
     qa_plane e=gen->planes->v[i].plane;
-    if(qa_dot3_double(plane.normal,e.normal)<0)continue;
-    int ok=1; for(int k=0;k<3;k++)if(fabs(f32(qa_dot3_double(pts[k],e.normal)-e.distance))>0.1)ok=0;
+    /* `>= 0` and `<= 0.1` are false for NaN (an overflowed binary32 cross). */
+    if(!(qa_dot3_double(plane.normal,e.normal)>=0))continue;
+    int ok=1; for(int k=0;k<3;k++)if(!(fabs(f32(qa_dot3_double(pts[k],e.normal)-e.distance))<=0.1))ok=0;
     if(ok)return (long)i;
   }
   if(gen->planes->n==2048)qa_common_error(QA_COMMON_ERROR_DROP,"MAX_PATCH_PLANES");
@@ -181,7 +197,7 @@ static long edge_plane(Gen*gen,size_t x,size_t y,int edge){
   return find_plane(gen,a,b,qa_add3(base,qa_scale3(gen->planes->v[pi].plane.normal,4)));
 }
 static void make_facet(Gen*gen,FacetList*facets,long surface,const long*raw,size_t rawn,const int*noadjust,const qa_vec3*verts,size_t vn,const qa_vec3 block[4]){
-  BorderList borders={0};
+  BorderList borders={0}; gen->borders=&borders;
   for(size_t bi=0;bi<rawn;bi++){
     long idx=raw[bi];
     if(idx==-1){bl_push(&borders,(qa_patch_border){-1,false,noadjust[bi]!=0});continue;}
@@ -192,34 +208,35 @@ static void make_facet(Gen*gen,FacetList*facets,long surface,const long*raw,size
     if(front&&back&&gen->debug)qa_collision_debug_record_mixed_border(gen->debug,block);
     bl_push(&borders,(qa_patch_border){(double)idx,front&&!back,noadjust[bi]!=0});
   }
-  if(surface==-1){free(borders.v);return;}
+  if(surface==-1){free(borders.v);gen->borders=NULL;return;}
   qa_collision_winding_library*W=gen->windings;
-  qa_collision_winding*winding=qa_winding_base_for_plane(W,gen->planes->v[surface].plane);
+  qa_collision_winding*winding=gen->live=qa_winding_base_for_plane(W,gen->planes->v[surface].plane);
   for(size_t bi=0;bi<borders.n;bi++){
     if(!winding)break;
-    if(borders.v[bi].plane==-1){/* TS returns leaving winding live (leak retained there); free here */
-      qa_winding_free(W,winding); free(borders.v); return;}
+    /* CM_ValidateFacet leaves this allocation live: abandon keeps TS's
+     * active-winding count and zone allocation. */
+    if(borders.v[bi].plane==-1){qa_winding_abandon(W,winding);gen->live=NULL;free(borders.v);gen->borders=NULL;return;}
     qa_plane bp=gen->planes->v[(size_t)borders.v[bi].plane].plane;
-    winding=qa_winding_chop_in_place(W,winding,borders.v[bi].inward?bp:negatep(bp),f32(0.1));
+    winding=gen->live=qa_winding_chop_in_place(W,winding,borders.v[bi].inward?bp:negatep(bp),f32(0.1));
   }
-  if(!winding){free(borders.v);return;}
+  if(!winding){free(borders.v);gen->borders=NULL;return;}
   qa_bounds wb=qa_winding_library_bounds(W,winding);
-  qa_winding_free(W,winding);
+  qa_winding_free(W,winding); gen->live=NULL;
   qa_vec3 delta=qa_sub3(wb.max,wb.min);
-  if(delta.x>65535||delta.y>65535||delta.z>65535||wb.min.x>=65535||wb.min.y>=65535||wb.min.z>=65535||wb.max.x<=-65535||wb.max.y<=-65535||wb.max.z<=-65535){free(borders.v);return;}
-  winding=qa_winding_base_for_plane(W,gen->planes->v[surface].plane);
+  if(delta.x>65535||delta.y>65535||delta.z>65535||wb.min.x>=65535||wb.min.y>=65535||wb.min.z>=65535||wb.max.x<=-65535||wb.max.y<=-65535||wb.max.z<=-65535){free(borders.v);gen->borders=NULL;return;}
+  winding=gen->live=qa_winding_base_for_plane(W,gen->planes->v[surface].plane);
   for(size_t bi=0;bi<borders.n;bi++){
     if(!winding)break;
     if(borders.v[bi].plane==(double)surface)continue;
     qa_plane bp=gen->planes->v[(size_t)borders.v[bi].plane].plane;
-    winding=qa_winding_chop_in_place(W,winding,borders.v[bi].inward?bp:negatep(bp),f32(0.1));
+    winding=gen->live=qa_winding_chop_in_place(W,winding,borders.v[bi].inward?bp:negatep(bp),f32(0.1));
   }
   if(!winding){
     if(facets->n==facets->cap){facets->cap=facets->cap?facets->cap*2:16;facets->v=xr(facets->v,facets->cap*sizeof*facets->v);}
-    facets->v[facets->n++]=(qa_patch_facet){(double)surface,borders.v,borders.n}; return;
+    facets->v[facets->n++]=(qa_patch_facet){(double)surface,borders.v,borders.n}; gen->borders=NULL; return;
   }
   qa_bounds bb=qa_winding_library_bounds(W,winding);
-  size_t wpn=0; qa_vec3*wpts=qa_collision_winding_points(winding,&wpn);
+  size_t wpn=0; qa_vec3*wpts=gen->wpts=qa_collision_winding_points(winding,&wpn);
   qa_vec3 axes[3]={V(1,0,0),V(0,1,0),V(0,0,1)};
   /* duplicate check helper inline */
   for(int ax=0;ax<3;ax++)for(int dir=-1;dir<=1;dir+=2){
@@ -249,22 +266,24 @@ static void make_facet(Gen*gen,FacetList*facets,long surface,const long*raw,size
       if(borders.n>26&&gen->debug)qa_collision_debug_print(gen->debug,"ERROR: too many bevels\n");
       qa_patch_border border=find_plane2(gen,plane);
       for(size_t bi=0;bi<borders.n;bi++)if(borders.v[bi].plane==border.plane&&gen->debug)qa_collision_debug_print(gen->debug,"WARNING: bevel plane already used\n");
-      qa_collision_winding*clipped=qa_winding_chop_in_place(W,qa_winding_copy(W,winding),border.inward?gen->planes->v[(size_t)border.plane].plane:negatep(gen->planes->v[(size_t)border.plane].plane),f32(0.1));
+      gen->copy=qa_winding_copy(W,winding);
+      qa_collision_winding*clipped=gen->copy=qa_winding_chop_in_place(W,gen->copy,border.inward?gen->planes->v[(size_t)border.plane].plane:negatep(gen->planes->v[(size_t)border.plane].plane),f32(0.1));
       if(!clipped){if(gen->debug)qa_collision_debug_developer_print(gen->debug,"WARNING: CM_AddFacetBevels... invalid bevel\n");continue;}
-      qa_winding_free(W,clipped);
+      qa_winding_free(W,clipped); gen->copy=NULL;
       bl_push(&borders,border);
     }
   }
-  free(wpts);
-  qa_winding_free(W,winding);
+  free(wpts); gen->wpts=NULL;
+  qa_winding_free(W,winding); gen->live=NULL;
   bl_push(&borders,(qa_patch_border){(double)surface,true,false});
   if(borders.n>27)qa_range_error("collision patch exceeds facet border storage");
   if(facets->n==facets->cap){facets->cap=facets->cap?facets->cap*2:16;facets->v=xr(facets->v,facets->cap*sizeof*facets->v);}
-  facets->v[facets->n++]=(qa_patch_facet){(double)surface,borders.v,borders.n};
+  facets->v[facets->n++]=(qa_patch_facet){(double)surface,borders.v,borders.n}; gen->borders=NULL;
 }
-qa_patch_collide *qa_generate_patch_collide(double width,double height,const qa_vec3*points,size_t pc,qa_collision_debug_surface*debug,qa_patch_allocator_fn allocate,void*alloc_ctx){
-  if(width!=floor(width)||height!=floor(height))qa_range_error("collision patch requires integer dimensions");
-  if(width<=2||height<=2)qa_common_error(QA_COMMON_ERROR_DROP,"CM_GeneratePatchFacets: bad parameters");
+qa_patch_collide *qa_generate_patch_collide(double width,double height,const qa_vec3*points,size_t pc,qa_collision_debug_surface*debug){
+  /* Number.isInteger: NaN and the infinities are not integers. */
+  if(!isfinite(width)||!isfinite(height)||width!=floor(width)||height!=floor(height))qa_range_error("collision patch requires integer dimensions");
+  if(width<=2||height<=2){char msg[160];snprintf(msg,sizeof msg,"CM_GeneratePatchFacets: bad parameters: (%s, %s, managed points)",QA_JS_NUMBER(width),QA_JS_NUMBER(height));qa_common_error(QA_COMMON_ERROR_DROP,msg);}
   if(fmod(width,2)==0||fmod(height,2)==0)qa_common_error(QA_COMMON_ERROR_DROP,"CM_GeneratePatchFacets: even sizes are invalid for quadratic meshes");
   if(width>129||height>129)qa_common_error(QA_COMMON_ERROR_DROP,"CM_GeneratePatchFacets: source is > MAX_GRID_SIZE");
   if((double)pc!=width*height)qa_range_error("collision patch requires a complete control grid");
@@ -272,6 +291,9 @@ qa_patch_collide *qa_generate_patch_collide(double width,double height,const qa_
   size_t W=(size_t)width,H=(size_t)height;
   Grid g={0}; g.height=H; g.cols=xm(W*sizeof*g.cols); g.ncols=W; g.cap=W;
   for(size_t x=0;x<W;x++){g.cols[x]=xm(H*sizeof*g.cols[x]);for(size_t y=0;y<H;y++)g.cols[x][y]=points[y*W+x];}
+  PlaneList planes={0}; FacetList facets={0};
+  Gen gen={&g,&planes,debug,NULL,NULL,0,0,&facets,NULL,NULL,NULL,NULL};
+  qa_cleanup node; qa_cleanup_push(&node,gen_release,&gen);
   int wrap_height=grid_wrapped(&g);
   grid_subdivide(&g);
   /* transpose */
@@ -282,18 +304,15 @@ qa_patch_collide *qa_generate_patch_collide(double width,double height,const qa_
   int wrap_width=grid_wrapped(&g);
   grid_subdivide(&g);
   size_t gw=g.ncols,gh=g.height;
-  qa_hunk_allocation alloc_rec={0}; int have_alloc=allocate!=NULL;
-  if(have_alloc)alloc_rec=allocate(alloc_ctx,"CM_GeneratePatchCollide",40);
-  (void)alloc_rec;
   /* bounds over all points */
   size_t total=gw*gh; qa_vec3*all=xm(total*sizeof*all); size_t k=0;
   for(size_t x=0;x<gw;x++)for(size_t y=0;y<gh;y++)all[k++]=g.cols[x][y];
   qa_bounds bounds=qa_winding_bounds(all,total); free(all);
-  if(debug)debug->c_total_patch_blocks=(int32_t)(debug->c_total_patch_blocks+(int32_t)((gw-1)*(gh-1)));
+  /* `(total + blocks) | 0` wraps; signed C overflow would be undefined. */
+  if(debug)debug->c_total_patch_blocks=(int32_t)((uint32_t)debug->c_total_patch_blocks+(uint32_t)((gw-1)*(gh-1)));
   qa_collision_winding_library local_w; qa_collision_winding_library_init(&local_w,NULL);
   qa_collision_winding_library*Wl=debug?&debug->windings:&local_w;
-  PlaneList planes={0}; FacetList facets={0};
-  Gen gen={&g,&planes,debug,Wl,NULL,0,0};
+  gen.windings=Wl;
   size_t gx=gw-1,gy=gh-1;
   gen.gp=xm(((gx*gy*2)>0?(gx*gy*2):1)*sizeof *gen.gp); gen.gw=gx; gen.gh=gy;
   for(size_t x=0;x<gx;x++)for(size_t y=0;y<gy;y++){
@@ -327,13 +346,10 @@ qa_patch_collide *qa_generate_patch_collide(double width,double height,const qa_
       make_facet(&gen,&facets,second,raw2,3,na2,v2,3,block);
     }
   }
+  qa_cleanup_pop(&node);
   free(gen.gp);
   for(size_t i=0;i<g.ncols;i++){free(g.cols[i]);}
   free(g.cols);
-  if(have_alloc){
-    (void)allocate(alloc_ctx,"CM_PatchCollideFromGrid:facets",(double)facets.n*320);
-    (void)allocate(alloc_ctx,"CM_PatchCollideFromGrid:planes",(double)planes.n*20);
-  }
   qa_patch_collide*r=xm(sizeof*r);
   r->planes=planes.v;r->plane_count=planes.n;r->facets=facets.v;r->facet_count=facets.n;
   r->bounds=(qa_bounds){qa_sub3(bounds.min,V(1,1,1)),qa_add3(bounds.max,V(1,1,1))};
@@ -365,7 +381,7 @@ bool qa_position_in_patch(const qa_patch_collide*patch,qa_vec3 start,qa_patch_sh
     int ok=1;
     for(size_t bi=0;bi<f->border_count;bi++){
       qa_plane pl=expanded(*pat(patch,f->borders[bi].plane),shape,&f->borders[bi]);
-      if(qa_dot3(start,pl.normal)>pl.distance)ok=0;
+      if(!(qa_dot3(start,pl.normal)<=pl.distance))ok=0; /* every(<=): NaN fails */
     }
     if(ok)return true;
   }
@@ -398,7 +414,7 @@ bool qa_trace_patch(const qa_patch_collide*patch,qa_vec3 start,qa_vec3 end,qa_pa
       qa_patch_plane pl=patch->planes[si];
       double off=box_offset(pl,pl.plane.normal,shape.mins,shape.extents);
       double d1=f32(qa_dot3(start,pl.plane.normal)-pl.plane.distance+off),d2=f32(qa_dot3(end,pl.plane.normal)-pl.plane.distance+off);
-      fraction=f32((d1-0.125)/(d1-d2)); if(fraction<0)fraction=0;
+      fraction=qa_js_max(0,f32((d1-0.125)/(d1-d2))); /* Math.max: NaN stays, -0 becomes 0 */
       result=(qa_patch_trace_hit){fraction,{pl.plane.normal,pl.plane.distance}}; have=1;
     }
     free(front);free(inter);
@@ -419,11 +435,11 @@ bool qa_trace_patch(const qa_patch_collide*patch,qa_vec3 start,qa_vec3 end,qa_pa
       if(d1>0&&(d2>=0.125||d2>=d1)){valid=0;break;}
       if(d1<=0&&d2<=0)continue;
       if(d1>d2){
-        double fr=f32((d1-0.125)/(d1-d2)); if(fr<0)fr=0;
+        double fr=qa_js_max(0,f32((d1-0.125)/(d1-d2)));
         if(fr>enter){enter=fr;hit_index=idx;have_best=1;
           best=(shape.kind&&strcmp(shape.kind,"capsule")==0)?(qa_plane){plane.normal,f32(plane.distance-fabs(qa_dot3(plane.normal,shape.offset)))}:plane;}
       }else{
-        double fr=f32((d1+0.125)/(d1-d2)); if(fr>1)fr=1; if(fr<leave)leave=fr;
+        leave=qa_js_min(leave,qa_js_min(1,f32((d1+0.125)/(d1-d2)))); /* Math.min: NaN propagates */
       }
     }
     if(valid&&hit_index!=(long)f->border_count-1&&enter<leave&&enter>=0&&enter<fraction&&have_best){

@@ -8,6 +8,7 @@
 #ifndef QA_WORLD_SESSION_MOD_CLIENT_PRESENTATION_H
 #define QA_WORLD_SESSION_MOD_CLIENT_PRESENTATION_H
 
+#include "qa/ui/hud/q2_native.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -27,20 +28,7 @@ typedef struct qa_mod_client_presentation_admission {
 /* TS PlayerView: real owner type (simulation/types.h). */
 typedef qa_app_sim_player_view qa_session_player_view;
 
-/* Mirrored NativeQ2HudFrame (TS owner src/ui/hud/q2-native.ts,
- * unported). Configstrings stay an opaque borrowed map. */
-typedef struct qa_session_native_q2_hud_frame {
-  qa_q2_protocol_identity protocol;
-  qa_double_view stats;
-  const void *configstrings; /* TS ReadonlyMap<number, string> */
-  const char *layout;
-  qa_double_view inventory;
-  double player_number;
-  double server_frame;
-  double time_milliseconds;
-  bool has_frame_time_milliseconds;
-  double frame_time_milliseconds;
-} qa_session_native_q2_hud_frame;
+/* TS NativeQ2HudFrame is the ui/hud/q2-native port (qa_native_q2_hud_frame). */
 
 /** TS NativeModCameraView: a player view plus native fields.
  * edition: "classic" | "rerelease". */
@@ -73,7 +61,7 @@ typedef struct qa_mod_client_presentation_frame {
   /* native hud mode: "layout-overlay" | "replace-status". */
   bool has_native_hud;
   const char *native_hud_mode;
-  qa_session_native_q2_hud_frame native_hud_frame;
+  qa_native_q2_hud_frame native_hud_frame;
   bool has_native_view;
   qa_native_mod_camera_view native_view;
 } qa_mod_client_presentation_frame;

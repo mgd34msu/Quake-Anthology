@@ -1,6 +1,7 @@
 /* Port of src/app/bootstrap/q3-client/guest-collision.ts.
  * GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q3_client/guest_collision.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,14 +116,14 @@ static qa_temporary_collision_model *temporary(qa_app_shared_qvm_client_clip_mod
      * destroyed by the caller via capsule_out pattern below. */
     return NULL; /* handled by callers through make_capsule */
   }
-  qa_range_error("CM_ClipHandleToModel: bad handle %g", handle);
+  qa_range_error("CM_ClipHandleToModel: bad handle %s", QA_JS_NUMBER(handle));
 }
 static qa_trace_policy policy(qa_app_shared_qvm_client_clip_models *m) {
   qa_cvar_snapshot snap;
   double no_curves = 0, player_clip = 1;
   if (m->cvars.get(m->cvars.ctx, "cm_noCurves", &snap)) { no_curves = snap.integer_value; qa_cvar_read_free(&snap); }
   if (m->cvars.get(m->cvars.ctx, "cm_playerCurveClip", &snap)) { player_clip = snap.integer_value; qa_cvar_read_free(&snap); }
-  return (qa_trace_policy){"q3", NULL, false, 0, -1, NULL, no_curves == 0, player_clip != 0};
+  return (qa_trace_policy){"q3", NULL, false, 0, -1, NULL, no_curves == 0, player_clip != 0, false};
 }
 double qa_app_shared_qvm_client_clip_models_point_contents(
     qa_app_shared_qvm_client_clip_models *models, qa_vec3 point, double handle) {
@@ -214,5 +215,38 @@ qa_source_trace_result qa_app_shared_qvm_client_clip_models_transformed_trace(
   out.plane.plane = result.source_plane.plane;
   out.plane.type = result.source_plane.type;
   out.plane.signbits = result.source_plane.signbits;
+  return out;
+}
+static bool client_has_nodes(void *ctx) { return qa_app_shared_qvm_client_clip_models_has_nodes(ctx); }
+static double client_model_count(void *ctx) { return qa_app_shared_qvm_client_clip_models_model_count(ctx); }
+static double client_inline_model(void *ctx, double index) {
+  return qa_app_shared_qvm_client_clip_models_inline_model(ctx, index);
+}
+static double client_temp_box_model(void *ctx, qa_vec3 min, qa_vec3 max, bool capsule) {
+  return qa_app_shared_qvm_client_clip_models_temp_box_model(ctx, min, max, capsule);
+}
+static double client_point_contents(void *ctx, qa_vec3 point, double handle) {
+  return qa_app_shared_qvm_client_clip_models_point_contents(ctx, point, handle);
+}
+static double client_transformed_point_contents(void *ctx, qa_vec3 point, double handle, qa_vec3 origin,
+                                                qa_vec3 angles) {
+  return qa_app_shared_qvm_client_clip_models_transformed_point_contents(ctx, point, handle, origin, angles);
+}
+static bool client_trace_without_nodes(void *ctx, double handle, qa_source_trace_result *out) {
+  return qa_app_shared_qvm_client_clip_models_trace_without_nodes(ctx, handle, out);
+}
+static qa_source_trace_result client_trace(void *ctx, qa_temporary_trace_query query, double handle) {
+  return qa_app_shared_qvm_client_clip_models_trace(ctx, query, handle);
+}
+static qa_source_trace_result client_transformed_trace(void *ctx, qa_temporary_trace_query query, double handle,
+                                                       qa_vec3 origin, qa_vec3 angles) {
+  return qa_app_shared_qvm_client_clip_models_transformed_trace(ctx, query, handle, origin, angles);
+}
+qa_qvm_client_clip_models qa_app_shared_qvm_client_clip_models_as_client(
+    qa_app_shared_qvm_client_clip_models *models) {
+  qa_qvm_client_clip_models out = {models, client_has_nodes, client_model_count, client_inline_model,
+                                   client_temp_box_model, client_point_contents,
+                                   client_transformed_point_contents, client_trace_without_nodes,
+                                   client_trace, client_transformed_trace};
   return out;
 }

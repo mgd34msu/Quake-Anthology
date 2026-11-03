@@ -1,5 +1,6 @@
 /* Port of src/platform/sdl.ts. GPL-2.0-or-later. */
 #include "qa/platform/sdl.h"
+#include "qa/platform/signal_hint.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -9,6 +10,7 @@
 
 #include "qa/foundation/support.h"
 #include "qa/platform/native_libraries.h"
+#include "qa/foundation/js_case.h"
 
 static const uint32_t video_subsystem = 0x20;
 
@@ -46,20 +48,12 @@ static bool streq_nullable(const char *a, const char *b) {
   return strcmp(a, b) == 0;
 }
 
-static bool ascii_iequals(const char *a, const char *b) {
-  while (*a != '\0' && *b != '\0') {
-    if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) return false;
-    a++;
-    b++;
-  }
-  return *a == *b;
-}
+/* TS a.toLowerCase() === b.toLowerCase(). */
+static bool ascii_iequals(const char *a, const char *b) { return qa_js_equals_ignore_case(a, b); }
 
 static void initialize_subsystem(uint32_t subsystem, const char *operation) {
   ensure_main_ready();
-  if (SDL_SetHint("SDL_NO_SIGNAL_HANDLERS", "1") != 1) {
-    qa_range_error("SDL must leave signal handling to the Unix signal owner");
-  }
+  qa_require_no_signal_handlers(SDL_SetHint("SDL_NO_SIGNAL_HANDLERS", "1"));
   checked(SDL_InitSubSystem(subsystem), operation);
 }
 

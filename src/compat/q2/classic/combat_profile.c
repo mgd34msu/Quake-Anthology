@@ -32,7 +32,7 @@ const qa_compat_q2_classic_combat_profile qa_compat_q2_xatrix1998_combat_profile
   CALLS_INIT,
   "sha256:0b0d119ea9ed1abbce02f32fe1243bcb69457d10a34a49b775c473210bcb65a3", "xatrix", 896,
   {480, 512, 264, 400, 376, 452, 456},
-  {740, 256, 1776, 3716, 188, 512, 3460},
+  {740, 256, 1776, 3716, 188, 512, 3640}, /* v_angle at client+3640 (client+3460 is resp.cmd_angles) */
   {0x48b0, 0x4de0, 0x4fc0, 0x186a0, 0x18750},
   {0x73fe0, 0x497c8, 72},
   {3, 2, 1, 5, 6, 23, 12},

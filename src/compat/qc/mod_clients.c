@@ -17,7 +17,15 @@ static qa_compat_qc_mod_client_entry *require_entry(B *b, qa_actor_id actor) {
   if (!entry || !has_client || (entry->has_client && !client_eq(entry->client, client)) || !has_back || !actor_eq(back, actor))
     qa_range_error("QuakeC component client identity is no longer live");
   if (entry->has_client) return entry;
-  entry->has_client = true; entry->client = client; return entry;
+  /* TS replaces the Map value, which ends any frame holding the old object. */
+  entry->has_client = true; entry->client = client; entry->generation = ++b->next_generation; return entry;
+}
+static void store_entry(B *b, qa_compat_qc_mod_client_entry value) {
+  value.generation = ++b->next_generation;
+  qa_compat_qc_mod_client_entry *existing = find_entry(b, value.actor);
+  if (existing) { *existing = value; return; }
+  if (b->entry_count==b->entry_capacity){ size_t c=b->entry_capacity?b->entry_capacity*2:8; b->entries=realloc(b->entries,c*sizeof *b->entries); if(!b->entries) qa_range_error("mod client allocation failed"); b->entry_capacity=c; }
+  b->entries[b->entry_count++] = value;
 }
 static void invoke_calls(B *b, const qa_mod_source_call *calls, size_t n, qa_actor_id actor) {
   for (size_t i = 0; i < n; i++) { require_entry(b, actor); b->operations.invoke(b->operations.ctx, calls[i], actor, NULL); }
@@ -33,8 +41,7 @@ bool qa_compat_qc_mod_client_bindings_slot(B *b, qa_actor_id actor, int64_t *out
   int64_t slot = 1;
   for (;;) { bool used=false; for(size_t i=0;i<b->entry_count;i++) if(b->entries[i].slot==slot) used=true; if(!used) break; slot++; }
   if (slot > (int64_t)b->operations.declaration->maximum) qa_range_error("QuakeC component source client capacity exceeded");
-  if (b->entry_count==b->entry_capacity){ size_t c=b->entry_capacity?b->entry_capacity*2:8; b->entries=realloc(b->entries,c*sizeof *b->entries); if(!b->entries) qa_range_error("mod client allocation failed"); b->entry_capacity=c; }
-  b->entries[b->entry_count++] = (qa_compat_qc_mod_client_entry){actor, true, client, slot, false};
+  store_entry(b, (qa_compat_qc_mod_client_entry){actor, true, client, slot, false, 0});
   *out = slot; return true;
 }
 static void delete_entry(B *b, qa_actor_id actor) {
@@ -42,11 +49,10 @@ static void delete_entry(B *b, qa_actor_id actor) {
 }
 static void admit(B *b, qa_actor_id actor) {
   int64_t slot; if (!qa_compat_qc_mod_client_bindings_slot(b, actor, &slot)) qa_range_error("QuakeC component admission requires a live client");
-  qa_compat_qc_mod_client_entry *entry = require_entry(b, actor);
-  bool was = entry->admitted;
+  qa_compat_qc_mod_client_entry entry = *require_entry(b, actor); /* TS keeps this object across reserve/project */
   if (b->operations.reserve) b->operations.reserve(b->operations.ctx, actor);
   b->operations.project(b->operations.ctx, actor);
-  if (!was) { entry = require_entry(b, actor); entry->admitted = true; invoke_calls(b, b->operations.declaration->admit, b->operations.declaration->admit_count, actor); }
+  if (!entry.admitted) { entry.admitted = true; store_entry(b, entry); invoke_calls(b, b->operations.declaration->admit, b->operations.declaration->admit_count, actor); }
   if (b->operations.admitted) b->operations.admitted(b->operations.ctx, actor);
 }
 static void on_event(void *ctx, qa_mod_client_event event) {
@@ -89,29 +95,30 @@ char *qa_compat_qc_mod_client_bindings_userinfo(B *b, qa_actor_id actor, const c
   if (!entry->has_client) qa_range_error("QuakeC component userinfo requires a restored client");
   return qa_info_value_for_key(svc(b)->userinfo(svc(b)->ctx, entry->client), key);
 }
-typedef struct { B *b; qa_compat_qc_mod_client_entry *entry; } LiveCtx;
+typedef struct { B *b; qa_compat_qc_mod_client_entry entry; } LiveCtx;
 static bool live_fn(void *ctx) {
-  LiveCtx *c = ctx; B *b = c->b; qa_compat_qc_mod_client_entry *entry = c->entry;
+  LiveCtx *c = ctx; B *b = c->b; const qa_compat_qc_mod_client_entry *entry = &c->entry;
   qa_client_id client; bool has_client = svc(b)->for_actor(svc(b)->ctx, entry->actor, &client);
   qa_actor_id back; bool has_back = has_client && svc(b)->actor(svc(b)->ctx, client, &back);
-  return entry->admitted && find_entry(b, entry->actor) == entry && has_client
+  const qa_compat_qc_mod_client_entry *now = find_entry(b, entry->actor);
+  return entry->admitted && now && now->generation == entry->generation && has_client
       && (!entry->has_client || client_eq(entry->client, client)) && has_back && actor_eq(back, entry->actor);
 }
 bool qa_compat_qc_mod_client_bindings_frame(B *b, int64_t slot, qa_frame_context frame) {
   if (slot < 1 || slot > (int64_t)b->operations.declaration->maximum) return false;
-  qa_compat_qc_mod_client_entry *entry = NULL;
+  const qa_compat_qc_mod_client_entry *entry = NULL;
   for (size_t i = 0; i < b->entry_count; i++) if (b->entries[i].slot == slot) { entry = &b->entries[i]; break; }
   if (!entry) return false;
-  LiveCtx live = {b, entry};
-  if (live_fn(&live) && b->operations.think) b->operations.think(b->operations.ctx, entry->actor, frame, &live, live_fn);
+  LiveCtx live = {b, *entry}; /* callbacks may grow or shift the entry table */
+  if (live_fn(&live) && b->operations.think) b->operations.think(b->operations.ctx, live.entry.actor, frame, &live, live_fn);
   for (size_t i = 0; i < b->operations.declaration->frame_count; i++) {
     if (!live_fn(&live)) break;
-    b->operations.invoke(b->operations.ctx, b->operations.declaration->frame[i], entry->actor, &frame);
+    b->operations.invoke(b->operations.ctx, b->operations.declaration->frame[i], live.entry.actor, &frame);
   }
   return true;
 }
 void qa_compat_qc_mod_client_bindings_set_userinfo(B *b, qa_actor_id actor, const char *key, const char *value) {
-  if (strchr(value, '\\') || strchr(value, '\0') != value + (ptrdiff_t)strlen(value)) qa_range_error("QuakeC component userinfo field cannot contain a delimiter or NUL");
+  if (strchr(value, '\\')) qa_range_error("QuakeC component userinfo field cannot contain a delimiter or NUL");
   qa_compat_qc_mod_client_entry *entry = require_entry(b, actor);
   if (!entry->has_client) qa_range_error("QuakeC component userinfo requires a restored client");
   const char *source = svc(b)->userinfo(svc(b)->ctx, entry->client);
@@ -119,16 +126,18 @@ void qa_compat_qc_mod_client_bindings_set_userinfo(B *b, qa_actor_id actor, cons
   char *copy = strdup(source), *result = malloc(strlen(source) + strlen(key) + strlen(value) + 4);
   if (!copy || !result) qa_range_error("userinfo allocation failed");
   result[0] = 0;
-  char *fields[512]; size_t nf = 0; char *p = copy;
+  size_t field_capacity = 1; for (const char *q = source; *q; q++) if (*q == '\\') field_capacity++;
+  char **fields = malloc(field_capacity * sizeof *fields); if (!fields) qa_range_error("userinfo allocation failed");
+  size_t nf = 0; char *p = copy;
   fields[nf++] = p;
-  for (; *p; p++) if (*p == '\\') { *p = 0; if (nf < 512) fields[nf++] = p + 1; }
+  for (; *p; p++) if (*p == '\\') { *p = 0; fields[nf++] = p + 1; }
   size_t start = (nf && fields[0][0] == 0) ? 1 : 0;
   for (size_t i = start; i + 1 < nf; i += 2) {
     if (strcmp(fields[i], key) != 0) { strcat(result, "\\"); strcat(result, fields[i]); strcat(result, "\\"); strcat(result, fields[i+1]); }
   }
   if (value[0]) { strcat(result, "\\"); strcat(result, key); strcat(result, "\\"); strcat(result, value); }
   svc(b)->set_userinfo(svc(b)->ctx, entry->client, result);
-  free(copy); free(result);
+  free(fields); free(copy); free(result);
 }
 size_t qa_compat_qc_mod_client_bindings_checkpoint(B *b, qa_compat_qc_mod_client_slot *out, size_t cap) {
   for (size_t i = 0; i < b->entry_count && i < cap; i++) out[i] = (qa_compat_qc_mod_client_slot){b->entries[i].actor, b->entries[i].slot, b->entries[i].admitted};
@@ -142,12 +151,16 @@ void qa_compat_qc_mod_client_bindings_restore(B *b, const qa_compat_qc_mod_clien
     if (bad) qa_range_error("Invalid saved QuakeC component client mapping");
     if (b->entry_count==b->entry_capacity){ size_t c=b->entry_capacity?b->entry_capacity*2:8; b->entries=realloc(b->entries,c*sizeof *b->entries); if(!b->entries) qa_range_error("mod client allocation failed"); b->entry_capacity=c; }
     qa_client_id client; bool has = svc(b)->for_actor(svc(b)->ctx, entries[i].actor, &client);
-    b->entries[b->entry_count++] = (qa_compat_qc_mod_client_entry){entries[i].actor, has, has ? client : (qa_client_id){{NULL,NULL},0,0,NULL}, entries[i].slot, entries[i].admitted};
+    qa_compat_qc_mod_client_entry restored; memset(&restored, 0, sizeof restored);
+    restored.actor = entries[i].actor; restored.has_client = has; if (has) restored.client = client;
+    restored.slot = entries[i].slot; restored.admitted = entries[i].admitted; restored.generation = ++b->next_generation;
+    b->entries[b->entry_count++] = restored;
   }
 }
 void qa_compat_qc_mod_client_bindings_forget(B *b, qa_actor_id actor) { delete_entry(b, actor); }
 void qa_compat_qc_mod_client_bindings_close(B *b) {
   if (b->has_unsubscribe) { b->unsubscribe.invoke(b->unsubscribe.ctx); b->has_unsubscribe = false; }
-  if (b->has_unsubscribe_input) b->unsubscribe_input.invoke(b->unsubscribe_input.ctx);
-  b->has_unsubscribe_input = false; b->entry_count = 0;
+  bool had_input = b->has_unsubscribe_input;
+  b->has_unsubscribe_input = false; b->entry_count = 0; /* TS finally: holds if the unsubscribe raises */
+  if (had_input) b->unsubscribe_input.invoke(b->unsubscribe_input.ctx);
 }

@@ -1,6 +1,7 @@
 /* Port of src/settings/server/rotation.ts. GPL-2.0-or-later. */
 #include "qa/settings/server/rotation.h"
 
+#include "qa/foundation/support.h"
 #include <ctype.h>
 #include <math.h>
 #include <stdarg.h>
@@ -12,13 +13,12 @@
 #include "qa/settings/server/common.h"
 
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static qa_server_setting_definition classic_definitions[1];

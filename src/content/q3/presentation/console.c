@@ -1,6 +1,8 @@
 /* Port of src/content/q3/presentation/console.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/console.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -162,11 +164,11 @@ static void next_order(qa_q3_pres_client_console_runtime *runtime) {
   if (!runtime->state->snap) qa_range_error("CG_NextOrder requires cg.snap");
   double client_num = runtime->state->snap->player_state.client_num;
   if (client_num < 0 || client_num >= 64)
-    qa_range_error("Console source array index %g outside 64", client_num);
+    qa_range_error("Console source array index %s outside 64", QA_JS_NUMBER(client_num));
   qa_q3_pres_client_info *client = &runtime->static_state->client_info[(size_t)client_num];
   double selected_index = vm_cvar_integer(runtime, QA_Q3_PRES_CONSOLE_CVAR_CURRENT_SELECTED_PLAYER);
-  if (selected_index < 0 || selected_index >= 8)
-    qa_range_error("Console source array index %g outside 8", selected_index);
+  if (!(selected_index >= 0 && selected_index < 32) || selected_index != trunc(selected_index)) /* sortedTeamPlayers has 32 slots */
+    qa_range_error("Console source array index %s outside 32", QA_JS_NUMBER(selected_index));
   if (!client->team_leader && runtime->state->sorted_team_players[(size_t)selected_index] != client_num) return;
   qa_q3_pres_client_game_static_state *cgs = runtime->static_state;
   if (cgs->current_order < 7) {
@@ -240,8 +242,10 @@ static bool dispatch(qa_q3_pres_client_console_runtime *runtime, const char *nam
     return true;
   }
   if (strcmp(name, "sizeup") == 0 || strcmp(name, "sizedown") == 0) {
-    double value = qa_int32(vm_cvar_integer(runtime, QA_Q3_PRES_CONSOLE_CVAR_VIEWSIZE) +
-                            (strcmp(name, "sizeup") == 0 ? 10 : -10));
+    double left = vm_cvar_integer(runtime, QA_Q3_PRES_CONSOLE_CVAR_VIEWSIZE);
+    double right = (strcmp(name, "sizeup") == 0 ? 10 : -10);
+    double value = qa_int32(left +
+                            right);
     qa_q3_game_format_arg args[1] = {qa_q3_game_format_number(value)};
     char *text = qa_q3_game_format("%i", args, 1, 1024);
     if (!text) return false;
@@ -411,19 +415,37 @@ static bool dispatch(qa_q3_pres_client_console_runtime *runtime, const char *nam
   }
   qa_range_error("Registered cgame console command has no handler: %s", name);
 }
+typedef struct execute_job {
+  qa_q3_pres_client_console_runtime *runtime; const char *const *argv; size_t argc; bool result;
+} execute_job;
+static void execute_body(void *ctx) {
+  execute_job *job = ctx;
+  qa_q3_pres_client_console_runtime *runtime = job->runtime;
+  runtime_open(runtime);
+  char first[1024];
+  const char *raw = argument(job->argv, job->argc, 0, first, sizeof first);
+  char name[1024];
+  fold_into(raw, name, sizeof name);
+  if (!qa_q3_pres_client_console_runtime_handles(runtime, name)) { job->result = false; return; }
+  job->result = dispatch(runtime, name, job->argv, job->argc);
+  runtime_open(runtime);
+}
 bool qa_q3_pres_client_console_runtime_execute(qa_q3_pres_client_console_runtime *runtime,
                                                const char *const *argv, size_t argc) {
   if (argc > 1024) qa_range_error("Console command exceeds MAX_STRING_TOKENS");
   size_t total = 0;
   for (size_t i = 0; i < argc; i++) total += strlen(argv[i]) + 1;
   if (total > 8192 + 1024) qa_range_error("Console command exceeds source token storage");
-  runtime_open(runtime);
-  char first[1024];
-  const char *raw = argument(argv, argc, 0, first, sizeof first);
-  char name[1024];
-  fold_into(raw, name, sizeof name);
-  if (!qa_q3_pres_client_console_runtime_handles(runtime, name)) return false;
-  bool result = dispatch(runtime, name, argv, argc);
-  runtime_open(runtime);
-  return result;
+  execute_job job = {runtime, argv, argc, false};
+  qa_caught_error caught;
+  if (qa_try(execute_body, &job, &caught)) return job.result;
+  if (runtime->closed) qa_rethrow(&caught);
+  /* A failed command is reported and the console stays usable; dispose is for lifecycle teardown only. */
+  size_t length = strlen(caught.message) + sizeof "Console command failed: \n";
+  char *text = malloc(length);
+  if (!text) return false;
+  snprintf(text, length, "Console command failed: %s\n", caught.message);
+  runtime->host.print(runtime->host.ctx, text);
+  free(text);
+  return true;
 }

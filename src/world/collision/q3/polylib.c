@@ -1,5 +1,7 @@
 /* Port of src/world/collision/q3/polylib.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/q3/polylib.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 #include "qa/core/common_error.h"
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
@@ -24,12 +26,12 @@ void qa_collision_winding_set_num_points(qa_collision_winding*w,double v){
   wr_i32(view(w),0,(int32_t)v);
 }
 qa_vec3 qa_collision_winding_point(qa_collision_winding*w,double idx){
-  if(idx!=floor(idx)||idx<0||idx>=w->capacity)qa_range_error("Winding point %g outside allocation",idx);
+  if(idx!=floor(idx)||idx<0||idx>=w->capacity)qa_range_error("Winding point %s outside allocation",QA_JS_NUMBER(idx));
   uint8_t*b=view(w); size_t o=4+(size_t)idx*12;
   qa_vec3 r={rd_f32(b,o),rd_f32(b,o+4),rd_f32(b,o+8)}; return r;
 }
 void qa_collision_winding_set_point(qa_collision_winding*w,double idx,qa_vec3 p){
-  if(idx!=floor(idx)||idx<0||idx>=w->capacity)qa_range_error("Winding point %g outside allocation",idx);
+  if(idx!=floor(idx)||idx<0||idx>=w->capacity)qa_range_error("Winding point %s outside allocation",QA_JS_NUMBER(idx));
   uint8_t*b=view(w); size_t o=4+(size_t)idx*12;
   wr_f32(b,o,p.x);wr_f32(b,o+4,p.y);wr_f32(b,o+8,p.z);
 }
@@ -50,7 +52,7 @@ void qa_collision_winding_library_init(qa_collision_winding_library*lib,const qa
 }
 qa_collision_winding *qa_winding_alloc(qa_collision_winding_library*lib,double points){
   lib->c_winding_allocs=(int32_t)((uint32_t)lib->c_winding_allocs+1u);
-  lib->c_winding_points=(int32_t)((int32_t)lib->c_winding_points+(int32_t)points);
+  lib->c_winding_points=(int32_t)((uint32_t)lib->c_winding_points+(uint32_t)qa_js_to_int32(points)); /* (c + points) | 0 */
   lib->c_active_windings=(int32_t)((uint32_t)lib->c_active_windings+1u);
   if(lib->c_active_windings>lib->c_peak_windings)lib->c_peak_windings=lib->c_active_windings;
   if(points!=floor(points)||points<0||points>(2147483647.0-4)/12)qa_range_error("Invalid winding allocation size");
@@ -68,6 +70,15 @@ void qa_winding_free(qa_collision_winding_library*lib,qa_collision_winding*w){
   else free(w->allocation.bytes);
   free(w);
 }
+void qa_winding_abandon(qa_collision_winding_library*lib,qa_collision_winding*w){
+  if(!w)return;
+  if(!lib->has_memory)free(w->allocation.bytes);
+  free(w);
+}
+/* Throw-time release for clip/chop: a raise from split or the count checks
+ * leaves the scratch arrays and the new windings to the GC in TS. */
+typedef struct{qa_collision_winding_library*lib;qa_vec3*p;double*d;qa_collision_winding*a,*b;}clip_own;
+static void clip_release(void*arg){clip_own*o=arg;free(o->p);free(o->d);qa_winding_abandon(o->lib,o->a);qa_winding_abandon(o->lib,o->b);}
 static void fmt_fixed(double value,int digits,char*out,size_t cap){
   /* TS prints exact binary32 decimal rounding; snprintf %.Nf on the
    * float-promoted double matches for the magnitudes windings carry. */
@@ -107,7 +118,7 @@ void qa_winding_remove_colinear(qa_collision_winding_library*lib,qa_collision_wi
     if(qa_dot3_double(a,b)<0.999)kept[kn++]=pt;
   }
   if(kn==n){free(p);free(kept);return;}
-  lib->c_removed=(int32_t)(lib->c_removed+(int32_t)(n-kn));
+  lib->c_removed=(int32_t)((uint32_t)lib->c_removed+(uint32_t)(n-kn)); /* (c + removed) | 0 */
   qa_collision_winding_set_num_points(w,(double)kn);
   for(size_t i=0;i<kn;i++)qa_collision_winding_set_point(w,(double)i,kept[i]);
   free(p);free(kept);
@@ -191,9 +202,11 @@ qa_winding_clip_result qa_winding_clip(qa_collision_winding_library*lib,qa_colli
   qa_winding_clip_result r={NULL,NULL};
   if(!any_pos){free(p);free(d);r.back=qa_winding_copy(lib,w);return r;}
   if(!any_neg){free(p);free(d);r.front=qa_winding_copy(lib,w);return r;}
-  r.front=qa_winding_alloc(lib,(double)n+4); r.back=qa_winding_alloc(lib,(double)n+4);
+  clip_own own={lib,p,d,NULL,NULL}; qa_cleanup node; qa_cleanup_push(&node,clip_release,&own);
+  r.front=own.a=qa_winding_alloc(lib,(double)n+4); r.back=own.b=qa_winding_alloc(lib,(double)n+4);
   split_(p,d,n,plane,eps,r.front,r.back);
   check_clip_counts(r.front,r.back);
+  qa_cleanup_pop(&node);
   free(p);free(d); return r;
 }
 qa_collision_winding *qa_winding_chop_in_place(qa_collision_winding_library*lib,qa_collision_winding*w,qa_plane plane,double eps){
@@ -202,9 +215,11 @@ qa_collision_winding *qa_winding_chop_in_place(qa_collision_winding_library*lib,
   for(size_t i=0;i<n;i++){d[i]=f32(qa_dot3_double(p[i],plane.normal)-plane.distance);if(d[i]>eps)any_pos=1;if(d[i]<-eps)any_neg=1;}
   if(!any_pos){free(p);free(d);qa_winding_free(lib,w);return NULL;}
   if(!any_neg){free(p);free(d);return w;}
-  qa_collision_winding*front=qa_winding_alloc(lib,(double)n+4);
+  clip_own own={lib,p,d,NULL,NULL}; qa_cleanup node; qa_cleanup_push(&node,clip_release,&own);
+  qa_collision_winding*front=own.a=qa_winding_alloc(lib,(double)n+4);
   split_(p,d,n,plane,eps,front,NULL);
   check_clip_counts(front,NULL);
+  qa_cleanup_pop(&node);
   free(p);free(d); qa_winding_free(lib,w); return front;
 }
 qa_collision_winding *qa_winding_chop(qa_collision_winding_library*lib,qa_collision_winding*w,qa_plane plane){
@@ -225,11 +240,12 @@ qa_winding_side qa_winding_on_plane_side(qa_collision_winding_library*lib,qa_col
 }
 void qa_winding_check(qa_collision_winding_library*lib,qa_collision_winding*w){
   double np=qa_collision_winding_num_points(w);
-  if(np<3)qa_common_error(QA_COMMON_ERROR_DROP,"CheckWinding: points");
+  if(np<3){char msg[96];snprintf(msg,sizeof msg,"CheckWinding: %s points",QA_JS_NUMBER(np));qa_common_error(QA_COMMON_ERROR_DROP,msg);}
   double area=qa_winding_area(lib,w);
   if(area<1){char b[64];fmt_fixed(area,6,b,sizeof b);char msg[128];snprintf(msg,sizeof msg,"CheckWinding: %s area",b);qa_common_error(QA_COMMON_ERROR_DROP,msg);}
   qa_plane face=qa_winding_plane(lib,w);
   size_t n=0; qa_vec3*p=qa_collision_winding_points(w,&n);
+  qa_cleanup node; qa_cleanup_push(&node,free,p);
   for(size_t i=0;i<n;i++){
     double vals[3]={p[i].x,p[i].y,p[i].z};
     for(int k=0;k<3;k++)if(vals[k]>MAXB||vals[k]<-MAXB){char b[64];fmt_fixed(vals[k],6,b,sizeof b);char msg[160];snprintf(msg,sizeof msg,"CheckFace: BUGUS_RANGE: %s",b);qa_common_error(QA_COMMON_ERROR_DROP,msg);}
@@ -241,6 +257,7 @@ void qa_winding_check(qa_collision_winding_library*lib,qa_collision_winding*w){
     double ed=f32(f32(qa_dot3_double(p[i],en))+ON_EPS);
     for(size_t j=0;j<n;j++)if(j!=i&&f32(qa_dot3_double(p[j],en))>ed)qa_common_error(QA_COMMON_ERROR_DROP,"CheckWinding: non-convex");
   }
+  qa_cleanup_pop(&node);
   free(p);
 }
 qa_collision_winding *qa_winding_add_to_convex_hull(qa_collision_winding_library*lib,qa_collision_winding*w,qa_collision_winding*hull,qa_vec3 normal){

@@ -8,8 +8,13 @@
  *    objects; close() mirrors TS close, destroy() also frees.
  *  - Async methods are synchronous. Returned bytes are malloc'd
  *    (NULL only on OOM; 0-length may be NULL). References returned
- *    by open/resolve are owned by the mounted instance (or reader)
- *    and stay valid until its close/destroy.
+ *    by open/resolve are borrowed views of values the mounted
+ *    instance (or reader) owns: they stay valid until its
+ *    close/destroy (a reopen of the same mount and path replaces the
+ *    value in place). A reference kept past that, as TS keeps the
+ *    plain value, is an owned copy (qa_resolved_resource_copy,
+ *    released with qa_resolved_resource_release). read_reference
+ *    takes any reference and keeps its own copy of it.
  *  - Plan structs are copied at open; mount identity/path strings
  *    stay borrowed from the caller's plan mounts, as the TS retains
  *    the mount objects. Resolved order arrays are owned copies.

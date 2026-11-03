@@ -1,5 +1,6 @@
 /* Port of src/core/common-error.ts. GPL-2.0-or-later. */
 #include "qa/core/common_error.h"
+#include "qa/foundation/support.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,7 +25,5 @@ bool qa_common_error_code_parse(const char *text, qa_common_error_code *out) {
 }
 
 noreturn void qa_common_error(qa_common_error_code code, const char *message) {
-  (void)code; /* The code travels on the TS error object; abort keeps none. */
-  fprintf(stderr, "CommonError: %s\n", message);
-  abort();
+  qa_raise("CommonError", (int)code, 0, "%s", message);
 }

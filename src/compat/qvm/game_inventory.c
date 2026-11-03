@@ -65,8 +65,6 @@ static void refresh(binding_ctx *ctx) {
         slots[(size_t)definition->weapon])
       qa_range_error("QVM inventory requires distinct public weapon slots");
     slots[(size_t)definition->weapon] = true;
-    const qa_qvm_inventory_weapon *defs[1] = {definition};
-    (void)defs;
     for (int which = 0; which < 2; which++) {
       qa_item_id item = which == 0 ? definition->item : definition->ammo;
       if (which == 1 && item == NULL) continue;
@@ -91,7 +89,7 @@ static void refresh(binding_ctx *ctx) {
 }
 
 static void public_view(binding_ctx *ctx, qa_qvm_writable_view *out) {
-  /* memory.assertLive(): the mirror memory has no retirement flag. */
+  qa_qvm_memory_assert_live(ctx->options.module->memory);
   refresh(ctx);
   const qa_qvm_public_inventory_profile *profile = ctx->options.profile.public_profile;
   qa_qvm_game_data_public_player_bytes(ctx->options.data, ctx->options.client(ctx->options.ctx), out);
@@ -187,6 +185,7 @@ typedef struct access_ctx {
 
 static int64_t field_address(binding_ctx *binding, qa_qvm_item_field field, const char *stride_message) {
   const qa_qvm_private_inventory_profile *profile = binding->options.profile.private_profile;
+  if (stride_message != NULL) qa_qvm_memory_assert_live(binding->options.module->memory);
   double slot = binding->options.client(binding->options.ctx);
   if (stride_message != NULL &&
       (qa_qvm_game_data_get_entity_stride_bytes(binding->options.data) != profile->entity_stride ||
@@ -233,7 +232,8 @@ static void access_write(void *ctx, qa_qvm_item_field field, double value) {
 
 static const qa_qvm_item_storage *private_storage_for(binding_ctx *binding, qa_item_id item) {
   const qa_qvm_private_inventory_profile *profile = binding->options.profile.private_profile;
-  for (size_t i = 0; i < profile->storage_count; i++) {
+  /* TS Map.set in storage order: the last storage naming an item owns it. */
+  for (size_t i = profile->storage_count; i-- > 0;) {
     const qa_qvm_item_storage *storage = &profile->storage[i];
     if (strcmp(storage->kind, "counter") == 0) {
       if (strcmp(storage->item, item) == 0) return storage;
@@ -295,7 +295,7 @@ static bool private_entry(void *ctx, qa_item_id item, qa_inventory_entry *out) {
     qa_range_error("out of memory");
   bool found = false;
   for (size_t i = 0; i < entries.count; i++)
-    if (strcmp(entries.entries[i].item, item) == 0) {
+    if (!found && strcmp(entries.entries[i].item, item) == 0) {
       *out = entries.entries[i];
       found = true;
     }
@@ -371,7 +371,12 @@ static double projected_read(void *ctx, qa_qvm_item_field field) {
   qa_qvm_memory_data_view(access->binding.options.module->memory, address, 4, &view);
   return qa_qvm_writable_view_get_int32(&view, 0, true);
 }
-double qa_qvmx_projected_global(void *ctx, double address);
+static double projected_global(void *ctx, double address) {
+  projected_access *access = ctx;
+  qa_qvm_writable_view view;
+  qa_qvm_memory_data_view(access->binding.options.module->memory, (int64_t)address, 4, &view);
+  return qa_qvm_writable_view_get_int32(&view, 0, true);
+}
 static void projected_write(void *ctx, qa_qvm_item_field field, double value) {
   projected_access *access = ctx;
   int64_t address = field_address(&access->binding, field, NULL);
@@ -411,7 +416,10 @@ bool qa_qvm_inventory_projection(qa_qvm_inventory_options options, qa_item_id it
       if (!matches && strcmp(candidate->kind, "counter") != 0)
         for (size_t j = 0; j < candidate->item_count; j++)
           matches = matches || strcmp(candidate->items[j].item, item) == 0;
-      if (matches) storage = candidate;
+      if (matches) {
+        storage = candidate; /* TS profile.storage.find: the first match */
+        break;
+      }
     }
     if (!has_entry || storage == NULL) {
       qa_qvm_inventory_binding_destroy(&binding);
@@ -421,7 +429,7 @@ bool qa_qvm_inventory_projection(qa_qvm_inventory_options options, qa_item_id it
     memset(&access, 0, sizeof access);
     access.binding.options = options;
     entry.count = count;
-    qa_qvm_item_storage_access storage_access = {&access, projected_read, qa_qvmx_projected_global,
+    qa_qvm_item_storage_access storage_access = {&access, projected_read, projected_global,
                                                  projected_write};
     qa_qvm_write_item_storage(profile->image, *storage, entry, storage_access);
     qa_qvm_inventory_binding_destroy(&binding);
@@ -443,8 +451,10 @@ bool qa_qvm_inventory_projection(qa_qvm_inventory_options options, qa_item_id it
   const qa_qvm_inventory_weapon *weapon = NULL;
   for (size_t i = 0; i < definition_count; i++)
     if (strcmp(definitions[i].item, item) == 0 ||
-        (definitions[i].ammo != NULL && strcmp(definitions[i].ammo, item) == 0))
+        (definitions[i].ammo != NULL && strcmp(definitions[i].ammo, item) == 0)) {
       weapon = &definitions[i];
+      break;
+    }
   if (weapon == NULL || weapon->weapon < 1 || weapon->weapon > 15)
     qa_range_error("Projected QVM item has no public inventory slot");
   const qa_qvm_public_inventory_profile *profile = options.profile.public_profile;
@@ -465,13 +475,6 @@ bool qa_qvm_inventory_projection(qa_qvm_inventory_options options, qa_item_id it
     out->entries[0].value = count;
   }
   return true;
-}
-
-double qa_qvmx_projected_global(void *ctx, double address) {
-  projected_access *access = ctx;
-  qa_qvm_writable_view view;
-  qa_qvm_memory_data_view(access->binding.options.module->memory, (int64_t)address, 4, &view);
-  return qa_qvm_writable_view_get_int32(&view, 0, true);
 }
 
 void qa_qvm_inventory_words_destroy(qa_qvm_inventory_words *words) {

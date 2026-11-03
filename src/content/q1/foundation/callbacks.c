@@ -41,6 +41,19 @@ static const qa_q1_callback_handlers *get(qa_q1_callback_registry *registry, con
     if (strcmp(registry->entries[i].name, name) == 0) return &registry->entries[i].handlers;
   qa_range_error("Unknown Q1 saved callback: %s", name);
 }
+/* The registered name owned by the registry: a bound slot carries it (TS
+ * q1CallbackName), so a caller's transient name buffer never dangles. */
+static const char *owned_name(qa_q1_callback_registry *registry, const char *name) {
+  for (size_t i = 0; i < registry->count; i++)
+    if (strcmp(registry->entries[i].name, name) == 0) return registry->entries[i].name;
+  qa_range_error("Unknown Q1 saved callback: %s", name);
+}
+
+bool qa_q1_callback_registry_has(const qa_q1_callback_registry *registry, const char *name) {
+  for (size_t i = 0; i < registry->count; i++)
+    if (strcmp(registry->entries[i].name, name) == 0) return true;
+  return false;
+}
 
 void qa_q1_callback_registry_register(qa_q1_callback_registry *registry, const char *name,
                                       qa_q1_callback_handlers handlers) {
@@ -105,42 +118,42 @@ qa_q1_bound_action qa_q1_callback_registry_action(qa_q1_callback_registry *regis
   (void)entity;
   const qa_q1_callback_handlers *handlers = get(registry, name);
   if (handlers->action == NULL) qa_range_error("Q1 callback is not an action: %s", name);
-  const qa_q1_bound_action bound = {name, handlers->ctx, handlers->action};
+  const qa_q1_bound_action bound = {owned_name(registry, name), handlers->ctx, handlers->action};
   return bound;
 }
 qa_q1_bound_use qa_q1_callback_registry_use(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name) {
   (void)entity;
   const qa_q1_callback_handlers *handlers = get(registry, name);
   if (handlers->use == NULL) qa_range_error("Q1 callback is not use: %s", name);
-  const qa_q1_bound_use bound = {name, handlers->ctx, handlers->use};
+  const qa_q1_bound_use bound = {owned_name(registry, name), handlers->ctx, handlers->use};
   return bound;
 }
 qa_q1_bound_touch qa_q1_callback_registry_touch(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name) {
   (void)entity;
   const qa_q1_callback_handlers *handlers = get(registry, name);
   if (handlers->touch == NULL) qa_range_error("Q1 callback is not touch: %s", name);
-  const qa_q1_bound_touch bound = {name, handlers->ctx, handlers->touch, handlers->trajectory};
+  const qa_q1_bound_touch bound = {owned_name(registry, name), handlers->ctx, handlers->touch, handlers->trajectory};
   return bound;
 }
 qa_q1_bound_pain qa_q1_callback_registry_pain(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name) {
   (void)entity;
   const qa_q1_callback_handlers *handlers = get(registry, name);
   if (handlers->pain == NULL) qa_range_error("Q1 callback is not pain: %s", name);
-  const qa_q1_bound_pain bound = {name, handlers->ctx, handlers->pain};
+  const qa_q1_bound_pain bound = {owned_name(registry, name), handlers->ctx, handlers->pain};
   return bound;
 }
 qa_q1_bound_die qa_q1_callback_registry_die(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name) {
   (void)entity;
   const qa_q1_callback_handlers *handlers = get(registry, name);
   if (handlers->die == NULL) qa_range_error("Q1 callback is not die: %s", name);
-  const qa_q1_bound_die bound = {name, handlers->ctx, handlers->die};
+  const qa_q1_bound_die bound = {owned_name(registry, name), handlers->ctx, handlers->die};
   return bound;
 }
 qa_q1_bound_blocked qa_q1_callback_registry_blocked(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name) {
   (void)entity;
   const qa_q1_callback_handlers *handlers = get(registry, name);
   if (handlers->blocked == NULL) qa_range_error("Q1 callback is not blocked: %s", name);
-  const qa_q1_bound_blocked bound = {name, handlers->ctx, handlers->blocked};
+  const qa_q1_bound_blocked bound = {owned_name(registry, name), handlers->ctx, handlers->blocked};
   return bound;
 }
 

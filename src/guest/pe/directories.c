@@ -269,7 +269,7 @@ static qa_pe_unwind_record read_unwind_entry(const qa_pe_image_reader *reader, u
   uint32_t size = tail - info_rva;
   if ((flags & 4) != 0) {
     uint32_t next_ancestors[66];
-    memcpy(next_ancestors, ancestors, ancestor_count * sizeof(uint32_t));
+    if (ancestor_count > 0) memcpy(next_ancestors, ancestors, ancestor_count * sizeof(uint32_t));
     next_ancestors[ancestor_count] = info_rva;
     qa_pe_unwind_record *chained = xmalloc(sizeof(qa_pe_unwind_record));
     *chained = read_unwind_entry(reader, qa_pe_image_reader_u32(reader, tail),
@@ -319,8 +319,9 @@ bool qa_pe_read_load_configuration(const qa_pe_image_reader *image, qa_pe_load_c
   qa_pe_directory_entry table = qa_pe_directory(reader.pe, 10);
   if (table.rva == 0) return false;
   uint32_t size = qa_pe_image_reader_u32(&reader, table.rva);
-  if (size < 4 || size > table.byte_length)
-    qa_pe_error(QA_PE_STAGE_LOAD_CONFIG, "invalid load configuration size");
+  /* Linkers targeting old Windows record a directory size of 64 while the structure's own Size is larger; the structure only has to fit the image. */
+  if (size < 4) qa_pe_error(QA_PE_STAGE_LOAD_CONFIG, "invalid load configuration size");
+  qa_pe_image_reader_range(&reader, table.rva, size);
   int width = reader.pe->abi.pointer_bytes;
   out->address = qa_pe_image_reader_address(&reader, table.rva, size);
   out->bytes = qa_pe_image_reader_copy(&reader, table.rva, size);

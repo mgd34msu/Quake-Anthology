@@ -9,6 +9,9 @@
 #include "qa/contracts/identity.h"
 #include "qa/contracts/math.h"
 #include "qa/contracts/presentation.h"
+#include "qa/contracts/scene.h"
+#include "qa/content/q3/presentation/ref_entity.h"
+#include "qa/render/scene/models/types.h"
 /* TS QvmBodyPart text: "body"|"head"|"legs"|"torso"|... kept as text. */
 /* TS BodyMaterial = Pick<RefModelEntity, ...>. custom_shader_name NULL
  * mirrors customShader === null; has_custom_skin + skin text mirror
@@ -16,6 +19,7 @@
 typedef struct qa_app_body_material {
   bool has_custom_shader; const char *custom_shader_name;
   bool has_custom_skin; const char *custom_skin_surfaces;
+  const qa_q3_pres_scene_skin *custom_skin; /* TS customSkin (NULL is null); surfaces feed the model options */
   qa_vec4 shader_rgba;
   qa_vec2 shader_tex_coord;
   double shader_time, render_flags, shadow_plane;
@@ -33,12 +37,13 @@ typedef struct qa_app_component_body {
   double time;
   const qa_app_component_body_part *parts; size_t part_count;
 } qa_app_component_body;
-/* TS PreparedPrimaryBody (entity/options stay opaque borrowed rows). */
+/* TS PreparedPrimaryBody. entity and options are borrowed from the producer. */
 typedef struct qa_app_prepared_primary_body {
   qa_actor_id actor;
   const char *part;
   qa_content_id content;
-  const void *entity, *options;
+  qa_scene_entity entity;
+  qa_model_source_options options;
   bool base;
   qa_content_id shader_content;
   double time;

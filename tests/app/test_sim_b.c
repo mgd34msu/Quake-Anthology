@@ -133,7 +133,9 @@ static void test_arsenal_and_commands(void) {
   qa_q3_arsenal_controls c2 = qa_app_sim_resolve_q3_arsenal_controls(arsenal, &intent, cmd, "baseq3");
   CHECK(c2.use_holdable && c2.requested_weapon == qa_q3_weapon_items[6].weapon);
   qa_arsenal_intent mp = {"q3:arsenal", "q3:weapon/chaingun", false, false, 0};
-  CHECK_ABORTS((void)qa_app_sim_resolve_q3_arsenal_controls(arsenal, &mp, cmd, "baseq3"));
+  /* Current TS: a weapon outside the product is no request (keeps sourceWeapon). */
+  qa_q3_arsenal_controls c_out = qa_app_sim_resolve_q3_arsenal_controls(arsenal, &mp, cmd, "baseq3");
+  CHECK(c_out.requested_weapon == 5 && c_out.attack);
   qa_q3_arsenal_controls c3 = qa_app_sim_resolve_q3_arsenal_controls(arsenal, &mp, cmd, "missionpack");
   CHECK(c3.requested_weapon == qa_q3_weapon_items[12].weapon);
   qa_arsenal_state bad = arsenal; bad.state.kind = "q1";

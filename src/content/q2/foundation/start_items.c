@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static char *dup_range(const char *s, size_t n) {
   char *p = malloc(n + 1);
@@ -41,17 +42,16 @@ qa_q2_start_item *qa_q2_parse_start_items(const char *expression, size_t *out_co
         /* Number.parseInt(...,10) prefix parse. */
         if (!(*p == '+' || *p == '-' || isdigit((unsigned char)*p))) ok = false;
         else {
-          char *end = NULL;
-          long long v = strtoll(p, &end, 10);
-          if (end == p) ok = false;
-          else count_value = (double)v;
+          double v = qa_js_parse_int(p, 10); /* strtoll clamped where TS rejects unsafe integers */
+          if (!(fabs(v) <= 9007199254740991.0)) ok = false;
+          else count_value = v;
         }
       }
       if (ok) {
         for (const char *p = classname; *p; p++)
           if (!isalnum((unsigned char)*p) && *p != '_') { ok = false; break; }
         if (classname[0] == '\0') ok = false;
-        if (count_value != (double)(int64_t)count_value) ok = false;
+        if (count_value < -9007199254740991.0 || count_value > 9007199254740991.0) ok = false;
       }
       if (!ok) qa_range_error("Invalid Q2 starting item: %s", value);
       free(value);

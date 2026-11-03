@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/simulation/arsenal/q3-source-legacy.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/simulation/arsenal/q3_source_legacy.h"
+#include "qa/app/bootstrap/simulation/arsenal/q3_source.h"
 #include <stdlib.h>
 #include <string.h>
 #include "qa/content/composition/expansion_source_supply.h"
@@ -12,6 +13,8 @@
 #include "qa/movement/q3/constants.h"
 #include "qa/persistence/save_image.h"
 #include "qa/persistence/shared.h"
+#include "qa/content/q3/base/game/save_callbacks.h"
+#include "qa/foundation/js.h"
 
 static qa_save_reader field(const qa_save_reader *reader, const char *name) {
   qa_save_reader out;
@@ -155,152 +158,190 @@ qa_app_q3_selected_arsenal_checkpoint qa_app_migrate_legacy_q3_arsenal(qa_app_q3
   return checkpoint;
 }
 
-static bool same_id(qa_actor_id a, qa_actor_id b) { return qa_same_actor(a, b); }
-void qa_app_restore_legacy_q3_source(qa_app_legacy_q3_source_host host, qa_app_legacy_q3_source saved,
-    void (*project)(void *ctx, qa_actor_id actor), void *project_ctx) {
-  if (!host.product || strcmp(host.product, "baseq3") != 0) qa_range_error("Legacy ballistics require the base Q3 source");
-  qa_actor_id references[256]; size_t reference_count = 0;
-  qa_actor_id hooks[64]; size_t hook_count = 0;
-  for (size_t i = 0; i < saved.projectile_count; i++) {
-    qa_app_q3_projectile_state *state = &saved.projectiles[i];
-    host.assert_owned(host.ctx, state->base.actor);
+/* TS Set<ActorId> in insertion order. */
+typedef struct actor_set { qa_actor_id *items; size_t count, capacity; } actor_set;
+static bool set_has(const actor_set *set, qa_actor_id actor) {
+  for (size_t i = 0; i < set->count; i++) if (qa_same_actor(set->items[i], actor)) return true;
+  return false;
+}
+static void set_add(actor_set *set, qa_actor_id actor) {
+  if (set_has(set, actor)) return;
+  if (set->count == set->capacity) {
+    size_t capacity = set->capacity == 0 ? 16 : set->capacity * 2;
+    qa_actor_id *grown = realloc(set->items, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("Out of memory");
+    set->items = grown; set->capacity = capacity;
+  }
+  set->items[set->count++] = actor;
+}
+static qa_save_value *saved_value(qa_actor_id actor) {
+  qa_saved_actor_id saved = qa_saved_actor_id_of(actor);
+  qa_save_value *object = qa_save_value_object();
+  if (object == NULL || !qa_save_value_set(object, "slot", qa_save_value_number(saved.slot))
+      || !qa_save_value_set(object, "generation", qa_save_value_number(saved.generation))) qa_range_error("Out of memory");
+  return object;
+}
+static void set_field(qa_save_value *object, const char *key, qa_save_value *value) {
+  if (value == NULL || !qa_save_value_set(object, key, value)) qa_range_error("Out of memory");
+}
+static qa_actor_id reference_saved(void *ctx, qa_saved_actor_id saved) {
+  return qa_session_actor_registry_reference_saved(((qa_app_q3_selected_source *)ctx)->host.actors, saved, "checkpoint");
+}
+static qa_q3_game_entity *native(qa_app_q3_selected_source *source, bool has_actor, qa_actor_id actor) {
+  return qa_q3_base_entity_records_native_by_actor(source->records, has_actor, actor);
+}
+static bool has_player(qa_app_q3_selected_source *source, qa_actor_id actor) {
+  qa_app_q3_selected_client_pose pose;
+  return source->host.player(source->host.ctx, actor, &pose);
+}
+static bool has_body(qa_app_q3_selected_source *source, qa_actor_id actor) {
+  return qa_shared_body_table_read(source->host.bodies, actor).has_value;
+}
+
+void qa_app_restore_legacy_q3_source(qa_app_q3_selected_source *source, const qa_app_legacy_q3_source *saved,
+    qa_q3_game_entity *(*project)(void *ctx, qa_actor_id actor), void *project_ctx) {
+  qa_session_actor_registry *actors = source->host.actors;
+  qa_q3_entity_pool *pool = &source->pool;
+  if (source->host.product != QA_Q3_BASE_PRODUCT_BASEQ3) qa_range_error("Legacy ballistics require the base Q3 source");
+  actor_set hooks = {0}, references = {0};
+  for (size_t i = 0; i < saved->projectile_count; i++) {
+    const qa_app_q3_projectile_state *state = &saved->projectiles[i];
+    qa_session_actor_registry_assert_owned(actors, state->base.actor);
     bool duplicate = false;
-    for (size_t j = 0; j < i; j++) if (qa_same_actor(saved.projectiles[j].base.actor.id, state->base.actor.id) && saved.projectiles[j].base.actor.token == state->base.actor.token) duplicate = true;
-    double slot; bool has_client;
-    bool native = host.native_slot(host.ctx, state->base.actor.id, &slot, &has_client);
-    if (!state->base.actor.owner || !host.provider || strcmp(state->base.actor.owner, host.provider) != 0
-        || duplicate || native || !host.body_exists(host.ctx, state->base.actor.id))
+    for (size_t j = 0; j < i; j++) if (qa_same_owned_actor(saved->projectiles[j].base.actor, state->base.actor)) duplicate = true;
+    if (state->base.actor.owner == NULL || source->host.provider == NULL || strcmp(state->base.actor.owner, source->host.provider) != 0
+        || duplicate || native(source, true, state->base.actor.id) != NULL || !has_body(source, state->base.actor.id))
       qa_range_error("Legacy projectile has no unique owned body");
-    references[reference_count++] = state->base.owner;
-    if (state->base.has_pass) references[reference_count++] = state->base.pass;
+    set_add(&references, state->base.owner);
+    if (state->base.has_pass) set_add(&references, state->base.pass);
     if (state->phase == QA_APP_Q3_PROJECTILE_ATTACHED && state->base.weapon != 10)
       qa_range_error("Only a legacy grappling hook can be attached");
     if (state->base.weapon == 10) {
-      bool seen = false;
-      for (size_t j = 0; j < hook_count; j++) if (same_id(hooks[j], state->base.owner)) seen = true;
-      if (seen || !host.has_player(host.ctx, state->base.owner)) qa_range_error("Legacy grappling hook has no unique live player");
-      hooks[hook_count++] = state->base.owner;
+      if (set_has(&hooks, state->base.owner) || !has_player(source, state->base.owner))
+        qa_range_error("Legacy grappling hook has no unique live player");
+      set_add(&hooks, state->base.owner);
     }
-    if (state->phase == QA_APP_Q3_PROJECTILE_ATTACHED && state->has_attached_target) references[reference_count++] = state->attached_target;
-    if (state->phase == QA_APP_Q3_PROJECTILE_EVENT && state->impact.has_target) references[reference_count++] = state->impact.target;
+    if (state->phase == QA_APP_Q3_PROJECTILE_ATTACHED && state->has_attached_target) set_add(&references, state->attached_target);
+    if (state->phase == QA_APP_Q3_PROJECTILE_EVENT && state->impact.has_target) set_add(&references, state->impact.target);
   }
   for (int group = 0; group < 2; group++) {
-    size_t count = group == 0 ? saved.statistics_count : saved.hook_held_count;
+    size_t count = group == 0 ? saved->statistics_count : saved->hook_held_count;
     for (size_t i = 0; i < count; i++) {
-      qa_owned_actor actor = group == 0 ? saved.statistics[i].actor : saved.hook_held[i];
+      qa_owned_actor actor = group == 0 ? saved->statistics[i].actor : saved->hook_held[i];
       for (size_t j = 0; j < i; j++) {
-        qa_owned_actor other = group == 0 ? saved.statistics[j].actor : saved.hook_held[j];
-        if (qa_same_actor(other.id, actor.id) && other.token == actor.token)
-          qa_range_error("Legacy Q3 client continuation has no unique live player");
+        qa_owned_actor other = group == 0 ? saved->statistics[j].actor : saved->hook_held[j];
+        if (qa_same_owned_actor(other, actor)) qa_range_error("Legacy Q3 client continuation has no unique live player");
       }
-      if (!host.has_player(host.ctx, actor.id)) qa_range_error("Legacy Q3 client continuation has no unique live player");
-      references[reference_count++] = actor.id;
+    }
+    for (size_t i = 0; i < count; i++) {
+      qa_owned_actor actor = group == 0 ? saved->statistics[i].actor : saved->hook_held[i];
+      if (!has_player(source, actor.id)) qa_range_error("Legacy Q3 client continuation has no unique live player");
+    }
+    for (size_t i = 0; i < count; i++) set_add(&references, group == 0 ? saved->statistics[i].actor.id : saved->hook_held[i].id);
+  }
+  size_t foreign_non_players = 0;
+  for (size_t i = 0; i < references.count; i++) {
+    qa_actor_id actor = references.items[i];
+    bool owned_projectile = false;
+    for (size_t j = 0; j < saved->projectile_count; j++) if (qa_same_actor(saved->projectiles[j].base.actor.id, actor)) owned_projectile = true;
+    if (!qa_session_actor_registry_is_live(actors, actor) || native(source, true, actor) != NULL || owned_projectile) continue;
+    if (!has_body(source, actor)) qa_range_error("Legacy Q3 reference has no body");
+    if (!has_player(source, actor)) foreign_non_players++;
+  }
+  size_t slot_count = 0;
+  double *slots = calloc(1022 - QA_Q3_MAX_CLIENTS, sizeof *slots);
+  if (slots == NULL) qa_range_error("Out of memory");
+  for (double slot = QA_Q3_MAX_CLIENTS; slot < 1022; slot++)
+    if (!qa_q3_game_entity_inuse(qa_q3_entity_pool_at(pool, slot))) slots[slot_count++] = slot;
+  if (slot_count < saved->projectile_count + foreign_non_players)
+    qa_range_error("Legacy Q3 projectiles exceed original source entity capacity");
+  qa_q3_game_entity **entities = calloc(saved->projectile_count ? saved->projectile_count : 1, sizeof *entities);
+  if (entities == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < saved->projectile_count; i++) {
+    if (i >= slot_count) qa_range_error("Legacy Q3 entity slot is missing");
+    double slot = slots[i];
+    entities[i] = qa_q3_base_entity_records_adopt(source->records, slot, saved->projectiles[i].base.actor);
+    if (slot >= pool->num_entities) {
+      qa_q3_pool_counts counts = {slot + 1, source->host.max_clients};
+      qa_q3_entity_pool_restore_counts(pool, counts);
     }
   }
-  qa_actor_id foreign[256]; size_t foreign_count = 0;
-  for (size_t i = 0; i < reference_count; i++) {
-    bool seen = false;
-    for (size_t j = 0; j < foreign_count; j++) if (same_id(foreign[j], references[i])) seen = true;
-    if (seen) continue;
-    double slot; bool has_client;
-    bool owned_projectile = false;
-    for (size_t j = 0; j < saved.projectile_count; j++) if (same_id(saved.projectiles[j].base.actor.id, references[i])) owned_projectile = true;
-    if (host.is_live(host.ctx, references[i]) && !host.native_slot(host.ctx, references[i], &slot, &has_client) && !owned_projectile)
-      foreign[foreign_count++] = references[i];
-  }
-  for (size_t i = 0; i < foreign_count; i++)
-    if (!host.body_exists(host.ctx, foreign[i])) qa_range_error("Legacy Q3 reference has no body");
-  double slots[1024]; size_t slot_count = 0;
-  for (double slot = 64; slot < 1022; slot++) if (!host.pool_inuse(host.ctx, slot)) slots[slot_count++] = slot;
-  size_t foreign_non_players = 0;
-  for (size_t i = 0; i < foreign_count; i++) if (!host.has_player(host.ctx, foreign[i])) foreign_non_players++;
-  if (slot_count < saved.projectile_count + foreign_non_players)
-    qa_range_error("Legacy Q3 projectiles exceed original source entity capacity");
-  double entity_slots[256];
-  for (size_t i = 0; i < saved.projectile_count; i++) {
-    if (i >= slot_count) qa_range_error("Legacy Q3 entity slot is missing");
-    entity_slots[i] = slots[i];
-    host.adopt(host.ctx, slots[i], saved.projectiles[i].base.actor);
-    if (slots[i] >= host.pool_num_entities(host.ctx)) host.pool_restore_counts(host.ctx, slots[i] + 1, host.max_clients);
-  }
-  for (size_t i = 0; i < reference_count; i++) project(project_ctx, references[i]);
-  qa_app_legacy_continuation *continuations = calloc(saved.projectile_count ? saved.projectile_count : 1, sizeof *continuations);
-  if (!continuations) qa_range_error("Out of memory");
-  for (size_t i = 0; i < saved.projectile_count; i++) {
-    qa_app_q3_projectile_state *state = &saved.projectiles[i];
-    double slot = entity_slots[i];
-    double owner_slot; bool owner_client;
-    bool has_owner = host.native_slot(host.ctx, state->base.owner, &owner_slot, &owner_client);
-    qa_app_legacy_entity_write write; memset(&write, 0, sizeof write);
-    write.slot = slot;
-    write.classname = state->base.weapon == 4 ? "grenade" : state->base.weapon == 5 ? "rocket" : state->base.weapon == 8 ? "plasma"
-        : state->base.weapon == 9 ? "bfg" : state->base.weapon == 10 ? "hook" : "nail";
-    write.weapon = state->base.weapon; write.e_flags = state->base.flags;
-    write.e_type = QA_Q3_BASE_ET_MISSILE; write.sv_flags = QA_Q3_BASE_SVF_USE_CURRENT_ORIGIN;
-    write.owner_num = has_owner ? owner_slot : 1023;
-    write.clipmask = 0x6000001;
-    write.damage = state->base.direct; write.splash_damage = state->base.splash; write.splash_radius = state->base.radius;
-    write.method_of_death = state->base.method; write.splash_method_of_death = state->base.splash_method;
-    write.origin = state->base.damage_point;
-    write.trajectory = state->saved_trajectory;
-    write.think = state->base.weapon == 10 ? "q3.base.game.missile.fireGrapple.think" : "q3.base.game.missile.launch.think";
-    write.nextthink = state->expires;
-    if (state->base.weapon == 10) {
-      if (!has_owner || !owner_client) { free(continuations); qa_range_error("Legacy hook owner lost its source client"); }
-      write.has_parent = true; write.parent_slot = owner_slot; write.other_entity_num = owner_slot;
-      qa_app_legacy_client_write client; memset(&client, 0, sizeof client);
-      client.slot = owner_slot; client.set_hook = true; client.hook_slot = slot;
+  free(slots);
+  for (size_t i = 0; i < references.count; i++) (void)project(project_ctx, references.items[i]);
+  qa_save_value *continuations = qa_save_value_array();
+  if (continuations == NULL) qa_range_error("Out of memory");
+  for (size_t i = 0; i < saved->projectile_count; i++) {
+    const qa_app_q3_projectile_state *state = &saved->projectiles[i];
+    qa_q3_game_entity *entity = entities[i];
+    if (entity == NULL) qa_range_error("Legacy Q3 entity is missing");
+    qa_q3_game_entity *owner = native(source, true, state->base.owner);
+    double weapon = state->base.weapon;
+    qa_q3_game_entity_set_classname(entity, weapon == 4 ? "grenade" : weapon == 5 ? "rocket" : weapon == 8 ? "plasma"
+        : weapon == 9 ? "bfg" : weapon == 10 ? "hook" : "nail");
+    entity->s.weapon = weapon; entity->s.e_flags = state->base.flags;
+    entity->s.e_type = QA_Q3_BASE_ET_MISSILE; entity->r.sv_flags = QA_Q3_BASE_SVF_USE_CURRENT_ORIGIN;
+    entity->r.owner_num = owner != NULL ? owner->slot : QA_Q3_BASE_ENTITYNUM_NONE; entity->clipmask = 0x6000001;
+    entity->damage = state->base.direct; entity->splash_damage = state->base.splash; entity->splash_radius = state->base.radius;
+    entity->method_of_death = state->base.method; entity->splash_method_of_death = state->base.splash_method;
+    entity->s.origin = state->base.damage_point;
+    entity->s.pos = state->saved_trajectory;
+    entity->think = qa_q3_callback_family_resolve(&pool->callbacks.think,
+        weapon == 10 ? "q3.base.game.missile.fireGrapple.think" : "q3.base.game.missile.launch.think");
+    qa_q3_game_entity_set_nextthink(entity, state->expires);
+    if (weapon == 10) {
+      if (owner == NULL || owner->client == NULL) qa_range_error("Legacy hook owner lost its source client");
+      entity->parent = owner; entity->s.other_entity_num = owner->slot; owner->client->hook = entity;
       if (state->phase == QA_APP_Q3_PROJECTILE_ATTACHED) {
-        write.e_type = QA_Q3_BASE_ET_GRAPPLE;
-        write.think = "q3.base.game.missile.hookThink"; write.nextthink = state->next_think;
-        client.grapple_pull = true;
-        qa_vec3 origin;
-        client.grapple_point = host.entity_origin && host.entity_origin(host.ctx, slot, &origin) ? origin : state->base.damage_point;
+        entity->s.e_type = QA_Q3_BASE_ET_GRAPPLE;
+        entity->think = qa_q3_callback_family_resolve(&pool->callbacks.think, "q3.base.game.missile.hookThink");
+        qa_q3_game_entity_set_nextthink(entity, state->next_think);
+        owner->client->ps.pm_flags = (double)(qa_js_to_int32(owner->client->ps.pm_flags) | QA_Q3_FLAG_GRAPPLE_PULL);
+        owner->client->ps.grapple_point = qa_q3_base_entity_shared_current_origin(&entity->r);
       }
-      host.client_write(host.ctx, client);
     }
     if (state->phase == QA_APP_Q3_PROJECTILE_EVENT) {
-      write.free_after_event = true; write.e_type = QA_Q3_BASE_ET_GENERAL; write.event_time = state->phase_time;
-      write.event = state->impact.flesh ? QA_Q3_EV_MISSILE_HIT
-          : (((long long)state->impact.surface_flags) & 0x1000) != 0 ? QA_Q3_EV_MISSILE_MISS_METAL : QA_Q3_EV_MISSILE_MISS;
-      write.event_parm = qa_q3_base_direction_to_byte(&state->impact.normal);
-      double target_slot; bool target_client;
-      write.other_entity_num = state->impact.has_target && host.native_slot(host.ctx, state->impact.target, &target_slot, &target_client) ? target_slot : 1023;
+      entity->free_after_event = true; entity->s.e_type = QA_Q3_BASE_ET_GENERAL; entity->event_time = state->phase_time;
+      entity->s.event = state->impact.flesh ? QA_Q3_EV_MISSILE_HIT
+          : (qa_js_to_int32(state->impact.surface_flags) & 0x1000) != 0 ? QA_Q3_EV_MISSILE_MISS_METAL : QA_Q3_EV_MISSILE_MISS;
+      entity->s.event_parm = qa_q3_base_direction_to_byte(&state->impact.normal);
+      qa_q3_game_entity *target = native(source, state->impact.has_target, state->impact.target);
+      entity->s.other_entity_num = target != NULL ? target->slot : QA_Q3_BASE_ENTITYNUM_NONE;
     }
-    host.entity_write(host.ctx, write);
-    continuations[i].entity = slot;
-    continuations[i].actor = qa_saved_actor_id_of(state->base.actor.id);
-    continuations[i].owner = qa_saved_actor_id_of(state->base.owner);
-    continuations[i].has_pass = state->base.has_pass;
-    if (state->base.has_pass) continuations[i].pass = qa_saved_actor_id_of(state->base.pass);
+    qa_save_value *row = qa_save_value_object(), *attachment = qa_save_value_object();
+    if (row == NULL || attachment == NULL) qa_range_error("Out of memory");
+    set_field(row, "entity", qa_save_value_number(entity->slot));
+    set_field(row, "actor", saved_value(state->base.actor.id));
+    set_field(row, "owner", saved_value(state->base.owner));
+    set_field(row, "pass", state->base.has_pass ? saved_value(state->base.pass) : qa_save_value_null());
+    set_field(row, "trigger", qa_save_value_null());
     if (state->phase == QA_APP_Q3_PROJECTILE_ATTACHED && state->has_attached_target) {
-      continuations[i].has_attachment = true;
-      continuations[i].attachment_actor = qa_saved_actor_id_of(state->attached_target);
+      set_field(attachment, "kind", qa_save_value_string("player"));
+      set_field(attachment, "actor", saved_value(state->attached_target));
+    } else {
+      set_field(attachment, "kind", qa_save_value_string("none"));
     }
+    set_field(row, "attachment", attachment);
+    if (!qa_save_value_push(continuations, row)) qa_range_error("Out of memory");
   }
-  host.missiles_restore(host.ctx, continuations, saved.projectile_count);
-  free(continuations);
-  host.random_reset(host.ctx, saved.random_seed);
-  for (size_t i = 0; i < saved.statistics_count; i++) {
-    double slot; bool has_client;
-    if (!host.native_slot(host.ctx, saved.statistics[i].actor.id, &slot, &has_client) || !has_client)
-      qa_range_error("Legacy statistics lost their source client");
-    qa_app_legacy_client_write client; memset(&client, 0, sizeof client);
-    client.slot = slot; client.set_accuracy = true;
-    client.accuracy_shots = saved.statistics[i].shots;
-    client.accuracy_hits = saved.statistics[i].rail.hits;
-    client.accurate_count = saved.statistics[i].rail.streak;
-    client.impressive_count = saved.statistics[i].rail.impressive_count;
-    client.reward_until = saved.statistics[i].rail.reward_until;
-    client.reward_flag = saved.statistics[i].rail.reward_until > saved.milliseconds;
-    host.client_write(host.ctx, client);
+  free(entities);
+  qa_q3_missile_runtime_restore_save_state(&source->missiles, continuations, reference_saved, source);
+  qa_save_value_free(continuations);
+  qa_game_random_reset(&source->random, (int64_t)saved->random_seed);
+  for (size_t i = 0; i < saved->statistics_count; i++) {
+    const qa_app_q3_weapon_statistics *state = &saved->statistics[i];
+    qa_q3_game_entity *entity = native(source, true, state->actor.id);
+    qa_q3_game_client *client = entity != NULL ? entity->client : NULL;
+    if (client == NULL) qa_range_error("Legacy statistics lost their source client");
+    client->accuracy_shots = state->shots; client->accuracy_hits = state->rail.hits; client->accurate_count = state->rail.streak;
+    qa_q3_base_player_state_slots_set(&client->ps.persistant, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT, state->rail.impressive_count);
+    client->reward_time = state->rail.reward_until;
+    if (state->rail.reward_until > saved->milliseconds) client->ps.e_flags = (double)(qa_js_to_int32(client->ps.e_flags) | 0x8000);
   }
-  for (size_t i = 0; i < saved.hook_held_count; i++) {
-    double slot; bool has_client;
-    if (!host.native_slot(host.ctx, saved.hook_held[i].id, &slot, &has_client) || !has_client)
-      qa_range_error("Legacy hook latch lost its source client");
-    qa_app_legacy_client_write client; memset(&client, 0, sizeof client);
-    client.slot = slot; client.fire_held = true;
-    host.client_write(host.ctx, client);
+  for (size_t i = 0; i < saved->hook_held_count; i++) {
+    qa_q3_game_entity *entity = native(source, true, saved->hook_held[i].id);
+    qa_q3_game_client *client = entity != NULL ? entity->client : NULL;
+    if (client == NULL) qa_range_error("Legacy hook latch lost its source client");
+    client->fire_held = true;
   }
+  free(hooks.items); free(references.items);
 }

@@ -1,6 +1,7 @@
 /* Port of src/network/q3/download.ts. GPL-2.0-or-later. */
 #include "qa/network/q3/download.h"
 #include "qa/core/common_error.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q3/pure.h"
 #include <math.h>
@@ -51,7 +52,9 @@ void qa_q3_server_download_begin(qa_q3_server_download *d, const char *name) {
 }
 void qa_q3_server_download_acknowledge(qa_q3_server_download *d, int64_t block, double time) {
   if (block != d->client_block) { d->bindings.drop(d->bindings.ctx, "broken download"); return; }
-  if (d->block_sizes[d->client_block % 8] == 0) { qa_q3_server_download_close(d); return; }
+  /* TS blockSizes[clientBlock % 8]: a negative index reads undefined, never 0. */
+  int index = d->client_block % 8;
+  if (index >= 0 && d->block_sizes[index] == 0) { qa_q3_server_download_close(d); return; }
   d->send_time = time;
   d->client_block = (int32_t)((uint32_t)d->client_block + 1u);
 }
@@ -91,14 +94,14 @@ static bool download_open(qa_q3_server_download *d, qa_q3_message_writer *writer
 }
 void qa_q3_server_download_write(qa_q3_server_download *d, qa_q3_message_writer *writer, double time, const qa_q3_download_rate *settings) {
   if (d->name[0] == 0 || (!d->has_file && !download_open(d, writer))) return;
-  if (!d->has_file) qa_range_error("Opened Q3 download has no file");
+  if (!d->has_file) qa_raise("Error", 0, 0, "Opened Q3 download has no file");
   while ((int64_t)d->current_block - d->client_block < 8 && d->size != d->count) {
     int index = d->current_block % 8;
     if (index < 0) qa_range_error("Missing download block storage");
     int64_t bytes = d->file.read(d->file.ctx, d->blocks[index], 2048);
     if (bytes <= 0 || bytes > 2048 || d->count + bytes > d->size) {
       qa_q3_server_download_close(d);
-      qa_range_error("Source download file changed or returned an invalid read");
+      qa_raise("Error", 0, 0, "Source download file changed or returned an invalid read");
     }
     d->block_sizes[index] = (int32_t)bytes;
     d->count = (int32_t)(d->count + bytes);
@@ -118,7 +121,7 @@ void qa_q3_server_download_write(qa_q3_server_download *d, qa_q3_message_writer 
   if (rate == 0) blocks = 1;
   else {
     /* Math.trunc(((Math.trunc(Math.imul(rate, snapshotMsec)/1000)+2048)|0)/2048) */
-    int32_t imul = (int32_t)((uint32_t)(int32_t)rate * (uint32_t)(int32_t)settings->snapshot_msec);
+    int32_t imul = (int32_t)((uint32_t)qa_int32(rate) * (uint32_t)qa_int32(settings->snapshot_msec));
     int32_t inner = (int32_t)((uint32_t)(int32_t)trunc(imul / 1000.0) + 2048u);
     blocks = (int64_t)trunc(inner / 2048.0);
   }
@@ -126,7 +129,7 @@ void qa_q3_server_download_write(qa_q3_server_download *d, qa_q3_message_writer 
   while (blocks-- > 0) {
     if (d->client_block == d->current_block) return;
     if (d->xmit_block == d->current_block) {
-      if ((int32_t)(time - d->send_time) > 1000) d->xmit_block = d->client_block;
+      if (qa_int32(time - d->send_time) > 1000) d->xmit_block = d->client_block;
       else return;
     }
     int index = d->xmit_block % 8;

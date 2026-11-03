@@ -61,21 +61,16 @@ typedef struct qa_app_q2_remote_mounts {
    * by the caller-side content owner. */
   bool (*open_scoped)(void *ctx, const char *path, bool game_local);
 } qa_app_q2_remote_mounts;
-/* Accessors over Q2ApplicationGameState's data/configStrings. */
-typedef struct qa_app_q2_state_access {
-  const char *(*gamedir)(const void *data);
-  const char *(*config_string)(const void *config_strings, double index);
-} qa_app_q2_state_access;
 typedef struct qa_app_q2_download_receiver qa_app_q2_download_receiver;
 /* permission NULL means the TS default allow-all. refresh_packages
- * NULL is TS undefined. */
+ * NULL is TS undefined. Game states are the receiver's: data a
+ * qa_q2_server_data_result, configStrings a qa_app_q2_config_snapshot. */
 qa_app_q2_download_receiver *qa_app_q2_download_receiver_create(
     const qa_app_q2_remote_mounts *(*content)(void *ctx), void *content_ctx,
     void (*command)(void *ctx, const char *text), void *command_ctx,
     void (*print)(void *ctx, const char *text), void *print_ctx,
     void (*refresh_packages)(void *ctx), void *refresh_ctx,
-    const qa_app_client_download_permission *permission,
-    qa_app_q2_state_access state_access);
+    const qa_app_client_download_permission *permission);
 void qa_app_q2_download_receiver_destroy(qa_app_q2_download_receiver *receiver);
 size_t qa_app_q2_download_receiver_progress(qa_app_q2_download_receiver *receiver,
     qa_app_client_download_progress *out, size_t capacity);

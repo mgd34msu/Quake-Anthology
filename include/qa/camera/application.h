@@ -19,9 +19,8 @@
  *    qa_application_spline_camera_unregister(camera, commands).
  *    Registration bookkeeping is owned by the camera; init/destroy
  *    replace the constructor/GC.
- *  - apply() is not yet ported: it needs perspectiveProjection from
- *    the unported src/render/scene/view.ts. No declaration is made
- *    for it until that module lands.
+ *  - apply() takes the TS default `milliseconds = services.milliseconds()`
+ *    explicitly; callers pass services.milliseconds(ctx) for the default.
  */
 #ifndef QA_CAMERA_APPLICATION_H
 #define QA_CAMERA_APPLICATION_H
@@ -31,6 +30,7 @@
 
 #include "qa/camera/spline.h"
 #include "qa/core/commands/index.h"
+#include "qa/contracts/render.h"
 
 /* TS ApplicationCameraServices. */
 typedef struct qa_application_camera_services {
@@ -79,6 +79,9 @@ void qa_application_spline_camera_stop(qa_application_spline_camera *camera);
 void qa_application_spline_camera_reset(qa_application_spline_camera *camera);
 /* No-op: queued work already ran synchronously. */
 void qa_application_spline_camera_drain(qa_application_spline_camera *camera);
+/* TS apply(camera, milliseconds): the playback's view override, or camera unchanged. */
+qa_scene_camera qa_application_spline_camera_apply(qa_application_spline_camera *camera, qa_scene_camera scene,
+                                                   double milliseconds);
 /* TS async close; synchronous here. Leaves the camera reusable. */
 void qa_application_spline_camera_close(qa_application_spline_camera *camera);
 

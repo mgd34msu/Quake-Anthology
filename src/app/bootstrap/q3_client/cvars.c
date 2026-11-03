@@ -6,6 +6,7 @@
 #include <string.h>
 #include "qa/core/cvars/info.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef struct handle_entry {
   qa_cvar_registry *owner;
   char *name;
@@ -59,7 +60,7 @@ bool qa_app_q3_client_cvars_register(qa_app_q3_client_cvars *c, const char *name
     double effective = has_flags ? flags : 0;
     bool alias = canonical == NULL || strcmp(canonical, name) != 0;
     free(canonical);
-    if (alias && (((int64_t)effective) & (QA_CVAR_FLAG_USER_INFO | QA_CVAR_FLAG_SERVER_INFO | QA_CVAR_FLAG_SYSTEM_INFO)) != 0)
+    if (alias && ((qa_js_to_int32(effective)) & (QA_CVAR_FLAG_USER_INFO | QA_CVAR_FLAG_SERVER_INFO | QA_CVAR_FLAG_SYSTEM_INFO)) != 0)
       qa_range_error("Cvar alias %s requires an explicit protocol info-key mapping", name);
     if (!qa_cvar_registry_get(owner, name, out))
       qa_range_error("Unknown guest cvars require a Q3 seat owner");
@@ -149,7 +150,7 @@ char *qa_app_q3_client_cvars_info_string(qa_app_q3_client_cvars *c, double flags
         && (value->flags & QA_Q2_CVAR_FLAG_PRIVATE) != 0;
       if (owner_of(c, value->name) != owner || (projected & (int64_t)flags) == 0 || q2_private) continue;
       qa_info_options options = {QA_COMMAND_DIALECT_Q3, (int64_t)max_len,
-        ((int64_t)flags & QA_CVAR_FLAG_USER_INFO) != 0 ? QA_CVAR_INFO_CLIENT_USERINFO : QA_CVAR_INFO_SERVER_INFO,
+        (qa_js_to_int32(flags) & QA_CVAR_FLAG_USER_INFO) != 0 ? QA_CVAR_INFO_CLIENT_USERINFO : QA_CVAR_INFO_SERVER_INFO,
         false, print_bridge, c};
       char *next = qa_set_info_value(result, value->name, value->value, &options);
       free(result);

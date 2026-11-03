@@ -1,6 +1,6 @@
 /*
- * Port of src/formats/q3-model/text.ts. ModelTextError aborts printing
- * "ModelTextError: <source>:<offset>: <message>". The generic
+ * Port of src/formats/q3-model/text.ts. ModelTextError raises the catchable
+ * "ModelTextError" ("<source>:<offset>: <message>", detail = offset). The generic
  * indexedRecords becomes an element-size callback form.
  * GPL-2.0-or-later.
  */

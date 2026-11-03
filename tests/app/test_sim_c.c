@@ -30,8 +30,10 @@
 #include "qa/app/bootstrap/simulation/weapon_slot.h"
 #include "qa/app/bootstrap/simulation/events.h"
 #include "qa/app/bootstrap/simulation/physics.h"
+#include "qa/app/bootstrap/content.h"
 #include "qa/core/cvars/index.h"
 #include "qa/core/numeric.h"
+#include "qa/formats/q1_map.h"
 #include "qa/world/actors/body.h"
 #include "qa/world/actors/callbacks.h"
 #include "qa/world/collision/index.h"
@@ -211,7 +213,7 @@ static void dispose_slot(void *ctx, double slot, qa_app_sim_rerelease_binding_en
 static void test_retire(void) {
   qa_actor_id actor; memset(&actor, 0, sizeof actor); actor.slot = 3;
   qa_app_sim_rerelease_slot_entry slots[1] = {{actor, 7}};
-  qa_app_sim_rerelease_binding_entry bindings[1] = {{7, actor, "target", 0}};
+  qa_app_sim_rerelease_binding_entry bindings[1] = {{7, actor, "target", 0, {actor, NULL, NULL}}};
   qa_app_sim_rerelease_retired_entry retired[1];
   size_t sc = 1, bc = 1, rc = 1;
   retired[0].actor = actor;
@@ -258,7 +260,7 @@ static void test_fog(void) {
   event.density = 0.1; event.color = (qa_vec3){0.5f, 0.5f, 0.5f}; event.duration = 1; event.sky_factor = 2;
   size_t count = 0;
   const qa_app_sim_presentation_event *events = qa_app_sim_q1_fog_update(fog, ctx, event, &count);
-  CHECK(count == 1 && events[0].sky_factor == 1);
+  CHECK(count == 1 && events[0].q1_fog.sky_factor == 1);
   qa_save_value *capture = qa_app_sim_q1_fog_capture(fog);
   CHECK(capture != NULL);
   qa_save_value_free(capture);
@@ -322,6 +324,7 @@ typedef struct phys_fixture {
   qa_owned_actor world;
   double blocked_positions[2];
   int blocked_calls;
+  const char *family; /* TS setup(family): solid family of phys_actor and the numeric profile */
 } phys_fixture;
 static bool phys_world_actor(void *ctx, qa_actor_id *out) {
   *out = ((phys_fixture *)ctx)->world.id; return true;
@@ -337,8 +340,9 @@ static void phys_on_blocked(void *ctx, qa_owned_actor pusher, qa_actor_id other)
   f->blocked_positions[1] = o.has_value ? o.value.origin.x : -999;
   f->blocked_calls++;
 }
-static void phys_setup(phys_fixture *f) {
+static void phys_setup_family(phys_fixture *f, const char *family) {
   memset(f, 0, sizeof *f);
+  f->family = family;
   CHECK(qa_identity_owner_create(&f->identity, "physics-test"));
   f->actors = qa_session_actor_registry_create(&f->identity, 1024);
   CHECK(f->actors != NULL);
@@ -354,7 +358,7 @@ static void phys_setup(phys_fixture *f) {
   options.actors = f->actors;
   options.callbacks = f->callbacks;
   options.scene = f->scene;
-  options.numeric = qa_q2_donor_profile;
+  options.numeric = strcmp(family, "q1") == 0 ? qa_q1_donor_profile : qa_q2_donor_profile;
   options.source_order = phys_source_order;
   options.world_actor = phys_world_actor;
   options.on_blocked = phys_on_blocked;
@@ -362,6 +366,7 @@ static void phys_setup(phys_fixture *f) {
   f->physics = qa_app_sim_shared_physics_create(options);
   CHECK(f->physics != NULL);
 }
+static void phys_setup(phys_fixture *f) { phys_setup_family(f, "q2"); }
 static void phys_teardown(phys_fixture *f) {
   qa_app_sim_shared_physics_destroy(f->physics);
   qa_shared_scene_queries_destroy(f->scene);
@@ -374,7 +379,7 @@ static qa_owned_actor phys_actor(phys_fixture *f, const char *name, qa_vec3 orig
   body.origin = origin; body.bounds = bounds;
   qa_shared_body_table_create_body(qa_app_sim_shared_physics_bodies(f->physics), actor, body);
   qa_app_sim_shared_solid solid; memset(&solid, 0, sizeof solid);
-  solid.solid = "box"; solid.family = "q2";
+  solid.solid = "box"; solid.family = f->family;
   qa_app_sim_shared_physics_set_solid(f->physics, actor, solid);
   qa_q2_motion motion; memset(&motion, 0, sizeof motion);
   motion.kind = kind; motion.gravity = 1;
@@ -490,6 +495,82 @@ static void test_physics_push_retry(void) {
   CHECK(!qa_session_actor_registry_is_live(f.actors, obstacle.id));
   CHECK(phys_read(&f, mover.id).origin.x == 10);
   CHECK(env.seen_count == 1 && env.seen == 10);
+  phys_teardown(&f);
+}
+/* physics.test.ts "a Q1 toss body keeps its ground when the supporting edict is freed, while a Q2 body does not". */
+static void test_physics_freed_ground(void) {
+  const char *families[2] = {"q1", "q2"};
+  for (int i = 0; i < 2; i++) {
+    phys_fixture f; phys_setup_family(&f, families[i]);
+    qa_owned_actor support = phys_actor(&f, "test:support", (qa_vec3){0, 0, 0}, "stationary", unit_bounds());
+    qa_owned_actor item = phys_actor(&f, "test:item", (qa_vec3){0, 0, 100}, "toss", unit_bounds());
+    qa_body_state body = phys_read(&f, item.id);
+    qa_actor_id ground = support.id;
+    body.ground = &ground;
+    qa_shared_body_table_write(qa_app_sim_shared_physics_bodies(f.physics), item, body);
+    qa_session_actor_registry_release(f.actors, support);
+    (void)qa_app_sim_shared_physics_step(f.physics, item, 0.1);
+    qa_body_state after = phys_read(&f, item.id);
+    CHECK((after.ground == NULL) == (i == 1));
+    if (i == 0) CHECK(after.origin.x == 0 && after.origin.y == 0 && after.origin.z == 100);
+    phys_teardown(&f);
+  }
+}
+/* physics.test.ts "Q1 push touches triggers before impact, rechecking mover liveness after each callback". */
+typedef struct order_env { phys_fixture *f; qa_owned_actor mover, blocker; bool release_on_impact; char log[4][8]; int count; } order_env;
+static void order_mover_touch(void *ctx, qa_touch_contact contact) {
+  order_env *e = ctx;
+  if (!qa_same_actor(contact.other, e->blocker.id)) return;
+  if (e->count < 4) snprintf(e->log[e->count++], sizeof e->log[0], "impact");
+  if (e->release_on_impact) qa_session_actor_registry_release(e->f->actors, e->mover);
+}
+static void order_trigger_touch(void *ctx, qa_touch_contact contact) {
+  (void)contact;
+  order_env *e = ctx;
+  if (e->count < 4) snprintf(e->log[e->count++], sizeof e->log[0], "trigger");
+  if (!e->release_on_impact) qa_session_actor_registry_release(e->f->actors, e->mover);
+}
+static void test_physics_q1_trigger_before_impact(void) {
+  for (int mode = 0; mode < 2; mode++) {
+    phys_fixture f; phys_setup_family(&f, "q1");
+    qa_owned_actor mover = phys_actor(&f, "test:flyer", (qa_vec3){0, 0, 0}, "fly", unit_bounds());
+    qa_owned_actor blocker = phys_actor(&f, "test:blocker", (qa_vec3){5, 0, 0}, "stationary", unit_bounds());
+    qa_owned_actor trigger = phys_actor(&f, "test:trigger", (qa_vec3){3, 0, 0}, "stationary", unit_bounds());
+    qa_app_sim_shared_solid solid; memset(&solid, 0, sizeof solid);
+    solid.solid = "trigger"; solid.family = "q1";
+    qa_app_sim_shared_physics_set_solid(f.physics, trigger, solid);
+    order_env env; memset(&env, 0, sizeof env);
+    env.f = &f; env.mover = mover; env.blocker = blocker; env.release_on_impact = mode == 0;
+    bind_touch(&f, mover, order_mover_touch, &env);
+    bind_touch(&f, trigger, order_trigger_touch, &env);
+    phys_set_motion(&f, mover, "fly", (qa_vec3){100, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+    qa_body_state body = phys_read(&f, mover.id);
+    body.velocity = (qa_vec3){100, 0, 0};
+    qa_shared_body_table_write(qa_app_sim_shared_physics_bodies(f.physics), mover, body);
+    (void)qa_app_sim_shared_physics_step(f.physics, mover, 0.1);
+    if (mode == 0) CHECK(env.count == 2 && strcmp(env.log[0], "trigger") == 0 && strcmp(env.log[1], "impact") == 0);
+    else CHECK(env.count == 1 && strcmp(env.log[0], "trigger") == 0);
+    phys_teardown(&f);
+  }
+}
+/* physics.test.ts "Q1 missile that starts inside another solid still impacts it". */
+typedef struct inside_env { qa_actor_id blocker; bool touched; } inside_env;
+static void inside_touch(void *ctx, qa_touch_contact contact) {
+  inside_env *e = ctx;
+  if (qa_same_actor(contact.other, e->blocker)) e->touched = true;
+}
+static void test_physics_q1_start_solid_impact(void) {
+  phys_fixture f; phys_setup_family(&f, "q1");
+  qa_owned_actor mover = phys_actor(&f, "test:flyer", (qa_vec3){0, 0, 0}, "fly-missile", unit_bounds());
+  qa_owned_actor blocker = phys_actor(&f, "test:blocker", (qa_vec3){0.5, 0, 0}, "stationary", unit_bounds());
+  inside_env env = {blocker.id, false};
+  bind_touch(&f, mover, inside_touch, &env);
+  phys_set_motion(&f, mover, "fly-missile", (qa_vec3){1000, 0, 0}, (qa_vec3){0, 0, 0}, 0x6000003);
+  qa_body_state body = phys_read(&f, mover.id);
+  body.velocity = (qa_vec3){1000, 0, 0};
+  qa_shared_body_table_write(qa_app_sim_shared_physics_bodies(f.physics), mover, body);
+  (void)qa_app_sim_shared_physics_step(f.physics, mover, 0.05);
+  CHECK(env.touched);
   phys_teardown(&f);
 }
 static void test_physics_blocked_rollback(void) {
@@ -699,14 +780,18 @@ static void test_simulation_events(void) {
   CHECK(taken[0].payload.has_source_presentation_sequence
       && taken[0].payload.source_presentation_sequence == 41);
   /* Q2 weapon muzzleflash and composition match-status mapping. */
+  qa_q2w_event flash; memset(&flash, 0, sizeof flash);
+  flash.kind = QA_Q2W_EVENT_MUZZLEFLASH; flash.actor = &player.id; flash.flash = 9;
   memset(&source, 0, sizeof source);
-  source.kind = "q2-weapon"; source.weapon_kind = "muzzleflash";
-  source.weapon_actor = player.id; source.weapon_flash = 9;
+  source.kind = "q2-weapon"; source.q2_weapon = &flash;
   (void)qa_app_sim_simulation_events_emit_owned(events, false, owner, "q2:base", source,
       false, (qa_source_time){0, 0}, false, player.id);
+  qa_q2_ctf_event status; memset(&status, 0, sizeof status);
+  status.kind = "match-status"; status.text = " tied";
+  qa_q2_composition_event composition; memset(&composition, 0, sizeof composition);
+  composition.kind = QA_Q2_COMPOSITION_EVENT_CTF; composition.ctf = &status;
   memset(&source, 0, sizeof source);
-  source.kind = "q2-composition"; source.composition_kind = "ctf";
-  source.composition_event_kind = "match-status"; source.composition_text = " tied";
+  source.kind = "q2-composition"; source.q2_composition = &composition;
   (void)qa_app_sim_simulation_events_emit_owned(events, false, owner, "q2:base", source,
       false, (qa_source_time){0, 0}, false, player.id);
   taken = qa_app_sim_simulation_events_take(events, &count);
@@ -815,6 +900,216 @@ static void test_frame_pipeline(void) {
   qa_app_sim_simulation_events_destroy(events);
   phys_teardown(&f);
 }
+/* --- Concrete host per-boundary dispatch: the test_frame_pipeline
+ * scenario (Q2-classic, two fly-missile actors, per-boundary think
+ * messages) driven through qa_app_sim_shared_simulation_step on the
+ * concrete host instead of hand-driven stages. Same outcomes:
+ * boundaries 2+1+1, events 4/2/2 alternating first/second with
+ * consecutive sequences, bodies at x 20/30/40 and 10/15/20. --- */
+static qa_q1_map conc_q1_map;
+static qa_q1_entity conc_entities[2];
+static qa_q1_entity_property conc_world_props[1], conc_start_props[3];
+static qa_provider_reference conc_weapons[1];
+static qa_provider_timing conc_timing[1];
+static qa_execution_module conc_execution[1];
+static qa_app_application_world conc_app_world;
+static void conc_build_map(void) {
+  build_empty_world();
+  conc_world_props[0] = (qa_q1_entity_property){"classname", "worldspawn"};
+  conc_start_props[0] = (qa_q1_entity_property){"classname", "info_player_start"};
+  conc_start_props[1] = (qa_q1_entity_property){"origin", "32 64 128"};
+  conc_start_props[2] = (qa_q1_entity_property){"angle", "90"};
+  conc_entities[0] = (qa_q1_entity){conc_world_props, 1};
+  conc_entities[1] = (qa_q1_entity){conc_start_props, 3};
+  memset(&conc_q1_map, 0, sizeof conc_q1_map);
+  conc_q1_map.world = phys_geo;
+  conc_q1_map.entity_list = conc_entities; conc_q1_map.entity_count = 2;
+}
+static qa_app_simulation_options conc_options(qa_identity_owner *identity, const char *provider,
+                                              qa_clock_profile clock, qa_numeric_profile numeric) {
+  qa_app_simulation_options options; memset(&options, 0, sizeof options);
+  qa_provider_reference r = {provider, "test:installed"};
+  qa_executable_recipe *recipe = &options.recipe;
+  recipe->schema_version = 3;
+  recipe->map.geometry.requested_path = "maps/test.bsp";
+  recipe->map.geometry_content = "test:installed";
+  recipe->map.entities = r; recipe->movement = r;
+  recipe->character.definition = r; recipe->character.appearance = r;
+  conc_weapons[0] = r; recipe->weapons.values = conc_weapons; recipe->weapons.count = 1;
+  recipe->engine_behavior = r; recipe->combat = r; recipe->inventory = r;
+  recipe->match = r; recipe->transition = r;
+  conc_timing[0] = (qa_provider_timing){provider, clock, numeric};
+  recipe->timing = conc_timing; recipe->timing_count = 1;
+  recipe->ordering.kind = QA_FRAME_ORDERING_NATIVE; recipe->ordering.clock = clock;
+  memset(conc_execution, 0, sizeof conc_execution);
+  conc_execution[0].kind = QA_EXECUTION_MODULE_TYPESCRIPT;
+  conc_execution[0].owner = r; conc_execution[0].role = "server-game";
+  conc_execution[0].api.kind = QA_GAME_API_QUAKEC;
+  conc_execution[0].api.as.quakec.kind = QA_QUAKEC_API_Q1_NETQUAKE;
+  recipe->execution = conc_execution; recipe->execution_count = 1;
+  options.identity = *identity;
+  conc_app_world = (qa_app_application_world){"q1-bsp", &conc_q1_map};
+  options.world = &conc_app_world;
+  options.skill = 1; options.mode = "singleplayer"; options.seed = 7; options.max_clients = 1;
+  return options;
+}
+typedef struct conc_think_env {
+  qa_frame_scheduler *scheduler; qa_app_sim_simulation_events *events;
+  qa_owned_actor actor; const char *text; int calls; double last_time;
+} conc_think_env;
+static void conc_schedule_think(conc_think_env *e, double due_seconds) {
+  qa_think_timing timing; memset(&timing, 0, sizeof timing);
+  timing.due = (qa_source_time){QA_SOURCE_TIME_SECONDS, due_seconds};
+  timing.boundary = QA_THINK_DURING_PHYSICS;
+  timing.order.provider = e->actor.owner; timing.order.actor = e->actor.id; timing.order.sequence = 0;
+  qa_frame_scheduler_schedule(e->scheduler, e->actor, "world:think", timing);
+}
+static void conc_think(void *ctx, qa_owned_actor self, qa_frame_context frame) {
+  conc_think_env *e = ctx; (void)self;
+  e->calls++; e->last_time = frame.time.value;
+  qa_network_event print; memset(&print, 0, sizeof print);
+  print.kind = QA_NETWORK_EVENT_PRINT; print.level = 2; print.text = e->text;
+  qa_app_sim_simulation_events_message(e->events, print, false, e->actor.id, false, 0);
+  conc_schedule_think(e, frame.time.value + 0.1);
+}
+static qa_owned_actor conc_actor(qa_session_actor_registry *actors, qa_app_sim_shared_physics *physics,
+                                 const char *name, qa_vec3 origin, qa_vec3 velocity) {
+  qa_owned_actor actor = qa_session_actor_registry_allocate(actors, "q2:official", name);
+  qa_body_state body; memset(&body, 0, sizeof body);
+  body.origin = origin; body.velocity = velocity; body.bounds = unit_bounds();
+  qa_shared_body_table_create_body(qa_app_sim_shared_physics_bodies(physics), actor, body);
+  qa_app_sim_shared_solid solid; memset(&solid, 0, sizeof solid);
+  solid.solid = "box"; solid.family = "q2";
+  qa_app_sim_shared_physics_set_solid(physics, actor, solid);
+  qa_q2_motion motion; memset(&motion, 0, sizeof motion);
+  motion.kind = "fly-missile"; motion.velocity = velocity; motion.gravity = 1;
+  motion.gravity_vector = (qa_vec3){0, 0, -1}; motion.clip_mask = 0x6000003;
+  qa_app_sim_shared_physics_set_motion(physics, actor, motion);
+  qa_shared_body_table_link(qa_app_sim_shared_physics_bodies(physics), actor, NULL);
+  return actor;
+}
+static qa_body_state conc_read(qa_app_sim_shared_physics *physics, qa_actor_id actor) {
+  qa_body_state_result r = qa_shared_body_table_read(qa_app_sim_shared_physics_bodies(physics), actor);
+  CHECK(r.has_value);
+  return r.value;
+}
+static void test_concrete_boundary_dispatch(void) {
+  conc_build_map();
+  qa_identity_owner identity;
+  CHECK(qa_identity_owner_create(&identity, "concrete-dispatch"));
+  qa_session_actor_registry *actors = qa_session_actor_registry_create(&identity, 1024);
+  CHECK(actors != NULL);
+  qa_clock_profile clock; memset(&clock, 0, sizeof clock); clock.kind = QA_CLOCK_Q2_CLASSIC;
+  qa_app_simulation_options options = conc_options(&identity, "q2:official", clock, qa_q2_donor_profile);
+  qa_app_sim_shared_simulation *sim = qa_app_sim_load_simulation_concrete(
+      options, actors, qa_session_actor_registry_session(actors), NULL, NULL);
+  CHECK(sim != NULL);
+  qa_app_sim_concrete_simulation *concrete = qa_app_sim_shared_simulation_concrete(sim);
+  CHECK(concrete != NULL);
+  qa_app_sim_shared_physics *physics = qa_app_sim_concrete_simulation_physics(concrete);
+  qa_frame_scheduler *scheduler = qa_app_sim_concrete_simulation_scheduler(concrete);
+  qa_actor_callback_table *callbacks = qa_app_sim_concrete_simulation_callbacks(concrete);
+  qa_app_sim_simulation_events *events = qa_app_sim_concrete_simulation_events(concrete);
+  CHECK(physics != NULL && scheduler != NULL && callbacks != NULL && events != NULL);
+  qa_owned_actor first = conc_actor(actors, physics, "test:first", (qa_vec3){0, 0, 0}, (qa_vec3){100, 0, 0});
+  qa_owned_actor second = conc_actor(actors, physics, "test:second", (qa_vec3){0, 10, 0}, (qa_vec3){50, 0, 0});
+  conc_think_env envs[2];
+  memset(envs, 0, sizeof envs);
+  envs[0] = (conc_think_env){scheduler, events, first, "first", 0, 0};
+  envs[1] = (conc_think_env){scheduler, events, second, "second", 0, 0};
+  for (int i = 0; i < 2; i++) {
+    qa_actor_callbacks bind; memset(&bind, 0, sizeof bind);
+    bind.ctx = &envs[i]; bind.think = conc_think;
+    qa_actor_callback_table_bind(callbacks, envs[i].actor, bind);
+    conc_schedule_think(&envs[i], 0.1);
+  }
+  const size_t expected_events[3] = {4, 2, 2};
+  const double expected_x[3] = {20, 30, 40};
+  qa_input_batch input; memset(&input, 0, sizeof input); input.elapsed_milliseconds = 100;
+  for (int frame = 0; frame < 3; frame++) {
+    qa_simulation_output output = qa_app_sim_shared_simulation_step(sim, input);
+    CHECK(output.event_count == expected_events[frame]);
+    for (size_t i = 0; i < output.event_count; i++) {
+      CHECK(strcmp(output.events[i].payload.event.text, i % 2 == 0 ? "first" : "second") == 0);
+      if (i > 0) CHECK(output.events[i].sequence == output.events[i - 1].sequence + 1);
+    }
+    CHECK(conc_read(physics, first.id).origin.x == expected_x[frame]);
+    CHECK(conc_read(physics, second.id).origin.x == expected_x[frame] / 2);
+    CHECK(conc_read(physics, second.id).origin.y == 10);
+    CHECK(fabs(output.snapshot.frame.time.value - (0.2 + 0.1 * frame)) < 1e-9);
+  }
+  CHECK(envs[0].calls == 4 && envs[1].calls == 4);
+  CHECK(qa_app_sim_simulation_events_next_sequence(events) == 8);
+  /* Idle boundary (no map run): generic turns do not dispatch, even
+   * for a think already due at the current source time. */
+  conc_schedule_think(&envs[0], 0.4);
+  input.elapsed_milliseconds = 0;
+  qa_simulation_output idle = qa_app_sim_shared_simulation_step(sim, input);
+  CHECK(idle.event_count == 0);
+  CHECK(envs[0].calls == 4 && envs[1].calls == 4);
+  CHECK(conc_read(physics, first.id).origin.x == 40);
+  CHECK(fabs(idle.snapshot.frame.time.value - 0.4) < 1e-9);
+  input.elapsed_milliseconds = 100;
+  qa_simulation_output resumed = qa_app_sim_shared_simulation_step(sim, input);
+  CHECK(resumed.event_count == 2);
+  CHECK(envs[0].calls == 5 && envs[1].calls == 5);
+  CHECK(conc_read(physics, first.id).origin.x == 50);
+  qa_app_sim_shared_simulation_close(sim);
+  qa_app_sim_shared_simulation_destroy(sim);
+  qa_session_actor_registry_destroy(actors);
+  qa_identity_owner_destroy(&identity);
+}
+/* NetQuake player on a Q1 concrete source: prepare+physics run in
+ * the player's ordered turn on every run boundary, so gravity acts
+ * even on frames carrying no command (the old merged command-phase
+ * step left commandless players frozen). */
+static void test_concrete_netquake_player_turns(void) {
+  conc_build_map();
+  qa_identity_owner identity;
+  CHECK(qa_identity_owner_create(&identity, "concrete-netquake"));
+  qa_session_actor_registry *actors = qa_session_actor_registry_create(&identity, 1024);
+  CHECK(actors != NULL);
+  qa_clock_profile clock; memset(&clock, 0, sizeof clock);
+  clock.kind = QA_CLOCK_Q1_NETQUAKE;
+  clock.minimum_frame_seconds = 0.001; clock.maximum_frame_seconds = 0.1;
+  qa_app_simulation_options options = conc_options(&identity, "q1:official", clock, qa_q1_donor_profile);
+  qa_app_sim_shared_simulation *sim = qa_app_sim_load_simulation_concrete(
+      options, actors, qa_session_actor_registry_session(actors), NULL, NULL);
+  CHECK(sim != NULL);
+  qa_app_sim_concrete_simulation *concrete = qa_app_sim_shared_simulation_concrete(sim);
+  CHECK(concrete != NULL);
+  qa_client_id client = qa_identity_owner_client(&identity, 0, 1);
+  qa_app_sim_player_admission admission = qa_app_sim_concrete_simulation_admit_player(concrete, client);
+  qa_app_sim_shared_physics *physics = qa_app_sim_concrete_simulation_physics(concrete);
+  qa_body_state spawned = conc_read(physics, admission.actor);
+  CHECK(spawned.origin.z == 128 && spawned.velocity.z == 0);
+  qa_input_batch input; memset(&input, 0, sizeof input); input.elapsed_milliseconds = 50;
+  for (int i = 0; i < 4; i++) (void)qa_app_sim_shared_simulation_step(sim, input);
+  qa_body_state fallen = conc_read(physics, admission.actor);
+  CHECK(fallen.velocity.z < -1 || fallen.origin.z < 128);
+  /* A fresh command is received at run entry and moves the player in
+   * its turn; replaying the same sequence must not re-receive it. */
+  qa_actor_command command; memset(&command, 0, sizeof command);
+  command.actor = admission.actor;
+  command.source.kind = QA_COMMAND_SOURCE_LOCAL_SEAT; command.source.client = client;
+  command.sequence = 1; command.command.kind = QA_USER_COMMAND_Q1;
+  command.command.as.q1.view_angles = (qa_vec3){0, 90, 0};
+  command.command.as.q1.forward_move = 400;
+  input.commands = &command; input.command_count = 1;
+  qa_body_state before = conc_read(physics, admission.actor);
+  (void)qa_app_sim_shared_simulation_step(sim, input);
+  qa_body_state moved = conc_read(physics, admission.actor);
+  CHECK(moved.origin.x != before.origin.x || moved.origin.y != before.origin.y
+      || moved.velocity.x != 0 || moved.velocity.y != 0);
+  command.command.as.q1.view_angles = (qa_vec3){0, 0, 0}; /* same sequence: ignored */
+  (void)qa_app_sim_shared_simulation_step(sim, input);
+  qa_body_state replayed = conc_read(physics, admission.actor);
+  CHECK(replayed.angles.y == moved.angles.y);
+  qa_app_sim_shared_simulation_close(sim);
+  qa_app_sim_shared_simulation_destroy(sim);
+  qa_session_actor_registry_destroy(actors);
+  qa_identity_owner_destroy(&identity);
+}
 static void test_gravity_validation(void) {
   phys_fixture f; phys_setup(&f);
   qa_app_sim_shared_physics_set_world_gravity(f.physics, 400);
@@ -845,12 +1140,17 @@ int main(void) {
   test_physics_step_support();
   test_physics_attachments();
   test_physics_push_retry();
+  test_physics_freed_ground();
+  test_physics_q1_trigger_before_impact();
+  test_physics_q1_start_solid_impact();
   test_physics_blocked_rollback();
   test_physics_push_team();
   test_physics_validation();
   test_runtime_guards();
   test_simulation_events();
   test_frame_pipeline();
+  test_concrete_boundary_dispatch();
+  test_concrete_netquake_player_turns();
   if (failures == 0) printf("test_sim_c: %d checks passed\n", checks);
   else fprintf(stderr, "test_sim_c: %d/%d checks failed\n", failures, checks);
   return failures == 0 ? 0 : 1;

@@ -186,7 +186,10 @@ static void test_game_numeric(void) {
   CHECK(fbits(scan.value) == 0x40a00000u && scan.next_offset == 4);
   scan = qa_scan_game_float("-", 0);
   CHECK(fbits(scan.value) == 0x80000000u && scan.next_offset == 2);
-  CHECK_ABORTS((void)qa_scan_game_float("1.5", 4));
+  /* TS clamps the offset (Math.min(offset, text.length)); a scan past the
+   * end reads zero (tests/network/remote-fault-containment.test.ts). */
+  scan = qa_scan_game_float("1.5", 4);
+  CHECK(fbits(scan.value) == 0 && scan.next_offset == 3);
 
   qa_game_vec3 vec = qa_scan_game_vector("1 2 3");
   CHECK(fbits(vec.x) == 0x3f800000u && fbits(vec.y) == 0x40000000u &&
@@ -198,8 +201,11 @@ static void test_game_numeric(void) {
   CHECK(fbits(vec.x) == 0 && fbits(vec.y) == 0 && fbits(vec.z) == 0);
   vec = qa_scan_game_vector("1,2,3");
   CHECK(fbits(vec.x) == 0x3f800000u && fbits(vec.z) == 0x40400000u);
-  CHECK_ABORTS((void)qa_scan_game_vector("7"));
-  CHECK_ABORTS((void)qa_scan_game_vector("1 2"));
+  /* TS reads missing components as zero instead of throwing. */
+  vec = qa_scan_game_vector("7");
+  CHECK(fbits(vec.x) == 0x40e00000u && fbits(vec.y) == 0 && fbits(vec.z) == 0);
+  vec = qa_scan_game_vector("1 2");
+  CHECK(fbits(vec.x) == 0x3f800000u && fbits(vec.y) == 0x40000000u && fbits(vec.z) == 0);
 
   qa_game_random random;
   qa_game_random_init(&random, 0);

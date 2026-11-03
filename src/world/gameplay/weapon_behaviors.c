@@ -1,6 +1,7 @@
 /* Port of src/world/gameplay/weapon-behaviors.ts. GPL-2.0-or-later. */
 #include "qa/world/gameplay/weapon_behaviors.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,8 +11,7 @@
 #include "qa/persistence/save_image.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -199,12 +199,35 @@ void qa_free_weapon_behavior_attachment_checkpoint(
   free((void *)checkpoint.attachments);
 }
 
+typedef struct resume_row { qa_owned_actor owner; qa_weapon_behavior_source *source; } resume_row;
+typedef struct resume_job {
+  qa_weapon_behavior_attachments *attachments;
+  const resume_row *rows;
+  size_t count;
+} resume_job;
+static void resume_all(void *arg) {
+  resume_job *job = arg;
+  qa_weapon_behavior_attachments *attachments = job->attachments;
+  for (size_t i = 0; i < job->count; i++) {
+    qa_weapon_behavior_instance instance =
+        job->rows[i].source->resume(job->rows[i].source->ctx, job->rows[i].owner.id);
+    if (attachments->entry_count == attachments->entry_capacity) {
+      attachments->entry_capacity =
+          attachments->entry_capacity != 0 ? attachments->entry_capacity * 2 : 8;
+      attachments->entries = xrealloc(attachments->entries,
+                                      attachments->entry_capacity * sizeof *attachments->entries);
+    }
+    attachments->entries[attachments->entry_count].owner = job->rows[i].owner;
+    attachments->entries[attachments->entry_count].instance = instance;
+    attachments->entry_count++;
+  }
+}
+
 void qa_weapon_behavior_attachments_restore(qa_weapon_behavior_attachments *attachments,
                                             qa_weapon_behavior_attachment_checkpoint checkpoint) {
   if (checkpoint.version != 1 || attachments->entry_count != 0)
     qa_error("Weapon behavior attachments require an empty matching checkpoint owner");
-  typedef struct pending { qa_owned_actor owner; qa_weapon_behavior_source *source; } pending;
-  pending *rows = xcalloc((checkpoint.attachment_count != 0 ? checkpoint.attachment_count : 1) *
+  resume_row *rows = xcalloc((checkpoint.attachment_count != 0 ? checkpoint.attachment_count : 1) *
                           sizeof *rows);
   for (size_t i = 0; i < checkpoint.attachment_count; i++) {
     const qa_weapon_behavior_attachment *entry = &checkpoint.attachments[i];
@@ -226,21 +249,16 @@ void qa_weapon_behavior_attachments_restore(qa_weapon_behavior_attachments *atta
     rows[i].owner = owner;
     rows[i].source = source;
   }
-  /* TS rolls back via detach on failure; C callback failures abort. */
-  for (size_t i = 0; i < checkpoint.attachment_count; i++) {
-    qa_weapon_behavior_instance instance =
-        rows[i].source->resume(rows[i].source->ctx, rows[i].owner.id);
-    if (attachments->entry_count == attachments->entry_capacity) {
-      attachments->entry_capacity =
-          attachments->entry_capacity != 0 ? attachments->entry_capacity * 2 : 8;
-      attachments->entries = xrealloc(attachments->entries,
-                                      attachments->entry_capacity * sizeof *attachments->entries);
-    }
-    attachments->entries[attachments->entry_count].owner = rows[i].owner;
-    attachments->entries[attachments->entry_count].instance = instance;
-    attachments->entry_count++;
-  }
+  /* try { resume each } catch { detach every attached actor; rethrow } */
+  resume_job job = {attachments, rows, checkpoint.attachment_count};
+  qa_caught_error caught;
+  bool resumed = qa_try(resume_all, &job, &caught);
   free(rows);
+  if (!resumed) {
+    while (attachments->entry_count != 0)
+      qa_weapon_behavior_attachments_detach(attachments, attachments->entries[0].owner.id);
+    qa_rethrow(&caught);
+  }
 }
 
 void qa_weapon_behavior_attachments_close(qa_weapon_behavior_attachments *attachments) {
@@ -345,6 +363,9 @@ qa_weapon_behavior_attachment_checkpoint qa_read_weapon_behavior_attachment_chec
   if (!qa_save_reader_field(reader, "attachments", &list)) abort();
   size_t count = qa_save_reader_list_count(&list);
   qa_weapon_behavior_attachment *rows = xcalloc((count != 0 ? count : 1) * sizeof *rows);
+  /* A SaveFormatError leaves the partial list to the GC in TS. */
+  qa_cleanup node;
+  qa_cleanup_push(&node, free, rows);
   for (size_t i = 0; i < count; i++) {
     qa_save_reader entry, definition_reader, id_reader, projectile, owner;
     if (!qa_save_reader_item(&list, i, &entry)) abort();
@@ -369,6 +390,7 @@ qa_weapon_behavior_attachment_checkpoint qa_read_weapon_behavior_attachment_chec
     qa_save_reader_destroy(&entry);
   }
   qa_save_reader_destroy(&list);
+  qa_cleanup_pop(&node);
   qa_weapon_behavior_attachment_checkpoint checkpoint;
   checkpoint.version = 1;
   checkpoint.attachments = rows;

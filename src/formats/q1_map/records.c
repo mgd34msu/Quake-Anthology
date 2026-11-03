@@ -1,5 +1,6 @@
 /* Port of src/formats/q1-map/records.ts. GPL-2.0-or-later. */
 #include "qa/formats/q1_map/records.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -13,19 +14,27 @@ static void *xmalloc(size_t size) {
 }
 
 qa_vec3 qa_q1_read_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader)};
+  qa_vec3 v; /* TS reads x, y, z in order; C leaves initializer order open */
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 qa_vec4 qa_q1_read_vec4(qa_binary_reader *reader) {
-  qa_vec4 v = {qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader),
-               qa_binary_reader_finite_f32(reader), qa_binary_reader_finite_f32(reader)};
+  qa_vec4 v;
+  v.x = qa_binary_reader_finite_f32(reader);
+  v.y = qa_binary_reader_finite_f32(reader);
+  v.z = qa_binary_reader_finite_f32(reader);
+  v.w = qa_binary_reader_finite_f32(reader);
   return v;
 }
 
 static qa_vec3 short_vec3(qa_binary_reader *reader) {
-  qa_vec3 v = {qa_binary_reader_i16(reader), qa_binary_reader_i16(reader), qa_binary_reader_i16(reader)};
+  qa_vec3 v;
+  v.x = qa_binary_reader_i16(reader);
+  v.y = qa_binary_reader_i16(reader);
+  v.z = qa_binary_reader_i16(reader);
   return v;
 }
 
@@ -38,14 +47,14 @@ qa_bounds qa_q1_read_bounds(qa_binary_reader *reader, bool floats) {
 
 void qa_q1_check_index(double value, double count, const char *source) {
   if (value != trunc(value) || value < 0 || value >= count) {
-    qa_binary_error(source, 0, "index %g outside %g records", value, count);
+    qa_binary_error(source, 0, "index %s outside %s records", QA_JS_NUMBER(value), QA_JS_NUMBER(count));
   }
 }
 
 void qa_q1_check_range(qa_index_range value, double count, const char *source) {
   if (value.first != trunc(value.first) || value.count != trunc(value.count) ||
       value.first < 0 || value.count < 0 || value.first > count - value.count) {
-    qa_binary_error(source, 0, "range %g+%g outside %g records", value.first, value.count, count);
+    qa_binary_error(source, 0, "range %s+%s outside %s records", QA_JS_NUMBER(value.first), QA_JS_NUMBER(value.count), QA_JS_NUMBER(count));
   }
 }
 
@@ -180,7 +189,7 @@ qa_bsp_face *qa_q1_read_faces(qa_binary_reader *reader, qa_q1_bsp_format format,
   for (size_t i = 0; i < count; i++) {
     result[i].plane = format == QA_Q1_FORMAT_BSP29 ? qa_binary_reader_u16(reader) : qa_binary_reader_u32(reader);
     double side = format == QA_Q1_FORMAT_BSP29 ? qa_binary_reader_u16(reader) : qa_binary_reader_u32(reader);
-    if (side != 0 && side != 1) qa_binary_error(reader->source, (int64_t)reader->cursor, "invalid face side %g", side);
+    if (side != 0 && side != 1) qa_binary_error(reader->source, (int64_t)reader->cursor, "invalid face side %s", QA_JS_NUMBER(side));
     result[i].edges.first = qa_binary_reader_i32(reader);
     result[i].edges.count = format == QA_Q1_FORMAT_BSP29 ? qa_binary_reader_u16(reader) : qa_binary_reader_u32(reader);
     result[i].texture_info = format == QA_Q1_FORMAT_BSP29 ? qa_binary_reader_u16(reader) : qa_binary_reader_u32(reader);

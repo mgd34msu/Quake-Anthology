@@ -36,10 +36,11 @@ bool qa_q3_wire_snapshot_copy(qa_q3_wire_snapshot *dst, const qa_q3_wire_snapsho
   *dst = *src;
   dst->entities = malloc((src->entity_count ? src->entity_count : 1) * sizeof *dst->entities);
   if (!dst->entities) return false;
-  memcpy(dst->entities, src->entities, src->entity_count * sizeof *dst->entities);
+  if (src->entity_count) memcpy(dst->entities, src->entities, src->entity_count * sizeof *dst->entities);
   return true;
 }
-static void fail(qa_q3_message_reader *r, const char *msg) {
+#include <stdnoreturn.h>
+static noreturn void fail(qa_q3_message_reader *r, const char *msg) {
   qa_binary_error(qa_q3_message_reader_source(r), qa_q3_message_reader_read_count(r), "%s", msg);
 }
 static void show_net(qa_q3_message_reader *r, const char *label, const qa_q3_delta_message_diagnostics *d) {
@@ -201,6 +202,7 @@ static bool read_download(qa_q3_message_reader *r, qa_q3_publish_download_size_f
   else { out->kind = QA_Q3_DOWNLOAD_CHUNK; out->number = number; }
   return true;
 }
+static void free_entity_list(void *list) { free(((ent_list_t *)list)->items); ((ent_list_t *)list)->items = NULL; }
 static bool read_snapshot(qa_q3_message_reader *r, int64_t server_time, int64_t delta_number, int64_t flags,
                           const qa_q3_server_message_context *ctx, const qa_q3_delta_message_diagnostics *diag,
                           qa_q3_source_parse_entities *pe, qa_q3_server_operation *out) {
@@ -226,13 +228,20 @@ static bool read_snapshot(qa_q3_message_reader *r, int64_t server_time, int64_t 
   if (length > MAX_AREA_BYTES) fail(r, "Snapshot area mask exceeds 32 bytes");
   uint8_t *area = NULL;
   if (!qa_q3_message_reader_read_data(r, length, &area)) return false;
+  /* Player-state and entity deltas raise on truncation; free what this frame owns. */
+  ent_list_t entities = {0};
+  qa_cleanup area_guard, entities_guard;
+  qa_cleanup_push(&area_guard, free, area);
+  qa_cleanup_push(&entities_guard, free_entity_list, &entities);
   show_net(r, "playerstate", diag);
   qa_q3_player_state_record player;
   qa_q3_read_delta_player_state(r, slot ? &slot->snapshot.player_state : NULL, ctx->product, diag, &player);
   show_net(r, "packet entities", diag);
   int64_t pe_number = pe ? qa_q3_source_parse_entities_number(pe) : ctx->parse_entities_number;
-  ent_list_t entities = {0};
-  if (!read_packet_entities(r, slot ? &slot->snapshot : NULL, ctx, diag, pe, &entities)) { free(area); free(entities.items); return false; }
+  bool ok = read_packet_entities(r, slot ? &slot->snapshot : NULL, ctx, diag, pe, &entities);
+  qa_cleanup_pop(&entities_guard);
+  qa_cleanup_pop(&area_guard);
+  if (!ok) { free(area); free(entities.items); return false; }
   out->validity = validity;
   qa_q3_wire_snapshot *snap = &out->snapshot;
   memset(snap, 0, sizeof *snap);
@@ -264,6 +273,8 @@ bool qa_q3_server_message_cursor_init(qa_q3_server_message_cursor **out, const u
                                       int64_t read_offset, qa_q3_source_parse_entities *parse_entities,
                                       qa_q3_publish_download_size_fn publish_download_size, void *publish_ctx) {
   if (read_offset < 0) qa_range_error("Invalid server message read offset");
+  /* MessageReader's cap check raises before this cursor owns anything. */
+  if (len > QA_Q3_MAX_MESSAGE_LENGTH) qa_binary_error(source ? source : "<server-message>", 0, "message exceeds maximum length");
   qa_q3_server_message_cursor *c = calloc(1, sizeof *c);
   if (!c) return false;
   c->owned = malloc(len ? len : 1);
@@ -287,15 +298,28 @@ void qa_q3_server_message_cursor_destroy(qa_q3_server_message_cursor *c) {
   if (!c) return;
   qa_q3_message_reader_destroy(c->reader); free(c->owned); free(c);
 }
+typedef struct source_long_scope { qa_q3_message_reader *reader; int64_t value; } source_long_scope;
+static void source_long_body(void *ctx) {
+  source_long_scope *scope = ctx;
+  scope->value = qa_q3_message_reader_read_long(scope->reader);
+}
+/* MSG_ReadLong returns -1 after exhaustion; retain that scalar's side effects.
+ * TS catches the BinaryError of a read that ran off the data (including inside a
+ * Huffman symbol) and rethrows anything else. */
 static int64_t source_long(qa_q3_server_message_cursor *c) {
   if (c->exhausted) return -1;
   size_t len; qa_q3_message_reader_data(c->reader, &len);
-  /* TS catches BinaryError at end-of-data; C abort cannot be caught, so pre-check
-   * the fully-consumed case. Mid-symbol truncation aborts (noted unresolved). */
-  if (qa_q3_message_reader_bit_position(c->reader) >= (int64_t)len * 8) { c->exhausted = true; return -1; }
-  int64_t value = qa_q3_message_reader_read_long(c->reader);
+  source_long_scope scope = { c->reader, 0 };
+  qa_caught_error caught;
+  if (!qa_try(source_long_body, &scope, &caught)) {
+    if (strcmp(caught.name, "BinaryError") != 0
+        || (qa_q3_message_reader_bit_position(c->reader) < (int64_t)len * 8
+            && qa_q3_message_reader_read_count(c->reader) <= (int64_t)len)) qa_rethrow(&caught);
+    c->exhausted = true;
+    return -1;
+  }
   if (qa_q3_message_reader_read_count(c->reader) > (int64_t)len) c->exhausted = true;
-  return value;
+  return scope.value;
 }
 bool qa_q3_server_message_cursor_next(qa_q3_server_message_cursor *c, const qa_q3_server_message_context *ctx, qa_q3_server_message_step *out) {
   memset(out, 0, sizeof *out);
@@ -351,7 +375,6 @@ bool qa_q3_server_message_cursor_next(qa_q3_server_message_cursor *c, const qa_q
         return true;
       }
       char buf[96]; snprintf(buf, sizeof buf, "Invalid gamestate opcode %lld", (long long)opcode); fail(r, buf);
-      return false;
     }
     case PH_CLIENT: {
       int64_t n = source_long(c); c->phase = PH_CHECKSUM;
@@ -413,6 +436,9 @@ bool qa_q3_server_message_cursor_next(qa_q3_server_message_cursor *c, const qa_q
     }
   }
 }
+static void cursor_cleanup(void *c) { qa_q3_server_message_cursor_destroy(c); }
+static void message_cleanup(void *m) { qa_q3_server_message_destroy(m); }
+static void gamestate_cleanup(void *g) { qa_q3_gamestate_destroy(g); }
 static qa_q3_entity_state_record *null_baseline(void *ctx, int64_t n) { (void)ctx; (void)n; return NULL; }
 static const qa_q3_snapshot_history_entry *null_history(void *ctx, int64_t n) { (void)ctx; (void)n; return NULL; }
 bool qa_q3_decode_server_message(const uint8_t *bytes, size_t len, const qa_q3_server_message_context *context,
@@ -420,11 +446,15 @@ bool qa_q3_decode_server_message(const uint8_t *bytes, size_t len, const qa_q3_s
   memset(out, 0, sizeof *out);
   qa_q3_server_message_cursor *cursor = NULL;
   if (!qa_q3_server_message_cursor_init(&cursor, bytes, len, source, NULL, 0, NULL, NULL, NULL)) return false;
+  qa_cleanup cursor_guard, out_guard, pending_guard;
+  qa_cleanup_push(&cursor_guard, cursor_cleanup, cursor);
+  qa_cleanup_push(&out_guard, message_cleanup, out);
   int64_t reliable_ack = 0, command_seq = context->server_command_sequence, pe_number = context->parse_entities_number;
   qa_q3_baseline_fn baseline = context->baseline; void *baseline_ctx = context->baseline_ctx;
   qa_q3_history_fn history = context->history; void *history_ctx = context->history_ctx;
   gs_baseline_t gs_ctx; gs_ctx.gs = NULL;
   qa_q3_gamestate pending; memset(&pending, 0, sizeof pending);
+  qa_cleanup_push(&pending_guard, gamestate_cleanup, &pending);
   size_t pending_cap = 0;
   bool ok = true;
   for (;;) {
@@ -494,6 +524,9 @@ bool qa_q3_decode_server_message(const uint8_t *bytes, size_t len, const qa_q3_s
     qa_q3_server_message_step_destroy(&step);
     if (done) break;
   }
+  qa_cleanup_pop(&pending_guard);
+  qa_cleanup_pop(&out_guard);
+  qa_cleanup_pop(&cursor_guard);
   qa_q3_gamestate_destroy(&pending);
   qa_q3_server_message_cursor_destroy(cursor);
   if (!ok) qa_q3_server_message_destroy(out);

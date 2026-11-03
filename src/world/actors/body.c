@@ -9,8 +9,7 @@
 #include "qa/foundation/support.h"
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static void *xrealloc(void *ptr, size_t size) {
   void *next = realloc(ptr, size != 0 ? size : 1);
@@ -47,6 +46,9 @@ typedef struct body_record {
   double link_count;
   bool has_attachment;
   qa_body_attachment attachment;
+  /* Position in the TS attachments Map: Map.set on a present key keeps it, a
+   * delete followed by a set appends. Iteration follows this order. */
+  uint64_t attach_order;
 } body_record;
 
 struct qa_shared_body_table {
@@ -55,7 +57,22 @@ struct qa_shared_body_table {
   body_record **records; /* indexed by actor slot */
   size_t record_capacity;
   int64_t release_subscription;
+  uint64_t attach_sequence;
 };
+
+/* Sorts actors by their attachment Map position (orders are unique). */
+static void sort_by_attach_order(qa_shared_body_table *table, qa_owned_actor *actors, size_t count) {
+  for (size_t i = 1; i < count; i++) {
+    const qa_owned_actor key = actors[i];
+    const body_record *key_record = table->records[key.id.slot];
+    size_t j = i;
+    while (j > 0 && table->records[actors[j - 1].id.slot]->attach_order > key_record->attach_order) {
+      actors[j] = actors[j - 1];
+      j--;
+    }
+    actors[j] = key;
+  }
+}
 
 /* Retarget state.ground onto caller-owned storage. */
 static qa_body_state own_ground(qa_body_state state, qa_actor_id *storage) {
@@ -85,6 +102,16 @@ static void set_record(qa_shared_body_table *table, int64_t slot_value, body_rec
   table->records[slot_value] = record;
 }
 
+typedef struct unlink_call { qa_shared_body_table *table; qa_actor_id actor; } unlink_call;
+static void run_unlink_call(void *arg) {
+  unlink_call *call = arg;
+  call->table->hooks.on_unlink(call->table->hooks.ctx, call->actor);
+}
+typedef struct child_release { qa_shared_body_table *table; qa_owned_actor child; } child_release;
+static void run_child_release(void *arg) {
+  child_release *call = arg;
+  qa_session_actor_registry_release(call->table->actors, call->child);
+}
 static void on_release(void *ctx, qa_owned_actor actor) {
   qa_shared_body_table *table = ctx;
   body_record *own = record_at(table, actor.id.slot);
@@ -105,18 +132,29 @@ static void on_release(void *ctx, qa_owned_actor actor) {
       children[child_count++] = record->actor;
     }
   }
+  /* TS collects children in attachments Map order. */
+  sort_by_attach_order(table, children, child_count);
   bool was_linked = false;
   if (own_is_actor) {
     was_linked = own->has_linked;
     table->records[actor.id.slot] = NULL;
     free(own);
   }
-  if (was_linked) table->hooks.on_unlink(table->hooks.ctx, actor.id);
+  /* Each step runs inside its own try; failures become one AggregateError. */
+  size_t errors = 0;
+  qa_caught_error caught;
+  if (was_linked) {
+    unlink_call call = {table, actor.id};
+    if (!qa_try(run_unlink_call, &call, &caught)) errors++;
+  }
   for (size_t i = 0; i < child_count; i++) {
-    if (qa_session_actor_registry_is_live(table->actors, children[i].id))
-      qa_session_actor_registry_release(table->actors, children[i]);
+    if (qa_session_actor_registry_is_live(table->actors, children[i].id)) {
+      child_release call = {table, children[i]};
+      if (!qa_try(run_child_release, &call, &caught)) errors++;
+    }
   }
   free(children);
+  if (errors > 0) qa_raise("AggregateError", 0, 0, "Attached body release failed");
 }
 
 qa_shared_body_table *qa_shared_body_table_create(qa_session_actor_registry *actors,
@@ -224,6 +262,7 @@ void qa_shared_body_table_attach(qa_shared_body_table *table, qa_owned_actor act
     ancestor = ancestor->has_attachment ? live_record(table, ancestor->attachment.anchor) : NULL;
   }
   record->attachment = attachment;
+  if (!record->has_attachment) record->attach_order = ++table->attach_sequence;
   record->has_attachment = true;
 }
 
@@ -313,6 +352,8 @@ void qa_shared_body_table_transport_attachments(qa_shared_body_table *table,
       actors[actor_count++] = record->actor;
     }
   }
+  /* TS iterates the attachments Map in insertion order, not slot order. */
+  sort_by_attach_order(table, actors, actor_count);
   for (size_t i = 0; i < actor_count; i++)
     transport_one(table, numeric, actors[i], transported, count);
   free(actors);
@@ -342,6 +383,18 @@ bool qa_shared_body_table_link_state(qa_shared_body_table *table, qa_actor_id ac
   return true;
 }
 
+/* binding.linked?.(linked) then hooks.onLink(linked): both receive the local
+ * `linked` value, so a callback that releases the actor (freeing the record)
+ * cannot change what onLink sees. */
+static void notify_linked(qa_shared_body_table *table, body_record *record) {
+  qa_actor_id ground;
+  qa_linked_body linked = record->linked;
+  linked.state = own_ground(linked.state, &ground);
+  qa_body_state_binding binding = record->binding;
+  if (record->external && binding.linked != NULL) binding.linked(binding.ctx, linked);
+  table->hooks.on_link(table->hooks.ctx, linked);
+}
+
 void qa_shared_body_table_restore_link_state(qa_shared_body_table *table,
                                              qa_owned_actor actor, qa_body_link_state saved) {
   qa_session_actor_registry_assert_owned(table->actors, actor);
@@ -362,9 +415,7 @@ void qa_shared_body_table_restore_link_state(qa_shared_body_table *table,
   record->linked.absolute_bounds = saved.linked.absolute_bounds;
   record->linked.link_count = saved.link_count;
   record->has_linked = true;
-  if (record->external && record->binding.linked != NULL)
-    record->binding.linked(record->binding.ctx, record->linked);
-  table->hooks.on_link(table->hooks.ctx, record->linked);
+  notify_linked(table, record);
 }
 
 void qa_shared_body_table_link(qa_shared_body_table *table, qa_owned_actor actor,
@@ -376,15 +427,16 @@ void qa_shared_body_table_link(qa_shared_body_table *table, qa_owned_actor actor
                                             : record->binding.read(record->binding.ctx);
   qa_body_state state = current;
   if (origin != NULL) state.origin = *origin;
+  /* TS builds `linked` before assigning record.linked: the hook sees the prior link. */
+  qa_actor_id ground;
+  state = own_ground(state, &ground);
+  qa_bounds absolute = table->hooks.absolute_bounds(table->hooks.ctx, actor, state);
   record->linked.actor = actor.id;
   record->linked.state = own_ground(state, &record->linked_ground_storage);
-  record->linked.absolute_bounds =
-      table->hooks.absolute_bounds(table->hooks.ctx, actor, record->linked.state);
+  record->linked.absolute_bounds = absolute;
   record->linked.link_count = ++record->link_count;
   record->has_linked = true;
-  if (record->external && record->binding.linked != NULL)
-    record->binding.linked(record->binding.ctx, record->linked);
-  table->hooks.on_link(table->hooks.ctx, record->linked);
+  notify_linked(table, record);
 }
 
 void qa_shared_body_table_unlink(qa_shared_body_table *table, qa_owned_actor actor) {

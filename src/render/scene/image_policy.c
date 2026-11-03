@@ -42,8 +42,10 @@ bool qa_image_policy_from_controls(qa_scene_image_controls c, qa_scene_image_pol
   int mask = i32d(c.override_mask);
   for (int i = 0; i < 5; i++) if (mask & BITS[i].bit) usages[nu++] = BITS[i].usage;
   /* TS trim().toLowerCase() === "source" (ASCII for format names). */
-  const char *f = c.formats; while (*f == ' ' || *f == '\t' || *f == '\n' || *f == '\r') f++;
-  size_t len = strlen(f); while (len && (f[len-1]==' '||f[len-1]=='\t'||f[len-1]=='\n'||f[len-1]=='\r')) len--;
+  /* String.prototype.trim strips every ASCII whitespace: tab, LF, VT, FF, CR, space (and Unicode spaces, which no
+   * format token contains). */
+  const char *f = c.formats; while (*f == ' ' || (*f >= '\t' && *f <= '\r')) f++;
+  size_t len = strlen(f); while (len && (f[len-1] == ' ' || (f[len-1] >= '\t' && f[len-1] <= '\r'))) len--;
   int is_source = len == 6; if (is_source) { const char *w = "source"; for (int i = 0; i < 6; i++) if (lower(f[i]) != w[i]) is_source = 0; }
   qa_scene_image_policy p = { 0 }; p.override_level = c.override_level; p.override_usages = usages; p.override_usage_count = nu;
   size_t nf = 0; const qa_scene_image_format *fmts = NULL;

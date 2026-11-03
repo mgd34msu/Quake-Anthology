@@ -177,6 +177,9 @@ typedef struct qa_navigation_world {
   bool (*get_entity)(void *ctx, qa_navigation_entity_binding binding,
                      qa_navigation_entity_state *out);
   bool (*hazard)(void *ctx, qa_bounds bounds);
+  /* TS `revision` getter (e.g. timeSeconds * 1000); NULL reads the
+   * revision field. */
+  double (*revision_of)(void *ctx);
 } qa_navigation_world;
 typedef struct qa_navigation_route {
   qa_navigation_map_identity map;

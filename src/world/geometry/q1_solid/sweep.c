@@ -1,7 +1,8 @@
-/* Port of src/world/geometry/q1-solid/sweep.ts. Non-convergence aborts
- * with TS Error text (qa_range_error carries it). GPL-2.0-or-later. */
+/* Port of src/world/geometry/q1-solid/sweep.ts. Non-convergence raises the
+ * TS Error. GPL-2.0-or-later. */
 #include "qa/world/geometry/q1_solid/sweep.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,8 +19,9 @@ bool qa_sweep_box_cell(const qa_convex_cell*cell,qa_vec3 start,qa_vec3 end,qa_ce
     if(a>0&&b>0){free(planes);return false;}
     if(a<=0&&b<=0)continue;
     double f=a/(a-b);
-    if(a>b){if(f>enter){enter=f;plane=planes[i];} double c=(a-eps)/(a-b); if(c>contact)contact=c;}
-    else if(f<exit_)exit_=f;
+    /* Math.max/Math.min: a NaN distance poisons contact/exit as in TS. */
+    if(a>b){if(f>enter){enter=f;plane=planes[i];} contact=qa_js_max(contact,(a-eps)/(a-b));}
+    else exit_=qa_js_min(exit_,f);
     if(enter>exit_){free(planes);return false;}
   }
   free(planes);
@@ -47,11 +49,11 @@ static Closest point_triangle(qa_vec3 p,qa_vec3 a,qa_vec3 b,qa_vec3 c){
   if(fabs(sum)<1e-25)return nearest(nearest(mkpair(p,a),mkpair(p,b)),mkpair(p,c));
   return mkpair(p,qa_cell_add(a,qa_cell_add(qa_cell_scale(ab,vb/sum),qa_cell_scale(ac,vc/sum))));
 }
-static double clamp01(double f){return f<0?0:f>1?1:f;}
+static double clamp01(double f){return qa_js_max(0,qa_js_min(1,f));}
 static Closest segments(qa_vec3 p,qa_vec3 q,qa_vec3 a,qa_vec3 b){
   qa_vec3 u=qa_cell_sub(q,p),v=qa_cell_sub(b,a),w=qa_cell_sub(p,a);
   double uu=qa_cell_dot(u,u),uv=qa_cell_dot(u,v),vv=qa_cell_dot(v,v),uw=qa_cell_dot(u,w),vw=qa_cell_dot(v,w);
-  double den=uu*vv-uv*uv; if(den==0)den=1;
+  double den=uu*vv-uv*uv; if(den==0||isnan(den))den=1; /* `|| 1`: 0, -0 and NaN are falsy */
   double s=uu==0?0:clamp01((uv*vw-vv*uw)/den);
   double t=vv==0?0:(uv*s+vw)/vv;
   if(t<0){t=0;s=uu==0?0:clamp01(-uw/uu);} else if(t>1){t=1;s=uu==0?0:clamp01((uv-uw)/uu);}
@@ -62,8 +64,8 @@ static Closest segment_cell(const qa_convex_cell*cell,qa_vec3 p,qa_vec3 q){
   for(size_t i=0;i<cell->face_count;i++){qa_plane pl=cell->faces[i].plane;
     double a=qa_cell_dot(p,pl.normal)-pl.distance,b=qa_cell_dot(q,pl.normal)-pl.distance;
     if(a>0&&b>0){enter=INFINITY;break;}
-    if(a>b&&a>0){double f=a/(a-b);if(f>enter)enter=f;}
-    if(a<b&&b>0){double f=a/(a-b);if(f<exit_)exit_=f;}}
+    if(a>b&&a>0)enter=qa_js_max(enter,a/(a-b));
+    if(a<b&&b>0)exit_=qa_js_min(exit_,a/(a-b));}
   if(enter<=exit_){qa_vec3 pt=qa_cell_lerp(p,q,enter);return mkpair(pt,pt);}
   Closest r={p,p,INFINITY};
   for(size_t fi=0;fi<cell->face_count;fi++){
@@ -94,7 +96,7 @@ static Entrance capsule_entrance(const qa_convex_cell*cell,qa_vec3 start,qa_vec3
     if(fraction+step>1){Entrance e={0,{{0,0,0},0},0};return e;}
     fraction+=step;
   }
-  qa_range_error("Quake solid-cell capsule sweep did not converge");
+  qa_raise("Error",0,0,"Quake solid-cell capsule sweep did not converge"); /* TS throws Error */
 }
 bool qa_sweep_capsule_cell(const qa_convex_cell*cell,qa_vec3 start,qa_vec3 end,qa_cell_shape shape,double eps,qa_sweep_interval*out){
   Entrance e=capsule_entrance(cell,start,end,shape,0);

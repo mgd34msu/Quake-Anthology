@@ -1,5 +1,6 @@
 /* Port of src/content/q3/team-arena/arenas.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/arenas.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -17,9 +18,9 @@
 
 enum { CONTENTS_SOLID = 1, CONTENTS_PLAYERCLIP = 0x10000, CONTENTS_BODY = 0x2000000,
   RANK_TIED_FLAG = 0x4000, MAX_STRING_CHARS = 1024, TIMER_GESTURE = 34 * 66 + 50 };
-static double s32(double v) { return (int32_t)v; }
-static double imul(double a, double b) { return (int32_t)((int32_t)a * (int32_t)b); }
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
+static double s32(double v) { return qa_js_to_int32(v); }
+static double imul(double a, double b) { return (int32_t)(qa_js_to_int32(a) * qa_js_to_int32(b)); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
 static qa_q3_ta_match_state *level(qa_q3_ta_arena_runtime *r) { return r->host.match->host.state; }
 static qa_q3_entity_pool *pool_of(qa_q3_ta_arena_runtime *r) { return r->host.match->host.pool; }
 static double sorted_at(qa_q3_ta_arena_runtime *r, double index) {
@@ -81,7 +82,7 @@ void qa_q3_ta_arena_runtime_update_tournament_info(qa_q3_ta_arena_runtime *r) {
   double player_client_num = 0;
   for (; player_client_num < pool_of(r)->max_clients; player_client_num++) {
     qa_q3_game_entity *entity = qa_q3_entity_pool_at(pool_of(r), player_client_num);
-    if (qa_q3_game_entity_inuse(entity) && ((int32_t)entity->r.sv_flags & QA_Q3_BASE_SVF_BOT) == 0) {
+    if (qa_q3_game_entity_inuse(entity) && (qa_js_to_int32(entity->r.sv_flags) & QA_Q3_BASE_SVF_BOT) == 0) {
       player = entity; break; }
   }
   if (player == NULL) return;
@@ -96,7 +97,7 @@ void qa_q3_ta_arena_runtime_update_tournament_info(qa_q3_ta_arena_runtime *r) {
         ? "postgame %i %i 0 0 0 0 0 0 0 0 0 0 0" : "postgame %i %i 0 0 0 0 0 0", a, 2, MAX_STRING_CHARS);
   } else {
     qa_q3_game_client *client = client_of(player);
-    qa_q3_game_player_slots_mirror *persistant = &client->ps.persistant;
+    qa_q3_base_player_state_slots *persistant = &client->ps.persistant;
     double accuracy = client->accuracy_shots != 0
         ? s32(trunc(imul(client->accuracy_hits, 100) / client->accuracy_shots)) : 0;
     if (match->product == QA_Q3_BASE_PRODUCT_MISSIONPACK) {
@@ -113,40 +114,57 @@ void qa_q3_ta_arena_runtime_update_tournament_info(qa_q3_ta_arena_runtime *r) {
         score2 = score_of(r, sorted_at(r, 0)); score1 = score_of(r, sorted_at(r, 1));
       }
       double perfect = (won && slot_get(persistant, QA_Q3_BASE_PERS_KILLED) == 0) ? 1 : 0;
+      qa_q3_game_format_arg value12 = qa_q3_game_format_number(level(r)->num_non_spectator_clients);
+      qa_q3_game_format_arg value13 = qa_q3_game_format_number(player_client_num);
+      qa_q3_game_format_arg value14 = qa_q3_game_format_number(accuracy);
+      qa_q3_game_format_arg value15 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT));
+      qa_q3_game_format_arg value16 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_EXCELLENT_COUNT));
+      qa_q3_game_format_arg value17 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_DEFEND_COUNT));
+      qa_q3_game_format_arg value18 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_ASSIST_COUNT));
+      qa_q3_game_format_arg value19 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_GAUNTLET_FRAG_COUNT));
+      qa_q3_game_format_arg value20 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_SCORE));
+      qa_q3_game_format_arg value21 = qa_q3_game_format_number(perfect);
+      qa_q3_game_format_arg value22 = qa_q3_game_format_number(score1);
+      qa_q3_game_format_arg value23 = qa_q3_game_format_number(score2);
+      qa_q3_game_format_arg value24 = qa_q3_game_format_number(level(r)->time);
+      qa_q3_game_format_arg value25 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_CAPTURES));
       qa_q3_game_format_arg a[] = {
-        qa_q3_game_format_number(level(r)->num_non_spectator_clients),
-        qa_q3_game_format_number(player_client_num), qa_q3_game_format_number(accuracy),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_EXCELLENT_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_DEFEND_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_ASSIST_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_GAUNTLET_FRAG_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_SCORE)),
-        qa_q3_game_format_number(perfect), qa_q3_game_format_number(score1),
-        qa_q3_game_format_number(score2), qa_q3_game_format_number(level(r)->time),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_CAPTURES))};
+        value12,
+        value13, value14,
+        value15,
+        value16,
+        value17,
+        value18,
+        value19,
+        value20,
+        value21, value22,
+        value23, value24, value25};
       message = qa_q3_game_format("postgame %i %i %i %i %i %i %i %i %i %i %i %i %i %i", a, 14, MAX_STRING_CHARS);
     } else {
       double perfect = (slot_get(&ranked->ps.persistant, QA_Q3_BASE_PERS_RANK) == 0 &&
           slot_get(persistant, QA_Q3_BASE_PERS_KILLED) == 0) ? 1 : 0;
+      qa_q3_game_format_arg value4 = qa_q3_game_format_number(level(r)->num_non_spectator_clients);
+      qa_q3_game_format_arg value5 = qa_q3_game_format_number(player_client_num);
+      qa_q3_game_format_arg value6 = qa_q3_game_format_number(accuracy);
+      qa_q3_game_format_arg value7 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT));
+      qa_q3_game_format_arg value8 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_EXCELLENT_COUNT));
+      qa_q3_game_format_arg value9 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_GAUNTLET_FRAG_COUNT));
+      qa_q3_game_format_arg value10 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_SCORE));
+      qa_q3_game_format_arg value11 = qa_q3_game_format_number(perfect);
       qa_q3_game_format_arg a[] = {
-        qa_q3_game_format_number(level(r)->num_non_spectator_clients),
-        qa_q3_game_format_number(player_client_num), qa_q3_game_format_number(accuracy),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_IMPRESSIVE_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_EXCELLENT_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_GAUNTLET_FRAG_COUNT)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_SCORE)),
-        qa_q3_game_format_number(perfect)};
+        value4,
+        value5, value6, value7, value8, value9, value10, value11};
       message = qa_q3_game_format("postgame %i %i %i %i %i %i %i %i", a, 8, MAX_STRING_CHARS);
     }
   }
   size_t message_length = strlen(message);
   for (double index = 0; index < level(r)->num_non_spectator_clients; index++) {
     double number = sorted_at(r, index);
-    qa_q3_game_player_slots_mirror *persistant = &qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant;
-    qa_q3_game_format_arg a[] = {qa_q3_game_format_number(number),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_RANK)),
-        qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_SCORE))};
+    qa_q3_base_player_state_slots *persistant = &qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant;
+    qa_q3_game_format_arg value = qa_q3_game_format_number(number);
+    qa_q3_game_format_arg value2 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_RANK));
+    qa_q3_game_format_arg value3 = qa_q3_game_format_number(slot_get(persistant, QA_Q3_BASE_PERS_SCORE));
+    qa_q3_game_format_arg a[] = {value, value2, value3};
     char *row = qa_q3_game_format(" %i %i %i", a, 3, 32);
     size_t row_length = strlen(row);
     if (message_length + row_length + 1 >= MAX_STRING_CHARS) { free(row); break; }
@@ -166,10 +184,12 @@ void qa_q3_ta_arena_runtime_update_tournament_info(qa_q3_ta_arena_runtime *r) {
 }
 
 static void place_model(qa_q3_ta_arena_runtime *r, qa_q3_game_entity *body, qa_q3_game_entity *podium, qa_vec3 offset) {
-  qa_vec3 angles = qa_vector_to_angles(qa_sub3(level(r)->intermission_origin, podium->r.current_origin));
+  qa_vec3 a = level(r)->intermission_origin;
+  qa_vec3 b = qa_q3_base_entity_shared_current_origin(&podium->r);
+  qa_vec3 angles = qa_vector_to_angles(qa_sub3(a, b));
   body->s.apos.base = qa_math_vec3(0, angles.y, 0);
   qa_angle_vectors axis = qa_qvm_angle_vectors(body->s.apos.base);
-  qa_vec3 origin = qa_add3(podium->r.current_origin, qa_scale3(axis.forward, offset.x));
+  qa_vec3 origin = qa_add3(qa_q3_base_entity_shared_current_origin(&podium->r), qa_scale3(axis.forward, offset.x));
   origin = qa_add3(origin, qa_scale3(axis.right, offset.y));
   origin = qa_add3(origin, qa_scale3(axis.up, offset.z));
   qa_q3_set_origin(body, origin);
@@ -188,16 +208,18 @@ static qa_q3_game_entity *spawn_model_on_pad(qa_q3_ta_arena_runtime *r, qa_q3_ga
   body->physics_object = true;
   body->physics_bounce = 0;
   body->s.event = 0;
-  body->s.pos.type = QA_Q3_TR_STATIONARY;
-  qa_actor_id world_actor = qa_q3_game_entity_actor(qa_q3_entity_pool_at(pool_of(r), QA_Q3_GAME_ENTITYNUM_WORLD)).id;
+  body->s.pos.type = QA_Q3_BASE_TR_STATIONARY;
+  qa_actor_id world_actor = qa_q3_game_entity_actor(qa_q3_entity_pool_at(pool_of(r), QA_Q3_BASE_ENTITYNUM_WORLD)).id;
   qa_q3_write_ground(body, &world_actor, pool_of(r));
-  /* TS legsAnim/torsoAnim stores: no mirror fields. */
+  body->s.legs_anim = QA_Q3_ANIM_LEGS_IDLE;
+  body->s.torso_anim = QA_Q3_ANIM_TORSO_STAND;
   if (body->s.weapon == QA_Q3_WP_NONE) body->s.weapon = QA_Q3_WP_MACHINEGUN;
+  if (body->s.weapon == QA_Q3_WP_GAUNTLET) body->s.torso_anim = QA_Q3_ANIM_TORSO_STAND2;
   body->s.event = 0;
   body->r.sv_flags = entity->r.sv_flags;
-  body->r.model_kind = entity->r.model_kind == QA_Q3_BASE_MODEL_CAPSULE ? QA_Q3_BASE_MODEL_CAPSULE : QA_Q3_BASE_MODEL_BOX;
-  body->r.mins = entity->r.mins;
-  body->r.maxs = entity->r.maxs;
+  body->r.model.kind = entity->r.model.kind == QA_Q3_BASE_MODEL_CAPSULE ? QA_Q3_BASE_MODEL_CAPSULE : QA_Q3_BASE_MODEL_BOX;
+  qa_q3_base_entity_shared_set_mins(&body->r, qa_q3_base_entity_shared_mins(&entity->r));
+  qa_q3_base_entity_shared_set_maxs(&body->r, qa_q3_base_entity_shared_maxs(&entity->r));
   body->clipmask = CONTENTS_SOLID | CONTENTS_PLAYERCLIP;
   body->r.contents = CONTENTS_BODY;
   body->r.owner_num = entity->r.owner_num;
@@ -207,8 +229,14 @@ static qa_q3_game_entity *spawn_model_on_pad(qa_q3_ta_arena_runtime *r, qa_q3_ga
   body->count = place;
   return body;
 }
-static void celebrate_stop(qa_q3_game_entity *player) { (void)player; /* torsoAnim: no mirror field */ }
+static double toggled_torso(const qa_q3_game_entity *player, int32_t animation) {
+  return ((qa_js_to_int32(player->s.torso_anim) & 128) ^ 128) | animation;
+}
+static void celebrate_stop(qa_q3_game_entity *player) {
+  player->s.torso_anim = toggled_torso(player, player->s.weapon == QA_Q3_WP_GAUNTLET ? QA_Q3_ANIM_TORSO_STAND2 : QA_Q3_ANIM_TORSO_STAND);
+}
 static void celebrate_start(qa_q3_ta_arena_runtime *r, qa_q3_game_entity *player) {
+  player->s.torso_anim = toggled_torso(player, QA_Q3_ANIM_TORSO_GESTURE);
   qa_q3_game_entity_set_nextthink(player, s32(level(r)->time + TIMER_GESTURE));
   player->think = qa_q3_callback_family_resolve(&pool_of(r)->callbacks.think, "q3.team-arena.arenas.celebrateStart.think");
   qa_q3_entity_pool_add_event(pool_of(r), player, QA_Q3_EV_TAUNT, 0);
@@ -216,10 +244,11 @@ static void celebrate_start(qa_q3_ta_arena_runtime *r, qa_q3_game_entity *player
 static qa_vec3 podium_origin(qa_q3_ta_arena_runtime *r) {
   qa_vec3 forward = qa_qvm_angle_vectors(level(r)->intermission_angle).forward;
   qa_vec3 view = level(r)->intermission_origin;
+  double x2 = view.x + (float)(forward.x * (float)cvar_integer(r, "g_podiumDist"));
+  double y2 = view.y + (float)(forward.y * (float)cvar_integer(r, "g_podiumDist"));
+  double z2 = view.z + (float)(forward.z * (float)cvar_integer(r, "g_podiumDist"));
   qa_vec3 origin = qa_math_vec3(
-      view.x + (float)(forward.x * (float)cvar_integer(r, "g_podiumDist")),
-      view.y + (float)(forward.y * (float)cvar_integer(r, "g_podiumDist")),
-      view.z + (float)(forward.z * (float)cvar_integer(r, "g_podiumDist")));
+      x2, y2, z2);
   origin = qa_math_vec3(origin.x, origin.y, origin.z - (float)cvar_integer(r, "g_podiumDrop"));
   return origin;
 }
@@ -238,7 +267,9 @@ static qa_q3_game_entity *spawn_podium(qa_q3_ta_arena_runtime *r) {
   podium->clipmask = podium->r.contents = CONTENTS_SOLID;
   podium->s.modelindex = qa_q3_config_string_registry_model_index(r->host.config, "models/mapobjects/podium/podium4.md3");
   qa_q3_set_origin(podium, podium_origin(r));
-  double yaw = qa_vector_to_angles(qa_sub3(level(r)->intermission_origin, podium->r.current_origin)).y;
+  qa_vec3 a = level(r)->intermission_origin;
+  qa_vec3 b = qa_q3_base_entity_shared_current_origin(&podium->r);
+  double yaw = qa_vector_to_angles(qa_sub3(a, b)).y;
   podium->s.apos.base = qa_math_vec3(podium->s.apos.base.x, yaw, podium->s.apos.base.z);
   r->host.world->link(r->host.world->ctx, podium);
   podium->think = qa_q3_callback_family_resolve(&pool_of(r)->callbacks.think, "q3.team-arena.arenas.spawnPodium.think");
@@ -249,19 +280,25 @@ void qa_q3_ta_arena_runtime_spawn_models_on_victory_pads(qa_q3_ta_arena_runtime 
   qa_q3_ta_arena_runtime_reset_podium_players(r);
   qa_q3_game_entity *podium = spawn_podium(r);
   double number = sorted_at(r, 0);
-  qa_q3_game_entity *player = spawn_model_on_pad(r, podium, offset_first(), qa_q3_entity_pool_at(pool_of(r), number),
-      (double)((int32_t)slot_get(&qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant, QA_Q3_BASE_PERS_RANK) & ~RANK_TIED_FLAG));
+  qa_vec3 offset3 = offset_first();
+  qa_q3_game_entity * entity3 = qa_q3_entity_pool_at(pool_of(r), number);
+  double place3 = (double)(qa_js_to_int32(slot_get(&qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant, QA_Q3_BASE_PERS_RANK)) & ~RANK_TIED_FLAG);
+  qa_q3_game_entity *player = spawn_model_on_pad(r, podium, offset3, entity3, place3);
   qa_q3_game_entity_set_nextthink(player, s32(level(r)->time + 2000));
   player->think = qa_q3_callback_family_resolve(&pool_of(r)->callbacks.think, "q3.team-arena.arenas.spawnModelsOnVictoryPads.think");
   r->podium1 = player;
   number = sorted_at(r, 1);
-  player = spawn_model_on_pad(r, podium, offset_second(), qa_q3_entity_pool_at(pool_of(r), number),
-      (double)((int32_t)slot_get(&qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant, QA_Q3_BASE_PERS_RANK) & ~RANK_TIED_FLAG));
+  qa_vec3 offset2 = offset_second();
+  qa_q3_game_entity * entity2 = qa_q3_entity_pool_at(pool_of(r), number);
+  double place2 = (double)(qa_js_to_int32(slot_get(&qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant, QA_Q3_BASE_PERS_RANK)) & ~RANK_TIED_FLAG);
+  player = spawn_model_on_pad(r, podium, offset2, entity2, place2);
   r->podium2 = player;
   if (level(r)->num_non_spectator_clients > 2) {
     number = sorted_at(r, 2);
-    player = spawn_model_on_pad(r, podium, offset_third(), qa_q3_entity_pool_at(pool_of(r), number),
-        (double)((int32_t)slot_get(&qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant, QA_Q3_BASE_PERS_RANK) & ~RANK_TIED_FLAG));
+    qa_vec3 offset = offset_third();
+    qa_q3_game_entity * entity = qa_q3_entity_pool_at(pool_of(r), number);
+    double place = (double)(qa_js_to_int32(slot_get(&qa_q3_entity_pool_client_at(pool_of(r), number)->ps.persistant, QA_Q3_BASE_PERS_RANK)) & ~RANK_TIED_FLAG);
+    player = spawn_model_on_pad(r, podium, offset, entity, place);
     r->podium3 = player;
   }
 }

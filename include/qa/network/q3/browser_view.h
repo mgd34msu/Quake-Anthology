@@ -1,6 +1,7 @@
 /* Port of src/network/q3/browser-view.ts. GPL-2.0-or-later.
  * TS-owner mirrors: services/discovery.ts ServerBrowser request surface
- * and common/endpoint.ts NetworkAddress/addressKey (admission.h). */
+ * and common/endpoint.ts NetworkAddress/addressKey (admission.h). Statuses are
+ * the shared ServerStatus (qa_server_status, services/discovery.h). */
 #ifndef QA_NETWORK_Q3_BROWSER_VIEW_H
 #define QA_NETWORK_Q3_BROWSER_VIEW_H
 #include <stdbool.h>
@@ -15,11 +16,11 @@ typedef enum qa_q3_mirror_request_result_kind {
 } qa_q3_mirror_request_result_kind;
 typedef struct qa_q3_mirror_request_result {
   qa_q3_mirror_request_result_kind kind;
-  const qa_q3_mirror_server_status *status; /* borrowed, completed */
+  const qa_server_status *status; /* borrowed, completed */
   double ping_milliseconds;
 } qa_q3_mirror_request_result;
 /* Mirror of the ServerBrowser surface used here (q3Core). */
-typedef bool (*qa_q3_browser_entry_fn)(void *ctx, const qa_q3_mirror_network_address *address, const qa_q3_mirror_server_status **status_out);
+typedef bool (*qa_q3_browser_entry_fn)(void *ctx, const qa_q3_mirror_network_address *address, const qa_server_status **status_out);
 typedef void (*qa_q3_browser_release_fn)(void *ctx, qa_q3_mirror_discovery_handle handle);
 typedef bool (*qa_q3_browser_result_fn)(void *ctx, qa_q3_mirror_discovery_handle handle, qa_q3_mirror_request_result *out);
 typedef qa_q3_mirror_discovery_handle (*qa_q3_browser_request_fn)(void *ctx, const qa_q3_mirror_network_address *address, double now, qa_q3_discovery_request_kind kind);
@@ -65,12 +66,13 @@ typedef struct qa_q3_browser_host {
   void *ctx;
 } qa_q3_browser_host;
 typedef double (*qa_q3_browser_now_fn)(void *ctx);
-typedef int64_t (*qa_q3_browser_int_fn)(void *ctx);
+/* TS maxPing()/statusResendTime(): cvar values, read as JS numbers. */
+typedef double (*qa_q3_browser_number_fn)(void *ctx);
 /* TS Q3BrowserViewOptions. */
 typedef struct qa_q3_browser_view_options {
   qa_q3_browser_host browser;
   qa_q3_browser_now_fn now;
-  qa_q3_browser_int_fn max_ping, status_resend_time;
+  qa_q3_browser_number_fn max_ping, status_resend_time;
   qa_q3_message_print_fn print; void *print_ctx;
   void *ctx;
 } qa_q3_browser_view_options;

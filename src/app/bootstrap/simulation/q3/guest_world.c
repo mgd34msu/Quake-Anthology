@@ -6,6 +6,8 @@
 #include "qa/foundation/support.h"
 #include "qa/world/collision/q3/clip_models.h"
 #include "qa/world/collision/q3/world.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 
 typedef struct reference { double first, second, count; } reference;
 struct qa_app_q3_guest_world {
@@ -73,7 +75,7 @@ qa_save_value *qa_app_q3_guest_world_capture_portal_checkpoint(qa_app_q3_guest_w
   bool ok = qa_save_value_set(root, "kind", qa_save_value_string(geometry_kind(world->scene->geometry.kind)));
   for (size_t i = 0; ok && i < world->reference_count; i++) {
     char pair[64];
-    snprintf(pair, sizeof pair, "%lld:%lld", (long long)world->references[i].first, (long long)world->references[i].second);
+    snprintf(pair, sizeof pair, "%s:%s", QA_JS_NUMBER(world->references[i].first), QA_JS_NUMBER(world->references[i].second));
     qa_save_value *entry = qa_save_value_object();
     ok = entry && qa_save_value_set(entry, "pair", qa_save_value_string(pair))
         && qa_save_value_set(entry, "count", qa_save_value_number(world->references[i].count))
@@ -148,12 +150,22 @@ void qa_app_q3_guest_world_restore_portal_checkpoint(qa_app_q3_guest_world *worl
     qa_save_reader count_reader = field(&cell, "count");
     double amount = qa_save_reader_integer_min(&count_reader, 0);
     qa_save_reader_destroy(&count_reader);
-    long long first = 0, second = 0;
-    char trailing = 0;
-    bool valid = pair && sscanf(pair, "%lld:%lld%c", &first, &second, &trailing) == 2 && first >= 0 && second >= 0;
+    /* /^(\d+):(\d+)$/ then Number(); sscanf also took signs, white space and overflow. */
+    double first = NAN, second = NAN;
+    bool valid = pair != NULL;
+    if (valid) {
+      const char *colon = strchr(pair, ':');
+      valid = colon != NULL && colon != pair && colon[1] != '\0';
+      for (const char *p = pair; valid && *p != '\0'; p++) valid = p == colon || (*p >= '0' && *p <= '9');
+      if (valid) {
+        first = qa_js_parse_int(pair, 10);
+        second = qa_js_string_to_number(colon + 1);
+      }
+    }
     for (size_t j = 0; valid && j < entry_count; j++) if (strcmp(entries[j].text, pair) == 0) valid = false;
     if (!valid) qa_range_error("Invalid guest portal reference");
-    if (first >= second) qa_range_error("Invalid guest portal pair");
+    if (first > 9007199254740991.0 || second > 9007199254740991.0 || first >= second)
+      qa_range_error("Invalid guest portal pair"); /* Number.isSafeInteger */
     qa_decoded_world geometry = world->scene->geometry;
     if (geometry.kind == QA_DECODED_WORLD_Q1
         || (geometry.kind == QA_DECODED_WORLD_Q2 && geometry.as.q2

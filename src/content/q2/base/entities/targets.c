@@ -1,6 +1,8 @@
 /* Port of src/content/q2/base/entities/targets.ts. Remaining Quake II
  * g_target.c targets. GPL-2.0-or-later. */
 #include "qa/content/q2/base/entities/targets.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -33,14 +35,15 @@ static void blaster_use_fn(void *, qa_q2_entity *, qa_q2_game_services *, const 
 static void crosslevel_use_fn(void *, qa_q2_entity *, qa_q2_game_services *, const qa_actor_id *, const qa_actor_id *);
 static void quake_use_fn(void *, qa_q2_entity *, qa_q2_game_services *, const qa_actor_id *, const qa_actor_id *);
 
-static int64_t sf(const qa_q2_entity *e) { return (int64_t)e->spawnflags; }
+/* TS `spawnflags & x` applies ToInt32: the int32 view of the number. */
+static int32_t sf(const qa_q2_entity *e) { return qa_js_to_int32(e->spawnflags); }
 #define SET_SF(e, bits) ((e)->spawnflags = (double)(bits))
 
 const qa_q2_think QA_Q2_TARGET_LASER_THINK = {NULL, qa_q2_target_laser_think_fn};
 
 void qa_q2_target_laser_think_fn(void *ctx, qa_q2_entity *self, qa_q2_game_services *services) {
   (void)ctx;
-  double count = (sf(self) & (int64_t)0x80000000LL) != 0 ? 8 : 4;
+  double count = (sf(self) & INT32_MIN) != 0 ? 8 : 4;
   qa_vec3 origin = qa_q2_game_body(services, self).origin;
   qa_body_state_result target = self->has_enemy
       ? qa_shared_body_table_read(services->host->bodies, self->enemy) : (qa_body_state_result){0};
@@ -48,7 +51,7 @@ void qa_q2_target_laser_think_fn(void *ctx, qa_q2_entity *self, qa_q2_game_servi
     qa_vec3 center = qa_q2_add(target.value.origin, qa_q2_scale(qa_q2_add(target.value.bounds.min, target.value.bounds.max), 0.5));
     qa_vec3 direction = qa_q2_normalize(qa_q2_subtract(center, origin));
     if (direction.x != self->movedir.x || direction.y != self->movedir.y || direction.z != self->movedir.z)
-      SET_SF(self, sf(self) | (int64_t)0x80000000LL);
+      SET_SF(self, sf(self) | INT32_MIN);
     self->movedir = direction;
   }
   qa_vec3 end = qa_q2_add(origin, qa_q2_scale(self->movedir, 2048));
@@ -78,12 +81,12 @@ void qa_q2_target_laser_think_fn(void *ctx, qa_q2_entity *self, qa_q2_game_servi
       }
     }
     if (!has_hit || (!services->host->is_monster(services->host->ctx, hit) && !services->host->is_player(services->host->ctx, hit))) {
-      if (trace.fraction < 1 && (sf(self) & (int64_t)0x80000000LL) != 0) {
-        SET_SF(self, sf(self) & ~(int64_t)0x80000000LL);
+      if (trace.fraction < 1 && (sf(self) & INT32_MIN) != 0) {
+        SET_SF(self, sf(self) & INT32_MAX);
         qa_q2_presentation_event ev = {0};
         ev.kind = "effect"; ev.effect = "q2:laser-sparks"; ev.origin = trace.end;
         ev.direction = trace.contact.has_plane ? trace.contact.plane.normal : QA_Q2_ZERO;
-        ev.count = count; ev.color = (double)((int64_t)self->skin & 255);
+        ev.count = count; ev.color = (double)(qa_js_to_int32(self->skin) & 255);
         services->host->emit(services->host->ctx, ev);
       }
       break;
@@ -107,13 +110,13 @@ void qa_q2_target_laser_think_fn(void *ctx, qa_q2_entity *self, qa_q2_game_servi
 static void laser_on_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game) {
   (void)c;
   if (!self->has_activator) { self->has_activator = true; self->activator = self->actor.id; }
-  SET_SF(self, sf(self) | (int64_t)0x80000001LL);
+  SET_SF(self, sf(self) | INT32_MIN | 1);
   self->visible = true;
   qa_q2_target_laser_think_fn(NULL, self, game);
 }
 static void laser_off_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game) {
   (void)c;
-  SET_SF(self, sf(self) & ~1LL);
+  SET_SF(self, sf(self) & ~1);
   self->visible = false;
   game->cancel(game->ctx, self);
   qa_q2_presentation_event visibility = {0};
@@ -134,7 +137,7 @@ static void laser_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game,
 }
 static void laser_start_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game) {
   self->frame = (sf(self) & 64) != 0 ? 16 : 4;
-  self->render_flags = (double)((int64_t)self->render_flags | 0xa0);
+  self->render_flags = (double)(qa_js_to_int32(self->render_flags) | 0xa0);
   self->skin = (sf(self) & 2) != 0 ? (double)0xf2f2f0f0 : (sf(self) & 4) != 0 ? (double)0xd0d1d2d3
       : (sf(self) & 8) != 0 ? (double)0xf3f3f1f1 : (sf(self) & 16) != 0 ? (double)0xdcdddedf
       : (sf(self) & 32) != 0 ? (double)0xe0e1e2e3 : 0;
@@ -171,7 +174,7 @@ static void ramp_think_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game
   double elapsed = game->host->now(game->host->ctx) - self->timestamp;
   double from = self->movedir.x, to = self->movedir.y;
   double level = trunc(97 + from + elapsed / self->speed * (to - from));
-  char pattern[2] = {(char)((int64_t)level & 255), '\0'};
+  char pattern[2] = {(char)(qa_js_to_int32(level) & 255), '\0'};
   qa_q2_presentation_event ev = {0};
   ev.kind = "lightstyle"; ev.style = qa_q2_integer_field(&target->spawn, "style", 0); ev.pattern = pattern;
   game->host->emit(game->host->ctx, ev);
@@ -207,7 +210,7 @@ static void ramp_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game, 
 static void temp_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game, const qa_actor_id *o, const qa_actor_id *a) {
   (void)c; (void)o; (void)a;
   char effect[64];
-  (void)snprintf(effect, sizeof effect, "q2:temp-%d", (int)((int64_t)qa_q2_integer_field(&self->spawn, "style", 0) & 255));
+  (void)snprintf(effect, sizeof effect, "q2:temp-%d", (int)(qa_js_to_int32(qa_q2_integer_field(&self->spawn, "style", 0)) & 255));
   qa_q2_presentation_event ev = {0};
   ev.kind = "effect"; ev.effect = effect; ev.origin = qa_q2_game_body(game, self).origin;
   ev.direction = QA_Q2_ZERO; ev.count = 1; ev.color = 0;
@@ -218,8 +221,8 @@ static void spawner_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *gam
   (void)c; (void)o; (void)a;
   qa_body_state body = qa_q2_game_body(game, self);
   char origin[128], angles[128];
-  (void)snprintf(origin, sizeof origin, "%g %g %g", body.origin.x, body.origin.y, body.origin.z);
-  (void)snprintf(angles, sizeof angles, "%g %g %g", body.angles.x, body.angles.y, body.angles.z);
+  (void)snprintf(origin, sizeof origin, "%s %s %s", QA_JS_NUMBER(body.origin.x), QA_JS_NUMBER(body.origin.y), QA_JS_NUMBER(body.origin.z));
+  (void)snprintf(angles, sizeof angles, "%s %s %s", QA_JS_NUMBER(body.angles.x), QA_JS_NUMBER(body.angles.y), QA_JS_NUMBER(body.angles.z));
   qa_q2_spawn_fields fields = {0};
   fields.ordinal = -1;
   fields.classname = self->target;
@@ -242,19 +245,19 @@ static void blaster_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *gam
   (void)o; (void)a;
   qa_q2_base_targets *t = c;
   double effects = game->options.edition == QA_Q2_EDITION_CLASSIC ? 8 : (sf(self) & 2) != 0 ? 0 : (sf(self) & 1) != 0 ? 64 : 8;
-  (void)t->hooks.fire_blaster(t->hooks.weapons_ctx, self, game, qa_q2_game_body(game, self).origin, self->movedir,
-                              self->damage, self->speed, effects, false, true, 33);
+  (void)qa_q2w_ballistics_fire_blaster(t->hooks.weapons, self->actor, game, qa_q2_game_body(game, self).origin, self->movedir,
+                                       self->damage, self->speed, effects, false, 33);
   game->sound(game->ctx, self->actor, "weapons/laser2.wav", 2, 1, 1);
 }
 
 static void crosslevel_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game, const qa_actor_id *o, const qa_actor_id *a) {
   (void)c; (void)o; (void)a;
-  game->counters->server_flags = (double)((int64_t)game->counters->server_flags | sf(self));
+  game->counters->server_flags = (double)(qa_js_to_int32(game->counters->server_flags) | sf(self));
   game->remove(game->ctx, self);
 }
 static void crosslevel_think_fn(void *c, qa_q2_entity *self, qa_q2_game_services *game) {
   (void)c;
-  if (self->spawnflags == (double)((int64_t)game->counters->server_flags & 255 & sf(self))) {
+  if (self->spawnflags == (double)(qa_js_to_int32(game->counters->server_flags) & 255 & sf(self))) {
     qa_actor_id self_id = self->actor.id;
     qa_q2_game_use_targets_entity(game, self, &self_id, false);
     game->remove(game->ctx, self);
@@ -276,8 +279,10 @@ static void quake_think_fn(void *c, qa_q2_entity *self, qa_q2_game_services *gam
     double mass = combat.has_value ? combat.value.mass : 200;
     qa_body_state next = body.value;
     next.ground = NULL;
-    next.velocity = (qa_vec3){body.value.velocity.x + (game->host->random(game->host->ctx) * 2 - 1) * 150,
-                              body.value.velocity.y + (game->host->random(game->host->ctx) * 2 - 1) * 150,
+    double x2 = body.value.velocity.x + (game->host->random(game->host->ctx) * 2 - 1) * 150;
+    double y2 = body.value.velocity.y + (game->host->random(game->host->ctx) * 2 - 1) * 150;
+    next.velocity = (qa_vec3){x2,
+                              y2,
                               self->speed * (100 / mass)};
     qa_shared_body_table_write(game->host->bodies, actor, next);
   }

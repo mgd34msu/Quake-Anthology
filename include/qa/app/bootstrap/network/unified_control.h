@@ -31,29 +31,39 @@ typedef struct qa_app_unified_control {
   /* command */ const char *name;
   /* userinfo */ const char *value;
   /* disconnect */ const char *reason;
+  /* A decoded control's strings borrow this tree; qa_app_unified_control_free releases it. */
+  qa_save_value *tree;
 } qa_app_unified_control;
 void qa_app_unified_control_free(qa_app_unified_control *control);
 bool qa_app_unified_command_in_bounds(const qa_user_command *command);
 uint8_t *qa_app_unified_encode_control(const qa_app_unified_control *value, size_t *out_length);
+/* Raises the TS decode errors. A qa_try around decode_control_into frees a partial `out`
+ * (zeroed by the callee first) with qa_app_unified_control_free. */
 qa_app_unified_control qa_app_unified_decode_control(const uint8_t *bytes, size_t length);
+void qa_app_unified_decode_control_into(qa_app_unified_control *out, const uint8_t *bytes, size_t length);
 typedef struct qa_app_unified_input {
   double sequence; qa_user_command command;
   bool has_arsenal; qa_arsenal_intent arsenal;
 } qa_app_unified_input;
 typedef struct qa_app_unified_input_batch {
   double epoch; qa_app_unified_input *commands; size_t command_count;
+  /* A decoded batch's arsenal strings borrow this tree until qa_app_unified_input_batch_free. */
+  qa_save_value *tree;
 } qa_app_unified_input_batch;
 void qa_app_unified_input_batch_free(qa_app_unified_input_batch *batch);
 uint8_t *qa_app_unified_encode_inputs(const qa_app_unified_input_batch *value, size_t *out_length);
 qa_app_unified_input_batch qa_app_unified_decode_inputs(const uint8_t *bytes, size_t length);
+void qa_app_unified_decode_inputs_into(qa_app_unified_input_batch *out, const uint8_t *bytes, size_t length);
 typedef enum qa_app_unified_handshake_kind {
   QA_APP_UNIFIED_HELLO, QA_APP_UNIFIED_CHALLENGE, QA_APP_UNIFIED_CONNECT
 } qa_app_unified_handshake_kind;
 typedef struct qa_app_unified_handshake {
   qa_app_unified_handshake_kind kind; const char *nonce, *token;
+  qa_save_value *tree; /* decoded strings borrow it; qa_app_unified_handshake_free releases it */
 } qa_app_unified_handshake;
+void qa_app_unified_handshake_free(qa_app_unified_handshake *handshake);
 uint8_t *qa_app_unified_encode_handshake(const qa_app_unified_handshake *value, size_t *out_length);
-/* false is TS null (any malformed input). */
+/* false is TS null: any malformed input, with nothing to free. */
 bool qa_app_unified_decode_handshake(const uint8_t *bytes, size_t length,
     qa_app_unified_handshake *out);
 #endif

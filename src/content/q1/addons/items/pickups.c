@@ -1,4 +1,4 @@
-/* Port of src/content/q1/addons/items/pickups.ts. GPL-2.0-or-later. */
+/* Port of src/content/q1/addons/items/pickups.ts (quakec_mg3/mg3_items.qc and items.qc). GPL-2.0-or-later. */
 #include "qa/content/q1/addons/items/pickups.h"
 
 #include <stdio.h>
@@ -6,10 +6,12 @@
 
 #include "qa/content/q1/addons/campaign.h"
 #include "qa/content/q1/addons/items/common.h"
+#include "qa/content/q1/foundation/pickups.h"
+#include "qa/foundation/js.h"
 
 #define TETTE 512
 
-double qa_q1ad_mg3_weapon_rank(const char *weapon) {
+double qa_q1ad_mg3_weapon_rank(qa_q1_weapon weapon) {
   if (strcmp(weapon, "lightning") == 0) return 1;
   if (strcmp(weapon, "rocketlauncher") == 0) return 2;
   if (strcmp(weapon, "mg3:laser") == 0) return 3;
@@ -19,303 +21,308 @@ double qa_q1ad_mg3_weapon_rank(const char *weapon) {
   if (strcmp(weapon, "nailgun") == 0) return 7;
   return 8;
 }
+
 static double read_flags(qa_q1ad_context *context) {
-  return context->game.campaign_read_flags != NULL
-      ? context->game.campaign_read_flags(context->game.ctx) : 0;
+  qa_q1_campaign_binding campaign = qa_q1_base_campaign(context->base);
+  return campaign.read_flags(campaign.ctx);
 }
 static void write_flags(qa_q1ad_context *context, double flags) {
-  if (context->game.campaign_write_flags != NULL)
-    context->game.campaign_write_flags(context->game.ctx, flags);
+  qa_q1_campaign_binding campaign = qa_q1_base_campaign(context->base);
+  campaign.write_flags(campaign.ctx, flags);
 }
-static void weapon_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                         const qa_actor_id *other, const qa_vec3 *normal) {
-  (void)normal;
-  if (other == NULL) return;
-  qa_q1ad_player *player = qa_q1ad_player_state(context, *other);
+static void configure(qa_q1_services *game, qa_owned_actor actor, qa_item_id item, double count, double capacity) {
+  qa_shared_inventory_table_configure(game->host.inventory, actor,
+                                      (qa_inventory_entry){.item = item, .count = count, .capacity = capacity}, NULL,
+                                      NULL);
+}
+
+static void weapon_touch(qa_q1ad_context *context, qa_q1_actor *entity, qa_actor_id other) {
+  qa_q1_services *game = context->game;
+  qa_q1_player_state *player = qa_q1_player(game, other);
   if (player == NULL) return;
-  const char *classname = entity->classname != NULL ? entity->classname : "";
-  const char *weapon = strcmp(classname, "weapon_mjolnir") == 0 ? "mg3:mjolnir" : "mg3:laser";
-  double dm = context->game.deathmatch;
-  bool leave = context->game.coop || dm == 2 || dm == 3 || dm == 5;
-  char item[64];
-  qa_q1ad_weapon_item(weapon, item);
-  bool admission = context->game.has_pickup_admission && context->game.admission_maps != NULL &&
-      context->game.admission_maps(context->game.ctx, "weapons", item);
-  bool owned = admission
-      ? context->game.admission_owns != NULL && context->game.admission_owns(context->game.ctx, *other, item)
-      : context->game.inventory_count != NULL &&
-            context->game.inventory_count(context->game.ctx, *other, item) != 0;
+  qa_q1_weapon weapon = strcmp(entity->classname, "weapon_mjolnir") == 0 ? "mg3:mjolnir" : "mg3:laser";
+  double deathmatch = game->options.deathmatch;
+  bool leave = game->options.coop || deathmatch == 2 || deathmatch == 3 || deathmatch == 5;
+  qa_item_id item = qa_q1_services_weapon_item(game, weapon);
+  const qa_pickup_admission *admission =
+      game->pickup_admission != NULL && game->pickup_admission->maps(game->pickup_admission->ctx, "weapons", item)
+          ? game->pickup_admission : NULL;
+  bool owned = admission == NULL ? qa_shared_inventory_table_count(game->host.inventory, other, item) != 0
+                                 : admission->owns(admission->ctx, other, item);
   if (leave && owned) return;
-  const char *auto_switch = player->auto_switch != NULL ? player->auto_switch : "";
-  if (admission) {
-    const char *selection = strcmp(auto_switch, "always") == 0 ||
-            (strcmp(auto_switch, "new") == 0 && !owned)
-        ? dm == 0 ? "always" : "better" : "never";
-    if (context->game.admission_weapon == NULL ||
-        !context->game.admission_weapon(context->game.ctx, player->actor, item, selection)) return;
+  bool switching = strcmp(player->auto_switch, "always") == 0 || (strcmp(player->auto_switch, "new") == 0 && !owned);
+  if (admission != NULL) {
+    qa_pickup_selection selection = switching ? deathmatch == 0 ? QA_PICKUP_SELECTION_ALWAYS : QA_PICKUP_SELECTION_BETTER
+                                              : QA_PICKUP_SELECTION_NEVER;
+    static const qa_pickup_ammo_grant AMMO[] = {{"q1:ammo/cells", 30}};
+    if (!admission->weapon(admission->ctx, player->actor,
+                           (qa_pickup_weapon_offer){.item = item, .ammo = AMMO, .ammo_count = 1}, selection))
+      return;
   } else {
-    if (context->game.inventory_give != NULL)
-      context->game.inventory_give(context->game.ctx, player->actor, "q1:ammo/cells", 30);
-    if (context->game.inventory_configure != NULL)
-      context->game.inventory_configure(context->game.ctx, player->actor, item, 1, 1);
-    if (strcmp(auto_switch, "always") == 0 || (strcmp(auto_switch, "new") == 0 && !owned)) {
-      if ((dm == 0 || qa_q1ad_mg3_weapon_rank(weapon) <
-              qa_q1ad_mg3_weapon_rank(player->weapon != NULL ? player->weapon : "")) &&
-          context->game.select_weapon != NULL)
-        (void)context->game.select_weapon(context->game.ctx, player->actor, weapon);
-    }
-    if (context->game.select_weapon != NULL)
-      (void)context->game.select_weapon(context->game.ctx, player->actor, player->weapon);
+    (void)qa_shared_inventory_table_give(game->host.inventory, player->actor, "q1:ammo/cells", 30);
+    configure(game, player->actor, qa_q1_services_weapon_item(game, weapon), 1, 1);
+    if (switching && (deathmatch == 0 || qa_q1ad_mg3_weapon_rank(weapon) < qa_q1ad_mg3_weapon_rank(player->weapon)))
+      (void)qa_q1_select_weapon(game, player->actor, weapon);
+    (void)qa_q1_select_weapon(game, player->actor, player->weapon);
   }
-  qa_q1ad_msg_arg args[] = {{.text = qa_q1ad_actor_text(entity, "netname")}};
-  qa_q1ad_message(context, *other, "$qc_got_item", true, args, 1);
-  qa_q1ad_sound_actor(context, player->actor.id, "weapons/pkup.wav", "item");
-  qa_q1ad_effect(context, "pickup", qa_q1ad_body_of(context, entity).origin, other, 0);
-  entity->activator = *other;
+  qa_q1_msg_arg args[] = {{.text = qa_q1_actor_text(entity, "netname")}};
+  qa_q1_message(game, &other, "$qc_got_item", true, args, 1);
+  qa_q1_sound(game, player->actor.id, "weapons/pkup.wav", "item", 1, 1);
+  qa_q1_effect(game, "pickup", qa_q1_get_body(game, entity).origin, &other, 1);
   entity->has_activator = true;
-  qa_q1ad_use_targets(context, entity, other);
-  if (!qa_q1ad_live(context, entity)) return;
-  if (leave) { entity->target = ""; return; }
-  entity->model = "";
+  entity->activator = other;
+  qa_q1_use_targets(game, entity, &other);
+  if (!qa_q1_live(game, entity)) return;
+  if (leave) { qa_q1ad_set_text(&entity->target, ""); return; }
+  qa_q1ad_set_text(&entity->model, "");
   entity->solid = "none";
-  qa_q1ad_link(context, entity);
-  double respawn = dm != 0 && dm != 2 ? 30 : entity->wait;
-  if (respawn > 0) qa_q1ad_schedule(context, entity, respawn, "SUB_regen");
-  else qa_q1ad_cancel(context, entity);
+  qa_q1_link(game, entity);
+  double respawn = deathmatch != 0 && deathmatch != 2 ? 30 : entity->wait;
+  if (respawn > 0) qa_q1_schedule(game, entity, respawn, qa_q1_callback_registry_action(game->named, entity, "SUB_regen"));
+  else qa_q1_cancel(game, entity);
 }
-static void ring_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                       const qa_actor_id *other, const qa_vec3 *normal) {
-  if (!qa_q1ad_is_player(context, other)) return;
-  qa_q1ad_do_touch(context, entity, "mg3:trigger:silent_teleport", other, normal);
-  qa_q1ad_body body;
-  if (qa_q1ad_body_by_id(context, *other, &body))
-    qa_q1ad_effect(context, "teleport", body.origin, NULL, 0);
+
+static void silent_teleport(qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                            const qa_touch_surface *surface) {
+  qa_q1_call_touch(game, entity, qa_q1_callback_registry_touch(game->named, entity, "mg3:trigger:silent_teleport"),
+                   other, normal, surface);
 }
-static void spawn_ring_kind(qa_q1ad_context *context, qa_q1ad_actor *entity, const char *model,
-                            const char *label, double height) {
+
+static void ring_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                       const qa_touch_surface *surface) {
+  (void)ctx; /* TS handler reads no context state */
+  if (!qa_q1_is_player(game, &other)) return;
+  silent_teleport(game, entity, other, normal, surface);
+  qa_body_state_result body = qa_shared_body_table_read(game->host.bodies, other);
+  if (body.has_value) qa_q1_effect(game, "teleport", body.value.origin, NULL, 1);
+}
+
+static void spawn_ring(qa_q1ad_context *context, qa_q1_actor *entity, const char *model, const char *label,
+                       double height) {
+  qa_q1_services *game = context->game;
   char path[64];
   (void)snprintf(path, sizeof path, "progs/%s.mdl", model);
-  qa_q1ad_actor_set(entity, "ring.model", path);
-  entity->model = qa_q1ad_actor_text(entity, "ring.model");
-  qa_q1ad_actor_set(entity, "netname", label);
-  qa_q1ad_set_bounds(context, entity, (qa_bounds){{-16, -16, -24}, {16, 16, 32}});
-  if (qa_q1ad_actor_number(entity, "height") == 0) qa_q1ad_set_number(context, entity, "height", height);
-  bool teleport = ((int32_t)entity->spawnflags & 1) != 0 &&
-      entity->target != NULL && entity->target[0] != '\0';
-  qa_q1ad_bind(entity->touch, teleport ? "teleport_touch" : QA_Q1AD_MG3_ITEM_PREFIX "ring_touch");
-  if (((int32_t)entity->spawnflags & QA_Q1AD_MG3_SPAWNED_ITEM) == 0 && entity->count == 0) {
-    entity->count = 1;
-    qa_vec3 origin = qa_add3(qa_q1ad_body_of(context, entity).origin, (qa_vec3){0, 0, 8});
-    qa_q1ad_host_event event = {.kind = "ambient", .origin = origin, .path = "ambience/hum1.wav",
-                                .volume = 0.7, .attenuation = 3};
-    qa_q1ad_host_emit(context, &event);
-    if (context->game.create != NULL) {
-      qa_q1ad_actor *particles = context->game.create(context->game.ctx, "particle_tele");
-      if (particles != NULL) {
-        qa_q1ad_set_number(context, particles, "distance", 48);
-        qa_q1ad_set_origin(context, particles, origin);
-        if (context->game.spawn_entity != NULL) context->game.spawn_entity(context->game.ctx, particles);
-      }
-    }
-  }
+  qa_q1ad_set_text(&entity->model, path);
+  (void)qa_q1_actor_field_set(entity, "netname", label);
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, -24}, {16, 16, 32}});
+  if (qa_q1_actor_number(entity, "height") == 0) qa_q1ad_set_number(context, entity, "height", height);
+  bool teleport = (qa_js_to_int32(entity->spawnflags) & 1) != 0 && entity->target[0] != '\0';
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity,
+                                                teleport ? "teleport_touch" : QA_Q1AD_MG3_ITEM_PREFIX "ring_touch");
+  if ((qa_js_to_int32(entity->spawnflags) & QA_Q1AD_MG3_SPAWNED_ITEM) == 0) qa_q1ad_ring_effect(context, entity, 8);
   qa_q1ad_start_mg3_item(context, entity);
 }
-static void spawn_insight(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  spawn_ring_kind(context, entity, "gold_ring", "$mg3_qc_ring_of_insight", -2048);
+
+static void spawn_insight(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* spawn signature */
+  spawn_ring(ctx, entity, "gold_ring", "$mg3_qc_ring_of_insight", -2048);
 }
-static void spawn_stupor(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  spawn_ring_kind(context, entity, "onyx_ring", "$mg3_qc_ring_of_oblivion", 2048);
+static void spawn_stupor(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* spawn signature */
+  spawn_ring(ctx, entity, "onyx_ring", "$mg3_qc_ring_of_oblivion", 2048);
 }
+
 typedef struct {
   qa_q1ad_context *context;
-  qa_q1ad_actor *entity;
+  qa_q1_actor *entity;
   qa_actor_id other;
-  qa_q1ad_player *player;
+  qa_q1_player_state *player;
 } shard_pickup;
-static bool shard_original(void *opaque) {
-  shard_pickup *pickup = opaque;
-  qa_q1ad_context *context = pickup->context;
-  qa_q1ad_armor armor = {0};
-  bool known = context->game.combat_armor != NULL &&
-      context->game.combat_armor(context->game.ctx, pickup->other, &armor);
-  const char *kind = known && armor.kind != NULL ? armor.kind : "none";
-  if (strcmp(kind, "source") == 0) return false;
-  if (strcmp(kind, "q1") == 0 && armor.absorption < 0.3 &&
-      context->game.combat_set_regular_armor != NULL) {
-    armor.absorption = 0.3;
-    context->game.combat_set_regular_armor(context->game.ctx, pickup->player->actor, &armor);
+
+static bool shard_original(void *ctx) {
+  shard_pickup *pickup = ctx;
+  qa_q1_services *game = pickup->context->game;
+  qa_combat_state_result state = qa_gameplay_authority_read(game->host.combat, pickup->other);
+  bool known = state.has_value;
+  qa_regular_armor_state armor = known ? state.value.armor.regular : (qa_regular_armor_state){0};
+  if (known && armor.kind == QA_REGULAR_ARMOR_SOURCE) return false;
+  if (known && armor.kind == QA_REGULAR_ARMOR_Q1 && armor.absorption < 0.3) {
+    qa_regular_armor_state raised = armor;
+    raised.absorption = 0.3;
+    qa_gameplay_authority_set_regular_armor(game->host.combat, pickup->player->actor, raised);
   }
-  double points = !known || strcmp(kind, "none") == 0 ? 0 : armor.points;
+  double points = !known || armor.kind == QA_REGULAR_ARMOR_NONE ? 0 : armor.points;
   if (points >= 200) return false;
-  double next_points = points + 5;
-  if (next_points > 200) next_points = 200;
-  qa_q1ad_armor next = {.kind = "q1", .points = next_points,
-      .absorption = strcmp(kind, "q1") == 0 ? (armor.absorption > 0.3 ? armor.absorption : 0.3) : 0.3,
-      .item = strcmp(kind, "q1") == 0 && armor.item != NULL ? armor.item : "q1:item_armor1"};
-  if (context->game.combat_set_regular_armor != NULL)
-    context->game.combat_set_regular_armor(context->game.ctx, pickup->player->actor, &next);
+  bool q1 = known && armor.kind == QA_REGULAR_ARMOR_Q1;
+  qa_gameplay_authority_set_regular_armor(
+      game->host.combat, pickup->player->actor,
+      (qa_regular_armor_state){.kind = QA_REGULAR_ARMOR_Q1, .points = qa_js_min(200, points + 5),
+                               .absorption = q1 ? qa_js_max(0.3, armor.absorption) : 0.3,
+                               .item = q1 ? armor.item : "q1:item_armor1"});
   return true;
 }
-static void shard_complete(void *opaque, bool taken) {
-  shard_pickup *pickup = opaque;
-  if (taken) qa_q1ad_finish_mg3_pickup(pickup->context, pickup->entity, pickup->other,
-      "$mg3_qc_armor_shard_touch", "items/armor1.wav", NULL, 0);
+
+static void shard_complete(void *ctx, bool taken) {
+  shard_pickup *pickup = ctx;
+  if (taken)
+    qa_q1ad_finish_mg3_pickup(pickup->context, pickup->entity, pickup->other, "$mg3_qc_armor_shard_touch",
+                              "items/armor1.wav", NULL, 0);
 }
-static void shard_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                        const qa_actor_id *other, const qa_vec3 *normal) {
-  (void)normal;
-  if (other == NULL) return;
-  qa_q1ad_player *player = qa_q1ad_player_state(context, *other);
-  if (player == NULL || qa_q1ad_health(context, *other) <= 0) return;
-  shard_pickup pickup = {context, entity, *other, player};
-  qa_q1ad_pickup_ops ops = {&pickup, shard_original, shard_complete};
-  if (context->game.touch_pickup != NULL)
-    context->game.touch_pickup(context->game.ctx, entity, *other, "q1:item_armor_shard", &ops);
-  else ops.complete(&pickup, ops.original(&pickup));
+
+static void shard_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                        const qa_touch_surface *surface) {
+  (void)normal; (void)surface; /* TS handler ignores them */
+  qa_q1_player_state *player = qa_q1_player(game, other);
+  if (player == NULL || qa_q1_health(game, other) <= 0) return;
+  shard_pickup pickup = {ctx, entity, other, player};
+  qa_q1_touch_pickup(game, entity, other, "q1:item_armor_shard", "protection",
+                     (qa_q1_pickup_continuation){.ctx = &pickup, .original = shard_original,
+                                                 .complete = shard_complete});
 }
-static void spawn_shard(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  entity->model = "progs/armorshard.mdl";
-  qa_q1ad_bind(entity->touch, QA_Q1AD_MG3_ITEM_PREFIX "shard_touch");
-  qa_q1ad_set_bounds(context, entity, (qa_bounds){{-16, -16, 0}, {16, 16, 56}});
-  qa_q1ad_start_mg3_item(context, entity);
+
+static void spawn_shard(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_set_text(&entity->model, "progs/armorshard.mdl");
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, QA_Q1AD_MG3_ITEM_PREFIX "shard_touch");
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, 0}, {16, 16, 56}});
+  qa_q1ad_start_mg3_item(ctx, entity);
 }
-static void mjolnir_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                          const qa_actor_id *other, const qa_vec3 *normal) {
-  weapon_touch(context, entity, other, normal);
-  qa_q1ad_do_touch(context, entity, "mg3:trigger:silent_teleport", other, normal);
+
+static void weapon_touch_handler(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                                 const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)game; (void)normal; (void)surface; /* TS handler ignores them */
+  weapon_touch(ctx, entity, other);
 }
-static void spawn_weapon_kind(qa_q1ad_context *context, qa_q1ad_actor *entity, const char *model,
-                              const char *label, bool mjolnir) {
+
+static void mjolnir_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                          const qa_vec3 *normal, const qa_touch_surface *surface) {
+  weapon_touch(ctx, entity, other);
+  silent_teleport(game, entity, other, normal, surface);
+}
+
+static void spawn_weapon(qa_q1ad_context *context, qa_q1_actor *entity, const char *model, const char *label,
+                         bool mjolnir) {
+  qa_q1_services *game = context->game;
   char path[64];
   (void)snprintf(path, sizeof path, "progs/%s.mdl", model);
-  qa_q1ad_actor_set(entity, "weapon.model", path);
-  entity->model = qa_q1ad_actor_text(entity, "weapon.model");
-  qa_q1ad_actor_set(entity, "netname", label);
-  bool teleport = mjolnir && ((int32_t)entity->spawnflags & 128) != 0;
-  if (teleport && qa_q1ad_actor_number(entity, "height") == 0)
-    qa_q1ad_set_number(context, entity, "height", -2048);
-  qa_q1ad_bind(entity->touch, teleport ? QA_Q1AD_MG3_ITEM_PREFIX "mjolnir_touch"
-                                       : QA_Q1AD_MG3_ITEM_PREFIX "weapon_touch");
-  qa_q1ad_set_bounds(context, entity, (qa_bounds){{-16, -16, 0}, {16, 16, 56}});
+  qa_q1ad_set_text(&entity->model, path);
+  (void)qa_q1_actor_field_set(entity, "netname", label);
+  bool teleport = mjolnir && (qa_js_to_int32(entity->spawnflags) & 128) != 0;
+  if (teleport && qa_q1_actor_number(entity, "height") == 0) qa_q1ad_set_number(context, entity, "height", -2048);
+  entity->touch = qa_q1_callback_registry_touch(
+      game->named, entity, teleport ? QA_Q1AD_MG3_ITEM_PREFIX "mjolnir_touch" : QA_Q1AD_MG3_ITEM_PREFIX "weapon_touch");
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, 0}, {16, 16, 56}});
   qa_q1ad_start_mg3_item(context, entity);
 }
-static void spawn_laser_gun(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  spawn_weapon_kind(context, entity, "g_laserg", "$qc_laser_cannon", false);
+
+static void spawn_laser_gun(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* spawn signature */
+  spawn_weapon(ctx, entity, "g_laserg", "$qc_laser_cannon", false);
 }
-static void spawn_mjolnir(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  spawn_weapon_kind(context, entity, "g_hammer", "$mg3_qc_hammer", true);
+static void spawn_mjolnir(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)game; /* spawn signature */
+  spawn_weapon(ctx, entity, "g_hammer", "$mg3_qc_hammer", true);
 }
-static void head_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                       const qa_actor_id *other, const qa_vec3 *normal) {
-  (void)normal;
-  if (!qa_q1ad_is_player(context, other)) return;
-  qa_q1ad_host_event event = {.kind = "achievement", .player_null = true, .text = "ACH_FIND_MG3_SECRET"};
-  qa_q1ad_host_emit(context, &event);
+
+static void head_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                       const qa_touch_surface *surface) {
+  (void)normal; (void)surface; /* TS handler ignores them */
+  qa_q1ad_context *context = ctx;
+  if (!qa_q1_is_player(game, &other)) return;
+  qa_q1_emit(game, (qa_q1_event){.kind = "achievement", .has_player = false, .id = "ACH_FIND_MG3_SECRET"});
   qa_q1ad_broadcast(context, "$mg3_selected_bloody_nightmare");
-  write_flags(context, (double)(int32_t)((int32_t)read_flags(context) |
-      QA_Q1AD_BLOODY_NIGHTMARE_ACTIVE | QA_Q1AD_BLOODY_NIGHTMARE_DISCOVERED));
-  if (context->game.campaign_set_skill != NULL) context->game.campaign_set_skill(context->game.ctx, 3);
-  if (context->services.set_cvar != NULL) context->services.set_cvar(context->services.ctx, "skill", "3");
-  qa_q1ad_finish_mg3_pickup(context, entity, *other, "", "player/tornoff2.wav", NULL, 0);
+  write_flags(context, (double)(qa_js_to_int32(read_flags(context)) | QA_Q1AD_BLOODY_NIGHTMARE_ACTIVE |
+                                QA_Q1AD_BLOODY_NIGHTMARE_DISCOVERED));
+  qa_q1_campaign_binding campaign = qa_q1_base_campaign(context->base);
+  campaign.set_skill(campaign.ctx, 3);
+  context->services.set_cvar(context->services.ctx, "skill", "3");
+  qa_q1ad_finish_mg3_pickup(context, entity, other, "", "player/tornoff2.wav", NULL, 0);
 }
-static void hug_tette(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                      const qa_actor_id *other, const qa_vec3 *normal) {
-  (void)normal;
-  if (other == NULL) return;
-  write_flags(context, (double)(int32_t)((int32_t)read_flags(context) | TETTE));
-  qa_q1ad_msg_arg args[] = {{.text = qa_q1ad_actor_text(entity, "netname")}};
-  qa_q1ad_finish_mg3_pickup(context, entity, *other, "$qc_got_item", "misc/secret.wav", args, 1);
+
+static void hug_tette(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other, const qa_vec3 *normal,
+                      const qa_touch_surface *surface) {
+  (void)game; (void)normal; (void)surface; /* TS handler ignores them */
+  qa_q1ad_context *context = ctx;
+  write_flags(context, (double)(qa_js_to_int32(read_flags(context)) | TETTE));
+  qa_q1_msg_arg args[] = {{.text = qa_q1_actor_text(entity, "netname")}};
+  qa_q1ad_finish_mg3_pickup(context, entity, other, "$qc_got_item", "misc/secret.wav", args, 1);
 }
-static void spawn_head(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  int32_t flags = (int32_t)read_flags(context);
+
+static void spawn_head(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  int32_t flags = qa_js_to_int32(read_flags(context));
   if ((flags & QA_Q1AD_BLOODY_NIGHTMARE_ACTIVE) != 0 &&
       ((flags & QA_Q1AD_BLOODY_NIGHTMARE_NEWGAME) == 0 || (flags & TETTE) != 0)) {
-    entity->classname = "item_health";
+    qa_q1ad_set_text(&entity->classname, "item_health");
     entity->spawnflags = 2;
-    qa_angle_vectors basis = qa_math_angle_vectors_rule(
-        qa_q1ad_body_of(context, entity).angles, QA_ANGLE_RULE_Q1);
-    if (context->game.make_vectors != NULL)
-      (void)context->game.make_vectors(context->game.ctx, qa_q1ad_body_of(context, entity).angles, &basis);
-    qa_vec3 origin = qa_q1ad_body_of(context, entity).origin;
-    qa_q1ad_set_origin(context, entity, qa_add3(qa_add3(origin, qa_scale3(basis.right, 16)),
-                                               qa_scale3(basis.forward, -16)));
-    if (context->game.spawn_pickup != NULL) context->game.spawn_pickup(context->game.ctx, entity);
+    qa_q1_basis basis = qa_q1_vectors(qa_q1_get_body(game, entity).angles);
+    qa_vec3 origin = qa_q1_get_body(game, entity).origin;
+    qa_q1_set_origin(game, entity,
+                     qa_q1_vadd(qa_q1_vadd(origin, qa_q1_vscale(basis.right, 16)), qa_q1_vscale(basis.forward, -16)));
+    (void)qa_q1_spawn_pickup(game, entity);
     return;
   }
   bool bunny = (flags & QA_Q1AD_BLOODY_NIGHTMARE_ACTIVE) != 0;
-  entity->model = bunny ? "progs/g_bunny.mdl" : "progs/item_h_hellkn.mdl";
-  qa_q1ad_actor_set(entity, "netname", bunny ? "$mg3_qc_newgameplus_item" : "");
-  qa_q1ad_bind(entity->touch, bunny ? QA_Q1AD_MG3_ITEM_PREFIX "hug_tette"
-                                    : QA_Q1AD_MG3_ITEM_PREFIX "head_touch");
-  qa_q1ad_set_bounds(context, entity, (qa_bounds){{-16, -16, -16}, {16, 16, 40}});
+  qa_q1ad_set_text(&entity->model, bunny ? "progs/g_bunny.mdl" : "progs/item_h_hellkn.mdl");
+  (void)qa_q1_actor_field_set(entity, "netname", bunny ? "$mg3_qc_newgameplus_item" : "");
+  entity->touch = qa_q1_callback_registry_touch(
+      game->named, entity, bunny ? QA_Q1AD_MG3_ITEM_PREFIX "hug_tette" : QA_Q1AD_MG3_ITEM_PREFIX "head_touch");
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, -16}, {16, 16, 40}});
   qa_q1ad_start_mg3_item(context, entity);
 }
-static void bloody_start(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  if (((int32_t)read_flags(context) & QA_Q1AD_BLOODY_NIGHTMARE_NEWGAME) == 0)
-    qa_q1ad_remove(context, entity);
+
+static void bloody_start(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  if ((qa_js_to_int32(read_flags(context)) & QA_Q1AD_BLOODY_NIGHTMARE_NEWGAME) == 0) qa_q1_remove(game, entity);
   else qa_q1ad_start_mg3_item(context, entity);
 }
-static void bloody_touch(qa_q1ad_context *context, qa_q1ad_actor *entity,
-                         const qa_actor_id *other, const qa_vec3 *normal) {
-  (void)normal;
-  if (other == NULL) return;
-  qa_q1ad_player *player = qa_q1ad_player_state(context, *other);
+
+static void bloody_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                         const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)normal; (void)surface; /* TS handler ignores them */
+  qa_q1ad_context *context = ctx;
+  qa_q1_player_state *player = qa_q1_player(game, other);
   if (player == NULL) return;
-  const char *classname = entity->classname != NULL ? entity->classname : "";
-  int flag = strcmp(classname, "weapon_bloody_sg") == 0
-      ? QA_Q1AD_MG3_BLOODY_SHOTGUN : QA_Q1AD_MG3_BLOODY_SUPER_SHOTGUN;
-  qa_q1ad_set_player_number(context, *other, "parm15",
-      (double)(int32_t)((int32_t)qa_q1ad_player_number(context, *other, "parm15") | flag));
-  if (context->game.inventory_give != NULL)
-    context->game.inventory_give(context->game.ctx, player->actor, "q1:ammo/shells", 30);
-  const char *weapon = flag == QA_Q1AD_MG3_BLOODY_SHOTGUN ? "shotgun" : "supershotgun";
-  char item[64];
-  qa_q1ad_weapon_item(weapon, item);
-  if (context->game.inventory_configure != NULL)
-    context->game.inventory_configure(context->game.ctx, player->actor, item, 1, 1);
-  if (context->game.select_weapon != NULL)
-    (void)context->game.select_weapon(context->game.ctx, player->actor, weapon);
-  qa_q1ad_finish_mg3_pickup(context, entity, *other, "$mg3_map2_secret_weapon", "weapons/pkup.wav", NULL, 0);
+  int32_t flag = strcmp(entity->classname, "weapon_bloody_sg") == 0 ? QA_Q1AD_MG3_BLOODY_SHOTGUN
+                                                                     : QA_Q1AD_MG3_BLOODY_SUPER_SHOTGUN;
+  qa_q1ad_set_player_number(context, other, "parm15",
+                            (double)(qa_js_to_int32(qa_q1ad_player_number(context, other, "parm15")) | flag));
+  (void)qa_shared_inventory_table_give(game->host.inventory, player->actor, "q1:ammo/shells", 30);
+  qa_q1_weapon weapon = flag == QA_Q1AD_MG3_BLOODY_SHOTGUN ? "shotgun" : "supershotgun";
+  configure(game, player->actor, qa_q1_services_weapon_item(game, weapon), 1, 1);
+  (void)qa_q1_select_weapon(game, player->actor, weapon);
+  qa_q1ad_finish_mg3_pickup(context, entity, other, "$mg3_map2_secret_weapon", "weapons/pkup.wav", NULL, 0);
 }
-static void spawn_bloody_kind(qa_q1ad_context *context, qa_q1ad_actor *entity, const char *model) {
+
+static void spawn_bloody(qa_q1_services *game, qa_q1_actor *entity, const char *model) {
   char path[64];
   (void)snprintf(path, sizeof path, "progs/%s.mdl", model);
-  qa_q1ad_actor_set(entity, "weapon.model", path);
-  entity->model = qa_q1ad_actor_text(entity, "weapon.model");
-  qa_q1ad_bind(entity->touch, QA_Q1AD_MG3_ITEM_PREFIX "bloody_touch");
-  qa_q1ad_set_bounds(context, entity, (qa_bounds){{-16, -16, 0}, {16, 16, 56}});
-  qa_q1ad_schedule(context, entity, 0.5, QA_Q1AD_MG3_ITEM_PREFIX "bloody_start");
+  qa_q1ad_set_text(&entity->model, path);
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, QA_Q1AD_MG3_ITEM_PREFIX "bloody_touch");
+  qa_q1_set_bounds(game, entity, (qa_bounds){{-16, -16, 0}, {16, 16, 56}});
+  qa_q1_schedule(game, entity, 0.5,
+                 qa_q1_callback_registry_action(game->named, entity, QA_Q1AD_MG3_ITEM_PREFIX "bloody_start"));
 }
-static void spawn_bloody_sg(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  spawn_bloody_kind(context, entity, "g_bloodshot");
+static void spawn_bloody_sg(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx; /* the handler reads no context state */
+  spawn_bloody(game, entity, "g_bloodshot");
 }
-static void spawn_bloody_ssg(qa_q1ad_context *context, qa_q1ad_actor *entity) {
-  spawn_bloody_kind(context, entity, "g_bloodshot2");
+static void spawn_bloody_ssg(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  (void)ctx; /* the handler reads no context state */
+  spawn_bloody(game, entity, "g_bloodshot2");
+}
+
+static void register_touch(qa_q1ad_context *context, const char *name, qa_q1_touch_fn touch) {
+  qa_q1_callback_registry_register(context->game->named, name,
+                                   (qa_q1_callback_handlers){.ctx = context, .touch = touch});
 }
 
 void qa_q1ad_register_mg3_pickups(qa_q1ad_context *context) {
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "ring_touch",
-      (qa_q1ad_handlers){.touch = ring_touch});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "shard_touch",
-      (qa_q1ad_handlers){.touch = shard_touch});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "weapon_touch",
-      (qa_q1ad_handlers){.touch = weapon_touch});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "mjolnir_touch",
-      (qa_q1ad_handlers){.touch = mjolnir_touch});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "head_touch",
-      (qa_q1ad_handlers){.touch = head_touch});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "hug_tette",
-      (qa_q1ad_handlers){.touch = hug_tette});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "bloody_start",
-      (qa_q1ad_handlers){.action = bloody_start});
-  qa_q1ad_register_named(context, QA_Q1AD_MG3_ITEM_PREFIX "bloody_touch",
-      (qa_q1ad_handlers){.touch = bloody_touch});
-  qa_q1ad_register_spawn(context, "item_draught_insight", false, spawn_insight);
-  qa_q1ad_register_spawn(context, "item_draught_stupor", false, spawn_stupor);
-  qa_q1ad_register_spawn(context, "item_armor_shard", false, spawn_shard);
-  qa_q1ad_register_spawn(context, "weapon_laser_gun", false, spawn_laser_gun);
-  qa_q1ad_register_spawn(context, "weapon_mjolnir", false, spawn_mjolnir);
-  qa_q1ad_register_spawn(context, "item_head_hellknight", false, spawn_head);
-  qa_q1ad_register_spawn(context, "weapon_bloody_sg", false, spawn_bloody_sg);
-  qa_q1ad_register_spawn(context, "weapon_bloody_ssg", false, spawn_bloody_ssg);
+  qa_q1_services *game = context->game;
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "ring_touch", ring_touch);
+  qa_q1_register_spawn(game, "item_draught_insight", spawn_insight, context);
+  qa_q1_register_spawn(game, "item_draught_stupor", spawn_stupor, context);
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "shard_touch", shard_touch);
+  qa_q1_register_spawn(game, "item_armor_shard", spawn_shard, context);
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "weapon_touch", weapon_touch_handler);
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "mjolnir_touch", mjolnir_touch);
+  qa_q1_register_spawn(game, "weapon_laser_gun", spawn_laser_gun, context);
+  qa_q1_register_spawn(game, "weapon_mjolnir", spawn_mjolnir, context);
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "head_touch", head_touch);
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "hug_tette", hug_tette);
+  qa_q1_register_spawn(game, "item_head_hellknight", spawn_head, context);
+  qa_q1_callback_registry_register(game->named, QA_Q1AD_MG3_ITEM_PREFIX "bloody_start",
+                                   (qa_q1_callback_handlers){.ctx = context, .action = bloody_start});
+  register_touch(context, QA_Q1AD_MG3_ITEM_PREFIX "bloody_touch", bloody_touch);
+  qa_q1_register_spawn(game, "weapon_bloody_sg", spawn_bloody_sg, context);
+  qa_q1_register_spawn(game, "weapon_bloody_ssg", spawn_bloody_ssg, context);
 }

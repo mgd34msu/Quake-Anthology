@@ -11,6 +11,9 @@ struct qa_loopback_transport {
 struct qa_loopback_hub {
   qa_datagram_limits limits; qa_net_now_fn now; void *now_ctx;
   qa_loopback_transport **endpoints; size_t count, capacity;
+  /* Closed endpoints leave `endpoints` (TS deletes them from the hub) but stay valid for
+   * their holders until qa_loopback_hub_destroy frees them. */
+  qa_loopback_transport **retired; size_t retired_count, retired_capacity;
 };
 int qa_loopback_hub_init(qa_loopback_hub *h, const qa_datagram_limits *limits, qa_net_now_fn now, void *now_ctx);
 void qa_loopback_hub_destroy(qa_loopback_hub *h);

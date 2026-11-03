@@ -1,6 +1,7 @@
 /* Port of src/core/common-parse.ts. GPL-2.0-or-later. */
 #include "qa/core/common_parse.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 
 #include "qa/core/common_error.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 #include "qa/foundation/support.h"
 
 #define MAX_TOKEN_CHARS 1024
@@ -170,7 +172,9 @@ void qa_common_parse_state_restore(qa_common_parse_state *state, const qa_save_v
     qa_save_reader_fail(&reader, "parser string exceeds source storage");
   strcpy(state->token, token);
   state->token_length = strlen(token);
-  state->line = (int32_t)line;
+  /* TS keeps the restored double; its first LF stores (line + 1) | 0. The C state is int32, so a restored
+     line past int32 wraps here (ToInt32) instead of at that LF; only a diagnostic printed before it differs. */
+  state->line = qa_js_to_int32(line);
   strcpy(state->name, name);
   qa_save_reader_destroy(&token_reader);
   qa_save_reader_destroy(&line_reader);
@@ -321,7 +325,7 @@ void qa_common_parse_state_parse_1d_matrix(qa_common_parse_state *state,
   for (double index = 0; index < x; index++) {
     const char *token = qa_common_parse_state_parse(state, cursor, true);
     double target = offset + index;
-    if (!(target == (double)(int64_t)target) || target < 0 ||
+    if (!(target == floor(target)) || target < 0 ||
         target >= (double)matrix_length)
       qa_range_error("Parse1DMatrix write exceeds its destination");
     matrix[(size_t)target] = (float)qa_native_atof(token);
@@ -380,14 +384,12 @@ void qa_common_parse_state_skip_rest_of_line(qa_common_parse_state *state,
 /* --- Tokenizer --- */
 noreturn void qa_text_parse_error(const char *source_name, int64_t line, int64_t column,
                                   const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "TextParseError: %s:%lld:%lld: ", source_name,
-          (long long)line, (long long)column);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("TextParseError", 0, 0, "%s:%lld:%lld: %s", source_name, (long long)line, (long long)column, text);
 }
 static bool is_whitespace(unsigned char c) { return c <= 32; }
 bool qa_tokenizer_init(qa_tokenizer *tokenizer, const char *source, size_t length,
@@ -536,36 +538,56 @@ static bool entity_set(qa_entity_record *record, char *key, char *value) {
   record->pair_count++;
   return true;
 }
+/* Owned state released when a TextParseError (qa_text_parse_error) is caught above the parse. */
+typedef struct entities_parse {
+  qa_tokenizer tokenizer;
+  qa_entities *out;
+  char *key;
+  char *value;
+} entities_parse;
+static void entities_parse_release(void *raw) {
+  entities_parse *parse = (entities_parse *)raw;
+  free(parse->key);
+  free(parse->value);
+  qa_tokenizer_destroy(&parse->tokenizer);
+  qa_entities_free(parse->out);
+}
 bool qa_parse_entities(const char *text, size_t length, const char *name, qa_entities *out) {
   memset(out, 0, sizeof *out);
-  qa_tokenizer tokenizer;
-  if (!qa_tokenizer_init(&tokenizer, text, length, name != NULL ? name : "<entities>"))
+  entities_parse parse;
+  memset(&parse, 0, sizeof parse);
+  parse.out = out;
+  if (!qa_tokenizer_init(&parse.tokenizer, text, length, name != NULL ? name : "<entities>"))
     return false;
+  qa_tokenizer *tokenizer = &parse.tokenizer;
+  qa_cleanup node;
+  qa_cleanup_push(&node, entities_parse_release, &parse);
   for (;;) {
     qa_text_token opening;
-    if (!qa_tokenizer_next(&tokenizer, true, &opening)) {
-      if (opening.value == NULL && tokenizer.offset < tokenizer.length) {
+    if (!qa_tokenizer_next(tokenizer, true, &opening)) {
+      qa_cleanup_pop(&node);
+      if (opening.value == NULL && tokenizer->offset < tokenizer->length) {
         /* OOM inside a token is indistinguishable here; TS would have
          * produced a token. Treat as failure. */
-        qa_tokenizer_destroy(&tokenizer);
+        qa_tokenizer_destroy(tokenizer);
         qa_entities_free(out);
         return false;
       }
-      qa_tokenizer_destroy(&tokenizer);
+      qa_tokenizer_destroy(tokenizer);
       return true;
     }
     if (strcmp(opening.value, "{") != 0) {
       int64_t line = opening.line;
       int64_t column = opening.column;
       free(opening.value);
-      qa_text_parse_error(tokenizer.name, line, column, "expected \"{\"");
+      qa_text_parse_error(tokenizer->name, line, column, "expected \"{\"");
     }
     free(opening.value);
     qa_entity_record *records = (qa_entity_record *)realloc(
         out->records, (out->record_count + 1) * sizeof *records);
     if (records == NULL) {
-      qa_tokenizer_destroy(&tokenizer);
-      qa_entities_free(out);
+      qa_cleanup_pop(&node);
+      entities_parse_release(&parse);
       return false;
     }
     out->records = records;
@@ -574,31 +596,34 @@ bool qa_parse_entities(const char *text, size_t length, const char *name, qa_ent
     out->record_count++;
     for (;;) {
       qa_text_token key;
-      if (!qa_tokenizer_next(&tokenizer, true, &key))
-        qa_text_parse_error(tokenizer.name, tokenizer.line, tokenizer.column,
+      if (!qa_tokenizer_next(tokenizer, true, &key))
+        qa_text_parse_error(tokenizer->name, tokenizer->line, tokenizer->column,
                             "expected key or \"}\"");
+      parse.key = key.value;
       if (strcmp(key.value, "}") == 0) {
-        free(key.value);
+        free(parse.key);
+        parse.key = NULL;
         break;
       }
       qa_text_token value;
-      if (!qa_tokenizer_next(&tokenizer, false, &value)) {
-        qa_text_parse_error(tokenizer.name, tokenizer.line, tokenizer.column,
-                            "missing value for entity key \"%s\"", key.value);
+      if (!qa_tokenizer_next(tokenizer, false, &value)) {
+        qa_text_parse_error(tokenizer->name, tokenizer->line, tokenizer->column,
+                            "missing value for entity key \"%s\"", parse.key);
       }
+      parse.value = value.value;
       if (strcmp(value.value, "}") == 0) {
         int64_t line = value.line;
         int64_t column = value.column;
-        qa_text_parse_error(tokenizer.name, line, column,
-                            "missing value for entity key \"%s\"", key.value);
+        qa_text_parse_error(tokenizer->name, line, column,
+                            "missing value for entity key \"%s\"", parse.key);
       }
-      if (!entity_set(entity, key.value, value.value)) {
-        free(key.value);
-        free(value.value);
-        qa_tokenizer_destroy(&tokenizer);
-        qa_entities_free(out);
+      if (!entity_set(entity, parse.key, parse.value)) {
+        qa_cleanup_pop(&node);
+        entities_parse_release(&parse);
         return false;
       }
+      parse.key = NULL;
+      parse.value = NULL;
     }
   }
 }

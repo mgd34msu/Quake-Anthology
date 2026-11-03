@@ -45,6 +45,9 @@ typedef struct qa_discovery_result {
 typedef struct qa_server_browser qa_server_browser;
 void qa_server_browser_init(qa_server_browser *b, qa_discovery_wire wire, qa_packet_sender transport);
 void qa_server_browser_destroy(qa_server_browser *b);
+/* Heap form (the struct is private to discovery.c): NULL only on OOM; free destroys. */
+qa_server_browser *qa_server_browser_create(qa_discovery_wire wire, qa_packet_sender transport);
+void qa_server_browser_free(qa_server_browser *b);
 const qa_browser_entry *qa_server_browser_add(qa_server_browser *b, const qa_net_address *address, const char *source, double now);
 void qa_server_browser_remove_favorite(qa_server_browser *b, const qa_net_address *address);
 void qa_server_browser_remove_source(qa_server_browser *b, const qa_net_address *address, const char *source);

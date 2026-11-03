@@ -1,5 +1,6 @@
 /* Port of src/network/q2/codecs/kex-write.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/codecs/kex_write.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <string.h>
@@ -21,20 +22,22 @@ static double protocol_of(qa_q2_protocol_codec *self) {
 }
 
 static uint32_t width_bits(double value, uint32_t byte_bit, uint32_t short_bit) {
-  uint32_t u = (uint32_t)(int32_t)value;
+  uint32_t u = qa_js_to_uint32(value); /* value >>> 0 */
   return (u & 0xffff8000u) != 0 ? byte_bit | short_bit : u > 255u ? short_bit : byte_bit;
 }
-static int32_t byte_color_of(double v) {
+/* TS numbers: Math.max(0, Math.min(255, NaN)) is NaN, which compares changed
+ * and is written as ToInt32(NaN) = 0. */
+static double byte_color_of(double v) {
   double c = trunc(v * 255.0);
   if (c < 0) c = 0;
   if (c > 255) c = 255;
-  return (int32_t)c;
+  return c;
 }
-static int32_t fixed_of(double v, double scale) {
+static double fixed_of(double v, double scale) {
   double c = trunc(v * scale);
   if (c < -32768) c = -32768;
   if (c > 32767) c = 32767;
-  return (int32_t)c;
+  return c;
 }
 static void write_width(qa_q2_sizebuf *m, double value, uint32_t bits, uint32_t byte_bit,
                         uint32_t short_bit) {
@@ -73,12 +76,12 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *m,
       if (to_models[i] > 255) bits |= U_MODEL16_KW;
     }
   }
-  int32_t volume = qa_q2repro_encode_loop_volume(to->loop_volume);
-  int32_t attenuation = qa_q2repro_encode_loop_attenuation(to->loop_attenuation);
+  double volume = qa_q2repro_encode_loop_volume(to->loop_volume);
+  double attenuation = qa_q2repro_encode_loop_attenuation(to->loop_attenuation);
   bool changed_vol = volume != qa_q2repro_encode_loop_volume(from->loop_volume);
   bool changed_attn = attenuation != qa_q2repro_encode_loop_attenuation(from->loop_attenuation);
   if (to->sound != from->sound || changed_vol || changed_attn) bits |= (uint32_t)QA_Q2_U_SOUND;
-  if (new_entity || ((int32_t)to->renderfx & QA_Q2_RF_BEAM) != 0) bits |= (uint32_t)QA_Q2_U_OLDORIGIN;
+  if (new_entity || (qa_js_to_int32(to->renderfx) & QA_Q2_RF_BEAM) != 0) bits |= (uint32_t)QA_Q2_U_OLDORIGIN;
   if (qa_q2repro_encode_alpha(to->alpha) != qa_q2repro_encode_alpha(from->alpha)) bits |= U_ALPHA_KW;
   if (qa_q2repro_encode_scale(to->scale) != qa_q2repro_encode_scale(from->scale)) high |= 1;
   if (to->instance_bits != from->instance_bits) high |= 2;
@@ -119,14 +122,14 @@ static void write_delta_entity(qa_q2_protocol_codec *self, qa_q2_sizebuf *m,
   if (bits & (uint32_t)QA_Q2_U_ANGLE2) qa_q2_msg_write_float(m, (double)to->angles[1]);
   if (bits & (uint32_t)QA_Q2_U_ANGLE3) qa_q2_msg_write_float(m, (double)to->angles[2]);
   if (bits & (uint32_t)QA_Q2_U_SOUND) {
-    int32_t word = (int32_t)to->sound | (changed_vol ? 1 << 14 : 0) | (changed_attn ? 1 << 15 : 0);
+    int32_t word = qa_js_to_int32(to->sound) | (changed_vol ? 1 << 14 : 0) | (changed_attn ? 1 << 15 : 0);
     qa_q2_msg_write_short(m, (double)word);
     if (changed_vol) qa_q2_msg_write_byte(m, (double)volume);
     if (changed_attn) qa_q2_msg_write_byte(m, (double)attenuation);
   }
   if (bits & (uint32_t)QA_Q2_U_EVENT) qa_q2_msg_write_byte(m, to->event);
-  if (bits & U_ALPHA_KW) qa_q2_msg_write_byte(m, (double)qa_q2repro_encode_alpha(to->alpha));
-  if (high & 1) qa_q2_msg_write_byte(m, (double)qa_q2repro_encode_scale(to->scale));
+  if (bits & U_ALPHA_KW) qa_q2_msg_write_byte(m, qa_q2repro_encode_alpha(to->alpha));
+  if (high & 1) qa_q2_msg_write_byte(m, qa_q2repro_encode_scale(to->scale));
   if (high & 2) qa_q2_msg_write_byte(m, to->instance_bits);
   if (high & 4) qa_q2_msg_write_short(m, to->owner);
   if (high & 8) qa_q2_msg_write_short(m, to->old_frame);
@@ -180,7 +183,7 @@ static void write_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *
   if (to->rdflags != from->rdflags) flags |= QA_Q2_PS_RDFLAGS;
   if (to->gunindex != from->gunindex || to->gunskin != from->gunskin) flags |= QA_Q2_PS_WEAPONINDEX;
   for (int i = 0; i < 3; i++) {
-    if (to->gunoffset[i] != from->gunoffset[i]) gunbits |= 1 << i;
+    if (to->gunoffset[i] != from->gunoffset[i]) gunbits |= (int32_t)(1u << i);
     if (to->gunangles[i] != from->gunangles[i]) gunbits |= 1 << (i + 3);
   }
   if (to->gunrate != from->gunrate) gunbits |= 64;
@@ -202,27 +205,29 @@ static void write_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *
     for (int i = 0; i < 3; i++) qa_q2_msg_write_float(m, delta_angle(to, i));
   }
   if (flags & QA_Q2_PS_VIEWOFFSET) {
-    for (int i = 0; i < 3; i++) qa_q2_msg_write_short(m, (double)fixed_of((double)to->viewoffset[i], 16));
+    for (int i = 0; i < 3; i++) qa_q2_msg_write_short(m, fixed_of((double)to->viewoffset[i], 16));
     qa_q2_msg_write_char(m, to->pmove.viewheight);
   }
   if (flags & QA_Q2_PS_VIEWANGLES) {
     for (int i = 0; i < 3; i++) qa_q2_msg_write_float(m, (double)to->viewangles[i]);
   }
   if (flags & QA_Q2_PS_KICKANGLES) {
-    for (int i = 0; i < 3; i++) qa_q2_msg_write_short(m, (double)fixed_of((double)to->kick_angles[i], 1024));
+    for (int i = 0; i < 3; i++) qa_q2_msg_write_short(m, fixed_of((double)to->kick_angles[i], 1024));
   }
   if (flags & QA_Q2_PS_WEAPONINDEX) {
-    int32_t gun = (int32_t)to->gunindex | ((int32_t)to->gunskin << 13);
+    /* JS << on ToInt32(gunskin): wraps instead of overflowing. */
+    int32_t gun = qa_js_to_int32(to->gunindex) |
+                  (int32_t)((uint32_t)qa_js_to_int32(to->gunskin) << 13);
     qa_q2_msg_write_short(m, (double)gun);
   }
   if (flags & QA_Q2_PS_WEAPONFRAME) {
     if (to->gunframe > 511 || to->gunframe < 0) {
       qa_range_error("KEX gun frame exceeds nine bits");
     }
-    int32_t packed = (int32_t)to->gunframe | (gunbits << 9);
+    int32_t packed = qa_js_to_int32(to->gunframe) | (gunbits << 9);
     qa_q2_msg_write_short(m, (double)packed);
     for (int i = 0; i < 3; i++) {
-      if (gunbits & (1 << i)) qa_q2_msg_write_float(m, (double)to->gunoffset[i]);
+      if (gunbits & ((int32_t)(1u << i))) qa_q2_msg_write_float(m, (double)to->gunoffset[i]);
     }
     for (int i = 0; i < 3; i++) {
       if (gunbits & (1 << (i + 3))) qa_q2_msg_write_float(m, (double)to->gunangles[i]);
@@ -230,22 +235,22 @@ static void write_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *
     if (gunbits & 64) qa_q2_msg_write_byte(m, to->gunrate);
   }
   if (flags & QA_Q2_PS_BLEND) {
-    for (int i = 0; i < 4; i++) qa_q2_msg_write_byte(m, (double)byte_color_of((double)to->blend[i]));
+    for (int i = 0; i < 4; i++) qa_q2_msg_write_byte(m, byte_color_of((double)to->blend[i]));
   }
   if (flags & QA_Q2_PS_FOV) qa_q2_msg_write_byte(m, to->fov);
   if (flags & QA_Q2_PS_RDFLAGS) qa_q2_msg_write_byte(m, to->rdflags);
   for (int half = 0; half < 2; half++) {
     int32_t mask = 0;
     for (int i = 0; i < 32; i++) {
-      if (to->stats[i + half * 32] != from->stats[i + half * 32]) mask |= 1 << i;
+      if (to->stats[i + half * 32] != from->stats[i + half * 32]) mask |= (int32_t)(1u << i);
     }
     qa_q2_msg_write_long(m, (double)mask);
     for (int i = 0; i < 32; i++) {
-      if (mask & (1 << i)) qa_q2_msg_write_short(m, (double)to->stats[i + half * 32]);
+      if (mask & ((int32_t)(1u << i))) qa_q2_msg_write_short(m, (double)to->stats[i + half * 32]);
     }
   }
   if (flags & PS_DAMAGE_BLEND_KW) {
-    for (int i = 0; i < 4; i++) qa_q2_msg_write_byte(m, (double)byte_color_of((double)to->damage_blend[i]));
+    for (int i = 0; i < 4; i++) qa_q2_msg_write_byte(m, byte_color_of((double)to->damage_blend[i]));
   }
   if (flags & PS_TEAM_KW) qa_q2_msg_write_byte(m, to->team_id);
 }

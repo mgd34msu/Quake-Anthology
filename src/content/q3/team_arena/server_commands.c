@@ -1,5 +1,6 @@
 /* Port of src/content/q3/team-arena/server-commands.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/team_arena/server_commands.h"
+#include "qa/foundation/js.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,8 +130,8 @@ void qa_q3_ta_game_server_command_runtime_restore(qa_q3_ta_game_server_command_r
     double compare_value = qa_save_reader_integer_min(&compare, 0);
     qa_save_reader_destroy(&compare);
     qa_save_reader_destroy(&item);
-    filters[i].mask = (uint32_t)mask_value;
-    filters[i].compare = (uint32_t)compare_value;
+    filters[i].mask = qa_js_to_uint32(mask_value);
+    filters[i].compare = qa_js_to_uint32(compare_value);
     if (mask_value > 4294967295.0 || compare_value > 4294967295.0) {
       /* validated after the full read below, like the TS */
       filters[i].mask = 0; /* placeholder, fail follows */
@@ -290,8 +291,8 @@ bool qa_q3_ta_game_server_command_runtime_filter_packet(qa_q3_ta_game_server_com
   for (size_t i = 0; i < r->state->filter_count; i++) {
     qa_q3_ta_ip_filter *filter = &r->state->filters[i];
     if ((incoming & filter->mask & initialized_mask) != (filter->compare & initialized_mask)) continue;
-    if ((filter->mask & ~initialized_mask) != 0)
-      qa_range_error("IP filter reads uninitialized source octets");
+    /* Bots have no IP epair, and C compares uninitialized octets here. A filter needing octets the address lacks doesn't match it. */
+    if ((filter->mask & ~initialized_mask) != 0) continue;
     if ((incoming & filter->mask) == filter->compare) return deny_matches;
   }
   return !deny_matches;
@@ -359,9 +360,9 @@ static void entity_list(qa_q3_ta_game_server_command_runtime *r) {
     qa_q3_game_format_arg a = qa_q3_game_format_number(i);
     print_fmt(r, "%3i:", &a, 1);
     double type = entity->s.e_type;
-    if (type == (int)type && type >= 0 && type < 12) {
+    if (type == qa_js_to_int32(type) && type >= 0 && type < 12) {
       char padded[24];
-      (void)snprintf(padded, sizeof padded, "%-20s", labels[(int)type]);
+      (void)snprintf(padded, sizeof padded, "%-20s", labels[qa_js_to_int32(type)]);
       r->host.print(r->host.ctx, padded);
     } else {
       qa_q3_game_format_arg b = qa_q3_game_format_number(type);

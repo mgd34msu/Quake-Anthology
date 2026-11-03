@@ -4,7 +4,6 @@
 #include "qa/content/q1/base/animation.h"
 #include "qa/content/q1/base/creatures.h"
 #include "qa/content/q1/base/finales.h"
-#include "qa/content/q1/base/foundation_types.h"
 #include "qa/content/q1/base/frames.h"
 #include "qa/content/q1/base/map_entities.h"
 #include "qa/content/q1/base/messages.h"

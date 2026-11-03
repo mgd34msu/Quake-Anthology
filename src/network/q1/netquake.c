@@ -1,14 +1,22 @@
 /* Port of src/network/q1/netquake.ts. GPL-2.0-or-later. */
 #include "qa/network/q1/netquake.h"
+#include "qa/network/common/js_number.h"
 #include "qa/foundation/support.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-static int32_t ji(double n) { double m = fmod(trunc(n), 4294967296.0); if (m < 0) m += 4294967296.0; return (int32_t)(uint32_t)m; }
+#include "qa/foundation/js.h"
+/* ToInt32 (NaN and infinities are 0; the fmod form cast NaN to uint32_t). */
+static int32_t ji(double n) { return qa_js_to_int32(n); }
 static uint32_t ju(double n) { return (uint32_t)ji(n); }
+/* JS `a << n` on Int32 (count taken mod 32), free of C's undefined shifts; truncated reads are -1. */
+static int32_t jshl(int32_t a, int32_t n) { return (int32_t)((uint32_t)a << (n & 31)); }
 static qa_vec3 vec3_of(double x, double y, double z) { qa_vec3 v; v.x = x; v.y = y; v.z = z; return v; }
-static qa_vec3 read_vec_coord(qa_coord_fn coord, void *ctx) { return vec3_of(coord(ctx), coord(ctx), coord(ctx)); }
+static qa_vec3 read_vec_coord(qa_coord_fn coord, void *ctx) {
+  double x = coord(ctx), y = coord(ctx), z = coord(ctx); /* Wire order: x, y, z. */
+  return vec3_of(x, y, z);
+}
 qa_temporary_entity qa_read_temporary_entity(qa_message_reader *r, qa_coord_fn coord, void *ctx, bool quakeworld) {
   qa_temporary_entity out; memset(&out, 0, sizeof out);
   double type = qa_message_reader_byte(r); out.type = type;
@@ -19,7 +27,7 @@ qa_temporary_entity qa_read_temporary_entity(qa_message_reader *r, qa_coord_fn c
     return out;
   }
   if (type < 0 || type > 13) {
-    char msg[64]; snprintf(msg, sizeof msg, "Unknown temporary entity %g", type);
+    char msg[64]; snprintf(msg, sizeof msg, "Unknown temporary entity %s", QA_JS_NUMBER(type));
     qa_q1_packet_error(msg, r->offset - 1);
   }
   double count = (quakeworld && (type == 2 || type == 12)) ? qa_message_reader_byte(r) : 1;
@@ -114,21 +122,24 @@ void qa_netquake_decoder_restore(qa_netquake_decoder *d, const qa_save_reader *r
 struct coord_ctx { qa_protocol_codec *codec; double flags; };
 static double coord_read(void *ctx) { struct coord_ctx *c = ctx; return c->codec->read_coord(c->codec, c->flags); }
 static double angle_read(void *ctx) { struct coord_ctx *c = ctx; return c->codec->read_angle(c->codec, c->flags); }
-static char **read_list(qa_message_reader *r, double max, size_t *out_count) {
-  size_t cap = 8, count = 0; char **values = malloc(cap * sizeof *values);
+/* Fills *values in place so a raise mid-list leaves every read name owned by the message. */
+static void read_list(qa_message_reader *r, double max, char ***values, size_t *count) {
+  size_t cap = 8;
+  *values = malloc(cap * sizeof **values);
+  *count = 0;
   for (;;) {
-    size_t len = 0; char *v = qa_message_reader_string(r, 2047, false, &len);
+    if (*count == cap) { cap *= 2; *values = realloc(*values, cap * sizeof **values); }
+    size_t len = 0;
+    char *v = qa_message_reader_string(r, 2047, false, &len);
+    (*values)[(*count)++] = v;
     qa_message_reader_finish(r);
-    if (v[0] == '\0') { free(v); break; }
-    if ((double)count >= max - 1) { free(v); qa_q1_packet_error("Precache overflow", r->offset); }
-    if (count == cap) { cap *= 2; values = realloc(values, cap * sizeof *values); }
-    values[count++] = v;
+    if (v[0] == '\0') { free(v); (*count)--; return; }
+    if ((double)(*count - 1) >= max - 1) qa_q1_packet_error("Precache overflow", r->offset);
   }
-  *out_count = count; return values;
 }
 static qa_q1_extended_entity_state read_entity(qa_netquake_decoder *d, qa_message_reader *r, qa_protocol_codec *codec, double flags, double initial) {
   int32_t bits = ji(initial);
-  if (bits & QA_Q1_U_MOREBITS) bits |= ji(qa_message_reader_byte(r)) << 8;
+  if (bits & QA_Q1_U_MOREBITS) bits |= jshl(ji(qa_message_reader_byte(r)), 8);
   bits = ji(codec->read_entity_bits(codec, bits));
   double number = (bits & QA_Q1_U_LONGENTITY) ? (double)(ji(qa_message_reader_short(r)) & 65535) : qa_message_reader_byte(r);
   qa_q1_wire_entity_state s;
@@ -148,8 +159,8 @@ static qa_q1_extended_entity_state read_entity(qa_netquake_decoder *d, qa_messag
   codec->read_entity_update_tail(codec, bits, &tail);
   if (tail.has_alpha) s.alpha = tail.alpha;
   if (tail.has_scale) s.scale = tail.scale;
-  if (tail.has_frame2) s.frame = ji(s.frame) | (ji(tail.frame_high) << 8);
-  if (tail.has_model2) s.modelindex = ji(s.modelindex) | (ji(tail.model_high) << 8);
+  if (tail.has_frame2) s.frame = ji(s.frame) | jshl(ji(tail.frame_high), 8);
+  if (tail.has_model2) s.modelindex = ji(s.modelindex) | jshl(ji(tail.model_high), 8);
   qa_q1_extended_entity_state out = qa_nq_entity_state_from_wire(number, &s);
   out.step = (bits & QA_Q1_U_STEP) != 0;
   out.lerp_finish_seconds = tail.has_lerpfinish ? d->time_seconds + tail.lerpfinish : 0;
@@ -179,16 +190,16 @@ static void read_client_data(qa_netquake_decoder *d, qa_message_reader *r, qa_pr
   cd->punch_angles = vec3_of(punch[0], punch[1], punch[2]);
   cd->velocity = vec3_of(velocity[0], velocity[1], velocity[2]);
   cd->items = items; cd->on_ground = (bits & QA_Q1_SU_ONGROUND) != 0; cd->in_water = (bits & QA_Q1_SU_INWATER) != 0;
-  cd->weapon_frame = ji(weapon_frame) | (ji(tail.weaponframe_high) << 8);
-  cd->armor = ji(armor) | (ji(tail.armor_high) << 8);
-  cd->weapon_model = ji(weapon_model) | (ji(tail.weapon_high) << 8);
+  cd->weapon_frame = ji(weapon_frame) | jshl(ji(tail.weaponframe_high), 8);
+  cd->armor = ji(armor) | jshl(ji(tail.armor_high), 8);
+  cd->weapon_model = ji(weapon_model) | jshl(ji(tail.weapon_high), 8);
   cd->health = health;
-  cd->ammo = ji(ammo) | (ji(tail.ammo_high) << 8);
-  cd->shells = ji(shells) | (ji(tail.shells_high) << 8);
-  cd->nails = ji(nails) | (ji(tail.nails_high) << 8);
-  cd->rockets = ji(rockets) | (ji(tail.rockets_high) << 8);
-  cd->cells = ji(cells) | (ji(tail.cells_high) << 8);
-  cd->active_weapon = d->standard_quake ? weapon : (double)(1 << ji(weapon));
+  cd->ammo = ji(ammo) | jshl(ji(tail.ammo_high), 8);
+  cd->shells = ji(shells) | jshl(ji(tail.shells_high), 8);
+  cd->nails = ji(nails) | jshl(ji(tail.nails_high), 8);
+  cd->rockets = ji(rockets) | jshl(ji(tail.rockets_high), 8);
+  cd->cells = ji(cells) | jshl(ji(tail.cells_high), 8);
+  cd->active_weapon = d->standard_quake ? weapon : (double)jshl(1, ji(weapon));
 }
 static void read_private(qa_netquake_decoder *d, qa_message_reader *r, double opd, qa_netquake_message *m) {
   int op = (int)opd; size_t dummy;
@@ -214,7 +225,7 @@ static void read_private(qa_netquake_decoder *d, qa_message_reader *r, double op
       if (sub == 0) { m->kind = "prompt-begin"; m->text = qa_message_reader_string(r, 2047, false, &dummy); m->choices = qa_message_reader_byte(r); return; }
       if (sub == 1) { m->kind = "prompt-choice"; m->text = qa_message_reader_string(r, 2047, false, &dummy); m->impulse = qa_message_reader_byte(r); return; }
       if (sub == 2) { m->kind = "prompt-clear"; return; }
-      char msg[64]; snprintf(msg, sizeof msg, "Unknown private prompt %g", sub);
+      char msg[64]; snprintf(msg, sizeof msg, "Unknown private prompt %s", QA_JS_NUMBER(sub));
       qa_q1_packet_error(msg, r->offset - 1);
     }
     default: {
@@ -222,6 +233,14 @@ static void read_private(qa_netquake_decoder *d, qa_message_reader *r, double op
       qa_q1_packet_error(msg, r->offset - 1);
     }
   }
+}
+typedef struct nq_scope { qa_netquake_message **messages; size_t *count; qa_netquake_message *current; } nq_scope;
+/* A caught PacketError abandons the decode; TS discards the partial list. */
+static void nq_scope_free(void *arg) {
+  nq_scope *scope = arg;
+  for (size_t i = 0; i < *scope->count; i++) qa_netquake_message_destroy(&(*scope->messages)[i]);
+  free(*scope->messages);
+  qa_netquake_message_destroy(scope->current);
 }
 qa_netquake_message *qa_netquake_decoder_decode(qa_netquake_decoder *d, const uint8_t *bytes, size_t length, size_t *out_count) {
   qa_message_reader r; qa_message_reader_init(&r, bytes, length);
@@ -231,9 +250,14 @@ qa_netquake_message *qa_netquake_decoder_decode(qa_netquake_decoder *d, const ui
   size_t cap = 8, count = 0;
   qa_netquake_message *messages = calloc(cap, sizeof *messages);
   size_t dummy;
+  qa_netquake_message m;
+  memset(&m, 0, sizeof m);
+  nq_scope scope = { &messages, &count, &m };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, nq_scope_free, &scope);
   while (qa_message_reader_remaining(&r) > 0) {
     double op = qa_message_reader_byte(&r);
-    qa_netquake_message m; memset(&m, 0, sizeof m);
+    memset(&m, 0, sizeof m);
     if (ji(op) & 128) {
       m.kind = "entity";
       cc.codec = &codec; cc.flags = flags;
@@ -275,8 +299,8 @@ qa_netquake_message *qa_netquake_decoder_decode(qa_netquake_decoder *d, const ui
           m.kind = "server-info"; m.protocol = protocol;
           m.max_clients = qa_message_reader_byte(&r); m.game_type = qa_message_reader_byte(&r);
           m.level = qa_message_reader_string(&r, 2047, false, &dummy);
-          m.models = read_list(&r, codec.max_precache, &m.model_count);
-          m.sounds = read_list(&r, codec.max_precache, &m.sound_count);
+          read_list(&r, codec.max_precache, &m.models, &m.model_count);
+          read_list(&r, codec.max_precache, &m.sounds, &m.sound_count);
           break;
         }
         case 12: m.kind = "light-style"; m.index = qa_message_reader_byte(&r); m.str_value = qa_message_reader_string(&r, 2047, false, &dummy); break;
@@ -346,7 +370,9 @@ qa_netquake_message *qa_netquake_decoder_decode(qa_netquake_decoder *d, const ui
     qa_message_reader_finish(&r);
     if (count == cap) { cap *= 2; messages = realloc(messages, cap * sizeof *messages); }
     messages[count++] = m;
+    memset(&m, 0, sizeof m);
   }
+  qa_cleanup_pop(&guard);
   *out_count = count; return messages;
 }
 static qa_q1_user_command q1_cmd(double t, qa_vec3 a, double f, double s, double u, double b, double im) {
@@ -363,7 +389,7 @@ void qa_write_netquake_move(qa_size_buf *sb, const qa_q1_user_command *command,
   double angs[3] = { command->view_angles.x, command->view_angles.y, command->view_angles.z };
   for (int i = 0; i < 3; i++) {
     if (protocol.version == 15) codec.write_angle(&codec, sb, angs[i], fl);
-    else qa_msg_write_angle16(sb, angs[i], (int64_t)fl);
+    else qa_msg_write_angle16(sb, angs[i], qa_js_to_int32(fl));
   }
   qa_msg_write_short(sb, command->forward_move);
   qa_msg_write_short(sb, command->side_move);
@@ -372,6 +398,13 @@ void qa_write_netquake_move(qa_size_buf *sb, const qa_q1_user_command *command,
   qa_msg_write_byte(sb, command->impulse);
 }
 void qa_netquake_client_message_destroy(qa_netquake_client_message *m) { free(m->text); memset(m, 0, sizeof *m); }
+typedef struct nq_client_scope { qa_netquake_client_message **out; size_t *count; qa_netquake_client_message *current; } nq_client_scope;
+static void nq_client_scope_free(void *arg) {
+  nq_client_scope *scope = arg;
+  for (size_t i = 0; i < *scope->count; i++) qa_netquake_client_message_destroy(&(*scope->out)[i]);
+  free(*scope->out);
+  qa_netquake_client_message_destroy(scope->current);
+}
 qa_netquake_client_message *qa_decode_netquake_client(const uint8_t *bytes, size_t length,
                                                       qa_q1_protocol_identity protocol, size_t *out_count) {
   qa_message_reader r; qa_message_reader_init(&r, bytes, length);
@@ -379,8 +412,13 @@ qa_netquake_client_message *qa_decode_netquake_client(const uint8_t *bytes, size
   double flags = qa_q1_protocol_flags(protocol);
   size_t cap = 4, count = 0, dummy;
   qa_netquake_client_message *out = calloc(cap, sizeof *out);
+  qa_netquake_client_message m;
+  memset(&m, 0, sizeof m);
+  nq_client_scope scope = { &out, &count, &m };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, nq_client_scope_free, &scope);
   while (qa_message_reader_remaining(&r) > 0) {
-    qa_netquake_client_message m; memset(&m, 0, sizeof m);
+    memset(&m, 0, sizeof m);
     switch ((int)qa_message_reader_byte(&r)) {
       case 1: m.kind = "nop"; break;
       case 2: m.kind = "disconnect"; break;
@@ -388,11 +426,13 @@ qa_netquake_client_message *qa_decode_netquake_client(const uint8_t *bytes, size
       case 3: {
         m.kind = "move";
         double t = qa_message_reader_float(&r);
-        double ax = protocol.version == 15 ? codec.read_angle(&codec, flags) : qa_read_move_angle16(&r, (int64_t)flags);
-        double ay = protocol.version == 15 ? codec.read_angle(&codec, flags) : qa_read_move_angle16(&r, (int64_t)flags);
-        double az = protocol.version == 15 ? codec.read_angle(&codec, flags) : qa_read_move_angle16(&r, (int64_t)flags);
-        m.command = q1_cmd(t, vec3_of(ax, ay, az), qa_message_reader_short(&r), qa_message_reader_short(&r),
-                           qa_message_reader_short(&r), qa_message_reader_byte(&r), qa_message_reader_byte(&r));
+        double ax = protocol.version == 15 ? codec.read_angle(&codec, flags) : qa_read_move_angle16(&r, qa_js_to_int32(flags));
+        double ay = protocol.version == 15 ? codec.read_angle(&codec, flags) : qa_read_move_angle16(&r, qa_js_to_int32(flags));
+        double az = protocol.version == 15 ? codec.read_angle(&codec, flags) : qa_read_move_angle16(&r, qa_js_to_int32(flags));
+        double forward = qa_message_reader_short(&r), side = qa_message_reader_short(&r);
+        double up = qa_message_reader_short(&r), buttons = qa_message_reader_byte(&r);
+        double impulse = qa_message_reader_byte(&r);
+        m.command = q1_cmd(t, vec3_of(ax, ay, az), forward, side, up, buttons, impulse);
         break;
       }
       default: qa_q1_packet_error("Unknown client message", r.offset - 1);
@@ -400,7 +440,9 @@ qa_netquake_client_message *qa_decode_netquake_client(const uint8_t *bytes, size
     qa_message_reader_finish(&r);
     if (count == cap) { cap *= 2; out = realloc(out, cap * sizeof *out); }
     out[count++] = m;
+    memset(&m, 0, sizeof m);
   }
+  qa_cleanup_pop(&guard);
   *out_count = count; return out;
 }
 void qa_write_netquake_entity(qa_size_buf *sb, qa_q1_protocol_identity profile,
@@ -477,7 +519,7 @@ void qa_write_netquake_message(qa_size_buf *sb, qa_q1_protocol_identity profile,
     ||!strcmp(k,"sequence")||!strcmp(k,"chat")||!strcmp(k,"level-completed")||!strcmp(k,"back-to-lobby")
     ||!strcmp(k,"prompt-begin")||!strcmp(k,"prompt-choice")||!strcmp(k,"prompt-clear"));
   if (is_private && strcmp(rr, "q1-rerelease-private") != 0)
-    qa_range_error("Message requires identified donor-private rerelease layout");
+    qa_raise("Error", 0, 0, "Message requires identified donor-private rerelease layout");
   if (!strcmp(k,"nop")) qa_msg_write_byte(sb, 1);
   else if (!strcmp(k,"disconnect")) qa_msg_write_byte(sb, 2);
   else if (!strcmp(k,"stat")) qa_write_netquake_stat(sb, m->index, m->value);
@@ -562,7 +604,7 @@ void qa_write_netquake_message(qa_size_buf *sb, qa_q1_protocol_identity profile,
   else if (!strcmp(k,"prompt-begin")) { qa_msg_write_byte(sb, 57); qa_msg_write_byte(sb, 0); qa_msg_write_string(sb, m->text); qa_msg_write_byte(sb, m->choices); }
   else if (!strcmp(k,"prompt-choice")) { qa_msg_write_byte(sb, 57); qa_msg_write_byte(sb, 1); qa_msg_write_string(sb, m->text); qa_msg_write_byte(sb, m->impulse); }
   else if (!strcmp(k,"prompt-clear")) { qa_msg_write_byte(sb, 57); qa_msg_write_byte(sb, 2); }
-  else qa_range_error("Unreachable message [object Object]");
+  else qa_raise("Error", 0, 0, "Unreachable message [object Object]");
 }
 void qa_netquake_move_sender_init(qa_netquake_move_sender *s) { s->messages = 0; }
 void qa_netquake_move_sender_reset(qa_netquake_move_sender *s) { s->messages = 0; }

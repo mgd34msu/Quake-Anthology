@@ -43,7 +43,25 @@ typedef struct qa_app_sim_shared_physics_flags {
   bool has_enemy; const qa_actor_id *enemy;
   bool has_delta_yaw; double delta_yaw;
   bool has_team_slave; bool team_slave;
+  /* JS key insertion order of the present members (spread merges keep the
+   * first position of a key). key_count 0 means the checkpoint reader's
+   * literal order (qa_app_sim_physics_flag_key). */
+  unsigned char key_order[11]; unsigned char key_count;
 } qa_app_sim_shared_physics_flags;
+/* Member keys, in the SharedPhysics checkpoint reader's literal order. */
+typedef enum qa_app_sim_physics_flag_key {
+  QA_APP_SIM_FLAG_TEAM_SLAVE, QA_APP_SIM_FLAG_ALWAYS_TOUCH, QA_APP_SIM_FLAG_FLY, QA_APP_SIM_FLAG_SWIM,
+  QA_APP_SIM_FLAG_PARTIAL_GROUND, QA_APP_SIM_FLAG_DEAD, QA_APP_SIM_FLAG_PLAYER, QA_APP_SIM_FLAG_WATER_LEVEL,
+  QA_APP_SIM_FLAG_WATER_TYPE, QA_APP_SIM_FLAG_DELTA_YAW, QA_APP_SIM_FLAG_ENEMY, QA_APP_SIM_FLAG_COUNT
+} qa_app_sim_physics_flag_key;
+bool qa_app_sim_physics_flags_has(const qa_app_sim_shared_physics_flags *flags, qa_app_sim_physics_flag_key key);
+/* Effective key order of the present members; returns the count. */
+size_t qa_app_sim_physics_flags_keys(const qa_app_sim_shared_physics_flags *flags, unsigned char out[QA_APP_SIM_FLAG_COUNT]);
+/* Records the present members' insertion order as `keys` (a literal's
+ * order); members missing from `keys` keep reader order after them. */
+void qa_app_sim_physics_flags_order(qa_app_sim_shared_physics_flags *flags, const unsigned char *keys, size_t count);
+/* `{ ...dst, ...src }`. */
+void qa_app_sim_physics_flags_merge(qa_app_sim_shared_physics_flags *dst, const qa_app_sim_shared_physics_flags *src);
 typedef struct qa_app_sim_source_body_physics {
   void *ctx;
   bool (*collision)(void *ctx, qa_app_sim_shared_solid *out);

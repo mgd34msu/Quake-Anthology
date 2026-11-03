@@ -137,6 +137,23 @@ bool qa_preload_navigation(qa_prepared_navigation *out, qa_navigation_map_identi
   }
   return true;
 }
+typedef struct asset_job {
+  qa_loaded_navigation *out;
+  qa_navigation_map_identity map;
+  const qa_prepared_navigation *prepared;
+  qa_navigation_construction options;
+  bool oom;
+} asset_job;
+/* TS try { new NavigationRuntime(navigationFromAsset(...)) }: both steps may raise. */
+static void asset_runtime(void *ctx) {
+  asset_job *job = ctx;
+  if (!qa_navigation_from_asset(&job->out->graph, job->map, job->prepared->aas, job->prepared->kex,
+                                job->options.profile, job->options.world)) { job->oom = true; return; }
+  if (!qa_navigation_runtime_init(&job->out->runtime, &job->out->graph, job->options.world)) {
+    qa_navigation_graph_destroy(&job->out->graph);
+    job->oom = true;
+  }
+}
 bool qa_load_prepared_navigation(qa_loaded_navigation *out, qa_navigation_construction options,
                                  const qa_prepared_navigation *prepared) {
   memset(out, 0, sizeof *out);
@@ -145,17 +162,24 @@ bool qa_load_prepared_navigation(qa_loaded_navigation *out, qa_navigation_constr
   bool name_eq = map.name && prepared->map.name && !strcmp(map.name, prepared->map.name);
   if (map.format != options.geometry.kind || !digest_eq || !name_eq || map.format != prepared->map.format)
     qa_range_error("Navigation map identity and prepared geometry disagree");
-  bool ok;
-  if (!prepared->aas && !prepared->kex)
-    ok = qa_construct_navigation(&out->graph, options);
-  else
-    ok = qa_navigation_from_asset(&out->graph, map, prepared->aas, prepared->kex, options.profile, options.world);
-  if (!ok) return false;
+  if (prepared->aas || prepared->kex) {
+    asset_job job = {out, map, prepared, options, false};
+    qa_caught_error caught;
+    if (qa_try(asset_runtime, &job, &caught)) {
+      if (job.oom) return false;
+      out->resource = prepared->resource;
+      return true;
+    }
+    /* A supplied asset whose graph cannot be built counts as absent, like one that fails to parse. The
+       partially built graph of the raise is abandoned with the frames that held it. */
+    memset(out, 0, sizeof *out);
+  }
+  if (!qa_construct_navigation(&out->graph, options)) return false;
   if (!qa_navigation_runtime_init(&out->runtime, &out->graph, options.world)) {
     qa_navigation_graph_destroy(&out->graph);
     return false;
   }
-  out->resource = prepared->resource;
+  out->resource = NULL;
   return true;
 }
 bool qa_load_navigation(qa_loaded_navigation *out, qa_navigation_load_options options) {

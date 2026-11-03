@@ -29,6 +29,12 @@ typedef struct qa_q1_id1_environment qa_q1_id1_environment;
 qa_q1_id1_environment *qa_q1_id1_environment_create(qa_q1qc_source source,
                                                     qa_q1qc_machine_fn machine,
                                                     void *machine_ctx);
+/* TS constructor with the optional foreignActor/foreignReference source
+ * members; foreign NULL = both absent. The table is copied. */
+qa_q1_id1_environment *qa_q1_id1_environment_create_foreign(qa_q1qc_source source,
+                                                            const qa_q1qc_foreign_source *foreign,
+                                                            qa_q1qc_machine_fn machine,
+                                                            void *machine_ctx);
 void qa_q1_id1_environment_destroy(qa_q1_id1_environment *environment);
 /* callback NULL = TS null. False return = TS null. */
 bool qa_q1_id1_environment_resolve(qa_q1_id1_environment *environment,

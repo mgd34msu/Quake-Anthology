@@ -1,66 +1,72 @@
-/* Port of src/render/worker-transport.ts. Direct/pumped (PORTING.md):
- * there is no worker thread or message channel; the transport holds a
- * runtime created synchronously from the initialization payload and
- * every request executes in-process before returning.
+/* Port of src/render/worker-transport.ts.
+ *
+ * qa_rwt_*: the TS RenderWorkerTransport and serveRenderWorker. A pthread is
+ * the worker, a mutex-guarded queue pair the MessageChannel, a condition
+ * variable plus counter the Atomics signal. Payloads are byte blobs copied on
+ * send (structured clone). TS throws here are recoverable by contract, so they
+ * become false returns with an error object; error identity is the pointer.
+ * The Node event loop becomes qa_rwt_pump, which runs message delivery, worker
+ * error/exit events and issue timers.
  * GPL-2.0-or-later. */
 #ifndef QA_RENDER_WORKER_TRANSPORT_H
 #define QA_RENDER_WORKER_TRANSPORT_H
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "qa/contracts/render.h"
 #include "qa/render/execution.h"
-/* TS worker request payloads (unknown records) become this tagged struct. */
-typedef enum qa_worker_request_kind {
-  QA_WORKER_REQUEST_COMMAND, QA_WORKER_REQUEST_PREPARE, QA_WORKER_REQUEST_BEGIN,
-  QA_WORKER_REQUEST_APPLY_TEXTURE, QA_WORKER_REQUEST_DRAW, QA_WORKER_REQUEST_CLEANUP,
-  QA_WORKER_REQUEST_SET_GAMMA, QA_WORKER_REQUEST_SET_OVERDRAW, QA_WORKER_REQUEST_READ_PIXELS,
-  QA_WORKER_REQUEST_READ_DEPTH, QA_WORKER_REQUEST_READ_STENCIL, QA_WORKER_REQUEST_DESCRIBE,
-  QA_WORKER_REQUEST_PARK, QA_WORKER_REQUEST_RESUME, QA_WORKER_REQUEST_CLOSE
-} qa_worker_request_kind;
-typedef struct qa_worker_request {
-  qa_worker_request_kind kind;
-  qa_execution_command command;
-  qa_draw_batch batch; double draw_id, unit;
-  qa_texture_binding binding;
-  double gamma; bool enabled; double x, y;
-} qa_worker_request;
-typedef struct qa_worker_response {
-  qa_worker_request_kind kind;
-  qa_image_level image; bool has_image;
-  double number;
-  const uint8_t *bytes; size_t byte_length;
-} qa_worker_response;
-/* Callbacks the runtime makes back to the frontend (image applied,
- * dynamic resolve, swap): TS request() channel, as fn+ctx. */
-typedef enum qa_worker_callback_kind { QA_WORKER_CALLBACK_IMAGE_APPLIED, QA_WORKER_CALLBACK_DYNAMIC_IMAGE, QA_WORKER_CALLBACK_SWAP } qa_worker_callback_kind;
-typedef struct qa_worker_callback {
-  qa_worker_callback_kind kind;
-  double token;
-  const double *captures; size_t capture_count;
-  qa_image_level image; bool has_image;
-} qa_worker_callback;
-typedef struct qa_render_worker_host {
+/* --- RenderWorkerTransport --- */
+/* Borrowed bytes, copied when sent. When owned is set the holder must release it
+ * (qa_rwt_value_release). A host or runtime returning a value may set owned; the
+ * transport then releases it after copying. size 0 with NULL bytes is undefined. */
+typedef struct qa_rwt_value { const void *bytes; size_t size; void *owned; } qa_rwt_value;
+void qa_rwt_value_release(qa_rwt_value *value);
+/* Error objects live until qa_rwt_destroy; pointer equality is TS identity. */
+typedef struct qa_rwt_error { char name[64]; char message[1024]; struct qa_rwt_error *next; } qa_rwt_error;
+typedef struct qa_rwt_transport qa_rwt_transport;
+typedef struct qa_rwt_host {
   void *ctx;
-  /* Returns a wire image for dynamic-image callbacks. */
-  bool (*on_callback)(void *ctx, qa_worker_callback callback, double *out_ordinal, double *out_width, double *out_height, const char **out_name);
-  void (*failed)(void *ctx, const char *message);
-} qa_render_worker_host;
-typedef struct qa_render_worker_runtime qa_render_worker_runtime;
-struct qa_render_worker_runtime { void *impl; };
-typedef bool (*qa_render_worker_initialize_fn)(void *ctx, const void *payload, size_t payload_size, qa_render_worker_host host, qa_render_worker_runtime *out);
-bool qa_render_worker_runtime_handle(qa_render_worker_runtime *runtime, qa_worker_request request, qa_worker_response *out);
-void qa_render_worker_runtime_close(qa_render_worker_runtime *runtime);
-typedef struct qa_render_worker_transport qa_render_worker_transport;
-struct qa_render_worker_transport { void *impl; };
-/* initialize/ctx create the runtime (qa_create_render_worker_runtime
- * for the built-in CPU/GL runtime). payload is the initialization
- * struct for that factory. False only on OOM/factory failure. */
-bool qa_render_worker_transport_open(qa_render_worker_transport *transport, qa_render_worker_initialize_fn initialize, void *initialize_ctx, const void *payload, size_t payload_size, qa_render_worker_host host);
-bool qa_render_worker_transport_request(qa_render_worker_transport *transport, qa_worker_request request, qa_worker_response *out);
-void qa_render_worker_transport_close(qa_render_worker_transport *transport);
-/* TS serveRenderWorker: in C there is no worker entry loop; this binds
- * a factory for qa_render_worker_transport_open callers using the
- * default factory slot. */
-void qa_serve_render_worker(qa_render_worker_initialize_fn initialize, void *initialize_ctx);
-bool qa_render_worker_transport_open_default(qa_render_worker_transport *transport, const void *payload, size_t payload_size, qa_render_worker_host host);
+  /* False = throw; set *error (qa_rwt_error_new, or an error a call returned). */
+  bool (*request)(void *ctx, qa_rwt_value payload, qa_rwt_value *out, qa_rwt_error **error);
+  bool (*completed)(void *ctx, qa_rwt_value payload, qa_rwt_error **error);
+  void (*failed)(void *ctx, qa_rwt_error *error); /* optional */
+} qa_rwt_host;
+/* Worker-side failure (TS Failure union), passed across threads by value. */
+typedef struct qa_rwt_failure { bool is_host; int64_t token; char name[64]; char message[1024]; } qa_rwt_failure;
+void qa_rwt_failure_set(qa_rwt_failure *failure, const char *name, const char *message);
+typedef struct qa_rwt_worker qa_rwt_worker;
+/* TS RenderWorkerRuntime. Everything here runs on the worker thread. */
+typedef struct qa_rwt_runtime {
+  void *ctx;
+  qa_rwt_value description;
+  bool (*dispatch)(void *ctx, qa_rwt_value payload, qa_rwt_value *out, qa_rwt_failure *failure);
+  bool (*close)(void *ctx, qa_rwt_failure *failure);
+} qa_rwt_runtime;
+/* TS serveRenderWorker's initialize; with its ctx it stands in for the worker URL. */
+typedef bool (*qa_rwt_initialize_fn)(void *ctx, qa_rwt_value payload, qa_rwt_worker *worker, qa_rwt_runtime *out, qa_rwt_failure *failure);
+/* TS request(), worker thread only. On true, *out is owned by the caller. */
+bool qa_rwt_worker_request(qa_rwt_worker *worker, qa_rwt_value payload, qa_rwt_value *out, qa_rwt_failure *failure);
+
+/* TS RenderWorkerTransport.open (default timeout 30000). *out is set whenever
+ * the transport was allocated, also on false, so the error stays readable until
+ * qa_rwt_destroy. Invalid timeouts abort, as the TS RangeError precedes any worker. */
+bool qa_rwt_open(qa_rwt_transport **out, qa_rwt_initialize_fn initialize, void *initialize_ctx, qa_rwt_value initialization, qa_rwt_host host, double timeout_milliseconds, qa_rwt_error **error);
+qa_rwt_error *qa_rwt_error_new(qa_rwt_transport *transport, const char *name, const char *message);
+bool qa_rwt_active(const qa_rwt_transport *transport);
+bool qa_rwt_settled(const qa_rwt_transport *transport);
+bool qa_rwt_retired(const qa_rwt_transport *transport);
+qa_rwt_value qa_rwt_description(const qa_rwt_transport *transport); /* borrowed */
+bool qa_rwt_issue(qa_rwt_transport *transport, qa_rwt_value payload, qa_rwt_error **error);
+/* out may be NULL to drop the result; otherwise it is owned by the caller. */
+bool qa_rwt_call(qa_rwt_transport *transport, qa_rwt_value payload, qa_rwt_value *out, qa_rwt_error **error);
+bool qa_rwt_callback_call(qa_rwt_transport *transport, qa_rwt_value payload, qa_rwt_value *out, qa_rwt_error **error);
+bool qa_rwt_synchronize(qa_rwt_transport *transport, qa_rwt_value *out, qa_rwt_error **error);
+/* TS boolean result in *retired; false return = throw from the nested close. */
+bool qa_rwt_retire_after_failure(qa_rwt_transport *transport, bool *retired, qa_rwt_error **error);
+bool qa_rwt_close(qa_rwt_transport *transport, qa_rwt_error **error);
+/* One event-loop turn; a no-op inside a host callback or after retirement. */
+void qa_rwt_pump(qa_rwt_transport *transport);
+/* Frees the frontend. A worker that never acknowledged close keeps running with
+ * its runtime, as TS leaves an unacknowledged context borrowed. */
+void qa_rwt_destroy(qa_rwt_transport *transport);
 #endif

@@ -199,9 +199,28 @@ typedef struct qa_provider_checkpoint_ref {
 typedef struct qa_save_clock { qa_provider_id provider; qa_source_time time; } qa_save_clock;
 typedef struct qa_save_random { qa_provider_id provider; qa_random_state state; } qa_save_random;
 
+/* TS SelectionConsumptionEntry: what a native-guest session did with one
+ * selection axis. axis "enemies" | "movement" | "character"; outcome
+ * "honored" | "partial" | "guest-native". Metadata only; restore never
+ * reads it back as state. */
+typedef struct qa_selection_consumption_entry {
+  const char *axis, *requested, *outcome, *detail;
+} qa_selection_consumption_entry;
+
+/* C-only: the JS insertion order of the SaveImage record's keys, which
+ * encodeCheckpointValue (JSON.stringify) preserves. A checkpoint built by
+ * SharedSimulation.checkpointFromSource orders its keys schemaVersion,
+ * recipe, frame, nextEventSequence, mods?, consumption, clocks, ...,
+ * guests; parseSaveImage builds schemaVersion, legacyArmorLayout?, recipe,
+ * frame, nextEventSequence, clocks, ..., guests, mods?, consumption. */
+typedef enum qa_save_image_key_order {
+  QA_SAVE_IMAGE_ORDER_CHECKPOINT = 0,
+  QA_SAVE_IMAGE_ORDER_PARSED
+} qa_save_image_key_order;
+
 typedef struct qa_save_image {
   const qa_mod_session_checkpoint *mods; /* optional */
-  int64_t schema_version;                /* TS literal 3 */
+  int64_t schema_version;                /* TS literal 4 */
   bool legacy_armor_layout;              /* TS optional `true` */
   qa_executable_recipe recipe;
   qa_frame_context frame;
@@ -216,6 +235,9 @@ typedef struct qa_save_image {
   const qa_think_checkpoint *thinks; size_t think_count;
   const qa_provider_checkpoint *providers; size_t provider_count;
   const qa_guest_checkpoint *guests; size_t guest_count;
+  /* TS consumption (empty when nothing was narrowed). */
+  const qa_selection_consumption_entry *consumption; size_t consumption_count;
+  qa_save_image_key_order key_order; /* C-only, see above */
 } qa_save_image;
 
 /** TS Simulation. step_async is the optional stepAsync (nullable);

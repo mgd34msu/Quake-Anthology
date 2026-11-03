@@ -1,11 +1,10 @@
 /*
  * Port of src/persistence/q1-selection.ts: original v5 does not
  * identify progs.dat or the game directory, so selection never
- * guesses between mods. TS CatalogProduct / InstalledCatalog
- * (owner: src/content/catalog/index.ts) and ProductExpectation
- * (owner: src/content/catalog/products.ts) have no C port yet, so
- * the fields q1-selection.ts reads are mirrored here; the content
- * port reconciles the names. Catalog fields the selector never
+ * guesses between mods. qa_select_q1_save_product_in_catalog
+ * selects over the content catalog (TS InstalledCatalog); the
+ * mirrored CatalogProduct fields below are the older form its unit
+ * tests build, and both share one selection. Catalog fields the selector never
  * reads (archives, loose roots, diagnostics) are omitted until
  * then. Plain TS Errors abort printing "Error: ..." (the
  * provider_ownership precedent). Case folding is ASCII byte-wise;
@@ -18,6 +17,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "qa/content/catalog/index.h"
 #include "qa/contracts/content.h"
 #include "qa/persistence/q1.h"
 
@@ -74,6 +74,10 @@ typedef struct qa_installed_catalog {
  * borrows from the catalog. */
 const qa_catalog_product *qa_select_q1_save_product(
     const qa_installed_catalog *catalog, const qa_q1_save_data *save,
+    const char *path, const char *selected);
+/* The same selection over the content catalog (TS InstalledCatalog). */
+const qa_catalog_discovered_product *qa_select_q1_save_product_in_catalog(
+    const qa_content_catalog *catalog, const qa_q1_save_data *save,
     const char *path, const char *selected);
 
 #endif

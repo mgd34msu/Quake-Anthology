@@ -88,11 +88,14 @@ typedef qa_q2_trace (*qa_q2_kex_clip_fn)(void *ctx, qa_q2_vec3 start, qa_q2_vec3
 #define QA_Q2_MAXTOUCH 32
 
 /* TS PmTypeT. */
-#define QA_Q2_PM_NORMAL 0
-#define QA_Q2_PM_SPECTATOR 1
-#define QA_Q2_PM_DEAD 2
-#define QA_Q2_PM_GIB 3
-#define QA_Q2_PM_FREEZE 4
+/* network/q2/state.h spells the same TS PmTypeT values; one shared definition. */
+#ifndef QA_Q2_PM_TYPE_DEFINED
+#define QA_Q2_PM_TYPE_DEFINED
+typedef enum qa_q2_pm_type {
+  QA_Q2_PM_NORMAL, QA_Q2_PM_SPECTATOR, QA_Q2_PM_DEAD, QA_Q2_PM_GIB,
+  QA_Q2_PM_FREEZE, QA_Q2_PM_GRAPPLE = 5, QA_Q2_PM_NOCLIP = 6
+} qa_q2_pm_type;
+#endif
 /* TS KexPmTypeT. */
 #define QA_Q2_KEX_PM_NORMAL 0
 #define QA_Q2_KEX_PM_GRAPPLE 1

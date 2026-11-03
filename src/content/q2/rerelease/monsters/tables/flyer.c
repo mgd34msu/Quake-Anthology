@@ -316,28 +316,6 @@ static const qa_q2m_frame f_flyer_3[] = {
   {QA_Q2M_AI_CHARGE, NULL, 40, a_flyer_3_3, 1, -1},
   {QA_Q2M_AI_CHARGE, NULL, 40, a_flyer_3_4, 1, -1},
 };
-static const qa_q2m_frame f_flyer_4[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
-static const qa_q2m_frame f_flyer_5[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
 static const qa_q2m_frame f_flyer_6[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
@@ -353,32 +331,6 @@ static const qa_q2m_frame f_flyer_7[] = {
 static const qa_q2m_frame f_flyer_8[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
-static const qa_q2m_frame f_flyer_9[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
-static const qa_q2m_frame f_flyer_10[] = {
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
-};
-static const qa_q2m_frame f_flyer_11[] = {
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
   {QA_Q2M_AI_MOVE, NULL, 0, NULL, 0, -1},
@@ -514,14 +466,9 @@ const qa_q2m_move qa_q2rm_flyer_moves[] = {
   {"flyer_move_walk", 13, 57, NULL, 0, f_flyer_1, 45},
   {"flyer_move_run", 13, 57, NULL, 0, f_flyer_2, 45},
   {"flyer_move_kamikaze", 120, 124, "flyer_kamikaze", 0, f_flyer_3, 5},
-  {"flyer_move_rollright", 119, 127, NULL, 0, f_flyer_4, 9},
-  {"flyer_move_rollleft", 110, 118, NULL, 0, f_flyer_5, 9},
   {"flyer_move_pain3", 147, 150, "flyer_run", 0, f_flyer_6, 4},
   {"flyer_move_pain2", 143, 146, "flyer_run", 0, f_flyer_7, 4},
   {"flyer_move_pain1", 134, 142, "flyer_run", 0, f_flyer_8, 9},
-  {"flyer_move_defense", 128, 133, NULL, 0, f_flyer_9, 6},
-  {"flyer_move_bankright", 103, 109, NULL, 0, f_flyer_10, 7},
-  {"flyer_move_bankleft", 96, 102, NULL, 0, f_flyer_11, 7},
   {"flyer_move_attack2", 79, 95, "flyer_run", 0, f_flyer_12, 17},
   {"flyer_move_attack3", 79, 95, "flyer_run", 0, f_flyer_13, 17},
   {"flyer_move_start_melee", 58, 63, "flyer_loop_melee", 0, f_flyer_14, 6},

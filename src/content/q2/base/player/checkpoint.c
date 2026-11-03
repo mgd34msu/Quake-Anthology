@@ -22,6 +22,37 @@ static double *copy_doubles(const double *values, size_t count) {
   return copy;
 }
 
+typedef struct kept_string { struct kept_string *next; char text[]; } kept_string;
+static kept_string *KEPT_STRINGS;
+const char *qa_q2_checkpoint_keep_string(const char *text) {
+  if (!text) return NULL;
+  for (kept_string *kept = KEPT_STRINGS; kept; kept = kept->next)
+    if (strcmp(kept->text, text) == 0) return kept->text;
+  size_t length = strlen(text);
+  kept_string *kept = malloc(sizeof *kept + length + 1);
+  if (!kept) qa_range_error("Out of memory");
+  memcpy(kept->text, text, length + 1);
+  kept->next = KEPT_STRINGS;
+  KEPT_STRINGS = kept;
+  return kept->text;
+}
+static void keep_entries(qa_inventory_entry *entries, size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    entries[i].item = qa_q2_checkpoint_keep_string(entries[i].item);
+    if (entries[i].has_count_policy) {
+      entries[i].count_policy.kind = qa_q2_checkpoint_keep_string(entries[i].count_policy.kind);
+      entries[i].count_policy.arithmetic = qa_q2_checkpoint_keep_string(entries[i].count_policy.arithmetic);
+    }
+  }
+}
+static void keep_carry(qa_q2_base_player_carry *carry) {
+  keep_entries(carry->inventory, carry->inventory_count);
+  carry->armor.regular.item = qa_q2_checkpoint_keep_string(carry->armor.regular.item);
+  carry->armor.powered.kind = qa_q2_checkpoint_keep_string(carry->armor.powered.kind);
+  carry->weapon = qa_q2_checkpoint_keep_string(carry->weapon);
+  carry->selected_item = qa_q2_checkpoint_keep_string(carry->selected_item);
+}
+
 void qa_q2_base_player_state_checkpoint_capture(const qa_q2_base_player_state *state, qa_q2_base_player_state_checkpoint *out) {
   *out = (qa_q2_base_player_state_checkpoint){0};
   out->slot = state->slot; out->entered_at = state->entered_at;
@@ -46,6 +77,7 @@ void qa_q2_base_player_state_checkpoint_capture(const qa_q2_base_player_state *s
   out->damage_alpha = state->damage_alpha; out->bonus_alpha = state->bonus_alpha;
   out->damage_pitch = state->damage_pitch; out->damage_roll = state->damage_roll; out->damage_time = state->damage_time;
   out->power_armor_time = state->power_armor_time; out->fall_time = state->fall_time; out->fall_value = state->fall_value;
+  out->help_changed = state->help_changed; out->game_help_changed = state->game_help_changed;
   out->landmark_free_fall = state->landmark_free_fall; out->landmark_noise_time = state->landmark_noise_time;
   out->old_velocity = state->old_velocity; out->old_view_angles = state->old_view_angles;
   out->killer_yaw = state->killer_yaw; out->buttons = state->buttons; out->latched_buttons = state->latched_buttons;
@@ -53,6 +85,7 @@ void qa_q2_base_player_state_checkpoint_capture(const qa_q2_base_player_state *s
   out->event = state->event; out->animation_priority = state->animation_priority; out->animation_end = state->animation_end;
   out->animation_duck = state->animation_duck; out->animation_run = state->animation_run;
   out->loop_sound = state->loop_sound; out->selected_item = state->selected_item;
+  out->jump_held = state->jump_held;
   out->show_scores = state->show_scores; out->show_inventory = state->show_inventory; out->show_help = state->show_help;
   out->has_chase_target = qa_q2_save_actor(state->has_chase_target ? &state->chase_target : NULL, &out->chase_target);
   out->has_coop_respawn = state->has_coop_respawn;
@@ -84,10 +117,12 @@ void qa_q2_base_player_state_checkpoint_restore(qa_q2_base_player_state *state,
   state->use_q2_weapons = checkpoint->use_q2_weapons; state->use_q2_inventory = checkpoint->use_q2_inventory;
   state->spawn_inventory = copy_entries(checkpoint->spawn_inventory, checkpoint->spawn_inventory_count);
   state->spawn_inventory_count = checkpoint->spawn_inventory_count;
+  keep_entries(state->spawn_inventory, state->spawn_inventory_count);
   (void)snprintf(state->userinfo, sizeof state->userinfo, "%s", checkpoint->userinfo);
   (void)snprintf(state->name, sizeof state->name, "%s", checkpoint->name);
   (void)snprintf(state->skin, sizeof state->skin, "%s", checkpoint->skin);
-  state->gender = checkpoint->gender; state->fov = checkpoint->fov; state->hand = checkpoint->hand;
+  state->gender = qa_q2_checkpoint_keep_string(checkpoint->gender); state->fov = checkpoint->fov;
+  state->hand = qa_q2_checkpoint_keep_string(checkpoint->hand);
   state->spectator = checkpoint->spectator; state->requested_spectator = checkpoint->requested_spectator;
   state->connected = checkpoint->connected; state->dead = checkpoint->dead; state->gibbed = checkpoint->gibbed;
   state->noclip = checkpoint->noclip; state->god = checkpoint->god; state->notarget = checkpoint->notarget;
@@ -101,18 +136,24 @@ void qa_q2_base_player_state_checkpoint_restore(qa_q2_base_player_state *state,
   state->damage_alpha = checkpoint->damage_alpha; state->bonus_alpha = checkpoint->bonus_alpha;
   state->damage_pitch = checkpoint->damage_pitch; state->damage_roll = checkpoint->damage_roll; state->damage_time = checkpoint->damage_time;
   state->power_armor_time = checkpoint->power_armor_time; state->fall_time = checkpoint->fall_time; state->fall_value = checkpoint->fall_value;
+  state->help_changed = checkpoint->help_changed; state->game_help_changed = checkpoint->game_help_changed;
   state->landmark_free_fall = checkpoint->landmark_free_fall; state->landmark_noise_time = checkpoint->landmark_noise_time;
   state->old_velocity = checkpoint->old_velocity; state->old_view_angles = checkpoint->old_view_angles;
   state->killer_yaw = checkpoint->killer_yaw; state->buttons = checkpoint->buttons; state->latched_buttons = checkpoint->latched_buttons;
   state->weapon_thunk = checkpoint->weapon_thunk; state->bob_time = checkpoint->bob_time; state->bob_move = checkpoint->bob_move;
-  state->event = checkpoint->event; state->animation_priority = checkpoint->animation_priority; state->animation_end = checkpoint->animation_end;
+  state->event = qa_q2_checkpoint_keep_string(checkpoint->event); state->animation_priority = checkpoint->animation_priority; state->animation_end = checkpoint->animation_end;
   state->animation_duck = checkpoint->animation_duck; state->animation_run = checkpoint->animation_run;
-  state->loop_sound = checkpoint->loop_sound; state->selected_item = checkpoint->selected_item;
+  state->loop_sound = qa_q2_checkpoint_keep_string(checkpoint->loop_sound);
+  state->selected_item = qa_q2_checkpoint_keep_string(checkpoint->selected_item);
+  state->jump_held = checkpoint->jump_held;
   state->show_scores = checkpoint->show_scores; state->show_inventory = checkpoint->show_inventory; state->show_help = checkpoint->show_help;
   state->has_chase_target = checkpoint->has_chase_target;
   if (checkpoint->has_chase_target) state->chase_target = resolve(resolve_ctx, checkpoint->chase_target);
   state->has_coop_respawn = checkpoint->has_coop_respawn;
-  if (checkpoint->has_coop_respawn) qa_q2_base_player_carry_set(&state->coop_respawn, checkpoint->coop_respawn);
+  if (checkpoint->has_coop_respawn) {
+    qa_q2_base_player_carry_set(&state->coop_respawn, checkpoint->coop_respawn);
+    keep_carry(&state->coop_respawn);
+  }
   state->flood_times = copy_doubles(checkpoint->flood_times, checkpoint->flood_time_count);
   state->flood_time_count = checkpoint->flood_time_count;
   state->flood_time_cap = checkpoint->flood_time_count;

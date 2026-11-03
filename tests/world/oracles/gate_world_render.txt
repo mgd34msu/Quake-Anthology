@@ -1,0 +1,11 @@
+patch_bad_params CommonError|CM_GeneratePatchFacets: bad parameters: (1, 3, managed points)
+patch_infinite RangeError|collision patch requires integer dimensions
+patch_position_nan false true facets 1 planes 5
+check_winding CommonError|CheckWinding: 2 points
+sweep_nan null clean 0.4375 0.8125 0.437255859375
+invocation_order -1
+give_nan_capacity RangeError|Inventory counter must be finite
+mod_swallowed Error|canonical boom
+transition_first Error|apply boom second none calls 2
+release_aggregate AggregateError|Actor release callbacks failed ran 2 live false
+scope_close AggregateError|Failed to close Gate scope ran 2

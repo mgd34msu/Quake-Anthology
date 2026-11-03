@@ -1,7 +1,8 @@
 /* Port of src/network/q3/server.ts. GPL-2.0-or-later.
- * Note: TS catches InvalidClientOpcodeError/InvalidClientCommandCountError
- * around reader calls; the C reader aborts on those BinaryErrors, so the
- * warning-print paths are unreachable in C (recorded unresolved). */
+ * execute_message catches InvalidClientOpcodeError ("WARNING: bad command byte
+ * for client") and InvalidClientCommandCountError ("cmdCount < 1" / "cmdCount >
+ * MAX_PACKET_USERCMDS") with qa_try, as TS does; every other raise propagates to
+ * the caller (qa_try-catchable), with owned decode buffers released. */
 #ifndef QA_NETWORK_Q3_SERVER_H
 #define QA_NETWORK_Q3_SERVER_H
 #include <stdbool.h>

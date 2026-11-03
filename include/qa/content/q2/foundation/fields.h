@@ -11,6 +11,11 @@ qa_vec3 qa_q2_vector_field(const qa_q2_spawn_fields *f, const char *key);
 /* Malloc'd array; free with qa_q2_entities_free. Aborts on TS Errors. */
 bool qa_q2_parse_entities(const char *source, qa_q2_edition edition, qa_q2_spawn_fields **out, size_t *out_count);
 void qa_q2_entities_free(qa_q2_spawn_fields *entities, size_t count);
+/* Recoverable form: TS callers that catch the parse Error (startup selection)
+ * receive MALFORMED with the TS message instead of an abort. */
+typedef enum { QA_Q2_PARSE_OK, QA_Q2_PARSE_OOM, QA_Q2_PARSE_MALFORMED } qa_q2_parse_status;
+qa_q2_parse_status qa_q2_parse_entities_checked(const char *source, qa_q2_edition edition, qa_q2_spawn_fields **out,
+                                                size_t *out_count, char *message, size_t message_size);
 bool qa_q2_inhibit_spawn(const qa_q2_spawn_fields *f, qa_q2_game_options options);
 qa_vec3 qa_q2_movedir(qa_vec3 angles);
 /* TS re-exports add/subtract/scale/dot/length/normalize/zero. */

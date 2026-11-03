@@ -9,7 +9,8 @@
 typedef struct qa_native_ipx_capability {
   void *ctx; bool available; const char *reason;
   /* On success fills *out with an owned transport (ctx owned by caller
-   * of bind through the returned vtable) and returns 1. */
+   * of bind through the returned vtable) and returns 1. A refused bind raises the
+   * host's error (TS rejected promise); 0 means allocation failure. */
   int (*bind)(void *ctx, double port, double packet_type, qa_datagram_transport *out);
 } qa_native_ipx_capability;
 typedef struct qa_ipx_host {

@@ -11,9 +11,7 @@
  *  - The TS unregister closure becomes a registration object freed
  *    by qa_console_discovery_registration_remove(), which unregisters
  *    exactly the names that were registered.
- *  - Sorting uses strcmp on the name: TS localeCompare can differ
- *    for case/punctuation in some locales; entry names here are
- *    command identifiers (see src/llm/models.c for the same note).
+ *  - Sorting is localeCompare on the name (qa_js_locale_compare), as in TS.
  * GPL-2.0-or-later.
  */
 #ifndef QA_CONSOLE_DISCOVERY_H

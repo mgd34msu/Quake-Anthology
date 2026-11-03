@@ -2,17 +2,21 @@
 #include "qa/content/q2/multiplayer/ctf/native_grapple_hooks.h"
 #include "../multiplayer_internal.h"
 
+/* TS Q2WeaponInput hand literal. */
+static const char *hand_name(qa_q2w_hand hand) {
+  return hand == QA_Q2W_HAND_LEFT ? "left" : hand == QA_Q2W_HAND_CENTER ? "center" : "right";
+}
+
 static qa_grapple_pose pose(void *ctxv, qa_actor_id actor, qa_q2_game_services *g) {
   qa_q2_ctf_native_grapple_ctx *ctx = ctxv;
   qa_q2_entity *entity = qa_q2_game_entity_of(g, &actor);
-  if (entity == NULL) qa_q2f_error("Native grapple binding requires its source player entity");
-  qa_q2mp_weapon_input input;
-  bool has_input = ctx->weapon_aim && ctx->hooks->weapons->get_input(ctx->hooks->weapons->ctx, actor, &input);
+  if (entity == NULL) qa_raise("Error", 0, 0, "Native grapple binding requires its source player entity");
+  const qa_q2w_input *input = ctx->weapon_aim ? qa_q2w_ballistics_input(&ctx->hooks->weapons->base, actor) : NULL;
   qa_q2_player_view_result view = g->host->player_view_state(g->host->ctx, actor);
-  qa_q2mp_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
+  qa_q2_base_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
   qa_grapple_pose out = {0};
-  out.angles = has_input ? input.angles : view.has_value ? view.value.view_angles : qa_q2_game_body(g, entity).angles;
-  out.hand = has_input && input.hand != NULL ? input.hand : player != NULL ? player->hand : "right";
+  out.angles = input != NULL ? input->angles : view.has_value ? view.value.view_angles : qa_q2_game_body(g, entity).angles;
+  out.hand = input != NULL ? hand_name(input->hand) : player != NULL ? player->hand : "right";
   out.view_height = entity->view_height;
   out.gravity = entity->gravity;
   out.gravity_vector = entity->gravity_vector;
@@ -38,30 +42,30 @@ static const char *anchor(void *ctxv, qa_actor_id actor, qa_q2_game_services *g)
 static bool dead(void *ctxv, qa_actor_id actor, qa_q2_game_services *g) {
   qa_q2_ctf_native_grapple_ctx *ctx = ctxv;
   qa_combat_state_result combat = qa_q2mp_combat_read(g, actor);
-  qa_q2mp_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
+  qa_q2_base_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
   return (player != NULL && player->dead) || (combat.has_value && combat.value.can_take_damage && combat.value.health <= 0);
 }
 
 static qa_vec3 previous_velocity(void *ctxv, qa_actor_id actor) {
   qa_q2_ctf_native_grapple_ctx *ctx = ctxv;
-  qa_q2mp_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
+  qa_q2_base_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
   return player == NULL ? QA_Q2_ZERO : player->old_velocity;
 }
 
 static void set_previous_velocity(void *ctxv, qa_actor_id actor, qa_vec3 velocity) {
   qa_q2_ctf_native_grapple_ctx *ctx = ctxv;
-  qa_q2mp_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
+  qa_q2_base_player_state *player = ctx->hooks->player(ctx->hooks->ctx, actor);
   if (player != NULL) player->old_velocity = velocity;
 }
 
 static double volume(void *ctxv, qa_actor_id actor) {
   qa_q2_ctf_native_grapple_ctx *ctx = ctxv;
-  return ctx->hooks->weapons->silencer_shots(ctx->hooks->weapons->ctx, actor) > 0 ? 0.2 : 1;
+  return qa_q2w_ballistics_silencer_shots(&ctx->hooks->weapons->base, actor) > 0 ? 0.2 : 1;
 }
 
 static void noise(void *ctxv, qa_actor_id actor, qa_q2_game_services *g, qa_vec3 origin, const char *kind) {
   qa_q2_ctf_native_grapple_ctx *ctx = ctxv;
-  ctx->hooks->weapons->player_noise(ctx->hooks->weapons->ctx, actor, g, origin, kind);
+  qa_q2w_ballistics_player_noise_for_actor(&ctx->hooks->weapons->base, actor, g, origin, kind);
 }
 
 static void set_prediction(void *ctxv, qa_actor_id actor, bool suppressed) {

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <string.h>
 #include "qa/materials/deform.h"
+#include "qa/render/scene/view.h"
 static int32_t i32d(double v) {
   if (!isfinite(v)) return 0;
   double m = fmod(trunc(v), 4294967296.0);
@@ -48,4 +49,8 @@ void qa_shadow_material_geometry(const qa_compiled_material *shader, qa_material
   out->geometry = qa_deform_geometry_apply(&out->_state, definition->deforms, definition->deform_count,
                                             context->deform_view, (float)time, context->noise, context->projection_shadow);
   out->has_geometry = true;
+}
+void qa_shadow_finish_quad(const qa_scene_camera *camera, qa_vec4 out[4]) {
+  static const double corners[4][2] = {{-100, 100}, {100, 100}, {100, -100}, {-100, -100}};
+  for (int k = 0; k < 4; k++) out[k] = qa_scene_project_point(camera->projection, (qa_vec3){corners[k][0], corners[k][1], -10});
 }

@@ -315,3 +315,95 @@ char *qa_create_resource_id(const qa_resolved_resource_reference *resource) {
   free(source);
   return out;
 }
+
+/* ---- owned ResolvedResourceReference values ---------------------- */
+
+/* Copies a nullable string into *out; false only on OOM. */
+static bool owned_text(const char *source, const char **out) {
+  if (source == NULL) { *out = NULL; return true; }
+  size_t length = strlen(source) + 1;
+  char *copy = (char *)malloc(length);
+  if (copy == NULL) return false;
+  memcpy(copy, source, length);
+  *out = copy;
+  return true;
+}
+
+static bool owned_identity(const qa_mount_identity *source, qa_mount_identity *out) {
+  out->generation = source->generation;
+  return owned_text(source->id, &out->id) && owned_text(source->content, &out->content);
+}
+
+bool qa_resolved_resource_copy(const qa_resolved_resource_reference *source,
+                               qa_resolved_resource_reference *out) {
+  qa_resolved_resource_reference copy;
+  memset(&copy, 0, sizeof copy);
+  copy.provenance.kind = source->provenance.kind;
+  copy.provenance.member_index = source->provenance.member_index;
+  copy.byte_length = source->byte_length;
+  copy.parsed_order = source->parsed_order;
+  copy.resolution.kind = source->resolution.kind;
+  copy.resolution.rank = source->resolution.rank;
+  bool ok = owned_text(source->id, &copy.id) &&
+            owned_text(source->requested_path, &copy.requested_path) &&
+            owned_text(source->digest, &copy.digest) &&
+            owned_text(source->provenance.member_path, &copy.provenance.member_path) &&
+            owned_text(source->resolution.plan, &copy.resolution.plan) &&
+            owned_text(source->resolution.prefix, &copy.resolution.prefix) &&
+            owned_text(source->resolution.source_prefix, &copy.resolution.source_prefix) &&
+            owned_text(source->resolution.target_path, &copy.resolution.target_path);
+  if (ok && source->provenance.archive_mount != NULL) {
+    const qa_archive_mount *from = source->provenance.archive_mount;
+    qa_archive_mount *mount = (qa_archive_mount *)calloc(1, sizeof *mount);
+    copy.provenance.archive_mount = mount;
+    ok = mount != NULL;
+    if (ok) {
+      mount->format = from->format;
+      ok = owned_identity(&from->identity, &mount->identity) &&
+           owned_text(from->archive_path, &mount->archive_path) &&
+           owned_text(from->archive_digest, &mount->archive_digest);
+    }
+  }
+  if (ok && source->provenance.loose_mount != NULL) {
+    const qa_loose_mount *from = source->provenance.loose_mount;
+    qa_loose_mount *mount = (qa_loose_mount *)calloc(1, sizeof *mount);
+    copy.provenance.loose_mount = mount;
+    ok = mount != NULL;
+    if (ok)
+      ok = owned_identity(&from->identity, &mount->identity) &&
+           owned_text(from->root_path, &mount->root_path);
+  }
+  if (!ok) {
+    qa_resolved_resource_release(&copy);
+    return false;
+  }
+  *out = copy;
+  return true;
+}
+
+void qa_resolved_resource_release(qa_resolved_resource_reference *resource) {
+  free((void *)resource->id);
+  free((void *)resource->requested_path);
+  free((void *)resource->digest);
+  free((void *)resource->provenance.member_path);
+  free((void *)resource->resolution.plan);
+  free((void *)resource->resolution.prefix);
+  free((void *)resource->resolution.source_prefix);
+  free((void *)resource->resolution.target_path);
+  qa_archive_mount *archive = (qa_archive_mount *)resource->provenance.archive_mount;
+  if (archive != NULL) {
+    free((void *)archive->identity.id);
+    free((void *)archive->identity.content);
+    free((void *)archive->archive_path);
+    free((void *)archive->archive_digest);
+    free(archive);
+  }
+  qa_loose_mount *loose = (qa_loose_mount *)resource->provenance.loose_mount;
+  if (loose != NULL) {
+    free((void *)loose->identity.id);
+    free((void *)loose->identity.content);
+    free((void *)loose->root_path);
+    free(loose);
+  }
+  memset(resource, 0, sizeof *resource);
+}

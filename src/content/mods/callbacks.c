@@ -1,5 +1,6 @@
 /* Port of src/content/mods/callbacks.ts. GPL-2.0-or-later. */
 #include "qa/content/mods/callbacks.h"
+#include "qa/content/mods/declaration.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 #include "qa/content/mods/match.h"
 #include "qa/content/mods/pickups.h"
 #include "qa/content/mods/source_call.h"
+#include "qa/content/mounts/paths.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/qc_weapon_stage.h"
 #include "qa/contracts/scene.h"
@@ -73,36 +75,17 @@ static const char *fns(const qa_save_reader *r, const char *name) {
   return v;
 }
 static void *xalloc(const qa_save_reader *r, size_t count, size_t size) {
-  void *p = count > 0 ? calloc(count, size) : NULL;
+  void *p = count > 0 ? qa_mod_declaration_calloc(count, size) : NULL;
   if (count > 0 && p == NULL) qa_save_reader_fail(r, "out of memory");
   return p;
 }
 
-/* Mirror of normalizeResourcePath (TS owner:
- * src/content/mounts/paths.ts) until that module lands. Returns a
- * malloc'd normalized copy; invalid paths abort with the TS
- * RangeError message. */
+/* TS normalizeResourcePath (mounts/paths.ts); invalid paths raise its
+ * RangeError. */
 static char *normalize_resource_path(const char *path) {
-  size_t n = strlen(path);
-  char *out = (char *)malloc(n + 1);
+  char *out = qa_normalize_resource_path(path);
   if (out == NULL) qa_range_error("out of memory");
-  for (size_t i = 0; i <= n; i++) out[i] = path[i] == '\\' ? '/' : path[i];
-  bool bad = n == 0;
-  if (n >= 2 && out[1] == ':' &&
-      ((out[0] >= 'a' && out[0] <= 'z') || (out[0] >= 'A' && out[0] <= 'Z')))
-    bad = true;
-  /* split("/") parts must be nonempty and not "." / ".." */
-  size_t start = 0;
-  for (size_t i = 0; i <= n && !bad; i++) {
-    if (out[i] == '/' || out[i] == '\0') {
-      size_t len = i - start;
-      if (len == 0) bad = true;
-      if (len == 1 && out[start] == '.') bad = true;
-      if (len == 2 && out[start] == '.' && out[start + 1] == '.') bad = true;
-      start = i + 1;
-    }
-  }
-  if (bad) qa_range_error("Invalid relative resource path: %s", path);
+  qa_mod_declaration_adopt(out);
   return out;
 }
 
@@ -560,7 +543,7 @@ static qa_mod_qc_armor_stage read_armor_stage(const qa_save_reader *r) {
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    stage.regular_scale = rows;
+    stage.regular_scale = qa_mod_declaration_present(rows);
     stage.regular_scale_count = count;
   }
   {
@@ -600,7 +583,10 @@ static qa_mod_qc_protection read_protection(const qa_save_reader *r) {
   static const char *const kind_values[] = {"none", "screen", "shield"};
   qa_mod_qc_protection prot;
   memset(&prot, 0, sizeof prot);
-  prot.id = fns(r, "id");
+  /* TS binds storage.field("selection") first (a non-record storage fails
+   * here), then reads absorb before building { id, absorb, admission, flags }. */
+  qa_save_reader storage = field(r, "storage");
+  qa_save_reader selection = field(&storage, "selection");
   {
     qa_save_reader absorb = field(r, "absorb");
     bool region = strcmp(fchoice(&absorb, "kind", absorb_kinds, 2), "region") == 0;
@@ -615,6 +601,7 @@ static qa_mod_qc_protection read_protection(const qa_save_reader *r) {
     }
     qa_save_reader_destroy(&absorb);
   }
+  prot.id = fns(r, "id");
   if (fpresent(r, "admission")) {
     qa_save_reader f = field(r, "admission");
     prot.admission = read_admission(&f);
@@ -630,10 +617,20 @@ static qa_mod_qc_protection read_protection(const qa_save_reader *r) {
     qa_save_reader_destroy(&flags);
   }
   prot.channel = fchoice(r, "channel", channels, 2);
-  qa_save_reader storage = field(r, "storage");
-  qa_save_reader selection = field(&storage, "selection");
   bool has_selection = !qa_save_reader_is_undefined(&selection);
   prot.has_selection = has_selection;
+  bool regular = strcmp(prot.channel, "regular") == 0;
+  /* TS storage order: points/item or cells/kind, then selection field,
+   * mask, values. */
+  if (regular) {
+    prot.storage_points = fstr(&storage, "points");
+    qa_save_reader f = field(&storage, "item");
+    prot.storage_item = qa_save_reader_is_null(&f) ? NULL : qa_namespaced(&f);
+    qa_save_reader_destroy(&f);
+  } else {
+    prot.storage_cells = fstr(&storage, "cells");
+    prot.storage_kind = fchoice(&storage, "kind", powered_kinds, 2);
+  }
   if (has_selection) {
     prot.selection_field = fstr(&selection, "field");
     if (fpresent(&selection, "mask")) {
@@ -641,11 +638,7 @@ static qa_mod_qc_protection read_protection(const qa_save_reader *r) {
       prot.selection_mask = fint(&selection, "mask", 0);
     }
   }
-  if (strcmp(prot.channel, "regular") == 0) {
-    prot.storage_points = fstr(&storage, "points");
-    qa_save_reader f = field(&storage, "item");
-    prot.storage_item = qa_save_reader_is_null(&f) ? NULL : qa_namespaced(&f);
-    qa_save_reader_destroy(&f);
+  if (regular) {
     if (has_selection) {
       qa_save_reader list = field(&selection, "values");
       size_t count = qa_save_reader_list_count(&list);
@@ -664,8 +657,6 @@ static qa_mod_qc_protection read_protection(const qa_save_reader *r) {
       prot.item_value_count = count;
     }
   } else {
-    prot.storage_cells = fstr(&storage, "cells");
-    prot.storage_kind = fchoice(&storage, "kind", powered_kinds, 2);
     if (has_selection) {
       qa_save_reader list = field(&selection, "values");
       size_t count = qa_save_reader_list_count(&list);
@@ -830,7 +821,7 @@ qa_mod_qc_combat *qa_read_qc_combat(const qa_save_reader *reader) {
   static const char *const scale_kinds[] = {"multiplier", "identity", "transform"};
   static const char *const empty_items[] = {"q1:item_armor1", "q1:item_armor2",
                                             "q1:item_armorInv"};
-  qa_mod_qc_combat *combat = (qa_mod_qc_combat *)calloc(1, sizeof *combat);
+  qa_mod_qc_combat *combat = (qa_mod_qc_combat *)qa_mod_declaration_calloc(1, sizeof *combat);
   if (combat == NULL) return NULL;
   qa_save_reader f = field(reader, "damage");
   combat->damage = qa_read_mod_source_call(&f);
@@ -900,12 +891,12 @@ static void read_input_output_adapter(void *ctx, const qa_save_reader *r, void *
   *(qa_mod_qc_input_output *)out = read_input_output(r);
 }
 
-qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
+static qa_mod_callback_declaration *read_quakec_mod_declaration(
     const qa_save_reader *reader) {
   static const char *const hud_choices[] = {"none", "replace-vitals"};
   static const char *const view_choices[] = {"none", "set-view"};
   qa_mod_callback_declaration *decl =
-      (qa_mod_callback_declaration *)calloc(1, sizeof *decl);
+      (qa_mod_callback_declaration *)qa_mod_declaration_calloc(1, sizeof *decl);
   if (decl == NULL) return NULL;
   {
     qa_save_reader f = field(reader, "version");
@@ -930,6 +921,7 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
         read_objective_storage_adapter, NULL, sizeof(qa_qc_mod_objective_storage),
         read_source_call_adapter, NULL, sizeof(qa_mod_source_call),
         &decl->objective_count);
+    decl->objectives = qa_mod_declaration_present(decl->objectives);
     qa_save_reader_destroy(&f);
   }
   {
@@ -976,6 +968,7 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
       rows->outputs = qa_read_client_output_declarations(
           &f, read_string_adapter, NULL, sizeof(const char *), read_string_adapter,
           NULL, sizeof(const char *), &rows->output_count);
+      rows->outputs = qa_mod_declaration_present(rows->outputs);
       qa_save_reader_destroy(&f);
     }
     rows->admit = read_source_calls(&clients, "admit", &rows->admit_count);
@@ -983,20 +976,20 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
     rows->disconnect =
         read_source_calls(&clients, "disconnect", &rows->disconnect_count);
     if (fpresent(&clients, "frame"))
-      rows->frame = read_source_calls(&clients, "frame", &rows->frame_count);
+      rows->frame = qa_mod_declaration_present(read_source_calls(&clients, "frame", &rows->frame_count));
     if (fpresent(&clients, "input")) {
       qa_save_reader f = field(&clients, "input");
-      rows->input = qa_read_mod_client_input(
+      rows->input = qa_mod_declaration_present(qa_read_mod_client_input(
           &f, read_source_call_adapter, NULL, sizeof(qa_mod_source_call),
           read_input_output_adapter, NULL, sizeof(qa_mod_qc_input_output),
-          &rows->input_count);
+          &rows->input_count));
       qa_save_reader_destroy(&f);
     }
     qa_save_reader_destroy(&clients);
     decl->clients = rows;
   }
   if (fpresent(reader, "initialize"))
-    decl->initialize = read_source_calls(reader, "initialize", &decl->initialize_count);
+    decl->initialize = qa_mod_declaration_present(read_source_calls(reader, "initialize", &decl->initialize_count));
   if (fpresent(reader, "frame")) {
     qa_save_reader f = field(reader, "frame");
     qa_mod_source_call *row = (qa_mod_source_call *)xalloc(reader, 1, sizeof *row);
@@ -1016,7 +1009,7 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->cvars = rows;
+    decl->cvars = qa_mod_declaration_present(rows);
     decl->cvar_count = count;
   }
   if (fpresent(reader, "commands")) {
@@ -1058,7 +1051,7 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->commands = rows;
+    decl->commands = qa_mod_declaration_present(rows);
     decl->command_count = count;
   }
   if (fpresent(reader, "protection")) {
@@ -1072,7 +1065,7 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->protection = rows;
+    decl->protection = qa_mod_declaration_present(rows);
     decl->protection_count = count;
   }
   if (fpresent(reader, "pickups")) {
@@ -1086,7 +1079,7 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&list);
-    decl->pickups = rows;
+    decl->pickups = qa_mod_declaration_present(rows);
     decl->pickup_count = count;
   }
   if (fpresent(reader, "items")) {
@@ -1102,17 +1095,34 @@ qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
   return decl;
 }
 
+/* Every block the reader allocates joins one owner (content/mods/declaration.h). */
+qa_mod_callback_declaration *qa_read_quakec_mod_declaration(
+    const qa_save_reader *reader) {
+  qa_mod_declaration_scope scope;
+  qa_mod_declaration_scope_begin(&scope);
+  qa_mod_callback_declaration *decl = read_quakec_mod_declaration(reader);
+  qa_mod_declaration_owner *owner = qa_mod_declaration_scope_end(&scope);
+  if (decl == NULL) { qa_mod_declaration_owner_free(owner); return NULL; }
+  decl->owner = owner;
+  return decl;
+}
+
 qa_mod_callback_declaration *qa_read_mod_callbacks(const uint8_t *bytes,
-                                                   size_t length) {
-  /* TS: JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(bytes)).
-   * The C JSON reader is lenient about UTF-8 (see value.h). The
-   * parsed tree intentionally leaks: declarations borrow from it. */
+    size_t length) {
   qa_save_value *value = qa_parse_json_value(bytes, length, false);
   if (value == NULL) return NULL;
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, qa_mod_declaration_free_parsed_value, value);
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, NULL)) return NULL;
-  qa_mod_callback_declaration *decl = qa_read_quakec_mod_declaration(&reader);
-  qa_save_reader_destroy(&reader);
+  qa_mod_callback_declaration *decl = NULL;
+  if (qa_save_reader_init(&reader, value, NULL)) {
+    decl = qa_read_quakec_mod_declaration(&reader);
+    qa_save_reader_destroy(&reader);
+  }
+  qa_cleanup_pop(&cleanup);
+  /* The declaration's strings borrow the parsed tree; its owner keeps it. */
+  if (decl != NULL) qa_mod_declaration_owner_adopt_value(decl->owner, value);
+  else qa_save_value_free(value);
   return decl;
 }
 

@@ -17,6 +17,8 @@
 #include "qa/content/archive/types.h"
 
 #define QA_ZIP_TAIL_LENGTH (22 + 0xffff)
+/* TS MAX_ZIP_ENTRY_BYTES: the largest entry a PK3 may declare. */
+#define QA_MAX_ZIP_ENTRY_BYTES (256 * 1024 * 1024)
 
 typedef struct qa_zip_directory {
   int64_t offset;

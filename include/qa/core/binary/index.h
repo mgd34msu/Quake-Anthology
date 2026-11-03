@@ -61,6 +61,10 @@ char *qa_binary_reader_fixed_string(qa_binary_reader *reader, int64_t length);
 char *qa_binary_reader_fixed_byte_string(qa_binary_reader *reader,
                                          int64_t length);
 /* Borrowed checked view into the reader's storage. */
+/* TS check(offset, length) over JS numbers: rejects non-safe-integer and
+ * negative operands with the same message (lengths print as JS numbers), so a
+ * product of file counts that overflows int64 cannot reach a cast. */
+void qa_binary_reader_check_number(const qa_binary_reader *reader, double offset, double length);
 uint8_t *qa_binary_reader_data_view(qa_binary_reader *reader, int64_t offset,
                                     int64_t length);
 /* Fills `out` with a sub-reader sharing storage. 0 only on OOM. */

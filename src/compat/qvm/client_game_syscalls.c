@@ -23,7 +23,8 @@ static void client(double slot, const qa_qvm_client_game_services *services, con
 bool qa_qvm_client_game_syscall(const qa_qvm_host_call *call,
                                 qa_qvm_client_game_services services, qa_qvm_host_result *out) {
   if (strcmp(call->kind, "engine") != 0 || strcmp(call->role, "qagame") != 0) return false;
-  qa_qvm_memory *guest = call->guest;
+  const qa_qvm_game_memory guest_memory = qa_qvm_host_call_game_memory(call);
+  const qa_qvm_game_memory *guest = &guest_memory;
   switch (call->code) {
     case QA_QVM_GAME_IMPORT_G_DROP_CLIENT: {
       int32_t number = qa_qvm_host_call_word(call, 1);
@@ -31,7 +32,7 @@ bool qa_qvm_client_game_syscall(const qa_qvm_host_call *call,
         *out = 0;
         return true;
       }
-      char *reason = qa_qvm_memory_read_string(guest, qa_qvm_host_call_word(call, 2));
+      char *reason = qa_qvm_game_memory_read_string(guest, qa_qvm_host_call_word(call, 2));
       if (reason == NULL) qa_range_error("out of memory");
       services.drop_client(services.ctx, number, reason);
       free(reason);
@@ -44,7 +45,7 @@ bool qa_qvm_client_game_syscall(const qa_qvm_host_call *call,
         *out = 0;
         return true;
       }
-      char *text = qa_qvm_memory_read_string(guest, qa_qvm_host_call_word(call, 2));
+      char *text = qa_qvm_game_memory_read_string(guest, qa_qvm_host_call_word(call, 2));
       if (text == NULL) qa_range_error("out of memory");
       services.send_server_command(services.ctx, number, text);
       free(text);
@@ -60,8 +61,10 @@ bool qa_qvm_client_game_syscall(const qa_qvm_host_call *call,
       }
       int32_t slot = qa_qvm_host_call_word(call, 1);
       client(slot, &services, "SV_GetUserinfo");
-      qa_qvm_memory_write_string(guest, qa_qvm_host_call_word(call, 2),
-                                 services.get_userinfo(services.ctx, slot), size);
+      int64_t word = qa_qvm_host_call_word(call, 2);
+      const char * text2 = services.get_userinfo(services.ctx, slot);
+      qa_qvm_game_memory_write_string(guest, word,
+                                 text2, size);
       *out = 0;
       return true;
     }
@@ -72,7 +75,7 @@ bool qa_qvm_client_game_syscall(const qa_qvm_host_call *call,
       if (pointer == 0) {
         services.set_userinfo(services.ctx, slot, "");
       } else {
-        char *value = qa_qvm_memory_read_string(guest, pointer);
+        char *value = qa_qvm_game_memory_read_string(guest, pointer);
         if (value == NULL) qa_range_error("out of memory");
         services.set_userinfo(services.ctx, slot, value);
         free(value);
@@ -84,7 +87,7 @@ bool qa_qvm_client_game_syscall(const qa_qvm_host_call *call,
       int32_t slot = qa_qvm_host_call_word(call, 1);
       client(slot, &services, "SV_GetUsercmd");
       qa_qvm_writable_view writable;
-      qa_qvm_memory_view(guest, qa_qvm_host_call_word(call, 2), QA_QVM_USER_COMMAND_BYTES, 0,
+      qa_qvm_game_memory_view(guest, qa_qvm_host_call_word(call, 2), QA_QVM_USER_COMMAND_BYTES, 0,
                          &writable);
       qa_qvmx_view view = {writable.bytes + writable.start, (size_t)writable.length};
       qa_qvmx_wire_user_command command = services.get_user_command(services.ctx, slot);

@@ -1,30 +1,29 @@
 /* Port of src/app/bootstrap/network/q1-demo.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/network/q1_demo.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
-#include <setjmp.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 typedef struct demo_operation {
   bool busy; const char *ended; double frame;
-  jmp_buf retired; bool armed;
 } demo_operation;
 static void operation_init(demo_operation *op) {
-  op->busy = false; op->ended = NULL; op->frame = -1; op->armed = false;
+  op->busy = false; op->ended = NULL; op->frame = -1;
 }
+/* TS assertCurrent: a RetiredDemoOperation that run() swallows. */
 static void operation_assert(void *ctx) {
   demo_operation *op = ctx;
-  if (op->ended && strcmp(op->ended, "closed") == 0) {
-    if (op->armed) longjmp(op->retired, 1);
-    qa_range_error("Demo closed during advancement");
-  }
+  if (op->ended && strcmp(op->ended, "closed") == 0)
+    qa_raise("RetiredDemoOperation", 0, 0, "Demo closed during advancement");
 }
 static void operation_finish(demo_operation *op, const char *reason) {
   if (!op->ended) op->ended = reason;
 }
 /* Returns false when the TS run() returns without doing work. */
 static bool operation_begin(demo_operation *op, qa_app_q1_demo_frame frame) {
-  if (op->busy) qa_range_error("Demo advancement is already in progress");
+  if (op->busy) qa_raise("Error", 0, 0, "Demo advancement is already in progress");
   if (frame.frame != trunc(frame.frame) || fabs(frame.frame) > 9007199254740991.0
       || frame.frame < 0 || !isfinite(frame.elapsed_seconds) || frame.elapsed_seconds < 0)
     qa_range_error("Invalid demo frame clock");
@@ -32,6 +31,20 @@ static bool operation_begin(demo_operation *op, qa_app_q1_demo_frame frame) {
   if (frame.frame < op->frame) qa_range_error("Demo frame number moved backwards");
   op->busy = true; op->frame = frame.frame;
   return true;
+}
+/* TS run(): try { await work(); } catch (RetiredDemoOperation) {} finally { busy = false; } */
+static void operation_run(demo_operation *op, qa_app_q1_demo_frame frame, void (*work)(void *), void *ctx) {
+  if (!operation_begin(op, frame)) return;
+  qa_caught_error caught;
+  bool ok = qa_try(work, ctx, &caught);
+  op->busy = false;
+  if (!ok && strcmp(caught.name, "RetiredDemoOperation") != 0) qa_rethrow(&caught);
+}
+static int32_t js_int32(double n) {
+  if (!isfinite(n)) return 0;
+  double m = fmod(trunc(n), 4294967296.0);
+  if (m < 0) m += 4294967296.0;
+  return (int32_t)qa_js_to_uint32(m);
 }
 struct qa_app_netquake_demo_input {
   qa_netquake_demo_reader *reader; qa_app_q1_demo_remote remote;
@@ -60,67 +73,78 @@ static bool nq_ready(qa_app_netquake_demo_input *in) {
   return in->signon == 4 && in->remote.has_player(in->remote.ctx)
       && in->remote.has_output(in->remote.ctx);
 }
+typedef struct nq_record_scope { qa_netquake_message *messages; size_t count; uint8_t *bytes; } nq_record_scope;
+static void nq_record_scope_free(void *arg) {
+  nq_record_scope *scope = arg;
+  for (size_t i = 0; i < scope->count; i++) qa_netquake_message_destroy(&scope->messages[i]);
+  free(scope->messages); free(scope->bytes);
+  memset(scope, 0, sizeof *scope);
+}
+typedef struct nq_work_scope { qa_app_netquake_demo_input *in; qa_app_q1_demo_frame frame; double records; } nq_work_scope;
+static void nq_work(void *ctx) {
+  nq_work_scope *work = ctx;
+  qa_app_netquake_demo_input *in = work->in;
+  qa_app_q1_demo_frame frame = work->frame;
+  demo_operation *op = &in->operation;
+  if (in->primed) in->clock += frame.elapsed_seconds;
+  do {
+    if (nq_ready(in) && !frame.timedemo
+        && in->clock <= in->remote.recorded_seconds(in->remote.ctx)) break;
+    qa_netquake_demo_record record;
+    if (!qa_netquake_demo_reader_next(in->reader, &record)) {
+      operation_finish(op, "eof");
+      break;
+    }
+    work->records++;
+    nq_record_scope scope = { NULL, 0, record.message };
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, nq_record_scope_free, &scope);
+    scope.messages = qa_netquake_decoder_decode(&in->decoder, record.message, record.length, &scope.count);
+    qa_netquake_message *messages = scope.messages;
+    size_t count = scope.count;
+    if (in->reader->forced_track != -1)
+      for (size_t i = 0; i < count; i++)
+        if (strcmp(messages[i].kind, "cd-track") == 0)
+          messages[i].track = (double)(js_int32(in->reader->forced_track) & 255);
+    for (size_t i = 0; i < count; i++)
+      if (strcmp(messages[i].kind, "server-info") == 0) {
+        in->signon = 0; in->primed = false; in->clock = 0;
+      }
+    in->remote.receive(in->remote.ctx, messages, count, in->clock * 1000,
+        operation_assert, op);
+    operation_assert(op);
+    in->remote.set_demo_view_angles(in->remote.ctx, record.view_angles, true);
+    for (size_t i = 0; i < count; i++) {
+      const qa_netquake_message *message = &messages[i];
+      if (strcmp(message->kind, "signon") == 0) {
+        if (message->stage <= in->signon || message->stage > 4)
+          qa_raise("Error", 0, 0, "Invalid demo signon stage %s after %s", QA_JS_NUMBER(message->stage), QA_JS_NUMBER(in->signon));
+        in->signon = message->stage;
+      } else if (strcmp(message->kind, "entity") == 0 && in->signon == 3) in->signon = 4;
+      else if (strcmp(message->kind, "disconnect") == 0)
+        operation_finish(op, "recorded-disconnect");
+    }
+    qa_cleanup_pop(&guard);
+    nq_record_scope_free(&scope);
+    if (!in->primed && nq_ready(in)) {
+      in->clock = in->remote.recorded_seconds(in->remote.ctx);
+      in->primed = true;
+      break;
+    }
+    if (nq_ready(in) && frame.timedemo) {
+      in->clock = in->remote.recorded_seconds(in->remote.ctx);
+      break;
+    }
+  } while (!op->ended);
+  operation_assert(op);
+  in->remote.sample_demo(in->remote.ctx, in->clock);
+}
 qa_app_q1_demo_progress qa_app_netquake_demo_input_advance(
     qa_app_netquake_demo_input *in, qa_app_q1_demo_frame frame) {
-  volatile double records = 0;
+  nq_work_scope work = { in, frame, 0 };
+  operation_run(&in->operation, frame, nq_work, &work);
   demo_operation *op = &in->operation;
-  if (operation_begin(op, frame)) {
-    if (setjmp(op->retired) == 0) {
-      op->armed = true;
-      if (in->primed) in->clock += frame.elapsed_seconds;
-      for (;;) {
-        if (nq_ready(in) && !frame.timedemo
-            && in->clock <= in->remote.recorded_seconds(in->remote.ctx)) break;
-        qa_netquake_demo_record record;
-        if (!qa_netquake_demo_reader_next(in->reader, &record)) {
-          operation_finish(op, "eof");
-          break;
-        }
-        records++;
-        size_t count = 0;
-        qa_netquake_message *messages = qa_netquake_decoder_decode(
-            &in->decoder, record.message, record.length, &count);
-        if (in->reader->forced_track != -1)
-          for (size_t i = 0; i < count; i++)
-            if (strcmp(messages[i].kind, "cd-track") == 0)
-              messages[i].track = (double)((int)in->reader->forced_track & 255);
-        for (size_t i = 0; i < count; i++)
-          if (strcmp(messages[i].kind, "server-info") == 0) {
-            in->signon = 0; in->primed = false; in->clock = 0;
-          }
-        in->remote.receive(in->remote.ctx, messages, count, in->clock * 1000,
-            operation_assert, op);
-        operation_assert(op);
-        in->remote.set_demo_view_angles(in->remote.ctx, record.view_angles, true);
-        for (size_t i = 0; i < count; i++) {
-          const qa_netquake_message *message = &messages[i];
-          if (strcmp(message->kind, "signon") == 0) {
-            if (message->stage <= in->signon || message->stage > 4)
-              qa_range_error("Invalid demo signon stage %g after %g", message->stage, in->signon);
-            in->signon = message->stage;
-          } else if (strcmp(message->kind, "entity") == 0 && in->signon == 3) in->signon = 4;
-          else if (strcmp(message->kind, "disconnect") == 0)
-            operation_finish(op, "recorded-disconnect");
-        }
-        for (size_t i = 0; i < count; i++) qa_netquake_message_destroy(&messages[i]);
-        free(messages);
-        free(record.message);
-        bool stop = false;
-        if (!in->primed && nq_ready(in)) {
-          in->clock = in->remote.recorded_seconds(in->remote.ctx);
-          in->primed = true; stop = true;
-        } else if (nq_ready(in) && frame.timedemo) {
-          in->clock = in->remote.recorded_seconds(in->remote.ctx);
-          stop = true;
-        }
-        if (stop || op->ended) break;
-      }
-      operation_assert(op);
-      in->remote.sample_demo(in->remote.ctx, in->clock);
-    }
-    op->armed = false; op->busy = false;
-  }
-  qa_app_q1_demo_progress progress = {in->clock, records, NULL, op->ended};
+  qa_app_q1_demo_progress progress = {in->clock, work.records, NULL, op->ended};
   progress.phase = op->ended ? "ended" : nq_ready(in) ? "active" : "loading";
   return progress;
 }
@@ -210,27 +234,39 @@ static uint32_t read_u32(const uint8_t *bytes) {
   return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8)
       | ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
 }
+typedef struct qw_messages_scope { qa_quakeworld_message *messages; size_t count, moved; } qw_messages_scope;
+static void qw_messages_scope_free(void *arg) {
+  qw_messages_scope *scope = arg;
+  for (size_t i = 0; i < scope->count; i++)
+    if (i != scope->moved) qa_quakeworld_message_destroy(&scope->messages[i]);
+  free(scope->messages);
+  memset(scope, 0, sizeof *scope);
+}
 static void qw_packet(qa_app_quakeworld_demo_input *in, qa_quakeworld_demo_record *record) {
   demo_operation *op = &in->operation;
-  if (record->length < 8) qa_range_error("Truncated QWD netchannel header");
+  if (record->length < 8) qa_raise("Error", 0, 0, "Truncated QWD netchannel header");
   if ((int32_t)read_u32(record->message) == -1) return;
   double sequence = (double)(read_u32(record->message) & 0x7fffffff);
   double acknowledged = (double)(read_u32(record->message + 4) & 0x7fffffff);
   if (sequence <= in->incoming) return;
   in->incoming = sequence; in->acknowledged = acknowledged;
   in->remote.prediction_acknowledged(in->remote.ctx, acknowledged, record->seconds * 1000);
-  size_t count = 0;
-  qa_quakeworld_message *messages = qa_quakeworld_decoder_decode(
-      &in->decoder, record->message + 8, record->length - 8, sequence, &count);
+  qw_messages_scope scope = { NULL, 0, 0 };
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, qw_messages_scope_free, &scope);
+  scope.messages = qa_quakeworld_decoder_decode(
+      &in->decoder, record->message + 8, record->length - 8, sequence, &scope.count);
+  qa_quakeworld_message *messages = scope.messages;
+  size_t count = scope.count;
+  scope.moved = count;
   bool disconnect = false;
-  size_t moved_data = count; /* index whose ownership moved to in->data */
   for (size_t i = 0; i < count; i++) {
     qa_quakeworld_message *message = &messages[i];
     if (strcmp(message->kind, "server-data") == 0) {
-      if (message->player_slot >= 32) qa_range_error("QWD requires a valid native player slot");
+      if (message->player_slot >= 32) qa_raise("Error", 0, 0, "QWD requires a valid native player slot");
       if (in->has_data) qa_quakeworld_message_destroy(&in->data);
       in->data = *message;
-      moved_data = i; /* ownership moved; skip in the destroy loop */
+      scope.moved = i; /* ownership moved to in->data; the scope skips it */
       in->has_data = true;
       clear_names(&in->models, &in->model_count);
       clear_names(&in->sounds, &in->sound_count);
@@ -240,10 +276,10 @@ static void qw_packet(qa_app_quakeworld_demo_input *in, qa_quakeworld_demo_recor
       operation_assert(op);
     } else if (strcmp(message->kind, "model-list") == 0
         || strcmp(message->kind, "sound-list") == 0) {
-      if (!in->has_data) qa_range_error("QWD precache before serverdata");
+      if (!in->has_data) qa_raise("Error", 0, 0, "QWD precache before serverdata");
       bool models = strcmp(message->kind, "model-list") == 0;
       size_t current = models ? in->model_count : in->sound_count;
-      if (message->first != (double)current) qa_range_error("Non-contiguous QWD precache list");
+      if (message->first != (double)current) qa_raise("Error", 0, 0, "Non-contiguous QWD precache list");
       for (size_t n = 0; n < message->name_count; n++) {
         if (models) push_name(&in->models, &in->model_count, &in->model_cap, message->names[n]);
         else push_name(&in->sounds, &in->sound_count, &in->sound_cap, message->names[n]);
@@ -267,19 +303,18 @@ static void qw_packet(qa_app_quakeworld_demo_input *in, qa_quakeworld_demo_recor
   operation_assert(op);
   replay_commands(in);
   if (disconnect) operation_finish(op, "recorded-disconnect");
-  for (size_t i = 0; i < count; i++) {
-    if (i == moved_data) continue;
-    qa_quakeworld_message_destroy(&messages[i]);
-  }
-  free(messages);
+  qa_cleanup_pop(&guard);
+  qw_messages_scope_free(&scope);
 }
-qa_app_q1_demo_progress qa_app_quakeworld_demo_input_advance(
-    qa_app_quakeworld_demo_input *in, qa_app_q1_demo_frame frame) {
-  volatile double records = 0;
+typedef struct qw_work_scope { qa_app_quakeworld_demo_input *in; qa_app_q1_demo_frame frame; double records; } qw_work_scope;
+static void free_record_slot(void *arg) { qa_quakeworld_demo_record_destroy(arg); }
+static void qw_work(void *ctx) {
+  qw_work_scope *work = ctx;
+  qa_app_quakeworld_demo_input *in = work->in;
+  qa_app_q1_demo_frame frame = work->frame;
   demo_operation *op = &in->operation;
-  if (operation_begin(op, frame)) {
-    if (setjmp(op->retired) == 0) {
-      op->armed = true;
+  {
+    {
       in->clock += qw_ready(in) && !frame.timedemo ? frame.elapsed_seconds : 0;
       double group = in->has_pending ? in->pending.seconds : in->clock;
       while (in->has_pending && !op->ended) {
@@ -293,20 +328,30 @@ qa_app_q1_demo_progress qa_app_quakeworld_demo_input_advance(
         }
         in->has_pending = false;
         if (frame.timedemo || !qw_ready(in)) in->clock = record.seconds;
-        records++;
+        work->records++;
         if (strcmp(record.kind, "sequences") == 0) {
           in->outgoing = record.outgoing; in->incoming = record.incoming;
           qa_quakeworld_demo_record_destroy(&record);
         } else if (strcmp(record.kind, "command") == 0) {
           in->remote.set_demo_view_angles(in->remote.ctx, record.view_angles, false);
-          if (in->command_count == in->command_cap) {
-            in->command_cap = in->command_cap ? in->command_cap * 2 : 16;
-            in->commands = realloc(in->commands, in->command_cap * sizeof *in->commands);
-            if (!in->commands) qa_range_error("out of memory");
+          /* commands.set(outgoing++, record): an existing key keeps its place. */
+          double key = in->outgoing++;
+          command_entry *existing = NULL;
+          for (size_t c = 0; c < in->command_count; c++)
+            if (in->commands[c].sequence == key) existing = &in->commands[c];
+          if (existing) {
+            qa_quakeworld_demo_record_destroy(&existing->record);
+            existing->record = record;
+          } else {
+            if (in->command_count == in->command_cap) {
+              in->command_cap = in->command_cap ? in->command_cap * 2 : 16;
+              in->commands = realloc(in->commands, in->command_cap * sizeof *in->commands);
+              if (!in->commands) qa_range_error("out of memory");
+            }
+            in->commands[in->command_count].sequence = key;
+            in->commands[in->command_count].record = record;
+            in->command_count++;
           }
-          in->commands[in->command_count].sequence = in->outgoing++;
-          in->commands[in->command_count].record = record;
-          in->command_count++;
           while (in->command_count > 64) {
             qa_quakeworld_demo_record_destroy(&in->commands[0].record);
             memmove(in->commands, in->commands + 1,
@@ -315,7 +360,10 @@ qa_app_q1_demo_progress qa_app_quakeworld_demo_input_advance(
           }
           replay_commands(in);
         } else {
+          qa_cleanup record_guard;
+          qa_cleanup_push(&record_guard, free_record_slot, &record);
           qw_packet(in, &record);
+          qa_cleanup_pop(&record_guard);
           qa_quakeworld_demo_record_destroy(&record);
         }
         operation_assert(op);
@@ -326,9 +374,14 @@ qa_app_q1_demo_progress qa_app_quakeworld_demo_input_advance(
       in->remote.sample_demo(in->remote.ctx, in->clock);
       in->remote.sample_presentation(in->remote.ctx, in->clock * 1000);
     }
-    op->armed = false; op->busy = false;
   }
-  qa_app_q1_demo_progress progress = {in->clock, records, NULL, op->ended};
+}
+qa_app_q1_demo_progress qa_app_quakeworld_demo_input_advance(
+    qa_app_quakeworld_demo_input *in, qa_app_q1_demo_frame frame) {
+  qw_work_scope work = { in, frame, 0 };
+  operation_run(&in->operation, frame, qw_work, &work);
+  demo_operation *op = &in->operation;
+  qa_app_q1_demo_progress progress = {in->clock, work.records, NULL, op->ended};
   progress.phase = op->ended ? "ended" : qw_ready(in) ? "active" : "loading";
   return progress;
 }

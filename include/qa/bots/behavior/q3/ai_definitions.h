@@ -2,6 +2,9 @@
 #ifndef QA_BOTS_BEHAVIOR_Q3_AI_DEFINITIONS_H
 #define QA_BOTS_BEHAVIOR_Q3_AI_DEFINITIONS_H
 #include <stdint.h>
+#include "qa/content/q3/base/shared/definitions.h"
+/* TS `export { MAX_ITEMS }` from the shared Q3 definitions. */
+#define QA_BOT_MAX_ITEMS QA_Q3_BASE_MAX_ITEMS
 #define QA_BOT_SETTINGS_PATH_LENGTH 144
 #define QA_MAX_PROXMINES_BOTS_A 64
 #define QA_MAX_ACTIVATESTACK 8
@@ -308,18 +311,33 @@ typedef enum qa_bot_match_subtype {
   QA_SUB_CAPTUREDFLAG = 8192,
   QA_SUB_RETURNEDFLAG = 16384,
   QA_SUB_TEAM = 32768,
-  QA_SUB_ONEFLAG_CTF_GOTFLAG = 65535
+  QA_SUB_ONEFLAG_CTF_GOTFLAG = 65535,
+  /* TS duplicate-valued members (task preference subtypes). */
+  QA_SUB_DEFENDER = 1,
+  QA_SUB_ATTACKER = 2,
+  QA_SUB_ROAMER = 4
 } qa_bot_match_subtype;
 typedef enum qa_bot_match_variable {
   QA_VAR_THE_ENEMY = 7,
+  QA_VAR_THE_TEAM = 7,
   QA_VAR_NETNAME = 0,
   QA_VAR_PLACE = 1,
+  QA_VAR_FLAG = 1,
   QA_VAR_MESSAGE = 2,
+  QA_VAR_ADDRESSEE = 2,
   QA_VAR_ITEM = 3,
   QA_VAR_TEAMMATE = 4,
+  QA_VAR_TEAMNAME = 4,
+  QA_VAR_ENEMY = 4,
   QA_VAR_KEYAREA = 5,
-  QA_VAR_TIME = 6
+  QA_VAR_FORMATION = 5,
+  QA_VAR_POSITION = 5,
+  QA_VAR_NUMBER = 5,
+  QA_VAR_TIME = 6,
+  QA_VAR_NAME = 6,
+  QA_VAR_MORE = 6
 } qa_bot_match_variable;
+/* TS ALL is 0xffffffff; every use is a bitwise operand, where ToInt32 gives -1. */
 enum {
   QA_SYN_ALL = -1,
   QA_SYN_NORMAL = 1,

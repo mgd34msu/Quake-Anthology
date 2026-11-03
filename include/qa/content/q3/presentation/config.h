@@ -104,6 +104,7 @@ typedef enum qa_q3_pres_client_vm_cvar_symbol {
   QA_Q3_PRES_VM_CG_CAMERA_MODE, /* "cg_cameraMode" */
   QA_Q3_PRES_VM_PMOVE_FIXED, /* "pmove_fixed" */
   QA_Q3_PRES_VM_PMOVE_MSEC, /* "pmove_msec" */
+  QA_Q3_PRES_VM_PMOVE_LADDERS, /* "pmove_ladders" */
   QA_Q3_PRES_VM_CG_NO_TAUNT, /* "cg_noTaunt" */
   QA_Q3_PRES_VM_CG_NO_PROJECTILE_TRAIL, /* "cg_noProjectileTrail" */
   QA_Q3_PRES_VM_CG_SMALL_FONT, /* "cg_smallFont" */

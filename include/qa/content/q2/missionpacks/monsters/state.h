@@ -68,15 +68,20 @@ typedef struct qa_q2mpm_monster_state {
   qa_q2mpm_flyer_next_move flyer_next_move;
   double widow_shots_fired;
   double widow_damage_multiplier; /* 1 | 2 | 4 */
+  void **bound_registries; size_t bound_count, bound_cap; /* TS released WeakSet */
+  int64_t *bound_subscriptions; /* on_release ids, parallel; undone by destroy */
 } qa_q2mpm_monster_state;
 
 void qa_q2mpm_state_init(qa_q2mpm_monster_state *state);
 void qa_q2mpm_state_destroy(qa_q2mpm_monster_state *state);
 /* TS get(entity): creates the default entry on first use. The
  * returned pointer is invalidated by the next get for a new actor. */
-qa_q2mpm_rogue_state *qa_q2mpm_state_get(qa_q2mpm_monster_state *state, qa_q2f_entity *entity);
+qa_q2mpm_rogue_state *qa_q2mpm_state_get(qa_q2mpm_monster_state *state, qa_q2_entity *entity);
 /* capture fills a malloc-backed checkpoint; false only on OOM. */
-bool qa_q2mpm_state_capture(qa_q2mpm_monster_state *state, qa_q2f_game *game, qa_q2mpm_monsters_checkpoint *out);
-void qa_q2mpm_state_restore(qa_q2mpm_monster_state *state, qa_q2f_game *game, const qa_q2mpm_monsters_checkpoint *checkpoint);
+/* TS bind(game): drop an actor's rogue state when the actor registry releases
+ * it; registered once per registry. The state must not move afterwards. */
+void qa_q2mpm_state_bind(qa_q2mpm_monster_state *state, qa_q2_game_services *game);
+bool qa_q2mpm_state_capture(qa_q2mpm_monster_state *state, qa_q2_game_services *game, qa_q2mpm_monsters_checkpoint *out);
+void qa_q2mpm_state_restore(qa_q2mpm_monster_state *state, qa_q2_game_services *game, const qa_q2mpm_monsters_checkpoint *checkpoint);
 
 #endif

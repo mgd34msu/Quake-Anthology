@@ -89,8 +89,10 @@ static qa_call_result libc_impl(void *ctx, const qa_guest_core_call_context *con
     case L_ERRNO_LOCATION: return qa_call_pointer(true, host->errno_address);
     case L_TLS_GET_ADDR: {
       qa_guest_core_address index = qa_guest_required_pointer(args, count, 0);
-      return qa_call_pointer(true, host->tls_address(host->ctx, qa_memory_read_u64(m, index),
-                                                     (int64_t)qa_memory_read_u64(m, off(m, index, 8))));
+      void * value2 = host->ctx;
+      uint64_t value3 = qa_memory_read_u64(m, index);
+      int64_t value4 = (int64_t)qa_memory_read_u64(m, off(m, index, 8));
+      return qa_call_pointer(true, host->tls_address(value2, value3, value4));
     }
     case L_MALLOC:
       return qa_call_pointer(true, qa_system_v_allocate(host, qa_guest_count(args, count, 0)));

@@ -34,10 +34,10 @@ typedef struct qa_q1_monster_move_state {
 } qa_q1_monster_move_state;
 
 /** TS readTarget result: Pick<Q1MonsterMoveState, "origin" | "absoluteBounds">. */
-typedef struct qa_q1_monster_target {
+typedef struct qa_q1_monster_move_target {
   qa_vec3 origin;
   qa_bounds absolute_bounds;
-} qa_q1_monster_target;
+} qa_q1_monster_move_target;
 
 /** TS Pick<RandomSource, "nextInteger">. */
 typedef struct qa_q1_monster_random {
@@ -52,7 +52,7 @@ typedef struct qa_q1_monster_move_services {
   qa_numeric_operations numeric;
   qa_q1_monster_random random;
   bool (*read)(void *ctx, qa_actor_id actor, qa_q1_monster_move_state *out);
-  bool (*read_target)(void *ctx, qa_actor_id actor, qa_q1_monster_target *out);
+  bool (*read_target)(void *ctx, qa_actor_id actor, qa_q1_monster_move_target *out);
   void (*write)(void *ctx, qa_owned_actor actor, qa_q1_monster_move_state state);
   void (*link)(void *ctx, qa_owned_actor actor, bool touch_triggers);
 } qa_q1_monster_move_services;

@@ -1,5 +1,6 @@
 /* Port of src/network/q2/gtv.ts. GPL-2.0-or-later. */
 #include "qa/network/q2/gtv.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -22,7 +23,7 @@ static uint8_t *gtv_packet(double op, const uint8_t *body, size_t body_length,
                            size_t *out_length) {
   uint8_t *message = (uint8_t *)malloc(body_length + 1);
   if (message == NULL) return NULL;
-  message[0] = (uint8_t)op;
+  message[0] = qa_js_to_uint8(op); /* Uint8Array store of the opcode */
   if (body_length > 0) memcpy(message + 1, body, body_length);
   uint8_t *out = qa_q2_frame_mvd_message(message, body_length + 1, out_length);
   free(message);
@@ -99,14 +100,16 @@ static uint8_t *compression_push(qa_q2_gtv_compression *c, const uint8_t *bytes,
     if (produced > (size_t)QA_Q2_MVD_MAX_MESSAGE * 64) {
       free(out);
       c->failed = true;
-      qa_q2_throw_error("GTV decompression output limit exceeded");
+      (void)snprintf(c->failure, sizeof c->failure, "GTV decompression output limit exceeded");
+      qa_q2_throw_error("%s", c->failure);
     }
     if (status == Z_STREAM_END) break;
     if (status != Z_OK && status != Z_BUF_ERROR) {
-      const char *message = c->stream.msg != NULL ? c->stream.msg : "zlib error";
       free(out);
       c->failed = true;
-      qa_q2_throw_error("%s", message);
+      (void)snprintf(c->failure, sizeof c->failure, "%s",
+                     c->stream.msg != NULL ? c->stream.msg : "zlib error");
+      qa_q2_throw_error("%s", c->failure);
     }
     if (c->stream.avail_in == 0 && c->stream.avail_out != 0) break;
     if (status == Z_BUF_ERROR && c->stream.avail_out != 0) break;
@@ -116,6 +119,15 @@ static uint8_t *compression_push(qa_q2_gtv_compression *c, const uint8_t *bytes,
 }
 
 /* --- GtvClient --- */
+typedef struct consume_owned {
+  qa_q2_sizebuf *message;
+  uint8_t *copy;
+} consume_owned;
+static void consume_owned_release(void *arg) {
+  consume_owned *held = (consume_owned *)arg;
+  free(held->copy);
+  qa_q2_message_destroy(held->message);
+}
 bool qa_q2_gtv_client_init(qa_q2_gtv_client *client, qa_q2_gtv_send_fn send,
                            void *ctx, qa_q2_gtv_identity identity,
                            double requested_flags) {
@@ -166,7 +178,8 @@ void qa_q2_gtv_client_start(qa_q2_gtv_client *client) {
   }
   client->started = true;
   size_t length = 0;
-  client_send_owned(client, qa_q2_mvd_magic(&length), length);
+  uint8_t *magic = qa_q2_mvd_magic(&length); /* sets length before it is passed */
+  client_send_owned(client, magic, length);
 }
 void qa_q2_gtv_client_request_start(qa_q2_gtv_client *client,
                                     double max_buffered_packets) {
@@ -179,11 +192,13 @@ void qa_q2_gtv_client_request_start(qa_q2_gtv_client *client,
     qa_range_error("Invalid GTV buffering request");
   }
   uint8_t body[2];
-  body[0] = (uint8_t)((uint32_t)max_buffered_packets & 0xff);
-  body[1] = (uint8_t)(((uint32_t)max_buffered_packets >> 8) & 0xff);
+  body[0] = (uint8_t)(qa_js_to_uint32(max_buffered_packets) & 0xff);
+  body[1] = (uint8_t)((qa_js_to_uint32(max_buffered_packets) >> 8) & 0xff);
   size_t length = 0;
-  client_send_owned(client, gtv_packet(QA_Q2_GTC_STREAM_START, body, 2, &length),
-                    length);
+  { /* the call sets length before it is passed */
+    uint8_t *encoded_ = gtv_packet(QA_Q2_GTC_STREAM_START, body, 2, &length);
+    client_send_owned(client, encoded_, length);
+  }
   client->phase = QA_Q2_GTV_STARTING;
 }
 void qa_q2_gtv_client_request_stop(qa_q2_gtv_client *client) {
@@ -191,8 +206,10 @@ void qa_q2_gtv_client_request_stop(qa_q2_gtv_client *client) {
     qa_q2_throw_error("GTV is not streaming");
   }
   size_t length = 0;
-  client_send_owned(client, gtv_packet(QA_Q2_GTC_STREAM_STOP, NULL, 0, &length),
-                    length);
+  { /* the call sets length before it is passed */
+    uint8_t *encoded_ = gtv_packet(QA_Q2_GTC_STREAM_STOP, NULL, 0, &length);
+    client_send_owned(client, encoded_, length);
+  }
   client->phase = QA_Q2_GTV_STOPPING;
 }
 static void client_connected(qa_q2_gtv_client *client) {
@@ -204,12 +221,15 @@ static void client_connected(qa_q2_gtv_client *client) {
 void qa_q2_gtv_client_ping(qa_q2_gtv_client *client) {
   client_connected(client);
   size_t length = 0;
-  client_send_owned(client, gtv_packet(QA_Q2_GTC_PING, NULL, 0, &length), length);
+  { /* the call sets length before it is passed */
+    uint8_t *encoded_ = gtv_packet(QA_Q2_GTC_PING, NULL, 0, &length);
+    client_send_owned(client, encoded_, length);
+  }
 }
 void qa_q2_gtv_client_command(qa_q2_gtv_client *client, const char *text) {
   client_connected(client);
   checked_text(text);
-  if ((((int32_t)client->flags) & QA_Q2_GTF_STRINGCMDS) == 0) {
+  if (((qa_js_to_int32(client->flags)) & QA_Q2_GTF_STRINGCMDS) == 0) {
     qa_q2_throw_error("GTV command forwarding was not negotiated");
   }
   qa_q2_sizebuf message;
@@ -290,15 +310,18 @@ static void client_consume(qa_q2_gtv_client *client, const uint8_t *bytes,
   }
   if (length > 0) memcpy(copy, bytes, length);
   qa_q2_message_load(&message, copy, length);
+  consume_owned held = {&message, copy};
+  qa_cleanup node;
+  qa_cleanup_push(&node, consume_owned_release, &held);
   int32_t opcode = qa_q2_msg_read_byte(&message);
   bool skip_trailing = false;
   if (opcode == QA_Q2_GTS_HELLO) {
     if (client->phase != QA_Q2_GTV_HELLO) qa_q2_throw_error("Unexpected GTV hello");
     client->flags = (double)qa_q2_msg_read_long(&message);
-    if (((int32_t)client->flags & ~(int32_t)client->requested_flags) != 0) {
+    if ((qa_js_to_int32(client->flags) & ~qa_js_to_int32(client->requested_flags)) != 0) {
       qa_q2_throw_error("Unrequested GTV flags");
     }
-    if (((int32_t)client->flags & QA_Q2_GTF_DEFLATE) != 0) {
+    if ((qa_js_to_int32(client->flags) & QA_Q2_GTF_DEFLATE) != 0) {
       compression_init(&client->compression, false);
     }
     client->phase = QA_Q2_GTV_CONNECTED;
@@ -367,6 +390,7 @@ static void client_consume(qa_q2_gtv_client *client, const uint8_t *bytes,
       qa_q2_throw_error("Trailing GTV control bytes");
     }
   }
+  qa_cleanup_pop(&node);
   free(copy);
   qa_q2_message_destroy(&message);
 }
@@ -389,6 +413,34 @@ static bool consume_plain(void *vctx, const uint8_t *bytes, size_t length) {
   return !c->events->oom;
 }
 
+typedef struct receive_owned {
+  event_list events;
+  uint8_t *owned;
+  uint8_t *pending;
+} receive_owned;
+static void receive_owned_release(void *arg) {
+  receive_owned *r = (receive_owned *)arg;
+  qa_q2_gtv_events_free(r->events.items, r->events.count);
+  free(r->owned);
+  free(r->pending);
+}
+static bool client_receive(qa_q2_gtv_client *client, const uint8_t *input, size_t length,
+                           qa_q2_gtv_event **out, size_t *out_count);
+static bool client_receive_held(qa_q2_gtv_client *client, const uint8_t *input, size_t length,
+                                receive_owned *held);
+typedef struct receive_scope {
+  qa_q2_gtv_client *client;
+  const uint8_t *input;
+  size_t length;
+  qa_q2_gtv_event **out;
+  size_t *out_count;
+  bool ok;
+} receive_scope;
+static void receive_body(void *arg) {
+  receive_scope *scope = (receive_scope *)arg;
+  scope->ok = client_receive(scope->client, scope->input, scope->length, scope->out,
+                             scope->out_count);
+}
 bool qa_q2_gtv_client_receive(qa_q2_gtv_client *client, const uint8_t *input,
                               size_t length, qa_q2_gtv_event **out,
                               size_t *out_count) {
@@ -400,10 +452,41 @@ bool qa_q2_gtv_client_receive(qa_q2_gtv_client *client, const uint8_t *input,
     qa_q2_throw_error("GTV connection is closed");
   }
   client->busy = true;
-  event_list events = {NULL, 0, 0, false};
+  /* TS: catch (error) { this.close(); throw error; } finally { this.busy = false; } */
+  receive_scope scope = {client, input, length, out, out_count, false};
+  qa_caught_error caught;
+  bool ok = qa_try(receive_body, &scope, &caught);
+  client->busy = false;
+  if (!ok) {
+    qa_q2_gtv_client_close(client);
+    qa_rethrow(&caught);
+  }
+  return scope.ok;
+}
+static bool client_receive(qa_q2_gtv_client *client, const uint8_t *input, size_t length,
+                           qa_q2_gtv_event **out, size_t *out_count) {
+  receive_owned held = {{NULL, 0, 0, false}, NULL, NULL};
+  qa_cleanup node;
+  qa_cleanup_push(&node, receive_owned_release, &held);
+  bool ok = client_receive_held(client, input, length, &held);
+  qa_cleanup_pop(&node);
+  free(held.owned);
+  free(held.pending);
+  if (!ok) {
+    qa_q2_gtv_events_free(held.events.items, held.events.count);
+    return false;
+  }
+  *out = held.events.items;
+  *out_count = held.events.count;
+  return true;
+}
+static bool client_receive_held(qa_q2_gtv_client *client, const uint8_t *input, size_t length,
+                                receive_owned *held) {
+  event_list *events_ref = &held->events;
+#define events (*events_ref)
   const uint8_t *bytes = input;
   size_t bytes_length = length;
-  uint8_t *owned = NULL;
+#define owned (held->owned)
   if (client->phase == QA_Q2_GTV_MAGIC) {
     size_t count = 4 - client->magic_length < bytes_length
                        ? 4 - client->magic_length
@@ -413,29 +496,18 @@ bool qa_q2_gtv_client_receive(qa_q2_gtv_client *client, const uint8_t *input,
     bytes += count;
     bytes_length -= count;
     if (client->magic_length != 4) {
-      client->busy = false;
-      *out = events.items;
-      *out_count = 0;
       return true;
     }
     size_t magic_length = 0;
     uint8_t *magic = qa_q2_mvd_magic(&magic_length);
-    if (magic == NULL) {
-      client->busy = false;
-      return false;
-    }
+    if (magic == NULL) return false;
     bool matches = memcmp(client->magic, magic, 4) == 0;
     free(magic);
     if (!matches) {
-      qa_q2_gtv_client_close(client);
-      client->busy = false;
       qa_q2_throw_error("Not a GTV server");
     }
     qa_q2_sizebuf message;
-    if (!qa_q2_message_create(&message, QA_Q2_MAX_GTC_MSGLEN)) {
-      client->busy = false;
-      return false;
-    }
+    if (!qa_q2_message_create(&message, QA_Q2_MAX_GTC_MSGLEN)) return false;
     qa_q2_msg_write_short(&message, QA_Q2_GTV_PROTOCOL_VERSION);
     qa_q2_msg_write_long(&message, client->requested_flags);
     qa_q2_msg_write_long(&message, 0);
@@ -445,21 +517,13 @@ bool qa_q2_gtv_client_receive(qa_q2_gtv_client *client, const uint8_t *input,
     size_t body_length = 0;
     uint8_t *body = qa_q2_message_bytes(&message, &body_length);
     qa_q2_message_destroy(&message);
-    if (body == NULL) {
-      client->busy = false;
-      return false;
-    }
+    if (body == NULL) return false;
     size_t hello_length = 0;
     uint8_t *hello = gtv_packet(QA_Q2_GTC_HELLO, body, body_length, &hello_length);
     free(body);
-    if (hello == NULL) {
-      client->busy = false;
-      return false;
-    }
+    if (hello == NULL) return false;
     if (hello_length - 2 > QA_Q2_MAX_GTC_MSGLEN) {
       free(hello);
-      qa_q2_gtv_client_close(client);
-      client->busy = false;
       qa_q2_throw_error("GTV identity exceeds message limit");
     }
     client->phase = QA_Q2_GTV_HELLO;
@@ -470,11 +534,7 @@ bool qa_q2_gtv_client_receive(qa_q2_gtv_client *client, const uint8_t *input,
     size_t out_length = 0;
     owned = compression_push(&client->compression, bytes, bytes_length,
                              &out_length);
-    if (owned == NULL) {
-      qa_q2_gtv_events_free(events.items, events.count);
-      client->busy = false;
-      return false;
-    }
+    if (owned == NULL) return false;
     bytes = owned;
     bytes_length = out_length;
   }
@@ -485,45 +545,26 @@ bool qa_q2_gtv_client_receive(qa_q2_gtv_client *client, const uint8_t *input,
   owned = NULL;
   if (ctx.switched && client->compression.active) {
     size_t pending_length = 0;
-    uint8_t *pending =
-        qa_q2_mvd_framer_take_pending(&client->frames, &pending_length);
+    held->pending = qa_q2_mvd_framer_take_pending(&client->frames, &pending_length);
     if (pending_length != 0) {
       size_t out_length = 0;
-      uint8_t *decoded = compression_push(&client->compression, pending,
-                                          pending_length, &out_length);
-      free(pending);
-      if (decoded == NULL) {
-        qa_q2_gtv_events_free(events.items, events.count);
-        client->busy = false;
-        return false;
-      }
-      qa_q2_mvd_framer_push(&client->frames, decoded, out_length, consume_plain,
-                            &ctx);
-      free(decoded);
-    } else {
-      free(pending);
+      owned = compression_push(&client->compression, held->pending, pending_length,
+                               &out_length);
+      if (owned == NULL) return false;
+      qa_q2_mvd_framer_push(&client->frames, owned, out_length, consume_plain, &ctx);
     }
   }
-  if (events.oom) {
-    qa_q2_gtv_events_free(events.items, events.count);
-    client->busy = false;
-    return false;
-  }
+  if (events.oom) return false;
   if (qa_q2_mvd_framer_finished(&client->frames)) {
     qa_q2_gtv_client_close(client);
     if (event_push(&events, QA_Q2_GTV_EVENT_CLOSED)) {
       events.items[events.count - 1].reason = dup_str("end of stream");
-      if (events.items[events.count - 1].reason == NULL) {
-        qa_q2_gtv_events_free(events.items, events.count);
-        client->busy = false;
-        return false;
-      }
+      if (events.items[events.count - 1].reason == NULL) return false;
     }
   }
-  client->busy = false;
-  *out = events.items;
-  *out_count = events.count;
   return true;
+#undef owned
+#undef events
 }
 
 bool qa_q2_read_gtv_request(const uint8_t *bytes, size_t length,
@@ -541,6 +582,9 @@ bool qa_q2_read_gtv_request(const uint8_t *bytes, size_t length,
   }
   memcpy(copy, bytes, length);
   qa_q2_message_load(&message, copy, length);
+  consume_owned held = {&message, copy};
+  qa_cleanup node;
+  qa_cleanup_push(&node, consume_owned_release, &held);
   int32_t opcode = qa_q2_msg_read_byte(&message);
   if (opcode == QA_Q2_GTC_HELLO) {
     if (qa_q2_msg_read_word(&message) != QA_Q2_GTV_PROTOCOL_VERSION) {
@@ -572,6 +616,7 @@ bool qa_q2_read_gtv_request(const uint8_t *bytes, size_t length,
   if (message.readcount != message.cursize) {
     qa_q2_throw_error("Trailing GTV request bytes");
   }
+  qa_cleanup_pop(&node);
   free(copy);
   qa_q2_message_destroy(&message);
   return true;
@@ -585,17 +630,17 @@ uint8_t *qa_q2_gtv_server_stream_hello(qa_q2_gtv_server_stream *stream,
   if (stream->greeted || stream->closed) {
     qa_q2_throw_error("GTV server hello already sent");
   }
-  if ((((int32_t)flags) & ~(QA_Q2_GTF_DEFLATE | QA_Q2_GTF_STRINGCMDS)) != 0) {
+  if (((qa_js_to_int32(flags)) & ~(QA_Q2_GTF_DEFLATE | QA_Q2_GTF_STRINGCMDS)) != 0) {
     qa_q2_throw_error("Unknown GTV negotiated flags");
   }
   stream->greeted = true;
   uint8_t body[4];
-  int32_t value = (int32_t)flags;
+  int32_t value = qa_js_to_int32(flags);
   body[0] = (uint8_t)((uint32_t)value & 0xff);
   body[1] = (uint8_t)(((uint32_t)value >> 8) & 0xff);
   body[2] = (uint8_t)(((uint32_t)value >> 16) & 0xff);
   body[3] = (uint8_t)(((uint32_t)value >> 24) & 0xff);
-  if ((((int32_t)flags) & QA_Q2_GTF_DEFLATE) != 0) {
+  if (((qa_js_to_int32(flags)) & QA_Q2_GTF_DEFLATE) != 0) {
     compression_init(&stream->compression, true);
   }
   return gtv_packet(QA_Q2_GTS_HELLO, body, 4, out_length);
@@ -605,7 +650,7 @@ uint8_t *qa_q2_gtv_server_stream_message(qa_q2_gtv_server_stream *stream,
                                          size_t body_length,
                                          size_t *out_length) {
   if (!stream->greeted || stream->closed || stream->busy ||
-      (int32_t)opcode == QA_Q2_GTS_HELLO) {
+      opcode == QA_Q2_GTS_HELLO /* opcode === GTS_HELLO: 5.5 is not HELLO */) {
     qa_q2_throw_error("Invalid GTV server stream state");
   }
   stream->busy = true;

@@ -103,6 +103,8 @@ static const qa_ui_choice *seat_choices(routing_state *s, bool with_none,
   qa_ui_choice *pool_items = choice_pool(s, count + 1);
   size_t at = 0;
   for (size_t i = 0; i < count; i++) {
+    const char * id2;
+    const char * label2;
     int64_t index = qa_seat_input_seat(inputs[i]).index;
     char id[32], label[48];
     char *num = qa_input_js_number((double)index);
@@ -113,7 +115,7 @@ static const qa_ui_choice *seat_choices(routing_state *s, bool with_none,
     if (plus == NULL) oom();
     snprintf(label, sizeof label, "Player %s", plus);
     free(plus);
-    pool_items[at++] = (qa_ui_choice){ pool(s, id), pool(s, label) };
+    pool_items[at++] = (id2 = pool(s, id), label2 = pool(s, label), (qa_ui_choice){ id2, label2 });
   }
   if (with_none) pool_items[at++] = (qa_ui_choice){ "none", "None" };
   *out_count = at;
@@ -204,8 +206,10 @@ static const char *device_read(void *v) {
   routing_state *s = v;
   qa_seat_input *input = selected_input(s);
   if (input == NULL) return "none";
+  const qa_input_router * router2 = s->router(s->router_ctx);
+  qa_seat_id seat = qa_seat_input_seat(input);
   qa_controller_selection selection = qa_input_router_controller_selection(
-      s->router(s->router_ctx), qa_seat_input_seat(input));
+      router2, seat);
   selection_key(selection, s->read_buffer, sizeof s->read_buffer);
   return s->read_buffer;
 }
@@ -220,6 +224,8 @@ static const qa_ui_choice *device_choices(void *v, size_t *out_count) {
   items[at++] = (qa_ui_choice){ "automatic", "Automatic" };
   items[at++] = (qa_ui_choice){ "none", "None" };
   for (size_t i = 0; i < device_count; i++) {
+    const char * id2;
+    const char * label2;
     qa_controller_selection target;
     if (!device_selection(&devices[i], &target)) continue;
     char key[1024], label[1024];
@@ -229,15 +235,17 @@ static const qa_ui_choice *device_choices(void *v, size_t *out_count) {
     if (ordinal == NULL) oom();
     snprintf(label, sizeof label, "%s (%s)", devices[i].name, ordinal);
     free(ordinal);
-    items[at++] = (qa_ui_choice){ pool(s, key), pool(s, label) };
+    items[at++] = (id2 = pool(s, key), label2 = pool(s, label), (qa_ui_choice){ id2, label2 });
   }
   qa_seat_input *input = selected_input(s);
   char current[1024];
   if (input == NULL) {
     snprintf(current, sizeof current, "none");
   } else {
+    const qa_input_router * router2 = s->router(s->router_ctx);
+    qa_seat_id seat = qa_seat_input_seat(input);
     qa_controller_selection selection = qa_input_router_controller_selection(
-        s->router(s->router_ctx), qa_seat_input_seat(input));
+        router2, seat);
     selection_key(selection, current, sizeof current);
   }
   bool seen = false;

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -13,7 +14,7 @@ static bool str_eq(const char *a, const char *b) {
 }
 /* JS bitwise ops convert through int32. */
 static double bit(double buttons, int32_t mask, bool enabled) {
-  int32_t value = (int32_t)buttons;
+  int32_t value = qa_js_to_int32(buttons);
   return (double)(enabled ? value | mask : value & ~mask);
 }
 static double buttons_of(qa_user_command command) {
@@ -129,11 +130,11 @@ qa_user_command qa_mod_client_command_scalar(
     if (command.kind == QA_USER_COMMAND_Q3) {
       double up = command.as.q3.up_move;
       command.as.q3.up_move =
-          value == 0 ? fmin(0, up) : fmax(10, fmax(up, scale));
+          value == 0 ? qa_js_min(0, up) : qa_js_max(10, qa_js_max(up, scale));
     } else {
       double up = command.as.q2.up_move;
       command.as.q2.up_move =
-          value == 0 ? fmin(0, up) : fmax(10, fmax(up, scale));
+          value == 0 ? qa_js_min(0, up) : qa_js_max(10, qa_js_max(up, scale));
     }
     return command;
   }
@@ -183,7 +184,7 @@ qa_user_command qa_mod_client_command_scalar(
   }
   /* "up-move" */
   if (command.kind == QA_USER_COMMAND_Q2_RERELEASE) {
-    int32_t buttons = (int32_t)buttons_of(command);
+    int32_t buttons = qa_js_to_int32(buttons_of(command));
     set_buttons(&command,
                 (double)((buttons & ~(8 | 16)) |
                          (value > 0 ? 8 : value < 0 ? 16 : 0)));

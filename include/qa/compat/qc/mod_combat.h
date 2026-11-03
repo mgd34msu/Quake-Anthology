@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include "qa/compat/qc/machine.h"
 #include "qa/compat/qc/source_call.h"
+#include "qa/content/q1/quakec/armor_points.h"
 #include "qa/content/q1/quakec/id1_damage.h"
 #include "qa/content/q1/quakec/id1_program.h"
 #include "qa/contracts/execution.h"
@@ -33,8 +34,10 @@ typedef struct qa_compat_qc_mod_combat {
   qa_q1qc_entity_memory qentities; qa_q1qc_machine qmachine; qa_q1qc_source qsource;
   qa_damage_request *incoming; bool *entered; qa_damage_outcome *outcomes; bool *has_outcome;
   size_t incoming_count, incoming_capacity;
-  char death_buffer[256]; qa_actor_id attack_attacker, attack_inflictor, reaction_self;
-  struct qa_compat_qc_mod_combat_bind { struct qa_compat_qc_mod_combat *c; qa_compat_qc_words *words; qa_owned_actor actor; const qa_q1_id1_program_binding *binding; } **bind_storage; size_t bind_count, bind_capacity;
+  /* Authored-request provenance cells. Requests nest with the QC call
+   * stack (limit 32), so the ring outlives every live request. */
+  struct qa_compat_qc_mod_combat_attack { qa_actor_id attacker, inflictor; char death_type[256]; } attacks[64]; size_t attack_next;
+  struct qa_compat_qc_mod_combat_bind { struct qa_compat_qc_mod_combat *c; qa_compat_qc_words *words; qa_owned_actor actor; const qa_q1_id1_program_binding *binding; qa_q1qc_empty_armor empty; } **bind_storage; size_t bind_count, bind_capacity;
   struct qa_compat_qc_mod_combat *self_ref;
 } qa_compat_qc_mod_combat;
 bool qa_compat_qc_mod_combat_init(qa_compat_qc_mod_combat *c, qa_compat_qc_mod_combat_options options);
@@ -42,4 +45,18 @@ void qa_compat_qc_mod_combat_destroy(qa_compat_qc_mod_combat *c);
 void qa_compat_qc_mod_combat_admit(qa_compat_qc_mod_combat *c, qa_owned_actor actor);
 void qa_compat_qc_mod_combat_pain(qa_compat_qc_mod_combat *c, qa_pain_reaction reaction);
 void qa_compat_qc_mod_combat_die(qa_compat_qc_mod_combat *c, qa_death_reaction reaction);
+/* TS combat.damage surface read by the provider. Boundaries are owned
+ * by the binding; their functions/regions lists are what the machine
+ * options must declare. */
+const qa_q1qc_function_boundary *qa_compat_qc_mod_combat_function_boundary(const qa_compat_qc_mod_combat *c);
+const qa_q1qc_inline_boundary *qa_compat_qc_mod_combat_inline_boundary(const qa_compat_qc_mod_combat *c);
+/* TS damage.functionBoundary.run / inlineBoundary.run with machine-level types. */
+void qa_compat_qc_mod_combat_run_function(qa_compat_qc_mod_combat *c, qa_compat_qc_call_site call, qa_compat_qc_function_execution execute);
+void qa_compat_qc_mod_combat_run_region(qa_compat_qc_mod_combat *c, qa_compat_qc_inline_region region, qa_compat_qc_inline_continuation execute);
+void qa_compat_qc_mod_combat_observe_call(qa_compat_qc_mod_combat *c, qa_compat_qc_call_site call);
+void qa_compat_qc_mod_combat_observe_entity_store(qa_compat_qc_mod_combat *c, qa_compat_qc_entity_store_observation store);
+/* Machine-level execution through a q1qc boundary: the prepare callback
+ * receives the q1qc machine view from machine(machine_ctx). */
+void qa_compat_qc_run_q1qc_function(const qa_q1qc_function_boundary *boundary, qa_q1qc_machine_fn machine, void *machine_ctx, qa_compat_qc_call_site call, qa_compat_qc_function_execution execute);
+void qa_compat_qc_run_q1qc_region(const qa_q1qc_inline_boundary *boundary, qa_compat_qc_inline_region region, qa_compat_qc_inline_continuation execute);
 #endif

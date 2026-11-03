@@ -44,6 +44,9 @@ void qa_quakeworld_signon_server_destroy(qa_quakeworld_signon_server *s);
 qa_qw_command_result qa_quakeworld_signon_server_command(qa_quakeworld_signon_server *s, const char *text,
                                                         qa_download_source *prepared_download, bool has_prepared);
 void qa_quakeworld_signon_server_close(qa_quakeworld_signon_server *s);
+/* Heap instance for callers that cannot see the struct size; free closes it. */
+qa_quakeworld_signon_server *qa_quakeworld_signon_server_create(qa_qw_signon_host host, bool donor_wide);
+void qa_quakeworld_signon_server_free(qa_quakeworld_signon_server *s);
 
 typedef struct qa_quakeworld_precache_client {
   double server_count; char **models; size_t model_count, model_cap;

@@ -70,9 +70,14 @@ typedef struct qa_qvm_mod_items_runtime {
   size_t retired_entry_count;
   size_t retired_entry_capacity;
   int64_t next_request;
-  qa_mod_client_application **applied;
+  uint64_t request_identity;              /* last request object identity */
+  int64_t *applied_invocations;           /* owned: open applications already applied */
   size_t applied_count;
   size_t applied_capacity;
+  qa_source_item_definition *presentation_items; /* owned: TS admissions.map(definition) */
+  void **retained;                        /* owned: capability and binding contexts */
+  size_t retained_count;
+  size_t retained_capacity;
 } qa_qvm_mod_items_runtime;
 
 void qa_qvm_mod_items_runtime_init(qa_qvm_mod_items_runtime *items, const qa_qvm_mod_items *definition,

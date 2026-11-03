@@ -79,5 +79,5 @@ extern const qa_vec3 qa_q2m_muzzle_classic[];
 extern const size_t qa_q2m_muzzle_classic_count;
 extern const qa_vec3 qa_q2m_muzzle_rerelease[];
 extern const size_t qa_q2m_muzzle_rerelease_count;
-qa_vec3 qa_q2m_muzzle_offset(qa_q2f_edition edition, double flash);
+qa_vec3 qa_q2m_muzzle_offset(qa_q2_edition edition, double flash);
 #endif

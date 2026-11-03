@@ -4,11 +4,12 @@
 #include <math.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 qa_ui_transform qa_ui_fit(qa_rect area, double scale) {
   if (!isfinite(scale) || scale <= 0 || area.width <= 0 || area.height <= 0)
     qa_range_error("UI requires a positive scale and safe area");
-  double factor = fmin(area.width / 640, area.height / 480) * scale;
+  double factor = qa_js_min(area.width / 640, area.height / 480) * scale;
   qa_ui_transform out = { area.x + (area.width - 640 * factor) / 2,
                           area.y + (area.height - 480 * factor) / 2, factor };
   return out;
@@ -26,10 +27,10 @@ bool qa_ui_contains(qa_rect rect, qa_vec2 point) {
 }
 
 qa_rect qa_ui_intersect(qa_rect a, qa_rect b) {
-  double x = fmax(a.x, b.x), y = fmax(a.y, b.y);
+  double x = qa_js_max(a.x, b.x), y = qa_js_max(a.y, b.y);
   qa_rect out = { x, y,
-    fmax(0, fmin(a.x + a.width, b.x + b.width) - x),
-    fmax(0, fmin(a.y + a.height, b.y + b.height) - y) };
+    qa_js_max(0, qa_js_min(a.x + a.width, b.x + b.width) - x),
+    qa_js_max(0, qa_js_min(a.y + a.height, b.y + b.height) - y) };
   return out;
 }
 

@@ -1,5 +1,6 @@
 /* Port of src/text/atlas.ts. GPL-2.0-or-later. */
 #include "qa/text/atlas.h"
+#include "qa/network/common/js_number.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -14,16 +15,16 @@
 #include "qa/foundation/support.h"
 #include "qa/text/kfont.h"
 #include "qa/text/truetype.h"
+#include "qa/foundation/js.h"
 
 /* TS `throw new Error(msg)`, as in src/core/commands/index.c. */
 static noreturn void qa_error(const char *format, ...) {
+  char text[1536];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(text, sizeof text, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", text);
 }
 
 static char *dup_text(const char *text) {
@@ -228,14 +229,9 @@ static char *join_key(const char *prefix, const char *path) {
   return key;
 }
 
-/* number -> JS decimal string for the small integral values used in
- * keys and messages; falls back to %g. */
+/* String(number) for keys and messages. */
 static void format_number(char *buffer, size_t size, double value) {
-  if (is_integer(value) && fabs(value) <= 9007199254740991.0) {
-    snprintf(buffer, size, "%lld", (long long)value);
-  } else {
-    snprintf(buffer, size, "%.17g", value);
-  }
+  qa_net_js_number(value, buffer, size);
 }
 
 const qa_text_atlas *qa_text_font_registry_load_kfont(
@@ -497,7 +493,7 @@ const qa_text_atlas *qa_text_font_registry_load_truetype(
     *oom = true;
     return NULL;
   }
-  qsort(coverage, coverage_count, sizeof *coverage, compare_doubles);
+  qa_js_sort(coverage, coverage_count, sizeof *coverage, compare_doubles);
   for (size_t i = 0; i < coverage_count; i++) validate_scalar(coverage[i]);
   char *key = coverage_key("truetype:", path, pixel_size, coverage, coverage_count);
   if (key == NULL) {

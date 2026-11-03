@@ -114,6 +114,7 @@ typedef struct entry {
   qa_client_id client;
   qa_protection_reservation reservation;
   bool bound;
+  void *binding_state; /* owned: the ctx handed to reservation.bind */
 } entry;
 
 typedef struct actor_entry {
@@ -249,7 +250,7 @@ typedef struct absorb_job {
 
 static qa_armor_stage_result run_absorb(void *ctx) {
   absorb_job *job = ctx;
-  qa_armor_stage_result result = {(double)job->protection->operations->invoke(
+  qa_armor_stage_result result = {job->protection->operations->invoke(
       job->protection->operations->ctx, &job->protection->definition->absorb, job->inputs, job->input_count)};
   return result;
 }
@@ -305,8 +306,8 @@ static qa_armor_stage_result absorb(qa_qvm_mod_protection_runtime *protection, q
       {"time", {"float", time.kind == QA_SOURCE_TIME_SECONDS ? time.value : time.value / 1000, NULL, point, NULL}},
   };
   absorb_job job = {protection, actor, inputs, 11};
-  int32_t saved = (int32_t)qa_qvm_mod_protection_observe(protection, actor, observer, run_absorb, &job).saved;
-  qa_armor_stage_result result = {(double)saved};
+  /* TS returns the observed savings number itself (a float32 source return is not truncated). */
+  qa_armor_stage_result result = {qa_qvm_mod_protection_observe(protection, actor, observer, run_absorb, &job).saved};
   return result;
 }
 
@@ -388,6 +389,8 @@ void qa_qvm_mod_protection_component_destroy(qa_qvm_mod_protection_component *co
 }
 
 void qa_qvm_mod_protection_runtime_destroy(qa_qvm_mod_protection_runtime *protection) {
+  actor_entry *entries = protection->entries;
+  for (size_t i = 0; i < protection->entry_count; i++) free(entries[i].value.binding_state);
   free(protection->entries);
   memset(protection, 0, sizeof *protection);
 }
@@ -441,6 +444,7 @@ void qa_qvm_mod_protection_reserve_actor(qa_qvm_mod_protection_runtime *protecti
   created->value.client = client;
   created->value.reservation = reservation;
   created->value.bound = false;
+  created->value.binding_state = NULL;
 }
 
 void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection, qa_actor_id actor) {
@@ -491,6 +495,7 @@ void qa_qvm_mod_protection_bind_actor(qa_qvm_mod_protection_runtime *protection,
   /* Re-find: reservation.bind may reenter and realloc the entries. */
   found = require_entry(protection, actor);
   found->bound = true;
+  found->binding_state = state;
 }
 
 void qa_qvm_mod_protection_activate(qa_qvm_mod_protection_runtime *protection) {
@@ -576,6 +581,26 @@ static void observe_write(void *ctx, const qa_qvm_committed_write *event) {
   }
 }
 
+typedef struct stage_finish_ctx {
+  qa_qvm_mod_protection_runtime *protection;
+  uint64_t generation;
+} stage_finish_ctx;
+
+/* TS finally { stage.stop(); stages.splice(...) }. Found by generation: nested
+ * observes may realloc the array. */
+static void stage_finish(void *ctx) {
+  stage_finish_ctx *finish = ctx;
+  qa_qvm_mod_protection_component *component = finish->protection->component;
+  stage *stages = component->stages;
+  for (size_t i = 0; i < component->stage_count; i++) {
+    if (stages[i].generation != finish->generation) continue;
+    qa_qvm_memory_writes_unobserve(&finish->protection->memory->writes, stages[i].watch_id);
+    memmove(&stages[i], &stages[i + 1], (component->stage_count - i - 1) * sizeof *stages);
+    component->stage_count--;
+    return;
+  }
+}
+
 qa_armor_stage_result qa_qvm_mod_protection_observe(qa_qvm_mod_protection_runtime *protection, qa_actor_id actor,
                                                     qa_protection_observer observer,
                                                     qa_qvm_protection_execute_fn execute, void *execute_ctx) {
@@ -626,18 +651,14 @@ qa_armor_stage_result qa_qvm_mod_protection_observe(qa_qvm_mod_protection_runtim
   state.stage_generation = generation;
   created->watch_id = qa_qvm_memory_observe_writes(protection->memory, ranges, range_count,
                                                     observe_write, &state, NULL, NULL);
+  stage_finish_ctx finish = {protection, generation};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, stage_finish, &finish);
   qa_armor_stage_result result = execute(execute_ctx);
+  qa_cleanup_pop(&guard);
   if (find_entry(protection, actor) != NULL && qa_session_actor_registry_is_live(protection->services->actors, actor))
     (void)require_entry(protection, actor);
-  /* Re-find by generation: nested observes may realloc the array. */
-  stage *stages = component->stages;
-  for (size_t i = 0; i < component->stage_count; i++) {
-    if (stages[i].generation != generation) continue;
-    qa_qvm_memory_writes_unobserve(&protection->memory->writes, stages[i].watch_id);
-    memmove(&stages[i], &stages[i + 1], (component->stage_count - i - 1) * sizeof *stages);
-    component->stage_count--;
-    break;
-  }
+  stage_finish(&finish);
   return result;
 }
 
@@ -657,10 +678,18 @@ void qa_qvm_mod_protection_release(qa_qvm_mod_protection_runtime *protection, qa
   actor_entry *entries = protection->entries;
   for (size_t i = 0; i < protection->entry_count; i++) {
     if (!qa_same_actor(entries[i].actor, actor)) continue;
+    /* TS: try { reservation.close(); } finally { entries.delete(actor); }: the
+     * entry stays readable while the reservation closes. */
     qa_protection_reservation reservation = entries[i].value.reservation;
-    memmove(&entries[i], &entries[i + 1], (protection->entry_count - i - 1) * sizeof *entries);
-    protection->entry_count--;
     reservation.close(reservation.ctx);
+    entries = protection->entries;
+    for (size_t j = 0; j < protection->entry_count; j++) {
+      if (!qa_same_actor(entries[j].actor, actor)) continue;
+      free(entries[j].value.binding_state);
+      memmove(&entries[j], &entries[j + 1], (protection->entry_count - j - 1) * sizeof *entries);
+      protection->entry_count--;
+      break;
+    }
     return;
   }
 }

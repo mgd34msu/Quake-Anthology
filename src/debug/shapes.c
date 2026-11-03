@@ -6,6 +6,7 @@
 #include <stdlib.h>
 
 #include "qa/core/math.h"
+#include "qa/foundation/js.h"
 
 static const double QA_PI = 3.141592653589793;
 
@@ -65,6 +66,14 @@ static qa_vec3 sphere_ring(qa_debug_shape shape, int stacks, int slices,
   return qa_add3(shape.origin, qa_scale3(unit, shape.radius));
 }
 
+/* Math.trunc(Math.min(k + radius / d, cap)) as a loop bound: a NaN or hugely
+ * negative radius runs no iterations in TS (i < NaN is false), so map NaN to 0
+ * and floor at -1e9 instead of casting an out-of-range double to int. */
+static int loop_bound(double value) {
+  if (isnan(value)) return 0;
+  double t = trunc(value);
+  return t < -1e9 ? -1000000000 : (int)t;
+}
 size_t qa_debug_shape_lines(qa_debug_shape shape, qa_vec4 color,
                             bool depth_test, qa_debug_line *out,
                             size_t capacity) {
@@ -96,7 +105,7 @@ size_t qa_debug_shape_lines(qa_debug_shape shape, qa_vec4 color,
     case QA_DEBUG_SHAPE_CYLINDER: {
       /* Math.trunc(Math.min(5 + radius/8, 16)); count may be <= 0 for
        * very negative radii, exactly as the TS loop then emits none. */
-      int count = (int)trunc(fmin(5 + shape.radius / 8, 16));
+      int count = loop_bound(qa_js_min(5 + shape.radius / 8, 16));
       for (int i = 0; i < count; i++) {
         if (shape.kind == QA_DEBUG_SHAPE_CIRCLE) {
           emit(&sink, circle_point(shape, i, count, shape.origin.z),
@@ -116,8 +125,8 @@ size_t qa_debug_shape_lines(qa_debug_shape shape, qa_vec4 color,
       break;
     }
     case QA_DEBUG_SHAPE_SPHERE: {
-      int stacks = (int)trunc(fmin(4 + shape.radius / 32, 10));
-      int slices = (int)trunc(fmin(6 + shape.radius / 32, 16));
+      int stacks = loop_bound(qa_js_min(4 + shape.radius / 32, 10));
+      int slices = loop_bound(qa_js_min(6 + shape.radius / 32, 16));
       qa_vec3 zr = {0, 0, shape.radius};
       qa_vec3 north = qa_add3(shape.origin, zr);
       qa_vec3 south = qa_sub3(shape.origin, zr);

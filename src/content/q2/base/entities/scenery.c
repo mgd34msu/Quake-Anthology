@@ -1,6 +1,7 @@
 /* Port of src/content/q2/base/entities/scenery.ts. Quake II g_misc.c
  * clocks, decorative models and teleporters. GPL-2.0-or-later. */
 #include "qa/content/q2/base/entities/scenery.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -13,14 +14,20 @@
 #include "qa/content/q2/foundation/scenery.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 typedef struct anim_entry { qa_q2_entity *e; double first, end; } anim_entry;
-typedef struct clock_entry { qa_q2_entity *e; double value; char message[16]; } clock_entry;
+typedef struct clock_entry { qa_q2_entity *e; double value; } clock_entry;
+/* TS clock messages are immutable strings held by both the clock and its
+ * display. Each entity gets its own heap text so a pointer stays valid when
+ * the clock table grows or is restored, and a former display keeps its text. */
+typedef struct message_slot { qa_q2_entity *e; char text[16]; } message_slot;
 
 struct qa_q2_base_scenery {
   qa_q2_base_entity_hooks hooks;
   anim_entry *animations; size_t animation_count, animation_cap;
   clock_entry *clocks; size_t clock_count, clock_cap;
+  message_slot **messages; size_t message_count, message_cap;
   qa_q2_named_think thinks[6];
   qa_q2_named_use uses[5];
   qa_q2_named_touch touches[2];
@@ -43,12 +50,12 @@ static void teleporter_touch_fn(void *, qa_q2_entity *, qa_q2_game_services *, q
 static void bomb_touch_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_touch_contact);
 static void remove_die_fn(void *, qa_q2_entity *, qa_q2_game_services *, qa_death_reaction);
 
-static int64_t sf(const qa_q2_entity *e) { return (int64_t)e->spawnflags; }
+/* TS `spawnflags & x` applies ToInt32: the int32 view of the number. */
+static int32_t sf(const qa_q2_entity *e) { return qa_js_to_int32(e->spawnflags); }
 
 /* JS String(number) for the integral clock values used here. */
 static void js_number(char *out, size_t size, double value) {
-  if (value == trunc(value) && fabs(value) < 1e21) (void)snprintf(out, size, "%lld", (long long)value);
-  else (void)snprintf(out, size, "%g", value);
+  qa_net_js_number(value, out, size);
 }
 static void pad_start(char *out, size_t size, const char *text, size_t width, char fill) {
   size_t length = strlen(text);
@@ -125,6 +132,21 @@ static clock_entry *set_clock(qa_q2_base_scenery *s, qa_q2_entity *e, double val
   return entry;
 }
 
+static char *message_of(qa_q2_base_scenery *s, qa_q2_entity *e) {
+  for (size_t i = 0; i < s->message_count; i++) if (s->messages[i]->e == e) return s->messages[i]->text;
+  if (s->message_count == s->message_cap) {
+    size_t cap = s->message_cap ? s->message_cap * 2 : 8;
+    message_slot **grown = realloc(s->messages, cap * sizeof *grown);
+    if (!grown) qa_range_error("Out of memory");
+    s->messages = grown; s->message_cap = cap;
+  }
+  message_slot *slot = calloc(1, sizeof *slot);
+  if (!slot) qa_range_error("Out of memory");
+  slot->e = e;
+  s->messages[s->message_count++] = slot;
+  return slot->text;
+}
+
 static void set_model(qa_q2_entity *entity, qa_q2_game_services *game, const char *path, qa_bounds bounds, const char *solid) {
   entity->model = path;
   qa_q2_body_changes changes = {0};
@@ -181,9 +203,14 @@ static void clock_tick_fn(void *c, qa_q2_entity *self, qa_q2_game_services *serv
     (void)snprintf(text, sizeof text, "%s:%s:%s", hour, minute, second);
   }
   /* TS slice(0, 15); the owned copy backs entity->message. */
-  (void)snprintf(state->message, sizeof state->message, "%.15s", text);
-  self->message = state->message;
-  display->message = self->message;
+  char *own = message_of(s, self);
+  (void)snprintf(own, sizeof ((message_slot *)0)->text, "%.15s", text);
+  self->message = own;
+  if (display != self) {
+    char *shown = message_of(s, display);
+    memcpy(shown, own, sizeof ((message_slot *)0)->text);
+    display->message = shown;
+  }
   qa_actor_id self_id = self->actor.id;
   (void)qa_actor_callback_table_use(services->host->callbacks, display->actor, &self_id, &self_id);
   if (((sf(self) & 1) != 0 && state->value > self->wait) || ((sf(self) & 2) != 0 && state->value < self->wait)) {
@@ -275,7 +302,7 @@ static void teleporter_touch_fn(void *c, qa_q2_entity *self, qa_q2_game_services
 
 static void bomb_prethink_fn(void *c, qa_q2_entity *current, qa_q2_game_services *host) {
   (void)c;
-  double diff = fmax(-1, current->timestamp - host->host->now(host->host->ctx));
+  double diff = qa_js_max(-1, current->timestamp - host->host->now(host->host->ctx));
   qa_vec3 direction = qa_q2_scale(current->movedir, 1 + diff);
   direction.z = diff;
   qa_vec3 angles = qa_vector_to_angles_with_rule(direction, QA_VECTOR_TO_ANGLES_NATIVE);
@@ -352,7 +379,7 @@ static void bomb_use_fn(void *c, qa_q2_entity *self, qa_q2_game_services *servic
   self->use = (qa_q2_use){0};
   self->has_activator = activator != NULL;
   if (activator) self->activator = *activator;
-  self->effects = (double)((int64_t)self->effects | 16);
+  self->effects = (double)(qa_js_to_int32(self->effects) | 16);
   qa_q2_body_changes changes = {0};
   changes.has_velocity = true; changes.velocity = qa_q2_scale(direction, viper->speed);
   services->move(services->ctx, self, changes, false);
@@ -408,7 +435,8 @@ qa_q2_base_scenery *qa_q2_base_scenery_create(qa_q2_base_entity_hooks hooks) {
 }
 void qa_q2_base_scenery_destroy(qa_q2_base_scenery *s) {
   if (!s) return;
-  free(s->animations); free(s->clocks); free(s);
+  for (size_t i = 0; i < s->message_count; i++) free(s->messages[i]);
+  free(s->messages); free(s->animations); free(s->clocks); free(s);
 }
 qa_q2_callback_definitions qa_q2_base_scenery_callbacks(qa_q2_base_scenery *s) { return s->defs; }
 
@@ -473,7 +501,9 @@ static void spawn_teleporter(qa_q2_base_scenery *s, qa_q2_entity *entity, qa_q2_
   qa_q2_presentation_event ev = {0};
   ev.kind = "sound"; ev.has_actor = true; ev.actor = entity->actor.id;
   ev.origin = qa_q2_game_body(game, entity).origin; ev.path = "world/amb10.wav";
-  ev.channel = 0; ev.volume = 1; ev.attenuation = 3; ev.reliable = false; ev.loop = "start";
+  ev.channel = 0; ev.volume = 1;
+  ev.attenuation = game->options.edition == QA_Q2_EDITION_RERELEASE ? 3 : 1;
+  ev.reliable = false; ev.loop = "start";
   game->host->emit(game->host->ctx, ev);
   qa_q2_entity *trigger = game->create(game->ctx, "teleporter_trigger", NULL, 0);
   trigger->target = entity->target;
@@ -523,8 +553,8 @@ bool qa_q2_base_scenery_spawn(qa_q2_base_scenery *s, qa_q2_entity *entity, qa_q2
     return true;
   }
   if (strcmp(classname, "monster_commander_body") == 0) {
-    entity->render_flags = (double)((int64_t)entity->render_flags | 64);
-    entity->flags = (double)((int64_t)entity->flags | 16);
+    entity->render_flags = (double)(qa_js_to_int32(entity->render_flags) | 64);
+    entity->flags = (double)(qa_js_to_int32(entity->flags) | 16);
     set_model(entity, game, "models/monsters/commandr/tris.md2", (qa_bounds){{-32, -32, 0}, {32, 32, 48}}, "box");
     combat_create(game, entity, 0, 200, true);
     entity->use = (qa_q2_use){s, commander_use_fn};
@@ -550,9 +580,12 @@ bool qa_q2_base_scenery_spawn(qa_q2_base_scenery *s, qa_q2_entity *entity, qa_q2
   }
   if (strcmp(classname, "misc_gib_arm") == 0 || strcmp(classname, "misc_gib_leg") == 0) {
     entity->model = strcmp(classname, "misc_gib_arm") == 0 ? "models/objects/gibs/arm/tris.md2" : "models/objects/gibs/leg/tris.md2";
-    entity->effects = (double)((int64_t)entity->effects | 2);
-    entity->server_flags = (double)((int64_t)entity->server_flags | 4);
-    entity->angular_velocity = (qa_vec3){game->host->random(game->host->ctx) * 200, game->host->random(game->host->ctx) * 200, game->host->random(game->host->ctx) * 200};
+    entity->effects = (double)(qa_js_to_int32(entity->effects) | 2);
+    entity->server_flags = (double)(qa_js_to_int32(entity->server_flags) | 4);
+    double x = game->host->random(game->host->ctx) * 200;
+    double y = game->host->random(game->host->ctx) * 200;
+    double z = game->host->random(game->host->ctx) * 200;
+    entity->angular_velocity = (qa_vec3){x, y, z};
     combat_create(game, entity, 0, 0, false);
     entity->die = (qa_q2_die){s, remove_die_fn};
     game->motion(game->ctx, entity, "toss");

@@ -197,7 +197,9 @@ qa_random_state qa_q3_random_checkpoint(const qa_q3_random *random) {
 
 void qa_q3_random_restore(qa_q3_random *random, qa_random_state state) {
   /* The TS restore constructs Q3Random(seed, draws), validating both. */
-  if (state.seed != trunc(state.seed)) {
+  /* Number.isInteger and the int32 range before any cast (a saved seed of
+   * Infinity or 1e300 is a RangeError in TS, not a C cast). */
+  if (state.seed != trunc(state.seed) || state.seed < -2147483648.0 || state.seed > 2147483647.0) {
     qa_range_error("Q3 random seed must be a signed 32-bit integer");
   }
   if (state.draws != trunc(state.draws) || fabs(state.draws) > 9007199254740991.0) {

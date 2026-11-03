@@ -16,7 +16,8 @@
 qa_provider_checkpoint qa_app_sim_simulation_provider_checkpoint(qa_save_image image, const char *schema);
 /* Owned tree or NULL (TS undefined). */
 qa_save_value *qa_app_sim_saved_source_cvars(qa_save_image image);
-typedef struct qa_app_sim_bot_connection { double client_slot; qa_saved_actor_id actor; } qa_app_sim_bot_connection;
+/* client_generation: the saved ClientId generation (TS connection.client.generation). */
+typedef struct qa_app_sim_bot_connection { double client_slot; qa_saved_actor_id actor; double client_generation; } qa_app_sim_bot_connection;
 typedef struct qa_app_sim_saved_bots { qa_save_value *value; qa_app_sim_bot_connection *connections; size_t connection_count; } qa_app_sim_saved_bots;
 /* NULL when no world:bots provider. Caller frees value + connections. */
 qa_app_sim_saved_bots *qa_app_sim_saved_bot_checkpoint(qa_save_image image);
@@ -29,11 +30,12 @@ typedef struct qa_app_sim_native_saved_client { double client_slot; const char *
 /* Malloc'd; strings borrow the decoded tree kept in *keep_alive. */
 qa_app_sim_native_saved_client *qa_app_sim_native_q2_saved_clients(qa_save_image image, size_t *out_count, qa_save_value **keep_alive);
 const qa_guest_checkpoint *qa_app_sim_simulation_quakec_checkpoint(qa_save_image image);
-const qa_guest_checkpoint *qa_app_sim_simulation_qvm_checkpoint(qa_save_image image);
+/* TS simulationQ3GuestCheckpoint: the qvm or native-guest checkpoint, or NULL. */
+const qa_guest_checkpoint *qa_app_sim_simulation_q3_guest_checkpoint(qa_save_image image);
 void qa_app_sim_validate_simulation_save(qa_save_image image);
 typedef struct qa_app_sim_q3_runtime_arsenal { qa_saved_actor_id actor; qa_q3_arsenal_runtime_state state; bool has_requested_weapon; double requested_weapon; } qa_app_sim_q3_runtime_arsenal;
 typedef struct qa_app_sim_q3_runtime_movement { qa_saved_actor_id actor; bool has_state; double trace_mask; bool has_fixed_msec; double fixed_msec; bool no_footsteps; bool gauntlet_hit; double debug_level; } qa_app_sim_q3_runtime_movement;
-typedef struct qa_app_sim_q3_runtime_attack { qa_saved_actor_id actor; qa_persist_q2_attack_checkpoint attack; } qa_app_sim_q3_runtime_attack;
+typedef struct qa_app_sim_q3_runtime_attack { qa_saved_actor_id actor; qa_q2_attack_checkpoint attack; } qa_app_sim_q3_runtime_attack;
 typedef struct qa_app_sim_native_q3_runtime {
   qa_save_value *value; /* owned; frees borrowed strings */
   qa_app_sim_q3_runtime_arsenal *arsenals; size_t arsenal_count;

@@ -1,5 +1,5 @@
 /* Port of src/content/q1/addons/monsters/bosses/oldnew-children.ts.
- * GPL-2.0-or-later. */
+ * mg3_oldone_new.qc summoned attack actors. GPL-2.0-or-later. */
 #include "qa/content/q1/addons/monsters/bosses/oldnew_children.h"
 
 #include <math.h>
@@ -8,481 +8,448 @@
 #include <string.h>
 
 #include "qa/content/q1/addons/monsters/bosses/oldnew_projectiles.h"
+#include "qa/content/q1/addons/qc_math.h"
+#include "qa/content/q1/base/projectiles.h"
+#include "qa/content/q1/foundation/spawns.h"
+#include "qa/content/q1/missionpacks/types.h"
+#include "qa/core/math.h"
+#include "../support.h"
 
-#define FLAGS(x) ((int32_t)(x))
+#define PREFIX QA_Q1AM_OLDNEW_PREFIX
+#define FLAGS QA_Q1AM_FLAGS
 
 static const qa_bounds large_hull = {{-32, -32, -24}, {32, 32, 64}};
-static qa_q1am_actor *child(qa_q1am_context *context, qa_q1am_actor *owner) {
-  qa_q1am_actor *entity = context->game->create(context->game->ctx, "oldnew_child");
+
+static const qa_actor_id *first_player(qa_q1_services *game, qa_actor_id *storage) {
+  size_t count = 0;
+  const qa_actor_id *players = game->host.players(game->host.ctx, &count);
+  if (count == 0) return NULL;
+  *storage = players[0];
+  return storage;
+}
+static qa_q1_actor *child(qa_q1ad_context *context, qa_q1_actor *owner) {
+  qa_q1_actor *entity = qa_q1_create(context->game, "oldnew_child", NULL, NULL);
   entity->has_owner = true;
   entity->owner = owner->actor.id;
-  context->game->set_origin(context->game->ctx, entity, context->game->body(context->game->ctx, owner).origin);
+  qa_q1_set_origin(context->game, entity, qa_q1_get_body(context->game, owner).origin);
   return entity;
 }
-static bool first_player(qa_q1am_game *game, qa_actor_id *out) {
-  size_t count = 0;
-  qa_actor_id *players = game->players(game->ctx, &count);
-  bool has = count > 0;
-  if (has) *out = players[0];
-  free(players);
-  return has;
+static void set_angles(qa_q1_services *game, qa_q1_actor *entity, qa_vec3 angles) {
+  qa_q1_body_patch patch;
+  memset(&patch, 0, sizeof patch);
+  patch.has_angles = true;
+  patch.angles = angles;
+  qa_q1_set_body(game, entity, &patch);
 }
-qa_q1am_actor *qa_q1am_spawn_spammer(qa_q1am_context *context, qa_q1am_actor *owner) {
-  qa_q1am_actor *entity = child(context, owner);
+static void set_origin_bounds(qa_q1_services *game, qa_q1_actor *entity, qa_vec3 origin, qa_bounds bounds) {
+  qa_q1_body_patch patch;
+  memset(&patch, 0, sizeof patch);
+  patch.has_origin = true;
+  patch.origin = origin;
+  patch.has_bounds = true;
+  patch.bounds = bounds;
+  qa_q1_set_body(game, entity, &patch);
+}
+qa_q1_actor *qa_q1am_spawn_spammer(qa_q1ad_context *context, qa_q1_actor *owner) {
+  qa_q1_actor *entity = child(context, owner);
   qa_actor_id enemy;
-  bool has = qa_q1am_boss_enemy(context, owner, &enemy);
-  if (!has) has = first_player(context->game, &enemy);
-  qa_q1am_actor_set_ref(entity, "enemy", has, enemy);
+  const qa_actor_id *target = qa_q1am_boss_enemy(context, owner, &enemy) ? &enemy : first_player(context->game, &enemy);
+  qa_q1am_reference(entity, "enemy", target);
   qa_q1am_boss_later(context, entity, "spammer_think", 0.1);
   return entity;
 }
-qa_q1am_actor *qa_q1am_spawn_swiper(qa_q1am_context *context, qa_q1am_actor *owner) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_actor *entity = child(context, owner);
+qa_q1_actor *qa_q1am_spawn_swiper(qa_q1ad_context *context, qa_q1_actor *owner) {
+  qa_q1_services *game = context->game;
+  qa_q1_actor *entity = child(context, owner);
   entity->count = 0;
-  qa_q1am_body_patch patch = {0};
-  patch.has_angles = true;
-  patch.angles = game->body(game->ctx, owner).angles;
-  game->set_body(game->ctx, entity, &patch);
-  game->sound(game->ctx, entity, "weapons/lstart.wav", "weapon", 1);
-  context->set_number(context->ctx, entity, "aflag", qa_q1am_actor_number(owner, "aflag"));
-  context->set_number(context->ctx, owner, "aflag", 1 - qa_q1am_actor_number(owner, "aflag"));
+  set_angles(game, entity, qa_q1_get_body(game, owner).angles);
+  qa_q1_sound(game, owner->actor.id, "weapons/lstart.wav", "auto", 1, 1);
+  qa_q1ad_set_number(context, entity, "aflag", qa_q1_actor_number(owner, "aflag"));
+  qa_q1ad_set_number(context, owner, "aflag", 1 - qa_q1_actor_number(owner, "aflag"));
   qa_q1am_boss_later(context, entity, "oldnew_swipe", 0.025);
   return entity;
 }
-qa_q1am_actor *qa_q1am_spawn_eye(qa_q1am_context *context, qa_q1am_actor *owner) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_actor *entity = game->create(game->ctx, "oldnew_eye");
-  qa_vec3 origin = qa_add3(game->body(game->ctx, owner).origin, (qa_vec3){0, 0, 300});
-  game->spawn_teleport_fog(game->ctx, game, origin);
-  qa_q1am_body_patch patch = {0};
-  patch.has_origin = true;
-  patch.origin = origin;
-  patch.has_bounds = true;
-  patch.bounds = large_hull;
-  game->set_body(game->ctx, entity, &patch);
-  (void)snprintf(entity->model, sizeof entity->model, "%s", "progs/teleporter_eye.mdl");
+qa_q1_actor *qa_q1am_spawn_eye(qa_q1ad_context *context, qa_q1_actor *owner) {
+  qa_q1_services *game = context->game;
+  qa_q1_actor *entity = qa_q1_create(game, "oldnew_eye", NULL, NULL);
+  const qa_vec3 origin = qa_add3(qa_q1_get_body(game, owner).origin, (qa_vec3){0, 0, 300});
+  (void)qa_q1_spawn_teleport_fog(game, origin);
+  set_origin_bounds(game, entity, origin, large_hull);
+  qa_q1ad_set_text(&entity->model, "progs/teleporter_eye.mdl");
   entity->solid = "slidebox";
   entity->movement = "fly";
-  qa_q1am_actor_set_damageable(game, entity, true);
+  qa_q1_actor_set_damageable(entity, true);
   entity->aimed_damage = true;
-  entity->pain = game->named_pain(game->ctx, entity, QA_Q1AM_OLDNEW_PREFIX "eye_pain");
-  entity->die = game->named_die(game->ctx, entity, QA_Q1AM_OLDNEW_PREFIX "eye_die");
-  entity->touch = game->named_touch(game->ctx, entity, QA_Q1AM_OLDNEW_PREFIX "eye_touch");
+  entity->pain = qa_q1_callback_registry_pain(game->named, entity, PREFIX "eye_pain");
+  entity->die = qa_q1_callback_registry_die(game->named, entity, PREFIX "eye_die");
+  entity->touch = qa_q1_callback_registry_touch(game->named, entity, PREFIX "eye_touch");
   entity->has_owner = true;
   entity->owner = owner->actor.id;
   entity->speed = 100;
-  game->combat_set_health(game->ctx, entity->actor, 300);
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 300);
   entity->max_health = 300;
   qa_actor_id player;
-  bool has = first_player(game, &player);
-  qa_q1am_actor_set_ref(entity, "enemy", has, player);
+  qa_q1am_reference(entity, "enemy", first_player(game, &player));
   qa_q1am_boss_later(context, entity, "eye_chase", 0.1);
-  game->link(game->ctx, entity);
+  qa_q1_link(game, entity);
   return entity;
 }
-static qa_q1am_actor *armed_eye(qa_q1am_context *context, qa_q1am_actor *owner, double offset) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_actor *entity = child(context, owner);
-  qa_q1am_basis basis = qa_q1am_game_make_vectors(game, game->body(game->ctx, owner).angles);
-  qa_vec3 origin = qa_add3(qa_add3(qa_add3(game->body(game->ctx, owner).origin,
-                                           qa_scale3(basis.right, offset * 300)),
-                                   qa_scale3(basis.up, 80)),
-                           qa_scale3(basis.forward, 200));
-  qa_q1am_body_patch patch = {0};
-  patch.has_origin = true;
-  patch.origin = origin;
-  patch.has_bounds = true;
-  patch.bounds = large_hull;
-  game->set_body(game->ctx, entity, &patch);
-  (void)snprintf(entity->model, sizeof entity->model, "%s", "progs/teleporter_eye.mdl");
+static qa_q1_actor *armed_eye(qa_q1ad_context *context, qa_q1_actor *owner, double offset) {
+  qa_q1_services *game = context->game;
+  qa_q1_actor *entity = child(context, owner);
+  const qa_q1_basis basis = qa_q1_make_vectors(game, qa_q1_get_body(game, owner).angles);
+  const qa_vec3 origin = qa_add3(qa_add3(qa_add3(qa_q1_get_body(game, owner).origin, qa_scale3(basis.right, offset * 300)),
+                                         qa_scale3(basis.up, 80)), qa_scale3(basis.forward, 200));
+  set_origin_bounds(game, entity, origin, large_hull);
+  qa_q1ad_set_text(&entity->model, "progs/teleporter_eye.mdl");
   entity->solid = "slidebox";
   entity->movement = "step";
   entity->movement_flags = 33;
-  entity->die = game->named_die(game->ctx, entity, QA_Q1AM_OLDNEW_PREFIX "eye_die");
-  qa_q1am_spawn_boss_teledeath(context, origin, entity);
-  game->combat_set_health(game->ctx, entity->actor, 120);
+  entity->die = qa_q1_callback_registry_die(game->named, entity, PREFIX "eye_die");
+  entity->pain = qa_q1_callback_registry_pain(game->named, entity, PREFIX "armed_eye_pain");
+  (void)qa_q1am_spawn_boss_teledeath(context, origin, entity);
+  qa_gameplay_authority_set_health(game->host.combat, entity->actor, 120);
   entity->max_health = 120;
-  qa_q1am_actor_set_damageable(game, entity, true);
+  qa_q1_actor_set_damageable(entity, true);
   entity->aimed_damage = true;
   game->total_monsters++;
-  qa_q1am_event event = {0};
+  qa_q1_event event;
+  memset(&event, 0, sizeof event);
   event.kind = "monster-total";
   event.total = game->total_monsters;
-  game->emit(game->ctx, &event);
-  patch.has_origin = false;
-  patch.has_bounds = false;
-  patch.has_angles = true;
-  patch.angles = game->body(game->ctx, owner).angles;
-  game->set_body(game->ctx, entity, &patch);
-  game->spawn_teleport_fog(game->ctx, game, origin);
+  qa_q1_emit(game, event);
+  set_angles(game, entity, qa_q1_get_body(game, owner).angles);
+  (void)qa_q1_spawn_teleport_fog(game, origin);
   entity->effects = 64;
-  game->link(game->ctx, entity);
+  qa_q1_link(game, entity);
   return entity;
 }
-void qa_q1am_spawn_blaster(qa_q1am_context *context, qa_q1am_actor *owner) {
-  const double offsets[] = {1, -1};
-  for (int i = 0; i < 2; i++) {
-    qa_q1am_actor *entity = armed_eye(context, owner, offsets[i]);
-    context->set_number(context->ctx, entity, "aflag", offsets[i]);
+void qa_q1am_spawn_blaster(qa_q1ad_context *context, qa_q1_actor *owner) {
+  static const double offsets[2] = {1, -1};
+  for (size_t i = 0; i < 2; i++) {
+    const double offset = offsets[i];
+    qa_q1_actor *entity = armed_eye(context, owner, offset);
+    qa_q1ad_set_number(context, entity, "aflag", offset);
     entity->count = 0;
-    entity->damage = -offsets[i];
+    entity->damage = -offset;
+    qa_q1am_field_text(entity, "oldnew.armedThink", "blast");
     qa_q1am_boss_later(context, entity, "blast", 2);
   }
 }
-qa_q1am_actor *qa_q1am_spawn_vortex(qa_q1am_context *context, qa_q1am_actor *owner) {
-  double side = qa_q1am_actor_number(owner, "ammo_cells") != 0 ? 1 : -1;
-  qa_q1am_actor *entity = armed_eye(context, owner, side);
-  context->set_number(context->ctx, entity, "aflag", side);
-  context->set_number(context->ctx, owner, "ammo_cells", 1 - qa_q1am_actor_number(owner, "ammo_cells"));
+qa_q1_actor *qa_q1am_spawn_vortex(qa_q1ad_context *context, qa_q1_actor *owner) {
+  qa_q1_actor *entity = armed_eye(context, owner, qa_q1_actor_number(owner, "ammo_cells") != 0 ? 1 : -1);
+  qa_q1ad_set_number(context, entity, "aflag", qa_q1_actor_number(owner, "ammo_cells") != 0 ? 1 : -1);
+  qa_q1ad_set_number(context, owner, "ammo_cells", 1 - qa_q1_actor_number(owner, "ammo_cells"));
   entity->count = 0;
   qa_actor_id enemy;
-  bool has = qa_q1am_boss_enemy(context, owner, &enemy);
-  qa_q1am_actor_set_ref(entity, "enemy", has, enemy);
+  qa_q1am_reference(entity, "enemy", qa_q1am_boss_enemy(context, owner, &enemy) ? &enemy : NULL);
+  qa_q1am_field_text(entity, "oldnew.armedThink", "vortex_think_alt");
   qa_q1am_boss_later(context, entity, "vortex_think_alt", 2);
   return entity;
 }
-void qa_q1am_cleanup_oldnew(qa_q1am_context *context) {
-  qa_q1am_game *game = context->game;
-  size_t total = game->entity_count(game->ctx);
-  for (size_t i = 0; i < total; i++) {
-    qa_q1am_actor *entity = game->entity_at(game->ctx, i);
-    if (entity && (strcmp(entity->classname, "oldnew_child") == 0 ||
-                   strcmp(entity->classname, "oldnew_eye") == 0))
+void qa_q1am_cleanup_oldnew(qa_q1ad_context *context) {
+  qa_q1_services *game = context->game;
+  for (size_t i = 0; i < game->entity_count; i++) {
+    qa_q1_actor *entity = game->entities[i];
+    if (strcmp(entity->classname, "oldnew_child") == 0 || strcmp(entity->classname, "oldnew_eye") == 0)
       qa_q1am_boss_later(context, entity, "oldnew_cleanup_think", 0.1);
   }
-  qa_q1am_actor *timer = game->create(game->ctx, "oldnew_cleanup_zombies");
-  timer->classname[0] = '\0';
+  qa_q1_actor *timer = qa_q1_create(game, "oldnew_cleanup_zombies", NULL, NULL);
+  qa_q1ad_set_text(&timer->classname, "");
   qa_q1am_boss_later(context, timer, "oldnew_cleanup_zombies", 2);
 }
-static void eye_die(qa_q1am_context *context, qa_q1am_actor *entity, bool has_attacker, qa_actor_id attacker) {
-  qa_q1am_game *game = context->game;
+
+static void eye_die(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker) {
+  qa_q1ad_context *context = ctx;
   if ((FLAGS(entity->movement_flags) & 32) != 0) {
     game->killed_monsters++;
-    qa_q1am_event event = {0};
+    qa_q1_event event;
+    memset(&event, 0, sizeof event);
     event.kind = "monster-killed";
     event.has_actor = true;
     event.actor = entity->actor.id;
     event.total = game->total_monsters;
     event.found = game->killed_monsters;
-    game->emit(game->ctx, &event);
-    entity->movement_flags = (double)(FLAGS(entity->movement_flags) & ~3);
-    qa_q1am_actor_set_ref(entity, "enemy", has_attacker, attacker);
-    game->use_targets(game->ctx, entity, has_attacker, attacker);
+    qa_q1_emit(game, event);
+    entity->movement_flags = FLAGS(entity->movement_flags) & ~3;
+    qa_q1am_reference(entity, "enemy", attacker);
+    qa_q1_use_targets(game, entity, attacker);
   }
-  qa_q1am_event event = {0};
-  event.kind = "colored-explosion";
-  event.origin = game->body(game->ctx, entity).origin;
+  qa_q1ad_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q1AD_EVENT_COLORED_EXPLOSION;
+  event.origin = qa_q1_get_body(game, entity).origin;
   event.color_start = 244;
   event.color_length = 3;
-  context->services_emit(context->services_ctx, &event);
-  game->remove(game->ctx, entity);
+  context->services.emit(context->services.ctx, &event);
+  qa_q1_remove(game, entity);
 }
-static void eye_die_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, bool has, qa_actor_id attacker) {
-  (void)game;
-  eye_die(ctx, entity, has, attacker);
+/* T_Damage reacts through FoundTarget: a hit armed eye starts shooting 0.1 s later instead of finishing its warm-up. */
+static void armed_eye_pain(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker, double damage) {
+  (void)attacker; (void)damage; /* TS (_game, entity) */
+  char think[40];
+  qa_q1am_copy_name(think, sizeof think, qa_q1_actor_text(entity, "oldnew.armedThink"));
+  if (think[0] != '\0' && entity->next_think - game->time > 0.1) qa_q1am_boss_later(ctx, entity, think, 0.1);
 }
-static void eye_pain_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, bool has,
-                             qa_actor_id attacker, double take) {
+static void eye_pain(void *ctx, qa_q1_services *game, qa_q1_actor *entity, const qa_actor_id *attacker, double take) {
   (void)ctx;
-  qa_vec3 origin = game->body(game->ctx, entity).origin;
-  qa_q1am_body attacker_body;
-  qa_vec3 attacker_origin = has && game->body_read(game->ctx, attacker, &attacker_body)
-                                ? attacker_body.origin : QA_Q1AM_ZERO;
-  qa_vec3 delta = qa_sub3(origin, attacker_origin);
+  const qa_vec3 origin = qa_q1_get_body(game, entity).origin;
+  qa_q1_body attacker_body;
+  const qa_vec3 from = attacker != NULL && qa_q1am_read_body(game, *attacker, &attacker_body) ? attacker_body.origin : QA_Q1_ZERO;
+  qa_vec3 delta = qa_sub3(origin, from);
   delta.z = 0;
-  qa_vec3 impulse = qa_scale3(qa_add3(qa_scale3(qa_q1am_normalize(delta), 0.8), (qa_vec3){0, 0, 0.2}), take * 10);
-  qa_q1am_body_patch patch = {0};
-  patch.has_velocity = true;
-  patch.velocity = qa_add3(game->body(game->ctx, entity).velocity, impulse);
-  game->set_body(game->ctx, entity, &patch);
+  const qa_vec3 impulse = qa_scale3(qa_add3(qa_scale3(qa_q1_normalize(delta), 0.8), (qa_vec3){0, 0, 0.2}), take * 10);
+  qa_q1am_set_velocity_body(game, entity, qa_add3(qa_q1_get_body(game, entity).velocity, impulse));
 }
-static void eye_touch_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, qa_actor_id other,
-                              bool has_normal, qa_vec3 normal) {
-  (void)ctx; (void)has_normal; (void)normal;
-  if (game->entity(game->ctx, true, other) == game->world ||
-      (entity->has_owner && qa_same_actor(entity->owner, other)))
-    return;
-  if (game->health(game->ctx, other) != 0)
-    game->damage(game->ctx, other, entity->actor.id, entity->has_owner, entity->owner, 500);
+static void eye_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                      const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface; /* TS (_game, entity, other) */
+  if (qa_q1_get_entity(game, &other) == game->world || (entity->has_owner && qa_same_actor(entity->owner, other))) return;
+  if (qa_q1_health(game, other) != 0)
+    (void)qa_q1_damage(game, other, entity->actor.id, qa_q1am_opt(entity->has_owner, &entity->owner), 500, NULL, NULL, NULL, NULL);
 }
-static void eye_chase_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  qa_q1am_body body = game->body(game->ctx, entity);
-  qa_vec3 target = qa_q1am_boss_target(context, entity);
+static void eye_chase(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  const qa_q1_body body = qa_q1_get_body(game, entity);
+  const qa_vec3 target = qa_q1am_boss_target(context, entity);
   entity->speed = qa_length3(body.velocity);
   if (entity->speed < 300) entity->speed += 10;
-  qa_vec3 velocity = qa_add3(qa_scale3(qa_q1am_normalize(qa_sub3(target, body.origin)), 0.3),
-                             qa_scale3(qa_q1am_normalize(body.velocity), 0.7));
+  qa_vec3 velocity = qa_add3(qa_scale3(qa_q1_normalize(qa_sub3(target, body.origin)), 0.3), qa_scale3(qa_q1_normalize(body.velocity), 0.7));
   if (body.origin.z < target.z + 32) {
     velocity.z = 0;
-    velocity = qa_q1am_normalize(velocity);
+    velocity = qa_q1_normalize(velocity);
   }
-  qa_q1am_body_patch patch = {0};
+  qa_q1_body_patch patch;
+  memset(&patch, 0, sizeof patch);
   patch.has_angles = true;
-  patch.angles = qa_q1am_velocity_angles(velocity);
+  patch.angles = qa_q1mp_velocity_angles(velocity);
   patch.has_velocity = true;
   patch.velocity = qa_scale3(velocity, entity->speed);
-  game->set_body(game->ctx, entity, &patch);
+  qa_q1_set_body(game, entity, &patch);
   qa_q1am_boss_later(context, entity, "eye_chase", 0.1);
-  if ((int)entity->count % 2 == 0) {
-    entity->effects = (double)((int32_t)entity->effects | 2);
-    game->sound(game->ctx, entity, "misc/power.wav", "voice", 1);
+  if (fmod(entity->count, 2) == 0) {
+    entity->effects = FLAGS(entity->effects) | 2;
+    qa_q1_sound_defaults(game, entity->actor.id, "misc/power.wav");
   }
   entity->count++;
 }
-static void blast(qa_q1am_context *context, qa_q1am_actor *entity, const char *name) {
-  qa_q1am_game *game = context->game;
+static void blast(qa_q1ad_context *context, qa_q1_actor *entity, const char *name) {
+  qa_q1_services *game = context->game;
   qa_actor_id enemy;
-  bool has_enemy = qa_q1am_boss_enemy(context, entity, &enemy);
-  if (!has_enemy || !game->is_player(game->ctx, true, enemy)) {
-    bool has = first_player(game, &enemy);
-    qa_q1am_actor_set_ref(entity, "enemy", has, enemy);
-  }
-  qa_q1am_body body = game->body(game->ctx, entity);
-  qa_vec3 target = qa_q1am_boss_target(context, entity);
-  qa_vec3 direction = qa_q1am_normalize(qa_sub3(target, body.origin));
-  direction = qa_q1am_normalize(qa_add3(
-      direction, qa_scale3(qa_cross3_double(direction, (qa_vec3){0, 0, 1}),
-                           cos(entity->count * 15) * 0.5 * qa_q1am_actor_number(entity, "aflag"))));
-  qa_q1am_body_patch patch = {0};
-  patch.has_angles = true;
-  patch.angles = qa_q1am_velocity_angles(direction);
-  game->set_body(game->ctx, entity, &patch);
-  qa_q1am_actor *shot = game->launch_spike(game->ctx, game, true, entity->actor.id,
-                                           qa_add3(body.origin, qa_scale3(direction, 8)), direction);
-  shot->touch = game->named_touch(game->ctx, shot, QA_Q1AM_OLDNEW_PREFIX "blast_touch");
-  (void)snprintf(shot->model, sizeof shot->model, "%s", "progs/rogue/sphere.mdl");
+  if (!qa_q1am_boss_enemy(context, entity, &enemy) || !qa_q1_is_player(game, &enemy))
+    qa_q1am_reference(entity, "enemy", first_player(game, &enemy));
+  const qa_q1_body body = qa_q1_get_body(game, entity);
+  const qa_vec3 target = qa_q1am_boss_target(context, entity);
+  qa_vec3 direction = qa_q1_normalize(qa_sub3(target, body.origin));
+  direction = qa_q1_normalize(qa_add3(direction, qa_scale3(qa_cross3_double(direction, (qa_vec3){0, 0, 1}),
+                                                           qa_q1ad_qc_cos(entity->count * 15) * 0.5 * qa_q1_actor_number(entity, "aflag"))));
+  set_angles(game, entity, qa_q1mp_velocity_angles(direction));
+  qa_q1_actor *shot = qa_q1_launch_spike(game, &entity->actor.id, qa_add3(body.origin, qa_scale3(direction, 8)), direction, "spike");
+  shot->touch = qa_q1_callback_registry_touch(game->named, shot, PREFIX "blast_touch");
+  qa_q1ad_set_text(&shot->model, "progs/rogue/sphere.mdl");
   shot->effects = 64;
-  game->sound(game->ctx, entity, "weapons/spike2.wav", "weapon", 1);
+  qa_q1_sound(game, entity->actor.id, "weapons/spike2.wav", "weapon", 1, 1);
+  qa_q1_body_patch patch;
   memset(&patch, 0, sizeof patch);
   patch.has_velocity = true;
   patch.velocity = qa_scale3(direction, 500);
   patch.has_bounds = true;
-  patch.bounds = QA_Q1AM_POINT;
-  game->set_body(game->ctx, shot, &patch);
-  shot->angular_velocity = qa_scale3((qa_vec3){300, 300, 300}, game->random(game->ctx) * 2 - 1);
+  patch.bounds = QA_Q1_POINT;
+  qa_q1_set_body(game, shot, &patch);
+  shot->angular_velocity = qa_scale3((qa_vec3){300, 300, 300}, qa_q1am_random(game) * 2 - 1);
   qa_q1am_boss_later(context, entity, name, 0.2);
   entity->count++;
   if (entity->count > 72) {
-    qa_actor_id world = qa_q1am_boss_world(context);
-    game->damage(game->ctx, entity->actor.id, world, true, world, 500);
+    const qa_actor_id inflictor = qa_q1am_boss_world(context);
+    const qa_actor_id attacker = qa_q1am_boss_world(context);
+    (void)qa_q1_damage(game, entity->actor.id, inflictor, &attacker, 500, NULL, NULL, NULL, NULL);
   }
 }
-static void blast_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
-  blast(ctx, entity, "blast");
-}
-static void vortex_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  (void)game;
-  blast(ctx, entity, "vortex_think_alt");
-}
-static void blast_touch_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, qa_actor_id other,
-                                bool has_normal, qa_vec3 normal) {
-  (void)ctx; (void)has_normal; (void)normal;
-  if (game->entity(game->ctx, true, other) == game->world) {
-    game->remove(game->ctx, entity);
+/* The TS loop registers one closure per name. */
+static void blast_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) { (void)game; blast(ctx, entity, "blast"); }
+static void vortex_action(void *ctx, qa_q1_services *game, qa_q1_actor *entity) { (void)game; blast(ctx, entity, "vortex_think_alt"); }
+static void blast_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                        const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface; /* TS (_game, entity, other) */
+  if (qa_q1_get_entity(game, &other) == game->world) { qa_q1_remove(game, entity); return; }
+  if (strcmp(game->host.classname(game->host.ctx, other), "sphere") == 0 || (entity->has_owner && qa_same_actor(entity->owner, other)))
     return;
-  }
-  if (strcmp(game->classname_of(game->ctx, other), "sphere") == 0 ||
-      (entity->has_owner && qa_same_actor(entity->owner, other)))
-    return;
-  if (strcmp(game->classname_of(game->ctx, other), "monster_oldone_new") == 0) {
-    game->remove(game->ctx, entity);
-    return;
-  }
-  qa_q1am_actor *target = game->entity(game->ctx, true, other);
-  if (target && strcmp(target->solid, "trigger") == 0) return;
-  if (game->health(game->ctx, other) != 0)
-    game->damage(game->ctx, other, entity->actor.id, entity->has_owner, entity->owner, 15);
-  game->remove(game->ctx, entity);
+  if (strcmp(game->host.classname(game->host.ctx, other), "monster_oldone_new") == 0) { qa_q1_remove(game, entity); return; }
+  const qa_q1_actor *target = qa_q1_get_entity(game, &other);
+  if (target != NULL && strcmp(target->solid, "trigger") == 0) return;
+  if (qa_q1_health(game, other) != 0)
+    (void)qa_q1_damage(game, other, entity->actor.id, qa_q1am_opt(entity->has_owner, &entity->owner), 15, NULL, NULL, NULL, NULL);
+  qa_q1_remove(game, entity);
 }
-static void spammer_think_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  qa_q1am_actor *owner = game->entity(game->ctx, entity->has_owner, entity->owner);
-  qa_vec3 angles = owner ? game->body(game->ctx, owner).angles : QA_Q1AM_ZERO;
-  qa_q1am_body_patch patch = {0};
-  patch.has_angles = true;
-  patch.angles = angles;
-  game->set_body(game->ctx, entity, &patch);
+static void spammer_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_actor *owner = qa_q1_get_entity(game, qa_q1am_opt(entity->has_owner, &entity->owner));
+  const qa_vec3 angles = owner == NULL ? QA_Q1_ZERO : qa_q1_get_body(game, owner).angles;
+  set_angles(game, entity, angles);
   static const double offsets[] = {0, 1, -3, 2, -2, 3, -1, 4, 2, -1, -3, 2, -4};
-  if (entity->count < 0 || entity->count >= 13) {
-    game->remove(game->ctx, entity);
-    return;
-  }
-  double offset = offsets[(int)entity->count];
-  qa_q1am_basis basis = qa_q1am_game_make_vectors(game, qa_add3(angles, (qa_vec3){0, offset * 6, 0}));
-  qa_q1am_actor *shot = game->create(game->ctx, "spam");
-  qa_vec3 origin = qa_add3(qa_add3(game->body(game->ctx, entity).origin, (qa_vec3){0, 0, 50}),
-                           qa_scale3(basis.forward, 48));
+  if (!(entity->count >= 0 && entity->count < 13 && entity->count == floor(entity->count))) { qa_q1_remove(game, entity); return; }
+  const double offset = offsets[(size_t)entity->count];
+  const qa_q1_basis basis = qa_q1_make_vectors(game, qa_add3(angles, (qa_vec3){0, offset * 6, 0}));
+  qa_q1_actor *shot = qa_q1_create(game, "spam", NULL, NULL);
+  const qa_vec3 origin = qa_add3(qa_add3(qa_q1_get_body(game, entity).origin, (qa_vec3){0, 0, 50}), qa_scale3(basis.forward, 48));
   shot->has_owner = entity->has_owner;
   shot->owner = entity->owner;
-  (void)snprintf(shot->model, sizeof shot->model, "%s", "progs/rogue/plasma.mdl");
+  qa_q1ad_set_text(&shot->model, "progs/rogue/plasma.mdl");
   shot->solid = "bbox";
   shot->movement = "toss";
   shot->effects = 64;
-  shot->touch = game->named_touch(game->ctx, shot, QA_Q1AM_OLDNEW_PREFIX "spam_touch");
-  double oomph = fmax(200, qa_length3(qa_sub3(qa_q1am_boss_target(context, entity),
-                                              game->body(game->ctx, entity).origin)) * 0.8);
+  shot->touch = qa_q1_callback_registry_touch(game->named, shot, PREFIX "spam_touch");
+  qa_vec3 a = qa_q1am_boss_target(context, entity);
+  qa_vec3 b = qa_q1_get_body(game, entity).origin;
+  const double oomph = qa_js_max(200, qa_length3(qa_sub3(a, b)) * 0.8);
   qa_vec3 velocity = qa_scale3(basis.forward, oomph + 25 * entity->count);
   velocity.z = 200;
+  qa_q1_body_patch patch;
   memset(&patch, 0, sizeof patch);
   patch.has_origin = true;
   patch.origin = origin;
   patch.has_bounds = true;
-  patch.bounds = QA_Q1AM_POINT;
+  patch.bounds = QA_Q1_POINT;
   patch.has_velocity = true;
   patch.velocity = velocity;
-  game->set_body(game->ctx, shot, &patch);
-  game->sound(game->ctx, entity, "weapons/grenade.wav", "weapon", 1);
+  qa_q1_set_body(game, shot, &patch);
+  qa_q1_sound(game, entity->actor.id, "weapons/grenade.wav", "weapon", 1, 1);
   entity->count++;
-  game->link(game->ctx, shot);
+  qa_q1_link(game, shot);
   qa_q1am_boss_later(context, entity, "spammer_think", 0.1);
 }
-static void spam_touch_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity, qa_actor_id other,
-                               bool has_normal, qa_vec3 normal) {
-  qa_q1am_context *context = ctx;
-  (void)has_normal; (void)normal;
+static void spam_touch(void *ctx, qa_q1_services *game, qa_q1_actor *entity, qa_actor_id other,
+                       const qa_vec3 *normal, const qa_touch_surface *surface) {
+  (void)normal; (void)surface; /* TS (_game, entity, other) */
+  qa_q1ad_context *context = ctx;
   if (entity->has_owner && qa_same_actor(entity->owner, other)) return;
-  if (game->entity(game->ctx, true, other) == game->world) {
-    qa_q1am_body_patch patch = {0};
+  if (qa_q1_get_entity(game, &other) == game->world) {
+    qa_q1_body_patch patch;
+    memset(&patch, 0, sizeof patch);
     patch.has_velocity = true;
-    patch.velocity = QA_Q1AM_ZERO;
+    patch.velocity = QA_Q1_ZERO;
     patch.has_angles = true;
-    patch.angles = (qa_vec3){0, game->random(game->ctx) * 360, 0};
-    game->set_body(game->ctx, entity, &patch);
+    patch.angles = (qa_vec3){0, qa_q1am_random(game) * 360, 0};
+    qa_q1_set_body(game, entity, &patch);
     entity->movement = "none";
     entity->solid = "none";
-    (void)snprintf(entity->model, sizeof entity->model, "%s", "maps/bmodel/b_splash.bsp");
-    entity->touch.present = false;
-    game->link(game->ctx, entity);
+    qa_q1ad_set_text(&entity->model, "maps/bmodel/b_splash.bsp");
+    memset(&entity->touch, 0, sizeof entity->touch);
+    qa_q1_link(game, entity);
     qa_q1am_boss_later(context, entity, "spam1", 2);
     return;
   }
-  if (game->health(game->ctx, other) != 0) {
-    qa_actor_id inflictor = entity->has_owner ? entity->owner : qa_q1am_boss_world(context);
-    game->damage(game->ctx, other, inflictor, true, entity->actor.id, 10);
+  if (qa_q1_health(game, other) != 0) {
+    const qa_actor_id inflictor = entity->has_owner ? entity->owner : qa_q1am_boss_world(context);
+    const qa_actor_id self = entity->actor.id;
+    (void)qa_q1_damage(game, other, inflictor, &self, 10, NULL, NULL, NULL, NULL);
+    qa_q1_remove(game, entity);
   }
-  game->remove(game->ctx, entity);
 }
-static void spam1_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  qa_vec3 origin = game->body(game->ctx, entity).origin;
-  qa_q1am_event event = {0};
-  event.kind = "lightning";
+static void spam1(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  const qa_vec3 origin = qa_q1_get_body(game, entity).origin;
+  qa_q1ad_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q1AD_EVENT_LIGHTNING;
   event.has_actor = true;
   event.actor = entity->actor.id;
   event.style = 1;
   event.start = origin;
   event.end = qa_add3(origin, (qa_vec3){0, 0, 500});
-  context->services_emit(context->services_ctx, &event);
+  context->services.emit(context->services.ctx, &event);
   qa_q1am_boss_later(context, entity, "spam2", 0.1);
 }
-static void spam2_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  qa_q1am_event event = {0};
-  event.kind = "colored-explosion";
-  event.origin = game->body(game->ctx, entity).origin;
+static void spam2(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  qa_q1ad_event event;
+  memset(&event, 0, sizeof event);
+  event.kind = QA_Q1AD_EVENT_COLORED_EXPLOSION;
+  event.origin = qa_q1_get_body(game, entity).origin;
   event.color_start = 244;
   event.color_length = 3;
-  context->services_emit(context->services_ctx, &event);
-  game->radius_damage(game->ctx, entity->actor.id, true, entity->actor.id, 100,
-                      game->world != NULL, game->world ? game->world->actor.id : (qa_actor_id){0}, NULL);
-  game->remove(game->ctx, entity);
+  context->services.emit(context->services.ctx, &event);
+  const qa_actor_id self = entity->actor.id;
+  qa_q1_radius_damage(game, self, &self, 100, game->world == NULL ? NULL : &game->world->actor.id, NULL, NULL);
+  qa_q1_remove(game, entity);
 }
-static void swipe_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  double a = pow(entity->count / 50, 2);
-  qa_q1am_basis basis = qa_q1am_game_make_vectors(
-      game, qa_add3(game->body(game->ctx, entity).angles,
-                    (qa_vec3){0, qa_q1am_actor_number(entity, "aflag") == 0 ? -60 + a * 180 : 60 - a * 180, 0}));
-  qa_vec3 origin = game->body(game->ctx, entity).origin;
-  qa_vec3 start = qa_add3(origin, qa_scale3(basis.forward, 130));
-  qa_q1am_trace_request request = {start, qa_add3(origin, qa_scale3(basis.forward, 1000)),
-                                   QA_Q1AM_POINT, true, entity->actor.id, true};
-  qa_q1am_trace trace = game->trace(game->ctx, &request);
-  if (trace.has_actor && game->health(game->ctx, trace.actor) != 0) {
-    qa_actor_id inflictor = entity->has_owner ? entity->owner : qa_q1am_boss_world(context);
-    game->damage(game->ctx, trace.actor, inflictor, entity->has_owner, entity->owner,
-                 strcmp(game->classname_of(game->ctx, trace.actor), "monster_szombie") == 0 ? 100 : 25);
+static void oldnew_swipe(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  const double a = qa_js_pow(entity->count / 50, 2);
+  qa_vec3 a2 = qa_q1_get_body(game, entity).angles;
+  qa_vec3 b = (qa_vec3){0, qa_q1_actor_number(entity, "aflag") == 0 ? -60 + a * 180 : 60 - a * 180, 0};
+  const qa_q1_basis basis = qa_q1_make_vectors(game, qa_add3(a2, b));
+  const qa_vec3 origin = qa_q1_get_body(game, entity).origin, start = qa_add3(origin, qa_scale3(basis.forward, 130));
+  const qa_q1_trace trace = qa_q1am_trace(game, start, qa_add3(origin, qa_scale3(basis.forward, 1000)), QA_Q1_POINT,
+                                          &entity->actor.id, true);
+  if (trace.has_actor && qa_q1_health(game, trace.actor) != 0) {
+    const qa_actor_id inflictor = entity->has_owner ? entity->owner : qa_q1am_boss_world(context);
+    (void)qa_q1_damage(game, trace.actor, inflictor, qa_q1am_opt(entity->has_owner, &entity->owner),
+                       strcmp(game->host.classname(game->host.ctx, trace.actor), "monster_szombie") == 0 ? 100 : 25,
+                       NULL, NULL, NULL, NULL);
   }
-  if ((int)entity->count % 2 == 0) {
-    qa_q1am_event event = {0};
-    event.kind = "lightning";
+  if (fmod(entity->count, 2) == 0) {
+    qa_q1ad_event event;
+    memset(&event, 0, sizeof event);
+    event.kind = QA_Q1AD_EVENT_LIGHTNING;
     event.has_actor = true;
     event.actor = entity->actor.id;
     event.style = 3;
     event.start = start;
     event.end = trace.end;
-    context->services_emit(context->services_ctx, &event);
+    context->services.emit(context->services.ctx, &event);
   }
-  if (qa_q1am_actor_number(entity, "t_width") < game->time) {
-    game->sound(game->ctx, entity, "weapons/lhit.wav", "weapon", 1);
-    context->set_number(context->ctx, entity, "t_width", game->time + 0.6);
+  if (qa_q1_actor_number(entity, "t_width") < game->time) {
+    qa_q1_sound(game, entity->actor.id, "weapons/lhit.wav", "weapon", 1, 1);
+    qa_q1ad_set_number(context, entity, "t_width", game->time + 0.6);
   }
   entity->count++;
-  if (entity->count > 50)
-    game->schedule(game->ctx, entity, 0.025, game->named_action(game->ctx, entity, "SUB_Remove"));
-  else
-    qa_q1am_boss_later(context, entity, "oldnew_swipe", 0.025);
+  if (entity->count > 50) qa_q1_schedule(game, entity, 0.025, qa_q1_callback_registry_action(game->named, entity, "SUB_Remove"));
+  else qa_q1am_boss_later(context, entity, "oldnew_swipe", 0.025);
 }
-static void cleanup_think_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
+static void cleanup_think(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
   (void)ctx;
-  game->damage(game->ctx, entity->actor.id, entity->actor.id, true, entity->actor.id, 5000);
+  const qa_actor_id self = entity->actor.id;
+  (void)qa_q1_damage(game, self, self, &self, 5000, NULL, NULL, NULL, NULL);
 }
-static void cleanup_zombies_handler(void *ctx, qa_q1am_game *game, qa_q1am_actor *entity) {
-  qa_q1am_context *context = ctx;
-  qa_q1am_actor *zombie = NULL;
-  size_t total = game->entity_count(game->ctx);
-  for (size_t i = 0; i < total && zombie == NULL; i++) {
-    qa_q1am_actor *candidate = game->entity_at(game->ctx, i);
-    if (candidate && strcmp(candidate->classname, "monster_szombie") == 0) zombie = candidate;
-  }
-  if (zombie) {
-    qa_actor_id world = qa_q1am_boss_world(context);
-    game->damage(game->ctx, zombie->actor.id, world, true, world, 500);
-    qa_q1am_boss_later(context, entity, "oldnew_cleanup_zombies", 0.2 + game->random(game->ctx) * 0.5);
+static void cleanup_zombies(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  qa_q1ad_context *context = ctx;
+  qa_q1_actor *zombie = NULL;
+  for (size_t i = 0; i < game->entity_count && zombie == NULL; i++)
+    if (strcmp(game->entities[i]->classname, "monster_szombie") == 0) zombie = game->entities[i];
+  if (zombie != NULL) {
+    const qa_actor_id inflictor = qa_q1am_boss_world(context);
+    const qa_actor_id attacker = qa_q1am_boss_world(context);
+    (void)qa_q1_damage(game, zombie->actor.id, inflictor, &attacker, 500, NULL, NULL, NULL, NULL);
+    qa_q1am_boss_later(context, entity, "oldnew_cleanup_zombies", 0.2 + qa_q1am_random(game) * 0.5);
     return;
   }
   qa_q1am_boss_later(context, entity, "oldnew_cleanup_zombies", 1.5);
 }
-void qa_q1am_register_oldnew_children(qa_q1am_context *context) {
-  qa_q1am_game *game = context->game;
-  qa_q1am_handlers handlers = {0};
-  handlers.ctx = context;
-  handlers.die = eye_die_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "eye_die", handlers);
-  handlers.die = NULL;
-  handlers.pain = eye_pain_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "eye_pain", handlers);
-  handlers.pain = NULL;
-  handlers.touch = eye_touch_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "eye_touch", handlers);
-  handlers.touch = NULL;
-  handlers.action = eye_chase_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "eye_chase", handlers);
-  handlers.action = blast_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "blast", handlers);
-  handlers.action = vortex_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "vortex_think_alt", handlers);
-  handlers.action = NULL;
-  handlers.touch = blast_touch_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "blast_touch", handlers);
-  handlers.touch = NULL;
-  handlers.action = spammer_think_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "spammer_think", handlers);
-  handlers.action = NULL;
-  handlers.touch = spam_touch_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "spam_touch", handlers);
-  handlers.touch = NULL;
-  handlers.action = spam1_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "spam1", handlers);
-  handlers.action = spam2_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "spam2", handlers);
-  handlers.action = swipe_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "oldnew_swipe", handlers);
-  handlers.action = cleanup_think_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "oldnew_cleanup_think", handlers);
-  handlers.action = cleanup_zombies_handler;
-  game->named_register(game->ctx, QA_Q1AM_OLDNEW_PREFIX "oldnew_cleanup_zombies", handlers);
+void qa_q1am_register_oldnew_children(qa_q1ad_context *context) {
+  qa_q1_services *game = context->game;
+  qa_q1_callback_handlers handlers;
+#define REGISTER(NAME, FIELD, FN)                                    \
+  do {                                                               \
+    memset(&handlers, 0, sizeof handlers);                           \
+    handlers.ctx = context;                                          \
+    handlers.FIELD = FN;                                             \
+    qa_q1_callback_registry_register(game->named, PREFIX NAME, handlers); \
+  } while (0)
+  REGISTER("eye_die", die, eye_die);
+  REGISTER("armed_eye_pain", pain, armed_eye_pain);
+  REGISTER("eye_pain", pain, eye_pain);
+  REGISTER("eye_touch", touch, eye_touch);
+  REGISTER("eye_chase", action, eye_chase);
+  REGISTER("blast", action, blast_action);
+  REGISTER("vortex_think_alt", action, vortex_action);
+  REGISTER("blast_touch", touch, blast_touch);
+  REGISTER("spammer_think", action, spammer_think);
+  REGISTER("spam_touch", touch, spam_touch);
+  REGISTER("spam1", action, spam1);
+  REGISTER("spam2", action, spam2);
+  REGISTER("oldnew_swipe", action, oldnew_swipe);
+  REGISTER("oldnew_cleanup_think", action, cleanup_think);
+  REGISTER("oldnew_cleanup_zombies", action, cleanup_zombies);
+#undef REGISTER
 }

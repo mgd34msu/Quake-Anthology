@@ -3,8 +3,46 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/app/bootstrap/simulation/classic_guest_source.h"
+#include "qa/app/bootstrap/simulation/rerelease_guest_source.h"
+#include "qa/content/mounts.h"
 #include "qa/foundation/support.h"
+#include "qa/guest/pe/format.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
+void *qa_app_sim_prepare_q2_guest_mounted(const qa_resolved_execution_module *execution, qa_content_mounted *mounts,
+    const char **out_edition) {
+  if (!is(execution->role, "server-game")) qa_range_error("Q2 guest preparation requires a server-game artifact");
+  size_t length = 0;
+  uint8_t *bytes = qa_content_mounted_read_reference(mounts, execution->artifact, &length);
+  if (bytes == NULL) qa_range_error("Native artifact could not be read");
+  qa_pe_file pe; qa_parse_pe(&pe, bytes, length);
+  qa_guest_native_abi abi = pe.abi;
+  qa_pe_file_free(&pe);
+  free(bytes);
+  qa_resolved_execution_module corrected = *execution;
+  corrected.profile = (qa_native_abi){abi.kind, abi.image, abi.pointer_bytes, abi.call};
+  corrected.api.kind = QA_GAME_API_Q2_GAME;
+  if (is(abi.kind, "windows-x86-64")) {
+    corrected.api.as.q2_game.kind = QA_Q2_GAME_API_RERELEASE; corrected.api.as.q2_game.version = 2023;
+    qa_app_sim_prepared_rerelease_guest *prepared = calloc(1, sizeof *prepared);
+    if (prepared == NULL) qa_range_error("Out of memory");
+    qa_app_sim_prepare_rerelease_guest(&corrected, mounts, prepared);
+    *out_edition = "rerelease";
+    return prepared;
+  }
+  corrected.api.as.q2_game.kind = QA_Q2_GAME_API_CLASSIC; corrected.api.as.q2_game.version = 3;
+  qa_app_sim_prepared_classic_guest *prepared = calloc(1, sizeof *prepared);
+  if (prepared == NULL) qa_range_error("Out of memory");
+  qa_app_sim_prepare_classic_guest(&corrected, mounts, prepared);
+  *out_edition = "classic";
+  return prepared;
+}
+void qa_app_sim_prepared_q2_guest_free(void *prepared, const char *edition) {
+  if (prepared == NULL) return;
+  if (is(edition, "rerelease")) qa_app_sim_prepared_rerelease_guest_free(prepared);
+  else qa_app_sim_prepared_classic_guest_free(prepared);
+  free(prepared);
+}
 qa_app_sim_prepared_q2_native_guest qa_app_sim_prepare_q2_guest(qa_execution_module execution, qa_app_sim_q2_guest_prepare_host host) {
   if (!is(execution.role, "server-game")) qa_range_error("Q2 guest preparation requires a server-game artifact");
   const qa_resolved_resource_reference *artifact = execution.artifact;

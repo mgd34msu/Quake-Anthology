@@ -115,28 +115,52 @@ qa_q1qc_statement_access qa_q1qc_statement_access_of(qa_q1qc_statement statement
   return result;
 }
 
-/* TS writtenWords WeakMap, as a small per-program cache (leaked). */
-typedef struct written_entry { const qa_q1qc_program *program; wset written; } written_entry;
+/* TS writtenWords WeakMap<QcProgram, Set>. The C mirrors of one TS program
+ * borrow its initial_globals, so that pointer is the identity (a mirror without
+ * it is keyed by its address); the digest and table sizes are compared so
+ * storage reused by a later program cannot return a stale set. Small per-process
+ * cache (leaked); a full cache replaces its first slot (correct, slower). */
+typedef struct written_entry {
+  const void *identity;
+  char *digest;
+  size_t statement_count, function_count, global_count;
+  wset written;
+} written_entry;
 static written_entry WRITTEN[16];
 static size_t WRITTEN_COUNT;
+static const void *program_identity(const qa_q1qc_program *program) {
+  return program->initial_globals != NULL ? (const void *)program->initial_globals : (const void *)program;
+}
+static bool written_matches(const written_entry *entry, const qa_q1qc_program *program) {
+  if (entry->identity != program_identity(program) || entry->statement_count != program->statement_count ||
+      entry->function_count != program->function_count || entry->global_count != program->global_count)
+    return false;
+  if (entry->digest == NULL || program->digest == NULL) return entry->digest == NULL && program->digest == NULL;
+  return strcmp(entry->digest, program->digest) == 0;
+}
+static char *copy_digest(const char *digest) {
+  if (digest == NULL) return NULL;
+  size_t length = strlen(digest);
+  char *copy = xmalloc(length + 1);
+  memcpy(copy, digest, length + 1);
+  return copy;
+}
 static const wset *written_words(const qa_q1qc_program *program) {
   for (size_t i = 0; i < WRITTEN_COUNT; i++)
-    if (WRITTEN[i].program == program) return &WRITTEN[i].written;
+    if (written_matches(&WRITTEN[i], program)) return &WRITTEN[i].written;
   wset written = {NULL, 0, 0};
   for (size_t i = 0; i < program->statement_count; i++) {
     qa_q1qc_statement_access access = qa_q1qc_statement_access_of(program->statements[i]);
     for (size_t w = 0; w < access.write_count; w++) wset_add(&written, access.write[w]);
   }
-  if (WRITTEN_COUNT < 16) {
-    WRITTEN[WRITTEN_COUNT].program = program;
-    WRITTEN[WRITTEN_COUNT].written = written;
-    return &WRITTEN[WRITTEN_COUNT++].written;
+  size_t slot = WRITTEN_COUNT < 16 ? WRITTEN_COUNT++ : 0;
+  if (WRITTEN[slot].identity != NULL) {
+    wset_free(&WRITTEN[slot].written);
+    free(WRITTEN[slot].digest);
   }
-  /* Cache full: keep the first slot's set replaced (correct, slower). */
-  wset_free(&WRITTEN[0].written);
-  WRITTEN[0].program = program;
-  WRITTEN[0].written = written;
-  return &WRITTEN[0].written;
+  WRITTEN[slot] = (written_entry){program_identity(program), copy_digest(program->digest), program->statement_count,
+                                  program->function_count, program->global_count, written};
+  return &WRITTEN[slot].written;
 }
 static const qa_q1qc_function *constant_callee(const qa_q1qc_program *program,
                                                const qa_q1qc_statement *statement) {
@@ -442,11 +466,13 @@ static const qa_mod_qc_armor_regular_scale SCALES_B[] = {{"superlavaspike_touch"
 static noreturn void reject_stage(const qa_q1qc_program *program, const char *reason) {
   qa_q1qc_program_error(program, "Unsupported QC armor stage: %s", reason);
 }
-static bool is_integer(double value) { return value == (double)(int64_t)value; }
+/* Number.isInteger, limited to safe integers so the int64 casts that follow are defined;
+ * every caller rejects larger integers anyway (statement and word indices are small). */
+static bool is_integer(double value) { return fabs(value) <= 9007199254740991.0 && value == trunc(value); }
 static void check_local(const qa_q1qc_program *program, const qa_q1qc_function *fn,
                         double word_value, const char *type) {
   bool ok = is_integer(word_value);
-  int64_t word = (int64_t)word_value;
+  int64_t word = ok ? (int64_t)word_value : 0;
   if (ok && (word < fn->parameter_start || word >= fn->parameter_start + fn->local_words)) ok = false;
   if (ok) {
     bool typed = false;
@@ -457,6 +483,11 @@ static void check_local(const qa_q1qc_program *program, const qa_q1qc_function *
   if (!ok) reject_stage(program, "typed frame words");
 }
 
+static void free_statements(void *arg) {
+  qa_qc_statement **statements = arg;
+  free(*statements);
+  *statements = NULL;
+}
 void qa_q1qc_armor_stage_destroy(qa_q1qc_armor_stage *stage) {
   if (stage == NULL) return;
   free(stage->statements_copy);
@@ -480,6 +511,7 @@ qa_q1qc_armor_stage *qa_q1qc_armor_stage_create(const qa_q1qc_program *program,
   if (declared == NULL && original == NULL) return NULL;
   qa_mod_qc_armor_stage synthesized = {0};
   qa_qc_statement *synthesized_statements = NULL;
+  qa_cleanup synthesized_node;
   const qa_mod_qc_armor_stage *source = declared;
   if (source == NULL) {
     synthesized.function = "T_Damage";
@@ -503,6 +535,8 @@ qa_q1qc_armor_stage *qa_q1qc_armor_stage_create(const qa_q1qc_program *program,
                                                     (double)actual->b, (double)actual->c};
     }
     synthesized.statements = synthesized_statements;
+    /* Released on a rejection below (TS GC). */
+    qa_cleanup_push(&synthesized_node, free_statements, &synthesized_statements);
     synthesized.statement_count = count;
     synthesized.regular_scale = scales;
     synthesized.regular_scale_count = scale_count;
@@ -657,6 +691,7 @@ qa_q1qc_armor_stage *qa_q1qc_armor_stage_create(const qa_q1qc_program *program,
     stage->region.has_standalone = true;
     stage->region.standalone_saved = (int64_t)source->saved;
   }
+  if (source == &synthesized) qa_cleanup_pop(&synthesized_node);
   free(synthesized_statements);
   return stage;
 }

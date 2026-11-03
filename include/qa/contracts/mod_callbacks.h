@@ -408,6 +408,8 @@ typedef struct qa_mod_callback_declaration {
   const qa_mod_pickup_rule *pickups; /* optional */
   size_t pickup_count;
   const qa_mod_qc_items *items; /* optional */
+  /* C ownership: everything the reader allocated (content/mods/declaration.h). */
+  struct qa_mod_declaration_owner *owner;
 } qa_mod_callback_declaration;
 
 #endif

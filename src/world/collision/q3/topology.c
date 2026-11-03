@@ -1,5 +1,7 @@
 /* Port of src/world/collision/q3/topology.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/q3/topology.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 #include "qa/core/common_error.h"
 #include "qa/core/math.h"
 #include "qa/foundation/support.h"
@@ -12,7 +14,7 @@ static int finite3(qa_vec3 p){return isfinite(p.x)&&isfinite(p.y)&&isfinite(p.z)
 static int is_int(double v){return isfinite(v)&&v==floor(v);}
 static int is_safe(double v){return is_int(v)&&v>=-9007199254740991.0&&v<=9007199254740991.0;}
 static qa_q3_collision_leaf *leaf_at(qa_collision_topology*t,double idx){
-  if(idx<0||(size_t)idx>=t->map->leaf_count)qa_range_error("collision topology index %g out of range",idx);
+  if(!(idx>=0&&idx<(double)t->map->leaf_count&&idx==floor(idx)))qa_range_error("collision topology index %s out of range",QA_JS_NUMBER(idx));
   return &t->map->leaves[(size_t)idx];
 }
 void qa_box_leaf_list_destroy(qa_box_leaf_list*l){free(l->leaves);l->leaves=NULL;l->leaf_count=0;}
@@ -76,18 +78,22 @@ static double word_(qa_save_reader*r){
   if(v>2147483647.0)qa_save_format_error(r->path,"expected a signed 32-bit source word");
   return v;
 }
+typedef struct{double*af,*afv,*pv;}restore_own;
+static void restore_release(void*arg){restore_own*o=arg;free(o->af);free(o->afv);free(o->pv);}
 void qa_topology_restore_portal_checkpoint(qa_collision_topology*t,const qa_save_value*value){
   qa_save_reader r; qa_save_reader_init(&r,value,"q3.collision.portals");
   qa_save_reader f;
   qa_save_reader_field(&r,"version",&f);
-  /* literal(1) */
-  { double v=qa_save_reader_number(&f); if(v!=1)qa_save_format_error(f.path,"expected 1"); }
+  qa_save_reader_literal_number(&f,1);
   qa_save_reader_destroy(&f);
   qa_save_reader_field(&r,"floodValid",&f); double flood_valid=word_(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(&r,"noAreas",&f); bool no_areas=qa_save_reader_boolean(&f); qa_save_reader_destroy(&f);
   qa_save_reader_field(&r,"areas",&f);
   size_t ac=qa_save_reader_list_count(&f);
-  double*af=xm((ac?ac:1)*sizeof*af),*afv=xm((ac?ac:1)*sizeof*afv);
+  /* A SaveFormatError from a later field leaves these to the GC in TS. */
+  restore_own own={xm((ac?ac:1)*sizeof(double)),xm((ac?ac:1)*sizeof(double)),NULL};
+  qa_cleanup node; qa_cleanup_push(&node,restore_release,&own);
+  double*af=own.af,*afv=own.afv;
   for(size_t i=0;i<ac;i++){
     qa_save_reader item,sub; qa_save_reader_item(&f,i,&item);
     qa_save_reader_field(&item,"flood",&sub); af[i]=word_(&sub); qa_save_reader_destroy(&sub);
@@ -97,13 +103,14 @@ void qa_topology_restore_portal_checkpoint(qa_collision_topology*t,const qa_save
   qa_save_reader_destroy(&f);
   qa_save_reader_field(&r,"portals",&f);
   size_t pc=qa_save_reader_list_count(&f);
-  double*pv=xm((pc?pc:1)*sizeof*pv);
+  double*pv=own.pv=xm((pc?pc:1)*sizeof*pv);
   for(size_t i=0;i<pc;i++){qa_save_reader item;qa_save_reader_item(&f,i,&item);pv[i]=word_(&item);qa_save_reader_destroy(&item);}
   qa_save_reader_destroy(&f);
   size_t area_count=(size_t)t->area_count;
   if(ac!=area_count||pc!=area_count*area_count)qa_save_format_error(r.path,"portal checkpoint belongs to another area table");
   for(size_t a=0;a<area_count;a++)for(size_t b=a+1;b<area_count;b++)
     if(pv[a*area_count+b]!=pv[b*area_count+a])qa_save_format_error(r.path,"asymmetric source portal references");
+  qa_cleanup_pop(&node);
   for(size_t i=0;i<ac;i++){t->map->areas[i].flood=(int32_t)af[i];t->map->areas[i].flood_valid=(int32_t)afv[i];}
   for(size_t i=0;i<pc;i++)qa_collision_portals_set(t->map,(double)i,pv[i]);
   t->flood_valid=(int32_t)flood_valid; t->no_areas=no_areas;
@@ -116,9 +123,9 @@ double qa_topology_point_leafnum(qa_collision_topology*t,qa_vec3 point){
   if(m->node_count==0)return 0;
   double idx=0;
   while(idx>=0){
-    if((size_t)idx>=m->node_count)qa_range_error("collision topology index %g out of range",idx);
+    if((size_t)idx>=m->node_count)qa_range_error("collision topology index %s out of range",QA_JS_NUMBER(idx));
     qa_q3_collision_node*node=&m->nodes[(size_t)idx];
-    if(node->plane<0||(size_t)node->plane>=m->plane_count)qa_range_error("collision topology index %g out of range",node->plane);
+    if(!(node->plane>=0&&node->plane<(double)m->plane_count&&node->plane==floor(node->plane)))qa_range_error("collision topology index %s out of range",QA_JS_NUMBER(node->plane));
     qa_q3_collision_plane*plane=&m->planes[(size_t)node->plane];
     double dist=f32((plane->type==0?point.x:plane->type==1?point.y:plane->type==2?point.z:qa_dot3(point,plane->plane.normal))-plane->plane.distance);
     idx=node->children[dist<0?1:0];
@@ -144,9 +151,9 @@ bool qa_topology_visit_leaves(qa_collision_topology*t,qa_bounds bounds,qa_store_
   while(sp>0){
     double idx=stack[--sp];
     if(idx<0){store(ctx,-1-idx);continue;}
-    if((size_t)idx>=m->node_count)qa_range_error("collision topology index %g out of range",idx);
+    if((size_t)idx>=m->node_count)qa_range_error("collision topology index %s out of range",QA_JS_NUMBER(idx));
     qa_q3_collision_node*node=&m->nodes[(size_t)idx];
-    if(node->plane<0||(size_t)node->plane>=m->plane_count)qa_range_error("collision topology index %g out of range",node->plane);
+    if(!(node->plane>=0&&node->plane<(double)m->plane_count&&node->plane==floor(node->plane)))qa_range_error("collision topology index %s out of range",QA_JS_NUMBER(node->plane));
     int side=box_side(bounds,&m->planes[(size_t)node->plane]);
     if(side!=1&&side!=2&&!has_top){has_top=1;topnode=idx;}
     if(sp+2>cap){cap*=2;stack=realloc(stack,cap*sizeof*stack);if(!stack)abort();}
@@ -179,7 +186,7 @@ static void store_brushes(void*ctx,double leafnum){
   qa_q3_collision_leaf*leaf=leaf_at(c->t,leafnum);
   for(double i=0;i<leaf->brush_count;i++){
     double bi=qa_collision_indexes_at(m->leaf_brushes,leaf->first_brush+i);
-    if(bi<0||(size_t)bi>=m->brush_count)qa_range_error("collision topology index %g out of range",bi);
+    if(!(bi>=0&&bi<(double)m->brush_count&&bi==floor(bi)))qa_range_error("collision topology index %s out of range",QA_JS_NUMBER(bi));
     qa_q3_collision_brush*brush=&m->brushes[(size_t)bi];
     if(brush->check_count==m->check_count)continue;
     brush->check_count=m->check_count;
@@ -198,11 +205,11 @@ qa_q3_collision_brush **qa_topology_box_brushes(qa_collision_topology*t,qa_bound
   *out=c.n; return c.v;
 }
 double qa_topology_leaf_area(qa_collision_topology*t,double idx){
-  if(is_int(idx)&&(idx<0||(size_t)idx>=t->map->leaf_count))qa_common_error(QA_COMMON_ERROR_DROP,"CM_LeafArea: bad number");
+  if(is_int(idx)&&(!(idx>=0&&idx<(double)t->map->leaf_count&&idx==floor(idx))))qa_common_error(QA_COMMON_ERROR_DROP,"CM_LeafArea: bad number");
   return leaf_at(t,idx)->area;
 }
 double qa_topology_leaf_cluster(qa_collision_topology*t,double idx){
-  if(is_int(idx)&&(idx<0||(size_t)idx>=t->map->leaf_count))qa_common_error(QA_COMMON_ERROR_DROP,"CM_LeafCluster: bad number");
+  if(is_int(idx)&&(!(idx>=0&&idx<(double)t->map->leaf_count&&idx==floor(idx))))qa_common_error(QA_COMMON_ERROR_DROP,"CM_LeafCluster: bad number");
   return leaf_at(t,idx)->cluster;
 }
 qa_source_cluster_pvs qa_topology_cluster_pvs(qa_collision_topology*t,double cluster){
@@ -213,7 +220,7 @@ qa_source_cluster_pvs qa_topology_cluster_pvs(qa_collision_topology*t,double clu
 double qa_source_cluster_pvs_byte_at(qa_source_cluster_pvs pvs,double offset){
   if(!is_safe(offset))qa_range_error("PVS byte offset must be a safe integer");
   int64_t idx=pvs.base_offset+(int64_t)offset;
-  if(idx<0||(size_t)idx>=pvs.map->visibility_length)
+  if(!(idx>=0&&idx<(double)pvs.map->visibility_length&&idx==floor(idx)))
     qa_range_error("PVS byte %lld outside stored visibility allocation of %zu bytes",(long long)idx,pvs.map->visibility_length);
   return pvs.map->visibility[idx];
 }
@@ -225,7 +232,7 @@ bool qa_topology_cluster_visible(qa_collision_topology*t,double from,double to){
 }
 void qa_topology_set_no_areas(qa_collision_topology*t,bool e){t->no_areas=e;}
 static void check_area(qa_collision_topology*t,double area){
-  if(!is_int(area)||area<0||area>=t->area_count)qa_range_error("invalid area %g",area);
+  if(!is_int(area)||area<0||area>=t->area_count)qa_range_error("invalid area %s",QA_JS_NUMBER(area));
 }
 void qa_topology_adjust_area_portal_state(qa_collision_topology*t,double a1,double a2,bool open){
   if(!is_int(a1)||!is_int(a2))qa_range_error("areas must be integers");
@@ -233,8 +240,8 @@ void qa_topology_adjust_area_portal_state(qa_collision_topology*t,double a1,doub
   if(a1>=t->area_count||a2>=t->area_count)qa_common_error(QA_COMMON_ERROR_DROP,"CM_ChangeAreaPortalState: bad area number");
   double i1=a1*t->area_count+a2,i2=a2*t->area_count+a1;
   double amt=open?1:-1;
-  qa_collision_portals_set(t->map,i1,(double)(int32_t)(qa_collision_portals_at(t->map,i1)+amt));
-  qa_collision_portals_set(t->map,i2,(double)(int32_t)(qa_collision_portals_at(t->map,i2)+amt));
+  qa_collision_portals_set(t->map,i1,(double)qa_js_to_int32(qa_collision_portals_at(t->map,i1)+amt));
+  qa_collision_portals_set(t->map,i2,(double)qa_js_to_int32(qa_collision_portals_at(t->map,i2)+amt));
   if(!open&&qa_collision_portals_at(t->map,i2)<0)qa_common_error(QA_COMMON_ERROR_DROP,"CM_AdjustAreaPortalState: negative reference count");
   flood_areas(t);
 }

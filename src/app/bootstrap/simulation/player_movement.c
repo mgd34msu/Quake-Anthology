@@ -13,7 +13,13 @@
 #include "qa/movement/q3/constants.h"
 #include "qa/movement/q3/postures.h"
 #include "qa/movement/q3/provider.h"
+#include "qa/foundation/js.h"
 static bool is(const char *a, const char *b) { return a != NULL && strcmp(a, b) == 0; }
+/* sourceMovement.ladders: ClientThink writes it (true/false); spectator and saved
+ * options leave it undefined. 1 true, 0 false, -1 undefined. */
+static int source_ladders(const qa_app_sim_client_movement_options *movement) {
+  return movement->order == QA_APP_SIM_MOVEMENT_ORDER_THINK ? (movement->ladders ? 1 : 0) : -1;
+}
 static qa_movement_state relocated(qa_movement_state state, qa_vec3 origin, qa_vec3 velocity) {
   if (state.kind == QA_MOVEMENT_STATE_Q2) {
     state.as.q2.origin_eighths.values[0] = trunc(origin.x * 8);
@@ -48,7 +54,8 @@ bool qa_app_sim_player_locomotion_matches(qa_app_sim_locomotion_player player, q
           && player.source_movement.trace_mask == previous.source_movement.trace_mask
           && player.source_movement.has_fixed_msec == previous.source_movement.has_fixed_msec
           && player.source_movement.fixed_msec == previous.source_movement.fixed_msec
-          && player.source_movement.no_footsteps == previous.source_movement.no_footsteps));
+          && player.source_movement.no_footsteps == previous.source_movement.no_footsteps
+          && source_ladders(&player.source_movement) == source_ladders(&previous.source_movement)));
 }
 qa_trace_policy qa_app_sim_player_trace_policy(qa_app_sim_locomotion_player player) {
   qa_trace_policy out; memset(&out, 0, sizeof out);
@@ -98,6 +105,8 @@ qa_movement_profile qa_app_sim_selected_movement_profile(qa_app_sim_selected_pro
     selected.has_fixed_milliseconds = player.source_movement.has_fixed_msec;
     selected.fixed_milliseconds = player.source_movement.fixed_msec;
     selected.no_footsteps = player.source_movement.no_footsteps;
+    selected.ladders_disabled = source_ladders(&player.source_movement) == 0; /* ladders: sourceMovement.ladders !== false */
+    selected.has_ladders = true;
     return selected;
   }
   if (player.has_q2_movement_config && is(selected.kind, "q2-classic")) {
@@ -170,6 +179,14 @@ qa_movement_provider qa_app_sim_create_player_movement_provider(qa_app_sim_provi
   storage->ctx = penv; storage->postures = posture_fn;
   if (player.has_source_movement) storage->trace_policy = policy_fn;
   return qa_q3_create_movement_provider(storage);
+}
+void qa_app_sim_release_player_movement_provider(qa_app_sim_player_movement_hooks hooks, qa_movement_provider provider) {
+  if (is(provider.kind, "q1-netquake")) free(provider.ctx);
+  else if (is(provider.kind, "q1-quakeworld")) {
+    if (hooks.native_quakeworld) free(provider.ctx); else qa_app_sim_shared_quakeworld_movement_destroy(provider);
+  } else if (is(provider.kind, "q3") && hooks.q3_options_storage != NULL) {
+    free(hooks.q3_options_storage->ctx); hooks.q3_options_storage->ctx = NULL;
+  }
 }
 struct qa_app_sim_player_movement_prediction {
   qa_app_sim_prediction_simulation simulation;
@@ -255,7 +272,7 @@ qa_app_sim_player_movement_prediction *qa_app_sim_create_player_movement_predict
   p->baseline = has_baseline ? baseline : player.state;
   p->initial = relocated(p->baseline, origin, velocity);
   if (p->initial.kind == QA_MOVEMENT_STATE_Q3)
-    p->initial.as.q3.movement_flags = ((int)p->initial.as.q3.movement_flags & ~2) | (crouched ? 1 : 0);
+    p->initial.as.q3.movement_flags = (qa_js_to_int32(p->initial.as.q3.movement_flags) & ~2) | (crouched ? 1 : 0);
   qa_q3_movement_hooks q3_hooks; memset(&q3_hooks, 0, sizeof q3_hooks);
   if (is(player.arsenal.state.kind, "q3")) {
     const char *product = "baseq3";
@@ -287,7 +304,13 @@ qa_app_sim_player_movement_prediction *qa_app_sim_create_player_movement_predict
   p->services.touch = pred_touch; p->services.weapon_step = pred_weapon; p->services.animation_step = pred_anim;
   return p;
 }
-void qa_app_sim_player_movement_prediction_destroy(qa_app_sim_player_movement_prediction *prediction) { free(prediction); }
+void qa_app_sim_player_movement_prediction_destroy(qa_app_sim_player_movement_prediction *prediction) {
+  if (prediction == NULL) return;
+  qa_app_sim_player_movement_hooks hooks; memset(&hooks, 0, sizeof hooks);
+  hooks.native_quakeworld = prediction->native_quakeworld; hooks.q3_options_storage = &prediction->q3_options;
+  qa_app_sim_release_player_movement_provider(hooks, prediction->provider);
+  free(prediction);
+}
 qa_movement_provider qa_app_sim_player_movement_prediction_provider(qa_app_sim_player_movement_prediction *prediction) { return prediction->provider; }
 qa_movement_services qa_app_sim_player_movement_prediction_services(qa_app_sim_player_movement_prediction *prediction) { return prediction->services; }
 qa_movement_input qa_app_sim_player_movement_prediction_input(qa_app_sim_player_movement_prediction *p,
@@ -295,10 +318,10 @@ qa_movement_input qa_app_sim_player_movement_prediction_input(qa_app_sim_player_
   if (previous && is(previous->status, "actor-removed")) qa_range_error("Movement prediction removed its actor");
   qa_movement_state state = previous ? previous->state : p->initial;
   double yaw = atan2(command_move.y, command_move.x);
-  double horizontal = fmin(400, hypot(command_move.x, command_move.y));
-  double up = fmax(-400, fmin(400, command_move.z));
+  double horizontal = qa_js_min(400, hypot(command_move.x, command_move.y));
+  double up = qa_js_max(-400, qa_js_min(400, command_move.z));
   qa_vec3 angles = {0, yaw * 180 / 3.141592653589793, 0};
-  double words[3] = {0, (double)((int64_t)llround(yaw * 65536 / (3.141592653589793 * 2)) & 65535), 0};
+  double words[3] = {0, (double)(qa_js_to_int32(qa_js_round(yaw * 65536 / (3.141592653589793 * 2))) & 65535), 0};
   double time = (p->baseline.kind == QA_MOVEMENT_STATE_Q3 ? p->baseline.as.q3.command_time_milliseconds : p->simulation.time_seconds * 1000) + (index + 1) * p->milliseconds;
   qa_bounds bounds = (is(p->profile.kind, "q1-quakeworld") && !p->native_quakeworld)
       ? (previous ? previous->bounds : (p->crouched ? qa_app_sim_player_crouched_bounds((qa_app_sim_locomotion_player){p->player.profile, p->player.standing_bounds, p->player.has_source_movement, p->player.source_movement, p->player.character, p->player.world_gravity, p->player.has_q2_movement_config, p->player.q2_movement_config, p->player.flight}) : p->player.bounds))
@@ -350,10 +373,10 @@ qa_movement_input qa_app_sim_player_movement_prediction_input(qa_app_sim_player_
     out.kind = "q3";
     out.command.kind = QA_USER_COMMAND_Q3; out.command.as.q3.server_time_milliseconds = time;
     out.command.as.q3.angle_words.values[0] = -state.as.q3.delta_angle_words.values[0];
-    out.command.as.q3.angle_words.values[1] = (double)(((int64_t)(words[1] - state.as.q3.delta_angle_words.values[1])) & 65535);
+    out.command.as.q3.angle_words.values[1] = (double)((qa_js_to_int32(words[1] - state.as.q3.delta_angle_words.values[1])) & 65535);
     out.command.as.q3.angle_words.values[2] = -state.as.q3.delta_angle_words.values[2];
-    out.command.as.q3.forward_move = llround(horizontal * 127 / 400);
-    out.command.as.q3.up_move = llround(up * 127 / 400);
+    out.command.as.q3.forward_move = qa_js_round(horizontal * 127 / 400);
+    out.command.as.q3.up_move = qa_js_round(up * 127 / 400);
     out.command.as.q3.weapon = p->has_entity_weapon ? p->entity_weapon
         : (is(p->player.arsenal.state.kind, "q3") ? p->player.arsenal.state.source_weapon : 0);
     return out;
@@ -364,7 +387,7 @@ qa_app_sim_movement_observation qa_app_sim_movement_observation_of(qa_movement_r
   const char *medium = result.water_level == 0 ? "dry"
       : (is(result.kind, "q1-netquake") || is(result.kind, "q1-quakeworld"))
         ? (result.water_type == -4 ? "slime" : result.water_type == -5 ? "lava" : "water")
-        : (((int)result.water_type & 16) ? "slime" : ((int)result.water_type & 8) ? "lava" : "water");
+        : ((qa_js_to_int32(result.water_type) & 16) ? "slime" : (qa_js_to_int32(result.water_type) & 8) ? "lava" : "water");
   bool fall = false;
   for (size_t i = 0; i < result.effect_count; i++)
     if (result.effects[i].effect.kind == QA_MOVEMENT_EFFECT_EVENT

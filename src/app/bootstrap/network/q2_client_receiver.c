@@ -9,6 +9,7 @@
 #include "qa/foundation/support.h"
 #include "qa/network/q2/frames.h"
 #include "qa/network/q2/server_write.h"
+#include "qa/network/common/js_number.h"
 typedef struct pending_state {
   qa_q2_server_data_result data;
   qa_app_q2_config_snapshot configs;
@@ -24,6 +25,9 @@ struct qa_app_q2_client_receiver {
   bool demo_disconnected;
   pending_state *pending;
   double loading_generation;
+  /* TS assertCurrent closures outlive the serverData call (a cinematic end checks one later), so
+   * each lives until the receiver is destroyed. */
+  struct assert_ctx **assertions; size_t assertion_count;
 };
 static char *copy_text(const char *s) {
   size_t n = strlen(s) + 1; char *out = malloc(n);
@@ -46,7 +50,7 @@ static void cancel_loading(qa_app_q2_client_receiver *r) {
 static void assert_current(qa_app_q2_client_receiver *r, double generation) {
   if (generation != r->loading_generation || strcmp(r->state, "closed") == 0
       || (!r->source.is_demo && r->source.closed(r->source.ctx)))
-    qa_range_error("Q2 server directory selection was retired");
+    qa_raise("Error", 0, 0, "Q2 server directory selection was retired");
 }
 typedef struct assert_ctx { qa_app_q2_client_receiver *r; double generation; } assert_ctx;
 static void assert_thunk(void *ctx) {
@@ -69,6 +73,8 @@ void qa_app_q2_client_receiver_destroy(qa_app_q2_client_receiver *receiver) {
   if (!receiver) return;
   pending_free(receiver->pending);
   qa_q2_server_message_reader_destroy(&receiver->reader);
+  for (size_t i = 0; i < receiver->assertion_count; i++) free(receiver->assertions[i]);
+  free(receiver->assertions);
   free(receiver);
 }
 qa_q2_server_message_reader *qa_app_q2_client_receiver_reader(qa_app_q2_client_receiver *receiver) {
@@ -111,7 +117,8 @@ void qa_app_q2_client_receiver_seed(qa_app_q2_client_receiver *receiver, qa_app_
   if (!receiver->has_server_data || strcmp(receiver->state, "active") != 0)
     qa_range_error("Recording requires an active Q2 server");
   qa_q2_wire_codec *wire = &receiver->reader.wire;
-  qa_q2_protocol_identity protocol = receiver->host.protocol;
+  /* TS wire.protocol: the codec's selected protocol. */
+  qa_q2_protocol_identity protocol = wire->selected_protocol;
   bool kex = protocol.kind && (strcmp(protocol.kind, "q2-kex") == 0
       || strcmp(protocol.kind, "q2-kex-demo") == 0);
   seed_builder builder = {0};
@@ -119,25 +126,36 @@ void qa_app_q2_client_receiver_seed(qa_app_q2_client_receiver *receiver, qa_app_
   qa_q2_server_event event = {0};
   event.kind = QA_Q2_SERVER_DATA; event.data = receiver->server_data;
   event.data.attractloop = true;
-  seed_add(&builder, qa_q2_encode_server_event(wire, &event, &length), length);
+  { /* the call sets length before it is passed */
+    uint8_t *encoded_ = qa_q2_encode_server_event(wire, &event, &length);
+    seed_add(&builder, encoded_, length);
+  }
   for (size_t i = 0; i < receiver->reader.config_count; i++) {
     qa_q2_server_event config = {0};
     config.kind = QA_Q2_SERVER_CONFIG_STRING;
     config.index = receiver->reader.config_strings[i].index;
     config.text = receiver->reader.config_strings[i].value;
-    seed_add(&builder, qa_q2_encode_server_event(wire, &config, &length), length);
+    { /* the call sets length before it is passed */
+      uint8_t *encoded_ = qa_q2_encode_server_event(wire, &config, &length);
+      seed_add(&builder, encoded_, length);
+    }
   }
   qa_q2_frame_history *history = qa_q2_server_message_reader_get_history_default(&receiver->reader);
-  (void)history;
-  for (size_t i = 0; i < receiver->reader.baselines.count; i++) {
+  for (size_t i = 0; i < history->baselines.count; i++) {
     qa_q2_server_event baseline = {0};
     baseline.kind = QA_Q2_SERVER_BASELINE;
-    baseline.entity = receiver->reader.baselines.entries[i].state;
-    seed_add(&builder, qa_q2_encode_server_event(wire, &baseline, &length), length);
+    baseline.entity = history->baselines.entries[i].state;
+    { /* the call sets length before it is passed */
+      uint8_t *encoded_ = qa_q2_encode_server_event(wire, &baseline, &length);
+      seed_add(&builder, encoded_, length);
+    }
   }
   qa_q2_server_event precache = {0};
   precache.kind = QA_Q2_SERVER_COMMAND_TEXT; precache.text = (char *)"precache\n";
-  seed_add(&builder, qa_q2_encode_server_event(wire, &precache, &length), length);
+  { /* the call sets length before it is passed */
+    uint8_t *encoded_ = qa_q2_encode_server_event(wire, &precache, &length);
+    seed_add(&builder, encoded_, length);
+  }
   qa_q2_latest_frame *frames = NULL; size_t frame_count = 0;
   if (!qa_q2_server_message_reader_latest_frames(&receiver->reader, &frames, &frame_count))
     qa_range_error("out of memory");
@@ -145,17 +163,26 @@ void qa_app_q2_client_receiver_seed(qa_app_q2_client_receiver *receiver, qa_app_
     if (kex) {
       qa_q2_server_event seat = {0};
       seat.kind = QA_Q2_SERVER_SEAT; seat.seat = frames[i].seat;
-      seed_add(&builder, qa_q2_encode_server_event(wire, &seat, &length), length);
+      { /* the call sets length before it is passed */
+        uint8_t *encoded_ = qa_q2_encode_server_event(wire, &seat, &length);
+        seed_add(&builder, encoded_, length);
+      }
     }
-    seed_add(&builder, qa_q2_encode_frame(wire, frames[i].frame, NULL,
-        &receiver->reader.baselines, 0, &length), length);
+    { /* the call sets length before it is passed */
+      uint8_t *encoded_ = qa_q2_encode_frame(wire, frames[i].frame, NULL,
+        &history->baselines, 0, &length);
+      seed_add(&builder, encoded_, length);
+    }
   }
   free(frames);
   if (kex) {
     qa_q2_server_event seat = {0};
     seat.kind = QA_Q2_SERVER_SEAT;
     seat.seat = qa_q2_server_message_reader_get_seat(&receiver->reader);
-    seed_add(&builder, qa_q2_encode_server_event(wire, &seat, &length), length);
+    { /* the call sets length before it is passed */
+      uint8_t *encoded_ = qa_q2_encode_server_event(wire, &seat, &length);
+      seed_add(&builder, encoded_, length);
+    }
   }
   out->protocol = protocol;
   out->packets = builder.packets; out->packet_count = builder.count;
@@ -182,46 +209,64 @@ void qa_app_q2_client_receiver_prepare_game_state(qa_app_q2_client_receiver *r) 
   r->pending = NULL;
   if (!r->source.is_demo) {
     char command[64];
-    snprintf(command, sizeof command, "begin %.0f", state->data.servercount);
+    snprintf(command, sizeof command, "begin %s", QA_JS_NUMBER(state->data.servercount));
     r->source.command(r->source.ctx, command);
   }
   pending_free(state);
   r->state = "active";
 }
+/* TS integer(): /^-?\d+$/ then Number.isSafeInteger, both as `new Error`. */
 static double signon_integer(const char *text) {
-  if (!text) qa_range_error("Invalid Q2 signon number");
+  if (!text) qa_raise("Error", 0, 0, "Invalid Q2 signon number");
   const char *p = text;
   if (*p == '-') p++;
-  if (!*p) qa_range_error("Invalid Q2 signon number");
+  if (!*p) qa_raise("Error", 0, 0, "Invalid Q2 signon number");
   for (const char *q = p; *q; q++)
-    if (*q < '0' || *q > '9') qa_range_error("Invalid Q2 signon number");
+    if (*q < '0' || *q > '9') qa_raise("Error", 0, 0, "Invalid Q2 signon number");
   double result = strtod(text, NULL);
   if (result != trunc(result) || fabs(result) > 9007199254740991.0)
-    qa_range_error("Q2 signon number outside range");
+    qa_raise("Error", 0, 0, "Q2 signon number outside range");
   return result;
 }
+typedef struct line_words { char *line; char **words; size_t count; } line_words;
+static void line_words_release(void *arg) {
+  line_words *held = arg;
+  for (size_t i = 0; i < held->count; i++) free(held->words[i]);
+  free(held->words);
+  free(held->line);
+  held->words = NULL; held->count = 0; held->line = NULL;
+}
 static void server_commands(qa_app_q2_client_receiver *r, const char *text) {
+  /* TS text.split(/\n|;/): every segment, including empty ones, in order. A raise (precache of
+   * another generation, a retired selection) leaves through the cleanup node. */
   const char *cursor = text;
   while (cursor) {
     const char *end = cursor;
     while (*end && *end != '\n' && *end != ';') end++;
     size_t line_length = (size_t)(end - cursor);
-    char *line = malloc(line_length + 1);
-    if (!line) qa_range_error("out of memory");
-    memcpy(line, cursor, line_length); line[line_length] = '\0';
-    qa_legacy_parse_state parse = {line, line_length, 0};
-    char **words = NULL; size_t word_count = 0, word_cap = 0;
+    line_words held = {0};
+    qa_cleanup node;
+    qa_cleanup_push(&node, line_words_release, &held);
+    held.line = malloc(line_length + 1);
+    if (!held.line) qa_range_error("out of memory");
+    memcpy(held.line, cursor, line_length); held.line[line_length] = '\0';
+    const char *line = held.line;
+    qa_legacy_parse_state parse = {held.line, line_length, 0};
+    size_t word_cap = 0;
     while (parse.index < line_length) {
       size_t before = parse.index;
-      char *value = qa_parse_q2_token(&parse, 8192);
+      char *value = qa_parse_q2_token(&parse, QA_Q2_TOKEN_MAX); /* TS default maxTokenChars */
       if (parse.index == before) { free(value); break; }
-      if (word_count == word_cap) {
+      if (held.count == word_cap) {
         word_cap = word_cap ? word_cap * 2 : 8;
-        words = realloc(words, word_cap * sizeof *words);
-        if (!words) qa_range_error("out of memory");
+        char **grown = realloc(held.words, word_cap * sizeof *grown);
+        if (!grown) { free(value); qa_range_error("out of memory"); }
+        held.words = grown;
       }
-      words[word_count++] = value;
+      held.words[held.count++] = value;
     }
+    char **words = held.words;
+    size_t word_count = held.count;
     const char *name = word_count ? words[0] : NULL;
     if (name && strcmp(name, "cmd") == 0 && word_count > 1
         && (strcmp(words[1], "configstrings") == 0 || strcmp(words[1], "baselines") == 0)) {
@@ -237,14 +282,17 @@ static void server_commands(qa_app_q2_client_receiver *r, const char *text) {
           memcpy(joined + used, words[i], len); used += len;
         }
         joined[used] = '\0';
+        qa_cleanup joined_node;
+        qa_cleanup_push(&joined_node, free, joined);
         r->source.command(r->source.ctx, joined);
+        qa_cleanup_pop(&joined_node);
         free(joined);
       }
     } else if (name && strcmp(name, "precache") == 0) {
       bool checked = !r->source.is_demo || word_count > 1;
       if (!r->has_server_data
           || (checked && signon_integer(word_count > 1 ? words[1] : NULL) != r->server_data.servercount))
-        qa_range_error("Q2 precache refers to another server generation");
+        qa_raise("Error", 0, 0, "Q2 precache refers to another server generation");
       cancel_loading(r);
       pending_state *pending = calloc(1, sizeof *pending);
       if (!pending) qa_range_error("out of memory");
@@ -252,15 +300,19 @@ static void server_commands(qa_app_q2_client_receiver *r, const char *text) {
       pending->configs.count = r->reader.config_count;
       pending->configs.entries = malloc(
           (pending->configs.count ? pending->configs.count : 1) * sizeof *pending->configs.entries);
-      if (!pending->configs.entries) qa_range_error("out of memory");
+      if (!pending->configs.entries) { free(pending); qa_range_error("out of memory"); }
       for (size_t i = 0; i < pending->configs.count; i++) {
         pending->configs.entries[i].index = r->reader.config_strings[i].index;
         pending->configs.entries[i].value = copy_text(r->reader.config_strings[i].value);
       }
-      for (size_t i = 0; i < r->reader.baselines.count; i++)
+      /* TS new Map(this.reader.history().baselines). */
+      qa_q2_frame_history *history = qa_q2_server_message_reader_get_history_default(&r->reader);
+      for (size_t i = 0; i < history->baselines.count; i++)
         if (!qa_q2_baseline_list_set(&pending->baselines,
-                r->reader.baselines.entries[i].number, &r->reader.baselines.entries[i].state))
+                history->baselines.entries[i].number, &history->baselines.entries[i].state)) {
+          pending_free(pending);
           qa_range_error("out of memory");
+        }
       pending->view.data = &pending->data;
       pending->view.config_strings = &pending->configs;
       pending->view.baselines = &pending->baselines;
@@ -275,13 +327,14 @@ static void server_commands(qa_app_q2_client_receiver *r, const char *text) {
       char *message = malloc(n);
       if (!message) qa_range_error("out of memory");
       snprintf(message, n, "Server command requires application binding: %s\n", line);
+      qa_cleanup message_node;
+      qa_cleanup_push(&message_node, free, message);
       r->host.print(r->host.ctx, message);
+      qa_cleanup_pop(&message_node);
       free(message);
     }
-    for (size_t i = 0; i < word_count; i++) free(words[i]);
-    free(words);
-    free(line);
-    if (strcmp(r->state, "closed") == 0) return;
+    qa_cleanup_pop(&node);
+    line_words_release(&held);
     cursor = *end ? end + 1 : NULL;
   }
 }
@@ -292,10 +345,15 @@ static void server_records(qa_app_q2_client_receiver *r, qa_q2_server_record *re
     switch (record->event.kind) {
       case QA_Q2_SERVER_DATA: {
         cancel_loading(r);
-        assert_ctx assertion = {r, r->loading_generation};
+        assert_ctx *assertion = malloc(sizeof *assertion);
+        assert_ctx **grown = realloc(r->assertions, (r->assertion_count + 1) * sizeof *grown);
+        if (!assertion || !grown) { free(assertion); qa_range_error("out of memory"); }
+        r->assertions = grown;
+        r->assertions[r->assertion_count++] = assertion;
+        *assertion = (assert_ctx){r, r->loading_generation};
         if (r->host.server_data)
-          r->host.server_data(r->host.ctx, &record->event.data, assert_thunk, &assertion);
-        assert_current(r, assertion.generation);
+          r->host.server_data(r->host.ctx, &record->event.data, assert_thunk, assertion);
+        assert_current(r, assertion->generation);
         r->server_data = record->event.data; r->has_server_data = true;
         r->last_frame = -1; r->has_recorded_time = false;
         if (!r->source.is_demo) r->source.reset_commands(r->source.ctx);
@@ -318,8 +376,11 @@ static void server_records(qa_app_q2_client_receiver *r, qa_q2_server_record *re
           const void **ptrs = malloc((count ? count : 1) * sizeof *ptrs);
           if (!ptrs) qa_range_error("out of memory");
           for (size_t j = 0; j < count; j++) ptrs[j] = &records[j];
+          qa_cleanup ptrs_node;
+          qa_cleanup_push(&ptrs_node, free, (void *)ptrs);
           r->host.frame(r->host.ctx, frame, ptrs, count,
               r->source.is_demo ? r->recorded_time : now);
+          qa_cleanup_pop(&ptrs_node);
           free(ptrs);
         }
         break;
@@ -332,7 +393,10 @@ static void server_records(qa_app_q2_client_receiver *r, qa_q2_server_record *re
           const void **ptrs = malloc((i + 1) * sizeof *ptrs);
           if (!ptrs) qa_range_error("out of memory");
           for (size_t j = 0; j <= i; j++) ptrs[j] = &records[j];
+          qa_cleanup ptrs_node;
+          qa_cleanup_push(&ptrs_node, free, (void *)ptrs);
           r->host.records(r->host.ctx, ptrs, i + 1);
+          qa_cleanup_pop(&ptrs_node);
           free(ptrs);
           return;
         }
@@ -359,8 +423,16 @@ static void server_records(qa_app_q2_client_receiver *r, qa_q2_server_record *re
   const void **ptrs = malloc((count ? count : 1) * sizeof *ptrs);
   if (!ptrs) qa_range_error("out of memory");
   for (size_t j = 0; j < count; j++) ptrs[j] = &records[j];
+  qa_cleanup ptrs_node;
+  qa_cleanup_push(&ptrs_node, free, (void *)ptrs);
   r->host.records(r->host.ctx, ptrs, count);
+  qa_cleanup_pop(&ptrs_node);
   free(ptrs);
+}
+typedef struct held_records { qa_q2_server_record *records; size_t count; } held_records;
+static void held_records_release(void *arg) {
+  held_records *held = arg;
+  qa_q2_server_records_free(held->records, held->count);
 }
 qa_q2_server_record *qa_app_q2_client_receiver_receive(qa_app_q2_client_receiver *receiver,
     const uint8_t *bytes, size_t length, double now_milliseconds, size_t *out_count) {
@@ -369,7 +441,12 @@ qa_q2_server_record *qa_app_q2_client_receiver_receive(qa_app_q2_client_receiver
   qa_q2_server_record *records = NULL;
   if (!qa_q2_server_message_reader_read(&receiver->reader, bytes, length, &records, out_count))
     qa_range_error("out of memory");
+  /* The records are the caller's on return; a raise while handling them frees them. */
+  held_records held = {records, *out_count};
+  qa_cleanup node;
+  qa_cleanup_push(&node, held_records_release, &held);
   server_records(receiver, records, *out_count, now_milliseconds);
+  qa_cleanup_pop(&node);
   return records;
 }
 void qa_app_q2_client_receiver_receive_records(qa_app_q2_client_receiver *receiver,

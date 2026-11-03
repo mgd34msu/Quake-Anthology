@@ -1,6 +1,7 @@
 /* Port of src/contracts/source-items.ts (runtime helpers). GPL-2.0-or-later. */
 #include "qa/contracts/source_items.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,8 +10,7 @@
 /* TS throws plain Error in this module (not RangeError); the C port
  * aborts printing the identical message under the Error class name. */
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static bool string_equal(const char *left, const char *right) {

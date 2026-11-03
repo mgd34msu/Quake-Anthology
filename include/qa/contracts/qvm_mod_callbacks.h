@@ -305,6 +305,8 @@ typedef struct qa_qvm_mod_callback_declaration {
   size_t initialize_count;
   const qa_qvm_mod_callback *callbacks;
   size_t callback_count;
+  /* C ownership: everything the reader allocated (content/mods/declaration.h). */
+  struct qa_mod_declaration_owner *owner;
 } qa_qvm_mod_callback_declaration;
 
 #endif

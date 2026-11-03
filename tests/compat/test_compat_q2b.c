@@ -149,17 +149,27 @@ static void test_reader_json(void) {
   qa_save_reader_destroy(&rd2); qa_save_value_free(v); qa_save_value_free(v2);
 }
 
-static int32_t fake_mem[64];
-static int32_t frd(void *ctx, uint64_t a) { (void)ctx; return fake_mem[(a / 4) % 64]; }
-static void fwr(void *ctx, uint64_t a, int32_t v) { (void)ctx; fake_mem[(a / 4) % 64] = v; }
-static uint64_t fcli(void *ctx, qa_actor_id a) { (void)ctx; (void)a; return 0; }
-static uint64_t fent(void *ctx, qa_actor_id a) { (void)ctx; (void)a; return 0; }
+/* Flat guest for the player service: entity at 0x1000, client at 0x2000. */
+static uint8_t fake_bytes[0x4000];
+static const void *fake_space = fake_bytes;
+static qa_guest_address_result fm_pointer(void *ctx, int64_t raw) { (void)ctx; qa_guest_address_result r; r.has_value = raw != 0; r.value.address_space = fake_space; r.value.byte_offset = raw; return r; }
+static qa_guest_address fm_offset(void *ctx, qa_guest_address a, int64_t d) { (void)ctx; a.byte_offset += d; return a; }
+static void fm_check(void *ctx, qa_guest_address a, double n, const char *access) { (void)ctx; (void)access; CHECK(a.byte_offset >= 0 && a.byte_offset + (int64_t)n <= (int64_t)sizeof fake_bytes); }
+static void fm_copy(void *ctx, qa_guest_address a, uint8_t *dest, double n) { (void)ctx; memcpy(dest, fake_bytes + a.byte_offset, (size_t)n); }
+static void fm_write(void *ctx, qa_guest_address a, const uint8_t *bytes, size_t n) { (void)ctx; memcpy(fake_bytes + a.byte_offset, bytes, n); }
+static bool fh_actor(void *ctx, qa_raw_entity_view record, qa_actor_id *out) { (void)ctx; (void)record; memset(out, 0, sizeof *out); return true; }
+static bool fh_record_for(void *ctx, qa_actor_id actor, qa_raw_entity_view *out) { (void)ctx; (void)actor; memset(out, 0, sizeof *out); out->address = (qa_guest_address){fake_space, 0x1000}; return true; }
 static void test_player(void) {
   const qa_compat_q2_native_primary_weapon_profile *wp = qa_compat_q2_get_native_primary_weapon_profile(RET);
   const qa_compat_q2_native_primary_player_profile *pp = qa_compat_q2_get_native_primary_player_profile(RET);
-  qa_compat_q2_player_memory mem = {NULL, frd, fwr, fcli, fent};
+  qa_compat_q2_memory mem; memset(&mem, 0, sizeof mem);
+  mem.module.digest = RET; mem.pointer_bytes = 8; mem.address_space = fake_space;
+  mem.pointer = fm_pointer; mem.offset = fm_offset; mem.check = fm_check; mem.copy = fm_copy; mem.write = fm_write;
+  qa_compat_q2_native_primary_weapon_host host; memset(&host, 0, sizeof host);
+  host.memory = &mem; host.actor = fh_actor; host.record_for = fh_record_for;
+  qa_compat_q2_mem_write_pointer(&mem, (qa_guest_address){fake_space, 0x1000 + (int64_t)wp->entity_client}, true, (qa_guest_address){fake_space, 0x2000});
   qa_compat_q2_native_primary_player pl;
-  qa_compat_q2_native_primary_player_init(&pl, mem, RET, wp, pp);
+  qa_compat_q2_native_primary_player_init(&pl, host, wp, pp);
   qa_actor_id actor; memset(&actor, 0, sizeof actor);
   qa_compat_q2_native_primary_player_set_score(&pl, actor, 42);
   CHECK(qa_compat_q2_native_primary_player_score(&pl, actor) == 42);

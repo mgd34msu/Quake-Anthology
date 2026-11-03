@@ -27,11 +27,14 @@ typedef struct qa_q2_rerelease_module {
   qa_q2_rerelease_lights lights;
   qa_q2_rerelease_goals goals;
   bool release_bound;
+  qa_session_actor_registry *release_registry; int64_t release_subscription; /* on_release, undone by destroy */
   /* capture scratch */
   qa_q2rr_saved_healthbar *cp_bars; qa_q2rr_saved_pair *cp_ht;
   qa_q2rr_saved_slots *cp_picked; double **cp_slot_arrays;
   qa_q2rr_saved_time *cp_sounds; qa_q2rr_saved_light *cp_lights;
   qa_q2_rerelease_level_entry *cp_levels; const char **cp_visited;
+  /* Storage behind qa_q2_rerelease_module_callbacks (per module). */
+  qa_q2_named_think cb_thinks[64]; qa_q2_named_touch cb_touches[64]; qa_q2_named_use cb_uses[64];
 } qa_q2_rerelease_module;
 typedef struct qa_q2_rerelease_module_options {
   qa_q2_rerelease_players *players;

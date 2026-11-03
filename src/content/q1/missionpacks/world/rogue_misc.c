@@ -1,91 +1,105 @@
-/* Port of src/content/q1/missionpacks/world/rogue-misc.ts.
- * makeStatic (TS owner: base/map-entities.ts) is the ext below.
- * registerDamageSourceEffects routes via the wrapper hook.
- * GPL-2.0-or-later. */
+/* Port of src/content/q1/missionpacks/world/rogue-misc.ts. GPL-2.0-or-later. */
 #include "qa/content/q1/missionpacks/world/rogue_misc.h"
 #include "../missionpacks_internal.h"
+#include "qa/content/q1/base/map_entities.h"
 #include "qa/content/q1/missionpacks/world/common.h"
-#include "qa/foundation/support.h"
-#include <stdlib.h>
 
-void qa_q1mp_ext_make_static(qa_q1mp_game *game, qa_q1mp_actor *entity);
-typedef struct rm_ctx { qa_q1mp_game *game; } rm_ctx;
-static void torch_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rm_ctx *c = vctx; const char *model = g->precache_model(g, "progs/flame.mdl");
-  qa_q1mp_set_model(e, model);
-  if ((e->spawnflags & 1) == 0) {
-    const char *path = g->precache_sound(g, "ambience/fire1.wav");
-    if (c->game->emit_ambient) c->game->emit_ambient(c->game->ctx, g->body(g, e).origin, path, 0.5, 3);
+static void torch_spawn(void *ctx, qa_q1_services *source, qa_q1_actor *entity) {
+  (void)ctx;
+  qa_q1mp_set_string(&entity->model, qa_q1_services_precache_model(source, "progs/flame.mdl"));
+  if ((qa_js_to_int32(entity->spawnflags) & 1) == 0) {
+    const char *path = qa_q1_services_precache_sound(source, "ambience/fire1.wav");
+    qa_q1_event event = {0};
+    event.kind = "ambient"; event.has_origin = true; event.origin = qa_q1_get_body(source, entity).origin;
+    event.path = path; event.volume = 0.5; event.attenuation = 3;
+    qa_q1_emit(source, event);
   }
-  qa_q1mp_ext_make_static(c->game, e);
+  qa_q1_make_static(source, entity);
 }
-static void light_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rm_ctx *c = vctx; char path[64];
-  const char *model = qa_q1mp_streq(e->classname, "light_lantern") ? "lantern" : "candle";
-  (void)snprintf(path, sizeof path, "progs/%s.mdl", model);
-  qa_q1mp_set_model(e, g->precache_model(g, path)); e->solid = "none"; e->movement = "none";
-  qa_q1mp_ext_make_static(c->game, e);
+static void light_spawn(void *ctx, qa_q1_services *game, qa_q1_actor *entity) {
+  const char *path = ctx; /* "progs/lantern.mdl" | "progs/candle.mdl" */
+  qa_q1mp_set_string(&entity->model, qa_q1_services_precache_model(game, path));
+  entity->solid = "none"; entity->movement = "none";
+  qa_q1_make_static(game, entity);
 }
-static void rubble_touch(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_actor_id other, bool hn, qa_vec3 n, const void *s) {
-  (void)vctx; (void)hn; (void)n; (void)s;
-  qa_q1mp_actor *oe = g->entity(g, QA_Q1MP_SOME(other));
-  if ((g->is_player(g, QA_Q1MP_SOME(other)) || (oe && (oe->movement_flags & 32) != 0)) && qa_q1mp_length(g->body(g, e).velocity) > 0)
-    qa_q1b_game_damage(g, other, e->actor.id, QA_Q1MP_SOME(e->actor.id), 10);
+static void rubble_touch(void *ctx, qa_q1_services *g, qa_q1_actor *e, qa_actor_id other, const qa_vec3 *normal,
+                         const qa_touch_surface *surface) {
+  (void)ctx; (void)normal; (void)surface;
+  qa_q1_actor *target = qa_q1_get_entity(g, &other);
+  const bool hit = qa_q1_is_player(g, &other) || (qa_js_to_int32(target != NULL ? target->movement_flags : 0) & 32) != 0;
+  if (hit && qa_q1_length(qa_q1_get_body(g, e).velocity) > 0) (void)qa_q1_damage(g, other, e->actor.id, &e->actor.id, 10, NULL, NULL, NULL, NULL);
 }
-static void rubble_throw(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rm_ctx *c = vctx; qa_q1mp_game *game = c->game;
-  qa_q1mp_actor *destination = qa_q1mp_find0(game, e->target);
-  if (!destination) destination = g->world;
-  if (!destination) qa_range_error("Rubble generator requires worldspawn");
-  qa_vec3 direction = qa_q1mp_normalize(qa_q1mp_vsub(g->body(g, destination).origin, g->body(g, e).origin));
-  qa_q1mp_actor *rubble = g->create(g, "rubble");
-  rubble->owner = QA_Q1MP_SOME(e->actor.id); qa_q1mp_set_model(rubble, "progs/rubble.mdl");
-  rubble->solid = "bbox"; rubble->movement = "bounce"; rubble->skin = (e->spawnflags & 1) != 0 ? 1 : 0;
-  qa_q1b_body_patch p = {0}; p.has_origin = true; p.origin = g->body(g, e).origin;
-  p.has_velocity = true; p.velocity = qa_q1mp_vscale(QA_Q1MP_V3(direction.x + qa_q1mp_random(game)*0.2-0.1, direction.y + qa_q1mp_random(game)*0.2-0.1, direction.z + qa_q1mp_random(game)*0.2-0.1), 300);
-  p.has_bounds = true; p.bounds = (qa_bounds){{-16,-16,-16},{16,16,16}}; qa_q1mp_patch(game, rubble, &p);
-  rubble->touch = g->named.touch(g->named.ctx, rubble, "rogue:rubble_touch");
-  qa_q1mp_world_later(game, rubble, 30, "SUB_Remove"); g->link(g, rubble);
-  qa_q1mp_world_later(game, e, e->delay, "rogue:rubble_throw");
+static void rubble_throw(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  (void)ctx;
+  qa_q1_actor *destination = qa_q1mp_find_first(g, e->target);
+  if (destination == NULL) destination = g->world;
+  if (destination == NULL) qa_range_error("Rubble generator requires worldspawn");
+  qa_vec3 a = qa_q1_get_body(g, destination).origin;
+  qa_vec3 b = qa_q1_get_body(g, e).origin;
+  const qa_vec3 direction = qa_q1_normalize(qa_q1_vsub(a, b));
+  qa_q1_actor *rubble = qa_q1_create(g, "rubble", NULL, NULL);
+  rubble->has_owner = true; rubble->owner = e->actor.id; qa_q1mp_set_string(&rubble->model, "progs/rubble.mdl");
+  rubble->solid = "bbox"; rubble->movement = "bounce"; rubble->skin = (qa_js_to_int32(e->spawnflags) & 1) != 0 ? 1 : 0;
+  qa_q1_body_patch patch = {0};
+  patch.has_origin = true; patch.origin = qa_q1_get_body(g, e).origin;
+  qa_vec3 spread;
+  spread.x = direction.x + g->host.random(g->host.ctx) * 0.2 - 0.1;
+  spread.y = direction.y + g->host.random(g->host.ctx) * 0.2 - 0.1;
+  spread.z = direction.z + g->host.random(g->host.ctx) * 0.2 - 0.1;
+  patch.has_velocity = true; patch.velocity = qa_q1_vscale(spread, 300);
+  patch.has_bounds = true; patch.bounds = (qa_bounds){{-16, -16, -16}, {16, 16, 16}};
+  qa_q1_set_body(g, rubble, &patch);
+  rubble->touch = qa_q1_callback_registry_touch(g->named, rubble, "rogue:rubble_touch");
+  qa_q1mp_world_later(g, rubble, 30, "SUB_Remove"); qa_q1_link(g, rubble);
+  qa_q1mp_world_later(g, e, e->delay, "rogue:rubble_throw");
 }
-static void rubble_use(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor o, qa_q1mp_opt_actor a) {
-  (void)o; (void)a; rm_ctx *c = vctx;
-  if (e->wait == 0) { e->wait = 1; qa_q1mp_world_later(c->game, e, e->delay, "rogue:rubble_throw"); return; }
-  e->wait = 0; g->cancel(g, e);
+static void rubble_use(void *ctx, qa_q1_services *g, qa_q1_actor *e, const qa_actor_id *other, const qa_actor_id *activator) {
+  (void)ctx; (void)other; (void)activator;
+  if (e->wait == 0) { e->wait = 1; qa_q1mp_world_later(g, e, e->delay, "rogue:rubble_throw"); return; }
+  e->wait = 0; qa_q1_cancel(g, e);
 }
-static void rubble_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  (void)vctx;
+static void rubble_spawn(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  (void)ctx;
   if (e->target[0] == '\0') qa_range_error("rubble_generator has no target!");
-  if (e->delay == 0) e->delay = 5;
-  e->solid = "none"; e->use = g->named.use(g->named.ctx, e, "rogue:rubble_use");
-  if ((e->spawnflags & 2) != 0) qa_q1b_use_call(&e->use, QA_Q1MP_NONE, QA_Q1MP_NONE);
+  if (e->delay == 0 || isnan(e->delay)) e->delay = 5; /* TS ||= */
+  e->solid = "none"; e->use = qa_q1_callback_registry_use(g->named, e, "rogue:rubble_use");
+  if ((qa_js_to_int32(e->spawnflags) & 2) != 0) qa_q1_call_use(g, e, e->use, NULL, NULL);
 }
-static void explosion_die(void *vctx, qa_q1b_game *g, qa_q1b_actor *e, qa_q1mp_opt_actor attacker) {
-  rm_ctx *c = vctx; g->use_targets(g, e, attacker); e->touch.has = false;
-  qa_q1mp_world_later(c->game, e, 0.1, "SUB_Remove");
+static void explosion_die(void *ctx, qa_q1_services *g, qa_q1_actor *e, const qa_actor_id *attacker) {
+  (void)ctx;
+  qa_q1_use_targets(g, e, attacker); e->touch = (qa_q1_bound_touch){0};
+  qa_q1mp_world_later(g, e, 0.1, "SUB_Remove");
 }
-static void explosion_spawn(void *vctx, qa_q1b_game *g, qa_q1b_actor *e) {
-  rm_ctx *c = vctx; qa_q1mp_world_trigger(c->game, e);
-  double health = g->health(g, e->actor.id); e->max_health = health != 0 ? health : 20;
-  g->host->combat_set_health(g->host->ctx, e->actor, e->max_health);
-  e->die = g->named.die(g->named.ctx, e, "rogue:explosion_trigger_die");
-  qa_q1b_actor_set_damageable(g, e, true); e->solid = "bbox"; g->link(g, e);
+static void explosion_spawn(void *ctx, qa_q1_services *g, qa_q1_actor *e) {
+  (void)ctx;
+  qa_q1mp_world_trigger(g, e);
+  const double health = qa_q1_health(g, e->actor.id);
+  e->max_health = health != 0 && !isnan(health) ? health : 20; /* TS || 20 */
+  qa_gameplay_authority_set_health(g->host.combat, e->actor, e->max_health);
+  e->die = qa_q1_callback_registry_die(g->named, e, "rogue:explosion_trigger_die");
+  qa_q1_actor_set_damageable(e, true); e->solid = "bbox"; qa_q1_link(g, e);
 }
-void qa_q1mp_register_rogue_misc(qa_q1mp_game *game) {
-  rm_ctx *c = malloc(sizeof *c); c->game = game; qa_q1b_game *g = game->base;
-  if (game->replace_spawn) game->replace_spawn(game->ctx, "light_torch_small_walltorch", torch_spawn, c);
-  else g->register_spawn(g, "light_torch_small_walltorch", torch_spawn, c);
-  g->register_spawn(g, "light_lantern", light_spawn, c);
-  g->register_spawn(g, "light_candle", light_spawn, c);
-  qa_q1b_handlers h = {0}; h.ctx = c; h.touch = rubble_touch;
-  g->named.register_named(g->named.ctx, "rogue:rubble_touch", &h);
-  qa_q1b_handlers h2 = {0}; h2.ctx = c; h2.action = rubble_throw;
-  g->named.register_named(g->named.ctx, "rogue:rubble_throw", &h2);
-  qa_q1b_handlers h3 = {0}; h3.ctx = c; h3.use = rubble_use;
-  g->named.register_named(g->named.ctx, "rogue:rubble_use", &h3);
-  g->register_spawn(g, "rubble_generator", rubble_spawn, c);
-  qa_q1b_handlers h4 = {0}; h4.ctx = c; h4.die = explosion_die;
-  g->named.register_named(g->named.ctx, "rogue:explosion_trigger_die", &h4);
-  g->register_spawn(g, "trigger_explosion", explosion_spawn, c);
-  if (game->register_damage_source_effects) game->register_damage_source_effects(game->ctx, "rogue:explosion-trigger", c);
+static bool explosion_before_quad(void *ctx, qa_damage_request request, double damage, qa_combat_state target,
+                                  const qa_combat_state *attacker, qa_damage_preparation *out) {
+  (void)target; (void)attacker;
+  qa_q1_services *game = ctx;
+  qa_q1_actor *entity = qa_q1_get_entity(game, &request.target);
+  const bool cancel = entity != NULL && qa_q1mp_streq(entity->classname, "trigger_explosion") &&
+                      !qa_q1mp_streq(request.delivery, "radius");
+  out->is_continue = !cancel; out->amount = cancel ? 0 : damage;
+  return true;
+}
+void qa_q1mp_register_rogue_misc(qa_q1_services *game) {
+  qa_q1_replace_spawn(game, "light_torch_small_walltorch", torch_spawn, NULL);
+  qa_q1_register_spawn(game, "light_lantern", light_spawn, (void *)"progs/lantern.mdl");
+  qa_q1_register_spawn(game, "light_candle", light_spawn, (void *)"progs/candle.mdl");
+  qa_q1_callback_registry_register(game->named, "rogue:rubble_touch", (qa_q1_callback_handlers){.touch = rubble_touch});
+  qa_q1_callback_registry_register(game->named, "rogue:rubble_throw", (qa_q1_callback_handlers){.action = rubble_throw});
+  qa_q1_callback_registry_register(game->named, "rogue:rubble_use", (qa_q1_callback_handlers){.use = rubble_use});
+  qa_q1_register_spawn(game, "rubble_generator", rubble_spawn, NULL);
+  qa_q1_callback_registry_register(game->named, "rogue:explosion_trigger_die", (qa_q1_callback_handlers){.die = explosion_die});
+  qa_q1_register_spawn(game, "trigger_explosion", explosion_spawn, NULL);
+  qa_q1_damage_source_effects effects = {0};
+  effects.ctx = game; effects.before_quad = explosion_before_quad;
+  qa_q1_register_damage_source_effects(game, "rogue:explosion-trigger", effects);
 }

@@ -1,6 +1,8 @@
 /* Port of src/compat/q2/rerelease/native-weapon-declaration.ts. GPL-2.0-or-later. */
 #include "qa/compat/q2/rerelease/native_weapon_declaration.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -533,8 +535,8 @@ static void jvalue(jbuf *b, const qa_save_value *v) {
       jput(b, "]", 1); break;
     case QA_SAVE_STRING: jstr(b, v->text); break;
     case QA_SAVE_NUMBER:
-      if (v->number == (double)(int64_t)v->number && v->number >= -9007199254740991.0 && v->number <= 9007199254740991.0) snprintf(tmp, sizeof tmp, "%lld", (long long)v->number);
-      else snprintf(tmp, sizeof tmp, "%.17g", v->number);
+      if (v->number >= -9007199254740991.0 && v->number <= 9007199254740991.0 && v->number == trunc(v->number)) snprintf(tmp, sizeof tmp, "%lld", (long long)v->number);
+      else snprintf(tmp, sizeof tmp, "%s", QA_JS_NUMBER(v->number));
       jput(b, tmp, strlen(tmp)); break;
     case QA_SAVE_BOOLEAN: jput(b, v->boolean ? "true" : "false", v->boolean ? 4 : 5); break;
     default: jput(b, "null", 4); break;
@@ -564,8 +566,7 @@ bool qa_compat_q2_same_native_weapon_declaration(const qa_native_weapon_behavior
   return same;
 }
 static void fmt_double(char *out, size_t cap, double v) {
-  if (v == (double)(int64_t)v && v >= -9007199254740991.0 && v <= 9007199254740991.0) snprintf(out, cap, "%lld", (long long)v);
-  else snprintf(out, cap, "%.17g", v);
+  qa_net_js_number(v, out, cap);
 }
 void qa_compat_q2_validate_native_weapon_image(const qa_native_weapon_behavior_declaration *profile,
                                                const char *image_abi_kind, qa_compat_q2_pe_file image) {

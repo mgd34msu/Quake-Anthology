@@ -1,11 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 /* See include/qa/llm/request.h. GPL-2.0-or-later. */
 #include "qa/llm/request.h"
+#include "qa/foundation/js.h"
 
 #include <curl/curl.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js_case.h"
 
 void qa_llm_signal_init(qa_llm_abort_signal *signal) {
   signal->aborted = false;
@@ -19,7 +21,9 @@ void qa_llm_signal_abort(qa_llm_abort_signal *signal) {
 }
 
 void qa_llm_signal_set_timeout(qa_llm_abort_signal *signal, double timeout_ms) {
-  if (timeout_ms < 0) timeout_ms = 0;
+  /* setTimeout(fn, ms) under Bun: NaN, below 1, or above 2^31 - 1 (Infinity too) runs
+   * after 1 ms (TimeoutOverflowWarning); no C cast of an out-of-range double. */
+  if (!(timeout_ms >= 1 && timeout_ms <= 2147483647.0)) timeout_ms = 1;
   signal->deadline_mono_ms = qa_llm_monotonic_ms() + (int64_t)timeout_ms;
 }
 
@@ -110,11 +114,13 @@ const char *qa_llm_response_content_type_base(const qa_llm_http_response *respon
   const char *begin = response->content_type;
   const char *end = strchr(begin, ';');
   if (end == NULL) end = begin + strlen(begin);
-  while (begin < end && isspace((uint8_t)*begin)) begin++;
-  while (end > begin && isspace((uint8_t)end[-1])) end--;
+  /* TS headers.get("content-type").split(";")[0].trim().toLowerCase(): the header is a
+   * ByteString (Latin-1), so trim also strips U+00A0 and lowering folds Latin-1. */
+  while (begin < end && (isspace((uint8_t)*begin) || (uint8_t)*begin == 0xa0)) begin++;
+  while (end > begin && (isspace((uint8_t)end[-1]) || (uint8_t)end[-1] == 0xa0)) end--;
   size_t length = (size_t)(end - begin);
   if (length + 1 > capacity) length = capacity - 1;
-  for (size_t i = 0; i < length; i++) buffer[i] = (char)tolower((uint8_t)begin[i]);
+  for (size_t i = 0; i < length; i++) buffer[i] = (char)qa_js_latin1_lower((uint8_t)begin[i]);
   buffer[length] = '\0';
   return buffer;
 }

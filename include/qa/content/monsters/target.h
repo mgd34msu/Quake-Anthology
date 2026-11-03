@@ -14,6 +14,11 @@ typedef struct qa_monster_target_observation {
   double light_level;
   bool has_hostile_until;
   double hostile_until;
+  /* Rerelease invisibility: has_cloak_alpha false when not cloaked (TS
+   * null/undefined), else the alpha a monster must roll under (0 once the
+   * reveal fade has ended). */
+  bool has_cloak_alpha;
+  double cloak_alpha;
 } qa_monster_target_observation;
 
 /* `observation` NULL mirrors the TS null. */

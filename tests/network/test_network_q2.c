@@ -138,6 +138,7 @@ static void test_message(void) {
   /* checkMessageRead after an over-read aborts. */
   CHECK_ABORTS({
     qa_q2_sizebuf t;
+    qa_q2_sizebuf_init_empty(&t); /* message_load frees an owned buffer; start from none */
     uint8_t one[1] = {7};
     qa_q2_message_load(&t, one, 1);
     (void)qa_q2_msg_read_long(&t);

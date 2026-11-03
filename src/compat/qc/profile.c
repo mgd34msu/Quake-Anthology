@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/support.h"
 static char *xd(const char *s) { size_t n = strlen(s) + 1; char *r = malloc(n); if (r) memcpy(r, s, n); return r; }
 size_t qa_compat_qc_program_search_order(qa_compat_qc_host_kind kind, const char **out, size_t cap) {
   bool qw = strcmp(kind, "quakeworld") == 0; size_t n = 0;
@@ -18,7 +19,13 @@ bool qa_compat_qc_load_mounted_program(qa_compat_qc_mounted_open content, qa_com
   for (size_t i = 0; i < n; i++) {
     size_t len = 0; qa_resolved_resource_reference ref; memset(&ref, 0, sizeof ref);
     uint8_t *bytes = content.open(content.ctx, paths[i], &len, &ref, content.storage);
-    if (bytes) { bool ok = qa_compat_qc_load_program(bytes, len, &api, paths[i], out_p); free(bytes); if (ok && out_r) *out_r = ref; return ok; }
+    if (bytes) {
+      qa_cleanup scope; qa_cleanup_push(&scope, free, bytes);
+      bool ok = qa_compat_qc_load_program(bytes, len, &api, paths[i], out_p);
+      qa_cleanup_pop(&scope); free(bytes);
+      if (ok && out_r) *out_r = ref;
+      return ok;
+    }
   }
   if (n == 2) qa_compat_qc_program_error("progs.dat", "missing qwprogs.dat or progs.dat");
   qa_compat_qc_program_error("progs.dat", "missing progs.dat");

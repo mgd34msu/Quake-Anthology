@@ -4,12 +4,13 @@
 #include "qa/content/q3/base/game/missile.h"
 #include "qa/core/math.h"
 #include "qa/core/numeric.h"
+#include "qa/foundation/js.h"
 static int actor_equal(qa_actor_id a, qa_actor_id b) { return a.slot == b.slot && a.generation == b.generation && a.token == b.token && a.session.token == b.session.token; }
 static int team_equal(const char *a, const char *b) { if (!a || !b) return a == b; return strcmp(a, b) == 0; }
 bool qa_q3_accuracy_hit(bool team_game, qa_q3_accuracy_subject t, qa_q3_accuracy_subject a) {
   return t.damageable && !actor_equal(t.actor, a.actor) && t.player && a.player && t.health > 0 && (!team_game || !team_equal(t.team, a.team));
 }
-static qa_vec3 trace_normal(qa_q3_actor_trace_result_mirror t) { qa_vec3 z = {0, 0, 0}; return t.contact_kind == QA_Q3_CONTACT_PLANE ? t.contact_plane.normal : z; }
+static qa_vec3 trace_normal(qa_q3_base_actor_trace_result t) { qa_vec3 z = {0, 0, 0}; return t.contact_is_plane ? t.contact_plane.normal : z; }
 static double scaled_damage(double amount, qa_q3_bullet_attack *a) { return qa_qvm_float_to_int((float)((float)amount * a->quad)); }
 static qa_vec3 reflected_end(qa_vec3 start, qa_vec3 point, qa_vec3 direction) {
   qa_vec3 incoming = qa_sub3(point, start);
@@ -20,17 +21,17 @@ void qa_q3_bullet_fire(qa_q3_bullet_host host, qa_actor_id shooter, qa_q3_bullet
   qa_vec3 end = qa_q3_bullet_endpoint(ba, spread, host.random);
   bool has_pass = true; qa_actor_id pass = shooter;
   for (int count = 0; count < 10; count++) {
-    qa_q3_actor_trace_result_mirror trace = host.trace(host.ctx, attack->muzzle, end, has_pass ? &pass : NULL);
-    if ((int)trace.surface_flags & 0x10) return;
-    if (trace.hit_kind != 0 && host.impact) host.impact(host.ctx, trace.end);
-    bool has_actor = trace.hit_kind == 1; qa_actor_id actor = trace.hit_actor;
+    qa_q3_base_actor_trace_result trace = host.trace(host.ctx, attack->muzzle, end, has_pass ? &pass : NULL);
+    if (qa_js_to_int32(trace.surface_flags) & 0x10) return;
+    if (trace.hit_kind != QA_Q3_BASE_HIT_NONE && host.impact) host.impact(host.ctx, trace.end);
+    bool has_actor = trace.hit_kind == QA_Q3_BASE_HIT_ACTOR; qa_actor_id actor = trace.hit_actor;
     qa_q3_bullet_target target; bool has_t = has_actor && host.target(host.ctx, actor, &target);
     qa_vec3 point = qa_q3_snap_vector_towards(trace.end, attack->muzzle);
     bool flesh = has_t && target.damageable && target.player;
     qa_q3_bullet_event ev = {point, trace_normal(trace), has_actor, actor, flesh}; host.emit(host.ctx, ev);
     if (flesh && target.accuracy_eligible) host.credit_accuracy_hit(host.ctx);
     if (has_actor && has_t && target.damageable) {
-      if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+      if (host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
         qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, point);
         if (impact.kind == QA_Q3_INVULN_HIT) {
           qa_vec3 incoming = qa_sub3(impact.impact_point, attack->muzzle);
@@ -46,8 +47,8 @@ void qa_q3_bullet_fire(qa_q3_bullet_host host, qa_actor_id shooter, qa_q3_bullet
   }
 }
 bool qa_q3_gauntlet_attack(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bullet_attack *attack, bool quad_active) {
-  qa_q3_actor_trace_result_mirror trace = host.trace(host.ctx, attack->muzzle, qa_add3(attack->muzzle, qa_scale3(attack->forward, 32)), &shooter);
-  if (((int)trace.surface_flags & 0x10) || trace.hit_kind != 1) return false;
+  qa_q3_base_actor_trace_result trace = host.trace(host.ctx, attack->muzzle, qa_add3(attack->muzzle, qa_scale3(attack->forward, 32)), &shooter);
+  if ((qa_js_to_int32(trace.surface_flags) & 0x10) || trace.hit_kind != QA_Q3_BASE_HIT_ACTOR) return false;
   qa_q3_bullet_target target; if (!host.target(host.ctx, trace.hit_actor, &target) || !target.damageable) return false;
   if (host.impact) host.impact(host.ctx, trace.end);
   if (target.player) { qa_q3_contact_event ev = {QA_Q3_CONTACT_HIT, trace.end, trace_normal(trace), {0,0,0}, {0,0,0}, trace.hit_actor}; host.emit(host.ctx, ev); }
@@ -57,16 +58,16 @@ bool qa_q3_gauntlet_attack(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_b
 void qa_q3_lightning_fire(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bullet_attack *attack) {
   bool has_pass = true; qa_actor_id pass = shooter;
   for (int count = 0; count < 10; count++) {
-    qa_q3_actor_trace_result_mirror trace = host.trace(host.ctx, attack->muzzle, qa_add3(attack->muzzle, qa_scale3(attack->forward, 768)), has_pass ? &pass : NULL);
-    if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && count != 0) {
+    qa_q3_base_actor_trace_result trace = host.trace(host.ctx, attack->muzzle, qa_add3(attack->muzzle, qa_scale3(attack->forward, 768)), has_pass ? &pass : NULL);
+    if (host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && count != 0) {
       qa_q3_contact_event ev = {QA_Q3_CONTACT_LIGHTNING_REFLECTION, {0,0,0}, {0,0,0}, attack->muzzle, qa_q3_snap_vector(trace.end), pass}; host.emit(host.ctx, ev);
     }
-    if (trace.hit_kind == 0) return;
-    if (!((int)trace.surface_flags & 0x10) && host.impact) host.impact(host.ctx, trace.end);
-    bool has_actor = trace.hit_kind == 1; qa_actor_id actor = trace.hit_actor;
+    if (trace.hit_kind == QA_Q3_BASE_HIT_NONE) return;
+    if (!(qa_js_to_int32(trace.surface_flags) & 0x10) && host.impact) host.impact(host.ctx, trace.end);
+    bool has_actor = trace.hit_kind == QA_Q3_BASE_HIT_ACTOR; qa_actor_id actor = trace.hit_actor;
     qa_q3_bullet_target target; bool has_t = has_actor && host.target(host.ctx, actor, &target);
     if (has_actor && has_t && target.damageable) {
-      if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+      if (host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
         qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, trace.end);
         if (impact.kind == QA_Q3_INVULN_HIT) {
           qa_vec3 end = reflected_end(attack->muzzle, impact.impact_point, impact.bounce_direction);
@@ -80,7 +81,7 @@ void qa_q3_lightning_fire(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bu
     if (has_actor && has_a && after.damageable && after.player) {
       qa_q3_contact_event ev = {QA_Q3_CONTACT_HIT, trace.end, trace_normal(trace), {0,0,0}, {0,0,0}, actor}; host.emit(host.ctx, ev);
       if (after.accuracy_eligible) host.credit_accuracy_hit(host.ctx);
-    } else if (!((int)trace.surface_flags & 0x10)) {
+    } else if (!(qa_js_to_int32(trace.surface_flags) & 0x10)) {
       qa_q3_contact_event ev = {QA_Q3_CONTACT_MISS, trace.end, trace_normal(trace), {0,0,0}, {0,0,0}, actor}; host.emit(host.ctx, ev);
     }
     break;
@@ -89,13 +90,13 @@ void qa_q3_lightning_fire(qa_q3_contact_host host, qa_actor_id shooter, qa_q3_bu
 static bool shotgun_pellet(qa_q3_shotgun_host host, qa_actor_id shooter, qa_q3_bullet_attack *attack, qa_vec3 start, qa_vec3 end) {
   bool has_pass = true; qa_actor_id pass = shooter;
   for (int count = 0; count < 10; count++) {
-    qa_q3_actor_trace_result_mirror trace = host.trace(host.ctx, start, end, has_pass ? &pass : NULL);
-    if ((int)trace.surface_flags & 0x10) return false;
-    if (trace.hit_kind != 0 && host.impact) host.impact(host.ctx, trace.end);
-    if (trace.hit_kind != 1) return false;
+    qa_q3_base_actor_trace_result trace = host.trace(host.ctx, start, end, has_pass ? &pass : NULL);
+    if (qa_js_to_int32(trace.surface_flags) & 0x10) return false;
+    if (trace.hit_kind != QA_Q3_BASE_HIT_NONE && host.impact) host.impact(host.ctx, trace.end);
+    if (trace.hit_kind != QA_Q3_BASE_HIT_ACTOR) return false;
     qa_actor_id actor = trace.hit_actor; qa_q3_bullet_target target;
     if (!host.target(host.ctx, actor, &target) || !target.damageable) return false;
-    if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+    if (host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
       qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, trace.end);
       if (impact.kind == QA_Q3_INVULN_HIT) { end = reflected_end(start, impact.impact_point, impact.bounce_direction); start = impact.impact_point; has_pass = false; }
       else { start = trace.end; has_pass = true; pass = actor; }
@@ -122,16 +123,16 @@ static void emit_trail(qa_q3_rail_host host, qa_q3_bullet_attack *attack, qa_vec
 double qa_q3_rail_fire(qa_q3_rail_host host, qa_actor_id shooter, qa_q3_bullet_attack *attack) {
   qa_vec3 end = qa_add3(attack->muzzle, qa_scale3(attack->forward, 8192));
   bool has_pass = true; qa_actor_id pass = shooter; double hits = 0; int penetrated = 0;
-  void *restores[4]; int restore_count = 0; bool has_trace = false; qa_q3_actor_trace_result_mirror trace;
+  void *restores[4]; int restore_count = 0; bool has_trace = false; qa_q3_base_actor_trace_result trace;
   memset(&trace, 0, sizeof trace);
   do {
     if (!host.alive(host.ctx)) break;
     trace = host.trace(host.ctx, attack->muzzle, end, has_pass ? &pass : NULL); has_trace = true;
-    if (trace.hit_kind != 0 && !((int)trace.surface_flags & 0x10) && host.impact) host.impact(host.ctx, trace.end);
-    if (trace.hit_kind != 1) break;
+    if (trace.hit_kind != QA_Q3_BASE_HIT_NONE && !(qa_js_to_int32(trace.surface_flags) & 0x10) && host.impact) host.impact(host.ctx, trace.end);
+    if (trace.hit_kind != QA_Q3_BASE_HIT_ACTOR) break;
     qa_actor_id actor = trace.hit_actor; qa_q3_bullet_target target; bool has_t = host.target(host.ctx, actor, &target);
     if (has_t && target.damageable) {
-      if (host.product == QA_Q3_GAME_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
+      if (host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK && target.player && target.invulnerable) {
         qa_q3_invuln_impact impact = host.invulnerability_impact(host.ctx, actor, attack->forward, trace.end);
         if (impact.kind == QA_Q3_INVULN_HIT) {
           end = reflected_end(attack->muzzle, impact.impact_point, impact.bounce_direction);
@@ -144,13 +145,13 @@ double qa_q3_rail_fire(qa_q3_rail_host host, qa_actor_id shooter, qa_q3_bullet_a
         host.damage(host.ctx, actor, attack->forward, trace.end, scaled_damage(100, attack));
       }
     }
-    if ((int)trace.contents & 1) break;
+    if (qa_js_to_int32(trace.contents) & 1) break;
     void *restore = host.unlink(host.ctx, actor); if (restore) restores[restore_count++] = restore;
     penetrated++;
   } while (penetrated < 4);
   for (int i = 0; i < restore_count; i++) host.restore(host.ctx, restores[i]);
   if (has_trace) {
-    if ((int)trace.surface_flags & 0x10) { qa_vec3 z = {0,0,0}; emit_trail(host, attack, qa_q3_snap_vector_towards(trace.end, attack->muzzle), QA_Q3_RAIL_NONE, z); }
+    if (qa_js_to_int32(trace.surface_flags) & 0x10) { qa_vec3 z = {0,0,0}; emit_trail(host, attack, qa_q3_snap_vector_towards(trace.end, attack->muzzle), QA_Q3_RAIL_NONE, z); }
     else emit_trail(host, attack, qa_q3_snap_vector_towards(trace.end, attack->muzzle), QA_Q3_RAIL_SURFACE, trace_normal(trace));
   }
   return hits;

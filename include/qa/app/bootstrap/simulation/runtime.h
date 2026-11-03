@@ -87,17 +87,25 @@ void qa_app_sim_frame_plan_free(qa_app_sim_frame_plan *plan);
  * landed sibling modules: scene queries, shared physics, simulation
  * events, gameplay authority, inventory, frame scheduler, movement
  * players). options.world, when set, is a borrowed
- * qa_app_application_world (content.h); when NULL the map geometry is
- * read from options.mounts (a qa_content_mounted) through
- * recipe.map.geometry and decoded here (Q1 BSP; Q2/Q3 require the
- * decoded world from content). The returned host's close destroys the
+ * qa_app_application_world (content.h); when NULL (or a {NULL, NULL}
+ * world view) the map geometry is read from options.mounts (a
+ * qa_content_mounted) through recipe.map.geometry and decoded here
+ * with the content.ts classifyBsp dispatch (Q1/Q2/Q3 BSP). The
+ * returned host's close destroys the
  * concrete state; qa_app_sim_shared_simulation_destroy after close is
- * safe. Source-game runtimes (TS createSource q1/q2/q3 games, QuakeC,
- * QVM and native guests, selected monsters/arsenals, mods) are not
- * constructed: execution modules of those kinds abort at build. --- */
+ * safe. Source games: a QuakeC execution module with
+ * options.prepared_quakec (a qa_app_sim_prepared_quakec_source)
+ * constructs the TS QuakeCSource game (compat/qc machine + world/
+ * presentation/movement/client hosts): spawnMap runs the authored
+ * spawn functions, StartFrame runs per map frame and entity thinks
+ * run through the QC nextthink fields. QVM/native guest source
+ * games and the QC damage/pickup/weapon-stage authority boundaries
+ * are not constructed and abort at build. --- */
 #include "qa/app/bootstrap/simulation/events.h"
 #include "qa/app/bootstrap/simulation/physics.h"
+#include "qa/world/actors/callbacks.h"
 #include "qa/world/collision/index.h"
+#include "qa/world/scheduler.h"
 typedef struct qa_app_sim_concrete_simulation qa_app_sim_concrete_simulation;
 qa_app_sim_shared_simulation_host qa_app_sim_shared_simulation_concrete_host(
     qa_app_simulation_options options, qa_session_actor_registry *actors, qa_session_id session,
@@ -116,13 +124,30 @@ qa_app_sim_concrete_simulation *qa_app_sim_shared_simulation_concrete(
     qa_app_sim_shared_simulation *simulation);
 qa_app_sim_shared_physics *qa_app_sim_concrete_simulation_physics(qa_app_sim_concrete_simulation *state);
 qa_app_sim_simulation_events *qa_app_sim_concrete_simulation_events(qa_app_sim_concrete_simulation *state);
+/* The concrete frame scheduler + callback table (TS this.scheduler /
+ * this.callbacks): per-boundary turns run scheduled "world:think"
+ * callbacks through the table. Borrowed; owned by the state. */
+qa_frame_scheduler *qa_app_sim_concrete_simulation_scheduler(qa_app_sim_concrete_simulation *state);
+qa_actor_callback_table *qa_app_sim_concrete_simulation_callbacks(qa_app_sim_concrete_simulation *state);
 qa_shared_scene_queries *qa_app_sim_concrete_simulation_scene(qa_app_sim_concrete_simulation *state);
 qa_frame_context qa_app_sim_concrete_simulation_frame(const qa_app_sim_concrete_simulation *state);
 bool qa_app_sim_concrete_simulation_world_actor(const qa_app_sim_concrete_simulation *state, qa_actor_id *out);
 /* TS admitPlayer for the shared (non-guest) source: allocates the
- * client actor at the map's info_player_start when the decoded Q1
- * entity list is available (origin zero otherwise), creates its body,
+ * client actor at the map's info_player_start (decoded Q1 entity
+ * list, or the retained Q2/Q3 entity lump; origin zero otherwise),
+ * creates its body,
  * combat (health 100) and inventory, and binds a MovementPlayer. */
 qa_app_sim_player_admission qa_app_sim_concrete_simulation_admit_player(
     qa_app_sim_concrete_simulation *state, qa_client_id client);
+/* QuakeC source-game activity (TS QuakeCSource over progs.dat):
+ * authored spawn functions invoked by spawnMap, StartFrame calls,
+ * entity think invocations and distinct precache registrations.
+ * Returns false when no QuakeC source game was constructed. */
+typedef struct qa_app_sim_concrete_quakec_stats {
+  const char *kind; /* "netquake"|"quakeworld" */
+  size_t spawn_count, start_frame_count, think_count, precache_count;
+  int64_t entity_count;
+} qa_app_sim_concrete_quakec_stats;
+bool qa_app_sim_concrete_simulation_quakec_stats(
+    const qa_app_sim_concrete_simulation *state, qa_app_sim_concrete_quakec_stats *out);
 #endif

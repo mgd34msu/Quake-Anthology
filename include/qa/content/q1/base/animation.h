@@ -5,7 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#include "qa/content/q1/base/foundation_types.h"
+#include "qa/content/q1/foundation/entity_services.h"
 
 /* TS MonsterAi string union. */
 typedef enum qa_q1_monster_ai {
@@ -23,7 +23,7 @@ typedef enum qa_q1_monster_operation_kind {
 typedef struct qa_q1_monster_operation {
   qa_q1_monster_operation_kind kind;
   qa_q1_monster_ai mode; double distance; /* ai */
-  const char *path; qa_q1b_channel channel; double attenuation; /* sound */
+  const char *path; qa_q1_sound_channel channel; double attenuation; /* sound */
   const char *comparison; /* "greater"|"less" */
   bool has_chance; double chance; /* sound: TS chance|null */
   const char *solid; /* solid: "none" */

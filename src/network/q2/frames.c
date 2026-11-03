@@ -336,6 +336,17 @@ static bool entity_push(entity_list *list, qa_q2_wire_entity entity) {
   return true;
 }
 
+typedef struct frame_held {
+  entity_list *entities;
+  qa_q2_split_player **splits;
+  size_t *split_count;
+} frame_held;
+static void frame_held_release(void *arg) {
+  frame_held *held = (frame_held *)arg;
+  free(held->entities->items);
+  for (size_t i = 0; i < *held->split_count; i++) free((*held->splits)[i].area_bits);
+  free(*held->splits);
+}
 qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
                                            qa_q2_wire_codec *wire,
                                            bool read_suppress_byte) {
@@ -359,6 +370,11 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
   qa_q2_split_player *splits = NULL;
   size_t split_count = 0;
   bool oom = false;
+  entity_list entities = {NULL, 0, 0};
+  /* A raise mid-frame releases what this read allocated, as TS leaves it to the GC. */
+  frame_held held = {&entities, &splits, &split_count};
+  qa_cleanup node;
+  qa_cleanup_push(&node, frame_held_release, &held);
   if (kind_is(&wire->selected_protocol, "q2-kex") ||
       kind_is(&wire->selected_protocol, "q2-kex-demo")) {
     double total = qa_q2_kex_split_player_count(&wire->kex);
@@ -372,6 +388,9 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
       size_t len = length > 0 ? (size_t)length : 0;
       uint8_t *area = (uint8_t *)calloc(len > 0 ? len : 1, 1);
       if (area == NULL) { oom = true; break; }
+      splits[split_count].area_bits = area; /* owned by the split list from here */
+      splits[split_count].area_bits_length = 0;
+      split_count++;
       qa_q2_msg_read_data(&wire->message, area, len, length);
       qa_q2_wire_player next;
       qa_q2_wire_player_init(&next);
@@ -380,26 +399,20 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
         prev = &old->split_players[(size_t)(index - 1)].player;
       }
       codec->read_frame_playerstate(codec, prev, &next);
-      splits[split_count].area_bits = area;
-      splits[split_count].area_bits_length = len;
-      splits[split_count].player = next;
-      split_count++;
+      splits[split_count - 1].area_bits_length = len;
+      splits[split_count - 1].player = next;
     }
   }
   codec->read_packet_entities_begin(codec);
-  entity_list entities = {NULL, 0, 0};
   const qa_q2_wire_entity *previous = old != NULL ? old->entities : NULL;
   size_t previous_count = old != NULL ? old->entity_count : 0;
   size_t cursor = 0;
-  double last_number = 0;
   if (!oom) {
     for (;;) {
       qa_q2_entity_bits entity_header;
       codec->read_entity_bits(codec, &entity_header);
       qa_q2_message_check_read(&wire->message);
       if (entity_header.number == 0) break;
-      if (entity_header.number <= last_number) qa_q2_throw_error("Unordered Q2 entity delta");
-      last_number = entity_header.number;
       for (;;) {
         const qa_q2_wire_entity *from = cursor < previous_count ? &previous[cursor] : NULL;
         if (from == NULL || from->number >= entity_header.number) break;
@@ -412,11 +425,8 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
       if (oom) break;
       const qa_q2_wire_entity *from = cursor < previous_count ? &previous[cursor] : NULL;
       if ((entity_header.bits_u64 & QA_Q2_U_REMOVE) != 0) {
-        if (from == NULL || from->number != entity_header.number) {
-          if (valid) qa_q2_throw_error("Q2 entity removal has no delta source");
-        } else {
-          cursor++;
-        }
+        /* CL_ParsePacketEntities prints a mismatch and still steps past the old entity. */
+        if (from != NULL) cursor++;
         continue;
       }
       bool matched = from != NULL && from->number == entity_header.number;
@@ -442,13 +452,14 @@ qa_q2_wire_frame *qa_q2_frame_history_read(qa_q2_frame_history *history,
       if (!entity_push(&entities, entity)) { oom = true; break; }
     }
   }
+  qa_q2_message_check_read(&wire->message);
+  qa_cleanup_pop(&node);
   if (oom) {
     free(entities.items);
     for (size_t i = 0; i < split_count; i++) free(splits[i].area_bits);
     free(splits);
     return NULL;
   }
-  qa_q2_message_check_read(&wire->message);
   frame.has_valid = true;
   frame.valid = valid;
   frame.server_frame = header.serverframe;

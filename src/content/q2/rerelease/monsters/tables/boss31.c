@@ -280,13 +280,6 @@ static const qa_q2m_frame f_boss31_1[] = {
   {QA_Q2M_AI_RUN, NULL, 9, NULL, 0, -1},
   {QA_Q2M_AI_RUN, NULL, 9, NULL, 0, -1},
 };
-static const qa_q2m_frame f_boss31_2[] = {
-  {QA_Q2M_AI_WALK, NULL, 5, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 6, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 7, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 9, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 15, NULL, 0, -1},
-};
 static const qa_q2m_frame f_boss31_3[] = {
   {QA_Q2M_AI_WALK, NULL, 17, NULL, 0, -1},
   {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
@@ -302,14 +295,6 @@ static const qa_q2m_frame f_boss31_3[] = {
   {QA_Q2M_AI_WALK, NULL, 9, NULL, 0, -1},
   {QA_Q2M_AI_WALK, NULL, 9, NULL, 0, -1},
   {QA_Q2M_AI_WALK, NULL, 9, NULL, 0, -1},
-};
-static const qa_q2m_frame f_boss31_4[] = {
-  {QA_Q2M_AI_WALK, NULL, 11, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 0, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, 8, NULL, 0, -1},
-  {QA_Q2M_AI_WALK, NULL, -8, NULL, 0, -1},
 };
 static const qa_q2m_action a_boss31_5_2[] = {
   {false, "jorg_step_left", 0, false},
@@ -496,9 +481,7 @@ static const qa_q2m_frame f_boss31_12[] = {
 const qa_q2m_move qa_q2rm_boss31_moves[] = {
   {"jorg_move_stand", 112, 162, NULL, 0, f_boss31_0, 51},
   {"jorg_move_run", 168, 181, NULL, 0, f_boss31_1, 14},
-  {"jorg_move_start_walk", 163, 167, NULL, 0, f_boss31_2, 5},
   {"jorg_move_walk", 168, 181, NULL, 0, f_boss31_3, 14},
-  {"jorg_move_end_walk", 182, 187, NULL, 0, f_boss31_4, 6},
   {"jorg_move_pain3", 87, 111, "jorg_run", 0, f_boss31_5, 25},
   {"jorg_move_pain2", 84, 86, "jorg_run", 0, f_boss31_6, 3},
   {"jorg_move_pain1", 81, 83, "jorg_run", 0, f_boss31_7, 3},

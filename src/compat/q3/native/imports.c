@@ -1,11 +1,13 @@
 /* Port of src/compat/q3/native/imports.ts. GPL-2.0-or-later. */
 #include "qa/compat/q3/native/imports.h"
+#include "qa/compat/q3/native/guest_services.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/app/bootstrap/simulation/q3/types.h"
 #include "qa/core/cvars/index.h"
+#include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/guest/runtime/common/memory.h"
 
@@ -63,9 +65,9 @@ qa_guest_core_address qa_compat_q3_quakelive_game_imports_bind(I *imports, int64
   slot->imports = imports; slot->slot = slot_index;
   slot->service_ctx = ctx; slot->service = invoke; slot->implemented = implemented;
   slot->name = dup_text(name);
-  char id[256];
-  snprintf(id, sizeof id, "native-ql:%llu:%lld:%s", (unsigned long long)imports->address.byte_offset, (long long)slot_index, name);
-  slot->id = dup_text(id);
+  size_t id_length = strlen(name) + 64;
+  slot->id = malloc(id_length);
+  if (slot->id) snprintf(slot->id, id_length, "native-ql:%llu:%lld:%s", (unsigned long long)imports->address.byte_offset, (long long)slot_index, name);
   slot->layouts = calloc(parameter_count ? parameter_count : 1, sizeof *slot->layouts);
   if (!slot->name || !slot->id || !slot->layouts) qa_range_error("Quake Live import allocation failed");
   qa_guest_call_signature signature = qa_compat_q3_native_signature(imports->abi, parameters, parameter_count,
@@ -84,30 +86,10 @@ size_t qa_compat_q3_quakelive_game_imports_coverage(const I *imports, qa_compat_
   return 206;
 }
 void qa_compat_q3_quakelive_game_imports_write_string(I *imports, qa_guest_core_address address, const char *value, int64_t capacity) {
-  if (capacity < 1) qa_range_error("Native string output requires positive source capacity");
-  qa_sparse_check(imports->memory, address, (size_t)capacity, QA_ACCESS_WRITE);
-  uint8_t *bytes = calloc((size_t)capacity, 1);
-  if (!bytes) qa_range_error("Quake Live import allocation failed");
-  size_t length = strlen(value);
-  size_t end = length < (size_t)(capacity - 1) ? length : (size_t)(capacity - 1);
-  for (size_t i = 0; i < end; i++) bytes[i] = (uint8_t)value[i];
-  qa_sparse_write(imports->memory, address, bytes, (size_t)capacity);
-  free(bytes);
+  qa_compat_q3_write_guest_string(imports->memory, address, value, capacity);
 }
 static void update_cvar(I *imports, qa_guest_core_address address) {
-  qa_sparse_guest_memory *m = imports->memory;
-  double modification_count = 0, numeric_value = 0, integer_value = 0;
-  char *value = NULL;
-  if (!imports->host.cvar_read_vm(imports->host.ctx, qa_sparse_read_i32(m, address),
-        &modification_count, &value, &numeric_value, &integer_value)) return;
-  if (qa_sparse_read_i32(m, qa_sparse_offset(m, address, 4)) == (int32_t)modification_count) { free(value); return; }
-  qa_sparse_check(m, address, 272, QA_ACCESS_WRITE);
-  qa_sparse_write_i32(m, qa_sparse_offset(m, address, 4), (int32_t)modification_count);
-  if (strlen(value) >= 256) qa_range_error("Cvar_Update: source value exceeds MAX_CVAR_VALUE_STRING");
-  qa_compat_q3_quakelive_game_imports_write_string(imports, qa_sparse_offset(m, address, 16), value, 256);
-  qa_sparse_write_f32(m, qa_sparse_offset(m, address, 8), (double)(float)numeric_value);
-  qa_sparse_write_i32(m, qa_sparse_offset(m, address, 12), (int32_t)integer_value);
-  free(value);
+  qa_compat_q3_update_guest_cvar(imports->memory, imports->host.cvar_read_vm, imports->host.ctx, address);
 }
 static char *arg_text(I *imports, const qa_call_value *args, size_t count, size_t index) {
   qa_guest_core_address address = qa_guest_required_pointer(args, count, index);
@@ -115,7 +97,9 @@ static char *arg_text(I *imports, const qa_call_value *args, size_t count, size_
   if (length < 0) qa_range_error("Guest string exceeds checked maximum");
   char *text = malloc((size_t)length + 1);
   if (!text) qa_range_error("Quake Live import allocation failed");
+  qa_cleanup scope; qa_cleanup_push(&scope, free, text);
   qa_sparse_copy(imports->memory, address, (uint8_t *)text, (size_t)length);
+  qa_cleanup_pop(&scope);
   text[length] = 0;
   return text;
 }
@@ -127,38 +111,57 @@ static qa_call_result unbound_invoke(void *ctx, const qa_guest_core_call_context
 #define HOST(slot_name) ((I *)ctx)
 static qa_call_result svc_send_console_command(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
-  imports->host.append_console_command(imports->host.ctx, t); free(t); return qa_call_void();
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  imports->host.append_console_command(imports->host.ctx, t);
+  qa_cleanup_pop(&scope); free(t); return qa_call_void();
 }
 static qa_call_result svc_printf(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
-  imports->host.print(imports->host.ctx, t); free(t); return qa_call_void();
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  imports->host.print(imports->host.ctx, t);
+  qa_cleanup_pop(&scope); free(t); return qa_call_void();
 }
 static qa_call_result svc_cvar_variable_value(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
-  double value = (double)(float)imports->host.cvar_variable_value(imports->host.ctx, t); free(t);
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  double value = (double)(float)imports->host.cvar_variable_value(imports->host.ctx, t);
+  qa_cleanup_pop(&scope); free(t);
   return qa_call_float32(value);
 }
 static qa_call_result svc_cvar_update(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); update_cvar(imports, qa_guest_required_pointer(args, n, 0)); return qa_call_void();
 }
 static qa_call_result svc_cvar_variable_string_buffer(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
-  (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 0);
-  char *value = imports->host.cvar_variable_string(imports->host.ctx, t); free(t);
-  qa_compat_q3_quakelive_game_imports_write_string(imports, qa_guest_required_pointer(args, n, 1),
-    value ? value : "", (int64_t)qa_guest_integer(args, n, 2));
+  (void)c; I *imports = HOST(0);
+  qa_guest_core_address output = qa_guest_required_pointer(args, n, 1);
+  char *t = arg_text(imports, args, n, 0);
+  qa_cleanup text_scope; qa_cleanup_push(&text_scope, free, t);
+  char *value = imports->host.cvar_variable_string(imports->host.ctx, t);
+  qa_cleanup_pop(&text_scope); free(t);
+  qa_cleanup value_scope; qa_cleanup_push(&value_scope, free, value);
+  qa_compat_q3_quakelive_game_imports_write_string(imports, output, value ? value : "", (int64_t)qa_guest_integer(args, n, 2));
+  qa_cleanup_pop(&value_scope);
   free(value); return qa_call_void();
 }
 static qa_call_result svc_cvar_set(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
-  char *name = arg_text(imports, args, n, 0), *value = arg_text(imports, args, n, 1);
+  char *name = arg_text(imports, args, n, 0);
+  qa_cleanup name_scope; qa_cleanup_push(&name_scope, free, name);
+  char *value = arg_text(imports, args, n, 1);
+  qa_cleanup value_scope; qa_cleanup_push(&value_scope, free, value);
   imports->host.cvar_set(imports->host.ctx, name, value, true);
+  qa_cleanup_pop(&value_scope); qa_cleanup_pop(&name_scope);
   free(name); free(value); return qa_call_void();
 }
 static qa_call_result svc_cvar_register(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
   qa_guest_core_address address; bool has = qa_guest_pointer_argument(args, n, 0, &address);
-  char *name = arg_text(imports, args, n, 1), *fallback = arg_text(imports, args, n, 2);
+  char *name = arg_text(imports, args, n, 1);
+  qa_cleanup name_scope; qa_cleanup_push(&name_scope, free, name);
+  char *fallback = arg_text(imports, args, n, 2);
+  qa_cleanup fallback_scope; qa_cleanup_push(&fallback_scope, free, fallback);
   int64_t handle = imports->host.cvar_bind_vm(imports->host.ctx, name, fallback, (double)qa_guest_integer(args, n, 3));
+  qa_cleanup_pop(&fallback_scope); qa_cleanup_pop(&name_scope);
   free(name); free(fallback);
   if (has) {
     qa_sparse_write_i32(imports->memory, address, (int32_t)handle);
@@ -182,15 +185,21 @@ static qa_call_result svc_argc(void *ctx, const qa_guest_core_call_context *c, c
 }
 static qa_call_result svc_drop_client(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
-  imports->host.drop_client(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  imports->host.drop_client(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t);
+  qa_cleanup_pop(&scope); free(t); return qa_call_void();
 }
 static qa_call_result svc_send_server_command(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
-  imports->host.send_server_command(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  imports->host.send_server_command(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t);
+  qa_cleanup_pop(&scope); free(t); return qa_call_void();
 }
 static qa_call_result svc_set_configstring(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
-  imports->host.configstring_set(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  imports->host.configstring_set(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t);
+  qa_cleanup_pop(&scope); free(t); return qa_call_void();
 }
 static qa_call_result svc_get_configstring(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
@@ -200,13 +209,18 @@ static qa_call_result svc_get_configstring(void *ctx, const qa_guest_core_call_c
 }
 static qa_call_result svc_get_userinfo(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0);
-  qa_compat_q3_quakelive_game_imports_write_string(imports, qa_guest_required_pointer(args, n, 1),
-    imports->host.get_userinfo(imports->host.ctx, (double)qa_guest_integer(args, n, 0)), (int64_t)qa_guest_integer(args, n, 2));
+  qa_guest_core_address address = qa_guest_required_pointer(args, n, 1);
+  const char * value = imports->host.get_userinfo(imports->host.ctx, (double)qa_guest_integer(args, n, 0));
+  int64_t capacity = (int64_t)qa_guest_integer(args, n, 2);
+  qa_compat_q3_quakelive_game_imports_write_string(imports, address,
+    value, capacity);
   return qa_call_void();
 }
 static qa_call_result svc_set_userinfo(void *ctx, const qa_guest_core_call_context *c, const qa_call_value *args, size_t n) {
   (void)c; I *imports = HOST(0); char *t = arg_text(imports, args, n, 1);
-  imports->host.set_userinfo(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t); free(t); return qa_call_void();
+  qa_cleanup scope; qa_cleanup_push(&scope, free, t);
+  imports->host.set_userinfo(imports->host.ctx, (double)qa_guest_integer(args, n, 0), t);
+  qa_cleanup_pop(&scope); free(t); return qa_call_void();
 }
 #undef HOST
 bool qa_compat_q3_quakelive_game_imports_init(I *imports, qa_sparse_guest_memory *memory,

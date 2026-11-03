@@ -1,6 +1,5 @@
 /* Port of src/content/q3/team-arena/match.ts. GPL-2.0-or-later.
- * ps.ping has no landed mirror field (logExit logs 0). changemap and
- * vote strings are owned char* (NULL changemap is TS null). */
+ * changemap and vote strings are owned char* (NULL changemap is TS null). */
 #ifndef QA_CONTENT_Q3_TEAM_ARENA_MATCH_H
 #define QA_CONTENT_Q3_TEAM_ARENA_MATCH_H
 #include <stdbool.h>
@@ -49,7 +48,7 @@ typedef struct qa_q3_ta_match_host {
   qa_q3_base_product product;
   qa_q3_ta_match_state *state;
   qa_q3_entity_pool *pool;
-  qa_q3_game_player_slots_mirror *team_scores;
+  qa_q3_base_player_state_slots *team_scores;
   qa_q3_game_random *random;
   void *ctx;
   qa_q3_ta_match_settings (*settings)(void *ctx);

@@ -61,6 +61,9 @@ bool qa_kex_mdns_open(qa_kex_mdns *mdns, bool has_advertised_port, double advert
                       qa_kex_mdns_failed_fn failed, void *failed_ctx);
 /* Drain pending datagrams (non-blocking). Returns packets handled. */
 size_t qa_kex_mdns_poll(qa_kex_mdns *mdns);
+/* TS socket.on('message', bytes => { try { owner.receive(bytes) } catch {} }): one received
+ * datagram; false when it was malformed and ignored. Usable on a zeroed, unopened owner. */
+bool qa_kex_mdns_message(qa_kex_mdns *mdns, const uint8_t *bytes, size_t length);
 void qa_kex_mdns_query(qa_kex_mdns *mdns);
 void qa_kex_mdns_close(qa_kex_mdns *mdns);
 

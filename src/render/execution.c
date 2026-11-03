@@ -7,15 +7,22 @@ void qa_render_executor_init(qa_render_executor *e,qa_renderer_backend b,qa_exec
 void qa_render_executor_replace_backend(qa_render_executor *e,qa_renderer_backend b){ e->backend=b; }
 void qa_render_executor_image(qa_render_executor *e,qa_image_resource_operation op){ e->backend.apply_image_resource(e->backend.ctx,op); e->services.image_applied(e->services.ctx,op); }
 static void apply_fwd(void *ctx,qa_image_resource_operation op){ qa_render_executor_image((qa_render_executor*)ctx,op); }
+typedef struct draw_scope { qa_prepared_backend_draw prepared; const qa_draw_batch *batch; } draw_scope;
+static void draw_body(void *ctx){ draw_scope *d=(draw_scope*)ctx; qa_prepared_backend_draw *prepared=&d->prepared;
+  prepared->begin(prepared->ctx);
+  prepared->apply_texture(prepared->ctx,0,d->batch->texture);
+  if(d->batch->texturing_is_pair) prepared->apply_texture(prepared->ctx,1,d->batch->second_texture.binding);
+  prepared->draw(prepared->ctx);
+}
 static void exec_draw(qa_render_executor *e,qa_draw_batch input){
   qa_draw_batch resolved; qa_draw_batch batch=qa_resolve_draw_textures(input,apply_fwd,e,&resolved)?resolved:input;
-  qa_prepared_backend_draw prepared=e->backend.prepare_geometry(e->backend.ctx,batch);
-  prepared.begin(prepared.ctx);
-  prepared.apply_texture(prepared.ctx,0,batch.texture);
-  if(batch.texturing_is_pair) prepared.apply_texture(prepared.ctx,1,batch.second_texture.binding);
-  prepared.draw(prepared.ctx);
-  prepared.cleanup(prepared.ctx);
+  draw_scope scope; scope.prepared=e->backend.prepare_geometry(e->backend.ctx,batch); scope.batch=&batch;
+  /* TS try/finally: cleanup runs for any error class, which then propagates unchanged. */
+  qa_caught_error caught; bool ok=qa_try(draw_body,&scope,&caught);
+  scope.prepared.cleanup(scope.prepared.ctx);
+  if(!ok) qa_rethrow(&caught);
 }
+void qa_render_executor_draw(qa_render_executor *e,qa_draw_batch batch){ exec_draw(e,batch); }
 typedef struct opacity_ctx { qa_render_executor *e; const qa_draw_batch *batches; size_t count; } opacity_ctx;
 static void opacity_draw(void *ctx){ opacity_ctx *c=(opacity_ctx*)ctx; for(size_t i=0;i<c->count;i++)exec_draw(c->e,c->batches[i]); }
 static void exec_ops(qa_render_executor *e,const qa_execution_operation *ops,size_t count){

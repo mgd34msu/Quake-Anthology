@@ -41,6 +41,10 @@ typedef struct qa_material_picture {
   const char *name; /* borrowed */
   double order;
   const void *compiled; /* TS CompiledMaterial; module unported. */
+  /* TS `compiled instanceof MaterialHandle`: compiled is a
+   * qa_scene_material_handle (render/scene/material_registrations.h) whose
+   * current material is the CompiledMaterial; false, a qa_compiled_material. */
+  bool compiled_is_handle;
 } qa_material_picture;
 
 /* TS PictureAsset = ImagePicture | MaterialPicture. */
@@ -93,7 +97,12 @@ typedef struct qa_text_draw_sink {
   void (*set_color)(void *ctx, const qa_vec4 *color);
   void (*stretch_pixels)(void *ctx, qa_rect rect, qa_text_texture_rect uv,
                          const qa_picture_asset *picture);
+  /* Non-NULL: target is a Rect shared with its owner (TS object identity),
+   * read through this pointer; borrowed. NULL reads target. */
+  const qa_rect *target_ref;
 } qa_text_draw_sink;
+/* TS sink.target: *target_ref when shared, else target. */
+qa_rect qa_text_draw_sink_target(const qa_text_draw_sink *sink);
 
 /* TS MaterialTextDraw. */
 typedef struct qa_material_text_draw {
@@ -119,6 +128,7 @@ typedef struct qa_text_command_sink {
   qa_material_text_draw_fn material;
   void *material_ctx;
   qa_vec4 color;
+  const qa_rect *target_ref; /* see qa_text_draw_sink.target_ref */
 } qa_text_command_sink;
 
 void qa_text_command_sink_init(qa_text_command_sink *sink, qa_seat_id seat,
@@ -127,6 +137,9 @@ void qa_text_command_sink_init(qa_text_command_sink *sink, qa_seat_id seat,
                                qa_material_text_draw_fn material,
                                void *material_ctx);
 qa_text_draw_sink qa_text_command_sink_sink(qa_text_command_sink *sink);
+/* The TS constructor's target is a Rect the caller keeps mutating: the
+ * sink (and every draw sink view of it) reads *target from now on. */
+void qa_text_command_sink_share_target(qa_text_command_sink *sink, const qa_rect *target);
 void qa_text_command_sink_set_color(qa_text_command_sink *sink,
                                     const qa_vec4 *color);
 void qa_text_command_sink_stretch_pixels(qa_text_command_sink *sink,

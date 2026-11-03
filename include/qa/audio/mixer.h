@@ -114,16 +114,6 @@ qa_mixer_stereo_volume qa_spatialize_sound_origin(qa_vec3 position,
                                                   qa_axis listener_axis,
                                                   double volume, int channels);
 
-/** TS MixerSoundMemory. frame_count is re-read for every
- * output-frames use (the TS PreparedSound getter). */
-typedef struct qa_mixer_sound_memory {
-  void *ctx;
-  double (*frame_count)(void *ctx, const qa_pcm_sound *sound);
-  bool (*has_data)(void *ctx, const qa_pcm_sound *sound);
-  double (*sample)(void *ctx, const qa_pcm_sound *sound, double frame);
-  void (*touch)(void *ctx, const qa_pcm_sound *sound, double milliseconds);
-} qa_mixer_sound_memory;
-
 /** TS MixerVoiceEvent: AudioVoiceEvent without the seat. */
 typedef struct qa_mixer_voice_event {
   qa_audio_voice_event_kind kind;
@@ -162,15 +152,11 @@ int64_t qa_audio_mixer_sound_clock(const qa_audio_mixer *mixer);
 bool qa_audio_mixer_playback_enabled(const qa_audio_mixer *mixer);
 void qa_audio_mixer_set_playback_enabled(qa_audio_mixer *mixer, bool enabled);
 int64_t qa_audio_mixer_raw_end(const qa_audio_mixer *mixer);
-/* The live interleaved sample-pair allocation (borrowed). */
-int32_t *qa_audio_mixer_raw_sample_pointer(qa_audio_mixer *mixer);
 
 void qa_audio_mixer_bind_sound_cvars(qa_audio_mixer *mixer,
                                      qa_cvar_registry *cvars);
 void qa_audio_mixer_bind_console_output(qa_audio_mixer *mixer,
                                         qa_mixer_print_fn print, void *ctx);
-void qa_audio_mixer_bind_sound_memory(qa_audio_mixer *mixer,
-                                      qa_mixer_sound_memory memory);
 /* observer NULL clears it; allocate_id NULL keeps the previous
  * allocator (the TS `allocateId !== undefined` test). */
 void qa_audio_mixer_set_voice_observer(qa_audio_mixer *mixer,
@@ -198,6 +184,8 @@ void qa_audio_mixer_select_time(qa_audio_mixer *mixer, double sound_time,
 double qa_audio_mixer_rebase_time(qa_audio_mixer *mixer, double delivered_time);
 void qa_audio_mixer_set_listener(qa_audio_mixer *mixer, double entity,
                                  qa_vec3 origin, qa_axis axis);
+/* TS entityActive. */
+bool qa_audio_mixer_entity_active(const qa_audio_mixer *mixer, double entity);
 void qa_audio_mixer_update_entity_position(qa_audio_mixer *mixer, double entity,
                                            qa_vec3 origin);
 void qa_audio_mixer_set_effects_volume(qa_audio_mixer *mixer, double volume);
@@ -265,12 +253,6 @@ void qa_audio_mixer_reset_raw_to_sound_time(qa_audio_mixer *mixer);
 void qa_audio_mixer_stop_raw(qa_audio_mixer *mixer);
 void qa_audio_mixer_queue_raw(qa_audio_mixer *mixer, const qa_pcm_sound *sound,
                               double volume);
-void qa_audio_mixer_queue_raw_bytes(qa_audio_mixer *mixer, double samples,
-                                    double rate, double width, double channels,
-                                    const uint8_t *data, size_t data_length,
-                                    double volume);
-void qa_audio_mixer_queue_music(qa_audio_mixer *mixer,
-                                const qa_pcm_sound *sound);
 
 /* TS mix(number): direct consumption. out holds frames*2 samples. */
 void qa_audio_mixer_mix(qa_audio_mixer *mixer, double frames, int16_t *out);

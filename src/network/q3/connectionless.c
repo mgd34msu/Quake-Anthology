@@ -12,12 +12,12 @@
 #define MAX_LINE_LENGTH 1023
 #define MAX_CONNECT_INFO 1013
 static const uint8_t CONNECT_WORD[7] = {99,111,110,110,101,99,116};
-static void check_latin1_len(const char *text, size_t max, const char *who) {
+static void check_latin1_len(const char *text, size_t max) {
   /* C bytes are already 0..255; length is strlen (cuts at NUL like TS cString). */
-  if (strlen(text) > max) qa_range_error("Connectionless text exceeds %zu source bytes (%s)", max, who);
+  if (strlen(text) > max) qa_range_error("Connectionless text exceeds %zu source bytes", max);
 }
 bool qa_q3_encode_connectionless_text(const char *text, uint8_t **out, size_t *out_len) {
-  check_latin1_len(text, MAX_PACKET - 4, "text");
+  check_latin1_len(text, MAX_PACKET - 4);
   size_t n = strlen(text);
   *out = malloc(n + 4);
   if (!*out) return false;
@@ -28,7 +28,7 @@ bool qa_q3_encode_connectionless_text(const char *text, uint8_t **out, size_t *o
 bool qa_q3_encode_connect(const char *userinfo, uint8_t **out, size_t *out_len) {
   if (strchr(userinfo, '"') || strchr(userinfo, '\n'))
     qa_range_error("Connect userinfo cannot contain a quote or newline");
-  check_latin1_len(userinfo, MAX_CONNECT_INFO, "userinfo");
+  check_latin1_len(userinfo, MAX_CONNECT_INFO);
   size_t n = strlen(userinfo);
   char *text = malloc(n + 16);
   if (!text) return false;
@@ -72,6 +72,11 @@ static char *command_whitespace(const char *line) {
   norm[o] = 0;
   return norm;
 }
+typedef struct expand_scope { const uint8_t *bytes; size_t len; uint8_t *expanded; size_t length; bool ok; } expand_scope;
+static void expand_body(void *ctx) {
+  expand_scope *scope = ctx;
+  scope->ok = qa_q3_decompress_adaptive(scope->bytes, scope->len, QA_Q3_MAX_MESSAGE_LENGTH - CONNECT_OFFSET, &scope->expanded, &scope->length);
+}
 bool qa_q3_decode_connectionless(const uint8_t *packet, size_t len, qa_q3_connectionless_receiver receiver,
                                  const char *source, qa_q3_connectionless_packet *out) {
   memset(out, 0, sizeof *out);
@@ -86,12 +91,15 @@ bool qa_q3_decode_connectionless(const uint8_t *packet, size_t len, qa_q3_connec
   qa_q3_connectionless_compression compression = QA_Q3_COMPRESSION_NONE;
   bool is_connect = len >= 4 + 7 && memcmp(packet + 4, CONNECT_WORD, 7) == 0;
   if (receiver == QA_Q3_CONNLESS_SERVER && is_connect && len > CONNECT_OFFSET) {
-    uint8_t *expanded = NULL; size_t elen = 0;
-    /* TS wraps decompress errors as BinaryError at CONNECT_OFFSET; C aborts inside
-     * decompress with the RangeError message (unrecoverable) - pre-validate header. */
-    if (len - CONNECT_OFFSET < 2 && len - CONNECT_OFFSET != 0)
-      qa_binary_error(src, CONNECT_OFFSET, "Malformed compressed connectionless payload: Truncated Huffman length");
-    if (!qa_q3_decompress_adaptive(packet + CONNECT_OFFSET, len - CONNECT_OFFSET, QA_Q3_MAX_MESSAGE_LENGTH - CONNECT_OFFSET, &expanded, &elen)) { free(data); return false; }
+    /* TS rewraps any decompression Error as BinaryError at CONNECT_OFFSET. */
+    expand_scope scope = { packet + CONNECT_OFFSET, len - CONNECT_OFFSET, NULL, 0, false };
+    qa_caught_error caught;
+    if (!qa_try(expand_body, &scope, &caught)) {
+      free(data);
+      qa_binary_error(src, CONNECT_OFFSET, "Malformed compressed connectionless payload: %s", caught.message);
+    }
+    if (!scope.ok) { free(data); return false; }
+    uint8_t *expanded = scope.expanded; size_t elen = scope.length;
     uint8_t *nd = malloc(CONNECT_OFFSET + elen);
     if (!nd) { free(data); free(expanded); return false; }
     memcpy(nd, packet, CONNECT_OFFSET);

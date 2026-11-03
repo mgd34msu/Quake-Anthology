@@ -22,9 +22,10 @@ static qa_q3_trace_result do_trace(void *ctx, qa_q3_trace_query query, qa_vec3 o
   q.target.model = query.has_model_index ? query.model_index : 0;
   q.target.origin = origin;
   q.target.angles = angles;
-  q.policy = (qa_trace_policy){"q3", NULL, false, 0, query.mask, NULL,
-    !qa_collision_map_settings_no_curves(s->settings) && (query.has_curves ? query.curves : true),
-    qa_collision_map_settings_player_curve_clip(s->settings) && (query.has_player_curve_clip ? query.player_curve_clip : true)};
+  double contents_mask = query.mask;
+  bool curves2 = !qa_collision_map_settings_no_curves(s->settings) && (query.has_curves ? query.curves : true);
+  bool player_curve_clip2 = qa_collision_map_settings_player_curve_clip(s->settings) && (query.has_player_curve_clip ? query.player_curve_clip : true);
+  q.policy = (qa_trace_policy){"q3", NULL, false, 0, contents_mask, NULL, curves2, player_curve_clip2, false};
   q.numeric = numeric_profile();
   q.pass_actor = NULL;
   qa_trace_result result = s->queries.trace(s->queries.ctx, q);
@@ -49,9 +50,10 @@ static double do_contents(void *ctx, qa_vec3 point, double model, bool has_model
   q.target.model = has_model ? model : 0;
   q.target.origin = origin;
   q.target.angles = angles;
+  bool curves = !qa_collision_map_settings_no_curves(s->settings);
+  bool player_curve_clip = qa_collision_map_settings_player_curve_clip(s->settings);
   q.policy = (qa_trace_policy){"q3", NULL, false, 0, -1, NULL,
-    !qa_collision_map_settings_no_curves(s->settings),
-    qa_collision_map_settings_player_curve_clip(s->settings)};
+    curves, player_curve_clip, false};
   q.numeric = numeric_profile();
   q.pass_actor = NULL;
   qa_point_contents_result result = s->queries.point_contents(s->queries.ctx, q);

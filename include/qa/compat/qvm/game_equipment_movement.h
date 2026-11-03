@@ -48,7 +48,7 @@ void qa_qvm_equipment_movement_close(qa_qvm_equipment_movement *movement);
 /* TS movement(): kind keeps its exact strings ("client-command" |
  * "movement-slice"); run is the TS run closure. */
 int32_t qa_qvm_equipment_movement_movement(qa_qvm_equipment_movement *movement,
-                                           qa_qvmy_function_call *call, const char *kind,
+                                           qa_qvm_module_function_call *call, const char *kind,
                                            int32_t (*run)(void *ctx), void *run_ctx);
 
 /* TS prepareWeapon()'s returned closure state; call restores the word. */
@@ -63,7 +63,7 @@ typedef struct qa_qvm_equipment_weapon_restore {
 
 /* False is TS undefined. */
 bool qa_qvm_equipment_movement_prepare_weapon(qa_qvm_equipment_movement *movement,
-                                              qa_actor_id actor, qa_qvmy_function_call *call,
+                                              qa_actor_id actor, qa_qvm_module_function_call *call,
                                               qa_qvm_equipment_weapon_restore *out);
 void qa_qvm_equipment_weapon_restore_call(qa_qvm_equipment_weapon_restore *restore);
 

@@ -18,16 +18,17 @@
 #include "qa/content/mounts/paths.h"
 #include "qa/foundation/support.h"
 #include "qa/platform/files/contained.h"
+#include "qa/foundation/js_case.h"
 
-/* TS `throw new Error(msg)`: prints "Error: msg" and aborts. */
+/* TS `throw new Error(msg)`: a qa_raise named "Error", so a TS catch (a
+ * qa_try) sees it; uncaught it prints "Error: msg" and aborts. */
 static inline noreturn void qa_catalog_error(const char *format, ...) {
+  char message[QA_CAUGHT_MESSAGE_CAPACITY];
   va_list args;
   va_start(args, format);
-  fputs("Error: ", stderr);
-  vfprintf(stderr, format, args);
-  fputc('\n', stderr);
+  vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 static inline char *qa_catalog_dup(const char *text) {
@@ -63,22 +64,16 @@ static inline bool qa_catalog_ends_with(const char *text, const char *suffix) {
   return a >= b && strcmp(text + (a - b), suffix) == 0;
 }
 
+/* TS text.toLowerCase() (Unicode, on UTF-8 names and paths). */
 static inline char *qa_catalog_lower_dup(const char *text) {
-  char *out = qa_catalog_dup(text != NULL ? text : "");
-  if (out != NULL)
-    for (size_t i = 0; out[i] != '\0'; i++)
-      out[i] = (char)tolower((unsigned char)out[i]);
-  return out;
+  return qa_js_to_lower_case(text != NULL ? text : "");
 }
 
+/* TS left.toLowerCase() === right.toLowerCase(). Regex /x/i tests fold ASCII only;
+ * those sites use strcasecmp instead. */
 static inline bool qa_catalog_ieq(const char *left, const char *right) {
   if (left == NULL || right == NULL) return left == right;
-  while (*left != '\0' && *right != '\0') {
-    if (tolower((unsigned char)*left) != tolower((unsigned char)*right))
-      return false;
-    left++; right++;
-  }
-  return *left == *right;
+  return qa_js_equals_ignore_case(left, right);
 }
 
 /* TS sourceCompare in catalog/index.ts. */

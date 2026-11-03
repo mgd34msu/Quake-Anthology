@@ -1,5 +1,6 @@
 /* Port of src/render/scene/models/renderer.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/models/renderer.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdarg.h>
@@ -22,6 +23,8 @@
 #include "qa/render/scene/models/prepare.h"
 #include "qa/render/scene/models/shadedots.h"
 #include "qa/render/scene/models/transform.h"
+#include "qa/render/scene/skin.h"
+#include "qa/foundation/js.h"
 
 static double fr(double v) { return (double)(float)v; }
 static bool bit(double flags, int32_t mask) { return (qa_int32(flags) & mask) != 0; }
@@ -118,66 +121,25 @@ static size_t camera_frustum(qa_scene_camera camera, qa_plane out[5]) {
   return count;
 }
 
-/* --- Mirrored floodSkin (TS owner: render/scene/skin.ts) --- */
-static uint8_t *flood_skin(qa_byte_view indices, double width, double height,
-                           qa_palette palette) {
-  uint8_t *result = malloc(indices.length ? indices.length : 1);
-  if (result == NULL) return NULL;
-  memcpy(result, indices.bytes, indices.length);
-  if (indices.length == 0) return result;
-  int black = 0;
-  for (int index = 0; index < 256; index++) {
-    size_t offset = (size_t)index * 3;
-    uint8_t r = offset < palette.colors.length ? palette.colors.bytes[offset] : 0;
-    uint8_t g = offset + 1 < palette.colors.length ? palette.colors.bytes[offset + 1] : 0;
-    uint8_t b = offset + 2 < palette.colors.length ? palette.colors.bytes[offset + 2] : 0;
-    if (r == 0 && g == 0 && b == 0) { black = index; break; }
-  }
-  uint8_t fill = result[0];
-  if (fill == (uint8_t)black || fill == 255) return result;
-  size_t *queue = calloc(indices.length, sizeof *queue);
-  if (queue == NULL) return result;
-  size_t qcount = 0;
-  queue[qcount++] = 0;
-  result[0] = 255;
-  long w = (long)width, h = (long)height;
-  for (size_t head = 0; head < qcount; head++) {
-    size_t pixel = queue[head];
-    long x = w > 0 ? (long)(pixel % (size_t)w) : 0;
-    long y = w > 0 ? (long)(pixel / (size_t)w) : 0;
-    uint8_t color = (uint8_t)black;
-    long nexts[4] = {x > 0 ? (long)pixel - 1 : -1,
-                     x + 1 < w ? (long)pixel + 1 : -1,
-                     y > 0 ? (long)pixel - w : -1,
-                     y + 1 < h ? (long)pixel + w : -1};
-    for (int k = 0; k < 4; k++) {
-      long next = nexts[k];
-      if (next < 0 || (size_t)next >= indices.length) continue;
-      uint8_t value = result[next];
-      if (value == fill) { result[next] = 255; queue[qcount++] = (size_t)next; }
-      else if (value != 255) color = value;
-    }
-    result[pixel] = color;
-  }
-  free(queue);
-  return result;
-}
-
 /* --- Materials map --- */
 typedef struct material_entry {
   char *key; /* owned */
   bool is_q3;
   char *name; /* owned, q3 */
-  const qa_mat_compiled_material *original;
-  qa_render_scene_texture texture; /* legacy */
+  qa_registered_scene_material original; /* q3 */
+  const qa_scene_texture *texture; /* legacy; loader-owned */
 } material_entry;
 typedef struct mat_state {
   material_entry *entries;
   size_t count, capacity;
   uint8_t **retained;
   size_t retained_count, retained_capacity;
-  qa_model_image_scratch *scratches;
+  /* Individually allocated: registered textures keep views into them. */
+  qa_model_image_scratch **scratches;
   size_t scratch_count, scratch_capacity;
+  /* world.materialContext results the prepared batches point into. */
+  qa_world_material_context **contexts;
+  size_t context_count, context_capacity;
 } mat_state;
 static mat_state *state_of(qa_scene_model_renderer *r) { return r->materials; }
 static void retain(qa_scene_model_renderer *r, uint8_t *bytes) {
@@ -193,11 +155,48 @@ static void retain(qa_scene_model_renderer *r, uint8_t *bytes) {
 static qa_model_image_scratch *new_scratch(qa_scene_model_renderer *r) {
   mat_state *state = state_of(r);
   if (state->scratch_count == state->scratch_capacity) {
-    state->scratch_capacity = state->scratch_capacity ? state->scratch_capacity * 2 : 16;
-    state->scratches = realloc(state->scratches, state->scratch_capacity * sizeof *state->scratches);
-    if (state->scratches == NULL) return NULL;
+    size_t capacity = state->scratch_capacity ? state->scratch_capacity * 2 : 16;
+    qa_model_image_scratch **grown = realloc(state->scratches, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("Out of memory");
+    state->scratches = grown;
+    state->scratch_capacity = capacity;
   }
-  return &state->scratches[state->scratch_count++];
+  qa_model_image_scratch *scratch = calloc(1, sizeof *scratch);
+  if (scratch == NULL) qa_range_error("Out of memory");
+  state->scratches[state->scratch_count++] = scratch;
+  return scratch;
+}
+static qa_world_material_context *new_world_context(qa_scene_model_renderer *r) {
+  mat_state *state = state_of(r);
+  if (state->context_count == state->context_capacity) {
+    size_t capacity = state->context_capacity ? state->context_capacity * 2 : 16;
+    qa_world_material_context **grown = realloc(state->contexts, capacity * sizeof *grown);
+    if (grown == NULL) qa_range_error("Out of memory");
+    state->contexts = grown;
+    state->context_capacity = capacity;
+  }
+  qa_world_material_context *context = calloc(1, sizeof *context);
+  if (context == NULL) qa_range_error("Out of memory");
+  state->contexts[state->context_count++] = context;
+  return context;
+}
+
+qa_scene_texture_loader *qa_model_render_provider_textures(const qa_model_render_provider *provider) {
+  return provider->textures_getter != NULL ? provider->textures_getter(provider->getter_ctx)
+                                           : provider->textures;
+}
+/* TS this.provider.textures / this.provider.modelPolicy (getter or value). */
+static qa_scene_texture_loader *provider_textures(const qa_scene_model_renderer *r) {
+  return qa_model_render_provider_textures(&r->provider);
+}
+static bool provider_model_policy(const qa_scene_model_renderer *r,
+                                  qa_model_replacement_policy *out) {
+  if (r->provider.model_policy_getter != NULL) {
+    *out = r->provider.model_policy_getter(r->provider.getter_ctx);
+    return true;
+  }
+  *out = r->provider.model_policy;
+  return r->provider.has_model_policy;
 }
 
 static const char *image_kind_name(qa_model_image_selection_kind kind) {
@@ -209,6 +208,14 @@ static const char *image_kind_name(qa_model_image_selection_kind kind) {
   }
   return "";
 }
+/* q1PlayerTranslation(top, bottom): RangeError unless both are integers in 0..13
+ * (checked before any int64 cast; 1.5 must not truncate to a valid colour). */
+static uint8_t *player_translation(const qa_model_source_options *options) {
+  double top = options->player_color_top, bottom = options->player_color_bottom;
+  if (!(top >= 0 && top <= 13 && top == floor(top) && bottom >= 0 && bottom <= 13 && bottom == floor(bottom)))
+    qa_range_error("Q1 player colors must be in 0..13");
+  return qa_q1_player_translation((int64_t)top, (int64_t)bottom);
+}
 static char *material_key(const qa_resolved_resource_reference *resource,
                           const qa_decoded_model *model,
                           const qa_model_image_selection *image,
@@ -218,9 +225,9 @@ static char *material_key(const qa_resolved_resource_reference *resource,
                      str_is(model->as.md5->skin_selection.kind, "q1-mdl-replacement"));
   char translation[96] = "";
   if (translated && options->has_player_colors)
-    (void)snprintf(translation, sizeof translation, "%lld:%lld",
-                   (long long)options->player_color_top,
-                   (long long)options->player_color_bottom);
+    (void)snprintf(translation, sizeof translation, "%s:%s",
+                   QA_JS_NUMBER(options->player_color_top),
+                   QA_JS_NUMBER(options->player_color_bottom));
   const char *middle = (image->kind == QA_MODEL_IMAGE_EXTERNAL ||
                         image->kind == QA_MODEL_IMAGE_INDEXED)
                            ? (image->name != NULL ? image->name : "")
@@ -254,12 +261,12 @@ static void put_material(qa_scene_model_renderer *r, char *key,
 
 bool qa_scene_model_renderer_init(qa_scene_model_renderer *renderer,
                                   qa_model_render_provider provider,
-                                  const qa_render_scene_world *world) {
+                                  qa_world_scene *world) {
   memset(renderer, 0, sizeof *renderer);
   renderer->provider = provider;
   renderer->world = world;
   renderer->materials = calloc(1, sizeof(mat_state));
-  renderer->textures_identity = provider.textures.ctx;
+  renderer->textures = provider_textures(renderer);
   if (renderer->materials == NULL) return false;
   return qa_model_light_sampler_init(&renderer->lighting, world);
 }
@@ -273,14 +280,17 @@ void qa_scene_model_renderer_destroy(qa_scene_model_renderer *renderer) {
     free(state->entries);
     for (size_t i = 0; i < state->retained_count; i++) free(state->retained[i]);
     free(state->retained);
+    for (size_t i = 0; i < state->scratch_count; i++) free(state->scratches[i]);
     free(state->scratches);
+    for (size_t i = 0; i < state->context_count; i++) free(state->contexts[i]);
+    free(state->contexts);
     free(state);
   }
   qa_model_light_sampler_destroy(&renderer->lighting);
   memset(renderer, 0, sizeof *renderer);
 }
 static void reset_if_loader_changed(qa_scene_model_renderer *r) {
-  if (r->textures_identity != r->provider.textures.ctx) {
+  if (r->textures != provider_textures(r)) {
     mat_state *state = state_of(r);
     for (size_t i = 0; i < state->count; i++) {
       free(state->entries[i].key);
@@ -288,7 +298,7 @@ static void reset_if_loader_changed(qa_scene_model_renderer *r) {
     }
     state->count = 0;
     r->material_count = 0;
-    r->textures_identity = r->provider.textures.ctx;
+    r->textures = provider_textures(r);
   }
 }
 
@@ -315,6 +325,7 @@ static void sel_free(selection_list *list) {
   free(list->items);
   memset(list, 0, sizeof *list);
 }
+static void sel_release(void *list) { sel_free(list); }
 /* frames<T>: element pointers of a TimedFrames. */
 static const void **timed_elements(const qa_timed_frames *frames, size_t *out_count) {
   if (!frames->is_group) {
@@ -467,25 +478,27 @@ static selection_list selections_of(const qa_resolved_resource_reference *resour
   return list;
 }
 
-static qa_render_scene_texture indexed_texture(
+static const qa_scene_texture *indexed_texture(
     qa_scene_model_renderer *r, const qa_decoded_model *model,
     const qa_model_image_selection *selection,
     const qa_model_source_options *options) {
   const qa_palette *palette = r->provider.palette;
   if (palette == NULL)
-    qa_range_error("Indexed model %s has no content palette", selection->name);
+    qa_raise("Error", 0, 0, "Indexed model %s has no content palette", selection->name);
   qa_model_image_selection image = *selection;
   uint8_t *flooded = NULL;
   if (model->kind == QA_DECODED_MODEL_Q1_ALIAS) {
-    flooded = flood_skin(selection->pixels, selection->width, selection->height, *palette);
+    /* floodSkin (render/scene/skin.ts): a palette entry past the palette is undefined, not black. */
+    flooded = qa_flood_skin(selection->pixels.bytes, selection->pixels.length, selection->width,
+                            selection->height, *palette, NULL);
+    if (flooded == NULL) qa_range_error("Out of memory");
     retain(r, flooded);
     image.pixels = (qa_byte_view){flooded, selection->pixels.length};
   }
   qa_byte_view translation = {0};
   const qa_byte_view *translation_ptr = NULL;
   if (options->has_player_colors) {
-    uint8_t *bytes = qa_q1_player_translation(
-        (int64_t)options->player_color_top, (int64_t)options->player_color_bottom);
+    uint8_t *bytes = player_translation(options);
     retain(r, bytes);
     translation = (qa_byte_view){bytes, 256};
     translation_ptr = &translation;
@@ -493,78 +506,91 @@ static qa_render_scene_texture indexed_texture(
   qa_model_image_scratch *scratch = new_scratch(r);
   qa_render_image render_image = qa_model_image(&image, *palette, translation_ptr, scratch);
   char *name = options->has_player_colors
-                   ? dup_format("%s:%lld:%lld", selection->name,
-                                (long long)options->player_color_top,
-                                (long long)options->player_color_bottom)
+                   ? dup_format("%s:%s:%s", selection->name,
+                                QA_JS_NUMBER(options->player_color_top),
+                                QA_JS_NUMBER(options->player_color_bottom))
                    : NULL;
-  qa_render_scene_texture result = r->provider.textures.register_texture(
-      r->provider.textures.ctx, name != NULL ? name : selection->name,
-      render_image, (qa_texture_sampling){"repeat", "linear"}, NULL);
+  qa_texture_sampling sampling = {"repeat", "linear"};
+  const qa_scene_texture *result = qa_scene_texture_loader_register(
+      provider_textures(r), name != NULL ? name : selection->name, render_image,
+      &sampling, NULL, false, 0, 0);
   /* Registered name is retained by the loader in TS; keep ours too. */
   if (name != NULL) retain(r, (uint8_t *)name);
   return result;
 }
 
-static qa_render_scene_texture external_texture(
+static const qa_scene_texture *external_texture(
     qa_scene_model_renderer *r, const qa_decoded_model *model,
     const char *name, const qa_model_source_options *options) {
   bool sprite = model->kind == QA_DECODED_MODEL_Q2_SPRITE;
   char *path = qa_model_image_path(name);
-  qa_render_scene_texture texture;
-  bool loaded = path != NULL && r->provider.textures.load(
-                                    r->provider.textures.ctx, path,
-                                    r->provider.family, sprite ? "sprite" : "skin",
-                                    !sprite, &texture);
+  if (path == NULL) qa_range_error("Out of memory");
+  qa_scene_texture_load_options load = {0};
+  load.has_mipmap = true;
+  load.mipmap = !sprite;
+  load.family = qa_game_family_name(r->provider.family);
+  load.usage = sprite ? "sprite" : "skin";
+  const qa_scene_texture *texture = qa_scene_texture_loader_load(provider_textures(r), path, &load);
   free(path);
-  if (!loaded) return r->provider.textures.missing;
+  if (texture == NULL) texture = provider_textures(r)->missing;
   if (model->kind == QA_DECODED_MODEL_MD5 &&
       str_is(model->as.md5->skin_selection.kind, "q1-mdl-replacement") &&
-      options->has_player_colors && texture.content.kind == QA_RENDER_IMAGE_INDEXED8) {
-    uint8_t *bytes = qa_q1_player_translation(
-        (int64_t)options->player_color_top, (int64_t)options->player_color_bottom);
+      options->has_player_colors && texture->content.kind == QA_RENDER_IMAGE_INDEXED8) {
+    uint8_t *bytes = player_translation(options);
     retain(r, bytes);
-    qa_render_image content = texture.content;
+    qa_render_image content = texture->content;
     qa_model_image_scratch *scratch = new_scratch(r);
-    if (scratch != NULL) {
-      scratch->translation = (qa_byte_view){bytes, 256};
-      content.translation = &scratch->translation;
-    }
-    char *registered = dup_format("%s:%lld:%lld", name,
-                                  (long long)options->player_color_top,
-                                  (long long)options->player_color_bottom);
-    qa_render_scene_texture result = r->provider.textures.register_texture(
-        r->provider.textures.ctx, registered, content,
-        (qa_texture_sampling){"repeat", "linear-mipmap-nearest"}, &texture.image);
+    scratch->translation = (qa_byte_view){bytes, 256};
+    content.translation = &scratch->translation;
+    char *registered = dup_format("%s:%s:%s", name,
+                                  QA_JS_NUMBER(options->player_color_top),
+                                  QA_JS_NUMBER(options->player_color_bottom));
+    qa_texture_sampling sampling = {"repeat", "linear-mipmap-nearest"};
+    const qa_scene_texture *result = qa_scene_texture_loader_register(
+        provider_textures(r), registered, content, &sampling, &texture->image, false, 0, 0);
     retain(r, (uint8_t *)registered);
     return result;
   }
   return texture;
 }
 
+/* TS load() returns Promise.reject for a deferred cinematic while the other
+ * selections' loads still run; the preload rejects after all of them start.
+ * The first deferred name is kept here and raised once the loops finish. */
+typedef struct deferred_cinematic { char *name; } deferred_cinematic;
+static void deferred_release(void *value) {
+  deferred_cinematic *deferred = value;
+  free(deferred->name);
+  deferred->name = NULL;
+}
+static void raise_deferred(deferred_cinematic *deferred) {
+  if (deferred->name == NULL) return;
+  char text[512];
+  (void)snprintf(text, sizeof text, "%s", deferred->name);
+  deferred_release(deferred);
+  qa_raise("Error", 0, 0, "Model cinematic deferred until use: %s", text);
+}
 static void load_material(qa_scene_model_renderer *r,
                           const qa_resolved_resource_reference *resource,
                           const qa_decoded_model *model,
                           const qa_model_image_selection *selection,
                           const qa_model_source_options *options,
-                          bool allow_cinematics) {
+                          bool allow_cinematics, deferred_cinematic *deferred) {
   if (!allow_cinematics && r->provider.family == QA_GAME_FAMILY_Q3 &&
       (selection->kind == QA_MODEL_IMAGE_EXTERNAL ||
        selection->kind == QA_MODEL_IMAGE_DEFAULT)) {
     const char *name = selection->kind == QA_MODEL_IMAGE_EXTERNAL ? selection->name : "*default";
-    const char *replacement = NULL;
-    const void *source_registry = NULL;
-    bool has_remap = r->world->remap_definition != NULL &&
-                     r->world->remap_definition(r->world->remap_ctx, name,
-                                                 &replacement, &source_registry);
-    const char *effective = has_remap && replacement != NULL ? replacement : name;
-    bool cinematic = has_remap && source_registry != NULL
-                         ? (r->world->registry_has_cinematic != NULL &&
-                            r->world->registry_has_cinematic(r->world->remap_ctx,
-                                                              source_registry, effective))
-                         : r->provider.shaders.has_cinematic(
-                               r->provider.shaders.ctx, effective);
-    if (cinematic)
-      qa_range_error("Model cinematic deferred until use: %s", effective);
+    /* TS this.world.shaders.registrations.owner.remapDefinition(name). */
+    qa_scene_remap_definition remap;
+    bool has_remap = qa_scene_material_registrations_remap_definition(
+        r->world->shaders->registrations->owner, name, &remap);
+    const char *effective = has_remap && remap.replacement != NULL ? remap.replacement : name;
+    qa_scene_shader_registry *registry = has_remap && remap.source != NULL
+                                             ? remap.source : r->provider.shaders;
+    if (qa_scene_shader_registry_has_cinematic(registry, effective)) {
+      if (deferred->name == NULL) deferred->name = dup_str(effective);
+      return;
+    }
   }
   char *key = material_key(resource, model, selection, options);
   if (key == NULL) return;
@@ -576,14 +602,14 @@ static void load_material(qa_scene_model_renderer *r,
     const char *name = selection->kind == QA_MODEL_IMAGE_EXTERNAL ? selection->name : "*default";
     entry.is_q3 = true;
     entry.name = dup_str(name);
-    entry.original = r->provider.shaders.register_shader(r->provider.shaders.ctx, name);
+    entry.original = qa_scene_shader_registry_register(r->provider.shaders, name, NULL);
     put_material(r, key, entry);
     return;
   }
-  qa_render_scene_texture texture;
+  const qa_scene_texture *texture = NULL;
   switch (selection->kind) {
-    case QA_MODEL_IMAGE_WHITE: texture = r->provider.textures.white; break;
-    case QA_MODEL_IMAGE_DEFAULT: texture = r->provider.textures.missing; break;
+    case QA_MODEL_IMAGE_WHITE: texture = provider_textures(r)->white; break;
+    case QA_MODEL_IMAGE_DEFAULT: texture = provider_textures(r)->missing; break;
     case QA_MODEL_IMAGE_INDEXED: texture = indexed_texture(r, model, selection, options); break;
     case QA_MODEL_IMAGE_EXTERNAL: texture = external_texture(r, model, selection->name, options); break;
   }
@@ -596,10 +622,14 @@ static void preload_selections(qa_scene_model_renderer *r,
                                const qa_resolved_resource_reference *resource,
                                const qa_decoded_model *model,
                                const qa_model_source_options *options,
-                               bool allow_cinematics) {
+                               bool allow_cinematics, deferred_cinematic *deferred) {
   selection_list list = selections_of(resource, model, options);
+  /* A load can raise (TS rejects the preload); free the list then. */
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, sel_release, &list);
   for (size_t i = 0; i < list.count; i++)
-    load_material(r, resource, model, &list.items[i], options, allow_cinematics);
+    load_material(r, resource, model, &list.items[i], options, allow_cinematics, deferred);
+  qa_cleanup_pop(&guard);
   sel_free(&list);
 }
 
@@ -608,11 +638,11 @@ static void preload_visit(qa_scene_model_renderer *r, const qa_scene_entity *ent
   qa_model_source_options source = options != NULL
                                        ? options(options_ctx, entity)
                                        : (qa_model_source_options){0};
-  preload_selections(r, &entity->resource, &entity->model, &source, true);
+  preload_selections(r, &entity->resource, &entity->model, &source, true, NULL);
   bool skip = entity->model.kind == QA_DECODED_MODEL_Q1_ALIAS && source.has_indexed_skin;
   qa_scene_entity replacement;
   if (!skip && qa_replacement_entity(entity, &replacement))
-    preload_selections(r, &replacement.resource, &replacement.model, &source, true);
+    preload_selections(r, &replacement.resource, &replacement.model, &source, true, NULL);
   for (size_t i = 0; i < entity->attachment_count; i++)
     preload_visit(r, entity->attachments[i].entity, options, options_ctx);
 }
@@ -633,7 +663,10 @@ void qa_scene_model_renderer_preload_model(
     const qa_decoded_model *model, qa_model_source_options options,
     bool allow_cinematics) {
   reset_if_loader_changed(renderer);
-  preload_selections(renderer, resource, model, &options, allow_cinematics);
+  deferred_cinematic deferred = {NULL};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, deferred_release, &deferred);
+  preload_selections(renderer, resource, model, &options, allow_cinematics, &deferred);
   if ((model->kind == QA_DECODED_MODEL_Q1_ALIAS ||
        model->kind == QA_DECODED_MODEL_Q2_ALIAS) &&
       !(model->kind == QA_DECODED_MODEL_Q1_ALIAS && options.has_indexed_skin)) {
@@ -644,9 +677,11 @@ void qa_scene_model_renderer_preload_model(
       replacement_model.as.md5 = &replacement->model;
       replacement_model.replacement = NULL;
       preload_selections(renderer, &replacement->resource, &replacement_model,
-                         &options, allow_cinematics);
+                         &options, allow_cinematics, &deferred);
     }
   }
+  qa_cleanup_pop(&guard);
+  raise_deferred(&deferred);
 }
 
 /* --- prepare() vertex lighting --- */
@@ -665,7 +700,7 @@ static long alias_normal_index(qa_vec3 normal) {
 }
 static char *key_number(char *buffer, size_t size, double value) {
   if (value == 0 && signbit(value)) (void)snprintf(buffer, size, "-0");
-  else (void)snprintf(buffer, size, "%g", value);
+  else (void)snprintf(buffer, size, "%s", QA_JS_NUMBER(value));
   return buffer;
 }
 
@@ -694,9 +729,9 @@ typedef struct illum {
 
 struct prepare_call {
   qa_scene_model_renderer *renderer;
-  const qa_render_scene_world_view_input *input;
-  qa_render_scene_world_view_input lighting_input_storage;
-  const qa_render_scene_world_view_input *lighting_input;
+  const qa_world_view_input *input;
+  qa_world_view_input lighting_input_storage;
+  const qa_world_view_input *lighting_input;
   qa_surface_dynamic_light *lighting_lights; /* owned */
   double time;
   const qa_q2_fragment_light *cone_lights;
@@ -755,18 +790,18 @@ static bool previous_normal_index_of(illum *st, double corner, double *out) {
     return false;
   const qa_q1_alias_model *mdl = entity->model.as.q1_alias;
   double triangle_index = trunc(corner / 3);
-  if (!(triangle_index >= 0) || (size_t)triangle_index >= mdl->triangle_count)
+  if (!(triangle_index >= 0) || triangle_index >= (double)mdl->triangle_count)
     return false;
   double vertex = mdl->triangles[(size_t)triangle_index].vertices[(size_t)fmod(corner, 3)];
   double old_index = entity->pose.previous_frame;
   if (!(old_index >= 0) || trunc(old_index) != old_index ||
-      (size_t)old_index >= mdl->frame_count)
+      old_index >= (double)mdl->frame_count)
     return false;
   const qa_q1_alias_frame *old_frame = qa_q1_sample_alias_frame(
       &mdl->frames[(size_t)old_index], st->call->time,
       st->source.has_sync_base ? st->source.sync_base : 0);
   if (old_frame == NULL || !(vertex >= 0) || trunc(vertex) != vertex ||
-      (size_t)vertex >= old_frame->compressed_vertex_count)
+      vertex >= (double)old_frame->compressed_vertex_count)
     return false;
   *out = old_frame->compressed_vertices[(size_t)vertex].normal_index;
   return true;
@@ -794,7 +829,7 @@ static qa_vec3 illuminate(void *ctx, qa_vec3 normal, qa_vec3 position, double co
       size_t table_count = 0;
       const qa_vec3 *table = qa_alias_normal_table(&table_count);
       if (previous_index >= 0 && trunc(previous_index) == previous_index &&
-          (size_t)previous_index < table_count) {
+          previous_index < (double)table_count) {
         qa_vec3 previous = table[(size_t)previous_index];
         color = qa_add3(qa_scale3(current, 1 - entity->pose.back_lerp),
                         qa_scale3(qa_diffuse_color(previous, st->entity_lighting),
@@ -855,21 +890,17 @@ static qa_vec3 illuminate(void *ctx, qa_vec3 normal, qa_vec3 position, double co
           ambient += amount;
           shade += amount;
         }
-        if (r->world->map.kind != QA_DECODED_WORLD_Q2 && call->input->has_lights) {
+        if (r->world->map.kind != QA_DECODED_WORLD_Q2) { /* TS input.lights ?? [] */
           for (size_t li = 0; li < call->input->light_count; li++) {
             qa_vec3 difference = qa_sub3(entity->transform.origin,
                                          call->input->lights[li].origin);
             double amount = call->input->lights[li].radius -
-                            hypot(difference.x, hypot(difference.y, difference.z));
-            /* TS Math.hypot(x,y,z) */
-            amount = call->input->lights[li].radius -
-                     sqrt(difference.x * difference.x + difference.y * difference.y +
-                          difference.z * difference.z);
+                            qa_js_hypot3(difference.x, difference.y, difference.z);
             if (amount > 0) { ambient += amount; shade += amount; }
           }
         }
-        ambient = fmin(128, ambient);
-        shade = fmin(shade, 192 - ambient);
+        ambient = qa_js_min(128, ambient);
+        shade = qa_js_min(shade, 192 - ambient);
         if (((st->source.has_player && st->source.player) ||
              str_is(entity->resource.requested_path, "progs/player.mdl")) && ambient < 8)
           shade = 8;
@@ -900,7 +931,7 @@ static qa_vec3 illuminate(void *ctx, qa_vec3 normal, qa_vec3 position, double co
   if (has_previous && entity->pose.is_frame && has_shade) {
     double old_shade = shade;
     if (previous_index >= 0 && trunc(previous_index) == previous_index &&
-        (size_t)previous_index < 256)
+        previous_index < (double)256)
       old_shade = (double)qa_r_avertexnormal_dots[st->row * 256 + (size_t)previous_index];
     shade = shade * (1 - entity->pose.back_lerp) + old_shade * entity->pose.back_lerp;
   }
@@ -998,13 +1029,13 @@ static qa_model_source_options cached_options(void *ctx,
 static qa_vec3 renderer_palette_color(qa_scene_model_renderer *r, double index) {
   const qa_palette *palette = r->provider.palette;
   if (palette == NULL)
-    qa_range_error("Indexed model effects require a source palette");
+    qa_raise("Error", 0, 0, "Indexed model effects require a source palette");
   double offset = index * 3;
   qa_vec3 out = {0, 0, 0};
   double *channels[3] = {&out.x, &out.y, &out.z};
   for (int i = 0; i < 3; i++) {
     double at = offset + i;
-    if (at >= 0 && trunc(at) == at && (size_t)at < palette->colors.length)
+    if (at >= 0 && trunc(at) == at && at < (double)palette->colors.length)
       *channels[i] = palette->colors.bytes[(size_t)at];
   }
   return out;
@@ -1016,7 +1047,7 @@ static qa_vec3 palette_color_cb(void *ctx, const qa_scene_entity *entity,
 }
 
 /* --- fogFor / world arrays / shade division --- */
-static const qa_render_scene_fog_selection *fog_for(
+static const qa_fog_selection *fog_for(
     qa_scene_model_renderer *r, const qa_prepared_model_surface *surface) {
   const qa_scene_entity *entity = &surface->entity;
   const qa_decoded_model *model = &entity->model;
@@ -1031,7 +1062,7 @@ static const qa_render_scene_fog_selection *fog_for(
                        fr(center.z + surface->fog_local_origin.z)};
     radius = surface->fog_radius;
     for (size_t i = 0; i < r->world->fog_selection_count; i++) {
-      qa_bounds b = r->world->fog_selections[i].volume_bounds;
+      qa_bounds b = r->world->fog_selections[i].volume.bounds;
       if (fr(center.x - radius) < b.max.x && fr(center.x + radius) > b.min.x &&
           fr(center.y - radius) < b.max.y && fr(center.y + radius) > b.min.y &&
           fr(center.z - radius) < b.max.z && fr(center.z + radius) > b.min.z)
@@ -1040,12 +1071,12 @@ static const qa_render_scene_fog_selection *fog_for(
     return NULL;
   }
   if (model->kind == QA_DECODED_MODEL_Q3_MESH)
-    qa_range_error("Prepared MD3 surface lost its selected-frame fog sphere");
+    qa_raise("Error", 0, 0, "Prepared MD3 surface lost its selected-frame fog sphere");
   if (surface->options.has_source && model->kind == QA_DECODED_MODEL_MD4)
     return NULL;
   if (model->kind == QA_DECODED_MODEL_MD4) {
     const qa_md4_frame *pose = NULL;
-    if (frame >= 0 && trunc(frame) == frame && (size_t)frame < model->as.md4->frame_count)
+    if (frame >= 0 && trunc(frame) == frame && frame < (double)model->as.md4->frame_count)
       pose = &model->as.md4->frames[(size_t)frame];
     else if (model->as.md4->frame_count > 0) pose = &model->as.md4->frames[0];
     if (pose != NULL) {
@@ -1054,7 +1085,7 @@ static const qa_render_scene_fog_selection *fog_for(
     }
   } else if (model->kind == QA_DECODED_MODEL_MD5) {
     const qa_md5_model_frame *pose = NULL;
-    if (frame >= 0 && trunc(frame) == frame && (size_t)frame < model->as.md5->frame_count)
+    if (frame >= 0 && trunc(frame) == frame && frame < (double)model->as.md5->frame_count)
       pose = &model->as.md5->frames[(size_t)frame];
     else if (model->as.md5->frame_count > 0) pose = &model->as.md5->frames[0];
     if (pose != NULL) radius = qa_radius_from_bounds(pose->bounds);
@@ -1070,7 +1101,7 @@ static const qa_render_scene_fog_selection *fog_for(
     radius = qa_radius_from_bounds(bounds);
   }
   for (size_t i = 0; i < r->world->fog_selection_count; i++) {
-    qa_bounds b = r->world->fog_selections[i].volume_bounds;
+    qa_bounds b = r->world->fog_selections[i].volume.bounds;
     if (center.x - radius < b.max.x && center.x + radius > b.min.x &&
         center.y - radius < b.max.y && center.y + radius > b.min.y &&
         center.z - radius < b.max.z && center.z + radius > b.min.z)
@@ -1162,17 +1193,19 @@ static qa_batch_lighting cone_model_lighting(void *ctx, qa_material_geometry geo
 
 typedef struct draw_call {
   prepare_call *call;
-  const qa_render_scene_world_view_input *input;
+  const qa_world_view_input *input;
 } draw_call;
 
-static const qa_mat_compiled_material *remapped(
-    qa_scene_model_renderer *r, const qa_mat_compiled_material *original,
-    double *time_offset_out) {
+/* TS currentRemap(original)?.material ?? original, with its timeOffset. */
+static const qa_mat_compiled_material *remapped(qa_registered_scene_material original,
+                                                double *time_offset_out) {
   *time_offset_out = 0;
-  if (r->provider.shaders.current_remap == NULL) return original;
-  const qa_mat_compiled_material *remap = r->provider.shaders.current_remap(
-      r->provider.shaders.ctx, original, time_offset_out);
-  return remap != NULL ? remap : original;
+  qa_scene_material_remap remap;
+  if (qa_current_remap(qa_registered_scene_material_compiled(original), original.handle, &remap)) {
+    *time_offset_out = remap.time_offset;
+    return qa_registered_scene_material_compiled(remap.material);
+  }
+  return qa_registered_scene_material_compiled(original);
 }
 
 static qa_scene_model_group *draw_surface(void *ctx,
@@ -1185,7 +1218,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
   draw_call *dc = ctx;
   prepare_call *call = dc->call;
   qa_scene_model_renderer *r = call->renderer;
-  const qa_render_scene_world_view_input *input = dc->input;
+  const qa_world_view_input *input = dc->input;
   qa_model_source_options options = surface->options;
   *out_count = 0;
   char *key = material_key(&surface->entity.resource, &surface->entity.model,
@@ -1193,7 +1226,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
   material_entry *material = key != NULL ? find_material(r, key) : NULL;
   free(key);
   if (material == NULL)
-    qa_range_error("Model material was not preloaded: %s/%s",
+    qa_raise("Error", 0, 0, "Model material was not preloaded: %s/%s",
                    surface->entity.resource.requested_path, surface->name);
   double time = source_seconds(input->time);
   double flags = flags_is(&surface->entity, "q2") ? surface->entity.flags_bits : 0;
@@ -1207,35 +1240,29 @@ static qa_scene_model_group *draw_surface(void *ctx,
   if (group == NULL) return NULL;
   if (material->is_q3) {
     double remap_offset = 0;
-    const qa_mat_compiled_material *compiled =
-        remapped(r, material->original, &remap_offset);
+    const qa_mat_compiled_material *compiled = remapped(material->original, &remap_offset);
     qa_axis axis = surface->transform.axis;
     qa_axis scaled_axis = {{qa_scale3(axis.vectors[0], surface->transform.scale.x),
                             qa_scale3(axis.vectors[1], surface->transform.scale.y),
                             qa_scale3(axis.vectors[2], surface->transform.scale.z)}};
-    const qa_render_scene_fog_selection *fog = fog_for(r, surface);
-    qa_material_draw_context context = {0};
-    if (r->world->material_context != NULL)
-      r->world->material_context(r->world->material_context_ctx, input,
-                                 surface->transform.origin, scaled_axis,
-                                 fog != NULL ? fog->volume : NULL, &context);
+    const qa_fog_selection *fog = fog_for(r, surface);
+    qa_scene_model_transform world_transform = {surface->transform.origin, scaled_axis, false, 0};
+    qa_world_material_context *base = new_world_context(r);
+    qa_world_scene_material_context(r->world, input, &world_transform,
+                                    fog != NULL ? &fog->volume : NULL, base);
+    qa_material_draw_context context = base->context;
     cone_lighting_ctx cone = {surface->transform, call->cone_lights,
-                              call->cone_count, input->q2_fragment_atlas};
+                              call->cone_count, input->fragment_atlas};
     if (receives_cone) {
+      /* Called only inside the batch prepare below. */
       context.model_lighting = cone_model_lighting;
-      /* Retained with the batches it feeds (see world_arrays note). */
-      cone_lighting_ctx *retained = malloc(sizeof *retained);
-      if (retained != NULL) *retained = cone;
-      context.model_lighting_ctx = retained;
+      context.model_lighting_ctx = &cone;
     }
     context.entity_rgba = qa_byte_color(surface->entity.color);
-    qa_entity_lighting *lighting = malloc(sizeof *lighting);
-    if (lighting != NULL) {
-      *lighting = qa_model_light_sampler_entity_lighting(
-          &r->lighting, &surface->entity, input,
-          options.has_no_world_model && options.no_world_model);
-      context.lighting = lighting;
-    }
+    base->lighting_value = qa_model_light_sampler_entity_lighting(
+        &r->lighting, &surface->entity, input,
+        options.has_no_world_model && options.no_world_model);
+    context.lighting = &base->lighting_value;
     if (options.has_shader_tex_coord) context.shader_tex_coord = options.shader_tex_coord;
     qa_vec3 origin = surface->transform.origin;
     context.local_view_origin = qa_q3_model_view_origin(
@@ -1244,23 +1271,15 @@ static qa_scene_model_group *draw_surface(void *ctx,
     context.depth_range[0] = surface->depth_range[0];
     context.depth_range[1] = surface->depth_range[1];
     context.time_offset = source_seconds(surface->entity.shader_time) + remap_offset;
+    qa_vec3 non_normalized_axis = scaled_axis.vectors[0];
     if (options.has_non_normalized_axes && options.non_normalized_axes) {
-      qa_vec3 *retained_axis = malloc(sizeof *retained_axis);
-      if (retained_axis != NULL) *retained_axis = scaled_axis.vectors[0];
-      context.deform_view.non_normalized_axis = retained_axis;
+      context.deform_view.non_normalized_axis = &non_normalized_axis;
     } else {
       context.deform_view.non_normalized_axis = NULL;
     }
+    /* Batches keep no projector: it runs only inside the prepare below. */
     projector_ctx pc = {&call->projector, false, &surface->transform};
-    projector_ctx *retained_pc = malloc(sizeof *retained_pc);
-    if (retained_pc != NULL) *retained_pc = pc;
-    qa_model_transform *retained_transform = malloc(sizeof *retained_transform);
-    if (retained_transform != NULL && retained_pc != NULL) {
-      *retained_transform = surface->transform;
-      retained_pc->transform = retained_transform;
-      retained_pc->projector = &call->projector;
-    }
-    context.project = (qa_mat_project_fn){retained_pc, project_fn};
+    context.project = (qa_mat_project_fn){&pc, project_fn};
     size_t batch_count = 0;
     qa_draw_batch *batches = qa_prepare_material_batches(
         compiled, surface->local_geometry, &context, &batch_count);
@@ -1271,7 +1290,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
       group->material = compiled;
     } else {
       group->kind = "source";
-      group->material = material->original;
+      group->source_material = material->original;
       group->source_view = options.source_view;
       group->source_entity = options.source_entity;
       group->surface = surface->surface_index;
@@ -1282,7 +1301,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
     return group;
   }
   /* Legacy path. */
-  qa_render_scene_texture texture = material->texture;
+  const qa_scene_texture *texture = material->texture;
   double alpha = surface->translucent ? surface->entity.color.w : 1;
   qa_surface_lighting lighting = {0};
   lighting.kind = "vertex";
@@ -1291,10 +1310,10 @@ static qa_scene_model_group *draw_surface(void *ctx,
     qa_create_q1_options create_options = {0};
     create_options.has_alpha = true;
     create_options.alpha = alpha;
-    definition = qa_create_q1_material(texture.name, texture.image, lighting,
+    definition = qa_create_q1_material(texture->name, texture->image, lighting,
                                        create_options);
   } else {
-    definition = qa_create_q2_material(texture.name, &texture.image, 1, lighting, 0, NULL);
+    definition = qa_create_q2_material(texture->name, &texture->image, 1, lighting, 0, NULL);
     definition.alpha = alpha;
   }
   bool liquid = str_is(definition.kind, "q1")
@@ -1311,7 +1330,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
   legacy_context.time = time;
   legacy_context.animation_frame = 0;
   legacy_context.alternate_animation = false;
-  legacy_context.fullbright = surface->unlit ? NULL : texture.fullbright;
+  legacy_context.fullbright = surface->unlit ? NULL : texture->fullbright;
   legacy_context.q1_lightmap_encoding = "rgb";
   legacy_context.cull = surface->cull;
   legacy_context.depth_range[0] = surface->depth_range[0];
@@ -1322,17 +1341,15 @@ static qa_scene_model_group *draw_surface(void *ctx,
                                                  &legacy_context, &batch_count);
     for (size_t i = 0; i < batch_count; i++) batches[i].space = "world";
   } else {
-    projector_ctx *pc = malloc(sizeof *pc);
-    if (pc != NULL)
-      *pc = (projector_ctx){&call->projector, surface->mirror_weapon, NULL};
-    legacy_context.project = (qa_mat_project_fn){pc, project_fn};
+    projector_ctx pc = {&call->projector, surface->mirror_weapon, NULL};
+    legacy_context.project = (qa_mat_project_fn){&pc, project_fn};
     batches = qa_prepare_legacy_material_batches(&definition, surface->geometry,
                                                  &legacy_context, &batch_count);
   }
   qa_vec3 shade;
   bool has_shade = find_light(call, &surface->entity, &shade);
   bool receives = r->provider.family == QA_GAME_FAMILY_Q2 && has_shade &&
-                  has_shadows && input->q2_fragment_atlas != NULL &&
+                  has_shadows && input->fragment_atlas != NULL &&
                   !surface->unlit &&
                   !(options.has_view_model && options.view_model) &&
                   ((qa_int32(flags) & (QA_Q2_SHELL_MASK | 8 | 4 | 16)) == 0) &&
@@ -1342,17 +1359,17 @@ static qa_scene_model_group *draw_surface(void *ctx,
   if (receives) {
     if (call->cone_lights == NULL) {
       affecting = qa_alias_shadow_light_fractions(
-          surface->entity.transform.origin, shade, input->q2_fragment_lights,
-          input->q2_fragment_light_count, 1, false, &affecting_count);
+          surface->entity.transform.origin, shade, input->fragment_lights,
+          input->fragment_light_count, 1, false, &affecting_count);
     } else {
       qa_q2_fragment_light *point_lights =
-          calloc(input->q2_fragment_light_count ? input->q2_fragment_light_count : 1,
+          calloc(input->fragment_light_count ? input->fragment_light_count : 1,
                  sizeof *point_lights);
       size_t point_count = 0;
       if (point_lights != NULL)
-        for (size_t i = 0; i < input->q2_fragment_light_count; i++)
-          if (input->q2_fragment_lights[i].cone == NULL)
-            point_lights[point_count++] = input->q2_fragment_lights[i];
+        for (size_t i = 0; i < input->fragment_light_count; i++)
+          if (input->fragment_lights[i].cone == NULL)
+            point_lights[point_count++] = input->fragment_lights[i];
       affecting = qa_alias_shadow_light_fractions(
           surface->entity.transform.origin, shade, point_lights, point_count, 1,
           false, &affecting_count);
@@ -1372,7 +1389,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
     batch->state = state;
     if (bi != 0) continue;
     bool alias_shadow = affecting_count != 0 && has_shadows &&
-                        input->q2_fragment_atlas != NULL;
+                        input->fragment_atlas != NULL;
     if (alias_shadow) {
       qa_vec3 *positions = NULL, *normals = NULL;
       world_arrays(surface->geometry, &positions, &normals);
@@ -1384,18 +1401,18 @@ static qa_scene_model_group *draw_surface(void *ctx,
       batch->lighting.model_shadow_light_count = affecting_count;
       batch->lighting.has_shade_scale = true;
       batch->lighting.shade_scale = shade_scale;
-      batch->lighting.atlas_value = *input->q2_fragment_atlas;
+      batch->lighting.atlas_value = *input->fragment_atlas;
       shade_divide_batch(batch, shade_scale);
     }
     if (receives_cone && has_shadows) {
       qa_vec3 *positions = NULL, *normals = NULL;
       world_arrays(surface->geometry, &positions, &normals);
       qa_q2_fragment_light *lights =
-          calloc(input->q2_fragment_light_count ? input->q2_fragment_light_count : 1,
+          calloc(input->fragment_light_count ? input->fragment_light_count : 1,
                  sizeof *lights);
       if (lights != NULL)
-        for (size_t li = 0; li < input->q2_fragment_light_count; li++) {
-          lights[li] = input->q2_fragment_lights[li];
+        for (size_t li = 0; li < input->fragment_light_count; li++) {
+          lights[li] = input->fragment_lights[li];
           bool cone = lights[li].cone != NULL;
           if (!cone) {
             lights[li].color = (qa_vec3){0, 0, 0};
@@ -1418,9 +1435,9 @@ static qa_scene_model_group *draw_surface(void *ctx,
       batch->lighting.world_position_count = surface->geometry.vertex_count;
       batch->lighting.normals = normals;
       batch->lighting.normal_count = surface->geometry.vertex_count;
-      batch->lighting.atlas = input->q2_fragment_atlas;
+      batch->lighting.atlas = input->fragment_atlas;
       batch->lighting.lights = lights;
-      batch->lighting.light_count = input->q2_fragment_light_count;
+      batch->lighting.light_count = input->fragment_light_count;
     }
   }
   if (affecting_count == 0) free(affecting);
@@ -1468,7 +1485,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
                  surface->local_geometry.index_count * sizeof *indices);
           shadow->lighting.kind = "vertex";
           shadow->texture.kind = QA_TEXTURE_BINDING_BIND_IMAGE;
-          shadow->texture.image = r->provider.textures.white.image;
+          shadow->texture.image = provider_textures(r)->white->image;
           shadow->state = (qa_render_state){{"src-alpha", "one-minus-src-alpha"},
                                             "less-equal", true, "none",
                                             surface->cull,
@@ -1496,7 +1513,7 @@ static qa_scene_model_group *draw_surface(void *ctx,
 
 qa_scene_model_group *qa_scene_model_renderer_prepare(
     qa_scene_model_renderer *renderer, const qa_scene_entity *entities,
-    size_t entity_count, const qa_render_scene_world_view_input *input,
+    size_t entity_count, const qa_world_view_input *input,
     qa_model_source_options_fn source_options, void *source_options_ctx,
     const qa_model_skinning_frame *skinning_frame, size_t *out_count) {
   prepare_call call = {0};
@@ -1509,14 +1526,14 @@ qa_scene_model_group *qa_scene_model_renderer_prepare(
   /* Cone lights. */
   bool any_cone = false;
   if (input->has_q2_fragment_lighting)
-    for (size_t i = 0; i < input->q2_fragment_light_count; i++)
-      if (input->q2_fragment_lights[i].cone != NULL) any_cone = true;
+    for (size_t i = 0; i < input->fragment_light_count; i++)
+      if (input->fragment_lights[i].cone != NULL) any_cone = true;
   if (any_cone) {
-    call.cone_owned = calloc(input->q2_fragment_light_count, sizeof *call.cone_owned);
+    call.cone_owned = calloc(input->fragment_light_count, sizeof *call.cone_owned);
     if (call.cone_owned != NULL)
-      for (size_t i = 0; i < input->q2_fragment_light_count; i++)
-        if (input->q2_fragment_lights[i].cone != NULL)
-          call.cone_owned[call.cone_count++] = input->q2_fragment_lights[i];
+      for (size_t i = 0; i < input->fragment_light_count; i++)
+        if (input->fragment_lights[i].cone != NULL)
+          call.cone_owned[call.cone_count++] = input->fragment_lights[i];
     call.cone_lights = call.cone_owned;
   }
   call.q2_lighting = renderer->provider.family == QA_GAME_FAMILY_Q2 ||
@@ -1525,14 +1542,14 @@ qa_scene_model_group *qa_scene_model_renderer_prepare(
   call.lighting_input = input;
   if (call.q2_lighting && input->has_q2_fragment_lighting) {
     call.lighting_input_storage = *input;
-    size_t total = input->q2_fragment_light_count +
+    size_t total = input->fragment_light_count +
                    (input->has_lights ? input->light_count : 0);
     call.lighting_lights = calloc(total ? total : 1, sizeof *call.lighting_lights);
     size_t count = 0;
     if (call.lighting_lights != NULL) {
       if (!input->has_lights) {
-        for (size_t i = 0; i < input->q2_fragment_light_count; i++) {
-          const qa_q2_fragment_light *light = &input->q2_fragment_lights[i];
+        for (size_t i = 0; i < input->fragment_light_count; i++) {
+          const qa_q2_fragment_light *light = &input->fragment_lights[i];
           if (call.cone_lights != NULL && light->cone != NULL) continue;
           call.lighting_lights[count++] =
               (qa_surface_dynamic_light){light->origin, light->radius, 0, light->color};
@@ -1540,8 +1557,8 @@ qa_scene_model_group *qa_scene_model_renderer_prepare(
       } else {
         for (size_t i = 0; i < input->light_count; i++)
           call.lighting_lights[count++] = input->lights[i];
-        for (size_t i = 0; i < input->q2_fragment_light_count; i++) {
-          const qa_q2_fragment_light *light = &input->q2_fragment_lights[i];
+        for (size_t i = 0; i < input->fragment_light_count; i++) {
+          const qa_q2_fragment_light *light = &input->fragment_lights[i];
           if (light->cone != NULL || str_is(light->shadow.kind, "none")) continue;
           call.lighting_lights[count++] =
               (qa_surface_dynamic_light){light->origin, light->radius, 0, light->color};
@@ -1557,8 +1574,6 @@ qa_scene_model_group *qa_scene_model_renderer_prepare(
   size_t frustum_count = camera_frustum(input->camera, frustum);
   qa_model_preparation_context context = {0};
   context.skinning_frame = skinning_frame;
-  context.has_model_policy = renderer->provider.has_model_policy;
-  context.model_policy = renderer->provider.model_policy;
   context.camera = input->camera;
   context.time_seconds = call.time;
   context.frustum = frustum;
@@ -1574,6 +1589,8 @@ qa_scene_model_group *qa_scene_model_renderer_prepare(
   qa_scene_model_group *result = NULL;
   size_t result_count = 0, result_capacity = 0;
   for (size_t ei = 0; ei < entity_count; ei++) {
+    /* TS reads this.provider.modelPolicy per entity. */
+    context.has_model_policy = provider_model_policy(renderer, &context.model_policy);
     qa_prepared_model_entity prepared;
     if (!qa_prepare_scene_entity(&entities[ei], &context, &prepared)) {
       qa_prepared_model_entity_destroy(&prepared);
@@ -1658,7 +1675,13 @@ static qa_render_scene_shadow_mesh shadow_mesh_of(qa_material_geometry geometry)
     for (size_t i = 0; i < geometry.vertex_count; i++)
       mesh.positions[i] = geometry.vertices[i].position;
   mesh.position_count = geometry.vertex_count;
-  mesh.indices = geometry.indices;
+  /* The prepared surface frees generated index storage before the caster is
+   * used (TS shares the array, kept alive by the GC): copy it. */
+  mesh.owned_indices = calloc(geometry.index_count ? geometry.index_count : 1,
+                              sizeof *mesh.owned_indices);
+  if (mesh.owned_indices != NULL && geometry.index_count != 0)
+    memcpy(mesh.owned_indices, geometry.indices, geometry.index_count * sizeof *mesh.owned_indices);
+  mesh.indices = mesh.owned_indices;
   mesh.index_count = geometry.index_count;
   return mesh;
 }
@@ -1670,7 +1693,7 @@ static qa_render_scene_shadow_caster shadow_caster_of(
       qa_vec3 position = meshes[mi].positions[pi];
       double dx = position.x - origin.x, dy = position.y - origin.y,
              dz = position.z - origin.z;
-      radius_squared = fmax(radius_squared, dx * dx + dy * dy + dz * dz);
+      radius_squared = qa_js_max(radius_squared, dx * dx + dy * dy + dz * dz);
     }
   double radius = sqrt(radius_squared);
   return (qa_render_scene_shadow_caster){origin, radius > 0 ? radius : 64,
@@ -1690,7 +1713,7 @@ void qa_render_scene_shadow_casters_destroy(
 
 typedef struct shadow_visit {
   qa_scene_model_renderer *renderer;
-  const qa_render_scene_world_view_input *input;
+  const qa_world_view_input *input;
   qa_model_source_options_fn options;
   void *options_ctx;
   const qa_model_skinning_frame *skinning_frame;
@@ -1720,8 +1743,7 @@ static bool retain_shadow_body_cb(void *ctx, const qa_scene_entity *selected,
     if (material == NULL) return true;
     if (material->is_q3) {
       double offset = 0;
-      const qa_mat_compiled_material *compiled =
-          remapped(r, material->original, &offset);
+      const qa_mat_compiled_material *compiled = remapped(material->original, &offset);
       if (compiled->registered.definition.deform_count != 0) return true;
     }
   }
@@ -1736,7 +1758,7 @@ static qa_model_source_options fixed_options(void *ctx,
 static void visit_shadow(shadow_visit *visit, qa_scene_entity entity,
                          const qa_scene_entity *original) {
   qa_scene_model_renderer *r = visit->renderer;
-  const qa_render_scene_world_view_input *input = visit->input;
+  const qa_world_view_input *input = visit->input;
   qa_model_source_options source = visit->options != NULL
                                        ? visit->options(visit->options_ctx, original)
                                        : (qa_model_source_options){0};
@@ -1748,7 +1770,7 @@ static void visit_shadow(shadow_visit *visit, qa_scene_entity entity,
   if (flags_is(&body, "q2"))
     body.flags_bits = (double)(qa_int32(body.flags_bits) & ~QA_Q2_SHELL_MASK);
   if (body.pose.is_frame)
-    body.pose.back_lerp = fmin(1, fmax(0, body.pose.back_lerp));
+    body.pose.back_lerp = qa_js_min(1, qa_js_max(0, body.pose.back_lerp));
   retain_ctx retain = {visit};
   qa_model_preparation_context context = {0};
   context.camera = input->camera;
@@ -1760,8 +1782,7 @@ static void visit_shadow(shadow_visit *visit, qa_scene_entity entity,
     context.retain_shadow_body_ctx = &retain;
   }
   context.skinning_frame = visit->skinning_frame;
-  context.has_model_policy = r->provider.has_model_policy;
-  context.model_policy = r->provider.model_policy;
+  context.has_model_policy = provider_model_policy(r, &context.model_policy);
   qa_model_source_options fixed = source;
   context.options = fixed_options;
   context.options_ctx = &fixed;
@@ -1785,7 +1806,7 @@ static void visit_shadow(shadow_visit *visit, qa_scene_entity entity,
       }
       free(meshes);
       qa_prepared_model_entity_destroy(&prepared);
-      qa_range_error("Shadow material was not preloaded: %s/%s",
+      qa_raise("Error", 0, 0, "Shadow material was not preloaded: %s/%s",
                      entity.resource.requested_path, surface->name);
     }
     qa_render_scene_shadow_mesh mesh;
@@ -1796,26 +1817,26 @@ static void visit_shadow(shadow_visit *visit, qa_scene_entity entity,
       qa_axis scaled_axis = {{qa_scale3(axis.vectors[0], surface->transform.scale.x),
                               qa_scale3(axis.vectors[1], surface->transform.scale.y),
                               qa_scale3(axis.vectors[2], surface->transform.scale.z)}};
-      qa_material_draw_context draw_context = {0};
-      if (r->world->material_context != NULL)
-        r->world->material_context(r->world->material_context_ctx, input,
-                                   surface->transform.origin, scaled_axis, NULL,
-                                   &draw_context);
+      /* TS this.world.materialContext(input, transform): the deformed
+       * geometry is copied out below, so the context need not outlive it. */
+      qa_scene_model_transform world_transform = {surface->transform.origin, scaled_axis, false, 0};
+      qa_world_material_context base;
+      memset(&base, 0, sizeof base);
+      qa_world_scene_material_context(r->world, input, &world_transform, NULL, &base);
+      qa_material_draw_context draw_context = base.context;
       draw_context.entity_rgba = qa_byte_color(entity.color);
       draw_context.local_view_origin = qa_q3_model_view_origin(
           surface->transform.origin, scaled_axis, input->camera.origin,
           source.has_non_normalized_axes && source.non_normalized_axes);
       draw_context.time_offset = source_seconds(entity.shader_time);
+      qa_vec3 non_normalized_axis = scaled_axis.vectors[0];
       if (source.has_non_normalized_axes && source.non_normalized_axes) {
-        qa_vec3 *retained_axis = malloc(sizeof *retained_axis);
-        if (retained_axis != NULL) *retained_axis = scaled_axis.vectors[0];
-        draw_context.deform_view.non_normalized_axis = retained_axis;
+        draw_context.deform_view.non_normalized_axis = &non_normalized_axis;
       } else {
         draw_context.deform_view.non_normalized_axis = NULL;
       }
       double offset = 0;
-      const qa_mat_compiled_material *compiled =
-          remapped(r, material->original, &offset);
+      const qa_mat_compiled_material *compiled = remapped(material->original, &offset);
       draw_context.time_offset += offset;
       qa_material_geometry deformed;
       qa_material_deform_state deform_state = {0};
@@ -1881,7 +1902,7 @@ static void visit_shadow(shadow_visit *visit, qa_scene_entity entity,
 
 qa_render_scene_shadow_caster *qa_scene_model_renderer_prepare_shadow_casters(
     qa_scene_model_renderer *renderer, const qa_scene_entity *entities,
-    size_t entity_count, const qa_render_scene_world_view_input *input,
+    size_t entity_count, const qa_world_view_input *input,
     qa_model_source_options_fn options, void *options_ctx,
     const qa_model_skinning_frame *skinning_frame,
     qa_model_retain_body_fn retain_body, void *retain_body_ctx,

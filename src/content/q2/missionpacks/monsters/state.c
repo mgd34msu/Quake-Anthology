@@ -13,15 +13,44 @@ void qa_q2mpm_state_init(qa_q2mpm_monster_state *state) {
 void qa_q2mpm_state_destroy(qa_q2mpm_monster_state *state) {
   for (size_t i = 0; i < state->actor_count; i++) free(state->actors[i].state.chosen_reinforcements);
   free(state->actors);
+  for (size_t i = 0; i < state->bound_count; i++)
+    qa_session_actor_registry_off_release(state->bound_registries[i], state->bound_subscriptions[i]);
+  free(state->bound_registries);
+  free(state->bound_subscriptions);
   memset(state, 0, sizeof *state);
 }
-qa_q2mpm_rogue_state *qa_q2mpm_state_get(qa_q2mpm_monster_state *state, qa_q2f_entity *entity) {
+static void release_actor(void *ctx, qa_owned_actor actor) {
+  qa_q2mpm_monster_state *state = ctx;
+  for (size_t i = 0; i < state->actor_count; i++) if (qa_same_actor(state->actors[i].actor, actor.id)) {
+    free(state->actors[i].state.chosen_reinforcements);
+    memmove(&state->actors[i], &state->actors[i + 1], (state->actor_count - i - 1) * sizeof *state->actors);
+    state->actor_count--;
+    return;
+  }
+}
+void qa_q2mpm_state_bind(qa_q2mpm_monster_state *state, qa_q2_game_services *game) {
+  void *registry = game->host->actors;
+  for (size_t i = 0; i < state->bound_count; i++) if (state->bound_registries[i] == registry) return;
+  if (state->bound_count == state->bound_cap) {
+    size_t cap = state->bound_cap ? state->bound_cap * 2 : 2;
+    void **grown = realloc(state->bound_registries, cap * sizeof *grown);
+    if (!grown) qa_raise("Error", 0, 0, "Out of memory binding rogue monster state");
+    state->bound_registries = grown;
+    int64_t *ids = realloc(state->bound_subscriptions, cap * sizeof *ids);
+    if (!ids) qa_raise("Error", 0, 0, "Out of memory binding rogue monster state");
+    state->bound_subscriptions = ids; state->bound_cap = cap;
+  }
+  state->bound_registries[state->bound_count] = registry;
+  state->bound_subscriptions[state->bound_count++] =
+      qa_session_actor_registry_on_release(game->host->actors, release_actor, state);
+}
+qa_q2mpm_rogue_state *qa_q2mpm_state_get(qa_q2mpm_monster_state *state, qa_q2_entity *entity) {
   for (size_t i = 0; i < state->actor_count; i++)
     if (qa_same_actor(state->actors[i].actor, entity->actor.id)) return &state->actors[i].state;
   if (state->actor_count == state->actor_cap) {
     size_t cap = state->actor_cap ? state->actor_cap * 2 : 8;
     qa_q2mpm_actor_state *grown = realloc(state->actors, cap * sizeof *grown);
-    if (!grown) qa_q2f_error("Out of memory growing mission-pack monster state");
+    if (!grown) qa_raise("Error", 0, 0, "Out of memory growing mission-pack monster state");
     state->actors = grown;
     state->actor_cap = cap;
   }
@@ -38,10 +67,10 @@ void qa_q2mpm_monsters_checkpoint_free(qa_q2mpm_monsters_checkpoint *checkpoint)
 }
 static bool save_optional(bool has, qa_actor_id actor, bool *out_has, qa_saved_actor_id *out) {
   const qa_actor_id *value = has ? &actor : NULL;
-  *out_has = qa_q2f_save_actor(value, out);
+  *out_has = qa_q2_save_actor(value, out);
   return true;
 }
-bool qa_q2mpm_state_capture(qa_q2mpm_monster_state *state, qa_q2f_game *game, qa_q2mpm_monsters_checkpoint *out) {
+bool qa_q2mpm_state_capture(qa_q2mpm_monster_state *state, qa_q2_game_services *game, qa_q2mpm_monsters_checkpoint *out) {
   memset(out, 0, sizeof *out);
   out->version = 1;
   out->flyer_next_move = state->flyer_next_move;
@@ -49,14 +78,14 @@ bool qa_q2mpm_state_capture(qa_q2mpm_monster_state *state, qa_q2f_game *game, qa
   out->widow_damage_multiplier = state->widow_damage_multiplier;
   size_t live = 0;
   for (size_t i = 0; i < state->actor_count; i++)
-    if (game->host->actors.is_live(game->host->actors.ctx, state->actors[i].actor)) live++;
+    if (qa_session_actor_registry_is_live(game->host->actors, state->actors[i].actor)) live++;
   if (live) {
     out->actors = calloc(live, sizeof *out->actors);
     if (!out->actors) return false;
   }
   for (size_t i = 0; i < state->actor_count; i++) {
     qa_actor_id actor = state->actors[i].actor;
-    if (!game->host->actors.is_live(game->host->actors.ctx, actor)) continue;
+    if (!qa_session_actor_registry_is_live(game->host->actors, actor)) continue;
     const qa_q2mpm_rogue_state *saved = &state->actors[i].state;
     qa_q2mpm_checkpoint_actor *entry = &out->actors[out->actor_count++];
     entry->actor.slot = (double)actor.slot;
@@ -86,11 +115,11 @@ bool qa_q2mpm_state_capture(qa_q2mpm_monster_state *state, qa_q2f_game *game, qa
   }
   return true;
 }
-static void restore_optional(qa_q2f_game *game, bool has, qa_saved_actor_id saved, bool *out_has, qa_actor_id *out) {
+static void restore_optional(qa_q2_game_services *game, bool has, qa_saved_actor_id saved, bool *out_has, qa_actor_id *out) {
   *out_has = has;
-  if (has) *out = game->host->actors.reference_saved(game->host->actors.ctx, saved);
+  if (has) *out = qa_session_actor_registry_reference_saved(game->host->actors, saved, NULL);
 }
-void qa_q2mpm_state_restore(qa_q2mpm_monster_state *state, qa_q2f_game *game, const qa_q2mpm_monsters_checkpoint *checkpoint) {
+void qa_q2mpm_state_restore(qa_q2mpm_monster_state *state, qa_q2_game_services *game, const qa_q2mpm_monsters_checkpoint *checkpoint) {
   for (size_t i = 0; i < state->actor_count; i++) free(state->actors[i].state.chosen_reinforcements);
   state->actor_count = 0;
   state->flyer_next_move = checkpoint->flyer_next_move;
@@ -98,8 +127,8 @@ void qa_q2mpm_state_restore(qa_q2mpm_monster_state *state, qa_q2f_game *game, co
   state->widow_damage_multiplier = checkpoint->widow_damage_multiplier;
   for (size_t i = 0; i < checkpoint->actor_count; i++) {
     const qa_q2mpm_checkpoint_actor *saved = &checkpoint->actors[i];
-    qa_owned_actor actor = qa_q2f_restore_actor(game, saved->actor);
-    qa_q2f_entity probe;
+    qa_owned_actor actor = qa_q2_restore_actor(game, saved->actor);
+    qa_q2_entity probe;
     memset(&probe, 0, sizeof probe);
     probe.actor = actor;
     qa_q2mpm_rogue_state *restored = qa_q2mpm_state_get(state, &probe);
@@ -117,7 +146,7 @@ void qa_q2mpm_state_restore(qa_q2mpm_monster_state *state, qa_q2f_game *game, co
     restored->reinforcement_cap = value->reinforcement_count;
     if (value->reinforcement_count) {
       restored->chosen_reinforcements = malloc(value->reinforcement_count * sizeof *restored->chosen_reinforcements);
-      if (!restored->chosen_reinforcements) qa_q2f_error("Out of memory restoring mission-pack monster state");
+      if (!restored->chosen_reinforcements) qa_raise("Error", 0, 0, "Out of memory restoring mission-pack monster state");
       memcpy(restored->chosen_reinforcements, value->chosen_reinforcements,
              value->reinforcement_count * sizeof *restored->chosen_reinforcements);
     }

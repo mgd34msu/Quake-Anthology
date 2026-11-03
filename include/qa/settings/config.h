@@ -125,7 +125,9 @@ char *qa_config_store_load_text(const qa_config_store *store, const char *name,
 bool qa_config_store_dump(const qa_config_store *store, const char *name,
                           const char *contents);
 
-/* False is the TS null (absent or undecodable document). */
+/* False is the TS null (absent or undecodable document). The loads below
+ * follow TS ConfigStore.decoded: a document that is not JSON or fails its
+ * schema is renamed to `<name>.bad` and loads as absent. */
 bool qa_config_store_load_gyro(const qa_config_store *store, const char *name,
                                qa_gyro_profile *out);
 bool qa_config_store_save_gyro(const qa_config_store *store, const char *name,
@@ -147,6 +149,11 @@ bool qa_config_store_load_global_tuning(const qa_config_store *store,
 bool qa_config_store_save_global_tuning(const qa_config_store *store,
                                         const char *name,
                                         const qa_global_input_tuning *tuning);
+/* Compact JSON.stringify texts of a SeatSettings, an InputBinding list and a
+ * GamepadTuning (key order follows the parsers). Malloc'd; NULL on OOM. */
+char *qa_seat_settings_json(const qa_seat_settings *settings);
+char *qa_input_bindings_json(const qa_input_binding *bindings, size_t count);
+char *qa_gamepad_tuning_json(const qa_gamepad_tuning *tuning);
 /* bindings are saved console binding lines (may be NULL/0). */
 bool qa_config_store_save_cvars(const qa_config_store *store, const char *name,
                                 qa_cvar_registry *cvars,

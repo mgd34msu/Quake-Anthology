@@ -30,11 +30,23 @@ struct qa_llm_session {
   bool closed;
 };
 
+/* JS text.length / text.slice(0, MAX_TURN_CHARS) count UTF-16 units. A cut
+ * inside a surrogate pair leaves TS a lone high surrogate, which UTF-8 text
+ * cannot hold; the C cut keeps the whole pair out instead. */
 static char *clipped(const char *text) {
-  if (strlen(text) <= MAX_TURN_CHARS) return qa_llm_strdup(text);
+  if (qa_llm_utf16_length(text) <= MAX_TURN_CHARS) return qa_llm_strdup(text);
+  size_t units = 0, bytes = 0;
+  while (text[bytes] != '\0') {
+    uint8_t lead = (uint8_t)text[bytes];
+    size_t width = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+    size_t cost = lead >= 0xf0 ? 2 : 1;
+    if (units + cost > MAX_TURN_CHARS) break;
+    units += cost;
+    bytes += width;
+  }
   qa_llm_strbuf out;
   qa_llm_strbuf_init(&out);
-  qa_llm_strbuf_append_n(&out, text, MAX_TURN_CHARS);
+  qa_llm_strbuf_append_n(&out, text, bytes);
   qa_llm_strbuf_append(&out, "\n[truncated for the retained session transcript]");
   return qa_llm_strbuf_steal(&out);
 }
@@ -114,7 +126,8 @@ static int64_t sync_config(qa_llm_session *session) {
   return session->generation;
 }
 
-static bool prime_now(qa_llm_session *session, const char *instructions, qa_llm_error *error) {
+static bool prime_now(qa_llm_session *session, const char *instructions, qa_llm_abort_signal *signal,
+                      qa_llm_error *error) {
   if (!assert_open(session, NULL, error)) return false;
   char *primer = qa_llm_trim_dup(instructions);
   if (primer[0] == '\0') { free(primer); return true; }
@@ -131,6 +144,7 @@ static bool prime_now(qa_llm_session *session, const char *instructions, qa_llm_
       : "This starts an ongoing session for this running program. Read the console context in your instructions, do not execute anything, and reply with READY only.";
   input.instructions = session->primer;
   input.session_id = session->id;
+  input.signal = signal; /* ...(signal === undefined ? {} : { signal }) */
   char *answer = NULL;
   bool ok = session->transport(session->transport_ctx, &input, &answer, error);
   free(answer);
@@ -150,30 +164,40 @@ static bool prime_now(qa_llm_session *session, const char *instructions, qa_llm_
 }
 
 bool qa_llm_session_prime(qa_llm_session *session, const char *instructions, qa_llm_error *error) {
-  return prime_now(session, instructions, error);
+  return prime_now(session, instructions, NULL, error);
 }
 
+/* #compose: the primer, then the turn's instructions; the transcript is not
+ * part of the instructions (it travels in the prompt). */
 static char *session_compose(qa_llm_session *session, const char *turn_instructions) {
-  if (session->primer[0] == '\0' && session->turn_count == 0) return qa_llm_strdup(turn_instructions);
+  bool primer = session->primer[0] != '\0';
+  bool turn = !qa_llm_trim_is_empty(turn_instructions);
+  if (!primer && !turn) return qa_llm_strdup(turn_instructions);
   qa_llm_strbuf out;
   qa_llm_strbuf_init(&out);
-  bool first = true;
-  if (session->primer[0] != '\0') {
-    qa_llm_strbuf_append(&out, session->primer);
-    first = false;
+  if (primer) qa_llm_strbuf_append(&out, session->primer);
+  if (turn) {
+    if (primer) qa_llm_strbuf_append(&out, "\n\n");
+    qa_llm_strbuf_append(&out, "Instructions for the current request:\n");
+    qa_llm_strbuf_append(&out, turn_instructions);
   }
-  if (session->turn_count != 0) {
-    if (!first) qa_llm_strbuf_append(&out, "\n\n");
-    qa_llm_strbuf_append(&out, "Conversation so far in this same program session, oldest first. This is prior context, not proof that any command was executed:");
-    for (size_t i = 0; i < session->turn_count; i++) {
-      qa_llm_strbuf_appendf(&out, "\nUser: %s\nAssistant: %s", session->turns[i].user, session->turns[i].assistant);
-    }
-    first = false;
+  return qa_llm_strbuf_steal(&out);
+}
+
+/* #withTranscript: earlier turns travel as user-level text in the prompt. */
+static char *session_with_transcript(qa_llm_session *session, const char *prompt) {
+  if (session->turn_count == 0) return qa_llm_strdup(prompt);
+  qa_llm_strbuf out;
+  qa_llm_strbuf_init(&out);
+  qa_llm_strbuf_append(&out, "Conversation so far in this same program session, oldest first. This is prior context, not proof that any command was executed:");
+  for (size_t i = 0; i < session->turn_count; i++) {
+    qa_llm_strbuf_append(&out, "\nUser: ");
+    qa_llm_strbuf_append(&out, session->turns[i].user);
+    qa_llm_strbuf_append(&out, "\nAssistant: ");
+    qa_llm_strbuf_append(&out, session->turns[i].assistant);
   }
-  if (!qa_llm_trim_is_empty(turn_instructions)) {
-    if (!first) qa_llm_strbuf_append(&out, "\n\n");
-    qa_llm_strbuf_appendf(&out, "Instructions for the current request:\n%s", turn_instructions);
-  }
+  qa_llm_strbuf_append(&out, "\nCurrent request:\n");
+  qa_llm_strbuf_append(&out, prompt);
   return qa_llm_strbuf_steal(&out);
 }
 
@@ -186,7 +210,8 @@ static void session_trim(qa_llm_session *session) {
   }
   for (;;) {
     size_t size = 0;
-    for (size_t i = 0; i < session->turn_count; i++) size += strlen(session->turns[i].user) + strlen(session->turns[i].assistant);
+    for (size_t i = 0; i < session->turn_count; i++)
+      size += qa_llm_utf16_length(session->turns[i].user) + qa_llm_utf16_length(session->turns[i].assistant);
     if (!(session->turn_count > 2 && size > MAX_TRANSCRIPT_CHARS)) break;
     free(session->turns[0].user);
     free(session->turns[0].assistant);
@@ -200,13 +225,15 @@ bool qa_llm_session_request(qa_llm_session *session, const qa_llm_request_input 
   if (!assert_open(session, input->signal, error)) return false;
   int64_t generation = sync_config(session);
   if (input->session_instructions != NULL) {
-    if (!prime_now(session, input->session_instructions, error)) return false;
+    if (!prime_now(session, input->session_instructions, input->signal, error)) return false;
   }
   if (!assert_current(session, generation, input->signal, error)) return false;
+  /* TS object literal order: prompt (#withTranscript) before instructions. */
+  char *prompt = session_with_transcript(session, input->prompt);
   char *instructions = session_compose(session, input->instructions);
   qa_llm_request_input transport_input;
   memset(&transport_input, 0, sizeof transport_input);
-  transport_input.prompt = input->prompt;
+  transport_input.prompt = prompt;
   transport_input.instructions = instructions;
   transport_input.session_id = session->id;
   transport_input.signal = input->signal;
@@ -214,6 +241,7 @@ bool qa_llm_session_request(qa_llm_session *session, const qa_llm_request_input 
   transport_input.on_text_ctx = input->on_text_ctx;
   char *answer = NULL;
   bool ok = session->transport(session->transport_ctx, &transport_input, &answer, error);
+  free(prompt);
   free(instructions);
   if (!ok) return false;
   if (generation == session->generation && !session->closed && !qa_llm_signal_is_aborted(input->signal)) {

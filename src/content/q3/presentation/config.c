@@ -1,5 +1,6 @@
 /* Port of src/content/q3/presentation/config.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/config.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -93,6 +94,7 @@ static const qa_q3_pres_cvar_definition BASE_TABLE[] = {
   {QA_Q3_PRES_VM_CG_CAMERA_MODE, "com_cameraMode", "0", QA_CVAR_FLAG_CHEAT},
   {QA_Q3_PRES_VM_PMOVE_FIXED, "pmove_fixed", "0", QA_CVAR_FLAG_NONE},
   {QA_Q3_PRES_VM_PMOVE_MSEC, "pmove_msec", "8", QA_CVAR_FLAG_NONE},
+  {QA_Q3_PRES_VM_PMOVE_LADDERS, "pmove_ladders", "1", QA_CVAR_FLAG_NONE},
   {QA_Q3_PRES_VM_CG_NO_TAUNT, "cg_noTaunt", "0", QA_CVAR_FLAG_ARCHIVE},
   {QA_Q3_PRES_VM_CG_NO_PROJECTILE_TRAIL, "cg_noProjectileTrail", "0", QA_CVAR_FLAG_ARCHIVE},
   {QA_Q3_PRES_VM_CG_SMALL_FONT, "ui_smallFont", "0.25", QA_CVAR_FLAG_ARCHIVE},
@@ -196,6 +198,7 @@ static const qa_q3_pres_cvar_definition MISSION_TABLE[] = {
   {QA_Q3_PRES_VM_CG_CAMERA_MODE, "com_cameraMode", "0", QA_CVAR_FLAG_CHEAT},
   {QA_Q3_PRES_VM_PMOVE_FIXED, "pmove_fixed", "0", QA_CVAR_FLAG_NONE},
   {QA_Q3_PRES_VM_PMOVE_MSEC, "pmove_msec", "8", QA_CVAR_FLAG_NONE},
+  {QA_Q3_PRES_VM_PMOVE_LADDERS, "pmove_ladders", "1", QA_CVAR_FLAG_NONE},
   {QA_Q3_PRES_VM_CG_NO_TAUNT, "cg_noTaunt", "0", QA_CVAR_FLAG_ARCHIVE},
   {QA_Q3_PRES_VM_CG_NO_PROJECTILE_TRAIL, "cg_noProjectileTrail", "0", QA_CVAR_FLAG_ARCHIVE},
   {QA_Q3_PRES_VM_CG_SMALL_FONT, "ui_smallFont", "0.25", QA_CVAR_FLAG_ARCHIVE},
@@ -299,6 +302,7 @@ static const char *const SYMBOL_NAMES[] = {
   "cg_cameraMode",
   "pmove_fixed",
   "pmove_msec",
+  "pmove_ladders",
   "cg_noTaunt",
   "cg_noProjectileTrail",
   "cg_smallFont",
@@ -364,7 +368,7 @@ static bool snapshot_copy(qa_cvar_snapshot *out, const qa_cvar_snapshot *source)
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);

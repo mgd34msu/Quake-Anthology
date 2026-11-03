@@ -10,16 +10,18 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/world/handles.h"
 #include "qa/world/session/mod_client_command.h"
 
+/* TS `throw new Error(...)`: catchable (a guest mod's late output call must
+ * not end the process); aborts only when nothing catches it. */
 static noreturn void qa_errorf(const char *format, ...) {
+  char message[1024];
   va_list args;
   va_start(args, format);
-  fprintf(stderr, "Error: ");
-  vfprintf(stderr, format, args);
-  fprintf(stderr, "\n");
+  (void)vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 static bool str_eq(const char *a, const char *b) {
   if (a == NULL || b == NULL) return a == b;
@@ -127,9 +129,17 @@ struct output_state {
   qa_mod_client_application *application;
   int64_t listener_id;
   bool open;
+  bool failed; /* TS failure.value */
+  qa_caught_error failure;
 };
-static void gated_output(void *ctx, qa_mod_client_input_output value) {
-  struct output_state *state = ctx;
+struct output_call {
+  struct output_state *state;
+  qa_mod_client_input_output value;
+};
+static void gated_output_body(void *arg) {
+  struct output_call *call = arg;
+  struct output_state *state = call->state;
+  qa_mod_client_input_output value = call->value;
   qa_mod_client_applications *apps = state->apps;
   if (!state->open ||
       find_listener(apps, state->listener_id) == NULL ||
@@ -138,6 +148,41 @@ static void gated_output(void *ctx, qa_mod_client_input_output value) {
       !live_of(apps, state->application->identity))
     qa_errorf("Input output is outside its live before callback");
   apply_output(apps, state->application, value);
+}
+/* The output closure records its throw before rethrowing; the before
+ * callback rethrows it even when the listener caught it. */
+/* ctx is a closure handle: a listener that keeps the output closure and
+ * calls it after its callback returned gets the TS throw (open is false). */
+static void gated_output(void *ctx, qa_mod_client_input_output value) {
+  struct output_state *state = qa_world_handle_get(ctx);
+  if (state == NULL) qa_errorf("Input output is outside its live before callback");
+  struct output_call call = {state, value};
+  if (!qa_try(gated_output_body, &call, &state->failure)) {
+    state->failed = true;
+    qa_rethrow(&state->failure);
+  }
+}
+struct listener_call {
+  qa_mod_client_application_listener_fn fn;
+  void *ctx;
+  qa_mod_client_application_event *event;
+  struct output_state *state;
+};
+static void run_listener(void *arg) {
+  struct listener_call *call = arg;
+  call->fn(call->ctx, call->event);
+  if (call->event->is_before && call->state->failed) qa_rethrow(&call->state->failure);
+}
+struct publish_scope {
+  qa_mod_client_applications *apps;
+  qa_mod_client_application *previous;
+  int64_t *ids;
+};
+/* finally { this.current = previous } (and the id snapshot). */
+static void publish_release(void *arg) {
+  struct publish_scope *scope = arg;
+  scope->apps->current = scope->previous;
+  free(scope->ids);
 }
 
 static void publish(qa_mod_client_applications *apps,
@@ -153,6 +198,12 @@ static void publish(qa_mod_client_applications *apps,
     if (ids == NULL) abort();
     memcpy(ids, listener_ids, listener_count * sizeof *ids);
   }
+  struct publish_scope scope = {apps, previous, ids};
+  qa_cleanup node;
+  qa_cleanup_push(&node, publish_release, &scope);
+  size_t errors = 0;
+  qa_caught_error first;
+  memset(&first, 0, sizeof first);
   for (size_t i = 0; i < listener_count; i++) {
     struct listener_entry *listener = find_listener(apps, ids[i]);
     if (listener == NULL) continue;
@@ -171,22 +222,36 @@ static void publish(qa_mod_client_applications *apps,
       }
       entered->listener_ids[entered->listener_count++] = ids[i];
     }
-    struct output_state state = {apps, application, ids[i], true};
+    struct output_state state;
+    memset(&state, 0, sizeof state);
+    state.apps = apps;
+    state.application = application;
+    state.listener_id = ids[i];
+    state.open = true;
     qa_mod_client_application_event event;
     memset(&event, 0, sizeof event);
     event.is_before = is_before;
     event.application = application;
     event.outcome = outcome;
     event.output = gated_output;
-    event.output_ctx = &state;
+    event.output_ctx = qa_world_handle_open(&state);
     if (!is_before && str_eq(outcome, "completed") &&
         !live_of(apps, application->identity))
       event.outcome = "actor-removed";
-    fn(ctx, &event);
+    struct listener_call call = {fn, ctx, &event, &state};
+    qa_caught_error caught;
+    bool ok = qa_try(run_listener, &call, &caught);
+    qa_world_handle_close(event.output_ctx);
     state.open = false;
+    if (!ok) {
+      if (is_before) qa_rethrow(&caught); /* the scope cleanup restores current */
+      if (errors++ == 0) first = caught;
+    }
   }
-  free(ids);
-  apps->current = previous;
+  qa_cleanup_pop(&node);
+  publish_release(&scope);
+  if (errors == 1) qa_rethrow(&first);
+  if (errors > 1) qa_raise("AggregateError", 0, 0, "Client input completion callbacks failed");
 }
 
 qa_mod_client_applications *qa_mod_client_applications_create(
@@ -242,6 +307,29 @@ void qa_mod_client_applications_unsubscribe(
     }
 }
 
+struct before_publish {
+  qa_mod_client_applications *apps;
+  qa_mod_client_application *application;
+  const int64_t *ids;
+  size_t count;
+};
+static void run_before_publish(void *arg) {
+  struct before_publish *job = arg;
+  publish(job->apps, job->application, true, NULL, job->ids, job->count);
+}
+struct failed_finish {
+  qa_mod_client_applications *apps;
+  qa_mod_client_application *application;
+};
+static void run_failed_finish(void *arg) {
+  struct failed_finish *job = arg;
+  qa_mod_client_applications_finish(job->apps, job->application, true);
+}
+static void run_release_finish(void *arg) {
+  struct failed_finish *job = arg;
+  qa_mod_client_applications_finish(job->apps, job->application, false);
+}
+
 qa_mod_client_application *qa_mod_client_applications_begin(
     qa_mod_client_applications *applications,
     qa_mod_client_application_input input,
@@ -291,10 +379,12 @@ qa_mod_client_application *qa_mod_client_applications_begin(
     application->has_arsenal = true;
     application->arsenal = *arsenal;
   }
+  /* controls?.impulse ?? arsenal?.impulse ?? command impulse: an arsenal
+   * intent without an impulse falls through to the command. */
   application->controls_impulse =
       input.has_controls
           ? input.controls_impulse
-          : application->has_arsenal
+          : application->has_arsenal && application->arsenal.has_impulse
                 ? application->arsenal.impulse
                 : qa_mod_client_command_impulse(input.command);
   application->invocation = ++applications->ordinal;
@@ -325,10 +415,21 @@ qa_mod_client_application *qa_mod_client_applications_begin(
     if (ids == NULL) abort();
     for (size_t i = 0; i < count; i++) ids[i] = applications->listeners[i].id;
   }
-  publish(applications, application, true, NULL, ids, count);
+  struct before_publish job = {applications, application, ids, count};
+  qa_caught_error caught;
+  bool ok = qa_try(run_before_publish, &job, &caught);
   free(ids);
   applications->encode_aim = saved_encode;
   applications->encode_aim_ctx = saved_encode_ctx;
+  if (!ok) {
+    /* catch (error) { try { finish(application, true) } catch (cleanup) {
+     * throw AggregateError } throw error } */
+    struct failed_finish cleanup_job = {applications, application};
+    qa_caught_error cleanup;
+    if (!qa_try(run_failed_finish, &cleanup_job, &cleanup))
+      qa_raise("AggregateError", 0, 0, "Input callback and cleanup failed");
+    qa_rethrow(&caught);
+  }
   return application;
 }
 
@@ -354,20 +455,28 @@ void qa_mod_client_applications_finish(
 
 void qa_mod_client_applications_release(
     qa_mod_client_applications *applications, qa_actor_id actor) {
-  /* Reverse pending order, as the TS iterates a reversed snapshot. */
-  for (;;) {
-    qa_mod_client_application *target = NULL;
-    for (size_t i = applications->pending_count; i-- > 0;) {
-      qa_mod_client_application *candidate =
-          applications->pending[i].application;
-      if (qa_same_actor(candidate->identity.actor, actor)) {
-        target = candidate;
-        break;
-      }
-    }
-    if (target == NULL) return;
-    qa_mod_client_applications_finish(applications, target, false);
+  /* A reversed snapshot of the pending applications; each finish runs in
+   * its own try. One failure rethrows; several become one AggregateError. */
+  size_t count = 0;
+  qa_mod_client_application **targets =
+      malloc((applications->pending_count != 0 ? applications->pending_count : 1) *
+             sizeof *targets);
+  if (targets == NULL) abort();
+  for (size_t i = applications->pending_count; i-- > 0;) {
+    qa_mod_client_application *candidate = applications->pending[i].application;
+    if (qa_same_actor(candidate->identity.actor, actor)) targets[count++] = candidate;
   }
+  size_t errors = 0;
+  qa_caught_error first;
+  memset(&first, 0, sizeof first);
+  for (size_t i = 0; i < count; i++) {
+    struct failed_finish job = {applications, targets[i]};
+    qa_caught_error caught;
+    if (!qa_try(run_release_finish, &job, &caught) && errors++ == 0) first = caught;
+  }
+  free(targets);
+  if (errors == 1) qa_rethrow(&first);
+  if (errors > 1) qa_raise("AggregateError", 0, 0, "Client input release callbacks failed");
 }
 
 int64_t qa_mod_client_applications_checkpoint(
@@ -378,7 +487,7 @@ int64_t qa_mod_client_applications_checkpoint(
 }
 void qa_mod_client_applications_restore(
     qa_mod_client_applications *applications, int64_t ordinal) {
-  if (ordinal < 0 || applications->pending_count != 0)
+  if (ordinal < 0 || ordinal > QA_MAX_SAFE_INTEGER || applications->pending_count != 0)
     qa_errorf("Invalid client application continuation");
   applications->ordinal = ordinal;
 }

@@ -211,6 +211,117 @@ static void test_impulse(void) {
   fixture_destroy(&fixture);
 }
 
+/* impulse.test.ts PLATFORM-004: an invalid strict impulse is printed and
+ * ignored instead of ending the frame loop. */
+typedef struct printed_lines { char text[8][64]; size_t count; } printed_lines;
+static void record_print(void *ctx, const char *text, const qa_command_context *source) {
+  (void)source;
+  printed_lines *printed = ctx;
+  if (printed->count < 8) snprintf(printed->text[printed->count++], 64, "%s", text);
+}
+static void test_strict_impulse_usage(void) {
+  const qa_command_dialect dialects[2] = {QA_COMMAND_DIALECT_Q2_RERELEASE, QA_COMMAND_DIALECT_Q3};
+  for (int d = 0; d < 2; d++) {
+    seat_fixture fixture;
+    fixture_init(&fixture, "impulse-strict", dialects[d]);
+    qa_command_buffer_append(fixture.commands, "impulse 0x9\n", NULL, -1);
+    qa_command_buffer_execute(fixture.commands);
+    qa_seat_input_sample sample;
+    CHECK(qa_seat_input_take_sample(fixture.input, 20, 20, &sample));
+    CHECK(sample.impulse == 9);
+    qa_seat_input_sample_dispose(&sample);
+    printed_lines printed;
+    memset(&printed, 0, sizeof printed);
+    qa_command_buffer_bind_output(fixture.commands, record_print, &printed);
+    const char *texts[4] = {"9tail", "9.5", "-1", "256"};
+    for (int i = 0; i < 4; i++) {
+      char line[32];
+      snprintf(line, sizeof line, "impulse %s\n", texts[i]);
+      qa_command_buffer_append(fixture.commands, line, NULL, -1);
+      qa_command_buffer_execute(fixture.commands);
+    }
+    CHECK(printed.count == 4);
+    for (size_t i = 0; i < printed.count; i++)
+      CHECK(strcmp(printed.text[i], "Input impulse must fit a byte\n") == 0);
+    CHECK(qa_seat_input_take_sample(fixture.input, 30, 20, &sample));
+    CHECK(sample.impulse == 0);
+    qa_seat_input_sample_dispose(&sample);
+    qa_command_buffer_append(fixture.commands, "+attack 1 abc\n", NULL, -1);
+    qa_command_buffer_execute(fixture.commands);
+    CHECK_ABORTS(qa_seat_input_set_impulse(fixture.input, 256));
+    fixture_destroy(&fixture);
+  }
+}
+
+/* impulse.test.ts PLATFORM-011: fractional wheel events accumulate to whole presses. */
+static void send_wheel(seat_fixture *fixture, double time, double y) {
+  qa_seat_input_event event;
+  memset(&event, 0, sizeof event);
+  event.seat = fixture->seat;
+  event.time_milliseconds = time;
+  event.kind = "mouse-wheel";
+  event.delta.y = y;
+  (void)qa_seat_input_input(fixture->input, &event);
+}
+static void test_fractional_wheel(void) {
+  seat_fixture fixture;
+  fixture_init(&fixture, "wheel", QA_COMMAND_DIALECT_Q1_NETQUAKE);
+  qa_input_binding binding;
+  memset(&binding, 0, sizeof binding);
+  binding.input = key_input(QA_KEY_MOUSE_WHEEL_UP);
+  binding.target.is_action = false;
+  binding.target.text = "impulse 7";
+  CHECK(qa_seat_input_bind(fixture.input, &binding));
+  for (int i = 0; i < 8; i++) send_wheel(&fixture, 10 + i, 0.125);
+  qa_command_buffer_execute(fixture.commands);
+  qa_seat_input_sample sample;
+  CHECK(qa_seat_input_take_sample(fixture.input, 20, 20, &sample));
+  CHECK(sample.impulse == 7);
+  qa_seat_input_sample_dispose(&sample);
+  for (int i = 0; i < 7; i++) send_wheel(&fixture, 30 + i, 0.125);
+  qa_command_buffer_execute(fixture.commands);
+  CHECK(qa_seat_input_take_sample(fixture.input, 40, 20, &sample));
+  CHECK(sample.impulse == 0);
+  qa_seat_input_sample_dispose(&sample);
+  fixture_destroy(&fixture);
+}
+
+/* impulse.test.ts UI-007: releasing a controller device tells the UI to drop
+ * its held sticks. */
+typedef struct axis_events { char text[4][32]; size_t count; } axis_events;
+static bool record_axis(void *ctx, const qa_seat_input_event *event, qa_seat_input_focus focus) {
+  (void)focus;
+  axis_events *events = ctx;
+  if (strcmp(event->kind, "controller-axis") == 0 && events->count < 4)
+    snprintf(events->text[events->count++], 32, "%g:%s:%g", event->device, event->axis, event->value);
+  return false;
+}
+static void test_release_device_axes(void) {
+  qa_identity_owner owner;
+  CHECK(qa_identity_owner_create(&owner, "release-device"));
+  qa_seat_id seat = qa_identity_owner_seat(&owner, 0);
+  qa_command_context context = seat_context(&owner, seat, qa_identity_owner_client(&owner, 0, 0));
+  qa_command_buffer *commands = make_commands(QA_COMMAND_DIALECT_Q3, context);
+  axis_events events;
+  memset(&events, 0, sizeof events);
+  qa_seat_input_options options;
+  memset(&options, 0, sizeof options);
+  options.seat = seat;
+  options.dialect = QA_COMMAND_DIALECT_Q3;
+  options.context = context;
+  options.commands = commands;
+  options.ui_event = record_axis;
+  options.ui_event_ctx = &events;
+  qa_seat_input *input = qa_seat_input_create(&options);
+  qa_seat_input_release_device(input, 4, 100);
+  CHECK(events.count == 2);
+  CHECK(strcmp(events.text[0], "4:left-x:0") == 0);
+  CHECK(strcmp(events.text[1], "4:left-y:0") == 0);
+  qa_seat_input_destroy(input);
+  qa_command_buffer_destroy(commands);
+  qa_identity_owner_destroy(&owner);
+}
+
 static void test_buttons(void) {
   qa_input_button button;
   qa_input_button_init(&button);
@@ -972,6 +1083,9 @@ static void test_router(void) {
 
 int main(void) {
   test_impulse();
+  test_strict_impulse_usage();
+  test_fractional_wheel();
+  test_release_device_axes();
   test_buttons();
   test_keys();
   test_pitch_drift();

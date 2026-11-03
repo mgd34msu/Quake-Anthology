@@ -1,10 +1,9 @@
 /* Port of src/content/q3/presentation/media.ts. GPL-2.0-or-later.
  * Registration from id Software's code/cgame/cg_main.c. TS async
  * registrations are synchronous; register_* return false only on OOM.
- * Mirrored types (TS owners unported): ClientWeaponMediaRegistry +
- * RegisteredWeaponEffects + WeaponPresentationMedia (weapons.ts) and
- * EffectMedia/MissionEffectMedia (effects.ts) are the landed
- * effects.h types; the weapon registry is supplied by the caller. ParticleMedia/ParticleAnimations are the landed
+ * ClientWeaponMediaRegistry + RegisteredWeaponEffects +
+ * WeaponPresentationMedia (weapons.ts) and EffectMedia/MissionEffectMedia
+ * (effects.ts) are the effects.h types; the weapon registry is supplied by the caller. ParticleMedia/ParticleAnimations are the landed
  * render/scene/particles types; SceneShader and qa_particle_shader are
  * layout-identical single-pointer records, so particle views cast. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_MEDIA_H
@@ -210,11 +209,6 @@ typedef struct qa_q3_pres_registered_client_graphics {
 /* TS RegisteredWeaponEffects / ClientWeaponMediaRegistry /
  * EffectMedia / WeaponPresentationMedia (weapons.ts / effects.ts):
  * the landed weapons.h/effects.h types and views. */
-typedef qa_q3_pres_registered_weapon_effects_view qa_q3_pres_registered_weapon_effects_mirror;
-typedef qa_q3_pres_client_weapon_media_registry_view qa_q3_pres_client_weapon_media_registry_mirror;
-typedef qa_q3_pres_mission_effect_media qa_q3_pres_mission_effect_media_mirror;
-typedef qa_q3_pres_effect_media qa_q3_pres_effect_media_mirror;
-typedef qa_q3_pres_weapon_presentation_media qa_q3_pres_weapon_presentation_media_mirror;
 /* TS ClientMedia. inline_models is an owned growing array seeded with
  * the default-model world entry. */
 typedef struct qa_q3_pres_client_media {
@@ -222,7 +216,7 @@ typedef struct qa_q3_pres_client_media {
   qa_q3_pres_client_game_static_state *static_state;
   qa_q3_pres_renderer_resources resources;
   qa_q3_pres_client_sound_bank sound_bank;
-  qa_q3_pres_client_weapon_media_registry_mirror weapon_registry;
+  qa_q3_pres_client_weapon_media_registry_view weapon_registry;
   qa_q3_pres_client_media_sounds sounds;
   qa_q3_pres_client_media_graphics graphics;
   qa_pcm_sound *footsteps[QA_Q3_PRES_FOOTSTEP_KIND_COUNT][4]; /* borrowed, nullable */
@@ -231,20 +225,20 @@ typedef struct qa_q3_pres_client_media {
 /* Product mismatch aborts with the TS Error text. False only on OOM. */
 bool qa_q3_pres_client_media_init(qa_q3_pres_client_media *media, qa_q3_base_product product,
     qa_q3_pres_client_game_static_state *static_state, qa_q3_pres_renderer_resources resources,
-    qa_q3_pres_client_sound_bank sound_bank, qa_q3_pres_client_weapon_media_registry_mirror weapon_registry);
+    qa_q3_pres_client_sound_bank sound_bank, qa_q3_pres_client_weapon_media_registry_view weapon_registry);
 void qa_q3_pres_client_media_destroy(qa_q3_pres_client_media *media);
 qa_q3_pres_client_event_media qa_q3_pres_client_media_events(qa_q3_pres_client_media *media);
 qa_q3_pres_player_media qa_q3_pres_client_media_players(qa_q3_pres_client_media *media);
 /* Aborts with the TS Error text in baseq3. */
 qa_q3_pres_mission_player_media qa_q3_pres_client_media_mission_players(qa_q3_pres_client_media *media);
 qa_q3_pres_packet_entity_media qa_q3_pres_client_media_packet(qa_q3_pres_client_media *media);
-qa_q3_pres_effect_media_mirror qa_q3_pres_client_media_effects(qa_q3_pres_client_media *media);
+qa_q3_pres_effect_media qa_q3_pres_client_media_effects(qa_q3_pres_client_media *media);
 qa_particle_media qa_q3_pres_client_media_particles(qa_q3_pres_client_media *media);
 /* Fills the mission local-entity media (base fields always valid);
  * returns the product (base callers use out->base). */
 qa_q3_base_product qa_q3_pres_client_media_local_entities(qa_q3_pres_client_media *media,
     qa_q3_pres_mission_local_entity_media *out);
-qa_q3_pres_weapon_presentation_media_mirror qa_q3_pres_client_media_weapons(qa_q3_pres_client_media *media);
+qa_q3_pres_weapon_presentation_media qa_q3_pres_client_media_weapons(qa_q3_pres_client_media *media);
 /* False only on OOM. */
 bool qa_q3_pres_register_item_sounds(qa_q3_pres_client_media *media, double number);
 bool qa_q3_pres_register_client_loading_graphics(qa_q3_pres_client_media *media);

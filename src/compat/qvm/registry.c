@@ -162,7 +162,9 @@ void qa_qvm_vm_registry_print_info(qa_qvm_vm_registry *registry, qa_qvm_registry
       print(print_ctx, "TypeScript replacement\n");
       continue;
     }
-    print(print_ctx, "interpreted\n");
+    snprintf(line, sizeof line, "%s\n",
+             strcmp(slots[i].kind, "interpreted") == 0 ? qa_qvm_interpreter_get_semantics(slots[i].interpreter) : "interpreted");
+    print(print_ctx, line);
     snprintf(line, sizeof line, "    code length : %7lld\n", (long long)slot_code_length(&slots[i]));
     print(print_ctx, line);
     snprintf(line, sizeof line, "    table length: %7lld\n", (long long)slot_table_length(&slots[i]));

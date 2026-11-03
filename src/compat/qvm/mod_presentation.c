@@ -37,6 +37,11 @@ static bool matches_module(qa_module_identity first, qa_module_identity second) 
          strcmp(first.digest, second.digest) == 0 && strcmp(first.revision, second.revision) == 0;
 }
 
+/* Keeps an integral host time for the later int32() check; a fraction, NaN or
+ * infinity becomes a value that check rejects, as TS int32() rejects the number. */
+static int64_t checked_later(double value) {
+  return isfinite(value) && value == trunc(value) && fabs(value) < 9.0e18 ? (int64_t)value : INT64_MAX;
+}
 static void check_int32(double value) {
   if (!isfinite(value) || value != trunc(value) || value < -2147483648.0 || value > 2147483647.0)
     qa_range_error("Source presentation value exceeds int32");
@@ -47,8 +52,9 @@ static bool safe_integer(double value) {
 }
 
 static const qa_qvm_instruction *insn_at(const qa_resolved_qvm_artifact *artifact, double index) {
+  /* instructions[index]: NaN, fractions and out-of-range indices find nothing. */
+  if (!(index == trunc(index)) || index < 0 || index >= (double)artifact->image.instruction_count) return NULL;
   int64_t at = (int64_t)index;
-  if (index != trunc(index) || at < 0 || (uint64_t)at >= artifact->image.instruction_count) return NULL;
   return &artifact->image.instructions[at];
 }
 
@@ -226,9 +232,34 @@ typedef struct snapshot_entry {
 
 typedef struct command_entry {
   int64_t sequence;
-  const char **arguments; /* owned array of borrowed strings */
+  char **arguments; /* owned strings: TS keeps the published arrays alive */
   size_t argument_count;
 } command_entry;
+
+static char **copy_strings(const char *const *source, size_t count) {
+  char **copy = xmalloc(count * sizeof *copy);
+  for (size_t i = 0; i < count; i++) {
+    size_t length = strlen(source[i]);
+    copy[i] = xmalloc(length + 1);
+    memcpy(copy[i], source[i], length + 1);
+  }
+  return copy;
+}
+
+static void free_strings(char **list, size_t count) {
+  if (list == NULL) return;
+  for (size_t i = 0; i < count; i++) free(list[i]);
+  free(list);
+}
+
+/* this.arguments_ = value (an owned copy). */
+static void set_scene_arguments(qa_qvm_mod_presentation *presentation, const char *const *arguments,
+                                size_t count) {
+  char **copy = copy_strings(arguments, count);
+  free_strings((char **)presentation->arguments, presentation->argument_count);
+  presentation->arguments = (const char *const *)copy;
+  presentation->argument_count = count;
+}
 
 typedef struct scene_actor_entry {
   int64_t slot;
@@ -265,8 +296,8 @@ typedef struct mesh_scope {
 typedef struct scope_state {
   player_scope *player;
   mesh_scope *mesh;
-  double call_sites[128];
-  const char *call_parts[128];
+  double *call_sites;      /* owned */
+  const char **call_parts; /* owned */
   size_t call_count;
 } scope_state;
 
@@ -361,10 +392,9 @@ static command_entry *find_command(qa_qvm_mod_presentation *presentation, int64_
 static void put_command(qa_qvm_mod_presentation *presentation, int64_t sequence,
                         const char *const *arguments, size_t argument_count) {
   command_entry *found = find_command(presentation, sequence);
-  const char **copy = xmalloc(argument_count * sizeof *copy);
-  memcpy(copy, arguments, argument_count * sizeof *copy);
+  char **copy = copy_strings(arguments, argument_count);
   if (found != NULL) {
-    free(found->arguments);
+    free_strings(found->arguments, found->argument_count);
     found->arguments = copy;
     found->argument_count = argument_count;
     return;
@@ -401,6 +431,9 @@ static void set_scene_actor(qa_qvm_mod_presentation *presentation, int64_t slot,
   actors[presentation->scene_actor_count++] = (scene_actor_entry){slot, actor, owned};
 }
 
+/* TS class RetiredPlayer extends Error. */
+#define RETIRED_PLAYER_MESSAGE "Source event actor no longer owns its original client slot"
+
 static void current(qa_qvm_mod_presentation *presentation, const qa_app_q3_source_player_event *event) {
   presentation->options.assert_current(presentation->options.ctx);
   if (strcmp(presentation->phase, "closed") == 0 || strcmp(presentation->phase, "failed") == 0)
@@ -411,7 +444,7 @@ static void current(qa_qvm_mod_presentation *presentation, const qa_app_q3_sourc
                                            (int64_t)event->player_state.client_number, &resolved);
     if (!presentation->options.live(presentation->options.ctx, event->actor) || !has ||
         !qa_same_actor(resolved, event->actor))
-      qa_range_error("Source event actor no longer owns its original client slot");
+      qa_raise("RetiredPlayer", 0, 0, "%s", RETIRED_PLAYER_MESSAGE);
   }
 }
 
@@ -616,16 +649,18 @@ static void restore_host(qa_qvm_mod_presentation *presentation, qa_save_value *v
     int64_t sequence = (int64_t)integer_field_min(&row, "sequence", 0);
     qa_save_reader arguments_reader = rfield(&row, "arguments");
     size_t argument_count = qa_save_reader_list_count(&arguments_reader);
-    const char **arguments = xmalloc(argument_count * sizeof *arguments);
+    const char **borrowed = xmalloc(argument_count * sizeof *borrowed);
     for (size_t a = 0; a < argument_count; a++) {
       qa_save_reader argument = ritem(&arguments_reader, a);
-      arguments[a] = qa_save_reader_string(&argument);
+      borrowed[a] = qa_save_reader_string(&argument);
       qa_save_reader_destroy(&argument);
     }
+    char **arguments = copy_strings(borrowed, argument_count);
+    free(borrowed);
     qa_save_reader_destroy(&arguments_reader);
     qa_save_reader_destroy(&row);
     if (find_command(presentation, sequence) != NULL) {
-      free(arguments);
+      free_strings(arguments, argument_count);
       qa_save_reader_fail(&reader, "duplicate saved server command");
     }
     if (presentation->command_count == presentation->command_capacity) {
@@ -646,8 +681,8 @@ static void restore_host(qa_qvm_mod_presentation *presentation, qa_save_value *v
     qa_save_reader_destroy(&argument);
   }
   qa_save_reader_destroy(&arguments_reader);
-  presentation->arguments = arguments;
-  presentation->argument_count = argument_count;
+  set_scene_arguments(presentation, arguments, argument_count);
+  free(arguments);
   qa_save_reader scene_actors = rfield(&reader, "sceneActors");
   size_t actor_rows = qa_save_reader_list_count(&scene_actors);
   for (size_t i = 0; i < actor_rows; i++) {
@@ -761,7 +796,7 @@ static void write_source_snapshot_full(qa_qvm_memory *memory, int64_t address,
   int ps_bytes = qa_qvm_player_state_bytes(profile);
   int entity_bytes = qa_qvm_entity_state_bytes_for(profile);
   qa_qvm_writable_view_set_int32(&view, 0, qa_int32(snapshot->flags), true);
-  qa_qvm_writable_view_set_int32(&view, 4, (int32_t)snapshot->player_state.ping_milliseconds, true);
+  qa_qvm_writable_view_set_int32(&view, 4, qa_int32(snapshot->player_state.ping_milliseconds), true);
   qa_qvm_writable_view_set_int32(&view, 8, qa_int32(snapshot->server_time), true);
   qa_qvm_memory_write_bytes(memory, address + 12, snapshot->area_mask, 32);
   qa_qvm_writable_view player_view;
@@ -776,32 +811,32 @@ static void write_source_snapshot_full(qa_qvm_memory *memory, int64_t address,
   qa_qvm_writable_view_set_int32(&view, size - 4, qa_int32(snapshot->server_command_sequence), true);
 }
 
-static qa_qvm_presentation_context build_context(qa_qvm_mod_presentation *presentation,
-                                                 const qa_qvm_scene_context *scene) {
-  qa_qvm_presentation_context context;
-  memset(&context, 0, sizeof context);
-  presentation->options.context(presentation->options.ctx, &context);
+/* Fills *context in place: its snapshot player state points at context->player_slots. */
+static void build_context(qa_qvm_presentation_context *context, qa_qvm_mod_presentation *presentation,
+                          const qa_qvm_scene_context *scene) {
+  memset(context, 0, sizeof *context);
+  presentation->options.context(presentation->options.ctx, context);
   if (scene != NULL) {
-    context.scene = scene;
-    context.game_state = scene->game_state;
-    context.game_state_revision = scene->game_state_revision;
-    context.snapshot_server_time = scene->snapshot.server_time;
-    context.snapshot_player_state = scene->snapshot.player_state;
+    context->scene = scene;
+    context->game_state = scene->game_state;
+    context->game_state_revision = scene->game_state_revision;
+    context->snapshot_server_time = checked_later(scene->snapshot.server_time);
+    context->snapshot_player_state = scene->snapshot.player_state;
     if (scene->snapshot.player_state.stats.values != NULL)
-      memcpy(context.player_slots, scene->snapshot.player_state.stats.values, 16 * sizeof(double));
+      memcpy(context->player_slots, scene->snapshot.player_state.stats.values, 16 * sizeof(double));
     if (scene->snapshot.player_state.persistent.values != NULL)
-      memcpy(context.player_slots + 16, scene->snapshot.player_state.persistent.values, 16 * sizeof(double));
+      memcpy(context->player_slots + 16, scene->snapshot.player_state.persistent.values, 16 * sizeof(double));
     if (scene->snapshot.player_state.powerups.values != NULL)
-      memcpy(context.player_slots + 32, scene->snapshot.player_state.powerups.values, 16 * sizeof(double));
+      memcpy(context->player_slots + 32, scene->snapshot.player_state.powerups.values, 16 * sizeof(double));
     if (scene->snapshot.player_state.ammo.values != NULL)
-      memcpy(context.player_slots + 48, scene->snapshot.player_state.ammo.values, 16 * sizeof(double));
-    context.snapshot_player_state.stats.values = context.player_slots;
-    context.snapshot_player_state.persistent.values = context.player_slots + 16;
-    context.snapshot_player_state.powerups.values = context.player_slots + 32;
-    context.snapshot_player_state.ammo.values = context.player_slots + 48;
-    context.has_time = true;
-    context.time_milliseconds = scene->snapshot.server_time;
-    context.frame_time_milliseconds = 0;
+      memcpy(context->player_slots + 48, scene->snapshot.player_state.ammo.values, 16 * sizeof(double));
+    context->snapshot_player_state.stats.values = context->player_slots;
+    context->snapshot_player_state.persistent.values = context->player_slots + 16;
+    context->snapshot_player_state.powerups.values = context->player_slots + 32;
+    context->snapshot_player_state.ammo.values = context->player_slots + 48;
+    context->has_time = true;
+    context->time_milliseconds = checked_later(scene->snapshot.server_time);
+    context->frame_time_milliseconds = 0;
   }
   int64_t data_game_state;
   const double *times = NULL, *frame_times = NULL;
@@ -817,25 +852,25 @@ static qa_qvm_presentation_context build_context(qa_qvm_mod_presentation *presen
     times = storage->time.values; time_count = storage->time.count;
     frame_times = storage->frame_time.values; frame_time_count = storage->frame_time.count;
   }
-  if (context.game_state_revision < 0 || context.game_state_revision < presentation->revision)
+  if (context->game_state_revision < 0 || context->game_state_revision < presentation->revision)
     qa_range_error("Source gameState revision is invalid or stale");
-  check_int32(context.frame_time_milliseconds);
-  if (context.frame_time_milliseconds < 0 || !isfinite((double)(float)context.view_origin.x) ||
-      !isfinite((double)(float)context.view_origin.y) || !isfinite((double)(float)context.view_origin.z))
+  check_int32(context->frame_time_milliseconds);
+  if (context->frame_time_milliseconds < 0 || !isfinite((double)(float)context->view_origin.x) ||
+      !isfinite((double)(float)context->view_origin.y) || !isfinite((double)(float)context->view_origin.z))
     qa_range_error("Source presentation frame context is invalid");
   if (presentation->has_current_game_state)
     qa_q3_source_game_state_record_destroy(&presentation->current_game_state);
   presentation->current_game_state.string_offsets = xmalloc(1024 * sizeof(int32_t));
-  memcpy(presentation->current_game_state.string_offsets, context.game_state.string_offsets, 1024 * sizeof(int32_t));
+  memcpy(presentation->current_game_state.string_offsets, context->game_state.string_offsets, 1024 * sizeof(int32_t));
   presentation->current_game_state.string_data = xmalloc(16000);
-  memcpy(presentation->current_game_state.string_data, context.game_state.string_data, 16000);
-  presentation->current_game_state.data_count = context.game_state.data_count;
+  memcpy(presentation->current_game_state.string_data, context->game_state.string_data, 16000);
+  presentation->current_game_state.data_count = context->game_state.data_count;
   presentation->has_current_game_state = true;
-  check_int32((double)context.snapshot_server_time);
-  check_int32(context.snapshot_player_state.client_number);
+  check_int32((double)context->snapshot_server_time);
+  check_int32(context->snapshot_player_state.client_number);
   qa_qvm_memory *memory = presentation->module.memory;
-  if (context.game_state_revision != presentation->revision)
-    write_game_state(memory, data_game_state, &context.game_state);
+  if (context->game_state_revision != presentation->revision)
+    write_game_state(memory, data_game_state, &context->game_state);
   if (!is_scene(presentation)) {
     const qa_qvm_player_event_storage *storage = &presentation->options.declaration->as.player_events->storage;
     const char *profile = cgame_profile(presentation);
@@ -844,14 +879,14 @@ static qa_qvm_presentation_context build_context(qa_qvm_mod_presentation *presen
     qa_qvm_writable_view view;
     qa_qvm_memory_data_view(memory, (int64_t)storage->snapshot.address, bytes, &view);
     qa_qvm_writable_view_set_int32(&view, 0, 0, true);
-    qa_qvm_writable_view_set_int32(&view, 4, (int32_t)context.snapshot_player_state.ping_milliseconds, true);
-    qa_qvm_writable_view_set_int32(&view, 8, (int32_t)context.snapshot_server_time, true);
+    qa_qvm_writable_view_set_int32(&view, 4, qa_int32(context->snapshot_player_state.ping_milliseconds), true);
+    qa_qvm_writable_view_set_int32(&view, 8, (int32_t)context->snapshot_server_time, true);
     qa_qvm_memory_fill_bytes(memory, (int64_t)storage->snapshot.address + 12, 32, 0);
     qa_qvm_writable_view player_view;
     qa_qvm_memory_data_view(memory, (int64_t)storage->snapshot.address + 44, ps_bytes, &player_view);
-    qa_qvm_write_source_player_state(&player_view, &context.snapshot_player_state, profile);
+    qa_qvm_write_source_player_state(&player_view, &context->snapshot_player_state, profile);
     qa_qvm_memory_data_view(memory, (int64_t)storage->player_state, ps_bytes, &player_view);
-    qa_qvm_write_source_player_state(&player_view, &context.snapshot_player_state, profile);
+    qa_qvm_write_source_player_state(&player_view, &context->snapshot_player_state, profile);
     qa_qvm_writable_view_set_int32(&view, 44 + ps_bytes, 0, true);
     qa_qvm_writable_view_set_int32(&view, bytes - 8, 0, true);
     qa_qvm_writable_view_set_int32(&view, bytes - 4, 0, true);
@@ -861,7 +896,7 @@ static qa_qvm_presentation_context build_context(qa_qvm_mod_presentation *presen
       qa_qvm_writable_view_set_int32(&pointer_view, 0, (int32_t)storage->snapshot.address, true);
     }
   }
-  int64_t time_value = context.has_time ? context.time_milliseconds : context.snapshot_server_time;
+  int64_t time_value = context->has_time ? context->time_milliseconds : context->snapshot_server_time;
   check_int32((double)time_value);
   for (size_t i = 0; i < time_count; i++) {
     qa_qvm_writable_view view;
@@ -871,10 +906,9 @@ static qa_qvm_presentation_context build_context(qa_qvm_mod_presentation *presen
   for (size_t i = 0; i < frame_time_count; i++) {
     qa_qvm_writable_view view;
     qa_qvm_memory_data_view(memory, (int64_t)frame_times[i], 4, &view);
-    qa_qvm_writable_view_set_int32(&view, 0, context.frame_time_milliseconds, true);
+    qa_qvm_writable_view_set_int32(&view, 0, context->frame_time_milliseconds, true);
   }
-  write_view(presentation, &context);
-  return context;
+  write_view(presentation, context);
 }
 
 static int32_t word_value(qa_qvm_mod_presentation *presentation, const qa_qvm_presentation_argument *argument,
@@ -887,7 +921,7 @@ static int32_t word_value(qa_qvm_mod_presentation *presentation, const qa_qvm_pr
     return (int32_t)(number > 0 ? number : 0);
   }
   if (strcmp(value, "server-command-sequence") == 0)
-    return context->scene != NULL ? context->scene->snapshot.server_command_sequence : 0;
+    return context->scene != NULL ? qa_int32(context->scene->snapshot.server_command_sequence) : 0;
   if (strcmp(value, "player-state") == 0) {
     if (is_scene(presentation)) qa_range_error("Scene calls cannot borrow event projection state");
     return (int32_t)presentation->options.declaration->as.player_events->storage.player_state;
@@ -908,8 +942,8 @@ static int32_t word_value(qa_qvm_mod_presentation *presentation, const qa_qvm_pr
   if (strcmp(value, "entity-state") == 0) return (int32_t)(entity + (int64_t)storage->centities.state);
   if (strcmp(value, "centity") == 0) return (int32_t)entity;
   if (strcmp(value, "origin") == 0) return (int32_t)(entity + (int64_t)storage->centities.origin);
-  if (strcmp(value, "event") == 0) return event->event;
-  return event->parameter;
+  if (strcmp(value, "event") == 0) return qa_int32(event->event);
+  return qa_int32(event->parameter);
 }
 
 typedef struct call_validate {
@@ -990,11 +1024,11 @@ static bool scene_syscall(qa_qvm_mod_presentation *presentation, const qa_qvm_ho
       if (has && qa_same_actor(resolved, mesh->player->actor) && word_at(call, 1) == mesh->pointer) {
         qa_qvm_writable_view view;
         qa_qvm_memory_view(guest, (int32_t)mesh->pointer, QA_QVM_REF_ENTITY_BYTES, 0, &view);
-        qa_qvm_source_ref_entity_record source;
+        qa_q3_pres_source_ref_entity_record source;
         qa_qvm_read_ref_entity(&view, &source);
-        if (strcmp(source.kind, "model") != 0) return false;
+        if (source.kind != QA_Q3_PRES_REF_MODEL) return false;
         qa_qvm_body_mesh *output = &mesh->player->parts[mesh->output_index];
-        if (source.custom_shader == mesh->shader) output->base = true;
+        if (source.custom_shader.handle == mesh->shader) output->base = true;
         else {
           if (output->pass_count == output->pass_capacity) {
             output->pass_capacity = output->pass_capacity == 0 ? 4 : output->pass_capacity * 2;
@@ -1015,7 +1049,7 @@ static bool scene_syscall(qa_qvm_mod_presentation *presentation, const qa_qvm_ho
     qa_qvm_writable_view_set_int32(&view, 0, (int32_t)presentation->snapshot_number, true);
     snapshot_entry *current_snapshot = find_snapshot(presentation, presentation->snapshot_number);
     qa_qvm_memory_view(guest, word_at(call, 2), 4, 0, &view);
-    qa_qvm_writable_view_set_int32(&view, 0, current_snapshot != NULL ? current_snapshot->snapshot.server_time : 0, true);
+    qa_qvm_writable_view_set_int32(&view, 0, current_snapshot != NULL ? qa_int32(current_snapshot->snapshot.server_time) : 0, true);
     *out = 0;
     return true;
   }
@@ -1036,9 +1070,8 @@ static bool scene_syscall(qa_qvm_mod_presentation *presentation, const qa_qvm_ho
     command_entry *entry = find_command(presentation, word_at(call, 1));
     if (entry == NULL)
       qa_range_error("Component cgame server command fell outside retained source history");
-    presentation->arguments = (const char *const *)entry->arguments;
-    presentation->argument_count = entry->argument_count;
-    *out = entry->argument_count != 0 ? 1 : 0;
+    set_scene_arguments(presentation, (const char *const *)entry->arguments, entry->argument_count);
+    *out = presentation->argument_count != 0 ? 1 : 0;
     return true;
   }
   return false;
@@ -1079,12 +1112,14 @@ static bool accept_scene(qa_qvm_mod_presentation *presentation, const qa_qvm_sce
   if (baseline) {
     for (size_t i = 0; i < scene->snapshot.entity_count; i++) {
       const qa_qvm_entity_state_fields *state = &scene->snapshot.entities[i];
-      int64_t address = (int64_t)storage->centities.address + state->number * (int64_t)storage->centities.stride;
+      if (state->number != trunc(state->number) || state->number < 0 || state->number >= (double)storage->centities.capacity)
+        qa_raise("Error", 0, 0, "Component snapshot entity exceeds cgame centities");
+      int64_t address = (int64_t)storage->centities.address + (int64_t)state->number * (int64_t)storage->centities.stride;
       qa_qvm_writable_view view;
       qa_qvm_memory_data_view(presentation->module.memory, address, (int64_t)storage->centities.stride, &view);
       qa_qvm_writable_view_set_int32(&view, (int64_t)storage->centities.previous_event,
-          (double)state->e_type > presentation->options.declaration->as.scene->event_entity_type ? 1 : state->event, true);
-      qa_qvm_writable_view_set_int32(&view, (int64_t)storage->centities.snapshot_time, scene->snapshot.server_time, true);
+          (double)state->e_type > presentation->options.declaration->as.scene->event_entity_type ? 1 : qa_int32(state->event), true);
+      qa_qvm_writable_view_set_int32(&view, (int64_t)storage->centities.snapshot_time, qa_int32(scene->snapshot.server_time), true);
     }
   }
   presentation->scene_revision = scene->revision;
@@ -1093,7 +1128,7 @@ static bool accept_scene(qa_qvm_mod_presentation *presentation, const qa_qvm_sce
   command_entry *commands = presentation->commands;
   for (size_t i = 0; i < presentation->command_count;) {
     if (commands[i].sequence <= scene->snapshot.server_command_sequence - 64) {
-      free((void *)commands[i].arguments);
+      free_strings(commands[i].arguments, commands[i].argument_count);
       memmove(&commands[i], &commands[i + 1], (presentation->command_count - i - 1) * sizeof *commands);
       presentation->command_count--;
     } else {
@@ -1136,7 +1171,7 @@ typedef struct hook_state {
   int kind; /* 0 player, 1 mesh, 2 event check */
 } hook_state;
 
-static int32_t call_word(qa_qvmy_function_call *call, double index) {
+static int32_t call_word(qa_qvm_module_function_call *call, double index) {
   size_t offset = (size_t)(int64_t)index * 4;
   if (offset > call->words_length || call->words_length - offset < 4)
     qa_range_error("Offset is outside the bounds of the DataView");
@@ -1145,12 +1180,54 @@ static int32_t call_word(qa_qvmy_function_call *call, double index) {
   return value;
 }
 
-static int32_t proceed(qa_qvmy_function_call *call) {
+static int32_t proceed(qa_qvm_module_function_call *call) {
   return strcmp(call->execution, "synchronous") == 0 ? call->proceed(call->call_ctx)
                                                      : call->proceed_async(call->call_ctx);
 }
 
-static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
+typedef struct player_leave {
+  qa_qvm_mod_presentation *presentation;
+  player_scope *player;
+  player_scope *previous;
+} player_leave;
+
+/* TS scoped(): finally { leave(); }: publish a live player's parts, restore the scope. */
+static void leave_player(void *ctx) {
+  player_leave *leave = ctx;
+  qa_qvm_mod_presentation *presentation = leave->presentation;
+  player_scope *player = leave->player;
+  if (player != NULL && presentation->options.live(presentation->options.ctx, player->actor)) {
+    if (presentation->body_count == presentation->body_capacity) {
+      presentation->body_capacity = presentation->body_capacity == 0 ? 8 : presentation->body_capacity * 2;
+      presentation->body_frame = realloc(presentation->body_frame, presentation->body_capacity * sizeof *presentation->body_frame);
+      if (presentation->body_frame == NULL) qa_range_error("QVM memory allocation failed");
+    }
+    presentation->body_frame[presentation->body_count].actor = player->actor;
+    presentation->body_frame[presentation->body_count].parts = player->parts;
+    presentation->body_frame[presentation->body_count].part_count = player->part_count;
+    presentation->body_count++;
+  } else if (player != NULL) {
+    for (size_t i = 0; i < player->part_count; i++) free(player->parts[i].passes);
+    free(player->parts);
+  }
+  if (player != NULL) free(player->pending);
+  free(player);
+  scopes(presentation)->player = leave->previous;
+}
+
+typedef struct mesh_leave {
+  scope_state *state;
+  mesh_scope *mesh;
+  mesh_scope *previous;
+} mesh_leave;
+
+static void leave_mesh(void *ctx) {
+  mesh_leave *leave = ctx;
+  free(leave->mesh);
+  leave->state->mesh = leave->previous;
+}
+
+static int32_t body_hook(void *ctx, qa_qvm_module_function_call *call) {
   hook_state *hook = ctx;
   qa_qvm_mod_presentation *presentation = hook->presentation;
   const qa_qvm_scene_presentation *declaration = presentation->options.declaration->as.scene;
@@ -1203,24 +1280,12 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
       }
     }
     state->player = player;
+    player_leave leave = {presentation, player, previous};
+    qa_cleanup guard;
+    qa_cleanup_push(&guard, leave_player, &leave);
     int32_t result = proceed(call);
-    if (player != NULL && presentation->options.live(presentation->options.ctx, player->actor)) {
-      if (presentation->body_count == presentation->body_capacity) {
-        presentation->body_capacity = presentation->body_capacity == 0 ? 8 : presentation->body_capacity * 2;
-        presentation->body_frame = realloc(presentation->body_frame, presentation->body_capacity * sizeof *presentation->body_frame);
-        if (presentation->body_frame == NULL) qa_range_error("QVM memory allocation failed");
-      }
-      presentation->body_frame[presentation->body_count].actor = player->actor;
-      presentation->body_frame[presentation->body_count].parts = player->parts;
-      presentation->body_frame[presentation->body_count].part_count = player->part_count;
-      presentation->body_count++;
-    } else if (player != NULL) {
-      for (size_t i = 0; i < player->part_count; i++) free(player->parts[i].passes);
-      free(player->parts);
-    }
-    if (player != NULL) free(player->pending);
-    free(player);
-    state->player = previous;
+    qa_cleanup_pop(&guard);
+    leave_player(&leave);
     return result;
   }
   mesh_scope *previous = state->mesh;
@@ -1270,38 +1335,45 @@ static int32_t body_hook(void *ctx, qa_qvmy_function_call *call) {
     mesh->previous = previous;
   }
   state->mesh = mesh;
+  mesh_leave leave = {state, mesh, previous};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, leave_mesh, &leave);
   int32_t result = proceed(call);
-  free(mesh);
-  state->mesh = previous;
+  qa_cleanup_pop(&guard);
+  leave_mesh(&leave);
   return result;
 }
 
 
 /* qualifyQvmBodyCalls over the artifact's instruction list (the
- * landed qa_qvm_qualify_body_calls reads only instructions/count).
- * Fills up to capacity (site, part) pairs; returns the filled count. */
+ * qa_qvm_qualify_body_calls reads only instructions/count). With outputs,
+ * returns owned (site, part) arrays; returns the call count. */
 static size_t qualify_body_calls(const qa_resolved_qvm_artifact *artifact, const qa_qvm_scene_body *body,
-                                 double *out_sites, const char **out_parts, size_t capacity) {
+                                 double **out_sites, const char ***out_parts) {
   qa_qvm_image image;
   memset(&image, 0, sizeof image);
   image.instructions = (qa_qvm_instruction *)artifact->image.instructions;
   image.instruction_count = artifact->image.instruction_count;
   qa_qvm_body_calls calls;
   if (!qa_qvm_qualify_body_calls(&image, *body, &calls)) qa_range_error("QVM memory allocation failed");
-  size_t filled = calls.count < capacity ? calls.count : capacity;
-  for (size_t i = 0; i < filled; i++) {
-    if (out_sites != NULL) out_sites[i] = calls.entries[i].call;
-    if (out_parts != NULL) out_parts[i] = calls.entries[i].part;
+  size_t count = calls.count;
+  if (out_sites != NULL) {
+    *out_sites = xmalloc(count * sizeof **out_sites);
+    *out_parts = xmalloc(count * sizeof **out_parts);
+    for (size_t i = 0; i < count; i++) {
+      (*out_sites)[i] = calls.entries[i].call;
+      (*out_parts)[i] = calls.entries[i].part;
+    }
   }
   qa_qvm_body_calls_destroy(&calls);
-  return filled;
+  return count;
 }
 
 static void bind_body(qa_qvm_mod_presentation *presentation) {
   scope_state *state = scopes(presentation);
   state->call_count = qualify_body_calls(
       presentation->options.module_options.artifact,
-      &presentation->options.declaration->as.scene->body, state->call_sites, state->call_parts, 128);
+      &presentation->options.declaration->as.scene->body, &state->call_sites, &state->call_parts);
   double entries[] = {presentation->options.declaration->as.scene->body.player.entry,
                       presentation->options.declaration->as.scene->body.mesh.entry,
                       presentation->options.declaration->as.scene->event_check.entry};
@@ -1309,6 +1381,7 @@ static void bind_body(qa_qvm_mod_presentation *presentation) {
     hook_state *hook = xmalloc(sizeof *hook);
     hook->presentation = presentation;
     hook->kind = i;
+    presentation->hooks[presentation->hook_count++] = hook;
     qa_guest_callback_reference reference;
     memset(&reference, 0, sizeof reference);
     reference.kind = QA_GUEST_CALLBACK_QVM;
@@ -1332,7 +1405,7 @@ void qa_qvm_mod_presentation_init(qa_qvm_mod_presentation *presentation,
   qa_qvm_validate_mod_presentation(options->module_options.artifact, options->source, options->declaration);
   if (is_scene(presentation))
     (void)qualify_body_calls(options->module_options.artifact,
-                             &options->declaration->as.scene->body, NULL, NULL, 0);
+                             &options->declaration->as.scene->body, NULL, NULL);
   presentation->host_state.ctx = presentation;
   presentation->host_state.checkpoint = host_checkpoint;
   presentation->host_state.restore = host_restore;
@@ -1362,10 +1435,19 @@ void qa_qvm_mod_presentation_destroy(qa_qvm_mod_presentation *presentation) {
   for (size_t i = 0; i < presentation->snapshot_count; i++) qa_qvm_source_snapshot_free(&snapshots[i].snapshot);
   free(presentation->snapshots);
   command_entry *commands = presentation->commands;
-  for (size_t i = 0; i < presentation->command_count; i++) free((void *)commands[i].arguments);
+  for (size_t i = 0; i < presentation->command_count; i++)
+    free_strings(commands[i].arguments, commands[i].argument_count);
   free(presentation->commands);
+  free_strings((char **)presentation->arguments, presentation->argument_count);
+  free_strings(presentation->command_arguments, presentation->command_argument_count);
   free(presentation->scene_actors);
-  free(presentation->scopes);
+  if (presentation->scopes != NULL) {
+    scope_state *state = presentation->scopes;
+    free(state->call_sites);
+    free((void *)state->call_parts);
+    free(state);
+  }
+  for (size_t i = 0; i < presentation->hook_count; i++) free(presentation->hooks[i]);
   if (presentation->has_current_game_state)
     qa_q3_source_game_state_record_destroy(&presentation->current_game_state);
   qa_qvm_module_destroy(&presentation->module);
@@ -1386,6 +1468,23 @@ void qa_qvm_mod_presentation_capture_checkpoint(qa_qvm_mod_presentation *present
   qa_qvm_module_checkpoint(&presentation->module, out);
 }
 
+/* TS fail(): the owner fails unless already closed, and the error propagates. */
+static _Noreturn void fail(qa_qvm_mod_presentation *presentation, const qa_caught_error *caught) {
+  if (strcmp(presentation->phase, "closed") != 0) presentation->phase = "failed";
+  qa_rethrow(caught);
+}
+
+typedef struct restore_job {
+  qa_qvm_mod_presentation *presentation;
+  const qa_guest_checkpoint *checkpoint;
+} restore_job;
+
+static void restore_body(void *ctx) {
+  restore_job *job = ctx;
+  qa_qvm_module_restore(&job->presentation->module, job->checkpoint);
+  job->presentation->phase = "initialized";
+}
+
 void qa_qvm_mod_presentation_restore_checkpoint(qa_qvm_mod_presentation *presentation, const qa_save_value *value,
                                                 qa_qvm_resolve_saved_actor_fn resolve, void *resolve_ctx) {
   current(presentation, NULL);
@@ -1399,12 +1498,20 @@ void qa_qvm_mod_presentation_restore_checkpoint(qa_qvm_mod_presentation *present
     qa_range_error("Component client checkpoint is not QVM state");
   presentation->restore_actor = resolve;
   presentation->restore_actor_ctx = resolve_ctx;
-  qa_qvm_module_restore(&presentation->module, &checkpoint);
-  presentation->phase = "initialized";
+  /* TS try { restore; phase = initialized } catch (error) { fail(error) } finally { restoreActor = null } */
+  restore_job job = {presentation, &checkpoint};
+  qa_caught_error caught;
+  bool ok = qa_try(restore_body, &job, &caught);
   presentation->restore_actor = NULL;
+  if (!ok) fail(presentation, &caught);
 }
 
+/* TS get arguments(): commandArguments ?? arguments_. */
 const char *const *qa_qvm_mod_presentation_arguments(qa_qvm_mod_presentation *presentation, size_t *out_count) {
+  if (presentation->has_command_arguments) {
+    *out_count = presentation->command_argument_count;
+    return (const char *const *)presentation->command_arguments;
+  }
   *out_count = presentation->argument_count;
   return presentation->arguments;
 }
@@ -1413,15 +1520,18 @@ int64_t qa_qvm_mod_presentation_last_sequence(const qa_qvm_mod_presentation *pre
   return presentation->sequence;
 }
 
-void qa_qvm_mod_presentation_initialize(qa_qvm_mod_presentation *presentation, int64_t baseline_sequence) {
-  current(presentation, NULL);
-  if (presentation->busy || strcmp(presentation->phase, "created") != 0 || baseline_sequence < -1)
-    qa_range_error("Invalid source presentation initialization");
-  presentation->busy = true;
-  presentation->sequence = baseline_sequence;
-  qa_qvm_presentation_context context = build_context(presentation, NULL);
+/* TS finally { this.restoringScene = false; }. */
+static void end_restoring_scene(void *ctx) {
+  qa_qvm_mod_presentation *presentation = ctx;
+  presentation->restoring_scene = false;
+}
+
+static void initialize_body(void *ctx) {
+  qa_qvm_mod_presentation *presentation = ctx;
+  qa_qvm_presentation_context context;
+  build_context(&context, presentation, NULL);
   const qa_qvm_scene_context *baseline_scene = context.scene != NULL ? context.scene->baseline : NULL;
-  if (baseline_scene != NULL) context = build_context(presentation, baseline_scene);
+  if (baseline_scene != NULL) build_context(&context, presentation, baseline_scene);
   for (size_t i = 0; i < base_of(presentation)->initialize_count; i++)
     invoke_call(presentation, &base_of(presentation)->initialize[i], &context, NULL);
   presentation->revision = context.game_state_revision;
@@ -1445,19 +1555,78 @@ void qa_qvm_mod_presentation_initialize(qa_qvm_mod_presentation *presentation, i
     qa_qvm_writable_view view;
     qa_qvm_memory_data_view(presentation->module.memory,
         (int64_t)presentation->options.declaration->as.scene->storage.server_command_sequence, 4, &view);
-    qa_qvm_writable_view_set_int32(&view, 0, context.scene->snapshot.server_command_sequence, true);
+    qa_qvm_writable_view_set_int32(&view, 0, qa_int32(context.scene->snapshot.server_command_sequence), true);
     qa_qvm_presentation_context fresh;
     memset(&fresh, 0, sizeof fresh);
     presentation->options.context(presentation->options.ctx, &fresh);
     if (fresh.scene != NULL && fresh.scene->baseline != NULL) {
       (void)accept_scene(presentation, fresh.scene->baseline, true);
       presentation->restoring_scene = true;
+      qa_cleanup restoring;
+      qa_cleanup_push(&restoring, end_restoring_scene, presentation);
       for (size_t i = 0; i < presentation->options.declaration->as.scene->snapshot_count; i++)
         invoke_call(presentation, &presentation->options.declaration->as.scene->snapshots[i], &context, NULL);
+      qa_cleanup_pop(&restoring);
       presentation->restoring_scene = false;
     }
   }
+}
+
+void qa_qvm_mod_presentation_initialize(qa_qvm_mod_presentation *presentation, int64_t baseline_sequence) {
+  current(presentation, NULL);
+  if (presentation->busy || strcmp(presentation->phase, "created") != 0 || baseline_sequence < -1)
+    qa_range_error("Invalid source presentation initialization");
+  presentation->busy = true;
+  presentation->sequence = baseline_sequence;
+  qa_caught_error caught;
+  bool ok = qa_try(initialize_body, presentation, &caught);
   presentation->busy = false;
+  if (!ok) fail(presentation, &caught);
+}
+
+typedef struct consume_job {
+  qa_qvm_mod_presentation *presentation;
+  const qa_app_q3_source_player_event *event;
+} consume_job;
+
+static void consume_body(void *ctx) {
+  consume_job *job = ctx;
+  qa_qvm_mod_presentation *presentation = job->presentation;
+  const qa_app_q3_source_player_event *event = job->event;
+  const qa_qvm_player_event_storage *storage = &presentation->options.declaration->as.player_events->storage;
+  const char *profile = cgame_profile(presentation);
+  int64_t slot = (int64_t)event->player_state.client_number;
+  current(presentation, event);
+  qa_qvm_memory *memory = presentation->module.memory;
+  int64_t entity = (int64_t)storage->centities.address + slot * (int64_t)storage->centities.stride;
+  slot_actor *player = find_player(presentation, slot);
+  if (player == NULL || !qa_same_actor(player->actor, event->actor)) {
+    if (presentation->defaults == NULL) qa_range_error("Source centity defaults are unavailable");
+    qa_qvm_memory_write_bytes(memory, entity,
+        presentation->defaults + (size_t)(slot * (int64_t)storage->centities.stride),
+        (size_t)storage->centities.stride);
+    set_player(presentation, slot, event->actor);
+  }
+  qa_qvm_presentation_context context;
+  build_context(&context, presentation, NULL);
+  refresh_context(presentation, &context);
+  qa_qvm_writable_view player_view;
+  qa_qvm_memory_data_view(memory, (int64_t)storage->player_state, qa_qvm_player_state_bytes(profile), &player_view);
+  qa_qvm_write_source_player_state(&player_view, &event->player_state, profile);
+  for (size_t i = 0; i < presentation->options.declaration->as.player_events->project_count; i++)
+    invoke_call(presentation, &presentation->options.declaration->as.player_events->project[i], &context, event);
+  qa_qvm_writable_view state_view;
+  qa_qvm_memory_data_view(memory, entity + (int64_t)storage->centities.state,
+                          qa_qvm_entity_state_bytes_for(profile), &state_view);
+  /* DataView.setInt32 applies ToInt32 to the host numbers. */
+  qa_qvm_writable_view_set_int32(&state_view, 180, qa_int32(event->event), true);
+  qa_qvm_writable_view_set_int32(&state_view, 184, qa_int32(event->parameter), true);
+  qa_qvm_writable_view origin_view;
+  qa_qvm_memory_data_view(memory, entity + (int64_t)storage->centities.origin, 12, &origin_view);
+  qa_qvm_writable_view_set_float32(&origin_view, 0, event->origin.x, true);
+  qa_qvm_writable_view_set_float32(&origin_view, 4, event->origin.y, true);
+  qa_qvm_writable_view_set_float32(&origin_view, 8, event->origin.z, true);
+  invoke_call(presentation, &presentation->options.declaration->as.player_events->event, &context, event);
 }
 
 void qa_qvm_mod_presentation_consume(qa_qvm_mod_presentation *presentation,
@@ -1472,9 +1641,9 @@ void qa_qvm_mod_presentation_consume(qa_qvm_mod_presentation *presentation,
     qa_range_error("Source player event belongs to a different gameplay module");
   if (is_scene(presentation)) qa_range_error("Scene presentation owns events through original snapshots");
   const qa_qvm_player_event_storage *storage = &presentation->options.declaration->as.player_events->storage;
-  const char *profile = cgame_profile(presentation);
-  int64_t slot = (int64_t)event->player_state.client_number;
-  if (slot < 0 || slot >= (int64_t)storage->centities.capacity)
+  double client_number = event->player_state.client_number; /* Number.isInteger first */
+  if (!(isfinite(client_number) && client_number == trunc(client_number)) || client_number < 0 ||
+      client_number >= storage->centities.capacity)
     qa_range_error("Source player event exceeds the declared centity array");
   check_int32(event->event);
   check_int32(event->parameter);
@@ -1484,37 +1653,31 @@ void qa_qvm_mod_presentation_consume(qa_qvm_mod_presentation *presentation,
   presentation->sequence = sequence;
   presentation->busy = true;
   presentation->active_event = event;
-  current(presentation, event);
-  qa_qvm_memory *memory = presentation->module.memory;
-  int64_t entity = (int64_t)storage->centities.address + slot * (int64_t)storage->centities.stride;
-  slot_actor *player = find_player(presentation, slot);
-  if (player == NULL || !qa_same_actor(player->actor, event->actor)) {
-    if (presentation->defaults == NULL) qa_range_error("Source centity defaults are unavailable");
-    qa_qvm_memory_write_bytes(memory, entity,
-        presentation->defaults + (size_t)(slot * (int64_t)storage->centities.stride),
-        (size_t)storage->centities.stride);
-    set_player(presentation, slot, event->actor);
-  }
-  qa_qvm_presentation_context context = build_context(presentation, NULL);
-  refresh_context(presentation, &context);
-  qa_qvm_writable_view player_view;
-  qa_qvm_memory_data_view(memory, (int64_t)storage->player_state, qa_qvm_player_state_bytes(profile), &player_view);
-  qa_qvm_write_source_player_state(&player_view, &event->player_state, profile);
-  for (size_t i = 0; i < presentation->options.declaration->as.player_events->project_count; i++)
-    invoke_call(presentation, &presentation->options.declaration->as.player_events->project[i], &context, event);
-  qa_qvm_writable_view state_view;
-  qa_qvm_memory_data_view(memory, entity + (int64_t)storage->centities.state,
-                          qa_qvm_entity_state_bytes_for(profile), &state_view);
-  qa_qvm_writable_view_set_int32(&state_view, 180, event->event, true);
-  qa_qvm_writable_view_set_int32(&state_view, 184, event->parameter, true);
-  qa_qvm_writable_view origin_view;
-  qa_qvm_memory_data_view(memory, entity + (int64_t)storage->centities.origin, 12, &origin_view);
-  qa_qvm_writable_view_set_float32(&origin_view, 0, event->origin.x, true);
-  qa_qvm_writable_view_set_float32(&origin_view, 4, event->origin.y, true);
-  qa_qvm_writable_view_set_float32(&origin_view, 8, event->origin.z, true);
-  invoke_call(presentation, &presentation->options.declaration->as.player_events->event, &context, event);
+  /* TS catch (error) { if (error instanceof RetiredPlayer) return; fail(error) }
+   * finally { busy = false; activeEvent = undefined }. A RetiredPlayer thrown
+   * through original code keeps its message, which no other error uses. */
+  consume_job job = {presentation, event};
+  qa_caught_error caught;
+  bool ok = qa_try(consume_body, &job, &caught);
   presentation->busy = false;
   presentation->active_event = NULL;
+  if (!ok && strcmp(caught.message, RETIRED_PLAYER_MESSAGE) != 0) fail(presentation, &caught);
+}
+
+static void advance_body(void *ctx) {
+  qa_qvm_mod_presentation *presentation = ctx;
+  qa_qvm_presentation_context context;
+  build_context(&context, presentation, NULL);
+  refresh_context(presentation, &context);
+  if (is_scene(presentation)) {
+    if (context.scene == NULL) qa_range_error("Scene declaration requires real source snapshots");
+    if (accept_scene(presentation, context.scene, false)) {
+      for (size_t i = 0; i < presentation->options.declaration->as.scene->snapshot_count; i++)
+        invoke_call(presentation, &presentation->options.declaration->as.scene->snapshots[i], &context, NULL);
+    }
+  }
+  for (size_t i = 0; i < base_of(presentation)->frame_count; i++)
+    invoke_call(presentation, &base_of(presentation)->frame[i], &context, NULL);
 }
 
 void qa_qvm_mod_presentation_advance(qa_qvm_mod_presentation *presentation, int64_t frame_sequence) {
@@ -1526,18 +1689,10 @@ void qa_qvm_mod_presentation_advance(qa_qvm_mod_presentation *presentation, int6
   presentation->frame = frame_sequence;
   presentation->busy = true;
   free_bodies(presentation);
-  qa_qvm_presentation_context context = build_context(presentation, NULL);
-  refresh_context(presentation, &context);
-  if (is_scene(presentation)) {
-    if (context.scene == NULL) qa_range_error("Scene declaration requires real source snapshots");
-    if (accept_scene(presentation, context.scene, false)) {
-      for (size_t i = 0; i < presentation->options.declaration->as.scene->snapshot_count; i++)
-        invoke_call(presentation, &presentation->options.declaration->as.scene->snapshots[i], &context, NULL);
-    }
-  }
-  for (size_t i = 0; i < base_of(presentation)->frame_count; i++)
-    invoke_call(presentation, &base_of(presentation)->frame[i], &context, NULL);
+  qa_caught_error caught;
+  bool ok = qa_try(advance_body, presentation, &caught);
   presentation->busy = false;
+  if (!ok) fail(presentation, &caught);
 }
 
 typedef struct command_validate {
@@ -1548,6 +1703,22 @@ static void run_command_validate(void *ctx) {
   current(((command_validate *)ctx)->presentation, NULL);
 }
 
+typedef struct console_job {
+  qa_qvm_mod_presentation *presentation;
+  const char *const *arguments;
+  size_t argument_count;
+  int32_t result;
+} console_job;
+
+static void console_body(void *ctx) {
+  console_job *job = ctx;
+  command_validate validate = {job->presentation};
+  int32_t words[] = {CG_CONSOLE_COMMAND};
+  job->result = qa_qvm_module_command_async(&job->presentation->module, words, 1, job->arguments,
+                                            job->argument_count, run_command_validate, &validate);
+  current(job->presentation, NULL);
+}
+
 bool qa_qvm_mod_presentation_console_command(qa_qvm_mod_presentation *presentation,
                                              const char *const *arguments, size_t argument_count) {
   current(presentation, NULL);
@@ -1555,20 +1726,27 @@ bool qa_qvm_mod_presentation_console_command(qa_qvm_mod_presentation *presentati
     qa_range_error("Source console command requires an idle initialized owner");
   presentation->busy = true;
   presentation->has_command_arguments = true;
-  const char *const *previous_arguments = presentation->arguments;
-  size_t previous_count = presentation->argument_count;
-  presentation->arguments = arguments;
-  presentation->argument_count = argument_count;
-  command_validate validate = {presentation};
-  int32_t words[] = {CG_CONSOLE_COMMAND};
-  int32_t result = qa_qvm_module_command_async(&presentation->module, words, 1, arguments, argument_count,
-                                               run_command_validate, &validate);
-  current(presentation, NULL);
+  presentation->command_arguments = copy_strings(arguments, argument_count);
+  presentation->command_argument_count = argument_count;
+  console_job job = {presentation, arguments, argument_count, 0};
+  qa_caught_error caught;
+  bool ok = qa_try(console_body, &job, &caught);
+  /* TS finally { commandArguments = null; busy = false }. */
+  free_strings(presentation->command_arguments, presentation->command_argument_count);
+  presentation->command_arguments = NULL;
+  presentation->command_argument_count = 0;
   presentation->has_command_arguments = false;
-  presentation->arguments = previous_arguments;
-  presentation->argument_count = previous_count;
   presentation->busy = false;
-  return result != 0;
+  if (!ok) fail(presentation, &caught);
+  return job.result != 0;
+}
+
+static void hud_body(void *ctx) {
+  qa_qvm_mod_presentation *presentation = ctx;
+  const qa_qvm_presentation_hud *hud = base_of(presentation)->hud;
+  qa_qvm_presentation_context context;
+  build_context(&context, presentation, NULL);
+  for (size_t i = 0; i < hud->frame_count; i++) invoke_call(presentation, &hud->frame[i], &context, NULL);
 }
 
 void qa_qvm_mod_presentation_draw_hud(qa_qvm_mod_presentation *presentation, int64_t frame_sequence) {
@@ -1580,9 +1758,10 @@ void qa_qvm_mod_presentation_draw_hud(qa_qvm_mod_presentation *presentation, int
   if (hud == NULL) qa_range_error("Source presentation has no HUD admission");
   presentation->hud_frame = frame_sequence;
   presentation->busy = true;
-  qa_qvm_presentation_context context = build_context(presentation, NULL);
-  for (size_t i = 0; i < hud->frame_count; i++) invoke_call(presentation, &hud->frame[i], &context, NULL);
+  qa_caught_error caught;
+  bool ok = qa_try(hud_body, presentation, &caught);
   presentation->busy = false;
+  if (!ok) fail(presentation, &caught);
 }
 
 void qa_qvm_mod_presentation_release(qa_qvm_mod_presentation *presentation, qa_actor_id actor) {
@@ -1610,7 +1789,8 @@ void qa_qvm_mod_presentation_close(qa_qvm_mod_presentation *presentation) {
   for (size_t i = 0; i < presentation->snapshot_count; i++) qa_qvm_source_snapshot_free(&snapshots[i].snapshot);
   presentation->snapshot_count = 0;
   command_entry *commands = presentation->commands;
-  for (size_t i = 0; i < presentation->command_count; i++) free((void *)commands[i].arguments);
+  for (size_t i = 0; i < presentation->command_count; i++)
+    free_strings(commands[i].arguments, commands[i].argument_count);
   presentation->command_count = 0;
   free(presentation->defaults);
   presentation->defaults = NULL;

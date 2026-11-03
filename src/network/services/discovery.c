@@ -1,10 +1,12 @@
 /* Port of src/network/services/discovery.ts. GPL-2.0-or-later. */
 #include "qa/network/services/discovery.h"
 #include "qa/foundation/support.h"
+#include "qa/persistence/value.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
 static char *dupstr(const char *s) { if (!s) return NULL; size_t n = strlen(s) + 1; char *p = malloc(n); memcpy(p, s, n); return p; }
 void qa_server_status_destroy(qa_server_status *s) {
   free(s->name); free(s->map);
@@ -57,6 +59,12 @@ struct qa_server_browser {
 void qa_server_browser_init(qa_server_browser *b, qa_discovery_wire wire, qa_packet_sender transport) {
   memset(b, 0, sizeof *b); b->wire = wire; b->transport = transport; b->next_handle = 1;
 }
+qa_server_browser *qa_server_browser_create(qa_discovery_wire wire, qa_packet_sender transport) {
+  qa_server_browser *b = malloc(sizeof *b);
+  if (b) qa_server_browser_init(b, wire, transport);
+  return b;
+}
+void qa_server_browser_free(qa_server_browser *b) { if (b) { qa_server_browser_destroy(b); free(b); } }
 void qa_server_browser_destroy(qa_server_browser *b) {
   for (size_t i = 0; i < b->count; i++) { entry_destroy(&b->entries[i]); free(b->keys[i]); }
   for (size_t i = 0; i < b->qcount; i++) { free(b->queries[i].challenge); qa_net_address_destroy(&b->queries[i].address); }
@@ -146,8 +154,10 @@ void qa_server_browser_restore_entry(qa_server_browser *b, const qa_browser_entr
   }
   free(key);
   qa_browser_entry *e = &b->entries[at];
-  if (!e->has_status && entry->has_status) {
-    qa_server_status_copy(&entry->status, &e->status); e->has_status = true;
+  /* { ...(existing.status === null ? entry : existing), sources: union } */
+  if (!e->has_status) {
+    if (entry->has_status) qa_server_status_copy(&entry->status, &e->status);
+    e->has_status = entry->has_status;
     e->has_ping = entry->has_ping; e->ping_ms = entry->ping_ms; e->updated_at = entry->updated_at;
   }
   for (size_t i = 0; i < entry->source_count; i++) if (!has_source(e, entry->sources[i])) {
@@ -205,6 +215,16 @@ static void finish_request(qa_server_browser *b, size_t index, const char *kind,
   if (retain) store_result(b, handle, kind, &address, rk, sent, status, ping_ms, completed_at);
   qa_net_address_destroy(&address);
 }
+struct send_scope { qa_server_browser *b; const qa_net_address *address; const char *kind; const char *challenge; bool sent; };
+static void free_bytes(void *bytes) { free(bytes); }
+static void send_query_body(void *ctx) {
+  struct send_scope *scope = ctx;
+  size_t blen = 0;
+  uint8_t *bytes = scope->b->wire.query(scope->b->wire.ctx, scope->kind, scope->challenge, &blen);
+  qa_cleanup guard; qa_cleanup_push(&guard, free_bytes, bytes);
+  scope->sent = scope->b->transport.send(scope->b->transport.ctx, scope->address, bytes, blen);
+  qa_cleanup_pop(&guard); free(bytes);
+}
 static long long start_request(qa_server_browser *b, const qa_net_address *address, double now,
                                const char *kind, bool retain, int timeout_mode, double timeout_ms) {
   long long handle = b->next_handle++;
@@ -217,11 +237,11 @@ static long long start_request(qa_server_browser *b, const qa_net_address *addre
   p->request_kind = kind; p->sent_at = now; p->retain_result = retain;
   p->timeout_mode = timeout_mode; p->timeout_ms = timeout_ms;
   if (retain) store_result(b, handle, "pending", address, kind, now, NULL, 0, 0);
-  size_t blen = 0;
-  uint8_t *bytes = b->wire.query(b->wire.ctx, kind, challenge, &blen);
-  bool sent = b->transport.send(b->transport.ctx, address, bytes, blen);
-  free(bytes);
-  if (sent) return handle;
+  /* try { if (send(...)) return handle } catch (error) { releaseRequest(handle); throw error } */
+  struct send_scope scope = { b, address, kind, challenge, false };
+  qa_caught_error caught;
+  if (!qa_try(send_query_body, &scope, &caught)) { qa_server_browser_release_request(b, handle); qa_rethrow(&caught); }
+  if (scope.sent) return handle;
   qa_server_browser_release_request(b, handle);
   return 0;
 }
@@ -304,8 +324,10 @@ bool qa_server_browser_receive(qa_server_browser *b, const qa_net_address *addre
     else for (size_t i = 0; i < b->bcount; i++) if (strcmp(b->broadcasts[i].challenge, challenge) == 0) broadcast = &b->broadcasts[i];
   }
   if (!have_direct && !broadcast) { free(key); return false; }
+  /* Any source may answer a broadcast window, so unsolicited LAN entries are bounded. */
+  if (!have_direct && entry_index(b, key) < 0 && b->count >= 4096) { free(key); return false; }
   double sent_at = have_direct ? b->queries[match_index].sent_at : broadcast->sent_at;
-  double ping = fmax(0, now - sent_at);
+  double ping = qa_js_max(0, now - sent_at);
   const qa_browser_entry *old;
   if (!have_direct) old = qa_server_browser_add(b, address, "lan", now);
   else {
@@ -388,6 +410,27 @@ static void append_str(char **buf, size_t *len, size_t *cap, const char *text) {
   if (*len + n + 1 > *cap) { size_t nc = (*cap ? *cap : 256); while (nc < *len + n + 1) nc *= 2; *buf = realloc(*buf, nc); *cap = nc; }
   memcpy(*buf + *len, text, n + 1); *len += n;
 }
+/* JSON.stringify string quoting. */
+static void append_json_string(char **buf, size_t *len, size_t *cap, const char *text) {
+  append_str(buf, len, cap, "\"");
+  for (const unsigned char *p = (const unsigned char *)text; *p; p++) {
+    char piece[8];
+    switch (*p) {
+      case '"': append_str(buf, len, cap, "\\\""); continue;
+      case '\\': append_str(buf, len, cap, "\\\\"); continue;
+      case '\b': append_str(buf, len, cap, "\\b"); continue;
+      case '\f': append_str(buf, len, cap, "\\f"); continue;
+      case '\n': append_str(buf, len, cap, "\\n"); continue;
+      case '\r': append_str(buf, len, cap, "\\r"); continue;
+      case '\t': append_str(buf, len, cap, "\\t"); continue;
+      default: break;
+    }
+    if (*p < 0x20) snprintf(piece, sizeof piece, "\\u%04x", *p);
+    else { piece[0] = (char)*p; piece[1] = '\0'; }
+    append_str(buf, len, cap, piece);
+  }
+  append_str(buf, len, cap, "\"");
+}
 char *qa_server_browser_save_favorites(qa_server_browser *b) {
   size_t count = 0; qa_net_address *addrs = qa_server_browser_favorite_addresses(b, &count);
   char *buf = NULL; size_t len = 0, cap = 0;
@@ -396,7 +439,11 @@ char *qa_server_browser_save_favorites(qa_server_browser *b) {
   for (size_t i = 0; i < count; i++) {
     if (i) append_str(&buf, &len, &cap, ",");
     qa_net_address *a = &addrs[i];
-    if (a->kind == QA_NET_LOOPBACK) snprintf(tmp, sizeof tmp, "{\"kind\":\"loopback\",\"id\":\"%s\"}", a->host ? a->host : "");
+    if (a->kind == QA_NET_LOOPBACK) {
+      append_str(&buf, &len, &cap, "{\"kind\":\"loopback\",\"id\":");
+      append_json_string(&buf, &len, &cap, a->host ? a->host : "");
+      snprintf(tmp, sizeof tmp, "}");
+    }
     else if (a->kind == QA_NET_IPV4) snprintf(tmp, sizeof tmp, "{\"kind\":\"ipv4\",\"host\":[%u,%u,%u,%u],\"port\":%lld}", a->ipv4[0], a->ipv4[1], a->ipv4[2], a->ipv4[3], (long long)a->port);
     else if (a->kind == QA_NET_IPV6) snprintf(tmp, sizeof tmp, "{\"kind\":\"ipv6\",\"host\":\"%s\",\"port\":%lld}", a->host ? a->host : "", (long long)a->port);
     else snprintf(tmp, sizeof tmp, "{\"kind\":\"ipx\",\"network\":%u,\"node\":[%u,%u,%u,%u,%u,%u],\"port\":%lld}", a->network, a->node[0], a->node[1], a->node[2], a->node[3], a->node[4], a->node[5], (long long)a->port);
@@ -407,98 +454,35 @@ char *qa_server_browser_save_favorites(qa_server_browser *b) {
   append_str(&buf, &len, &cap, "]");
   return buf;
 }
-/* Minimal parser for the saved-favorites JSON array of address records. */
-static const char *json_find(const char *obj, const char *key) {
-  char pat[64]; snprintf(pat, sizeof pat, "\"%s\"", key);
-  const char *p = strstr(obj, pat);
-  if (!p) return NULL;
-  p = strchr(p, ':');
-  if (!p) return NULL;
-  p++;
-  while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-  return p;
-}
-static int json_string(const char *obj, const char *key, char *out, size_t outsz) {
-  const char *v = json_find(obj, key);
-  if (!v || *v != '"') return 0;
-  v++;
-  size_t n = 0;
-  while (*v && *v != '"' && n + 1 < outsz) {
-    if (*v == '\\' && v[1]) v++;
-    out[n++] = *v++;
+struct favorites_scope { const qa_save_value *list; qa_net_address *addresses; size_t count; };
+static void parse_favorites_body(void *ctx) {
+  struct favorites_scope *scope = ctx;
+  for (size_t i = 0; i < scope->list->item_count; i++) {
+    qa_net_parse_address_value(scope->list->items[i], &scope->addresses[i]);
+    scope->count = i + 1;
   }
-  out[n] = '\0';
-  return *v == '"';
 }
-static int json_numbers(const char *obj, const char *key, double *out, size_t max, size_t *count) {
-  const char *v = json_find(obj, key);
-  if (!v || *v != '[') return 0;
-  v++;
-  size_t n = 0;
-  while (*v && *v != ']' && n < max) {
-    while (*v == ' ' || *v == ',') v++;
-    if (*v == ']') break;
-    char *end = NULL;
-    out[n++] = strtod(v, &end);
-    if (end == v) return 0;
-    v = end;
-  }
-  *count = n; return 1;
-}
+static void free_value(void *value) { qa_save_value_free(value); }
 void qa_server_browser_restore_favorites(qa_server_browser *b, const char *text) {
-  const char *p = text;
-  while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-  if (*p != '[') qa_range_error("Invalid favorites save");
-  /* Collect object substrings first (parse before mutating, like TS map). */
-  size_t cap = 4, count = 0;
-  qa_net_address *addrs = calloc(cap, sizeof *addrs);
-  p++;
-  for (;;) {
-    while (*p == ' ' || *p == ',' || *p == '\n' || *p == '\t' || *p == '\r') p++;
-    if (*p == ']') break;
-    if (*p != '{') qa_range_error("Invalid favorites save");
-    const char *start = p;
-    int depth = 0; bool in_str = false, esc = false;
-    for (; *p; p++) {
-      if (esc) { esc = false; continue; }
-      if (*p == '\\' && in_str) { esc = true; continue; }
-      if (*p == '"') in_str = !in_str;
-      if (in_str) continue;
-      if (*p == '{') depth++;
-      if (*p == '}' && --depth == 0) { p++; break; }
-    }
-    if (depth != 0) qa_range_error("Invalid favorites save");
-    char *obj = malloc((size_t)(p - start) + 1);
-    memcpy(obj, start, (size_t)(p - start)); obj[p - start] = '\0';
-    char kind[32] = {0}, host[512] = {0};
-    double numbers[8] = {0}; size_t ncount = 0;
-    const char *portv = json_find(obj, "port");
-    const char *netv = json_find(obj, "network");
-    double port = portv ? strtod(portv, NULL) : NAN;
-    (void)json_string(obj, "kind", kind, sizeof kind);
-    (void)json_string(obj, "host", host, sizeof host);
-    if (strcmp(kind, "ipv4") == 0) (void)json_numbers(obj, "host", numbers, 4, &ncount);
-    if (strcmp(kind, "ipx") == 0) (void)json_numbers(obj, "node", numbers, 6, &ncount);
-    if (strcmp(kind, "loopback") == 0) (void)json_string(obj, "id", host, sizeof host);
-    if (count == cap) { cap *= 2; addrs = realloc(addrs, cap * sizeof *addrs); }
-    qa_net_address parsed;
-    if (strcmp(kind, "loopback") == 0)
-      (void)qa_net_parse_address(&parsed, "loopback", host, NULL, 0, 0, false, 0, false);
-    else if (strcmp(kind, "ipv6") == 0)
-      (void)qa_net_parse_address(&parsed, "ipv6", host, NULL, 0, 0, false, port, portv != NULL);
-    else if (strcmp(kind, "ipv4") == 0)
-      (void)qa_net_parse_address(&parsed, "ipv4", NULL, numbers, ncount, 0, false, port, portv != NULL);
-    else if (strcmp(kind, "ipx") == 0)
-      (void)qa_net_parse_address(&parsed, "ipx", NULL, numbers, ncount, netv ? (int64_t)strtod(netv, NULL) : 0, netv != NULL, port, portv != NULL);
-    else qa_range_error("Invalid network address fields");
-    addrs[count++] = parsed;
-    free(obj);
+  qa_save_value *value = qa_parse_json_value((const uint8_t *)text, strlen(text), false);
+  if (!value) qa_range_error("Out of memory");
+  qa_cleanup value_guard; qa_cleanup_push(&value_guard, free_value, value);
+  if (value->kind != QA_SAVE_ARRAY) qa_raise("Error", 0, 0, "Invalid favorites save");
+  /* entries.map(parseNetworkAddress) completes before any favorite changes. */
+  struct favorites_scope scope = { value, calloc(value->item_count ? value->item_count : 1, sizeof (qa_net_address)), 0 };
+  if (!scope.addresses) qa_range_error("Out of memory");
+  qa_caught_error caught;
+  bool ok = qa_try(parse_favorites_body, &scope, &caught);
+  qa_cleanup_pop(&value_guard); qa_save_value_free(value);
+  if (!ok) {
+    for (size_t i = 0; i < scope.count; i++) qa_net_address_destroy(&scope.addresses[i]);
+    free(scope.addresses); qa_rethrow(&caught);
   }
   size_t fav_count = 0; qa_net_address *favs = qa_server_browser_favorite_addresses(b, &fav_count);
   for (size_t i = 0; i < fav_count; i++) { qa_server_browser_remove_favorite(b, &favs[i]); qa_net_address_destroy(&favs[i]); }
   free(favs);
-  for (size_t i = 0; i < count; i++) { (void)qa_server_browser_add(b, &addrs[i], "favorite", 0); qa_net_address_destroy(&addrs[i]); }
-  free(addrs);
+  for (size_t i = 0; i < scope.count; i++) { (void)qa_server_browser_add(b, &scope.addresses[i], "favorite", 0); qa_net_address_destroy(&scope.addresses[i]); }
+  free(scope.addresses);
 }
 void qa_master_heartbeat_service_init(qa_master_heartbeat_service *s, qa_discovery_wire wire, qa_packet_sender transport, double interval_ms) {
   memset(s, 0, sizeof *s);

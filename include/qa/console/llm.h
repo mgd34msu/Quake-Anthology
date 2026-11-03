@@ -1,13 +1,13 @@
 /*
  * Port of src/console/llm.ts: the llm_ask/llm_exec/llm_cancel
- * engine commands and session priming.
+ * engine commands (registration no longer primes the session).
  * C accommodations (per docs/PORTING.md, async flows become
  * synchronous): the TS requester's Promise<string> request is a
  * synchronous call returning a malloc'd answer, or NULL with a
  * malloc'd message in *out_error (the TS Error.message; NULL
  * message mirrors a non-Error rejection, printed as
- * "Unknown error"). prime is a plain call (its TS rejection is
- * swallowed there). The 120 s timer becomes the abort signal's
+ * "Unknown error"). prime stays on the requester (TS keeps the
+ * optional method) but the console never calls it. The 120 s timer becomes the abort signal's
  * deadline (qa_llm_signal_set_timeout); a request that overruns
  * it is reported with the TS timeout text when it returns.
  * Prompt length counts bytes where TS counts UTF-16 units.
@@ -32,13 +32,6 @@ typedef struct qa_llm_command_requester {
   char *(*request)(void *ctx, const qa_llm_request_input *input, char **out_error);
   void (*prime)(void *ctx, const char *instructions);
 } qa_llm_command_requester;
-
-/* Start the requester's process-lifetime session with this
- * console's live catalog. requester NULL and source NULL mirror
- * the TS undefined/default arguments. */
-void qa_prime_llm_console_session(qa_command_buffer *commands,
-                                  const qa_llm_command_requester *requester,
-                                  const qa_command_context *source);
 
 typedef struct qa_llm_pending_request {
   char *key; /* owned: "seat:<index>" or "console" */

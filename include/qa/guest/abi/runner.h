@@ -87,5 +87,15 @@ qa_guest_inline_region_handle *qa_guest_call_runner_bind_inline_region(
     bool (*accepts)(void *ctx), void *accepts_ctx);
 void qa_guest_inline_region_unbind(qa_guest_inline_region_handle *handle);
 void qa_guest_inline_region_handle_free(qa_guest_inline_region_handle *handle);
+/* Storage size for callers that allocate the opaque runner. */
+size_t qa_guest_call_runner_size(void);
+/* Forget calls deeper than depth after a host-side unwind (the TS
+ * runner's try/finally for a throw that crossed guest frames). */
+void qa_guest_call_runner_unwind(qa_guest_call_runner *runner, int64_t depth);
+/* TS recover(): after a stopped outermost call, returns the processor to its
+ * state at entry so shutdown does not run on the faulted stack. */
+void qa_guest_call_runner_recover(qa_guest_call_runner *runner);
+/* TS chargeBytes: one budget unit per 64 bytes from every active frame. */
+void qa_guest_call_runner_charge_bytes(qa_guest_call_runner *runner, size_t byte_length);
 
 #endif

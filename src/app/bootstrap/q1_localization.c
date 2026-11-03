@@ -1,5 +1,6 @@
 /* Port of src/app/bootstrap/q1-localization.ts. GPL-2.0-or-later. */
 #include "qa/app/bootstrap/q1_localization.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,7 @@
 #include "qa/content/q1/base/messages.h"
 #include "qa/content/q1/missionpacks/world/finale_text.h"
 #include "qa/foundation/support.h"
+#include <math.h>
 /* content/q1/foundation/text.h is landed without its .c in this
  * tree; classicQ1Text is inlined here from the landed finale and
  * obituary helpers plus the TS classicQ1Messages table. Supersede
@@ -41,6 +43,7 @@ static const char *classic_message(const char *key) {
   return NULL;
 }
 #include "qa/text/localization.h"
+#include "qa/foundation/js.h"
 typedef struct catalog_entry {
   char *content;
   char *language;
@@ -136,9 +139,9 @@ static qa_localization_table *table_for(qa_app_q1_message_localization *localiza
 }
 static char *arg_text(const qa_q1_msg_arg *arg, char *scratch, size_t size) {
   if (!arg->is_number) return (char *)arg->text;
-  if (arg->number == (double)(long long)arg->number)
-    snprintf(scratch, size, "%lld", (long long)arg->number);
-  else snprintf(scratch, size, "%g", arg->number);
+  if ((fabs(arg->number) < 9.2e18 && arg->number == trunc(arg->number)))
+    snprintf(scratch, size, "%s", QA_JS_NUMBER(arg->number));
+  else snprintf(scratch, size, "%s", QA_JS_NUMBER(arg->number));
   return scratch;
 }
 /* TS classicQ1Text (inlined, see above). Malloc'd result. */
@@ -154,9 +157,9 @@ static char *classic_text(const char *value, const qa_q1_msg_arg *args, size_t a
     if (obituary == NULL) qa_range_error("Out of memory");
     for (size_t i = 0; i < arg_count; i++) {
       if (args[i].is_number) {
-        if (args[i].number == (double)(long long)args[i].number)
-          snprintf(scratch[i], 64, "%lld", (long long)args[i].number);
-        else snprintf(scratch[i], 64, "%g", args[i].number);
+        if ((fabs(args[i].number) < 9.2e18 && args[i].number == trunc(args[i].number)))
+          snprintf(scratch[i], 64, "%s", QA_JS_NUMBER(args[i].number));
+        else snprintf(scratch[i], 64, "%s", QA_JS_NUMBER(args[i].number));
         texts[i] = scratch[i];
       } else texts[i] = args[i].text;
     }
@@ -170,18 +173,20 @@ static char *classic_text(const char *value, const qa_q1_msg_arg *args, size_t a
   size_t at = 0;
   for (const char *p = format; *p != '\0';) {
     if (*p == '{') {
-      char *end = NULL;
-      long index = strtol(p + 1, &end, 10);
+      /* /\{([0-9]+)\}/: digits only (strtol also took a sign and white space). */
+      const char *end = p + 1;
+      while (*end >= '0' && *end <= '9') end++;
+      double index = qa_js_parse_int(p + 1, 10); /* Number(index) of the digit run */
       if (end != p + 1 && *end == '}') {
         const char *piece;
         char piece_scratch[64];
         size_t piece_len;
-        if (index >= 0 && (size_t)index < arg_count) {
-          const qa_q1_msg_arg *arg = &args[index];
+        if (index < (double)arg_count) {
+          const qa_q1_msg_arg *arg = &args[(size_t)index];
           if (arg->is_number) {
-            if (arg->number == (double)(long long)arg->number)
-              snprintf(piece_scratch, sizeof piece_scratch, "%lld", (long long)arg->number);
-            else snprintf(piece_scratch, sizeof piece_scratch, "%g", arg->number);
+            if ((fabs(arg->number) < 9.2e18 && arg->number == trunc(arg->number)))
+              snprintf(piece_scratch, sizeof piece_scratch, "%s", QA_JS_NUMBER(arg->number));
+            else snprintf(piece_scratch, sizeof piece_scratch, "%s", QA_JS_NUMBER(arg->number));
             piece = piece_scratch;
           } else {
             const char *mapped = classic_message(arg->text);

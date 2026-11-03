@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 
 const qa_gamepad_tuning qa_default_gamepad_tuning = {
     {QA_STICK_CURVE_RADIAL, 0.175, 0.02, 2},
@@ -46,9 +47,9 @@ qa_vec2 qa_apply_stick_curve(qa_vec2 axis, qa_stick_curve curve) {
     double applied[2];
     for (int i = 0; i < 2; i++) {
       double value = values[i];
-      double magnitude = fmax(0, fmin(1, (fabs(value) - curve.deadzone) /
+      double magnitude = qa_js_max(0, qa_js_min(1, (fabs(value) - curve.deadzone) /
                                              (1 - curve.deadzone)));
-      applied[i] = (value > 0 ? 1 : value < 0 ? -1 : 0) * pow(magnitude, curve.exponent);
+      applied[i] = qa_js_sign(value) * qa_js_pow(magnitude, curve.exponent);
     }
     out.x = applied[0];
     out.y = applied[1];
@@ -59,7 +60,7 @@ qa_vec2 qa_apply_stick_curve(qa_vec2 axis, qa_stick_curve curve) {
     qa_vec2 zero = {0, 0};
     return zero;
   }
-  double scale = pow(fmin(1, (magnitude - curve.deadzone) /
+  double scale = qa_js_pow(qa_js_min(1, (magnitude - curve.deadzone) /
                                  (1 - curve.deadzone - curve.outer_threshold)),
                      curve.exponent) /
                  magnitude;
@@ -78,7 +79,7 @@ qa_controller_axis qa_controller_axis_name(double axis) {
 double qa_normalized_controller_axis(qa_controller_axis axis, double raw) {
   size_t length = strlen(axis);
   bool trigger = length >= 7 && strcmp(axis + length - 7, "trigger") == 0;
-  return fmax(trigger ? 0 : -1, fmin(1, raw / 32767));
+  return qa_js_max(trigger ? 0 : -1, qa_js_min(1, raw / 32767));
 }
 
 static int axis_index(qa_controller_axis axis) {
@@ -89,7 +90,7 @@ static int axis_index(qa_controller_axis axis) {
   return -1;
 }
 
-static double clamped(double value) { return fmax(-1, fmin(1, value)); }
+static double clamped(double value) { return qa_js_max(-1, qa_js_min(1, value)); }
 
 static double axis_value(const double *axes, const bool *set, int index) {
   return set[index] ? axes[index] : 0;
@@ -144,7 +145,7 @@ qa_gyro_calibration_state qa_gamepad_input_gyro_calibration(
     state.samples = input->has_capture ? input->capture_samples : 0;
     state.progress = !input->has_capture
                          ? 0
-                         : fmin(1, fmin((input->capture_last - input->capture_start) /
+                         : qa_js_min(1, qa_js_min((input->capture_last - input->capture_start) /
                                             GYRO_CALIBRATION_DURATION,
                                         input->capture_samples /
                                             GYRO_CALIBRATION_SAMPLES));
@@ -186,7 +187,7 @@ void qa_gamepad_input_gyro(qa_gamepad_input *input, qa_vec3 value,
   if (aiming) input->gyro_sample = value;
   if (!input->calibrating) return;
   input->has_gyro_sample = false;
-  if (hypot(hypot(value.x, value.y), value.z) > 0.15) {
+  if (qa_js_hypot3(value.x, value.y, value.z) > 0.15) {
     input->has_capture = false;
     return;
   }
@@ -216,7 +217,7 @@ void qa_gamepad_input_gyro(qa_gamepad_input *input, qa_vec3 value,
       input->capture_deviation.y + (value.y - input->capture_mean.y) * (value.y - mean.y),
       input->capture_deviation.z + (value.z - input->capture_mean.z) * (value.z - mean.z)};
   double limit = 0.01 * 0.01;
-  if (fmax(deviation.x, fmax(deviation.y, deviation.z)) / (samples - 1) > limit) {
+  if (qa_js_max(deviation.x, qa_js_max(deviation.y, deviation.z)) / (samples - 1) > limit) {
     input->has_capture = false;
     return;
   }

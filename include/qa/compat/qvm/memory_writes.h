@@ -6,9 +6,9 @@
  *  - Publish callbacks are fn + ctx; the TS `effect` thunk wrapper is
  *    fn + ctx receiving a perform fn + ctx, which it must run (the TS
  *    default runs it immediately) before returning.
- *  - Publish callbacks cannot throw in C, so the TS AggregateError
- *    collection has no counterpart; a callback that aborts does so
- *    through qa_range_error like every other thrown error.
+ *  - A publish callback that throws through qa_range_error is caught so
+ *    later listeners still drain; one failure rethrows as itself and
+ *    several rethrow as the TS AggregateError message.
  *  - QvmWritableView (a DataView subclass) becomes a view struct with
  *    explicit get/set functions; multi-byte accesses take the TS
  *    DataView littleEndian flag.
@@ -84,6 +84,16 @@ void qa_qvm_memory_writes_unobserve(qa_qvm_memory_writes *writes, size_t watch_i
 qa_qvm_write_capture *qa_qvm_memory_writes_before(qa_qvm_memory_writes *writes,
                                                   int64_t offset, int64_t length);
 void qa_qvm_memory_writes_after(qa_qvm_memory_writes *writes, qa_qvm_write_capture *captures);
+/* One committed raw store: before(), copy `length` bytes, after(). The caller
+ * has already bounds-checked `offset`. */
+void qa_qvm_memory_writes_store(qa_qvm_memory_writes *writes, int64_t offset, const void *bytes, size_t length);
+/* Make raw qa_qvmx_view / qa_qvmx_memory stores inside this allocation publish
+ * through `writes` (the TS retained-view rule). Interpreters bind their one
+ * allocation for their lifetime. qa_qvmx_writes_for returns NULL for bytes in no
+ * bound allocation. */
+void qa_qvm_memory_writes_bind_raw(qa_qvm_memory_writes *writes);
+void qa_qvm_memory_writes_unbind_raw(qa_qvm_memory_writes *writes);
+qa_qvm_memory_writes *qa_qvmx_writes_for(const uint8_t *bytes);
 void qa_qvm_memory_writes_clear(qa_qvm_memory_writes *writes);
 void qa_qvm_memory_writes_close(qa_qvm_memory_writes *writes);
 
@@ -93,7 +103,8 @@ typedef struct qa_qvm_writable_view {
   size_t allocation_length;
   int64_t start; /* view start within the allocation */
   int64_t length;
-  qa_qvm_memory_writes *writes; /* borrowed */
+  qa_qvm_memory_writes *writes; /* borrowed; NULL: a plain DataView (no observers) */
+  bool read_only; /* a store raises "Native module memory is read-only" (compat/q3/native/memory.ts) */
 } qa_qvm_writable_view;
 
 void qa_qvm_writable_view_init(qa_qvm_writable_view *view, uint8_t *bytes,

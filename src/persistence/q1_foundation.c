@@ -1,5 +1,6 @@
 /* Port of src/persistence/q1-foundation.ts. GPL-2.0-or-later. */
 #include "qa/persistence/q1_foundation.h"
+#include "qa/content/q1/foundation/checkpoint.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -190,28 +191,15 @@ static qa_persist_q1_entity_source_state read_source_state(
   return state;
 }
 
-static qa_persist_q1_saved_monster read_monster(const qa_save_reader *reader) {
+/* Version 5 monsters carried the grunt and dog sequence cursor; version 6
+ * keeps that animation state in the base controller. */
+static qa_persist_q1_saved_monster read_monster(const qa_save_reader *reader, bool legacy) {
   static const char *const modes[] = {"stand", "walk", "run", "attack",
                                       "leap", "pain", "death"};
   qa_persist_q1_saved_monster monster;
   memset(&monster, 0, sizeof monster);
   monster.species =
       f_choice(reader, "species", monster_species, MONSTER_SPECIES_COUNT);
-  monster.mode = f_choice(reader, "mode", modes, 7);
-  monster.frame_index = f_number(reader, "frameIndex");
-  {
-    qa_save_reader sequence = field(reader, "sequence");
-    size_t count = qa_save_reader_list_count(&sequence);
-    monster.sequence = alloc(&sequence, count, sizeof *monster.sequence);
-    monster.sequence_count = count;
-    for (size_t i = 0; i < count; i++) {
-      qa_save_reader frame = item(&sequence, i);
-      monster.sequence[i] = qa_save_reader_number(&frame);
-      qa_save_reader_destroy(&frame);
-    }
-    qa_save_reader_destroy(&sequence);
-  }
-  monster.first_frame = f_number(reader, "firstFrame");
   monster.has_enemy = f_nullable_actor(reader, "enemy", &monster.enemy);
   monster.has_old_enemy =
       f_nullable_actor(reader, "oldEnemy", &monster.old_enemy);
@@ -220,8 +208,28 @@ static qa_persist_q1_saved_monster read_monster(const qa_save_reader *reader) {
   monster.attack_finished = f_number(reader, "attackFinished");
   monster.pain_finished = f_number(reader, "painFinished");
   monster.search_until = f_number(reader, "searchUntil");
-  monster.death_drop = f_boolean(reader, "deathDrop");
   monster.refired = f_boolean(reader, "refired");
+  if (!legacy) {
+    monster.mode = f_choice(reader, "mode", modes, 3);
+    return monster;
+  }
+  const char *mode = f_choice(reader, "mode", modes, 7);
+  (void)f_boolean(reader, "deathDrop");
+  {
+    qa_save_reader sequence = field(reader, "sequence");
+    size_t count = qa_save_reader_list_count(&sequence);
+    for (size_t i = 0; i < count; i++) {
+      qa_save_reader frame = item(&sequence, i);
+      (void)qa_save_reader_number(&frame);
+      qa_save_reader_destroy(&frame);
+    }
+    qa_save_reader_destroy(&sequence);
+  }
+  monster.mode = !strcmp(mode, "stand") || !strcmp(mode, "walk") ? mode : "run";
+  monster.has_legacy_animation = true;
+  monster.legacy_animation.mode = mode;
+  monster.legacy_animation.first_frame = f_number(reader, "firstFrame");
+  monster.legacy_animation.frame_index = f_number(reader, "frameIndex");
   return monster;
 }
 
@@ -234,7 +242,7 @@ static const char *callback_name(const qa_save_reader *callbacks,
   return value;
 }
 
-static qa_persist_q1_saved_entity read_entity(const qa_save_reader *reader) {
+static qa_persist_q1_saved_entity read_entity(const qa_save_reader *reader, bool legacy) {
   qa_persist_q1_saved_entity entity;
   memset(&entity, 0, sizeof entity);
   /* TS entity() binds the callbacks reader before the literal, but
@@ -306,7 +314,7 @@ static qa_persist_q1_saved_entity read_entity(const qa_save_reader *reader) {
   {
     qa_save_reader monster = field(reader, "monster");
     entity.has_monster = !qa_save_reader_is_null(&monster);
-    if (entity.has_monster) entity.monster = read_monster(&monster);
+    if (entity.has_monster) entity.monster = read_monster(&monster, legacy);
     qa_save_reader_destroy(&monster);
   }
   {
@@ -419,7 +427,8 @@ qa_persist_q1_foundation_checkpoint qa_read_q1_foundation_checkpoint(
     checkpoint.format = qa_save_reader_literal_string(&format, "q1-foundation");
     qa_save_reader_destroy(&format);
     qa_save_reader version = field(reader, "version");
-    checkpoint.version = qa_save_reader_literal_number(&version, 5);
+    static const double versions[] = {5, 6};
+    checkpoint.version = qa_save_reader_choice_number(&version, versions, 2);
     qa_save_reader_destroy(&version);
   }
   {
@@ -483,7 +492,7 @@ qa_persist_q1_foundation_checkpoint qa_read_q1_foundation_checkpoint(
     checkpoint.entity_count = count;
     for (size_t i = 0; i < count; i++) {
       qa_save_reader entry = item(&entities, i);
-      checkpoint.entities[i] = read_entity(&entry);
+      checkpoint.entities[i] = read_entity(&entry, checkpoint.version == 5);
       qa_save_reader_destroy(&entry);
     }
     qa_save_reader_destroy(&entities);
@@ -642,22 +651,16 @@ static qa_save_value *build_source_state(const qa_persist_q1_entity_source_state
   return obj;
 }
 
+/* Key order of TS `{ ...monster, enemy, oldEnemy }` over the Q1Monster a
+ * base controller creates (species, mode, enemy, oldEnemy, path, ...); a
+ * monster read from a version 5 save keeps the reader's order (mode and
+ * legacyAnimation last). */
 static qa_save_value *build_monster(const qa_persist_q1_saved_monster *in) {
   qa_save_value *obj = qa_save_value_object();
   if (obj == NULL) return NULL;
   bool ok = true;
   SET(obj, "species", str_value(in->species));
-  SET(obj, "mode", str_value(in->mode));
-  SET(obj, "frameIndex", qa_save_value_number(in->frame_index));
-  if (ok) {
-    qa_save_value *sequence = qa_save_value_array();
-    bool built = sequence != NULL;
-    for (size_t i = 0; built && i < in->sequence_count; i++)
-      built = push_own(sequence, qa_save_value_number(in->sequence[i]));
-    if (!built) qa_save_value_free(sequence);
-    ok = built && set_own(obj, "sequence", sequence);
-  }
-  SET(obj, "firstFrame", qa_save_value_number(in->first_frame));
+  if (!in->has_legacy_animation) SET(obj, "mode", str_value(in->mode));
   if (ok) ok = set_own(obj, "enemy", nullable_actor(in->has_enemy, in->enemy));
   if (ok)
     ok = set_own(obj, "oldEnemy",
@@ -667,8 +670,17 @@ static qa_save_value *build_monster(const qa_persist_q1_saved_monster *in) {
   SET(obj, "attackFinished", qa_save_value_number(in->attack_finished));
   SET(obj, "painFinished", qa_save_value_number(in->pain_finished));
   SET(obj, "searchUntil", qa_save_value_number(in->search_until));
-  SET(obj, "deathDrop", qa_save_value_boolean(in->death_drop));
   SET(obj, "refired", qa_save_value_boolean(in->refired));
+  if (in->has_legacy_animation) SET(obj, "mode", str_value(in->mode));
+  if (ok && in->has_legacy_animation) {
+    qa_save_value *legacy = qa_save_value_object();
+    bool built = legacy != NULL;
+    if (built) built = set_own(legacy, "mode", str_value(in->legacy_animation.mode));
+    if (built) built = set_own(legacy, "firstFrame", qa_save_value_number(in->legacy_animation.first_frame));
+    if (built) built = set_own(legacy, "frameIndex", qa_save_value_number(in->legacy_animation.frame_index));
+    if (!built) qa_save_value_free(legacy);
+    ok = built && set_own(obj, "legacyAnimation", legacy);
+  }
   if (!ok) {
     qa_save_value_free(obj);
     return NULL;
@@ -1029,7 +1041,6 @@ void qa_q1_foundation_checkpoint_free(qa_persist_q1_foundation_checkpoint *check
     free(entity->fields);
     free(entity->references);
     free(entity->door_group);
-    free(entity->monster.sequence);
   }
   free(checkpoint->entities);
   for (size_t i = 0; i < checkpoint->player_count; i++)
@@ -1038,4 +1049,295 @@ void qa_q1_foundation_checkpoint_free(qa_persist_q1_foundation_checkpoint *check
   free(checkpoint->extensions);
   qa_save_value_free(checkpoint->root);
   memset(checkpoint, 0, sizeof *checkpoint);
+}
+
+/* ---- One TS type, two C mirrors ----
+ * TS Q1FoundationCheckpoint is one type: captureFoundation builds it,
+ * encodeQ1FoundationCheckpoint serializes it and readQ1FoundationCheckpoint
+ * returns it to restoreFoundation. C keeps the content capture shape
+ * (qa_q1_foundation_checkpoint, content/q1/foundation/checkpoint.h) and the
+ * persistence reader shape (qa_persist_q1_foundation_checkpoint); these copy
+ * one into the other field for field, borrowing every string and byte
+ * buffer from the source checkpoint (which must outlive the copy). */
+static void *conv_alloc(size_t count, size_t size) {
+  void *ptr = calloc(count == 0 ? 1 : count, size);
+  if (ptr == NULL) qa_save_format_error("q1-foundation", "out of memory");
+  return ptr;
+}
+static qa_persist_q1_entity_source_state state_to_persist(const qa_q1_entity_source_state *in) {
+  qa_persist_q1_entity_source_state out;
+  memset(&out, 0, sizeof out);
+  out.model = in->model; out.frame = in->frame; out.skin = in->skin; out.effects = in->effects;
+  out.solid = in->solid; out.movement = in->movement;
+  out.target = in->target; out.targetname = in->targetname; out.killtarget = in->killtarget; out.message = in->message;
+  out.delay = in->delay; out.spawnflags = in->spawnflags; out.sounds = in->sounds; out.wait = in->wait;
+  out.speed = in->speed; out.damage = in->damage; out.max_health = in->max_health;
+  out.aimed_damage = in->aimed_damage; out.next_think = in->next_think; out.original_model = in->original_model;
+  out.pos1 = in->pos1; out.pos2 = in->pos2; out.dest1 = in->dest1; out.dest2 = in->dest2;
+  out.movedir = in->movedir; out.mangle = in->mangle; out.state = in->state;
+  out.has_trigger_bounds = in->has_trigger_bounds; out.trigger_bounds = in->trigger_bounds;
+  out.attack_finished = in->attack_finished; out.count = in->count; out.activated = in->activated;
+  out.projectile = in->projectile; out.projectile_weapon = in->projectile_weapon;
+  out.angular_velocity = in->angular_velocity; out.water_level = in->water_level; out.water_type = in->water_type;
+  out.movement_flags = in->movement_flags; out.ideal_yaw = in->ideal_yaw; out.yaw_speed = in->yaw_speed;
+  out.attack_state = in->attack_state;
+  return out;
+}
+static qa_q1_entity_source_state state_to_content(const qa_persist_q1_entity_source_state *in) {
+  qa_q1_entity_source_state out;
+  memset(&out, 0, sizeof out);
+  out.model = in->model; out.frame = in->frame; out.skin = in->skin; out.effects = in->effects;
+  out.solid = in->solid; out.movement = in->movement;
+  out.target = in->target; out.targetname = in->targetname; out.killtarget = in->killtarget; out.message = in->message;
+  out.delay = in->delay; out.spawnflags = in->spawnflags; out.sounds = in->sounds; out.wait = in->wait;
+  out.speed = in->speed; out.damage = in->damage; out.max_health = in->max_health;
+  out.aimed_damage = in->aimed_damage; out.next_think = in->next_think; out.original_model = in->original_model;
+  out.pos1 = in->pos1; out.pos2 = in->pos2; out.dest1 = in->dest1; out.dest2 = in->dest2;
+  out.movedir = in->movedir; out.mangle = in->mangle; out.state = in->state;
+  out.has_trigger_bounds = in->has_trigger_bounds; out.trigger_bounds = in->trigger_bounds;
+  out.attack_finished = in->attack_finished; out.count = in->count; out.activated = in->activated;
+  out.projectile = in->projectile; out.projectile_weapon = in->projectile_weapon;
+  out.angular_velocity = in->angular_velocity; out.water_level = in->water_level; out.water_type = in->water_type;
+  out.movement_flags = in->movement_flags; out.ideal_yaw = in->ideal_yaw; out.yaw_speed = in->yaw_speed;
+  out.attack_state = in->attack_state;
+  return out;
+}
+
+void qa_persist_q1_foundation_from_content(const qa_q1_foundation_checkpoint *in,
+                                           qa_persist_q1_foundation_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  out->provider = in->provider; out->format = in->format; out->version = in->version;
+  out->precaches.phase = in->precaches.phase;
+  out->precaches.models = conv_alloc(in->precaches.model_count, sizeof *out->precaches.models);
+  for (size_t i = 0; i < in->precaches.model_count; i++) out->precaches.models[i] = in->precaches.models[i];
+  out->precaches.model_count = in->precaches.model_count;
+  out->precaches.sounds = conv_alloc(in->precaches.sound_count, sizeof *out->precaches.sounds);
+  for (size_t i = 0; i < in->precaches.sound_count; i++) out->precaches.sounds[i] = in->precaches.sounds[i];
+  out->precaches.sound_count = in->precaches.sound_count;
+  out->edition = in->edition; out->time = in->time; out->frame_seconds = in->frame_seconds;
+  out->force_retouch = in->force_retouch; out->sequence = in->sequence; out->next_dynamic_slot = in->next_dynamic_slot;
+  out->total_secrets = in->total_secrets; out->found_secrets = in->found_secrets;
+  out->total_monsters = in->total_monsters; out->killed_monsters = in->killed_monsters;
+  out->world_type = in->world_type; out->map_name = in->map_name;
+  out->basis.forward = in->basis.forward; out->basis.right = in->basis.right; out->basis.up = in->basis.up;
+  out->has_world = in->has_world; out->world = in->world;
+  out->has_sight_entity = in->has_sight_entity; out->sight_entity = in->sight_entity;
+  out->sight_time = in->sight_time;
+  out->has_intermission = in->has_intermission;
+  out->intermission.map = in->intermission_map;
+  out->intermission.has_cause = in->has_intermission_cause;
+  out->intermission.cause = in->intermission_cause;
+  out->intermission.exit_after = in->intermission_exit_after;
+  out->entities = conv_alloc(in->entity_count, sizeof *out->entities);
+  out->entity_count = in->entity_count;
+  for (size_t i = 0; i < in->entity_count; i++) {
+    const qa_q1_saved_entity *src = &in->entities[i];
+    qa_persist_q1_saved_entity *dst = &out->entities[i];
+    dst->actor = src->actor; dst->actor_provider = src->actor_provider;
+    dst->has_source_slot = src->has_source_slot; dst->source_slot = src->source_slot;
+    dst->classname = src->classname;
+    dst->has_source_ordinal = src->has_source_ordinal; dst->source_ordinal = src->source_ordinal;
+    dst->state = state_to_persist(&src->state);
+    dst->fields = conv_alloc(src->field_count, sizeof *dst->fields);
+    dst->field_count = src->field_count;
+    for (size_t k = 0; k < src->field_count; k++) { dst->fields[k].key = src->fields[k].key; dst->fields[k].value = src->fields[k].value; }
+    dst->references = conv_alloc(src->reference_count, sizeof *dst->references);
+    dst->reference_count = src->reference_count;
+    for (size_t k = 0; k < src->reference_count; k++) {
+      dst->references[k].key = src->references[k].key;
+      dst->references[k].has_actor = src->references[k].has_actor;
+      dst->references[k].actor = src->references[k].actor;
+    }
+    dst->has_owner = src->has_owner; dst->owner = src->owner;
+    dst->has_activator = src->has_activator; dst->activator = src->activator;
+    dst->door_group = conv_alloc(src->door_group_count, sizeof *dst->door_group);
+    dst->door_group_count = src->door_group_count;
+    for (size_t k = 0; k < src->door_group_count; k++) dst->door_group[k] = src->door_group[k];
+    if (src->monster != NULL) {
+      const qa_q1_saved_monster *m = src->monster;
+      dst->has_monster = true;
+      dst->monster.species = m->species; dst->monster.mode = m->mode;
+      dst->monster.has_enemy = m->has_enemy; dst->monster.enemy = m->enemy;
+      dst->monster.has_old_enemy = m->has_old_enemy; dst->monster.old_enemy = m->old_enemy;
+      dst->monster.path = m->path; dst->monster.pause_until = m->pause_until;
+      dst->monster.attack_finished = m->attack_finished; dst->monster.pain_finished = m->pain_finished;
+      dst->monster.search_until = m->search_until;
+      dst->monster.refired = m->refired;
+      dst->monster.has_legacy_animation = m->has_legacy_animation;
+      dst->monster.legacy_animation.mode = m->legacy_animation.mode;
+      dst->monster.legacy_animation.first_frame = m->legacy_animation.first_frame;
+      dst->monster.legacy_animation.frame_index = m->legacy_animation.frame_index;
+    }
+    dst->has_move = src->has_move;
+    dst->move.destination = src->move_destination; dst->move.done = src->move_done;
+    dst->callbacks.think = src->callbacks.think; dst->callbacks.use = src->callbacks.use;
+    dst->callbacks.touch = src->callbacks.touch; dst->callbacks.pain = src->callbacks.pain;
+    dst->callbacks.die = src->callbacks.die; dst->callbacks.blocked = src->callbacks.blocked;
+    dst->callbacks.path_end = src->callbacks.path_end;
+  }
+  out->players = conv_alloc(in->player_count, sizeof *out->players);
+  out->player_count = in->player_count;
+  for (size_t i = 0; i < in->player_count; i++) {
+    const qa_q1_saved_player *src = &in->players[i];
+    qa_persist_q1_saved_player *dst = &out->players[i];
+    const qa_q1_saved_player_state *s = &src->state;
+    qa_persist_q1_saved_player_state *d = &dst->state;
+    dst->actor = src->actor; dst->actor_provider = src->actor_provider;
+    /* TS reader: an absent alpha/scale reads as 0. */
+    d->alpha = s->has_alpha ? s->alpha : 0; d->scale = s->has_scale ? s->scale : 0;
+    d->weapon = s->weapon; d->primary_holstered = s->primary_holstered; d->attack_held = s->attack_held;
+    d->jump_held = s->jump_held; d->teleport_until = s->teleport_until; d->attack_finished = s->attack_finished;
+    d->weapon_frame = s->weapon_frame; d->weapon_animation_at = s->weapon_animation_at;
+    d->weapon_animation_base = s->weapon_animation_base; d->continuous_firing = s->continuous_firing;
+    d->next_weapon_frame = s->next_weapon_frame; d->lightning_sound_at = s->lightning_sound_at;
+    d->punch_angles = s->punch_angles; d->nail_side = s->nail_side; d->max_health = s->max_health;
+    d->mega_rot_at = s->mega_rot_at; d->hostile_until = s->hostile_until; d->view_angles = s->view_angles;
+    d->water_level = s->water_level; d->air_finished = s->air_finished; d->drown_damage = s->drown_damage;
+    d->drown_at = s->drown_at; d->hazard_at = s->hazard_at; d->auto_switch = s->auto_switch;
+    dst->powerups = conv_alloc(src->powerup_count, sizeof *dst->powerups);
+    dst->powerup_count = src->powerup_count;
+    for (size_t k = 0; k < src->powerup_count; k++) {
+      dst->powerups[k].kind = src->powerups[k].kind;
+      dst->powerups[k].expires = src->powerups[k].expires;
+    }
+  }
+  out->extensions = conv_alloc(in->extension_count, sizeof *out->extensions);
+  out->extension_count = in->extension_count;
+  for (size_t i = 0; i < in->extension_count; i++) {
+    out->extensions[i].id = in->extensions[i].id;
+    out->extensions[i].bytes.bytes = in->extensions[i].bytes;
+    out->extensions[i].bytes.length = in->extensions[i].len;
+  }
+}
+
+/* One allocation block holding every array of the content copy; storage
+ * points at it (qa_persist_q1_foundation_content_free releases it). */
+typedef struct conv_block { void **ptrs; size_t count, capacity; } conv_block;
+static void *block_alloc(conv_block *block, size_t count, size_t size) {
+  void *ptr = conv_alloc(count, size);
+  if (block->count == block->capacity) {
+    size_t grown = block->capacity ? block->capacity * 2 : 16;
+    void **next = realloc(block->ptrs, grown * sizeof *next);
+    if (next == NULL) qa_save_format_error("q1-foundation", "out of memory");
+    block->ptrs = next; block->capacity = grown;
+  }
+  block->ptrs[block->count++] = ptr;
+  return ptr;
+}
+void qa_persist_q1_foundation_to_content(const qa_persist_q1_foundation_checkpoint *in,
+                                         qa_q1_foundation_checkpoint *out) {
+  memset(out, 0, sizeof *out);
+  conv_block *block = conv_alloc(1, sizeof *block);
+  out->storage = block;
+  out->format = in->format; out->provider = in->provider; out->version = in->version;
+  out->precaches.phase = in->precaches.phase;
+  out->precaches.models = in->precaches.models; out->precaches.model_count = in->precaches.model_count;
+  out->precaches.sounds = in->precaches.sounds; out->precaches.sound_count = in->precaches.sound_count;
+  out->edition = in->edition; out->time = in->time; out->frame_seconds = in->frame_seconds;
+  out->force_retouch = in->force_retouch;
+  out->basis.forward = in->basis.forward; out->basis.right = in->basis.right; out->basis.up = in->basis.up;
+  out->sequence = in->sequence; out->next_dynamic_slot = in->next_dynamic_slot;
+  out->total_secrets = in->total_secrets; out->found_secrets = in->found_secrets;
+  out->total_monsters = in->total_monsters; out->killed_monsters = in->killed_monsters;
+  out->world_type = in->world_type; out->map_name = in->map_name;
+  out->has_world = in->has_world; out->world = in->world;
+  out->has_sight_entity = in->has_sight_entity; out->sight_entity = in->sight_entity;
+  out->sight_time = in->sight_time;
+  out->has_intermission = in->has_intermission;
+  out->intermission_map = in->has_intermission ? in->intermission.map : NULL;
+  out->has_intermission_cause = in->has_intermission && in->intermission.has_cause;
+  out->intermission_cause = in->intermission.cause;
+  out->intermission_exit_after = in->intermission.exit_after;
+  qa_q1_saved_entity *entities = block_alloc(block, in->entity_count, sizeof *entities);
+  for (size_t i = 0; i < in->entity_count; i++) {
+    const qa_persist_q1_saved_entity *src = &in->entities[i];
+    qa_q1_saved_entity *dst = &entities[i];
+    dst->actor = src->actor; dst->actor_provider = src->actor_provider;
+    dst->has_source_slot = src->has_source_slot; dst->source_slot = src->source_slot;
+    dst->classname = src->classname;
+    dst->has_source_ordinal = src->has_source_ordinal; dst->source_ordinal = src->source_ordinal;
+    dst->state = state_to_content(&src->state);
+    qa_q1_saved_field *fields = block_alloc(block, src->field_count, sizeof *fields);
+    for (size_t k = 0; k < src->field_count; k++) { fields[k].key = src->fields[k].key; fields[k].value = src->fields[k].value; }
+    dst->fields = fields; dst->field_count = src->field_count;
+    qa_q1_saved_reference *references = block_alloc(block, src->reference_count, sizeof *references);
+    for (size_t k = 0; k < src->reference_count; k++) {
+      references[k].key = src->references[k].key;
+      references[k].has_actor = src->references[k].has_actor;
+      references[k].actor = src->references[k].actor;
+    }
+    dst->references = references; dst->reference_count = src->reference_count;
+    dst->has_owner = src->has_owner; dst->owner = src->owner;
+    dst->has_activator = src->has_activator; dst->activator = src->activator;
+    qa_saved_actor_id *doors = block_alloc(block, src->door_group_count, sizeof *doors);
+    for (size_t k = 0; k < src->door_group_count; k++) doors[k] = src->door_group[k];
+    dst->door_group = doors; dst->door_group_count = src->door_group_count;
+    if (src->has_monster) {
+      qa_q1_saved_monster *m = block_alloc(block, 1, sizeof *m);
+      m->species = src->monster.species; m->mode = src->monster.mode;
+      m->has_enemy = src->monster.has_enemy; m->enemy = src->monster.enemy;
+      m->has_old_enemy = src->monster.has_old_enemy; m->old_enemy = src->monster.old_enemy;
+      m->path = src->monster.path; m->pause_until = src->monster.pause_until;
+      m->attack_finished = src->monster.attack_finished; m->pain_finished = src->monster.pain_finished;
+      m->search_until = src->monster.search_until;
+      m->refired = src->monster.refired;
+      m->has_legacy_animation = src->monster.has_legacy_animation;
+      m->legacy_animation.mode = src->monster.legacy_animation.mode;
+      m->legacy_animation.first_frame = src->monster.legacy_animation.first_frame;
+      m->legacy_animation.frame_index = src->monster.legacy_animation.frame_index;
+      dst->monster = m;
+    }
+    dst->has_move = src->has_move;
+    dst->move_destination = src->move.destination; dst->move_done = src->has_move ? src->move.done : NULL;
+    dst->callbacks.think = src->callbacks.think; dst->callbacks.use = src->callbacks.use;
+    dst->callbacks.touch = src->callbacks.touch; dst->callbacks.pain = src->callbacks.pain;
+    dst->callbacks.die = src->callbacks.die; dst->callbacks.blocked = src->callbacks.blocked;
+    dst->callbacks.path_end = src->callbacks.path_end;
+  }
+  out->entities = entities; out->entity_count = in->entity_count;
+  qa_q1_saved_player *players = block_alloc(block, in->player_count, sizeof *players);
+  for (size_t i = 0; i < in->player_count; i++) {
+    const qa_persist_q1_saved_player *src = &in->players[i];
+    qa_q1_saved_player *dst = &players[i];
+    const qa_persist_q1_saved_player_state *s = &src->state;
+    qa_q1_saved_player_state *d = &dst->state;
+    dst->actor = src->actor; dst->actor_provider = src->actor_provider;
+    d->has_alpha = true; d->alpha = s->alpha; d->has_scale = true; d->scale = s->scale;
+    d->weapon = s->weapon; d->primary_holstered = s->primary_holstered; d->attack_held = s->attack_held;
+    d->jump_held = s->jump_held; d->teleport_until = s->teleport_until; d->attack_finished = s->attack_finished;
+    d->weapon_frame = s->weapon_frame; d->weapon_animation_at = s->weapon_animation_at;
+    d->weapon_animation_base = s->weapon_animation_base; d->continuous_firing = s->continuous_firing;
+    d->next_weapon_frame = s->next_weapon_frame; d->lightning_sound_at = s->lightning_sound_at;
+    d->punch_angles = s->punch_angles; d->nail_side = s->nail_side; d->max_health = s->max_health;
+    d->mega_rot_at = s->mega_rot_at; d->hostile_until = s->hostile_until; d->view_angles = s->view_angles;
+    d->water_level = s->water_level; d->air_finished = s->air_finished; d->drown_damage = s->drown_damage;
+    d->drown_at = s->drown_at; d->hazard_at = s->hazard_at; d->auto_switch = s->auto_switch;
+    qa_q1_powerup_entry *powerups = block_alloc(block, src->powerup_count, sizeof *powerups);
+    for (size_t k = 0; k < src->powerup_count; k++) {
+      powerups[k].kind = src->powerups[k].kind;
+      powerups[k].expires = src->powerups[k].expires;
+    }
+    dst->powerups = powerups; dst->powerup_count = src->powerup_count;
+  }
+  out->players = players; out->player_count = in->player_count;
+  out->extensions = block_alloc(block, in->extension_count, sizeof *out->extensions);
+  out->extension_count = in->extension_count;
+  for (size_t i = 0; i < in->extension_count; i++) {
+    out->extensions[i].id = in->extensions[i].id;
+    out->extensions[i].bytes = in->extensions[i].bytes.bytes;
+    out->extensions[i].len = in->extensions[i].bytes.length;
+  }
+}
+void qa_persist_q1_foundation_content_free(qa_q1_foundation_checkpoint *checkpoint) {
+  if (checkpoint == NULL) return;
+  conv_block *block = checkpoint->storage;
+  if (block != NULL) {
+    for (size_t i = 0; i < block->count; i++) free(block->ptrs[i]);
+    free(block->ptrs);
+    free(block);
+  }
+  memset(checkpoint, 0, sizeof *checkpoint);
+}
+qa_save_value *qa_q1_foundation_checkpoint_value(const qa_persist_q1_foundation_checkpoint *checkpoint) {
+  return build_checkpoint(checkpoint);
 }

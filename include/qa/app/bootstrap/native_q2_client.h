@@ -1,76 +1,55 @@
-/* Port of src/app/bootstrap/native-q2-client.ts. Q2NativeWorld and
- * the network/q2-layout + q2-service-presentation helpers are other
- * bootstrap slices behind the host below. The unlanded
- * SimulationPresentationEvent is carried as an opaque kind/payload
- * record. GPL-2.0-or-later. */
+/* Port of src/app/bootstrap/native-q2-client.ts: NativeQ2ClientPresentation, the client
+ * presentation state decoded from the source host's recipient-filtered messages over the
+ * real Q2NativeWorld (classic or rerelease guest world), Q2ServerMessageReader and the Q2
+ * service presentation (network/q2_service_presentation.h). Events are the
+ * SimulationPresentationEvent union. GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NATIVE_Q2_CLIENT_H
 #define QA_APP_BOOTSTRAP_NATIVE_Q2_CLIENT_H
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "qa/app/bootstrap/simulation/classic_guest_player.h"
+#include "qa/app/bootstrap/simulation/native_primary_weapons.h"
+#include "qa/app/bootstrap/simulation/types.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/identity.h"
+#include "qa/contracts/protocol.h"
 #include "qa/network/q2/server_messages.h"
-typedef struct qa_app_native_q2_event {
-  const char *kind;      /* borrowed */
-  const void *payload;   /* borrowed, host-defined */
-} qa_app_native_q2_event;
-typedef struct qa_app_native_q2_layout {
-  double max_config_strings, images, sounds, player_skins;
-} qa_app_native_q2_layout;
-/* Q2ServicePresentationHost surface filled by the client below and
- * consumed by the host's translate/print functions. */
-typedef struct qa_app_native_q2_presentation_host {
-  void *ctx;
-  qa_content_id (*content)(void *ctx);
-  double seconds;
-  double (*next_sequence)(void *ctx);
-  const char *edition;
-  bool (*player)(void *ctx, qa_actor_id *actor_out, double *source_entity_out);
-  bool (*actor)(void *ctx, double slot, qa_actor_id *out);
-  const void *(*entity)(void *ctx, double slot);
-  const void *(*fog)(void *ctx, const void *value);
-  double image_config_offset, sound_config_offset, player_skin_config_offset;
-  const char *(*config_string)(void *ctx, double index);
-  void (*set_config_string)(void *ctx, double index, const char *value);
-  void (*set_inventory)(void *ctx, const double *counts, size_t count);
-  void (*set_layout)(void *ctx, const char *value);
-  void (*emit)(void *ctx, qa_app_native_q2_event event);
-} qa_app_native_q2_presentation_host;
-typedef struct qa_app_native_q2_world {
-  void *ctx;
-  const char *edition; /* "classic"|"rerelease" */
-  bool (*actor)(void *ctx, double slot, qa_actor_id *out);
-  /* Borrowed configstring rows at construction. */
-  size_t (*configstrings)(void *ctx, const double **indices, const char *const **values);
-  const void *(*player_state)(void *ctx, double slot);
-  bool (*entity_active)(void *ctx, double slot);
-  const void *(*entity_state)(void *ctx, double slot);
-  /* q2ApplicationLayout(protocol) + q2FogFromWire + service records. */
-  qa_app_native_q2_layout (*layout)(void *ctx, qa_q2_protocol_identity protocol);
-  const void *(*fog_from_wire)(void *ctx, const void *current, const void *value);
-  const void *empty_fog;
-  /* translateQ2ServiceRecords: remaining records borrowed. */
-  size_t (*translate)(void *ctx, qa_q2_server_record *records, size_t count,
-      qa_app_native_q2_presentation_host *host, qa_q2_server_record **remaining_out);
-  void (*service_print)(void *ctx, qa_app_native_q2_presentation_host *host, double level, const char *text);
-} qa_app_native_q2_world;
 typedef struct qa_app_native_q2_client qa_app_native_q2_client;
-/* Aborts when the source slot is not the admitted actor (TS Error). */
-qa_app_native_q2_client *qa_app_native_q2_client_create(qa_app_native_q2_world world,
+/* TS Pick<ClassicGuestMessage, "bytes">. */
+typedef struct qa_app_native_q2_message {
+  const uint8_t *bytes;
+  size_t length;
+} qa_app_native_q2_message;
+/* TS world.playerState(slot): the classic or rerelease player state. */
+typedef struct qa_app_native_q2_player_state {
+  bool rerelease;
+  qa_q2_player_state classic;
+  qa_q2_rerelease_player_state rerelease_state;
+} qa_app_native_q2_player_state;
+/* TS constructor. Raises Error "Native client presentation requires its admitted source
+ * player" when the slot's actor is not `actor`. The world is borrowed; content is copied. */
+qa_app_native_q2_client *qa_app_native_q2_client_create(qa_app_sim_q2_native_world world,
     double source_slot, qa_actor_id actor, qa_content_id content);
 void qa_app_native_q2_client_destroy(qa_app_native_q2_client *client);
-const char *qa_app_native_q2_client_config_string(qa_app_native_q2_client *client, double index);
-const double *qa_app_native_q2_client_inventory(qa_app_native_q2_client *client, size_t *out_count);
-const char *qa_app_native_q2_client_layout(qa_app_native_q2_client *client);
-const void *qa_app_native_q2_client_player_state(qa_app_native_q2_client *client);
-/* Remaining records are malloc'd (caller frees the array). */
-size_t qa_app_native_q2_client_receive(qa_app_native_q2_client *client,
-    const uint8_t *const *messages, const size_t *lengths, size_t message_count,
-    double seconds, qa_q2_server_record **remaining_out);
-void qa_app_native_q2_client_print(qa_app_native_q2_client *client, double level,
-    const char *text, double seconds);
-/* Drained events are malloc'd (caller frees the array). */
-size_t qa_app_native_q2_client_take_events(qa_app_native_q2_client *client,
-    qa_app_native_q2_event **out);
+qa_app_sim_q2_native_world qa_app_native_q2_client_world(const qa_app_native_q2_client *client);
+double qa_app_native_q2_client_source_slot(const qa_app_native_q2_client *client);
+qa_actor_id qa_app_native_q2_client_actor(const qa_app_native_q2_client *client);
+qa_content_id qa_app_native_q2_client_content(const qa_app_native_q2_client *client);
+/* TS configstrings (ReadonlyMap<number, string>): entries in Map order, and one lookup
+ * (NULL is undefined). Borrowed until the next receive/print. */
+const qa_app_sim_configstring *qa_app_native_q2_client_configstrings(const qa_app_native_q2_client *client,
+    size_t *out_count);
+const char *qa_app_native_q2_client_config_string(const qa_app_native_q2_client *client, double index);
+const double *qa_app_native_q2_client_inventory(const qa_app_native_q2_client *client, size_t *out_count);
+const char *qa_app_native_q2_client_layout(const qa_app_native_q2_client *client);
+qa_app_native_q2_player_state qa_app_native_q2_client_player_state(const qa_app_native_q2_client *client);
+/* TS receive(messages, seconds): the records translateQ2ServiceRecords leaves, owned by the
+ * caller (qa_q2_server_records_free). */
+size_t qa_app_native_q2_client_receive(qa_app_native_q2_client *client, const qa_app_native_q2_message *messages,
+    size_t message_count, double seconds, qa_q2_server_record **remaining_out);
+void qa_app_native_q2_client_print(qa_app_native_q2_client *client, double level, const char *text, double seconds);
+/* TS takeEvents(): owned events (release each with qa_app_sim_presentation_event_release,
+ * then free the array); NULL with 0 when none are pending. */
+size_t qa_app_native_q2_client_take_events(qa_app_native_q2_client *client, qa_app_sim_presentation_event **out);
 #endif

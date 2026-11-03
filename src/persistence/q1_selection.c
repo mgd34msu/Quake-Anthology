@@ -1,14 +1,14 @@
 /* Port of src/persistence/q1-selection.ts. GPL-2.0-or-later. */
 #include "qa/persistence/q1_selection.h"
 
+#include "qa/foundation/support.h"
 #include <stdnoreturn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static noreturn void qa_error(const char *message) {
-  fprintf(stderr, "Error: %s\n", message);
-  abort();
+  qa_raise("Error", 0, 0, "%s", message);
 }
 
 typedef struct view {
@@ -69,8 +69,25 @@ static view directory_label(const char *path) {
   return (view){path + start, dir_end - start};
 }
 
+/* One product as the selector reads it: the mirrored CatalogProduct and
+ * the content catalog's discovered product share this view. */
+typedef struct product_view {
+  const void *product;
+  const char *id;
+  const char *expectation_id;
+  bool q1, installed;
+  const char *content_directory;
+  const char *edition;
+  size_t map_count;
+  const char *(*map_path)(const void *product, size_t index);
+} product_view;
+typedef struct product_list {
+  const void *catalog;
+  size_t count;
+  product_view (*at)(const void *catalog, size_t index);
+} product_list;
+
 typedef struct selection {
-  const qa_installed_catalog *catalog;
   const qa_q1_save_data *save;
   bool has_game;
   view game; /* lower-cased on compare */
@@ -85,15 +102,15 @@ static bool map_matches(const selection *sel, const char *map_path) {
          view_eq_lower((view){map_path + 5 + map_length, 4}, ".bsp", 4);
 }
 
-static bool is_candidate(const selection *sel, const qa_catalog_product *product) {
-  if (!str_eq(product->expectation.family, "q1")) return false;
-  if (!str_eq(product->availability.kind, "installed")) return false;
+static bool is_candidate(const selection *sel, const product_view *product) {
+  if (!product->q1) return false;
+  if (!product->installed) return false;
   bool any_map = false;
   for (size_t i = 0; i < product->map_count; i++)
-    if (map_matches(sel, product->maps[i].path)) any_map = true;
+    if (map_matches(sel, product->map_path(product->product, i))) any_map = true;
   if (!any_map) return false;
   if (sel->has_game) {
-    view base = basename_view(product->expectation.content_directory);
+    view base = basename_view(product->content_directory);
     if (!view_eq_lower(base, sel->game.text, sel->game.length)) return false;
   }
   return true;
@@ -110,11 +127,10 @@ static bool valid_directory_segment(view segment) {
   return true;
 }
 
-const qa_catalog_product *qa_select_q1_save_product(
-    const qa_installed_catalog *catalog, const qa_q1_save_data *save,
-    const char *path, const char *selected) {
+static const void *select_product(product_list catalog, const qa_q1_save_data *save,
+                                  const char *path, const char *selected) {
   view directory = directory_label(path);
-  selection sel = {catalog, save, false, {NULL, 0}};
+  selection sel = {save, false, {NULL, 0}};
   if (save->format_version == 6) {
     const char *directories =
         save->game_directories != NULL ? save->game_directories : "";
@@ -137,33 +153,33 @@ const qa_catalog_product *qa_select_q1_save_product(
     sel.has_game = true;
   }
   if (selected != NULL) {
-    for (size_t i = 0; i < catalog->product_count; i++) {
-      const qa_catalog_product *product = &catalog->products[i];
-      if (is_candidate(&sel, product) &&
-          (str_eq(product->expectation.id, selected) ||
-           str_eq(product->id, selected)))
-        return product;
+    for (size_t i = 0; i < catalog.count; i++) {
+      product_view product = catalog.at(catalog.catalog, i);
+      if (is_candidate(&sel, &product) &&
+          (str_eq(product.expectation_id, selected) ||
+           str_eq(product.id, selected)))
+        return product.product;
     }
     qa_error("Selected source game does not match this save.");
   }
-  const qa_catalog_product *contextual = NULL;
+  const void *contextual = NULL;
   size_t contextual_count = 0;
-  const qa_catalog_product *only = NULL;
+  const void *only = NULL;
   size_t candidate_count = 0;
-  const qa_catalog_product *rerelease = NULL;
+  const void *rerelease = NULL;
   size_t rerelease_count = 0;
-  for (size_t i = 0; i < catalog->product_count; i++) {
-    const qa_catalog_product *product = &catalog->products[i];
-    if (!is_candidate(&sel, product)) continue;
+  for (size_t i = 0; i < catalog.count; i++) {
+    product_view product = catalog.at(catalog.catalog, i);
+    if (!is_candidate(&sel, &product)) continue;
     candidate_count++;
-    only = product;
-    if (str_eq_view(product->expectation.id, directory)) {
+    only = product.product;
+    if (str_eq_view(product.expectation_id, directory)) {
       contextual_count++;
-      contextual = product;
+      contextual = product.product;
     }
-    if (str_eq(product->expectation.edition, "rerelease")) {
+    if (str_eq(product.edition, "rerelease")) {
       rerelease_count++;
-      rerelease = product;
+      rerelease = product.product;
     }
   }
   if (contextual_count == 1) return contextual;
@@ -175,4 +191,42 @@ const qa_catalog_product *qa_select_q1_save_product(
                ? "Required source save game content is not installed."
                : "Select the source game for this save; its original format "
                  "does not identify the program.");
+}
+
+static const char *mirror_map_path(const void *product, size_t index) {
+  return ((const qa_catalog_product *)product)->maps[index].path;
+}
+static product_view mirror_at(const void *catalog, size_t index) {
+  const qa_catalog_product *product = &((const qa_installed_catalog *)catalog)->products[index];
+  return (product_view){product, product->id, product->expectation.id,
+                        str_eq(product->expectation.family, "q1"),
+                        str_eq(product->availability.kind, "installed"),
+                        product->expectation.content_directory,
+                        product->expectation.edition, product->map_count,
+                        mirror_map_path};
+}
+const qa_catalog_product *qa_select_q1_save_product(
+    const qa_installed_catalog *catalog, const qa_q1_save_data *save,
+    const char *path, const char *selected) {
+  return select_product((product_list){catalog, catalog->product_count, mirror_at},
+                        save, path, selected);
+}
+
+static const char *installed_map_path(const void *product, size_t index) {
+  return ((const qa_catalog_discovered_product *)product)->maps[index].path;
+}
+static product_view installed_at(const void *catalog, size_t index) {
+  const qa_catalog_discovered_product *product = &((const qa_content_catalog *)catalog)->products[index];
+  return (product_view){product, product->id, product->expectation.id,
+                        product->expectation.family == QA_GAME_FAMILY_Q1,
+                        product->availability.kind == QA_CATALOG_INSTALLED,
+                        product->expectation.content_directory,
+                        product->expectation.edition, product->map_count,
+                        installed_map_path};
+}
+const qa_catalog_discovered_product *qa_select_q1_save_product_in_catalog(
+    const qa_content_catalog *catalog, const qa_q1_save_data *save,
+    const char *path, const char *selected) {
+  return select_product((product_list){catalog, catalog->product_count, installed_at},
+                        save, path, selected);
 }

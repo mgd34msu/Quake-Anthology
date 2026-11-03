@@ -1,9 +1,9 @@
-/* Port of src/content/q2/missionpacks/weapons/player.ts. GPL-2.0-or-later.
- * TS game.host.actors.observations() has no qa_q2f mirror; the rerelease
- * chainfist sweep iterates the game entities snapshot. */
+/* Port of src/content/q2/missionpacks/weapons/player.ts. GPL-2.0-or-later. */
 #include "qa/content/q2/missionpacks/weapons/player.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "../missionpacks_internal.h"
@@ -33,7 +33,7 @@ static void think_fn(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons
   qa_q2mp_weapons_ext_ctx *e = ctx;
   qa_q2w_state *state = context->state;
   const qa_q2w_input *input = &context->input;
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   const qa_q2w_definition *definition = context->definition;
   if (name_is(definition->name, "trap") || name_is(definition->name, "tesla")) {
     bool trap = name_is(definition->name, "trap");
@@ -58,9 +58,9 @@ static void think_fn(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons
       if ((state->frame == 42 || state->frame == 51) && floor(q2mp_rnd(game) * 8) != 0 && input->hand != QA_Q2W_HAND_CENTER &&
           q2mp_rnd(game) < 0.4) {
         qa_q2w_projection projection = qa_q2w_weapons_project_default(weapons, context, q2mp_v3(8, 8, -4));
-        qa_q2f_presentation_event ev;
+        qa_q2_presentation_event ev;
         memset(&ev, 0, sizeof ev);
-        ev.kind = QA_Q2F_EVENT_EFFECT; ev.effect = "q2:chainfist_smoke"; ev.origin = projection.start;
+        ev.kind = "effect"; ev.effect = "q2:chainfist_smoke"; ev.origin = projection.start;
         ev.direction = q2mp_zero(); ev.count = 0; ev.color = 0;
         game->host->emit(game->host->ctx, ev);
       }
@@ -76,9 +76,9 @@ static void think_fn(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons
     else if ((state->frame == 42 || state->frame == 51) && floor(q2mp_rnd(game) * 8) != 0 &&
              input->hand != QA_Q2W_HAND_CENTER && q2mp_rnd(game) < 0.4) {
       qa_q2w_projection projection = qa_q2w_weapons_project_default(weapons, context, q2mp_v3(8, 8, -4));
-      qa_q2f_presentation_event ev;
+      qa_q2_presentation_event ev;
       memset(&ev, 0, sizeof ev);
-      ev.kind = QA_Q2F_EVENT_EFFECT; ev.effect = "q2:chainfist_smoke"; ev.origin = projection.start;
+      ev.kind = "effect"; ev.effect = "q2:chainfist_smoke"; ev.origin = projection.start;
       ev.direction = q2mp_zero(); ev.count = 0; ev.color = 0;
       game->host->emit(game->host->ctx, ev);
     }
@@ -118,11 +118,16 @@ static void think_fn(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons
 
 static void throw_weapon(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons, bool held) {
   qa_q2w_owner self = context->self;
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   const qa_q2w_input *input = &context->input;
   qa_q2w_state *state = context->state;
   bool trap = name_is(context->definition->name, "trap");
   if (context->rerelease) {
+    qa_q2mp_mines * m2;
+    qa_owned_actor self3;
+    qa_vec3 start3;
+    qa_vec3 direction3;
+    double multiplier2;
     double timer = state->grenade_time - context->now;
     double duration = trap ? 5 : 3, minimum = trap ? 300 : 400, maximum = trap ? 700 : 800;
     double charged = minimum + (duration - timer) * (maximum - minimum) / duration;
@@ -134,8 +139,8 @@ static void throw_weapon(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_wea
       (void)qa_q2mp_projectiles_fire_trap(w->projectiles, self.actor, game, projection.start, projection.direction,
                                           125 * qa_q2w_weapons_multiplier(weapons, context), speed, 1, 165, held);
     else
-      (void)qa_q2mp_mines_fire_tesla(mines_of(w), self.actor, game, projection.start, projection.direction,
-                                     qa_q2w_weapons_multiplier(weapons, context), speed);
+      (void)(m2 = mines_of(w), self3 = self.actor, start3 = projection.start, direction3 = projection.direction, multiplier2 = qa_q2w_weapons_multiplier(weapons, context), qa_q2mp_mines_fire_tesla(m2, self3, game, start3, direction3,
+                                     multiplier2, speed));
     qa_q2w_weapons_consume(weapons, context, 1, false);
     return;
   }
@@ -151,8 +156,12 @@ static void throw_weapon(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_wea
     double side = input->hand == QA_Q2W_HAND_LEFT ? 4 : input->hand == QA_Q2W_HAND_CENTER ? 0 : -4;
     qa_vec3 start = q2mp_add(q2mp_add(game->body(game->ctx, self.actor).origin, q2mp_scale(axes.right, side)),
                              q2mp_scale(axes.up, self.view_height - 22));
-    (void)qa_q2mp_mines_fire_tesla(mines_of(w), self.actor, game, start, axes.forward,
-                                   qa_q2w_weapons_multiplier(weapons, context), speed);
+    qa_q2mp_mines * m = mines_of(w);
+    qa_owned_actor self2 = self.actor;
+    qa_vec3 direction2 = axes.forward;
+    double multiplier = qa_q2w_weapons_multiplier(weapons, context);
+    (void)qa_q2mp_mines_fire_tesla(m, self2, game, start, direction2,
+                                   multiplier, speed);
   }
   qa_q2w_weapons_consume(weapons, context, 1, !trap);
   state->grenade_time = context->now + qa_q2w_weapons_firing_interval(weapons, self.actor.id, 1);
@@ -168,29 +177,42 @@ static void fire_prox(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapon
                                        : input->angles;
   qa_q2w_projection projection = qa_q2w_weapons_project(weapons, context, q2mp_v3(8, context->rerelease ? 0 : 8, -8), angles);
   qa_q2w_weapons_kick_default(weapons, context, q2mp_scale(q2mp_axes(input->angles).forward, -2), q2mp_v3(-1, 0, 0));
-  (void)qa_q2mp_mines_fire_prox(mines_of(w), context->self.actor, context->game, projection.start, projection.direction,
-                                qa_q2w_weapons_multiplier(weapons, context), 600);
+  qa_q2mp_mines * m = mines_of(w);
+  qa_owned_actor self2 = context->self.actor;
+  qa_q2_game_services * game2 = context->game;
+  qa_vec3 start2 = projection.start;
+  qa_vec3 direction2 = projection.direction;
+  double multiplier = qa_q2w_weapons_multiplier(weapons, context);
+  (void)qa_q2mp_mines_fire_prox(m, self2, game2, start2, direction2,
+                                multiplier, 600);
   qa_q2w_weapons_flash(weapons, context, context->rerelease ? 31 : 6);
   if (!context->rerelease) context->state->frame++;
   noise(weapons, context, projection.start);
   qa_q2w_weapons_consume_default(weapons, context);
 }
 static void fire_ion(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   const qa_q2w_input *input = &context->input;
   qa_vec3 aim = q2mp_v3(input->angles.x, input->angles.y + q2mp_rnd(game) * 2 - 1, input->angles.z);
   qa_q2w_projection projection = qa_q2w_weapons_project(weapons, context, q2mp_v3(16, 7, -8), aim);
   qa_q2w_weapons_kick_default(weapons, context,
                               q2mp_scale(q2mp_axes(context->rerelease ? input->angles : aim).forward, -3), q2mp_v3(-3, 0, 0));
-  (void)qa_q2mp_bolts_fire_ion_ripper(bolts_of(w), context->self.actor, game, projection.start, projection.direction,
-                                      (q2mp_dm(game) ? 30 : 50) * qa_q2w_weapons_multiplier(weapons, context), 500, 0x100000);
+  qa_q2mp_bolts * b = bolts_of(w);
+  qa_owned_actor self2 = context->self.actor;
+  qa_vec3 start2 = projection.start;
+  qa_vec3 direction2 = projection.direction;
+  double left = (q2mp_dm(game) ? 30 : 50);
+  double right = qa_q2w_weapons_multiplier(weapons, context);
+  double damage = left * right;
+  (void)qa_q2mp_bolts_fire_ion_ripper(b, self2, game, start2, direction2,
+                                      damage, 500, 0x100000);
   qa_q2w_weapons_flash(weapons, context, 16);
   if (!context->rerelease) context->state->frame++;
   noise(weapons, context, projection.start);
   qa_q2w_weapons_consume_default(weapons, context);
 }
 static void fire_phalanx(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   const qa_q2w_input *input = &context->input;
   qa_q2w_state *state = context->state;
   bool second = state->frame == 8;
@@ -213,7 +235,7 @@ static void fire_phalanx(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_wea
   if (!context->rerelease) state->frame++;
 }
 static void fire_etf(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   const qa_q2w_input *input = &context->input;
   qa_q2w_state *state = context->state;
   qa_q2w_owner self = context->self;
@@ -247,9 +269,15 @@ static void fire_etf(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons
     start = q2mp_add(start, q2mp_scale(axes.up, -8));
     projection = (qa_q2w_projection){start, axes.forward};
   }
-  (void)qa_q2mp_bolts_fire_flechette(bolts_of(w), self.actor, game, projection.start, projection.direction,
-                                     10 * qa_q2w_weapons_multiplier(weapons, context), context->rerelease ? 1150 : 750,
-                                     3 * qa_q2w_weapons_multiplier(weapons, context));
+  qa_q2mp_bolts * b = bolts_of(w);
+  qa_owned_actor self2 = self.actor;
+  qa_vec3 start2 = projection.start;
+  qa_vec3 direction2 = projection.direction;
+  double damage = 10 * qa_q2w_weapons_multiplier(weapons, context);
+  double speed = context->rerelease ? 1150 : 750;
+  double kick = 3 * qa_q2w_weapons_multiplier(weapons, context);
+  (void)qa_q2mp_bolts_fire_flechette(b, self2, game, start2, direction2,
+                                     damage, speed, kick);
   if (context->rerelease) qa_q2w_weapons_powerup_sound(weapons, context);
   qa_q2w_weapons_flash(weapons, context, context->rerelease && state->frame == 7 ? 32 : 30);
   noise(weapons, context, projection.start);
@@ -259,12 +287,12 @@ static void fire_etf(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons
 }
 
 static void fire_tracker(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   qa_q2w_owner self = context->self;
   qa_q2w_projection projection = qa_q2w_weapons_project_default(weapons, context, q2mp_v3(24, 8, -8));
   qa_vec3 end = q2mp_add(projection.start, q2mp_scale(projection.direction, 8192));
   double mask = context->rerelease ? (double)(int64_t)0x46004003 : (double)0x6000003;
-  if (context->rerelease && !context->input.players_collide) mask = (double)(q2mp_u32(mask) & ~0x40000000u);
+  if (context->rerelease && !context->input.players_collide) mask = (double)(qa_js_to_int32(q2mp_u32(mask) & ~0x40000000u));
   void *token = NULL;
   bool lag = context->rerelease && weapons->base.hooks.lag_is_history;
   if (lag) token = weapons->base.hooks.lag_begin(weapons->base.hooks.ctx, self.actor.id, projection.start, projection.direction);
@@ -279,13 +307,15 @@ static void fire_tracker(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_wea
   qa_actor_id actor = has_actor ? trace.hit.actor : self.actor.id;
   bool has_enemy = false;
   if (has_actor) {
-    qa_q2f_entity *target = q2mp_ent(game, true, actor);
+    qa_q2_entity *target = q2mp_ent(game, true, actor);
     has_enemy = (game->host->is_monster(game->host->ctx, actor) || game->host->is_player(game->host->ctx, actor) ||
                  (target != NULL && target->damageable_target)) && q2mp_health(game, actor) > 0;
   }
   qa_q2w_weapons_kick_default(weapons, context, q2mp_scale(q2mp_axes(context->input.angles).forward, -2), q2mp_v3(-1, 0, 0));
-  double damage = (context->rerelease ? (q2mp_dm(game) ? 45 : 135) : (q2mp_dm(game) ? 30 : 45)) *
-                  qa_q2w_weapons_multiplier(weapons, context);
+  double left = (context->rerelease ? (q2mp_dm(game) ? 45 : 135) : (q2mp_dm(game) ? 30 : 45));
+  double right = qa_q2w_weapons_multiplier(weapons, context);
+  double damage = left *
+                  right;
   (void)qa_q2mp_bolts_fire_tracker(bolts_of(w), self.actor, game, projection.start, projection.direction, damage, 1000,
                                    has_enemy, actor);
   qa_q2w_event ev;
@@ -298,7 +328,7 @@ static void fire_tracker(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_wea
   qa_q2w_weapons_consume(weapons, context, context->definition->quantity, context->rerelease);
 }
 static void fire_heat(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   qa_q2w_owner self = context->self;
   qa_q2w_state *state = context->state;
   qa_q2w_projection projection = qa_q2w_weapons_project_default(weapons, context, q2mp_v3(7, 2, -3));
@@ -321,9 +351,16 @@ static void fire_heat(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapon
   void *token = NULL;
   bool lag = context->rerelease && weapons->base.hooks.lag_is_history;
   if (lag) token = weapons->base.hooks.lag_begin(weapons->base.hooks.ctx, self.actor.id, projection.start, projection.direction);
-  qa_q2mp_bolts_fire_heat_beam(bolts_of(w), self.actor, game, projection.start, projection.direction, q2mp_v3(2, 7, -3),
-                               15 * qa_q2w_weapons_multiplier(weapons, context),
-                               (q2mp_dm(game) ? 75 : 30) * qa_q2w_weapons_multiplier(weapons, context));
+  qa_q2mp_bolts * b = bolts_of(w);
+  qa_owned_actor self2 = self.actor;
+  qa_vec3 start2 = projection.start;
+  qa_vec3 direction2 = projection.direction;
+  qa_vec3 offset = q2mp_v3(2, 7, -3);
+  double damage = 15 * qa_q2w_weapons_multiplier(weapons, context);
+  double left = (q2mp_dm(game) ? 75 : 30);
+  double right = qa_q2w_weapons_multiplier(weapons, context);
+  double kick = left * right;
+  qa_q2mp_bolts_fire_heat_beam(b, self2, game, start2, direction2, offset, damage, kick);
   if (lag) weapons->base.hooks.lag_end(weapons->base.hooks.ctx, token);
   qa_q2w_weapons_flash(weapons, context, 33);
   noise(weapons, context, projection.start);
@@ -337,7 +374,7 @@ static qa_vec3 closest_point(qa_vec3 point, qa_vec3 min, qa_vec3 max) {
                  point.z < min.z ? min.z : point.z > max.z ? max.z : point.z);
 }
 static void fire_chainfist_rr(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   qa_q2w_owner self = context->self;
   qa_q2w_state *state = context->state;
   if (!qa_q2w_weapons_continues_attack(weapons, context) &&
@@ -350,12 +387,16 @@ static void fire_chainfist_rr(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2
   qa_vec3 own_min = q2mp_add(own.origin, own.bounds.min), own_max = q2mp_add(own.origin, own.bounds.max);
   double count = 0;
   bool hit = false;
-  for (size_t i = 0; i < game->entity_count; i++) {
-    qa_actor_id actor = game->entities[i]->actor.id;
+  size_t observed = 0;
+  qa_actor_id *actors = q2mp_observations(game, &observed);
+  for (size_t i = 0; i < observed; i++) {
+    double left;
+    double right;
+    qa_actor_id actor = actors[i];
     if (qa_same_actor(actor, self.actor.id) || !q2mp_can_hurt(game, actor)) continue;
     qa_body_state_result body = q2mp_bread(game, actor);
-    qa_q2f_entity *target = q2mp_ent(game, true, actor);
-    if (!body.has_value || (target != NULL && (target->solid == QA_Q2F_SOLID_NONE || target->solid == QA_Q2F_SOLID_TRIGGER))) continue;
+    qa_q2_entity *target = q2mp_ent(game, true, actor);
+    if (!body.has_value || (target != NULL && (strcmp(target->solid, "none") == 0 || strcmp(target->solid, "trigger") == 0))) continue;
     qa_vec3 min = q2mp_add(body.value.origin, body.value.bounds.min), max = q2mp_add(body.value.origin, body.value.bounds.max);
     if (min.x > own_max.x + 23 || max.x < own_min.x - 23 || min.y > own_max.y + 23 || max.y < own_min.y - 23 ||
         min.z > own_max.z + 23 || max.z < own_min.z - 23) continue;
@@ -373,13 +414,14 @@ static void fire_chainfist_rr(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2
     qa_q2m_context *monster = bolts_of(w)->hooks.monster(bolts_of(w)->hooks.ctx, actor);
     if (monster != NULL) monster->state->pain_time -= 0.005 + q2mp_rnd(game) * 0.07;
     q2mp_damage(game, actor, NULL, self.actor.id, &self.actor.id,
-                (q2mp_dm(game) ? 15 : 7) * qa_q2w_weapons_multiplier(weapons, context), 50, projection.direction, point,
+                (left = (q2mp_dm(game) ? 15 : 7), right = qa_q2w_weapons_multiplier(weapons, context), left * right), 50, projection.direction, point,
                 q2mp_scale(projection.direction, -1), QA_Q2MP_MOD_CHAINFIST, true, 64 | 8, "q2:weapon_chainfist");
     hit = true;
   }
+  free(actors);
   if (hit && state->empty_sound_time < context->now) {
     state->empty_sound_time = context->now + 0.5;
-    game->sound(game->ctx, self.actor, "weapons/sawslice.wav", true, 1, false, 0, false, 0);
+    game->sound(game->ctx, self.actor, "weapons/sawslice.wav", 1, 1, 1);
   }
   noise(weapons, context, projection.start);
   state->frame++;
@@ -392,7 +434,7 @@ static void fire_chainfist_rr(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2
 }
 static void fire_chainfist(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_weapons *weapons) {
   if (context->rerelease) { fire_chainfist_rr(w, context, weapons); return; }
-  qa_q2f_game *game = context->game;
+  qa_q2_game_services *game = context->game;
   qa_q2w_owner self = context->self;
   qa_q2w_projection projection = qa_q2w_weapons_project_default(weapons, context, q2mp_v3(0, 8, -4));
   qa_angle_vectors axes = q2mp_axes(context->input.angles);
@@ -403,18 +445,20 @@ static void fire_chainfist(qa_q2mp_weapons *w, qa_q2w_context *context, qa_q2w_w
     bool has_target = trace.hit.kind == QA_TRACE_HIT_ACTOR;
     qa_actor_id target = has_target ? trace.hit.actor : self.actor.id;
     if (has_target && q2mp_can_hurt(game, target)) {
+      double left;
+      double right;
       qa_q2mp_velocity(game, self.actor.id,
                        q2mp_add(q2mp_add(game->body(game->ctx, self.actor).velocity, q2mp_scale(axes.forward, 75)),
                                 q2mp_scale(axes.up, 75)), false);
       qa_body_state_result target_body = q2mp_bread(game, target);
       q2mp_damage(game, target, NULL, self.actor.id, &self.actor.id,
-                  (q2mp_dm(game) ? 30 : 15) * qa_q2w_weapons_multiplier(weapons, context), 50, q2mp_zero(),
+                  (left = (q2mp_dm(game) ? 30 : 15), right = qa_q2w_weapons_multiplier(weapons, context), left * right), 50, q2mp_zero(),
                   target_body.has_value ? target_body.value.origin : trace.end, q2mp_zero(), QA_Q2MP_MOD_CHAINFIST, true,
                   64 | 8, "q2:weapon_chainfist");
     } else {
-      qa_q2f_presentation_event e;
+      qa_q2_presentation_event e;
       memset(&e, 0, sizeof e);
-      e.kind = QA_Q2F_EVENT_EFFECT; e.effect = "q2:gunshot"; e.origin = trace.end;
+      e.kind = "effect"; e.effect = "q2:gunshot"; e.origin = trace.end;
       e.direction = q2mp_normal(trace); e.count = 0; e.color = 0;
       game->host->emit(game->host->ctx, e);
     }
@@ -433,15 +477,15 @@ static void fire_fn(void *ctx, qa_q2w_context *context, qa_q2w_weapons *weapons)
   else if (name_is(name, "heatbeam")) fire_heat(e->owner, context, weapons);
   else if (name_is(name, "chainfist")) fire_chainfist(e->owner, context, weapons);
   else if (name_is(name, "proxlauncher")) fire_prox(e->owner, context, weapons);
-  else qa_q2f_error("No mission-pack fire callback for %s", name);
+  else qa_raise("Error", 0, 0, "No mission-pack fire callback for %s", name);
 }
-static bool selection_choose(void *ctx, qa_q2w_owner self, qa_q2f_game *game, qa_q2w_state *state) {
+static bool selection_choose(void *ctx, qa_q2w_owner self, qa_q2_game_services *game, qa_q2w_state *state) {
   qa_q2mp_weapons_ext_ctx *e = ctx;
   const char *requested = name_is(e->definition->name, "ionripper") ? "hyperblaster" : "railgun";
-  if (game->host->inventory.count(game->host->inventory.ctx, self.actor.id, e->definition->item) == 0) return false;
+  if (qa_shared_inventory_table_count(game->host->inventory, self.actor.id, e->definition->item) == 0) return false;
   if (strcmp(requested, "hyperblaster") == 0) return name_is(state->weapon, requested);
-  if (game->host->inventory.count(game->host->inventory.ctx, self.actor.id, "q2:ammo_slugs") == 0)
-    return game->host->inventory.count(game->host->inventory.ctx, self.actor.id, "q2:ammo_magslug") > 0;
+  if (qa_shared_inventory_table_count(game->host->inventory, self.actor.id, "q2:ammo_slugs") == 0)
+    return qa_shared_inventory_table_count(game->host->inventory, self.actor.id, "q2:ammo_magslug") > 0;
   return name_is(state->weapon, requested);
 }
 
@@ -450,15 +494,15 @@ void qa_q2mp_weapons_init(qa_q2mp_weapons *weapons, qa_q2mp_projectiles *project
   weapons->projectiles = projectiles;
 }
 static const double ion_fires_rr[] = {6};
-void qa_q2mp_weapons_register(qa_q2mp_weapons *weapons, qa_q2w_weapons *target, qa_q2mp_pack pack, qa_q2f_edition edition) {
+void qa_q2mp_weapons_register(qa_q2mp_weapons *weapons, qa_q2w_weapons *target, qa_q2mp_pack pack, qa_q2_edition edition) {
   const qa_q2w_definition *originals = pack == QA_Q2MP_PACK_XATRIX ? qa_q2mp_xatrix_weapon_definitions
                                                                     : qa_q2mp_rogue_weapon_definitions;
   size_t count = pack == QA_Q2MP_PACK_XATRIX ? qa_q2mp_xatrix_weapon_definition_count
                                              : qa_q2mp_rogue_weapon_definition_count;
   for (size_t i = 0; i < count; i++) {
-    if (weapons->def_count >= 12) qa_q2f_error("Mission-pack weapon registration overflow");
+    if (weapons->def_count >= 12) qa_raise("Error", 0, 0, "Mission-pack weapon registration overflow");
     qa_q2w_definition definition = originals[i];
-    if (edition == QA_Q2F_RERELEASE) {
+    if (edition == QA_Q2_EDITION_RERELEASE) {
       if (name_is(definition.name, "ionripper")) {
         definition.activate_last = 5; definition.fire_last = 7; definition.fires = ion_fires_rr; definition.fire_count = 1;
       } else if (name_is(definition.name, "heatbeam")) {
@@ -475,7 +519,7 @@ void qa_q2mp_weapons_register(qa_q2mp_weapons *weapons, qa_q2w_weapons *target, 
     extension.fire = fire_fn;
     extension.think = think_fn;
     if (name_is(definition.name, "trap") || name_is(definition.name, "tesla")) extension.held = held_fn;
-    if (edition == QA_Q2F_CLASSIC && pack == QA_Q2MP_PACK_XATRIX &&
+    if (edition == QA_Q2_EDITION_CLASSIC && pack == QA_Q2MP_PACK_XATRIX &&
         (name_is(definition.name, "ionripper") || name_is(definition.name, "phalanx"))) {
       extension.selection_requested = name_is(definition.name, "ionripper") ? "hyperblaster" : "railgun";
       extension.selection_choose = selection_choose;

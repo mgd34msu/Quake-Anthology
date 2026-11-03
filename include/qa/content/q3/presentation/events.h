@@ -1,9 +1,8 @@
 /* Port of src/content/q3/presentation/events.ts. GPL-2.0-or-later.
  * Entity events from id Software's code/cgame/cg_event.c. TS async
  * presentEvent/prepareWeapon/voiceChatLocal are synchronous host calls.
- * Mirrored types (TS owners unported): ClientWeaponRuntime pick +
- * ImpactSound/BulletHit (weapons.ts) and ClientEffects picks
- * (effects.ts) are the landed weapons.h/effects.h types. */
+ * ClientWeaponRuntime pick + ImpactSound/BulletHit (weapons.ts) and
+ * ClientEffects picks (effects.ts) are the weapons.h/effects.h types. */
 #ifndef QA_CONTENT_Q3_PRESENTATION_EVENTS_H
 #define QA_CONTENT_Q3_PRESENTATION_EVENTS_H
 #include <stdbool.h>
@@ -86,14 +85,9 @@ typedef struct qa_q3_pres_client_event_options {
 } qa_q3_pres_client_event_options;
 /* TS ImpactSound / BulletHit / weapon+effects picks (weapons.ts /
  * effects.ts): the landed weapons.h/effects.h types. */
-typedef qa_q3_pres_impact_sound qa_q3_pres_impact_sound_mirror;
 #define QA_Q3_PRES_IMPACT_DEFAULT QA_Q3_PRES_IMPACT_SOUND_DEFAULT
 #define QA_Q3_PRES_IMPACT_METAL QA_Q3_PRES_IMPACT_SOUND_METAL
 #define QA_Q3_PRES_IMPACT_FLESH QA_Q3_PRES_IMPACT_SOUND_FLESH
-typedef qa_q3_pres_bullet_hit qa_q3_pres_bullet_hit_mirror;
-typedef qa_q3_pres_client_weapon_runtime_view qa_q3_pres_client_weapon_runtime_mirror;
-typedef qa_q3_pres_event_effects_view qa_q3_pres_event_effects_mirror;
-typedef qa_q3_pres_mission_effects_view qa_q3_pres_mission_effects_mirror;
 /* TS presentEvent source closure. */
 typedef void (*qa_q3_pres_event_source_fn)(void *ctx);
 /* TS ClientEventHost: mission fields are read only for missionpack.
@@ -101,7 +95,7 @@ typedef void (*qa_q3_pres_event_source_fn)(void *ctx);
 typedef struct qa_q3_pres_client_event_host {
   qa_q3_base_product product;
   qa_pcm_sound *mission_sounds[QA_Q3_PRES_MISSION_EVENT_SOUND_COUNT]; /* borrowed, nullable */
-  qa_q3_pres_mission_effects_mirror mission_effects;
+  qa_q3_pres_mission_effects_view mission_effects;
   void *mission_ctx;
   void (*start_local_sound)(void *ctx, qa_pcm_sound *sound, double channel);
   void (*voice_chat_local)(void *ctx, double mode, bool voice_only, double client_num, double color,
@@ -112,8 +106,8 @@ typedef struct qa_q3_pres_client_event_host {
   void *entities_ctx;
   void (*set_entity_sound_position)(void *ctx, qa_q3_pres_client_entity *entity);
   void (*beam)(void *ctx, qa_q3_pres_client_entity *entity);
-  qa_q3_pres_client_weapon_runtime_mirror weapons;
-  qa_q3_pres_event_effects_mirror effects;
+  qa_q3_pres_client_weapon_runtime_view weapons;
+  qa_q3_pres_event_effects_view effects;
   void *ctx;
   void (*present_event)(void *ctx, qa_q3_pres_client_entity *entity, qa_vec3 position,
                         qa_q3_pres_event_source_fn source, void *source_ctx);

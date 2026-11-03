@@ -7,26 +7,30 @@
 #include <string.h>
 
 #include "qa/core/binary/index.h"
+#include "qa/foundation/support.h"
 
 noreturn void qa_bmp_drop_error(const char *source, const char *format, ...) {
   (void)source; /* the TS keeps it as a field; the message embeds it */
+  /* TS throws BmpDropError for its caller's ERR_DROP: a catchable raise. */
+  char message[QA_CAUGHT_MESSAGE_CAPACITY];
   va_list args;
   va_start(args, format);
-  va_list sizing;
-  va_copy(sizing, args);
-  int needed = vsnprintf(NULL, 0, format, sizing);
-  va_end(sizing);
-  char *message = needed >= 0 ? (char *)malloc((size_t)needed + 1) : NULL;
-  if (message != NULL) {
-    vsnprintf(message, (size_t)needed + 1, format, args);
-    fprintf(stderr, "BmpDropError: %s", message);
-    if (needed == 0 || message[needed - 1] != '\n') fputc('\n', stderr);
-    free(message);
-  } else {
-    fputs("BmpDropError\n", stderr);
-  }
+  vsnprintf(message, sizeof message, format, args);
   va_end(args);
-  abort();
+  qa_raise("BmpDropError", 0, 0, "%s", message);
+}
+
+/* Owned decode state released when a BinaryError unwinds the decoder. */
+typedef struct decode_guard {
+  qa_binary_reader *reader;
+  void **owned[3];
+} decode_guard;
+
+static void decode_guard_release(void *raw) {
+  decode_guard *guard = (decode_guard *)raw;
+  for (int i = 0; i < 3; i++)
+    if (guard->owned[i] != NULL) free(*guard->owned[i]);
+  qa_binary_reader_destroy(guard->reader);
 }
 
 int qa_decode_q3_bmp(const uint8_t *bytes, size_t length, const char *source,
@@ -34,6 +38,10 @@ int qa_decode_q3_bmp(const uint8_t *bytes, size_t length, const char *source,
   const char *name = source != NULL ? source : "<buffer>";
   qa_binary_reader reader;
   if (!qa_binary_reader_init(&reader, (uint8_t *)bytes, length, name)) return 0;
+  uint8_t *palette = NULL, *pixels = NULL;
+  decode_guard guard_state = {&reader, {(void **)&palette, (void **)&pixels, NULL}};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, decode_guard_release, &guard_state);
   int64_t id0 = qa_binary_reader_u8(&reader);
   int64_t id1 = qa_binary_reader_u8(&reader);
   uint32_t file_size = qa_binary_reader_u32(&reader);
@@ -44,10 +52,9 @@ int qa_decode_q3_bmp(const uint8_t *bytes, size_t length, const char *source,
   int64_t bits_per_pixel = qa_binary_reader_u16(&reader);
   uint32_t compression = qa_binary_reader_u32(&reader);
   qa_binary_reader_skip(&reader, 20);
-  uint8_t *palette = NULL;
   if (bits_per_pixel == 8) {
     palette = qa_binary_reader_bytes(&reader, 1024);
-    if (palette == NULL) { qa_binary_reader_destroy(&reader); return 0; }
+    if (palette == NULL) { qa_binary_reader_destroy(&reader); qa_cleanup_pop(&guard); return 0; }
   }
   /* The source check uses &&: a single wrong ID byte still passes. */
   if (id0 != 66 && id1 != 77) {
@@ -89,7 +96,7 @@ int qa_decode_q3_bmp(const uint8_t *bytes, size_t length, const char *source,
     out->height = height;
     out->pixels = NULL;
     out->pixels_length = 0;
-    return 1;
+    qa_cleanup_pop(&guard); return 1;
   }
   if (bits_per_pixel == 16) {
     qa_binary_error(name, 28,
@@ -105,11 +112,11 @@ int qa_decode_q3_bmp(const uint8_t *bytes, size_t length, const char *source,
                     "truncated BMP pixel data");
   }
   size_t out_length = (size_t)(width * height * 4);
-  uint8_t *pixels = (uint8_t *)malloc(out_length);
+  pixels = (uint8_t *)malloc(out_length);
   if (pixels == NULL) {
     free(palette);
     qa_binary_reader_destroy(&reader);
-    return 0;
+    qa_cleanup_pop(&guard); return 0;
   }
   for (int64_t row = height - 1; row >= 0; row--) {
     size_t destination = (size_t)(row * width * 4);
@@ -137,5 +144,5 @@ int qa_decode_q3_bmp(const uint8_t *bytes, size_t length, const char *source,
   out->height = height;
   out->pixels = pixels;
   out->pixels_length = out_length;
-  return 1;
+  qa_cleanup_pop(&guard); return 1;
 }

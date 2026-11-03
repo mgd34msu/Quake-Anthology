@@ -1,14 +1,18 @@
 /* Port of src/network/common/transport.ts. GPL-2.0-or-later. */
+#define _DEFAULT_SOURCE
 #include "qa/network/common/transport.h"
 #include "qa/foundation/support.h"
 #include <arpa/inet.h>
 #include <errno.h>
+#include <net/if.h>
+#include <netdb.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <time.h>
+#include <stdio.h>
 #include <unistd.h>
 
 const qa_datagram_limits QA_Q3_DATAGRAM_LIMITS_NET = { 16383, 256 };
@@ -55,7 +59,7 @@ void qa_packet_queue_push_event(qa_packet_queue *q, qa_receive_event *event) {
   size_t n = q->listener_count;
   struct qa_net_listener *snap = malloc((n ? n : 1) * sizeof *snap);
   if (!snap) return;
-  memcpy(snap, q->listeners, n * sizeof *snap);
+  if (n) memcpy(snap, q->listeners, n * sizeof *snap);
   for (size_t i = 0; i < n; i++) {
     bool alive = false;
     for (size_t j = 0; j < q->listener_count; j++) if (q->listeners[j].id == snap[i].id) alive = true;
@@ -87,7 +91,7 @@ int qa_packet_queue_poll(qa_packet_queue *q, qa_receive_event *out) {
   q->head = (q->head + 1) % q->capacity; q->count--; return 1;
 }
 long long qa_packet_queue_subscribe(qa_packet_queue *q, qa_net_listener_fn fn, void *ctx) {
-  if (q->ended) qa_range_error("Packet queue is closed");
+  if (q->ended) qa_raise("Error", 0, 0, "Packet queue is closed");
   if (q->listener_count == q->listener_cap) {
     size_t nc = q->listener_cap ? q->listener_cap * 2 : 4;
     struct qa_net_listener *nl = realloc(q->listeners, nc * sizeof *nl); if (!nl) return -1;
@@ -110,39 +114,65 @@ void qa_packet_queue_close(qa_packet_queue *q) {
   q->count = 0; q->head = 0;
   size_t n = q->listener_count;
   struct qa_net_listener *snap = malloc((n ? n : 1) * sizeof *snap);
-  if (snap) memcpy(snap, q->listeners, n * sizeof *snap);
+  if (snap && n) memcpy(snap, q->listeners, n * sizeof *snap);
   q->listener_count = 0;
   if (snap) { for (size_t i = 0; i < n; i++) snap[i].fn(snap[i].ctx); free(snap); }
 }
 
-static void udp_opened(const qa_udp_transport *t) { if (t->ended) qa_range_error("UDP transport is closed"); }
+static void udp_opened(const qa_udp_transport *t) { if (t->ended) qa_raise("Error", 0, 0, "UDP transport is closed"); }
+static int64_t bound_address(int fd, char num[INET6_ADDRSTRLEN]) {
+  struct sockaddr_storage ss; socklen_t sl = sizeof ss;
+  memset(&ss, 0, sizeof ss);
+  getsockname(fd, (struct sockaddr *)&ss, &sl);
+  if (ss.ss_family == AF_INET) {
+    inet_ntop(AF_INET, &((struct sockaddr_in *)&ss)->sin_addr, num, INET6_ADDRSTRLEN);
+    return ntohs(((struct sockaddr_in *)&ss)->sin_port);
+  }
+  inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&ss)->sin6_addr, num, INET6_ADDRSTRLEN);
+  return ntohs(((struct sockaddr_in6 *)&ss)->sin6_port);
+}
+/* Numeric host (with an optional IPv6 %scope) to a socket address. */
+static bool numeric_sockaddr(const char *host, int64_t port, struct sockaddr_storage *ss, socklen_t *sl) {
+  struct addrinfo hints, *res = NULL;
+  memset(&hints, 0, sizeof hints);
+  hints.ai_flags = AI_NUMERICHOST; hints.ai_socktype = SOCK_DGRAM;
+  if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) return false;
+  memcpy(ss, res->ai_addr, res->ai_addrlen); *sl = (socklen_t)res->ai_addrlen;
+  freeaddrinfo(res);
+  if (ss->ss_family == AF_INET) ((struct sockaddr_in *)ss)->sin_port = htons((uint16_t)port);
+  else ((struct sockaddr_in6 *)ss)->sin6_port = htons((uint16_t)port);
+  return true;
+}
 int qa_udp_transport_bind(qa_udp_transport *t, const qa_udp_bind_options *opts) {
   qa_net_address check; (void)qa_net_make_ip(&check, opts->host, opts->port, true); qa_net_address_destroy(&check);
   memset(t, 0, sizeof *t); t->fd = -1;
   qa_datagram_limits limits = opts->limits ? *opts->limits : QA_UNIFIED_DATAGRAM_LIMITS_NET;
   if (!qa_packet_queue_init(&t->queue, limits, opts->now, opts->now_ctx)) return 0;
   (void)qa_net_port_number(opts->port, true);
-  /* Resolve bind address; support v4 and v6 literals. */
-  struct in_addr a4; struct in6_addr a6;
-  int fd;
-  if (inet_pton(AF_INET, opts->host, &a4) == 1) {
-    fd = socket(AF_INET, SOCK_DGRAM, 0); if (fd < 0) qa_range_error("UDP callback supplied no error");
-    struct sockaddr_in sin; memset(&sin, 0, sizeof sin);
-    sin.sin_family = AF_INET; sin.sin_addr = a4; sin.sin_port = htons((uint16_t)opts->port);
-    if (bind(fd, (struct sockaddr *)&sin, sizeof sin) != 0) { close(fd); qa_range_error("UDP callback supplied no error"); }
-  } else if (inet_pton(AF_INET6, opts->host, &a6) == 1) {
-    fd = socket(AF_INET6, SOCK_DGRAM, 0); if (fd < 0) qa_range_error("UDP callback supplied no error");
-    struct sockaddr_in6 sin; memset(&sin, 0, sizeof sin);
-    sin.sin6_family = AF_INET6; sin.sin6_addr = a6; sin.sin6_port = htons((uint16_t)opts->port);
-    if (bind(fd, (struct sockaddr *)&sin, sizeof sin) != 0) { close(fd); qa_range_error("UDP callback supplied no error"); }
-  } else qa_range_error("Expected an IP literal: %s", opts->host);
+  /* Bun.udpSocket: a failed socket or bind rejects with the system error; the queue
+   * built for it is released first. */
+  struct sockaddr_storage ss; socklen_t sl = 0;
+  if (!numeric_sockaddr(opts->host, opts->port, &ss, &sl)) {
+    qa_packet_queue_destroy(&t->queue);
+    qa_raise("Error", EINVAL, 0, "bind EINVAL %s", opts->host);
+  }
+  int fd = socket(ss.ss_family, SOCK_DGRAM, 0);
+  if (fd < 0 || bind(fd, (struct sockaddr *)&ss, sl) != 0) {
+    int code = errno;
+    if (fd >= 0) close(fd);
+    qa_packet_queue_destroy(&t->queue);
+    qa_raise("Error", code, 0, "bind %s", strerror(code));
+  }
   int flags = fcntl(fd, F_GETFL, 0); fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  if (opts->broadcast) { int one = 1; if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof one) != 0) { close(fd); qa_packet_queue_destroy(&t->queue); qa_range_error("Could not enable UDP broadcast"); } }
+  if (opts->broadcast) {
+    int one = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof one) != 0) {
+      close(fd); qa_packet_queue_destroy(&t->queue);
+      qa_raise("Error", 0, 0, "Could not enable UDP broadcast");
+    }
+  }
   t->fd = fd;
-  struct sockaddr_storage ss; socklen_t sl = sizeof ss; getsockname(fd, (struct sockaddr *)&ss, &sl);
-  char num[INET6_ADDRSTRLEN]; int64_t bound_port;
-  if (ss.ss_family == AF_INET) { inet_ntop(AF_INET, &((struct sockaddr_in *)&ss)->sin_addr, num, sizeof num); bound_port = ntohs(((struct sockaddr_in *)&ss)->sin_port); }
-  else { inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&ss)->sin6_addr, num, sizeof num); bound_port = ntohs(((struct sockaddr_in6 *)&ss)->sin6_port); }
+  char num[INET6_ADDRSTRLEN]; int64_t bound_port = bound_address(fd, num);
   (void)qa_net_make_ip(&t->address, num, bound_port, false);
   (void)qa_socks_association_init(&t->socks);
   return 1;
@@ -153,38 +183,83 @@ void qa_udp_transport_destroy(qa_udp_transport *t) {
 bool qa_udp_transport_closed(const qa_udp_transport *t) { return t->ended; }
 long long qa_udp_transport_dropped_packets(const qa_udp_transport *t) { return qa_packet_queue_dropped(&t->queue); }
 int qa_udp_transport_get_address(const qa_udp_transport *t, qa_net_address *out) { return qa_net_address_clone(&t->address, out); }
+struct socks_scope { qa_udp_transport *t; const qa_socks_options *opts; };
+static void socks_open_body(void *ctx) {
+  struct socks_scope *scope = ctx;
+  qa_socks_association_open(&scope->t->socks, scope->opts, scope->t->address.port);
+}
 void qa_udp_transport_connect_socks(qa_udp_transport *t, const qa_socks_options *opts) {
   udp_opened(t);
-  if (t->address.kind != QA_NET_IPV4) qa_range_error("SOCKS UDP association requires IPv4");
+  if (t->address.kind != QA_NET_IPV4) qa_raise("Error", 0, 0, "SOCKS UDP association requires IPv4");
   if (t->has_socks) qa_socks_association_close(&t->socks);
   (void)qa_socks_association_init(&t->socks); t->has_socks = true;
-  qa_socks_association_open(&t->socks, opts, t->address.port);
+  struct socks_scope scope = { t, opts };
+  qa_caught_error caught;
+  if (!qa_try(socks_open_body, &scope, &caught)) { qa_socks_association_close(&t->socks); qa_rethrow(&caught); }
   udp_opened(t);
 }
+struct source_scope { const char *host; int64_t port; qa_net_address *from; };
+static void source_address_body(void *ctx) {
+  struct source_scope *scope = ctx;
+  (void)qa_net_make_ip(scope->from, scope->host, scope->port, false);
+}
+/* The Bun data callback per datagram. Nested polls from readable listeners only drain
+ * the queue: TS delivers datagrams from the event loop, never recursively. */
 static void udp_pump(qa_udp_transport *t) {
-  uint8_t buf[65507];
+  if (t->pumping || t->fd < 0) return;
+  t->pumping = true;
+  uint8_t *buf = malloc(65507);
+  if (!buf) { t->pumping = false; return; }
   for (;;) {
     struct sockaddr_storage ss; socklen_t sl = sizeof ss;
-    ssize_t n = recvfrom(t->fd, buf, sizeof buf, MSG_TRUNC, (struct sockaddr *)&ss, &sl);
-    if (n < 0) { if (errno != EAGAIN && errno != EWOULDBLOCK) qa_packet_queue_push_error(&t->queue, "UDP callback supplied no error"); return; }
-    bool truncated = (size_t)n > sizeof buf;
-    size_t len = truncated ? sizeof buf : (size_t)n;
-    char num[INET6_ADDRSTRLEN]; int64_t port;
-    if (ss.ss_family == AF_INET) { inet_ntop(AF_INET, &((struct sockaddr_in *)&ss)->sin_addr, num, sizeof num); port = ntohs(((struct sockaddr_in *)&ss)->sin_port); }
-    else { inet_ntop(AF_INET6, &((struct sockaddr_in6 *)&ss)->sin6_addr, num, sizeof num); port = ntohs(((struct sockaddr_in6 *)&ss)->sin6_port); }
-    qa_net_address from; (void)qa_net_make_ip(&from, num, port, false);
-    qa_packet_queue_accept(&t->queue, &from, buf, len, truncated);
-    qa_net_address_destroy(&from);
+    memset(&ss, 0, sizeof ss);
+    ssize_t n = recvfrom(t->fd, buf, 65507, MSG_TRUNC, (struct sockaddr *)&ss, &sl);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      /* A pending ICMP error is reported by the socket error callback. */
+      if (errno != EAGAIN && errno != EWOULDBLOCK) qa_packet_queue_push_error(&t->queue, strerror(errno));
+      if (errno == EAGAIN || errno == EWOULDBLOCK || t->ended) break;
+      continue;
+    }
+    bool truncated = (size_t)n > 65507;
+    size_t len = truncated ? 65507 : (size_t)n;
+    char num[INET6_ADDRSTRLEN + IF_NAMESIZE + 2]; int64_t port;
+    if (ss.ss_family == AF_INET) {
+      inet_ntop(AF_INET, &((struct sockaddr_in *)&ss)->sin_addr, num, sizeof num);
+      port = ntohs(((struct sockaddr_in *)&ss)->sin_port);
+    } else if (ss.ss_family == AF_INET6) {
+      struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
+      inet_ntop(AF_INET6, &sin6->sin6_addr, num, sizeof num);
+      if (sin6->sin6_scope_id != 0) {
+        char name[IF_NAMESIZE];
+        size_t used = strlen(num);
+        if (if_indextoname(sin6->sin6_scope_id, name)) snprintf(num + used, sizeof num - used, "%%%s", name);
+        else snprintf(num + used, sizeof num - used, "%%%u", (unsigned)sin6->sin6_scope_id);
+      }
+      port = ntohs(sin6->sin6_port);
+    } else continue;
+    /* A source port of 0 cannot be answered or attributed; it is dropped rather than reported. */
+    if (port == 0) continue;
+    /* try { from = ipAddress(host, port) } catch (error) { queue.push(error event) } */
+    qa_net_address from; memset(&from, 0, sizeof from);
+    struct source_scope scope = { num, port, &from };
+    qa_caught_error caught;
+    if (!qa_try(source_address_body, &scope, &caught)) qa_packet_queue_push_error(&t->queue, caught.message);
+    else { qa_packet_queue_accept(&t->queue, &from, buf, len, truncated); qa_net_address_destroy(&from); }
+    if (t->ended) break;
   }
+  free(buf);
+  t->pumping = false;
 }
 bool qa_udp_transport_send(qa_udp_transport *t, const qa_net_address *to, const uint8_t *payload, size_t length) {
-  udp_opened(t); (void)qa_net_port_number(to->port, false);
+  udp_opened(t);
+  if (to->kind == QA_NET_IPV4 || to->kind == QA_NET_IPV6) (void)qa_net_port_number(to->port, false);
   if ((long long)length > qa_packet_queue_get_limits(&t->queue).max_bytes)
     qa_range_error("Datagram exceeds selected transport limit");
   qa_net_address relay; bool has_relay = t->has_socks && qa_socks_association_get_relay(&t->socks, &relay);
   if (t->has_socks && (!has_relay || to->kind != QA_NET_IPV4)) {
     if (has_relay) qa_net_address_destroy(&relay);
-    qa_range_error("SOCKS association unavailable or destination unsupported");
+    qa_raise("Error", 0, 0, "SOCKS association unavailable or destination unsupported");
   }
   bool broadcast_all = to->kind == QA_NET_IPV4 && to->ipv4[0] == 255 && to->ipv4[1] == 255 && to->ipv4[2] == 255 && to->ipv4[3] == 255;
   bool proxied = to->kind == QA_NET_IPV4 && has_relay && !broadcast_all;
@@ -192,22 +267,21 @@ bool qa_udp_transport_send(qa_udp_transport *t, const qa_net_address *to, const 
   uint8_t *owned = NULL; const uint8_t *bytes = payload; size_t blen = length;
   if (proxied) { owned = qa_socks_datagram(to, payload, length, &blen); bytes = owned; }
   char *host = qa_net_address_host(dest);
+  struct sockaddr_storage ss; socklen_t sl = 0;
+  bool addressable = host && numeric_sockaddr(host, dest->port, &ss, &sl);
   bool result = false;
-  for (int attempt = 0;; attempt++) {
-    struct sockaddr_storage ss; socklen_t sl;
-    memset(&ss, 0, sizeof ss);
-    if (dest->kind == QA_NET_IPV4) {
-      struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
-      sin->sin_family = AF_INET; sin->sin_port = htons((uint16_t)dest->port);
-      inet_pton(AF_INET, host, &sin->sin_addr); sl = sizeof *sin;
-    } else {
-      struct sockaddr_in6 *sin = (struct sockaddr_in6 *)&ss;
-      sin->sin6_family = AF_INET6; sin->sin6_port = htons((uint16_t)dest->port);
-      inet_pton(AF_INET6, host, &sin->sin6_addr); sl = sizeof *sin;
-    }
+  for (int attempt = 0; addressable; attempt++) {
     ssize_t sent = sendto(t->fd, bytes, blen, 0, (struct sockaddr *)&ss, sl);
     if (sent >= 0) { result = (size_t)sent == blen; break; }
-    qa_packet_queue_push_error(&t->queue, "send");
+    if (errno == EINTR) continue;
+    /* Bun's send reports backpressure as false. */
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) { result = false; break; }
+    /* Linux delivers pending ICMP errors (e.g. port-unreachable from an earlier datagram
+     * to a dead endpoint) by failing the next sendmsg without transmitting. The failed
+     * call consumes one queued error, so retry a bounded number of times before
+     * reporting the send as lost. */
+    char message[160]; snprintf(message, sizeof message, "send %s", strerror(errno));
+    qa_packet_queue_push_error(&t->queue, message);
     if (attempt >= 8) { result = false; break; }
   }
   free(host); free(owned);
@@ -216,32 +290,38 @@ bool qa_udp_transport_send(qa_udp_transport *t, const qa_net_address *to, const 
 }
 int qa_udp_transport_poll(qa_udp_transport *t, qa_receive_event *out) {
   udp_opened(t); udp_pump(t);
-  if (!qa_packet_queue_poll(&t->queue, out)) return 0;
-  qa_net_address relay; bool has_relay = t->has_socks && qa_socks_association_get_relay(&t->socks, &relay);
-  if (out->kind == QA_RECV_PACKET && has_relay && out->from.kind == QA_NET_IPV4
-      && out->from.port == relay.port && memcmp(out->from.ipv4, relay.ipv4, 4) == 0) {
+  for (;;) {
+    if (!qa_packet_queue_poll(&t->queue, out)) return 0;
+    qa_net_address relay; bool has_relay = t->has_socks && qa_socks_association_get_relay(&t->socks, &relay);
+    if (!has_relay) return 1;
+    bool from_relay = out->kind == QA_RECV_PACKET && out->from.kind == QA_NET_IPV4
+        && out->from.port == relay.port && memcmp(out->from.ipv4, relay.ipv4, 4) == 0;
+    qa_net_address_destroy(&relay);
+    if (!from_relay) return 1;
     qa_net_address from; uint8_t *payload = NULL; size_t plen = 0;
     int ok = qa_socks_read_datagram(out->payload, out->length, &from, &payload, &plen);
-    qa_net_address_destroy(&relay);
-    if (!ok) { qa_receive_event_destroy(out); return 0; }
     double at = out->received_at;
     qa_receive_event_destroy(out); memset(out, 0, sizeof *out);
+    /* A malformed relay datagram is skipped; 0 must keep meaning an empty queue. */
+    if (!ok) continue;
     out->kind = QA_RECV_PACKET; out->from = from; out->payload = payload; out->length = plen; out->received_at = at;
     return 1;
   }
-  if (has_relay) qa_net_address_destroy(&relay);
-  return 1;
 }
 long long qa_udp_transport_subscribe(qa_udp_transport *t, qa_net_listener_fn fn, void *ctx) {
   udp_opened(t); return qa_packet_queue_subscribe(&t->queue, fn, ctx);
 }
 void qa_udp_transport_unsubscribe(qa_udp_transport *t, long long id) { qa_packet_queue_unsubscribe(&t->queue, id); }
+static void close_queue_body(void *ctx) { qa_packet_queue_close(ctx); }
 void qa_udp_transport_close(qa_udp_transport *t) {
   if (t->ended) return;
   t->ended = true;
   if (t->has_socks) { qa_socks_association_close(&t->socks); t->has_socks = false; }
-  qa_packet_queue_close(&t->queue);
+  /* try { queue.close() } finally { socket.close() } */
+  qa_caught_error caught;
+  bool ok = qa_try(close_queue_body, &t->queue, &caught);
   if (t->fd >= 0) { close(t->fd); t->fd = -1; }
+  if (!ok) qa_rethrow(&caught);
 }
 static int udp_vt_address(void *ctx, qa_net_address *out) { return qa_udp_transport_get_address(ctx, out); }
 static bool udp_vt_closed(void *ctx) { return qa_udp_transport_closed(ctx); }
@@ -257,5 +337,10 @@ qa_datagram_transport qa_udp_transport_as_transport(qa_udp_transport *t) {
   v.subscribe = udp_vt_sub; v.unsubscribe = udp_vt_unsub; v.close = udp_vt_close; return v;
 }
 void qa_unsupported_transport_error(const char *transport, const char *detail) {
-  qa_range_error("%s: %s", transport, detail);
+  qa_raise("UnsupportedTransportError", 0, 0, "%s: %s", transport, detail);
+}
+static void udp_connect_socks(void *ctx, const qa_socks_options *options) { qa_udp_transport_connect_socks(ctx, options); }
+qa_socks_connector qa_udp_transport_as_socks_connector(qa_udp_transport *t) {
+  qa_socks_connector connector = { t, udp_connect_socks };
+  return connector;
 }

@@ -7,7 +7,8 @@ typedef struct qa_q2_train_stop { qa_actor_id actor; qa_vec3 origin; bool has_ne
 typedef struct qa_q2_train_route { bool running; bool has_destination; qa_actor_id destination; const qa_q2_train_stop *stops; size_t stop_count; } qa_q2_train_route;
 typedef struct qa_q2_door_checkpoint_state { qa_vec3 start, end, safe_direction; double distance, water_divisor, debounce; bool button, angular, water, reversed, activated; const char *phase; } qa_q2_door_checkpoint_state;
 typedef struct qa_q2_door_checkpoint { qa_saved_actor_id actor; qa_q2_door_checkpoint_state state; qa_saved_actor_id master; const qa_saved_actor_id *team; size_t team_count; } qa_q2_door_checkpoint;
-typedef struct qa_q2_train_checkpoint { qa_saved_actor_id actor; bool has_destination; qa_saved_actor_id destination; double debounce; bool ship; } qa_q2_train_checkpoint;
+/* TS train entry; has_wait false = TS wait undefined (older saves). */
+typedef struct qa_q2_train_checkpoint { qa_saved_actor_id actor; bool has_destination; qa_saved_actor_id destination; double debounce; bool has_wait; double wait; bool ship; } qa_q2_train_checkpoint;
 typedef struct qa_q2_movers_checkpoint { const qa_q2_door_checkpoint *doors; size_t door_count; const qa_q2_train_checkpoint *trains; size_t train_count; qa_q2_linear_motion_checkpoint linear; qa_q2_angular_motion_checkpoint angular; } qa_q2_movers_checkpoint;
 typedef struct qa_q2_mover_hooks { void *ctx; void (*path_corner)(void *ctx, qa_q2_entity *c, qa_q2_game_services *g, qa_actor_id other); void (*combat_point)(void *ctx, qa_q2_entity *p, qa_q2_game_services *g, qa_actor_id other); } qa_q2_mover_hooks;
 typedef struct qa_q2_mover_module qa_q2_mover_module;

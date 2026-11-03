@@ -59,16 +59,4 @@ typedef enum qa_cvar_info_target {
   QA_CVAR_INFO_CLIENT_USERINFO, QA_CVAR_INFO_SERVER_INFO
 } qa_cvar_info_target;
 
-/* TS CvarPolicy union on kind; every variant pins nameComparison and
- * registrationOrder: q1/q2 kinds "exact"/"newest-first", q3
- * "ascii-insensitive"/"newest-first". Only q1-quakeworld carries
- * infoTargets. */
-typedef struct qa_cvar_policy {
-  const char *kind; /* "q1-netquake"|"q1-quakeworld"|"q2-classic"|"q2-rerelease"|"q3" */
-  const char *name_comparison;
-  const char *registration_order;
-  const qa_cvar_info_target *info_targets;
-  size_t info_target_count;
-} qa_cvar_policy;
-
 #endif

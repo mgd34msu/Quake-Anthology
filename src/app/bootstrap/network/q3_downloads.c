@@ -12,6 +12,7 @@
 #include "qa/content/mounts.h"
 #include "qa/foundation/support.h"
 #include "qa/network/q3/pure.h"
+#include "qa/foundation/js_case.h"
 typedef struct member_set { char **paths; size_t count; } member_set;
 struct qa_app_q3_packages {
   qa_q3_mounted_pak *packs; size_t pack_count;
@@ -19,17 +20,17 @@ struct qa_app_q3_packages {
   char **games, **basenames; /* owned, parallel to packs */
   qa_q3_content_references *references;
   qa_resource_id *processed; size_t processed_count, processed_cap;
+  /* TS verified: mount id -> size/mtime/ctime of the last whole-file digest. */
+  struct verified_stat { bool seen; off_t size; struct timespec mtime, ctime; } *verified;
 };
 static char *copy_text(const char *s) {
   size_t n = strlen(s) + 1; char *out = malloc(n);
   if (out) memcpy(out, s, n);
   return out;
 }
-static char *lower_copy(const char *s) {
-  char *out = copy_text(s);
-  if (out) for (char *p = out; *p; p++) *p = tolower((unsigned char)*p);
-  return out;
-}
+/* TS toLowerCase on UTF-8 member paths (Unicode lowering). */
+static char *lower_copy(const char *s) { return qa_js_to_lower_case(s); }
+static void archive_cleanup(void *archive) { qa_archive_destroy(archive); }
 static double one_random(void *ctx) { (void)ctx; return 1; }
 qa_app_q3_packages *qa_app_q3_packages_open(const qa_app_q3_package_mount *mounts,
     size_t mount_count, double checksum_feed) {
@@ -42,19 +43,19 @@ qa_app_q3_packages *qa_app_q3_packages_open(const qa_app_q3_package_mount *mount
     if (strcmp(candidate->product_family, "q3") != 0) continue;
     qa_archive_handle *archive = qa_open_archive(candidate->mount.archive_path,
         true, candidate->mount.format);
+    /* try { ... } finally { archive.close() } */
+    qa_cleanup archive_guard;
+    qa_cleanup_push(&archive_guard, archive_cleanup, archive);
     const char *slash = strrchr(candidate->content_directory, '/');
     const char *game = slash ? slash + 1 : candidate->content_directory;
-    if (game[0] == '\0') {
-      qa_archive_destroy(archive);
-      qa_range_error("Q3 archive has no game directory");
-    }
+    if (game[0] == '\0') qa_raise("Error", 0, 0, "Q3 archive has no game directory");
     const char *file = strrchr(candidate->mount.archive_path, '/');
     file = file ? file + 1 : candidate->mount.archive_path;
     size_t base_length = strlen(file);
     if (base_length >= 4 && strcasecmp(file + base_length - 4, ".pk3") == 0) base_length -= 4;
     char *basename = malloc(base_length + 1);
     char *game_copy = copy_text(game);
-    if (!basename || !game_copy) { free(basename); free(game_copy); qa_archive_destroy(archive); qa_range_error("out of memory"); }
+    if (!basename || !game_copy) { free(basename); free(game_copy); qa_range_error("out of memory"); }
     memcpy(basename, file, base_length); basename[base_length] = '\0';
     if (packages->pack_count == capacity) {
       capacity = capacity ? capacity * 2 : 8;
@@ -81,6 +82,7 @@ qa_app_q3_packages *qa_app_q3_packages_open(const qa_app_q3_package_mount *mount
       }
       set->paths[set->count++] = lower_copy(archive->entries[e].path);
     }
+    qa_cleanup_pop(&archive_guard);
     qa_archive_destroy(archive);
   }
   if (!qa_q3_content_references_init(&packages->references, packages->packs,
@@ -100,7 +102,8 @@ void qa_app_q3_packages_destroy(qa_app_q3_packages *packages) {
   }
   free(packages->packs); free(packages->members);
   free(packages->games); free(packages->basenames);
-  free(packages->processed); free(packages);
+  for (size_t i = 0; i < packages->processed_count; i++) free((void *)packages->processed[i]);
+  free(packages->processed); free(packages->verified); free(packages);
 }
 const qa_q3_mounted_pak *qa_app_q3_packages_packs(const qa_app_q3_packages *packages, size_t *out_count) {
   *out_count = packages->pack_count;
@@ -125,7 +128,10 @@ void qa_app_q3_packages_collect(qa_app_q3_packages *packages,
           packages->processed_cap * sizeof *packages->processed);
       if (!packages->processed) qa_range_error("out of memory");
     }
-    packages->processed[packages->processed_count++] = reference->id;
+    /* TS keeps the id value in its Set; the reference may not outlive this call. */
+    char *id = copy_text(reference->id);
+    if (!id) qa_range_error("out of memory");
+    packages->processed[packages->processed_count++] = id;
   }
 }
 bool qa_app_q3_packages_pure_checksum(const qa_app_q3_packages *packages,
@@ -154,11 +160,11 @@ static void assert_unchanged(download_file *file) {
       || current.st_mtim.tv_nsec != file->original.st_mtim.tv_nsec
       || current.st_ctim.tv_sec != file->original.st_ctim.tv_sec
       || current.st_ctim.tv_nsec != file->original.st_ctim.tv_nsec)
-    qa_range_error("Download archive changed after opening");
+    qa_raise("Error", 0, 0, "Download archive changed after opening");
 }
 static int64_t download_read(void *ctx, uint8_t *target, size_t capacity) {
   download_file *file = ctx;
-  if (file->closed) qa_range_error("Q3 download is closed");
+  if (file->closed) qa_raise("Error", 0, 0, "Q3 download is closed");
   assert_unchanged(file);
   int64_t remaining = file->size - file->position;
   size_t want = capacity < (size_t)remaining ? capacity : (size_t)remaining;
@@ -172,19 +178,33 @@ static void download_close(void *ctx) {
   if (!file->closed) { file->closed = true; close(file->fd); }
   free(file);
 }
+typedef struct verify_scope { download_file *probe; const char *path; const char *digest; } verify_scope;
+static void verify_body(void *ctx) {
+  verify_scope *scope = ctx;
+  char *digest = qa_digest_file(scope->path);
+  if (!digest) qa_range_error("out of memory");
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, free, digest);
+  assert_unchanged(scope->probe);
+  qa_cleanup_pop(&guard);
+  bool same = strcmp(digest, scope->digest) == 0;
+  free(digest);
+  if (!same) qa_raise("Error", 0, 0, "Download archive changed after mount");
+}
 bool qa_app_q3_packages_open_download(qa_app_q3_packages *packages,
     const char *name, qa_q3_download_read_file *out) {
   qa_q3_check_download_name(name);
   const qa_q3_mounted_pak *mounted = NULL;
+  size_t mounted_index = 0;
   for (size_t i = 0; i < packages->pack_count; i++) {
     const qa_q3_mounted_pak *pack = &packages->packs[i];
     size_t n = strlen(pack->pack.game) + strlen(pack->pack.basename) + 6;
     char *candidate = malloc(n);
     if (!candidate) qa_range_error("out of memory");
     snprintf(candidate, n, "%s/%s.pk3", pack->pack.game, pack->pack.basename);
-    bool match = strcasecmp(candidate, name) == 0;
+    bool match = qa_js_equals_ignore_case(candidate, name); /* TS toLowerCase() === toLowerCase() */
     free(candidate);
-    if (match) { mounted = pack; break; }
+    if (match) { mounted = pack; mounted_index = i; break; }
   }
   if (!mounted) return false;
   int fd = open(mounted->mount.archive_path, O_RDONLY);
@@ -196,15 +216,24 @@ bool qa_app_q3_packages_open_download(qa_app_q3_packages *packages,
     return false;
   }
   /* The TS hashes through this descriptor between unchanged checks;
-   * the landed digest helper hashes by path with the fd checks
-   * bracketing it. */
+   * the digest helper hashes by path with the fd checks bracketing it. */
   download_file probe = {fd, original.st_size, 0, false, original};
-  char *digest = qa_digest_file(mounted->mount.archive_path);
-  if (!digest) { close(fd); qa_range_error("out of memory"); }
-  assert_unchanged(&probe);
-  bool same = strcmp(digest, mounted->mount.archive_digest) == 0;
-  free(digest);
-  if (!same) { close(fd); qa_range_error("Download archive changed after mount"); }
+  if (!packages->verified) {
+    packages->verified = calloc(packages->pack_count ? packages->pack_count : 1, sizeof *packages->verified);
+    if (!packages->verified) { close(fd); qa_range_error("out of memory"); }
+  }
+  /* A whole-file digest per request is expensive; an archive whose size and
+   * timestamps are unchanged since it was verified is not rehashed. */
+  struct verified_stat *seen = &packages->verified[mounted_index];
+  if (!seen->seen || seen->size != original.st_size
+      || seen->mtime.tv_sec != original.st_mtim.tv_sec || seen->mtime.tv_nsec != original.st_mtim.tv_nsec
+      || seen->ctime.tv_sec != original.st_ctim.tv_sec || seen->ctime.tv_nsec != original.st_ctim.tv_nsec) {
+    /* TS: try { ...verify... } catch (error) { closeSync(descriptor); throw error; } */
+    verify_scope scope = { &probe, mounted->mount.archive_path, mounted->mount.archive_digest };
+    qa_caught_error caught;
+    if (!qa_try(verify_body, &scope, &caught)) { close(fd); qa_rethrow(&caught); }
+    seen->seen = true; seen->size = original.st_size; seen->mtime = original.st_mtim; seen->ctime = original.st_ctim;
+  }
   download_file *file = malloc(sizeof *file);
   if (!file) { close(fd); return false; }
   *file = probe;

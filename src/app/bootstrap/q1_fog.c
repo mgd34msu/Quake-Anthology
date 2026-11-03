@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include "qa/foundation/js.h"
 struct qa_app_q1_map_fog {
   qa_q1_fog_state state;
   double sky_factor;
@@ -56,7 +57,7 @@ void qa_app_q1_map_fog_receive(qa_app_q1_map_fog *fog, const qa_app_q1_fog_event
 bool qa_app_q1_map_fog_active(const qa_app_q1_map_fog *fog) { return fog->enabled; }
 static double byte_of(double value) {
   double clamped = value < 0 ? 0 : value > 1 ? 1 : value;
-  return round(clamped * 255) / 255;
+  return qa_js_round(clamped * 255) / 255;
 }
 qa_scene_fog qa_app_q1_map_fog_current(qa_app_q1_map_fog *fog, double seconds) {
   qa_q1_fog value = qa_q1_fog_state_sample(&fog->state, seconds);

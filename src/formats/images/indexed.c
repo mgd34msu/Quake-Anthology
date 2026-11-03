@@ -1,5 +1,6 @@
 /* Port of src/formats/images/indexed.ts. GPL-2.0-or-later. */
 #include "qa/formats/images/indexed.h"
+#include "qa/formats/images/limits.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -10,7 +11,8 @@
 
 static int64_t dimensions(int64_t width, int64_t height, const char *source) {
   double count = (double)width * (double)height;
-  if (width <= 0 || height <= 0 || count > 2147483647.0) {
+  if (width <= 0 || height <= 0 || count > 2147483647.0 ||
+      !qa_image_size_allowed((double)width, (double)height)) {
     qa_binary_error(source, 0, "Invalid image dimensions %lldx%lld",
                     (long long)width, (long long)height);
   }
@@ -158,12 +160,23 @@ int qa_decode_qpic(const uint8_t *bytes, size_t length, const char *source,
   return 1;
 }
 
+typedef struct pcx_owned { qa_binary_reader *reader, *encoded; uint8_t *indices; } pcx_owned;
+static void pcx_owned_free(void *arg) {
+  pcx_owned *owned = arg;
+  if (owned->encoded) qa_binary_reader_destroy(owned->encoded);
+  qa_binary_reader_destroy(owned->reader);
+  free(owned->indices);
+}
 int qa_decode_pcx(const uint8_t *bytes, size_t length, const char *source,
                   qa_pcx_image *out) {
   const char *name = source != NULL ? source : "<pcx>";
   qa_binary_reader reader;
   if (!qa_binary_reader_init(&reader, (uint8_t *)bytes, length, name)) return 0;
   memset(out, 0, sizeof *out);
+  /* A BinaryError caught by the caller (a remote skin, a download) must not leak the readers. */
+  pcx_owned owned = {&reader, NULL, NULL};
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, pcx_owned_free, &owned);
   if (qa_binary_reader_u8(&reader) != 10 || qa_binary_reader_u8(&reader) != 5 ||
       qa_binary_reader_u8(&reader) != 1 || qa_binary_reader_u8(&reader) != 8) {
     qa_binary_error(name, 0, "Expected version 5, RLE, 8-bit PCX");
@@ -183,12 +196,16 @@ int qa_decode_pcx(const uint8_t *bytes, size_t length, const char *source,
   int64_t encoded_length = (has_palette ? palette_offset : (int64_t)length) - 128;
   qa_binary_reader encoded;
   if (!qa_binary_reader_section(&reader, 128, encoded_length, &encoded)) {
+    qa_cleanup_pop(&guard);
     qa_binary_reader_destroy(&reader);
     return 0;
   }
+  owned.encoded = &encoded;
   size_t count = (size_t)(width * height);
   uint8_t *indices = count == 0 ? NULL : (uint8_t *)malloc(count);
+  owned.indices = indices;
   if (count != 0 && indices == NULL) {
+    qa_cleanup_pop(&guard);
     qa_binary_reader_destroy(&encoded);
     qa_binary_reader_destroy(&reader);
     return 0;
@@ -209,6 +226,7 @@ int qa_decode_pcx(const uint8_t *bytes, size_t length, const char *source,
       x += run;
     }
   }
+  qa_cleanup_pop(&guard);
   qa_binary_reader_destroy(&encoded);
   qa_binary_reader_destroy(&reader);
   out->width = width;

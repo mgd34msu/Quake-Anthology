@@ -1,6 +1,6 @@
 /* Port of src/app/bootstrap/network/q3-types.ts. Landed Q3 wire
  * payloads are forwarded as borrowed opaque pointers.
- * Q3GameCallbackError aborts with the exact TS message.
+ * Q3GameCallbackError raises through qa_raise under that name with the TS message.
  * GPL-2.0-or-later. */
 #ifndef QA_APP_BOOTSTRAP_NETWORK_Q3_TYPES_H
 #define QA_APP_BOOTSTRAP_NETWORK_Q3_TYPES_H
@@ -30,7 +30,7 @@ typedef struct qa_app_q3_network_round_restart {
 } qa_app_q3_network_round_restart;
 typedef struct qa_app_q3_snapshot {
   const void *player; const uint8_t *area_mask; size_t area_mask_length;
-  const void *const *entities; size_t entity_count;
+  const void *const *entities; size_t entity_count; /* entities[i]: const qa_q3_entity_state_record *; player: qa_q3_player_state_record * */
 } qa_app_q3_snapshot;
 typedef struct qa_app_q3_admission_settings {
   const void *ctx;
@@ -73,6 +73,11 @@ typedef struct qa_app_q3_server_host {
   const char *(*status)(void *ctx, const char *challenge, bool detailed);
   void (*print)(void *ctx, const char *text);
 } qa_app_q3_server_host;
-/* TS q3GameCallback: fn returns borrowed error text or NULL. */
+#define QA_APP_Q3_GAME_CALLBACK_ERROR "Q3GameCallbackError"
+/* TS q3GameCallback for a callback reporting failure as text: fn returns
+ * borrowed error text or NULL; text raises Q3GameCallbackError. */
 void qa_app_q3_game_callback(const char *(*fn)(void *ctx), void *ctx);
+/* TS q3GameCallback: runs fn; any raise other than Q3GameCallbackError becomes
+ * Q3GameCallbackError("Q3 game callback failed: <message>"). */
+void qa_app_q3_game_call(void (*fn)(void *ctx), void *ctx);
 #endif

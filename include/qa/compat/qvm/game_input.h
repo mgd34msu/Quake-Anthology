@@ -36,7 +36,7 @@ typedef struct qa_qvm_input_source {
   void (*retiring)(void *ctx, double slot, qa_mod_client_identity identity);
   bool (*retired)(void *ctx, double slot);
   int32_t (*disconnect)(void *ctx, double slot, qa_mod_client_identity identity,
-                        qa_qvmy_function_call *call);
+                        qa_qvm_module_function_call *call);
   int32_t (*movement)(void *ctx, double slot, qa_qvm_input_run_fn run, void *run_ctx);
 } qa_qvm_input_source;
 
@@ -51,7 +51,7 @@ typedef struct qa_qvm_input_services {
   const qa_mod_client_command_receipt *(*accepted)(void *ctx, qa_actor_id actor);
   qa_frame_context (*frame)(void *ctx);
   void (*spawned)(void *ctx, qa_mod_client_identity identity);
-  int32_t (*movement)(void *ctx, qa_qvmy_function_call *call, const char *kind,
+  int32_t (*movement)(void *ctx, qa_qvm_module_function_call *call, const char *kind,
                       qa_qvm_input_run_fn run, void *run_ctx);
   qa_mod_client_unsubscribe (*on_release)(void *ctx, void (*listener)(void *ctx, qa_actor_id actor),
                                           void *listener_ctx);

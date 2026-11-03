@@ -22,6 +22,8 @@ typedef struct qa_q1_state_extension {
   bool (*capture)(void *ctx, uint8_t **out, size_t *out_len);
   void (*restore)(void *ctx, const uint8_t *bytes, size_t len);
   void (*clone)(void *ctx, qa_q1_actor *source, qa_q1_actor *target); /* optional */
+  /* TS restoreAbsent is attached with qa_q1_set_state_extension_restore_absent
+   * (entity_services.h), keeping this struct's positional initializers valid. */
 } qa_q1_state_extension;
 
 /* TS callbackName for each slot kind: NULL slot name with no fn -> NULL;
@@ -37,6 +39,8 @@ typedef struct qa_q1_callback_registry qa_q1_callback_registry;
 qa_q1_callback_registry *qa_q1_callback_registry_create(qa_q1_services *game);
 void qa_q1_callback_registry_destroy(qa_q1_callback_registry *registry);
 void qa_q1_callback_registry_register(qa_q1_callback_registry *registry, const char *name, qa_q1_callback_handlers handlers);
+/* TS handlers.has(name) (the registry's private Map): whether name is registered. */
+bool qa_q1_callback_registry_has(const qa_q1_callback_registry *registry, const char *name);
 void qa_q1_callback_registry_project_trajectory(qa_q1_callback_registry *registry, qa_q1_actor *entity, qa_weapon_trajectory_update update);
 qa_q1_bound_action qa_q1_callback_registry_action(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name);
 qa_q1_bound_use qa_q1_callback_registry_use(qa_q1_callback_registry *registry, qa_q1_actor *entity, const char *name);

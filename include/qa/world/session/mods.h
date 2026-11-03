@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "qa/compat/qvm/artifacts.h"
 #include "qa/contracts/content.h"
 #include "qa/contracts/execution.h"
 #include "qa/contracts/gameplay.h"
@@ -40,6 +41,7 @@
 #include "qa/world/gameplay/mod_composition.h"
 #include "qa/world/session/mod_client_presentation.h"
 #include "qa/world/session/mod_clients.h"
+#include "qa/world/session/mod_engine.h"
 #include "qa/world/session/resources.h"
 
 typedef struct qa_mod_commands qa_mod_commands;
@@ -48,14 +50,6 @@ typedef struct qa_mod_qvm_presentation_source
     qa_mod_qvm_presentation_source;
 typedef struct qa_active_mod_presentation qa_active_mod_presentation;
 
-/* Mirrored SimulationPresentation (TS owner src/app/bootstrap/
- * simulation/types.ts, unported): mods.ts reads only actor and
- * viewWeapon; the remaining source fields stay in opaque. */
-typedef struct qa_session_simulation_presentation {
-  qa_actor_id actor;
-  bool view_weapon;
-  const void *opaque;
-} qa_session_simulation_presentation;
 
 /** TS ModOperations: borrowed operation pointers from the tables. */
 typedef struct qa_mod_operations {
@@ -91,13 +85,13 @@ qa_mod_registration_removal qa_mod_registrations_register(
     qa_mod_registrations *registrations, qa_mod_operation *operation,
     qa_mod_operation_registration contribution);
 
-/* Mirrored Pick<SimulationEvents, "emit" | "registerResource"> (TS
- * owner src/app/bootstrap/simulation/events.ts, unported): carried,
- * never called by mods.ts; payloads stay opaque. */
+/* TS Pick<SimulationEvents, "emit" | "registerResource">: the call
+ * arguments travel as one struct each (world/session/mod_engine.h), borrowed
+ * for the call. Carried, never called by mods.ts. */
 typedef struct qa_session_mod_engine_events {
   void *ctx;
-  void (*emit)(void *ctx, const void *event);
-  void (*register_resource)(void *ctx, const void *resource);
+  void (*emit)(void *ctx, const qa_session_mod_emit *event);
+  void (*register_resource)(void *ctx, const qa_session_mod_resource_registration *resource);
 } qa_session_mod_engine_events;
 
 /* The bindOwner result: a session resource with its owner and the
@@ -132,9 +126,10 @@ typedef struct qa_session_mod_engine_services {
   void (*message)(void *ctx, qa_network_event event,
                   const qa_actor_id *actor);
   const char *presentation_map;    /* TS QuakeCLocalMessageHost.map: string */
-  const void *presentation_camera;
+  const qa_session_mod_engine_camera *presentation_camera; /* TS presentation.camera; NULL when absent */
   const qa_actor_id *(*presentation_players)(void *ctx, size_t *out_count);
   qa_session_mod_engine_events events;
+  /* Typed views of the const void * members: world/session/mod_engine.h. */
   const void *scene;   /* SceneQueries/SharedSceneQueries picks */
   bool (*world)(void *ctx, qa_actor_id *out); /* false is TS null */
   const void *physics; /* SharedPhysics picks */
@@ -193,9 +188,9 @@ struct qa_mod_runtime {
   void (*activate)(void *ctx);
   void (*register_)(void *ctx, qa_mod_registrations *registrations);
   void (*advance)(void *ctx, qa_frame_context frame);
-  const qa_session_simulation_presentation *(*presentations)(
+  const qa_app_simulation_presentation *(*presentations)(
       void *ctx, size_t *out_count);
-  const qa_session_simulation_presentation *(*appearance_overrides)(
+  const qa_app_simulation_presentation *(*appearance_overrides)(
       void *ctx, size_t *out_count);
   qa_mod_private_checkpoint (*checkpoint)(void *ctx);
   void (*restore)(void *ctx, qa_mod_private_checkpoint state);
@@ -203,9 +198,8 @@ struct qa_mod_runtime {
 /* The runtime viewed as a SessionResource. */
 qa_session_resource qa_mod_runtime_as_resource(qa_mod_runtime *runtime);
 
-/* Mirrored QvmModuleOptions["artifact"] (TS owner
- * src/compat/qvm/artifacts.ts, unported): borrowed opaque. */
-typedef const void *qa_session_qvm_artifact;
+/* TS PreparedModQvmPresentation.artifact: ResolvedQvmArtifact (borrowed). */
+typedef const qa_resolved_qvm_artifact *qa_session_qvm_artifact;
 
 /** TS NonNullable<PreparedMod["presentation"]>. */
 typedef struct qa_prepared_mod_qvm_presentation {
@@ -269,20 +263,18 @@ void qa_session_mods_destroy(qa_session_mods *mods);
 const qa_mod_selection *qa_session_mods_enabled(qa_session_mods *mods,
                                                 size_t *out_count);
 bool qa_session_mods_owns(qa_session_mods *mods, qa_provider_id provider);
-const qa_session_simulation_presentation *qa_session_mods_presentations(
+const qa_app_simulation_presentation *qa_session_mods_presentations(
     qa_session_mods *mods, size_t *out_count);
 /* TS appearanceOverrides(): per-actor groups, later mods winning. */
 typedef struct qa_session_mod_appearance_group {
   qa_actor_id actor;
-  const qa_session_simulation_presentation *presentations;
+  const qa_app_simulation_presentation *presentations;
   size_t count;
 } qa_session_mod_appearance_group;
 const qa_session_mod_appearance_group *qa_session_mods_appearance_overrides(
     qa_session_mods *mods, size_t *out_count);
 void qa_session_mods_advance(qa_session_mods *mods,
                              qa_frame_context frame);
-void qa_session_mods_set_enabled(qa_session_mods *mods,
-                                 qa_mod_selection selection, bool enabled);
 /* Malloc'd checkpoint mods array (caller frees the array; states are
  * runtime-borrowed). Version is the TS literal 1. */
 void qa_session_mods_checkpoint(qa_session_mods *mods,
@@ -296,8 +288,6 @@ const qa_active_mod_presentation *qa_session_mods_presentation_sources(
 void qa_session_mods_checkpoint_for_travel(qa_session_mods *mods,
                                            qa_mod_travel_entry **out_mods,
                                            size_t *out_count);
-void qa_session_mods_restore(qa_session_mods *mods,
-                             const qa_mod_session_checkpoint *saved);
 void qa_session_mods_close(qa_session_mods *mods);
 /* The owner viewed as a SessionResource. */
 qa_session_resource qa_session_mods_as_resource(qa_session_mods *mods);

@@ -1,5 +1,6 @@
 /* Port of src/content/q3/base/combat-bridge.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/base/combat_bridge.h"
+#include "qa/foundation/js.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -12,34 +13,8 @@
 #include "qa/contracts/time.h"
 #include "qa/foundation/support.h"
 
-static double slot_get(qa_q3_game_player_slots_mirror *s, double i) { return qa_q3_game_slots_get_mirror(s, (size_t)i); }
+static double slot_get(qa_q3_base_player_state_slots *s, double i) { return qa_q3_base_player_state_slots_get(s, (size_t)i); }
 
-/* Spatial adapter for the landed combat context (ctx is the bridge). */
-static qa_q3_radius_trace_result spatial_trace(void *ctx, qa_q3_radius_trace_query query) {
-  qa_q3_base_combat_bridge *bridge = ctx;
-  qa_q3_base_actor_trace_query input;
-  memset(&input, 0, sizeof input);
-  input.start = query.start;
-  input.end = query.end;
-  input.shape.kind = QA_Q3_BASE_SHAPE_POINT;
-  input.mask = query.mask;
-  input.pass_actor = query.has_pass_actor ? &query.pass_actor : NULL;
-  qa_q3_base_actor_trace_result result =
-      bridge->host.spatial->trace_actor(bridge->host.spatial->ctx, input);
-  qa_q3_radius_trace_result out = {result.fraction,
-      result.hit_kind == QA_Q3_BASE_HIT_ACTOR ? QA_Q3_RADIUS_HIT_ACTOR
-      : result.hit_kind == QA_Q3_BASE_HIT_WORLD ? QA_Q3_RADIUS_HIT_WORLD : QA_Q3_RADIUS_HIT_NONE,
-      result.hit_actor};
-  return out;
-}
-static size_t spatial_area(void *ctx, qa_bounds bounds, double max_count, qa_actor_id *out, size_t out_cap) {
-  qa_q3_base_combat_bridge *bridge = ctx;
-  size_t count = 0;
-  const qa_actor_id *actors = bridge->host.spatial->area_actors(bridge->host.spatial->ctx, bounds, max_count, &count);
-  size_t take = count < out_cap ? count : out_cap;
-  for (size_t i = 0; i < take; i++) out[i] = actors[i];
-  return take;
-}
 static bool context_is_live(void *ctx, qa_actor_id actor) {
   qa_q3_base_combat_bridge *bridge = ctx;
   return bridge->host.is_live(bridge->host.ctx, actor);
@@ -82,11 +57,9 @@ void qa_q3_base_combat_bridge_init(qa_q3_base_combat_bridge *bridge, qa_q3_base_
   bridge->host = host;
   qa_q3_game_combat_context *context = &bridge->context;
   memset(context, 0, sizeof *context);
-  context->product = host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_GAME_PRODUCT_MISSIONPACK : QA_Q3_GAME_PRODUCT_BASEQ3;
+  context->product = host.product == QA_Q3_BASE_PRODUCT_MISSIONPACK ? QA_Q3_BASE_PRODUCT_MISSIONPACK : QA_Q3_BASE_PRODUCT_BASEQ3;
   context->entities = host.entities;
-  context->spatial.ctx = bridge;
-  context->spatial.trace_actor = spatial_trace;
-  context->spatial.area_actors = spatial_area;
+  context->spatial = *bridge->host.spatial;
   context->ctx = bridge;
   context->is_live = context_is_live;
   context->apply_damage = context_apply_damage;
@@ -233,7 +206,7 @@ static qa_q3_combat_context policy_context(void *ctx, qa_damage_request request,
   out.noclip = target_client != NULL && target_client->noclip;
   out.missionpack_invulnerability = host->product == QA_Q3_BASE_PRODUCT_MISSIONPACK &&
       target_client != NULL && target_client->invulnerability_time > host->time(host->ctx);
-  out.no_knockback = target != NULL && ((int32_t)target->flags & QA_Q3_GAME_FLAG_NO_KNOCKBACK) != 0;
+  out.no_knockback = target != NULL && (qa_js_to_int32(target->flags) & QA_Q3_GAME_FLAG_NO_KNOCKBACK) != 0;
   out.knockback_scale = host->knockback(host->ctx);
   out.friendly_fire = host->friendly_fire(host->ctx);
   out.battlesuit = target_client != NULL && slot_get(&target_client->ps.powerups, QA_Q3_PW_BATTLESUIT) != 0;
@@ -256,11 +229,11 @@ static qa_combat_state source_state(qa_q3_base_combat_bridge *bridge, qa_damage_
       : qa_q3_base_entity_records_native_by_actor(bridge->host.records, true, *id);
   qa_combat_state out = state;
   out.invulnerable = state.invulnerable ||
-      (entity != NULL && ((int32_t)entity->flags & QA_Q3_GAME_FLAG_GODMODE) != 0);
+      (entity != NULL && (qa_js_to_int32(entity->flags) & QA_Q3_GAME_FLAG_GODMODE) != 0);
   if (entity != NULL && entity->client != NULL &&
       bridge->host.game_type(bridge->host.ctx) >= QA_Q3_BASE_GT_TEAM) {
     double team = entity->client->sess.session_team;
-    out.team = (team >= 0 && team < 4 && team == (int)team) ? team_strings[(int)team] : state.team;
+    out.team = (team >= 0 && team < 4 && team == qa_js_to_int32(team)) ? team_strings[qa_js_to_int32(team)] : state.team;
   }
   return out;
 }
@@ -296,18 +269,51 @@ typedef struct progress_ctx {
   qa_combat_progress inner;
 } progress_ctx;
 static void wrap_progress(qa_q3_base_combat_bridge *bridge, qa_combat_progress *value);
+/* A resume consumes its progress (qa_combat_progress ownership): the inner
+ * resume frees the inner ctx, the adapter frees itself and the projection,
+ * which the inner policies read only during the call. The cleanup node frees
+ * both when the inner resume raises. */
+typedef struct resume_frame { progress_ctx *adapter; project_ctx *project; } resume_frame;
+static void resume_frame_free(void *arg) {
+  resume_frame *frame = arg;
+  free(frame->project);
+  free(frame->adapter);
+}
 static void resume_source_adapter(void *ctx, qa_current_combat_state current, qa_combat_progress *out) {
   progress_ctx *adapter = ctx;
-  adapter->inner.resume_source(adapter->inner.ctx,
-      project_current(adapter->bridge, adapter->inner.request, current), out);
-  wrap_progress(adapter->bridge, out);
+  qa_q3_base_combat_bridge *bridge = adapter->bridge;
+  qa_current_combat_state projected = project_current(bridge, adapter->inner.request, current);
+  resume_frame frame = {adapter, projected.ctx};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, resume_frame_free, &frame);
+  adapter->inner.resume_source(adapter->inner.ctx, projected, out);
+  qa_cleanup_pop(&cleanup);
+  resume_frame_free(&frame);
+  wrap_progress(bridge, out);
 }
 static void resume_armor_adapter(void *ctx, qa_armor_stage_result result,
     qa_current_combat_state current, qa_combat_progress *out) {
   progress_ctx *adapter = ctx;
-  adapter->inner.resume_armor(adapter->inner.ctx, result,
-      project_current(adapter->bridge, adapter->inner.request, current), out);
-  wrap_progress(adapter->bridge, out);
+  qa_q3_base_combat_bridge *bridge = adapter->bridge;
+  qa_current_combat_state projected = project_current(bridge, adapter->inner.request, current);
+  resume_frame frame = {adapter, projected.ctx};
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, resume_frame_free, &frame);
+  adapter->inner.resume_armor(adapter->inner.ctx, result, projected, out);
+  qa_cleanup_pop(&cleanup);
+  resume_frame_free(&frame);
+  wrap_progress(bridge, out);
+}
+static qa_armor_result fallback_adapter(void *ctx, qa_armor_state current) {
+  progress_ctx *adapter = ctx;
+  return adapter->inner.fallback(adapter->inner.ctx, current);
+}
+/* qa_combat_progress.discard over the replaced ctx: forward the inner
+ * discard with the inner ctx, then release the adapter. */
+static void discard_adapter(void *ctx) {
+  progress_ctx *adapter = ctx;
+  if (adapter->inner.discard != NULL) adapter->inner.discard(adapter->inner.ctx);
+  free(adapter);
 }
 static void wrap_progress(qa_q3_base_combat_bridge *bridge, qa_combat_progress *value) {
   if (strcmp(value->kind, "complete") == 0) return;
@@ -318,14 +324,20 @@ static void wrap_progress(qa_q3_base_combat_bridge *bridge, qa_combat_progress *
   if (strcmp(value->kind, "source-continuation") == 0) {
     value->ctx = adapter;
     value->resume_source = resume_source_adapter;
+    value->discard = discard_adapter;
   } else if (strcmp(value->kind, "armor-stage") == 0) {
+    /* TS spreads the stage, so its fallback keeps the original closure. Every
+     * leaf that shares the replaced ctx must be forwarded with the inner one. */
     value->ctx = adapter;
     value->resume_armor = resume_armor_adapter;
+    value->discard = discard_adapter;
+    if (value->fallback) value->fallback = fallback_adapter;
   } else free(adapter);
 }
 typedef struct policy_ctx {
   qa_q3_base_combat_bridge *bridge;
   qa_combat_policy inner;
+  qa_victim_armor_policy armor;
 } policy_ctx;
 static void policy_decide(void *ctx, qa_damage_request request, qa_combat_state target,
     const qa_combat_state *attacker, bool has_prepared, double prepared, qa_combat_progress *out) {
@@ -352,6 +364,7 @@ qa_combat_policy qa_q3_base_combat_bridge_policy(qa_q3_base_combat_bridge *bridg
   if (!policy) qa_range_error("out of memory");
   policy->bridge = bridge;
   policy->inner = inner;
+  policy->armor = options.armor;
   qa_combat_policy out;
   memset(&out, 0, sizeof out);
   out.ctx = policy;
@@ -359,4 +372,10 @@ qa_combat_policy qa_q3_base_combat_bridge_policy(qa_q3_base_combat_bridge *bridg
   out.decide = policy_decide;
   return out;
 }
-void qa_q3_base_combat_bridge_policy_destroy(qa_combat_policy policy) { free(policy.ctx); }
+void qa_q3_base_combat_bridge_policy_destroy(qa_combat_policy policy) {
+  policy_ctx *owned = policy.ctx;
+  if (owned == NULL) return;
+  qa_combat_policy_free(owned->inner);
+  qa_victim_armor_policy_free(owned->armor);
+  free(owned);
+}

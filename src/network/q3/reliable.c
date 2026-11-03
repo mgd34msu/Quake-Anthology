@@ -92,6 +92,8 @@ void qa_q3_client_reliable_commands_change_latest(qa_q3_client_reliable_commands
   replace_slot(r, r->current, buf);
 }
 bool qa_q3_client_reliable_commands_add(qa_q3_client_reliable_commands *r, const char *text, qa_q3_reliable_command *out) {
+  qa_q3_reliable_command scratch;
+  if (!out) out = &scratch;
   if (qa_q3_reliable_ring_outstanding(r) > QA_Q3_MAX_RELIABLE_COMMANDS) {
     out->sequence = r->current; out->text[0] = 0; /* ReliableOverflowError(sequence, acknowledge) */
     return false;
@@ -134,4 +136,8 @@ qa_q3_reliable_acknowledgement qa_q3_server_reliable_commands_acknowledge_throug
     r->acknowledged = r->current; a.kind = QA_Q3_ACK_REJECTED_STALE; a.sequence = r->current; return a;
   }
   r->acknowledged = sequence; a.kind = QA_Q3_ACK_ACKNOWLEDGED; a.sequence = sequence; return a;
+}
+void qa_q3_reliable_ring_replace(qa_q3_reliable_ring *r, int64_t sequence, const char *text) { replace_slot(r, sequence, text); }
+void qa_q3_reliable_ring_set_sequences(qa_q3_reliable_ring *r, int64_t current, int64_t acknowledged) {
+  r->current = current; r->acknowledged = acknowledged;
 }

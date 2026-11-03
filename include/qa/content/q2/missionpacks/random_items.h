@@ -2,9 +2,8 @@
 #ifndef QA_CONTENT_Q2_MISSIONPACKS_RANDOM_ITEMS_H
 #define QA_CONTENT_Q2_MISSIONPACKS_RANDOM_ITEMS_H
 #include <stdbool.h>
+#include "qa/content/q2/foundation/items.h"
 #include "qa/content/q2/foundation/weapons/types.h"
-
-typedef struct qa_q2mp_item_definition qa_q2mp_item_definition;
 
 /* TS Q2RandomItemSettings. */
 typedef struct qa_q2mp_random_item_settings {
@@ -12,6 +11,6 @@ typedef struct qa_q2mp_random_item_settings {
 } qa_q2mp_random_item_settings;
 
 /* NULL return is TS null. */
-const char *qa_q2mp_random_item(qa_q2f_entity *entity, const qa_q2mp_item_definition *item, qa_q2f_game *game,
+const char *qa_q2mp_random_item(qa_q2_entity *entity, const qa_q2_item_definition *item, qa_q2_game_services *game,
                                 qa_q2mp_random_item_settings settings);
 #endif

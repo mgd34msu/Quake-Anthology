@@ -151,3 +151,95 @@ int64_t qa_bot_log_file_write(qa_bot_log *l, const char *f) {
   qa_bot_log_io_result r = l->stream.write(l->stream.ctx, (const uint8_t *)f, strlen(f));
   return r.kind == QA_LOG_IO_OK ? (int64_t)strlen(f) : -1;
 }
+qa_save_value *qa_bot_log_capture_save_state(qa_bot_log *l) {
+  qa_save_value *state = qa_save_value_object(), *out = qa_save_value_object();
+  if (state == NULL || out == NULL)
+    qa_range_error("Out of memory capturing the bot log");
+  if (!l->is_open && !l->retained_closed)
+    qa_save_value_set(state, "kind", qa_save_value_string("closed"));
+  else if (!l->is_open)
+    qa_save_value_set(state, "kind", qa_save_value_string("closed-retained"));
+  else {
+    if (!l->stream.has_checkpoint || l->stream.checkpoint_position == NULL) {
+      fprintf(stderr, "Active bot log stream does not support continuation checkpoints\n");
+      abort();
+    }
+    int64_t position = l->stream.checkpoint_position(l->stream.ctx);
+    if (position < 0 || position > INT64_C(9007199254740991)) {
+      fprintf(stderr, "Bot log stream returned an invalid byte position\n");
+      abort();
+    }
+    qa_save_value_set(state, "kind", qa_save_value_string("open"));
+    qa_save_value_set(state, "position", qa_save_value_number((double)position));
+  }
+  qa_save_value_set(out, "filename", qa_save_value_string(l->filename));
+  qa_save_value_set(out, "openedFilename",
+                    qa_save_value_string(l->opened_filename != NULL ? l->opened_filename : ""));
+  qa_save_value_set(out, "numwrites", qa_save_value_number((double)l->numwrites));
+  qa_save_value_set(out, "state", state);
+  return out;
+}
+static void log_field(const qa_save_reader *r, const char *name, qa_save_reader *out) {
+  if (!qa_save_reader_field(r, name, out))
+    qa_range_error("Out of memory reading the bot log");
+}
+void qa_bot_log_restore_save_state(qa_bot_log *l, const qa_save_value *value) {
+  if (l->is_open || l->retained_closed) {
+    fprintf(stderr, "Log restore requires an empty owner\n");
+    abort();
+  }
+  static const char *const KINDS[] = {"closed", "closed-retained", "open"};
+  qa_save_reader reader, state, cell;
+  if (!qa_save_reader_init(&reader, value, "bot.log"))
+    qa_range_error("Out of memory reading the bot log");
+  log_field(&reader, "state", &state);
+  log_field(&state, "kind", &cell);
+  const char *kind = qa_save_reader_choice_string(&cell, KINDS, 3);
+  bool retained = strcmp(kind, "closed-retained") == 0, open = strcmp(kind, "open") == 0;
+  qa_save_reader_destroy(&cell);
+  qa_save_reader filename_reader, opened_reader;
+  log_field(&reader, "filename", &filename_reader);
+  log_field(&reader, "openedFilename", &opened_reader);
+  const char *filename = qa_save_reader_string(&filename_reader);
+  const char *opened = qa_save_reader_string(&opened_reader);
+  log_field(&reader, "numwrites", &cell);
+  double numwrites = qa_save_reader_integer_min(&cell, 0);
+  qa_save_reader_destroy(&cell);
+  if (strlen(filename) > 1024 || numwrites > 2147483647.0)
+    qa_save_reader_fail(&reader, "invalid log state");
+  bool active = false;
+  qa_bot_log_stream_bots_a stream;
+  memset(&stream, 0, sizeof stream);
+  if (open) {
+    if (opened[0] == '\0' || strlen(filename) != (strlen(opened) < 1024 ? strlen(opened) : 1024) ||
+        strncmp(filename, opened, 1024) != 0)
+      qa_save_reader_fail(&reader, "invalid active log filename");
+    if (l->resume_file == NULL)
+      qa_save_reader_fail(&reader, "active log continuation requires a resumable file host");
+    log_field(&state, "position", &cell);
+    double position = qa_save_reader_integer_min(&cell, 0);
+    qa_save_reader_destroy(&cell);
+    qa_bot_log_open_result result = l->resume_file(l->resume_ctx, opened, (int64_t)position);
+    if (!result.opened) {
+      fprintf(stderr, "Bot log resume failed for %s\n", opened);
+      abort();
+    }
+    stream = result.stream;
+    active = true;
+  }
+  l->is_open = active;
+  l->retained_closed = retained;
+  l->stream = stream;
+  snprintf(l->filename, sizeof l->filename, "%s", filename);
+  free(l->opened_filename);
+  size_t n = strlen(opened) + 1;
+  l->opened_filename = malloc(n);
+  if (l->opened_filename == NULL)
+    qa_range_error("Out of memory restoring the bot log");
+  memcpy(l->opened_filename, opened, n);
+  l->numwrites = (int32_t)numwrites;
+  qa_save_reader_destroy(&filename_reader);
+  qa_save_reader_destroy(&opened_reader);
+  qa_save_reader_destroy(&state);
+  qa_save_reader_destroy(&reader);
+}

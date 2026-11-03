@@ -1,5 +1,7 @@
 /* Port of src/world/collision/q1/hull.ts. GPL-2.0-or-later. */
 #include "qa/world/collision/q1/hull.h"
+#include <math.h>
+#include "qa/network/common/js_number.h"
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include <stdlib.h>
@@ -11,7 +13,7 @@ const qa_bounds qa_q1_hull_bounds[3]={
 #define NDIV(a,b) n->divide(n->ctx,(a),(b))
 #define NSTORE(a) n->store(n->ctx,(a))
 bool qa_create_q1_hulls(const qa_q1_world_geometry*map,double model_index,qa_q1_hulls*out){
-  if(model_index<0||(size_t)model_index>=map->model_count)qa_range_error("Unknown Quake model %g",model_index);
+  if(!(model_index>=0&&model_index<(double)map->model_count&&model_index==floor(model_index)))qa_range_error("Unknown Quake model %s",QA_JS_NUMBER(model_index));
   const qa_q1_world_model*model=&map->models[(size_t)model_index];
   qa_q1_clip_node*drawing=malloc((map->node_count?map->node_count:1)*sizeof*drawing);
   if(!drawing)return false;
@@ -21,7 +23,7 @@ bool qa_create_q1_hulls(const qa_q1_world_geometry*map,double model_index,qa_q1_
       qa_bsp_child ch=map->nodes[i].children[k];
       if(ch.is_node){drawing[i].children[k].is_clipnode=true;drawing[i].children[k].value=ch.index;}
       else{
-        if(ch.index<0||(size_t)ch.index>=map->leaf_count)qa_range_error("Unknown Quake hull-zero leaf");
+        if(!(ch.index>=0&&ch.index<(double)map->leaf_count&&ch.index==floor(ch.index)))qa_range_error("Unknown Quake hull-zero leaf");
         drawing[i].children[k].is_clipnode=false;drawing[i].children[k].value=map->leaves[(size_t)ch.index].contents;
       }
     }
@@ -32,7 +34,7 @@ bool qa_create_q1_hulls(const qa_q1_world_geometry*map,double model_index,qa_q1_
     double first=model->headnodes.values[idx];
     if(idx==0&&first<0){
       double li=-1-first;
-      if(li<0||(size_t)li>=map->leaf_count)qa_range_error("Unknown Quake hull root leaf");
+      if(!(li>=0&&li<(double)map->leaf_count&&li==floor(li)))qa_range_error("Unknown Quake hull root leaf");
       first=map->leaves[(size_t)li].contents;
     }
     const qa_q1_clip_node*cn=idx==0?drawing:map->clipnodes;
@@ -46,7 +48,7 @@ bool qa_create_q1_hulls(const qa_q1_world_geometry*map,double model_index,qa_q1_
 }
 void qa_q1_hulls_destroy(qa_q1_hulls*h){if(!h)return;free(h->drawing);h->drawing=NULL;}
 static double plane_distance(const qa_q1_hull*hull,double pi,qa_vec3 p,const qa_numeric_operations*n){
-  if(pi<0||(size_t)pi>=hull->plane_count)qa_range_error("Invalid Quake hull plane");
+  if(!(pi>=0&&pi<(double)hull->plane_count&&pi==floor(pi)))qa_range_error("Invalid Quake hull plane");
   const qa_bsp_plane*pl=&hull->planes[(size_t)pi];
   if(pl->type==0)return NSUB(p.x,pl->plane.distance);
   if(pl->type==1)return NSUB(p.y,pl->plane.distance);
@@ -55,8 +57,8 @@ static double plane_distance(const qa_q1_hull*hull,double pi,qa_vec3 p,const qa_
 }
 static double child_number(qa_q1_clip_child c){return c.value;}
 static const qa_q1_clip_node*node_at(const qa_q1_hull*hull,double node){
-  if(node<hull->first_clipnode||node>hull->last_clipnode)qa_range_error("Invalid Quake hull node %g",node);
-  if(node<0||(size_t)node>=hull->clipnode_count)qa_range_error("Missing Quake hull node %g",node);
+  if(node<hull->first_clipnode||node>hull->last_clipnode)qa_range_error("Invalid Quake hull node %s",QA_JS_NUMBER(node));
+  if(!(node>=0&&node<(double)hull->clipnode_count&&node==floor(node)))qa_range_error("Missing Quake hull node %s",QA_JS_NUMBER(node));
   return &hull->clipnodes[(size_t)node];
 }
 static double contents_at(const qa_q1_hull*hull,qa_vec3 p,double node,const qa_numeric_operations*n){
@@ -102,10 +104,10 @@ static int walk(Walk*w,double node,double p1f,double p2f,qa_vec3 p1,qa_vec3 p2,d
   double far_contents=contents_at(hull,mid,child_number(far_),n);
   if(!blocks_(w,far_contents))return walk(w,child_number(far_),midf,p2f,mid,p2,depth+1);
   if(w->tr.all_solid)return 0;
-  if(clip->plane<0||(size_t)clip->plane>=hull->plane_count)qa_range_error("Invalid Quake collision plane");
+  if(!(clip->plane>=0&&clip->plane<(double)hull->plane_count&&clip->plane==floor(clip->plane)))qa_range_error("Invalid Quake collision plane");
   const qa_bsp_plane*pl=&hull->planes[(size_t)clip->plane];
-  if(t1<0){w->tr.plane.normal=(qa_vec3){-pl->plane.normal.x,-pl->plane.normal.y,-pl->plane.normal.z};w->tr.plane.distance=-pl->plane.distance;}
-  else w->tr.plane=pl->plane;
+  if(t1<0){w->tr.plane.normal=(qa_vec3){-pl->plane.normal.x,-pl->plane.normal.y,-pl->plane.normal.z};w->tr.plane.distance=-pl->plane.distance;w->tr.plane_index=-1;}
+  else{w->tr.plane=pl->plane;w->tr.plane_index=(int)clip->plane;}
   w->tr.contents=far_contents;
   while(blocks_(w,contents_at(hull,mid,hull->first_clipnode,n))){
     fraction=NSUB(fraction,0.1);
@@ -116,7 +118,7 @@ static int walk(Walk*w,double node,double p1f,double p2f,qa_vec3 p1,qa_vec3 p2,d
 }
 qa_q1_hull_trace qa_trace_q1_hull(const qa_q1_hull*hull,qa_vec3 start,qa_vec3 end,qa_numeric_profile numeric,qa_q1_blocks_fn blocks,void*bctx){
   Walk w; w.hull=hull; w.n=qa_create_numeric_operations(&numeric); w.blocks=blocks; w.bctx=bctx;
-  w.tr=(qa_q1_hull_trace){1,end,false,true,false,false,{{0,0,0},0},QA_Q1_CONTENTS_EMPTY};
+  w.tr=(qa_q1_hull_trace){1,end,false,true,false,false,{{0,0,0},0},QA_Q1_CONTENTS_EMPTY,-2};
   (void)walk(&w,hull->first_clipnode,0,1,start,end,0);
   return w.tr;
 }

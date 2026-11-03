@@ -245,9 +245,6 @@ static void test_atlas_and_layout(void) {
   scaled.commands.target = viewport;
   CHECK(qa_draw2d_scale_x(&scaled) == (double)(float)(900 * (double)(float)(1.0 / 480)));
   CHECK(fabs(qa_draw2d_bias_x(&scaled) - 200) < 0.01);
-  qa_seat_text_scale scales = qa_seat_text_scale_of(viewport, 0, 1, 1);
-  CHECK(scales.console_width == 528); /* floor(1600/3)=533, & ~7 = 528 */
-  CHECK(scales.crosshair == 1 && scales.status_bar == 1);
 
   qa_text_atlas_destroy(&tinted);
   qa_text_atlas_destroy(&charset);
@@ -274,26 +271,13 @@ static void test_kfont_parse(void) {
   const qa_kfont_char *b = qa_scr_kfont_lookup(&font, 66);
   CHECK(b != NULL && b->w == 6);
   CHECK(qa_scr_kfont_lookup(&font, 1040) == NULL);
-  CHECK(qa_kfont_has_glyph(&font, 1040));
-  CHECK(!qa_kfont_has_glyph(&font, 67));
+  CHECK(qa_kfont_glyph(&font, 1040) != NULL);
+  CHECK(qa_kfont_glyph(&font, 67) == NULL);
   qa_parsed_kfont_destroy(&parsed);
 
   qa_parsed_kfont missing;
   CHECK(!qa_parse_kfont("mapchar {\n65 0 0 8 8 0\n}\n", &missing));
 
-  int64_t codes[] = {65};
-  qa_atlas_rect rects[] = {{1, 2, 3, 4, true}};
-  qa_font_atlas fake = {0};
-  fake.codepoints = codes;
-  fake.glyphs = rects;
-  fake.glyph_count = 1;
-  fake.line_height = 20;
-  qa_ttf_kfont ttf;
-  CHECK(qa_kfont_from_ttf(&fake, "pic", &ttf));
-  const qa_kfont_char *from_ttf = qa_ttf_kfont_lookup(&ttf, 65);
-  CHECK(from_ttf != NULL && from_ttf->x == 1 && from_ttf->has_color &&
-        from_ttf->color && ttf.line_height == 20);
-  qa_ttf_kfont_destroy(&ttf);
 }
 
 struct registry_files {
@@ -387,7 +371,7 @@ static void test_captions(void) {
       "2\n00:00:01,500 --> 00:00:03,000\nDoors opening";
   qa_caption_cue *cues = NULL;
   size_t cue_count = 0;
-  CHECK(qa_parse_subtitle_text(srt, strlen(srt), "clip", &cues, &cue_count));
+  CHECK(qa_parse_subtitle_text(srt, strlen(srt), "clip", NULL, NULL, &cues, &cue_count));
   CHECK(cue_count == 2 && strcmp(cues[0].id, "clip:0") == 0 &&
         cues[0].start_milliseconds == 1000 &&
         cues[0].duration_milliseconds == 1000);
@@ -425,12 +409,12 @@ static void test_captions(void) {
     qa_caption_cue *bad = NULL;
     size_t n = 0;
     const char *text = "1\n00:99:00,000 --> 00:00:02,000\nX";
-    qa_parse_subtitle_text(text, strlen(text), "bad", &bad, &n);
+    qa_parse_subtitle_text(text, strlen(text), "bad", NULL, NULL, &bad, &n);
   });
 
   /* WebVTT voice speaker extraction. */
   const char *vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\n<v Ann>Hi</v>";
-  CHECK(qa_parse_subtitle_text(vtt, strlen(vtt), "v", &cues, &cue_count));
+  CHECK(qa_parse_subtitle_text(vtt, strlen(vtt), "v", NULL, NULL, &cues, &cue_count));
   CHECK(cue_count == 1 && cues[0].speaker != NULL &&
         strcmp(cues[0].speaker, "Ann") == 0 &&
         strcmp(cues[0].text, "Hi") == 0);
@@ -462,7 +446,10 @@ static const char *read_live(void *ctx) {
   (void)ctx;
   return live_language;
 }
-static void live_failed(void *ctx) { ((struct media_files *)ctx)->failures++; }
+static void live_failed(void *ctx, const char *error) {
+  (void)error;
+  ((struct media_files *)ctx)->failures++;
+}
 
 static void test_media_captions(void) {
   char **paths = NULL;

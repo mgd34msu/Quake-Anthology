@@ -1,5 +1,7 @@
 /* Port of src/content/q3/presentation/players.ts. GPL-2.0-or-later. */
 #include "qa/content/q3/presentation/players.h"
+#include "qa/network/common/js_number.h"
+#include "qa/foundation/js.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -35,7 +37,7 @@ static double f_(double value) { return (double)(float)value; }
 static int32_t to_int32(double value) {
   if (!isfinite(value)) return 0;
   double truncated = trunc(fmod(fabs(value), 4294967296.0));
-  uint32_t bits = (uint32_t)truncated;
+  uint32_t bits = qa_js_to_uint32(truncated);
   if (value < 0) bits = ~bits + 1u;
   int32_t result;
   memcpy(&result, &bits, sizeof result);
@@ -46,7 +48,7 @@ static qa_q3_base_trajectory base_trajectory(const qa_q3_wire_trajectory *wire) 
   return result;
 }
 static bool powered(const qa_q3_base_entity_state *state, qa_q3_powerup powerup) {
-  return (state->powerups & (1 << powerup)) != 0;
+  return (qa_js_to_int32(state->powerups) & (1 << powerup)) != 0;
 }
 static double sphere_angle(double time, double divisor) {
   return f_(f_(f_((double)(to_int32(trunc(time / divisor)) & 255) * f_(acos(-1.0) * 2))) / 255);
@@ -171,10 +173,10 @@ bool qa_q3_pres_player_presenter_light_verts(presenter_t *presenter, qa_vec3 nor
     const double directed[3] = {light.directed_light.x, light.directed_light.y, light.directed_light.z};
     for (int axis = 0; axis < 3; axis++) {
       if (incoming <= 0) {
-        components[axis] = (double)((int64_t)trunc(ambient[axis]) & 255);
+        components[axis] = (double)(qa_js_to_int32(trunc(ambient[axis])) & 255);
       } else {
         double value = trunc(f_(ambient[axis] + f_(incoming * directed[axis])));
-        components[axis] = (double)((int64_t)(value < 255 ? value : 255) & 255);
+        components[axis] = (double)(qa_js_to_int32((value < 255 ? value : 255)) & 255);
       }
     }
     vertices[index].color = qa_math_vec4(components[0], components[1], components[2], 255);
@@ -189,7 +191,7 @@ static void animation(presenter_t *presenter, qa_q3_pres_client_entity *entity, 
   const qa_q3_base_entity_state *state = &entity->current_state;
   double speed_scale = powered(state, QA_Q3_PW_HASTE) ? 1.5 : 1;
   double legs_animation = entity->player.pose.legs.yawing &&
-          (state->legs_anim & ~QA_Q3_ANIMATION_TOGGLE_BIT) == QA_Q3_ANIM_LEGS_IDLE
+          (qa_js_to_int32(state->legs_anim) & ~QA_Q3_ANIMATION_TOGGLE_BIT) == QA_Q3_ANIM_LEGS_IDLE
       ? QA_Q3_ANIM_LEGS_TURN : state->legs_anim;
   print_ctx debug = {presenter->host.ctx, presenter->host.print};
   qa_q3_lerp_print_fn print = options.debug_animation ? print_thunk : NULL;
@@ -230,12 +232,12 @@ static void sprites(presenter_t *presenter, qa_q3_pres_client_entity *entity, qa
       {8, media->medal_excellent}, {64, media->medal_gauntlet}, {0x10000, media->medal_defend},
       {0x20000, media->medal_assist}, {0x800, media->medal_capture}};
   for (size_t index = 0; index < sizeof choices / sizeof choices[0]; index++) {
-    if (entity->current_state.e_flags & choices[index].flag) {
+    if (qa_js_to_int32(entity->current_state.e_flags) & choices[index].flag) {
       sprite(presenter, entity, choices[index].shader);
       return;
     }
   }
-  if (!(entity->current_state.e_flags & DEAD) &&
+  if (!(qa_js_to_int32(entity->current_state.e_flags) & DEAD) &&
       qa_q3_base_player_state_slots_get(&snapshot_ps(presenter)->persistant, QA_Q3_BASE_PERS_TEAM) == ci->team &&
       options.game_type >= QA_Q3_BASE_GT_TEAM && options.draw_friend) {
     sprite(presenter, entity, media->friend_shader);
@@ -260,7 +262,7 @@ static shadow_result shadow(presenter_t *presenter, qa_q3_pres_client_entity *en
   if (options.shadows != 1) return result;
   if (!trace.has_plane) qa_range_error("Player shadow hit has no contact plane");
   double alpha = f_(1 - trace.fraction);
-  qa_q3_pres_impact_mark_request_mirror request;
+  qa_q3_pres_impact_mark_request request;
   memset(&request, 0, sizeof request);
   request.shader = presenter->host.media.shadow_mark_shader;
   request.origin = trace.end;
@@ -308,7 +310,7 @@ static void splash(presenter_t *presenter, qa_q3_pres_client_entity *entity,
 static qa_q3_pres_local_entity *smoke_puff(presenter_t *presenter, qa_vec3 origin, qa_vec3 velocity,
     double radius, qa_vec4 color, double duration, double start_time, double fade_in_time, double flags,
     const qa_q3_pres_scene_shader *shader) {
-  qa_q3_pres_smoke_puff_options_mirror options;
+  qa_q3_pres_smoke_puff_options options;
   memset(&options, 0, sizeof options);
   options.origin = origin;
   options.velocity = velocity;
@@ -339,7 +341,7 @@ static void breath(presenter_t *presenter, qa_q3_pres_client_entity *entity,
   if (!options.enable_breath ||
       (entity->current_state.number == snapshot_ps(presenter)->client_num &&
        !presenter->host.state->rendering_third_person) ||
-      (entity->current_state.e_flags & DEAD)) {
+      (qa_js_to_int32(entity->current_state.e_flags) & DEAD)) {
     return;
   }
   qa_q3_pres_client_info *ci =
@@ -394,7 +396,7 @@ static void flag(presenter_t *presenter, qa_q3_pres_client_entity *entity,
   flap.lighting_origin = torso->lighting_origin;
   flap.shadow_plane = torso->shadow_plane;
   flap.shading.render_flags = torso->shading.render_flags;
-  int32_t legs = entity->current_state.legs_anim & ~QA_Q3_ANIMATION_TOGGLE_BIT;
+  int32_t legs = qa_js_to_int32(entity->current_state.legs_anim) & ~QA_Q3_ANIMATION_TOGGLE_BIT;
   bool idle = legs == QA_Q3_ANIM_LEGS_IDLE || legs == QA_Q3_ANIM_LEGS_IDLECR;
   bool walk = legs == QA_Q3_ANIM_LEGS_WALK || legs == QA_Q3_ANIM_LEGS_WALKCR;
   if (!idle) {
@@ -466,11 +468,10 @@ static qa_vec3 trail_position_at(qa_q3_pres_skull_trail *trail, int64_t index) {
 static void tokens(presenter_t *presenter, qa_q3_pres_client_entity *entity, qa_q3_pres_client_info *ci,
     double render_flags, const qa_q3_pres_mission_player_media *media) {
   double token_count_value = entity->current_state.generic1 < 10 ? entity->current_state.generic1 : 10;
-  int32_t number = entity->current_state.number;
+  int32_t number = qa_js_to_int32(entity->current_state.number);
   if (number < 0 || number >= QA_Q3_PRES_MAX_CLIENTS) {
-    /* Corpses have non-client entity numbers. */
-    if (token_count_value == 0) return;
-    qa_range_error("No skull trail for entity %lld", (long long)number);
+    /* Corpses have non-client entity numbers, and source indexes cg.skullTrails out of bounds for them; there is nothing to trail. */
+    return;
   }
   qa_q3_pres_skull_trail *trail = &presenter->host.state->skull_trails[number];
   if (token_count_value == 0) {
@@ -532,7 +533,7 @@ static void kamikaze(presenter_t *presenter, qa_q3_pres_client_entity *entity,
   skull.shadow_plane = torso->shadow_plane;
   skull.shading.render_flags = torso->shading.render_flags;
   double pi = acos(-1.0);
-  if (entity->current_state.e_flags & DEAD) {
+  if (qa_js_to_int32(entity->current_state.e_flags) & DEAD) {
     double angle = sphere_angle(presenter_time(presenter), 7);
     if (angle > f_(pi * 2)) angle = f_(angle - f_(f_(pi) * 2));
     double x = f_(f_(sin(angle)) * 20), y = f_(f_(cos(angle)) * 20);
@@ -568,7 +569,7 @@ static void kamikaze(presenter_t *presenter, qa_q3_pres_client_entity *entity,
 static void mission_powerups(presenter_t *presenter, qa_q3_pres_client_entity *entity,
     qa_q3_pres_client_info *ci, qa_q3_pres_ref_model_entity *torso,
     const qa_q3_pres_mission_player_media *media) {
-  if (entity->current_state.e_flags & KAMIKAZE) kamikaze(presenter, entity, torso, media);
+  if (qa_js_to_int32(entity->current_state.e_flags) & KAMIKAZE) kamikaze(presenter, entity, torso, media);
   const struct { qa_q3_powerup powerup; qa_q3_pres_scene_model model; } attachments[] = {
       {QA_Q3_PW_GUARD, media->guard_powerup_model}, {QA_Q3_PW_SCOUT, media->scout_powerup_model},
       {QA_Q3_PW_DOUBLER, media->doubler_powerup_model}, {QA_Q3_PW_AMMOREGEN, media->ammo_regen_powerup_model}};
@@ -622,7 +623,7 @@ static void mission_powerups(presenter_t *presenter, qa_q3_pres_client_entity *e
 
 void qa_q3_pres_player_presenter_player(presenter_t *presenter, qa_q3_pres_client_entity *entity) {
   qa_q3_pres_player_presentation_host *host = &presenter->host;
-  int32_t client_num = entity->current_state.client_num;
+  int32_t client_num = qa_js_to_int32(entity->current_state.client_num);
   if (client_num < 0 || client_num >= 64) {
     qa_common_error(QA_COMMON_ERROR_DROP, "Bad clientNum on player entity");
   }
@@ -716,6 +717,8 @@ struct qa_q3_pres_client_info_store {
   double requests[64];
   qa_common_parse_state animation_parser;
   double lifecycle;
+  void (*entity_reset)(void *ctx, qa_q3_pres_client_entity *entity); /* NULL is TS null */
+  void *entity_reset_ctx;
 };
 typedef qa_q3_pres_client_info_store store_t;
 typedef enum load_status { LOAD_OK, LOAD_SUPERSEDED, LOAD_OOM } load_status;
@@ -733,7 +736,21 @@ static bool superseded(load_check *check) {
 
 static void fmt_index(char *buffer, size_t size, double value) {
   if (value == trunc(value) && fabs(value) < 1e21) snprintf(buffer, size, "%lld", (long long)value);
-  else snprintf(buffer, size, "%g", value);
+  else snprintf(buffer, size, "%s", QA_JS_NUMBER(value));
+}
+void qa_q3_pres_client_info_store_set_entity_reset(store_t *store,
+    void (*reset)(void *ctx, qa_q3_pres_client_entity *entity), void *ctx) {
+  store->entity_reset = reset;
+  store->entity_reset_ctx = ctx;
+}
+/* CG_LoadClientInfo ends by resetting every player entity of that client, which may hold lerp state from the old model. */
+static void reset_entities(store_t *store, double index) {
+  if (store->entity_reset == NULL) return;
+  for (int32_t number = 0; number < 1024; number++) {
+    qa_q3_pres_client_entity *entity = qa_q3_pres_client_game_state_entity_at(store->host.state, number);
+    if (entity->current_state.client_num == index && entity->current_state.e_type == QA_Q3_BASE_ET_PLAYER)
+      store->entity_reset(store->entity_reset_ctx, entity);
+  }
 }
 qa_q3_pres_client_info *qa_q3_pres_client_info_store_client_info(store_t *store, double index) {
   if (index != trunc(index) || index < 0 || index >= 64) {
@@ -826,10 +843,15 @@ static load_status filename_of(store_t *store, double length, const char *format
 static load_status exists(store_t *store, const char *path, load_check *check, bool *out_found) {
   *out_found = false;
   if (!store->host.assets.has(store->host.assets.ctx, path)) return LOAD_OK;
-  uint8_t *bytes = NULL;
-  size_t length = 0;
-  if (!store->host.assets.read(store->host.assets.ctx, path, &bytes, &length)) return LOAD_OOM;
-  free(bytes);
+  /* CG_FileExists only opens the file; read it only when the reader cannot report a length. */
+  double length = 0;
+  if (store->host.read_file_length == NULL) {
+    uint8_t *bytes = NULL;
+    size_t byte_length = 0;
+    if (!store->host.assets.read(store->host.assets.ctx, path, &bytes, &byte_length)) return LOAD_OOM;
+    free(bytes);
+    length = (double)byte_length;
+  } else length = store->host.read_file_length(store->host.assets.ctx, path);
   CHECKED(check);
   *out_found = length > 0;
   return LOAD_OK;
@@ -1378,11 +1400,6 @@ bool qa_q3_pres_client_info_store_new_client_info(store_t *store, double index, 
   value = info_value(configstring, "t");
   int32_t team = qa_game_atoi(value != NULL ? value : "");
   free(value);
-  if (team != QA_Q3_BASE_TEAM_FREE && team != QA_Q3_BASE_TEAM_RED && team != QA_Q3_BASE_TEAM_BLUE &&
-      team != QA_Q3_BASE_TEAM_SPECTATOR) {
-    qa_q3_pres_client_info_destroy(&next);
-    qa_range_error("Invalid player team %lld", (long long)team);
-  }
   next.team = (qa_q3_base_team)team;
   value = info_value(configstring, "tt");
   next.team_task = qa_game_atoi(value != NULL ? value : "");
@@ -1429,6 +1446,7 @@ bool qa_q3_pres_client_info_store_new_client_info(store_t *store, double index, 
     return false;
   }
   load_status status = LOAD_OK;
+  bool loaded = false;
   if (!reuse(store, &next, settings)) {
     bool force_defer = store->host.memory_remaining(store->host.ctx) < 4000000;
     if (force_defer || (settings.defer_players && !settings.build_script && !settings.loading)) {
@@ -1440,6 +1458,7 @@ bool qa_q3_pres_client_info_store_new_client_info(store_t *store, double index, 
       }
     } else {
       status = load_client(store, &next, settings, &check);
+      loaded = status == LOAD_OK;
     }
   }
   if (status == LOAD_SUPERSEDED) {
@@ -1453,6 +1472,7 @@ bool qa_q3_pres_client_info_store_new_client_info(store_t *store, double index, 
   if (check.lifecycle == store->lifecycle && store->requests[(size_t)index] == request) {
     next.info_valid = true;
     ok = qa_q3_pres_client_info_copy_from(slot, &next);
+    if (ok && loaded) reset_entities(store, index);
   }
   qa_q3_pres_client_info_destroy(&next);
   return ok;

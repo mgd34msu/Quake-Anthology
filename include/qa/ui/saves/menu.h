@@ -2,9 +2,13 @@
  * Port of src/ui/saves/menu.ts: SavedGameMenuService,
  * registerSavedGameMenus.
  * C accommodations:
- *  - TS Promise<void> service operations are synchronous and
- *    return an error message (borrowed) or NULL, matching the TS
- *    run() try/catch into the menu message; the busy guard is kept.
+ *  - TS Promise<void> service operations take a settle closure the
+ *    service calls exactly once, at once or later (an application
+ *    queues save/load/restart and runs them in its step): error NULL
+ *    resolves, otherwise the text is the rejection's message. The
+ *    menu stays busy ("Working...") until the operation settles, as
+ *    the TS run() awaits it; menus disposed while an operation is
+ *    pending keep their state until it settles (TS GC).
  *  - Mirror (TS owner not yet ported, removed when it lands):
  *    qa_ui_startup_save_list mirrors StartupSaveList/StartupSaveRow
  *    (src/app/bootstrap/startup-saves.ts).
@@ -44,15 +48,21 @@ typedef struct qa_ui_startup_save_list {
 /** TS SavedGameMenuService (one shared ctx). unavailable action is
  * the exact TS string ("save"|"load"); its NULL return is TS null.
  * save's overwrite NULL is TS null. */
+/** The settlement of a TS Promise<void>: fn(ctx, NULL) resolves,
+ * fn(ctx, message) rejects (the message is borrowed for the call). */
+typedef struct qa_ui_saves_settle {
+  void (*fn)(void *ctx, const char *error);
+  void *ctx;
+} qa_ui_saves_settle;
 typedef struct qa_ui_saved_game_menu_service {
   void *ctx;
   bool has_recovery;
-  const char *(*recovery_restart)(void *ctx);
+  void (*recovery_restart)(void *ctx, qa_ui_saves_settle settle);
   qa_ui_startup_save_list (*list)(void *ctx);
-  const char *(*refresh)(void *ctx);
+  void (*refresh)(void *ctx, qa_ui_saves_settle settle);
   const char *(*unavailable)(void *ctx, const char *action);
-  const char *(*save)(void *ctx, const char *name, const char *overwrite);
-  const char *(*load)(void *ctx, const char *id);
+  void (*save)(void *ctx, const char *name, const char *overwrite, qa_ui_saves_settle settle);
+  void (*load)(void *ctx, const char *id, qa_ui_saves_settle settle);
 } qa_ui_saved_game_menu_service;
 
 /** TS registerSavedGameMenus result {save, load, dispose()}. */

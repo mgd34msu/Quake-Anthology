@@ -154,11 +154,11 @@ static void write_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *
   if (pflags & QA_Q2_PS_RDFLAGS) qa_q2_msg_write_byte(msg, ps->rdflags);
   int32_t statbits = 0;
   for (int i = 0; i < QA_Q2_MAX_STATS; i++) {
-    if (ps->stats[i] != ops->stats[i]) statbits |= 1 << i;
+    if (ps->stats[i] != ops->stats[i]) statbits |= (int32_t)(1u << i);
   }
   qa_q2_msg_write_long(msg, (double)statbits);
   for (int i = 0; i < QA_Q2_MAX_STATS; i++) {
-    if (statbits & (1 << i)) qa_q2_msg_write_short(msg, (double)ps->stats[i]);
+    if (statbits & ((int32_t)(1u << i))) qa_q2_msg_write_short(msg, (double)ps->stats[i]);
   }
 }
 
@@ -207,11 +207,12 @@ static void read_entity_bits(qa_q2_protocol_codec *self, qa_q2_entity_bits *out)
   qa_q2_vanilla_context *ctx = self_ctx(self);
   qa_q2_sizebuf *m = self->net_message;
   int32_t total = qa_q2_msg_read_byte(m);
-  if (total & QA_Q2_U_MOREBITS1) total |= qa_q2_msg_read_byte(m) << 8;
-  if (total & QA_Q2_U_MOREBITS2) total |= qa_q2_msg_read_byte(m) << 16;
-  if (total & QA_Q2_U_MOREBITS3) total |= qa_q2_msg_read_byte(m) << 24;
+  if (total & QA_Q2_U_MOREBITS1) total |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 8);
+  if (total & QA_Q2_U_MOREBITS2) total |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 16);
+  if (total & QA_Q2_U_MOREBITS3) total |= (int32_t)((uint32_t)qa_q2_msg_read_byte(m) << 24);
   for (int i = 0; i < 32; i++) {
-    if (total & (1 << i)) ctx->bitcounts[i] += 1;
+    /* Int32Array store of readElement + 1: wraps at 2^31. */
+    if (total & ((int32_t)(1u << i))) ctx->bitcounts[i] = (int32_t)((uint32_t)ctx->bitcounts[i] + 1u);
   }
   double number = (total & QA_Q2_U_NUMBER16) != 0
                       ? (double)qa_q2_msg_read_short(m)
@@ -262,7 +263,7 @@ static void read_delta_entity(qa_q2_protocol_codec *self,
   }
   if ((bits & (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) ==
       (QA_Q2_U_EFFECTS8 | QA_Q2_U_EFFECTS16)) {
-    to->effects = (double)qa_q2_msg_read_long(m);
+    to->effects = (double)(uint32_t)qa_q2_msg_read_long(m); /* >>> 0 */
   } else if (bits & QA_Q2_U_EFFECTS8) {
     to->effects = (double)qa_q2_msg_read_byte(m);
   } else if (bits & QA_Q2_U_EFFECTS16) {
@@ -372,7 +373,7 @@ static void read_player_state_delta(qa_q2_protocol_codec *self, qa_q2_sizebuf *m
   if (flags & QA_Q2_PS_RDFLAGS) t->rdflags = (double)qa_q2_msg_read_byte(msg);
   int32_t statbits = qa_q2_msg_read_long(msg);
   for (int i = 0; i < QA_Q2_MAX_STATS; i++) {
-    if (statbits & (1 << i)) t->stats[i] = (int16_t)qa_q2_msg_read_short(msg);
+    if (statbits & ((int32_t)(1u << i))) t->stats[i] = (int16_t)qa_q2_msg_read_short(msg);
   }
 }
 

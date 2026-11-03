@@ -2,6 +2,7 @@
 #ifndef QA_BOTS_BEHAVIOR_LIBRARY_LOG_H
 #define QA_BOTS_BEHAVIOR_LIBRARY_LOG_H
 #include "qa/bots/behavior/library/libvars.h"
+#include "qa/persistence/value.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -28,6 +29,10 @@ typedef struct qa_bot_log {
   void *print_ctx;
   qa_bot_log_open_result (*open_file)(void *ctx, const char *name);
   void *open_ctx;
+  /* TS resumeFile: opens an existing log without writes or truncation, retaining
+   * the saved position. NULL is the absent member. */
+  qa_bot_log_open_result (*resume_file)(void *ctx, const char *name, int64_t position);
+  void *resume_ctx;
   bool is_open;
   bool retained_closed;
   qa_bot_log_stream_bots_a stream;
@@ -46,4 +51,9 @@ void qa_bot_log_write_time_stamped(qa_bot_log *l, const char *formatted);
 void qa_bot_log_flush(qa_bot_log *l);
 bool qa_bot_log_has_file(const qa_bot_log *l);
 int64_t qa_bot_log_file_write(qa_bot_log *l, const char *formatted);
+/* TS captureSaveState: owned tree. Aborts with the TS message when the active
+ * stream cannot checkpoint, leaving it open. */
+qa_save_value *qa_bot_log_capture_save_state(qa_bot_log *l);
+/* TS restoreSaveState: requires an empty owner; never writes or truncates. */
+void qa_bot_log_restore_save_state(qa_bot_log *l, const qa_save_value *value);
 #endif

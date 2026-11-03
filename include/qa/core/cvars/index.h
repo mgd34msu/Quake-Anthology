@@ -154,7 +154,8 @@ struct qa_cvar_transfer {
   void (*publish)(void *ctx);
   void (*destroy)(void *ctx);
 };
-/* `print` NULL means the owner's configured print. NULL only on OOM. */
+/* has_print false selects the owner's configured print (TS default parameter). NULL only on OOM.
+ * destroy(ctx) releases the transfer state; the caller then frees the qa_cvar_transfer itself. */
 qa_cvar_transfer *qa_cvar_registry_prepare_candidate(qa_cvar_registry *registry,
                                                      qa_command_print_fn print,
                                                      void *print_ctx, bool has_print);
@@ -188,6 +189,16 @@ double qa_cvar_registry_variable_value(qa_cvar_registry *registry, const char *n
 void qa_cvar_registry_set_server_active(qa_cvar_registry *registry, bool active);
 void qa_cvar_registry_set_client_connected(qa_cvar_registry *registry, bool connected);
 void qa_cvar_registry_set_server_high_characters(qa_cvar_registry *registry, bool enabled);
+
+/* TS CvarRegistry.localInfo, QuakeWorld's server-side `localinfo` store: an
+ * insertion-ordered Map<string, string> the registry owns. get returns a
+ * borrowed value or NULL (TS undefined); entry walks it in Map order. */
+const char *qa_cvar_registry_local_info_get(const qa_cvar_registry *registry, const char *key);
+void qa_cvar_registry_local_info_set(qa_cvar_registry *registry, const char *key, const char *value);
+bool qa_cvar_registry_local_info_delete(qa_cvar_registry *registry, const char *key);
+size_t qa_cvar_registry_local_info_count(const qa_cvar_registry *registry);
+bool qa_cvar_registry_local_info_entry(const qa_cvar_registry *registry, size_t index,
+                                       const char **key, const char **value);
 
 bool qa_cvar_registry_register(qa_cvar_registry *registry, const char *name,
                                const char *default_value, double flags, qa_cvar_snapshot *out);

@@ -5,9 +5,12 @@
 #include <string.h>
 #include "qa/app/bootstrap/network/unified_component_consumer.h"
 #include "qa/app/bootstrap/network/unified_event_codec.h"
+#include "qa/app/bootstrap/network/unified_event_values.h"
+#include "qa/app/bootstrap/presentation_state.h"
 #include "qa/app/bootstrap/network/unified_native_consumer.h"
 #include "qa/app/bootstrap/simulation/players.h"
 #include "qa/foundation/support.h"
+#include "qa/world/collision/index.h"
 static void *xmalloc(size_t size) {
   void *p = malloc(size ? size : 1);
   if (!p) qa_range_error("out of memory");
@@ -29,6 +32,20 @@ typedef struct pending_events {
   qa_save_value **simulation; size_t simulation_count;
 } pending_events;
 typedef struct sequence_entry { double source, local; } sequence_entry;
+/* A released SimulationEvent: its view borrows the decoded tree and the storage beside it. */
+typedef struct simulation_record {
+  qa_save_value *tree; qa_simulation_event event; qa_app_unified_simulation_event_storage storage;
+} simulation_record;
+static void simulation_record_free(simulation_record *record) {
+  if (record == NULL) return;
+  qa_app_unified_simulation_event_storage_release(&record->storage);
+  qa_save_value_free(record->tree);
+  free(record);
+}
+static void simulation_records_free(simulation_record **records, size_t count) {
+  for (size_t i = 0; i < count; i++) simulation_record_free(records[i]);
+  free(records);
+}
 struct qa_app_unified_remote {
   qa_app_unified_remote_options options;
   qa_app_remote_world_content *world;
@@ -37,8 +54,10 @@ struct qa_app_unified_remote {
   resource_entry *resources; size_t resource_count, resource_cap;
   pending_events *pending; size_t pending_head, pending_count, pending_cap;
   sequence_entry *source_sequences; size_t sequence_count, sequence_cap;
-  qa_save_value **media; size_t media_count, media_cap; double media_next;
-  qa_save_value **simulation_events; size_t simulation_count, simulation_cap;
+  qa_app_presentation_state *media; /* TS mediaValue */
+  simulation_record **simulation_events; size_t simulation_count, simulation_cap;
+  /* The last drainSimulationEvents() result, valid until the next drain. */
+  simulation_record **drained; size_t drained_count; qa_simulation_event *drained_events;
   qa_app_unified_component_consumers *components;
   qa_app_unified_native_consumers *native;
   bool has_current; qa_app_unified_presentation_frame_t current;
@@ -59,23 +78,62 @@ struct qa_app_unified_remote {
   qa_app_simulation_presentation *shifted_models;
   qa_q3_character_view *shifted_characters;
   qa_active_mod_client_presentation *client_sources; size_t client_source_cap;
+  /* Component updates the consumers retain pointers into: an owned re-read of each control's
+   * update (its tree and arrays), released when the epoch's consumers are. */
+  struct retained_update { qa_save_value *tree; qa_app_unified_component_update update; } *retained;
+  size_t retained_count, retained_cap;
 };
+static void retained_release(qa_app_unified_remote *remote) {
+  for (size_t i = 0; i < remote->retained_count; i++) {
+    qa_app_unified_component_update_free(&remote->retained[i].update);
+    qa_save_value_free(remote->retained[i].tree);
+  }
+  remote->retained_count = 0;
+}
 static void assert_current(qa_app_unified_remote *remote, double generation) {
   if (remote->closed || generation != remote->generation)
-    qa_range_error("Unified replica load was retired");
+    qa_raise("Error", 0, 0, "Unified replica load was retired");
 }
 typedef struct assert_ctx { qa_app_unified_remote *remote; double generation; } assert_ctx;
 static void assert_thunk(void *ctx) {
   assert_ctx *a = ctx;
   assert_current(a->remote, a->generation);
 }
+/* new PresentationState(() => this.current?.output.snapshot.frame.time ?? { kind: "milliseconds", value: 0 },
+ *   actor => this.numberOf(actor)). */
+static qa_source_time media_now(void *ctx) {
+  qa_app_unified_remote *remote = ctx;
+  if (remote->has_current) return remote->current.output.snapshot.frame.time;
+  return (qa_source_time){QA_SOURCE_TIME_MILLISECONDS, 0};
+}
+static bool media_slot(void *ctx, qa_actor_id actor, double *out) {
+  return qa_app_unified_remote_number_of(ctx, actor, out);
+}
+static void media_replace(qa_app_unified_remote *remote) {
+  qa_app_presentation_state *media = qa_app_presentation_state_create(media_now, media_slot, remote, NULL);
+  if (media == NULL) qa_range_error("out of memory");
+  qa_app_presentation_state_destroy(remote->media);
+  remote->media = media;
+}
+#define MAX_IDENTITY_SLOTS 65536
+#define PENDING_CAPACITY 4096
+#define SIMULATION_CAPACITY 16384
+/* One entry per slot: a new generation replaces the old, so identity memory is bounded by the
+ * slot range. */
 static qa_actor_id identity_actor(void *ctx, double slot, double generation) {
   qa_app_unified_remote *remote = ctx;
+  if (slot >= MAX_IDENTITY_SLOTS) qa_raise("RangeError", 0, 0, "Unified actor slot is out of range");
+  id_entry *old = NULL;
   for (size_t i = 0; i < remote->actor_count; i++)
-    if (remote->actors[i].slot == slot && remote->actors[i].generation == generation)
-      return remote->actors[i].actor;
+    if (remote->actors[i].slot == slot) old = &remote->actors[i];
+  if (old && old->generation == generation) return old->actor;
   double local = remote->options.next_generation(remote->options.ctx, slot);
   qa_actor_id value = remote->options.identity_actor(remote->options.ctx, slot, local);
+  if (old) {
+    old->generation = generation;
+    old->actor = value;
+    return value;
+  }
   if (remote->actor_count == remote->actor_cap) {
     remote->actor_cap = remote->actor_cap ? remote->actor_cap * 2 : 16;
     remote->actors = realloc(remote->actors, remote->actor_cap * sizeof *remote->actors);
@@ -92,11 +150,19 @@ static qa_client_id identity_client(void *ctx, double slot, double generation) {
   if (remote->has_binding && remote->binding_client.slot == slot
       && remote->binding_client.generation == generation)
     return remote->options.client;
+  if (slot >= MAX_IDENTITY_SLOTS) qa_raise("RangeError", 0, 0, "Unified client slot is out of range");
+  id_entry *old = NULL;
   for (size_t i = 0; i < remote->client_count; i++)
-    if (remote->clients[i].slot == slot && remote->clients[i].generation == generation)
-      return remote->clients[i].client;
+    if (remote->clients[i].slot == slot) old = &remote->clients[i];
+  if (old && old->generation == generation) return old->client;
+  /* Remote references are not admitted session clients; their generation is epoch-scoped. */
   double local = remote->options.next_generation(remote->options.ctx, slot);
   qa_client_id value = remote->options.identity_client(remote->options.ctx, slot, local);
+  if (old) {
+    old->generation = generation;
+    old->client = value;
+    return value;
+  }
   if (remote->client_count == remote->client_cap) {
     remote->client_cap = remote->client_cap ? remote->client_cap * 2 : 16;
     remote->clients = realloc(remote->clients, remote->client_cap * sizeof *remote->clients);
@@ -116,10 +182,8 @@ static qa_seat_id identity_seat(void *ctx, double index) {
 static qa_resource_id identity_resource(void *ctx, qa_resource_id id) {
   qa_app_unified_remote *remote = ctx;
   for (size_t i = 0; i < remote->resource_count; i++)
-    if (remote->resources[i].reference.id
-        && strcmp(remote->resources[i].reference.id, id) == 0)
-      return remote->resources[i].reference.id;
-  qa_range_error("Unified resource was not declared: %s", id);
+    if (strcmp(remote->resources[i].id, id) == 0) return remote->resources[i].reference.id;
+  qa_raise("Error", 0, 0, "Unified resource was not declared: %s", id);
 }
 static qa_app_unified_identity_decoder identity_of(qa_app_unified_remote *remote) {
   qa_app_unified_identity_decoder decoder = {0};
@@ -183,13 +247,14 @@ static void consumer_assert_current(void *ctx) {
   qa_app_unified_remote *remote = ctx;
   assert_current(remote, remote->consumer_generation);
 }
+/* TS events: this.mediaValue (the consumers' admitReplicatedOwner / retireReplicatedOwner). */
 static void consumer_admit_owner(void *ctx, qa_presentation_owner owner, qa_content_id content) {
   qa_app_unified_remote *remote = ctx;
-  if (remote->options.admit_owner) remote->options.admit_owner(remote->options.ctx, owner, content);
+  qa_app_presentation_state_admit_replicated_owner(remote->media, owner, content);
 }
 static void consumer_retire_owner(void *ctx, qa_presentation_owner owner) {
   qa_app_unified_remote *remote = ctx;
-  if (remote->options.retire_owner) remote->options.retire_owner(remote->options.ctx, owner);
+  qa_app_presentation_state_retire_replicated_owner(remote->media, owner);
 }
 static const void *consumer_installed_mounts(void *ctx, qa_content_id content) {
   qa_app_unified_remote *remote = ctx;
@@ -217,15 +282,21 @@ static void consumer_command(void *ctx, qa_presentation_owner owner, double gene
     const char *const *args, size_t count) {
   qa_app_unified_remote *remote = ctx;
   if (!remote->options.send_component_command)
-    qa_range_error("Remote component command channel is unavailable");
+    qa_raise("Error", 0, 0, "Remote component command channel is unavailable");
   remote->options.send_component_command(remote->options.ctx, owner, generation, args, count);
 }
 static void retire_op(void *ctx) {
   qa_app_unified_remote *remote = ctx;
-  if (remote->closed) qa_range_error("Unified replica is closed");
-  if (remote->components) qa_app_unified_component_consumers_close(remote->components);
+  if (remote->closed) qa_raise("Error", 0, 0, "Unified replica is closed");
+  if (remote->components) {
+    qa_app_unified_component_consumers_close(remote->components);
+    qa_app_unified_component_consumers_destroy(remote->components);
+  }
   remote->components = NULL;
-  if (remote->native) qa_app_unified_native_consumers_close(remote->native);
+  if (remote->native) {
+    qa_app_unified_native_consumers_close(remote->native);
+    qa_app_unified_native_consumers_destroy(remote->native);
+  }
   remote->native = NULL;
   remote->generation++;
 }
@@ -245,6 +316,13 @@ static void trees_free(qa_save_value **trees, size_t count) {
   for (size_t i = 0; i < count; i++) qa_save_value_free(trees[i]);
   free(trees);
 }
+static void pending_entry_free(void *arg) {
+  pending_events *entry = arg;
+  trees_free(entry->events, entry->event_count);
+  trees_free(entry->simulation, entry->simulation_count);
+  entry->events = NULL; entry->event_count = 0;
+  entry->simulation = NULL; entry->simulation_count = 0;
+}
 static void pending_reset(qa_app_unified_remote *remote) {
   for (size_t i = 0; i < remote->pending_count; i++) {
     pending_events *entry = &remote->pending[(remote->pending_head + i) % remote->pending_cap];
@@ -262,6 +340,8 @@ qa_app_unified_remote *qa_app_unified_remote_create(qa_app_unified_remote_option
   if (!remote->world) { free(remote); return NULL; }
   remote->last_event_sequence = -1;
   remote->last_simulation_sequence = -1;
+  remote->media = qa_app_presentation_state_create(media_now, media_slot, remote, NULL);
+  if (!remote->media) { qa_app_remote_world_content_destroy(remote->world); free(remote); return NULL; }
   return remote;
 }
 void qa_app_unified_remote_destroy(qa_app_unified_remote *remote) {
@@ -270,6 +350,12 @@ void qa_app_unified_remote_destroy(qa_app_unified_remote *remote) {
   if (remote->components) qa_app_unified_component_consumers_destroy(remote->components);
   if (remote->native) qa_app_unified_native_consumers_destroy(remote->native);
   if (remote->has_current) qa_app_unified_presentation_frame_free(&remote->current);
+  retained_release(remote);
+  qa_app_presentation_state_destroy(remote->media);
+  remote->media = NULL;
+  simulation_records_free(remote->drained, remote->drained_count);
+  free(remote->drained_events);
+  free(remote->retained);
   qa_app_remote_world_content_destroy(remote->world);
   free(remote->actors);
   free(remote->clients);
@@ -277,7 +363,6 @@ void qa_app_unified_remote_destroy(qa_app_unified_remote *remote) {
   free(remote->resources);
   free(remote->pending);
   free(remote->source_sequences);
-  free(remote->media);
   free(remote->simulation_events);
   free(remote->linked);
   free(remote->offered_digest);
@@ -316,7 +401,7 @@ bool qa_app_unified_remote_player(const qa_app_unified_remote *remote,
 }
 void qa_app_unified_remote_offer(qa_app_unified_remote *remote,
     const qa_app_unified_control *offer) {
-  if (remote->closed) qa_range_error("Unified replica is closed");
+  if (remote->closed) qa_raise("Error", 0, 0, "Unified replica is closed");
   offer_ctx context = {remote, offer};
   if (!remote->options.publish_components) offer_retire(&context);
   else remote->options.publish_components(remote->options.ctx, offer_retire, &context);
@@ -336,7 +421,9 @@ void qa_app_unified_remote_offer(qa_app_unified_remote *remote,
   for (size_t i = 0; i < remote->resource_count; i++) free(remote->resources[i].id);
   remote->resource_count = 0;
   remote->sequence_count = 0;
-  trees_free(remote->simulation_events, remote->simulation_count);
+  retained_release(remote);
+  media_replace(remote);
+  simulation_records_free(remote->simulation_events, remote->simulation_count);
   remote->simulation_events = NULL;
   remote->simulation_count = 0;
   remote->simulation_cap = 0;
@@ -346,7 +433,6 @@ void qa_app_unified_remote_offer(qa_app_unified_remote *remote,
   size_t mod_count = 0;
   const qa_prepared_mod *mods = remote->options.prepared_mods
       ? remote->options.prepared_mods(remote->options.ctx, content, &mod_count) : NULL;
-  assert_ctx native_assert = {remote, generation};
   qa_app_unified_native_consumer_options native_options = {0};
   native_options.ctx = remote;
   native_options.prepared_mods = mods;
@@ -359,11 +445,10 @@ void qa_app_unified_remote_offer(qa_app_unified_remote *remote,
   native_options.product_expectation = consumer_product_expectation;
   remote->native = qa_app_unified_native_consumers_create(native_options);
   if (!remote->native) qa_range_error("out of memory");
-  (void)native_assert;
   if (remote->options.mod_has_presentation
       && remote->options.mod_has_presentation(remote->options.ctx, content)) {
     if (!remote->options.has_mod_files)
-      qa_range_error("Remote component presentation requires client-owned writable storage");
+      qa_raise("Error", 0, 0, "Remote component presentation requires client-owned writable storage");
     qa_app_unified_component_consumer_options component_options = {0};
     component_options.ctx = remote;
     component_options.prepared_mods = mods;
@@ -392,25 +477,56 @@ void qa_app_unified_remote_admitted(qa_app_unified_remote *remote,
 typedef struct components_op {
   qa_app_unified_remote *remote; double epoch; const qa_app_unified_component_update *update;
 } components_op;
+static void cleanup_commit(void *arg) {
+  qa_app_unified_native_commit **commit = arg;
+  if (*commit) qa_app_unified_native_commit_free(*commit);
+}
 static void components_publish(void *ctx) {
   components_op *op = ctx;
   qa_app_unified_remote *remote = op->remote;
   if (op->epoch != remote->world_epoch || remote->closed) return;
   qa_app_unified_native_commit *commit = remote->native
       ? qa_app_unified_native_consumers_prepare_update(remote->native, op->update) : NULL;
+  qa_cleanup commit_guard;
+  qa_cleanup_push(&commit_guard, cleanup_commit, &commit);
   if (!remote->components) {
     if (op->update->source_count != 0)
-      qa_range_error("Server activated an unqualified remote component");
+      qa_raise("Error", 0, 0, "Server activated an unqualified remote component");
   } else qa_app_unified_component_consumers_update(remote->components, op->update);
-  if (commit) qa_app_unified_native_commit_run(commit);
+  qa_cleanup_pop(&commit_guard);
+  if (commit) {
+    qa_app_unified_native_commit_run(commit);
+    qa_app_unified_native_commit_free(commit);
+  }
 }
+static void cleanup_value(void *arg) { qa_save_value_free(arg); }
 void qa_app_unified_remote_receive_components(qa_app_unified_remote *remote,
     double epoch, const qa_app_unified_component_update *update) {
-  components_op op = {remote, epoch, update};
+  /* The decoded control (and the strings its update borrows) is freed after this call, while the
+   * consumers keep identities and configstrings: they get an owned copy. */
+  if (remote->retained_count == remote->retained_cap) {
+    size_t cap = remote->retained_cap ? remote->retained_cap * 2 : 4;
+    struct retained_update *grown = realloc(remote->retained, cap * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    remote->retained = grown;
+    remote->retained_cap = cap;
+  }
+  qa_save_value *tree = qa_app_unified_write_component_update(update);
+  if (!tree) qa_range_error("out of memory");
+  qa_cleanup tree_guard;
+  qa_cleanup_push(&tree_guard, cleanup_value, tree);
+  qa_save_reader reader;
+  if (!qa_save_reader_init(&reader, tree, "unified-components")) qa_range_error("out of memory");
+  qa_app_unified_component_update owned = qa_app_unified_read_component_update(&reader);
+  qa_cleanup_pop(&tree_guard);
+  struct retained_update *slot = &remote->retained[remote->retained_count++];
+  slot->tree = tree;
+  slot->update = owned;
+  components_op op = {remote, epoch, &slot->update};
   if (!remote->options.publish_components) components_publish(&op);
   else remote->options.publish_components(remote->options.ctx, components_publish, &op);
 }
-const void *qa_app_unified_remote_mod_presentation_sources(qa_app_unified_remote *remote,
+const struct qa_active_mod_presentation *qa_app_unified_remote_mod_presentation_sources(qa_app_unified_remote *remote,
     size_t *out_count) {
   if (!remote->components) { *out_count = 0; return NULL; }
   return qa_app_unified_component_consumers_sources(remote->components, out_count);
@@ -450,30 +566,7 @@ void qa_app_unified_remote_declare(qa_app_unified_remote *remote, double epoch,
 }
 static double tree_number(const qa_save_value *tree, const char *key, double fallback) {
   const qa_save_value *value = qa_save_value_get(tree, key);
-  if (!value) return fallback;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, key)) return fallback;
-  double result = qa_save_reader_number(&reader);
-  qa_save_reader_destroy(&reader);
-  return result;
-}
-static const char *tree_string(const qa_save_value *tree, const char *key) {
-  const qa_save_value *value = qa_save_value_get(tree, key);
-  if (!value) return NULL;
-  qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, value, key)) return NULL;
-  const char *result = qa_save_reader_string(&reader);
-  qa_save_reader_destroy(&reader);
-  return result;
-}
-static double media_receive(qa_app_unified_remote *remote, qa_save_value *event) {
-  if (remote->media_count == remote->media_cap) {
-    remote->media_cap = remote->media_cap ? remote->media_cap * 2 : 32;
-    remote->media = realloc(remote->media, remote->media_cap * sizeof *remote->media);
-    if (!remote->media) qa_range_error("out of memory");
-  }
-  remote->media[remote->media_count++] = event;
-  return remote->media_next++;
+  return value != NULL && value->kind == QA_SAVE_NUMBER ? value->number : fallback;
 }
 static void sequence_set(qa_app_unified_remote *remote, double source, double local) {
   for (size_t i = 0; i < remote->sequence_count; i++)
@@ -499,68 +592,73 @@ static bool sequence_get(qa_app_unified_remote *remote, double source, double *o
     }
   return false;
 }
+/* One released presentation event: the decoded TS object as the typed event mediaValue.receivePresentation takes. */
+typedef struct released_event { qa_app_sim_presentation_event typed; } released_event;
+static void released_event_free(void *arg) { qa_app_sim_presentation_event_release(&((released_event *)arg)->typed); }
+static void receive_presentation(qa_app_unified_remote *remote, const qa_save_value *tree) {
+  released_event event;
+  memset(&event, 0, sizeof event);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, released_event_free, &event);
+  qa_app_unified_presentation_event_from_tree(tree, &event.typed);
+  if (strcmp(event.typed.kind, "presentation-owner") == 0 && strcmp(event.typed.presentation_owner.kind, "retired") == 0
+      && remote->native)
+    qa_app_unified_native_consumers_retire(remote->native, event.typed.presentation_owner.owner);
+  sequence_set(remote, event.typed.sequence, qa_app_presentation_state_receive_presentation(remote->media, &event.typed));
+  remote->last_event_sequence = event.typed.sequence;
+  qa_cleanup_pop(&guard);
+  released_event_free(&event);
+}
+typedef struct release_batch { simulation_record **records; size_t count, cap; } release_batch;
+static void release_batch_free(void *arg) {
+  release_batch *batch = arg;
+  simulation_records_free(batch->records, batch->count);
+  memset(batch, 0, sizeof *batch);
+}
 static void release_events(qa_app_unified_remote *remote) {
   if (!remote->has_current) return;
   double frame = remote->current.output.snapshot.frame.frame;
+  release_batch batch = {NULL, 0, 0};
+  qa_cleanup batch_guard;
+  qa_cleanup_push(&batch_guard, release_batch_free, &batch);
   while (remote->pending_count > 0) {
     pending_events *next = &remote->pending[remote->pending_head];
     if (next->frame > frame) break;
-    for (size_t i = 0; i < next->event_count; i++) {
-      qa_save_value *event = next->events[i];
-      next->events[i] = NULL;
-      double sequence = tree_number(event, "sequence", -1);
-      if (sequence > remote->last_event_sequence) {
-        const char *kind = tree_string(event, "kind");
-        const qa_save_value *inner = qa_save_value_get(event, "event");
-        if (kind && strcmp(kind, "presentation-owner") == 0 && inner) {
-          const char *inner_kind = tree_string(inner, "kind");
-          if (inner_kind && strcmp(inner_kind, "retired") == 0 && remote->native) {
-            const qa_save_value *owner = qa_save_value_get(inner, "owner");
-            if (owner) {
-              qa_save_reader reader;
-              if (qa_save_reader_init(&reader, owner, "owner")) {
-                qa_presentation_owner value = qa_app_unified_read_component_owner(&reader);
-                qa_save_reader_destroy(&reader);
-                qa_app_unified_native_consumers_retire(remote->native, value);
-              }
-            }
-          }
-        }
-        sequence_set(remote, sequence, media_receive(remote, event));
-        remote->last_event_sequence = sequence;
-      } else qa_save_value_free(event);
-    }
-    for (size_t i = 0; i < next->simulation_count; i++) {
-      qa_save_value *event = next->simulation[i];
-      next->simulation[i] = NULL;
-      double sequence = tree_number(event, "sequence", -1);
-      if (sequence > remote->last_simulation_sequence) {
-        qa_save_value *payload = (qa_save_value *)qa_save_value_get(event, "payload");
-        if (payload) {
-          const char *kind = tree_string(payload, "kind");
-          const qa_save_value *source = qa_save_value_get(payload, "sourcePresentationSequence");
-          if (kind && strcmp(kind, "message") == 0 && source) {
-            double source_sequence = tree_number(payload, "sourcePresentationSequence", -1);
-            double local = 0;
-            if (sequence_get(remote, source_sequence, &local))
-              qa_save_value_set(payload, "sourcePresentationSequence",
-                  qa_save_value_number(local));
-          }
-        }
-        if (remote->simulation_count == remote->simulation_cap) {
-          remote->simulation_cap = remote->simulation_cap ? remote->simulation_cap * 2 : 64;
-          remote->simulation_events = realloc(remote->simulation_events,
-              remote->simulation_cap * sizeof *remote->simulation_events);
-          if (!remote->simulation_events) qa_range_error("out of memory");
-        }
-        remote->simulation_events[remote->simulation_count++] = event;
-        remote->last_simulation_sequence = sequence;
-      } else qa_save_value_free(event);
-    }
-    free(next->events);
-    free(next->simulation);
+    /* TS pendingEvents.read(cursor): the entry leaves the ring before its events are handled. */
+    pending_events entry = *next;
     remote->pending_head = (remote->pending_head + 1) % remote->pending_cap;
     remote->pending_count--;
+    {
+      qa_cleanup entry_guard;
+      qa_cleanup_push(&entry_guard, pending_entry_free, &entry);
+      for (size_t i = 0; i < entry.event_count; i++)
+        if (tree_number(entry.events[i], "sequence", -1) > remote->last_event_sequence)
+          receive_presentation(remote, entry.events[i]);
+      for (size_t i = 0; i < entry.simulation_count; i++) {
+        double sequence = tree_number(entry.simulation[i], "sequence", -1);
+        if (!(sequence > remote->last_simulation_sequence)) continue;
+        simulation_record *record = calloc(1, sizeof *record);
+        if (!record) qa_range_error("out of memory");
+        record->tree = entry.simulation[i];
+        entry.simulation[i] = NULL;
+        if (batch.count == batch.cap) {
+          size_t cap = batch.cap ? batch.cap * 2 : 64;
+          simulation_record **grown = realloc(batch.records, cap * sizeof *grown);
+          if (!grown) { simulation_record_free(record); qa_range_error("out of memory"); }
+          batch.records = grown;
+          batch.cap = cap;
+        }
+        batch.records[batch.count++] = record;
+        qa_app_unified_simulation_event_view(record->tree, &record->event, &record->storage);
+        double local = 0;
+        if (record->event.payload.kind == QA_SIM_EVENT_MESSAGE && record->event.payload.has_source_presentation_sequence
+            && sequence_get(remote, record->event.payload.source_presentation_sequence, &local))
+          record->event.payload.source_presentation_sequence = local;
+        remote->last_simulation_sequence = sequence;
+      }
+      qa_cleanup_pop(&entry_guard);
+      pending_entry_free(&entry);
+    }
   }
   if (remote->sequence_count > 4096) {
     size_t kept = 0;
@@ -569,34 +667,65 @@ static void release_events(qa_app_unified_remote *remote) {
         remote->source_sequences[kept++] = remote->source_sequences[i];
     remote->sequence_count = kept;
   }
+  if (batch.count == 0) { qa_cleanup_pop(&batch_guard); release_batch_free(&batch); return; }
+  /* TS simulationEvents.admitAll: all records or a capacity error, never a partial batch. */
+  if (batch.count > SIMULATION_CAPACITY - remote->simulation_count)
+    qa_raise("RangeError", 0, 0,
+        "Event ring capacity exhausted (%d undrained records, batch of %zu); drain before admitting more",
+        SIMULATION_CAPACITY, batch.count);
+  if (remote->simulation_count + batch.count > remote->simulation_cap) {
+    size_t cap = remote->simulation_count + batch.count;
+    simulation_record **grown = realloc(remote->simulation_events, cap * sizeof *grown);
+    if (!grown) qa_range_error("out of memory");
+    remote->simulation_events = grown;
+    remote->simulation_cap = cap;
+  }
+  memcpy(remote->simulation_events + remote->simulation_count, batch.records, batch.count * sizeof *batch.records);
+  remote->simulation_count += batch.count;
+  qa_cleanup_pop(&batch_guard);
+  free(batch.records);
+}
+typedef struct events_scope {
+  qa_save_value **events; size_t event_count;
+  qa_save_value **simulation; size_t simulation_count;
+  qa_save_value *decoded;
+} events_scope;
+static void events_scope_free(void *arg) {
+  events_scope *scope = arg;
+  trees_free(scope->events, scope->event_count);
+  trees_free(scope->simulation, scope->simulation_count);
+  qa_save_value_free(scope->decoded);
+  memset(scope, 0, sizeof *scope);
 }
 void qa_app_unified_remote_receive_events(qa_app_unified_remote *remote, double epoch,
     double frame, const uint8_t *payload, size_t payload_length,
     const uint8_t *simulation, size_t simulation_length) {
   if (epoch != remote->world_epoch || remote->closed) return;
   qa_app_unified_identity_decoder identity = identity_of(remote);
-  size_t event_count = 0;
-  qa_save_value **events = qa_app_unified_decode_presentation_events(
-      payload, payload_length, &identity, &event_count);
-  qa_save_value *decoded = qa_decode_checkpoint_value(simulation, simulation_length);
-  if (!decoded) qa_range_error("out of memory");
+  events_scope scope;
+  memset(&scope, 0, sizeof scope);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, events_scope_free, &scope);
+  scope.events = qa_app_unified_decode_presentation_events(payload, payload_length, &identity,
+      &scope.event_count);
+  scope.decoded = qa_decode_checkpoint_value(simulation, simulation_length);
+  if (!scope.decoded) qa_range_error("out of memory");
   qa_save_reader reader;
-  if (!qa_save_reader_init(&reader, decoded, "unified-events")) qa_range_error("out of memory");
+  if (!qa_save_reader_init(&reader, scope.decoded, "unified-events")) qa_range_error("out of memory");
   size_t count = qa_save_reader_list_count(&reader);
-  qa_save_value **simulations = xmalloc(count * sizeof *simulations);
+  scope.simulation = calloc(count ? count : 1, sizeof *scope.simulation);
+  if (!scope.simulation) qa_range_error("out of memory");
   for (size_t i = 0; i < count; i++) {
     qa_save_reader item;
     if (!qa_save_reader_item(&reader, i, &item)) qa_range_error("out of memory");
-    const qa_save_value *value = reader.value;
-    (void)value;
-    qa_save_reader value_reader;
-    const qa_save_value *item_value = item.value;
-    (void)value_reader;
-    simulations[i] = qa_app_unified_read_simulation_event(item_value, &identity);
-    qa_save_reader_destroy(&item);
+    scope.simulation[i] = qa_app_unified_read_simulation_event(item.value, &identity);
+    if (!scope.simulation[i]) qa_range_error("out of memory");
+    scope.simulation_count = i + 1;
   }
-  qa_save_reader_destroy(&reader);
-  qa_save_value_free(decoded);
+  /* TS EventRing(4096).admit: a full ring throws instead of growing. */
+  if (remote->pending_count >= PENDING_CAPACITY)
+    qa_raise("RangeError", 0, 0,
+        "Event ring capacity exhausted (%d undrained records); drain before admitting more", PENDING_CAPACITY);
   if (remote->pending_count == remote->pending_cap) {
     size_t new_cap = remote->pending_cap ? remote->pending_cap * 2 : 16;
     pending_events *grown = xmalloc(new_cap * sizeof *grown);
@@ -607,13 +736,15 @@ void qa_app_unified_remote_receive_events(qa_app_unified_remote *remote, double 
     remote->pending_cap = new_cap;
     remote->pending_head = 0;
   }
+  qa_cleanup_pop(&guard);
+  qa_save_value_free(scope.decoded);
   pending_events *entry = &remote->pending[
       (remote->pending_head + remote->pending_count) % remote->pending_cap];
   entry->frame = frame;
-  entry->events = events;
-  entry->event_count = event_count;
-  entry->simulation = simulations;
-  entry->simulation_count = count;
+  entry->events = scope.events;
+  entry->event_count = scope.event_count;
+  entry->simulation = scope.simulation;
+  entry->simulation_count = scope.simulation_count;
   remote->pending_count++;
   release_events(remote);
 }
@@ -638,18 +769,10 @@ static qa_resolved_resource_reference decoder_resource(void *ctx,
   resource_set(remote, id, value);
   return value;
 }
-static qa_decoded_model decoder_model(void *ctx, const qa_resolved_resource_reference *reference) {
+static qa_decoded_model decoder_model(void *ctx, const qa_app_unified_resource_key *key,
+    bool has_brush_model, double brush_model) {
   decoder_ctx *decoder = ctx;
-  qa_app_unified_resource_key key =
-      qa_app_unified_resource_key_from_reference(reference);
-  /* The frame decoder's model seam carries no brush index in C. */
-  return decoder->remote->options.model(decoder->remote->options.ctx, &key, false, 0);
-}
-static const qa_scene_snapshot_world *decoder_world(void *ctx,
-    const qa_resolved_resource_reference *reference) {
-  (void)reference;
-  decoder_ctx *decoder = ctx;
-  return decoder->remote->options.world_geometry(decoder->remote->options.ctx, decoder->loaded);
+  return decoder->remote->options.model(decoder->remote->options.ctx, key, has_brush_model, brush_model);
 }
 static bool is_brush_hit(void *ctx, qa_trace_hit hit) {
   qa_app_unified_remote *remote = ctx;
@@ -664,7 +787,7 @@ static void correct_prediction(qa_app_unified_remote *remote,
   qa_app_unified_prediction_projection *projection = &frame->prediction;
   if (!qa_same_actor(projection->actor, frame->player_actor)
       || projection->snapshot.sequence != frame->acknowledged_input)
-    qa_range_error("Unified prediction does not match admitted snapshot");
+    qa_raise("Error", 0, 0, "Unified prediction does not match admitted snapshot");
   if (remote->has_current && remote->predictor
       && !qa_same_actor(remote->current.prediction.actor, projection->actor))
     clear_prediction(remote);
@@ -711,6 +834,8 @@ static void correct_prediction(qa_app_unified_remote *remote,
     options.probe.profile = projection->profile;
     options.probe.standing_bounds = projection->standing_bounds;
     options.probe.standing_view_height = projection->standing_view_height;
+    /* scene: this.scene (the replica world's queries) */
+    options.probe.scene = qa_shared_as_scene_queries((qa_shared_scene_queries *)qa_app_remote_world_scene(remote->world));
     options.probe.host_ctx = remote;
     options.probe.is_brush = is_brush_hit;
     remote->predictor = qa_app_selected_movement_prediction_create(options, initial);
@@ -724,78 +849,90 @@ static void correct_prediction(qa_app_unified_remote *remote,
   remote->predicted = qa_app_selected_movement_prediction_replay(remote->predictor, NULL, NULL);
   remote->has_predicted = true;
 }
+static void cleanup_envelope(void *arg) { qa_app_unified_frame_envelope_free(arg); }
+static void cleanup_frame(void *arg) { qa_app_unified_presentation_frame_free(arg); }
 bool qa_app_unified_remote_receive_frame(qa_app_unified_remote *remote,
     const uint8_t *bytes, size_t length, double *out_acknowledged) {
-  if (remote->closed || !remote->has_binding) return false;
-  void *loaded = qa_app_remote_world_loaded(remote->world);
-  decoder_ctx context = {remote, loaded, remote->generation};
-  qa_app_unified_frame_decoder decoder = {0};
-  decoder.ctx = &context;
-  decoder.identity = identity_of(remote);
-  decoder.resource = decoder_resource;
-  decoder.model = decoder_model;
-  decoder.world = decoder_world;
-  qa_app_unified_presentation_frame_t frame =
-      qa_app_unified_decode_frame(bytes, length, &decoder);
-  if (frame.epoch != remote->world_epoch) {
-    qa_app_unified_presentation_frame_free(&frame);
+  qa_app_unified_frame_envelope envelope = qa_app_unified_read_frame(bytes, length);
+  if (remote->closed || envelope.epoch != remote->world_epoch || !remote->has_binding) {
+    qa_app_unified_frame_envelope_free(&envelope);
     return false;
   }
+  qa_cleanup envelope_guard;
+  qa_cleanup_push(&envelope_guard, cleanup_envelope, &envelope);
+  void *loaded = qa_app_remote_world_loaded(remote->world);
+  decoder_ctx context = {remote, loaded, remote->generation};
+  qa_app_unified_frame_decoder decoder;
+  memset(&decoder, 0, sizeof decoder);
+  decoder.ctx = &context;
+  decoder.identity = identity_of(remote);
+  decoder.world = remote->options.world_geometry(remote->options.ctx, loaded);
+  decoder.resource = decoder_resource;
+  decoder.model = decoder_model;
+  qa_cleanup_pop(&envelope_guard);
+  qa_app_unified_presentation_frame_t frame = qa_app_unified_decode_frame_envelope(&envelope, &decoder);
+  qa_cleanup frame_guard;
+  qa_cleanup_push(&frame_guard, cleanup_frame, &frame);
   assert_current(remote, context.generation);
   qa_actor_id expected = identity_actor(remote,
       remote->binding_actor.slot, remote->binding_actor.generation);
-  if (!qa_same_actor(frame.player_actor, expected)) {
-    qa_app_unified_presentation_frame_free(&frame);
-    qa_range_error("Unified frame changed the admitted player");
-  }
+  if (!qa_same_actor(frame.player_actor, expected))
+    qa_raise("Error", 0, 0, "Unified frame changed the admitted player");
+  *out_acknowledged = frame.acknowledged_input;
   if (remote->has_current
       && frame.output.snapshot.frame.frame <= remote->current.output.snapshot.frame.frame) {
-    *out_acknowledged = frame.acknowledged_input;
+    qa_cleanup_pop(&frame_guard);
     qa_app_unified_presentation_frame_free(&frame);
     return true;
   }
-  qa_app_unified_component_frames empty = {0};
-  const qa_app_unified_component_frames *frames =
-      frame.has_components ? &frame.components : &empty;
-  qa_app_unified_native_camera legacy = {0};
-  const qa_app_unified_native_camera *legacy_ptr = NULL;
+  qa_app_unified_component_frames empty;
+  memset(&empty, 0, sizeof empty);
+  const qa_app_unified_component_frames *frames = frame.has_components ? &frame.components : &empty;
+  qa_app_unified_native_camera camera;
+  memset(&camera, 0, sizeof camera);
   if (frame.has_native_camera) {
-    legacy.owner = NULL;
-    legacy.identity = NULL;
-    legacy.generation = frame.native_camera.generation;
-    legacy.view = NULL;
-    legacy_ptr = &legacy;
+    camera.owner = &frame.native_camera.owner;
+    camera.identity = &frame.native_camera.identity;
+    camera.generation = frame.native_camera.generation;
+    camera.view = &frame.native_camera.view;
   }
-  qa_app_unified_native_commit *commit = remote->native
-      ? qa_app_unified_native_consumers_prepare(remote->native, frames, expected, legacy_ptr)
-      : NULL;
-  if (remote->native && !commit) {
-    *out_acknowledged = frame.acknowledged_input;
+  qa_app_unified_native_commit *commit = NULL;
+  qa_cleanup commit_guard;
+  qa_cleanup_push(&commit_guard, cleanup_commit, &commit);
+  bool rejected = false;
+  if (remote->native) {
+    commit = qa_app_unified_native_consumers_prepare(remote->native, frames, expected,
+        frame.has_native_camera ? &camera : NULL);
+    rejected = commit == NULL;
+  }
+  if (!rejected && remote->components
+      && !qa_app_unified_component_consumers_accept(remote->components, frames, expected))
+    rejected = true;
+  if (!rejected && !remote->components && frames->source_count != 0)
+    qa_raise("Error", 0, 0, "Remote frame contains unadmitted components");
+  qa_cleanup_pop(&commit_guard);
+  qa_cleanup_pop(&frame_guard);
+  if (rejected) {
+    if (commit) qa_app_unified_native_commit_free(commit);
     qa_app_unified_presentation_frame_free(&frame);
     return true;
-  }
-  if (remote->components
-      && !qa_app_unified_component_consumers_accept(remote->components, frames, expected)) {
-    if (commit) qa_app_unified_native_commit_free(commit);
-    *out_acknowledged = frame.acknowledged_input;
-    qa_app_unified_presentation_frame_free(&frame);
-    return true;
-  }
-  if (!remote->components && frames->source_count != 0) {
-    if (commit) qa_app_unified_native_commit_free(commit);
-    qa_app_unified_presentation_frame_free(&frame);
-    qa_range_error("Remote frame contains unadmitted components");
   }
   if (remote->has_current) qa_app_unified_presentation_frame_free(&remote->current);
   remote->current = frame;
   remote->has_current = true;
+  /* TS current = {...frame, output:{...frame.output, events:[]}}: simulation events arrive on the
+   * events channel only. */
+  for (size_t i = 0; i < remote->current.event_count; i++) qa_save_value_free(remote->current.events[i]);
+  remote->current.event_count = 0;
   remote->current.output.events = NULL;
   remote->current.output.event_count = 0;
-  if (commit) qa_app_unified_native_commit_run(commit);
+  if (commit) {
+    qa_app_unified_native_commit_run(commit);
+    qa_app_unified_native_commit_free(commit);
+  }
   correct_prediction(remote, &remote->current);
   release_events(remote);
   remote->options.publish(remote->options.ctx, &remote->current.output);
-  *out_acknowledged = frame.acknowledged_input;
   return true;
 }
 bool qa_app_unified_remote_command_time(const qa_app_unified_remote *remote, double *out) {
@@ -868,13 +1005,13 @@ const qa_simulation_output *qa_app_unified_remote_sample_presentation(
 const qa_app_sim_player_ui *qa_app_unified_remote_player_ui(qa_app_unified_remote *remote,
     qa_actor_id actor) {
   if (!remote->has_current || !qa_same_actor(remote->current.player_actor, actor))
-    qa_range_error("Unified player UI belongs to another actor");
+    qa_raise("Error", 0, 0, "Unified player UI belongs to another actor");
   return &remote->current.player_ui;
 }
 qa_app_sim_player_view qa_app_unified_remote_player_view(qa_app_unified_remote *remote,
     qa_actor_id actor) {
   if (!remote->has_current || !qa_same_actor(remote->current.player_actor, actor))
-    qa_range_error("Unified player view belongs to another actor");
+    qa_raise("Error", 0, 0, "Unified player view belongs to another actor");
   qa_app_sim_player_view view = remote->current.player_view;
   const qa_app_movement_prediction_snapshot *player = predicted_player(remote);
   if (!player) return view;
@@ -934,7 +1071,7 @@ bool qa_app_unified_remote_is_player(qa_app_unified_remote *remote, qa_actor_id 
 bool qa_app_unified_remote_number_of(qa_app_unified_remote *remote, qa_actor_id actor,
     double *out) {
   for (size_t i = 0; i < remote->actor_count; i++)
-    if (qa_same_actor(remote->actors[i].actor, actor)) {
+    if (remote->actors[i].slot == (double)actor.slot && qa_same_actor(remote->actors[i].actor, actor)) {
       *out = remote->actors[i].slot;
       return true;
     }
@@ -945,7 +1082,7 @@ void qa_app_unified_remote_player_command(qa_app_unified_remote *remote, qa_acto
   qa_actor_id player;
   if (!qa_app_unified_remote_player(remote, &player, NULL, NULL)
       || !qa_same_actor(player, actor))
-    qa_range_error("Unified command belongs to another player");
+    qa_raise("Error", 0, 0, "Unified command belongs to another player");
   remote->options.send_command(remote->options.ctx, name, args, count);
 }
 void qa_app_unified_remote_register_resource(qa_app_unified_remote *remote,
@@ -956,24 +1093,26 @@ void qa_app_unified_remote_register_resource(qa_app_unified_remote *remote,
   if (!id) qa_range_error("out of memory");
   resource_set(remote, id, resource);
 }
-qa_save_value **qa_app_unified_remote_drain_simulation_events(qa_app_unified_remote *remote,
+const qa_simulation_event *qa_app_unified_remote_drain_simulation_events(qa_app_unified_remote *remote,
     size_t *out_count) {
-  qa_save_value **events = remote->simulation_events;
-  *out_count = remote->simulation_count;
+  simulation_records_free(remote->drained, remote->drained_count);
+  free(remote->drained_events);
+  remote->drained = remote->simulation_events;
+  remote->drained_count = remote->simulation_count;
   remote->simulation_events = NULL;
   remote->simulation_count = 0;
   remote->simulation_cap = 0;
-  return events;
+  remote->drained_events = calloc(remote->drained_count ? remote->drained_count : 1, sizeof *remote->drained_events);
+  if (!remote->drained_events) qa_range_error("out of memory");
+  for (size_t i = 0; i < remote->drained_count; i++) remote->drained_events[i] = remote->drained[i]->event;
+  *out_count = remote->drained_count;
+  return remote->drained_events;
 }
-qa_save_value **qa_app_unified_remote_drain_presentation_events(qa_app_unified_remote *remote,
+const qa_app_sim_presentation_event *qa_app_unified_remote_drain_presentation_events(qa_app_unified_remote *remote,
     size_t *out_count) {
-  qa_save_value **events = remote->media;
-  *out_count = remote->media_count;
-  remote->media = NULL;
-  remote->media_count = 0;
-  remote->media_cap = 0;
-  return events;
+  return qa_app_presentation_state_take(remote->media, out_count);
 }
+qa_app_presentation_state *qa_app_unified_remote_media(qa_app_unified_remote *remote) { return remote->media; }
 void qa_app_unified_remote_disconnected(qa_app_unified_remote *remote, const char *reason) {
   remote->options.disconnected(remote->options.ctx, reason);
 }
@@ -981,9 +1120,15 @@ void qa_app_unified_remote_print(qa_app_unified_remote *remote, const char *text
   remote->options.print(remote->options.ctx, text);
 }
 void qa_app_unified_remote_close(qa_app_unified_remote *remote) {
-  if (remote->components) qa_app_unified_component_consumers_close(remote->components);
+  if (remote->components) {
+    qa_app_unified_component_consumers_close(remote->components);
+    qa_app_unified_component_consumers_destroy(remote->components);
+  }
   remote->components = NULL;
-  if (remote->native) qa_app_unified_native_consumers_close(remote->native);
+  if (remote->native) {
+    qa_app_unified_native_consumers_close(remote->native);
+    qa_app_unified_native_consumers_destroy(remote->native);
+  }
   remote->native = NULL;
   clear_prediction(remote);
   remote->content_epoch = 0;
@@ -995,11 +1140,9 @@ void qa_app_unified_remote_close(qa_app_unified_remote *remote) {
   }
   pending_reset(remote);
   remote->sequence_count = 0;
-  trees_free(remote->media, remote->media_count);
-  remote->media = NULL;
-  remote->media_count = 0;
-  remote->media_cap = 0;
-  trees_free(remote->simulation_events, remote->simulation_count);
+  size_t taken = 0;
+  (void)qa_app_presentation_state_take(remote->media, &taken);
+  simulation_records_free(remote->simulation_events, remote->simulation_count);
   remote->simulation_events = NULL;
   remote->simulation_count = 0;
   remote->simulation_cap = 0;

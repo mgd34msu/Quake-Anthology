@@ -3,8 +3,10 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include "qa/foundation/js.h"
+#include "qa/foundation/support.h"
 qa_bounds qa_compat_qc_link_bounds(qa_body_state s, double flags, const qa_numeric_operations *n) {
-  bool item = ((int64_t)trunc(flags) & 256) != 0; double xy = item ? 15 : 1, z = item ? 0 : 1; void *c = n->ctx;
+  bool item = (qa_js_to_int32(flags) & 256) != 0; double xy = item ? 15 : 1, z = item ? 0 : 1; void *c = n->ctx;
   return (qa_bounds){
     {n->subtract(c,n->add(c,s.origin.x,s.bounds.min.x),xy), n->subtract(c,n->add(c,s.origin.y,s.bounds.min.y),xy), n->subtract(c,n->add(c,s.origin.z,s.bounds.min.z),z)},
     {n->add(c,n->add(c,s.origin.x,s.bounds.max.x),xy), n->add(c,n->add(c,s.origin.y,s.bounds.max.y),xy), n->add(c,n->add(c,s.origin.z,s.bounds.max.z),z)}};
@@ -16,6 +18,19 @@ int64_t qa_compat_qc_world_host_reference(qa_compat_qc_world_host *h, qa_actor_i
   if (src.has_value && strcmp(src.provider, h->options.slots_options.provider) == 0) return qa_compat_qc_entity_memory_reference(h->options.entities, src.slot);
   return h->options.foreign_reference(h->options.ctx, actor);
 }
+/* TS prepareEntities: findradius walks QC rows, so foreign actors need their borrowed rows before it runs. */
+void qa_compat_qc_world_host_prepare_entities(qa_compat_qc_world_host *h) {
+  size_t count = 0;
+  const qa_actor_observation *observed = qa_session_actor_registry_observations(h->options.actors, &count);
+  qa_actor_id *ids = malloc((count != 0 ? count : 1) * sizeof *ids); /* the TS observations() array */
+  if (ids == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < count; i++) ids[i] = observed[i].id;
+  qa_cleanup scope;
+  qa_cleanup_push(&scope, free, ids);
+  for (size_t i = 0; i < count; i++) (void)qa_compat_qc_world_host_reference(h, ids[i]);
+  qa_cleanup_pop(&scope);
+  free(ids);
+}
 static int64_t body_ref(void *ctx, qa_actor_id a) { return qa_compat_qc_world_host_reference(ctx, a); }
 static bool body_actor(void *ctx, int64_t ref, qa_actor_id *out) {
   qa_compat_qc_world_host *h = ctx; int64_t slot = qa_compat_qc_entity_memory_slot(h->options.entities, ref);
@@ -25,6 +40,7 @@ static bool body_actor(void *ctx, int64_t ref, qa_actor_id *out) {
   return false;
 }
 qa_owned_actor qa_compat_qc_world_host_actor(qa_compat_qc_world_host *h, int64_t slot) {
+  if (h->options.actor_at) return h->options.actor_at(h->options.ctx, slot);
   if (qa_compat_qc_world_host_is_free_entity(h, slot)) qa_compat_qc_program_error("progs.dat", "world builtin references a free source edict");
   qa_owned_actor borrowed;
   if (h->options.foreign_actor && h->options.foreign_actor(h->options.ctx, slot, &borrowed)) { qa_session_actor_registry_assert_owned(h->options.actors, borrowed); return borrowed; }

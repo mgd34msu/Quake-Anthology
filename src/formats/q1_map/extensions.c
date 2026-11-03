@@ -1,5 +1,6 @@
 /* Port of src/formats/q1-map/extensions.ts. GPL-2.0-or-later. */
 #include "qa/formats/q1_map/extensions.h"
+#include "qa/network/common/js_number.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -223,7 +224,10 @@ static qa_q1_face_normals *read_face_normals(bool has_data, const uint8_t *data,
   qa_binary_reader_destroy(&section);
   qa_binary_reader_skip(&reader, (int64_t)count * 12);
   size_t corners = (size_t)corner_count;
-  result->indices = xmalloc(corners * sizeof *result->indices);
+  /* TS grows the list one corner at a time and the reads fail at the end of
+   * the lump, so never reserve more corners than the lump can hold. */
+  size_t room = qa_binary_reader_remaining(&reader) / 12;
+  result->indices = xmalloc((corners < room ? corners : room) * sizeof *result->indices);
   result->index_count = corners;
   for (size_t i = 0; i < corners; i++) {
     double normal = qa_binary_reader_u32(&reader);
@@ -246,7 +250,7 @@ static bool exact_lump(const qa_q1_bspx_lump *lumps, size_t lump_count, const ch
   if ((double)*out_length != length) {
     char source[64];
     snprintf(source, sizeof source, "BSPX %s", name);
-    qa_binary_error(source, 0, "expected %g bytes, got %zu", length, *out_length);
+    qa_binary_error(source, 0, "expected %s bytes, got %zu", QA_JS_NUMBER(length), *out_length);
   }
   return true;
 }
@@ -262,11 +266,19 @@ void qa_q1_read_bspx_metadata(const qa_q1_bspx_lump *lumps, size_t lump_count, d
   memset(out, 0, sizeof *out);
   const uint8_t *data = NULL;
   size_t length = 0;
+  /* TS checks LMOFFSET and VERTEXNORMALS before building the record, so
+   * their length errors win over LMSHIFT's and the styles'. */
+  const uint8_t *offsets_data = NULL, *normals_data = NULL;
+  size_t offsets_length = 0, normals_length = 0;
+  bool has_offsets = exact_lump(lumps, lump_count, "LMOFFSET", face_count * 4, &offsets_data, &offsets_length);
+  bool has_normals = exact_lump(lumps, lump_count, "VERTEXNORMALS", vertex_count * 12, &normals_data, &normals_length);
   if (exact_lump(lumps, lump_count, "LMSHIFT", face_count, &data, &length)) {
     out->lightmap_shifts = copy_bytes(data, length);
     out->lightmap_shift_count = length;
   }
-  if (exact_lump(lumps, lump_count, "LMOFFSET", face_count * 4, &data, &length)) {
+  if (has_offsets) {
+    data = offsets_data;
+    length = offsets_length;
     qa_binary_reader reader = make_reader(data, length, "BSPX LMOFFSET");
     size_t count = length / 4;
     out->lightmap_offsets = xmalloc(count * sizeof *out->lightmap_offsets);
@@ -298,7 +310,9 @@ void qa_q1_read_bspx_metadata(const qa_q1_bspx_lump *lumps, size_t lump_count, d
     out->lighting_directions = copy_bytes(data, length);
     out->lighting_direction_length = length;
   }
-  if (exact_lump(lumps, lump_count, "VERTEXNORMALS", vertex_count * 12, &data, &length)) {
+  if (has_normals) {
+    data = normals_data;
+    length = normals_length;
     qa_binary_reader reader = make_reader(data, length, "BSPX VERTEXNORMALS");
     size_t count = length / 12;
     out->vertex_normals = xmalloc(count * sizeof *out->vertex_normals);

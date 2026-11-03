@@ -680,8 +680,10 @@ static qa_vec2 pointer_position(const qa_input_router *router, double x, double 
 }
 
 static double event_time(const qa_input_router *router, double timestamp) {
-  return qa_sdl_event_time(timestamp, router->options.ticks(router->options.ticks_ctx),
-                           router_now(router), router->options.subframe);
+  double ticks2 = router->options.ticks(router->options.ticks_ctx);
+  double now = router_now(router);
+  return qa_sdl_event_time(timestamp, ticks2,
+                           now, router->options.subframe);
 }
 
 static bool keyboard_code(const qa_input_router *router, int32_t scancode,
@@ -780,12 +782,20 @@ void qa_input_router_handle_platform(qa_input_router *router,
       translated.text = event->as.text.text;
       break;
     case QA_SDL_EVENT_MOUSE_MOTION:
+      /* Relative game motion ignores the position, and motion never changes
+         focus or capture, so the native size queries are skipped. */
       translated.kind = "mouse-motion";
-      translated.position = pointer_position(router, event->as.mouse_motion.x,
-                                             event->as.mouse_motion.y);
+      if (strcmp(qa_seat_input_get_focus(seat).kind, "game") == 0) {
+        translated.position.x = event->as.mouse_motion.x;
+        translated.position.y = event->as.mouse_motion.y;
+      } else {
+        translated.position = pointer_position(router, event->as.mouse_motion.x,
+                                               event->as.mouse_motion.y);
+      }
       translated.delta.x = event->as.mouse_motion.dx;
       translated.delta.y = event->as.mouse_motion.dy;
-      break;
+      (void)qa_seat_input_input(seat, &translated);
+      return;
     case QA_SDL_EVENT_MOUSE_BUTTON: {
       if (strcmp(qa_seat_input_get_focus(seat).kind, "game") != 0) {
         qa_seat_input_event motion;

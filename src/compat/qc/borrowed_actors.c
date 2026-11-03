@@ -5,9 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "qa/core/numeric.h"
+#include "qa/foundation/support.h"
 #include "qa/persistence/save_image.h"
-static const char *const vectors[8] = {"origin","angles","velocity","mins","maxs","absmin","absmax","size"};
-static const char *const privates[2] = {"chain","invincible_sound"};
 static const char *const names[14] = {"origin","angles","velocity","mins","maxs","absmin","absmax","size","chain","invincible_sound","health","takedamage","classname","solid"};
 enum { F_ORIGIN, F_ANGLES, F_VELOCITY, F_MINS, F_MAXS, F_ABSMIN, F_ABSMAX, F_SIZE, F_CHAIN, F_INVSND, F_HEALTH, F_TAKEDAMAGE, F_CLASSNAME, F_SOLID };
 static bool owned_eq(qa_owned_actor a, qa_owned_actor b) { return qa_same_owned_actor(a, b); }
@@ -52,7 +51,6 @@ static void field_offsets(qa_compat_qc_borrowed_actors *b) {
   b->fields_by_word_count = (size_t)maxw;
   for (int i = 0; i < 14; i++) { int64_t width = i < 8 ? 3 : 1; for (int64_t w = b->offsets[i]; w < b->offsets[i] + width; w++) b->fields_by_word[w] = i; }
   b->offsets_ready = true;
-  (void)vectors; (void)privates;
 }
 static void refresh(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_row *row, const bool requested[14]) {
   qa_compat_qc_machine *vm = b->host.machine(b->host.ctx);
@@ -101,6 +99,13 @@ static void refresh(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_row *
   }
   if (requested[F_SOLID]) qa_compat_qc_words_set_float(fields, b->offsets[F_SOLID], (double)b->host.solid(b->host.ctx, row->actor.id));
 }
+/* TS catch: forget the provisional row and return its slot. */
+typedef struct { qa_compat_qc_borrowed_actors *b; int64_t slot; qa_source_time now; } BorrowUnwind;
+static void unwind_borrow(void *arg) {
+  BorrowUnwind *u = arg; qa_compat_qc_borrowed_row *r = find_slot(u->b, u->slot);
+  if (r) remove_row(u->b, r);
+  u->b->host.slots_options.storage.clear_freed(u->b->host.slots_options.storage.ctx, u->slot, u->now);
+}
 int64_t qa_compat_qc_borrowed_actors_reference(qa_compat_qc_borrowed_actors *b, qa_actor_id actor) {
   qa_owned_actor owned;
   if (!qa_session_actor_registry_resolve_owned(b->host.actors, actor, &owned)) qa_compat_qc_program_error("progs.dat", "Cannot borrow a retired canonical actor");
@@ -126,7 +131,9 @@ int64_t qa_compat_qc_borrowed_actors_reference(qa_compat_qc_borrowed_actors *b, 
   qa_compat_qc_borrowed_row *row = &b->rows[b->row_count++];
   bool requested[14] = {0}; for (int i = 0; i < 8; i++) requested[i] = true;
   requested[F_HEALTH] = requested[F_TAKEDAMAGE] = requested[F_CLASSNAME] = requested[F_SOLID] = true;
+  BorrowUnwind unwind = {b, selected, now}; qa_cleanup scope; qa_cleanup_push(&scope, unwind_borrow, &unwind);
   refresh(b, row, requested);
+  qa_cleanup_pop(&scope);
   return qa_compat_qc_entity_memory_reference(b->host.machine(b->host.ctx)->entities, selected);
 }
 void qa_compat_qc_borrowed_actors_access(qa_compat_qc_borrowed_actors *b, int64_t reference, int64_t word, int64_t words, const char *kind) {
@@ -138,7 +145,7 @@ void qa_compat_qc_borrowed_actors_access(qa_compat_qc_borrowed_actors *b, int64_
   if (strcmp(kind, "write") == 0) {
     for (int64_t cur = word; cur < word + words; cur++) {
       int64_t f = (cur >= 0 && cur < (int64_t)b->fields_by_word_count) ? b->fields_by_word[cur] : -1;
-      if (f >= 0 && f != F_CHAIN && f != F_INVSND) qa_compat_qc_program_error("progs.dat", "Original QC cannot mutate borrowed field %s outside its source owner", names[f]);
+      if (f >= 0 && f != F_VELOCITY && f != F_CHAIN && f != F_INVSND) qa_compat_qc_program_error("progs.dat", "Original QC cannot mutate borrowed field %s outside its source owner", names[f]);
     }
     return;
   }
@@ -148,6 +155,26 @@ void qa_compat_qc_borrowed_actors_access(qa_compat_qc_borrowed_actors *b, int64_
     if (f >= 0 && !requested[f]) { requested[f] = true; any = true; }
   }
   if (any) refresh(b, row, requested);
+}
+void qa_compat_qc_borrowed_actors_observe_store(qa_compat_qc_borrowed_actors *b, int64_t reference, int64_t word,
+    const uint8_t *after, size_t after_length) {
+  qa_compat_qc_machine *vm = b->host.machine(b->host.ctx);
+  qa_compat_qc_borrowed_row *row = find_slot(b, qa_compat_qc_entity_memory_slot(vm->entities, reference));
+  /* fieldsByWord is filled by fieldOffsets(); before that the TS Map lookup misses. */
+  if (!row || !b->offsets_ready || word < 0 || (size_t)word >= b->fields_by_word_count
+      || b->fields_by_word[word] != F_VELOCITY) return;
+  qa_body_state_result body = b->host.bodies.read(b->host.bodies.ctx, row->actor.id);
+  if (!body.has_value) return;
+  int64_t index = word - b->offsets[F_VELOCITY];
+  qa_vec3 velocity = body.value.velocity;
+  for (size_t w = 0; w < after_length / 4; w++) {
+    int64_t axis = index + (int64_t)w;
+    if (axis < 0 || axis > 2) continue;
+    float value; memcpy(&value, after + w * 4, 4);
+    if (axis == 0) velocity.x = value; else if (axis == 1) velocity.y = value; else velocity.z = value;
+  }
+  qa_body_state next = body.value; next.velocity = velocity;
+  b->host.bodies.write(b->host.bodies.ctx, row->actor, next);
 }
 size_t qa_compat_qc_borrowed_actors_checkpoint(qa_compat_qc_borrowed_actors *b, qa_compat_qc_borrowed_checkpoint *out, size_t cap) {
   for (size_t i = 0; i < b->row_count && i < cap; i++) out[i] = (qa_compat_qc_borrowed_checkpoint){qa_saved_actor_id_of(b->rows[i].actor.id), b->rows[i].slot};

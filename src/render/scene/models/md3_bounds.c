@@ -26,7 +26,7 @@ static bool frame_envelope(const qa_q3_mesh_model *model, double index,
   for (size_t s = 0; s < model->surface_count; s++) {
     const qa_q3_mesh_surface *surface = &model->surfaces[s];
     if (!(index >= 0) || trunc(index) != index ||
-        (size_t)index >= surface->frame_count) {
+        index >= (double)surface->frame_count) {
       free(out->counts); out->counts = NULL; return false;
     }
     const qa_model_vertex *vertices = surface->frame_vertices[(size_t)index];

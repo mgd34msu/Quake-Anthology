@@ -10,6 +10,7 @@
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/animation.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 
 const qa_bounds qa_q3_character_bounds = {{-15,-15,-24},{15,15,32}};
 void qa_q3_death_animation_sequence_init(qa_q3_death_animation_sequence *s){ s->index=0; }
@@ -24,14 +25,14 @@ qa_q3_death_animation_next qa_q3_death_animation_sequence_next(qa_q3_death_anima
   qa_q3_death_animation_next r=s->index==0?(qa_q3_death_animation_next){QA_Q3_ANIM_BOTH_DEATH1,QA_Q3_EV_DEATH1}
     :s->index==1?(qa_q3_death_animation_next){QA_Q3_ANIM_BOTH_DEATH2,QA_Q3_EV_DEATH2}
     :(qa_q3_death_animation_next){QA_Q3_ANIM_BOTH_DEATH3,QA_Q3_EV_DEATH3};
-  s->index=(double)((int32_t)(s->index+1)%3); return r;
+  s->index=(double)(qa_js_to_int32((s->index+1))%3); return r;
 }
 double qa_q3_maximum_health(const char *handicap){
   int32_t m=qa_game_atoi(handicap); return m<1||m>100?100:m;
 }
 qa_combat_state qa_q3_initial_combat(const char *handicap, const char *team){
   qa_combat_state s={0};
-  s.health=(double)(int32_t)((int32_t)qa_q3_maximum_health(handicap)+25);
+  s.health=(double)(int32_t)(qa_js_to_int32(qa_q3_maximum_health(handicap))+25);
   s.armor.regular.kind=QA_REGULAR_ARMOR_Q3; s.armor.regular.points=0; s.armor.regular.protection=(float)0.66;
   s.armor.powered.kind="none"; s.mass=200; s.can_take_damage=true; s.invulnerable=false; s.team=team;
   return s;
@@ -109,7 +110,7 @@ void qa_q3_character_actor_spawn(qa_q3_character_actor *a, qa_q3_character_spawn
     for(size_t i=0;i<input.inventory_count;i++) qa_shared_inventory_table_configure(s->inventory,actor,input.inventory[i],NULL,NULL);
   }
   a->current_animation=qa_q3_spawn_animation();
-  a->flags=(double)(((int32_t)a->flags&(4|0x4000|0x80000))^4);
+  a->flags=(double)((qa_js_to_int32(a->flags)&(4|0x4000|0x80000))^4);
   a->dead=false; a->gibbed=false; a->respawn_time=s->time_milliseconds(s->ctx); a->spawn_count++;
   qa_shared_body_table_write(s->bodies,actor,input.body);
   bind_callbacks(a);
@@ -121,7 +122,7 @@ void qa_q3_character_actor_spawn(qa_q3_character_actor *a, qa_q3_character_spawn
   }
 }
 static void gib_actor(qa_q3_character_actor *a,double killer){
-  a->gibbed=true; a->flags=(double)((int32_t)a->flags|0x80);
+  a->gibbed=true; a->flags=(double)(qa_js_to_int32(a->flags)|0x80);
   qa_combat_trait_changes ch={0}; ch.has_can_take_damage=true; ch.can_take_damage=false;
   qa_gameplay_authority_set_traits(a->services.combat,a->actor,ch);
   qa_shared_body_table_unlink(a->services.bodies,a->actor);
@@ -138,8 +139,8 @@ void qa_q3_character_actor_die(qa_q3_character_actor *a){
     else if(!context.blood&&health<=-40) qa_gameplay_authority_set_health(a->services.combat,a->actor,-39);
     return;
   }
-  a->dead=true; a->flags=(double)((int32_t)a->flags|1);
-  a->respawn_time=(double)(int32_t)((uint32_t)(int32_t)a->services.time_milliseconds(a->services.ctx)+1700u);
+  a->dead=true; a->flags=(double)(qa_js_to_int32(a->flags)|1);
+  a->respawn_time=(double)(int32_t)((uint32_t)qa_js_to_int32(a->services.time_milliseconds(a->services.ctx))+1700u);
   qa_body_state_result br=qa_shared_body_table_read(a->services.bodies,a->actor.id);
   if(br.has_value){
     qa_body_state body=br.value; body.angles=(qa_vec3){0,body.angles.y,0}; body.bounds.max.z=-8;
@@ -150,14 +151,14 @@ void qa_q3_character_actor_die(qa_q3_character_actor *a){
   else {
     if(health<=-40) qa_gameplay_authority_set_health(a->services.combat,a->actor,-39);
     qa_q3_death_animation_next next=qa_q3_death_animation_sequence_next(a->death_animations);
-    a->current_animation.legs=(double)((((int32_t)a->current_animation.legs&128)^128)|(int32_t)next.animation);
-    a->current_animation.torso=(double)((((int32_t)a->current_animation.torso&128)^128)|(int32_t)next.animation);
+    a->current_animation.legs=(double)(((qa_js_to_int32(a->current_animation.legs)&128)^128)|qa_js_to_int32(next.animation));
+    a->current_animation.torso=(double)(((qa_js_to_int32(a->current_animation.torso)&128)^128)|qa_js_to_int32(next.animation));
     emit_event(a,next.event,context.killer_source_slot);
   }
 }
 bool qa_q3_character_actor_wants_respawn(const qa_q3_character_actor *a, double now, bool attack, bool use_holdable, double force_seconds){
   if(!a->dead||now<=a->respawn_time) return false;
-  return attack||use_holdable||(force_seconds>0&&((int32_t)((uint32_t)(int32_t)now-(uint32_t)(int32_t)a->respawn_time)>(int32_t)((uint32_t)(int32_t)force_seconds*1000u)));
+  return attack||use_holdable||(force_seconds>0&&((int32_t)((uint32_t)qa_js_to_int32(now)-(uint32_t)qa_js_to_int32(a->respawn_time))>(int32_t)((uint32_t)qa_js_to_int32(force_seconds)*1000u)));
 }
 void qa_q3_character_actor_commit_animation(qa_q3_character_actor *a, qa_actor_animation_state animation){
   if(!animation.provider||!a->provider||strcmp(animation.provider,a->provider)!=0

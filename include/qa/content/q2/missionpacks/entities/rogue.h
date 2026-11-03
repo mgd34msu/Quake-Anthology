@@ -10,17 +10,17 @@ typedef struct qa_q2mp_rogue_entities_checkpoint { double steam_id; } qa_q2mp_ro
 typedef struct qa_q2mp_rogue_entities {
   qa_q2mp_entity_hooks hooks;
   double steam_id;
-  qa_q2f_named_think cb_think[3];
-  qa_q2f_named_touch cb_touch[2];
-  qa_q2f_named_use cb_use[6];
-  qa_q2f_think steam_start, black_light, orb;
-  qa_q2f_touch teleport_touch, disguise_touch;
-  qa_q2f_use teleport_use, disguise_use, steam_use, anger_use, kill_players, core_use;
+  qa_q2_named_think cb_think[3];
+  qa_q2_named_touch cb_touch[2];
+  qa_q2_named_use cb_use[6];
+  qa_q2_think steam_start, black_light, orb;
+  qa_q2_touch teleport_touch, disguise_touch;
+  qa_q2_use teleport_use, disguise_use, steam_use, anger_use, kill_players, core_use;
 } qa_q2mp_rogue_entities;
 
 void qa_q2mp_rogue_entities_init(qa_q2mp_rogue_entities *entities, qa_q2mp_entity_hooks hooks);
-qa_q2f_callback_definitions qa_q2mp_rogue_entities_callbacks(qa_q2mp_rogue_entities *entities);
+qa_q2_callback_definitions qa_q2mp_rogue_entities_callbacks(qa_q2mp_rogue_entities *entities);
 qa_q2mp_rogue_entities_checkpoint qa_q2mp_rogue_entities_capture(qa_q2mp_rogue_entities *entities);
 void qa_q2mp_rogue_entities_restore(qa_q2mp_rogue_entities *entities, qa_q2mp_rogue_entities_checkpoint state);
-bool qa_q2mp_rogue_entities_spawn(qa_q2mp_rogue_entities *entities, qa_q2f_entity *entity, qa_q2f_game *game);
+bool qa_q2mp_rogue_entities_spawn(qa_q2mp_rogue_entities *entities, qa_q2_entity *entity, qa_q2_game_services *game);
 #endif

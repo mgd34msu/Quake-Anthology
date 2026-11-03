@@ -1,7 +1,9 @@
 /* Port of src/compat/qc/memory.ts. GPL-2.0-or-later.
  * QcWords borrows its byte storage (entity field views borrow the
- * entity arena). QcStrings.get returns a borrowed buffer valid until
- * the next strings mutation (TS returns a fresh string). */
+ * entity arena). QcStrings.get returns a private copy of the bytes: TS
+ * strings are immutable values, so a result survives arena growth,
+ * setEngine rewrites and restore. It stays valid for the next
+ * QA_COMPAT_QC_STRING_RING - 1 get calls; hold it longer by copying. */
 #ifndef QA_COMPAT_QC_MEMORY_H
 #define QA_COMPAT_QC_MEMORY_H
 #include <stdbool.h>
@@ -20,6 +22,8 @@ void qa_compat_qc_words_set_float(qa_compat_qc_words *w, int64_t word, double va
 qa_vec3 qa_compat_qc_words_vector(const qa_compat_qc_words *w, int64_t word);
 void qa_compat_qc_words_set_vector(qa_compat_qc_words *w, int64_t word, qa_vec3 value);
 void qa_compat_qc_words_copy_words(qa_compat_qc_words *dst, const qa_compat_qc_words *from, int64_t source, int64_t destination, int64_t count);
+/* TS copyReturnWords: source words past the storage read as zero. */
+void qa_compat_qc_words_copy_return_words(qa_compat_qc_words *dst, const qa_compat_qc_words *from, int64_t source, int64_t destination, int64_t count);
 
 typedef struct qa_compat_qc_entity_layout { int64_t stride_bytes, variables_offset_bytes, field_words; } qa_compat_qc_entity_layout;
 typedef struct qa_compat_qc_entity_memory {
@@ -41,18 +45,25 @@ typedef struct qa_compat_qc_resolved_pointer { qa_compat_qc_words *fields; int64
 qa_compat_qc_resolved_pointer qa_compat_qc_entity_memory_resolve_pointer(qa_compat_qc_entity_memory *m, int64_t pointer, int64_t words);
 void qa_compat_qc_entity_memory_restore(qa_compat_qc_entity_memory *m, const uint8_t *bytes, size_t length, int64_t count);
 
+#define QA_COMPAT_QC_STRING_RING 64
 typedef struct qa_compat_qc_engine_string { char *name; int64_t offset, capacity; } qa_compat_qc_engine_string;
+typedef struct qa_compat_qc_interned_string { char *text; int64_t offset; } qa_compat_qc_interned_string;
 typedef struct qa_compat_qc_strings {
   uint8_t *arena; size_t arena_length, used; /* owned */
   qa_compat_qc_engine_string *engines; size_t engine_count, engine_capacity;
-  bool quakeworld; char *get_buffer; size_t get_buffer_length;
+  bool quakeworld;
+  qa_compat_qc_interned_string *interned; size_t interned_count, interned_capacity; /* TS intern map, owned */
+  char *get_ring[QA_COMPAT_QC_STRING_RING]; size_t get_ring_capacity[QA_COMPAT_QC_STRING_RING]; size_t get_ring_next;
 } qa_compat_qc_strings;
 bool qa_compat_qc_strings_init(qa_compat_qc_strings *s, const uint8_t *program_strings, size_t length, bool quakeworld);
 void qa_compat_qc_strings_destroy(qa_compat_qc_strings *s);
 int64_t qa_compat_qc_strings_allocate(qa_compat_qc_strings *s, const char *text);
-/* capacity<0 = TS default 128. */
+/* Repeated values share one arena copy; restore forgets the map. */
+int64_t qa_compat_qc_strings_intern(qa_compat_qc_strings *s, const char *text);
+/* capacity<0 = TS default 128 (for a new name). A longer value for an
+ * existing name moves it to a buffer of max(length + 1, 2 * capacity). */
 int64_t qa_compat_qc_strings_set_engine(qa_compat_qc_strings *s, const char *name, const char *text, int64_t capacity);
-/* Borrowed; valid until next mutation. */
+/* Borrowed copy; see the ring note above. */
 const char *qa_compat_qc_strings_get(qa_compat_qc_strings *s, int64_t reference);
 /* Malloc'd snapshot (caller frees); NULL on OOM, *out_length set. */
 uint8_t *qa_compat_qc_strings_snapshot(qa_compat_qc_strings *s, size_t *out_length);

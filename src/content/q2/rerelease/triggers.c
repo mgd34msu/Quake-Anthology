@@ -26,7 +26,8 @@ void qa_q2rr_sound_time_clear(qa_q2_rerelease_triggers *t) { t->count = 0; }
 
 static void trig_init(qa_q2_entity *e, qa_q2_game_services *g) {
   e->visible = false; e->server_flags = rr_bor(e->server_flags, 1);
-  e->movedir = qa_q2_movedir(rr_body_of(g, e).angles);
+  qa_vec3 angles = rr_body_of(g, e).angles;
+  e->movedir = angles.x == 0 && angles.y == 0 && angles.z == 0 && !qa_q2_spawn_has(&e->spawn, "angle") ? QA_Q2_ZERO : qa_q2_movedir(angles);
   qa_q2_body_changes ch; memset(&ch, 0, sizeof ch); ch.has_angles = true; ch.angles = QA_Q2_ZERO;
   g->move(g->ctx, e, ch, false); g->solid(g->ctx, e, "trigger");
 }
@@ -71,7 +72,7 @@ static void push_touch(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_touc
     qa_shared_body_table_write(g->host->bodies, owner, nb);
     if (other) g->motion(g->ctx, other, other->motion);
     if (g->host->is_player(g->host->ctx, contact.other)) {
-      qa_q2rr_player_state *st = qa_q2rr_players_get_state(t->players, contact.other);
+      qa_q2_base_player_state *st = qa_q2_players_get_state(t->players->base, contact.other);
       qa_q2rr_player_extra_state *extra = qa_q2_rerelease_players_get_extra(t->players, contact.other);
       if (st) st->old_velocity = velocity;
       t->hooks.push_player(t->hooks.ctx, contact.other, velocity);
@@ -112,6 +113,8 @@ static void push_inactive(void *c, qa_q2_entity *e, qa_q2_game_services *g) {
   g->schedule(g->ctx, e, 0.1, t->push_active);
 }
 static void hurt_touch(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_touch_contact contact) {
+  double left;
+  double right;
   qa_q2_rerelease_triggers *t = c;
   qa_q2_entity *target = rr_ent(g, &contact.other);
   qa_body_state_result br = qa_shared_body_table_read(g->host->bodies, contact.other);
@@ -122,7 +125,7 @@ static void hurt_touch(void *c, qa_q2_entity *e, qa_q2_game_services *g, qa_touc
   if (((rr_band(e->spawnflags, 32) != 0 && player) || (rr_band(e->spawnflags, 64) != 0 && monster)) || e->timestamp > rr_now(g)) return;
   if (rr_band(e->spawnflags, 128) != 0 && !t->hooks.clip_trigger(t->hooks.ctx, e, contact.other, g)) return;
   e->timestamp = rr_now(g) + (rr_band(e->spawnflags, 16) != 0 ? 1 : 0.1);
-  if (rr_band(e->spawnflags, 4) == 0 && qa_q2rr_sound_time_get(t, e->actor.id) < rr_now(g)) {
+  if (rr_band(e->spawnflags, 4) == 0 && (left = qa_q2rr_sound_time_get(t, e->actor.id), right = rr_now(g), left < right)) {
     qa_q2rr_sound_time_set(t, e->actor.id, rr_now(g) + 1);
     qa_q2_presentation_event ev; memset(&ev, 0, sizeof ev);
     ev.kind = "sound"; ev.has_actor = true; ev.actor = contact.other; ev.origin = br.value.origin;

@@ -8,5 +8,7 @@
 #include "qa/ui/common/draw.h"
 #include "qa/ui/common/layout.h"
 #include "qa/ui/common/skin.h"
+#include "qa/ui/common/localization.h"
+#include "qa/ui/common/controls.h"
 
 #endif

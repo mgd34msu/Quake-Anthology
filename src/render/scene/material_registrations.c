@@ -1,10 +1,12 @@
 /* Port of src/render/scene/material-registrations.ts. GPL-2.0-or-later. */
 #include "qa/render/scene/material_registrations.h"
+#include "qa/network/common/js_number.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
 #include "qa/materials/material.h"
+#include "qa/foundation/js.h"
 static void *xalloc(size_t n) { void *p = malloc(n ? n : 1); if (!p) qa_range_error("Allocation failed"); return p; }
 static void *xg(void *p, size_t n) { void *q = realloc(p, n ? n : 1); if (!q) qa_range_error("Allocation failed"); return q; }
 static char *xdup(const char *s) { size_t n = strlen(s) + 1; char *p = xalloc(n); memcpy(p, s, n); return p; }
@@ -401,7 +403,7 @@ const qa_registered_scene_material *qa_scene_material_registrations_snapshot(qa_
     qa_scene_material_handle *h = o->admitted->vals[i];
     o->snapshot[w++] = (qa_registered_scene_material){ h->registration, h, h->current };
   }
-  if (sorted) qsort(o->snapshot, w, sizeof *o->snapshot, cmp_sort);
+  if (sorted) qa_js_sort(o->snapshot, w, sizeof *o->snapshot, cmp_sort);
   if (out_count) *out_count = w;
   return o->snapshot;
 }
@@ -417,17 +419,20 @@ void qa_provider_shader_registrations_destroy(qa_provider_shader_registrations *
 }
 char *qa_provider_shader_registrations_key(qa_provider_shader_registrations *p, qa_shader_logical_key key) {
   char buf[4096];
-  if (key.kind == QA_BINDING_UNLIT) snprintf(buf, sizeof buf, "%s\x01unlit\x01%g", key.name, key.lightmap_index);
-  else if (key.kind == QA_BINDING_SOURCE) snprintf(buf, sizeof buf, "%s\x01source\x01%g", key.name, key.request);
+  if (key.kind == QA_BINDING_UNLIT) snprintf(buf, sizeof buf, "%s\x01unlit\x01%s", key.name, QA_JS_NUMBER(key.lightmap_index));
+  else if (key.kind == QA_BINDING_SOURCE) snprintf(buf, sizeof buf, "%s\x01source\x01%s", key.name, QA_JS_NUMBER(key.request));
   else {
     if (key.world->owner != p->owner) qa_range_error("Shader world belongs to another scene");
-    snprintf(buf, sizeof buf, "%s\x01world\x01%g\x01%g\x01%s", key.name, key.world->ordinal, key.lightmap_index, key.base_texture_name ? key.base_texture_name : "");
+    snprintf(buf, sizeof buf, "%s\x01world\x01%s\x01%s\x01%s", key.name, QA_JS_NUMBER(key.world->ordinal), QA_JS_NUMBER(key.lightmap_index), key.base_texture_name ? key.base_texture_name : "");
   }
   return xdup(buf);
 }
 static qa_shader_registration *new_registration(qa_provider_shader_registrations *p, const char *name) {
   qa_shader_registration *r = xalloc(sizeof *r); r->provider = p; r->name = shader_name(name); return r;
 }
+/* A registration is owned by its provider's map (or, before commit, by the replacement stage that created it); TS
+ * drops the last reference when cancel deletes it from the map. */
+static void free_registration(qa_shader_registration *r) { free(r->name); free(r); }
 qa_shader_registration *qa_provider_shader_registrations_find(qa_provider_shader_registrations *p, qa_shader_logical_key key) {
   char *k = qa_provider_shader_registrations_key(p, key); qa_shader_registration *r = smap_get(p->_registrations, k); free(k); return r;
 }
@@ -446,6 +451,7 @@ void qa_provider_shader_registrations_cancel(qa_provider_shader_registrations *p
   if (smap_get(p->_registrations, k) != registration) { free(k); qa_range_error("Shader admission does not match its request"); }
   qa_scene_material_registrations_cancel(p->owner, registration);
   smap_delete(p->_registrations, k); free(k);
+  free_registration(registration);
 }
 qa_registered_scene_material qa_provider_shader_registrations_commit(qa_provider_shader_registrations *p, qa_shader_logical_key key, qa_shader_registration *registration, const qa_compiled_material *compiled) {
   char *k = qa_provider_shader_registrations_key(p, key);
@@ -457,7 +463,13 @@ qa_registered_scene_material qa_provider_shader_registrations_commit(qa_provider
   return qa_provider_shader_registrations_publish(p, registration, compiled);
 }
 /* replacement stage */
-typedef struct stage_entry { qa_shader_logical_key key; qa_shader_registration *registration; qa_scene_material_handle *material; char *name_copy; char *key_string; } stage_entry;
+typedef struct stage_entry { qa_shader_logical_key key; qa_shader_registration *registration; qa_scene_material_handle *material; char *name_copy; char *key_string; bool created; } stage_entry;
+/* A registration the stage created (no provider entry yet) belongs to the stage until commit hands it to the
+ * provider's map; cancel, discard and an uncommitted destroy free it. */
+static void stage_entry_free(stage_entry *e) {
+  free(e->name_copy); free(e->key_string);
+  if (e->created) free_registration(e->registration);
+}
 typedef struct stage_impl { stage_entry *items; size_t count, cap; qa_scene_material_handle **handles; size_t nh, ch; } stage_impl;
 void qa_provider_shader_registrations_begin_replacement(qa_provider_shader_registrations *p, qa_shader_replacement_stage *out) {
   memset(out, 0, sizeof *out); out->provider = p; out->state = 0;
@@ -466,7 +478,7 @@ void qa_provider_shader_registrations_begin_replacement(qa_provider_shader_regis
 void qa_shader_replacement_stage_destroy(qa_shader_replacement_stage *s) {
   if (!s || !s->_entries) return;
   stage_impl *impl = s->_entries;
-  for (size_t i = 0; i < impl->count; i++) { free(impl->items[i].name_copy); free(impl->items[i].key_string); }
+  for (size_t i = 0; i < impl->count; i++) stage_entry_free(&impl->items[i]);
   free(impl->items);
   for (size_t i = 0; i < impl->nh; i++) free(impl->handles[i]);
   free(impl->handles); free(impl); s->_entries = NULL;
@@ -484,8 +496,7 @@ qa_shader_registration *qa_shader_replacement_stage_reserve(qa_shader_replacemen
   if (impl->count == impl->cap) { impl->cap = impl->cap ? impl->cap * 2 : 8; impl->items = xg(impl->items, impl->cap * sizeof *impl->items); }
   stage_entry *e = &impl->items[impl->count++];
   e->key = key; e->name_copy = xdup(key.name); e->key.name = e->name_copy;
-  e->registration = registration; e->material = NULL; e->key_string = k;
-  if (is_new) { /* tracked for cleanup through entries */ }
+  e->registration = registration; e->material = NULL; e->key_string = k; e->created = is_new;
   return registration;
 }
 qa_registered_scene_material qa_shader_replacement_stage_publish(qa_shader_replacement_stage *s, qa_shader_registration *registration, const qa_compiled_material *compiled) {
@@ -506,7 +517,7 @@ void qa_shader_replacement_stage_cancel(qa_shader_replacement_stage *s, qa_shade
   char *k = qa_provider_shader_registrations_key(s->provider, key);
   for (size_t i = 0; i < impl->count; i++) if (!strcmp(impl->items[i].key_string, k)) {
     if (impl->items[i].registration != registration || impl->items[i].material) break;
-    free(impl->items[i].name_copy); free(impl->items[i].key_string); free(k);
+    stage_entry_free(&impl->items[i]); free(k);
     memmove(impl->items + i, impl->items + i + 1, (impl->count - i - 1) * sizeof *impl->items); impl->count--;
     return;
   }
@@ -528,12 +539,13 @@ void qa_shader_replacement_stage_commit(qa_shader_replacement_stage *s) {
     qa_scene_material_handle *current = impl->items[i].material;
     const qa_compiled_material *compiled = current->current;
     qa_registered_scene_material retained = qa_provider_shader_registrations_commit(s->provider, impl->items[i].key, impl->items[i].registration, compiled);
+    impl->items[i].created = false; /* the provider's map owns it now */
     current->current = qa_registered_scene_material_compiled(retained);
   }
   s->state = 1;
 }
 void qa_shader_replacement_stage_discard(qa_shader_replacement_stage *s) {
   stage_require(s); stage_impl *impl = s->_entries;
-  for (size_t i = 0; i < impl->count; i++) { free(impl->items[i].name_copy); free(impl->items[i].key_string); }
+  for (size_t i = 0; i < impl->count; i++) stage_entry_free(&impl->items[i]);
   impl->count = 0; s->state = 2;
 }

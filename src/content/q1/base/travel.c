@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "qa/foundation/js.h"
+
 #include "qa/foundation/support.h"
 
 static char *dup_text(const char *text) {
@@ -40,7 +42,7 @@ static void set_inventory(qa_q1_travel_state *state, const qa_inventory_entry *e
   }
 }
 
-qa_q1_travel_state qa_q1_new_travel(const qa_q1b_options *options) {
+qa_q1_travel_state qa_q1_new_travel(const qa_q1_options *options) {
   qa_inventory_entry entries[14];
   size_t count = 0;
   static const char *const WEAPON_ITEMS[] = {
@@ -61,7 +63,7 @@ qa_q1_travel_state qa_q1_new_travel(const qa_q1b_options *options) {
   entries[count++] = (qa_inventory_entry){.item = "q1:ammo/cells", .count = 0, .capacity = 100};
   entries[count++] = (qa_inventory_entry){.item = "q1:key/silver", .count = 0, .capacity = 1};
   entries[count++] = (qa_inventory_entry){.item = "q1:key/gold", .count = 0, .capacity = 1};
-  double health = strcmp(options->edition, "rerelease") == 0 && options->skill == 3 &&
+  double health = strcmp(options->edition, "rerelease") == 0 && qa_q1_options_skill(options) == 3 &&
                           options->deathmatch == 0
                       ? 50 : 100;
   qa_q1_travel_state state = {0};
@@ -83,57 +85,60 @@ static bool is_temporary(const char *item) {
     if (strcmp(item, TEMPORARY[i]) == 0) return true;
   return false;
 }
-qa_q1_travel_state qa_q1_capture_travel(qa_q1b_game *game, qa_owned_actor actor,
+/* TS captureQ1TravelExtensions: player extension parameters
+ * (SetChangeParms) that survive every travel reset. Fills out (capacity
+ * 32) with owned copies; returns the count. */
+size_t qa_q1_capture_travel_extensions(qa_q1_services *game, qa_owned_actor actor,
+                                       qa_q1_travel_extension *out, size_t capacity) {
+  qa_q1_player_state *player = qa_q1_player(game, actor.id);
+  size_t count = 0;
+  if (player == NULL) return 0;
+  for (size_t i = 0; i < game->player_extension_count; i++) {
+    const qa_q1_player_extension *extension = game->player_extensions[i];
+    if (extension->capture_travel == NULL) continue;
+    uint8_t *bytes = NULL;
+    size_t length = 0;
+    if (!extension->capture_travel(extension->ctx, game, player, &bytes, &length)) continue;
+    if (count == capacity) qa_range_error("too many Q1 travel extensions");
+    out[count].id = dup_text(extension->id);
+    out[count].bytes = bytes; /* TS bytes.slice(): the extension hands over a fresh copy */
+    out[count].length = length;
+    count++;
+  }
+  return count;
+}
+qa_q1_travel_state qa_q1_capture_travel(qa_q1_services *game, qa_owned_actor actor,
                                         const char *weapon, const double *max_health_arg,
                                         qa_q1_travel_policy policy) {
-  qa_q1b_player_state *player_state = game->player(game, actor.id);
+  qa_q1_player_state *player_state = qa_q1_player(game, actor.id);
   const char *weapon_value = weapon != NULL ? weapon
                              : player_state != NULL ? player_state->weapon : "shotgun";
   double max_health = max_health_arg != NULL ? *max_health_arg
                       : player_state != NULL ? player_state->max_health : 100;
-  qa_combat_state combat;
-  if (!game->host->combat_read(game->host->ctx, actor.id, &combat))
-    qa_range_error("Q1 travel actor has no combat state");
+  const qa_combat_state_result combat = qa_gameplay_authority_read(game->host.combat, actor.id);
+  if (!combat.has_value) qa_range_error("Q1 travel actor has no combat state");
   qa_q1_travel_extension extensions[32];
-  size_t extension_count = 0;
-  if (player_state != NULL) {
-    const qa_q1b_player_extension *list[32];
-    size_t count = game->player_extensions(game, list, 32);
-    for (size_t i = 0; i < count; i++) {
-      const qa_q1b_player_extension *extension = list[i];
-      if (extension->capture_travel == NULL) continue;
-      size_t length = 0;
-      uint8_t *bytes = extension->capture_travel(extension->ctx, game, player_state, &length);
-      if (bytes == NULL) continue;
-      uint8_t *copy = malloc(length != 0 ? length : 1);
-      if (copy == NULL) qa_range_error("out of memory");
-      memcpy(copy, bytes, length);
-      free(bytes);
-      extensions[extension_count].id = dup_text(extension->id);
-      extensions[extension_count].bytes = copy;
-      extensions[extension_count].length = length;
-      extension_count++;
-    }
-  }
-  bool reset = policy.has_reset_in_deathmatch ? policy.reset_in_deathmatch : true;
+  const size_t extension_count = qa_q1_capture_travel_extensions(game, actor, extensions, 32);
+  const bool reset = policy.has_reset_in_deathmatch ? policy.reset_in_deathmatch : true;
   qa_q1_travel_state result;
-  if (combat.health <= 0 || (game->options.deathmatch != 0 && reset)) {
+  if (combat.value.health <= 0 || (game->options.deathmatch != 0 && reset)) {
     result = qa_q1_new_travel(&game->options);
   } else {
-    qa_inventory_entry entries[128];
-    size_t count = game->host->inventory_entries(game->host->ctx, actor.id, entries, 128);
+    size_t count = 0;
+    const qa_inventory_entry *held = qa_shared_inventory_table_entries(game->host.inventory, actor.id, &count);
+    qa_inventory_entry *entries = malloc((count != 0 ? count : 1) * sizeof *entries);
+    if (entries == NULL) qa_range_error("out of memory");
     for (size_t i = 0; i < count; i++) {
+      entries[i] = held[i];
       if (is_temporary(entries[i].item)) entries[i].count = 0;
-      else if (strcmp(entries[i].item, "q1:ammo/shells") == 0 && entries[i].count < 25) entries[i].count = 25;
+      else if (strcmp(entries[i].item, "q1:ammo/shells") == 0) entries[i].count = qa_js_max(25, entries[i].count);
     }
     memset(&result, 0, sizeof result);
-    double health = combat.health;
-    if (health > max_health) health = max_health;
-    if (health < max_health / 2) health = max_health / 2;
-    result.health = health;
+    result.health = qa_js_max(max_health / 2, qa_js_min(max_health, combat.value.health));
     result.max_health = max_health;
-    result.armor = combat.armor;
+    result.armor = combat.value.armor;
     set_inventory(&result, entries, count);
+    free(entries);
     result.weapon = weapon_value;
   }
   result.extensions = malloc((extension_count != 0 ? extension_count : 1) * sizeof *result.extensions);
@@ -142,7 +147,7 @@ qa_q1_travel_state qa_q1_capture_travel(qa_q1b_game *game, qa_owned_actor actor,
   result.extension_count = extension_count;
   return result;
 }
-qa_q1_travel_state qa_q1_decode_travel(qa_q1b_game *game, const qa_q1_travel_state *state, double server_flags) {
+qa_q1_travel_state qa_q1_decode_travel(qa_q1_services *game, const qa_q1_travel_state *state, double server_flags) {
   if (server_flags != 0 && strcmp(game->map_name, "start") == 0) {
     qa_q1_travel_state result = qa_q1_new_travel(&game->options);
     /* TS shares the extensions array; the copy keeps it shared. */
@@ -157,32 +162,39 @@ qa_q1_travel_state qa_q1_decode_travel(qa_q1b_game *game, const qa_q1_travel_sta
   result.extensions = state->extensions;
   return result;
 }
-void qa_q1_admit_travel(qa_q1b_game *game, qa_owned_actor actor, const qa_q1_travel_state *state) {
-  game->host->combat_set_health(game->host->ctx, actor, state->health);
-  game->host->combat_set_armor(game->host->ctx, actor, state->armor);
-  if (!game->host->inventory_has(game->host->ctx, actor.id)) {
-    game->host->inventory_create(game->host->ctx, actor, state->inventory, state->inventory_count);
+void qa_q1_admit_travel(qa_q1_services *game, qa_owned_actor actor, const qa_q1_travel_state *state) {
+  qa_gameplay_authority_set_health(game->host.combat, actor, state->health);
+  qa_gameplay_authority_set_armor(game->host.combat, actor, state->armor);
+  qa_inventory_entry *entries = malloc((state->inventory_count != 0 ? state->inventory_count : 1) * sizeof *entries);
+  if (entries == NULL) qa_range_error("out of memory");
+  for (size_t i = 0; i < state->inventory_count; i++) {
+    entries[i] = state->inventory[i]; /* the shared inventory table copies item ids it keeps */
+  }
+  if (!qa_shared_inventory_table_has(game->host.inventory, actor.id)) {
+    qa_shared_inventory_table_create_entries(game->host.inventory, actor, entries, state->inventory_count);
   } else {
     for (size_t i = 0; i < state->inventory_count; i++)
-      game->host->inventory_configure(game->host->ctx, actor, &state->inventory[i]);
+      qa_shared_inventory_table_configure(game->host.inventory, actor, entries[i], NULL, NULL);
   }
-  qa_q1b_player_state *player = game->player(game, actor.id);
+  free(entries);
+  qa_q1_player_state *player = qa_q1_player(game, actor.id);
   if (player != NULL) {
     player->max_health = state->max_health;
-    /* TS iterates powerup keys, calls host.powerup(actor, kind, 0),
-     * then clears the map; copy keys first because host.powerup may
-     * mutate the same list in a mirror implementation. */
-    const char *kinds[32];
-    size_t kind_count = player->powerup_count < 32 ? player->powerup_count : 32;
-    for (size_t i = 0; i < kind_count; i++) kinds[i] = player->powerups[i].name;
-    for (size_t i = 0; i < kind_count; i++)
-      game->host->powerup(game->host->ctx, actor, kinds[i], 0);
-    qa_q1b_powerups_clear(player);
+    /* TS iterates the powerup keys, calls host.powerup(actor, kind, 0),
+     * then clears the map; copy the keys first since host.powerup may
+     * touch the same player. */
+    qa_q1_powerup kinds[16];
+    const size_t kind_count = player->powerup_count;
+    for (size_t i = 0; i < kind_count; i++) kinds[i] = player->powerups[i].kind;
+    for (size_t i = 0; i < kind_count; i++) game->host.powerup(game->host.ctx, actor, kinds[i], 0);
+    player->powerup_count = 0;
     player->mega_rot_at = -1;
-    (void)game->select_weapon(game, actor, state->weapon);
+    (void)qa_q1_select_weapon(game, actor, state->weapon);
     for (size_t i = 0; i < state->extension_count; i++) {
       const qa_q1_travel_extension *extension = &state->extensions[i];
-      const qa_q1b_player_extension *registered = game->player_extension_get(game, extension->id);
+      const qa_q1_player_extension *registered = NULL;
+      for (size_t e = 0; e < game->player_extension_count; e++)
+        if (strcmp(game->player_extensions[e]->id, extension->id) == 0) registered = game->player_extensions[e];
       if (registered == NULL || registered->restore_travel == NULL)
         qa_range_error("Missing Q1 player travel extension: %s", extension->id);
       registered->restore_travel(registered->ctx, game, player, extension->bytes, extension->length);

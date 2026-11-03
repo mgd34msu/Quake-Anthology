@@ -148,12 +148,18 @@ static qa_archive_format detect_format(const uint8_t *header, size_t header_leng
   return QA_ARCHIVE_FORMAT_ZIP;
 }
 
+/* openArchiveSource's catch closes the retained source before rethrowing a
+ * parse error; decodeArchive's memory source is released the same way. */
+static void discard_partial_archive(void *arg) {
+  qa_archive_handle *archive = (qa_archive_handle *)arg;
+  free_entries(archive->entries, archive->entry_count);
+  qa_archive_source_destroy(&archive->storage);
+  free(archive);
+}
+
 static qa_archive_handle *open_from_storage(qa_archive_source *storage,
                                             bool has_format,
-                                            qa_archive_format format,
-                                            bool close_on_failure) {
-  const char *path = storage->source;
-  (void)close_on_failure; /* destroy below closes, as the TS catch does */
+                                            qa_archive_format format) {
   qa_archive_handle *archive =
       (qa_archive_handle *)calloc(1, sizeof *archive);
   if (archive == NULL) {
@@ -163,32 +169,44 @@ static qa_archive_handle *open_from_storage(qa_archive_source *storage,
   archive->storage = *storage;
   archive->source = archive->storage.source;
   archive->byte_length = archive->storage.byte_length;
+  const char *path = archive->source;
+  qa_cleanup cleanup;
+  qa_cleanup_push(&cleanup, discard_partial_archive, archive);
 
   size_t header_length = 0;
   int64_t wanted = archive->byte_length < 12 ? archive->byte_length : 12;
   uint8_t *header = qa_archive_source_read(&archive->storage, 0, wanted,
                                            &header_length);
   if (header == NULL && header_length != 0) goto oom;
+  /* Each buffer is released if a parser below raises (malformed input). */
+  qa_cleanup header_node;
+  qa_cleanup_push(&header_node, free, header);
   qa_archive_format selected =
       has_format ? format : detect_format(header, header_length, path);
   archive->format = selected;
   if (selected == QA_ARCHIVE_FORMAT_PAK) {
     qa_pak_header directory = qa_read_pak_header(
         header, header_length, path, archive->byte_length);
+    qa_cleanup_pop(&header_node);
     free(header);
     size_t directory_length = 0;
     uint8_t *directory_bytes = qa_archive_source_read(
         &archive->storage, directory.offset, directory.byte_length,
         &directory_length);
     if (directory_bytes == NULL && directory_length != 0) goto oom;
+    qa_cleanup directory_node;
+    qa_cleanup_push(&directory_node, free, directory_bytes);
     bool ok = qa_read_pak_directory(directory_bytes, directory_length, path,
                                     archive->byte_length, &archive->entries,
                                     &archive->entry_count);
+    qa_cleanup_pop(&directory_node);
     free(directory_bytes);
     if (!ok) goto oom;
     archive->central_offset = directory.offset;
+    qa_cleanup_pop(&cleanup);
     return archive;
   }
+  qa_cleanup_pop(&header_node);
   free(header);
   int64_t tail_length = archive->byte_length < QA_ZIP_TAIL_LENGTH
                             ? archive->byte_length
@@ -198,27 +216,31 @@ static qa_archive_handle *open_from_storage(qa_archive_source *storage,
       &archive->storage, archive->byte_length - tail_length, tail_length,
       &tail_read);
   if (tail == NULL && tail_read != 0) goto oom;
+  qa_cleanup tail_node;
+  qa_cleanup_push(&tail_node, free, tail);
   qa_zip_directory directory =
       qa_read_zip_tail(tail, tail_read, path, archive->byte_length);
+  qa_cleanup_pop(&tail_node);
   free(tail);
   uint8_t *directory_bytes = qa_archive_source_read(
       &archive->storage, directory.offset, directory.byte_length,
       &directory_read);
   if (directory_bytes == NULL && directory_read != 0) goto oom;
+  qa_cleanup zip_directory_node;
+  qa_cleanup_push(&zip_directory_node, free, directory_bytes);
   bool ok = qa_read_zip_directory(directory_bytes, directory_read, path,
                                   directory, selected, &archive->entries,
                                   &archive->entry_count);
+  qa_cleanup_pop(&zip_directory_node);
   free(directory_bytes);
   if (!ok) goto oom;
   archive->central_offset = directory.offset;
+  qa_cleanup_pop(&cleanup);
   return archive;
 oom:
-  /* Parse aborts propagate like the TS throws; only OOM reaches here.
-   * openArchiveSource closes the retained source on failure. */
-  free_entries(archive->entries, archive->entry_count);
-  archive->entries = NULL;
-  qa_archive_source_destroy(&archive->storage);
-  free(archive);
+  /* Parse errors raise through the cleanup above; only OOM reaches here. */
+  qa_cleanup_pop(&cleanup);
+  discard_partial_archive(archive);
   return NULL;
 }
 
@@ -227,7 +249,7 @@ qa_archive_handle *qa_decode_archive(const uint8_t *bytes, size_t length,
                                      const char *source) {
   qa_archive_source storage;
   if (!qa_memory_source_init(&storage, bytes, length, source)) return NULL;
-  return open_from_storage(&storage, has_format, format, false);
+  return open_from_storage(&storage, has_format, format);
 }
 
 qa_archive_handle *qa_open_archive(const char *path, bool has_format,
@@ -244,5 +266,5 @@ qa_archive_handle *qa_open_archive_source(qa_archive_source *storage,
   memset(storage, 0, sizeof *storage);
   storage->descriptor = -1;
   storage->closed = true;
-  return open_from_storage(&owned, has_format, format, true);
+  return open_from_storage(&owned, has_format, format);
 }

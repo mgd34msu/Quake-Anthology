@@ -61,6 +61,7 @@ qa_vec3 qa_q1_normalize(qa_vec3 a) {
   return magnitude == 0 ? QA_Q1_ZERO : qa_scale3(a, 1 / magnitude);
 }
 bool qa_q1_overlaps(qa_bounds a, qa_bounds b) { return qa_math_bounds_overlap(a, b); }
+double qa_q1_path_end_time(double time) { return (double)(float)((double)(float)time + 999999); }
 double qa_q1_yaw_for(qa_vec3 direction) {
   double yaw = atan2(direction.y, direction.x) * 180 / 3.141592653589793;
   return yaw < 0 ? yaw + 360 : yaw;
@@ -88,4 +89,15 @@ void qa_q1_player_powerup_delete(qa_q1_player_state *p, qa_q1_powerup kind) {
     memmove(&p->powerups[i], &p->powerups[i + 1], (p->powerup_count - i - 1) * sizeof *p->powerups);
     p->powerup_count--; return;
   }
+}
+
+double qa_q1_options_skill(const qa_q1_options *options) {
+  return options->live.skill != NULL ? options->live.skill(options->live.ctx) : options->skill;
+}
+double qa_q1_options_teamplay(const qa_q1_options *options) {
+  if (options->live.teamplay != NULL) return options->live.teamplay(options->live.ctx);
+  return options->has_teamplay ? options->teamplay : 0;
+}
+double qa_q1_options_gravity(const qa_q1_options *options) {
+  return options->live.gravity != NULL ? options->live.gravity(options->live.ctx) : options->gravity;
 }

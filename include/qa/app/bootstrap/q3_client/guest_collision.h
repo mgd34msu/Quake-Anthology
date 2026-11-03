@@ -5,6 +5,7 @@
 #define QA_APP_BOOTSTRAP_Q3_CLIENT_GUEST_COLLISION_H
 #include <stdbool.h>
 #include "qa/app/bootstrap/q3_client/cvars.h"
+#include "qa/compat/qvm/client_collision_syscalls.h"
 #include "qa/contracts/math.h"
 #include "qa/persistence/value.h"
 #include "qa/world/collision/index.h"
@@ -40,4 +41,8 @@ qa_source_trace_result qa_app_shared_qvm_client_clip_models_trace(
 qa_source_trace_result qa_app_shared_qvm_client_clip_models_transformed_trace(
     qa_app_shared_qvm_client_clip_models *models, qa_temporary_trace_query query, double handle,
     qa_vec3 origin, qa_vec3 angles);
+/* TS `implements QvmClientClipModels`: the models as the client collision
+ * interface (ctx is the borrowed models). */
+qa_qvm_client_clip_models qa_app_shared_qvm_client_clip_models_as_client(
+    qa_app_shared_qvm_client_clip_models *models);
 #endif

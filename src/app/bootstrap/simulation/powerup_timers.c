@@ -2,6 +2,7 @@
 #include "qa/app/bootstrap/simulation/powerup_timers.h"
 #include <string.h>
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 static size_t push(qa_active_powerup_timer *out, size_t cap, size_t n, qa_item_id item, const char *label, double remaining) {
   if (!(remaining > 0)) return n;
   if (n < cap) { out[n].item = item; out[n].label = label; out[n].remaining_seconds = remaining; }
@@ -63,7 +64,7 @@ size_t qa_app_sim_q3_public_powerup_timers(double (*expires)(void *ctx, double p
 size_t qa_app_sim_q3_powerup_timers(qa_app_sim_q3_timer_client client, double now_ms,
     qa_app_sim_q3_timer_client (*client_at)(void *ctx, double client_number), void *client_at_ctx,
     qa_active_powerup_timer *out, size_t capacity) {
-  qa_app_sim_q3_timer_client viewed = ((int)client.pm_flags & QA_Q3_FLAG_FOLLOW) != 0
+  qa_app_sim_q3_timer_client viewed = (qa_js_to_int32(client.pm_flags) & QA_Q3_FLAG_FOLLOW) != 0
       ? client_at(client_at_ctx, client.client_num) : client;
   size_t n = qa_app_sim_q3_public_powerup_timers(viewed.powerup_expires, viewed.powerup_ctx, now_ms, out, capacity);
   n = push(out, capacity, n, "q3:holdable_invulnerability", "Invulnerability", (viewed.invulnerability_time - now_ms) / 1000);

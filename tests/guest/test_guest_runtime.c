@@ -174,6 +174,7 @@ static void fixture_init(fixture *f, int width) {
   qa_guest_processor_initial_state init = {width == 4 ? QA_GUEST_I386 : QA_GUEST_X86_64,
                                            0x30000, 0x20000, 2, 0x37f, 0x1f80, 0xffff};
   qa_create_guest_processor_state(&f->state, &init);
+  memset(&f->x64, 0, sizeof f->x64);
   if (width == 8) qa_x64_cpu_init(&f->x64, &f->state, &f->mem, NULL, NULL, &f->callbacks);
   else qa_i386_cpu_init(&f->x86, &f->state, &f->mem, is_host_call, &f->callbacks, NULL, NULL);
   memset(&f->cpu, 0, sizeof f->cpu);
@@ -345,6 +346,7 @@ static void test_format_buffer(void) {
   qa_guest_format_result overflow_result = qa_format_guest_buffer(&overflow);
   CHECK(overflow_result.result == -1 && overflow_result.has_errno &&
         overflow_result.errno_value == 132);
+  qa_x64_cpu_destroy(&f.x64);
   qa_sparse_guest_memory_destroy(&f.mem);
 }
 
@@ -392,6 +394,7 @@ static void test_scan(void) {
                     args_addr, &catch_) == 1);
   CHECK(qa_memory_read_u64(m, destinations) == 1);
   CHECK(scan_direct(&f, guest_text(&f, "1"), INT64_MAX, "%s", args_addr, &catch_) == -2);
+  qa_x64_cpu_destroy(&f.x64);
   qa_sparse_guest_memory_destroy(&f.mem);
 }
 
@@ -495,6 +498,7 @@ static void test_system_v_heap_guard_qsort(void) {
   qa_call_value free_args[] = {ptr_arg(true, allocation)};
   (void)sv_call(f, &s.rt, "libc.so.6", "free", NULL, free_args, 1);
   qa_system_v_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 static void test_system_v_format_service(void) {
@@ -538,6 +542,7 @@ static void test_system_v_format_service(void) {
   CHECK(qa_gmem_read_pointer(m, qa_memory_offset(m, descriptor, 8), &cursor) &&
         cursor.byte_offset == stack.byte_offset + 32);
   qa_system_v_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 static qa_call_result invoke_virtual(fixture *f, qa_guest_core_address object, int slot_index,
@@ -629,6 +634,7 @@ static void test_system_v_iostreams(void) {
   CHECK(s.out.flush_count - flushes_before == 10);
   CHECK(qa_gmem_read_i32(m, streams->refcount) == 1);
   qa_system_v_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 typedef struct destructor_probe { qa_sparse_guest_memory *mem; qa_guest_core_address counter; }
@@ -673,6 +679,7 @@ static void test_system_v_destructors(void) {
   s.rt.host.finalize_destructors(s.rt.host.ctx, &f->context, false, A(0));
   CHECK(qa_gmem_read_i32(m, counter) == 312);
   qa_system_v_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 
@@ -813,6 +820,7 @@ static void test_windows_services(void) {
   qa_call_value destroy_args[] = {ptr_arg(true, heap)};
   CHECK(result_is_int(win_call(&s, "kernel32.dll", "HeapDestroy", destroy_args, 1), 1));
   qa_windows_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 static void test_windows_crt(void) {
@@ -860,6 +868,7 @@ static void test_windows_crt(void) {
   qa_call_result errno_result = win_call(&s, "ucrtbase.dll", "_errno", NULL, 0);
   CHECK(qa_gmem_read_i32(m, errno_result.pointer) == 34);
   qa_windows_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 typedef struct compare_probe { qa_sparse_guest_memory *mem; int comparisons; } compare_probe;
@@ -931,6 +940,7 @@ static void test_windows_qsort_and_libraries(void) {
   (void)win_call(&s, "kernel32.dll", "LeaveCriticalSection", lock_args, 1);
   CHECK(qa_memory_read_u32(m, qa_memory_offset(m, lock, 8)) == 0xffffffffu);
   qa_windows_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 static void test_windows_ucrt_format(void) {
@@ -965,6 +975,7 @@ static void test_windows_ucrt_format(void) {
   const uint8_t expected_copied[6] = {97, 98, 99, 0, 127, 127};
   CHECK(memcmp(copied, expected_copied, 6) == 0);
   qa_windows_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 static void test_windows_unsupported_import(void) {
@@ -990,6 +1001,7 @@ static void test_windows_unsupported_import(void) {
   CHECK_ABORTS((void)qa_guest_callback_table_invoke(&f->callbacks, resolution.address,
                                                     &f->context, NULL, 0));
   qa_windows_guest_runtime_destroy(&s.rt);
+  qa_x64_cpu_destroy(&f->x64);
   qa_sparse_guest_memory_destroy(&f->mem);
 }
 

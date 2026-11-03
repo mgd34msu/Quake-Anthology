@@ -1,5 +1,6 @@
 /* Port of src/compat/qc/presentation-host.ts. GPL-2.0-or-later. */
 #include "qa/compat/qc/presentation_host.h"
+#include "qa/network/common/js_number.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,6 +10,7 @@
 #include "qa/network/q1/wire_types.h"
 #include "qa/persistence/save_image.h"
 #include "qa/foundation/support.h"
+#include "qa/text/localization_key.h"
 
 /* Finale */
 static bool actor_eq(qa_actor_id a, qa_actor_id b) { return qa_same_actor(a, b); }
@@ -34,10 +36,7 @@ bool qa_compat_qc_finale_ack_poll(qa_compat_qc_finale_ack *a, double seconds, co
   }
   for (size_t i = 0; i < count; i++) {
     int idx = held_index(a, actors[i], true); bool previous = a->held[idx];
-    if (down[i] && previous != true && !(idx == (int)a->count - 1 && a->held[idx] == false && false)) {
-      /* TS: previous undefined (new entry) also counts as press. held_index create sets false; TS get returns undefined != true, same result. */
-      a->acknowledged = true;
-    }
+    if (down[i] && !previous) a->acknowledged = true; /* a new entry reads false, as TS undefined !== true */
     a->held[idx] = down[i];
   }
   return a->acknowledged;
@@ -53,7 +52,27 @@ static qa_compat_qc_builtin host_get(PS *s, const char *name) {
   for (size_t i = 0; i < s->world->host_count; i++) if (strcmp(s->world->host[i].name, name) == 0) return s->world->host[i].fn;
   return (qa_compat_qc_builtin){NULL, NULL};
 }
-enum { W_FINALE, W_EXFLAGS, W_INERT, W_INERT0, W_BPRINT, W_LOCALCMD, W_MAKESTATIC, W_SPRINT, W_CENTERPRINT, W_STUFFCMD, W_EXSPRINT, W_EXCENTER, W_PRECACHE_SOUND, W_PRECACHE_MODEL, W_PRECACHE_FILE, W_SOUND, W_LOCALSOUND, W_AMBIENT, W_PARTICLE, W_LIGHTSTYLE };
+/* TS printText: ex_* prints pass `$key, arguments...`; the plain family concatenates every argument. Malloc'd. */
+static char *print_text(qa_compat_qc_machine *m, int64_t first, bool keyed) {
+  if (!keyed || first + 1 >= qa_compat_qc_machine_get_argc(m)) return qa_compat_qc_machine_var_string(m, first);
+  const char *key0 = qa_compat_qc_machine_arg_string(m, first);
+  if (key0[0] != '$') return qa_compat_qc_machine_var_string(m, first);
+  char *key = strdup(key0);
+  if (key == NULL) qa_range_error("QC print allocation failed");
+  const int64_t count = qa_compat_qc_machine_get_argc(m) - first - 1;
+  char **args = calloc((size_t)(count > 0 ? count : 1), sizeof *args);
+  if (args == NULL) qa_range_error("QC print allocation failed");
+  for (int64_t index = 0; index < count; index++) {
+    args[index] = strdup(qa_compat_qc_machine_arg_string(m, first + 1 + index));
+    if (args[index] == NULL) qa_range_error("QC print allocation failed");
+  }
+  char *text = qa_encode_localization_key(key, (const char *const *)args, (size_t)count);
+  for (int64_t index = 0; index < count; index++) free(args[index]);
+  free(args);
+  free(key);
+  return text;
+}
+enum { W_FINALE, W_EXFLAGS, W_INERT, W_INERT0, W_BPRINT, W_EXBPRINT, W_LOCALCMD, W_MAKESTATIC, W_SPRINT, W_CENTERPRINT, W_STUFFCMD, W_EXSPRINT, W_EXCENTER, W_PRECACHE_SOUND, W_PRECACHE_MODEL, W_PRECACHE_FILE, W_SOUND, W_LOCALSOUND, W_AMBIENT, W_PARTICLE, W_LIGHTSTYLE };
 static void pres_fn(void *ctx, qa_compat_qc_machine *m) {
   struct Ctx { const char *name; PS *state; int which; } *c = ctx;
   PS *s = c->state; p_check(s, m);
@@ -63,14 +82,15 @@ static void pres_fn(void *ctx, qa_compat_qc_machine *m) {
     case W_FINALE: qa_compat_qc_machine_return_float(m, sv->finale_finished(sv->ctx) ? 1 : 0); return;
     case W_EXFLAGS: case W_INERT0: qa_compat_qc_machine_return_float(m, 0); return;
     case W_INERT: return;
-    case W_BPRINT: {
-      if (sv->broadcast_print) { char *t = qa_compat_qc_machine_var_string(m, qw ? 1 : 0); double lvl = qw ? trunc(qa_compat_qc_machine_arg_float(m, 0)) : 2; sv->broadcast_print(sv->ctx, t ? t : "", lvl); free(t); return; }
+    case W_BPRINT: case W_EXBPRINT: {
+      const bool keyed = c->which == W_EXBPRINT;
+      if (sv->broadcast_print) { char *t = print_text(m, qw ? 1 : 0, keyed); double lvl = qw ? trunc(qa_compat_qc_machine_arg_float(m, 0)) : 2; sv->broadcast_print(sv->ctx, t ? t : "", lvl); free(t); return; }
       if (!qw) {
-        char *t = qa_compat_qc_machine_var_string(m, 0); sv->print(sv->ctx, t ? t : "");
+        char *t = print_text(m, 0, keyed); char *plain = qa_plain_localization_text(t ? t : ""); sv->print(sv->ctx, plain ? plain : ""); free(plain);
         if (!sv->print_broadcasts_to_clients && sv->nq) { qa_netquake_message msg; memset(&msg,0,sizeof msg); msg.kind="print"; msg.text=t; sv->nq->route(sv->nq->ctx, &msg, 1, (qa_compat_qc_message_destination){QA_QC_DEST_BROADCAST, true, {{NULL,0},0,0,NULL}, {0,0,0}, NULL}, NULL, NULL, 0); }
         free(t); return;
       }
-      char *t = qa_compat_qc_machine_var_string(m, 1); sv->print(sv->ctx, t ? t : "");
+      char *t = print_text(m, 1, keyed); char *plain = qa_plain_localization_text(t ? t : ""); sv->print(sv->ctx, plain ? plain : ""); free(plain);
       if (!sv->print_broadcasts_to_clients) { qa_compat_qc_routed_message e; memset(&e,0,sizeof e); e.message.kind="print"; e.message.level=trunc(qa_compat_qc_machine_arg_float(m,0)); e.message.text=t; qw->route(qw->ctx, &e, 1, (qa_compat_qc_message_destination){QA_QC_DEST_BROADCAST, true, {{NULL,0},0,0,NULL}, {0,0,0}, NULL}); }
       free(t); return;
     }
@@ -97,7 +117,7 @@ static void pres_fn(void *ctx, qa_compat_qc_machine *m) {
     case W_SPRINT: case W_CENTERPRINT: case W_STUFFCMD: case W_EXSPRINT: case W_EXCENTER: {
       const char *name = c->name; bool center = c->which==W_CENTERPRINT||c->which==W_EXCENTER;
       qa_owned_actor actor = s->world->actor(s->world->ctx, qa_compat_qc_entity_memory_slot(s->world->entities, qa_compat_qc_machine_arg_int(m,0)));
-      char *t = qa_compat_qc_machine_var_string(m, (qw && c->which==W_SPRINT) ? 2 : 1);
+      char *t = print_text(m, (qw && c->which==W_SPRINT) ? 2 : 1, c->which==W_EXSPRINT || c->which==W_EXCENTER);
       qa_compat_qc_message_destination dest = {QA_QC_DEST_CLIENT, true, actor.id, {0,0,0}, NULL};
       if (qw) {
         if (!qw->client(qw->ctx, actor.id)) { char buf[256]; snprintf(buf,sizeof buf,"tried to %s to a non-client\n", name); sv->print(sv->ctx, buf); free(t); return; }
@@ -109,7 +129,13 @@ static void pres_fn(void *ctx, qa_compat_qc_machine *m) {
       }
       bool is_sprint = c->which==W_SPRINT||c->which==W_EXSPRINT;
       if (sv->nq) {
-        if (!sv->nq->client(sv->nq->ctx, actor.id)) { free(t); qa_compat_qc_machine_fail(m, "Client message addressed a non-client"); }
+        if (!sv->nq->client(sv->nq->ctx, actor.id)) {
+          free(t);
+          if (c->which == W_STUFFCMD) qa_compat_qc_machine_fail(m, "Client message addressed a non-client");
+          char buf[64]; snprintf(buf, sizeof buf, "tried to %s to a non-client\n", center ? "centerprint" : "sprint");
+          sv->print(sv->ctx, buf);
+          return;
+        }
         qa_netquake_message msg; memset(&msg,0,sizeof msg); msg.kind = is_sprint?"print":center?"center-print":"stufftext"; msg.text=t;
         sv->nq->route(sv->nq->ctx, &msg, 1, dest, NULL, NULL, 0); free(t); return;
       }
@@ -131,9 +157,9 @@ static void pres_fn(void *ctx, qa_compat_qc_machine *m) {
       double channel = trunc(qa_compat_qc_machine_arg_float(m,1));
       double volume = trunc(m->numeric->multiply(m->numeric->ctx, qa_compat_qc_machine_arg_float(m,3), 255));
       double attenuation = qa_compat_qc_machine_arg_float(m,4);
-      if (!isfinite(volume)||volume<0||volume>255) { qa_compat_qc_machine_fail(m, "SV_StartSound: volume = %g", volume); }
-      if (!isfinite(attenuation)||attenuation<0||attenuation>4) { qa_compat_qc_machine_fail(m, "SV_StartSound: attenuation = %g", attenuation); }
-      if (!isfinite(channel)||channel<0||channel>(qw?15:7)) { qa_compat_qc_machine_fail(m, "SV_StartSound: channel = %g", channel); }
+      if (!isfinite(volume)||volume<0||volume>255) { qa_compat_qc_machine_fail(m, "SV_StartSound: volume = %s", QA_JS_NUMBER(volume)); }
+      if (!isfinite(attenuation)||attenuation<0||attenuation>4) { qa_compat_qc_machine_fail(m, "SV_StartSound: attenuation = %s", QA_JS_NUMBER(attenuation)); }
+      if (!isfinite(channel)||channel<0||channel>(qw?15:7)) { qa_compat_qc_machine_fail(m, "SV_StartSound: channel = %s", QA_JS_NUMBER(channel)); }
       int channel_id = (int)channel & 7;
       const char *sc; char chnum[8];
       switch(channel_id){case 0:sc="auto";break;case 1:sc="weapon";break;case 2:sc="voice";break;case 3:sc="item";break;case 4:sc="body";break;default:snprintf(chnum,sizeof chnum,"%d",channel_id);sc=chnum;break;}
@@ -213,7 +239,7 @@ qa_compat_qc_presentation_bindings qa_compat_qc_create_presentation_bindings(qa_
   for (size_t i = 0; i < 4; i++) INSTALL(inert0[i], W_INERT0);
   bool qw = world->program->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD;
   if (qw && !services.qw) qa_range_error("QuakeWorld presentation requires routed message services");
-  INSTALL("bprint", W_BPRINT); INSTALL("ex_bprint", W_BPRINT);
+  INSTALL("bprint", W_BPRINT); INSTALL("ex_bprint", W_EXBPRINT);
   INSTALL("localcmd", W_LOCALCMD); INSTALL("makestatic", W_MAKESTATIC);
   if (services.message || (qw && services.qw)) {
     INSTALL("sprint", W_SPRINT); INSTALL("centerprint", W_CENTERPRINT); INSTALL("stuffcmd", W_STUFFCMD);
@@ -244,77 +270,92 @@ static void routed_delete(B *b, const char *key) {
     free(b->routed[i].key); qa_size_buf_destroy(&b->routed[i].buffer); free(b->routed[i].owners);
     memmove(&b->routed[i], &b->routed[i+1], (b->routed_count-i-1)*sizeof *b->routed); b->routed_count--; return; }
 }
+typedef struct { qa_size_buf encoded; bool has_encoded; qa_q1_event *effects; bool *has; } EffectScope;
+static void effect_scope_free(void *arg) { EffectScope *s = arg; if (s->has_encoded) qa_size_buf_destroy(&s->encoded); free(s->effects); free(s->has); }
 static void emit_nq_effects(B *b, qa_netquake_message *messages, size_t count, const qa_compat_qc_owner_entry *owners, size_t owner_count, long long maximum, bool routed, const qa_actor_id *recipient) {
-  qa_size_buf encoded; if (!qa_size_buf_init(&encoded, maximum, false)) qa_range_error("message buffer allocation failed");
-  qa_q1_event *effects = calloc(count ? count : 1, sizeof *effects);
-  bool *has = calloc(count ? count : 1, sizeof *has);
-  if (!effects || !has) qa_range_error("message effect allocation failed");
+  EffectScope s; memset(&s, 0, sizeof s);
+  if (!qa_size_buf_init(&s.encoded, maximum, false)) qa_range_error("message buffer allocation failed");
+  s.has_encoded = true;
+  s.effects = calloc(count ? count : 1, sizeof *s.effects);
+  s.has = calloc(count ? count : 1, sizeof *s.has);
+  if (!s.effects || !s.has) qa_range_error("message effect allocation failed");
+  qa_cleanup scope; qa_cleanup_push(&scope, effect_scope_free, &s);
   for (size_t i = 0; i < count; i++) {
-    long long offset = encoded.cursize;
+    long long offset = s.encoded.cursize;
     if (strcmp(messages[i].kind, "entity") == 0) qa_range_error("QC cannot write host entity snapshots");
-    qa_write_netquake_message(&encoded, b->decoder.protocol, &messages[i], b->decoder.rerelease_messages, b->decoder.standard_quake);
+    qa_write_netquake_message(&s.encoded, b->decoder.protocol, &messages[i], b->decoder.rerelease_messages, b->decoder.standard_quake);
     if (strcmp(messages[i].kind, "temporary-entity") != 0) {
       if (routed) continue;
       qa_range_error("Unsupported QC broadcast message %s", messages[i].kind);
     }
     qa_actor_id owner; bool has_owner = owner_get(owners, owner_count, offset + 2, &owner);
-    effects[i] = qa_compat_qc_quake_temporary_event(messages[i].effect, has_owner ? &owner : NULL, false); has[i] = true;
+    s.effects[i] = qa_compat_qc_quake_temporary_event(messages[i].effect, has_owner ? &owner : NULL, false); s.has[i] = true;
   }
-  qa_size_buf_destroy(&encoded);
-  for (size_t i = 0; i < count; i++) if (has[i]) b->emit(b->emit_ctx, effects[i], recipient);
-  free(effects); free(has);
+  for (size_t i = 0; i < count; i++) if (s.has[i]) b->emit(b->emit_ctx, s.effects[i], recipient);
+  qa_cleanup_pop(&scope); effect_scope_free(&s);
+}
+typedef struct { uint8_t *bytes; qa_netquake_message *nq; qa_quakeworld_message *qw; size_t count; qa_actor_id *view_targets; bool *view_has; qa_compat_qc_routed_message *entries; qa_size_buf encoded; bool has_encoded; } RouteScope;
+static void route_scope_free(void *arg) {
+  RouteScope *s = arg;
+  if (s->has_encoded) qa_size_buf_destroy(&s->encoded);
+  if (s->nq) for (size_t i = 0; i < s->count; i++) qa_netquake_message_destroy(&s->nq[i]);
+  if (s->qw) for (size_t i = 0; i < s->count; i++) qa_quakeworld_message_destroy(&s->qw[i]);
+  free(s->nq); free(s->qw); free(s->entries); free(s->bytes); free(s->view_targets); free(s->view_has);
 }
 static void route_buffer(B *b, qa_size_buf *buffer, const qa_compat_qc_owner_entry *owners, size_t owner_count, qa_compat_qc_message_destination dest) {
+  long long maxsize = buffer->maxsize; /* the routed table may move during route() */
+  RouteScope s; memset(&s, 0, sizeof s);
+  qa_cleanup scope; qa_cleanup_push(&scope, route_scope_free, &s);
   if (b->nq) {
-    size_t len = 0; uint8_t *bytes = qa_size_buf_bytes(buffer, &len);
-    size_t count = 0; qa_netquake_message *messages = qa_netquake_decoder_decode(&b->decoder, bytes, len, &count);
-    qa_size_buf encoded; if (!qa_size_buf_init(&encoded, buffer->maxsize, false)) qa_range_error("message buffer allocation failed");
-    qa_actor_id *view_targets = calloc(count ? count : 1, sizeof *view_targets);
-    bool *view_has = calloc(count ? count : 1, sizeof *view_has);
-    if (!view_targets || !view_has) qa_range_error("message view allocation failed");
-    for (size_t i = 0; i < count; i++) {
-      if (strcmp(messages[i].kind, "entity") == 0) qa_range_error("QC cannot write host entity snapshots");
-      if (strcmp(messages[i].kind, "set-view") == 0) view_has[i] = owner_get(owners, owner_count, encoded.cursize + 1, &view_targets[i]);
-      qa_write_netquake_message(&encoded, b->decoder.protocol, &messages[i], b->decoder.rerelease_messages, b->decoder.standard_quake);
+    size_t len = 0; s.bytes = qa_size_buf_bytes(buffer, &len);
+    s.nq = qa_netquake_decoder_decode(&b->decoder, s.bytes, len, &s.count);
+    if (!qa_size_buf_init(&s.encoded, maxsize, false)) qa_range_error("message buffer allocation failed");
+    s.has_encoded = true;
+    s.view_targets = calloc(s.count ? s.count : 1, sizeof *s.view_targets);
+    s.view_has = calloc(s.count ? s.count : 1, sizeof *s.view_has);
+    if (!s.view_targets || !s.view_has) qa_range_error("message view allocation failed");
+    for (size_t i = 0; i < s.count; i++) {
+      if (strcmp(s.nq[i].kind, "entity") == 0) qa_range_error("QC cannot write host entity snapshots");
+      if (strcmp(s.nq[i].kind, "set-view") == 0) s.view_has[i] = owner_get(owners, owner_count, s.encoded.cursize + 1, &s.view_targets[i]);
+      qa_write_netquake_message(&s.encoded, b->decoder.protocol, &s.nq[i], b->decoder.rerelease_messages, b->decoder.standard_quake);
     }
-    qa_size_buf_destroy(&encoded);
-    b->nq->route(b->nq->ctx, messages, count, dest, view_targets, view_has, count);
+    qa_size_buf_destroy(&s.encoded); s.has_encoded = false;
+    b->nq->route(b->nq->ctx, s.nq, s.count, dest, s.view_targets, s.view_has, s.count);
     bool local = b->nq->local ? b->nq->local(b->nq->ctx) : false;
     if (!b->nq->native(b->nq->ctx) || local || (dest.kind == QA_QC_DEST_BROADCAST && !dest.reliable)) {
       const qa_actor_id *recip = dest.kind == QA_QC_DEST_CLIENT ? &dest.actor : NULL;
-      emit_nq_effects(b, messages, count, owners, owner_count, buffer->maxsize, true, recip);
+      emit_nq_effects(b, s.nq, s.count, owners, owner_count, maxsize, true, recip);
     }
-    for (size_t i = 0; i < count; i++) qa_netquake_message_destroy(&messages[i]);
-    free(messages); free(bytes); free(view_targets); free(view_has);
+    qa_cleanup_pop(&scope); route_scope_free(&s);
     return;
   }
   if (!b->qw) qa_range_error("Missing QuakeWorld routing service");
-  size_t len = 0; uint8_t *bytes = qa_size_buf_bytes(buffer, &len);
-  size_t count = 0; qa_quakeworld_message *messages = qa_quakeworld_decoder_decode(&b->qw_decoder, bytes, len, 0, &count);
-  qa_size_buf encoded; if (!qa_size_buf_init(&encoded, buffer->maxsize, false)) qa_range_error("message buffer allocation failed");
-  qa_compat_qc_routed_message *entries = calloc(count ? count : 1, sizeof *entries);
-  if (!entries) qa_range_error("message entry allocation failed");
-  for (size_t i = 0; i < count; i++) {
-    if (strcmp(messages[i].kind, "packet-entities") == 0 || strcmp(messages[i].kind, "invalid-delta") == 0) qa_range_error("QC cannot write snapshot entity deltas");
-    long long offset = encoded.cursize;
-    qa_write_quakeworld_message(&encoded, b->qw_decoder.protocol, &messages[i]);
+  size_t len = 0; s.bytes = qa_size_buf_bytes(buffer, &len);
+  s.qw = qa_quakeworld_decoder_decode(&b->qw_decoder, s.bytes, len, 0, &s.count);
+  if (!qa_size_buf_init(&s.encoded, maxsize, false)) qa_range_error("message buffer allocation failed");
+  s.has_encoded = true;
+  s.entries = calloc(s.count ? s.count : 1, sizeof *s.entries);
+  if (!s.entries) qa_range_error("message entry allocation failed");
+  for (size_t i = 0; i < s.count; i++) {
+    if (strcmp(s.qw[i].kind, "packet-entities") == 0 || strcmp(s.qw[i].kind, "invalid-delta") == 0) qa_range_error("QC cannot write snapshot entity deltas");
+    long long offset = s.encoded.cursize;
+    qa_write_quakeworld_message(&s.encoded, b->qw_decoder.protocol, &s.qw[i]);
     qa_actor_id actor; bool has = false;
-    if (strcmp(messages[i].kind, "temporary-entity") == 0 && messages[i].effect.kind == QA_TE_BEAM) has = owner_get(owners, owner_count, offset + 2, &actor);
-    else if (strcmp(messages[i].kind, "sound") == 0 || strcmp(messages[i].kind, "stop-sound") == 0) has = owner_get(owners, owner_count, -offset - 2, &actor);
-    else if (strcmp(messages[i].kind, "muzzle-flash") == 0 || strcmp(messages[i].kind, "set-view") == 0) has = owner_get(owners, owner_count, offset + 1, &actor);
-    if (strcmp(messages[i].kind, "temporary-entity") == 0 && messages[i].effect.kind == QA_TE_BEAM && !has) qa_range_error("QC beam had no owned actor when written");
-    entries[i].message = messages[i]; entries[i].has_actor = has; if (has) entries[i].actor = actor;
+    if (strcmp(s.qw[i].kind, "temporary-entity") == 0 && s.qw[i].effect.kind == QA_TE_BEAM) has = owner_get(owners, owner_count, offset + 2, &actor);
+    else if (strcmp(s.qw[i].kind, "sound") == 0 || strcmp(s.qw[i].kind, "stop-sound") == 0) has = owner_get(owners, owner_count, -offset - 2, &actor);
+    else if (strcmp(s.qw[i].kind, "muzzle-flash") == 0 || strcmp(s.qw[i].kind, "set-view") == 0) has = owner_get(owners, owner_count, offset + 1, &actor);
+    if (strcmp(s.qw[i].kind, "temporary-entity") == 0 && s.qw[i].effect.kind == QA_TE_BEAM && !has) qa_range_error("QC beam had no owned actor when written");
+    s.entries[i].message = s.qw[i]; s.entries[i].has_actor = has; if (has) s.entries[i].actor = actor;
   }
-  qa_size_buf_destroy(&encoded);
-  b->qw->route(b->qw->ctx, entries, count, dest);
-  for (size_t i = 0; i < count; i++) qa_quakeworld_message_destroy(&entries[i].message);
-  free(entries); free(messages); free(bytes);
+  qa_size_buf_destroy(&s.encoded); s.has_encoded = false;
+  b->qw->route(b->qw->ctx, s.entries, s.count, dest);
+  qa_cleanup_pop(&scope); route_scope_free(&s);
 }
 enum { BW_BYTE, BW_CHAR, BW_SHORT, BW_LONG, BW_COORD, BW_ANGLE, BW_STRING, BW_ENTITY, BW_MULTICAST };
 static qa_compat_qc_routed_buffer *target_buffer(B *b, qa_compat_qc_machine *m) {
   bool is_qw = b->world->program->api.kind == QA_QUAKEC_API_Q1_QUAKEWORLD;
   const void *routing = b->qw ? (const void *)b->qw : (const void *)b->nq;
-  int64_t dest = (int64_t)trunc(qa_compat_qc_machine_arg_float(m, 0));
+  double dest = trunc(qa_compat_qc_machine_arg_float(m, 0)); /* switch (Math.trunc(...)): NaN falls to default */
   char key[96]; qa_compat_qc_message_destination destination; memset(&destination, 0, sizeof destination); bool has_dest = true;
   if (dest == 0) { snprintf(key,sizeof key,"broadcast"); destination.kind=QA_QC_DEST_BROADCAST; destination.reliable=false; }
   else if (dest == 1) {
@@ -349,11 +390,12 @@ static void write_fn(void *ctx, qa_compat_qc_machine *m) {
   struct BCtx { B *self; int which; } *c = ctx; B *b = c->self;
   if (c->which == BW_MULTICAST) {
     if (m->program != b->world->program || m->entities != b->world->entities) { qa_compat_qc_machine_fail(m, "QC multicast belongs to another source"); }
-    int64_t mode = (int64_t)trunc(qa_compat_qc_machine_arg_float(m, 1));
+    /* Math.trunc(argFloat): a NaN mode passes the range check and routes as "pvs". */
+    double mode = trunc(qa_compat_qc_machine_arg_float(m, 1));
     if (mode < 0 || mode > 5) { qa_compat_qc_machine_fail(m, "SV_Multicast: bad destination"); }
     qa_compat_qc_routed_buffer *entry = routed_get(b, "multicast");
     if (entry) {
-      qa_compat_qc_message_destination d = {QA_QC_DEST_MULTICAST, mode>=3, {{NULL,NULL},0,0,NULL}, qa_compat_qc_machine_arg_vector(m,0), mode%3==0?"all":mode%3==1?"phs":"pvs"};
+      qa_compat_qc_message_destination d = {QA_QC_DEST_MULTICAST, mode>=3, {{NULL,NULL},0,0,NULL}, qa_compat_qc_machine_arg_vector(m,0), fmod(mode,3)==0?"all":fmod(mode,3)==1?"phs":"pvs"};
       route_buffer(b, &entry->buffer, entry->owners, entry->owner_count, d);
       routed_delete(b, "multicast");
     }
@@ -419,24 +461,48 @@ void qa_compat_qc_broadcast_messages_flush_signon(B *b) {
     routed_delete(b, "signon");
   }
 }
+void qa_compat_qc_broadcast_messages_set_dropped(B *b, void *ctx, void (*dropped)(void *, const char *)) { b->dropped_ctx = ctx; b->dropped = dropped; }
+/* TS routeDropping: a malformed or unsupported message is dropped and
+ * reported; it must not stay queued to fail every later flush. */
+static void route_dropping(B *b, void (*route)(void *), void *ctx) {
+  qa_caught_error caught;
+  if (qa_try(route, ctx, &caught) || !b->dropped) return;
+  char text[QA_CAUGHT_MESSAGE_CAPACITY + 32]; snprintf(text, sizeof text, "Dropped QC message: %s\n", caught.message);
+  b->dropped(b->dropped_ctx, text);
+}
+typedef struct { B *b; qa_compat_qc_routed_buffer entry; } FlushRoute;
+static void flush_route(void *ctx) { FlushRoute *f = ctx; route_buffer(f->b, &f->entry.buffer, f->entry.owners, f->entry.owner_count, f->entry.destination); }
+typedef struct { B *b; uint8_t *bytes; size_t length; const qa_compat_qc_owner_entry *owners; size_t owner_count; long long maximum; qa_netquake_message *messages; size_t count; } FlushEffects;
+static void flush_effects_free(void *arg) { FlushEffects *f = arg; for (size_t i = 0; i < f->count; i++) qa_netquake_message_destroy(&f->messages[i]); free(f->messages); f->messages = NULL; f->count = 0; }
+static void flush_effects(void *ctx) {
+  FlushEffects *f = ctx;
+  f->messages = qa_netquake_decoder_decode(&f->b->decoder, f->bytes, f->length, &f->count);
+  qa_cleanup scope; qa_cleanup_push(&scope, flush_effects_free, f);
+  emit_nq_effects(f->b, f->messages, f->count, f->owners, f->owner_count, f->maximum, false, NULL);
+  qa_cleanup_pop(&scope); flush_effects_free(f);
+}
 void qa_compat_qc_broadcast_messages_flush(B *b) {
   if (b->qw || b->nq) {
     size_t i = 0;
     while (i < b->routed_count) {
-      qa_compat_qc_routed_buffer *entry = &b->routed[i];
-      if (!entry->has_destination) { i++; continue; }
-      char *key = strdup(entry->key);
-      if (!entry->buffer.overflowed) route_buffer(b, &entry->buffer, entry->owners, entry->owner_count, entry->destination);
-      routed_delete(b, key); free(key);
+      if (!b->routed[i].has_destination) { i++; continue; }
+      /* TS deletes the key before routing: a write during route starts a new buffer. */
+      FlushRoute route = {b, b->routed[i]};
+      memmove(&b->routed[i], &b->routed[i+1], (b->routed_count-i-1)*sizeof *b->routed); b->routed_count--;
+      if (!route.entry.buffer.overflowed) route_dropping(b, flush_route, &route);
+      free(route.entry.key); qa_size_buf_destroy(&route.entry.buffer); free(route.entry.owners);
     }
     return;
   }
+  /* TS empties the queue first, so a failing decode cannot repeat. */
   size_t len = 0; uint8_t *bytes = qa_size_buf_bytes(&b->buffer, &len);
-  size_t count = 0; qa_netquake_message *messages = qa_netquake_decoder_decode(&b->decoder, bytes, len, &count);
-  emit_nq_effects(b, messages, count, b->owners, b->owner_count, b->buffer.maxsize, false, NULL);
-  for (size_t i = 0; i < count; i++) qa_netquake_message_destroy(&messages[i]);
-  free(messages); free(bytes);
+  qa_compat_qc_owner_entry *owners = malloc((b->owner_count ? b->owner_count : 1) * sizeof *owners);
+  if (!owners) qa_range_error("message owner allocation failed");
+  if (b->owner_count) memcpy(owners, b->owners, b->owner_count * sizeof *owners);
+  FlushEffects effects = {b, bytes, len, owners, b->owner_count, b->buffer.maxsize, NULL, 0};
   qa_size_buf_clear(&b->buffer); b->owner_count = 0;
+  route_dropping(b, flush_effects, &effects);
+  free(owners); free(bytes);
 }
 uint8_t *qa_compat_qc_broadcast_capture_netquake_messages(B *b, const qa_netquake_message *messages, size_t count, size_t *out_len) {
   qa_size_buf buffer; if (!qa_size_buf_init(&buffer, 8000, false)) return NULL;

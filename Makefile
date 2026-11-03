@@ -32,8 +32,12 @@ all: $(BIN)
 $(BIN): $(APP_OBJS) $(LIB)
 	$(CC) $(CFLAGS) $(APP_OBJS) $(LIB) -o $@ $(LDLIBS)
 
+# `ar r` replaces members by basename, so objects that share a basename in
+# different directories would drop each other; rebuild with `q` instead.
 $(LIB): $(LIB_OBJS)
-	$(AR) rcs $@ $(LIB_OBJS)
+	rm -f $@
+	$(AR) qc $@ $(LIB_OBJS)
+	ranlib $@
 
 # tests/<module>/test_<name>.c -> build/test-<module>/test_<name>
 $(BUILD)/test-%: $(BUILD)/tests/%.o $(LIB)

@@ -9,6 +9,7 @@
 #include "qa/core/numeric.h"
 #include "qa/foundation/support.h"
 #include "qa/movement/q3/constants.h"
+#include "qa/foundation/js.h"
 static float f32(double v) { return (float)v; }
 #define PI_F 3.1415927410125732421875 /* fround(Math.PI) */
 static qa_vec3 multiply_add(qa_vec3 origin, double scale, qa_vec3 direction) {
@@ -35,8 +36,8 @@ bool qa_q3_pres_view_runtime_calculate_view_values(qa_q3_pres_view_runtime *view
   double size = state->snap->player_state.pm_type == QA_Q3_PM_INTERMISSION ? 100 : settings.view_size;
   if (size < 30) { view->host.set_view_size(view->host.ctx, 30); size = 30; }
   else if (size > 100) { view->host.set_view_size(view->host.ctx, 100); size = 100; }
-  refdef->width = (double)((int64_t)trunc((double)((int32_t)((int64_t)settings.video_width * (int64_t)size)) / 100) & ~1LL);
-  refdef->height = (double)((int64_t)trunc((double)((int32_t)((int64_t)settings.video_height * (int64_t)size)) / 100) & ~1LL);
+  refdef->width = (double)(qa_js_to_int32(trunc((double)((int32_t)((int64_t)settings.video_width * (int64_t)size)) / 100)) & ~1);
+  refdef->height = (double)(qa_js_to_int32(trunc((double)((int32_t)((int64_t)settings.video_height * (int64_t)size)) / 100)) & ~1);
   refdef->x = qa_int32((settings.video_width - refdef->width) / 2);
   refdef->y = qa_int32((settings.video_height - refdef->height) / 2);
   if (refdef->width <= 0 || refdef->height <= 0) qa_range_error("Camera view requires a positive viewport");
@@ -48,8 +49,8 @@ bool qa_q3_pres_view_runtime_calculate_view_values(qa_q3_pres_view_runtime *view
     refdef->view_axis = qa_qvm_angles_to_axis(state->refdef_view_angles);
     return calculate_fov(view, settings);
   }
-  state->bob_cycle = (double)(((int64_t)ps->bob_cycle & 128) >> 7);
-  state->bob_frac_sin = fabs(f32(sin(f32(f32(((int64_t)ps->bob_cycle & 127) / 127.0) * PI_F))));
+  state->bob_cycle = (double)((qa_js_to_int32(ps->bob_cycle) & 128) >> 7);
+  state->bob_frac_sin = fabs(f32(sin(f32(f32((qa_js_to_int32(ps->bob_cycle) & 127) / 127.0) * PI_F))));
   qa_vec3 velocity = qa_q3_base_player_state_record_velocity(ps);
   state->xyspeed = f32(sqrt(f32(f32(velocity.x * velocity.x) + f32(velocity.y * velocity.y))));
   double third_person_angle = f32(settings.third_person_angle);
@@ -121,7 +122,7 @@ static void offset_third_person(qa_q3_pres_view_runtime *view, qa_q3_pres_view_s
   }
   refdef->view_origin = view_point;
   focus_point = qa_sub3(focus_point, view_point);
-  double distance = fmax(1, f32(sqrt(f32(f32(focus_point.x * focus_point.x) + f32(focus_point.y * focus_point.y)))));
+  double distance = qa_js_max(1, f32(sqrt(f32(f32(focus_point.x * focus_point.x) + f32(focus_point.y * focus_point.y)))));
   state->refdef_view_angles = (qa_vec3){f32(f32(-180.0 / 3.141592653589793) * f32(atan2(focus_point.z, distance))),
                                         f32(state->refdef_view_angles.y - angle), state->refdef_view_angles.z};
 }
@@ -152,7 +153,7 @@ static void offset_first_person(qa_q3_pres_view_runtime *view, qa_q3_pres_view_s
   angles = (qa_vec3){angles.x + f32(qa_dot3(velocity, refdef->view_axis.vectors[0]) * f32(settings.run_pitch)),
                      angles.y,
                      angles.z - f32(qa_dot3(velocity, refdef->view_axis.vectors[1]) * f32(settings.run_roll))};
-  double speed = fmax(state->xyspeed, 200);
+  double speed = qa_js_max(state->xyspeed, 200);
   double pitch = f32(f32(state->bob_frac_sin * f32(settings.bob_pitch)) * speed);
   double roll = f32(f32(state->bob_frac_sin * f32(settings.bob_roll)) * speed);
   if ((qa_int32(ps->pm_flags) & QA_Q3_FLAG_DUCKED) != 0) {
@@ -164,7 +165,7 @@ static void offset_first_person(qa_q3_pres_view_runtime *view, qa_q3_pres_view_s
   double height = f32(refdef->view_origin.z + f32(ps->viewheight));
   double duck_delta = qa_int32(state->time - state->duck_time);
   if (duck_delta < 100) height = f32(height - f32(f32(state->duck_change * f32(qa_int32(100 - duck_delta))) / 100));
-  height = f32(height + fmin(6, f32(f32(state->bob_frac_sin * state->xyspeed) * f32(settings.bob_up))));
+  height = f32(height + qa_js_min(6, f32(f32(state->bob_frac_sin * state->xyspeed) * f32(settings.bob_up))));
   double land_delta = f32(qa_int32(state->time - state->land_time));
   if (land_delta < 150) height = f32(height + f32(state->land_change * f32(land_delta / 150)));
   else if (land_delta < 450) {
@@ -180,8 +181,8 @@ static bool calculate_fov(qa_q3_pres_view_runtime *view, qa_q3_pres_view_setting
   qa_q3_pres_refdef *refdef = &state->refdef;
   double fov = 90;
   if (state->predicted_player_state.pm_type != QA_Q3_PM_INTERMISSION) {
-    fov = (qa_int32(settings.dm_flags) & 16) != 0 ? 90 : fmax(1, fmin(160, f32(settings.fov)));
-    double zoom = fmax(1, fmin(160, f32(settings.zoom_fov)));
+    fov = (qa_int32(settings.dm_flags) & 16) != 0 ? 90 : qa_js_max(1, qa_js_min(160, f32(settings.fov)));
+    double zoom = qa_js_max(1, qa_js_min(160, f32(settings.zoom_fov)));
     double fraction = f32(f32(qa_int32(state->time - state->zoom_time)) / 150);
     if (state->zoomed) fov = fraction > 1 ? zoom : f32(fov + f32(fraction * f32(zoom - fov)));
     else if (fraction <= 1) fov = f32(zoom + f32(fraction * f32(fov - zoom)));
@@ -215,7 +216,7 @@ bool qa_q3_pres_view_runtime_damage_blend_blob(qa_q3_pres_view_runtime *view,
   out->radius = f32(state->damage_value * 3);
   out->shading.custom_shader = shader;
   out->shading.shader_rgba = (qa_vec4){255, 255, 255,
-      (double)((int64_t)trunc(f32(200 * f32(1 - f32(elapsed / 500)))) & 255)};
+      (double)(qa_js_to_int32(trunc(f32(200 * f32(1 - f32(elapsed / 500))))) & 255)};
   return true;
 }
 bool qa_q3_pres_view_runtime_clear_test_model(qa_q3_pres_view_runtime *view) {
@@ -276,7 +277,7 @@ void qa_q3_pres_view_runtime_next_model_frame(qa_q3_pres_view_runtime *view) {
   print_number(view, "frame", view->state->test_model_entity.frame);
 }
 void qa_q3_pres_view_runtime_previous_model_frame(qa_q3_pres_view_runtime *view) {
-  view->state->test_model_entity.frame = fmax(0, qa_int32(view->state->test_model_entity.frame - 1));
+  view->state->test_model_entity.frame = qa_js_max(0, qa_int32(view->state->test_model_entity.frame - 1));
   print_number(view, "frame", view->state->test_model_entity.frame);
 }
 void qa_q3_pres_view_runtime_next_model_skin(qa_q3_pres_view_runtime *view) {
@@ -284,7 +285,7 @@ void qa_q3_pres_view_runtime_next_model_skin(qa_q3_pres_view_runtime *view) {
   print_number(view, "skin", view->state->test_model_entity.skin_num);
 }
 void qa_q3_pres_view_runtime_previous_model_skin(qa_q3_pres_view_runtime *view) {
-  view->state->test_model_entity.skin_num = fmax(0, qa_int32(view->state->test_model_entity.skin_num - 1));
+  view->state->test_model_entity.skin_num = qa_js_max(0, qa_int32(view->state->test_model_entity.skin_num - 1));
   print_number(view, "skin", view->state->test_model_entity.skin_num);
 }
 bool qa_q3_pres_view_runtime_add_test_model(qa_q3_pres_view_runtime *view, qa_q3_pres_ref_entity *out, bool *has) {

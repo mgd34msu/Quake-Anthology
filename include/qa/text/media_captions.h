@@ -6,9 +6,11 @@
  *    immediately), so the request counter never races; it is kept for
  *    parity. The live-language path still returns no captions for the
  *    call that notices a language change, as the TS does while its
- *    load is in flight. The failed callback is retained for API
- *    parity: load errors abort in C (see docs/PORTING.md), so it is
- *    never invoked.
+ *    load is in flight. A load or parse error raised by that prepare
+ *    is caught and handed to `failed` as String(error), as the TS
+ *    `.catch(failed)` does; a direct prepare() call raises it.
+ *  - The TS constructor's optional `warn` is set with
+ *    qa_seat_media_captions_set_warn before the first prepare.
  *  - CinematicStatus (media/types.ts) is the exact TS string:
  *    "playing" | "paused" | "held" | "ended" | "stopped".
  *  - A NULL localization at init makes prepare load one through
@@ -46,7 +48,8 @@ typedef struct qa_caption_playback_state {
 typedef struct qa_live_language {
   void *ctx;
   const char *(*read)(void *ctx);
-  void (*failed)(void *ctx); /* never invoked; see header note */
+  /* error is TS String(error): "<name>: <message>". */
+  void (*failed)(void *ctx, const char *error);
 } qa_live_language;
 
 /* TS SeatMediaCaptions. */
@@ -63,6 +66,8 @@ typedef struct qa_seat_media_captions {
   char *prepared;                         /* owned; "" when none */
   char *live_request;                     /* owned */
   int64_t request;
+  void (*warn)(void *ctx, const char *text); /* TS warn; NULL when absent */
+  void *warn_ctx;
 } qa_seat_media_captions;
 
 /* localization NULL and live_language NULL mirror the TS defaults. */
@@ -73,7 +78,12 @@ void qa_seat_media_captions_init(qa_seat_media_captions *captions,
                                  bool kind_caption,
                                  const qa_live_language *live_language);
 void qa_seat_media_captions_destroy(qa_seat_media_captions *captions);
-/* TS prepare (synchronous form). False only on OOM. */
+/* TS constructor argument `warn`: invalid subtitle cues are skipped with
+ * "<reason>\n" instead of failing the whole sidecar. */
+void qa_seat_media_captions_set_warn(qa_seat_media_captions *captions,
+                                     void (*warn)(void *ctx, const char *text), void *ctx);
+/* TS prepare (synchronous form). False only on OOM; a malformed sidecar
+ * raises when no warn is set (TS rejects). */
 bool qa_seat_media_captions_prepare(qa_seat_media_captions *captions,
                                     const char *source, const char *language);
 /* TS active. Output like qa_caption_timeline_active_at. */

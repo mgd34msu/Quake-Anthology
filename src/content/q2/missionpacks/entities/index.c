@@ -11,11 +11,11 @@ void qa_q2mp_entities_init(qa_q2mp_entities *entities, qa_q2mp_pack pack, qa_q2m
   entities->has_movers = pack == QA_Q2MP_PACK_ROGUE;
   if (entities->has_movers) qa_q2mp_rogue_movers_init(&entities->movers, hooks);
 }
-qa_q2f_callback_definitions qa_q2mp_entities_callbacks(qa_q2mp_entities *entities) {
-  qa_q2f_callback_definitions source = entities->pack == QA_Q2MP_PACK_XATRIX
+qa_q2_callback_definitions qa_q2mp_entities_callbacks(qa_q2mp_entities *entities) {
+  qa_q2_callback_definitions source = entities->pack == QA_Q2MP_PACK_XATRIX
       ? qa_q2mp_xatrix_entities_callbacks(&entities->xatrix)
       : qa_q2mp_rogue_entities_callbacks(&entities->rogue);
-  qa_q2f_callback_definitions movers;
+  qa_q2_callback_definitions movers;
   memset(&movers, 0, sizeof movers);
   if (entities->has_movers) movers = qa_q2mp_rogue_movers_callbacks(&entities->movers);
   size_t i = 0;
@@ -38,7 +38,7 @@ qa_q2f_callback_definitions qa_q2mp_entities_callbacks(qa_q2mp_entities *entitie
   for (size_t j = 0; j < source.blocked_count; j++) entities->cb_blocked[i++] = source.blocked[j];
   for (size_t j = 0; j < movers.blocked_count; j++) entities->cb_blocked[i++] = movers.blocked[j];
   entities->cb_blocked_count = i;
-  qa_q2f_callback_definitions defs;
+  qa_q2_callback_definitions defs;
   memset(&defs, 0, sizeof defs);
   defs.think = entities->cb_think; defs.think_count = entities->cb_think_count;
   defs.use = entities->cb_use; defs.use_count = entities->cb_use_count;
@@ -47,7 +47,7 @@ qa_q2f_callback_definitions qa_q2mp_entities_callbacks(qa_q2mp_entities *entitie
   defs.blocked = entities->cb_blocked; defs.blocked_count = entities->cb_blocked_count;
   return defs;
 }
-bool qa_q2mp_entities_spawn(qa_q2mp_entities *entities, qa_q2f_entity *entity, qa_q2f_game *game) {
+bool qa_q2mp_entities_spawn(qa_q2mp_entities *entities, qa_q2_entity *entity, qa_q2_game_services *game) {
   bool spawned = entities->pack == QA_Q2MP_PACK_XATRIX
       ? qa_q2mp_xatrix_entities_spawn(&entities->xatrix, entity, game)
       : qa_q2mp_rogue_entities_spawn(&entities->rogue, entity, game);

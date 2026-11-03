@@ -6,6 +6,9 @@
 #include <string.h>
 #include "qa/content/q2/base/player/index.h"
 #include "qa/foundation/support.h"
+#include "qa/foundation/js_case.h"
+#include "qa/foundation/js.h"
+#include "qa/network/common/js_number.h"
 struct qa_app_q2_console { qa_app_q2_console_options options; };
 struct qa_app_q2_console_binding {
   qa_command_buffer *commands;
@@ -43,6 +46,16 @@ static void forward_handler(void *v, qa_command_invocation *invocation) {
 static void print_text(qa_app_q2_console *console, const char *text) {
   console->options.print(console->options.ctx, text);
 }
+/* `selection ${axis}: ${outcome} (${requested}) ${detail}\n` */
+static void print_selection_entry(void *v, const char *axis, const char *outcome, const char *requested, const char *detail) {
+  qa_app_q2_console *console = v;
+  size_t length = strlen(axis) + strlen(outcome) + strlen(requested) + strlen(detail) + 32;
+  char *line = malloc(length);
+  if (line == NULL) qa_range_error("Out of memory");
+  snprintf(line, length, "selection %s: %s (%s) %s\n", axis, outcome, requested, detail);
+  print_text(console, line);
+  free(line);
+}
 static void status_handler(void *v, qa_command_invocation *invocation) {
   (void)invocation;
   qa_app_q2_console *console = v;
@@ -58,10 +71,12 @@ static void status_handler(void *v, qa_command_invocation *invocation) {
     char scratch[256];
     const char *name = qa_app_q2_operator_player_name(players[i].userinfo, players[i].name, scratch, sizeof scratch);
     char line[1024];
-    snprintf(line, sizeof line, "%lld %lld %lld %s\n", (long long)players[i].slot,
-        (long long)players[i].score, (long long)players[i].ping, name);
+    snprintf(line, sizeof line, "%s %s %s %s\n", QA_JS_NUMBER(players[i].slot),
+        QA_JS_NUMBER(players[i].score), QA_JS_NUMBER(players[i].ping), name);
     print_text(console, line);
   }
+  if (console->options.selection_consumption != NULL)
+    console->options.selection_consumption(console->options.ctx, print_selection_entry, console);
 }
 static bool all_digits(const char *text) {
   if (text[0] == '\0') return false;
@@ -177,15 +192,20 @@ void qa_app_q2_console_bind_current(qa_app_q2_console *console) {
     while (end < length && bytes[end] != '\n') end++;
     size_t line_end = end;
     if (line_end > at && bytes[line_end - 1] == '\r') line_end--;
-    size_t start = at;
-    while (start < line_end && isspace(bytes[start])) start++;
+    /* TS line.trim().split(/\s+/)[0].toLowerCase(): JS white space and Unicode lowering. */
+    char *line = malloc(line_end - at + 1);
+    if (line == NULL) qa_range_error("Out of memory");
+    memcpy(line, bytes + at, line_end - at);
+    line[line_end - at] = '\0';
+    size_t start = 0, space;
+    while ((space = qa_js_white_space_length(line + start)) != 0) start += space;
     size_t stop = start;
-    while (stop < line_end && !isspace(bytes[stop])) stop++;
-    if (stop > start) {
-      char *name = malloc(stop - start + 1);
-      if (name == NULL) qa_range_error("Out of memory");
-      for (size_t c = 0; c < stop - start; c++) name[c] = (char)tolower(bytes[start + c]);
-      name[stop - start] = '\0';
+    while (line[stop] != '\0' && qa_js_white_space_length(line + stop) == 0) stop++;
+    line[stop] = '\0';
+    char *name = stop > start ? qa_js_to_lower_case(line + start) : NULL;
+    free(line);
+    if (stop > start && name == NULL) qa_range_error("Out of memory");
+    if (name != NULL) {
       if (count == capacity) {
         capacity = capacity == 0 ? 8 : capacity * 2;
         const char **next = realloc(names, capacity * sizeof *next);

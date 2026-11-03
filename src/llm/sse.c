@@ -155,17 +155,7 @@ bool qa_llm_consume_sse(qa_llm_http_response *response, qa_llm_abort_signal *sig
     if (!qa_llm_utf8_valid(raw.data, raw.length, &valid)) {
       /* Invalid only when the bad byte is not a split sequence tail:
        * re-check the prefix; a partial tail waits for more bytes. */
-      bool partial_tail = false;
-      if (valid < raw.length) {
-        uint8_t lead = raw.data[valid];
-        size_t need = (lead & 0xe0) == 0xc0 ? 2 : (lead & 0xf0) == 0xe0 ? 3 : (lead & 0xf8) == 0xf0 ? 4 : 0;
-        if (need > 0 && raw.length - valid < need) {
-          partial_tail = true;
-          for (size_t i = valid + 1; i < raw.length; i++) {
-            if ((raw.data[i] & 0xc0) != 0x80) partial_tail = false;
-          }
-        }
-      }
+      bool partial_tail = valid < raw.length && qa_llm_utf8_incomplete_tail(raw.data + valid, raw.length - valid);
       if (!partial_tail) { stream_error = true; ok = false; break; }
     } else {
       valid = raw.length;

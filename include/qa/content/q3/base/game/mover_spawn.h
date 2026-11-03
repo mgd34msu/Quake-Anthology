@@ -11,7 +11,7 @@
 #include "qa/content/q3/base/game/spawn.h"
 typedef struct qa_q3_mover_spawn_host {
   void *ctx; qa_q3_mover_runtime *movers; qa_q3_entity_pool *pool;
-  qa_q3_server_world_mirror world; qa_q3_teleport_context teleport;
+  qa_q3_base_server_world world; qa_q3_teleport_context teleport;
   double (*time)(void *ctx); double (*gravity)(void *ctx);
   void (*set_brush_model)(void *ctx, qa_q3_game_entity *entity, const char *name);
   void (*remap_shader)(void *ctx, const char *old_name, const char *new_name, double time_seconds);
@@ -27,6 +27,5 @@ typedef struct qa_q3_mover_spawn_runtime { qa_q3_mover_spawn_host host; } qa_q3_
 void qa_q3_mover_spawn_runtime_init(qa_q3_mover_spawn_runtime *runtime, qa_q3_mover_spawn_host host);
 void qa_q3_mover_spawn_bind_save_callbacks(qa_q3_mover_spawn_runtime *runtime);
 bool qa_q3_mover_spawn_is_door_trigger(qa_q3_mover_spawn_runtime *runtime, qa_q3_game_entity *entity);
-size_t qa_q3_create_mover_spawn_handlers(qa_q3_mover_spawn_host host, qa_q3_spawn_handler_entry *out, size_t out_cap);
 size_t qa_q3_mover_spawn_runtime_handlers(qa_q3_mover_spawn_runtime *runtime, qa_q3_spawn_handler_entry *out, size_t out_cap);
 #endif

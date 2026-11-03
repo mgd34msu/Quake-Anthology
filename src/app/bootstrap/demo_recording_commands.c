@@ -52,11 +52,11 @@ static const char *finish_current(qa_app_client_demo_recording *owner) {
 }
 static qa_app_demo_recording *open_recording(qa_app_client_demo_recording *owner, const char *name,
                                              qa_app_demo_recording_seed seed, const char **out_error) {
-  if (name) return qa_app_demo_recording_open(owner->host.root(owner->host.ctx), name, seed, out_error);
+  if (name) return qa_app_demo_recording_open(owner->host.root(owner->host.ctx), name, seed, true, out_error);
   for (int index = 0; index < 10000; index++) {
     char generated[16];
     snprintf(generated, sizeof generated, "demo%04d", index);
-    qa_app_demo_recording *recording = qa_app_demo_recording_open(owner->host.root(owner->host.ctx), generated, seed, out_error);
+    qa_app_demo_recording *recording = qa_app_demo_recording_open(owner->host.root(owner->host.ctx), generated, seed, false, out_error);
     if (recording) return recording;
     if (!*out_error || strstr(*out_error, "EEXIST") == NULL) return NULL;
   }
@@ -180,7 +180,7 @@ const char *qa_app_client_demo_recording_rerecord(qa_app_client_demo_recording *
     packet.kind = QA_APP_RECORDING_QW;
     packet.record.kind = "sequences";
     qa_app_demo_recording_seed fresh = {seed.identity, &packet, 1};
-    recording = qa_app_demo_recording_open(owner->host.root(owner->host.ctx), name, fresh, &error);
+    recording = qa_app_demo_recording_open(owner->host.root(owner->host.ctx), name, fresh, true, &error);
   }
   if (!error) {
     sink_ctx *storage = malloc(sizeof *storage);

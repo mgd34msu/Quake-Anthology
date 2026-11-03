@@ -21,7 +21,6 @@
 #include "qa/content/q2/rerelease/monsters/berserk.h"
 #include "qa/content/q2/rerelease/monsters/boss.h"
 #include "qa/content/q2/rerelease/monsters/common.h"
-#include "qa/content/q2/rerelease/monsters/generate_tables.h"
 #include "qa/content/q2/rerelease/monsters/gladiator.h"
 #include "qa/content/q2/rerelease/monsters/guardian.h"
 #include "qa/content/q2/rerelease/monsters/guncmdr.h"

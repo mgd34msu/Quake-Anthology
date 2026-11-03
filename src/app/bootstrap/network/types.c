@@ -13,9 +13,14 @@ const char *qa_app_network_phase_name(qa_app_network_phase phase) {
   }
   return "closed";
 }
-void qa_app_q2_game_callback(const char *(*fn)(void *ctx), void *ctx) {
-  const char *error = fn(ctx);
-  if (error == NULL) return;
-  if (strncmp(error, "Q2 game callback failed: ", 25) == 0) qa_range_error("%s", error);
-  qa_range_error("Q2 game callback failed: %s", error);
+noreturn void qa_app_q2_game_callback_error(const char *cause) {
+  qa_raise("Q2GameCallbackError", 0, 0, "Q2 game callback failed: %s", cause);
+}
+/* TS q2GameCallback: try { callback() } catch (error) { throw error instanceof Q2GameCallbackError
+ * ? error : new Q2GameCallbackError(error) } */
+void qa_app_q2_game_callback(void (*fn)(void *ctx), void *ctx) {
+  qa_caught_error caught;
+  if (qa_try(fn, ctx, &caught)) return;
+  if (strcmp(caught.name, "Q2GameCallbackError") == 0) qa_rethrow(&caught);
+  qa_app_q2_game_callback_error(caught.message);
 }

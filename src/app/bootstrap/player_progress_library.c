@@ -1,11 +1,13 @@
 /* Port of src/app/bootstrap/player-progress-library.ts. GPL-2.0-or-later. */
 #define _POSIX_C_SOURCE 200809L
 #include "qa/app/bootstrap/player_progress_library.h"
+#include "qa/network/common/js_number.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "qa/foundation/support.h"
+#include <math.h>
 typedef struct owned_row { qa_ui_library_entry view; char *id, *label, *detail; } owned_row;
 struct qa_app_player_progress_library {
   qa_app_progress_store_fn store_fn; void *store_ctx;
@@ -79,9 +81,9 @@ static owned_row entry_of(const qa_app_player_progress_event *event) {
   } else {
     row.label = dup_text(event->map);
     char score[64];
-    if (event->score == (double)(long long)event->score)
-      snprintf(score, sizeof score, "%lld", (long long)event->score);
-    else snprintf(score, sizeof score, "%g", event->score);
+    if ((fabs(event->score) < 9.2e18 && event->score == trunc(event->score)))
+      snprintf(score, sizeof score, "%s", QA_JS_NUMBER(event->score));
+    else snprintf(score, sizeof score, "%s", QA_JS_NUMBER(event->score));
     row.detail = format2("%s · Match completed · Score %s", family, score);
   }
   row.view.id = row.id; row.view.label = row.label; row.view.detail = row.detail; row.view.unavailable = NULL;

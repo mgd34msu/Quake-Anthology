@@ -157,29 +157,8 @@ typedef struct qa_q2_admission_result {
   const char *userinfo;
 } qa_q2_admission_result;
 
-/* TS ClientAdmission union on kind: "q1" connect(client) |
- * "q2-classic" connect(client,userinfo) | "q2-rerelease"
- * connect(client,userinfo,socialId,isBot) | "q3"
- * connect(client,firstTime,isBot) -> string | null. */
-typedef enum qa_client_admission_kind {
-  QA_CLIENT_ADMISSION_Q1, QA_CLIENT_ADMISSION_Q2_CLASSIC,
-  QA_CLIENT_ADMISSION_Q2_RERELEASE, QA_CLIENT_ADMISSION_Q3
-} qa_client_admission_kind;
-typedef struct qa_client_admission {
-  qa_client_admission_kind kind;
-  void *ctx;
-  void (*connect_q1)(void *ctx, qa_client_id client);
-  qa_q2_admission_result (*connect_q2_classic)(void *ctx, qa_client_id client,
-                                               const char *userinfo);
-  qa_q2_admission_result (*connect_q2_rerelease)(void *ctx, qa_client_id client,
-                                                 const char *userinfo,
-                                                 const char *social_id, bool is_bot);
-  const char *(*connect_q3)(void *ctx, qa_client_id client, bool first_time,
-                            bool is_bot); /* NULL = admitted */
-} qa_client_admission;
-
 /* TS ActorLifetimePolicy. reuse: "immediate"|"source-cooldown";
- * clear: "source-edict"|"source-gentity";
+ * clear: "source-edict" (TS dropped "source-gentity");
  * exhaustion: "fatal"|"qw-last-slot" (exact strings). */
 typedef struct qa_actor_lifetime_policy {
   double first_dynamic_slot;

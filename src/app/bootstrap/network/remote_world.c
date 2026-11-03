@@ -29,7 +29,7 @@ bool qa_app_remote_world_ready(const qa_app_remote_world_content *content) {
   return content->loaded != NULL;
 }
 void *qa_app_remote_world_loaded(qa_app_remote_world_content *content) {
-  if (content->loaded == NULL) qa_range_error("Remote server has not supplied a world");
+  if (content->loaded == NULL) qa_raise("Error", 0, 0, "Remote server has not supplied a world");
   return content->loaded;
 }
 void qa_app_remote_world_set_loaded(qa_app_remote_world_content *content, void *loaded) {

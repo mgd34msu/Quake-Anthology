@@ -183,6 +183,31 @@ static double role_index(qa_qvm_combat_call call, const char *role) {
   return -1;
 }
 
+typedef struct damage_finally {
+  qa_qvm_game_combat *combat;
+  qa_qvm_memory *memory;
+  bool has_temporary;
+  int32_t temporary;
+  double *words;
+  int32_t *call_words;
+  uint8_t saved[24];
+} damage_finally;
+
+/* TS finally: free the temporary inflictor, then restore the scratch bytes. */
+static void damage_finish(void *ctx) {
+  damage_finally *finally = ctx;
+  free(finally->words);
+  free(finally->call_words);
+  finally->words = NULL;
+  finally->call_words = NULL;
+  if (finally->has_temporary) {
+    int32_t free_words[] = {finally->temporary};
+    (void)qa_qvm_module_call(&finally->combat->game->module, free_words, 1,
+                             (int64_t)finally->combat->definition.callback_free);
+  }
+  qa_qvm_memory_write_bytes(finally->memory, finally->combat->scratch, finally->saved, 24);
+}
+
 void qa_qvm_game_combat_damage(qa_qvm_game_combat *combat, qa_qvm_game_damage hit,
                                const qa_qvm_damage_invoke *invoke) {
   double words_to_check[] = {hit.amount, hit.flags, hit.method};
@@ -203,7 +228,11 @@ void qa_qvm_game_combat_damage(qa_qvm_game_combat *combat, qa_qvm_game_damage hi
   qa_qvm_writable_view_set_float32(&scratch, 12, qa_float32(hit.point.x), true);
   qa_qvm_writable_view_set_float32(&scratch, 16, qa_float32(hit.point.y), true);
   qa_qvm_writable_view_set_float32(&scratch, 20, qa_float32(hit.point.z), true);
-  bool has_temporary = false;
+  /* TS try { ... } finally { free the temporary; restore the scratch }. */
+  damage_finally finally = {combat, memory, false, 0, NULL, NULL, {0}};
+  memcpy(finally.saved, saved, 24);
+  qa_cleanup guard;
+  qa_cleanup_push(&guard, damage_finish, &finally);
   int32_t temporary = 0;
   double attacker = hit.has_attacker ? entity_pointer(combat, hit.attacker) : 0;
   double inflictor = 0;
@@ -212,7 +241,8 @@ void qa_qvm_game_combat_damage(qa_qvm_game_combat *combat, qa_qvm_game_damage hi
   } else if (hit.inflictor_kind == QA_QVM_INFLICTOR_FOREIGN) {
     temporary = qa_qvm_module_call(&combat->game->module, NULL, 0,
                                    (int64_t)combat->definition.callback_allocate);
-    has_temporary = true;
+    finally.has_temporary = true;
+    finally.temporary = temporary;
     double slot = qa_qvm_game_data_number_from_pointer(&combat->game->data, temporary);
     qa_qvm_shared_entity *entity = qa_qvm_game_data_entity(&combat->game->data, slot);
     qa_qvm_writable_view view;
@@ -234,6 +264,7 @@ void qa_qvm_game_combat_damage(qa_qvm_game_combat *combat, qa_qvm_game_damage hi
   }
   double *words = malloc((combat->argument_count == 0 ? 1 : combat->argument_count) * sizeof(double));
   if (words == NULL) qa_range_error("out of memory");
+  finally.words = words;
   memcpy(words, combat->arguments, combat->argument_count * sizeof(double));
   qa_qvm_combat_call call = combat->definition.damage_call;
   words[(size_t)role_index(call, "target")] = entity_pointer(combat, hit.target);
@@ -249,16 +280,11 @@ void qa_qvm_game_combat_damage(qa_qvm_game_combat *combat, qa_qvm_game_damage hi
   } else {
     int32_t *call_words = malloc((combat->argument_count == 0 ? 1 : combat->argument_count) * sizeof(int32_t));
     if (call_words == NULL) qa_range_error("out of memory");
+    finally.call_words = call_words;
     for (size_t i = 0; i < combat->argument_count; i++) call_words[i] = qa_int32(words[i]);
     (void)qa_qvm_module_call(&combat->game->module, call_words, combat->argument_count,
                              (int64_t)combat->definition.callback_damage);
-    free(call_words);
   }
-  free(words);
-  if (has_temporary) {
-    int32_t free_words[] = {temporary};
-    (void)qa_qvm_module_call(&combat->game->module, free_words, 1,
-                             (int64_t)combat->definition.callback_free);
-  }
-  qa_qvm_memory_write_bytes(memory, combat->scratch, saved, 24);
+  qa_cleanup_pop(&guard);
+  damage_finish(&finally);
 }
